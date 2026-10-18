@@ -8347,7 +8347,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "57e5eb61ec4f955990301aa3e385b0706a22e1869113f5e89295e7393672724b",
+ "fingerprint": "45ac9fd2b22abf8975b1bfddb5160a3269945d81e5c65559d1947b090d5ab453",
  "gate": {
   "fields": {
    "capabilities": {
@@ -16904,6 +16904,7 @@
    "tests": [
     "tests/unit/agent_swarm/test_delegation_protocol.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_issue407_subagent_persistence.py",
     "tests/unit/test_specialist_data_compute.py",
     "tests/unit/test_subagent.py",
     "tests/unit/test_subagent_roles_v2.py",

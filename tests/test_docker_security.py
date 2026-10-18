@@ -365,6 +365,18 @@ class TestCiEnvPrivScript:
             "${WEBGIS_IMAGE:-webgis-ai-agent:local} 的 build: 兜底"
         )
 
+    def test_script_sets_umask_before_writing(self):
+        """.env.Priv 装着全部生产凭据 —— 写文件前必须 umask 077，否则默认
+        umask 022 落成 0644（runner 上任意本地用户可读 DB/Redis/JWT 口令）。
+        Windows 的 noacl 挂载对原生 Python stat 隐藏 POSIX 位，故用结构断言。"""
+        with open(self.SCRIPT, encoding="utf-8") as f:
+            script = f.read()
+        umask_at = script.find("umask 077")
+        assert umask_at != -1, "ci-generate-env-priv.sh 缺少 umask 077"
+        assert umask_at < script.find("> .env.Priv"), (
+            "umask 077 必须在写 .env.Priv 之前生效"
+        )
+
 
 def test_prod_image_code_not_owned_by_runtime_user():
     """security F-16：运行用户不得拥有应用代码（只授权运行期可写路径）。"""

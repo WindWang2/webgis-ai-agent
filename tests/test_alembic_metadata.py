@@ -4,7 +4,7 @@ import ast
 
 def test_target_metadata_not_none():
     """target_metadata must be assigned to Base.metadata, not None."""
-    with open("migrations/env.py") as f:
+    with open("migrations/env.py", encoding="utf-8") as f:
         source = f.read()
 
     tree = ast.parse(source)

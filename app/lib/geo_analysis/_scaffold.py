@@ -30,6 +30,7 @@ from typing import Any, Callable, Optional, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 
 from app.lib.cancellation import checkpoint
 from app.lib.geo_processor.core import GeoAnalysisResult
@@ -142,11 +143,14 @@ def filter_two_numeric(
     aligned_x = filter_numeric(gdf, field_x)
     if aligned_x is None or len(aligned_x[1]) == 0:
         return None
-    gdf_x, vx = aligned_x
+    gdf_x, _ = aligned_x
     aligned_xy = filter_numeric(gdf_x, field_y)
     if aligned_xy is None or len(aligned_xy[1]) == 0:
         return None
     gdf_xy, vy = aligned_xy
+    # y 过滤可能再丢行：vx 必须从 gdf_xy 重抽，与 vy / gdf_xy 行对齐
+    # （#1600 双变量字段过滤行对齐修复 —— lag 字段部分空值不再错位/裸崩）。
+    vx = pd.to_numeric(gdf_xy[field_x], errors="coerce").astype(float).values
     return gdf_xy, vx, vy
 
 

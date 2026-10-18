@@ -12,9 +12,12 @@
   （``truncated=True`` 诚实标注），无 key 可截则 typed 诚实失败。
 
 防御逻辑：``estimate_volume`` 三级降级估算（D1 cost_hint → rows_hint →
-bbox 面积密度 → 诚实 unknown）；大范围/大体量时任务图头部自动注入
-``reproject`` 节点（``infer_utm_crs`` 由 bbox 中心经度推导 UTM zone，
-无 bbox 诚实跳过，绝不猜 EPSG）。
+bbox 面积密度 → 诚实 unknown）；``infer_utm_crs`` 由 bbox 中心经度推导 UTM
+zone，无 bbox 诚实跳过，绝不猜 EPSG。大范围/大体量触发防御阈值时**诚实
+披露跳过**（深评 2026-10-08）：本编排器只提交尾节点 durable job、
+input_refs 直指原始未投影数据，reproject 无任何执行方（ops 注册表未接线
+REPROJECT）—— 计划不注入永不执行的投影节点，提货券也不宣称
+crs_defense / 投影 CRS，只如实回报请求声明的输入 CRS。
 """
 from __future__ import annotations
 
@@ -47,7 +50,8 @@ from app.services.geocompute.plan import (
 
 #: bbox 面积密度启发式（行/km²；估算用途，诚实标注 assumption）。
 DENSITY_ROWS_PER_KM2 = 50
-#: 自动 UTM 防御阈值：超过任一即注入投影节点。
+#: 自动 UTM 防御阈值：超过任一即触发防御披露（defense skipped note）。
+#: 不注入投影节点 —— REPROJECT 无执行方，注入即"计划含永不执行的节点"。
 AUTO_UTM_AREA_KM2_THRESHOLD = 5_000.0
 AUTO_UTM_ROWS_THRESHOLD = 200_000
 
@@ -143,8 +147,8 @@ class GeoComputeAgent(BaseSpecialistAgent):
         "必须编入 durable 执行图经 Celery Worker 执行，绝不内联在对话事件"
         "循环里解析大 GeoJSON；纪律（Zero Big Data in Context）：结果只以"
         "SpatialProfileRef 提货券回传（ref_id + 有界摘要 ≤8KB），原始几何"
-        "绝不进上下文；大范围输入自动注入 UTM 投影防御并披露 CRS；估算不到"
-        "的体积诚实为 unknown。"
+        "绝不进上下文；估算不到的体积诚实为 unknown；CRS 只宣称真实发生"
+        "的投影，未执行的防御如实披露为跳过。"
     )
 
     def __init__(
@@ -226,37 +230,37 @@ class GeoComputeAgent(BaseSpecialistAgent):
             (volume.area_km2 is not None and volume.area_km2 > AUTO_UTM_AREA_KM2_THRESHOLD)
             or (volume.rows is not None and volume.rows > AUTO_UTM_ROWS_THRESHOLD)
         )
-        crs_defense = "auto_utm" if (needs_defense and utm) else None
+        # 诚实防御（深评 2026-10-08）：此前防御触发会在计划头部注入
+        # reproject 节点，但本编排器只提交尾节点 durable job、input_refs
+        # 直指原始未投影数据 —— reproject 无任何执行方（ops 注册表未接线
+        # REPROJECT），计算实际发生在原始 CRS 上，提货券却宣称
+        # crs=EPSG:326xx / crs_defense="auto_utm"（虚假元数据）。未执行的
+        # 防御绝不宣称：计划只含真正提交执行的节点；ref.crs 如实回报请求
+        # 声明的输入 CRS（未声明 → None）；防御跳过以 note 披露。
+        crs_defense = None
+        defense_note = (
+            f"auto utm defense skipped (unexecuted, crs={req.crs or 'unknown'}); "
+            f"compute runs in source crs"
+            if needs_defense and utm else None
+        )
 
-        nodes: List[ExecutionNode] = []
-        if crs_defense:
-            nodes.append(ExecutionNode(
-                node_id="reproject_auto_utm",
-                category=NodeCategory.REPROJECT,
-                operation="reproject_coordinates",
-                parameters={"target_crs": utm, "defense": "auto_utm"},
-                crs=CrsExpectation(output_crs=utm),
+        dataset_fp = hashlib.sha1(req.dataset_ref.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+        nodes: List[ExecutionNode] = [
+            ExecutionNode(
+                node_id=f"compute_{req.operation}",
+                category=category,
+                operation=req.operation,
+                inputs=[],
+                dataset_fingerprints={"dataset_ref": dataset_fp},
+                parameters=dict(req.operation_params),
+                crs=CrsExpectation(output_crs=req.crs) if req.crs else None,
                 policy=ExecutionPolicyKind.DURABLE_JOB,
                 produces=PayloadKind.FEATURES,
-                description="自动 UTM 防御投影（大范围/大体量输入）",
-            ))
-        dataset_fp = hashlib.sha1(req.dataset_ref.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
-        main_inputs = [nodes[-1].node_id] if nodes else []
-        nodes.append(ExecutionNode(
-            node_id=f"compute_{req.operation}",
-            category=category,
-            operation=req.operation,
-            inputs=main_inputs,
-            dataset_fingerprints={"dataset_ref": dataset_fp},
-            parameters=dict(req.operation_params),
-            crs=CrsExpectation(output_crs=utm) if utm else None,
-            policy=ExecutionPolicyKind.DURABLE_JOB,
-            produces=PayloadKind.FEATURES,
-            accepts=[PayloadKind.FEATURES] if main_inputs else [],
-            estimate=plan_estimate_for_operation(
-                req.operation, rows=volume.rows, method=volume.method,
+                estimate=plan_estimate_for_operation(
+                    req.operation, rows=volume.rows, method=volume.method,
+                ),
             ),
-        ))
+        ]
 
         plan = ExecutionPlan(
             plan_id=f"gc-{uuid.uuid4().hex[:12]}",
@@ -298,7 +302,7 @@ class GeoComputeAgent(BaseSpecialistAgent):
             ref_id=f"gc-{plan.plan_id}-{final_fp}"[:_MAX_REF_ID_LEN],
             job_id=int(job_id) if job_id is not None else None,
             celery_task_id=str(celery_task_id) if celery_task_id else None,
-            crs=utm,
+            crs=req.crs,
             crs_defense=crs_defense,
             volume=volume,
             summary=(
@@ -309,7 +313,7 @@ class GeoComputeAgent(BaseSpecialistAgent):
             notes=tuple(
                 note for note in (
                     f"plan digest {plan.graph_fingerprint()}",
-                    f"auto utm defense → {utm}" if crs_defense else None,
+                    defense_note,
                 ) if note
             ),
         )

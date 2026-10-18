@@ -107,6 +107,30 @@ def test_reobserved_provenance_is_read_mostly(wc):
     assert len(wc.user_edits) == 2
 
 
+def test_new_user_edit_turn_bumps_revision_and_updated_turn_id(wc):
+    """A genuinely new user edit is a transition: the CAS token must
+    advance (and updated_turn_id move) or the store's revision CAS lets a
+    same-revision concurrent writer overwrite the edit record wholesale —
+    no bump, no rebase, first writer's edits lost."""
+    rev0 = wc.revision
+    obs = observe_session(_prov(_OPACITY, _REORDER), {})
+    outcome = apply_changes(wc, [], obs=obs, turn_id="t-edit")
+    assert outcome.recorded_edits == 2          # presentation + semantic
+    assert wc.revision == rev0 + 1              # one bump per transition
+    assert wc.updated_turn_id == "t-edit"
+
+
+def test_reobserved_hide_does_not_bump_revision(wc):
+    """The read-mostly rule holds on the (pre-H09) hide channel too: a
+    replayed hide keeps the revision and the last-writer turn id frozen."""
+    obs = observe_session(_prov(_HIDE), {})
+    apply_changes(wc, [], obs=obs, turn_id="t1")
+    rev, turn = wc.revision, wc.updated_turn_id
+    outcome = apply_changes(wc, [], obs=obs, turn_id="t2")
+    assert outcome.recorded_edits == 0
+    assert wc.revision == rev and wc.updated_turn_id == turn
+
+
 def test_no_op_id_edits_are_first_wins_per_layer_and_kind(wc):
     detail = dict(_OPACITY["detail"])          # keep the opacity payload…
     detail.pop("mutation_id", None)            # …but no cross-replica id

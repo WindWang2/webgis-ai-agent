@@ -11,6 +11,7 @@ This test verifies:
 5. Feature flag gating (USE_NEW_AGENT=true/false)
 """
 import asyncio
+import json
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -144,7 +145,11 @@ class TestPiBridgeE2EScenarios:
 
     @pytest.mark.asyncio
     async def test_pi_rpc_failure_yields_task_error(self):
-        """When Pi process fails, stream_prompt yields task_error + done."""
+        """When Pi process fails, stream_prompt yields task_error + done.
+
+        INV-7: the task_error carries error_class, and the raw PiRpcError
+        text must not leak into the SSE payload (fixed-phrase red line).
+        """
         bridge = PiBridge(rpc=_make_event_rpc([], fail_request=True))
 
         events_out = []
@@ -154,7 +159,9 @@ class TestPiBridgeE2EScenarios:
         types = [e.split("\n")[0].replace("event: ", "") for e in events_out if e.strip()]
         assert "task_error" in types
         error_ev = next(e for e in events_out if "task_error" in e)
-        assert "connection refused" in error_ev
+        error_data = json.loads(error_ev.split("data: ", 1)[1])
+        assert "connection refused" not in error_ev
+        assert error_data["error_class"] == "transport_error"
         assert types[-1] == "done"
 
     @pytest.mark.asyncio
