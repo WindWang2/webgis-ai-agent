@@ -138,6 +138,53 @@ async def test_cancelled_error_releases_dedup_key():
     assert ("slow_async_tool", '{"x": 1}') not in executed
 
 
+@pytest.mark.asyncio
+async def test_cancelled_during_situation_supply_releases_dedup_key(monkeypatch):
+    """#1659: 硬取消落在占位之后、执行段 try 之前的 await（situation 供给
+    合并）上时，dedup 占位键必须释放，且同参重试真实执行 —— #1060 只覆盖
+    了执行段，预执行窗口的取消会滞留键，让本 turn 重试恒收「在飞」谎言。"""
+    import asyncio
+    import app.services.gis_harness.hotpath_convergence.runtime_situation as rs
+    from app.services.tool_dispatch_service import ToolDispatchService
+
+    merge_calls = {"n": 0}
+
+    async def _merge_once(base, session_id):
+        merge_calls["n"] += 1
+        if merge_calls["n"] == 1:
+            await asyncio.sleep(10)  # 首次供给挂起 —— 取消必落此窗口
+        return base
+
+    monkeypatch.setattr(rs, "merge_situation_facts_async", _merge_once)
+
+    reg = ToolRegistry()
+    really_executed = []
+
+    async def _real(**_):
+        really_executed.append(1)
+        return {"success": True}
+
+    reg.register("slow_async_tool", "slow", _real, execution_policy="async")
+    svc = ToolDispatchService(registry=reg)
+    executed: set = set()
+    tc = {"id": "c1", "function": {"name": "slow_async_tool", "arguments": {"x": 1}}}
+
+    task = asyncio.create_task(svc.dispatch(tc, "s1", executed))
+    await asyncio.sleep(0.05)  # 让 dispatch 到达 situation 供给 await
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert ("slow_async_tool", '{"x": 1}') not in executed, (
+        "取消落在 situation 供给窗口时占位键必须释放（#1659）"
+    )
+
+    # 重试必须真实执行，而非「并发在飞」谎言
+    res = await svc.dispatch(tc, "s1", executed)
+    assert res.status != "repeated", f"取消释放后同参重试不应被去重拦截: {res.llm_payload}"
+    assert really_executed, "取消释放后同参重试应真实执行工具"
+    assert res.raw_result.get("success") is True
+
+
 def test_reregistration_warns(monkeypatch):
     """#1062: 同名覆盖此前静默替换活工具 —— 现在必须留下 WARNING。
 

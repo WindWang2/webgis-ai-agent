@@ -949,6 +949,7 @@ class CombineMapThemeArgs(BaseModel):
     viewport: Optional[Dict[str, Any]] = Field(None, description="视口件配置: {center: [lng, lat], zoom: 10}")
     layer_id: Optional[str] = Field("default_layer", description="目标图层 ID")
     field: Optional[str] = Field("", description="专题字段（thematic 槽为分级/热力时必填，驱动 legend_spec 生成）")
+    geojson: Optional[Any] = Field(None, description="GeoJSON FeatureCollection（composite 预设提交 MapSpec 时必填；支持 ref:xxx 引用）")
     session_id: Optional[str] = Field(None, description="会话 ID（经生命周期引擎提交 MapSpec 时必填）")
 
 
