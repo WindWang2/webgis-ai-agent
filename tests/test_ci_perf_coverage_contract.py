@@ -9,6 +9,7 @@ import shlex
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -118,42 +119,79 @@ def _top_level_third_party_imports() -> set:
 
 def _module_of_pip_package(pkg: str) -> str:
     """pip 包名 -> import 模块名的归一化：pytest-asyncio -> pytest_asyncio、
-    psycopg2-binary -> psycopg2（`-`→`_`，剥离 -binary/-stubs 后缀）。"""
-    name = pkg.split("==")[0].split(">=")[0].split("<")[0].strip().replace("-", "_")
+    psycopg2-binary -> psycopg2（`-`→`_`，剥离 -binary/-stubs 后缀）、
+    sqlalchemy[asyncio] -> sqlalchemy（剥离 [...] extras，#1656：不剥则
+    requirements.txt 的 extra 声明会让 covered 集合永远对不上 import 名，
+    断言恒红）。"""
+    name = pkg.split("[", 1)[0]
+    name = name.split("==")[0].split(">=")[0].split("<")[0].strip().replace("-", "_")
     for suffix in ("_binary", "_stubs"):
         if name.endswith(suffix):
             name = name[: -len(suffix)]
     return name
 
 
+def _modules_of_requirements(req_path: Path) -> set:
+    """requirements 文件 -> 包名归一化集合（跳过注释/空行/-r/-c 等选项行）。"""
+    modules: set = set()
+    for raw in req_path.read_text(encoding="utf-8").splitlines():
+        raw = raw.split("#", 1)[0].strip()
+        if not raw or raw.startswith("-"):
+            continue
+        modules.add(_module_of_pip_package(raw))
+    return modules
+
+
 def test_pr_perf_lane_installs_all_module_level_imports():
     """test-perf PR lane 的 pip install 必须覆盖 perf 文件模块层的全部第三方
     import —— 缺任何一个（如 pytest-asyncio）都会在收集期 ImportError，
-    lane 红 → release-gate 红。覆盖集 = lane install 行参数 ∪ requirements.txt。"""
+    lane 红 → release-gate 红。覆盖集 = lane install 行显式参数 ∪ 其
+    -r/--requirement 实际引入的 requirements 文件内容（#1656：lane 行若
+    去掉 -r requirements.txt，整份基础依赖即失去覆盖，断言必须报红）。"""
     run = _job_run_text("test-perf")
     install_lines = [line for line in run.splitlines() if "pip install" in line]
     assert install_lines, "test-perf lane 必须有 pip install 步骤"
 
     covered: set = set()
     for line in install_lines:
-        for arg in shlex.split(line):
-            if arg in ("pip", "install") or arg.startswith("-"):
+        args = shlex.split(line)
+        for i, arg in enumerate(args):
+            if arg in ("pip", "install"):
                 continue
-            if arg.endswith(".txt"):  # -r requirements.txt，单独解析
+            if arg in ("-r", "--requirement"):
+                if i + 1 < len(args):
+                    covered |= _modules_of_requirements(REPO_ROOT / args[i + 1])
+                continue
+            if arg.startswith(("-r=", "--requirement=")):
+                covered |= _modules_of_requirements(REPO_ROOT / arg.split("=", 1)[1])
+                continue
+            if arg.startswith("-"):  # -c/--constraint 等：约束版本，不构成安装覆盖
                 continue
             covered.add(_module_of_pip_package(arg))
-    req = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
-    for raw in req.splitlines():
-        raw = raw.split("#", 1)[0].strip()
-        if not raw or raw.startswith("-"):
-            continue
-        covered.add(_module_of_pip_package(raw))
 
     missing = sorted(_top_level_third_party_imports() - covered)
     assert not missing, (
         "test-perf PR lane 的 pip install 未覆盖 perf 文件模块层 import: "
         f"{missing} —— 收集期 ImportError → lane 红 → release-gate 红"
     )
+
+
+def test_lane_dropping_requirements_r_flag_fails_closed(monkeypatch, tmp_path):
+    """fail-closed 反向验证（#1656 验收标准 3）：把 lane 安装行里的
+    `-r requirements.txt` 去掉后，覆盖集只剩显式 pin，perf 文件的第三方
+    import 缺失必须报红（防止本契约被"恒绿"化）。"""
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for step in workflow["jobs"]["test-perf"]["steps"]:
+        run = step.get("run", "")
+        if "pip install" in run:
+            assert "-r requirements.txt " in run, "lane 安装行形态变化，请同步本测试"
+            step["run"] = run.replace("-r requirements.txt ", "", 1)
+    patched = tmp_path / "production.yml"
+    patched.write_text(yaml.safe_dump(workflow, allow_unicode=True), encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "WORKFLOW", patched)
+
+    with pytest.raises(AssertionError, match="sqlalchemy"):
+        test_pr_perf_lane_installs_all_module_level_imports()
 
 
 def test_every_perf_marked_file_is_wired_into_a_lane():
@@ -254,3 +292,24 @@ def test_frontend_vitest_has_real_coverage_thresholds():
     for key in ("lines", "functions", "statements", "branches"):
         km = re.search(rf"{key}:\s*(\d+)", block)
         assert km and int(km.group(1)) > 0, f"thresholds.{key} 必须为正数"
+
+
+@pytest.mark.parametrize(
+    ("pkg", "expected"),
+    [
+        # extras 形态（#1656）：[...] 必须剥离，否则 covered 集合与
+        # import 名（sqlalchemy）永远对不上，主断言恒红
+        ("sqlalchemy[asyncio]>=2.0.25,<2.1", "sqlalchemy"),
+        ("sqlalchemy[asyncio]", "sqlalchemy"),
+        ("psycopg[binary]>=3.1", "psycopg"),
+        ("uvicorn[standard]>=0.27.0", "uvicorn"),
+        ("pkg[extra1,extra2]", "pkg"),
+        # 既有归一化语义不回退
+        ("pytest-asyncio==1.4.0", "pytest_asyncio"),
+        ("psycopg2-binary", "psycopg2"),
+        ("types-requests", "types_requests"),
+        ("pytest==9.1.1", "pytest"),
+    ],
+)
+def test_module_of_pip_package_normalization(pkg, expected):
+    assert _module_of_pip_package(pkg) == expected

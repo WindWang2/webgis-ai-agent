@@ -1,5 +1,5 @@
 /**
- * Interaction IR review 清偿（前端侧，ADR-0225 / round-1 review P1-3/P1-5）：
+ * Interaction IR review 清偿（前端侧，ADR-0227 / round-1 review P1-3/P1-5）：
  * mutation 链接事件的诚实性 ——
  * - reorder 成功 → layer_order_changed committed（真实 mutation id）；
  * - mutation 从未发生（会话切换 enqueue 短路）→ **不 emit**（P1-3 假 committed）；

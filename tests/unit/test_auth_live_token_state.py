@@ -112,3 +112,27 @@ async def test_with_version_prefers_db_role(live_db):
             credentials=_creds("u-dem2", role="admin"), db=db)
     assert user["role"] == "viewer"
     assert user["scopes"] <= scopes_for_role("viewer")
+
+
+@pytest.mark.asyncio
+async def test_live_state_cache_evicts_instead_of_full_clear():
+    """#1641：满帽淘汰过期/最早插入条目，不全清（全清 = 每请求一次 PK 查询）。"""
+    import time
+
+    from app.core import auth as auth_mod
+
+    now = time.monotonic()
+    auth_mod._live_state_cache.clear()  # noqa: SLF001 — 测试直查内部缓存
+    try:
+        for i in range(auth_mod._LIVE_STATE_MAX):
+            auth_mod._live_state_cache[f"u{i}"] = (  # noqa: SLF001 — 测试直查内部缓存
+                now + 100.0, (0, True, "viewer", None)
+            )
+        auth_mod._live_state_cache["stale"] = (now - 1.0, None)  # noqa: SLF001 — 测试直查内部缓存
+        auth_mod._evict_live_state_cache(now)  # noqa: SLF001 — 被测淘汰助手
+        assert "stale" not in auth_mod._live_state_cache, "过期条目必须被淘汰"
+        assert len(auth_mod._live_state_cache) == auth_mod._LIVE_STATE_MAX - 1
+        assert "u0" not in auth_mod._live_state_cache, "仍满时淘汰最早插入条目"
+        assert f"u{auth_mod._LIVE_STATE_MAX - 1}" in auth_mod._live_state_cache
+    finally:
+        auth_mod._live_state_cache.clear()  # noqa: SLF001 — 测试直查内部缓存

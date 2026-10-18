@@ -4,7 +4,8 @@
 - ``python manage.py osm-ingest`` 流式扫描 ``china-*.osm.pbf``（pyosmium，
   GDAL OSM 驱动 C++ 层过滤），写入
   ``<LOCAL_GEODATA_DIR>/osm_gpkg/<theme>.gpkg``（geopandas/pyogrio，GPKG
-  自带 R-tree 空间索引），幂等（存在即跳过，--force 覆盖）。
+  自带 R-tree 空间索引），幂等（完整可读的主题跳过；残缺/损坏的主题
+  重导，--force 覆盖重导）。主题写盘走 tmp + ``os.replace`` 原子发布。
 - 查询（工具与 HTTP 路由共用）：``gpd.read_file(gpkg, bbox=...)`` 走 R-tree，
   内存做属性过滤，返回 GeoJSON FeatureCollection。
 
@@ -318,6 +319,29 @@ def _available_memory_gb() -> Optional[float]:
     return None
 
 
+def _theme_gpkg_readable(path: Path, theme: str) -> bool:
+    """终态 GPKG 是否完整可读（有效 SQLite + 主题层表存在）。
+
+    写盘中途崩溃遗留的残缺文件（非 SQLite 内容 / 无层表）→ False：调用方
+    必须重导，绝不能把残缺主题当已完成永久跳过（#1632）。GPKG 由 GDAL 经
+    SQLite 事务写，崩溃现场要么整体回滚（无层表）、要么文件损坏 —— 两者
+    本探测都能识别。
+    """
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            return conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (theme,),
+            ).fetchone() is not None
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
 # 全国级 lines 主题（roads 850 万行）实测峰值 ~6-10GB GeoDataFrame RSS；
 # 低于此余量直接拒绝，避免重演 pyosmium 时代把机器 OOM 的教训。
 _MIN_FREE_GB = 8.0
@@ -343,6 +367,10 @@ def ingest_pbf(
     内存契约：每主题一次全量读（lines 主题峰值 ~6-10GB RSS），写库后立即
     释放再进下一主题。启动前检查 MemAvailable ≥ 8GB，不足则拒绝（--force
     可强行，自担风险）。
+
+    发布原子性：主题 GPKG 先写同目录隐藏 tmp 再 ``os.replace`` 到终态 ——
+    写盘中途崩溃只遗留孤儿 tmp（重跑忽略并覆写），残缺 GPKG 永不落终态
+    路径对外服务。
     """
     import os
 
@@ -368,7 +396,12 @@ def ingest_pbf(
     out_dir = osm_gpkg_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs = {t: theme_gpkg_path(t) for t in themes}
-    existing = [t for t in themes if outputs[t].exists()]
+    # 存在性 = 完整可读：残缺 GPKG（旧版直接写终态的崩溃遗留）不算已导入 ——
+    # 非 force 重跑也重导，残缺主题绝不永久跳过（#1632）。
+    existing = [
+        t for t in themes
+        if outputs[t].exists() and _theme_gpkg_readable(outputs[t], t)
+    ]
     if existing and not force:
         return {"skipped": existing, "note": "已存在的主题默认跳过；--force 覆盖重导。"}
     for t in existing:
@@ -381,7 +414,13 @@ def ingest_pbf(
         layer, where, cat_keys = _THEME_QUERIES[theme]
         raw = pyogrio.read_dataframe(str(pbf_path), layer=layer, where=where)
         out = _slim_theme_frame(raw, cat_keys)
-        pyogrio.write_dataframe(out, outputs[theme], layer=theme, driver="GPKG")
+        # 原子发布：先写同目录隐藏 tmp，再 os.replace 到终态。写盘中途崩溃
+        # 只遗留孤儿 tmp（重跑直接忽略并覆写），残缺 GPKG 永不落终态路径
+        # 对外服务 —— 旧实现直接写终态，残缺主题会被「存在即跳过」永久跳过。
+        tmp_path = outputs[theme].with_name(f".{theme}.tmp.gpkg")
+        tmp_path.unlink(missing_ok=True)
+        pyogrio.write_dataframe(out, tmp_path, layer=theme, driver="GPKG")
+        os.replace(tmp_path, outputs[theme])
         counts[theme] = len(out)
         del raw, out
         gc.collect()  # 立即把 GeoDataFrame 的几何缓冲归还给 OS

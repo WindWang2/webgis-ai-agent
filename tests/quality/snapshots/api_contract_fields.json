@@ -1397,7 +1397,6 @@
   "project_id": "string",
   "promotion_summary": "object",
   "session_id": "string",
-  "snapshot": "object",
   "snapshot_id": "string",
   "sources_durable": "integer",
   "sources_needing_recompute": "integer",

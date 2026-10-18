@@ -72,7 +72,7 @@
           },
           "annotations": {
             "summary": "API 进程内存使用率过高",
-            "description": "API 进程 RSS 超过 1.7GB（docker-compose.prod*.yml 中 api 服务 memory 限额 2g 的约 85%）。数据源：prometheus_client 默认 process 采集器，随 /metrics 暴露"
+            "description": "API 进程 RSS 超过 1.7GB。阈值按 docker-compose.prod*.yml 的 api memory 限额 2g 的约 85% 校准；k8s 栈（deploy/k8s/02-api-deployment.yaml）api limit 为 4Gi，同一阈值在约 42% 即触发 —— k8s 部署请在监控覆盖层把阈值提到 3.4e9（4Gi 的 85%），或改看容器 OOMKilled 事件（2g cgroup 会先于 3.4e9 杀容器，故不在此统一抬阈值）。数据源：prometheus_client 默认 process 采集器，随 /metrics 暴露"
           }
         },
         {

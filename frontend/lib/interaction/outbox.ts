@@ -1,5 +1,5 @@
 /**
- * Interaction IR V1 —— 浏览器端可靠 outbox（ADR-0225 C）。
+ * Interaction IR V1 —— 浏览器端可靠 outbox（ADR-0227 C）。
  *
  * 与 map-action-acks.ts 同族的工程范式（debounce 批量/重试/幂等分类），
  * 服务**用户交互事件**方向，新增：
@@ -12,6 +12,8 @@
  *   待发条目（风暴合并）；
  * - 水印同步：ack 信封的 watermarks 用于裁剪队列中已被服务端记账的事件
  *   （ack 丢失后的重试不会无限重发）；
+ * - 持久化降级重试：2xx + persist_degraded（存储降级窗口，响应不带
+ *   watermarks）按暂态重试 —— 重放命中水印/查重幂等收敛，不静默弃队；
  * - pagehide best-effort flush：fetch keepalive（批 ≤50 事件 ≈ 15KB，远离
  *   64KB cap；与 acks 不同，本通道载荷小，keepalive 可用）。
  *
@@ -80,12 +82,6 @@ interface QueuedEvent {
   readyAt: number;
 }
 
-function isTimeoutError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const name = (error as { name?: string }).name;
-  return name === 'AbortError' || name === 'TimeoutError' || name === 'ApiTimeoutError';
-}
-
 function classifyDelivery(input: {
   error?: unknown;
   status?: number;
@@ -149,7 +145,7 @@ export function getClientInstanceId(
   }
 }
 
-/** 会话切换时重置 seq（per-(session, tab) 从 1 起 —— ADR-0225 C7 契约）。 */
+/** 会话切换时重置 seq（per-(session, tab) 从 1 起 —— ADR-0227 C7 契约）。 */
 export function resetClientSeq(storage?: InteractionOutboxOptions['storage']): void {
   const store = resolveStorage(storage);
   try {
@@ -359,6 +355,16 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
       if (gen !== generation) return;
       if (response.ok && body && typeof body === 'object') {
         applyWatermarks(body);
+        // 持久化降级对账信道（后端 ingest review P2-3）：2xx +
+        // persist_degraded 且不带 watermarks —— 服务端内存态已折叠但未
+        // 落库。按暂态重试（复用 5xx 路径：attempts+1 / 指数退避 /
+        // maxAttempts 收敛；重放命中水印与 event_id 查重，不双计），
+        // 否则降级窗口的交互事件被静默弃队、ledger 永久缺席。
+        if (body.persist_degraded === true) {
+          logEvent('persist degraded (transient retry)', { count: items.length });
+          settleBatch(items, { transient: true, permanent: false }, gen);
+          return;
+        }
         settleBatch(items, { transient: false, permanent: false }, gen);
         return;
       }

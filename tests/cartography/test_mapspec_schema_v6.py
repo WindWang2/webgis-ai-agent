@@ -23,6 +23,8 @@ from app.lib.cartography.mapspec_schema import (
     require_parseable_mapspec,
 )
 
+pytestmark = pytest.mark.cartography
+
 # ── 脏值兼容 corpus（R1-C2 的回归锁）─────────────────────────────────────
 
 

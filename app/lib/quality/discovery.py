@@ -46,19 +46,28 @@ def repo_root() -> Path:
 
 @functools.lru_cache(maxsize=8)
 def _git_tracked_files(root: str) -> Optional[frozenset]:
-    """git 已跟踪文件集（相对路径）。失败（非 git/无 git）返回 None。"""
+    """git 已跟踪文件集（相对路径）。失败（非 git/无 git/空输出）返回 None。"""
     try:
         # -z：关闭 core.quotePath 的跨环境差异（CI 默认对非 ASCII 路径
         # 加引号，会让 is_file() 静默漏文件 → 字节闸跨机器漂移）
+        # encoding="utf-8"：git ls-files 输出恒为 UTF-8，而 text=True 默认
+        # 按区域编码解码（中文 Windows=GBK）——非 ASCII 路径会在线程内抛
+        # UnicodeDecodeError 且 stdout 静默变 None（#1651）
         out = subprocess.run(
             ["git", "ls-files", "-z"], cwd=root, capture_output=True,
-            text=True, timeout=30, check=True,
+            text=True, encoding="utf-8", timeout=30, check=True,
         ).stdout
     except Exception:  # noqa: BLE001 —— 退化为全扫描（本地实验场景）
         logger.warning("git ls-files unavailable; discovery falls back to "
                        "untracked-inclusive scan (byte gates may drift)")
         return None
-    return frozenset(out.split("\0")) if out else frozenset()
+    if not out:
+        # 空输出（含解码失败后 stdout=None）按不可用处理：绝不静默返回
+        # 空集 —— 空 tracked 集会让 discovery 扫到 0 文件、字节闸全假红。
+        logger.warning("git ls-files returned no output; discovery falls back "
+                       "to untracked-inclusive scan (byte gates may drift)")
+        return None
+    return frozenset(out.split("\0"))
 
 
 def _iter_scan_files(root: Path) -> List[Path]:

@@ -136,3 +136,13 @@
 - Rebase 后 gates：IR 88 / gis_harness 族 + clarification 2424 / 契约守卫 22 /
   前端 mapspec+interaction+map-panel 534 / tsc 0 / ruff 0 / boundaries OK /
   staleness 指纹对齐。
+
+## Phase 5 尾注（2026-10-18，ADR 终编 0225→0227）
+
+- 最终合并（PR #1623，master c8c66119）时 0225/0226 已被 RenderWork Protocol
+  与 durable project cartographic runtime 占用 —— Interaction IR 再重编
+  0225→0227，`adr_watermark`→227（`docs/integration/ownership.json`）。
+- 合并时后端引用（`app/services/gis_harness/interaction_ir/*`、
+  `app/api/routes/interaction_events.py`）、ADR 文件名与 ownership watermark
+  已同步；前端 15 个文件约 30 处注释锚点、ADR-0227 编号自述与本尾注属本轮
+  文档清偿（上文 Phase 4 的「0224→0225，watermark→225」为历史记录保留）。

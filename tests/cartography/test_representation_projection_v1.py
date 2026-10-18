@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.lib.cartography.quality_loop import (
     representation_at_scale_report,
     review_cartography,
 )
 from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
 from app.services.analysis_cartography_converter import convert_analysis_to_mapspec_layer
+
+pytestmark = pytest.mark.cartography
 
 
 def _points(n: int) -> dict:

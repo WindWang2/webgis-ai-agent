@@ -58,7 +58,7 @@ def check_dataset_contract(
     if unresolvable:
         return False, f"target 无法解析（API 改名/移除？）: {unresolvable}"
 
-    raw = json.loads((DATA_DIR / f"{domain}.json").read_text())
+    raw = json.loads((DATA_DIR / f"{domain}.json").read_text(encoding="utf-8"))
     if "count" in raw and raw["count"] != len(cases):
         return False, f"count 字段 {raw['count']} != 实际 cases 数 {len(cases)}"
     return True, ""

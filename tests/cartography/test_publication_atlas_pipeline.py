@@ -31,7 +31,14 @@ from app.services.publication_export import (
 pytestmark = pytest.mark.cartography
 
 pdf = pytest.importorskip("pypdf")
-pytest.importorskip("weasyprint")
+try:
+    import weasyprint  # noqa: F401
+except (ImportError, OSError):
+    # Windows 无 GTK 时 import 期抛 OSError（缺 libpango）——与 ImportError
+    # 同等视为缺席（同 app/services/publication_export.py 的守卫；
+    # #1221 D-7 同类：只捕 ImportError 会让收集期直接 error）。
+    pytest.skip("WeasyPrint unavailable (ImportError/OSError)",
+                allow_module_level=True)
 
 
 def _atlas_doc(num_features: int = 6, title: str = "C14 管线图册",
@@ -104,7 +111,7 @@ def test_category_atlas_end_to_end():
 
 def test_svg_semantic_parity_per_atlas_page():
     """PNG/PDF/SVG parity 的语义面：每页 SVG 语义 == 该页文档期望语义。"""
-    from app.services.publication_export import _page_filtered_doc  # noqa:  模块内消费面
+    from app.services.publication_export import _page_filtered_doc  # 模块内消费面
     from app.lib.cartography.publication_ir import plan_publication_pages
 
     doc = _atlas_doc()

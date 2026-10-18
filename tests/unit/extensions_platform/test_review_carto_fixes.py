@@ -184,6 +184,22 @@ def test_cp02_settings_defaults_are_safe(monkeypatch):
     assert settings_bridge._parse_isolation_backend("bubblewrap") == "bubblewrap"
 
 
+def _can_symlink(probe_dir: Path) -> bool:
+    """探测平台能否建目录 symlink —— client._worker_pythonpath 建 staged
+    目录（仅含 app 链接）的准入条件；失败时按已文档化设计回退 repo 根。"""
+    link = probe_dir / "symlink_probe"
+    try:
+        link.symlink_to(probe_dir, target_is_directory=True)
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            link.unlink()
+        except OSError:
+            pass
+
+
 def test_cp02_worker_env_has_no_repo_root_or_host_secrets(monkeypatch, tmp_path):
     from app.extensions_platform.worker import client as wc
 
@@ -196,7 +212,13 @@ def test_cp02_worker_env_has_no_repo_root_or_host_secrets(monkeypatch, tmp_path)
     env = worker._child_env()
     assert "LLM_API_KEY" not in env and "sk-host-secret" not in env.values()
     pp = Path(env["PYTHONPATH"])
-    assert pp != wc._REPO_ROOT
+    # CP-02 staged 路径依赖 symlink；无 symlink 特权的平台（Windows 开发机）
+    # 按 client._worker_pythonpath 注释中已文档化的设计回退 repo 根 ——
+    # 导入卫生降级但功能保持，Linux 容器（生产）不受影响。
+    if _can_symlink(tmp_path):
+        assert pp != wc._REPO_ROOT
+    else:
+        assert pp == wc._REPO_ROOT
     assert (pp / "app").resolve() == (wc._REPO_ROOT / "app").resolve()
     assert not (pp / ".env").exists()
 

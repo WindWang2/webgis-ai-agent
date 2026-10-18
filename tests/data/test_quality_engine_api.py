@@ -408,6 +408,31 @@ def test_autofix_apply_reproject_with_pyproj():
     assert abs(lon - 116.0) < 1e-6 and abs(lat - 39.5) < 1e-6
 
 
+def test_autofix_reproject_rejects_oversized_payload():
+    """#1634：>max_scan 的载荷 typed 拒绝重投影（连同 CRS 标签一起不改）。
+
+    坐标只处理前 max_scan 个要素、CRS 标签却对全载荷生效 = 尾部要素静默
+    坐标错标（闸门一放松即开口的潜在缺陷）；拒绝 + bounded_to 披露。
+    """
+    from app.services.data_quality.autofix import _MAX_SCAN
+
+    payload = {"geojson": {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [116.0, 39.5]},
+         "properties": {}} for _ in range(_MAX_SCAN + 1)]}, "crs": "EPSG:4326"}
+    steps = [AutofixStep(operation="reproject", params={"target_crs": "EPSG:3857"})]
+    new_payload, evidence = apply_autofix(payload, steps)
+    entry = evidence["operations"][0]
+    assert entry["applied"] is False
+    assert entry["rejected"] == "feature_count_exceeds_scan_bound"
+    assert entry["bounded_to"] == _MAX_SCAN
+    assert entry["feature_count"] == _MAX_SCAN + 1
+    # 载荷逐字节未改：CRS 标签与坐标都保持原样（绝不半吊子只改标签）
+    assert new_payload["crs"] == "EPSG:4326"
+    assert new_payload["geojson"]["features"][0]["geometry"]["coordinates"] == [116.0, 39.5]
+    assert evidence["changed"] is False
+
+
 def test_autofix_apply_filter_null_drops_rows():
     payload = {"geojson": {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": None, "properties": {"a": 1}},

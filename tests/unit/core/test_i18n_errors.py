@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from app.core.errors import (
@@ -159,3 +160,45 @@ def test_middleware_success_response_untouched():
     client = TestClient(_make_app())
     resp = client.get("/ok", headers={"Accept-Language": "en-US"})
     assert resp.json() == {"success": True, "data": 1}
+
+
+# ── 大错误体缓冲有界（#1641）──────────────────────────────────────────────
+
+
+def test_middleware_bounds_large_error_body():
+    """非默认 Locale 的 4xx 大错误体（>1MB）不整体缓冲：体完整、状态不变。"""
+    import app.core.i18n as i18n_mod
+
+    assert i18n_mod.MAX_ERROR_BODY_BYTES >= 1024 * 1024
+    app = FastAPI()
+    app.add_middleware(AcceptLanguageMiddleware)
+    big = {"blob": "x" * (2 * 1024 * 1024)}  # 远超错误信封体积的大 4xx 体
+
+    @app.get("/big-error")
+    async def big_error():
+        return JSONResponse(big, status_code=400)
+
+    client = TestClient(app)
+    resp = client.get("/big-error", headers={"Accept-Language": "en-US"})
+    assert resp.status_code == 400
+    assert len(resp.content) > i18n_mod.MAX_ERROR_BODY_BYTES
+    assert resp.json() == big, "超限错误体必须完整下发，不得截断"
+
+
+def test_middleware_overflow_path_roundtrips_body(monkeypatch):
+    """帽调至 64B 后 >64B 错误体仍完整 round-trip（证伪「截断」式实现）。"""
+    import app.core.i18n as i18n_mod
+
+    monkeypatch.setattr(i18n_mod, "MAX_ERROR_BODY_BYTES", 64)
+    app = FastAPI()
+    app.add_middleware(AcceptLanguageMiddleware)
+    body = {"errors": [f"e{i}" for i in range(500)]}
+
+    @app.get("/wide-error")
+    async def wide_error():
+        return JSONResponse(body, status_code=422)
+
+    client = TestClient(app)
+    resp = client.get("/wide-error", headers={"Accept-Language": "en-US"})
+    assert resp.status_code == 422
+    assert resp.json() == body, "前缀 + 原流剩余重组必须保持体完整"

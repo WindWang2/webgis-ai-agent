@@ -21,6 +21,7 @@ import {
 } from '@/lib/api/data-fabric-disclosure';
 import { OpsCard, formatBytes, formatDuration, HonestEmptyCard } from './ops-shared';
 import { useT } from '@/lib/i18n/useT';
+import { currentLocale } from '@/lib/i18n/t';
 
 const BREAKER_CONF: Record<BreakerState, { labelKey: string; status: string; ring: string }> = {
   closed: { labelKey: 'kfh4bk1', status: 'ok', ring: 'border-status-success-border bg-status-success-soft text-status-success' },
@@ -134,5 +135,6 @@ function OpsMiniStat({ labelKey, value }: { labelKey: string; value: string }) {
 
 function formatTimeSafe(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('zh-CN', { hour12: false });
+  // #1628/#1436：时间戳随应用语言格式化（zh-CN 用户输出不变），不硬编码。
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString(currentLocale(), { hour12: false });
 }

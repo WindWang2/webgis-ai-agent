@@ -17,7 +17,9 @@ dependencies = [
     "starlette>=1.3.1",
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.6",
-    "sqlalchemy>=2.0.25",
+    # 与 requirements.txt:28 逐字一致（#1512：<2.1 上界挡住 2.1.x 击穿；
+    # [asyncio] extra 是 greenlet 自 2.1.x 起移出核心依赖后的必需声明）。
+    "sqlalchemy[asyncio]>=2.0.25,<2.1",
     "alembic>=1.13.0",
     "geopandas>=1.1.4",
     "shapely>=2.1.2",
@@ -35,7 +37,6 @@ dependencies = [
     "pyyaml>=6.0.3",
     # 直接 import 的库必须直接声明（#618-35；同类问题见 requirements.txt 的 rich 注释）
     "rich>=15.0.0",
-    "openai>=1.0.0",
     "aiohttp>=3.10.0",
     "scipy>=1.12.0",
     # 上限放宽记录：#1010 曾因旧版 numba 的 numpy ABI 窗口只到 2.4 而限死 <2.5；

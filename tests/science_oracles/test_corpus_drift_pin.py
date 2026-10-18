@@ -4,7 +4,11 @@
 （目标函数）与数据（JSON 期望值）**同步**修改，回放将全绿且无察觉
 （期望值与实现互相"印证"）。本测试用 ``data/corpus_manifest.json``
 （逐数据文件的 sha256 + case 数 + domain）做文件级漂移钉扎：任何
-data 文件的字节级改动、新增、删除都会让本测试红。
+data 文件的内容级改动、新增、删除都会让本测试红。
+
+哈希为**换行归一化**后的 sha256（#1662）：CRLF/LF 检出差异是 checkout
+artifact 而非内容漂移，``read_text`` 的 universal newlines 把 CRLF
+归一为 LF 后取哈希，Windows autocrlf 与 Linux LF 检出结果一致。
 
 漂移**有意**不被静默放行：禁止手改 manifest 去"对齐"数据。若数据
 变更是有意的（期望值/用例集更新、域增删），必须先用
@@ -52,15 +56,21 @@ if not MANIFEST_PATH.exists():
 MANIFEST = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
 _DRIFT_HINT = (
-    "\n这是 oracle corpus 文件级漂移钉扎（有意设计：data 的任何字节级变更"
-    "都应显式可见）。若数据变更是**有意**的，必须先运行 "
+    "\n这是 oracle corpus 文件级漂移钉扎（有意设计：data 的任何内容级变更"
+    "都应显式可见；纯 CRLF/LF 换行差异按 checkout artifact 归一，不算漂移）。"
+    "若数据变更是**有意**的，必须先运行 "
     f"`{REGEN_CMD}` 重新生成 manifest，在 PR 描述中说明理由，并与代码变更"
     "**同一 PR** 提交数据与 manifest；禁止手改 manifest 绕过本检查。"
 )
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """换行归一化后的 sha256（#1662）：``read_text`` 的 universal newlines
+    把 CRLF 归一为 LF，与 git index/blob 的 LF 字节一致 —— Windows
+    autocrlf 检出与 Linux LF 检出给出同一哈希；直接对工作树字节取哈希
+    会让 Windows 上 14 条全红，且 regen 脚本同缺陷会把 CRLF 哈希冻进
+    manifest 反噬 Linux CI。"""
+    return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
 def test_corpus_manifest_shape() -> None:

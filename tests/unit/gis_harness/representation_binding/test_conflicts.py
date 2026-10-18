@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 
+import pytest
+
 from app.services.gis_harness.representation_binding.conflicts import (
     REASON_CODES,
     disclosure_for,
@@ -69,10 +71,49 @@ class TestResultMapping:
             is_error=True, superseded=False, duplicate=False,
             error_code="layer_locked") == "binding_target_locked"
 
-    def test_other_error_passthrough(self):
+    @pytest.mark.parametrize("engine_code", [
+        "layer_locked",
+        "user_wins_presentation",
+        "workbench_delta_invalid",
+        "workbench_delta_conflict",
+        "quality_gate_blocked",
+        "UNSUPPORTED_MUTATION_INTENT",
+        "HEAL_CONVERGENCE_EXHAUSTED",
+        "HEAL_PLAN_EMPTY",
+    ])
+    def test_known_engine_codes_map_into_matrix(self, engine_code):
+        # C5 登记闭环：mapspec 引擎面全部已知错误码映射后必须仍在
+        # REASON_CODES 矩阵内（透传 off-vocabulary 码 = 遥测漏类）。
+        code = resolve_from_result(
+            is_error=True, superseded=False, duplicate=False,
+            error_code=engine_code)
+        assert code in REASON_CODES, (
+            f"引擎码 {engine_code} 映射出矩阵外 code: {code}")
+
+    def test_workbench_delta_invalid_maps_to_registered_generic(self):
         assert resolve_from_result(
             is_error=True, superseded=False, duplicate=False,
-            error_code="workbench_delta_invalid") == "workbench_delta_invalid"
+            error_code="workbench_delta_invalid") == "binding_engine_refused"
+
+    def test_heal_family_maps_to_registered_generic(self):
+        for engine_code in ("HEAL_CONVERGENCE_EXHAUSTED", "HEAL_PLAN_EMPTY",
+                            "HEAL_SOMETHING_NEW"):
+            assert resolve_from_result(
+                is_error=True, superseded=False, duplicate=False,
+                error_code=engine_code) == "binding_engine_refused"
+
+    def test_unknown_engine_code_falls_back_to_registered_generic(self):
+        code = resolve_from_result(
+            is_error=True, superseded=False, duplicate=False,
+            error_code="some_future_engine_code")
+        assert code == "binding_engine_refused"
+        assert code in REASON_CODES
+        assert disclosure_for(code) != f"未注册 reason code: {code}"
+
+    def test_missing_engine_code_falls_back_to_registered_generic(self):
+        assert resolve_from_result(
+            is_error=True, superseded=False, duplicate=False,
+            error_code=None) == "binding_engine_refused"
 
     def test_success_maps_to_none(self):
         assert resolve_from_result(

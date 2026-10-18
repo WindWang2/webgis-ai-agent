@@ -32,6 +32,12 @@ async def app_and_client():
     registry = ToolRegistry()
     chat_routes.registry = registry
     chat_routes.engine = ChatEngine(registry)
+    # 假 IP DNS（Clash/VpnKit 类解析器把外部域名映射进 198.18.0.0/15 保留段）
+    # 开发机上，未收录进 SSRF 豁免清单的引擎基线 base_url 会被
+    # _validate_no_ssrf 拒掉 —— 与产品行为无关的环境伪影。钉到豁免清单内的
+    # OSM 域，使「探针回退引擎配置」的用例在两类 DNS 环境下都确定
+    # （honors_request_overrides 显式传 base_url，同样只用豁免域）。
+    chat_routes.engine.base_url = "https://overpass-api.de/v1"
 
     app = FastAPI()
     # require_admin 现在依赖 get_current_user_with_version（会查 DB）。
@@ -206,12 +212,12 @@ async def test_config_llm_test_honors_request_overrides(app_and_client, monkeypa
     _, client = app_and_client
     resp = await client.post(
         "/api/v1/config/llm/test",
-        json={"base_url": "https://example.com/v1", "model": "probe-model", "api_key": "k"},
+        json={"base_url": "https://overpass-api.de/v1", "model": "probe-model", "api_key": "k"},
         headers=_admin_headers(),
     )
     assert resp.status_code == 200, resp.text
     cfg = captured["cfg"]
-    assert cfg.base_url == "https://example.com/v1"
+    assert cfg.base_url == "https://overpass-api.de/v1"
     assert cfg.model == "probe-model"
     assert cfg.api_key == "k"
 
@@ -240,7 +246,7 @@ async def test_config_llm_test_connect_failure_returns_502(app_and_client, monke
 @pytest.mark.asyncio
 async def test_config_llm_test_provider_error_detail(app_and_client, monkeypatch):
     """#390: 上游 4xx 时返回 provider 的 error.message 作为详情。"""
-    request = httpx.Request("POST", "https://example.com/v1/chat/completions")
+    request = httpx.Request("POST", "https://overpass-api.de/v1/chat/completions")
 
     async def failing_probe(cfg, timeout=httpx.Timeout(1)):
         raise httpx.HTTPStatusError(

@@ -17,11 +17,14 @@ where 下推 SQLite 层，max_features 界定内存），坐标一律 WGS84。
 from __future__ import annotations
 
 import itertools
+import contextlib
 import json
 import logging
+import os
 import re
 import shutil
 import sqlite3
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -221,14 +224,27 @@ def _flush_chunk(
 
 
 def _province_prefixes(pcode: str) -> List[str]:
-    """包编码 → 省级行政编码前缀：'21_22_230000' → ['21','22','23']。"""
-    return [p.zfill(2) for p in pcode.split("_")]
+    """包编码 → 省级行政编码前缀：'21_22_230000' → ['21','22','23']。
+
+    每段取前 2 位（zfill 兜底）：POI 行的 adcode 是 6 位区县级编码
+    （如 510104），省级范围必须按 2 位前缀展开（['51','52')）才能覆盖
+    全省 —— 直接拿 6 位编码做范围只会命中 adcode 恰等于省编码的行。
+    """
+    return [p.zfill(2)[:2] for p in pcode.split("_")]
 
 
 def _delete_province_rows(gpkg: Path, pcode: str) -> None:
-    """按省刷新时先删旧数据（GPKG 行 adcode 前缀范围匹配，走索引）。"""
+    """按省刷新时先删旧数据（GPKG 行 adcode 前缀范围匹配，走索引）。
+
+    层尚未建立（首次导入中断在首块 flush 之前）时无可删行 —— 直接返回，
+    让随后的 append 自然建层（中断恢复路径的常态入口）。
+    """
     conn = sqlite3.connect(gpkg)
     try:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pois'"
+        ).fetchone() is None:
+            return
         clauses: List[str] = []
         params: List[str] = []
         for p in _province_prefixes(pcode):
@@ -242,6 +258,28 @@ def _delete_province_rows(gpkg: Path, pcode: str) -> None:
             )
     finally:
         conn.close()
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """原子写文本（同目录 tmp + fsync + os.replace；断电撕裂不再可能）。
+
+    与 dataset_semantics/store.py、mapspec/store.py 的原子写范式一致：
+    读者要么见旧完整文件、要么见新完整文件。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
 
 
 def _iter_xlsx_chunks(
@@ -337,7 +375,12 @@ def ingest_gd_poi(
     progress_cb: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """gd_*_poi.zip 系列 → gd_pois.gpkg（WGS84）。按 zip 幂等；force 重建
-    （指定 provinces 时为按省刷新：只清该省旧行，其余省数据不动）。"""
+    （指定 provinces 时为按省刷新：只清该省旧行，其余省数据不动）。
+
+    中断恢复语义：省不在 done meta ⇒ 该省是脏省（上次导入中途崩溃，已
+    flush 的 chunk 行残留在库）—— 无论 force 与否都先删该省旧行再 append，
+    重跑恒幂等（不翻倍）；meta.json 原子写，撕裂写不再可能。
+    """
 
     zips = _iter_poi_zip_paths(source)
     if provinces:
@@ -355,7 +398,10 @@ def ingest_gd_poi(
     if meta_path.exists():
         try:
             done = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (ValueError, OSError):
+        except (ValueError, OSError) as exc:
+            # 撕裂/损坏的 meta（旧版非原子写遗留）：按「无省完成」处理 ——
+            # 所有省走脏省路径（先删后写），绝不追加重复行。
+            logger.warning("[gd-poi] meta.json 不可解析（%s），按未完成处理", exc)
             done = {}
     if force and not provinces:
         # 全量重建：清空整库；按省刷新（force+provinces）只删该省旧行。
@@ -374,8 +420,12 @@ def ingest_gd_poi(
             if pcode in done.get("provinces", {}) and not force:
                 stats["skipped"].append(pcode)
                 continue
-            if force and gpkg.exists():
-                _delete_province_rows(gpkg, pcode)  # 按省刷新：先清旧行
+            if gpkg.exists():
+                # 中断恢复：省不在 done meta ⇒ 该省是脏省（上次导入中途崩溃，
+                # 已 flush 的 chunk 行残留在库）。无论 force 与否都先删该省
+                # 旧行再 append —— 否则重跑会把该省 POI 全部翻倍（层无主键，
+                # 重复行无任何机制阻止）。force 全量重建已在上面 unlink 整库。
+                _delete_province_rows(gpkg, pcode)
             rows_written = 0
             centers: List[Tuple[Any, ...]] = []
             with zipfile.ZipFile(zpath) as zf:
@@ -429,8 +479,9 @@ def ingest_gd_poi(
             stats["provinces"][pcode] = rows_written
             done["provinces"] = {**done.get("provinces", {}), pcode: rows_written}
             done["generated_at"] = pd.Timestamp.now().isoformat(timespec="seconds")
-            meta_path.write_text(
-                json.dumps(done, ensure_ascii=False, indent=1), encoding="utf-8",
+            _atomic_write_text(
+                meta_path,
+                json.dumps(done, ensure_ascii=False, indent=1),
             )
             logger.info("[gd-poi] %s: %s 行", pcode, rows_written)
         stats["gpkg"] = str(gpkg)

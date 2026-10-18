@@ -1,7 +1,10 @@
 """GIS 数据文件解析服务"""
+import contextlib
 import json
 import logging
+import os
 import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -138,6 +141,39 @@ def _quality_remediation(code: str) -> str:
 class ParseError(Exception):
     """数据解析错误"""
     pass
+
+
+def _atomic_write_geojson(gdf: Any, output_path: Path) -> None:
+    """GeoJSON 原子发布（#1634）：同目录隐藏 tmp + os.replace。
+
+    上传请求内失败（异常中止/进程被杀）不遗留半成品 original.geojson ——
+    下游按 output_path 直读，残缺文件会被当成完整解析结果服务。
+    """
+    tmp = output_path.with_name(f".{output_path.name}.tmp")
+    try:
+        gdf.to_file(tmp, driver="GeoJSON")
+        os.replace(tmp, output_path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    """JSON 原子写（#1634；仓库原子写范式：同目录 tmp + fsync + os.replace）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
 
 
 def _validate_shapefile_zip(file_path: Path) -> None:
@@ -344,9 +380,9 @@ def parse_vector(
     bounds = gdf.total_bounds.tolist()  # [minx, miny, maxx, maxy]
     bbox = [bounds[0], bounds[1], bounds[2], bounds[3]]
 
-    # 保存为 GeoJSON
+    # 保存为 GeoJSON（原子发布：#1634）
     output_path = upload_dir / "original.geojson"
-    gdf.to_file(output_path, driver="GeoJSON")
+    _atomic_write_geojson(gdf, output_path)
 
     # 提取属性字段
     attr_cols = [c for c in gdf.columns if c != gdf.geometry.name]
@@ -501,7 +537,7 @@ def _parse_csv(
     bbox = [bounds[0], bounds[1], bounds[2], bounds[3]]
 
     output_path = upload_dir / "original.geojson"
-    gdf.to_file(output_path, driver="GeoJSON")
+    _atomic_write_geojson(gdf, output_path)
 
     attr_cols = [c for c in gdf.columns if c != gdf.geometry.name]
 
@@ -566,12 +602,11 @@ def parse_raster(
 
 
 def save_meta(upload_dir: Path, meta: Dict[str, Any]) -> None:
-    """保存元信息到 meta.json"""
+    """保存元信息到 meta.json（原子写：#1634）"""
     meta_path = upload_dir / "meta.json"
     # 移除 output_path 等内部字段
     export_meta = {k: v for k, v in meta.items() if k != "output_path"}
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(export_meta, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(meta_path, export_meta)
 
 
 def get_upload_dir(base_dir: str, upload_id: str) -> Path:

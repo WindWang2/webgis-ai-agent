@@ -430,7 +430,7 @@ def test_tampered_pack_quarantined_even_if_allowlisted(tmp_path):
     ext_dir = layout_root / "target"
     ext_dir.mkdir(parents=True)
     for f in pack.iterdir():
-        (ext_dir / f.name).write_text(f.read_text())
+        (ext_dir / f.name).write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
     policy = HostPolicy(
         roots=(layout_root,),
         allow=frozenset({"acme.target"}),

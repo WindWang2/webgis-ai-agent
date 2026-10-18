@@ -11,6 +11,7 @@ import { ShieldAlert, ServerOff } from 'lucide-react';
 import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { useT } from '@/lib/i18n/useT';
+import { currentLocale } from '@/lib/i18n/t';
 
 /* ------------------------------------------------------------------ */
 /* 展示格式化                                                          */
@@ -48,7 +49,8 @@ export function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleTimeString('zh-CN', { hour12: false });
+  // #1628/#1436：时间戳随应用语言格式化（zh-CN 用户输出不变），不硬编码。
+  return d.toLocaleTimeString(currentLocale(), { hour12: false });
 }
 
 /* ------------------------------------------------------------------ */

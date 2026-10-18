@@ -138,7 +138,9 @@ async def save_runtime_snapshot(
         promotion_summary=dict(
             snapshot.disclosure.get("promotion") or {}
         ),
-        snapshot=snapshot.model_dump(mode="json"),
+        # 只回摘要字段：manifest 内嵌 ≤16MB mapspec_doc，整份回传是纯浪费
+        # （带宽/序列化 CPU）—— 完整只读预览面走 inspect 端点（validation
+        # preview），此处绝不回传全量 manifest。
     )
 
 
@@ -198,6 +200,8 @@ async def inspect_runtime_snapshot(
         project_id=project_id,
         snapshot_id=snapshot_id,
         current_user_id=str(user_id or ""),
+        # 复用上面已线程加载的 manifest（inspect 不再双读盘）。
+        snapshot=snapshot,
     )
     recovery_plan = build_recovery_plan(snapshot, report)
     return RuntimeSnapshotInspectResponse(

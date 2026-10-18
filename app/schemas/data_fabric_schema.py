@@ -1,9 +1,10 @@
 """
 Pydantic Schemas for Geospatial Data Fabric Contract
 """
+import json
 import time
 from typing import Dict, Any, List, Optional, Union
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ConnectionProfile(BaseModel):
@@ -186,6 +187,11 @@ class DataFabricHealth(BaseModel):
 # 请求模型从 app/api/routes/data_fabric.py 内联迁出；响应对应
 # data_fabric 服务投影 —— 开放对象（extra="allow"）+ 锚定键。
 
+#: options 自由结构（适配器协议配置，落 connection_profile JSON 列）的
+#: 序列化字节帽 —— 与 chat_schema 画布 meta 8KB 帽同纪律（#1648）：拒绝式，
+#: 不静默截断。连接配置语义上远小于此限，超限即滥用。
+_MAX_OPTIONS_BYTES = 64 * 1024
+
 
 class CreateDataSourceRequest(BaseModel):
     """POST /data-fabric/sources 请求体。"""
@@ -203,17 +209,29 @@ class CreateDataSourceRequest(BaseModel):
         }
     )
 
-    name: str = Field(..., description="Data source display name")
+    name: str = Field(..., max_length=255, description="Data source display name")
     source_type: str = Field(
         ...,
+        max_length=64,
         description="Source adapter type (postgis, ogc_api, wfs, wms, wmts, arcgis)",
     )
     endpoint_url: str = Field(
-        ..., description="Endpoint URL or database connection string"
+        ..., max_length=2048, description="Endpoint URL or database connection string"
     )
     options: Dict[str, Any] = Field(
         default_factory=dict, description="Additional protocol options"
     )
+
+    @model_validator(mode="after")
+    def _cap_options_size(self) -> "CreateDataSourceRequest":
+        # #1648：options 为调用方可控自由结构，64KB 序列化帽（落库前拒绝）。
+        # 孤立代理字符（\ud800 类）无法 UTF-8 编码，同样在此拒绝 —— 该类
+        # 载荷本就不能进 JSONB 列（UnicodeEncodeError 是 ValueError 子类，
+        # pydantic 收敛为 422，不会 500）。
+        blob = json.dumps(self.options, ensure_ascii=False, default=str).encode("utf-8")
+        if len(blob) > _MAX_OPTIONS_BYTES:
+            raise ValueError(f"options exceeds {_MAX_OPTIONS_BYTES} bytes")
+        return self
 
 
 class MaterializeRequest(BaseModel):
@@ -231,8 +249,8 @@ class MaterializeRequest(BaseModel):
         }
     )
 
-    session_id: str = Field(..., description="Session identifier UUID")
-    catalog_item_id: str = Field(..., description="Catalog item identifier")
+    session_id: str = Field(..., max_length=128, description="Session identifier UUID")
+    catalog_item_id: str = Field(..., max_length=128, description="Catalog item identifier")
     query_spec: Optional[QuerySpec] = Field(
         None, description="Optional query pushdown specification"
     )

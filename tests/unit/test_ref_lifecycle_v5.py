@@ -194,6 +194,42 @@ async def test_redis_revision_bumps_on_overwrite():
 
 
 @pytest.mark.asyncio
+async def test_redis_same_bytes_overwrite_does_not_bump_revision():
+    """V3 闭环（#1624）：字节相同的覆写不得 bump content_revision。
+
+    hget 以 decode_responses=False 返回 bytes，与 str digest 直接比较恒为
+    「不同」—— 同内容反复覆写（checkpoint 回滚 / plan 重持久化）曾每次
+    +1，使 analysis_reuse 的 revision 复核整段 miss、全量重算。
+    契约：首次覆写无 digest 记录时 bump（store 不 mint digest），此后
+    同字节覆写保持稳定，异字节覆写才 +1。
+    """
+    store = RedisSessionStore(
+        redis_url="redis://unused",
+        redis=fakeredis.aioredis.FakeRedis(decode_responses=False),
+    )
+    sid = "sess-1624"
+    ref = await store.store(sid, {"v": 1})
+    revisions_key = store._ref_revisions_key(sid)
+
+    async def _revision() -> int:
+        raw = await store._r.hget(revisions_key, ref)
+        return int(raw)
+
+    assert await _revision() == 1  # store minted revision 1
+
+    await store.overwrite(sid, ref, {"v": 1})  # 首次覆写：无 digest 记录 → bump
+    assert await _revision() == 2
+
+    await store.overwrite(sid, ref, {"v": 1})  # 同字节 → 不得再 bump
+    assert await _revision() == 2
+
+    await store.overwrite(sid, ref, {"v": 2})  # 异字节 → +1
+    assert await _revision() == 3
+    await store.overwrite(sid, ref, {"v": 2})  # 再次同字节 → 稳定
+    assert await _revision() == 3
+
+
+@pytest.mark.asyncio
 async def test_revision_is_per_ref_isolated():
     store = MemorySessionStore(capacity=10)
     sid = "sess-v5e-iso"

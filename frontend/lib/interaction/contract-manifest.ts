@@ -1,5 +1,5 @@
 /**
- * Interaction IR 契约词表的**前端镜像常量**（ADR-0225，carto_ir manifest 模式）。
+ * Interaction IR 契约词表的**前端镜像常量**（ADR-0227，carto_ir manifest 模式）。
  *
  * 权威在 app/services/gis_harness/interaction_ir/contracts.py；本文件是
  * 浏览器端镜像。两侧由

@@ -4,6 +4,8 @@
 不产生 findings、DTO 归一门、validate_render_observation 消费链。
 """
 
+import pytest
+
 from app.lib.cartography.render_apply_ack import (
     ACK_SCHEMA_VERSION,
     ENTRY_APPLIED,
@@ -24,6 +26,8 @@ from app.lib.cartography.render_perf_probes import (
 from app.services.gis_harness.completion.contracts import (
     F_RENDER_APPLY_FAILED,
 )
+
+pytestmark = pytest.mark.cartography
 
 
 def _ack(**overrides):

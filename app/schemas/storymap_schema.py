@@ -30,6 +30,9 @@ class StoryExportRequest(BaseModel):
     """POST /storymap/export 请求体：spec 由调用方编译后直供。"""
 
     spec: Dict[str, Any]
-    layers: List[Dict[str, Any]] = Field(default_factory=list)
+    # #1648：layers 为调用方可控的 GeoJSON 层列表 —— 条数帽 64（故事包
+    # 按章节挂层，语义上远小于此限）；每条层的深度/体积由路由侧
+    # assert_json_depth 与全局 body 帽（app.core.body_limit）兜底。
+    layers: List[Dict[str, Any]] = Field(default_factory=list, max_length=64)
     mapspec: Optional[Dict[str, Any]] = None
     format: Literal["json", "html"] = "json"

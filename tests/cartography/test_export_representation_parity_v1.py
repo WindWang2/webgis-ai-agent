@@ -1,8 +1,12 @@
 """导出 parity（方向 5 / C6）：Python 孪生 + expected_semantics 对账。"""
 from __future__ import annotations
 
+import pytest
+
 from app.lib.cartography.export_semantic_corpus import expected_semantics
 from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
+
+pytestmark = pytest.mark.cartography
 
 
 def _points(n: int) -> dict:

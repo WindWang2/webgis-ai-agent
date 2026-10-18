@@ -81,6 +81,22 @@ class TestSummary:
         summary = representation_binding_summary(doc2, mapspec)
         assert summary["drift"] == [{"layer_id": "roads", "signal": "user_hidden_but_visible"}]
 
+    def test_malformed_layout_does_not_raise(self, doc):
+        # #1650：layout 非 dict 真值（可落盘畸形值）不得抛 AttributeError
+        # —— 按可见缺省处理（与 layout 缺席同口径），drift 信号照常产出。
+        doc2 = _user_set(doc, "representation.hidden_layer_ids", ["roads"], "c9")
+        mapspec = {"layers": [{"id": "roads", "layout": "oops"}]}
+        summary = representation_binding_summary(doc2, mapspec)
+        assert summary["drift"] == [
+            {"layer_id": "roads", "signal": "user_hidden_but_visible"}]
+
+    def test_absent_layout_still_counts_as_visible(self, doc):
+        doc2 = _user_set(doc, "representation.hidden_layer_ids", ["roads"], "c10")
+        mapspec = {"layers": [{"id": "roads"}]}
+        summary = representation_binding_summary(doc2, mapspec)
+        assert summary["drift"] == [
+            {"layer_id": "roads", "signal": "user_hidden_but_visible"}]
+
     def test_superseded_short_circuit(self, doc):
         doc2 = _user_set(doc, "representation.palette", "蓝色", "c5")
         superseded = doc2.model_copy(update={"lifecycle": "superseded"})

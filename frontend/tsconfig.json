@@ -41,7 +41,6 @@
     "**/*.test.tsx",
     "**/*.spec.ts",
     "**/*.spec.tsx",
-    "vitest.config.ts",
-    "tests/e2e"
+    "vitest.config.ts"
   ]
 }

@@ -121,9 +121,12 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000)
     session_id: Optional[str] = None
     map_state: Optional[dict] = Field(None, description="当前的地图状态（视角、图层等）")
-    skill_name: Optional[str] = Field(None, description="要激活的技能名称")
+    # #1648：skill_name/project_id 为检索/归属键（注册表与项目 id 词表），
+    # 128 字符帽 —— 与 MapProductRestoreRequest.session_id 同纪律。
+    skill_name: Optional[str] = Field(None, max_length=128, description="要激活的技能名称")
     project_id: Optional[str] = Field(
         None,
+        max_length=128,
         description=(
             "Active project workspace id; when set, the chat context "
             "assembler renders the project-summary block (datasets + "
@@ -421,6 +424,15 @@ class ClarificationAnswerRequest(BaseModel):
     answers: List[ClarificationAnswerItem] = Field(default_factory=list, max_length=2)
     waive: List[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
         default_factory=list, max_length=2)
+
+    @model_validator(mode="after")
+    def _require_answers_or_waive(self) -> "ClarificationAnswerRequest":
+        # #1648：answers 与 waive 至少其一非空 —— 双空提交在 schema 层拒绝
+        # （422），不再穿透到服务层 clarification_answer_invalid 的 400
+        # 兜底（契约形状与同文件其余请求体一致：先拒后过）。
+        if not self.answers and not self.waive:
+            raise ValueError("answers or waive required (at least one non-empty)")
+        return self
 
 
 # ── 响应模型（P2 新增）────────────────────────────────────────────────

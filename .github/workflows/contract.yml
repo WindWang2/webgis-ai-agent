@@ -30,6 +30,13 @@ jobs:
     # #1558 环境漂移防护：contract lane 是唯一轻量到可加矩阵的 Python 入口 ——
     # 主 lane（production.yml）15 个 job 共享 env.PYTHON_VERSION=3.12 不动。
     # 3.13 覆盖开发机实际版本；requires-python 上界 <3.14 见 pyproject.toml。
+    # #1657 已知局限（3.12/3.13 解析关系）：requirements.lock 由
+    # `uv pip compile requirements.txt --python-version 3.12` 生成，全文件
+    # 0 条 python_version marker —— 两条矩阵腿（3.12 / 3.13）共用同一份
+    # 3.12 解析结果安装（-c requirements.lock）。当前两腿实测绿，但一旦某
+    # 个 pin 换成无 cp313/abi3 wheel 的二进制包，3.13 腿会以难以归因的方式
+    # 失败。后续若重编译 lock，应评估 `--universal`（生成 python_version
+    # marker 的双版本解析）或给 3.13 腿单独编译约束文件。
     strategy:
       fail-fast: false
       matrix:

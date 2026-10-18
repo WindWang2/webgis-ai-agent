@@ -24,8 +24,10 @@ from app.schemas.health_schema import LivenessResponse, SreStatusReport
 from app.core.database import Engine
 from app.core.exception import (
     global_exception_handler,
+    unified_error_envelope,
     unified_http_exception_handler,
     unified_validation_exception_handler,
+    wants_legacy_envelope,
 )
 from app.core.idempotency import IdempotencyMiddleware
 from prometheus_client import Counter
@@ -895,7 +897,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self.window,
         )
         if not allowed:
-            return JSONResponse(status_code=429, content={"detail": "请求过于频繁，请稍后再试"})
+            # ADR-0138 统一错误信封（#1641）：中间件层 429 曾直回 {"detail"}，
+            # 与路由层 HTTPException 的 {code,success,message,data} 两套形状
+            # 并存，且无 category 字段不被 AcceptLanguageMiddleware 本地化。
+            # legacy 灰度（X-Error-Envelope: detail / settings 总开关）与路由层
+            # 处理器同一判定，灰度客户端行为不变。
+            if wants_legacy_envelope(request):
+                return JSONResponse(
+                    status_code=429, content={"detail": "请求过于频繁，请稍后再试"}
+                )
+            return JSONResponse(
+                status_code=429,
+                content=unified_error_envelope(429, "请求过于频繁，请稍后再试"),
+            )
 
         return await call_next(request)
 
@@ -905,6 +919,14 @@ app.add_middleware(RateLimitMiddleware, max_requests=240, window_seconds=60)
 # V9 契约基石（ADR-0138）：HTTP 幂等 —— 只对携带 Idempotency-Key 的 JSON POST
 # 生效（重放首次响应 24h / SET NX 单飞 / Redis 故障 fail-open）。
 app.add_middleware(IdempotencyMiddleware)
+
+# #1648：全局请求体大小守卫（与 nginx client_max_body_size 100M 对齐的
+# 应用层兜底 choke point，超限 413 早拒、不整 body 读入）。注册位置：
+# IdempotencyMiddleware 之后 = 其外侧（先于 50MB 体缓冲生效），CORS 之前
+# = 其内侧（413 响应带 CORS 头，浏览器可读）；RateLimit 外侧（边缘早拒
+# 不消耗限流预算）。add_middleware 反序 → 后注册 = 更外层。
+from app.core.body_limit import BodySizeLimitMiddleware  # noqa: E402
+app.add_middleware(BodySizeLimitMiddleware)
 
 # v1 弃用头 + 使用量打点（ADR-0138 / P7）：v1 响应带 Deprecation/Sunset，
 # 计数器为未来下线决策提供数据（不下线任何 v1 端点）。

@@ -248,6 +248,36 @@ class TestReviewHardening:
         )
 
     @pytest.mark.asyncio
+    async def test_session_lock_never_evicts_held_lock(self):
+        """#1633：锁表满时只清空闲锁 —— 在飞 holder 的锁永不被提出表外。
+
+        旧实现在 cap 处整体 ``_SESSION_LOCKS.clear()``：A 持锁期间 B 对同
+        session 取到一把未锁的新对象直接放行 → 双 apply 并发执行 → 同一
+        (plan, source) 两条 repaired ref（ref 链分叉）。
+        """
+        from app.services.data_quality import repair_transaction as rt
+
+        rt._SESSION_LOCKS.clear()
+        held = rt._session_lock("target")
+        await held.acquire()
+        try:
+            # 填满至 cap：第 cap 个新 session 取锁即触发淘汰路径
+            for i in range(rt._MAX_SESSION_CACHE):
+                rt._session_lock(f"other-{i}")
+            # 空闲锁已被淘汰（有界性保持；旧实现在此整体 clear）
+            assert "other-0" not in rt._SESSION_LOCKS
+            # 持锁中的 target 必须原对象存活，且 locked() 反映 A 的持有
+            assert rt._session_lock("target") is held
+            assert held.locked() is True
+            # 再取新 session 不越界（清后仍不满则不重复淘汰）
+            fresh = rt._session_lock("trigger-purge")
+            assert fresh is not held
+            assert rt._session_lock("target") is held
+        finally:
+            held.release()
+            rt._SESSION_LOCKS.clear()
+
+    @pytest.mark.asyncio
     async def test_dry_run_never_clobbers_terminal_session(self):
         """P1-1：apply 后的 dry-run 重放不得覆写缓存终态，回退仍可用。"""
         payload = _dirty_geojson()

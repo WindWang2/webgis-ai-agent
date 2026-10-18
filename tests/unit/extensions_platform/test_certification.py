@@ -86,7 +86,7 @@ class TestCertifyExtension:
         assert record is not None
         # 破坏入口：activate 期崩溃 → smoke fail。
         main_path = record.path / "main.py"
-        main_path.write_text(main_path.read_text() + "\n    raise RuntimeError('boom')\n", encoding="utf-8")
+        main_path.write_text(main_path.read_text(encoding="utf-8") + "\n    raise RuntimeError('boom')\n", encoding="utf-8")
         host.reload(EXTENSION_ID, activate=False)
         report = certify_extension(host, EXTENSION_ID)
         assert report["certified"] is False

@@ -429,16 +429,14 @@ async def apply_binding(
             BindingStatus.SUPERSEDED, mutation_revision=result.mutation_revision,
             error_code=code, disclosures=[resolve_conflict(code or "").disclosure])
     if result.is_error:
-        # user-wins 守卫拒绝携带稳定 error_code（门面 user_wins_result）；
-        # 无码的拒绝按 error_msg 分类不可靠，统一落 binding_refused。
-        final_code = code
-        if final_code in (None, "", "binding_refused") \
-                and result.error_code == "user_wins_presentation":
-            final_code = "binding_user_wins_presentation"
+        # 引擎拒绝码经 resolve_from_result 统一映射进冲突矩阵词表
+        # （N1：透传 off-vocabulary 码会让按码聚合的遥测漏类）；
+        # 无码拒绝同样落已登记的通用拒绝码（binding_engine_refused）。
+        final_code = code or "binding_engine_refused"
         return binding.with_status(
             BindingStatus.REFUSED,
             mutation_id=result.mutation_id,
-            error_code=final_code or "binding_refused",
+            error_code=final_code,
             disclosures=[(result.error_msg or "")[:180]],
         )
     return binding.with_status(

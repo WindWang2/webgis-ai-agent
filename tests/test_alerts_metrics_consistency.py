@@ -338,6 +338,26 @@ def test_rule_files_are_mounted_in_both_prod_stacks():
         )
 
 
+def test_alertmanager_targets_not_empty():
+    """#1636：alertmanagers targets 为空 = 全部规则无投递通道 —— 生产故障时
+    告警静默，只有人工翻 UI 才发现。占位目标（alertmanager:9093）让
+    「alertmanager 未部署」在 Prometheus error log 里响亮失败；运维上线
+    receiver 后投递自动生效。"""
+    cfg = yaml.safe_load((DEPLOY / "prometheus.yml").read_text(encoding="utf-8"))
+    managers = cfg.get("alerting", {}).get("alertmanagers", [])
+    assert managers, "prometheus.yml 未配置 alertmanagers —— 告警无投递通道"
+    targets = [
+        t
+        for m in managers
+        for sc in m.get("static_configs", []) or []
+        for t in sc.get("targets", []) or []
+    ]
+    assert targets, (
+        "alertmanagers targets 为空 —— 规则会在 Prometheus UI 可见但没有任何 "
+        "receiver，生产故障时告警静默（#1636）"
+    )
+
+
 # ── "Can actually fire" checks (CI substitute for staging fault injection) ─
 
 def test_error_rate_and_latency_rules_have_data(app_emitted_metrics):

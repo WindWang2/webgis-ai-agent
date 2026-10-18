@@ -33,18 +33,58 @@ _LOOP_GUARDS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, An
 )
 
 
-def _runtime_guards(session_id: str) -> "tuple[asyncio.Semaphore, asyncio.Lock]":
-  """按事件循环隔离的 (全局信号量, 会话锁)——asyncio 原语不可跨 loop 复用。"""
+def _loop_guards() -> Dict[str, Any]:
+  """当前事件循环的守卫表（全局信号量 + 会话锁表）。
+
+  asyncio 原语不可跨 loop 复用 —— 按 loop 隔离，loop 消亡随
+  WeakKeyDictionary 自动回收。
+  """
   loop = asyncio.get_running_loop()
   guards = _LOOP_GUARDS.get(loop)
   if guards is None:
-    guards = {"sem": asyncio.Semaphore(MAX_CONCURRENT_RUNTIME_VALIDATIONS), "locks": {}}
+    guards = {
+        "sem": asyncio.Semaphore(MAX_CONCURRENT_RUNTIME_VALIDATIONS),
+        "locks": {},
+    }
     _LOOP_GUARDS[loop] = guards
-  locks = guards["locks"]
-  lock = locks.get(session_id)
-  if lock is None:
-    lock = locks[session_id] = asyncio.Lock()
-  return guards["sem"], lock
+  return guards
+
+
+def _runtime_guards(session_id: str) -> "tuple[asyncio.Semaphore, asyncio.Lock]":
+  """按事件循环隔离的 (全局信号量, 会话锁)。
+
+  锁表条目带引用计数（``_enter_session_guard`` / ``_exit_session_guard``
+  配对增减）：归零即淘汰 —— 与 ``_SessionWaveGate`` 同纪律，会话表有界于
+  活跃会话数，不随历史会话数单调增长。
+  """
+  locks = _loop_guards()["locks"]
+  entry = locks.get(session_id)
+  if entry is None:
+    entry = {"lock": asyncio.Lock(), "holders": 0}
+    locks[session_id] = entry
+  return _loop_guards()["sem"], entry["lock"]
+
+
+def _enter_session_guard(session_id: str) -> None:
+  """会话锁持有期开始（引用计数 +1；缺席建档）。"""
+  locks = _loop_guards()["locks"]
+  entry = locks.get(session_id)
+  if entry is None:
+    _runtime_guards(session_id)
+    entry = locks[session_id]
+  entry["holders"] += 1
+
+
+def _exit_session_guard(session_id: str) -> None:
+  """会话锁持有期结束（引用计数 -1；归零即淘汰，锁表不随历史会话增长）。"""
+  locks = _loop_guards()["locks"]
+  entry = locks.get(session_id)
+  if entry is None:
+    return
+  entry["holders"] -= 1
+  if entry["holders"] <= 0:
+    locks.pop(session_id, None)
+
 
 # Path to the Seam C Node script, mirroring how compile_mapspec_cli resolves cli.ts.
 RUNTIME_VALIDATE_SCRIPT = (
@@ -148,9 +188,36 @@ class RuntimeValidator:
 
   async def validate_runtime(self, session_id: str, probes_path: Path | str | None = None) -> Dict[str, Any]:
     sem, lock = _runtime_guards(session_id)
-    async with lock:
-      async with sem:
-        return await self._validate_runtime_unlocked(session_id, probes_path)
+    _enter_session_guard(session_id)
+    try:
+      async with lock:
+        async with sem:
+          # CP-14 取消穿透：await 方被 cancel 时两层 async with 会立即归还
+          # 锁/信号量，但真正干活的 worker 线程（subprocess npx tsx，见
+          # _run_headless_validator）不可取消 —— 同会话第二次 validate 会与
+          # 孤儿 Chromium 并发覆写同一 runtime 证据目录（report.json /
+          # map.png / trace.zip），全局 2 并发上限也被孤儿击穿。把线程执行
+          # 包在取消屏蔽里并等孤儿真正收尾才释放：取消语义不变，最多延迟到
+          # 子进程结束（≤ RUNTIME_TIMEOUT_S 有界）。
+          inner = asyncio.ensure_future(
+              self._validate_runtime_unlocked(session_id, probes_path)
+          )
+          try:
+              return await asyncio.shield(inner)
+          except asyncio.CancelledError:
+              while not inner.done():
+                  try:
+                      await asyncio.shield(inner)
+                  except asyncio.CancelledError:
+                      continue  # 等待本身也被取消：继续等孤儿收尾
+                  except Exception as e:  # noqa: BLE001 — 孤儿失败不再久等
+                      logger.info(
+                          "[RuntimeValidate] orphaned run failed after cancel: %s", e
+                      )
+                      break
+              raise
+    finally:
+      _exit_session_guard(session_id)
 
   async def _validate_runtime_unlocked(
       self, session_id: str, probes_path: Path | str | None = None

@@ -15,7 +15,7 @@
  *    自动发送续行消息让 agent 恢复执行（与 PlanProposalCard 同模式）。
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { HelpCircle, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useLocale, useT } from '@/lib/i18n/useT';
 import type {
@@ -47,6 +47,18 @@ export function ClarificationCard({ state, onSubmit, onRefresh }: ClarificationC
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [freeText, setFreeText] = useState<Record<string, string>>({});
   const [waived, setWaived] = useState<Record<string, boolean>>({});
+
+  // #1628：服务端换入新 pending envelope（replaceClarificationEnvelope 置
+  // open）时组件实例不变（chat-tab 按消息挂载，非按 request_id）—— 旧作答
+  // 原样保留会让 radio 显示未选而 answerOf 仍返回旧值，用户「未重新选择
+  // 即提交陈旧值」。request_id 绑定 document_id + requirement_revision +
+  // context_keys：同 request_id 同 revision 的重取保留在途作答，换 envelope
+  // （新 request_id 或新 revision）一律清空本地作答状态。
+  useEffect(() => {
+    setSelected({});
+    setFreeText({});
+    setWaived({});
+  }, [envelope.request_id, envelope.requirement_revision]);
 
   const disabled = status === 'submitting' || status === 'submitted' || status === 'stale';
 

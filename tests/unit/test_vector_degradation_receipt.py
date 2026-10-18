@@ -86,7 +86,12 @@ def _spec_with_unsupported_component():
 
 
 def test_publication_pdf_aggregates_component_coverage():
-    pytest.importorskip("weasyprint")
+    try:
+        import weasyprint  # noqa: F401
+    except (ImportError, OSError):
+        # Windows 无 GTK 时 import 期抛 OSError（缺 libpango）——与 ImportError
+        # 同等视为缺席（同 app/services/publication_export.py 的守卫）。
+        pytest.skip("WeasyPrint unavailable (ImportError/OSError)")
     from app.services.publication_export import render_publication_pdf
 
     result = render_publication_pdf(_spec_with_unsupported_component(),
@@ -118,7 +123,12 @@ def test_catch_all_omission_drift_net():
 
 @pytest.mark.asyncio
 async def test_vector_pdf_writes_diagnostics_sidecar(client):
-    pytest.importorskip("weasyprint")
+    try:
+        import weasyprint  # noqa: F401
+    except (ImportError, OSError):
+        # Windows 无 GTK 时 import 期抛 OSError（缺 libpango）——与 ImportError
+        # 同等视为缺席（同 app/services/publication_export.py 的守卫）。
+        pytest.skip("WeasyPrint unavailable (ImportError/OSError)")
     _auth(client)
     resp = await client.post("/api/v1/export/vector-pdf",
                              json={"mapspec": _spec_with_unsupported_component(),
@@ -186,7 +196,12 @@ def test_lineage_metadata_carries_component_coverage():
 
 @pytest.mark.asyncio
 async def test_vector_route_response_echoes_lineage_degradation(client, monkeypatch):
-    pytest.importorskip("weasyprint")
+    try:
+        import weasyprint  # noqa: F401
+    except (ImportError, OSError):
+        # Windows 无 GTK 时 import 期抛 OSError（缺 libpango）——与 ImportError
+        # 同等视为缺席（同 app/services/publication_export.py 的守卫）。
+        pytest.skip("WeasyPrint unavailable (ImportError/OSError)")
     _auth(client)
 
     class _FakeLineage:

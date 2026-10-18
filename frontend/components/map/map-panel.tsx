@@ -90,7 +90,7 @@ import { scenarioModeToComparisonKind } from "@/lib/mapspec/scenario-mode"
 import { computeInteractiveIds } from "@/lib/map-kit/interactive-ids"
 import { MapSpecChrome } from "@/components/map/map-spec-chrome"
 import { PoiInfoPanel } from "@/components/map/poi-info-panel"
-// ADR-0225 Interaction IR V1：用户地图交互事件（观察层，只记录事实）。
+// ADR-0227 Interaction IR V1：用户地图交互事件（观察层，只记录事实）。
 import {
   emitViewportSettled,
   emitFeatureDeselected,
@@ -100,6 +100,7 @@ import { ComparisonView } from "@/components/map/comparison"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
+import { nextViewportSeq, viewportSeqTracker } from "@/lib/utils/viewport-seq"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
 import {
   getSelection,
@@ -300,6 +301,12 @@ export function MapPanel({
     setWebglError(null)
     setMapReady(false)
     setMapKey((k) => k + 1)
+    // #1627：mapKey 重建会连旧主图实例带其上所有监听一起销毁，但
+    // ComparisonView 是 <Map> 的兄弟节点（模态/地图三元之外），不随 key
+    // 重挂 —— store mapLoaded 停在新 true 会让其相机同步 effect 的 deps
+    // 全部不变而永不重跑，主→副同步监听静默停留在已销毁的旧实例上。
+    // 新主图 onLoad 时 :1474 自然置回 true。
+    useHudStore.getState().setMapLoaded(false)
   }, [])
 
   const mapRef = useRef<MapRef>(null)
@@ -1242,10 +1249,13 @@ export function MapPanel({
         evt.viewState.pitch,
         bounds
       )
-      // ADR-0225：视口落定（100ms debounce 终态）→ 交互事件（outbox 内
+      // ADR-0227：视口落定（100ms debounce 终态）→ 交互事件（outbox 内
       // replace_pending 合并，pan/zoom 风暴只发最后 settled 态）。FE-3 同款
       // 判别：程序性相机移动（agent flyTo/set_view）无 originalEvent ——
       // 不是用户手势，不得伪造用户 viewport 事实（review P1-4）。
+      // F4 方序对账：viewportSeq 与 turn-start 快照（useMapBridge send）
+      // 同源同 tracker —— 事件携带落定方序，后端投影才能把 settled 事件
+      // 与同轮 map_state.viewport_seq 对账。
       if ((evt as { originalEvent?: unknown }).originalEvent) {
         emitViewportSettled({
           center: [evt.viewState.longitude, evt.viewState.latitude],
@@ -1253,6 +1263,7 @@ export function MapPanel({
           bearing: evt.viewState.bearing,
           pitch: evt.viewState.pitch,
           bounds,
+          viewportSeq: nextViewportSeq(viewportSeqTracker),
         })
       }
       // Phase 8: 视口稳定后（100ms debounce）对大型内联 GeoJSON source

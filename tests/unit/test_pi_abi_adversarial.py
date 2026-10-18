@@ -9,6 +9,7 @@ All assertions are machine-verified through the real production paths
 otherwise); fully offline, no LLM keys, no vendor/pi.
 """
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -44,6 +45,13 @@ def _run_node_script(script: str) -> subprocess.CompletedProcess:
         text=True,
         timeout=15,
     )
+
+
+# 未装 node 的机器上这些用例应 skip 而非 error（与
+# tests/integration/test_pi_real_llm_e2e.py 的 node 守卫同语义）。
+requires_node = pytest.mark.skipif(
+    shutil.which("node") is None, reason="needs node on PATH"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -783,6 +791,7 @@ def _parse_advjson(stdout: str) -> dict:
     return json.loads(stdout.split(marker, 1)[1].strip().split("\n", 1)[0])
 
 
+@requires_node
 def test_extension_echoes_v3_spec_fingerprint(tmp_path):
     """v3 dump: a tool with spec.fingerprint is echoed via postToBridge
     options.toolFingerprint on the direct callback; the dump-level
@@ -836,6 +845,7 @@ def test_extension_echoes_v3_spec_fingerprint(tmp_path):
         "proxy wrap of a tool without a known spec must send no echo"
 
 
+@requires_node
 def test_extension_v2_dump_sends_no_echo(tmp_path):
     """v2 dump (no spec): callbacks carry no toolFingerprint key at all —
     undefined is not serialized into the bridge request body."""

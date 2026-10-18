@@ -9,7 +9,8 @@ state）：逐字段 Welford 兼容矩（n/sum/sumsq/min/max/类型计数）+ H3
   别名，可安全跨请求持有）；
 - **JSON 可序列化**：状态可入缓存/DB（画像失效由 ref_lifecycle 钩子 +
   修订绑定共同兜底）；
-- **有界**：单批扫描 ≤ ``max_scan``；H3 cell 数有硬帽（超出保留 top 计数
+- **有界**：单批扫描 ≤ ``max_scan``（超出时 count 只含已扫要素并打
+  ``count_truncated`` 旗标披露）；H3 cell 数有硬帽（超出保留 top 计数
   并打 ``truncated`` 旗标）。
 """
 from __future__ import annotations
@@ -34,6 +35,9 @@ def new_state(resolution: int = _DEFAULT_RESOLUTION) -> Dict[str, Any]:
         "geom_types": {},
         "h3": {},
         "h3_truncated": False,
+        # count 少计旗标（#1634）：批超 max_scan 时 count 只含已扫要素 ——
+        # 与 h3_truncated/fields_truncated 同纪律，诚实披露而非静默少计。
+        "count_truncated": False,
     }
 
 
@@ -85,6 +89,9 @@ def update_state(
     new = copy.deepcopy(state)
     batch = [f for f in features[:max_scan] if isinstance(f, dict)]
     new["count"] = int(new.get("count") or 0) + len(batch)
+    # 批超出扫描上限：count 少计（只含已扫要素）—— 打旗标披露（#1634）。
+    if len(features) > max_scan:
+        new["count_truncated"] = True
     for f in batch:
         geometry = f.get("geometry")
         if isinstance(geometry, dict):
@@ -133,6 +140,8 @@ def merge_states(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
         return copy.deepcopy(a)
     out = copy.deepcopy(a)
     out["count"] = int(a.get("count") or 0) + int(b.get("count") or 0)
+    # count 少计旗标随合并传播（任一输入披露过即披露，#1634）。
+    out["count_truncated"] = bool(a.get("count_truncated")) or bool(b.get("count_truncated"))
     if int(a.get("resolution") or 0) != int(b.get("resolution") or 0):
         # 分辨率不一致时以小（粗）为准 —— 粗粒度 cell 可加，细不可拆。
         out["resolution"] = min(int(a.get("resolution") or _DEFAULT_RESOLUTION),
@@ -198,6 +207,7 @@ def state_summary(state: Dict[str, Any]) -> Dict[str, Any]:
                     "share": round(n / h3_total, 4)} for c, n in top] if h3_total else [],
         "h3_cell_count": len(h3),
         "h3_truncated": bool(state.get("h3_truncated")),
+        "count_truncated": bool(state.get("count_truncated")),
     }
 
 

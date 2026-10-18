@@ -5,9 +5,14 @@ global:
 alerting:
   alertmanagers:
     - static_configs:
-        # 告警投递需要 alertmanager 服务（尚未部署）；规则仍会被加载并在
-        # Prometheus UI 中可见。
-        - targets: []
+        # #1636：targets 此前为空列表 —— alerts-rules.json 全部 14 条规则会被
+        # 加载并在 Prometheus UI 可见，但没有任何 receiver，生产故障时告警
+        # 静默（只能人工翻看 UI 才发现）。改为占位目标 alertmanager:9093：
+        # alertmanager 服务尚未部署，Prometheus 会持续记录投递失败（error
+        # log 可见）而非静默丢弃；运维上线 alertmanager（compose override
+        # 增补服务或独立部署）并配置 receiver 后投递自动生效 —— rule_files
+        # 与规则本身无需任何改动。
+        - targets: ['alertmanager:9093']
 
 # 加载仓库内已跟踪的告警规则（deploy/alerts-rules.json，compose 中挂载）。
 # #473：规则表达式引用的指标与下面的 scrape job 一一对应 ——

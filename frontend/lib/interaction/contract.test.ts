@@ -1,5 +1,5 @@
 /**
- * Interaction IR 契约双端漂移闸（前端侧，ADR-0225；模式同
+ * Interaction IR 契约双端漂移闸（前端侧，ADR-0227；模式同
  * lib/carto-ir 的 contract-manifest 测试）：断言
  * tests/unit/gis_harness/interaction_ir/contract_manifest.json ≡ 本包常量。
  * 后端 pytest 断言同一 JSON ≡ contracts.py —— 任一侧改词表不更新 JSON 即红。

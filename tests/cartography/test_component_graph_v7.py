@@ -35,6 +35,9 @@ from app.lib.cartography.mapspec_schema import (
 )
 
 
+pytestmark = pytest.mark.cartography
+
+
 @pytest.fixture()
 def registry():
     reset_component_registry()

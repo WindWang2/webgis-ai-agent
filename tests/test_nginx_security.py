@@ -156,3 +156,94 @@ class TestNginxWebSocketRouting:
         assert "map $http_upgrade $connection_upgrade" in content, (
             "需要 map $http_upgrade $connection_upgrade 以在非 WS 请求上复用 keepalive"
         )
+
+
+class TestCspSingleSource:
+    """#1635：CSP 只有一份拷贝 —— frontend/next.config.mjs 的 headers()。
+
+    修复前 deploy/nginx/nginx.conf 与 docker-compose.prod.secure.yml 的内联
+    副本在 server 级再注入一份更严的 CSP。CSP3 规定多个 CSP 响应头 = 多条
+    策略、浏览器全部强制执行（等效取交集）：应用侧比 nginx 宽松的指令全部
+    作废 —— connect-src data:（#1597 maplibre-gl v6 worker 适配所加）、
+    img-src blob:、worker-src blob:、font-src data: 在生产 compose 栈被
+    完全中和，表现为「dev 生效、上线坏」且无任何报错指向 CSP。nginx 自身
+    只生成 /health 文本与 50x 错误页，无 CSP 需求，故边缘侧不再注入。
+
+    同理收敛 X-Frame-Options：server 级注入会被 location / 继承，与上游
+    响应自带的应用级 DENY 双头冲突（重复且取值不一致，行为依浏览器而异）；
+    nginx 自己生成的 50x 错误页改为在 location = /50x.html 显式保留。
+    """
+
+    def test_nginx_conf_does_not_inject_csp(self):
+        with open("deploy/nginx/nginx.conf", encoding="utf-8") as f:
+            nginx = f.read()
+        assert "add_header Content-Security-Policy" not in nginx, (
+            "nginx 不得注入 CSP —— CSP 唯一来源是 frontend/next.config.mjs；"
+            "边缘再叠一份更严策略会把应用侧放宽的指令在生产栈完全中和（#1635）"
+        )
+
+    def test_secure_compose_inline_does_not_inject_csp(self):
+        import yaml
+
+        with open("docker-compose.prod.secure.yml", encoding="utf-8") as f:
+            compose = yaml.safe_load(f)
+        embedded = compose["configs"]["webgis_nginx_conf"]["content"]
+        assert "add_header Content-Security-Policy" not in embedded, (
+            "compose 内联 nginx 副本不得注入 CSP（与 deploy/nginx/nginx.conf "
+            "同一不变量，见 test_nginx_conf_does_not_inject_csp）"
+        )
+
+    def test_next_config_is_the_single_csp_source(self):
+        """应用侧必须恰好定义一份 CSP，且保留运行时依赖的放宽指令。"""
+        import re
+
+        with open("frontend/next.config.mjs", encoding="utf-8") as f:
+            config = f.read()
+        assert config.count('key: "Content-Security-Policy"') == 1, (
+            "next.config.mjs 必须恰好定义一份 CSP（唯一来源）"
+        )
+        m = re.search(
+            r'key:\s*"Content-Security-Policy",\s*value:\s*\[(.*?)\]\.join',
+            config,
+            re.DOTALL,
+        )
+        assert m, "无法解析 next.config.mjs 的 CSP value 数组"
+        directives = [
+            d.strip().rstrip(",").strip().strip('"') for d in m.group(1).splitlines()
+        ]
+        directives = [d for d in directives if d]
+        for required in (
+            "default-src 'self'",
+            # #1597：maplibre-gl v6 worker 适配依赖 data: URI 的 connect
+            "connect-src 'self' data: http: https: ws: wss:",
+            "img-src 'self' data: blob: http: https:",
+            "worker-src 'self' blob:",
+            "font-src 'self' data:",
+            "frame-ancestors 'none'",
+        ):
+            assert required in directives, (
+                f"next.config.mjs CSP 缺少指令 {required!r} —— 生产栈唯一下发"
+                "的 CSP，缺指令会被浏览器直接阻断对应能力"
+            )
+
+    def test_nginx_server_level_does_not_inject_x_frame_options(self):
+        """server 级 add_header（8 空格缩进）不得含 X-Frame-Options —— 它会被
+        location / 继承，与上游应用响应自带的 DENY 双头冲突。location 级
+        （12 空格缩进：/api/、/health、/50x.html）的显式注入不在此列。"""
+        import re
+
+        with open("deploy/nginx/nginx.conf", encoding="utf-8") as f:
+            nginx = f.read()
+        assert not re.findall(r"^        add_header X-Frame-Options", nginx, re.M), (
+            "server 级仍在注入 X-Frame-Options —— location / 的上游响应已带"
+            "应用级 DENY，双头且取值冲突（#1635）"
+        )
+
+    def test_app_sets_deny_x_frame_options(self):
+        """前端响应的 XFO 唯一来源是应用的 DENY（与 frame-ancestors 'none'
+        双保险）。"""
+        with open("frontend/next.config.mjs", encoding="utf-8") as f:
+            config = f.read()
+        assert 'key: "X-Frame-Options", value: "DENY"' in config, (
+            "next.config.mjs 必须设置 X-Frame-Options: DENY（nginx 侧已不再注入）"
+        )

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from app.extensions_platform.diagnostics import has_errors
+from app.extensions_platform.diagnostics import DiagnosticCode, has_errors
 from app.extensions_platform.host import ExtensionHost, HostPolicy
 
 
@@ -139,7 +139,7 @@ def _make_v3_pack(tmp_path: Path) -> Path:
             }
         )
     )
-    (pack / "main.py").write_text(MAIN_V3)
+    (pack / "main.py").write_text(MAIN_V3, encoding="utf-8")
     return pack
 
 
@@ -168,7 +168,19 @@ def test_worker_v3_projection_all_sections(tmp_path):
     try:
         assert not has_errors(diags), [d.message for d in diags if d.severity.value == "error"]
         record = host.get_record("v3demo.full")
-        assert record is not None and record.state.value == "active"
+        assert record is not None
+        # worker 资源强制（RLIMIT_AS/CPU）在无 resource 模块的平台
+        # （Windows 开发机）按设计降级为 RESOURCE_LIMIT_UNAVAILABLE 告警 →
+        # degraded（ac-07 已登记的 POSIX 环境缺口；生产 Linux 容器不受
+        # 影响）—— 只容许这一种已文档化降级原因，其余降级仍是失败。
+        if record.state.value == "degraded":
+            codes = {d.code for d in diags}
+            assert codes == {DiagnosticCode.RESOURCE_LIMIT_UNAVAILABLE}, (
+                f"degraded 只容许 resource 不可用的已文档化降级: "
+                f"{sorted(str(c) for c in codes)}"
+            )
+        else:
+            assert record.state.value == "active"
 
         # 算法投影（描述符元数据 + tool_candidates 指向 worker 工具投影名）。
         algo = get_algorithm_registry().get("v3demo.demo_algo")
@@ -230,7 +242,7 @@ def test_worker_v3_deactivate_rolls_back_all_sections(tmp_path):
 def test_worker_v3_undeclared_handshake_offer_fails_closed(tmp_path):
     """握手申报未声明节 → typed 激活失败 + worker 回收。"""
     pack = _make_v3_pack(tmp_path)
-    manifest = json.loads((pack / "manifest.json").read_text())
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
     manifest["algorithms"] = []  # 声明删除但 worker 仍申报
     (pack / "manifest.json").write_text(json.dumps(manifest))
     # worker 内 register_algorithm_v3 会被 _require_declared 拒绝 → 握手失败

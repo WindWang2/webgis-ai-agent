@@ -185,6 +185,24 @@ def test_concurrency_invariant():
     assert not [v for v in collect_violations() if "concurrency" in v]
 
 
+def test_production_concurrency_group_isolates_event_name():
+    """#1657：production.yml 的 concurrency.group 必须带 github.event_name。
+
+    push 与 workflow_dispatch 共用组时，master push run（Backend lane 预算
+    110 分钟）在跑，dispatch 的 rollback 只能 pending 排在其后；按 GitHub
+    并发语义，组内新 run 到达时先前 pending 的 run 会被取消 —— 一次 master
+    推送即可静默取消排队中的紧急回滚。带 event_name 后 push/dispatch 分组
+    隔离；cancel-in-progress 仍只对 pull_request 为真（G15 不变量保持），
+    故两次 dispatch 仍共享同组、排队互斥。
+    """
+    doc = yaml.safe_load((WORKFLOWS_DIR / "production.yml").read_text(encoding="utf-8"))
+    group = doc["concurrency"]["group"]
+    assert "github.event_name" in group, (
+        f"production.yml concurrency.group 未按事件类型隔离: {group!r} —— "
+        "workflow_dispatch 的 rollback 会被 master push run 堵住/取消"
+    )
+
+
 def test_timeout_invariant():
     assert not [v for v in collect_violations() if "timeout-minutes" in v]
 

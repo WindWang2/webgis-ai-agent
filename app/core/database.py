@@ -82,6 +82,12 @@ def _to_async_url(url: str) -> str:
         return url.replace("postgresql://", "postgresql+asyncpg://", 1)
     if url.startswith("postgres://"):
         return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgresql+psycopg2://"):
+        # #1641：运维按「显式钉 psycopg2」写 DATABASE_URL 时，同步侧
+        # （_to_sync_url）原样容忍、async 侧原样返回会让 create_async_engine
+        # 抛 InvalidRequestError（asyncio 扩展需要 async 驱动）—— 对称改写
+        # 为 asyncpg，与 _to_sync_url 的驱动钉扎行为一致。
+        return url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
     return url
 
 
@@ -198,8 +204,9 @@ def _apply_runtime_migrations() -> None:
     """运行守卫式增量迁移：仅 SQLite。
 
     Base.metadata.create_all 只创建缺失的表，对已存在的表不会补字段。
-    本项目还没上 Alembic（M10），所以这里给少量轻量字段做最小幂等迁移。
-    Postgres 部署请用 Alembic，不会走到这里。
+    生产 schema 自 #476 起由 Alembic 唯一掌管（见 init_db：非 sqlite 明确
+    跳过 create_all）；本函数仅是 SQLite（开发/测试）下的轻量幂等补丁，
+    不是 Alembic 的替代品。Postgres 部署请用 Alembic，不会走到这里。
     """
     import logging
     from sqlalchemy import text

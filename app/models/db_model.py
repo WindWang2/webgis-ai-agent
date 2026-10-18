@@ -724,10 +724,6 @@ class RefreshTokenFamily(Base):
     )
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeResourceUsage", "GeoComputeArtifact", "GeoComputeTaskQuarantine",
-           "WorkflowPackageRow", "WorkflowInstanceRow", "WorkflowInstanceNodeRow",
-           "WorkflowNodeReuseRow", "OrgQuota", "AuditEvent", "RefreshTokenFamily", "get_init_sql"]
-
 # ═══════════════════════════════════════════════════════════════════════
 # Workflow Runtime V5（Epic workflow-v5；架构见
 # .agent-work/workflow-v5-executable-runtime/01-architecture.md §3）
@@ -964,4 +960,13 @@ class WorkflowNodeReuseRow(Base):
     )
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeRunEvent", "GeoComputeWorkerCache", "GeoComputeResourceUsage", "GeoComputeArtifact", "GeoComputeTaskQuarantine", "WorkflowEventRow", "WorkflowWorkerRow", "get_init_sql"]
+__all__ = [
+    "Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission",
+    "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult",
+    "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker",
+    "GeoComputeRunEvent", "GeoComputeWorkerCache", "GeoComputeResourceUsage",
+    "GeoComputeArtifact", "GeoComputeTaskQuarantine", "OrgQuota", "AuditEvent",
+    "RefreshTokenFamily", "WorkflowPackageRow", "WorkflowInstanceRow",
+    "WorkflowInstanceNodeRow", "WorkflowEventRow", "WorkflowWorkerRow",
+    "WorkflowNodeReuseRow", "get_init_sql",
+]

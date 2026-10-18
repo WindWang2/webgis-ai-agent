@@ -19,6 +19,7 @@ import {
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
 import { useT } from '@/lib/i18n/useT';
+import { currentLocale } from '@/lib/i18n/t';
 
 const EVENT_TONE: Record<string, 'ok' | 'bad' | 'warn' | 'info'> = {
   run_started: 'info',
@@ -48,7 +49,8 @@ const TONE_CLASS: Record<string, string> = {
 
 function eventTime(e: GeoComputeRunEvent): string {
   const t = new Date(e.created_at);
-  return Number.isNaN(t.getTime()) ? '—' : t.toLocaleTimeString('zh-CN');
+  // #1628/#1436：时间戳随应用语言格式化（zh-CN 用户输出不变），不硬编码。
+  return Number.isNaN(t.getTime()) ? '—' : t.toLocaleTimeString(currentLocale());
 }
 
 export function RunTimeline({ runId }: { runId: string }) {

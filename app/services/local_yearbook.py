@@ -343,6 +343,37 @@ def _open_db(path: Path) -> sqlite3.Connection:
     return conn
 
 
+#: 单年导入完成标记的 meta key 前缀（值恒 '1'）。完成标记与年内数据同一
+#: 事务落盘 —— 行存在 ≠ 完成，崩溃即整体回滚。
+_YEAR_COMPLETE_PREFIX = "yearbook_year_complete:"
+
+
+def _completed_years(conn: sqlite3.Connection) -> set:
+    """meta 表标记「整年导入完成」的出版年集合。
+
+    旧版按 ``SELECT DISTINCT pub_year`` 推导 done，而年内 DELETE 与逐
+    sheet INSERT 各自提交 —— 中途崩溃留下半个年份的行，重跑却因「行已
+    存在」静默跳过，半年度被当作完整数据服务。完成标记随年内事务提交，
+    是唯一可信的完成度事实源。
+    """
+    out: set = set()
+    for (key,) in conn.execute(
+        "SELECT key FROM meta WHERE key LIKE ?", (_YEAR_COMPLETE_PREFIX + "%",)
+    ):
+        tail = str(key)[len(_YEAR_COMPLETE_PREFIX):]
+        if tail.isdigit():
+            out.add(int(tail))
+    return out
+
+
+def _mark_year_complete(conn: sqlite3.Connection, pub_year: int) -> None:
+    """标记某出版年整年导入完成（与年内数据同一事务内调用）。"""
+    conn.execute(
+        "INSERT OR REPLACE INTO meta VALUES (?, '1')",
+        (f"{_YEAR_COMPLETE_PREFIX}{pub_year}",),
+    )
+
+
 def _excel_sheets(data_or_path: bytes | Path | str | BytesIO) -> pd.ExcelFile:
     target = BytesIO(data_or_path) if isinstance(data_or_path, bytes) else data_or_path
     try:
@@ -358,14 +389,21 @@ def ingest_yearbook(
     years: Optional[Iterable[int]] = None,
     progress_cb: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """乡镇卷 zip 系列 → township_yearbook。幂等：默认跳过已导入年份。"""
+    """乡镇卷 zip 系列 → township_yearbook。幂等：默认跳过已标记完成的年份。
+
+    中断恢复语义：年内 DELETE + 全部 sheet INSERT + 完成标记收进**单个
+    事务** —— 中途崩溃整体回滚，重跑见「无行无标记」→ 整年重导。旧版
+    遗留的残缺年（有行无完成标记）同样整年重导，并在 stats 的
+    ``reimported_incomplete`` 披露，绝不把半年度当完整数据服务。
+    """
     db = yearbook_db_path()
     conn = _open_db(db)
     stats: Dict[str, Any] = {"zips": 0, "years": [], "skipped": 0}
     try:
-        done = {
+        completed = _completed_years(conn)
+        partial_years = {
             r[0] for r in conn.execute("SELECT DISTINCT pub_year FROM township_yearbook")
-        }
+        } - completed
         idx = _load_district_index()
         if idx is None:
             logger.warning("[yearbook] district.shp 不可用：乡镇行将缺少 adcode 连接")
@@ -373,31 +411,36 @@ def ingest_yearbook(
         for pub_year, zpath in iter_yearbook_zips(source):
             if want and pub_year not in want:
                 continue
-            if pub_year in done and not force:
+            if pub_year in completed and not force:
                 stats["skipped"] += 1
                 continue
-            with conn:
-                conn.execute("DELETE FROM township_yearbook WHERE pub_year=?", (pub_year,))
+            if pub_year in partial_years:
+                stats.setdefault("reimported_incomplete", []).append(pub_year)
             year_rows = 0
-            with zipfile.ZipFile(zpath) as zf:
-                for name in zf.namelist():
-                    if not name.endswith(".xlsx") or not _SHEET_OK.search(name):
-                        continue
-                    hint = _province_hint(name.rsplit("/", 1)[-1])
-                    excel = _excel_sheets(zf.read(name))
-                    for sheet in excel.sheet_names:
-                        if sheet.upper().startswith("CNKI"):
+            # 年内原子边界：DELETE + 逐 sheet INSERT + 完成标记同一事务。
+            with conn:
+                conn.execute(
+                    "DELETE FROM township_yearbook WHERE pub_year=?", (pub_year,)
+                )
+                with zipfile.ZipFile(zpath) as zf:
+                    for name in zf.namelist():
+                        if not name.endswith(".xlsx") or not _SHEET_OK.search(name):
                             continue
-                        rows = _sheet_rows(
-                            excel.parse(sheet, header=None), pub_year, hint, idx,
-                        )
-                        if rows:
-                            year_rows += len(rows)
-                            with conn:
+                        hint = _province_hint(name.rsplit("/", 1)[-1])
+                        excel = _excel_sheets(zf.read(name))
+                        for sheet in excel.sheet_names:
+                            if sheet.upper().startswith("CNKI"):
+                                continue
+                            rows = _sheet_rows(
+                                excel.parse(sheet, header=None), pub_year, hint, idx,
+                            )
+                            if rows:
+                                year_rows += len(rows)
                                 conn.executemany(
                                     "INSERT INTO township_yearbook VALUES (?,?,?,?,?,?,?,?)",
                                     rows,
                                 )
+                _mark_year_complete(conn, pub_year)
             stats["zips"] += 1
             stats["years"].append(pub_year)
             stats[f"rows_{pub_year}"] = year_rows

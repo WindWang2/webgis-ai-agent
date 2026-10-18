@@ -129,7 +129,12 @@ def test_pdf_cjk_font_embedded_emitter_registered():
 
 
 def test_publication_pdf_emits_font_embedded_when_no_system_cjk(monkeypatch):
-    pytest.importorskip("weasyprint")
+    try:
+        import weasyprint  # noqa: F401
+    except (ImportError, OSError):
+        # Windows 无 GTK 时 import 期抛 OSError（缺 libpango）——与 ImportError
+        # 同等视为缺席（同 app/services/publication_export.py 的守卫）。
+        pytest.skip("WeasyPrint unavailable (ImportError/OSError)")
     monkeypatch.setattr(pe, "_probe_cjk_font", lambda: False)
     monkeypatch.setattr(pe, "_FONT_FACE_CACHE", None)
     spec = {
@@ -193,7 +198,12 @@ async def test_canvas_export_dpi_reaches_lineage(client, monkeypatch):
 
 
 def test_multi_frame_pages_use_profiles():
-    pytest.importorskip("weasyprint")
+    try:
+        import weasyprint  # noqa: F401
+    except (ImportError, OSError):
+        # Windows 无 GTK 时 import 期抛 OSError（缺 libpango）——与 ImportError
+        # 同等视为缺席（同 app/services/publication_export.py 的守卫）。
+        pytest.skip("WeasyPrint unavailable (ImportError/OSError)")
     payload = {
         "version": "1.1",
         "sources": {"s1": {"type": "geojson", "inlineData": {

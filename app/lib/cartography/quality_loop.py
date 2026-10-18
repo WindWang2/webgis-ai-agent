@@ -580,6 +580,8 @@ def representation_at_scale_report(mapspec: Dict[str, Any]) -> Optional[Dict[str
     结果」—— 与协议层的 AggregationSemantics 同口径）。
     """
     from app.lib.cartography.representation import (
+        ZOOM_DOMAIN_MAX,
+        ZOOM_DOMAIN_MIN,
         normalize_windows,
         tier_of_zoom,
         zoom_gate_of_layer,
@@ -608,7 +610,7 @@ def representation_at_scale_report(mapspec: Dict[str, Any]) -> Optional[Dict[str
             "windows_valid": normalized is not None,
         }
         if normalized:
-            z = min(23.999999, max(0.0, zoom))
+            z = min(ZOOM_DOMAIN_MAX - 1e-9, max(ZOOM_DOMAIN_MIN, zoom))
             active = next(
                 (w for w in normalized if w.min_zoom <= z < w.max_zoom),
                 normalized[-1],

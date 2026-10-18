@@ -3,6 +3,7 @@
 import { Info } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useT } from '@/lib/i18n/useT';
+import { currentLocale } from '@/lib/i18n/t';
 
 /**
  * The one legend container.
@@ -65,7 +66,8 @@ export function formatLegendValue(n: number): string {
   const abs = Math.abs(n);
   if (abs >= 1_000_000) return `${significant(n / 1_000_000)}M`;
   if (abs >= 10_000) return `${significant(n / 1_000)}k`;
-  if (Number.isInteger(n)) return n.toLocaleString('zh-CN');
+  // #1628/#1436：数字分组随应用语言格式化（zh-CN 用户输出不变），不硬编码。
+  if (Number.isInteger(n)) return n.toLocaleString(currentLocale());
   return significant(n);
 }
 

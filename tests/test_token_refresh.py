@@ -10,7 +10,6 @@ fixture 模式照搬 tests/test_auth_routes.py：进程内 FastAPI + httpx.Async
 aiosqlite + dependency_overrides + NoOp rate limiter。
 """
 import os
-import time
 from datetime import timedelta
 
 import pytest
@@ -272,8 +271,6 @@ async def test_refresh_rejects_expired_refresh_token(client):
         expires_delta=timedelta(seconds=-1),  # 已过期
         token_version=0,
     )
-    # PyJWT 可能缓存时间，sleep 1s 让 exp 真正过期
-    time.sleep(1.1)
     resp = await client.post("/api/v1/auth/refresh", json={"refresh_token": expired})
     assert resp.status_code == 401
 

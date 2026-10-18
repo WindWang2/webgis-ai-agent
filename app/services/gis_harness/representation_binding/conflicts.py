@@ -33,6 +33,7 @@ REASON_CODES = {
     "binding_ineligible_representation": "用户 pin 的表达与数据/renderer 不兼容（grammar face 披露回退）",
     "binding_duplicate_replay": "同 fingerprint 幂等重放（引擎 dedup 命中，revision 不推进）",
     "binding_document_superseded": "requirement 文档已被超替（新任务），旧绑定不落地",
+    "binding_engine_refused": "绑定被 MapSpec 引擎拒绝（增量非法/冲突、质量门禁、自愈未收敛、不支持的意图等；引擎信息经 disclosure 透传）",
     # ── C4（MapSpec → Requirement）方向 ───────────────────────────────
     "projection_non_user_origin": "非 user origin 的 mutation 不投影为用户偏好",
     "projection_ephemeral": "presentation-ephemeral 面（pan/zoom/opacity-only）不进入 requirement",
@@ -94,6 +95,10 @@ def resolve_conflict(code: str, *, detail: str = "") -> ConflictResolution:
         "binding_duplicate_replay": ConflictResolution(
             "binding_duplicate_replay", "none", "apply",
             "同 fingerprint 重放命中幂等；返回存证回执，不重复落盘。"),
+        "binding_engine_refused": ConflictResolution(
+            "binding_engine_refused", "system", "refuse",
+            "绑定被引擎校验/门禁拒绝（增量非法或冲突、质量门禁、"
+            "自愈未收敛、意图不支持）；按 disclosure 指引修正后重试。"),
         "binding_document_superseded": ConflictResolution(
             "binding_document_superseded", "user", "skip_disclosed",
             "需求文档已超替；携带用户态的新文档是后续绑定的输入。"),
@@ -153,6 +158,21 @@ def disclosure_for(code: str) -> str:
     return REASON_CODES.get(code, f"未注册 reason code: {code}")
 
 
+#: 引擎回执码 → 冲突矩阵登记码（C5「禁止 silent」的登记闭环）。
+#: 已知引擎码显式登记；未登记码（含 ``HEAL_*`` 族）统一落已注册的通用
+#: 拒绝码 —— 透传 off-vocabulary 引擎码会让按码聚合的遥测/披露漏类。
+_ENGINE_CODE_TO_MATRIX: Dict[str, str] = {
+    "layer_locked": "binding_target_locked",
+    "user_wins_presentation": "binding_user_wins_presentation",
+    "workbench_delta_invalid": "binding_engine_refused",
+    "workbench_delta_conflict": "binding_engine_refused",
+    "quality_gate_blocked": "binding_engine_refused",
+    "UNSUPPORTED_MUTATION_INTENT": "binding_engine_refused",
+    "HEAL_CONVERGENCE_EXHAUSTED": "binding_engine_refused",
+    "HEAL_PLAN_EMPTY": "binding_engine_refused",
+}
+
+
 def resolve_from_result(
     *,
     is_error: bool,
@@ -166,11 +186,8 @@ def resolve_from_result(
     if superseded:
         return "binding_stale_revision"
     if is_error:
-        if error_code == "layer_locked":
-            return "binding_target_locked"
-        if error_code == "user_wins_presentation":
-            # 门面 user-wins 拒绝的引擎码 → 冲突矩阵登记码（N1：透传
-            # off-vocabulary 码会让按码聚合的遥测漏类）。
-            return "binding_user_wins_presentation"
-        return error_code or "binding_refused"
+        engine_code = error_code or ""
+        if engine_code.startswith("HEAL_"):
+            return "binding_engine_refused"
+        return _ENGINE_CODE_TO_MATRIX.get(engine_code, "binding_engine_refused")
     return None

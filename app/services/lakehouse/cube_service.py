@@ -404,6 +404,11 @@ async def revise_session_cube(
             ),
         )
     except Exception as e:
+        # 失败零残留（#1634）：fork 自身也会清理 dst，这里双保险 —— 残缺
+        # 修订目录不得残留（下次 revise 用新 id，永不被 GC 回收）。
+        import shutil as _shutil
+
+        _shutil.rmtree(new_dir, ignore_errors=True)
         raise CubeServiceError(f"cube revision failed: {e}") from e
 
     old_record = await get_artifact(session_id, ref)

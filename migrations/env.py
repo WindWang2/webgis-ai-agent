@@ -38,7 +38,14 @@ if db_url:
     # #1592：2.1.x 裸 postgres URL 默认方言改走 psycopg v3（lock 只有 psycopg2-binary），
     # 与 get_engine() 同源同纪律，显式钉 psycopg2 驱动。
     db_url = _to_sync_url(db_url)
-    config.set_main_option("sqlalchemy.url", db_url)
+    # #1638：alembic Config 底层是 configparser（默认 BasicInterpolation），
+    # set_main_option 写入时即校验插值语法——URL 里的裸 %（百分号编码密码如
+    # p%40ss；RDS/Azure 托管库强密码含 @/%/: 是常态）会抛 ValueError:
+    # invalid interpolation syntax，upgrade head 崩在 env.py 入口、部署拒绝
+    # 启动（而 create_engine 原生接受 % URL，故障形态不对称、难排查）。
+    # 按 configparser 协议写 %% 转义；读回（get_main_option/get_section）时
+    # 自动还原为单 %，online/offline 两个 mode 与 drift check 消费的都是原 URL。
+    config.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
 
 # 审计 I6：必须显式 import 所有 model 模块，让它们的表注册到 Base.metadata。
 # 否则 autogenerate 看到 metadata 是空的 → 生成的 revision upgrade() 是 pass。
@@ -66,12 +73,15 @@ import app.models.ads_fabric  # noqa: F401, E402  (ADR-0175/0178: ads_* 三张�
 # 「metadata 里不存在」→ 对已迁移库生成 drop_table（数据丢失风险）。
 # security F-09：手工清单已漏掉 ads_fabric / gis_context / harness_journal
 # （5 张线上表）。兜底遍历 app.models 下全部子模块，新增模块无需再登记。
+# walk_packages 递归展开子包：iter_modules 只列一层，将来若建
+# app/models/<子包>/，包内模块不会被兜底 import（漏注册 = drop_table
+# 数据丢失风险的潜在入口）。
 import importlib  # noqa: E402
 import pkgutil  # noqa: E402
 
 import app.models  # noqa: E402
 
-for _mod in pkgutil.iter_modules(app.models.__path__):
+for _mod in pkgutil.walk_packages(app.models.__path__):
     importlib.import_module(f"app.models.{_mod.name}")
 
 target_metadata = Base.metadata

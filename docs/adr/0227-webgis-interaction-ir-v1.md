@@ -5,7 +5,7 @@
 - 方向：Goal 02 —— 统一、版本化、有界、可回放、可归因的用户地图交互事件契约
 - 基线 commit：`ddd10fb4db05cf27446ff5a8ddb4b2917f505952`
 - 前置 ADR：ADR-0180（GIS Situation）、ADR-0183（mutation 幂等键）、ADR-0194（画布 affordance）、ADR-0214（render observation 对账）、ADR-0216（turn journal）、ADR-0219（representation binding）
-- 编号说明：分配器给出 0220（与 open PR #1615/#1621 撞号），手动跳号后 0224 又被 open PR #1620（Pi tool ABI）占用 —— 最终定 0225，`adr_watermark` 推进至 225。撞号史（0219/0220/0224）证明并发分配不可静态消除：分配器 + preflight + 后合并者重编是既定惯例。
+- 编号说明：分配器给出 0220（与 open PR #1615/#1621 撞号），手动跳号后 0224 又被 open PR #1620（Pi tool ABI）占用，再跳的 0225 在最终合并时亦被占（RenderWork Protocol 定 0225、durable project cartographic runtime 定 0226）—— 最终定 0227，`adr_watermark` 推进至 227。撞号史（0219/0220/0224/0225）证明并发分配不可静态消除：分配器 + preflight + 后合并者重编是既定惯例。
 
 ## 背景与问题
 

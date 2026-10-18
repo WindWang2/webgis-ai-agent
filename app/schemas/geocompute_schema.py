@@ -17,12 +17,26 @@ class ExecutionNodeIn(BaseModel):
     operation: str = ""
     inputs: list[str] = Field(default_factory=list)
     dataset_fingerprints: Dict[str, str] = Field(default_factory=dict)
-    parameters: Dict[str, Any] = Field(default_factory=dict)
+    # #1648：parameters/retry 为调用方可控自由结构（可内联 features 等
+    # 载荷）。语义帽 = 整个 plan 序列化 ≤256KB
+    # （app.services.geocompute.cluster.contracts.MAX_PLAN_SNAPSHOT_BYTES，
+    # 落库纪律；超限在 submit 路径 typed 413 PLAN_SNAPSHOT_TOO_LARGE）——
+    # schema 层不另设运行时帽，避免把既有 413 契约提前成 422。全局 body
+    # 兜底见 app.core.body_limit.BodySizeLimitMiddleware。
+    parameters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Node parameters; plan-level byte budget ≤256KB "
+        "(MAX_PLAN_SNAPSHOT_BYTES)",
+    )
     crs: Optional[Dict[str, Any]] = None
     estimate: Optional[Dict[str, Any]] = None
     policy: str = "in_process"
     reuse: str = "allow"
-    retry: Dict[str, Any] = Field(default_factory=dict)
+    retry: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Retry policy overrides; plan-level byte budget ≤256KB "
+        "(MAX_PLAN_SNAPSHOT_BYTES)",
+    )
     deadline_s: Optional[float] = None
     cancellable: bool = True
     locality_hint: Optional[str] = None
@@ -36,7 +50,13 @@ class ExecutionNodeIn(BaseModel):
 class ExecutionPlanIn(BaseModel):
     plan_id: str
     nodes: list[ExecutionNodeIn] = Field(default_factory=list)
-    budget: Dict[str, Any] = Field(default_factory=dict)
+    # #1648：语义帽同 parameters —— 整个 plan 序列化 ≤256KB
+    # （MAX_PLAN_SNAPSHOT_BYTES）；submit 路径 typed 413 是运行时权威。
+    budget: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Resource budget overrides; plan-level byte budget ≤256KB "
+        "(MAX_PLAN_SNAPSHOT_BYTES)",
+    )
     description: Optional[str] = None
 
 

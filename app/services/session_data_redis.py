@@ -404,13 +404,19 @@ class RedisSessionStore(BaseSessionStore):
             current_count = await self._r.zcard(order_key)
             if current_count > self.capacity:
                 overflow = current_count - self.capacity
-                oldest = await self._r.zrange(order_key, 0, overflow - 1)
+                oldest = await self._r.zrange(
+                    order_key, 0, overflow - 1, withscores=True
+                )
                 old_refs = []
-                for old_ref_bytes in oldest:
-                    old_ref = old_ref_bytes.decode() if isinstance(old_ref_bytes, bytes) else old_ref_bytes
+                snapshot_scores: dict[str, float] = {}
+                for member, score in oldest:
+                    old_ref = (
+                        member.decode() if isinstance(member, bytes) else member
+                    )
                     if old_ref == ref_id:
                         continue
                     old_refs.append(old_ref)
+                    snapshot_scores[old_ref] = float(score)
                 if old_refs:
                     # #618-7: 一次 HMGET 取全部待驱逐 ref 的 alias（resolve_aliases
                     # 同款批量模式），替代逐 ref 串行 HGET。
@@ -420,18 +426,18 @@ class RedisSessionStore(BaseSessionStore):
                         for ref, al in zip(old_refs, alias_values)
                         if al is not None
                     }
-                    async with self._r.pipeline() as evict_pipe:
-                        for old_ref in old_refs:
-                            self._evict_ref(evict_pipe, session_id, old_ref, aliases.get(old_ref))
-                        await evict_pipe.execute()
-                    # P-1（#874）/#1111：被驱逐 ref 的进程内三缓存一并失效
-                    # （对齐 delete_ref / overwrite / 内存后端淘汰路径）。
-                    self._invalidate_derived_caches(session_id, *old_refs, reason='EVICT')
-                    # m-2: the awaits above (zcard/zrange/hmget/execute) can
-                    # interleave with a get_session_metadata that re-populates
-                    # L1 with a refs_order still containing the evicted refs —
-                    # invalidate L1 again AFTER the eviction pipeline commits.
-                    self._l1_invalidate_session(session_id)
+                    evict_refs = await self._evict_lru_unbumped(
+                        order_key, session_id, old_refs, snapshot_scores, aliases
+                    )
+                    if evict_refs:
+                        # P-1（#874）/#1111：被驱逐 ref 的进程内三缓存一并失效
+                        # （对齐 delete_ref / overwrite / 内存后端淘汰路径）。
+                        self._invalidate_derived_caches(session_id, *evict_refs, reason='EVICT')
+                        # m-2: the awaits above (zcard/zrange/hmget/execute) can
+                        # interleave with a get_session_metadata that re-populates
+                        # L1 with a refs_order still containing the evicted refs —
+                        # invalidate L1 again AFTER the eviction pipeline commits.
+                        self._l1_invalidate_session(session_id)
         except aioredis.RedisError as e:
             logger.error(
                 "Redis post-store eviction failed for session %s: %s — new ref kept",
@@ -472,6 +478,11 @@ class RedisSessionStore(BaseSessionStore):
             )
         except aioredis.RedisError:
             previous_digest = None
+        # 客户端以 decode_responses=False 构造，hget 返回 bytes（或 None）——
+        # 不归一化类型时 b"..." != "..." 恒真，同内容覆写也会误判 changed
+        # 而 bump revision（analysis_reuse 的 revision 复核随之整段 miss）。
+        if isinstance(previous_digest, bytes):
+            previous_digest = previous_digest.decode()
         content_changed = previous_digest != payload_digest
         try:
             async with self._r.pipeline() as pipe:
@@ -625,11 +636,19 @@ class RedisSessionStore(BaseSessionStore):
         singleflight 去重（``ref_fetch_shared``）—— 并发 miss 共享一次拉取。
         纯优化：epoch 捕获仍在读源之前、put_if_current 仍在同一调用方收尾，
         失效语义与单飞接入前完全一致。
+
+        #1626(a)：本方法此前是唯一不调 ``_ensure_connected()`` 的公开方法
+        —— 生产形态（redis=None）下若它是进程内首个触 Redis 的调用，
+        ``self._r`` 仍是 None，首行 hget 直接 AttributeError（且不在
+        RedisError 降级契约内，会逃逸到工具分发路径）；跨 event loop
+        复用时还会拿到绑定旧 loop 的 client。与兄弟方法（get/store/...）
+        对齐：入口取连接，alias 解析走在返回 client 上。
         """
         from app.services.ref_payload_cache import ref_payload_cache
         try:
+            client = await self._ensure_connected()
             ref_id = ref_id_or_alias
-            resolved = await self._r.hget(self._aliases_key(session_id), ref_id_or_alias)
+            resolved = await client.hget(self._aliases_key(session_id), ref_id_or_alias)
             if resolved is not None:
                 ref_id = resolved.decode() if isinstance(resolved, bytes) else resolved
 
@@ -1740,6 +1759,64 @@ return results
         if alias:
             pipe.hdel(self._aliases_key(session_id), alias)
         pipe.hdel(self._refs_key(session_id), ref_id)
+
+    async def _evict_lru_unbumped(
+        self,
+        order_key: str,
+        session_id: str,
+        old_refs: list,
+        snapshot_scores: dict,
+        aliases: dict,
+    ) -> list:
+        """#1626(b)：WATCH refs_order 重读存活 score，事务内仅逐出快照后
+        未被 recency bump 的成员；返回实际逐出的 ref 列表（空 = 无可逐或
+        放弃本轮淘汰）。
+
+        store() 的 LRU 淘汰集合来自非 WATCH 的 zrange 快照；get() 的
+        recency bump（CONC-F6 只守护了「驱逐后 zadd 复活」的反方向）落在
+        快照与逐出 pipeline 之间时，会把「刚被读取并 bump 过 recency」的
+        旧 ref 数据键删掉 —— 读者本次拿到数据，下次读同一 ref 却得到不
+        存在的 ref。refs_order 的 score 只会因 store/overwrite/读而前移
+        （zadd now），故存活 score 仍等于快照 score 即未被 bump；被 bump
+        的成员连同 WATCH 中止的 EXEC 一起留到下一轮自然淘汰（方向保守：
+        只可能少逐一个 ref，绝不多删活数据）。
+
+        WatchError（并发 zadd 改写 refs_order）重试一次；再失败返回空表
+        （放弃本轮淘汰，容量由下一次 store 收敛），日志明示。
+        """
+        for _attempt in range(2):
+            try:
+                async with self._r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(order_key)
+                    live = await pipe.zrange(order_key, 0, -1, withscores=True)
+                    live_scores = {
+                        (m.decode() if isinstance(m, bytes) else m): float(s)
+                        for m, s in live
+                    }
+                    evict_refs = [
+                        r for r in old_refs
+                        if r in live_scores
+                        and live_scores[r] <= snapshot_scores[r]
+                    ]
+                    if not evict_refs:
+                        # 快照后全部被 bump / 已被并发移除 —— 无物可逐。
+                        # （async with 退出时 reset() 负责 UNWATCH + 归还连接。）
+                        return []
+                    pipe.multi()
+                    for old_ref in evict_refs:
+                        self._evict_ref(
+                            pipe, session_id, old_ref, aliases.get(old_ref)
+                        )
+                    await pipe.execute()
+                return evict_refs
+            except aioredis.WatchError:
+                continue  # 并发 zadd 改写 order —— 重读后重试
+        logger.info(
+            "Redis LRU eviction for session %s gave up after WatchError retry "
+            "(%d candidate refs kept; capacity converges on next store)",
+            session_id, len(old_refs),
+        )
+        return []
 
     async def _stamp_content_revision(self, session_id: str, ref_id: str, d: dict) -> dict:
         """V5-E: write the authoritative content_revision into a descriptor dict."""

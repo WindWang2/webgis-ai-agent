@@ -379,245 +379,166 @@ class ToolDispatchService:
                 )
             executed_tools.add(tool_key)
 
-        # 1.42 (ADR-0204 D3/D4) capability dispatch bind —— 唯一调用点，
-        # 覆盖全部 agent 路径（legacy / Pi bridge / workflow_engine）。
-        # 实现与 kill switch（GIS_CAPABILITY_DISPATCH_BIND）承袭 #1395：
-        # 工具声明的 capability 若被资格判定 INELIGIBLE 且存在 eligible
-        # 替代 → 拒绝（typed CAPABILITY_INELIGIBLE）；allowed/refused 双面
-        # 记 bounded evidence（id/code/score 级，无参数无凭证）。fail-open
-        # 纪律不变：图缺席/异常/闸关 → 放行，本闸绝不成为第二 planner 故障面。
-        #
-        # F06（ADR-0215）：situation 生产供给 —— caller 未传（或传 dict）
-        # 时在 chokepoint 组装/增强 runtime situation（kill switch
-        # GIS_SITUATION_SUPPLY 默认 ON；异常退回原值 = bare context 既有
-        # 语义）。供给经 async 变体（探针在非循环线程执行），worker 探针
-        # 配置（GIS_SITUATION_PROBE_WORKERS）由此真实生效。断言纪律见
-        # runtime_situation 模块：可用性/凭证/权限各有独立命名空间与消费
-        # 契约；默认部署零配置 ⇒ bind 裁决与 bare context 逐位一致。
-        with best_effort(
-            "situation-supply-merge",
-            "tool-dispatch-situation-supply-best-effort",
-            ctx={"tool": tool_name},
-        ):
-            # 供给失败退回 caller 原值（bare context 既有语义）。
-            from app.services.gis_harness.hotpath_convergence.runtime_situation import (
-                merge_situation_facts_async as _merge_situation,
-                situation_supply_enabled as _supply_enabled,
-            )
-
-            if _supply_enabled() and (
-                    situation is None or isinstance(situation, dict)):
-                situation = await _merge_situation(situation, session_id) or None
-        capability_evidence: Optional[Dict[str, Any]] = None
+        # #1659: 占位（executed_tools.add）之后到执行段 try 之间还有多个 await
+        # （situation 供给合并 merge_situation_facts_async、分析复用查找
+        # snapshot_input_shapes/find_reusable_artifact）—— 硬取消
+        # （task.cancel() 的 CancelledError 是 BaseException）落在这些 await 上时
+        # 会穿过 best_effort 的 Exception 边界与仅覆盖执行段的 handler，dedup
+        # 占位键滞留 executed_tools 且不在 _completed_keys：本 turn 内同参重试恒收
+        # 「并发在飞」谎言（#1060 只补了执行段，此处为不完整修复残留）。把释放
+        # 语义上提到占位之后，覆盖全部预执行 await；各早退分支（dedup 命中 /
+        # capability denial / guardrail BLOCK / provider 断路）的显式释放保留
+        # （discard 幂等，无双释放风险）。
         try:
-            from app.services.gis_harness.hotpath_convergence import (
-                CAPABILITY_BIND_POLICY_VERSION,
-                CAPABILITY_INELIGIBLE_CODE,
-                CAPABILITY_INELIGIBLE_KEY,
-                bind_tool_capability,
-            )
-
-            _bind = bind_tool_capability(
-                tool_name, registry=self._registry,
-                session_id=session_id, situation=situation)
-        except Exception:  # noqa: BLE001 — 绑定/证据绝不阻断调度面
-            _bind = None
-        if _bind is not None:
-            capability_evidence = dict(_bind.evidence or {})
+            # 1.42 (ADR-0204 D3/D4) capability dispatch bind —— 唯一调用点，
+            # 覆盖全部 agent 路径（legacy / Pi bridge / workflow_engine）。
+            # 实现与 kill switch（GIS_CAPABILITY_DISPATCH_BIND）承袭 #1395：
+            # 工具声明的 capability 若被资格判定 INELIGIBLE 且存在 eligible
+            # 替代 → 拒绝（typed CAPABILITY_INELIGIBLE）；allowed/refused 双面
+            # 记 bounded evidence（id/code/score 级，无参数无凭证）。fail-open
+            # 纪律不变：图缺席/异常/闸关 → 放行，本闸绝不成为第二 planner 故障面。
+            #
+            # F06（ADR-0215）：situation 生产供给 —— caller 未传（或传 dict）
+            # 时在 chokepoint 组装/增强 runtime situation（kill switch
+            # GIS_SITUATION_SUPPLY 默认 ON；异常退回原值 = bare context 既有
+            # 语义）。供给经 async 变体（探针在非循环线程执行），worker 探针
+            # 配置（GIS_SITUATION_PROBE_WORKERS）由此真实生效。断言纪律见
+            # runtime_situation 模块：可用性/凭证/权限各有独立命名空间与消费
+            # 契约；默认部署零配置 ⇒ bind 裁决与 bare context 逐位一致。
             with best_effort(
-                "capability-evidence-record",
-                "tool-dispatch-capability-evidence-best-effort",
+                "situation-supply-merge",
+                "tool-dispatch-situation-supply-best-effort",
                 ctx={"tool": tool_name},
             ):
-                _ev = current_turn_evidence()
-                if _ev is not None:
-                    _ev.add_capability_dispatch(capability_evidence)
-            if _bind.refused:
-                # F06：denial 决策溯源记录 —— riding TOOL_CALLS 附加记录
-                # （decision_record 约定：不加新 Stage、不改链 schema），
-                # replay metrics/drift 的既有消费端零改动即生效。记录面
-                # 绝不阻断拒绝路径本身。
+                # 供给失败退回 caller 原值（bare context 既有语义）。
+                from app.services.gis_harness.hotpath_convergence.runtime_situation import (
+                    merge_situation_facts_async as _merge_situation,
+                    situation_supply_enabled as _supply_enabled,
+                )
+
+                if _supply_enabled() and (
+                        situation is None or isinstance(situation, dict)):
+                    situation = await _merge_situation(situation, session_id) or None
+            capability_evidence: Optional[Dict[str, Any]] = None
+            try:
+                from app.services.gis_harness.hotpath_convergence import (
+                    CAPABILITY_BIND_POLICY_VERSION,
+                    CAPABILITY_INELIGIBLE_CODE,
+                    CAPABILITY_INELIGIBLE_KEY,
+                    bind_tool_capability,
+                )
+
+                _bind = bind_tool_capability(
+                    tool_name, registry=self._registry,
+                    session_id=session_id, situation=situation)
+            except Exception:  # noqa: BLE001 — 绑定/证据绝不阻断调度面
+                _bind = None
+            if _bind is not None:
+                capability_evidence = dict(_bind.evidence or {})
                 with best_effort(
-                    "denial-decision-record",
-                    "tool-dispatch-denial-record-best-effort",
+                    "capability-evidence-record",
+                    "tool-dispatch-capability-evidence-best-effort",
                     ctx={"tool": tool_name},
                 ):
-                    from app.lib.runtime.chain_emitters import emit_chain
-                    from app.lib.runtime.decision_record import (
-                        DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
-                        alternative_entry,
-                        decision_record,
-                        reason_code,
-                    )
-                    from app.lib.runtime.gis_trace import Stage as _Stage
-
-                    _denial = _bind.decision
-                    emit_chain(
-                        _Stage.TOOL_CALLS,
-                        tool=tool_name,
-                        status="denied",
-                        decision=decision_record(
-                            DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
-                            selected=tool_name,
-                            alternatives=[
-                                alternative_entry(
-                                    f"{a.get('kind', 'tool')}:"
-                                    f"{a.get('id', '')}"[:96],
-                                    score=a.get("score"),
-                                    status=str(a.get("status", "")),
-                                )
-                                for a in (_denial.alternatives or [])[:4]
-                            ],
-                            reason_codes=[
-                                reason_code(
-                                    str(rc.get("check", "")),
-                                    str(rc.get("observed", "")),
-                                    str(rc.get("expected", "")),
-                                    str(rc.get("hint", "") or ""),
-                                )
-                                for rc in (_denial.reason_codes or [])[:6]
-                            ],
-                            inputs={
-                                "capability": _denial.capability_id,
-                                "session_id": (session_id or "")[:64],
-                                "situation_supply": bool(situation),
-                            },
-                            evidence_refs=[
-                                f"tool:{tool_name}",
-                                f"capability:{_denial.capability_id}",
-                            ],
-                            policy_version=CAPABILITY_BIND_POLICY_VERSION,
-                        ),
-                    )
-                # 与 guardrail BLOCK 同纪律：释放 dedup 占位，纠正后的重试
-                # 不会被「在飞」谎言拦住。
-                self._release_key(executed_tools, tool_key, session_id or "")
-                # H05：拒绝码取自 decision 本体（INELIGIBLE / 断路
-                # PROVIDER_UNAVAILABLE 双支共用此出口；默认承既有词）。
-                return ToolDispatchResult(
-                    status="error",
-                    llm_payload=_bind.decision.denial_text(),
-                    slim_event={
-                        "type": "tool_error",
-                        "name": tool_name,
-                        "error": _bind.decision.error_key,
-                    },
-                    geojson_ref=None,
-                    raw_result=_bind.decision.to_details(),
-                    error_msg=(_bind.decision.code or CAPABILITY_INELIGIBLE_CODE),
-                    capability_evidence=capability_evidence,
-                )
-
-        # 1.43 (ADR-0217 / H10) GISAction IR 投影闸 —— 每条 legacy direct
-        # 调用在执行前先确定性投影为 GISActionPlan 并编译（contract
-        # validation）。纪律承袭 capability bind：fail-open（投影/编译故障
-        # 绝不阻断调度面）、kill switch（GIS_ACTION_IR_BIND，默认 ON）、
-        # 证据只记 id/code 级（无参数）。默认模式：blocking findings 只降级
-        # 为证据 + 收敛 telemetry（行为逐位不变）；GIS_ACTION_IR_STRICT=1
-        # 时 blocking（弃用工具且无替代声明等）→ typed 拒绝，与 capability
-        # denial 同形状。这是「执行前先有 typed Action IR」的统一收口点。
-        action_evidence: Optional[Dict[str, Any]] = None
-        with best_effort(
-            "action-ir-bind",
-            "tool-dispatch-action-ir-bind-best-effort",
-            ctx={"tool": tool_name},
-        ):
-            from app.services.gis_action.service import (
-                bind_action_ir as _bind_action_ir,
-            )
-
-            try:
-                _ir_args = (
-                    tool_args_raw
-                    if isinstance(tool_args_raw, dict)
-                    else json.loads(tool_args_raw)
-                    if isinstance(tool_args_raw, str)
-                    else None
-                )
-            except (json.JSONDecodeError, TypeError):
-                _ir_args = None
-            _ir_bind = _bind_action_ir(
-                tool_name, _ir_args if isinstance(_ir_args, dict) else {},
-                registry=self._registry,
-                args_projected=_ir_args is not None)
-            if _ir_bind is not None:
-                action_evidence = dict(_ir_bind.evidence)
-                if _ir_bind.denied:
-                    # strict 模式拒绝：决策溯源 riding TOOL_CALLS（与
-                    # capability denial 同惯例；不加新 Stage、不改链 schema）。
+                    _ev = current_turn_evidence()
+                    if _ev is not None:
+                        _ev.add_capability_dispatch(capability_evidence)
+                if _bind.refused:
+                    # F06：denial 决策溯源记录 —— riding TOOL_CALLS 附加记录
+                    # （decision_record 约定：不加新 Stage、不改链 schema），
+                    # replay metrics/drift 的既有消费端零改动即生效。记录面
+                    # 绝不阻断拒绝路径本身。
                     with best_effort(
-                        "action-ir-denial-decision-record",
-                        "tool-dispatch-action-ir-denial-best-effort",
+                        "denial-decision-record",
+                        "tool-dispatch-denial-record-best-effort",
                         ctx={"tool": tool_name},
                     ):
                         from app.lib.runtime.chain_emitters import emit_chain
                         from app.lib.runtime.decision_record import (
-                            DECISION_KIND_ACTION_PLAN_COMPILE,
-                            decision_record as _dr,
-                            reason_code as _rc,
+                            DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+                            alternative_entry,
+                            decision_record,
+                            reason_code,
                         )
                         from app.lib.runtime.gis_trace import Stage as _Stage
 
-                        _blocking = (
-                            _ir_bind.compilation.blocking_findings()
-                            if _ir_bind.compilation is not None else [])
+                        _denial = _bind.decision
                         emit_chain(
                             _Stage.TOOL_CALLS,
                             tool=tool_name,
                             status="denied",
-                            decision=_dr(
-                                DECISION_KIND_ACTION_PLAN_COMPILE,
+                            decision=decision_record(
+                                DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
                                 selected=tool_name,
-                                alternatives=[],
+                                alternatives=[
+                                    alternative_entry(
+                                        f"{a.get('kind', 'tool')}:"
+                                        f"{a.get('id', '')}"[:96],
+                                        score=a.get("score"),
+                                        status=str(a.get("status", "")),
+                                    )
+                                    for a in (_denial.alternatives or [])[:4]
+                                ],
                                 reason_codes=[
-                                    _rc(str(f.code), "blocking", "compiled", "")
-                                    for f in _blocking[:6]
+                                    reason_code(
+                                        str(rc.get("check", "")),
+                                        str(rc.get("observed", "")),
+                                        str(rc.get("expected", "")),
+                                        str(rc.get("hint", "") or ""),
+                                    )
+                                    for rc in (_denial.reason_codes or [])[:6]
                                 ],
                                 inputs={
-                                    "plan_id": _ir_bind.plan_id[:64],
-                                    "compile_id": _ir_bind.compile_id,
-                                    "kind": _ir_bind.kind,
+                                    "capability": _denial.capability_id,
                                     "session_id": (session_id or "")[:64],
+                                    "situation_supply": bool(situation),
                                 },
-                                evidence_refs=[f"tool:{tool_name}"],
-                                policy_version="gis_action_ir_bind.v1",
+                                evidence_refs=[
+                                    f"tool:{tool_name}",
+                                    f"capability:{_denial.capability_id}",
+                                ],
+                                policy_version=CAPABILITY_BIND_POLICY_VERSION,
                             ),
                         )
-                    # 与 guardrail BLOCK 同纪律：释放 dedup 占位。
+                    # 与 guardrail BLOCK 同纪律：释放 dedup 占位，纠正后的重试
+                    # 不会被「在飞」谎言拦住。
                     self._release_key(executed_tools, tool_key, session_id or "")
+                    # H05：拒绝码取自 decision 本体（INELIGIBLE / 断路
+                    # PROVIDER_UNAVAILABLE 双支共用此出口；默认承既有词）。
                     return ToolDispatchResult(
                         status="error",
-                        llm_payload=_ir_bind.denial_text,
+                        llm_payload=_bind.decision.denial_text(),
                         slim_event={
                             "type": "tool_error",
                             "name": tool_name,
-                            "error": "action_ir_compile_blocked",
+                            "error": _bind.decision.error_key,
                         },
                         geojson_ref=None,
-                        raw_result=_ir_bind.evidence,
-                        error_msg="ACTION_IR_BLOCKED",
+                        raw_result=_bind.decision.to_details(),
+                        error_msg=(_bind.decision.code or CAPABILITY_INELIGIBLE_CODE),
                         capability_evidence=capability_evidence,
-                        action_evidence=action_evidence,
                     )
 
-        # 1.45 (ADR-0195) 空间反幻觉守护网关：L1 格式/倒置、L2 海陆/红线、
-        # L3 设施常识、L4 拓扑，在进入任何执行/复用管线前拦截。BLOCK →
-        # 结构化错误结果（不执行工具）；AUTO_FLIP → 就地改写 arguments 后
-        # 照常调度（dedup key 保持原参：同参倒置重复提交同样被纠偏，语义
-        # 幂等）。SPATIAL_GUARDRAILS=0 一键关闭（与 GIS_ANALYSIS_REUSE 同
-        # kill switch 惯例）。网关内部已 fail-open，此处再兜一层异常边界。
-        if spatial_guardrails_enabled():
+            # 1.43 (ADR-0217 / H10) GISAction IR 投影闸 —— 每条 legacy direct
+            # 调用在执行前先确定性投影为 GISActionPlan 并编译（contract
+            # validation）。纪律承袭 capability bind：fail-open（投影/编译故障
+            # 绝不阻断调度面）、kill switch（GIS_ACTION_IR_BIND，默认 ON）、
+            # 证据只记 id/code 级（无参数）。默认模式：blocking findings 只降级
+            # 为证据 + 收敛 telemetry（行为逐位不变）；GIS_ACTION_IR_STRICT=1
+            # 时 blocking（弃用工具且无替代声明等）→ typed 拒绝，与 capability
+            # denial 同形状。这是「执行前先有 typed Action IR」的统一收口点。
+            action_evidence: Optional[Dict[str, Any]] = None
             with best_effort(
-                "spatial-guardrail-gate",
-                "tool-dispatch-guardrail-best-effort",
+                "action-ir-bind",
+                "tool-dispatch-action-ir-bind-best-effort",
                 ctx={"tool": tool_name},
             ):
-                from app.services.spatial_guardrails.guardrail_middleware import (
-                    get_guardrails,
+                from app.services.gis_action.service import (
+                    bind_action_ir as _bind_action_ir,
                 )
 
                 try:
-                    _guard_args = (
+                    _ir_args = (
                         tool_args_raw
                         if isinstance(tool_args_raw, dict)
                         else json.loads(tool_args_raw)
@@ -625,292 +546,343 @@ class ToolDispatchService:
                         else None
                     )
                 except (json.JSONDecodeError, TypeError):
-                    _guard_args = None
-                if isinstance(_guard_args, dict):
-                    _guard_verdict = get_guardrails().check_tool_args(
-                        tool_name, _guard_args
-                    )
-                    if not _guard_verdict.passed:
-                        _first = _guard_verdict.blocking()[0]
-                        _hint = str(_first.evidence.get("suggestion") or "")
-                        # H01 (#1384): BLOCK is an error-shaped early return
-                        # after executed_tools.add — release the dedup slot so
-                        # a corrected retry is not lied-to as "still in flight".
+                    _ir_args = None
+                _ir_bind = _bind_action_ir(
+                    tool_name, _ir_args if isinstance(_ir_args, dict) else {},
+                    registry=self._registry,
+                    args_projected=_ir_args is not None)
+                if _ir_bind is not None:
+                    action_evidence = dict(_ir_bind.evidence)
+                    if _ir_bind.denied:
+                        # strict 模式拒绝：决策溯源 riding TOOL_CALLS（与
+                        # capability denial 同惯例；不加新 Stage、不改链 schema）。
+                        with best_effort(
+                            "action-ir-denial-decision-record",
+                            "tool-dispatch-action-ir-denial-best-effort",
+                            ctx={"tool": tool_name},
+                        ):
+                            from app.lib.runtime.chain_emitters import emit_chain
+                            from app.lib.runtime.decision_record import (
+                                DECISION_KIND_ACTION_PLAN_COMPILE,
+                                decision_record as _dr,
+                                reason_code as _rc,
+                            )
+                            from app.lib.runtime.gis_trace import Stage as _Stage
+
+                            _blocking = (
+                                _ir_bind.compilation.blocking_findings()
+                                if _ir_bind.compilation is not None else [])
+                            emit_chain(
+                                _Stage.TOOL_CALLS,
+                                tool=tool_name,
+                                status="denied",
+                                decision=_dr(
+                                    DECISION_KIND_ACTION_PLAN_COMPILE,
+                                    selected=tool_name,
+                                    alternatives=[],
+                                    reason_codes=[
+                                        _rc(str(f.code), "blocking", "compiled", "")
+                                        for f in _blocking[:6]
+                                    ],
+                                    inputs={
+                                        "plan_id": _ir_bind.plan_id[:64],
+                                        "compile_id": _ir_bind.compile_id,
+                                        "kind": _ir_bind.kind,
+                                        "session_id": (session_id or "")[:64],
+                                    },
+                                    evidence_refs=[f"tool:{tool_name}"],
+                                    policy_version="gis_action_ir_bind.v1",
+                                ),
+                            )
+                        # 与 guardrail BLOCK 同纪律：释放 dedup 占位。
                         self._release_key(executed_tools, tool_key, session_id or "")
                         return ToolDispatchResult(
                             status="error",
-                            llm_payload=(
-                                f"[空间反幻觉拦截] {_first.code}: {_first.message}"
-                                + (f" 修正建议：{_hint}" if _hint else "")
-                                + "。请修正参数后重试。"
-                            ),
+                            llm_payload=_ir_bind.denial_text,
                             slim_event={
                                 "type": "tool_error",
                                 "name": tool_name,
-                                "error": f"guardrail_block:{_first.code}",
+                                "error": "action_ir_compile_blocked",
                             },
                             geojson_ref=None,
-                            raw_result={
-                                "success": False,
-                                "error": _first.message,
-                                "code": f"GUARDRAIL_{_first.code}",
-                                "correction_hint": _hint,
-                                "guardrail_findings": [
-                                    i.to_dict() for i in _guard_verdict.issues
-                                ],
-                            },
-                            error_msg=_first.code,
+                            raw_result=_ir_bind.evidence,
+                            error_msg="ACTION_IR_BLOCKED",
+                            capability_evidence=capability_evidence,
+                            action_evidence=action_evidence,
                         )
-                    if _guard_verdict.mutated:
-                        tc["function"]["arguments"] = json.dumps(
-                            _guard_args, ensure_ascii=False
-                        )
-                        tool_args_raw = tc["function"]["arguments"]
 
-        # 1.5 (V2 P10) analysis reuse —— artifact 层确定性复用。ref: 参数
-        # 是 cached_tool 的正确性盲区（ref 可变 → 拒缓存），本层靠
-        # ArtifactRegistry 状态 + descriptor 形状指纹补齐复用语义。仅对
-        # registry 认定的分析工具生效；任何不可判定 → miss 照常执行
-        # （纯加速，绝不因复用逻辑改变失败语义）。GIS_ANALYSIS_REUSE=0
-        # 整体关闭（复用查询只读，关闭只影响命中）。
-        analysis_key: Optional[str] = None
-        input_shapes: Optional[Dict[str, dict]] = None
-        reused_result: Optional[Dict[str, Any]] = None
-        if os.getenv("GIS_ANALYSIS_REUSE", "1") != "0":
-            try:
-                from app.lib.gis.algorithm_registry import get_algorithm_registry
-                from app.lib.gis.analysis_reuse import (
-                    compute_analysis_key,
-                    find_reusable_artifact,
-                    snapshot_input_shapes,
-                )
+            # 1.45 (ADR-0195) 空间反幻觉守护网关：L1 格式/倒置、L2 海陆/红线、
+            # L3 设施常识、L4 拓扑，在进入任何执行/复用管线前拦截。BLOCK →
+            # 结构化错误结果（不执行工具）；AUTO_FLIP → 就地改写 arguments 后
+            # 照常调度（dedup key 保持原参：同参倒置重复提交同样被纠偏，语义
+            # 幂等）。SPATIAL_GUARDRAILS=0 一键关闭（与 GIS_ANALYSIS_REUSE 同
+            # kill switch 惯例）。网关内部已 fail-open，此处再兜一层异常边界。
+            if spatial_guardrails_enabled():
+                with best_effort(
+                    "spatial-guardrail-gate",
+                    "tool-dispatch-guardrail-best-effort",
+                    ctx={"tool": tool_name},
+                ):
+                    from app.services.spatial_guardrails.guardrail_middleware import (
+                        get_guardrails,
+                    )
 
-                if tool_name in get_algorithm_registry().tool_to_capability():
                     try:
-                        _parsed = (
+                        _guard_args = (
                             tool_args_raw
-                            if isinstance(tool_args_raw, (dict, list))
+                            if isinstance(tool_args_raw, dict)
                             else json.loads(tool_args_raw)
+                            if isinstance(tool_args_raw, str)
+                            else None
                         )
                     except (json.JSONDecodeError, TypeError):
-                        _parsed = None
-                    if _parsed is not None:
-                        analysis_key = compute_analysis_key(tool_name, _parsed)
-                        if analysis_key is not None:
-                            input_shapes = await snapshot_input_shapes(session_id, _parsed)
-                            raster_fps = None
-                            try:
-                                from app.lib.gis.analysis_reuse import (
-                                    snapshot_raster_fingerprints,
-                                )
-
-                                raster_fps = snapshot_raster_fingerprints(_parsed) or None
-                            except Exception:  # noqa: BLE001
-                                raster_fps = None
-                            reuse = await find_reusable_artifact(
-                                session_id,
-                                analysis_key=analysis_key,
-                                input_shapes=input_shapes,
-                                raster_fingerprints=raster_fps,
+                        _guard_args = None
+                    if isinstance(_guard_args, dict):
+                        _guard_verdict = get_guardrails().check_tool_args(
+                            tool_name, _guard_args
+                        )
+                        if not _guard_verdict.passed:
+                            _first = _guard_verdict.blocking()[0]
+                            _hint = str(_first.evidence.get("suggestion") or "")
+                            # H01 (#1384): BLOCK is an error-shaped early return
+                            # after executed_tools.add — release the dedup slot so
+                            # a corrected retry is not lied-to as "still in flight".
+                            self._release_key(executed_tools, tool_key, session_id or "")
+                            return ToolDispatchResult(
+                                status="error",
+                                llm_payload=(
+                                    f"[空间反幻觉拦截] {_first.code}: {_first.message}"
+                                    + (f" 修正建议：{_hint}" if _hint else "")
+                                    + "。请修正参数后重试。"
+                                ),
+                                slim_event={
+                                    "type": "tool_error",
+                                    "name": tool_name,
+                                    "error": f"guardrail_block:{_first.code}",
+                                },
+                                geojson_ref=None,
+                                raw_result={
+                                    "success": False,
+                                    "error": _first.message,
+                                    "code": f"GUARDRAIL_{_first.code}",
+                                    "correction_hint": _hint,
+                                    "guardrail_findings": [
+                                        i.to_dict() for i in _guard_verdict.issues
+                                    ],
+                                },
+                                error_msg=_first.code,
                             )
-                            if reuse:
-                                _fc = reuse.get("feature_count")
-                                reused_result = {
-                                    "success": True,
-                                    "summary": (
-                                        f"分析复用：本调用的工具、参数与输入引用与既有产物 "
-                                        f"{reuse['artifact_id']} 完全一致（analysis key 相同且输入未变），"
-                                        f"本次未重复计算，直接复用该产物。"
-                                    ),
-                                    "ref_id": reuse["artifact_id"],
-                                    "reused": True,
-                                    "feature_count": _fc,
-                                }
-                                if reuse.get("bbox"):
-                                    reused_result["bbox"] = reuse["bbox"]
-            except Exception:  # noqa: BLE001 — 复用是纯加速：查找失败绝不阻塞执行
-                logger.debug(
-                    "[AnalysisReuse] lookup skipped tool=%s", tool_name, exc_info=True
-                )
+                        if _guard_verdict.mutated:
+                            tc["function"]["arguments"] = json.dumps(
+                                _guard_args, ensure_ascii=False
+                            )
+                            tool_args_raw = tc["function"]["arguments"]
 
-        # 2. 执行（registry 内部全权处理 ref 解析、校验、异常捕获与自愈）
-        # #909 wave bound: the registry call (+ store + MapSpec authoring below) is
-        # the blast radius. Guard it behind _wave_semaphore so an LLM round that
-        # emits 12-20 concurrent tool_calls cannot burst the thread pool / Redis /
-        # external APIs. _dedup_lock is already released, so only execution is gated.
-        if reused_result is not None:
-            result: Dict[str, Any] = reused_result
-        else:
-            # H05（capability runtime vNext）：provider 健康面 —— 执行前断路
-            # 裁决（OPEN → typed fail-fast；HALF_OPEN 在此消耗 trial 名额，
-            # 与下方 record 配对，早退路径不经过此处故无名额泄漏面）+
-            # 执行后 typed 结果回填（喂断路/EWMA/排序因子）。
-            # 全链 fail-open：健康面缺席/kill switch = 逐位既有行为。
-            _provider_executed = False
-            try:
-                from app.services.capability_runtime.dispatch_recording import (
-                    provider_allow as _provider_allow,
-                )
-
-                _provider_allowed = _provider_allow(tool_name)
-            except Exception:  # noqa: BLE001
-                _provider_allowed = True
-            if not _provider_allowed:
-                from app.services.capability_runtime.dispatch_recording import (
-                    PROVIDER_UNAVAILABLE_CODE,
-                    PROVIDER_UNAVAILABLE_KEY,
-                )
-
-                self._release_key(executed_tools, tool_key, session_id or "")
-                return ToolDispatchResult(
-                    status="error",
-                    llm_payload=(
-                        f"Tool '{tool_name}' is temporarily unavailable "
-                        "(circuit open after repeated failures). Please retry "
-                        "later or dispatch a healthy alternative for the same "
-                        "capability."),
-                    slim_event={
-                        "type": "tool_error",
-                        "name": tool_name,
-                        "error": PROVIDER_UNAVAILABLE_KEY,
-                    },
-                    geojson_ref=None,
-                    raw_result={
-                        "success": False,
-                        "error": "provider circuit open (fail-fast)",
-                        "code": PROVIDER_UNAVAILABLE_CODE,
-                        "retryable": True,
-                    },
-                    error_msg=PROVIDER_UNAVAILABLE_CODE,
-                )
-            try:
-                # #1062: 消费 ToolCost 元数据（#996 承诺的「wave 并发可按档分桶」
-                # 的最小落地）—— heavy 工具占 2 个并发槽，避免同波多个 heavy
-                # 分析挤占全部 wave 预算让轻工具排队。light/medium 占 1 槽不变。
-                # registry duck-typing（workflow 测试的 _FakeRegistry 等不实现
-                # metadata —— 视为 light，与 metadata() 的未注册兜底一致）。
-                _meta_fn = getattr(self._registry, "metadata", None)
-                _cost = _meta_fn(tool_name).get("cost") if callable(_meta_fn) else None
-                _wave_slots = 2 if _cost == "heavy" else 1
-                # 顺序（防死锁）：先过会话门（等待者不持全局槽），再抢全局
-                # wave 槽 —— 达到会话上限的会话在此排队，其它会话照常通过。
-                await self._session_wave_gate.acquire(session_id or "")
+            # 1.5 (V2 P10) analysis reuse —— artifact 层确定性复用。ref: 参数
+            # 是 cached_tool 的正确性盲区（ref 可变 → 拒缓存），本层靠
+            # ArtifactRegistry 状态 + descriptor 形状指纹补齐复用语义。仅对
+            # registry 认定的分析工具生效；任何不可判定 → miss 照常执行
+            # （纯加速，绝不因复用逻辑改变失败语义）。GIS_ANALYSIS_REUSE=0
+            # 整体关闭（复用查询只读，关闭只影响命中）。
+            analysis_key: Optional[str] = None
+            input_shapes: Optional[Dict[str, dict]] = None
+            reused_result: Optional[Dict[str, Any]] = None
+            if os.getenv("GIS_ANALYSIS_REUSE", "1") != "0":
                 try:
-                    async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
-                        # V3 data foundation：捕获本调用参数消费的规范 ref
-                        # （血缘证据；下方产物铸造后随登记写入账本边）。
-                        with capture_arg_lineage_refs() as _arg_lineage:
-                            # F06（ADR-0215 候选）：凭证 presence 授予作用域
-                            # —— #1402 闸的生产供给（env/provider 声明的凭证
-                            # id 在本作用域可见；secret 永不过桥；权限授予
-                            # 保持 tier3/plan-approved user-wins 流不变）。
-                            # 零配置 → 直通；kill switch
-                            # GIS_TOOL_SECURITY_SUPPLY（默认 ON）。
-                            try:
-                                from app.services.gis_harness.hotpath_convergence.security_supply import (
-                                    bind_session_credentials as _bind_creds,
+                    from app.lib.gis.algorithm_registry import get_algorithm_registry
+                    from app.lib.gis.analysis_reuse import (
+                        compute_analysis_key,
+                        find_reusable_artifact,
+                        snapshot_input_shapes,
+                    )
+
+                    if tool_name in get_algorithm_registry().tool_to_capability():
+                        try:
+                            _parsed = (
+                                tool_args_raw
+                                if isinstance(tool_args_raw, (dict, list))
+                                else json.loads(tool_args_raw)
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            _parsed = None
+                        if _parsed is not None:
+                            analysis_key = compute_analysis_key(tool_name, _parsed)
+                            if analysis_key is not None:
+                                input_shapes = await snapshot_input_shapes(session_id, _parsed)
+                                raster_fps = None
+                                try:
+                                    from app.lib.gis.analysis_reuse import (
+                                        snapshot_raster_fingerprints,
+                                    )
+
+                                    raster_fps = snapshot_raster_fingerprints(_parsed) or None
+                                except Exception:  # noqa: BLE001
+                                    raster_fps = None
+                                reuse = await find_reusable_artifact(
+                                    session_id,
+                                    analysis_key=analysis_key,
+                                    input_shapes=input_shapes,
+                                    raster_fingerprints=raster_fps,
                                 )
+                                if reuse:
+                                    _fc = reuse.get("feature_count")
+                                    reused_result = {
+                                        "success": True,
+                                        "summary": (
+                                            f"分析复用：本调用的工具、参数与输入引用与既有产物 "
+                                            f"{reuse['artifact_id']} 完全一致（analysis key 相同且输入未变），"
+                                            f"本次未重复计算，直接复用该产物。"
+                                        ),
+                                        "ref_id": reuse["artifact_id"],
+                                        "reused": True,
+                                        "feature_count": _fc,
+                                    }
+                                    if reuse.get("bbox"):
+                                        reused_result["bbox"] = reuse["bbox"]
+                except Exception:  # noqa: BLE001 — 复用是纯加速：查找失败绝不阻塞执行
+                    logger.debug(
+                        "[AnalysisReuse] lookup skipped tool=%s", tool_name, exc_info=True
+                    )
 
-                                _cred_scope = _bind_creds(session_id or "")
-                            except Exception:  # noqa: BLE001 — 供给面直通兜底
-                                from contextlib import nullcontext as _nullctx
+            # 2. 执行（registry 内部全权处理 ref 解析、校验、异常捕获与自愈）
+            # #909 wave bound: the registry call (+ store + MapSpec authoring below) is
+            # the blast radius. Guard it behind _wave_semaphore so an LLM round that
+            # emits 12-20 concurrent tool_calls cannot burst the thread pool / Redis /
+            # external APIs. _dedup_lock is already released, so only execution is gated.
+            if reused_result is not None:
+                result: Dict[str, Any] = reused_result
+            else:
+                # H05（capability runtime vNext）：provider 健康面 —— 执行前断路
+                # 裁决（OPEN → typed fail-fast；HALF_OPEN 在此消耗 trial 名额，
+                # 与下方 record 配对，早退路径不经过此处故无名额泄漏面）+
+                # 执行后 typed 结果回填（喂断路/EWMA/排序因子）。
+                # 全链 fail-open：健康面缺席/kill switch = 逐位既有行为。
+                _provider_executed = False
+                try:
+                    from app.services.capability_runtime.dispatch_recording import (
+                        provider_allow as _provider_allow,
+                    )
 
-                                _cred_scope = _nullctx()
-                            with _cred_scope:
-                                # ADR-0182 Harness Resource Governor：估算 → 准入 →
-                                # 预留 → 执行 → 记账/归还。拒绝/降级返回错误族
-                                # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
-                                # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
-                                _governor_adapter = _get_governor_adapter(self._registry)
-                                # review P3：EWMA 计时点在门/槽获取之后 ——
-                                # 排队拥塞不是 provider 慢的证据。
-                                _dispatch_started = time.monotonic()
-                                _provider_executed = True
-                                if _governor_adapter is not None:
-                                    # #1408: pass active turn_id into ResourceDemand
-                                    # (adapter accepts it; call site previously omitted).
-                                    try:
-                                        from app.lib.runtime.context import (
-                                            current_runtime_context,
+                    _provider_allowed = _provider_allow(tool_name)
+                except Exception:  # noqa: BLE001
+                    _provider_allowed = True
+                if not _provider_allowed:
+                    from app.services.capability_runtime.dispatch_recording import (
+                        PROVIDER_UNAVAILABLE_CODE,
+                        PROVIDER_UNAVAILABLE_KEY,
+                    )
+
+                    self._release_key(executed_tools, tool_key, session_id or "")
+                    return ToolDispatchResult(
+                        status="error",
+                        llm_payload=(
+                            f"Tool '{tool_name}' is temporarily unavailable "
+                            "(circuit open after repeated failures). Please retry "
+                            "later or dispatch a healthy alternative for the same "
+                            "capability."),
+                        slim_event={
+                            "type": "tool_error",
+                            "name": tool_name,
+                            "error": PROVIDER_UNAVAILABLE_KEY,
+                        },
+                        geojson_ref=None,
+                        raw_result={
+                            "success": False,
+                            "error": "provider circuit open (fail-fast)",
+                            "code": PROVIDER_UNAVAILABLE_CODE,
+                            "retryable": True,
+                        },
+                        error_msg=PROVIDER_UNAVAILABLE_CODE,
+                    )
+                try:
+                    # #1062: 消费 ToolCost 元数据（#996 承诺的「wave 并发可按档分桶」
+                    # 的最小落地）—— heavy 工具占 2 个并发槽，避免同波多个 heavy
+                    # 分析挤占全部 wave 预算让轻工具排队。light/medium 占 1 槽不变。
+                    # registry duck-typing（workflow 测试的 _FakeRegistry 等不实现
+                    # metadata —— 视为 light，与 metadata() 的未注册兜底一致）。
+                    _meta_fn = getattr(self._registry, "metadata", None)
+                    _cost = _meta_fn(tool_name).get("cost") if callable(_meta_fn) else None
+                    _wave_slots = 2 if _cost == "heavy" else 1
+                    # 顺序（防死锁）：先过会话门（等待者不持全局槽），再抢全局
+                    # wave 槽 —— 达到会话上限的会话在此排队，其它会话照常通过。
+                    await self._session_wave_gate.acquire(session_id or "")
+                    try:
+                        async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
+                            # V3 data foundation：捕获本调用参数消费的规范 ref
+                            # （血缘证据；下方产物铸造后随登记写入账本边）。
+                            with capture_arg_lineage_refs() as _arg_lineage:
+                                # F06（ADR-0215 候选）：凭证 presence 授予作用域
+                                # —— #1402 闸的生产供给（env/provider 声明的凭证
+                                # id 在本作用域可见；secret 永不过桥；权限授予
+                                # 保持 tier3/plan-approved user-wins 流不变）。
+                                # 零配置 → 直通；kill switch
+                                # GIS_TOOL_SECURITY_SUPPLY（默认 ON）。
+                                try:
+                                    from app.services.gis_harness.hotpath_convergence.security_supply import (
+                                        bind_session_credentials as _bind_creds,
+                                    )
+
+                                    _cred_scope = _bind_creds(session_id or "")
+                                except Exception:  # noqa: BLE001 — 供给面直通兜底
+                                    from contextlib import nullcontext as _nullctx
+
+                                    _cred_scope = _nullctx()
+                                with _cred_scope:
+                                    # ADR-0182 Harness Resource Governor：估算 → 准入 →
+                                    # 预留 → 执行 → 记账/归还。拒绝/降级返回错误族
+                                    # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
+                                    # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
+                                    _governor_adapter = _get_governor_adapter(self._registry)
+                                    # review P3：EWMA 计时点在门/槽获取之后 ——
+                                    # 排队拥塞不是 provider 慢的证据。
+                                    _dispatch_started = time.monotonic()
+                                    _provider_executed = True
+                                    if _governor_adapter is not None:
+                                        # #1408: pass active turn_id into ResourceDemand
+                                        # (adapter accepts it; call site previously omitted).
+                                        try:
+                                            from app.lib.runtime.context import (
+                                                current_runtime_context,
+                                            )
+                                            _rt = current_runtime_context()
+                                            _turn_id = (
+                                                str(_rt.turn_id)
+                                                if _rt is not None and _rt.turn_id
+                                                else ""
+                                            )
+                                        except Exception:  # noqa: BLE001
+                                            _turn_id = ""
+                                        result = await _governor_adapter.run(
+                                            tool_name=tool_name,
+                                            tool_args=tool_args_raw,
+                                            session_id=session_id or "",
+                                            turn_id=_turn_id,
+                                            dispatch_inner=lambda: self._registry.dispatch(
+                                                tool_name, tool_args_raw,
+                                                session_id=session_id),
                                         )
-                                        _rt = current_runtime_context()
-                                        _turn_id = (
-                                            str(_rt.turn_id)
-                                            if _rt is not None and _rt.turn_id
-                                            else ""
+                                    else:
+                                        result = await self._registry.dispatch(
+                                            tool_name, tool_args_raw, session_id=session_id)
+                                    # H05：成功/typed 失败结果回填（记录面绝不阻断）。
+                                    try:
+                                        from app.services.capability_runtime.dispatch_recording import (
+                                            record_dispatch_outcome as _record_outcome,
+                                        )
+
+                                        _record_outcome(
+                                            tool_name,
+                                            started_at=_dispatch_started,
+                                            result=result,
                                         )
                                     except Exception:  # noqa: BLE001
-                                        _turn_id = ""
-                                    result = await _governor_adapter.run(
-                                        tool_name=tool_name,
-                                        tool_args=tool_args_raw,
-                                        session_id=session_id or "",
-                                        turn_id=_turn_id,
-                                        dispatch_inner=lambda: self._registry.dispatch(
-                                            tool_name, tool_args_raw,
-                                            session_id=session_id),
-                                    )
-                                else:
-                                    result = await self._registry.dispatch(
-                                        tool_name, tool_args_raw, session_id=session_id)
-                                # H05：成功/typed 失败结果回填（记录面绝不阻断）。
-                                try:
-                                    from app.services.capability_runtime.dispatch_recording import (
-                                        record_dispatch_outcome as _record_outcome,
-                                    )
-
-                                    _record_outcome(
-                                        tool_name,
-                                        started_at=_dispatch_started,
-                                        result=result,
-                                    )
-                                except Exception:  # noqa: BLE001
-                                    pass
-                finally:
-                    await self._session_wave_gate.release(session_id or "")
-            except OperationCancelled:
-                # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
-                # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
-                # H05：取消不是 provider 证据 —— 只归还半开 trial 名额。
-                try:
-                    from app.services.capability_runtime.dispatch_recording import (
-                        release_provider_trial as _release_trial,
-                    )
-
-                    _release_trial(tool_name)
-                except Exception:  # noqa: BLE001
-                    pass
-                self._release_key(executed_tools, tool_key, session_id or "")
-                raise
-            except asyncio.CancelledError:
-                # #946/#1060：asyncio.CancelledError 是 BaseException，不会命中上面
-                # 两个 handler —— 硬取消（task.cancel()）若不在此外释放占位键，
-                # 本 turn 内同参重试会一直收到「并发在飞」谎言（实际无结果）。
-                # H05：同上 —— 硬取消只归还 trial 名额，不记 provider 失败。
-                try:
-                    from app.services.capability_runtime.dispatch_recording import (
-                        release_provider_trial as _release_trial,
-                    )
-
-                    _release_trial(tool_name)
-                except Exception:  # noqa: BLE001
-                    pass
-                self._release_key(executed_tools, tool_key, session_id or "")
-                raise
-            except Exception as e:
-                # H05：异常按 typed 分类回填健康面（取消不占 dedup 槽的既有
-                # 纪律不变）。到达执行后（_provider_executed）才记失败 ——
-                # 门/槽获取阶段的基建故障不是 provider-down 证据。
-                if _provider_executed:
-                    try:
-                        from app.services.capability_runtime.dispatch_recording import (
-                            record_dispatch_outcome as _record_outcome,
-                        )
-
-                        _record_outcome(tool_name, exc=e)
-                    except Exception:  # noqa: BLE001
-                        pass
-                else:
+                                        pass
+                    finally:
+                        await self._session_wave_gate.release(session_id or "")
+                except OperationCancelled:
+                    # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
+                    # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
+                    # H05：取消不是 provider 证据 —— 只归还半开 trial 名额。
                     try:
                         from app.services.capability_runtime.dispatch_recording import (
                             release_provider_trial as _release_trial,
@@ -919,15 +891,59 @@ class ToolDispatchService:
                         _release_trial(tool_name)
                     except Exception:  # noqa: BLE001
                         pass
-                from app.tools._utils import std_error_response
-                error_msg = sanitize_error_msg(str(e))
-                result = std_error_response(
-                    error_msg,
-                    code="TOOL_ERROR",
-                    error_type=type(e).__name__,
-                    correction_hint=f"Execution error: {error_msg}",
-                )
-                self._release_key(executed_tools, tool_key, session_id or "")
+                    self._release_key(executed_tools, tool_key, session_id or "")
+                    raise
+                except asyncio.CancelledError:
+                    # #946/#1060：asyncio.CancelledError 是 BaseException，不会命中上面
+                    # 两个 handler —— 硬取消（task.cancel()）若不在此外释放占位键，
+                    # 本 turn 内同参重试会一直收到「并发在飞」谎言（实际无结果）。
+                    # H05：同上 —— 硬取消只归还 trial 名额，不记 provider 失败。
+                    try:
+                        from app.services.capability_runtime.dispatch_recording import (
+                            release_provider_trial as _release_trial,
+                        )
+
+                        _release_trial(tool_name)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self._release_key(executed_tools, tool_key, session_id or "")
+                    raise
+                except Exception as e:
+                    # H05：异常按 typed 分类回填健康面（取消不占 dedup 槽的既有
+                    # 纪律不变）。到达执行后（_provider_executed）才记失败 ——
+                    # 门/槽获取阶段的基建故障不是 provider-down 证据。
+                    if _provider_executed:
+                        try:
+                            from app.services.capability_runtime.dispatch_recording import (
+                                record_dispatch_outcome as _record_outcome,
+                            )
+
+                            _record_outcome(tool_name, exc=e)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    else:
+                        try:
+                            from app.services.capability_runtime.dispatch_recording import (
+                                release_provider_trial as _release_trial,
+                            )
+
+                            _release_trial(tool_name)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    from app.tools._utils import std_error_response
+                    error_msg = sanitize_error_msg(str(e))
+                    result = std_error_response(
+                        error_msg,
+                        code="TOOL_ERROR",
+                        error_type=type(e).__name__,
+                        correction_hint=f"Execution error: {error_msg}",
+                    )
+                    self._release_key(executed_tools, tool_key, session_id or "")
+        except BaseException:
+            # 取消/异常离开预执行区：幂等释放 dedup 占位后原样上抛 —— 传播
+            # 语义不变（执行段既有 handler / 工具管道继续处理）。
+            self._release_key(executed_tools, tool_key, session_id or "")
+            raise
 
         # 3. (#529/#589) 归一化：~160 个工具点以失败形状正常返回（不抛异常、
         # 不返回 std_error_response 形状），此前只有 std_error_response 被

@@ -146,6 +146,12 @@ class RefPayloadCache:
         与 SpatialIndexCache.invalidate_session 同语义：只 pop 条目不递增
         epoch 会让**在飞构建者**（捕获的是旧 epoch）在会话清空后仍能把
         payload 发布回来。
+
+        #1626(e)：递增后必须 ``move_to_end``（与 per-ref ``invalidate``
+        对齐）—— 否则刚递增的 epoch 滞留在队首，会被其他会话的失效潮从
+        ``4×max_entries`` 的队首裁掉，使在飞构建者随后以 epoch 0 误判
+        「未失效」而被 put_if_current 放行（5s TTL 兜底，方向安全，但
+        钉住 MRU 端可把窗口压到最小）。
         """
         with self._lock:
             session_keys = {
@@ -153,6 +159,7 @@ class RefPayloadCache:
             } | {k for k in self._entries if k[0] == session_id}
             for key in session_keys:
                 self._epochs[key] = self._epochs.get(key, 0) + 1
+                self._epochs.move_to_end(key)
                 entry = self._entries.pop(key, None)
                 if entry is not None:
                     self._total_bytes -= entry[2]

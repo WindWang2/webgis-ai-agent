@@ -390,15 +390,30 @@ def test_prod_image_code_not_owned_by_runtime_user():
     assert "/app/data" in src and "USER appuser" in src
 
 
-def test_secure_compose_drops_caps_and_blocks_privesc():
-    """security F-17：prod.secure 的 api/celery 必须 cap_drop ALL + no-new-privileges。"""
+def test_prod_compose_stacks_drop_caps_and_block_privesc():
+    """security F-17：两个 prod compose 栈的 api/celery 都必须 cap_drop ALL +
+    no-new-privileges，且两栈加固指令集合一致 —— 文档支持的手动标准栈
+    （docker-compose.prod.yml，DEPLOYMENT.md 形态三）与 CI 实际部署的加固栈
+    （docker-compose.prod.secure.yml）安全姿态不允许分叉（#1636）。"""
     from pathlib import Path
 
     import yaml
 
-    path = Path(__file__).resolve().parents[1] / "docker-compose.prod.secure.yml"
-    compose = yaml.safe_load(path.read_text(encoding="utf-8"))
-    for svc in ("api", "celery-worker"):
-        conf = compose["services"][svc]
-        assert "ALL" in (conf.get("cap_drop") or []), svc
-        assert "no-new-privileges:true" in (conf.get("security_opt") or []), svc
+    stacks = {}
+    for name in ("docker-compose.prod.yml", "docker-compose.prod.secure.yml"):
+        path = Path(__file__).resolve().parents[1] / name
+        stacks[name] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for name, compose in stacks.items():
+        for svc in ("api", "celery-worker"):
+            conf = compose["services"][svc]
+            assert "ALL" in (conf.get("cap_drop") or []), f"{name} {svc}"
+            assert "no-new-privileges:true" in (conf.get("security_opt") or []), (
+                f"{name} {svc}"
+            )
+    reference = stacks["docker-compose.prod.secure.yml"]
+    for name, compose in stacks.items():
+        for svc in ("api", "celery-worker"):
+            for key in ("cap_drop", "security_opt"):
+                assert compose["services"][svc].get(key) == reference["services"][svc].get(key), (
+                    f"{name} {svc}: {key} 与 secure 栈不一致 —— 两栈加固姿态分叉"
+                )

@@ -42,6 +42,9 @@ python -m mypy
 step "debt ratchet (lint job)"
 python scripts/debt_ratchet.py check
 
+step "dependency bounds (lint job, #1512)"
+python scripts/check_dependency_bounds.py
+
 step "eslint (repo-wide, lint job)"
 (cd frontend && pnpm exec eslint . --max-warnings 0)
 

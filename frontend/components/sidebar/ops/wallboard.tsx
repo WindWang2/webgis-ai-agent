@@ -15,7 +15,7 @@ import { Maximize, Minimize, Pause, Play, X } from 'lucide-react';
 import { ClusterDashboard } from './cluster-dashboard';
 import { BreakerPanel } from './breaker-panel';
 import { SystemHealthPanel } from './system-health-panel';
-import { useT } from '@/lib/i18n/useT';
+import { useT, useLocale } from '@/lib/i18n/useT';
 
 const VIEWS = [
   { key: 'cluster', labelKey: 'knjj5sd' },
@@ -33,6 +33,8 @@ export function Wallboard({
   onExit: () => void;
 }) {
   const t = useT('ops');
+  // #1628/#1436：大屏时钟随应用语言格式化（zh-CN 用户输出不变），不硬编码。
+  const locale = useLocale();
   const prefersReducedMotion = useRef(
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -119,7 +121,7 @@ export function Wallboard({
         <div className="flex items-baseline gap-3">
           <h2 className="text-heading font-semibold">{t('knjg0dq')}</h2>
           <span className="text-meta tabular-nums text-ink-muted" data-testid="wallboard-clock">
-            {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
+            {new Date().toLocaleTimeString(locale, { hour12: false })}
           </span>
           <span className="text-micro text-ink-muted">
             {auto ? t('autoCarousel', { p0: CAROUSEL_INTERVAL_MS / 1000 }) : t('manualMode')}

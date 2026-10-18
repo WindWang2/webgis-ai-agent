@@ -27,7 +27,6 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy import Text as SAText
 
 from app.core.database import Base
 
@@ -143,7 +142,3 @@ class SpatialWatchFireRow(Base):
         Index("idx_spatial_watch_fire_org", "org_id", "fired_at"),
         Index("idx_spatial_watch_fire_watch", "watch_id", "fired_at"),
     )
-
-
-# SAText re-exported to keep flake8 happy if future columns need Text.
-_ = SAText

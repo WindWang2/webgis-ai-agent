@@ -77,6 +77,274 @@
 - `frontend`：ACK builder/observation collector/observation hook/
   use-sse-stream/map-state-restore 增维接线（全部 additive，旧后端兼容）。
 
+## [Unreleased] - 2026-10-18 (zcode/webgis-interaction-ir-v1, ADR-0227)
+
+### Added (harness: WebGIS Interaction IR V1 —— Human ↔ Map ↔ Agent 观察总线, ADR-0227)
+- **交互事件契约**（`app/services/gis_harness/interaction_ir/contracts.py`，
+  `interaction_ir.v1`）：封闭词表 13 kind（`viewport_settled` /
+  `feature_selected` / `feature_deselected` / `aoi_drawn` / `aoi_edited` /
+  `aoi_deleted` / `measurement_created` / `layer_visibility_changed` /
+  `layer_opacity_changed` / `layer_style_changed` / `layer_order_changed` /
+  `layer_removed` / `comparison_mode_changed`），每 kind 登记 payload 键
+  白名单 / 合并策略 / 敏感级 / authority 归属；前端镜像
+  `frontend/lib/interaction/` 双端漂移闸锁定。任何 kind 的 payload 都
+  不含原始 feature properties（隐私最小化，服务端 normalize 强制）。
+- **摄入 = 纯函数状态机**：`LedgerState + apply_event(state, raw) →
+  verdict`（不读时钟/不随机/不 IO），生产（`ingest_interaction_batch`）
+  与回放（`replay_scenario`）共用同一 fold —— 回放确定性由构造保证；
+  裁决词表 `accepted / accepted_with_gap / duplicate / stale_seq /
+  rejected`。
+- **持久层**（不建新表）：`map_state` 有界键 `_interaction_ir_ledger`
+  （环 128 条 / 96KB 字节预算，淘汰计入 `dropped` 披露）+
+  `_interaction_ir_clients`（per-instance 水印 ≤8 FIFO）+
+  `_interaction_ir_meta`（server_seq / dropped）；session_data 生命周期
+  （clear/delete/TTL/Redis 降级）免费复用。写入唯一入口 = 路由（session
+  锁内三键 read-modify-write，锁降级 fail-closed 503）。
+- **新 REST 面**：`POST /api/v1/chat/sessions/{id}/interaction-events`
+  （批 ≤50、per-IP 限速 300/min、`require_owned_session`、删除 tombstone
+  双探测、actor=user 防伪造 agent/system 事件）+ `GET
+  /api/v1/chat/sessions/{id}/interaction-events/projection`（只读有界
+  投影：viewport / selection / active_aoi / user_overrides ≤16 /
+  attempted_not_applied ≤8 / recent_interactions ≤12 / dropped 披露 /
+  reason-coded omitted / token_estimate，序号驱动不读时钟）。
+- **前端 outbox**（`frontend/lib/interaction/`）：per-tab 身份
+  （sessionStorage `clientInstanceId` + 单调 `client_seq`）、viewport
+  风暴 `replace_pending` 队列内合并、ack `watermarks` 裁剪已记账事件、
+  pagehide `fetch keepalive`、会话切换冲刷；SSR/无会话 emit 静默丢弃。
+- **causality bridge**：mutation 链接型事件摄入时对
+  `map_state["_mutation_dedup"]`（引擎 `c:<id>` 幂等索引）只读交叉校验
+  —— 命中 → `mutation_verified=true` + 权威 `verified_revision`；未命中
+  → `verified=false` 按 claimed 呈现。`mutation_outcome ∈ {superseded,
+  failed}` 的尝试进 `attempted_not_applied`，绝不投影为成功 override。
+- **回放语料** 10 场景（`replay_corpus/*.json`：pan/zoom 风暴 500、
+  select→hide→续答、AOI 画→析→改、双标签页交错、重连重发整批、
+  mutation 被 superseded、旧事件迟于新世代、会话切换清零、gap 披露、
+  隐私字段剥离），每场景双跑逐位一致。
+
+### Changed
+- `gis_situation` 投影 additive 优先读 IR ledger（旧 ring 缺省回退）；
+  复合 interaction revision 并入 IR server_seq。
+- map-state 恢复面剥离 `_interaction_ir_*` 三键（后端私有键不下发
+  浏览器；agent 消费走投影端点）。
+
+### 已知限制（诚实披露）
+- undo/redo 不是事件（草图 undo 走 `replaceSketchFeatures` 重放，不经
+  用户意图包装）—— 撤销绘制后 `active_aoi` 投影可能滞后（V2 候选
+  `sketch_undone`）。
+- `_mutation_dedup` 存证窗口 64 —— 超窗事件 `mutation_verified=false`
+  （claimed 级呈现，不冒充已校验）。
+- ledger 环 128 条：更早历史淘汰并 `dropped` 披露 —— 本方向目标是
+  agent 近因上下文，不是审计系统（审计面已有 provenance 环 + turn
+  journal）。
+- `user_overrides` 无失效语义：agent 事后改同层 presentation 后，override
+  仍陈述"用户最后一次明确意图"（观察层定位，不回写权威）。
+
+## [Unreleased] - 2026-10-18 (zcode/pi-native-gis-tool-abi-v2, ADR-0224)
+
+### Added (pi: Native GIS Tool ABI V2 —— turn-scoped qualified tool surface, ADR-0224)
+- **版本化工具 ABI**（`app/services/chat/pi_tool_spec.py`，
+  `pi_tool_spec.v1`）：ToolRegistry → `PiToolSpecV1` 的 fail-honest schema
+  投影 —— JSON Schema 白名单外装饰键删除（封闭 finding codes 披露）；
+  `description` 是唯一允许截断的弱化（≤512 字符记 finding）；约束键
+  （enum/pattern/min*/max*/type/required）verbatim 永不改写；
+  union/`$defs`/`$ref` 原样保留。放不进 per-tool 预算
+  （`PI_SPEC_MAX_SCHEMA_BYTES`，默认 16KB）→ 整工具逐出 native 面
+  （proxy 长尾仍可达），绝不裁 schema 换预算。spec 指纹 = 契约字段 +
+  findings 的 canonical-JSON SHA-256 short digest；`registry_generation`
+  是来源锚不进 spec 指纹但参与 surface 指纹。
+- **turn 面资格 + SurfaceReceipt**（`pi_surface_receipt.py`，
+  `pi_surface_qualification.v1`）：`compute_turn_active_tools ⊕
+  RuntimeSituation` 白名单投影 → qualification（封闭 drop codes：
+  `side_effect_destructive` / `credential_absent` /
+  `offline_network_tool` / `durable_worker_unavailable` /
+  `spec_over_budget` / `byte_budget`）→ 既有 D2 字节预算 →
+  `SurfaceReceipt` 按 (session_id, turn_id) 有界存储（≤128，turn 清理
+  evict，同 turn 首铸后不可变）。DESTRUCTIVE 副作用类逐出 native 注册面
+  （红线：side-effect tool 不得经 native path 绕过确认；proxy 长尾与
+  dispatch tier 闸不变）。dispatch 期 capability bind 仍是唯一执行权威
+  —— 本层是 turn 侧投影、闸的先验披露。
+- **结果面契约**（`app/services/chat/pi_result_abi.py`，`pi_result.v1`
+  envelope）：`details["resultAbi"]` additive —— status / summary / refs
+  （geojson、result、image —— 大对象一律 ref-first 绝不内联）/
+  map_action_ids / background_job_ids / evidence / error class + code；
+  ≤4KB 预算收缩序 warnings → evidence → summary（status/refs/error 恒
+  保留）。content 通道与既有 slim 逻辑不变。
+- **stale 检测**（`pi_bridge_surface_gate.py`）：`/pi-tools/execute`
+  鉴权链不变（bridge secret → HMAC turn token → live-turn），新增
+  `toolFingerprint` echo 与 `SurfaceReceipt.tool_fingerprints` 同源
+  对照；mismatch → **typed 200 isError 拒绝**（`surface_stale`，模型可读
+  guidance：re-discover → webgis_execute），不是 HTTP 错误。echo 缺席 =
+  master 兼容行为；receipt 缺席（动态面关/弃成）→ 放行。
+- **spawn dump v3**（v2 键保留，向后兼容）：加性字段 abi /
+  registry_generation / per-tool spec；扩展新增的只是 per-call
+  `toolFingerprint` echo（v2 dump 下自然缺席）。
+- **kill switch 全家**：`PI_TOOL_ABI=0`（dump v2、无 qualification、
+  无 receipt、无 echo 校验 —— master 行为逐位一致）、`PI_RESULT_ABI=0`
+  （details 原样）、`PI_SPEC_MAX_SCHEMA_BYTES=0`（per-tool 预算关闭）、
+  `PI_SURFACE_SCOPE_ENFORCE`（默认 OFF 的 opt-in 面成员硬校验）、
+  `PI_DYNAMIC_TOOL_SURFACE=0`（既有动态面回冻结）。
+
+## [Unreleased] - 2026-10-18 (zcode/harness-kernel-settle-convergence, ADR-0223)
+
+### Added (harness: host-neutral settle coordinator —— K9 / agent_settled 编排收口, ADR-0223)
+- **单一 settle 编排入口**（`app/services/harness_kernel/settle.py`）：
+  通用 GIS settle 编排从 chat 域搬进 kernel —— 编排既有效果函数、
+  不拥有任何事实（turn 终态仍归 `GISSessionRuntime.end_turn` 唯一写者；
+  MapSpec/workflow/runtime/checkpoint/证据链权威均不变）。效果序
+  （顺序即权威序）：E1 final_gate → E2 workflow_projection →
+  E3 runtime_state_projection → E4 context_checkpoint →
+  E5 map_product_disclosure → E6 evidence_chain → K kernel_end_turn →
+  P lifecycle_parity。
+- **typed settle 契约**（kernel 内、封闭词表、fail-closed）：
+  `SettleCause`（success / tool_error / model_error / user_cancel /
+  system_abort / policy_abort / timeout / send_error /
+  host_process_death / unclassified_error / host_interrupted）+
+  `CAUSE_STATUS` 单表（未知 cause 按 `failed` 收口，未分类不伪装
+  completed）+ `settle_class_for_status`（completed/refused→clean；
+  cancelled→cancelled；aborted→aborted；其余→failed）+
+  `SettleEffectReceipt`（effect 封闭词表 × status
+  applied|skipped|failed|already）。
+- **幂等 / stale / 收据**：settle 级幂等键（默认 `session:turn`），
+  进程内 bounded receipt cache（≤256）+ per-(session,turn) asyncio 锁
+  —— 同键重复调用重放同一收据（disposition=duplicate），零效果重跑；
+  disposition 判定先读 kernel 台账快照（无 plan/无 turn 记录 →
+  `unknown_turn` 零效果；迟到 settle —— turn N 在 turn N+1 begin_turn
+  被终态化后才到达 → **`stale`：零效果**，不在新 turn 在飞时污染会话级
+  投影）；successor-in-flight 守卫覆盖 legacy 锁外交错窗口。
+- **legacy host 补齐半个结算**：`execution_engine` 锁内 finally 保留
+  `safe_end_turn`（S1 预终态化），锁释放后调
+  `settle_turn(pre_terminated=True, cause=...)` —— 终验/workflow/
+  runtime 投影/checkpoint/证据链/parity 收口此前全部缺失（recon H1：
+  终验抛错曾级联跳过后续效果；现 E1-E4 逐段独立守卫，收据如实记录
+  failed/skipped）。
+- **接线薄化 + 可观测性**：Pi bridge `_settle_turn_outcome` 薄化为
+  「pop_turn_abort_source + flags → `cause_from_host_signals` →
+  `settle_turn(input)` → tracker/rt_ev/SSE 投影」；`TurnSettleOutcome` /
+  `settle_turn_projections` / `log_lifecycle_parity` /
+  `resolve_turn_refusal` 在 `pi_post_dispatch` 保留为委托薄层（lab/
+  契约面不变）。`hk_metrics.record("turn_settled", ...)` + 一行结构化
+  `[HarnessSettle]` 日志。kill switch `GIS_HOST_NEUTRAL_SETTLE`（默认
+  ON；OFF 跳效果序但 K 腿照常 —— authority 永不因开关漂移）。
+
+## [Unreleased] - 2026-10-18 (zcode/requirement-clarification-closed-loop, ADR-0222)
+
+### Added (requirement_ir: 歧义澄清闭环 —— blocking 歧义 → 用户 → 应答 → 恢复, ADR-0222)
+- **ClarificationEnvelope**（`requirement_ir/envelope.py`，
+  `clarification_envelope.v1`）：从 RequirementDocument 的 open blocking
+  歧义确定性派生（`request_id = "clar-" + document_id + "-" +
+  fingerprint(revision, sorted(context_keys))[:12]`）；GET 恢复面、SSE
+  发射、答案 CAS 校验共用同一构造函数 —— 同输入必同输出。歧义账本仍是
+  "什么未决"的唯一真相；suppression 记账
+  （`requirement_clarification_ledger`）只记"哪些 context_key 已在 SSE
+  上问过"，fail-open 不影响需求真相。
+- **答案 authority 全走既有 patch 协议**（不另起状态机）：`submit_answers`
+  幂等检查（重复同答案 → 同结果，先于 revision CAS）→ request_id 与
+  文档派生值比对（防跨会话/伪造 id）→ `expected_revision` CAS（stale →
+  typed 409）→ 答案经 option value/label 或词表归一（formats/
+  statistics）+ patch 目标 path 既有 validator 预检（fail-closed，无
+  部分应用）→ 转确定性 `op_id` 的 `answer_ambiguity` /
+  `waive_ambiguity` patch（provenance origin=user；agent 代答 blocking
+  在服务层与 patch 层双重拒绝）。waive 显式豁免时把安全默认写回目标
+  字段并以 `origin=default + rationale` 披露（默认值不是用户选择，
+  不冒充 user-wins）。
+- **传输：additive SSE 事件 + 章节单写者**：`clarification` 事件注册进
+  `CHAT_EVENT_TYPES`；Pi 事件泵在 `agent_settled` 分支**先**计算
+  envelope + 章节 pending 章（`update_chapter_clarification`，事件
+  `clarification_updated` 入 EVENT_KINDS）再跑 settle 投影 —— goal
+  evaluator 的 `REQUEST_CLARIFICATION` 与 refusal 降级谓词读到同一份
+  事实；TurnResumeRegistry ring 自动覆盖断线重连重放；never-raise：
+  澄清面故障绝不阻断收口。suppression 只发"本 turn 新出现"的未决问题。
+- **新 REST 面**：`POST /api/v1/chat/sessions/{id}/clarifications/answer`
+  （`require_owned_session`；typed 状态码映射：409 stale/
+  already_answered、404 unknown/absent/所有权、400 invalid）+ `GET
+  /api/v1/chat/sessions/{id}/clarifications/pending`（204/200；前端
+  `selectSession` 历史载入后重挂卡片 —— 历史 transcript 只有纯文本，
+  卡片不落历史）。
+- **闭环语义**：全部答完 → 章节 `status="resolved"` + answers（kernel
+  refusal 谓词与 goal evaluator 两读取点即闭环 —— 此前 `resolved` 状态
+  被两处读取却无任何代码写入）；仍有 pending → 章节问题滚动到下一个。
+  恢复执行由前端按 PlanProposalCard 先例发送续行消息（后端不自动起
+  turn —— 尊重单 POST 单 turn + turn lease 模型，destructive 工具绝不
+  自动重放；下一 turn 的 `ensure_document` 幂等收敛，已完成 evidence
+  不失效）。
+- **并发**：`requirement_ir` service 增 bounded per-session
+  `asyncio.Lock`（`ensure_document` / `apply_user_patches` /
+  `submit_answers` 全程持锁，无锁内层供组合调用避免重入死锁）；跨进程
+  双写为 seq fencing + 进程内锁 —— 栅栏输家的写入被检测并转 typed
+  `requirement_persist_fenced`（409，客户端重读重试收敛），不再静默
+  丢失。
+
+### Fixed
+- `tools.py` 生产缝参数误传：`ensure_document` 调用曾把 session_id
+  字符串误传为 `session_store`、query 误传为 `session_id`
+  （TypeError 被 fail-open except 静默吞掉）—— requirement IR 状态
+  每次意图解析都重建、永不持久（澄清去重/答案 journal 全部失效）。
+  现按 service 签名传入生产 SessionStore 与真实参数（ADR-0219 recon
+  同期独立发现的 master 缺陷）。
+- 超替文档 revision 跨代单调：生产 store 的 `set_map_state(seq)` 单调
+  栅栏曾静默拒绝 revision 回退到 1 的超替写入（多任务会话的 IR 状态
+  此前永远无法前进）；`save_state` 检查栅栏拒绝并转 typed 错误。
+
+## [Unreleased] - 2026-10-18 (zcode/skill-procedure-plan-binding, ADR-0220)
+
+### Added (harness: skill procedure → SessionPlan/PlanGraph 约束与证据绑定 V1, ADR-0220)
+- **ProcedureBinding 派生投影**（`app/services/gis_harness/skills/procedure_binding.py`，
+  `procedure_binding.v1`）：SkillPolicyDecision + SkillContract +
+  MapProductPlan → 纯函数构造（零 IO/零 LLM/零时间戳，指纹确定性），
+  持久于 `gis_chapter["procedure_binding"]`（additive 键，不改
+  session_plan 持久层；旧章节无该键 = 零漂移）。每 step 绑定携带
+  skill id/version/fingerprint、step_id、kind、required/skip_policy、
+  depends_on、**plan_node_ids**（capability_refs ∩ 计划 capability 集）、
+  **session_step_refs**（kernel 物化规则 `step-{cap[:48]}`）、
+  evidence_kinds、conditional_on、status（bound /
+  bound_obligation_only / capability_absent / optional_unplanned）+
+  reason_codes。映射规则稳定确定性：PlanGraph `node_id == capability`
+  （既有事实），不发明第二套 id；capability 缺失不虚构节点。
+- **decision 分支结构裁决**（红线）：只能由结构化事实裁决 —— 绑定期以
+  计划内容做结构裁决（选项 `then_step_ids` 的 capability 在/不在计划 →
+  `selected_option`（resolved_by=plan_content）；无选项命中 → default
+  （resolved_by=default，显式披露）；多选项同时命中 → ambiguous 不
+  裁决）。LLM 文本无权直接选分支。
+- **Plan-time enforcement**（`enforce_procedure_binding` 纯函数 →
+  `ProcedurePlanCheck`：violations + replan_hints）：违例词表
+  `required_step_unplanned` / `order_conflict` /
+  `required_capability_unresolved`；`mode=execute_guided` 时进 intent
+  结果 guidance（⚠ 行 + 建议补的能力），`guide` 模式 advisory。
+  **披露不阻断**：技能对 planner 无 veto 权（user/planner-wins）。
+- **运行期证据绑定 + ProcedureCoverage**（`procedure_coverage.py::
+  compute_procedure_coverage`，读时派生不建第二状态库）：输入 chapter
+  绑定 + data_requirements/analysis_steps 行状态 + kernel
+  `PlanStep.evidence`（same-capability 重复以 tool_call_id 区分，
+  exactly-once 去重）+ 决策结构 + map_product/goal_satisfaction 块；
+  步骤状态机 covered / blocked（failed 可重试 / unavailable 带 fallback
+  披露）/ stale（supersede generation）/ unknown（pending/running 或
+  evidence-only 步骤 honest-unknown）/ skipped_declared（分支未走）/
+  missing（required 无踪迹）；分母义务三态（结构接地 → satisfied；
+  `map_product` 显式事实 → satisfied/missing；无独立事实 → unknown，
+  不下率不恒 missing）；drift 标志（skill_version_drift /
+  skill_fingerprint_drift / skill_deprecated / skill_missing ——
+  deprecated 绑定只降级不删除）；双完成旗标 `complete`（replay 兼容：
+  无 missing，unknown 不阻断）与 `fully_covered`（强语义：全部 required
+  步骤 covered/skipped_declared + required 能力 covered）。skill
+  coverage ≠ goal satisfaction —— 后者继续消费 science/cartography/
+  final_map 事实，procedure_coverage 仅 additive。
+- **消费面**：`format_session_plan_projection` additive 单行
+  `Procedure: skill@ver covered=x/y missing=[..] next=.. drift=..`
+  （fail-open，无绑定零漂移；fully_covered 才标 complete=true）；
+  completion/pipeline 终验块 additive 键 `procedure_coverage`；
+  `procedure_pi_card` ≤1 有界卡（当前 skill、phase、missing obligations
+  ≤3、next expected step）进 hotpath pi context —— **禁止整份 YAML
+  procedure 注入**。
+- **测试语料**：`tests/unit/gis_harness/procedure_binding_corpus.py`
+  覆盖 §D 全族 × 场景（deterministic generated）。
+
+### 红线（继承 + 新增）
+- 不造 SkillExecutor / 第二 DAG / 第二状态库；不绕过 Capability/Tool/
+  Permission/Governor/MapSpec 体系；任何 LLM 输出不产生绑定/不裁决
+  分支/不充当证据；原始 CoT 不进 evidence；User-wins：用户显式锁定
+  不被绑定/覆盖自动改写；fail-closed for authority（绑定只披露不授权），
+  fail-open only for optional telemetry。
+
 ## [Unreleased] - 2026-10-09 (fix/deep-review-2026-10-08, 深度评审 Critical/High 清偿)
 
 全仓 12 维度深度评审（架构/安全/并发/数据层/GIS 科学计算/Mapspec/Action IR/委派/API/性能/前端/CI）后的 1 Critical + 18 High 修复，pre-landing 评审军团（testing/maintainability/security/performance/api-contract/red-team）复审加固；每项均带先红后绿回归测试。

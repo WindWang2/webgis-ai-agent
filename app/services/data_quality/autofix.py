@@ -221,7 +221,10 @@ def apply_autofix(
     """执行确定性修复：返回 ``(new_payload, evidence)``。
 
     - 输入 payload 不被修改（深拷贝后处理 —— new-ref 语义的硬前提）；
-    - pyproj 缺席时 reproject 降级为 attach-CRS（证据标注）。
+    - pyproj 缺席时 reproject 降级为 attach-CRS（证据标注）；
+    - reproject 遇超 ``max_scan`` 的载荷：typed 拒绝（连同 CRS 标签一起
+      不改，``bounded_to`` 披露）—— 坐标只处理前 ``max_scan`` 个要素，
+      绝不让 CRS 标签对全载荷生效、令尾部坐标静默错标（#1634）。
     """
     import copy
 
@@ -283,12 +286,30 @@ def apply_autofix(
                 entry.update({"attached_crs": target, "reprojected": False})
                 evidence["changed"] = True
             elif current != target:
-                reprojected = _reproject_features(features[:max_scan], current, target)
-                entry.update({"from_crs": current, "to_crs": target,
-                              "reprojected": reprojected,
-                              "note": "" if reprojected else "pyproj unavailable; crs label updated only"})
-                new_payload["crs"] = target
-                evidence["changed"] = True
+                if len(features) > max_scan:
+                    # 截断语义对齐（#1634）：坐标只处理前 max_scan 个要素，
+                    # 而 CRS 标签对**整个**载荷生效 —— 超界时尾部要素坐标留在
+                    # 旧 CRS 却随载荷声明新 CRS（静默坐标错标）。typed 拒绝：
+                    # 连同标签一起不改（bounded_to 披露同 repair_geometry
+                    # 纪律），调用方分批或显式提高 max_scan。
+                    entry.update({
+                        "applied": False,
+                        "rejected": "feature_count_exceeds_scan_bound",
+                        "from_crs": current,
+                        "to_crs": target,
+                        "feature_count": len(features),
+                        "bounded_to": max_scan,
+                        "note": f"载荷 {len(features)} 要素超出扫描上限 "
+                                f"{max_scan}，拒绝重投影（避免尾部坐标错标）；"
+                                "可分批处理或显式提高 max_scan",
+                    })
+                else:
+                    reprojected = _reproject_features(features[:max_scan], current, target)
+                    entry.update({"from_crs": current, "to_crs": target,
+                                  "reprojected": reprojected,
+                                  "note": "" if reprojected else "pyproj unavailable; crs label updated only"})
+                    new_payload["crs"] = target
+                    evidence["changed"] = True
             else:
                 entry.update({"note": "crs already target", "applied": False})
         elif op == "normalize":

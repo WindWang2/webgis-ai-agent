@@ -6,7 +6,12 @@
 重新哈希（sha256 + case 数 + domain）写入
 ``tests/science_oracles/data/corpus_manifest.json``，供漂移 pin 测试
 （tests/science_oracles/test_corpus_drift_pin.py）比对 —— 任何 data
-文件的字节级改动都会让该测试失败。
+文件的内容级改动都会让该测试失败。
+
+哈希为**换行归一化**后的 sha256（#1662，与该测试的 ``_sha256`` 语义
+必须一致）：``read_text`` 的 universal newlines 把 CRLF 归一为 LF，
+与 git blob 的 LF 字节一致，Windows autocrlf 检出上重复运行本脚本
+字节级幂等，不会把 CRLF 版哈希冻进 manifest 反噬 Linux CI。
 
 用法（工作树根目录）::
 
@@ -32,7 +37,12 @@ CORPUS_SCHEMA_VERSION = 1
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """换行归一化后的 sha256（#1662，与 test_corpus_drift_pin.py 必须一致）：
+    ``read_text`` 的 universal newlines 把 CRLF 归一为 LF，与 git blob 的
+    LF 字节一致 —— Windows autocrlf 检出上重复运行本脚本得到与 LF 环境
+    相同的 manifest（幂等），不会把 CRLF 版哈希冻进 corpus_manifest.json
+    反噬 Linux CI。"""
+    return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
 def build_manifest() -> dict:

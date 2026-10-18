@@ -234,6 +234,33 @@ def test_fork_target_exists_rejected(cube_store, tmp_path):
         fork_cube_revision(store, target, updates={"red": [(0, upd[0], None)]})
 
 
+def test_fork_failure_leaves_no_partial_revision(cube_store, tmp_path):
+    """#1634：fork 中途失败（chunk loader 抛错）→ 残缺修订目录零残留。
+
+    旧实现失败后残留半成品 new_dir：下次 revise 铸造新 id，ledger GC 按
+    记录清，永远看不见这个无台账目录（磁盘孤儿）。
+    """
+    store, _bd = cube_store
+    upd = _band_groups(tmp_path, "u", [0.0])
+
+    def _boom(_descriptor, _t):
+        raise RuntimeError("injected chunk loader failure")
+
+    target = tmp_path / "rev_fail.zarr"
+    with pytest.raises(RuntimeError, match="injected chunk loader failure"):
+        fork_cube_revision(
+            store, target,
+            updates={"red": [(1, upd[0], _boom)]},
+        )
+    assert not target.exists() or not any(target.rglob("*")), (
+        "残缺修订目录必须被清理（failure 零残留）"
+    )
+    # 源 store 不受失败影响，仍可再次 fork
+    target2 = tmp_path / "rev_ok.zarr"
+    fork_cube_revision(store, target2, updates={"red": [(1, upd[0], None)]})
+    assert target2.is_dir()
+
+
 def test_publish_manifest_only_over_budget(cube_store):
     store, _bd = cube_store
     res = publish_cube(store, session_id="s9", blob_budget_bytes=0)

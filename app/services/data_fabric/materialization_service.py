@@ -19,8 +19,10 @@
 """
 import asyncio
 import logging
+import os
 import re
 import secrets
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -350,9 +352,23 @@ class MaterializationService:
 
         def _write() -> int:
             path.parent.mkdir(parents=True, exist_ok=True)
-            table_to_geoparquet(
-                table, str(path), compression="zstd", row_group_size=row_group_size,
+            # 原子发布（#1634）：同目录隐藏 tmp + os.replace —— 写盘中途崩溃
+            # 不落残缺 .parquet 到终态路径（sha256/register_artifact 都在写后，
+            # 残缺文件无台账，ledger GC 按记录清，永远看不见它 = 磁盘孤儿）。
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent),
             )
+            os.close(fd)
+            tmp_path = Path(tmp_name)
+            try:
+                table_to_geoparquet(
+                    table, str(tmp_path), compression="zstd",
+                    row_group_size=row_group_size,
+                )
+                os.replace(tmp_path, path)
+            except BaseException:
+                tmp_path.unlink(missing_ok=True)
+                raise
             return path.stat().st_size
 
         size = await asyncio.to_thread(_write)

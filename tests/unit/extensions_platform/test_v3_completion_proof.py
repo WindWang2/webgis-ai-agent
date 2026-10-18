@@ -32,8 +32,10 @@ def _pack_dir(version: str, work: Path) -> Path:
     dest = work / f"v3demo_ecosystem-{version}"
     dest.mkdir(parents=True, exist_ok=True)
     for name in ("main.py", "health.py"):
-        (dest / name).write_text((PACK_SRC / name).read_text())
-    manifest = json.loads((PACK_SRC / "manifest.json").read_text())
+        (dest / name).write_text(
+            (PACK_SRC / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    manifest = json.loads((PACK_SRC / "manifest.json").read_text(encoding="utf-8"))
     manifest["version"] = version
     (dest / "manifest.json").write_text(json.dumps(manifest))
     return dest

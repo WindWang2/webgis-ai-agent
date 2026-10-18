@@ -184,3 +184,34 @@ async def test_zonal_stats_string_form_crs_member(tmp_path):
     stats = zonal_statistics(fc, raster, stats=["mean"])
     assert stats and stats[0].get("mean") is not None
     assert stats[0]["mean"] == pytest.approx(1.0, nan_ok=True)
+
+
+def test_zonal_stats_does_not_mutate_input_fc():
+    """#1634：zonal_stats 绝不原地修改调用方传入的 FeatureCollection。
+
+    统计结果只进返回值的要素拷贝；输入 FC（工具层 ref 载荷的同一个 dict）
+    的 properties 不得被分析管线静默改写（data_quality 全链 deepcopy，
+    此处补漏）。
+    """
+    import copy as _copy
+
+    from app.services.spatial_analyzer import SpatialAnalyzer
+
+    raster_path = _data_path(f"test_1634_zonal_{uuid.uuid4().hex[:8]}.tif")
+    _make_raster(raster_path, "EPSG:4326", value=10.0)
+    fc = _copy.deepcopy(WGS84_ZONE_FC)
+    snapshot = _copy.deepcopy(fc)
+    try:
+        res = SpatialAnalyzer.zonal_stats(fc, raster_path)
+        assert res.success is True, res.summary
+        # 返回值带统计值
+        props = res.data["features"][0]["properties"]
+        assert props.get("mean") is not None
+        assert abs(float(props["mean"]) - 10.0) < 1e-6
+        # 输入逐字节未改
+        assert fc == snapshot, "zonal_stats 不得原地修改调用方输入的 properties"
+    finally:
+        try:
+            os.unlink(raster_path)
+        except OSError:
+            pass

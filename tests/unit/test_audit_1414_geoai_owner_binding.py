@@ -1,6 +1,7 @@
 """#1414 regression: GeoAI HTTP owner binding + session-scoped path roots."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -227,6 +228,7 @@ async def test_empty_scope_roots_exclude_data_dir(data_dir, monkeypatch):
     assert data_dir.resolve() not in [r.resolve() for r in roots]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="symlink semantics")
 def test_gate_returns_resolved_path(data_dir, tmp_path):
     from app.api.routes import geoai as geoai_mod
 

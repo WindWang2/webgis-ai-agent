@@ -191,6 +191,8 @@ export class MapSpecRuntime {
   private zoomHooked = false;
   /** zoomend 处理器引用 —— dispose 时对称 off（#1309）。 */
   private zoomEndHandler: (() => void) | null = null;
+  /** #1645（#1597 依赖）：style._loaded 缺席兜底路径只披露一次（每实例）。 */
+  private styleLoadedFallbackWarned = false;
 
   constructor(map: MaplibreMap, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
@@ -290,6 +292,21 @@ export class MapSpecRuntime {
   private styleSpecReady(): boolean {
     const style = (this.map as { style?: { _loaded?: unknown } } | null)?.style;
     if (style && typeof style._loaded === "boolean") return style._loaded;
+    // #1645：私有字段 style._loaded 缺席（MapLibre 大版移除/改名；或测试
+    // 替身只实现公开 API）→ 兜底 isStyleLoaded()（v6 语义偏保守，见
+    // #1597）。生产环境真 MapLibre 恒有 _loaded —— 一旦走到本路径即说明
+    // 私有依赖漂移，spec 可能被无限推迟到 style_load_timeout 的旧缺陷。
+    // 记一条 evidence + dev 告警（每实例一次），私有字段消失即可观测。
+    if (!this.styleLoadedFallbackWarned) {
+      this.styleLoadedFallbackWarned = true;
+      recordSymbolLawEvidence("style-spec-ready-fallback", {
+        has_style: !!style,
+        fallback: "isStyleLoaded",
+      });
+      devOnly.warn(
+        "[MapSpecRuntime] style._loaded 缺失，回退 isStyleLoaded()（MapLibre 私有字段漂移？）",
+      );
+    }
     return !!this.map.isStyleLoaded?.();
   }
 

@@ -4,6 +4,9 @@ from __future__ import annotations
 import pytest
 
 from app.lib.cartography import mapspec_schema as ms
+from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
+
+pytestmark = pytest.mark.cartography
 
 
 def _spec(**layer_extra) -> dict:
@@ -102,3 +105,61 @@ class TestRepresentationBlock:
         assert list(ms.REPRESENTATION_MODES) == [
             "raw", "point_cluster", "visual_heatmap",
             "aggregate_grid", "generalized", "hidden"]
+
+
+def _hidden_first_windows():
+    return [
+        {"min_zoom": 0, "max_zoom": 14, "mode": "hidden",
+         "reason_codes": ["REPR.WINDOW.HIDDEN.LOW_ZOOM"]},
+        {"min_zoom": 14, "max_zoom": 24, "mode": "raw"},
+    ]
+
+
+def _scale_checks(report):
+    return [c for c in report.checks
+            if c.rule == "carto.scale.representation"]
+
+
+class TestVisibilityGateTypeDiscipline:
+    """#1649：非数值 visibility.min_zoom 必须披露/缺席而非炸 review 链。
+
+    ``carto.scale.representation`` 的结构门一致性只经 representation
+    单一裁决点 zoom_gate_of_layer 取门值（钳制/NaN/inf/非数值 → None
+    = 门缺席）—— 裸 float() 会把 webgis_validate/swarm 专家/replay
+    oracle 的 review 调用变成未捕获 ValueError。
+    """
+
+    def test_non_numeric_min_zoom_does_not_raise(self):
+        spec = _spec(representation={"windows": _hidden_first_windows()},
+                     visibility={"min_zoom": "not-a-number"})
+        report = evaluate_cartography_semantics(spec)
+        checks = _scale_checks(report)
+        assert checks, "表达计划声明在场时检查必须存在（缺席=漏检）"
+        assert checks[0].status in ("pass", "fail")
+
+    @pytest.mark.parametrize("bad_min_zoom", [
+        "not-a-number", ["x"], {"a": 1}, True, float("nan"), float("inf"),
+    ])
+    def test_malformed_min_zoom_variants_do_not_raise(self, bad_min_zoom):
+        spec = _spec(representation={"windows": _hidden_first_windows()},
+                     visibility={"min_zoom": bad_min_zoom})
+        report = evaluate_cartography_semantics(spec)
+        checks = _scale_checks(report)
+        assert checks and checks[0].status in ("pass", "fail")
+
+    def test_numeric_divergence_still_fails(self):
+        # 类型门不得洗掉真实分歧：数值门值与首个非 hidden 窗起点不一致仍 fail。
+        spec = _spec(representation={"windows": _hidden_first_windows()},
+                     visibility={"min_zoom": 10})
+        report = evaluate_cartography_semantics(spec)
+        checks = _scale_checks(report)
+        assert checks[0].status == "fail"
+        assert "visibility_gate_diverges_from_windows" in (
+            checks[0].evidence.get("problems") or [])
+
+    def test_numeric_matching_min_zoom_passes(self):
+        spec = _spec(representation={"windows": _hidden_first_windows()},
+                     visibility={"min_zoom": 14})
+        report = evaluate_cartography_semantics(spec)
+        checks = _scale_checks(report)
+        assert checks[0].status == "pass"

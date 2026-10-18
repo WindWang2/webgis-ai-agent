@@ -33,7 +33,7 @@ from sqlalchemy import (
     text,
 )
 
-from app.models.project import Base
+from app.core.database import Base
 
 
 def _utcnow() -> datetime:

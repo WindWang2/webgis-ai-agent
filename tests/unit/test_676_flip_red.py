@@ -331,3 +331,61 @@ def test_composite_heatmap_paint_matches_analysis_contract():
         assert layer["paint"].get(key) == expected.get(key), (
             f"composite {key} must equal the contract paint"
         )
+
+
+# 11. #1658: CombineMapThemeArgs 必须暴露 geojson —— 经注册表 dispatch 钉住。
+# #676 给 combine_map_theme 加了 geojson 形参与 composite 必需语义，但共用
+# args model 未同步；registry 对显式 args_model 的工具按 audit #828 拒绝未知
+# 参数 → LLM 传 geojson 恒 VALIDATION_ERROR，composite 预设提交路径经注册表
+# 不可达（既有单测直接调函数、绕过 dispatch 校验，漂移被掩盖）。
+def test_combine_map_theme_args_model_exposes_geojson():
+    from app.tools.templates import CombineMapThemeArgs
+    assert "geojson" in CombineMapThemeArgs.model_fields, (
+        f"CombineMapThemeArgs 缺 geojson 字段，dispatch 将拒绝该参数: "
+        f"{sorted(CombineMapThemeArgs.model_fields)}"
+    )
+    assert not CombineMapThemeArgs.model_fields["geojson"].is_required()
+
+
+@pytest.mark.asyncio
+async def test_combine_map_theme_dispatch_accepts_geojson(registry):
+    import unittest.mock as mock
+    mock_res = {
+        "success": True,
+        "is_compiled": True,
+        "mapspec_fingerprint": "fp-dispatch-combine",
+        "mapspec": {"version": "1.0", "sources": {"source_default_layer": {"type": "geojson", "inlineData": SAMPLE_GEOJSON}}, "layers": [{"id": "default_layer", "source": "source_default_layer", "type": "fill", "paint": {}}], "view": {}, "basemap": {"providerId": "carto-positron"}, "layout": {}, "thresholds": {}},
+        "layer": {"id": "default_layer", "source": "source_default_layer", "type": "fill", "paint": {}},
+    }
+    with mock.patch("app.services.mapspec_store.mapspec_store.layer_upsert", new=mock.AsyncMock(return_value=mock_res)) as mock_upsert:
+        result = await registry.dispatch("combine_map_theme", {
+            "preset": "academic_research",
+            "geojson": SAMPLE_GEOJSON,
+            "session_id": "sess-dispatch-combine",
+        })
+        assert result.get("code") != "VALIDATION_ERROR", f"dispatch 不应拒绝 geojson 参数: {result}"
+        assert "error" not in result, f"composite 预设应进入提交分支: {result}"
+        assert result.get("status") == "composite_applied", f"应经 mapspec_store 提交: {result}"
+        assert result.get("committed") is True, f"session+geojson 必须 committed: {result}"
+        assert mock_upsert.called, "dispatch 通路应真实调用 mapspec_store.layer_upsert"
+
+
+@pytest.mark.asyncio
+async def test_webgis_map_combine_dispatch_accepts_geojson(registry):
+    import unittest.mock as mock
+    mock_res = {
+        "success": True,
+        "is_compiled": True,
+        "mapspec_fingerprint": "fp-dispatch-alias",
+        "mapspec": {"version": "1.0", "sources": {"source_default_layer": {"type": "geojson", "inlineData": SAMPLE_GEOJSON}}, "layers": [{"id": "default_layer", "source": "source_default_layer", "type": "fill", "paint": {}}], "view": {}, "basemap": {"providerId": "carto-positron"}, "layout": {}, "thresholds": {}},
+        "layer": {"id": "default_layer", "source": "source_default_layer", "type": "fill", "paint": {}},
+    }
+    with mock.patch("app.services.mapspec_store.mapspec_store.layer_upsert", new=mock.AsyncMock(return_value=mock_res)):
+        result = await registry.dispatch("webgis_map_combine", {
+            "preset": "academic_research",
+            "geojson": SAMPLE_GEOJSON,
+            "session_id": "sess-dispatch-alias",
+        })
+        assert result.get("code") != "VALIDATION_ERROR", f"别名工具同样不应拒绝 geojson: {result}"
+        assert "error" not in result, f"webgis_map_combine 应进入提交分支: {result}"
+        assert result.get("committed") is True, f"webgis_map_combine 应 committed: {result}"

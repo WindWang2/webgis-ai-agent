@@ -23,6 +23,12 @@ class RuntimeSnapshotSaveRequest(BaseModel):
 
 
 class RuntimeSnapshotSaveResponse(BaseModel):
+    """显式冻结回执（只回摘要字段；完整只读预览面走 inspect 端点）。
+
+    ``snapshot`` 全量 manifest 字段已移除：manifest 内嵌 ≤16MB
+    mapspec_doc，整份回传纯浪费带宽/序列化 CPU。
+    """
+
     project_id: str
     snapshot_id: str
     session_id: str
@@ -36,7 +42,6 @@ class RuntimeSnapshotSaveResponse(BaseModel):
     sources_needing_recompute: int
     datasets: int
     promotion_summary: Dict[str, Any] = Field(default_factory=dict)
-    snapshot: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RuntimeSnapshotSummary(BaseModel):

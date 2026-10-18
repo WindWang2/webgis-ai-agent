@@ -77,6 +77,12 @@ services:
       dockerfile: Dockerfile.prod
       target: runner
     container_name: webgis-prod-api
+    # security F-17：与 secure 栈（docker-compose.prod.secure.yml）及 k8s
+    # securityContext 对齐的容器加固（丢弃全部 capability、禁止 setuid 提权）。
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     ports:
       - "127.0.0.1:${API_PORT:-18000}:8000"
@@ -139,6 +145,12 @@ services:
       dockerfile: Dockerfile.prod
       target: runner
     container_name: webgis-prod-celery
+    # security F-17：与 secure 栈（docker-compose.prod.secure.yml）及 k8s
+    # securityContext 对齐的容器加固（丢弃全部 capability、禁止 setuid 提权）。
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     environment:
       - ENV=production

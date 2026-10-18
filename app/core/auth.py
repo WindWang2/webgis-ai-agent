@@ -371,6 +371,21 @@ _LIVE_STATE_MAX = 4096
 _live_state_cache: dict[str, tuple[float, Optional[tuple]]] = {}
 
 
+def _evict_live_state_cache(now: float) -> None:
+    """满帽淘汰（F-07 惊群修复，#1641）：先清已过期条目，仍满则淘汰最早插入的。
+
+    旧实现整体 ``clear()`` —— 活跃用户基数 >4096/2s 时缓存反复清零，每个
+    认证请求都打一次 DB PK 查询（~220 条 ``get_current_user`` 路由的每请求
+    开销被放大成全量）。按过期时间淘汰把影响面收敛到单个条目（dict 保序，
+    最早插入 ≈ 最早过期；``popitem`` 近似 LRU 的同款取舍）。
+    """
+    expired = [k for k, (exp, _state) in _live_state_cache.items() if exp <= now]
+    for key in expired:
+        _live_state_cache.pop(key, None)
+    while len(_live_state_cache) >= _LIVE_STATE_MAX:
+        _live_state_cache.pop(next(iter(_live_state_cache)), None)
+
+
 def invalidate_live_user_state(user_id: Optional[str] = None) -> None:
     """失效实时状态缓存（logout / 角色变更后调用；None = 全清）。"""
     if user_id is None:
@@ -410,7 +425,7 @@ async def _load_live_user_state(user_id: str) -> tuple[str, Optional[tuple]]:
         int(row[0] or 0), bool(row[1]) if row[1] is not None else True,
         row[2], row[3])
     if len(_live_state_cache) >= _LIVE_STATE_MAX:
-        _live_state_cache.clear()
+        _evict_live_state_cache(now)
     _live_state_cache[user_id] = (now + _LIVE_STATE_TTL_S, state)
     return ("ok", state) if state is not None else ("missing", None)
 

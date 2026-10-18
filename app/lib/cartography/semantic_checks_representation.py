@@ -35,7 +35,10 @@ def _check_scale_representation(
     """
     from app.lib.cartography.representation import (
         ARTIFACT_MODES,
+        ZOOM_DOMAIN_MAX,
+        ZOOM_DOMAIN_MIN,
         normalize_windows,
+        zoom_gate_of_layer,
     )
 
     declared = layer.get("representation")
@@ -84,18 +87,20 @@ def _check_scale_representation(
             if w.mode in ("point_cluster", "visual_heatmap"):
                 problems.append("point_mode_on_non_point_layer")
     # 结构门一致性：首窗 hidden → visibility.min_zoom 应等于首个非 hidden
-    # 窗起点（渲染端两条门路径不漂移）。
-    vis_block = layer.get("visibility") if isinstance(layer.get("visibility"), dict) else {}
+    # 窗起点（渲染端两条门路径不漂移）。门值只经 representation 单一裁决点
+    # zoom_gate_of_layer 投影 —— 钳制/NaN/inf/非数值一律 None（语义 = 结构
+    # 门缺席），畸形可落盘值披露而非抛错（与上文 view.zoom 的类型门同纪律）。
+    gate = zoom_gate_of_layer(layer)
     visible_windows = [w for w in normalized if w.mode != "hidden"]
     if normalized and normalized[0].mode == "hidden" and visible_windows:
         expected_min = visible_windows[0].min_zoom
-        got_min = vis_block.get("min_zoom")
-        if got_min is not None and abs(float(got_min) - expected_min) > 1e-6:
+        got_min = gate.get("min_zoom")
+        if got_min is not None and abs(got_min - expected_min) > 1e-6:
             problems.append("visibility_gate_diverges_from_windows")
 
     active_mode = None
     if zoom is not None:
-        z = min(23.999999, max(0.0, float(zoom)))
+        z = min(ZOOM_DOMAIN_MAX - 1e-9, max(ZOOM_DOMAIN_MIN, float(zoom)))
         active_mode = next(
             (w.mode for w in normalized if w.min_zoom <= z < w.max_zoom),
             normalized[-1].mode,

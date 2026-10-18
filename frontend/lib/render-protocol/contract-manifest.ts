@@ -67,7 +67,7 @@ export const RENDERER_CAPABILITY_MANIFEST = {
     label_placement: true,
     terrain: true,
     fill_extrusion_3d: true,
-    semantic_zoom_representation: false,
+    semantic_zoom_representation: true,
     generalization: false,
     export_svg: true,
     export_pdf: true,

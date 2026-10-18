@@ -74,6 +74,7 @@ def migrated_sqlite(tmp_path_factory):
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=str(REPO_ROOT),
         env={
+            **os.environ,  # 继承 SYSTEMROOT 等平台变量（Windows 的 _overlapped 需要）
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "DATABASE_URL": f"sqlite:///{db_path}",
             "JWT_SECRET_KEY": "test-secret-migration-32-chars-okay",

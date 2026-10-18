@@ -19,6 +19,8 @@ from app.lib.cartography.render_work_envelope import (
     project_render_work_envelope,
 )
 
+pytestmark = pytest.mark.cartography
+
 
 def _spec(layers=None, sources=None, components=None):
     return {

@@ -36,6 +36,8 @@ from app.services.mapspec.intents import (
 from app.services.mapspec.store import BASE_STORAGE_DIR
 from app.services.session_data import session_data_manager
 
+pytestmark = pytest.mark.cartography
+
 _QUERY = "成都小学分布图"
 
 

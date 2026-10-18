@@ -4,7 +4,7 @@
 - 日期：2026-10-18
 - 方向：Goal 03（RenderWork Protocol V1）
 - 基线：master `ddd10fb4`
-- 前置：ADR-0214（F13 render runtime recon 及其 D1/D3/D5/D6 落地）、ADR-0180（settle/K9）、#1617（MapSpec v1.6 RepresentationAtScale，open —— 本 ADR 前向兼容消费）
+- 前置：ADR-0214（F13 render runtime recon 及其 D1/D3/D5/D6 落地）、ADR-0180（settle/K9）、#1617（MapSpec v1.6 RepresentationAtScale，2026-10-18 已合并 —— 本 ADR 前向兼容消费）
 
 ## 背景与问题
 
@@ -96,8 +96,12 @@ stale 旗标表达，不另造码）。
 `app/lib/cartography/renderer_capability.py`：单一真相引用（layer types
 引用 `layer_capability`、组件清单引用 `component_renderers`，不复制判定）
 + 首个源类型/feature 面声明。**红线：不把未来功能声明为 supported** ——
-#1617 未合并，`semantic_zoom_representation`/`generalization` =
-`supported: false`（信封对 `layer.representation` 透传不重裁决）。
+#1617 已合并（2026-10-18），渲染端可执行表达（raw/point_cluster/
+visual_heatmap）端到端落地后 `semantic_zoom_representation` 翻
+`supported: true`（follow-up 执行：声明 + note 修正 + manifest 再生，
+fingerprint 变化由 parity gate 守护）；`generalization`（artifact 模式
+aggregate_grid/generalized）无预计算工件供给链，仍 = false。信封对
+`layer.representation` 透传不重裁决。
 `capability_fingerprint`（canonical manifest sha256）是 Python/TS parity
 锚；`design_system.renderCapabilityManifest` 导出（fail-open）。
 
@@ -152,8 +156,9 @@ work_match（信封指纹 vs 观察指纹）/ recompile_fallbacks）。bounded
   cartographic quality 现有权威（P9 observation、semantic checks、
   quality loop）不变；
 - #1617 合并后：`layer.representation` 经 extra="allow" round-trip 自然
-  透传；capability 面将 `semantic_zoom_representation` 翻 true 需其一
-  行改动 + manifest 再生（fingerprint 变化由 parity gate 守护）。
+  透传；`semantic_zoom_representation` 翻 true 的 follow-up 已执行
+  （2026-10-18：renderer_capability 声明 + note 修正 + corpus manifest
+  再生，fingerprint 变化由 parity gate 守护）。
 
 ## 独立 review 清偿（2026-10-18）
 
