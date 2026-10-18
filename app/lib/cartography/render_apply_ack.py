@@ -150,8 +150,9 @@ def validate_render_apply_ack(
     # 形状非法 → 条目级跳过（不整块拒绝：旧客户端无此块照常）。
     work_block = _validate_work_block(payload.get("work"), errors)
 
-    # ADR-0224：per-source 数据面状态（additive，可选）—— data revision
-    # actually used 的对账证据。条目级容错（非法条目跳过 + errors 披露）。
+    # ADR-0224：per-source 数据面状态（additive，可选）—— applied spec
+    # 声明的源 revision（reconcile 落定面）与信封依赖的对账证据。条目级
+    # 容错（非法条目跳过 + errors 披露）。
     sources: List[Dict[str, Any]] = []
     raw_sources = payload.get("sources")
     if raw_sources is not None and not isinstance(raw_sources, list):
@@ -220,7 +221,12 @@ def _validate_work_block(
 def _validate_source_entry(
     entry: Any, errors: List[str]
 ) -> Optional[Dict[str, Any]]:
-    """source 条目校验：source_id + status（ENTRY 词表）+ 可选 revision/cache。"""
+    """source 条目校验：source_id + status（ENTRY 词表）+ 可选 revision。
+
+    容差不对称（有意）：layers/components 非数组 → 整块拒绝（v1 既有
+    fail-closed 面）；sources 非数组 → 条目级跳过（additive 块缺席优先于
+    主链路拒绝 —— 与 work 块同纪律）。
+    """
     if not isinstance(entry, dict):
         errors.append("source entry must be an object")
         return None
@@ -239,12 +245,8 @@ def _validate_source_entry(
             errors.append(f"source {sid!r} invalid data_revision")
         else:
             out["data_revision"] = str(revision)[:_MAX_ID]
-    cache = entry.get("cache")
-    if cache is not None:
-        if cache not in ("hit", "miss", "bypass"):
-            errors.append(f"source {sid!r} invalid cache {cache!r}")
-        else:
-            out["cache"] = cache
+    # review P2-2：``cache`` 字段移除 —— 前端无真实产生点（封闭词表只描述
+    # 现实纪律）；数据面命中语义后续经 telemetry 通道供给时再入词表。
     return out
 
 

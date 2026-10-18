@@ -68,6 +68,11 @@ def reset_render_work_cache_for_tests() -> None:
         _cache.clear()
 
 
+def get_latest_for_tests(session_id: str) -> Optional[_Entry]:
+    """测试探针：读取 last-emitted 缓存条目（生产代码不得消费）。"""
+    return _cache_get(session_id)
+
+
 def project_envelope_from_state(
     state: Dict[str, Any],
     session_id: str,
@@ -79,25 +84,71 @@ def project_envelope_from_state(
     ``fingerprint`` 缺省时由调用方保证已算出（state 路径外复用）；
     本函数不重算 fingerprint（O(spec) 成本归 async 供给面线程卸载）。
     """
+    return _project_and_store(
+        state.get("mapspec"),
+        session_id,
+        fingerprint=fingerprint,
+        revision=_int_or_zero(state.get("_cartographic_mutation_revision")),
+        seq=_observation_seq_of(state),
+    )
+
+
+def emit_render_work_envelope(
+    mapspec: Dict[str, Any],
+    *,
+    session_id: str,
+    revision: int,
+    fingerprint: str,
+    observation_seq: int = 0,
+) -> Optional[RenderWorkEnvelope]:
+    """mutation 落地路径的本地投影（**不重读 state**，review P2-5）。
+
+    step_result 已持有权威事实（lifecycle 的 mapspec/mutation_revision/
+    mapspec_fingerprint/runtime_observation_seq）—— 从本地值投影避免
+    「commit 后重读 state」的并发撕裂（并行工具调用会把 G+1 代的信封
+    挂到 G 代的 step 上）。
+    """
+    return _project_and_store(
+        mapspec,
+        session_id,
+        fingerprint=fingerprint,
+        revision=revision,
+        seq=observation_seq,
+    )
+
+
+def _int_or_zero(value: Any) -> int:
     try:
-        mapspec = state.get("mapspec")
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _observation_seq_of(state: Dict[str, Any]) -> int:
+    observation = state.get("_cartographic_observation")
+    try:
+        return max(
+            0,
+            int(
+                observation.get("sequence", 0)
+                if isinstance(observation, dict) else 0
+            ),
+        )
+    except (TypeError, ValueError):
+        return 0
+
+
+def _project_and_store(
+    mapspec: Any,
+    session_id: str,
+    *,
+    fingerprint: str,
+    revision: int,
+    seq: int,
+) -> Optional[RenderWorkEnvelope]:
+    try:
         if not isinstance(mapspec, dict):
             return None
-        try:
-            revision = max(0, int(state.get("_cartographic_mutation_revision") or 0))
-        except (TypeError, ValueError):
-            revision = 0
-        observation = state.get("_cartographic_observation")
-        try:
-            seq = max(
-                0,
-                int(
-                    observation.get("sequence", 0)
-                    if isinstance(observation, dict) else 0
-                ),
-            )
-        except (TypeError, ValueError):
-            seq = 0
         cached = _cache_get(session_id)
         # 幂等身份命中：直接返回已缓存信封（重投影绝不把自身当 previous ——
         # 否则 hints 退化为 style_only=True 的自比较，破坏确定性契约）。
@@ -105,7 +156,15 @@ def project_envelope_from_state(
             cached[0], cached[1], cached[2]
         ) == (fingerprint, revision, seq):
             return cached[3]
-        previous = cached[3] if cached is not None else None
+        # 时序守卫（review P2-1）：last-emitted 记忆只允许沿 (revision, seq)
+        # 单调前进 —— 迟到的旧代投影（并发慢读）不得把 previous 基线倒拨到
+        # 新代之后（hints 会反向：data_changed/layers_removed 全颠倒），
+        # 也不得把缓存回退到旧代。旧代投影按「无前代可比」诚实降级。
+        previous = None
+        if cached is not None and (
+            (cached[1], cached[2]) <= (revision, seq)
+        ):
+            previous = cached[3]
         envelope = project_render_work_envelope(
             mapspec,
             session_id=session_id,
@@ -114,9 +173,12 @@ def project_envelope_from_state(
             observation_seq=seq,
             previous=previous,
         )
-        _cache_put(
-            session_id, (fingerprint, revision, seq, envelope)
-        )
+        # 只有单调前进（或首份）才推进 last-emitted 记忆；迟到旧代按无前代
+        # 投影返回，不回退缓存。
+        if cached is None or (cached[1], cached[2]) <= (revision, seq):
+            _cache_put(
+                session_id, (fingerprint, revision, seq, envelope)
+            )
         return envelope
     except Exception:  # noqa: BLE001 — fail-open：信封缺席 ≠ 主链路失败
         logger.debug(
@@ -178,9 +240,40 @@ async def get_render_work_envelope(
         return None
 
 
+def expected_work_fingerprint(
+    mapspec: Any,
+    *,
+    session_id: str,
+    revision: int,
+    fingerprint: str,
+) -> Optional[str]:
+    """服务端 work echo 对账的期望指纹（纯投影，无缓存副作用）。
+
+    work_fingerprint 不含 observation_target_seq / invalidation —— 同
+    (mapspec, session, revision, fingerprint) 必同指纹，可从当前权威
+    state 确定性重算（observation ingest 的 server_match 检查消费）。
+    """
+    if not isinstance(mapspec, dict):
+        return None
+    try:
+        envelope = project_render_work_envelope(
+            mapspec,
+            session_id=session_id,
+            revision=revision,
+            fingerprint=fingerprint,
+        )
+        return envelope.work_fingerprint
+    except Exception:  # noqa: BLE001 — 对账失败按缺席
+        logger.debug("[render-work] expected fingerprint projection failed",
+                     exc_info=True)
+        return None
+
+
 __all__ = [
     "get_render_work_envelope",
     "project_envelope_from_state",
+    "emit_render_work_envelope",
+    "expected_work_fingerprint",
     "invalidate_render_work_envelope",
     "reset_render_work_cache_for_tests",
 ]

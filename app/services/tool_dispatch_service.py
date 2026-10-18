@@ -195,16 +195,32 @@ _DISPLAY_RESULT_METADATA_KEYS = (
 )
 
 
-async def _attach_render_work(result: Dict[str, Any], session_id: str) -> None:
+def _attach_render_work(
+    result: Dict[str, Any],
+    session_id: str,
+    lifecycle: Dict[str, Any],
+) -> None:
     """ADR-0224（Goal 03）：执行信封随 mapspec-bearing step_result 上行。
 
-    fail-open：信封缺席（state 异常/投影失败）不阻断 step_result ——
-    envelope 是对账增值面，不是 mapspec 载体本身。
+    fail-open：信封缺席（投影失败）不阻断 step_result —— envelope 是对账
+    增值面，不是 mapspec 载体本身。**本地投影**（review P2-5）：从
+    lifecycle 已验证的 mapspec/mutation_revision/fingerprint/
+    runtime_observation_seq 投影，不重读 state —— 并行工具调用下重读会把
+    G+1 代信封挂到 G 代 step 上（并发撕裂），且省一次指纹重算。
     """
     try:
-        from app.services.render_work_supply import get_render_work_envelope
+        from app.services.render_work_supply import emit_render_work_envelope
 
-        envelope = await get_render_work_envelope(session_id)
+        mapspec = lifecycle.get("mapspec")
+        if not isinstance(mapspec, dict):
+            return
+        envelope = emit_render_work_envelope(
+            mapspec,
+            session_id=session_id,
+            revision=int(lifecycle.get("mutation_revision") or 0),
+            fingerprint=str(lifecycle.get("mapspec_fingerprint") or ""),
+            observation_seq=int(lifecycle.get("runtime_observation_seq") or 0),
+        )
         if envelope is not None:
             result["render_work"] = envelope.to_dict()
     except Exception:  # noqa: BLE001 — fail-open
@@ -1561,7 +1577,7 @@ class ToolDispatchService:
                 raise RuntimeError("persisted MapSpec fingerprint mismatch")
             # ADR-0224（Goal 03）：versioned 执行信封随 mapspec 上行（fail-open；
             # envelope = refs/IDs/revisions 有界投影，载荷永不进）。
-            await _attach_render_work(result, session_id)
+            _attach_render_work(result, session_id, lifecycle)
             return result
         except Exception as exc:  # noqa: BLE001 - preserve completed analysis
             logger.warning(
@@ -1771,8 +1787,8 @@ class ToolDispatchService:
                     authored[key] = lifecycle[key]
             if authored.get("mapspec_fingerprint") != cartographic_fingerprint(mapspec):
                 raise RuntimeError("persisted MapSpec fingerprint mismatch")
-            # ADR-0224：raster 路径同款信封上行（fail-open）。
-            await _attach_render_work(authored, session_id)
+            # ADR-0224：raster 路径同款信封上行（fail-open，本地投影）。
+            _attach_render_work(authored, session_id, lifecycle)
             return authored
         except Exception as exc:  # noqa: BLE001 - preserve completed raster analysis
             logger.warning(

@@ -25,7 +25,8 @@ export const MAX_COMPONENT_WORK = 32;
 export const MAX_DIAGNOSTICS = 8;
 
 const MAX_ID = 64;
-const MAX_FINGERPRINT = 64;
+/** 指纹全长保留（carto-sha256:<64hex> = 77 字符；与后端 _MAX_FINGERPRINT=96 同值）。 */
+const MAX_FINGERPRINT = 96;
 
 /** 源类型词表（镜像后端 _SOURCE_KINDS；词表外 → 'unknown'）。 */
 const SOURCE_KINDS: ReadonlySet<string> = new Set([
@@ -177,7 +178,7 @@ export function parseRenderWorkEnvelope(raw: unknown): RenderWorkEnvelope | null
     work_id: workId,
     session_id: sessionId,
     mapspec_revision: revision,
-    mapspec_fingerprint: boundedId(r.mapspec_fingerprint),
+    mapspec_fingerprint: boundedFp(r.mapspec_fingerprint) ?? '',
     observation_target_seq:
       typeof r.observation_target_seq === 'number'
       && Number.isFinite(r.observation_target_seq)

@@ -98,6 +98,57 @@ class TestProjectFromState:
         assert env3.invalidation.style_only is True
 
 
+class TestChronologyGuard:
+    """Review P2-1：last-emitted 记忆单调 —— 迟到旧代不倒拨 previous 基线、
+    不回退缓存。"""
+
+    def test_late_old_projection_degrades_to_unknown(self):
+        supply.project_envelope_from_state(
+            _state(_SPEC_V1, revision=6, seq=20), "sess-L", fingerprint="fp-new"
+        )
+        # 迟到的旧代（revision 5）—— hints 必须无前代可比（不反向），且
+        # 缓存不被回退。
+        late = supply.project_envelope_from_state(
+            _state(_SPEC_V1, revision=5, seq=10), "sess-L", fingerprint="fp-old"
+        )
+        assert late.invalidation.style_only is None
+        fresh = supply.get_latest_for_tests("sess-L")
+        assert fresh[1] == 6  # (fp, revision, seq) —— 仍是新代
+
+    def test_newer_projection_advances_memory(self):
+        supply.project_envelope_from_state(
+            _state(_SPEC_V1, revision=5), "sess-L", fingerprint="fp1"
+        )
+        spec2 = dict(_SPEC_V1)
+        spec2["sources"] = {"s1": {"type": "geojson", "content_revision": 3}}
+        env = supply.project_envelope_from_state(
+            _state(spec2, revision=6), "sess-L", fingerprint="fp2"
+        )
+        assert env.invalidation.data_changed == ("s1",)
+
+
+class TestExpectedWorkFingerprint:
+    """服务端 work echo 对账的期望指纹重算（纯投影，无缓存副作用）。"""
+
+    def test_matches_client_projection(self):
+        from app.lib.cartography.render_work_envelope import (
+            project_render_work_envelope,
+        )
+
+        env = project_render_work_envelope(
+            _SPEC_V1, session_id="sess-M", revision=4, fingerprint="fp-z",
+            observation_seq=31,
+        )
+        assert supply.expected_work_fingerprint(
+            _SPEC_V1, session_id="sess-M", revision=4, fingerprint="fp-z",
+        ) == env.work_fingerprint
+
+    def test_garbage_mapspec_none(self):
+        assert supply.expected_work_fingerprint(
+            None, session_id="s", revision=1, fingerprint="f",
+        ) is None
+
+
 class TestAsyncSupply:
     @pytest.mark.asyncio
     async def test_failopen_when_state_missing(self, monkeypatch):

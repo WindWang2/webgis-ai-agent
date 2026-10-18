@@ -102,7 +102,7 @@
             "visible": true
           }
         ],
-        "mapspec_fingerprint": "fp-1111111111111111",
+        "mapspec_fingerprint": "carto-sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "mapspec_revision": 7,
         "observation_target_seq": 41,
         "required_capabilities": [
@@ -112,11 +112,11 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "9264795399fa708af56f19dca33ccffd7eea470b2eac14e8280e9850d6e4e526",
-        "work_id": "rw-7-fp-111111111"
+        "work_fingerprint": "c56f1751569df1ea35c05b9ca2220cc9cb05378f1e66dda48c63bbf5a3079e3b",
+        "work_id": "rw-7-111111111111"
       },
       "projector_input": {
-        "fingerprint": "fp-1111111111111111",
+        "fingerprint": "carto-sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "mapspec": {
           "layers": [
             {
@@ -259,7 +259,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "d0405f75b59e602a34262ce3032267f30de634b4626dfde410dda442b3199541",
+        "work_fingerprint": "6f74a4fcfbd5b8a91dddb1936da179753fb4b206e0c6b2d9fb2aff40d688f722",
         "work_id": "rw-8-fp-222222222"
       },
       "projector_input": {
@@ -416,7 +416,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "377ca183bdb81b248c942cd4e87ae63c120d8acc0fcdd32dc9861b893ed78c2a",
+        "work_fingerprint": "778ac2baf173d81c65b300f718b14b8a45af179a9c35892f47f2bcad52ea62f1",
         "work_id": "rw-9-fp-333333333"
       },
       "projector_input": {
@@ -624,7 +624,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "e47cfb269c92e7d95d814921f73c6746a863f5b92917bc7d13464ee6481fbf5b",
+        "work_fingerprint": "b87034c4264e8c69938492514203bbcd6ceca1e303df7d97c68f66bc3f470948",
         "work_id": "rw-10-fp-444444444"
       },
       "projector_input": {
@@ -774,7 +774,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-B",
-        "work_fingerprint": "a55cebd1e455e6ecbb65ea8d216185a32641c3b6e8d2db51a768957b2a568479",
+        "work_fingerprint": "efb03cec0ec81e0981ce127b7120a726dd60990316c7bf288b0def98fe1b6fcc",
         "work_id": "rw-3-fp-555555555"
       },
       "projector_input": {
@@ -864,7 +864,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-C",
-        "work_fingerprint": "9961308eec31a9b045ac88ff072c8467b3f4f579da31e2cc1412d992bd5de90b",
+        "work_fingerprint": "4b5ff47972ebd5e321f973a0200cbb44c86f8d344c6fed92842836b5d8f0b5a6",
         "work_id": "rw-2-fp-666666666"
       },
       "projector_input": {
@@ -965,7 +965,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-D",
-        "work_fingerprint": "7198c92b8e0c3f9893e5c5da02833d3f94b2effe6c52591d8e806176a411f24f",
+        "work_fingerprint": "c5f91bf7728288ff65c81ba28867a6928be192964b55249cdcf429752d37ee0b",
         "work_id": "rw-5-fp-777777777"
       },
       "projector_input": {
@@ -1062,7 +1062,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-E",
-        "work_fingerprint": "e70b35b42abae6282cf868ae3376061decc3cba52125c5d9d422caa4e554bc16",
+        "work_fingerprint": "2bd2093ef76b2c51ed3062049640d877144b770f424d77fbe4fd6ce2f9489be2",
         "work_id": "rw-11-fp-888888888"
       },
       "projector_input": {
@@ -1174,7 +1174,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-F",
-        "work_fingerprint": "e00811acfd79c868a73a904eda9510fd631d2561f6b6b2e86d5376393ec98a20",
+        "work_fingerprint": "ae188f0ec4e4d2214e0d72c41f783173c480b797c4a0b9ecb4bc7b1fc9dd2150",
         "work_id": "rw-4-fp-999999999"
       },
       "projector_input": {
@@ -1272,7 +1272,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-G",
-        "work_fingerprint": "803889890fd752e4c1ffb24d494ecccb78205352cede23157d1878da6ba2c5f7",
+        "work_fingerprint": "f39c643b774d9102a7433125a3430f0624a9a66ca3b5b8aa297ea36f15e244aa",
         "work_id": "rw-6-fp-aaaaaaaaa"
       },
       "projector_input": {
@@ -1413,7 +1413,7 @@
             "visible": true
           }
         ],
-        "mapspec_fingerprint": "fp-1111111111111111",
+        "mapspec_fingerprint": "carto-sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "mapspec_revision": 7,
         "observation_target_seq": 41,
         "required_capabilities": [
@@ -1423,11 +1423,11 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "9264795399fa708af56f19dca33ccffd7eea470b2eac14e8280e9850d6e4e526",
-        "work_id": "rw-7-fp-111111111"
+        "work_fingerprint": "c56f1751569df1ea35c05b9ca2220cc9cb05378f1e66dda48c63bbf5a3079e3b",
+        "work_id": "rw-7-111111111111"
       },
       "projector_input": {
-        "fingerprint": "fp-1111111111111111",
+        "fingerprint": "carto-sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "mapspec": {
           "layers": [
             {
@@ -1599,7 +1599,7 @@
         ],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "6d0c8ced0b5c5be24ffcf2ee19e6966ef7e22c2a6b8f1a1daea9aca29e44ca73",
+        "work_fingerprint": "64be5e0fec7f295d22e76ffa187ced3056e6c4880b9054c8a4adf2ed5dd55503",
         "work_id": "rw-12-fp-bbbbbbbbb"
       },
       "projector_input": {

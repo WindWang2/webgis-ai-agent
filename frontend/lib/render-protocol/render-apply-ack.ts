@@ -20,6 +20,7 @@
 
 import type { MapSpec } from '@/lib/mapspec-compiler/types.generated';
 import { layerAliases } from '@/lib/mapspec/live-spec';
+import { workEchoStatus } from './render-work';
 
 export const APPLY_ACK_SCHEMA_VERSION = 'render_apply_ack.v1' as const;
 
@@ -54,16 +55,17 @@ export interface ApplyAckComponentEntry {
 }
 
 /**
- * per-source 数据面状态（ADR-0224）：data revision actually used 的对账
- * 证据 —— envelope.data_dependencies 与 applied spec 源 revision 对比。
- * `stale` = 层挂上了但数据代次落后（当前代真实风险，非旧 ACK）。
+ * per-source 数据面状态（ADR-0224）：信封 data_dependencies 与 **applied
+ * spec 声明的源 revision**（reconcile 落定面）的对账证据 —— `stale` =
+ * runtime 落定的源 revision 落后于信封声明（reconcile 滞后于数据代次，
+ * 当前代真实风险，非旧 ACK）。这是 reconcile 基面对账，不是字节级
+ * data-plane fetch 追踪（后者经 telemetry 通道）。
  */
 export interface ApplyAckSourceEntry {
   source_id: string;
   status: ApplyAckEntryStatus;
   reason_code?: ApplyAckReasonCode;
   data_revision?: string;
-  cache?: 'hit' | 'miss' | 'bypass';
 }
 
 /** work echo 块：ACK 绑定的执行信封身份（仅同代 matched 才 echo）。 */
@@ -297,7 +299,9 @@ export function buildRenderApplyAck({
   let workEcho: ApplyAckWorkEcho | undefined;
   let sources: ApplyAckSourceEntry[] | undefined;
   let sourceStaleCount = 0;
-  if (work && work.mapspec_revision === revision) {
+  // 同代门单一实现（store 的 workEchoStatus）：仅 matched 才 echo ——
+  // 旧代信封的身份对本代 ACK 是错误归因。
+  if (work && workEchoStatus(work, revision) === 'matched') {
     workEcho = {
       work_id: work.work_id,
       work_fingerprint: work.work_fingerprint,
@@ -309,10 +313,12 @@ export function buildRenderApplyAck({
     const appliedRevById = new Map<string, string | undefined>();
     for (const [sid, src] of Object.entries(applied?.sources ?? {})) {
       const rev = (src as { content_revision?: unknown } | null)?.content_revision;
+      // 非整数 revision（后端 int 归一外的形状）按「无可对账 revision」
+      // 处理 —— 不虚构 stale 也不宣称命中（诚实缺席）。
       appliedRevById.set(
         sid,
-        typeof rev === 'number' && Number.isFinite(rev)
-          ? String(Math.max(0, rev))
+        typeof rev === 'number' && Number.isInteger(rev) && rev >= 0
+          ? String(rev)
           : typeof rev === 'string' && rev ? rev : undefined,
       );
     }

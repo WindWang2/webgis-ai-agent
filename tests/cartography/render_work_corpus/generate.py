@@ -4,9 +4,11 @@
 
 1. ``contract_manifest.json`` —— Python↔TS 词表/预算三重锁的 JSON 侧
    （backend 单一权威 consts 的 canonical 投影）；
-2. ``render_work_golden.json`` —— 12 场景执行信封 + ACK 期望语料
-   （同一份 JSON 被 Python 投影测试与 vitest ACK 测试消费 —— 跨语言
-   单一语料，两侧漂移任一侧爆）。
+2. ``render_work_golden.json`` —— 12 场景执行信封语料 + ACK builder
+   输入（同一份 JSON 被 Python 投影重放测试
+   ``test_render_work_corpus_v1.py`` 与 vitest ``corpus.golden.test.ts``
+   消费 —— 跨语言单一语料，两侧漂移任一侧爆；ACK 侧断言在 TS 测试内
+   以真实 builder 输出书写）。
 
 再生：``python tests/cartography/render_work_corpus/generate.py``
 """
@@ -102,9 +104,8 @@ def scenarios() -> list:
     """(name, projector_input, ack_input) 三元组列表。
 
     ack_input 是 buildRenderApplyAck 的 TS 侧输入（applied/mapIdle/pending/
-    work），golden 期望由真实 builder 生成 —— 见 generate() 的 TS 侧说明：
-    Python 侧只投影 envelope；ACK 期望由 scripts/gen_ack_golden.mjs 运行
-    真实 TS builder 产出（禁止手写）。
+    work）。Python 侧只投影 envelope；ACK 断言在 corpus.golden.test.ts
+    内以真实 TS builder 输出书写（重放漂移由该测试爆出）。
     """
     ten_layers = [
         {
@@ -122,7 +123,9 @@ def scenarios() -> list:
                 "mapspec": _spec(ten_layers, {"src-main": _geojson_source(3)}),
                 "session_id": "sess-A",
                 "revision": 7,
-                "fingerprint": "fp-" + "1" * 16,
+                # 真实指纹形状（carto-sha256:<64hex>）—— 锁定 work_id 切
+                # 哈希段而非 scheme 前缀（review P0-1 回归）。
+                "fingerprint": "carto-sha256:" + "1" * 64,
                 "observation_seq": 41,
             },
             "ack": {
@@ -381,7 +384,9 @@ def scenarios() -> list:
                 "mapspec": _spec(ten_layers, {"src-main": _geojson_source(3)}),
                 "session_id": "sess-A",
                 "revision": 7,
-                "fingerprint": "fp-" + "1" * 16,
+                # 真实指纹形状（carto-sha256:<64hex>）—— 锁定 work_id 切
+                # 哈希段而非 scheme 前缀（review P0-1 回归）。
+                "fingerprint": "carto-sha256:" + "1" * 64,
                 "observation_seq": 41,
             },
             "ack": {

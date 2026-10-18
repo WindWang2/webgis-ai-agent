@@ -121,6 +121,34 @@ class TestBounds:
         assert len(env.component_work) == MAX_COMPONENT_WORK
 
 
+class TestIdentityDiscrimination:
+    """Review P0-1/P1-1 回归：真实指纹格式（carto-sha256:<64hex>）下
+    work_id 必须切**哈希段**，指纹全长保留。"""
+
+    def test_same_revision_different_content_different_work_id(self):
+        spec_a = _spec([{"id": "x", "type": "fill", "source": ""}])
+        spec_b = _spec([{"id": "y", "type": "fill", "source": ""}])
+        e1 = _project(spec_a, revision=5, fingerprint="carto-sha256:" + "a" * 64)
+        e2 = _project(spec_b, revision=5, fingerprint="carto-sha256:" + "b" * 64)
+        assert e1.work_id != e2.work_id
+        assert e1.work_id == "rw-5-" + "a" * 12
+        assert e2.work_id == "rw-5-" + "b" * 12
+
+    def test_fingerprint_full_length_preserved(self):
+        fp = "carto-sha256:" + "9" * 64
+        env = _project(_spec([{"id": "l", "type": "fill", "source": ""}]),
+                       fingerprint=fp)
+        assert env.to_dict()["mapspec_fingerprint"] == fp
+
+    def test_seq_not_in_work_fingerprint(self):
+        """seq 跨通道漂移（SSE seq=N vs 恢复面 seq=N+1）不得改变身份。"""
+        spec = _spec([{"id": "l", "type": "fill", "source": ""}])
+        e1 = _project(spec, observation_seq=7)
+        e2 = _project(spec, observation_seq=99)
+        assert e1.work_fingerprint == e2.work_fingerprint
+        assert e1.observation_target_seq != e2.observation_target_seq
+
+
 class TestInvalidationHints:
     def _base(self):
         return _spec(

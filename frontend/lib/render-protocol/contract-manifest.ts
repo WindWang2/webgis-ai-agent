@@ -8,7 +8,7 @@
  *     ≡ tests/cartography/render_work_corpus/contract_manifest.json（生成物）
  *     ≡ 本模块（TS 镜像）
  *
- * 任何一侧漂移由双侧 drift test 爆（corpus.parity.golden.test.ts /
+ * 任何一侧漂移由双侧 drift test 爆（corpus.golden.test.ts /
  * test_render_work_corpus_v1.py）。**手改本文件 = 伪造一致性** —— 只能经
  * `tests/cartography/render_work_corpus/generate.py` 再生。
  */

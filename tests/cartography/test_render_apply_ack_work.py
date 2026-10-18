@@ -83,14 +83,14 @@ class TestSourceEntries:
                 {"source_id": "s1", "status": "applied", "data_revision": "3"},
                 {"source_id": "s2", "status": "stale",
                  "reason_code": "stale_data_revision", "data_revision": "1"},
-                {"source_id": "s3", "status": "pending", "cache": "miss"},
+                {"source_id": "s3", "status": "pending"},
             ]),
             stamped_revision=5,
         )
         assert normalized is not None and errors == []
         assert normalized["sources"][0]["data_revision"] == "3"
         assert normalized["sources"][1]["status"] == ENTRY_STALE
-        assert normalized["sources"][2]["cache"] == "miss"
+        assert normalized["sources"][2] == {"source_id": "s3", "status": "pending"}
 
     def test_invalid_source_status_skipped(self):
         normalized, errors = validate_render_apply_ack(
@@ -104,16 +104,6 @@ class TestSourceEntries:
         assert [s["source_id"] for s in normalized["sources"]] == ["s2"]
         assert errors
 
-    def test_invalid_cache_value_dropped(self):
-        normalized, errors = validate_render_apply_ack(
-            _base_ack(sources=[
-                {"source_id": "s1", "status": "applied", "cache": "teleport"},
-            ]),
-            stamped_revision=5,
-        )
-        assert normalized is not None
-        assert "cache" not in normalized["sources"][0]
-        assert errors
 
     def test_source_bound_disclosed(self):
         normalized, _ = validate_render_apply_ack(

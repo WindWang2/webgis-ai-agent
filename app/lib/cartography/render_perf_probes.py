@@ -67,7 +67,16 @@ def normalize_render_perf_block(payload: Any) -> Optional[Dict[str, Any]]:
     out["data_plane"] = {
         key: _bounded_count((data_plane_raw or {}).get(key))
         for key in _DATA_PLANE_KEYS
+        if key != "bytesFetched"
     }
+    # bytesFetched 是累计字节幅（页面生命周期可超 1e9 事件计数界）——
+    # 与 cache_bytes 同用字节上界族（review P3-8）。
+    raw_bytes = (data_plane_raw or {}).get("bytesFetched")
+    if isinstance(raw_bytes, bool) or not isinstance(raw_bytes, (int, float)):
+        raw_bytes = 0
+    out["data_plane"]["bytesFetched"] = min(
+        max(0, int(raw_bytes)), _MAX_BYTES
+    )
     cache_bytes = payload.get("cache_bytes")
     if isinstance(cache_bytes, bool) or not isinstance(cache_bytes, (int, float)):
         cache_bytes = 0

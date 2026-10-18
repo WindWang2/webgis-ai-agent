@@ -1863,6 +1863,48 @@ async def push_cartographic_runtime_observation(
                 apply_ack, _ack_errors = validate_render_apply_ack(
                     req.apply_ack, stamped_revision=stamped_revision
                 )
+                # ADR-0224（review P2-3）：work echo 服务端对账 —— ACK 描述
+                # 当前代（非 stale）且带 work 块时，按当前 mapspec 重算期望
+                # work_fingerprint（确定性：session+revision+fingerprint；
+                # seq 不进指纹）比对客户端 echo。不匹配 → server_match=False
+                # + 有界 errors 披露（审计面不虚构工作归因；层条目 findings
+                # 不受影响 —— 归因错误≠应用结果错误）。重算失败 → 缺席
+                # （fail-open）。
+                if (
+                    apply_ack is not None
+                    and apply_ack.get("stale") is not True
+                    and isinstance(apply_ack.get("work"), dict)
+                    and isinstance(current_mapspec, dict)
+                ):
+                    try:
+                        from app.services.render_work_supply import (
+                            expected_work_fingerprint,
+                        )
+
+                        expected_fp = expected_work_fingerprint(
+                            current_mapspec,
+                            session_id=session_id,
+                            revision=stamped_revision,
+                            fingerprint=current_fingerprint,
+                        )
+                        work_block = dict(apply_ack["work"])
+                        if expected_fp is not None:
+                            work_block["server_match"] = (
+                                expected_fp
+                                == work_block.get("work_fingerprint")
+                            )
+                            apply_ack["work"] = work_block
+                            if work_block["server_match"] is False:
+                                errors_list = apply_ack.setdefault("errors", [])
+                                if len(errors_list) < 8:
+                                    errors_list.append(
+                                        "work_fingerprint mismatch"
+                                    )
+                    except Exception:  # noqa: BLE001 — 对账失败按缺席
+                        logger.debug(
+                            "[render-work] server-side work check failed for %s",
+                            session_id, exc_info=True,
+                        )
             observation = {
                 "session_id": session_id,
                 "sequence": sequence,

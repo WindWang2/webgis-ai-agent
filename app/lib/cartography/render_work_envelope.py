@@ -49,7 +49,10 @@ MAX_LAYER_WORK = 128
 MAX_COMPONENT_WORK = 32
 MAX_DIAGNOSTICS = 8
 _MAX_ID = 64
-_MAX_FINGERPRINT = 64
+#: 指纹保留全长（cartographic_fingerprint 形如 ``carto-sha256:<64hex>``
+#: = 77 字符 —— 64 截断会砍掉 13 个 hex 位并让前缀碰撞：work_match /
+#: work_id 判别力受损。96 覆盖现有格式 + 少量余量）。
+_MAX_FINGERPRINT = 96
 
 #: 源身份字段投影（按 source.type；缺席字段 → None，不虚构）。
 _SOURCE_KINDS = frozenset({
@@ -359,16 +362,23 @@ def project_render_work_envelope(
     fp = str(fingerprint or "")[:_MAX_FINGERPRINT]
     sid = str(session_id or "")[:_MAX_ID]
 
-    # work_id：deterministic（revision + mapspec fingerprint 短前缀 ——
-    # 同代重投影必同 id；幂等重放可检测）。
-    work_id = f"rw-{revision_int}-{fp[:12]}" if fp else f"rw-{revision_int}-empty"
+    # work_id：deterministic（revision + mapspec fingerprint 的**哈希段**
+    # 短前缀 —— 形如 ``carto-sha256:<hex>`` 的指纹必须切 hex 段：切整个
+    # 字符串前缀会把 scheme 前缀当身份（同 revision 全部碰撞，review
+    # P0-1）。同代重投影必同 id；同 revision 不同内容必不同 id）。
+    fp_hex = fp.split(":")[-1] if fp else ""
+    work_id = f"rw-{revision_int}-{fp_hex[:12]}" if fp_hex else f"rw-{revision_int}-empty"
 
+    # work_fingerprint 的语义字段：observation_target_seq 不进（seq 是
+    # 发射时刻的观察环位置（metadata），随通道/时机漂移 —— SSE 先于观察
+    # （seq=N）、恢复面晚于观察（seq=N+1）；进指纹会让同代信封跨通道指纹
+    # 不等，破坏「幂等重放可检测」（review P2-4）。它仍是信封字段与 ACK
+    # 对账输入，只是不构成工作身份。
     semantic = {
         "schema_version": RENDER_WORK_SCHEMA_VERSION,
         "session_id": sid,
         "mapspec_revision": revision_int,
         "mapspec_fingerprint": fp,
-        "observation_target_seq": seq_int,
         "data_dependencies": [
             [d.source_id, *_identity_of(d)] for d in deps
         ],

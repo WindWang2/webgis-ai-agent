@@ -34,7 +34,8 @@
 
 ### Changed
 - `tool_dispatch_service`：vector/raster 两处 authoring 路径 attach
-  `render_work`（fail-open；slim_event_result 自动透传）。
+  `render_work`（fail-open；**本地投影** —— 从 lifecycle 已验证事实投影，
+  不重读 state，消除并行工具调用的代次撕裂；slim_event_result 自动透传）。
 - `GET /sessions/{id}/map-state`：恢复面同带 `render_work`（重连/重放
   幂等对账基线）。
 - `frontend`：ACK builder/observation collector/observation hook/
