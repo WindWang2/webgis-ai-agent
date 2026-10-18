@@ -15,6 +15,12 @@ body hash 维度上 24h 内重放返回**首次响应**（状态码 + content-ty
   混入调用方凭证摘要（Authorization / X-Session-Token），否则任何人用同
   key + 同 body 即可取回他人的首次响应；``/auth/*`` 凭证面整体不参与幂等；
   只缓存 2xx 且不带 ``Set-Cookie`` 的响应。
+- **无凭证调用方不参与读写**（security F-05 加固，评审 #1640）：摘要只混入
+  Authorization / X-Session-Token 两个头，均缺席时 digest 输入恒为
+  ``"\\x00\\x00"`` —— 摘要恒定，匿名调用方之间零隔离，同 key + 同 body
+  可互取首次响应（匿名会话 owner_token 即会话能力令牌，SEC-08）。此类
+  调用方直接放行：不读缓存、不存缓存（与 fail-open 路径同纪律 —— 幂等
+  本就是尽力而为语义，匿名客户端失去重放保护但消除跨调用方泄露）。
 """
 from __future__ import annotations
 
@@ -79,6 +85,19 @@ def caller_principal_digest(request: Request) -> str:
     return digest.hexdigest()
 
 
+def caller_has_credentials(request: Request) -> bool:
+    """调用方是否携带凭证（Authorization / X-Session-Token，非空即算）。
+
+    无凭证调用方的 principal 摘要恒为常量（两个头均缺席时 digest 输入恒为
+    ``"\\x00\\x00"``），重放缓存对其零隔离（#1640）—— 同 key + 同 body 即可
+    取回他人的首次响应。此类调用方不参与幂等读写（见模块 docstring 纪律）。
+    """
+    return any(
+        request.headers.get(name)
+        for name in ("authorization", "x-session-token")
+    )
+
+
 def compute_idempotency_key(
     header_value: str, method: str, path: str, body: bytes, principal: str = ""
 ) -> str:
@@ -139,6 +158,12 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if not header_key or request.method != "POST":
             return await call_next(request)
         if any(m in request.url.path for m in _EXCLUDED_PATH_MARKERS):
+            return await call_next(request)
+        # security F-05 加固（#1640）：Authorization 与 X-Session-Token 均缺席的
+        # 无凭证调用方摘要是常量 —— 匿名调用方共享同一份重放缓存，同 key + 同
+        # body 即可取回他人的首次响应（匿名会话 owner_token 即会话能力令牌，
+        # SEC-08）。直接放行：不读缓存、不存缓存（与 fail-open 同纪律）。
+        if not caller_has_credentials(request):
             return await call_next(request)
         # 只处理 JSON 请求体（mutating API 面）；其他内容类型放行
         if "application/json" not in request.headers.get("content-type", ""):

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 from fastapi import FastAPI
@@ -25,6 +26,10 @@ class FakeRedis:
         self.store: dict[str, tuple[str, float]] = {}
         self.broken = broken
         self.calls: list[str] = []
+        # #1664：TestClient 多线程并发下保证 set(nx=True) 的「检查-置位」原子性
+        # （非原子的 check-then-set 会让两个线程同时拿到单飞锁，单飞断言失去
+        # 确定性）。临界区内无 await，不阻塞 event loop。
+        self._lock = threading.Lock()
 
     async def _check(self):
         if self.broken:
@@ -43,13 +48,14 @@ class FakeRedis:
 
     async def set(self, key: str, value: str, nx: bool = False, ex: int = 0):
         await self._check()
-        self.calls.append(key)
-        if nx and key in self.store:
-            v, exp = self.store[key]
-            if exp >= time.monotonic():
-                return False
-        self.store[key] = (value, time.monotonic() + ex)
-        return True
+        with self._lock:
+            self.calls.append(key)
+            if nx and key in self.store:
+                v, exp = self.store[key]
+                if exp >= time.monotonic():
+                    return False
+            self.store[key] = (value, time.monotonic() + ex)
+            return True
 
     async def delete(self, key: str):
         await self._check()
@@ -96,8 +102,9 @@ class TestReplay:
     def test_same_key_replays_first_response(self):
         redis = FakeRedis()
         client, counter = _client(redis)
-        r1 = client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "k-1"})
-        r2 = client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "k-1"})
+        headers = {"Idempotency-Key": "k-1", "Authorization": "Bearer t"}
+        r1 = client.post("/echo", json={"x": 1}, headers=headers)
+        r2 = client.post("/echo", json={"x": 1}, headers=headers)
         assert r1.status_code == 200
         assert r2.status_code == 200
         assert r1.json()["n"] == 1
@@ -108,8 +115,9 @@ class TestReplay:
     def test_different_key_processes_again(self):
         redis = FakeRedis()
         client, counter = _client(redis)
-        client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "k-a"})
-        r2 = client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "k-b"})
+        headers = {"Authorization": "Bearer t"}
+        client.post("/echo", json={"x": 1}, headers={**headers, "Idempotency-Key": "k-a"})
+        r2 = client.post("/echo", json={"x": 1}, headers={**headers, "Idempotency-Key": "k-b"})
         assert r2.json()["n"] == 2
         assert counter["n"] == 2
 
@@ -124,8 +132,9 @@ class TestReplay:
     def test_key_scoped_to_path_and_body(self):
         redis = FakeRedis()
         client, counter = _client(redis)
-        client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "same"})
-        r2 = client.post("/echo", json={"x": 2}, headers={"Idempotency-Key": "same"})
+        headers = {"Authorization": "Bearer t"}
+        client.post("/echo", json={"x": 1}, headers={**headers, "Idempotency-Key": "same"})
+        r2 = client.post("/echo", json={"x": 2}, headers={**headers, "Idempotency-Key": "same"})
         assert r2.json()["n"] == 2, "同 key 不同 body 必须视为不同请求"
 
 
@@ -135,19 +144,17 @@ class TestSingleflight:
         app, counter = _build_app(redis)
         client = TestClient(app)
 
-        async def one_call():
-            # TestClient 是同步的 —— 用线程池模拟并发到达
-            await asyncio.sleep(0)
-
-        import threading
-
         results: list = []
         barrier = threading.Barrier(5)
 
         def worker():
             barrier.wait()
             results.append(
-                client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "conc"}).json()
+                client.post(
+                    "/echo",
+                    json={"x": 1},
+                    headers={"Idempotency-Key": "conc", "Authorization": "Bearer t"},
+                ).json()
             )
 
         threads = [threading.Thread(target=worker) for _ in range(5)]
@@ -156,11 +163,15 @@ class TestSingleflight:
         for t in threads:
             t.join()
         assert len(results) == 5
-        assert counter["n"] <= 2, (
+        # #1664：合同是「N 并发只命中上游一次」—— 恰好 1 次，不是「≤2 次」。
+        # 锁释放与响应存储的「先存后放」排序（app/core/idempotency.py
+        # _store_response）保证等待者在锁消失前必读到重放记录；<= 2 会把
+        # 「单个等待者穿透」这一主要回归形态完全放绿。
+        assert counter["n"] == 1, (
             f"并发同 key 单飞失效：上游命中 {counter['n']} 次（results={results}）"
         )
         bodies = {r["n"] for r in results}
-        assert all(b in (1, 2) for b in bodies)
+        assert bodies == {1}, f"所有并发响应必须重放同一首次响应：{bodies}"
 
 
 class TestTtl:
@@ -170,12 +181,14 @@ class TestTtl:
         redis = FakeRedis()
         client, counter = _client(redis)
         monkeypatch.setattr(idem_mod, "RESPONSE_TTL_S", 1)
-        client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "ttl"})
+        client.post("/echo", json={"x": 1}, headers={
+            "Idempotency-Key": "ttl", "Authorization": "Bearer t"})
         # 人为过期
         for key, (value, _exp) in list(redis.store.items()):
             if key.startswith("idem:resp:"):
                 redis.store[key] = (value, time.monotonic() - 0.01)
-        r2 = client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "ttl"})
+        r2 = client.post("/echo", json={"x": 1}, headers={
+            "Idempotency-Key": "ttl", "Authorization": "Bearer t"})
         assert r2.headers.get("Idempotent-Replay") is None
         assert r2.json()["n"] == 2
 
@@ -184,7 +197,8 @@ class TestFailOpen:
     def test_redis_down_processes_normally(self):
         redis = FakeRedis(broken=True)
         client, counter = _client(redis)
-        r = client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "down"})
+        r = client.post("/echo", json={"x": 1}, headers={
+            "Idempotency-Key": "down", "Authorization": "Bearer t"})
         assert r.status_code == 200
         assert r.json()["n"] == 1
 
@@ -226,8 +240,10 @@ class TestReplayHeaders:
             )
 
         client = TestClient(app)
-        r1 = client.post("/hdr", json={}, headers={"Idempotency-Key": "hk"})
-        r2 = client.post("/hdr", json={}, headers={"Idempotency-Key": "hk"})
+        r1 = client.post("/hdr", json={}, headers={
+            "Idempotency-Key": "hk", "Authorization": "Bearer t"})
+        r2 = client.post("/hdr", json={}, headers={
+            "Idempotency-Key": "hk", "Authorization": "Bearer t"})
         assert r1.headers.get("X-Custom-Trace") == "t-123"
         assert r2.headers.get("X-Custom-Trace") == "t-123"
         assert r2.headers.get("Idempotent-Replay") == "true"
@@ -282,7 +298,50 @@ class TestCallerScoping:
             return JSONResponse({"err": n["c"]}, status_code=409)
 
         client = TestClient(app)
-        client.post("/fail", json={}, headers={"Idempotency-Key": "f"})
-        r2 = client.post("/fail", json={}, headers={"Idempotency-Key": "f"})
+        client.post("/fail", json={}, headers={
+            "Idempotency-Key": "f", "Authorization": "Bearer t"})
+        r2 = client.post("/fail", json={}, headers={
+            "Idempotency-Key": "f", "Authorization": "Bearer t"})
         assert r2.headers.get("Idempotent-Replay") is None
         assert n["c"] == 2
+
+
+class TestAnonymousCallers:
+    """security F-05 加固（#1640）：无凭证调用方不读不存重放缓存。
+
+    凭证摘要只混入 Authorization / X-Session-Token；两者均缺席时摘要恒定，
+    匿名调用方之间零隔离 —— 同 key + 同 body 即可取回他人的首次响应
+    （匿名会话 owner_token 即会话能力令牌，SEC-08）。此类调用方直接放行。
+    """
+
+    def test_anonymous_callers_share_no_replay_cache(self):
+        redis = FakeRedis()
+        client, counter = _client(redis)
+        r1 = client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "anon"})
+        r2 = client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "anon"})
+        assert r1.status_code == 200
+        assert r1.json()["n"] == 1
+        # 第二个匿名调用方拿到的是新处理的响应，不是首个调用方的重放
+        assert r2.headers.get("Idempotent-Replay") is None
+        assert r2.json()["n"] == 2
+        assert counter["n"] == 2
+        assert not [k for k in redis.store if k.startswith("idem:resp:")], (
+            "无凭证调用方的响应不得写入重放缓存"
+        )
+
+    def test_session_token_caller_still_replays(self):
+        """#1640 验收 3：带 X-Session-Token 的匿名调用方行为不变（按凭证摘要隔离）。"""
+        redis = FakeRedis()
+        client, counter = _client(redis)
+        headers = {"Idempotency-Key": "sess", "X-Session-Token": "s-1"}
+        r1 = client.post("/echo", json={"x": 1}, headers=headers)
+        r2 = client.post("/echo", json={"x": 1}, headers=headers)
+        assert r1.json()["n"] == 1
+        assert r2.headers.get("Idempotent-Replay") == "true"
+        assert r2.json() == r1.json()
+        # 不同 session token → 不同摘要 → 不重放（隔离语义不回归）
+        r3 = client.post("/echo", json={"x": 1}, headers={
+            "Idempotency-Key": "sess", "X-Session-Token": "s-2"})
+        assert r3.headers.get("Idempotent-Replay") is None
+        assert r3.json()["n"] == 2
+        assert counter["n"] == 2

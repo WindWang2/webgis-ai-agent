@@ -23,17 +23,30 @@ import contextvars
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 from app.core.errors import ErrorCategory, category_defaults
+
+if TYPE_CHECKING:
+    # call_next 的流式响应（body_iterator 的宿主类）；仅注解期可见，
+    # 运行期不依赖私有符号（PEP 563 惰性求值）。
+    from starlette.middleware.base import _StreamingResponse
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_LOCALES = ("zh_CN", "en_US")
 DEFAULT_LOCALE = "zh_CN"
+
+#: 错误体缓冲上限（#1641）：非默认 Locale 的 4xx/5xx JSON 响应体会被整体读入
+#: 内存以本地化 message —— 无帽累积会让代理上游的大 4xx 体造成内存放大。
+#: 本平台错误信封远小于此（校验错误 ≤20 条）；超限即停止累积、按「已读前缀
+#: + 原流剩余」重组下发（内存有界、体完整，本地化跳过）—— 与幂等中间件
+#: MAX_BUFFER_BYTES 同纪律。
+MAX_ERROR_BODY_BYTES = 1024 * 1024
 
 _LOCALE_DIR = Path(__file__).resolve().parent.parent / "locales"
 
@@ -147,7 +160,9 @@ class AcceptLanguageMiddleware(BaseHTTPMiddleware):
 
     响应面纪律：只重写「JSON + success:false + 带 category」的错误信封的
     ``message`` 字段；结构化字段（category/retryable/code/degraded）与
-    成功响应、流式响应零触碰。
+    成功响应、流式响应零触碰。错误体缓冲以 ``MAX_ERROR_BODY_BYTES`` 为帽：
+    超限的大错误体不整体进内存，按「已读前缀 + 原流剩余」重组原样下发
+    （本地化跳过，#1641）。
     """
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
@@ -171,8 +186,16 @@ class AcceptLanguageMiddleware(BaseHTTPMiddleware):
             return response  # 默认语言：信封原样（zh 短语即现值）
 
         body = b""
+        overflow = False
         async for chunk in response.body_iterator:
             body += chunk
+            if len(body) > MAX_ERROR_BODY_BYTES:
+                overflow = True
+                break
+        if overflow:
+            # 大错误体不整体缓冲：已读前缀 + 原迭代器剩余流原样重组（内存
+            # 有界、响应体完整），本地化跳过（超限体非本平台信封形态）。
+            return self._reissue_stream(response, bytes(body))
         try:
             data = json.loads(body)
         except Exception:  # noqa: BLE001 — 非 JSON 体原样返回
@@ -200,6 +223,29 @@ class AcceptLanguageMiddleware(BaseHTTPMiddleware):
         headers.pop("content-length", None)
         return StarletteResponse(
             content=body,
+            status_code=response.status_code,
+            headers=headers,
+            media_type=response.headers.get("content-type"),
+        )
+
+    @staticmethod
+    def _reissue_stream(
+        response: _StreamingResponse, prefix: bytes
+    ) -> StreamingResponse:
+        """大错误体专用：已读前缀 + 原 body_iterator 剩余流重组下发。
+
+        整体缓冲超限（MAX_ERROR_BODY_BYTES）时调用 —— 内存占用收敛到
+        「前缀帽 + 单 chunk」，响应体仍完整交付（不截断、不改状态码/头）。
+        """
+        async def body_iter() -> AsyncIterator[bytes]:
+            yield prefix
+            async for chunk in response.body_iterator:
+                yield chunk
+
+        headers = dict(response.headers)
+        headers.pop("content-length", None)
+        return StreamingResponse(
+            body_iter(),
             status_code=response.status_code,
             headers=headers,
             media_type=response.headers.get("content-type"),

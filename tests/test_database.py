@@ -54,6 +54,38 @@ def test_to_sync_url_sqlite_unchanged():
     assert _to_sync_url("sqlite:///./data/webgis.db") == "sqlite:///./data/webgis.db"
 
 
+def test_to_async_url_bare_postgresql():
+    """裸 postgresql:// → asyncpg 驱动"""
+    from app.core.database import _to_async_url
+    url = "postgresql://user:pass@localhost:5432/db"
+    assert _to_async_url(url) == "postgresql+asyncpg://user:pass@localhost:5432/db"
+
+
+def test_to_async_url_bare_postgres():
+    """裸 postgres:// 同样改写为 asyncpg"""
+    from app.core.database import _to_async_url
+    assert _to_async_url("postgres://user@host/db") == "postgresql+asyncpg://user@host/db"
+
+
+def test_to_async_url_psycopg2_pinned():
+    """显式钉 psycopg2 的 URL 对称改写为 asyncpg（#1641）。
+
+    同步侧 _to_sync_url 原样容忍已带 '+' 的 URL；async 侧原样返回会让
+    create_async_engine 抛 InvalidRequestError（启动期响亮失败）。
+    """
+    from app.core.database import _to_async_url
+    assert _to_async_url("postgresql+psycopg2://user@host/db") == (
+        "postgresql+asyncpg://user@host/db"
+    )
+
+
+def test_to_async_url_sqlite_and_asyncpg_unchanged():
+    """sqlite 换 aiosqlite；已带 asyncpg 驱动的 URL 原样返回"""
+    from app.core.database import _to_async_url
+    assert _to_async_url("sqlite:///./data/webgis.db") == "sqlite+aiosqlite:///./data/webgis.db"
+    assert _to_async_url("postgresql+asyncpg://user@host/db") == "postgresql+asyncpg://user@host/db"
+
+
 def test_init_db_creates_tables(tmp_path):
     """用临时数据库测试建表"""
     from sqlalchemy import create_engine
