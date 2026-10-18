@@ -1,0 +1,71 @@
+{
+  "name": "select_hide_agent_continues",
+  "description": "选要素 → 用户隐藏图层（mutation 存证校验通过）→ 投影同时持有 selection 与 user_overrides，因果链可回溯到 mutation revision。",
+  "initial": {
+    "mutation_dedup": {
+      "c:mut-12345678": {
+        "revision": 42
+      }
+    }
+  },
+  "events": [
+    {
+      "event_id": "select_hide_-0001",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 1,
+      "kind": "feature_selected",
+      "payload": {
+        "layer_id": "roads",
+        "feature_id": "f1",
+        "field_names": [
+          "name"
+        ]
+      }
+    },
+    {
+      "event_id": "select_hide_-0002",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 2,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.1,
+          39.9
+        ],
+        "zoom": 11.5
+      }
+    },
+    {
+      "event_id": "select_hide_-0003",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 3,
+      "kind": "layer_visibility_changed",
+      "payload": {
+        "layer_id": "roads",
+        "visible": false
+      },
+      "client_mutation_id": "mut-12345678",
+      "mutation_outcome": "committed",
+      "mutation_revision": 42
+    }
+  ],
+  "expect": {
+    "projection": {
+      "selection": {
+        "layer_id": "roads",
+        "feature_id": "f1"
+      },
+      "user_overrides": [
+        {
+          "layer_id": "roads",
+          "visible": false,
+          "link": {
+            "mutation_verified": true,
+            "verified_revision": 42,
+            "outcome": "committed"
+          }
+        }
+      ]
+    }
+  }
+}

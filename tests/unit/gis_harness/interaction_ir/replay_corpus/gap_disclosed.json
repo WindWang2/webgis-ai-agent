@@ -1,0 +1,34 @@
+{
+  "name": "gap_disclosed",
+  "description": "批量跳号（1→5）→ accepted_with_gap 且 gap_from=2（丢失事件不假装见过）。",
+  "events": [
+    {
+      "event_id": "gap_disclose-0001",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 1,
+      "kind": "feature_selected",
+      "payload": {
+        "layer_id": "roads",
+        "feature_id": "f1"
+      }
+    },
+    {
+      "event_id": "gap_disclose-0002",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 5,
+      "kind": "feature_deselected",
+      "payload": {}
+    }
+  ],
+  "expect": {
+    "verdicts": [
+      {
+        "event_verdict": "accepted"
+      },
+      {
+        "event_verdict": "accepted_with_gap",
+        "gap_from": 2
+      }
+    ]
+  }
+}

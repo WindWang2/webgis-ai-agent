@@ -1,0 +1,6518 @@
+{
+  "name": "pan_zoom_storm",
+  "description": "500 次 viewport 事件（单调在序）→ 环淘汰至 128，dropped=372 披露；投影只保留最后 settled 视口；recent 内 viewport 合并为 1 条。",
+  "events": [
+    {
+      "event_id": "pan_zoom_sto-0001",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 1,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.001,
+          39.9
+        ],
+        "zoom": 10.005
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0002",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 2,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.002,
+          39.9
+        ],
+        "zoom": 10.01
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0003",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 3,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.003,
+          39.9
+        ],
+        "zoom": 10.015
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0004",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 4,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.004,
+          39.9
+        ],
+        "zoom": 10.02
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0005",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 5,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.005,
+          39.9
+        ],
+        "zoom": 10.025
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0006",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 6,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.006,
+          39.9
+        ],
+        "zoom": 10.03
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0007",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 7,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.007,
+          39.9
+        ],
+        "zoom": 10.035
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0008",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 8,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.008,
+          39.9
+        ],
+        "zoom": 10.04
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0009",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 9,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.009,
+          39.9
+        ],
+        "zoom": 10.045
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0010",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 10,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.01,
+          39.9
+        ],
+        "zoom": 10.05
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0011",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 11,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.011,
+          39.9
+        ],
+        "zoom": 10.055
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0012",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 12,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.012,
+          39.9
+        ],
+        "zoom": 10.06
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0013",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 13,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.013,
+          39.9
+        ],
+        "zoom": 10.065
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0014",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 14,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.014,
+          39.9
+        ],
+        "zoom": 10.07
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0015",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 15,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.015,
+          39.9
+        ],
+        "zoom": 10.075
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0016",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 16,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.016,
+          39.9
+        ],
+        "zoom": 10.08
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0017",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 17,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.017,
+          39.9
+        ],
+        "zoom": 10.085
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0018",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 18,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.018,
+          39.9
+        ],
+        "zoom": 10.09
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0019",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 19,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.019,
+          39.9
+        ],
+        "zoom": 10.095
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0020",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 20,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.02,
+          39.9
+        ],
+        "zoom": 10.1
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0021",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 21,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.021,
+          39.9
+        ],
+        "zoom": 10.105
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0022",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 22,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.022,
+          39.9
+        ],
+        "zoom": 10.11
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0023",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 23,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.023,
+          39.9
+        ],
+        "zoom": 10.115
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0024",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 24,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.024,
+          39.9
+        ],
+        "zoom": 10.12
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0025",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 25,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.025,
+          39.9
+        ],
+        "zoom": 10.125
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0026",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 26,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.026,
+          39.9
+        ],
+        "zoom": 10.13
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0027",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 27,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.027,
+          39.9
+        ],
+        "zoom": 10.135
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0028",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 28,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.028,
+          39.9
+        ],
+        "zoom": 10.14
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0029",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 29,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.029,
+          39.9
+        ],
+        "zoom": 10.145
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0030",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 30,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.03,
+          39.9
+        ],
+        "zoom": 10.15
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0031",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 31,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.031,
+          39.9
+        ],
+        "zoom": 10.155
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0032",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 32,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.032,
+          39.9
+        ],
+        "zoom": 10.16
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0033",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 33,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.033,
+          39.9
+        ],
+        "zoom": 10.165
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0034",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 34,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.034,
+          39.9
+        ],
+        "zoom": 10.17
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0035",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 35,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.035,
+          39.9
+        ],
+        "zoom": 10.175
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0036",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 36,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.036,
+          39.9
+        ],
+        "zoom": 10.18
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0037",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 37,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.037,
+          39.9
+        ],
+        "zoom": 10.185
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0038",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 38,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.038,
+          39.9
+        ],
+        "zoom": 10.19
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0039",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 39,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.039,
+          39.9
+        ],
+        "zoom": 10.195
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0040",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 40,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.04,
+          39.9
+        ],
+        "zoom": 10.2
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0041",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 41,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.041,
+          39.9
+        ],
+        "zoom": 10.205
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0042",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 42,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.042,
+          39.9
+        ],
+        "zoom": 10.21
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0043",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 43,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.043,
+          39.9
+        ],
+        "zoom": 10.215
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0044",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 44,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.044,
+          39.9
+        ],
+        "zoom": 10.22
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0045",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 45,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.045,
+          39.9
+        ],
+        "zoom": 10.225
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0046",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 46,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.046,
+          39.9
+        ],
+        "zoom": 10.23
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0047",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 47,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.047,
+          39.9
+        ],
+        "zoom": 10.235
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0048",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 48,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.048,
+          39.9
+        ],
+        "zoom": 10.24
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0049",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 49,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.049,
+          39.9
+        ],
+        "zoom": 10.245
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0050",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 50,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.05,
+          39.9
+        ],
+        "zoom": 10.25
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0051",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 51,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.051,
+          39.9
+        ],
+        "zoom": 10.255
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0052",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 52,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.052,
+          39.9
+        ],
+        "zoom": 10.26
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0053",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 53,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.053,
+          39.9
+        ],
+        "zoom": 10.265
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0054",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 54,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.054,
+          39.9
+        ],
+        "zoom": 10.27
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0055",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 55,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.055,
+          39.9
+        ],
+        "zoom": 10.275
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0056",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 56,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.056,
+          39.9
+        ],
+        "zoom": 10.28
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0057",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 57,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.057,
+          39.9
+        ],
+        "zoom": 10.285
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0058",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 58,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.058,
+          39.9
+        ],
+        "zoom": 10.29
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0059",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 59,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.059,
+          39.9
+        ],
+        "zoom": 10.295
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0060",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 60,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.06,
+          39.9
+        ],
+        "zoom": 10.3
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0061",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 61,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.061,
+          39.9
+        ],
+        "zoom": 10.305
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0062",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 62,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.062,
+          39.9
+        ],
+        "zoom": 10.31
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0063",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 63,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.063,
+          39.9
+        ],
+        "zoom": 10.315
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0064",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 64,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.064,
+          39.9
+        ],
+        "zoom": 10.32
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0065",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 65,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.065,
+          39.9
+        ],
+        "zoom": 10.325
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0066",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 66,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.066,
+          39.9
+        ],
+        "zoom": 10.33
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0067",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 67,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.067,
+          39.9
+        ],
+        "zoom": 10.335
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0068",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 68,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.068,
+          39.9
+        ],
+        "zoom": 10.34
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0069",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 69,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.069,
+          39.9
+        ],
+        "zoom": 10.345
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0070",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 70,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.07,
+          39.9
+        ],
+        "zoom": 10.35
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0071",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 71,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.071,
+          39.9
+        ],
+        "zoom": 10.355
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0072",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 72,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.072,
+          39.9
+        ],
+        "zoom": 10.36
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0073",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 73,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.073,
+          39.9
+        ],
+        "zoom": 10.365
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0074",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 74,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.074,
+          39.9
+        ],
+        "zoom": 10.37
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0075",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 75,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.075,
+          39.9
+        ],
+        "zoom": 10.375
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0076",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 76,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.076,
+          39.9
+        ],
+        "zoom": 10.38
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0077",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 77,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.077,
+          39.9
+        ],
+        "zoom": 10.385
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0078",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 78,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.078,
+          39.9
+        ],
+        "zoom": 10.39
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0079",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 79,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.079,
+          39.9
+        ],
+        "zoom": 10.395
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0080",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 80,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.08,
+          39.9
+        ],
+        "zoom": 10.4
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0081",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 81,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.081,
+          39.9
+        ],
+        "zoom": 10.405
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0082",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 82,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.082,
+          39.9
+        ],
+        "zoom": 10.41
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0083",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 83,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.083,
+          39.9
+        ],
+        "zoom": 10.415
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0084",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 84,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.084,
+          39.9
+        ],
+        "zoom": 10.42
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0085",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 85,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.085,
+          39.9
+        ],
+        "zoom": 10.425
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0086",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 86,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.086,
+          39.9
+        ],
+        "zoom": 10.43
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0087",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 87,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.087,
+          39.9
+        ],
+        "zoom": 10.435
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0088",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 88,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.088,
+          39.9
+        ],
+        "zoom": 10.44
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0089",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 89,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.089,
+          39.9
+        ],
+        "zoom": 10.445
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0090",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 90,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.09,
+          39.9
+        ],
+        "zoom": 10.45
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0091",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 91,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.091,
+          39.9
+        ],
+        "zoom": 10.455
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0092",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 92,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.092,
+          39.9
+        ],
+        "zoom": 10.46
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0093",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 93,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.093,
+          39.9
+        ],
+        "zoom": 10.465
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0094",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 94,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.094,
+          39.9
+        ],
+        "zoom": 10.47
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0095",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 95,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.095,
+          39.9
+        ],
+        "zoom": 10.475
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0096",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 96,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.096,
+          39.9
+        ],
+        "zoom": 10.48
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0097",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 97,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.097,
+          39.9
+        ],
+        "zoom": 10.485
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0098",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 98,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.098,
+          39.9
+        ],
+        "zoom": 10.49
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0099",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 99,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.099,
+          39.9
+        ],
+        "zoom": 10.495
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0100",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 100,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.1,
+          39.9
+        ],
+        "zoom": 10.5
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0101",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 101,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.101,
+          39.9
+        ],
+        "zoom": 10.505
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0102",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 102,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.102,
+          39.9
+        ],
+        "zoom": 10.51
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0103",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 103,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.103,
+          39.9
+        ],
+        "zoom": 10.515
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0104",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 104,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.104,
+          39.9
+        ],
+        "zoom": 10.52
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0105",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 105,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.105,
+          39.9
+        ],
+        "zoom": 10.525
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0106",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 106,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.106,
+          39.9
+        ],
+        "zoom": 10.53
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0107",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 107,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.107,
+          39.9
+        ],
+        "zoom": 10.535
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0108",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 108,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.108,
+          39.9
+        ],
+        "zoom": 10.54
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0109",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 109,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.109,
+          39.9
+        ],
+        "zoom": 10.545
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0110",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 110,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.11,
+          39.9
+        ],
+        "zoom": 10.55
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0111",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 111,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.111,
+          39.9
+        ],
+        "zoom": 10.555
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0112",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 112,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.112,
+          39.9
+        ],
+        "zoom": 10.56
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0113",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 113,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.113,
+          39.9
+        ],
+        "zoom": 10.565
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0114",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 114,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.114,
+          39.9
+        ],
+        "zoom": 10.57
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0115",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 115,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.115,
+          39.9
+        ],
+        "zoom": 10.575
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0116",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 116,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.116,
+          39.9
+        ],
+        "zoom": 10.58
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0117",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 117,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.117,
+          39.9
+        ],
+        "zoom": 10.585
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0118",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 118,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.118,
+          39.9
+        ],
+        "zoom": 10.59
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0119",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 119,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.119,
+          39.9
+        ],
+        "zoom": 10.595
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0120",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 120,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.12,
+          39.9
+        ],
+        "zoom": 10.6
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0121",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 121,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.121,
+          39.9
+        ],
+        "zoom": 10.605
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0122",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 122,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.122,
+          39.9
+        ],
+        "zoom": 10.61
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0123",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 123,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.123,
+          39.9
+        ],
+        "zoom": 10.615
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0124",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 124,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.124,
+          39.9
+        ],
+        "zoom": 10.62
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0125",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 125,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.125,
+          39.9
+        ],
+        "zoom": 10.625
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0126",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 126,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.126,
+          39.9
+        ],
+        "zoom": 10.63
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0127",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 127,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.127,
+          39.9
+        ],
+        "zoom": 10.635
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0128",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 128,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.128,
+          39.9
+        ],
+        "zoom": 10.64
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0129",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 129,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.129,
+          39.9
+        ],
+        "zoom": 10.645
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0130",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 130,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.13,
+          39.9
+        ],
+        "zoom": 10.65
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0131",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 131,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.131,
+          39.9
+        ],
+        "zoom": 10.655
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0132",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 132,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.132,
+          39.9
+        ],
+        "zoom": 10.66
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0133",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 133,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.133,
+          39.9
+        ],
+        "zoom": 10.665
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0134",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 134,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.134,
+          39.9
+        ],
+        "zoom": 10.67
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0135",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 135,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.135,
+          39.9
+        ],
+        "zoom": 10.675
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0136",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 136,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.136,
+          39.9
+        ],
+        "zoom": 10.68
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0137",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 137,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.137,
+          39.9
+        ],
+        "zoom": 10.685
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0138",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 138,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.138,
+          39.9
+        ],
+        "zoom": 10.69
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0139",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 139,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.139,
+          39.9
+        ],
+        "zoom": 10.695
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0140",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 140,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.14,
+          39.9
+        ],
+        "zoom": 10.7
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0141",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 141,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.141,
+          39.9
+        ],
+        "zoom": 10.705
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0142",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 142,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.142,
+          39.9
+        ],
+        "zoom": 10.71
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0143",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 143,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.143,
+          39.9
+        ],
+        "zoom": 10.715
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0144",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 144,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.144,
+          39.9
+        ],
+        "zoom": 10.72
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0145",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 145,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.145,
+          39.9
+        ],
+        "zoom": 10.725
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0146",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 146,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.146,
+          39.9
+        ],
+        "zoom": 10.73
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0147",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 147,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.147,
+          39.9
+        ],
+        "zoom": 10.735
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0148",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 148,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.148,
+          39.9
+        ],
+        "zoom": 10.74
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0149",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 149,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.149,
+          39.9
+        ],
+        "zoom": 10.745
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0150",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 150,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.15,
+          39.9
+        ],
+        "zoom": 10.75
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0151",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 151,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.151,
+          39.9
+        ],
+        "zoom": 10.755
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0152",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 152,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.152,
+          39.9
+        ],
+        "zoom": 10.76
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0153",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 153,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.153,
+          39.9
+        ],
+        "zoom": 10.765
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0154",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 154,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.154,
+          39.9
+        ],
+        "zoom": 10.77
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0155",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 155,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.155,
+          39.9
+        ],
+        "zoom": 10.775
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0156",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 156,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.156,
+          39.9
+        ],
+        "zoom": 10.78
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0157",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 157,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.157,
+          39.9
+        ],
+        "zoom": 10.785
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0158",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 158,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.158,
+          39.9
+        ],
+        "zoom": 10.79
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0159",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 159,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.159,
+          39.9
+        ],
+        "zoom": 10.795
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0160",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 160,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.16,
+          39.9
+        ],
+        "zoom": 10.8
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0161",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 161,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.161,
+          39.9
+        ],
+        "zoom": 10.805
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0162",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 162,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.162,
+          39.9
+        ],
+        "zoom": 10.81
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0163",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 163,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.163,
+          39.9
+        ],
+        "zoom": 10.815
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0164",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 164,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.164,
+          39.9
+        ],
+        "zoom": 10.82
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0165",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 165,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.165,
+          39.9
+        ],
+        "zoom": 10.825
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0166",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 166,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.166,
+          39.9
+        ],
+        "zoom": 10.83
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0167",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 167,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.167,
+          39.9
+        ],
+        "zoom": 10.835
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0168",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 168,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.168,
+          39.9
+        ],
+        "zoom": 10.84
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0169",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 169,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.169,
+          39.9
+        ],
+        "zoom": 10.845
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0170",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 170,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.17,
+          39.9
+        ],
+        "zoom": 10.85
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0171",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 171,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.171,
+          39.9
+        ],
+        "zoom": 10.855
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0172",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 172,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.172,
+          39.9
+        ],
+        "zoom": 10.86
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0173",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 173,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.173,
+          39.9
+        ],
+        "zoom": 10.865
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0174",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 174,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.174,
+          39.9
+        ],
+        "zoom": 10.87
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0175",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 175,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.175,
+          39.9
+        ],
+        "zoom": 10.875
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0176",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 176,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.176,
+          39.9
+        ],
+        "zoom": 10.88
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0177",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 177,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.177,
+          39.9
+        ],
+        "zoom": 10.885
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0178",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 178,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.178,
+          39.9
+        ],
+        "zoom": 10.89
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0179",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 179,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.179,
+          39.9
+        ],
+        "zoom": 10.895
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0180",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 180,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.18,
+          39.9
+        ],
+        "zoom": 10.9
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0181",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 181,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.181,
+          39.9
+        ],
+        "zoom": 10.905
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0182",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 182,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.182,
+          39.9
+        ],
+        "zoom": 10.91
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0183",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 183,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.183,
+          39.9
+        ],
+        "zoom": 10.915
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0184",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 184,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.184,
+          39.9
+        ],
+        "zoom": 10.92
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0185",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 185,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.185,
+          39.9
+        ],
+        "zoom": 10.925
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0186",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 186,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.186,
+          39.9
+        ],
+        "zoom": 10.93
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0187",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 187,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.187,
+          39.9
+        ],
+        "zoom": 10.935
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0188",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 188,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.188,
+          39.9
+        ],
+        "zoom": 10.94
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0189",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 189,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.189,
+          39.9
+        ],
+        "zoom": 10.945
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0190",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 190,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.19,
+          39.9
+        ],
+        "zoom": 10.95
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0191",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 191,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.191,
+          39.9
+        ],
+        "zoom": 10.955
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0192",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 192,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.192,
+          39.9
+        ],
+        "zoom": 10.96
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0193",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 193,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.193,
+          39.9
+        ],
+        "zoom": 10.965
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0194",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 194,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.194,
+          39.9
+        ],
+        "zoom": 10.97
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0195",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 195,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.195,
+          39.9
+        ],
+        "zoom": 10.975
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0196",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 196,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.196,
+          39.9
+        ],
+        "zoom": 10.98
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0197",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 197,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.197,
+          39.9
+        ],
+        "zoom": 10.985
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0198",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 198,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.198,
+          39.9
+        ],
+        "zoom": 10.99
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0199",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 199,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.199,
+          39.9
+        ],
+        "zoom": 10.995
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0200",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 200,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.2,
+          39.9
+        ],
+        "zoom": 11.0
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0201",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 201,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.201,
+          39.9
+        ],
+        "zoom": 11.004999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0202",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 202,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.202,
+          39.9
+        ],
+        "zoom": 11.01
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0203",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 203,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.203,
+          39.9
+        ],
+        "zoom": 11.015
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0204",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 204,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.204,
+          39.9
+        ],
+        "zoom": 11.02
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0205",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 205,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.205,
+          39.9
+        ],
+        "zoom": 11.025
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0206",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 206,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.206,
+          39.9
+        ],
+        "zoom": 11.03
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0207",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 207,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.207,
+          39.9
+        ],
+        "zoom": 11.035
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0208",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 208,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.208,
+          39.9
+        ],
+        "zoom": 11.04
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0209",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 209,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.209,
+          39.9
+        ],
+        "zoom": 11.045
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0210",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 210,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.21,
+          39.9
+        ],
+        "zoom": 11.05
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0211",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 211,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.211,
+          39.9
+        ],
+        "zoom": 11.055
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0212",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 212,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.212,
+          39.9
+        ],
+        "zoom": 11.06
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0213",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 213,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.213,
+          39.9
+        ],
+        "zoom": 11.065
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0214",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 214,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.214,
+          39.9
+        ],
+        "zoom": 11.07
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0215",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 215,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.215,
+          39.9
+        ],
+        "zoom": 11.075
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0216",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 216,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.216,
+          39.9
+        ],
+        "zoom": 11.08
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0217",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 217,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.217,
+          39.9
+        ],
+        "zoom": 11.085
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0218",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 218,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.218,
+          39.9
+        ],
+        "zoom": 11.09
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0219",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 219,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.219,
+          39.9
+        ],
+        "zoom": 11.095
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0220",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 220,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.22,
+          39.9
+        ],
+        "zoom": 11.1
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0221",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 221,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.221,
+          39.9
+        ],
+        "zoom": 11.105
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0222",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 222,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.222,
+          39.9
+        ],
+        "zoom": 11.11
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0223",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 223,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.223,
+          39.9
+        ],
+        "zoom": 11.115
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0224",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 224,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.224,
+          39.9
+        ],
+        "zoom": 11.120000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0225",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 225,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.225,
+          39.9
+        ],
+        "zoom": 11.125
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0226",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 226,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.226,
+          39.9
+        ],
+        "zoom": 11.129999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0227",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 227,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.227,
+          39.9
+        ],
+        "zoom": 11.135
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0228",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 228,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.228,
+          39.9
+        ],
+        "zoom": 11.14
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0229",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 229,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.229,
+          39.9
+        ],
+        "zoom": 11.145
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0230",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 230,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.23,
+          39.9
+        ],
+        "zoom": 11.15
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0231",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 231,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.231,
+          39.9
+        ],
+        "zoom": 11.155
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0232",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 232,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.232,
+          39.9
+        ],
+        "zoom": 11.16
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0233",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 233,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.233,
+          39.9
+        ],
+        "zoom": 11.165
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0234",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 234,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.234,
+          39.9
+        ],
+        "zoom": 11.17
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0235",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 235,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.235,
+          39.9
+        ],
+        "zoom": 11.175
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0236",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 236,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.236,
+          39.9
+        ],
+        "zoom": 11.18
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0237",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 237,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.237,
+          39.9
+        ],
+        "zoom": 11.185
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0238",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 238,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.238,
+          39.9
+        ],
+        "zoom": 11.19
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0239",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 239,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.239,
+          39.9
+        ],
+        "zoom": 11.195
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0240",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 240,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.24,
+          39.9
+        ],
+        "zoom": 11.2
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0241",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 241,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.241,
+          39.9
+        ],
+        "zoom": 11.205
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0242",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 242,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.242,
+          39.9
+        ],
+        "zoom": 11.21
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0243",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 243,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.243,
+          39.9
+        ],
+        "zoom": 11.215
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0244",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 244,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.244,
+          39.9
+        ],
+        "zoom": 11.22
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0245",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 245,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.245,
+          39.9
+        ],
+        "zoom": 11.225
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0246",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 246,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.246,
+          39.9
+        ],
+        "zoom": 11.23
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0247",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 247,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.247,
+          39.9
+        ],
+        "zoom": 11.235
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0248",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 248,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.248,
+          39.9
+        ],
+        "zoom": 11.24
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0249",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 249,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.249,
+          39.9
+        ],
+        "zoom": 11.245000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0250",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 250,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.25,
+          39.9
+        ],
+        "zoom": 11.25
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0251",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 251,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.251,
+          39.9
+        ],
+        "zoom": 11.254999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0252",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 252,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.252,
+          39.9
+        ],
+        "zoom": 11.26
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0253",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 253,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.253,
+          39.9
+        ],
+        "zoom": 11.265
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0254",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 254,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.254,
+          39.9
+        ],
+        "zoom": 11.27
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0255",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 255,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.255,
+          39.9
+        ],
+        "zoom": 11.275
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0256",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 256,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.256,
+          39.9
+        ],
+        "zoom": 11.28
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0257",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 257,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.257,
+          39.9
+        ],
+        "zoom": 11.285
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0258",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 258,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.258,
+          39.9
+        ],
+        "zoom": 11.29
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0259",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 259,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.259,
+          39.9
+        ],
+        "zoom": 11.295
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0260",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 260,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.26,
+          39.9
+        ],
+        "zoom": 11.3
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0261",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 261,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.261,
+          39.9
+        ],
+        "zoom": 11.305
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0262",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 262,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.262,
+          39.9
+        ],
+        "zoom": 11.31
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0263",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 263,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.263,
+          39.9
+        ],
+        "zoom": 11.315
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0264",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 264,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.264,
+          39.9
+        ],
+        "zoom": 11.32
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0265",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 265,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.265,
+          39.9
+        ],
+        "zoom": 11.325
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0266",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 266,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.266,
+          39.9
+        ],
+        "zoom": 11.33
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0267",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 267,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.267,
+          39.9
+        ],
+        "zoom": 11.335
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0268",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 268,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.268,
+          39.9
+        ],
+        "zoom": 11.34
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0269",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 269,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.269,
+          39.9
+        ],
+        "zoom": 11.345
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0270",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 270,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.27,
+          39.9
+        ],
+        "zoom": 11.35
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0271",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 271,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.271,
+          39.9
+        ],
+        "zoom": 11.355
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0272",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 272,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.272,
+          39.9
+        ],
+        "zoom": 11.36
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0273",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 273,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.273,
+          39.9
+        ],
+        "zoom": 11.365
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0274",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 274,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.274,
+          39.9
+        ],
+        "zoom": 11.370000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0275",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 275,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.275,
+          39.9
+        ],
+        "zoom": 11.375
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0276",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 276,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.276,
+          39.9
+        ],
+        "zoom": 11.379999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0277",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 277,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.277,
+          39.9
+        ],
+        "zoom": 11.385
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0278",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 278,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.278,
+          39.9
+        ],
+        "zoom": 11.39
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0279",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 279,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.279,
+          39.9
+        ],
+        "zoom": 11.395
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0280",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 280,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.28,
+          39.9
+        ],
+        "zoom": 11.4
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0281",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 281,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.281,
+          39.9
+        ],
+        "zoom": 11.405
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0282",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 282,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.282,
+          39.9
+        ],
+        "zoom": 11.41
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0283",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 283,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.283,
+          39.9
+        ],
+        "zoom": 11.415
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0284",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 284,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.284,
+          39.9
+        ],
+        "zoom": 11.42
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0285",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 285,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.285,
+          39.9
+        ],
+        "zoom": 11.425
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0286",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 286,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.286,
+          39.9
+        ],
+        "zoom": 11.43
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0287",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 287,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.287,
+          39.9
+        ],
+        "zoom": 11.435
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0288",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 288,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.288,
+          39.9
+        ],
+        "zoom": 11.44
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0289",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 289,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.289,
+          39.9
+        ],
+        "zoom": 11.445
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0290",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 290,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.29,
+          39.9
+        ],
+        "zoom": 11.45
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0291",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 291,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.291,
+          39.9
+        ],
+        "zoom": 11.455
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0292",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 292,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.292,
+          39.9
+        ],
+        "zoom": 11.46
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0293",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 293,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.293,
+          39.9
+        ],
+        "zoom": 11.465
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0294",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 294,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.294,
+          39.9
+        ],
+        "zoom": 11.47
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0295",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 295,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.295,
+          39.9
+        ],
+        "zoom": 11.475
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0296",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 296,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.296,
+          39.9
+        ],
+        "zoom": 11.48
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0297",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 297,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.297,
+          39.9
+        ],
+        "zoom": 11.485
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0298",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 298,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.298,
+          39.9
+        ],
+        "zoom": 11.49
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0299",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 299,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.299,
+          39.9
+        ],
+        "zoom": 11.495000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0300",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 300,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.3,
+          39.9
+        ],
+        "zoom": 11.5
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0301",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 301,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.301,
+          39.9
+        ],
+        "zoom": 11.504999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0302",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 302,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.302,
+          39.9
+        ],
+        "zoom": 11.51
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0303",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 303,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.303,
+          39.9
+        ],
+        "zoom": 11.515
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0304",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 304,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.304,
+          39.9
+        ],
+        "zoom": 11.52
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0305",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 305,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.305,
+          39.9
+        ],
+        "zoom": 11.525
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0306",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 306,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.306,
+          39.9
+        ],
+        "zoom": 11.53
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0307",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 307,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.307,
+          39.9
+        ],
+        "zoom": 11.535
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0308",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 308,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.308,
+          39.9
+        ],
+        "zoom": 11.54
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0309",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 309,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.309,
+          39.9
+        ],
+        "zoom": 11.545
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0310",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 310,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.31,
+          39.9
+        ],
+        "zoom": 11.55
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0311",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 311,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.311,
+          39.9
+        ],
+        "zoom": 11.555
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0312",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 312,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.312,
+          39.9
+        ],
+        "zoom": 11.56
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0313",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 313,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.313,
+          39.9
+        ],
+        "zoom": 11.565
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0314",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 314,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.314,
+          39.9
+        ],
+        "zoom": 11.57
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0315",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 315,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.315,
+          39.9
+        ],
+        "zoom": 11.575
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0316",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 316,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.316,
+          39.9
+        ],
+        "zoom": 11.58
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0317",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 317,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.317,
+          39.9
+        ],
+        "zoom": 11.585
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0318",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 318,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.318,
+          39.9
+        ],
+        "zoom": 11.59
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0319",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 319,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.319,
+          39.9
+        ],
+        "zoom": 11.595
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0320",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 320,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.32,
+          39.9
+        ],
+        "zoom": 11.6
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0321",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 321,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.321,
+          39.9
+        ],
+        "zoom": 11.605
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0322",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 322,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.322,
+          39.9
+        ],
+        "zoom": 11.61
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0323",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 323,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.323,
+          39.9
+        ],
+        "zoom": 11.615
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0324",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 324,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.324,
+          39.9
+        ],
+        "zoom": 11.620000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0325",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 325,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.325,
+          39.9
+        ],
+        "zoom": 11.625
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0326",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 326,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.326,
+          39.9
+        ],
+        "zoom": 11.629999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0327",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 327,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.327,
+          39.9
+        ],
+        "zoom": 11.635
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0328",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 328,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.328,
+          39.9
+        ],
+        "zoom": 11.64
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0329",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 329,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.329,
+          39.9
+        ],
+        "zoom": 11.645
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0330",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 330,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.33,
+          39.9
+        ],
+        "zoom": 11.65
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0331",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 331,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.331,
+          39.9
+        ],
+        "zoom": 11.655
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0332",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 332,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.332,
+          39.9
+        ],
+        "zoom": 11.66
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0333",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 333,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.333,
+          39.9
+        ],
+        "zoom": 11.665
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0334",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 334,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.334,
+          39.9
+        ],
+        "zoom": 11.67
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0335",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 335,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.335,
+          39.9
+        ],
+        "zoom": 11.675
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0336",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 336,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.336,
+          39.9
+        ],
+        "zoom": 11.68
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0337",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 337,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.337,
+          39.9
+        ],
+        "zoom": 11.685
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0338",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 338,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.338,
+          39.9
+        ],
+        "zoom": 11.69
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0339",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 339,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.339,
+          39.9
+        ],
+        "zoom": 11.695
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0340",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 340,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.34,
+          39.9
+        ],
+        "zoom": 11.7
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0341",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 341,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.341,
+          39.9
+        ],
+        "zoom": 11.705
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0342",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 342,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.342,
+          39.9
+        ],
+        "zoom": 11.71
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0343",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 343,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.343,
+          39.9
+        ],
+        "zoom": 11.715
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0344",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 344,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.344,
+          39.9
+        ],
+        "zoom": 11.72
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0345",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 345,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.345,
+          39.9
+        ],
+        "zoom": 11.725
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0346",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 346,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.346,
+          39.9
+        ],
+        "zoom": 11.73
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0347",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 347,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.347,
+          39.9
+        ],
+        "zoom": 11.735
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0348",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 348,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.348,
+          39.9
+        ],
+        "zoom": 11.74
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0349",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 349,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.349,
+          39.9
+        ],
+        "zoom": 11.745000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0350",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 350,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.35,
+          39.9
+        ],
+        "zoom": 11.75
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0351",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 351,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.351,
+          39.9
+        ],
+        "zoom": 11.754999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0352",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 352,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.352,
+          39.9
+        ],
+        "zoom": 11.76
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0353",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 353,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.353,
+          39.9
+        ],
+        "zoom": 11.765
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0354",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 354,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.354,
+          39.9
+        ],
+        "zoom": 11.77
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0355",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 355,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.355,
+          39.9
+        ],
+        "zoom": 11.775
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0356",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 356,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.356,
+          39.9
+        ],
+        "zoom": 11.78
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0357",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 357,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.357,
+          39.9
+        ],
+        "zoom": 11.785
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0358",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 358,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.358,
+          39.9
+        ],
+        "zoom": 11.79
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0359",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 359,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.359,
+          39.9
+        ],
+        "zoom": 11.795
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0360",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 360,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.36,
+          39.9
+        ],
+        "zoom": 11.8
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0361",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 361,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.361,
+          39.9
+        ],
+        "zoom": 11.805
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0362",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 362,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.362,
+          39.9
+        ],
+        "zoom": 11.81
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0363",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 363,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.363,
+          39.9
+        ],
+        "zoom": 11.815
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0364",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 364,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.364,
+          39.9
+        ],
+        "zoom": 11.82
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0365",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 365,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.365,
+          39.9
+        ],
+        "zoom": 11.825
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0366",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 366,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.366,
+          39.9
+        ],
+        "zoom": 11.83
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0367",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 367,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.367,
+          39.9
+        ],
+        "zoom": 11.835
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0368",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 368,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.368,
+          39.9
+        ],
+        "zoom": 11.84
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0369",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 369,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.369,
+          39.9
+        ],
+        "zoom": 11.845
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0370",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 370,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.37,
+          39.9
+        ],
+        "zoom": 11.85
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0371",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 371,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.371,
+          39.9
+        ],
+        "zoom": 11.855
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0372",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 372,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.372,
+          39.9
+        ],
+        "zoom": 11.86
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0373",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 373,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.373,
+          39.9
+        ],
+        "zoom": 11.865
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0374",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 374,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.374,
+          39.9
+        ],
+        "zoom": 11.870000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0375",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 375,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.375,
+          39.9
+        ],
+        "zoom": 11.875
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0376",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 376,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.376,
+          39.9
+        ],
+        "zoom": 11.879999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0377",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 377,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.377,
+          39.9
+        ],
+        "zoom": 11.885
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0378",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 378,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.378,
+          39.9
+        ],
+        "zoom": 11.89
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0379",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 379,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.379,
+          39.9
+        ],
+        "zoom": 11.895
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0380",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 380,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.38,
+          39.9
+        ],
+        "zoom": 11.9
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0381",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 381,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.381,
+          39.9
+        ],
+        "zoom": 11.905
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0382",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 382,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.382,
+          39.9
+        ],
+        "zoom": 11.91
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0383",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 383,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.383,
+          39.9
+        ],
+        "zoom": 11.915
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0384",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 384,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.384,
+          39.9
+        ],
+        "zoom": 11.92
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0385",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 385,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.385,
+          39.9
+        ],
+        "zoom": 11.925
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0386",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 386,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.386,
+          39.9
+        ],
+        "zoom": 11.93
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0387",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 387,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.387,
+          39.9
+        ],
+        "zoom": 11.935
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0388",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 388,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.388,
+          39.9
+        ],
+        "zoom": 11.94
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0389",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 389,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.389,
+          39.9
+        ],
+        "zoom": 11.945
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0390",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 390,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.39,
+          39.9
+        ],
+        "zoom": 11.95
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0391",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 391,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.391,
+          39.9
+        ],
+        "zoom": 11.955
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0392",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 392,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.392,
+          39.9
+        ],
+        "zoom": 11.96
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0393",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 393,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.393,
+          39.9
+        ],
+        "zoom": 11.965
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0394",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 394,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.394,
+          39.9
+        ],
+        "zoom": 11.97
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0395",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 395,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.395,
+          39.9
+        ],
+        "zoom": 11.975
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0396",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 396,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.396,
+          39.9
+        ],
+        "zoom": 11.98
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0397",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 397,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.397,
+          39.9
+        ],
+        "zoom": 11.985
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0398",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 398,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.398,
+          39.9
+        ],
+        "zoom": 11.99
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0399",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 399,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.399,
+          39.9
+        ],
+        "zoom": 11.995000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0400",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 400,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.4,
+          39.9
+        ],
+        "zoom": 12.0
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0401",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 401,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.401,
+          39.9
+        ],
+        "zoom": 12.004999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0402",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 402,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.402,
+          39.9
+        ],
+        "zoom": 12.01
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0403",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 403,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.403,
+          39.9
+        ],
+        "zoom": 12.015
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0404",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 404,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.404,
+          39.9
+        ],
+        "zoom": 12.02
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0405",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 405,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.405,
+          39.9
+        ],
+        "zoom": 12.025
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0406",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 406,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.406,
+          39.9
+        ],
+        "zoom": 12.03
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0407",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 407,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.407,
+          39.9
+        ],
+        "zoom": 12.035
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0408",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 408,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.408,
+          39.9
+        ],
+        "zoom": 12.04
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0409",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 409,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.409,
+          39.9
+        ],
+        "zoom": 12.045
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0410",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 410,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.41,
+          39.9
+        ],
+        "zoom": 12.05
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0411",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 411,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.411,
+          39.9
+        ],
+        "zoom": 12.055
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0412",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 412,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.412,
+          39.9
+        ],
+        "zoom": 12.06
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0413",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 413,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.413,
+          39.9
+        ],
+        "zoom": 12.065
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0414",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 414,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.414,
+          39.9
+        ],
+        "zoom": 12.07
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0415",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 415,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.415,
+          39.9
+        ],
+        "zoom": 12.075
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0416",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 416,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.416,
+          39.9
+        ],
+        "zoom": 12.08
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0417",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 417,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.417,
+          39.9
+        ],
+        "zoom": 12.085
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0418",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 418,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.418,
+          39.9
+        ],
+        "zoom": 12.09
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0419",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 419,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.419,
+          39.9
+        ],
+        "zoom": 12.095
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0420",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 420,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.42,
+          39.9
+        ],
+        "zoom": 12.1
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0421",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 421,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.421,
+          39.9
+        ],
+        "zoom": 12.105
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0422",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 422,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.422,
+          39.9
+        ],
+        "zoom": 12.11
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0423",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 423,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.423,
+          39.9
+        ],
+        "zoom": 12.115
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0424",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 424,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.424,
+          39.9
+        ],
+        "zoom": 12.120000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0425",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 425,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.425,
+          39.9
+        ],
+        "zoom": 12.125
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0426",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 426,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.426,
+          39.9
+        ],
+        "zoom": 12.129999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0427",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 427,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.427,
+          39.9
+        ],
+        "zoom": 12.135
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0428",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 428,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.428,
+          39.9
+        ],
+        "zoom": 12.14
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0429",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 429,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.429,
+          39.9
+        ],
+        "zoom": 12.145
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0430",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 430,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.43,
+          39.9
+        ],
+        "zoom": 12.15
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0431",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 431,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.431,
+          39.9
+        ],
+        "zoom": 12.155
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0432",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 432,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.432,
+          39.9
+        ],
+        "zoom": 12.16
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0433",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 433,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.433,
+          39.9
+        ],
+        "zoom": 12.165
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0434",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 434,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.434,
+          39.9
+        ],
+        "zoom": 12.17
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0435",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 435,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.435,
+          39.9
+        ],
+        "zoom": 12.175
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0436",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 436,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.436,
+          39.9
+        ],
+        "zoom": 12.18
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0437",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 437,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.437,
+          39.9
+        ],
+        "zoom": 12.185
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0438",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 438,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.438,
+          39.9
+        ],
+        "zoom": 12.19
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0439",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 439,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.439,
+          39.9
+        ],
+        "zoom": 12.195
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0440",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 440,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.44,
+          39.9
+        ],
+        "zoom": 12.2
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0441",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 441,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.441,
+          39.9
+        ],
+        "zoom": 12.205
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0442",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 442,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.442,
+          39.9
+        ],
+        "zoom": 12.21
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0443",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 443,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.443,
+          39.9
+        ],
+        "zoom": 12.215
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0444",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 444,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.444,
+          39.9
+        ],
+        "zoom": 12.22
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0445",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 445,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.445,
+          39.9
+        ],
+        "zoom": 12.225
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0446",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 446,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.446,
+          39.9
+        ],
+        "zoom": 12.23
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0447",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 447,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.447,
+          39.9
+        ],
+        "zoom": 12.235
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0448",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 448,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.448,
+          39.9
+        ],
+        "zoom": 12.24
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0449",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 449,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.449,
+          39.9
+        ],
+        "zoom": 12.245000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0450",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 450,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.45,
+          39.9
+        ],
+        "zoom": 12.25
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0451",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 451,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.451,
+          39.9
+        ],
+        "zoom": 12.254999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0452",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 452,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.452,
+          39.9
+        ],
+        "zoom": 12.26
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0453",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 453,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.453,
+          39.9
+        ],
+        "zoom": 12.265
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0454",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 454,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.454,
+          39.9
+        ],
+        "zoom": 12.27
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0455",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 455,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.455,
+          39.9
+        ],
+        "zoom": 12.275
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0456",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 456,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.456,
+          39.9
+        ],
+        "zoom": 12.28
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0457",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 457,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.457,
+          39.9
+        ],
+        "zoom": 12.285
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0458",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 458,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.458,
+          39.9
+        ],
+        "zoom": 12.29
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0459",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 459,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.459,
+          39.9
+        ],
+        "zoom": 12.295
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0460",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 460,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.46,
+          39.9
+        ],
+        "zoom": 12.3
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0461",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 461,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.461,
+          39.9
+        ],
+        "zoom": 12.305
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0462",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 462,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.462,
+          39.9
+        ],
+        "zoom": 12.31
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0463",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 463,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.463,
+          39.9
+        ],
+        "zoom": 12.315
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0464",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 464,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.464,
+          39.9
+        ],
+        "zoom": 12.32
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0465",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 465,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.465,
+          39.9
+        ],
+        "zoom": 12.325
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0466",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 466,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.466,
+          39.9
+        ],
+        "zoom": 12.33
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0467",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 467,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.467,
+          39.9
+        ],
+        "zoom": 12.335
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0468",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 468,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.468,
+          39.9
+        ],
+        "zoom": 12.34
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0469",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 469,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.469,
+          39.9
+        ],
+        "zoom": 12.345
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0470",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 470,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.47,
+          39.9
+        ],
+        "zoom": 12.35
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0471",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 471,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.471,
+          39.9
+        ],
+        "zoom": 12.355
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0472",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 472,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.472,
+          39.9
+        ],
+        "zoom": 12.36
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0473",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 473,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.473,
+          39.9
+        ],
+        "zoom": 12.365
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0474",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 474,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.474,
+          39.9
+        ],
+        "zoom": 12.370000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0475",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 475,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.475,
+          39.9
+        ],
+        "zoom": 12.375
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0476",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 476,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.476,
+          39.9
+        ],
+        "zoom": 12.379999999999999
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0477",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 477,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.477,
+          39.9
+        ],
+        "zoom": 12.385
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0478",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 478,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.478,
+          39.9
+        ],
+        "zoom": 12.39
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0479",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 479,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.479,
+          39.9
+        ],
+        "zoom": 12.395
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0480",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 480,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.48,
+          39.9
+        ],
+        "zoom": 12.4
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0481",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 481,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.481,
+          39.9
+        ],
+        "zoom": 12.405
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0482",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 482,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.482,
+          39.9
+        ],
+        "zoom": 12.41
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0483",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 483,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.483,
+          39.9
+        ],
+        "zoom": 12.415
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0484",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 484,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.484,
+          39.9
+        ],
+        "zoom": 12.42
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0485",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 485,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.485,
+          39.9
+        ],
+        "zoom": 12.425
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0486",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 486,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.486,
+          39.9
+        ],
+        "zoom": 12.43
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0487",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 487,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.487,
+          39.9
+        ],
+        "zoom": 12.435
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0488",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 488,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.488,
+          39.9
+        ],
+        "zoom": 12.44
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0489",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 489,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.489,
+          39.9
+        ],
+        "zoom": 12.445
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0490",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 490,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.49,
+          39.9
+        ],
+        "zoom": 12.45
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0491",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 491,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.491,
+          39.9
+        ],
+        "zoom": 12.455
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0492",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 492,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.492,
+          39.9
+        ],
+        "zoom": 12.46
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0493",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 493,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.493,
+          39.9
+        ],
+        "zoom": 12.465
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0494",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 494,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.494,
+          39.9
+        ],
+        "zoom": 12.47
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0495",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 495,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.495,
+          39.9
+        ],
+        "zoom": 12.475
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0496",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 496,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.496,
+          39.9
+        ],
+        "zoom": 12.48
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0497",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 497,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.497,
+          39.9
+        ],
+        "zoom": 12.485
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0498",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 498,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.498,
+          39.9
+        ],
+        "zoom": 12.49
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0499",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 499,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.499,
+          39.9
+        ],
+        "zoom": 12.495000000000001
+      }
+    },
+    {
+      "event_id": "pan_zoom_sto-0500",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 500,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.5,
+          39.9
+        ],
+        "zoom": 12.5
+      }
+    }
+  ],
+  "expect": {
+    "invariants": [
+      "ring_bounded_128",
+      "dropped_372",
+      "single_viewport_recent"
+    ],
+    "projection": {
+      "viewport": {
+        "zoom": 12.5
+      }
+    }
+  }
+}

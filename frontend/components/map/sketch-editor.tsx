@@ -42,6 +42,8 @@ import {
   snapToVertex,
 } from '@/lib/edit/sketch-geometry';
 import { useT } from '@/lib/i18n/useT';
+// ADR-0225 Interaction IR V1：草图增删改 → AOI 事件（几何只报摘要）。
+import { emitAoiChanged } from '@/lib/interaction/bus';
 import { t as tNow } from '@/lib/i18n/t';
 
 const SKETCH_FILL_LAYER = 'wb-sketch-fill';
@@ -133,6 +135,18 @@ function commitSketchCommand(
   const before = previous;
   mutate();
   const after = getSketchState().features;
+  // ADR-0225：用户意图命令 → AOI 事件（undo/redo 重放不经过本包装、不再
+  // 发射 —— 事件记录的是绘制时点的事实；undo 语义的事件化是 V2 候选）。
+  try {
+    const beforeIds = new Set(before.map((f) => f.id));
+    const afterIds = new Set(after.map((f) => f.id));
+    for (const feature of after) {
+      if (!beforeIds.has(feature.id)) emitAoiChanged('drawn', feature.geometry);
+    }
+    for (const feature of before) {
+      if (!afterIds.has(feature.id)) emitAoiChanged('deleted');
+    }
+  } catch { /* 观察层不影响编辑主链路 */ }
   recordCommand({
     label,
     kind: 'sketch',
@@ -441,6 +455,9 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       const before = dragStartGeometry.get(done.parentId);
       const after = feature.geometry;
       if (before && JSON.stringify(before) !== JSON.stringify(after)) {
+        try {
+          emitAoiChanged('edited', after as { type?: string; coordinates?: unknown });
+        } catch { /* 观察层不影响编辑主链路 */ }
         recordCommand({
           label: t('map.sketch.editVertices'),
           kind: 'sketch',

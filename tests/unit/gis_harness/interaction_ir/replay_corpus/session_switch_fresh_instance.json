@@ -1,0 +1,36 @@
+{
+  "name": "session_switch_fresh_instance",
+  "description": "新会话 = 空初始态；新实例从 seq 1 干净起步，gap=0。",
+  "initial": {
+    "clients": {},
+    "meta": {
+      "server_seq": 0,
+      "dropped": 0
+    }
+  },
+  "events": [
+    {
+      "event_id": "session_swit-0001",
+      "client_instance_id": "tab-cccc0003",
+      "client_seq": 1,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          0,
+          0
+        ],
+        "zoom": 2
+      }
+    }
+  ],
+  "expect": {
+    "summary": {
+      "accepted": 1
+    },
+    "state": {
+      "clients": {
+        "tab-cccc0003": 1
+      }
+    }
+  }
+}

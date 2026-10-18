@@ -1,0 +1,179 @@
+{
+  "bounds": {
+    "max_events_per_batch": 50,
+    "max_ledger_bytes": 98304,
+    "max_ledger_events": 128,
+    "max_payload_bytes": 512,
+    "max_tracked_clients": 8
+  },
+  "contract": "interaction_ir_manifest.v1",
+  "description": "Interaction IR V1 契约词表双向漂移闸（ADR-0227，carto_ir manifest 模式）：backend pytest 断言本文件 ≡ app/services/gis_harness/interaction_ir/contracts.py 常量，frontend vitest 断言本文件 ≡ frontend/lib/interaction/contract-manifest.ts 常量。任一侧改词表不更新本文件即红。",
+  "kind_specs": {
+    "aoi_deleted": {
+      "allow_empty_payload": true,
+      "authority": "observation",
+      "coalesce": "none",
+      "payload_keys": [],
+      "sensitivity": "limited",
+      "state_changing": false
+    },
+    "aoi_drawn": {
+      "allow_empty_payload": false,
+      "authority": "observation",
+      "coalesce": "none",
+      "payload_keys": [
+        "geometry_digest",
+        "geometry_type",
+        "vertex_count"
+      ],
+      "sensitivity": "limited",
+      "state_changing": false
+    },
+    "aoi_edited": {
+      "allow_empty_payload": false,
+      "authority": "observation",
+      "coalesce": "none",
+      "payload_keys": [
+        "geometry_digest",
+        "geometry_type",
+        "vertex_count"
+      ],
+      "sensitivity": "limited",
+      "state_changing": false
+    },
+    "comparison_mode_changed": {
+      "allow_empty_payload": false,
+      "authority": "observation",
+      "coalesce": "none",
+      "payload_keys": [
+        "enabled",
+        "mode"
+      ],
+      "sensitivity": "internal",
+      "state_changing": false
+    },
+    "feature_deselected": {
+      "allow_empty_payload": true,
+      "authority": "observation",
+      "coalesce": "none",
+      "payload_keys": [
+        "feature_id",
+        "layer_id"
+      ],
+      "sensitivity": "limited",
+      "state_changing": false
+    },
+    "feature_selected": {
+      "allow_empty_payload": false,
+      "authority": "observation",
+      "coalesce": "none",
+      "payload_keys": [
+        "dataset_ref",
+        "feature_id",
+        "field_names",
+        "geometry_digest",
+        "layer_id"
+      ],
+      "sensitivity": "limited",
+      "state_changing": false
+    },
+    "layer_opacity_changed": {
+      "allow_empty_payload": false,
+      "authority": "mapspec",
+      "coalesce": "none",
+      "payload_keys": [
+        "layer_id",
+        "opacity"
+      ],
+      "sensitivity": "internal",
+      "state_changing": true
+    },
+    "layer_order_changed": {
+      "allow_empty_payload": false,
+      "authority": "mapspec",
+      "coalesce": "none",
+      "payload_keys": [
+        "from_index",
+        "layer_id",
+        "to_index"
+      ],
+      "sensitivity": "internal",
+      "state_changing": true
+    },
+    "layer_removed": {
+      "allow_empty_payload": false,
+      "authority": "mapspec",
+      "coalesce": "none",
+      "payload_keys": [
+        "layer_id"
+      ],
+      "sensitivity": "internal",
+      "state_changing": true
+    },
+    "layer_style_changed": {
+      "allow_empty_payload": false,
+      "authority": "mapspec",
+      "coalesce": "none",
+      "payload_keys": [
+        "attribute_names",
+        "layer_id"
+      ],
+      "sensitivity": "internal",
+      "state_changing": true
+    },
+    "layer_visibility_changed": {
+      "allow_empty_payload": false,
+      "authority": "mapspec",
+      "coalesce": "none",
+      "payload_keys": [
+        "layer_id",
+        "visible"
+      ],
+      "sensitivity": "internal",
+      "state_changing": true
+    },
+    "measurement_created": {
+      "allow_empty_payload": false,
+      "authority": "observation",
+      "coalesce": "none",
+      "payload_keys": [
+        "measure_kind",
+        "segment_count",
+        "unit",
+        "value"
+      ],
+      "sensitivity": "internal",
+      "state_changing": false
+    },
+    "viewport_settled": {
+      "allow_empty_payload": false,
+      "authority": "observation",
+      "coalesce": "replace_pending",
+      "payload_keys": [
+        "bearing",
+        "bounds",
+        "center",
+        "pitch",
+        "zoom"
+      ],
+      "sensitivity": "internal",
+      "state_changing": false
+    }
+  },
+  "kinds": [
+    "aoi_deleted",
+    "aoi_drawn",
+    "aoi_edited",
+    "comparison_mode_changed",
+    "feature_deselected",
+    "feature_selected",
+    "layer_opacity_changed",
+    "layer_order_changed",
+    "layer_removed",
+    "layer_style_changed",
+    "layer_visibility_changed",
+    "measurement_created",
+    "viewport_settled"
+  ],
+  "schema_version": "interaction_ir.v1"
+}

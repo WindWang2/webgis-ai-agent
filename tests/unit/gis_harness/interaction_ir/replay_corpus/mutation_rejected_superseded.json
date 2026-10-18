@@ -1,0 +1,30 @@
+{
+  "name": "mutation_rejected_superseded",
+  "description": "用户隐藏层被 CAS 拒（superseded，无引擎存证）→ attempted_not_applied，绝不投影为成功 override。",
+  "events": [
+    {
+      "event_id": "mutation_rej-0001",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 1,
+      "kind": "layer_visibility_changed",
+      "payload": {
+        "layer_id": "locked",
+        "visible": false
+      },
+      "client_mutation_id": "mut-30000001",
+      "mutation_outcome": "superseded"
+    }
+  ],
+  "expect": {
+    "projection": {
+      "user_overrides": [],
+      "attempted_not_applied": [
+        {
+          "kind": "layer_visibility_changed",
+          "layer_id": "locked",
+          "outcome": "superseded"
+        }
+      ]
+    }
+  }
+}

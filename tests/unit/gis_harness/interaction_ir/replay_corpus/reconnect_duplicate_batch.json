@@ -1,0 +1,59 @@
+{
+  "name": "reconnect_duplicate_batch",
+  "description": "同一批发两次 —— 第二次全部 stale_seq（水印幂等），账面不变（replay 收敛性）。",
+  "events": [
+    {
+      "event_id": "reconnect_du-0001",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 1,
+      "kind": "feature_selected",
+      "payload": {
+        "layer_id": "roads",
+        "feature_id": "f1"
+      }
+    },
+    {
+      "event_id": "reconnect_du-0002",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 2,
+      "kind": "layer_opacity_changed",
+      "payload": {
+        "layer_id": "roads",
+        "opacity": 0.5
+      },
+      "client_mutation_id": "mut-20000001",
+      "mutation_outcome": "committed"
+    },
+    {
+      "event_id": "reconnect_du-0003",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 1,
+      "kind": "feature_selected",
+      "payload": {
+        "layer_id": "roads",
+        "feature_id": "f1"
+      }
+    },
+    {
+      "event_id": "reconnect_du-0004",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 2,
+      "kind": "layer_opacity_changed",
+      "payload": {
+        "layer_id": "roads",
+        "opacity": 0.5
+      },
+      "client_mutation_id": "mut-20000001",
+      "mutation_outcome": "committed"
+    }
+  ],
+  "expect": {
+    "summary": {
+      "accepted": 2,
+      "stale": 2
+    },
+    "state": {
+      "event_count": 2
+    }
+  }
+}

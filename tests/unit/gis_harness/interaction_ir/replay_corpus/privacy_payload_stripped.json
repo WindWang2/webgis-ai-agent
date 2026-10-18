@@ -1,0 +1,35 @@
+{
+  "name": "privacy_payload_stripped",
+  "description": "客户端塞入原始 properties / 未知键 → 服务端白名单剥离；ledger 内无属性值本体。",
+  "events": [
+    {
+      "event_id": "privacy_payl-0001",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 1,
+      "kind": "feature_selected",
+      "payload": {
+        "layer_id": "roads",
+        "feature_id": "f1",
+        "properties": {
+          "secret": "sensitive",
+          "owner_phone": "13800000000"
+        },
+        "raw_geometry": {
+          "type": "Point",
+          "coordinates": [
+            1,
+            2
+          ]
+        }
+      }
+    }
+  ],
+  "expect": {
+    "projection": {
+      "selection": {
+        "layer_id": "roads",
+        "feature_id": "f1"
+      }
+    }
+  }
+}

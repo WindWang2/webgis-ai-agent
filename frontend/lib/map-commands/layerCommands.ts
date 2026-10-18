@@ -469,7 +469,7 @@ export const layerCommands: Record<string, CommandEntry> = {
             // 会话守卫把“未传参(undefined)”判为会话切换并直接返回
             // 'reflected'（不发 POST 即清 pending → 已删层被 reconcile 复活）。
             const outcome = await removeLayerFromSpec(specLayerId, enqueuedSessionId);
-            if (outcome === 'unsynced') {
+            if (outcome.outcome === 'unsynced') {
               devOnly.warn('[remove_layer] backend spec removal unsynced; keeping pendingRemoved:', specLayerId);
               continue;
             }
