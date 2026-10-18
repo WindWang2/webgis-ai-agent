@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+import logging
+
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
