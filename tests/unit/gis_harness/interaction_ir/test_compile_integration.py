@@ -1,4 +1,4 @@
-"""Interaction IR → GIS Situation 投影集成（ADR-0225 E/F）。
+"""Interaction IR → GIS Situation 投影集成（ADR-0227 E/F）。
 
 compile_interaction 的 recent_interactions 优先读 IR ledger（存在时），
 旧 ring（/ws 死通道）仅缺省回退；复合 interaction revision 并入 IR

@@ -1,4 +1,4 @@
-"""Interaction IR V1 回放语料测试（ADR-0225 I）。
+"""Interaction IR V1 回放语料测试（ADR-0227 I）。
 
 每个 corpus 场景：``events + initial authority revisions -> same meaningful
 projection`` —— 与生产摄入共用 apply_event / project_interaction_snapshot

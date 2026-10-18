@@ -1,4 +1,4 @@
-"""Interaction IR V1 摄入状态机测试（ADR-0225 D4/G）：幂等 / 水印 / 多标签页 /
+"""Interaction IR V1 摄入状态机测试（ADR-0227 D4/G）：幂等 / 水印 / 多标签页 /
 gap 披露 / actor 伪造拒绝 / causality 交叉校验 / 有界淘汰与 drop 披露。"""
 from __future__ import annotations
 

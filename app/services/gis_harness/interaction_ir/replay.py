@@ -1,4 +1,4 @@
-"""Interaction IR V1 回放 harness（Goal 02 / ADR-0225 I）。
+"""Interaction IR V1 回放 harness（Goal 02 / ADR-0227 I）。
 
 ``events + initial authority revisions -> same meaningful projection``：
 

@@ -1,4 +1,4 @@
-"""Interaction IR V1 契约常量与词表（Goal 02 / ADR-0225）。
+"""Interaction IR V1 契约常量与词表（Goal 02 / ADR-0227）。
 
 本模块是交互事件分类学的**单一权威**：
 
@@ -7,13 +7,13 @@
   （payload 白名单 / 合并策略 / 敏感级 / authority 归属）；
 - :func:`normalize_payload` —— 服务端有界化（键白名单 + 值长 + 总字节），
   与 ``gis_situation/observation.py`` 同纪律，但**任何 kind 都不允许原始
-  feature properties 进入 ledger**（隐私最小化，ADR-0225 H）。
+  feature properties 进入 ledger**（隐私最小化，ADR-0227 H）。
 
 前端镜像常量在 ``frontend/lib/interaction/contract-manifest.ts``，两侧由
 ``tests/unit/gis_harness/interaction_ir/contract_manifest.json`` 双向漂移闸
 锁定（carto_ir manifest 模式）。
 
-纪律（ADR-0225）：
+纪律（ADR-0227）：
 - Interaction IR 是 observation/event layer —— 记录"发生了什么 + 与哪个
   authority revision 关联"；MapSpec / GISWorldState / Requirement IR 仍是
   各自领域的唯一真相；
@@ -95,7 +95,7 @@ def _k(
 
 
 #: 封闭词表：kind → 元数据。每个 kind 都对应前端真实交互路径（ADR 归纳表；
-#: 评估后**未收录**的候选见 ADR-0225「词表边界」：temporal scrub / feature
+#: 评估后**未收录**的候选见 ADR-0227「词表边界」：temporal scrub / feature
 #: inspect / measurement clear —— 前端无对应交互钩子，不为词表完整伪造）。
 INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     # ── 观察型：viewport（settle 后上报，replace_pending 合并）──────────
@@ -252,7 +252,7 @@ def interaction_event_fingerprint(
     """内容指纹（sha256[:16]）。
 
     **排除 wall-clock 字段**（created_at / observed_at / 服务端接收序）——
-    指纹只由协议语义字段构成，重放与时钟噪声不得破坏（ADR-0225 D5）。
+    指纹只由协议语义字段构成，重放与时钟噪声不得破坏（ADR-0227 D5）。
     """
     blob = canonical_event_blob({
         "schema_version": SCHEMA_VERSION,
@@ -272,7 +272,7 @@ class LedgerState:
 
     生产接线：``load_ledger_state`` / ``persist_ledger_state`` 在 session
     锁内读/写 ``map_state``；回放：corpus 直接构造初始态后 fold —— 同一
-    :func:`ingest.apply_event` 保证确定性（ADR-0225 D4）。
+    :func:`ingest.apply_event` 保证确定性（ADR-0227 D4）。
     """
 
     events: list = field(default_factory=list)

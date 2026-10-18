@@ -1,4 +1,4 @@
-"""Interaction IR V1 投影测试（ADR-0225 F/I）：有界 / 诚实结局 / 风暴合并 /
+"""Interaction IR V1 投影测试（ADR-0227 F/I）：有界 / 诚实结局 / 风暴合并 /
 确定性（无 wall-clock）。"""
 from __future__ import annotations
 

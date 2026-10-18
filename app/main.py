@@ -1012,7 +1012,7 @@ app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
-app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0225 Interaction IR V1
+app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
 app.include_router(review_proposals.router, prefix="/api/v1", tags=["审查会签"])
 # F15（ADR-0214）：user-approved visual repair + 截图 ref-only 通道。
 app.include_router(visual_repairs.router, prefix="/api/v1", tags=["AI对话"])

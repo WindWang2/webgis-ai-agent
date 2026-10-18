@@ -421,7 +421,7 @@ def render_situation_for_context(
 def _render_interactions(value: Any) -> Optional[str]:
     if not isinstance(value, list) or not value:
         return None
-    # ADR-0225：recent_interactions 事实有双形态 —— legacy 环条目（含
+    # ADR-0227：recent_interactions 事实有双形态 —— legacy 环条目（含
     # payload 键，旧→新）与 IR 投影条目（无 payload，新→旧）。渲染窗口
     # 各取"最近 3 条"：legacy 取尾、IR 取头；IR 摘要取条目顶层引用字段。
     is_ir = isinstance(value[0], dict) and "payload" not in value[0]

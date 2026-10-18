@@ -1,4 +1,4 @@
-"""Interaction IR V1 契约测试（ADR-0225）：词表封闭性 / 白名单有界化 /
+"""Interaction IR V1 契约测试（ADR-0227）：词表封闭性 / 白名单有界化 /
 指纹确定性 / 双端 manifest 漂移闸。"""
 from __future__ import annotations
 

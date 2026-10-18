@@ -1,11 +1,11 @@
-"""Interaction IR V1 有界投影（Goal 02 / ADR-0225 F）。
+"""Interaction IR V1 有界投影（Goal 02 / ADR-0227 F）。
 
 把 ledger 环投影为 agent 可消费的**有界上下文快照**：
 
 - 禁止把原始高频事件全塞 prompt —— 只投影语义状态（当前视口/选择/
   AOI/用户覆盖）+ 最近有意义交互（合并同 kind 连发）；
 - 一切由序号驱动（server_seq = 服务端规范接收序）：**不读时钟**，投影
-  是 ledger 列表的纯函数 → 回放确定性由构造保证（ADR-0225 D5）；
+  是 ledger 列表的纯函数 → 回放确定性由构造保证（ADR-0227 D5）；
 - 诚实性：mutation 被拒/superseded 的用户尝试进 ``attempted_not_applied``
   而不是 ``user_overrides``；verified 与 claimed_unverified 分级披露；
 - 有界性：recent 窗 ≤ :data:`MAX_RECENT_INTERACTIONS` 条、overrides
@@ -185,7 +185,7 @@ def _recent_interactions(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     合并语义：窗口内同 kind 的 ``replace_pending`` 类（viewport/temporal）
     只保留最新一条 —— 500 次 pan/zoom 风暴投影为 1 条 settled 事实
-    （ADR-0225 I 场景）。
+    （ADR-0227 I 场景）。
     """
     recent: List[Dict[str, Any]] = []
     seen_coalesced: set = set()

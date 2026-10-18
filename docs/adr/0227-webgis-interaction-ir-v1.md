@@ -1,4 +1,4 @@
-# ADR 0225 — WebGIS Interaction IR V1：Human ↔ Map ↔ Agent 观察总线
+# ADR 0227 — WebGIS Interaction IR V1：Human ↔ Map ↔ Agent 观察总线
 
 - 状态：Proposed（PR 评审中）
 - 日期：2026-10-18

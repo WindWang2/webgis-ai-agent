@@ -7,7 +7,7 @@
     "max_tracked_clients": 8
   },
   "contract": "interaction_ir_manifest.v1",
-  "description": "Interaction IR V1 契约词表双向漂移闸（ADR-0225，carto_ir manifest 模式）：backend pytest 断言本文件 ≡ app/services/gis_harness/interaction_ir/contracts.py 常量，frontend vitest 断言本文件 ≡ frontend/lib/interaction/contract-manifest.ts 常量。任一侧改词表不更新本文件即红。",
+  "description": "Interaction IR V1 契约词表双向漂移闸（ADR-0227，carto_ir manifest 模式）：backend pytest 断言本文件 ≡ app/services/gis_harness/interaction_ir/contracts.py 常量，frontend vitest 断言本文件 ≡ frontend/lib/interaction/contract-manifest.ts 常量。任一侧改词表不更新本文件即红。",
   "kind_specs": {
     "aoi_deleted": {
       "allow_empty_payload": true,
