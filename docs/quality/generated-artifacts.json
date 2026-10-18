@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "7272010caae3ac7bb47ede695b0cdf3e25124e5fdb3daa978bbbfed674c2a13f",
+   "input_fingerprint": "6fb87037b1b9bdade70c2db2d06cb37b4b436a6fb92ba12b6db43e10032853a2",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "7272010caae3ac7bb47ede695b0cdf3e25124e5fdb3daa978bbbfed674c2a13f",
+   "input_fingerprint": "6fb87037b1b9bdade70c2db2d06cb37b4b436a6fb92ba12b6db43e10032853a2",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -187,7 +187,7 @@
    "scope": "global"
   },
   "tests/quality/snapshots/realtime-contract.json": {
-   "content_fingerprint": "92de82e328ef152a282906ce875c2ccc770b5acb43e25a861c054b65b1aecff7",
+   "content_fingerprint": "360065728abce3becbfabf84a5cc06f862b931df6bdc6f1915b2d3fe999949d7",
    "generator": "app/lib/quality/api_compat.py",
    "generator_version": 1,
    "input_fingerprint": "0614dd4b74f08552ba8914d8f49bdc80dfed03978ffb4810185653fff7bdcb69",
