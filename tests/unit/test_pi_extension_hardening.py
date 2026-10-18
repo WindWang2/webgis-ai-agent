@@ -259,3 +259,62 @@ def test_native_tool_names_contract(registry):
         f"Registry schema dump ({dumped_names}) drifted from "
         f"NATIVE_TOOL_NAMES ({list(NATIVE_TOOL_NAMES)})"
     )
+
+
+# ---------------------------------------------------------------------------
+# ADR-0224（Goal 04）：dump v3 spec 解析 + per-call fingerprint echo。
+# ---------------------------------------------------------------------------
+
+def test_load_native_tools_parses_v3_shape(tmp_path):
+    """v3 dump（v2 键 + abi/spec/generation 加性字段）继续以 v2 兼容形状返回。"""
+    dump = {
+        "version": 3,
+        "abi": {"version": 1, "policy": "pi_tool_spec.v1"},
+        "registry_generation": "gen123",
+        "surface_fingerprint": "surf456",
+        "tools": [
+            {
+                "name": "webgis_map_intent",
+                "label": "Map Intent",
+                "description": "d",
+                "parameters": {"type": "object", "properties": {}},
+                "spec": {"name": "webgis_map_intent", "fingerprint": "fp1", "tier": 1},
+            },
+        ],
+        "default_active": ["webgis_map_intent"],
+        "execute_proxy": "webgis_execute",
+    }
+    path = tmp_path / "surface-v3.json"
+    path.write_text(json.dumps(dump), encoding="utf-8")
+    script = f"""
+      import {{ loadNativeTools }} from {json.dumps(EXTENSION_PATH.as_uri())};
+      process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(str(path))};
+      const res = loadNativeTools();
+      process.stdout.write(JSON.stringify(res));
+    """
+    res = _run_node_script(script)
+    data = json.loads(res.stdout)
+    assert [t["name"] for t in data["tools"]] == ["webgis_map_intent"]
+    assert data["defaultActive"] == ["webgis_map_intent"]
+    # spec 原样可达（echo 源）
+    assert data["tools"][0]["spec"]["fingerprint"] == "fp1"
+
+
+def test_post_to_bridge_includes_tool_fingerprint_when_provided():
+    body_check = """
+      let lastBody = null;
+      globalThis.fetch = async (url, init) => {
+        lastBody = JSON.parse(init.body);
+        return { ok: true, json: async () => ({
+          toolCallId: "c", content: [], details: {}, isError: false,
+        }) };
+      };
+    """
+    script = f"""
+      import {{ postToBridge }} from {json.dumps(EXTENSION_PATH.as_uri())};
+      {body_check}
+      await postToBridge("c", "heatmap_data", {{}}, "tok.sig", {{ toolFingerprint: "FP123" }});
+      process.stdout.write(lastBody.toolFingerprint);
+    """
+    res = _run_node_script(script)
+    assert res.stdout == "FP123"

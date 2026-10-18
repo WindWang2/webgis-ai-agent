@@ -12,6 +12,7 @@ import type { SSEEvent } from '@/lib/api/chat';
 import type { SelectedFeatureInfo } from '@/lib/store/hud-types';
 import { reportLayerFetchFailure, syncSpecLayersToStore } from '@/lib/session/map-state-restore';
 import { commitMapSpecDocument, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { ingestRenderWork } from '@/lib/render-protocol/render-work';
 import { nextTurn, noteAgentDisplayed } from '@/lib/chat/turn-focus';
 import { useToastStore } from '@/components/ui/toast';
 import type { MapActionPayload } from '@/lib/types';
@@ -555,6 +556,12 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         // 成 HUD 行，图层面板可见、ref 定向显隐可解析（幂等，见注释）。
         syncSpecLayersToStore(incomingMapSpec, sessionIdRef.current);
       }
+      // ADR-0225（Goal 03）：执行信封收纳（render_work.v1；防御式解析 +
+      // 代次门在 store 内 —— 形状非法/旧代/跨会话一律拒收，不影响主链）。
+      ingestRenderWork(
+        data?.render_work ?? data?.result?.render_work,
+        sessionIdRef.current,
+      );
 
       // SEC-08：服务端在新建匿名会话时签发 owner_token（随 task_start / session 事件下发）。
       // 前端持有后在后续请求的 X-Session-Token 头里回传。认证会话不携带该字段。

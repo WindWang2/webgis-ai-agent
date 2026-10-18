@@ -596,8 +596,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/mapspec/mutations` | Apply User Mapspec Mutation | MutationApplyResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/state` | Get Workbench State | WorkbenchStateResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
-| `POST` | `/api/v1/chat/sessions/{session_id}/interaction-events` | Push Interaction Events | InteractionIngestResponse |
-| `GET` | `/api/v1/chat/sessions/{session_id}/interaction-events/projection` | Get Interaction Projection | InteractionProjectionResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/plan` | Plan Visual Repair | VisualRepairPlanResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/apply` | Apply Visual Repair | VisualRepairApplyResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/reject` | Reject Visual Repair | VisualRepairRejectResponse |
@@ -925,6 +923,16 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/mission-runtime/missions/{mission_id}/resume` | Resume Mission | object |
 | `POST` | `/api/v1/mission-runtime/missions/{mission_id}/cancel` | Cancel Mission | object |
 
+### Project Runtime
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/projects/{project_id}/runtime-snapshots` | Save Runtime Snapshot | RuntimeSnapshotSaveResponse |
+| `GET` | `/api/v1/projects/{project_id}/runtime-snapshots` | List Runtime Snapshots | RuntimeSnapshotListResponse |
+| `GET` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}` | Inspect Runtime Snapshot | RuntimeSnapshotInspectResponse |
+| `DELETE` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}` | Delete Runtime Snapshot | RuntimeSnapshotDeleteResponse |
+| `POST` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}/resume` | Resume Runtime Snapshot | RuntimeSnapshotResumeResponse |
+
 ### Project Knowledge
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1105,6 +1113,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：388（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：391（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

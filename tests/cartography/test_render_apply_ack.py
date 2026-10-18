@@ -267,3 +267,51 @@ class TestObservationIngestContract:
             {"map_layers": []}, {"layers": []}, observation, current_revision=7
         )
         assert F_RENDER_APPLY_FAILED not in [f.code for f in findings]
+
+
+# ── ADR-0225：perf 块 additive 扩展（bytesFetched / work_receipt）────────
+
+
+class TestPerfBlockWorkReceipt:
+    def test_work_receipt_normalized(self):
+        from app.lib.cartography.render_perf_probes import (
+            normalize_render_perf_block,
+        )
+
+        out = normalize_render_perf_block({
+            "schema_version": "render_perf_probes.v1",
+            "map_idle": True,
+            "work_receipt": {
+                "work_id": "rw-5-abc",
+                "work_match": True,
+                "recompile_fallbacks": 2,
+            },
+            "data_plane": {"requests": 1, "bytesFetched": 2048},
+        })
+        assert out["work_receipt"] == {
+            "work_id": "rw-5-abc", "work_match": True,
+            "recompile_fallbacks": 2,
+        }
+        assert out["data_plane"]["bytesFetched"] == 2048
+
+    def test_work_receipt_malformed_absent(self):
+        from app.lib.cartography.render_perf_probes import (
+            normalize_render_perf_block,
+        )
+
+        out = normalize_render_perf_block({
+            "schema_version": "render_perf_probes.v1",
+            "work_receipt": {"work_match": True},  # 缺 work_id → 整块缺席
+        })
+        assert "work_receipt" not in out
+
+    def test_bytes_fetched_byte_bound_not_count_bound(self):
+        from app.lib.cartography.render_perf_probes import (
+            normalize_render_perf_block,
+        )
+
+        out = normalize_render_perf_block({
+            "schema_version": "render_perf_probes.v1",
+            "data_plane": {"bytesFetched": 5_000_000_000},  # > 1e9 事件计数界
+        })
+        assert out["data_plane"]["bytesFetched"] == 5_000_000_000

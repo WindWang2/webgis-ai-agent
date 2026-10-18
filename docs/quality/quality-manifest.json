@@ -5282,6 +5282,7 @@
    "tests": [
     "tests/cartography/test_template_intelligence.py",
     "tests/data/test_catalog.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/data/test_review_fixes.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -5386,6 +5387,7 @@
    "tests": [
     "tests/data/test_catalog.py",
     "tests/data/test_dirty_corpus_oracle.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/data/test_reliability_corpus.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -5986,6 +5988,7 @@
    "tests": [
     "tests/cartography/test_template_intelligence.py",
     "tests/data/test_catalog.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/data/test_review_fixes.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -8347,7 +8350,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "45ac9fd2b22abf8975b1bfddb5160a3269945d81e5c65559d1947b090d5ab453",
+ "fingerprint": "72777d87c440978f25fecb29708d45d7d244e65fe4cc7cfba630a4d2ae3083d6",
  "gate": {
   "fields": {
    "capabilities": {
@@ -11230,6 +11233,7 @@
     "tests/unit/test_local_geodata_tools.py",
     "tests/unit/test_local_stats_data.py",
     "tests/unit/test_pi_surface_metrics.py",
+    "tests/unit/test_pi_tool_spec.py",
     "tests/unit/test_session_plan.py"
    ],
    "tier": 2
@@ -11902,6 +11906,7 @@
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_heatmap_contract.py",
     "tests/unit/test_issue_701_correctness.py",
+    "tests/unit/test_pi_extension_hardening.py",
     "tests/unit/test_pi_harness.py",
     "tests/unit/test_pi_input_gate.py",
     "tests/unit/test_pi_native_surface.py",
@@ -14499,6 +14504,7 @@
    ],
    "tests": [
     "tests/benchmarks/test_gis_registry_perf.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/governor/test_dispatch_actual_backfill.py",
     "tests/test_chat_session_plan_route.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
@@ -14528,6 +14534,7 @@
     "tests/unit/test_pi_rpc_client.py",
     "tests/unit/test_pi_surface_metrics.py",
     "tests/unit/test_pi_surface_parity.py",
+    "tests/unit/test_pi_tool_spec.py",
     "tests/unit/test_reproducible_gis_runtime.py",
     "tests/unit/test_session_plan.py",
     "tests/unit/test_tool_architecture_fixes.py",
@@ -14684,6 +14691,7 @@
    "tests": [
     "tests/cartography/test_mutation_transactions.py",
     "tests/data/test_catalog.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/data/test_workspace_snapshot.py",
     "tests/data/test_workspace_v4.py",
     "tests/test_chat_engine_tracking.py",
@@ -18405,6 +18413,7 @@
     "tests/unit/test_harness_kernel_runtime.py",
     "tests/unit/test_harness_lifecycle_properties.py",
     "tests/unit/test_harness_round_856_864.py",
+    "tests/unit/test_pi_abi_adversarial.py",
     "tests/unit/test_pi_dynamic_surface.py",
     "tests/unit/test_pi_extension_hardening.py",
     "tests/unit/test_pi_native_surface.py",

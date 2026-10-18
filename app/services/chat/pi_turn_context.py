@@ -267,7 +267,8 @@ async def bind_turn_prompt(
                 session_id,
             )
     return await legacy_bind_turn_prompt(
-        message, token, session_id, cartography_block, env_block
+        message, token, session_id, cartography_block, env_block,
+        turn_id=turn_id,
     )
 
 
@@ -277,6 +278,8 @@ async def legacy_bind_turn_prompt(
     session_id: str,
     cartography_block: str = "",
     env_block: str = "",
+    *,
+    turn_id: str = "",
 ) -> str:
     """Pre-F04 ``bind_turn_prompt``（字节等价保留；退役边界见 recon §6）。
 
@@ -286,6 +289,8 @@ async def legacy_bind_turn_prompt(
     → DynamicToolSurface 激活名单 marker，扩展在 before_agent_start
     setActiveTools —— 模型可见工具从冻结 7 + proxy 升级为 10-30 个相关工具；
     执行仍全部回到 ToolRegistry（单一执行真相）。
+    ADR-0224：``turn_id`` 传入时激活面投影铸 SurfaceReceipt（回调
+    fingerprint echo 的对照真相）；缺席保持旧行为（无 receipt）。
     """
     plan_block = ""
     surface_block = ""
@@ -314,7 +319,10 @@ async def legacy_bind_turn_prompt(
             surface = _compile_surface(plan)
             if surface is not None:
                 surface_block = _render_surface_block(surface)
-                active_tools_block = _active_tools_block_for(message, surface, plan)
+                active_tools_block = await _active_tools_block_for(
+                    message, surface, plan,
+                    session_id=session_id, turn_id=turn_id,
+                )
             # V6 Wave 13：同一份 plan/spec/map_state 的三层块投影（同一
             # builder，非第二通道；失败即空串，不影响既有块）。
             try:
@@ -338,7 +346,7 @@ async def legacy_bind_turn_prompt(
                     [{"role": "user", "content": message}],
                     session_data_manager,
                 )
-        except Exception:  # noqa: BLE001 — tombstone 是增值披露，绝不阻断 turn
+        except Exception:  # noqa: BLE001 — tombstone 是增值披露，绝不阻断
             evicted_refs_block = ""
     return attach_turn_context(
         message, token, cartography_block, plan_block,
@@ -378,8 +386,19 @@ def _render_surface_block(surface: Any) -> str:
         return ""
 
 
-def _active_tools_block_for(message: str, surface: Any, plan: Any) -> str:
-    """动态激活名单 marker（ADR-0103）。失败/关闭 → 空串，扩展保持既有面。"""
+async def _active_tools_block_for(
+    message: str,
+    surface: Any,
+    plan: Any,
+    *,
+    session_id: str = "",
+    turn_id: str = "",
+) -> str:
+    """动态激活名单 marker（ADR-0103）。失败/关闭 → 空串，扩展保持既有面。
+
+    ADR-0224：``session_id``/``turn_id`` 在场时，投影同时消费 situation
+    资格事实（async 供给，线程安全）并铸 SurfaceReceipt；缺席保持旧行为。
+    """
     try:
         from app.services.chat.pi_native_surface import compute_turn_active_tools
 
@@ -388,12 +407,29 @@ def _active_tools_block_for(message: str, surface: Any, plan: Any) -> str:
             for row in (getattr(plan, "progress", None) or ())
             if getattr(row, "capability", "")
         )
+        situation: dict | None = None
+        if session_id:
+            try:
+                from app.services.gis_harness.hotpath_convergence.runtime_situation import (
+                    build_runtime_situation_async,
+                )
+
+                situation_obj = await build_runtime_situation_async(session_id)
+                situation = (
+                    situation_obj.to_qualification_dict()
+                    if situation_obj is not None else None
+                )
+            except Exception:  # noqa: BLE001 — situation 缺席 = unknown = 不排除
+                situation = None
         disclosure: dict = {}
         names = compute_turn_active_tools(
             message or "",
             active_capabilities=capabilities,
             workflow_stage=str(getattr(surface, "phase", "") or ""),
             disclosure=disclosure,
+            situation=situation,
+            session_id=session_id,
+            turn_id=turn_id,
         )
         if not names:
             return ""

@@ -1,0 +1,79 @@
+{
+  "apply_ack": {
+    "entry_statuses": [
+      "applied",
+      "failed",
+      "skipped",
+      "pending",
+      "stale"
+    ],
+    "max_components": 32,
+    "max_layers": 64,
+    "max_sources": 64,
+    "reason_codes": [
+      "apply_error",
+      "budget_degraded",
+      "missing_after_apply",
+      "source_unresolved",
+      "stale_data_revision",
+      "style_diverged",
+      "unsupported_layer_type",
+      "user_pending"
+    ],
+    "schema_version": "render_apply_ack.v1",
+    "statuses": [
+      "applied",
+      "partial",
+      "failed"
+    ]
+  },
+  "capability": {
+    "feature_support": {
+      "export_pdf": true,
+      "export_svg": true,
+      "fill_extrusion_3d": true,
+      "generalization": false,
+      "heatmap_density": true,
+      "label_placement": true,
+      "point_clustering": true,
+      "semantic_zoom_representation": false,
+      "terrain": true
+    },
+    "levels": [
+      "full",
+      "partial",
+      "none"
+    ],
+    "schema_version": "renderer_capability.v1",
+    "source_type_levels": {
+      "data_fabric": "partial",
+      "geojson": "full",
+      "pmtiles": "none",
+      "raster": "full",
+      "raster-dem": "full",
+      "vector": "full",
+      "wms": "none",
+      "wmts": "none"
+    }
+  },
+  "perf": {
+    "schema_version": "render_perf_probes.v1"
+  },
+  "render_work": {
+    "max_component_work": 32,
+    "max_data_dependencies": 64,
+    "max_diagnostics": 8,
+    "max_layer_work": 128,
+    "schema_version": "render_work.v1",
+    "source_kinds": [
+      "data_fabric",
+      "geojson",
+      "pmtiles",
+      "raster",
+      "raster-dem",
+      "vector",
+      "wms",
+      "wmts"
+    ]
+  }
+}

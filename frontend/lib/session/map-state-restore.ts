@@ -24,6 +24,7 @@ import { hydrateWorkbenchFromSpec } from '@/lib/workbench/persistence';
 import { useToastStore } from '@/components/ui/toast';
 import { devOnly } from '@/lib/utils/logger';
 import { commitMapSpecDocument } from '@/lib/mapspec/session-cursor';
+import { ingestRenderWork } from '@/lib/render-protocol/render-work';
 
 function isAbortError(err: unknown): boolean {
   return (err instanceof DOMException && err.name === 'AbortError')
@@ -114,6 +115,8 @@ export interface SessionMapState {
   _cartographic_mutation_revision?: number;
   _current_cartographic_fingerprint?: string;
   _cartographic_observation?: { mapspec_fingerprint?: string; layers?: RestoredLayerRow[] };
+  /** ADR-0225：恢复面携带的执行信封（render_work.v1；防御式解析）。 */
+  render_work?: unknown;
 }
 
 /** 观察态是否为当前代次（指纹匹配才算数，旧代次观察不得覆盖权威 layers）。 */
@@ -384,6 +387,9 @@ export async function restoreSessionMapLayers(
   opts: RestoreMapLayersOptions,
 ): Promise<void> {
   commitMapSpecDocument(state.mapspec, state._cartographic_mutation_revision);
+  // ADR-0225（Goal 03）：恢复面同带执行信封（render_work.v1）—— 重连后
+  // 首份 ACK 即有 work 对账基线（store 内代次门拒旧代/跨会话）。
+  ingestRenderWork(state.render_work, opts.sessionId);
   // Workbench V5（W3）：组织态（分组树/成员/锁/模式）随同一 spec 恢复并
   // 武装持久化基线 —— 旧会话无 workbench 分支时空基线起跑（用户此后编辑
   // 开始持久化）。

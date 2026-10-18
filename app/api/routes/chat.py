@@ -1863,6 +1863,26 @@ async def push_cartographic_runtime_observation(
                 apply_ack, _ack_errors = validate_render_apply_ack(
                     req.apply_ack, stamped_revision=stamped_revision
                 )
+                # ADR-0225（review P2-3）：work echo 服务端确定性重算对账
+                # （reconcile_work_echo 纯函数 —— 路由只传权威事实）。
+                if apply_ack is not None:
+                    try:
+                        from app.lib.cartography.render_apply_ack import (
+                            reconcile_work_echo,
+                        )
+
+                        apply_ack = reconcile_work_echo(
+                            apply_ack,
+                            mapspec=current_mapspec,
+                            session_id=session_id,
+                            revision=stamped_revision,
+                            fingerprint=current_fingerprint,
+                        )
+                    except Exception:  # noqa: BLE001 — 对账失败按缺席
+                        logger.debug(
+                            "[render-work] server-side work check failed for %s",
+                            session_id, exc_info=True,
+                        )
             observation = {
                 "session_id": session_id,
                 "sequence": sequence,

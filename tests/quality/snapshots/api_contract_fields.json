@@ -34,6 +34,13 @@
   "message": "string",
   "status": "string"
  },
+ "DELETE /api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}": {
+  "__model__": "RuntimeSnapshotDeleteResponse",
+  "deleted": "boolean",
+  "durable_pointers": "integer",
+  "project_id": "string",
+  "snapshot_id": "string"
+ },
  "DELETE /api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}": {
   "__model__": "WorkspaceSnapshotDeleteResponse",
   "home": "string",
@@ -541,6 +548,26 @@
   "workflow_id": "string",
   "workflow_revision_id": "null|string",
   "workflow_version": "integer"
+ },
+ "GET /api/v1/projects/{project_id}/runtime-snapshots": {
+  "__model__": "RuntimeSnapshotListResponse",
+  "count": "integer",
+  "items": "array<RuntimeSnapshotSummary>",
+  "project_id": "string"
+ },
+ "GET /api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}": {
+  "__model__": "RuntimeSnapshotInspectResponse",
+  "capability_verdicts": "object",
+  "dataset_verdicts": "object",
+  "dispositions": "array<object>",
+  "findings": "array<object>",
+  "mapspec_integrity_ok": "boolean",
+  "permission": "string",
+  "project_ok": "boolean",
+  "recovery_plan": "object",
+  "schema_supported": "boolean",
+  "snapshot_id": "string",
+  "status": "string"
  },
  "GET /api/v1/projects/{project_id}/workflows": {
   "__model__": "Page_WorkflowSummary_",
@@ -1359,6 +1386,44 @@
   "workflow_id": "string",
   "workflow_revision_id": "null|string",
   "workflow_version": "integer"
+ },
+ "POST /api/v1/projects/{project_id}/runtime-snapshots": {
+  "__model__": "RuntimeSnapshotSaveResponse",
+  "datasets": "integer",
+  "freeze_reason": "string",
+  "label": "string",
+  "mapspec_fingerprint": "string",
+  "mapspec_mutation_revision": "integer",
+  "project_id": "string",
+  "promotion_summary": "object",
+  "session_id": "string",
+  "snapshot": "object",
+  "snapshot_id": "string",
+  "sources_durable": "integer",
+  "sources_needing_recompute": "integer",
+  "sources_total": "integer",
+  "workspace_snapshot_id": "string"
+ },
+ "POST /api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}/resume": {
+  "__model__": "RuntimeSnapshotResumeResponse",
+  "artifacts_expired": "integer",
+  "artifacts_registered": "integer",
+  "capabilities_unavailable": "array<string>",
+  "datasets_changed": "array<string>",
+  "degraded": "array<object>",
+  "disclosures": "array<string>",
+  "invalidated": "array<string>",
+  "mapspec_frozen_fingerprint": "string",
+  "mapspec_new_fingerprint": "string",
+  "mapspec_rebound": "boolean",
+  "missing_refs": "array<string>",
+  "project_id": "string",
+  "ref_map": "object",
+  "restored_refs": "array<string>",
+  "session_id": "string",
+  "snapshot_id": "string",
+  "source_session_id": "string",
+  "status": "string"
  },
  "POST /api/v1/projects/{project_id}/workflows": {
   "__model__": "WorkflowResponse",

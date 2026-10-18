@@ -16,7 +16,8 @@
  * - **失败不缓存不重试**（重试语义归 transport 的幂等重试）。
  */
 
-import { RefDataCache } from '@/lib/data-plane/cache';
+import { RefDataCache, estimateFeatureCollectionBytes } from '@/lib/data-plane/cache';
+import { recordDataPlaneBytes } from '@/lib/data-plane/observability';
 import type { FeatureCollectionLike } from '@/lib/mapspec-runtime/source-diff';
 
 export type Urgency = 'interactive' | 'normal' | 'idle';
@@ -449,8 +450,12 @@ export class DataPlaneScheduler {
             });
           }
         } else {
-          this.cache.set(key, outcome.fc, { etag: outcome.etag });
+          // ADR-0225：字节幅一次估算双消费（缓存预算 + 观测账本）——
+          // 不在 set 内隐式重算。
+          const bytes = estimateFeatureCollectionBytes(outcome.fc);
+          this.cache.set(key, outcome.fc, { etag: outcome.etag, bytes });
           this.counters.fetchOk += 1;
+          recordDataPlaneBytes(bytes);
           this.onEvent?.('fulfilled', { refId: req.refId, sessionId: req.sessionId });
           this.safeFulfilled(req.refId, outcome.fc, outcome.etag);
           this.settle(key, { status: 'fulfilled', fc: outcome.fc, etag: outcome.etag });
