@@ -1,4 +1,4 @@
-"""Project Runtime 包（ADR-0220 — Durable Project Cartographic Runtime V1）。
+"""Project Runtime 包（ADR-0224 — Durable Project Cartographic Runtime V1）。
 
 组合既有权威（WorkspaceSnapshot / MapSpec store / artifact registry /
 data fabric datasets / capability runtime），提供：

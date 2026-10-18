@@ -1,4 +1,4 @@
-"""ProjectRuntimeStore —— 项目域 runtime snapshot 存储（ADR-0220 §6/§7）。
+"""ProjectRuntimeStore —— 项目域 runtime snapshot 存储（ADR-0224 §6/§7）。
 
 - 家：``DATA_DIR/workspaces/<project_id>/runtime-snapshots/``（项目域，
   在 mapspec 会话清扫的 ``workspaces`` 白名单之下 —— 不随会话 TTL 蒸发）；
@@ -93,7 +93,7 @@ def _atomic_write_json_sync(path: Path, payload: dict) -> None:
         try:
             os.unlink(tmp)
         except OSError:
-            pass
+            logger.debug("[RuntimeSnapshot] tmp manifest cleanup failed: %s", tmp)
         raise
 
 
@@ -155,7 +155,10 @@ class ProjectRuntimeStore:
         try:
             await asyncio.to_thread(_cap)
         except OSError:
-            pass
+            logger.debug(
+                "[RuntimeSnapshot] retention cap sweep failed project=%s",
+                project_id, exc_info=True,
+            )
 
     def _load_raw(self, project_id: str, snapshot_id: str) -> Optional[dict]:
         path = _snapshot_path(project_id, snapshot_id)
@@ -242,7 +245,9 @@ class ProjectRuntimeStore:
         try:
             await asyncio.to_thread(lease.unlink, True)
         except OSError:
-            pass
+            logger.debug(
+                "[RuntimeSnapshot] stale lease cleanup failed: %s", lease
+            )
         return {
             "snapshot_id": snapshot_id,
             "deleted": True,
@@ -318,7 +323,10 @@ class ProjectRuntimeStore:
                 return  # 后继者已接管：不删别人的 lease
             lease.unlink()
         except (OSError, TypeError, ValueError):
-            pass
+            logger.debug(
+                "[RuntimeSnapshot] lease release skipped project=%s snapshot=%s",
+                project_id, snapshot_id, exc_info=True,
+            )
 
 
 _store: Optional[ProjectRuntimeStore] = None

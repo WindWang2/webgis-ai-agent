@@ -33,7 +33,7 @@ from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
-from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0220
+from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0224
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
 # replay + Mission Portfolio 只读投影（org 域；runtime 默认关，读路径常开）。
@@ -1044,7 +1044,7 @@ app.include_router(extensions_marketplace_routes.router, prefix="/api/v1", tags=
 app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute / 执行平面"])
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
 app.include_router(mission_runtime_routes.router, prefix="/api/v1", tags=["Mission Runtime"])
-app.include_router(project_runtime_routes.router, prefix="/api/v1", tags=["Project Runtime"])  # ADR-0220
+app.include_router(project_runtime_routes.router, prefix="/api/v1", tags=["Project Runtime"])  # ADR-0224
 app.include_router(project_knowledge_routes.router, prefix="/api/v1", tags=["Project Knowledge"])
 app.include_router(geoai_routes.router, prefix="/api/v1", tags=["GeoAI"])
 # Agent Ops Cockpit：只读投影面（无写端点；operator 动作沿用 mission-runtime 路由）

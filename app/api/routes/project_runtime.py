@@ -1,4 +1,4 @@
-"""Project Runtime Snapshot 路由（ADR-0220 — Durable Project Cartographic
+"""Project Runtime Snapshot 路由（ADR-0224 — Durable Project Cartographic
 Runtime V1）。
 
 薄入口（不做 UI redesign）：
@@ -61,7 +61,7 @@ async def _verify_session_access(
 
 async def _auth_project(
     db: Session, project_id: str, user: Dict[str, Any]
-):
+) -> Any:
     user_id, org_id = actor_ids(user)
     project = await asyncio.to_thread(
         ProjectService.get_project_with_auth,

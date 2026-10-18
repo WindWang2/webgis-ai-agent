@@ -5282,6 +5282,7 @@
    "tests": [
     "tests/cartography/test_template_intelligence.py",
     "tests/data/test_catalog.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/data/test_review_fixes.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -5386,6 +5387,7 @@
    "tests": [
     "tests/data/test_catalog.py",
     "tests/data/test_dirty_corpus_oracle.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/data/test_reliability_corpus.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -5986,6 +5988,7 @@
    "tests": [
     "tests/cartography/test_template_intelligence.py",
     "tests/data/test_catalog.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/data/test_review_fixes.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -8347,7 +8350,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "45ac9fd2b22abf8975b1bfddb5160a3269945d81e5c65559d1947b090d5ab453",
+ "fingerprint": "4ad451d6b1d148523b570dcc30901573f28f7c74d4be91199049cc69d2d4c6cd",
  "gate": {
   "fields": {
    "capabilities": {
@@ -14499,6 +14502,7 @@
    ],
    "tests": [
     "tests/benchmarks/test_gis_registry_perf.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/governor/test_dispatch_actual_backfill.py",
     "tests/test_chat_session_plan_route.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
@@ -14684,6 +14688,7 @@
    "tests": [
     "tests/cartography/test_mutation_transactions.py",
     "tests/data/test_catalog.py",
+    "tests/data/test_project_runtime_v1.py",
     "tests/data/test_workspace_snapshot.py",
     "tests/data/test_workspace_v4.py",
     "tests/test_chat_engine_tracking.py",

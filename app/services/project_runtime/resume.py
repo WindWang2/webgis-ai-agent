@@ -1,4 +1,4 @@
-"""Runtime resume 编排（ADR-0220 §5/§6）。
+"""Runtime resume 编排（ADR-0224 §5/§6）。
 
 ``ResumeRequest → ValidationReport → RecoveryPlan → NewSessionBinding →
 ResumeReceipt`` 的执行半边：
@@ -200,7 +200,7 @@ async def _execute_resume(
     try:
         from app.models.db_model import Conversation
 
-        def _create_conversation():
+        def _create_conversation() -> None:
             existing = db.get(Conversation, new_sid)
             if existing is None:
                 db.add(Conversation(

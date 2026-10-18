@@ -1,4 +1,4 @@
-"""Project Runtime Snapshot 路由接线测试（ADR-0220）。
+"""Project Runtime Snapshot 路由接线测试（ADR-0224）。
 
 生产面：鉴权三重门（项目 auth → 会话所有权 → 服务侧 created_by）、
 freeze → inspect → resume → delete 的 HTTP 契约、跨项目/跨会话 404

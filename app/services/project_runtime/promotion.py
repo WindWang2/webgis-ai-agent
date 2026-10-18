@@ -1,4 +1,4 @@
-"""Durable ref promotion planner（ADR-0220 §3）。
+"""Durable ref promotion planner（ADR-0224 §3）。
 
 把 freeze 时收集的 MapSpec source refs 规划并执行为 durable 指针：
 

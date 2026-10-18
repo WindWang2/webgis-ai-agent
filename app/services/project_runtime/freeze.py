@@ -1,4 +1,4 @@
-"""Runtime snapshot freeze 编排（ADR-0220 §2/§3/§6）。
+"""Runtime snapshot freeze 编排（ADR-0224 §2/§3/§6）。
 
 显式冻结点（explicit_save / named_checkpoint / publish）→ 一致切口 →
 ref 晋升 → 组合 workspace snapshot（账本权威）→ 原子落盘 manifest。
@@ -99,7 +99,7 @@ def _plan_projection(plan: Optional[Any]) -> PlanProjectionRef:
             p.model_dump() for p in (plan.progress or [])[:32]
         ] if plan.progress else []
     except Exception:  # noqa: BLE001 — 投影失败按空投影（诚实降级）
-        pass
+        logger.debug("[RuntimeFreeze] plan projection degraded", exc_info=True)
     chapter = getattr(plan, "gis_chapter", None)
     if isinstance(chapter, dict):
         projection.restorable_chapter = {
@@ -112,7 +112,9 @@ def _plan_projection(plan: Optional[Any]) -> PlanProjectionRef:
             if rows_fp:
                 projection.workflow_rows_fingerprint = str(rows_fp)[:2048]
         except Exception:  # noqa: BLE001 — 指纹是增值不是前提
-            pass
+            logger.debug(
+                "[RuntimeFreeze] workflow rows fingerprint skipped", exc_info=True
+            )
         # capability 词表：workflow_instance 行的 capability 字段（有界去重）。
         caps: List[str] = []
         instance = chapter.get("workflow_instance")

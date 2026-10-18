@@ -1,4 +1,4 @@
-"""Project Runtime Snapshot API schemas（ADR-0220）。
+"""Project Runtime Snapshot API schemas（ADR-0224）。
 
 薄入口：list / validation preview / resume / delete。不做大规模 UI
 redesign —— 每个响应都携带「恢复了什么 / 没恢复什么 / 要重算什么」的

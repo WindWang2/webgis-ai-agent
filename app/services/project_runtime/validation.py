@@ -1,4 +1,4 @@
-"""Runtime snapshot 校验（ADR-0220 §5 —— verify-first，绝不先写后验）。
+"""Runtime snapshot 校验（ADR-0224 §5 —— verify-first，绝不先写后验）。
 
 ``validate_runtime_snapshot`` 只读：schema / project / permission /
 MapSpec 完整性 / durable 指针 / dataset 版本指纹 / capability 可用性
@@ -128,7 +128,7 @@ async def _check_project(
 
         from app.models.project import Project
 
-        def _query():
+        def _query() -> Any:
             return db.execute(
                 select(Project.status).where(Project.id == project_id)
             ).scalar_one_or_none()
@@ -236,7 +236,7 @@ async def _validate_datasets(
 
         ids = [d.dataset_id for d in snapshot.datasets]
 
-        def _query():
+        def _query() -> dict:
             rows = db.execute(
                 select(
                     ProjectDataset.id,

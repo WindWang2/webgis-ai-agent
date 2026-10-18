@@ -191,7 +191,7 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Orphan Projection** | A namespaced registry entry of a pack that survives its own deactivation; certification fails on it (upgrade/uninstall oracle). | leaked tool, zombie entry |
 | **Evidence Mode / Strict Mode** | The gate's two trust postures: evidence accepts unsigned reports loudly (dev); strict requires an HMAC from the operator certification key (production, fail closed). | signed mode |
 
-## Durable Project Runtime (ADR-0220)
+## Durable Project Runtime (ADR-0224)
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |

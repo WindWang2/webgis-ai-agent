@@ -240,6 +240,11 @@ POST,/api/v1/projects/{project_id}/runs/{run_id}/promote-artifacts,projects:writ
 POST,/api/v1/projects/{project_id}/runs/{run_id}/replay,projects:write,N,Y
 POST,/api/v1/projects/{project_id}/runs/{run_id}/rerun,projects:write,N,Y
 POST,/api/v1/projects/{project_id}/runs/{run_id}/resume,projects:write,N,Y
+GET,/api/v1/projects/{project_id}/runtime-snapshots,projects:read,N,Y
+POST,/api/v1/projects/{project_id}/runtime-snapshots,projects:write,N,Y
+DELETE,/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id},projects:write,N,Y
+GET,/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id},projects:read,N,Y
+POST,/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}/resume,projects:write,N,Y
 GET,/api/v1/projects/{project_id}/workflows,projects:read,N,Y
 POST,/api/v1/projects/{project_id}/workflows,projects:write,N,Y
 GET,/api/v1/projects/{project_id}/workflows/{workflow_id}/revisions,projects:read,N,Y

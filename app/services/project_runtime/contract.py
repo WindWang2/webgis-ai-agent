@@ -1,4 +1,4 @@
-"""ProjectRuntimeSnapshotV1 契约（ADR-0220）。
+"""ProjectRuntimeSnapshotV1 契约（ADR-0224）。
 
 Manifest，不是第二数据库：只记录 authority ids / immutable fingerprints /
 version tokens / durable artifact refs / MapSpec 身份 + 有界文档 / dataset
@@ -168,7 +168,7 @@ class RecoveryPolicy(BaseModel):
 
 
 class ProjectRuntimeSnapshotV1(BaseModel):
-    """项目制图运行时快照（ADR-0220 §1）。"""
+    """项目制图运行时快照（ADR-0224 §1）。"""
 
     schema_version: int = RUNTIME_SNAPSHOT_SCHEMA_VERSION
     snapshot_id: str

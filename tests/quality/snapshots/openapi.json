@@ -9913,6 +9913,452 @@
     "title": "RunsListResponse",
     "type": "object"
    },
+   "RuntimeSnapshotDeleteResponse": {
+    "properties": {
+     "deleted": {
+      "title": "Deleted",
+      "type": "boolean"
+     },
+     "durable_pointers": {
+      "default": 0,
+      "title": "Durable Pointers",
+      "type": "integer"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "project_id",
+     "snapshot_id",
+     "deleted"
+    ],
+    "title": "RuntimeSnapshotDeleteResponse",
+    "type": "object"
+   },
+   "RuntimeSnapshotInspectResponse": {
+    "description": "validation preview（只读；resume 前即可见 missing/stale/recompute）。",
+    "properties": {
+     "capability_verdicts": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Capability Verdicts",
+      "type": "object"
+     },
+     "dataset_verdicts": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Dataset Verdicts",
+      "type": "object"
+     },
+     "dispositions": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Dispositions",
+      "type": "array"
+     },
+     "findings": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Findings",
+      "type": "array"
+     },
+     "mapspec_integrity_ok": {
+      "title": "Mapspec Integrity Ok",
+      "type": "boolean"
+     },
+     "permission": {
+      "title": "Permission",
+      "type": "string"
+     },
+     "project_ok": {
+      "title": "Project Ok",
+      "type": "boolean"
+     },
+     "recovery_plan": {
+      "additionalProperties": true,
+      "title": "Recovery Plan",
+      "type": "object"
+     },
+     "schema_supported": {
+      "title": "Schema Supported",
+      "type": "boolean"
+     },
+     "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "snapshot_id",
+     "status",
+     "schema_supported",
+     "project_ok",
+     "permission",
+     "mapspec_integrity_ok"
+    ],
+    "title": "RuntimeSnapshotInspectResponse",
+    "type": "object"
+   },
+   "RuntimeSnapshotListResponse": {
+    "properties": {
+     "count": {
+      "title": "Count",
+      "type": "integer"
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/RuntimeSnapshotSummary"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "project_id",
+     "count"
+    ],
+    "title": "RuntimeSnapshotListResponse",
+    "type": "object"
+   },
+   "RuntimeSnapshotResumeRequest": {
+    "description": "恢复请求（allow_stale=False 要求纯净恢复面）。",
+    "properties": {
+     "allow_stale": {
+      "default": true,
+      "title": "Allow Stale",
+      "type": "boolean"
+     }
+    },
+    "title": "RuntimeSnapshotResumeRequest",
+    "type": "object"
+   },
+   "RuntimeSnapshotResumeResponse": {
+    "description": "ResumeReceipt 面（诚实披露）。",
+    "properties": {
+     "artifacts_expired": {
+      "default": 0,
+      "title": "Artifacts Expired",
+      "type": "integer"
+     },
+     "artifacts_registered": {
+      "default": 0,
+      "title": "Artifacts Registered",
+      "type": "integer"
+     },
+     "capabilities_unavailable": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Capabilities Unavailable",
+      "type": "array"
+     },
+     "datasets_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Datasets Changed",
+      "type": "array"
+     },
+     "degraded": {
+      "items": {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      "title": "Degraded",
+      "type": "array"
+     },
+     "disclosures": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Disclosures",
+      "type": "array"
+     },
+     "invalidated": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Invalidated",
+      "type": "array"
+     },
+     "mapspec_frozen_fingerprint": {
+      "default": "",
+      "title": "Mapspec Frozen Fingerprint",
+      "type": "string"
+     },
+     "mapspec_new_fingerprint": {
+      "default": "",
+      "title": "Mapspec New Fingerprint",
+      "type": "string"
+     },
+     "mapspec_rebound": {
+      "default": false,
+      "title": "Mapspec Rebound",
+      "type": "boolean"
+     },
+     "missing_refs": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Missing Refs",
+      "type": "array"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "ref_map": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Ref Map",
+      "type": "object"
+     },
+     "restored_refs": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Restored Refs",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+     },
+     "source_session_id": {
+      "title": "Source Session Id",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "snapshot_id",
+     "project_id",
+     "session_id",
+     "source_session_id",
+     "status"
+    ],
+    "title": "RuntimeSnapshotResumeResponse",
+    "type": "object"
+   },
+   "RuntimeSnapshotSaveRequest": {
+    "description": "显式冻结请求（freeze 点：explicit_save / named_checkpoint / publish）。",
+    "properties": {
+     "freeze_reason": {
+      "default": "explicit_save",
+      "maxLength": 32,
+      "title": "Freeze Reason",
+      "type": "string"
+     },
+     "label": {
+      "default": "",
+      "maxLength": 96,
+      "title": "Label",
+      "type": "string"
+     },
+     "map_product_version_no": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Map Product Version No"
+     },
+     "materialize_budget_bytes": {
+      "anyOf": [
+       {
+        "maximum": 4294967296.0,
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "per-freeze durable materialization budget (default 256MB)",
+      "title": "Materialize Budget Bytes"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "RuntimeSnapshotSaveRequest",
+    "type": "object"
+   },
+   "RuntimeSnapshotSaveResponse": {
+    "properties": {
+     "datasets": {
+      "title": "Datasets",
+      "type": "integer"
+     },
+     "freeze_reason": {
+      "title": "Freeze Reason",
+      "type": "string"
+     },
+     "label": {
+      "title": "Label",
+      "type": "string"
+     },
+     "mapspec_fingerprint": {
+      "title": "Mapspec Fingerprint",
+      "type": "string"
+     },
+     "mapspec_mutation_revision": {
+      "title": "Mapspec Mutation Revision",
+      "type": "integer"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "promotion_summary": {
+      "additionalProperties": true,
+      "title": "Promotion Summary",
+      "type": "object"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "snapshot": {
+      "additionalProperties": true,
+      "title": "Snapshot",
+      "type": "object"
+     },
+     "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+     },
+     "sources_durable": {
+      "title": "Sources Durable",
+      "type": "integer"
+     },
+     "sources_needing_recompute": {
+      "title": "Sources Needing Recompute",
+      "type": "integer"
+     },
+     "sources_total": {
+      "title": "Sources Total",
+      "type": "integer"
+     },
+     "workspace_snapshot_id": {
+      "title": "Workspace Snapshot Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "project_id",
+     "snapshot_id",
+     "session_id",
+     "workspace_snapshot_id",
+     "label",
+     "freeze_reason",
+     "mapspec_fingerprint",
+     "mapspec_mutation_revision",
+     "sources_total",
+     "sources_durable",
+     "sources_needing_recompute",
+     "datasets"
+    ],
+    "title": "RuntimeSnapshotSaveResponse",
+    "type": "object"
+   },
+   "RuntimeSnapshotSummary": {
+    "properties": {
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "datasets": {
+      "default": 0,
+      "title": "Datasets",
+      "type": "integer"
+     },
+     "freeze_reason": {
+      "default": "",
+      "title": "Freeze Reason",
+      "type": "string"
+     },
+     "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+     },
+     "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+     },
+     "session_id": {
+      "default": "",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+     },
+     "sources": {
+      "default": 0,
+      "title": "Sources",
+      "type": "integer"
+     },
+     "workspace_snapshot_id": {
+      "default": "",
+      "title": "Workspace Snapshot Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "snapshot_id"
+    ],
+    "title": "RuntimeSnapshotSummary",
+    "type": "object"
+   },
    "SearchRequest": {
     "description": "POST /knowledge/search 请求体。",
     "examples": [
@@ -30207,6 +30653,326 @@
     "tags": [
      "项目工作区",
      "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/runtime-snapshots": {
+   "get": {
+    "description": "有界快照清单（≤25；项目域）。",
+    "operationId": "list_runtime_snapshots_api_v1_projects__project_id__runtime_snapshots_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RuntimeSnapshotListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Runtime Snapshots",
+    "tags": [
+     "Project Runtime",
+     "Project Runtime"
+    ]
+   },
+   "post": {
+    "description": "显式冻结当前 session 的制图运行时（manifest + durable 指针组合）。",
+    "operationId": "save_runtime_snapshot_api_v1_projects__project_id__runtime_snapshots_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RuntimeSnapshotSaveRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RuntimeSnapshotSaveResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Save Runtime Snapshot",
+    "tags": [
+     "Project Runtime",
+     "Project Runtime"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}": {
+   "delete": {
+    "description": "定点删除 manifest（blob 归 artifact lifecycle GC 引用计数，绝不私删）。",
+    "operationId": "delete_runtime_snapshot_api_v1_projects__project_id__runtime_snapshots__snapshot_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "snapshot_id",
+      "required": true,
+      "schema": {
+       "title": "Snapshot Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RuntimeSnapshotDeleteResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Runtime Snapshot",
+    "tags": [
+     "Project Runtime",
+     "Project Runtime"
+    ]
+   },
+   "get": {
+    "description": "validation preview（只读；stale/missing/recompute 在 resume 前可见）。",
+    "operationId": "inspect_runtime_snapshot_api_v1_projects__project_id__runtime_snapshots__snapshot_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "snapshot_id",
+      "required": true,
+      "schema": {
+       "title": "Snapshot Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RuntimeSnapshotInspectResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect Runtime Snapshot",
+    "tags": [
+     "Project Runtime",
+     "Project Runtime"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}/resume": {
+   "post": {
+    "description": "verify-first 恢复 → 新 session runtime + ResumeReceipt（诚实披露）。",
+    "operationId": "resume_runtime_snapshot_api_v1_projects__project_id__runtime_snapshots__snapshot_id__resume_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "snapshot_id",
+      "required": true,
+      "schema": {
+       "title": "Snapshot Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RuntimeSnapshotResumeRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RuntimeSnapshotResumeResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Resume Runtime Snapshot",
+    "tags": [
+     "Project Runtime",
+     "Project Runtime"
     ]
    }
   },
