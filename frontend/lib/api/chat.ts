@@ -7,6 +7,11 @@
  */
 
 import type { ToolResult } from '@/lib/types';
+import type {
+  ClarificationAnswerItem,
+  ClarificationAnswerResult,
+  ClarificationEnvelope,
+} from '@/lib/types/clarification';
 import { apiFetch, openStream } from './transport';
 import { parseSSEStream } from './sse-stream-parser';
 
@@ -77,7 +82,9 @@ export type SSEEventType =
   // ADR-0081: Map Product Completion Runtime 的完成态披露
   | 'map_finalization'
   // ADR-0194: 生成式微 UI（mount_widget 等声明式部件下发）
-  | 'ui_action';
+  | 'ui_action'
+  // 方向 3（ADR-0222）：requirement IR blocking 澄清 envelope（可交互卡片）
+  | 'clarification';
 
 /** `ui_action` 事件载荷（ADR-0194 spec §3.1）。 */
 export type UiActionPayload = {
@@ -272,6 +279,51 @@ export async function getSessionPlan(
   return apiFetch<import('@/lib/types/session-plan').SessionPlanProjection | undefined>(
     `/api/v1/chat/sessions/${sessionId}/plan`,
     { ownerToken, label: "API Error" }
+  );
+}
+
+/**
+ * 方向 3（ADR-0222）：获取当前会话 pending 的澄清 envelope（刷新/重连恢复）。
+ * 无 open blocking 歧义 → 后端 204 → resolve undefined。
+ */
+export async function getPendingClarification(
+  sessionId: string,
+  ownerToken?: string | null
+): Promise<ClarificationEnvelope | undefined> {
+  return apiFetch<ClarificationEnvelope | undefined>(
+    `/api/v1/chat/sessions/${sessionId}/clarifications/pending`,
+    { ownerToken, label: "API Error" }
+  );
+}
+
+/**
+ * 方向 3（ADR-0222）：提交澄清应答（幂等；request_id + expected_revision CAS）。
+ *
+ * 非幂等语义但后端幂等（重复同答案 → 同结果）：transport 对 POST 永不自动
+ * 重试，用户重试由卡片状态机显式触发。409 stale/already_answered 由调用方
+ * 按 ApiError.status + body.code 处理（卡片转 stale 并重取 pending）。
+ */
+export async function submitClarificationAnswer(
+  sessionId: string,
+  requestId: string,
+  expectedRevision: number,
+  answers: ClarificationAnswerItem[],
+  waive: string[],
+  ownerToken?: string | null
+): Promise<ClarificationAnswerResult> {
+  return apiFetch<ClarificationAnswerResult>(
+    `/api/v1/chat/sessions/${sessionId}/clarifications/answer`,
+    {
+      method: "POST",
+      body: {
+        request_id: requestId,
+        expected_revision: expectedRevision,
+        answers,
+        waive,
+      },
+      ownerToken,
+      label: "API Error",
+    }
   );
 }
 

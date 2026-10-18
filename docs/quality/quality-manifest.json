@@ -1736,15 +1736,13 @@
    "conformance_tests": [
     "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_gis_context_revalidation"
    ],
-   "deterministic": false,
+   "deterministic": true,
    "id": "platform.gis_context_revalidation",
    "memory_cost": "low",
-   "random_seed_policy": "none",
+   "random_seed_policy": "deterministic",
    "runtime_status": "native",
    "scientific_status": "",
-   "tests": [
-    "tests/unit/gis/test_platform_capabilities.py"
-   ],
+   "tests": [],
    "uncertainty_outputs": []
   },
   {
@@ -5541,6 +5539,7 @@
     "tests/perf/test_runtime_v2_perf_contracts.py",
     "tests/science_oracles/test_network_oracles.py",
     "tests/test_network_temporal_harness.py",
+    "tests/unit/evaluation/test_corpus_schema_pins.py",
     "tests/unit/extensions_platform/test_host_lifecycle.py",
     "tests/unit/extensions_platform/test_sdk_projections.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
@@ -8332,7 +8331,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "56cfac2444f9af0605f956bd455c4b714ac6b8e7eef43f1adee3ce98aa6fa99f",
+ "fingerprint": "9f95d6707b3b131750d54825428e64bcf167ed1eea3dff0d0cf431cb6e82c298",
  "gate": {
   "fields": {
    "capabilities": {
@@ -14607,8 +14606,7 @@
     "tests/governor/test_plan_aggregation.py",
     "tests/test_osm_tools.py",
     "tests/unit/gis_harness/test_estimate_bridge.py",
-    "tests/unit/gis_harness/test_resource_aware_selection.py",
-    "tests/unit/test_review_f5_local_first_offloop.py"
+    "tests/unit/gis_harness/test_resource_aware_selection.py"
    ],
    "tier": 2
   },
@@ -14679,7 +14677,6 @@
     "tests/unit/test_gis_round_865_873.py",
     "tests/unit/test_issue_735_auto_mount_mapspec.py",
     "tests/unit/test_local_first_routing.py",
-    "tests/unit/test_review_f5_local_first_offloop.py",
     "tests/unit/test_tool_catalog.py",
     "tests/unit/test_tool_dispatch_service.py",
     "tests/unit/test_tool_error_standardization.py",
@@ -14715,8 +14712,7 @@
    "tests": [
     "tests/test_osm_tools.py",
     "tests/unit/gis/test_platform_capabilities.py",
-    "tests/unit/test_local_first_routing.py",
-    "tests/unit/test_review_f5_local_first_offloop.py"
+    "tests/unit/test_local_first_routing.py"
    ],
    "tier": 2
   },
@@ -16093,8 +16089,7 @@
    ],
    "tests": [
     "tests/test_web_crawler.py",
-    "tests/test_web_search_offload_434.py",
-    "tests/unit/test_review_f5_local_first_offloop.py"
+    "tests/test_web_search_offload_434.py"
    ],
    "tier": 2
   },
@@ -16168,7 +16163,6 @@
     "tests/unit/test_issue_702_provider_cache.py",
     "tests/unit/test_local_first_routing.py",
     "tests/unit/test_protocol_parity.py",
-    "tests/unit/test_review_f5_local_first_offloop.py",
     "tests/unit/test_subagent_roles_v2.py",
     "tests/unit/test_subagent_team_v4.py",
     "tests/unit/test_tier_guardrail_678.py",
@@ -16204,7 +16198,6 @@
     "tests/unit/test_chinese_maps_split.py",
     "tests/unit/test_local_first_routing.py",
     "tests/unit/test_protocol_parity.py",
-    "tests/unit/test_review_f5_local_first_offloop.py",
     "tests/unit/test_runtime_v2_manifest.py",
     "tests/unit/test_tier_guardrail_678.py"
    ],
@@ -16235,7 +16228,6 @@
     "tests/unit/test_chinese_maps_split.py",
     "tests/unit/test_local_first_routing.py",
     "tests/unit/test_protocol_parity.py",
-    "tests/unit/test_review_f5_local_first_offloop.py",
     "tests/unit/test_tool_catalog.py"
    ],
    "tier": 2
@@ -16889,7 +16881,6 @@
     "tests/unit/test_specialist_data_compute.py",
     "tests/unit/test_subagent.py",
     "tests/unit/test_subagent_roles_v2.py",
-    "tests/unit/test_subagent_session_lock_review_f2.py",
     "tests/unit/test_subagent_team_v4.py",
     "tests/unit/test_tool_surface_v2.py",
     "tests/unit/test_tooling_audit824_831.py"

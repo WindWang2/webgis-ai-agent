@@ -5,6 +5,8 @@ process-local via Harness Resource Governor; durable totals survive restart.
 """
 from __future__ import annotations
 
+import time
+
 from typing import Dict, Optional
 
 from app.services.mission_runtime import contracts as C
@@ -17,7 +19,12 @@ from app.services.mission_runtime.store import (
 
 class MissionResourceLedger:
     #: RUN-15: bounded CAS retries for the read-modify-write budget charge.
-    _MAX_CAS_ATTEMPTS = 5
+    # CAS 重试上限：并发计费（barrier 对齐的多线程持续写）在慢速 CI 上
+    # 偶发耗尽 5 次尝试（test_concurrent_charges 两树间歇红，2026-10-18
+    # 实证）。提到 24 + 冲突时微退避：additive charge 重试无正确性代价，
+    # 上限只防活锁。
+    _MAX_CAS_ATTEMPTS = 24
+    _CAS_BACKOFF_S = 0.002
 
     def __init__(self, store: Optional[MissionStore] = None) -> None:
         self.store = store or MissionStore()
@@ -126,6 +133,7 @@ class MissionResourceLedger:
                 if str(exc) not in ("REVISION_CONFLICT", "CAS_LOST"):
                     raise
                 last_conflict = exc
+                time.sleep(self._CAS_BACKOFF_S)  # 微退避：减少热冲突下的尝试空转
                 continue
             if idempotency_key and seen_keys is not None:
                 seen_keys.add(idempotency_key)

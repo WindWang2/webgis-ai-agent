@@ -578,12 +578,10 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions` | List Sessions | SessionListResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}` | Get Session Detail | SessionDetailResponse |
 | `DELETE` | `/api/v1/chat/sessions/{session_id}` | Clear Session | ClearSessionResponse |
-| `GET` | `/api/v1/chat/sessions/{session_id}/map-state` | Get Session Map State | SessionMapStateResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/clarifications/pending` | Get Pending Clarification | ClarificationEnvelope |
+| `POST` | `/api/v1/chat/sessions/{session_id}/clarifications/answer` | Answer Session Clarification | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/map-state` | Push Session Map State | — |
-| `GET` | `/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}` | Get Session Chart Artifact | ChartArtifactResponse |
-| `GET` | `/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}` | Get Session Table Artifact | TableArtifactResponse |
-| `GET` | `/api/v1/chat/sessions/{session_id}/plan` | Get Session Plan | SessionPlanViewResponse |
-| `POST` | `/api/v1/chat/sessions/{session_id}/plans/{plan_id}/confirm` | Confirm Destructive Plan | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/map-state` | Get Session Map State | SessionMapStateResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/canvas-actions` | Push Session Canvas Actions | CanvasActionsAckResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/cartographic-observation` | Push Cartographic Runtime Observation | CartographicObservationResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/map-action-ack` | Push Map Action Acks | MapActionAckResponse |
@@ -591,6 +589,10 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/rotate-owner-token` | Rotate Session Owner Token | RotateOwnerTokenResponse |
 | `GET` | `/api/v1/chat/tools` | List Tools | ToolsListResponse |
 | `POST` | `/api/v1/chat/tools/execute` | Execute Tool Direct | ToolExecuteResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}` | Get Session Chart Artifact | ChartArtifactResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}` | Get Session Table Artifact | TableArtifactResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/plan` | Get Session Plan | SessionPlanViewResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/plans/{plan_id}/confirm` | Confirm Destructive Plan | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/mapspec/mutations` | Apply User Mapspec Mutation | MutationApplyResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/state` | Get Workbench State | WorkbenchStateResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
@@ -1101,6 +1103,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：384（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：386（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Iterable, Iterator, Any
 
 from app.lib.quality.discovery import repo_root
 
@@ -295,9 +295,25 @@ def check_recipe_contract_drift() -> List[DriftIssue]:
 
 
 def _backend_api_routes() -> Dict[str, set]:
-    """path（参数折叠为 *）→ method 集合。直接枚举各 routes 模块的 router。"""
+    """path（参数折叠为 *）→ method 集合。直接枚举各 routes 模块的 router。
+
+    FastAPI 新版 ``include_router`` 是惰性挂载（``_IncludedRouter``：
+    path 为空、``effective_candidates()`` 到应用构建时才扁平化）——模块级
+    扫描必须显式展开嵌套子路由，否则经父 router 挂载的端点（如
+    chat_session_views 经 chat.router 的 5 个会话视图端点）不可见。
+    """
     routes_dir = repo_root() / "app" / "api" / "routes"
     from fastapi import APIRouter
+
+    def _iter_leaf_routes(routes: Iterable[Any]) -> Iterator[Any]:
+        for route in routes:
+            eff = getattr(route, "effective_candidates", None)
+            if callable(eff):
+                # 惰性 include：候选上下文的 path/methods 已含父前缀扁平化结果
+                for ctx in eff():
+                    yield ctx
+                continue
+            yield route
 
     table: Dict[str, set] = {}
     for py in sorted(routes_dir.glob("*.py")):
@@ -315,7 +331,7 @@ def _backend_api_routes() -> Dict[str, set]:
                 # 模块级 router 自身 prefix 不在 route.path 里（include 时才
                 # 拼接），必须显式补上；嵌套 include 的子前缀已被扁平化。
                 prefix = getattr(attr, "prefix", "") or ""
-                for route in attr.routes:
+                for route in _iter_leaf_routes(attr.routes):
                     path = getattr(route, "path", None)
                     if not path:
                         continue
