@@ -49,13 +49,26 @@ async def validate_runtime_snapshot(
     snapshot_id: str,
     current_user_id: str = "",
     skip_capability_check: bool = False,
+    snapshot: Any = None,
 ) -> ValidationReport:
-    """只读校验（resume 前置；不写任何状态）。"""
+    """只读校验（resume 前置；不写任何状态）。
+
+    ``snapshot``：调用方已加载的 manifest（resume / inspect 路由都已
+    ``asyncio.to_thread`` 读过）—— 在场则复用，缺席才自行加载；同一请求
+    内绝不双读盘（读到的还正是执行面要恢复的那一份，切口更一致）。
+    """
     from app.services.project_runtime.store import get_project_runtime_store
 
     report = ValidationReport(snapshot_id=snapshot_id)
     try:
-        snapshot = get_project_runtime_store().load(project_id, snapshot_id)
+        if snapshot is None:
+            # O(doc) 读盘 + json 解析 + model_validate 全部卸载到线程
+            # （manifest 含 ≤16MB mapspec_doc；与 freeze/rebind/resume 的
+            # 线程纪律一致 —— 绝不上事件循环，大文档校验不得让同进程全部
+            # SSE 流停摆）。
+            snapshot = await asyncio.to_thread(
+                get_project_runtime_store().load, project_id, snapshot_id
+            )
     except UnsupportedSnapshotSchema as exc:
         report.schema_supported = False
         report.findings.append(ValidationFinding(
@@ -95,8 +108,11 @@ async def validate_runtime_snapshot(
 
     # ── MapSpec 文档完整性 ──
     doc = snapshot.mapspec_doc if isinstance(snapshot.mapspec_doc, dict) else {}
+    # O(doc) canonical 序列化 + sha256 同样卸载到线程（≤16MB doc 的
+    # dumps 不上事件循环 —— 与 freeze/rebind 同纪律）。
+    fingerprint = await asyncio.to_thread(canonical_fingerprint, doc)
     report.mapspec_integrity_ok = bool(doc) and (
-        canonical_fingerprint(doc) == snapshot.mapspec_fingerprint
+        fingerprint == snapshot.mapspec_fingerprint
     )
     if not report.mapspec_integrity_ok:
         report.findings.append(ValidationFinding(

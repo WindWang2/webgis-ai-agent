@@ -157,20 +157,37 @@ def _capability_freeze_facts(
 async def _collect_sensitive_refs(session_id: str) -> set:
     """账本标记 sensitive 的全部 ref（组合 lane 排除面；与 promotion planner
     的 sensitive 判定同源 —— 账本 metadata.sensitive。覆盖账本全体而不仅
-    spec 源：ledger-only 契约（chart/export 等）同样不得经组合 lane 物化）。"""
-    from app.services.artifact_registry import list_artifacts
+    spec 源：ledger-only 契约（chart/export 等）同样不得经组合 lane 物化）。
+
+    扫描帽与账本自身的有界性同界（``MAX_ARTIFACT_RECORDS``，即 workspace
+    snapshot 的 ``_MAX_SNAPSHOT_ARTIFACTS`` 同值）—— 覆盖账本全体；一旦
+    被击穿（账本上限上调而忘了同步此处），排在后位的 sensitive ledger-only
+    ref 会逃过 ``exclude_refs`` 被组合 lane 物化，故截断时显式计数披露，
+    绝不静默。"""
+    from app.services.artifact_registry import (
+        MAX_ARTIFACT_RECORDS,
+        list_artifacts,
+    )
 
     sensitive: set = set()
     try:
         records = await list_artifacts(session_id)
     except Exception:  # noqa: BLE001 — 账本缺席按无 sensitive
         return sensitive
-    for rec in records[:256]:
+    for rec in records[:MAX_ARTIFACT_RECORDS]:
         ref = str(rec.artifact_id or "")
         if not ref.startswith("ref:"):
             continue
         if bool((rec.metadata or {}).get("sensitive")):
             sensitive.add(ref)
+    skipped = max(0, len(records) - MAX_ARTIFACT_RECORDS)
+    if skipped:
+        logger.warning(
+            "[RuntimeFreeze] sensitive ledger scan capped: %d record(s) "
+            "beyond %d not checked — late sensitive ledger-only refs may "
+            "escape exclude_refs",
+            skipped, MAX_ARTIFACT_RECORDS,
+        )
     return sensitive
 
 

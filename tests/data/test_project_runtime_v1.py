@@ -1124,3 +1124,141 @@ class TestCrossSessionResume:
             assert forbidden not in blob.lower()
         # mapspec_doc 有界（不含 FeatureCollection 载荷——载荷在 ref 里）
         assert "features" not in json.dumps(snapshot.mapspec_doc)
+
+
+# ═══ 事件循环纪律：大文档校验/取消不得在循环上同步跑 ═══════════════════
+
+
+class TestEventLoopDiscipline:
+    async def test_validate_offloads_load_and_fingerprint(self, db, monkeypatch):
+        """≥4MB mapspec_doc 的 validate：读盘 + model_validate + 指纹必须全部
+        卸载到线程（与 freeze/rebind/resume 同纪律）—— 同步跑会让同进程全部
+        SSE 流停摆（#1629）。
+
+        线程身份探针确定性断言卸载面；5ms 心跳探针佐证循环在 validate 期间
+        保持响应（判据取 issue 允许的「与总时长解耦」—— Windows 上 GIL 让
+        json.loads / model_validate / json.dumps 的 C 段即便在线程内也能造成
+        数十 ms 级停顿，绝对阈值在本机不可达）。"""
+        import asyncio
+        import contextlib
+        import threading
+        import time
+        from typing import Dict, List
+
+        from app.services.project_runtime import validation as validation_mod
+        from app.services.project_runtime.contract import (
+            ProjectRuntimeSnapshotV1,
+        )
+        from app.services.project_runtime.rebind import canonical_fingerprint
+        from app.services.project_runtime.store import (
+            ProjectRuntimeStore,
+            get_project_runtime_store,
+        )
+        from app.services.project_runtime.validation import (
+            validate_runtime_snapshot,
+        )
+
+        doc = {
+            "sources": {"s": {"type": "geojson",
+                              "url": "https://x.example/d.json"}},
+            "layers": [{"id": "l1", "source": "s"}],
+            "padding": ["x" * 1024] * 16384,  # 序列化后 ≈16MB（冻结上限）
+        }
+        snapshot = ProjectRuntimeSnapshotV1(
+            snapshot_id="prs-loop1", project_id="proj-rt1",
+            mapspec_doc=doc, mapspec_fingerprint=canonical_fingerprint(doc),
+        )
+        assert await get_project_runtime_store().save(snapshot)
+
+        # 间谍：记录重活实际运行的线程（委托真实现，绝不 mock 掉被测逻辑）
+        loop_thread = threading.get_ident()
+        seen: Dict[str, int] = {}
+        real_load = ProjectRuntimeStore.load
+
+        def _spy_load(self, project_id, snapshot_id):
+            seen["load"] = threading.get_ident()
+            return real_load(self, project_id, snapshot_id)
+
+        def _spy_fingerprint(doc_arg):
+            seen["fingerprint"] = threading.get_ident()
+            return canonical_fingerprint(doc_arg)
+
+        monkeypatch.setattr(ProjectRuntimeStore, "load", _spy_load)
+        monkeypatch.setattr(
+            validation_mod, "canonical_fingerprint", _spy_fingerprint
+        )
+
+        gaps: List[float] = []
+
+        async def _heartbeat() -> None:
+            last = time.perf_counter()
+            while True:
+                await asyncio.sleep(0.005)
+                now = time.perf_counter()
+                gaps.append((now - last) * 1000.0)
+                last = now
+
+        hb = asyncio.create_task(_heartbeat())
+        await asyncio.sleep(0.1)  # 预热：心跳先稳定跑起来
+        gaps.clear()
+        t0 = time.perf_counter()
+        report = await validate_runtime_snapshot(
+            db, project_id="proj-rt1", snapshot_id="prs-loop1",
+            current_user_id="u_rt",
+        )
+        total_ms = (time.perf_counter() - t0) * 1000.0
+        hb.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await hb
+        validate_gaps = list(gaps)
+
+        assert report.mapspec_integrity_ok is True  # 指纹算得且一致
+        assert report.status == "ready"
+        assert total_ms > 15.0, "probe saw no real work (load + fingerprint)"
+        # 卸载面：读盘（json 解析 + model_validate）与指纹都不得在事件循环上
+        assert seen["load"] != loop_thread, "store.load ran on the event loop"
+        assert seen["fingerprint"] != loop_thread, (
+            "canonical_fingerprint ran on the event loop"
+        )
+
+        # 金丝雀：同样的指纹计算直接跑在循环上时，心跳必须测不到任何 tick
+        # —— 证明探针能侦测循环阻塞（防假绿）。
+        gaps.clear()
+        canonical_fingerprint(doc)
+        assert not gaps, "heartbeat probe cannot detect loop blocking"
+
+        # 心跳佐证：循环在 validate 全程保持响应（修复前同步读盘 + 同步指纹
+        # 会把循环独占到整个 validate 结束）。
+        assert validate_gaps, "event loop never ran while validate was in flight"
+        assert max(validate_gaps) < total_ms, (
+            "event loop was blocked for the whole validate duration"
+        )
+
+
+# ═══ 回执诚实性：注册失败不得静默跳账 ═════════════════════════════════
+
+
+class TestResumeReceiptHonesty:
+    async def test_register_failure_disclosed_as_degraded(self, db, monkeypatch):
+        """账本重注册失败（register_artifact 返回 None）时，该契约行绝不
+        凭空消失 —— 必须进 degraded 如实披露（#1631）。"""
+        from app.services.project_runtime.resume import resume_runtime_snapshot
+
+        sid_a = "rt-regfail-session-a"
+        await _seed_session(sid_a)
+        snapshot = await _freeze(db, sid_a)
+        await _kill_session(sid_a)
+
+        async def _register_none(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(
+            "app.services.artifact_registry.register_artifact", _register_none
+        )
+        receipt = await resume_runtime_snapshot(
+            db, project_id="proj-rt1", snapshot_id=snapshot.snapshot_id,
+            user_id="u_rt",
+        )
+        reasons = {d.get("reason") for d in receipt.degraded}
+        assert "register_failed" in reasons
+        assert receipt.artifacts_registered == 0

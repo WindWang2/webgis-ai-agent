@@ -23,6 +23,7 @@ from app.services.project_runtime.contract import (
     RESUME_BLOCKED,
     RESUME_UNSUPPORTED_SCHEMA,
     ResumeReceipt,
+    SENSITIVE,
 )
 from app.services.project_runtime.rebind import (
     RebindResult,
@@ -84,6 +85,9 @@ async def resume_runtime_snapshot(
         project_id=project_id,
         snapshot_id=snapshot_id,
         current_user_id=str(user_id or ""),
+        # 复用上面已线程加载的 manifest（同一请求内绝不双读盘；校验面与
+        # 执行面恢复的是同一份切口）。
+        snapshot=snapshot,
     )
     status = report.status
     if status == RESUME_UNSUPPORTED_SCHEMA:
@@ -369,7 +373,7 @@ async def _restore_payloads(
         if not ref or not ref.startswith("ref:") or ref in seen:
             continue
         seen.add(ref)
-        if binding.promotion_class == "sensitive":
+        if binding.promotion_class == SENSITIVE:
             # sensitive 载荷只披露不搬运（freeze 未物化；恢复同样拒绝）。
             missing.append(ref)
             continue
@@ -397,7 +401,7 @@ async def _register_ledger(
     # sensitive 分类（freeze 判定）在恢复侧同样生效：账本契约补恢复跳过。
     sensitive_refs = {
         str(b.ref) for b in snapshot.source_bindings
-        if b.promotion_class == "sensitive" and b.ref
+        if b.promotion_class == SENSITIVE and b.ref
     }
     """workspace snapshot 契约 → 新 session 账本（id 重映射 + 诚实过期）。"""
     from app.services.artifact_registry import mark_status, register_artifact
@@ -454,6 +458,12 @@ async def _register_ledger(
             metadata=metadata,
         )
         if ok is None:
+            # 注册失败（存储异常/锁降级时 register_artifact 返回 None）：
+            # 该契约行绝不凭空消失 —— 计入 degraded 如实披露（回执不少一行）。
+            degraded.append({
+                "artifact_id": old_id,
+                "reason": "register_failed",
+            })
             continue
         if old_id.startswith("ref:") and old_id not in ref_map:
             # 载荷未重水合：血缘行保留、状态如实 expired（不伪造可用）。
