@@ -8,6 +8,8 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
+import { ClarificationCard } from '@/components/chat/clarification-card';
+import type { ClarificationCardState } from '@/lib/types/clarification';
 import { PlanCard } from '@/components/chat/plan-card';
 import { SessionPlanPanel } from '@/components/chat/session-plan-panel';
 import { AnalysisGraphPanel } from '@/components/agent/analysis-graph-panel';
@@ -108,6 +110,8 @@ interface ChatMessage {
   agentPlan?: import('@/lib/types/agent-plan').AgentPlanState;
   layerAdded?: string;
   resultId?: string;
+  /** 方向 3：requirement IR blocking 澄清卡片状态。 */
+  clarification?: ClarificationCardState;
 }
 
 /**
@@ -132,6 +136,14 @@ interface ChatTabProps {
   onCancel?: () => void;
   /** Plan Mode: 用户在卡片上点按钮时回调，由父组件发送对应 chat 消息并更新 plan.status */
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
+  /** 方向 3（ADR-0222）：ClarificationCard 提交（REST 应答；waiveKeys 为逐问题豁免）。 */
+  onClarificationSubmit?: (
+    state: import('@/lib/types/clarification').ClarificationCardState,
+    answers: { context_key: string; value: string }[],
+    waiveKeys: string[],
+  ) => void;
+  /** 方向 3：stale/恢复期重取 pending envelope。 */
+  onClarificationRefresh?: () => void;
   /**
    * #467: 当前会话 id —— 中途切换会话（History 抽屉 / 新会话）会把 aiStatus
    * 强制置 idle，但那是旧会话回合的中止而非完成；播报器据此抑制错误的
@@ -163,11 +175,19 @@ const ChatMessageItem = memo(function ChatMessageItem({
   mounted,
   thinkingText,
   onPlanAction,
+  onClarificationSubmit,
+  onClarificationRefresh,
 }: {
   message: ChatMessage;
   mounted: boolean;
   thinkingText: string;
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
+  onClarificationSubmit?: (
+    state: import('@/lib/types/clarification').ClarificationCardState,
+    answers: { context_key: string; value: string }[],
+    waiveKeys: string[],
+  ) => void;
+  onClarificationRefresh?: () => void;
 }) {
 const t = useT();
   const locale = useLocale();
@@ -286,6 +306,19 @@ const t = useT();
                 onReject={(pid) => onPlanAction?.(pid, 'reject')}
               />
             )}
+            {msg.clarification && (
+              <ClarificationCard
+                state={msg.clarification as ClarificationCardState}
+                onSubmit={({ answers, waiveKeys }) =>
+                  onClarificationSubmit?.(
+                    msg.clarification as ClarificationCardState,
+                    answers,
+                    waiveKeys,
+                  )
+                }
+                onRefresh={onClarificationRefresh}
+              />
+            )}
             {msg.charts?.map((raw: unknown, idx: number) => {
               const chart = adaptChartData(raw);
               if (!chart) return null;
@@ -302,7 +335,7 @@ const t = useT();
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, onClarificationSubmit, onClarificationRefresh, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
 const t = useT();
   const [configuredRuntime, setConfiguredRuntime] = useState<AgentRuntime | null>(null);
   useEffect(() => {
@@ -479,6 +512,8 @@ const t = useT();
                 mounted={mounted}
                 thinkingText={thinkingText}
                 onPlanAction={onPlanAction}
+                onClarificationSubmit={onClarificationSubmit}
+                onClarificationRefresh={onClarificationRefresh}
               />
             </div>
           ))}

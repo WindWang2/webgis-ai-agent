@@ -26,6 +26,21 @@ def process_role() -> str:
     return "api"
 
 
+def _to_sync_url(url: str) -> str:
+    """裸 postgres URL 显式钉 psycopg2 驱动（#1592）。
+
+    SQLAlchemy 2.1.x 起裸 postgresql:// 的默认方言从 psycopg2 改为 psycopg (v3)，
+    而 requirements.lock 只有 psycopg2-binary，create_engine 会抛
+    ModuleNotFoundError: No module named 'psycopg'。显式钉 psycopg2 驱动以
+    恢复 2.0.x 行为；已带 '+' 驱动后缀的 URL 原样返回。
+    """
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg2://", 1)
+    return url
+
+
 def get_engine():
     connect_args = {}
     is_sqlite = settings.DATABASE_URL.startswith("sqlite")
@@ -38,7 +53,7 @@ def get_engine():
         connect_args["timeout"] = 30
 
     engine_kwargs = {
-        "url": settings.DATABASE_URL,
+        "url": _to_sync_url(settings.DATABASE_URL),
         "connect_args": connect_args,
     }
 

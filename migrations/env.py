@@ -28,13 +28,17 @@ if config.config_file_name is not None:
 
 # 审计 I6：优先从环境读 DATABASE_URL，覆盖 alembic.ini 的占位符。
 # 这让 `alembic upgrade head` 在 docker-compose / k8s 里直接可用。
-db_url = os.getenv("DATABASE_URL")
-if db_url:
-    config.set_main_option("sqlalchemy.url", db_url)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-from app.core.database import Base  # noqa: E402
+from app.core.database import Base, _to_sync_url  # noqa: E402
+
+db_url = os.getenv("DATABASE_URL")
+if db_url:
+    # #1592：2.1.x 裸 postgres URL 默认方言改走 psycopg v3（lock 只有 psycopg2-binary），
+    # 与 get_engine() 同源同纪律，显式钉 psycopg2 驱动。
+    db_url = _to_sync_url(db_url)
+    config.set_main_option("sqlalchemy.url", db_url)
 
 # 审计 I6：必须显式 import 所有 model 模块，让它们的表注册到 Base.metadata。
 # 否则 autogenerate 看到 metadata 是空的 → 生成的 revision upgrade() 是 pass。
