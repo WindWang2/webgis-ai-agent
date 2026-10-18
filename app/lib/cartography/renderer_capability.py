@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Iterable
 
 from app.lib.cartography.layer_capability import LAYER_TYPE_SUPPORT
 
@@ -159,7 +159,7 @@ def capability_fingerprint(manifest: Dict[str, Any] | None = None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def check_required_capabilities(required) -> Dict[str, Any]:
+def check_required_capabilities(required: Iterable[Any]) -> Dict[str, Any]:
     """信封 ``required_capabilities`` → 支持裁决（封闭、有界、诚实）。
 
     返回 ``{supported: bool, unsupported: [keys], degraded: [keys]}``；
