@@ -290,6 +290,38 @@ async def _q(theme, bbox, name_like=None, tag=None, limit=200):
 
 
 @pytest.mark.asyncio
+async def test_osm_ingest_reimports_truncated_theme_gpkg(osm_env, tmp_path):
+    """中断恢复（#1632）：残缺主题 GPKG 留在终态 → 非 force 重跑必须重导。
+
+    旧语义「终态文件存在即跳过」会让写盘中途崩溃留下的残缺主题永久对外
+    服务；修复后主题写盘走 tmp + os.replace 原子发布，残缺 tmp 被忽略，
+    残缺终态文件（外部遗留）在非 force 重跑时同样被重导覆盖。
+    """
+    from app.services.local_osm import (
+        ingest_pbf,
+        query_osm_features,
+        theme_gpkg_path,
+    )
+
+    pbf = tmp_path / "mini_truncated.osm.pbf"
+    _make_synthetic_pbf(pbf)
+    # ① 中断现场：终态路径留着写了一半的残缺 GPKG（非 SQLite 内容）
+    truncated = theme_gpkg_path("pois")
+    truncated.parent.mkdir(parents=True, exist_ok=True)
+    truncated.write_bytes(b"SQLite format 3\x00" + b"\x00" * 64)
+
+    # ② 非 force 重跑：不得把残缺主题当已完成跳过
+    result = ingest_pbf(pbf, ["pois"])
+    assert "skipped" not in result
+    assert result["themes"]["pois"]["rows"] == 3
+
+    # ③ 重导后主题可正常查询；无孤儿 tmp 遗留
+    res = query_osm_features("pois", [104.05, 30.60, 104.12, 30.70])
+    assert res["count"] == 2
+    assert list(truncated.parent.glob(".pois.tmp.gpkg")) == []
+
+
+@pytest.mark.asyncio
 async def test_osm_tools_registered_and_dispatchable(osm_env, tmp_path, admin_env):
     from app.services.local_osm import ingest_pbf
     from app.tools.registry import ToolRegistry

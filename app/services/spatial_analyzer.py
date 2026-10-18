@@ -496,6 +496,16 @@ class SpatialAnalyzer:
         if not feat_list:
             return GeoAnalysisResult(False, None, "No features provided for zonal statistics")
 
+        # 非破坏纪律（#1634）：统计结果只写进要素的浅拷贝（properties 也拷贝）
+        # —— 调用方传入的 FeatureCollection（工具层 ref 载荷的同一个 dict）
+        # 绝不被分析管线原地改写（data_quality 全链 deepcopy，此处补漏）。
+        # 非 dict 要素原样保留（后续 update 处的失败语义不变）。
+        feat_list = [
+            {**f, "properties": dict(f.get("properties") or {})}
+            if isinstance(f, dict) else f
+            for f in feat_list
+        ]
+
         from app.lib.geo_analysis.raster_ops import zonal_statistics
         from app.lib.geo_analysis.raster_math import rasterio_env
         # GIS-682: forward the whole FeatureCollection including the top-level

@@ -662,9 +662,10 @@ def fork_cube_revision(
     语义与 :func:`write_cube` 相同（同网格、精确铺排）。旧 store 逐字节
     不动 —— 旧修订持续可验证；跨设备硬链接失败 → 保守整体拷贝（正确性
     优先，成本诚实）。zarr v2/未知布局 → 全拷贝（无法识别 chunk 归属）。
+    原子发布：整个修订先落同目录隐藏 staging 再 ``os.replace`` 到终态；
+    任一环节异常 → 清掉 staging 残骸再抛（终态路径从未被创建，绝不遗留
+    无台账的残缺修订目录 —— 调用方下次用新 id，ledger GC 看不见它）。
     """
-    from app.lib.geo_raster.reader import RasterReader
-
     zarr = _require_zarr()
     src, dst = Path(source_dir), Path(target_dir)
     if not src.is_dir():
@@ -705,8 +706,49 @@ def fork_cube_revision(
         for t_index, _descriptors, _rc in per_band:
             replaced.add((band, t_index))
 
+    # 原子发布（#1634）：整个修订目录先落到同目录隐藏 staging，再
+    # os.replace 到终态 —— 读者要么见完整修订、要么见无修订；CoW 链接
+    # 与 chunk 重写都在 staging 内进行，写盘中途崩溃只遗留 staging 残骸
+    # （下次 fork 开头即清），残缺修订目录永不落终态。
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.mkdir()
+    stage = dst.with_name(f".{dst.name}.tmp")
+    shutil.rmtree(stage, ignore_errors=True)  # 上次崩溃遗留的 staging 残骸
+    stage.mkdir()
+    try:
+        _fork_revision_into(
+            src=src,
+            dst=stage,
+            updates=updates,
+            times=times,
+            replaced=replaced,
+            known_v3=known_v3,
+        )
+        os.replace(stage, dst)
+    except BaseException:
+        # 失败零残留（#1634）：staging 残骸清掉；终态路径从未被创建，
+        # 调用方下次用新 id fork，ledger GC 永远看不见无台账目录。
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return dst
+
+
+def _fork_revision_into(
+    *,
+    src: Path,
+    dst: Path,
+    updates: Mapping[str, Sequence[Tuple[int, Sequence[Any], Optional[Callable[[Any, str], Any]]]]],
+    times: Sequence[str],
+    replaced: set,
+    known_v3: bool,
+) -> None:
+    """fork 的实体工作（CoW 链接 + 时间片重写 + 修订事件戳）。
+
+    拆出为使 :func:`fork_cube_revision` 能用一层 try/except 保证「失败
+    即清空 dst」—— 调用方只经外层入口使用。
+    """
+    from app.lib.geo_raster.reader import RasterReader
+
+    zarr = _require_zarr()
 
     def _link_or_copy(s: Path, t: Path, *, allow_link: bool = True) -> None:
         t.parent.mkdir(parents=True, exist_ok=True)
@@ -790,4 +832,3 @@ def fork_cube_revision(
     new_root = zarr.open_group(store=str(dst), mode="a")
     new_root.attrs["revision_id"] = uuid.uuid4().hex
     consolidate_cube_metadata(dst)
-    return dst

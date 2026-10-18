@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from app.services import data_parser
 from app.services.data_ingest.pipeline import (
     get_ingest_pipeline,
     reset_ingest_pipeline,
@@ -119,6 +120,45 @@ class TestCrsHonesty:
         assert meta["crs"] == "EPSG:4326"
         assert meta["crs_source"] == "rfc7946_default"
         assert meta["crs_assumed"] == "EPSG:4326"
+
+    def test_parse_vector_publishes_outputs_atomically(self, tmp_path):
+        """#1634：original.geojson / meta.json 经 tmp + os.replace 原子发布。
+
+        上传请求内失败不遗留半成品到 upload 暂存区终态路径（下游按
+        output_path 直读，残缺文件会被当成完整解析结果）。
+        """
+        import geopandas as gpd
+
+        from app.services.data_parser import save_meta
+
+        p = tmp_path / "atomic.geojson"
+        _write_geojson(p, _fc(2))
+        upload = tmp_path / "upload-atomic"
+        upload.mkdir()
+        meta = parse_vector(p, upload, "atomic-1")
+        out = upload / "original.geojson"
+        assert out.exists()
+        # 无 tmp 遗留 + 内容完整可读
+        assert list(upload.glob(".*.tmp")) == []
+        assert len(gpd.read_file(out)) == 2
+        save_meta(upload, {**meta, "output_path": str(out)})
+        written = json.loads((upload / "meta.json").read_text(encoding="utf-8"))
+        assert written["feature_count"] == 2
+        assert "output_path" not in written  # 内部字段仍被剥离
+        assert list(upload.glob(".*.tmp")) == []
+
+    def test_atomic_geojson_write_cleans_tmp_on_failure(self, tmp_path, monkeypatch):
+        """写盘失败 → tmp 清理 + 异常透传（终态路径绝不出现半成品）。"""
+
+        class _Boom:
+            def to_file(self, *_a, **_k):
+                raise OSError("disk full")
+
+        out = tmp_path / "upload-fail" / "original.geojson"
+        with pytest.raises(OSError, match="disk full"):
+            data_parser._atomic_write_geojson(_Boom(), out)
+        assert not out.exists()
+        assert list(out.parent.glob(".*.tmp")) == []
 
     def test_vector_with_crs_marks_source_confirmed(self, tmp_path):
         # GPKG 真实携带 CRS 元数据 → crs_source=source（确认，非缺省）。

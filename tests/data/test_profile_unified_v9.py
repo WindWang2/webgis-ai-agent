@@ -107,6 +107,20 @@ def test_incremental_null_accounting():
     assert s["fields"]["a"]["null_rate"] == 0.5
 
 
+def test_incremental_count_truncated_flag_discloses_undercount():
+    """#1634：批超 max_scan 时 count 少计必须打旗标（h3/fields 同纪律）。"""
+    feats = _batch(0, 6)
+    capped = state_summary(update_state(new_state(), feats, max_scan=3))
+    assert capped["count"] == 3  # 只扫了前 3 个
+    assert capped["count_truncated"] is True
+    # 未超限不打旗标
+    ok = update_state(new_state(), _batch(0, 3), max_scan=3)
+    assert state_summary(ok)["count_truncated"] is False
+    # 合并传播：任一输入披露过即披露
+    merged = merge_states(ok, update_state(new_state(), feats, max_scan=3))
+    assert state_summary(merged)["count_truncated"] is True
+
+
 # ── 统一画像 + 规则联动 ──────────────────────────────────────────────
 
 

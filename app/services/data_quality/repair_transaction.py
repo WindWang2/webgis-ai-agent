@@ -193,6 +193,8 @@ def resolve_pipeline_ops(proposal_operations: Sequence[str]) -> List[str]:
 
 _SESSION_CACHE: "Dict[str, RepairSession]" = {}
 #: per-session 串行锁（并发 apply 同一会话时串行化，防 ref 链分叉）。
+#: 淘汰只清空闲锁 —— 在飞 holder 的锁对象永不清（整体 clear 会让同
+#: session 的第二个 apply 各持不同锁对象、互斥失效，#1633）。
 _SESSION_LOCKS: "Dict[str, asyncio.Lock]" = {}
 _TERMINAL_STATES = frozenset({STATE_APPLIED, STATE_VERIFIED, STATE_ROLLED_BACK})
 
@@ -214,10 +216,21 @@ def _cache_put(session: RepairSession) -> None:
 
 
 def _session_lock(session_id: str) -> asyncio.Lock:
+    """per-session 串行锁（并发 apply 同一会话时串行化，防 ref 链分叉）。
+
+    淘汰纪律（#1633）：锁表达 cap 时**只清空闲锁**。``asyncio.Lock`` 的
+    互斥语义绑定在对象身份上 —— 整体 ``clear()`` 会把在飞 holder 的锁
+    对象提出表外，同 session 的第二个 apply 取到一把未锁的新对象直接
+    放行，两个事务同时进入临界区 → 同一 (plan, source) 登记两条 repaired
+    ref（ref 链分叉），击穿「恰好一次真实执行」不变式。持锁中的条目永不
+    清；若清后仍满（极端：cap 个锁全在飞），本轮不淘汰 —— 锁表短暂超限
+    有界，下轮 apply 自然收敛，绝不整体 clear。
+    """
     lock = _SESSION_LOCKS.get(session_id)
     if lock is None:
         if len(_SESSION_LOCKS) >= _MAX_SESSION_CACHE:
-            _SESSION_LOCKS.clear()
+            for sid in [s for s, lk in _SESSION_LOCKS.items() if not lk.locked()]:
+                _SESSION_LOCKS.pop(sid, None)
         lock = asyncio.Lock()
         _SESSION_LOCKS[session_id] = lock
     return lock
@@ -373,9 +386,6 @@ async def run_repair_transaction(
             "repaired_geojson": repaired,
             "repair_evidence": apply_result.get("repair_evidence"),
         }
-
-
-_MAX_PREVIEW_OPS = 16
 
 
 _MAX_PREVIEW_OPS = 16

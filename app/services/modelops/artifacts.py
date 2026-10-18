@@ -36,6 +36,8 @@ def write_raster_output(
     ``window_origin``：数组是源栅格的子窗口时，transform 平移到窗口原点
     ——否则产物 georef 错位（renderable 产物放错地理位置）。
     """
+    import os
+
     import rasterio
 
     if len(arrays) != len(band_names):
@@ -43,6 +45,9 @@ def write_raster_output(
     src = template.dataset if hasattr(template, "dataset") else template
     height, width = arrays[0].shape
     path.parent.mkdir(parents=True, exist_ok=True)
+    # 原子发布（#1634）：同目录隐藏 tmp + os.replace —— 推理进程在写盘中被
+    # kill 不遗留半成品 GeoTIFF 于 run 输出目录（无台账孤儿文件）。
+    tmp_path = path.with_name(f".{path.name}.tmp")
     profile = {
         "driver": "GTiff",
         "height": height,
@@ -62,16 +67,38 @@ def write_raster_output(
         "blockysize": 256,
         "compress": "deflate",
     }
-    with rasterio.open(path, "w", **profile) as dst:
-        for i, (arr, name) in enumerate(zip(arrays, band_names), start=1):
-            dst.write(arr.astype(dtype), i)
-            dst.set_band_description(i, name)
+    try:
+        with rasterio.open(tmp_path, "w", **profile) as dst:
+            for i, (arr, name) in enumerate(zip(arrays, band_names), start=1):
+                dst.write(arr.astype(dtype), i)
+                dst.set_band_description(i, name)
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
     return path
 
 
 def write_geojson_output(path: Path, geojson: Dict[str, Any]) -> Path:
+    """GeoJSON 产物原子写盘（#1634：同目录 tmp + fsync + os.replace）。"""
+    import contextlib
+    import os
+    import tempfile
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(geojson, ensure_ascii=False), encoding="utf-8")
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(geojson, ensure_ascii=False))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
     return path
 
 

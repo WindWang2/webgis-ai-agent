@@ -123,6 +123,38 @@ async def test_probe_ref_reports_dead_parquet(data_dir):
     assert await probe_ref("sess-v6", res["ref"]) is None
 
 
+# ── 原子发布（#1634）：tmp + os.replace，失败零残留 ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_materialize_publishes_atomically_no_tmp_leftovers(data_dir):
+    """终态 .parquet 经同目录 tmp + os.replace 发布；无孤儿 tmp 遗留。"""
+    res, _table = await _materialize(data_dir)
+    path = Path(res["path"])
+    assert path.exists()
+    assert list(path.parent.glob(f".{path.name}.*.tmp")) == []
+
+
+@pytest.mark.asyncio
+async def test_materialize_write_failure_leaves_no_partial(data_dir, monkeypatch):
+    """写盘失败 → tmp 清理、终态路径无半成品（异常透传，绝不静默）。"""
+    pytest.importorskip("pyarrow")
+    from app.services.data_fabric import vector_carrier
+    from app.services.data_fabric.materialization_service import materialization_service
+    from app.services.data_fabric.vector_carrier import features_to_arrow
+
+    def _boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(vector_carrier, "table_to_geoparquet", _boom)
+    table = features_to_arrow(_point_features(2), crs="EPSG:4326")
+    with pytest.raises(OSError, match="disk full"):
+        await materialization_service.materialize_geoparquet("sess-v6", table, "T")
+    published = list((data_dir / "sess-v6" / "fabric-geoparquet").glob("*.parquet"))
+    assert published == [], "失败不得在终态路径留下半成品 .parquet"
+    assert list((data_dir / "sess-v6" / "fabric-geoparquet").glob(".*.tmp")) == []
+
+
 # ── GC 孤儿 unlink（此前 GC 盲区）───────────────────────────────────────
 
 

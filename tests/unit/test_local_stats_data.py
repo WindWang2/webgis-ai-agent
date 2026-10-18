@@ -3,6 +3,7 @@
 fixture 全部在 tmp_path 内合成（微型 shapefile / 年鉴 zip / POI zip），
 不依赖外置盘真实数据；settings.LOCAL_GEODATA_DIR 指向 tmp。
 """
+import json
 import zipfile
 
 import geopandas as gpd
@@ -229,6 +230,43 @@ async def test_yearbook_catalog(stats_env):
     assert "地区生产总值(万元)" in cat["panel_indicators"]
 
 
+@pytest.mark.asyncio
+async def test_yearbook_rerun_after_interrupt_reimports_partial_year(stats_env):
+    """中断恢复（#1632）：半年度行残留 + 无完成标记 → 重跑整年重导并披露。
+
+    旧语义「行存在即该年导完」会把半个年份静默跳过；修复后行存在 ≠ 完成，
+    完成标记与年内数据同一事务落盘，残缺年整年重导。
+    """
+    from app.services import local_yearbook
+
+    db = local_yearbook.yearbook_db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    # ① 中断现场：2020 年只落了部分 sheet 的行（无完成标记）
+    conn = local_yearbook._open_db(db)
+    with conn:
+        conn.execute(
+            "INSERT INTO township_yearbook VALUES (?,?,?,?,?,?,?,?)",
+            (2020, "双流县永安镇", "永安镇", "510116", "四川省", "成都市",
+             "双流县", json.dumps({"户籍人口(人)": 1}, ensure_ascii=False)),
+        )
+    conn.close()
+    _write_yearbook_zip(stats_env, 2020)
+
+    # ② 不带 force 重跑：残缺年整年重导，事实进 stats 披露
+    stats = local_yearbook.ingest_yearbook(years=[2020])
+    assert stats.get("reimported_incomplete") == [2020]
+    assert stats["rows_2020"] == 4
+    assert stats["rows"] == 4
+    hit = local_yearbook.query_township("永安镇", pub_year=2020)
+    assert hit["count"] == 1
+    assert hit["rows"][0]["indicators"]["行政区域面积(公顷)"] == 5660
+
+    # ③ 完成标记生效：再次重跑按年幂等跳过（不重复导入）
+    stats = local_yearbook.ingest_yearbook(years=[2020])
+    assert stats["skipped"] == 1
+    assert stats["rows"] == 4
+
+
 # ── POI：GCJ-02 → WGS84 与查询 ───────────────────────────────────────────
 
 
@@ -406,6 +444,63 @@ async def test_poi_csv_member_and_incremental_ingest(stats_env):
     # 原有省未被增量模式破坏
     fc = query_gd_poi(name_like="华西医院")
     assert fc["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_poi_rerun_after_interrupt_is_idempotent(stats_env):
+    """中断恢复（#1632）：半省 chunk 行残留 + 空 done meta → 重跑不翻倍。
+
+    旧语义「文件存在即 append + 省不在 done 不清理」会把该省 POI 全部
+    追加成双份；修复后「省不在 done ⇒ 脏省，先删后写」恒幂等。
+    """
+    import pyogrio
+
+    from app.services.local_poi import (
+        _meta_path,
+        gd_poi_gpkg_path,
+        ingest_gd_poi,
+        query_gd_poi,
+    )
+
+    gpkg = gd_poi_gpkg_path()
+    gpkg.parent.mkdir(parents=True, exist_ok=True)
+    # ① 中断现场：510000 只 flush 了部分 chunk 行；meta 未写（或撕裂后被清空）
+    partial = gpd.GeoDataFrame(
+        {
+            "poi_id": ["B001"], "name": ["唐昌镇"],
+            "category": ["地名地址信息"], "subtype": ["普通地名;乡镇级地名"],
+            "typecode": ["190106"], "adcode": ["510124"], "adname": ["郫都区"],
+            "cityname": ["成都市"], "pname": ["四川省"], "address": [""], "tel": [""],
+        },
+        geometry=[Point(104.10, 30.66)], crs="EPSG:4326",
+    )
+    pyogrio.write_dataframe(partial, gpkg, layer="pois", driver="GPKG")
+    assert not _meta_path().exists()
+
+    # ② 不带 force 重跑：该省是脏省 → 先删旧行再写
+    stats = ingest_gd_poi()
+    assert stats["provinces"]["510000"] == 4
+    assert stats["skipped"] == []
+
+    fc = query_gd_poi([104.0, 30.6, 104.2, 30.7])
+    assert fc["count"] == 4  # 全量行数，无重复
+    assert sorted(f["properties"]["poi_id"] for f in fc["features"]) == [
+        "B001", "B002", "B003", "B005",
+    ]
+    # 原子写：无遗留 tmp，meta 可解析且记录该省完成
+    assert list(gpkg.parent.glob(".meta.json.*.tmp")) == []
+    done = json.loads(_meta_path().read_text(encoding="utf-8"))
+    assert done["provinces"] == {"510000": 4}
+
+    # ③ meta 撕裂（旧版非原子写遗留）→ 按「无省完成」处理，仍不翻倍
+    _meta_path().write_text('{"provinces": {"5100', encoding="utf-8")
+    stats = ingest_gd_poi()
+    assert stats["skipped"] == []
+    fc = query_gd_poi([104.0, 30.6, 104.2, 30.7])
+    assert fc["count"] == 4
+    assert sorted(f["properties"]["poi_id"] for f in fc["features"]) == [
+        "B001", "B002", "B003", "B005",
+    ]
 
 
 # ── 工具注册与调度 ────────────────────────────────────────────────────────
