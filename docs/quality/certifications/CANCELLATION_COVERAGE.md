@@ -5,13 +5,14 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**23/74** 个重计算文件含取消检查点。
+- 覆盖：**24/75** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
 | app/lib/geo_analysis/__init__.py | 0 | 0 | no-checkpoints |
+| app/lib/geo_analysis/_scaffold.py | 1 | 0 | certified |
 | app/lib/geo_analysis/_vector.py | 0 | 6 | no-checkpoints |
-| app/lib/geo_analysis/aggregation.py | 2 | 26 | certified |
+| app/lib/geo_analysis/aggregation.py | 2 | 35 | certified |
 | app/lib/geo_analysis/cokriging_lmc.py | 1 | 10 | certified |
 | app/lib/geo_analysis/context.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/cost_surface.py | 1 | 4 | certified |
@@ -59,7 +60,7 @@
 | app/lib/geo_analysis/spatial_weights.py | 0 | 5 | no-checkpoints |
 | app/lib/geo_analysis/spatiotemporal_eha.py | 0 | 18 | no-checkpoints |
 | app/lib/geo_analysis/spectral.py | 0 | 8 | no-checkpoints |
-| app/lib/geo_analysis/statistics.py | 10 | 126 | certified |
+| app/lib/geo_analysis/statistics.py | 10 | 124 | certified |
 | app/lib/geo_analysis/statistics_v3_diag.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/tasseled_cap.py | 0 | 10 | no-checkpoints |
 | app/lib/geo_analysis/temporal_cube.py | 0 | 2 | no-checkpoints |
@@ -76,7 +77,7 @@
 | app/lib/geo_raster/reader.py | 0 | 10 | no-checkpoints |
 | app/lib/geo_raster/remote.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_raster/source.py | 0 | 2 | no-checkpoints |
-| app/lib/geo_raster/windowed.py | 1 | 11 | certified |
+| app/lib/geo_raster/windowed.py | 1 | 12 | certified |
 | app/lib/geo_raster/zarr.py | 0 | 26 | no-checkpoints |
 | app/services/data_ingest/__init__.py | 0 | 0 | no-checkpoints |
 | app/services/data_ingest/pipeline.py | 0 | 1 | no-checkpoints |

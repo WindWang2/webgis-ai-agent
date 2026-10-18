@@ -3,14 +3,14 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`325869534995a8d5…`
+- 内容指纹：`b490cf352a5d65a0…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
 | tools | 356 | 348 | 8 |
-| algorithms | 237 | 180 | 1 |
+| algorithms | 237 | 181 | 1 |
 | capabilities | 160 | 110 | 0 |
 | artifact_types | 22 | 22 | 0 |
 | recipes | 166 | 166（conformance 由 workflow 闸保护） | 0 |

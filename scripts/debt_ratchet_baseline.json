@@ -520,7 +520,6 @@
     "app/lib/cartography/grammar_propagation.py": 1,
     "app/lib/cartography/mapspec_schema.py": 1,
     "app/lib/cartography/pdf_renderer.py": 5,
-    "app/lib/cartography/scene_camera.py": 2,
     "app/lib/cartography/selfheal_actions.py": 1,
     "app/lib/cartography/semantic_checks.py": 2,
     "app/lib/cartography/standards/qa.py": 1,

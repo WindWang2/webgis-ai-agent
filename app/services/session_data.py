@@ -617,8 +617,8 @@ class MemorySessionStore(BaseSessionStore):
         """#1073: 一批状态字段一次写入（服务端真值，无 seq 语义）。
 
         Redis 后端为单 WATCH/MULTI（spec 与 CAS 令牌原子落地）；内存后端
-        语义上等价（写入全程持 ``_map_state_lock``，与 get_map_state 的
-        deepcopy 快照互斥）。
+        语义上等价（写入全程持 ``_map_state_lock``，写方彼此串行；与读者
+        get_map_state 经审查 S1 快照 + copy-on-write 纪律互不撕裂）。
         """
         if not fields:
             return True
@@ -649,8 +649,9 @@ class MemorySessionStore(BaseSessionStore):
         """v2(audit F4): MapSpec commit 单事务（内存后端语义等价实现）。
 
         与 Redis 后端的 WATCH/MULTI 语义对齐：fields 写入 + layers 的
-        read-modify-write 原子完成（全程持 ``_map_state_lock``，与
-        get_map_state 的 deepcopy 快照互斥，无 crash 窗口）。
+        read-modify-write 原子完成（写方全程持 ``_map_state_lock`` 彼此
+        串行；与读者 get_map_state 经审查 S1 的浅快照 + copy-on-write
+        纪律互不撕裂，无 crash 窗口）。
         layer_op 语义见 RedisSessionStore.commit_mapspec_state。
         """
         if not fields and layer_op is None:
@@ -666,9 +667,11 @@ class MemorySessionStore(BaseSessionStore):
                 op, layer_id, layer_payload = layer_op
                 layers = list(state.get("layers") or [])
                 if op == "upsert":
-                    for layer in layers:
+                    for i, layer in enumerate(layers):
                         if layer.get("id") == layer_id:
-                            layer.update(layer_payload)
+                            # 审查 S1：copy-on-write —— 读者可能正在工作线程里
+                            # deepcopy 旧 layer dict，绝不就地 update。
+                            layers[i] = {**layer, **layer_payload}
                             break
                     else:
                         layers.append({"id": layer_id, **layer_payload})
@@ -693,9 +696,10 @@ class MemorySessionStore(BaseSessionStore):
         的写入（服务端真相：ws_service / layer_manager / mapspec）总是生效，
         且不推进已存 seq —— 客户端下一次带 seq 的写入不会被误拒。
 
-        评审[High]：写入持 ``_map_state_lock``，与 get_map_state 的 deepcopy
-        快照互斥。已持锁的内部路径（update/remove_layer_in_state）直接调
-        ``_set_map_state_unlocked`` —— asyncio.Lock 不可重入。
+        评审[High]：写入持 ``_map_state_lock``，写方（read-modify-write）
+        彼此串行。已持锁的内部路径（update/remove_layer_in_state）直接调
+        ``_set_map_state_unlocked`` —— asyncio.Lock 不可重入。与读者
+        （get_map_state 的 S1 浅快照）经 copy-on-write 纪律互不撕裂。
         """
         async with self._map_state_lock:
             return self._set_map_state_unlocked(session_id, key, value, seq)
@@ -732,17 +736,28 @@ class MemorySessionStore(BaseSessionStore):
         copy 纪律此前只覆盖了 get()，未覆盖 map_state）。#799: deepcopy
         下线程（与 Redis 后端一致），大 state 不再内联阻塞事件循环。
 
-        评审[High]: 全程持 ``_map_state_lock`` 穿越 to_thread —— 所有
-        map_state 写方在同一把锁上序列化，deepcopy 迭代期间并发写不再
-        触发 ``RuntimeError: dictionary changed size during iteration`` 或
-        撕裂快照。取舍：「锁内浅拷贝 + 无锁深拷贝」不可行 —— 写方存在
-        嵌套容器就地改（update_layer_in_state 的 layer.update），浅拷贝
-        仍与写方共享嵌套对象；持锁穿越只会让写方 async 排队等待拷贝窗口
-        （~100ms 级），不阻塞事件循环，也不波及 ref store/get（独立锁）。
+        评审[High]（融合定案）：读侧走审查 S1 的「循环线程浅快照 + 工作线程
+        deepcopy 快照」—— 即便存在绕过 ``_map_state_lock`` 的裸写（或未来
+        新写方），快照对象图对被就地改写的两层（顶层 dict / layer dict，
+        后者由 copy-on-write 保证）也是私有的，不会撕裂。写方彼此在
+        ``_map_state_lock`` 上串行（read-modify-write 原子性）；读侧不持该
+        锁，写方不再排队等待 ~100ms 级拷贝窗口，也无「锁内穿越 to_thread」
+        的死锁面。
         """
         import copy as _copy
-        async with self._map_state_lock:
-            return await asyncio.to_thread(_copy.deepcopy, self._map_state.get(session_id, {}))
+
+        # 审查 S1：deepcopy 在工作线程执行，而事件循环线程会并发改写存储
+        # dict（set_map_state 新增 _<key>_seq 键 / state.update 等）——直接
+        # deepcopy 活 dict 会 "dictionary changed size during iteration" 或
+        # 得到撕裂快照。先在循环线程上做有界浅快照（顶层 dict + layers
+        # 列表及其各 layer dict），线程里只 deepcopy 快照。
+        snapshot = dict(self._map_state.get(session_id, {}))
+        layers = snapshot.get("layers")
+        if isinstance(layers, list):
+            snapshot["layers"] = [
+                dict(layer) if isinstance(layer, dict) else layer for layer in layers
+            ]
+        return await asyncio.to_thread(_copy.deepcopy, snapshot)
 
     def invalidate_local_cache(self, session_id: str) -> None:
         """Memory is authoritative in-process, so no read cache can be stale."""
@@ -768,9 +783,10 @@ class MemorySessionStore(BaseSessionStore):
         # lose one side's mutation.
         async with self._map_state_lock:
             layers = list(self._map_state.get(session_id, {}).get("layers", []))
-            for layer in layers:
+            for i, layer in enumerate(layers):
                 if layer.get("id") == layer_id:
-                    layer.update(updates)
+                    # 审查 S1：copy-on-write（见 commit_mapspec_state）
+                    layers[i] = {**layer, **updates}
                     break
             else:
                 layers.append({"id": layer_id, **updates})

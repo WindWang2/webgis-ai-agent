@@ -77,3 +77,37 @@ describe('StoryView 长叙事（48 章节）', () => {
     }
   }, 20000);
 });
+
+describe('StoryView anonymous owner token (F-09)', () => {
+  it('asks the opener for the owner token and sends it as X-Session-Token', async () => {
+    const { installStoryTokenResponder } = await import('@/lib/session/story-token-handoff');
+    const uninstall = installStoryTokenResponder((sid) => (sid === 'long48' ? 'owner-long48' : null));
+    const origOpener = Object.getOwnPropertyDescriptor(window, 'opener');
+    Object.defineProperty(window, 'opener', {
+      configurable: true,
+      value: {
+        postMessage: (data: unknown) =>
+          window.dispatchEvent(new MessageEvent('message', {
+            data,
+            origin: window.location.origin,
+            source: {
+              postMessage: (reply: unknown) =>
+                window.dispatchEvent(new MessageEvent('message', { data: reply, origin: window.location.origin })),
+            } as unknown as Window,
+          })),
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(jsonOk({ messages: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(<StoryView />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const sessionCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/chat/sessions/long48'));
+      expect(sessionCall?.[1]?.headers?.['X-Session-Token']).toBe('owner-long48');
+    } finally {
+      uninstall();
+      if (origOpener) Object.defineProperty(window, 'opener', origOpener);
+      vi.unstubAllGlobals();
+    }
+  });
+});

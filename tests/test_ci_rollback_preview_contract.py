@@ -95,3 +95,19 @@ def test_deploy_steps_chmod_env_priv_on_host():
             f"{job} 必须在远端收紧 .incoming 为 0600 后原子替换 ~/.env.Priv"
         )
         assert tighten_at > scp_at, f"{job} 的收紧替换必须在 scp .env.Priv 之后"
+
+
+def test_rollback_requires_explicit_master_dispatch_input():
+    """TC-02：rollback 不得被任意 workflow_dispatch 触发（重跑 nightly / 特性分支）。"""
+    wf = _workflow()
+    # PyYAML 把 `on` 解析成 True
+    triggers = wf.get("on", wf.get(True))
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    assert inputs["rollback_production"]["type"] == "boolean"
+    assert inputs["rollback_production"]["default"] is False
+    assert "rollback_confirm" in inputs
+    cond = wf["jobs"]["rollback"]["if"]
+    assert "github.event_name == 'workflow_dispatch'" in cond
+    assert "github.ref == 'refs/heads/master'" in cond
+    assert "inputs.rollback_production == true" in cond
+    assert "inputs.rollback_confirm == 'ROLLBACK'" in cond

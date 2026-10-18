@@ -24,6 +24,11 @@ COPY frontend/. .
 # transport goal E-F-2 (P0): inject the API base at build time (see Dockerfile.prod).
 ARG NEXT_PUBLIC_API_URL=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# F-04: "" -> collab WebSocket derives ws(s)://<page host> at runtime (nginx
+# /api/v1/ws/ location) instead of the dev fallback; override for a
+# cross-origin backend.
+ARG NEXT_PUBLIC_WS_URL=""
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build
 

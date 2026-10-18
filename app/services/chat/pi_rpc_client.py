@@ -81,6 +81,39 @@ PI_RPC_TIMEOUT = _env_float("PI_RPC_TIMEOUT", 300.0)
 PI_STARTUP_READY_TIMEOUT = _env_float("PI_STARTUP_READY_TIMEOUT", 10.0)
 
 
+
+# Review F16: environment allowlist for the Pi subprocess.
+_PI_ENV_ALLOW_EXACT = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TZ",
+    "TMPDIR", "TEMP", "TMP", "TERM", "SYSTEMROOT", "COMSPEC", "PATHEXT",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "API_PORT", "PORT", "TOOL_TIMEOUT_S",
+    "WEBGIS_API_BASE", "WEBGIS_TOOL_TIMEOUT_MS",
+    # LLM provider credentials Pi may legitimately need for PI_PROVIDER.
+    "OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+    "GOOGLE_API_KEY", "DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "OPENROUTER_API_KEY",
+    "MOONSHOT_API_KEY", "DASHSCOPE_API_KEY", "ZAI_API_KEY", "GROQ_API_KEY",
+    "XAI_API_KEY", "MISTRAL_API_KEY",
+})
+_PI_ENV_ALLOW_PREFIXES = ("LC_", "NODE_", "NPM_CONFIG_", "PI_", "XDG_")
+
+
+def _pi_subprocess_env(source: "os._Environ[str] | dict[str, str]") -> dict[str, str]:
+    """Allowlisted copy of ``source`` for the Pi subprocess (review F16).
+
+    Operators can pass extra names via ``PI_ENV_PASSTHROUGH`` (comma list).
+    """
+    extra = {
+        n.strip() for n in (source.get("PI_ENV_PASSTHROUGH") or "").split(",") if n.strip()
+    }
+    return {
+        k: v for k, v in source.items()
+        if k in _PI_ENV_ALLOW_EXACT or k in extra or k.startswith(_PI_ENV_ALLOW_PREFIXES)
+    }
+
+
 class PiRpcClient:
     """Owns the Pi subprocess and the async JSON-RPC multiplexing over pipes.
 
@@ -243,7 +276,11 @@ class PiRpcClient:
         self._session_dir.mkdir(parents=True, exist_ok=True)
         PI_AGENT_DIR.mkdir(parents=True, exist_ok=True)
 
-        env = os.environ.copy()
+        # Review F16: least privilege — the LLM-driven Pi host must not inherit
+        # DATABASE_URL / JWT_SECRET_KEY / cloud & Redis credentials. Only an
+        # allowlisted env is passed; the bridge secret and LLM key are added
+        # explicitly below.
+        env = _pi_subprocess_env(os.environ)
         env["PI_CODING_AGENT_DIR"] = str(PI_AGENT_DIR)
         env["PI_SESSION_DIR"] = str(self._session_dir)
         env["PI_OFFLINE"] = "1"

@@ -254,22 +254,28 @@ class TestMapStateSequencing:
 
 
 class TestMapStateSnapshotIsolation:
-    """评审[High]: get_map_state 的 to_thread deepcopy 必须与写方互斥。
+    """评审[High]（融合定案 · S1 语义）: get_map_state 的 to_thread deepcopy
+    与并发写方互不撕裂。
 
-    修复前读侧全程不持锁，写方（set_map_state / set_map_state_fields /
-    commit_mapspec_state / update_layer_in_state）就地改同一 dict —— 大
-    state（~100ms 级拷贝窗口）下并发写触发 ``RuntimeError: dictionary
-    changed size during iteration`` 或撕裂快照。用受控慢拷贝把写方精确注入
-    deepcopy 迭代中段：修复前 await reader 必抛 RuntimeError，修复后写方
-    在 ``_map_state_lock`` 上排队、快照是写前一致状态。
+    读侧走审查 S1 的「循环线程浅快照 + 工作线程 deepcopy 快照」：顶层
+    dict / layer dict 是私有拷贝，写方（set_map_state / set_map_state_fields /
+    commit_mapspec_state / update_layer_in_state）对活 dict 的就地写全部
+    落在快照之外 —— 历史缺陷形态（大 state ~100ms 级拷贝窗口内并发写触发
+    ``RuntimeError: dictionary changed size during iteration`` 或撕裂快照）
+    不可复现。写方彼此在 ``_map_state_lock`` 上串行，但不等待读侧拷贝
+    窗口。用受控慢拷贝把 deepcopy 精确挂起在中段（choke 锚点用快照与
+    活 dict 共享的嵌套 value —— 浅快照只拷贝顶层与 layer dict 两层），
+    期间并发执行公共 API 写方：断言 reader 不抛、快照是写前一致状态、
+    写事后落地。
     """
 
     async def _snapshot_while_writing(self, mgr, sid, writer, choke):
         """deepcopy 在 choke 对象的迭代中段挂起，期间并发执行 writer。
 
         dict/list 由慢拷贝钩子手工遍历（嵌套 choke 对象同样走钩子），
-        标量走真 deepcopy；choke 对象先落地存活迭代器再挂起 —— 挂起期间
-        对该 dict 的任何写都会让迭代抛 RuntimeError（修复前的缺陷形态）。
+        标量走真 deepcopy；choke 对象先落地存活迭代器再挂起。choke 锚点
+        必须选浅快照未拷贝的嵌套 value（如 viewport dict —— 快照与活
+        dict 共享该对象），deepcopy 才会真正到达。
         """
         import asyncio
         import copy as copy_mod
@@ -299,11 +305,12 @@ class TestMapStateSnapshotIsolation:
             assert reached, "deepcopy 未到达 choke 点（测试前提失败）"
             writer_task = asyncio.create_task(writer())
             await asyncio.sleep(0.05)
-            # 修复前：写即刻落在 deepcopy 迭代窗口内 → 下面 await reader 抛
-            # RuntimeError；修复后：写方在 _map_state_lock 上排队，快照不受影响。
+            # 此时写方运行在 deepcopy 拷贝窗口内。S1 下活 dict 与快照的
+            # 顶层/layers 两层是不同对象：写不撕裂快照，reader 不抛
+            # RuntimeError；快照保持写前一致状态。
             release.set()
             snapshot = await reader
-            assert await writer_task, "并发写必须在快照完成后落地"
+            assert await writer_task, "并发写必须正常落地"
 
         assert snapshot.get("_started_at"), "快照必须是完整一致的写前状态"
         return snapshot
@@ -311,7 +318,7 @@ class TestMapStateSnapshotIsolation:
     @pytest.mark.parametrize(
         "method", ["set_map_state", "set_map_state_fields", "commit_mapspec_state"]
     )
-    async def test_top_level_writers_wait_for_snapshot(self, mgr, method):
+    async def test_top_level_writers_excluded_from_inflight_snapshot(self, mgr, method):
         sid = "s1"
         await mgr.set_map_state(sid, "viewport", {"zoom": 5})
 
@@ -322,24 +329,28 @@ class TestMapStateSnapshotIsolation:
                 return await mgr.set_map_state_fields(sid, {"late_key": "late_value"})
             return await mgr.commit_mapspec_state(sid, {"late_key": "late_value"})
 
+        # choke 锚点：viewport dict —— 浅快照未拷贝该嵌套 value，快照与活
+        # dict 共享同一对象，deepcopy 必然到达。
         snapshot = await self._snapshot_while_writing(
-            mgr, sid, writer, {id(mgr._map_state[sid])}
+            mgr, sid, writer, {id(mgr._map_state[sid]["viewport"])}
         )
         assert "late_key" not in snapshot
         assert snapshot["viewport"] == {"zoom": 5}
         assert mgr._map_state[sid]["late_key"] == "late_value"
 
-    async def test_inplace_layer_update_waits_for_snapshot(self, mgr):
+    async def test_layer_cow_update_excluded_from_inflight_snapshot(self, mgr):
         sid = "s1"
+        await mgr.set_map_state(sid, "viewport", {"zoom": 5})
         await mgr.set_map_state(sid, "layers", [{"id": "L1", "opacity": 1.0}])
 
         async def writer():
-            # update_layer_in_state 就地 layer.update —— 挂起中的嵌套迭代
-            # 同样会被撕裂（修复前）
+            # update_layer_in_state 走 copy-on-write（审查 S1）—— 旧 layer
+            # dict 绝不就地改；快照的 layer 拷贝保持写前值。
             return await mgr.update_layer_in_state(sid, "L1", {"opacity": 0.5, "note": "x"})
 
         snapshot = await self._snapshot_while_writing(
-            mgr, sid, writer, {id(mgr._map_state[sid]["layers"][0])}
+            mgr, sid, writer, {id(mgr._map_state[sid]["viewport"])}
         )
         assert snapshot["layers"] == [{"id": "L1", "opacity": 1.0}]
+        assert snapshot["viewport"] == {"zoom": 5}
         assert mgr._map_state[sid]["layers"][0]["opacity"] == 0.5

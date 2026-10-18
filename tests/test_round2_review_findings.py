@@ -77,6 +77,23 @@ def test_A1_public_project_visible_to_everyone(db):
     assert _caller_may_access_project(proj, "bob", 1) is True
 
 
+def test_F11_ownerless_org_project_stays_org_only(db):
+    """security F-11: an org project whose owner was deleted (owner_id NULL,
+    org_id set) must not become readable/listable by no-org or anonymous callers."""
+    proj = ProjectService.create_project(db, name="orphaned", owner_id=None, org_id=1)
+    assert proj.org_id == 1 and proj.owner_id is None
+    assert ProjectService.get_project_with_auth(db, proj.id, user_id="bob", org_id=1) is not None
+    assert ProjectService.get_project_with_auth(db, proj.id, user_id="dave", org_id=None) is None
+    assert ProjectService.get_project_with_auth(db, proj.id, user_id=None, org_id=None) is None
+    assert ProjectService.get_project_with_auth(db, proj.id, user_id="carol", org_id=2) is None
+    rows, _ = ProjectService.list_projects(db, user_id="dave", org_id=None)
+    assert proj.id not in {r.id for r in rows}
+    rows, _ = ProjectService.list_projects(db, user_id=None, org_id=None)
+    assert proj.id not in {r.id for r in rows}
+    rows, _ = ProjectService.list_projects(db, user_id="bob", org_id=1)
+    assert proj.id in {r.id for r in rows}
+
+
 # ── A-4: data-fabric create/probe/sync must require authentication ───────────
 
 def test_A4_data_fabric_mutations_require_auth():

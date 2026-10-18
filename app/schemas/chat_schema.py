@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -399,6 +399,28 @@ class PlanConfirmRequest(BaseModel):
     """
 
     challenge_id: str = Field(min_length=1, max_length=128)
+
+
+class ClarificationAnswerItem(BaseModel):
+    """一条澄清应答：绑定 context_key（envelope 问题锚）。"""
+
+    context_key: str = Field(min_length=1, max_length=64)
+    value: str = Field(min_length=1, max_length=128)
+
+
+class ClarificationAnswerRequest(BaseModel):
+    """POST /chat/sessions/{session_id}/clarifications/answer 请求体（方向 3）。
+
+    ``request_id`` + ``expected_revision`` 是 CAS 锚（ClarificationEnvelope
+    的 requirement_revision）；answers 与 waive 二选一或并存（≤2）。
+    actor 恒为 user（会话所有者）——agent 不得经此端点代答。
+    """
+
+    request_id: str = Field(min_length=1, max_length=64)
+    expected_revision: Optional[int] = Field(None, ge=1)
+    answers: List[ClarificationAnswerItem] = Field(default_factory=list, max_length=2)
+    waive: List[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=2)
 
 
 # ── 响应模型（P2 新增）────────────────────────────────────────────────

@@ -307,6 +307,27 @@ class TestWebhook:
         )
         assert r2.status_code == 200
 
+    def test_replay_without_event_id_is_deduped(self, api, monkeypatch):
+        """security F-14：无 event_id / occurred_at 的已签名投递被截获重放
+        时必须落到 duplicate（此前每次以 now() 派生新 id → 无限入账）。"""
+        monkeypatch.setenv(
+            "GIS_SPATIAL_EVENT_WEBHOOK_SECRET__ORG_ORG_A", "sekrit-org-a"
+        )
+        import json as jsonlib
+
+        body = _ingest_body(org_id="org-a", subject_key="dataset:replay-me")
+        raw = jsonlib.dumps(body).encode()
+        sig = hmac_mod.new(b"sekrit-org-a", raw, hashlib.sha256).hexdigest()
+        headers = {"X-WebGIS-Signature": f"sha256={sig}",
+                   "Content-Type": "application/json"}
+        r1 = api.client.post("/api/v1/spatial-events/webhook", content=raw, headers=headers)
+        assert r1.status_code == 200, r1.text
+        assert r1.json()["status"] != "duplicate"
+        r2 = api.client.post("/api/v1/spatial-events/webhook", content=raw, headers=headers)
+        assert r2.status_code == 200
+        assert r2.json()["status"] == "duplicate"
+        assert r2.json()["event_id"] == r1.json()["event_id"]
+
     def test_disabled_without_secret(self, api):
         r = api.client.post("/api/v1/spatial-events/webhook",
                             json=_ingest_body(org_id="org-a"))

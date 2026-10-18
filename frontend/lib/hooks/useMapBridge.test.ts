@@ -1263,6 +1263,27 @@ describe('useMapBridge', () => {
     expect(result.current.aiStatus).toBe('error'); // Must NOT roll back to 'acting'
   });
 
+  it('F-05 (#969): a per-tool step_error is NOT terminal — the turn stays in progress', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    async function* gen(): AsyncGenerator<SSEEvent> {
+      yield { event: 'thinking', data: {} } as SSEEvent;
+      yield { event: 'step_error', data: { step_id: 'st-1', tool: 'buffer', error: 'boom' } } as SSEEvent;
+      yield { event: 'step_start', data: { step_id: 'st-2' } } as SSEEvent;
+      await gate;
+      yield { event: 'done', data: {} } as SSEEvent;
+    }
+    mockStreamChat.mockReturnValue(gen());
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    let sending!: Promise<unknown>;
+    act(() => { sending = result.current.send('q', {}); });
+    await vi.waitFor(() => expect(result.current.aiStatus).toBe('acting'));
+    await act(async () => { release(); await sending; });
+    expect(result.current.aiStatus).toBe('done');
+  });
+
   it('INV-10: non-retryable 4xx HTTP errors (e.g. 400/401/403/404) stop reconnect immediately', async () => {
     const apiError = new Error('Not found');
     (apiError as any).status = 404;

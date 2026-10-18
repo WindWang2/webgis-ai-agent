@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fastGet, invalidateCache, clearCache, _cacheSize } from './get-fast-path';
+import { setAuth, clearAuth } from '../auth/tokenStore';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -188,5 +189,77 @@ describe('fastGet ownerToken passthrough (#1109)', () => {
     const call = mockFetch.mock.calls[0];
     const headers = call[1]?.headers as Record<string, string>;
     expect(headers?.['X-Session-Token']).toBeUndefined();
+  });
+
+  describe('F-12: shared in-flight semantics', () => {
+    function deferredFetch() {
+      let release!: (v: unknown) => void;
+      let signal: AbortSignal | undefined;
+      mockFetch.mockImplementationOnce(
+        (_url: string, init?: RequestInit) =>
+          new Promise((resolve, reject) => {
+            signal = init?.signal ?? undefined;
+            release = resolve;
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          }),
+      );
+      return { release: (v: unknown) => release(v), signal: () => signal };
+    }
+
+    it('one caller aborting does not reject the other deduplicated callers', async () => {
+      const d = deferredFetch();
+      const a = new AbortController();
+      const pa = fastGet('/shared', { signal: a.signal });
+      const pb = fastGet<{ v: number }>('/shared', { signal: new AbortController().signal });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      a.abort();
+      await expect(pa).rejects.toMatchObject({ name: 'AbortError' });
+      expect(d.signal()?.aborted).toBe(false);
+      d.release(jsonOk({ v: 1 }));
+      await expect(pb).resolves.toMatchObject({ data: { v: 1 } });
+    });
+
+    it('the shared fetch is aborted once every caller has aborted', async () => {
+      const d = deferredFetch();
+      const a = new AbortController();
+      const b = new AbortController();
+      const pa = fastGet('/shared2', { signal: a.signal }).catch((e) => e);
+      const pb = fastGet('/shared2', { signal: b.signal }).catch((e) => e);
+      a.abort();
+      expect(d.signal()?.aborted).toBe(false);
+      b.abort();
+      expect(d.signal()?.aborted).toBe(true);
+      await pa;
+      await pb;
+    });
+
+    it('invalidateCache does not abort an in-flight GET others are awaiting', async () => {
+      const d = deferredFetch();
+      const p = fastGet<{ v: number }>('/api/v1/projects');
+      invalidateCache('/api/v1/projects');
+      expect(d.signal()?.aborted).toBe(false);
+      d.release(jsonOk({ v: 2 }));
+      await expect(p).resolves.toMatchObject({ data: { v: 2 } });
+    });
+
+    it('cache entries are scoped by identity (user / owner token)', async () => {
+      mockFetch.mockResolvedValue(jsonOk({ who: 'x' }));
+      try {
+        setAuth({ accessToken: 'a', refreshToken: null }, { id: 'X', username: 'x' });
+        await fastGet('/me-scoped');
+        setAuth({ accessToken: 'b', refreshToken: null }, { id: 'Y', username: 'y' });
+        const r = await fastGet('/me-scoped');
+        expect(r.cached).toBe(false);
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        clearAuth();
+        await fastGet('/me-scoped', { ownerToken: 'tok-1' });
+        await fastGet('/me-scoped', { ownerToken: 'tok-2' });
+        expect(mockFetch).toHaveBeenCalledTimes(4);
+        // invalidation still matches scoped keys by path
+        expect(invalidateCache('/me-scoped')).toBe(4);
+      } finally {
+        clearAuth();
+      }
+    });
   });
 });
