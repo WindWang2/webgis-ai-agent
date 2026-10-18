@@ -35,6 +35,47 @@
     dataset changed/detached、archived blocked、capability 降级、blob 篡改、
     unsupported schema、quota/预算跳过、lease 冲突、顺序多次恢复、
     permission_changed、secret 红线）+ 路由接线 6（三重门/404 面/全流程）。
+## [Unreleased] - 2026-10-18 (zcode/renderwork-protocol-v1, ADR-0225)
+
+### Added (render: RenderWork Protocol V1 执行闭环, ADR-0225)
+- **执行信封 `render_work.v1`**（`app/lib/cartography/render_work_envelope.py`）：
+  MapSpec + 会话事实 → versioned 纯投影（work_id/work_fingerprint 确定性；
+  data_dependencies 带 revision/fingerprint；invalidation hints 显式
+  style-only vs data-changed；零载荷红线 —— refs/IDs/计数，绝不含
+  GeoJSON/样式体）。会话供给 `app/services/render_work_supply.py`
+  （fail-open + 身份键 LRU + last-emitted 记忆）。
+- **ACK v1 additive 演进**（`render_apply_ack.v1` 不换版本）：
+  可选 `work` echo（仅同代信封；work_id + work_fingerprint + style_epoch）
+  + `sources[]` per-source 数据代次对账（`stale` + `stale_data_revision`
+  披露实际在用 revision）；entry 词表增 `stale`（对齐 #1618 disposition）。
+  服务端 validator/findings 同步（stale entry = 当前代 warning finding；
+  事务级 stale 语义不变）。
+- **renderer capability v1**（`app/lib/cartography/renderer_capability.py`）：
+  源类型/feature 面（clustering/heatmap/terrain/3D/export）首个声明面 +
+  versioned manifest + fingerprint；layer/component 维度单一真相引用不
+  复制。#1617 未合并的 representation/generalization 诚实声明
+  supported=false。`design_system.renderCapabilityManifest` 导出。
+- **stale/generation 守卫**：`MapSpecRuntime.getStyleEpoch()`（#459 token
+  additive getter）随 ACK echo；前端 render-work store（防御式解析 +
+  代次门 + 会话隔离）接线 SSE step_result 与 map-state 恢复面。
+- **telemetry**：`render_perf_probes.v1` additive —— `data_plane.bytesFetched`
+  （scheduler fulfilled 字节一次估算双消费）+ `work_receipt`（work_id/
+  work_match/recompile_fallbacks）。
+- **Python↔TS 三重锁 + 12 场景语料**（`tests/cartography/render_work_corpus/`）：
+  contract_manifest.json ≡ Python consts ≡ TS 镜像（双侧 drift test）；
+  golden 语料 Python 侧重放 projector、TS 侧以同一份 JSON 跑真实
+  buildRenderApplyAck（幂等重放确定性 s11≡s01 内联守卫）。
+- **文档**：ADR-0225 + UBIQUITOUS_LANGUAGE 增条（RenderWork / work
+  fingerprint / data dependency / apply ACK）。
+
+### Changed
+- `tool_dispatch_service`：vector/raster 两处 authoring 路径 attach
+  `render_work`（fail-open；**本地投影** —— 从 lifecycle 已验证事实投影，
+  不重读 state，消除并行工具调用的代次撕裂；slim_event_result 自动透传）。
+- `GET /sessions/{id}/map-state`：恢复面同带 `render_work`（重连/重放
+  幂等对账基线）。
+- `frontend`：ACK builder/observation collector/observation hook/
+  use-sse-stream/map-state-restore 增维接线（全部 additive，旧后端兼容）。
 
 ## [Unreleased] - 2026-10-09 (fix/deep-review-2026-10-08, 深度评审 Critical/High 清偿)
 

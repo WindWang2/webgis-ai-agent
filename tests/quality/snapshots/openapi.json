@@ -7877,6 +7877,17 @@
       "title": "Toolcallid",
       "type": "string"
      },
+     "toolFingerprint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Toolfingerprint"
+     },
      "turnToken": {
       "anyOf": [
        {

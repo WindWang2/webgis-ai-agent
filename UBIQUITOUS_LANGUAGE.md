@@ -12,6 +12,10 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **MapSpec generation** | One revision lineage of a session's MapSpec; a verdict or observation belongs to exactly one generation. | revision (weaker: a generation may span several revisions), turn |
 | **MapSpec fingerprint** | The content hash identifying a MapSpec generation; the join key between intent, observation, and verdict. | hash, style hash |
 | **Superseded** | The state of a verdict/observation whose generation a newer intent has replaced; it must never be acted on. | stale, outdated |
+| **RenderWork envelope** | The versioned execution envelope (`render_work.v1`) projected from a MapSpec generation + session facts; carries refs/IDs/revisions only — never payloads, never a second spec. | work order, render job spec |
+| **Work fingerprint** | Deterministic sha256 of a RenderWork envelope's semantic fields; same inputs ⇒ same fingerprint, making idempotent replay detectable. | work hash |
+| **Data dependency** | One source's data identity in the envelope: source_id + kind + content revision + descriptor/data fingerprint (+ ref carrier). The join key the apply ACK reconciles against. | source ref (weaker: no revision) |
+| **Apply ACK (v1)** | Structured per-layer/component/source result of applying one desired generation, bound to a mapspec revision (and, when a same-generation envelope exists, to a work fingerprint + style epoch). Evidence of execution, never an oracle of visual quality. | render result (weaker: no per-layer attribution) |
 | **MapSpec lifecycle review** | The desired-state review embedded in a mutation tool's `content` (`stage: desired_state`). | mutation review, compile review |
 
 ## Validity ladder

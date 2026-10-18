@@ -1,7 +1,8 @@
 """Pi 动态工具面测试（ADR-0103 Phase 1-4）。
 
-- spawn dump v2 形状：注册超集 + default-active + native 完整 schema；
-  绝不含 tier-3/hidden/planned/external_unavailable；
+- spawn dump 形状（ADR-0224：默认 v3 = v2 键 + abi/spec/generation 加性
+  字段；PI_TOOL_ABI=0 回 v2）：注册超集 + default-active + native 完整
+  schema；绝不含 tier-3/hidden/planned/external_unavailable/destructive；
 - resolve_pi_tool_call：动态注册面直呼 → execute（与 proxy 同管线）；
   面外名字仍 reject；native wrap-reject 不变；
 - compute_turn_active_tools：env 关 → 空；正常 → 含 native 前门、无 tier-3；
@@ -31,8 +32,10 @@ def registry():
 
 
 def test_spawn_surface_v2_shape(registry):
+    """ADR-0224：默认 dump v3；v2 键保留（扩展 v2 解析兼容）。"""
     surface = pi_surface_for_spawn(registry)
-    assert surface["version"] == 2
+    assert surface["version"] == 3
+    assert surface["abi"]["version"] == 1
     names = {t["name"] for t in surface["tools"]}
     # native 完整在册
     assert set(NATIVE_TOOL_NAMES) <= names
@@ -145,7 +148,10 @@ def test_active_tools_block_absent_when_dynamic_off(monkeypatch):
     class _FakePlan:
         progress = []
 
-    assert _active_tools_block_for("msg", _FakeSurface(), _FakePlan()) == ""
+    # ADR-0224：_active_tools_block_for 现为 async（situation 供给 await 点）
+    import asyncio
+
+    assert asyncio.run(_active_tools_block_for("msg", _FakeSurface(), _FakePlan())) == ""
     assert ACTIVE_TOOLS_MARKER
 
 
@@ -154,7 +160,7 @@ def test_spawn_dump_roundtrip_file(registry, tmp_path):
 
     path = write_surface_file(registry, tmp_path / "native-tools.json")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["version"] == 2
+    assert payload["version"] == 3  # ADR-0224：默认 v3（v2 键保留）
     assert isinstance(payload["tools"], list) and payload["tools"]
 
 
