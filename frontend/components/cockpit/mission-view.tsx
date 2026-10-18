@@ -29,7 +29,7 @@ import {
   type CockpitTimeline,
 } from '@/lib/api/cockpit';
 import { ApiError, describeApiError } from '@/lib/api/transport';
-import { useT } from '@/lib/i18n/useT';
+import { useT, useLocale } from '@/lib/i18n/useT';
 import { StatusBadge, Kv, EmptyState, VirtualList } from './cockpit-shared';
 
 type Op = 'start' | 'suspend' | 'resume' | 'cancel';
@@ -55,6 +55,8 @@ function fmtTime(ts: number | null | undefined, locale: string): string {
 
 export function MissionView({ enabled, ownerToken, selectedId, onSelect }: MissionViewProps) {
   const t = useT('cockpit');
+  // #1628/#1436：mission 时间戳随应用语言格式化（zh-CN 用户输出不变），不硬编码。
+  const locale = useLocale();
   const [armed, setArmed] = useState<Op | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -228,8 +230,8 @@ export function MissionView({ enabled, ownerToken, selectedId, onSelect }: Missi
             <Kv label={t('mission.blocked')}>
               {detail.data.mission.recovery.blocked_reason || t('mission.none')}
             </Kv>
-            <Kv label={t('mission.createdAt')}>{fmtTime(detail.data.mission.created_at, 'zh-CN')}</Kv>
-            <Kv label={t('mission.updatedAt')}>{fmtTime(detail.data.mission.updated_at, 'zh-CN')}</Kv>
+            <Kv label={t('mission.createdAt')}>{fmtTime(detail.data.mission.created_at, locale)}</Kv>
+            <Kv label={t('mission.updatedAt')}>{fmtTime(detail.data.mission.updated_at, locale)}</Kv>
           </div>
 
           {/* 工作前沿 */}
@@ -269,7 +271,7 @@ export function MissionView({ enabled, ownerToken, selectedId, onSelect }: Missi
                   <StatusBadge state={cp.state} label={stateLabel(cp.state)} />
                   <span className="text-ink-secondary">{cp.checkpoint_id}</span>
                   <span className="ms-auto text-ink-muted">
-                    rev {cp.mission_revision} · g{cp.goal_revision} · {fmtTime(cp.created_at, 'zh-CN')}
+                    rev {cp.mission_revision} · g{cp.goal_revision} · {fmtTime(cp.created_at, locale)}
                   </span>
                 </div>
               )}

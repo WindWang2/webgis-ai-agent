@@ -249,7 +249,13 @@ function freshMockMap() {
   // The shared mock ships isStyleLoaded (true), setTerrain and getBounds
   // (default center [116.4, 39.9] ± 0.1° = the exact constants this helper
   // used to hard-code); no per-test scaffolding needed anymore (#404).
-  return makeMockMaplibreMap();
+  const map = makeMockMaplibreMap();
+  // #1645（#1597）：真实 MapLibre 的 style 恒带私有 `_loaded` 标志
+  // （style.load 后 true、setStyle 过渡期 false）—— styleSpecReady 的
+  // 实际生效路径。补上它使替身与生产同构，避免落到 isStyleLoaded 兜底
+  // 路径（兜底只在私有字段漂移时出现，且会记一条 evidence 披露）。
+  map.style = { _loaded: true };
+  return map;
 }
 
 /** A layer that triggers exactly one cartographic observation per fingerprint. */

@@ -23,6 +23,7 @@ import {
   type WorkbenchDelta,
 } from './delta';
 import { devOnly } from '@/lib/utils/logger';
+import { currentLocale } from '@/lib/i18n/t';
 
 export const UNDO_MAX_HISTORY = 50;
 
@@ -68,7 +69,8 @@ function journal(entry: Pick<OpLogEntry, 'type' | 'label'> & { detail?: string; 
   try {
     useHudStore.getState().pushOpLog({
       id: `op-${seq}`,
-      time: new Date().toLocaleTimeString('zh-CN'),
+      // #1628/#1436：事件发生时的语言即文案语言（与 tNow 同哲学），不硬编码。
+      time: new Date().toLocaleTimeString(currentLocale()),
       ...entry,
     });
   } catch {

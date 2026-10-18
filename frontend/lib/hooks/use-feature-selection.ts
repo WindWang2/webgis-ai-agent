@@ -8,7 +8,7 @@ import type { SelectedFeatureInfo } from '@/lib/store/hud-types';
 import { geometryBBox } from '@/lib/utils/geo';
 import type { Layer } from '@/lib/types/layer';
 import { publishSelection, getSelection } from '@/lib/selection/selection-store';
-// ADR-0225 Interaction IR V1：选中事实入事件总线（最小载荷：引用+字段名+摘要）。
+// ADR-0227 Interaction IR V1：选中事实入事件总线（最小载荷：引用+字段名+摘要）。
 import { emitFeatureSelected } from '@/lib/interaction/bus';
 // C11（issue #1556）：要素属性 typed 访问面 —— id/OBJECTID 魔法字段
 // 的读取收口到 propOf（替代 as any 链；字段改名编译期暴露）。
@@ -130,7 +130,7 @@ export function useFeatureSelection({
       properties: (feature.properties || {}) as Record<string, unknown>,
       bbox: tileBbox ?? undefined,
     })
-    // ADR-0225：选中 → 交互事件（字段只报名、几何只报摘要 —— 隐私最小化）。
+    // ADR-0227：选中 → 交互事件（字段只报名、几何只报摘要 —— 隐私最小化）。
     emitFeatureSelected({
       layerId: layerKey,
       featureId: rawFeatureId,

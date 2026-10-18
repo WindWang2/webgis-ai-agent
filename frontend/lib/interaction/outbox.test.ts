@@ -1,9 +1,9 @@
 /**
- * Interaction IR V1 outbox 测试（ADR-0225 C/G）：
+ * Interaction IR V1 outbox 测试（ADR-0227 C/G）：
  * 批量/重试/永久丢弃分类 / replace_pending 合并 / 水印同步收敛 /
  * 队列上界 / keepalive 冲刷分块 / per-tab 身份与 seq 持久化。
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createInteractionOutbox,
   getClientInstanceId,
@@ -160,6 +160,62 @@ describe('interaction outbox · 重试与丢弃', () => {
     await h.advance(50);
     await h.advance(5000);
     expect(h.fetchCalls.length).toBe(1);
+  });
+
+  it('persist_degraded 2xx 按暂态重试（同批重发），exhausted 后放弃', async () => {
+    const h = createHarness({ debounceMs: 100, retryBaseMs: 100, retryMaxMs: 400 });
+    // 后端持久化降级对账信道：2xx + persist_degraded 且**不带** watermarks
+    // （服务端内存态已折叠但未落库）—— 客户端必须重发，重放幂等收敛。
+    h.respondWith(() => new Response(
+      JSON.stringify({
+        accepted: 1, duplicates: 0, stale: 0, rejected: 0, acks: [],
+        persist_degraded: true,
+      }),
+      { status: 200 },
+    ));
+    h.outbox.enqueue(event(1));
+    await h.advance(100);
+    expect(h.fetchCalls.length).toBe(1);
+    await h.advance(300);
+    expect(h.fetchCalls.length).toBe(2);
+    // 退避后重发的是同一批事件（replace_pending 风暴只发最后 settled 态）。
+    expect(h.fetchCalls[1].body.events.map((e) => e.client_seq)).toEqual([1]);
+    await h.advance(1000);
+    expect(h.fetchCalls.length).toBe(3);
+    await h.advance(5000);
+    expect(h.fetchCalls.length).toBe(3); // 3 次尝试耗尽（同 5xx 用例）
+  });
+
+  it('persist_degraded 后恢复：带水印的成功响应收敛重发', async () => {
+    const h = createHarness({ debounceMs: 50, retryBaseMs: 100 });
+    let call = 0;
+    h.respondWith(() => {
+      call += 1;
+      if (call === 1) {
+        return new Response(
+          JSON.stringify({
+            accepted: 1, duplicates: 0, stale: 0, rejected: 0, acks: [],
+            persist_degraded: true,
+          }),
+          { status: 200 },
+        );
+      }
+      const instance = getClientInstanceId(h.storage);
+      const body: InteractionIngestResponse = {
+        accepted: 1, duplicates: 0, stale: 0, rejected: 0, acks: [],
+        watermarks: { [instance]: 1 },
+      };
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    h.outbox.enqueue(event(1));
+    await h.advance(50);
+    expect(h.fetchCalls.length).toBe(1);
+    await h.advance(500);
+    expect(h.fetchCalls.length).toBe(2);
+    expect(h.outbox.acknowledgedSeq()).toBe(1);
+    // 水印到达后收敛：不再有第三次发送。
+    await h.advance(5000);
+    expect(h.fetchCalls.length).toBe(2);
   });
 });
 

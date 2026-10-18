@@ -1,5 +1,5 @@
 /**
- * Interaction IR V1 —— 前端契约类型与常量（ADR-0225）。
+ * Interaction IR V1 —— 前端契约类型与常量（ADR-0227）。
  *
  * 权威词表在 `app/services/gis_harness/interaction_ir/contracts.py`；本文件
  * 是浏览器端消费的镜像（kind 词表 / 合并策略 / 有界常量），由
@@ -34,6 +34,11 @@ export interface InteractionEventRefs {
   mapspec_fingerprint?: string;
   /** F4 viewport 双写方序（仅 viewport_settled 携带）。 */
   viewport_seq?: number;
+  /**
+   * 渲染观察代次引用（render observation seq）。后端 ingest 会记录该
+   * 字段，但前端一期未做关联 —— reserved（未生产填充），避免误导读者
+   * 以为已接线。
+   */
   render_observation_seq?: number;
 }
 

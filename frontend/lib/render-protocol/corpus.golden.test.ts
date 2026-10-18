@@ -66,8 +66,11 @@ describe('contract manifest triple-lock (JSON ≡ TS)', () => {
     expect({ ...RENDERER_CAPABILITY_MANIFEST.feature_support }).toEqual(
       manifest.capability.feature_support,
     );
-    // #1617 红线：未合并不虚报 supported。
-    expect(manifest.capability.feature_support.semantic_zoom_representation).toBe(false);
+    // v1.6 红线（#1617 已合并，2026-10-18）：渲染端可执行表达已端到端
+    // 落地（后端生产方 + 前端 compiler/runtime 消费）—— 不虚报 false；
+    // artifact 模式（generalization）无预计算工件供给链 —— 不虚报 true。
+    expect(manifest.capability.feature_support.semantic_zoom_representation).toBe(true);
+    expect(manifest.capability.feature_support.generalization).toBe(false);
   });
 });
 

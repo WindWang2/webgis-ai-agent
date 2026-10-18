@@ -33,6 +33,8 @@ from app.lib.cartography.render_work_envelope import (
     project_render_work_envelope,
 )
 
+pytestmark = pytest.mark.cartography
+
 CORPUS_DIR = Path(__file__).resolve().parent / "render_work_corpus"
 MANIFEST_PATH = CORPUS_DIR / "contract_manifest.json"
 GOLDEN_PATH = CORPUS_DIR / "render_work_golden.json"
@@ -157,8 +159,9 @@ class TestScenarioSemantics:
             golden["scenarios"]["s08_representation_passthrough"]["envelope"]["required_capabilities"]
         )
         assert {"circle", "geojson"} <= caps
-        # #1617 未合并：capability 面不声明 representation 为 supported ——
-        # 信封的 required_capabilities 也不得出现其专属键。
+        # 信封对 layer.representation 透传不重裁决（P2-3 语义）——
+        # required_capabilities 只出现 layer/source 词表键，不出现
+        # representation 专属键（capability 面的声明值与信封词表无关）。
         assert "semantic_zoom_representation" not in caps
 
 

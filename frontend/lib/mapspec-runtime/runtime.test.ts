@@ -3,6 +3,7 @@ import { MapSpecRuntime, MAX_STYLE_RETRY_ATTEMPTS } from "./runtime";
 import type { MapSpec } from "@/lib/mapspec-compiler/types";
 import { consumeDiffLastFailed, _resetWorkerBridgeForTests } from "@/lib/mapspec-compiler/worker-bridge";
 import { getPerfCounters, resetPerfCounters } from "@/lib/utils/perf-counters";
+import { getSymbolLawEvidence, resetSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
 
 // ADR-0036: MapSpecRuntime — applies a SpecPatch to a live (here: mocked) map.
 // House style: do NOT vi.mock('maplibre-gl'); hand-roll a stub map that records
@@ -187,6 +188,24 @@ describe("MapSpecRuntime (ADR-0036)", () => {
   });
 
   describe("reconcile — style-not-loaded retry", () => {
+    it("style._loaded 缺席 → 兜底路径记一次可观测告警（私有字段漂移不静默）", () => {
+      // #1645（#1597 依赖）：真 MapLibre 恒有 style._loaded —— 缺席即私有
+      // 依赖漂移（大版移除/改名），静默回退 isStyleLoaded() 会把 spec 无限
+      // 推迟到 style_load_timeout。兜底路径必须可观测（evidence + dev
+      // 告警），且每实例只记一次（styleSpecReady 每遍 reconcile 都跑）。
+      resetSymbolLawEvidence();
+      map.style = {}; // style 在场但无 _loaded（私有字段消失的形状）
+      const rt = new MapSpecRuntime(map);
+      const ready = rt as unknown as { styleSpecReady: () => boolean };
+      expect(ready.styleSpecReady()).toBe(true); // 兜底 isStyleLoaded() = true
+      ready.styleSpecReady();
+      const ev = getSymbolLawEvidence();
+      expect(ev.counts["style-spec-ready-fallback"]).toBe(1);
+      expect(
+        ev.events.filter((e) => e.kind === "style-spec-ready-fallback"),
+      ).toHaveLength(1);
+    });
+
     it("defers application until isStyleLoaded becomes true, then applies once", async () => {
       vi.useFakeTimers();
       let loaded = false;

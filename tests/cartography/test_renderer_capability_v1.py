@@ -3,8 +3,9 @@
 锁定：单一真相引用（layer_capability / component_renderers 不复制）、
 schema 词表全对账（source types ⊆ mapspec_schema union；layer types ==
 词表）、required capabilities 裁决（unsupported 不静默放行）、fingerprint
-稳定性 + 前向兼容红线（#1617 未合并 → semantic_zoom_representation =
-supported: false，绝不虚报）。
+稳定性 + 诚实红线（#1617 已合并：渲染端可执行表达
+``semantic_zoom_representation = supported: true``；artifact 模式
+``generalization`` 无供给链仍 = false，绝不虚报）。
 """
 from __future__ import annotations
 
@@ -19,6 +20,8 @@ from app.lib.cartography.mapspec_schema import (
     RasterMapSpecSource,
     VectorMapSpecSource,
 )
+
+pytestmark = pytest.mark.cartography
 
 
 class TestManifestSingleSource:
@@ -65,16 +68,27 @@ class TestManifestSingleSource:
 
 
 class TestPendingCapabilityHonesty:
-    """红线：不把未来功能（#1617）声明为 supported。"""
+    """红线：只把已实现声明为 supported（#1617 已合并，2026-10-18）。"""
 
-    def test_semantic_zoom_not_supported_on_master(self):
-        assert rc.FEATURE_SUPPORT["semantic_zoom_representation"]["supported"] is False
+    def test_renderer_executable_representation_supported(self):
+        # v1.6 渲染端可执行模式端到端落地（后端生产方 + 前端 compiler/
+        # runtime 消费）—— capability 面不得再锁在旧值。
+        assert rc.FEATURE_SUPPORT["semantic_zoom_representation"]["supported"] is True
+
+    def test_artifact_generalization_not_supported(self):
+        # artifact 模式（aggregate_grid/generalized）需预计算工件 ——
+        # master 无供给链，绝不虚报。
         assert rc.FEATURE_SUPPORT["generalization"]["supported"] is False
 
     def test_unsupported_required_capability_fails_check(self):
-        verdict = rc.check_required_capabilities(["semantic_zoom_representation"])
+        verdict = rc.check_required_capabilities(["generalization"])
         assert verdict["supported"] is False
-        assert "semantic_zoom_representation" in verdict["unsupported"]
+        assert "generalization" in verdict["unsupported"]
+
+    def test_supported_required_capability_passes_check(self):
+        verdict = rc.check_required_capabilities(["semantic_zoom_representation"])
+        assert verdict["supported"] is True
+        assert verdict["unsupported"] == []
 
     def test_degraded_partial_source(self):
         verdict = rc.check_required_capabilities(["data_fabric"])

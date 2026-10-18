@@ -42,9 +42,9 @@ import {
   snapToVertex,
 } from '@/lib/edit/sketch-geometry';
 import { useT } from '@/lib/i18n/useT';
-// ADR-0225 Interaction IR V1：草图增删改 → AOI 事件（几何只报摘要）。
+// ADR-0227 Interaction IR V1：草图增删改 → AOI 事件（几何只报摘要）。
 import { emitAoiChanged } from '@/lib/interaction/bus';
-import { t as tNow } from '@/lib/i18n/t';
+import { t as tNow, currentLocale } from '@/lib/i18n/t';
 
 const SKETCH_FILL_LAYER = 'wb-sketch-fill';
 const SKETCH_LINE_LAYER = 'wb-sketch-line';
@@ -135,7 +135,7 @@ function commitSketchCommand(
   const before = previous;
   mutate();
   const after = getSketchState().features;
-  // ADR-0225：用户意图命令 → AOI 事件（undo/redo 重放不经过本包装、不再
+  // ADR-0227：用户意图命令 → AOI 事件（undo/redo 重放不经过本包装、不再
   // 发射 —— 事件记录的是绘制时点的事实；undo 语义的事件化是 V2 候选）。
   try {
     const beforeIds = new Set(before.map((f) => f.id));
@@ -560,7 +560,8 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
             id: `op-${Date.now()}`,
             type: 'add',
             label: t('map.sketch.exportGeoJson'),
-            time: new Date().toLocaleTimeString('zh-CN'),
+            // #1628/#1436：事件发生时的语言即文案语言（与 tNow 同哲学），不硬编码。
+            time: new Date().toLocaleTimeString(currentLocale()),
             actor: 'user',
           });
         }}

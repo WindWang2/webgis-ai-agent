@@ -16,7 +16,7 @@ import { useToastStore } from '@/components/ui/toast';
 import { tagUserDisplayed, untagUserPinned } from '@/lib/chat/turn-focus';
 import { journalOnly, presentationCommand, reorderCommand } from '@/lib/workbench/undo';
 import { devOnly } from '@/lib/utils/logger';
-// ADR-0225 Interaction IR V1：用户 mutation 意图 + 结局入事件总线（事件在
+// ADR-0227 Interaction IR V1：用户 mutation 意图 + 结局入事件总线（事件在
 // mutation 落定后发射，client_mutation_id 与服务端 c:<id> 交叉校验）。
 import { emitMutationLinked } from '@/lib/interaction/bus';
 
@@ -239,7 +239,7 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
-      // ADR-0225：mutation 落定 → 交互事件（committed 带权威 revision）。
+      // ADR-0227：mutation 落定 → 交互事件（committed 带权威 revision）。
       if (patch.visible !== undefined) emitPresentationEvent('visible', 'committed', data.mutation_revision);
       if (patch.opacity !== undefined) emitPresentationEvent('opacity', 'committed', data.mutation_revision);
       // 先清本次收敛目标自己的 pending，再回灌 —— 响应文档对目标层有
@@ -559,7 +559,7 @@ async function removeLayerFromSpecOnce(
     return { outcome: 'reflected', mutationId: newMutationId() };
   }
   // 方向 8：每次尝试独立幂等键 —— committed 那笔进服务端去重索引
-  //（superseded 尝试不留存证）；ADR-0225 事件关联同一笔真实 id。
+  //（superseded 尝试不留存证）；ADR-0227 事件关联同一笔真实 id。
   const attemptMutationId = newMutationId();
   try {
     const data = await apiFetch<MutationResponse>(
@@ -612,14 +612,14 @@ async function removeLayerFromSpecOnce(
 
 export type RemoveLayerOutcome = 'committed' | 'reflected' | 'unsynced';
 
-/** ADR-0225：删除落定回报（outcome + 真实铸造的 client_mutation_id）。 */
+/** ADR-0227：删除落定回报（outcome + 真实铸造的 client_mutation_id）。 */
 export interface RemoveLayerReport {
   outcome: RemoveLayerOutcome;
   mutationId?: string;
   revision?: number;
 }
 
-/** ADR-0225 防御：mutationId 回报缺失时的非存证 fallback（服务端将按
+/** ADR-0227 防御：mutationId 回报缺失时的非存证 fallback（服务端将按
  * unverified 呈现 —— 不伪造可校验链接）。 */
 function removeEventIdFallback(specLayerId: string): string {
   const safe = specLayerId.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, 100);
@@ -684,7 +684,7 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
         return removeLayerFromSpec(specLayerId, enqueuedSessionId);
       },
     );
-    // ADR-0225：删除结局如实入事件（reflected = 并发已删，服务端真相一致；
+    // ADR-0227：删除结局如实入事件（reflected = 并发已删，服务端真相一致；
     // unsynced = 双 superseded 未落账 —— 绝不投影为成功）。关联真实铸造的
     // client_mutation_id（committed 那笔在服务端留有 c:<id> 存证）。
     if (outcome !== 'session-switched' && (outcome.outcome === 'committed' || outcome.outcome === 'reflected')) {
@@ -754,7 +754,7 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
     layers.map((layer) => ({ ...layer })),
   );
   useHudStore.getState().reorderLayers(layers as any);
-  // ADR-0225：排序事件关联本笔真实 mutation id（commitMapSpecMutation 尊重
+  // ADR-0227：排序事件关联本笔真实 mutation id（commitMapSpecMutation 尊重
   // 调用方自带 id）；首个位移层作为 from/to 摘要。
   const reorderMutationId = newMutationId();
   let movedLayer: { id: string; from: number; to: number } | null = null;

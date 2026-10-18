@@ -2,7 +2,7 @@
 /**
  * Interaction IR review 清偿（P1-4 机器验证）：程序性相机移动（agent
  * flyTo/set_view，无 originalEvent）不得产生用户 viewport 交互事件 ——
- * FE-3 同款手势判别在 ADR-0225 viewport 事件源上的应用。
+ * FE-3 同款手势判别在 ADR-0227 viewport 事件源上的应用。
  */
 import { render, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import { MapPanel } from './map-panel';
 import { makeMockMaplibreMap } from '../../test/__mocks__/maplibre-map';
 import { emitViewportSettled } from '@/lib/interaction/bus';
+import { resetViewportSeq, viewportSeqTracker } from '@/lib/utils/viewport-seq';
 
 vi.mock('@/lib/interaction/bus', () => ({
   emitViewportSettled: vi.fn(),
@@ -155,6 +156,7 @@ beforeEach(() => {
   hud.reset();
   rmg.loaded = false;
   rmg.map = makeMockMaplibreMap() as unknown;
+  resetViewportSeq();
 });
 
 afterEach(() => {
@@ -177,7 +179,7 @@ async function fireMoveAndSettle(evt: unknown): Promise<void> {
   });
 }
 
-describe('MapPanel viewport 事件源（ADR-0225 / review P1-4）', () => {
+describe('MapPanel viewport 事件源（ADR-0227 / review P1-4）', () => {
   const panelProps = {
     layers: [],
     onRemoveLayer: () => undefined,
@@ -189,7 +191,13 @@ describe('MapPanel viewport 事件源（ADR-0225 / review P1-4）', () => {
     render(<MapPanel {...panelProps} />);
     await fireMoveAndSettle(moveEvent(true));
     expect(emitViewportSettled).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(emitViewportSettled).mock.calls[0][0].zoom).toBe(5);
+    const call = vi.mocked(emitViewportSettled).mock.calls[0][0];
+    expect(call.zoom).toBe(5);
+    // F4 方序对账：viewportSeq 与 turn-start 快照（useMapBridge send 的
+    // map_state.viewport_seq）同源同 tracker —— 落定事件携带落定方序，
+    // 后端投影才能把 settled 事件与同轮 viewport 方序对账。
+    expect(call.viewportSeq).toBe(viewportSeqTracker.current);
+    expect(call.viewportSeq).toBeGreaterThanOrEqual(1);
   });
 
   it('程序性相机（agent flyTo，无 originalEvent）→ 不 emit 用户事件', async () => {

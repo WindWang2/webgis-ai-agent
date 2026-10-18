@@ -14,7 +14,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { useToastStore } from '@/components/ui/toast';
 import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
-import { useT } from '@/lib/i18n/useT';
+import { useT, useLocale } from '@/lib/i18n/useT';
 
 /**
  * 操作历史弹层（ADR-0147 P5）。
@@ -50,6 +50,8 @@ type Tab = 'timeline' | 'layers';
 
 export function UndoHistoryPanel(): React.ReactElement | null {
   const t = useT('workbench');
+  // #1628/#1436：操作时间随应用语言格式化（zh-CN 用户输出不变），不硬编码。
+  const locale = useLocale();
   const isOpen = useUndoHistoryStore((s) => s.isOpen);
   const closePanel = useUndoHistoryStore((s) => s.closePanel);
   useUndoVersion(); // 栈变化驱动重渲染
@@ -213,7 +215,7 @@ export function UndoHistoryPanel(): React.ReactElement | null {
                         <span className="min-w-0 flex-1 truncate">
                           {cmd.label}
                           <span className="ml-2 text-caption text-ink-muted">
-                            {cmd.actor === 'agent' ? '· agent' : ''} {new Date(cmd.ts).toLocaleTimeString('zh-CN')}
+                            {cmd.actor === 'agent' ? '· agent' : ''} {new Date(cmd.ts).toLocaleTimeString(locale)}
                           </span>
                         </span>
                         <button
@@ -307,7 +309,7 @@ export function UndoHistoryPanel(): React.ReactElement | null {
                         {KIND_LABEL_KEYS[cmd.kind] ? t(KIND_LABEL_KEYS[cmd.kind]) : cmd.kind}
                       </span>
                       <span className="min-w-0 flex-1 truncate">{cmd.label}</span>
-                      <span className="shrink-0 text-caption text-ink-muted">{new Date(cmd.ts).toLocaleTimeString('zh-CN')}</span>
+                      <span className="shrink-0 text-caption text-ink-muted">{new Date(cmd.ts).toLocaleTimeString(locale)}</span>
                     </li>
                   ))}
                 </ul>

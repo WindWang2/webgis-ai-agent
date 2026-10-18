@@ -8,11 +8,12 @@
   versioned/fingerprint 化，不复制判定；
 - 组件支持：唯一权威 = :mod:`app.lib.cartography.component_renderers`
   （``_SUPPORT_MATRIX``）—— 本模块只投影组件类型清单供对账；
-- 源类型 / feature 面（clustering/heatmap/terrain/3D/generalization/
+- 源类型 / feature 面（clustering/heatmap/terrain/3D/representation/
   export）：本模块是**首个声明面**，truth = 前端
   ``frontend/lib/mapspec-compiler/compiler.ts`` 与 runtime 的实际消费
-  实况（只描述已实现，不声明未来功能为 supported —— #1617 的
-  RepresentationAtScale 未合并前 generalization = supported: false）。
+  实况（只描述已实现，不声明未来功能为 supported —— v1.6 渲染端可执行
+  表达已端到端落地故 ``semantic_zoom_representation = true``；artifact
+  模式（``generalization``）无预计算工件供给链故仍 = false）。
 
 消费方向：
 
@@ -97,14 +98,22 @@ FEATURE_SUPPORT: Dict[str, Dict[str, Any]] = {
         "note": "fill-extrusion 编译；视觉依赖地图 pitch",
     },
     "semantic_zoom_representation": {
-        # #1617（MapSpec v1.6 RepresentationAtScale）未合并 —— 不声明为
-        # supported（红线：不把未来功能声明为已实现）。
-        "supported": False,
-        "note": "pending #1617 (layer.representation v1.6)；master 无消费方",
+        # #1617（MapSpec v1.6 RepresentationAtScale）已合并（2026-10-18）：
+        # 渲染端可执行模式（raw/point_cluster/visual_heatmap）端到端落地 ——
+        # 后端生产方 analysis_cartography_converter 落笔
+        # layer.representation，前端 compiler（resolveRepresentationPlan）
+        # 与 runtime（表达窗子层 / 源级 cluster）实际消费。artifact 模式
+        # （aggregate_grid/generalized）需预计算工件，不可用 —— 见
+        # generalization 键（红线：只声明已实现）。
+        "supported": True,
+        "note": "渲染端可执行模式（raw/point_cluster/visual_heatmap）已实现；artifact 模式无工件（见 generalization）",
     },
     "generalization": {
+        # artifact-backed 表达模式（aggregate_grid/generalized）的 capability
+        # seam：须调用方声明已实际可用的预计算工件 —— master 无 artifact
+        # 供给链，故不声明 supported（红线：不把未来功能声明为已实现）。
         "supported": False,
-        "note": "随 #1617 RepresentationAtScale 提供；master 无消费方",
+        "note": "artifact 模式（aggregate_grid/generalized）需预计算工件；master 无供给链",
     },
     "export_svg": {
         "supported": True,

@@ -355,7 +355,10 @@ export type SymbolLawEventKind =
   | "representation-gate-degenerate"
   | "representation-window-layer"
   | "representation-window-hidden"
-  | "representation-heatmap-degraded";
+  | "representation-heatmap-degraded"
+  // #1645（#1597 依赖）：styleSpecReady 的私有字段 style._loaded 缺席
+  // 兜底披露（MapLibre 大版移除/改名 → 静默回退 isStyleLoaded 的可观测化）。
+  | "style-spec-ready-fallback";
 
 export interface SymbolLawEvent {
   kind: SymbolLawEventKind;
