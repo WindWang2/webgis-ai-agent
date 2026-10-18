@@ -1979,10 +1979,31 @@ class ChatExecutionEngine:
         # ADR-0223 D4：锁外 host-neutral settle 的 turn 事实（早失败/未参与
         # kernel 台账的 turn 保持 None 跳过）。
         ctx: Optional["StreamTurnContext"] = None
+        # #1646：acquire 任务跨轮询复用、绝不被 keepalive 轮询取消。旧形态
+        # ``wait_for(lock.acquire(), 10s)`` 超时取消的是「正在 acquire 的
+        # 任务」：前一个 turn 放锁与 10s 超时同刻时，锁已被授予给该（随即
+        # 被取消的）任务而无人释放 —— in-process 模式下同 session 后续每个
+        # turn 都排在这把永不释放的锁后（30s 预算耗尽 → LockContentionError
+        # 误报 → 再排队，直至进程重启）；Redis 模式下已 nx 写入的 key 随
+        # 属主取消失去 renewer，TTL 内同 session 楔死。shield 让超时只取消
+        # 「等待」而不取消「获取」；生成器退出时的诚实回收见下方 finally。
+        _acquire_task: Optional[asyncio.Task] = None
         try:
             while True:
+                if _acquire_task is None or (
+                    _acquire_task.done()
+                    and not _acquire_task.cancelled()
+                    and _acquire_task.exception() is not None
+                ):
+                    # 首次获取；或上一次 acquire 已永久失败（如 30s 争用预算
+                    # 耗尽抛 LockContentionError）—— 换一个新 acquire 重试，
+                    # 保持旧形态「每轮一次获取尝试」的节奏（死任务不复用：
+                    # wait_for 对同一失败任务立即重抛，keepalive 会退化成紧旋）。
+                    _acquire_task = asyncio.ensure_future(lock.acquire())
                 try:
-                    await asyncio.wait_for(lock.acquire(), timeout=_PLANNER_KEEPALIVE_S)
+                    await asyncio.wait_for(
+                        asyncio.shield(_acquire_task), timeout=_PLANNER_KEEPALIVE_S
+                    )
                     break
                 except asyncio.TimeoutError:
                     yield sse_event("keep_alive", {"message": "ping"})
@@ -2009,6 +2030,22 @@ class ChatExecutionEngine:
                     await _phase_gen.aclose()
                     raise
         finally:
+            if _acquire_task is not None and acquired_lock is None:
+                # #1646 生成器退出的诚实回收（await 允许、yield 不允许）：
+                # 未进入 turn 主体而 acquire 已授予（生成器在轮询 yield 处被
+                # 关闭）→ 立即释放；仍在途 → 挂完成回调，授予即刻释放。绝不
+                # cancel：取消一个「恰好此刻被授予」的 acquire 正是本 issue
+                # 的根因（锁留给死任务）—— shield 的语义本就是获取任务比
+                # 等待者长寿，回收靠回调而非取消。回调同时取回任务异常，
+                # 避免 GC 期 "exception was never retrieved" 告警。
+                def _release_if_granted(task: "asyncio.Task") -> None:
+                    if not task.cancelled() and task.exception() is None:
+                        lock.release()
+
+                if _acquire_task.done():
+                    _release_if_granted(_acquire_task)
+                else:
+                    _acquire_task.add_done_callback(_release_if_granted)
             if acquired_lock is not None:
                 acquired_lock.release()
             # ADR-0223 D4：host-neutral settle 效果在引擎会话锁释放之后执行
