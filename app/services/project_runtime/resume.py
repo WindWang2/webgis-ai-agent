@@ -1,4 +1,4 @@
-"""Runtime resume 编排（ADR-0224 §5/§6）。
+"""Runtime resume 编排（ADR-0226 §5/§6）。
 
 ``ResumeRequest → ValidationReport → RecoveryPlan → NewSessionBinding →
 ResumeReceipt`` 的执行半边：

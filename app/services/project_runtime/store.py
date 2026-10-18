@@ -1,4 +1,4 @@
-"""ProjectRuntimeStore —— 项目域 runtime snapshot 存储（ADR-0224 §6/§7）。
+"""ProjectRuntimeStore —— 项目域 runtime snapshot 存储（ADR-0226 §6/§7）。
 
 - 家：``DATA_DIR/workspaces/<project_id>/runtime-snapshots/``（项目域，
   在 mapspec 会话清扫的 ``workspaces`` 白名单之下 —— 不随会话 TTL 蒸发）；

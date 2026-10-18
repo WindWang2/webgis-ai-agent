@@ -116,7 +116,7 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
     counted = 0
     seen_entries: set = set()
     for proj_dir in project_dirs:
-        # ADR-0224：同一项目域还有 runtime-snapshots/*.json —— 其
+        # ADR-0226：同一项目域还有 runtime-snapshots/*.json —— 其
         # ``source_bindings[].durable_pointer`` 与 workspace 快照指针同语义
         # （同一 BlobStore），保护面必须一并覆盖（否则组合 workspace 快照被
         # cap 裁掉 + 会话账本死亡后，runtime manifest 承诺的恢复面被 GC 删）。

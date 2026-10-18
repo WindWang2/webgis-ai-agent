@@ -213,7 +213,7 @@ def _workspaces_root() -> Path:
 
 
 def workspaces_root() -> Path:
-    """公共别名（ADR-0224）：runtime snapshot store 复用同一路径真相。"""
+    """公共别名（ADR-0226）：runtime snapshot store 复用同一路径真相。"""
     return _workspaces_root()
 
 
@@ -517,7 +517,7 @@ class WorkspaceSnapshotService:
           （总量受 ``budget_bytes`` 约束，超出如实 ``materialize_skipped``）；
         - 全部声明 ref 盖 ``persistence_tier="workspace"`` 章 ——
           ``collect_orphan_refs`` 的保护规则零改动即生效（audit §6.5）。
-        - ``exclude_refs``（ADR-0224）：调用方判定不得物化的 ref（如 sensitive
+        - ``exclude_refs``（ADR-0226）：调用方判定不得物化的 ref（如 sensitive
           载荷）跳过物化与盖章（additive；既有调用方零行为变化）。
         """
         from app.services.artifact_registry import (
@@ -735,7 +735,7 @@ class WorkspaceSnapshotService:
     def load_snapshot(
         self, session_id: str, snapshot_id: str, *, project_id: str = ""
     ) -> Optional[WorkspaceSnapshot]:
-        """公共读取入口（ADR-0224）：runtime resume 组合账本权威时复用，
+        """公共读取入口（ADR-0226）：runtime resume 组合账本权威时复用，
         不重复实现 manifest 解析/路径解析/版本容忍语义。"""
         return self._load_snapshot(session_id, snapshot_id, project_id=project_id)
 

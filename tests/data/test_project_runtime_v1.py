@@ -1,4 +1,4 @@
-"""Durable Project Cartographic Runtime V1 —— 跨 session 场景语料（ADR-0224）。
+"""Durable Project Cartographic Runtime V1 —— 跨 session 场景语料（ADR-0226）。
 
 端到端恢复主场景 + 漂移/降级/安全/并发边界：
 

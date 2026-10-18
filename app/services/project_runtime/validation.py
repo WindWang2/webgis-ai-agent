@@ -1,4 +1,4 @@
-"""Runtime snapshot 校验（ADR-0224 §5 —— verify-first，绝不先写后验）。
+"""Runtime snapshot 校验（ADR-0226 §5 —— verify-first，绝不先写后验）。
 
 ``validate_runtime_snapshot`` 只读：schema / project / permission /
 MapSpec 完整性 / durable 指针 / dataset 版本指纹 / capability 可用性

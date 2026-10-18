@@ -1,7 +1,7 @@
 # Changelog
-## [Unreleased] - 2026-10-18 (zcode/durable-project-cartographic-runtime-v1, ADR-0224)
+## [Unreleased] - 2026-10-18 (zcode/durable-project-cartographic-runtime-v1, ADR-0226)
 
-### Added (harness: durable project cartographic runtime V1, ADR-0224)
+### Added (harness: durable project cartographic runtime V1, ADR-0226)
 - 新包 `app/services/project_runtime/`（manifest 组合层，非第二真相源）：
   - **契约**：`ProjectRuntimeSnapshotV1`（schema_version=1，authority ids +
     fingerprints + durable 指针 + 有界 spec 文档 + dataset 描述符 + plan

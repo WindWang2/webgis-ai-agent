@@ -1,4 +1,4 @@
-"""MapSpec source rebinding transaction（ADR-0224 §4）。
+"""MapSpec source rebinding transaction（ADR-0226 §4）。
 
 把冻结的 MapSpec 文档重绑定到新 session 的 ref 集合：
 

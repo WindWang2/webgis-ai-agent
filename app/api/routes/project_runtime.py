@@ -1,4 +1,4 @@
-"""Project Runtime Snapshot 路由（ADR-0224 — Durable Project Cartographic
+"""Project Runtime Snapshot 路由（ADR-0226 — Durable Project Cartographic
 Runtime V1）。
 
 薄入口（不做 UI redesign）：

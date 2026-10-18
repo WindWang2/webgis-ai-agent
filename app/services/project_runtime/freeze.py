@@ -1,4 +1,4 @@
-"""Runtime snapshot freeze 编排（ADR-0224 §2/§3/§6）。
+"""Runtime snapshot freeze 编排（ADR-0226 §2/§3/§6）。
 
 显式冻结点（explicit_save / named_checkpoint / publish）→ 一致切口 →
 ref 晋升 → 组合 workspace snapshot（账本权威）→ 原子落盘 manifest。
