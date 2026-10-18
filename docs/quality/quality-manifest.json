@@ -5521,8 +5521,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 177,
-  "mention": 171,
+  "dispatch": 178,
+  "mention": 170,
   "none": 8
  },
  "capabilities": [
@@ -8342,7 +8342,7 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 177,
+  "behavioral_dispatch": 178,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
   "pass": true,
@@ -8350,7 +8350,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "72777d87c440978f25fecb29708d45d7d244e65fe4cc7cfba630a4d2ae3083d6",
+ "fingerprint": "98c094243abcfab35c92521e7a0d7f26f45defc20207713cfa2c5e1134a43c24",
  "gate": {
   "fields": {
    "capabilities": {
@@ -9198,7 +9198,7 @@
    "tier": 2
   },
   {
-   "behavior": "mention",
+   "behavior": "dispatch",
    "capabilities": [
     "thematic_cartography"
    ],
@@ -18360,6 +18360,7 @@
    ],
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_676_flip_red.py",
     "tests/unit/tools/test_behavioral_webgis.py"
    ],
    "tier": 2
@@ -18705,6 +18706,7 @@
     "编译前检查"
    ],
    "tests": [
+    "tests/cartography/test_mapspec_schema_v16_representation.py",
     "tests/unit/gis/test_action_legacy_adapter.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/tools/test_behavioral_webgis.py"
