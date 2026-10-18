@@ -356,7 +356,7 @@
     "app/lib/geo_analysis/statistics.py": 3836,
     "app/lib/geo_analysis/terrain.py": 3464,
     "app/lib/harness/pi_agent_harness.py": 2167,
-    "app/services/chat/execution_engine.py": 3073,
+    "app/services/chat/execution_engine.py": 3173,
     "app/services/data_fabric/query/federation.py": 2380,
     "app/services/geocompute/executor.py": 2359,
     "app/services/gis_harness/planner.py": 2077,

@@ -2647,10 +2647,6 @@ class PiBridge:
                                     # F03：已 abort 的 turn 不在此预跑 clean
                                     # 投影（完成度奖励不属于被中止的 turn）。
                                     if not _TURN_ABORT_SOURCES.get(turn_id):
-<<<<<<< HEAD
-                                        from app.services.harness_kernel import (
-                                            run_settle_effects,
-=======
                                         # 方向 3（ADR-0222）：澄清 envelope 先于
                                         # settle 投影计算 + 章节 pending 章——goal
                                         # evaluator / refusal 谓词读到的是同一份
@@ -2664,9 +2660,12 @@ class PiBridge:
                                                 turn_sid, turn_id,
                                             )
                                         )
-                                        from app.services.chat.pi_post_dispatch import (
-                                            settle_turn_projections,
->>>>>>> origin/master
+                                        # ADR-0223：settle 效果序收口 harness_kernel
+                                        # （host-neutral coordinator，Pi/legacy 共用
+                                        # 同一实现；settle_turn_projections 契约面
+                                        # 保留但此处直调 kernel 主路径）。
+                                        from app.services.harness_kernel import (
+                                            run_settle_effects,
                                         )
                                         _, _turn_map_product = await run_settle_effects(
                                             turn_sid, turn_id, "clean",

@@ -1362,10 +1362,19 @@ class ChatExecutionEngine:
         # that stale tail. (The old "same lock, cannot acquire twice" note was
         # wrong — it guarded the window that caused the lost update.)
         lock = session_lock(session_id)
-<<<<<<< HEAD
+        if getattr(self, "is_subagent_engine", False) and _parent_holds_session_lock(session_id):
+            # Review F2: a sub-agent engine runs INSIDE the parent's legacy turn,
+            # which already holds the (non-reentrant) session lock and has bound
+            # it via legacy_bind_engine_lock. Re-acquiring would self-deadlock
+            # until acquire_timeout_s and fail as LockContentionError. Run under
+            # the parent's held lock instead.
+            lock = contextlib.nullcontext()
         # ADR-0223 D4：锁外 host-neutral settle 需要的 turn 事实（早失败路径
         # 保持空值，settle_after_lock 自守卫跳过）。效果函数内部自取同一把
         # 非重入会话锁 —— 必须等锁释放后才能结算（外层 CM 先于 lock 退出）。
+        # 子代理 turn（P2-7）不进 kernel 台账：_hk_lock_token 恒 None →
+        # _hk_settle_turn 恒 False，锁外 settle 自守卫跳过 —— 子代理微会话
+        # 的收口属于父 turn 自己的 settle，且父持锁期间绝不抢锁。
         turn_id = ""
         rt_ev: Optional[TurnEvidence] = None
         _hk_settle_turn = False
@@ -1391,16 +1400,6 @@ class ChatExecutionEngine:
                         )
 
         async with _post_lock_settle(), lock:
-=======
-        if getattr(self, "is_subagent_engine", False) and _parent_holds_session_lock(session_id):
-            # Review F2: a sub-agent engine runs INSIDE the parent's legacy turn,
-            # which already holds the (non-reentrant) session lock and has bound
-            # it via legacy_bind_engine_lock. Re-acquiring would self-deadlock
-            # until acquire_timeout_s and fail as LockContentionError. Run under
-            # the parent's held lock instead.
-            lock = contextlib.nullcontext()
-        async with lock:
->>>>>>> origin/master
             self._reject_if_clearing(session_id)
             messages = await self._get_or_create_session(session_id, user_id=user_id)
             _task = asyncio.current_task()
