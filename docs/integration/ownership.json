@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "adr_watermark": 220,
+  "adr_watermark": 224,
   "migration_watermark": 96,
   "rules": [
     {
