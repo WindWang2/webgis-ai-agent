@@ -147,7 +147,7 @@
    "scope": "global"
   },
   "docs/quality/quality-report.json": {
-   "content_fingerprint": "65af3f112dc4b61301431bf7ea742c813761d7f683180746649f57e7240a0aed",
+   "content_fingerprint": "68e7a1010072ed34ede6213858c8384472c68d440cbf610c298acb178a30d9b3",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
    "input_fingerprint": "322243c4809c8fcee323fa83a462296eee47dae5ff9fea50442683637406702e",
