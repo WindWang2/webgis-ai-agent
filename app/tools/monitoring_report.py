@@ -24,11 +24,14 @@ MAX_REPORT_ASSETS = 100
 
 def _get_template_name(template_key: str) -> str:
     """映射模板键到模板文件名"""
+    # CP-17：仅 monitoring_report.html 存在；vegetation/water/fire 原先指向
+    # 不存在的文件，静默落到极简内联 HTML。专题模板落地前统一用通用模板
+    # （模板内按资产类型分组呈现）。
     mapping = {
         "natural_resources": "monitoring_report.html",
-        "vegetation": "monitoring_report_vegetation.html",
-        "water": "monitoring_report_water.html",
-        "fire": "monitoring_report_fire.html",
+        "vegetation": "monitoring_report.html",
+        "water": "monitoring_report.html",
+        "fire": "monitoring_report.html",
     }
     return mapping.get(template_key, "monitoring_report.html")
 
@@ -88,7 +91,8 @@ def _render_monitoring_report_html(
         # 再捕获 jinja2.TemplateNotFound，避免 jinja2 名未绑定时的 NameError）。
         return _fallback_monitoring_html(title, region_name, period, assets, summary_text, conclusions)
     except jinja2.TemplateNotFound:
-        # 模板文件缺失 —— 同样走 fallback。
+        # 模板文件缺失 —— 同样走 fallback（告警留痕，不再静默）。
+        logger.warning("monitoring report template %r not found; using inline fallback", template_name)
         return _fallback_monitoring_html(title, region_name, period, assets, summary_text, conclusions)
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -166,9 +170,14 @@ def _html_to_pdf(html_content: str, output_path: str) -> None:
     try:
         import weasyprint
         from app.services.report_service import safe_url_fetcher
-        weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
     except ImportError:
         raise ImportError("WeasyPrint 未安装，无法生成 PDF。请运行: pip install weasyprint")
+    # CP-11：WeasyPrint write_pdf 必须经进程级互斥（fontconfig/pango 全局态非
+    # 线程安全）——与 report_service 同语义：报告链是排队型业务，忙时阻塞等待。
+    from app.services.publication_export import _WEASYPRINT_LOCK
+
+    with _WEASYPRINT_LOCK:
+        weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
 
 
 def register_monitoring_report_tools(registry: ToolRegistry):

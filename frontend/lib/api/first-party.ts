@@ -9,10 +9,12 @@ import { API_BASE } from './config';
  * behind the reverse proxy) and an absolute origin in dev
  * (`http://localhost:8001`).
  *
- * - `API_BASE === ''`: any same-origin relative path qualifies. Protocol-
- *   relative URLs (`//host/...`) are absolute and MUST be rejected — the
- *   leading `//` would otherwise match the `/` check and leak the session
- *   token to an arbitrary host.
+ * - `API_BASE === ''`: the URL must resolve (WHATWG parsing, exactly what the
+ *   browser's fetch does) to the page's own origin. Never prefix-test the raw
+ *   string: protocol-relative `//host/...`, `/\host/...` (backslash is a
+ *   slash for special schemes) and `/<TAB>/host/...` (TAB/LF are stripped)
+ *   all START with `/` but resolve to a foreign host, which would leak the
+ *   Bearer JWT / owner_token (F-02).
  * - `API_BASE` configured: the request URL's ORIGIN must equal the base's
  *   origin exactly (never a prefix match — `http://api.example.com.evil.com`
  *   must not satisfy `http://api.example.com`), and its path must fall under
@@ -21,7 +23,17 @@ import { API_BASE } from './config';
 export function isFirstPartyUrl(url: string): boolean {
   if (!url) return false;
   if (!API_BASE) {
-    return url.startsWith('/') && !url.startsWith('//');
+    // Outside a browser (SSR/tests) use an unroutable sentinel origin: a
+    // relative path resolves onto it, any foreign host does not.
+    const pageOrigin =
+      typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null'
+        ? window.location.origin
+        : 'http://first-party.invalid';
+    try {
+      return new URL(url, pageOrigin).origin === pageOrigin;
+    } catch {
+      return false;
+    }
   }
   try {
     const base = new URL(API_BASE, 'http://localhost');

@@ -4,6 +4,7 @@
  "sse": {
   "endpoint": "/api/v1/chat/stream",
   "events": [
+   "clarification",
    "content",
    "done",
    "error",

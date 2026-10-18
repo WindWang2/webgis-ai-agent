@@ -76,6 +76,14 @@ export interface ContextPanelProps {
   sessionId?: string | null;
   ownerToken?: string | null;
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
+  /** 方向 3（ADR-0222）：ClarificationCard 提交（answers 或逐问题 waive）。 */
+  onClarificationSubmit?: (
+    state: import('@/lib/types/clarification').ClarificationCardState,
+    answers: { context_key: string; value: string }[],
+    waiveKeys: string[],
+  ) => void;
+  /** 方向 3：stale/恢复期重取 pending envelope。 */
+  onClarificationRefresh?: () => void;
   agentRuntime?: AgentRuntime | null;
   /** #1048：SessionPlan 流式实时状态（useSessionPlan.view）→ ChatTab → 面板。 */
   sessionPlan?: SessionPlanViewState;
@@ -136,6 +144,8 @@ export function ContextPanel({
   sessionId,
   ownerToken,
   onPlanAction,
+  onClarificationSubmit,
+  onClarificationRefresh,
   agentRuntime,
   sessionPlan,
   layoutMode = 'desktop',
@@ -372,6 +382,8 @@ export function ContextPanel({
                 onSend={onSend}
                 onCancel={onCancel}
                 onPlanAction={onPlanAction}
+                onClarificationSubmit={onClarificationSubmit}
+                onClarificationRefresh={onClarificationRefresh}
                 sessionId={sessionId}
                 agentRuntime={agentRuntime}
                 ownerToken={ownerToken}
@@ -468,6 +480,8 @@ export function ContextPanel({
               onSend={onSend}
               onCancel={onCancel}
               onPlanAction={onPlanAction}
+              onClarificationSubmit={onClarificationSubmit}
+              onClarificationRefresh={onClarificationRefresh}
               sessionId={sessionId}
               agentRuntime={agentRuntime}
               ownerToken={ownerToken}

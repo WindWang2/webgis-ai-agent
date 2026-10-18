@@ -751,7 +751,7 @@ class AgentPlanOrchestrator:
         try:
             from app.services.chat import planner
             resp = await planner.call_llm(cfg, _planning_messages(user_message, env_summary))
-            choice = resp.get("choices", [{}])[0]
+            choice = (resp.get("choices") or [{}])[0]
             msg = choice.get("message", {})
             raw = msg.get("content") or msg.get("reasoning_content") or ""
         except Exception as e:

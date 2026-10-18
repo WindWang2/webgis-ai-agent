@@ -163,9 +163,49 @@ async def test_pipeline_no_stamp_without_prefetch_or_non_ref():
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_engine_stamps_revision_end_to_end():
-    """The async lifecycle caller prefetches the revision and the stamped
-    entry lands in the committed MapSpec sources."""
-    # The engine path is heavy to construct; this test pins the pipeline
-    # contract the caller relies on (process_layer_ingestion accepts and
-    # stamps ref_content_revisions — covered above).
+async def test_lifecycle_engine_stamps_revision_end_to_end(monkeypatch, tmp_path):
+    """The async lifecycle caller prefetches the revision and hands it to the
+    ingestion pipeline (TC-14: previously an empty body that always passed).
+
+    The UpsertLayer handler awaits the ref descriptor *before* the sync
+    ingestion runs in a worker thread; this pins that wiring: the descriptor's
+    content_revision must reach process_layer_ingestion as
+    ref_content_revisions, and the pipeline stamps it on the source entry.
+    """
+    from types import SimpleNamespace
+
+    from app.services.mapspec import mutation_handlers as mh
+    from app.services.mapspec.pipeline import process_layer_ingestion
+
+    async def fake_descriptor(session_id, ref_id):
+        assert session_id == "sess-p3"
+        return {"content_revision": 11} if ref_id == "ref:abc-123" else None
+
+    monkeypatch.setattr(mh.session_data_manager, "get_ref_descriptor", fake_descriptor)
+
+    captured: dict = {}
+
+    class _Stop(Exception):
+        pass
+
+    def spy_ingestion(*args, **kwargs):
+        captured["revs"] = kwargs.get("ref_content_revisions")
+        captured["out"] = process_layer_ingestion(*args, **kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(mh, "process_layer_ingestion", spy_ingestion)
+
+    intent = SimpleNamespace(
+        layer={"id": "L1", "type": "circle", "source": "s1"},
+        source_data={"ref_id": "ref:abc-123", "type": "FeatureCollection", "features": []},
+    )
+    ctx = SimpleNamespace(
+        session_id="sess-p3", origin=None, loaded=_mk_mapspec(), intent=intent,
+        store=SimpleNamespace(get_session_dir=lambda sid: tmp_path),
+    )
+    with pytest.raises(_Stop):
+        await mh._handle_upsertlayer(ctx)
+
+    assert captured["revs"] == {"ref:abc-123": 11}
+    _, source_entry, _ = captured["out"]
+    assert source_entry.get("content_revision") == 11

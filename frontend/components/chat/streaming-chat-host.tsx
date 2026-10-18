@@ -54,6 +54,8 @@ export function StreamingChatHost({
     aiStatus,
     handleSend,
     handlePlanAction,
+    handleClarificationSubmit,
+    refreshPendingClarification,
     bridge,
     agentRuntime,
   } = useSSEStream({
@@ -89,6 +91,8 @@ export function StreamingChatHost({
       sessionId={sessionId ?? null}
       ownerToken={activeSessionToken}
       onPlanAction={handlePlanAction}
+      onClarificationSubmit={handleClarificationSubmit}
+      onClarificationRefresh={refreshPendingClarification}
       agentRuntime={agentRuntime}
       sessionPlan={sessionPlanView}
       layoutMode={layoutMode}

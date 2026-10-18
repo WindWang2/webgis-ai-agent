@@ -533,3 +533,49 @@ async def test_get_pi_bridge_resets_singleton_on_start_failure(monkeypatch):
     with pytest.raises(RuntimeError, match="start failed"):
         await bridge_mod.get_pi_bridge()
     assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_spawn_env_is_allowlisted_review_f16(monkeypatch, tmp_path):
+    """Review F16: Pi subprocess must not inherit backend secrets."""
+    from app.services.chat import pi_rpc_client as mod
+
+    captured = {}
+
+    def fake_popen(*args, **kwargs):
+        captured["env"] = kwargs.get("env") or {}
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdout = DummyPipe([])
+        proc.stderr = DummyPipe([])
+        proc.poll.return_value = None
+        return proc
+
+    for k, v in {
+        "DATABASE_URL": "postgresql://u:p@db/x",
+        "JWT_SECRET_KEY": "jwt-secret",
+        "AWS_SECRET_ACCESS_KEY": "aws",
+        "REDIS_URL": "redis://:pw@r",
+        "PI_MODEL": "m1",
+        "NODE_OPTIONS": "--max-old-space-size=512",
+    }.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(mod, "PI_AGENT_DIR", tmp_path)
+    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_surface_file",
+        lambda p: p, raising=False,
+    )
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    client = mod.PiRpcClient(pi_rpc_entry=entry)
+    client._spawn_process()
+    env = captured["env"]
+    for secret in ("DATABASE_URL", "JWT_SECRET_KEY", "AWS_SECRET_ACCESS_KEY", "REDIS_URL"):
+        assert secret not in env, secret
+    assert env.get("PI_MODEL") == "m1"
+    assert env.get("NODE_OPTIONS")
+    assert env.get("PATH")
+    assert env.get("WEBGIS_BRIDGE_SECRET")
+    assert env.get("WEBGIS_API_BASE")
+    assert env.get("WEBGIS_NATIVE_TOOLS_PATH")

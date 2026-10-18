@@ -130,6 +130,12 @@ def safe_extract_package(blob: bytes, target_dir: Path) -> None:
                         f"package entry {name!r} is not a regular file "
                         f"(type {member.type!r} rejected)",
                     )
+                # CP-01：字节码不在指纹/签名覆盖范围内，分发包不得携带。
+                if "__pycache__" in Path(name).parts or name.endswith((".pyc", ".pyo")):
+                    raise _dist_error(
+                        DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
+                        f"package entry {name!r} is compiled bytecode; ship sources only",
+                    )
                 if name.startswith("/") or ".." in Path(name).parts or "\\" in name:
                     raise _dist_error(
                         DiagnosticCode.PACKAGE_UNSAFE_ENTRY,

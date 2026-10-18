@@ -86,7 +86,11 @@ def publish_geojson_to_postgis(
     try:
         from sqlalchemy import create_engine
 
-        engine = create_engine(resolved_dsn)
+        from app.core.database import _to_sync_url
+
+        # #1592：2.1.x 裸 postgresql:// 默认方言改走 psycopg v3 —— 钉 psycopg2
+        # 保持 2.0.x 发布行为（否则 DSN 裸写时退化为 "postgis write failed"）。
+        engine = create_engine(_to_sync_url(resolved_dsn))
         frame.to_postgis(table, engine, if_exists=if_exists, index=False)
     except Exception as exc:  # noqa: BLE001 — 连接/驱动失败如实上报
         logger.warning("postgis publish to %s failed: %s", table, exc)
