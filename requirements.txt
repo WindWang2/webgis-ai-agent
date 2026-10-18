@@ -11,7 +11,10 @@ uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 
 # Database & ORM
-# sqlalchemy 上界放宽到 <2.2（#1592），2.1.x 的两个行为变化都需显式处理：
+# sqlalchemy 上界维持 <2.1：仓库依赖安全门禁（test_dependency_bounds，#1512
+# 实测 2.1.1 击穿）拒绝 2.1.x 放行；#1592 的驱动健壮性修复（显式 psycopg2
+# 后缀 / [asyncio] extra 声明）作为 2.1 未来解禁的前置加固保留。原注释存档：
+# 2.1.x 的两个行为变化——
 # (1) greenlet 自 2.1.x 起从核心依赖移到 asyncio extra（可选依赖）——裸
 #     sqlalchemy 在干净环境不装 greenlet → ModuleNotFoundError: greenlet →
 #     sqlalchemy.ext.asyncio 整体不可用（#1592 干净环境 390 collection
@@ -22,7 +25,7 @@ python-multipart>=0.0.6
 #     get_engine() 仍传裸 URL，生产 sync Postgres 连接应显式写 driver 后缀
 #     （如 postgresql+psycopg2://），避免依赖 2.1.x 的默认方言。
 # lock（sqlalchemy==2.1.4 + greenlet==3.5.6 via sqlalchemy）已验证。
-sqlalchemy[asyncio]>=2.0.25,<2.2
+sqlalchemy[asyncio]>=2.0.25,<2.1
 alembic>=1.13.0
 
 # GIS Libraries
