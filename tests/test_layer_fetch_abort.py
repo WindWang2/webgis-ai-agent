@@ -12,7 +12,7 @@ import re
 
 
 def _read_source() -> str:
-    with open("frontend/lib/hooks/use-sse-stream.ts") as f:
+    with open("frontend/lib/hooks/use-sse-stream.ts", encoding="utf-8") as f:
         return f.read()
 
 

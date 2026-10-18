@@ -5,8 +5,12 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from app.lib.cartography import mapspec_schema as ms
 from app.lib.cartography.ts_projection import emit_typescript
+
+pytestmark = pytest.mark.cartography
 
 
 def _spec(layer_extra: dict) -> dict:

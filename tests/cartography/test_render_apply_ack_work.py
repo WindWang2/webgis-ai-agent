@@ -16,6 +16,8 @@ from app.lib.cartography.render_apply_ack import (
     validate_render_apply_ack,
 )
 
+pytestmark = pytest.mark.cartography
+
 
 def _base_ack(**over):
     payload = {

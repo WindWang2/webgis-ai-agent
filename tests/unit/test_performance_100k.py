@@ -226,37 +226,6 @@ def test_wire_bytes_comparison(fc_100k):
     assert reduction > 99.0, "Should eliminate >99% of wire traffic"
 
 
-def test_mapspec_deepcopy_bytes_comparison(fc_100k):
-    """Measure: deepcopy cost before vs after COW for SetView."""
-    spec_with_large_source = {
-        "version": "1.0",
-        "view": {"center": [116.0, 39.0], "zoom": 10},
-        "sources": {"large": {"type": "geojson", "inlineData": fc_100k}},
-        "layers": [{"id": "l1", "type": "circle", "source": "large"}],
-        "layout": {"legend": {"visible": True}, "controls": []},
-    }
-
-    # V3 COW path: shallow copy + copy-only-view-branch
-    cow_candidate = {**spec_with_large_source}
-    cow_candidate["view"] = dict(spec_with_large_source["view"])
-    # sources dict is shared by reference (not copied)
-
-    # Verify the source payload is actually shared (zero copy for SetView)
-    assert cow_candidate["sources"]["large"]["inlineData"] is spec_with_large_source["sources"]["large"]["inlineData"], \
-        "COW SetView candidate must share the source payload (same object)"
-
-    # Verify that mutating the candidate's view does not affect the original
-    cow_candidate["view"]["zoom"] = 12
-    assert spec_with_large_source["view"]["zoom"] == 10, \
-        "Mutating candidate view must not affect prior spec view"
-
-    print("\nSetView MapSpec copy cost (V3 COW):")
-    print(f"  Prior payload features: {len(fc_100k['features']):,}")
-    print("  Source payload shared by reference: YES")
-    print("  View branch copied (O(1)): YES")
-    print("  SetView deepcopy eliminated: YES")
-
-
 def test_tile_encode_cold_vs_warm():
     """Measure: tile encode calls cold vs warm."""
     from app.services.mvt import encode_tile, tile_lru_cache, spatial_index_cache

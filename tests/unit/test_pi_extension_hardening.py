@@ -9,6 +9,7 @@ Validates:
 """
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 import pytest
@@ -44,6 +45,14 @@ def _run_node_script(script: str) -> subprocess.CompletedProcess:
     )
 
 
+# 未装 node 的机器上这些用例应 skip 而非 error（与
+# tests/integration/test_pi_real_llm_e2e.py 的 node 守卫同语义）。
+requires_node = pytest.mark.skipif(
+    shutil.which("node") is None, reason="needs node on PATH"
+)
+
+
+@requires_node
 def test_current_turn_token_scans_past_24_entries():
     """Item 3: A tool-heavy turn (>24 entries) must not age out the turn marker."""
     server_token = "valid.turn_token"
@@ -61,6 +70,7 @@ def test_current_turn_token_scans_past_24_entries():
     assert res.stdout == server_token
 
 
+@requires_node
 def test_current_turn_token_falls_back_to_pinned():
     """Item 3: Pinned token persists if entries are later pruned or empty."""
     server_token = "pinned.turn_token"
@@ -81,6 +91,7 @@ def test_current_turn_token_falls_back_to_pinned():
     assert data["token2"] == server_token
 
 
+@requires_node
 def test_post_to_bridge_409_provides_recovery_guidance():
     """Item 1 (#1042): 409 现在语义是 TURN_CONTEXT_INACTIVE —— 扩展透传结构化
     recovery guidance，并阻止对已过期 turn 的盲目重试。
@@ -137,6 +148,7 @@ def test_post_to_bridge_409_provides_recovery_guidance():
     assert "webgis_cartography_status" not in text2
 
 
+@requires_node
 def test_post_to_bridge_503_provides_recovery_guidance():
     """Item 1: 503 Service Unavailable provides guidance about overload/retry."""
     script = f"""
@@ -158,6 +170,7 @@ def test_post_to_bridge_503_provides_recovery_guidance():
     assert "overloaded" in text or "temporarily" in text
 
 
+@requires_node
 def test_post_to_bridge_timeout_provides_guidance():
     """Item 1: Timeout aborts fetch and provides timeout recovery guidance."""
     script = f"""
@@ -181,6 +194,7 @@ def test_post_to_bridge_timeout_provides_guidance():
     assert "webgis_cartography_status" in text
 
 
+@requires_node
 def test_post_to_bridge_external_signal_cancellation():
     """Item 1: External harness cancellation signal cancels postToBridge."""
     script = f"""
@@ -207,6 +221,7 @@ def test_post_to_bridge_external_signal_cancellation():
     assert "cancelled" in data["content"][0]["text"]
 
 
+@requires_node
 def test_load_native_tools_logs_on_invalid_json(tmp_path: Path):
     """Item 2: loadNativeTools logs loudly when file is unparseable or not an array."""
     bad_file = tmp_path / "bad-native-tools.json"
@@ -265,6 +280,7 @@ def test_native_tool_names_contract(registry):
 # ADR-0224（Goal 04）：dump v3 spec 解析 + per-call fingerprint echo。
 # ---------------------------------------------------------------------------
 
+@requires_node
 def test_load_native_tools_parses_v3_shape(tmp_path):
     """v3 dump（v2 键 + abi/spec/generation 加性字段）继续以 v2 兼容形状返回。"""
     dump = {
@@ -300,6 +316,7 @@ def test_load_native_tools_parses_v3_shape(tmp_path):
     assert data["tools"][0]["spec"]["fingerprint"] == "fp1"
 
 
+@requires_node
 def test_post_to_bridge_includes_tool_fingerprint_when_provided():
     body_check = """
       let lastBody = null;

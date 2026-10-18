@@ -20,6 +20,8 @@ from app.lib.cartography import mapspec_schema as ms
 from app.lib.cartography.component_abi import COMPONENT_ABI_VERSION
 from app.lib.cartography.scale_rules import SCALE_TIERS
 
+pytestmark = pytest.mark.cartography
+
 CORPUS_DIR = Path(__file__).parent / "carto_ir_corpus"
 MANIFEST = CORPUS_DIR / "contract_manifest.json"
 

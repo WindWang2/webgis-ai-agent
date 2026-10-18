@@ -18,6 +18,8 @@ from app.lib.cartography.representation import (
 )
 from app.lib.cartography.scale_rules import resolve_scale_tier
 
+pytestmark = pytest.mark.cartography
+
 CORPUS = Path(__file__).parent / "representation_corpus" / "representation_golden.json"
 
 

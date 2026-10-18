@@ -10,6 +10,8 @@ import pytest
 
 from app.services import render_work_supply as supply
 
+pytestmark = pytest.mark.cartography
+
 
 @pytest.fixture(autouse=True)
 def _clean_cache():
