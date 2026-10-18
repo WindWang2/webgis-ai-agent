@@ -6,6 +6,7 @@
  */
 import { render, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { ReactNode } from 'react';
 import { MapPanel } from './map-panel';
 import { makeMockMaplibreMap } from '../../test/__mocks__/maplibre-map';
 import { emitViewportSettled } from '@/lib/interaction/bus';
@@ -18,11 +19,11 @@ vi.mock('@/lib/interaction/bus', () => ({
 
 const rmg = vi.hoisted(() => ({
   renderCount: 0,
-  lastOnClick: null as null | ((e: any) => void),
-  lastOnMove: null as null | ((e: any) => void),
+  lastOnClick: null as null | ((e: unknown) => void),
+  lastOnMove: null as null | ((e: unknown) => void),
   lastOnLoad: null as null | (() => void),
   loaded: false,
-  map: null as any,
+  map: null as unknown,
 }));
 
 const hud = vi.hoisted(() => {
@@ -33,20 +34,21 @@ const hud = vi.hoisted(() => {
     viewport: { center: [116.4, 39.9], zoom: 4, bearing: 0, pitch: 0, bounds: undefined },
     focusLayerId: null as string | null,
     aiStatus: 'idle',
-    selectedFeature: null as any,
+    selectedFeature: null as unknown,
     mapLoaded: false,
-    layers: [] as any[],
-    annotations: [] as any[],
+    layers: [] as Array<{ id: string } & Record<string, unknown>>,
+    annotations: [] as unknown[],
     activeMapTool: null as string | null,
   });
   const actions = {
     setMapLoaded: (v: boolean) => hud.setState({ mapLoaded: v }),
-    setSelectedFeature: (f: any) => hud.setState({ selectedFeature: f }),
-    setViewport: (center: any, zoom: number, bearing: number, pitch: number, bounds?: any) =>
+    setSelectedFeature: (f: unknown) => hud.setState({ selectedFeature: f }),
+    setViewport: (center: unknown, zoom: number, bearing: number, pitch: number, bounds?: unknown) =>
       hud.setState({ viewport: { center, zoom, bearing, pitch, bounds } }),
     focusLayer: (id: string | null) => hud.setState({ focusLayerId: id }),
-    updateLayer: (id: string, updates: any) => {
-      const layers = hud.state.layers.map((l: any) => (l.id === id ? { ...l, ...updates } : l));
+    updateLayer: (id: string, updates: Record<string, unknown>) => {
+      const current = hud.state.layers as Array<{ id: string } & Record<string, unknown>>;
+      const layers = current.map((l) => (l.id === id ? { ...l, ...updates } : l));
       hud.setState({ layers });
     },
     setActiveMapTool: (t: string | null) => hud.setState({ activeMapTool: t }),
@@ -72,7 +74,13 @@ const apiFetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-map-gl/maplibre', () => {
   const React = require('react');
-  const MapMock = React.forwardRef(function MapMock(props: any, ref: any) {
+  type MapMockProps = {
+    children?: ReactNode;
+    onClick?: (e: unknown) => void;
+    onMove?: (e: unknown) => void;
+    onLoad?: () => void;
+  };
+  const MapMock = React.forwardRef(function MapMock(props: MapMockProps, ref: React.Ref<unknown>) {
     React.useImperativeHandle(ref, () => ({ getMap: () => rmg.map }), []);
     rmg.renderCount += 1;
     rmg.lastOnClick = props.onClick ?? null;
@@ -87,7 +95,8 @@ vi.mock('react-map-gl/maplibre', () => {
     }, [onLoad]);
     return React.createElement('div', { 'data-testid': 'map-mock' }, props.children);
   });
-  const PopupMock = (props: any) => React.createElement('div', { 'data-testid': 'popup' }, props.children);
+  const PopupMock = (props: { children?: ReactNode }) =>
+    React.createElement('div', { 'data-testid': 'popup' }, props.children);
   return { default: MapMock, Popup: PopupMock };
 });
 
@@ -98,11 +107,16 @@ vi.mock('@/lib/store/useHudStore', () => {
     hud.listeners.add(cb);
     return () => hud.listeners.delete(cb);
   };
-  const useHudStore = (selector: (s: any) => unknown) =>
+  const useHudStore = (selector: (s: Record<string, unknown>) => unknown) =>
     useSyncExternalStore(subscribe, () => selector(hud.state), () => selector(hud.state));
-  (useHudStore as any).getState = () => hud.state;
-  (useHudStore as any).setState = (partial: any) => hud.setState(partial);
-  (useHudStore as any).subscribe = subscribe;
+  const store = useHudStore as unknown as {
+    getState: () => Record<string, unknown>;
+    setState: (partial: Record<string, unknown>) => void;
+    subscribe: (cb: () => void) => () => void;
+  };
+  store.getState = () => hud.state;
+  store.setState = (partial) => hud.setState(partial);
+  store.subscribe = subscribe;
   return { useHudStore };
 });
 
@@ -140,21 +154,21 @@ beforeEach(() => {
   vi.useFakeTimers();
   hud.reset();
   rmg.loaded = false;
-  rmg.map = makeMockMaplibreMap() as any;
+  rmg.map = makeMockMaplibreMap() as unknown;
 });
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
-function moveEvent(withGesture: boolean): any {
+function moveEvent(withGesture: boolean): Record<string, unknown> {
   return {
     viewState: { longitude: 116.4, latitude: 39.9, zoom: 5, bearing: 0, pitch: 0 },
     ...(withGesture ? { originalEvent: { type: 'pointermove' } } : {}),
   };
 }
 
-async function fireMoveAndSettle(evt: any): Promise<void> {
+async function fireMoveAndSettle(evt: unknown): Promise<void> {
   act(() => {
     rmg.lastOnMove?.(evt);
   });
@@ -165,7 +179,7 @@ async function fireMoveAndSettle(evt: any): Promise<void> {
 
 describe('MapPanel viewport 事件源（ADR-0225 / review P1-4）', () => {
   const panelProps = {
-    layers: [] as any[],
+    layers: [],
     onRemoveLayer: () => undefined,
     onToggleLayer: () => undefined,
     onViewportChange: () => undefined,

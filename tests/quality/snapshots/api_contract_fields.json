@@ -109,6 +109,12 @@
   "schema_version": "string",
   "session_id": "string"
  },
+ "GET /api/v1/chat/sessions/{session_id}/interaction-events/projection": {
+  "__model__": "InteractionProjectionResponse",
+  "projection": "object",
+  "schema_version": "string",
+  "session_id": "string"
+ },
  "GET /api/v1/chat/sessions/{session_id}/map-state": {
   "__model__": "SessionMapStateResponse",
   "map_state": "null|object",
@@ -892,6 +898,17 @@
   "observation_rejection_reason": "null|string",
   "observation_sequence": "integer",
   "overall_passed": "boolean|null"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/interaction-events": {
+  "__model__": "InteractionIngestResponse",
+  "accepted": "integer",
+  "acks": "array<InteractionEventAck>",
+  "dropped": "integer|null",
+  "duplicates": "integer",
+  "persist_degraded": "boolean|null",
+  "rejected": "integer",
+  "stale": "integer",
+  "watermarks": "object"
  },
  "POST /api/v1/chat/sessions/{session_id}/map-action-ack": {
   "__model__": "MapActionAckResponse",
