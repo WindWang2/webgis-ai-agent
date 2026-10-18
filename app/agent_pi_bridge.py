@@ -1249,21 +1249,29 @@ def _hk_turn_status(
 ) -> str:
     """Turn settle flags → kernel TurnStatus (ADR-0180/0204, single mapping).
 
-    Shared by the streaming and non-streaming settle paths. Precedence
-    (F03): an explicit asyncio cancellation wins (client disconnect);
-    a recorded abort source comes next — user → ``cancelled``,
-    system/policy → ``aborted`` (deliberate stops are not failures); then
-    the failure family (stall/total timeout / prompt send error / Pi
-    process death / unclassified exception) → ``failed``; everything else
-    → ``completed``.
+    ADR-0223: the vocabulary authority moved to ``harness_kernel.settle``
+    (``cause_from_host_signals`` → ``status_for_cause``); this bridge helper
+    composes the two kernel pure functions so the tested seam keeps its
+    flag-based signature. Precedence (F03, unchanged): an explicit asyncio
+    cancellation wins (client disconnect); a recorded abort source comes next
+    — user → ``cancelled``, system/policy → ``aborted`` (deliberate stops are
+    not failures); then the failure family (stall/total timeout / prompt send
+    error / Pi process death / unclassified exception) → ``failed``;
+    everything else → ``completed``.
     """
-    if cancelled:
-        return "cancelled"
-    if abort_source:
-        return _ABORT_SOURCE_STATUS.get(abort_source, "aborted")
-    if timed_out or send_failed or process_died or error:
-        return "failed"
-    return "completed"
+    from app.services.harness_kernel import (
+        cause_from_host_signals,
+        status_for_cause,
+    )
+
+    return status_for_cause(cause_from_host_signals(
+        cancelled=cancelled,
+        timed_out=timed_out,
+        send_failed=send_failed,
+        process_died=process_died,
+        error=error,
+        abort_source=abort_source,
+    ))
 
 
 async def _hk_record_late_callback(
@@ -1520,24 +1528,21 @@ class PiBridge:
         timeout_reason: str = "",
         projections_settled: bool,
     ) -> str:
-        """Single turn settlement seam (F03 / ADR-0204-f03 D1).
+        """Turn settle host adapter (F03 seam → ADR-0223 thin adapter).
 
-        The ONE settlement sequence for every way a turn can end —
-        stream/non-stream × clean agent_settled / client cancel / stall /
-        total budget / process death / send failure / unclassified
-        exception / abort (user|system|policy). Replaces the duplicated
-        finally choreographies; idempotent per turn (kernel end_turn
-        re-settle is a no-op; projections are gated by
-        ``projections_settled`` on paths that already ran them in-try).
-
-        Order: status mapping (abort-source aware) → refusal downgrade
-        (clean settles only) → outcome-aware projection pipeline (reduced
-        on non-clean) → kernel end_turn → tracker settle. Each leg is
-        best-effort; settlement must complete even when a leg fails.
-        Returns the kernel TurnStatus that was recorded.
+        The bridge keeps only host facts: abort-source consumption, the Pi
+        failure taxonomy, and the tracker/diagnostic projection. The generic
+        GIS settle orchestration (cause normalization → refusal downgrade →
+        disclosure effect pipeline → kernel end_turn → parity) lives in
+        ``harness_kernel.settle`` behind ONE production entry shared with the
+        legacy host. Idempotency is the coordinator's (same-turn receipt
+        replay; the in-try projection pre-run is passed through as
+        ``projections_pre_settled``). Returns the kernel TurnStatus recorded.
         """
+        from app.services.harness_kernel import settle as hk_settle
+
         abort_source = pop_turn_abort_source(turn_id)
-        status = _hk_turn_status(
+        cause = hk_settle.cause_from_host_signals(
             cancelled=cancelled,
             timed_out=timed_out,
             send_failed=send_failed,
@@ -1545,8 +1550,7 @@ class PiBridge:
             error=error,
             abort_source=abort_source,
         )
-        from app.services.chat.pi_post_dispatch import TurnSettleOutcome
-
+        status = hk_settle.status_for_cause(cause)
         failure_class = ""
         if timed_out:
             failure_class = "pi_turn_budget" if timeout_reason == "total" else "pi_stall"
@@ -1558,49 +1562,28 @@ class PiBridge:
             failure_class = "pi_unclassified_error"
         elif abort_source in ("system", "policy"):
             failure_class = f"pi_abort_{abort_source}"
-        outcome = TurnSettleOutcome(
-            settle_class=(
-                "clean" if status == "completed" else
-                "cancelled" if status == "cancelled" else
-                "aborted" if status == "aborted" else "failed"
-            ),
-            kernel_status=status,
-            failure_class=failure_class,
-            failure_detail=error_detail[:200],
-        )
-        # Refusal downgrade (clean settles only): zero execution activity +
-        # an open clarification question → the turn ended before anything
-        # was at stake (ADR-0208). Failure/cancel/abort never downgrade.
         refusal: Optional[dict] = None
-        if session_id and outcome.is_clean:
-            from app.services.chat.pi_post_dispatch import resolve_turn_refusal
-
-            refusal = await resolve_turn_refusal(session_id, turn_id)
-            if refusal:
-                status = "refused"
-                outcome = TurnSettleOutcome(
-                    settle_class="clean",
-                    kernel_status="refused",
-                    failure_class="",
-                    failure_detail=str(refusal.get("question") or "")[:200],
-                )
-        if session_id and not projections_settled:
+        if session_id:
             try:
-                from app.services.chat.pi_post_dispatch import settle_turn_projections
-
-                await settle_turn_projections(session_id, turn_id, outcome=outcome)
-            except Exception:  # noqa: BLE001 — 增值披露，绝不阻断结算
+                outcome = await hk_settle.settle_turn(hk_settle.HarnessSettleInput(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    host="pi",
+                    cause=cause,
+                    failure_class=failure_class,
+                    failure_detail=error_detail[:200],
+                    projections_pre_settled=projections_settled,
+                ))
+                status = outcome.kernel_status or status
+                refusal = outcome.refusal
+            except Exception:  # noqa: BLE001 — coordinator never raises by
+                # contract; if it ever does, authority still must land.
                 logger.exception(
-                    "[PiBridge] turn settle pipeline failed session=%s turn=%s",
+                    "[PiBridge] settle coordinator failed session=%s turn=%s "
+                    "— falling back to direct kernel end_turn",
                     session_id, turn_id,
                 )
-        if session_id:
-            await self._safe_kernel_end_turn(session_id, turn_id, status)
-            # F03 D5（review P2-2）：parity 行必须在 kernel end_turn 之后读
-            # —— 终态未落时 terminal parity 恒为 None（生产死代码）。
-            from app.services.chat.pi_post_dispatch import log_lifecycle_parity
-
-            await log_lifecycle_parity(session_id, turn_id)
+                await self._safe_kernel_end_turn(session_id, turn_id, status)
         if tracker_task_id:
             try:
                 from app.services.chat.engine_instance import try_get_chat_engine
@@ -1616,7 +1599,7 @@ class PiBridge:
                         (
                             "turn aborted (system/policy stop)"
                             if status == "aborted"
-                            else (outcome.failure_detail or "turn failed or timed out")
+                            else (error_detail[:200] or "turn failed or timed out")
                         ),
                     )
                 else:
@@ -2224,11 +2207,10 @@ class PiBridge:
                     # 单结算 seam 会以 reduced outcome 收口。
                     if turn_sid and not _TURN_ABORT_SOURCES.get(turn_id):
                         try:
-                            from app.services.chat.pi_post_dispatch import (
-                                settle_turn_projections,
-                            )
-                            _turn_map_product = await settle_turn_projections(
-                                turn_sid, turn_id, reason="turn_settled",
+                            from app.services.harness_kernel import run_settle_effects
+
+                            _, _turn_map_product = await run_settle_effects(
+                                turn_sid, turn_id, "clean", reason="turn_settled",
                             )
                             _projections_settled = True
                         except Exception:  # noqa: BLE001 — 增值披露，绝不阻断返回
@@ -2685,11 +2667,16 @@ class PiBridge:
                                                 turn_sid, turn_id,
                                             )
                                         )
-                                        from app.services.chat.pi_post_dispatch import (
-                                            settle_turn_projections,
+                                        # ADR-0223：settle 效果序收口 harness_kernel
+                                        # （host-neutral coordinator，Pi/legacy 共用
+                                        # 同一实现；settle_turn_projections 契约面
+                                        # 保留但此处直调 kernel 主路径）。
+                                        from app.services.harness_kernel import (
+                                            run_settle_effects,
                                         )
-                                        _turn_map_product = await settle_turn_projections(
-                                            turn_sid, turn_id, reason="turn_settled",
+                                        _, _turn_map_product = await run_settle_effects(
+                                            turn_sid, turn_id, "clean",
+                                            reason="turn_settled",
                                         )
                                         _projections_settled = True
                                 sse = map_event_to_sse(

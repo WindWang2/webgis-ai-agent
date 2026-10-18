@@ -78,15 +78,17 @@ def _turn_env(monkeypatch):
     import app.services.chat.engine_instance as ei
     monkeypatch.setattr(ei, "try_get_chat_engine", _fake_engine)
 
-    import app.services.chat.pi_post_dispatch as ppd
-    async def _settle(sid, turn_id, *, outcome=None, reason="turn_settled", state_trigger="execution_settled"):
-        # F03：单结算 seam 以 outcome 契约调用（clean/cancelled/aborted/failed）；
-        # fake 记录 settle_class 供结算矩阵断言。
-        state.settle_calls.append((
-            sid, turn_id, reason, getattr(outcome, "settle_class", "clean"),
-        ))
-        return state.settle_result
-    monkeypatch.setattr(ppd, "settle_turn_projections", _settle)
+    # ADR-0223：通用 settle 编排收口 harness_kernel.settle —— 桩位随 seam
+    # 迁移（行为断言不变）。效果序打桩在 kernel settle 模块（coordinator 与
+    # in-try 预跑共用该入口）；kernel 台账打桩在 runtime 子模块。
+    import app.services.harness_kernel.settle as hks
+    async def _settle_effects(sid, turn_id, settle_class, *, reason="turn_settled",
+                              state_trigger="execution_settled"):
+        # F03/ADR-0223：结算类别（clean/cancelled/aborted/failed）由 coordinator
+        # 单表产出；fake 记录供结算矩阵断言。
+        state.settle_calls.append((sid, turn_id, reason, settle_class))
+        return [], state.settle_result
+    monkeypatch.setattr(hks, "run_settle_effects", _settle_effects)
 
     monkeypatch.setattr(bridge_mod, "emit_turn_summary", lambda ev: state.summaries.append(ev) or {})
 
@@ -96,18 +98,29 @@ def _turn_env(monkeypatch):
     monkeypatch.setattr(rec, "maybe_record_turn", _record)
 
     import app.services.harness_kernel as hk
+    import app.services.harness_kernel.runtime as hk_runtime
     class FakeKernelRuntime:
-        async def begin_turn(self, turn_id, *, host, message):
+        async def begin_turn(self, turn_id, *, host, message, lock=None):
             state.kernel_turns.append(("begin", turn_id))
 
-        async def end_turn(self, turn_id, *, host, status):
+        async def end_turn(self, turn_id, *, host, status, checkpoint=True, lock=None):
             state.kernel_turns.append(("end", turn_id, status))
+            return []
+
+        async def lifecycle_parity_snapshot(self, turn_id):
+            return {"turn_id": turn_id, "phase": "verifying", "status": "running"}
+
+        async def turn_refusal_candidate(self, turn_id):
+            return None
     monkeypatch.setattr(hk, "get_runtime", lambda sid: FakeKernelRuntime())
+    monkeypatch.setattr(hk_runtime, "get_runtime", lambda sid: FakeKernelRuntime())
 
     # 流式路径 map_event_to_sse 的真实实现会查 cache/caches —— 提供 no-op 依赖
     monkeypatch.setattr(bridge_mod, "_clear_dispatch_cache", lambda sid=None: None)
 
-    return state
+    hks.reset_for_tests()
+    yield state
+    hks.reset_for_tests()
 
 
 async def _feed_settled(rpc):

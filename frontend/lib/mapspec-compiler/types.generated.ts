@@ -170,6 +170,7 @@ export interface MapSpecLayer {
   visibility?: MapSpecLayerVisibility;
   bivariate?: MapSpecLayerBivariate;
   data_binding?: MapSpecLayerDataBinding;
+  representation?: MapSpecLayerRepresentation;
 }
 
 export interface MapSpecLayerExtrusion {
@@ -204,6 +205,17 @@ export interface MapSpecLayerDataBinding {
   field: string;
   field_type?: "number" | "string" | "boolean" | "date";
   class_field?: string;
+}
+
+export interface MapSpecRepresentationWindow {
+  min_zoom: number;
+  max_zoom: number;
+  mode: "raw" | "point_cluster" | "visual_heatmap" | "aggregate_grid" | "generalized" | "hidden";
+  reason_codes?: string[];
+}
+
+export interface MapSpecLayerRepresentation {
+  windows?: MapSpecRepresentationWindow[];
 }
 
 export interface MapSpecLayerLabel {

@@ -21,6 +21,11 @@ from app.lib.cartography.palettes import (
     min_adjacent_delta_e,
     perceptual_ramp,
 )
+# carto.scale.representation 检查已拆至 semantic_checks_representation
+# （ISSUE-044 god_modules 收敛）；此处 re-export 保持既有调用方不变。
+from app.lib.cartography.semantic_checks_representation import (
+    _check_scale_representation,
+)
 from app.lib.cartography.thematic_spec import palette_size, spec_to_paint, thematic_field
 
 # Layer "type" expected for a given geometry type. A Point layer painted as
@@ -2383,6 +2388,7 @@ def evaluate_cartography_semantics(
         _check_visual_variable_overload(report, layer, lid, sid)
         _check_label_collision(report, mapspec, layer, lid, sid, profile)
         _check_scale_svs(report, mapspec, layer, lid, sid, profile)
+        _check_scale_representation(report, mapspec, layer, lid, sid)
         _check_3d_extrusion_rules(report, mapspec, layer, lid, sid, profile)
         _check_isoline_contour_rules(report, mapspec, layer, lid, sid)
 
