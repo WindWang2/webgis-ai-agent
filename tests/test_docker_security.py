@@ -364,3 +364,29 @@ class TestCiEnvPrivScript:
             "非 CI 环境（无 GITHUB_SHA）不应写入 WEBGIS_IMAGE —— 本地走 "
             "${WEBGIS_IMAGE:-webgis-ai-agent:local} 的 build: 兜底"
         )
+
+
+def test_prod_image_code_not_owned_by_runtime_user():
+    """security F-16：运行用户不得拥有应用代码（只授权运行期可写路径）。"""
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "Dockerfile.prod").read_text(encoding="utf-8")
+    assert not re.search(r"chown\s+-R\s+appuser:appgroup\s+/app\s*($|&&|\\)", src, re.M), (
+        "Dockerfile.prod 仍 chown -R 整个 /app（代码可被运行用户改写）"
+    )
+    assert "/app/data" in src and "USER appuser" in src
+
+
+def test_secure_compose_drops_caps_and_blocks_privesc():
+    """security F-17：prod.secure 的 api/celery 必须 cap_drop ALL + no-new-privileges。"""
+    from pathlib import Path
+
+    import yaml
+
+    path = Path(__file__).resolve().parents[1] / "docker-compose.prod.secure.yml"
+    compose = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for svc in ("api", "celery-worker"):
+        conf = compose["services"][svc]
+        assert "ALL" in (conf.get("cap_drop") or []), svc
+        assert "no-new-privileges:true" in (conf.get("security_opt") or []), svc

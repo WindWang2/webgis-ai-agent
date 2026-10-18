@@ -148,3 +148,34 @@ async def test_get_raster_png_ownership_guard(client):
   # Wrong token → 404.
   res = await client.get("/api/v1/sessions/owned-session/raster/ndvi_src.png?token=bad")
   assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_raster_png_signed_url_scoped_to_path(client):
+  """security F-13: a path-scoped exp/sig grants exactly that PNG — no
+  session owner_token in the URL; signature for another path / expired fails."""
+  from app.api.routes.raster import signed_raster_query
+  from app.core.signing import make_signature
+
+  path = "/api/v1/sessions/owned-session/raster/ndvi_src.png"
+  res = await client.get(f"{path}?{signed_raster_query(path)}")
+  assert res.status_code == 200
+  assert "token" not in signed_raster_query(path)
+
+  other = "/api/v1/sessions/raster-test-session/raster/second.png"
+  q = signed_raster_query(other)
+  res = await client.get(f"{path}?{q}")
+  assert res.status_code == 404
+
+  expired = f"exp=1&sig={make_signature(path, 1)}"
+  res = await client.get(f"{path}?{expired}")
+  assert res.status_code == 404
+
+
+def test_cartography_raster_url_carries_no_owner_token():
+  import inspect
+
+  from app.tools import cartography_tools
+
+  src = inspect.getsource(cartography_tools)
+  assert "?token={session_token}" not in src

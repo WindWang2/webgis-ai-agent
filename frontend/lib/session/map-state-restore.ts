@@ -542,6 +542,7 @@ export async function applyStoryMapState(
   sessionId: string,
   signal: AbortSignal,
   dispatchAction: (action: MapActionPayload) => void,
+  ownerToken: string | null = null,
 ): Promise<void> {
   const store = useHudStore.getState();
   if (state.base_layer) store.setBaseLayer(state.base_layer);
@@ -552,5 +553,6 @@ export async function applyStoryMapState(
       params: framed,
     });
   }
-  await restoreSessionMapLayers(state, { sessionId, token: null, signal });
+  // F-09: anonymous sessions need the owner token (handed over by the opener).
+  await restoreSessionMapLayers(state, { sessionId, token: ownerToken, signal });
 }

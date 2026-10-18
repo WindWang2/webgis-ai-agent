@@ -28,13 +28,17 @@ if config.config_file_name is not None:
 
 # 审计 I6：优先从环境读 DATABASE_URL，覆盖 alembic.ini 的占位符。
 # 这让 `alembic upgrade head` 在 docker-compose / k8s 里直接可用。
-db_url = os.getenv("DATABASE_URL")
-if db_url:
-    config.set_main_option("sqlalchemy.url", db_url)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-from app.core.database import Base  # noqa: E402
+from app.core.database import Base, _to_sync_url  # noqa: E402
+
+db_url = os.getenv("DATABASE_URL")
+if db_url:
+    # #1592：2.1.x 裸 postgres URL 默认方言改走 psycopg v3（lock 只有 psycopg2-binary），
+    # 与 get_engine() 同源同纪律，显式钉 psycopg2 驱动。
+    db_url = _to_sync_url(db_url)
+    config.set_main_option("sqlalchemy.url", db_url)
 
 # 审计 I6：必须显式 import 所有 model 模块，让它们的表注册到 Base.metadata。
 # 否则 autogenerate 看到 metadata 是空的 → 生成的 revision upgrade() 是 pass。
@@ -51,6 +55,15 @@ import app.models.cartography_quality  # noqa: F401, E402  (AC-10/ADR-0159: Cart
 import app.models.mission  # noqa: F401, E402  (ADR-0197: GIS Mission Runtime)
 # 注意：漏 import 任何一个 model 模块，autogenerate 都会把该模块的表当作
 # 「metadata 里不存在」→ 对已迁移库生成 drop_table（数据丢失风险）。
+# security F-09：手工清单已漏掉 ads_fabric / gis_context / harness_journal
+# （5 张线上表）。兜底遍历 app.models 下全部子模块，新增模块无需再登记。
+import importlib  # noqa: E402
+import pkgutil  # noqa: E402
+
+import app.models  # noqa: E402
+
+for _mod in pkgutil.iter_modules(app.models.__path__):
+    importlib.import_module(f"app.models.{_mod.name}")
 
 target_metadata = Base.metadata
 

@@ -75,6 +75,7 @@ def execute_windowed(
     dst_dtype: Optional[str] = None,
     on_chunk_done: Optional[Callable[[Any, str, int], None]] = None,
     chunk_cache: Optional[Any] = None,
+    budget_ok: bool = False,
 ) -> WindowResult:
     """Run ``fn`` over every window and merge the outputs.
 
@@ -83,7 +84,9 @@ def execute_windowed(
     and the READ window actually fetched (halo-clamped at raster edges —
     so ``core - read`` offsets locate the core inside ``window_data`` even
     on the boundary). It must return an array matching the core shape.
-    Raises :class:`RasterReaderError` for non-window-safe profiles.
+    Raises :class:`RasterReaderError` for non-window-safe profiles, and when
+    the merged full-raster output exceeds the reader byte budget (pass
+    ``budget_ok=True`` to override; review W1).
 
     Band scope (ADR-0101 D9, V6 §19 — now a wired capability):
     - ``band=N`` (default): single-band read, ``window_data.shape == (h, w)``.
@@ -163,6 +166,20 @@ def execute_windowed(
         from app.lib.geo_raster import chunk as chunk_mod  # noqa: F811
 
     out_dtype = dst_dtype or meta.dtype
+    # review W1: the merged output is one in-memory full-raster array — it
+    # must honour the same byte budget as RasterReader full reads instead of
+    # silently allocating e.g. 12.8 GB for a 40k² float64 result before the
+    # first window. Callers that have proven memory headroom pass
+    # ``budget_ok=True``.
+    from app.lib.geo_raster.reader import DEFAULT_FULL_READ_BUDGET_BYTES
+
+    out_bytes = int(meta.height) * int(meta.width) * np.dtype(out_dtype).itemsize
+    if not budget_ok and out_bytes > DEFAULT_FULL_READ_BUDGET_BYTES:
+        raise RasterReaderError(
+            f"windowed output would allocate ~{out_bytes / 1e6:.0f} MB "
+            f"(budget {DEFAULT_FULL_READ_BUDGET_BYTES // 1e6:.0f} MB); stream "
+            "windows to a WindowedRasterWriter or pass budget_ok=True"
+        )
     out = np.empty((meta.height, meta.width), dtype=out_dtype)
     windows = list(iter_bounded_windows(meta.width, meta.height, window_side=window_side, src=ds))
     n_windows = len(windows)

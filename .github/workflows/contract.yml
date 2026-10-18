@@ -38,7 +38,7 @@ jobs:
           cache: pip
 
       - name: Install deps
-        run: pip install -r requirements-dev.txt -r requirements.txt schemathesis httpx
+        run: pip install -c requirements.lock -r requirements-dev.txt -r requirements.txt schemathesis httpx
 
       - name: OpenAPI snapshot (no breaking changes, additive needs explicit refresh)
         run: pytest tests/quality/test_api_compatibility.py -q

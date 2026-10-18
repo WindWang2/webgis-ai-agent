@@ -16,8 +16,9 @@ store 协议（可注入；单测用内存实现）::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from app.services.gis_harness.requirement_ir.build import (
@@ -54,39 +55,36 @@ REQUIREMENT_STATE_KEY = "requirement_ir_document"
 STATE_SCHEMA = "requirement_ir_state.v1"
 MAX_SUMMARY_CLARIFICATIONS = 2
 MAX_FOLDED_OP_IDS = 128
-# 并发假设（诚实披露，review §4 + ADR-0219 P1#3 加固）：service 的
-# 读-改-写原为**单写者**模型——生产路径由 Pi turn lease 串行化
-# （agent_pi_bridge._acquire_turn_lease）。ADR-0219 的 UI 投影为文档引入
-# 了 turn lease 之外的**进程内**写者（用户地图操作的 post-commit 投影），
-# 故增设进程内 per-session 写入门（loop 感知，模式同 distributed_lock
-# 的 _fallback_bound_loop）：同进程 turn 路径与投影路径互斥，消除
-# load→modify→save 交错的静默丢更新。跨进程双写仍不被本模块防御
-# （IR 是 fail-open 旁路，最坏丢失一次增量，由下一轮 ensure 重建收敛；
-# set_map_state 的 seq=doc.revision 仍是跨进程 best-effort fencing）。
-_WRITE_GATES: Dict[str, Any] = {}
-_WRITE_GATE_LOOP: Any = None
+# 并发假设（诚实披露，review §4）：service 的读-改-写是**单写者**模型——
+# 生产路径由 Pi turn lease 串行化（agent_pi_bridge._acquire_turn_lease），
+# 同 session 不会有并发写。set_map_state 的 seq 参数传 doc.revision 作为
+# best-effort fencing；跨进程双写不被本模块防御（IR 是 fail-open 旁路，
+# 最坏丢失一次增量，由下一轮 ensure 重建收敛）。
+# 方向 3：answer 端点在 turn 之外执行——与 Pi turn 内的 ensure_document
+# 存在进程内并发窗口。per-session asyncio 锁关闭该窗口（同进程内
+# answer/ensure/patch 全部串行；跨进程仍为上述 best-effort 模型）。
 
 
-def _session_write_gate(session_id: str) -> asyncio.Lock:
-    """per-session 进程内写入门（asyncio.Lock，loop 变更时整体重建）。"""
-    global _WRITE_GATE_LOOP
+_SESSION_WRITER_LOCKS: Dict[str, asyncio.Lock] = {}
+_MAX_WRITER_LOCKS = 512
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if _WRITE_GATE_LOOP is not loop:
-        _WRITE_GATES.clear()
-        _WRITE_GATE_LOOP = loop
-    gate = _WRITE_GATES.get(session_id)
-    if gate is None:
-        gate = asyncio.Lock()
-        _WRITE_GATES[session_id] = gate
-        if len(_WRITE_GATES) > 512:
-            for key in list(_WRITE_GATES)[: len(_WRITE_GATES) - 384]:
-                if not _WRITE_GATES[key].locked():
-                    _WRITE_GATES.pop(key, None)
-    return gate
+
+@contextlib.asynccontextmanager
+async def session_writer_lock(session_id: str) -> AsyncIterator[None]:
+    """进程内 per-session 写锁（bounded；answer 端点与 Pi turn 共用）。
+
+    锁的创建在单事件循环内 get→set 无 await，天然原子；极端会话数下
+    整体重置（有界），被锁保护的是"同会话读-改-写不交错"，锁对象重建
+    至多放行一次并发（与 fail-open 模型一致）。
+    """
+    lock = _SESSION_WRITER_LOCKS.get(session_id)
+    if lock is None:
+        if len(_SESSION_WRITER_LOCKS) >= _MAX_WRITER_LOCKS:
+            _SESSION_WRITER_LOCKS.clear()   # 有界：极端会话数下整体重置
+        lock = asyncio.Lock()
+        _SESSION_WRITER_LOCKS[session_id] = lock
+    async with lock:
+        yield
 
 
 class SessionState(BaseModel):
@@ -137,14 +135,30 @@ async def load_state(session_store: Any, session_id: str) -> Optional[SessionSta
     return None
 
 
-async def save_state(session_store: Any, session_id: str, state: SessionState) -> None:
+async def save_state(session_store: Any, session_id: str, state: SessionState) -> bool:
+    """持久化 requirement 状态；返回 store 是否接受写入。
+
+    生产 store 的 ``set_map_state(seq=...)`` 是单调栅栏（``seq <=
+    stored_seq`` → **返回 False 静默拒绝**，不抛错）。此前返回值被忽略：
+    栅栏拒绝（跨进程并发/revision 回退）被吞成"成功"，调用方拿着内存态
+    继续走（review P0-1/P1-3）。现在 False → WARNING 日志 + 返回 False，
+    由调用方决定披露面（ensure 面仍 fail-open，patch/answer 面转 typed
+    错误）。
+    """
     try:
         revision = int(state.document.get("revision") or 0)
-        await session_store.set_map_state(
+        saved = await session_store.set_map_state(
             session_id, REQUIREMENT_STATE_KEY, state.model_dump(),
             seq=revision or None)
+        if saved is False:
+            logger.warning(
+                "[requirement_ir] state save fenced by store (stale seq) "
+                "session=%s rev=%s", session_id, revision)
+            return False
+        return True
     except Exception as exc:  # noqa: BLE001 — 会话面故障不阻塞
         logger.debug("[requirement_ir] save_state skipped: %s", exc)
+        return False
 
 
 def _fold_if_needed(state: SessionState, doc: RequirementDocument):
@@ -234,23 +248,23 @@ async def ensure_document(
     turn: int = 0,
     core: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """意图入口的 requirement 面（幂等；edit → patch，新任务 → 超替携带）。
+    """意图入口的 requirement 面（per-session 写锁内执行；幂等；edit →
+    patch，新任务 → 超替携带）。
 
     ``core`` 允许调用方传入已解析的 ``MapRequestIntent``（工具路径复用
     同一解析产物，保证 intent 载荷与 requirement 文档一致且不重复解析）。
-    读写全程持有 per-session 进程内写入门（见 ``_session_write_gate``）。
 
     Returns:
         {"summary": summarize(doc), "created": bool, "patched": int,
          "superseded": bool, "patch_errors": [reason codes]}
     """
-    async with _session_write_gate(session_id):
-        return await _ensure_document_locked(
+    async with session_writer_lock(session_id):
+        return await _ensure_document_unlocked(
             session_store, session_id, query,
             hints=hints, turn=turn, core=core)
 
 
-async def _ensure_document_locked(
+async def _ensure_document_unlocked(
     session_store: Any,
     session_id: str,
     query: str,
@@ -259,6 +273,7 @@ async def _ensure_document_locked(
     turn: int = 0,
     core: Optional[Any] = None,
 ) -> Dict[str, Any]:
+    """ensure_document 的无锁内层（调用方必须已持 session 写锁）。"""
     state = await load_state(session_store, session_id)
     patch_errors: List[str] = []
 
@@ -268,7 +283,8 @@ async def _ensure_document_locked(
         doc = build_document(query, resolved, turn=turn, classification=classification)
         doc = record_ambiguities(doc, plan_clarifications(doc), turn)
         state = SessionState(genesis=doc.model_dump(), document=doc.model_dump())
-        await save_state(session_store, session_id, state)
+        if not await save_state(session_store, session_id, state):
+            patch_errors.append("requirement_persist_fenced")
         return {"summary": summarize(doc), "created": True, "patched": 0,
                 "superseded": False, "patch_errors": patch_errors}
 
@@ -291,8 +307,13 @@ async def _ensure_document_locked(
                     break   # CAS 失败：其余 patch 基于过期基线，全部放弃
         doc = record_ambiguities(doc, plan_clarifications(doc), turn)
         state, doc = _fold_if_needed(state, doc)
-        state.document = doc.model_dump()
-        await save_state(session_store, session_id, state)
+        new_dump = doc.model_dump()
+        if new_dump != state.document:
+            # review N2：无变化的重复 edit 不写——同 seq 重写必被 store 栅栏
+            # 拒绝，曾误报 requirement_persist_fenced（无并发、无丢失）。
+            state.document = new_dump
+            if not await save_state(session_store, session_id, state):
+                patch_errors.append("requirement_persist_fenced")
         return {"summary": summarize(doc), "created": False, "patched": applied,
                 "superseded": False, "patch_errors": patch_errors}
 
@@ -307,12 +328,19 @@ async def _ensure_document_locked(
         carried_locks=locks)
     new_doc = _restore_user_fields(new_doc, user_fields, turn)
     new_doc = record_ambiguities(new_doc, plan_clarifications(new_doc), turn)
+    # review P0-1：超替跨代单调 revision。生产 store 的 set_map_state 以
+    # revision 为 seq 栅栏（seq <= stored_seq 静默拒绝）；build_document
+    # 产出的新文档 revision=1，若不携带旧文档 revision 前进，超替写入
+    # 必被栅栏拒绝且永不收敛（load_state 永远读回旧任务文档，多任务
+    # 会话的澄清/答案 journal 全部失效）。
+    new_doc = new_doc.model_copy(update={"revision": doc.revision + 1})
     superseded_doc = supersede(doc, new_doc.document_id)
     state.genesis = new_doc.model_dump()   # 新 checkpoint（旧史随旧文档超替封存）
     state.document = new_doc.model_dump()
     state.folded_patch_count = 0
     state.folded_op_ids = []
-    await save_state(session_store, session_id, state)
+    if not await save_state(session_store, session_id, state):
+        patch_errors.append("requirement_persist_fenced")
     return {"summary": summarize(new_doc), "created": True, "patched": 0,
             "superseded": True, "patch_errors": patch_errors,
             "superseded_document": {
@@ -378,39 +406,51 @@ async def apply_user_patches(
     session_id: str,
     patches: List[TurnPatch],
 ) -> Dict[str, Any]:
-    """显式 patch 提交面（CAS/幂等由 apply_patch 保证；折叠 op_id 幂等
-    由 folded_op_ids 补充——已折叠进 genesis 的历史 patch 不再重放）。
-    读写全程持有 per-session 进程内写进门（turn 路径与 UI 投影路径互斥）。"""
-    async with _session_write_gate(session_id):
-        state = await load_state(session_store, session_id)
-        if state is None:
-            return {"applied": 0, "errors": ["requirement_document_absent"], "summary": None}
-        doc = _doc_from(state.document)
-        applied, errors = 0, []
-        for spec in patches:
-            record = PatchRecord(
-                op_id=spec.op_id or f"patch-{canonical_fingerprint({'op': spec.op, 'p': spec.path, 'v': spec.value, 't': spec.turn})[:12]}",
-                turn=spec.turn,
-                actor=spec.actor,  # type: ignore[arg-type]
-                op=spec.op,  # type: ignore[arg-type]
-                path=spec.path, value=spec.value, reason=spec.reason,
-                expected_revision=spec.expected_revision,
-            )
-            if _is_known_op_id(state, record.op_id):
-                continue    # 已折叠历史：幂等跳过
-            try:
-                doc, was_applied = apply_patch(doc, record)
-                if was_applied:
-                    applied += 1
-            except ValueError as exc:
-                errors.append(getattr(exc, "code", "patch_rejected"))
-                if getattr(exc, "code", "") == "patch_stale_revision":
-                    break
-        doc = record_ambiguities(doc, plan_clarifications(doc), doc.updated_turn)
-        state, doc = _fold_if_needed(state, doc)
-        state.document = doc.model_dump()
-        await save_state(session_store, session_id, state)
-        return {"applied": applied, "errors": errors, "summary": summarize(doc)}
+    """显式 patch 提交面（per-session 写锁内执行；CAS/幂等由 apply_patch
+    保证；折叠 op_id 幂等由 folded_op_ids 补充——已折叠进 genesis 的历史
+    patch 不再重放）。"""
+    async with session_writer_lock(session_id):
+        return await _apply_user_patches_unlocked(session_store, session_id, patches)
+
+
+async def _apply_user_patches_unlocked(
+    session_store: Any,
+    session_id: str,
+    patches: List[TurnPatch],
+) -> Dict[str, Any]:
+    """apply_user_patches 的无锁内层（调用方必须已持 session 写锁）。"""
+    state = await load_state(session_store, session_id)
+    if state is None:
+        return {"applied": 0, "errors": ["requirement_document_absent"], "summary": None}
+    doc = _doc_from(state.document)
+    applied, errors = 0, []
+    for spec in patches:
+        record = PatchRecord(
+            op_id=spec.op_id or f"patch-{canonical_fingerprint({'op': spec.op, 'p': spec.path, 'v': spec.value, 't': spec.turn})[:12]}",
+            turn=spec.turn,
+            actor=spec.actor,  # type: ignore[arg-type]
+            op=spec.op,  # type: ignore[arg-type]
+            path=spec.path, value=spec.value, reason=spec.reason,
+            expected_revision=spec.expected_revision,
+        )
+        if _is_known_op_id(state, record.op_id):
+            continue    # 已折叠历史：幂等跳过
+        try:
+            doc, was_applied = apply_patch(doc, record)
+            if was_applied:
+                applied += 1
+        except ValueError as exc:
+            errors.append(getattr(exc, "code", "patch_rejected"))
+            if getattr(exc, "code", "") == "patch_stale_revision":
+                break
+    doc = record_ambiguities(doc, plan_clarifications(doc), doc.updated_turn)
+    state, doc = _fold_if_needed(state, doc)
+    state.document = doc.model_dump()
+    if not await save_state(session_store, session_id, state):
+        # review P1-3：栅栏拒绝绝不能伪装成功——answer 面据此转 typed 拒绝
+        # （内存态不外泄为"已答"）。
+        errors.append("requirement_persist_fenced")
+    return {"applied": applied, "errors": errors, "summary": summarize(doc)}
 
 
 async def answer_clarification(

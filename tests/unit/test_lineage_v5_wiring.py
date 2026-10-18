@@ -347,7 +347,8 @@ def _wf(db, proj_id, steps, name="wf"):
     return ProjectService.save_workflow(
         db, proj_id,
         WorkflowCreate(name=name, graph_spec=WorkflowGraphSpec(
-            steps=[WorkflowStepSpec(**s) for s in steps])))
+            steps=[WorkflowStepSpec(**s) for s in steps])),
+        org_id=1)  # security F-11: ownerless org project is org-only
 
 
 def _run_wf(db, wf, proj, **kw):
