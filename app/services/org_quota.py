@@ -12,7 +12,10 @@
    - 速率 = org 维度 Redis 滑窗桶（``get_rate_limiter`` 既有设施，
      in-memory 兜底）。
 3. **裁决**：越限 → ``QuotaExceededError``（PlatformError, category=
-   QUOTA → 429 分类学信封，A 线对齐点）+ 审计事件（fail-open）。
+   QUOTA → 429 分类学信封，A 线对齐点）+ 审计事件（fail-open）。并发/
+   存储为 check-then-act（先 COUNT 再放行、无原子预留）——并发提交可
+   超额数个在途请求，配额为**近似裁决**（#1626(d) 在 admin usage
+   快照旁同等披露）。
 
 检查全部 fail-open 于**读**（查询失败视为未超限，不阻塞业务）——
 配额是保护性限流，不是可用性单点。
@@ -209,7 +212,13 @@ async def check_rate(org_id: str, *, limit_per_min: Optional[int] = None,
 
 
 async def usage_snapshot(db: AsyncSession, org_id: str) -> dict:
-    """usage 投影（admin 面展示；配额与当前用量一页看全）。"""
+    """usage 投影（admin 面展示；配额与当前用量一页看全）。
+
+    #1626(d)：并发/存储裁决是 check-then-act（先 COUNT 再放行，无原子
+    预留），并发提交可超额数个任务 —— 本快照的 used 计数为**近似裁决
+    依据**（越限审计仍如实记录），不是精确余额。模块文档明示的
+    fail-open 取舍（保护性限流不是可用性单点）在此同样适用。
+    """
     limits = await effective_limits(db, org_id)
     return {
         "org_id": org_id,

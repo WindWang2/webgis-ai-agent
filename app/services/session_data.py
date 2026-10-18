@@ -743,6 +743,15 @@ class MemorySessionStore(BaseSessionStore):
         ``_map_state_lock`` 上串行（read-modify-write 原子性）；读侧不持该
         锁，写方不再排队等待 ~100ms 级拷贝窗口，也无「锁内穿越 to_thread」
         的死锁面。
+
+        #1626(c) copy-on-write 约定（无代码强制，靠写方纪律）：layer 的
+        **嵌套对象（source/paint/layout）只进不出** —— 现有写方
+        （commit_mapspec_state / update_layer_in_state）均整体替换 layer
+        dict（``layers[i] = {**layer, **updates}``），绝不在快照可能持有
+        引用的嵌套对象上就地改写。快照只私有化「顶层 dict + layers 列表
+        + 各 layer dict」两层；未来新写方若就地改 ``layer["source"]`` 等
+        嵌套对象，to_thread 内的 deepcopy 可能撕裂或抛
+        ``RuntimeError: dictionary changed size during iteration``。
         """
         import copy as _copy
 
