@@ -43,6 +43,13 @@ from app.services.chat.pi_native_surface import (
     NATIVE_TOOL_NAME_SET,
     resolve_pi_tool_call,
 )
+# ADR-0224：turn SurfaceReceipt 对照门禁 + result ABI envelope（god-module
+# 棘轮 #1377 收敛：校验/组装语义在各自模块，bridge 只留薄调用点）。
+from app.services.chat.pi_bridge_surface_gate import (
+    evict_turn_receipts,
+    stale_surface_gate,
+)
+from app.services.chat.pi_result_abi import abi_tool_response
 from app.services.jobs.cancellation import CancellationToken, OperationCancelled, use_token
 # 再导出（有意为之，勿被 F401 清理移除）：pi_post_dispatch 的降级锁兜底
 # except 子句经 ``bridge.LockDegradedError/LockLostError`` 引用本模块属性
@@ -162,6 +169,11 @@ class PiToolRequest(BaseModel):
     # Set only by the authenticated HTTP adapter after token verification.
     # The extension never supplies this field as routing authority.
     verifiedTurnId: Optional[str] = None
+    # ADR-0224 fingerprint echo：dump v3 的 per-tool ``spec.fingerprint``
+    # 原样回传（缺席 = master 兼容不校验；值非权限——权限仍是 secret +
+    # token + live-turn；无 surfaceFingerprint 字段，面级指纹为 receipt
+    # 私有值）。完整语义见 pi_bridge_surface_gate 模块 docstring。
+    toolFingerprint: Optional[str] = None
 
 
 class PiToolResponse(BaseModel):
@@ -378,11 +390,14 @@ def _cleanup_turn_state(turn_sid: str) -> None:
     Dispatch results and SessionPlan SSE written by the HTTP callback for this
     session are dropped if never consumed. Scoped to turn_sid to prevent wiping
     unrelated sessions' state under multi-session concurrency.
+    ADR-0224：同 session 的 SurfaceReceipt 随 turn 生命周期一并回收
+    （见 pi_bridge_surface_gate.evict_turn_receipts）。
     """
     _session_executed_sets.pop(turn_sid, None)
     _session_executed_sets.pop("", None)
     _pop_session_entries(_dispatch_result_cache, turn_sid)
     _pop_session_entries(_session_plan_sse_cache, turn_sid)
+    evict_turn_receipts(turn_sid)
     from app.services.chat.pi_no_progress import clear_pi_no_progress_streak
     clear_pi_no_progress_streak(turn_sid)
 
@@ -545,6 +560,12 @@ async def _dispatch_tool_bound(
     _proxied = request.name == EXECUTE_PROXY_NAME and resolved.kind == "execute"
     tool_name = normalize_tool_name(resolved.name)
     arguments = dict(resolved.arguments)
+
+    # ADR-0224：turn SurfaceReceipt 对照（fingerprint echo + opt-in 面成员
+    # 硬校验）——语义与故障模型见 pi_bridge_surface_gate.stale_surface_gate。
+    stale = stale_surface_gate(request, session_id, tool_name, _proxied)
+    if stale is not None:
+        return stale
 
     if session_id:
         try:
@@ -782,11 +803,9 @@ async def _dispatch_tool_bound(
                     session_id=session_id,
                 ))
             _record_cancelled_tracker_step(request, tool_name, arguments)
-            return PiToolResponse(
-                toolCallId=request.toolCallId,
-                content=[{"type": "text", "text": "工具执行已被用户取消"}],
-                details={"cancelled": True},
-                isError=True,
+            return abi_tool_response(
+                request.toolCallId, "工具执行已被用户取消",
+                {"cancelled": True}, None, is_error=True, cancelled=True,
             )
         except Exception as exc:
             duration_ms = int((time.monotonic() - t0) * 1000)
@@ -927,11 +946,10 @@ async def _dispatch_tool_bound(
         # The GIS result is still returned, but a completion from an
         # older MapSpec revision cannot enter or evaluate the current
         # process-local harness.
-        return PiToolResponse(
-            toolCallId=request.toolCallId,
-            content=[{"type": "text", "text": result.llm_payload}],
-            details=_slim_pi_details_payload(result),
-            isError=(result.status == "error"),
+        return abi_tool_response(
+            request.toolCallId, result.llm_payload,
+            _slim_pi_details_payload(result), result,
+            extra_warnings=["stale mapspec generation: result not applied to live map"],
         )
 
     details_payload = _slim_pi_details_payload(result)
@@ -969,19 +987,12 @@ async def _dispatch_tool_bound(
         )
         payload = result.llm_payload or ""
         text = f"{payload}\n[no_progress] {stop_note}" if payload else stop_note
-        return PiToolResponse(
-            toolCallId=request.toolCallId,
-            content=[{"type": "text", "text": text}],
-            details=details_payload,
-            isError=True,
-        )
+        return abi_tool_response(
+            request.toolCallId, text, details_payload, result, is_error=True,
+            extra_warnings=[f"no_progress hard stop: streak={streak}"])
 
-    return PiToolResponse(
-        toolCallId=request.toolCallId,
-        content=[{"type": "text", "text": result.llm_payload}],
-        details=details_payload,
-        isError=(result.status == "error"),
-    )
+    return abi_tool_response(
+        request.toolCallId, result.llm_payload, details_payload, result)
 
 
 # 每个 session 的已执行工具集合，供重复调用拦截（service 接受外部 set）。

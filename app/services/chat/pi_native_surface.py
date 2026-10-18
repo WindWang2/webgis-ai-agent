@@ -326,9 +326,25 @@ def apply_surface_byte_budget(
 
 
 def registered_surface_names(registry: Any) -> list[str]:
-    """spawn 超集：全部 model-visible、非 tier-3、非 external_unavailable 工具。"""
-    from app.tools.descriptor import ToolStatus
+    """spawn 超集：全部 model-visible、非 tier-3、非 external_unavailable 工具。
 
+    ADR-0224（Goal 04）：``PI_TOOL_ABI`` 开启时追加两条**逐出**规则（dump 与
+    dispatch 分类共用本函数 —— 分类集 ≡ 扩展注册现实的不变量保持）：
+    - DESTRUCTIVE 副作用类（低 tier 同样）不进 native 注册面 —— 红线
+      「side-effect tool 不得经 native path 绕过确认」；proxy 长尾通道
+      不变，dispatch tier 闸仍守；
+    - per-tool schema 超 ``PI_SPEC_MAX_SCHEMA_BYTES``（registry.schema_size
+      口径，#1062 缓存）逐出 —— fail-honest：放不下逐工具，绝不裁 schema。
+    """
+    from app.tools.descriptor import SideEffectClass, ToolStatus
+
+    from app.services.chat.pi_tool_spec import (
+        spec_max_schema_bytes,
+        tool_abi_enabled,
+    )
+
+    abi_on = tool_abi_enabled()
+    per_tool_budget = spec_max_schema_bytes() if abi_on else 0
     names: list[str] = []
     for name in registry.list_tools():
         try:
@@ -341,6 +357,11 @@ def registered_surface_names(registry: Any) -> list[str]:
             continue
         if int(desc.tier) >= 3 or desc.effective_security_tier >= 3:
             continue
+        if abi_on and desc.side_effect is SideEffectClass.DESTRUCTIVE:
+            continue
+        if abi_on and per_tool_budget:
+            if (registry.schema_size(name) or 0) > per_tool_budget:
+                continue
         names.append(name)
     return sorted(names)
 
@@ -366,28 +387,76 @@ def _pi_tool_definition(registry: Any, name: str, *, dormant: bool) -> dict[str,
 
 
 def pi_surface_for_spawn(registry: Any) -> dict[str, Any]:
-    """spawn dump v2：注册超集 + default active（渐进式动态机制 Phase 3）。
+    """spawn dump：注册超集 + default active（渐进式动态机制 Phase 3）。
 
+    - v2（``PI_TOOL_ABI=0``）：``{version:2, tools, default_active, execute_proxy}``
+      —— master 行为原样（兼容回退 / kill switch）；
+    - v3（默认，ADR-0224）：v2 形状**加性**扩展（v2 解析方继续工作）——
+      ``abi``（版本 + 策略）、``registry_generation``（runtime manifest 指纹，
+      来源锚）、``surface_fingerprint``（dump 超集的 spec 级指纹）、
+      per-tool ``spec``（PiToolSpecV1 序列化：tier/side-effect/资源分级/
+      凭证类/指纹）。扩展注册仍只用 name/label/description/parameters；
+      spec 是 fingerprint echo 与诊断面的契约，不是第二注册中心。
     - ``tools``: 注册超集（native 7 带 promptSnippet；其余为完整注册 schema
       + ``dormant`` 标记）；
     - ``default_active``: 冻结 native 面（兼容 Phase 1 行为）。
     扩展注册全部 tools，随后 setActiveTools(default_active)。
     """
+    from app.services.chat.pi_tool_spec import (
+        PI_TOOL_SPEC_ABI_VERSION,
+        PI_TOOL_SPEC_POLICY,
+        compile_tool_spec,
+        current_registry_generation,
+        surface_fingerprint,
+        tool_abi_enabled,
+    )
+
     native = native_tools_for_pi(registry)  # fail-fast：native 缺失即 abort spawn
     native_names = {t["name"] for t in native}
+    superset = registered_surface_names(registry)
+    abi_on = tool_abi_enabled()
+    generation = current_registry_generation() if abi_on else ""
+    specs_by_name: dict[str, Any] = {}
+    if abi_on:
+        for name in [*NATIVE_TOOL_NAMES, *(n for n in superset if n not in native_names)]:
+            try:
+                spec = compile_tool_spec(registry, name, registry_generation=generation)
+            except Exception:  # noqa: BLE001 — spec 是投影；单工具失败不 abort spawn
+                logger.warning("[PiNativeSurface] spec compile failed for %s", name, exc_info=True)
+                spec = None
+            if spec is not None:
+                specs_by_name[name] = spec
     tools: list[dict[str, Any]] = list(native)
-    for name in registered_surface_names(registry):
+    for name in superset:
         if name in native_names:
             continue
         definition = _pi_tool_definition(registry, name, dormant=True)
         if definition is not None:
             tools.append(definition)
-    return {
+    payload: dict[str, Any] = {
         "version": 2,
         "tools": tools,
         "default_active": list(NATIVE_TOOL_NAMES),
         "execute_proxy": EXECUTE_PROXY_NAME,
     }
+    if not abi_on:
+        return payload
+    # dump v3：加性字段（v2 keys 保留 —— 扩展 v2 解析继续工作）。
+    for tool in payload["tools"]:
+        spec = specs_by_name.get(tool.get("name", ""))
+        if spec is not None:
+            tool["spec"] = spec.to_dump_dict()
+    payload["version"] = 3
+    payload["abi"] = {
+        "version": PI_TOOL_SPEC_ABI_VERSION,
+        "policy": PI_TOOL_SPEC_POLICY,
+    }
+    payload["registry_generation"] = generation
+    payload["surface_fingerprint"] = surface_fingerprint(
+        [specs_by_name[t["name"]] for t in payload["tools"] if t["name"] in specs_by_name],
+        registry_generation=generation,
+    )
+    return payload
 
 
 def write_surface_file(registry: Any, path: Path) -> Path:
@@ -488,11 +557,20 @@ def compute_turn_active_tools(
     k_max: int = 30,
     role: str = "execution",
     disclosure: Optional[Dict[str, Any]] = None,
+    situation: Optional[Mapping[str, Any]] = None,
+    session_id: str = "",
+    turn_id: str = "",
 ) -> list[str]:
-    """per-turn 动态工具面（Phase 3）：SelectionContext → 激活名单。
+    """per-turn 动態工具面（Phase 3）：SelectionContext → 激活名单。
 
     ``role`` 透传给 V3 选择器的角色副作用策略（ROLE_SIDE_EFFECT_POLICY）；
     Pi 主循环固定 execution（不受限），受限子代理/评测方传入对应角色名。
+
+    ADR-0224（Goal 04）：``PI_TOOL_ABI`` 开启时，安全双检之后叠加
+    **situation 资格投影**（credentials/offline/durable-worker 阳性缺席
+    事实 → 逐出 + reason code），并按 (session_id, turn_id) 铸
+    SurfaceReceipt（candidates/selected/dropped/bytes/fingerprint ——
+    回调 fingerprint echo 的对照真相）。dispatch 期闸仍是唯一执行权威。
 
     任何失败 → 返回空列表（调用方不注入 marker，扩展保持上轮/default 面）。
     名单恒含 NATIVE_TOOL_NAMES（前门不可失），绝不包含 tier-3。
@@ -569,6 +647,7 @@ def compute_turn_active_tools(
                     "confidence": float(selection.confidence),
                     "reason": str(selection.abstain_reason)[:96],
                 })
+            _record_abstained_receipt(registry, session_id, turn_id)
             return list(NATIVE_TOOL_NAMES)
         if disclosure is not None:
             disclosure.update({
@@ -586,6 +665,23 @@ def compute_turn_active_tools(
             if int(desc.tier) >= 3 or desc.effective_security_tier >= 3:
                 continue
             safe.append(name)
+        # ADR-0224：situation 资格投影（PI_TOOL_ABI=0 时整体跳过 —— master
+        # 行为逐位一致）。receipt 在字节预算**之后**铸造（见下）—— 捕获最终
+        # 激活面与全部逐出原因（资格 + 预算）。
+        qualification: Optional[Dict[str, Any]] = None
+        try:
+            qualification = _apply_surface_qualification(
+                registry,
+                safe,
+                situation=situation,
+            )
+        except Exception:  # noqa: BLE001 — 资格投影是增强，失败不裁名单
+            logger.debug("[PiNativeSurface] qualification failed", exc_info=True)
+            qualification = None
+        if qualification is not None:
+            safe = list(qualification["selected"])
+            if disclosure is not None and qualification["dropped"]:
+                disclosure["qualification_dropped"] = qualification["dropped"][:12]
         # ADR-0180 D2：激活面 schema 字节预算 —— 只裁动态候选，native 前门
         # 恒保留；裁剪记因（disclosure + 链发射 + metrics），绝不阻断 turn。
         try:
@@ -594,6 +690,36 @@ def compute_turn_active_tools(
             )
         except Exception:  # noqa: BLE001 — 预算是增强，度量失败不裁名单
             budget_info = None
+        # ADR-0224：铸造 SurfaceReceipt（最终激活面 + 资格/预算全部逐出因；
+        # 同 turn 幂等 —— 首次铸造后本 turn 内 surface 不可变）。
+        _turn_receipt = None
+        if qualification is not None and session_id and turn_id:
+            try:
+                from app.services.chat.pi_surface_receipt import (
+                    SurfaceDrop,
+                    record_turn_surface,
+                )
+
+                budget_drops = [
+                    SurfaceDrop(n, "byte_budget")
+                    for n in ((budget_info or {}).get("dropped") or [])
+                ]
+                _turn_receipt = record_turn_surface(
+                    [qualification["specs_by_name"][n] for n in safe
+                     if n in qualification["specs_by_name"]],
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    candidates=names,
+                    selected=safe,
+                    drops=[*(qualification["drops"]), *budget_drops],
+                    byte_budget=int((budget_info or {}).get("budget") or 0),
+                )
+                if disclosure is not None:
+                    disclosure["surface_fingerprint"] = _turn_receipt.surface_fingerprint
+            except Exception:  # noqa: BLE001 — receipt 是披露/校验面，绝不阻断 turn
+                logger.debug(
+                    "[PiNativeSurface] surface receipt mint failed", exc_info=True
+                )
         # V4 Wave 8：证据链阶段 7（TOOL_SURFACE）——per-turn 动态面裁决入链
         # （emit-once：每 turn 一条；上下文缺席静默跳过）。ADR-0180 追加
         # surface_bytes/budget 披露字段（additive，观测面）。
@@ -610,6 +736,8 @@ def compute_turn_active_tools(
                 _emit_kwargs["surface_bytes"] = int(budget_info["bytes_used"])
                 _emit_kwargs["surface_budget"] = int(budget_info["budget"])
                 _emit_kwargs["budget_dropped"] = len(budget_info["dropped"])
+            if _turn_receipt is not None:
+                _emit_kwargs["surface_fingerprint"] = _turn_receipt.surface_fingerprint
             emit_chain_once(Stage.TOOL_SURFACE, **_emit_kwargs)
         except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn
             pass
@@ -629,3 +757,112 @@ def compute_turn_active_tools(
         return safe
     except Exception:  # noqa: BLE001 — 动态面是增强，绝不阻断 turn
         return []
+
+
+def _apply_surface_qualification(
+    registry: Any,
+    names: Sequence[str],
+    *,
+    situation: Optional[Mapping[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """situation 资格投影（ADR-0224；PI_TOOL_ABI=0 → None = master 行为）。
+
+    输入是 tier 双检后的候选序（native 前门 + 选择器序）。逐出只依据
+    **阳性缺席事实**（credentials_present[id]=False / offline=True /
+    durable_worker=False）—— 无来源 = unknown = 不排除；dispatch 期
+    capability bind 仍是唯一执行权威，本层只是 turn 侧投影。
+    返回 ``{selected, drops, dropped, specs_by_name}``；receipt 由调用方
+    在字节预算后铸造（捕获最终激活面）。
+    """
+    from app.services.chat.pi_tool_spec import (
+        compile_tool_spec,
+        current_registry_generation,
+        tool_abi_enabled,
+    )
+    from app.services.chat.pi_surface_receipt import qualify_surface
+
+    if not tool_abi_enabled():
+        return None
+    generation = current_registry_generation()
+    specs_by_name: Dict[str, Any] = {}
+    ordered_specs = []
+    compile_failed: list[str] = []
+    for name in names:
+        try:
+            spec = compile_tool_spec(registry, name, registry_generation=generation)
+        except Exception:  # noqa: BLE001 — 单工具编译失败不裁候选（review P2-1）
+            logger.debug("[PiNativeSurface] spec compile skipped for %s", name, exc_info=True)
+            spec = None
+        if spec is None:
+            # 瞬态编译失败 / schema 缺席：**不逐出**（资格层失败不缩面 ——
+            # dispatch 闸仍是权威；native 前门绝不因此消失）。该工具无指纹
+            # → receipt.tool_fingerprints 缺席 → echo 校验对其跳过。
+            compile_failed.append(name)
+            continue
+        specs_by_name[name] = spec
+        ordered_specs.append(spec)
+    selected, drops = qualify_surface(ordered_specs, situation=situation)
+    if compile_failed:
+        logger.warning(
+            "[PiNativeSurface] spec compile failed for %d candidate(s) "
+            "(kept unqualified, dispatch gates unchanged): %s",
+            len(compile_failed), ", ".join(compile_failed[:8]),
+        )
+    # 未编译成功的候选保持原序保留（master 行为）；已编译候选按资格裁决。
+    selected_with_unqualified = [
+        name for name in names
+        if name in selected or name in compile_failed
+    ]
+    dropped = [d.to_dict() for d in drops]
+    if dropped:
+        logger.info(
+            "[PiNativeSurface] qualification dropped %d candidate(s): %s",
+            len(dropped),
+            ", ".join(f"{d['tool']}({d['code']})" for d in dropped[:8]),
+        )
+    return {
+        "selected": selected_with_unqualified,
+        "drops": list(drops),
+        "dropped": dropped,
+        "specs_by_name": specs_by_name,
+    }
+
+
+def _record_abstained_receipt(registry: Any, session_id: str, turn_id: str) -> None:
+    """V6 弃权 turn 的 receipt：native 前门 only + abstained 标记。
+
+    回调 fingerprint echo 在弃权 turn 也要有对照真相（native 7 的 spec
+    指纹）。session/turn 缺席或 ABI 关闭时跳过。
+    """
+    if not session_id or not turn_id:
+        return
+    try:
+        from app.services.chat.pi_tool_spec import (
+            compile_tool_spec,
+            current_registry_generation,
+            tool_abi_enabled,
+        )
+        from app.services.chat.pi_surface_receipt import record_turn_surface
+
+        if not tool_abi_enabled():
+            return
+        generation = current_registry_generation()
+        specs = []
+        for name in NATIVE_TOOL_NAMES:
+            try:
+                spec = compile_tool_spec(registry, name, registry_generation=generation)
+            except Exception:  # noqa: BLE001
+                spec = None
+            if spec is not None:
+                specs.append(spec)
+        record_turn_surface(
+            specs,
+            session_id=session_id,
+            turn_id=turn_id,
+            candidates=list(NATIVE_TOOL_NAMES),
+            selected=list(NATIVE_TOOL_NAMES),
+            drops=[],
+            abstained=True,
+        )
+    except Exception:  # noqa: BLE001 — receipt 是披露/校验面，绝不阻断 turn
+        logger.debug("[PiNativeSurface] abstained receipt mint failed", exc_info=True)
