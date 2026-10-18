@@ -127,28 +127,6 @@ class TestChronologyGuard:
         assert env.invalidation.data_changed == ("s1",)
 
 
-class TestExpectedWorkFingerprint:
-    """服务端 work echo 对账的期望指纹重算（纯投影，无缓存副作用）。"""
-
-    def test_matches_client_projection(self):
-        from app.lib.cartography.render_work_envelope import (
-            project_render_work_envelope,
-        )
-
-        env = project_render_work_envelope(
-            _SPEC_V1, session_id="sess-M", revision=4, fingerprint="fp-z",
-            observation_seq=31,
-        )
-        assert supply.expected_work_fingerprint(
-            _SPEC_V1, session_id="sess-M", revision=4, fingerprint="fp-z",
-        ) == env.work_fingerprint
-
-    def test_garbage_mapspec_none(self):
-        assert supply.expected_work_fingerprint(
-            None, session_id="s", revision=1, fingerprint="f",
-        ) is None
-
-
 class TestAsyncSupply:
     @pytest.mark.asyncio
     async def test_failopen_when_state_missing(self, monkeypatch):

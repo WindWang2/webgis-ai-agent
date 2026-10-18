@@ -250,6 +250,60 @@ def _validate_source_entry(
     return out
 
 
+def reconcile_work_echo(
+    apply_ack: Dict[str, Any],
+    *,
+    mapspec: Any,
+    session_id: str,
+    revision: int,
+    fingerprint: str,
+) -> Dict[str, Any]:
+    """服务端 work echo 对账（ADR-0224 review P2-3；纯函数，路由薄壳消费）。
+
+    输入是 **validate_render_apply_ack 的 normalized 输出**。仅当 ACK 非
+    stale 且带 work 块时，按当前权威 (mapspec, session, revision,
+    fingerprint) 确定性重算期望 work_fingerprint（seq 不进指纹故可重算）
+    比对客户端 echo：
+
+    - 匹配 / 不匹配 → work 块增补 ``server_match`` 布尔（不匹配另在
+      errors 追加 ``work_fingerprint mismatch``，遵守 8 条上界）；
+    - 权威事实缺席（mapspec 非法 / 重算失败）→ 原样返回（fail-open，
+      server_match 不落 —— 审计面不虚构）；
+    - stale ACK / 无 work 块 → 原样返回（旧代证据只进诊断）。
+
+    返回**新的** ack dict（输入不可变纪律；调用方替换落库值）。
+    """
+    if not isinstance(apply_ack, dict):
+        return apply_ack
+    work = apply_ack.get("work")
+    if apply_ack.get("stale") is True or not isinstance(work, dict):
+        return apply_ack
+    if not isinstance(mapspec, dict) or not fingerprint:
+        return apply_ack
+    from app.lib.cartography.render_work_envelope import (
+        project_render_work_envelope,
+    )
+
+    try:
+        expected = project_render_work_envelope(
+            mapspec,
+            session_id=session_id,
+            revision=revision,
+            fingerprint=fingerprint,
+        )
+    except Exception:  # noqa: BLE001 — 对账失败按缺席（不虚构归因）
+        return apply_ack
+    matched = expected.work_fingerprint == work.get("work_fingerprint")
+    out = dict(apply_ack)
+    out["work"] = {**work, "server_match": matched}
+    if not matched:
+        errors = list(out.get("errors") or [])[:_MAX_ERRORS]
+        if len(errors) < _MAX_ERRORS:
+            errors.append("work_fingerprint mismatch")
+        out["errors"] = errors
+    return out
+
+
 def _validate_entry(
     entry: Any, errors: List[str], kind: str
 ) -> Optional[Dict[str, Any]]:
@@ -361,4 +415,5 @@ __all__ = [
     "MAX_ACK_SOURCES",
     "validate_render_apply_ack",
     "derive_apply_ack_findings",
+    "reconcile_work_echo",
 ]

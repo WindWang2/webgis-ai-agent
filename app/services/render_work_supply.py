@@ -240,40 +240,10 @@ async def get_render_work_envelope(
         return None
 
 
-def expected_work_fingerprint(
-    mapspec: Any,
-    *,
-    session_id: str,
-    revision: int,
-    fingerprint: str,
-) -> Optional[str]:
-    """服务端 work echo 对账的期望指纹（纯投影，无缓存副作用）。
-
-    work_fingerprint 不含 observation_target_seq / invalidation —— 同
-    (mapspec, session, revision, fingerprint) 必同指纹，可从当前权威
-    state 确定性重算（observation ingest 的 server_match 检查消费）。
-    """
-    if not isinstance(mapspec, dict):
-        return None
-    try:
-        envelope = project_render_work_envelope(
-            mapspec,
-            session_id=session_id,
-            revision=revision,
-            fingerprint=fingerprint,
-        )
-        return envelope.work_fingerprint
-    except Exception:  # noqa: BLE001 — 对账失败按缺席
-        logger.debug("[render-work] expected fingerprint projection failed",
-                     exc_info=True)
-        return None
-
-
 __all__ = [
     "get_render_work_envelope",
     "project_envelope_from_state",
     "emit_render_work_envelope",
-    "expected_work_fingerprint",
     "invalidate_render_work_envelope",
     "reset_render_work_cache_for_tests",
 ]

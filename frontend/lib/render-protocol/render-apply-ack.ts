@@ -133,7 +133,11 @@ export interface BuildApplyAckOptions {
    * 不带 work 块 —— 旧代信封绝不冒充本代 ACK 的执行身份）。
    */
   work?: import('./render-work').RenderWorkEnvelope | null;
-  /** MapSpecRuntime.getStyleEpoch()（basemap wipe 代次；apply 时采集）。 */
+  /**
+   * MapSpecRuntime.getStyleEpoch()（basemap wipe 代次）。采集时刻是观察
+   * 而非 apply —— 但 invalidateStyle() 会清空 appliedSpec，applied 非空
+   * 即隐含 epoch 未变，故该值对本份 ACK 的 apply 基面有效（review P3-2）。
+   */
   styleEpoch?: number;
 }
 

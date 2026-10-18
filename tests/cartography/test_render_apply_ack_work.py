@@ -12,6 +12,7 @@ from app.lib.cartography.render_apply_ack import (
     REASON_CODES,
     RC_STALE_DATA_REVISION,
     derive_apply_ack_findings,
+    reconcile_work_echo,
     validate_render_apply_ack,
 )
 
@@ -181,3 +182,91 @@ class TestStaleVocabulary:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+class TestReconcileWorkEcho:
+    """服务端 work echo 对账（delta review N3 —— 路由块逻辑的纯函数化测试）。"""
+
+    _SPEC = {
+        "version": "1.5",
+        "sources": {"s1": {"type": "geojson", "content_revision": 2}},
+        "layers": [{"id": "l1", "type": "circle", "source": "s1"}],
+    }
+
+    def _validated(self, work, *, stamped=5):
+        payload = _base_ack(work=work)
+        normalized, errors = validate_render_apply_ack(payload, stamped_revision=stamped)
+        assert normalized is not None and errors == []
+        return normalized
+
+    def test_matching_echo_stamps_server_match_true(self):
+        from app.lib.cartography.render_work_envelope import (
+            project_render_work_envelope,
+        )
+
+        env = project_render_work_envelope(
+            self._SPEC, session_id="sess-R", revision=5, fingerprint="fp-r",
+            observation_seq=77,  # seq 不进指纹 —— 与服务端重算无关
+        )
+        ack = self._validated({
+            "work_id": env.work_id, "work_fingerprint": env.work_fingerprint,
+        })
+        out = reconcile_work_echo(
+            ack, mapspec=self._SPEC, session_id="sess-R",
+            revision=5, fingerprint="fp-r",
+        )
+        assert out["work"]["server_match"] is True
+        assert "errors" not in out
+
+    def test_mismatched_echo_stamps_false_and_discloses(self):
+        ack = self._validated({
+            "work_id": "rw-5-someoneelse", "work_fingerprint": "wf-forged",
+        })
+        out = reconcile_work_echo(
+            ack, mapspec=self._SPEC, session_id="sess-R",
+            revision=5, fingerprint="fp-r",
+        )
+        assert out["work"]["server_match"] is False
+        assert out["errors"] == ["work_fingerprint mismatch"]
+        # 输入不可变：原 ack 未被就地改写。
+        assert "server_match" not in ack["work"]
+
+    def test_stale_ack_untouched(self):
+        ack = self._validated(
+            {"work_id": "w", "work_fingerprint": "f"}, stamped=9,
+        )
+        assert ack["stale"] is True
+        out = reconcile_work_echo(
+            ack, mapspec=self._SPEC, session_id="sess-R",
+            revision=9, fingerprint="fp-r",
+        )
+        assert out is ack  # 旧代证据只进诊断，不对账
+        assert "server_match" not in out["work"]
+
+    def test_absent_work_or_bad_authority_untouched(self):
+        no_work = self._validated(None)
+        assert reconcile_work_echo(
+            no_work, mapspec=self._SPEC, session_id="s",
+            revision=5, fingerprint="f",
+        ) is no_work
+        ack = self._validated({"work_id": "w", "work_fingerprint": "f"})
+        out = reconcile_work_echo(
+            ack, mapspec=None, session_id="s", revision=5, fingerprint="",
+        )
+        assert out is ack
+        assert "server_match" not in out["work"]
+
+    def test_error_cap_respected(self):
+        # 已有 8 条 errors（上界）→ mismatch 不再追加（有界纪律）。
+        payload = _base_ack(work={"work_id": "w", "work_fingerprint": "bad"})
+        payload["layers"] = [
+            {"layer_id": f"x{i}", "status": "failed", "reason_code": "bogus{i}"}
+            for i in range(8)
+        ]
+        normalized, _ = validate_render_apply_ack(payload, stamped_revision=5)
+        out = reconcile_work_echo(
+            normalized, mapspec=self._SPEC, session_id="sess-R",
+            revision=5, fingerprint="fp-r",
+        )
+        assert out["work"]["server_match"] is False
+        assert len(out["errors"]) == 8

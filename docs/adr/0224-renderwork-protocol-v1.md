@@ -173,6 +173,15 @@ work_match（信封指纹 vs 观察指纹）/ recompile_fallbacks）。bounded
   TS 指纹界 96；float revision 诚实缺席；styleEpoch 注释机制修正；
   文档引用修正；validator 容差不对称显式文档化。
 
+Delta 复核（第二轮独立 review）确认 P0/P1/P2 全清偿，追加清偿三个 P3：
+
+- 字节幅归一 NaN/±inf 钳 0（`_finite_or_zero` —— 非标准 JSON 字面量
+  不再把 observation 打成 422；`bytesFetched`/`cache_bytes` 同族）；
+- server_match 路由块纯函数化为 `reconcile_work_echo`（lib 层权威事实
+  重算 + immutable-in/out + errors 8 条上界；5 个分支单测覆盖
+  matched/mismatch/stale/缺席/上界）；
+- 死 API `expected_work_fingerprint` 移除（对账逻辑归 lib 层单一实现）。
+
 ## 明确不做（本 ADR 边界）
 
 - 不重写 runtime.ts / MapLibre renderer / MVT data-plane；
