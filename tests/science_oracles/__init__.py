@@ -48,7 +48,7 @@ def load_domain(domain: str) -> List[OracleCase]:
     path = DATA_DIR / f"{domain}.json"
     if not path.exists():
         return []
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     cases = []
     for entry in raw["cases"]:
         cases.append(OracleCase(
