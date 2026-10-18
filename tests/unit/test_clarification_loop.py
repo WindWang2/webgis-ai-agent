@@ -210,17 +210,18 @@ async def test_answer_endpoint_ownership_denied(client):
 
 
 @pytest.mark.asyncio
-async def test_answer_endpoint_empty_payload_400(client):
-    store = MemorySessionStore()
-    await _seed_requirement(store, "s-a")
-    env = await env_mod.pending_envelope(store, "s-a")
-    with patch("app.services.session_data.session_data_manager", new=store), \
-            _pass_ownership():
+async def test_answer_endpoint_empty_payload_422_at_schema_layer(client):
+    """#1648：answers/waive 双空在 schema 层拒绝（422）—— 不再穿透到
+    服务层 clarification_answer_invalid 的 400 兜底。request_id 用不存
+    在的 "x"：若仍在服务层裁决会是 404/400，422 即证明拒绝点在 schema。"""
+    with _pass_ownership():
         resp = await client.post(
             "/api/v1/chat/sessions/s-a/clarifications/answer",
-            json={"request_id": env.request_id, "answers": []},
+            json={"request_id": "x", "answers": [], "waive": []},
         )
-    assert resp.status_code == 400
+    assert resp.status_code == 422
+    detail = resp.json()["detail"] if "detail" in resp.json() else resp.json()
+    assert "answers or waive" in str(detail)
 
 
 @pytest.mark.asyncio

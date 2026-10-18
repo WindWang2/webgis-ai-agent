@@ -1918,6 +1918,7 @@
      "project_id": {
       "anyOf": [
        {
+        "maxLength": 128,
         "type": "string"
        },
        {
@@ -1941,6 +1942,7 @@
      "skill_name": {
       "anyOf": [
        {
+        "maxLength": 128,
         "type": "string"
        },
        {
@@ -2410,11 +2412,13 @@
     "properties": {
      "endpoint_url": {
       "description": "Endpoint URL or database connection string",
+      "maxLength": 2048,
       "title": "Endpoint Url",
       "type": "string"
      },
      "name": {
       "description": "Data source display name",
+      "maxLength": 255,
       "title": "Name",
       "type": "string"
      },
@@ -2426,6 +2430,7 @@
      },
      "source_type": {
       "description": "Source adapter type (postgis, ogc_api, wfs, wms, wmts, arcgis)",
+      "maxLength": 64,
       "title": "Source Type",
       "type": "string"
      }
@@ -2505,8 +2510,10 @@
      "keywords": {
       "description": "搜索关键词标签",
       "items": {
+       "maxLength": 64,
        "type": "string"
       },
+      "maxItems": 32,
       "title": "Keywords",
       "type": "array"
      },
@@ -3592,6 +3599,7 @@
      },
      "parameters": {
       "additionalProperties": true,
+      "description": "Node parameters; plan-level byte budget ≤256KB (MAX_PLAN_SNAPSHOT_BYTES)",
       "title": "Parameters",
       "type": "object"
      },
@@ -3602,6 +3610,7 @@
      },
      "retry": {
       "additionalProperties": true,
+      "description": "Retry policy overrides; plan-level byte budget ≤256KB (MAX_PLAN_SNAPSHOT_BYTES)",
       "title": "Retry",
       "type": "object"
      },
@@ -3622,6 +3631,7 @@
     "properties": {
      "budget": {
       "additionalProperties": true,
+      "description": "Resource budget overrides; plan-level byte budget ≤256KB (MAX_PLAN_SNAPSHOT_BYTES)",
       "title": "Budget",
       "type": "object"
      },
@@ -6805,6 +6815,7 @@
     "properties": {
      "catalog_item_id": {
       "description": "Catalog item identifier",
+      "maxLength": 128,
       "title": "Catalog Item Id",
       "type": "string"
      },
@@ -6821,6 +6832,7 @@
      },
      "session_id": {
       "description": "Session identifier UUID",
+      "maxLength": 128,
       "title": "Session Id",
       "type": "string"
      }
@@ -10249,6 +10261,7 @@
      "mode": {
       "default": "exact",
       "description": "exact = reuse frozen graph+inputs; latest = current revision, same inputs",
+      "maxLength": 32,
       "title": "Mode",
       "type": "string"
      }
@@ -10611,6 +10624,7 @@
     "type": "object"
    },
    "RuntimeSnapshotSaveResponse": {
+    "description": "显式冻结回执（只回摘要字段；完整只读预览面走 inspect 端点）。\n\n``snapshot`` 全量 manifest 字段已移除：manifest 内嵌 ≤16MB\nmapspec_doc，整份回传纯浪费带宽/序列化 CPU。",
     "properties": {
      "datasets": {
       "title": "Datasets",
@@ -10644,11 +10658,6 @@
      "session_id": {
       "title": "Session Id",
       "type": "string"
-     },
-     "snapshot": {
-      "additionalProperties": true,
-      "title": "Snapshot",
-      "type": "object"
      },
      "snapshot_id": {
       "title": "Snapshot Id",
@@ -12159,6 +12168,7 @@
        "additionalProperties": true,
        "type": "object"
       },
+      "maxItems": 64,
       "title": "Layers",
       "type": "array"
      },
@@ -13995,6 +14005,7 @@
      "from_step": {
       "anyOf": [
        {
+        "maxLength": 128,
         "type": "string"
        },
        {
@@ -14347,6 +14358,7 @@
      "start_from_step": {
       "anyOf": [
        {
+        "maxLength": 128,
         "type": "string"
        },
        {

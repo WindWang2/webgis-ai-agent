@@ -1,9 +1,27 @@
 """
 Pydantic schemas and seed template definitions for Cartography Template System.
 """
+import json
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from app.lib.cartography.defaults import DEFAULT_CLASS_COUNT, DEFAULT_CLASSIFICATION_METHOD, DEFAULT_PALETTE
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+#: 模板 payload（按 kind 的样式/配置自由结构）序列化字节帽 —— 与画布 meta
+#: 8KB 帽同纪律（#1648）：拒绝式，不静默截断。样式配置语义上远小于此限。
+_MAX_TEMPLATE_PAYLOAD_BYTES = 64 * 1024
+#: 关键词单条长度帽（检索标签，非正文）。
+_MAX_KEYWORD_CHARS = 64
+#: 关键词条数帽。
+_MAX_KEYWORDS = 32
+
+
+def _cap_template_payload(payload: Dict[str, Any]) -> None:
+    """模板 payload 序列化字节帽（超限 → ValueError → 422）。"""
+    blob = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    if len(blob) > _MAX_TEMPLATE_PAYLOAD_BYTES:
+        raise ValueError(
+            f"payload exceeds {_MAX_TEMPLATE_PAYLOAD_BYTES} bytes"
+        )
 
 
 class BasemapPayload(BaseModel):
@@ -84,8 +102,13 @@ class CartographyTemplateBase(BaseModel):
     name: str
     kind: Literal["basemap", "symbology", "layout", "thematic"]
     category: Optional[str] = None
-    keywords: List[str] = Field(default_factory=list)
+    # #1648：keywords 条数帽 32 + 单条 ≤64 字符（检索标签，非正文）。
+    keywords: List[Annotated[str, Field(max_length=_MAX_KEYWORD_CHARS)]] = Field(
+        default_factory=list, max_length=_MAX_KEYWORDS
+    )
     description: Optional[str] = None
+    # payload 语义帽见请求模型上的运行时帽（≤64KB，
+    # _MAX_TEMPLATE_PAYLOAD_BYTES）；响应侧不设运行时帽（存量行不回放）。
     payload: Dict[str, Any]
     is_builtin: bool = False
     version: int = 1
@@ -94,6 +117,12 @@ class CartographyTemplateBase(BaseModel):
 class CartographyTemplateCreate(CartographyTemplateBase):
     org_id: Optional[int] = None
     creator_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _cap_payload_size(self) -> "CartographyTemplateCreate":
+        # #1648：payload 为调用方可控自由结构，64KB 序列化帽（拒绝式）。
+        _cap_template_payload(self.payload)
+        return self
 
 
 class CartographyTemplateResponse(CartographyTemplateBase):
@@ -1299,9 +1328,20 @@ class CreateTemplateRequest(BaseModel):
     name: str = Field(..., description="模板名称", min_length=1, max_length=100)
     kind: str = Field(..., description="模板类别: basemap, symbology, layout, thematic")
     description: Optional[str] = Field(None, description="模板描述")
-    keywords: List[str] = Field(default_factory=list, description="搜索关键词标签")
+    # #1648：keywords 条数帽 32 + 单条 ≤64 字符（与 CartographyTemplateBase
+    # 同纪律）。
+    keywords: List[Annotated[str, Field(max_length=_MAX_KEYWORD_CHARS)]] = Field(
+        default_factory=list, max_length=_MAX_KEYWORDS, description="搜索关键词标签"
+    )
     payload: Dict[str, Any] = Field(..., description="对应 kind 的样式/配置 payload")
     thumbnail_url: Optional[str] = Field(None, description="缩略图 URL")
+
+    @model_validator(mode="after")
+    def _cap_payload_size(self) -> "CreateTemplateRequest":
+        # #1648：payload 为调用方可控自由结构，64KB 序列化帽（拒绝式，
+        # 不静默截断）—— 样式配置语义上远小于此限。
+        _cap_template_payload(self.payload)
+        return self
 
 
 class TemplateView(BaseModel):

@@ -1,9 +1,24 @@
 """
 Project Workspace, Persistent Workflow, Artifact, Lineage, and Quality API Schemas
 """
+import json
 from typing import Literal, Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+
+#: run 输入覆盖（input_bindings：dataset/AOI/parameters 引用，进 run
+#: manifest 的自由结构）序列化字节帽 —— 与 ChatRequest map_state 256KB
+#: 预算同纪律（#1648 / #521 同族）：调用方可控、拒绝式，不静默截断。
+_MAX_INPUT_BINDINGS_BYTES = 256 * 1024
+
+
+def _cap_input_bindings(bindings: Dict[str, Any]) -> None:
+    """input_bindings 序列化字节帽（超限 → ValueError → 422）。"""
+    blob = json.dumps(bindings, ensure_ascii=False, default=str).encode("utf-8")
+    if len(blob) > _MAX_INPUT_BINDINGS_BYTES:
+        raise ValueError(
+            f"input_bindings exceeds {_MAX_INPUT_BINDINGS_BYTES} bytes"
+        )
 
 
 class ProjectCreate(BaseModel):
@@ -113,7 +128,14 @@ class WorkflowResponse(BaseModel):
 
 class WorkflowRunRequest(BaseModel):
     input_bindings: Dict[str, Any] = Field(default_factory=dict, description="Override dataset/AOI/parameters")
-    start_from_step: Optional[str] = Field(None, description="Optional step_id to run from")
+    start_from_step: Optional[str] = Field(None, max_length=128, description="Optional step_id to run from")
+
+    @model_validator(mode="after")
+    def _cap_input_bindings_size(self) -> "WorkflowRunRequest":
+        # #1648：input_bindings 为调用方可控自由结构，256KB 序列化帽
+        # （拒绝式；引用型绑定语义上远小于此限）。
+        _cap_input_bindings(self.input_bindings)
+        return self
 
 
 class WorkflowRunResponse(BaseModel):
@@ -164,7 +186,7 @@ class WorkflowRevisionSummary(BaseModel):
 
 
 class RunReplayRequest(BaseModel):
-    mode: str = Field("exact", description="exact = reuse frozen graph+inputs; latest = current revision, same inputs")
+    mode: str = Field("exact", max_length=32, description="exact = reuse frozen graph+inputs; latest = current revision, same inputs")
 
 
 class RunResumeRequest(BaseModel):
@@ -179,10 +201,16 @@ class WorkflowRerunRequest(BaseModel):
     through CapabilityRegistry → AlgorithmResolver → ToolRegistry.
     """
 
-    from_step: Optional[str] = Field(None, description="Re-execute this step and all its descendants")
+    from_step: Optional[str] = Field(None, max_length=128, description="Re-execute this step and all its descendants")
     input_bindings: Dict[str, Any] = Field(
         default_factory=dict, description="Override dataset/AOI/parameters for the re-executed tail"
     )
+
+    @model_validator(mode="after")
+    def _cap_input_bindings_size(self) -> "WorkflowRerunRequest":
+        # #1648：同 WorkflowRunRequest —— 256KB 序列化帽（拒绝式）。
+        _cap_input_bindings(self.input_bindings)
+        return self
 
 
 class MapProductVersionCreate(BaseModel):
