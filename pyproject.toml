@@ -19,7 +19,7 @@ dependencies = [
     "python-multipart>=0.0.6",
     # 与 requirements.txt:28 逐字一致（#1512：<2.1 上界挡住 2.1.x 击穿；
     # [asyncio] extra 是 greenlet 自 2.1.x 起移出核心依赖后的必需声明）。
-    "sqlalchemy[asyncio]>=2.0.25,<2.1",
+    "sqlalchemy[asyncio]>=2.0.25,<2.2",
     "alembic>=1.13.0",
     "geopandas>=1.1.4",
     "shapely>=2.1.2",
