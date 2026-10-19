@@ -50,7 +50,7 @@ cryptography>=50.0.1
 # pydantic 上界 <2.14（#1512 同型）：CI 不走 lock，>=2.13.4 敞开时解析到 2.14.x，
 # mutation parity 语料记录的 errors.pydantic.dev/2.13/v URL 漂移（2.14 才发布生态未验证）。
 # 与 requirements.lock（==2.13.5）对齐。
-pydantic>=2.13.4,<2.14
+pydantic>=2.13.4,<2.15
 pydantic-settings>=2.14.2
 python-dotenv>=1.0.0
 httpx>=0.26.0
