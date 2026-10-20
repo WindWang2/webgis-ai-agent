@@ -422,7 +422,16 @@ def _resolve_paint_value(
 
     if method == "step":
         f = val.get("field")
-        prop_val = _safe_float(props.get(f), default=float("nan")) if (props and isinstance(props, dict) and f) else float("nan")
+        raw_val = props.get(f) if (props and isinstance(props, dict) and f) else None
+        # H02 §B：nodata guard —— null/missing 分派无数据色（与 live
+        # withNoDataGuard 同语义）；数值 NaN 行为保持不变。
+        nodata = val.get("nodata")
+        if (
+            isinstance(nodata, str) and nodata
+            and (raw_val is None or raw_val == "")
+        ):
+            return nodata
+        prop_val = _safe_float(raw_val, default=float("nan"))
         stops = val.get("stops", [])
         if not isinstance(stops, list) or not stops:
             return val.get("default", fallback)
@@ -437,7 +446,14 @@ def _resolve_paint_value(
 
     if method == "interpolate":
         f = val.get("field")
-        prop_val = _safe_float(props.get(f), default=float("nan")) if (props and isinstance(props, dict) and f) else float("nan")
+        raw_val = props.get(f) if (props and isinstance(props, dict) and f) else None
+        nodata = val.get("nodata")
+        if (
+            isinstance(nodata, str) and nodata
+            and (raw_val is None or raw_val == "")
+        ):
+            return nodata
+        prop_val = _safe_float(raw_val, default=float("nan"))
         stops = val.get("stops", [])
         if not isinstance(stops, list) or not stops:
             return val.get("default", fallback)

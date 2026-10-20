@@ -350,6 +350,36 @@ async def upload_map_export(
         logger.warning("[export] lineage recording errored file=%s", filename,
                        exc_info=True)
 
+    # H02-D：Cartographic Product Manifest —— 权威 MapSpec + 本次导出
+    # 事实 → versioned 语义一致性验证报告（与 diagnostics sidecar 同锚点
+    # 落盘；无会话/无 spec 时诚实缺席，绝不阻断导出）。
+    if session_id:
+        try:
+            from app.lib.cartography.product_manifest import (
+                verify_export_semantic_consistency,
+            )
+            from app.services.mapspec_store import mapspec_store
+
+            authoritative = await mapspec_store.get_mapspec(session_id)
+            if isinstance(authoritative, dict) and authoritative:
+                report = verify_export_semantic_consistency(
+                    authoritative,
+                    export_format=ext.lstrip("."),
+                    diagnostics=accepted_diagnostics,
+                )
+                manifest_bytes = json.dumps(
+                    report, ensure_ascii=False, sort_keys=True,
+                ).encode("utf-8")
+                await asyncio.to_thread(
+                    _persist_export_file,
+                    f"{filename}.manifest.json",
+                    manifest_bytes,
+                    ".json",
+                )
+        except Exception:  # noqa: BLE001 — manifest 是增值证据面
+            logger.warning("[export] manifest generation errored file=%s",
+                           filename, exc_info=True)
+
     download_url = f"/api/v1/export/download/{filename}"
     return MapExportResponse(
         success=True,

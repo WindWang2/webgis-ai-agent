@@ -528,6 +528,16 @@ def _uncertainty_to_interpolate(
     return None, warnings
 
 
+def _nodata_color(legend_spec: Dict[str, Any]) -> Optional[str]:
+    """legend_spec.nodata.color → StyleMethod 无数据色（H02 §B 双端一致）。"""
+    nodata = legend_spec.get("nodata")
+    if isinstance(nodata, dict):
+        color = nodata.get("color")
+        if isinstance(color, str) and color:
+            return color
+    return None
+
+
 def _graduated_to_step(legend_spec: Dict[str, Any], warnings: List[str]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     field = legend_spec.get("field", "")
     breaks = legend_spec.get("breaks", [])
@@ -542,7 +552,13 @@ def _graduated_to_step(legend_spec: Dict[str, Any], warnings: List[str]) -> Tupl
         for i in range(1, len(breaks) - 1):
             color_i = palette_colors[i] if i < len(palette_colors) else palette_colors[-1]
             stops.append([float(breaks[i]), color_i])
-        return {"method": "step", "field": field, "default": default_color, "stops": stops}, warnings
+        method: Dict[str, Any] = {
+            "method": "step", "field": field, "default": default_color, "stops": stops,
+        }
+        nodata = _nodata_color(legend_spec)
+        if nodata:
+            method["nodata"] = nodata
+        return method, warnings
 
     warnings.append("graduated_legend_invalid: insufficient breaks or palette_colors")
     return None, warnings
@@ -565,7 +581,11 @@ def _domain_to_interpolate(legend_spec: Dict[str, Any], warnings: List[str]) -> 
         n = len(palette_colors)
         step = (float(max_val) - float(min_val)) / (n - 1)
         stops = [[round(float(min_val) + i * step, 6), palette_colors[i]] for i in range(n)]
-        return {"method": "interpolate", "field": field, "stops": stops}, warnings
+        method: Dict[str, Any] = {"method": "interpolate", "field": field, "stops": stops}
+        nodata = _nodata_color(legend_spec)
+        if nodata:
+            method["nodata"] = nodata
+        return method, warnings
 
     warnings.append("continuous_legend_invalid: missing field, palette_colors (min 2), or min must be strictly less than max")
     return None, warnings

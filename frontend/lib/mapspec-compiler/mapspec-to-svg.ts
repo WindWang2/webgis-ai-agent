@@ -246,11 +246,22 @@ export function resolvePaintValue(
     cases?: Array<[unknown, unknown]>;
     stops?: Array<[unknown, unknown]>;
     default?: unknown;
+    /** H02 §B：legend_spec.nodata 的无数据色（与 live/Python 孪生同语义）。 */
+    nodata?: string;
   };
   const method = spec.method;
   if (!method || typeof method !== "string") {
     return val;
   }
+
+  // H02 §B：null/missing → 无数据色（数值 NaN 行为保持不变）。
+  const noDataHit = (
+    f: string | undefined,
+  ): boolean =>
+    typeof spec.nodata === "string" &&
+    spec.nodata !== "" &&
+    !!f &&
+    (!props || props[f] === undefined || props[f] === null);
 
   if (method === "constant") {
     return spec.value !== undefined ? spec.value : fallback;
@@ -282,6 +293,9 @@ export function resolvePaintValue(
 
   if (method === "step") {
     const f = spec.field;
+    if (noDataHit(f)) {
+      return spec.nodata as string;
+    }
     const propVal = props && f ? Number(props[f]) : NaN;
     const stops = spec.stops || [];
     if (!Array.isArray(stops) || stops.length === 0) {
@@ -303,6 +317,9 @@ export function resolvePaintValue(
 
   if (method === "interpolate") {
     const f = spec.field;
+    if (noDataHit(f)) {
+      return spec.nodata as string;
+    }
     const propVal = props && f ? Number(props[f]) : NaN;
     const stops = spec.stops || [];
     if (!Array.isArray(stops) || stops.length === 0) {
@@ -558,7 +575,13 @@ function compileMapSpecToSvgBody(
     }
 
     const srcData = src.inlineData ?? src.data;
-    if (!srcData) return;
+    if (!srcData) {
+      // H02（任务书 §D）：ref 未水合的层不得静默消失 —— 结构化披露
+      // （与 hillshade_not_vectorizable 同通道；修复面是导出装配层的
+      // injectResolvedRefSources 水合，见 exporter.ts SVG 分支）。
+      options.onDiagnostic?.("layer_ref_unavailable", String(layer.id ?? ""));
+      return;
+    }
     const features: unknown[] = srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
 
     features.forEach((rawFeat: unknown) => {

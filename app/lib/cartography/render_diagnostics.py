@@ -224,6 +224,12 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "hillshade_not_vectorizable", "warning",
             "山体阴影图层无法以矢量形式表达，已在导出件中省略（layer: {detail}）",
         ),
+        # —— H02（任务书 §D）SVG 矢量链 ref 水合披露 ——
+        RenderDiagnosticSpec(
+            "layer_ref_unavailable", "warning",
+            "图层引用的数据在矢量导出时不可用（未水合 inline 数据），"
+            "该层未进入导出件（layer: {detail}）",
+        ),
         RenderDiagnosticSpec(
             "vector_pdf_unavailable", "warning",
             "服务端矢量 PDF 引擎不可用，已回退栅格导出",
@@ -449,6 +455,10 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     # AC-06（ADR-0155）：SVG 导出孪生的 hillshade 表达力披露（双端发射）
     "hillshade_not_vectorizable": (
         "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    # H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（孪生发射）
+    "layer_ref_unavailable": (
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
 }

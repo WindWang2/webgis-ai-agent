@@ -141,6 +141,9 @@ export type ExportDegradationCode =
   | 'export_timeout_partial'
   | 'vector_svg_fallback_raster'
   | 'basemap_omitted_vector_svg'
+  /* H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（孪生发射，
+   * 词表权威 app/lib/cartography/render_diagnostics.py）。 */
+  | 'layer_ref_unavailable'
   | 'pdf_text_rasterized_cjk'
   | 'comparison_second_view_not_exported'
   | 'comparison_export_composed'

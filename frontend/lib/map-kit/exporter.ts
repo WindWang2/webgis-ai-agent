@@ -2226,8 +2226,18 @@ async function runExportInternal(
       let svgDegradations: ExportDegradation[];
       try {
         const { buildVectorSvgExport } = await import('./vector-svg-export');
+        // H02（任务书 §D）：SVG 矢量链与 live/publication 同款 ref 水合
+        //（缓存命中注入 inlineData；不触发后台拉取）。未命中的层由
+        // 孪生侧 layer_ref_unavailable 结构化披露，不再静默丢层。
+        const { injectResolvedRefSources } = await import(
+          '@/lib/mapspec/ref-source-resolver'
+        );
+        const hydratedSpec = injectResolvedRefSources(
+          committedSpec as never,
+          null,
+        ) as typeof committedSpec;
         const vector = buildVectorSvgExport({
-          spec: committedSpec,
+          spec: hydratedSpec,
           layout: publicationLayout,
           dpi,
           fallbackRaster: () => buildSvgText(exportCanvas, title, dataUrl),
