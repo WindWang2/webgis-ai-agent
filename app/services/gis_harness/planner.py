@@ -1907,6 +1907,62 @@ class MapProductPlanner:
                 recipe.id, wf_profile,
                 resolver_profile=profile, role_resolutions=role_resolutions,
             )
+            # H01（K2/K3）：五态资格 + 四层回退档进 finalize 契约 —— 与
+            # 编译器同源（qualify_workflow_data_roles / resolve_fallback_tier
+            # 单一资格语义），完成判据（completion.contracts）消费同一份
+            # 证据，不再只活在编译器证据侧。失败不阻断 finalize（键缺席 =
+            # 旧读者零漂移）。
+            data_qualifications: List[Dict[str, Any]] = []
+            fallback_tier = ""
+            try:
+                from app.services.gis_harness.data_qualification import (
+                    qualify_workflow_data_roles,
+                )
+                from app.services.gis_harness.fallback_v3 import (
+                    resolve_fallback_tier,
+                )
+
+                quals = qualify_workflow_data_roles(
+                    wf_profile.data_roles, role_resolutions,
+                    resolver_profile=profile,
+                )
+                data_qualifications = [
+                    {
+                        "role": str(q.role)[:32],
+                        "state": str(q.state),
+                        "reason_codes": [
+                            str(q.reason_code)[:64],
+                        ][:1] if q.reason_code else [],
+                    }
+                    for q in quals[:16]
+                ]
+                # 与编译器（workflow_compiler 阶段 14）同源的 ontology 任务
+                # 锚：本体任务 semantic_status=planned 时强制降档（不会升档
+                # —— 只影响 preferred→degraded 方向）。finalize 侧无
+                # plan-candidates 的 uses_planned_capability / scenario
+                # minimal 披露（两者同样只会进一步降档），差异方向诚实：
+                # finalize tier 是上界，仅 planned-capability 子场景可偏乐观。
+                ontology_task_id = ""
+                try:
+                    from app.services.gis_harness.gis_ontology import (
+                        get_task_ontology,
+                    )
+
+                    _onto = get_task_ontology().match_intent(
+                        plan.intent, limit=1)
+                    if _onto:
+                        ontology_task_id = str(_onto[0].task_id)
+                except Exception:  # noqa: BLE001 — 本体锚缺席不阻断
+                    ontology_task_id = ""
+                fallback_tier = resolve_fallback_tier(
+                    ontology_task_id=ontology_task_id,
+                    data_states=tuple(str(q.state) for q in quals),
+                    method_blockers=tuple(contract.method_blockers),
+                    data_blockers=tuple(contract.data_blockers),
+                ).tier
+            except Exception:  # noqa: BLE001 — 资格投影失败如实缺席
+                data_qualifications = []
+                fallback_tier = ""
             # 合并去重：同一 warning_code 已在 plan（如 pattern projection 的
             # 规划期披露）时不再重复追加 —— 披露幂等，证据不冗余。
             existing_codes = {
@@ -1979,6 +2035,9 @@ class MapProductPlanner:
                 "method_blockers": contract.method_blockers[:8],
                 "data_blockers": contract.data_blockers[:8],
                 "stage": "finalize",
+                # H01（K2/K3）：五态资格 + 回退档（完成判据消费面）。
+                "data_qualifications": data_qualifications,
+                "fallback_tier": fallback_tier,
             }
         except Exception as exc:  # noqa: BLE001 - 评估失败诚实留痕，不阻断终稿
             return {

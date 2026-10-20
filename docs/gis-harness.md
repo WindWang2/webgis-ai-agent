@@ -218,6 +218,49 @@ GIS 侧的产品规划职责。
 - 把 legacy 规划链移植进 Pi 回车 preamble 是独立的 roadmap 项，需要 Pi 侧
   多工具 schema 支持，不在本 seam 隐式实现。
 
+## 资格→完成判据收敛（H01，2026-10-20）
+
+> 代码：`planner.py`（finalize 契约）、`completion/contracts.py`、
+> `hotpath_convergence/dispatch_reason_codes.py`、`chat/pi_*`。测试：
+> `tests/unit/gis_harness/test_h01_*.py`、`tests/unit/test_pi_h01_*.py`。
+
+master 此前的结构性断点：五态数据资格（`data_qualification`）与四层回退
+档（`fallback_v3`）只在编译器证据侧（`workflow_compiler` 阶段 7/14），
+finalize 热路径的 `workflow_contract` 不携带它们，`evaluate_completion_
+contract` 读不到 ——「拒绝/降级」裁决与实际完成判据脱钩；fallback_tier
+全仓无生产消费方。H01 收敛（全部加性）：
+
+- **finalize 契约携带资格事实**：`planner._evaluate_workflow_contract`
+  以与编译器同源的 `qualify_workflow_data_roles` / `resolve_fallback_tier`
+  写入 `workflow_contract["data_qualifications"]`（五态 + reason_codes，
+  ≤16 角色）与 `["fallback_tier"]`。
+- **完成判据消费**：blocked 资格（未被声明允许的降级覆盖 —— recipe
+  fallback `blocks=False` 的 FallbackDecision 视为已覆盖）→ data 维
+  False + `BLOCKED_BY_DATA`（reason `data_qualification_blocked`，与
+  fallback_v3 blocked_reasons 同词）；`fallback_tier ∈ {degraded, minimal}`
+  → READY 封顶 `READY_WITH_WARNINGS`（`fallback_tier:<tier>` 披露义务）。
+- **任务语义存续守卫**（K4）：`TASK_SEMANTIC_FAMILY_GUARDS`（首条：
+  `analytical_density` ✕ `visual_density`）——受保护分析任务由纯视觉族
+  交付 → `F_TASK_SEMANTIC_DOWNGRADED` → `BLOCKED_BY_METHOD`。intent 层
+  的 `_HINT_PROTECTED_TASKS` 护栏（hint 不可降级）在完成层有了对偶。
+- **跨层机器码单一事实源**：`dispatch_reason_codes`（registry/dispatch
+  码常量 + `ERROR_CLASS_BY_CODE` envelope 映射 + `TURN_DROP_PARITY`
+  turn↔dispatch 对照），一致性守卫测试钉住词表漂移。
+- **权限先验披露**：`PiToolSpecV1.required_permission`（条件序列化）+
+  `qualify_surface` 阳性缺席逐出（`permission_not_granted`）；
+  `granted_permissions` 是 `credentials_present` 纯派生键，等价 digest
+  剔除以保 planner/dispatch parity。
+- **turn 面逐出披露**：`[工具面资格]` 有界段（≤6 条/≤900 字符/
+  `PI_SURFACE_DISCLOSURE` 杀开关）。
+- **结果契约修复**：`resultAbi.evidence` 投影生产者真实键
+  （capability id / plan_id 不再丢失）；权威错误码确定性分类
+  （新增 `provider_unavailable` class）；桥内 not-found/tier-3 拒绝带
+  机器码。
+
+场景工厂：21 类任务场景（展示/统计/密度/分母/热点/服务区/POI 丢失/
+字段缺失/空数据/少点/CRS/单位/凭据/网络/ref 失效/权限/schema 改版/
+恢复/重复/parity）+ 5 组 metamorphic，全经生产函数可重放。
+
 ## V4 — Autonomous Spatial Reasoning & Execution Runtime（ADR-0104）
 
 > 状态：已实现（2026-09，`feat/gis-harness-autonomous-runtime-v4`）。

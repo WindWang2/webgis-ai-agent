@@ -103,6 +103,40 @@ ToolRegistry/ToolDescriptor（唯一真相）
     （v2 解析继续工作）；扩展新增的只是 per-call `toolFingerprint` echo
     （从 dump v3 `spec.fingerprint` 读取，v2 dump 下自然缺席）。
 
+## 后续修订（H01，2026-10-20，feat/h01-gis-harness-capability-foundation-vnext）
+
+基于 ADR-0224 结果面的四个生产缺陷修复（全部加性，码值不漂移）：
+
+1. **evidence 投影键对齐**（裁决 8 的缺陷修复）：`evidence.capability_bind`
+   改投生产者真实键（`{action, capability, status, code, reason_codes[:4],
+   alternatives[:2]}`，allowed 路径 capability id 取 `rank_capability`）；
+   `evidence.action_ir` 改投 `{plan_id, kind, status, finding_codes[:4]}`。
+   master 抽取键 `decision/code/capability_id` 与生产者键错配，capability
+   id 永远丢失、action_ir 恒空整键省略。
+2. **错误分类确定性优先**：`error.class` 先经
+   `hotpath_convergence/dispatch_reason_codes.ERROR_CLASS_BY_CODE`（跨层
+   机器码单一事实源）映射，文本匹配仅兜底；词表加性扩展
+   `provider_unavailable` 成员。桥内 not-found / tier-3 拒绝带
+   `details.error` 机器码（`UNKNOWN_TOOL` / `TIER3_CONFIRMATION_REQUIRED`，
+   与 registry 同码）。
+3. **required_permission 进 spec**（裁决 3 的权限维补全）：
+   `PiToolSpecV1.required_permission`（条件序列化 —— 未声明不出键，
+   既有工具 spec 指纹零漂移；声明权限的工具指纹必然变化 = 新 ABI 代，
+   与裁决 2 指纹纪律一致）。`qualify_surface` 消费 situation 的
+   `granted_permissions`（`perm:<p>` 投影的显式列表）：**阳性缺席**
+   （供给成功且未授予）才逐出（新 drop code `permission_not_granted`）；
+   截断 / 未供给 = unknown 不排除。`granted_permissions` 是
+   `credentials_present` 的纯派生键 —— `situation_facts_digest` 剔除该键，
+   planner/dispatch 四面等价契约不变。
+4. **逐出披露回流**：turn marker 追加 `[工具面资格]` 有界段（≤6 条、
+   ≤900 字符、`PI_SURFACE_DISCLOSURE=0` 杀开关）—— 裁决 3 的「先验披露」
+   从「面收缩」升级为「面收缩 + 原因可见」，模型可自纠。
+
+关联收敛（GIS Harness 领域层，见 docs/gis-harness.md「资格→完成判据
+收敛」节）：finalize 契约携带五态 `data_qualifications` + `fallback_tier`，
+完成判据消费（blocked→BLOCKED_BY_DATA、degraded/minimal→压档、
+`F_TASK_SEMANTIC_DOWNGRADED` 语义存续守卫）。
+
 ## 与其他方向的关系
 
 - #1618 settle：不触碰（`_settle_turn_outcome` 区零改动）。

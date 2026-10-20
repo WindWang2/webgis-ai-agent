@@ -277,6 +277,9 @@ class PiToolSpecV1:
     requires_credentials: Tuple[str, ...] = ()
     execution_policy: str = "thread"
     network: Optional[bool] = None
+    #: H01（K5）：dispatch 权限闸（registry #1402）的先验披露 —— 条件序列化
+    #: （未声明不出键，既有工具 spec 指纹零漂移）。
+    required_permission: Optional[str] = None
 
     # --- 资源分级（surface 预算先验）---
     latency_class: str = "unknown"
@@ -298,7 +301,7 @@ class PiToolSpecV1:
 
     def to_dict(self) -> Dict[str, Any]:
         """确定性序列化形态（dump v3 / receipt / 测试消费；canonical 友好）。"""
-        return {
+        out = {
             "name": self.name,
             "abi_version": self.abi_version,
             "description": self.description,
@@ -326,6 +329,9 @@ class PiToolSpecV1:
             "schema_bytes": int(self.schema_bytes),
             "findings": self.findings,
         }
+        if self.required_permission:
+            out["required_permission"] = self.required_permission
+        return out
 
     def fingerprint(self) -> str:
         """spec 指纹：契约字段 + 投影 findings 的 canonical digest。
@@ -396,6 +402,10 @@ def compile_tool_spec(
         cancellable=True,  # dispatch 全链绑 turn CancellationToken（use_token）
         idempotent=descriptor.effective_idempotent,
         requires_credentials=tuple(sorted(descriptor.requires_credentials)),
+        required_permission=(
+            str(descriptor.required_permission).strip() or None
+            if descriptor.required_permission else None
+        ),
         execution_policy=str(descriptor.execution_policy or "thread"),
         network=descriptor.network,
         latency_class=str(descriptor.latency_class or "unknown"),

@@ -24,7 +24,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 
 from app.lib.tool_security import (
     CredentialPresence,
@@ -211,6 +211,15 @@ class RuntimeSituation:
                 list(self.runtime_availability.items())[:_MAX_DEP_KEYS])
         if self.offline is not None:
             out["offline"] = self.offline
+        # H01（K5）：授予权限面（perm:<p> 投影的显式列表）。**键恒在场**——
+        # 空列表 = 供给成功且零授予（阳性缺席，可逐出）；键缺席 = 未供给
+        # （unknown 不排除）。截断时附带标志，缺席事实不可判。注意这是
+        # ``credentials_present`` 的纯派生键 —— 等价性 digest（
+        # situation_facts_digest）显式剔除它以保持 planner/dispatch 两侧
+        # 四面等价契约。
+        out.update(
+            granted_permissions_view(self.credentials_present, self.truncations)
+        )
         return out
 
     def to_bounded_view(self) -> Dict[str, Any]:
@@ -231,6 +240,28 @@ class RuntimeSituation:
     def facts_digest(self) -> str:
         """资格事实的稳定指纹（planner↔dispatch 等价性断言键）。"""
         return situation_facts_digest(self.to_qualification_dict())
+
+
+def granted_permissions_view(
+    credentials_present: Mapping[str, bool],
+    truncations: Optional[Mapping[str, int]] = None,
+) -> Dict[str, Any]:
+    """``perm:<p>`` 键 → 显式授予权限投影（H01 K5，qualify_surface 消费）。
+
+    返回 ``{"granted_permissions": [...], ["granted_permissions_truncated": True]}``；
+    空列表 = 供给成功且零授予（阳性缺席），与「未供给」以键缺席区分。
+    纯派生：等价性 digest 剔除本键（见 situation_facts_digest）。
+    """
+    granted = sorted(
+        key[len("perm:"):] for key in credentials_present
+        if key.startswith("perm:") and credentials_present.get(key) is True
+    )
+    out: Dict[str, Any] = {
+        "granted_permissions": granted[:_MAX_CRED_KEYS],
+    }
+    if truncations and "granted_permissions" in truncations:
+        out["granted_permissions_truncated"] = True
+    return out
 
 
 def situation_facts_digest(facts: Any) -> str:
@@ -264,6 +295,14 @@ def situation_facts_digest(facts: Any) -> str:
                     facts.pop("runtime_availability")
         except Exception:  # noqa: BLE001 — 投影失败按原值序列化
             pass
+    if isinstance(facts, dict):
+        # H01（K5）：granted_permissions* 是 credentials_present 的纯派生键
+        # —— 剔除后再散列，保持 planner/dispatch 四面等价契约（派生键只
+        # 在其中一侧构造，不剔除则同事实恒不等价）。
+        facts = {
+            k: v for k, v in facts.items()
+            if k not in ("granted_permissions", "granted_permissions_truncated")
+        }
     payload = json.dumps(facts, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
@@ -447,13 +486,29 @@ def _merge_with_runtime(base: Any, runtime: Optional[RuntimeSituation]) -> Any:
         return runtime_facts
     if isinstance(base, dict):
         merged = dict(base)
+        took_runtime_creds = False
         for key in ("credentials_present", "runtime_availability"):
             if not merged.get(key) and runtime_facts.get(key):
                 merged[key] = runtime_facts[key]
+                if key == "credentials_present":
+                    took_runtime_creds = True
         if merged.get("offline") is None and runtime_facts.get("offline") is not None:
             merged["offline"] = runtime_facts["offline"]
         if not merged.get("owner_scope_key") and runtime_facts.get("owner_scope_key"):
             merged["owner_scope_key"] = runtime_facts["owner_scope_key"]
+        # H01（K5）：granted_permissions* 是 credentials_present 的派生键。
+        # 只在**运行时事实补齐了 credentials_present** 时用运行时派生键
+        # 替换（stale 派生键不得跨事实版本存活）；caller 自带凭证面
+        # （含 kill-switch 下 runtime 缺席）时 caller 的派生键原样保留 ——
+        # caller 数据事实 win，不静默销毁。
+        if took_runtime_creds:
+            merged.pop("granted_permissions", None)
+            merged.pop("granted_permissions_truncated", None)
+            if runtime_facts.get("granted_permissions") is not None:
+                merged["granted_permissions"] = runtime_facts[
+                    "granted_permissions"]
+                if runtime_facts.get("granted_permissions_truncated"):
+                    merged["granted_permissions_truncated"] = True
         return merged
     try:
         from dataclasses import replace
