@@ -144,6 +144,8 @@ export type ExportDegradationCode =
   /* H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（孪生发射，
    * 词表权威 app/lib/cartography/render_diagnostics.py）。 */
   | 'layer_ref_unavailable'
+  /* H02（任务书 §C）：标题/副标题确定性截断披露（layout-description 发射）。 */
+  | 'title_truncated'
   | 'pdf_text_rasterized_cjk'
   | 'comparison_second_view_not_exported'
   | 'comparison_export_composed'

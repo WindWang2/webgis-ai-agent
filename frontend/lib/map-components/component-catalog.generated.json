@@ -1771,6 +1771,11 @@
       "message": "3D 地形/倾斜视角下比例尺按平面口径计算，可能与视觉距离不符"
     },
     {
+      "code": "title_truncated",
+      "severity": "warning",
+      "message": "标题/副标题超出确定性上限已截断（{detail}）"
+    },
+    {
       "code": "vector_pdf_unavailable",
       "severity": "warning",
       "message": "服务端矢量 PDF 引擎不可用，已回退栅格导出"

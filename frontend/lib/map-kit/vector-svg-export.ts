@@ -152,6 +152,14 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
         detail: refUnavailableLayers.join(','),
       });
     }
+    // H02（任务书 §C）：版面文本确定性截断披露（IR 单源标记）。
+    const truncatedTexts = input.layout.texts.filter((t) => t.truncated);
+    if (truncatedTexts.length > 0) {
+      degradations.push({
+        code: 'title_truncated',
+        detail: truncatedTexts.map((t) => t.kind).join(','),
+      });
+    }
     const dataSvg = truncateCompiledLabels(compiled, degradations);
     // 内容态：层近似诊断（heatmap/extrusion）或产物内近似标记在场 → mixed；
     // 纯矢量数据层 → vector（label 截断不算层近似）。

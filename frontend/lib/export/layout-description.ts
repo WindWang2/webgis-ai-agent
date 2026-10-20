@@ -50,6 +50,19 @@ export interface PublicationText {
   kind: 'title' | 'subtitle' | 'attribution' | 'dataSource' | 'author';
   /** 回退链决策后的最终文本（空串 = 不进文本层）。 */
   text: string;
+  /** H02（任务书 §C）：确定性截断已发生（超长标题不得静默溢出画幅 —
+   * 消费端据此发 title_truncated 披露）。 */
+  truncated?: boolean;
+}
+
+/** 标题/副标题确定性截断上限（code points；与孪生标注 60 上限同约定，
+ * 标题字号更大给更宽的 120/160）。 */
+const MAX_TITLE_CODEPOINTS = 120;
+const MAX_SUBTITLE_CODEPOINTS = 160;
+
+function clipText(text: string, cap: number): { text: string; truncated: boolean } {
+  if (text.length <= cap) return { text, truncated: false };
+  return { text: `${text.slice(0, cap - 1)}…`, truncated: true };
 }
 
 /** 范围契约（P4 所见即所得）。 */
@@ -129,8 +142,19 @@ export function buildPublicationLayout(
   const title = input.requestTitle || input.specTitle || '';
   const subtitle = input.requestSubtitle || input.specSubtitle || '';
   const texts: PublicationText[] = [];
-  if (title) texts.push({ kind: 'title', text: title });
-  if (subtitle) texts.push({ kind: 'subtitle', text: subtitle });
+  if (title) {
+    const clipped = clipText(title, MAX_TITLE_CODEPOINTS);
+    // 仅截断时携带标记（非截断形态与旧 IR 逐字段一致，golden 不漂移）。
+    texts.push(clipped.truncated
+      ? { kind: "title", ...clipped }
+      : { kind: "title", text: clipped.text });
+  }
+  if (subtitle) {
+    const clipped = clipText(subtitle, MAX_SUBTITLE_CODEPOINTS);
+    texts.push(clipped.truncated
+      ? { kind: "subtitle", ...clipped }
+      : { kind: "subtitle", text: clipped.text });
+  }
   if (input.author) texts.push({ kind: 'author', text: input.author });
   if (input.dataSource) texts.push({ kind: 'dataSource', text: input.dataSource });
   const attribution = input.attributionText || '';

@@ -230,6 +230,11 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "图层引用的数据在矢量导出时不可用（未水合 inline 数据），"
             "该层未进入导出件（layer: {detail}）",
         ),
+        # —— H02（任务书 §C）版面文本确定性截断披露 ——
+        RenderDiagnosticSpec(
+            "title_truncated", "warning",
+            "标题/副标题超出确定性上限已截断（{detail}）",
+        ),
         RenderDiagnosticSpec(
             "vector_pdf_unavailable", "warning",
             "服务端矢量 PDF 引擎不可用，已回退栅格导出",
@@ -460,6 +465,10 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     # H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（孪生发射）
     "layer_ref_unavailable": (
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    # H02（任务书 §C）：版面文本截断披露（layout-description IR 单源发射）
+    "title_truncated": (
+        "frontend/lib/export/layout-description.ts",
     ),
 }
 
