@@ -51,6 +51,11 @@ _LAYER_METADATA_KEYS = (
     "paint",
     "filter",
     "legend_spec",
+    # v1.5/v1.6 语义缩放字段：表达窗口计划与结构 zoom 门参与身份推导
+    # （RenderWork work_id / C13 截图 revision 门 / superseded 代守卫都从
+    # 该指纹派生——representation-only 变异不能是"隐身代"）。
+    "representation",
+    "visibility",
     "provenance",
     "cartographic_intent",
     "cartographic_profile",
@@ -544,6 +549,7 @@ class CartographicLoopResult:
             "suppressed_repairs": self.suppressed_repairs,
             "locked_suppressed": self.locked_suppressed,
             "grammar_audit": self.grammar_audit,
+            "representation_report": self.representation_report,
         }
 
 
@@ -838,6 +844,7 @@ def review_and_repair_cartography(
             locked_suppressed[k] for k in sorted(locked_suppressed)
         ],
         grammar_audit=_run_grammar_audit(current, grammar_decision),
+        representation_report=representation_at_scale_report(current),
     )
 
 

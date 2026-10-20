@@ -143,7 +143,17 @@ export function compileStyleMethod(
       for (const [stopVal, outputVal] of stops) {
         flattenedStops.push(stopVal, outputVal);
       }
-      return asExpression(["interpolate", interpolationExpr, fieldExpr, ...flattenedStops]);
+      const interpExpr = asExpression([
+        "interpolate", interpolationExpr, fieldExpr, ...flattenedStops,
+      ]);
+      // H02 §B：nodata guard —— 与 live withNoDataGuard 同形状
+      // （["case", ["==", ["get", field], null], nodata, thematic]）。
+      if (typeof m.nodata === "string" && m.nodata) {
+        return asExpression([
+          "case", ["==", ["get", m.field], null], m.nodata, interpExpr,
+        ]);
+      }
+      return interpExpr;
     }
 
     case "step": {
@@ -158,7 +168,15 @@ export function compileStyleMethod(
       for (let i = startIndex; i < stops.length; i++) {
         flattenedStops.push(stops[i][0], stops[i][1]);
       }
-      return asExpression(["step", fieldExpr, initialValue, ...flattenedStops]);
+      const stepExpr = asExpression([
+        "step", fieldExpr, initialValue, ...flattenedStops,
+      ]);
+      if (typeof m.nodata === "string" && m.nodata) {
+        return asExpression([
+          "case", ["==", ["get", m.field], null], m.nodata, stepExpr,
+        ]);
+      }
+      return stepExpr;
     }
 
     case "match": {

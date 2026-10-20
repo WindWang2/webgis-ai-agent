@@ -1574,9 +1574,22 @@ class MapProductPlanner:
             from app.services.gis_harness.component_resolver import get_component_resolver
             template = self.templates.get(plan.template_id) if plan.template_id else None
             comp_tmpl_id = (template.composition_template_id if template and template.composition_template_id else "")
-            # report_product prefers a composition that provides export_layout/map_border
-            if plan.intent.report_product:
-                output_target = "pdf"
+            # report_product prefers a composition that provides export_layout/map_border；
+            # H02-G5：显式 export intents（非 report 产品）同样需要 export 槽位
+            # 裁决 —— 用户点名要 png/pdf/svg 时接线组合缺必备 export_layout
+            # 槽不得静默放行（此前仅 report_product 分支改选）。
+            _export_intents = [
+                str(t) for t in (getattr(plan.intent, "export_intents", None) or [])
+                if str(t) in ("png", "pdf", "svg")
+            ]
+            if plan.intent.report_product or _export_intents:
+                output_target = (
+                    "pdf" if plan.intent.report_product
+                    else next(
+                        (t for t in ("pdf", "svg", "png") if t in _export_intents),
+                        "pdf",
+                    )
+                )
                 # force a report-capable composition（接线模板不满足时改选；
                 # 满足 export_layout 必备的接线模板保持不变）
                 from app.lib.cartography.composition_templates import get_composition_template_registry
@@ -1591,8 +1604,8 @@ class MapProductPlanner:
                 wired = compo_reg.get(comp_tmpl_id) if comp_tmpl_id else None
                 if not _requires_export_layout(wired):
                     # wired 为 None 时（未接线/未注册 id）同样走自动改选 ——
-                    # 报告产品的版面契约优先于具体模板选择。
-                    cands = compo_reg.find_for_map_model(primary_carto, "pdf")
+                    # 报告产品/显式导出意图的版面契约优先于具体模板选择。
+                    cands = compo_reg.find_for_map_model(primary_carto, output_target)
                     report_cands = [c for c in cands if _requires_export_layout(c)]
                     if report_cands:
                         comp_tmpl_id = report_cands[0].id

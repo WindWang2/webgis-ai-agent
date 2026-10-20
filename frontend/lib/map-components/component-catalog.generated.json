@@ -1686,6 +1686,21 @@
       "message": "标注文本过长，已截断显示（{detail}）"
     },
     {
+      "code": "layer_gated_by_zoom",
+      "severity": "info",
+      "message": "图层 zoom 门不含导出比例尺，未进入导出件（{detail}）"
+    },
+    {
+      "code": "layer_ref_unavailable",
+      "severity": "warning",
+      "message": "图层引用的数据在矢量导出时不可用（未水合 inline 数据），该层未进入导出件（layer: {detail}）"
+    },
+    {
+      "code": "layer_representation_hidden",
+      "severity": "info",
+      "message": "图层在导出比例尺处的表达窗口为 hidden，未进入导出件（{detail}）"
+    },
+    {
       "code": "legend_entries_truncated",
       "severity": "info",
       "message": "图例条目较多：live 界面仅显示前 8 条，导出件绘制全部条目"
@@ -1754,6 +1769,11 @@
       "code": "terrain_3d_scale_caveat",
       "severity": "info",
       "message": "3D 地形/倾斜视角下比例尺按平面口径计算，可能与视觉距离不符"
+    },
+    {
+      "code": "title_truncated",
+      "severity": "warning",
+      "message": "标题/副标题超出确定性上限已截断（{detail}）"
     },
     {
       "code": "vector_pdf_unavailable",
