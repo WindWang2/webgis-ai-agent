@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_required_component_slots(
@@ -45,8 +48,16 @@ def resolve_required_component_slots(
                     slots.append(allowed or [str(slot.id)])
                 if slots:
                     return slots
-        except Exception:  # noqa: BLE001 — 模板缺失退化为兜底契约
-            pass
+        except Exception as exc:  # noqa: BLE001 — 模板缺失退化为兜底契约
+            # 退化必须可观测：静默 except 会让「注册表炸了」与「模板没配槽」
+            # 在日志上无法区分（debt ratchet 的 except_silent 路径级棘轮同样
+            # 拒绝新增静默处理器）。
+            logger.debug(
+                "[CompletionInputs] composition template registry lookup "
+                "failed for %s; falling back to minimal slot contract",
+                compo_id,
+                exc_info=exc,
+            )
     return [["title"], ["scale_bar"]]
 
 
