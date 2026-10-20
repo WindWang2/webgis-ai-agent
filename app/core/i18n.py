@@ -23,7 +23,7 @@ import contextvars
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, cast
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -239,7 +239,13 @@ class AcceptLanguageMiddleware(BaseHTTPMiddleware):
         """
         async def body_iter() -> AsyncIterator[bytes]:
             yield prefix
-            async for chunk in response.body_iterator:
+            # 上游 _StreamingResponse.body_iterator 的注解取自 Starlette
+            # 中间件别名，含 ASGI pathsend 消息（MutableMapping）—— 那是
+            # FileResponse 零拷贝路径的形状。走到这里说明 body += chunk 已
+            # 按 bytes 累加了 1MB+，本路径只可能是字节流；此处收窄为该不变量。
+            async for chunk in cast(
+                AsyncIterator[bytes], response.body_iterator
+            ):
                 yield chunk
 
         headers = dict(response.headers)
