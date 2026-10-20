@@ -47,10 +47,23 @@ PI_SURFACE_SCOPE_ENFORCE_ENV = "PI_SURFACE_SCOPE_ENFORCE"
 DROP_TIER3 = "tier3_excluded"                    # tier / 生效安全层 >= 3
 DROP_DESTRUCTIVE = "side_effect_destructive"     # DESTRUCTIVE 副作用类（低 tier 同样逐出）
 DROP_CREDENTIAL_ABSENT = "credential_absent"     # 所需凭证已证实缺席
+DROP_PERMISSION_NOT_GRANTED = "permission_not_granted"  # 所需权限已证实未授予（H01；与 canonical reason code 同名）
 DROP_OFFLINE_NETWORK = "offline_network_tool"    # offline 已证实且工具需要网络
 DROP_NO_DURABLE_WORKER = "durable_worker_unavailable"  # 执行策略需 durable worker 且已证实缺席
 DROP_SPEC_OVER_BUDGET = "spec_over_budget"       # per-tool schema 预算（compile 期）
 DROP_BYTE_BUDGET = "byte_budget"                 # surface 总预算（既有 D2 语义）
+
+#: 全量 drop codes 封闭集合快照（H01：一致性守卫与跨层对照表消费）。
+SURFACE_DROP_CODES = frozenset({
+    DROP_TIER3,
+    DROP_DESTRUCTIVE,
+    DROP_CREDENTIAL_ABSENT,
+    DROP_PERMISSION_NOT_GRANTED,
+    DROP_OFFLINE_NETWORK,
+    DROP_NO_DURABLE_WORKER,
+    DROP_SPEC_OVER_BUDGET,
+    DROP_BYTE_BUDGET,
+})
 
 
 def surface_scope_enforce_enabled() -> bool:
@@ -160,6 +173,23 @@ def qualify_surface(
                 f"credentials absent: {', '.join(sorted(missing)[:4])}",
             ))
             continue
+        # H01（K5）：权限先验披露 —— granted_permissions 键在场（供给成功）
+        # 且未含所需权限 → 阳性缺席，逐出；键缺席（未供给）或截断 →
+        # unknown 不排除（ADR-0224 裁决 3 纪律；执行权威仍在 registry 闸）。
+        required_perm = getattr(spec, "required_permission", None)
+        if required_perm:
+            granted_perms = situation.get("granted_permissions")
+            truncated = situation.get("granted_permissions_truncated") is True
+            if (
+                isinstance(granted_perms, list)
+                and not truncated
+                and required_perm not in granted_perms
+            ):
+                drops.append(SurfaceDrop(
+                    spec.name, DROP_PERMISSION_NOT_GRANTED,
+                    f"permission not granted: {required_perm[:64]}",
+                ))
+                continue
         if offline is True and spec.network is True:
             drops.append(SurfaceDrop(spec.name, DROP_OFFLINE_NETWORK, "offline=true"))
             continue

@@ -603,6 +603,9 @@ async def _dispatch_tool_bound(
                     f"Available tools: {', '.join(sorted(available)[:20])}"
                 ),
             }],
+            # H01（K7）：稳定机器码（先例：native_surface_reject 的
+            # details.error；码值与 registry.dispatch 的 UNKNOWN_TOOL 同源）。
+            details={"error": "UNKNOWN_TOOL", "tool": str(tool_name)[:128]},
             isError=True,
         )
 
@@ -616,6 +619,12 @@ async def _dispatch_tool_bound(
                 "type": "text",
                 "text": f"Tool '{tool_name}' is tier-{tier} (destructive) and cannot be dispatched via Pi bridge.",
             }],
+            # H01（K7）：与 registry tier-3 闸同码（TIER3_CONFIRMATION_REQUIRED）。
+            details={
+                "error": "TIER3_CONFIRMATION_REQUIRED",
+                "tool": str(tool_name)[:128],
+                "tier": int(tier),
+            },
             isError=True,
         )
 

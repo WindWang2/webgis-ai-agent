@@ -443,9 +443,50 @@ async def _active_tools_block_for(
                 f"（confidence={disclosure.get('confidence')}），未注入动态"
                 "工具面；如需完整工具清单请调用 list_available_tools。"
             )
+        # H01（K6）：资格逐出的模型面披露 —— 逐出原因（凭证/权限/offline/
+        # durable worker）必须可见，模型才能自纠（补凭证/权限或走代理通道）。
+        marker += _qualification_drop_disclosure(disclosure)
         return marker
     except Exception:  # noqa: BLE001 — 动态面绝不阻断 turn
         return ""
+
+
+#: 资格逐出披露总闸（默认 ON；=0 → marker 无该段，master 行为）。
+PI_SURFACE_DISCLOSURE_ENV = "PI_SURFACE_DISCLOSURE"
+#: 披露条数与字符上界（有界投影，防 marker 膨胀吃掉 turn 预算）。
+_DISCLOSURE_MAX_DROPS = 6
+_DISCLOSURE_SECTION_MAX_CHARS = 900
+
+
+def _qualification_drop_disclosure(disclosure: dict) -> str:
+    """``qualification_dropped`` → 有界 ``[工具面资格]`` 段（纯文本，无 payload）。
+
+    形态异常条目跳过（不阻断）；无逐出/杀开关关 → 空串。
+    """
+    import os
+
+    raw = (os.getenv(PI_SURFACE_DISCLOSURE_ENV) or "1").strip().lower()
+    if raw in ("0", "false", "off", "no"):
+        return ""
+    drops = disclosure.get("qualification_dropped")
+    if not isinstance(drops, list):
+        return ""
+    entries: list[str] = []
+    for drop in drops[:_DISCLOSURE_MAX_DROPS]:
+        if not isinstance(drop, dict):
+            continue
+        tool = str(drop.get("tool") or "")[:64]
+        code = str(drop.get("code") or "")[:48]
+        if tool and code:
+            entries.append(f"{tool}:{code}")
+    if not entries:
+        return ""
+    section = (
+        "[工具面资格] 本轮以下候选工具因资格事实被移出激活面（"
+        + "; ".join(entries)
+        + "）。可补齐对应凭证/权限后重试，或改用 webgis_execute 代理通道。"
+    )
+    return section[:_DISCLOSURE_SECTION_MAX_CHARS]
 
 
 class PiTurnRegistry:

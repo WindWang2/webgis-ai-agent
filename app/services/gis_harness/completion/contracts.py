@@ -9,7 +9,7 @@ repair action codes，不建第二份字面量表。完整设计（性能契约�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # ADR-0216：render-apply 归因词表与 bounded finding 载体归位
 # app/contracts/completion（lib/cartography/render_apply_ack 跨层消费方
@@ -97,6 +97,14 @@ F_MAP_MODEL_MISMATCH = "map_model_mismatch"
 #   enabled+visible —— 像素级空白画布验证仍是 agent 工具
 #   （heuristic_visual_proxies，不进判定门），本码只做诚实披露。
 F_LAYER_TRANSPARENT = "layer_transparent"
+
+# H01（K4）：任务语义存续 —— 受保护分析任务（intent 层 hint 护栏的
+# 完成层对偶）不得由纯视觉族交付：定量密度被降级为视觉热力是语义违约，
+# 不能被「渲染完美」掩盖。family 词表 = recipe_packs 的 workflow_family。
+F_TASK_SEMANTIC_DOWNGRADED = "F_TASK_SEMANTIC_DOWNGRADED"
+TASK_SEMANTIC_FAMILY_GUARDS: Dict[str, Tuple[str, ...]] = {
+    "analytical_density": ("visual_density",),
+}
 
 RUNTIME_RENDER_CODES = frozenset({
     F_RENDER_LAYER_MISSING,
@@ -209,6 +217,36 @@ def evaluate_completion_contract(
         and fb.get("reason_code")
     ]
 
+    # H01（K2/K3）：五态资格 + 回退档消费（finalize 契约的加性键；旧章节
+    # 无该键 → 全部按缺席处理，零漂移）。blocked 资格若被**已声明允许的
+    # 降级**（downgrade_class != not_allowed 的 fallback decision，如分母
+    # 缺失 → raw_counts）覆盖，则交由方法论披露压档，不判 BLOCKED。
+    data_quals = [
+        q for q in (wf_contract.get("data_qualifications") or [])
+        if isinstance(q, dict) and q.get("role")
+    ]
+    fallback_tier = str(wf_contract.get("fallback_tier") or "")
+    allowed_downgrade_codes = {
+        str(fb.get("reason_code") or "")
+        for fb in chapter.get("fallbacks") or []
+        if isinstance(fb, dict)
+        and isinstance(fb.get("evidence"), dict)
+        and str(fb["evidence"].get("downgrade_class") or "") != "not_allowed"
+        and fb.get("reason_code")
+    }
+    blocking_data_quals = [
+        q for q in data_quals
+        if str(q.get("state")) == "blocked"
+        and not (
+            set(str(c) for c in (q.get("reason_codes") or []))
+            & allowed_downgrade_codes
+        )
+    ]
+    # tier=blocked 必然蕴含 blocked 资格状态在场（fallback_v3 的 tier 推导
+    # 以 data_states 为输入），未覆盖者已进 blocking_data_quals —— 单一
+    # 事实源，不重复推导。
+    data_qualification_blocked = bool(blocking_data_quals)
+
     # ── 七维推导（缺证据的维度诚实置 False）──────────────────────────
     # V6 Wave 7：workflow runtime 的 stale 节点是 analysis 维硬输入 ——
     # 「工具执行成功」不再充分：证据漂移/reuse unsafe 的节点必须重算
@@ -225,8 +263,11 @@ def evaluate_completion_contract(
     # 仅 verify 结论非 unknown 时采纳（unknown = 无证据，不断言重算）。
     resumed_stale = _resumed_verify_stale_nodes(chapter)
 
-    data_ok = not data_blockers and not any(
-        f.code in _DATA_BLOCK_CODES for f in errors)
+    data_ok = (
+        not data_blockers
+        and not data_qualification_blocked
+        and not any(f.code in _DATA_BLOCK_CODES for f in errors)
+    )
     analysis_ok = not any(f.code == F_NEEDS_EXECUTION for f in errors) \
         and result.status != STATUS_PENDING \
         and not runtime_stale and not resumed_stale
@@ -307,6 +348,13 @@ def evaluate_completion_contract(
         "uncertainty_disclosed": int(uncertainty_evidence),
         "runtime_stale_nodes": runtime_stale,
         "resumed_stale_nodes": resumed_stale,
+        # H01（K2/K3/K4）：资格/回退档/语义存续的裁决输入面（additive）。
+        "data_qualification_states": {
+            str(q["role"]): str(q.get("state")) for q in data_quals
+        },
+        "fallback_tier": fallback_tier,
+        "data_qualification_blocked": data_qualification_blocked,
+        "workflow_family": str(wf_contract.get("workflow_family") or ""),
     }
 
 
@@ -382,6 +430,45 @@ def derive_product_verdict(
         verdict = VERDICT_NEEDS_REPAIR
         reasons = sorted(set(reasons) | {"runtime_node_stale"})[:6]
 
+    # H01（K2/K3）追加裁决：资格/回退档消费 —— blocked 资格（未被声明
+    # 允许的降级覆盖）压过 complete 档位（BLOCKED_BY_DATA）；degraded/
+    # minimal 档压 READY 为 READY_WITH_WARNINGS（回退披露义务，
+    # 「降级交付不得伪装首选完成」）。旧章节无该键 → 零漂移。
+    fallback_tier = str(contract.get("fallback_tier") or "")
+    if verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS):
+        if contract.get("data_qualification_blocked"):
+            verdict = VERDICT_BLOCKED_BY_DATA
+            reasons = sorted(set(reasons) | {"data_qualification_blocked"})[:6]
+        elif fallback_tier in ("degraded", "minimal") and verdict == VERDICT_READY:
+            verdict = VERDICT_READY_WITH_WARNINGS
+            reasons = sorted(
+                set(reasons) | {f"fallback_tier:{fallback_tier}"})[:6]
+
+    # H01（K4）追加裁决：任务语义存续 —— 受保护分析任务（如定量密度）
+    # 由纯视觉族交付 = 语义违约（用户问「每平方公里多少」，交付「哪里
+    # 红」）→ BLOCKED_BY_METHOD，不能被渲染质量掩盖。intent/family 缺席
+    # （V1 recipe / 旧章节）→ 不参与，零漂移。
+    semantic_downgraded = False
+    if verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS):
+        chapter_intent = (
+            chapter.get("intent") if isinstance(chapter, dict) else None
+        )
+        intent_task = (
+            str(chapter_intent.get("task") or "")
+            if isinstance(chapter_intent, dict) else ""
+        )
+        family = str(contract.get("workflow_family") or "")
+        semantic_downgraded = bool(
+            intent_task
+            and family
+            and intent_task in TASK_SEMANTIC_FAMILY_GUARDS
+            and family in TASK_SEMANTIC_FAMILY_GUARDS[intent_task]
+        )
+        if semantic_downgraded:
+            verdict = VERDICT_BLOCKED_BY_METHOD
+            reasons = sorted(
+                set(reasons) | {F_TASK_SEMANTIC_DOWNGRADED})[:6]
+
     # V6 W14 Resume VNext 追加裁决（review A/MAJOR-2(b)）：恢复后验证判
     # stale 的节点同样不得 READY —— 恢复后行证据缺席时运行态块为空，
     # 上一分支看不见漂移，此处以 resumed_from.verify 为准（同码披露，
@@ -422,6 +509,9 @@ def derive_product_verdict(
         "workflow_contract_present": contract["workflow_present"],
         "runtime_stale_nodes": runtime_stale,
         "resumed_stale_nodes": resumed_stale,
+        # H01（K2/K3/K4）：资格/回退档/语义存续的裁决披露面（additive）。
+        "fallback_tier": fallback_tier,
+        "task_semantic_downgraded": semantic_downgraded,
     }
     if cartography_summary is not None:
         payload["cartography"] = cartography_summary
