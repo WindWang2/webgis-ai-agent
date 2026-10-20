@@ -133,6 +133,71 @@ async def test_map_product_preserves_user_contract_identity(registry, sid):
     )
 
 
+async def test_map_product_preserves_locked_component_placement(registry, sid):
+    """W3：被锁组件（用户 pin）的 placement 在 agent 再制图中保持。
+
+    锁（workbench.lockedComponentIds）是既有词表中的用户 pin 通道：
+    omission 守卫保护其存在性，空间决策（placement/position）同样不可
+    被 agent 再组合默认值覆写。
+    """
+    from app.services.mapspec.lifecycle_engine import (
+        MapSpecLifecycleEngine,
+        SetWorkbenchStateIntent,
+    )
+    from app.services.mapspec_store import mapspec_store
+
+    await _run_product(sid, call_id="h02-w3-a")
+    spec = await mapspec_store.get_mapspec(sid) or {}
+    components = (spec.get("layout") or {}).get("components") or []
+    target = next(
+        (c for c in components
+         if isinstance(c, dict) and c.get("type") in
+         ("legend", "categorical_legend", "scale_bar", "north_arrow")),
+        None,
+    )
+    assert target is not None, f"产品组件表缺少可 pin 组件：{components}"
+    user_placement = {"mode": "floating", "x": 321, "y": 222}
+    from app.services.session_data import session_data_manager
+
+    map_state = await session_data_manager.get_map_state(sid) or {}
+    rev = int(map_state.get("_cartographic_mutation_revision") or 0)
+    res = await mapspec_store.patch_component(
+        sid, component_id=str(target["id"]), placement=user_placement,
+        origin="user", expected_revision=rev,
+    )
+    import json as _json
+    assert res.get("success"), _json.dumps(res, ensure_ascii=False, default=str)[:600]
+    rev = int(res.get("mutation_revision") or rev)
+    engine = MapSpecLifecycleEngine()
+    res = await engine.apply_mutation(
+        sid,
+        SetWorkbenchStateIntent(doc={
+            "version": 5,
+            "groups": [],
+            "membership": {},
+            "lockedLayerIds": [],
+            "lockedComponentIds": [str(target["id"])],
+            "mode": "compose",
+        }),
+        origin="user", expected_revision=rev,
+    )
+    assert not res.is_error, res.error_msg
+
+    await _run_product(sid, call_id="h02-w3-b")
+    spec2 = await mapspec_store.get_mapspec(sid) or {}
+    after = next(
+        (c for c in (spec2.get("layout") or {}).get("components") or []
+         if isinstance(c, dict) and c.get("id") == target["id"]),
+        None,
+    )
+    assert after is not None, "被锁组件在再制图中被丢弃（omission 守卫失效）"
+    assert (after.get("placement") or {}).get("x") == 321 and (
+        after.get("placement") or {}
+    ).get("mode") == "floating", (
+        f"被锁组件的 placement 被 agent 再组合覆写：{after.get('placement')}"
+    )
+
+
 # ── G4: required_slots 从物理 spec 身份块恢复真契约 ──────────────────────
 
 
