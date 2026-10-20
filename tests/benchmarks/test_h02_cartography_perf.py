@@ -127,9 +127,7 @@ def test_required_slot_resolution_all_templates_budget():
     )
 
     reg = get_composition_template_registry()
-    template_ids = sorted(
-        t.id for t in reg._by_id.values()  # noqa: SLF001 — perf 形状测试
-    )
+    template_ids = sorted(t.id for t in reg.all_templates())
     assert len(template_ids) >= 29
     spec_tpl = {
         "layout": {"composition": {

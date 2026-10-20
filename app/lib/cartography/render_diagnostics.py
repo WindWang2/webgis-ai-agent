@@ -462,13 +462,16 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "app.services.mapspec_to_svg",
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
-    # H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（孪生发射）
+    # H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（双端孪生发射）
     "layer_ref_unavailable": (
+        "app.services.mapspec_to_svg",
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
-    # H02（任务书 §C）：版面文本截断披露（layout-description IR 单源发射）
+    # H02（任务书 §C）：版面文本截断披露（exporter/vector-svg-export 发射；
+    # layout-description 置 truncated 标记为单源决策点）
     "title_truncated": (
-        "frontend/lib/export/layout-description.ts",
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/vector-svg-export.ts",
     ),
 }
 

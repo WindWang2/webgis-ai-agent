@@ -44,8 +44,17 @@ _UNSUPPORTED_CODES = frozenset({
 
 
 def _digest(value: Any) -> str:
+    def _default(obj: Any) -> Any:
+        # 确定性序列化：非 JSON 型先规范化（set → 排序表），杜绝
+        # default=str 把内存集合顺序写进摘要（review P3）。
+        if isinstance(obj, (set, frozenset)):
+            return sorted(str(x) for x in obj)
+        if isinstance(obj, (bytes, bytearray)):
+            return obj.hex()
+        return str(obj)
+
     payload = json.dumps(
-        value, ensure_ascii=False, sort_keys=True, default=str,
+        value, ensure_ascii=False, sort_keys=True, default=_default,
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()[:_MAX_DIGEST_HEX]
@@ -196,9 +205,13 @@ def build_product_manifest(
         }
     time_block = spec.get("time")
     if isinstance(time_block, dict) and time_block:
+        # 键白名单 + 有界字符串（review P2：time 块任意键原文透传会把
+        # bbox 坐标/凭据写进 sidecar —— 只收时间语义键）。
         manifest["time"] = {
-            k: _bounded_str(v, 48)
-            for k, v in list(time_block.items())[:8] if v is not None
+            k: _bounded_str(time_block[k], 48)
+            for k in ("as_of", "current", "type", "period", "start", "end",
+                      "label", "note_type")
+            if isinstance(time_block.get(k), (str, int, float))
         }
     return manifest
 
@@ -262,10 +275,11 @@ def verify_export_semantic_consistency(
         },
     })
 
-    # 2) 图层显隐进入交付语义（导出诊断未含隐藏层泄露码）。
+    # 2) 图层显隐进入交付语义（无图层 = 维度不适用，诚实 not_evaluated
+    # —— review P2：空 spec 不得整体冒充 pass）。
     checks.append({
         "aspect": "layer_visibility",
-        "status": "pass",
+        "status": "pass" if manifest["layers"] else "not_evaluated",
         "evidence": {
             "layers_visible": sum(1 for r in manifest["layers"] if r["visible"]),
             "layers_total": len(manifest["layers"]),

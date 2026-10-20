@@ -1605,7 +1605,7 @@ class MapProductPlanner:
                 if not _requires_export_layout(wired):
                     # wired 为 None 时（未接线/未注册 id）同样走自动改选 ——
                     # 报告产品/显式导出意图的版面契约优先于具体模板选择。
-                    cands = compo_reg.find_for_map_model(primary_carto, "pdf")
+                    cands = compo_reg.find_for_map_model(primary_carto, output_target)
                     report_cands = [c for c in cands if _requires_export_layout(c)]
                     if report_cands:
                         comp_tmpl_id = report_cands[0].id

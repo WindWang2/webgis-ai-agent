@@ -96,6 +96,7 @@ describe("H02 scenario factory (TS side)", () => {
       spec,
       applied,
       revision: 1,
+      mapIdle: true,
       work: {
         schema: "render_work.v1",
         work_id: "rw-1-abcdef012345",

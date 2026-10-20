@@ -355,6 +355,16 @@ async def upload_map_export(
     # 落盘；无会话/无 spec 时诚实缺席，绝不阻断导出）。
     if session_id:
         try:
+            # 跨租户读守卫（review P1-1）：session_id 是客户端声称值，
+            # 与 _record_lineage 同款 verify_session_owner —— 未过属主
+            # 校验的会话绝不读取其 MapSpec 生成 sidecar。
+            from app.services.auth_history_bridge import verify_session_owner
+
+            await verify_session_owner(
+                db, session_id,
+                user_id=_user.get("user_id") or None,
+                owner_token=owner_token or None,
+            )
             from app.lib.cartography.product_manifest import (
                 verify_export_semantic_consistency,
             )
@@ -362,7 +372,10 @@ async def upload_map_export(
 
             authoritative = await mapspec_store.get_mapspec(session_id)
             if isinstance(authoritative, dict) and authoritative:
-                report = verify_export_semantic_consistency(
+                # 大 spec 的指纹遍历/序列化与文件写一致卸载出事件循环
+                #（#427/#592 同款纪律；review P3）。
+                report = await asyncio.to_thread(
+                    verify_export_semantic_consistency,
                     authoritative,
                     export_format=ext.lstrip("."),
                     diagnostics=accepted_diagnostics,
