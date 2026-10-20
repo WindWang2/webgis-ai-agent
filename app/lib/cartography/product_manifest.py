@@ -296,22 +296,28 @@ def verify_export_semantic_consistency(
 
             tpl = get_composition_template_registry().get(
                 str(identity.get("template_id")))
-            enabled_types = {
-                c["type"] for c in manifest["components"] if c["enabled"]
-            }
-            missing: List[Dict[str, Any]] = []
-            if tpl is not None:
+            if tpl is None:
+                checks.append({
+                    "aspect": "component_requiredness",
+                    "status": "not_evaluated",
+                    "evidence": {"reason": "template_not_registered"},
+                })
+            else:
+                enabled_types = {
+                    c["type"] for c in manifest["components"] if c["enabled"]
+                }
+                missing: List[Dict[str, Any]] = []
                 for slot in tpl.component_slots:
                     if slot.cardinality != "required":
                         continue
                     allowed = set(slot.allowed_component_types or [])
                     if allowed and not (enabled_types & allowed):
                         missing.append({"slot": str(slot.id)})
-            checks.append({
-                "aspect": "component_requiredness",
-                "status": "fail" if missing else "pass",
-                "evidence": {"missing_required_slots": missing[:8]},
-            })
+                checks.append({
+                    "aspect": "component_requiredness",
+                    "status": "fail" if missing else "pass",
+                    "evidence": {"missing_required_slots": missing[:8]},
+                })
         except Exception:  # noqa: BLE001 — 模板注册表异常诚实缺席
             checks.append({
                 "aspect": "component_requiredness",
@@ -322,7 +328,7 @@ def verify_export_semantic_consistency(
     # 5) 导出能力覆盖（renderer 支持矩阵真值：has_exporter 单源判定）。
     if export_format and export_format in ("png", "pdf", "svg"):
         try:
-            from app.lib.cartography.component_registry import (
+            from app.lib.cartography.component_renderers import (
                 get_component_renderer_registry,
             )
 
@@ -381,9 +387,12 @@ def verify_export_semantic_consistency(
         },
     })
 
-    order = {"fail": 0, "warning": 1, "unsupported": 2, "not_evaluated": 3,
-             "pass": 4}
-    overall = "pass"
+    # 聚合语义：最差**适用**维度定调 —— not_evaluated 是"维度不适用/
+    # 证据缺席"的诚实缺席，不把整体拉低（全维度 not_evaluated → 整体
+    # not_evaluated，维持"缺证据不冒充 pass"的底线）。
+    order = {"fail": 0, "warning": 1, "unsupported": 2, "pass": 3,
+             "not_evaluated": 4}
+    overall = "not_evaluated"
     for check in checks:
         if order[check["status"]] < order[overall]:
             overall = check["status"]
