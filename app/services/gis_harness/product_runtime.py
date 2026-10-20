@@ -136,6 +136,71 @@ def _view_projection(spec: MapProductSpec) -> List[Dict[str, Any]]:
     return out
 
 
+def _product_conformance_snapshot(
+    plan: Any,
+    product_spec: MapProductSpec,
+    composition_template_id: str,
+) -> Dict[str, Any]:
+    """H02-G6：产品语义层复跑 composition conformance（既有真值，只读）。
+
+    以 plan.components 的 materialization 投影 + 组合模板契约 +
+    产品交付目标为输入，产出与 webgis_apply_composition 预检同一
+    conformance 真值的 bounded 快照 —— export_parity_gap /
+    required_slot_missing 等 error 级问题不再在产品编译面被绕过。
+    状态用既有词表（pass/fail/warning/not_evaluated）；组件或模板缺席
+    → not_evaluated（诚实缺席，不伪造 pass）。
+    """
+    compo_id = str(composition_template_id or "")
+    components = [
+        c.to_mapspec() for c in (getattr(plan, "components", None) or [])
+        if hasattr(c, "to_mapspec")
+    ]
+    if not compo_id or not components:
+        return {
+            "status": "not_evaluated",
+            "composition_template_id": compo_id,
+            "issues": [],
+            "reason": "composition_template_or_components_absent",
+        }
+    try:
+        from app.lib.cartography.composition_conformance import (
+            conformance_report,
+            report_to_dicts,
+        )
+        from app.lib.cartography.composition_templates import (
+            get_composition_template_registry,
+        )
+
+        tpl = get_composition_template_registry().get(compo_id)
+        targets = tuple(
+            t for t in product_spec.delivery.targets if t in ("png", "pdf", "svg")
+        )
+        issues = conformance_report(
+            {"layout": {"components": components}},
+            template=tpl,
+            export_targets=targets or None,
+        )
+        if any(i.severity == "error" for i in issues):
+            status = "fail"
+        elif issues:
+            status = "warning"
+        else:
+            status = "pass"
+        return {
+            "status": status,
+            "composition_template_id": compo_id,
+            "issues": report_to_dicts(issues),
+        }
+    except Exception:  # noqa: BLE001 — conformance 是增值披露面
+        logger.exception("[product-runtime] conformance snapshot degraded")
+        return {
+            "status": "not_evaluated",
+            "composition_template_id": compo_id,
+            "issues": [],
+            "reason": "conformance_evaluation_error",
+        }
+
+
 def produce_product_layer(
     *,
     plan: Any,
@@ -188,6 +253,10 @@ def produce_product_layer(
                 "decisions": list(compile_result.decisions)[:6],
             },
             "product_completeness": completeness.to_dict(),
+            # H02-G6：conformance 快照（与契约预检同真值；不阻断组装，
+            # error 级由消费面披露/阻断）。
+            "product_conformance": _product_conformance_snapshot(
+                plan, spec, compile_result.composition_template_id),
         }
         if _merged_from_existing:
             # CAS 基线（review P1）：session_plan merge 侧据此检测并发覆盖。

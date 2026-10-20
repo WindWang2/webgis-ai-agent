@@ -5,6 +5,51 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 
+def resolve_required_component_slots(
+    chapter: Dict[str, Any],
+    spec: Optional[Dict[str, Any]] = None,
+) -> List[List[str]]:
+    """required 组件槽契约（slot id ≠ 组件类型名："legend" 槽可由
+    legend/categorical_legend/continuous_colorbar 任一满足 —— 按
+    allowed_component_types 族判定，不发明第二套 schema）。
+
+    模板身份来源优先级（H02-G4）：chapter.template_selection 显式证据 →
+    物理 MapSpec ``layout.composition`` 身份块（H02-G3 产品路径落地）→
+    最小契约兜底 ``[["title"], ["scale_bar"]]``（与 composition seeds 一致，
+    避免旧章节误报）。注册表异常 → 空断言（诚实退化，不伪造契约）。
+    """
+    compo_id = str(
+        (chapter.get("template_selection") or {}).get("composition_template_id")
+        or ""
+    )
+    if not compo_id and isinstance(spec, dict):
+        # 身份块宽容读取（composition_contract.read_composition_identity
+        # 的同款语义：缺型/缺键 → None，不抛）。
+        layout = spec.get("layout")
+        raw = layout.get("composition") if isinstance(layout, dict) else None
+        if isinstance(raw, dict):
+            compo_id = str(raw.get("template_id") or "")
+    if compo_id:
+        try:
+            from app.lib.cartography.composition_templates import (
+                get_composition_template_registry,
+            )
+
+            tpl = get_composition_template_registry().get(compo_id)
+            if tpl is not None:
+                slots: List[List[str]] = []
+                for slot in tpl.component_slots:
+                    if slot.cardinality != "required":
+                        continue
+                    allowed = [str(t) for t in (slot.allowed_component_types or [])]
+                    slots.append(allowed or [str(slot.id)])
+                if slots:
+                    return slots
+        except Exception:  # noqa: BLE001 — 模板缺失退化为兜底契约
+            pass
+    return [["title"], ["scale_bar"]]
+
+
 async def gather_completion_inputs(
     session_id: str,
     chapter: Dict[str, Any],
@@ -156,30 +201,10 @@ async def gather_completion_inputs(
     # required 组件以 composition slot 族语义表达（slot id ≠ 组件类型名：
     # "legend" 槽可由 legend/categorical_legend/continuous_colorbar 任一满足
     # —— 校验/修复按 allowed_component_types 族判定，不发明第二套 schema）。
-    required_slots: List[List[str]] = []
-    compo_id = str(
-        (chapter.get("template_selection") or {}).get("composition_template_id")
-        or ""
-    )
-    if compo_id:
-        try:
-            from app.lib.cartography.composition_templates import (
-                get_composition_template_registry,
-            )
-
-            tpl = get_composition_template_registry().get(compo_id)
-            if tpl is not None:
-                for slot in tpl.component_slots:
-                    if slot.cardinality != "required":
-                        continue
-                    allowed = [str(t) for t in (slot.allowed_component_types or [])]
-                    required_slots.append(allowed or [str(slot.id)])
-        except Exception:  # noqa: BLE001 — 模板缺失退化为无 required 断言
-            required_slots = []
-    if not required_slots:
-        # 兜底：组合证据缺失时按最小契约断言（title + scale_bar）—— 与
-        # composition seeds 一致，避免旧章节误报。
-        required_slots = [["title"], ["scale_bar"]]
+    # H02-G4：chapter 证据缺席时从物理 MapSpec 身份块恢复真契约
+    # （resolve_required_component_slots 内含最小契约兜底）。
+    required_slots: List[List[str]] = resolve_required_component_slots(
+        chapter, mapspec)
     # V4 Wave 7（审计 06 缺口）：chart_required 此前只被 ProductGraph
     # pending 节点消费，完成管线从不断言图表在场 —— 并入 required 槽后，
     # 槽位校验（F_COMPONENT_MISSING）、渲染观察校验

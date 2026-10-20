@@ -201,6 +201,56 @@ async def _project_verified_recipes() -> set:
     return verified
 
 
+def _product_composition_identity(
+    plan: Any,
+    component_dicts: List[Dict[str, Any]],
+    existing_spec: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """H02-G3：产品组合身份块（layout.composition）的有界投影。
+
+    模板缺席/未注册 → None（layout_set 的 composition=None 即"不触碰"）。
+    用户显式契约身份（contract_id 非空）在场 → None：agent 再制图不得
+    覆盖用户的组合契约（user-wins）。``applied_revision=0`` 与契约工具的
+    ``int(expected_revision or 0)`` 同口径（产品路径未钉 revision）。
+    """
+    compo_id = str(
+        (getattr(plan, "template_selection", None) or {}).get(
+            "composition_template_id")
+        or ""
+    )
+    if not compo_id:
+        return None
+    try:
+        from app.lib.cartography.component_abi import (
+            COMPONENT_ABI_VERSION,
+            versions_projection,
+        )
+        from app.lib.cartography.composition_contract import CompositionIdentity
+        from app.lib.cartography.composition_templates import (
+            get_composition_template_registry,
+        )
+
+        tpl = get_composition_template_registry().get(compo_id)
+        if tpl is None:
+            return None
+        existing = ((existing_spec or {}).get("layout") or {}).get("composition")
+        if (
+            isinstance(existing, dict)
+            and str(existing.get("contract_id") or "")
+        ):
+            return None
+        identity = CompositionIdentity(
+            template_id=tpl.id,
+            template_version=str(getattr(tpl, "schema_version", 1)),
+            component_abi_version=COMPONENT_ABI_VERSION,
+            component_versions=versions_projection(
+                [str(c.get("type") or "") for c in component_dicts]),
+        )
+        return identity.to_bounded_dict()
+    except Exception:  # noqa: BLE001 — 身份是增值披露，缺席不阻断组装
+        return None
+
+
 def register_gis_harness_tools(registry: ToolRegistry):
     """注册 GIS Harness 工具（tier 1：意图解析廉价且恒可用）。"""
 
@@ -1055,6 +1105,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 component_dicts.append(_existing)
         layout_res = await mapspec_store.layout_set(
             session_id, components=component_dicts,
+            # H02-G3：产品组合身份随同一 layout 事务落地（ADR-0214 D2/D3
+            # composition 通道）—— 物理 MapSpec 可追溯产品模板契约；
+            # 用户显式契约身份（contract_id 非空）不覆盖（user-wins）。
+            composition=_product_composition_identity(plan, component_dicts, spec),
         )
         if not layout_res.get("success"):
             msg = f"layout components commit failed: {layout_res.get('message')}"
