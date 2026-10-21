@@ -1,5 +1,7 @@
 # PR: feat(task-acceptance-lab) — G05 任务级端到端验收、判错与回归基础
 
+> **PR URL**: https://github.com/WindWang2/webgis-ai-agent/pull/1762（已创建，未 merge）
+
 - 分支：`feat/g05-harness-task-acceptance-vnext`（基线 `ee8c14f8`，含已合并 #1758）
 - Worktree：`../webgis-g05-task-acceptance`（保留供回看）
 
