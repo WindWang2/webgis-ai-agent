@@ -304,8 +304,8 @@ class _TableMeta:
     """describe 缓存的表元数据（字段/几何列/SRID/PK/索引/行数/V3 列统计）。"""
 
     __slots__ = ("schema", "table", "fields", "field_names", "geom_col", "srid",
-                 "geom_type", "pk_col", "has_geometry_index", "feature_count", "bbox",
-                 "column_statistics")
+                 "geom_type", "pk_col", "has_geometry_index", "has_geography_index",
+                 "feature_count", "bbox", "column_statistics")
 
     def __init__(self):
         self.schema = "public"
@@ -317,6 +317,9 @@ class _TableMeta:
         self.geom_type: Optional[str] = None
         self.pk_col: Optional[str] = None
         self.has_geometry_index: Optional[bool] = None
+        # #1682：(geom::geography) 表达式索引（dwithin 的 geography cast 只有
+        # 它能服务）；None = 探测失败/未探测（不臆造缺失）。
+        self.has_geography_index: Optional[bool] = None
         self.feature_count: Optional[int] = None
         self.bbox: Optional[List[float]] = None
         self.column_statistics: Optional[Dict[str, Any]] = None  # V3: pg_stats 尽力探针
@@ -629,6 +632,21 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             except Exception:
                 conn.rollback()
                 cur = conn.cursor()
+        # #1682：geography 表达式索引探测 —— 4326 列的 dwithin 编译为
+        # ``ST_DWithin(geom::geography, ...)``，GiST(geom) 建在 geometry 类型上
+        # 服务不了 cast 后的表达式；只有 ``USING GIST ((geom::geography))``
+        # 表达式索引（或列本身为 geography）能让它走索引扫描。
+        if meta.geom_col:
+            try:
+                cur.execute(
+                    "SELECT 1 FROM pg_indexes WHERE schemaname = %s AND tablename = %s "
+                    "AND indexdef ILIKE '%%using gist%%' AND indexdef ILIKE %s LIMIT 1;",
+                    (schema_name, table_name, f"%({meta.geom_col}::geography)%"),
+                )
+                meta.has_geography_index = cur.fetchone() is not None
+            except Exception:
+                conn.rollback()
+                cur = conn.cursor()
         # 行数 + extent（lightweight 跳过：瓦片路径不需要）
         if not lightweight:
             try:
@@ -692,6 +710,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     "table": table_name,
                     "primary_key": meta.pk_col,
                     "has_geometry_index": meta.has_geometry_index,
+                    # #1682：披露 geography 表达式索引状态（普通 GiST 服务不了
+                    # dwithin 的 geom::geography cast）。
+                    "has_geography_index": meta.has_geography_index,
                 }
                 # V3：列统计进 descriptor.metadata，statistics_from_descriptor 统一收割
                 if meta.column_statistics:
@@ -699,10 +720,28 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         {"name": name, **info}
                         for name, info in meta.column_statistics.items()
                     ]
+                # #1682：索引建议分型。dwithin 在 4326 列编译为
+                # ``ST_DWithin(geom::geography, ...)``——GiST 建在 geometry 上，
+                # 无法服务 cast 后的表达式。无任何几何索引才建议 GIST(geom)；
+                # 已有几何索引但缺 geography 表达式索引时，必须建议表达式索引
+                # 并披露 cast 语义（否则运营者建了 GIST(geom)，dwithin 仍全表扫，
+                # planner 的 full-scan 警告也因 has_geometry_index=True 永不触发）。
                 if meta.has_geometry_index is False and meta.geom_col:
                     md["index_suggestion"] = (
                         f'CREATE INDEX ON "{schema_name}"."{table_name}" '
                         f'USING GIST ("{meta.geom_col}");'
+                    )
+                elif meta.has_geography_index is False and meta.geom_col:
+                    md["index_suggestion"] = (
+                        f'CREATE INDEX ON "{schema_name}"."{table_name}" '
+                        f'USING GIST (({meta.geom_col}::geography));'
+                    )
+                    md["spatial_index_note"] = (
+                        f'dwithin on an EPSG:4326 column compiles to '
+                        f'ST_DWithin("{meta.geom_col}"::geography, ...); a plain '
+                        f'GiST("{meta.geom_col}") index cannot serve the cast — '
+                        'the expression index above is required, otherwise dwithin '
+                        'degrades to seq scan.'
                     )
                 return DatasetDescriptor(
                     id=dataset_id,
@@ -1115,6 +1154,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             metadata={
                 "primary_key": meta.pk_col,
                 "has_geometry_index": meta.has_geometry_index,
+                # #1682：查询路径同样披露 geography 表达式索引状态（planner 据此
+                # 对 dwithin 的 geom::geography cast 发 full-scan 警告）。
+                "has_geography_index": meta.has_geography_index,
             },
         )
 

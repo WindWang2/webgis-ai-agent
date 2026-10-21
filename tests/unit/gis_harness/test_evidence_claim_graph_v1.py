@@ -6,11 +6,13 @@ and bounded traversal performance.
 """
 from __future__ import annotations
 
+import pytest
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
 from app.services.gis_harness.evidence_claim import (
+    Claim,
     ClaimNarrativeProjection,
     ClaimStatus,
     ClaimStore,
@@ -713,3 +715,221 @@ def test_grounding_projection_does_not_mutate_claim_status():
     assert refreshed is not None
     assert refreshed.status is ClaimStatus.UNKNOWN
     assert "status" in ground
+
+
+# ── Adversarial fail-open regressions (#1712) ─────────────────────────────
+
+def _wuhou_claim_with_uncertainty(unc_kind, unc_freshness):
+    """武侯场景 + 替换 uncertainty 节点（其余证据面保持完整可 supported）。"""
+    store = _wuhou_scenario()
+    unc = next(
+        e for e in store.all_evidence() if e.kind is EvidenceKind.UNCERTAINTY)
+    store.upsert_evidence(unc.model_copy(update={
+        "kind": unc_kind, "freshness": unc_freshness}))
+    claim = next(c for c in store.all_claims() if c.comparator == "highest")
+    return store, store.get_claim(claim.claim_id)
+
+
+def test_verify_uncertainty_wrong_kind_is_not_supported():
+    """#1712-1：uncertainty 节点类型错误但 freshness 非 MISSING → 义务未满足。
+
+    旧实现用 and 连接两个独立失败条件，该组合静默通过 → SUPPORTED。
+    """
+    store, claim = _wuhou_claim_with_uncertainty(
+        EvidenceKind.STATISTIC, EvidenceFreshness.FRESH)
+    result = verify_claim(claim, store, require_uncertainty=True)
+    assert result.status is not ClaimStatus.SUPPORTED
+    assert result.positive_proof is False
+    assert "uncertainty_kind_mismatch" in result.reasons
+
+
+def test_verify_uncertainty_missing_freshness_is_not_supported():
+    """#1712-1：类型正确但 freshness=MISSING → 义务未满足（reason 保真）。"""
+    store, claim = _wuhou_claim_with_uncertainty(
+        EvidenceKind.UNCERTAINTY, EvidenceFreshness.MISSING)
+    result = verify_claim(claim, store, require_uncertainty=True)
+    assert result.status is not ClaimStatus.SUPPORTED
+    assert result.positive_proof is False
+    assert "uncertainty_not_present" in result.reasons
+
+
+def test_verify_uncertainty_both_conditions_fail_reports_both():
+    """#1712-1：类型错 + MISSING 同时在场 → 两个 reason 都披露。"""
+    store, claim = _wuhou_claim_with_uncertainty(
+        EvidenceKind.ARTIFACT, EvidenceFreshness.MISSING)
+    result = verify_claim(claim, store, require_uncertainty=True)
+    assert result.positive_proof is False
+    assert "uncertainty_kind_mismatch" in result.reasons
+    assert "uncertainty_not_present" in result.reasons
+
+
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
+def test_verify_non_finite_claim_value_rejected(bad_value):
+    """#1712-2：claim.value 非有限 → NaN 比较恒假会放行任何数值绑定。"""
+    store = ClaimStore()
+    stat = EvidenceNode(
+        evidence_id="stat:nan", kind=EvidenceKind.STATISTIC, ref="ref:nan",
+        freshness=EvidenceFreshness.FRESH, method="admin_density",
+        metadata={"stat_type": "density", "unit": "per_km2", "value": 4.7},
+    )
+    store.upsert_evidence(stat)
+    claim = claim_from_statistic(
+        subject="武侯区", claim_type=ClaimType.DENSITY, value=bad_value,
+        unit="per_km2", method="admin_density",
+        statistic_evidence_id="stat:nan", store=store,
+    )
+    result = verify_claim(claim, store)
+    assert result.status is not ClaimStatus.SUPPORTED
+    assert result.positive_proof is False
+    assert "claim_value_not_finite" in result.reasons
+
+
+def test_verify_non_finite_evidence_value_rejected():
+    """#1712-2：证据侧非有限值同样不得换来 value_bound。"""
+    store = ClaimStore()
+    stat = EvidenceNode(
+        evidence_id="stat:evnan", kind=EvidenceKind.STATISTIC, ref="ref:evnan",
+        freshness=EvidenceFreshness.FRESH, method="admin_density",
+        metadata={"stat_type": "density", "unit": "per_km2",
+                  "value": float("nan")},
+    )
+    store.upsert_evidence(stat)
+    claim = claim_from_statistic(
+        subject="武侯区", claim_type=ClaimType.DENSITY, value=4.7,
+        unit="per_km2", method="admin_density",
+        statistic_evidence_id="stat:evnan", store=store,
+    )
+    result = verify_claim(claim, store)
+    assert result.positive_proof is False
+    assert "evidence_value_not_finite" in result.reasons
+
+
+# ── Adversarial regressions (#1743) ──────────────────────────────────────
+
+def _method_proof_fixture(store: ClaimStore) -> None:
+    """完整正证明四件套（stat + dsv + unc），claim 由调用方决定是否带 store。"""
+    project_dataset_version(
+        dataset_key="s", version_token="v1", store=store, tenant_id="t1",
+    )
+    store.upsert_evidence(EvidenceNode(
+        evidence_id="stat:1", kind=EvidenceKind.STATISTIC, ref="ref:stats",
+        freshness=EvidenceFreshness.FRESH, method="admin_density",
+        metadata={"stat_type": "density", "unit": "per_km2", "value": 4.7},
+        tenant_id="t1", session_id="s1",
+        scope=Scope(spatial_level="district", group_by="district", temporal_label="2024"),
+    ))
+    store.upsert_evidence(EvidenceNode(
+        evidence_id="unc:1", kind=EvidenceKind.UNCERTAINTY, ref="unc:1",
+        freshness=EvidenceFreshness.FRESH, tenant_id="t1", session_id="s1",
+    ))
+
+
+def test_verify_whitespace_only_method_rejected():
+    """#1743：method 义务按 :280 注释口径显式实现——纯空白声明不算方法。"""
+    store = ClaimStore()
+    _method_proof_fixture(store)
+    claim = claim_from_statistic(
+        subject="武侯区", claim_type=ClaimType.DENSITY, value=4.7,
+        unit="per_km2", comparator="highest", method="   ",
+        statistic_evidence_id="stat:1", dataset_version_evidence_id="dsv:s:v1",
+        uncertainty_ref="unc:1",
+        spatial_scope=Scope(spatial_level="district", group_by="district"),
+        temporal_scope=Scope(temporal_label="2024"),
+        tenant_id="t1", session_id="s1",
+        store=store,
+    )
+    result = verify_claim(claim, store)
+    assert result.status is not ClaimStatus.SUPPORTED
+    assert result.positive_proof is False
+    assert "method_missing" in result.reasons
+
+
+def test_verify_declared_method_string_satisfies_method_obligation():
+    """#1743：按 :280 注释口径，claim 上的 method 字符串即满足方法义务
+    （结构性声明，不要求 method: 边在场）。
+
+    app/evaluation/runner.py 的 supported 场景正例即按此口径构建
+    （claim_from_statistic 不传 store → 无 method: 边）；若将来要把
+    method: 边校验收紧为硬条件，需先给该场景补边，再更新本测试。
+    """
+    store = ClaimStore()
+    _method_proof_fixture(store)
+    claim = claim_from_statistic(
+        subject="武侯区", claim_type=ClaimType.DENSITY, value=4.7,
+        unit="per_km2", comparator="highest", method="admin_density",
+        statistic_evidence_id="stat:1", dataset_version_evidence_id="dsv:s:v1",
+        uncertainty_ref="unc:1",
+        spatial_scope=Scope(spatial_level="district", group_by="district"),
+        temporal_scope=Scope(temporal_label="2024"),
+        tenant_id="t1", session_id="s1",
+    )  # 不传 store → 不生成 method: 边（仅字符串声明）
+    store.upsert_claim(claim)
+    result = verify_claim(claim, store)
+    assert result.status is ClaimStatus.SUPPORTED
+    assert result.positive_proof is True
+    assert "method_missing" not in result.reasons
+
+
+@pytest.mark.parametrize("comparator", ["", "eq"])
+def test_contradiction_both_nan_values_not_hard(comparator):
+    """#1743：双方 value 均 NaN（都算不出来）不构成 hard 矛盾。
+
+    旧实现 NaN != NaN 恒为 True，同主体、同方法、同 scope 的两个 NaN claim
+    被判硬矛盾并双双标为 CONTRADICTED，矛盾结论污染下游裁决。
+    """
+    store = ClaimStore()
+    store.upsert_evidence(EvidenceNode(
+        evidence_id="stat:1", kind=EvidenceKind.STATISTIC, ref="ref:stats",
+        freshness=EvidenceFreshness.FRESH, method="admin_density",
+        metadata={"stat_type": "density", "unit": "per_km2"},
+        tenant_id="t1", session_id="s1",
+    ))
+    nan_common = dict(
+        claim_type=ClaimType.DENSITY,
+        subject="武侯区",
+        value=float("nan"),
+        unit="per_km2",
+        comparator=comparator,
+        method="admin_density",
+        predicate="density",
+        supporting_evidence_refs=["stat:1"],
+        spatial_scope=Scope(spatial_level="district", group_by="district"),
+        temporal_scope=Scope(temporal_label="2024"),
+        tenant_id="t1",
+        session_id="s1",
+    )
+    store.upsert_claim(Claim(claim_id="claim:nan-a", **nan_common))
+    store.upsert_claim(Claim(claim_id="claim:nan-b", **nan_common))
+    results = detect_contradictions(store)
+    assert not any(r.kind == "hard" for r in results)
+    assert store.get_claim("claim:nan-a").status is not ClaimStatus.CONTRADICTED
+    assert store.get_claim("claim:nan-b").status is not ClaimStatus.CONTRADICTED
+
+
+def test_contradiction_one_nan_vs_value_still_hard():
+    """#1743 修复范围仅限「皆 NaN」：单侧 NaN vs 实值仍是冲突（语义不变）。"""
+    store = ClaimStore()
+    store.upsert_evidence(EvidenceNode(
+        evidence_id="stat:1", kind=EvidenceKind.STATISTIC, ref="ref:stats",
+        freshness=EvidenceFreshness.FRESH, method="admin_density",
+        metadata={"stat_type": "density", "unit": "per_km2"},
+        tenant_id="t1", session_id="s1",
+    ))
+    base = dict(
+        claim_type=ClaimType.DENSITY,
+        subject="武侯区",
+        unit="per_km2",
+        method="admin_density",
+        predicate="density",
+        supporting_evidence_refs=["stat:1"],
+        spatial_scope=Scope(spatial_level="district", group_by="district"),
+        temporal_scope=Scope(temporal_label="2024"),
+        tenant_id="t1",
+        session_id="s1",
+    )
+    store.upsert_claim(Claim(claim_id="claim:nan-a", value=float("nan"), **base))
+    store.upsert_claim(Claim(claim_id="claim:val-b", value=5.0, **base))
+    results = detect_contradictions(store)
+    assert any(r.kind == "hard" for r in results)
+    assert store.get_claim("claim:nan-a").status is ClaimStatus.CONTRADICTED
+    assert store.get_claim("claim:val-b").status is ClaimStatus.CONTRADICTED

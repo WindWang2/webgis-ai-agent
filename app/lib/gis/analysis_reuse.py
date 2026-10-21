@@ -281,7 +281,9 @@ async def find_reusable_artifact(
     - metadata.cacheable 不是显式 False（V3 cacheability 声明）；
     - recency ≤ max_age_s（实现升级的兜底失效）；
     - 产物 ref 的 descriptor 仍可探测（store TTL/LRU 驱逐 → miss）；
-    - 输入 ref 形状指纹与生产时一致（in-place overwrite 守卫）；
+    - 输入 ref 形状指纹与生产时一致（in-place overwrite 守卫；期望值取自
+      生产时录入的 metadata["input_shapes"]，与当前 descriptor 比对 ——
+      调用方传入的 input_shapes 只是复核时刻的现状，不作期望值，#1720）；
     - 输入 ref content_revision 与生产时一致（V3：属性编辑保形状的
       盲区守卫；旧记录无该证据时跳过 —— 向后兼容）；
     - 输入栅格内容指纹与生产时一致（同路径重写守卫，V3；args 给定时
@@ -322,17 +324,29 @@ async def find_reusable_artifact(
     # revision 复核独立于形状复核：input_shapes 缺席（形状证据收集失败）
     # 时仍按 recorded revisions 复核有证据的 ref —— 复核缺失按保守 miss
     # 的方向不因形状证据缺席而整段跳过。
+    # #1720：形状期望值必须取自**生产时录入**的 metadata["input_shapes"]。
+    # 调用方传入的 input_shapes 是复核时刻的现状快照，拿它当期望值与刚读到
+    # 的当前 descriptor 比对照旧是恒真守卫 —— 调用前发生的 in-place 覆写
+    # 永远发现不了。旧记录无该证据（早期版本 / metadata 截断）→ 该 ref 不
+    # 做形状复核；调用方给的 ref 仍进复核集合（descriptor 存活探测），
+    # revision 复核独立生效（向后兼容）。
     recorded_revisions = (
         rec.metadata.get("input_ref_revisions")
         if isinstance(rec.metadata, dict)
         else None
     )
-    shape_map = input_shapes if isinstance(input_shapes, dict) else {}
+    recorded_shapes = (
+        rec.metadata.get("input_shapes")
+        if isinstance(rec.metadata, dict)
+        else None
+    )
+    shape_map = recorded_shapes if isinstance(recorded_shapes, dict) else {}
+    caller_shapes = input_shapes if isinstance(input_shapes, dict) else {}
     revision_map = (
         recorded_revisions if isinstance(recorded_revisions, dict) else {}
     )
     review_refs = list(dict.fromkeys(
-        [*shape_map.keys(), *revision_map.keys()]
+        [*shape_map.keys(), *revision_map.keys(), *caller_shapes.keys()]
     ))[:8]
     for ref in review_refs:
         expected = shape_map.get(ref)

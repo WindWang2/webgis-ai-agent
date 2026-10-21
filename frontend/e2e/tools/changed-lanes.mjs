@@ -26,6 +26,10 @@ const PREFIX_MAP = [
   { key: 'frontend/app/', effect: 'smoke' },
   // Transport/store/auth contract changes can break journeys via fixtures.
   { key: 'frontend/lib/', effect: 'smoke' },
+  // Copy is not cosmetic: journey selectors are `getByRole`/`getByText` strings
+  // that come straight out of frontend/messages/*.json — a retranslated label
+  // silently breaks a journey without touching a line of component code.
+  { key: 'frontend/messages/', effect: 'smoke' },
   // Playwright config itself.
   { key: 'frontend/playwright.config.ts', effect: 'smoke' },
   // The lane's own workflow stays self-triggering (a broken lane config is

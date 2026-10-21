@@ -10,10 +10,14 @@
   （DB/Redis/LLM）有界超时。LLM 连通失败 vs 策略拒绝在 detail 里区分。
 - 不伪造：本地数据缺失如实 down；CLI 上下文工具 registry 未注入的
   依赖矩阵如实标注（见 network_dependency.tool_network_matrix）。
+- detail 脱敏（#1710）：URL userinfo 段口令投影为 ``***`` + ``_check``
+  层值级净化兜底——detail 经 console 表格 / ``--out`` 落盘 / ``--json``
+  三处消费，口令不得外泄；已外发过的历史报告按口令泄露轮换。
 """
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 #: 词表（与 health.py SRE 组件一致）
@@ -23,10 +27,33 @@ _DOWN = "down"
 _NOT_CONFIGURED = "not_configured"
 
 
+#: URL userinfo 段口令（``redis://:口令@host`` / ``postgres://user:口令@host``）
+_URL_USERINFO_PW = re.compile(r"(://[^:/@\s]*:)[^@\s]*(@)")
+
+
+def _redact_secret_url(text: str) -> str:
+    """URL userinfo 段口令 → ``***``（保留 scheme/host/db 可诊断性）。
+
+    #1710：生产 ``REDIS_URL`` 形如 ``redis://:${REDIS_PASSWORD}@redis:6379/0``
+    （见 docker-compose.prod.yml / docker-compose.prod.secure.yml），口令在
+    userinfo 段；原样进 detail 即经三处消费面泄露。
+    """
+    return _URL_USERINFO_PW.sub(r"\1***\2", str(text))
+
+
+def _sanitize_detail(detail: str) -> str:
+    """detail 脱敏（#1710）：URL 口令投影 + 值级 secret 净化兜底。"""
+    from app.lib.redaction import scrub_secret_strings
+
+    return scrub_secret_strings(_redact_secret_url(detail))
+
+
 def _check(check: str, status: str, detail: str,
            required: bool = False) -> Dict[str, Any]:
-    return {"check": check, "status": status, "detail": detail,
-            "required": required}
+    # #1710：统一兜底 —— 任何 check 的 detail 都过脱敏（连接串 / 异常文本
+    # 可能内嵌 DATABASE_URL 等口令），防其它 check 复犯同类外泄。
+    return {"check": check, "status": status,
+            "detail": _sanitize_detail(detail), "required": required}
 
 
 def _dir_status(path_str: str) -> str:
@@ -196,16 +223,19 @@ def check_redis(timeout_s: float = 2.0) -> Dict[str, Any]:
 
     if not settings.USE_REDIS:
         return _check("redis", _NOT_CONFIGURED, "USE_REDIS=false（内存实现）")
+    # #1710：detail 只给脱敏投影（host/db 保留可诊断性）——原样 REDIS_URL
+    # 会把 userinfo 段口令带进 console 表格 / --out 落盘 / --json。
+    safe_url = _redact_secret_url(settings.REDIS_URL)
     try:
         import redis
         r = redis.from_url(settings.REDIS_URL,
                            socket_connect_timeout=timeout_s)
         r.ping()
         r.close()
-        return _check("redis", _OK, settings.REDIS_URL, required=True)
+        return _check("redis", _OK, safe_url, required=True)
     except Exception as exc:  # noqa: BLE001
         return _check("redis", _DOWN,
-                      f"{settings.REDIS_URL}: {exc}", required=True)
+                      f"{safe_url}: {exc}", required=True)
 
 
 def check_celery_worker(timeout_s: float = 3.0) -> Dict[str, Any]:

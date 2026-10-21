@@ -21,6 +21,7 @@ import time
 
 import pytest
 from pydantic import ValidationError
+from unittest.mock import patch
 
 from app.api.routes.chat import ChatRequest, MapStatePushRequest
 from app.services.session_data_redis import RedisSessionStore
@@ -197,3 +198,51 @@ def test_chat_request_map_state_serialized_size_capped():
 def test_chat_request_accepts_normal_map_state():
     req = ChatRequest(message="hi", map_state={"viewport": {"zoom": 10}, "layers": [{"id": "l1"}]})
     assert req.map_state["viewport"]["zoom"] == 10
+
+
+# ─── #1717: ChatRequest 客户端可控字符串字段边界 + 全局请求体预算 ────────────
+
+
+def test_chat_request_session_id_bounded():
+    """#1717：session_id 客户端可控 —— 补 max_length=128（与 lakehouse_schema 对齐）。"""
+    with pytest.raises(ValidationError):
+        ChatRequest(message="hi", session_id="s" * 129)
+    assert ChatRequest(message="hi", session_id="s" * 128).session_id == "s" * 128
+    assert ChatRequest(message="hi", session_id=None).session_id is None
+
+
+def test_chat_request_skill_name_bounded():
+    """#1717：skill_name 客户端可控 —— 补 max_length=128。"""
+    with pytest.raises(ValidationError):
+        ChatRequest(message="hi", skill_name="k" * 129)
+    assert ChatRequest(message="hi", skill_name="k" * 128).skill_name == "k" * 128
+
+
+def test_chat_request_project_id_bounded():
+    """#1717：project_id 客户端可控 —— 补 max_length=64。"""
+    with pytest.raises(ValidationError):
+        ChatRequest(message="hi", project_id="p" * 65)
+    assert ChatRequest(message="hi", project_id="p" * 64).project_id == "p" * 64
+    assert ChatRequest(message="hi", project_id="proj_minjiang").project_id == "proj_minjiang"
+
+
+def test_chat_request_size_gate_applies_without_map_state():
+    """#1717：序列化大小闸不得以 map_state 缺席为豁免。
+
+    旧实现是 ``self.map_state is not None and len(...) > 256KB`` —— 无
+    map_state 的巨型请求体完全无界。现为全局请求体预算：强制把
+    model_dump_json 钳出超限序列化，map_state 缺席时同样必须 422。
+    """
+    req = ChatRequest(message="hi")
+    assert req.map_state is None  # 前提：map_state 缺席
+
+    oversized = '{"blob": "' + "x" * (300 * 1024) + '"}'
+    with patch.object(ChatRequest, "model_dump_json", return_value=oversized):
+        with pytest.raises(ValidationError, match="exceeds 256KB"):
+            ChatRequest(message="hi")
+
+
+def test_chat_request_size_gate_message_only_still_accepts():
+    """#1717 反向边界：正常小请求体（无 map_state）不得被全局闸误伤。"""
+    req = ChatRequest(message="hi", session_id="sess-1", project_id="proj_abc")
+    assert req.message == "hi"

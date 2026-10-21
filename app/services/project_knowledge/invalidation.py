@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import Iterator, List
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,6 +24,52 @@ logger = logging.getLogger(__name__)
 
 _hook_registered = False
 _hook_register_lock = threading.Lock()
+
+#: ref-tag 兜底扫描的分页大小（有界内存）。
+_REF_SCAN_PAGE = 200
+#: 分页上限：org 级 active 行的诚实扫描上界（25 页 × 200 = 5000 行）。
+#: 触顶记 warning 并停止 —— 绝不静默截断（#1740 修的正是静默漏降级）。
+_MAX_REF_SCAN_PAGES = 25
+
+
+def _ref_tagged_active_rows(
+    db: Session, *, org_id: str, ref_id: str
+) -> Iterator[ProjectKnowledgeEntry]:
+    """org 级 active 行里 refs 引用 ``ref_id`` 的行（确定性主键游标分页）。
+
+    #1740: 修复前是无 ``ORDER BY`` 的 ``limit(400)`` —— 数据库返回的行序
+    不确定，超过首页 400 条 active 行所持的 ref 引用被静默漏掉、不降级
+    （每 (org, project) 行预算已是 400，多项目 org 必然漏）。改为按主键
+    升序游标翻页：首页不再有特权，全部 active 行都被看见；ref-tag 匹配仍在
+    Python 侧做（无跨后端 JSON 谓词，与原实现同一约束）。
+    """
+    after = ""
+    for _page in range(_MAX_REF_SCAN_PAGES):
+        stmt = select(ProjectKnowledgeEntry).where(
+            ProjectKnowledgeEntry.org_id == org_id,
+            ProjectKnowledgeEntry.status == ST_ACTIVE,
+        ).order_by(ProjectKnowledgeEntry.id).limit(_REF_SCAN_PAGE)
+        if after:
+            stmt = stmt.where(ProjectKnowledgeEntry.id > after)
+        rows: List[ProjectKnowledgeEntry] = list(
+            db.execute(stmt).scalars().all())
+        for row in rows:
+            if any(
+                isinstance(t, dict) and t.get("id") == ref_id
+                for t in (row.refs or [])
+            ):
+                yield row
+        if len(rows) < _REF_SCAN_PAGE:
+            return
+        last = rows[-1].id
+        if not last:
+            return
+        after = str(last)
+    logger.warning(
+        "[ProjectKnowledge] ref-tag scan hit the page cap (%d pages x %d rows) "
+        "org=%s ref=%s — remaining active rows not scanned",
+        _MAX_REF_SCAN_PAGES, _REF_SCAN_PAGE, org_id, ref_id,
+    )
 
 
 def handle_ref_invalidation_for_session(
@@ -53,19 +100,9 @@ def handle_ref_invalidation_for_session(
     )
     if count == 0:
         # ref-tag 引用兜底：authority_id 不是该 ref，但 refs 里引用了它。
-        tagged = list(db.execute(
-            select(ProjectKnowledgeEntry).where(
-                ProjectKnowledgeEntry.org_id == org_id,
-                ProjectKnowledgeEntry.status == ST_ACTIVE,
-            ).limit(400)
-        ).scalars().all())
-        victims = [
-            r for r in tagged
-            if any(
-                isinstance(t, dict) and t.get("id") == ref_id
-                for t in (r.refs or [])
-            )
-        ]
+        # #1740: 确定性游标分页扫描全部 active 行（原 limit(400) 无序查询会
+        # 静默漏掉首页之后的行）。
+        victims = list(_ref_tagged_active_rows(db, org_id=org_id, ref_id=ref_id))
         count = ks.demote_entries(db, victims, status="stale", rule="head_changed")
     return count
 

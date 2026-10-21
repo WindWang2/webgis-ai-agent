@@ -93,6 +93,104 @@ def test_evaluation_requires_references(service, tmp_path):
         )
 
 
+def test_evaluate_async_gates_paths_outside_data_dir(service, tmp_path, monkeypatch):
+    """#1708（SEC-06）：评估族输入栅格与推理族同一道数据目录门。
+
+    默认门钉在 ``settings.DATA_DIR``（工具面/HTTP 面口径）；受信进程内
+    调用者经 ``allowed_roots`` 显式豁免（``[]`` = 关闭门，历史语义）。
+    """
+    import asyncio
+
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from app.core.config import settings
+    from app.lib.modelops.errors import ModelOpsError
+
+    def _write(path, value):
+        profile = {
+            "driver": "GTiff", "width": 16, "height": 16, "count": 1,
+            "dtype": "uint8", "crs": "EPSG:4326",
+            "transform": from_origin(116.0, 40.0, 1.0, 1.0), "nodata": 255,
+        }
+        with rasterio.open(path, "w", **profile) as dst:
+            dst.write(value, 1)
+        return path
+
+    y = np.zeros((16, 16), dtype=np.uint8)
+    y[4:12, 4:12] = 1
+    pred_path = _write(tmp_path / "pred.tif", y.copy())
+    ref_path = _write(tmp_path / "ref.tif", y.copy())
+
+    # DATA_DIR 指向另一目录 → 两个栅格都在门外（模型控制的路径）。
+    data_root = tmp_path / "elsewhere"
+    data_root.mkdir()
+    monkeypatch.setattr(settings, "DATA_DIR", str(data_root), raising=False)
+
+    request = EvaluationRequest(
+        owner_scope={"session_id": "s1"},
+        task_type="segmentation",
+        predictions_path=pred_path,
+        references_path=ref_path,
+        num_classes=2,
+    )
+    with pytest.raises(ModelOpsError, match="data directory"):
+        asyncio.run(service.evaluate_async(request))
+
+    # 受信调用者显式豁免：同一请求改走显式 roots 即可真实评估。
+    report = asyncio.run(service.evaluate_async(request, allowed_roots=[tmp_path]))
+    assert report["metrics"]["iou_per_class"][1] > 0.99
+
+
+def test_evaluate_async_gates_confidence_and_regions_paths(service, tmp_path, monkeypatch):
+    """#1708（SEC-06）：可选 confidence/regions 栅格同门（同一读取链）。"""
+    import asyncio
+
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from app.core.config import settings
+    from app.lib.modelops.errors import ModelOpsError
+
+    def _write(path, value):
+        profile = {
+            "driver": "GTiff", "width": 16, "height": 16, "count": 1,
+            "dtype": "uint8", "crs": "EPSG:4326",
+            "transform": from_origin(116.0, 40.0, 1.0, 1.0), "nodata": 255,
+        }
+        with rasterio.open(path, "w", **profile) as dst:
+            dst.write(value, 1)
+        return path
+
+    y = np.zeros((16, 16), dtype=np.uint8)
+    y[4:12, 4:12] = 1
+    pred_path = _write(tmp_path / "pred.tif", y.copy())
+    ref_path = _write(tmp_path / "ref.tif", y.copy())
+    conf_path = _write(tmp_path / "conf.tif", np.full((16, 16), 200, dtype=np.uint8))
+    regions_path = _write(tmp_path / "regions.tif", np.ones((16, 16), dtype=np.uint8))
+
+    request = EvaluationRequest(
+        owner_scope={"session_id": "s1"},
+        task_type="segmentation",
+        predictions_path=pred_path,
+        references_path=ref_path,
+        confidence_path=conf_path,
+        regions_path=regions_path,
+        num_classes=2,
+    )
+    # conftest 的 DATA_DIR 夹具已把数据根钉到 tmp_path → 门放行。
+    report = asyncio.run(service.evaluate_async(request))
+    assert report["metrics"]["iou_per_class"][1] > 0.99
+    assert report.get("ece") is not None
+
+    # 把数据根挪走 → confidence/regions 也在门外，同样 typed 拒绝。
+    data_root = tmp_path / "elsewhere"
+    data_root.mkdir()
+    monkeypatch.setattr(settings, "DATA_DIR", str(data_root), raising=False)
+    with pytest.raises(ModelOpsError, match="data directory"):
+        asyncio.run(service.evaluate_async(request))
+
+
 def test_compare_and_provenance(service, synthetic_raster):
     result = service.run_inference(
         InferenceRequest(

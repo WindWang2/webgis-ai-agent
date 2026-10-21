@@ -241,9 +241,17 @@ class GisTraceRegistry:
             self._pinned.pop(turn_id, None)
 
     def record(self, turn_id: str, stage: Stage, **payload: Any) -> bool:
-        """便捷记录：链不存在则惰性创建（保证发射侧零前置依赖）。"""
+        """便捷记录：链不存在则惰性创建（保证发射侧零前置依赖）。
+
+        LRU 逐出后迟到的链记录**复用 pinned 区旧链**（#1720-4）：pinned
+        区本为保护 settle 期窗口，此前此处无条件 ``start()`` 会用新空链
+        覆写 pinned 区，把已录得的全部证据阶段静默丢弃。惰性创建仅限
+        LRU 与 pinned 两头都未命中。
+        """
         with self._lock:
             chain = self._chains.get(turn_id)
+            if chain is None:
+                chain = self._pinned.get(turn_id)
             if chain is None:
                 if turn_id == "":
                     return False

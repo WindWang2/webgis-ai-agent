@@ -7,7 +7,7 @@
 ## 目录
 
 - [存储分层](#存储分层)
-- [表结构总览（22 张）](#表结构总览22-张)
+- [表结构总览（78 张）](#表结构总览78-张)
 - [身份与消息域](#身份与消息域)
 - [图层与权限域](#图层与权限域)
 - [统一任务表 analysis_tasks（ADR-0052）](#统一任务表-analysis_tasksadr-0052)
@@ -22,7 +22,7 @@
 
 | 层 | 载体 | 内容 | 生命周期 |
 |----|------|------|---------|
-| 关系 + 空间 | **PostGIS 15-3.4**（生产）/ **SQLite**（开发默认 `sqlite:///./data/webgis.db`） | 用户、会话、任务、项目、数据源编目等全部持久业务数据（22 张表） | 持久，Alembic 管理 |
+| 关系 + 空间 | **PostGIS 15-3.4**（生产）/ **SQLite**（开发默认 `sqlite:///./data/webgis.db`） | 用户、会话、任务、项目、数据源编目等全部持久业务数据（78 张表） | 持久，Alembic 管理 |
 | 会话态 | **Redis**（`USE_REDIS=true` 时 `RedisSessionDataManager`，否则进程内 `MemorySessionStore` 兜底） | 大 GeoJSON ref 数据、地图状态、感知事件、地图动作 ACK | TTL 4 小时 + 每 session LRU |
 | 队列 | Redis db0（Celery broker）/ db1（result backend） | Celery 任务消息与结果 | 由 Celery 管理，无 TTL，见下文驱逐策略说明 |
 
@@ -30,9 +30,9 @@
 
 **PostGIS 驱逐策略注意**：生产栈（`docker-compose.prod.yml` 与 `deploy/redis.conf`）固定 `maxmemory-policy noeviction` —— broker/result 键无 TTL，任何 `allkeys-lru` 类策略都会在内存压力下静默丢任务；会话键自带 TTL，内存耗尽时写操作显式报错（`Redis_Memory_High` 告警 actionable），这是有意为之。开发 compose 的 Redis 用 `allkeys-lru`（仅缓存用途）。
 
-## 表结构总览（22 张）
+## 表结构总览（78 张）
 
-按模型文件清点：`db_model.py` 8 张、`project.py` 7 张、`data_fabric.py` 3 张、`upload.py` / `report.py` 各 1 张、`knowledge_base.py` 2 张。
+按模型文件清点（`__tablename__` 去重计数，共 78 个）：`db_model.py` 26 张、`project.py` 11 张、`data_fabric.py` 6 张、`spatial_events.py` / `cartography_quality.py` 各 4 张、`ads_fabric.py` / `data_lifecycle.py` / `intent_learning.py` / `lakehouse_datasets.py` / `mission.py` 各 3 张、`data_quality.py` / `knowledge_base.py` 各 2 张、`gis_context.py` / `harness_journal.py` / `lakehouse_catalog.py` / `project_knowledge.py` / `report.py` / `spatial_memory.py` / `template_version.py` / `upload.py` 各 1 张。
 
 ## 身份与消息域
 
@@ -249,30 +249,33 @@ ADR-0052 新增列：
 
 ## 迁移链概览与漂移守护
 
-Alembic 单链 18 个 revision（`migrations/versions/`），base `85e4939d7e07` → head `0018_dedupe_duplicate_indexes`：
+Alembic 单链 67 个 revision（`migrations/versions/`），base `85e4939d7e07` → head `0097_gc_node_result_owner_fp_unique`：
 
-| # | Revision | 内容 |
+| 段 | Revision | 内容 |
 |---|----------|------|
-| 1 | `85e4939d7e07` | initial schema（base） |
-| 2 | `6c68ec475cfa` | users.token_version |
-| 3 | `e46935cd5dd1` | FK ON DELETE + CHECK 约束 |
-| 4 | `a1b2c3d4e5f6` | analysis_tasks 进度 CHECK |
-| 5 | `f123456789ab` | 复合索引 |
-| 6 | `6ef479051297` | conversations.owner_token（SEC-08） |
-| 7 | `b2c3d4e5f6a7` | messages(conversation_id, created_at) 索引 |
-| 8 | `c1d2e3f4a5b6` | cartography_templates 建表 + 种子 |
-| 9 | `d3e4f5a6b7c8` | 删除 layers.properties_def |
-| 10 | `0010_project_workspace_workflow` | 项目/工作流域建表 |
-| 11 | `0011_enterprise_geospatial_data_fabric` | 数据织网域建表（PostGIS 专属操作） |
-| 12 | `0012_add_composite_indexes_pd_wr` | project_datasets / workflow_runs 复合索引 |
-| 13 | `0013_unified_durable_job_runtime` | analysis_tasks 演进为统一 durable job 表（additive） |
-| 14 | `0014_workflow_provenance_revisions` | workflow_revisions、指纹与血缘列 |
-| 15 | `0015_uploads_session_upload_index` | uploads(session_id, upload_time) |
-| 16 | `0016_knowledge_documents_owner` | knowledge_documents 归属列 |
-| 17 | `0017_close_model_migration_drift` | 关闭模型↔迁移漂移 |
-| 18 | `0018_dedupe_duplicate_indexes` | 去重索引（head） |
+| base | `85e4939d7e07` | initial schema（base） |
+| base | `6c68ec475cfa` | users.token_version |
+| base | `e46935cd5dd1` | FK ON DELETE + CHECK 约束 |
+| base | `a1b2c3d4e5f6` | analysis_tasks 进度 CHECK |
+| base | `f123456789ab` | 复合索引 |
+| base | `6ef479051297` | conversations.owner_token（SEC-08） |
+| base | `b2c3d4e5f6a7` | messages(conversation_id, created_at) 索引 |
+| base | `c1d2e3f4a5b6` | cartography_templates 建表 + 种子 |
+| base | `d3e4f5a6b7c8` | 删除 layers.properties_def |
+| 编号链 | `0010`–`0019` | 项目/工作流域、数据织网域、analysis_tasks 演进为统一 durable job 表、provenance/血缘、uploads 索引、知识库归属、模型↔迁移漂移关闭与索引去重 |
+| 编号链 | `0020`–`0041` | 数据织网 v2/v7、map product lifecycle、cartography 项目事实/意图学习/质量事实、lifecycle registry、artifact revisions、uploads sha256、lineage 证据、geocompute v5–v8 运行时、harness v5、security-v9 多租户系列（0041 后经 merge 收拢） |
+| 编号链 | `0046`–`0048` | quality_reports、lifecycle_registry、template_versions |
+| 编号链 | `0056`–`0058` | cartography 质量事实、意图学习、质量成本与波次 |
+| 编号链 | `0070`–`0071` | ads acquisition 快照/事实 |
+| 编号链 | `0080` | gis_spatial_memories |
+| 编号链 | `0090`–`0095` | 模型索引漂移关闭、gis mission runtime、spatial_events、project_knowledge、check 约束漂移、gis working contexts |
+| 编号链 | `0096`–`0097` | harness turn journal；geocompute_node_results (owner_scope, node_fingerprint) 唯一索引（head） |
+| merge | `184068cb4249` / `c0d8322aa2cb` / `c1e2f3a4b5c6` | security-v9×lifecycle、0034/0035 多 epic 分叉头合并 |
+| 旁支 | `g1109_legacy_owner_tokens` | legacy owner tokens 收编（revises `0022`，`0023` 之前入链） |
+
+> 完整逐条清单以 `migrations/versions/` 目录为准（文件名前缀即 revision id；上表为分段摘要）。
 
 - SQLite 兼容：迁移使用 `render_as_batch=True`（SQLite 无 ALTER 列能力时批量重建表）。
 - **漂移守护**：CI 的 `db-migrations` job（`.github/workflows/production.yml`）先在真实 PostGIS 15-3.4 service 上 `alembic upgrade head`，再跑 `tests/test_deploy_migration_wiring.py::test_migrated_schema_matches_models`——迁移建出的 schema 必须覆盖模型声明的表/列/索引，漂移即红。
-- 部署侧自动执行：Dockerfile.prod entrypoint 启动前 `alembic upgrade head`（legacy create_all 库自动 `stamp head` 收编；`SKIP_DB_MIGRATIONS=true` 供 celery-worker 跳过并发竞争）；k8s 由 initContainer 执行。
+- 部署侧自动执行：Dockerfile.prod entrypoint 启动前 `alembic upgrade head`（**legacy create_all 库默认拒绝收编**：无 `alembic_version` 的存量库命中 `FATAL: refusing to auto-adopt`，仅 `ADOPT_LEGACY_SCHEMA=true` 显式 opt-in 才 `alembic stamp head`——见 `deploy/docker-entrypoint.sh`；`SKIP_DB_MIGRATIONS=true` 供 celery-worker 跳过并发竞争）；k8s 由 initContainer 执行。
 - 生成新 revision：改 `app/models/` 后 `DATABASE_URL=sqlite:///tmp.db alembic revision --autogenerate -m "..."`，复查生成的脚本再提交。

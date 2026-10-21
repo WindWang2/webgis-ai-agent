@@ -32,6 +32,7 @@ from .protocol import (
     ProtocolError,
     decode_frame,
     error_payload,
+    iter_frames_bounded,
     make_handshake,
     write_frame,
 )
@@ -120,6 +121,8 @@ class WorkerProcess:
         # 恶意/被击穿 worker 无视信用洪泛时，reader 线程在满队列上阻塞 →
         # 管道背压 → worker 写入阻塞：宿主内存上界 = 64 × max_frame_bytes，
         # 而非无界 OOM 面。守序 worker 不受影响（消费节奏 >> 生产节奏）。
+        # #1709：上界还对**单行**成立——reader 按字节累计上限拆帧
+        # （见 _reader_loop / iter_frames_bounded），不依赖对端逐帧换行。
         self._frames: "queue.Queue[Any]" = queue.Queue(maxsize=64)
         self._reader: Optional[threading.Thread] = None
         self._lock = threading.RLock()
@@ -270,7 +273,11 @@ class WorkerProcess:
 
     def _reader_loop(self, stdout: Any) -> None:
         try:
-            for line in stdout:
+            # #1709：**有界**拆帧。``for line in stdout`` 会让「只写不换行」
+            # 的 worker 无界堆积宿主内存（FRAME_MAX_BYTES 检查在 decode_frame
+            # 内、整行读完之后才执行）；改为按字节累计上限拆帧，超限即
+            # ProtocolError → 归一为 __protocol_error__ 并杀 worker。
+            for line in iter_frames_bounded(stdout):
                 try:
                     frame = decode_frame(line)
                 except ProtocolError:
@@ -278,6 +285,14 @@ class WorkerProcess:
                 # 阻塞 put：满队列 = 宿主消费不过来（或恶意洪泛）→ reader
                 # 停读 → 管道背压反压 worker（结构性内存上界的一部分）。
                 self._frames.put(frame)
+        except ProtocolError as exc:
+            # 读帧超限：不再把后续字节读进宿主内存；协议失败即信任失败
+            # （与 shutdown 的 kill 调用同形——kill 自身已把进程组死亡/
+            # 权限/等待超时归一，不再引入静默 except）。
+            self._frames.put(
+                {"type": "__protocol_error__", "message": f"worker frame read failed: {exc}"}
+            )
+            self.kill()
         finally:
             self._frames.put({"type": "__eof__"})
 

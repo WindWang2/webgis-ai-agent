@@ -100,6 +100,35 @@ class TestFakeIpDnsAllowlist:
                 )
 
 
+class TestMetadataAndStacCoverage:
+    """#1694 SEC-11 / SEC-07：元数据主机清单补阿里云/腾讯云；STAC_API_URL 纳入启动校验。"""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://100.100.100.200/latest/meta-data/",  # 阿里云 IMDS
+            "http://169.254.0.23/latest/meta-data/",  # 腾讯云 IMDS
+            "http://metadata.tencentyun.com/latest/meta-data/",  # 腾讯云主机名
+        ],
+    )
+    def test_alibaba_tencent_metadata_blocked_even_with_private_allowed(
+        self, url: str
+    ) -> None:
+        # allow_private=True 是 LLM_BASE_URL（企业内网）路径 —— 元数据检查
+        # 必须先于该早退，否则内网豁免把 IMDS 当普通内网目标放行。
+        with pytest.raises(ValueError):
+            Settings._validate_no_ssrf(url, field="TEST", allow_private=True)
+
+    def test_stac_api_url_is_validated_on_settings_construction(self) -> None:
+        # SEC-07：STAC_API_URL 此前不在 _validate_external_urls 列内 ——
+        # stac_client 直接检索该目录，等于出网白名单覆盖面上的洞。
+        with pytest.raises(ValueError):
+            Settings(STAC_API_URL="http://169.254.169.254/v1")
+
+    def test_stac_api_url_default_is_accepted(self) -> None:
+        assert Settings().STAC_API_URL.startswith("https://")
+
+
 class TestFcntlGuardedImports:
     """#1221 D-7：fcntl 守卫后的模块在任意平台可 import（Windows 回归）。"""
 

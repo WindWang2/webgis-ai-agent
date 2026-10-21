@@ -30,6 +30,24 @@ async def test_validate_carries_fetch_errors_forward(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_validate_carries_parse_failures_forward_1740(monkeypatch) -> None:
+    """#1740: parse 阶段的 per-source 失败与未解析 ref 与 fetch_errors 同轨
+    进终态摘要 —— 部分成功的探索不得只报幸存者。"""
+    monkeypatch.setattr(VS, "bridge_geocoded_to_session", _noop_bridge)
+    parse_errors = [{"source_id": "s2", "ref_id": "ref:s2",
+                     "error": "corrupt payload"}]
+    result = await VS.run_validate_stage(
+        "t1740", total_rows=3,
+        fetch_errors=[{"source_id": "s1", "error": "upstream 503"}],
+        parse_errors=parse_errors, missing_refs=["ref:s3"])
+    assert result.data["parse_errors"] == parse_errors
+    assert result.data["missing_refs"] == ["ref:s3"]
+    # 缺省仍是有界的空列表（终态契约稳定）。
+    assert (await VS.run_validate_stage("t1740b", total_rows=0)).data[
+        "parse_errors"] == []
+
+
+@pytest.mark.asyncio
 async def test_validate_bridges_to_session(monkeypatch) -> None:
     async def _bridge(task_id, session_id, ref):  # noqa: ANN001
         return {"session_ref_id": "ref:session-copy",

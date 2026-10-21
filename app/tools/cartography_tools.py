@@ -548,7 +548,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
           # 拼进 ``?token=``，落入 nginx/uvicorn access log 与 Referer。改为
           # 仅对该 PNG 路径有效的限时 HMAC 签名（static 同款 sig/exp）。
           try:
-            from app.api.routes.raster import signed_raster_query
+            # #1678：签名 helper 归属 app/core/signing.py（原从 api/routes/raster
+            # 反向 import，tools→api 跨层边违反 ADR-0216 §6.5）。
+            from app.core.signing import signed_raster_query
 
             image_url = f"{image_url}?{signed_raster_query(image_url)}"
           except Exception:  # noqa: BLE001 — 签名失败退化为需认证的裸 URL

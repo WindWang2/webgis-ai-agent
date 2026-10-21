@@ -277,10 +277,16 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
 
   const gen = useRef(0);
   const lineageAbort = useRef<AbortController | null>(null);
+  // #1746-3：reload 的在途请求控制器同样入 ref —— 否则卸载/切项目时无法
+  // 中止（违背本模块「unmount aborts everything」契约；对照下方 lineageAbort）。
+  const reloadAbort = useRef<AbortController | null>(null);
   const mounted = useRef(true);
 
   const reload = useCallback(
     async (opts?: FetchOpts) => {
+      // 新一次 reload 取代旧一次：先中止在途请求（含 !projectId 的清空路径，
+      // 切项目时空 id 的提前 return 不得留下上一个项目的在途请求）。
+      reloadAbort.current?.abort();
       if (!projectId) {
         setArtifacts([]);
         setTotal(0);
@@ -288,6 +294,7 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
         return;
       }
       const ac = new AbortController();
+      reloadAbort.current = ac;
       const g = ++gen.current;
       setLoading(true);
       setError(null);
@@ -420,6 +427,7 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
     return () => {
       mounted.current = false;
       lineageAbort.current?.abort();
+      reloadAbort.current?.abort();
     };
   }, []);
 

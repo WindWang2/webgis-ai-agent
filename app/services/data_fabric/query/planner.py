@@ -405,6 +405,22 @@ def plan_query(
                 "geometry column has no spatial index; spatial pushdown will full-scan "
                 "(admin may create a GiST index)"
             )
+        # #1682：4326 列的 dwithin 编译为 geom::geography cast，普通 GiST(geom)
+        # 服务不了它——已有几何索引但缺 geography 表达式索引时，下推仍会全表扫。
+        # 必须如实告警：否则 has_geometry_index=True 让上面的警告永不触发，
+        # 运营者误以为索引已覆盖（「给出错误最优解」类缺陷）。
+        if (
+            meta.get("has_geometry_index") is True
+            and meta.get("has_geography_index") is False
+            and spec.spatial is not None
+            and spec.spatial.op == "dwithin"
+            and dataset_srid(descriptor) == 4326
+        ):
+            warnings.append(
+                "dwithin on an EPSG:4326 column compiles to geom::geography which a "
+                'plain GiST(geom) index cannot serve; create USING GIST ((geom::geography)) '
+                "or the pushdown will full-scan"
+            )
         if meta.get("revision_strength") == "weak":
             warnings.append("dataset revision is weak; cached results may be stale")
 

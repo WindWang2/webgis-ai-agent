@@ -64,6 +64,12 @@ _METADATA_HOSTS = frozenset({
     "fd00:ec2::254",            # AWS IMDSv6
     "metadata.google.internal",  # GCP（.internal 后缀使其落入私网形态，
     "metadata.goog",            #  故必须先于私网豁免比对——review P1-1）
+    # #1694 SEC-11：阿里云/腾讯云 IMDS。缺项时这些端点会掉到私网豁免
+    # （allow_private=True 正是内网部署默认）后面被当普通内网目标放行 ——
+    # 元数据凭证外泄通道，与 data_fabric BLOCKED_IPS_EXPLICIT 同清单。
+    "100.100.100.200",          # 阿里云 IMDS（100.64/10 CGNAT 段字面 IP）
+    "169.254.0.23",             # 腾讯云 IMDS（链路本地）
+    "metadata.tencentyun.com",  # 腾讯云 IMDS 主机名形态
 })
 
 

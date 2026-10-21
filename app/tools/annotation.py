@@ -125,7 +125,10 @@ def register_annotation_tools(registry: ToolRegistry):
         output_semantic_type="stats",
         result_size_policy="inline_small",
         crs_semantics="wgs84",
-        unit_semantics="meters",
+        # #1749：unit_semantics 与载荷键对齐 —— 返回键是 distance_km，
+        # 单位语义必须是 kilometers（此前写 meters 与载荷脱节，单位族
+        # 一致性校验按错误单位判）。
+        unit_semantics="kilometers",
         required_context=("map_state",),
         map_mutations=("annotation",),
         failure_modes=("invalid_args",),
@@ -172,7 +175,12 @@ def register_annotation_tools(registry: ToolRegistry):
         output_semantic_type="stats",
         result_size_policy="inline_small",
         crs_semantics="wgs84",
-        unit_semantics="square_meters",
+        # #1749：unit_semantics 与载荷键对齐 —— 返回键是 area_km2，
+        # 单位语义取 canonical unit 词表（app/lib/gis/measurement.py
+        # CANONICAL_UNITS）的 square_kilometers；此前写 square_meters
+        # 既与 km² 载荷脱节、又不在 execution_catalog_conformance 的
+        # 单位族词表内（面积工具一致性校验静默失效）。
+        unit_semantics="square_kilometers",
         required_context=("map_state",),
         map_mutations=("annotation",),
         failure_modes=("invalid_args",),

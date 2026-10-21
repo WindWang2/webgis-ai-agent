@@ -10,10 +10,32 @@ resources:
 - 02-api-deployment.yaml
 - 03-celery-deployment.yaml
 - 04-ingress.yaml
+# #1688: 04b-clusterissuer.yaml（ClusterIssuer letsencrypt-prod）故意不列在
+# 这里：本文件有 `namespace: webgis-prod`，kustomize 的 namespace 转换器会给
+# 资源树里每个资源注入 metadata.namespace，而 ClusterIssuer 是 cluster-scoped，
+# apiserver 会以 "not allowed when resource is not namespaced" 拒绝整个 apply。
+# 签发者需单独 `kubectl apply -f deploy/k8s/04b-clusterissuer.yaml`。
 # 审计 PR H: PDB + API ServiceAccount（无 Role — app 不调 k8s API）
 - 06-hpa-pdb-rbac.yaml
 # 审计 K8S-06: HPA 从 04-ingress.yaml 拆出，独立成文件便于单独调参。
 - 07-hpa.yaml
+
+# #1688: Ingress 对外域名的单一事实来源 = 01-configmap.yaml 的 INGRESS_HOST。
+# build 时注入 04-ingress.yaml 的 spec.tls[0].hosts[0] 与 spec.rules[0].host
+# —— 清单里写死的 host 字面值不会进入 apply 产物，部署方只需改 ConfigMap 一处
+# （或在外层 overlay 覆盖）。TLS 证书由 cert-manager 依据该域名签发。
+replacements:
+- source:
+    kind: ConfigMap
+    name: webgis-config
+    fieldPath: data.INGRESS_HOST
+  targets:
+  - select:
+      kind: Ingress
+      name: webgis-ingress
+    fieldPaths:
+    - spec.tls.0.hosts.0
+    - spec.rules.0.host
 
 # 可选依赖（生产环境建议使用外部托管的数据库和Redis，注释掉以下行）
 # - 05-deps-optional.yaml

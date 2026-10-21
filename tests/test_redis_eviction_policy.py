@@ -7,9 +7,9 @@ result backend(db1) + session 缓存，内存压力下驱逐 broker 列表键和
 不报错 → 任务无声丢失（告警看不出异常：键消失而非 backlog 增长）。
 
 本文件守住整个部署矩阵里每个 broker-bearing Redis 的有效策略：
-  1. deploy/redis.conf（仅 secure 栈挂载）必须是 noeviction，且不许 allkeys-lru；
-  2. 参考栈 docker-compose.prod.yml 的 redis command 保持 noeviction；
-  3. k8s 可选 redis（05-deps-optional.yaml）的 command 保持 noeviction；
+  1. deploy/redis.conf（secure 栈与 #1676 起的 prod 栈挂载）必须是 noeviction，且不许 allkeys-lru；
+  2. 参考栈 docker-compose.prod.yml 必须挂载该 conf（策略经 conf 生效，#1676 起不再走 command）；
+  3. k8s 可选 redis（05-deps-optional.yaml）的运行时 conf 保持 noeviction；
   4. 禁止任何栈把 allkeys-lru 传进 secure 栈的 redis（防回归）。
 """
 from pathlib import Path
@@ -52,13 +52,19 @@ def test_secure_stack_redis_uses_mounted_conf_without_cli_override():
 
 
 def test_prod_compose_redis_policy_is_safe():
-    """参考栈（docker-compose.prod.yml）：redis command 必须保持 noeviction。"""
+    """参考栈（docker-compose.prod.yml）：策略必须保持 noeviction。
+
+    #1676 起该栈与 secure 栈同路 —— 配置（含 maxmemory-policy）经挂载的
+    deploy/redis.conf 生效，不再走 command argv（口令与策略都不进
+    Config.Cmd）。因此断言点从 command 改为「挂载了 conf + conf 本身安全」。
+    """
     redis = _compose("docker-compose.prod.yml")["services"]["redis"]
-    cmd = " ".join(redis.get("command", [])) if isinstance(
-        redis.get("command"), list
-    ) else str(redis.get("command", ""))
-    assert "noeviction" in cmd, "prod 栈 redis command 必须 noeviction"
-    assert "allkeys-lru" not in cmd
+    text = str(redis)
+    assert "redis.conf" in text, "prod 栈 redis 必须挂载 deploy/redis.conf"
+    assert "allkeys-lru" not in text, "prod 栈 redis 不能把 allkeys-lru 传进容器"
+    assert "maxmemory-policy noeviction" in _redis_conf_text(), (
+        "prod 栈经 deploy/redis.conf 生效，conf 必须显式 noeviction"
+    )
 
 
 def test_k8s_optional_redis_policy_is_safe():
@@ -83,15 +89,29 @@ def test_k8s_optional_redis_policy_is_safe():
 
 
 def test_no_broker_bearing_stack_uses_eviction_policy():
-    """矩阵级守卫：所有（显式声明或经 conf）给 redis 的策略都必须是安全集。"""
-    # secure 栈经 conf：已由 test_secure_stack_conf_policy_is_safe 覆盖。
-    # prod 栈经 command：
-    redis = _compose("docker-compose.prod.yml")["services"]["redis"]
-    cmd = " ".join(redis.get("command", [])) if isinstance(
-        redis.get("command"), list
-    ) else str(redis.get("command", ""))
-    policy = None
-    if "--maxmemory-policy" in cmd:
-        parts = cmd.split()
-        policy = parts[parts.index("--maxmemory-policy") + 1]
-    assert policy in SAFE_POLICIES, f"prod 栈 redis 策略 {policy!r} 不在安全集内"
+    """矩阵级守卫：所有（显式声明或经 conf）给 broker-bearing redis 的策略都必须是安全集。
+
+    #1676 起 prod 栈与 secure 栈同走挂载的 deploy/redis.conf、k8s 走 sh -c
+    运行时 conf —— 采集点随形态更新，安全集不变。
+    """
+    policies: dict[str, str] = {}
+    for line in _redis_conf_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("maxmemory-policy "):
+            policies["deploy/redis.conf (secure+prod)"] = stripped.split(None, 1)[1]
+    for doc in yaml.safe_load_all(
+        (REPO_ROOT / "deploy" / "k8s" / "05-deps-optional.yaml").read_text(encoding="utf-8")
+    ):
+        if not doc or doc.get("kind") != "Deployment":
+            continue
+        for container in doc["spec"]["template"]["spec"].get("containers", []):
+            if container.get("name") != "redis":
+                continue
+            parts = " ".join(
+                (container.get("command") or []) + (container.get("args") or [])
+            ).split()
+            if "maxmemory-policy" in parts:
+                policies["k8s 05-deps-optional"] = parts[parts.index("maxmemory-policy") + 1]
+    assert policies, "未采集到任何 broker-bearing redis 的 maxmemory-policy"
+    unsafe = {k: v for k, v in policies.items() if v not in SAFE_POLICIES}
+    assert not unsafe, f"broker-bearing redis 策略不在安全集内: {unsafe}"

@@ -385,7 +385,14 @@ def _capture_critique_sync(
     live_state: Optional[Dict[str, Any]],
 ) -> int:
     """Sync capture body — runs inside ``asyncio.to_thread`` (store load/
-    save are blocking DB calls; the hot-path convention)."""
+    save are blocking DB calls; the hot-path convention).
+
+    Capture **is** a derivation pass: durable facts are re-observed first
+    (#1739 — their drifts drive the dependency-precise walk, so a reuse
+    conclusion anchored to an advanced dataset/mapspec token is staled here
+    instead of rendering as current on the next turn), and only then are
+    this turn's fresh critique findings recorded with fresh anchors.
+    """
     from app.services.gis_context.observation import observe_session
     from app.services.gis_context.store import WorkingContextStore
 
@@ -395,7 +402,20 @@ def _capture_critique_sync(
         return 0
     disk_revision = int(wc.revision)
     obs = observe_session(live_state, mapspec if isinstance(mapspec, dict) else None)
-    observe_facts(wc, obs)
+    # #1739: 捕获路径必须消费 observe_facts 的 drifts —— 本次观察中前进的
+    # dataset/mapspec token 会作废既有派生结论的 anchor（reuse 族尤其危险：
+    # 死 anchor 的结论会以 current 续渲染到下一个 hot-path turn）。drifts 按
+    # (dim, ref) 归因翻译成 invalidate_graph 的 change 词表（与 hotpath 3c
+    # 同一合成规则），缺失即等价于静默丢弃。
+    drifts = observe_facts(wc, obs)
+    walk_changes: List[ContextChange] = []
+    for drift in drifts:
+        walk_changes.append(ContextChange(
+            kind="MAPSPEC_SEMANTIC_CHANGED" if drift.kind == "mapspec"
+            else "DATASET_VERSION_CHANGED",
+            ref_id=drift.ref,
+            detail=f"{drift.old_token}->{drift.new_token}"[:96]))
+    graph_hits = invalidate_graph(wc, walk_changes) if walk_changes else []
     wc.revision = int(wc.revision) + 1  # fact transitions advance the CAS token
     recorded = 0
     for f in crit:
@@ -420,8 +440,16 @@ def _capture_critique_sync(
             finding.finding_id = existing.finding_id  # stable identity
         wc.upsert_derived_finding(finding)
         recorded += 1
-    if not recorded:
+    if not recorded and not graph_hits:
+        # 无新推导、无失效 = 只读轮次（与 hotpath 的 read-mostly 纪律同向：
+        # 不落盘）。drift 已作废既有结论时即使没有新 critique 行也必须落盘，
+        # 否则下一个 hot-path turn 从 store 读回的仍是带死 anchor 的 current
+        # 行（#1739：失效闭环在 capture 路径断裂的那一环）。
         return 0
+    if graph_hits:
+        logger.debug(
+            "[gis_context] capture walk staled %d derived finding(s) "
+            "mission=%s", len(graph_hits), mission_id)
     try:
         store.save(wc, expected_revision=disk_revision)
     except Exception as exc:  # noqa: BLE001 — capture never blocks verify

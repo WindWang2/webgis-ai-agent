@@ -3300,12 +3300,16 @@ def solar_radiation(
     cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
     gy, gx = np.gradient(z, cy, cx)
     slope = np.arctan(np.sqrt(gx ** 2 + gy ** 2))
-    aspect = np.arctan2(-gx, -gy)  # 下坡向（数学方位角；0=北 → 转 0=东约定）
+    # 罗盘坡向（0=北、顺时针）＝ ESRI/band_math 等价式 arctan2(−dzdx, dzdy)
+    # （同文件 hillshade_multiazimuth :3172、真相源 band_math.compute_aspect）：
+    # gy = dz/d(row) 为南向梯度，故 y 分量取 +gy；#1720 前误写 −gy（南北镜像
+    # 180°，N↔S 使朝阳坡欠照、背阳坡过照），修正后与 az_sun 同约定直接相减。
+    aspect = np.arctan2(-gx, gy)
     # 太阳方位近似：正午太阳方位 = 赤纬决定（北半球夏偏南）；取
     # az_sun = π + delta（弧度，0=北顺时针）作为日积分代表方位（近似披露）。
     az_sun = math.pi + delta
-    aspect_from_south = aspect + math.pi / 2.0 - az_sun
-    incidence = np.cos(slope) + np.sin(slope) * np.cos(aspect_from_south)
+    # 方位项 = cos(az_sun − aspect)（docstring 公式；两角同为罗盘约定）。
+    incidence = np.cos(slope) + np.sin(slope) * np.cos(az_sun - aspect)
     factor = np.clip(incidence, 0.15, None)
     insolation = np.where(valid, clear_sky * factor, np.nan)
 

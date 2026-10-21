@@ -69,8 +69,17 @@ function escapeSvgAttr(value: unknown): string {
  *
  * Contract: both twins emit `50` (not `50.0`), `1` (not `1.0`). The parity
  * tests assert ONE canonical form; drift fails the test.
+ *
+ * Non-finite guard (#1747): the Python twin `_fmt_num` maps NaN/±Inf to `"0"`
+ * (documented default), while JS `Number.prototype.toFixed` happily writes
+ * `"NaN"` / `"Infinity"` — an invalid SVG attribute that parsers reject or
+ * silently drop. Every numeric call site (opacity / stroke width / font size /
+ * halo width / coordinates) funnels through here, so the guard lives at the
+ * formatter, mirroring the twin instead of wrapping each `Number(...)`.
  */
 function fmtNum(v: number): string {
+  // 与 Python 孪生 _safe_float/_fmt_num 对齐：非有限值写文档化缺省 "0"。
+  if (!Number.isFinite(v)) return "0";
   let s = v.toFixed(2);
   if (s.includes(".")) {
     s = s.replace(/0+$/, "").replace(/\.$/, "");

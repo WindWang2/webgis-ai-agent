@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 
 from app.services.gis_context import hotpath as hp
-from app.services.gis_context.memory_graph import mapspec_token
+from app.services.gis_context.memory_graph import dataset_token, mapspec_token
 from app.services.gis_context.working_context import (
     BasisDataset,
     ContextFact,
@@ -295,6 +295,112 @@ def test_capture_resolves_mission_without_caller_state(wc_store, monkeypatch):
     assert ("mapspec", "", "5") in {(f.kind, f.ref, f.token) for f in after.facts}
     # Idempotent: the same derivation again records nothing.
     assert _run(mg.record_critique_findings("sess-final", findings=findings)) == 0
+
+
+def _seed_reuse_row(store, *, anchor: str = "rev-1") -> None:
+    """A reuse-family conclusion anchored to a dataset token — the family
+    the capture path used to leave on a dead anchor (#1739)."""
+    wc = store.load("msn-wire0001", org_id="org-1")
+    wc.upsert_derived_finding(DerivedFinding(
+        finding_id="df-reuse", family="reuse", ref="reuse:project",
+        label="项目复用判定", status="current", generation=3, digest="dg-reuse",
+        priority=1,
+        depends_on=[DependencyEdge(dim="data", ref="ref:schools", anchor=anchor)],
+        basis_revision=3))
+    store.save(wc)
+    return wc
+
+
+def _patch_capture(monkeypatch, store, *, state, mapspec):
+    import types
+
+    from app.services.gis_context import memory_graph as mg
+
+    async def fake_session_state(session_id):
+        return state
+
+    async def fake_get_mapspec(session_id, state_hint=None):
+        return mapspec
+
+    monkeypatch.setattr(mg, "_session_state", fake_session_state)
+    monkeypatch.setattr(
+        "app.services.gis_context.store.WorkingContextStore", lambda: store)
+    monkeypatch.setattr(
+        "app.services.mapspec.store.mapspec_store_instance",
+        types.SimpleNamespace(get_mapspec=fake_get_mapspec))
+    return mg
+
+
+def test_capture_drives_the_invalidation_walk_1739(wc_store, monkeypatch):
+    """#1739: 捕获路径必须消费 observe_facts 的 drifts。
+
+    修复前 ``observe_facts(wc, obs)`` 的返回值被直接丢弃：本 turn 前进的
+    dataset token 不会作废任何既有结论 —— 带死 anchor 的 reuse 结论以
+    current 续渲染到下一个 hot-path turn。
+    """
+    import types
+
+    mg = _patch_capture(
+        monkeypatch, wc_store,
+        state=_state(rev=5), mapspec=_mapspec(ds_rev="rev-2"))
+    _seed_graph_row(wc_store)
+    _seed_reuse_row(wc_store)
+    findings = [types.SimpleNamespace(
+        code="label_collision", target="L1", severity="warning",
+        detail="collision ratio 0.9")]
+    recorded = _run(mg.record_critique_findings("sess-final", findings=findings))
+
+    assert recorded == 1
+    after = wc_store.load("msn-wire0001", org_id="org-1")
+    # 死 anchor 的 reuse 结论被降级 + 归因到前进的 dataset token。
+    reuse_row = after.derived_finding("df-reuse")
+    assert reuse_row.status == "stale"
+    assert any(r.startswith("DATASET_VERSION_CHANGED")
+               for r in reuse_row.stale_reasons)
+    # 新推导以 fresh anchor 发布为 current（捕获即推导）。
+    fresh = next(f for f in after.derived_findings
+                 if f.family == "critique" and f.ref == "label_collision:L1")
+    assert fresh.status == "current"
+    assert dataset_token(after, "ref:schools") == "rev-2"
+
+
+def test_capture_drift_only_still_persists_the_walk_1739(wc_store, monkeypatch):
+    """只有 drift、无新 critique 推导时也必须落盘 —— 否则下一个 turn 从
+    store 读回的仍是 current 死 anchor 行（失效闭环断裂的那一环）。"""
+    import types
+
+    from app.services.gis_context.working_context import DependencyEdge
+
+    mg = _patch_capture(
+        monkeypatch, wc_store,
+        state=_state(rev=5), mapspec=_mapspec(ds_rev="rev-2"))
+    _seed_graph_row(wc_store)
+    _seed_reuse_row(wc_store)
+    # 一条 basis-only 的 critique 行 = 本次「未变化」的推导对象（drift 不
+    # 命中它），于是 recorded == 0 而 walk 仍有事可做。
+    seeded = wc_store.load("msn-wire0001", org_id="org-1")
+    seeded.upsert_derived_finding(DerivedFinding(
+        finding_id="df-basis", family="critique", ref="blank_map_risk:view1",
+        label="blank_map_risk", detail="ratio 0.4", status="current",
+        generation=3,
+        digest=mg._digest("blank_map_risk|view1|warning|ratio 0.4"),
+        priority=2, depends_on=[DependencyEdge(dim="basis.aoi", anchor="3")],
+        basis_revision=3))
+    wc_store.save(seeded)
+    unchanged = [types.SimpleNamespace(
+        code="blank_map_risk", target="view1", severity="warning",
+        detail="ratio 0.4")]
+
+    assert _run(mg.record_critique_findings("sess-final", findings=unchanged)) == 0
+
+    after = wc_store.load("msn-wire0001", org_id="org-1")
+    reuse_row = after.derived_finding("df-reuse")
+    assert reuse_row.status == "stale"
+    assert any(r.startswith("DATASET_VERSION_CHANGED")
+               for r in reuse_row.stale_reasons)
+    # 未被 drift 命中的推导保持 current（精确性没有退化成全场作废）。
+    assert after.derived_finding("df-basis").status == "current"
+    assert dataset_token(after, "ref:schools") == "rev-2"
 
 
 def test_capture_target_fallback_refuses_without_any_source(monkeypatch):

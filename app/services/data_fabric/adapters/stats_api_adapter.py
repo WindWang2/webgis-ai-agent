@@ -81,20 +81,48 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
                     "hint": "declare datasets in config/sources/*.yaml (no guessing)"},
         )
 
+    def _max_bytes_per_request(self) -> Optional[int]:
+        """源声明的单次响应字节配额（``options.max_bytes_per_request``）。
+
+        #1715：``config/sources/*.yaml`` 的 ``quota.max_bytes_per_request``
+        经 ``SourceDefinition.fabric_profile`` 下传至此；未声明/非法值 →
+        None = 走公共读取通道的默认硬界（``limits.max_response_bytes``）。
+        """
+        raw = (self.profile.options or {}).get("max_bytes_per_request")
+        try:
+            cap = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return cap if cap > 0 else None
+
     def _fetch_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        """有界 JSON GET（#1715）：经适配器公共读取通道流式读取。
+
+        与 ogc_api/stac/wfs/wms 同一道门（``security.safe_json_get``）：
+        Content-Length 预检 + 解压后逐块字节上限，超限抛 typed
+        ``SourceBadResponseError``。此前裸 ``session.get`` + ``resp.json()``
+        全文读入内存 —— 单次 Overpass 大查询可拉入数百 MB 打爆 worker。
+        """
+        from app.services.data_fabric.security import safe_json_get
+
         session = self._http_session()
         try:
-            resp = session.get(url, params=params, timeout=30)
+            return safe_json_get(
+                session, url, params=params, timeout=30,
+                max_bytes=self._max_bytes_per_request(),
+            )
+        except requests.HTTPError as e:
+            # HTTPError 是 RequestException 子类 —— 必须先于它捕获，
+            # 把状态码映射回本适配器的 typed 契约（非 200 → BAD_RESPONSE）。
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            raise SourceBadResponseError(
+                f"stats_api returned {status}",
+                details={"url": url, "status_code": status},
+            ) from e
         except requests.RequestException as e:
             raise SourceUnreachableError(f"stats_api unreachable: {e}") from e
-        if resp.status_code != 200:
-            raise SourceBadResponseError(
-                f"stats_api returned {resp.status_code}",
-                details={"url": url},
-            )
-        try:
-            return resp.json()
         except ValueError as e:
+            # safe_json_get 的 json.loads 失败（JSONDecodeError / UnicodeDecodeError）
             raise SourceBadResponseError(f"stats_api returned non-JSON body: {e}") from e
 
     @staticmethod

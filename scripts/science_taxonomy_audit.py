@@ -175,7 +175,8 @@ def render_report(matrix: dict) -> str:
         "  remote_sensing / time_series 的 category 匹配）；",
         "- Uncertainty 是横切族：`uncertainty_outputs` 非空即计入，成员与",
         "  原族重复计数；",
-        f"- platform / data_access / flow_analysis 为平台面，不入矩阵",
+        # #1691（scripts/ 纳入 ruff 门禁）：去掉无占位符的 f 前缀（F541）。
+        "- platform / data_access / flow_analysis 为平台面，不入矩阵",
         f"（未对齐且非平台的算法 {len(matrix['unaligned'])} 个，见下）。",
         "",
     ]

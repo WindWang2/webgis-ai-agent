@@ -14,11 +14,28 @@ import { installJourneyStubs } from '../fixtures/api-stubs';
 import { expectMapReady } from '../helpers/assertions';
 import { MODE, REAL_ONLY_REASON } from '../helpers/mode';
 
-/** Mean per-channel absolute delta between two same-size PNG buffers. */
-function meanAbsDelta(a: Buffer, b: Buffer): { delta: number; comparable: boolean } {
+/**
+ * Mean per-channel absolute delta between two PNG buffers.
+ *
+ * `comparable: false` = 两张截图尺寸不同，像素比较在此刻没有意义 ——
+ * 调用方必须显式失败并披露原因（#1748：此前该场景被当成「通过」，
+ * 轮询立即绿，这条生产信号等于不存在）。
+ */
+function meanAbsDelta(a: Buffer, b: Buffer): {
+  delta: number;
+  comparable: boolean;
+  /** 尺寸不一致时的人类可读原因；comparable 为 true 时为 null。 */
+  sizeMismatch: string | null;
+} {
   const pa = PNG.sync.read(a);
   const pb = PNG.sync.read(b);
-  if (pa.width !== pb.width || pa.height !== pb.height) return { delta: -1, comparable: false };
+  if (pa.width !== pb.width || pa.height !== pb.height) {
+    return {
+      delta: -1,
+      comparable: false,
+      sizeMismatch: `${pa.width}x${pa.height} → ${pb.width}x${pb.height}`,
+    };
+  }
   const n = pa.width * pa.height;
   let sum = 0;
   for (let i = 0; i < pa.data.length; i += 4) {
@@ -26,7 +43,7 @@ function meanAbsDelta(a: Buffer, b: Buffer): { delta: number; comparable: boolea
     sum += Math.abs(pa.data[i + 1] - pb.data[i + 1]);
     sum += Math.abs(pa.data[i + 2] - pb.data[i + 2]);
   }
-  return { delta: sum / (n * 3), comparable: true };
+  return { delta: sum / (n * 3), comparable: true, sizeMismatch: null };
 }
 
 async function shootMap(page: Page): Promise<Buffer> {
@@ -49,6 +66,28 @@ async function applyDarkBasemap(page: Page): Promise<void> {
   const card = page.locator('div.cursor-pointer').filter({ hasText: '深色影像底图' }).first();
   await expect(card).toBeVisible({ timeout: 15_000 });
   await card.getByRole('button', { name: '应用' }).click();
+}
+
+/**
+ * 生产信号：画布像素发生变化（mean per-channel delta > 1.5，0–255 尺度）。
+ *
+ * 容差取 1.5：抗压缩渲染抖动，仍能可靠识别风格切换。
+ * 尺寸不可比时抛错并披露两个尺寸 —— 绝不静默通过：#1748 之前这里是
+ * `return comparable ? delta > 1.5 : true`，截图尺寸一变轮询立即绿，
+ * 整条断言等于不存在。尺寸不同本身也是异常信号（画布被重排/替换），
+ * 要红在明处，而不是被一个永远为 true 的分支吞掉。
+ */
+async function expectCanvasMoved(before: Buffer, page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      const after = await shootMap(page);
+      const { delta, comparable, sizeMismatch } = meanAbsDelta(before, after);
+      if (!comparable) {
+        throw new Error(`画布截图尺寸不可比（before → after ${sizeMismatch}）：无法判定像素变化`);
+      }
+      return delta > 1.5;
+    }, { timeout: 20_000, intervals: [500, 1000, 2000, 4000] })
+    .toBe(true);
 }
 
 test.describe('journey-3 模板应用', () => {
@@ -75,15 +114,8 @@ test.describe('journey-3 模板应用', () => {
       }, { timeout: 20_000 })
       .toBe(true);
 
-    // 生产信号 3：画布变化 —— 容差取 1.5（0–255 尺度）：抗压缩渲染抖动，
-    // 仍能可靠识别风格切换。
-    await expect
-      .poll(async () => {
-        const after = await shootMap(page);
-        const { delta, comparable } = meanAbsDelta(before, after);
-        return comparable ? delta > 1.5 : true;
-      }, { timeout: 20_000, intervals: [500, 1000, 2000, 4000] })
-      .toBe(true);
+    // 生产信号 3：画布变化（容差 1.5，尺寸不可比即显式失败）。
+    await expectCanvasMoved(before, page);
   });
 
   test('real：浏览模板库 → 应用底图模板 → 底图切换 + 画布变化', async ({ page }) => {
@@ -106,12 +138,7 @@ test.describe('journey-3 模板应用', () => {
         return label !== null && !label.includes('Carto 深色');
       }, { timeout: 30_000 })
       .toBe(true);
-    await expect
-      .poll(async () => {
-        const after = await shootMap(page);
-        const { delta, comparable } = meanAbsDelta(before, after);
-        return comparable ? delta > 1.5 : true;
-      }, { timeout: 20_000, intervals: [500, 1000, 2000, 4000] })
-      .toBe(true);
+    // 生产信号 3：画布变化（容差 1.5，尺寸不可比即显式失败）。
+    await expectCanvasMoved(before, page);
   });
 });

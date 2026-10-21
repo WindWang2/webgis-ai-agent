@@ -9,10 +9,9 @@
  * 4. 发送分析指令 → SSE 回放 → 结果卡片落地图 → 画布保持全屏（无左 inset）
  * 5. 语言切换经设置面板真实 UI（zh→en）即时生效 —— 不直写 cookie（#1555）
  *
- * 面板入口说明：≤768px 下 rail 的 chat tab 与顶栏右侧集群目前被既有缺陷
- * 遮挡（见文件末 NOTE），本 journey 走同一 store 动作的生产入口——顶栏
- * 「展开侧栏」开关（toggleLeftPanel，rail chat tab 激活态点击的同一动作）
- * 与命令面板（Ctrl+K →「打开设置」）。缺陷修复后应改回 rail tab 直开。
+ * 面板入口说明：rail 底部档 chat tab 直开（#1666 修复 tablist 方向不随
+ * variant 切换后，chat 不再被 48px 底栏裁剪/地图 canvas 拦截）；语言切换
+ * 走顶栏「设置」真实入口（#1667 修复右侧集群 390px 溢出后的内联按钮）。
  *
  * 本地运行（mock 档零后端，webServer 自动起 next dev）：
  *   cd frontend
@@ -23,14 +22,12 @@
  * 先 `pnpm exec next dev --webpack -p 3310` 起服，config 的
  * reuseExistingServer 会复用已起服务。
  *
- * NOTE（2026-10-18 本 journey 激活时实测发现，待后续 issue 修复）：
- * 1. nav-rail.tsx 底部档 tablist 未随 variant 切换方向（className 恒为
- *    `flex w-full flex-1 flex-col overflow-y-auto`，而 aria-orientation 已声明
- *    horizontal）：≤768px 下 14 个 rail tab 纵向堆叠、被 48px 底栏的
- *    overflow 裁剪，chat/project/图层等入口实际不可点（地图拦截命中）。
- * 2. top-bar.tsx 右侧操作集群（新建/历史/底图/3D/UI 调整/设置）固有宽度
- *    ~530px，390px 视口下整体溢出屏外，「设置」按钮不可达。
- * 两者均为 P5（ADR-0144）移动档实现残疵，超出本 journey 的接线范围。
+ * （历史 NOTE，2026-10-18 本 journey 激活时实测的移动档残疵，均已修复：)
+ * - 原 NOTE 1「nav-rail 底部档 tablist className 恒 flex-col、14 个 tab
+ *   纵向堆叠被裁剪、chat 不可点」→ #1666：方向随 variant 切换（底部档
+ *   flex-row + 横向滚动），本 journey 步骤 3 已改回 rail chat tab 直开。
+ * - 原 NOTE 2「top-bar 右侧集群 ~530px 溢出、设置不可达」→ #1667：mobile
+ *   档折叠为「更多」收纳菜单，见下方 390px 溢出断言。
  */
 import { test, expect } from 'playwright/test';
 import { bootstrapMock, defaultWorld, awaitShellReady, sendChat } from '../helpers/bootstrap';
@@ -68,10 +65,25 @@ test.describe('journey-8 移动档主流程（≤768px）', () => {
     const rail = page.locator('nav[data-rail-variant="bottom"]');
     await expect(rail).toBeVisible();
 
-    // 3) 打开工作面板（顶栏「展开侧栏」= toggleLeftPanel，与 rail chat tab
-    //    激活态点击同一 store 动作）→ chat 以 bottom-sheet 呈现；默认活动
-    //    tab 即 chat（useHudStore 初值），sheet 内直接是对话面板。
-    await page.getByRole('button', { name: '展开侧栏', exact: true }).click();
+    // 2b) 验收 1（#1666）：chat tab 命中测试通过 —— tab 中心点的
+    //     elementFromPoint 必须是 tab 自身（或其子元素），不被地图 canvas
+    //     拦截。修复前 tablist 纵向堆叠被 48px 底栏裁剪，中心点落到 canvas 上，
+    //     点击被拦截、chat 实际不可点（issue 的实证方法同款）。
+    const chatTab = page.getByRole('tab', { name: '对话', exact: true });
+    await expect(chatTab).toBeVisible();
+    const hit = await chatTab.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return top === el || el.contains(top);
+    });
+    expect(hit, 'chat tab 命中点不应被地图 canvas 拦截').toBe(true);
+
+    // 3) 打开工作面板：rail 底部档 chat tab 直开（真实用户路径 —— #1666
+    //    修复前 tablist 纵向堆叠被 48px 底栏裁剪、点击被地图 canvas 拦截，
+    //    只能绕行顶栏「展开侧栏」）。默认活动 tab 即 chat（useHudStore 初值），
+    //    mobile 档（<768px）面板初值折叠 → 点击 active tab 即开面板，chat 以
+    //    bottom-sheet 呈现，sheet 内直接是对话面板。
+    await page.getByRole('tab', { name: '对话', exact: true }).click();
     const sheet = page.locator('[role="dialog"][data-snap]');
     await expect(sheet).toBeVisible();
     await expect(sheet).toHaveAttribute('data-snap', 'half');
@@ -88,6 +100,31 @@ test.describe('journey-8 移动档主流程（≤768px）', () => {
     expect(box?.x ?? 0).toBeLessThan(8);
   });
 
+  test('mock：390px 顶栏无横向溢出，「设置」按钮可达（#1667）', async ({ page }) => {
+    test.skip(MODE !== 'mock', MOCK_ONLY_REASON);
+    await bootstrapMock(page, defaultWorld());
+    await page.goto('/');
+    await expect(page.locator('html')).toHaveAttribute('data-layout-mode', 'mobile', {
+      timeout: 15_000,
+    });
+
+    // 验收 2：顶栏无横向溢出。修复前右侧集群（新建/历史/底图/3D/UI 调整/
+    // 设置）固有宽度 ~530px，390px 视口下整体溢出屏外；折叠后集群只剩
+    // 新建/更多/设置三个 26px 按钮（宽控件收进「更多」收纳菜单）。
+    const bar = page.getByTestId('topbar');
+    await expect(bar).toBeVisible();
+    const overflow = await bar.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow, 'top-bar 不应有横向溢出').toBeLessThanOrEqual(0);
+
+    // 验收 1：「设置」在 390px 视口内可见且可点 —— 真实用户路径进设置抽屉。
+    const settings = page.getByRole('button', { name: '设置', exact: true });
+    await expect(settings).toBeVisible();
+    await settings.click();
+    await expect(
+      page.locator('[role="dialog"][aria-labelledby="settings-panel-title"]'),
+    ).toBeVisible();
+  });
+
   test('mock：语言切换经设置面板真实 UI，zh→en 即时生效', async ({ page }) => {
     test.skip(MODE !== 'mock', MOCK_ONLY_REASON);
     await bootstrapMock(page, defaultWorld());
@@ -96,15 +133,11 @@ test.describe('journey-8 移动档主流程（≤768px）', () => {
       timeout: 15_000,
     });
 
-    // 命令面板（Ctrl+K）→「打开设置」→ 设置抽屉 → 「系统」分区的语言
-    // radiogroup —— 全程真实用户路径（#1555：禁止 page.evaluate 直写
-    // cookie 绕过语言契约）。390px 下顶栏「设置」按钮被溢出遮挡（见文件
-    // 末 NOTE 2），命令面板是键盘可达的同一动作入口。
-    await page.keyboard.press('Control+k');
-    const palette = page.getByRole('dialog').filter({ has: page.getByTestId('command-palette-input') });
-    await expect(palette).toBeVisible();
-    await page.getByTestId('command-palette-input').fill('打开设置');
-    await page.getByRole('option', { name: '打开设置' }).click();
+    // 顶栏「设置」→ 设置抽屉 → 「系统」分区的语言 radiogroup —— 全程真实
+    // 用户路径（#1555：禁止 page.evaluate 直写 cookie 绕过语言契约）。
+    // #1667 前 390px 下顶栏「设置」被溢出遮挡不可达，本用例只能绕道
+    // Ctrl+K 命令面板；集群折叠修复后改回顶栏真实入口。
+    await page.getByRole('button', { name: '设置', exact: true }).click();
 
     // 抽屉的可访问名随语言切换（标题走 i18n）—— 用稳定的 labelledby 锚点定位，
     // 名称基定位会在切换后瞬间失效。

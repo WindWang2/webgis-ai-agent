@@ -361,10 +361,7 @@ export class DataPlaneScheduler {
     } catch {
       /* controller 已废弃 */
     }
-    if (item.externalAbortHandler && item.req.signal) {
-      item.req.signal.removeEventListener('abort', item.externalAbortHandler);
-      item.externalAbortHandler = undefined;
-    }
+    this.detachExternalSignal(item);
     const idx = this.queue.indexOf(item);
     if (idx >= 0) {
       this.queue.splice(idx, 1);
@@ -481,11 +478,34 @@ export class DataPlaneScheduler {
     );
   }
 
+  /**
+   * 摘除 request 注册在调用方 AbortSignal 上的监听器（#1745 6）。
+   *
+   * 监听器此前只在 ``cancelItem`` 里移除 —— 请求正常落地（fulfilled /
+   * not-modified / failed）的路径从不移除：长生命周期 signal（会话级 /
+   * 组件级）上监听器与已结算的 QueueItem 单向累积。结算
+   * （:meth:`settle`）是唯一的卸除点：排队取消经它、在飞取消经
+   * ``cancelItem`` 立即卸一次（落地后再卸由幂等保护）。幂等：重复调用
+   * 无副作用。
+   */
+  private detachExternalSignal(item: QueueItem): void {
+    const handler = item.externalAbortHandler;
+    const signal = item.req.signal;
+    if (!handler || !signal) return;
+    signal.removeEventListener('abort', handler);
+    item.externalAbortHandler = undefined;
+  }
+
   private settle(key: string, result: RefFetchResult): void {
     const group = this.pending.get(key);
     this.pending.delete(key);
     this.inflight.delete(key);
-    group?.waiters.forEach((w) => w(result));
+    if (group) {
+      // 结算即卸除外部 signal 监听器（#1745 6）：不留给调用方的长命
+      // signal 一个永不失效的回调。
+      this.detachExternalSignal(group.item);
+      group.waiters.forEach((w) => w(result));
+    }
     this.notifyIdleIfDrained();
   }
 

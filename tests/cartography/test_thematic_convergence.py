@@ -545,12 +545,19 @@ def test_cartography_findings_forwarded_through_production_evidence_channel():
     assert forwarded.get("cartography_findings") == findings
 
     # And the disclosure pipeline whitelist includes it (the field is named in
-    # the forward list). dir-09 之后该转发循环从 agent_pi_bridge 内联胶水迁
-    # 到 pi_post_dispatch 的 _record_cartography_evidence —— 断言跟到新家。
-    from app.lib.harness.evidence import CARTOGRAPHIC_RESULT_EVIDENCE_KEYS
+    # the forward list). #1550 之后逐键投影从 pi_post_dispatch 内联循环收敛到
+    # evidence.py 的 project_cartographic_result_evidence（单一投影入口）——
+    # 断言跟到新家：生产管道仍经该入口透传 CARTOGRAPHIC_RESULT_EVIDENCE_KEYS。
+    from app.lib.harness.evidence import (
+        CARTOGRAPHIC_RESULT_EVIDENCE_KEYS,
+        project_cartographic_result_evidence,
+    )
     assert "cartography_findings" in CARTOGRAPHIC_RESULT_EVIDENCE_KEYS
     pipeline_src = open("app/services/chat/pi_post_dispatch.py").read()
-    assert "CARTOGRAPHIC_RESULT_EVIDENCE_KEYS" in pipeline_src
+    assert "project_cartographic_result_evidence" in pipeline_src
+    assert "cartography_findings" in project_cartographic_result_evidence(
+        {"cartography_findings": findings}, status="ok", llm_payload_len=0
+    )
 
 
 def test_cartography_not_evaluated_when_no_profile_no_legend():

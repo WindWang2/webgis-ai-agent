@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_quality.rules import RULE_TYPES
@@ -229,11 +229,40 @@ def rule_null_rate(ctx: RuleEvalContext) -> RuleOutcome:
     return RuleOutcome("pass", "null rates within thresholds", 0, metric)
 
 
+# CRS「不可识别」判据（#1716）：**整令牌精确匹配**，绝不裸子串。
+# 旧实现把裸 ``"0"`` 当子串标记，于是任何含数字 0 的真实 CRS 都被误报
+# —— ``EPSG:4490``（CGCS2000）、``EPSG:32650``（UTM 50N）、
+# ``+proj=utm +zone=50``、以及含 ``PARAMETER["False_northing",0]`` 的
+# WKT。故裸 ``"0"`` 只参与**整串**判定（CRS 串整体就是 ``"0"``），
+# 绝不进令牌集 —— 否则上述 WKT 会把投影 CRS 全部误报。
+_UNKNOWN_CRS_TOKENS = frozenset({
+    "UNKNOWN", "NONE", "NULL", "UNDEFINED", "UNSPECIFIED", "INVALID",
+    "N/A", "?", "+PROJ=?", "EPSG:0",
+})
+_UNKNOWN_CRS_EXACT = frozenset({"0", "EPSG:0", "EPSG::0"})
+_CRS_TOKEN_SPLIT_RE = re.compile(r"[\s,;:=()\[\]{}<>\"]+")
+# EPSG 码抽取（``EPSG:0`` / ``EPSG::0`` / ``+epsg=0`` / ``urn:ogc:def:
+# crs:EPSG::0``）：码为 0 = undefined geographic CRS，才算不可识别。
+_EPSG_CODE_RE = re.compile(r"EPSG[\s:=]+(\d+)", re.IGNORECASE)
+
+
+def _crs_is_unrecognized(crs: str) -> bool:
+    """CRS 不可识别判定：令牌/码级精确匹配（绝不裸子串，理由见上方常量）。"""
+    upper = crs.strip().upper()
+    if not upper:
+        return False
+    if upper in _UNKNOWN_CRS_EXACT:
+        return True
+    if any(int(m.group(1)) == 0 for m in _EPSG_CODE_RE.finditer(upper)):
+        return True
+    return any(t in _UNKNOWN_CRS_TOKENS
+               for t in _CRS_TOKEN_SPLIT_RE.split(upper) if t)
+
+
 def rule_crs_validity(ctx: RuleEvalContext) -> RuleOutcome:
     crs = str(ctx.crs or "").strip()
-    unknown_markers = ("EPSG:0", "unknown", "none", "+proj=?", "0")
     missing = not crs
-    unknown = (not missing) and any(m in crs.upper() for m in map(str.upper, unknown_markers))
+    unknown = (not missing) and _crs_is_unrecognized(crs)
     if missing or unknown:
         suggested = str(ctx.params.get("target_crs") or "EPSG:4326")
         metric = {"crs": crs[:64] or "(missing)", "suggested_crs": suggested}
@@ -563,6 +592,21 @@ def rule_field_type_drift(ctx: RuleEvalContext) -> RuleOutcome:
     return RuleOutcome("pass", "field types stable", 0, metric)
 
 
+def _as_aware_utc(dt: datetime) -> datetime:
+    """时间戳归一为 aware UTC（naive 按 UTC 解释）。
+
+    ``datetime.fromisoformat`` 对同一字段既能产出 naive（无偏移后缀）
+    又能产出 aware（``Z`` / ``+08:00``）。二者混存时 ``sort()`` 与相减
+    直接抛 ``TypeError: can't compare offset-naive and offset-aware
+    datetimes`` —— 该崩溃被 engine 的单规则隔离吞成 error 态并计入
+    ``failed``，整场质量评估因此判 fail（#1716）。统一折算到 UTC 后
+    比较，才是同一时间轴上的真实间隔。
+    """
+    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def rule_temporal_gaps(ctx: RuleEvalContext) -> RuleOutcome:
     field_name = str(ctx.params.get("time_field") or "")
     if not field_name:
@@ -585,6 +629,10 @@ def rule_temporal_gaps(ctx: RuleEvalContext) -> RuleOutcome:
     if len(stamps) < 3:
         return RuleOutcome(status="skipped",
                            message=f"insufficient timestamps ({len(stamps)})")
+    # naive/aware 混存必须先归一再排序（见 :func:`_as_aware_utc`）。
+    naive_count = sum(1 for s in stamps
+                      if s.tzinfo is None or s.tzinfo.utcoffset(s) is None)
+    stamps = [_as_aware_utc(s) for s in stamps]
     stamps.sort()
     diffs = [(stamps[i + 1] - stamps[i]).total_seconds()
              for i in range(len(stamps) - 1)]
@@ -602,7 +650,8 @@ def rule_temporal_gaps(ctx: RuleEvalContext) -> RuleOutcome:
             gaps += 1
     metric = {"time_field": field_name, "points": len(stamps),
               "median_interval_s": median, "gaps": gaps,
-              "max_gap_s": max(diffs), "unparsed": unparsed}
+              "max_gap_s": max(diffs), "unparsed": unparsed,
+              "naive_normalized_to_utc": naive_count}
     if gaps:
         return RuleOutcome("warn", f"时间序列存在 {gaps} 处断裂（> {gap_factor}× 中位间隔）",
                            gaps, metric)

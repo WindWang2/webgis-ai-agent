@@ -123,6 +123,26 @@ def catalog_snapshot_ref(
     return payload
 
 
+def _is_int(value: Any) -> bool:
+    """真整数判定（``bool`` 是 ``int`` 子类，快照里的 ``true`` 不是版本号）。"""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _read_catalog_version(snapshot: Mapping[str, Any]) -> Optional[int]:
+    """快照携带的 catalog_version；缺失/不可判读 → ``None``。
+
+    不可判读 ≠ 版本变化：损坏的存储值不构成「registry 世代变化」的证据
+    （与 ``validate_snapshot_ref`` 的损坏规则同一诚实方向），调用方据此
+    跳过版本归因，绝不把损坏输入变成 ``int()`` 异常。
+    """
+    raw = snapshot.get("catalog_version")
+    if raw is None:
+        return None
+    if not _is_int(raw):
+        return None
+    return int(raw)
+
+
 def validate_snapshot_ref(snapshot: Mapping[str, Any]) -> Optional[str]:
     """快照凭证健康检查；返回损坏/不认识原因码，健康返回 None。
 
@@ -141,6 +161,12 @@ def validate_snapshot_ref(snapshot: Mapping[str, Any]) -> Optional[str]:
         return REASON_SNAPSHOT_CORRUPT
     fps = snapshot.get("entry_fingerprints", {})
     if fps is not None and not isinstance(fps, Mapping):
+        return REASON_SNAPSHOT_CORRUPT
+    # catalog_version 是 explain_staleness 的归因输入（版本变化判定）：非
+    # 整数字符串/浮点/bool 一律判损坏 —— 否则解释器只能在 int() 里炸，而
+    # 模块自身契约是「不可判读 → stale=False + 披露码」。
+    raw_version = snapshot.get("catalog_version")
+    if raw_version is not None and not _is_int(raw_version):
         return REASON_SNAPSHOT_CORRUPT
     return None
 
@@ -255,11 +281,16 @@ def explain_staleness(
     current_fps = current_catalog.entry_fingerprints()
     stored_fps = dict(stored_snapshot.get("entry_fingerprints", {}) or {})
     stored_gen = str(stored_snapshot.get("generation_fingerprint", ""))
-    stored_catalog_version = int(
-        stored_snapshot.get("catalog_version", current_catalog.catalog_version))
-    scope = str(stored_snapshot.get("scope", "full") or "full")
-    if stored_catalog_version != current_catalog.catalog_version:
+    # 容错读取（#1740）：非整数 catalog_version 不可判读 → 不归因版本变化。
+    # 健康门（validate_snapshot_ref）已把非整数判损坏，这里是对「绕过门
+    # 直接调用」的二线保护 —— 绝不让损坏快照在解释器里炸。
+    stored_catalog_version = _read_catalog_version(stored_snapshot)
+    catalog_version_changed = (
+        stored_catalog_version is not None
+        and stored_catalog_version != current_catalog.catalog_version)
+    if catalog_version_changed:
         reasons.append(REASON_CATALOG_VERSION_CHANGED)
+    scope = str(stored_snapshot.get("scope", "full") or "full")
     manifest_fp = str(stored_snapshot.get("manifest_fingerprint", "") or "")
     if (current_manifest_fingerprint and manifest_fp
             and manifest_fp != current_manifest_fingerprint):
@@ -297,8 +328,7 @@ def explain_staleness(
         "summary": {
             "changed_total": len(changed_keys),
             "truncated": bool(diff.truncated_total()),
-            "catalog_version_changed": (
-                stored_catalog_version != current_catalog.catalog_version),
+            "catalog_version_changed": catalog_version_changed,
         },
     }
 

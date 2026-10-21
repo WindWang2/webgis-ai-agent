@@ -13,7 +13,8 @@
      "assertless_tests":     {"tests/test_x.py": 1, ...},
      "unannotated_defs":     {"app/bar.py": 12, ...},
      "unannotated_defs_pct": 11.74,
-     "god_modules":          {"app/huge.py": 3252, ...}}
+     "god_modules":          {"app/huge.py": 3252, ...},
+     "dict_str_any":         6611}
 
 计数型规则（前四个 + god_modules）按"路径级 + 总量"双重只减不增；
 ``unannotated_defs_pct`` 保留全局占比语义（ISSUE-057 的 mypy 白名单棘轮
@@ -22,6 +23,11 @@ v1 未含的规则键跳过；注意 v1 兼容读取下 `frontend_explicit_any` 
 屏蔽（G14 误报修复）比旧口径少计注释命中（当前树 -2），存在相应余量，
 入库 v2 基线已按新口径重算锁定。``baseline`` 命令永远写 v2；v2 基线
 缺失任何规则键即判违规（防删键关闸）。
+
+``dict_str_any``（#1550）是**总量口径标量**：``dict[str, Any]`` /
+``Dict[str, Any]`` 注解弥散于全仓上千文件，路径级棘轮噪音大于收益，
+故只锁"总量只减不增"（接缝逐个具名化后自然单调下降）；``locate``
+仍按 file:line 逐条列出，升级为路径级是显式的重基线决策。
 
 指标::
 
@@ -36,6 +42,8 @@ v1 未含的规则键跳过；注意 v1 兼容读取下 `frontend_explicit_any` 
                            （ISSUE-059；AST 识别 assert/pytest.raises/mock断言）
     unannotated_defs       app/**/*.py 中未完整注解的函数数（按文件）
     unannotated_defs_pct   上述函数占全部函数的百分比（全局，ISSUE-057）
+    dict_str_any           app/**/*.py 中 dict[str, Any] / Dict[str, Any]
+                           注解出现位总数（#1550；AST 计数，总量口径棘轮）
 
 用法::
 
@@ -85,7 +93,7 @@ _ASSERT_CALLS = {
 COUNT_RULES = ("frontend_explicit_any", "except_silent",
                "assertless_tests", "unannotated_defs")
 LOCATE_RULES = ("frontend_explicit_any", "except_silent", "god_modules",
-                "assertless_tests", "unannotated_defs")
+                "assertless_tests", "unannotated_defs", "dict_str_any")
 
 
 @dataclass(frozen=True)
@@ -291,7 +299,11 @@ def _is_silent_handler(handler: ast.ExceptHandler) -> bool:
 
 def collect_except_silent(root: Path) -> list[DebtItem]:
     items: list[DebtItem] = []
-    for path in _iter_files(root, "app", (".py",)):
+    # #1691（TEST-02）：扫描根纳入 scripts/ —— 该目录（含 4 个 release-blocking
+    # 门禁脚本自身）此前完全在棘轮面外，ads_baseline.py 等处的静默 except 因此
+    # 不可见。存量已随本轮 baseline 重生成登记（只减不增的起点）。
+    for path in (*_iter_files(root, "app", (".py",)),
+                 *_iter_files(root, "scripts", (".py",))):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
             tree = ast.parse(text, filename=str(path))
@@ -379,7 +391,10 @@ def _def_fully_annotated(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 def _scan_unannotated(root: Path) -> tuple[list[DebtItem], float]:
     items: list[DebtItem] = []
     total = annotated = 0
-    for path in _iter_files(root, "app", (".py",)):
+    # #1691（TEST-02）：扫描根纳入 scripts/（同 collect_except_silent）——
+    # 注解率口径覆盖门禁脚本自身；存量已登记进 baseline 棘轮起点。
+    for path in (*_iter_files(root, "app", (".py",)),
+                 *_iter_files(root, "scripts", (".py",))):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
             tree = ast.parse(text, filename=str(path))
@@ -398,11 +413,59 @@ def _scan_unannotated(root: Path) -> tuple[list[DebtItem], float]:
     return items, pct
 
 
+# #1550：``dict[str, Any]`` / ``Dict[str, Any]``（含 ``typing.Dict`` 属性形）
+# 的 Subscript 基名 —— Primitive Obsession 债的识别面。
+_DICT_ANY_BASENAMES = frozenset({"dict", "Dict"})
+
+
+def _is_dict_str_any(node: ast.Subscript) -> bool:
+    value = node.value
+    if isinstance(value, ast.Name):
+        base = value.id
+    elif isinstance(value, ast.Attribute):
+        base = value.attr
+    else:
+        return False
+    if base not in _DICT_ANY_BASENAMES:
+        return False
+    slice_node = node.slice
+    if not isinstance(slice_node, ast.Tuple) or len(slice_node.elts) != 2:
+        return False
+    key, val = slice_node.elts
+    return (
+        isinstance(key, ast.Name) and key.id == "str"
+        and isinstance(val, ast.Name) and val.id == "Any"
+    )
+
+
+def collect_dict_str_any(root: Path) -> list[DebtItem]:
+    """#1550：``dict[str, Any]`` 出现位计数（Primitive Obsession 债）。
+
+    AST 识别 Subscript 节点（函数签名/字段注解/cast 等一切出现位），
+    注释与字符串字面量不误计。该债弥散于全仓上千文件 —— 棘轮按**总量**
+    口径只减不增（路径级对弥散债噪音大于收益，重基线升级是显式决策）；
+    ``locate --rule dict_str_any`` 提供 file:line 逐条定位。
+    """
+    items: list[DebtItem] = []
+    for path in _iter_files(root, "app", (".py",)):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            tree = ast.parse(text, filename=str(path))
+        except (OSError, SyntaxError):
+            continue
+        rel = _rel(root, path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript) and _is_dict_str_any(node):
+                items.append(DebtItem("dict_str_any", rel, node.lineno))
+    return items
+
+
 def _collect(root: Path) -> tuple[dict, dict[str, list[DebtItem]]]:
     any_items = collect_frontend_any(root)
     except_items = collect_except_silent(root)
     assertless_items = collect_assertless_tests(root)
     unann_items, unann_pct = _scan_unannotated(root)
+    dict_any_items = collect_dict_str_any(root)
 
     god_map = _god_module_lines(root)
     god_items = [
@@ -418,10 +481,12 @@ def _collect(root: Path) -> tuple[dict, dict[str, list[DebtItem]]]:
         "assertless_tests": _count_by_path(assertless_items),
         "unannotated_defs": _count_by_path(unann_items),
         "unannotated_defs_pct": unann_pct,
+        # #1550：总量口径标量（弥散债，见 collect_dict_str_any  docstring）。
+        "dict_str_any": len(dict_any_items),
     }
     items: dict[str, list[DebtItem]] = {}
     for it in (*any_items, *except_items, *god_items,
-               *assertless_items, *unann_items):
+               *assertless_items, *unann_items, *dict_any_items):
         items.setdefault(it.rule, []).append(it)
     return current, items
 
@@ -498,6 +563,20 @@ def _gate_failures(baseline: dict, current: dict,
                 f"unannotated_defs_pct: {cur_pct} > baseline {base_pct} "
                 f"(+{round(cur_pct - base_pct, 2)})")
 
+    # #1550：dict[str, Any] 总量口径棘轮（标量，同 unannotated_defs_pct）。
+    if "dict_str_any" not in baseline:
+        if is_v2:
+            failures.append(
+                "dict_str_any: 基线（v2）缺失规则键 —— "
+                "基线文件不完整或被篡改，请用 `baseline` 命令重新生成")
+    else:
+        base_total = int(baseline["dict_str_any"])
+        cur_total = int(current["dict_str_any"])
+        if cur_total > base_total:
+            failures.append(
+                f"dict_str_any: {cur_total} > baseline {base_total} "
+                f"(+{cur_total - base_total})")
+
     base_gods: dict = baseline.get("god_modules", {})
     if not isinstance(base_gods, dict):
         base_gods = {}
@@ -541,6 +620,11 @@ def check(baseline_path=None, root=None) -> int:
     base_pct = baseline.get("unannotated_defs_pct", 0.0)
     delta = f"(-{round(base_pct - cur_pct, 2)})" if cur_pct < base_pct else ""
     print(f"  unannotated_defs_pct: {cur_pct} / baseline {base_pct} {delta}")
+    # #1550：dict[str, Any] 总量口径（基线条目缺失时按 0 报，不静默）。
+    cur_any = int(current.get("dict_str_any", 0))
+    base_any = int(baseline.get("dict_str_any", 0))
+    delta = f"(-{base_any - cur_any})" if cur_any < base_any else ""
+    print(f"  dict_str_any: {cur_any} / baseline {base_any} {delta}")
     print(f"  god_modules: {len(current['god_modules'])} / "
           f"baseline {len(baseline.get('god_modules', {}))}")
     return 0
@@ -588,6 +672,7 @@ def main() -> int:
         for key in COUNT_RULES:
             print(f"  {key}: {sum(data[key].values())}")
         print(f"  unannotated_defs_pct: {data['unannotated_defs_pct']}")
+        print(f"  dict_str_any: {data['dict_str_any']}")
         print(f"  god_modules: {len(data['god_modules'])}")
         return 0
     if args.command == "check":

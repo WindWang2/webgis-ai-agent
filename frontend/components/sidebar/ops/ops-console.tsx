@@ -7,7 +7,7 @@
  * 断路器（P6）/ 系统（P5 复用设置面板的同一组件）。大屏值守（P7）经头部
  * 按钮进入全屏覆盖层。内部 tab 记忆不进全局 store（运维面不参与模式协调）。
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Activity, GitPullRequestArrow, Cpu, Zap, HeartPulse, MonitorPlay } from 'lucide-react';
 import { ClusterDashboard } from './cluster-dashboard';
 import { PlanConsole } from './plan-console';
@@ -38,6 +38,23 @@ export function OpsConsole({
   const [view, setView] = useState<ViewKey>('cluster');
   const [wallboard, setWallboard] = useState(false);
 
+  // WAI-APG tablist：roving tabindex + 方向键/Home/End（activation-on-focus），
+  // 与 lakehouse 子页签 / nav-rail 同一配方（#1747 补齐 —— 此前键盘用户无法
+  // 切换运维视图）。
+  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const onViewKeyDown = (e: React.KeyboardEvent) => {
+    const idx = VIEWS.findIndex((v) => v.key === view);
+    let next: ViewKey | null = null;
+    if (e.key === 'ArrowRight') next = VIEWS[(idx + 1) % VIEWS.length].key;
+    else if (e.key === 'ArrowLeft') next = VIEWS[(idx - 1 + VIEWS.length) % VIEWS.length].key;
+    else if (e.key === 'Home') next = VIEWS[0].key;
+    else if (e.key === 'End') next = VIEWS[VIEWS.length - 1].key;
+    if (!next) return;
+    e.preventDefault();
+    setView(next);
+    tabRefs.current.get(next)?.focus();
+  };
+
   if (wallboard) {
     return <Wallboard ownerToken={ownerToken} onExit={() => setWallboard(false)} />;
   }
@@ -46,13 +63,25 @@ export function OpsConsole({
     <div className="flex min-h-0 flex-1 flex-col" data-testid="ops-console">
       {/* 分区切换 + 大屏入口 */}
       <div className="flex items-center justify-between gap-2 border-b border-edge-subtle px-1 pb-2">
-        <div role="tablist" aria-label={t('kmhhpag')} className="flex items-center gap-0.5 overflow-x-auto">
+        <div
+          role="tablist"
+          aria-label={t('kmhhpag')}
+          className="flex items-center gap-0.5 overflow-x-auto"
+          onKeyDown={onViewKeyDown}
+        >
           {VIEWS.map(({ key, labelKey, icon: Icon }) => (
             <button
               key={key}
+              ref={(el) => {
+                if (el) tabRefs.current.set(key, el);
+                else tabRefs.current.delete(key);
+              }}
               type="button"
               role="tab"
+              id={`ops-view-tab-${key}`}
               aria-selected={view === key}
+              aria-controls={`ops-panel-${key}`}
+              tabIndex={view === key ? 0 : -1}
               data-testid={`ops-view-${key}`}
               onClick={() => setView(key)}
               className={`flex shrink-0 items-center gap-1 rounded-sm px-2 py-1 text-meta font-medium transition-colors ${
@@ -78,8 +107,13 @@ export function OpsConsole({
           {t('kgndi')}</button>
       </div>
 
-      {/* 当前分区 */}
-      <div className="min-h-0 flex-1 overflow-y-auto pt-3">
+      {/* 当前分区（tabpanel —— 与上方 tablist 的 aria-controls 关联） */}
+      <div
+        role="tabpanel"
+        id={`ops-panel-${view}`}
+        aria-labelledby={`ops-view-tab-${view}`}
+        className="min-h-0 flex-1 overflow-y-auto pt-3"
+      >
         {view === 'cluster' && <ClusterDashboard ownerToken={ownerToken} />}
         {view === 'plan' && <PlanConsole ownerToken={ownerToken} sessionId={sessionId} />}
         {view === 'runtime' && <RuntimeSection ownerToken={ownerToken} sessionId={sessionId} />}

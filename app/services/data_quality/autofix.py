@@ -10,8 +10,10 @@ P1（任务书 §2）修复建议 → 确定性修复的窄桥：
   负责注册为新 ref/新修订，绝不覆写源）；
 - **确定性**：每步修复有明确可枚举语义（附 CRS/闭合环/剔除退化几何/
   乱码重码/空值要素剔除），无启发式写操作；
-- **有界**：``max_scan`` 内逐要素处理；pyproj/shapely 缺席时诚实降级
-  （attach-CRS / 仅剔除），证据写明实际执行的语义。
+- **有界**：``max_scan`` 内逐要素处理（reproject 例外：CRS 标签是
+  payload 级声明，半变换会让窗外坐标与标签不一致，故必须全量变换）；
+  pyproj/shapely 缺席时诚实降级（attach-CRS / 仅剔除），证据写明实际
+  执行的语义。
 """
 from __future__ import annotations
 
@@ -85,10 +87,19 @@ def _features_of(payload: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
     return None
 
 
-def _iter_fixable_rings(geometry: Dict[str, Any]) -> List[List[Tuple[float, float]]]:
-    rings: List[List[Tuple[float, float]]] = []
+def _iter_fixable_rings(
+    geometry: Dict[str, Any],
+) -> List[Tuple[Tuple[int, ...], List[Tuple[float, float]]]]:
+    """收集环，并带回每个环在 coordinates 树里的**路径**（原地写回的锚点）。
 
-    def walk(node: Any) -> None:
+    返回 ``[(path, ring), ...]``：``path`` 是该环的索引序列 —— Polygon 为
+    ``(ring_idx,)``，MultiPolygon 为 ``(part_idx, ring_idx,)``（孔洞环与外环
+    同样带路径，只是 ring_idx 不同）。修复必须沿同一路径写回，否则
+    MultiPolygon 的部件分组与孔洞嵌套会被摊平成独立实心多边形。
+    """
+    rings: List[Tuple[Tuple[int, ...], List[Tuple[float, float]]]] = []
+
+    def walk(node: Any, path: Tuple[int, ...]) -> None:
         if not isinstance(node, list) or not node:
             return
         head = node[0]
@@ -96,28 +107,49 @@ def _iter_fixable_rings(geometry: Dict[str, Any]) -> List[List[Tuple[float, floa
             ring = [(float(c[0]), float(c[1])) for c in node
                     if isinstance(c, list) and len(c) >= 2
                     and isinstance(c[0], (int, float)) and isinstance(c[1], (int, float))]
-            rings.append(ring)
+            rings.append((path, ring))
             return
-        for child in node:
-            walk(child)
+        for i, child in enumerate(node):
+            walk(child, path + (i,))
 
     if isinstance(geometry, dict):
-        walk(geometry.get("coordinates"))
+        walk(geometry.get("coordinates"), ())
     return rings
 
 
-def _replace_rings(geometry: Dict[str, Any], new_rings: List[List[Tuple[float, float]]]) -> None:
-    """把 Polygon/MultiPolygon 的坐标按环粒度替换（拓扑形状保持）。"""
-    gtype = str(geometry.get("type") or "")
-    if gtype == "Polygon":
-        geometry["coordinates"] = [
-            [[x, y] for (x, y) in ring] for ring in new_rings
-        ]
-    elif gtype == "MultiPolygon" and new_rings:
-        # 每个多边形按外环粒度切回（修复只处理单环闭合，拆分证据如实标注）
-        geometry["coordinates"] = [
-            [[x, y] for (x, y) in ring] for ring in new_rings
-        ]
+def _replace_rings(
+    geometry: Dict[str, Any],
+    fixed_rings: List[Tuple[Tuple[int, ...], List[Tuple[float, float]]]],
+) -> None:
+    """按环的原路径**原地**替换坐标（部件分组与孔洞嵌套原样保持）。
+
+    路径来自 :func:`_iter_fixable_rings`：``(part_idx, ring_idx)`` 写回
+    ``coordinates[part_idx][ring_idx]``。绝不把环列表摊平成独立多边形 ——
+    那会把孔洞填成实心面、把多部件改写成 N 个单部件（静默伪造地理真相）。
+    """
+    if str(geometry.get("type") or "") not in ("Polygon", "MultiPolygon"):
+        return
+    coords = geometry.get("coordinates")
+    if not isinstance(coords, list):
+        return
+    for path, ring in fixed_rings:
+        if not path:
+            # 畸形扁平坐标（coordinates 自身即一个环）：包回一层环列表
+            geometry["coordinates"] = [[[x, y] for (x, y) in ring]]
+            coords = geometry["coordinates"]
+            continue
+        node: Any = coords
+        reachable = True
+        for idx in path[:-1]:
+            if not isinstance(node, list) or not isinstance(idx, int) \
+                    or not 0 <= idx < len(node):
+                reachable = False
+                break
+            node = node[idx]
+        last = path[-1]
+        if reachable and isinstance(node, list) and isinstance(last, int) \
+                and 0 <= last < len(node):
+            node[last] = [[x, y] for (x, y) in ring]
 
 
 # ── dry-run ──────────────────────────────────────────────────────────
@@ -152,7 +184,7 @@ def dry_run_autofix(
                 if not isinstance(geometry, dict) or geometry.get("coordinates") in (None, []):
                     droppable += 1
                     continue
-                for ring in _iter_fixable_rings(geometry):
+                for _path, ring in _iter_fixable_rings(geometry):
                     if len(ring) >= 3 and not _ring_is_closed(ring):
                         closable += 1
             preview["would_change"][op] = {
@@ -248,20 +280,20 @@ def apply_autofix(
                     dropped += 1
                     continue
                 rings = _iter_fixable_rings(geometry)
-                fixed_rings: List[List[Tuple[float, float]]] = []
+                fixed_rings: List[Tuple[Tuple[int, ...], List[Tuple[float, float]]]] = []
                 ring_ok = True
-                for ring in rings:
+                for path, ring in rings:
                     if len(ring) >= 3 and not _ring_is_closed(ring):
                         ring = ring + [ring[0]]
                         closed += 1
-                    fixed_rings.append(ring)
+                    fixed_rings.append((path, ring))
                 if rings and fixed_rings:
                     _replace_rings(geometry, fixed_rings)
                 # 零面积多边形（退化）剔除
                 gtype = str(geometry.get("type") or "")
                 if gtype in ("Polygon", "MultiPolygon"):
                     from app.services.data_quality.rule_functions import _ring_area
-                    areas = [_ring_area(r) for r in fixed_rings[:1]]
+                    areas = [_ring_area(ring) for _path, ring in fixed_rings[:1]]
                     if areas and areas[0] == 0.0:
                         dropped += 1
                         ring_ok = False
@@ -286,30 +318,22 @@ def apply_autofix(
                 entry.update({"attached_crs": target, "reprojected": False})
                 evidence["changed"] = True
             elif current != target:
-                if len(features) > max_scan:
-                    # 截断语义对齐（#1634）：坐标只处理前 max_scan 个要素，
-                    # 而 CRS 标签对**整个**载荷生效 —— 超界时尾部要素坐标留在
-                    # 旧 CRS 却随载荷声明新 CRS（静默坐标错标）。typed 拒绝：
-                    # 连同标签一起不改（bounded_to 披露同 repair_geometry
-                    # 纪律），调用方分批或显式提高 max_scan。
-                    entry.update({
-                        "applied": False,
-                        "rejected": "feature_count_exceeds_scan_bound",
-                        "from_crs": current,
-                        "to_crs": target,
-                        "feature_count": len(features),
-                        "bounded_to": max_scan,
-                        "note": f"载荷 {len(features)} 要素超出扫描上限 "
-                                f"{max_scan}，拒绝重投影（避免尾部坐标错标）；"
-                                "可分批处理或显式提高 max_scan",
-                    })
-                else:
-                    reprojected = _reproject_features(features[:max_scan], current, target)
-                    entry.update({"from_crs": current, "to_crs": target,
-                                  "reprojected": reprojected,
-                                  "note": "" if reprojected else "pyproj unavailable; crs label updated only"})
-                    new_payload["crs"] = target
-                    evidence["changed"] = True
+                # 重投影必须覆盖**全部**要素：CRS 标签是 payload 级声明，
+                # 只变换扫描窗内的要素会让窗外坐标静默留在源 CRS，而整个
+                # payload 被打上目标 CRS 标签（下游按错误 CRS 解释坐标）。
+                # 故此处不做 ``max_scan`` 窗口裁剪 —— 代价是 O(n) 线性，
+                # 与整载荷深拷贝同量级；证据如实报告变换要素数。
+                # （#1634 曾在此按 max_scan typed 拒绝超大载荷，#1716 改为
+                # 全量变换 + features_transformed 披露：半变换即伪造，拒绝
+                # 只是把伪造换成不可用。）
+                reprojected = _reproject_features(features, current, target)
+                entry.update({"from_crs": current, "to_crs": target,
+                              "reprojected": reprojected,
+                              "features_transformed":
+                                  len(features) if reprojected else 0,
+                              "note": "" if reprojected else "pyproj unavailable; crs label updated only"})
+                new_payload["crs"] = target
+                evidence["changed"] = True
             else:
                 entry.update({"note": "crs already target", "applied": False})
         elif op == "normalize":
@@ -344,7 +368,13 @@ def apply_autofix(
 
 
 def _reproject_features(features: List[Dict[str, Any]], src: str, dst: str) -> bool:
-    """pyproj 可用时真实重投影坐标（有界）；失败/缺席 → False（诚实降级）。"""
+    """pyproj 可用时真实重投影坐标（**全量**，不做扫描窗裁剪）；
+    失败/缺席 → False（诚实降级）。
+
+    全量的理由：CRS 标签是 payload 级声明，只变换窗内要素会让窗外坐标
+    与标签分属两个 CRS（下游按错误 CRS 解释坐标）。调用方只在
+    ``current != target`` 时进入，代价为线性遍历。
+    """
     try:
         from pyproj import Transformer
         transformer = Transformer.from_crs(src, dst, always_xy=True)

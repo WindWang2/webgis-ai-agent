@@ -468,6 +468,34 @@ def test_bivariate_local_moran_labels_and_determinism():
     assert _payload_json(res) == _payload_json(res2)
 
 
+def test_bivariate_local_moran_labels_use_bh_adjusted_p():
+    """#1736：标签判定必须走 BH-FDR 校正后的 p_adj，而非未校正 p_sim。
+
+    同族 local_moran_narrated / getis_ord_narrated 都走 q<0.05；本函数
+    此前用 p_sim<0.05，口径更宽松，把多重比较假阳性标成 HH/LH/LL/HL。
+    """
+    rng = np.random.default_rng(0)
+    fc = _grid_fc(6, 6, lambda r, c: {"v1": float(rng.normal()),
+                                      "v2": float(rng.normal())})
+    res = bivariate_local_moran_narrated(fc, "v1", "v2", permutations=999)
+    assert res.success, res.summary
+    props = [f["properties"] for f in res.data["features"]]
+    # 不变式：显著标签 ⟺ BH 校正后 p_adj<0.05（与未校正 p_sim 无关）
+    for p in props:
+        labelled = p["bivariate_local_moran_label"] != "not_significant"
+        assert labelled == (p["p_bh"] < 0.05), p
+    assert res.data["significant_count"] == \
+        sum(1 for p in props if p["p_bh"] < 0.05)
+    # 该 fixture 确有 p_sim<0.05 但 BH 后不显著的位置 —— 旧口径会把它们
+    # 误标成 HH/LH/LL/HL（假阳性标注）。
+    raw_sig = [p for p in props if p["p_value"] < 0.05]
+    assert raw_sig, "fixture should contain raw-significant locations"
+    assert all(p["p_bh"] >= 0.05 for p in raw_sig)
+    assert all(p["bivariate_local_moran_label"] == "not_significant"
+               for p in raw_sig)
+    assert "BH-FDR 校正后" in res.summary
+
+
 def test_bivariate_local_moran_partial_null_lag_field_typed_result():
     """回归：lag 字段部分行缺失 → 剔除后行对齐计算，不得形状失配崩溃。
 

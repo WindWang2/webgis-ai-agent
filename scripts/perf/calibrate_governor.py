@@ -34,8 +34,6 @@ from app.services.governor.contract import Dimension  # noqa: E402
 from app.services.governor.governor import HarnessResourceGovernor  # noqa: E402
 from tests.governor.synthetic import (  # noqa: E402
     SCALES,
-    FakeExecutor,
-    run_mixed_corpus,
     synthetic_demand,
 )
 
@@ -45,7 +43,6 @@ async def _calibrate(sessions: int, tasks: int, time_scale: float) -> dict:
     config.queue_max_wait_s = 8.0
     budgets = load_manifest(REPO_ROOT / "config" / "governor_budgets.json")
     gov = HarnessResourceGovernor(config, budgets=budgets)
-    executor = FakeExecutor(gov, time_scale=time_scale, rng_seed=20260914)
 
     decisions: Counter = Counter()
     mem_errors: list = []

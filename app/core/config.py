@@ -16,6 +16,14 @@ logger = logging.getLogger(__name__)
 _VALID_DEPLOYMENT_PROFILES = ("cloud", "air_gapped")
 _VALID_EGRESS_MODES = ("unrestricted", "allowlist")
 
+# issue #1673（SWARM deep review SEC-01）：生产密钥强度下限。此前
+# _ensure_jwt_secret 只拦空值与 change_me 占位符，JWT_SECRET_KEY=jwt /
+# METRICS_TOKEN=tok123 这类低熵值可静默通过启动校验 —— HS256 密钥 3 字符
+# 等于允许任何人离线爆破后伪造 admin JWT。.env.Priv.example 早已写明
+# 「至少 32 字符」但无代码执行，此处补上启动期 fail-fast。
+_MIN_SECRET_LEN = 32         # JWT_SECRET_KEY 生产长度下限
+_MIN_METRICS_TOKEN_LEN = 24  # /metrics fail-closed 门禁 token 强度下限
+
 
 def _worker_env_file() -> str | None:
     """worker 子进程禁止读取 ``.env``（Round-2 审查 C-1）。
@@ -113,6 +121,13 @@ class Settings(BaseSettings):
     # 置 True —— 之后无 type/ver claim 的 token 一律 401，ver 吊销对
     # 存量旧 token 也即时生效。
     JWT_REJECT_LEGACY_TOKENS: bool = False
+
+    # /metrics Bearer 门禁 token（app/main.py 的 _require_metrics_token 消费）。
+    # issue #1673（SEC-01）：登记为 Settings 字段以便启动期熵闸校验 ——
+    # METRICS_TOKEN=tok123 会让 /metrics 门禁形同虚设。空值 = 端点
+    # fail-closed 401（METRICS_AUTH_DISABLED=true 显式回退除外），故生产
+    # 只拦「已设置但过短」，不强制要求非空。
+    METRICS_TOKEN: str = ""
 
     # 数据库
     DATABASE_URL: str = "sqlite:///./data/webgis.db"
@@ -446,6 +461,26 @@ class Settings(BaseSettings):
                 stacklevel=2,
             )
             logger.warning("JWT_SECRET_KEY not set, generated random secret for this session")
+        elif self.is_production() and len(self.JWT_SECRET_KEY) < _MIN_SECRET_LEN:
+            # issue #1673（SEC-01）：低熵 JWT 密钥 = 全站认证可伪造（HS256
+            # 可离线爆破后直接签发 admin token），生产启动即拒绝。
+            raise RuntimeError(
+                f"JWT_SECRET_KEY must be >= {_MIN_SECRET_LEN} chars in production "
+                f"(got {len(self.JWT_SECRET_KEY)}). Generate with: "
+                'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+            )
+        # issue #1673（SEC-01）：/metrics 门禁的强度等于 token 强度 ——
+        # METRICS_TOKEN=tok123 时 Bearer 比较形同虚设。
+        if (
+            self.is_production()
+            and self.METRICS_TOKEN
+            and len(self.METRICS_TOKEN) < _MIN_METRICS_TOKEN_LEN
+        ):
+            raise RuntimeError(
+                f"METRICS_TOKEN must be >= {_MIN_METRICS_TOKEN_LEN} chars in "
+                f"production (got {len(self.METRICS_TOKEN)}). Generate with: "
+                'python -c "import secrets; print(secrets.token_urlsafe(24))"'
+            )
         return self
 
     @model_validator(mode="after")
@@ -535,6 +570,10 @@ class Settings(BaseSettings):
         for attr in ("OVERPASS_API_URL", "NOMINATIM_URL"):
             url = getattr(self, attr)
             self._validate_no_ssrf(url, field=attr)
+        # #1694 SEC-07：STAC_API_URL 此前不在校验列 —— 它是出网白名单覆盖面上
+        # 的洞（stac_client 直接检索该目录，与 Overpass/Nominatim 同为外部
+        # 数据源）。默认值是公网 earth-search，过校验无副作用。
+        self._validate_no_ssrf(getattr(self, "STAC_API_URL"), field="STAC_API_URL")
         self._validate_no_ssrf(getattr(self, "LLM_BASE_URL"), field="LLM_BASE_URL", allow_private=True)
         return self
 
@@ -561,11 +600,17 @@ class Settings(BaseSettings):
                 f"Localhost URLs are blocked to prevent SSRF."
             )
 
-        # 阻止云元数据端点（AWS / GCP / Azure）
+        # 阻止云元数据端点（AWS / GCP / Azure / 阿里云 / 腾讯云）
+        # #1694 SEC-11：补阿里云/腾讯云 IMDS —— 该检查先于下面的
+        # allow_private 早退，故 LLM_BASE_URL（allow_private=True）路径同样受护。
         _METADATA_IPS = {
             "169.254.169.254",  # AWS / GCP
             "metadata.google.internal.",  # GCP（尾部点保留 FQDN 习惯）
             "169.254.169.254.",   # 带尾点的变体
+            "100.100.100.200",    # 阿里云 IMDS
+            "169.254.0.23",       # 腾讯云 IMDS
+            "metadata.tencentyun.com",     # 腾讯云 IMDS 主机名
+            "metadata.tencentyun.com.",    # 带尾点变体
         }
         if hostname.lower() in _METADATA_IPS:
             raise ValueError(
@@ -629,9 +674,11 @@ class Settings(BaseSettings):
                     # 豁免清单（#1204）：Clash/VpnKit 类解析器把所有外部域名
                     # 映射进 198.18.0.0/15 保留段，构造期硬失败会让应用/质量
                     # 闸脚本在合法开发环境无法启动。清单覆盖 Settings 默认值
-                    # 与 tests/conftest 基线值所用的 OSM 域（默认
-                    # overpass.openstreetmap.fr、conftest 基线 overpass-api.de），
-                    # 保持与既有 nominatim/tile 先例同族。真实 SSRF 防线在请求层
+                    # 与 tests/conftest 基线值所用的域（OSM 系默认
+                    # overpass.openstreetmap.fr、conftest 基线 overpass-api.de，
+                    # 以及 #1694 SEC-07 起纳入校验的 STAC 默认目录
+                    # earth-search.aws.element84.com），保持与既有
+                    # nominatim/tile 先例同族。真实 SSRF 防线在请求层
                     # （DataFabricSecurity pin + aiohttp connector）。
                     if hostname in {
                         "nominatim.openstreetmap.org",
@@ -642,6 +689,7 @@ class Settings(BaseSettings):
                         "data.beijing.gov.cn",
                         "data.sh.gov.cn",
                         "gddata.gd.gov.cn",
+                        "earth-search.aws.element84.com",
                     }:
                         continue
                     raise ValueError(

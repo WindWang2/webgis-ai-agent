@@ -26,13 +26,24 @@ class TestDevComposeSecurity:
         )
 
     def test_redis_has_requirepass(self):
-        """Redis command must include --requirepass."""
+        """#1676（SEC-04）：Redis 必须启用认证，且口令**不得进 argv**。
+
+        原断言只查 command 含 `--requirepass` —— 而那正是缺陷本身：compose
+        在解析期把口令插值进容器 Config.Cmd，`docker inspect` /
+        `docker top` / 宿主机 `/proc/<pid>/cmdline` 可见明文（该口令同时是
+        celery broker + result backend + session store 的钥匙）。现在 dev 栈
+        由入口把完整配置（含 `requirepass` 配置指令）写进 /dev/shm tmpfs 的
+        0400 运行时 conf 后 exec redis-server，command/args 里不再有口令。
+        """
         compose = _load_compose(DOCKER_COMPOSE)
         cmd = compose["services"]["redis"].get("command", "")
         if isinstance(cmd, list):
             cmd = " ".join(cmd)
-        assert "--requirepass" in cmd, (
-            f"Redis has no authentication. Command: {cmd}"
+        assert "--requirepass" not in cmd, (
+            f"Redis 口令进 argv（docker inspect Config.Cmd 可见明文，#1676）: {cmd}"
+        )
+        assert "requirepass" in cmd, (
+            f"Redis 丢失认证注入（#1676 修的是 argv 暴露，不是认证本身）: {cmd}"
         )
 
     def test_api_and_celery_use_compose_postgis_not_sqlite(self):

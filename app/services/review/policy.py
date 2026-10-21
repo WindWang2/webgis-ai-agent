@@ -42,7 +42,7 @@ TRANSITIONS: dict[ProposalStatus, frozenset[ProposalStatus]] = {
         }
     ),
     ProposalStatus.CHANGES_REQUESTED: frozenset(
-        {ProposalStatus.SUBMITTED, ProposalStatus.WITHDRAWN}
+        {ProposalStatus.SUBMITTED, ProposalStatus.APPROVED, ProposalStatus.WITHDRAWN}
     ),
     ProposalStatus.APPROVED: frozenset(
         {
@@ -160,7 +160,15 @@ def evaluate_approval(
         # 低风险 agent 提案同样要求审批者 != 作者 id（agent 借用户身份自批面）。
         needs_distinct = True
     if needs_distinct:
-        if any(d.actor.actor_id == author.actor_id for d in human_approvals):
+        # review #1744-7：审批者身份按 **(actor_id, actor_kind)** 双重判定，
+        # 与 service 层写时门槛 `_same_person`（app/services/review/service.py）
+        # 口径一致 —— 只比 id 会把「同 id 不同 kind」误判成自批，策略面与
+        # 写时面的放行标准分叉。
+        if any(
+            d.actor.actor_id == author.actor_id
+            and d.actor.actor_kind == author.actor_kind
+            for d in human_approvals
+        ):
             reasons.append("distinct human reviewer required (author cannot self-approve)")
 
     if is_high:

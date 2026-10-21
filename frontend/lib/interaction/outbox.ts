@@ -196,7 +196,13 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let generation = 0;
-  let ackedWatermark = 0;
+  /**
+   * 服务端已记账水印，按**会话**作用域（ADR-0225 C7：client_seq 契约是
+   * per-(session, tab) 从 1 起）。实例级标量会在会话切换后把新会话整批
+   * `client_seq ≤ 旧水印` 的事件静默剪掉（永不发送）——旧会话的迟到/重试
+   * 响应只应裁剪同一会话的队列条目。
+   */
+  const ackedWatermarks = new Map<string | undefined, number>();
   let overflowDropped = 0;
 
   const logEvent = (event: string, fields: Record<string, unknown>): void => {
@@ -267,12 +273,19 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
     }, Math.max(0, nextAt - now())));
   };
 
-  const applyWatermarks = (response: InteractionIngestResponse): void => {
+  const applyWatermarks = (
+    response: InteractionIngestResponse,
+    sessionId: string,
+  ): void => {
     const mark = response.watermarks?.[instanceId];
-    if (typeof mark === 'number' && mark > ackedWatermark) {
-      ackedWatermark = mark;
-      // 服务端已记账的旧事件不再重发（ack 丢失重试的收敛面）。
-      queue = queue.filter((item) => item.event.client_seq > ackedWatermark);
+    if (typeof mark === 'number' && mark > (ackedWatermarks.get(sessionId) ?? 0)) {
+      ackedWatermarks.set(sessionId, mark);
+      // 服务端已记账的旧事件不再重发（ack 丢失重试的收敛面）。只裁剪同一
+      // 会话的条目 —— 不同会话的 client_seq 是独立序空间，跨会话比对会把
+      // 新会话的事件误判为"已记账"而静默丢弃。
+      queue = queue.filter(
+        (item) => item.sessionId !== sessionId || item.event.client_seq > mark,
+      );
     }
     if (response.dropped && response.dropped > 0) {
       logEvent('server ledger dropped (disclosure)', { dropped: response.dropped });
@@ -354,7 +367,7 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
       finish();
       if (gen !== generation) return;
       if (response.ok && body && typeof body === 'object') {
-        applyWatermarks(body);
+        applyWatermarks(body, sessionId);
         // 持久化降级对账信道（后端 ingest review P2-3）：2xx +
         // persist_degraded 且不带 watermarks —— 服务端内存态已折叠但未
         // 落库。按暂态重试（复用 5xx 路径：attempts+1 / 指数退避 /
@@ -448,7 +461,14 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
     flush,
     flushKeepalive,
     dispose,
-    acknowledgedSeq: () => ackedWatermark,
+    // 诊断/测试视图：跨会话的最大已记账水印（队列裁剪按会话分别生效）。
+    acknowledgedSeq: () => {
+      let max = 0;
+      for (const mark of ackedWatermarks.values()) {
+        if (mark > max) max = mark;
+      }
+      return max;
+    },
   };
 }
 

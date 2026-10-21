@@ -4,6 +4,8 @@
 （恒 2）—— 256MB 字节预算从未生效（无界驻留）；本文件钉死修复语义。
 """
 import asyncio
+import threading
+import time
 
 
 from app.services.data_fabric.tile_cache import (
@@ -169,3 +171,49 @@ def test_coalescer_max_inflight_degrades_without_queueing():
         assert await leader == 1
 
     asyncio.run(scenario())
+
+
+# ── 跨 event loop 的 single-flight（PERF-03 / #1683）─────────────────────────
+
+
+def test_coalescer_single_flight_across_event_loops():
+    """不同 event loop 上的同键并发必须仍收敛为一次构建。
+
+    PERF-03（#1683）后 data_fabric manager 协程每个请求一条自己的 loop
+    （消除进程级单 loop 的头阻塞），tile 路由的并发同瓦片请求因此落在不同
+    loop 上 —— in-flight 槽必须跨 loop 安全，否则 follower await 到别的
+    loop 的 future 直接 RuntimeError（并发瓦片请求从 single-flight 退化成
+    失败）。此前槽里是 asyncio.Future（仅限单 loop）。
+    """
+    calls = {"n": 0}
+    coalescer: TileBuildCoalescer[str] = TileBuildCoalescer()
+
+    async def builder():
+        calls["n"] += 1
+        await asyncio.sleep(0.2)
+        return "tile"
+
+    started = threading.Event()
+    box = {}
+
+    def _run_leader():
+        async def _scenario():
+            started.set()
+            box["leader"] = await coalescer.run("k", builder)
+
+        asyncio.run(_scenario())
+
+    # 领导者跑在自己的 loop（线程 A）上并占住 in-flight 槽。
+    leader_thread = threading.Thread(target=_run_leader)
+    leader_thread.start()
+    assert started.wait(timeout=2)
+    time.sleep(0.05)  # 等领导者注册完槽（set 与注册之间无 await）
+
+    # follower 在另一条 loop（主线程）上 await 同一槽：修复前 await 到别的
+    # loop 的 asyncio.Future 直接 RuntimeError。
+    box["follower"] = asyncio.run(coalescer.run("k", builder))
+    leader_thread.join(timeout=5)
+
+    assert box["leader"] == "tile" and box["follower"] == "tile", "跨 loop 结果必须一致"
+    assert calls["n"] == 1, "跨 event loop 的同键并发必须仍收敛为一次构建"
+    assert coalescer.inflight_keys() == 0

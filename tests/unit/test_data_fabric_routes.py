@@ -419,3 +419,69 @@ def test_require_source_manage_matrix():
         with pytest.raises(HTTPException) as ei:
             m(org_other, user, destructive=destructive)
         assert ei.value.status_code == 403
+
+
+def test_list_sources_pagination():
+    """#1745 8：GET /data-fabric/sources 补 limit/offset 分页。
+
+    此前不带分页参数直接全量 ``.all()`` —— 同路由文件里唯一没有分页的
+    列表端点（/data-fabric/catalog 早有 limit/offset/total）。
+    """
+    client = TestClient(app)
+    from app.core.auth import create_access_token
+    token = create_access_token({"sub": "df-user", "username": "df", "role": "editor"})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created: list[str] = []
+    with patch("app.services.data_fabric.manager.DataFabricManager.probe_profile") as mock_probe, \
+         patch("app.services.data_fabric.manager.DataFabricManager.sync_catalog") as mock_sync:
+        mock_probe.return_value = DataFabricHealth(status="healthy", message="OK", latency_ms=1.0)
+        mock_sync.return_value = []
+        for i in range(3):
+            res = client.post(
+                "/api/v1/data-fabric/sources",
+                json={
+                    "name": f"DF Pagination Source {i}",
+                    "source_type": "ogc_api",
+                    "endpoint_url": f"https://example.com/ogc/pagination/{i}",
+                    "options": {},
+                },
+                headers=headers,
+            )
+            assert res.status_code == 200, res.text
+            created.append(res.json()["data_source"]["id"])
+
+    # 默认（不带分页参数）：既有调用方零行为变化 —— sources 仍在，且带总量
+    # （带 auth：匿名调用方按 SEC-03 只看得到全局源，见 _tenant_filter）
+    body = client.get("/api/v1/data-fabric/sources", headers=headers).json()
+    assert "sources" in body
+    assert body["limit"] == 200 and body["offset"] == 0
+    assert body["total"] >= len(created)
+
+    # limit=1 逐页：三页两两不重叠，且正好覆盖新建的三个源
+    # （created_at 倒序 → 最新在前；本测试是文件里最后一个建源的测试）。
+    pages = [
+        client.get(f"/api/v1/data-fabric/sources?limit=1&offset={i}", headers=headers).json()
+        for i in range(3)
+    ]
+    for page in pages:
+        assert len(page["sources"]) == 1
+        assert page["total"] == body["total"]
+        assert page["limit"] == 1
+    ids = [page["sources"][0]["id"] for page in pages]
+    assert len(set(ids)) == 3, "分页页之间不得重叠"
+    assert set(ids) == set(created), "三页必须正好覆盖新建的三个源（新→旧）"
+
+    # limit=2 常规分页：两页不重叠
+    p1 = client.get("/api/v1/data-fabric/sources?limit=2&offset=0", headers=headers).json()
+    p2 = client.get("/api/v1/data-fabric/sources?limit=2&offset=2", headers=headers).json()
+    ids1 = {s["id"] for s in p1["sources"]}
+    ids2 = {s["id"] for s in p2["sources"]}
+    assert len(ids1) == 2
+    assert not (ids1 & ids2), "分页页之间不得重叠"
+    assert p1["total"] == p2["total"] == body["total"]
+
+    # 上下界由 Query 校验（ge=1 / le=1000 / offset ge=0）
+    assert client.get("/api/v1/data-fabric/sources?limit=0").status_code == 422
+    assert client.get("/api/v1/data-fabric/sources?limit=1001").status_code == 422
+    assert client.get("/api/v1/data-fabric/sources?offset=-1").status_code == 422

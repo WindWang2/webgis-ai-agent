@@ -583,7 +583,12 @@ describe('MapActionHandler', () => {
       render(<MapActionHandler />);
     });
 
-    expect(map.moveLayer).toHaveBeenCalledWith('custom-layer2', 'custom-layer1');
+    // #1726：MapLibre 数组越靠后越在上；moveLayer(id, before) 把 id 插到
+    // before 正下方，省略锚点 = 追加到末尾（最顶层）。up = 朝顶层移动一格：
+    // layer2 上方唯一的异组层是 layer3，插到它之后（之前无更上层 → 省略
+    // 锚点）。修复前此处期望 ('custom-layer2', 'custom-layer1') —— 那实际
+    // 把图层移向底部，正是 #1726 描述的方向反转。
+    expect(map.moveLayer).toHaveBeenCalledWith('custom-layer2', undefined);
   });
 
   it('calls map.moveLayer correctly for REORDER_LAYER position down', async () => {
@@ -605,7 +610,10 @@ describe('MapActionHandler', () => {
       render(<MapActionHandler />);
     });
 
-    expect(map.moveLayer).toHaveBeenCalledWith('custom-layer2', undefined);
+    // #1726：down = 朝底层移动一格 —— 插到下方第一个异组层（layer1）之前，
+    // 即紧贴其下。修复前此处期望 ('custom-layer2', undefined) —— 省略锚点
+    // 会把整组甩到最顶层，正是 #1726 描述的第二半缺陷。
+    expect(map.moveLayer).toHaveBeenCalledWith('custom-layer2', 'custom-layer1');
   });
 
   it('calls map.moveLayer correctly for REORDER_LAYER position before', async () => {

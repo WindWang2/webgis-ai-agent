@@ -296,6 +296,11 @@ describe('Deterministic Work-Count Performance Evidence (Scenarios A - J)', () =
       await new Promise((r) => setTimeout(r, 150));
     });
 
+    // Gate, not benchmark: the camera is uncontrolled, so 50 zoom frames must
+    // not cost 50 map re-renders. A revert to the controlled camera shows up
+    // here as one render per frame (50) instead of ~0.
+    expect(zoomMapRenders).toBeLessThanOrEqual(2);
+
     console.log('[Scenario B Evidence] 50 Zoom Steps:', {
       mapRendersDuringZoom: zoomMapRenders,
     });
@@ -333,6 +338,14 @@ describe('Deterministic Work-Count Performance Evidence (Scenarios A - J)', () =
 
     const identicalReconcileStyleCalls = metrics.mapLibreGetStyleCalls - styleCallsBeforeIdentical;
     const identicalReconcileMoves = metrics.mapLibreMoveLayerCalls - moveLayerBeforeIdentical;
+
+    // Gate: the first reconcile must actually install the 20 layers (otherwise
+    // the zero below would be vacuous), and an identical spec must short-circuit
+    // — no style read, no moveLayer. Losing that short-circuit costs one full
+    // re-diff per identical reconcile.
+    expect(firstReconcileMoves).toBeGreaterThan(0);
+    expect(identicalReconcileStyleCalls).toBe(0);
+    expect(identicalReconcileMoves).toBe(0);
 
     console.log('[Scenario C Evidence] 20 Layers Reconcile:', {
       firstReconcileStyleCalls,
@@ -388,6 +401,9 @@ describe('Deterministic Work-Count Performance Evidence (Scenarios A - J)', () =
     }
 
     const totalMovesDuringDrag = metrics.mapLibreMoveLayerCalls - initialMoves;
+    // Gate: an opacity change must not reorder layers — 20 drag ticks that each
+    // cost a moveLayer would be 20 style mutations per drag.
+    expect(totalMovesDuringDrag).toBe(0);
     console.log('[Scenario E Evidence] 20 Opacity Drag Reconciles:', {
       totalMoveLayerCalls: totalMovesDuringDrag,
     });
@@ -412,6 +428,8 @@ describe('Deterministic Work-Count Performance Evidence (Scenarios A - J)', () =
     }
 
     const movesDuringFilter = metrics.mapLibreMoveLayerCalls - initialMoves;
+    // Gate: a filter change repaints features, it does not reorder layers.
+    expect(movesDuringFilter).toBe(0);
     console.log('[Scenario F Evidence] 20 Filter Updates:', {
       movesDuringFilter,
     });
@@ -513,6 +531,10 @@ describe('Deterministic Work-Count Performance Evidence (Scenarios A - J)', () =
     const initialMoves = metrics.mapLibreMoveLayerCalls;
     await rt.reconcileAsync(spec2);
     const duplicateMoves = metrics.mapLibreMoveLayerCalls - initialMoves;
+
+    // Gate: reconciling the same repaired spec twice must be idempotent — the
+    // second pass must not re-emit moveLayer for an order it already applied.
+    expect(duplicateMoves).toBe(0);
 
     console.log('[Scenario J Evidence] Duplicate Repair Reconcile Moves:', {
       duplicateMoves,

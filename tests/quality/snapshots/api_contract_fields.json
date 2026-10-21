@@ -905,6 +905,14 @@
   "token_type": "string",
   "user": "UserInfo"
  },
+ "POST /api/v1/auth/register [201]": {
+  "__model__": "TokenResponse",
+  "access_token": "string",
+  "expires_in": "integer",
+  "refresh_token": "null|string",
+  "token_type": "string",
+  "user": "UserInfo"
+ },
  "POST /api/v1/chat/completions": {
   "__model__": "ChatResponse",
   "content": "string",
@@ -959,6 +967,15 @@
   "runtime_observation_seq": "integer",
   "success": "boolean",
   "warnings": "array<string>"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/review/proposals [201]": {
+  "__model__": "ProposalProjectionResponse",
+  "anchor_states": "object",
+  "base_revision": "integer",
+  "conflict": "boolean",
+  "current_revision": "integer",
+  "policy": "object",
+  "proposal": "object"
  },
  "POST /api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/comments": {
   "__model__": "ProposalProjectionResponse",
@@ -1210,6 +1227,9 @@
  "POST /api/v1/geocompute/plans/execute": {
   "__model__": "PlanExecuteResponse"
  },
+ "POST /api/v1/geocompute/plans/runs [202]": {
+  "__model__": "PlanRunSubmitResponse"
+ },
  "POST /api/v1/geocompute/plans/runs/{run_id}/cancel": {
   "__model__": "PlanRunCancelResponse"
  },
@@ -1232,6 +1252,18 @@
   "data": "null|unknown",
   "message": "string",
   "success": "boolean"
+ },
+ "POST /api/v1/projects [201]": {
+  "__model__": "ProjectResponse",
+  "created_at": "string",
+  "description": "null|string",
+  "id": "string",
+  "metadata_json": "object",
+  "name": "string",
+  "org_id": "integer|null",
+  "owner_id": "null|string",
+  "status": "string",
+  "updated_at": "string"
  },
  "POST /api/v1/projects/artifacts/{artifact_id}/clone": {
   "__model__": "ArtifactCloneResponse",
@@ -1282,6 +1314,69 @@
   "project_id": "string",
   "rejected": "integer",
   "upserted": "object"
+ },
+ "POST /api/v1/projects/{project_id}/map-products [201]": {
+  "__model__": "MapProductVersionResponse",
+  "artifact_ids": "array<string>",
+  "compute_plan": "array<object>",
+  "created_at": "string",
+  "diff_summary": "object",
+  "id": "string",
+  "input_dataset_fingerprints": "object",
+  "label": "null|string",
+  "lineage_kind": "null|string",
+  "mapspec_fingerprint": "null|string",
+  "mapspec_revision": "integer|null",
+  "parent_version_no": "integer|null",
+  "product_fingerprint": "null|string",
+  "project_id": "string",
+  "recipe_id": "null|string",
+  "snapshot_available": "boolean",
+  "version_no": "integer",
+  "workflow_id": "null|string",
+  "workflow_run_id": "null|string"
+ },
+ "POST /api/v1/projects/{project_id}/map-products/merge [201]": {
+  "__model__": "MapProductVersionResponse",
+  "artifact_ids": "array<string>",
+  "compute_plan": "array<object>",
+  "created_at": "string",
+  "diff_summary": "object",
+  "id": "string",
+  "input_dataset_fingerprints": "object",
+  "label": "null|string",
+  "lineage_kind": "null|string",
+  "mapspec_fingerprint": "null|string",
+  "mapspec_revision": "integer|null",
+  "parent_version_no": "integer|null",
+  "product_fingerprint": "null|string",
+  "project_id": "string",
+  "recipe_id": "null|string",
+  "snapshot_available": "boolean",
+  "version_no": "integer",
+  "workflow_id": "null|string",
+  "workflow_run_id": "null|string"
+ },
+ "POST /api/v1/projects/{project_id}/map-products/{version_no}/fork [201]": {
+  "__model__": "MapProductVersionResponse",
+  "artifact_ids": "array<string>",
+  "compute_plan": "array<object>",
+  "created_at": "string",
+  "diff_summary": "object",
+  "id": "string",
+  "input_dataset_fingerprints": "object",
+  "label": "null|string",
+  "lineage_kind": "null|string",
+  "mapspec_fingerprint": "null|string",
+  "mapspec_revision": "integer|null",
+  "parent_version_no": "integer|null",
+  "product_fingerprint": "null|string",
+  "project_id": "string",
+  "recipe_id": "null|string",
+  "snapshot_available": "boolean",
+  "version_no": "integer",
+  "workflow_id": "null|string",
+  "workflow_run_id": "null|string"
  },
  "POST /api/v1/projects/{project_id}/map-products/{version_no}/rerun": {
   "__model__": "MapProductRerunResponse",
@@ -1519,6 +1614,21 @@
   "retried": "boolean",
   "status": "string"
  },
+ "POST /api/v1/templates [201]": {
+  "__model__": "TemplateView",
+  "category": "null|string",
+  "created_at": "null|string",
+  "description": "null|string",
+  "id": "string",
+  "is_builtin": "boolean",
+  "keywords": "array<string>",
+  "kind": "string",
+  "name": "string",
+  "payload": "null|object",
+  "thumbnail_url": "null|string",
+  "updated_at": "null|string",
+  "version": "integer"
+ },
  "POST /api/v1/upload": {
   "__model__": "UploadResponse",
   "bbox": "array<number>|null",
@@ -1589,6 +1699,9 @@
  },
  "POST /api/v2/geocompute/plans/execute": {
   "__model__": "PlanExecuteResponse"
+ },
+ "POST /api/v2/geocompute/plans/runs [202]": {
+  "__model__": "PlanRunSubmitResponse"
  },
  "POST /api/v2/geocompute/plans/runs/{run_id}/cancel": {
   "__model__": "PlanRunCancelResponse"

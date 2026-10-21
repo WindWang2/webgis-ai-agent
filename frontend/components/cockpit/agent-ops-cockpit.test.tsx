@@ -263,3 +263,50 @@ describe('AgentOpsCockpit — Oracle 行为', () => {
     expect(screen.getByText(/1200/)).toBeInTheDocument(); // 总量可见（诚实计数）
   });
 });
+
+/**
+ * #1747 项 6：控制台视图 tablist 的 WAI-APG 键盘契约 —— roving tabindex +
+ * 方向键/Home/End（activation-on-focus）+ tabpanel 关联（与 ops-console、
+ * lakehouse 子页签同一配方）。
+ */
+describe('AgentOpsCockpit — 视图 tablist 键盘导航（#1747）', () => {
+  it('roving tabindex + Arrow/Home/End + tabpanel 关联', async () => {
+    render(<AgentOpsCockpit sessionId="sess-1" ownerToken="tok" />);
+    await flush(0);
+
+    const missionTab = screen.getByTestId('cockpit-view-mission');
+    const executionTab = screen.getByTestId('cockpit-view-execution');
+    const traceTab = screen.getByTestId('cockpit-view-trace');
+
+    // roving tabindex：只有活跃 tab 进 tab 序列
+    expect(missionTab).toHaveAttribute('tabindex', '0');
+    expect(executionTab).toHaveAttribute('tabindex', '-1');
+    expect(missionTab).toHaveAttribute('aria-selected', 'true');
+
+    // tabpanel 关联
+    expect(missionTab).toHaveAttribute('aria-controls', 'cockpit-panel-mission');
+    const panel = screen.getByRole('tabpanel');
+    expect(panel).toHaveAttribute('id', 'cockpit-panel-mission');
+    expect(panel).toHaveAttribute('aria-labelledby', 'cockpit-view-tab-mission');
+
+    // ArrowRight → 下一视图，焦点随动（activation-on-focus）
+    fireEvent.keyDown(missionTab, { key: 'ArrowRight' });
+    expect(executionTab).toHaveAttribute('aria-selected', 'true');
+    expect(executionTab).toHaveAttribute('tabindex', '0');
+    expect(document.activeElement).toBe(executionTab);
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'cockpit-panel-execution');
+
+    // End → 末视图；Home → 首视图
+    fireEvent.keyDown(executionTab, { key: 'End' });
+    expect(traceTab).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'cockpit-panel-trace');
+    fireEvent.keyDown(traceTab, { key: 'Home' });
+    expect(missionTab).toHaveAttribute('aria-selected', 'true');
+    expect(document.activeElement).toBe(missionTab);
+
+    // ArrowLeft 在首项处回绕到末项
+    fireEvent.keyDown(missionTab, { key: 'ArrowLeft' });
+    expect(traceTab).toHaveAttribute('aria-selected', 'true');
+    expect(document.activeElement).toBe(traceTab);
+  });
+});

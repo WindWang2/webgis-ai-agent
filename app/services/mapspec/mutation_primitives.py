@@ -13,7 +13,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TypedDict
 
 from app.services.session_data import session_data_manager
 from app.services.mapspec.mutation_contracts import (
@@ -69,12 +69,30 @@ _MUTATION_DEDUP_KEY = "_mutation_dedup"
 _MUTATION_DEDUP_LIMIT = 64
 
 
-def _dedup_index_of(pre_state: Dict[str, Any]) -> Dict[str, Any]:
+class MutationDedupEntry(TypedDict):
+    """#1550：去重索引单条存证的具名载体（替代裸 dict[str, Any]）。
+
+    与上方注释的索引值形状逐字对应；committed 恒为 True —— 失败/回滚尝试
+    不留存证（见 _dedup_hit）。"""
+
+    revision: int
+    ts: float
+    origin: str
+    committed: bool
+
+
+#: 去重索引本体：mutation_id → 存证（FIFO 上限 _MUTATION_DEDUP_LIMIT）。
+MutationDedupIndex = Dict[str, MutationDedupEntry]
+
+
+def _dedup_index_of(pre_state: Dict[str, Any]) -> MutationDedupIndex:
     raw = pre_state.get(_MUTATION_DEDUP_KEY)
     return dict(raw) if isinstance(raw, dict) else {}
 
 
-def _dedup_hit(pre_state: Dict[str, Any], mutation_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def _dedup_hit(
+    pre_state: Dict[str, Any], mutation_id: Optional[str]
+) -> Optional[MutationDedupEntry]:
     """已提交的同 id 存证（committed 条目）——失败/回滚尝试不留存证，可重试。"""
     if not mutation_id:
         return None
@@ -89,7 +107,7 @@ def _dedup_commit_fields(
     mutation_id: Optional[str],
     mutation_revision: int,
     origin: MutationOrigin,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[Dict[str, MutationDedupIndex]]:
     """提交侧 extra_fields：新存证并入索引（FIFO 裁剪），随 save 单事务落地。"""
     if not mutation_id:
         return None

@@ -136,7 +136,7 @@ def test_vlm_mode_without_key_is_not_evaluated(monkeypatch):
     from app.lib.harness.visual_judge.golden_images import render_golden_image
 
     monkeypatch.setattr(vp, "resolve_visual_screenshot",
-                        lambda e: render_golden_image("clean_balanced_map"))
+                        lambda e, **kwargs: render_golden_image("clean_balanced_map"))
     res = vp.evaluate_observation(_obs())
     assert res.status == "not_evaluated"
     assert res.reason in ("no_api_key", "not_configured")
@@ -222,6 +222,85 @@ def test_timeout_bound_is_clamped(monkeypatch):
     assert vp.provider_timeout_s() <= vp._MAX_TIMEOUT_S
     monkeypatch.setenv("GIS_VISUAL_PROVIDER_TIMEOUT_S", "nonsense")
     assert vp.provider_timeout_s() == vp.DEFAULT_TIMEOUT_S
+
+
+# ── 5. C13 三道门三模式共用（#1713-1）──────────────────────────────────────
+# revision / 指纹 / session 门此前只在 rules 模式执行 —— vlm/hybrid 直接
+# resolve，旧像素可在非默认模式下归因到新 spec（跨代误修复）。门现前移到
+# 公共入口 _gated_screenshot，三模式共用。
+
+def _obs_at(revision: int, fingerprint: str = "", mode: str = "vlm"):
+    return VisualObservationInput(
+        trigger="finalization", session_id="s-test", mapspec_revision=revision,
+        mapspec_fingerprint=fingerprint,
+        screenshot=VisualScreenshotRef(
+            ref="vshot-" + "b" * 64, sha256="b" * 64, size=2048,
+            width=480, height=360, mapspec_revision=revision,
+            mapspec_fingerprint=fingerprint,
+        ),
+    )
+
+
+@pytest.mark.parametrize("mode", ["vlm", "hybrid", "rules_only"])
+def test_revision_mismatch_gated_in_all_modes(monkeypatch, mode):
+    """截图 revision 与观察不一致 → 任何模式都 not_evaluated（不评估旧像素）。"""
+    monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", mode)
+    called = []
+    monkeypatch.setattr(
+        vp, "resolve_visual_screenshot",
+        lambda e, **kwargs: called.append(1) or b"png")
+    obs = VisualObservationInput(
+        trigger="finalization", session_id="s-test", mapspec_revision=3,
+        mapspec_fingerprint="carto-sha256:abc",
+        screenshot=VisualScreenshotRef(
+            ref="vshot-" + "b" * 64, sha256="b" * 64, size=2048,
+            mapspec_revision=9,
+        ),
+    )
+    res = vp.evaluate_observation(obs)
+    assert res.status == "not_evaluated"
+    assert res.reason == "screenshot_revision_mismatch"
+    assert res.screenshot_sha256 == "b" * 64
+    assert called == [], "门失败时不得解析截图字节"
+
+
+@pytest.mark.parametrize("mode", ["vlm", "hybrid", "rules_only"])
+def test_fingerprint_mismatch_gated_in_all_modes(monkeypatch, mode):
+    """revision 相同但指纹漂移（状态替换/回滚）→ 任何模式都拒绝评估。"""
+    monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", mode)
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: b"png")
+    entry = VisualScreenshotRef(
+        ref="vshot-" + "b" * 64, sha256="b" * 64, size=2048,
+        mapspec_revision=3, mapspec_fingerprint="carto-sha256:OLD")
+    obs = VisualObservationInput(
+        trigger="finalization", session_id="s-test", mapspec_revision=3,
+        mapspec_fingerprint="carto-sha256:NEW", screenshot=entry,
+    )
+    res = vp.evaluate_observation(obs)
+    assert res.status == "not_evaluated"
+    assert res.reason == "screenshot_fingerprint_mismatch"
+
+
+@pytest.mark.parametrize("mode", ["vlm", "hybrid", "rules_only"])
+def test_session_binding_gate_passed_in_all_modes(monkeypatch, mode):
+    """会话绑定护栏：三模式都以请求 session_id 调 resolve（#1713-1）。
+
+    vlm/hybrid 的引擎以 skipped 报告钉住（不触网、不等墙钟）—— 断言面是
+    resolve 收到的 session_id，与模式无关。
+    """
+    monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", mode)
+    _fake_engine(monkeypatch, VisualJudgeReport.skipped("provider_error"))
+    seen = {}
+
+    def _capture(entry, *, session_id=""):
+        seen["session_id"] = session_id
+        return b"png"
+
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", _capture)
+    res = vp.evaluate_observation(
+        _obs_at(revision=3, fingerprint="carto-sha256:abc"))
+    assert seen.get("session_id") == "s-test"
+    assert res.status in ("evaluated", "not_evaluated")
 
 
 # ── 4. hybrid 融合 + 反翻转 ───────────────────────────────────────────────

@@ -128,6 +128,11 @@
       "branch": "master",
       "revision": "0095_gis_working_contexts",
       "down_revision": "0094_model_check_constraint_drift"
+    },
+    "0097": {
+      "branch": "master",
+      "revision": "0097_gc_node_result_owner_fp_unique",
+      "down_revision": "0096_harness_turn_journal"
     }
   }
 }

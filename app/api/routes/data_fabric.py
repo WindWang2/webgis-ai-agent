@@ -2,9 +2,9 @@
 Enterprise Geospatial Data Fabric REST Routes
 """
 import asyncio
+import concurrent.futures
 import contextlib
 import logging
-import threading
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -226,67 +226,97 @@ def _run_sync_orm(fn):
     return asyncio.to_thread(_worker)
 
 
-# C3 修复（ADR-0094 §10 / 审计）：此前每个请求 ``asyncio.run`` 新建事件循环，
-# 与 loop-绑定的 RedisSessionDataManager 单例相互竞争（并发时 _ensure_connected
-# 无锁 aclose 他人正在 await 的客户端 → 普通并发负载下物化误报 redis-unavailable）。
-# 现在全部 manager 协程跑在一个常驻 worker loop 上：Redis 客户端绑定一次即稳定。
-_MANAGER_LOOP: Optional[asyncio.AbstractEventLoop] = None
-_MANAGER_LOOP_LOCK = threading.Lock()
-
-
-def _get_manager_loop() -> asyncio.AbstractEventLoop:
-    global _MANAGER_LOOP
-    with _MANAGER_LOOP_LOCK:
-        if _MANAGER_LOOP is None or _MANAGER_LOOP.is_closed():
-            loop = asyncio.new_event_loop()
-            t = threading.Thread(target=loop.run_forever, daemon=True, name="df-manager-loop")
-            t.start()
-            _MANAGER_LOOP = loop
-        return _MANAGER_LOOP
+# PERF-03（issue #1683）：此前全部 manager 协程经 run_coroutine_threadsafe
+# 汇入进程级单一常驻 loop（df-manager-loop）—— 协程内的同步 SQLAlchemy ORM
+# （_authorize_catalog_item / manager 的 db.query）是该 loop 上的阻塞段：
+#   (a) 头阻塞：一条慢查询 stall 全部并发 catalog 请求（wall time 随并发数线性增长）；
+#   (b) 连接池放大：每个在飞请求的 SessionLocal 从提交到完成的整个 loop 排队
+#       期间都持有连接，~30 并发即耗尽 pool_size=10 + max_overflow=20，并连带
+#       拖垮其它路由。
+# 现在每个 manager 调用跑在**自己线程的自己 loop**上，Session 随请求创建/关闭
+# —— 同步阻塞段只拖住本请求自己的 loop，连接持有时间 = 请求时长而非 loop 排队时长。
+#
+# 历史注记：C3（fbf0133d）引入共享 loop 的动机是 per-request asyncio.run 与
+# loop 绑定的 RedisSessionDataManager 单例竞争（并发时 _ensure_connected 无锁
+# aclose 他人正在 await 的客户端 → 普通并发负载下物化误报 redis-unavailable）；
+# 该竞争已由 session_data_redis 的 per-loop 客户端表消除（R1-M4 / #1703：
+# _ensure_connected 按 loop 隔离客户端，且永不 aclose 可能仍被其他 loop await
+# 的客户端），故 per-request loop 可安全恢复。
 
 
 def _run_async_manager(fn):
-    """Run an async data_fabric manager call (``fn(session) -> coroutine``) on
-    the shared manager event loop with its own SessionLocal().
+    """Run an async data_fabric manager call (``fn(session) -> coroutine``) in
+    a worker thread's OWN event loop with a request-scoped SessionLocal().
 
-    Manager 方法在 session 上做同步 SQLAlchemy I/O，不能跑应用主循环；协程
-    经 run_coroutine_threadsafe 提交到常驻 df-manager-loop（会话对象自 worker
-    线程顺序移交，无并发访问）。
+    PERF-03（#1683）：per-thread event loop —— 协程内的同步 ORM 阻塞段只拖住
+    本请求自己的 loop，进程级单 loop 的头阻塞随之消失；并发度由
+    ``asyncio.to_thread`` 的默认执行器界定（排队中的请求不占线程、不占连接）。
+    Session 随请求创建/关闭：close 即归还连接，``loop.close()`` 同时关闭该
+    loop 的默认执行器（无跨请求线程/执行器残留）。
     """
-    loop = _get_manager_loop()
-
     def _worker():
-        with SessionLocal() as thread_db:
-            fut = asyncio.run_coroutine_threadsafe(fn(thread_db), loop)
-            return fut.result(timeout=600)
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            with SessionLocal() as thread_db:
+                return loop.run_until_complete(fn(thread_db))
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
 
     return asyncio.to_thread(_worker)
 
 
 async def _run_async_manager_cancellable(fn):
-    """``_run_async_manager`` 的真取消版（W12 断线取消）。
+    """``_run_async_manager`` 的真取消版（W12 断线取消；#1683 后 per-request loop）。
 
-    客户端断开时 Starlette 取消 handler task；await 侧的取消经
-    ``wrap_future`` 传播为对 ``run_coroutine_threadsafe`` future 的
-    ``cancel()`` —— df-manager-loop 上的协程在下一个 await 点收到
-    CancelledError（远程 fetch 的 to_thread await 被取消；阻塞线程本身
-    受 adapter timeout 有界）。旧实现里后台协程会白跑到 600s 超时或
-    查询自然结束 —— 任务树不随断连收敛。
+    每个调用一条自己的 worker loop（跑在 ``asyncio.to_thread`` 同款默认执行器
+    上，并发度有界 ⇒ 连接 checkout 峰值 ≤ 并发度而非请求数）+ 在 worker 线程
+    内创建/关闭的请求级 session。
+
+    客户端断开 → Starlette 取消 handler task → 取消经 ``call_soon_threadsafe``
+    投递到 worker loop 上的协程 task —— 协程在下一个 await 点收到
+    CancelledError（远程 fetch 的 to_thread await 被取消；阻塞线程本身受
+    adapter timeout 有界）。finally 的收束窗口等 worker 跑完「取消投递 →
+    session 关闭 → loop 关闭」再返回，任务树才真正随断连收敛。
     """
-    loop = _get_manager_loop()
-    db = await asyncio.to_thread(SessionLocal)
-    try:
-        fut = asyncio.run_coroutine_threadsafe(fn(db), loop)
+    loop = asyncio.new_event_loop()
+    # worker → handler 的 task 句柄交接（concurrent.futures.Future 跨线程安全）
+    task_box: "concurrent.futures.Future" = concurrent.futures.Future()
+
+    def _worker():
+        asyncio.set_event_loop(loop)
         try:
-            return await asyncio.wrap_future(fut)
+            with SessionLocal() as thread_db:
+                task = loop.create_task(fn(thread_db))
+                if not task_box.done():
+                    task_box.set_result(task)
+                return loop.run_until_complete(task)
+        except BaseException as exc:
+            # 含 CancelledError：worker 早死也必须把原因交接给 handler，
+            # 否则 handler 永远等不到 task_box。原样重抛，语义不吞。
+            if not task_box.done():
+                task_box.set_exception(exc)
+            raise
         finally:
-            if not fut.done():
-                fut.cancel()
+            asyncio.set_event_loop(None)
+            loop.close()
+
+    worker_fut = asyncio.get_running_loop().run_in_executor(None, _worker)
+    try:
+        task = await asyncio.wrap_future(task_box)
+        try:
+            return await asyncio.shield(worker_fut)
+        except asyncio.CancelledError:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(task.cancel)
+            raise
     finally:
-        # shield：handler task 的取消不该在「关 session」这一步二次打断 ——
-        # 二次取消会让 session 泄漏（close 永不执行）。
-        with contextlib.suppress(Exception):
-            await asyncio.shield(asyncio.to_thread(db.close))
+        # 收束窗口（仅未完成时）：断线取消后必须等 worker 收敛再返回，
+        # 否则协程悬挂、session/连接迟归。有界 5s，绝不久等。
+        if not worker_fut.done():
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(worker_fut), timeout=5)
 
 
 def _df_tile_response(gz_body: bytes, fingerprint: str, if_none_match: Optional[str]) -> Response:
@@ -395,34 +425,54 @@ async def create_data_source(
 @router.get("/data-fabric/sources", tags=["Data Fabric / 数据织网"], response_model=SourceListResponse)
 async def list_data_sources(
     source_type: Optional[str] = Query(None, description="Filter by source type"),
+    # #1745 8：列表端点补分页 —— 此前不带 limit/offset 全量 ``.all()``，是同
+    # 路由文件里唯一没有分页的列表端点（契约与 /data-fabric/catalog 同款）。
+    # 默认 200 让既有不带参数的调用方（前端 listDataSources）零行为变化，
+    # 上限 1000 兜住超大规模租户的响应体与内存。
+    limit: int = Query(200, ge=1, le=1000, description="页大小（数据源数）"),
+    offset: int = Query(0, ge=0, description="分页偏移"),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取所有已注册的地理空间数据源列表"""
-    def _load(session: Session) -> list[dict]:
+    def _load(session: Session) -> dict:
         query = session.query(DataSourceModel)
         query = _tenant_filter(query, user)
         if source_type:
             query = query.filter(DataSourceModel.source_type == source_type)
-        rows = query.order_by(DataSourceModel.created_at.desc()).all()
+        total = query.count()
+        rows = (
+            query.order_by(DataSourceModel.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
         # Serialize INSIDE the worker: rows are ORM instances bound to the
         # worker session; never read their attributes after it closes
         # (#565 review — same rule as create/sync/get).
-        return [
-            {
-                "id": s.id,
-                "name": s.name,
-                "source_type": s.source_type,
-                "endpoint_url": DataFabricSecurity.redact_url(s.endpoint_url),
-                "status": s.status,
-                "capabilities": s.capabilities_json,
-                "connection_profile": DataFabricSecurity.sanitize_profile_dict(s.connection_profile or {}),
-                "last_health_check": s.last_health_check.isoformat() if s.last_health_check else None,
-            }
-            for s in rows
-        ]
+        return {
+            "total": total,
+            "rows": [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "source_type": s.source_type,
+                    "endpoint_url": DataFabricSecurity.redact_url(s.endpoint_url),
+                    "status": s.status,
+                    "capabilities": s.capabilities_json,
+                    "connection_profile": DataFabricSecurity.sanitize_profile_dict(s.connection_profile or {}),
+                    "last_health_check": s.last_health_check.isoformat() if s.last_health_check else None,
+                }
+                for s in rows
+            ],
+        }
 
-    sources = await _run_sync_orm(_load)
-    return {"sources": sources}
+    data = await _run_sync_orm(_load)
+    return {
+        "sources": data["rows"],
+        "total": data["total"],
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/data-fabric/sources/{source_id}", tags=["Data Fabric / 数据织网"], response_model=SourceDetailResponse)
@@ -991,8 +1041,8 @@ async def stream_catalog_item_features_http(
 
     取消：客户端断开 → Starlette 取消生成器 → finally 里 cancel_token
     取消 → 泵线程停 + 上游迭代器 close（协作取消，绝不悬挂/泄漏）。
-    鉴权在流开始前完成（_prep 在 manager-loop 上跑完 tenant 门 + adapter
-    治理解析）。
+    鉴权在流开始前完成（_prep 在 per-request manager worker loop 上跑完
+    tenant 门 + adapter 治理解析，PERF-03/#1683）。
     """
     from app.extensions_platform import fabric_bridge
     from app.lib.cancellation import CancellationToken, OperationCancelled

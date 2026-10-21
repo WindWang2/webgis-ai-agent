@@ -62,6 +62,17 @@ function getValue(expr: unknown, f: FeatureLike): unknown {
   if (op === 'get') return (f.properties ?? {})[String(expr[1])];
   if (op === 'id') return f.id;
   if (op === 'literal') return expr[1];
+  // #1726：selection-store 编译的类别/ID 过滤把字段侧包一层 to-string 归一
+  // （['in', ['to-string', ['get', f]], ['literal', [...]]] ——
+  // getSelectionFilterExpression）。不求值即 v=undefined，`in` 分支随后硬
+  // false，把一张正常渲染的层误报成「过滤后 0 要素」（Layers 面板警告徽标）。
+  // MapLibre 语义：to-string 把入参转字符串，null/缺失 → ""。
+  if (op === 'to-string') {
+    // 内层仍是未识别形状 → 继续 unknown，不把未知伪装成空串。
+    if (_isUnresolvedOperand(expr[1])) return undefined;
+    const inner = getValue(expr[1], f);
+    return inner === undefined || inner === null ? '' : String(inner);
+  }
   return undefined;
 }
 
@@ -194,6 +205,10 @@ function _isUnresolvedOperand(operand: unknown): boolean {
     if (head !== 'get' && head !== 'id' && head !== 'literal' && head !== 'to-string') {
       return true;
     }
+    // to-string 只是归一包装（#1726：selection-store 的类别/ID 过滤形状）——
+    // 内层仍未识别（['to-string', ['geometry-type']] 等）时整体按未识别处理，
+    // 否则 ==/in 会把 unknown 静默降级成硬 false。
+    if (head === 'to-string' && _isUnresolvedOperand(operand[1])) return true;
   }
   return false;
 }

@@ -150,6 +150,23 @@ const EMPTY_COMPARISON: ComparisonState = {
 
 let groupSeq = 0;
 
+/**
+ * 组 id 序号解析（`wg-<n>`）。水合/持久化 doc 里的恢复组也带这个前缀，
+ * 播种计数器用；非本族 id（外部/旧格式）返回 null。
+ */
+function groupIdSeq(id: string): number | null {
+  const matched = /^wg-(\d+)$/.exec(id);
+  return matched ? Number.parseInt(matched[1], 10) : null;
+}
+
+/** 以既有组 id 的最大序号播种计数器（水印下方留出空间，防撞号）。 */
+function seedGroupSeq(groups: ReadonlyArray<{ id: string }>): void {
+  for (const group of groups) {
+    const seq = groupIdSeq(group.id);
+    if (seq != null && seq > groupSeq) groupSeq = seq;
+  }
+}
+
 export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set, get) => {
   return {
     /* ─── Mode ─── */
@@ -225,8 +242,16 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
     layerGroups: [],
     layerGroupMembership: {},
     createLayerGroup: (name, parentId = null) => {
-      groupSeq += 1;
-      const id = `wg-${groupSeq}`;
+      // id 唯一性：groupSeq 是模块级计数器，水合播种后仍可能与既有 id 撞号
+      // （外部 doc / 并发创建）—— 递增到未占用为止。撞号会让 rename/remove/
+      // collapse 同时作用到两行，重复 id 下次水合还会被 normalizeWorkbenchDoc
+      // 静默丢弃。
+      const taken = new Set(get().layerGroups.map((g) => g.id));
+      let id: string;
+      do {
+        groupSeq += 1;
+        id = `wg-${groupSeq}`;
+      } while (taken.has(id));
       set((s) => {
         // 父不存在 → 落根（与投影孤儿兜底语义一致）。
         const validParent =
@@ -331,6 +356,10 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
     /* ─── Workbench Doc V5（W3）─── */
     hydrateWorkbenchDoc: (doc) => {
       if (!doc) return false;
+      // 组 id 计数器按恢复 doc 播种 —— 否则水合后新建组会与恢复组撞 id
+      // （rename/remove/collapse 同时作用两行；重复 id 下次水合被
+      // normalizeWorkbenchDoc 静默丢弃）。
+      seedGroupSeq(doc.groups);
       set({
         layerGroups: doc.groups.map((g) => ({ ...g })),
         layerGroupMembership: { ...doc.membership },

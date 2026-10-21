@@ -168,6 +168,60 @@ async def test_anon_session_delete_requires_token(client, db):
 
 
 @pytest.mark.asyncio
+async def test_anon_session_404_with_non_ascii_token(client, db):
+    """#1711: 非 ASCII owner_token 不得把所有权守卫变成 500。
+
+    hmac.compare_digest 对含非 ASCII 的 str 直接 TypeError —— 客户端经
+    X-Session-Token 送一个非 ASCII token（latin-1 可编码即可过 HTTP 头）
+    就能让本应 404 的守卫抛未处理异常。现在 fail-closed 404，与错 token
+    同语义（不泄露存在性）。
+    """
+    async with db as session:
+        await AsyncHistoryService(session).get_or_create_conversation(
+            "sec08-anon-nonascii", user_id=None
+        )
+    resp = await client.get(
+        "/api/v1/chat/sessions/sec08-anon-nonascii",
+        # httpx 只放行 ASCII str 头值；以 latin-1 字节送（真实浏览器/代理的
+        # 传输形态），服务端侧解回非 ASCII str。
+        headers={"X-Session-Token": "tök-é-wröng".encode("latin-1")},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_anon_session_load_context_and_delete_fail_closed_on_non_ascii_token(
+    client, db
+):
+    """#1711: load_context / delete_session 的非 ASCII token 同样 fail-closed。"""
+    async with db as session:
+        conv = await AsyncHistoryService(session).get_or_create_conversation(
+            "sec08-anon-nonascii-svc", user_id=None
+        )
+        token = conv.owner_token
+        assert token
+
+        svc = AsyncHistoryService(session)
+        # 正确（ASCII）token → 正常加载
+        ctx = await svc.load_context("sec08-anon-nonascii-svc", owner_token=token)
+        assert ctx.owner_token == token
+        # 非 ASCII 错 token → 空上下文 fail-closed（旧代码 TypeError）
+        ctx_bad = await svc.load_context(
+            "sec08-anon-nonascii-svc", owner_token="tök-é-wröng"
+        )
+        assert ctx_bad.llm_messages == []
+        assert ctx_bad.owner_token is None
+        # 非 ASCII token 删除 → False（旧代码 TypeError）
+        assert await svc.delete_session(
+            "sec08-anon-nonascii-svc", owner_token="tök-é-wröng"
+        ) is False
+        # 正确 token 删除仍可用
+        assert await svc.delete_session(
+            "sec08-anon-nonascii-svc", owner_token=token
+        ) is True
+
+
+@pytest.mark.asyncio
 async def test_layer_data_requires_token_for_anon_session(client, db):
     """匿名会话的图层引用数据同样受 owner_token 保护。"""
     from unittest.mock import patch, AsyncMock

@@ -305,8 +305,15 @@ class ReviewService:
                     )
                 p.decisions.append(entry)
                 verdict = evaluate_approval(self.policy, p, p.decisions)
-                if verdict.satisfied and p.status is ProposalStatus.SUBMITTED:
-                    p.status = ProposalStatus.APPROVED
+                # CHANGES_REQUESTED 下的 approve 同样显式翻态：决策入流水、
+                # 策略满足却永远翻不到 APPROVED 时，merge 会以 "awaiting
+                # approval flip" 无限期拒绝，审批面出现"批了却不作数"的
+                # 假象（review #1722）。intents 起草后不可变，审查者在
+                # changes_requested 态补 approve = 对现状放行，直接 APPROVED。
+                if verdict.satisfied and p.status in (
+                    ProposalStatus.SUBMITTED, ProposalStatus.CHANGES_REQUESTED,
+                ):
+                    _transition(p, ProposalStatus.APPROVED)
             elif decision == "request_changes":
                 if p.status is not ProposalStatus.SUBMITTED:
                     raise InvalidTransition(

@@ -40,6 +40,21 @@ def sign_path(path: str, ttl_seconds: int = 3600) -> tuple[int, str]:
     return exp, make_signature(path, exp)
 
 
+#: 签名 URL 有效期（地图状态里的图片 URL 需跨刷新可用；只授权单个 PNG）。
+RASTER_URL_TTL_S = 24 * 3600
+
+
+def signed_raster_query(path: str, ttl_seconds: int = RASTER_URL_TTL_S) -> str:
+    """``/api/v1/sessions/<sid>/raster/<id>.png`` → ``exp=..&sig=..``（F-13）。
+
+    #1678：原先定义在 app/api/routes/raster.py，被 app/tools/cartography_tools.py
+    反向 import（tools→api 跨层边，ADR-0216 §6.5）。签名查询串装配本就是 core
+    签名基础设施职责，下沉至此；raster.py 保留 re-export 兼容。
+    """
+    exp, sig = sign_path(path.split("?", 1)[0], ttl_seconds)
+    return f"exp={exp}&sig={sig}"
+
+
 def verify_signature(path: str, exp: int | str, sig: str) -> bool:
     """常量时间比较；过期或签名错均返回 False。"""
     try:

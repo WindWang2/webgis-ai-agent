@@ -168,7 +168,16 @@ class TestSecondPassFixes:
         assert resolve_conflict(code).winner == "user"
 
     def test_n4_truncation_disclosure(self):
-        """N4：多来源叠加超限时产出 binding_pass_truncated 披露条目。"""
+        """N4：多来源叠加超限时产出 binding_pass_truncated 披露条目。
+
+        #1671：该回执码须在冲突矩阵登记（skip_disclosed 非错误 skip），
+        否则按码聚合的遥测漏类、disclosure_for 落兜底文案。
+        """
+        from app.services.gis_harness.representation_binding.conflicts import (
+            REASON_CODES,
+            disclosure_for,
+            resolve_conflict,
+        )
         from app.services.gis_harness.requirement_ir.patch import apply_patch
         from app.services.gis_harness.requirement_ir.contracts import (
             PatchRecord, RequirementDocument)
@@ -196,6 +205,14 @@ class TestSecondPassFixes:
         assert skipped, "超限必须有截断披露条目"
         assert "binding_pass_truncated" in (skipped[0].error_code or "")
         assert skipped[0].disclosures
+        # #1671 登记闭环：回执码 ∈ REASON_CODES，矩阵裁决非错误 skip 并披露。
+        assert skipped[0].error_code in REASON_CODES
+        resolution = resolve_conflict(skipped[0].error_code or "")
+        assert resolution.action == "skip_disclosed"
+        assert resolution.winner == "none"
+        assert resolution.disclosure
+        assert disclosure_for(skipped[0].error_code or "") != (
+            f"未注册 reason code: {skipped[0].error_code}")
 
     def test_n4_skip_reasons(self):
         """N4：projection_skip_reason 的专属码（style→not_mirrored；

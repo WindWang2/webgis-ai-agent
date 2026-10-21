@@ -26,6 +26,14 @@ data:
   # volumeMounts）—— 整个 DATA_DIR 子树（uploads/analysis_results/
   # monitoring_reports/exports）跨 api/celery pod 共享。
   DATA_DIR: "/app/data"
+  # #1688: Ingress 对外域名 —— 04-ingress.yaml 的 host 段（spec.tls[0].hosts[0]
+  # 与 spec.rules[0].host）由 kustomization.yaml 的 replacements 在 build 时
+  # 从这里注入，部署方只需改这一处（或在外层 overlay 覆盖该 ConfigMap）。
+  # 默认值 webgis.internal 是 ICANN 保留的私网 TLD：忘改时公网 DNS 与
+  # cert-manager 的 ACME HTTP-01 必然解析失败（响亮失败），不会误指向任何
+  # 真实域名。改完这里务必同步上面的 CORS_ORIGINS 为 https://<新域名>，
+  # 否则浏览器预检会被拒。
+  INGRESS_HOST: "webgis.internal"
 ---
 # ⚠️ 审计 I4：Secret 资源已从此文件移除。
 #
@@ -41,6 +49,12 @@ data:
 #     --from-literal=REDIS_URL='redis://:PWD@redis:6379/0' \
 #     --from-literal=CELERY_BROKER_URL='redis://:PWD@redis:6379/0' \
 #     --from-literal=CELERY_RESULT_BACKEND='redis://:PWD@redis:6379/1'
+#   # #1689：api /metrics 的 METRICS_TOKEN Bearer 门禁 fail-closed
+#   #（app/main.py _require_metrics_token，未配置即 401）。api pod 注解
+#   # prometheus.io/scrape（02-api-deployment.yaml）邀请集群内抓取，secret
+#   # 缺此键则全部 401 → 监控静默失明（compose 栈以 ${METRICS_TOKEN:?}
+#   # 强制提供，k8s 此前无等价来源）：
+#     --from-literal=METRICS_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
 #   # #561: 启用 05-deps-optional.yaml（可选内部 postgres/redis）时还需
 #   # 组件键（值必须与上面 URL 内嵌的 user/password/db 一致，否则
 #   # postgres 初始化的账号与 DATABASE_URL 对不上）：

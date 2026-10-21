@@ -22,6 +22,7 @@ from app.extensions_platform.worker.protocol import (
     decode_frame,
     encode_frame,
     error_payload,
+    iter_frames_bounded,
     make_handshake,
 )
 from app.extensions_platform.worker.server import WorkerServer
@@ -178,6 +179,51 @@ class TestProtocol:
     def test_protocol_version_pinned(self):
         assert WORKER_PROTOCOL_VERSION == "3.0"  # ADR-0119 V3 流式协议
         assert FRAME_MAX_BYTES >= 64 * 1024 * 1024
+
+
+class TestBoundedFrameReader:
+    """#1709：宿主读 worker stdout 必须按字节有界（不依赖对端换行守序）。"""
+
+    def test_yields_complete_lines(self):
+        raw = encode_frame({"type": "a"}) + encode_frame({"type": "b"})
+        assert [decode_frame(line) for line in iter_frames_bounded(io.BytesIO(raw))] == [
+            {"type": "a"},
+            {"type": "b"},
+        ]
+
+    def test_splits_across_chunk_boundaries(self):
+        raw = encode_frame({"type": "x", "blob": "y" * 64}) + encode_frame({"type": "z"})
+
+        class Chunked:
+            """每次只返 size 字节（模拟管道 read1 的短读）。"""
+
+            def __init__(self, data: bytes) -> None:
+                self._data = data
+                self._pos = 0
+
+            def read1(self, size: int) -> bytes:
+                chunk = self._data[self._pos:self._pos + size]
+                self._pos += len(chunk)
+                return chunk
+
+        lines = list(iter_frames_bounded(Chunked(raw), chunk_size=3))
+        assert [decode_frame(line)["type"] for line in lines] == ["x", "z"]
+
+    def test_oversize_without_newline_raises_before_buffering_it_all(self):
+        # 只写不换行的 worker：累计超过上限即失败，不得把整行读进内存。
+        with pytest.raises(ProtocolError, match="without a newline terminator"):
+            list(iter_frames_bounded(io.BytesIO(b"x" * 1024), max_bytes=64))
+
+    def test_oversize_line_with_newline_raises(self):
+        with pytest.raises(ProtocolError, match="frame exceeds"):
+            list(iter_frames_bounded(io.BytesIO(b"x" * 128 + b"\n"), max_bytes=64))
+
+    def test_eof_partial_tail_line_is_handed_over(self):
+        # EOF 前的不完整尾行原样交出（由 decode_frame 判非法），语义不变。
+        lines = list(iter_frames_bounded(io.BytesIO(b'{"type": "a"}\n{"type"')))
+        assert lines == [b'{"type": "a"}\n', b'{"type"']
+        with pytest.raises(ProtocolError):
+            decode_frame(lines[-1])
 
 
 class TestHandshake:

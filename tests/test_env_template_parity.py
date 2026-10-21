@@ -41,11 +41,17 @@ def test_env_example_covers_all_settings_fields():
     )
 
 
-def test_redis_url_carries_password_placeholder():
-    """E-5（#896）：dev compose 对 Redis 强制 requirepass，宿主机模板 URL 必须带密码。"""
+def test_host_redis_urls_carry_password_placeholder():
+    """E-5（#896 / #1730）：dev compose 对 Redis 强制 requirepass，宿主机模板 URL 必须带密码。
+
+    #1730：原守卫只锚定 REDIS_URL，而 CELERY_BROKER_URL / CELERY_RESULT_BACKEND
+    同样是宿主机进程直连（容器内由 compose 注入带密码 URL）—— 漏密码一样 NOAUTH。
+    模板三处 URL 必须同步带密码，守卫随之覆盖全部三个键。
+    """
     content = open(TEMPLATE, encoding="utf-8").read()
-    m = re.search(r"^REDIS_URL=(\S+)$", content, re.M)
-    assert m, "REDIS_URL 必须出现在 .env.example"
-    assert re.search(r"://:[^@/]+@", m.group(1)), (
-        f"REDIS_URL 示例必须带密码占位（redis://:<password>@host，compose requirepass 下宿主机进程会 NOAUTH）：{m.group(1)}"
-    )
+    for key in ("REDIS_URL", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
+        m = re.search(rf"^{key}=(\S+)$", content, re.M)
+        assert m, f"{key} 必须出现在 .env.example"
+        assert re.search(r"://:[^@/]+@", m.group(1)), (
+            f"{key} 示例必须带密码占位（redis://:<password>@host，compose requirepass 下宿主机进程会 NOAUTH）：{m.group(1)}"
+        )

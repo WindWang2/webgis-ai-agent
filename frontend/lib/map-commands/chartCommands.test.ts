@@ -11,7 +11,7 @@ vi.mock('@/lib/mapspec/component-mutation', () => ({
   },
   getComponentPlacementOverride: () => undefined,
 }));
-import { resetSelectionStore, selectionEvents } from '@/lib/selection/selection-store';
+import { resetSelectionStore, selectionEvents, getSelection, getSelectionFilter, getSelectionFilterExpression } from '@/lib/selection/selection-store';
 import {
   getMapSpecSessionCursor,
   setMapSpecSessionCursor,
@@ -132,6 +132,48 @@ describe('chart agent commands', () => {
     expect(events.length).toBeGreaterThan(0);
     expect(events[events.length - 1].source).toBe('chart');
     expect(events[events.length - 1].context?.selected_categories).toEqual(['A', 'B']);
+  });
+
+  // #1726 regression: chart_highlight published the category selection WITHOUT
+  // filter_field, and selection-store's getSelectionFilter requires it — so
+  // getSelectionFilterExpression() returned null forever and the agent's
+  // "chart→map highlight" did nothing on the map. The field now comes from the
+  // chart component's bound data field (options.selectionField), the same
+  // protocol the user-gesture path (chart-panel.tsx) publishes.
+  it('chart_highlight：携带 options.selectionField 作为 filter_field，地图侧可编译类别过滤', async () => {
+    seedSpec([
+      {
+        id: 'chart-bound',
+        type: 'chart_panel',
+        enabled: true,
+        options: { layerId: 'layer-1', selectionField: 'district' },
+      },
+    ]);
+
+    const res = await await chartCommands.chart_highlight.run(
+      ctxFor({ componentId: 'chart-bound', categories: ['武侯区', '锦江区'] }),
+    ) as { status: string; result?: { layerId?: string } };
+    expect(res.status).toBe('succeeded');
+    expect(res.result?.layerId).toBe('layer-1');
+
+    expect(getSelectionFilter('layer-1')).toEqual({
+      field: 'district',
+      categories: ['武侯区', '锦江区'],
+    });
+    expect(getSelectionFilterExpression('layer-1')).toEqual([
+      'in',
+      ['to-string', ['get', 'district']],
+      ['literal', ['武侯区', '锦江区']],
+    ]);
+  });
+
+  it('chart_highlight：组件未声明 selectionField 时如实缺席 filter_field（仅状态高亮）', async () => {
+    const res = await await chartCommands.chart_highlight.run(
+      ctxFor({ componentId: 'chart-1', categories: ['A'] }),
+    ) as { status: string };
+    expect(res.status).toBe('succeeded');
+    expect(getSelection()?.filter_field).toBeUndefined();
+    expect(getSelectionFilterExpression('chart-1')).toBeNull();
   });
 
   it('chart_close / chart_restore：enabled 通道', async () => {

@@ -8,7 +8,8 @@
  * minzoom/maxzoom 门（零 per-frame JS 切换；zoom 手势不回写 spec）。
  *
  * 语义（与后端 normalize_windows 逐条对齐，golden corpus 锁 parity）：
- * - mode ∈ CONTRACT_REPRESENTATION_MODES；min<max；钳制 [0,24]；
+ * - mode ∈ CONTRACT_REPRESENTATION_MODES；钳制 [0,24] 后 min<max
+ *   （整体越界窗钳成零宽 → 拒，同后端 #1625 / #1668）；
  * - 排序后必须连续覆盖 [0,24)（缺口计划无从消费 → null + 证据披露，
  *   消费方回退层缺省，绝不猜）；
  * - 相邻同模式窗合并；窗口数 ≤ 8；
@@ -91,14 +92,22 @@ export function resolveRepresentationPlan(
     if (typeof mode !== "string" || !MODES.includes(mode)) return null;
     const mn = (w as { min_zoom?: unknown }).min_zoom;
     const mx = (w as { max_zoom?: unknown }).max_zoom;
-    if (!isFiniteNumber(mn) || !isFiniteNumber(mx) || !(mn < mx)) return null;
+    if (!isFiniteNumber(mn) || !isFiniteNumber(mx)) return null;
     const rawCodes = (w as { reason_codes?: unknown }).reason_codes;
     const reasonCodes = Array.isArray(rawCodes)
       ? rawCodes.filter((c): c is string => typeof c === "string").slice(0, 8)
       : [];
+    // #1668（后端 #1625 同款 parity）：钳制到 [0,24] 后复核 min<max（文档契约
+    // 「钳制后 min<max」）—— 整体越界窗（两端都 <0 或都 >24，如 [-10,-5] /
+    // [25,30]）钳制后退化为零宽 [0,0]/[24,24]，与 [8,8] 同为空窗，必须拒；
+    // 部分越界仍合法（[-5,8]→[0,8]、[20,30]→[20,24]）。钳制前校验会放过
+    // 整体越界窗并产出退化窗，与后端行为漂移。
+    const min = Math.min(MAPLIBRE_ZOOM_MAX, Math.max(MAPLIBRE_ZOOM_MIN, mn));
+    const max = Math.min(MAPLIBRE_ZOOM_MAX, Math.max(MAPLIBRE_ZOOM_MIN, mx));
+    if (!(min < max)) return null;
     rows.push({
-      min: Math.min(MAPLIBRE_ZOOM_MAX, Math.max(MAPLIBRE_ZOOM_MIN, mn)),
-      max: Math.min(MAPLIBRE_ZOOM_MAX, Math.max(MAPLIBRE_ZOOM_MIN, mx)),
+      min,
+      max,
       mode,
       reasonCodes,
     });

@@ -32,6 +32,7 @@ from app.services.gis_harness.completion.contracts import (
 from app.services.gis_harness.completion.map_verification import (
     aggregate_final_map_status,
     collect_final_map_findings,
+    verify_final_map,
 )
 
 
@@ -115,15 +116,37 @@ class TestStaleOverlay:
                 "id": "src_old_result", "ref": "ref:old_result"}
         return {"layers": layers, "sources": sources}
 
-    def test_evicted_ref_layer_flagged(self):
-        """ref 已不在 ref store（descriptors 无键）→ 死层告警。"""
+    def test_confirmed_evicted_ref_layer_flagged(self):
+        """确认驱逐（descriptors 有键且值为 None —— inputs 三态的 missing）→
+        死层告警。"""
+        findings = collect_final_map_findings(
+            _chapter(), self._spec_with(stale_ref=True),
+            descriptors={"ref:ctx": {"status": "active"},
+                         "ref:pts": {"status": "active"},
+                         "ref:old_result": None})
+        stale = [f for f in findings if f.code == F_STALE_OVERLAY]
+        assert len(stale) == 1
+        assert stale[0].target == "old_result"
+
+    def test_unknown_ref_probe_not_flagged(self):
+        """#1713-3：键缺席 = 探测 unknown（存储瞬态故障）—— 未知 ≠ 过期，
+        跳过不判（同 inputs.py 三态 / validators/artifacts.py unknown 分支）。"""
         findings = collect_final_map_findings(
             _chapter(), self._spec_with(stale_ref=True),
             descriptors={"ref:ctx": {"status": "active"},
                          "ref:pts": {"status": "active"}})
-        stale = [f for f in findings if f.code == F_STALE_OVERLAY]
-        assert len(stale) == 1
-        assert stale[0].target == "old_result"
+        assert all(f.code != F_STALE_OVERLAY for f in findings)
+
+    def test_unknown_probe_does_not_degrade_final_status(self):
+        """瞬态探测失败不得把终验洗成 degraded（虚假披露的降档链封口）。"""
+        status, findings = verify_final_map(
+            _chapter(), self._spec_with(stale_ref=True),
+            descriptors={"ref:ctx": {"status": "active"},
+                         "ref:pts": {"status": "active"}},
+            base_status=STATUS_COMPLETE, render_status=RENDER_VERIFIED,
+        )
+        assert findings == []
+        assert status == FINAL_MAP_VERIFIED
 
     def test_superseded_ref_layer_flagged(self):
         descriptors = {

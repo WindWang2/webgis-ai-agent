@@ -26,6 +26,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import owner_token_matches
 from app.models.db_model import Conversation, Message
 
 from app.tools._utils import async_db_session
@@ -253,10 +254,11 @@ class AsyncHistoryService(HistoryStoreProtocol):
             and conv.owner_token is not None
             and (owner_token or not self._internal_load_ok)
         ):
-            import hmac
+            # #1711: 非 ASCII token 经 owner_token_matches fail-closed
+            # （compare_digest 对非 ASCII str 直接 TypeError → 500）。
             mismatch = (
                 not owner_token
-                or not hmac.compare_digest(conv.owner_token, owner_token)
+                or not owner_token_matches(conv.owner_token, owner_token)
             )
             if mismatch:
                 logger.warning(
@@ -530,13 +532,14 @@ class AsyncHistoryService(HistoryStoreProtocol):
             return None
         if conv.user_id is None:
             # SEC-08：匿名会话。若 owner_token 已设置则要求调用方提供匹配值；
-            # 使用 hmac.compare_digest 做常量时间比较以防时序侧信道。
+            # 常量时间比较防时序侧信道（owner_token_matches；#1711 起非 ASCII
+            # 输入 fail-closed 而非 TypeError 500）。
             if conv.owner_token is None:
                 # #1109: legacy NULL/NULL — fail closed.
                 return None
-            import hmac
-
-            if not owner_token or not hmac.compare_digest(conv.owner_token, owner_token):
+            if not owner_token or not owner_token_matches(
+                conv.owner_token, owner_token
+            ):
                 return None
             return conv
         if _is_anonymous(user_id):
@@ -598,8 +601,10 @@ class AsyncHistoryService(HistoryStoreProtocol):
             # callers (all current call sites pre-guard via _authorize).
             if conv.owner_token is None:
                 return False
-            import hmac
-            if not owner_token or not hmac.compare_digest(conv.owner_token, owner_token):
+            # #1711: 非 ASCII token fail-closed（见 owner_token_matches）。
+            if not owner_token or not owner_token_matches(
+                conv.owner_token, owner_token
+            ):
                 return False
         await self.db.delete(conv)
         await self.db.commit()

@@ -7,6 +7,8 @@
 - 限额是公开常数/显式配置（rows/bytes/nodes/concurrency），不是计费系统；
 - 超限 → 类型化 ``BudgetExceededError``，details 指明冒限的作用域并附
   可行动建议；
+- 树有界：execution 作用域逐 run 创建/摘除，身份作用域（tenant/project/
+  session）按挂载引用计数回收（``ensure_scope``/``release_scope``）；
 - 线程安全（节点并发记账）；跨进程汇总默认不做（与 ADR-0094:273 同一
   取舍）—— Wave 8（audit 07 R2）起提供**可选的** advisory 层
   ``resource_counter.CrossProcessCounter``（默认关闭、fail-open；L1
@@ -68,7 +70,18 @@ class _Scope:
         self.scope_id = scope_id
         self.limits = limits
         self.usage = ScopeUsage()
-        self.children: Dict[str, "_Scope"] = []
+        self.children: List["_Scope"] = []
+        #: 子作用域索引（子 path → 子作用域）：``_chain``/``_find`` 的 O(1)
+        #: 查找。逐节点记账每段都要解析一次链，children 线性扫描会把单次
+        #: 记账变成 O(兄弟数)（#1745 1）。``children`` 列表保留供遍历/诊断。
+        self.by_path: Dict[str, "_Scope"] = {}
+        #: 身份作用域（tenant/project/session）的活跃挂载数：
+        #: ``ensure_scope`` 每次挂载 +1（幂等，重复挂载即重复计数）、
+        #: ``create_scope`` 建时置 1（创建者持有）、``release_scope`` -1。
+        #: 归零且无后代、记账归零后随链回收 —— 身份作用域此前只建不拆，
+        #: 长命进程下随历史 org/project/session 数无界累积（#1745 1）。
+        #: execution 作用域由 executor 的 ``teardown_scope`` 摘除，不参与。
+        self.refs = 0
         self.lock = threading.Lock()
 
     @property
@@ -109,11 +122,16 @@ class ResourceGovernor:
 
         ADR-0101 D10：find-then-create 在 governor 级锁内完成 —— 并发首次
         挂载不再可能产生重复子作用域。
+
+        #1745 1：身份作用域的每次挂载计一份引用（``refs += 1``）—— 调用方
+        必须以 :meth:`release_scope` 配对归还，否则该作用域永不被回收
+        （fail-safe 方向：宁可留下节点，不可拆掉在飞 run 的记账链）。
         """
         target = f"{parent_path}/{kind.value}:{scope_id}"
         with self._lock:
             existing = self._find(target)
             if existing is not None:
+                existing.refs += 1
                 return target
             parent = self._find(parent_path)
             if parent is None:
@@ -122,25 +140,76 @@ class ResourceGovernor:
                     suggestions=["create the parent scope first"],
                 )
             child = _Scope(kind, scope_id, limits)
+            child.refs = 1
             parent.children.append(child)
+            parent.by_path[child.path] = child
             return target
+
+    def release_scope(self, path: str) -> None:
+        """归还 :meth:`ensure_scope` 的挂载引用，并回收链上闲置的身份作用域。
+
+        与 ``ensure_scope`` 严格配对（``api.run_plan_sync`` 的 finally）：
+        自 ``path`` 向上逐段 ``refs -= 1``，随后自叶向根摘除「引用归零 +
+        无后代执行作用域 + 记账归零」的身份作用域（tenant/project/session）
+        —— 它们此前创建后无拆除路径，进程内随历史身份数单调增长
+        （#1745 1）。execution 作用域仍归 executor 的 ``teardown_scope``
+        管，本方法不触碰；记账非零（归还泄漏的残留）的作用域不回收 ——
+        那是可见的故障信号，不是静默丢账。
+        """
+        chain = self._chain(path)
+        if len(chain) <= 1:
+            return
+        with self._lock:
+            for scope in chain:
+                scope.refs = max(0, scope.refs - 1)
+            self._reclaim_chain(chain)
+
+    def _reclaim_chain(self, chain: List[_Scope]) -> None:
+        """自叶向根回收链上可回收的身份作用域（调用方持 governor 级锁）。
+
+        本层不可回收时上层必留后代，直接停。链快照可能取自加锁前（并发
+        归还/重新挂载）：只摘「父里仍挂着这一个对象」的情况 —— 防止把并发
+        新建的同 path 子作用域从索引里误删。
+        """
+        for idx in range(len(chain) - 1, 0, -1):
+            scope = chain[idx]
+            if not self._reclaimable(scope):
+                break
+            parent = chain[idx - 1]
+            if parent.by_path.get(scope.path) is scope:
+                del parent.by_path[scope.path]
+                if scope in parent.children:
+                    parent.children.remove(scope)
+
+    def _reclaimable(self, scope: _Scope) -> bool:
+        """身份作用域可否回收（调用方持 governor 级锁）。"""
+        if scope.kind is ScopeKind.EXECUTION:
+            return False
+        if scope.refs or scope.children:
+            return False
+        usage = scope.usage
+        return not (usage.rows or usage.bytes or usage.nodes or usage.concurrency)
 
     def teardown_scope(self, path: str) -> None:
         """从父作用域摘除 execution 作用域（防 GLOBAL_GOVERNOR 子树无限增长）。
 
         已发生的用量保留在祖先链上（记账不回滚）；仅移除树节点本身。
+
+        身份作用域（tenant/project/session）不在此拆除 —— 同会话可能仍有
+        其他 run 在飞，就地拆链会把它们的记账接到一棵新树上；它们的回收
+        走 :meth:`release_scope` 的引用计数（#1745 1）。
         """
         if "/" not in path:
             return
-        parent_path, _, _ = path.rpartition("/")
-        parent = self._find(parent_path) if parent_path else self._root
-        if parent is None:
-            return
+        parent_path, _, leaf = path.rpartition("/")
         with self._lock:
-            parent.children = [
-                c for c in parent.children
-                if f"{parent.path}/{c.path}" != path and c.path != path
-            ]
+            parent = self._find(parent_path) if parent_path else self._root
+            if parent is None:
+                return
+            child = parent.by_path.pop(leaf, None)
+            if child is None:
+                return
+            parent.children.remove(child)
 
     def create_scope(
         self,
@@ -152,16 +221,22 @@ class ResourceGovernor:
         """在父作用域下创建子作用域，返回完整路径（``a:b`` 链）。
 
         路径格式：``global:root/session:s-1/execution:gexec-x``。
+
+        #1745 1：创建者持一份引用（``refs = 1``）—— 身份作用域需显式
+        ``release_scope`` 归还后才可能被回收；execution 作用域由 executor
+        的 ``teardown_scope`` 摘除，引用不参与其生命周期。
         """
-        parent = self._find(parent_path)
-        if parent is None:
-            raise BudgetExceededError(
-                f"budget scope '{parent_path}' does not exist",
-                suggestions=["create the parent scope first"],
-            )
-        child = _Scope(kind, scope_id, limits)
         with self._lock:
+            parent = self._find(parent_path)
+            if parent is None:
+                raise BudgetExceededError(
+                    f"budget scope '{parent_path}' does not exist",
+                    suggestions=["create the parent scope first"],
+                )
+            child = _Scope(kind, scope_id, limits)
+            child.refs = 1
             parent.children.append(child)
+            parent.by_path[child.path] = child
         return f"{parent_path}/{kind.value}:{scope_id}"
 
     def reserve(
@@ -389,38 +464,28 @@ class ResourceGovernor:
         return caps
 
     def _chain(self, path: str) -> List[_Scope]:
-        """按路径解析作用域链；未知段按无限额透传（容忍并发创建次序）。"""
-        scopes: List[_Scope] = []
+        """按路径解析作用域链；未知段按无限额透传（容忍并发创建次序）。
+
+        段查找走 ``by_path`` 索引（O(1)）—— 每次节点记账都要解析一次链，
+        线性扫 ``children`` 会让记账成本随兄弟作用域数增长（#1745 1）。
+        """
+        scopes: List[_Scope] = [self._root]
         cur: Optional[_Scope] = self._root
-        scopes.append(cur)
-        parts = [p for p in path.split("/") if p and p != "global:root"]
-        for part in parts:
-            nxt = None
-            if cur is not None:
-                for child in cur.children:
-                    if child.path == part:
-                        nxt = child
-                        break
-            cur = nxt
-            if cur is None:
+        for part in (p for p in path.split("/") if p and p != "global:root"):
+            nxt = cur.by_path.get(part) if cur is not None else None
+            if nxt is None:
                 break
-            scopes.append(cur)
+            scopes.append(nxt)
+            cur = nxt
         return scopes
 
     def _find(self, path: str) -> Optional[_Scope]:
         """精确解析：路径的每一段都必须命中真实作用域，否则 None。"""
         cur: Optional[_Scope] = self._root
-        parts = [p for p in path.split("/") if p and p != "global:root"]
-        for part in parts:
-            nxt = None
-            if cur is not None:
-                for child in cur.children:
-                    if child.path == part:
-                        nxt = child
-                        break
-            if nxt is None:
+        for part in (p for p in path.split("/") if p and p != "global:root"):
+            if cur is None:
                 return None
-            cur = nxt
+            cur = cur.by_path.get(part)
         return cur
 
 

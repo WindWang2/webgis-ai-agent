@@ -37,24 +37,27 @@ def _plan(node_id: str = "n1") -> ExecutionPlan:
 
 
 class TestHierarchicalIdentityScopes:
-    def test_tenant_and_project_scopes_mounted_from_identity(self):
+    def test_tenant_and_project_scopes_mounted_from_identity(self, monkeypatch):
         gov = GOVERNOR
         caller = {"user_id": "u-govv4", "org_id": "org-govv4"}
+        # #1745 1：身份作用域改为引用计数回收（run 收尾即归还）—— 挂载事实
+        # 在执行期内观测，不再依赖 run 之后子树仍在。
+        mounted: list[str] = []
+        real_ensure = gov.ensure_scope
+
+        def spy_ensure(parent_path, kind, scope_id, limits=None):
+            path = real_ensure(parent_path, kind, scope_id, limits)
+            mounted.append(path)
+            return path
+
+        monkeypatch.setattr(gov, "ensure_scope", spy_ensure)
         run = run_plan_sync(_plan(), session_id="sess-govv4", caller=caller,
                             project_id="proj-govv4", governor=gov)
         assert run.status.value == "completed"
         # 层级链：global:root / tenant:hash(org) / project:hash(proj) / session:hash(sid)
-        root_children = {c.path for c in gov._root.children}
-        tenant_paths = [p for p in root_children if p.startswith("tenant:")]
-        assert tenant_paths, "tenant scope should be mounted for org caller"
-        # 深度遍历找 project/session
-        def walk(scope):
-            yield scope
-            for c in scope.children:
-                yield from walk(c)
-        paths = [s.path for s in walk(gov._root)]
-        assert any(p.startswith("project:") for p in paths)
-        assert any(p.startswith("session:") for p in paths)
+        assert any(p.startswith("global:root/tenant:") for p in mounted), mounted
+        assert any("/project:" in p for p in mounted), mounted
+        assert any("/session:" in p for p in mounted), mounted
 
     def test_anonymous_caller_mounts_no_tenant(self):
         gov = GOVERNOR

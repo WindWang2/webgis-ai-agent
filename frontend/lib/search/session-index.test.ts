@@ -149,6 +149,57 @@ describe('本地搜索分组', () => {
     expect(hits[0].layerId).toBe('L1');
   });
 
+  // #1727：三组曾共用同一个全局 limit（依序灌：会话标题 → 消息/产物 → 图层），
+  // 前两组灌满后图层组循环开头就 break，「当前工作区图层」整组静默消失。
+  it('#1727 图层组有保底份额：会话标题 + 消息产物都灌满也不消失', () => {
+    const sessions = Array.from({ length: 25 }, (_, i) => ({
+      id: `s${i}`,
+      title: `热力图会话 ${i}`,
+      updatedAt: i,
+      docs: Array.from({ length: 20 }, (_, d) => ({
+        messageIndex: d,
+        role: 'user' as const,
+        text: `第 ${d} 条热力图分析`,
+        refs: [],
+      })),
+    }));
+    const layers = [
+      { id: 'L1', name: '热力图底图' },
+      { id: 'L2', name: '热力图标注' },
+    ];
+    const hits = searchLocalIndex('热力图', sessions, layers);
+    // 前两组确实已被配额灌满（否则本断言没有覆盖到回归点）
+    expect(hits.filter((h) => h.kind === 'session')).toHaveLength(18);
+    expect(hits.filter((h) => h.kind === 'message')).toHaveLength(30);
+    // 图层组仍然整组到位
+    const layerHits = hits.filter((h) => h.kind === 'layer');
+    expect(layerHits.map((h) => h.layerId)).toEqual(['L1', 'L2']);
+    expect(hits).toHaveLength(50); // 三组配额之和，未越过总上限
+  });
+
+  it('#1727 三组配额之和 <= limit；自定义 limit 下各组仍独立计量', () => {
+    const sessions = Array.from({ length: 25 }, (_, i) => ({
+      id: `s${i}`,
+      title: `热力图会话 ${i}`,
+      updatedAt: i,
+      docs: Array.from({ length: 20 }, (_, d) => ({
+        messageIndex: d,
+        role: 'user' as const,
+        text: `第 ${d} 条热力图分析`,
+        refs: [],
+      })),
+    }));
+    const layers = [{ id: 'L1', name: '热力图底图' }];
+    const hits = searchLocalIndex('热力图', sessions, layers, 12);
+    expect(hits.length).toBeLessThanOrEqual(12);
+    expect(hits.filter((h) => h.kind === 'session')).toHaveLength(3);
+    expect(hits.filter((h) => h.kind === 'message')).toHaveLength(7);
+    expect(hits.filter((h) => h.kind === 'layer')).toHaveLength(1);
+    // 极小 limit：总量不越界（保底份额让位给消息组）
+    const tiny = searchLocalIndex('热力图', sessions, layers, 2);
+    expect(tiny.length).toBeLessThanOrEqual(2);
+  });
+
   it('空查询 / 无命中', () => {
     expect(searchLocalIndex('', [], [])).toEqual([]);
     expect(searchLocalIndex('zzz不存在', [], [])).toEqual([]);
@@ -221,5 +272,31 @@ describe('normalizeSessionList + pendingLocate', () => {
     setPendingLocate('s1', 7, );
     // 直接操作 issuedAt 超窗：借助注入时钟太重，TTL 15s 内正常取回
     expect(consumePendingLocate('s1')).toBe(7);
+  });
+});
+
+describe('#1745 索引统计 memo（每敲一字不再重解析）', () => {
+  it('索引未变时命中 memo：不重复 parse/stringify', () => {
+    const spy = vi.spyOn(JSON, 'parse');
+    upsertIndexedSession(makeSession('a', 1));
+    const first = searchIndexStats();
+    expect(first.sessions).toBe(1);
+    expect(first.messages).toBe(3);
+    spy.mockClear();
+    for (let i = 0; i < 50; i++) searchIndexStats();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('索引变化（写入/清空/外部改同一 key）后统计随之更新', () => {
+    upsertIndexedSession(makeSession('a', 1));
+    expect(searchIndexStats().sessions).toBe(1);
+    upsertIndexedSession(makeSession('b', 2));
+    expect(searchIndexStats()).toMatchObject({ sessions: 2, messages: 6 });
+    clearSearchIndex();
+    expect(searchIndexStats()).toMatchObject({ sessions: 0, messages: 0 });
+    // 外部（其他标签页）直接写同一 key：原文变化 → 重算，不返回过期值。
+    storage.set('geoagent-cross-session-index-v1', JSON.stringify([makeSession('c', 3, 2)]));
+    expect(searchIndexStats()).toMatchObject({ sessions: 1, messages: 2 });
   });
 });

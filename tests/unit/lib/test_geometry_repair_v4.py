@@ -146,3 +146,58 @@ def test_zonal_valid_geometry_unchanged_no_repair_key(tmp_path):
     rows = zonal_statistics(fc, _tiny_raster(tmp_path))
     assert rows and "geometry_repair" not in rows[0]
     assert rows[0]["mean"] == pytest.approx(7.0)
+
+
+def _double_loop_raster(tmp_path):
+    """恒定值 7.0 的栅格（经纬度步长 0.01°）。"""
+    import rasterio
+    from rasterio.transform import from_origin
+
+    path = tmp_path / "dl.tif"
+    with rasterio.open(
+        path, "w", driver="GTiff", width=200, height=200, count=1,
+        dtype="float32", crs="EPSG:4326",
+        transform=from_origin(0.0, 1.0, 0.01, 0.01),
+    ) as dst:
+        dst.write(np.full((1, 200, 200), 7.0, dtype="float32"))
+    return str(path)
+
+
+def _double_loop_fc():
+    """同一外环按同向走两遍的自交多边形（Ring self-intersection）。
+
+    GDAL 栅格化对该环给空掩膜（even-odd：绕数 2），而 make_valid 还原出
+    完整正方形 —— 掩膜若仍用修复前的几何，整行统计会变成全 None 的
+    「貌似无数据」（#1736）。
+    """
+    ring = [[0.2, 0.2], [1.8, 0.2], [1.8, 1.8], [0.2, 1.8], [0.2, 0.2],
+            [0.2, 0.2], [1.8, 0.2], [1.8, 1.8], [0.2, 1.8], [0.2, 0.2]]
+    return {
+        "type": "FeatureCollection",
+        "crs": "EPSG:4326",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": {"id": 1},
+        }],
+    }
+
+
+def test_zonal_mask_uses_repaired_geometry_not_raw_input(tmp_path):
+    """#1736：strict=False 的掩膜几何必须与披露的修复记录同一个几何。
+
+    窗口由 poly.bounds（修复后）定；掩膜若用修复前的 geom，自交双环会被
+    GDAL 栅格成空掩膜 → 全 None 行，与 geometry_repair 披露自相矛盾。
+    """
+    from app.lib.geo_analysis.raster_ops import zonal_statistics
+
+    rows = zonal_statistics(
+        _double_loop_fc(), _double_loop_raster(tmp_path),
+        stats=["count", "mean"], strict=False)
+    assert len(rows) == 1
+    rec = rows[0].get("geometry_repair")
+    assert rec is not None and rec["method"] == "make_valid"
+    # 修复后几何覆盖 12800 个像素（2°×2° 的 160×160 格）——修复前后掩膜
+    # 若不一致，这里会是全 None。
+    assert rows[0]["count"] == 12800
+    assert rows[0]["mean"] == pytest.approx(7.0)

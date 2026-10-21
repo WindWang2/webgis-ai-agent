@@ -126,6 +126,13 @@ from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES
 from app.lib.cartography.render_diagnostics import (
     diagnostic as _render_diagnostic,
 )
+from app.services.mapspec_expr import (
+    ACTIVE_EXPORT_ZOOM,
+    DEFAULT_EXPORT_ZOOM,
+    MAPLIBRE_EXPR_OPS,
+    evaluate_map_libre_expression,
+    interpolate_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -344,55 +351,28 @@ def _substitute_tile_url(template: str, x: int, y: int, z: int) -> str:
         return str(template)
 
 
-def _parse_color(c: Any) -> Tuple[int, int, int] | None:
-    if not isinstance(c, str):
-        return None
-    s = c.strip().lower()
-    if s.startswith("#"):
-        hex_str = s[1:]
-        if len(hex_str) == 3:
-            return (int(hex_str[0] * 2, 16), int(hex_str[1] * 2, 16), int(hex_str[2] * 2, 16))
-        elif len(hex_str) in (6, 8):
-            return (int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16))
-    elif s.startswith("rgb"):
-        import re
-        m = re.search(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", s)
-        if m:
-            return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    return None
-
-
-def _rgb_to_hex(r: float, g: float, b: float) -> str:
-    r_c = max(0, min(255, int(round(r))))
-    g_c = max(0, min(255, int(round(g))))
-    b_c = max(0, min(255, int(round(b))))
-    return f"#{r_c:02x}{g_c:02x}{b_c:02x}"
-
-
-def _interpolate_value(v0: Any, v1: Any, t: float) -> Any:
-    try:
-        n0, n1 = float(v0), float(v1)
-        if _math.isfinite(n0) and _math.isfinite(n1):
-            return n0 + t * (n1 - n0)
-    except (ValueError, TypeError):
-        pass
-
-    c0 = _parse_color(v0)
-    c1 = _parse_color(v1)
-    if c0 and c1:
-        r = c0[0] + t * (c1[0] - c0[0])
-        g = c0[1] + t * (c1[1] - c0[1])
-        b = c0[2] + t * (c1[2] - c0[2])
-        return _rgb_to_hex(r, g, b)
-
-    return v0 if t < 0.5 else v1
-
-
 def _resolve_paint_value(
-    val: Any, props: Any = None, fallback: Any = None
+    val: Any,
+    props: Any = None,
+    fallback: Any = None,
+    zoom: Optional[float] = None,
 ) -> Any:
     if val is None:
         return fallback
+    if isinstance(val, (list, tuple)):
+        # #1726 项 2：MapLibre 表达式数组在导出 zoom 处求值（与 TS 孪生
+        # mapspec-to-svg.ts ``resolvePaintValue`` 同口径）—— 此前
+        # ``if not isinstance(val, dict): return val`` 把表达式数组原样
+        # 返回，热力图半径等退化成 _safe_float 缺省值，双路径几何分歧。
+        # 词表外算子不求值（原样返回 → 调用方 fail-open 缺省）。
+        if val and isinstance(val[0], str) and val[0] in MAPLIBRE_EXPR_OPS:
+            active_zoom = (
+                ACTIVE_EXPORT_ZOOM.get() if zoom is None else float(zoom)
+            )
+            if not _math.isfinite(active_zoom):
+                active_zoom = DEFAULT_EXPORT_ZOOM
+            return evaluate_map_libre_expression(val, props, active_zoom, fallback)
+        return val
     if not isinstance(val, dict):
         return val
 
@@ -462,7 +442,7 @@ def _resolve_paint_value(
                 if x1 == x0:
                     return s0[1]
                 t = (prop_val - x0) / (x1 - x0)
-                return _interpolate_value(s0[1], s1[1], t)
+                return interpolate_value(s0[1], s1[1], t)
         return last_stop[1]
 
     return val.get("value", fallback)
@@ -1166,6 +1146,10 @@ def compile_mapspec_to_svg_detailed(
     # 方向 5（C6）：导出 = 固定 zoom 的一次裁决（spec.view.zoom authored；
     # 前端孪生 options.zoom??view.zoom 同口径 —— 缺省 8）。
     _export_zoom = export_zoom_of_mapspec(mapspec if isinstance(mapspec, dict) else {})
+    # #1726 项 2：导出 zoom 进 ContextVar —— paint 表达式求值器
+    # （_resolve_paint_value）按同一 zoom 求值，与 TS 孪生
+    # ``activeExportZoom`` 的 set/restore 语义同款（并发导出互不污染）。
+    _zoom_token = ACTIVE_EXPORT_ZOOM.set(_export_zoom)
     feature_count = 0
     truncated_features = False
     timed_out = False
@@ -1921,4 +1905,8 @@ def compile_mapspec_to_svg_detailed(
             truncated_features=truncated_features,
             timed_out=timed_out,
         )
+
+    finally:
+        # 与 set 配对（异常路径同样还原）—— 嵌套/并发编译不泄漏 zoom。
+        ACTIVE_EXPORT_ZOOM.reset(_zoom_token)
 

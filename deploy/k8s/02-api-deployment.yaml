@@ -97,6 +97,24 @@ spec:
         # readOnlyRootFilesystem 下 psycopg/SQLAlchemy 需要可写 /tmp
         - name: tmp
           mountPath: /tmp
+      - name: seed-skills
+        # #1729: 镜像 = ghcr.io/windwang2/webgis-ai-agent（与主容器同 tag，
+        # 见文件头 #618-37 注释：部署时须钉同一 sha）。把镜像内
+        # /app/backend/app/skills（Dockerfile.prod chown 的可写技能目录）
+        # 播种进 skills-volume；uploads 的 admin 技能上传（config.py:238）
+        # 与 agent 自建技能（skill_creator）此后才不再 EROFS。
+        image: ghcr.io/windwang2/webgis-ai-agent:master
+        imagePullPolicy: Always
+        command: ["sh", "-c", "mkdir -p /seed-skills && cp -a /app/backend/app/skills/. /seed-skills/"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        volumeMounts:
+        - name: skills-volume
+          mountPath: /seed-skills
       containers:
       - name: webgis-api
         # #618-37: default tag `master` matches CI branch tag. Pin sha at
@@ -116,7 +134,9 @@ spec:
         command: ["sh", "-c"]
         # 审计 P0：trap + wait 确保 SIGTERM 正确传播给 uvicorn + node 子进程，
         # 否则滚动更新时 pod 会脏退出（tini 在 k8s 侧不在 pid 1）。
-        args: ["trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000 & wait"]
+        # #1694 SEC-13：--ws-max-size 与 ws.py:29 / ws_collab.py:51 的
+        # _MAX_INBOUND_BYTES=16*1024 对齐（应用层检查在整帧缓冲之后，协议层先限）。
+        args: ["trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws-max-size 16384 & node frontend/.next/standalone/server.js -p 3000 & wait"]
         ports:
         - containerPort: 8000
           name: api
@@ -171,6 +191,20 @@ spec:
           mountPath: /tmp
         - name: app-pi
           mountPath: /app/.pi
+        # #1729: 只读根文件系统缺技能目录可写路径 —— 后台技能上传
+        # （POST /api/v1/skills/upload，app/api/routes/config.py:238 写相对
+        # 路径 "app/skills"）与 agent 自建技能（skill_creator.py 同一目录）
+        # 在此前永久 EROFS。WORKDIR 为 /app/backend（Dockerfile.prod），
+        # 故相对路径解析为 /app/backend/app/skills。种子由 seed-skills
+        # initContainer 播种（否则空挂载会遮掉镜像自带技能）。
+        - name: skills-volume
+          mountPath: /app/backend/app/skills
+        # #1729: HOME=/app（Dockerfile.prod useradd --home /app）→ 运行期
+        # 缓存（fontconfig / rasterio GDAL / HF 等写 $HOME/.cache =
+        # /app/.cache，镜像内在 Dockerfile.prod:129 预建并 chown）在只读
+        # rootfs 下同样 EROFS。
+        - name: app-cache
+          mountPath: /app/.cache
       volumes:
       - name: uploads-volume
         persistentVolumeClaim:
@@ -179,6 +213,11 @@ spec:
       - name: tmp
         emptyDir: {}
       - name: app-pi
+        emptyDir: {}
+      # #1729: 技能目录（种子来自 seed-skills initContainer）与 HOME 缓存
+      - name: skills-volume
+        emptyDir: {}
+      - name: app-cache
         emptyDir: {}
 ---
 # WebGIS API Service

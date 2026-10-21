@@ -51,7 +51,7 @@ V3 流式语义（ADR-0119，架构挑战 C-3/C-7/M-5/M-6 的落点）：
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Iterator
 
 WORKER_PROTOCOL_VERSION = "3.0"
 
@@ -137,3 +137,49 @@ def read_frame(fileobj: Any) -> dict[str, Any]:
     if not line:
         raise ProtocolError("stream closed (EOF)")
     return decode_frame(line)
+
+
+def iter_frames_bounded(
+    fileobj: Any,
+    max_bytes: int = FRAME_MAX_BYTES,
+    chunk_size: int = 64 * 1024,
+) -> Iterator[bytes]:
+    """按字节有界地切分行并逐行产出（含换行符；EOF 尾行原样交出）。
+
+    #1709：``for line in stdout`` 对「只写不换行」的 worker（或其子进程）
+    会把输出无界读进宿主内存——``FRAME_MAX_BYTES`` 检查原本在
+    :func:`decode_frame` 内、整行读完之后才执行。改为按 chunk 读入 + 累计
+    缓冲拆行：待解析缓冲超过 ``max_bytes`` 仍未见换行即
+    :class:`ProtocolError`（调用方断开并杀 worker），宿主内存上界与单帧
+    上限同阶，不再依赖对端守序（逐帧换行）。
+    """
+    # read1 = 单次底层读、有多少返多少（管道语义，不为凑满 chunk 阻塞）；
+    # 无 read1 的对象（内存流/测试替身）退化为 read。
+    read_some = getattr(fileobj, "read1", None) or fileobj.read
+    pending = bytearray()
+    while True:
+        chunk = read_some(chunk_size)
+        if isinstance(chunk, str):  # text 管道替身；生产为二进制
+            chunk = chunk.encode("utf-8")
+        if not chunk:
+            if pending:
+                # EOF 前的不完整尾行：原样交出，由 decode_frame 判非法。
+                yield bytes(pending)
+            return
+        pending += chunk
+        start = 0
+        while True:
+            nl = pending.find(b"\n", start)
+            if nl < 0:
+                break
+            line = bytes(pending[start:nl + 1])
+            start = nl + 1
+            if len(line) > max_bytes:
+                raise ProtocolError(f"frame exceeds {max_bytes} bytes")
+            yield line
+        if start:
+            del pending[:start]
+        if len(pending) > max_bytes:
+            raise ProtocolError(
+                f"frame exceeds {max_bytes} bytes without a newline terminator"
+            )

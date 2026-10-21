@@ -35,6 +35,32 @@ describe('evaluateFilterBounded (closed operator vocabulary)', () => {
     expect(evaluateFilterBounded(['within', ['get', 'x']], features[0])).toBeNull();
     expect(evaluateFilterBounded(['any', ['within', ['get', 'x']], ['==', ['get', 'district'], '武侯区']], features[0])).toBe(true);
   });
+
+  // #1726 regression: the real selection filter is
+  // ['in', ['to-string', ['get', f]], ['literal', [...]]]
+  // (selection-store.getSelectionFilterExpression). getValue did not know
+  // `to-string`, so the operand resolved to undefined while
+  // _isUnresolvedOperand still called it "recognized" → the `in` branch
+  // returned a hard false for every feature → a fully rendered layer was
+  // reported as "过滤后 0 要素".
+  it('evaluates to-string-wrapped operands (selection filter shape)', () => {
+    const selExpr = ['in', ['to-string', ['get', 'district']], ['literal', ['武侯区', '锦江区']]];
+    expect(evaluateFilterBounded(selExpr, features[0])).toBe(true);
+    expect(evaluateFilterBounded(selExpr, features[1])).toBe(true);
+    expect(evaluateFilterBounded(selExpr, features[2])).toBe(false);
+  });
+
+  it('to-string normalizes numeric properties for string haystacks', () => {
+    const numeric = { properties: { OBJECTID: 42 }, geometry: { type: 'Point' } };
+    const idExpr = ['in', ['to-string', ['get', 'OBJECTID']], ['literal', ['42']]];
+    expect(evaluateFilterBounded(idExpr, numeric)).toBe(true);
+    // A missing property is "" (MapLibre to-string semantics), not undefined.
+    expect(evaluateFilterBounded(['in', ['to-string', ['get', 'absent']], ['literal', ['']]], numeric)).toBe(true);
+  });
+
+  it('to-string over an unrecognized operand stays unknown (no fabricated "")', () => {
+    expect(evaluateFilterBounded(['in', ['to-string', ['geometry-type']], ['literal', ['Point']]], features[0])).toBeNull();
+  });
 });
 
 describe('deriveFilterEvidence', () => {
@@ -101,6 +127,19 @@ describe('deriveFilterEvidence', () => {
       features,
     });
     expect(evidence.status).toBe('unknown');
+  });
+
+  // #1726 regression: a chart/legend-linked layer carries the selection filter
+  // verbatim; the bounded evaluator used to score it "命中 0" and the Layers
+  // panel raised a "过滤后 0 要素" warning badge over a layer that renders.
+  it('active (not empty) for the selection-store category filter', () => {
+    const evidence = deriveFilterEvidence({
+      layerId: 'l',
+      sublayerFilters: [['in', ['to-string', ['get', 'district']], ['literal', ['武侯区', '锦江区']]]],
+      features,
+    });
+    expect(evidence.status).toBe('active');
+    expect(evidence.matched_count).toBe(2);
   });
 
   it('invalid wins over unknown operator when the field is absent (operator-independent evidence)', () => {

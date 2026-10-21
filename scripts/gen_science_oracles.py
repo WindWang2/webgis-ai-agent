@@ -1125,7 +1125,12 @@ def build_regression() -> List[Dict[str, Any]]:
         try:
             fn(*args)
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — 能力探测：拒绝即 False，但必须可观测（#1691）
+            # 与下方 _probe_code 同构（那里返回异常类型名）—— 静默 False 会让
+            # 「契约拒绝 list 入参」与「探测器自身 bug」无法区分。stderr 输出，
+            # 不污染生成的 JSON 语料。
+            print(f"[gen-science-oracles] probe {getattr(fn, '__name__', fn)} "
+                  f"rejected input: {type(exc).__name__}", file=sys.stderr)
             return False
 
     def _probe_code(fn, *args):

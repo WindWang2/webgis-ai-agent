@@ -115,6 +115,24 @@ def test_authorize_session_write_matches_get_session_contract():
     assert authorize_session_write(_C(None, "tok"), None, "tok") is True
 
 
+def test_authorize_session_write_non_ascii_token_fails_closed():
+    """#1711: 非 ASCII owner_token 必须 fail-closed，而不是 TypeError 500。
+
+    hmac.compare_digest 对含非 ASCII 的 str 直接抛 TypeError —— 客户端送一个
+    非 ASCII X-Session-Token 就能把 SEC-08 守卫变成未处理异常。
+    """
+    class _C:
+        def __init__(self, user_id=None, owner_token=None):
+            self.user_id = user_id
+            self.owner_token = owner_token
+
+    conv = _C(None, "tök-é-correct")
+    assert authorize_session_write(conv, None, "tök-é-correct") is True
+    assert authorize_session_write(conv, None, "tök-é-wrong") is False
+    assert authorize_session_write(conv, None, "ascii-wrong") is False
+    assert authorize_session_write(conv, None, None) is False
+
+
 def test_owner_token_compare_digest_mismatch():
     from app.services.session_data_protocol import BaseSessionStore, SessionRefDataResult
 

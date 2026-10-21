@@ -206,8 +206,15 @@ class WorkerContext:
         streaming 能力在 manifest 层已被拒绝（单帧 RPC）；这里的调用走
         通用 call 往返（聚合结果单帧返回）。本地名 `<pid>_invoke`
         与宿主投影名的前缀剥离形态精确一致。
+
+        #1709：合成的 spec 必须回填 ``required_permissions``（此前留空 →
+        ``wrap_with_permissions`` 原样返回 func，MODEL_PROVIDER grants 在
+        worker 路径上从未被强制 = 死权限）。权限集合由
+        :data:`~app.extensions_platform.sdk.model.MODEL_PROVIDER_REQUIRED_PERMISSIONS`
+        单一事实源给出；spec.validate 已 fail closed 强制它被 manifest 声明，
+        因此此处回填与 in-process 路径完全同权。
         """
-        from ..sdk.model import ModelProviderSpec
+        from ..sdk.model import MODEL_PROVIDER_REQUIRED_PERMISSIONS, ModelProviderSpec
         from ..sdk.tool import ToolExtensionSpec
 
         if not isinstance(spec, ModelProviderSpec):
@@ -257,6 +264,7 @@ class WorkerContext:
             func=_invoke,
             side_effect="external_side_effect",
             deterministic=False,
+            required_permissions=list(MODEL_PROVIDER_REQUIRED_PERMISSIONS),
             parameters=spec.parameters
             or {
                 "type": "object",

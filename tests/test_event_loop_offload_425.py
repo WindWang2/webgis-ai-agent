@@ -242,7 +242,18 @@ def _patch_query_paths(monkeypatch, observed):
     """Patch BOTH query paths: the slow work itself (sync) and the async
     wrapper that must offload it. Pre-fix routes call the sync method on the
     loop (RED); post-fix routes await the async wrapper (GREEN)."""
+    from app.api.routes import data_fabric as route_mod
     from app.services.data_fabric.manager import DataFabricManager
+
+    # #1753 守卫：本文件按类打 patch，而路由实际调用单例实例。若某测试先对
+    # **实例** monkeypatch 了同名继承属性，pytest undo 会把原方法写回实例
+    # __dict__（常驻阴影）——类级 patch 从此被静默击败，本测试会跑到真实
+    # OGC 网络路径并永久挂起（全量套件 abort 的根因）。有此阴影即立刻红灯。
+    shadowed = "query_catalog_item_async" in vars(route_mod.data_fabric_manager)
+    assert not shadowed, (
+        "#1753: data_fabric_manager 实例上残留 query_catalog_item_async 阴影"
+        "（先前某测试对实例 monkeypatch 的 undo 物化）——请改为类级 patch"
+    )
 
     def _slow_query(db, item_id, spec):
         observed["thread"] = threading.get_ident()

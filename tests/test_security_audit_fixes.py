@@ -155,6 +155,9 @@ def test_F2_subagent_extra_tools_cannot_force_tier3():
 
 
 # ── F4: rate-limit keys use the forwarded client IP ─────────────────────────
+# #1675: the forwarded headers are trusted ONLY up to TRUSTED_PROXY_HOPS
+# (default 1 = production nginx single hop). Direct exposure (hops<=0) keys
+# every limiter on the TCP peer, so forged X-Real-IP/XFF cannot rotate buckets.
 
 def test_F4_client_ip_prefers_real_ip_header():
     from app.core.client_ip import client_ip_from
@@ -198,6 +201,29 @@ def test_F4_client_ip_falls_back_to_peer_without_headers():
         "method": "GET",
         "path": "/",
         "headers": [],
+        "client": ("10.0.0.5", 1234),
+    }
+    req = Request(scope)
+    assert client_ip_from(req) == "10.0.0.5"
+
+
+def test_F4_client_ip_ignores_forged_headers_when_directly_exposed(monkeypatch):
+    """#1675: TRUSTED_PROXY_HOPS=0 (uvicorn reached directly — exposed port,
+    service mesh, ingress passing $http_x_real_ip through) — every forwarded
+    header is attacker-controlled, so the TCP peer keys the limiter. Pre-fix a
+    fresh X-Real-IP per request rotated every IP-keyed bucket."""
+    from app.core.client_ip import client_ip_from
+
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "0")
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [
+            (b"x-real-ip", b"1.2.3.4"),
+            (b"x-forwarded-for", b"9.9.9.9, 1.2.3.4"),
+        ],
         "client": ("10.0.0.5", 1234),
     }
     req = Request(scope)

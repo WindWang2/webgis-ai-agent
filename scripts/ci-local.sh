@@ -34,7 +34,10 @@ export LLM_API_KEY="${LLM_API_KEY:-test-key-not-real}"
 step() { printf '\n=== %s ===\n' "$1"; }
 
 step "ruff (repo-wide, lint job)"
-ruff check --output-format=github app/ tests/ main.py manage.py
+# #1691（TEST-02）：目标集补 scripts/ —— 与 workflow lint job 的 ruff 命令逐字
+# 一致（tests/test_ci_local_gate_contract.py 钉住对齐）；scripts/ 的 CLI stdout
+# 即契约，T20 由 pyproject "scripts/**" 通配豁免。
+ruff check --output-format=github app/ tests/ scripts/ main.py manage.py
 
 step "mypy (allowlist ratchet, lint job)"
 python -m mypy
@@ -75,6 +78,13 @@ pytest \
 # 同款命令 —— 由 tests/test_ci_local_gate_contract.py 对齐锁定。
 step "import boundaries (lint job, ADR-0216)"
 python scripts/check_import_boundaries.py
+
+# #1734：skills-lock 完整性（#1349）与 ADS source-registry lint（DS1 /
+# ADR-0171）接入 workflow lint job 后必须同跑 —— 与上面各 lint gate 同款
+# 逐字对齐（tests/test_ci_local_gate_contract.py 钉住）。
+step "skills lock + source registry (lint job, #1349 / ADR-0171)"
+python scripts/verify_skills_lock.py
+python scripts/check_source_registry.py
 
 if [ "$FAST" = "1" ]; then
   echo "--fast：跳过 next build 与后端/perf/cartography pytest lanes"

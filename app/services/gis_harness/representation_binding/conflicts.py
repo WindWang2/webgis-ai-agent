@@ -32,6 +32,9 @@ REASON_CODES = {
     "binding_target_absent": "绑定目标（层/组件）在权威 spec 中不存在",
     "binding_ineligible_representation": "用户 pin 的表达与数据/renderer 不兼容（grammar face 披露回退）",
     "binding_duplicate_replay": "同 fingerprint 幂等重放（引擎 dedup 命中，revision 不推进）",
+    # #1671：pass-truncated 是非错误 skip 回执（绑定通过但引用被截断），
+    # 须与拒绝码同表登记，否则按码聚合的遥测漏类、disclosure_for 落兜底文案。
+    "binding_pass_truncated": "绑定通过但引用被截断（单轮绑定数超上限；非错误 skip，披露截断事实）",
     "binding_document_superseded": "requirement 文档已被超替（新任务），旧绑定不落地",
     "binding_engine_refused": "绑定被 MapSpec 引擎拒绝（增量非法/冲突、质量门禁、自愈未收敛、不支持的意图等；引擎信息经 disclosure 透传）",
     # ── C4（MapSpec → Requirement）方向 ───────────────────────────────
@@ -95,6 +98,9 @@ def resolve_conflict(code: str, *, detail: str = "") -> ConflictResolution:
         "binding_duplicate_replay": ConflictResolution(
             "binding_duplicate_replay", "none", "apply",
             "同 fingerprint 重放命中幂等；返回存证回执，不重复落盘。"),
+        "binding_pass_truncated": ConflictResolution(
+            "binding_pass_truncated", "none", "skip_disclosed",
+            "单轮绑定数超上限，超出面已截断并披露（非错误）；下一轮按需继续绑定。"),
         "binding_engine_refused": ConflictResolution(
             "binding_engine_refused", "system", "refuse",
             "绑定被引擎校验/门禁拒绝（增量非法或冲突、质量门禁、"

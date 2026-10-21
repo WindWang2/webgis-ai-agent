@@ -110,7 +110,7 @@ def get_raster_window(
 
 
 def resolve_stream_target(db: Any, item_id: str) -> tuple[Any, str]:
-    """目录条目 → (adapter, dataset_name)（同步 ORM，须在 manager-loop 上调）。
+    """目录条目 → (adapter, dataset_name)（同步 ORM，须在 manager worker loop 上调）。
 
     W12 抽取：route 的流式预检（鉴权后）与既有 stream_catalog_item_features
     共用同一解析路径 —— adapter 构建/能力探测只有一个事实源。

@@ -4,7 +4,8 @@ Manages connected data source profiles and active adapter instances.
 """
 import ipaddress
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+import time
+from typing import Callable, Dict, Any, List, Optional, Tuple
 from app.schemas.data_fabric_schema import (
     ConnectionProfile,
     DatasetDescriptor,
@@ -263,24 +264,112 @@ def _ssrf_validate_profile(profile: ConnectionProfile) -> None:
     )
 
 
+def _connection_setting(name: str, default: Any) -> Any:
+    """延迟读取 settings（未登记配置回落默认 —— 与 fabric registry 同语义）。"""
+    try:
+        from app.core.config import settings
+
+        return getattr(settings, name, default)
+    except Exception:  # noqa: BLE001 - 配置层不可用时用默认值
+        return default
+
+
 class DataFabricConnectionManager:
     """Connection Manager for Data Fabric profiles and adapters.
 
     C4 修复（ADR-0094 §10 / 审计）：``owner`` 作用域键控 —— 连接按
     (owner, profile_id) 隔离存储；不同会话（租户）不再互相覆盖/访问连接。
     owner=None 保留 legacy 全局语义（单租户/测试路径）。并发访问加锁。
+
+    #1715：``_profiles``/``_adapters`` 此前只增不删（``disconnect``/``clear``
+    无生产调用点）—— 长生命周期 API worker 随会话连接线性泄漏 adapter
+    （含 ``requests.Session`` 连接池）直至 OOM。现按 (owner, profile) 键做
+    LRU + idle TTL（与 fabric ConnectionRegistry 共用同一对设置），逐出/
+    断连时级联清理该 profile 在 SpatialCatalog 的目录足迹。
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        max_entries: Optional[int] = None,
+        idle_ttl_s: Optional[float] = None,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         import threading
 
         self._profiles: Dict[Tuple[Optional[str], str], ConnectionProfile] = {}
         self._adapters: Dict[Tuple[Optional[str], str], GeospatialDataSourceAdapter] = {}
+        #: (owner, profile_id) → 最近访问时刻（LRU 序 + idle TTL 判定）。
+        self._last_access: Dict[Tuple[Optional[str], str], float] = {}
         self._lock = threading.RLock()
+        self._max_entries = max(
+            1,
+            int(max_entries if max_entries is not None
+                else _connection_setting("DATA_FABRIC_V7_CONNECTION_MAX_ENTRIES", 1024)),
+        )
+        self._idle_ttl_s = max(
+            0.0,
+            float(idle_ttl_s if idle_ttl_s is not None
+                  else _connection_setting("DATA_FABRIC_V7_CONNECTION_IDLE_TTL_S", 1800.0)),
+        )
+        self._clock = clock
 
     @staticmethod
     def _key(profile_id: str, owner: Optional[str]) -> Tuple[Optional[str], str]:
         return (owner, profile_id)
+
+    # -- 生命周期维护（#1715） --------------------------------------------------
+
+    def _drop_locked(self, key: Tuple[Optional[str], str]) -> Optional[str]:
+        """移除一条连接（调用方持锁）；返回其 profile_id（级联清理用）。"""
+        profile = self._profiles.pop(key, None)
+        self._adapters.pop(key, None)
+        self._last_access.pop(key, None)
+        return profile.id if profile is not None else None
+
+    def _maintain_locked(self) -> List[str]:
+        """idle 清扫 + LRU 逐出（调用方持锁）；返回被逐出的 profile_id。"""
+        evicted: List[str] = []
+        if self._idle_ttl_s > 0:
+            now = self._clock()
+            for key in [
+                k for k, ts in self._last_access.items() if now - ts > self._idle_ttl_s
+            ]:
+                pid = self._drop_locked(key)
+                if pid is not None:
+                    evicted.append(pid)
+        while len(self._adapters) > self._max_entries and self._last_access:
+            victim = min(self._last_access.items(), key=lambda kv: (kv[1], kv[0]))[0]
+            pid = self._drop_locked(victim)
+            if pid is not None:
+                evicted.append(pid)
+        return evicted
+
+    def _cascade_catalog_cleanup(self, profile_id: str) -> None:
+        """某 profile 无存活连接后回收其 SpatialCatalog 目录足迹。
+
+        仍有其它 (owner, profile) 连接引用同一 profile 时不清场 —— 它们的
+        目录条目仍然有效。
+        """
+        with self._lock:
+            still_live = any(pid == profile_id for (_o, pid) in self._adapters)
+        if not still_live:
+            spatial_catalog_service.unregister_by_profile(profile_id)
+
+    def _sweep(self) -> None:
+        """idle 清扫 + LRU 逐出 + 目录足迹级联清理（#1715）。"""
+        with self._lock:
+            evicted = self._maintain_locked()
+        for pid in evicted:
+            self._cascade_catalog_cleanup(pid)
+
+    def stats(self) -> Dict[str, Any]:
+        """诊断视图（条目数/上限/idle TTL）。"""
+        with self._lock:
+            return {
+                "entries": len(self._adapters),
+                "max_entries": self._max_entries,
+                "idle_ttl_s": self._idle_ttl_s,
+            }
 
     def connect(
         self,
@@ -301,6 +390,11 @@ class DataFabricConnectionManager:
             key = self._key(profile.id, owner)
             self._profiles[key] = profile
             self._adapters[key] = adapter
+            self._last_access[key] = self._clock()
+            evicted = self._maintain_locked()
+
+        for pid in evicted:
+            self._cascade_catalog_cleanup(pid)
 
         logger.info(
             "[ConnectionManager] Connected profile '%s' (owner=%s, source_type=%s, adapter=%s)",
@@ -311,23 +405,42 @@ class DataFabricConnectionManager:
     def get_adapter(
         self, profile_id: str, owner: Optional[str] = None
     ) -> Optional[GeospatialDataSourceAdapter]:
+        self._sweep()
         with self._lock:
-            adapter = self._adapters.get(self._key(profile_id, owner))
-            if adapter is not None or owner is None:
+            key = self._key(profile_id, owner)
+            adapter = self._adapters.get(key)
+            if adapter is not None:
+                self._last_access[key] = self._clock()
                 return adapter
+            if owner is None:
+                return None
             # 全局（legacy）连接对会话可见；其它会话的连接不可见
-            return self._adapters.get(self._key(profile_id, None))
+            fallback = self._key(profile_id, None)
+            adapter = self._adapters.get(fallback)
+            if adapter is not None:
+                self._last_access[fallback] = self._clock()
+            return adapter
 
     def get_profile(
         self, profile_id: str, owner: Optional[str] = None
     ) -> Optional[ConnectionProfile]:
+        self._sweep()
         with self._lock:
-            profile = self._profiles.get(self._key(profile_id, owner))
-            if profile is not None or owner is None:
+            key = self._key(profile_id, owner)
+            profile = self._profiles.get(key)
+            if profile is not None:
+                self._last_access[key] = self._clock()
                 return profile
-            return self._profiles.get(self._key(profile_id, None))
+            if owner is None:
+                return None
+            fallback = self._key(profile_id, None)
+            profile = self._profiles.get(fallback)
+            if profile is not None:
+                self._last_access[fallback] = self._clock()
+            return profile
 
     def list_profiles(self, owner: Optional[str] = None) -> List[ConnectionProfile]:
+        self._sweep()
         with self._lock:
             return [
                 p for (o, _pid), p in self._profiles.items()
@@ -335,22 +448,34 @@ class DataFabricConnectionManager:
             ]
 
     def get_all_adapters(self) -> Dict[str, GeospatialDataSourceAdapter]:
+        self._sweep()
         with self._lock:
             return {f"{o or '_global'}:{pid}": a for (o, pid), a in self._adapters.items()}
 
     def disconnect(self, profile_id: str, owner: Optional[str] = None) -> bool:
         with self._lock:
             key = self._key(profile_id, owner)
-            if key in self._profiles:
-                self._profiles.pop(key, None)
-                self._adapters.pop(key, None)
-                return True
-            return False
+            if key not in self._profiles:
+                return False
+            self._drop_locked(key)
+            still_live = any(pid == profile_id for (_o, pid) in self._adapters)
+        # 级联清理（#1715）：无存活连接引用该 profile → 清其全部目录足迹；
+        # 仍有其它会话/全局连接在用 → 仅清本次 (owner, profile) 注册的条目。
+        if still_live:
+            spatial_catalog_service.unregister_by_profile(profile_id, owner=owner)
+        else:
+            spatial_catalog_service.unregister_by_profile(profile_id)
+        return True
 
     def clear(self):
         with self._lock:
+            profile_ids = {pid for (_o, pid) in self._adapters}
             self._profiles.clear()
             self._adapters.clear()
+            self._last_access.clear()
+        # 级联清理：仅回收本管理器自己连接过的 profile 的目录足迹（#1715）。
+        for pid in profile_ids:
+            spatial_catalog_service.unregister_by_profile(pid)
 
 
 # Global singleton instance

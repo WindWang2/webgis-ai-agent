@@ -4,6 +4,8 @@ Unit Tests for All 10 Data Fabric Adapters Interface Contracts
 """
 import os
 
+import pytest
+
 from app.schemas.data_fabric_schema import ConnectionProfile
 from app.services.data_fabric.adapters import (
     PostGISAdapter,
@@ -19,12 +21,26 @@ from app.services.data_fabric.adapters import (
 )
 
 
+@pytest.mark.real_services
 def test_postgis_adapter_interface():
-    # CI 的 Backend Tests job 提供真实 PostGIS service 并注入 DATABASE_URL；
-    # 本地缺省走 localhost trust。ConnectionProfile 现在会把 DSN 解析进
-    # 结构化字段（审计 C2 配套）——describe 若连接失败将诚实抛
-    # SourceUnreachableError，不再伪造 descriptor。
+    # #1603：本用例需要真实 PostGIS。#1734 之后 Backend Tests 与 nightly
+    # order-randomization 腿都不再提供 PostGIS service（真实 PG 覆盖归
+    # db-migrations / real-services-smoke 两个专属 lane），未打标记时该测
+    # 试在两腿必红（SourceUnreachableError: Connection refused，
+    # localhost:5432 无服务）。按 #661 契约改由 real-services-smoke lane
+    # 拥有：只有显式 REAL_SERVICES=1 才武装（ambient DATABASE_URL 不算数），
+    # 否则诚实 self-skip —— 既不把"连不上"伪装成"通过"，也不让缺服务的
+    # lane 永久红。
+    if os.environ.get("REAL_SERVICES") != "1":
+        pytest.skip(
+            "real-services lane: 未显式启用（需 REAL_SERVICES=1；"
+            "ambient DATABASE_URL 不算数）"
+        )
     dsn = os.environ.get("DATABASE_URL", "postgresql://postgres@localhost:5432/postgres")
+    if not dsn.startswith(("postgresql://", "postgresql+")):
+        pytest.skip("real-services lane: DATABASE_URL 未指向 Postgres")
+    # ConnectionProfile 会把 DSN 解析进结构化字段（审计 C2 配套）——
+    # describe 若连接失败将诚实抛 SourceUnreachableError，不再伪造 descriptor。
     profile = ConnectionProfile(
         source_type="postgis",
         endpoint_url=dsn,

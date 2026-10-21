@@ -127,6 +127,18 @@ def result_indicates_map_change(raw_result: Any) -> bool:
     return False
 
 
+def _lock_in_use(lock: asyncio.Lock) -> bool:
+    """锁被持有或有等待者时为 True —— 这样的锁不可逐出（#1681）。
+
+    对齐 execution_engine._lock_in_use（F1）范本：只看 locked() 有
+    check-then-pop 竞态 —— release() 经 call_soon 唤醒等待者，等待者
+    尚未重新持锁的窗口里 locked() 已是 False。
+    """
+    if lock.locked():
+        return True
+    return bool(getattr(lock, "_waiters", None))
+
+
 def _get_cartography_eval_lock(session_id: str) -> asyncio.Lock:
     """Get or create per-session cartography evaluation lock with LRU bounds."""
     try:
@@ -146,8 +158,18 @@ def _get_cartography_eval_lock(session_id: str) -> asyncio.Lock:
     lock = asyncio.Lock()
     _cartography_eval_locks[session_id] = lock
     _cartography_eval_locks.move_to_end(session_id)
+    # #1681：逐出守卫 —— 持锁/有等待者的锁绝不逐出。此前无守卫逐出让同一
+    # 会话可同时持两把「互斥锁」（被逐出会话的下一次取锁拿到新对象），
+    # MapSpec 评审与 harness 写入并发执行且无任何异常迹象。对齐
+    # execution_engine._evict_idle_locks（F1）范本：全表持锁时暂留
+    # （表略越界），压力消退后由后续调用回收，绝不静默双持。
     while len(_cartography_eval_locks) > _CARTOGRAPHY_EVAL_LOCKS_LIMIT:
-        _cartography_eval_locks.popitem(last=False)
+        for sid in list(_cartography_eval_locks):
+            if not _lock_in_use(_cartography_eval_locks[sid]):
+                del _cartography_eval_locks[sid]
+                break
+        else:
+            break
     return lock
 
 
@@ -592,14 +614,15 @@ async def record_cartographic_dispatch_evidence(
     if outcome.status != "ok" or not result_indicates_map_change(raw):
         return
     has_generation = bool(raw.get("mapspec_fingerprint"))
-    result_evidence: dict[str, Any] = {
-        "status": outcome.status,
-        "llm_payload_len": len(outcome.llm_payload),
-    }
-    from app.lib.harness.evidence import CARTOGRAPHIC_RESULT_EVIDENCE_KEYS
-    for key in CARTOGRAPHIC_RESULT_EVIDENCE_KEYS:
-        if key in raw:
-            result_evidence[key] = raw[key]
+    # #1550：证据投影收敛到 evidence.py 的具名载体（单一投影入口，
+    # 与 pi_post_dispatch 的 legacy seam 共用同一份键清单契约）。
+    from app.lib.harness.evidence import project_cartographic_result_evidence
+
+    result_evidence = project_cartographic_result_evidence(
+        raw,
+        status=outcome.status,
+        llm_payload_len=len(outcome.llm_payload),
+    )
     event = ToolCallEvent(
         tool_call_id=tool_call_id,
         # #789: real tool name (no "webgis_layer_upsert" relabel) — the harness

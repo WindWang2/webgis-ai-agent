@@ -2,8 +2,9 @@
 
 本模块是 legacy chat_stream 事件载荷的**单一事实源**：
 
-- ``CHAT_EVENT_TYPES`` —— 后端真实发出的 chat 域事件词表（文档化枚举，
-  测试守卫其与实际发射一致）；
+- ``CHAT_EVENT_TYPES`` —— 后端真实发出的 chat 域 SSE 事件词表（文档化枚举，
+  测试守卫其与实际发射一致：正向 emitter 方法 ⊆ 词表，反向实际发射 ⊆ 词表，
+  见 tests/unit/test_sse_contracts.py 的 TestVocabulary）；
 - ``TERMINAL_CHAT_EVENTS`` —— 终态事件词表，从 :mod:`app.utils.sse`
   再导出（不复制，单一来源）；
 - :class:`TurnEventEmitter` —— 绑定会话/turn 身份的 typed 事件出口。
@@ -41,6 +42,11 @@ from app.utils.sse import (
 
 # Chat 域事件词表。ghost 名（前端历史兼容名 message/thinking/...）不在
 # 后端词表内 —— 这里只登记后端真实发射的事件。
+# #1684（API-01 ④）：词表原自述「单一事实源」却漏 8 名真实发射的事件
+# （map_finalization / explorer_progress / heartbeat / spatial_event 直调
+# 字面量即可扫到、4 个 session_plan_* 走登记表投影）。反向守卫
+# （test_vocabulary_covers_every_emitted_event）钉死「实际发射 ⊆ 词表」，
+# 此后新增事件漏登记即红，而不是静默出一个前端不认的 wire 事件。
 CHAT_EVENT_TYPES: frozenset[str] = frozenset({
     "session",        # 匿名会话绑定（owner_token 下发，route 层）
     "task_start",
@@ -64,6 +70,16 @@ CHAT_EVENT_TYPES: frozenset[str] = frozenset({
     "resume_gap",     # resume replay 截断标记（event_resume）
     "ui_action",      # mount_widget 挂件（canvas_affordance）
     "clarification",  # ClarificationEnvelope（requirement_ir blocking 歧义，方向 3）
+    # ── #1684 补登记：以下 8 名此前在词表外但真实在 SSE wire 上 ──
+    "map_finalization",   # Pi 路径地图完成度终验披露（agent_pi_bridge.py）
+    "explorer_progress",  # post-turn explorer 桥接进度流（explorer/orchestrator.py）
+    "heartbeat",          # explorer 流保活（explorer/orchestrator.py）
+    "spatial_event",      # 空间事件 SSE 端点（api/routes/spatial_events.py）
+    "session_plan_updated",     # SessionPlan 面板唯一实时通道（session_plan.SSE_EVENT_NAMES）
+    "session_plan_progress",    # 同上
+    "session_plan_superseded",  # 同上
+    "session_plan_step",        # 同上（ADR-0180 kernel step 投影）
+    "workflow_graph",           # 执行图有界投影，复用 session_plan 通道（ADR-0184 E8）
 })
 
 # 终态词表：单一来源是 app.utils.sse（SSEBatcher 的 immediate-flush 判定

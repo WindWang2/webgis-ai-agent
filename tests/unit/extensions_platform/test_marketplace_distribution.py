@@ -370,6 +370,47 @@ def test_safe_extract_rejects_oversize_budget(tmp_path):
         safe_extract_package(_tar_bytes(build), tmp_path / "out")
 
 
+def test_safe_extract_total_budget_counted_once(tmp_path):
+    """review #1744-2：解包总字节预算必须**单次**累计。
+
+    旧结构在同一批成员上累加两次（流式预检 + 形状校验循环），实际生效
+    上界只有文档声明的一半（8 MiB → 4 MiB）。回归：4–8 MiB 区间的包
+    （文档预算内）必须解包成功；超过 8 MiB 才拒绝。"""
+    import io
+
+    manifest = b'{"id": "acme.demo", "version": "1.0.0"}'
+    budget = 8 * 1024 * 1024
+    half = (budget - 1024) // 2
+
+    def build_within(tar):
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest)
+        tar.addfile(info, io.BytesIO(manifest))
+        # 两个 ≈4 MiB 分片（+ manifest）仍在文档 8 MiB 预算内，但已越过
+        # 旧双重累计的「一半」预算 —— 旧实现在第一片就会误拒。
+        for name in ("a.bin", "b.bin"):
+            info = tarfile.TarInfo(name)
+            info.size = half
+            tar.addfile(info, io.BytesIO(b"x" * half))
+
+    out = tmp_path / "within"
+    safe_extract_package(_tar_bytes(build_within), out)
+    assert (out / "manifest.json").is_file()
+    assert (out / "a.bin").stat().st_size == half
+
+    def build_over(tar):
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest)
+        tar.addfile(info, io.BytesIO(manifest))
+        for name, size in (("a.bin", half), ("b.bin", half + 1024)):
+            info = tarfile.TarInfo(name)
+            info.size = size
+            tar.addfile(info, io.BytesIO(b"x" * size))
+
+    with pytest.raises(ExtensionPlatformError, match="unpacked bytes"):
+        safe_extract_package(_tar_bytes(build_over), tmp_path / "over")
+
+
 def test_safe_extract_requires_manifest(tmp_path):
     def build(tar):
         import io

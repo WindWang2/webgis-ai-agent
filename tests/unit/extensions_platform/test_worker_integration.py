@@ -258,3 +258,60 @@ class TestWorkerLifecycle:
         assert isinstance(entry["worker_pid"], int)
         assert entry["worker_crash_count"] == 0
         host.reset()
+
+
+class _NeverTerminatedStdout:
+    """只写不换行的 stdout 替身（#1709 的 OOM 向量：readline 会无界读下去）。"""
+
+    def read1(self, size: int) -> bytes:
+        return b"x" * size
+
+
+class TestBoundedStdoutReader:
+    """#1709：宿主 reader 按字节有界读 worker stdout；超限即杀 worker。"""
+
+    def test_oversize_line_kills_worker_instead_of_buffering(self, tmp_path, monkeypatch):
+        import subprocess
+        import sys
+
+        from app.extensions_platform.worker import client as wc
+        from app.extensions_platform.worker import protocol as wp
+
+        # 只把 max_bytes 收窄到 KiB 级（默认 64MiB 上限在单测里没有意义）；
+        # 被测代码路径（_reader_loop → iter_frames_bounded → kill）不变。
+        monkeypatch.setattr(
+            wc, "iter_frames_bounded",
+            lambda stdout: wp.iter_frames_bounded(stdout, max_bytes=1024),
+        )
+        # 真子进程：killpg 语义可观测（进程组被 SIGKILL）。
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        worker = wc.WorkerProcess(
+            pack_dir=tmp_path,
+            extension_id=EXTENSION_ID,
+            namespace="acme",
+            name="pack",
+            fingerprint="x" * 64,
+            grants=[],
+            settings={},
+            startup_timeout_s=1.0,
+            call_timeout_s=1.0,
+        )
+        worker._proc = proc
+        worker.pid = proc.pid
+        try:
+            worker._reader_loop(_NeverTerminatedStdout())
+            frame = worker._frames.get(timeout=5)
+            assert frame["type"] == "__protocol_error__"
+            assert "without a newline terminator" in frame["message"]
+            assert worker._frames.get(timeout=5)["type"] == "__eof__"
+            # 超限即杀 worker（不等下一个调用方去踩崩溃路径）。
+            assert proc.poll() is not None
+            assert not worker.alive
+        finally:
+            worker.kill()

@@ -298,7 +298,9 @@ function _parseStats(raw: unknown): StatsPanelData | undefined {
           : undefined,
       unit: typeof it['unit'] === 'string' ? it['unit'] : undefined,
     }))
-    .filter((it) => it.label !== undefined || it.value !== undefined);
+    .filter((it) => it.label !== undefined || it.value !== undefined)
+    // #1745 5：行数封顶 —— 超大面板不得进入导出关键路径。
+    .slice(0, EXPORT_PANEL_MAX_ROWS);
   if (parsed.length === 0) return undefined;
   const title = (raw as { title?: unknown }).title;
   return { title: typeof title === 'string' ? title : undefined, items: parsed };
@@ -360,6 +362,15 @@ function _parseChart(raw: unknown): ChartPanelData | undefined {
 
 const EXPORT_TABLE_MAX_ROWS = 8;
 const EXPORT_TABLE_MAX_COLUMNS = 6;
+
+/**
+ * 面板行数上限（#1745 5）：statistics / decision / methodology / uncertainty
+ * 四族面板的载荷解析封顶。后端下发的超大面板此前不设上限 —— 绘制端对每行
+ * 做 `_clipText`（O(len²) 的 measureText 循环）+ measureText + fillText，
+ * 会在导出关键路径上造成无界画布工作量，并把面板盒高撑到画布外。与
+ * table_panel 的 EXPORT_TABLE_MAX_ROWS 同一「有界显示面」纪律。
+ */
+const EXPORT_PANEL_MAX_ROWS = 24;
 
 /** 行数组（列序对齐）→ 记录；非数组行透传对象。 */
 function _rowToRecord(columns: unknown, row: unknown): Record<string, unknown> {
@@ -446,6 +457,7 @@ function _parseMethodology(raw: unknown): ExportChromeElement['disclosure'] {
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
   const rows: string[] = [];
   for (const item of raw) {
+    if (rows.length >= EXPORT_PANEL_MAX_ROWS) break;  // #1745 5：行数封顶
     if (!item || typeof item !== 'object') continue;
     const rec = item as Record<string, unknown>;
     if (typeof rec['text'] !== 'string' || !rec['text'].trim()) continue;
@@ -461,6 +473,7 @@ function _parseUncertainty(raw: unknown): ExportChromeElement['disclosure'] {
   const rows: string[] = [];
   if (Array.isArray(rec['items'])) {
     for (const item of rec['items']) {
+      if (rows.length >= EXPORT_PANEL_MAX_ROWS) break;  // #1745 5：行数封顶
       if (!item || typeof item !== 'object') continue;
       const r = item as Record<string, unknown>;
       if (typeof r['label'] !== 'string' || !r['label'].trim()) continue;
@@ -471,6 +484,7 @@ function _parseUncertainty(raw: unknown): ExportChromeElement['disclosure'] {
       rows.push(`${kind} · ${r['label']}${detail}`);
     }
   }
+  // 采样说明是尾部注记（不计入行数封顶的正文配额）。
   if (typeof rec['sampleNote'] === 'string' && rec['sampleNote'].trim()) {
     rows.push(rec['sampleNote']);
   }
@@ -490,11 +504,13 @@ function _parseDecision(raw: unknown): ExportChromeElement['disclosure'] {
   }
   const rowsRaw = rec['rows'];
   if (Array.isArray(rowsRaw)) {
-    // 与 live decision-panel 同语义：行数不设上限（boxH 随行数伸缩）；
-    // rank 缺失回退 rows.length+1（live 同式）；basis 仅区分 vetoed
-    //（删除线），不做内联文本（live 用 data-basis）。
+    // #1745 5：行数封顶（此前「不设上限、boxH 随行数伸缩」—— 超大决策
+    // 面板会把导出画布工作量与盒高一起撑爆）；rank 缺失回退 rows.length+1
+    //（live 同式）；basis 仅区分 vetoed（删除线），不做内联文本（live 用
+    // data-basis）。
     let seq = 0;
     for (const item of rowsRaw) {
+      if (rows.length >= EXPORT_PANEL_MAX_ROWS) break;
       if (!item || typeof item !== 'object') continue;
       const r = item as Record<string, unknown>;
       if (typeof r['name'] !== 'string' || !r['name'].trim()) continue;
@@ -507,11 +523,14 @@ function _parseDecision(raw: unknown): ExportChromeElement['disclosure'] {
     }
   }
   const vetoesRaw = rec['vetoes'];
-  if (Array.isArray(vetoesRaw)) {
+  if (Array.isArray(vetoesRaw) && rows.length < EXPORT_PANEL_MAX_ROWS) {
     const vetoes = vetoesRaw.filter((v): v is string => typeof v === 'string' && !!v.trim());
     if (vetoes.length) {
       rows.push('硬约束否决：');
-      for (const v of vetoes) rows.push(`· ${v}`);
+      for (const v of vetoes) {
+        if (rows.length >= EXPORT_PANEL_MAX_ROWS) break;
+        rows.push(`· ${v}`);
+      }
     }
   }
   // 出现条件与 live 对齐：live 仅在 rows 或 vetoes 存在时渲染正文
@@ -1510,6 +1529,27 @@ export function drawChromeAttribution(
   _text(d, el.text, origin.x, y, origin.align);
 }
 
+/**
+ * 面板盒高钳位（#1745 5）：面板绝不超出画布下沿。
+ *
+ * 顶锚时盒顶在 `origin.y`、底锚时盒底距画布底 `origin.y`（anchorOrigin 的
+ * y 契约）—— 两种锚定的可用高度同式 `targetH - origin.y`。返回钳位后的盒高
+ * 与盒内可容纳的行数：行数封顶（EXPORT_PANEL_MAX_ROWS）之外的第二道闸，
+ * 小画布 / 顶部长锚距下面板同样不会把行画到画布外。
+ */
+function _clampPanelBox(
+  d: DrawCtx,
+  origin: { y: number },
+  rawBoxH: number,
+  chromeH: number,
+  rowH: number,
+): { boxH: number; visibleRows: number } {
+  const availH = Math.max(d.scalePx(36), d.targetH - origin.y - d.scalePx(8));
+  const boxH = Math.min(rawBoxH, availH);
+  const visibleRows = Math.max(0, Math.floor((boxH - chromeH) / rowH));
+  return { boxH, visibleRows };
+}
+
 /** 统计卡（title + label/value 行）。 */
 export function drawChromeStatsPanel(
   d: DrawCtx,
@@ -1523,13 +1563,15 @@ export function drawChromeStatsPanel(
   const titleH = el.stats.title ? d.scalePx(26) : 0;
   const collapsed = el.text !== undefined;
   const boxW = el.rect?.width ?? d.scalePx(240);
-  const boxH = collapsed
+  const chromeH = padding * 2 + titleH;
+  const rawBoxH = collapsed
     ? d.scalePx(36)
-    : padding * 2 + titleH + el.stats.items.length * rowH;
+    : chromeH + el.stats.items.length * rowH;
 
   const origin = el.rect
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
     : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 90 });
+  const { boxH, visibleRows } = _clampPanelBox(d, origin, rawBoxH, chromeH, rowH);
   const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
   const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
 
@@ -1542,7 +1584,7 @@ export function drawChromeStatsPanel(
     y += titleH;
   }
   if (collapsed) return;
-  for (const item of el.stats.items) {
+  for (const item of el.stats.items.slice(0, visibleRows)) {
     ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(100,116,139,0.9)';
     ctx.font = `${d.scalePx(11)}px sans-serif`;
     _text(d, item.label ?? '', lx + padding, y + d.scalePx(14), 'left');
@@ -1571,11 +1613,14 @@ export function drawChromeDisclosurePanel(
   const titleH = d.scalePx(24);
   const collapsed = el.text !== undefined;
   const boxW = el.rect?.width ?? d.scalePx(250);
-  const boxH = collapsed ? d.scalePx(36) : padding * 2 + titleH + el.disclosure.rows.length * rowH;
+  const chromeH = padding * 2 + titleH;
+  const rawBoxH = collapsed ? d.scalePx(36) : chromeH + el.disclosure.rows.length * rowH;
 
   const origin = el.rect
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
     : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 90 });
+  // #1745 5：盒高钳位 + 盒内可见行数（行数封顶之外的第二道闸）。
+  const { boxH, visibleRows } = _clampPanelBox(d, origin, rawBoxH, chromeH, rowH);
   const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
   const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
 
@@ -1597,8 +1642,9 @@ export function drawChromeDisclosurePanel(
   _text(d, el.disclosure.title, lx + padding, y + d.scalePx(12), 'left');
   y += titleH;
   const strike = new Set(el.disclosure.strikeRows ?? []);
-  for (let i = 0; i < el.disclosure.rows.length; i++) {
-    const row = el.disclosure.rows[i];
+  const rows = el.disclosure.rows.slice(0, visibleRows);
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
     const text = _clipText(ctx, row, boxW - padding * 2);
     ctx.fillStyle = strike.has(i)
       ? d.darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(100,116,139,0.9)'
@@ -1649,13 +1695,17 @@ export function drawChromeTable(
   if (hiddenCols > 0) footerParts.push(`…${hiddenCols} 列未显示`);
   const footerH = footerParts.length ? d.scalePx(16) : 0;
   const boxW = el.rect?.width ?? d.scalePx(320);
-  const boxH = collapsed
+  const chromeH = padding * 2 + titleH + rowH + footerH;  // +表头行
+  const rawBoxH = collapsed
     ? d.scalePx(36)
     : padding * 2 + titleH + rowH * (table.rows.length + 1) + footerH;
 
   const origin = el.rect
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
     : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 90 });
+  // #1745 5：盒高钳位 + 盒内可见行数（快照 ≤8 行之外的第二道闸 —— 小画布
+  // 或顶部长锚距下的表格同样不得把行画到画布外）。
+  const { boxH, visibleRows } = _clampPanelBox(d, origin, rawBoxH, chromeH, rowH);
   const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
   const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
 
@@ -1682,9 +1732,9 @@ export function drawChromeTable(
   ctx.lineTo(gridX + gridW, y + rowH - d.scalePx(4));
   ctx.stroke();
   y += rowH;
-  // 行快照（≤8 行；隔行淡底 —— live hover 底纹的静态近似）
+  // 行快照（≤8 行且 ≤ 盒内可见行数；隔行淡底 —— live hover 底纹的静态近似）
   ctx.font = `${d.scalePx(10)}px sans-serif`;
-  table.rows.forEach((row, ri) => {
+  table.rows.slice(0, visibleRows).forEach((row, ri) => {
     if (ri % 2 === 1) {
       ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)';
       ctx.fillRect(gridX, y, gridW, rowH);

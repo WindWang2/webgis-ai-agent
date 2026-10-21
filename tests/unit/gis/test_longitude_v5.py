@@ -58,6 +58,22 @@ def test_bbox_crosses_antimeridian():
     assert bbox_crosses_antimeridian(-10.0, 0.0, 10.0, 10.0) is False
 
 
+@pytest.mark.parametrize("minx,maxx,expected", [
+    # 宽 bbox 但不触 ±180：span>180 单独不构成环绕证据（#1737）
+    (-100.0, 100.0, False),
+    (-179.0, 179.0, False),
+    # 触边 + span>180：真环绕（含 e360 全球表示）
+    (-100.0, 180.0, True),
+    (0.0, 350.0, True),
+    (-180.0, 180.0, True),
+    # 触边但 span ≤ 180：贴边合法 bbox，不是环绕
+    (-180.0, -170.0, False),
+    (170.0, 180.0, False),
+])
+def test_bbox_crosses_antimeridian_needs_edge_contact(minx, maxx, expected):
+    assert bbox_crosses_antimeridian(minx, 0.0, maxx, 10.0) is expected
+
+
 # ---------------------------------------------------------------- AM 拆分
 
 def _polygon(*rings):
@@ -132,6 +148,31 @@ def test_describe_longitude_semantics_absent_evidence():
     assert facts["convention"] == "ambiguous"
     assert facts["crosses_antimeridian"] is False
     assert facts["evidence"] == "absent"  # 绝不虚构
+
+
+def test_describe_longitude_semantics_keeps_bbox_e360_evidence():
+    """#1737：bbox 的 e360 证据（maxx>180）不得被采样几何整体替换掉。
+
+    e360 全球数据集的几何采样常全部落在 0-180（东半球一角）——旧实现
+    ``lons = geo_lons or lons`` 把它报成 ambiguous 且不要求归一。
+    """
+    bbox = [0.0, -10.0, 200.0, 10.0]  # e360 表示：maxx>180
+    geom = {"type": "Polygon", "coordinates": [[
+        [10.0, 0.0], [20.0, 0.0], [20.0, 5.0], [10.0, 5.0], [10.0, 0.0],
+    ]]}
+    facts = describe_longitude_semantics(bbox, geom)
+    assert facts["convention"] == "e360"
+    assert facts["normalization_required"] is True
+    assert facts["evidence"] == "bbox+geometry"
+
+
+def test_describe_longitude_semantics_merges_geometry_pm180_evidence():
+    """bbox 与 geometry 证据取并集 —— 几何里的负经度也活。"""
+    bbox = [0.0, -10.0, 50.0, 10.0]  # 单独看 ambiguous（全落 0-180）
+    geom = {"type": "Point", "coordinates": [-5.0, 1.0]}
+    facts = describe_longitude_semantics(bbox, geom)
+    assert facts["convention"] == "pm180"
+    assert facts["evidence"] == "bbox+geometry"
 
 
 # ---------------------------------------------------------------- KNOWN-GAP #1

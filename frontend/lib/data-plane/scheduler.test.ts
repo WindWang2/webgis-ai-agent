@@ -374,3 +374,79 @@ describe('DataPlaneScheduler — pinning (visibility-aware cache)', () => {
     expect(h.scheduler.cachePeek('s1::ref:pin')).toBeDefined(); // 仍在：未到预算
   });
 });
+
+// ── #1745（6）：调用方 AbortSignal 监听器的生命周期 ──────────────────────
+//
+// request 注册在调用方 signal 上的监听器此前只在 cancelItem 里移除 ——
+// fulfilled / not-modified / failed 的落地路径从不移除：长生命周期 signal
+// （会话级/组件级）上监听器与已结算的 QueueItem 单向累积。
+
+function fakeSignal() {
+  const listeners = new Set<(ev?: unknown) => void>();
+  return {
+    aborted: false,
+    addEventListener: vi.fn((_type: string, fn: (ev?: unknown) => void) => {
+      listeners.add(fn);
+    }),
+    removeEventListener: vi.fn((_type: string, fn: (ev?: unknown) => void) => {
+      listeners.delete(fn);
+    }),
+    fire: () => {
+      for (const fn of [...listeners]) fn();
+    },
+    size: () => listeners.size,
+  };
+}
+
+describe('DataPlaneScheduler — external signal listener lifecycle (#1745 6)', () => {
+  it('fulfilled request removes its abort listener', async () => {
+    const h = makeHarness();
+    const signal = fakeSignal();
+    const p = h.scheduler.request(req({ signal: signal as unknown as AbortSignal }));
+    expect(signal.addEventListener).toHaveBeenCalledTimes(1);
+    h.resolveAll();
+    expect((await p).status).toBe('fulfilled');
+    expect(signal.removeEventListener).toHaveBeenCalledTimes(1);
+    expect(signal.size()).toBe(0);
+  });
+
+  it('failed request removes its abort listener', async () => {
+    const h = makeHarness({ impl: async () => { throw new Error('boom'); } });
+    const signal = fakeSignal();
+    const r = await h.scheduler.request(req({ signal: signal as unknown as AbortSignal }));
+    expect(r.status).toBe('failed');
+    expect(signal.removeEventListener).toHaveBeenCalledTimes(1);
+    expect(signal.size()).toBe(0);
+  });
+
+  it('cancelled (queued) request removes its abort listener', async () => {
+    const h = makeHarness({ concurrency: 1 });
+    const gate = h.scheduler.request(req({ refId: 'ref:gate' }));
+    const signal = fakeSignal();
+    const queued = h.scheduler.request(req({ refId: 'ref:queued', signal: signal as unknown as AbortSignal }));
+    expect(h.scheduler.cancelRef('ref:queued')).toBe(1);
+    expect((await queued).status).toBe('cancelled');
+    expect(signal.size()).toBe(0);
+    h.resolveAll();
+    await gate;
+  });
+
+  it('many sequential requests on one long-lived signal leave zero listeners', async () => {
+    const h = makeHarness();
+    const signal = fakeSignal();
+    for (let i = 0; i < 12; i++) {
+      const p = h.scheduler.request(req({ refId: `ref:r${i}`, signal: signal as unknown as AbortSignal }));
+      h.resolveAll();
+      expect((await p).status).toBe('fulfilled');
+    }
+    expect(signal.size()).toBe(0);
+    // 监听器仍可用：后续 abort 语义没被提前摘除破坏（幂等卸除不误伤）。
+    const last = h.scheduler.request(req({ refId: 'ref:last', signal: signal as unknown as AbortSignal }));
+    expect(signal.size()).toBe(1);
+    signal.fire();
+    // 取消后让在飞 fetch 落地（harness 只看 resolveAll）→ cancelled 结算。
+    h.resolveAll();
+    expect((await last).status).toBe('cancelled');
+    expect(signal.size()).toBe(0);
+  });
+});

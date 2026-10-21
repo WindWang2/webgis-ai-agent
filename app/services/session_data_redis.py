@@ -165,6 +165,12 @@ class RedisSessionStore(BaseSessionStore):
         # GC 后会复用，复用 id 会拿到绑定已死 loop 的旧客户端）。
         client = self._loop_clients.get(loop) if loop is not None else None
         if client is not None:
+            # #1703：命中 per-loop 缓存也必须刷新 legacy 字段。本类 32 个方法
+            # 在 `await self._ensure_connected()` 之后直接读 `self._r`，若此处
+            # 只 return 不更新，loop 交替（REST/manager loop ↔ agent 工具 loop）
+            # 后旧 loop 的每次操作都会驱动另一个 loop 的客户端 —— 违背 redis-py
+            # 的 loop-affinity 硬约束，慢路径（下方）的不变式被快路径打破。
+            self._bind_legacy_client(client, loop)
             return client
 
         with self._client_lock:
@@ -172,6 +178,7 @@ class RedisSessionStore(BaseSessionStore):
             # 双检
             client = self._loop_clients.get(loop) if loop is not None else None
             if client is not None:
+                self._bind_legacy_client(client, loop)
                 return client
             new_client = aioredis.Redis.from_url(
                 self._redis_url,
@@ -181,13 +188,26 @@ class RedisSessionStore(BaseSessionStore):
             )
             if loop is not None:
                 self._loop_clients[loop] = new_client
-                # legacy 读取点（直接访问 self._r）保持可用：指向当前 loop 的
-                # 最新客户端。
-                self._r = new_client
-                self._bound_loop = loop
+                self._bind_legacy_client(new_client, loop)
             else:
                 self._r = new_client
             return new_client
+
+    def _bind_legacy_client(
+        self,
+        client: aioredis.Redis,
+        loop: Optional[asyncio.AbstractEventLoop],
+    ) -> None:
+        """把 legacy 读取字段指向当前 loop 的客户端（#1703 不变式维护点）。
+
+        ``self._r`` / ``self._bound_loop`` 是 legacy 兼容字段：本类绝大多数
+        方法在 ``await self._ensure_connected()`` 之后直接访问 ``self._r``
+        而非使用返回值，因此每条物化/命中路径都必须同步刷新它们，否则 loop
+        交替时会读到绑定别的 loop 的客户端（redis-py 的 loop-affinity 硬约束）。
+        纯属性写、无 await，loop 安全。
+        """
+        self._r = client
+        self._bound_loop = loop
 
     def _prune_closed_loops(self) -> None:
         """清理绑定到已关闭 loop 的客户端（防止表无限增长）。"""

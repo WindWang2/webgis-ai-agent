@@ -196,3 +196,49 @@ async def test_evidence_tier_verdicts(runner):
     })
     r2 = await runner.run_case(wrong)
     assert not r2.passed, "narrative must never reach supported"
+
+
+class _StubExecRegistry:
+    """execute tier 最小 registry 替身（离线：不触真实工具）。"""
+
+    def list_tools(self):
+        return ["stub_tool"]
+
+    async def dispatch(self, tool, args, session_id=None):
+        return {"success": True, "value": 1}
+
+
+class _BoomMapspecStore:
+    """存储不可用替身：get_mapspec 一律抛错。"""
+
+    async def get_mapspec(self, session_id):
+        raise RuntimeError("mapspec store unavailable")
+
+
+async def test_execute_tier_mapspec_store_error_is_not_product_failure(monkeypatch):
+    """review #1744-3：MapSpec 读取抛错（基础设施故障）不得折算成产品
+    语义失败。旧代码 `except Exception: mapspec = None` 把「存储不可用」
+    与「本轮没产出」混为一谈 —— component 补充断言、numeric mapspec
+    断言与 "mapspec missing after script" 会全红。回归：infra 故障单独
+    记账，伪产品失败一条都不许出现。"""
+    from app.evaluation.case import NumericAssertion, ScriptStep
+
+    monkeypatch.setattr(
+        "app.services.mapspec.store.mapspec_store_instance", _BoomMapspecStore()
+    )
+    case = GISBenchmarkCase(
+        id="UT-exec-store-error", name="store error", group="hard-negative",
+        query="青羊区小学数量", plan_only=False,
+        script=[ScriptStep(tool="stub_tool", args={})],
+        component_assertions=["chart"],
+        numeric_assertions=[
+            NumericAssertion(source="mapspec", path="layout", agg="len",
+                             op=">=", value=0),
+        ],
+    )
+    r = await GISBenchmarkRunner(registry=_StubExecRegistry()).run_case(case)
+    assert not r.passed
+    assert any("infrastructure" in f for f in r.failures), r.failures
+    assert not any("component missing in MapSpec" in f for f in r.failures)
+    assert not any("numeric assertion failed" in f for f in r.failures)
+    assert not any("mapspec missing after script" in f for f in r.failures)

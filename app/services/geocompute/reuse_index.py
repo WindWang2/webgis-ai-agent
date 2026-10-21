@@ -63,6 +63,12 @@ def record_result(
 
     fail-open：任何 DB 异常返回 False（调用方只当「索引没写上」，绝不影响
     执行结果）。
+
+    #1724：并发守卫。真正的原子性由 (owner_scope, node_fingerprint) 唯一
+    索引担保（db_model 声明 + 迁移侧修复，核心契约范围）；本函数在索引
+    就位前/就位后都用 bulk delete 清掉该键的**全部**既有行（含历史竞态
+    留下的重复行）再插入 —— read-one→delete-one 会漏删重复行，让它们
+    永久驻留并被无 order_by 的读取方随机消费。
     """
     if not owner_scope or not node_fingerprint or not result_ref or not session_id:
         return False
@@ -80,18 +86,13 @@ def record_result(
                 .limit(1)
             ).scalar_one_or_none() or tenancy.get_or_create_default_org_id_sync(db)
 
-            existing = (
-                db.query(GeoComputeNodeResult)
-                .filter(
-                    GeoComputeNodeResult.owner_scope == owner_scope,
-                    GeoComputeNodeResult.node_fingerprint == node_fingerprint,
-                )
-                .first()
-            )
-            if existing is not None:
-                # 重写即刷新（LRU 触点 = created_at）
-                db.delete(existing)
-                db.flush()
+            # 重写即刷新（LRU 触点 = created_at）：删除该键的全部行后插入
+            # 新行（bulk delete 一并清掉竞态重复行）。
+            db.query(GeoComputeNodeResult).filter(
+                GeoComputeNodeResult.owner_scope == owner_scope,
+                GeoComputeNodeResult.node_fingerprint == node_fingerprint,
+            ).delete(synchronize_session=False)
+            db.flush()
             db.add(GeoComputeNodeResult(
                 org_id=org_id,
                 owner_scope=owner_scope[:40],
@@ -115,6 +116,11 @@ def find_result(owner_scope: str, node_fingerprint: str) -> Optional[dict[str, A
 
     返回 ``{result_ref, session_id, upstream_fingerprints, created_at}``；
     上游一致性校验与 ref 存活探测由调用方（executor）执行 —— 本模块只寻址。
+
+    #1724：「最新条目」必须显式 ``order_by(created_at.desc(), id.desc())``
+    —— 裸 ``.first()`` 在无唯一索引（迁移修复前）/ 竞态重复行下语义不定，
+    可能返回陈旧条目（错行被复用）。id 作为 created_at 同秒时的确定性
+    决胜（与 _prune_owner 同一排序口径）。
     """
     if not owner_scope or not node_fingerprint:
         return None
@@ -127,6 +133,10 @@ def find_result(owner_scope: str, node_fingerprint: str) -> Optional[dict[str, A
                 .filter(
                     GeoComputeNodeResult.owner_scope == owner_scope,
                     GeoComputeNodeResult.node_fingerprint == node_fingerprint,
+                )
+                .order_by(
+                    GeoComputeNodeResult.created_at.desc(),
+                    GeoComputeNodeResult.id.desc(),
                 )
                 .first()
             )

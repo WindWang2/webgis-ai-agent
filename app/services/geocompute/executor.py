@@ -43,6 +43,7 @@ from app.services.geocompute.errors import (
     classify_failure,
 )
 from app.services.geocompute.normalization import canonical_dumps
+from app.services.geocompute.payload_rows import row_items
 from app.services.geocompute.plan import (
     ExecutionNode,
     ExecutionPlan,
@@ -259,11 +260,19 @@ class NodeResultStore:
     @staticmethod
     def _measure(payload: dict[str, Any]) -> int:
         """近似字节量：采样 64 条外推（评审 m2 —— 全量 str() 是大节点上的
-        瞬时垃圾源；采样估计对字节预算足够）。"""
+        瞬时垃圾源；采样估计对字节预算足够）。
+
+        #1718：``features`` 键下的 rows 信封 dict（durable 回传面的历史
+        盲包形状）必须先还原成 rows 列表再采样 —— 对 dict 切片
+        （``items[:64]``）会抛 KeyError/TypeError，把 governor 记账与
+        NodeResultStore.put 一起炸断。
+        """
         total = 0
         for key in ("features", "rows"):
-            items = payload.get(key) or []
-            if not items:
+            items = payload.get(key)
+            if isinstance(items, dict):
+                items = items.get("rows")
+            if not isinstance(items, list) or not items:
                 continue
             sample = items[:64]
             avg = sum(len(str(f)) for f in sample) / len(sample)
@@ -1028,6 +1037,7 @@ class GeoExecutionEngine:
                 # 分区 job（各自独立幂等/重试），完成后按 seam 语义合并。
                 self._execute_durable_partitioned(
                     run, node, outputs, outputs_fp, ev, session_id=session_id,
+                    caller=caller,
                     owner_scope=owner_scope,
                     cancel_token=cancel_token, node_deadline=node_deadline,
                     governor=governor, gov_path=gov_path,
@@ -1039,6 +1049,7 @@ class GeoExecutionEngine:
             else:
                 self._execute_durable(
                     run, node, outputs, outputs_fp, ev, session_id=session_id,
+                    caller=caller,
                     owner_scope=owner_scope,
                     cancel_token=cancel_token, node_deadline=node_deadline,
                     governor=governor, gov_path=gov_path,
@@ -1256,6 +1267,7 @@ class GeoExecutionEngine:
         ev: NodeEvidence,
         *,
         session_id: Optional[str],
+        caller: Optional[dict[str, Any]] = None,
         owner_scope: str,
         cancel_token: Optional[CancellationToken],
         node_deadline: float,
@@ -1349,6 +1361,7 @@ class GeoExecutionEngine:
             job_id = self._dispatch_tile(
                 entry["node"], run, session_id, node_deadline, budget,
                 input_refs, input_keys, resource_envelope, owner_scope,
+                caller=caller,
             )
             if job_id is None:
                 entry["attempts"] += 1
@@ -1414,6 +1427,7 @@ class GeoExecutionEngine:
                     new_job = self._dispatch_tile(
                         tile_node, run, session_id, node_deadline, budget,
                         input_refs, input_keys, resource_envelope, owner_scope,
+                        caller=caller,
                     )
                     if new_job is not None:
                         entry["job_id"] = new_job
@@ -1607,6 +1621,7 @@ class GeoExecutionEngine:
         input_keys: dict[str, str],
         resource_envelope: Optional[dict[str, Any]],
         owner_scope: str,
+        caller: Optional[dict[str, Any]] = None,
     ) -> Optional[int]:
         """派发单个 tile job；返回 job_id（派发失败 None → tile 重试）。"""
         from app.services.geocompute import durable
@@ -1625,6 +1640,7 @@ class GeoExecutionEngine:
                 input_keys=input_keys,
                 resource_envelope=resource_envelope,
                 owner_scope=owner_scope,
+                caller=caller,
             )
         except GeoComputeError:
             # 派发异常（DB 抖动/快照超限等）→ None = 消耗一次 tile attempt
@@ -1734,6 +1750,7 @@ class GeoExecutionEngine:
         ev: NodeEvidence,
         *,
         session_id: Optional[str],
+        caller: Optional[dict[str, Any]] = None,
         owner_scope: str,
         cancel_token: Optional[CancellationToken],
         node_deadline: float,
@@ -1766,6 +1783,11 @@ class GeoExecutionEngine:
         worker 侧 ``OperatorContext`` 无 budget，行数红线只剩
         HARD_NODE_ROW_CAP，plan 级预算在 durable 路径形同虚设。budget 走
         task_kwargs（不进 params）—— 不改幂等键（治理元数据≠节点身份）。
+
+        #1718：``caller`` 同款通道穿透到 worker 任务体 —— 此前 durable
+        路径丢弃 caller，QUERY/SOURCE_SCAN 的目录项准入在 worker 侧按
+        匿名 fail-closed 裁决（租户隔离失效）。caller 与 budget/run_id
+        一样只进 task_kwargs，幂等键不变。
         """
         from app.services.geocompute.envelope import effective_dispatch_envelope
 
@@ -1837,6 +1859,7 @@ class GeoExecutionEngine:
                     input_keys=input_keys,
                     resource_envelope=resource_envelope,
                     owner_scope=owner_scope,
+                    caller=caller,
                 )
                 if ret.get("backend_variant"):
                     # V5 step 5：eager 降级诚实披露（reproducibility honesty）。
@@ -1858,6 +1881,7 @@ class GeoExecutionEngine:
                     owner_scope=owner_scope, budget=budget,
                     input_refs=input_refs, input_keys=input_keys,
                     resource_envelope=resource_envelope,
+                    caller=caller,
                     emit_events=emit_events,
                 )
                 payload = done["payload"]
@@ -1974,6 +1998,7 @@ class GeoExecutionEngine:
         input_refs: dict[str, str],
         input_keys: dict[str, str],
         resource_envelope: Optional[dict[str, Any]],
+        caller: Optional[dict[str, Any]] = None,
         emit_events: bool = False,
     ) -> dict[str, Any]:
         """durable job 等待；straggler 触发时派发**投机副本**（Phase F）。
@@ -2047,6 +2072,7 @@ class GeoExecutionEngine:
             input_keys=input_keys,
             resource_envelope=resource_envelope,
             owner_scope=owner_scope,
+            caller=caller,
         )
         spec_id = int(spec_ret["job_id"])
         _emit_run_event(run.run_id, "speculative_dispatch",
@@ -2309,7 +2335,12 @@ class GeoExecutionEngine:
             return None
         if stored is None:
             return None
-        return {"ref_id": ref, "features": stored, "metadata": {"via": "durable_reuse"}}
+        # #1718：与 await 面（durable.payload_from_stored_ref）同一形状
+        # 归位 —— rows 信封还原为 rows 键，复用命中后的记账/计数/
+        # 下游交接才不被 dict 形状破坏。
+        from app.services.geocompute.durable import payload_from_stored_ref
+
+        return payload_from_stored_ref(ref, stored, "durable_reuse")
 
     @staticmethod
     def slot_units_for(node: ExecutionNode) -> int:
@@ -2340,19 +2371,22 @@ class GeoExecutionEngine:
         """
         if governor is None or gov_path is None:
             return
-        rows_payload = payload.get("features") or payload.get("rows") or []
+        # #1718：经 row_items 投影（rows 信封 dict → 信封内 rows）；
+        # 裸 payload.get("features") 会把信封 dict 当真值，len(dict)=1
+        # 少报，_measure 同源炸断（见 payload_rows 模块 docstring）。
+        rows_items = row_items(payload) or []
         bytes_est = NodeResultStore._measure(payload)
-        governor.charge(gov_path, rows=len(rows_payload), bytes=bytes_est, nodes=1)
+        governor.charge(gov_path, rows=len(rows_items), bytes=bytes_est, nodes=1)
         if charge_ledger is not None:
-            charge_ledger.add(len(rows_payload), bytes_est, 1)
+            charge_ledger.add(len(rows_items), bytes_est, 1)
 
     @staticmethod
     def _count_rows(payload: dict[str, Any]) -> Optional[int]:
-        if "features" in payload:
-            return len(payload["features"])
-        if "rows" in payload:
-            return len(payload["rows"])
-        return None
+        # #1718：信封形状（features 键下嵌 {"rows": [...]}）经 row_items
+        # 还原为真实行数；裸 len(dict) 会恒报 1。都不命中 → None（无行/
+        # 要素通道，如 raster tile 的路径通货）。
+        items = row_items(payload)
+        return None if items is None else len(items)
 
 
 #: 进程级默认引擎（与 spatial_catalog_service 同一单例惯例）。

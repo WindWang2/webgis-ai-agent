@@ -1,0 +1,41 @@
+# #1688: cert-manager 的 ACME 签发者清单。
+#
+# 修复前 04-ingress.yaml:L33 声明 `cert-manager.io/cluster-issuer:
+# "letsencrypt-prod"`，但仓库内没有任何 ClusterIssuer/Issuer 清单 ——
+# cert-manager 只会发 IssuerNotFound event，`spec.tls.secretName: webgis-tls`
+# 永远不会被创建；叠加 host 占位符与 L8 的 `ssl-redirect: "true"`，最终形态是
+# 所有 HTTP 请求 308 到一个没有证书的 HTTPS 端点（HTTPS 永不就绪）。
+#
+# ⚠️ 故意**不**进 kustomization.yaml 的 resources：该文件有
+# `namespace: webgis-prod`，kustomize 的 namespace 转换器会给资源树里每个资源
+# 注入 metadata.namespace；而 ClusterIssuer 是 cluster-scoped，apiserver 的
+# ValidateObjectMeta(requiresNamespace=false) 会直接拒绝
+# （"metadata.namespace: Invalid value: ... not allowed when resource is not
+# namespaced"），把整个 `kubectl apply -k .` 一起打挂。因此本清单单独应用
+# （cert-manager 的 CRD 需先在集群里装好）：
+#
+#   kubectl apply -f deploy/k8s/04b-clusterissuer.yaml
+#
+# 部署前必须替换的运维参数（占位值下 ACME 注册/签发必然失败 —— 响亮失败，
+# 不会静默退化成明文入口）：
+#   1. spec.acme.email：ACME 账号注册邮箱（证书到期通知发到这里）；
+#   2. deploy/k8s/01-configmap.yaml 的 INGRESS_HOST：Ingress 对外域名，
+#      kustomize build 时由 replacements 注入 04-ingress.yaml 的 host 段。
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  # 故意不写 namespace：cluster-scoped 资源带 namespace 会被 apiserver 拒绝
+  # （见文件头说明），tests/test_k8s_ingress_contract.py 守住这一点。
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # #1688: 占位邮箱 —— 不替换则 ACME 注册即失败。部署前改成运维邮箱，
+    # 例如 ops@<INGRESS_HOST 对应的真实域名>。
+    email: __OPS_EMAIL__
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx

@@ -39,7 +39,8 @@ def evaluate_chain_gate(
     """门裁决（纯函数）。
 
     records: ``chain.as_dict()`` 形状列表（含 ``stages`` / ``completeness`` /
-    ``turn_id``）。返回 {passed, min_required, per_chain[], n/a 披露}。
+    ``turn_id``）。返回 {passed, min_required, per_chain[], n/a 披露,
+    total/truncated}。全量遍历（#1709：不再截断到前 64 条）。
 
     ``expected_stages``（review R3 MAJOR）：场景必须覆盖的阶段集合 ——
     场景化回归的主判据（``expected ⊆ covered``）。条件阶段（如 REPAIR
@@ -50,7 +51,10 @@ def evaluate_chain_gate(
     unknown_na = na - {Stage(int(i)).name for i in STAGE_IDS}
     per_chain: List[Dict[str, Any]] = []
     passed = bool(records)
-    for rec in records[:64]:
+    # #1709：取消 records[:64] 截断——第 65 条以后的链此前既不计 passed
+    # 也不进报告（静默绕过）。改为全量遍历，并在报告披露 total/truncated
+    # （当前语义下 truncated 恒为 False，作为「无静默丢弃」的契约字段）。
+    for rec in records:
         stages = {
             str(s.get("stage"))
             for s in rec.get("stages") or []
@@ -92,6 +96,9 @@ def evaluate_chain_gate(
         "unknown_na_stages": sorted(unknown_na),
         "expected_stages": sorted(expected_stages or set()),
         "chain_count": len(per_chain),
+        # #1709：截断披露（total = 输入链数；全量遍历后无静默丢弃）。
+        "total": len(records),
+        "truncated": False,
         "per_chain": per_chain,
     }
 

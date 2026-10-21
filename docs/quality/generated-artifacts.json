@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "98411cc545e636d866838fece08b53523f2592d4e63115a16546305369f21cea",
+   "input_fingerprint": "6cdd706770457441ecf26629f132de7dfce4fd379697c095f36ce640abc43a2f",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -42,10 +42,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "a964bea352ab417d2fbf82b8e0f86258bdd58a00cb3f7b0101b8b3ad47e4acfd",
+   "content_fingerprint": "c4c600ad677ad33904a37baa7c67a2f439b2008d63b055b0e3896afa4e34d2c2",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "45d547b60e7c28d2b4547977e5ac357e32311c5a4d21f4269fc7be5951b43fb1",
+   "input_fingerprint": "ff5c54e5c5b1e701e53e4176300bcbe8227a0d182780910c4069b3ff294f1ebc",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -60,7 +60,7 @@
    "content_fingerprint": "44b8db2cad4983e78aa7a27d3c707db155532721af1201ca3b1945f519c19265",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "4d22bfeabc0864656b5be311212fccb27746925ecf2058059fc924511b6bc388",
+   "input_fingerprint": "659e984aa1c3b41a23d309be79b084951f89ca5187fc578307e3a38b281e0366",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -69,10 +69,10 @@
    "scope": "global"
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
-   "content_fingerprint": "7373a49c5264c257a687d0746b20d7e4f741de04013ad33520d767173ceb3808",
+   "content_fingerprint": "63785b47f1f8f40b6f1996975dcfb3fb985b5ff4fdcca6e7fef7f360f52d2b6f",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "bbdadbadc8021e21e02f2827cd5e43eaf820abf435efcf991bd94d18483ac475",
+   "input_fingerprint": "155ef55b696fed3fc9c0fa5dde469465cf7688b2d6e022eceef4192b30f4152c",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -103,7 +103,7 @@
    "content_fingerprint": "c0a912f32c18ad375f6f71e42952d53ac8afeff933ca3d9e6c500264417cea0a",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "bbdadbadc8021e21e02f2827cd5e43eaf820abf435efcf991bd94d18483ac475",
+   "input_fingerprint": "155ef55b696fed3fc9c0fa5dde469465cf7688b2d6e022eceef4192b30f4152c",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "98411cc545e636d866838fece08b53523f2592d4e63115a16546305369f21cea",
+   "input_fingerprint": "6cdd706770457441ecf26629f132de7dfce4fd379697c095f36ce640abc43a2f",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -132,10 +132,10 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "8ba024263153e990bdcf11e457c94c3ffd3393cb3de16b5240897c4413f9021b",
+   "content_fingerprint": "070fe742dc745785b28d58e5be0bbc65afb676e1c417d57bee685772bb7f9ae3",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "45d547b60e7c28d2b4547977e5ac357e32311c5a4d21f4269fc7be5951b43fb1",
+   "input_fingerprint": "ff5c54e5c5b1e701e53e4176300bcbe8227a0d182780910c4069b3ff294f1ebc",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -150,7 +150,7 @@
    "content_fingerprint": "53aaf066a2bc65807654402932e46fea3f2c84dde84396b11e66162a17abbe93",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "4d22bfeabc0864656b5be311212fccb27746925ecf2058059fc924511b6bc388",
+   "input_fingerprint": "659e984aa1c3b41a23d309be79b084951f89ca5187fc578307e3a38b281e0366",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -187,10 +187,10 @@
    "scope": "global"
   },
   "tests/quality/snapshots/realtime-contract.json": {
-   "content_fingerprint": "360065728abce3becbfabf84a5cc06f862b931df6bdc6f1915b2d3fe999949d7",
+   "content_fingerprint": "9e222afda0d3990057433fae0bc8daea2c949339d68e64968938084431e5d8a5",
    "generator": "app/lib/quality/api_compat.py",
    "generator_version": 1,
-   "input_fingerprint": "09c139f099b9904d00b9457e1d81e2f36188363017be692753b7b7cfe5b97301",
+   "input_fingerprint": "4153f10d85fb4827f3ddaae9ace3240416c333b795a2d716e2363c227b7f3883",
    "inputs": [
     "app/services/ws_service.py",
     "app/api/routes/ws.py",

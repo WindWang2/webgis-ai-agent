@@ -17,6 +17,7 @@ from app.models.data_fabric import CatalogItemModel, DataSourceModel
 from app.models.db_model import User
 from app.schemas.data_fabric_schema import QueryResult
 from app.services.data_fabric.errors import InvalidQueryError
+from app.services.data_fabric.manager import DataFabricManager
 
 _ITEM_ID = "cat_page_layer"
 _SOURCE_ID = "ds_page_src"
@@ -90,12 +91,18 @@ def _fake_query_result(features, next_cursor=None, has_more=False):
 
 
 def _install_manager(monkeypatch, result, capture=None):
-    async def _fake_query(session, item_id, spec):
+    # #1753：patch 类而非单例实例 —— 对实例的 monkeypatch 在 undo 时会把继承来的
+    # 原方法写回实例 __dict__（常驻阴影），之后任何对同属性的类级 patch 都被静默
+    # 击败（test_event_loop_offload_425 的 preview 用例因此走到真实 OGC 网络路径，
+    # 全量串行套件永久挂起）。classmethod 包装保持调用签名。
+    async def _fake_query(cls, session, item_id, spec):
         if capture is not None:
             capture["spec"] = spec
         return result
 
-    monkeypatch.setattr(df_routes.data_fabric_manager, "query_catalog_item_async", _fake_query)
+    monkeypatch.setattr(
+        DataFabricManager, "query_catalog_item_async", classmethod(_fake_query)
+    )
 
 
 @pytest.mark.asyncio
@@ -136,10 +143,11 @@ async def test_honest_degrade_when_source_lacks_pagination(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invalid_keyset_maps_400(client, monkeypatch):
-    async def _boom(session, item_id, spec):
+    async def _boom(cls, session, item_id, spec):
         raise InvalidQueryError("keyset cursor requires a uniform order key")
 
-    monkeypatch.setattr(df_routes.data_fabric_manager, "query_catalog_item_async", _boom)
+    # #1753：类级 patch（实例级 patch 的 undo 会留下常驻实例阴影，击败后续类级 patch）
+    monkeypatch.setattr(DataFabricManager, "query_catalog_item_async", classmethod(_boom))
     with patch.object(df_routes, "_authorize_catalog_item", lambda *a, **k: None):
         r = await client.get(
             f"/api/v1/data-fabric/catalog/{_ITEM_ID}/features",
@@ -159,12 +167,15 @@ async def test_authz_runs_before_query(client, monkeypatch):
 
         raise HTTPException(status_code=404, detail="not found")
 
-    async def _fake_query(session, item_id, spec):
+    async def _fake_query(cls, session, item_id, spec):
         calls["query"] += 1
         return _fake_query_result([])
 
     monkeypatch.setattr(df_routes, "_authorize_catalog_item", _deny)
-    monkeypatch.setattr(df_routes.data_fabric_manager, "query_catalog_item_async", _fake_query)
+    # #1753：类级 patch（实例级 patch 的 undo 会留下常驻实例阴影，击败后续类级 patch）
+    monkeypatch.setattr(
+        DataFabricManager, "query_catalog_item_async", classmethod(_fake_query)
+    )
     r = await client.get(f"/api/v1/data-fabric/catalog/{_ITEM_ID}/features")
     assert r.status_code == 404
     assert calls["authz"] == 1 and calls["query"] == 0, "鉴权必须先于任何数据访问"

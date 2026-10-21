@@ -8,8 +8,10 @@ scripts/ci-local.sh 必须逐条包含 production.yml PR 阻塞 lane 的 gate �
 import os
 import re
 import stat
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,9 +37,40 @@ def _script() -> str:
     return SCRIPT.read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows 检出无 POSIX exec 位（git index 100755 → 工作树 0o100666，"
+    "core.fileMode=false）；可执行位由"
+    "test_ci_local_script_is_committed_executable 跨平台守护",
+)
 def test_ci_local_script_exists_and_is_executable():
+    """#1692：工作树 exec 位只在 POSIX 文件系统上有意义。
+
+    Windows 上该断言恒红（本机实证 1 failed），而 CI（ubuntu）恒绿 ——
+    契约文件自己成了开发者 --deselect 绕过契约层的理由。平台相关部分
+    在此 skip，平台不变式由下面的 git index mode 用例守护。
+    """
     assert SCRIPT.is_file(), "scripts/ci-local.sh 不存在"
     assert os.stat(SCRIPT).st_mode & stat.S_IXUSR, "scripts/ci-local.sh 不可执行"
+
+
+def test_ci_local_script_is_committed_executable():
+    """#1692：exec 位的跨平台等价物 —— 断言 git index mode 100755。
+
+    git index 记录提交时的 exec 位，与工作树/文件系统无关：Windows 检出
+    （core.fileMode=false）把 100755 物化成 0o100666，但 `git ls-files -s`
+    仍报 100755 —— 这正是「与平台无关的不变式」，本地与 CI 同值。
+
+    encoding="utf-8" 显式钉死（#1651 同款坑）：git 输出恒为 UTF-8，而
+    text=True 默认按区域编码解码，中文 Windows（GBK 区域）会抛
+    UnicodeDecodeError。仓内先例：app/lib/quality/discovery.py。
+    """
+    out = subprocess.run(
+        ["git", "ls-files", "-s", "scripts/ci-local.sh"],
+        cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
+        check=True,
+    )
+    assert "100755" in out.stdout, "scripts/ci-local.sh 未以可执行位（100755）提交"
 
 
 def test_ruff_gate_matches_workflow():
@@ -149,16 +182,34 @@ def test_import_boundary_gate_matches_workflow():
 
 
 def test_dependency_bounds_gate_matches_workflow():
-    """#1512 / TC-03：依赖上界 gate（pandas<3.0 / sqlalchemy<2.1 与 lock 一致
-    性，纯标准库不联网）必须与 workflow lint job 逐字对齐 —— 723f68a9 只改了
-    workflow，本地脚本漏跟即本地绿、CI 红（#671 要消除的事故形态）。"""
+    """#1512 / #1734：依赖上界 gate（pandas<3.0 / sqlalchemy<2.1 / greenlet /
+    lock 漂移）在 workflow lint job 里，却不在 ci-local.sh —— 本地漏跑即
+    「回归无人察觉」（#1512 立项目的反面）。命令必须两边逐字对齐。"""
     run = _job_run_text("lint")
     assert "python scripts/check_dependency_bounds.py" in run, (
-        "workflow lint job 缺少依赖上界门禁（#1512）"
+        "workflow lint job 缺少 Dependency Bounds Gate"
     )
     assert "python scripts/check_dependency_bounds.py" in _script(), (
-        "ci-local.sh 缺少依赖上界门禁（#1512）"
+        "ci-local.sh 缺少 Dependency Bounds Gate（与 lint job 对齐）"
     )
+
+
+def test_skills_lock_and_source_registry_gates_match_workflow():
+    """#1734：skills-lock 完整性（#1349）与 ADS source-registry lint
+    （DS1 / ADR-0171）接入 workflow lint job 后，ci-local.sh 必须同跑 ——
+    否则本地与 CI 再次漂移（这两个门禁此前零接线，从未生效）。"""
+    run = _job_run_text("lint")
+    assert "python scripts/verify_skills_lock.py" in run, (
+        "workflow lint job 缺少 skills-lock 完整性门禁"
+    )
+    assert "python scripts/check_source_registry.py" in run, (
+        "workflow lint job 缺少 ADS source-registry lint"
+    )
+    for cmd in (
+        "python scripts/verify_skills_lock.py",
+        "python scripts/check_source_registry.py",
+    ):
+        assert cmd in _script(), f"ci-local.sh 未包含 {cmd}"
 
 
 def test_contract_tier_step_exists():

@@ -40,6 +40,10 @@ BLOCKED_HOSTNAMES = {
 BLOCKED_IPS_EXPLICIT = {
     ipaddress.ip_address("169.254.169.254"),  # AWS / GCP metadata
     ipaddress.ip_address("fd00:ec2::254"),     # AWS IMDSv6 metadata
+    # #1694 SEC-11：阿里云/腾讯云 IMDS（与 app/core/egress.py _METADATA_HOSTS
+    # 同清单）—— 缺项时内网豁免下这些元数据端点被当普通私网目标放行。
+    ipaddress.ip_address("100.100.100.200"),   # 阿里云 IMDS
+    ipaddress.ip_address("169.254.0.23"),      # 腾讯云 IMDS
 }
 
 # System directories a geospatial local-file adapter must never read from, even

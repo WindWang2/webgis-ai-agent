@@ -11,7 +11,7 @@
  * **资源**（配额/预留/背压）。全部读自后端 projection；operator 动作只
  * 调既有 mission-runtime 路由（两步确认，无乐观写）。
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ListChecks, Cpu, Lightbulb, GitBranch, Gauge, History } from 'lucide-react';
 import { getCockpitHealth } from '@/lib/api/cockpit';
 import { useT } from '@/lib/i18n/useT';
@@ -46,6 +46,23 @@ export function AgentOpsCockpit({
   // 选中的 mission 由 root 持有：mission 视图选中，execution/resources 视图
   // 共享同一目标（受控下传，无事件桥接、无全局 store）。
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
+
+  // WAI-APG tablist：roving tabindex + 方向键/Home/End（activation-on-focus），
+  // 与 lakehouse 子页签 / ops-console 同一配方（#1747 补齐 —— 此前键盘用户
+  // 无法切换控制台视图）。
+  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const onViewKeyDown = (e: React.KeyboardEvent) => {
+    const idx = VIEWS.findIndex((v) => v.key === view);
+    let next: ViewKey | null = null;
+    if (e.key === 'ArrowRight') next = VIEWS[(idx + 1) % VIEWS.length].key;
+    else if (e.key === 'ArrowLeft') next = VIEWS[(idx - 1 + VIEWS.length) % VIEWS.length].key;
+    else if (e.key === 'Home') next = VIEWS[0].key;
+    else if (e.key === 'End') next = VIEWS[VIEWS.length - 1].key;
+    if (!next) return;
+    e.preventDefault();
+    setView(next);
+    tabRefs.current.get(next)?.focus();
+  };
 
   // 健康探测：一次挂载级请求（不轮询）—— 决定整个投影面的可用性。
   // 卸载时 abort；组件重挂载（tab 切换）会重新探测，拿到的开关永远新鲜。
@@ -84,14 +101,26 @@ export function AgentOpsCockpit({
         <LiveDot active reducedMotion={reducedMotion} />
       </header>
 
-      {/* 视图切换（role=tablist，与 ops-console 同款） */}
-      <div role="tablist" aria-label={t('title')} className="flex items-center gap-0.5 overflow-x-auto py-1">
+      {/* 视图切换（role=tablist，与 ops-console 同款；WAI-APG 键盘导航 #1747） */}
+      <div
+        role="tablist"
+        aria-label={t('title')}
+        className="flex items-center gap-0.5 overflow-x-auto py-1"
+        onKeyDown={onViewKeyDown}
+      >
         {VIEWS.map(({ key, icon: Icon }) => (
           <button
             key={key}
+            ref={(el) => {
+              if (el) tabRefs.current.set(key, el);
+              else tabRefs.current.delete(key);
+            }}
             type="button"
             role="tab"
+            id={`cockpit-view-tab-${key}`}
             aria-selected={view === key}
+            aria-controls={`cockpit-panel-${key}`}
+            tabIndex={view === key ? 0 : -1}
             data-testid={`cockpit-view-${key}`}
             onClick={() => setView(key)}
             className={`flex shrink-0 items-center gap-1 rounded-sm px-2 py-1 text-meta font-medium transition-colors ${
@@ -106,7 +135,12 @@ export function AgentOpsCockpit({
         ))}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1">
+      <div
+        role="tabpanel"
+        id={`cockpit-panel-${view}`}
+        aria-labelledby={`cockpit-view-tab-${view}`}
+        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1"
+      >
         {view === 'mission' && (
           <MissionView
             enabled

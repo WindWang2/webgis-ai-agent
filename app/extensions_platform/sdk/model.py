@@ -28,6 +28,14 @@ from .identifier import NAME_RE
 
 InvokeFn = Callable[[dict[str, Any], Any], Any]
 
+# model provider 投影工具在**运行期**所需的权限（#1709）。
+# manifest 声明侧已 fail closed（spec.validate 缺声明 →
+# PERMISSION_DECLARATION_INVALID）；这里把它变成调用期的授权检查点——
+# 此前 in-process 注册与 worker 合成 spec 两条路径都不填
+# required_permissions，SDK 包裹层直接原样返回 func，MODEL_PROVIDER
+#  grants 从未被强制（死权限）。
+MODEL_PROVIDER_REQUIRED_PERMISSIONS: tuple[str, ...] = (Permission.MODEL_PROVIDER,)
+
 
 @dataclass
 class ModelProviderSpec:

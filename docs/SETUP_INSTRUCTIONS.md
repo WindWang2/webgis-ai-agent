@@ -60,7 +60,7 @@ cp .env.example .env
 
 容器路径额外必填（`docker-compose.yml` 用 `${VAR:?}` 强制）：
 
-- `REDIS_PASSWORD`：dev compose 的 redis 以 `--requirepass` 启动，必须设置。此时本机直连的 `REDIS_URL` 需带密码：`redis://:<REDIS_PASSWORD>@localhost:16379/0`。
+- `REDIS_PASSWORD`：dev compose 的 redis 强制认证（`#1676` 起口令由容器入口写进 `/dev/shm` tmpfs 运行时 conf，不再走命令行参数），必须设置。此时本机直连的 `REDIS_URL` 需带密码：`redis://:<REDIS_PASSWORD>@localhost:16379/0`。
 - `DB_PASSWORD`：PostgreSQL 容器密码。compose api/celery 用它拼 `DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/webgis`（应用不读 `DB_HOST`）。
 
 ## 4. 前端配置 frontend/.env.local
@@ -125,7 +125,7 @@ cd frontend && npm run dev
 
 ## 6. manage.py 命令参考
 
-`python manage.py`（argparse，共 6 个子命令）：
+`python manage.py`（argparse，共 17 个子命令）：
 
 | 命令 | 作用 |
 |------|------|
@@ -135,6 +135,17 @@ cd frontend && npm run dev
 | `python manage.py dev` | 一键拉起后端 uvicorn `:18000`（`--reload`）+ Celery worker + 前端 `npm run dev`；启动前强制检查 Redis |
 | `python manage.py server` | 仅后端：`uvicorn app.main:app --host 0.0.0.0 --port 18000 --reload` |
 | `python manage.py worker` | 仅 Celery worker：`celery -A app.services.task_queue.celery_app worker --loglevel=info` |
+| `python manage.py osm-ingest` | 一次性 OSM PBF → 主题化 GPKG 预处理（本地资源查询用；`--pbf/--themes/--force`） |
+| `python manage.py osm-status` | 列出本地 OSM 主题目录与行数 |
+| `python manage.py yearbook-ingest` | 中国县域统计年鉴（乡镇卷+县域面板）→ yearbook.sqlite（含行政区 adcode 连接） |
+| `python manage.py yearbook-status` | 年鉴库状态：年份/行数/连接率/指标词表 |
+| `python manage.py sources-scan` | 扫描本地数据资产（osm/poi/yearbook）归一登记进 source registry 目录 |
+| `python manage.py gd-poi-ingest` | 高德全国 POI zip → gd_pois.gpkg（GCJ-02→WGS84，含乡镇中心点回填） |
+| `python manage.py gis-benchmark` | GIS agent 语义回归 benchmark（确定性、离线；`--case/--group/--report`） |
+| `python manage.py preflight` | 部署预检（profile/egress/依赖/本地数据；required 项缺失退出 1） |
+| `python manage.py network-catalog` | 机器可读网络依赖目录（egress 审计；`--format table/json`） |
+| `python manage.py sbom` | SBOM（Python 发行版 + 前端依赖，仅元数据） |
+| `python manage.py asset-manifest` | 离线资产清单（运维预置的模型/字体/瓦片/地理数据） |
 
 对应的手动等价命令（不想用 manage.py 时）：
 
@@ -150,7 +161,7 @@ cd frontend && npm run dev
 ## 7. 数据库与迁移
 
 - 本机 pytest / `manage.py` 默认 SQLite（`sqlite:///./data/webgis.db`），零配置兜底。dev compose 的 api/celery 钉到 PostGIS `db` 服务（不读 `.env` 里的 sqlite URL）。生产必须 PostgreSQL/PostGIS（`ENV=production` 时启动校验强制 `postgresql://` 前缀）。
-- 迁移用 alembic，单一迁移链 `migrations/versions/`（18 个 revision）：
+- 迁移用 alembic，单一迁移链 `migrations/versions/`（67 个 revision）：
 
 ```bash
 alembic upgrade head
@@ -225,7 +236,7 @@ pytest markers：`heavy`（重依赖 geopandas/numpy/rasterio，含 Runtime 校�
 
 **端口冲突**。本地路径占用端口：后端 18000、前端 3000、Redis 16379、Postgres 15432。排查：`lsof -i :18000`（或 `ss -ltnp | grep 18000`）。改动后端端口时记得同步 `frontend/.env.local` 的 `NEXT_PUBLIC_API_URL`。
 
-**Redis 缺失/带密码**。`python manage.py dev` 启动即退并提示 Redis 未运行：本机装 redis-server 监听 16379，或 `docker compose up -d redis`。用 compose 的 redis 时它有 `--requirepass`，`REDIS_URL` 必须写成 `redis://:<REDIS_PASSWORD>@localhost:16379/0`，否则 ping 通不过、Celery 也连不上 broker。
+**Redis 缺失/带密码**。`python manage.py dev` 启动即退并提示 Redis 未运行：本机装 redis-server 监听 16379，或 `docker compose up -d redis`。用 compose 的 redis 时它强制认证（口令由容器入口注入，`#1676` 起不再出现在进程命令行），`REDIS_URL` 必须写成 `redis://:<REDIS_PASSWORD>@localhost:16379/0`，否则 ping 通不过、Celery 也连不上 broker。
 
 **LLM key 占位符**。日志出现 `LLM_API_KEY is set to placeholder value ... LLM calls will fail`：在 `.env` 填入真实 key。占位符状态下后端能启动，但所有对话/工具调用会 401。默认 provider 是阶跃 Step Plan（`https://api.stepfun.com/step_plan/v1`），也可换任意 OpenAI 兼容端点（同时改 `LLM_BASE_URL`/`LLM_MODEL`）。
 

@@ -85,6 +85,20 @@ def test_empty_records_fail_closed():
     assert verdict["chain_count"] == 0
 
 
+def test_no_silent_truncation_beyond_64_chains():
+    # #1709：records[:64] 截断使第 65 条以后的链既不计 passed 也不进报告
+    # （静默绕过）——全量遍历 + total/truncated 披露后钉死。
+    records = [_record(f"t{i}", ALL_NAMES) for i in range(64)]
+    records.append(_record("t64-bad", ALL_NAMES[:5]))
+    verdict = evaluate_chain_gate(records)
+    assert verdict["total"] == 65
+    assert verdict["truncated"] is False
+    assert verdict["chain_count"] == 65
+    assert verdict["passed"] is False
+    assert verdict["per_chain"][-1]["turn_id"] == "t64-bad"
+    assert verdict["per_chain"][-1]["passed"] is False
+
+
 def test_multi_chain_gate_requires_every_chain():
     verdict = evaluate_chain_gate(
         [_record("t-ok", ALL_NAMES), _record("t-bad", ALL_NAMES[:5])]

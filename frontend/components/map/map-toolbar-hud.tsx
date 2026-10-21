@@ -79,17 +79,6 @@ export function MapToolbarHUD({
   const [uncontrolledMeasurePoints, setUncontrolledMeasurePoints] = useState<[number, number][]>(EMPTY_POINTS)
   const [collapsed, setCollapsed] = useState(false)
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null)
-  // #1628：toast 定时器 id 存 ref —— showToast 过去把 effect 风格的 cleanup
-  // 当返回值返回，而 4 个调用点全部丢弃（死代码，2s 定时器永远无法取消）。
-  // 定时器改由组件级 effect 在卸载时统一清理；新 toast 顶掉旧定时器，各自
-  // 拿满 2s（旧定时器提前触发会把新 toast 抹早）。
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(
-    () => () => {
-      if (toastTimerRef.current !== null) clearTimeout(toastTimerRef.current);
-    },
-    [],
-  )
 
   const is3D = useHudStore((s: HudState) => Boolean(s?.is3D))
   const annotations = useHudStore((s: HudState) => s?.annotations ?? EMPTY_ANNOTATIONS)
@@ -101,13 +90,22 @@ export function MapToolbarHUD({
     return EMPTY_POINTS
   }, [controlledMeasurePoints, uncontrolledMeasurePoints])
 
+  // #1746-9：toast 清理函数统一登记在 ref —— 新 toast 先清旧 timer，
+  // 否则旧 timer 提前把新 toast 置 null（连续 toast 互相截断）；调用点
+  // 即使丢弃 showToast 的返回值也不会丢清理。
+  const toastClearRef = useRef<(() => void) | null>(null)
   const showToast = useCallback((msg: string) => {
-    if (toastTimerRef.current !== null) clearTimeout(toastTimerRef.current);
+    toastClearRef.current?.()
     setFeedbackToast(msg)
-    toastTimerRef.current = setTimeout(() => {
-      toastTimerRef.current = null
-      setFeedbackToast(null)
-    }, 2000)
+    const timer = setTimeout(() => setFeedbackToast(null), 2000)
+    const clear = () => clearTimeout(timer)
+    toastClearRef.current = clear
+    return clear
+  }, [])
+
+  // 卸载：清在途 toast timer，避免卸载后 setState。
+  useEffect(() => () => {
+    toastClearRef.current?.()
   }, [])
 
   const setMeasureMode = useCallback(

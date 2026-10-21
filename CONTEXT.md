@@ -442,13 +442,17 @@ _Avoid_: MapLibreDriver as a rename this round; treating `hudStateToMapSpec` as 
 intent author.
 
 ### Tool Catalog (webgis_*)
-The 18 `webgis_*` registry tools (`webgis_project_init`, `webgis_state_get`,
+The 27 `webgis_*` registry tools (`webgis_project_init`, `webgis_state_get`,
 `webgis_source_profile`, `webgis_view_set`, `webgis_layer_upsert`,
 `webgis_layer_remove`, `webgis_layout_set`, `webgis_map_combine`,
-`webgis_validate`, `webgis_compile_maplibre`, `webgis_runtime_validate`,
-`webgis_checkpoint`, `webgis_rollback`, `webgis_map_intent`,
-`webgis_map_product`, `webgis_component_update`, `webgis_component_catalog`,
-`webgis_cartography_status`) are the canonical tool names, **hard-migrated**
+`webgis_validate`, `webgis_compile_maplibre`, `webgis_compile_map_plan`,
+`webgis_runtime_validate`, `webgis_checkpoint`, `webgis_rollback`,
+`webgis_map_intent`, `webgis_map_product`, `webgis_component_update`,
+`webgis_component_catalog`, `webgis_cartography_status`, `webgis_action_plan`,
+`webgis_apply_composition`, `webgis_context_bind_mission`,
+`webgis_context_revalidate`, `webgis_discover_components`,
+`webgis_plan_component_replace`, `webgis_product_edit`,
+`webgis_world_state`) are the canonical tool names, **hard-migrated**
 from the legacy `add_layer` / `set_view` / etc. via a central `old→new` alias
 table at the `ToolRegistry.dispatch()` entry, so Pi bridge, history replay, and
 tests all cross one normalization boundary. Legacy names carry no alias; stored
@@ -605,7 +609,7 @@ The deep temporal GIS computation runtime (`app/services/temporal/engine.py`).
 Encapsulates `temporal_filter` (instant, range, relative window), `temporal_aggregate` (hourly, daily, monthly, yearly stats), `temporal_change` ($T_1$ vs $T_2$ count/attribute/geometry deltas), `temporal_trend` (Sen's slope, moving averages, anomalies), `spatiotemporal_hotspot` (space-time window clustering), and windowed `temporal_raster` time series analysis without reading entire rasters into memory.
 
 ### MapSpec Time Dimension
-The declarative time extension section in MapSpec schema (`app/services/mapspec/models.py`), adding optional `time` parameters (`enabled`, `field`, `type`, `extent`, `current`, `window`, `playback`, `step`, `speed`). Preserves 100% backward compatibility for non-temporal MapSpec documents while powering interactive timeline UI sliders and zero-reconstruct feature/raster filtering in the map runtime.
+The declarative time extension section in MapSpec schema (contract declared by `SetTimeBody` in `app/schemas/mapspec_mutation_schema.py`, applied by the `set_time` intent in `app/services/mapspec/mutation_handlers.py` onto the `time` section of `MapSpecDocument` in `app/lib/cartography/mapspec_schema.py`), adding optional `time` parameters (`enabled`, `field`, `type`, `extent`, `current`, `window`, `playback`, `step`, `speed`). Preserves 100% backward compatibility for non-temporal MapSpec documents while powering interactive timeline UI sliders and zero-reconstruct feature/raster filtering in the map runtime.
 
 ### Spatial Decision Intelligence V2 (Glossary)
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { compileMapSpec } from "./compiler";
 import { getSymbolLawEvidence, resetSymbolLawEvidence } from "../map-kit/symbol-law";
-import type { GeoJSONMapSpecSource, MapSpec, MapSpecLayer, MapSpecRepresentationWindow } from "./types";
+import type { GeoJSONMapSpecSource, MapSpec, MapSpecLayer, MapSpecRepresentationWindow, StyleMethod } from "./types";
 
 /**
  * v1.6（方向 5）：compileMapSpec 的表达窗口展开契约测试。
@@ -255,6 +255,30 @@ describe("compileMapSpec：e) 结构门 ∩ 窗门", () => {
     expect(main.maxzoom).toBe(10);
   });
 
+  // #1726 项 1：主层「型」与「门」必须同源（同为 raw 首窗）。首窗
+  // visual_heatmap + 后续 raw 窗时，主层门 = raw 首窗 [11,24)，型必须
+  // 仍是 circle（raw 语义）—— 此前型取 normalized 首窗 heatmap，把
+  // raw 窗编译成 heatmap。
+  it("首窗 visual_heatmap + 后续 raw 窗：主层门 [11,24) 且型为 circle（不被 heatmap 改写）", () => {
+    const r = compileMapSpec(
+      specWith({
+        windows: [
+          { min_zoom: 0, max_zoom: 11, mode: "visual_heatmap" },
+          { min_zoom: 11, max_zoom: 24, mode: "raw" },
+        ],
+      }),
+    );
+    const main = layerOf(r, "L");
+    expect(main.minzoom).toBe(11);
+    expect(main.maxzoom).toBe(24);
+    expect(main.type).toBe("circle");
+    // heatmap 表达仍由展开子层 L__rep0 承载（门 [0,11)）
+    const rep0 = layerOf(r, "L__rep0");
+    expect(rep0.type).toBe("heatmap");
+    expect(rep0.minzoom).toBe(0);
+    expect(rep0.maxzoom).toBe(11);
+  });
+
   it("窗门与结构门合成空窗 → 主层退化为 minzoom=24 恒空门 + gate-degenerate evidence", () => {
     const r = compileMapSpec(
       specWith({
@@ -368,6 +392,67 @@ describe("compileMapSpec：显式计划优先于密度推断", () => {
     expect(src.cluster).toBeUndefined();
     const kinds = evidenceKinds().map(([k]) => k);
     expect(kinds).not.toContain("density-switch");
+  });
+});
+
+// ── #1747 项 1：heatmap 表达窗子层 paint 与 live 路径对齐 ─────────────────
+// live runtime（addRepresentationSublayersSafe）对 heatmap 子层用
+// heatmapOnlyPaint(toMapLibrePaint(layer)) —— 原生 heatmap-* paint 全量
+// 穿透；headless 编译器此前只发 heatmap-radius，带原生密度色带的层导出
+// 即掉回 MapLibre 默认蓝色色带（导出降级）。现已收口为单一实现
+// （mapspec-compiler/heatmap-paint.ts），此处锁定导出侧契约。
+describe("compileMapSpec：g) heatmap 表达窗子层 paint 与 live 对齐（#1747）", () => {
+  const windows: MapSpecRepresentationWindow[] = [
+    { min_zoom: 0, max_zoom: 11, mode: "raw" },
+    { min_zoom: 11, max_zoom: 24, mode: "visual_heatmap" },
+  ];
+
+  it("原生 heatmap paint（色带/intensity/weight/opacity/radius）穿透到 __rep 子层", () => {
+    // 授权链路（analysis_cartography_converter）发的是 MapLibre 原生表达式
+    // 数组 —— 声明类型 MapSpecLayerPaint 的索引签名只收 StyleMethod（编译
+    // 器侧按 Record<string, unknown> 方言桥消费），故此处显式拓宽。
+    const nativeColor = [
+      "interpolate", ["linear"], ["heatmap-density"],
+      0, "rgba(0,0,0,0)", 0.5, "#ff8800", 1, "#ff0000",
+    ] as unknown as StyleMethod;
+    const r = compileMapSpec(
+      specWith({
+        windows,
+        layer: {
+          type: "heatmap",
+          paint: {
+            intensity: 2,
+            weight: 1.5,
+            opacity: 0.7,
+            "heatmap-radius": 18,
+            "heatmap-color": nativeColor,
+          },
+        },
+      }),
+    );
+    expect(r.report.success).toBe(true);
+    const rep1 = layerOf(r, "L__rep1");
+    expect(rep1.type).toBe("heatmap");
+    expect(rep1.minzoom).toBe(11);
+    expect(rep1.maxzoom).toBe(24);
+    // 密度色带不得掉回 MapLibre 默认蓝（heatmapOnlyPaint 只过 heatmap-* 键）
+    expect(rep1.paint["heatmap-color"]).toEqual(nativeColor);
+    expect(rep1.paint["heatmap-intensity"]).toBe(2);
+    expect(rep1.paint["heatmap-weight"]).toBe(1.5);
+    expect(rep1.paint["heatmap-opacity"]).toBe(0.7);
+    // 显式半径优先（符号律兜底只在缺省时介入 —— 与 live 同规）
+    expect(rep1.paint["heatmap-radius"]).toBe(18);
+    // 非 heatmap-* 键不得残留（MapLibre 会拒绝整层）
+    expect(Object.keys(rep1.paint).every((k) => k.startsWith("heatmap-"))).toBe(true);
+  });
+
+  it("circle 层的 heatmap 窗子层：circle-* 键不残留，radius 走符号律兜底", () => {
+    const r = compileMapSpec(specWith({ windows }));
+    const rep1 = layerOf(r, "L__rep1");
+    expect(rep1.type).toBe("heatmap");
+    expect(rep1.paint["circle-color"]).toBeUndefined();
+    expect(rep1.paint["heatmap-radius"]).toBeDefined();
+    expect((rep1.paint["heatmap-radius"] as unknown[])[0]).toBe("interpolate");
   });
 });
 

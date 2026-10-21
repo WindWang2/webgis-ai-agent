@@ -76,12 +76,17 @@ class CircuitBreaker:
         entry.half_open_trial_inflight = False
 
     def record_failure(self, entry: _BreakerEntry, exc: BaseException) -> None:
+        # The half-open trial has finished —— release its slot unconditionally.
+        # A permanent-error trial (4xx/auth/validation) must NOT leak the
+        # single slot: ``allow()`` would then fail-fast forever, and
+        # ``_state()`` only resets the slot on the OPEN→HALF_OPEN transition,
+        # so a stuck entry can never reopen (#1714).
+        entry.half_open_trial_inflight = False
         # Permanent errors (bad request, security) do not trip the breaker —
         # they are not evidence the source is down.
         if not is_transient(exc):
             return
         entry.consecutive_failures += 1
-        entry.half_open_trial_inflight = False
         if entry.state == CircuitState.HALF_OPEN:
             # Trial failed → reopen.
             entry.state = CircuitState.OPEN

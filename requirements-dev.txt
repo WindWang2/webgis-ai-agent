@@ -22,4 +22,7 @@ fakeredis>=2.39.0
 openpyxl>=3.1.5
 python-calamine>=0.8.3
 
-pypdf>=6.20.0  # WeasyPrint 70 ObjStm 页对象结构化读取（test_report_service_vector_svg）
+# audit #1734：下限与 requirements.txt / requirements.lock 钉版（6.21.1）对齐 ——
+# 下限落后于 lock 时 CI 的 `pip install -c requirements.lock -r requirements-dev.txt`
+# 会解析到旧版，Lockfile Freshness 的「lock 是否新鲜」信号也被下限掩盖。
+pypdf>=6.21.0  # WeasyPrint 70 ObjStm 页对象结构化读取（test_report_service_vector_svg）

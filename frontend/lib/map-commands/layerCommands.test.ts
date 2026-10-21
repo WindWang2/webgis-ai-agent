@@ -327,6 +327,109 @@ describe('reorder_layer (issue #393: MapSpec `${id}__` layers reorder durably)',
     expect(map.moveLayer).toHaveBeenCalledWith('custom-target', undefined);
     expect(map.moveLayer).toHaveBeenCalledWith('custom-target-outline', undefined);
   });
+
+  // #1726 regression: on the map scheme the two directions were swapped. MapLibre
+  // renders later array indices ON TOP and `moveLayer(id, before)` inserts `id`
+  // immediately BENEATH `before` (no `before` → appended at the top), while the
+  // store scheme's `up` means "towards index 0 = topmost". So on the map the group
+  // must travel towards the END of the array: `up` walked DOWNWARDS (moving the
+  // group lower) and `down` walked upwards, and when its `i + 1` anchor ran off
+  // the end it passed `undefined` to moveLayer — which yanks the whole group to
+  // the top layer.
+  describe('custom stack z-order directions', () => {
+    /** Style order == draw order: index 0 is the BOTTOM, last is on top. */
+    function customStack(ids: string[]) {
+      const map = makeMockMaplibreMap();
+      for (const id of ids) map.addLayer({ id, type: 'fill' });
+      const { ctx } = layerCtx(map); // no store rows → pure custom-scheme path
+      return { map, ctx };
+    }
+
+    const orderOf = (map: { _layers: Array<{ id: string }> }): string[] =>
+      map._layers.map((l) => l.id);
+
+    it('up moves the group one slot towards the top', () => {
+      const { map, ctx } = customStack([
+        'custom-bottom',
+        'custom-target',
+        'custom-target-outline',
+        'custom-top',
+      ]);
+      ctx.command = 'reorder_layer';
+      ctx.params = { layer_id: 'target', position: 'up' };
+
+      const result = layerCommands.reorder_layer.run(ctx);
+
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      // inserted just above `custom-top` — i.e. one slot up, not down.
+      expect(orderOf(map)).toEqual([
+        'custom-bottom',
+        'custom-top',
+        'custom-target',
+        'custom-target-outline',
+      ]);
+    });
+
+    it('down moves the group one slot towards the bottom', () => {
+      const { map, ctx } = customStack([
+        'custom-bottom',
+        'custom-target',
+        'custom-target-outline',
+        'custom-top',
+      ]);
+      ctx.command = 'reorder_layer';
+      ctx.params = { layer_id: 'target', position: 'down' };
+
+      const result = layerCommands.reorder_layer.run(ctx);
+
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      // inserted immediately below `custom-bottom` — never yanked to the top.
+      expect(orderOf(map)).toEqual([
+        'custom-target',
+        'custom-target-outline',
+        'custom-bottom',
+        'custom-top',
+      ]);
+      expect(map.moveLayer).not.toHaveBeenCalledWith('custom-target', undefined);
+      expect(map.moveLayer).not.toHaveBeenCalledWith('custom-target-outline', undefined);
+    });
+
+    it('up at the top / down at the bottom keep the group in place (no anchor → top yank)', () => {
+      const topCase = customStack([
+        'custom-top',
+        'custom-target',
+        'custom-target-outline',
+      ]);
+      topCase.ctx.command = 'reorder_layer';
+      topCase.ctx.params = { layer_id: 'target', position: 'up' };
+      expect(layerCommands.reorder_layer.run(topCase.ctx)).toMatchObject({
+        status: 'succeeded',
+      });
+      expect(topCase.map.moveLayer).not.toHaveBeenCalled();
+      expect(orderOf(topCase.map)).toEqual([
+        'custom-top',
+        'custom-target',
+        'custom-target-outline',
+      ]);
+
+      const bottomCase = customStack([
+        'custom-target',
+        'custom-target-outline',
+        'custom-top',
+      ]);
+      bottomCase.ctx.command = 'reorder_layer';
+      bottomCase.ctx.params = { layer_id: 'target', position: 'down' };
+      expect(layerCommands.reorder_layer.run(bottomCase.ctx)).toMatchObject({
+        status: 'succeeded',
+      });
+      expect(bottomCase.map.moveLayer).not.toHaveBeenCalled();
+      expect(orderOf(bottomCase.map)).toEqual([
+        'custom-target',
+        'custom-target-outline',
+        'custom-top',
+      ]);
+    });
+  });
 });
 
 // ─── #557: layer_style_update contract (params.style flat paint + categorical) ───

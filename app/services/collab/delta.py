@@ -215,11 +215,23 @@ def apply_delta(doc: Optional[Dict[str, Any]], delta: Dict[str, Any]) -> Dict[st
     for layer_id in cleared:
         membership.pop(layer_id, None)
 
-    # 4. locks。
-    lock_set = set(locked)
-    lock_set.update(delta["locksAdd"])
-    lock_set.difference_update(delta["locksRemove"])
-    locked = list(lock_set)
+    # 4. locks（保序运算：按原 list 次序 filter + 追加新增）。
+    # 不用 set 重建——``list(set(...))`` 的次序随进程字符串 hash 随机化而变，
+    # 同一逻辑 doc 在不同 worker/pod 上落盘字节与指纹都会漂移。
+    remove_locks = set(delta["locksRemove"])
+    seen_locks: set[str] = set()
+    next_locked: List[str] = []
+    for lid in locked:
+        if lid in remove_locks or lid in seen_locks:
+            continue
+        next_locked.append(lid)
+        seen_locks.add(lid)
+    for lid in delta["locksAdd"]:
+        if lid in remove_locks or lid in seen_locks:
+            continue
+        next_locked.append(lid)
+        seen_locks.add(lid)
+    locked = next_locked
 
     return {
         "version": version,

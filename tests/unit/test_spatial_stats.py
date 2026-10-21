@@ -270,3 +270,66 @@ async def test_hotspot_analysis_missing_field(stats_tools):
         "value_field": "nonexistent",
     })
     assert result.get("success") is False or "error" in result
+
+
+# ─── distance_band 参数契约接线（#1735）─────────────────────────────
+# moran_i / geary_c / general_g / hotspot_analysis 的 distance_band 曾绕过
+# apply_contract 直达分析层（float(distance_band or 0) 用 LLM 原始值），
+# 契约声明的 minimum=0 在这条工具路径上是死代码。四个工具的契约
+# （moran_i_analysis / geary_c_analysis / general_g_analysis /
+# gi_star_analysis）都声明了 distance_band —— 接线后负值必须被闸拦下。
+
+
+def _clustered_fc():
+    """两个高/低值簇（构造同 test_moran_i_clustered）。"""
+    return _fc(
+        [_point(0, 0.01 * i, {"val": 100}) for i in range(10)]
+        + [_point(10, 10 + 0.01 * i, {"val": 1}) for i in range(10)]
+    )
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["moran_i", "geary_c", "general_g", "hotspot_analysis"],
+)
+@pytest.mark.asyncio
+async def test_distance_band_negative_rejected_by_contract(stats_tools, tool_name):
+    """#1735：distance_band 负值被 apply_contract 的 minimum=0 拦下，
+    返回机器可读 parameter_contract_violation，不再绕过契约直达分析层。"""
+    result = await stats_tools.dispatch(tool_name, {
+        "geojson": _clustered_fc(),
+        "value_field": "val",
+        "distance_band": -500,
+    })
+    assert result.get("success") is False, result
+    assert result.get("code") == "VALIDATION_ERROR"
+    assert "parameter_contract_violation" in result.get("message", "")
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["moran_i", "geary_c", "general_g", "hotspot_analysis"],
+)
+@pytest.mark.asyncio
+async def test_distance_band_valid_value_passes_contract(stats_tools, tool_name):
+    """#1735：合法 distance_band 经契约归一化后照常生效（无回归）。"""
+    result = await stats_tools.dispatch(tool_name, {
+        "geojson": _clustered_fc(),
+        "value_field": "val",
+        "distance_band": 50000,
+    })
+    assert result.get("success") is True, result
+
+
+@pytest.mark.asyncio
+async def test_hotspot_analysis_evidence_uses_contract_normalized_band(stats_tools):
+    """#1735：证据块 parameters_applied.distance_band 取契约归一化后的值
+    （与真正送进分析层的参数一致，而非 LLM 原始值）。"""
+    result = await stats_tools.dispatch("hotspot_analysis", {
+        "geojson": _clustered_fc(),
+        "value_field": "val",
+        "distance_band": 1500.0,
+    })
+    assert result.get("success") is True, result
+    ev = result.get("scientific_evidence") or {}
+    assert ev.get("parameters_applied", {}).get("distance_band") == 1500.0

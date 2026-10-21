@@ -108,6 +108,7 @@ def run_geocompute_node(
     input_keys: Optional[dict[str, str]] = None,
     resource_envelope: Optional[dict] = None,
     owner_scope: Optional[str] = None,
+    caller: Optional[dict] = None,
 ) -> dict[str, Any]:
     """执行单个 ExecutionNode（经 ops 注册表），结果落 session ref。
 
@@ -116,7 +117,10 @@ def run_geocompute_node(
     V7 新增 kwargs 全部是治理/观测元数据（不进 params，幂等键不变）：
     run_id/node_attempt（事件关联）、input_refs/input_keys（输入交接 +
     局部性键）、resource_envelope（worker 侧准入守卫）、owner_scope
-    （缓存身份域）。
+    （缓存身份域）、caller（目录准入身份 —— #1718：此前 durable 路径
+    丢弃 caller，QUERY/SOURCE_SCAN 的目录项准入被按匿名 fail-closed
+    裁决，租户隔离在 worker 路径失效；与 run_id/node_attempt 同款
+    task_kwargs 通道，auth user dict 是 JSON 可序列化标量投影）。
     """
     from app.services.geocompute import ops
     from app.services.geocompute.plan import ExecutionNode, ResourceBudget
@@ -161,7 +165,7 @@ def run_geocompute_node(
         )
         ctx = ops.OperatorContext(
             run_id="direct", node_id=exec_node.node_id, session_id=session_id,
-            budget=ctx_budget,
+            caller=caller, budget=ctx_budget,
         )
         payload = ops.execute_node(ctx, exec_node, {})
         return _bounded_summary(payload)
@@ -186,6 +190,10 @@ def run_geocompute_node(
             run_id=f"job-{job_id}",
             node_id=exec_node.node_id,
             session_id=session_id,
+            # #1718：caller 经 task_kwargs 穿透回 worker —— 目录类算子
+            # （QUERY/SOURCE_SCAN）的准入按真实身份裁决，绝不在
+            # Celery 边界退化成匿名（fail-closed 只剩无属主全局行）。
+            caller=caller,
             deadline_ts=deadline_ts,
             cancel_token=job.token,  # durable_job 已 use_token；此处显式传入
             budget=ctx_budget,

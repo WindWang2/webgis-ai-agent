@@ -82,9 +82,10 @@ def register_geocompute_tools(registry: ToolRegistry):
             "nodes": "节点列表（同 validate_execution_plan）",
             "budget": "可选预算 {max_rows, max_bytes, deadline_s, max_nodes}",
             "session_id": (
-                "会话上下文（materialize / durable_job 策略必需）。必须是你自己的"
-                "当前会话 id —— 工具运行于调用方会话上下文并原样透传；传入他人"
-                "会话 id 的计划会被拒绝，且执行结果与缓存按身份隔离。"
+                "会话上下文（materialize / durable_job 策略必需）。省略时取调用方"
+                "执行上下文（ToolExecutionContext）的当前会话 id；显式传入时必须"
+                "与调用方会话 id 一致 —— 不一致以 AUTHORIZATION_DENIED 拒绝"
+                "（fail-closed，先于任何节点执行），执行结果与缓存按身份隔离。"
             ),
         },
         cost="heavy",
@@ -114,6 +115,7 @@ def register_geocompute_tools(registry: ToolRegistry):
         # 生效（无上下文时按匿名隔离，fail-closed）。
         caller: Optional[dict] = None
         project_id: Optional[str] = None
+        context_session_id: Optional[str] = None
         try:
             from app.services.provenance.context import get_tool_execution_context
 
@@ -123,8 +125,24 @@ def register_geocompute_tools(registry: ToolRegistry):
                     caller = {"user_id": str(tc.user_id),
                               "org_id": getattr(tc, "org_id", None)}
                 project_id = getattr(tc, "project_id", None) or None
+                context_session_id = getattr(tc, "session_id", None) or None
         except Exception:  # noqa: BLE001 - 身份增强失败按匿名隔离
             caller = None
+        # #1708（SEC）：会话隔离承诺落地 —— 显式 session_id 必须与调用方
+        # 执行上下文的会话身份一致，否则 typed 拒绝（fail-closed，先于
+        # 任何节点执行）：materialize 会把载荷写进该 session 的数据存储
+        # （session_data_manager.store），原样透传等于允许跨会话写入。
+        # 省略 session_id 时从上下文取（缺上下文的进程内直跑按 None 走，
+        # 与既有行为一致）。
+        if session_id and context_session_id and session_id != context_session_id:
+            from app.services.geocompute.errors import AuthorizationError
+
+            raise AuthorizationError(
+                "session_id does not match the caller's execution context",
+                details={"code": "SESSION_MISMATCH"},
+            )
+        if not session_id:
+            session_id = context_session_id
         run = run_plan_sync(plan, session_id=session_id, caller=caller,
                             project_id=project_id)
         return {

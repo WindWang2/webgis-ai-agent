@@ -186,6 +186,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "value_field": value_field,
             "weights_scheme": weights_scheme,
             "k": k,
+            "distance_band": distance_band,
             "permutations": permutations,
         })
         # #1110 review M6: forward the full FC (CRS preservation).
@@ -193,7 +194,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             data, params["value_field"],
             weights_scheme=params["weights_scheme"],
             k=int(params["k"]),
-            distance_band=float(distance_band or 0),
+            distance_band=float(params["distance_band"]),
             permutations=int(params["permutations"]),
         )
         payload = res.to_llm_response()
@@ -211,7 +212,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                     "value_field": params["value_field"],
                     "weights_scheme": params["weights_scheme"],
                     "k": int(params["k"]),
-                    "distance_band": float(distance_band or 0),
+                    "distance_band": float(params["distance_band"]),
                     "permutations": int(params["permutations"]),
                 },
                 feature_count=res.data.get("n_features"),
@@ -264,13 +265,14 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "value_field": value_field,
             "weights_scheme": weights_scheme,
             "k": k,
+            "distance_band": distance_band,
             "permutations": permutations,
         })
         res = SpatialAnalyzer.geary_c(
             data, params["value_field"],
             weights_scheme=params["weights_scheme"],
             k=int(params["k"]),
-            distance_band=float(distance_band or 0),
+            distance_band=float(params["distance_band"]),
             permutations=int(params["permutations"]),
             analytic_variance=bool(analytic_variance),
         )
@@ -282,7 +284,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                     "value_field": params["value_field"],
                     "weights_scheme": params["weights_scheme"],
                     "k": int(params["k"]),
-                    "distance_band": float(distance_band or 0),
+                    "distance_band": float(params["distance_band"]),
                     "permutations": int(params["permutations"]),
                     "analytic_variance": bool(analytic_variance),
                 },
@@ -329,11 +331,12 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
         params = apply_contract("general_g_analysis", {
             "value_field": value_field,
+            "distance_band": distance_band,
             "permutations": permutations,
         })
         res = SpatialAnalyzer.general_g(
             data, params["value_field"],
-            distance_band=float(distance_band or 0),
+            distance_band=float(params["distance_band"]),
             permutations=int(params["permutations"]),
         )
         payload = res.to_llm_response()
@@ -342,7 +345,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 payload, "stats.general_g", tool="general_g",
                 parameters_applied={
                     "value_field": params["value_field"],
-                    "distance_band": float(distance_band or 0),
+                    "distance_band": float(params["distance_band"]),
                     "permutations": int(params["permutations"]),
                 },
                 feature_count=res.data.get("n_features"),
@@ -492,13 +495,14 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         # spatial_analyzer.py 不在本批次改动范围内）。
         params = apply_contract("gi_star_analysis", {
             "value_field": value_field,
+            "distance_band": distance_band,
             "significance_method": significance_method,
             "permutations": permutations,
         })
         if str(params["significance_method"]) == "permutation":
             data = safe_parse_geojson(geojson)
             res = _geo_lib.statistics.hotspot_narrated(
-                data, params["value_field"], distance_band=distance_band,
+                data, params["value_field"], distance_band=float(params["distance_band"]),
                 significance_method="permutation",
                 permutations=int(params["permutations"]),
             )
@@ -508,7 +512,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                     payload, "spatial.hotspot.local", tool="hotspot_analysis",
                     parameters_applied={
                         "value_field": params["value_field"],
-                        "distance_band": float(distance_band or 0),
+                        "distance_band": float(params["distance_band"]),
                         "significance_method": "permutation",
                         "permutations": int(params["permutations"]),
                     },
@@ -519,7 +523,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 )
             return payload
         payload = SpatialAnalyzer.hotspot(geojson, params["value_field"],
-                                          distance_band=distance_band
+                                          distance_band=float(params["distance_band"])
                                           ).to_llm_response()
         # 审计 F-3：normal（默认）路径同样挂科学证据块（实现层 data_out
         # 已带 StatisticalSignificance uncertainty 块，这里只做通道透传）。
@@ -529,7 +533,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 payload, "spatial.hotspot.local", tool="hotspot_analysis",
                 parameters_applied={
                     "value_field": params["value_field"],
-                    "distance_band": float(distance_band or 0),
+                    "distance_band": float(params["distance_band"]),
                     "significance_method": "normal",
                 },
                 feature_count=len(data.get("features") or []) or None,

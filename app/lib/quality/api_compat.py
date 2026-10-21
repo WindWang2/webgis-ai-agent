@@ -17,7 +17,8 @@
 - **WebSocket**：入站感知事件词表（PERCEPTION_HANDLERS）+ 每事件必需字段
   （AST 派生 handler 的 data.get 守卫）+ 出站信封 {event, data} + 出站
   事件词表（AST 扫描 broadcast_ws_event 字面量）+ auth 语义锚；
-- **SSE**：事件词表（AST 扫描 sse_event 首参字面量）+ wire 格式
+- **SSE**：事件词表（AST 扫描 sse_event 首参字面量**与可解析的模块级
+  str 常量**，见 :func:`scan_sse_event_names`）+ wire 格式
   （event:/id:/data:）+ resume 语义锚。
 
 快照：``tests/quality/snapshots/realtime-contract.json``。刷新 =
@@ -466,34 +467,68 @@ def _matches_call(node: ast.Call, names: tuple) -> bool:
     return False
 
 
-def _scan_literal_first_args(
-    func_names: tuple,
-    arg_index: int,
-    roots: tuple = ("app",),
-) -> List[str]:
-    """AST 扫描 app/**/*.py 中 ``{func_names}(..., "literal", ...)`` 调用。"""
+def _module_str_constants() -> Dict[str, str]:
+    """{CONST_NAME: value} —— app/** 模块级 str 赋值，**仅收无歧义名字**。
+
+    #1684（API-01）：``resume_gap`` 经 ``sse_event(RESUME_GAP_EVENT_TYPE, ...)``
+    上线（event_resume.py），只扫字面量首参的旧实现因此把它漏在
+    realtime-contract.json 的 SSE 词表外 —— 字节一致闸永远看不见它的改名。
+    同名多处定义且取值不一致的名字不收（解析歧义宁可漏报也不错收：错收
+    会把幻觉事件名塞进契约词表，反向守卫随即误红）。
+    """
     root = Path(__file__).resolve().parents[3]
-    names: set = set()
-    for pattern_dir in roots:
-        base = root / pattern_dir
-        if not base.is_dir():
+    values: Dict[str, set] = {}
+    for path in sorted((root / "app").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
             continue
-        for path in sorted(base.rglob("*.py")):
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-            except (OSError, SyntaxError):
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                values.setdefault(node.targets[0].id, set()).add(node.value.value)
+    return {name: next(iter(vals)) for name, vals in values.items() if len(vals) == 1}
+
+
+def scan_sse_event_names() -> List[str]:
+    """后端实际发射的 SSE 事件名全集（升序）——契约词表的锚。
+
+    三种形态合起来无盲区：#1) ``sse_event("literal", ...)`` 直调；
+    #2) ``sse_event(CONST, ...)`` 常量中转（经 :func:`_module_str_constants`
+    解析，覆盖 ``RESUME_GAP_EVENT_TYPE`` 等）；#3) session_plan 的逐事件
+    投影 ``sse_event(item.event, ...)`` —— 事件名是变量、AST 不可解析，
+    改消费其显式登记表 :data:`app.services.session_plan.SSE_EVENT_NAMES`
+    （该表同时是 events_to_sse 的 fail-loud 守卫，#1684 ④）。
+    """
+    root = Path(__file__).resolve().parents[3]
+    consts = _module_str_constants()
+    names: set = set()
+    for path in sorted((root / "app").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not _matches_call(node, ("sse_event",)):
                 continue
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                if not _matches_call(node, func_names):
-                    continue
-                if (
-                    len(node.args) > arg_index
-                    and isinstance(node.args[arg_index], ast.Constant)
-                    and isinstance(node.args[arg_index].value, str)
-                ):
-                    names.add(node.args[arg_index].value)
+            if not node.args:
+                continue
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                names.add(first.value)
+            elif isinstance(first, ast.Name) and first.id in consts:
+                names.add(consts[first.id])
+    # #1684：session_plan 通道的登记表（SSE_EVENT_NAMES）—— 该路径以变量
+    # 投影事件名，AST 不可解析，但其登记表是显式单一事实源，纳入后契约
+    # 快照与反向守卫才覆盖这条唯一实时通道。
+    from app.services.session_plan import SSE_EVENT_NAMES
+
+    names.update(SSE_EVENT_NAMES)
     return sorted(names)
 
 
@@ -575,7 +610,7 @@ def snapshot_realtime_contract() -> Dict[str, Any]:
                 "sse_event_type",
                 "sse_event_id_scope",
             ],
-            "events": _scan_literal_first_args(("sse_event",), 0),
+            "events": scan_sse_event_names(),
             "resume": {
                 "last_event_id_replay": True,
                 "keepalive_comments": True,

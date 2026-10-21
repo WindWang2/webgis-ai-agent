@@ -127,6 +127,10 @@ def test_v3_completion_proof(ecosystem, tmp_path):
         isolation_backend=backend,
         network_allow={"v3demo.ecosystem": frozenset({"example.com"})},
         stream_window=8,
+        # #1709：manifest 声明 != 授权。第 7 步的流式 model provider 需要
+        # 运行期授予 model_provider（broker 网络仍不授予 → 第 5 步的默认
+        # deny 语义不变）。
+        grants={"v3demo.ecosystem": frozenset({"model_provider"})},
     )
     host = ExtensionHost(tool_registry=_Registry(), policy=policy)
     host.discover()

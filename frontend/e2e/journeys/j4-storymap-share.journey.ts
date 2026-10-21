@@ -96,7 +96,11 @@ test.describe('journey-4 StoryMap 分享回放', () => {
     const toast = page.locator('[role="status"], [data-testid^="toast"]').filter({ hasText: '已复制分享链接' });
     await expect(toast.first()).toBeVisible({ timeout: 15_000 });
     const clip = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clip).toContain(`session_id=${SESSION_ID}`);
+    // The real leg seeds its session through the chat API, so the id is only
+    // known at runtime — asserting the mock world's constant here would be a
+    // guaranteed red (or a vacuous pass if the constant ever leaked into real).
+    expect(clip).toContain('/story');
+    expect(clip).toContain(`session_id=${sessionId}`);
     const replay = await page.context().newPage();
     await replay.goto(clip);
     await expect(

@@ -263,10 +263,35 @@ class FaissVectorStore:
         return self._index
 
     def _recover_index_metadata_consistency(self) -> None:
-        """If on-disk index and metadata have diverged, pick a direction and
-        log it. The chosen direction is "trust the index" because the
-        in-memory index is rebuilt from index.faiss on every load; metadata
+        """If on-disk index and metadata have diverged, REPAIR it on disk.
+
+        The chosen direction is "trust the index" because the in-memory
+        index is rebuilt from index.faiss on every load; metadata
         without a backing vector is dead weight.
+
+        Both divergence directions are repaired, not just logged:
+
+        - index behind metadata (ntotal < len(chunks)): truncate the
+          metadata to ntotal and rewrite it.
+        - index ahead of metadata (ntotal > len(chunks)): pad the
+          metadata up to ntotal with explicit ``unavailable``
+          placeholder entries (#1704). A crash in add_vectors between
+          its index.faiss write and its metadata.json write leaves
+          exactly this state. The orphan vectors' text never reached
+          disk, but their slots must stay addressable so that list
+          position == vector slot — the invariant add_vectors'
+          base_idx and search()'s positional lookup both rely on.
+          Padding rather than truncating the index is deliberate:
+          load_metadata() returns {"chunks": []} on ANY parse error,
+          so truncating would destroy real vectors whenever
+          metadata.json is merely corrupt. search() skips unavailable
+          entries, so orphans are never surfaced as hits.
+
+        Repairing matters because add_vectors numbers new chunks from
+        len(metadata chunks): leaving a divergence in place makes the
+        next add_vectors write its new metadata onto slots already
+        held by orphan vectors — permanent, silent metadata↔vector
+        misalignment that no reload or compact can undo.
         """
         try:
             ntotal = int(self._index.ntotal) if self._index is not None else 0
@@ -285,13 +310,17 @@ class FaissVectorStore:
             # entries with no vector. (The next add_vectors base_idx will
             # be ntotal, so re-adds are coherent.)
             dropped = len(chunks) - ntotal
-            meta["chunks"] = list(chunks)[:ntotal]
-            for i, ch in enumerate(meta["chunks"]):
+            # Write a COPY: load_metadata hands out the object it cached,
+            # and mutating it here would make a failed write look
+            # succeeded to every later reader in this process (#1704).
+            repaired = dict(meta)
+            repaired["chunks"] = list(chunks)[:ntotal]
+            for i, ch in enumerate(repaired["chunks"]):
                 ch["index"] = i
             try:
                 with _write_lock(self.index_dir):
                     _atomic_write_json(
-                        os.path.join(self.index_dir, "metadata.json"), meta
+                        os.path.join(self.index_dir, "metadata.json"), repaired
                     )
             except Exception as e:
                 logger.warning(
@@ -302,12 +331,37 @@ class FaissVectorStore:
                 f"truncated {dropped} orphaned metadata entries"
             )
         else:
-            # Index ahead of metadata. Either the metadata save failed
-            # (now handled by add_vectors propagation, but historically
-            # was silent) or there is a third file. Surface it.
+            # Index ahead of metadata: vectors exist whose metadata entry
+            # is missing — a crash in add_vectors between its index.faiss
+            # write and its metadata.json write (#1704), or a metadata
+            # save that failed before error propagation existed. Pad the
+            # metadata to ntotal with explicit placeholders so list
+            # position == vector slot again (see the docstring for why
+            # padding beats truncating here). Persist, don't just log:
+            # add_vectors numbers new chunks from len(chunks), so a
+            # divergence left on disk would misalign the next add.
+            orphan_count = ntotal - len(chunks)
+            if isinstance(meta, dict):
+                padded = list(chunks)
+                for slot in range(len(chunks), ntotal):
+                    padded.append({"index": slot, "unavailable": True})
+                # Write a copy — same reason as the branch above: the
+                # cached dict must keep describing what is on disk, so a
+                # failed pad write stays visible to add_vectors' check.
+                repaired = dict(meta)
+                repaired["chunks"] = padded
+                try:
+                    with _write_lock(self.index_dir):
+                        _atomic_write_json(
+                            os.path.join(self.index_dir, "metadata.json"), repaired
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[RAG] recovery: failed to pad metadata to match index: {e}"
+                    )
             logger.warning(
                 f"[RAG] recovery: index ntotal={ntotal} > metadata chunks={len(chunks)}; "
-                f"vectors exist whose metadata is missing"
+                f"padded {orphan_count} orphan slot(s) with unavailable placeholders"
             )
 
     def save_index(self) -> None:
@@ -403,32 +457,62 @@ class FaissVectorStore:
 
         The fix:
           1. hold a single sidecar write lock for the whole op
-          2. build the new metadata in memory, validate size, then
+          2. resolve the index inside the lock via the mtime-refreshing
+             _get_index, then reconcile the metadata against it (#1704)
+             so base_idx numbers real vector slots
+          3. build the new metadata in memory, validate size, then
              write the FAISS index first, then the metadata
-          3. propagate every OS / IO failure as RagPersistenceError
+          4. propagate every OS / IO failure as RagPersistenceError
 
         Write order chosen so a partial failure loses *at most* the
-        new chunks (the index is older, the metadata references
-        chunks the index doesn't have, and the next load truncates
-        them — see _recover_index_metadata_consistency).
+        new chunks: the index lands with the new vectors while the
+        metadata still lacks them, and the next load pads those orphan
+        slots as unavailable placeholders (#1704) rather than letting
+        the next add write its metadata onto them — see
+        _recover_index_metadata_consistency.
 
         #544: the index is resolved INSIDE the lock, via the mtime-refreshing
         _get_index. A cross-process compact that happened after a stale
         in-memory load is therefore re-read first, so this call never
         overwrites index.faiss with an index missing other writers' state.
+
+        #1704: _get_index runs recovery only when it actually reloads
+        index.faiss (mtime changed). metadata.json can diverge on its
+        own — a crash between this method's index write and metadata
+        write leaves the index ahead, and an external rewrite can
+        shrink metadata without touching the index. So reconciliation
+        runs explicitly, inside the lock, BEFORE the new chunks are
+        numbered: base_idx must equal the number of vectors already in
+        the index, or the new metadata lands on orphan vector slots and
+        every later search returns another document's text.
         """
         index_path = os.path.join(self.index_dir, "index.faiss")
         meta_path = os.path.join(self.index_dir, "metadata.json")
 
         with _write_lock(self.index_dir):
             idx = self._get_index(vectors.shape[1])
+            # #1704: align metadata with the (possibly just-reloaded)
+            # index before numbering the new chunks — see the docstring.
+            # Idempotent: a no-op when the two files already agree.
+            self._recover_index_metadata_consistency()
+            meta = self.load_metadata()
+            base_idx = len(meta.get("chunks", []))
+            if base_idx != idx.ntotal:
+                # Recovery could not bring the two files into agreement
+                # (its metadata write failed — disk full, permission
+                # denied). Numbering anyway would either overwrite orphan
+                # vector slots (base_idx < ntotal) or leave holes the
+                # search path cannot fill (base_idx > ntotal): permanent,
+                # silent metadata↔vector misalignment. Fail closed.
+                raise RagPersistenceError(
+                    f"add_vectors refused: index ntotal={idx.ntotal} != "
+                    f"metadata chunks={base_idx} after recovery"
+                )
+            for i, ch_meta in enumerate(chunks_metadata):
+                ch_meta["index"] = base_idx + i
+                meta.setdefault("chunks", []).append(ch_meta)
             idx.add(vectors)
             try:
-                meta = self.load_metadata()
-                base_idx = len(meta.get("chunks", []))
-                for i, ch_meta in enumerate(chunks_metadata):
-                    ch_meta["index"] = base_idx + i
-                    meta.setdefault("chunks", []).append(ch_meta)
                 # Index first: a crash here leaves the new metadata behind,
                 # which the next load truncates (safe direction).
                 _atomic_write_faiss(index_path, idx)
@@ -471,6 +555,15 @@ class FaissVectorStore:
                 chunk_meta = dict(meta["chunks"][int(i)])
 
                 if chunk_meta.get("deleted", False):
+                    continue
+
+                # #1704: recovery pads orphan vector slots (index ahead of
+                # metadata) with explicit unavailable placeholders so list
+                # position stays == vector slot. A placeholder carries no
+                # text and no tenant, so it must never be surfaced — and it
+                # must not count toward top_k either, or one orphan would
+                # starve a real hit.
+                if chunk_meta.get("unavailable", False):
                     continue
 
                 # Tenant filtering check (fail-closed, SEC-02)

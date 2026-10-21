@@ -49,6 +49,8 @@ from app.services.gis_harness.recipes import (
 from app.lib.gis.runtime_manifest import get_runtime_manifest
 from app.services.gis_harness.template_catalog import get_template_catalog
 from app.services.gis_harness.template_selector import TemplateSelector
+# #1549：「绝不阻断」旁路操作的统一降级面（吞掉必留可见证据）。
+from app.utils.best_effort import best_effort
 
 
 # ── 兼容视图（audit #825 的锁定对象迁移到 registry；非第二事实源）──────
@@ -369,7 +371,10 @@ def fact_signals(
     # 只读消费 intent 护栏词表（intent.py 归 01 线，本线零改动）：
     # 受保护任务不可被 hint 降级 —— 事实冲突的披露面上显式标注该约束，
     # 消费方（LLM/完成管线）不得据此改写任务路由。
-    try:
+    # #1549：词表/护栏投影失败经 best_effort 可见化（绝不阻断投影主路）。
+    with best_effort(
+        "fact-guardrail-vocab", "planner-fact-guardrail-best-effort"
+    ):
         from app.services.gis_harness.intent import (
             _HINT_OVERRIDABLE,
             _HINT_PROTECTED_TASKS,
@@ -382,8 +387,6 @@ def fact_signals(
                 ev["protected_task"] = task
                 for c in conflicts:
                     c["protected_task"] = task
-    except Exception:  # noqa: BLE001 — 词表缺席不影响投影主路
-        pass
 
     out["evidence"] = ev
     out["conflicts"] = conflicts[:4]
@@ -832,7 +835,11 @@ class MapProductPlanner:
 
         # V4 Wave 8（ADR-0104）：证据链阶段 1-6 发射（有界、消毒、绝不
         # 阻断规划；turn 上下文缺席时静默跳过 —— 记录面不伪造链）。
-        try:
+        # #1549：发射失败经 best_effort 留痕（稳定码 + turn 级计数），
+        # 不再 body-only-pass 静默吞掉。
+        with best_effort(
+            "plan-evidence-chain-emit", "planner-evidence-chain-best-effort"
+        ):
             from app.lib.runtime.chain_emitters import emit_chain, emit_chain_once
             from app.lib.runtime.decision_record import (
                 DECISION_KIND_PLAN_SELECTION,
@@ -866,10 +873,12 @@ class MapProductPlanner:
                 ],
             }
             if situation is not None and hasattr(situation, "to_dict"):
-                try:
+                # #1549：情境投影缺席按空，经 best_effort 可见化。
+                with best_effort(
+                    "situation-projection",
+                    "planner-situation-projection-best-effort",
+                ):
                     _selection_inputs["situation"] = situation.to_dict()
-                except Exception:  # noqa: BLE001 — 情境投影缺席按空
-                    pass
             _selected_recipe_id = str(getattr(recipe, "id", "") or "")
             emit_chain_once(
                 Stage.CANDIDATE_WORKFLOWS,
@@ -894,8 +903,6 @@ class MapProductPlanner:
                 Stage.SELECTED_WORKFLOW,
                 recipe_id=str(getattr(recipe, "id", "") or ""),
             )
-        except Exception:  # noqa: BLE001 — 记录面绝不阻断规划
-            pass
 
         # 模板选择：TemplateSelector 确定性评分（subject/task/outputs/
         # priority）是证据基线；显式 template_id（plan 连续性回放）只在
@@ -1082,7 +1089,11 @@ class MapProductPlanner:
         #  b) 决策族义务（task 门控）：一等决策 task（选址/适宜性/风险）命中
         #     即披露准则/权重/受体义务 —— 评价类产品的诚实底线，非噪声。
         # 每条警告携带稳定机器可读 code（warning_codes[0] 兼容单码断言）。
-        try:
+        # #1549：披露面失败经 best_effort 留痕（绝不阻断规划）。
+        with best_effort(
+            "methodology-pattern-projection",
+            "planner-methodology-pattern-best-effort",
+        ):
             from app.lib.gis.pattern_projection import project_patterns
 
             projection = project_patterns(intent.query, intent_task=intent.task)
@@ -1114,15 +1125,16 @@ class MapProductPlanner:
                     "pitfalls": list(match.common_pitfalls or [])[:2],
                     "stage": "planning",
                 })
-        except Exception:  # noqa: BLE001 — 披露是增值，绝不阻断规划
-            pass
 
         # Workflow V2（Goal C / R1-A4）：专业关键词命中、但被 seed 资历守卫
         # 压制的 V2 recipe，其科学义务的**披露面**必须随胜出 plan 下行 ——
         # 「显著性热点」即便路由到描述性产品族，检验条件义务（数值字段/
         # 空间单元下限）也不得丢失。有界（≤2 recipe × ≤4 警告）、去重、
         # 纯披露（不改路由、不加能力 —— 路由语义仍由 seed 资历守卫锁定）。
-        try:
+        # #1549：overlay 失败经 best_effort 留痕（绝不阻断规划）。
+        with best_effort(
+            "obligation-overlay", "planner-obligation-overlay-best-effort"
+        ):
             overlay_recipes = [
                 r for r in self.recipes.keyword_hits(intent.query)
                 if r.id != plan.recipe_id and r.workflow is not None
@@ -1150,8 +1162,6 @@ class MapProductPlanner:
                         "overlay_from": overlay.id,
                     })
                     existing_codes.add(code)
-        except Exception:  # noqa: BLE001 — 披露是增值，绝不阻断规划
-            pass
 
         if memo_key is not None:
             # 存入即深拷贝：调用方持有返回对象并可变（plan1.data_requirements=[]
@@ -1221,7 +1231,11 @@ class MapProductPlanner:
 
         # V4 Wave 8：证据链阶段 4（DATA_PROFILE）+ 6（SELECTED_WORKFLOW 的
         # finalize 复裁决）—— profile 事实摘要有界入链。
-        try:
+        # #1549：发射失败经 best_effort 留痕（绝不阻断终稿）。
+        with best_effort(
+            "finalize-evidence-chain-emit",
+            "planner-finalize-evidence-chain-best-effort",
+        ):
             from app.lib.runtime.chain_emitters import emit_chain_once
             from app.lib.runtime.gis_trace import Stage
 
@@ -1234,8 +1248,6 @@ class MapProductPlanner:
                     field_count=len(profile.get("fields") or {}),
                 )
             emit_chain_once(Stage.SELECTED_WORKFLOW, recipe_id=plan.recipe_id, phase="finalize")
-        except Exception:  # noqa: BLE001 — 记录面绝不阻断规划
-            pass
 
         report: EligibilityReport = self.check_recipe_eligibility(
             recipe, profile, min_points_default=min_points_default,
@@ -1252,7 +1264,11 @@ class MapProductPlanner:
         # profile/situation 提供时以事实刷新能力解析证据；必需能力失格
         # → methodology_warnings 留痕（诚实披露，不改 fallback 路由 ——
         # capability 级 fallback 纳入降级链是独立后续项，见 ledger）。
-        try:
+        # #1549：能力解析失败经 best_effort 留痕（绝不阻断终稿）。
+        with best_effort(
+            "capability-resolution-finalize",
+            "planner-capability-resolution-best-effort",
+        ):
             from app.services.gis_harness.capability_resolution import (
                 GoalRequirements,
                 capability_planning_v1_enabled,
@@ -1306,12 +1322,13 @@ class MapProductPlanner:
                             f"current situation — {hints}"],
                         "stage": "finalize",
                     })
-        except Exception:  # noqa: BLE001 — 证据是增值，绝不阻断终稿
-            pass
 
         # V4（ADR-0151 #P5）：事实优先信号 —— 数据事实覆盖文本 hint 的
         # 冲突走披露面（绝不改写 intent / 路由）；证据摘要随 plan 下行。
-        try:
+        # #1549：事实信号投影失败经 best_effort 留痕（绝不阻断终稿）。
+        with best_effort(
+            "finalize-fact-signals", "planner-finalize-fact-signals-best-effort"
+        ):
             from app.services.gis_harness.recipes import EligibilityContext
 
             _signals = fact_signals(
@@ -1325,8 +1342,6 @@ class MapProductPlanner:
                     "disclosures": [str(conflict.get("disclosure") or "")],
                     "stage": "finalize",
                 })
-        except Exception:  # noqa: BLE001 — 披露是增值，绝不阻断终稿
-            pass
 
         # Workflow V2（Goal C / C4+C6）：workflow 契约评估 —— 数据角色解析 +
         # 科学义务联动（precondition 委托算法层裁决，不重复实现）。仅对带
@@ -1669,12 +1684,14 @@ class MapProductPlanner:
             self._append_methodology_disclosure(finalized)
             # V11 W5（ADR-0165，缺口 G1）：备选版面证据（≥3 候选 + 评分）
             # —— composition_alternatives_payload 的生产调用与消费点。
-            try:
+            # #1549：备选证据失败经 best_effort 留痕（不影响组合落地）。
+            with best_effort(
+                "composition-alternatives-evidence",
+                "planner-composition-alternatives-best-effort",
+            ):
                 _alternatives = _composition_alternatives_evidence(plan, profile)
                 if _alternatives:
                     _alternatives_evidence["composition_alternatives"] = _alternatives
-            except Exception:  # noqa: BLE001 —— 证据失败不影响组合
-                pass
             # stash composition evidence
             finalized.template_selection = {
                 **finalized.template_selection,
@@ -1747,7 +1764,11 @@ class MapProductPlanner:
             for c in finalized.components
         ):
             return
-        try:
+        # #1549：披露组件失败经 best_effort 留痕（绝不阻断终稿）。
+        with best_effort(
+            "methodology-note-component",
+            "planner-methodology-note-best-effort",
+        ):
             from app.services.gis_harness.components import (
                 MAX_METHODOLOGY_NOTES,
                 methodology_note_component,
@@ -1774,8 +1795,6 @@ class MapProductPlanner:
             notes = notes[:MAX_METHODOLOGY_NOTES]
             if notes:
                 finalized.components.append(methodology_note_component(notes))
-        except Exception:  # noqa: BLE001 — 披露组件失败不阻断终稿
-            pass
 
     def _finalize_with_fallback_recipe(
         self,
@@ -1851,14 +1870,16 @@ class MapProductPlanner:
             for c in finalized.components
         ):
             return
-        try:
+        # #1549：说明卡失败经 best_effort 留痕（绝不阻断终稿）。
+        with best_effort(
+            "insufficient-data-card",
+            "planner-insufficient-data-card-best-effort",
+        ):
             from app.services.gis_harness.components import (
                 methodology_note_component,
             )
 
             finalized.components.append(methodology_note_component([card]))
-        except Exception:  # noqa: BLE001 — 说明卡失败不阻断终稿
-            pass
 
     def _evaluate_workflow_contract(
         self,

@@ -5,13 +5,15 @@ global:
 alerting:
   alertmanagers:
     - static_configs:
-        # #1636：targets 此前为空列表 —— alerts-rules.json 全部 14 条规则会被
+        # #1636：targets 此前为空列表 —— alerts-rules.json 全部 16 条规则会被
         # 加载并在 Prometheus UI 可见，但没有任何 receiver，生产故障时告警
-        # 静默（只能人工翻看 UI 才发现）。改为占位目标 alertmanager:9093：
-        # alertmanager 服务尚未部署，Prometheus 会持续记录投递失败（error
-        # log 可见）而非静默丢弃；运维上线 alertmanager（compose override
-        # 增补服务或独立部署）并配置 receiver 后投递自动生效 —— rule_files
-        # 与规则本身无需任何改动。
+        # 静默（只能人工翻看 UI 才发现）。改为目标 alertmanager:9093。
+        # #1687：该主机名当时在全仓库解析失败（没有任何 alertmanager 服务）——
+        # 现由 docker-compose.prod.yml / docker-compose.prod.secure.yml 的
+        # alertmanager 服务提供（服务名即本 target 主机名），receiver 配置见
+        # deploy/alertmanager.yml（webhook URL 由部署流程渲染注入）。
+        # 不变式由 tests/test_alerts_metrics_consistency.py 钉住：target
+        # 主机名必须命中已部署 compose 服务，删除服务/改名即红。
         - targets: ['alertmanager:9093']
 
 # 加载仓库内已跟踪的告警规则（deploy/alerts-rules.json，compose 中挂载）。

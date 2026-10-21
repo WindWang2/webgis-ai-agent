@@ -78,6 +78,13 @@ def test_ids_strictly_monotonic_across_random_event_mix():
         assert ids == list(range(1, len(ids) + 1)), f"seed={seed} id 非严格单调"
 
 
+def _reject_constant(token: str):
+    # #1685: NaN/Infinity are not valid JSON (RFC 8259) — the browser's
+    # JSON.parse rejects them, so a lenient json.loads blessing the frame
+    # would bless one the client silently drops.
+    raise ValueError(f"non-JSON constant in SSE frame: {token}")
+
+
 def test_serializer_never_raises_on_hostile_payloads():
     hostile = [
         object(),  # 不可 JSON 序列化
@@ -85,6 +92,7 @@ def test_serializer_never_raises_on_hostile_payloads():
         {"cycle": None, "nan": float("nan")},
         {"deep": [{"k": (b"bytes",)}]},
         {"self": object()},
+        {"inf": float("inf"), "-inf": float("-inf")},  # #1685
     ]
     for payload in hostile:
         frame = sse_event("token", payload)
@@ -93,7 +101,10 @@ def test_serializer_never_raises_on_hostile_payloads():
         # 防御解析不抛
         assert sse_event_type(frame) == "token"
         data_line = next(ln for ln in frame.split("\n") if ln.startswith("data: "))
-        json.loads(data_line[len("data: "):])  # 降级载荷仍是合法 JSON
+        payload_json = data_line[len("data: "):]
+        # #1685: strict — 帧必须能被浏览器 JSON.parse 接受
+        assert "NaN" not in payload_json and "Infinity" not in payload_json
+        json.loads(payload_json, parse_constant=_reject_constant)
 
 
 def test_pydantic_like_objects_serialize_via_model_dump():

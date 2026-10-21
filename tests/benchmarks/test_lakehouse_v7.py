@@ -85,10 +85,11 @@ def test_gc_plan_is_metadata_only(env):
     files = {
         f"chunks/c{i}.bin": bytes([i % 256]) * chunk_bytes for i in range(8)
     }
-    publish_data_object(
+    published = publish_data_object(
         files, kind="zarr_cube",
         owner_scope=normalize_owner_scope(session_id="sess-perf7"),
     )
+    manifest_id = published.data_object_id
 
     live_store = s3_mod.get_object_store()
     real_get = live_store.get_blob
@@ -100,13 +101,19 @@ def test_gc_plan_is_metadata_only(env):
 
     live_store.get_blob = counting_get
     try:
-        plan = plan_gc(grace_hours=0.0)
+        # #1604：ttl_floor=0.0 显式关闭 registry TTL 宽限下限（plan_gc 的
+        # 测试旋钮）—— 否则宽限被抬到 registry TTL（默认 4h），刚发布的
+        # manifest 恒判 fresh/protected → 候选集为空 → 候选阶段不执行，
+        # 下面的「零内容读」断言会空转。
+        plan = plan_gc(grace_hours=0.0, ttl_floor=0.0)
     finally:
         live_store.get_blob = real_get
-    # 结构性：plan 只读 manifest 元数据（扫描 + 候选重读 = 2 次），
-    # 8 个 256KB chunk 的内容读取次数为 0 —— GC 成本 ∝ manifest 数，
-    # 与 chunk 字节无关（§13：GC 不是 O(all bytes)）。
+    # 结构性：plan 只读 manifest 元数据（R2-4 单次解析后每 manifest 恰 1 次
+    # 读，候选阶段复用扫描期缓存、零重读），8 个 256KB chunk 的内容读取次数
+    # 为 0 —— GC 成本 ∝ manifest 数，与 chunk 字节无关（§13：GC 不是
+    # O(all bytes)）。
     assert plan["scanned_manifests"] == 1
-    assert len(reads) == 2
-    plan2 = plan_gc(grace_hours=0.0)
+    assert plan["candidates"] == [manifest_id]  # 候选路径确被执行（断言有牙）
+    assert reads == [manifest_id]  # 唯一读 = manifest 元数据；chunk 内容 0 读
+    plan2 = plan_gc(grace_hours=0.0, ttl_floor=0.0)
     assert plan2["token"] == plan["token"]  # 确定性

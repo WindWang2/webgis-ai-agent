@@ -4,6 +4,11 @@
 greenlet 必须可解析、lock 不得与约束漂移。纯文本/数值比较 —— 不跑 pip、不联网，
 标准库实现，``--no-cov`` 友好。
 
+扫描面（#1730）：requirements.txt / requirements-dev.txt（安装面单一事实源，
+PLT-10）+ pyproject.toml 的 ``[project].dependencies``（PEP 621 元数据面）。
+pyproject 曾在扫描面外，openai 幽灵依赖与 sqlalchemy 上界丢失因此绕过本门禁 ——
+击穿检查对两个源各自求值，另查 pyproject 有而 requirements 无的幽灵声明。
+
 用法::
 
     python scripts/check_dependency_bounds.py [repo_root]
@@ -14,6 +19,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 # #1512 两个根因包：已知不安全版本线（首个不安全版本 → 该线实测击穿版本）。
@@ -148,24 +154,58 @@ def parse_lock(path: Path) -> dict[str, str]:
     return pins
 
 
-def check(req_paths: list[Path], lock_path: Path) -> list[str]:
-    """门禁求值 → 错误列表（空 = 干净）。后者文件的同名约束覆盖前者（dev 覆盖 prod）。"""
+def parse_pyproject_dependencies(path: Path) -> dict[str, str]:
+    """解析 pyproject.toml 的 ``[project].dependencies``（PEP 621）→ {name: spec}。
+
+    #1730：该列表曾在扫描面外 —— openai 幽灵依赖（全仓无 import）与 sqlalchemy
+    丢失 <2.1 上界都藏在里面绕过本门禁。它与 requirements.txt 是两份声明面
+    （PLT-10：安装面单一事实源是后者），约束必须同宽严，故各自独立参与击穿检查。
+    ``[project.optional-dependencies]`` 不在扫面内（extra 本就可选装）。
+    """
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
     specs: dict[str, str] = {}
+    for item in data.get("project", {}).get("dependencies", []):
+        m = _NAME_RE.match(str(item).strip())
+        if not m:
+            continue
+        name, _, rest = m.groups()
+        spec = rest.split(";", 1)[0].strip()
+        if spec:
+            specs[name] = spec
+    return specs
+
+
+def check(req_paths: list[Path], lock_path: Path) -> list[str]:
+    """门禁求值 → 错误列表（空 = 干净）。
+
+    requirements 文件按序合并（后者覆盖前者，dev 覆盖 prod）；``*.toml`` 路径按
+    pyproject ``[project].dependencies`` 解析（#1730）并单独成源：击穿检查对
+    requirements 与 pyproject 两个源**各自**求值（任一带坏上界即红 —— 只查合并
+    面会让「pyproject 丢上界而 requirements 还有」互相掩盖），lock 漂移只对照
+    requirements（lock 由其编译而来），另查 pyproject 独有的幽灵声明。
+    """
+    specs: dict[str, str] = {}
+    pyproject_specs: dict[str, str] = {}
     for p in req_paths:
-        if p.exists():
+        if not p.exists():
+            continue
+        if p.suffix == ".toml":
+            pyproject_specs.update(parse_pyproject_dependencies(p))
+        else:
             specs.update(parse_requirements(p))
     pins = parse_lock(lock_path) if lock_path.exists() else {}
     errors: list[str] = []
 
-    for name, (first, breaker) in UNSAFE_LINES.items():
-        spec = specs.get(name)
-        if spec is None:
-            continue
-        if admits(spec, first) or admits(spec, breaker):
-            errors.append(
-                f"{name}: 约束 '{spec}' 放行击穿版本（首个不安全版本 {first}；"
-                f"#1512 实测 {breaker}）— 必须收紧上界"
-            )
+    for source, src_specs in (("requirements", specs), ("pyproject", pyproject_specs)):
+        for name, (first, breaker) in UNSAFE_LINES.items():
+            spec = src_specs.get(name)
+            if spec is None:
+                continue
+            if admits(spec, first) or admits(spec, breaker):
+                errors.append(
+                    f"{name}（{source}）：约束 '{spec}' 放行击穿版本（首个不安全版本 {first}；"
+                    f"#1512 实测 {breaker}）— 必须收紧上界"
+                )
 
     for name in REQUIRED_DIRECT:
         if name not in specs:
@@ -182,12 +222,28 @@ def check(req_paths: list[Path], lock_path: Path) -> list[str]:
         if spec is not None and not admits(spec, ver):
             errors.append(f"{name}=={ver} 与约束 '{spec}' 漂移（lock 版本不被约束容忍，lock 陈旧）")
 
+    # #1730：pyproject 幽灵依赖 —— 安装面单一事实源是 requirements.txt（PLT-10），
+    # 只在 [project].dependencies 声明的包任何环境都不装（openai>=1.0.0 即此形态：
+    # 全仓无 import），只会让「元数据声称的依赖面」与真实安装面漂移。
+    for name in sorted(set(pyproject_specs) - set(specs)):
+        errors.append(
+            f"{name}（pyproject）：声明于 [project].dependencies 但不在任何 requirements"
+            f" — 幽灵依赖（安装面单一事实源是 requirements.txt，PLT-10）；确需安装应补进"
+            f" requirements.txt，否则删除该行"
+        )
+
     return errors
 
 
 def main(root: Path | None = None) -> int:
     root = (root or Path(__file__).resolve().parents[1]).resolve()
-    reqs = [root / "requirements.txt", root / "requirements-dev.txt"]
+    # #1730：pyproject.toml 纳入扫描面 —— 它曾在面外，openai 幽灵依赖与
+    # sqlalchemy 上界丢失因此绕过本门禁（结构性根因）。
+    reqs = [
+        root / "requirements.txt",
+        root / "requirements-dev.txt",
+        root / "pyproject.toml",
+    ]
     errors = check([p for p in reqs if p.exists()], root / "requirements.lock")
     if errors:
         for e in errors:

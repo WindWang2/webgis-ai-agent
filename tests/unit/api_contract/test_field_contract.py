@@ -2,8 +2,9 @@
 
 path 级快照闸（tests/quality/test_api_compatibility.py）只挡「端点消失/
 参数变更」；字段级漂移（响应模型字段增删/改名/类型变化）对 TS 侧无强制
-同步 —— 本闸补上：每端点 200 响应 schema 的字段签名（字段名 + 类型）
-逐端点快照比对。
+同步 —— 本闸补上：每端点**全部 2xx** 响应 schema 的字段签名（字段名 +
+类型）逐端点快照比对（#1684 前只读 200，写入型端点的 201/202 全被静默
+跳过）。
 
 刷新：API_CONTRACT_FIELDS_UPDATE=1 pytest tests/unit/api_contract/test_field_contract.py
 """
@@ -63,6 +64,25 @@ def _type_of(spec: dict, components: dict, depth: int) -> str:
     return str(spec.get("type", "unknown"))
 
 
+def _success_schemas(op: dict) -> list[tuple[str, dict]]:
+    """端点全部 2xx 响应的 (status, json schema) 列表。
+
+    #1684（API-01 ②）：旧实现硬编码 ``responses["200"]`` 并用
+    ``except KeyError: continue`` 静默跳过 201/202 —— 恰是全部**写入型**
+    端点（map-products 201、fork/merge、geocompute runs 202、review
+    proposal 201），字段级契约对最重的写路径从未生效。
+    """
+    out: list[tuple[str, dict]] = []
+    for status, resp in (op.get("responses") or {}).items():
+        if not str(status).startswith("2"):
+            continue
+        try:
+            out.append((str(status), resp["content"]["application/json"]["schema"]))
+        except (KeyError, TypeError):
+            continue
+    return out
+
+
 def _current_signatures() -> dict:
     from app.main import app
 
@@ -75,13 +95,13 @@ def _current_signatures() -> dict:
         for method, op in methods.items():
             if method not in ("get", "post", "put", "delete", "patch"):
                 continue
-            try:
-                resp_schema = op["responses"]["200"]["content"]["application/json"]["schema"]
-            except (KeyError, TypeError):
-                continue
-            sig = _field_signature(resp_schema, components)
-            if sig:
-                out[f"{method.upper()} {path}"] = sig
+            for status, resp_schema in _success_schemas(op):
+                # 200 保持无后缀键（快照稳定）；非 200 的 2xx 带 [status]
+                # 后缀（同端点可有多形态成功响应）。
+                suffix = "" if status == "200" else f" [{status}]"
+                sig = _field_signature(resp_schema, components)
+                if sig:
+                    out[f"{method.upper()} {path}{suffix}"] = sig
     return dict(sorted(out.items()))
 
 

@@ -28,6 +28,7 @@ from app.schemas.mapspec_mutation_schema import (
 )
 from app.services.review.policy import (
     ApprovalPolicy,
+    TRANSITIONS,
     classify_risk,
     evaluate_approval,
     proposal_targets,
@@ -131,6 +132,25 @@ class TestContracts:
         }
 
 
+class TestTransitions:
+    """状态机闭包真相（policy.TRANSITIONS）契约。"""
+
+    def test_changes_requested_can_reach_approved(self):
+        """review #1722：CHANGES_REQUESTED 下 approve 必须能翻态（不再被吞）。"""
+        assert ProposalStatus.APPROVED in TRANSITIONS[ProposalStatus.CHANGES_REQUESTED]
+        assert ProposalStatus.SUBMITTED in TRANSITIONS[ProposalStatus.CHANGES_REQUESTED]
+
+    def test_terminal_statuses_have_no_out_edges(self):
+        for st in (
+            ProposalStatus.REJECTED, ProposalStatus.MERGED,
+            ProposalStatus.SUPERSEDED, ProposalStatus.WITHDRAWN,
+        ):
+            assert TRANSITIONS[st] == frozenset(), f"{st} 必须无出边"
+
+    def test_every_status_has_table_entry(self):
+        assert set(TRANSITIONS) == set(ProposalStatus)
+
+
 class TestRiskClassification:
     def test_low_risk_presentation(self):
         assert classify_risk(_intents()) is ProposalRisk.LOW
@@ -199,7 +219,11 @@ class TestApprovalPolicy:
 
     def test_agent_author_needs_distinct_human(self):
         p = self._proposal(author=_actor("agent:carto", kind="agent", role="viewer"))
-        # agent 作者自批（假设 agent 冒名 user 决策）→ 不满足 distinct
+        # review #1744-7：审批者身份按 (actor_id, actor_kind) 双重判定 ——
+        # 同 id 不同 kind 是**不同主体**（agent 作者 vs user 审批者），不算
+        # 自批；「agent 冒名 user 记录决策」的 fail-closed 在写时门槛
+        # （service._approve_gate：非 user 身份一律拒收决策），策略层与
+        # service 层 `_same_person` 保持同一口径。
         v = evaluate_approval(
             ApprovalPolicy(), p,
             approvals=[ReviewDecision(
@@ -207,8 +231,18 @@ class TestApprovalPolicy:
                 base_revision_at_decision=7,
             )],
         )
-        assert not v.satisfied
-        # 同人 distinct 缺席：自己批自己也不行（agent 作者永远要别人）
+        assert v.satisfied and v.counted_approvals == 1
+        # agent 审批者的 approve 永不计数（防御纵深）
+        v_agent = evaluate_approval(
+            ApprovalPolicy(), p,
+            approvals=[ReviewDecision(
+                decision_id="rd_1b", decision="approve",
+                actor=_actor("agent:carto", kind="agent"),
+                base_revision_at_decision=7,
+            )],
+        )
+        assert not v_agent.satisfied
+        # agent 作者永远要 distinct human：他人（user）审批才满足
         v2 = evaluate_approval(
             ApprovalPolicy(), p,
             approvals=[ReviewDecision(
@@ -217,6 +251,36 @@ class TestApprovalPolicy:
             )],
         )
         assert v2.satisfied and v2.counted_approvals == 1
+
+    def test_self_approval_compares_id_and_kind(self):
+        """review #1744-7：自批判定 = (actor_id, actor_kind) 双重相同
+        （与 service._same_person 一致）。高风险 user 作者 + 同 id 同 kind
+        的审批者必须拒绝；仅 id 相同而 kind 不同不构成自批。"""
+        p = self._proposal(risk=ProposalRisk.HIGH)
+        v_same = evaluate_approval(
+            ApprovalPolicy(), p,
+            approvals=[ReviewDecision(
+                decision_id="rd_1", decision="approve",
+                actor=_actor("u1", role="admin"),
+                base_revision_at_decision=7,
+            )],
+        )
+        assert not v_same.satisfied
+        assert any("distinct" in r for r in v_same.blocking_reasons)
+        # 同 id 但 kind 不同：不构成自批（该 approve 由 user 主体作出）
+        p_agent_author = self._proposal(
+            risk=ProposalRisk.HIGH,
+            author=_actor("shared-id", kind="agent", role="viewer"),
+        )
+        v_cross_kind = evaluate_approval(
+            ApprovalPolicy(), p_agent_author,
+            approvals=[ReviewDecision(
+                decision_id="rd_2", decision="approve",
+                actor=_actor("shared-id", role="editor"),
+                base_revision_at_decision=7,
+            )],
+        )
+        assert not any("distinct" in r for r in v_cross_kind.blocking_reasons)
 
     def test_agent_approval_never_counts(self):
         """agent 记录的 approve 永不满足策略（即使审查者身份是别的 agent）。"""

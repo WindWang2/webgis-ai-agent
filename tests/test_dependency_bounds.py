@@ -1,8 +1,9 @@
 """依赖上界守护（scripts/check_dependency_bounds.py）的回归测试（#1512，P1）。
 
 把 #1512 的回归防线钉进测试套件：pandas 必须 <3.0、sqlalchemy 必须 <2.1、
-greenlet 必须可解析、lock 不得与约束漂移。纯文本断言 —— 不跑 pip、不联网，
-``--no-cov`` 友好。
+greenlet 必须可解析、lock 不得与约束漂移。#1730 起 pyproject.toml 的
+``[project].dependencies`` 也在扫描面内（击穿各自求值 + 幽灵依赖）。
+纯文本断言 —— 不跑 pip、不联网，``--no-cov`` 友好。
 """
 import subprocess
 import sys
@@ -41,14 +42,45 @@ pandas==2.3.3
 sqlalchemy==2.0.54
 """
 
+# #1730：pyproject [project].dependencies 与 FIXED_REQ 对齐的干净形态
+PYPROJECT_CLEAN = """\
+[project]
+name = "demo"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "sqlalchemy[asyncio]>=2.0.25,<2.1",  # 上界与 requirements 一致
+    "geopandas>=1.1.4",
+    "pandas>=2.2.2,<3.0",
+]
+"""
 
-def _write(tmp_path: Path, req: str, lock: str = LOCK, dev: str = "") -> tuple[Path, Path]:
+# #1730 现场复刻：requirements 还带着 <2.1，pyproject 把上界丢了
+PYPROJECT_BREAKER = PYPROJECT_CLEAN.replace(
+    '"sqlalchemy[asyncio]>=2.0.25,<2.1"', '"sqlalchemy[asyncio]>=2.0.25"'
+)
+
+# #1730 现场复刻：幽灵依赖 —— 只在 pyproject 声明，requirements 无、全仓无 import
+PYPROJECT_GHOST = PYPROJECT_CLEAN.replace(
+    '    "pandas>=2.2.2,<3.0",\n', '    "pandas>=2.2.2,<3.0",\n    "openai>=1.0.0",\n'
+)
+
+
+def _write(
+    tmp_path: Path,
+    req: str,
+    lock: str = LOCK,
+    dev: str = "",
+    pyproject: str | None = None,
+) -> tuple[Path, Path]:
     req_path = tmp_path / "requirements.txt"
     req_path.write_text(req, encoding="utf-8")
     lock_path = tmp_path / "requirements.lock"
     lock_path.write_text(lock, encoding="utf-8")
     dev_path = tmp_path / "requirements-dev.txt"
     dev_path.write_text(dev or "-r requirements.txt\npytest>=9.1.1\n", encoding="utf-8")
+    if pyproject is not None:
+        (tmp_path / "pyproject.toml").write_text(pyproject, encoding="utf-8")
     return req_path, lock_path
 
 
@@ -199,12 +231,56 @@ class TestCheckGate:
         assert any("pandas" in e and "3.0.6" in e for e in errors)
 
 
+class TestPyprojectScanSurface:
+    """#1730：pyproject [project].dependencies 必须在扫描面内。
+
+    它曾在面外：openai 幽灵依赖（全仓无 import）与 sqlalchemy 丢失 <2.1 上界
+    都藏在 pyproject 里绕过本门禁（requirements 还带着上界，合并面互相掩盖）。
+    """
+
+    def test_parse_pyproject_dependencies(self, tmp_path):
+        path = tmp_path / "pyproject.toml"
+        path.write_text(PYPROJECT_CLEAN, encoding="utf-8")
+        assert guard.parse_pyproject_dependencies(path) == {
+            "sqlalchemy": ">=2.0.25,<2.1",
+            "geopandas": ">=1.1.4",
+            "pandas": ">=2.2.2,<3.0",
+        }
+
+    def test_pyproject_missing_upper_bound_is_flagged(self, tmp_path):
+        # #1730 现场复刻：requirements 有 <2.1、pyproject 丢掉 → 必须红
+        req, lock = _write(tmp_path, FIXED_REQ, pyproject=PYPROJECT_BREAKER)
+        errors = guard.check([req, tmp_path / "pyproject.toml"], lock)
+        assert any(
+            "sqlalchemy" in e and "2.1.1" in e and "pyproject" in e for e in errors
+        ), errors
+
+    def test_pyproject_ghost_dependency_is_flagged(self, tmp_path):
+        # #1730 现场复刻：openai 只在 pyproject 声明 → 幽灵依赖必须红
+        req, lock = _write(tmp_path, FIXED_REQ, pyproject=PYPROJECT_GHOST)
+        errors = guard.check([req, tmp_path / "pyproject.toml"], lock)
+        assert any("openai" in e and "幽灵依赖" in e for e in errors), errors
+
+    def test_pyproject_aligned_is_clean(self, tmp_path):
+        req, lock = _write(tmp_path, FIXED_REQ, pyproject=PYPROJECT_CLEAN)
+        assert guard.check([req, tmp_path / "pyproject.toml"], lock) == []
+
+    def test_main_scans_pyproject(self, tmp_path):
+        # main() 必须把 pyproject 纳入扫描面（#1730 结构性根因），否则脚本本身仍是漏的
+        _write(tmp_path, FIXED_REQ, pyproject=PYPROJECT_BREAKER)
+        assert guard.main(tmp_path) == 1
+
+
 class TestLiveRepoGate:
     """实测门：仓库当前状态必须干净（ oracle：退出码 0）。"""
 
     def test_repo_requirements_are_clean(self):
         errors = guard.check(
-            [REPO / "requirements.txt", REPO / "requirements-dev.txt"],
+            [
+                REPO / "requirements.txt",
+                REPO / "requirements-dev.txt",
+                REPO / "pyproject.toml",
+            ],
             REPO / "requirements.lock",
         )
         assert errors == [], f"仓库依赖约束被 #1512 形态击穿：{errors}"

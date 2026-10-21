@@ -10,7 +10,7 @@ import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
 import { restoreSessionMapLayers, selectCameraToRestore } from '@/lib/session/map-state-restore';
 import { setMapSpecOwnerToken, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
-import { t } from '@/lib/i18n/t';
+import { t, currentLocale } from '@/lib/i18n/t';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -107,7 +107,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       sessions.map((s) => ({
         id: s.id,
         title: s.title || '未命名',
-        time: new Date(s.createdAt).toLocaleString('zh-CN') || '',
+        // #1670：时间戳随应用语言格式化（同 #1628 的 currentLocale 模式），
+        // 不硬编码 'zh-CN' —— 英文 UI 下也应是用户 locale 的日期时间。
+        time: new Date(s.createdAt).toLocaleString(currentLocale(), { hour12: false }) || '',
         msgs: s.messages?.length || 0,
         tags: [],
       }))
@@ -184,6 +186,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // V7（审计 §2-M）：样式钻入视图描述的是旧会话的图层行 —— 不清则
       // 切换后图层 tab 渲染 LayerStylePanel，找不到层 return null → 整页空白。
       useHudStore.getState().setEditingLayerId(null);
+      // #1725：copilot 画布意图态是会话级的（工具/高亮/微 UI/staged 信封）
+      // —— 不清则会话 A 的手势信封被会话 B 的下一轮 turn 捎带出去。
+      useHudStore.getState().clearCopilotState();
       // V7（审计 §4-M）：工具激活态与脏标记跨会话残留（测量模式在新会话
       // 仍激活）；草图要素同理清空。
       useHudStore.getState().clearToolState();
@@ -381,6 +386,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setAiStatus('idle');
       // V7（审计 §2-M）：同 selectSession —— 样式钻入视图随会话清空。
       useHudStore.getState().setEditingLayerId(null);
+      // #1725：同 selectSession —— copilot 画布意图态随会话清空。
+      useHudStore.getState().clearCopilotState();
       // V7：同 selectSession —— 工具/脏标记/草图随会话清空。
       useHudStore.getState().clearToolState();
       resetSketchStore();

@@ -1,0 +1,53 @@
+# Alertmanager 投递通道配置（#1687）。
+#
+# 背景：deploy/prometheus.yml 的 alerting.alertmanagers target 是
+# ``alertmanager:9093``，而修复前全仓库（两个 prod compose + deploy/k8s/）
+# 没有任何 alertmanager 服务 —— 该主机名在 compose 网络里 DNS 解析失败，
+# deploy/alerts-rules.json 的 16 条规则全部静默（Prometheus 只在自己的
+# error log 里记录投递失败）。本文件与 docker-compose.prod*.yml 的
+# alertmanager 服务（服务名即 target 主机名）共同补上投递通道。
+#
+# receiver URL 注入：alertmanager 配置**不做 env 展开**，webhook URL 由部署
+# 流程在 runner 侧把占位符 ``__ALERT_WEBHOOK_URL__`` 替换为
+# ALERT_WEBHOOK_URL（GitHub secret/var，见 production.yml 的 deploy-prod /
+# rollback job）后随 scp 送达主机。未配置时替换为 RFC 2606 的 .invalid
+# 占位 —— 投递在 alertmanager UI / 日志里**响亮失败**，而非静默丢弃
+# （#1636 同款诚实降级）；配置 secret/var 后下次部署即生效。
+#
+# 验证：docker compose ... exec alertmanager wget -qO- http://localhost:9093/api/v2/status
+global:
+  # 告警未 resolve 的保留时长（Prometheus 重复发送同一 alert 的上界由
+  # route.repeat_interval 控制）。
+  resolve_timeout: 5m
+
+route:
+  # 默认接收者 + 分组维度：同 alertname + severity 的告警合并为一条通知，
+  # 避免一次故障把 16 条规则炸成 16 条消息。
+  receiver: webgis-ops
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # critical（WebGIS_API_Down / Database_Connection_Failure /
+    # SRE_Component_Down）单独通道：更短的首批等待与 repeat，避免被
+    # warning 组淹没 —— 这些是最该立刻叫人的规则。
+    - match:
+        severity: critical
+      receiver: webgis-ops-critical
+      group_wait: 10s
+      group_interval: 5m
+      repeat_interval: 1h
+
+receivers:
+  # webhook 投递（通用 HTTP POST；Feishu/钉钉/Slack/PagerDuty 的 webhook
+  # 均兼容）。send_resolved: true —— 恢复消息与告警消息同等重要，
+  # 否则「恢复了」只能靠人工翻 UI 确认。
+  - name: webgis-ops
+    webhook_configs:
+      - url: '__ALERT_WEBHOOK_URL__'
+        send_resolved: true
+  - name: webgis-ops-critical
+    webhook_configs:
+      - url: '__ALERT_WEBHOOK_URL__'
+        send_resolved: true

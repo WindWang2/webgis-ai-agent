@@ -3718,10 +3718,12 @@ def bivariate_local_moran_narrated(
     """双变量局部 Moran（stats.bivariate_local_moran；esda 委托，seed=42）。
 
     I_i^BV = z(x1)_i · Σ_j w_ij z(x2)_j / S₀（esda.Moran_Local_BV，行标准化
-    权重，固定种子 42 条件随机化）。标签 HH/LH/LL/HL 取 p_sim<0.05，
-    BH q 值随要素输出。**孤岛权重警示**（与既有双变量 Moran 同款披露）：
-    无邻居位置在行标准化权重下贡献为 0、结果中性；与 esda 归一化的对齐
-    仅在无 island 权重时严格成立。共位相关 ≠ 因果/超前-滞后。
+    权重，固定种子 42 条件随机化）。标签 HH/LH/LL/HL 取 BH-FDR 校正后的
+    p_adj<0.05（与同族 local_moran_narrated / getis_ord 口径一致，多重
+    比较假阳性受控）；原始 p_sim 与校正 q 随要素输出。**孤岛权重警示**
+    （与既有双变量 Moran 同款披露）：无邻居位置在行标准化权重下贡献为 0、
+    结果中性；与 esda 归一化的对齐仅在无 island 权重时严格成立。共位相关
+    ≠ 因果/超前-滞后。
     """
     import esda as _esda
     import libpysal as _libpysal
@@ -3785,7 +3787,10 @@ def bivariate_local_moran_narrated(
 
     p_sim = np.asarray(ref.p_sim, dtype=float)
     p_adj = multiple_testing_correction(p_sim, "bh")
-    significant = p_sim < 0.05
+    # #1736：标签判定走 BH-FDR 校正后的 p_adj（与 local_moran_narrated /
+    # getis_ord_narrated 同一口径）—— 未校正的 p_sim<0.05 会让双变量 LISA
+    # 比同族宽松，制造假阳性标注；p_sim 仍作为原始 p 随要素输出。
+    significant = p_adj < 0.05
     quads = np.asarray(ref.q, dtype=int)
     labels = np.where(
         significant,
@@ -3835,7 +3840,8 @@ def bivariate_local_moran_narrated(
     }
     summary = (
         f"双变量局部 Moran（'{value_field}' vs '{lag_field}' 的空间滞后，"
-        f"esda 委托、固定种子 42）：{sig_count}/{n} 个位置 p_sim<0.05 —— "
+        f"esda 委托、固定种子 42）：{sig_count}/{n} 个位置 BH-FDR 校正后 "
+        f"p_adj<0.05 —— "
         f"HH={counts['HH']}、LH={counts['LH']}、LL={counts['LL']}、"
         f"HL={counts['HL']}、not_significant={counts['not_significant']}"
         f"（BH-FDR 后随机期望假阳性 ≈{expected_fp} 个；{island_note}）。"

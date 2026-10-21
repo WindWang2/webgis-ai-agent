@@ -81,7 +81,7 @@
 - **代码位置**: `app/services/jobs/worker.py:440`。
 - **原因分析**: `mark_failed_sync` 已把 `error=exc` 存库,写日志时误以为信息已持久化即可,忽略了日志侧的即时可观测性。
 - **优化方案**: 改为 `logger.warning("[jobs] failed job_id=%s error=%s: %s", job_id, type(exc).__name__, exc, exc_info=True)`。
-- **验证方式**: 构造失败 job 后 `grep "\[jobs\] failed" logs/app.log` 应包含堆栈。
+- **验证方式**: 构造失败 job 后 `grep "\[jobs\] failed"` 应用日志(`LOG_DIR` 默认 `/tmp/webgis-logs/app.log`,或容器 stdout/stderr;#1686)应包含堆栈。
 
 ### E-7 [P2] structlog 声明为直接依赖但全库零使用(死依赖)
 

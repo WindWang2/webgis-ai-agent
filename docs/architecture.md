@@ -50,8 +50,8 @@ graph TD
     B2 -->|GET /layers/data/ref| C2
 
     subgraph Agent ["Agent 调度层（双 runtime，工具面已统一）"]
-        D[ChatEngine: planner → execution_engine → tool_pipeline → 观察/反思<br/>（默认路径）]
-        D1[Pi agent 桥 USE_NEW_AGENT=false 默认<br/>JSON-RPC 子进程; 传输收敛进行中]
+        D[ChatEngine: planner → execution_engine → tool_pipeline → 观察/反思<br/>（紧急回退 / Pi 降级路径）]
+        D1[Pi agent 桥 USE_NEW_AGENT=true 默认<br/>bundled RPC 子进程宿主; 传输收敛进行中]
         D2[ToolDispatchService —— 两路同一分发入口<br/>dedup / ref 落存 / MapSpec authoring / error 契约]
         CR[cartography_runtime —— 共享制图会话运行时<br/>desired vs observed 收敛判定（ADR-0071）]
     end
@@ -82,7 +82,7 @@ graph TD
     subgraph 存储 ["存储层"]
         G[(Redis: broker + 会话数据<br/>SessionDataManager)]
         G1[(磁盘: MapSpec 权威<br/>mapspec.json + revisions + checkpoints)]
-        H[(PostgreSQL/PostGIS 或 SQLite: 23 张表 + durable job 事实源)]
+        H[(PostgreSQL/PostGIS 或 SQLite: 78 张表 + durable job 事实源)]
     end
     D -.-> G
     F --> G
@@ -95,7 +95,7 @@ graph TD
 ### 3.1 一次对话的完整生命周期
 
 1. 前端采集 `map_state`(视口中心、zoom、图层显隐)随 `POST /api/v1/chat/stream` 上行。
-2. 路径裁决 `_use_pi_bridge()`(默认 ChatEngine;`USE_NEW_AGENT` 经 Settings 配置,默认 false)。
+2. 路径裁决 `_use_pi_bridge()`(`USE_NEW_AGENT` 经 Settings 配置,**默认 true** —— Pi agent 桥为默认宿主,API 启动即拉起 bundled RPC 子进程;`USE_NEW_AGENT=false` 或 Pi 进程死亡时降级 ChatEngine)。
 3. ChatEngine 组装上下文(系统提示 + 历史 token 预算 + 图层 inventory(descriptor 优先,零物化) + 项目上下文)→ 规划(LLM plan 或 `_synth_plan_from_harness` 确定性合成)→ LLM 循环(60 rounds / 900s 预算 / no-progress 熔断)。
 4. 工具执行统一经 **ToolDispatchService**(ADR-0068):ref 解引用 → 执行(sync 工具 to_thread)→ 大结果挂 `ref:` → **MapSpec authoring**(产出即带 mapspec_fingerprint 证据)→ error 契约。
 5. SSE 按序下发 token / tool_result / mapspec / mutation_revision;前端 session-cursor 收敛(单调 revision,旧代次事件拒收)。
@@ -146,8 +146,8 @@ MapRequestIntent ──► Recipe/Template 选择 ──► MapProductPlanner（
 
 | 子系统 | 位置 | 职责 |
 |---|---|---|
-| ChatEngine | `app/services/chat/` | 规划-执行-反思循环、上下文组装、SSE 事件（默认执行路径） |
-| Pi agent 桥 | `app/agent_pi_bridge.py` | `USE_NEW_AGENT` 开启后以 JSON-RPC 子进程驱动 Pi;失败回退 ChatEngine;传输职责（收敛进行中，制图运行时已抽出） |
+| ChatEngine | `app/services/chat/` | 规划-执行-反思循环、上下文组装、SSE 事件（紧急回退 / Pi 降级执行路径） |
+| Pi agent 桥 | `app/agent_pi_bridge.py` | `USE_NEW_AGENT` 默认 true:以 JSON-RPC 子进程驱动 bundled Pi(默认宿主);置 false 或进程死亡时回退/降级 ChatEngine;传输职责（收敛进行中，制图运行时已抽出） |
 | cartography_runtime | `app/services/cartography_runtime.py` | **共享**制图会话运行时（ADR-0071）:harness 注册表、desired vs observed 评估、上下文水化、runtime repair |
 | GISWorldState | `app/services/gis_world_state/` | 统一读模型快照、GISMutation 门面、provenance 决策链、user-wins 守卫（ADR-0072） |
 | 工具注册中心 | `app/tools/registry.py` + `app/tools/` | 75 个 `@tool` 静态注册 + `app/skills/*.md` 动态技能;`ref:` 参数自动解引用 |

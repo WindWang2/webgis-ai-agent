@@ -11,8 +11,8 @@ V4 基线：0-360 / antimeridian 的真实处理只存在于 MVT 瓦片切分
 - ``normalize_lon_pm180`` / ``normalize_lon_e360``：标量经度换算；
 - ``detect_longitude_convention``：从经度序列判定 ``pm180`` / ``e360``
   / ``ambiguous``（全部落在 0-180 时两种约定等价，不猜）；
-- ``bbox_crosses_antimeridian``：±180 bbox 判定（V5 语义：pm180 表示
-  下 span>180 即跨 AM）；
+- ``bbox_crosses_antimeridian``：±180 bbox 判定（V5 语义：规范表示下
+  需「触 ±180 边」且 span>180 才构成环绕证据）；
 - ``split_geometry_at_antimeridian``：GeoJSON 几何级 AM 拆分 —— 平移
   进 0-360 连续帧、按 180 经线切分、再映射回 pm180；
 - ``normalize_geojson_geometry``：约定转换入口（e360 → pm180 时自动
@@ -61,12 +61,16 @@ def bbox_crosses_antimeridian(minx: float, miny: float,
     """bbox 是否跨越 antimeridian。
 
     - 环绕表示（``maxx < minx``，如 177 … -179）：本身就是跨 AM 表示；
-    - 规范表示（``maxx ≥ minx``）：pm180 下 span > 180 必然是「绕远路」
-      的环绕数据。
+    - 规范表示（``maxx ≥ minx``）：**触 ±180 边且 span > 180** 才构成环绕
+      证据 —— 单凭 span>180 不是环绕证据：[-100, 100]（200° 宽、完全不
+      触 ±180）是合法的大跨度 bbox，不是跨 AM（#1737）。
     """
-    if float(maxx) < float(minx):
+    minx_f, maxx_f = float(minx), float(maxx)
+    if maxx_f < minx_f:
         return True
-    return (float(maxx) - float(minx)) > 180.0
+    if minx_f > -180.0 and maxx_f < 180.0:
+        return False  # 未触边 —— span 再大也只是宽 bbox，不是环绕
+    return (maxx_f - minx_f) > 180.0
 
 
 def _shift_coords_to_e360(coords: Any) -> Any:
@@ -279,7 +283,10 @@ def describe_longitude_semantics(
         geo_lons = _sample_lons(geometry.get("coordinates"))
         if geo_lons:
             evidence = "geometry" if evidence == "absent" else "bbox+geometry"
-            lons = geo_lons or lons
+            # 证据合并（取并集）而非整体替换：bbox 的 e360 证据（maxx>180）
+            # 必须存活，否则跨 AM 的 e360 数据集会被误报 ambiguous 且
+            # normalization_required=False（#1737）。
+            lons = sorted(set(lons) | set(geo_lons))
             if len(geo_lons) >= 2:
                 crosses = crosses or geometry_crosses_antimeridian(geo_lons)
     conv = detect_longitude_convention(lons) if lons else "ambiguous"

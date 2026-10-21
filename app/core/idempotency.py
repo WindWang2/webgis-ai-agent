@@ -9,6 +9,9 @@ body hash 维度上 24h 内重放返回**首次响应**（状态码 + content-ty
 - **fail-open**：Redis 不可用/超时 → 直接放行处理（幂等是尽力而为语义，
   与 RateLimiter 的 C-F10 同源）。绝不因幂等层故障拒绝请求。
 - **只缓冲 JSON 响应**：SSE / 文件流不缓冲不重放（显式排除清单见 ADR-0138）。
+- **超限透传**（#1724）：响应体 > ``MAX_BUFFER_BYTES`` 时不缓冲不重放，
+  原样（流式）透传 —— 已成功执行的请求绝不被改写成 502（502 可重试，会把
+  副作用二次执行，幂等契约反被中间件自己打破）。
 - 锁 TTL 60s 覆盖单请求最坏处理时长；过期即退化为重复处理（有界重复，
   无分布式死锁 —— 与 tool_cache 同决策）。
 - **按调用方身份隔离**（security F-05）：重放发生在路由/认证之前，key 必须
@@ -30,14 +33,18 @@ import json
 import logging
 import time
 import uuid
-from typing import Optional
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
 from app.core.config import settings
 from app.core.exception import unified_error_envelope
+
+if TYPE_CHECKING:
+    import redis.asyncio as aioredis
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +119,17 @@ def compute_idempotency_key(
     digest.update(b"\x00")
     digest.update(hashlib.sha256(body or b"").digest())
     return digest.hexdigest()[:32]
+
+
+def _declared_content_length(response: Response) -> Optional[int]:
+    """响应声明的 content-length；缺头/非法值 → None（流式响应）。"""
+    raw = response.headers.get("content-length")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 class _SkipStore(Exception):
@@ -223,18 +241,41 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         return None
 
     # ── 响应缓冲与重放 ───────────────────────────────────────────────
+    async def _release_lock(self, redis: "aioredis.Redis", lock_key: str, token: str) -> None:
+        """只释放自己持有的锁（token 校验语义，Lua 原子比较删除）。"""
+        try:
+            await redis.eval(_RELEASE_LOCK_LUA, 1, lock_key, token)
+        except Exception:  # noqa: BLE001 — 释放失败不改变响应语义
+            pass
+
     async def _store_response(self, redis, idem_key: str, lock_key: str, token: str, response):
         """缓冲 JSON 响应入 Redis；返回给客户端的是重组后的响应
-        （body_iterator 已被消费，原响应不可复用）。非 JSON 不缓冲原样返回。"""
+        （body_iterator 已被消费，原响应不可复用）。非 JSON 不缓冲原样返回。
+        超限（> ``MAX_BUFFER_BYTES``）响应不缓冲不重放，**原样透传**
+        （#1724：已成功执行的请求绝不被改写成 502 —— 502 可重试，会把
+        副作用二次执行，幂等契约反被中间件自己打破）。"""
         content_type = response.headers.get("content-type", "")
         if "application/json" not in content_type:
             return response
+        declared = _declared_content_length(response)
+        if declared is not None and declared > MAX_BUFFER_BYTES:
+            # 上游声明即超限：迭代器尚未消费，原响应对象直接透传
+            logger.info(
+                "[Idempotency] response content-length %d > cap %d; "
+                "passthrough uncached",
+                declared, MAX_BUFFER_BYTES,
+            )
+            await self._release_lock(redis, lock_key, token)
+            return response
         buffered: Optional[bytes] = None
+        oversize_prefix: Optional[bytes] = None
         try:
             body = b""
             async for chunk in response.body_iterator:
                 body += chunk
                 if len(body) > MAX_BUFFER_BYTES:
+                    # 流式中途才发现超限：不再入缓存，改透传（见 _passthrough）
+                    oversize_prefix = body
                     break
             else:
                 buffered = body
@@ -262,14 +303,16 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         except Exception as exc:  # noqa: BLE001 — 缓冲失败不改变响应语义
             logger.warning("[Idempotency] store failed (%s)", exc)
         finally:
-            try:
-                # 只释放自己持有的锁（token 校验语义，Lua 原子比较删除）
-                await redis.eval(_RELEASE_LOCK_LUA, 1, lock_key, token)
-            except Exception:  # noqa: BLE001
-                pass
+            await self._release_lock(redis, lock_key, token)
+        if oversize_prefix is not None:
+            logger.info(
+                "[Idempotency] response streamed past cap %d; passthrough uncached",
+                MAX_BUFFER_BYTES,
+            )
+            return self._passthrough(response, response.body_iterator, oversize_prefix)
         if buffered is None:
-            # 超限或缓冲异常：迭代器可能已部分消费，以保守空体重建不撒谎的响应
-            # （信封与全局统一错误信封同形状 —— 不另造第二套错误体）
+            # 仅剩响应体迭代自身断裂（流式源中途抛错）：体已不可交付，
+            # 与统一错误信封同形状保守收尾。超限路径已在上方透传，不走这里。
             envelope = unified_error_envelope(
                 502, "idempotency buffering failed",
             )
@@ -288,6 +331,30 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             status_code=response.status_code,
             media_type=content_type,
             headers=preserved_headers,
+        )
+
+    def _passthrough(
+        self,
+        response: Response,
+        body_iterator: AsyncIterator[bytes],
+        prefix: bytes,
+    ) -> Response:
+        """超限响应的流式透传：已读前缀 + 原迭代器剩余体，状态码/头原样
+        （逐跳/长度类头由框架重算 —— 透传绝不重写任何语义）。"""
+        async def stream() -> AsyncIterator[bytes]:
+            yield prefix
+            async for chunk in body_iterator:
+                yield chunk
+
+        passthrough_headers = {
+            k: v
+            for k, v in response.headers.items()
+            if k.lower() not in _SKIP_STORED_HEADERS
+        }
+        return StreamingResponse(
+            stream(),
+            status_code=response.status_code,
+            headers=passthrough_headers,
         )
 
     def _replay(self, record_json: str) -> Response:

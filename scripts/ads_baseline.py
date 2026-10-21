@@ -133,8 +133,12 @@ def measure_external_availability() -> Dict[str, Any]:
             s = _socket.create_connection((host, port), timeout=3)
             s.close()
             ok = True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — 探测失败=不可用，但必须可观测（#1691）
             ok = False
+            # 静默 swallow 会让「不可用」与「探测代码坏掉」无法区分；错误类型
+            # 走 stderr（stdout/JSON 结果面契约不变）。
+            print(f"[ads-baseline] probe {name} failed: {type(exc).__name__}",
+                  file=sys.stderr)
         results.append(
             {
                 "endpoint": name,

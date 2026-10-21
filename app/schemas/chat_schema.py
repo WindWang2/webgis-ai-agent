@@ -119,7 +119,10 @@ class ChatRequest(BaseModel):
     )
 
     message: str = Field(..., min_length=1, max_length=5000)
-    session_id: Optional[str] = None
+    # #1717: session_id / skill_name / project_id 是客户端可控字符串 ——
+    # 补 max_length 与其它 schema 对齐（lakehouse_schema session_id=128），
+    # 无界值会原样进入会话存储/技能目录查找/项目上下文装配。
+    session_id: Optional[str] = Field(None, max_length=128)
     map_state: Optional[dict] = Field(None, description="当前的地图状态（视角、图层等）")
     # #1648：skill_name/project_id 为检索/归属键（注册表与项目 id 词表），
     # 128 字符帽 —— 与 MapProductRestoreRequest.session_id 同纪律。
@@ -151,10 +154,12 @@ class ChatRequest(BaseModel):
         # bounded at 5000 chars, so this is the map_state budget with a small
         # constant slack, but the error text must not claim map_state itself
         # exceeded the limit.
-        if self.map_state is not None and (
-            len(self.model_dump_json().encode("utf-8")) > 256 * 1024
-        ):
-            raise ValueError("serialized chat request exceeds 256KB (map_state budget)")
+        # #1717: 该闸此前以 `self.map_state is not None` 为前提 —— map_state
+        # 缺席时整个请求体（超长 session_id / skill_name / project_id 等
+        # 客户端可控字段）无任何尺寸上界。现改为全局请求体预算：字段级
+        # max_length 之上再加 256KB 整闸，map_state 缺席时同样生效。
+        if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
+            raise ValueError("serialized chat request exceeds 256KB")
         return self
 
 

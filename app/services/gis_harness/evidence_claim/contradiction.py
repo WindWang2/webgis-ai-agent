@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from typing import List, Optional
 
 from .contracts import (
@@ -35,6 +36,14 @@ def _same_metric_axis(a: Claim, b: Claim) -> bool:
 def _values_conflict(a: Claim, b: Claim) -> bool:
     if a.comparator == "highest" and b.comparator == "highest":
         return a.subject != b.subject
+    # 双方 value 均为 NaN（"都算不出来"）不构成冲突：NaN != NaN 恒为 True，
+    # 旧实现据此把同主体、同方法、同 scope 的两个 NaN claim 误判 hard 矛盾
+    # 并双双标为 CONTRADICTED，矛盾结论污染下游裁决（#1743）。
+    if (
+        a.value is not None and b.value is not None
+        and math.isnan(a.value) and math.isnan(b.value)
+    ):
+        return False
     if a.value is not None and b.value is not None and a.subject == b.subject:
         return float(a.value) != float(b.value)
     if a.comparator == b.comparator == "eq" and a.subject == b.subject:

@@ -12,18 +12,21 @@ desired-state 评审（mapspec_store 提交面）、``HarnessEvaluator``（eval 
 - 所有投影有界：逐检查项数值字段封顶、逐 run 行数封顶、summary 截断，
   大载荷绝不入行；
 - 保留策略默认 90 天 / 5000 run（可配 ``CARTO_METRICS_RETENTION_DAYS`` /
-  ``CARTO_METRICS_MAX_RUNS``）。
+  ``CARTO_METRICS_MAX_RUNS``）；执行走 :func:`schedule_retention` 的后台
+  节流任务（默认 300s 一次、同刻一个在飞），**不在**每次落库的提交后面
+  同步跑（#1745 2）。
 
 其他 9 条自适应线的产出处（03/05/06/07/08）按同一契约调用
 :func:`record_quality_run` 即可入账 —— 本模块就是那条契约。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from app.core.config import settings
 from app.models.cartography_quality import (  # noqa: F401 — 顶层注册进 Base.metadata，
@@ -42,6 +45,21 @@ _MAX_METRICS_PER_RUN = 96
 #: summary 投影边界
 _MAX_SUMMARY_KEYS = 24
 _MAX_SUMMARY_STR = 200
+
+#: 保留策略的执行间隔（秒）。落库热路径不再同步跑整套保留策略 —— 全表
+#: ``count()`` + 至多两次批量 DELETE 放在每次质量 run 的提交后面，会把
+#: 评审延迟放大一个账本量级（#1745 2）。改为至多每间隔一次的后台任务；
+#: 超限账本在下一个间隔收敛（有界超出 = 一个间隔内的写入量）。
+_RETENTION_INTERVAL_S = 300.0
+
+#: 在飞保留任务的强引用集合（asyncio 只持弱引用，任务可能被 GC 掉）。
+_retention_tasks: Set[asyncio.Task] = set()
+#: 是否有保留任务在飞（同刻只允许一个）。
+_retention_running = False
+#: 上一次保留策略执行完成的单调时钟（0 = 从未执行）。
+_retention_last_run = 0.0
+#: 上一次保留策略的删除行数（诊断/测试观测用）。
+_retention_last_result: Optional[Dict[str, int]] = None
 
 _VALID_VERDICTS = ("pass", "fail", "warning", "not_evaluated")
 
@@ -234,8 +252,64 @@ async def _record_quality_run_inner(
         db.add(run)
         await db.commit()
         run_id = run.id
-    await maybe_enforce_retention()
+    # #1745 2：保留策略不进落库热路径 —— 抛后台、按间隔节流。
+    schedule_retention()
     return run_id
+
+
+def schedule_retention() -> None:
+    """把保留策略抛到后台（#1745 2）：落库路径只记账，不做保留。
+
+    至多每 ``_RETENTION_INTERVAL_S`` 触发一次、同刻只有一个任务在飞；
+    调用方（``_record_quality_run_inner``）绝不等待它。无运行中的事件循环
+    （同步脚本路径）时静默跳过 —— 保留策略是最终一致的后台治理，下一次
+    落库（或显式 :func:`maybe_enforce_retention`）仍会收敛。
+
+    收敛上界：保留任务在飞期间到来的写入不另起任务（由紧随其后的写入
+    触发），因此账本最多超出保留容量「一个间隔内的写入量 + 一次在飞
+    期间的写入量」—— 有界，不会随运行时间无界增长。
+    """
+    global _retention_running, _retention_last_run
+    interval = float(
+        getattr(settings, "CARTO_METRICS_RETENTION_INTERVAL_S", _RETENTION_INTERVAL_S)
+        or _RETENTION_INTERVAL_S
+    )
+    if _retention_running:
+        return
+    now = time.monotonic()
+    if _retention_last_run and (now - _retention_last_run) < interval:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # 无事件循环：后台任务无处安放，跳过本次
+    _retention_running = True
+
+    async def _run() -> None:
+        global _retention_running, _retention_last_run, _retention_last_result
+        try:
+            _retention_last_result = await maybe_enforce_retention()
+        except Exception:  # noqa: BLE001 — 后台保留失败绝不倒灌落库路径
+            logger.debug("cartography quality retention: sweep failed", exc_info=True)
+        finally:
+            _retention_last_run = time.monotonic()
+            _retention_running = False
+
+    task = loop.create_task(_run())
+    _retention_tasks.add(task)
+    task.add_done_callback(_retention_tasks.discard)
+
+
+async def flush_retention() -> Optional[Dict[str, int]]:
+    """等待在飞保留任务落地，返回其删除行数（无在飞任务 → None）。
+
+    测试与优雅关停用：落库路径不再同步执行保留策略，需要确定性观测时
+    经此收敛（#1745 2）。
+    """
+    pending = [t for t in _retention_tasks if not t.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    return _retention_last_result
 
 
 def _like_prefix(check_id: str) -> str:
@@ -370,6 +444,9 @@ async def maybe_enforce_retention() -> Dict[str, int]:
 
     双方言删除：先按 run 子查询删 metrics，再删 runs 本体 —— 不依赖
     SQLite 默认关闭的外键级联，也不用 PG 专有语法。
+
+    #1745 2：调用方是 :func:`schedule_retention` 的后台任务（或脚本/测试
+    的显式调用），不再是落库热路径的一部分。
     """
     from sqlalchemy import delete, func, select
 

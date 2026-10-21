@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "production.yml"
 COMPOSE = REPO_ROOT / "docker-compose.prod.secure.yml"
 
-TRANSPORTED = {"deploy/prometheus.yml", "deploy/alerts-rules.json"}
+TRANSPORTED = {"deploy/prometheus.yml", "deploy/alerts-rules.json", "deploy/alertmanager.yml"}
 
 
 def _workflow() -> dict:

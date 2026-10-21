@@ -498,6 +498,43 @@ class TestRuntime:
         res = run_simulation(_hydro_params(), _hydro_cfg(n=3, stride=1))
         assert [p.tick for p in res.products] == [0, 1, 2, 3]
 
+    def test_product_carries_own_tick_state_not_previous(self):
+        """#1751 回归：产物必须装**本 tick** 刚推进出来的状态。
+
+        发射早于提交一 tick 时：T1 产物复读 T0 状态（stride=1 初态双发），
+        且末步 new_state 永不进入任何产物（终态丢失，回放/导出缺最后状态）。
+        """
+        sink = InMemoryTemporalSink()
+        res = run_simulation(
+            _hydro_params(rain=1e-4), _hydro_cfg(n=4, stride=1), sink=sink)
+
+        def _max_cell(tick: int) -> float:
+            feats = sink.payloads[f"sim-{res.run_id}-t{tick}"]
+            return max((f["properties"]["cell_value"] for f in feats), default=0.0)
+
+        # 每片产物装各自 tick 的水深（错位实现下 T1 会退回全零初态）。
+        assert res.products[0].feature_count == 0  # T0 = 初态（降雨未入账）
+        assert res.products[1].feature_count > 0
+        assert _max_cell(1) == pytest.approx(5e-4)
+        assert _max_cell(2) == pytest.approx(1e-3)
+        # 末态产物 = 第 n_steps 步提交的状态（与 final_state 一致）；
+        # 错位实现会让末产物装 N−1 状态。
+        assert _max_cell(4) == pytest.approx(
+            float(res.final_state.variables["water_depth_m"].max()))
+        assert _max_cell(3) < _max_cell(4)
+
+    def test_final_product_matches_final_state_off_stride(self):
+        """#1751 回归：末步不在 stride 上时，补发的那片也必须是终态。"""
+        sink = InMemoryTemporalSink()
+        res = run_simulation(
+            _hydro_params(rain=1e-4), _hydro_cfg(n=5, stride=2), sink=sink)
+        assert [p.tick for p in res.products] == [0, 2, 4, 5]
+        last = res.products[-1]
+        feats = sink.payloads[last.product_id]
+        max_cell = max(f["properties"]["cell_value"] for f in feats)
+        assert max_cell == pytest.approx(
+            float(res.final_state.variables["water_depth_m"].max()))
+
     def test_law_registry_dispatch(self):
         law = build_law(_hydro_params())
         assert isinstance(law, DynamicPropagationLaw)

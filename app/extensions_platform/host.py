@@ -1363,6 +1363,16 @@ class ExtensionHost:
             for provider_id, spec in specs.items():
                 if record.manifest.namespaced_model_provider_tool(provider_id) != projected_tool:
                     continue
+                # #1709：in-process 直连路径同样必须强制 MODEL_PROVIDER 授权。
+                # spec.invoke_fn 是未包裹的原函数（context.py:593-598 的权限
+                # 包裹只作用于 ToolRegistry 派发面），而本入口是 modelops
+                # ExtensionProviderAdapter 的生产调用面——不放行即授权旁路。
+                # grants 源与注册期包裹一致（ctx.grants），错误形状经
+                # PermissionGrantSet.require 与包裹层同型（PERMISSION_NOT_GRANTED）。
+                from .sdk.model import MODEL_PROVIDER_REQUIRED_PERMISSIONS
+
+                for permission in MODEL_PROVIDER_REQUIRED_PERMISSIONS:
+                    ctx.grants.require(permission)
                 if stream:
                     # worker 分支在上方已提前处理并 continue；此处必为 in-process。
                     return spec.invoke_fn(dict(request or {}), ctx)

@@ -119,6 +119,11 @@ def run_coro_sync(
             "run_coro_sync called from within a running event loop; "
             "await the coroutine directly instead"
         )
+    # review #1744-1：acquire 成功之后的一切失败（loop 重建、
+    # run_coroutine_threadsafe 注册）都必须走同一个 finally 释放许可 ——
+    # 否则一次 _ensure() 失败就永久蒸发一个 in-flight 名额，最终整个
+    # 桥被 BoundedSemaphore 耗尽、所有调用 BridgeTimeoutError。
+    acquired = False
     if _inflight_sem is not None:
         if not _inflight_sem.acquire(timeout=timeout_s):
             coro.close()
@@ -126,17 +131,24 @@ def run_coro_sync(
                 "geocompute bridge overloaded: in-flight cap "
                 f"{_MAX_INFLIGHT} reached"
             )
-    loop = _bridge._ensure()
-    fut = asyncio.run_coroutine_threadsafe(coro, loop)
+        acquired = True
     try:
-        return fut.result(timeout=max(0.1, float(timeout_s)))
-    except concurrent.futures.TimeoutError as exc:
-        # 超时即取消（round2 Rm4）：未启动的协程干净出队；已启动的在
-        # 下一个 await 点收 —— 不再无限占用 loop。
-        fut.cancel()
-        raise BridgeTimeoutError(
-            f"geocompute bridge call exceeded {timeout_s}s"
-        ) from exc
+        try:
+            loop = _bridge._ensure()
+        except BaseException:
+            # 协程尚未入队：显式关闭，避免「never awaited」悬挂告警。
+            coro.close()
+            raise
+        fut = asyncio.run_coroutine_threadsafe(coro, loop)
+        try:
+            return fut.result(timeout=max(0.1, float(timeout_s)))
+        except concurrent.futures.TimeoutError as exc:
+            # 超时即取消（round2 Rm4）：未启动的协程干净出队；已启动的在
+            # 下一个 await 点收 —— 不再无限占用 loop。
+            fut.cancel()
+            raise BridgeTimeoutError(
+                f"geocompute bridge call exceeded {timeout_s}s"
+            ) from exc
     finally:
-        if _inflight_sem is not None:
+        if acquired and _inflight_sem is not None:
             _inflight_sem.release()

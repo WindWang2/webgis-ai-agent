@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from app.lib.cartography.palettes import (
     min_adjacent_delta_e,
@@ -967,10 +967,12 @@ def _viewport_bbox(view: Any) -> Optional[List[float]]:
     lon = min(max(float(center[0]), -180.0), 180.0)
     lat = min(max(float(center[1]), -_MAX_MERCATOR_LAT), _MAX_MERCATOR_LAT)
     # 256px 瓦片在 zoom z 覆盖 360/2^z 度经度；视口宽高按 1024×768。
+    # Mercator 纬度分辨率 dy/dφ = 1/cosφ —— 一个像素（y 向 360/2^z 度）对应
+    # 的纬度跨度随 cos(lat) 收缩：高纬同像素覆盖更小纬度差（赤道最大）。
     lon_span = 360.0 * _VIEWPORT_WIDTH_PX / (256.0 * (2.0 ** z))
     lat_span = (
         360.0 * _VIEWPORT_HEIGHT_PX / (256.0 * (2.0 ** z))
-        / max(math.cos(math.radians(lat)), 1e-6)
+        * max(math.cos(math.radians(lat)), 1e-6)
     )
     return [
         max(lon - lon_span / 2.0, -180.0),
@@ -1617,6 +1619,875 @@ def _check_map_legend_completeness(
     )
 
 
+# ---------------------------------------------------------------- 逐层检查簇
+# ISSUE-1544：``evaluate_cartography_semantics`` 原为 ~806 行单函数，按 check
+# 簇拆为下列 ``_check_layer_*`` 辅助函数。抽取为逐字搬迁（仅缩进/取参变化），
+# 判定口径、check 名、severity、evidence 与 suggested_fix 均不变；编排顺序见
+# ``evaluate_cartography_semantics``。
+
+
+def _check_layer_source_binding(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    source: Dict[str, Any],
+    source_keys: Set[str],
+) -> bool:
+    """簇 1（ISSUE-1544）：source/layer 引用一致性 + 可寻址性 + raster 工件。
+
+    返回 False 表示 layer 引用的 source 不存在，调用方据此 ``continue``，
+    不再对该层执行后续检查。
+    """
+    # 1. Source/layer reference consistency (error).
+    if sid not in source_keys:
+        report.findings.append(CartographyFinding(
+            check="SOURCE_LAYER_REF", severity="error",
+            message=f"Layer '{lid}' references missing source '{sid}'",
+            layer_id=lid, source_id=sid,
+        ))
+        # ISSUE-1544：原内联 `continue` 改为返回值，由调用方决定跳过本层。
+        return False  # no point checking further against a missing source
+    report.add_check(
+        "SOURCE_LAYER_REF",
+        "pass",
+        f"Layer '{lid}' is bound to source '{sid}'",
+        layer_id=lid,
+        source_id=sid,
+        evidence={
+            "layer_id": lid,
+            "source_id": sid,
+            "source_exists": True,
+        },
+    )
+    source_addressable = _source_is_addressable(source)
+    report.add_check(
+        "SOURCE_ADDRESSABILITY",
+        "pass" if source_addressable else "fail",
+        (
+            f"Source '{sid}' has a runtime-addressable data carrier"
+            if source_addressable
+            else f"Source '{sid}' has metadata but no runtime-addressable data carrier"
+        ),
+        severity="info" if source_addressable else "error",
+        layer_id=lid,
+        source_id=sid,
+        evidence={
+            "source_type": source.get("type"),
+            "carrier_kinds": [
+                key for key in (
+                    "inlineData", "ref", "ref_id", "url", "dataPath",
+                    "imageRef", "catalog_item_id",
+                )
+                if source.get(key) is not None
+            ],
+        },
+        repairability="not_repairable",
+    )
+
+    layer_provenance = (
+        layer.get("provenance")
+        if isinstance(layer.get("provenance"), dict) else {}
+    )
+    provenance_warnings = layer_provenance.get("warnings")
+    raster_conversion_errors = [
+        warning for warning in (
+            provenance_warnings if isinstance(provenance_warnings, list) else []
+        )
+        if isinstance(warning, str)
+        and warning.startswith("raster_converter_error:")
+    ]
+    if layer.get("type") == "raster":
+        raster_artifact_present = bool(
+            source.get("imageRef") or source.get("ref") or source.get("url")
+        )
+        raster_ready = raster_artifact_present and not raster_conversion_errors
+        report.add_check(
+            "RASTER_ARTIFACT_READY",
+            "pass" if raster_ready else "fail",
+            (
+                f"Layer '{lid}' raster conversion failed"
+                if raster_conversion_errors
+                else (
+                    f"Layer '{lid}' raster artifact is addressable"
+                    if raster_artifact_present
+                    else f"Layer '{lid}' has no addressable raster artifact"
+                )
+            ),
+            severity="info" if raster_ready else "error",
+            layer_id=lid,
+            source_id=sid,
+            evidence={
+                "converter_error_count": len(raster_conversion_errors),
+                "artifact_ref_present": raster_artifact_present,
+            },
+            repairability="not_repairable",
+        )
+        raster_bounds = source.get("bounds")
+        raster_bounds_valid = _valid_bbox(raster_bounds)
+        report.add_check(
+            "RASTER_BOUNDS_VALIDITY",
+            "pass" if raster_bounds_valid else "fail",
+            (
+                f"Layer '{lid}' raster has finite ordered bounds"
+                if raster_bounds_valid
+                else f"Layer '{lid}' raster bounds are missing or invalid"
+            ),
+            severity="info" if raster_bounds_valid else "error",
+            layer_id=lid,
+            source_id=sid,
+            evidence={"bounds": raster_bounds},
+            repairability="not_repairable",
+        )
+    return True
+
+
+def _check_layer_visibility(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+) -> None:
+    """簇 2（ISSUE-1544）：RESULT_VISIBILITY + OPACITY_VALIDITY。"""
+    # Desired visibility is structural evidence, not pixel evidence. A
+    # hidden/zero-opacity result is detectable, but only malformed opacity
+    # is AUTO_SAFE: valid hidden state may be deliberate unless completion
+    # intent explicitly says otherwise.
+    layout = layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
+    visibility_source = (
+        "layer.visible" if "visible" in layer
+        else "layout.visibility" if "visibility" in layout
+        else "maplibre_default_visible"
+    )
+    declared_visible = layer.get("visible") is not False and layout.get("visibility") != "none"
+    cartographic_intent = (
+        layer.get("cartographic_intent")
+        if isinstance(layer.get("cartographic_intent"), dict) else {}
+    )
+    expected_visible = cartographic_intent.get("expected_visible")
+    if declared_visible:
+        visibility_status = "pass"
+        visibility_severity = "info"
+        visibility_repairability = "not_repairable"
+        visibility_fix = None
+    elif expected_visible is True:
+        visibility_status = "fail"
+        visibility_severity = "error"
+        visibility_repairability = "auto_safe"
+        visibility_fix = {
+            "operation": "set_layer_visibility",
+            "layer_id": lid,
+            "visible": True,
+        }
+    elif expected_visible is False:
+        visibility_status = "pass"
+        visibility_severity = "info"
+        visibility_repairability = "not_repairable"
+        visibility_fix = None
+    else:
+        visibility_status = "not_evaluated"
+        visibility_severity = "info"
+        visibility_repairability = "not_repairable"
+        visibility_fix = None
+    report.add_check(
+        "RESULT_VISIBILITY",
+        visibility_status,
+        (
+            f"Layer '{lid}' is intended to be visible"
+            if declared_visible
+            else (
+                f"Layer '{lid}' is hidden despite explicit result visibility intent"
+                if expected_visible is True
+                else (
+                    f"Layer '{lid}' is intentionally hidden per explicit cartographic intent"
+                    if expected_visible is False
+                    else f"Layer '{lid}' is hidden but no expected-visible intent is available"
+                )
+            )
+        ),
+        severity=visibility_severity,
+        layer_id=lid,
+        source_id=sid,
+        evidence={
+            "layer_id": lid,
+            "visible": declared_visible,
+            "expected_visible": expected_visible,
+            "layout_visibility": layout.get("visibility", "visible"),
+            "visibility_source": visibility_source,
+            "visibility_contract": (
+                "MapLibre layout.visibility defaults to visible"
+                if visibility_source == "maplibre_default_visible" else None
+            ),
+            "evidence_scope": "desired_structural_state",
+        },
+        repairability=visibility_repairability,
+        suggested_fix=visibility_fix,
+    )
+    for opacity_name, opacity in _constant_opacities(layer.get("paint") or {}):
+        valid_opacity = _is_num(opacity) and 0.0 <= float(opacity) <= 1.0
+        nonzero = valid_opacity and float(opacity) > 0.0
+        if valid_opacity and nonzero:
+            opacity_status = "pass"
+            opacity_severity = "info"
+            repairability = "not_repairable"
+            suggested_fix = None
+            opacity_message = f"Layer '{lid}' {opacity_name} is visible and in range"
+        elif valid_opacity:
+            opacity_status = "fail" if expected_visible is True else "not_evaluated"
+            opacity_severity = "error" if expected_visible is True else "info"
+            repairability = "auto_safe" if expected_visible is True else "not_repairable"
+            suggested_fix = (
+                {
+                    "operation": "normalize_opacity",
+                    "layer_id": lid,
+                    "property": opacity_name,
+                    "value": 0.85 if layer.get("type") == "raster" else 1.0,
+                }
+                if expected_visible is True else None
+            )
+            opacity_message = (
+                f"Layer '{lid}' {opacity_name} is zero despite explicit visibility intent"
+                if expected_visible is True else
+                f"Layer '{lid}' {opacity_name} is zero but visibility intent is unknown"
+            )
+        else:
+            opacity_status = "fail"
+            opacity_severity = "error"
+            repairability = "auto_safe"
+            suggested_fix = {
+                "operation": "normalize_opacity",
+                "layer_id": lid,
+                "property": opacity_name,
+                "value": 0.85 if layer.get("type") == "raster" else 1.0,
+            }
+            opacity_message = f"Layer '{lid}' {opacity_name} is not a finite value in [0, 1]"
+        report.add_check(
+            "OPACITY_VALIDITY",
+            opacity_status,
+            opacity_message,
+            severity=opacity_severity,
+            layer_id=lid,
+            source_id=sid,
+            evidence={"property": opacity_name, "value": opacity},
+            repairability=repairability,
+            suggested_fix=suggested_fix,
+        )
+
+
+def _check_layer_crs_evidence(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    profile: Optional[Dict[str, Any]],
+) -> None:
+    """簇 3（ISSUE-1544）：CRS_EVIDENCE / BBOX_VALIDITY / CRS_BBOX_COMPATIBILITY。"""
+    # CRS and extent truthfulness. Missing provenance is explicitly
+    # unevaluated; a legacy/default CRS string without `crs_status=explicit`
+    # cannot self-certify spatial truth.
+    if profile is None:
+        report.add_check(
+            "CRS_EVIDENCE",
+            "not_evaluated",
+            f"Source '{sid}' CRS cannot be evaluated without a profile",
+            layer_id=lid,
+            source_id=sid,
+            evidence={"source_id": sid, "crs": None, "crs_status": "unknown"},
+        )
+        report.add_check(
+            "BBOX_VALIDITY",
+            "not_evaluated",
+            f"Source '{sid}' extent cannot be evaluated without a profile",
+            layer_id=lid,
+            source_id=sid,
+            evidence={"source_id": sid, "bbox": None},
+        )
+    else:
+        crs = profile.get("crs")
+        crs_status = profile.get("crs_status") or "unknown"
+        crs_explicit = bool(crs) and crs_status == "explicit"
+        report.add_check(
+            "CRS_EVIDENCE",
+            "pass" if crs_explicit else "not_evaluated",
+            (
+                f"Source '{sid}' has explicit CRS '{crs}'"
+                if crs_explicit
+                else f"Source '{sid}' has no authoritative CRS evidence"
+            ),
+            layer_id=lid,
+            source_id=sid,
+            evidence={
+                "source_id": sid,
+                "crs": crs if crs_explicit else None,
+                "crs_status": crs_status,
+            },
+        )
+        bbox = profile.get("bbox")
+        bbox_valid = _valid_bbox(bbox)
+        report.add_check(
+            "BBOX_VALIDITY",
+            "pass" if bbox_valid else ("not_evaluated" if bbox is None else "fail"),
+            (
+                f"Source '{sid}' has a finite ordered extent"
+                if bbox_valid
+                else (
+                    f"Source '{sid}' has no extent evidence"
+                    if bbox is None
+                    else f"Source '{sid}' has an invalid extent"
+                )
+            ),
+            severity="error" if bbox is not None and not bbox_valid else "info",
+            layer_id=lid,
+            source_id=sid,
+            evidence={"source_id": sid, "bbox": bbox},
+        )
+        if crs_explicit and bbox_valid and _is_geographic_crs(crs):
+            geographic_extent = (
+                -180.0 <= float(bbox[0]) <= 180.0
+                and -180.0 <= float(bbox[2]) <= 180.0
+                and -90.0 <= float(bbox[1]) <= 90.0
+                and -90.0 <= float(bbox[3]) <= 90.0
+            )
+            report.add_check(
+                "CRS_BBOX_COMPATIBILITY",
+                "pass" if geographic_extent else "fail",
+                (
+                    f"Source '{sid}' extent is compatible with geographic CRS '{crs}'"
+                    if geographic_extent else
+                    f"Source '{sid}' extent contains coordinates impossible for geographic CRS '{crs}'"
+                ),
+                severity="info" if geographic_extent else "error",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"source_id": sid, "crs": crs, "bbox": bbox},
+            )
+
+
+def _check_layer_data_presence(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    profile: Optional[Dict[str, Any]],
+) -> None:
+    """簇 4（ISSUE-1544）：RESULT_DATA_PRESENCE（空数据不得记成功）。"""
+    # 2. Empty-data not success: emit positive/missing evidence as well.
+    if layer.get("type") != "raster":
+        feature_count = profile.get("featureCount") if profile is not None else None
+        feature_count_known = _is_num(feature_count) and float(feature_count) >= 0
+        has_features = feature_count_known and float(feature_count) > 0
+        report.add_check(
+            "RESULT_DATA_PRESENCE",
+            "pass" if has_features else "fail" if feature_count_known else "not_evaluated",
+            (
+                f"Layer '{lid}' source contains {int(feature_count)} features"
+                if has_features
+                else (
+                    f"Layer '{lid}' source '{sid}' has zero features"
+                    if feature_count_known
+                    else f"Layer '{lid}' feature count is unavailable"
+                )
+            ),
+            severity="info" if has_features else "error" if feature_count_known else "warning",
+            layer_id=lid,
+            source_id=sid,
+            evidence={"feature_count": feature_count},
+            repairability="not_repairable",
+        )
+        if feature_count_known and not has_features:
+            report.findings.append(CartographyFinding(
+                check="EMPTY_DATA",
+                severity="error",
+                message=f"Layer '{lid}' source '{sid}' has zero features (no data)",
+                layer_id=lid,
+                source_id=sid,
+            ))
+
+
+def _check_layer_geometry_type(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    profile: Optional[Dict[str, Any]],
+) -> None:
+    """簇 5（ISSUE-1544）：GEOMETRY_LAYER_TYPE（几何类型 vs 图层类型）。"""
+    # 3. Geometry type vs layer type (warning).
+    ltype = layer.get("type")
+    if ltype == "raster":
+        pass
+    elif profile is not None:
+        geom_types = profile.get("geometryTypes") or []
+        supported_geom_types = [g for g in geom_types if g in _GEOM_LAYER_TYPE]
+        unsupported_geom_types = [g for g in geom_types if g not in _GEOM_LAYER_TYPE]
+        mismatched = [
+            g for g in supported_geom_types
+            if ltype not in _GEOM_LAYER_TYPE[g]
+        ]
+        mixed_geometry = len(set(supported_geom_types)) > 1
+        geometry_evaluated = bool(supported_geom_types and ltype)
+        geometry_complete = (
+            geometry_evaluated
+            and not unsupported_geom_types
+            and not mixed_geometry
+        )
+        report.add_check(
+            "GEOMETRY_LAYER_TYPE",
+            (
+                "not_evaluated" if mixed_geometry
+                else "fail" if mismatched
+                else "pass" if geometry_complete
+                else "not_evaluated"
+            ),
+            (
+                f"Layer '{lid}' type '{ltype}' matches source geometry"
+                if geometry_complete and not mismatched
+                else (
+                    (
+                        f"Layer '{lid}' source contains mixed geometry types; "
+                        "runtime sublayer fan-out must provide type evidence"
+                    )
+                    if mixed_geometry
+                    else f"Layer '{lid}' type '{ltype}' mismatches geometry {mismatched}"
+                    if mismatched
+                    else (
+                        f"Layer '{lid}' includes unsupported geometry types {unsupported_geom_types}"
+                        if unsupported_geom_types
+                        else f"Layer '{lid}' geometry/layer type evidence is incomplete"
+                    )
+                )
+            ),
+            severity="error" if mismatched and not mixed_geometry else "info",
+            layer_id=lid,
+            source_id=sid,
+            evidence={
+                "layer_type": ltype,
+                "geometry_types": geom_types,
+                "supported_geometry_types": supported_geom_types,
+                "unsupported_geometry_types": unsupported_geom_types,
+                "mixed_geometry": mixed_geometry,
+            },
+        )
+        if mismatched and not mixed_geometry:
+            report.findings.append(CartographyFinding(
+                check="GEOMETRY_LAYER_TYPE",
+                severity="error",
+                message=(
+                    f"Layer '{lid}' type '{ltype}' mismatches geometry "
+                    f"{mismatched} from source '{sid}'"
+                ),
+                layer_id=lid,
+                source_id=sid,
+            ))
+    elif ltype:
+        report.add_check(
+            "GEOMETRY_LAYER_TYPE",
+            "not_evaluated",
+            f"Layer '{lid}' geometry/layer-type not evaluable (no profile for '{sid}')",
+            layer_id=lid,
+            source_id=sid,
+            evidence={"layer_type": ltype, "geometry_types": None},
+        )
+
+
+def _check_layer_paint_fields(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    profile: Optional[Dict[str, Any]],
+    explicit_profile_ids: Set[str],
+) -> None:
+    """簇 6（ISSUE-1544）：paint 字段存在性 / 数值型 / stops 值域检查。"""
+    # 4-6. Paint field existence / numeric / stops-range checks.
+    fields_profile = (profile or {}).get("fields") or {}
+    # An explicit caller profile is an authoritative inspection result;
+    # embedded descriptor metadata is incomplete unless it says otherwise.
+    fields_status = (profile or {}).get("fields_status") or (
+        "explicit" if sid in explicit_profile_ids
+        else "unknown"
+    )
+    for prop, raw_spec in (layer.get("paint") or {}).items():
+        if isinstance(raw_spec, list):
+            report.add_check(
+                "STYLE_EXPRESSION_SUPPORT",
+                "not_evaluated",
+                f"Layer '{lid}' paint '{prop}' uses a native expression not inspected by this rule set",
+                layer_id=lid,
+                source_id=sid,
+                evidence={
+                    "property": prop,
+                    "expression_operator": raw_spec[0] if raw_spec else None,
+                },
+            )
+    for prop, spec in _paint_methods(layer.get("paint") or {}):
+        fname = spec.get("field")
+        method = spec.get("method")
+        if not fname:
+            continue
+        if profile is None:
+            report.findings.append(CartographyFinding(
+                check="PAINT_FIELD_EXISTS", severity="info",
+                message=f"Layer '{lid}' paint '{prop}' field '{fname}' not evaluable (no profile)",
+                layer_id=lid, source_id=sid, evaluated=False,
+            ))
+            continue
+        field_info = fields_profile.get(fname)
+        if field_info is None:
+            if fields_status == "unknown":
+                report.findings.append(CartographyFinding(
+                    check="PAINT_FIELD_EXISTS", severity="info",
+                    message=(
+                        f"Layer '{lid}' paint '{prop}' field '{fname}' cannot be "
+                        "verified from descriptor-only schema metadata"
+                    ),
+                    layer_id=lid, source_id=sid, evaluated=False,
+                    evidence={"field": fname, "fields_status": fields_status},
+                ))
+                continue
+            report.findings.append(CartographyFinding(
+                check="PAINT_FIELD_EXISTS", severity="error",
+                message=(
+                    f"Layer '{lid}' paint '{prop}' references field '{fname}' "
+                    f"absent from source '{sid}'"
+                ),
+                layer_id=lid, source_id=sid,
+            ))
+            continue
+        report.add_check(
+            "PAINT_FIELD_EXISTS",
+            "pass",
+            f"Layer '{lid}' paint field '{fname}' exists in source metadata",
+            layer_id=lid,
+            source_id=sid,
+            evidence={"property": prop, "field": fname},
+        )
+        # interpolate/step require a numeric field.
+        if method in ("interpolate", "step") and field_info.get("type") != "number":
+            report.findings.append(CartographyFinding(
+                check="INTERPOLATE_NUMERIC_FIELD", severity="warning",
+                message=(
+                    f"Layer '{lid}' paint '{prop}' uses {method} on non-numeric "
+                    f"field '{fname}' (type {field_info.get('type')})"
+                ),
+                layer_id=lid, source_id=sid,
+            ))
+        # stops domain should overlap the field's [min, max].
+        if method in ("interpolate", "step") and field_info.get("type") == "number":
+            stops = spec.get("stops") or []
+            fmin, fmax = field_info.get("min"), field_info.get("max")
+            if stops and fmin is not None and fmax is not None:
+                stop_inputs = [s[0] for s in stops if isinstance(s, (list, tuple)) and s]
+                if stop_inputs:
+                    s_lo, s_hi = min(stop_inputs), max(stop_inputs)
+                    # No overlap between [s_lo,s_hi] and [fmin,fmax] → out of range.
+                    if s_hi < fmin or s_lo > fmax:
+                        report.findings.append(CartographyFinding(
+                            check="STOPS_DATA_RANGE", severity="warning",
+                            message=(
+                                f"Layer '{lid}' paint '{prop}' stops [{s_lo}, {s_hi}] "
+                                f"do not overlap field '{fname}' data range [{fmin}, {fmax}]"
+                            ),
+                            layer_id=lid, source_id=sid,
+                        ))
+
+
+def _check_layer_thematic(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    profile: Optional[Dict[str, Any]],
+    review_profile: str,
+) -> None:
+    """簇 7（ISSUE-1544）：ADR-0078 专题一致性 + LEGEND_STYLE_EQUIVALENCE 修复标注。"""
+    # 4b-10. ADR-0078 thematic consistency: paint ↔ legend equivalence,
+    # cardinality, domain coverage, no-data, divergent, palette, categorical
+    # domain. Each NOT_EVALUATED when its evidence is absent.
+    legend_spec = layer.get("legend_spec")
+    color_spec = _thematic_color_spec(layer.get("paint") or {})
+    # ISSUE-1544：拆分前由簇 2（RESULT_VISIBILITY）在内联作用域定义，此处按同一
+    # 口径就地推导（layer.cartographic_intent 非 dict → {}）。
+    cartographic_intent = (
+        layer.get("cartographic_intent")
+        if isinstance(layer.get("cartographic_intent"), dict) else {}
+    )
+    raster_classified = (
+        review_profile == "raster_result"
+        and (
+            isinstance(legend_spec, dict)
+            or bool(cartographic_intent.get("requires_legend"))
+            or bool((profile or {}).get("classification"))
+        )
+    )
+    requires_legend = color_spec is not None or raster_classified
+    if requires_legend:
+        has_legend = isinstance(legend_spec, dict)
+        report.add_check(
+            "THEMATIC_LEGEND",
+            "pass" if has_legend else "fail",
+            (
+                f"Layer '{lid}' has a legend for its thematic encoding"
+                if has_legend
+                else f"Layer '{lid}' has a thematic encoding but no legend_spec"
+            ),
+            severity="info" if has_legend else "error",
+            layer_id=lid,
+            source_id=sid,
+            evidence={
+                "layer_type": layer.get("type"),
+                "thematic_style": color_spec is not None,
+                "legend_present": has_legend,
+            },
+        )
+        if has_legend:
+            legend_type = legend_spec.get("type")
+            field_required = (
+                review_profile != "raster_result"
+                and legend_type in {
+                    "categorical", "graduated", "continuous", "divergent",
+                }
+            )
+            legend_field = thematic_field(legend_spec)
+            if field_required:
+                report.add_check(
+                    "THEMATIC_FIELD",
+                    "pass" if legend_field else "fail",
+                    (
+                        f"Layer '{lid}' legend and style classify field '{legend_field}'"
+                        if legend_field
+                        else f"Layer '{lid}' vector thematic legend has no classification field"
+                    ),
+                    severity="info" if legend_field else "error",
+                    layer_id=lid,
+                    source_id=sid,
+                    evidence={
+                        "legend_type": legend_type,
+                        "legend_field": legend_field,
+                        "style_field": (
+                            color_spec.get("field")
+                            if isinstance(color_spec, dict) else None
+                        ),
+                        "raster_exception": False,
+                    },
+                    repairability=(
+                        "not_repairable" if legend_field
+                        else "auto_with_semantic_risk"
+                    ),
+                )
+            class_status, class_evidence, class_message = _classification_integrity(legend_spec)
+            report.add_check(
+                "CLASSIFICATION_INTEGRITY",
+                class_status,
+                f"Layer '{lid}': {class_message}",
+                severity="info" if class_status == "pass" else "error",
+                layer_id=lid,
+                source_id=sid,
+                evidence=class_evidence,
+                repairability=(
+                    "not_repairable"
+                    if class_status == "pass"
+                    else "auto_with_semantic_risk"
+                ),
+            )
+
+    findings_before = len(report.findings)
+    equivalence_before = sum(
+        1 for finding in report.findings
+        if finding.check == "LEGEND_STYLE_EQUIVALENCE" and finding.layer_id == lid
+    )
+    _check_thematic_consistency(report, lid, sid, layer, profile)
+    equivalence_after = sum(
+        1 for finding in report.findings
+        if finding.check == "LEGEND_STYLE_EQUIVALENCE" and finding.layer_id == lid
+    )
+    _annotate_legend_equivalence_repair(
+        report, layer, lid, sid, legend_spec, color_spec,
+        findings_before, equivalence_before, equivalence_after,
+    )
+def _annotate_legend_equivalence_repair(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    legend_spec: Any,
+    color_spec: Optional[Dict[str, Any]],
+    findings_before: int,
+    equivalence_before: int,
+    equivalence_after: int,
+) -> None:
+    """LEGEND_STYLE_EQUIVALENCE 修复标注（ISSUE-1544 从簇 7 拆出）。
+
+    ``_check_thematic_consistency`` 新报出等价性缺陷时，按 ADR-0078 以
+    legend_spec 为权威分类补修复建议；无缺陷时补 pass 证据。
+    """
+    if equivalence_after > equivalence_before and isinstance(legend_spec, dict):
+        canonical_paint, paint_warnings = spec_to_paint(legend_spec)
+        paint = layer.get("paint") if isinstance(layer.get("paint"), dict) else {}
+        color_property = _thematic_color_property(paint)
+        if (
+            canonical_paint is not None
+            and not paint_warnings
+            and color_property is not None
+            and isinstance(paint.get(color_property), dict)
+        ):
+            expected_method = {
+                "categorical": "match",
+                "graduated": "step",
+                "continuous": "interpolate",
+                "divergent": "interpolate",
+            }.get(legend_spec.get("type"))
+            legend_field = thematic_field(legend_spec)
+            style_field = color_spec.get("field") if color_spec is not None else None
+            style_method = color_spec.get("method") if color_spec is not None else None
+            safe_projection = bool(
+                legend_field
+                and style_field == legend_field
+                and expected_method
+                and style_method == expected_method
+            )
+            suggested_fix = {
+                "operation": "refresh_style_from_legend",
+                "layer_id": lid,
+                "property": color_property,
+                "value": canonical_paint,
+            }
+            for finding in report.findings[findings_before:]:
+                if finding.check == "LEGEND_STYLE_EQUIVALENCE":
+                    # ADR-0078 makes legend_spec the canonical thematic
+                    # classification and derives paint with spec_to_paint;
+                    # this repair restores that projection, it does not
+                    # invent new breaks/categories.
+                    finding.evidence = {
+                        **finding.evidence,
+                        "authoritative_source": "legend_spec",
+                        "legend_field": legend_field,
+                        "style_field": style_field,
+                        "expected_style_method": expected_method,
+                        "actual_style_method": style_method,
+                        "semantic_parameters_changed": not safe_projection,
+                    }
+                    finding.repairability = (
+                        "auto_safe" if safe_projection
+                        else "auto_with_semantic_risk"
+                    )
+                    finding.suggested_fix = suggested_fix if safe_projection else None
+    if isinstance(legend_spec, dict) and color_spec is not None and equivalence_after == equivalence_before:
+        report.add_check(
+            "LEGEND_STYLE_EQUIVALENCE",
+            "pass",
+            f"Layer '{lid}' legend and style use the same classification",
+            layer_id=lid,
+            source_id=sid,
+            evidence={
+                "legend_type": legend_spec.get("type"),
+                "legend_field": thematic_field(legend_spec),
+                "style_field": color_spec.get("field"),
+            },
+        )
+
+
+def _check_layer_result_provenance(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    source: Dict[str, Any],
+) -> None:
+    """簇 8（ISSUE-1544）：RESULT_MAP_PROVENANCE + VISUAL_OVERLAP（视觉证据缺失）。"""
+    display_ref = source.get("ref_id") or source.get("ref")
+    provenance = layer.get("provenance") if isinstance(layer.get("provenance"), dict) else {}
+    # ``source_ref`` identifies the analysis input. It must never satisfy
+    # the output-to-map chain; only the display result identity can do so.
+    result_ref = provenance.get("result_ref")
+    if (
+        not display_ref
+        and result_ref
+        and source.get("imageRef") == result_ref
+    ):
+        display_ref = source.get("imageRef")
+    analysis_origin = bool(
+        result_ref
+        or provenance.get("algorithm")
+        or provenance.get("source_ref")
+        or provenance.get("computed_at")
+        or provenance.get("item_id")
+    )
+    if analysis_origin:
+        provenance_complete = bool(display_ref and result_ref)
+        provenance_matches = bool(
+            provenance_complete and display_ref == result_ref
+        )
+        provenance_status = (
+            "pass" if provenance_matches
+            else "fail" if provenance_complete
+            else "not_evaluated"
+        )
+        report.add_check(
+            "RESULT_MAP_PROVENANCE",
+            provenance_status,
+            (
+                f"Layer '{lid}' is traceable to result ref '{display_ref}'"
+                if provenance_matches
+                else (
+                    f"Layer '{lid}' source and provenance identify different results"
+                    if provenance_complete
+                    else f"Layer '{lid}' result-to-source identity is incomplete"
+                )
+            ),
+            severity="error" if provenance_status == "fail" else "warning",
+            layer_id=lid,
+            source_id=sid,
+            evidence={
+                "display_ref": display_ref,
+                # Compatibility alias: historically this evidence key named
+                # the MapSpec source carrier, not analysis input provenance.
+                "source_ref": display_ref,
+                "result_ref": result_ref,
+                "input_ref": provenance.get("source_ref"),
+                "analysis_origin": analysis_origin,
+                "matches": provenance_matches,
+            },
+        )
+    report.add_check(
+        "VISUAL_OVERLAP",
+        "not_evaluated",
+        "Rendered label overlap requires visual evidence",
+        layer_id=lid,
+        source_id=sid,
+        evidence_class="visual",
+        evidence={"pixel_evidence_available": False},
+    )
+
+
+def _check_layer_quantitative_rules(
+    report: CartographyReport,
+    mapspec: Dict[str, Any],
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    profile: Optional[Dict[str, Any]],
+) -> None:
+    """簇 9（ISSUE-1544）：量化制图规则分发表（既有 _check_* 辅助函数的编排）。"""
+    # 3D 拉伸 / 等值线检查已拆至 semantic_checks_maplevel（ISSUE-044 god_modules
+    # 收敛 + ISSUE-1544 拆分腾出的文件余量）；函数级导入规避模块级循环依赖。
+    from app.lib.cartography.semantic_checks_maplevel import (
+        _check_3d_extrusion_rules,
+        _check_isoline_contour_rules,
+    )
+
+    # 6b. Quantitative cartographic rules
+    # (specs/cartographic-quality-rules-and-memory-spec Phase 1 + 4).
+    _check_viewport_load(report, mapspec, layer, lid, sid, profile)
+    _check_color_separability(report, layer, lid, sid)
+    _check_visual_variable_overload(report, layer, lid, sid)
+    _check_label_collision(report, mapspec, layer, lid, sid, profile)
+    _check_scale_svs(report, mapspec, layer, lid, sid, profile)
+    _check_scale_representation(report, mapspec, layer, lid, sid)
+    _check_3d_extrusion_rules(report, mapspec, layer, lid, sid, profile)
+    _check_isoline_contour_rules(report, mapspec, layer, lid, sid)
+
+
 def evaluate_cartography_semantics(
     mapspec: Dict[str, Any],
     source_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -1653,744 +2524,32 @@ def evaluate_cartography_semantics(
         if review_profile not in report.profiles:
             report.profiles.append(review_profile)
 
-        # 1. Source/layer reference consistency (error).
-        if sid not in source_keys:
-            report.findings.append(CartographyFinding(
-                check="SOURCE_LAYER_REF", severity="error",
-                message=f"Layer '{lid}' references missing source '{sid}'",
-                layer_id=lid, source_id=sid,
-            ))
-            continue  # no point checking further against a missing source
-        report.add_check(
-            "SOURCE_LAYER_REF",
-            "pass",
-            f"Layer '{lid}' is bound to source '{sid}'",
-            layer_id=lid,
-            source_id=sid,
-            evidence={
-                "layer_id": lid,
-                "source_id": sid,
-                "source_exists": True,
-            },
-        )
-        source_addressable = _source_is_addressable(source)
-        report.add_check(
-            "SOURCE_ADDRESSABILITY",
-            "pass" if source_addressable else "fail",
-            (
-                f"Source '{sid}' has a runtime-addressable data carrier"
-                if source_addressable
-                else f"Source '{sid}' has metadata but no runtime-addressable data carrier"
-            ),
-            severity="info" if source_addressable else "error",
-            layer_id=lid,
-            source_id=sid,
-            evidence={
-                "source_type": source.get("type"),
-                "carrier_kinds": [
-                    key for key in (
-                        "inlineData", "ref", "ref_id", "url", "dataPath",
-                        "imageRef", "catalog_item_id",
-                    )
-                    if source.get(key) is not None
-                ],
-            },
-            repairability="not_repairable",
-        )
-
-        layer_provenance = (
-            layer.get("provenance")
-            if isinstance(layer.get("provenance"), dict) else {}
-        )
-        provenance_warnings = layer_provenance.get("warnings")
-        raster_conversion_errors = [
-            warning for warning in (
-                provenance_warnings if isinstance(provenance_warnings, list) else []
-            )
-            if isinstance(warning, str)
-            and warning.startswith("raster_converter_error:")
-        ]
-        if layer.get("type") == "raster":
-            raster_artifact_present = bool(
-                source.get("imageRef") or source.get("ref") or source.get("url")
-            )
-            raster_ready = raster_artifact_present and not raster_conversion_errors
-            report.add_check(
-                "RASTER_ARTIFACT_READY",
-                "pass" if raster_ready else "fail",
-                (
-                    f"Layer '{lid}' raster conversion failed"
-                    if raster_conversion_errors
-                    else (
-                        f"Layer '{lid}' raster artifact is addressable"
-                        if raster_artifact_present
-                        else f"Layer '{lid}' has no addressable raster artifact"
-                    )
-                ),
-                severity="info" if raster_ready else "error",
-                layer_id=lid,
-                source_id=sid,
-                evidence={
-                    "converter_error_count": len(raster_conversion_errors),
-                    "artifact_ref_present": raster_artifact_present,
-                },
-                repairability="not_repairable",
-            )
-            raster_bounds = source.get("bounds")
-            raster_bounds_valid = _valid_bbox(raster_bounds)
-            report.add_check(
-                "RASTER_BOUNDS_VALIDITY",
-                "pass" if raster_bounds_valid else "fail",
-                (
-                    f"Layer '{lid}' raster has finite ordered bounds"
-                    if raster_bounds_valid
-                    else f"Layer '{lid}' raster bounds are missing or invalid"
-                ),
-                severity="info" if raster_bounds_valid else "error",
-                layer_id=lid,
-                source_id=sid,
-                evidence={"bounds": raster_bounds},
-                repairability="not_repairable",
-            )
-
-        # Desired visibility is structural evidence, not pixel evidence. A
-        # hidden/zero-opacity result is detectable, but only malformed opacity
-        # is AUTO_SAFE: valid hidden state may be deliberate unless completion
-        # intent explicitly says otherwise.
-        layout = layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
-        visibility_source = (
-            "layer.visible" if "visible" in layer
-            else "layout.visibility" if "visibility" in layout
-            else "maplibre_default_visible"
-        )
-        declared_visible = layer.get("visible") is not False and layout.get("visibility") != "none"
-        cartographic_intent = (
-            layer.get("cartographic_intent")
-            if isinstance(layer.get("cartographic_intent"), dict) else {}
-        )
-        expected_visible = cartographic_intent.get("expected_visible")
-        if declared_visible:
-            visibility_status = "pass"
-            visibility_severity = "info"
-            visibility_repairability = "not_repairable"
-            visibility_fix = None
-        elif expected_visible is True:
-            visibility_status = "fail"
-            visibility_severity = "error"
-            visibility_repairability = "auto_safe"
-            visibility_fix = {
-                "operation": "set_layer_visibility",
-                "layer_id": lid,
-                "visible": True,
-            }
-        elif expected_visible is False:
-            visibility_status = "pass"
-            visibility_severity = "info"
-            visibility_repairability = "not_repairable"
-            visibility_fix = None
-        else:
-            visibility_status = "not_evaluated"
-            visibility_severity = "info"
-            visibility_repairability = "not_repairable"
-            visibility_fix = None
-        report.add_check(
-            "RESULT_VISIBILITY",
-            visibility_status,
-            (
-                f"Layer '{lid}' is intended to be visible"
-                if declared_visible
-                else (
-                    f"Layer '{lid}' is hidden despite explicit result visibility intent"
-                    if expected_visible is True
-                    else (
-                        f"Layer '{lid}' is intentionally hidden per explicit cartographic intent"
-                        if expected_visible is False
-                        else f"Layer '{lid}' is hidden but no expected-visible intent is available"
-                    )
-                )
-            ),
-            severity=visibility_severity,
-            layer_id=lid,
-            source_id=sid,
-            evidence={
-                "layer_id": lid,
-                "visible": declared_visible,
-                "expected_visible": expected_visible,
-                "layout_visibility": layout.get("visibility", "visible"),
-                "visibility_source": visibility_source,
-                "visibility_contract": (
-                    "MapLibre layout.visibility defaults to visible"
-                    if visibility_source == "maplibre_default_visible" else None
-                ),
-                "evidence_scope": "desired_structural_state",
-            },
-            repairability=visibility_repairability,
-            suggested_fix=visibility_fix,
-        )
-        for opacity_name, opacity in _constant_opacities(layer.get("paint") or {}):
-            valid_opacity = _is_num(opacity) and 0.0 <= float(opacity) <= 1.0
-            nonzero = valid_opacity and float(opacity) > 0.0
-            if valid_opacity and nonzero:
-                opacity_status = "pass"
-                opacity_severity = "info"
-                repairability = "not_repairable"
-                suggested_fix = None
-                opacity_message = f"Layer '{lid}' {opacity_name} is visible and in range"
-            elif valid_opacity:
-                opacity_status = "fail" if expected_visible is True else "not_evaluated"
-                opacity_severity = "error" if expected_visible is True else "info"
-                repairability = "auto_safe" if expected_visible is True else "not_repairable"
-                suggested_fix = (
-                    {
-                        "operation": "normalize_opacity",
-                        "layer_id": lid,
-                        "property": opacity_name,
-                        "value": 0.85 if layer.get("type") == "raster" else 1.0,
-                    }
-                    if expected_visible is True else None
-                )
-                opacity_message = (
-                    f"Layer '{lid}' {opacity_name} is zero despite explicit visibility intent"
-                    if expected_visible is True else
-                    f"Layer '{lid}' {opacity_name} is zero but visibility intent is unknown"
-                )
-            else:
-                opacity_status = "fail"
-                opacity_severity = "error"
-                repairability = "auto_safe"
-                suggested_fix = {
-                    "operation": "normalize_opacity",
-                    "layer_id": lid,
-                    "property": opacity_name,
-                    "value": 0.85 if layer.get("type") == "raster" else 1.0,
-                }
-                opacity_message = f"Layer '{lid}' {opacity_name} is not a finite value in [0, 1]"
-            report.add_check(
-                "OPACITY_VALIDITY",
-                opacity_status,
-                opacity_message,
-                severity=opacity_severity,
-                layer_id=lid,
-                source_id=sid,
-                evidence={"property": opacity_name, "value": opacity},
-                repairability=repairability,
-                suggested_fix=suggested_fix,
-            )
-
-        # CRS and extent truthfulness. Missing provenance is explicitly
-        # unevaluated; a legacy/default CRS string without `crs_status=explicit`
-        # cannot self-certify spatial truth.
-        if profile is None:
-            report.add_check(
-                "CRS_EVIDENCE",
-                "not_evaluated",
-                f"Source '{sid}' CRS cannot be evaluated without a profile",
-                layer_id=lid,
-                source_id=sid,
-                evidence={"source_id": sid, "crs": None, "crs_status": "unknown"},
-            )
-            report.add_check(
-                "BBOX_VALIDITY",
-                "not_evaluated",
-                f"Source '{sid}' extent cannot be evaluated without a profile",
-                layer_id=lid,
-                source_id=sid,
-                evidence={"source_id": sid, "bbox": None},
-            )
-        else:
-            crs = profile.get("crs")
-            crs_status = profile.get("crs_status") or "unknown"
-            crs_explicit = bool(crs) and crs_status == "explicit"
-            report.add_check(
-                "CRS_EVIDENCE",
-                "pass" if crs_explicit else "not_evaluated",
-                (
-                    f"Source '{sid}' has explicit CRS '{crs}'"
-                    if crs_explicit
-                    else f"Source '{sid}' has no authoritative CRS evidence"
-                ),
-                layer_id=lid,
-                source_id=sid,
-                evidence={
-                    "source_id": sid,
-                    "crs": crs if crs_explicit else None,
-                    "crs_status": crs_status,
-                },
-            )
-            bbox = profile.get("bbox")
-            bbox_valid = _valid_bbox(bbox)
-            report.add_check(
-                "BBOX_VALIDITY",
-                "pass" if bbox_valid else ("not_evaluated" if bbox is None else "fail"),
-                (
-                    f"Source '{sid}' has a finite ordered extent"
-                    if bbox_valid
-                    else (
-                        f"Source '{sid}' has no extent evidence"
-                        if bbox is None
-                        else f"Source '{sid}' has an invalid extent"
-                    )
-                ),
-                severity="error" if bbox is not None and not bbox_valid else "info",
-                layer_id=lid,
-                source_id=sid,
-                evidence={"source_id": sid, "bbox": bbox},
-            )
-            if crs_explicit and bbox_valid and _is_geographic_crs(crs):
-                geographic_extent = (
-                    -180.0 <= float(bbox[0]) <= 180.0
-                    and -180.0 <= float(bbox[2]) <= 180.0
-                    and -90.0 <= float(bbox[1]) <= 90.0
-                    and -90.0 <= float(bbox[3]) <= 90.0
-                )
-                report.add_check(
-                    "CRS_BBOX_COMPATIBILITY",
-                    "pass" if geographic_extent else "fail",
-                    (
-                        f"Source '{sid}' extent is compatible with geographic CRS '{crs}'"
-                        if geographic_extent else
-                        f"Source '{sid}' extent contains coordinates impossible for geographic CRS '{crs}'"
-                    ),
-                    severity="info" if geographic_extent else "error",
-                    layer_id=lid,
-                    source_id=sid,
-                    evidence={"source_id": sid, "crs": crs, "bbox": bbox},
-                )
-
-        # 2. Empty-data not success: emit positive/missing evidence as well.
-        if layer.get("type") != "raster":
-            feature_count = profile.get("featureCount") if profile is not None else None
-            feature_count_known = _is_num(feature_count) and float(feature_count) >= 0
-            has_features = feature_count_known and float(feature_count) > 0
-            report.add_check(
-                "RESULT_DATA_PRESENCE",
-                "pass" if has_features else "fail" if feature_count_known else "not_evaluated",
-                (
-                    f"Layer '{lid}' source contains {int(feature_count)} features"
-                    if has_features
-                    else (
-                        f"Layer '{lid}' source '{sid}' has zero features"
-                        if feature_count_known
-                        else f"Layer '{lid}' feature count is unavailable"
-                    )
-                ),
-                severity="info" if has_features else "error" if feature_count_known else "warning",
-                layer_id=lid,
-                source_id=sid,
-                evidence={"feature_count": feature_count},
-                repairability="not_repairable",
-            )
-            if feature_count_known and not has_features:
-                report.findings.append(CartographyFinding(
-                    check="EMPTY_DATA",
-                    severity="error",
-                    message=f"Layer '{lid}' source '{sid}' has zero features (no data)",
-                    layer_id=lid,
-                    source_id=sid,
-                ))
-
-        # 3. Geometry type vs layer type (warning).
-        ltype = layer.get("type")
-        if ltype == "raster":
-            pass
-        elif profile is not None:
-            geom_types = profile.get("geometryTypes") or []
-            supported_geom_types = [g for g in geom_types if g in _GEOM_LAYER_TYPE]
-            unsupported_geom_types = [g for g in geom_types if g not in _GEOM_LAYER_TYPE]
-            mismatched = [
-                g for g in supported_geom_types
-                if ltype not in _GEOM_LAYER_TYPE[g]
-            ]
-            mixed_geometry = len(set(supported_geom_types)) > 1
-            geometry_evaluated = bool(supported_geom_types and ltype)
-            geometry_complete = (
-                geometry_evaluated
-                and not unsupported_geom_types
-                and not mixed_geometry
-            )
-            report.add_check(
-                "GEOMETRY_LAYER_TYPE",
-                (
-                    "not_evaluated" if mixed_geometry
-                    else "fail" if mismatched
-                    else "pass" if geometry_complete
-                    else "not_evaluated"
-                ),
-                (
-                    f"Layer '{lid}' type '{ltype}' matches source geometry"
-                    if geometry_complete and not mismatched
-                    else (
-                        (
-                            f"Layer '{lid}' source contains mixed geometry types; "
-                            "runtime sublayer fan-out must provide type evidence"
-                        )
-                        if mixed_geometry
-                        else f"Layer '{lid}' type '{ltype}' mismatches geometry {mismatched}"
-                        if mismatched
-                        else (
-                            f"Layer '{lid}' includes unsupported geometry types {unsupported_geom_types}"
-                            if unsupported_geom_types
-                            else f"Layer '{lid}' geometry/layer type evidence is incomplete"
-                        )
-                    )
-                ),
-                severity="error" if mismatched and not mixed_geometry else "info",
-                layer_id=lid,
-                source_id=sid,
-                evidence={
-                    "layer_type": ltype,
-                    "geometry_types": geom_types,
-                    "supported_geometry_types": supported_geom_types,
-                    "unsupported_geometry_types": unsupported_geom_types,
-                    "mixed_geometry": mixed_geometry,
-                },
-            )
-            if mismatched and not mixed_geometry:
-                report.findings.append(CartographyFinding(
-                    check="GEOMETRY_LAYER_TYPE",
-                    severity="error",
-                    message=(
-                        f"Layer '{lid}' type '{ltype}' mismatches geometry "
-                        f"{mismatched} from source '{sid}'"
-                    ),
-                    layer_id=lid,
-                    source_id=sid,
-                ))
-        elif ltype:
-            report.add_check(
-                "GEOMETRY_LAYER_TYPE",
-                "not_evaluated",
-                f"Layer '{lid}' geometry/layer-type not evaluable (no profile for '{sid}')",
-                layer_id=lid,
-                source_id=sid,
-                evidence={"layer_type": ltype, "geometry_types": None},
-            )
-
-        # 4-6. Paint field existence / numeric / stops-range checks.
-        fields_profile = (profile or {}).get("fields") or {}
-        # An explicit caller profile is an authoritative inspection result;
-        # embedded descriptor metadata is incomplete unless it says otherwise.
-        fields_status = (profile or {}).get("fields_status") or (
-            "explicit" if sid in explicit_profile_ids
-            else "unknown"
-        )
-        for prop, raw_spec in (layer.get("paint") or {}).items():
-            if isinstance(raw_spec, list):
-                report.add_check(
-                    "STYLE_EXPRESSION_SUPPORT",
-                    "not_evaluated",
-                    f"Layer '{lid}' paint '{prop}' uses a native expression not inspected by this rule set",
-                    layer_id=lid,
-                    source_id=sid,
-                    evidence={
-                        "property": prop,
-                        "expression_operator": raw_spec[0] if raw_spec else None,
-                    },
-                )
-        for prop, spec in _paint_methods(layer.get("paint") or {}):
-            fname = spec.get("field")
-            method = spec.get("method")
-            if not fname:
-                continue
-            if profile is None:
-                report.findings.append(CartographyFinding(
-                    check="PAINT_FIELD_EXISTS", severity="info",
-                    message=f"Layer '{lid}' paint '{prop}' field '{fname}' not evaluable (no profile)",
-                    layer_id=lid, source_id=sid, evaluated=False,
-                ))
-                continue
-            field_info = fields_profile.get(fname)
-            if field_info is None:
-                if fields_status == "unknown":
-                    report.findings.append(CartographyFinding(
-                        check="PAINT_FIELD_EXISTS", severity="info",
-                        message=(
-                            f"Layer '{lid}' paint '{prop}' field '{fname}' cannot be "
-                            "verified from descriptor-only schema metadata"
-                        ),
-                        layer_id=lid, source_id=sid, evaluated=False,
-                        evidence={"field": fname, "fields_status": fields_status},
-                    ))
-                    continue
-                report.findings.append(CartographyFinding(
-                    check="PAINT_FIELD_EXISTS", severity="error",
-                    message=(
-                        f"Layer '{lid}' paint '{prop}' references field '{fname}' "
-                        f"absent from source '{sid}'"
-                    ),
-                    layer_id=lid, source_id=sid,
-                ))
-                continue
-            report.add_check(
-                "PAINT_FIELD_EXISTS",
-                "pass",
-                f"Layer '{lid}' paint field '{fname}' exists in source metadata",
-                layer_id=lid,
-                source_id=sid,
-                evidence={"property": prop, "field": fname},
-            )
-            # interpolate/step require a numeric field.
-            if method in ("interpolate", "step") and field_info.get("type") != "number":
-                report.findings.append(CartographyFinding(
-                    check="INTERPOLATE_NUMERIC_FIELD", severity="warning",
-                    message=(
-                        f"Layer '{lid}' paint '{prop}' uses {method} on non-numeric "
-                        f"field '{fname}' (type {field_info.get('type')})"
-                    ),
-                    layer_id=lid, source_id=sid,
-                ))
-            # stops domain should overlap the field's [min, max].
-            if method in ("interpolate", "step") and field_info.get("type") == "number":
-                stops = spec.get("stops") or []
-                fmin, fmax = field_info.get("min"), field_info.get("max")
-                if stops and fmin is not None and fmax is not None:
-                    stop_inputs = [s[0] for s in stops if isinstance(s, (list, tuple)) and s]
-                    if stop_inputs:
-                        s_lo, s_hi = min(stop_inputs), max(stop_inputs)
-                        # No overlap between [s_lo,s_hi] and [fmin,fmax] → out of range.
-                        if s_hi < fmin or s_lo > fmax:
-                            report.findings.append(CartographyFinding(
-                                check="STOPS_DATA_RANGE", severity="warning",
-                                message=(
-                                    f"Layer '{lid}' paint '{prop}' stops [{s_lo}, {s_hi}] "
-                                    f"do not overlap field '{fname}' data range [{fmin}, {fmax}]"
-                                ),
-                                layer_id=lid, source_id=sid,
-                            ))
-
-        # 4b-10. ADR-0078 thematic consistency: paint ↔ legend equivalence,
-        # cardinality, domain coverage, no-data, divergent, palette, categorical
-        # domain. Each NOT_EVALUATED when its evidence is absent.
-        legend_spec = layer.get("legend_spec")
-        color_spec = _thematic_color_spec(layer.get("paint") or {})
-        raster_classified = (
-            review_profile == "raster_result"
-            and (
-                isinstance(legend_spec, dict)
-                or bool(cartographic_intent.get("requires_legend"))
-                or bool((profile or {}).get("classification"))
-            )
-        )
-        requires_legend = color_spec is not None or raster_classified
-        if requires_legend:
-            has_legend = isinstance(legend_spec, dict)
-            report.add_check(
-                "THEMATIC_LEGEND",
-                "pass" if has_legend else "fail",
-                (
-                    f"Layer '{lid}' has a legend for its thematic encoding"
-                    if has_legend
-                    else f"Layer '{lid}' has a thematic encoding but no legend_spec"
-                ),
-                severity="info" if has_legend else "error",
-                layer_id=lid,
-                source_id=sid,
-                evidence={
-                    "layer_type": layer.get("type"),
-                    "thematic_style": color_spec is not None,
-                    "legend_present": has_legend,
-                },
-            )
-            if has_legend:
-                legend_type = legend_spec.get("type")
-                field_required = (
-                    review_profile != "raster_result"
-                    and legend_type in {
-                        "categorical", "graduated", "continuous", "divergent",
-                    }
-                )
-                legend_field = thematic_field(legend_spec)
-                if field_required:
-                    report.add_check(
-                        "THEMATIC_FIELD",
-                        "pass" if legend_field else "fail",
-                        (
-                            f"Layer '{lid}' legend and style classify field '{legend_field}'"
-                            if legend_field
-                            else f"Layer '{lid}' vector thematic legend has no classification field"
-                        ),
-                        severity="info" if legend_field else "error",
-                        layer_id=lid,
-                        source_id=sid,
-                        evidence={
-                            "legend_type": legend_type,
-                            "legend_field": legend_field,
-                            "style_field": (
-                                color_spec.get("field")
-                                if isinstance(color_spec, dict) else None
-                            ),
-                            "raster_exception": False,
-                        },
-                        repairability=(
-                            "not_repairable" if legend_field
-                            else "auto_with_semantic_risk"
-                        ),
-                    )
-                class_status, class_evidence, class_message = _classification_integrity(legend_spec)
-                report.add_check(
-                    "CLASSIFICATION_INTEGRITY",
-                    class_status,
-                    f"Layer '{lid}': {class_message}",
-                    severity="info" if class_status == "pass" else "error",
-                    layer_id=lid,
-                    source_id=sid,
-                    evidence=class_evidence,
-                    repairability=(
-                        "not_repairable"
-                        if class_status == "pass"
-                        else "auto_with_semantic_risk"
-                    ),
-                )
-
-        findings_before = len(report.findings)
-        equivalence_before = sum(
-            1 for finding in report.findings
-            if finding.check == "LEGEND_STYLE_EQUIVALENCE" and finding.layer_id == lid
-        )
-        _check_thematic_consistency(report, lid, sid, layer, profile)
-        equivalence_after = sum(
-            1 for finding in report.findings
-            if finding.check == "LEGEND_STYLE_EQUIVALENCE" and finding.layer_id == lid
-        )
-        if equivalence_after > equivalence_before and isinstance(legend_spec, dict):
-            canonical_paint, paint_warnings = spec_to_paint(legend_spec)
-            paint = layer.get("paint") if isinstance(layer.get("paint"), dict) else {}
-            color_property = _thematic_color_property(paint)
-            if (
-                canonical_paint is not None
-                and not paint_warnings
-                and color_property is not None
-                and isinstance(paint.get(color_property), dict)
-            ):
-                expected_method = {
-                    "categorical": "match",
-                    "graduated": "step",
-                    "continuous": "interpolate",
-                    "divergent": "interpolate",
-                }.get(legend_spec.get("type"))
-                legend_field = thematic_field(legend_spec)
-                style_field = color_spec.get("field") if color_spec is not None else None
-                style_method = color_spec.get("method") if color_spec is not None else None
-                safe_projection = bool(
-                    legend_field
-                    and style_field == legend_field
-                    and expected_method
-                    and style_method == expected_method
-                )
-                suggested_fix = {
-                    "operation": "refresh_style_from_legend",
-                    "layer_id": lid,
-                    "property": color_property,
-                    "value": canonical_paint,
-                }
-                for finding in report.findings[findings_before:]:
-                    if finding.check == "LEGEND_STYLE_EQUIVALENCE":
-                        # ADR-0078 makes legend_spec the canonical thematic
-                        # classification and derives paint with spec_to_paint;
-                        # this repair restores that projection, it does not
-                        # invent new breaks/categories.
-                        finding.evidence = {
-                            **finding.evidence,
-                            "authoritative_source": "legend_spec",
-                            "legend_field": legend_field,
-                            "style_field": style_field,
-                            "expected_style_method": expected_method,
-                            "actual_style_method": style_method,
-                            "semantic_parameters_changed": not safe_projection,
-                        }
-                        finding.repairability = (
-                            "auto_safe" if safe_projection
-                            else "auto_with_semantic_risk"
-                        )
-                        finding.suggested_fix = suggested_fix if safe_projection else None
-        if isinstance(legend_spec, dict) and color_spec is not None and equivalence_after == equivalence_before:
-            report.add_check(
-                "LEGEND_STYLE_EQUIVALENCE",
-                "pass",
-                f"Layer '{lid}' legend and style use the same classification",
-                layer_id=lid,
-                source_id=sid,
-                evidence={
-                    "legend_type": legend_spec.get("type"),
-                    "legend_field": thematic_field(legend_spec),
-                    "style_field": color_spec.get("field"),
-                },
-            )
-
-        display_ref = source.get("ref_id") or source.get("ref")
-        provenance = layer.get("provenance") if isinstance(layer.get("provenance"), dict) else {}
-        # ``source_ref`` identifies the analysis input. It must never satisfy
-        # the output-to-map chain; only the display result identity can do so.
-        result_ref = provenance.get("result_ref")
-        if (
-            not display_ref
-            and result_ref
-            and source.get("imageRef") == result_ref
+        # ISSUE-1544：逐层检查按 check 簇分派（原 806 行单体函数拆分为
+        # _check_layer_*；分派顺序与各簇判定口径保持逐字一致）。
+        if not _check_layer_source_binding(
+            report, layer, lid, sid, source, source_keys
         ):
-            display_ref = source.get("imageRef")
-        analysis_origin = bool(
-            result_ref
-            or provenance.get("algorithm")
-            or provenance.get("source_ref")
-            or provenance.get("computed_at")
-            or provenance.get("item_id")
+            continue  # no point checking further against a missing source
+        _check_layer_visibility(report, layer, lid, sid)
+        _check_layer_crs_evidence(report, layer, lid, sid, profile)
+        _check_layer_data_presence(report, layer, lid, sid, profile)
+        _check_layer_geometry_type(report, layer, lid, sid, profile)
+        _check_layer_paint_fields(
+            report, layer, lid, sid, profile, explicit_profile_ids
         )
-        if analysis_origin:
-            provenance_complete = bool(display_ref and result_ref)
-            provenance_matches = bool(
-                provenance_complete and display_ref == result_ref
-            )
-            provenance_status = (
-                "pass" if provenance_matches
-                else "fail" if provenance_complete
-                else "not_evaluated"
-            )
-            report.add_check(
-                "RESULT_MAP_PROVENANCE",
-                provenance_status,
-                (
-                    f"Layer '{lid}' is traceable to result ref '{display_ref}'"
-                    if provenance_matches
-                    else (
-                        f"Layer '{lid}' source and provenance identify different results"
-                        if provenance_complete
-                        else f"Layer '{lid}' result-to-source identity is incomplete"
-                    )
-                ),
-                severity="error" if provenance_status == "fail" else "warning",
-                layer_id=lid,
-                source_id=sid,
-                evidence={
-                    "display_ref": display_ref,
-                    # Compatibility alias: historically this evidence key named
-                    # the MapSpec source carrier, not analysis input provenance.
-                    "source_ref": display_ref,
-                    "result_ref": result_ref,
-                    "input_ref": provenance.get("source_ref"),
-                    "analysis_origin": analysis_origin,
-                    "matches": provenance_matches,
-                },
-            )
-        report.add_check(
-            "VISUAL_OVERLAP",
-            "not_evaluated",
-            "Rendered label overlap requires visual evidence",
-            layer_id=lid,
-            source_id=sid,
-            evidence_class="visual",
-            evidence={"pixel_evidence_available": False},
+        _check_layer_thematic(report, layer, lid, sid, profile, review_profile)
+        _check_layer_result_provenance(report, layer, lid, sid, source)
+        _check_layer_quantitative_rules(
+            report, mapspec, layer, lid, sid, profile
         )
 
-        # 6b. Quantitative cartographic rules
-        # (specs/cartographic-quality-rules-and-memory-spec Phase 1 + 4).
-        _check_viewport_load(report, mapspec, layer, lid, sid, profile)
-        _check_color_separability(report, layer, lid, sid)
-        _check_visual_variable_overload(report, layer, lid, sid)
-        _check_label_collision(report, mapspec, layer, lid, sid, profile)
-        _check_scale_svs(report, mapspec, layer, lid, sid, profile)
-        _check_scale_representation(report, mapspec, layer, lid, sid)
-        _check_3d_extrusion_rules(report, mapspec, layer, lid, sid, profile)
-        _check_isoline_contour_rules(report, mapspec, layer, lid, sid)
+    # 场景级检查（组件布局/图语义、3D 拉伸、等值线）已拆至
+    # semantic_checks_maplevel（ISSUE-044 god_modules 收敛 + ISSUE-1544 拆分
+    # 腾出的文件余量）；此处函数级导入以规避模块级循环依赖。
+    from app.lib.cartography.semantic_checks_maplevel import (
+        _check_component_graph_semantics,
+        _check_component_layout,
+    )
 
     # 7pre. Component layout QA（C4）：zone 容量 / singleton 重复 / 悬空绑定 /
     # floating 矩形重叠——desired-state 证据即可评，不再恒 not_evaluated。
@@ -2423,449 +2582,3 @@ def evaluate_cartography_semantics(
     _check_map_legend_completeness(report, mapspec, layers)
 
     return report
-
-
-def _check_component_layout(report: CartographyReport, mapspec: Dict[str, Any]) -> None:
-    """C4（Cartographic QA）：组件布局检查——desired-state 证据即可评。
-
-    维度（layout_constraints 的 zone 模型 + floating 矩形）：
-    - zone 容量超限 / exclusive zone 重复占用（anchored 组件）；
-    - singleton 组件重复（title/north_arrow/scale_bar/attribution）；
-    - 组件 layerId 悬空（指向不存在的图层）；
-    - floating 组件矩形重叠（拖拽后压住另一个 floating 面板）。
-
-    floating 组件的位置由用户手势拥有（placement.mode=floating 豁免 zone
-    容量——用户可以把它放任何地方），但 floating 之间的矩形重叠仍要报。
-    无组件 / 全部 not_applicable 时 pass（有证据的通过，不是 not_evaluated）。
-    """
-    from types import SimpleNamespace
-
-    from app.lib.cartography.layout_constraints import (
-        detect_collisions,
-        detect_orphan_components,
-    )
-
-    layout = mapspec.get("layout") if isinstance(mapspec.get("layout"), dict) else {}
-    raw = layout.get("components")
-    if not isinstance(raw, list) or not raw:
-        return  # 无组件：布局维度不适用（不产检查项）
-    components = [c for c in raw if isinstance(c, dict)]
-
-    layer_ids = {
-        str(layer.get("id"))
-        for layer in (mapspec.get("layers") or [])
-        if isinstance(layer, dict)
-    }
-
-    def _adapt(c: Dict[str, Any]) -> SimpleNamespace:
-        placement = c.get("placement") if isinstance(c.get("placement"), dict) else {}
-        return SimpleNamespace(
-            id=str(c.get("id") or ""),
-            type=str(c.get("type") or ""),
-            enabled=bool(c.get("enabled", True)),
-            # floating 组件豁免 zone 容量（位置归用户手势所有）
-            position="none" if placement.get("mode") == "floating" else str(c.get("position") or "none"),
-            priority=int(c.get("priority") or 0),
-            options=c.get("options") if isinstance(c.get("options"), dict) else {},
-        )
-
-    adapted = [_adapt(c) for c in components]
-    issues: List[str] = []
-    issues.extend(detect_collisions(adapted))
-    issues.extend(detect_orphan_components(adapted, sorted(layer_ids)))
-    overlap_issues = _detect_floating_overlaps(components)
-    issues.extend(overlap_issues)
-
-    if not issues:
-        report.add_check(
-            "LAYOUT_COLLISION",
-            "pass",
-            f"{len(components)} components: no zone overflow, singleton duplication, "
-            "orphan binding, or floating overlap",
-            evidence_class="desired_state",
-        )
-        return
-    # AC-07（ADR-0156）：warning → 可自动修复。status 保持 warning（quality_loop
-    # 只自动修 fail —— user-wins 语义不回退），但附确定性修复建议：策略链
-    # 改 anchor → 缩尺寸 → 折叠进溢出面板 → 隐藏最低优先组件；前端
-    # composition-repair 执行同一词表的动作链。悬空 layerId 属绑定语义
-    # （非摆位），不在摆位修复链域内 —— 不为其生成动作。
-    from app.lib.cartography.component_composer import plan_layout_repairs
-
-    actions = plan_layout_repairs(components)
-    report.add_check(
-        "LAYOUT_COLLISION",
-        "warning",
-        "; ".join(issues[:6]),
-        severity="warning",
-        evidence_class="desired_state",
-        evidence={"issues": issues},
-        repairability="auto_safe" if actions else "not_repairable",
-        suggested_fix={
-            "operation": "resolve_layout_collisions",
-            "actions": actions,
-        } if actions else None,
-    )
-
-
-def _check_component_graph_semantics(
-    report: CartographyReport, mapspec: Dict[str, Any]
-) -> None:
-    """V7（Goal 08 Phase I）组件图级 QA——图语义与几何越界。
-
-    规则（与 LAYOUT_COLLISION 的槽位计数正交）：
-    - ``DUPLICATE_LEGEND_BINDING``：同型组件 binds_to 同一图层（图例族
-      重复的根语义；per-layer 图例展开是合法构成，不在此列）。warning，
-      修复需改绑定语义 → 非 auto。
-    - ``COMPONENT_OUTSIDE_CANVAS``：浮动矩形完全在画布负象限（不可见、
-      不可达 —— 不是用户摆放意图，是破损状态）。fail + auto_safe，
-      suggested_fix 走 ``resolve_floating_layout``（确定性钳制进安全区）。
-      可见的部分越界沿用 LAYOUT_COLLISION 的 user-wins 边界，不在此报。
-    - ``COMPONENT_LINK_CYCLE``：显式 requires/under 边成环（z 序/依赖
-      不可满足）。error，需模板/用户裁决 → 非 auto。
-
-    无组件时本维度不适用（不产检查项，同 _check_component_layout）。
-    """
-    from app.lib.cartography.component_graph import (
-        build_component_graph,
-        validate_component_graph,
-    )
-    from app.lib.cartography.layout_geometry import (
-        CanvasSpec,
-        check_component_bounds,
-        resolve_floating_rects,
-        safe_area_for,
-    )
-
-    layout = mapspec.get("layout") if isinstance(mapspec.get("layout"), dict) else {}
-    raw = layout.get("components")
-    if not isinstance(raw, list) or not raw:
-        return
-    components = [c for c in raw if isinstance(c, dict)]
-
-    graph = build_component_graph(mapspec)
-    issues = validate_component_graph(graph)
-
-    dup = [i for i in issues if i.code == "duplicate_binding"]
-    if dup:
-        report.add_check(
-            "DUPLICATE_LEGEND_BINDING",
-            "warning",
-            "; ".join(i.message for i in dup[:3]),
-            severity="warning",
-            evidence_class="deterministic",
-            evidence={"bindings": [i.model_dump() for i in dup[:4]]},
-            repairability="not_repairable",
-            suggested_fix=None,
-        )
-    else:
-        report.add_check(
-            "DUPLICATE_LEGEND_BINDING",
-            "pass",
-            "no duplicate same-type layer binding",
-            evidence_class="deterministic",
-        )
-
-    cycles = [i for i in issues if i.code == "cycle"]
-    if cycles:
-        # AC-07（ADR-0156）：断环策略 —— 每环断开最低权重边（端点 priority
-        # 和最小，平局字典序），建议载荷 remove_links 与前端/评审消费同构。
-        # repairability=auto_with_semantic_risk：断边是语义手术（z 序/依赖
-        # 声明被移除），不进 quality_loop 自动通道（其语义即 explicit
-        # intent 才可执行），live 侧由 composition-repair 按同一策略执行。
-        from app.lib.cartography.component_graph import break_component_cycles
-
-        remove_links = break_component_cycles(graph)
-        report.add_check(
-            "COMPONENT_LINK_CYCLE",
-            "fail",
-            "; ".join(i.message for i in cycles[:3]),
-            severity="error",
-            evidence_class="deterministic",
-            evidence={"cycles": [i.model_dump() for i in cycles[:4]]},
-            repairability="auto_with_semantic_risk" if remove_links else "not_repairable",
-            suggested_fix={
-                "operation": "break_component_cycle",
-                "remove_links": remove_links,
-            } if remove_links else None,
-        )
-    else:
-        report.add_check(
-            "COMPONENT_LINK_CYCLE",
-            "pass",
-            "no explicit link cycle",
-            evidence_class="deterministic",
-        )
-
-    # 浮动越界双层语义：
-    # - 完全不可达（x+w<=0 或 y+h<=0，负象限）——任何视口都不可见，破损
-    #   状态 → fail + auto_safe（resolve_floating_layout 确定性钳回）；
-    # - 超出标称视口（1280×720 假设）但坐标为正 —— 大屏可能是合法摆放，
-    #   不定罪 → warning + auto_safe 建议（quality_loop 只自动修 fail，
-    #   假设性修复不进自动通道，供 harness 评审采纳）。
-    # 可见的部分越界沿用 LAYOUT_COLLISION 的 user-wins 边界，不在此报。
-    canvas = CanvasSpec(width=1280, height=720)
-    safe = safe_area_for(canvas, layout.get("margins")
-                         if isinstance(layout.get("margins"), dict) else None)
-    bounds_issues = check_component_bounds(components, canvas, safe)
-    unreachable = []
-    assumed_out = []
-    for c in components:
-        placement = c.get("placement") if isinstance(c.get("placement"), dict) else {}
-        if placement.get("mode") != "floating" or not c.get("enabled", True):
-            continue
-        try:
-            x = float(placement.get("x", 0))
-            y = float(placement.get("y", 0))
-            w = float(placement.get("width", 0) or 0)
-            h = float(placement.get("height", 0) or 0)
-        except (TypeError, ValueError):
-            continue
-        # 与 layout_geometry.check_component_bounds 的 id 归一同口径
-        # （id or ""）—— 空 id 时 bounds 侧不产条目，本侧也不得用
-        # type/"?" 兜底造出匹配不上的悬空引用（auto_safe 建议会失配）。
-        cid = str(c.get("id") or "")
-        if not cid:
-            continue
-        if w <= 0 or h <= 0:
-            continue
-        if x + w <= 0 or y + h <= 0:
-            unreachable.append(
-                {"component_ids": [cid], "message": f"浮动组件 {cid} 完全在负象限（不可见）"})
-        else:
-            for i in bounds_issues:
-                if i.code in ("outside_safe_area", "outside_canvas") \
-                        and cid in i.component_ids:
-                    assumed_out.append({"component_ids": [cid],
-                                        "message": i.message})
-    fix_placements: List[Dict[str, Any]] = []
-    if unreachable or assumed_out:
-        fix_report = resolve_floating_rects(components, canvas, safe)
-        target_ids = {c for i in (*unreachable, *assumed_out)
-                      for c in i["component_ids"]}
-        fix_placements = [
-            {"component_id": a.component_id,
-             "x": round(a.to_rect.x, 2), "y": round(a.to_rect.y, 2)}
-            for a in fix_report.adjustments if a.component_id in target_ids
-        ]
-    if unreachable:
-        report.add_check(
-            "COMPONENT_OUTSIDE_CANVAS",
-            "fail",
-            "; ".join(i["message"] for i in unreachable[:3]),
-            severity="error",
-            evidence_class="deterministic",
-            evidence={"outside": unreachable[:4]},
-            repairability="auto_safe",
-            suggested_fix={
-                "operation": "resolve_floating_layout",
-                "placements": fix_placements,
-            } if fix_placements else None,
-        )
-    elif assumed_out:
-        report.add_check(
-            "COMPONENT_OUTSIDE_CANVAS",
-            "warning",
-            "; ".join(i["message"] for i in assumed_out[:3]),
-            severity="warning",
-            evidence_class="deterministic",
-            evidence={"outside": assumed_out[:4]},
-            repairability="auto_safe",
-            suggested_fix={
-                "operation": "resolve_floating_layout",
-                "placements": fix_placements,
-            } if fix_placements else None,
-        )
-    else:
-        report.add_check(
-            "COMPONENT_OUTSIDE_CANVAS",
-            "pass",
-            "no floating component fully outside canvas",
-            evidence_class="deterministic",
-        )
-
-
-def _detect_floating_overlaps(components: List[Dict[str, Any]]) -> List[str]:
-    """floating 组件矩形重叠（归一化 x/y/width/height 相交检测）。
-
-    仅报 warning：用户可能有意叠放（如临时收起的统计卡）；QA 曝光即可，
-    不 auto_safe 修复（修复会挪动用户手动摆放的位置——user wins）。
-    几何单一实现在 component_composer.floating_overlap_pairs（AC-07：
-    披露与修复建议同源，不做二次实现）。
-    """
-    from app.lib.cartography.component_composer import floating_overlap_pairs
-
-    return [
-        f"floating components {a_id} and {b_id} overlap "
-        f"({ox:.2f}x{oy:.2f} normalized units)"
-        for a_id, b_id, ox, oy in floating_overlap_pairs(components)
-    ]
-
-
-def _check_3d_extrusion_rules(
-    report: CartographyReport,
-    mapspec: Dict[str, Any],
-    layer: Dict[str, Any],
-    lid: str,
-    sid: str,
-    profile: Optional[Dict[str, Any]],
-) -> None:
-    """ADR-0095: 3D 挤出图层语义检查（高度字段存在性、极值/全零检测、相机俯仰建议、高倾角遮挡预警）。"""
-    ltype = layer.get("type")
-    ext_spec = layer.get("extrusion") or {}
-    if ltype != "fill-extrusion" and not ext_spec:
-        return
-
-    # 1. 高度字段检查
-    h_field = ext_spec.get("height_field")
-    if not h_field:
-        paint = layer.get("paint") or {}
-        raw_h = paint.get("fill-extrusion-height")
-        if isinstance(raw_h, str):
-            h_field = raw_h
-        elif isinstance(raw_h, list) and len(raw_h) >= 2 and raw_h[0] == "get":
-            h_field = raw_h[1]
-
-    if isinstance(h_field, str) and profile and profile.get("fields"):
-        fields = profile.get("fields")
-        if h_field not in fields:
-            report.add_check(
-                "EXTRUSION_HEIGHT_FIELD_VALID",
-                "fail",
-                f"3D 挤出图层 '{lid}' 绑定的高度字段 '{h_field}' 在数据集中不存在",
-                severity="error",
-                layer_id=lid,
-                source_id=sid,
-                evidence={"height_field": h_field, "available_fields": list(fields.keys())},
-            )
-            report.findings.append(CartographyFinding(
-                check="EXTRUSION_HEIGHT_FIELD_VALID",
-                severity="error",
-                message=f"3D 挤出图层 '{lid}' 绑定的高度字段 '{h_field}' 不存在",
-                layer_id=lid,
-                source_id=sid,
-            ))
-        else:
-            report.add_check(
-                "EXTRUSION_HEIGHT_FIELD_VALID",
-                "pass",
-                f"3D 挤出图层 '{lid}' 高度字段 '{h_field}' 验证通过",
-                layer_id=lid,
-                source_id=sid,
-                evidence={"height_field": h_field},
-            )
-
-    # 2. 统计特征检查（全零 / 极值离群）
-    stats = ext_spec.get("stats") or {}
-    if stats.get("is_all_zero"):
-        report.add_check(
-            "EXTRUSION_HEIGHT_DISTRIBUTION",
-            "warning",
-            f"3D 挤出图层 '{lid}' 高度字段全部为 0，要素将呈平坦无高差显示",
-            severity="warning",
-            layer_id=lid,
-            source_id=sid,
-        )
-    elif stats.get("has_extreme_outlier"):
-        report.add_check(
-            "EXTRUSION_HEIGHT_DISTRIBUTION",
-            "warning",
-            f"3D 挤出图层 '{lid}' 存在极大离群值，建议采用 log1p 或 sqrt 变换防止其他柱体被压平",
-            severity="warning",
-            layer_id=lid,
-            source_id=sid,
-        )
-
-    # 3. 相机俯仰角与遮挡检查
-    view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
-    pitch = float(view.get("pitch", 0.0) or 0.0)
-    if pitch < 10.0:
-        report.add_check(
-            "EXTRUSION_PITCH_ADVISORY",
-            "warning",
-            f"3D 挤出图层 '{lid}' 已启用但相机处于平视模式 (pitch={pitch:.0f}°)，建议调整俯仰角为 35°-55° 以便立体观察",
-            severity="warning",
-            layer_id=lid,
-            source_id=sid,
-            evidence={"pitch": pitch},
-        )
-    else:
-        report.add_check(
-            "EXTRUSION_PITCH_ADVISORY",
-            "pass",
-            f"3D 挤出图层 '{lid}' 视角良好 (pitch={pitch:.0f}°)",
-            layer_id=lid,
-            source_id=sid,
-            evidence={"pitch": pitch},
-        )
-
-    max_h = float(ext_spec.get("max_visual_height_m", 5000.0) or 5000.0)
-    if pitch > 75.0 and max_h > 3000.0:
-        report.add_check(
-            "EXTRUSION_OCCLUSION_WARNING",
-            "warning",
-            f"大倾角 (pitch={pitch:.0f}°) 配合高柱体 ({max_h:.0f}m) 可能导致严重的前景遮挡",
-            severity="warning",
-            layer_id=lid,
-            source_id=sid,
-        )
-
-
-def _check_isoline_contour_rules(
-    report: CartographyReport,
-    mapspec: Dict[str, Any],
-    layer: Dict[str, Any],
-    lid: str,
-    sid: str,
-) -> None:
-    """ADR-0095: 等值线/等值面语义检查（单调递增性、级数充足性）。"""
-    iso_meta = layer.get("isoline")
-    if not isinstance(iso_meta, dict):
-        return
-
-    levels = iso_meta.get("levels")
-    if isinstance(levels, list):
-        if len(levels) < 2:
-            report.add_check(
-                "CONTOUR_LEVELS_VALID",
-                "fail",
-                f"等值线图层 '{lid}' 级数不足 2 级 (当前 {len(levels)} 级)，无法形成有效等值面",
-                severity="error",
-                layer_id=lid,
-                source_id=sid,
-            )
-            report.findings.append(CartographyFinding(
-                check="CONTOUR_LEVELS_VALID",
-                severity="error",
-                message=f"等值线图层 '{lid}' 级数不足 2 级",
-                layer_id=lid,
-                source_id=sid,
-            ))
-        else:
-            is_monotonic = all(levels[i] < levels[i + 1] for i in range(len(levels) - 1))
-            if not is_monotonic:
-                report.add_check(
-                    "CONTOUR_LEVELS_VALID",
-                    "fail",
-                    f"等值线图层 '{lid}' 等值级不是单调严格递增: {levels}",
-                    severity="error",
-                    layer_id=lid,
-                    source_id=sid,
-                )
-                report.findings.append(CartographyFinding(
-                    check="CONTOUR_LEVELS_VALID",
-                    severity="error",
-                    message=f"等值线图层 '{lid}' 等值级不是单调递增",
-                    layer_id=lid,
-                    source_id=sid,
-                ))
-            else:
-                report.add_check(
-                    "CONTOUR_LEVELS_VALID",
-                    "pass",
-                    f"等值线图层 '{lid}' {len(levels)} 级等值线单调有效",
-                    layer_id=lid,
-                    source_id=sid,
-                    evidence={"levels_count": len(levels)},
-                )
-

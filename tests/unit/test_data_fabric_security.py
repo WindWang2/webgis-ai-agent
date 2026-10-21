@@ -44,6 +44,23 @@ def test_ssrf_adapter_blocks_private_ranges(url):
         adapter.send(req, timeout=1)
 
 
+# ── #1694 SEC-11：阿里云/腾讯云 IMDS 字面量 ──────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # 100.64/10 CGNAT 不在 BLOCKED_NETWORKS —— 补进 BLOCKED_IPS_EXPLICIT
+        # 之前，阿里云 IMDS 字面量连 allow_private=False 都能过门。
+        "http://100.100.100.200/latest/meta-data/",
+        "http://169.254.0.23/latest/meta-data/",  # 腾讯云 IMDS（link-local）
+    ],
+)
+def test_cloud_imds_literal_ips_blocked(url):
+    with pytest.raises(DataFabricSecurityError):
+        DataFabricSecurity.validate_url(url)
+
+
 def test_make_safe_session_mounts_adapter_on_both_schemes():
     s = make_safe_session(allow_private=False)
     http_adapter = s.get_adapter("http://anything.example")

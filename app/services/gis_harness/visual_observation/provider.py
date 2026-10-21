@@ -121,36 +121,50 @@ def replace_duration(
 
 # ── 模式实现 ───────────────────────────────────────────────────────────────
 
-def _eval_rules(obs: VisualObservationInput) -> VisualObservationResult:
-    """像素判据模式（离线；无截图 → not_evaluated 诚实缺席）。
+def _gated_screenshot(
+    obs: VisualObservationInput, mode: str,
+) -> Tuple[Optional[bytes], Optional[VisualObservationResult]]:
+    """C13 stale 双尺 + 会话绑定护栏（三模式**公共入口**；#1713-1）。
 
-    C13 stale 第二道门（纵深防御；第一道在管线 ``latest_screenshot_for``
-    严格匹配）：截图 revision 与观察不一致 → 拒绝评估像素 —— 像素判据
-    是唯一把字节归因到当前 spec 的路径，旧像素在新 spec 上产生的 finding
-    会直接变成跨代误修复。指纹双方非空且不一致同理（同 revision 的状态
-    替换/回滚）。
+    revision / 指纹 / session 三道门在模式分派前统一执行：此前只有
+    rules 模式校验，vlm/hybrid 直接 resolve —— 旧像素可在非默认模式下
+    归因到新 spec，跨代误修复。像素判据是唯一把字节归因到当前 spec 的
+    路径，截图 revision 与观察不一致即拒绝评估；指纹双方非空且不一致
+    同理（同 revision 的状态替换/回滚）；跨会话猜 ref 在解析面直接
+    拒绝（诚实缺席）。失败 → (None, not_evaluated result)。
     """
     entry = obs.screenshot
     if entry is None:
-        return VisualObservationResult.not_evaluated(
-            "no_screenshot", provider=MODE_RULES)
+        return None, VisualObservationResult.not_evaluated(
+            "no_screenshot", provider=mode)
     if entry.mapspec_revision != obs.mapspec_revision:
-        return VisualObservationResult.not_evaluated(
-            "screenshot_revision_mismatch", provider=MODE_RULES,
+        return None, VisualObservationResult.not_evaluated(
+            "screenshot_revision_mismatch", provider=mode,
             screenshot_sha256=entry.sha256)
     obs_fp = str(obs.mapspec_fingerprint or "")
     entry_fp = str(entry.mapspec_fingerprint or "")
     if obs_fp and entry_fp and obs_fp != entry_fp:
-        return VisualObservationResult.not_evaluated(
-            "screenshot_fingerprint_mismatch", provider=MODE_RULES,
+        return None, VisualObservationResult.not_evaluated(
+            "screenshot_fingerprint_mismatch", provider=mode,
             screenshot_sha256=entry.sha256)
     # C13 会话绑定护栏：跨会话猜 ref 在解析面直接拒绝（诚实缺席）。
     data = resolve_visual_screenshot(
         entry, session_id=str(obs.session_id or ""))
     if data is None:
-        return VisualObservationResult.not_evaluated(
-            "screenshot_unresolvable", provider=MODE_RULES,
+        return None, VisualObservationResult.not_evaluated(
+            "screenshot_unresolvable", provider=mode,
             screenshot_sha256=entry.sha256)
+    return data, None
+
+
+def _eval_rules(obs: VisualObservationInput) -> VisualObservationResult:
+    """像素判据模式（离线；三道门见 ``_gated_screenshot`` —— 与 vlm/
+    hybrid 共用，无截图 / 门失败即 not_evaluated 诚实缺席）。"""
+    entry = obs.screenshot
+    data, gate = _gated_screenshot(obs, MODE_RULES)
+    if gate is not None:
+        return gate
+    sha = entry.sha256 if entry is not None else ""
     findings = fuse_visual_with_deterministic(
         evaluate_pixel_rules(data), _deterministic_proxies(obs)).kept
     categories = [
@@ -161,30 +175,30 @@ def _eval_rules(obs: VisualObservationInput) -> VisualObservationResult:
         findings=tuple(findings),
         provider=MODE_RULES,
         taxonomy_counts=taxonomy_counts_of(categories),
-        screenshot_sha256=entry.sha256,
+        screenshot_sha256=sha,
     )
 
 
 def _eval_vlm(obs: VisualObservationInput) -> VisualObservationResult:
-    """VLM 模式（ADR-0185 引擎；ref-only 输入，字节只在本函数内存里）。"""
+    """VLM 模式（ADR-0185 引擎；ref-only 输入，字节只在本函数内存里）。
+
+    三道 stale/会话门与 rules 共用（``_gated_screenshot``）—— 旧像素在
+    任何模式下都不得归因到新 spec。
+    """
     entry = obs.screenshot
-    if entry is None:
-        return VisualObservationResult.not_evaluated(
-            "no_screenshot", provider=MODE_VLM)
-    data = resolve_visual_screenshot(entry)
-    if data is None:
-        return VisualObservationResult.not_evaluated(
-            "screenshot_unresolvable", provider=MODE_VLM,
-            screenshot_sha256=entry.sha256)
+    data, gate = _gated_screenshot(obs, MODE_VLM)
+    if gate is not None:
+        return gate
+    sha = entry.sha256 if entry is not None else ""
     report = _run_engine_with_timeout(obs, data)
     if report is None:
         return VisualObservationResult.not_evaluated(
             "provider_timeout", provider=MODE_VLM,
-            screenshot_sha256=entry.sha256)
+            screenshot_sha256=sha)
     if not getattr(report, "evaluated", False):
         reason = str(getattr(report, "reason", "") or "not_evaluated")
         return VisualObservationResult.not_evaluated(
-            reason, provider=MODE_VLM, screenshot_sha256=entry.sha256)
+            reason, provider=MODE_VLM, screenshot_sha256=sha)
     findings = _critiques_to_findings(report)
     fused = fuse_visual_with_deterministic(
         findings, _deterministic_proxies(obs)).kept
@@ -194,21 +208,21 @@ def _eval_vlm(obs: VisualObservationInput) -> VisualObservationResult:
         findings=tuple(fused),
         provider=MODE_VLM,
         taxonomy_counts=taxonomy_counts_of(categories),
-        screenshot_sha256=entry.sha256,
+        screenshot_sha256=sha,
     )
 
 
 def _eval_hybrid(obs: VisualObservationInput) -> VisualObservationResult:
-    """rules ∪ vlm（同 entity+taxonomy 合并；全失败 → not_evaluated）。"""
+    """rules ∪ vlm（同 entity+taxonomy 合并；全失败 → not_evaluated）。
+
+    三道 stale/会话门与 rules 共用（``_gated_screenshot``）—— 融合模式
+    不得绕过护栏。
+    """
     entry = obs.screenshot
-    if entry is None:
-        return VisualObservationResult.not_evaluated(
-            "no_screenshot", provider=MODE_HYBRID)
-    data = resolve_visual_screenshot(entry)
-    if data is None:
-        return VisualObservationResult.not_evaluated(
-            "screenshot_unresolvable", provider=MODE_HYBRID,
-            screenshot_sha256=entry.sha256)
+    data, gate = _gated_screenshot(obs, MODE_HYBRID)
+    if gate is not None:
+        return gate
+    sha = entry.sha256 if entry is not None else ""
     rule_findings = evaluate_pixel_rules(data)
     report = _run_engine_with_timeout(obs, data)
     vlm_findings: List[UnifiedFinding] = []
@@ -224,14 +238,14 @@ def _eval_hybrid(obs: VisualObservationInput) -> VisualObservationResult:
         # 时 rules 已 evaluated——只有引擎缺席才落这里）。
         reason = str(getattr(report, "reason", "") or "not_evaluated")
         return VisualObservationResult.not_evaluated(
-            reason, provider=MODE_HYBRID, screenshot_sha256=entry.sha256)
+            reason, provider=MODE_HYBRID, screenshot_sha256=sha)
     categories = [_taxonomy_of(vf) for vf in fused]
     return VisualObservationResult(
         status="evaluated",
         findings=tuple(fused),
         provider=MODE_HYBRID,
         taxonomy_counts=taxonomy_counts_of(categories),
-        screenshot_sha256=entry.sha256,
+        screenshot_sha256=sha,
     )
 
 

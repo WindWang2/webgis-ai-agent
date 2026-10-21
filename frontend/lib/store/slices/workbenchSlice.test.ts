@@ -144,6 +144,46 @@ describe('workbenchSlice · layer groups', () => {
     expect(store.getState().layerGroupMembership).toEqual({});
   });
 
+  it('组 id 播种：水合恢复组后续号，不与恢复 id 撞号', () => {
+    // groupSeq 是模块级计数器 —— 重载/切会话后若不以 doc 的最大 seq 播种，
+    // 新建组会与恢复组撞 id（rename/remove/collapse 同时作用两行）。基准取
+    // 远大于本文件其他用例的创建量，使断言不受用例间计数器残留影响。
+    const store = makeStore();
+    expect(
+      store.getState().hydrateWorkbenchDoc({
+        version: 5,
+        groups: [
+          { id: 'wg-9000', name: '恢复组', collapsed: true, parentId: null },
+          { id: 'wg-9001', name: '恢复子组', collapsed: false, parentId: 'wg-9000' },
+        ],
+        membership: {},
+        lockedLayerIds: [],
+        mode: 'explore',
+      }),
+    ).toBe(true);
+    expect(store.getState().createLayerGroup('新组')).toBe('wg-9002');
+    const ids = store.getState().layerGroups.map((g) => g.id);
+    expect(ids).toEqual(['wg-9000', 'wg-9001', 'wg-9002']);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('组 id 唯一性：带外写入占用的候选 id 被递增绕过', () => {
+    const store = makeStore();
+    const first = store.getState().createLayerGroup('一组');
+    const firstSeq = Number.parseInt(first.slice('wg-'.length), 10);
+    // 带外写入（undo 回放 / 迟到 doc）塞进一个等于下一候选的 id。
+    const squatted = `wg-${firstSeq + 1}`;
+    store.setState({
+      layerGroups: [
+        ...store.getState().layerGroups,
+        { id: squatted, name: '带外组', collapsed: false, parentId: null },
+      ],
+    } as Partial<HudState>);
+    expect(store.getState().createLayerGroup('二组')).toBe(`wg-${firstSeq + 2}`);
+    const ids = store.getState().layerGroups.map((g) => g.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it('toggleGroupCollapsed 翻转折叠', () => {
     const store = makeStore();
     const gid = store.getState().createLayerGroup('g');

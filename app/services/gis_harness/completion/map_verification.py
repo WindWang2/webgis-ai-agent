@@ -209,9 +209,13 @@ def _check_stale_overlays(
     判定（确定性）：非计划图层的 source 经 MapSpec sources 二跳取得
     ref 指针（descriptors 以 ref id 为键 —— review M1 键位对齐），满足
     之一即告警：
-    (a) source 声明了 ref 指针但 descriptors 无该 ref（被 TTL/LRU 驱逐
-        或属上个任务 —— 已不可渲染的死层）；
+    (a) source 声明了 ref 指针、descriptors **有该键且值为 None**（两次
+        探测都确认驱逐 —— TTL/LRU 逐出或属上个任务，已不可渲染的死层）；
     (b) descriptor.status ∈ {superseded, expired, stale}。
+    键缺席（``ref not in descriptors``）= 探测 unknown（存储瞬态故障）
+    —— 未知 ≠ 过期，跳过不判（与 ``inputs.py`` 三态、
+    ``validators/artifacts.py`` 的 unknown 分支对齐；#1713-3：此前的
+    「键缺席即 evicted」把瞬态故障判成上个任务残留，虚假降档终验）。
     用户添加的有效图层（ref 存活 + 非 superseded）永不误伤；无 ref 语义
     的 basemap/xyz source 不参与判定。
     """
@@ -248,9 +252,14 @@ def _check_stale_overlays(
         )
         if not ref:
             continue   # 无 ref 语义（basemap/xyz）——不判定
+        if ref not in descriptors:
+            # unknown（探测失败/存储瞬态故障）：未知 ≠ 过期，跳过不判
+            # （三态纪律同 inputs.py:92-95 / validators/artifacts.py:60-61）。
+            continue
         desc = descriptors.get(str(ref))
         if desc is None:
-            # ref 已不在 ref store：死层（上个任务残留 / 已驱逐）
+            # ref 已确认不在 ref store（两次探测都 None）：死层（上个任务
+            # 残留 / 已驱逐）
             findings.append(MapCompletionFinding(
                 code=F_STALE_OVERLAY,
                 severity="warning",

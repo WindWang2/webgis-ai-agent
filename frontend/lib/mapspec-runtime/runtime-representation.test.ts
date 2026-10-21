@@ -377,6 +377,45 @@ describe("MapSpecRuntime — 表达窗口展开（v1.6 方向 5）", () => {
     });
   });
 
+  // #1726 项 1（live 路径）：主层「型」与「门」同源。首窗
+  // visual_heatmap + 后续 raw 窗时，主层门 = raw 首窗 [11,24)，型必须
+  // 仍是 circle —— 此前型取 normalized 首窗 heatmap，raw 窗被上屏成
+  // heatmap（与 headless compiler 双路径漂移的根因）。
+  describe("首窗 heatmap + 后续 raw 窗：主层型/门同源（#1726）", () => {
+    const HEAT_THEN_RAW_LAYER: MapSpecLayer = {
+      id: "L",
+      source: "S",
+      type: "circle",
+      paint: { color: "#ff0000", radius: 4 },
+      representation: {
+        windows: [
+          { min_zoom: 0, max_zoom: 11, mode: "visual_heatmap" },
+          { min_zoom: 11, max_zoom: 24, mode: "raw" },
+        ],
+      },
+    } as unknown as MapSpecLayer;
+
+    it("主层门 [11,24) 且型为 circle（heatmap 表达由 __rep0 子层承载）", () => {
+      const rt = makeRuntime(map);
+      rt.reconcile(repSpec(HEAT_THEN_RAW_LAYER));
+      expect(rt.getLastError()).toBeNull();
+
+      const main = layerOn(map, "L");
+      expect(main.type).toBe("circle");
+      expect(main.minzoom).toBe(11);
+      expect(main.maxzoom).toBe(24);
+      // circle paint 键不得被 heatmapOnlyPaint 改写（无 heatmap-* 残留）
+      const paintKeys = Object.keys(main.paint ?? {});
+      expect(paintKeys.some((k) => k.startsWith("heatmap-"))).toBe(false);
+
+      const rep0 = layerOn(map, "L__rep0");
+      expect(rep0.type).toBe("heatmap");
+      expect(rep0.minzoom).toBe(0);
+      expect(rep0.maxzoom).toBe(11);
+      expect(rep0.paint?.["heatmap-radius"]).toBeDefined();
+    });
+  });
+
   describe("raw 多窗计划的展开 parity", () => {
     it("raw[0,11)+cluster[11,14)+raw[14,24)：主层门 [0,11) + rep2 克隆 [14,24) + 簇三子层 [11,14)", () => {
       const layer: MapSpecLayer = {

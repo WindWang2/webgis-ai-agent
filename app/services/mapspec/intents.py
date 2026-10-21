@@ -9,7 +9,7 @@ import 面零破坏。叶子模块：仅依赖 visual_healer 纯函数层的类�
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 
 from app.services.mapspec.visual_healer import VisualCritiqueItem
 # H01×H02 收敛（ADR-0216）：presentation 契约归位 app/contracts（kernel，
@@ -19,6 +19,147 @@ from app.contracts.mapspec_intents import (  # noqa: F401
     SetSceneIntent,
     SetViewIntent,
 )
+
+
+# ─── #1550：mutation intent 载荷接缝的具名载体 ─────────────────────────────
+#
+# intent 携带的 MapSpec 分支此前全是裸 ``Dict[str, Any]`` —— 字段拼错、
+# 缺字段、None 传播均无类型期防线。以下 TypedDict 给每个命名载荷一个
+# 键集契约（与前端 ``types.generated.ts`` / 后端 pydantic 契约逐字对齐）。
+#
+# ``total=False`` = **已知键**契约，不是封闭集：MapSpec 载荷是开放文档
+# （MapLibre 允许任意附加键、渲染端透传、LLM 可携带扩展字段），TypedDict
+# 的关闭性无法表达这一点；运行期仍是普通 dict（既有行为零变化）。
+# 真正封闭的载荷走 pydantic 契约（CartographyComponent / CompositionIdentity）。
+
+
+class MapSpecLayerPayload(TypedDict, total=False):
+    """图层条目（MapLibre layer spec + 后端制图扩展键）。
+
+    后端读写的键：id/type/source（摄取与 upsert 匹配）、paint/layout
+    （presentation 突变）、cartographic_intent/context_role/role
+    （authoring 决策印记）、provenance（ref_id/result_ref 溯源）、
+    legend_spec/filter（语义评审）。其余 MapLibre 键透传不干预。
+    """
+
+    id: str
+    type: str
+    source: str
+    paint: Dict[str, Any]
+    layout: Dict[str, Any]
+    filter: Any
+    metadata: Dict[str, Any]
+    legend_spec: Dict[str, Any]
+    cartographic_intent: Dict[str, Any]
+    context_role: str
+    role: str
+    provenance: Dict[str, Any]
+
+
+class MapSpecSourcePayload(TypedDict, total=False):
+    """source 条目（数据载体 + 画像指纹；键集见 pipeline 的存取面）。"""
+
+    type: str
+    url: str
+    data: Any
+    inlineData: Any
+    dataPath: str
+    ref: str
+    ref_id: str
+    imageRef: str
+    bounds: Any
+    profile: Dict[str, Any]
+    data_fingerprint: str
+
+
+class MapSpecControlPayload(TypedDict, total=False):
+    """layout.controls 单条（与前端 MapSpecControlConfig 对齐）。"""
+
+    type: str  # navigation | scale | fullscreen
+    position: str  # 四槽锚点
+
+
+class MapSpecComponentPayload(TypedDict, total=False):
+    """layout.components 单条（与 CartographyComponent 的 mapspec 形态对齐）。"""
+
+    id: str
+    type: str
+    enabled: bool
+    position: str
+    priority: int
+    style: Dict[str, Any]
+    options: Dict[str, Any]
+    compatibility: Dict[str, Any]
+    category: str
+    variant: str
+    templateId: str
+    schemaVersion: int
+
+
+class MapSpecComponentLinkPayload(TypedDict, total=False):
+    """layout.component_links 单条（实例边；type 词表见 COMPONENT_LINK_TYPES）。"""
+
+    src: str
+    dst: str
+    type: str
+    dst_kind: str  # component | layer | source
+
+
+class CompositionIdentityPayload(TypedDict, total=False):
+    """layout.composition 身份块（composition_contract.CompositionIdentity 的
+    to_bounded_dict 投影；有界 4KB，由 webgis_apply_composition 写入）。"""
+
+    template_id: str
+    template_version: str
+    contract_id: str
+    contract_fingerprint: str
+    component_abi_version: int
+    component_versions: Dict[str, str]
+    applied_revision: int
+
+
+class MapSpecSnapshotPayload(TypedDict, total=False):
+    """RestoreStyleIntent.snapshot —— Map Product 版本携带的表达面子集。
+
+    只含 style-only 恢复触及的分支（view/basemap/time/layout/layers）；
+    数据与计算计划不进快照。
+    """
+
+    view: Dict[str, Any]
+    basemap: Dict[str, Any]
+    time: Dict[str, Any]
+    layout: Dict[str, Any]
+    layers: List[MapSpecLayerPayload]
+
+
+#: 持久 paint 补丁（PatchLayerStyleIntent）。键集 = 后端实际写面：通用
+#: ``opacity`` + 逐图层类型专属透明度键（_OPACITY_PAINT_KEYS 的值域）。
+#: 其余 paint 属性由 symbology 管线写入，不经本意图。功能语法是因为
+#: MapLibre paint 键含连字符（类语法 TypedDict 只允许标识符键）。
+MapSpecPaintPayload = TypedDict(
+    "MapSpecPaintPayload",
+    {
+        "opacity": float,
+        "circle-opacity": float,
+        "fill-opacity": float,
+        "line-opacity": float,
+        "raster-opacity": float,
+        "heatmap-opacity": float,
+        "fill-extrusion-opacity": float,
+        "icon-opacity": float,
+    },
+    total=False,
+)
+
+
+# TypedDict 字段的可变缺省须走具名工厂（mypy 不接受裸 ``dict`` 工厂：
+# 其返回 dict[Never, Never]，与 TypedDict 不兼容）。
+def _empty_snapshot() -> MapSpecSnapshotPayload:
+    return {}
+
+
+def _empty_paint() -> MapSpecPaintPayload:
+    return {}
 
 
 @dataclass
@@ -44,14 +185,16 @@ class InitProjectIntent:
 
 @dataclass
 class UpsertLayerIntent:
-    layer: Dict[str, Any]
+    # #1550：layer 载荷具名化（MapSpecLayerPayload）。
+    layer: MapSpecLayerPayload
     source_data: Optional[Any] = None
 
 
 @dataclass
 class UpsertSourceIntent:
     source_id: str
-    source: Dict[str, Any]
+    # #1550：source 载荷具名化（MapSpecSourcePayload）。
+    source: MapSpecSourcePayload
 
 
 @dataclass
@@ -67,16 +210,17 @@ class ReorderLayersIntent:
 @dataclass
 class SetLayoutIntent:
     legend: Optional[Dict[str, Any]] = None
-    controls: Optional[List[Dict[str, Any]]] = None
+    # #1550：controls/components/component_links/composition 载荷具名化。
+    controls: Optional[List[MapSpecControlPayload]] = None
     margins: Optional[Dict[str, Any]] = None
     # CartographyComponent 列表（app/services/gis_harness/components）。
     # live 渲染与 export 共用同一份组件描述；None = 不触碰既有组件。
-    components: Optional[List[Dict[str, Any]]] = None
+    components: Optional[List[MapSpecComponentPayload]] = None
     # ADR-0214 D2/D3 additive：契约 apply 的实例边与组合身份块。
     # None = 不触碰既有值（全部既有调用方零行为变化）。锁语义不变：
     # intent_lock_targets 只看 components —— 身份块/边不是锁目标。
-    component_links: Optional[List[Dict[str, Any]]] = None
-    composition: Optional[Dict[str, Any]] = None
+    component_links: Optional[List[MapSpecComponentLinkPayload]] = None
+    composition: Optional[CompositionIdentityPayload] = None
 
 
 @dataclass
@@ -100,7 +244,8 @@ class RestoreStyleIntent:
     走 apply_mutation 的锁 + CAS + 校验 + 失败回滚全事务，不是裸写。
     """
 
-    snapshot: Dict[str, Any] = field(default_factory=dict)
+    # #1550：snapshot 载荷具名化（MapSpecSnapshotPayload —— 表达面分支子集）。
+    snapshot: MapSpecSnapshotPayload = field(default_factory=_empty_snapshot)
 
 
 @dataclass
@@ -115,7 +260,8 @@ class PatchLayerStyleIntent:
     """
 
     layer_id: str
-    paint: Dict[str, Any] = field(default_factory=dict)
+    # #1550：paint 补丁具名化（MapSpecPaintPayload —— 后端写面键集）。
+    paint: MapSpecPaintPayload = field(default_factory=_empty_paint)
 
 
 @dataclass

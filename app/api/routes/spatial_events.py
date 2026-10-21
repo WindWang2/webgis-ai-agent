@@ -13,7 +13,9 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import threading
 import time
+import weakref
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional
@@ -304,14 +306,33 @@ class WebhookBody(BaseModel):
 
 
 #: 每 org webhook 速率（有界内存；≤256 org）
-_rl_lock = asyncio.Lock()
+# #1711（loop-affinity，同 #1681 族）：模块级 asyncio.Lock 在首次「有竞争」的
+# await 时绑定所在事件循环；同一 ASGI app 若被第二个事件循环驱动，竞争路径直接
+# RuntimeError: ... is bound to a different event loop → webhook 500。改为
+# per-loop 惰性创建（app/core/network.py #933 同款 WeakKeyDictionary 模式）：
+# 单 loop 部署语义不变，条目随 loop GC 自动回收，不长内存。
+_rl_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
+_rl_locks_guard = threading.Lock()
 _rl_buckets: Dict[str, Deque[float]] = defaultdict(lambda: deque(maxlen=30))
 _WEBHOOK_WINDOW_S = 60.0
 _WEBHOOK_MAX_PER_WINDOW = 30
 
 
+def _rl_lock() -> asyncio.Lock:
+    """当前事件循环的 webhook 限流锁（per-loop；#1711 loop-affinity 修复）。"""
+    loop = asyncio.get_running_loop()
+    with _rl_locks_guard:
+        lock = _rl_locks.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            _rl_locks[loop] = lock
+        return lock
+
+
 async def _rate_limit(org_id: str) -> bool:
-    async with _rl_lock:
+    async with _rl_lock():
         if len(_rl_buckets) > 256:
             # 有界性：驱逐最早写入的桶（不清空全部——不重置他人窗口）
             for k in sorted(_rl_buckets.keys())[: len(_rl_buckets) - 255]:

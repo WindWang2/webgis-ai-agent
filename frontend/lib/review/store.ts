@@ -142,11 +142,15 @@ export function reviewSetSession(sessionId: string | null): void {
 }
 
 export function reviewSetProposals(sessionId: string, items: unknown[]): void {
+  // stale 响应守卫（review R1-P3，与 reviewSetDetail 同姿势）：迟到旧会话的
+  // 列表响应不得覆盖当前会话列表，也不得把 store.sessionId 回退到入参值。
+  // 入参 sessionId 由调用方经 reviewSetSession 绑定，这里只读不写。
+  if (store.sessionId != null && store.sessionId !== sessionId) return;
   const proposals = items
     .map(asSummary)
     .filter((x): x is ReviewProposalSummary => x != null)
     .slice(0, MAX_LIST);
-  patch({ sessionId, proposals, status: 'ready' });
+  patch({ proposals, status: 'ready' });
 }
 
 export function reviewSetStatus(status: ReviewLoadStatus): void {

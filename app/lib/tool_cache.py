@@ -427,7 +427,11 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
                                 key, ttl, effective_lock_ttl, lambda: func(**kwargs)
                             )
                         result = await func(**kwargs)
-                        await set_cached_async(key, result, ttl)
+                        # 模块头不变式「错误形态结果从不写缓存」对 singleflight
+                        # 关闭路径同样成立（此前此分支漏守卫，错误结果会被
+                        # ttl 可达 24h 地缓存住 —— 见 #1742）。
+                        if not _is_error_shaped(result):
+                            await set_cached_async(key, result, ttl)
                         return result
                     finally:
                         if not is_outermost:
@@ -467,7 +471,9 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
                             key, ttl, effective_lock_ttl, lambda: func(**kwargs)
                         )
                     result = func(**kwargs)
-                    set_cached(key, result, ttl)
+                    # 同 async 分支：singleflight 关闭路径也守错误形态守卫（#1742）。
+                    if not _is_error_shaped(result):
+                        set_cached(key, result, ttl)
                     return result
                 finally:
                     if not is_outermost:

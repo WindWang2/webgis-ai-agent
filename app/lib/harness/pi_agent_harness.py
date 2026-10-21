@@ -22,9 +22,11 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from app.lib.harness.evidence import (
+    CartographicCheck,
     CartographicReviewEvidence,
     EvaluationRun,
     MapActionEvidence,
+    MapActionEvidenceDict,
     MapActionStatus,
     MapProductEvidence,
     MapSpecValidityEvidence,
@@ -32,6 +34,7 @@ from app.lib.harness.evidence import (
     RefResolution,
     RefResolutionStatus,
     ToolCallEvidence,
+    ToolCallEvidenceDict,
 )
 from app.lib.harness.tool_call_event import ToolCallEvent
 from app.lib.cartography.quality_loop import cartographic_fingerprint
@@ -1014,7 +1017,7 @@ class PiAgentHarness:
         severity: str = "error",
         repairability: str = "not_repairable",
         suggested_fix: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> CartographicCheck:
         return {
             "rule": rule,
             "status": status,
@@ -1840,7 +1843,7 @@ class PiAgentHarness:
         }
 
     @staticmethod
-    def _map_action_evidence_to_dict(a: MapActionEvidence) -> Dict[str, Any]:
+    def _map_action_evidence_to_dict(a: MapActionEvidence) -> MapActionEvidenceDict:
         """序列化单条 MapActionEvidence（含收敛判定，供评估/调试观测）。"""
         verifiable = _is_verifiable_ack(a)
         return {
@@ -1886,7 +1889,7 @@ class PiAgentHarness:
         )
 
     @staticmethod
-    def _evidence_to_dict(ev: ToolCallEvidence) -> Dict[str, Any]:
+    def _evidence_to_dict(ev: ToolCallEvidence) -> ToolCallEvidenceDict:
         v = ev.mapspec_validity
         return {
             "run_id": ev.run_id,

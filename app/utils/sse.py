@@ -14,6 +14,7 @@
 import contextvars
 import json
 import logging
+import math
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -68,6 +69,24 @@ def sse_event_id(event_str: str) -> int | None:
                 return None
     return None
 
+def _json_safe(value: Any) -> Any:
+    """Recursively map non-finite floats to None.
+
+    #1685: Python's json emits the bare tokens NaN/Infinity/-Infinity, which are
+    NOT valid JSON (RFC 8259). The browser's JSON.parse rejects them, so a
+    single NaN anywhere in a tool payload (e.g. ``np.nanmean`` over an
+    all-nodata slice in terrain_analysis) silently kills the whole SSE event on
+    the client. Map them to null instead of dropping the event.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 def _serialize_sse_data(data: Any) -> str:
     """
     安全地将数据序列化为 JSON 字符串，防止序列化失败导致流中断。
@@ -76,14 +95,14 @@ def _serialize_sse_data(data: Any) -> str:
     try:
         # Pydantic v2
         if hasattr(data, "model_dump"):
-            return json.dumps(data.model_dump(), ensure_ascii=False)
+            return json.dumps(_json_safe(data.model_dump()), ensure_ascii=False)
         # Pydantic v1 — must call .dict() (v1 method). The prior code called
         # the v2-only .model_dump() here, so v1 models silently fell through
         # to the generic json.dumps branch and could fail on non-JSON types.
         if hasattr(data, "dict") and callable(getattr(data, "dict")):
-            return json.dumps(data.dict(), ensure_ascii=False)
+            return json.dumps(_json_safe(data.dict()), ensure_ascii=False)
         # Standard types
-        return json.dumps(data, ensure_ascii=False)
+        return json.dumps(_json_safe(data), ensure_ascii=False)
     except Exception as e:
         logger.error(f"SSE serialization error: {e}, data type: {type(data)}")
         # 尝试提取 session_id 或 task_id 用于基本的错误追踪

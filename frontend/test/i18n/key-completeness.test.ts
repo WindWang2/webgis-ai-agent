@@ -6,6 +6,7 @@
  * 3. 每个键的 {placeholder} 占位符两语言一致（漏占位符会渲染出字面 {var}）
  * 4. messages.ts 已登记全部 namespace 文件（防止新文件忘记 import）
  * 5. catalog 值非空字符串
+ * 6. 代码里 t()/useT() 引用的键 ⊆ catalog（#1748：此前缺键无任何闸）
  */
 
 import { readFileSync, readdirSync } from 'node:fs'
@@ -13,8 +14,10 @@ import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { messages } from '@/lib/i18n/messages'
 import { SUPPORTED_LOCALES } from '@/lib/i18n/config'
+import { collectKeyReferences } from './key-refs.mjs'
 
-const MESSAGES_DIR = join(import.meta.dirname, '..', '..', 'messages')
+const ROOT = join(import.meta.dirname, '..', '..')
+const MESSAGES_DIR = join(ROOT, 'messages')
 
 function flatten(obj: unknown, prefix = ''): Map<string, string> {
   const out = new Map<string, string>()
@@ -112,12 +115,15 @@ describe('i18n key completeness', () => {
   })
 
   it('zh 键数量达到抽取规模（防 catalog 被意外清空 / 守卫降级）', () => {
-    // 下限随 P3 归零进度只升不降（P3 完成后应为 >800）。
+    // 2026-10-20 实测：zh-CN catalog 3047 键（28 个 namespace 展平统计）。
+    // 旧下限 50 只占 1.6% —— 删掉 98% 文案该守卫依然绿，#1748 正是拿它
+    // 当「形同虚设」的证据。新下限 2500（≈ 实际的 82%）：日常增删文案
+    // 不会踩线，但任何规模的 catalog 丢失/清空立刻红。
     let count = 0
     for (const ns of namespacesOnDisk('zh-CN')) {
       count += flatten(JSON.parse(readFileSync(join(MESSAGES_DIR, 'zh-CN', `${ns}.json`), 'utf8'))).size
     }
-    expect(count).toBeGreaterThan(50)
+    expect(count).toBeGreaterThan(2500)
   })
 
   it('F-13: en-US 值不含 CJK（#1436 未译副本回归闸）', () => {
@@ -131,5 +137,84 @@ describe('i18n key completeness', () => {
       }
     }
     expect(offenders.length ? `en-US 含中文（${offenders.length}）：\n  ` + offenders.slice(0, 20).join('\n  ') : '').toBe('')
+  })
+})
+
+/** zh-CN catalog 全键集合（`<namespace>.<子路径>`）。 */
+function catalogKeys(locale: string): Set<string> {
+  const keys = new Set<string>()
+  for (const ns of namespacesOnDisk(locale)) {
+    const flat = flatten(JSON.parse(readFileSync(join(MESSAGES_DIR, locale, `${ns}.json`), 'utf8')))
+    for (const k of flat.keys()) keys.add(`${ns}.${k}`)
+  }
+  return keys
+}
+
+/**
+ * 「代码引用键 ⊆ catalog」契约（#1748）。
+ *
+ * translator.ts:27 声称缺 key 由本文件在 CI 兜住 —— 在那之前这只是个愿望：
+ * 上面那些用例只比对 catalog **内部**一致性（namespace 集合 / 两语言 diff /
+ * 占位符 / 空值 / 键数规模），没有任何一条把代码里 t('...') / useT('ns')
+ * 引用的键对照 catalog 校验存在性。删掉一个 catalog 条目，界面只会多渲染
+ * 一行键路径（onError 对 MISSING_MESSAGE 静默回落），CI 全绿。
+ */
+describe('i18n 代码引用键 ⊆ catalog（#1748）', () => {
+  it('t()/useT() 静态引用的键都存在于 catalog', () => {
+    // 只查 zh-CN：en-US 的键集合与 zh-CN 一致由上面的 diff 用例保证。
+    const catalog = catalogKeys('zh-CN')
+    const { refs } = collectKeyReferences(ROOT)
+    const missing = refs.filter((r) => !catalog.has(r.key))
+    expect(
+      missing.length
+        ? `代码引用了 catalog 中不存在的键（${missing.length}）：\n` +
+            missing.slice(0, 40).map((r) => `  ${r.file}:${r.line} → ${r.key}`).join('\n') +
+            (missing.length > 40 ? `\n  … 共 ${missing.length} 处` : '')
+        : '',
+    ).toBe('')
+  })
+
+  it('扫描器没有空转（引用量与分目录贡献守住基线）', () => {
+    const { refs } = collectKeyReferences(ROOT)
+    // 基线 2026-10-20：2566 处引用（components 2474 / app 81 / lib 11）。
+    // 下限留 ~40% 余量：日常增删文案不会踩线，但扫描器一旦写坏（正则失灵 /
+    // 绑定识别失败 / 只扫了一个目录）引用量会断崖下跌 —— 那时必须红。
+    // 空转的守卫比没有守卫更坏，#1748 的 50 键下限就是同款教训。
+    expect(refs.length).toBeGreaterThan(1500)
+    const perDir = new Map<string, number>()
+    for (const r of refs) perDir.set(r.dir, (perDir.get(r.dir) ?? 0) + 1)
+    for (const dir of ['components', 'app', 'lib']) {
+      expect(perDir.get(dir) ?? 0, `${dir}/ 零引用 —— 扫描面漏了？`).toBeGreaterThan(0)
+    }
+  })
+
+  it('不可静态判定的引用不超出登记配额（盲区棘轮，不许静默扩大）', () => {
+    const { unresolved } = collectKeyReferences(ROOT)
+    const actual = new Map<string, number>()
+    for (const u of unresolved) actual.set(u.file, (actual.get(u.file) ?? 0) + 1)
+
+    // translator 作为参数传给模块级 helper（`function label(t: TranslateFn)`）时，
+    // namespace 不在调用点作用域内，无法静态解析。配额 = 实际，与
+    // no-raw-cjk 白名单同款棘轮：新增要么内联掉，要么在这里登记并说明理由。
+    // 模板串/变量键（`t(\`ns.${x}\`)`）天然不可静态判定，本扫描器不计数
+    // （基线 2026-10-20：42 处 / 25 文件）。
+    const QUOTA: Record<string, number> = {
+      'components/chat/cartography-result-card.tsx': 7,
+      'components/settings/map-config.tsx': 2,
+      'components/sidebar/modelops/modelops-model-detail.tsx': 7,
+      'components/workbench/review-drawer.tsx': 3,
+    }
+
+    const failures: string[] = []
+    for (const [file, allowed] of Object.entries(QUOTA)) {
+      const n = actual.get(file) ?? 0
+      if (n !== allowed) {
+        failures.push(`${file}: 登记 ${allowed} ≠ 实际 ${n}（${n === 0 ? '删除条目' : '更新配额'}）`)
+      }
+    }
+    for (const [file, n] of actual) {
+      if (!(file in QUOTA)) failures.push(`${file}: ${n} 处引用无法静态判定（配额外，请内联或登记）`)
+    }
+    expect(failures.length ? '不可静态判定的引用需维护：\n  ' + failures.join('\n  ') : '').toBe('')
   })
 })

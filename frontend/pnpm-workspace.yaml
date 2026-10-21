@@ -1,5 +1,12 @@
+# #1670：allowBuilds 占位值 "set this to true or false" = 未评审构建 —— pnpm
+# ≥10.26 起该键生效（strictDepBuilds 默认 true），install 直接以
+# ERR_PNPM_IGNORED_BUILDS 失败（pnpm 12.14.0 隔离复现实测；CI action-setup
+# `version: 10` 现解析到 10.34.7，同样命中该逻辑）。低于 10.26 的本地 pnpm
+# 10.18.3 不识别该键，四项一律 ignored 仅告警不报错。两包 postinstall 负责
+# 拉取平台二进制（@parcel/watcher 原生 watcher、@swc/core 的 swc 二进制），
+# 禁用以运行时静默失败收场 —— 与 core-js / unrs-resolver 一致置 true 全放行。
 allowBuilds:
-  '@parcel/watcher': set this to true or false
-  '@swc/core': set this to true or false
+  '@parcel/watcher': true
+  '@swc/core': true
   core-js: true
   unrs-resolver: true

@@ -123,3 +123,40 @@ def test_failed_step_rolls_back_only_current_step(db_session):
         f"DATA-10 regression: expected only step-1 artifact, got {len(artifacts)}"
     )
     assert artifacts[0].name.endswith("s1_output")
+
+
+def test_failed_status_is_durable_when_manifest_build_raises(db_session, monkeypatch):
+    """review #1744-4：except 分支置 failed 之后，若 manifest 构建/指纹
+    计算/提交抛错，异常会穿出 _execute —— failed 状态必须**已经落库**。
+    旧结构只在内存里置 failed：DB 行永久停在 status="running"（假 running），
+    而 workflow_runs 没有任何 stale/恢复清扫面。"""
+    import asyncio
+
+    from app.models.project import WorkflowRun
+    from app.services.workflow_engine import WorkflowEngine
+
+    db = db_session
+    wf = _seed_workflow(db, steps_data=[
+        {"step_id": "s1", "tool_name": "explode", "args_template": {}, "input_bindings": {}, "dependencies": []},
+    ])
+    registry = _FakeRegistry(fail_on="explode")
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("manifest build exploded")
+
+    monkeypatch.setattr(WorkflowEngine, "_attach_outcome_context", _boom)
+
+    with pytest.raises(RuntimeError, match="manifest build exploded"):
+        asyncio.run(WorkflowEngine.execute_workflow_run(
+            db=db, workflow_id=wf.id, tool_registry=registry,
+        ))
+
+    # 新查询绕过会话身份映射：读到的必须是已提交的 DB 行状态。
+    db.rollback()
+    rows = db.execute(select(WorkflowRun)).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == "failed", (
+        "run row must be durably 'failed' even when the post-failure manifest "
+        f"build raises; got {rows[0].status!r}"
+    )
+    assert "exploded" in (rows[0].error_message or "")

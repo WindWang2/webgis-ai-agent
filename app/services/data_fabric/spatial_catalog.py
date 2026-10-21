@@ -3,10 +3,20 @@ Geospatial Data Fabric: Spatial Catalog Service
 Provides lightweight catalog search, indexing, filtering by keyword, bbox, CRS, tags, and source_type.
 """
 import logging
-from typing import Dict, Any, List, Optional
+from collections import OrderedDict
+from typing import Any, Dict, List, Optional
 from app.schemas.data_fabric_schema import DatasetDescriptor
 
 logger = logging.getLogger(__name__)
+
+#: 目录条目容量上限（#1715）：进程级单例此前只增不减（``unregister_dataset``
+#: 零生产调用点），长生命周期 worker 随会话连接线性累积描述符。超出按 LRU
+#: 逐出最旧条目（重复注册刷新序）；逐出仅丢索引条目，源重连 sync 即重建。
+_DEFAULT_MAX_DATASETS = 20_000
+
+#: ``unregister_by_profile`` 的“不限 owner”哨兵 —— 区别于显式 ``owner=None``
+#: 的全局/legacy 语义（精确清理绝不误删其它会话的条目）。
+_ANY_OWNER: Any = object()
 
 
 def _bbox_intersects(box1: List[float], box2: List[float]) -> bool:
@@ -30,15 +40,18 @@ class SpatialCatalogService:
     表示全局/legacy 条目（单租户语义，旧行为保留）；带 owner 的查询只看到
     自己的 + 全局条目——跨会话（跨租户）数据不再互相可见。
     并发：注册/查询在锁内进行（connect/search 并行时 dict 迭代不再 race）。
+    有界（#1715）：条目数按 LRU 上限 ``max_entries`` 逐出，进程级单例不再
+    无界累积；连接断连/逐出时 ``unregister_by_profile`` 回收其目录足迹。
     """
 
-    def __init__(self):
+    def __init__(self, max_entries: int = _DEFAULT_MAX_DATASETS):
         import threading
 
-        self._catalog: Dict[str, DatasetDescriptor] = {}
+        self._catalog: "OrderedDict[str, DatasetDescriptor]" = OrderedDict()
         self._tags: Dict[str, List[str]] = {}
         self._profile_map: Dict[str, str] = {}
         self._owner_map: Dict[str, Optional[str]] = {}
+        self._max_entries = max(1, int(max_entries))
         self._lock = threading.RLock()
 
     def register_dataset(
@@ -51,6 +64,7 @@ class SpatialCatalogService:
         """Register or update a dataset descriptor in the catalog."""
         with self._lock:
             self._catalog[descriptor.id] = descriptor
+            self._catalog.move_to_end(descriptor.id)  # 重复注册刷新 LRU 序
             if tags is not None:
                 self._tags[descriptor.id] = list(tags)
             elif descriptor.id not in self._tags:
@@ -59,6 +73,12 @@ class SpatialCatalogService:
                 self._profile_map[descriptor.id] = profile_id
             # 重复注册以最近一次 owner 为准（会话重连）
             self._owner_map[descriptor.id] = owner
+            # #1715：有界目录 —— 超容按 LRU 逐出（进程级单例绝不无界累积）。
+            while len(self._catalog) > self._max_entries:
+                evicted_id, _ = self._catalog.popitem(last=False)
+                self._tags.pop(evicted_id, None)
+                self._profile_map.pop(evicted_id, None)
+                self._owner_map.pop(evicted_id, None)
 
         logger.info("[SpatialCatalog] Registered dataset '%s' (owner=%s)", descriptor.id, owner)
         return descriptor
@@ -66,14 +86,45 @@ class SpatialCatalogService:
     def unregister_dataset(self, dataset_id: str) -> bool:
         """Remove a dataset descriptor from the catalog."""
         with self._lock:
-            if dataset_id in self._catalog:
-                del self._catalog[dataset_id]
-                self._tags.pop(dataset_id, None)
-                self._profile_map.pop(dataset_id, None)
-                self._owner_map.pop(dataset_id, None)
-                logger.info("[SpatialCatalog] Unregistered dataset '%s'", dataset_id)
-                return True
-            return False
+            return self._remove_locked(dataset_id)
+
+    def unregister_by_profile(self, profile_id: str, owner: Any = _ANY_OWNER) -> int:
+        """移除某数据源注册的全部目录条目（#1715 级联清理），返回移除条数。
+
+        连接断连/LRU 逐出时由 ``connection_manager`` 调用，回收该源的目录
+        足迹（此前 ``unregister_dataset`` 零调用点 → 目录只增不减）。
+
+        ``owner`` 语义：
+        - 缺省（``_ANY_OWNER``）：不限 owner —— 调用方已确认无存活连接引用
+          该 profile；
+        - 显式 ``owner="sess"`` / ``owner=None``：仅移除该 (owner, profile)
+          注册的条目（精确清理，不误删其它会话/全局连接的同源条目）。
+        """
+        with self._lock:
+            victims = [
+                did for did, pid in self._profile_map.items()
+                if pid == profile_id
+                and (owner is _ANY_OWNER or self._owner_map.get(did) == owner)
+            ]
+            for did in victims:
+                self._remove_locked(did)
+        if victims:
+            logger.info(
+                "[SpatialCatalog] Unregistered %d datasets for profile '%s' (owner=%s)",
+                len(victims), profile_id, "any" if owner is _ANY_OWNER else owner,
+            )
+        return len(victims)
+
+    def _remove_locked(self, dataset_id: str) -> bool:
+        """调用方必须已持有 ``self._lock``。"""
+        if dataset_id in self._catalog:
+            del self._catalog[dataset_id]
+            self._tags.pop(dataset_id, None)
+            self._profile_map.pop(dataset_id, None)
+            self._owner_map.pop(dataset_id, None)
+            logger.info("[SpatialCatalog] Unregistered dataset '%s'", dataset_id)
+            return True
+        return False
 
     def _visible(self, dataset_id: str, owner: Optional[str]) -> bool:
         """owner 作用域可见性：owner=None（legacy/全局视图）看全部；

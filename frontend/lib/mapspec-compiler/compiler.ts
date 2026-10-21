@@ -61,6 +61,9 @@ import {
 } from "../carto-ir/representation";
 import { checkMapSpecVersion } from "../carto-ir/version";
 import { checkBivariateLayer } from "../carto-ir/bivariate";
+// #1747：heatmap 表达窗子层的安全 paint 与 live runtime 单一实现
+// （此前只发 heatmap-radius，原生 heatmap-color 色带在导出里掉落）。
+import { heatmapOnlyPaint } from "./heatmap-paint";
 
 /**
  * AC-06：headless 编译器可识别的源类型白名单。白名单外的类型此前静默降级
@@ -568,8 +571,15 @@ export function compileMapSpec(
     const repPlan = repPlansByLayerId.get(layer.id) ?? null;
     const presentation = presentationByLayerId.get(layer.id);
     const planEffective = !!repPlan?.nonTrivial;
-    const planFirstMode = planEffective ? repPlan!.windows[0].mode : null;
-    const layerType = planEffective && planFirstMode === "visual_heatmap" && layer.type === "circle"
+    // #1726 项 1：主层「型」与「门」必须同源 —— 主层 = 首个 raw 窗（dev
+    // note 方向 5 决策 2），型改写按该 raw 首窗自身的 mode 判定，而非
+    // normalized 首窗。否则首窗 visual_heatmap + 后续 raw 窗时，raw 窗被
+    // 编译成 heatmap（型/门来源不同窗）。无 raw 窗时主层退化为身份锚，
+    // 按 normalized 首窗改写（恒空门内型不改变渲染结果）。
+    const planMainMode = planEffective
+      ? (rawWindowsOf(repPlan!)[0] ?? repPlan!.windows[0]).mode
+      : null;
+    const layerType = planEffective && planMainMode === "visual_heatmap" && layer.type === "circle"
       ? "heatmap"
       : layer.type === "circle" && presentation?.mode === "heatmap" ? "heatmap" : layer.type;
     // C11 v1.5：显隐/zoom 单一裁决面（与 live 路径 addLayerSafe 同源）。
@@ -1087,14 +1097,16 @@ export function compileMapSpec(
         if (w.mode === "point_cluster" && repClusterWindow) continue;
         if (w.mode === "visual_heatmap" && (layer.type === "circle" || layer.type === "heatmap")) {
           // heatmap 窗只可能出现在点层（circle/heatmap 型恒有数据面）。
+          // #1747：子层 paint 走与 live（runtime.ts heatmapOnlyPaint）同一
+          // 单一实现 —— 原生 heatmap paint（heatmap-color 密度色带 /
+          // intensity / weight / opacity）必须穿透到子层，否则带原生色带
+          // 的层在导出里掉回 MapLibre 默认蓝色色带（导出降级）。
           const heatSub: CompiledLayer & { layout: MapLibrePaint } = {
             id: representationSublayerId(layer.id, w.index),
             type: "heatmap",
             source: layer.source,
             ...(subNoneLayout ?? { layout: {} }),
-            paint: {
-              "heatmap-radius": asPaintValue(heatmapRadiusExpression({ featureCount })),
-            },
+            paint: heatmapOnlyPaint(maplibreLayer.paint, featureCount),
             minzoom: wMin,
             maxzoom: wMax,
           };

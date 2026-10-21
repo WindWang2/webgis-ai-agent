@@ -118,6 +118,25 @@ def actor_ids(user: Optional[dict]) -> tuple[Optional[str], Optional[object]]:
     return uid, user.get("org_id")
 
 
+def owner_token_matches(expected: Optional[str], presented: Optional[str]) -> bool:
+    """SEC-08 owner_token 常量时间比较（fail-closed；#1711）。
+
+    ``hmac.compare_digest`` 对含非 ASCII 字符的 ``str`` 直接抛 ``TypeError``
+    —— 客户端经 X-Session-Token / WS subprotocol 送一个非 ASCII token 就能把
+    本应 fail-closed（404/False）的所有权守卫变成未处理异常 500。双方先
+    encode 成 bytes（bytes 无 ASCII 限制）再比较；任一为空、或 encode 失败
+    （如 lone surrogate）都 fail-closed 返回 False，绝不把异常抛给调用方。
+    """
+    if not expected or not presented:
+        return False
+    try:
+        return hmac.compare_digest(
+            str(expected).encode("utf-8"), str(presented).encode("utf-8")
+        )
+    except UnicodeEncodeError:  # lone surrogate 等不可编码输入 —— fail-closed
+        return False
+
+
 def authorize_session_write(
     conv: Optional[object],
     user_id: Optional[str],
@@ -143,7 +162,9 @@ def authorize_session_write(
             return False  # #1109: legacy NULL/NULL — fail closed.
         if not owner_token:
             return False
-        return hmac.compare_digest(str(owner_token), str(expected))
+        # #1711: 非 ASCII token 经 owner_token_matches fail-closed（compare_digest
+        # 对非 ASCII str 直接 TypeError，会把守卫变成 500）。
+        return owner_token_matches(expected, owner_token)
     if user_id is None or str(user_id) in _ANONYMOUS_USER_IDS:
         return False
     return str(conv_uid) == str(user_id)

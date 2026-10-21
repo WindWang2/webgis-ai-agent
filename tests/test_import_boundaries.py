@@ -4,7 +4,8 @@
 1. 真实仓树 PASS —— gate 对当前 app/ 无违规（本文件同时是 ci-local.sh
    contract tier 成员，构成"一条命令"本地门禁）。
 2. 负向 fixture —— tmp 树构造 core→services / contracts→services /
-   lib/cartography→services / 函数级懒导入违规，gate 必须逐条 FAIL。
+   lib/cartography→services / 函数级懒导入违规，gate 必须逐条 FAIL；
+   #1678 起另覆盖 tools→api / services→api / agent_pi_bridge→api 回潮边。
 3. 豁免语义 —— TYPE_CHECKING 守护 import 与 ``# h01:allow`` 行内注释
    被正确豁免；``h01:allow`` 当前全仓使用数为 0（防逃生口滥用）。
 """
@@ -84,6 +85,20 @@ def test_allow_escape_hatch_unused_in_repo():
         ),
         # core → api
         ("app/core/violator_api.py", "from app.api.routes import health\n"),
+        # #1678：下层反向 import 路由层的回潮边（tools→api / services→api /
+        # agent_pi_bridge→api），FORBIDDEN 表补边后必须逐条 FAIL。
+        (
+            "app/tools/violator_api.py",
+            "def f():\n    from app.api.routes import raster\n    return raster\n",
+        ),
+        (
+            "app/services/violator_api.py",
+            "from app.api.routes import chat\n",
+        ),
+        (
+            "app/agent_pi_bridge.py",
+            "from app.api.routes import pi_tools\n",
+        ),
     ],
 )
 def test_gate_fails_on_violation(tmp_path, module_path, import_stmt):

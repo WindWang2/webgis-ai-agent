@@ -172,9 +172,14 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
   const onTablistKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const currentIndex = visibleTabs.findIndex((t) => isTabActive(t.key));
+      // #1666：方向键跟随 aria-orientation —— 底部档 horizontal 用
+      // ArrowLeft/ArrowRight，竖排档 vertical 用 ArrowUp/ArrowDown（修复前
+      // 底部档只认 Up/Down，与声明的 horizontal 语义矛盾）。
+      const prevKey = variant === 'bottom' ? 'ArrowLeft' : 'ArrowUp';
+      const nextKey = variant === 'bottom' ? 'ArrowRight' : 'ArrowDown';
       let nextIndex: number | null = null;
-      if (e.key === 'ArrowDown') nextIndex = ((currentIndex < 0 ? 0 : currentIndex) + 1) % visibleTabs.length;
-      else if (e.key === 'ArrowUp')
+      if (e.key === nextKey) nextIndex = ((currentIndex < 0 ? 0 : currentIndex) + 1) % visibleTabs.length;
+      else if (e.key === prevKey)
         nextIndex = ((currentIndex < 0 ? 0 : currentIndex) - 1 + visibleTabs.length) % visibleTabs.length;
       else if (e.key === 'Home') nextIndex = 0;
       else if (e.key === 'End') nextIndex = visibleTabs.length - 1;
@@ -186,7 +191,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
       else if (!leftPanelOpen) toggleLeftPanel();
       tabRefs.current.get(next.key)?.focus();
     },
-    [visibleTabs, isTabActive, leftPanelOpen, setActiveTab, toggleLeftPanel]
+    [variant, visibleTabs, isTabActive, leftPanelOpen, setActiveTab, toggleLeftPanel]
   );
 
   return (
@@ -203,7 +208,15 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
       }
       style={
         variant === 'bottom'
-          ? { paddingBottom: 'env(safe-area-inset-bottom, 0px)' }
+          ? {
+              // #1666：底部档必须坐在 HUD 状态条上方 —— EmbodiedHud 是 z-50 的
+              // fixed bottom-0 条（收起态 24px / 展开 210px），rail z-40 若贴
+              // bottom-0，下半（含 44px tab 的命中中心）被 HUD 盖住，chat tab
+              // 依旧点不着。避让规则与竖排档同源（bottom: hudOpen ? 234 : 24）。
+              bottom: hudOpen ? 234 : 24,
+              transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            }
           : { bottom: hudOpen ? 234 : 24, transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)' }
       }
     >
@@ -211,7 +224,10 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
       {/* Review R1（a11y MINOR-7）：radiogroup 的必需子元素只能是 radio ——
           agent 回执按钮移出分组容器；roving tabindex + 方向键按 APG radio。 */}
       <div className={variant === 'bottom' ? "flex flex-row items-center gap-1 border-b-0 px-1" : "flex w-full flex-col items-center gap-1 border-b border-edge-subtle py-2"}>
-        <div role="radiogroup" aria-label={t('nav.workbenchMode')} className="flex w-full flex-col items-center gap-1">
+        {/* #1666：模式 radiogroup 方向随 variant 切换 —— 底部档 horizontal
+            横向排布（修复前恒 flex-col，3 个模式按钮在 48px 底栏内纵向堆叠
+            被裁剪）。竖排档维持 w-full 纵列。 */}
+        <div role="radiogroup" aria-label={t('nav.workbenchMode')} className={variant === 'bottom' ? "flex flex-row items-center gap-1" : "flex w-full flex-col items-center gap-1"}>
         {WORKBENCH_MODES.map((m) => {
           const ModeIcon = MODE_META[m].icon;
           const modeLabel = t(`modes.${m}`);
@@ -263,7 +279,17 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
         aria-label={t('nav.workspacePanels')}
         aria-orientation={variant === 'bottom' ? 'horizontal' : 'vertical'}
         onKeyDown={onTablistKeyDown}
-        className="flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto py-2"
+        // #1666：tablist 排列方向必须随 variant 切换，与 aria-orientation
+        // 一致。修复前恒 flex-col：底部档 14 个 tab 纵向堆叠、被 h-rail
+        // (48px) 底栏裁剪，chat tab 命中被地图 canvas 拦截、实际不可点。
+        // 底部档改 flex-row + flex-1/min-w-0 收进剩余宽度，超宽时由自身
+        // overflow-x-auto 横向滚动（chat 居首恒可见可点）；竖向 padding 去掉
+        // —— 触屏 .touch-target 已把 tab 提到 44px，48px 底栏内不留余量。
+        className={
+          variant === 'bottom'
+            ? 'flex flex-1 min-w-0 flex-row items-center gap-1 overflow-x-auto'
+            : 'flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto py-2'
+        }
       >
         {visibleTabs.map(({ key, icon: Icon }) => {
           const label = t(`tabs.${key}`);

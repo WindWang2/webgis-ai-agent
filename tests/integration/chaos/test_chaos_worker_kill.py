@@ -47,7 +47,10 @@ async def test_worker_sigkill_job_converges_to_stale(chaos_stack, chaos_worker) 
         async with AsyncSessionLocal() as db:
             fresh = await DurableJobStore.get(db, job.id)
         assert fresh is not None
-        assert fresh.status.value in ("stale", "failed"), (
+        # #1602：analysis_tasks.status 是 String(20) 普通列（app/models/db_model.py），
+        # DB 回读后是裸 str 而非 JobStatus 枚举，取 .value 会 AttributeError
+        # （nightly run 39389025836 即此因红：job 实际已收敛到 stale）。
+        assert fresh.status in ("stale", "failed"), (
             f"job 收敛到可重试终态，实际 {fresh.status}")
         # 可重试语义：retryable 标志/状态允许新 attempt（规范 §25）。
     finally:

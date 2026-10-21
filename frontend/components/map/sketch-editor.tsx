@@ -489,7 +489,14 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       map.off('mousemove', onMove);
       map.off('mouseup', onUp);
       window.removeEventListener('mouseup', onMouseUpWindow);
+      // 与 onUp 同姿势恢复三个手势：拖拽中途切工具/卸载时若只恢复 dragPan，
+      // touchZoomRotate/touchPitch 会残留失效（#1746-6）。未拖拽时这三个
+      // enable 是幂等空操作。
       if (typeof map.dragPan?.enable === 'function') map.dragPan.enable();
+      if (typeof map.touchZoomRotate?.enableRotation === 'function') map.touchZoomRotate.enableRotation();
+      if (typeof (map as unknown as { touchPitch?: { enable: () => void } }).touchPitch?.enable === 'function') {
+        (map as unknown as { touchPitch: { enable: () => void } }).touchPitch.enable();
+      }
     };
   }, [tool, mapReady, getMap, setSketchDirty, t]);
 
