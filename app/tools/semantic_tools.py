@@ -341,6 +341,7 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
             session_descriptor = None
             role_bindings_summary: List[Dict[str, Any]] = []
             role_evidence: Optional[Dict[str, Dict[str, Any]]] = None
+            data_preflight: Dict[str, Any] = {}
             if session_id:
                 try:
                     from app.services.dataset_semantics import (
@@ -368,6 +369,7 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                 try:
                     from app.services.dataset_semantics import (
                         collect_session_evidence,
+                        preflight_multi_dataset,
                         role_qualification_evidence,
                     )
                     from app.services.dataset_semantics.qualification_bridge import (
@@ -399,19 +401,30 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                             evidence_map = role_qualification_evidence(report)
                             if evidence_map:
                                 role_evidence = evidence_map
-                                # 重编译：命中角色用自己的数据集事实裁决。
+                                # 重编译：角色绑定证据为权威（review P2：
+                                # 不再同时传 primary descriptor —— 否则
+                                # ambiguous/缺席角色会被 primary 数据集
+                                # 事实裁决，「不拿别的数据集顶替」被中和）。
                                 c = compile_workflow_v4(
                                     query, recipe_id=recipe_id or "",
                                     profile=profile,
-                                    descriptor=session_descriptor,
+                                    descriptor=None,
                                     role_evidence=role_evidence)
                             role_bindings_summary = [
                                 b.to_bounded_dict()
                                 for b in report.bindings[:16]
                             ]
+                            # WP-C：绑定证据面的 metadata-only 兼容预检
+                            # （typed gaps 供澄清回路；零数据扫描）。
+                            data_preflight = preflight_multi_dataset(
+                                evidence_map,
+                                expected_roles=tuple(
+                                    r.role for r in wf_profile.data_roles
+                                )).to_bounded_dict()
                 except Exception:  # noqa: BLE001 — 角色接线失败 = 原行为
-                    logger.debug(
-                        "[semantic_tools] role binding skipped", exc_info=True)
+                    logger.warning(
+                        "[semantic_tools] role binding skipped sid=%s",
+                        session_id, exc_info=True)
 
             mq = c.method_qualification or {}
             rejected = [
@@ -454,6 +467,8 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                 # stale 带期望指纹（记录面 vs 当前语义）；not_authorized
                 # 拒绝跨作用域解析。
                 "data_role_bindings": role_bindings_summary,
+                # G01/WP-C：多数据兼容预检（metadata-only；typed gaps）。
+                "data_preflight": data_preflight,
                 # 与 orchestrator 证据同源披露（review R2 MINOR-1）
                 "qualification_basis": (
                     "role_grounded" if role_evidence

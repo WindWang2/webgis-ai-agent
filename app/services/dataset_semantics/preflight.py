@@ -118,29 +118,71 @@ def _bbox_overlap(a: Optional[List[float]], b: Optional[List[float]]) -> Optiona
     return not (a[0] > b[2] or b[0] > a[2] or a[1] > b[3] or b[1] > a[3])
 
 
-def _coverage_years(cov: str) -> Optional[int]:
-    """ISO 覆盖串 → 年份（保守解析：取前 4 位数字；失败 None）。"""
+def _coverage_point(cov: str) -> Optional[Tuple[int, Optional[int]]]:
+    """覆盖串 → (年, 月|None)（保守解析；失败 None）。
+
+    月粒度（YYYY-MM…）可比到月；仅年粒度按整年保守展开。open-ended
+    （如 "present"）→ None。
+    """
     s = str(cov or "").strip()
     if len(s) >= 4 and s[:4].isdigit():
-        return int(s[:4])
+        month: Optional[int] = None
+        if len(s) >= 7 and s[4] == "-" and s[5:7].isdigit():
+            m = int(s[5:7])
+            if 1 <= m <= 12:
+                month = m
+        return int(s[:4]), month
     return None
 
 
+def _interval(d: Any) -> Optional[Tuple[int, int, bool]]:
+    """descriptor 覆盖 → (起值, 止值, 是否月精度全端点)；无起点 → None。
+
+    值域 = 年×12+月（无月按整年保守展开：起点=1 月，止点=12 月）。
+    止点不可解析（open-ended）→ 以起点单点参与且精度降级（不猜端点）。
+    """
+    t = getattr(d, "temporal", None)
+    start_s = str(getattr(t, "coverage_start", "") or "")
+    end_s = str(getattr(t, "coverage_end", "") or "")
+    ps = _coverage_point(start_s)
+    if ps is None:
+        return None
+    pe = _coverage_point(end_s) if end_s else None
+    start_val = ps[0] * 12 + (ps[1] - 1 if ps[1] else 0)
+    if pe is None:
+        # end 缺席/open-ended：区间未知，止点保守取同起点（不外推）。
+        return start_val, start_val, False
+    end_val = pe[0] * 12 + (pe[1] - 1 if pe[1] else 11)
+    month_precise = ps[1] is not None and pe[1] is not None
+    return start_val, end_val, month_precise
+
+
+def _has_temporal_evidence(descriptor: Any) -> bool:
+    """descriptor 是否携带时间语义证据（has_time_field/coverage_start）。"""
+    t = getattr(descriptor, "temporal", None)
+    return bool(
+        getattr(t, "has_time_field", False)
+        or getattr(t, "coverage_start", ""))
+
+
+# 任务关心时间对齐的角色（这些角色在场时，单侧时间证据必须按 unknown 披露）。
+_TEMPORAL_ROLES = ("baseline", "target_time", "comparison_time")
+
+
 def _temporal_overlap(d1: Any, d2: Any) -> str:
-    """两 descriptor 时间关系：overlap / disjoint / partial / unknown。"""
-    t1, t2 = getattr(d1, "temporal", None), getattr(d2, "temporal", None)
-    s1, e1 = (getattr(t1, "coverage_start", "") or "",
-              getattr(t1, "coverage_end", "") or "")
-    s2, e2 = (getattr(t2, "coverage_start", "") or "",
-              getattr(t2, "coverage_end", "") or "")
-    y1s, y1e = _coverage_years(s1), _coverage_years(e1) or _coverage_years(s1)
-    y2s, y2e = _coverage_years(s2), _coverage_years(e2) or _coverage_years(s2)
-    if y1s is None or y2s is None:
-        return "unknown" if (y1s is None and y2s is None) else "partial"
-    a1, a2 = (y1s, y1e if y1e is not None else y1s), (y2s, y2e if y2e is not None else y2s)
-    if a1[0] > a2[1] or a2[0] > a1[1]:
-        return "disjoint"
-    return "overlap"
+    """两 descriptor 时间关系：overlap / disjoint / partial / unknown。
+
+    review P1/P2：end 不可解析不外推端点（防假 disjoint）；仅年粒度或
+    端点不全时结果降 partial（同年不同月不得假 pass，review P2-6）。
+    """
+    i1, i2 = _interval(d1), _interval(d2)
+    if i1 is None or i2 is None:
+        return "unknown" if (i1 is None and i2 is None) else "partial"
+    disjoint = i1[0] > i2[1] or i2[0] > i1[1]
+    full_precision = i1[2] and i2[2]
+    if disjoint:
+        return "disjoint" if full_precision else "partial"
+    return "overlap" if full_precision else "partial"
 
 
 def _unit_facts(descriptor: Any) -> Dict[str, str]:
@@ -203,8 +245,9 @@ def preflight_multi_dataset(
 
     gaps = report.gaps
 
-    # ── role_coverage：期望角色绑定面 ─────────────────────────────────
-    missing_roles = [str(r)[:32] for r in expected_roles if r not in datasets]
+    # ── role_coverage：期望角色绑定面（按归一后的非 None 输入判）───────
+    bound_keys = {k for k, _ in items}
+    missing_roles = [str(r)[:32] for r in expected_roles if r not in bound_keys]
     report.checks.append({
         "check": "role_coverage",
         "result": "pass" if not missing_roles else "fail",
@@ -287,13 +330,25 @@ def preflight_multi_dataset(
         "unverifiable_pairs": spatial_unknown,
     })
 
-    # ── temporal_overlap（两两；仅时间角色对有意义，但全对检查保守）──
-    temporal_result = "pass"
+    # ── temporal_overlap（只评双方都有时间证据的对；静态数据不误伤）──
+    # review 追加修正：无时间语义的静态联接不受时间判据拖累
+    # （not_applicable ≠ unknown）；单侧证据只在任务声明时间角色时
+    # 按 unknown 披露（证据不足不虚构兼容）。
+    temporal_task = any(str(r) in _TEMPORAL_ROLES for r in expected_roles)
+    temporal_result = "not_applicable"
     temporal_partial = 0
+    temporal_one_sided = 0
+    both_sided_evaluated = 0
     for i in range(len(items)):
         for j in range(i + 1, len(items)):
             k1, d1 = items[i]
             k2, d2 = items[j]
+            e1, e2 = _has_temporal_evidence(d1), _has_temporal_evidence(d2)
+            if not (e1 and e2):
+                if e1 != e2:
+                    temporal_one_sided += 1
+                continue
+            both_sided_evaluated += 1
             rel = _temporal_overlap(d1, d2)
             if rel == "disjoint":
                 temporal_result = "fail"
@@ -309,11 +364,18 @@ def preflight_multi_dataset(
                     ))
             elif rel in ("partial", "unknown"):
                 temporal_partial += 1
-    if temporal_result == "pass" and temporal_partial:
+    if both_sided_evaluated:
+        if temporal_result == "not_applicable":
+            temporal_result = "pass"
+        if temporal_result == "pass" and temporal_partial:
+            temporal_result = "unknown"
+    elif temporal_one_sided and temporal_task:
         temporal_result = "unknown"
     report.checks.append({
         "check": "temporal_overlap", "result": temporal_result,
         "partial_pairs": temporal_partial,
+        "one_sided_pairs": temporal_one_sided,
+        "partial_code": CODE_TEMPORAL_PARTIAL,  # 证据不足对（不虚构兼容）
     })
 
     # ── unit_consistency（同名字段单位）───────────────────────────────
@@ -322,20 +384,23 @@ def preflight_multi_dataset(
     for k, d in items:
         for fname, unit in _unit_facts(d).items():
             units_by_field.setdefault(fname[:64], []).append((k, unit))
+    unit_gaps = 0
     for fname, entries in sorted(units_by_field.items()):
         declared = [(k, u) for k, u in entries if u]
         units = {u for _, u in declared}
         if len(declared) >= 2 and len(units) > 1:
             unit_result = "fail"
-            gaps.append(PreflightGap(
-                code=CODE_UNIT_CONFLICT,
-                detail=f"字段 {fname} 在多个数据集单位冲突："
-                       + "；".join(f"{k}={u}" for k, u in declared[:3]),
-                refs=[k for k, _ in declared[:4]],
-                alternatives=[TypedAlternative(
-                    action="clarify_units",
-                    needs=f"统一 {fname} 的单位或提供换算关系")],
-            ))
+            if unit_gaps < 2:  # review P3：每码缺口上限（披露面有界）
+                unit_gaps += 1
+                gaps.append(PreflightGap(
+                    code=CODE_UNIT_CONFLICT,
+                    detail=f"字段 {fname} 在多个数据集单位冲突："
+                           + "；".join(f"{k}={u}" for k, u in declared[:3]),
+                    refs=[k for k, _ in declared[:4]],
+                    alternatives=[TypedAlternative(
+                        action="clarify_units",
+                        needs=f"统一 {fname} 的单位或提供换算关系")],
+                ))
         elif len(entries) >= 2 and len(declared) < len(entries):
             if unit_result == "pass":
                 unit_result = "unknown"
@@ -377,7 +442,15 @@ def preflight_multi_dataset(
                 ],
             ))
 
-    report.verdict = "gaps" if gaps else "compatible"
+    # ── verdict 收敛（review P1：unknown ≠ pass 是本模块的契约）────────
+    # gaps（有结构化缺口）> unknown（判据证据不足，不下兼容结论）>
+    # compatible（全部判据 pass 且无缺口）。
+    if gaps:
+        report.verdict = "gaps"
+    elif any(c.get("result") == "unknown" for c in report.checks):
+        report.verdict = "unknown"
+    else:
+        report.verdict = "compatible"
     return report
 
 

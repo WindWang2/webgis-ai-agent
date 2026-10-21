@@ -30,6 +30,7 @@ ADR-0215 留下的最大歧义：多数据 session 的语义供给是「首个�
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -42,6 +43,8 @@ ROLE_BINDING_STATUSES = (
     "stale",
     "partial",
 )
+
+logger = logging.getLogger(__name__)
 
 #: ref 语义读取状态（store 读结果 + 会话作用域判定的投影）。
 REF_READ_STATUSES = ("ok", "missing", "out_of_scope", "corrupt", "unsupported")
@@ -195,6 +198,11 @@ async def collect_session_evidence(
     try:
         aliases = await session_data_manager.list_refs(session_id)
     except Exception:  # noqa: BLE001 — ref 清单缺席 = 无证据（诚实空）
+        # review P2：基础设施故障必须可见 —— 静默降级会让 Agent 把
+        # 「存储不可用」误读成「该会话没有数据」。
+        logger.warning(
+            "[RoleBinding] list_refs unavailable sid=%s（证据面降级为空）",
+            session_id, exc_info=True)
         return []
     if not isinstance(aliases, dict):
         return []
@@ -241,26 +249,16 @@ async def collect_session_evidence(
 # ── 证据匹配（确定性评分；词表复用不另造）───────────────────────────────
 
 def _geometry_category(descriptor: Any) -> str:
-    """descriptor → 主导几何类别（与 data_qualification._geometry_category 同语义）。
-
-    栅格由 kind=raster 直接判定（geometry_types 不适用）。
-    """
+    """descriptor → 主导几何类别（单一事实源：data_qualification.geometry_category；
+    栅格由 kind=raster 直接判定 —— 矢量归约零复制，延迟 import 避免环）。"""
     kind = str(getattr(descriptor, "kind", "") or "")
     if kind == "raster":
         return "raster"
-    point = {"Point", "MultiPoint"}
-    line = {"LineString", "MultiLineString"}
-    polygon = {"Polygon", "MultiPolygon"}
-    counts = {"point": 0, "line": 0, "polygon": 0}
-    for gt in (getattr(descriptor, "geometry_types", None) or []):
-        if gt in point:
-            counts["point"] += 1
-        elif gt in line:
-            counts["line"] += 1
-        elif gt in polygon:
-            counts["polygon"] += 1
-    active = [k for k, v in counts.items() if v > 0]
-    return max(counts, key=lambda c: counts[c]) if active else "unknown"
+    from app.services.gis_harness.data_qualification import (
+        geometry_category,
+    )
+
+    return geometry_category(list(getattr(descriptor, "geometry_types", None) or []))
 
 
 def _field_names(descriptor: Any) -> List[str]:
@@ -368,8 +366,8 @@ def bind_session_roles(
     3. 无 ok 记录 → ``not_found``。
 
     ``expected_fingerprints``：记录面（MapSpec source / durable facts /
-    plan 当时引用的指纹），键为 ref_id；只在显式绑定路径做 stale 对账
-    （证据推导路径无记录面锚，不虚构期望）。
+    plan 当时引用的指纹），键为 ref_id；绑定命中（显式或证据推导）且
+    该 ref 存在记录面锚时做 stale 对账；无锚不虚构期望。
     """
     bound_refs = dict(bound_refs or {})
     expected_fingerprints = dict(expected_fingerprints or {})
@@ -487,6 +485,23 @@ def bind_session_roles(
         binding.alias = rec.alias
         binding.fingerprint = rec.fingerprint
         binding.matched_on = matched
+        # review P2：证据路径绑定成功后，若记录面对该 ref 存在指纹锚，
+        # 同样做 stale 对账（不只显式绑定路径）—— 生产入口不传
+        # bound_refs 时 stale 判据必须可达。
+        expected_ev = str(expected_fingerprints.get(rec.ref_id, "") or "")[:96]
+        binding.expected_fingerprint = expected_ev
+        if expected_ev:
+            verdict = _reuse_verdict(expected_ev, rec)
+            if verdict not in ("valid",):
+                binding.status = "stale"
+                binding.reason_code = CODE_STALE
+                binding.detail = (
+                    f"记录面指纹与当前语义不符（reuse={verdict}）："
+                    "相关结论需按新语义重评，不静默续用。"
+                )
+                report.bindings.append(binding)
+                continue
+            binding.matched_on = matched + ["freshness_valid"]
         if missing:
             binding.status = "partial"
             binding.reason_code = CODE_FACTS_INCOMPLETE
@@ -497,7 +512,10 @@ def bind_session_roles(
         else:
             binding.status = "bound"
             binding.reason_code = CODE_BOUND
-            binding.detail = f"唯一证据候选（得分 {score}）。"
+            binding.detail = (
+                f"唯一证据候选（得分 {score}）"
+                + ("，记录面指纹一致。" if expected_ev else "。")
+            )
         report.bindings.append(binding)
 
     return report

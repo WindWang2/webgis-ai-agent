@@ -154,19 +154,32 @@ def test_compile_workflow_v4_threads_role_evidence():
         compile_workflow_v4,
     )
 
-    population = _population_descriptor()
-    c = compile_workflow_v4(
-        "成都各区人口密度分析",
-        role_evidence={"denominator": {
-            "descriptor": population,
+    # facility_coverage_ratio：subject/boundary/denominator 三角色 recipe
+    # （review P1：必须选带 data_roles 的 recipe，否则资格阶段空转、
+    # threading 断言恒真）。subject 是 local 获取角色（capability bound →
+    # 资格事实评估真实可达；denominator 是 data_fabric 外部获取角色，
+    # 规划期按设计 early-return unknown，不用它断言 threading）。
+    kw = {"recipe_id": "facility_coverage_ratio"}
+    baseline = compile_workflow_v4("成都各区的学校覆盖率", **kw)
+    base_by_role = {
+        q["role"]: q for q in baseline.base.data_qualifications}
+    # 基线（无角色证据）：subject 无事实 → 不虚构资格。
+    assert base_by_role["subject"]["state"] in ("unknown", "degraded")
+
+    schools = _point_descriptor()
+    grounded = compile_workflow_v4(
+        "成都各区的学校覆盖率", role_evidence={"subject": {
+            "descriptor": schools,
             "expected_descriptor_fingerprint": "",
-        }})
-    # 纯函数纪律：role_evidence 缺席 = 与基线同输出（确定性对比）。
-    c2 = compile_workflow_v4("成都各区人口密度分析")
-    assert c.base.recipe_id == c2.base.recipe_id
-    assert c.package_fingerprint == c2.package_fingerprint or True  # 证据不进包指纹
-    # base 资格阶段消费了角色级事实（有 data_qualifications 即接线可达）。
-    assert isinstance(c.base.data_qualifications, list)
+        }}, **kw)
+    grounded_by_role = {
+        q["role"]: q for q in grounded.base.data_qualifications}
+    # 角色证据生效：subject 用学校点数据自己的事实（几何 point 匹配的
+    # 事实检查在场），与基线（无事实检查）显著不同。
+    d = grounded_by_role["subject"]
+    geom = [c for c in d["checks"] if c.get("check") == "geometry_kind"]
+    assert geom and geom[0].get("passed") is True
+    assert len(d["checks"]) > len(base_by_role["subject"]["checks"])
 
 
 def test_compile_workflow_v4_default_unchanged_without_role_evidence():
@@ -248,3 +261,40 @@ async def test_semantic_tool_single_dataset_session_binding(sem_store):
     bindings = out.get("data_role_bindings") or []
     # 单数据 session：有绑定为 bound/partial，且不出现 ambiguous。
     assert all(b["status"] != "ambiguous" for b in bindings)
+
+
+async def test_semantic_tool_stale_reachable_via_recorded_face(sem_store):
+    """review P2-1：生产入口（无 bound_refs）stale 判据可达。
+
+    durable 记录面留下指纹锚 → store 语义前进 → 绑定（证据推导路径）
+    必须产出 stale + data_preflight 在场。
+    """
+    import app.services.session_data as session_data_mod
+
+    reg = _make_registry()
+    sid = "g01-w2-stale"
+    manager = session_data_mod.session_data_manager
+    ref = await manager.store(sid, {"k": 1}, prefix="data-schools")
+    d1 = _point_descriptor(key=ref)
+    await sem_store.put(sid, ref, d1)
+    from app.services.gis_harness.durable_context import record_source_fingerprints
+
+    await record_source_fingerprints(sid, [{"ref": ref, "fingerprint": "aa"}])
+    d2 = _point_descriptor(count=77, key=ref)
+    await sem_store.put(sid, ref, d2)
+
+    out = await reg.dispatch(
+        "compile_workflow_semantics",
+        {"query": "成都各区的学校覆盖率与公平性",
+         "recipe_id": "facility_coverage_ratio"}, session_id=sid)
+    assert out["success"] is True, out.get("error")
+    bindings = out.get("data_role_bindings") or []
+    # subject 角色经证据推导绑定到该 ref（唯一点数据）→ 记录面锚过期 → stale。
+    stales = [b for b in bindings if b["status"] == "stale"]
+    assert stales, f"生产链 stale 必须可达：{[b['status'] for b in bindings]}"
+    assert stales[0]["expected_descriptor_fingerprint"] == (
+        d1.descriptor_fingerprint)
+    # WP-C：preflight 审计面在场（有界形状）。
+    pre = out.get("data_preflight") or {}
+    assert pre.get("verdict") in ("compatible", "gaps", "unknown")
+    assert isinstance(pre.get("gaps"), list)

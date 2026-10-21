@@ -333,7 +333,11 @@ async def _reconcile_descriptor_semantics(
     except Exception:  # noqa: BLE001 — 记录面解析失败按无锚（不虚构期望）
         recorded = {}
 
-    pairs = list(ref_map.items())[:_MAX_DESCRIPTOR_RECONCILE_REFS]
+    # 排序 + 有界（review P3：dict 插入序不定，对账面确定性按旧 ref 排序；
+    # 截断计数入输出，不静默）。
+    pairs = sorted(ref_map.items(), key=lambda kv: str(kv[0]))[
+        :_MAX_DESCRIPTOR_RECONCILE_REFS]
+    out["truncated_refs"] = max(0, len(ref_map) - len(pairs))
     for old_ref, new_ref in pairs:
         current_fp = ""
         try:

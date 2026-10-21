@@ -19,7 +19,10 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional, Sequence
+
+logger = logging.getLogger(__name__)
 
 
 async def primary_session_descriptor(
@@ -116,6 +119,9 @@ async def session_role_binding(
         records = await collect_session_evidence(session_id, max_refs=max_refs)
         expected = await recorded_fingerprints(session_id)
     except Exception:  # noqa: BLE001 — 证据面失败 = 无证据（不阻断主链）
+        logger.warning(
+            "[QualificationBridge] session_role_binding evidence unavailable "
+            "sid=%s（绑定诚实降级为空）", session_id, exc_info=True)
         return RoleBindingReport(session_id=str(session_id)[:64])
     return bind_session_roles(
         role_reqs, records,

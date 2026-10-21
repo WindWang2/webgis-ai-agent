@@ -195,3 +195,35 @@ def test_zero_data_scans(monkeypatch):
                             expected_roles=("subject", "boundary"),
                             analysis_kind="density")
     assert calls["n"] == 0, "preflight 必须零数据扫描"
+
+
+# ── review P1/P2 修复回归 ──────────────────────────────────────────────
+
+def test_verdict_unknown_when_checks_lack_evidence():
+    """P1：判据证据不足 → verdict unknown（不判 compatible）。"""
+    a = _descriptor(key="a")  # 无 bbox/无时间证据
+    b = _descriptor(key="b")
+    rep = preflight_multi_dataset({"a": a, "b": b})
+    assert rep.verdict == "unknown"
+    by_check = {c["check"]: c["result"] for c in rep.checks}
+    assert by_check["spatial_overlap"] == "unknown"
+    # 静态无时间证据：时间判据 not_applicable（不误伤），unknown 来自空间。
+    assert by_check["temporal_overlap"] == "not_applicable"
+
+
+def test_open_ended_coverage_no_false_disjoint():
+    """P1：end 不可解析（open-ended）不得塌缩成假 TEMPORAL_DISJOINT。"""
+    a = _descriptor(key="a", coverage=("2020-01", "present"))
+    b = _descriptor(key="b", coverage=("2021-01", "2021-12"))
+    rep = preflight_multi_dataset({"a": a, "b": b})
+    assert not any(g.code == "PREFLIGHT_TEMPORAL_DISJOINT"
+                   for g in rep.gaps)
+    assert rep.verdict == "unknown"  # 证据不足 → 不下兼容结论
+
+
+def test_same_year_different_months_not_false_pass():
+    """P2：同年不同月（1-2 月 vs 11-12 月）不得假 overlap。"""
+    a = _descriptor(key="a", coverage=("2021-01", "2021-02"))
+    b = _descriptor(key="b", coverage=("2021-11", "2021-12"))
+    rep = preflight_multi_dataset({"a": a, "b": b})
+    assert any(g.code == "PREFLIGHT_TEMPORAL_DISJOINT" for g in rep.gaps)
