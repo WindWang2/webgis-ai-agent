@@ -7,13 +7,13 @@
 - [x] RECON_DATA.md(子代理 A,file:line 证据)
 - [x] RECON.md / PR_OVERLAP_MATRIX.md / PLAN.md / DECISIONS.md / TEST_MATRIX.md
 - [x] worktree + 分支 feat/g03-gis-tool-conformance-vnext
-- [ ] W0 commit
+- [x] W0 commit (312f2631)
 
 ## W1 引擎(主 Agent)
-- [ ] app/lib/gis/tool_capability_conformance.py(8 面引擎 + 指纹 + live 收集器)
-- [ ] tests/unit/gis_tool_conformance/test_engine_faces.py(红→绿)
-- [ ] tests/unit/gis_tool_conformance/test_engine_determinism.py
-- [ ] ruff + 目标测试退出码记录 → commit
+- [x] app/lib/gis/tool_capability_conformance.py(8 面引擎 + 指纹 + live 收集器)
+- [x] tests/unit/gis_tool_conformance/test_engine_faces.py(44 passed)
+- [x] tests/unit/gis_tool_conformance/test_engine_determinism.py(8 passed)
+- [x] ruff 通过;test_fallback_code_xwalk.py 提前完成(3 passed)→ 本 commit
 
 ## W2 接线(主 Agent)
 - [ ] scripts/check_tool_capability_conformance.py(CLI)

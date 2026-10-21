@@ -30,4 +30,9 @@
 
 ## 结果记录
 
-(每 wave 追加:日期 / 命令 / 退出码 / 通过数 / 失败-既有 vs 新增判定)
+| 日期 | 命令 | 退出码 | 结果 | 备注 |
+|---|---|---|---|---|
+| 10-21 | `-m pytest tests/unit/gis_tool_conformance/test_engine_faces.py -q --maxfail=3` | 0 | 44 passed | 首跑 33/36,修 3 处测试构造(签名自动推导 schema/deprecated 需 deprecation_of/enum 需 Literal) |
+| 10-21 | `-m pytest tests/unit/gis_tool_conformance/ -q --maxfail=3 -p no:cacheprovider` | 0 | **55 passed**(faces 44 + determinism 8 + xwalk 3) | 引擎 bug 修复 1 个:_overall 聚合序(not_evaluated 不压过 pass) |
+| 10-21 | `-m ruff check app/lib/gis/tool_capability_conformance.py tests/unit/gis_tool_conformance/` | 0 | All checks passed | |
+| 10-21 | 活 registry 冒烟(bootstrap=True 全量审计) | 0 | 356 工具:0 fail / 215 warning / 141 not_evaluated | warning top:metadata_incomplete 158、result_size_unknown 76、binding_unbacked 60、ref_offload_without_ref_contract 41、contract_divergence 7 → W4 清偿 |
