@@ -2,7 +2,7 @@
 
 - 分支: `feat/g03-gis-tool-conformance-vnext`(rebase 到 ee8c14f8 后 9 commits)
 - 基线: 初始 b1b2ec23 → rebase 后 ee8c14f8(#1758 已合并)
-- PR URL: TBD(创建后回填)
+- PR URL: https://github.com/WindWang2/webgis-ai-agent/pull/1761
 
 ## Why / Now
 
