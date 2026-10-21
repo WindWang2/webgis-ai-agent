@@ -10,6 +10,7 @@ from app.lib.gis.execution_catalog import (
 )
 from app.lib.gis.execution_catalog_staleness import (
     MAX_CHANGED_ENTRIES,
+    REASON_CATALOG_VERSION_CHANGED,
     REASON_ENTRY_CONTENT_CHANGED,
     REASON_ENTRY_REMOVED,
     REASON_SNAPSHOT_CORRUPT,
@@ -128,6 +129,30 @@ def test_validate_snapshot_ref_shape_rules():
                                   "generation_fingerprint": "a" * 32,
                                   "entry_fingerprints": [1, 2]}) == \
         REASON_SNAPSHOT_CORRUPT
+
+
+def test_corrupt_catalog_version_is_disclosed_not_raised_1740():
+    """#1740：非整数 catalog_version 判损坏（health 披露路径），绝不在
+    explain_staleness 的 int() 里炸 —— 「不可判读 ≠ 不新鲜」对版本号同样
+    成立。"""
+    cat = _catalog(*_healthy_chain())
+    healthy = {"schema_version": 1, "generation_fingerprint": "a" * 32,
+               "entry_fingerprints": {}}
+    for bad in ("7", 7.5, True, [7], {"v": 7}):
+        snap = dict(healthy, catalog_version=bad)
+        assert validate_snapshot_ref(snap) == REASON_SNAPSHOT_CORRUPT
+        res = explain_staleness(snap, cat)
+        assert res["stale"] is False
+        assert res["reasons"] == [REASON_SNAPSHOT_CORRUPT]
+        assert res["summary"]["catalog_version_changed"] is False
+    # 真整数版本号照常归因（前进的版本号 = 世代变化证据）。
+    assert validate_snapshot_ref(dict(healthy, catalog_version=99)) is None
+    bumped = explain_staleness(dict(healthy, catalog_version=99), cat)
+    assert bumped["stale"] is True
+    assert REASON_CATALOG_VERSION_CHANGED in bumped["reasons"]
+    # 缺失版本号（历史快照）不归因、不崩。
+    legacy = explain_staleness(healthy, cat)
+    assert legacy["summary"]["catalog_version_changed"] is False
 
 
 def test_manifest_generation_change_is_reported_even_without_entry_diff():

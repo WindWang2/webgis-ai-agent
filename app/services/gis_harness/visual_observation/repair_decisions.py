@@ -113,22 +113,26 @@ async def record_decision(
 def rejected_fingerprints(decisions: List[Dict[str, Any]]) -> frozenset:
     """被用户拒绝的原因身份集（recurrence_fingerprint；plan/auto 过滤输入）。
 
-    approved 条目撤销同键的更早 rejected（用户改主意 = 最新裁决获胜）。
+    每个原因身份按**决策时序**取最近一次 approved/rejected 裁决（账本
+    按追加序保序，``decision_for_proposal`` 的 reversed 扫描同源）：
+    最新为 rejected → 记忆生效；最新为 approved（用户改主意）→ 撤销。
+    先批后拒同样按时序定夺 —— approved 不再对 rejected 有无条件优先权
+    （#1713-2：否则后发的拒绝记忆被吞，同一 patch 反复再提案）。
+    ``auto_applied`` / ``auto_failed`` 是系统收场记录，不构成用户裁决，
+    不覆写任何一方的状态。
     """
-    approved_keys = set()
+    latest: Dict[str, str] = {}
     for d in decisions or []:
-        if str(d.get("decision") or "") == DECISION_APPROVED:
-            approved_keys.update(
-                str(x) for x in (d.get("recurrence_fingerprints") or []) if x)
-    out = set()
-    for d in decisions or []:
-        if str(d.get("decision") or "") != DECISION_REJECTED:
+        decision = str(d.get("decision") or "")
+        if decision not in (DECISION_APPROVED, DECISION_REJECTED):
             continue
         for fp in (d.get("recurrence_fingerprints") or []):
             fp = str(fp or "")
-            if fp and fp not in approved_keys:
-                out.add(fp)
-    return frozenset(out)
+            if fp:
+                latest[fp] = decision
+    return frozenset(
+        fp for fp, decision in latest.items() if decision == DECISION_REJECTED
+    )
 
 
 def decision_for_proposal(

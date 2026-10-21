@@ -14,7 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from app.extensions_platform.diagnostics import has_errors
+from app.extensions_platform.diagnostics import (
+    DiagnosticCode,
+    ExtensionPlatformError,
+    has_errors,
+)
 from app.extensions_platform.host import ExtensionHost, ExtensionState, HostPolicy
 from app.extensions_platform.sdk import (
     RasterWindowProvider,
@@ -168,7 +172,13 @@ class TestWorkerModeModelProvider:
         registry = ToolRegistry()
         host = ExtensionHost(
             tool_registry=registry,
-            policy=HostPolicy(roots=(tmp_path,), max_worker_crashes=5),
+            policy=HostPolicy(
+                roots=(tmp_path,),
+                max_worker_crashes=5,
+                # #1709：manifest 声明 != 授权。未授予 model_provider 时调用
+                # 被 typed 拒绝（见 TestModelProviderPermissionEnforced）。
+                grants={"workerml.pack": frozenset({"model_provider"})},
+            ),
         )
         host.discover()
         diags = host.activate("workerml.pack")
@@ -227,6 +237,172 @@ class TestWorkerModeModelProvider:
                     ],
                 }
             )
+
+
+def _write_worker_ml_pack(tmp_path: Path) -> Path:
+    """worker 模式 model provider 包（单帧聚合；manifest 声明 model_provider）。"""
+    pack = tmp_path / "workerml.pack.dir"
+    pack.mkdir()
+    manifest = {
+        "schema_version": 1,
+        "id": "workerml.pack",
+        "name": "pack",
+        "namespace": "workerml",
+        "version": "1.0.0",
+        "api_version": "1.1.0",
+        "entry_point": "main",
+        "description": "worker model provider",
+        "execution": {"mode": "worker", "call_timeout_s": 10},
+        "permissions": ["model_provider"],
+        "model_providers": [
+            {
+                "id": "echo",
+                "description": "echo model (worker, no streaming)",
+                "capabilities": ["cancellation"],
+            }
+        ],
+    }
+    (pack / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (pack / "main.py").write_text(
+        textwrap.dedent(
+            """
+            from app.extensions_platform.sdk import ModelProviderSpec
+
+
+            def _echo(request, ctx):
+                return {
+                    "type": "final",
+                    "echo": request.get("text", ""),
+                }
+
+
+            def activate(ctx):
+                ctx.register_model_provider(ModelProviderSpec(
+                    provider_id="echo",
+                    description="echo model",
+                    invoke_fn=_echo,
+                    capabilities=["cancellation"],
+                ))
+            """
+        ),
+        encoding="utf-8",
+    )
+    return pack
+
+
+class TestModelProviderPermissionEnforced:
+    """#1709：MODEL_PROVIDER 授权不是死权限——两条执行路径都必须在调用期强制。
+
+    manifest ``permissions`` 只是**声明**（意图）；授权是运维决定
+    （``HostPolicy.grants`` / ``EXTENSION_PERMISSION_GRANTS``），默认全无。
+    """
+
+    def test_in_process_dispatch_allowed_when_granted(self, ml_host):
+        host, registry = ml_host
+        # 正向钉：fixture 授予 model_provider → 派发照常工作（不因收紧而误伤）。
+        assert registry._tools["extdemoml_wordfreq_invoke"](text="a b a", top_k=1)[
+            "final"
+        ]["total_tokens"] == 3
+
+    def test_in_process_dispatch_denied_without_grant(self, tmp_path):
+        target = tmp_path / "extdemo-ml-pack"
+        shutil.copytree(PACK_SOURCE, target)
+        registry = ToolRegistry()
+        host = ExtensionHost(
+            tool_registry=registry,
+            policy=HostPolicy(
+                roots=(tmp_path,),
+                builtin_ids=frozenset({EXTENSION_ID}),
+                secrets={EXTENSION_ID: {"demo_key": "demo-123456"}},
+            ),
+        )
+        host.discover()
+        assert not has_errors(host.activate(EXTENSION_ID))
+        try:
+            with pytest.raises(ExtensionPlatformError) as excinfo:
+                registry._tools["extdemoml_wordfreq_invoke"](text="a b")
+            assert excinfo.value.diagnostic.code is DiagnosticCode.PERMISSION_NOT_GRANTED
+            assert "model_provider" in excinfo.value.diagnostic.message
+        finally:
+            host.reset()
+
+    def test_in_process_host_entry_denied_without_grant(self, tmp_path):
+        # #1709：host.invoke_model_provider（modelops ExtensionProviderAdapter
+        # 的生产入口）此前直连 spec.invoke_fn，绕过注册期权限包裹——in-process
+        # 模式下授权可被该入口旁路。流式/非流式两个形态都必须 typed 拒绝。
+        target = tmp_path / "extdemo-ml-pack"
+        shutil.copytree(PACK_SOURCE, target)
+        registry = ToolRegistry()
+        host = ExtensionHost(
+            tool_registry=registry,
+            policy=HostPolicy(
+                roots=(tmp_path,),
+                builtin_ids=frozenset({EXTENSION_ID}),
+                secrets={EXTENSION_ID: {"demo_key": "demo-123456"}},
+            ),
+        )
+        host.discover()
+        assert not has_errors(host.activate(EXTENSION_ID))
+        try:
+            for stream in (False, True):
+                with pytest.raises(ExtensionPlatformError) as excinfo:
+                    host.invoke_model_provider(
+                        "extdemoml_wordfreq_invoke",
+                        {"text": "a b"},
+                        stream=stream,
+                    )
+                assert (
+                    excinfo.value.diagnostic.code
+                    is DiagnosticCode.PERMISSION_NOT_GRANTED
+                )
+                assert "model_provider" in excinfo.value.diagnostic.message
+        finally:
+            host.reset()
+
+    def test_worker_invoke_denied_without_grant(self, tmp_path):
+        _write_worker_ml_pack(tmp_path)
+        registry = ToolRegistry()
+        host = ExtensionHost(
+            tool_registry=registry,
+            policy=HostPolicy(roots=(tmp_path,), max_worker_crashes=5),
+        )
+        host.discover()
+        assert not has_errors(host.activate("workerml.pack"))
+        assert registry.has("workerml_echo_invoke")
+        try:
+            with pytest.raises(ExtensionPlatformError) as excinfo:
+                registry._tools["workerml_echo_invoke"](request={"text": "ping"})
+            assert excinfo.value.diagnostic.code is DiagnosticCode.PERMISSION_NOT_GRANTED
+        finally:
+            host.reset()
+
+    def test_worker_invoke_allowed_when_granted(self, tmp_path):
+        _write_worker_ml_pack(tmp_path)
+        registry = ToolRegistry()
+        host = ExtensionHost(
+            tool_registry=registry,
+            policy=HostPolicy(
+                roots=(tmp_path,),
+                max_worker_crashes=5,
+                grants={"workerml.pack": frozenset({"model_provider"})},
+            ),
+        )
+        host.discover()
+        assert not has_errors(host.activate("workerml.pack"))
+        try:
+            result = registry._tools["workerml_echo_invoke"](request={"text": "ping"})
+            assert result == {"type": "final", "echo": "ping"}
+        finally:
+            host.reset()
+
+    def test_manifest_declaration_alone_is_not_authorization(self):
+        """声明与授权分离的正向契约钉（permissions.py 模块 docstring 的不变式）。"""
+        from app.extensions_platform.permissions import grants_for
+
+        assert grants_for("workerml.pack", {}).granted == frozenset()
+        assert grants_for(
+            "workerml.pack", {"workerml.pack": frozenset({"network"})}
+        ).allows("model_provider") is False
 
 
 class TestExtendedProviderProtocols:

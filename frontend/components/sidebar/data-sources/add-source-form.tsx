@@ -5,9 +5,18 @@ import { dataFabricApi } from '@/lib/api/data-fabric';
 import { useToastStore } from '@/components/ui/toast';
 import { useT } from '@/lib/i18n/useT';
 
-const SOURCE_TYPES = [
+/**
+ * 数据源协议下拉项。label = 字面量（协议名是专有名词，随 MapLibre/OGC 官方
+ * 命名）；labelKey = i18n 键（useT() 无命名空间前缀，须写全键）—— 渲染处
+ * 两者都消费，见下方 select。
+ *
+ * #1747：postgis 条目曾写成 `labelKey: 'ds.type.postgis'` 而渲染只读
+ * `label` —— 该项在下拉里渲染成完全空白的 option；且即便读 labelKey，
+ * 缺 `sidebar.` 前缀的键也解析不到（useT() 不拼命名空间）。
+ */
+const SOURCE_TYPES: Array<{ value: string; label?: string; labelKey?: string }> = [
   { value: 'ogc_api', label: 'OGC API Features' },
-  { value: 'postgis', labelKey: 'ds.type.postgis' },
+  { value: 'postgis', labelKey: 'sidebar.ds.type.postgis' },
   { value: 'wfs', label: 'OGC WFS' },
   { value: 'wms', label: 'OGC WMS' },
   { value: 'wmts', label: 'OGC WMTS' },
@@ -97,9 +106,9 @@ const t = useT();
             onChange={(e) => setNewType(e.target.value)}
             className={inputClass}
           >
-            {SOURCE_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
+            {SOURCE_TYPES.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.labelKey ? t(opt.labelKey) : opt.label}
               </option>
             ))}
           </select>

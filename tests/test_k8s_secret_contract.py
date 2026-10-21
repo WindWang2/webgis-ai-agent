@@ -114,3 +114,22 @@ def test_app_consumes_url_shaped_keys():
     assert "REDIS_URL: str" in config
     # 应用不得消费组件键（若开始消费，契约文档需同步调整）
     assert "DB_USER" not in config and "REDIS_PASSWORD" not in config
+
+
+def test_metrics_token_is_part_of_the_secret_contract():
+    """#1689：/metrics 是 fail-closed（app/main.py _require_metrics_token，
+    未配置即 401），k8s secret 缺 METRICS_TOKEN = 监控全盲。
+
+    02-api-deployment.yaml 的 prometheus.io/scrape 注解邀请集群内 Prometheus
+    抓取，而 api 经 envFrom.secretRef 整 secret 注入（无 secretKeyRef），
+    既有契约测试结构上抓不到这个从未被引用的键 —— 在此显式钉住。
+    """
+    declared = _template_declared_keys()
+    assert "METRICS_TOKEN" in declared, (
+        "secret.example.yaml 缺 METRICS_TOKEN —— 照模板建 secret 后 "
+        "prometheus.io/scrape 注解的抓取全部 401"
+    )
+    cfg = (K8S_DIR / "01-configmap.yaml").read_text(encoding="utf-8")
+    assert "--from-literal=METRICS_TOKEN" in cfg, (
+        "01-configmap.yaml 的 kubectl 配方未覆盖 METRICS_TOKEN"
+    )

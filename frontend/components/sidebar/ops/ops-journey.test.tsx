@@ -152,3 +152,52 @@ describe('验收旅程 B：校验 plan → 提交执行 → 进度瀑布', () =>
     expect(err).toHaveTextContent('unknown input node: buffer_x');
   });
 });
+
+/**
+ * #1747 项 6：运维视图 tablist 的 WAI-APG 键盘契约 —— roving tabindex +
+ * 方向键/Home/End（activation-on-focus）+ tabpanel 关联。此前只有
+ * role/aria-selected，键盘用户无法切换视图（与本片 lakehouse 子页签、
+ * nav-rail 的既有配方不一致）。
+ */
+describe('运维视图 tablist：WAI-APG 键盘导航（#1747）', () => {
+  it('roving tabindex + Arrow/Home/End + tabpanel 关联', () => {
+    installOkRoutes();
+    render(<OpsConsole sessionId="sess-1" ownerToken="tok" />);
+
+    const clusterTab = screen.getByTestId('ops-view-cluster');
+    const planTab = screen.getByTestId('ops-view-plan');
+    const healthTab = screen.getByTestId('ops-view-health');
+
+    // roving tabindex：只有活跃 tab 进 tab 序列
+    expect(clusterTab).toHaveAttribute('tabindex', '0');
+    expect(planTab).toHaveAttribute('tabindex', '-1');
+    expect(clusterTab).toHaveAttribute('aria-selected', 'true');
+
+    // tabpanel 关联：aria-controls 指向唯一 tabpanel，且回指活跃 tab
+    expect(clusterTab).toHaveAttribute('aria-controls', 'ops-panel-cluster');
+    const panel = screen.getByRole('tabpanel');
+    expect(panel).toHaveAttribute('id', 'ops-panel-cluster');
+    expect(panel).toHaveAttribute('aria-labelledby', 'ops-view-tab-cluster');
+
+    // ArrowRight → 下一视图，焦点随动（activation-on-focus）
+    fireEvent.keyDown(clusterTab, { key: 'ArrowRight' });
+    expect(planTab).toHaveAttribute('aria-selected', 'true');
+    expect(planTab).toHaveAttribute('tabindex', '0');
+    expect(clusterTab).toHaveAttribute('tabindex', '-1');
+    expect(document.activeElement).toBe(planTab);
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'ops-panel-plan');
+
+    // End → 末视图；Home → 首视图
+    fireEvent.keyDown(planTab, { key: 'End' });
+    expect(healthTab).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'ops-panel-health');
+    fireEvent.keyDown(healthTab, { key: 'Home' });
+    expect(clusterTab).toHaveAttribute('aria-selected', 'true');
+    expect(document.activeElement).toBe(clusterTab);
+
+    // ArrowLeft 在首项处回绕到末项
+    fireEvent.keyDown(clusterTab, { key: 'ArrowLeft' });
+    expect(healthTab).toHaveAttribute('aria-selected', 'true');
+    expect(document.activeElement).toBe(healthTab);
+  });
+});

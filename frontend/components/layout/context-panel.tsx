@@ -375,7 +375,7 @@ export function ContextPanel({
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {activeTab === 'chat' && (
-            <PanelErrorBoundary label={t('layout.panel.boundary.chat')}>
+            <PanelErrorBoundary label={t('panel.boundary.chat')}>
               <ChatTab
                 messages={messages}
                 aiStatus={aiStatus}
@@ -392,42 +392,42 @@ export function ContextPanel({
             </PanelErrorBoundary>
           )}
           {activeTab === 'project' && (
-            <PanelErrorBoundary label={t('layout.panel.boundary.project')}>
+            <PanelErrorBoundary label={t('panel.boundary.project')}>
               <ProjectTab sessionId={sessionId} />
             </PanelErrorBoundary>
           )}
           {activeTab === 'layers' && (
-            <PanelErrorBoundary label={t('layout.panel.boundary.layers')}>
+            <PanelErrorBoundary label={t('panel.boundary.layers')}>
               {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
             </PanelErrorBoundary>
           )}
           {activeTab === 'components' && (
-            <PanelErrorBoundary label={t('layout.panel.boundary.components')}>
+            <PanelErrorBoundary label={t('panel.boundary.components')}>
               <ComponentsTab sessionId={sessionId} />
             </PanelErrorBoundary>
           )}
           {activeTab === 'analysis' && (
-            <PanelErrorBoundary label={t('layout.panel.boundary.analysis')}>
+            <PanelErrorBoundary label={t('panel.boundary.analysis')}>
               <AnalysisTab onSend={onSend} aiStatus={aiStatus} />
             </PanelErrorBoundary>
           )}
           {activeTab === 'data_sources' && (
-            <PanelErrorBoundary label={t('layout.panel.boundary.data_sources')}>
+            <PanelErrorBoundary label={t('panel.boundary.data_sources')}>
               <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />
             </PanelErrorBoundary>
           )}
           {(activeTab === 'export_layout' || activeTab === 'exports') && (
-            <PanelErrorBoundary label={t('layout.panel.boundary.export_layout')}>
+            <PanelErrorBoundary label={t('panel.boundary.export_layout')}>
               <MapStudioTab />
             </PanelErrorBoundary>
           )}
           {activeTab === 'tasks' && (
-            <PanelErrorBoundary label={t('layout.panel.boundary.tasks')}>
+            <PanelErrorBoundary label={t('panel.boundary.tasks')}>
               <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
             </PanelErrorBoundary>
           )}
           {activeTab === 'results' && (
-            <PanelErrorBoundary label={t('layout.panel.boundary.results')}>
+            <PanelErrorBoundary label={t('panel.boundary.results')}>
               <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
             </PanelErrorBoundary>
           )}
@@ -473,7 +473,7 @@ export function ContextPanel({
             analysis/data_sources/export_layout 裸渲染，任一 tab 抛错白屏
             整个 ContextPanel。 */}
         {activeTab === 'chat' && (
-          <PanelErrorBoundary label={t(`panel.boundary.$chat`)}>
+          <PanelErrorBoundary label={t('panel.boundary.chat')}>
             <ChatTab
               messages={messages}
               aiStatus={aiStatus}
@@ -490,22 +490,22 @@ export function ContextPanel({
           </PanelErrorBoundary>
         )}
         {activeTab === 'project' && (
-          <PanelErrorBoundary label={t(`panel.boundary.$project`)}>
+          <PanelErrorBoundary label={t('panel.boundary.project')}>
             <ProjectTab sessionId={sessionId} />
           </PanelErrorBoundary>
         )}
         {activeTab === 'layers' && (
-          <PanelErrorBoundary label={t(`panel.boundary.$layers`)}>
+          <PanelErrorBoundary label={t('panel.boundary.layers')}>
             {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
           </PanelErrorBoundary>
         )}
         {activeTab === 'components' && (
-          <PanelErrorBoundary label={t(`panel.boundary.$components`)}>
+          <PanelErrorBoundary label={t('panel.boundary.components')}>
             <ComponentsTab sessionId={sessionId} />
           </PanelErrorBoundary>
         )}
         {activeTab === 'analysis' && (
-          <PanelErrorBoundary label={t(`panel.boundary.$analysis`)}>
+          <PanelErrorBoundary label={t('panel.boundary.analysis')}>
             <AnalysisTab onSend={onSend} aiStatus={aiStatus} />
           </PanelErrorBoundary>
         )}
@@ -513,7 +513,7 @@ export function ContextPanel({
             实例化至图层 materializes into the REAL conversation session instead of
             the phantom 'default_session' (and the layer's ref is fetchable). */}
         {activeTab === 'data_sources' && (
-          <PanelErrorBoundary label={t(`panel.boundary.$data_sources`)}>
+          <PanelErrorBoundary label={t('panel.boundary.data_sources')}>
             <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
@@ -523,12 +523,12 @@ export function ContextPanel({
           </PanelErrorBoundary>
         )}
         {(activeTab === 'export_layout' || activeTab === 'exports') && (
-          <PanelErrorBoundary label={t(`panel.boundary.$export_layout`)}>
+          <PanelErrorBoundary label={t('panel.boundary.export_layout')}>
             <MapStudioTab />
           </PanelErrorBoundary>
         )}
         {activeTab === 'tasks' && (
-          <PanelErrorBoundary label={t(`panel.boundary.$tasks`)}>
+          <PanelErrorBoundary label={t('panel.boundary.tasks')}>
             <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
@@ -545,7 +545,7 @@ export function ContextPanel({
           </PanelErrorBoundary>
         )}
         {activeTab === 'results' && (
-          <PanelErrorBoundary label={t(`panel.boundary.$results`)}>
+          <PanelErrorBoundary label={t('panel.boundary.results')}>
             <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
           </PanelErrorBoundary>
         )}

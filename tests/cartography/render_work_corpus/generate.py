@@ -18,7 +18,10 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# #1670：parents[2] 指向 tests/（无 app 包），直跑即 ModuleNotFoundError ——
+# 仓库根在 parents[3]（<root>/app）；改后 `python tests/cartography/render_work_corpus/
+# generate.py` 从仓库根直跑可用（-m 方式不受影响）。
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.lib.cartography.render_apply_ack import (  # noqa: E402
     ACK_SCHEMA_VERSION,

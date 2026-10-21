@@ -35,6 +35,7 @@ from app.lib.geo_analysis.spatial_regression import (
 )
 from app.lib.gis.scientific_errors import (
     DegenerateData,
+    IllConditionedSystem,
     InsufficientSamples,
     MissingRequiredField,
     NoValidObservations,
@@ -375,6 +376,53 @@ def test_gwr_matches_hand_wls_and_bandwidth_cv():
                                       bandwidth_selection="cv")
     assert json.dumps(res_cv.data, sort_keys=True) == \
         json.dumps(res_cv2.data, sort_keys=True)
+
+
+def test_gwr_cv_skips_candidates_too_small_for_p():
+    """#1736：候选带宽的 LOO 邻域（k−1 点）装不下 p 个参数时跳过该候选。
+
+    解释变量 5 个 → p=6（含截距）；最小候选 k=5 → take=4 < 6，旧行为让
+    每个候选都抛 IllConditionedSystem、``min()`` 在空序列上整体失败。
+    """
+    rng = np.random.default_rng(11)
+
+    def props(r, c):
+        return {"x1": float(rng.uniform(0, 10)), "x2": float(rng.uniform(0, 10)),
+                "x3": float(rng.uniform(0, 10)), "x4": float(rng.uniform(0, 10)),
+                "x5": float(rng.uniform(0, 10)),
+                "y": 1.0 + 0.5 * r + 0.2 * c + float(rng.normal(0, 0.3))}
+
+    fc = _grid_fc(4, 6, props)  # n=24 → k_cap=12，可行候选只剩 {10}
+    res = gwr_regression_narrated(fc, "y", ["x1", "x2", "x3", "x4", "x5"],
+                                  bandwidth=10, bandwidth_selection="cv")
+    assert res.success, res.summary
+    data = res.data
+    assert [e["bandwidth"] for e in data["bandwidth_cv"]] == [10]
+    assert data["bandwidth"]["selected"] == 10
+    skipped = {e["bandwidth"]: e["reason"] for e in data["bandwidth_cv_skipped"]}
+    assert set(skipped) == {5}
+    assert "< 6 parameters" in skipped[5]
+    # 跳过原因进 uncertainty 披露（never-silent）
+    unc_targets = {u["target"] for u in data["uncertainty"]}
+    assert "gwr_bandwidth_cv_skipped" in unc_targets
+
+
+def test_gwr_cv_raises_typed_when_no_candidate_fits():
+    """#1736：所有候选都装不下 p 个参数 → 类型化拒绝（而非空网格 min()）。"""
+    rng = np.random.default_rng(3)
+
+    def props(r, c):
+        return {"x1": float(rng.uniform(0, 10)), "x2": float(rng.uniform(0, 10)),
+                "x3": float(rng.uniform(0, 10)), "x4": float(rng.uniform(0, 10)),
+                "x5": float(rng.uniform(0, 10)),
+                "y": 1.0 + 0.5 * r + 0.2 * c + float(rng.normal(0, 0.3))}
+
+    fc = _grid_fc(2, 7, props)  # n=14（=2p+2 下限）→ k_cap=7，候选 {5} 全装不下
+    with pytest.raises(IllConditionedSystem) as ei:
+        gwr_regression_narrated(fc, "y", ["x1", "x2", "x3", "x4", "x5"],
+                                bandwidth=10, bandwidth_selection="cv")
+    assert ei.value.correction_hint
+    assert "no candidate bandwidth" in str(ei.value)
 
 
 def test_gwr_guards_typed_errors():

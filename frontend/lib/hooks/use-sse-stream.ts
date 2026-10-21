@@ -722,6 +722,16 @@ export function useSSEStream(options: UseSSEStreamOptions) {
                     useHudStore.getState().focusLayer(fetchRef);
                   }
                 }
+              })
+              .catch((err) => {
+                // 调度器结算 promise 本不 reject；此 catch 是 then 体内意外异常
+                // （toast/store 写入）的兜底，防 unhandled rejection —— 与
+                // map-state-restore.ts restoreSessionMapLayers 同姿势。
+                reportLayerFetchFailure(
+                  '[LiveLayerFetch] Failed to fetch geojson_ref:',
+                  layerName,
+                  err,
+                );
               });
           }
           setMessages((prev) => attachLayerChip(prev, {

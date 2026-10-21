@@ -5,6 +5,7 @@
 """
 import asyncio
 import json
+import time
 
 import pytest
 from fastapi import FastAPI
@@ -13,6 +14,7 @@ from unittest.mock import patch
 
 from app.api.routes import data_fabric as df_routes
 from app.extensions_platform.sdk.provider import StreamingVectorProvider
+from app.services.data_fabric.manager import DataFabricManager
 
 _ITEM_ID = "cat_stream_layer"
 
@@ -96,12 +98,14 @@ class _SyncOnlyAdapter:
 
 
 def _install(monkeypatch, adapter, item_fingerprint="fp1"):
-    # route 调 data_fabric_manager.resolve_catalog_stream(session, item_id)
-    # —— 实例属性直接给普通函数即可。
+    # route 调 data_fabric_manager.resolve_catalog_stream(session, item_id)。
+    # #1753：patch 类而非单例实例 —— 对实例的 monkeypatch 在 undo 时会把继承来的
+    # 原方法写回实例 __dict__（常驻阴影），之后任何对同属性的类级 patch 都被静默
+    # 击败（test_event_loop_offload_425 因此走到真实网络路径，全量套件挂起）。
     monkeypatch.setattr(
-        df_routes.data_fabric_manager,
+        DataFabricManager,
         "resolve_catalog_stream",
-        lambda db, item_id: (adapter, "stream_layer"),
+        classmethod(lambda cls, db, item_id: (adapter, "stream_layer")),
     )
     # _run_async_manager 直接跑 fn(None)（绕开真实 DB 装配；鉴权已被 patch 掉）
     async def _run_prep(fn):
@@ -223,10 +227,13 @@ async def test_authz_runs_before_stream_starts(client, monkeypatch):
         raise HTTPException(status_code=404, detail="denied")
 
     monkeypatch.setattr(df_routes, "_authorize_catalog_item", _deny)
+    # #1753：类级 patch（实例级 patch 的 undo 会留下常驻实例阴影，击败后续类级 patch）
     monkeypatch.setattr(
-        df_routes.data_fabric_manager,
+        DataFabricManager,
         "resolve_catalog_stream",
-        lambda db, item_id: calls.__setitem__("resolve", calls["resolve"] + 1) or (None, None),
+        classmethod(
+            lambda cls, db, item_id: calls.__setitem__("resolve", calls["resolve"] + 1) or (None, None)
+        ),
     )
     r = await client.get(f"/api/v1/data-fabric/catalog/{_ITEM_ID}/features/stream")
     assert r.status_code == 404
@@ -235,7 +242,12 @@ async def test_authz_runs_before_stream_starts(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_async_manager_cancellable_propagates_task_cancellation():
-    """handler task 被取消 → 取消必须传播进 manager-loop 协程（任务树收敛）。"""
+    """handler task 被取消 → 取消必须传播进 per-request worker loop 上的协程。
+
+    PERF-03（#1683）后 manager 协程不再汇入进程级单 loop，而是每个调用一条
+    自己的 worker loop —— 断线取消仍须到达该协程（任务树收敛），且收束窗口
+    有界（不得久等悬挂 worker）。
+    """
     observed = {"cancelled": False}
 
     async def _long_fn(session):
@@ -247,8 +259,11 @@ async def test_run_async_manager_cancellable_propagates_task_cancellation():
             raise
 
     task = asyncio.create_task(df_routes._run_async_manager_cancellable(_long_fn))
-    await asyncio.sleep(0.2)  # 让协程在 manager loop 上跑起来
+    await asyncio.sleep(0.2)  # 让协程在自己的 worker loop 上跑起来
     task.cancel()
+    started = time.perf_counter()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert observed["cancelled"] is True, "断连取消必须到达 df-manager-loop 上的协程"
+    elapsed = time.perf_counter() - started
+    assert observed["cancelled"] is True, "断线取消必须到达 worker loop 上的协程"
+    assert elapsed < 5, "取消收束窗口必须有界（worker 跑完投递即收敛）"

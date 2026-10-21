@@ -68,6 +68,7 @@ import {
   resolveSyncPair,
   SWIPE_KEYBOARD_STEP,
 } from './comparison-sync';
+import { devOnly } from '@/lib/utils/logger';
 
 /** 与 map-panel 的 DEFAULT_VIEW_STATE 同值（覆盖层挂载先落默认相机，onLoad 立即对齐主图）。 */
 const DEFAULT_VIEW_STATE = {
@@ -238,7 +239,8 @@ export function ComparisonView({
     if (!filteredSpec) return;
     void runtimeRef.current
       .reconcileAsync(filteredSpec)
-      .catch((e) => console.warn('[comparison] secondary reconcile failed:', e));
+      // #1746-10：生产环境不得直接打印 reconcile 错误对象（devOnly 卫生约定）。
+      .catch((e) => devOnly.warn('[comparison] secondary reconcile failed:', e));
   }, [active, secondaryReady, secondaryLayerId, filteredSpec, styleEpoch]);
 
   // 底图样式身份变化 → 失效 runtime 样式缓存（对齐 map-panel 的 invalidateStyle 时机）。

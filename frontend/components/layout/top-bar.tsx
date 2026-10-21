@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   PanelLeftClose,
   Menu,
@@ -9,15 +9,33 @@ import {
   History,
   Settings,
   Sliders,
+  MoreHorizontal,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
 import { useT } from '@/lib/i18n/useT';
+// #1667：窄档（≤768px）右侧集群折叠为「更多」收纳菜单。布局模式走 ADR-0144
+// 三档唯一真相（matchMedia + useSyncExternalStore）而非裸 CSS 断点 —— 同一
+// 判据在 vitest 里可装 matchMedia mock 直接断言折叠行为（390px 命中测试）。
+import { useLayoutMode } from '@/lib/hooks/use-layout-mode';
 import BaselayerSwitcher from '@/components/map/baselayer-switcher';
 
 interface TopBarProps {
   sessionName?: string;
   onNewSession?: () => void;
+}
+
+/** 2D/3D 视角 glyph（内联集群与「更多」收纳菜单共用同一图形）。 */
+function ViewToggleGlyph({ is3D }: { is3D: boolean }) {
+  return (
+    <svg width='11' height='11' viewBox='0 0 11 11' fill='none' style={{ display: 'block' }}>
+      {is3D ? (
+        <path d='M5.5 1.5L2 3.5l3.5 2L9 3.5 5.5 1.5z M2 6l3.5 2L9 6 M2 8.5l3.5 2 3.5-2' stroke='var(--success)' strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
+      ) : (
+        <path d='M5.5 2.5L2 4.5l3.5 2 3.5-2-3.5-2z' stroke='var(--text-secondary)' strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
+      )}
+    </svg>
+  );
 }
 
 export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
@@ -30,6 +48,34 @@ export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
   const setTweaksOpen = useHudStore((s) => s.setTweaksOpen);
   const is3D = useHudStore((s) => s.is3D);
   const setIs3D = useHudStore((s) => s.setIs3D);
+  const layoutMode = useLayoutMode();
+
+  // #1667：右侧集群（新建/历史/底图/3D/UI 调整/设置）固有宽度 ~530px，390px
+  // 视口整体溢出屏外、「设置」按钮不可达。mobile 档（≤768px）只保留 新建 +
+  // 设置 两个高频内联按钮（连同「更多」触发器共 ~86px），其余收进收纳菜单；
+  // 宽档（desktop/thin）维持原内联布局不变。
+  const compactActions = layoutMode === 'mobile';
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+
+  // 「更多」收纳菜单：Escape 关闭 + 点击外部关闭（与 BaselayerSwitcher 同模式）。
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false);
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onMouseDown);
+    };
+  }, [moreOpen]);
 
   const isActive = aiStatus === 'thinking' || aiStatus === 'acting';
   const name = sessionName ?? t('unnamed');
@@ -71,6 +117,7 @@ export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
     // 移除 backdrop-blur —— 顶栏压在持续重绘的地图画布上，blur 是最贵的
     // 那一类滤镜，半透明又会让地图细节透进密集文本。
     <div
+      data-testid="topbar"
       className="fixed inset-x-0 top-0 z-50 flex h-topbar items-center gap-2.5 bg-surface-panel px-3"
       style={{
         borderBottomWidth: isActive ? 2 : 1,
@@ -143,7 +190,7 @@ export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
       </span>
 
       {/* right actions */}
-      <div className="flex shrink-0 items-center gap-0.5">
+      <div data-testid="topbar-actions" className="flex shrink-0 items-center gap-0.5">
         <button
           onClick={onNewSession}
           aria-label={t('newSession')}
@@ -153,53 +200,121 @@ export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
           <Plus size={14} aria-hidden />
         </button>
 
-        <button
-          onClick={() => setHistoryOpen(true)}
-          aria-label={t('history')}
-          title={t('history')}
-          className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
-        >
-          <History size={14} aria-hidden />
-        </button>
-
-        <span aria-hidden className="mx-1 h-4 w-px bg-edge-subtle" />
-
-        <BaselayerSwitcher />
-
-        <button
-          type='button'
-          onClick={() => setIs3D(!is3D)}
-          aria-label={is3D ? t('switchTo2D') : t('switchTo3D')}
-          title={is3D ? t('view3DTitle') : t('view2DTitle')}
-          className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-overlay px-2.5 py-1 font-mono text-body text-ink-secondary shadow-overlay transition-colors hover:bg-surface-hover"
-        >
-          <svg width='11' height='11' viewBox='0 0 11 11' fill='none' style={{ display: 'block' }}>
-            {is3D ? (
-              <path d='M5.5 1.5L2 3.5l3.5 2L9 3.5 5.5 1.5z M2 6l3.5 2L9 6 M2 8.5l3.5 2 3.5-2' stroke='var(--success)' strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
-            ) : (
-              <path d='M5.5 2.5L2 4.5l3.5 2 3.5-2-3.5-2z' stroke='var(--text-secondary)' strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
+        {/* #1667：窄档折叠 —— 历史/底图/3D/UI 调整收进「更多」收纳菜单，
+            设置保持内联（390px 下验收的命中入口）。 */}
+        {compactActions ? (
+          <div ref={moreRef} className="relative">
+            <button
+              onClick={() => setMoreOpen((v) => !v)}
+              aria-label={t('moreActions')}
+              title={t('moreActions')}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+            >
+              <MoreHorizontal size={14} aria-hidden />
+            </button>
+            {moreOpen && (
+              <div
+                role="menu"
+                aria-label={t('moreActions')}
+                className="absolute right-0 top-full z-30 mt-1 min-w-[184px] rounded-md border border-edge-subtle bg-surface-panel py-1 shadow-overlay"
+              >
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setHistoryOpen(true);
+                    setMoreOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-body text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+                >
+                  <History size={14} aria-hidden />
+                  {t('history')}
+                </button>
+                {/* 底图行：BaselayerSwitcher 自带 listbox 浮层与 aria-label
+                    （含当前底图名）—— 收纳菜单内嵌一个受管浮层。ARIA 上 menu
+                    的直属子元素应为 menuitem，故该行包一层 role="none" 承载
+                    非 menuitem 控件；Escape/外部点击由其自身监听 + moreRef 兜底。 */}
+                <div role="none" className="px-3 py-1.5">
+                  <BaselayerSwitcher />
+                </div>
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    setIs3D(!is3D);
+                    setMoreOpen(false);
+                  }}
+                  aria-label={is3D ? t('switchTo2D') : t('switchTo3D')}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-body text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+                >
+                  <ViewToggleGlyph is3D={is3D} />
+                  <span
+                    className="font-mono"
+                    style={{ color: is3D ? 'var(--success)' : undefined }}
+                  >
+                    {is3D ? '3D' : '2D'}
+                  </span>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setTweaksOpen(true);
+                    setMoreOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-body text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+                >
+                  <Sliders size={14} aria-hidden />
+                  {t('uiTweaks')}
+                </button>
+              </div>
             )}
-          </svg>
-          <span
-            className={is3D ? 'font-semibold' : undefined}
-            style={{ color: is3D ? 'var(--success)' : undefined }}
-          >
-            {is3D ? '3D' : '2D'}
-          </span>
-        </button>
+          </div>
+        ) : (
+          <>
+            <button
+              onClick={() => setHistoryOpen(true)}
+              aria-label={t('history')}
+              title={t('history')}
+              className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+            >
+              <History size={14} aria-hidden />
+            </button>
 
-        <span aria-hidden className="mx-1 h-4 w-px bg-edge-subtle" />
+            <span aria-hidden className="mx-1 h-4 w-px bg-edge-subtle" />
 
-        {/* #551：Tweaks 面板此前没有任何生产入口调用 setTweaksOpen(true) ——
-            面板永远不可达。这里补上真实 opener（顶栏 UI 调整按钮）。 */}
-        <button
-          onClick={() => setTweaksOpen(true)}
-          aria-label={t('uiTweaks')}
-          title={t('uiTweaks')}
-          className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
-        >
-          <Sliders size={14} aria-hidden />
-        </button>
+            <BaselayerSwitcher />
+
+            <button
+              type='button'
+              onClick={() => setIs3D(!is3D)}
+              aria-label={is3D ? t('switchTo2D') : t('switchTo3D')}
+              title={is3D ? t('view3DTitle') : t('view2DTitle')}
+              className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-overlay px-2.5 py-1 font-mono text-body text-ink-secondary shadow-overlay transition-colors hover:bg-surface-hover"
+            >
+              <ViewToggleGlyph is3D={is3D} />
+              <span
+                className={is3D ? 'font-semibold' : undefined}
+                style={{ color: is3D ? 'var(--success)' : undefined }}
+              >
+                {is3D ? '3D' : '2D'}
+              </span>
+            </button>
+
+            <span aria-hidden className="mx-1 h-4 w-px bg-edge-subtle" />
+
+            {/* #551：Tweaks 面板此前没有任何生产入口调用 setTweaksOpen(true) ——
+                面板永远不可达。这里补上真实 opener（顶栏 UI 调整按钮）。 */}
+            <button
+              onClick={() => setTweaksOpen(true)}
+              aria-label={t('uiTweaks')}
+              title={t('uiTweaks')}
+              className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+            >
+              <Sliders size={14} aria-hidden />
+            </button>
+          </>
+        )}
 
         <button
           onClick={() => setSettingsOpen(true)}

@@ -66,6 +66,58 @@ async def test_execute_execution_plan_behavioral(registry):
 
 
 @pytest.mark.asyncio
+async def test_execute_execution_plan_rejects_foreign_session(registry):
+    """#1708（SEC）：会话隔离承诺落地 —— 显式 session_id 必须与调用方
+    执行上下文的会话身份一致，否则 typed 拒绝（fail-closed，先于执行）。"""
+    from app.services.provenance.context import (
+        ToolExecutionContext,
+        reset_tool_execution_context,
+        set_tool_execution_context,
+    )
+
+    token = set_tool_execution_context(
+        ToolExecutionContext(user_id="u-1", session_id="sess-mine")
+    )
+    try:
+        # 他人会话 id → typed 拒绝（不是静默透传去写别人的 session 存储）。
+        denied = await registry.dispatch("execute_execution_plan", {
+            "plan_id": "p-foreign",
+            "nodes": _filter_plan_nodes(),
+            "session_id": "sess-someone-else",
+        })
+        assert denied.get("success") is False, denied
+        assert denied.get("error_type") == "AuthorizationError", denied
+        assert denied.get("code") == "TOOL_ERROR", denied
+
+        # 一致 → 放行。
+        ok = await registry.dispatch("execute_execution_plan", {
+            "plan_id": "p-mine",
+            "nodes": _filter_plan_nodes(),
+            "session_id": "sess-mine",
+        })
+        assert ok.get("status") == "completed", ok
+
+        # 省略 session_id → 从执行上下文取（materialize 策略必需）。
+        omitted = await registry.dispatch("execute_execution_plan", {
+            "plan_id": "p-omit", "nodes": _filter_plan_nodes(),
+        })
+        assert omitted.get("status") == "completed", omitted
+    finally:
+        reset_tool_execution_context(token)
+
+
+def test_execute_execution_plan_session_param_promise(registry):
+    """#1708（SEC）：param_descriptions 的会话承诺必须与实现同口径 ——
+    明写「不一致即拒绝」，不再宣称「原样透传」。"""
+    schema = next(
+        s for s in registry.get_schemas()
+        if s["function"]["name"] == "execute_execution_plan"
+    )
+    desc = schema["function"]["parameters"]["properties"]["session_id"]["description"]
+    assert "一致" in desc and "拒绝" in desc, desc
+
+
+@pytest.mark.asyncio
 async def test_get_execution_run_behavioral(registry):
     # validation：缺 run_id → 校验错误
     bad = await registry.dispatch("get_execution_run", {})

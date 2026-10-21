@@ -83,10 +83,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # PLT-03: official Node 25 binary (FROM node:25-bookworm-slim above).
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
-# Copy frontend standalone output
+# Copy frontend standalone output.
+# Next standalone 的 server.js 相对自身目录解析静态资源：
+# <standalone>/.next/static 与 <standalone>/public（#1706：此前 static/public
+# 落在 standalone 目录之外，容器内 /_next/static/* 与 /public 全部 404，
+# 前端是无 JS/CSS 的空壳，而 /health 仍绿）。
 COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/.next/standalone
-COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
-COPY --from=frontend-builder /app/frontend/public ./frontend/public
+COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/standalone/.next/static
+COPY --from=frontend-builder /app/frontend/public ./frontend/.next/standalone/public
+# 构建期断言：摆错即构建失败，防复发（复制失败时 Docker COPY 本身会报错）。
+RUN test -d frontend/.next/standalone/.next/static && test -d frontend/.next/standalone/public
 
 # Copy Python packages
 COPY --from=backend-deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
@@ -142,4 +148,7 @@ ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 # 审计 I9：trap-kill-wait 模式让 SIGTERM 正确传播给两个子进程。
 # 之前 sh -c "A & B" 在 tini 下：sh 不 wait 任何子进程，uvicorn OOM 后
 # 容器仍"健康"（node 还活），SIGTERM 也不传播 → 滚动更新脏退出。
-CMD ["sh", "-c", "trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000 & wait"]
+# #1694 SEC-13：--ws-max-size 与 app/api/routes/ws.py:29 / ws_collab.py:51 的
+# _MAX_INBOUND_BYTES=16*1024 对齐（应用层长度检查在整帧 receive_text() 缓冲之后，
+# 协议层先限 size 才不会把超大帧整体读进内存）。与 Dockerfile / k8s args 一致。
+CMD ["sh", "-c", "trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws-max-size 16384 & node frontend/.next/standalone/server.js -p 3000 & wait"]

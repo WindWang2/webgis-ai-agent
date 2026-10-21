@@ -306,6 +306,55 @@ async def test_state_machine_guard(service):
 
 
 @pytest.mark.asyncio
+async def test_approve_in_changes_requested_flips_to_approved(service):
+    """CHANGES_REQUESTED 下的 approve 不得被吞（review #1722）。
+
+    决策入流水、策略满足却永远翻不到 APPROVED 时，merge 会以
+    "awaiting approval flip" 无限期拒绝 —— 审批面出现"批了却不作数"的
+    假象。intents 起草后不可变，审查者在 changes_requested 态补 approve
+    即对现状放行，应显式翻 APPROVED 且可直接合并（无需重复审批）。
+    """
+    sid = _sid()
+    engine, base = await _seed_layer(sid)
+    p = await service.create_proposal(
+        sid, author=_actor("u1"), title="t", intents=_intents(base),
+    )
+    await service.submit(sid, p.proposal_id, _actor("u1"), base_revision=base)
+    reviewer = _actor("u2", role="editor")
+    requested = await service.record_decision(
+        sid, p.proposal_id, reviewer, decision="request_changes", reason="断点对齐",
+    )
+    assert requested.status is ProposalStatus.CHANGES_REQUESTED
+    approved = await service.record_decision(
+        sid, p.proposal_id, reviewer, decision="approve", reason="已澄清，放行",
+    )
+    assert approved.status is ProposalStatus.APPROVED
+    assert len(approved.decisions) == 2  # request_changes + approve 都在流水里
+    merged, outcome = await service.merge(sid, p.proposal_id, _actor("u1"))
+    assert outcome.ok
+    assert merged.status is ProposalStatus.MERGED
+
+
+@pytest.mark.asyncio
+async def test_approve_after_terminal_status_rejected(service):
+    """终态（rejected 等）下的 approve 仍被显式拒绝，不是静默入流水。"""
+    sid = _sid()
+    engine, base = await _seed_layer(sid)
+    p = await service.create_proposal(
+        sid, author=_actor("u1"), title="t", intents=_intents(base),
+    )
+    await service.submit(sid, p.proposal_id, _actor("u1"), base_revision=base)
+    rejected = await service.record_decision(
+        sid, p.proposal_id, _actor("u2", role="editor"), decision="reject",
+    )
+    assert rejected.status is ProposalStatus.REJECTED
+    with pytest.raises(InvalidTransition):
+        await service.record_decision(
+            sid, p.proposal_id, _actor("u3", role="editor"), decision="approve",
+        )
+
+
+@pytest.mark.asyncio
 async def test_not_found(service):
     with pytest.raises(ProposalNotFound):
         await service.get_proposal("s-x", "ghost")

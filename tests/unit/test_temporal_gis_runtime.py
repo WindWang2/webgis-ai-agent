@@ -279,6 +279,52 @@ def test_temporal_aggregation_daily(sample_temporal_geojson):
     assert first_bucket["temperature_mean"] == 20.0
 
 
+def test_temporal_aggregation_week_key_uses_iso_week():
+    """review #1744-5：周桶 key 必须与**周一起算**的桶同一套周定义。
+
+    旧代码 key 用周日基准的 %U + 日历 %Y：含 1 月初数据的桶（周一落在
+    上一年 12 月）被标成上一年份，年中周序号也与 ISO 周错位。回归：
+    key = ISO 8601 (iso_year, iso_week)，与桶起点 isocalendar() 一致。"""
+    from app.services.temporal.aggregation import get_group_key
+
+    # 2026-01-01（周四）→ 桶起点周一 2025-12-29 = ISO 2026-W01；
+    # 旧实现标 "2025-W52"（上一年份）。
+    key, start, end = get_group_key(
+        datetime(2026, 1, 1, 12, tzinfo=timezone.utc), TemporalUnit.WEEK
+    )
+    assert key == "2026-W01"
+    assert start == datetime(2025, 12, 29, tzinfo=timezone.utc)
+    assert end == datetime(2026, 1, 5, tzinfo=timezone.utc)
+
+    # 周中日期：2026-08-05 → 周一 2026-08-03 = ISO 2026-W32（旧 %U 给 31）。
+    key2, _, _ = get_group_key(
+        datetime(2026, 8, 5, tzinfo=timezone.utc), TemporalUnit.WEEK
+    )
+    assert key2 == "2026-W32"
+
+    # 跨年长周年：2027-01-01（周五）→ 周一 2026-12-28 = ISO 2026-W53。
+    key3, _, _ = get_group_key(
+        datetime(2027, 1, 1, tzinfo=timezone.utc), TemporalUnit.WEEK
+    )
+    assert key3 == "2026-W53"
+
+
+def test_temporal_aggregation_weekly_buckets_across_year_boundary():
+    """聚合面回归：跨年周的桶按 ISO key 正确标注且时间序稳定。"""
+    agg_engine = TemporalAggregationEngine()
+    features = [
+        {"type": "Feature", "geometry": None, "properties": {
+            "id": "a", "timestamp": datetime(2025, 12, 30, tzinfo=timezone.utc).isoformat()}},
+        {"type": "Feature", "geometry": None, "properties": {
+            "id": "b", "timestamp": datetime(2026, 1, 6, tzinfo=timezone.utc).isoformat()}},
+    ]
+    results = agg_engine.aggregate(
+        {"type": "FeatureCollection", "features": features},
+        time_field="timestamp", group_by_unit=TemporalUnit.WEEK,
+    )
+    assert [r["period"] for r in results] == ["2026-W01", "2026-W02"]
+
+
 def test_temporal_aggregation_monthly(sample_temporal_geojson):
     agg_engine = TemporalAggregationEngine()
     results = agg_engine.aggregate(

@@ -7,6 +7,7 @@ Never promote missing evidence to PASS/supported.
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional
 
 from .contracts import (
@@ -73,6 +74,12 @@ def _value_compatible(claim: Claim, evidence_meta: Dict[str, Any]) -> tuple[bool
         cv = float(claim.value)
     except (TypeError, ValueError):
         return False, "evidence_value_unparseable"
+    # 非有限值（NaN/inf）防御（#1712-2）：abs(ev - cv) 对 NaN 恒为 NaN，
+    # NaN 比较恒 False → 任何数值都判 value_bound（fail-open，且无披露）。
+    if not math.isfinite(cv):
+        return False, "claim_value_not_finite"
+    if not math.isfinite(ev):
+        return False, "evidence_value_not_finite"
     if abs(ev - cv) > 1e-9 * max(1.0, abs(cv)):
         return False, f"value_mismatch:{cv} vs {ev}"
     return True, "value_bound"
@@ -273,11 +280,10 @@ def verify_claim(
             method_ok = False
             reasons.append(detail_sc)
     if claim.method:
-        any(
-            e.dst.startswith("method:") or e.dst == f"method:{claim.method}"[:64]
-            for e in store.edges_from(claim.claim_id)
-        ) or bool(claim.method)
-        # method string on claim counts as declared method obligation met structurally
+        # method string on claim counts as declared method obligation met
+        # structurally（#1743：旧实现在此留有一条结果被丢弃的死表达式
+        # `any(...) or bool(claim.method)`，声称的 method: 边校验从未生效；
+        # 按本注释口径显式实现并删除死行）。
         if not claim.method.strip():
             method_ok = False
             reasons.append("method_missing")
@@ -308,9 +314,16 @@ def verify_claim(
                 # allow bare ref string as evidence_id attempt
                 unc_ok = False
                 reasons.append("uncertainty_ref_unresolved")
-            elif unc_node.kind is not EvidenceKind.UNCERTAINTY and unc_node.freshness is EvidenceFreshness.MISSING:
-                unc_ok = False
-                reasons.append("uncertainty_not_present")
+            else:
+                # 两个**独立**失败条件（#1712-1）：节点类型必须是 UNCERTAINTY
+                # 且新鲜度不得为 MISSING —— 任一不满足即失败。用 and 连接
+                # 会让「类型错 + 新鲜度非 MISSING」静默通过，义务被满足。
+                if unc_node.kind is not EvidenceKind.UNCERTAINTY:
+                    unc_ok = False
+                    reasons.append("uncertainty_kind_mismatch")
+                if unc_node.freshness is EvidenceFreshness.MISSING:
+                    unc_ok = False
+                    reasons.append("uncertainty_not_present")
     steps.append(VerificationStep(
         stage=VerificationStage.UNCERTAINTY, ok=unc_ok,
         detail="uncertainty_ok" if unc_ok else "uncertainty_failed",

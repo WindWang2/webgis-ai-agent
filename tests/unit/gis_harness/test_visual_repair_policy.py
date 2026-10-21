@@ -3,7 +3,8 @@
 不变式：
 1. 分级边界机器可测：可映射+warning+不触锁 → auto_safe；error 或触锁 →
    needs_approval；不可映射 → blocked（无修复路径，永不产生意图）；
-2. 决策账本：≤32 FIFO、同 proposal 替换、rejected 指纹集可提取；
+2. 决策账本：≤32 FIFO、同 proposal 替换、rejected 指纹集可提取、
+   每指纹按决策时序取最近 approved/rejected 裁决（先批后拒不吞拒绝）；
 3. intent codec：dict round-trip 等指纹；intent_kind 漂移 / 缺 category →
    None（不猜、不部分还原）；fingerprint 是账本幂等键。
 """
@@ -16,6 +17,8 @@ import pytest
 
 from app.services.gis_harness.visual_observation.repair_decisions import (
     DECISION_APPROVED,
+    DECISION_AUTO_APPLIED,
+    DECISION_AUTO_FAILED,
     DECISION_REJECTED,
     load_decisions,
     record_decision,
@@ -145,6 +148,55 @@ async def test_approval_supersedes_earlier_rejection(sid):
         sid, decision=DECISION_APPROVED, proposal_id="vrepair-r-1",
         recurrence_fingerprints=["fp-x"], revision=2)
     assert rejected_fingerprints(await load_decisions(sid)) == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_rejection_after_approval_is_remembered(sid):
+    """#1713-2：先批后拒（不同提案）→ 按时序最新裁决 = rejected，记忆生效。
+
+    旧实现无条件让 approved 优先，后发的拒绝被吞 → 同一 patch 反复再提案。
+    """
+    await record_decision(
+        sid, decision=DECISION_APPROVED, proposal_id="vrepair-a-1",
+        recurrence_fingerprints=["fp-x"], revision=1)
+    assert rejected_fingerprints(await load_decisions(sid)) == frozenset()
+    await record_decision(
+        sid, decision=DECISION_REJECTED, proposal_id="vrepair-a-2",
+        recurrence_fingerprints=["fp-x"], revision=2)
+    assert rejected_fingerprints(await load_decisions(sid)) == frozenset({"fp-x"})
+
+
+@pytest.mark.asyncio
+async def test_latest_decision_per_fingerprint_wins(sid):
+    """#1713-2：多指纹混合时序 —— 每键各取自己的最近裁决，互不串味。"""
+    await record_decision(
+        sid, decision=DECISION_REJECTED, proposal_id="p-1",
+        recurrence_fingerprints=["fp-a", "fp-b"], revision=1)
+    await record_decision(
+        sid, decision=DECISION_APPROVED, proposal_id="p-2",
+        recurrence_fingerprints=["fp-b"], revision=2)
+    await record_decision(
+        sid, decision=DECISION_REJECTED, proposal_id="p-3",
+        recurrence_fingerprints=["fp-c"], revision=3)
+    # fp-a：rejected（未被后续批准撤销）；fp-b：最新为 approved → 放行；
+    # fp-c：rejected。
+    assert rejected_fingerprints(await load_decisions(sid)) == frozenset(
+        {"fp-a", "fp-c"})
+
+
+@pytest.mark.asyncio
+async def test_auto_decisions_do_not_revoke_user_verdict(sid):
+    """#1713-2：auto_applied / auto_failed 是系统收场记录，不覆写用户裁决。"""
+    await record_decision(
+        sid, decision=DECISION_REJECTED, proposal_id="p-1",
+        recurrence_fingerprints=["fp-x"], revision=1)
+    await record_decision(
+        sid, decision=DECISION_AUTO_FAILED, proposal_id="p-2",
+        recurrence_fingerprints=["fp-x"], revision=2)
+    await record_decision(
+        sid, decision=DECISION_AUTO_APPLIED, proposal_id="p-3",
+        recurrence_fingerprints=["fp-y"], revision=3)
+    assert rejected_fingerprints(await load_decisions(sid)) == frozenset({"fp-x"})
 
 
 @pytest.mark.asyncio

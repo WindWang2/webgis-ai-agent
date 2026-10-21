@@ -73,6 +73,33 @@ describe("resolveRepresentationPlan：合法计划归一化", () => {
     expect(plan!.windows.map((x) => [x.minZoom, x.maxZoom])).toEqual([[0, 8], [8, 24]]);
   });
 
+  it("部分越界钳制后仍为正宽窗 → 合法（#1668 parity：与后端 test_partial_out_of_bounds_clamped_and_accepted 逐条对账）", () => {
+    // 后端同款输入：[-5,8]+[8,30] → [0,8]+[8,24]；min 端出域（-5）与 max 端
+    // 出域（30）各自钳回域内，钳制后 min<max 恒成立。
+    const plan = resolveRepresentationPlan(
+      layerWithWindows([w(-5, 8, "raw"), w(8, 30, "hidden")]),
+    );
+    expect(plan).not.toBeNull();
+    expect(plan!.windows.map((x) => [x.minZoom, x.maxZoom, x.mode])).toEqual([
+      [0, 8, "raw"],
+      [8, 24, "hidden"],
+    ]);
+    expect(plan!.hasHidden).toBe(true);
+  });
+
+  it("部分越界仅 max 端出域：[0,8)+[20,30) → [0,8)+[20,24) 合法（#1668 parity）", () => {
+    // [20,30] 钳成 [20,24]（正宽）→ 合法；与整体越界 [25,30]→[24,24]（零宽）
+    // 的拒收区分 —— 后端同款语义。
+    const plan = resolveRepresentationPlan(
+      layerWithWindows([w(0, 8, "raw"), w(8, 20, "raw"), w(20, 30, "hidden")]),
+    );
+    expect(plan).not.toBeNull();
+    expect(plan!.windows.map((x) => [x.minZoom, x.maxZoom, x.mode])).toEqual([
+      [0, 20, "raw"],
+      [20, 24, "hidden"],
+    ]);
+  });
+
   it("reason_codes 透传且非字符串项被滤除", () => {
     const plan = resolveRepresentationPlan(
       layerWithWindows([w(0, 24, "point_cluster", ["a", 3 as never, null as never, "b"])]),
@@ -108,6 +135,21 @@ describe("resolveRepresentationPlan：非法计划 → null", () => {
     expect(
       resolveRepresentationPlan(layerWithWindows([w(0, 8, "raw"), w(11, 24, "raw")])),
     ).toBeNull();
+  });
+
+  it("整体越界窗（钳制后零宽）→ null（#1668 parity：与后端 test_whole_window_out_of_domain_rejected_after_clamp 逐条对账）", () => {
+    // 合法性是「钳制后 min<max」：两端都 <0 或都 >24 的窗钳成零宽
+    // （[-10,-5]→[0,0]、[25,30]→[24,24]），与 [8,8] 同为空窗，必须拒 ——
+    // 修复前钳制前校验放过、钳制后产出退化 [0,0]/[24,24] 窗（#1625 后端同款）。
+    expect(
+      resolveRepresentationPlan(layerWithWindows([w(-10, -5, "raw"), w(0, 24, "raw")])),
+    ).toBeNull();
+    expect(
+      resolveRepresentationPlan(layerWithWindows([w(0, 24, "raw"), w(25, 30, "raw")])),
+    ).toBeNull();
+    // 单窗整体越界同样拒（不依赖第二窗兜覆盖）。
+    expect(resolveRepresentationPlan(layerWithWindows([w(-10, -5, "raw")]))).toBeNull();
+    expect(resolveRepresentationPlan(layerWithWindows([w(25, 30, "raw")]))).toBeNull();
   });
 
   it("重叠窗（[0,12)+[10,24)）→ null（连续性要求 min == 前窗 max）", () => {

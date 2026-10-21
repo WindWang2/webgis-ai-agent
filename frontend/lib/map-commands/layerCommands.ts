@@ -886,7 +886,7 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       // 1. custom stack → legacy algorithm: move the group on the map within the
       //    custom stack (the runtime does not own these layers).
-      let customMoved = false;
+      let customSettled = false;
       if (customMatched.length > 0) {
         // #462: registry read — no per-command style deep-clone.
         const customIds = renderer
@@ -894,7 +894,18 @@ export const layerCommands: Record<string, CommandEntry> = {
           .filter((id: string) => id.startsWith('custom-'));
 
         const firstSubIdx = customIds.indexOf(customMatched[0]);
-        let beforeAnchor: string | undefined;
+        // MapLibre 渲染顺序 = 数组顺序：越靠后的索引画在越上面。
+        // `moveLayer(id, before)` 把 id 插到 `before` **正下方**；省略 `before`
+        // 则是追加到数组末尾（= 最顶层）。store 方案的 `up` 语义是「朝 index 0
+        // （topmost）移动」，因此在地图方案上组必须朝数组**尾部**移动 —— 两个
+        // 方向在 #1726 之前恰好写反了（up 向下遍历、down 向上遍历并把组甩到
+        // 最顶层）。
+        const lastSubIdx = Math.max(
+          ...customMatched.map((id: string) => customIds.indexOf(id)),
+        );
+        // `null` = 保持原位（该方向已到极值，或无可用锚点）。绝不能落到
+        // `undefined` —— moveLayer 把省略锚点读成「移到最顶层」。
+        let beforeAnchor: string | undefined | null = null;
 
         if (position === 'top') {
           beforeAnchor = undefined; // moveLayer with no anchor -> top
@@ -902,38 +913,49 @@ export const layerCommands: Record<string, CommandEntry> = {
           const bottomCandidate = customIds.find((id: string) => !customMatched.includes(id));
           beforeAnchor = bottomCandidate;
         } else if (position === 'up') {
-          // Find next custom group above
-          for (let i = firstSubIdx - 1; i >= 0; i--) {
-            if (!customMatched.includes(customIds[i])) {
-              // Place customMatched before the layer that sits above customIds[i]
-              beforeAnchor = customIds[i];
-              break;
-            }
-          }
-        } else if (position === 'down') {
-          for (let i = firstSubIdx + customMatched.length; i < customIds.length; i++) {
+          // 向顶层移动一格：插到「上方第一个异组层」的再上方，即该层后面那一层
+          // 之前（它就是 i+1；i 已是末层时 i+1 为 undefined = 置顶，语义正确）。
+          for (let i = lastSubIdx + 1; i < customIds.length; i++) {
             if (!customMatched.includes(customIds[i])) {
               beforeAnchor = customIds[i + 1];
               break;
             }
           }
+        } else if (position === 'down') {
+          // 向底层移动一格：插到「下方第一个异组层」之前（= 紧贴其下）。已在
+          // 最底层时循环不命中 → beforeAnchor 保持 null → 原地不动，不再像
+          // 旧代码那样因 i+1 越界成 undefined 而被甩到最顶层。
+          for (let i = firstSubIdx - 1; i >= 0; i--) {
+            if (!customMatched.includes(customIds[i])) {
+              beforeAnchor = customIds[i];
+              break;
+            }
+          }
         } else if (position === 'before' && before_id) {
           const targetGroup = customIds.find((id: string) => id === `custom-${before_id}` || id.startsWith(`custom-${before_id}-`));
-          beforeAnchor = targetGroup;
+          // 锚点组不存在时保持原位（旧代码落 undefined → 整个组被甩到最顶层）。
+          beforeAnchor = targetGroup ?? null;
         }
 
-        try {
-          for (const id of customMatched) {
-            map.moveLayer(id, beforeAnchor);
+        if (beforeAnchor === null) {
+          // 无可用锚点。up/down 的极值情形：请求的终态本就成立 —— 不触碰样式
+          // 也算已兑现（诚实 confirmed）。before 的锚点组不在地图上：不能声称
+          // confirmed（这条命令没有兑现），交由 store 方案的结果说话。
+          customSettled = position !== 'before';
+        } else {
+          try {
+            for (const id of customMatched) {
+              map.moveLayer(id, beforeAnchor);
+            }
+            customSettled = true;
+            // #462: anchored moves are not mirrored by the registry's note
+            // hooks — drop it so the next read re-seeds from one cold getStyle
+            // (reorders are rare commands; the cold re-seed is the budget).
+            renderer.clearStyleLayerIds(map);
+          } catch (e) {
+            devOnly.warn('[MapActionHandler] REORDER_LAYER failed:', e);
+            return { status: 'failed', error: 'reorder_failed' };
           }
-          customMoved = true;
-          // #462: anchored moves are not mirrored by the registry's note
-          // hooks — drop it so the next read re-seeds from one cold getStyle
-          // (reorders are rare commands; the cold re-seed is the budget).
-          renderer.clearStyleLayerIds(map);
-        } catch (e) {
-          devOnly.warn('[MapActionHandler] REORDER_LAYER failed:', e);
-          return { status: 'failed', error: 'reorder_failed' };
         }
       }
 
@@ -1009,7 +1031,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       // the runtime reconcile (store_updated — the backend treats it as
       // non-converging until the next observation confirms the map z-order).
       const result: Record<string, unknown> = {};
-      if (customMoved) result.confirmed = true;
+      if (customSettled) result.confirmed = true;
       if (storeReordered) result.store_updated = true;
       return { status: 'succeeded', result };
     },

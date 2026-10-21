@@ -191,6 +191,7 @@ def readiness_check() -> JSONResponse:
 import asyncio as _asyncio
 import threading as _threading
 import time as _time
+import weakref as _weakref
 
 from fastapi import Depends as _Depends
 
@@ -205,7 +206,29 @@ _CACHE_TTL_S = 10.0
 _cache_lock = _threading.Lock()
 _cache_snapshot: Optional[dict] = None
 _cache_written_at: float = 0.0
-_refresh_guard = _asyncio.Lock()
+
+# #1711（loop-affinity，同 #1681 族）：模块级 asyncio.Lock 在首次「有竞争」的
+# await 时绑定所在事件循环（acquire 的快路径不绑定，等待者路径才 _get_loop()）。
+# 同一 ASGI app 若被第二个事件循环驱动（测试客户端 + 多 worker 同进程），竞争
+# 路径直接 RuntimeError: ... is bound to a different event loop →
+# /api/v1/status/detailed 500。改为 per-loop 惰性创建（app/core/network.py
+# #933 同款 WeakKeyDictionary 模式）：每个事件循环持自己的守卫锁，单 loop
+# 部署语义不变（仍是同一把锁互斥刷新）；条目随 loop GC 自动回收，不长内存。
+_refresh_guards: _weakref.WeakKeyDictionary[_asyncio.AbstractEventLoop, _asyncio.Lock] = (
+    _weakref.WeakKeyDictionary()
+)
+_refresh_guards_guard = _threading.Lock()
+
+
+def _refresh_guard() -> _asyncio.Lock:
+    """当前事件循环的 SRE 快照刷新守卫（per-loop；#1711 loop-affinity 修复）。"""
+    loop = _asyncio.get_running_loop()
+    with _refresh_guards_guard:
+        guard = _refresh_guards.get(loop)
+        if guard is None:
+            guard = _asyncio.Lock()
+            _refresh_guards[loop] = guard
+        return guard
 
 
 #: R1-m2：延迟降级阈值（ms）——超过即 degraded（探测成功但逼近不可用）
@@ -370,7 +393,7 @@ async def sre_status_detailed(
     global _cache_snapshot, _cache_written_at
     now = _time.monotonic()
     if _cache_snapshot is None or now - _cache_written_at >= _CACHE_TTL_S:
-        async with _refresh_guard:
+        async with _refresh_guard():
             if _cache_snapshot is None or \
                     _time.monotonic() - _cache_written_at >= _CACHE_TTL_S:
                 fresh = await _asyncio.to_thread(_collect_sre_snapshot)

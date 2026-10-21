@@ -68,3 +68,39 @@ async def test_progress_reaches_hundred_on_success() -> None:
     await run_fetch_stage("t4", [_source("good")], adapter=_FlakyAdapter(),
                           on_progress=seen.append)
     assert seen[-1] == 100
+
+
+# ── #1721：畸形 source dict 不得逃逸隔离边界崩掉整阶段 ────────────────
+
+
+@pytest.mark.asyncio
+async def test_malformed_source_dict_lands_in_fetch_errors() -> None:
+    """DataSource 校验失败（缺 id/name、非 mapping payload）= 单源错误。
+
+    构造发生在 gather 隔离边界内（fetch_stage.py:45）；归集循环曾**二次**
+    构造 DataSource（隔离边界外），任一条畸形 dict 就让整个 fetch 阶段抛
+    未捕获 ValidationError 崩溃。修复后错误必须落 fetch_errors，兄弟源
+    照常成功。
+    """
+    result = await run_fetch_stage(
+        "t5",
+        [{"source": {"format": "csv"}},   # 缺 id/name → ValidationError
+         {"source": None},                # 非 mapping → TypeError
+         _source("good")],
+        adapter=_FlakyAdapter(),
+    )
+    assert result.success is True
+    assert [r["source_id"] for r in result.data["fetch_results"]] == ["good"]
+    errs = result.data["fetch_errors"]
+    assert len(errs) == 2
+    assert all(e["source_id"] == "<invalid source>" for e in errs)
+    assert all(e["error"] for e in errs)
+    assert "validation" in errs[0]["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_all_sources_malformed_is_stage_failure_not_crash() -> None:
+    result = await run_fetch_stage("t6", [{"source": {}}], adapter=_FlakyAdapter())
+    assert result.success is False
+    assert "All source fetches failed" in result.message
+    assert result.data["fetch_errors"][0]["source_id"] == "<invalid source>"

@@ -166,16 +166,17 @@ spec:
           limits:
             cpu: "500m"
             memory: "2Gi"
-        command:
-        - redis-server
-        - "--appendonly"
-        - "yes"
-        - "--maxmemory"
-        - "1gb"
-        - "--maxmemory-policy"
-        - "noeviction"
-        - "--requirepass"
-        - "$(REDIS_PASSWORD)"
+        # #1676（SEC-04）：`--requirepass $(REDIS_PASSWORD)` 作为独立 argv
+        # 元素时，kubelet 在容器启动时把 secret 值展开进进程命令行 ——
+        # `kubectl describe`、节点 /proc/<pid>/cmdline 可见明文（该口令同时是
+        # celery broker + result backend + session store 的钥匙）。改为
+        # sh -c 把完整配置（含 requirepass）写进 /dev/shm tmpfs 的 0400 运行
+        # 时 conf 后 exec redis-server；原 command 的配置项原样搬进该 conf
+        # （appendonly yes / maxmemory 1gb / maxmemory-policy noeviction）。
+        # $$ 不需要：$REDIS_PASSWORD 由容器 shell 从 env（secretKeyRef）展开。
+        command: ["/bin/sh", "-c"]
+        args:
+          - 'umask 077; printf "appendonly yes\nmaxmemory 1gb\nmaxmemory-policy noeviction\nrequirepass %s\n" "$REDIS_PASSWORD" > /dev/shm/redis-runtime.conf; chmod 400 /dev/shm/redis-runtime.conf; exec redis-server /dev/shm/redis-runtime.conf'
         env:
         - name: REDIS_PASSWORD
           valueFrom:
@@ -196,10 +197,19 @@ spec:
         volumeMounts:
         - name: redis-data
           mountPath: /data
+        # #1676：requirepass 运行时 conf 的落点。readOnlyRootFilesystem: true
+        # 下必须显式挂可写路径（与 02-api-deployment.yaml 的 /tmp emptyDir
+        # 同款做法）；medium: Memory = tmpfs，容器停止即消失，不落节点磁盘。
+        - name: redis-runtime
+          mountPath: /dev/shm
       volumes:
       - name: redis-data
         persistentVolumeClaim:
           claimName: redis-pvc
+      # #1676：tmpfs 运行时 conf（口令只在这里与容器 env 出现，不进 argv）。
+      - name: redis-runtime
+        emptyDir:
+          medium: Memory
 ---
 # Redis Service
 apiVersion: v1

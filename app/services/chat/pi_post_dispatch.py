@@ -267,11 +267,15 @@ async def _record_cartographic_evidence(d: DispatchDisclosure) -> bool:
         return False
 
     is_error = d.status == "error"
-    ev = {"status": d.status, "llm_payload_len": len(d.llm_payload)}
-    from app.lib.harness.evidence import CARTOGRAPHIC_RESULT_EVIDENCE_KEYS
-    for k in CARTOGRAPHIC_RESULT_EVIDENCE_KEYS:
-        if k in raw:
-            ev[k] = raw[k]
+    # #1550：证据投影收敛到 evidence.py 的具名载体（单一投影入口，
+    # 与 cartography_runtime 的 legacy seam 共用同一份键清单契约）。
+    from app.lib.harness.evidence import project_cartographic_result_evidence
+
+    ev = project_cartographic_result_evidence(
+        raw,
+        status=d.status,
+        llm_payload_len=len(d.llm_payload),
+    )
     event = bridge.ToolCallEvent(
         tool_call_id=d.tool_call_id,
         # #789：保留真实工具名（mutation 台账按结构分类，见 PiAgentHarness）。

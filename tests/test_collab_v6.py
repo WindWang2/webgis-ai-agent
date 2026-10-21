@@ -105,6 +105,57 @@ def test_delta_locks_add_remove():
     assert out["lockedLayerIds"] == ["l2"]
 
 
+def test_delta_locks_order_preserved_and_deterministic():
+    """#1751 回归：lockedLayerIds 保序重建（按原 list 次序 filter + 追加新增）。
+
+    ``list(set(...))`` 的次序随进程字符串 hash 随机化而变 —— 同一逻辑 doc
+    在不同 worker/pod 上落盘字节与指纹都会漂移；保序运算保证跨进程确定。
+    """
+    doc = {
+        "version": 5, "groups": [], "membership": {},
+        "lockedLayerIds": ["layer-b", "layer-a", "layer-c"], "mode": "explore",
+    }
+    out = apply_delta(doc, validate_delta({
+        "locksRemove": ["layer-a"],
+        # "layer-b" 已在锁集中 → 追加为幂等 no-op（不重复、不改原次序）。
+        "locksAdd": ["layer-z", "layer-d", "layer-b"],
+    }))
+    assert out["lockedLayerIds"] == ["layer-b", "layer-c", "layer-z", "layer-d"]
+
+    # locksAdd 与 locksRemove 同现 → remove 净效应优先（与原 set 语义一致）。
+    out2 = apply_delta(doc, validate_delta({
+        "locksAdd": ["layer-b", "layer-q"], "locksRemove": ["layer-q"],
+    }))
+    assert out2["lockedLayerIds"] == ["layer-b", "layer-a", "layer-c"]
+
+
+def test_delta_locks_bytes_identical_across_hash_seeds():
+    """#1751：同一 delta 在不同 PYTHONHASHSEED 子进程必须给出同一字节序列。"""
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "import json;"
+        "from app.services.collab.delta import apply_delta, validate_delta;"
+        "doc={'lockedLayerIds':['b','a','c','d','e','f','g','h']};"
+        "out=apply_delta(doc, validate_delta("
+        "{'locksRemove':['c'],'locksAdd':['i','j','k']}));"
+        "print(json.dumps(out['lockedLayerIds']))"
+    )
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    outs = set()
+    for seed in ("0", "1", "424242"):
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, check=True,
+            cwd=root, env={**os.environ, "PYTHONHASHSEED": seed},
+        )
+        outs.add(proc.stdout.strip())
+    assert outs == {json.dumps(
+        ["b", "a", "d", "e", "f", "g", "h", "i", "j", "k"])}
+
+
 def test_delta_rejects_unknown_fields_and_empty():
     with pytest.raises(DeltaError):
         validate_delta({"mode": "explore"})  # mode 不在 delta 域
@@ -150,6 +201,26 @@ def test_presence_heartbeat_merges_sanitized_fields():
     assert snap[0]["editingLayerId"] == "l1"
     assert "evil" not in snap[0]  # 白名单裁剪
     assert snap[0]["label"] == "b"
+
+
+def test_presence_sanitize_rejects_non_finite_viewport():
+    """#1733：viewport 白名单剔除 NaN/Infinity —— 非有限 float 不是合法 JSON。
+
+    Python 的 json 会写出裸 ``NaN``/``Infinity`` 字面量（RFC 8259 之外），
+    浏览器 JSON.parse 抛错 → 整帧静默丢弃。白名单 isinstance(float) 原样放行
+    是漏洞入口：恶意/失控协作者推一个 NaN viewport 就能毒化全房间广播。
+    """
+    from app.services.collab.presence import _sanitize_patch
+
+    out = _sanitize_patch({"viewport": {
+        "lat": float("nan"), "lng": 104.0, "zoom": float("inf"),
+        "neg": float("-inf"), "name": "x", "flag": True,
+    }})
+    # 非有限键整键剔除（bool/int/str 与有限 float 原样保留）
+    assert out["viewport"] == {"lng": 104.0, "name": "x", "flag": True}
+    # 其余字段不受影响
+    out2 = _sanitize_patch({"label": "用户", "viewport": {"lat": 30.0}})
+    assert out2 == {"label": "用户", "viewport": {"lat": 30.0}}
 
 
 # ─── lease（进程内降级模式）──────────────────────────────────────────────────
@@ -616,6 +687,26 @@ def test_collab_ws_auth_matrix():
             pass
 
 
+def test_collab_ws_non_ascii_owner_token_closes_4003():
+    """#1711: 非 ASCII owner_token → 干净 4003，而不是 TypeError 把 WS 打挂。
+
+    hmac.compare_digest 对含非 ASCII 的 str 直接抛 TypeError —— 匿名协作者
+    送一个非 ASCII token 就能让所有权守卫从 fail-closed（4003）变成未处理
+    异常（服务端 500/1011 语义）。
+    """
+    app = _make_collab_app([("sess-anon-na", None, "tok-correct")])
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+            "/api/v1/ws/collab/sess-anon-na",
+            # httpx 只放行 ASCII str 头值；以 latin-1 字节送 subprotocol 头
+            # （真实传输形态），服务端侧解回非 ASCII token。
+            headers={"sec-websocket-protocol": b"session, t\xf6k-\xe9-wr\xf6ng"},
+        ):
+            pass
+    assert exc_info.value.code == 4003
+
+
 def test_collab_ws_ping_sync_roundtrip():
     from app.core.auth import create_access_token
 
@@ -687,6 +778,97 @@ def test_collab_ws_send_loop_drains_queue_to_socket():
     assert [f["data"]["revision"] for f in frames2] == [7, 8]
     # 单扇出无双计：每连接各恰一份
     assert len(frames1) == 1 and len(frames2) == 2
+
+
+def _strict_loads(text: str):
+    """严格 JSON 解析：NaN/Infinity 字面量一律视为非法（浏览器同口径）。"""
+    return json.loads(
+        text, parse_constant=lambda name: (_ for _ in ()).throw(ValueError(name))
+    )
+
+
+def test_collab_ws_send_loop_drops_non_finite_frame():
+    """#1733：扇出末段 allow_nan=False —— 非有限信封丢帧 + 日志，连接存活。
+
+    入站 parse_constant + presence 白名单已挡两层，这里是对外最后一闸：
+    万一穿透（如 ws_service 遗留直写通道写入的 doc），丢该帧而不是把非法
+    JSON 发给浏览器（JSON.parse 抛错 = 静默丢帧）或把健康连接关掉。
+    """
+    import asyncio
+
+    from app.api.routes.ws_collab import _CollabConnection
+
+    class _FakeWS:
+        def __init__(self):
+            self.sent = []
+
+        async def send_text(self, text):
+            self.sent.append(text)
+
+    async def _scenario():
+        fake = _FakeWS()
+        conn = _CollabConnection(fake, "sess-nan", "c1", "u")
+        conn.send_task = asyncio.get_running_loop().create_task(conn.send_loop())
+        conn.enqueue({"event": "op", "data": {"revision": 1}})
+        conn.enqueue({"event": "presence", "data": {"viewport": {"lat": float("nan")}}})
+        conn.enqueue({"event": "op", "data": {"revision": 2}})
+        await asyncio.sleep(0.05)
+        conn.enqueue(None)  # 哨兵
+        conn.closed = True
+        await conn.send_task
+        return fake.sent
+
+    sent = asyncio.run(_scenario())
+    # NaN 帧被丢，前后正常帧照发（连接未被关闭）
+    assert [_strict_loads(t)["data"]["revision"] for t in sent] == [1, 2]
+    assert all("NaN" not in t for t in sent)
+
+
+def test_collab_ws_inbound_non_finite_rejected():
+    """#1733：入站 NaN/Infinity 字面量被拒（parse_constant）——不进 presence
+    存储、不广播，连接照常存活（ping→pong）。
+
+    没有 parse_constant 时 Python 的宽松 json.loads 会放行裸常量，presence
+    viewport 白名单（isinstance float）再原样放行 → 全房间收到非法 JSON。
+    """
+    from app.core.auth import create_access_token
+    from app.services.collab.presence import presence_registry
+
+    sid = _sid("v6_nan_in")
+    app = _make_collab_app([(sid, "user-123", None)])
+    client = TestClient(app)
+    good = create_access_token({"sub": "user-123"})
+    with client.websocket_connect(
+        f"/api/v1/ws/collab/{sid}", subprotocols=["bearer", good]
+    ) as ws:
+        _receive_hello(ws)
+        # 合法 presence 先落库（flush 窗口后成为已知基线）
+        ws.send_text(json.dumps({
+            "event": "presence", "data": {"viewport": {"lat": 30.0, "lng": 104.0}},
+        }))
+        time.sleep(0.35)  # 越过 200ms 合并节流窗口
+        # 连接建立时自身 join 也会回显一条 presence —— 找到 update 那条
+        echo = _strict_loads(ws.receive_text())
+        while echo.get("data", {}).get("action") != "update":
+            assert echo.get("event") != "pong", "presence update 先于 pong 到达"
+            echo = _strict_loads(ws.receive_text())
+        assert echo["data"]["client"]["viewport"] == {"lat": 30.0, "lng": 104.0}
+
+        # 恶意帧：裸 NaN / Infinity 字面量（严格 JSON 非法）
+        ws.send_text('{"event":"presence","data":{"viewport":{"lat":NaN}}}')
+        ws.send_text('{"event":"presence","data":{"viewport":{"lat":Infinity}}}')
+        time.sleep(0.35)  # 若有毒帧被放行，flush 会在此窗口内广播
+        ws.send_text(json.dumps({"event": "ping"}))
+        got = _strict_loads(ws.receive_text())
+        while got.get("event") != "pong":
+            # 任何到达帧都必须是严格合法 JSON 且不得是非有限 presence 广播
+            assert got.get("event") != "presence"
+            got = _strict_loads(ws.receive_text())
+
+        # presence 存储未被毒帧污染（仍为合法基线）
+        records = presence_registry.snapshot_local(sid)
+        viewports = [r["viewport"] for r in records if "viewport" in r]
+        assert viewports == [{"lat": 30.0, "lng": 104.0}]
 
 
 # ─── artifact 感知（W8）：投影端点 + 失效事件 ────────────────────────────────

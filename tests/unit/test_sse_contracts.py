@@ -67,6 +67,25 @@ class TestVocabulary:
         ):
             assert name in CHAT_EVENT_TYPES
 
+    def test_vocabulary_covers_every_emitted_event(self):
+        """反向守卫（#1684 API-01 ⑤）：词表必须覆盖实际发射的全部事件名。
+
+        正向守卫（test_vocabulary_covers_all_emitters）只查 TurnEventEmitter
+        的方法面 —— emitter 之外新上线的事件（map_finalization /
+        explorer_progress / spatial_event / session_plan_* 都曾是这一形态）
+        可以永久不入词表。这里以 api_compat 的 AST 扫描 + session_plan 登记表
+        为锚反查：任何已发射但不在词表的事件名即红。
+        """
+        from app.lib.quality.api_compat import scan_sse_event_names
+
+        emitted = set(scan_sse_event_names())
+        assert emitted, "扫描结果为空 —— 锚失效（api_compat 被改坏？）"
+        missing = emitted - CHAT_EVENT_TYPES
+        assert not missing, (
+            f"已发射但不在 CHAT_EVENT_TYPES: {sorted(missing)} —— "
+            f"新事件必须登记进词表（前端才知道怎么解析）"
+        )
+
 
 class TestEmitterPayloadShapes:
     """载荷与既有 chat_stream wire 的逐字段兼容（新增字段仅 turn_id）。"""

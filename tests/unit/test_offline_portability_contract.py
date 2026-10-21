@@ -81,3 +81,64 @@ def test_no_windows_only_or_posix_only_path_hardcoding():
     for mod in (offline_inventory, offline_preflight):
         src = inspect.getsource(mod)
         assert "C:\\" not in src and "/usr/local" not in src, mod.__name__
+
+
+def test_redis_check_detail_redacts_url_password():
+    """#1710：check_redis 成功分支只给脱敏投影，口令不进 detail。
+
+    生产 REDIS_URL 形如 ``redis://:${REDIS_PASSWORD}@redis:6379/0``——
+    detail 经 console 表格 / --out 落盘 / --json 三处消费，原样输出即
+    口令外泄。
+    """
+    from unittest import mock
+
+    from app.services import offline_preflight as pf
+
+    url = "redis://:s3cr3t-pw@redis:6379/0"
+    with mock.patch("app.core.config.settings") as fake_settings:
+        fake_settings.USE_REDIS = True
+        fake_settings.REDIS_URL = url
+        with mock.patch("redis.from_url") as from_url:
+            from_url.return_value.ping.return_value = None
+            result = pf.check_redis()
+    assert result["status"] == "ok"
+    assert "s3cr3t-pw" not in result["detail"]
+    # host/db 保留可诊断性
+    assert "redis://:***@redis:6379/0" in result["detail"]
+
+
+def test_redis_down_detail_redacts_url_password():
+    """#1710：失败分支同样只输出脱敏投影（连接错误也要可诊断）。"""
+    from unittest import mock
+
+    from app.services import offline_preflight as pf
+
+    url = "redis://:s3cr3t-pw@redis:6379/0"
+    with mock.patch("app.core.config.settings") as fake_settings:
+        fake_settings.USE_REDIS = True
+        fake_settings.REDIS_URL = url
+        with mock.patch("redis.from_url",
+                        side_effect=OSError("connection refused")):
+            result = pf.check_redis()
+    assert result["status"] == "down"
+    assert "s3cr3t-pw" not in result["detail"]
+    assert "redis://:***@redis:6379/0" in result["detail"]
+
+
+def test_check_layer_scrubs_url_and_keyvalue_secrets():
+    """#1710：_check 层兜底——任意 check 的 detail 内口令一律脱敏。
+
+    连接串（如异常文本内嵌 DATABASE_URL）与键值形态（password=…）都覆盖，
+    防其它 check 复犯同类外泄。
+    """
+    from app.services.offline_preflight import _check
+
+    detail = _check(
+        "database", "down",
+        "connect failed: postgresql://u:pw123456@db:5432/app",
+    )["detail"]
+    assert "pw123456" not in detail
+    assert "postgresql://u:***@db:5432/app" in detail
+
+    kv = _check("x", "down", "cfg password=abcdef123456")["detail"]
+    assert "abcdef123456" not in kv

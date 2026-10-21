@@ -1957,7 +1957,9 @@ class PiBridge:
         # mutable self._session_id field (which a concurrent/preceding turn
         # could overwrite). Pi events carry no session of their own.
         turn_sid = session_id or ""
-        from app.api.routes.pi_tools import get_bridge_secret
+        # #1678：与 app/services/chat/pi_rpc_client.py 对齐，从 core 取共享密钥
+        # （原从 api/routes/pi_tools 反向 import，违反 ADR-0216 §6.5）。
+        from app.core.bridge_secret import get_bridge_secret
         from app.services.chat.pi_turn_context import bind_turn_prompt, issue_turn_token
 
         turn_id = _mint_turn_id()
@@ -2400,7 +2402,9 @@ class PiBridge:
         # owns this turn — not bridge instance state a prior turn could have
         # overwritten.
         turn_sid = session_id or ""
-        from app.api.routes.pi_tools import get_bridge_secret
+        # #1678：与 app/services/chat/pi_rpc_client.py 对齐，从 core 取共享密钥
+        # （原从 api/routes/pi_tools 反向 import，违反 ADR-0216 §6.5）。
+        from app.core.bridge_secret import get_bridge_secret
         from app.services.chat.pi_turn_context import bind_turn_prompt, issue_turn_token
 
         turn_id = _mint_turn_id()

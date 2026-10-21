@@ -251,6 +251,53 @@ describe('interaction outbox · 水印同步（ack 丢失收敛）', () => {
     await h.advance(5000);
     expect(h.fetchCalls.length).toBe(2);
   });
+
+  it('水印按会话作用域：旧会话的迟到 ack 不裁剪新会话的低序号事件', async () => {
+    // ADR-0225 C7：client_seq 是 per-(session, tab) 从 1 起 —— 会话切换后
+    // 旧会话的迟到/重试响应不得把新会话整批 client_seq ≤ 旧水印 的事件静默
+    // 剪掉（曾被实例级标量水印剪掉 → 新会话事件永不发送）。
+    let activeSession = 'sess-a';
+    const h = createHarness({
+      getSessionId: () => activeSession,
+      getOwnerToken: () => 'tok',
+      debounceMs: 50,
+    });
+    const instance = getClientInstanceId(h.storage);
+    const watermarkBody = (mark: number): InteractionIngestResponse => ({
+      accepted: 2, duplicates: 0, stale: 0, rejected: 0, acks: [],
+      watermarks: { [instance]: mark },
+    });
+    // 旧会话的 POST 挂在途（弱网/慢响应）—— 响应推迟到会话切换之后才落地。
+    let releaseAck: (response: Response) => void = () => {};
+    h.respondWith(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseAck = resolve;
+        }) as unknown as Response,
+    );
+
+    h.outbox.enqueue(event(1));
+    h.outbox.enqueue(event(2));
+    await h.advance(50);
+    expect(h.fetchCalls.length).toBe(1);
+    expect(h.fetchCalls[0].url).toContain('/sessions/sess-a/');
+
+    // 切到会话 B 并继续交互：B 的 client_seq 从 1 重新起算（≤ A 的旧水印）。
+    activeSession = 'sess-b';
+    h.outbox.enqueue(event(1));
+
+    // A 的迟到 ack 落地：水印 2 只对 sess-a 的条目生效。
+    releaseAck(new Response(JSON.stringify(watermarkBody(2)), { status: 200 }));
+    // 延迟 responder 的 promise 链比同步 responder 多几跳 —— 多刷几轮微任务。
+    for (let i = 0; i < 5; i += 1) await flushMicrotasks();
+    expect(h.outbox.acknowledgedSeq()).toBe(2);
+
+    // B 的防抖窗口到期 → 事件必须仍在队列里并被发出。
+    await h.advance(50);
+    const sessionBPosts = h.fetchCalls.filter((c) => c.url.includes('/sessions/sess-b/'));
+    expect(sessionBPosts).toHaveLength(1);
+    expect(sessionBPosts[0].body.events.map((e) => e.client_seq)).toEqual([1]);
+  });
 });
 
 describe('interaction outbox · keepalive 卸载冲刷', () => {

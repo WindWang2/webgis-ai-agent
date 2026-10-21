@@ -371,6 +371,133 @@ class TestLocate:
         assert "frontend/src/a.ts:1" not in lines
 
 
+# ------------------------------------------------- #1550 dict[str, Any]
+
+
+class TestDictStrAnyCollection:
+    """#1550：dict[str, Any] 计数的识别面（AST，注释/字符串不误计）。"""
+
+    def _count(self, src: str, tmp_path) -> int:
+        (tmp_path / "app").mkdir(exist_ok=True)
+        (tmp_path / "app" / "m.py").write_text(src, encoding="utf-8")
+        return len(debt_ratchet.collect_dict_str_any(tmp_path))
+
+    def test_lowercase_and_typing_forms_counted(self, tmp_path):
+        src = (
+            "from typing import Any, Dict\n"
+            "def f(a: dict[str, Any]) -> Dict[str, Any]:\n"
+            "    x: dict[str, Any] = {}\n"
+            "    return x\n"
+        )
+        assert self._count(src, tmp_path) == 3
+
+    def test_attribute_form_counted(self, tmp_path):
+        src = "import typing\ndef f() -> typing.Dict[str, Any]:\n    return {}\n"
+        assert self._count(src, tmp_path) == 1
+
+    def test_each_occurrence_on_one_line_counted(self, tmp_path):
+        # 一行两处独立注解 → 按出现位各计一次（同行不合并）。
+        src = (
+            "from typing import Any, Dict\n"
+            "a: Dict[str, Any] = {}; b: dict[str, Any] = {}\n"
+        )
+        (tmp_path / "app").mkdir(exist_ok=True)
+        (tmp_path / "app" / "m.py").write_text(src, encoding="utf-8")
+        items = debt_ratchet.collect_dict_str_any(tmp_path)
+        assert len(items) == 2
+        assert {it.line for it in items} == {2}
+
+    def test_nested_non_any_value_not_counted(self, tmp_path):
+        # dict[str, Dict[str, Any]] 只计内层那处 —— 外层值类型不是 Any。
+        src = (
+            "from typing import Any, Dict\n"
+            "x: dict[str, Dict[str, Any]] = {}\n"
+        )
+        (tmp_path / "app").mkdir(exist_ok=True)
+        (tmp_path / "app" / "m.py").write_text(src, encoding="utf-8")
+        items = debt_ratchet.collect_dict_str_any(tmp_path)
+        assert len(items) == 1
+        assert items[0].line == 2
+
+    def test_other_generics_not_counted(self, tmp_path):
+        src = (
+            "from typing import Any, Dict, List, Optional\n"
+            "def f(a: dict[str, int], b: List[str],\n"
+            "       c: Optional[Dict[int, Any]]) -> None:\n"
+            "    pass\n"
+        )
+        assert self._count(src, tmp_path) == 0
+
+    def test_comment_and_string_not_counted(self, tmp_path):
+        src = (
+            "from typing import Any, Dict\n"
+            "# dict[str, Any] in a comment is not debt\n"
+            "MSG = 'Dict[str, Any] in a string is not debt'\n"
+            "def f() -> None:\n"
+            "    pass\n"
+        )
+        assert self._count(src, tmp_path) == 0
+
+    def test_gate_fails_when_total_grows(self, tmp_path):
+        (tmp_path / "app").mkdir()
+        (tmp_path / "app" / "m.py").write_text(
+            "from typing import Any\ndef f() -> dict[str, Any]:\n    return {}\n",
+            encoding="utf-8")
+        baseline = debt_ratchet.measure(tmp_path)
+        bp = _write_baseline(tmp_path, baseline)
+        # 同一文件再加一处 → 总量棘轮必须 FAIL
+        (tmp_path / "app" / "m.py").write_text(
+            "from typing import Any\n"
+            "def f() -> dict[str, Any]:\n"
+            "    x: dict[str, Any] = {}\n"
+            "    return x\n",
+            encoding="utf-8")
+        current, items = debt_ratchet._collect(tmp_path)
+        failures = debt_ratchet._gate_failures(baseline, current, items)
+        assert any(f.startswith("dict_str_any: 2 > baseline 1")
+                   for f in failures), failures
+        assert debt_ratchet.check(bp, tmp_path) == 1
+
+    def test_paying_down_passes(self, tmp_path):
+        (tmp_path / "app").mkdir()
+        (tmp_path / "app" / "m.py").write_text(
+            "from typing import Any\n"
+            "def f() -> dict[str, Any]:\n"
+            "    x: dict[str, Any] = {}\n"
+            "    return x\n",
+            encoding="utf-8")
+        baseline = debt_ratchet.measure(tmp_path)
+        (tmp_path / "app" / "m.py").write_text(
+            "from typing import Any\ndef f() -> dict[str, Any]:\n    return {}\n",
+            encoding="utf-8")
+        bp = _write_baseline(tmp_path, baseline)
+        assert debt_ratchet.check(bp, tmp_path) == 0
+
+    def test_missing_rule_key_in_v2_baseline_fails(self, tmp_path):
+        baseline = _make_tree(tmp_path)
+        del baseline["dict_str_any"]
+        bp = _write_baseline(tmp_path, baseline)
+        current, items = debt_ratchet._collect(tmp_path)
+        failures = debt_ratchet._gate_failures(baseline, current, items)
+        assert any("dict_str_any" in f and "缺失规则键" in f
+                   for f in failures), failures
+        assert debt_ratchet.check(bp, tmp_path) == 1
+
+    def test_v1_baseline_without_dict_str_any_still_passes(self, tmp_path):
+        """v1 标量基线本就没有 dict_str_any 键 —— 兼容跳过，不误判。"""
+        _make_tree(tmp_path)
+        v1 = {
+            "frontend_explicit_any": 2,
+            "except_silent": 1,
+            "god_modules": {},
+            "assertless_tests": 1,
+        }
+        bp = _write_baseline(tmp_path, v1)
+        current, items = debt_ratchet._collect(tmp_path)
+        assert debt_ratchet._gate_failures(v1, current, items) == []
+        assert debt_ratchet.check(bp, tmp_path) == 0
+
+
 @pytest.mark.skipif(
     not (Path(__file__).resolve().parents[2] / "frontend").is_dir(),
     reason="frontend tree absent",
@@ -383,6 +510,7 @@ def test_baseline_file_shape():
     assert set(data) - {"note"} == {
         "version", "frontend_explicit_any", "except_silent", "god_modules",
         "assertless_tests", "unannotated_defs", "unannotated_defs_pct",
+        "dict_str_any",
     }
     assert isinstance(data.get("note", ""), str)
     for key in ("frontend_explicit_any", "except_silent", "god_modules",
@@ -390,3 +518,5 @@ def test_baseline_file_shape():
         assert isinstance(data[key], dict), key
         assert all(isinstance(v, int) for v in data[key].values()), key
     assert isinstance(data["unannotated_defs_pct"], (int, float))
+    # #1550：dict_str_any 是总量口径标量（非路径级 map）。
+    assert isinstance(data["dict_str_any"], int)

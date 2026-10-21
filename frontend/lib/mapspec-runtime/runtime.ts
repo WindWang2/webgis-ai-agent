@@ -6,6 +6,9 @@ import {
 } from "@/lib/mapspec-compiler/reconciler";
 import { diffSpecsAsync, disposeWorker, consumeDiffLastFailed } from "@/lib/mapspec-compiler/worker-bridge";
 import { compileStyleMethod, isStyleMethodObject } from "@/lib/mapspec-compiler/compiler";
+// #1747：heatmapOnlyPaint 与 headless 编译器共用单一实现（导出 paint 与
+// live 逐键一致 —— 原生 heatmap-color 色带不再在导出里掉落）。
+import { heatmapOnlyPaint } from "@/lib/mapspec-compiler/heatmap-paint";
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { toMapLibrePaint } from "@/lib/mapspec-runtime/paint-bridge";
 import { isRefOnlySource } from "@/lib/mapspec/ref-source-resolver";
@@ -20,7 +23,7 @@ import {
   recordPaintPatch,
   recordRecompileFallback,
 } from "@/lib/utils/perf-counters";
-import { recordSymbolLawEvidence, heatmapRadiusExpression } from "@/lib/map-kit/symbol-law";
+import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
 import { recordSceneEvidence } from "@/lib/mapspec-runtime/adapter";
 import { checkMapSpecVersion } from "@/lib/carto-ir/version";
 import { resolveLayerVisibility } from "@/lib/carto-ir/visibility";
@@ -34,24 +37,6 @@ import {
 } from "@/lib/carto-ir/representation";
 import { devOnly } from "@/lib/utils/logger";
 
-/**
- * v1.6（方向 5）：heatmap 型表达层的安全 paint —— 只保留 heatmap-* 键
- * （circle 层改写为 heatmap 时 circle-* 键会被 MapLibre 拒绝），半径缺省
- * 走符号律（与 headless compiler 同一默认表）。
- */
-function heatmapOnlyPaint(
-  nativePaint: Record<string, unknown>,
-  featureCount: number | undefined,
-): Record<string, unknown> {
-  const heat: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(nativePaint)) {
-    if (k.startsWith("heatmap-")) heat[k] = v;
-  }
-  if (heat["heatmap-radius"] === undefined) {
-    heat["heatmap-radius"] = heatmapRadiusExpression({ featureCount });
-  }
-  return heat;
-}
 import {
   activeBandIndex,
   averageLabelChars,
@@ -1158,13 +1143,20 @@ export class MapSpecRuntime {
         }
       }
     }
-    const planFirstMode = planEffective ? repPlan!.windows[0].mode : null;
+    // #1726 项 1：主层「型」与「门」同源 —— 型改写按承载主门的 raw 首窗
+    // mode 判定（与下方 planGate 的 rawWindowsOf(repPlan!)[0] 同一窗口），
+    // 而非 normalized 首窗。否则首窗 visual_heatmap + 后续 raw 窗时，raw
+    // 窗被上屏成 heatmap（型/门来源不同窗）。无 raw 窗时主层退化为身份
+    // 锚，按 normalized 首窗改写（恒空门内型不改变渲染结果）。
+    const planMainMode = planEffective
+      ? (rawWindowsOf(repPlan!)[0] ?? repPlan!.windows[0]).mode
+      : null;
     const nativePaint = toMapLibrePaint(layer, {
       featureCount: this.sourceFeatureCounts.get(layer.source),
     });
     let baseType: string = layer.type;
     let basePaint: Record<string, unknown> = nativePaint;
-    if (planEffective && planFirstMode === "visual_heatmap" && layer.type === "circle") {
+    if (planEffective && planMainMode === "visual_heatmap" && layer.type === "circle") {
       baseType = "heatmap";
       basePaint = heatmapOnlyPaint(nativePaint, this.sourceFeatureCounts.get(layer.source));
     }

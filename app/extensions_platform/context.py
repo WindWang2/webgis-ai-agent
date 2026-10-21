@@ -533,7 +533,12 @@ class ExtensionContext:
         invoke_fn 本体留在本进程（in-process 语义）；流式事件聚合为单个
         工具结果。声明核对 / 权限核对 fail closed。
         """
-        from .sdk.model import ModelProviderSpec, aggregate_stream_events
+        from .sdk.model import (
+            MODEL_PROVIDER_REQUIRED_PERMISSIONS,
+            ModelProviderSpec,
+            aggregate_stream_events,
+        )
+        from .sdk.tool import ToolExtensionSpec
 
         if not isinstance(spec, ModelProviderSpec):
             raise ExtensionPlatformError(
@@ -582,11 +587,20 @@ class ExtensionContext:
             "type": "object",
             "properties": {"request": {"type": "object"}},
         }
+        # #1709：MODEL_PROVIDER 授权必须在调用期被强制（此前裸注册 = 死权限）。
+        # 借 SDK 的权限包裹（PERMISSION_NOT_GRANTED 错误形状与 register_tool
+        # 一致）；授权集合在注册期冻结进包裹层，进程内无扩权路径。
+        gated_invoke = ToolExtensionSpec(
+            name=projected,
+            description=spec.description or f"model provider {spec.provider_id}",
+            func=_model_invoke,
+            required_permissions=list(MODEL_PROVIDER_REQUIRED_PERMISSIONS),
+        ).wrap_with_permissions(self.grants)
         try:
             self._tool_registry.register(
                 projected,
                 spec.description or f"model provider {spec.provider_id}",
-                _model_invoke,
+                gated_invoke,
                 tier=1,
                 side_effect="external_side_effect",
                 deterministic=False,

@@ -17,7 +17,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    TypedDict,
+    cast,
+)
 
 
 _MAX_CARTOGRAPHIC_CHECKS = 64
@@ -47,6 +54,58 @@ _MAX_REPAIR_ATTEMPTS = 4
 _MAX_VISUAL_EVIDENCE = 4
 _MAX_PRODUCT_FALLBACKS = 16
 _MAX_PRODUCT_COMPONENTS = 32
+
+
+class CartographicResultEvidence(TypedDict, total=False):
+    """#1550：工具结果 → harness 证据投影的**具名载体**（替代裸 dict）。
+
+    键集 = ``CARTOGRAPHIC_RESULT_EVIDENCE_KEYS`` + 两条 agent 路径各自的
+    correlation 腿（``status`` / ``llm_payload_len``）。``total=False``：
+    证据键按在场性投影 —— 缺失键即缺失证据，绝不伪造默认值（与模块核心
+    不变量「缺失证据 → NOT_EVALUATED」同源）。
+    """
+
+    status: str
+    llm_payload_len: int
+    success: bool
+    is_compiled: bool
+    warnings: List[str]
+    checkpoint_id: str
+    message: str
+    correction_hint: str
+    cartography_findings: List[Dict[str, Any]]
+    cartographic_review: Dict[str, Any]
+    mapspec_fingerprint: str
+    runtime_observation_seq: int
+    runtime_projection_fingerprint: str
+    mutation_revision: int
+    map_product_evidence: Dict[str, Any]
+    # agent_pi_bridge 取消路径的标记（无世代证据可投影时唯一的在场键）。
+    cancelled: bool
+
+
+def project_cartographic_result_evidence(
+    raw: Dict[str, Any],
+    *,
+    status: str,
+    llm_payload_len: int,
+) -> CartographicResultEvidence:
+    """#1550：工具结果 → harness 证据的**单一投影入口**（两条 agent 路径共用）。
+
+    此前 ``cartography_runtime.record_cartographic_dispatch_evidence`` 与
+    ``pi_post_dispatch._record_cartographic_evidence`` 各持一份逐字相同的
+    逐键拷贝；键清单已由 CARTOGRAPHIC_RESULT_EVIDENCE_KEYS 单一化，投影
+    循环在此收敛为一处。动态键循环经 ``cast`` 落地 —— 键清单即契约
+    （TypedDict 键必须是字面量，无法按变量下标赋值）。
+    """
+    projected: Dict[str, Any] = {
+        "status": status,
+        "llm_payload_len": llm_payload_len,
+    }
+    for key in CARTOGRAPHIC_RESULT_EVIDENCE_KEYS:
+        if key in raw:
+            projected[key] = raw[key]
+    return cast("CartographicResultEvidence", projected)
 
 
 def _bounded_cartographic_review(review: Dict[str, Any]) -> Dict[str, Any]:
@@ -206,7 +265,8 @@ class CartographicReviewEvidence:
     source_tool_call_id: Optional[str] = None
     trusted: bool = False
     desired_review: Dict[str, Any] = field(default_factory=dict)
-    checks: List[Dict[str, Any]] = field(default_factory=list)
+    # #1550：check 条目是 CartographicCheck 投影（_cartography_check 产出）。
+    checks: List["CartographicCheck"] = field(default_factory=list)
     repair_attempts: List[Dict[str, Any]] = field(default_factory=list)
     visual_evidence: List[Dict[str, Any]] = field(default_factory=list)
     # Unified cartography feedback axes (visual / template_codegen / gis_semantics).
@@ -345,3 +405,92 @@ class EvaluationRun:
 
     def add(self, ev: ToolCallEvidence) -> None:
         self.evidence.append(ev)
+
+
+# ─── #1550：评估证据的序列化投影（具名载体，替代裸 dict[str, Any]）────────
+#
+# dataclass 出栈即拍平回裸 dict 的三条序列化接缝（pi_agent_harness 的
+# _cartography_check / _map_action_evidence_to_dict / _evidence_to_dict）
+# 从此有具名键集契约。三个序列化函数的键全部必中（可选语义以显式 None
+# 在场，不缺键）—— 故这里用 total 契约；投影的开放载荷腿（evidence /
+# map_product 等内部结构）仍是 dict，其自身契约在各自产出处。
+
+
+class CartographicCheck(TypedDict):
+    """``_cartography_check`` 的产出形状（desired/runtime 各 check 条目）。
+
+    全部键必中（不可修复/无建议的 check 以 ``suggested_fix=None`` 在场，
+    不缺席 —— 缺键与显式 None 在消费端同义，但形状保持稳定）。
+    """
+
+    rule: str
+    status: str
+    severity: str
+    message: str
+    evidence_class: str
+    evidence: Dict[str, Any]
+    repairability: str
+    suggested_fix: Optional[Dict[str, Any]]
+
+
+class MapActionEvidenceDict(TypedDict):
+    """``_map_action_evidence_to_dict`` 的产出形状（单条 ACK 的观测投影）。"""
+
+    action_id: str
+    command: str
+    session_id: str
+    status: str
+    run_id: str
+    turn_id: str
+    tool_call_id: str
+    sse_event_id: str
+    started_at: str
+    finished_at: str
+    duration_ms: Optional[float]
+    error: str
+    requested: Dict[str, Any]
+    actual: Dict[str, Any]
+    mapspec_fingerprint: Optional[str]
+    verifiable: bool
+    # 不可验证 ACK 的收敛判定为 None（绝不用假收敛充数）。
+    converged: Optional[bool]
+
+
+class RefResolutionDict(TypedDict):
+    """``_evidence_to_dict`` 内 refs 条目的投影形状。"""
+
+    ref: str
+    status: str
+    resolved: bool
+
+
+class MapSpecValidityDict(TypedDict):
+    """``_evidence_to_dict`` 内 mapspec_validity 腿的投影形状。"""
+
+    tier: str
+    is_valid: bool
+    evaluated: bool
+    semantic_errors: List[Any]
+    checkpoint_id: Optional[str]
+
+
+class ToolCallEvidenceDict(TypedDict):
+    """``_evidence_to_dict`` 的产出形状（单次工具调用的完整证据投影）。
+
+    可选腿（非 mutation 工具 / 无产品证据 / 无运行时路径）以 ``None``
+    在场而非缺席 —— 消费端按 falsy 判定，不区分两种缺席。
+    """
+
+    run_id: str
+    session_id: str
+    turn_id: str
+    tool_call_id: str
+    tool_name: str
+    duration_ms: int
+    is_error: bool
+    error_msg: str
+    refs: List[RefResolutionDict]
+    mapspec_validity: Optional[MapSpecValidityDict]
+    runtime_evidence_path: Optional[str]
+    map_product: Optional[Dict[str, Any]]
+    map_actions: List[MapActionEvidenceDict]

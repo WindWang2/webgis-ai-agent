@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TabularDataGrid } from '@/components/explorer/tabular-data-grid';
 import type { QueryResult } from '@/lib/api/data-fabric';
@@ -86,5 +86,89 @@ describe('Spatial Explorer TabularDataGrid Integration Tests', () => {
     expect(screen.getByText('金牛区')).toBeInTheDocument();
     expect(screen.queryByText('成华区')).not.toBeInTheDocument();
     expect(screen.getByText(/匹配 1 \/ 5 条/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * #1746-8：行复制按钮必须接管 clipboard 的失败路径。
+ *
+ * `navigator.clipboard.writeText(...)` 在权限被拒 / 文档失焦时 reject，在非
+ * 安全上下文（或旧浏览器缺 API）时同步 TypeError —— 两条路径无人接管都会变成
+ * unhandled rejection。
+ */
+describe('TabularDataGrid 行复制剪贴板接管（#1746-8）', () => {
+  const rows: QueryResult = {
+    dataset_id: 'cd-district-economy-2026',
+    total_count: 2,
+    features: [
+      { id: 'cd-01', district: '锦江区', gdp_billion: 142.5 },
+      { id: 'cd-02', district: '青羊区', gdp_billion: 156.8 },
+    ],
+  };
+
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalClipboard) {
+      Object.defineProperty(navigator, 'clipboard', originalClipboard);
+    } else {
+      Reflect.deleteProperty(navigator, 'clipboard');
+    }
+  });
+
+  // 用 fireEvent 而非 userEvent：userEvent.setup() 会自装 clipboard stub 覆盖
+  // 本用例的注入，无法观测组件的真实失败路径。
+  function copyFirstRow() {
+    fireEvent.click(screen.getByRole('button', { name: '复制第 1 行数据' }));
+  }
+
+  it('剪贴板被拒时不产生 unhandled rejection，且不显示「已复制」', async () => {
+    const seen: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      seen.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: vi.fn().mockRejectedValue(new DOMException('denied', 'NotAllowedError')) },
+      });
+
+      render(<TabularDataGrid data={rows} />);
+      copyFirstRow();
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(seen).toHaveLength(0);
+      expect(screen.queryByTitle('已复制行 JSON')).not.toBeInTheDocument();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('navigator.clipboard 缺失时点击不抛（静默降级）', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    Reflect.deleteProperty(navigator, 'clipboard');
+
+    render(<TabularDataGrid data={rows} />);
+
+    expect(() => copyFirstRow()).not.toThrow();
+    await new Promise((r) => setTimeout(r, 20));
+    // 缺 API 是同步 TypeError：不得冒泡成 React 未捕获错误
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(screen.queryByTitle('已复制行 JSON')).not.toBeInTheDocument();
+  });
+
+  it('剪贴板可用时正常显示「已复制」回执', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+
+    render(<TabularDataGrid data={rows} />);
+    copyFirstRow();
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0][0]).toContain('锦江区');
+    expect(await screen.findByTitle('已复制行 JSON')).toBeInTheDocument();
   });
 });

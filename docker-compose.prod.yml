@@ -44,13 +44,23 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${REDIS_PORT:-16379}:6379"
-    command: >
-      redis-server
-      --appendonly
-      --maxmemory 256mb
-      --maxmemory-policy noeviction
-      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod}
+    # #1676（SEC-04）：删除 `command: redis-server ... --requirepass
+    # ${REDIS_PASSWORD}` 整段 —— compose 在解析期完成插值并把结果存进容器
+    # Config.Cmd，`docker inspect --format '{{.Config.Cmd}}'` 直接打印明文；
+    # `docker top` / 宿主机 /proc/<pid>/cmdline 同理。该口令同时是 celery
+    # broker + result backend + session store 的钥匙。改为与 CI 实际部署的
+    # secure 栈同一入口：deploy/redis-entrypoint.sh 把 requirepass 写进
+    # /dev/shm tmpfs 的 0400 运行时 conf（不落盘、不进 argv），原 command 里
+    # 的配置项（appendonly / maxmemory 256mb / maxmemory-policy noeviction）
+    # 原样搬进 deploy/redis.conf。
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/entrypoint.sh"]
+    environment:
+      # `:?` 缺值即拒绝启动（绝不引导无认证或口令不匹配的实例）；entrypoint
+      # 与 healthcheck 的 $$REDIS_PASSWORD 都从这里取。
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod}"
     volumes:
+      - ./deploy/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./deploy/redis-entrypoint.sh:/usr/local/etc/redis/entrypoint.sh:ro
       - redis_prod_data:/data
     healthcheck:
       # 用 REDISCLI_AUTH 传密码，避免 -a 把密码暴露在进程列表 / shell history。
@@ -303,8 +313,19 @@ services:
     restart: unless-stopped
     environment:
       REDIS_ADDR: redis://redis:6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod.example}
+      # #1676（SEC-04）：REDIS_PASSWORD env 明文进 docker inspect Config.Env
+      # （任何能 inspect 的身份可取到 Redis 口令 —— 它同时是 celery broker +
+      # result backend + session store 的钥匙）。改用 REDIS_PASSWORD_FILE：
+      # 上游 redis_exporter v1.58.0 的 main.go 定义
+      # `flag.String("redis.password-file", getEnv("REDIS_PASSWORD_FILE", ""))`，
+      # exporter/pwd_file.go 用 json.Unmarshal 解析 {redis URI: 口令} 映射，
+      # 且仅在 REDIS_PASSWORD 为空时生效（故此处必须移除 REDIS_PASSWORD）。
+      # 文件内容由下方 configs: webgis_redis_password 挂载生成。
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
       REDIS_EXPORTER_CHECK_KEYS: celery
+    configs:
+      - source: webgis_redis_password
+        target: /run/secrets/redis_password
     depends_on:
       redis:
         condition: service_healthy
@@ -334,6 +355,35 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host:ro,rslave
+    networks:
+      - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 128m
+          cpus: "0.1"
+
+  # Alertmanager 投递通道（#1687）：与 secure 栈同款 —— deploy/prometheus.yml 的
+  # alertmanagers target 是 alertmanager:9093，标准栈此前同样没有该服务，
+  # 主机名解析失败、16 条规则无投递通道。receiver 配置 ./deploy/alertmanager.yml
+  # （webhook URL 由部署方把 __ALERT_WEBHOOK_URL__ 占位符替换为真实值；
+  # CI 路径由 production.yml 的 deploy-prod / rollback 自动渲染）。
+  # 9093 仅绑宿主机 loopback：运维经 UI/API 验证投递，不对网络暴露。
+  alertmanager:
+    image: quay.io/prometheus/alertmanager:v0.28.0@sha256:d5155cfac40a6d9250ffc97c19db2c5e190c7bc57c6b67125c94903358f8c7d8
+    container_name: webgis-prod-alertmanager
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9093:9093"
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - ./deploy/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
     networks:
       - webgis-net
     deploy:
@@ -383,6 +433,8 @@ volumes:
   nginx_log:
   prometheus_data:
   grafana_data:
+  # #1687：alertmanager 通知状态持久化（silence / 去重 / nflog）。
+  alertmanager_data:
 
 networks:
   webgis-net:
@@ -394,3 +446,10 @@ configs:
   # token，无引号（与 deploy/prometheus.yml 的 credentials_file 约定一致）。
   webgis_metrics_token:
     content: "${METRICS_TOKEN:?ERROR: METRICS_TOKEN not set. Set it in .env.prod (see .env.prod.example).}"
+  # #1676（SEC-04）：redis_exporter 的 REDIS_PASSWORD_FILE 内容。格式是上游
+  # 契约（exporter/pwd_file.go 的 json.Unmarshal）：{"<redis URI>": "<口令>"}，
+  # key 必须带 redis:// 前缀且与 REDIS_ADDR 一致。口令必须是 JSON 安全的
+  # （不含 " 与 \）——仓内口令一律按 secrets.token_urlsafe 生成
+  # （见 .env.prod.example 的生成命令），天然满足。
+  webgis_redis_password:
+    content: '{"redis://redis:6379": "${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Set it in .env.prod (see .env.prod.example).}"}'

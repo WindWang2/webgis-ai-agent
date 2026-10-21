@@ -15,11 +15,13 @@ tuple）。条目内存按 **gzip 字节长度** 计 —— 此前 ``len(value)`
 的元素个数（恒为 2），256MB 字节预算从未真正生效，进程可无界驻留瓦片字节。
 超单条上限的瓦片不入缓存（诚实降级：仍然服务该响应，只是不复用）。
 
-线程模型：``DfTileCache`` 是 threading.Lock 保护的同步结构（df-manager-loop
-协程与 manager 线程共用同一实例）；协程内的 single-flight 收敛见
-``TileBuildCoalescer``（必须在 df-manager-loop 上使用，asyncio 语义）。
+线程模型：``DfTileCache`` 是 threading.Lock 保护的同步结构（manager worker
+线程与 per-request event loop 协程共用同一实例）；协程内的 single-flight 收敛见
+``TileBuildCoalescer``（in-flight 槽持 ``concurrent.futures.Future``，跨
+event loop 安全）。
 """
 import asyncio
+import concurrent.futures
 import contextlib
 import threading
 from collections import OrderedDict
@@ -131,21 +133,25 @@ class DfTileCache:
 
 
 class TileBuildCoalescer(Generic[_T]):
-    """df-manager-loop 上的瓦片构建 single-flight。
+    """瓦片构建 single-flight（跨 event loop 安全）。
 
     并发同键请求合并为一次构建：首个请求执行 ``builder()``，其余 await 同一
-    future（ADR-0047 同族纪律：昂贵构建绝不惊群）。异常按请求逐份传播——
+    in-flight 结果（ADR-0047 同族纪律：昂贵构建绝不惊群）。异常按请求逐份传播——
     失败不缓存、不污染后续请求。
+
+    PERF-03（issue #1683）：in-flight 槽持有 ``concurrent.futures.Future``
+    （线程/loop 无关），follower 经 ``asyncio.wrap_future`` 在**自己的** loop
+    上 await。此前槽里是 asyncio.Future（"仅限单事件循环内使用"），而 manager
+    协程现在每个请求一条自己的 loop（PERF-03 消除进程级单 loop 头阻塞）——
+    跨请求 follower 若 await 别的 loop 的 future 会直接 RuntimeError，
+    tile 路由的并发同瓦片请求会从 single-flight 退化成 502。
 
     诚实降级（与会话路径 SingleFlightManager 同语义）：在飞键数达上限或等
     待超时后，后到请求 **自己执行构建**，绝不永久悬挂，也绝不静默吞结果。
-
-    仅限单事件循环内使用（future 属于创建它的 loop；df-manager-loop 常驻，
-    满足该前提）。
     """
 
     def __init__(self, max_inflight: int = 512, wait_timeout_s: float = 30.0):
-        self._inflight: "Dict[Hashable, asyncio.Future]" = {}
+        self._inflight: "Dict[Hashable, concurrent.futures.Future]" = {}
         self._max_inflight = max_inflight
         self._wait_timeout_s = wait_timeout_s
 
@@ -156,29 +162,37 @@ class TileBuildCoalescer(Generic[_T]):
             # loop 上无竞态）。
             return await builder()
         if leader:
-            fut: "asyncio.Future" = asyncio.get_running_loop().create_future()
+            fut: "concurrent.futures.Future" = concurrent.futures.Future()
             self._inflight[key] = fut
             try:
                 result = await builder()
-                fut.set_result(result)
+                # 后到者等待超时走 shield 降级（不取消本 future），故 set_*
+                # 不会撞上已取消的槽；仍防御性抑制，领导者绝不因 follower
+                # 的取消而失败。
+                with contextlib.suppress(concurrent.futures.InvalidStateError):
+                    fut.set_result(result)
                 return result
             except BaseException as exc:
-                fut.set_exception(exc)
-
-                def _consume(f: "asyncio.Future") -> None:
-                    # 无 follower 时异常无人取回 → GC 期 asyncio 记 ERROR 日志。
-                    # done-callback 主动消费（follower 已取回也幂等）。
-                    with contextlib.suppress(BaseException):
-                        f.exception()
-
-                fut.add_done_callback(_consume)
+                with contextlib.suppress(concurrent.futures.InvalidStateError):
+                    fut.set_exception(exc)
                 raise
             finally:
                 self._inflight.pop(key, None)
         follower_fut = self._inflight[key]
+        wrapped = asyncio.wrap_future(follower_fut)
+
+        def _consume(f: "asyncio.Future") -> None:
+            # 超时降级后 wrapped 无人取回 → GC 期 asyncio 记 ERROR 日志。
+            # done-callback 主动消费（已取回也幂等）。
+            with contextlib.suppress(BaseException):
+                f.exception()
+
+        wrapped.add_done_callback(_consume)
         try:
+            # shield：等待超时只放弃**本请求**的等待，不取消共享的 in-flight
+            # future —— 否则后续 follower 会 await 到一个已取消的槽。
             return await asyncio.wait_for(
-                asyncio.shield(follower_fut), timeout=self._wait_timeout_s
+                asyncio.shield(wrapped), timeout=self._wait_timeout_s
             )
         except (asyncio.TimeoutError, TimeoutError):
             # 领导者构建超过等待上限：后到者自行构建（诚实降级，不悬挂）。

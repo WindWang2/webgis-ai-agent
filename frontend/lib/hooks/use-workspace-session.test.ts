@@ -29,6 +29,8 @@ const hudState = vi.hoisted(() => ({
   setEditingLayerId: vi.fn(),
   // V7：会话切换清理工具激活态/脏标记。
   clearToolState: vi.fn(),
+  // #1725：会话切换清理 copilot 画布意图态（工具/高亮/微 UI/staged 信封）。
+  clearCopilotState: vi.fn(),
   historyOpen: false,
   resetDockState: vi.fn(),
   // Workbench V4：会话切换清理分组树/多选/锁定/隔离。
@@ -445,6 +447,30 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
       await result.current.selectSession('sid-explorer', vi.fn());
     });
     expect(vi.mocked(hudState.clearExplorerTasks)).toHaveBeenCalled();
+  });
+
+  it('#1725: selectSession clears session-scoped copilot canvas state', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({ title: 'S', messages: [] }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }));
+
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('sid-copilot', vi.fn());
+    });
+
+    // staged 信封/高亮/微 UI 是会话级意图态 —— 不清则会话 A 的手势信封被
+    // 会话 B 的下一轮 turn 捎带出去。
+    expect(vi.mocked(hudState.clearCopilotState)).toHaveBeenCalled();
+  });
+
+  it('#1725: startNewSession clears session-scoped copilot canvas state', () => {
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    act(() => {
+      result.current.startNewSession(vi.fn());
+    });
+    expect(vi.mocked(hudState.clearCopilotState)).toHaveBeenCalled();
   });
 
   it('#392: History 抽屉打开信号触发 refreshSessions（不再只 mount 拉一次）', async () => {

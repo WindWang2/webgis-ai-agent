@@ -348,6 +348,17 @@ class TestNormalization:
         assert [(w.min_zoom, w.max_zoom, w.mode) for w in norm] == [
             (0.0, 8.0, "raw"), (8.0, 24.0, "hidden")]
 
+    def test_whole_window_out_of_domain_rejected_after_clamp(self):
+        # #1719（与 TS 孪生 #1668 同款 parity）：合法性为「钳制后 min<max」。
+        # 整体越界窗钳成零宽（[-10,-5]→[0,0]、[25,30]→[24,24]）必须拒绝，
+        # 不得静默产出退化窗进入规范形计划。
+        assert normalize_windows([
+            {"min_zoom": -10, "max_zoom": -5, "mode": "raw"},
+            {"min_zoom": 0, "max_zoom": 24, "mode": "raw"}]) is None
+        assert normalize_windows([
+            {"min_zoom": 0, "max_zoom": 24, "mode": "raw"},
+            {"min_zoom": 25, "max_zoom": 30, "mode": "raw"}]) is None
+
     def test_overlapping_rejected(self):
         # 重叠（8→12 与 11→24）破坏半开连续性契约。
         assert normalize_windows([

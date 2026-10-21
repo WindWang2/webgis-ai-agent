@@ -44,7 +44,17 @@ _SECRET_KEY_MARKERS: tuple = SENSITIVE_KEY_PARTS
 _MAX_PERSISTED_LEAF_CHARS = 512
 #: hard budget for the fully-redacted params JSON (audit 08 §6.2.5)
 _MAX_REDACTED_JSON_CHARS = 4096
+#: list members kept before an explicit truncation marker is appended
+#: (review #1744-8: the marker makes the truncation visible — the ledger must
+#: never silently lose data)
+_MAX_LIST_ITEMS = 64
 _REDACTED = "[REDACTED]"
+#: honest truncation markers (review #1744-8): deep nesting used to collapse
+#: to a bare ``None`` and over-long lists were cut with no trace — both now
+#: leave a visible marker, matching the ``_digest_note`` / ``...[truncated]``
+#: conventions already used for oversized strings and over-budget JSON.
+_TRUNCATED_DEPTH = "[truncated:max-depth]"
+_TRUNCATED_LIST = "[truncated]"
 
 
 def _is_secret_key(key: Any) -> bool:
@@ -94,6 +104,9 @@ def redact_provenance_args(value: Any, depth: int = 0) -> Any:
     - oversized string leaves (>512 chars) keep the key and shrink to a
       ``sha256[:16]`` digest + byte-size note (existence verifiable, content
       not recoverable);
+    - deep nesting (>8 levels) and over-long lists (>64 items) are truncated
+      **with a visible marker** (review #1744-8) — the ledger never silently
+      drops data;
     - the result is bounded: redacted JSON exceeding 4KB is deterministically
       truncated (with a visible marker).
 
@@ -101,7 +114,8 @@ def redact_provenance_args(value: Any, depth: int = 0) -> Any:
     engine-side and service-side application compose safely.
     """
     if depth > 8:
-        return None
+        # review #1744-8：深层嵌套留显式标记，不再静默变成 None。
+        return _TRUNCATED_DEPTH
     if isinstance(value, dict):
         out: Any = {}
         for k, v in value.items():
@@ -113,7 +127,19 @@ def redact_provenance_args(value: Any, depth: int = 0) -> Any:
                 out[k] = redact_provenance_args(v, depth + 1)
         return _bound_redacted(out)
     if isinstance(value, list):
-        return [redact_provenance_args(v, depth + 1) for v in value[:64]]
+        # review #1744-8：超限截断留显式标记（丢弃条数入标记），且保留位
+        # 让出一个给标记 —— 输出总数仍是 _MAX_LIST_ITEMS，二次脱敏时长度
+        # 不再越界、标记原样通过（幂等）。
+        if len(value) > _MAX_LIST_ITEMS:
+            keep = _MAX_LIST_ITEMS - 1
+            redacted = [
+                redact_provenance_args(v, depth + 1) for v in value[:keep]
+            ]
+            redacted.append(
+                f"{_TRUNCATED_LIST}:{len(value) - keep} more items dropped"
+            )
+            return redacted
+        return [redact_provenance_args(v, depth + 1) for v in value]
     if isinstance(value, str) and len(value) > _MAX_PERSISTED_LEAF_CHARS:
         return _digest_note(value)
     return value

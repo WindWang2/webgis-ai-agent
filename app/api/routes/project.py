@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db, SessionLocal
 from app.core.auth import actor_ids, get_current_user, get_current_user_optional, get_owner_token
-from app.models.project import Project, WorkflowRun
+from app.models.project import Project, Workflow, WorkflowRun
 from app.services.map_product_service import MapProductService
 from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
@@ -93,6 +93,54 @@ async def _get_project_with_auth_offloaded(
             )
 
     return await asyncio.to_thread(_worker)
+
+
+def _engine_conflict(exc: ValueError) -> HTTPException:
+    """引擎/服务层 ValueError → 409 前置条件冲突（#1741）。
+
+    404 不再从异常消息文本推断（原 ``404 if "not found" in str(e) else 409``
+    —— 文案一改、或他处消息含该子串即错分类）：引用实体（run / workflow /
+    map-product version）的存在性由调用方在调用引擎前显式查询判定
+    （``_require_run_in_project`` / 各 map-product 路由的 get_version 预查），
+    因此到达这里的 ValueError 一律是"实体存在但状态不允许"的冲突 ——
+    状态机拒绝、输入漂移、图校验失败、合并维度冲突。
+    """
+    return HTTPException(status_code=409, detail=str(exc))
+
+
+async def _require_run_in_project(run_id: str, project_id: str) -> None:
+    """引用 run（及其 workflow）的存在性前置校验 —— 数据驱动 404（#1741）。
+
+    与引擎 ``WorkflowEngine._load_and_authorize_run`` + replay/resume/rerun
+    的 workflow 查询是同一组不变量，只是提前到路由边界显式判定：run 缺失、
+    跨项目 run、workflow 缺失各自 404，其余引擎 ValueError 经
+    ``_engine_conflict`` 映射 409。跨项目 run 报 404（不泄露存在性），与
+    ``_promote_run_artifacts_sync`` 的 "Run not found in project" 同义。
+    引擎内部仍会重新授权（INV-AUTH1），此处不替代任何安全判定。
+    """
+    def _worker() -> Optional[str]:
+        # 会话变量名用 thread_db（非 db）：#565 AST 守卫把 async def 子树内
+        # 任何 `db.<orm>` 判为事件循环上的同步 ORM 调用 —— worker 线程内的
+        # 局部会话按 _get_project_with_auth_offloaded 的同款命名书写。
+        with SessionLocal() as thread_db:
+            run = thread_db.execute(
+                select(WorkflowRun).where(WorkflowRun.id == run_id)
+            ).scalar_one_or_none()
+            if run is None:
+                return f"WorkflowRun {run_id} not found"
+            # Fail-closed（同引擎）：NULL project_id 的 legacy 行不得通配。
+            if run.project_id != project_id:
+                return f"Run {run_id} not found in project {project_id}"
+            workflow = thread_db.execute(
+                select(Workflow).where(Workflow.id == run.workflow_id)
+            ).scalar_one_or_none()
+            if workflow is None:
+                return f"Workflow {run.workflow_id} not found"
+            return None
+
+    missing = await asyncio.to_thread(_worker)
+    if missing:
+        raise HTTPException(status_code=404, detail=missing)
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -465,6 +513,9 @@ async def replay_run(
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    # #1741：run/workflow 存在性前置校验（数据驱动 404），取代原先按异常
+    # 消息子串猜 404/409 的分类。
+    await _require_run_in_project(run_id, project_id)
     tool_registry = get_tool_registry()
     try:
         return await _run_workflow_engine(
@@ -477,7 +528,7 @@ async def replay_run(
             expected_project_id=project_id,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+        raise _engine_conflict(e)
 
 
 @router.post("/{project_id}/runs/{run_id}/resume", response_model=WorkflowRunResponse)
@@ -498,6 +549,8 @@ async def resume_run(
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    # #1741：run/workflow 存在性前置校验（数据驱动 404）。
+    await _require_run_in_project(run_id, project_id)
     tool_registry = get_tool_registry()
     try:
         return await _run_workflow_engine(
@@ -510,7 +563,7 @@ async def resume_run(
             allow_rerun=req.allow_rerun,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+        raise _engine_conflict(e)
 
 
 @router.post("/{project_id}/runs/{run_id}/rerun", response_model=WorkflowRunResponse)
@@ -533,6 +586,9 @@ async def rerun_from_step(
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    # #1741：run/workflow 存在性前置校验（数据驱动 404）。两个分支
+    # （from_step 增量 / 无锚点完整重放）引用同一个 prior run。
+    await _require_run_in_project(run_id, project_id)
     tool_registry = get_tool_registry()
     try:
         if req.from_step:
@@ -565,7 +621,7 @@ async def rerun_from_step(
         )
         return prior
     except ValueError as e:
-        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+        raise _engine_conflict(e)
 
 
 def _promote_run_artifacts_sync(
@@ -742,6 +798,20 @@ def record_map_product_version(
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    # #1741：绑定的 run 存在性显式校验（数据驱动 404）——服务层 record_version
+    # 对「本项目内找不到该 run」的 ValueError 不再靠消息子串决定状态码。
+    if req.workflow_run_id:
+        bound_run = db.execute(
+            select(WorkflowRun).where(
+                WorkflowRun.id == req.workflow_run_id,
+                WorkflowRun.project_id == project_id,
+            )
+        ).scalar_one_or_none()
+        if bound_run is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"WorkflowRun {req.workflow_run_id} not found in project {project_id}",
+            )
     try:
         # ADR-0099：携带会话时服务端抓取 MapSpec 快照（restore/open 的
         # 授权依据）与操作者；指纹/差分仍然是服务端计算，客户端不可伪造。
@@ -771,7 +841,8 @@ def record_map_product_version(
             lineage_kind="linear",
         )
     except ValueError as e:
-        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+        # #1741：run 404 已在上方显式判定；余下 ValueError 是账本前置冲突。
+        raise _engine_conflict(e)
 
 
 @router.get("/{project_id}/map-products/{version_no}/open", response_model=MapProductOpenResponse)
@@ -832,6 +903,14 @@ async def restore_map_product_version(
         # SEC-08：会话所有权校验（review C1）—— restore 是对活会话的
         # MapSpec 突变，绝不允许指向他人会话。
         await _verify_session_access(req.session_id, user, owner_token)
+        # #1741：版本存在性显式校验（数据驱动 404）——与下方 full 分支的
+        # get_version 预查同形；服务层余下 ValueError 是恢复前置冲突
+        # （无快照 / 突变被拒）。
+        version_row = await asyncio.to_thread(
+            MapProductService.get_version, db, project_id, version_no)
+        if version_row is None:
+            raise HTTPException(
+                status_code=404, detail=f"map product version not found: {version_no}")
         try:
             return await MapProductService.restore_style_to_session(
                 db, project_id, version_no,
@@ -839,8 +918,7 @@ async def restore_map_product_version(
                 actor=str(user.get("user_id") or "user"),
             )
         except ValueError as e:
-            raise HTTPException(
-                status_code=404 if "not found" in str(e) else 409, detail=str(e))
+            raise _engine_conflict(e)
     # full restore = rerun the bound run from scratch (fresh artifacts).
     row = await asyncio.to_thread(
         MapProductService.get_version, db, project_id, version_no)
@@ -933,6 +1011,13 @@ def merge_map_product_versions(
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    # #1741：两侧版本存在性显式校验（数据驱动 404，缺失侧带版本号）——
+    # 服务层 diff/merge 的 "map product version not found" 不再靠消息子串
+    # 决定状态码；余下 ValueError 是结构性维度冲突（409）。
+    for _side_no in (req.from_version_no, req.to_version_no):
+        if MapProductService.get_version(db, project_id, _side_no) is None:
+            raise HTTPException(
+                status_code=404, detail=f"map product version not found: {_side_no}")
     try:
         return MapProductService.merge_dimensions(
             db, project_id, req.from_version_no, req.to_version_no,
@@ -940,7 +1025,7 @@ def merge_map_product_versions(
             actor=str(user.get("user_id") or "user"),
         )
     except ValueError as e:
-        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+        raise _engine_conflict(e)
 
 
 @router.post("/{project_id}/map-products/{version_no}/rerun", response_model=MapProductRerunResponse)

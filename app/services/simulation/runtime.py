@@ -218,7 +218,9 @@ class SimulationRuntime:
         timestamp = self._timestamp_for(tick)
         product = None
         if tick % self.config.output_stride == 0 or tick == self.config.n_steps:
-            product = self._emit_product(tick)
+            # 发射必须携带**待提交的 tick N 状态**：读 self._state 会让整条
+            # 时态序列错位一 tick（且末步 new_state 永不进入任何产物）。
+            product = self._emit_product(tick, new_state)
         diagnostics = SimulationStepDiagnostics(
             tick=tick,
             sim_seconds=tick * dt,
@@ -331,7 +333,7 @@ class SimulationRuntime:
         self._initial_total = self._state.total(var)
         self._expected_total = self._initial_total
         self.events.append("state_initialized")
-        self._emit_product(0)
+        self._emit_product(0, self._state)
 
     def _ensure_not_cancelled(self) -> None:
         if self._cancelled:
@@ -356,9 +358,11 @@ class SimulationRuntime:
         grid = getattr(self.params, "grid", None)
         return grid.crs if grid is not None else None
 
-    def _emit_product(self, tick: int) -> TemporalLayerProduct:
-        extras = self.law.feature_extras(self._state)
-        features, bbox, truncated = self._state.to_features(
+    def _emit_product(
+        self, tick: int, state: SpatialStateMatrix,
+    ) -> TemporalLayerProduct:
+        extras = self.law.feature_extras(state)
+        features, bbox, truncated = state.to_features(
             self.law.product_variable,
             threshold=self.law.product_threshold,
             max_features=MAX_SLICE_FEATURES,

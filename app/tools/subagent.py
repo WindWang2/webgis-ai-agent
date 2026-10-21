@@ -61,8 +61,8 @@ def register_subagent_tools(registry: ToolRegistry):
             "task": "用一段自然语言准确描述子任务的目标、输入、期望输出格式。子代理只看这一段，要写充分。",
             "role": "可选：专家角色名（如 spatial_scientist/algorithm_reviewer/map_observer/"
                     "result_verifier/doc_crosschecker/planner/corpus_worker）。不传 = 无角色的通用子代理。",
-            "domains": "可选：要给子代理开放的 tier-2 工具域列表，如 ['network','chinese']。默认空表示只给 tier-1 基础工具。",
-            "extra_tools": "可选：强制纳入工具白名单（按名字），无视 tier/domain。用于强制带上某个具体工具。",
+            "domains": "可选：要给子代理开放的 tier-2 工具域列表，如 ['network','chinese']。默认空表示只给 tier-1 基础工具。parallel_tasks 并行派发时对每个子代理同时生效。",
+            "extra_tools": "可选：强制纳入工具白名单（按名字），无视 tier/domain。用于强制带上某个具体工具。parallel_tasks 并行派发时对每个子代理同时生效。",
             "max_rounds": "可选：子代理最大对话轮次，默认 10（比主 30 短）。复杂子任务可以调高。",
         },
         side_effect="state_mutation",
@@ -158,6 +158,12 @@ def register_subagent_tools(registry: ToolRegistry):
                     "task": str(item["task"]),
                     "role": item_role,
                     "max_rounds": max_rounds,
+                    # #1735：调用方级 domains/extra_tools 对每个并行子代理
+                    # 同样生效 —— 此前只进单发路径，并行分支静默丢弃，
+                    # 子代理拿到的工具面与请求不符（LLM 看到的工具面
+                    # 与实际行为脱节）。
+                    "domains": tuple(domains) if domains else None,
+                    "extra_tools": tuple(extra_tools) if extra_tools else None,
                 })
             dispatcher = SubagentDispatcher(registry, parent_session_id=session_id)
             from app.services.subagent import SubagentTaskSpec
@@ -167,6 +173,8 @@ def register_subagent_tools(registry: ToolRegistry):
                     task=str(s["task"]),
                     role=s.get("role"),
                     max_rounds=max_rounds,
+                    domains=s.get("domains"),
+                    extra_tools=s.get("extra_tools"),
                 )
                 for s in specs
             ])

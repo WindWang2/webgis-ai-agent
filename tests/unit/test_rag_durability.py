@@ -20,6 +20,15 @@ The post-fix code:
     leaves "stale metadata" (recoverable by _recover_index_metadata_consistency)
   - on load, cross-checks index ntotal against metadata chunk count and
     drops orphaned metadata entries (trust the index)
+
+#1704: the index-ahead direction of that cross-check (ntotal > len(chunks),
+the crash window between add_vectors' index write and metadata write) used
+to log a warning and nothing else, so the next add_vectors numbered its new
+chunks from the short metadata and wrote them into slots already held by
+orphan vectors — permanent, silent metadata↔vector misalignment. Recovery
+now pads the metadata to ntotal with explicit unavailable placeholders,
+search skips them, and add_vectors reconciles before numbering (and refuses
+to write when reconciliation cannot be persisted).
 """
 import json
 import os
@@ -619,6 +628,192 @@ def test_stale_add_vectors_does_not_clobber_compacted_index(patch_embed):
             f"stale add_vectors clobbered the compacted index: disk ntotal="
             f"{disk_idx.ntotal}, metadata chunks={len(meta['chunks'])}"
         )
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+# ── #1704: index ahead of metadata (crash between the two writes) ─────
+
+
+def _crash_window_index_ahead(dir_: str, vectors: np.ndarray) -> None:
+    """Simulate add_vectors' crash window: rewrite index.faiss with MORE
+    vectors than metadata.json has chunks, leaving the metadata untouched
+    (the metadata write never happened).
+    """
+    import faiss
+
+    from app.services.rag.faiss_store import _atomic_write_faiss
+
+    crashed = faiss.IndexFlatIP(vectors.shape[1])
+    crashed.add(vectors)
+    _atomic_write_faiss(os.path.join(dir_, "index.faiss"), crashed)
+
+
+def test_recovery_pads_orphan_slots_when_index_is_ahead():
+    """#1704: index.faiss ahead of metadata.json used to produce a log line
+    and nothing else. Recovery must pad the metadata up to ntotal with
+    explicit ``unavailable`` placeholders — persisted, not just in memory —
+    so list position == vector slot again and search never surfaces an
+    orphan slot as a hit.
+    """
+    store, dir_ = _tmp_store()
+    try:
+        store.add_vectors(_fake_vectors(2), [
+            {"document_id": "d1", "content": "alpha"},
+            {"document_id": "d2", "content": "beta"},
+        ])
+
+        # Crash window: index gains 2 orphan vectors, metadata stays at 2.
+        _crash_window_index_ahead(dir_, _fake_vectors(4))
+        store._index = None  # force the next op to reload from disk
+
+        stats = store.get_stats()  # triggers _get_index -> recovery
+        assert stats["total_vectors"] == 4
+        assert stats["total_chunks"] == 4, (
+            f"recovery must pad metadata to ntotal; got total_chunks="
+            f"{stats['total_chunks']}"
+        )
+
+        meta = store.load_metadata()
+        # Real chunks untouched…
+        assert [c["document_id"] for c in meta["chunks"][:2]] == ["d1", "d2"]
+        assert [c["index"] for c in meta["chunks"][:2]] == [0, 1]
+        # …orphan slots are explicit placeholders.
+        for slot in (2, 3):
+            ph = meta["chunks"][slot]
+            assert ph.get("unavailable") is True, f"slot {slot} not a placeholder: {ph}"
+            assert ph["index"] == slot
+            assert ph.get("document_id") is None
+
+        # The pad must be on DISK, not just in memory: a fresh instance
+        # (cold cache) must see the reconciled state.
+        fresh = FaissVectorStore(index_dir=dir_)
+        on_disk = fresh.load_metadata()
+        assert len(on_disk["chunks"]) == 4
+        assert on_disk["chunks"][2].get("unavailable") is True
+
+        # Search skips the orphan slots: a query matching the row-0 vector
+        # hits both slot 0 (real) and slot 2 (orphan, same vector) — only
+        # the real one may come back.
+        results = fresh.search(_fake_vectors(1), top_k=10)
+        assert {r["content"] for r in results} == {"alpha", "beta"}, (
+            f"orphan slots leaked into search results: {[r.get('content') for r in results]}"
+        )
+        assert not any(r.get("unavailable") for r in results)
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+def test_add_vectors_after_index_ahead_crash_keeps_slots_aligned():
+    """#1704 end-to-end: after add_vectors crashed between its index.faiss
+    write and its metadata.json write (index 1 vector ahead), the next
+    add_vectors must number its new chunks onto REAL vector slots
+    (base_idx == ntotal), not onto the slots the orphan vectors occupy —
+    and retrieval must pair each vector with its own chunk's metadata.
+
+    Geometry (seed 99, dim 8): v_orphan is a near-duplicate of v_alpha, so
+    a v_orphan query ranks slot 2 (the orphan) strictly first and slot 0
+    (alpha) second; a v_gamma query ranks slot 3 (gamma) strictly first.
+    That makes the old mis-pairing observable: pre-fix, the orphan slot's
+    hit was answered with the NEW document's metadata (张冠李戴).
+    """
+    import faiss
+
+    rng = np.random.default_rng(99)
+    v_alpha, v_beta, v_gamma = (rng.random((1, 8)).astype(np.float32) for _ in range(3))
+    v_orphan = v_alpha + np.float32(0.01)  # nearest neighbour of itself
+
+    store, dir_ = _tmp_store()
+    try:
+        store.add_vectors(np.vstack([v_alpha, v_beta]), [
+            {"document_id": "d1", "content": "alpha"},
+            {"document_id": "d2", "content": "beta"},
+        ])
+
+        # Crash window: index.faiss lands with 1 extra (orphan) vector,
+        # the metadata write never happens.
+        _crash_window_index_ahead(dir_, np.vstack([v_alpha, v_beta, v_orphan]))
+        store._index = None  # next op reloads the crashed index from disk
+
+        # The upload that arrives after the crash.
+        store.add_vectors(v_gamma, [{"document_id": "d3", "content": "gamma"}])
+
+        meta = store.load_metadata()
+        disk_idx = faiss.read_index(os.path.join(dir_, "index.faiss"))
+        assert disk_idx.ntotal == len(meta["chunks"]) == 4, (
+            f"index/metadata diverged after post-crash add: ntotal="
+            f"{disk_idx.ntotal}, chunks={len(meta['chunks'])}"
+        )
+        # The new chunk must own vector slot 3 — NOT the orphan's slot 2.
+        new_chunk = meta["chunks"][3]
+        assert new_chunk["index"] == 3, (
+            f"#1704: new chunk numbered onto a stale slot: {new_chunk}"
+        )
+        assert new_chunk["document_id"] == "d3" and new_chunk["content"] == "gamma"
+        assert meta["chunks"][2].get("unavailable") is True, (
+            f"orphan slot 2 was overwritten by the new chunk's metadata: "
+            f"{meta['chunks'][2]}"
+        )
+
+        # Query the orphan vector: pre-fix its top hit (slot 2) was answered
+        # with d3/gamma's metadata; post-fix the slot is skipped and the
+        # top hit is the real nearest neighbour, alpha.
+        top = store.search(v_orphan, top_k=1)
+        assert len(top) == 1
+        assert top[0]["content"] == "alpha", (
+            f"#1704: orphan slot surfaced wrong metadata: {top[0]}"
+        )
+        assert top[0]["document_id"] == "d1"
+
+        # Query gamma's own vector: must hit gamma's own metadata.
+        top_gamma = store.search(v_gamma, top_k=1)
+        assert top_gamma[0]["content"] == "gamma"
+        assert top_gamma[0]["document_id"] == "d3"
+
+        # No result may ever carry the placeholder marker.
+        for r in store.search(v_orphan, top_k=10) + store.search(v_gamma, top_k=10):
+            assert not r.get("unavailable")
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+def test_add_vectors_refuses_when_recovery_cannot_persist(monkeypatch):
+    """#1704 belt-and-braces: if recovery itself cannot persist the repair
+    (disk full / permission denied on metadata.json), add_vectors must
+    refuse to write instead of numbering new chunks from the still-divergent
+    metadata — which would silently overwrite orphan vector slots.
+    """
+    import app.services.rag.faiss_store as mod
+
+    store, dir_ = _tmp_store()
+    try:
+        store.add_vectors(_fake_vectors(2), [
+            {"document_id": "d1", "content": "alpha"},
+            {"document_id": "d2", "content": "beta"},
+        ])
+
+        # Crash window: index 1 ahead of metadata.
+        _crash_window_index_ahead(dir_, _fake_vectors(3))
+        store._index = None
+
+        def boom(*a, **kw):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(mod, "_atomic_write_json", boom)
+
+        with pytest.raises(RagPersistenceError):
+            store.add_vectors(_fake_vectors(1), [{"document_id": "d3", "content": "gamma"}])
+
+        # Nothing was written: metadata still 2 chunks, index still the
+        # crashed 3-vector one (the refused add left no trace).
+        fresh = FaissVectorStore(index_dir=dir_)
+        assert [c["document_id"] for c in fresh.load_metadata()["chunks"]] == ["d1", "d2"]
+        import faiss
+
+        assert faiss.read_index(os.path.join(dir_, "index.faiss")).ntotal == 3
     finally:
         import shutil
         shutil.rmtree(dir_, ignore_errors=True)

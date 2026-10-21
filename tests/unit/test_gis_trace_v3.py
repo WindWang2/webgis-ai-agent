@@ -68,6 +68,48 @@ def test_registry_lazy_create_and_bounded():
     assert reg.record("", Stage.USER_INTENT) is False
 
 
+def test_record_after_lru_eviction_reuses_pinned_chain():
+    """#1720-4：LRU 逐出后迟到的链记录复用 pinned 区旧链。
+
+    pinned 区本为保护 settle 期窗口；此前 record() 在 LRU 未命中时无条件
+    start()，用新空链覆写 pinned 区 —— 已录得的证据阶段被静默丢弃。
+    """
+    reg = GisTraceRegistry(max_chains=2, max_pinned=8)
+    reg.start("evict-turn")
+    reg.record("evict-turn", Stage.USER_INTENT, text="成都市热力图")
+    # 洪水推挤：evict-turn 被逐出 LRU，但 pinned 区仍持有同一链对象。
+    for i in range(4):
+        reg.start(f"flood-{i}")
+    assert "evict-turn" not in reg._chains
+    pinned = reg._pinned.get("evict-turn")
+    assert pinned is not None
+    # 迟到记录：必须落到 pinned 旧链上（追加），不得另起空链。
+    assert reg.record("evict-turn", Stage.TOOL_CALLS, tool="spatial_aggregate") is True
+    chain = reg.get("evict-turn")
+    assert chain is pinned, "迟到记录不得覆写 pinned 链对象"
+    assert chain.first(Stage.USER_INTENT) is not None
+    assert chain.first(Stage.TOOL_CALLS) is not None
+    assert [Stage(int(k)).name for k in chain._records] == [
+        "USER_INTENT", "TOOL_CALLS"]
+
+
+def test_record_lazy_create_only_when_both_regions_miss():
+    """惰性创建仅限 LRU 与 pinned 两头都未命中（含 pinned 命中不新建链）。"""
+    reg = GisTraceRegistry(max_chains=2, max_pinned=8)
+    reg.start("p-only")
+    for i in range(4):
+        reg.start(f"flood-{i}")
+    assert "p-only" not in reg._chains
+    before = reg._pinned.get("p-only")
+    reg.record("p-only", Stage.VERIFICATION, verdict="pass")
+    assert reg._pinned.get("p-only") is before
+    assert before.first(Stage.VERIFICATION) is not None
+    # 两头都未命中 → 惰性 start（新链 + 新 pin）。
+    assert reg.record("brand-new", Stage.USER_INTENT, text="x") is True
+    assert reg.get("brand-new") is not None
+    assert "brand-new" in reg._pinned
+
+
 def test_record_stage_module_entry_never_raises():
     assert record_stage("t-module", Stage.VERIFICATION, verdict="pass") is True
     assert record_stage("", Stage.VERIFICATION) is False

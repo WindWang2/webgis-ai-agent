@@ -30,14 +30,27 @@ metadata:
     # store, tracked separately (not in this PR).
     nginx.ingress.kubernetes.io/affinity: "cookie"
     nginx.ingress.kubernetes.io/session-cookie-name: "webgis_sse_resume"
+    # #1688: 签发者清单见 04b-clusterissuer.yaml（ClusterIssuer
+    # letsencrypt-prod，HTTP-01）。修复前该注解在仓库内没有任何对应清单 ——
+    # cert-manager 发 IssuerNotFound event，webgis-tls 永不创建。
+    # 注意该清单是 cluster-scoped，故意不进 kustomization resources
+    # （kustomize 的 namespace 转换器会注入 metadata.namespace 并被 apiserver
+    # 拒绝），需 `kubectl apply -f deploy/k8s/04b-clusterissuer.yaml` 单独应用。
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   tls:
   - hosts:
-    - webgis.your-domain.com
+    # #1688: host 不再是写死的占位符 —— 单一事实来源是 01-configmap.yaml 的
+    # INGRESS_HOST，kustomization.yaml 的 replacements 在 build 时覆盖这里的
+    # 字面值（spec.tls[0].hosts[0] 与 spec.rules[0].host 两处）。此处的
+    # webgis.internal 只是让 raw-apply 也能通过 schema 校验的默认值：.internal
+    # 是 ICANN 保留的私网 TLD，忘改时公网 DNS 与 ACME HTTP-01 必然解析失败
+    # （响亮失败），不会误指向任何真实域名。改域名只需改 INGRESS_HOST 一处，
+    # 并同步 01-configmap.yaml 的 CORS_ORIGINS。
+    - webgis.internal
     secretName: webgis-tls
   rules:
-  - host: webgis.your-domain.com
+  - host: webgis.internal
     http:
       paths:
       - path: /api

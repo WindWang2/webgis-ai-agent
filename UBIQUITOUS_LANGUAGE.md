@@ -36,7 +36,7 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **not_evaluated** | The honest state when required evidence is missing, stale, or unverifiable; never counts as pass. | unknown, skipped, N/A |
 | **Fail-closed** | The policy that missing evidence fails safe: `not_evaluated`, `overall_passed: False`, no exemption. | strict mode, deny-by-default |
 | **overall_passed** | The gate flag on the stored review meaning CartographicQuality only; deliberately absent from the inject. | passed, success flag |
-| **EvaluationEvidence** | The harness-collected record (checks, repair attempts, counters) a verdict is rendered from. | evidence dict, harness dump |
+| **EvaluationEvidence** | The harness-collected record (checks, repair attempts, counters) a verdict is rendered from. Carried by the named `ToolCallEvidence` / `CartographicReviewEvidence` dataclasses and their `ToolCallEvidenceDict` / `CartographicCheck` / `CartographicResultEvidence` TypedDict projections (`app/lib/harness/evidence.py`) — #1550 removed the anonymous dict carrier this alias used to name. | evidence dict, harness dump |
 
 ## Cartographic standards layer (ADR-0200)
 

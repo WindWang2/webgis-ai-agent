@@ -93,8 +93,16 @@ def _counter(**kw) -> tuple[CrossProcessCounter, fakeredis.FakeRedis]:
 
 
 def _assert_baseline(gov: ResourceGovernor, *paths: str) -> None:
+    """基线断言：链上用量归零。
+
+    #1745 1：身份作用域在最后一个挂载归还后随链回收 —— ``usage_full``
+    返回 None（作用域已不存在）与归零等价，都算回到基本线；用量泄漏的
+    作用域因残留记账**不会**被回收，此处仍以非零断言抓住。
+    """
     for path in paths:
         u = gov.usage_full(path)
+        if u is None:
+            continue
         assert (u.rows, u.bytes, u.nodes, u.concurrency) == (0, 0, 0, 0), path
 
 

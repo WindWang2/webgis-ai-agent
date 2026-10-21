@@ -54,6 +54,12 @@ def test_contract_gate_runs_contract_commands():
     assert "test_schemathesis.py" in run, (
         "contract-gate 必须跑 schemathesis fuzz shard"
     )
+    assert "scripts/generate_endpoint_scope_matrix.py" in run, (
+        "contract-gate 必须跑 endpoint scope matrix --check（#1417）"
+    )
+    assert "tests/test_endpoint_scope_matrix.py" in run, (
+        "contract-gate 必须跑 endpoint scope matrix 测试（#1417 auth flags）"
+    )
 
 
 def test_contract_gate_covers_the_source_workflow_commands():
@@ -66,6 +72,10 @@ def test_contract_gate_covers_the_source_workflow_commands():
         "tests/unit/api_contract",
         "tests/test_api_docs_drift.py",
         "test_schemathesis.py",
+        # #1417 / #1729：endpoint scope matrix 两检曾在 contract.yml 有、
+        # contract-gate 无 —— #1417 权限面门禁因此从未进入发布链路。
+        "scripts/generate_endpoint_scope_matrix.py",
+        "tests/test_endpoint_scope_matrix.py",
     ):
         assert marker in source_run, f"contract.yml 自身不再包含 {marker}"
         assert marker in gate_run, f"contract-gate 缺少 contract.yml 的命令 {marker}"

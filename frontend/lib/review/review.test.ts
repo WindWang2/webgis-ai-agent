@@ -35,6 +35,37 @@ describe('review store', () => {
     expect(s.proposals[0].author.actor_kind).toBe('user');
   });
 
+  it('setProposals 丢弃迟到旧会话响应，且不回退 store.sessionId', () => {
+    // review R1-P3 / #1746-5：切换会话后，旧会话的列表响应不得覆盖当前列表，
+    // 也不得把 store.sessionId 回退到入参值（detail 路径同姿势）。
+    reviewSetSession('s2');
+    reviewSetProposals('s1', [
+      {
+        proposal_id: 'rp_stale', title: 'stale', status: 'submitted', risk: 'low',
+        base_revision: 1, author: { actor_id: 'u1', actor_kind: 'user', role: 'editor' },
+        updated_at: '2026-09-17T00:00:00+00:00',
+      },
+    ]);
+    const stale = getReviewState();
+    expect(stale.sessionId).toBe('s2');
+    expect(stale.proposals).toHaveLength(0);
+    expect(stale.status).toBe('idle');
+
+    // 同会话响应正常写入（守卫不误伤当前轮）。
+    reviewSetProposals('s2', [
+      {
+        proposal_id: 'rp_live', title: 'live', status: 'submitted', risk: 'low',
+        base_revision: 1, author: { actor_id: 'u1', actor_kind: 'user', role: 'editor' },
+        updated_at: '2026-09-17T00:00:00+00:00',
+      },
+    ]);
+    const live = getReviewState();
+    expect(live.sessionId).toBe('s2');
+    expect(live.status).toBe('ready');
+    expect(live.proposals).toHaveLength(1);
+    expect(live.proposals[0].proposal_id).toBe('rp_live');
+  });
+
   it('selected + detail + merge outcome 投影', () => {
     reviewSetSelected('rp_1');
     expect(getReviewState().selectedId).toBe('rp_1');

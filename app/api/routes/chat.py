@@ -1219,7 +1219,21 @@ async def chat_stream(
         )
 
     if use_pi:
-        assert pi_session_id
+        # #1741：原 `assert pi_session_id` 在 `python -O` 下被整体剥除，等于
+        # 生产运行时没有这道保证。改为显式 None 检查 + 错误信封（结构化
+        # detail 由统一信封移入 data）。不变量由构造保证：use_pi 为真时
+        # 上面 `if use_pi and last_event_id is None` 已把 pi_session_id 设为
+        # 非空 _affinity_sid（req.session_id or uuid4），而携带
+        # Last-Event-ID 的 resume 路径已在上面提前 return —— 此处只是不再
+        # 依赖解释器保留 assert 的显式断言。
+        if not pi_session_id:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "PI_SESSION_MISSING",
+                    "message": "agent-bridge turn has no session id",
+                },
+            )
         # V5-B: resolve the affinity worker for THIS session once — prompt,
         # abort and disconnect unwind all stay on it (abort routes via the
         # session-keyed active-turn table when invoked from elsewhere).

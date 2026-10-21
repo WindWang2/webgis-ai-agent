@@ -6,7 +6,7 @@ affine==3.0.1
     #   rasterstats
 aiohappyeyeballs==2.7.1
     # via aiohttp
-aiohttp==3.14.3
+aiohttp==3.14.5
     # via -r requirements.txt
 aiosignal==1.4.0
     # via aiohttp
@@ -14,7 +14,7 @@ aiosqlite==0.22.1
     # via -r requirements.txt
 alembic==1.20.0
     # via -r requirements.txt
-amqp==5.3.1
+amqp==5.4.1
     # via kombu
 annotated-doc==0.0.5
     # via
@@ -27,24 +27,22 @@ anyio==4.15.1
     #   httpx
     #   starlette
     #   watchfiles
-asyncpg==0.31.0
+asyncpg==0.32.0
     # via -r requirements.txt
 attrs==26.1.0
     # via
     #   affine
     #   aiohttp
-    #   jsonschema
     #   rasterio
-    #   referencing
 beautifulsoup4==4.15.0
     # via libpysal
-billiard==4.3.0
+billiard==4.3.1
     # via celery
 brotli==1.2.0
     # via fonttools
 celery==5.6.3
     # via -r requirements.txt
-certifi==2026.7.22
+certifi==2026.10.19
     # via
     #   httpcore
     #   httpx
@@ -56,7 +54,7 @@ cffi==2.1.1
     # via
     #   cryptography
     #   weasyprint
-charset-normalizer==3.5.1
+charset-normalizer==3.5.2
     # via requests
 click==8.5.0
     # via
@@ -74,7 +72,7 @@ click-didyoumean==0.3.1
     # via celery
 click-plugins==1.1.1.2
     # via celery
-click-repl==0.4.0
+click-repl==0.4.1
     # via celery
 cligj==0.7.2
     # via rasterstats
@@ -82,7 +80,7 @@ cloudpickle==3.1.2
     # via joblib
 contourpy==1.4.0
     # via matplotlib
-cryptography==50.0.1
+cryptography==50.0.2
     # via -r requirements.txt
 cssselect2==0.10.1
     # via weasyprint
@@ -102,13 +100,13 @@ esda==2.10.0
     # via -r requirements.txt
 faiss-cpu==1.15.1
     # via -r requirements.txt
-fastapi==0.141.1
+fastapi==0.156.8
     # via -r requirements.txt
-filelock==4.0.0
+filelock==4.2.4
     # via
     #   huggingface-hub
     #   torch
-fonttools==4.65.0
+fonttools==4.67.0
     # via
     #   matplotlib
     #   weasyprint
@@ -116,11 +114,11 @@ frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-fsspec==2026.7.0
+fsspec==2026.9.0
     # via
     #   huggingface-hub
     #   torch
-geopandas==1.1.4
+geopandas==1.2.0
     # via
     #   -r requirements.txt
     #   esda
@@ -133,17 +131,17 @@ h11==0.16.0
     #   uvicorn
 h3==4.5.0
     # via -r requirements.txt
-hf-xet==1.6.0
+hf-xet==1.7.0
     # via huggingface-hub
 httpcore==1.0.9
     # via httpx
-httptools==0.8.0
+httptools==0.9.0
     # via uvicorn
 httpx==0.28.1
     # via
     #   -r requirements.txt
     #   huggingface-hub
-huggingface-hub==1.32.0
+huggingface-hub==1.33.0
     # via
     #   sentence-transformers
     #   tokenizers
@@ -154,7 +152,7 @@ idna==3.20
     #   httpx
     #   requests
     #   yarl
-ijson==3.5.1
+ijson==3.6.0
     # via -r requirements.txt
 jinja2==3.1.6
     # via
@@ -163,10 +161,6 @@ jinja2==3.1.6
     #   torch
 joblib==1.6.0
     # via scikit-learn
-jsonschema==4.26.0
-    # via pystac
-jsonschema-specifications==2025.9.1
-    # via jsonschema
 kiwisolver==1.5.1
     # via matplotlib
 kombu==5.6.2
@@ -177,11 +171,11 @@ libpysal==4.15.0
     #   esda
 lxml==6.1.3
     # via duckduckgo-search
-mako==1.4.1
+mako==1.4.3
     # via alembic
 markdown-it-py==4.2.0
     # via rich
-markupsafe==3.0.3
+markupsafe==3.0.4
     # via
     #   jinja2
     #   mako
@@ -191,19 +185,19 @@ mdurl==0.1.2
     # via markdown-it-py
 mpmath==1.3.0
     # via sympy
-multidict==6.8.0
+multidict==7.1.0
     # via
     #   aiohttp
     #   yarl
-narwhals==2.26.0
+narwhals==2.27.1
     # via scikit-learn
-networkx==3.6.1
+networkx==3.7
     # via
     #   -r requirements.txt
     #   torch
 numexpr==2.14.2
     # via -r requirements.txt
-numpy==2.5.3
+numpy==2.5.4
     # via
     #   -r requirements.txt
     #   contourpy
@@ -263,7 +257,9 @@ nvidia-nvshmem-cu13==3.4.5
     # via torch
 nvidia-nvtx==13.0.85
     # via cuda-toolkit
-osmium==4.3.1
+opentelemetry-api==1.45.1
+    # via fastapi
+osmium==4.3.2
     # via -r requirements.txt
 packaging==26.3
     # via
@@ -281,12 +277,12 @@ pandas==2.3.3
     #   esda
     #   geopandas
     #   libpysal
-pillow==12.3.0
+pillow==13.0.0
     # via
     #   -r requirements.txt
     #   matplotlib
     #   weasyprint
-platformdirs==4.11.10
+platformdirs==4.13.5
     # via libpysal
 primp==2.0.1
     # via duckduckgo-search
@@ -304,29 +300,29 @@ propcache==0.5.4
     #   yarl
 psycopg2-binary==2.9.13
     # via -r requirements.txt
-pycparser==3.0
+pycparser==3.11
     # via cffi
-pydantic==2.13.5
+pydantic==2.14.1
     # via
     #   -r requirements.txt
     #   fastapi
     #   pydantic-settings
-pydantic-core==2.46.5
+pydantic-core==2.50.1
     # via pydantic
-pydantic-settings==2.15.0
+pydantic-settings==2.16.1
     # via -r requirements.txt
-pydyf==0.12.1
+pydyf==0.13.0
     # via weasyprint
 pygments==2.21.0
     # via rich
-pyjwt==2.15.0
+pyjwt==2.15.1
     # via -r requirements.txt
 pyogrio==0.13.0
     # via
     #   -r requirements.txt
     #   geopandas
     #   rasterstats
-pyparsing==3.3.2
+pyparsing==3.3.3
     # via
     #   matplotlib
     #   rasterio
@@ -338,7 +334,7 @@ pyproj==3.8.0
     # via geopandas
 pystac==1.15.2
     # via pystac-client
-pystac-client==0.9.0
+pystac-client==0.9.1
     # via -r requirements.txt
 pystac-core==1.15.2
     # via
@@ -425,14 +421,14 @@ python-dateutil==2.9.0.post0
     #   pandas
     #   pystac-client
     #   pystac-core
-python-dotenv==1.2.3
+python-dotenv==1.2.4
     # via
     #   -r requirements.txt
     #   pydantic-settings
     #   uvicorn
 python-multipart==0.0.32
     # via -r requirements.txt
-pytz==2026.3.post1
+pytz==2026.5
     # via pandas
 pyyaml==6.0.3
     # via
@@ -440,7 +436,7 @@ pyyaml==6.0.3
     #   huggingface-hub
     #   transformers
     #   uvicorn
-rasterio==1.5.1
+rasterio==1.5.2
     # via
     #   -r requirements.txt
     #   rasterstats
@@ -448,11 +444,7 @@ rasterstats==0.21.0
     # via -r requirements.txt
 redis==8.1.0
     # via -r requirements.txt
-referencing==0.37.0
-    # via
-    #   jsonschema
-    #   jsonschema-specifications
-regex==2026.9.10
+regex==2026.9.29
     # via
     #   tiktoken
     #   transformers
@@ -467,10 +459,6 @@ rich==15.0.0
     # via
     #   -r requirements.txt
     #   typer
-rpds-py==2026.6.3
-    # via
-    #   jsonschema
-    #   referencing
 safetensors==0.8.0
     # via transformers
 scikit-learn==1.9.1
@@ -486,11 +474,11 @@ scipy==1.18.1
     #   libpysal
     #   scikit-learn
     #   sentence-transformers
-sentence-transformers==6.0.1
+sentence-transformers==6.1.0
     # via -r requirements.txt
-setuptools==84.0.0
+setuptools==84.2.1
     # via torch
-shapely==2.1.2
+shapely==2.2.0
     # via
     #   -r requirements.txt
     #   esda
@@ -499,17 +487,17 @@ shapely==2.1.2
     #   rasterstats
 shellingham==1.5.4
     # via typer
-simplejson==4.1.2
+simplejson==4.2.0
     # via rasterstats
 six==1.17.0
     # via python-dateutil
-soupsieve==2.9.2
+soupsieve==3.0.3
     # via beautifulsoup4
-sqlalchemy==2.0.54
+sqlalchemy==2.0.55
     # via
     #   -r requirements.txt
     #   alembic
-starlette==1.6.0
+starlette==1.9.0
     # via
     #   -r requirements.txt
     #   fastapi
@@ -526,22 +514,22 @@ tinycss2==1.5.1
     #   weasyprint
 tinyhtml5==2.1.0
     # via weasyprint
-tokenizers==0.23.2
+tokenizers==0.23.3
     # via
     #   sentence-transformers
     #   transformers
-torch==2.14.0
+torch==2.14.1
     # via sentence-transformers
 tqdm==4.70.1
     # via
     #   huggingface-hub
     #   sentence-transformers
     #   transformers
-transformers==5.17.0
+transformers==5.20.2
     # via sentence-transformers
 triton==3.8.0
     # via torch
-typer==0.27.2
+typer==0.27.3
     # via transformers
 typing-extensions==4.16.0
     # via
@@ -553,9 +541,10 @@ typing-extensions==4.16.0
     #   click-repl
     #   fastapi
     #   huggingface-hub
+    #   opentelemetry-api
     #   pydantic
     #   pydantic-core
-    #   referencing
+    #   pydantic-settings
     #   sentence-transformers
     #   sqlalchemy
     #   starlette
@@ -566,7 +555,7 @@ typing-inspection==0.4.4
     #   fastapi
     #   pydantic
     #   pydantic-settings
-tzdata==2026.4
+tzdata==2026.5
     # via
     #   kombu
     #   pandas
@@ -574,7 +563,7 @@ tzlocal==5.4.4
     # via celery
 urllib3==2.8.0
     # via requests
-uvicorn==0.53.0
+uvicorn==0.54.0
     # via -r requirements.txt
 uvloop==0.23.0
     # via uvicorn
@@ -583,9 +572,9 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-watchfiles==1.2.0
+watchfiles==1.3.0
     # via uvicorn
-wcwidth==0.8.4
+wcwidth==0.9.3
     # via prompt-toolkit
 weasyprint==70.0
     # via -r requirements.txt
@@ -594,7 +583,7 @@ webencodings==0.6.1
     #   cssselect2
     #   tinycss2
     #   tinyhtml5
-websockets==17.1
+websockets==17.3
     # via uvicorn
 yarl==1.25.1
     # via aiohttp

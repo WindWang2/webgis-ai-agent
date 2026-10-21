@@ -28,7 +28,8 @@
     "view3DTitle": "视角: 3D (点击切换 2D)",
     "view2DTitle": "视角: 2D (点击切换 3D)",
     "uiTweaks": "UI 调整",
-    "settings": "设置"
+    "settings": "设置",
+    "moreActions": "更多操作"
   },
   "tabs": {
     "chat": "对话",

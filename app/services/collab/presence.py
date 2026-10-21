@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from typing import Any, Dict, List, Optional
 
@@ -89,7 +90,7 @@ return alive
 
 
 def _sanitize_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
-    """白名单 + 长度裁剪（服务端权威：载荷可信后才进广播/存储）。"""
+    """白名单 + 长度裁剪 + 非有限 float 剔除（服务端权威：载荷可信后才进广播/存储）。"""
     out: Dict[str, Any] = {}
     for key, value in patch.items():
         if key not in _ALLOWED_FIELDS:
@@ -100,6 +101,11 @@ def _sanitize_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
                     str(k)[:32]: v
                     for k, v in list(value.items())[:12]
                     if isinstance(v, (int, float, str, bool))
+                    # #1733：NaN/Infinity 不是合法 JSON —— 非有限 float 原样放行
+                    # 会穿过白名单进广播/存储，扇出写出浏览器 JSON.parse 拒绝的
+                    # 裸字面量（整帧静默丢弃）。整键剔除而非置 None：viewport
+                    # 语义上要么完整要么缺省。
+                    and (not isinstance(v, float) or math.isfinite(v))
                 }
         elif key == "selectionIds":
             if isinstance(value, list):

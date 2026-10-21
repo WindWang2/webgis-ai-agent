@@ -605,6 +605,9 @@ async def test_spawn_subagent_parallel_tasks_wired(tool_registry, monkeypatch):
         assert 1 <= len(specs) <= 6
         assert specs[0].task == "t1"
         assert specs[0].role == "result_verifier"
+        # 未传 domains/extra_tools 时保持 None（历史行为无回归）
+        assert specs[0].domains is None
+        assert specs[0].extra_tools is None
         return _FakeBatch()
 
     import app.services.subagent as sub_mod
@@ -643,6 +646,49 @@ async def test_spawn_subagent_parallel_tasks_validation(tool_registry):
         session_id="sess-v4-pv",
     )
     assert res["success"] is False and res["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_parallel_tasks_forwards_domains_extra_tools(
+        tool_registry, monkeypatch):
+    """#1735：parallel_tasks 分支必须把调用方级 domains/extra_tools 并入
+    每个 SubagentTaskSpec —— 此前组 spec 只写 task/role/max_rounds，并发
+    子代理静默丢失请求的工具域/白名单（工具面与请求不符）。"""
+    seen = {}
+
+    async def _fake_run_parallel(self, specs, **kwargs):
+        seen["specs"] = [
+            (s.task, s.role, s.domains, s.extra_tools) for s in specs
+        ]
+
+        class _Batch:
+            status = "completed"
+            results = []
+
+            def to_dict(self):
+                return {"success": True, "status": "completed", "results": []}
+
+        return _Batch()
+
+    import app.services.subagent as sub_mod
+    monkeypatch.setattr(
+        sub_mod.SubagentDispatcher, "run_parallel", _fake_run_parallel,
+    )
+    res = await tool_registry.dispatch(
+        "spawn_subagent",
+        {"task": "ignored",
+         "domains": ["network", "chinese"],
+         "extra_tools": ["nearest_facility"],
+         "parallel_tasks": [{"task": "t1"}, {"task": "t2", "role": "planner"}]},
+        session_id="sess-v4-parallel-fwd",
+    )
+    assert res.get("success") is True, res
+    specs = seen["specs"]
+    assert [s[0] for s in specs] == ["t1", "t2"]
+    assert specs[1][1] == "planner"
+    for _task, _role, domains, extra_tools in specs:
+        assert domains == ("network", "chinese")
+        assert extra_tools == ("nearest_facility",)
 
 
 # ─── dispatch 边界成员校验（review R2 MAJOR-8 负向测试）──────────────────

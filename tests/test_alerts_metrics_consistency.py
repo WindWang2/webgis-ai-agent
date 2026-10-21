@@ -338,24 +338,53 @@ def test_rule_files_are_mounted_in_both_prod_stacks():
         )
 
 
-def test_alertmanager_targets_not_empty():
-    """#1636：alertmanagers targets 为空 = 全部规则无投递通道 —— 生产故障时
-    告警静默，只有人工翻 UI 才发现。占位目标（alertmanager:9093）让
-    「alertmanager 未部署」在 Prometheus error log 里响亮失败；运维上线
-    receiver 后投递自动生效。"""
+def test_alertmanager_target_resolves_to_a_deployed_service():
+    """#1687：target 主机名必须是两个生产栈里真实部署的服务（替换 #1636 时代
+    只查「targets 非空」的弱断言 —— 占位目标足以让 CI 恒绿）。
+
+    #1636 把 targets 从空列表换成占位 ``alertmanager:9093``，而当时全仓库没有
+    任何 alertmanager 服务：该主机名在 compose 网络里 DNS 解析失败，16 条规则
+    （alerts-rules.json）全部无投递通道（生产故障静默，MTTR 退化到人工翻
+    Prometheus UI）。#1687 在两个 prod compose 补上 alertmanager 服务（服务名
+    即 target 主机名，receiver 配置 deploy/alertmanager.yml）；本断言钉住不变
+    式：targets 非空且主机名命中已部署 compose 服务 —— 服务被删 / 目标改名即红。
+    """
     cfg = yaml.safe_load((DEPLOY / "prometheus.yml").read_text(encoding="utf-8"))
     managers = cfg.get("alerting", {}).get("alertmanagers", [])
     assert managers, "prometheus.yml 未配置 alertmanagers —— 告警无投递通道"
-    targets = [
-        t
+    hosts = {
+        t.split(":")[0]
         for m in managers
         for sc in m.get("static_configs", []) or []
         for t in sc.get("targets", []) or []
-    ]
-    assert targets, (
+    }
+    assert hosts, (
         "alertmanagers targets 为空 —— 规则会在 Prometheus UI 可见但没有任何 "
         "receiver，生产故障时告警静默（#1636）"
     )
+    deployed: set = set()
+    for compose_file in ("docker-compose.prod.yml", "docker-compose.prod.secure.yml"):
+        deployed |= set(compose_services(compose_file))
+    unresolved = hosts - deployed
+    assert not unresolved, (
+        f"alertmanager targets {sorted(hosts)} 中的 {sorted(unresolved)} 不是任何"
+        "已部署 compose 服务 —— 主机名解析失败，告警仍无投递通道（#1687）"
+    )
+
+
+def test_alertmanager_config_is_mounted_in_both_prod_stacks():
+    """#1687：receiver 配置必须随 alertmanager 服务挂载。
+
+    只有服务没有配置 = alertmanager 以默认空配置启动（无 receiver）——
+    投递通道依旧不存在。bind 源的传输契约（scp 送达主机）由
+    tests/test_ci_prometheus_transport.py 通用守护。
+    """
+    for compose_file in ("docker-compose.prod.yml", "docker-compose.prod.secure.yml"):
+        volumes = compose_services(compose_file)["alertmanager"]["volumes"]
+        assert any("alertmanager.yml" in v for v in volumes), (
+            f"{compose_file}: alertmanager 未挂载 deploy/alertmanager.yml —— "
+            "服务在但无 receiver 配置，告警仍无投递通道（#1687）"
+        )
 
 
 # ── "Can actually fire" checks (CI substitute for staging fault injection) ─

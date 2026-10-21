@@ -83,6 +83,13 @@ class ExplorerPipelineRunner:
             )
             if not parse_res.success:
                 return parse_res
+            # #1740: parse 阶段的 per-source 失败 / 未解析 ref 与 fetch_errors
+            # 同轨进终态摘要。此前它们只存在于 parse 阶段自己的 data 里，
+            # `if not parse_res.success: return` 之后无人提取 —— 部分成功的
+            # 探索在终态报告里只见幸存者，违背 #774 的诚实纪律。
+            parse_data = parse_res.data or {}
+            parse_errors = parse_data.get("errors", []) or []
+            missing_refs = parse_data.get("missing_refs", []) or []
 
         # 4. Geocode Stage
         async with self.tracker.track_step(task_id, "explorer_geocode", {}):
@@ -111,6 +118,8 @@ class ExplorerPipelineRunner:
                 geocoded_ref_id=geocoded_ref_id,
                 total_rows=geo_stage_res.summary.total,
                 fetch_errors=fetch_errors,
+                parse_errors=parse_errors,
+                missing_refs=missing_refs,
                 on_progress=lambda p: on_progress("validate", p) if on_progress else None,
                 # #776: in-process 路径同样桥接进 chat session 命名空间。
                 session_id=session_id,

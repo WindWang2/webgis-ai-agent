@@ -11,11 +11,17 @@
   （同进程失效，幂等）。
 - 无 Redis：进程内模式照常工作 —— 发布是 no-op，不监听。
 
+热路径卸载（#1723）：有运行中事件循环时（async 热路径，如 session
+store() → 失效权威），同步 publish 卸载到 loop 默认线程池 —— 连接失败
+要吃满 ``socket_connect_timeout=1``，绝不在事件循环上阻塞；失败后写入
+退避时间戳，退避窗口内本进程静默跳过、窗口过后重探自愈。
+
 有界性：频道单条；消息 ≤256 字节 JSON（四个固定字段）；监听线程
 daemon，异常永不外溢。
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -79,13 +85,12 @@ def _client_cached() -> Optional[Any]:
         return client
 
 
-def broadcast_ref_invalidation(
-    session_id: str, ref_id: str, reason: str = "REPLACE"
+def _publish(
+    client: Any, session_id: str, ref_id: str, reason: str
 ) -> bool:
-    """发布 ref 失效事件（有界、无载荷；失败静默 = 依赖权威校验兜底）。"""
-    client = _client_cached()
-    if client is None:
-        return False
+    """同步发布（阻塞 IO；调用方负责在事件循环外卸载，见
+    ``broadcast_ref_invalidation``）。"""
+    global _cached_client, _client_failed_at
     try:
         message = json.dumps({
             "kind": "ref_invalidation",
@@ -96,12 +101,68 @@ def broadcast_ref_invalidation(
         }, ensure_ascii=False)
         client.publish(CHANNEL, message)
         return True
-    except Exception as exc:  # noqa: BLE001
-        global _cached_client, _client_failed_at
+    except Exception as exc:  # noqa: BLE001 - 广播是增值，绝不阻断主路径
+        import time as _time
+
         with _client_lock:
             _cached_client = None  # 丢缓存；退避后重探（Redis 恢复自愈）
+            # #1723：失败分支必须写退避时间戳（与 ``_redis_client() is None``
+            # 分支对齐）—— 不写则 ``_client_cached`` 的窗口判定永不生效，
+            # Redis 故障期每次 ref 写都重建客户端再撞一次连接超时（1s/次），
+            # 且毫无退避。
+            _client_failed_at = _time.monotonic()
         logger.debug("[cache-broadcast] publish failed (harmless): %s", exc)
         return False
+
+
+#: 卸载 publish 的未完成 future 强引用集（asyncio 文档：丢弃引用可能被
+#: GC、done 回调丢失）；done 后自动移除，语义同 ref_lifecycle 的任务集。
+_offloaded_publishes: set = set()
+
+
+def _offload_publish(
+    loop: asyncio.AbstractEventLoop,
+    client: Any,
+    session_id: str,
+    ref_id: str,
+    reason: str,
+) -> None:
+    """把阻塞 publish 卸载到 loop 的默认线程池（#1723）。
+
+    同步客户端 publish 在连接失败时吃满 ``socket_connect_timeout=1``
+    （读 2s）—— 在 async 热路径（session store() → 失效权威）上执行会
+    阻塞整个事件循环。卸载后调用方立即返回；失败退避照常在 ``_publish``
+    内生效（退避窗口内静默跳过）。
+    """
+    future = loop.run_in_executor(
+        None, _publish, client, session_id, ref_id, reason
+    )
+    _offloaded_publishes.add(future)
+    future.add_done_callback(_offloaded_publishes.discard)
+
+
+def broadcast_ref_invalidation(
+    session_id: str, ref_id: str, reason: str = "REPLACE"
+) -> bool:
+    """发布 ref 失效事件（有界、无载荷；失败静默 = 依赖权威校验兜底）。
+
+    有运行中事件循环（async 热路径）时同步 publish 卸载到线程池，绝不
+    在 loop 上阻塞近 1s 的连接超时（#1723）；此时返回 True 表示「已卸载」
+    而非「已确认送达」（best-effort 通知）。无 loop（同步 worker 线程）
+    时原地发布。任何失败都进入 ``_CLIENT_RETRY_S`` 退避窗口：窗口内
+    本进程静默跳过，窗口过后重探自愈。
+    """
+    client = _client_cached()
+    if client is None:
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        _offload_publish(loop, client, session_id, ref_id, reason)
+        return True
+    return _publish(client, session_id, ref_id, reason)
 
 
 def _apply_event(message: str) -> None:

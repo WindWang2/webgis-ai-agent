@@ -45,6 +45,18 @@ class TestMatrix:
             assert resolution.action == "retry_with_fresh_revision"
             assert resolution.winner == "none"
 
+    def test_pass_truncated_registered_as_non_error_skip(self):
+        # #1671：binding_pass_truncated 是"绑定通过但引用被截断"的
+        # 非错误 skip 回执，必须登记为 skip_disclosed（不得 fail-closed refuse）。
+        code = "binding_pass_truncated"
+        assert code in REASON_CODES
+        resolution = resolve_conflict(code)
+        assert resolution.code == code
+        assert resolution.action == "skip_disclosed"
+        assert resolution.winner == "none"
+        assert resolution.disclosure
+        assert disclosure_for(code) != f"未注册 reason code: {code}"
+
     def test_no_silent_last_write_wins(self):
         # 拒绝类动作必须存在披露（无静默裁决）。
         for code in REASON_CODES:

@@ -490,12 +490,34 @@ def format_session_plan_projection(
     return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + "\n" + block + products_line + next_action_line + product_line + goal_line + procedure_line
 
 
+#: SessionPlan 域的 SSE 事件登记表（#1684 API-01 ④）。
+#: ``events_to_sse`` 以 ``sse_event(item.event, ...)`` 逐事件投影，事件名是
+#: **变量**而非字面量 —— 静态扫描（app/lib/quality/api_compat.scan_sse_event_names）
+#: 看不见它们，契约快照会静默漏收整条通道。此处显式登记 + 发射时 fail-loud：
+#: 未登记的新事件名直接 ValueError（测试即红），而不是悄悄上一个前端不认
+#: 的新事件。公开名（无下划线）是契约面：realtime 契约闸消费它补全词表。
+SSE_EVENT_NAMES = frozenset({
+    SESSION_PLAN_UPDATED,
+    SESSION_PLAN_PROGRESS,
+    SESSION_PLAN_SUPERSEDED,
+    SESSION_PLAN_STEP,
+    # workflow_graph（ADR-0184 E8）复用本通道：单一事实源是
+    # app/services/workflow_runtime/graph_events.WORKFLOW_GRAPH_EVENT ——
+    # 该模块 import 本模块的 SessionPlanEvent，反向 import 会成环，故此处
+    # 按字面量登记并指向源（值漂移由下方 fail-loud + 测试红兜底）。
+    "workflow_graph",
+})
+
+
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:
     """Serialize SessionPlan events. Never uses CanonicalPlan event names."""
     chunks: list[str] = []
     for item in events:
         if item.event in CANONICAL_PLAN_EVENT_NAMES:
             raise ValueError(f"CanonicalPlan event name forbidden on Pi path: {item.event}")
+        # #1684：未登记事件名 fail-loud —— 见 SSE_EVENT_NAMES 注释。
+        if item.event not in SSE_EVENT_NAMES:
+            raise ValueError(f"unregistered session_plan SSE event: {item.event!r}")
         payload = dict(item.data)
         if session_id and "session_id" not in payload:
             payload["session_id"] = session_id

@@ -691,6 +691,18 @@ class WorkflowEngine:
             run.completed_at = datetime.now(timezone.utc)
             run.execution_trace = list(execution_trace)
             run.completed_steps = list(completed_steps)
+            # review #1744-4：failed 状态必须**现在就**落库。下面的 manifest
+            # 构建/指纹计算/提交一旦抛错，异常会穿出 _execute —— 旧结构里
+            # failed 只存在于内存，DB 行永远停在 status="running"（而
+            # workflow_runs 没有任何 stale/恢复清扫面），调用方看到的是
+            # 一条假 running。提交失败只降级告警：原始失败原因仍是主异常。
+            try:
+                db.commit()
+            except Exception:
+                logger.warning(
+                    "[WorkflowEngine] failed-status commit failed for run %s",
+                    run_id, exc_info=True,
+                )
 
         # Build the reproducibility manifest + fingerprint from whatever
         # completed (full or partial). Both fresh and resumed runs get a manifest

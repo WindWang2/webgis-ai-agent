@@ -7,6 +7,9 @@
   - ``app/core/**``            → 禁 import app.{services,api,lib,schemas,tools,extensions_platform}
   - ``app/contracts/**``       → 禁 import 上层（services/api/lib/schemas/tools/extensions_platform）
   - ``app/lib/cartography/**`` → 禁 import app.{services,api,tools,extensions_platform}
+  - ``app/tools/**``           → 禁 import app.api（#1678）
+  - ``app/services/**``        → 禁 import app.api（#1678）
+  - ``app/agent_pi_bridge.py`` → 禁 import app.api（#1678）
 
 豁免仅两种（ADR-0216 D3）：
   1. ``if TYPE_CHECKING:`` 块内的 import（类型面，非运行时边）；
@@ -37,6 +40,14 @@ FORBIDDEN: List[Tuple[str, Tuple[str, ...]]] = [
         "app.services", "app.api",
         "app.tools", "app.extensions_platform",
     )),
+    # #1678：下层反向 import 路由层的回潮边（E-2/#893 已修 bridge secret，
+    # 但 tools/Pi 桥两条主路径半路回潮，且原 FORBIDDEN 表恰好不覆盖）——
+    # tools→api（cartography_tools 曾 import api/routes/raster）与
+    # services→api（pi_tools/pi_rpc 曾走 api 取 bridge secret）零容忍。
+    ("app/tools", ("app.api",)),
+    ("app/services", ("app.api",)),
+    # agent_pi_bridge 是 services 同级的桥接实现，同样不得 import app.api。
+    ("app/agent_pi_bridge.py", ("app.api",)),
 ]
 
 ALLOW_MARK = "h01:allow"

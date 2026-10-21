@@ -129,8 +129,14 @@ def get_artifact(key: str) -> Optional[str]:
         return None  # corrupt meta -> treat as miss
     if recorded.get("src_identity") != _source_identity(recorded.get("src_path", "")):
         return None  # source changed -> stale, miss
-    # bump atime on the meta for LRU recency
-    os.utime(meta, None)
+    # bump atime on the meta for LRU recency — best-effort (#1742): the
+    # periodic orphan sweep may unlink the meta concurrently (or the FS may
+    # refuse the touch), and a failed recency bump must never turn a valid
+    # cache hit into an exception thrown at the caller.
+    try:
+        os.utime(meta, None)
+    except OSError as exc:
+        logger.debug("[artifact_cache] atime bump skipped: %s", exc)
     return path
 
 
@@ -179,12 +185,18 @@ def publish_artifact(key: str, src_path: str, compute: Callable[[], str]) -> str
         with open(_meta_path(key), "w", encoding="utf-8") as f:
             json.dump({
                 "key": key,
-                "src_path": src_path,
+                # str() 规整（#1742）：调用方可能传 pathlib.Path —— 此时
+                # json.dump 抛 TypeError，而 .tif 已原子落盘；异常会把一次
+                # 成功计算翻成调用方可见的失败，并留下无 meta 的孤儿产物。
+                "src_path": str(src_path),
                 "src_identity": _source_identity(src_path),
                 "operation": key,  # informational
                 "created_at": time.time(),
             }, f)
-    except OSError:
+    # OSError 之外：src_path/params 里出现 json 不可序列化对象时 TypeError，
+    # 循环引用 ValueError — sidecar 是记账附属物，写不上只降级为缓存 miss，
+    # 绝不把已落盘的产物算成失败。
+    except (OSError, TypeError, ValueError):
         pass
 
     # PERF MAJOR-3: the published size is known — bump the advisory counter
@@ -279,7 +291,11 @@ def get_chunk(key: str) -> Optional[str]:
         return None
     if recorded.get("src_identity") != _source_identity(recorded.get("src_path", "")):
         return None
-    os.utime(meta, None)  # LRU recency bump
+    # LRU recency bump — same best-effort discipline as get_artifact (#1742).
+    try:
+        os.utime(meta, None)
+    except OSError as exc:
+        logger.debug("[artifact_cache] atime bump skipped: %s", exc)
     return path
 
 
@@ -324,11 +340,12 @@ def publish_chunk(
         with open(_chunk_meta_path(key), "w", encoding="utf-8") as f:
             json.dump({
                 "key": key,
-                "src_path": source_path,
+                # str() 规整 + 宽异常捕获，同 publish_artifact（#1742）。
+                "src_path": str(source_path) if source_path else "",
                 "src_identity": _source_identity(source_path) if source_path else "",
                 "created_at": time.time(),
             }, f)
-    except OSError:
+    except (OSError, TypeError, ValueError):
         pass
     # PERF MAJOR-3: bump the advisory counter with the stored size (chunk
     # publishes are frequent small writes — never full-scan here unless the

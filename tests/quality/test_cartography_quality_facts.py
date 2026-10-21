@@ -29,6 +29,14 @@ def _check(rule: str, status: str, evidence: dict) -> dict:
     }
 
 
+@pytest.fixture()
+def fresh_retention_throttle(monkeypatch):
+    """复位保留策略的节流状态（模块级、跨测试共享；#1745 2）。"""
+    monkeypatch.setattr(store, "_retention_running", False, raising=False)
+    monkeypatch.setattr(store, "_retention_last_run", 0.0, raising=False)
+    monkeypatch.setattr(store, "_retention_last_result", None, raising=False)
+
+
 @pytest.mark.anyio
 async def test_record_and_query_roundtrip_recent_30(facts_db):
     """验收口径：写入后最近 30 次 run 可检索，趋势查询按检查项命中。"""
@@ -95,8 +103,12 @@ async def test_evidence_numbers_bounded_and_finite_only(facts_db):
 
 
 @pytest.mark.anyio
-async def test_retention_by_count_and_age(facts_db, monkeypatch):
-    """max_runs 截断保留最新；age 过期删除。双方言 SQL。"""
+async def test_retention_by_count_and_age(facts_db, monkeypatch, fresh_retention_throttle):
+    """max_runs 截断保留最新；age 过期删除。双方言 SQL。
+
+    #1745 2：保留策略已移出落库热路径（后台节流任务），本测试经公开的
+    ``maybe_enforce_retention`` 显式驱动它 —— 删除语义与节流前一致。
+    """
     monkeypatch.setattr(settings, "CARTO_METRICS_MAX_RUNS", 3)
     monkeypatch.setattr(settings, "CARTO_METRICS_RETENTION_DAYS", 90)
     for i in range(5):
@@ -104,6 +116,11 @@ async def test_retention_by_count_and_age(facts_db, monkeypatch):
             lane="runtime", source="test",
             checks=[_check("carto.load.ratio", "pass", {"load_ratio": i})],
         )
+    # 落库路径本身不做保留：写入量全部在账（后台保留可能在任意 await 点
+    # 已跑过，故只断言未超出写入量）。
+    assert len(await store.latest_runs(30)) <= 5
+    deleted = await store.maybe_enforce_retention()
+    assert deleted["overflow_runs"] >= 1
     runs = await store.latest_runs(30)
     assert len(runs) == 3
     values = sorted(
@@ -259,3 +276,43 @@ async def test_trend_prefix_query_escapes_like_wildcards(facts_db):
     ids = {row["check_id"] for row in trend}
     assert any(i.startswith("carto.load.ratio") for i in ids)
     assert not any(i.startswith("carto_load_ratioX") for i in ids)
+
+
+@pytest.mark.anyio
+async def test_retention_leaves_the_write_hot_path(facts_db, monkeypatch,
+                                                   fresh_retention_throttle):
+    """#1745 2：保留策略不在每次落库后同步执行。
+
+    落库路径（runtime/desired/eval 三条 lane 共用）只记账；保留由
+    ``schedule_retention`` 抛后台、按间隔节流 —— 多次写入至多触发一次。
+    """
+    calls: list[str] = []
+    real_enforce = store.maybe_enforce_retention
+
+    async def counting_enforce():
+        calls.append("enforce")
+        return await real_enforce()
+
+    monkeypatch.setattr(settings, "CARTO_METRICS_MAX_RUNS", 5000)
+    monkeypatch.setattr(settings, "CARTO_METRICS_RETENTION_DAYS", 90)
+    monkeypatch.setattr(store, "maybe_enforce_retention", counting_enforce)
+
+    for i in range(6):
+        assert await store.record_quality_run(
+            lane="runtime", source="test",
+            checks=[_check("carto.load.ratio", "pass", {"load_ratio": i})],
+        )
+    # 写入期间保留任务不同步阻塞写入路径（至多一次，且是后台任务）。
+    assert len(calls) <= 1, calls
+    result = await store.flush_retention()
+    assert len(calls) == 1, calls
+    assert result == {"expired_runs": 0, "overflow_runs": 0}
+    # 全部 6 条 run 都在账（max_runs=5000 不该删任何东西）。
+    assert len(await store.latest_runs(30)) == 6
+
+
+@pytest.mark.anyio
+async def test_flush_retention_without_sweep_returns_none(facts_db,
+                                                          fresh_retention_throttle):
+    """无在飞/未执行过的保留任务时 flush 返回 None（诚实：没跑过）。"""
+    assert await store.flush_retention() is None

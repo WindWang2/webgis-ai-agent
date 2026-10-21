@@ -30,11 +30,15 @@ CONTRACT = (
     REPO_ROOT / "docs/dev/ac-v11-contracts/semantic-checks.v1.json"
 )
 #: 码字面量的宿主文件族。semantic_checks_representation.py 是语义缩放
-#: 扩展（RepresentationAtScale）拆分出的同族检查模块（v2 契约已含其码），
-#: 拆分后扫描面必须跟随，否则「码清单冻结」会漏扫拆分模块。
+#: 扩展（RepresentationAtScale）拆分出的同族检查模块（v2 契约已含其码）；
+#: semantic_checks_maplevel.py 是场景级检查（组件布局/图语义、3D 拉伸、
+#: 等值线）拆分出的同族检查模块（ISSUE-044 god_modules 收敛 + ISSUE-1544
+#: evaluate_cartography_semantics 拆分）；拆分后扫描面必须跟随，否则
+#: 「码清单冻结」会漏扫拆分模块。
 SOURCE_FILES = [
     REPO_ROOT / "app/lib/cartography/semantic_checks.py",
     REPO_ROOT / "app/lib/cartography/semantic_checks_representation.py",
+    REPO_ROOT / "app/lib/cartography/semantic_checks_maplevel.py",
 ]
 
 #: 源码扫描噪音白名单：形似码但实为常量名/词表（非检查码）。

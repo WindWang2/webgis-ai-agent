@@ -207,8 +207,12 @@ def _windowed_zonal_stats(
             arr = reader.read_window(
                 (int(win.col_off), int(win.row_off), int(win.width), int(win.height))
             ).astype(np.float64, copy=False)
+            # #1736：掩膜必须用**修复后**的 poly —— 窗口由 poly.bounds 定，
+            # 若仍用修复前的 geom 做掩膜，统计区与披露的 geometry_repair
+            # 记录不是同一个几何（无效环在栅格化规则下甚至可能整片落空，
+            # 产出全 None 的「貌似无数据」行）。
             mask = geometry_mask(
-                [geom], out_shape=arr.shape,
+                [poly], out_shape=arr.shape,
                 transform=reader.window_transform(win), invert=True,
             )
             vals = arr[mask]

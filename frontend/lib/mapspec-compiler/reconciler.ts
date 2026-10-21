@@ -238,9 +238,13 @@ function diffFlatDict(a: unknown, b: unknown): string[] {
  * - `prev === null` means "the runtime has applied nothing yet" → everything
  *   in `next` is reported as `add`.
  * - Identical specs yield an empty patch (the runtime's no-op fast path).
- * - Layer order is significant (it controls z-order). A reordering of the same
- *   layer set is reported as `recompile` for every layer whose position
- *   changed, which is what the runtime needs to re-apply z-ordering.
+ * - Layer order is significant (it controls z-order), but a **pure
+ *   reordering** (same layer set, every layer deep-equal) yields an empty
+ *   patch: reorderings are not per-layer `recompile` events. The runtime
+ *   owns z-order reconciliation instead — after every apply it compares the
+ *   joined layer-id order key and calls `syncLayerZOrder` when it changed
+ *   (#375; see MapSpecRuntime.apply). Do not "fix" this by emitting
+ *   recompiles here: that would churn remove/add on every drag-reorder.
  */
 function isMapSpecShallowEqual(prev: MapSpec | null, next: MapSpec): boolean {
   if (prev === next) return true;

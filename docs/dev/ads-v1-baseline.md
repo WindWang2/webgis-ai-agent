@@ -9,8 +9,8 @@
 |---|---|
 | 样本数 | 60 |
 | 每次 rows | 200 |
-| P50 | 7.98 ms |
-| P95 | 10.09 ms |
+| P50 | 6.02 ms |
+| P95 | 6.63 ms |
 
 ## 内联缓存（ref_payload_cache）
 
@@ -19,14 +19,14 @@
 | 命中率 | 1.0 |
 | put P50 | 0.001 ms |
 | get(hit) P50 | 0.001 ms |
-| get(hit) P95 | 0.002 ms |
+| get(hit) P95 | 0.003 ms |
 
 ## 外部源可用率（真实 probe，不伪造）
 
 | 端点 | 可用 | probe 耗时 |
 |---|---|---|
-| overpass-api.de | yes | 14.0 ms |
-| services.arcgis.com | yes | 15.9 ms |
-| planetarycomputer.microsoft.com | yes | 14.9 ms |
+| overpass-api.de | yes | 308.2 ms |
+| services.arcgis.com | yes | 1771.4 ms |
+| planetarycomputer.microsoft.com | yes | 1590.2 ms |
 
 > sandbox default = unavailable (not faked)

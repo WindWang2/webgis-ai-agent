@@ -139,3 +139,31 @@ async def test_clear_annotations_emits_command(registry):
 def test_all_four_tools_registered(registry):
     names = [s["function"]["name"] for s in registry._schemas]
     assert set(names) == {"measure_distance", "measure_area", "add_marker", "clear_annotations"}
+
+
+# ─── descriptor unit semantics（#1749）─────────────────────────────
+# unit_semantics 必须与载荷键同单位：此前 measure_distance 声明 meters 却
+# 返回 distance_km、measure_area 声明 square_meters 却返回 area_km2 ——
+# 错误的单位语义进一致性校验与检索语料。
+
+
+def test_measure_distance_unit_semantics_matches_payload_key(registry):
+    """distance_km 载荷 ↔ kilometers 单位语义（canonical unit 词表内）。"""
+    assert registry.metadata("measure_distance")["unit_semantics"] == "kilometers"
+
+
+def test_measure_area_unit_semantics_matches_payload_key(registry):
+    """area_km2 载荷 ↔ square_kilometers 单位语义
+    （app/lib/gis/measurement.py CANONICAL_UNITS 的规范面积单位名）。"""
+    assert registry.metadata("measure_area")["unit_semantics"] == "square_kilometers"
+
+
+@pytest.mark.asyncio
+async def test_measure_tools_payload_keys_still_km_units(registry):
+    """载荷键不变（distance_km / area_km2）—— 单位语义只对齐描述符。"""
+    dist = await registry.dispatch(
+        "measure_distance", {"coordinates": [[0, 0], [1, 0]]})
+    assert dist["distance_km"] > 0
+    area = await registry.dispatch(
+        "measure_area", {"coordinates": [[0, 0], [1, 0], [1, 1], [0, 1]]})
+    assert area["area_km2"] > 12000

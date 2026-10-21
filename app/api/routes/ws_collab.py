@@ -21,15 +21,21 @@ L1 后定向读）—— 只读参与者的陈旧探测路径（R1-M1）。
 入站白名单 + 预算：ping | sync | presence | lease_acquire | lease_renew |
 lease_release；token bucket（容量 20，速率 20/s）超发 → 4408 close；
 单条消息 ≤ 16KB。载荷字段服务端白名单裁剪，凭据绝不入事件。
+
+SEC-02（#1674）：握手只认证一次 —— bearer 模式的消息循环内每 60s 重跑
+``authenticate_ws_token``（token_version / is_active 复核，与 ws.py:L128-135
+同口径），已注销/停用/ver 被 bump 的 token 立即以 4401 断开，不再能永久
+保持协作读写。session 模式（Conversation.owner_token）无 DB 用户可撤销，
+不适用该复核。
 """
 from __future__ import annotations
 
 import asyncio
-import hmac
 import json
 import logging
 import time
 import uuid
+from typing import NoReturn
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
@@ -49,6 +55,19 @@ _WS_RATE_LIMIT_WINDOW = 60
 _MSG_BUDGET_CAPACITY = 20
 _MSG_BUDGET_REFILL_PER_S = 20.0
 _MAX_INBOUND_BYTES = 16 * 1024
+#: SEC-02（#1674）：周期性撤销复核间隔（与 ws.py 同口径）。握手认证是一次性
+#: 的，logout/停用/bump token_version 后旧 token 必须在此窗口内失效。
+_REAUTH_INTERVAL_S = 60.0
+
+
+def _reject_constant(name: str) -> NoReturn:
+    """#1733：json.loads 默认接受 NaN/Infinity/-Infinity 字面量 —— 入站一律拒绝。
+
+    与 ws.py（F-15）同口径：Python 宽松解析器放行的裸常量不是合法 JSON，
+    会穿过 presence viewport 白名单进入广播/存储，最终由扇出写出给同会话
+    其他协作者 —— 浏览器 JSON.parse 抛错静默丢整帧。
+    """
+    raise ValueError(f"non-finite JSON constant: {name}")
 
 
 async def _fresh_revision(session_id: str) -> int:
@@ -190,7 +209,21 @@ class _CollabConnection:
                 envelope = await self.queue.get()
                 if envelope is None:
                     break
-                await self.ws.send_text(json.dumps(envelope, ensure_ascii=False, default=str))
+                # #1733：allow_nan=False —— NaN/Infinity 是非法 JSON（与 #1685
+                # SSE 修复同口径）。入站 parse_constant + presence 白名单已挡
+                # 两层，这里是对外最后一闸；万一穿透（如 ws_service 遗留直写
+                # 通道写入的 doc），丢该帧 + 日志，而不是把非法 JSON 发下游
+                # （浏览器 JSON.parse 抛错 = 静默丢帧）或把健康连接关掉。
+                try:
+                    frame = json.dumps(
+                        envelope, ensure_ascii=False, default=str, allow_nan=False
+                    )
+                except ValueError:
+                    logger.info(
+                        "[ws-collab] non-finite payload dropped for %s", self.client_id
+                    )
+                    continue
+                await self.ws.send_text(frame)
         except Exception:  # noqa: BLE001 — 发送失败 → 关闭触发重连（不静默留僵尸）
             self.closed = True
             self._schedule_close()
@@ -248,6 +281,7 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
         return
 
     # 所有权校验（SEC-03 / authorize_session_write 语义）。
+    from app.core.auth import owner_token_matches
     from app.tools._utils import async_db_session
 
     try:
@@ -275,8 +309,10 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     else:
         # 匿名会话：仅 owner_token 匹配；#1109 legacy NULL fail-closed。
         # JWT 不得连他人匿名会话（评审 m2 双拒）。
+        # #1711: 非 ASCII token 经 owner_token_matches fail-closed
+        # （compare_digest 对非 ASCII str 直接 TypeError → 1011/500）。
         if user_id is None and conv_owner_token is not None and owner_token is not None:
-            authorized = hmac.compare_digest(str(owner_token), str(conv_owner_token))
+            authorized = owner_token_matches(conv_owner_token, owner_token)
     if not authorized:
         await websocket.close(code=4003, reason="Session not owned by caller")
         return
@@ -329,6 +365,8 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
 
     budget = _MSG_BUDGET_CAPACITY
     last_budget_refill = time.monotonic()
+    # SEC-02（#1674）：撤销复核时钟从入循环起算（与预算同源 monotonic）。
+    last_reauth = last_budget_refill
     last_presence_relay = 0.0
     # R2-M-6：sync 触发全量 doc 读（HGETALL+解析+可能磁盘复活）—— 独立的
     # 更严格预算（2/s，突发 4），与 presence/lease 的一般预算分桶。
@@ -360,6 +398,20 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
             raw = await websocket.receive_text()
             # 预算（token bucket）。
             now = time.monotonic()
+            # SEC-02（#1674）：周期性撤销复核。此前握手后只认证一次，已注销/
+            # 停用/token_version 被 bump 的用户可无限期保持协作读写（半径是
+            # HTTP 面 30min TTL 的无限倍）。仅 bearer 模式有撤销向量 ——
+            # session 模式是 Conversation.owner_token，没有可撤销的 DB 用户；
+            # 口径与 ws.py:L128-135 一致（60s 重跑 + close 4401）。
+            if mode == "bearer" and now - last_reauth >= _REAUTH_INTERVAL_S:
+                last_reauth = now
+                from app.core.auth import WsAuthError, authenticate_ws_token
+
+                try:
+                    await authenticate_ws_token(token)
+                except WsAuthError:
+                    await websocket.close(code=4401, reason="Token revoked")
+                    break
             budget = min(
                 _MSG_BUDGET_CAPACITY,
                 budget + (now - last_budget_refill) * _MSG_BUDGET_REFILL_PER_S,
@@ -372,7 +424,9 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
             if len(raw) > _MAX_INBOUND_BYTES:
                 continue  # 超限丢弃（计数已扣 —— 持续超发会被预算断开）
             try:
-                message = json.loads(raw)
+                # #1733：parse_constant 拒绝 NaN/Infinity/-Infinity（ValueError
+                # 与下面既有 except 同一落地：整帧丢弃，预算已扣）。
+                message = json.loads(raw, parse_constant=_reject_constant)
             except (ValueError, TypeError):
                 continue
             if not isinstance(message, dict):

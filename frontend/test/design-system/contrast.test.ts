@@ -53,10 +53,19 @@ const AA_BODY = 4.5;
 /** AA non-text / large text. Icons, dividers, decorative marks. */
 const AA_NON_TEXT = 3.0;
 
-/** The five accent presets the tweaks panel offers. */
+/**
+ * The five accent presets the tweaks panel offers.
+ *
+ * Extracted from the panel source because the presets are the contract: the
+ * correction in `globals.css` must hold for exactly the hexes a user can pick.
+ * The shape is `{ value: '#15803d', nameKey: 'color.green' }` — an earlier
+ * regex assumed a `name:` property, matched nothing, and the two `it.each`
+ * blocks below silently registered zero cases (green suite, no coverage). The
+ * guard assertion below fails loudly if that ever happens again.
+ */
 const ACCENT_PRESETS = (() => {
   const src = readFileSync(resolve(__dirname, '../../components/tweaks-panel.tsx'), 'utf8');
-  return Array.from(src.matchAll(/\{ value: '(#[0-9a-f]{6})', name:/gi)).map((m) => m[1]);
+  return Array.from(src.matchAll(/\{\s*value:\s*'(#[0-9a-fA-F]{6})',\s*nameKey:/g)).map((m) => m[1]);
 })();
 
 /** Resolves a token to a colour, following one level of `var()` indirection. */
@@ -130,6 +139,15 @@ describe('runtime accent correction', () => {
     expect(darkBlock, 'dark theme must correct the raw accent').toMatch(ACCENT_MIX);
     // Light is the identity: the presets already clear AA there.
     expect(blockBody(':root')).toMatch(/--agent-accent:\s*var\(--agent-accent-raw\)/);
+  });
+
+  it('extracts every preset the tweaks panel actually offers', () => {
+    // Guard against the silent-zero regression: a stale extraction shape must
+    // turn the parameterized blocks below red, not into 0 registered cases.
+    expect(ACCENT_PRESETS.length, 'tweaks panel presets must be extractable').toBeGreaterThan(0);
+    for (const preset of ACCENT_PRESETS) {
+      expect(preset).toMatch(/^#[0-9a-fA-F]{6}$/);
+    }
   });
 
   it.each(ACCENT_PRESETS)(

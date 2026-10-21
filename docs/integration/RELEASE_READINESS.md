@@ -1,7 +1,7 @@
 # Release Readiness（生成物 · 确定性）
 
 - verdict: **NOT-READY**
-- git commit（生成时）: `7cb26580246e`（身份以包含本文件的 commit 为准）
+- git commit（生成时）: `60fcdd84ffdb`（身份以包含本文件的 commit 为准）
 
 ## 现场闸（生成时真实执行）
 
@@ -45,5 +45,11 @@
 - adr-duplicate-180: 存量 ADR 0180 撞号（watermark 下 known limitation）: ['docs/adr/0180-gis-situation-world-model.md', 'docs/adr/0180-pi-native-harness-kernel-sessionplan.md', 'docs/adr/0180-pi-typed-tool-surface-hardening.md']
 - adr-duplicate-182: 存量 ADR 0182 撞号（watermark 下 known limitation）: ['docs/adr/0182-gis-skill-procedure-library-v1.md', 'docs/adr/0182-harness-resource-governor-v1.md']
 - adr-duplicate-183: 存量 ADR 0183 撞号（watermark 下 known limitation）: ['docs/adr/0183-gis-spatial-reasoning-memory.md', 'docs/adr/0183-harness-goal-satisfaction-evaluator.md', 'docs/adr/0183-harness-replay-benchmark-explainability.md', 'docs/adr/0183-mutation-transactions-v1.md', 'docs/adr/0183-semantic-map-product-graph-v1.md']
+- adr-duplicate-204: 存量 ADR 0204 撞号（watermark 下 known limitation）: ['docs/adr/0204-capability-abi-v2-binding-conformance.md', 'docs/adr/0204-f03-harness-lifecycle-convergence.md']
+- adr-duplicate-214: 存量 ADR 0214 撞号（watermark 下 known limitation）: ['docs/adr/0214-composition-contract-component-abi.md', 'docs/adr/0214-map-plan-compiler.md', 'docs/adr/0214-mapspec-render-runtime-data-plane.md', 'docs/adr/0214-trace-replay-oracle-v3.md', 'docs/adr/0214-visual-observation-repair-provider.md', 'docs/adr/0214-workflow-resource-scheduler-convergence.md']
+- adr-duplicate-215: 存量 ADR 0215 撞号（watermark 下 known limitation）: ['docs/adr/0215-context-revalidation-safe-reuse.md', 'docs/adr/0215-gis-dataset-semantic-contract.md', 'docs/adr/0215-gis-intent-requirement-ir.md', 'docs/adr/0215-worker-placement-envelope-and-inline-admission.md']
+- adr-duplicate-216: 存量 ADR 0216 撞号（watermark 下 known limitation）: ['docs/adr/0216-architecture-boundaries-contract-kernel.md', 'docs/adr/0216-durable-turn-journal.md', 'docs/adr/0216-subagent-delegation-lease-protocol.md']
+- adr-duplicate-217: 存量 ADR 0217 撞号（watermark 下 known limitation）: ['docs/adr/0217-large-data-plane-vnext.md', 'docs/adr/0217-situational-memory-graph-recompute.md', 'docs/adr/0217-unified-gis-action-ir.md', 'docs/adr/0217-visual-observation-blob-lifecycle-and-safe-repair.md']
+- adr-duplicate-228: 存量 ADR 0228 撞号（watermark 下 known limitation）: ['docs/adr/0228-cartographic-product-manifest-v1.md', 'docs/adr/0228-ci-toolchain-no-runner-image-drift.md']
 - real-lane-opt-in: real-services 车道为 opt-in 资源纪律；未运行时本报告以 not-run 显式标注，不构成 pass
 - browser-e2e: Playwright 浏览器级 E2E 沿用既有 nightly REQUIRE_BROWSER 机制；本 Epic 的前端证据为 vitest 组件/模块行为级

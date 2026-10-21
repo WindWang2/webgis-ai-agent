@@ -547,3 +547,36 @@ def test_r2_coarse_band_window_aligned_to_reference_footprint(monkeypatch, tmp_p
     assert f.shape == c.shape
     interior = (slice(2, -2), slice(2, -2))
     assert np.abs(c[interior] - f[interior]).max() < 0.1 * fine_px
+
+
+def test_get_catalog_passes_http_timeout(monkeypatch):
+    """review #1744-6：STAC 目录检索必须带 HTTP 超界。
+
+    旧实现 ``Client.open(url)`` / ``catalog.search`` / ``list(search.items())``
+    全程无超时，与栅格读取的 GDAL_HTTP_TIMEOUT 硬化形成缺口；catalog 被
+    lru_cache(maxsize=1) 缓存，一次挂死毒化整个进程。回归：open 必须收到
+    timeout（pystac-client 会把它传播到该 client 的所有后续请求）。"""
+    import pystac_client
+
+    from app.services.rs import stac_client as stac_mod
+    from app.services.rs.stac_client import StacClientPrimitive
+
+    captured: dict = {}
+
+    class _FakeClient:
+        @staticmethod
+        def open(url, **kwargs):
+            captured["url"] = url
+            captured.update(kwargs)
+            return object()
+
+    monkeypatch.setattr(pystac_client.Client, "open", _FakeClient.open)
+    StacClientPrimitive._get_catalog.cache_clear()
+    try:
+        StacClientPrimitive()._get_catalog()
+    finally:
+        StacClientPrimitive._get_catalog.cache_clear()
+
+    assert captured["url"] == stac_mod._catalog_url()
+    assert captured["timeout"] == stac_mod._STAC_HTTP_TIMEOUT_S
+    assert stac_mod._STAC_HTTP_TIMEOUT_S > 0

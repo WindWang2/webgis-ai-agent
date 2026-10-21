@@ -28,7 +28,8 @@
     "view3DTitle": "View: 3D (click for 2D)",
     "view2DTitle": "View: 2D (click for 3D)",
     "uiTweaks": "UI tweaks",
-    "settings": "Settings"
+    "settings": "Settings",
+    "moreActions": "More actions"
   },
   "tabs": {
     "chat": "Chat",

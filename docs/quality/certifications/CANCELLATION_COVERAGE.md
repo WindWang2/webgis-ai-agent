@@ -55,7 +55,7 @@
 | app/lib/geo_analysis/sar_filter.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/sar_temporal.py | 0 | 9 | no-checkpoints |
 | app/lib/geo_analysis/sar_v3.py | 0 | 2 | no-checkpoints |
-| app/lib/geo_analysis/spatial_regression.py | 2 | 70 | certified |
+| app/lib/geo_analysis/spatial_regression.py | 2 | 71 | certified |
 | app/lib/geo_analysis/spatial_sampling.py | 2 | 16 | certified |
 | app/lib/geo_analysis/spatial_weights.py | 0 | 5 | no-checkpoints |
 | app/lib/geo_analysis/spatiotemporal_eha.py | 0 | 18 | no-checkpoints |

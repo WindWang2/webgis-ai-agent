@@ -43,9 +43,15 @@ def get_group_key(dt: datetime, unit: TemporalUnit) -> tuple[str, datetime, date
         end = start + timedelta(days=1)
         key = start.strftime("%Y-%m-%d")
     elif unit == TemporalUnit.WEEK:
+        # 桶按**周一起算**（回退到本周一 00:00）。key 必须与桶同一套周
+        # 定义编号：旧代码 %U 是周日基准的周序号、%Y 是日历年份 —— 与
+        # 周一起算的桶错配，含 1 月初数据的桶被标成上一年份（review
+        # #1744-5）。ISO 8601 周（周一为首日、含首个周四的周为第 1 周）
+        # 正是周一定义，改用 isocalendar() 的 (iso_year, iso_week)。
         start = (dt - timedelta(days=dt.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=7)
-        key = f"{start.strftime('%Y-W%U')}"
+        iso_year, iso_week, _ = start.isocalendar()
+        key = f"{iso_year}-W{iso_week:02d}"
     elif unit == TemporalUnit.MONTH:
         start = dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         if start.month == 12:

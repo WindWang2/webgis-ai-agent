@@ -10,8 +10,11 @@ legend ramp, so the only failing rule is the one under test.
 """
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -23,7 +26,10 @@ from app.lib.cartography.palettes import (
     perceptual_ramp,
 )
 from app.lib.cartography.quality_loop import review_and_repair_cartography
-from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
+from app.lib.cartography.semantic_checks import (
+    _viewport_bbox,
+    evaluate_cartography_semantics,
+)
 
 
 # ─── fixtures ────────────────────────────────────────────────────────────
@@ -145,6 +151,43 @@ def test_load_healthy_passes_and_missing_evidence_stays_silent():
     spec = _spec([_layer(_SEPARABLE)])
     spec["sources"]["src-1"]["profile"]["geometryTypes"] = ["Polygon"]
     assert _checks(spec, "carto.load.ratio") == []
+
+
+def test_viewport_bbox_lat_span_scales_with_cos_lat():
+    """#1719：Web Mercator 纬度跨度正比于 cos(lat)（dy/dφ = 1/cosφ 的逆）。
+
+    修正前按 cos 相除，中高纬 lat_span 被系统性放大（相对经向跨度
+    1/cos²(lat) 误差）——「可见负载/密度」规则阈值随纬度漂移。此测试
+    锁定方向：跨度随纬度升高单调收缩，赤道最大，视口仍以 center 为心。
+    """
+    base = 360.0 * 768.0 / (256.0 * 2.0 ** 4)  # z=4 时一屏高度的 y 向跨度
+    equator = _viewport_bbox({"center": [116.0, 0.0], "zoom": 4.0})
+    mid = _viewport_bbox({"center": [116.0, 39.9], "zoom": 4.0})
+    high = _viewport_bbox({"center": [116.0, 60.0], "zoom": 4.0})
+
+    def lat_span(bbox):
+        return bbox[3] - bbox[1]
+
+    assert lat_span(equator) == pytest.approx(base, rel=1e-9)
+    assert lat_span(mid) == pytest.approx(base * math.cos(math.radians(39.9)), rel=1e-9)
+    assert lat_span(high) == pytest.approx(base * 0.5, rel=1e-9)  # cos60° = 0.5
+    assert lat_span(high) < lat_span(mid) < lat_span(equator)
+    for bbox, lat in ((equator, 0.0), (mid, 39.9), (high, 60.0)):
+        assert (bbox[1] + bbox[3]) / 2.0 == pytest.approx(lat, abs=1e-9)
+
+
+def test_viewport_coverage_shrinks_with_latitude():
+    """#1719 端到端：源 bbox 纬度向高出视口时，覆盖率按 cos(lat) 收缩。
+
+    z=4、60°N：视口纬度跨度 = 67.5° × cos60° = 33.75°，只吞下源 bbox
+    40° 纬度跨度的 33.75° → coverage = 33.75/40。修正前（除以 cos）跨度
+    翻倍至 67.5°，40° 的源 bbox 被完整吞没 → coverage 虚高为 1.0。
+    """
+    spec = _spec([_layer(_SEPARABLE)], zoom=4.0)
+    spec["view"]["center"] = [116.0, 60.0]
+    spec["sources"]["src-1"]["profile"]["bbox"] = [80.0, 40.0, 150.0, 80.0]
+    check = _checks(spec, "carto.load.ratio")[0]
+    assert check["evidence"]["bbox_coverage"] == pytest.approx(33.75 / 40.0, rel=1e-6)
 
 
 # ─── carto.color.separability ────────────────────────────────────────────

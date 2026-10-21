@@ -129,9 +129,9 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 │   ├── components/          # chat / map / hud / sidebar / explorer / report / settings
 │   ├── lib/                 # Zustand store · map-kit · SSE 解析 · MapSpec 编译器
 │   └── test/                # vitest + 设计系统契约测试 + 视觉回归
-├── migrations/              # Alembic 迁移链(63 个 revision)
+├── migrations/              # Alembic 迁移链(67 个 revision)
 ├── deploy/                  # nginx / k8s kustomize / redis / prometheus / grafana
-├── docs/                    # 文档与 ADR(217 篇决策记录)
+├── docs/                    # 文档与 ADR(254 篇决策记录)
 ├── tests/                   # pytest:根回归 + unit + jobs + cartography + perf + benchmarks
 ├── manage.py                # 开发运维 CLI(dev / server / worker / check / init-db / create-admin)
 ├── docker-compose.yml       # 开发栈(db / redis / api / celery)
@@ -299,7 +299,7 @@ CI 在 release-gate 通过后自动构建镜像推送 `ghcr.io`,并支持 PR 预
 | [前端文档](frontend/README.md) | Visual System V4 设计系统与组件架构 |
 | [工程纪律](CODE_REVIEW.md) | 代码红线与历史缺陷修补录 |
 | [变更日志](CHANGELOG.md) | 逐版本变更记录 |
-| [ADR](docs/adr/) | 217 篇架构决策记录 |
+| [ADR](docs/adr/) | 254 篇架构决策记录 |
 
 <a id="roadmap"></a>
 

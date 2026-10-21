@@ -41,7 +41,12 @@ class User(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
-    organization = relationship("Organization", backref="users", lazy="selectin")
+    # #1745 4：``selectin`` 让底座依赖（auth.get_current_user_with_version
+    # 的 select(User)）每次请求都多发一条 SELECT organizations，而它只消费
+    # token_version/is_active/role/org_id 四个标量列。改惰性加载：认证路径
+    # 零额外查询；确有组织信息需求的查询点自行 selectinload/joinedload
+    # （仓库内无任何 User.organization 消费面）。
+    organization = relationship("Organization", backref="users", lazy="select")
 
     __table_args__ = (
         CheckConstraint("role IN ('viewer', 'editor', 'admin')", name="ck_user_role"),

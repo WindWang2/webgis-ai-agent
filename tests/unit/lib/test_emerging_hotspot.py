@@ -29,6 +29,7 @@ intensifying / diminishing / 冷点镜像由纯规则核 ``_classify_one`` 的
 """
 import asyncio
 import math
+import warnings
 
 import numpy as np
 import pytest
@@ -38,6 +39,7 @@ from app.lib.gis.scientific_errors import (
     InsufficientSamples,
     InvalidCRS,
 )
+from app.lib.geo_analysis import spatiotemporal_eha
 from app.lib.geo_analysis.spatiotemporal_eha import (
     EHA_CATEGORY_CODES,
     _classify_one,
@@ -238,6 +240,28 @@ def test_two_periods_persistent_and_new_without_mk_trend():
         _block([(0, 3, 6), (7, 10, 6)]), COORDS, distance_band=BAND)
     assert res2["categories"][1] == "historical_hot_spot"
     assert res2["categories"][8] == "new_hot_spot"
+
+
+# ── docstring 转义：#1736 的 Gi\* 非法转义（每次 import 发 SyntaxWarning）
+
+def test_module_compiles_without_invalid_escape_warning():
+    """#1736：模块 docstring 的 ``Gi\\*`` 不得再触发 SyntaxWarning。
+
+    无效转义序列在 Python 3.12+ 是 SyntaxWarning，未来版本会变成语法错误
+    —— 用「警告即错误」重新编译本模块来钉住。
+    """
+    import pathlib
+    import py_compile
+    import tempfile
+
+    src = pathlib.Path(spatiotemporal_eha.__file__)
+    assert src.exists()
+    with tempfile.TemporaryDirectory() as td:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SyntaxWarning)
+            py_compile.compile(
+                str(src), doraise=True,
+                cfile=str(pathlib.Path(td) / "eha.pyc"))
 
 
 # ── 类型化守卫（审计口径：先拒绝，后计算）────────────────────────────

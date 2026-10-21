@@ -495,3 +495,62 @@ describe("TEST-06 #1385 F04: MapLibre expression arrays + options.zoom", () => {
     expect(fallbackZoom).toContain('r="42"');
   });
 });
+
+/**
+ * #1747 项 2：fmtNum 的非有限值守卫 —— 与 Python 孪生 `_fmt_num` 对齐。
+ *
+ * Python 侧对 NaN/±Inf 返回文档化缺省 "0"（_safe_float 同规）；TS 侧
+ * `Number.prototype.toFixed` 会原样写出 "NaN"/"Infinity" —— 非法 SVG
+ * 属性（解析器拒绝或静默丢弃该属性）。opacity/线宽/字号/晕宽等调用点
+ * （`fmtNum(Number(resolvePaintValue(...)))`）此前无处不包裹 _safe_float，
+ * 守卫收口在 formatter 自身：所有数值属性共用一个出口。
+ */
+describe("fmtNum 非有限值守卫（#1747，Python 孪生 _fmt_num parity）", () => {
+  function circleSpec(circleOpacity: unknown) {
+    return {
+      sources: {
+        s1: {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                geometry: { type: "Point", coordinates: [116.4, 39.9] },
+                properties: {},
+              },
+            ],
+          },
+        },
+      },
+      layers: [
+        {
+          id: "pts",
+          type: "circle",
+          source: "s1",
+          paint: {
+            "circle-color": "#de2d26",
+            "circle-radius": 6,
+            "circle-opacity": circleOpacity,
+          },
+        },
+      ],
+    };
+  }
+
+  it("非有限 opacity → 写文档化缺省 0，绝不写 NaN/Infinity 属性", () => {
+    // 注：null/undefined 走 resolvePaintValue 的缺省通道（回落 1），不是
+    // 非有限值；此处只覆盖真的会产出 NaN/±Inf 的输入。
+    for (const bad of ["not-a-number", {}, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const svg = compileMapSpecToSvg(circleSpec(bad), { targetDpi: 72 });
+      expect(svg).not.toContain("NaN");
+      expect(svg).not.toContain("Infinity");
+      expect(svg).toContain('fill-opacity="0"');
+    }
+  });
+
+  it("有限值不受守卫影响（既有逐字节契约不回退）", () => {
+    const svg = compileMapSpecToSvg(circleSpec(0.6), { targetDpi: 72 });
+    expect(svg).toContain('fill-opacity="0.6"');
+  });
+});

@@ -143,6 +143,22 @@ def _is_demo_adapter_source(query_result: QueryResult) -> bool:
     return _is_demo_source_type((query_result.metadata or {}).get("source_type"))
 
 
+def _breaker_source_key(adapter: GeospatialDataSourceAdapter) -> str:
+    """熔断器的 per-source 键（#1714）：adapter 所属 profile id。
+
+    与查询路径同一把键 —— manager ``_execute_remote_query`` 用
+    ``ds_model.id``，而 governed adapter 的 ``profile.id`` 即 ``ds_model.id``
+    （``_profile_from_model``/``fabric_profile`` 都以源 id 建 profile）——
+    于是查询/describe 与物化路径共享同一道门。profile 缺失（mock seam）
+    时回退类名限定键，绝不静默并入全局键。
+    """
+    profile = getattr(adapter, "profile", None)
+    profile_id = getattr(profile, "id", None)
+    if profile_id:
+        return str(profile_id)
+    return f"adapter:{adapter.__class__.__name__}"
+
+
 class MaterializationService:
     """Data Fabric 物化管线（V2 单管线）。"""
 
@@ -152,20 +168,37 @@ class MaterializationService:
         dataset_id: str,
         query_spec: QuerySpec,
     ) -> QueryResult:
-        """执行查询；V2 typed error 直接传播，V1 in-band 标记兜底转换。"""
-        try:
-            result = adapter.query(dataset_id, query_spec)
-        except DataFabricError:
-            raise
-        except Exception as e:
-            logger.error("[MaterializationService] query failed for '%s': %s", dataset_id, e)
-            raise
-        # V1 兼容：仍返回 in-band 标记的 adapter（如 WMS）→ typed error。
-        err = error_from_query_result(result)
-        if err is not None:
-            logger.error("[MaterializationService] query failed for '%s': %s", dataset_id, err)
-            raise err
-        return result
+        """执行查询；V2 typed error 直接传播，V1 in-band 标记兜底转换。
+
+        #1714：远端调用经 ``get_breaker_registry().call`` 包裹 —— 与查询/
+        describe 路径（manager ``_execute_remote_query``）同一道门。此前物化
+        路径完全绕开熔断器：源故障期间每次 materialize 都付满 adapter 超时，
+        且熔断器永远打不开（与查询路径的 fail-fast 不对称）。
+        """
+        from app.services.data_fabric.circuit_breaker import get_breaker_registry
+
+        registry = get_breaker_registry()
+
+        def _query_and_validate() -> QueryResult:
+            try:
+                result = adapter.query(dataset_id, query_spec)
+            except DataFabricError:
+                raise
+            except Exception as e:
+                logger.error("[MaterializationService] query failed for '%s': %s", dataset_id, e)
+                raise
+            # V1 兼容：仍返回 in-band 标记的 adapter（如 WMS）→ typed error。
+            err = error_from_query_result(result)
+            if err is not None:
+                logger.error("[MaterializationService] query failed for '%s': %s", dataset_id, err)
+                # Raise INSIDE the breaker-wrapped callable so the in-band
+                # failure is recorded as a breaker failure (a non-raising
+                # empty result would be counted as success and reset the
+                # counter —— same discipline as _execute_remote_query).
+                raise err
+            return result
+
+        return registry.call(_breaker_source_key(adapter), _query_and_validate)
 
     async def materialize(
         self,

@@ -103,7 +103,8 @@ adapter 协议与注册表；science 域的加载器在 `tests/science_oracles`�
 ## 4. 非目标（Out of Scope）
 
 - 不做在线/分布式评测；不引入消息队列或外部编排器。
-- 不重写 `apply_mutation`/`chat_stream` 巨石方法（#1544 另行处理）。
+- 不重写 `apply_mutation`/`chat_stream`/`evaluate_cartography_semantics` 巨石方法
+  （#1544 另行处理；截至本版本 #1544 三项均已在主链拆分完毕，本文档不重复覆盖）。
 - 不替换前端 `llm-stub.mjs`（real 档 nightly 资产）；后端 lab fake 与其并存。
 - 不把上传做成通用文件管理器（#1221 上传线仍归原方向）；本范围只要求
   主链上传入口真实存在且 e2e 走 UI。

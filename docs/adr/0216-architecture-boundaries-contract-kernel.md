@@ -69,4 +69,5 @@ rebase 基线 77d2678d）将守卫整体迁至 `app/services/auth_history_bridge
 - 正面：lib/cartography 运行时反向边 0（S1 复核 10 文件 11 处全消）；core 运行时 services/tools/lib 反向边 0；`quality_loop ⇄ lifecycle_engine` 真循环随锁/intent 下沉自然消解；门禁防回归可本地一条命令复现；`examples/extensions` 命名自解释。
 - 中性：估工/锁/findings 语义逐位不变（回归测试锁定数值与前缀匹配语义）；OpenAPI 无路由变化。
 - 成本：`components.py`（1320 行）拆为契约核（kernel）+ 组装权威（services）两半；旧 import path 依赖 shim —— 后续新代码应直取 `app.contracts`。
-- 已知留白（Out of Scope）：lib 其他子包（geo_analysis/harness/gis/quality…约 30 文件）与 app/schemas 3 文件的 services 边、`lifecycle_engine` 3445 行巨石、`data_fabric` 反向引 API 路由缓存（#1544）——gate 规则表已留扩展位，按同法逐包清偿。
+- 已知留白（Out of Scope）：lib 其他子包（geo_analysis/harness/gis/quality…约 30 文件）与 app/schemas 3 文件的 services 边、`data_fabric` 反向引 API 路由缓存（#1544）——gate 规则表已留扩展位，按同法逐包清偿。
+  （`lifecycle_engine` 巨石方法已于 #1544 清偿：`apply_mutation` ~1520 行 → 571 行编排骨架 + `app/services/mapspec/mutation_handlers.py` 24 个 per-intent handler 经 `MUTATION_REGISTRY` 分派；`execution_engine.chat_stream` ~964 行 → 153 行阶段编排壳 + `app/services/chat/stream_turn_context.py` 跨阶段状态契约；`evaluate_cartography_semantics` ~806 行 → 96 行分派 + `_check_layer_*` 簇函数，场景级检查另拆 `app/lib/cartography/semantic_checks_maplevel.py`。）

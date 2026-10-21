@@ -74,6 +74,47 @@ SHUTDOWN_DRAIN_DEADLINE_S: float = float(
     os.environ.get("SHUTDOWN_DRAIN_DEADLINE_S", 20.0) or 20.0
 )
 
+
+def _install_root_logging() -> None:
+    """#1686：给 root logger 挂 stream handler —— 否则 app.* 的 INFO 记录被
+    ``logging.lastResort``（WARNING 级 _StderrHandler）整体丢弃，生产排障只剩
+    uvicorn 的 access log，请求级关联字段（request_id/session_id/turn_id/
+    run_id/project_id/trace_id/span_id）从不出现。
+
+    - uvicorn 默认 LOGGING_CONFIG 只配 uvicorn / uvicorn.error /
+      uvicorn.access 三个 logger，不含 root；其 dictConfig 在 load_app
+      （import 本模块）之前执行且 ``disable_existing_loggers=False``，故
+      此处挂接不会被覆盖；
+    - 幂等：root 已有 handler（pytest 的 logging 插件、嵌入式宿主）时不
+      重复挂接 —— 测试进程的捕获语义不受影响；
+    - LOG_FORMAT=json → JsonFormatter（结构化 + 关联字段恒在），否则人类
+      可读 LOG_FORMATTER；两者都挂 RuntimeCorrelationFilter；
+    - LOG_LEVEL 生效（默认 INFO；compose/k8s manifest 早已设置、此前无读者
+      即是死配置）。无法解析的级别名回落 INFO 而非启动失败 —— 日志配置不
+      应该有否决进程启动的权力。
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    # 函数级 import：logging_config 轻量（无 import 期副作用，#1686），但保持
+    # 与 app 其余处一致的延迟加载，避免模块循环面。
+    from app.core.logging_config import (
+        LOG_FORMATTER,
+        JsonFormatter,
+        _attach_correlation_filter,
+        _json_logging_enabled,
+    )
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter() if _json_logging_enabled() else LOG_FORMATTER)
+    _attach_correlation_filter(handler)
+    root.addHandler(handler)
+    level_name = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+    root.setLevel(getattr(logging, level_name, logging.INFO))
+
+
+_install_root_logging()
+
 logger = logging.getLogger(__name__)
 
 
@@ -792,7 +833,10 @@ try:
     from prometheus_client import generate_latest as _prom_generate_latest
     from prometheus_fastapi_instrumentator import Instrumentator
 
-    _METRICS_TOKEN = (os.getenv("METRICS_TOKEN") or "").strip()
+    # issue #1673（SEC-01）：METRICS_TOKEN 已登记为 Settings 字段，其生产
+    # 长度下限（≥24）在 app.core.config 启动闸 fail-fast；此处单一事实源取
+    # settings，避免 os.getenv 与配置层两处读数漂移。
+    _METRICS_TOKEN = (settings.METRICS_TOKEN or "").strip()
     _METRICS_AUTH_DISABLED = (os.getenv("METRICS_AUTH_DISABLED") or "").strip().lower() \
         in ("1", "true", "yes")
 
@@ -871,6 +915,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/v1/local-data/",
         "/healthz",
     )
+    #: 429 文案与 _STATUS_DEFAULT_MESSAGE[429] 一致（app/core/exception.py）
+    RATE_LIMIT_MESSAGE = "请求过于频繁，请稍后再试"
 
     def __init__(self, app, max_requests: int = 240, window_seconds: int = 60):
         super().__init__(app)
@@ -897,18 +943,30 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self.window,
         )
         if not allowed:
-            # ADR-0138 统一错误信封（#1641）：中间件层 429 曾直回 {"detail"}，
-            # 与路由层 HTTPException 的 {code,success,message,data} 两套形状
-            # 并存，且无 category 字段不被 AcceptLanguageMiddleware 本地化。
-            # legacy 灰度（X-Error-Envelope: detail / settings 总开关）与路由层
-            # 处理器同一判定，灰度客户端行为不变。
+            # ADR-0138「根治双信封」（#1741）：路由内 HTTPException(429) 走
+            # 统一错误信封，中间件这条路径原先绕过异常处理链直接回 legacy
+            # 单体 {"detail"}，客户端需双轨解析。改为复用异常响应的序列化
+            # 函数（unified_error_envelope + classify_exception，与路由内
+            # 429 逐字段一致：code=RATE_LIMITED / category=resource_exhausted
+            # / retryable=true）；v2 面与显式 x-error-envelope: detail 请求
+            # 仍可回退旧体（wants_legacy_envelope）。
+            _rl_exc = HTTPException(status_code=429, detail=self.RATE_LIMIT_MESSAGE)
+            # #1694 API-05：429 必须带 Retry-After —— 与路由内背压 429
+            # （geocompute.py ClusterBackpressureError → Retry-After: 5）契约
+            # 一致；缺头部时客户端只能盲重试，把限流窗口打成二次风暴。
+            # 值 = 限流窗口秒数（本中间件 window_seconds，默认 60）。
+            _rl_headers = {"Retry-After": str(self.window)}
             if wants_legacy_envelope(request):
                 return JSONResponse(
-                    status_code=429, content={"detail": "请求过于频繁，请稍后再试"}
+                    status_code=429,
+                    content={"detail": _rl_exc.detail},
+                    headers=_rl_headers,
                 )
+            envelope = unified_error_envelope(
+                429, _rl_exc.detail, request=request, exc=_rl_exc
+            )
             return JSONResponse(
-                status_code=429,
-                content=unified_error_envelope(429, "请求过于频繁，请稍后再试"),
+                status_code=429, content=envelope, headers=_rl_headers
             )
 
         return await call_next(request)

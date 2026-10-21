@@ -129,7 +129,7 @@ docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
 要点：
 
 - **`--env-file .env.Priv` 必须显式传**：db/redis 依赖 `${DB_PWD:?...}` 等插值，compose 默认只读 `.env`。
-- redis 经 `deploy/redis.conf` 启动（`maxmemory 256mb` + `noeviction`，理由见 [Redis 驱逐策略](#redis-驱逐策略)）；`requirepass` 不写配置文件，由 `deploy/redis-entrypoint.sh` 从 `REDIS_PASSWORD` 环境变量注入（三种部署路径行为一致）。这两个文件必须随 compose 一起 scp 到部署机（bind-mount）。
+- redis 经 `deploy/redis.conf` 启动（`maxmemory 256mb` + `noeviction`，理由见 [Redis 驱逐策略](#redis-驱逐策略)）；`requirepass` 不写配置文件，由 `deploy/redis-entrypoint.sh` 从 `REDIS_PASSWORD` 环境变量注入（三种部署路径行为一致）。**#1676（SEC-04）起注入方式是「`/dev/shm` tmpfs 0400 运行时 conf + config include」，口令不再进容器 argv** —— `docker inspect` 的 entrypoint、`docker top`、宿主机 `/proc/<pid>/cmdline` 均不可见（dev 栈 `docker-compose.yml` 与标准 prod 栈 `docker-compose.prod.yml` 同规则；k8s 可选 redis 用等价的 sh -c 写法）。redis-exporter 的抓取口令同样从 env 改为 `REDIS_PASSWORD_FILE`（config 文件挂载）。不变式由 `tests/test_deploy_secrets_hygiene.py` 钉住。这两个文件必须随 compose 一起 scp 到部署机（bind-mount）。
 - prometheus 挂载 `deploy/prometheus.yml` 与 `deploy/alerts-rules.json`（同为 scp 清单成员；缺失会被 Docker 创建为空目录导致 crash-loop）。
 - nginx 的 TLS 证书是内联自签 scaffold（仅保证能以 TLS 启动，浏览器会告警）。换真实证书：复制本文件为 override，把 `webgis_ssl_scaffold_cert/key` 两个 config 换成 `file: ./deploy/nginx/ssl/server.crt` 形式的源，再 `-f <override>` 启动。
 - 健康验证：`curl -k https://localhost/health`（nginx 自身）与 `curl -k https://localhost/api/v1/health/live`（经反代到 api）。
@@ -142,10 +142,16 @@ docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
 
 清单经 kustomize 组织（namespace `webgis-prod`）：`00-namespace` / `01-configmap` / `02-api-deployment` / `03-celery-deployment`（含 50Gi PVC） / `04-ingress`（TLS） / `06-hpa-pdb-rbac`（API ServiceAccount + PDB） / `07-hpa`。`05-deps-optional.yaml`（内部 postgres/redis）**默认不在资源列表中**，生产建议用外部托管服务。
 
+**#1688（TLS 链路）**：`04b-clusterissuer.yaml`（cert-manager `ClusterIssuer letsencrypt-prod`，ACME HTTP-01）是 cluster-scoped 资源，**故意不在 `kustomization.yaml` 的 resources 里** —— 该文件有 `namespace: webgis-prod`，kustomize 的 namespace 转换器会给资源树里每个资源注入 `metadata.namespace`，apiserver 会以 "not allowed when resource is not namespaced" 拒绝整个 `kubectl apply -k .`。因此签发者需在装好 cert-manager CRD 后单独应用；`webgis-tls` 证书由 cert-manager 依据该签发者自动创建并轮换，**不要手写该 Secret**：
+
 ```bash
 cd deploy/k8s
 # CI 只推 sha 标签到 ghcr.io/windwang2/webgis-ai-agent —— 部署必须显式钉 tag
 kustomize edit set image ghcr.io/windwang2/webgis-ai-agent=ghcr.io/windwang2/webgis-ai-agent:<ci-pushed-sha>
+# #1688: Ingress 对外域名只改这一处（同步 CORS_ORIGINS），cert-manager 按它签证书
+#   （部署前还要把 04b-clusterissuer.yaml 的 spec.acme.email 占位值换成运维邮箱）
+sed -i 's|INGRESS_HOST: .*|INGRESS_HOST: "webgis.<真实域名>"|' 01-configmap.yaml
+kubectl apply -f 04b-clusterissuer.yaml
 kubectl apply -k .
 ```
 
@@ -157,7 +163,7 @@ kubectl apply -k .
 - 非 root（runAsUser 1001）、readOnlyRootFilesystem（可写面仅为挂载点）、专用 ServiceAccount、topologySpread 跨节点分散。
 - HPA `minReplicas: 2 / maxReplicas: 10`。
 - api/celery 挂共享 RWX PVC 于 `/app/data`。
-- 04-ingress 需 `webgis-tls` secret 与真实域名；`proxy-body-size: 100m` 对齐上传限额。
+- #1688: 04-ingress 的 host 来自 `01-configmap.yaml` 的 `INGRESS_HOST`（kustomize build 时注入），证书由 cert-manager + `04b-clusterissuer.yaml` 签发进 `webgis-tls`；`proxy-body-size: 100m` 对齐上传限额。
 
 ### Secret 管理（审计 I4/I6）
 
@@ -169,7 +175,12 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
   --from-literal=JWT_SECRET_KEY="$(openssl rand -hex 32)" \
   --from-literal=REDIS_URL='redis://:PWD@redis:6379/0' \
   --from-literal=CELERY_BROKER_URL='redis://:PWD@redis:6379/0' \
-  --from-literal=CELERY_RESULT_BACKEND='redis://:PWD@redis:6379/1'
+  --from-literal=CELERY_RESULT_BACKEND='redis://:PWD@redis:6379/1' \
+  --from-literal=METRICS_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
+# #1689：/metrics 的 METRICS_TOKEN Bearer 门禁 fail-closed（app/main.py
+# _require_metrics_token，未配置即 401）；api pod 注解 prometheus.io/scrape
+# 邀请集群内 Prometheus 抓取，secret 缺此键则全部 401、监控静默失明
+# （compose 栈用 ${METRICS_TOKEN:?} 强制提供，k8s 必须在此补等价来源）。
 # 启用 05-deps-optional.yaml（可选内部 postgres/redis）时，还需与 URL 内嵌
 # 值一致的组件键：
 #   --from-literal=DB_USER='USER' \
@@ -266,7 +277,7 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 
 ### deploy-prod（master push）
 
-前置：repo 配置 `SSH_HOST` var 与 `SSH_PRIVATE_KEY` / `DB_PWD` / `REDIS_PASSWORD` / `JWT_SECRET_KEY` / `LLM_API_KEY` / `CORS_ORIGINS` / `METRICS_TOKEN` secrets。流程：`deploy/ci-generate-env-priv.sh` 生成 `.env.Priv` → scp compose 文件、`deploy/redis.conf`、`deploy/redis-entrypoint.sh`、`deploy/prometheus.yml`、`deploy/alerts-rules.json`、`.env.Priv`、镜像 tar 到主机 → SSH `docker load` + `compose up -d` → `curl http://localhost:8000/api/v1/ready` 验证（503-aware，依赖未就绪即失败）→ Feishu webhook 通知（`FEISHU_WEBHOOK_URL` var 配置时）。未配置 `SSH_HOST` 时仅校验镜像在 registry 可达（`docker manifest inspect`），供手动 pull。
+前置：repo 配置 `SSH_HOST` var 与 `SSH_PRIVATE_KEY` / `DB_PWD` / `REDIS_PASSWORD` / `JWT_SECRET_KEY` / `LLM_API_KEY` / `CORS_ORIGINS` / `METRICS_TOKEN` secrets（告警投递另见 `ALERT_WEBHOOK_URL`，可选）。流程：`deploy/ci-generate-env-priv.sh` 生成 `.env.Priv` → scp compose 文件、`deploy/redis.conf`、`deploy/redis-entrypoint.sh`、`deploy/prometheus.yml`、`deploy/alerts-rules.json`、渲染后的 `deploy/alertmanager.yml`、`.env.Priv`、镜像 tar 到主机 → SSH `docker load` + `compose up -d` → `curl http://localhost:8000/api/v1/ready` 验证（503-aware，依赖未就绪即失败）→ Feishu webhook 通知（`FEISHU_WEBHOOK_URL` var 配置时）。未配置 `SSH_HOST` 时仅校验镜像在 registry 可达（`docker manifest inspect`），供手动 pull。
 
 ### rollback（手动 workflow_dispatch）
 
@@ -275,6 +286,8 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 ## 监控
 
 - **Prometheus**（prod 127.0.0.1:19090 / secure 127.0.0.1:9090）：`deploy/prometheus.yml` 抓取 `webgis-api`（`api:8000`，30s）、`postgres-exporter:9187`、`redis-exporter`、`node-exporter`；告警规则 `deploy/alerts-rules.json`（Database_Connection_Failure、Redis_Memory_High、Celery_Task_Backlog、Disk_Space_Low、High_Error_Rate、Slow_Response_P95/P99、High_API_CPU/Memory_Usage、Auth_JWT_Errors、WebGIS_API_Down）。
+- **Alertmanager**（#1687；prod / secure 两栈均已部署，127.0.0.1:9093）：`prometheus.yml` 的 `alertmanagers` target `alertmanager:9093` 由本服务提供（修复前全仓库无该服务，主机名解析失败、16 条规则全部无投递通道）。receiver 配置 `deploy/alertmanager.yml`：webhook 投递，critical（WebGIS_API_Down / Database_Connection_Failure / SRE_Component_Down）单独通道 + 1h repeat，其余按 alertname+severity 分组、4h repeat，均 `send_resolved: true`。alertmanager 配置不做 env 展开 —— webhook URL 由部署流程把占位符 `__ALERT_WEBHOOK_URL__` 渲染为 `ALERT_WEBHOOK_URL`（repo secret 或 var，deploy-prod / rollback 的 `deploy/render-alertmanager-config.sh` 步骤）后随 scp 送达主机；**未配置时写 `.invalid` 占位（RFC 2606 永不解析），投递在 alertmanager UI / 日志响亮失败而非静默丢弃**（#1636 同款诚实降级），配置该 secret/var 后下次部署即生效。验证：`docker compose -f docker-compose.prod.secure.yml exec alertmanager wget -qO- http://localhost:9093/api/v2/status`。不变式由 `tests/test_alerts_metrics_consistency.py` 钉住：target 主机名必须命中已部署 compose 服务。
+- **应用日志**（#1686）：`app/main.py` 在 import 期给 root logger 挂 stream handler（stderr）。修复前全仓库零处配置 logging —— `app.*` 的 INFO 记录被 `logging.lastResort`（WARNING 级）整体丢弃，生产排障只剩 uvicorn access log，`LOG_LEVEL` / `LOG_FORMAT` 全是死配置。现在：每条记录带关联字段 `[req=… sess=… turn=… run=… proj=…]`（`RuntimeCorrelationFilter`，未绑定为 `-`，可按 turn_id/session_id 直接 grep）；`LOG_LEVEL` 生效（默认 `INFO`，无法解析的级别名回落 INFO 而非启动失败；compose prod/secure、k8s ConfigMap 均已设 `INFO`）；`LOG_FORMAT=json` 切 `JsonFormatter`（结构化 JSON 行：关联字段显式 null、异常带 exc_info、extra 标量经拒绝词表脱敏），未设则人类可读文本 —— **是否在生产启用 json 由运维决定**（设一个环境变量即可，聚合场景推荐）；`LOG_DIR`（默认 `/tmp/webgis-logs`）只被 `get_logger()` 显式创建的文件 handler 使用，目录不可写（只读 rootfs）时自动降级为纯控制台，容器/k8s 以 stdout/stderr 流为 collect 主通道。k8s `readOnlyRootFilesystem: true` 下 import 不再触碰 `./logs`（原先 import 期 mkdir 直接 Errno 30 CrashLoop）。不变式由 `tests/unit/test_root_logging_installed.py` 钉住（含「uvicorn dictConfig 后 import app.main，app.* INFO 必须到达 stderr」的子进程端到端证明）。
 - **exporters**：postgres-exporter（pg_up）、redis-exporter（`check-keys=celery` 导出默认队列长度）、node-exporter（宿主 /proc /sys 只读挂载）。
 - **Grafana**（仅标准 prod 栈，127.0.0.1:13001）：`deploy/grafana/provisioning/dashboards/provider.yml`（file provider）使 `dashboard.json` 随启动自动加载；datasource provisioning 已含 Prometheus。
 - **应用指标**：`/metrics`（无 /api/v1 前缀，prometheus-fastapi-instrumentator 暴露 `http_requests_total` / `http_request_duration_seconds` 等）；由 `METRICS_TOKEN` Bearer 门禁 fail-closed（audit ISSUE-067，未配置即 401）。prometheus 经 `configs:` 挂载的 `credentials_file`（`/etc/prometheus/secrets/metrics_token`）携带同一 token，两个生产栈（prod + secure）都必须提供 `METRICS_TOKEN`。

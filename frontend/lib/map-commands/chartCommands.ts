@@ -194,17 +194,30 @@ export const chartCommands: Record<string, CommandEntry> = {
       // 硬编码 componentId 使地图过滤永不命中（无同 id 图层）、面板高亮
       // 也无从谈起。调用方可显式传 layerId 覆盖；都缺省时以 componentId
       // 兜底（行为与旧版一致，但 agent 正确绑定后即恢复联动）。
+      const compOptions = (comp as unknown as { options?: Record<string, unknown> }).options;
       const explicitLayerId = (ctx.params as { layerId?: unknown }).layerId;
       const boundLayerId = typeof explicitLayerId === 'string' && explicitLayerId
         ? explicitLayerId
-        : (typeof (comp as unknown as { options?: { layerId?: unknown } }).options?.layerId === 'string'
-          ? ((comp as unknown as { options: { layerId: string } }).options.layerId)
+        : (typeof compOptions?.layerId === 'string'
+          ? compOptions.layerId
           : componentId);
+      // 类别 ↔ 要素属性的映射字段（chart 组件的 options.selectionField 协议；
+      // 与用户手势路径 components/map/map-components/chart-panel.tsx 同一读取
+      // 口径）。selection-store 的 getSelectionFilter 要求 filter_field 在场
+      // 才会把类别选择编译成地图要素过滤（getSelectionFilterExpression）——
+      // 缺席时该函数恒返回 null，「图表联动高亮」在地图上什么也不发生（#1726）。
+      // 组件未声明 selectionField 时如实缺席（仅状态高亮的 D4 降级），绝不猜
+      // 字段名。
+      const selectionField = typeof compOptions?.selectionField === 'string'
+        && compOptions.selectionField.trim()
+        ? compOptions.selectionField
+        : undefined;
       publishSelection('select', {
         source: 'chart',
         layer_id: boundLayerId,
         artifact_ref: componentId,
         selected_categories: categories.slice(0, 20),
+        filter_field: selectionField,
       });
       return ok({ componentId, layerId: boundLayerId, categories });
     },

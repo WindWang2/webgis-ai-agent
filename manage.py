@@ -43,6 +43,40 @@ def cmd_init_db():
     console.print("[bold green]✓[/bold green] Database initialized successfully.")
 
 
+def _ensure_users_table() -> None:
+    """create-admin 前置校验：users 表必须已存在（#1750）。
+
+    init_db() 对非 sqlite 库故意跳过 create_all（schema 由 Alembic 管理，
+    audit #839）—— 全新 Postgres 上 users 表不存在，直接查询会以裸
+    ``relation "users" does not exist`` traceback 失败。这里预检表存在并
+    输出「alembic upgrade head」指引；连接失败也转成可读错误而非 traceback。
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.core.config import settings
+    from app.core.database import Engine
+
+    try:
+        tables = set(sa_inspect(Engine).get_table_names())
+    except Exception as exc:
+        console.print(f"[red]无法连接数据库进行预检: {exc}[/red]")
+        sys.exit(2)
+    if "users" in tables:
+        return
+    if str(settings.DATABASE_URL).startswith("sqlite"):
+        console.print(
+            "[red]users 表不存在 —— SQLite 库 schema 异常"
+            "（init_db 应已 create_all；请检查数据目录是否可写）。[/red]"
+        )
+    else:
+        console.print(
+            "[red]users 表不存在 —— 数据库 schema 尚未初始化。[/red]\n"
+            "非 sqlite 库上 init_db() 故意跳过 create_all（schema 由 Alembic "
+            "管理，audit #839）。请先执行: [bold]alembic upgrade head[/bold]"
+        )
+    sys.exit(2)
+
+
 def cmd_create_admin(username: str, email: str, password: str):
     """创建 admin 账号 —— 公开注册关闭后，运维用此命令创建初始 admin。
 
@@ -65,7 +99,8 @@ def cmd_create_admin(username: str, email: str, password: str):
     from app.core.auth import hash_password
     from sqlalchemy import select, or_
 
-    init_db()  # 幂等；确保表存在
+    init_db()  # 幂等；非 sqlite 上是 no-op（schema 归 Alembic，audit #839）
+    _ensure_users_table()  # #1750：全新库给出可行动指引，而不是裸 traceback
 
     with SessionLocal() as db:
         # 检查唯一性
@@ -85,7 +120,11 @@ def cmd_create_admin(username: str, email: str, password: str):
         )
         db.add(user)
         db.commit()
-    console.print(f"[bold green]✓[/bold green] Admin 创建成功: username={username} email={email} id={user.id}")
+        # commit 后实例属性已过期、session 关闭即 detached —— 先在会话内
+        # 取 id（此前在 with 块外访问 user.id 抛 DetachedInstanceError，
+        # admin 已落库却以 traceback + rc=1 收场，#1750 回归测试钉住）。
+        created_id = user.id
+    console.print(f"[bold green]✓[/bold green] Admin 创建成功: username={username} email={email} id={created_id}")
     console.print("[dim]使用 POST /api/v1/auth/login 获取 JWT。[/dim]")
 
 async def check_infrastructure():

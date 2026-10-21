@@ -430,6 +430,30 @@ class TestProvenanceRedaction:
         assert len(json.dumps(bounded, ensure_ascii=False)) <= 4096
         assert "[truncated]" in json.dumps(bounded, default=str)
 
+    def test_truncation_is_never_silent(self):
+        """review #1744-8：深层嵌套与超长列表的截断必须留显式标记。
+
+        旧实现 depth>8 → None、>64 项列表静默截断，台账静默失真；与同函数
+        对超长字符串（digest note）/超预算 JSON（...[truncated]）的诚实
+        截断口径不一致。回归：两处截断都带可见标记，且整体仍幂等。"""
+        deep = current = {"leaf": 1}
+        for _ in range(12):
+            current["child"] = {"leaf": 2}
+            current = current["child"]
+        out = redact_provenance_args(deep)
+        node = out
+        for _ in range(8):
+            node = node["child"]
+        assert node["child"] == "[truncated:max-depth]"
+
+        red = redact_provenance_args(list(range(200)))
+        assert len(red) == 64
+        assert red[:63] == list(range(63))
+        assert red[63].startswith("[truncated]:")
+        assert "137 more items dropped" in red[63]
+        # 幂等：二次脱敏不再越界，标记原样通过
+        assert redact_provenance_args(red) == red
+
     def test_password_never_lands_in_db_rows(self, db_session):
         db = db_session
         proj = _seed(db)

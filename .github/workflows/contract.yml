@@ -19,8 +19,10 @@ permissions:
 # 同一分支/PR 的过时 run 直接取消，避免 contract lane 重复流水线堆积；
 # 仅取消 PR —— master push 与手动触发不取消（与 production.yml 的写法
 # 一致：在途 run 绝不能被并发组杀掉）。
+# #1694 OPS-14：group 补 event_name（production.yml:49 同款）—— 缺它时同一
+# ref 的手动触发与 PR/push run 共组，可被静默取消。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -76,6 +78,16 @@ jobs:
 
       - name: api-docs drift gate
         run: pytest tests/test_api_docs_drift.py -q
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
+
+      # #1684（API-01 ①）：realtime 契约闸（WS/SSE 快照字节一致 + 分类器
+      # 自测）此前零接线 —— 全仓 grep realtime 在 .github/ 下 0 命中，
+      # realtime-contract.json 是只在全量后端 lane 间接收集的快照（缺快信号
+      # 面）。接入 contract lane 后删 WS 认证语义锚 / 删 SSE done 事件 /
+      # 漏登记新 SSE 事件名都会在此 10 秒内现形。
+      - name: Realtime contract snapshot (WS/SSE, ADR-0104 W6)
+        run: pytest tests/quality/test_realtime_contract.py -q
         env:
           JWT_SECRET_KEY: ci-contract-lane-secret
 

@@ -50,6 +50,8 @@ async def run_validate_stage(
     geocoded_ref_id: Optional[str] = None,
     total_rows: int = 0,
     fetch_errors: Optional[List[dict]] = None,
+    parse_errors: Optional[List[dict]] = None,
+    missing_refs: Optional[List[str]] = None,
     on_progress: Optional[Callable[[int], None]] = None,
     session_id: str = "",
 ) -> StageResult:
@@ -60,6 +62,11 @@ async def run_validate_stage(
     #774: ``fetch_errors`` (per-source fetch failures from the fetch stage) are
     included in the final summary so a partial exploration never reports
     survivor-only results as complete.
+
+    #1740: ``parse_errors`` / ``missing_refs`` (the parse stage's per-source
+    failures and its unresolved *fetch* refs — not the geocode summary's own
+    ``missing_refs``) ride along on the same track: a partial exploration must
+    not hide its own parse failures either.
 
     #776: 有 chat session 上下文且存在 geocoded 结果时，把结果桥接进
     session 命名空间（``session_ref_id`` / ``session_ref_alias``）—— 探索
@@ -83,6 +90,8 @@ async def run_validate_stage(
             "geocoded_ref_id": geocoded_ref_id,
             "total_rows": total_rows,
             "fetch_errors": fetch_errors or [],
+            "parse_errors": parse_errors or [],
+            "missing_refs": missing_refs or [],
             **bridge,
         },
         success=True,

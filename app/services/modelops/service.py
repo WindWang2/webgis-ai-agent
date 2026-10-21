@@ -862,7 +862,33 @@ class ModelOpsService:
         except Exception as exc:  # noqa: BLE001 — lineage 记录失败不毁评估
             logger.warning("evaluation lineage append failed: %s", exc)
 
-    async def evaluate_async(self, request: EvaluationRequest) -> Dict[str, Any]:
+    def _gate_eval_paths(
+        self, request: EvaluationRequest, *, allowed_roots: Optional[List[Path]] = None
+    ) -> None:
+        """评估族输入栅格的路径门（SEC-06）：与推理族 ``_gate_source_uri``
+        同一道门 —— ``predictions_path`` / ``references_path`` / 可选
+        ``confidence_path`` / ``regions_path`` 全部解析后必须落在
+        ``settings.DATA_DIR``（或受信调用者显式 ``allowed_roots``），
+        模型控制的路径不能被当任意本地栅格读取器。
+        """
+        roots = (
+            allowed_roots
+            if allowed_roots is not None
+            else self._data_dir_roots()
+        )
+        for attr in ("predictions_path", "references_path",
+                     "confidence_path", "regions_path"):
+            uri = getattr(request, attr, None)
+            if uri is None:
+                continue
+            self._gate_path(str(uri), what=attr, roots=roots, error_cls=ModelOpsError)
+
+    async def evaluate_async(
+        self, request: EvaluationRequest, *, allowed_roots: Optional[List[Path]] = None
+    ) -> Dict[str, Any]:
+        # SEC-06：LLM 工具面不再绕过 source-path 门 —— 服务层是所有调用者
+        # （工具/HTTP/内部）的唯一入口，默认只放行 DATA_DIR 数据域。
+        self._gate_eval_paths(request, allowed_roots=allowed_roots)
         return await asyncio.to_thread(self._evaluation.evaluate, request)
 
     async def evaluate_drift_async(self, request: DriftEvaluationRequest) -> Dict[str, Any]:

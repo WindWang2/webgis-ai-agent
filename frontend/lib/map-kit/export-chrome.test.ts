@@ -11,6 +11,7 @@ import {
   drawChromeAttribution,
   drawChromeChartPanel,
   drawChromeColorbar,
+  drawChromeDisclosurePanel,
   drawChromeLegend,
   drawChromeNorthArrow,
   drawChromeScaleBar,
@@ -817,5 +818,121 @@ describe('V4 table_panel 导出 — 有界快照', () => {
       CANVAS,
     );
     expect(model.panels.find((p) => p.kind === 'table')?.text).toBe('行政区');
+  });
+});
+
+// ── #1745（5）：面板行数封顶 + 盒高钳位 ──────────────────────────────────
+//
+// 后端下发的超大面板此前解析不设行数上限：绘制端对每行做 _clipText
+// （O(len²) measureText 循环）+ measureText + fillText，在导出关键路径上
+// 造成无界画布工作量，并把面板盒高撑到画布外。
+
+/** 与 export-chrome.ts 的 EXPORT_PANEL_MAX_ROWS 同值（源常量不导出）。 */
+const PANEL_ROW_CAP = 24;
+
+describe('#1745 面板行数封顶', () => {
+  it('statistics：超大 items 解析封顶，前 N 条按序保留', async () => {
+    const items = Array.from({ length: 200 }, (_, i) => ({ label: `L${i}`, value: i }));
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'stats', type: 'statistics_panel', options: { stats: { title: '统计', items } } }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    const stats = model.panels.find((p) => p.kind === 'statistics')?.stats;
+    expect(stats?.items).toHaveLength(PANEL_ROW_CAP);
+    expect(stats?.items[0]).toMatchObject({ label: 'L0', value: 0 });
+    expect(stats?.items[PANEL_ROW_CAP - 1]).toMatchObject({ label: `L${PANEL_ROW_CAP - 1}` });
+  });
+
+  it('decision：超大 rows/vetoes 解析封顶', async () => {
+    const rows = Array.from({ length: 200 }, (_, i) => ({ name: `候选${i}`, rank: i + 1, score: i }));
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({
+            id: 'dec', type: 'decision_panel',
+            options: { decision: { method: 'ahp', weightSource: 'manual', rows, vetoes: ['v1', 'v2'] } },
+          }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    const rowsOut = model.panels.find((p) => p.kind === 'decision')?.disclosure?.rows ?? [];
+    expect(rowsOut.length).toBeLessThanOrEqual(PANEL_ROW_CAP);
+    expect(rowsOut.length).toBeGreaterThan(0);
+  });
+
+  it('methodology：超大 warnings 解析封顶', async () => {
+    const warnings = Array.from({ length: 200 }, (_, i) => ({ code: `C${i}`, text: `说明 ${i}` }));
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'meth', type: 'methodology_note', options: { warnings } }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.panels.find((p) => p.kind === 'methodology')?.disclosure?.rows)
+      .toHaveLength(PANEL_ROW_CAP);
+  });
+
+  it('uncertainty：超大 items 解析封顶，sampleNote 仍作为尾注保留', async () => {
+    const items = Array.from({ length: 200 }, (_, i) => ({ label: `项${i}`, kind: 'sampling' }));
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({
+            id: 'unc', type: 'uncertainty_panel',
+            options: { uncertainty: { items, sampleNote: '抽样说明' } },
+          }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    const rows = model.panels.find((p) => p.kind === 'uncertainty')?.disclosure?.rows ?? [];
+    expect(rows.length).toBeLessThanOrEqual(PANEL_ROW_CAP + 1);
+    expect(rows[rows.length - 1]).toBe('抽样说明');
+  });
+});
+
+describe('#1745 面板盒高钳位', () => {
+  it('统计卡：小画布下盒高与绘制行都不越过画布下沿', () => {
+    const { ctx, calls } = mockCtx();
+    const items = Array.from({ length: 200 }, (_, i) => ({ label: `L${i}`, value: i }));
+    drawChromeStatsPanel(
+      { ctx, ...DRAW_BASE, targetH: 300 },
+      { kind: 'statistics', anchor: 'top-left', stats: { title: '统计', items } },
+      { marginX: 40 },
+    );
+    const boxes = calls.filter((c) => c.op === 'fill').length; // 面板底 + 行底纹
+    expect(boxes).toBeGreaterThan(0);
+    // fillText 参数序是 [text, x, y] —— 取 args[2] 才是基线 y。
+    const ys = calls.filter((c) => c.op === 'fillText').map((c) => Number(c.args[2]));
+    expect(ys.length).toBeGreaterThan(0);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(300);
+  });
+
+  it('披露族：顶部长锚距下面板不把行画到画布外', () => {
+    const { ctx, calls } = mockCtx();
+    const rows = Array.from({ length: 200 }, (_, i) => `第 ${i} 行说明`);
+    drawChromeDisclosurePanel(
+      { ctx, ...DRAW_BASE, targetH: 260 },
+      { kind: 'decision', anchor: 'top-left', disclosure: { title: '决策', rows, accent: false } },
+      { marginX: 40 },
+    );
+    const ys = calls.filter((c) => c.op === 'fillText').map((c) => Number(c.args[2]));
+    expect(ys.length).toBeGreaterThan(0);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(260);
   });
 });

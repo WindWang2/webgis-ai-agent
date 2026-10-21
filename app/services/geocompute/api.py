@@ -191,7 +191,8 @@ def run_plan_sync(
     默认接入进程级 ``GOVERNOR``：global 上限 + 层级作用域链
     ``tenant:{org} → project:{pid} → session:{sid} → execution``（ADR-0101
     D10 —— tenant/project 仅在既有身份真相存在时挂载；稳定哈希派生，
-    幂等，execution 作用域在 run 内创建并在 finally 摘除）。
+    幂等，execution 作用域在 run 内创建并在 finally 摘除；身份作用域按
+    挂载引用计数管理，run 结束（含执行期抛错）即归还，无活跃引用时回收）。
 
     ``caller``（auth user dict 或 None）原样穿透到执行器：目录项准入、
     复用键 owner 域与 run 归属都以它为准（SEC：数据平面内 authz 与
@@ -227,11 +228,17 @@ def run_plan_sync(
         )
     from app.services.geocompute.executor import engine
 
-    return engine.execute_plan(
-        plan, session_id=session_id, caller=caller, cancel_token=cancel_token,
-        governor=gov, governor_parent_path=parent,
-        run_id=run_id, yield_check=yield_check,
-        owner_scope_override=owner_scope_override,
-        resource_envelope=resource_envelope,
-        emit_events=emit_events,
-    )
+    try:
+        return engine.execute_plan(
+            plan, session_id=session_id, caller=caller, cancel_token=cancel_token,
+            governor=gov, governor_parent_path=parent,
+            run_id=run_id, yield_check=yield_check,
+            owner_scope_override=owner_scope_override,
+            resource_envelope=resource_envelope,
+            emit_events=emit_events,
+        )
+    finally:
+        # #1745 1：身份作用域（tenant/project/session）的挂载引用归还 ——
+        # 归零且记账/后代清空的作用域随链回收，否则 GLOBAL_GOVERNOR 的子树
+        # 随历史 org/project/session 数无界累积（执行期抛错同样要归还）。
+        gov.release_scope(parent)

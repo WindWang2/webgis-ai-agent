@@ -13,6 +13,24 @@ from app.services.explorer.models import StageResult
 logger = logging.getLogger(__name__)
 
 
+def _source_id_of(item: Dict[str, Any]) -> str:
+    """Best-effort source id for error reporting — never raises.
+
+    #1721: the failure branch of the aggregation loop may run on a source
+    dict that already failed ``DataSource`` validation *inside* the gather
+    isolation boundary (missing ``id``/``name``, or a non-mapping payload).
+    Deriving the id here must not re-validate — re-constructing ``DataSource``
+    re-raised the captured error and crashed the whole stage instead of
+    recording a single-source fetch failure.
+    """
+    source_dict = item.get("source", {}) if isinstance(item, dict) else {}
+    if isinstance(source_dict, dict):
+        sid = source_dict.get("id")
+        if sid:
+            return str(sid)
+    return "<invalid source>"
+
+
 async def run_fetch_stage(
     task_id: str,
     selected_sources: List[Dict[str, Any]],
@@ -71,12 +89,15 @@ async def run_fetch_stage(
     # Build the results list in input order, discriminating success vs failure.
     results: List[Dict[str, Any]] = []
     for item, outcome in zip(selected_sources, gather_results):
-        source_dict = item.get("source", {})
-        source = DataSource(**source_dict)
         if isinstance(outcome, BaseException):
-            logger.warning(f"[Explorer:{task_id}] Fetch failed for {source.id}: {outcome}")
+            # #1721: this branch stays inside the isolation boundary — it
+            # must not re-construct DataSource (the pre-fix crash point: one
+            # malformed source dict re-raised its ValidationError here and
+            # sank the whole stage instead of landing in fetch_errors).
+            source_id = _source_id_of(item)
+            logger.warning(f"[Explorer:{task_id}] Fetch failed for {source_id}: {outcome}")
             results.append({
-                "source_id": source.id,
+                "source_id": source_id,
                 "error": str(outcome),
             })
         else:

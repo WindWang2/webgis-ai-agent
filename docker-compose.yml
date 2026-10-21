@@ -33,11 +33,32 @@ services:
     # 审计 P1：开发环境也拒绝弱默认密码。之前 dev_redis_pass 硬编码且多处重复。
     # Dev Redis is cache-only (allkeys-lru). Prod/k8s use noeviction — see
     # docs/DEPLOYMENT.md "Redis 驱逐策略". Do not "fix" this to noeviction.
-    command: redis-server --appendonly --maxmemory 256mb --maxmemory-policy allkeys-lru --bind 0.0.0.0 --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    # #1676（SEC-04）：`--requirepass ${REDIS_PASSWORD}` 从 command 移除 ——
+    # compose 在解析期插值并把结果存进容器 Config.Cmd，`docker inspect` 直接
+    # 打印明文；`docker top` / 宿主机 /proc/<pid>/cmdline 同样可见。改为入口
+    # 把完整配置（含 requirepass）写进 /dev/shm tmpfs 的 0400 运行时 conf
+    # （不落盘、容器停止即消失）后 exec redis-server，并保留 stock entrypoint
+    # 的 root→redis 降权（gosu）与 /data chown。$$ 双写让 compose 不展开，
+    # 运行时由容器 shell 从 env 读取。
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        umask 077
+        printf 'appendonly yes\nmaxmemory 256mb\nmaxmemory-policy allkeys-lru\nbind 0.0.0.0\nrequirepass %s\n' "$$REDIS_PASSWORD" > /dev/shm/redis-runtime.conf
+        chmod 400 /dev/shm/redis-runtime.conf
+        if [ "$(id -u)" = '0' ] && command -v gosu >/dev/null 2>&1; then
+          find /data \! -user redis -exec chown redis '{}' +
+          chown redis:redis /dev/shm/redis-runtime.conf
+          exec gosu redis redis-server /dev/shm/redis-runtime.conf
+        fi
+        exec redis-server /dev/shm/redis-runtime.conf
     environment:
+      # 审计 P1：`:?` 缺值即拒绝启动（绝不引导无认证实例）。
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"
       # 审计 P0：healthcheck 不直接暴露密码。通过 REDISCLI_AUTH 环境变量传递，
       # 避免密码出现在 docker inspect 的 healthcheck 命令中。
-      - REDISCLI_AUTH=${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      REDISCLI_AUTH: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -86,7 +107,10 @@ services:
       - uploads:/app/data
     env_file:
       - .env
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    # #1694 SEC-13：--ws-max-size 与 app/api/routes/ws.py:29 / ws_collab.py:51 的
+    # _MAX_INBOUND_BYTES=16*1024 对齐 —— 应用层检查发生在整帧 receive_text()
+    # 缓冲之后，协议层先限size 才不会把超大帧整体读进内存。
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws-max-size 16384
     deploy:
       resources:
         limits:

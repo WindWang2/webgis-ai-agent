@@ -304,6 +304,9 @@ def build_binding_proposals(
 
     if len(proposals) > _MAX_BINDINGS_PER_PASS:
         # 截断披露（C5 纪律：所有跳过携带 code，不静默丢面）。
+        # #1671：binding_pass_truncated 已在 conflicts 矩阵登记
+        # （skip_disclosed，非错误），不经 resolve_from_result —— 该函数
+        # 只映射引擎事务回执，截断发生在任何 mutation 之前。
         dropped_paths = sorted({
             p.source_requirement_path
             for p in proposals[_MAX_BINDINGS_PER_PASS:]

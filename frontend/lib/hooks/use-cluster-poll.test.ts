@@ -111,6 +111,10 @@ describe('useBoundedPoll 轮询纪律（ADR-0142 D3）', () => {
   });
 
   it('卸载后 in-flight 响应被丢弃（纪律⑤）', async () => {
+    // 完整可观测覆盖（卸载 abort + 陈旧响应零 setState + 轮询不再触发）见
+    // frontend/test/hooks/use-cluster-poll-unmount.test.ts —— React 19 ESM
+    // namespace 不可 spy，那里用整模块 mock 的 setter 记录器实现。
+    // 此处保留最小可观测契约：陈旧响应兑现不得引发新拉取。
     let resolveLater: (v: { v: number }) => void = () => undefined;
     const fetcher = vi.fn().mockImplementation(
       () => new Promise<{ v: number }>((resolve) => {
@@ -122,7 +126,7 @@ describe('useBoundedPoll 轮询纪律（ADR-0142 D3）', () => {
     await act(async () => {
       resolveLater({ v: 42 });
     });
-    // 无断言崩溃即通过：陈旧响应不再写状态
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('手动 refresh 立即拉取', async () => {

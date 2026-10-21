@@ -456,15 +456,20 @@ class DatasetProfiler:
             )
             out_w = max(1, (ds.width or 1) // scale)
             out_h = max(1, (ds.height or 1) // scale)
-            data = ds.read(
-                out_shape=(ds.count, out_h, out_w),
-                boundless=False,
-            )
             # 波段读取封顶（波段数是数据可控维度，1000 波段 × 512² × 8B ≈ 2GB）。
+            # 封顶必须**先于分配**生效：旧实现先按 ``ds.count`` 全波段
+            # ``ds.read(out_shape=(ds.count, ...))`` 再只统计前 16 个波段，
+            # 内存已按全量落地，封顶名不符实。故这里先定 ``bands_read``，
+            # 再以 ``indexes`` 只读这些波段（``out_shape`` 与 indexes 等长）。
             bands_read = min(ds.count, 16)
             diagnostics: list = []
             if bands_read < ds.count:
                 diagnostics.append(f"band_stats_truncated_to_{bands_read}")
+            data = ds.read(
+                indexes=list(range(1, bands_read + 1)),
+                out_shape=(bands_read, out_h, out_w),
+                boundless=False,
+            )
             for b in range(bands_read):
                 band = data[b].ravel()
                 total = band.size

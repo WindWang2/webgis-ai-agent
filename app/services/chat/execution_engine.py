@@ -168,6 +168,24 @@ def _has_non_plan_refs(refs: dict) -> bool:
 #: _repair_orphaned_tool_calls 以「已取消」补齐。
 _CANCELLED_TOOL = object()
 
+#: audit4 #980（流式）/ #1717（非流式 parity）：工具结果载荷钳制上限。
+#: 未截断的 llm_payload 直接进 messages（_sessions LRU 会话历史）时，
+#: 轮内重组会把全量载荷重发给 provider（token 浪费 + 内存放大），且与
+#: DB 的截断版不一致。内存副本与 DB 同钳本常量。
+_TOOL_PAYLOAD_MAX_CHARS = 100000
+
+
+def _clamp_tool_payload(payload: str) -> str:
+    """把工具结果载荷钳制到 _TOOL_PAYLOAD_MAX_CHARS（流式/非流式共用）。
+
+    与流式路径 audit4 #980 的 ``db_save_content`` 同义：超限取前 100K，
+    不加后缀 —— DB 侧 ``_save_msg_async`` 的 "...[truncated]" 兜底标记
+    保留给以超限载荷直接调用它的调用方。
+    """
+    if len(payload) > _TOOL_PAYLOAD_MAX_CHARS:
+        return payload[:_TOOL_PAYLOAD_MAX_CHARS]
+    return payload
+
 
 def _is_empty_completion(content: object, tc_list: object) -> bool:
     """CORRECTNESS-4 空补全谓词（H-6/#861 提为共用函数）。
@@ -874,7 +892,7 @@ class ChatExecutionEngine:
             msg_result_str = res["msg_result_str"]
             tool_name = res["tool_name"]
             if standard_calls:
-                db_save_content = msg_result_str[:100000] if len(msg_result_str) > 100000 else msg_result_str
+                db_save_content = _clamp_tool_payload(msg_result_str)
                 await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc["id"])
                 # DB 写完成后再动内存列表 —— 中断窗口内重入不会重复 append
                 # audit4 #980: 内存副本与 DB 同钳 100K —— 此前未截断的
@@ -930,8 +948,8 @@ class ChatExecutionEngine:
         except Exception:  # noqa: BLE001 - marker check must never block saves
             pass
         try:
-            if tool_result is not None and isinstance(tool_result, str) and len(tool_result) > 100000:
-                tool_result = tool_result[:100000] + "...[truncated]"
+            if tool_result is not None and isinstance(tool_result, str) and len(tool_result) > _TOOL_PAYLOAD_MAX_CHARS:
+                tool_result = _clamp_tool_payload(tool_result) + "...[truncated]"
             async with async_db_session() as db:
                 await AsyncHistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id, reasoning_content)
         except Exception as e:
@@ -1689,6 +1707,11 @@ class ChatExecutionEngine:
                                     _payload = f"Tool execution failed: {_res}"
                                 else:
                                     _payload = _res.llm_payload
+                                # #1717: 内存副本与 DB 同钳 100K —— 非流式
+                                # unwind 路径此前把未截断 llm_payload 直接
+                                # 驻进 messages（_sessions LRU），与流式
+                                # audit4 #980 修复不对称。
+                                _payload = _clamp_tool_payload(_payload)
                                 if not standard_calls:
                                     continue  # XML path never persists tool rows (#376)
                                 try:
@@ -1771,12 +1794,17 @@ class ChatExecutionEngine:
                             )
 
                         if standard_calls:
+                            # audit4 #980 非流式 parity（#1717）：内存副本与
+                            # DB 同钳 100K —— 此前未截断的 llm_payload 直接进
+                            # messages（_sessions LRU 会话历史），轮内重组时
+                            # 全量重发，与 DB 截断版不一致。
+                            db_save_content = _clamp_tool_payload(llm_payload)
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": tc.get("id", ""),
-                                "content": llm_payload,
+                                "content": db_save_content,
                             })
-                            await self._save_msg_async(session_id, "tool", "", None, llm_payload, tc.get("id", ""))
+                            await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc.get("id", ""))
                         else:
                             tool_name = tc.get("function", {}).get("name", "tool") if isinstance(exec_res, Exception) else exec_res.tool_name
                             tool_result_msgs.append(f"{tool_name}: {llm_payload}")

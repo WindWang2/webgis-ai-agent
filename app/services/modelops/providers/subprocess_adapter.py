@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import subprocess
 import sys
 import threading
@@ -48,9 +49,17 @@ from app.services.modelops.providers.base import (
     TileOutput,
 )
 
+logger = logging.getLogger(__name__)
+
 #: 单次子进程请求/响应字节上限（b64 膨胀 ~4/3 已计入预算）。
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+#: stderr drain 的字节上界（超限 = worker 失控；与 stdout bomb 同纪律：
+#: 有界读 + kill，绝不无界堆积宿主内存）。
+MAX_STDERR_BYTES = 1024 * 1024
+#: 管道线程 join 的宽限（进程终态后线程应即退；超时不阻断结果 ——
+#: daemon 线程随进程退出收敛，真卡死由 deadline kill 兜底）。
+_PIPE_JOIN_GRACE_S = 5.0
 DEFAULT_DEADLINE_S = 120.0
 
 _SERVED_TASKS = frozenset(
@@ -240,11 +249,44 @@ class SubprocessWorkerProvider:
                 self._in_flight -= 1
 
     def _read_bounded(self, proc: subprocess.Popen, request: bytes) -> tuple:
-        """stdin 一次性写入；stdout 以字节上限增量读取 + deadline kill。"""
-        import threading
+        """stdin 独立线程写入；stdout 有界增量读；stderr 随读 drain。
 
-        proc.stdin.write(request)
-        proc.stdin.close()
+        #1709 死锁修复：此前 ``proc.stdin.write(request)`` 在主线程同步
+        执行且无超时，stderr 直到 ``proc.wait()`` 之后才读 —— worker 若在
+        消费 stdin 之前先向 stderr 写出超过管道缓冲（Linux 默认 64KiB）
+        的量，双方互卡成永久死锁，且 deadline 守门在该路径上不可达。现在
+        三条管道各由独立线程消费（stderr 先起 drain），主线程只做
+        deadline 守门；stdin 写入侧卡死由 wait 超时 → kill 收敛。
+        """
+        err_buf = bytearray()
+        err_exceeded = threading.Event()
+
+        def _drain_stderr() -> None:
+            try:
+                while True:
+                    chunk = proc.stderr.read(65536)
+                    if not chunk:
+                        break
+                    err_buf.extend(chunk)
+                    if len(err_buf) > MAX_STDERR_BYTES:
+                        err_exceeded.set()
+                        proc.kill()
+                        break
+            except Exception as exc:  # noqa: BLE001 — 管道随 kill 断开是预期
+                logger.debug("[subprocess_adapter] stderr drain ended early: %s", exc)
+
+        def _write_stdin() -> None:
+            try:
+                proc.stdin.write(request)
+                proc.stdin.close()
+            except Exception as exc:  # noqa: BLE001 — worker 已死 → 管道断开是预期
+                logger.debug("[subprocess_adapter] stdin write ended early: %s", exc)
+
+        # 顺序：stderr drain 先起（唯一可能先满的管道），stdin 写入并行。
+        stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+        stdin_thread = threading.Thread(target=_write_stdin, daemon=True)
+        stderr_thread.start()
+        stdin_thread.start()
 
         buf = bytearray()
         exceeded = threading.Event()
@@ -274,14 +316,22 @@ class SubprocessWorkerProvider:
                 f"subprocess worker exceeded deadline {self._deadline_s}s "
                 f"(killed); shrink batch or raise MODELOPS_SUBPROCESS_DEADLINE_S"
             ) from exc
-        reader_thread.join(timeout=5.0)
+        # 进程终态后三条线程应即退（EOF / 断管）；宽限等待只为收割，
+        # 超时不阻断结果（daemon 线程随进程退出收敛）。
+        stdin_thread.join(timeout=_PIPE_JOIN_GRACE_S)
+        reader_thread.join(timeout=_PIPE_JOIN_GRACE_S)
+        stderr_thread.join(timeout=_PIPE_JOIN_GRACE_S)
         if exceeded.is_set():
             raise ProviderOOM(
                 f"subprocess response exceeds {MAX_RESPONSE_BYTES} bytes "
                 "(output bomb guard, killed mid-read)"
             )
-        err = proc.stderr.read() if proc.stderr else b""
-        return bytes(buf), err
+        if err_exceeded.is_set():
+            raise ProviderError(
+                f"subprocess worker stderr exceeds {MAX_STDERR_BYTES} bytes "
+                "(unbounded error writer, killed)"
+            )
+        return bytes(buf), bytes(err_buf)
 
     def _parse_response(
         self, model: LoadedModel, batch: TileBatch, ctx: InferenceContext, raw: bytes
@@ -345,6 +395,7 @@ __all__ = [
     "SubprocessWorkerProvider",
     "MAX_REQUEST_BYTES",
     "MAX_RESPONSE_BYTES",
+    "MAX_STDERR_BYTES",
     "parse_worker_allowlist",
     "worker_request_payload",
 ]

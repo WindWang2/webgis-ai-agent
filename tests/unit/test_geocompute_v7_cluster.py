@@ -534,3 +534,33 @@ class TestBridgeConcurrency:
         with pytest.raises(BridgeTimeoutError):
             run_coro_sync(_hang(), timeout_s=0.2)
         assert time.monotonic() - start < 3
+
+    def test_bridge_ensure_failure_releases_inflight_permit(self, monkeypatch):
+        """review #1744-1：acquire 成功后 ``_ensure()``（loop 重建）抛错时，
+         finally 之外的旧结构会永久蒸发一个 in-flight 许可 —— 反复触发后
+        BoundedSemaphore 耗尽，所有桥调用以 BridgeTimeoutError 失败。
+        回归：失败路径必须全额归还许可。"""
+        from app.services.geocompute import _async_bridge as bridge_mod
+        from app.services.geocompute._async_bridge import run_coro_sync
+
+        sem = bridge_mod._inflight_sem
+        cap = bridge_mod._MAX_INFLIGHT
+        if sem is None or cap <= 0:
+            pytest.skip("bridge in-flight cap disabled (WEBGIS_BRIDGE_MAX_INFLIGHT=0)")
+
+        async def _coro():
+            return 1
+
+        def _boom():
+            raise RuntimeError("geocompute bridge loop failed to start")
+
+        monkeypatch.setattr(bridge_mod._bridge, "_ensure", _boom)
+        with pytest.raises(RuntimeError, match="loop failed to start"):
+            run_coro_sync(_coro(), timeout_s=1.0)
+
+        # 许可全额归还：连续 acquire 至上限都必须立刻成功（漏一个就会在这里
+        # 以超时暴露）。
+        for i in range(cap):
+            assert sem.acquire(timeout=0.5), f"in-flight permit {i}/{cap} leaked"
+        for _ in range(cap):
+            sem.release()

@@ -9,17 +9,25 @@ def _load_k8s(path):
 
 class TestK8sRedisAuth:
     def test_redis_has_requirepass(self):
-        """K8s Redis must use --requirepass."""
+        """K8s Redis 必须启用认证，且口令不得进 argv（#1676 / SEC-04）。
+
+        原断言只查 args 含 requirepass —— 而 `--requirepass $(REDIS_PASSWORD)`
+        作为独立 argv 元素时，kubelet 在容器启动时把 secret 值展开进进程
+        命令行：`kubectl describe`、节点 `/proc/<pid>/cmdline` 可见明文。现在
+        由 sh -c 把 requirepass 写进 /dev/shm tmpfs 的 0400 运行时 conf 后
+        exec redis-server（配置指令，非 argv 标志）。
+        """
         for doc in _load_k8s("deploy/k8s/05-deps-optional.yaml"):
             if doc and doc.get("kind") == "Deployment":
                 containers = doc["spec"]["template"]["spec"].get("containers", [])
                 for c in containers:
                     if c.get("name") == "redis":
-                        cmd = c.get("command", [])
-                        args = c.get("args", [])
-                        all_args = cmd + args
+                        all_args = (c.get("command") or []) + (c.get("args") or [])
+                        assert "--requirepass" not in all_args, (
+                            f"Redis 口令进 argv（k8s 进程列表可见明文，#1676）: {all_args}"
+                        )
                         assert any("requirepass" in a for a in all_args), (
-                            f"Redis has no --requirepass. Command: {all_args}"
+                            f"Redis has no requirepass. Command: {all_args}"
                         )
 
 

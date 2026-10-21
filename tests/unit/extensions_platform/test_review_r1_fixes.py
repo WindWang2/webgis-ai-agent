@@ -122,7 +122,14 @@ class TestCritical2FlatKwargsDispatch:
         registry = ToolRegistry()
         host = ExtensionHost(
             tool_registry=registry,
-            policy=HostPolicy(roots=(tmp_path,), builtin_ids=frozenset({"acme.pack"})),
+            policy=HostPolicy(
+                roots=(tmp_path,),
+                builtin_ids=frozenset({"acme.pack"}),
+                # #1709：manifest 声明 != 授权。本钉测的是扁平 kwargs 派发
+                # 约定（Round-1 CRITICAL-2），故授予 model_provider；未授权
+                # 时的 typed 拒绝见 test_model_provider.py。
+                grants={"acme.pack": frozenset({"model_provider"})},
+            ),
         )
         host.discover()
         assert not has_errors(host.activate("acme.pack"))

@@ -1258,7 +1258,9 @@ def gwr_regression_narrated(
 
     自适应 bisquare 核，带宽 = 最近邻数 k（契约默认 30，运行时钳制到
     [5, n//2]）；``bandwidth_selection="cv"`` 在有界候选网格上做留一 CV
-    （确定性穷举）。输出全局 R² / AIC / AICc、逐观测局部 R² 摘要、逐系数
+    （确定性穷举）—— 候选带宽的 LOO 邻域（k−1 点）装不下 p 个参数时跳过
+    该候选并在 ``bandwidth_cv_skipped`` 披露，无候选可行则类型化拒绝
+    （#1736）。输出全局 R² / AIC / AICc、逐观测局部 R² 摘要、逐系数
     空间变异摘要（min/median/max/IQR）；n ≤ 2000 时附逐观测系数面（列
     表），超过则只回摘要 + ``full_coefficient_surfaces=False`` 披露。
     AIC/AICc 用帽矩阵迹的有效参数 q = tr(S)+1 的高斯形式（Fotheringham
@@ -1286,21 +1288,42 @@ def gwr_regression_narrated(
     k_fixed = int(min(max(int(bandwidth), 5), k_cap))
 
     cv_scores: List[Dict] = []
+    cv_skipped: List[Dict] = []
     envelope: Optional[Dict] = None
     if selection == "cv":
         for cand in _GWR_BW_CANDIDATES:
             if cand > k_cap:
                 break
-            _, _, sse_cv, _ = _gwr_local_fit(
-                coords, y, x_mat, cand, leave_self_out=True)
+            try:
+                _, _, sse_cv, _ = _gwr_local_fit(
+                    coords, y, x_mat, cand, leave_self_out=True)
+            except IllConditionedSystem as exc:
+                # #1736：候选带宽「装不下」p 个参数（LOO 邻域 take=k−1 < p）
+                # 时跳过该候选，而不是让整次 CV 失败 —— 解释变量 ≥5 个时
+                # 最小候选 k=5 必然装不下，旧行为使 min() 在空序列上抛错。
+                # 跳过原因进 envelope 披露（never-silent）。
+                cv_skipped.append({
+                    "bandwidth": int(cand),
+                    "reason": str(exc)[:160],
+                })
+                continue
             cv_scores.append({"bandwidth": int(cand),
                               "cv_mse": round(sse_cv / n, 6)})
+        if not cv_scores:
+            raise IllConditionedSystem(
+                f"no candidate bandwidth in {list(_GWR_BW_CANDIDATES)} "
+                f"(capped at k_cap={k_cap}) fits {p} parameters — the "
+                f"smallest feasible LOO neighborhood needs k >= {p + 1}",
+                correction_hint="increase the sample count or reduce the "
+                                "explanatory fields",
+            )
         best = min(cv_scores, key=lambda e: e["cv_mse"])
         k_used = int(best["bandwidth"])
         envelope = {
             "scheme": f"bandwidth LOO-CV over bounded grid "
                       f"{list(_GWR_BW_CANDIDATES)} (clipped to ≤ {k_cap})",
             "selected": k_used,
+            "skipped_candidates": cv_skipped,
         }
     else:
         k_used = k_fixed
@@ -1419,6 +1442,23 @@ def gwr_regression_narrated(
                 notes="各候选带宽的 CV MSE 见 bandwidth_cv（确定性网格穷举）",
             ).to_evidence())
         data_out["bandwidth_cv"] = cv_scores
+        if cv_skipped:
+            # #1736：被跳过的候选（带宽装不下 p 个参数）如实披露，不静默。
+            data_out["bandwidth_cv_skipped"] = cv_skipped
+            data_out["uncertainty"].append(
+                SensitivityEnvelope(
+                    target="gwr_bandwidth_cv_skipped",
+                    perturbation_scheme=(
+                        "candidate bandwidths skipped in LOO-CV because their "
+                        "LOO neighborhood (k-1 points) is smaller than the "
+                        "parameter count p"),
+                    tipping_points=[
+                        f"k={pt['bandwidth']}: {pt['reason']}"
+                        for pt in cv_skipped
+                    ],
+                    notes="跳过装不下的候选带宽后仍在可行候选上完成 CV 选择"
+                          "（#1736）；无候选可行时类型化拒绝而非空网格 min()",
+                ).to_evidence())
     elif bandwidth_sensitivity:
         data_out["uncertainty"].append(
             SensitivityEnvelope(

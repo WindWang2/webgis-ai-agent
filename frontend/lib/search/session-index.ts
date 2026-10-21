@@ -63,9 +63,19 @@ export function buildIndexedSession(
 
 export function loadPersistedSessions(): IndexedSession[] {
   if (typeof localStorage === 'undefined') return [];
+  let raw: string | null = null;
   try {
-    const raw = localStorage.getItem(INDEX_KEY);
-    if (!raw) return [];
+    raw = localStorage.getItem(INDEX_KEY);
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+  return _sessionsFromRaw(raw);
+}
+
+/** 持久化原文 → 会话数组（坏载荷安静降级为空，不抛）。 */
+function _sessionsFromRaw(raw: string): IndexedSession[] {
+  try {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((s): s is IndexedSession => Boolean(s && typeof s === 'object' && s.id));
@@ -102,13 +112,37 @@ export function clearSearchIndex(): void {
   if (typeof localStorage !== 'undefined') localStorage.removeItem(INDEX_KEY);
 }
 
+/**
+ * 索引统计的 memo（#1745 7）。
+ *
+ * 调用点在渲染体里（``search-drawer`` 每次渲染都调）：旧实现每次都
+ * JSON.parse 整个持久化索引、再逐会话 JSON.stringify 一遍（``chars`` 算了
+ * 还没有消费方）—— 每敲一个字符就把整套索引重跑一遍。改为按**持久化原文**
+ * 记忆：索引没变时零解析零序列化；原文变化（含其他标签页写入同一 key）
+ * 才重算，因此统计不会读到过期值。
+ */
+let _statsMemo: { raw: string; value: { sessions: number; messages: number; chars: number } } | null =
+  null;
+
 export function searchIndexStats(): { sessions: number; messages: number; chars: number } {
-  const sessions = loadPersistedSessions();
-  return {
+  const empty = { sessions: 0, messages: 0, chars: 0 };
+  if (typeof localStorage === 'undefined') return empty;
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(INDEX_KEY);
+  } catch {
+    return empty;
+  }
+  if (!raw) return empty;
+  if (_statsMemo && _statsMemo.raw === raw) return { ..._statsMemo.value };
+  const sessions = _sessionsFromRaw(raw);
+  const value = {
     sessions: sessions.length,
     messages: sessions.reduce((acc, s) => acc + s.docs.length, 0),
     chars: sessions.reduce((acc, s) => acc + JSON.stringify(s).length, 0),
   };
+  _statsMemo = { raw, value };
+  return { ...value };
 }
 
 // ── 搜索 ──
@@ -122,12 +156,12 @@ function makeSnippet(text: string, at: number, len: number): string {
 function findMessageHits(
   session: IndexedSession,
   query: string,
-  hits: SearchHit[],
   limit: number,
-): void {
+): SearchHit[] {
   const q = query.toLowerCase();
+  const out: SearchHit[] = [];
   for (const doc of session.docs) {
-    if (hits.length >= limit) return;
+    if (out.length >= limit) break;
     const at = doc.text.toLowerCase().indexOf(q);
     const refIdHit = doc.refs.find((r) => r.toLowerCase().includes(q));
     if (at < 0 && !refIdHit) continue;
@@ -138,7 +172,7 @@ function findMessageHits(
       for (const ref of doc.refs.slice(0, 3)) {
         if (emittedRefs.has(ref)) continue;
         emittedRefs.add(ref);
-        hits.push({
+        out.push({
           kind: 'artifact',
           sessionId: session.id,
           sessionTitle: session.title,
@@ -146,13 +180,14 @@ function findMessageHits(
           snippet: makeSnippet(doc.text, at, q.length),
           ref,
         });
-        if (hits.length >= limit) return;
+        if (out.length >= limit) break;
       }
+      if (out.length >= limit) break;
     }
     // ref id 本身命中：产物组直接出（按 ref 检索产物名）
     if (refIdHit && !emittedRefs.has(refIdHit)) {
       emittedRefs.add(refIdHit);
-      hits.push({
+      out.push({
         kind: 'artifact',
         sessionId: session.id,
         sessionTitle: session.title,
@@ -160,10 +195,10 @@ function findMessageHits(
         snippet: `${refIdHit}（位于第 ${doc.messageIndex + 1} 条消息）`,
         ref: refIdHit,
       });
-      if (hits.length >= limit) return;
+      if (out.length >= limit) break;
     }
     if (at >= 0) {
-      hits.push({
+      out.push({
         kind: 'message',
         sessionId: session.id,
         sessionTitle: session.title,
@@ -173,12 +208,38 @@ function findMessageHits(
       });
     }
   }
+  return out;
+}
+
+/**
+ * 三组配额权重（#1727）：消息全文是主检索信号拿最大份额；会话标题与图层组
+ * 各占一份保底 —— 任一组都不会被排在前面的组灌满后整组静默消失。
+ */
+const GROUP_WEIGHTS = { session: 3, message: 5, layer: 2 } as const;
+
+/**
+ * 把单一全局 `limit` 拆成三组独立配额（会话标题 / 消息+产物 / 图层）。
+ *
+ * 旧实现三组共用同一个 `hits.length >= limit` 闸门：会话标题与消息产物依序
+ * 灌满后，图层组的循环开头就 break，「当前工作区图层」一次都不跑。配额化后
+ * 每组各自计量；三组之和 ≤ limit（总量仍受 limit 兜底），小 limit 下保底
+ * 份额让位给消息组（limit<3 时无解）。
+ */
+function groupQuotas(limit: number): { session: number; message: number; layer: number } {
+  const total = Math.max(1, Math.floor(limit));
+  const sum = GROUP_WEIGHTS.session + GROUP_WEIGHTS.message + GROUP_WEIGHTS.layer;
+  const share = (w: number): number => Math.floor((total * w) / sum);
+  const session = Math.min(Math.max(1, share(GROUP_WEIGHTS.session)), Math.max(0, total - 2));
+  const layer = Math.min(Math.max(1, share(GROUP_WEIGHTS.layer)), Math.max(0, total - session - 1));
+  return { session, message: Math.max(0, total - session - layer), layer };
 }
 
 /**
  * 本地搜索：会话标题（子串）+ 消息全文（子串，产物 ref 另立产物组）+
  * 当前工作区图层（由调用方注入）。size<=5000 doc 量级下线性扫描（与命令
  * 面板同一性能契约量级）。
+ *
+ * 三组各自走 groupQuotas 拆出的独立配额（#1727），详见 groupQuotas 注释。
  */
 export function searchLocalIndex(
   query: string,
@@ -188,21 +249,24 @@ export function searchLocalIndex(
 ): SearchHit[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
-  const hits: SearchHit[] = [];
+  const quotas = groupQuotas(limit);
+  const sessionHits: SearchHit[] = [];
   for (const s of sessions) {
-    if (hits.length >= limit) break;
+    if (sessionHits.length >= quotas.session) break;
     if (s.title.toLowerCase().includes(q)) {
-      hits.push({ kind: 'session', sessionId: s.id, sessionTitle: s.title, snippet: s.title });
+      sessionHits.push({ kind: 'session', sessionId: s.id, sessionTitle: s.title, snippet: s.title });
     }
   }
+  const messageHits: SearchHit[] = [];
   for (const s of sessions) {
-    if (hits.length >= limit) break;
-    findMessageHits(s, q, hits, limit);
+    if (messageHits.length >= quotas.message) break;
+    messageHits.push(...findMessageHits(s, q, quotas.message - messageHits.length));
   }
+  const layerHits: SearchHit[] = [];
   for (const layer of layers) {
-    if (hits.length >= limit) break;
+    if (layerHits.length >= quotas.layer) break;
     if (layer.name.toLowerCase().includes(q)) {
-      hits.push({
+      layerHits.push({
         kind: 'layer',
         sessionId: 'current',
         sessionTitle: '当前工作区',
@@ -212,7 +276,7 @@ export function searchLocalIndex(
       });
     }
   }
-  return hits;
+  return [...sessionHits, ...messageHits, ...layerHits];
 }
 
 // ── 索引编排：会话列表 → 逐会话拉取消息建索引（可取消） ──

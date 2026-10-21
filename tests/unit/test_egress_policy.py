@@ -227,6 +227,11 @@ def test_decision_as_dict_roundtrip():
         "http://metadata.goog/computeMetadata/v1/token",
         "http://169.254.169.254./latest/meta-data/",  # 尾点
         "http://[::ffff:169.254.169.254]/latest/meta-data/",  # IPv4-mapped IPv6
+        # #1694 SEC-11：阿里云/腾讯云 IMDS —— 补入清单前这些端点在
+        # allow_private=True 下被当普通内网目标放行（元数据凭证外泄通道）。
+        "http://100.100.100.200/latest/meta-data/",  # 阿里云 IMDS
+        "http://169.254.0.23/latest/meta-data/",  # 腾讯云 IMDS
+        "http://metadata.tencentyun.com/latest/meta-data/",  # 腾讯云 IMDS 主机名
     ],
 )
 def test_metadata_forms_denied_even_with_private_allowed(url):

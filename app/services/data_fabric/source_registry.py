@@ -181,6 +181,11 @@ class SourceDefinition(BaseModel):
                 d.model_dump() if hasattr(d, "model_dump") else dict(d)
                 for d in self.datasets
             ]
+        # #1715: 源声明的单响应字节配额下传进 profile options —— 适配器公共
+        # 读取通道（security.safe_json_get 的 max_bytes）据此设流式上限；
+        # 未声明 = None = 走默认硬界。显式 options 值优先（setdefault 语义）。
+        if self.quota.max_bytes_per_request is not None:
+            options.setdefault("max_bytes_per_request", self.quota.max_bytes_per_request)
         return {
             "id": self.source_id,
             "source_type": self.protocol,

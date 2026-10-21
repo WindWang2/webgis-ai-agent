@@ -134,8 +134,12 @@ webgis-ai-agent/
 .DS_Store
 Thumbs.db
 .scratch/
-.claude/
-# 已跟踪的 Claude Code 镜像层（.claude/skills/ 为 git symlink + commands/）
+# #1677：父目录整体排除（.claude/）时 git 不会下降遍历，下面三条 ! 否定
+# 规则永不生效 —— .claude/README.md 与 .claude/commands/ 在盘上存在却既未
+# 跟踪也被遮蔽，新 clone 永久缺失。改为只排除 .claude/ 的直接子项，再显式
+# 放行已跟踪的镜像层（父目录未被排除，否定规则因此真正生效）。
+/.claude/*
+# 已跟踪的 Claude Code 镜像层（.claude/skills/ + commands/）
 # 与镜像说明文档仍需入库 —— 显式放行，其余 .claude 会话文件继续忽略。
 !/.claude/skills/
 !/.claude/commands/
@@ -195,9 +199,13 @@ uv.lock
 *.tar.gz
 
 # Runtime data (exports, reports, uploads generated at runtime)
-data/
-# ...but the source package `app/lib/data` and its tests are code, not runtime data
+# #1677：锚定到仓库根。未锚定的 `data/` 匹配任意深度的同名目录 —— 曾把生产
+# import 包 app/services/spatial_guardrails/data/ 的新增模块静默吞掉（规则
+# 早于该包 4.5 个月，新 clone / CI 直接 ImportError）。
+/data/
+# ...but the source packages below are code, not runtime data
 !app/lib/data/
+!app/services/spatial_guardrails/data/
 !tests/data/
 # Numerical Oracle Corpus 冻结快照是版本化交付物（Foundation V3）
 !tests/science_oracles/data/
@@ -216,7 +224,12 @@ screenshot.png
 .agent-work/
 .scratch/
 .audit/
-review/
+# #1677：锚定到仓库根。未锚定的 `review/` 匹配任意深度的同名目录 —— 曾静默
+# 吞掉 app/services/review/（7）、frontend/lib/review/（3）、tests/review/（9）
+# 的新文件。测试目录受害最危险：新测试在 CI 中直接不存在，表现为「绿灯但
+# 没跑」。任意深度的评审草稿按明确后缀忽略，而非裸目录名。
+/review/
+**/review/*.scratch.md
 
 # Test / coverage artifacts
 .coverage
@@ -256,7 +269,13 @@ screenshot-*.png
 # Bundled-Pi local runtime state (auth.json credentials, sessions, native-tools dump)
 .pi/
 
-.agents/
+# #1677：只忽略 .agents/ 的直接子项（会话产物等），再放行活跃技能树。
+# 未锚定的 `.agents/` 匹配任意深度同名目录，曾让第 100 个 skill 起永不入库
+# （739 个 skill 文件靠 git add -f 强行入库；gstack-upgrade / 外部 skills CLI
+# 的安装结果稳定丢失）。注意不能写 `!.agents/skills/` 代替：父目录被整体
+# 排除时 git 不会下降遍历，否定规则无效（上方 .claude/* 的同款事故，#1677）。
+/.agents/*
+!/.agents/skills/
 
 # Git bare-repo conversion backups (kept on disk for safety, never committed)
 .git.backup-*

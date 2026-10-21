@@ -314,10 +314,23 @@ function RowCopyButton({ rowData, rowIndex }: { rowData: Record<string, unknown>
   const handleCopy = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      navigator.clipboard.writeText(JSON.stringify(rowData, null, 2)).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      });
+      // #1746-8：非安全上下文 / 旧浏览器没有 navigator.clipboard（同步
+      // TypeError），权限被拒时 promise reject —— 两条路径都要接管，否则
+      // 产生 unhandled rejection。
+      let task: Promise<void>;
+      try {
+        task = navigator.clipboard.writeText(JSON.stringify(rowData, null, 2));
+      } catch {
+        return; // 剪贴板 API 不可用：静默降级（不打断表格交互）
+      }
+      task
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        })
+        .catch(() => {
+          // 权限被拒 / 文档失焦：剪贴板不可用，静默降级
+        });
     },
     [rowData]
   );

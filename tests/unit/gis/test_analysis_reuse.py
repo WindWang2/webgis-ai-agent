@@ -122,11 +122,12 @@ async def test_reuse_miss_on_param_change(clean_session):
 
 
 async def test_reuse_miss_on_input_shape_change(clean_session):
-    """输入 ref 形状指纹与生产时不一致 → 拒绝复用（in-place overwrite 防御）。
+    """输入 ref 被 in-place 覆写（形状真变）→ 与生产时记录不符 → 拒绝复用。
 
-    注：memory 后端 overwrite() 不刷新 descriptor（既有行为），故这里
-    直接构造「当前 descriptor 指纹 ≠ 生产时记录」的查询 —— 复用门看到
-    的正是 overwrite 后的形状失配。"""
+    #1720：旧守卫是恒真的 —— 期望值取自调用方传入的「复核时刻现状快照」，
+    与刚读到的当前 descriptor 比对永远相等，调用前发生的覆写发现不了。修正后
+    期望值取自生产时录入的 metadata["input_shapes"]，与当前 descriptor 比对。
+    这里用真实 overwrite 改形状（descriptor 随覆写重算，#1113）→ 失配 → miss。"""
     sid = clean_session
     input_ref = await session_data_manager.store(sid, _fc(5), prefix="geojson")
     out_ref = await session_data_manager.store(sid, _fc(9), prefix="geojson")
@@ -136,10 +137,39 @@ async def test_reuse_miss_on_input_shape_change(clean_session):
     await register_tool_artifact(
         sid, out_ref, tool="h3_binning", analysis_key=key, input_shapes=shapes
     )
-    # 复核时该输入形状已变为 50 点（overwrite 后的现实）
-    changed = {input_ref: {"feature_count": 50, "geometry_types": ["Point"]}}
-    hit = await find_reusable_artifact(sid, analysis_key=key, input_shapes=changed)
+    # 复核前输入被覆写：5 点 → 50 点（形状真的变了；调用方快照也照实反映）
+    await session_data_manager.overwrite(sid, input_ref, _fc(50))
+    hit = await find_reusable_artifact(
+        sid,
+        analysis_key=key,
+        input_shapes=await snapshot_input_shapes(sid, args),
+    )
     assert hit is None  # 输入变 → 不可复用
+
+
+async def test_reuse_shape_guard_reads_recorded_not_caller(clean_session):
+    """#1720：形状期望值取自生产时录入，不取自调用方现状快照。
+
+    恒真守卫的判据：调用方声称的形状与生产时记录、当前 descriptor 都不一致
+    时（生产上不可能 —— 快照本就派生自 descriptor），判定只由
+    「生产时记录 vs 当前 descriptor」决定。此处记录与现状一致（5 点）→ 命中；
+    旧逻辑会用调用方的 50 点口径误判 miss。"""
+    sid = clean_session
+    input_ref = await session_data_manager.store(sid, _fc(5), prefix="geojson")
+    out_ref = await session_data_manager.store(sid, _fc(9), prefix="geojson")
+    args = {"geojson": input_ref}
+    key = compute_analysis_key("h3_binning", args)
+    shapes = await snapshot_input_shapes(sid, args)
+    await register_tool_artifact(
+        sid, out_ref, tool="h3_binning", analysis_key=key, input_shapes=shapes
+    )
+    hit = await find_reusable_artifact(
+        sid,
+        analysis_key=key,
+        input_shapes={input_ref: {"feature_count": 50, "geometry_types": ["Point"]}},
+    )
+    assert hit is not None  # 记录与现状一致 → 可复用（调用方口径不是证据）
+    assert hit["artifact_id"] == out_ref
 
 
 async def test_reuse_miss_on_unknown_input_shape(clean_session):

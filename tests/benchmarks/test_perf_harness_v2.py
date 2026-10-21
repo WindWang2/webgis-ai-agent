@@ -146,7 +146,13 @@ def test_data_fabric_factory_adapter_routing():
     cm = DataFabricConnectionManager()
 
     profiles = [
-        ConnectionProfile(id="p_pg", source_type="postgis", host="localhost", database="gis"),
+        # #1604：SSRF 守卫默认拦 localhost（security.py BLOCKED_HOSTNAMES）。
+        # 本测试只验证 source_type → 具体 adapter 路由；allow_private=True
+        # 显式声明这是受信内网/自建数据源（不影响生产默认拒绝语义）。
+        ConnectionProfile(
+            id="p_pg", source_type="postgis", host="localhost", database="gis",
+            allow_private=True,
+        ),
         ConnectionProfile(id="p_gq", source_type="geoparquet", url="s3://bucket/test.parquet"),
         ConnectionProfile(id="p_fgb", source_type="flatgeobuf", url="https://example.com/test.fgb"),
         ConnectionProfile(id="p_stac", source_type="stac", url="https://earth-search.aws.element84.com/v1"),

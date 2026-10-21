@@ -56,9 +56,11 @@ export function HistogramSliderWidget({
             />
           );
         })}
-        {breaks.map((brk) => (
+        {breaks.map((brk, i) => (
           <line
-            key={brk}
+            // #1746-7：断点值可经两个 range 滑块拖成同值 → 纯 break 作 key 会
+            // 重复；复合索引保证唯一（列表长度固定，不会因索引混用）。
+            key={`${brk}-${i}`}
             x1={`${((brk - payload.min) / range) * 100}%`}
             x2={`${((brk - payload.min) / range) * 100}%`}
             y1={0}

@@ -1,4 +1,4 @@
-"""Emerging Hot Spot Analysis（EHA，时空热点演化；science-v3 R1 / 审计 03 §8）。
+r"""Emerging Hot Spot Analysis（EHA，时空热点演化；science-v3 R1 / 审计 03 §8）。
 
 对「已聚合的空间箱 × 时间期」计数量矩阵（space-time cube，调用方经
 H3/格网聚合产出，或输入天然分箱的 period 计数）做三段式热点演化分析：
@@ -139,7 +139,7 @@ def emerging_hotspot_narrated(
     distance_band: float = 0.0,
     alpha: float = 0.05,
 ) -> Dict[str, Any]:
-    """时空热点演化分析（Emerging Hot Spot Analysis）。
+    r"""时空热点演化分析（Emerging Hot Spot Analysis）。
 
     参数
     ----

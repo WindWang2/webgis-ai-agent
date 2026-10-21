@@ -107,7 +107,13 @@ export function createTimelineLoader(opts: TimelineLoaderOptions): TimelineLoade
       const ahead = opts.prefetchAhead ?? 4;
       for (let i = 1; i <= ahead; i += 1) {
         const next = index + i;
-        if (next < opts.total && !cache.has(next)) void request(next);
+        if (next < opts.total && !cache.has(next)) {
+          // 预取副本无人接 rejection：request 的 catch 会把 fetchSlice 失败
+          // 原样 rethrow，主链 load() 只接自己的那一份。这里显式吞掉 ——
+          // 同一 in-flight promise 的失败已由 load(index) 报给调用方，
+          // 兜底只为不产生 unhandled rejection（review #1746-1）。
+          void request(next).catch(() => {});
+        }
       }
       return request(index);
     },

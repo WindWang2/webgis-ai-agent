@@ -5,6 +5,7 @@
 """
 import asyncio
 import logging
+import os
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
@@ -12,6 +13,15 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _STAC_CATALOG_URL = "https://earth-search.aws.element84.com/v1"
+
+#: STAC 目录检索的 HTTP 超界（秒；env 可调）。此前 ``Client.open`` +
+#: ``catalog.search`` + ``list(search.items())`` 全程无超时 —— 与栅格读取
+#: 的 ``GDAL_HTTP_TIMEOUT=5``（``app/lib/geo_raster/env.py``）硬化形成明显
+#: 缺口；catalog 又被 ``lru_cache(maxsize=1)`` 缓存，一次挂死会毒化整个
+#: 进程（review #1744-6）。pystac-client 的 ``Client.open(timeout=...)`` 会
+#: 把上界传播到该 client 的 ``StacApiIO`` 会话 —— 后续 search / items 的
+#: 每个请求都带超时；打开失败（APIError）不被 lru_cache 缓存，下轮可重试。
+_STAC_HTTP_TIMEOUT_S = max(1.0, float(os.environ.get("WEBGIS_STAC_HTTP_TIMEOUT_S", "30") or 30))
 
 
 def _catalog_url() -> str:
@@ -218,7 +228,10 @@ class StacClientPrimitive:
     @lru_cache(maxsize=1)
     def _get_catalog(self):
         import pystac_client
-        return pystac_client.Client.open(_catalog_url())
+        # review #1744-6：timeout 覆盖 open 本身与该 client 的所有后续
+        # 请求（search / items 走同一 StacApiIO 会话；pystac-client ≥0.8
+        # 支持该形参，见 requirements 下限）。挂死从此有界。
+        return pystac_client.Client.open(_catalog_url(), timeout=_STAC_HTTP_TIMEOUT_S)
 
     async def open_catalog(self):
         loop = asyncio.get_running_loop()

@@ -26,7 +26,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from app.core.auth import get_current_user_optional
-from app.core.signing import sign_path, verify_signature
+from app.core.signing import (
+    RASTER_URL_TTL_S,
+    signed_raster_query,
+    verify_signature,
+)
 from app.services.auth_history_bridge import verify_session_owner
 from app.core.database import get_async_db
 from app.services.mapspec_store import BASE_STORAGE_DIR
@@ -39,14 +43,10 @@ router = APIRouter()
 # Rejects anything path-traversal-shaped (`.`, `..`, `/`, `\`) before touching disk.
 _RASTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
-#: 签名 URL 有效期（地图状态里的图片 URL 需跨刷新可用；只授权单个 PNG）。
-RASTER_URL_TTL_S = 24 * 3600
-
-
-def signed_raster_query(path: str, ttl_seconds: int = RASTER_URL_TTL_S) -> str:
-    """``/api/v1/sessions/<sid>/raster/<id>.png`` → ``exp=..&sig=..``（F-13）。"""
-    exp, sig = sign_path(path.split("?", 1)[0], ttl_seconds)
-    return f"exp={exp}&sig={sig}"
+# #1678：signed_raster_query / RASTER_URL_TTL_S 实现下沉 app/core/signing.py
+# （tools 层反向 import 路由层的跨层边收口，同 E-2/#893 范本）；此处 re-export
+# 保持既有调用方（含 tests/test_raster_route.py）兼容。
+__all__ = ["router", "signed_raster_query", "RASTER_URL_TTL_S"]
 
 
 @router.get(

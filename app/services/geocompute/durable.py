@@ -139,6 +139,34 @@ def _default_session_factory():
 session_factory: Callable[[], Any] = _default_session_factory
 
 
+def payload_from_stored_ref(ref: str, stored: Any, via: str) -> dict[str, Any]:
+    """session ref 载荷 → 节点载荷（形状归位；#1718）。
+
+    rows 信封（``tasks._store_payload`` 对 rows 型输出的落存形状
+    ``{"rows": [...]}``）在回传面必须还原为 ``{"rows": [...]}`` 键 ——
+    此前一律盲包成 ``{"features": stored}``，rows 列表被嵌在 features
+    键下的 dict 里：``_count_rows``/``_governor_charge`` 少报为 1，
+    ``NodeResultStore._measure`` 对 dict 切片直接抛异常（governor 记账
+    被炸断、``_record_durable_result`` 被跳过 —— rows 型 durable 节点
+    的复用事实从不记录）。归位规则与 worker 侧输入交接面
+    （``tasks._payload_from_stored``）逐条一致（同一形状域）：
+    - ``{"rows": [...]}``（rows 信封）→ rows 键；
+    - FC dict / ``{"geojson": FC}`` → 抽取 features 列表；
+    - 裸列表（features 型落存 / 旧 ref）→ features（兼容既有行为）；
+    - 其余形状 → 原样挂 features 键（消费方自行判别）。
+    """
+    meta = {"via": via}
+    if isinstance(stored, dict):
+        rows = stored.get("rows")
+        if isinstance(rows, list) and "features" not in stored:
+            return {"ref_id": ref, "rows": rows, "metadata": dict(meta)}
+        fc = stored.get("geojson") if isinstance(stored.get("geojson"), dict) else stored
+        feats = fc.get("features") if isinstance(fc, dict) else None
+        if isinstance(feats, list):
+            return {"ref_id": ref, "features": feats, "metadata": dict(meta)}
+    return {"ref_id": ref, "features": stored, "metadata": dict(meta)}
+
+
 #: 节点类别 → worker 能力提示（ADR-0101 D10，V4 §25）。
 #: V5 起（audit 06 §6.1 step 1）这些提示被 ``queue_for_node`` 提升为
 #: 路由真值（profile 队列在 task_queue.task_queues 声明）；单 worker 部署
@@ -172,6 +200,7 @@ def dispatch_node(
     input_keys: Optional[dict[str, str]] = None,
     resource_envelope: Optional[dict[str, Any]] = None,
     owner_scope: Optional[str] = None,
+    caller: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """把节点提交为 durable job（幂等键 = 节点语义指纹 + 会话）。
 
@@ -185,6 +214,10 @@ def dispatch_node(
     不含治理/观测元数据，budget 同款先例）穿透到 worker 任务体 —— Celery
     边界丢 contextvars，显式传参是 worker 侧分布式事件（run_events）的唯一
     可靠关联通道；缺席 = eager/旧路径，worker 只跳过事件发射。
+
+    #1718：``caller``（auth user dict）同款通道穿透 —— worker 侧
+    ``OperatorContext.caller`` 据此恢复，目录类算子（QUERY/SOURCE_SCAN）
+    的目录项准入按提交者身份裁决（匿名 = fail closed 到只剩无属主全局行）。
     """
     from app.services.geocompute.tasks import run_geocompute_node
     from app.services.jobs.submit import submit_durable_job
@@ -220,6 +253,8 @@ def dispatch_node(
             "input_keys": input_keys,
             "resource_envelope": resource_envelope,
             "owner_scope": owner_scope,
+            # #1718：目录准入身份（auth user dict；JSON 可序列化标量投影）。
+            "caller": caller,
         },
         session_id=session_id,
         queue=queue,
@@ -325,7 +360,7 @@ def await_node_job(
                 retry_safe=False,
                 details={"job_id": str(job_id), "result_ref": ref},
             )
-        payload = {"ref_id": ref, "features": stored, "metadata": {"via": "durable_job"}}
+        payload = payload_from_stored_ref(ref, stored, "durable_job")
     return {"payload": payload, "job_id": str(job_id)}
 
 
@@ -391,8 +426,8 @@ def await_node_jobs(
                                 "error": f"result ref {ref} unresolvable",
                             }
                         else:
-                            payload = {"ref_id": ref, "features": stored,
-                                       "metadata": {"via": "partition_tile"}}
+                            payload = payload_from_stored_ref(
+                                ref, stored, "partition_tile")
                     elif isinstance(summary, dict):
                         # raster tile：raster_path 经 result_summary 回传
                         payload = dict(summary)

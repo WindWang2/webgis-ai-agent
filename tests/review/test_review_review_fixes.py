@@ -7,22 +7,33 @@
 - P2 合并期间状态被并发迁移 → 中止合并 + 失败存证持久化 + merge_in_progress 排斥；
 - P2 失败/交错合并的 evidence 落库（不只 HTTP 回执）；
 - P2 无漂移 rebase 拒绝；
+- P2（#1722）merge_in_progress 无 TTL → 崩溃即永久卡死：布尔量租约化，
+  过期/缺租约的残留闸在读取/变迁时自动回收；
+- P2（#1722）CHANGES_REQUESTED 下的 approve 被吞 → 显式翻 APPROVED；
 - P3 merge SUBMITTED 空原因文案 / 空 session_id 拒绝 / superseded intent 不入 mutation_ids。
 """
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
 
 from app.schemas.mapspec_mutation_schema import PatchLayerStyleBody, SetViewBody
-from app.schemas.review_schema import ProposalStatus, ReviewActor, ReviewProposal
+from app.schemas.review_schema import (
+    ProposalStatus,
+    ReviewActor,
+    ReviewDecision,
+    ReviewProposal,
+)
+from app.services.review import store as store_mod
 from app.services.review.merge import merge_proposal_intents
 from app.services.review.service import (
     InvalidTransition,
     ReviewService,
 )
-from app.services.review.store import ReviewStore
+from app.services.review.store import MERGE_LEASE_TTL_SECONDS, ReviewStore
 
 
 def _sid():
@@ -294,6 +305,225 @@ def test_p3_store_rejects_empty_session_id():
     store = ReviewStore()
     with pytest.raises(Exception):
         store._review_dir("")
+
+
+@pytest.fixture
+def lease_store(tmp_path):
+    return ReviewStore(base_dir=tmp_path)
+
+
+def _lease_sid():
+    return f"rv-lease-{uuid4().hex[:8]}"
+
+
+def _lease_actor(uid="u1", kind="user", role="editor"):
+    return _actor(uid, kind=kind, role=role)
+
+
+def _lease_proposal(
+    sid, pid="rp_lease", status=ProposalStatus.SUBMITTED, base=3,
+):
+    return ReviewProposal(
+        proposal_id=pid, session_id=sid, title="t", author=_lease_actor(),
+        base_revision=base, status=status,
+        mutation_intents=[
+            PatchLayerStyleBody(
+                intent="patch_layer_style", expected_revision=base,
+                layer_id="L1", paint={"circle-color": "#0f0"},
+            ),
+        ],
+    )
+
+
+def _lease_payload(store, sid):
+    path = store._review_dir(sid) / "proposals.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+async def _write_stuck_merge_gate(store, sid, proposal, *, age_seconds=None):
+    """模拟崩溃现场：merge_in_progress=True 已落盘。
+
+    ``age_seconds=None`` = 修复前遗留数据（flag 永久 True、无租约附表）；
+    否则补一个 age_seconds 秒前的租约时间戳。
+    """
+
+    async def _reserve(cur):
+        cur.merge_in_progress = True
+        return cur
+
+    await store.save_proposal(sid, proposal)
+    await store.mutate_proposal(sid, proposal.proposal_id, _reserve)
+    path = store._review_dir(sid) / "proposals.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if age_seconds is None:
+        payload.pop("merge_leases", None)
+    else:
+        stamp = (
+            datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+        ).isoformat()
+        payload["merge_leases"] = {proposal.proposal_id: stamp}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_p2_expired_lease_reclaimed_on_read(lease_store):
+    """#1722：过期租约在读取时回收 —— 崩溃残留不再永久挡住治理面。"""
+    sid = _lease_sid()
+    await _write_stuck_merge_gate(
+        lease_store, sid, _lease_proposal(sid), age_seconds=MERGE_LEASE_TTL_SECONDS * 2,
+    )
+    loaded = await lease_store.get_proposal(sid, "rp_lease")
+    assert loaded is not None and loaded.merge_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_p2_expired_lease_self_heals_decision_path(lease_store):
+    """#1722：过期租约后 record_decision 恢复受理，且回收结果落盘（非仅内存自愈）。"""
+    sid = _lease_sid()
+    await _write_stuck_merge_gate(
+        lease_store, sid, _lease_proposal(sid), age_seconds=MERGE_LEASE_TTL_SECONDS * 2,
+    )
+    svc = ReviewService(store=lease_store)
+    p = await svc.record_decision(sid, "rp_lease", _lease_actor("u2"), decision="approve")
+    assert p.status is ProposalStatus.APPROVED
+    final = await lease_store.get_proposal(sid, "rp_lease")
+    assert final is not None and final.merge_in_progress is False
+    payload = _lease_payload(lease_store, sid)
+    assert payload["proposals"][0]["merge_in_progress"] is False
+    assert "merge_leases" not in payload
+
+
+@pytest.mark.asyncio
+async def test_p2_fresh_lease_still_excludes_transitions(lease_store):
+    """#1722：新鲜租约仍互斥 —— 真实合并窗口内的状态迁移继续被拒。"""
+    sid = _lease_sid()
+    await _write_stuck_merge_gate(
+        lease_store, sid, _lease_proposal(sid), age_seconds=MERGE_LEASE_TTL_SECONDS / 2,
+    )
+    loaded = await lease_store.get_proposal(sid, "rp_lease")
+    assert loaded is not None and loaded.merge_in_progress is True
+    svc = ReviewService(store=lease_store)
+    with pytest.raises(InvalidTransition):
+        await svc.record_decision(sid, "rp_lease", _lease_actor("u2"), decision="approve")
+
+
+@pytest.mark.asyncio
+async def test_p2_legacy_flag_without_lease_is_reclaimed(lease_store):
+    """#1722：修复前遗留的"缺租约永久 True"同样自愈（不能把 proposal 钉死）。"""
+    sid = _lease_sid()
+    await _write_stuck_merge_gate(lease_store, sid, _lease_proposal(sid), age_seconds=None)
+    loaded = await lease_store.get_proposal(sid, "rp_lease")
+    assert loaded is not None and loaded.merge_in_progress is False
+    svc = ReviewService(store=lease_store)
+    p = await svc.record_decision(sid, "rp_lease", _lease_actor("u2"), decision="approve")
+    assert p.status is ProposalStatus.APPROVED
+
+
+@pytest.mark.asyncio
+async def test_p2_lease_recorded_on_reserve_and_dropped_on_release(lease_store):
+    """#1722：租约与 flag 同生共死 —— 置位记时间戳（新鲜），清位撤租约。"""
+    sid = _lease_sid()
+    await lease_store.save_proposal(sid, _lease_proposal(sid))
+
+    async def _reserve(cur):
+        cur.merge_in_progress = True
+        return cur
+
+    await lease_store.mutate_proposal(sid, "rp_lease", _reserve)
+    stamp = _lease_payload(lease_store, sid)["merge_leases"]["rp_lease"]
+    assert store_mod._lease_expired(stamp) is False
+    loaded = await lease_store.get_proposal(sid, "rp_lease")
+    assert loaded is not None and loaded.merge_in_progress is True
+
+    async def _release(cur):
+        cur.merge_in_progress = False
+        return cur
+
+    await lease_store.mutate_proposal(sid, "rp_lease", _release)
+    assert "merge_leases" not in _lease_payload(lease_store, sid)
+    final = await lease_store.get_proposal(sid, "rp_lease")
+    assert final is not None and final.merge_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_p2_unrelated_mutation_preserves_active_lease(lease_store):
+    """#1722：对他人的无关变迁不得抹掉进行中合并的租约（否则互斥闸被绕过）。"""
+    sid = _lease_sid()
+    await lease_store.save_proposal(sid, _lease_proposal(sid, pid="rp_a"))
+    await lease_store.save_proposal(sid, _lease_proposal(sid, pid="rp_b"))
+
+    async def _reserve(cur):
+        cur.merge_in_progress = True
+        return cur
+
+    await lease_store.mutate_proposal(sid, "rp_a", _reserve)
+    svc = ReviewService(store=lease_store)
+    await svc.record_decision(sid, "rp_b", _lease_actor("u2"), decision="approve")
+    assert "rp_a" in _lease_payload(lease_store, sid).get("merge_leases", {})
+    with pytest.raises(InvalidTransition):
+        await svc.record_decision(sid, "rp_a", _lease_actor("u2"), decision="approve")
+
+
+def test_p2_lease_expiry_boundary_is_strict():
+    """#1722：TTL 边界严格大于；无法解析的租约按过期（坏元数据不 brick proposal）。"""
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    at_ttl = (now - timedelta(seconds=MERGE_LEASE_TTL_SECONDS)).isoformat()
+    past_ttl = (now - timedelta(seconds=MERGE_LEASE_TTL_SECONDS + 1)).isoformat()
+    assert store_mod._lease_expired(at_ttl, now=now) is False
+    assert store_mod._lease_expired(past_ttl, now=now) is True
+    assert store_mod._lease_expired("not-a-timestamp", now=now) is True
+
+
+@pytest.mark.asyncio
+async def test_p2_crashed_merge_gate_recovers_merge_retry(lease_store):
+    """#1722：崩溃残留闸过期后 merge 重试恢复受理（影响面：永久卡死）。"""
+    sid = _lease_sid()
+    engine, base = await _seed_two_layers(sid)
+    approved = _lease_proposal(sid, pid="rp_retry", status=ProposalStatus.APPROVED, base=base)
+    approved.decisions.append(ReviewDecision(
+        decision_id="rd_1", decision="approve", actor=_lease_actor("u2"),
+        base_revision_at_decision=base,
+    ))
+    await _write_stuck_merge_gate(
+        lease_store, sid, approved, age_seconds=MERGE_LEASE_TTL_SECONDS * 2,
+    )
+    svc = ReviewService(store=lease_store)
+    merged, outcome = await svc.merge(sid, "rp_retry", _lease_actor("u2"))
+    assert outcome.ok is True
+    assert merged.status is ProposalStatus.MERGED
+    assert merged.merge_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_p2_approve_in_changes_requested_flips_to_approved():
+    """#1722：CHANGES_REQUESTED 下的 approve 不得被吞。
+
+    决策入流水、策略满足却永远翻不到 APPROVED 时，merge 会以
+    "awaiting approval flip" 无限期拒绝 —— 审批面出现"批了却不作数"的
+    假象。intents 起草后不可变，审查者在 changes_requested 态补 approve
+    即对现状放行，应显式翻 APPROVED 且可直接合并（无需重复审批）。
+    """
+    sid = _sid()
+    svc = ReviewService()
+    engine, base = await _seed_two_layers(sid)
+    p = await svc.create_proposal(
+        sid, author=_actor(), title="t",
+        intents=[{"intent": "patch_layer_style", "expected_revision": base,
+                  "layer_id": "L1", "paint": {"circle-color": "#654321"}}],
+    )
+    await svc.submit(sid, p.proposal_id, _actor(), base_revision=base)
+    requested = await svc.record_decision(
+        sid, p.proposal_id, _actor2(), decision="request_changes", reason="断点对齐",
+    )
+    assert requested.status is ProposalStatus.CHANGES_REQUESTED
+    approved = await svc.record_decision(
+        sid, p.proposal_id, _actor2(), decision="approve", reason="已澄清，放行",
+    )
+    assert approved.status is ProposalStatus.APPROVED
+    assert len(approved.decisions) == 2  # request_changes + approve 都在流水里
+    merged, outcome = await svc.merge(sid, p.proposal_id, _actor2())
+    assert outcome.ok
+    assert merged.status is ProposalStatus.MERGED
 
 
 @pytest.mark.asyncio

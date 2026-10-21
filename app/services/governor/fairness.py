@@ -31,6 +31,11 @@ PRIORITY_PENALTY = 2.0
 _CONSUMPTION_DECAY = 0.5
 #: 会话消费的绝对上限（防单会话天文数字把 key 空间拉爆）
 _CONSUMPTION_CAP = 1e12
+#: 会话消费表的条目上界（#1745 3）。``_consumption`` 是 governor 里唯一的
+#: per-session 映射且只有 get/set、无驱逐路径 —— 长命进程下随历史会话数
+#: 单调增长。超限时驱逐**当前值最小**的会话：消费已衰减到近零的历史会话
+#: 公平基准最弱，先走；当前写入的会话绝不驱逐。
+_MAX_CONSUMPTION_ENTRIES = 4096
 
 
 @dataclass(eq=False)
@@ -161,7 +166,7 @@ class FairScheduler:
         cur = self._consumption.get(session_id, 0.0)
         # 衰减 + 钳顶：历史消费只影响近期公平，不永久记账
         nxt = (cur + max(0.0, actual_cost)) * _CONSUMPTION_DECAY
-        self._consumption[session_id] = min(nxt, _CONSUMPTION_CAP)
+        self._record_consumption(session_id, min(nxt, _CONSUMPTION_CAP))
 
     def on_complete(self, waiter: FairWaiter, actual_cost: float = 1.0) -> None:
         """兼容入口：按 waiter 归还。"""
@@ -179,13 +184,34 @@ class FairScheduler:
 
     # ── 内部 ─────────────────────────────────────────────────────────
 
+    def _record_consumption(self, session_id: str, value: float) -> None:
+        """写入会话消费并维持条目上界（#1745 3）。
+
+        驱逐策略：当前值最小的会话先走（Tie-break 用 session_id 保证确定
+        性）—— 消费已衰减到近零的历史会话公平基准最弱。当前写入的会话
+        永不驱逐；上限内的常见路径不触发扫描。
+        """
+        self._consumption[session_id] = value
+        if len(self._consumption) <= _MAX_CONSUMPTION_ENTRIES:
+            return
+        victim = min(
+            (k for k in self._consumption if k != session_id),
+            key=lambda k: (self._consumption[k], k),
+            default=None,
+        )
+        if victim is not None:
+            del self._consumption[victim]
+
     def _admit(self, waiter: FairWaiter) -> None:
         self._in_flight += 1
         if waiter.small:
             self._in_flight_small += 1
-        self._consumption[waiter.session_id] = min(
-            self._consumption.get(waiter.session_id, 0.0) + waiter.est_cost,
-            _CONSUMPTION_CAP,
+        self._record_consumption(
+            waiter.session_id,
+            min(
+                self._consumption.get(waiter.session_id, 0.0) + waiter.est_cost,
+                _CONSUMPTION_CAP,
+            ),
         )
 
     def _position_of(self, seq: int) -> int:

@@ -96,20 +96,31 @@ jobs:
         run: pip install ruff==0.16.8
 
       - name: Run Ruff Check
-        # Blocking gate on production code, tests, and root entrypoints. The
-        # app/ backlog was cleared in the lint-cleanup PRs and tests/ + root
-        # entrypoints were cleared to 0 in #303, so this actually blocks and
-        # keeps the test suite lint-clean. Config lives in pyproject.toml
+        # Blocking gate on production code, tests, root entrypoints, and the
+        # scripts/ CLI/gate directory. The app/ backlog was cleared in the
+        # lint-cleanup PRs and tests/ + root entrypoints were cleared to 0 in
+        # #303, so this actually blocks and keeps the test suite lint-clean.
+        # #1691（TEST-02）：scripts/ 纳入目标集 —— 该目录 64 个 .py 含 4 个
+        # release-blocking 门禁脚本自身（debt_ratchet / check_dependency_bounds
+        # / check_import_boundaries / generate_endpoint_scope_matrix），守门人
+        # 此前自己不被 lint。存量已清零（F401/F841/F541 三处真实错误修复 +
+        # pyproject 增加 "scripts/**" = ["T20"]：CLI stdout 即契约，同 tests/**）。
+        # 与 scripts/ci-local.sh 的 ruff 命令逐字一致（test_ci_local_gate_contract
+        # 钉住二者对齐）。Config lives in pyproject.toml
         # [tool.ruff.lint] (E402 ignored globally by policy).
-        run: ruff check --output-format=github app/ tests/ main.py manage.py
+        run: ruff check --output-format=github app/ tests/ scripts/ main.py manage.py
 
       - name: Mypy Check (allowlist ratchet)
         # #1377 ISSUE-057：[tool.mypy] files=app/core 白名单棘轮 ——
         # 名单内模块必须保持 mypy 干净，清理一个模块就把它加进 files。
         # 装 mypy + app/core 依赖的带类型包（否则 import 全变 Any、检查失真）；
         # 不装全量 dev-req —— lint lane 要保持快。
+        # #1670（TEST-10 残余）：aiohttp/pydantic/fastapi/httpx/PyJWT 按
+        # requirements.lock 钉版 —— 未 pin 的 gate 依赖会随上游新版静默改变
+        # 安装面与检查结果（同上方 ADS Source Registry 步骤的 pin 纪律）；
+        # sqlalchemy 保留 <2.1 上界（#1512 Dependency Bounds Gate 管）。
         run: |
-          pip install mypy==2.3.1 'sqlalchemy<2.1' aiohttp pydantic fastapi httpx PyJWT
+          pip install mypy==2.3.1 'sqlalchemy<2.1' aiohttp==3.14.5 pydantic==2.13.5 fastapi==0.156.4 httpx==0.28.1 PyJWT==2.15.1
           python -m mypy
 
       - name: Debt Ratchet Gate
@@ -126,6 +137,27 @@ jobs:
         # core→services、lib/cartography→services、contracts→上层零容忍
         # （issues #1541/#1542 防回归；TYPE_CHECKING/h01:allow 豁免）。
         run: python scripts/check_import_boundaries.py
+
+      - name: Skills Lock Integrity Gate (#1349)
+        # audit ISSUE-069：skills-lock.json 的 runtime_skills 登记 +
+        # sha256 账本此前零接线（无任何 workflow/test 引用，#1734）——
+        # 篡改/缺文件只在手工跑脚本时可见。纯标准库、不联网。
+        # runtime_skills 为 {} 时走 legacy 分支 exit 0；app/skills 出现
+        # 未登记 .py 即红（与 loader 的 quarantine 语义一致）。
+        run: python scripts/verify_skills_lock.py
+
+      - name: ADS Source Registry Lint (DS1 / ADR-0171)
+        # docs/dev/ads-v1-source-onboarding.md §3 定为必过（0 错误才算过），
+        # 但此前无任何 workflow/test 引用（#1734）—— config/sources/*.yaml
+        # 的重复 ID / bbox 失真 / 明文凭据 / 能力声明与 adapter 不符从未在
+        # CI 现形。只依赖 pydantic + pyyaml + requests（版本与 requirements.lock
+        # 对齐，TEST-10 pin 纪律），不装全量 dev-req —— lint lane 要保持快；
+        # requests 是能力声明核对 import app.services.data_fabric.registry 的
+        # 传递依赖（adapter → security → requests.adapters），漏装则整步
+        # ModuleNotFoundError 红——PR #1758 首次接线时即复现，已修。
+        run: |
+          pip install pydantic==2.13.5 pyyaml==6.0.3 requests==2.34.2
+          python scripts/check_source_registry.py
 
       - name: Install Frontend Deps
         working-directory: ./frontend
@@ -148,31 +180,12 @@ jobs:
     # 提到 110：留足余量，后续应通过 sharding/提速把它压回来。
     # （单测自身的 --timeout=180 防挂死纪律不变。）
     timeout-minutes: 110
-    services:
-      postgres:
-        image: postgis/postgis:15-3.4
-        env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_pass
-          POSTGRES_DB: test_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+    # #1734：本 lane 曾配 postgis + redis service container 并做健康检查，但
+    # 套件实际跑 SQLite / fakeredis / eager-celery（TC-10：conftest 为每个
+    # xdist worker 钉独享临时 SQLite；USE_REDIS=false + fakeredis）—— 容器
+    # 从未被连接，每轮 PR 白拉 postgis 镜像。已删。真实 PostGIS / Redis /
+    # celery 覆盖由 db-migrations 与 real-services-smoke 两个专属 lane 拥有
+    # （各自配 service container 并显式导出 DATABASE_URL / USE_REDIS=true）。
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -195,8 +208,11 @@ jobs:
 
       - name: Install Dependencies
         # requirements-dev.txt includes requirements.txt + test deps (pytest,
-        # pytest-cov, fakeredis). psycopg2-binary for CI's Postgres service.
-        run: pip install -c requirements.lock -r requirements-dev.txt httpx psycopg2-binary
+        # pytest-cov, fakeredis) —— 生产依赖面（含 psycopg2-binary，见
+        # requirements.txt:120）经 -r 链锁-constrained 进入，无需在此重复
+        # 显式安装。#1734：本 lane 无 Postgres service（跑 SQLite，TC-10），
+        # 显式 psycopg2-binary 的唯一理由随容器删除一起消失。
+        run: pip install -c requirements.lock -r requirements-dev.txt httpx
 
       - name: Install pnpm
         # test_mapspec_store 编译走 frontend/lib/mapspec-compiler（jiti 运行时）。
@@ -221,7 +237,10 @@ jobs:
           # TC-10：不再导出 DATABASE_URL —— tests/conftest.py 为每个 xdist
           # worker 强制使用独享的临时 SQLite（共享 Postgres 曾导致 FK 冲突与
           # 顺序依赖失败）。真实 PG 覆盖由 db-migrations / real-services lane 负责。
-          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          # #1734：同样不再导出 REDIS_URL —— 本 lane 无 redis service，套件由
+          # conftest 以 USE_REDIS=false + fakeredis 钉扎（默认
+          # redis://localhost:16379/0，与本地基线一致）；真实 Redis 覆盖由
+          # real-services-smoke lane 拥有。
           echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
@@ -435,6 +454,8 @@ jobs:
   # release-gate.needs），master push 可在契约红的情况下直达 build→deploy。
   # 此 job 复刻 contract.yml 的命令（同文件、同 env），令 release-gate 能
   # 显式依赖；contract.yml 保留为独立快速信号面。
+  # #1729：复刻面曾漏 contract.yml 的 #1417 endpoint scope matrix 两检
+  # （--check + pytest），导致 #1417 权限面门禁从未进入发布链路 —— 已补齐。
   contract-gate:
     name: API Contract Gate
     runs-on: ubuntu-latest
@@ -454,14 +475,25 @@ jobs:
         run: pip install -c requirements.lock -r requirements-dev.txt schemathesis httpx
 
       - name: Response model + OpenAPI snapshot + field contract + api-docs drift
-        # 对应 contract.yml 的四个确定性检查步骤；test_field_contract.py 在
-        # tests/unit/api_contract 目录内，由目录收集覆盖。
+        # 对应 contract.yml 的确定性检查步骤（#1417 的 endpoint scope matrix
+        # 单列于下）；test_field_contract.py 在 tests/unit/api_contract 目录内，
+        # 由目录收集覆盖。
         env:
           JWT_SECRET_KEY: ci-contract-lane-secret
         run: |
           pytest tests/quality/test_api_compatibility.py -q
           pytest tests/unit/api_contract -q --ignore=tests/unit/api_contract/test_schemathesis.py
           pytest tests/test_api_docs_drift.py -q
+
+      - name: Endpoint scope matrix --check + auth flags (#1417)
+        # 对应 contract.yml 的 #1417 门 —— 此前 contract-gate 漏掉这两道
+        # 检查（#1729），权限面/auth-flag 矩阵漂移在发布链路不可见。补上后
+        # 经 release-gate.needs 已有的 contract-gate 依赖纳入发布 DAG。
+        run: |
+          python scripts/generate_endpoint_scope_matrix.py --check
+          pytest tests/test_endpoint_scope_matrix.py -q
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
 
       - name: Schemathesis fuzz shard (max_examples=30, allowlisted paths)
         env:
@@ -823,15 +855,34 @@ jobs:
         working-directory: ./frontend
         run: pnpm run typecheck
 
+      - name: Cache Next.js build cache
+        # #1596 方向 4：next build 在无 build cache 的 runner 上实测 41m43s
+        # （10-14 master 单步），45m job 预算零余量、慢 runner 日连续被砍
+        # （日志 "No build cache found"）。job/步骤级超时已放宽（75m/50m，
+        # TC-05 + #1729），此处补第二只手：持久化 webpack cache 压时长方差。
+        # 纪律同 setup-node 的 pnpm store cache —— exact key（lockfile+
+        # package.json hash + commit sha）才写回；restore-keys 前缀命中只
+        # 恢复不写（actions/cache 语义），避免把跨提交的半新缓存当权威。
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: frontend/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('frontend/pnpm-lock.yaml', 'frontend/package.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('frontend/pnpm-lock.yaml', 'frontend/package.json') }}-
+            ${{ runner.os }}-nextjs-
+
       - name: Production Build
         # 审计 CI-GAP（PR #151 暴露）：之前 test-frontend 只跑 vitest，不跑 next build。
         # use-client 指令顺序错误（webpack-only 检查）直到 Docker prod build 才被发现，
         # 已合入 master。在此 PR 阶段跑 next build，把生产构建错误前移到快速反馈环。
         # next build 同时校验：指令顺序、SSR 兼容性、静态导出、webpack 配置。
         # TC-05：步骤级超时 —— 构建挂起（"Creating an optimized production
-        # build ..." 后无输出直到 45 分钟 job 上限被取消）时快速失败并保留日志，
-        # 而不是吃光整个 job 预算。挂起根因归前端 track 排查。
-        timeout-minutes: 20
+        # build ..." 后无输出）时快速失败并保留日志，而不是吃光整个 job 预算。
+        # 挂起根因归前端 track 排查。
+        # #1729：20min 与实测矛盾（10-14 master 单步 41m43s）—— 慢 runner 上
+        # 必被步骤级超时杀掉。上调到 50min：实测 +~20% 慢 runner 余量；job
+        # 预算 75min 扣 Vitest(~6min)+tsc(~40s) 后仍留 ~18min 给安装等步骤。
+        timeout-minutes: 50
         working-directory: ./frontend
         env:
           NEXT_TELEMETRY_DISABLED: '1'
@@ -944,12 +995,19 @@ jobs:
 
       - name: Lockfile Freshness (Backend)
         # audit ISSUE-033：requirements.lock 必须与 requirements.txt 同步 ——
-        # 重新编译到临时文件并 diff；钉定面漂移即非零退出。非
-        # release-blocking（同 dependency-audit job 的 informational 定位），
-        # 但信号可见。TEST-10（#1657）：uv 必须 pin —— 解析器版本变化会改变
-        # 选版结果，diff 的红/绿会随 uv 升级漂移而无法归因。版本为 CI 当天
+        # 重新编译到临时文件并 diff；钉定面漂移即非零退出。#1734：此前
+        # continue-on-error 把漂移静默放行（实测 lock 陈旧：pypdf 6.20.1 vs
+        # 重编译 6.21.0 等），门禁形同虚设 —— 去掉放行后漂移在此步响亮失败。
+        # job 整体仍非 release-blocking（不在 release-gate.needs；CVE 类失败
+        # 同理无法在任意 PR 内修复），但信号必须可见：红即重跑
+        # `uv pip compile requirements.txt -o requirements.lock`。
+        # #1734 实测坑：uv 对**已存在**的 -o 目标会复用其中的旧钉版（minimal
+        # churn，origin/master e78c4d64 的「只变 pypdf」即此行为），原样重跑
+        # 同命令 exit 0 但本步仍红 —— 必须删掉旧 lock 或加 --upgrade
+        # （--upgrade 才等价于本步对不存在的 /tmp 目标的从零解析）。
+        # TEST-10（#1657）：uv 必须 pin —— 解析器版本变化会改变选版结果，
+        # diff 的红/绿会随 uv 升级漂移而无法归因。版本为 CI 当天
         # （2026-10-18）实测锁定。
-        continue-on-error: true
         run: |
           pip install uv==0.13.1
           uv pip compile requirements.txt -o /tmp/requirements.lock.fresh
@@ -1301,6 +1359,12 @@ jobs:
           # 之前 workflow 零引用该 secret，deploy/rollback 双双在 up 前
           # 就挂掉。secret 未配置时写出空行，compose 的 :? 快速失败。
           METRICS_TOKEN: ${{ secrets.METRICS_TOKEN }}
+          # #1687：alertmanager receiver 的 webhook URL。deploy/alertmanager.yml
+          # 是 bind-mount 的静态文件（alertmanager 不做 env 展开），占位符由
+          # deploy/render-alertmanager-config.sh 在 runner 侧替换后随 scp 送达。
+          # secret 或 var 任一配置即可；都未配置时写 RFC 2606 的 .invalid 占位 —
+          # 投递在 alertmanager UI/log 响亮失败而非静默丢弃（#1636 同款诚实降级）。
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL || vars.ALERT_WEBHOOK_URL }}
         run: |
           sh deploy/ci-generate-env-priv.sh
           # redis 服务挂载 deploy/redis.conf + deploy/redis-entrypoint.sh，
@@ -1314,6 +1378,12 @@ jobs:
           # 挂载源创建为空目录，prometheus 把目录当 config 加载即 crash-loop、
           # 告警全哑（nginx 在 #472 已内联修复，prometheus 走 scp 传输）。
           scp deploy/prometheus.yml deploy/alerts-rules.json ${{ vars.SSH_HOST }}:~/deploy/
+          # #1687：alertmanager 服务 bind-mount ./deploy/alertmanager.yml（补投递
+          # 通道）。不随部署送达主机时，Docker 把缺失的挂载源建成空目录、
+          # alertmanager 以目录当 config 加载即 crash-loop —— #530 同款事故。
+          # receiver webhook URL 在 runner 侧渲染后送达（降级语义见脚本注释）。
+          sh deploy/render-alertmanager-config.sh /tmp/alertmanager.yml
+          scp /tmp/alertmanager.yml ${{ vars.SSH_HOST }}:~/deploy/alertmanager.yml
           # 凭据落盘零 0644 中间态（pre-landing review TOCTOU 收紧）：scp
           # （不带 -p）远端按 umask 022 落成 0644 —— 先落 .incoming、远端
           # 收紧 0600 后原子替换，杜绝"落盘→chmod"秒级全局可读窗口。
@@ -1480,6 +1550,10 @@ jobs:
           # .env.Priv。此前未导出 → 脚本回落到 GITHUB_SHA = 当前坏 HEAD，回滚实际
           # 重跑了坏镜像。
           WEBGIS_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback
+          # #1687：与 deploy-prod 一致 —— alertmanager receiver 的 webhook URL
+          # （runner 侧渲染 deploy/alertmanager.yml 的占位符）。未配置时写
+          # .invalid 占位，投递响亮失败而非静默丢弃（#1636 同款诚实降级）。
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL || vars.ALERT_WEBHOOK_URL }}
         run: |
           # 与共享脚本的 umask 077 对齐：printf 兜底分支（或旧 PREV_SHA 树里的
           # 旧版脚本）写出的 .env.Priv 也不能在 runner 上落成全局可读。
@@ -1510,6 +1584,14 @@ jobs:
           for f in deploy/prometheus.yml deploy/alerts-rules.json; do
             [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
           done
+          # #1687：与 deploy-prod 一致，alertmanager 配置（#1687 补的投递通道）
+          # 随回滚送达，并在 runner 侧渲染 receiver webhook URL。回退树 PREV_SHA
+          # 可能早于 #1687（无该文件/无渲染脚本/旧 compose 不挂载它）——三重
+          # 存在性守卫跳过，不影响回滚主路径。
+          if [ -f deploy/alertmanager.yml ] && [ -f deploy/render-alertmanager-config.sh ]; then
+            sh deploy/render-alertmanager-config.sh /tmp/alertmanager.yml
+            scp /tmp/alertmanager.yml ${{ vars.SSH_HOST }}:~/deploy/alertmanager.yml
+          fi
           # 同 deploy-prod 的 TOCTOU 收紧：.incoming + 0600 + 原子替换，
           # 凭据落盘全程无 0644 中间态。
           scp .env.Priv ${{ vars.SSH_HOST }}:~/.env.Priv.incoming

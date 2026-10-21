@@ -4,7 +4,8 @@
 1. 重放一致性：同 key 二次请求返回首次响应 + Idempotent-Replay 头；
 2. 并发同 key 单飞：N 并发只命中上游一次；
 3. TTL 过期：记录过期后重新处理；
-4. Redis 不可用 fail-open：请求正常处理，不 5xx。
+4. Redis 不可用 fail-open：请求正常处理，不 5xx；
+5. 超限透传（#1724）：>MAX_BUFFER_BYTES 响应原样透传，绝不伪造 502。
 """
 from __future__ import annotations
 
@@ -13,10 +14,10 @@ import threading
 import time
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.testclient import TestClient
 
-from app.core.idempotency import IdempotencyMiddleware, _LazyRedis
+from app.core.idempotency import MAX_BUFFER_BYTES, IdempotencyMiddleware, _LazyRedis
 
 
 class FakeRedis:
@@ -345,3 +346,73 @@ class TestAnonymousCallers:
         assert r3.headers.get("Idempotent-Replay") is None
         assert r3.json()["n"] == 2
         assert counter["n"] == 2
+
+
+class TestOversizePassthrough:
+    """#1724：>MAX_BUFFER_BYTES 的 JSON 响应必须原样透传。
+
+    旧行为：缓冲循环超限 break → buffered 保持 None → 中间件把**已成功
+    执行**的响应改写 502。客户端按 502 重试 → 副作用二次执行，幂等契约
+    被中间件自己打破。新行为：不缓冲不重放，原样（流式）透传。
+    """
+
+    def _has_resp_record(self, redis: FakeRedis) -> bool:
+        return any(k.startswith("idem:resp:") for k in redis.store)
+
+    def test_declared_oversize_passes_through_uncached(self):
+        """声明 content-length 即超限：原响应对象直接透传（200 + 完整体）。"""
+        redis = FakeRedis()
+        app = FastAPI()
+        app.add_middleware(IdempotencyMiddleware, redis=_InlineRedis(redis))
+        hits = {"n": 0}
+        blob = b"a" * (MAX_BUFFER_BYTES + 4096)
+        payload = b'{"blob":"' + blob + b'"}'
+
+        @app.post("/big")
+        async def big(payload_body: dict):
+            hits["n"] += 1
+            return Response(content=payload, media_type="application/json")
+
+        client = TestClient(app)
+        r = client.post("/big", json={"x": 1}, headers={"Idempotency-Key": "big-1"})
+        assert r.status_code == 200, "超限不得改写状态码（502 伪装）"
+        assert r.content == payload
+        assert r.headers["content-type"] == "application/json"
+        assert hits["n"] == 1
+        assert not self._has_resp_record(redis), "超限响应不得写入重放缓存"
+
+        # 不缓存的诚实代价：同 key 重试重新处理（而非 502 放大副作用）
+        r2 = client.post("/big", json={"x": 1}, headers={"Idempotency-Key": "big-1"})
+        assert r2.status_code == 200
+        assert hits["n"] == 2
+
+    def test_streamed_oversize_passes_through_uncached(self):
+        """无 content-length 的流式响应中途超限：已读前缀 + 剩余体透传。"""
+        redis = FakeRedis()
+        app = FastAPI()
+        app.add_middleware(IdempotencyMiddleware, redis=_InlineRedis(redis))
+        hits = {"n": 0}
+        chunk = b"b" * (4 * 1024 * 1024)
+        n_chunks = MAX_BUFFER_BYTES // len(chunk) + 2  # 总量 > 50MiB
+        expected = chunk * n_chunks
+
+        @app.post("/stream-big")
+        async def stream_big(payload_body: dict):
+            hits["n"] += 1
+
+            async def gen():
+                for _ in range(n_chunks):
+                    yield chunk
+
+            return StreamingResponse(gen(), media_type="application/json")
+
+        client = TestClient(app)
+        r = client.post(
+            "/stream-big", json={"x": 1}, headers={"Idempotency-Key": "stream-big"}
+        )
+        assert r.status_code == 200, "流式超限不得改写状态码（502 伪装）"
+        assert r.content == expected, "透传必须给出完整体（前缀 + 剩余流）"
+        assert hits["n"] == 1
+        assert not self._has_resp_record(redis), "超限响应不得写入重放缓存"
+        # 单飞锁必须已释放（透传路径 finally 释放，无泄漏）
+        assert not any(k.startswith("idem:inflight:") for k in redis.store)

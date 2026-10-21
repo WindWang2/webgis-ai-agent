@@ -1,32 +1,32 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { MapToolbarHUD } from './map-toolbar-hud'
 import { useHudStore } from '@/lib/store/useHudStore'
 
+const mockZoomIn = vi.fn()
+const mockZoomOut = vi.fn()
+const mockResetNorthPitch = vi.fn()
+const mockEaseTo = vi.fn()
+const mockGetZoom = vi.fn(() => 5)
+const mockZoomTo = vi.fn()
+
+const fakeMapInstance = {
+  zoomIn: mockZoomIn,
+  zoomOut: mockZoomOut,
+  resetNorthPitch: mockResetNorthPitch,
+  easeTo: mockEaseTo,
+  getZoom: mockGetZoom,
+  zoomTo: mockZoomTo,
+}
+
+const mapRef = {
+  current: {
+    getMap: () => fakeMapInstance,
+  },
+} as any
+
 describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () => {
-  const mockZoomIn = vi.fn()
-  const mockZoomOut = vi.fn()
-  const mockResetNorthPitch = vi.fn()
-  const mockEaseTo = vi.fn()
-  const mockGetZoom = vi.fn(() => 5)
-  const mockZoomTo = vi.fn()
-
-  const fakeMapInstance = {
-    zoomIn: mockZoomIn,
-    zoomOut: mockZoomOut,
-    resetNorthPitch: mockResetNorthPitch,
-    easeTo: mockEaseTo,
-    getZoom: mockGetZoom,
-    zoomTo: mockZoomTo,
-  }
-
-  const mapRef = {
-    current: {
-      getMap: () => fakeMapInstance,
-    },
-  } as any
-
   beforeEach(() => {
     vi.clearAllMocks()
     useHudStore.setState({
@@ -225,5 +225,69 @@ describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () =
 
     fireEvent.click(screen.getByRole('button', { name: '展开工具栏' }))
     expect(screen.getByRole('button', { name: '放大' })).toBeInTheDocument()
+  })
+})
+
+/**
+ * #1746-9：showToast 的清理函数被全部调用点丢弃 → 连续 toast 互相截断
+ * （旧 timer 提前把新 toast 置 null）。清理函数统一登记在 ref，新 toast
+ * 先清旧 timer。
+ */
+describe('MapToolbarHUD toast 串行（#1746-9）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    useHudStore.setState({
+      is3D: false,
+      annotations: [],
+    } as any)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('连续 toast 不互相截断：旧 timer 被新 toast 取代', () => {
+    render(<MapToolbarHUD mapRef={mapRef} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '重置指北与俯仰角' }))
+    expect(screen.getByText('已重置正北与俯仰角')).toBeInTheDocument()
+
+    // 第一个 toast 的 timer 过半（剩余 500ms）
+    act(() => {
+      vi.advanceTimersByTime(1500)
+    })
+    expect(screen.getByText('已重置正北与俯仰角')).toBeInTheDocument()
+
+    // 新 toast 取代旧的
+    fireEvent.click(screen.getByRole('button', { name: '切换3D视图' }))
+    expect(screen.getByText('已开启 3D 地形视角')).toBeInTheDocument()
+    expect(screen.queryByText('已重置正北与俯仰角')).not.toBeInTheDocument()
+
+    // 旧 timer 的原到期点（t=2000）：不得把新 toast 提前清掉
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(screen.getByText('已开启 3D 地形视角')).toBeInTheDocument()
+
+    // 新 toast 自己的 2000ms 到期 → 消失
+    act(() => {
+      vi.advanceTimersByTime(1500)
+    })
+    expect(screen.queryByText('已开启 3D 地形视角')).not.toBeInTheDocument()
+  })
+
+  it('卸载后不再触发 toast 清理的 setState', () => {
+    const { unmount } = render(<MapToolbarHUD mapRef={mapRef} />)
+    fireEvent.click(screen.getByRole('button', { name: '切换3D视图' }))
+    expect(screen.getByText('已开启 3D 地形视角')).toBeInTheDocument()
+
+    unmount()
+    // 卸载时清掉在途 timer：不抛、无残留
+    expect(() => {
+      act(() => {
+        vi.advanceTimersByTime(5000)
+      })
+    }).not.toThrow()
   })
 })

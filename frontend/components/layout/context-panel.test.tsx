@@ -13,7 +13,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
  *     全局 store 写；终止（up/cancel/lostcapture/blur/折叠）恰好提交一次。
  */
 
-const counters = vi.hoisted(() => ({ chatRenders: 0 }));
+const counters = vi.hoisted(() => ({ chatRenders: 0, chatThrows: false }));
 
 /**
  * jsdom 没有 PointerEvent 构造器，fireEvent.pointer* 会退化成裸 Event ——
@@ -60,6 +60,7 @@ vi.mock('@/lib/store/useHudStore', () => ({
 vi.mock('@/components/sidebar/chat-tab', () => ({
   ChatTab: () => {
     counters.chatRenders += 1;
+    if (counters.chatThrows) throw new Error('boom');
     return <div data-testid="tab-chat" />;
   },
 }));
@@ -192,6 +193,7 @@ describe('ContextPanel resize drag (perf + lifecycle contract)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     counters.chatRenders = 0;
+    counters.chatThrows = false;
     store.activeLeftTab = 'chat';
     store.leftPanelOpen = true;
     store.sidebarWidth = 320;
@@ -395,5 +397,35 @@ describe('ContextPanel resize drag (perf + lifecycle contract)', () => {
 
     document.body.removeChild(railTab);
     document.body.removeChild(elsewhere);
+  });
+});
+
+/**
+ * #1727 —— PanelErrorBoundary 的 label 键。
+ *
+ * useT('layout') 会拼 `layout.` 前缀，故消费方必须传 `panel.boundary.X`。
+ * 此前有 18 处写错：9 处传了已带命名空间的 `layout.panel.boundary.X`（双重
+ * 前缀 → 解析 `layout.layout.panel.boundary.X`），9 处用了模板串
+ * `panel.boundary.$X`（`$X` 是字面量而非插值 → 解析 `layout.panel.boundary.$X`）。
+ * translator 的 onError 静默吞 MISSING_MESSAGE、fallback 返回键路径，用户看到
+ * 「layout.layout.panel.boundary.chat面板遇到错误」这类乱码；而
+ * test/i18n/key-completeness.test.ts 只校验 zh↔en 对称，从不校验消费方引用的
+ * 键是否存在 —— 消费方视角的存在性守卫见同目录
+ * context-panel-boundary-keys.test.ts（刻意不 import 聚合 messages，绕开
+ * 与本次修复无关的 catalog 依赖）。
+ */
+describe('ContextPanel boundary label 渲染（#1727）', () => {
+  it('chat tab 抛错 → 边界展示本地化 label，而不是键路径', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    counters.chatThrows = true;
+    try {
+      render(<ContextPanel {...baseProps} />);
+    } finally {
+      counters.chatThrows = false;
+      consoleError.mockRestore();
+    }
+    expect(screen.queryByTestId('tab-chat')).not.toBeInTheDocument();
+    expect(screen.getByText('对话面板遇到错误')).toBeInTheDocument();
+    expect(screen.queryByText(/^layout\./)).not.toBeInTheDocument();
   });
 });

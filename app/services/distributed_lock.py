@@ -24,6 +24,8 @@ import asyncio
 import os
 import logging
 import secrets
+import threading
+import weakref
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,17 @@ _client_close_tasks: set = set()
 def _track_client_close(task) -> None:
     _client_close_tasks.add(task)
     task.add_done_callback(_client_close_tasks.discard)
+
+
+# #1690：release() 的 Redis DEL 同样是 fire-and-forget —— 与 client close 同一
+# 条 F12 纪律：强引用保持到任务完成，否则 GC 压力下 DEL 可能在发出前就被回收，
+# 且对任何 background-task drain 不可见（此前 release 路径零覆盖）。
+_release_tasks: set = set()
+
+
+def _track_release(task) -> None:
+    _release_tasks.add(task)
+    task.add_done_callback(_release_tasks.discard)
 
 _DEFAULT_TTL_MS = 30_000          # 30s base TTL
 _DEFAULT_ACQUIRE_TIMEOUT_S = 30.0 # 30s acquire budget (matches cartographic observation holders)
@@ -186,13 +199,35 @@ class _ResilientSessionLock:
             if self._renewer:
                 self._renewer.cancel()
             if self._token and not self._lost and self._client is not None:
+                # #1690：release 跑在清理路径（finally / done-callback）—— 取协程与
+                # 调度的任何失败都必须可观测且绝不向上抛（收窄旧的宽 except 语义）。
                 try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(
-                        self._client.eval(_RELEASE_SCRIPT, 1, self._key, self._token)
+                    coro = self._client.eval(_RELEASE_SCRIPT, 1, self._key, self._token)
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop is not None and not loop.is_closed():
+                        # #1690：F12 强引用纪律（同 _track_client_close）—— 保持到 DEL
+                        # 完成，绝不让 GC 提前回收。旧代码丢弃 create_task 返回值，
+                        # DEL 是否发出不可观测。
+                        _track_release(loop.create_task(coro))
+                    else:
+                        # #1690：无运行 loop 的同步上下文（同步调用方 / 关停路径）——
+                        # 立即跑完 token 校验 DEL，绝不让 key 活到 TTL。旧代码在此静默
+                        # 丢弃（debug 级），同 session 后续 acquire 全排队到 TTL 过期。
+                        try:
+                            asyncio.run(coro)
+                        except Exception as e:  # noqa: BLE001 — 可观测但不致命
+                            logger.warning(
+                                "session lock sync release failed for %s: %s",
+                                self._key, e,
+                            )
+                except Exception as e:  # noqa: BLE001 — 可观测但不致命
+                    logger.warning(
+                        "session lock release scheduling failed for %s: %s",
+                        self._key, e,
                     )
-                except (RuntimeError, Exception) as e:
-                    logger.debug("session lock async release scheduling failed for %s: %s", self._key, e)
         else:
             self._fallback.release()
 
@@ -200,7 +235,10 @@ class _ResilientSessionLock:
         if self._client is not None:
             try:
                 self._token = secrets.token_hex(16)
-                deadline = asyncio.get_event_loop().time() + self._acquire_timeout_s
+                # #1694 PERF-P3-02：__aenter__ 必在运行中的 loop 内 —— 用
+                # get_running_loop() 取代弃用的 get_event_loop()（后者在无
+                # 当前 loop 的上下文会静默新建，loop 亲和性判断失真）。
+                deadline = asyncio.get_running_loop().time() + self._acquire_timeout_s
                 while True:
                     ok = await self._client.set(
                         self._key, self._token, nx=True, px=self._ttl_ms
@@ -209,7 +247,7 @@ class _ResilientSessionLock:
                         self._mode = "redis"
                         self._renewer = asyncio.create_task(self._renew_loop())
                         return self
-                    if asyncio.get_event_loop().time() > deadline:
+                    if asyncio.get_running_loop().time() > deadline:
                         raise LockContentionError(
                             f"session lock contention: could not acquire {self._key} in {self._acquire_timeout_s:.1f}s"
                         )
@@ -331,12 +369,24 @@ class SessionLockRegistry:
         self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
         self._last_check_s: float = 0.0
         self._fallback_locks: Dict[str, _InProcessLock] = {}
-        # asyncio primitives bind to the loop they were first used on. When
-        # the running loop changes (pytest per-test loops; loop restarts), a
-        # cached in-process lock from the OLD loop deadlocks cross-test
-        # acquirers — reproduced by test_delete_session → resume chaos. The
-        # client rebuild above (F12) has the same rationale.
-        self._fallback_bound_loop: Optional[asyncio.AbstractEventLoop] = None
+        # #1681（loop-affinity）：in-process 回退锁按运行 loop 分桶持有 ——
+        # asyncio.Lock 在首次「有竞争」的 await 时绑定所在 loop，跨 loop 复用
+        # 同一把锁会 RuntimeError / 静默双持。旧实现在 loop 变化时 clear()
+        # **整张**表：那会连其它存活 loop（如 geocompute 专用 bridge loop，
+        # _async_bridge）的锁一起销毁，导致同一 loop 的后续 acquire 拿到新锁
+        # 而双持（Redis 降级期进程内互斥静默失效）。改为每 loop 一张表
+        # （session_data_redis._loop_clients / health._refresh_guards 同款
+        # per-loop 模式）：条目随 loop GC 自动回收（WeakKeyDictionary），
+        # 已关闭 loop 的死桶显式扫除。跨 loop 的互斥缺口是 asyncio.Lock 的
+        # 硬约束（ADR-0096 既有结论），per-loop 分桶至少保证**每个 loop
+        # 内部**的互斥不再被别的 loop 的调用摧毁。
+        self._fallback_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, _InProcessLock]]" = (
+            weakref.WeakKeyDictionary()
+        )
+        # 多线程多 loop（REST loop ↔ bridge loop）可并发调用 _fallback_lock，
+        # 分桶表的遍历/写与 threading 侧同纪律加锁（session_data_redis
+        # 的 _client_lock 同款）。
+        self._fallback_guard = threading.Lock()
 
     @staticmethod
     async def _close_client(client) -> None:
@@ -405,26 +455,30 @@ class SessionLockRegistry:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
-        if self._fallback_bound_loop is not loop:
-            # Loop changed: drop every old-loop lock (they can only deadlock
-            # on this loop). Single-loop processes never hit this branch
-            # after the first call.
-            self._fallback_locks.clear()
-            self._fallback_bound_loop = loop
-        lock = self._fallback_locks.get(session_id)
+        if loop is None:
+            # 无运行 loop（同步调用方/关停路径）：用无 loop 桶（锁同样惰性
+            # 绑定，首次竞争的 await 落在使用方自己的 loop 上）。
+            bucket = self._fallback_locks
+        else:
+            # #1681：只回收已关闭 loop 的死桶，绝不再整表 clear()。
+            with self._fallback_guard:
+                for dead in [lp for lp in self._fallback_by_loop if lp.is_closed()]:
+                    self._fallback_by_loop.pop(dead, None)
+                bucket = self._fallback_by_loop.setdefault(loop, {})
+        lock = bucket.get(session_id)
         if lock is None:
-            self._evict_idle_fallbacks()
+            self._evict_idle_fallbacks(bucket)
             lock = _InProcessLock()
-            self._fallback_locks[session_id] = lock
+            bucket[session_id] = lock
         return lock
 
-    def _evict_idle_fallbacks(self) -> None:
-        """Bound the fallback table: drop only unlocked, zero-waiter locks."""
-        if len(self._fallback_locks) < _FALLBACK_CAP:
+    def _evict_idle_fallbacks(self, bucket: Dict[str, _InProcessLock]) -> None:
+        """Bound one fallback bucket: drop only unlocked, zero-waiter locks."""
+        if len(bucket) < _FALLBACK_CAP:
             return
-        for sid in [s for s, lk in self._fallback_locks.items() if lk.idle]:
-            self._fallback_locks.pop(sid, None)
-            if len(self._fallback_locks) < _FALLBACK_CAP * 3 // 4:
+        for sid in [s for s, lk in bucket.items() if lk.idle]:
+            bucket.pop(sid, None)
+            if len(bucket) < _FALLBACK_CAP * 3 // 4:
                 break
 
     def _is_redis_configured(self) -> bool:

@@ -193,7 +193,7 @@ describe("MapSpec Reconciler (ADR-0036)", () => {
   });
 
   describe("diffSpecs — layer ordering", () => {
-    it("reports reordered layers as recompile (order is encoded in patch order)", () => {
+    it("对纯重排保持沉默 —— 空 patch（z-order 由运行时的 order-key 追踪负责，#375）", () => {
       const a = baseSpec({
         layers: [
           { id: "l1", source: "pts", type: "circle" },

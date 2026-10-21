@@ -50,7 +50,7 @@ celery -A app.services.task_queue.celery_app inspect ping
 
 ### P1 · LLM 供给
 
-- `/ready` 已覆盖 LLM 连通性;若单独排查,看 `logs/app.log` 中 llm_client 的报错(限流 / 鉴权失败 / 超时)。
+- `/ready` 已覆盖 LLM 连通性;若单独排查,看应用日志中 llm_client 的报错(限流 / 鉴权失败 / 超时)。日志位置:`LOG_DIR`(默认 `/tmp/webgis-logs`,文件日志 `app.log`;容器/k8s 以 stdout/stderr 流为主,#1686)。
 - 🔴 级:完全不可用;🟠 级:间歇超时(考虑切换 `LLM_BASE_URL`/`LLM_MODEL` 或检查出口网络与代理配置)。
 
 ### P1 · 上下文防爆巡检(Fetch-on-Demand 纪律)

@@ -72,7 +72,10 @@ export function getCachedChartArtifact(ref: string): ChartData | null | undefine
 export function loadChartArtifact(ref: string): Promise<ChartData | null> {
   const key = ref.trim();
   if (!key) return Promise.resolve(null);
-  const hit = cache.get(key);
+  // #1746-4：读缓存必须走 TTL 感知的 getCachedChartArtifact —— 原始
+  // cache.get 会让失败条目（null）在会话内永久驻留，#1078(G-4) 承诺的
+  // 「TTL 后可重试」在异步拉取路径上永不生效。
+  const hit = getCachedChartArtifact(key);
   if (hit !== undefined) return Promise.resolve(hit);
   const pending = inFlight.get(key);
   if (pending) return pending;

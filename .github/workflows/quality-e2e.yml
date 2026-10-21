@@ -35,7 +35,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: quality-e2e-${{ github.ref }}
+  # #1694 OPS-14：group 补 event_name —— 与 production.yml:49 的
+  # `${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}` 对齐。
+  # 缺它时同一 ref 的 workflow_dispatch / push 与 PR run 共组，手动触发会被
+  # 在途 PR run 静默取消（cancel-in-progress 只对 PR 求值为 true，但组同名
+  # 就会连坐）。
+  group: quality-e2e-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

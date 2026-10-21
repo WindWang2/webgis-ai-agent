@@ -141,18 +141,11 @@ def safe_extract_package(blob: bytes, target_dir: Path) -> None:
                         DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
                         f"package entry {name!r} has an unsafe path shape",
                     )
-                if member.size > MAX_PACKAGE_TOTAL_BYTES:
-                    raise _dist_error(
-                        DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
-                        f"package entry {name!r} exceeds {MAX_PACKAGE_TOTAL_BYTES} bytes",
-                    )
-                total_bytes += member.size
-                entries += 1
-                if total_bytes > MAX_PACKAGE_TOTAL_BYTES:
-                    raise _dist_error(
-                        DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
-                        f"package exceeds {MAX_PACKAGE_TOTAL_BYTES} unpacked bytes",
-                    )
+                # review #1744-2：预算只在上面的流式预检循环**单次**累计。
+                # 本循环（形状校验）曾对同一批成员再累加一次 total_bytes /
+                # entries，使实际生效上界只有文档声明的一半（512→256 条、
+                # 8 MiB→4 MiB），而报错信息仍显示完整上界、误导排查。
+                # 这里不再记账，只做形状/路径校验。
                 destination = (target_dir / name).resolve()
                 if not destination.is_relative_to(resolved_root):
                     raise _dist_error(

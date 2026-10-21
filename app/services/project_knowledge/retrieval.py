@@ -6,17 +6,19 @@
 - 作用域字段任何一侧未知 = 不能确认 = 判定降级（绝不 wildcard 放行）；
 - 检索时对每条候选做 lazy liveness 复核：权威 token 漂移 → 行降级 stale
   （写回），权威行消失 → invalidated —— 缓存正确性不依赖任何失效通知；
+  复核的 token 按权威类别一次 IN 查询批量取回（#1721），逐条判定不变；
 - 正向证明缺失（claim 不可解析/非 SUPPORTED）永远不给 exact。
 """
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.services.project_knowledge import store as ks
 from app.services.project_knowledge.contract import (
+    AS_PROJECT_DATASET,
     AS_SESSION_REF,
     EK_ARTIFACT,
     EK_DATASET_VERSION,
@@ -33,7 +35,10 @@ from app.services.project_knowledge.contract import (
     bbox_contains,
     validate_bbox,
 )
-from app.services.project_knowledge.liveness import live_version_token
+from app.services.project_knowledge.liveness import (
+    live_version_token,
+    live_version_tokens,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,10 @@ logger = logging.getLogger(__name__)
 REUSE_KINDS = (EK_ARTIFACT, EK_MAP_PRODUCT, EK_DATASET_VERSION)
 
 _VERDICT_ORDER = {VERDICT_EXACT: 0, VERDICT_RECOMPUTE_PARTIAL: 1, VERDICT_NOT_REUSABLE: 2}
+
+#: 哨兵：调用方未显式传入探测结果时，_evaluate_entry 自行单条探测（兼容旧
+#: 调用面）；find_reuse_candidates 现传批量探测结果（#1721）。
+_UNPROBED: Any = object()
 
 
 def _claim_statuses_for(claim_ids: List[str]) -> dict[str, Optional[str]]:
@@ -73,8 +82,13 @@ def _evaluate_entry(
     entry: KnowledgeEntry,
     query: ReuseQuery,
     request_stale_inputs: Optional[List[str]] = None,
+    live_token: Any = _UNPROBED,
 ) -> ReuseCandidate:
-    """单条候选的 lazy 复核 + 判定（纯读权威 + 允许写回投影降级）。"""
+    """单条候选的 lazy 复核 + 判定（纯读权威 + 允许写回投影降级）。
+
+    ``live_token`` 为调用方（批量探测，#1721）已解析的权威当前 token；
+    缺省时自行单条探测（旧调用面）。
+    """
     reasons: List[str] = []
     stale_causes: List[str] = []
 
@@ -88,11 +102,14 @@ def _evaluate_entry(
         )
 
     # 1. lazy liveness：权威 token 漂移 → 写回降级；消失 → invalidated。
-    live = live_version_token(
-        db,
-        project_id=entry.project_id,
-        authority_store=entry.authority_store,
-        authority_id=entry.authority_id,
+    live = (
+        live_version_token(
+            db,
+            project_id=entry.project_id,
+            authority_store=entry.authority_store,
+            authority_id=entry.authority_id,
+        )
+        if live_token is _UNPROBED else live_token
     )
     if live is None:
         ks.demote_stale_by_token(
@@ -240,27 +257,40 @@ def find_reuse_candidates(
         return []
     kinds = tuple(query.kinds) if query.kinds else REUSE_KINDS
 
+    entries = ks.get_active_entries(
+        db, org_id=org_id, project_id=project_id,
+        kinds=kinds, limit=200,
+    )
+
+    # #1721: 一次批量探测全部候选（外加请求声称的输入指纹）的权威 token。
+    # 逐条 live_version_token 是 O(active 条目) 的 N+1（artifact 权威每
+    # 条 2 次查询，默认只留 query.limit=3 条也要把 200 条全复核）—— 每个
+    # chat turn ~600 条 SQL。批量后每类权威一次 IN 查询（artifact/workflow
+    # 各两次），语句数与候选数脱钩。
+    probes: List[Tuple[str, str]] = [
+        (e.authority_store, e.authority_id) for e in entries
+    ]
+    probes.extend(
+        (AS_PROJECT_DATASET, ds_id) for ds_id in (query.dataset_fingerprints or {})
+    )
+    tokens = live_version_tokens(db, project_id=project_id, probes=probes)
+
     # 请求级输入 liveness 复核：query.dataset_fingerprints 声称的是
     # 「新 Mission 计划使用的输入指纹」—— 若与权威当前值漂移/消失，
     # 所有候选一律不得 exact（规划输入本身已 stale）。
     request_stale_inputs: List[str] = []
     for ds_id, claimed in (query.dataset_fingerprints or {}).items():
-        live = live_version_token(
-            db, project_id=project_id,
-            authority_store="project_dataset", authority_id=ds_id,
-        )
+        live = tokens.get((AS_PROJECT_DATASET, ds_id))
         if live is None:
             request_stale_inputs.append(f"request_input_gone:{ds_id}")
         elif (live or "") != str(claimed):
             request_stale_inputs.append(f"request_input_stale:{ds_id}")
 
-    entries = ks.get_active_entries(
-        db, org_id=org_id, project_id=project_id,
-        kinds=kinds, limit=200,
-    )
     candidates = [
         _evaluate_entry(
-            db, entry=e, query=query, request_stale_inputs=request_stale_inputs,
+            db, entry=e, query=query,
+            request_stale_inputs=request_stale_inputs,
+            live_token=tokens.get((e.authority_store, e.authority_id)),
         )
         for e in entries
     ]

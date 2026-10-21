@@ -408,11 +408,13 @@ def test_autofix_apply_reproject_with_pyproj():
     assert abs(lon - 116.0) < 1e-6 and abs(lat - 39.5) < 1e-6
 
 
-def test_autofix_reproject_rejects_oversized_payload():
-    """#1634：>max_scan 的载荷 typed 拒绝重投影（连同 CRS 标签一起不改）。
+def test_autofix_reproject_transforms_oversized_payload_fully():
+    """#1716（取代 #1634 的 typed 拒绝）：>max_scan 的载荷全量重投影。
 
-    坐标只处理前 max_scan 个要素、CRS 标签却对全载荷生效 = 尾部要素静默
-    坐标错标（闸门一放松即开口的潜在缺陷）；拒绝 + bounded_to 披露。
+    #1634 曾在超限时连同 CRS 标签一起拒绝（半变换即伪造的另一种出口），
+    但拒绝只是把「伪造」换成「不可用」：CRS 标签是 payload 级声明，正确
+    语义是全量变换（O(n) 线性，与整载荷深拷贝同量级），证据以
+    features_transformed 如实披露变换要素数，绝不静默留下扫描窗外要素。
     """
     from app.services.data_quality.autofix import _MAX_SCAN
 
@@ -423,14 +425,23 @@ def test_autofix_reproject_rejects_oversized_payload():
     steps = [AutofixStep(operation="reproject", params={"target_crs": "EPSG:3857"})]
     new_payload, evidence = apply_autofix(payload, steps)
     entry = evidence["operations"][0]
-    assert entry["applied"] is False
-    assert entry["rejected"] == "feature_count_exceeds_scan_bound"
-    assert entry["bounded_to"] == _MAX_SCAN
-    assert entry["feature_count"] == _MAX_SCAN + 1
-    # 载荷逐字节未改：CRS 标签与坐标都保持原样（绝不半吊子只改标签）
-    assert new_payload["crs"] == "EPSG:4326"
-    assert new_payload["geojson"]["features"][0]["geometry"]["coordinates"] == [116.0, 39.5]
-    assert evidence["changed"] is False
+    assert entry["reprojected"] is True, "pyproj 在场时必须真实重投影"
+    assert entry["features_transformed"] == _MAX_SCAN + 1, (
+        "扫描窗外要素不得留在源 CRS（半变换即伪造）"
+    )
+    assert entry.get("rejected") is None, "#1716 起不再 typed 拒绝超限载荷"
+    assert new_payload["crs"] == "EPSG:3857"
+    assert evidence["changed"] is True
+    x, y = new_payload["geojson"]["features"][0]["geometry"]["coordinates"]
+    # Web Mercator 合法域检查（精确值由 pyproj 权威，避免测试硬编码漂移）：
+    # 116E → x ∈ 1.2e7~1.3e7；39.5N → y ∈ 4.7e6~4.9e6
+    assert 1.2e7 < x < 1.3e7 and 4.7e6 < y < 4.9e6
+    # 反变换回到经纬度（±1e-6°）
+    from pyproj import Transformer
+
+    lon, lat = Transformer.from_crs("EPSG:3857", "EPSG:4326",
+                                    always_xy=True).transform(x, y)
+    assert abs(lon - 116.0) < 1e-6 and abs(lat - 39.5) < 1e-6
 
 
 def test_autofix_apply_filter_null_drops_rows():

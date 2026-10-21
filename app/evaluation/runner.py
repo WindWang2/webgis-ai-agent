@@ -1180,17 +1180,31 @@ class GISBenchmarkRunner:
         evidence["retry_count"] = sum(c - 1 for c in seen_calls.values() if c > 1)
 
         # MapSpec-derived assertions.
+        # review #1744-3：区分「存储不可用 / 读取抛错」与「本轮脚本确实
+        # 没产出 MapSpec」。旧代码 `except Exception: mapspec = None` 把两
+        # 者混为一谈 —— 一次存储抖动会被折算成 mapspec_present=False 的
+        # 产品语义失败，连带 component 补充断言与 numeric mapspec 断言
+        # 全红。基础设施故障现在单独记账（lookup error），且不产生伪产品
+        # 失败；mapspec 相关断言在该轮无法评判，直接跳过。
         mapspec = None
+        mapspec_lookup_error: Optional[str] = None
         try:
             from app.services.mapspec.store import mapspec_store_instance
 
             mapspec = await mapspec_store_instance.get_mapspec(session_id)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — 基础设施故障如实记账
             mapspec = None
+            mapspec_lookup_error = f"{type(exc).__name__}: {exc}"[:300]
         evidence["mapspec_present"] = bool(mapspec)
         evidence["mapspec"] = mapspec
+        if mapspec_lookup_error is not None:
+            evidence["mapspec_lookup_error"] = mapspec_lookup_error
+            evidence["failures"].append(
+                "mapspec lookup failed (infrastructure, not product): "
+                f"{mapspec_lookup_error}"
+            )
 
-        if case.component_assertions:
+        if case.component_assertions and mapspec_lookup_error is None:
             types: set = set()
             if isinstance(mapspec, dict):
                 layout = mapspec.get("layout") or {}
@@ -1219,6 +1233,10 @@ class GISBenchmarkRunner:
         quantities = self._compute_quantities(case)
         evidence["quantities"] = quantities
         for assertion in case.numeric_assertions:
+            if mapspec_lookup_error is not None and assertion.source == "mapspec":
+                # MapSpec 读取本身失败：该断言无法评判，不计产品失败
+                # （infra 失败已在上面单独记账）。
+                continue
             if not _check_numeric(
                 assertion,
                 step_results=results,
@@ -1424,8 +1442,15 @@ class GISBenchmarkRunner:
                 metrics["map_product_complete"] = bool(exec_evidence.get("mapspec_present"))
             result.metrics = metrics
 
-            if exec_evidence is not None and not exec_evidence.get("mapspec_present") \
-                    and (case.component_assertions or case.expected_artifact_types):
+            # review #1744-3：MapSpec 读取抛错（基础设施故障）时
+            # mapspec_present=False 是「没读到」，不是「没产出」—— 不得
+            # 再叠一条产品语义失败（infra 失败已在 exec evidence 记账）。
+            if (
+                exec_evidence is not None
+                and not exec_evidence.get("mapspec_present")
+                and (case.component_assertions or case.expected_artifact_types)
+                and not exec_evidence.get("mapspec_lookup_error")
+            ):
                 result.failures.append("mapspec missing after script (map product incomplete)")
             result.passed = not result.failures
             result.status = "pass" if result.passed else "fail"
