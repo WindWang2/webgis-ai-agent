@@ -13,6 +13,10 @@
   （available/degraded/unavailable/credential_missing/policy_denied）——
   合成 provider 健康（断路/延迟档）、凭证 presence、policy 裁决、认证
   状态与资源分级。规划期先看「此刻真正能跑什么」，而不是只看注册面。
+- ``catalog_conformance``（G03）：单工具 × 8 消费面（注册/搜索/规划/
+  Pi native/proxy/dispatch/结果/科学语义）契约对账报告——回答「这个
+  工具的元数据在每个面上一致吗、不一致在哪」。只读投影，不裁决
+  （turn 级资格与执行闸权威不变）。
 
 边界：运行期 provider 选择权威仍是 ``capability_resolution``；本模块的
 运行时投影只读（不写 catalog 身份、不做第二套资格裁决）；不修改 Pi
@@ -60,6 +64,10 @@ class CatalogLookupArgs(BaseModel):
 class CapabilityRuntimeStatusArgs(BaseModel):
     capabilities: str = Field(
         "", description="逗号分隔的 capability id（1-8 个；空 = 全量有界投影，上限 16）")
+
+
+class CatalogConformanceArgs(BaseModel):
+    tool: str = Field(..., description="要审计的工具名（registry canonical 名）")
 
 
 def _get_catalog(refresh: bool = False):
@@ -225,6 +233,61 @@ def register_catalog_discovery_tools(registry: ToolRegistry):
         payload["note"] = (
             "runtime projection: registry presence ≠ current runnability; "
             "credential_missing/policy_denied rows list the exact fix")
+        return payload
+
+    @tool(
+        registry,
+        tier=2,
+        domains=["meta"],
+        name="catalog_conformance",
+        description=(
+            "单工具 × 8 消费面契约对账报告（只读、确定性）。对指定工具"
+            "输出 registration/search/planner/pi_native/proxy/dispatch/"
+            "result/science 八面的 pass/warning/fail/not_evaluated 裁决，"
+            "每面带稳定原因码与证据。"
+            "\n何时用：解释某个工具为何不可用/被逐出/元数据可疑时——"
+            "先查它的对账面，再决定下一步（换工具/补参数/等待凭证）。"
+            "\n边界：本工具只披露不裁决；turn 级资格与执行闸权威不变。"
+        ),
+        args_model=CatalogConformanceArgs,
+        side_effect="pure", deterministic=True,
+        latency_class="fast", memory_class="light", scale_class="small",
+        tags=("catalog", "conformance", "契约", "对账", "目录"),
+        capabilities=["plan_workflow_orchestration"],
+        output_semantic_type="object", result_size_policy="bounded",
+        network=False,
+    )
+    def catalog_conformance(tool: str) -> Dict[str, Any]:
+        from app.lib.gis.tool_capability_conformance import (
+            audit_tool_conformance,
+            collect_live_facts,
+        )
+
+        name = str(tool or "").strip()
+        if not name:
+            return {"error": "tool_name_required",
+                    "detail": "provide the registry canonical tool name"}
+        # 生产 registry 经 bridge 持有面取（与 capability_runtime_status 同款
+        # 供给纪律）；缺席退化为主持面缺失错误，绝不引导离线 bootstrap。
+        try:
+            from app.agent_pi_bridge import try_get_tool_registry
+
+            registry = try_get_tool_registry()
+        except Exception:  # noqa: BLE001 — bridge 缺席退化，不伪装成功
+            registry = None
+        if registry is None:
+            return {"error": "registry_unavailable",
+                    "detail": "live tool registry not attached to this process"}
+        facts = collect_live_facts(registry)
+        try:
+            report = audit_tool_conformance(name, facts)
+        except KeyError:
+            return {"error": "tool_not_found", "tool": name[:128]}
+        payload = report.to_dict()
+        payload["registry_generation"] = facts.registry_generation
+        payload["note"] = (
+            "static conformance projection: pass ≠ currently runnable; "
+            "per-turn qualification and dispatch gates remain authoritative")
         return payload
 
 
