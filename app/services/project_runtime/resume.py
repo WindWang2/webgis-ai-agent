@@ -36,6 +36,9 @@ from app.services.project_runtime.store import (
 
 logger = logging.getLogger(__name__)
 
+#: 恢复链语义对账的 ref 上限（与 durable facts 记录面同界）。
+_MAX_DESCRIPTOR_RECONCILE_REFS = 16
+
 
 class ResumeBlocked(Exception):
     """resume 前置校验不通过（携带 ValidationReport 供路由如实上报）。"""
@@ -179,6 +182,26 @@ async def _execute_resume(
         r for r in receipt.missing_refs if r not in ref_map
     ][:64]
 
+    # ── 3.5 数据集语义身份：迁移 + 记录面对账（G01/WP-B6）──────────────
+    # 旧 session 语义 store 的 descriptor 随载荷迁入新 session（指针改写、
+    # 指纹不变）；MapSpec 快照 source 冻结的 descriptor_fingerprint（记录面）
+    # vs 迁移后当前语义 → evaluate_reuse verdict。漂移只披露不阻断
+    # （消费面按 verdict 重评资格，不静默续渲染）。
+    try:
+        receipt.descriptor_reconciliation = await _reconcile_descriptor_semantics(
+            snapshot, new_sid, ref_map)
+    except Exception:  # noqa: BLE001 — 对账面失败不阻断恢复（如实披露）
+        logger.warning(
+            "[RuntimeResume] descriptor reconciliation skipped sid=%s",
+            new_sid, exc_info=True)
+        receipt.descriptor_reconciliation = {"v": 1, "error": "reconcile_failed"}
+    for entry in (receipt.descriptor_reconciliation.get("checks") or []):
+        if entry.get("verdict") not in ("valid", None, ""):
+            receipt.disclosures.append(
+                f"dataset semantics {entry.get('verdict')} for restored ref: "
+                f"{str(entry.get('ref') or '')[:48]}")
+            break  # 有界披露：一条汇总即可，明细在 reconciliation 字段
+
     # ── 4/5. plan 种子 + 会话标记 + Conversation 行（失败按披露降级 ——
     # 载荷/spec/账本已提交，后续步骤失败不产生无回执的半成品会话）────────
     try:
@@ -249,6 +272,116 @@ async def _execute_resume(
         "in-flight jobs not restored",
     ])
     return receipt
+
+
+async def _reconcile_descriptor_semantics(
+    snapshot: Any,
+    new_sid: str,
+    ref_map: Dict[str, str],
+) -> Dict[str, Any]:
+    """恢复链数据集语义身份：迁移 + 记录面对账（G01/WP-B6，ADR-0215 补缝）。
+
+    1. **迁移**：旧 session 语义 store 的 descriptor 随载荷迁入新 session
+       （``dataset_key`` 指针改写、指纹不变 —— 与 resume_anchor 的
+       semantic store migration 同一模式，本函数是该模式在 durable
+       project runtime 恢复链的落点）；
+    2. **对账**：MapSpec 快照 source 上冻结的 ``descriptor_fingerprint``
+       （记录面）vs 迁移后当前语义指纹 → ``evaluate_reuse`` verdict：
+       valid = 语义身份连续可复用；recompute/stale = 数据漂移（旧计划/
+       结论按新语义重评）；unknown = 不可对账（诚实披露，绝不把
+       「不知道」当「没变」）。
+
+    纯披露面：不自动改写 spec/计划状态；迁移失败逐 ref 计数（不阻断
+    恢复主链）。输出有界（≤ ``_MAX_DESCRIPTOR_RECONCILE_REFS`` 条 check）。
+    """
+    out: Dict[str, Any] = {
+        "v": 1,
+        "migrated": 0,
+        "migration_failed": 0,
+        "checks": [],
+        "stale_refs": [],
+        "unknown_refs": [],
+    }
+    old_sid = str(getattr(snapshot, "session_id", "") or "")
+    if not old_sid or not ref_map:
+        return out
+    from app.services.dataset_semantics import evaluate_reuse, get_dataset_semantic_store
+    from app.services.dataset_semantics.store import (
+        STATUS_OK,
+        DescriptorRecord,
+    )
+    from app.services.project_runtime.rebind import (
+        _entry_ref_keys,
+        _source_entries,
+    )
+
+    sem_store = get_dataset_semantic_store()
+
+    # 记录面：MapSpec 快照 source 的 {旧 ref → 冻结 descriptor_fingerprint}。
+    recorded: Dict[str, str] = {}
+    try:
+        doc = getattr(snapshot, "mapspec_doc", None)
+        if isinstance(doc, dict):
+            for entry in _source_entries(doc):
+                fp = str(entry.get("descriptor_fingerprint") or "")[:96]
+                if not fp:
+                    continue
+                for key in _entry_ref_keys(entry):
+                    val = entry.get(key)
+                    if isinstance(val, str) and val:
+                        recorded[str(val)[:64]] = fp
+    except Exception:  # noqa: BLE001 — 记录面解析失败按无锚（不虚构期望）
+        recorded = {}
+
+    pairs = list(ref_map.items())[:_MAX_DESCRIPTOR_RECONCILE_REFS]
+    for old_ref, new_ref in pairs:
+        current_fp = ""
+        try:
+            rec = await sem_store.get(old_sid, old_ref)
+            if rec.ok and rec.descriptor is not None:
+                carried = rec.descriptor.model_copy(
+                    update={"dataset_key": str(new_ref)[:200]})
+                put = await sem_store.put(new_sid, new_ref, carried)
+                if put.ok:
+                    out["migrated"] += 1
+                    current_fp = str(
+                        rec.descriptor.descriptor_fingerprint or "")[:96]
+                else:
+                    out["migration_failed"] += 1
+            # 旧会话无 descriptor（老会话/未铸语义）= 不迁移（诚实缺席），
+            # 有记录面锚时对账按 unknown 披露。
+        except Exception:  # noqa: BLE001 — 单 ref 失败不阻断
+            out["migration_failed"] += 1
+        expected = recorded.get(str(old_ref)[:64], "")
+        if not expected:
+            continue  # 无记录面锚（legacy source）= 无可对账，不虚构
+        if not current_fp:
+            out["checks"].append({
+                "ref": str(new_ref)[:64],
+                "verdict": "unknown",
+                "reason_codes": ["DESCRIPTOR_MISSING"],
+            })
+            out["unknown_refs"].append(str(new_ref)[:64])
+            continue
+        decision = evaluate_reuse(expected, DescriptorRecord(
+            status=STATUS_OK, descriptor=rec.descriptor,
+            fingerprint=current_fp,
+            dataset_key=str(new_ref)[:200]))
+        verdict = str(decision.verdict)
+        out["checks"].append({
+            "ref": str(new_ref)[:64],
+            "verdict": verdict,
+            "reason_codes": [str(c)[:64] for c in decision.reason_codes[:4]],
+            "recorded_fingerprint": expected[:16],
+            "current_fingerprint": current_fp[:16],
+        })
+        if verdict == "valid":
+            continue
+        if verdict == "unknown":
+            out["unknown_refs"].append(str(new_ref)[:64])
+        else:
+            out["stale_refs"].append(str(new_ref)[:64])
+    return out
 
 
 async def _restore_from_pointer(
