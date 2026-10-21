@@ -1,28 +1,23 @@
 {
  "gates": {
   "contract_drift": {
-   "command": "C:\\ProgramData\\anaconda3\\python.exe scripts/gen_drift_report.py --check",
+   "command": "/home/kevin/project/webgis-ai-agent/.venv/bin/python scripts/gen_drift_report.py --check",
    "detail": [
-    "https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation",
-    "https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#troubleshooting ",
-    "",
-    "-----",
-    "",
     "drift report up to date"
    ],
    "status": "pass"
   },
   "frontend_behavior": {
-   "command": "C:\\ProgramData\\anaconda3\\python.exe scripts/gen_frontend_behavior.py --check",
+   "command": "/home/kevin/project/webgis-ai-agent/.venv/bin/python scripts/gen_frontend_behavior.py --check",
    "detail": [
     "ok: 2 behaviors"
    ],
    "status": "pass"
   },
   "integration_preflight": {
-   "command": "C:\\ProgramData\\anaconda3\\python.exe scripts/check_integration_preflight.py --report",
+   "command": "/home/kevin/project/webgis-ai-agent/.venv/bin/python scripts/check_integration_preflight.py --report",
    "detail": [
-    "   \"errors\": [",
+    "    \"docs/integration/RELEASE_READINESS.md 输入未变但内容被改（手改将在下次再生成时静默丢失）\",",
     "    \"docs/science/CAPABILITY_CATALOG.md 输入未变但内容被改（手改将在下次再生成时静默丢失）\"",
     "   ]",
     "  }",
@@ -32,19 +27,14 @@
    "status": "fail"
   },
   "quality_manifest": {
-   "command": "C:\\ProgramData\\anaconda3\\python.exe scripts/gen_quality_manifest.py --check",
+   "command": "/home/kevin/project/webgis-ai-agent/.venv/bin/python scripts/gen_quality_manifest.py --check",
    "detail": [
-    "https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation",
-    "https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#troubleshooting ",
-    "",
-    "-----",
-    "",
     "quality manifest up to date"
    ],
    "status": "pass"
   }
  },
- "git_commit_generation_time": "7cb26580246e0cea0e2621595ff0bf546982ef8d",
+ "git_commit_generation_time": "60fcdd84ffdb870d7d31037e7e286778eb506380",
  "known_gaps": [
   {
    "detail": "存量 ADR 0077 撞号（watermark 下 known limitation）: ['docs/adr/0077-multi-pod-topology-turn-ownership.md', 'docs/adr/0077-wrap-vendored-pi.md']",
@@ -97,6 +87,30 @@
   {
    "detail": "存量 ADR 0183 撞号（watermark 下 known limitation）: ['docs/adr/0183-gis-spatial-reasoning-memory.md', 'docs/adr/0183-harness-goal-satisfaction-evaluator.md', 'docs/adr/0183-harness-replay-benchmark-explainability.md', 'docs/adr/0183-mutation-transactions-v1.md', 'docs/adr/0183-semantic-map-product-graph-v1.md']",
    "id": "adr-duplicate-183"
+  },
+  {
+   "detail": "存量 ADR 0204 撞号（watermark 下 known limitation）: ['docs/adr/0204-capability-abi-v2-binding-conformance.md', 'docs/adr/0204-f03-harness-lifecycle-convergence.md']",
+   "id": "adr-duplicate-204"
+  },
+  {
+   "detail": "存量 ADR 0214 撞号（watermark 下 known limitation）: ['docs/adr/0214-composition-contract-component-abi.md', 'docs/adr/0214-map-plan-compiler.md', 'docs/adr/0214-mapspec-render-runtime-data-plane.md', 'docs/adr/0214-trace-replay-oracle-v3.md', 'docs/adr/0214-visual-observation-repair-provider.md', 'docs/adr/0214-workflow-resource-scheduler-convergence.md']",
+   "id": "adr-duplicate-214"
+  },
+  {
+   "detail": "存量 ADR 0215 撞号（watermark 下 known limitation）: ['docs/adr/0215-context-revalidation-safe-reuse.md', 'docs/adr/0215-gis-dataset-semantic-contract.md', 'docs/adr/0215-gis-intent-requirement-ir.md', 'docs/adr/0215-worker-placement-envelope-and-inline-admission.md']",
+   "id": "adr-duplicate-215"
+  },
+  {
+   "detail": "存量 ADR 0216 撞号（watermark 下 known limitation）: ['docs/adr/0216-architecture-boundaries-contract-kernel.md', 'docs/adr/0216-durable-turn-journal.md', 'docs/adr/0216-subagent-delegation-lease-protocol.md']",
+   "id": "adr-duplicate-216"
+  },
+  {
+   "detail": "存量 ADR 0217 撞号（watermark 下 known limitation）: ['docs/adr/0217-large-data-plane-vnext.md', 'docs/adr/0217-situational-memory-graph-recompute.md', 'docs/adr/0217-unified-gis-action-ir.md', 'docs/adr/0217-visual-observation-blob-lifecycle-and-safe-repair.md']",
+   "id": "adr-duplicate-217"
+  },
+  {
+   "detail": "存量 ADR 0228 撞号（watermark 下 known limitation）: ['docs/adr/0228-cartographic-product-manifest-v1.md', 'docs/adr/0228-ci-toolchain-no-runner-image-drift.md']",
+   "id": "adr-duplicate-228"
   },
   {
    "detail": "real-services 车道为 opt-in 资源纪律；未运行时本报告以 not-run 显式标注，不构成 pass",

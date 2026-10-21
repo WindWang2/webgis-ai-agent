@@ -175,12 +175,12 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
   --from-literal=JWT_SECRET_KEY="$(openssl rand -hex 32)" \
   --from-literal=REDIS_URL='redis://:PWD@redis:6379/0' \
   --from-literal=CELERY_BROKER_URL='redis://:PWD@redis:6379/0' \
-  --from-literal=CELERY_RESULT_BACKEND='redis://:PWD@redis:6379/1'
+  --from-literal=CELERY_RESULT_BACKEND='redis://:PWD@redis:6379/1' \
+  --from-literal=METRICS_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
 # #1689：/metrics 的 METRICS_TOKEN Bearer 门禁 fail-closed（app/main.py
 # _require_metrics_token，未配置即 401）；api pod 注解 prometheus.io/scrape
 # 邀请集群内 Prometheus 抓取，secret 缺此键则全部 401、监控静默失明
-# （compose 栈用 ${METRICS_TOKEN:?} 强制提供，k8s 必须在此补等价来源）：
-  --from-literal=METRICS_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
+# （compose 栈用 ${METRICS_TOKEN:?} 强制提供，k8s 必须在此补等价来源）。
 # 启用 05-deps-optional.yaml（可选内部 postgres/redis）时，还需与 URL 内嵌
 # 值一致的组件键：
 #   --from-literal=DB_USER='USER' \

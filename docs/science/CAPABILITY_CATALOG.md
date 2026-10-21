@@ -15,8 +15,8 @@
 ## 总览
 
 - capability 词表：160 条（图内 160 节点）
-- 图节点 984 / 边 3184 / graph fingerprint `086cdd037d39c6de`
-- provider 面：algorithm 237，component 20，model 0，provider(adapters) 15，template 8，tool 356，workflow(recipes) 166
+- 图节点 1003 / 边 3204 / graph fingerprint `bbd86ce1d5a42cc3`
+- provider 面：algorithm 237，component 20，model 10，provider(adapters) 15，template 8，tool 356，workflow(recipes) 166
 - 域分布：`general` 71，`network` 14，`platform` 17，`raster` 55，`statistics` 1，`temporal` 2
 
 ## Capability 词表
@@ -188,9 +188,9 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 73 | 1 | 76 | 6 | 0 |
+| 64 | 1 | 76 | 6 | 0 |
 
-### orphan_capability（73）
+### orphan_capability（64）
 
 - capability accessibility has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability areal_interpolation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -223,15 +223,6 @@
 - capability local_join_count has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mantel_test has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mnf_transform has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_change_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_embedding has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_image_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_instance_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_object_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_promptable_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_super_resolution has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_temporal_classification has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_temporal_forecast has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability nearest_neighbor_functions has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability network_centrality has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability pair_correlation_function has no algorithm/tool provider and is not referenced by any workflow/template/fallback

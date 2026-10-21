@@ -60,6 +60,10 @@ _ENV_BASELINE = {
     "NETWORK_EGRESS_MODE": "unrestricted",
     "NETWORK_EGRESS_ALLOW": "",
     "NETWORK_EGRESS_ALLOW_PRIVATE": "true",
+    # #1675 可信代理跳数（client_ip 默认 1 = nginx 单跳）与 #1673 /metrics
+    # Bearer token（Settings 默认空串 = fail-closed 401）的 .env.example 钉扎。
+    "TRUSTED_PROXY_HOPS": "1",
+    "METRICS_TOKEN": "",
         # E-4/E-9（#895/#900）：.env.example 新登记键的钉扎（与 Settings 默认等价）
         "LLM_PLANNER_MODEL": "",
         "LLM_PROMPT_CACHING_ENABLED": "true",
