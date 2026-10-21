@@ -36,3 +36,8 @@
 | 10-21 | `-m pytest tests/unit/gis_tool_conformance/ -q --maxfail=3 -p no:cacheprovider` | 0 | **55 passed**(faces 44 + determinism 8 + xwalk 3) | 引擎 bug 修复 1 个:_overall 聚合序(not_evaluated 不压过 pass) |
 | 10-21 | `-m ruff check app/lib/gis/tool_capability_conformance.py tests/unit/gis_tool_conformance/` | 0 | All checks passed | |
 | 10-21 | 活 registry 冒烟(bootstrap=True 全量审计) | 0 | 356 工具:0 fail / 215 warning / 141 not_evaluated | warning top:metadata_incomplete 158、result_size_unknown 76、binding_unbacked 60、ref_offload_without_ref_contract 41、contract_divergence 7 → W4 清偿 |
+| 10-21 | CLI `--tool buffer_analysis` | 0 | 人读报告正常(overall=warning:ref_offload 无 produced_refs) | |
+| 10-21 | `-m pytest tests/unit/gis_tool_conformance/ -q`(含 B 代理 3 新文件) | 0 | **86 passed**(faces 44+determinism 8+xwalk 3+tool 7+scale 7+poi 9+ndvi 8) | E2E 经真实 ToolDispatchService;零网络 |
+| 10-21 | 回归:docs_drift+parity+tool_catalog+surface_v2 / pi_tool_spec+surface_receipt+reason_code_parity | 0 | 47 + 45 passed | 新工具入 registry 后 |
+| 10-21 | `scripts/check_tool_descriptor_coverage.py` | 0 | 357 工具 5 字段全 100% PASS | |
+| 10-21 | `python -m app.lib.gis.execution_catalog_docs`(docs 重生成) | 0 | 356→357 工具,manifest 更新 | |
