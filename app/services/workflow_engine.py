@@ -45,6 +45,7 @@ from app.services.provenance.context import (
     set_tool_execution_context,
 )
 from app.schemas.project_schema import WorkflowStepSpec
+from app.lib.gis.scientific_errors import ScientificPreconditionFailed
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,25 @@ class WorkflowEngine:
 
     # ── capability re-resolution (ADR-0092 A5) ────────────────────────────
 
+    #: G02：执行期科学硬拒码前缀。这些拒绝只在画像事实在场时才可能产生
+    #: （resolver 对事实缺席一律 deferred 放行），因此命中即为**事实
+    #: 支持的科学违反**（plan→execute 之间数据变化的 TOCTOU 硬风险），
+    #: 执行入口必须 fail-closed，不得静默回退 recorded tool。
+    SCIENCE_REJECTION_PREFIXES = (
+        "scientific_precondition:",
+        "crs_class_mismatch:",
+        "insufficient_features:",
+        "geometry_mismatch:",
+    )
+
+    @staticmethod
+    def _profile_digest(profile: Dict[str, Any]) -> str:
+        """画像确定性摘要（freshness token；单一实现在 science_final_gate
+        —— plan/execute/final 三段共用同一键集与序列化）。"""
+        from app.lib.gis.science_final_gate import science_profile_digest
+
+        return science_profile_digest(profile)
+
     @staticmethod
     def resolve_step_tool(
         step_spec: WorkflowStepSpec,
@@ -161,6 +181,12 @@ class WorkflowEngine:
         变活（此前只传 available_tools，所有 profile 依赖的门在运行时失活，
         审计 gap #2）。None = 画像不可得 → 诚实降级为既有行为（未知事实
         ≠ 不满足，旧 manifest 证据逐位兼容）。
+
+        G02（science_hard_block）：re-resolution 全拒且拒绝理由为科学性
+        拒绝（SCIENCE_REJECTION_PREFIXES；这些拒绝只在事实在场时产生）
+        时，evidence 携带 ``science_hard_block`` —— 调用方必须拒发该步
+        （fail-closed），不得消费返回的 recorded tool。其余不可用分支
+        （注册表视图未知/工具退役）保留既有诚实回退。
 
         Returns (tool_name, capability, algorithm, resolution_evidence).
         """
@@ -189,6 +215,35 @@ class WorkflowEngine:
                     str(k) for k in list(profile.keys())[:32]
                     if profile.get(k) is not None
                 )[:16]
+                # G02：freshness token —— plan/execute/final 三段对账的
+                # 数据版本锚点（同一画像同摘要；无 IO、无值泄漏）。
+                digest = WorkflowEngine._profile_digest(profile)
+                if digest:
+                    evidence["profile_digest"] = digest
+            # G02：科学 evidence 透传（有界）—— not_evaluated 是
+            # PASS-deferred 披露，scientific_warnings 是带警告通过，
+            # fallback_trail 携带科学等价性分类（不等价替换必须可对账）。
+            # getattr 诚实缺省：兼容旧 resolver 返回面/测试桩（字段缺席
+            # = 无披露，不因证据字段升级而杀死 re-resolution 主路）。
+            not_evaluated = list(
+                getattr(resolution, "not_evaluated", None) or [])
+            if not_evaluated:
+                evidence["not_evaluated"] = not_evaluated[:8]
+            sci_warnings = list(
+                getattr(resolution, "scientific_warnings", None) or [])
+            if sci_warnings:
+                evidence["scientific_warnings"] = sci_warnings[:8]
+            fb_trail = list(getattr(resolution, "fallback_trail", None) or [])
+            if fb_trail:
+                evidence["fallback_trail"] = [
+                    {
+                        "from": getattr(f, "from_element", ""),
+                        "to": getattr(f, "to_element", ""),
+                        "reason_code": getattr(f, "reason_code", ""),
+                        "semantics": getattr(f, "semantics", ""),
+                    }
+                    for f in fb_trail[:4]
+                ]
             if resolution.status == "resolved" and resolution.tool:
                 if step_spec.algorithm_preference and resolution.algorithm != step_spec.algorithm_preference:
                     evidence["algorithm_changed_from"] = step_spec.algorithm_preference
@@ -197,6 +252,22 @@ class WorkflowEngine:
                     capability,
                     resolution.algorithm,
                     evidence,
+                )
+            # G02 fail-closed：全拒且存在科学性拒绝（事实在场才会发生）
+            # —— 数据在 plan 后已不满足方法学前提，静默回退 recorded tool
+            # 会产出科学上不可信的结果。标记 science_hard_block；执行侧
+            # 由调用方拒发该步（本函数签名不变，其余不可用分支的兼容
+            # 回退语义逐位保留）。
+            science_rejections = [
+                r for r in resolution.rejected
+                if r.startswith(WorkflowEngine.SCIENCE_REJECTION_PREFIXES)
+            ]
+            if science_rejections:
+                evidence["science_hard_block"] = science_rejections[0][:200]
+                evidence["science_rejection_count"] = len(science_rejections)
+                return (
+                    step_spec.tool_name, capability,
+                    step_spec.algorithm_preference, evidence,
                 )
             # Honest fallback: recorded tool id may be stale; disclose it.
             evidence["used_recorded_tool"] = True
@@ -533,6 +604,22 @@ class WorkflowEngine:
                         profile=step_profile,
                     )
                 )
+                # G02 fail-closed：执行期科学硬拒（数据事实在 plan 后已
+                # 违反方法前提）—— 拒发该步并以 typed 错误失败整个 run
+                # （trace 留结构化证据）；绝不静默回退 recorded tool。
+                if resolution_evidence.get("science_hard_block"):
+                    block_reason = str(
+                        resolution_evidence["science_hard_block"])[:200]
+                    execution_trace.append({
+                        "step_id": step_id,
+                        "tool_name": tool_name,
+                        "status": "failed",
+                        "error_code": "SCIENCE_PRECONDITION_FAILED",
+                        "resolution_evidence": resolution_evidence,
+                    })
+                    raise ScientificPreconditionFailed(
+                        f"step '{step_id}' blocked by execution-time science "
+                        f"gate: {block_reason}")
                 tool_version = tool_registry.tool_version(tool_name)
                 step_start = datetime.now(timezone.utc)
 

@@ -1448,7 +1448,12 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     for r in plan.data_requirements
                 ],
                 "algorithm_selection": [
-                    r.model_dump() for r in plan.algorithm_selections
+                    # G02：有界投影 —— 空值字段（""/[]）不入 LLM 面证据
+                    # （科学 evidence 字段 additive 后空语法占位会使大载荷
+                    # 产品（G4 150k POI 的 24KB descriptor 预算）无谓超限；
+                    # 非空证据照常全量转录，record 本体不受影响）。
+                    {k: v for k, v in r.model_dump().items() if v}
+                    for r in plan.algorithm_selections
                 ],
                 "map_model_selection": plan.map_model_selection,
                 "template_selection": plan.template_selection,

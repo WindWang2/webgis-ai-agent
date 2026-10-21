@@ -105,6 +105,11 @@ class ProductCompileResult(BaseModel):
     slots: List[SlotSatisfaction] = Field(default_factory=list, max_length=24)
     decisions: List[str] = Field(default_factory=list, max_length=_MAX_DECISIONS)
     fallbacks: List[Dict[str, Any]] = Field(default_factory=list, max_length=_MAX_FALLBACKS)
+    # G02：final gate 科学对账发现（code/severity/subject/detail；≤16）
+    # + blocked 机读旗标（block 级 = 该制品含执行期被科学门硬拒的能力，
+    # 消费面必须披露/拦截；disclose 级 = 诚实降级披露面）。
+    science_findings: List[Dict[str, Any]] = Field(default_factory=list, max_length=16)
+    science_blocked: bool = False
     compile_digest: str = ""
     ok: bool = True
 
@@ -335,6 +340,35 @@ def compile_product_spec(
                               "does not back — layout auto-fill owns the fix",
                 })
 
+    # ── G02 science final gate：结果入图前的科学 evidence 对账 ──────
+    # 纯函数降级：gate 是增值对账面，失败只留一条披露，绝不阻断编译。
+    science_findings: List[Dict[str, Any]] = []
+    science_blocked = False
+    try:
+        from app.lib.gis.science_final_gate import run_science_final_gate
+
+        gate = run_science_final_gate(plan)
+        science_findings = [f.model_dump() for f in gate.findings]
+        science_blocked = gate.blocked
+        # 非等价算法替换必须在制品 fallbacks 披露面出现（DoD：不等价
+        # fallback 显式披露）；受 _MAX_FALLBACKS 预算约束（超出留
+        # science_findings 机读面）。
+        for f in gate.findings:
+            if f.code == "G-FALLBACK-SEMANTICS" and \
+                    len(fallbacks) < _MAX_FALLBACKS:
+                fallbacks.append({
+                    "code": "science_fallback_substitution",
+                    "subject": f.subject,
+                    "reason": f.detail,
+                })
+    except Exception:  # noqa: BLE001 — 对账面降级
+        science_findings = [{
+            "code": "science_gate_unavailable",
+            "severity": "disclose",
+            "subject": "product_compiler",
+            "detail": "science final gate projection failed — honest default",
+        }]
+
     result = ProductCompileResult(
         spec_id=spec.spec_id,
         spec_revision=spec.revision,
@@ -345,6 +379,8 @@ def compile_product_spec(
         slots=slots,
         decisions=decisions[:_MAX_DECISIONS],
         fallbacks=fallbacks[:_MAX_FALLBACKS],
+        science_findings=science_findings[:16],
+        science_blocked=science_blocked,
         ok=True,
     )
     result.compile_digest = compile_digest(result)
