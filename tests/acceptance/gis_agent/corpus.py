@@ -582,12 +582,15 @@ def f08_no_coordinates() -> ScenarioContract:
 
 @register
 def f09_wrong_crs() -> ScenarioContract:
-    """负例（数据缺陷注入）：投影平面坐标谎称 WGS84 → 分析工具必须拒绝。"""
+    """缺口披露型注入：错误 CRS 坐标在分析链**不被拒绝**（实测
+    spatial_stats 照常完成，仅 polar warning 日志）——钉扎缺口现状 +
+    判据不放行；CRS 域校验接线属 data-qualification 方向。
+    """
     q = "分析这些点位的分布"
     return ScenarioContract(
         id="f09-wrong-crs",
         family="F09",
-        title="错误 CRS 坐标 → 空间分析确定性拒绝",
+        title="错误 CRS 坐标 → 分析放行（缺口披露）+ 判据不放行",
         negative=True,
         user_goal=q,
         datasets=[DatasetSpec(name="bad", dataset_kind="wrong_crs_points")],
@@ -604,13 +607,19 @@ def f09_wrong_crs() -> ScenarioContract:
             ],
         )],
         expectations=[
+            # 现状钉扎：坏数据上的分析行照常 complete（缺口成为可观测事实）
+            _exp("f09-analysis-passes-through", Face.METHOD, "crs",
+                 "plan.progress.status_counts.complete", op="ge", value=1,
+                 note="错误 CRS 未被分析链拒绝（warning-only）——现状钉扎，"
+                      "CRS 域校验落地后本期望需重校准"),
             *_pending_honest_exps("f09"),
-            _exp("f09-failure-visible", Face.METHOD, "tool_receipt",
-                 "plan.progress.status_counts", op="exists",
-                 note="失败/拒绝必须对计划可见（failed 行或无完成行）"),
         ],
-        not_evaluated=COMMON_NOT_EVALUATED,
-        tags=["negative", "crs"],
+        not_evaluated=COMMON_NOT_EVALUATED + [
+            "crs_domain_validation_gap: 分析与产品路径均无 CRS 域校验接线"
+            "（仅日志 warning）；修复归 data-qualification 方向。本场景与"
+            " f18 分别钉扎分析路径与产品路径的同族缺口",
+        ],
+        tags=["negative", "crs", "gap-disclosure"],
     )
 
 
@@ -666,12 +675,14 @@ def f10_nodata_raster() -> ScenarioContract:
 
 @register
 def f11_unit_conflict() -> ScenarioContract:
-    """负例（数据缺陷注入）：同名字段两种单位混标 → 统计语义不可信。"""
+    """缺口披露型注入：单位混标不改变任务判错面（与正例同为 pending
+    诚实降级）——单位一致性检测器属 G01/G02；本场景防止该数据形态
+    被误判为满足。"""
     q = "分析这些学校的规模"
     return ScenarioContract(
         id="f11-unit-conflict",
         family="F11",
-        title="字段单位混标 → 统计不得静默当成同单位",
+        title="字段单位混标 → 缺口披露（判据不放行）",
         negative=True,
         user_goal=q,
         datasets=[DatasetSpec(name="mixed",
@@ -695,7 +706,7 @@ def f11_unit_conflict() -> ScenarioContract:
             "unit_invariant_detection: 单位一致性检测器由 G01/G02 方向与 "
             "data_quality 管线覆盖；本场景钉扎任务级判据不放行",
         ],
-        tags=["negative", "units"],
+        tags=["negative", "units", "gap-disclosure"],
     )
 
 

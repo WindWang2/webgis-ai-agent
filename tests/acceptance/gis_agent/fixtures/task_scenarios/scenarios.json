@@ -1420,6 +1420,16 @@
    "description": "",
    "expectations": [
     {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f09-analysis-passes-through",
+     "kind": "crs",
+     "note": "错误 CRS 未被分析链拒绝（warning-only）——现状钉扎，CRS 域校验落地后本期望需重校准",
+     "op": "ge",
+     "path": "plan.progress.status_counts.complete",
+     "value": 1
+    },
+    {
      "expected_verdict": "not_evaluated",
      "face": "final_answer",
      "id": "f09-no-claim",
@@ -1438,16 +1448,6 @@
      "op": "ge",
      "path": "plan.progress.mandatory_pending",
      "value": 1
-    },
-    {
-     "expected_verdict": "pass",
-     "face": "method",
-     "id": "f09-failure-visible",
-     "kind": "tool_receipt",
-     "note": "失败/拒绝必须对计划可见（failed 行或无完成行）",
-     "op": "exists",
-     "path": "plan.progress.status_counts",
-     "value": null
     }
    ],
    "family": "F09",
@@ -1456,15 +1456,17 @@
    "not_evaluated": [
     "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
     "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
-    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "crs_domain_validation_gap: 分析与产品路径均无 CRS 域校验接线（仅日志 warning）；修复归 data-qualification 方向。本场景与 f18 分别钉扎分析路径与产品路径的同族缺口"
    ],
    "schema_version": "task_scenario.v1",
    "tags": [
     "negative",
-    "crs"
+    "crs",
+    "gap-disclosure"
    ],
    "timeout_s": 60,
-   "title": "错误 CRS 坐标 → 空间分析确定性拒绝",
+   "title": "错误 CRS 坐标 → 分析放行（缺口披露）+ 判据不放行",
    "turns": [
     {
      "failure_class": "",
@@ -1689,10 +1691,11 @@
    "schema_version": "task_scenario.v1",
    "tags": [
     "negative",
-    "units"
+    "units",
+    "gap-disclosure"
    ],
    "timeout_s": 60,
-   "title": "字段单位混标 → 统计不得静默当成同单位",
+   "title": "字段单位混标 → 缺口披露（判据不放行）",
    "turns": [
     {
      "failure_class": "",

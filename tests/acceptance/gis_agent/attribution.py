@@ -84,14 +84,16 @@ def attribute_run(run: ScenarioRunResult) -> Dict[str, List[Dict[str, str]]]:
             "authority": FACE_AUTHORITY.get(c.face, ""),
         })
     if run.error:
-        out.setdefault("governance_violation", []).append({
+        # runner 级故障（超时/基础设施 bug）不是被审系统的治理违例——
+        # 独立 infra_error 桶，不污染治理热区。
+        out.setdefault("infra_error", []).append({
             "check": "<runner>",
             "face": "-",
             "kind": "runner_error",
             "got": "error",
             "want": "-",
             "detail": run.error[:200],
-            "authority": "runner infrastructure",
+            "authority": "runner infrastructure (not the system under test)",
         })
     return out
 

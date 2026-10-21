@@ -198,3 +198,88 @@ def _check_actual(run, expectation_id: str):
         if c.expectation_id == expectation_id:
             return c.actual
     return None
+
+
+class TestCliCompareRegression:
+    """P1-1 回归：compare 对缺 error 键的旧格式基线不得漏报真回归。"""
+
+    def test_compare_detects_regression_without_error_key(self, tmp_path):
+        import json
+        import scripts.g05_task_acceptance as cli
+        # 旧格式基线：无 error 键（历史报告），场景 ok
+        baseline = {"runs": [{
+            "scenario_id": "s1",
+            "checks": [{"verdict": "pass", "expected_verdict": "pass"}],
+        }]}
+        # 本次运行：同场景 fail（期望失配）
+        current = {"runs": [{
+            "scenario_id": "s1",
+            "checks": [{"verdict": "fail", "expected_verdict": "pass"}],
+        }]}
+        b = tmp_path / "base.json"
+        c = tmp_path / "curr.json"
+        b.write_text(json.dumps(baseline))
+        c.write_text(json.dumps(current))
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli._cmd_compare(
+                type("A", (), {"baseline": str(b), "run": str(c)})())
+        assert code == 1, f"真回归必须 exit 1，输出：{out.getvalue()}"
+        assert "NEW-FAIL s1" in out.getvalue()
+
+    def test_compare_reports_missing_scenarios(self, tmp_path):
+        import json
+        import scripts.g05_task_acceptance as cli
+        baseline = {"runs": [
+            {"scenario_id": "s1", "error": "",
+             "checks": [{"verdict": "pass", "expected_verdict": "pass"}]},
+            {"scenario_id": "s2", "error": "",
+             "checks": [{"verdict": "pass", "expected_verdict": "pass"}]},
+        ]}
+        current = {"runs": [baseline["runs"][0]]}  # s2 未跑
+        b, c = tmp_path / "b.json", tmp_path / "c.json"
+        b.write_text(json.dumps(baseline))
+        c.write_text(json.dumps(current))
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli._cmd_compare(
+                type("A", (), {"baseline": str(b), "run": str(c)})())
+        assert code == 1
+        assert "MISSING  s2" in out.getvalue()
+
+
+class TestRunnerErrorAttribution:
+    def test_runner_error_not_governance(self):
+        from .attribution import attribute_run
+        from .contracts import ScenarioRunResult
+        run = ScenarioRunResult(scenario_id="x", family="F00",
+                                negative=False, error="timeout")
+        attributed = attribute_run(run)
+        assert "governance_violation" not in attributed
+        assert "infra_error" in attributed
+
+
+class TestTier3GuardBehavioral:
+    """P3-11：tier-3 反转改真跑（篡改守卫语义 → runner 必须翻红）。"""
+
+    @pytest.mark.asyncio
+    async def test_tier3_inverted_actually_errors(
+            self, g05_runner: TaskScenarioRunner):
+        scenario = scenarios_by_id()["f15-tier3-governance"]
+        data = scenario.model_dump(mode="json")
+        for st in data["turns"][0]["steps"]:
+            if st["call_id"] == "danger":
+                # 反转一：expect_error=False 且不允许错误 → tier-3 若被
+                # 错误放行会以"未预期成功"翻红；若仍拒绝则以"未预期失败"
+                # 翻红——守卫不可绕过，二者必居其一。
+                st["expect_error"] = False
+                st["allow_error"] = False
+        inverted = ScenarioContract.model_validate(data)
+        result = await g05_runner.run(inverted)
+        assert not result.ok, (
+            "反转后场景仍绿 = tier-3 守卫演练无行为证据: "
+            + result.summary_line())

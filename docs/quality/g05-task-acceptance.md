@@ -27,35 +27,44 @@ pytest tests/acceptance/gis_agent -m cartography --no-cov --timeout=120 -q
 
 ## 2. 覆盖热区图（场景 × 断言面）
 
-图例：● = 有 pass 级期望；○ = 有 not_evaluated 级期望（诚实缺席钉扎）；
-neg = 负例注入。
+图例：● = 该面有 pass 级期望；○ = 该面有 not_evaluated 级期望（诚实缺席
+钉扎）；neg = 负例注入；gap = 缺口披露型（注入不改变判错面，钉扎系统
+现状红线，见 §3/§4）。**本表由脚本从 corpus 逐期望生成**（生成口径：
+`python -c "from tests.acceptance.gis_agent.corpus import all_scenarios; ..."`
+按 face×expected_verdict 聚合），corpus 变更后须同步重生成。
 
-| 场景 | family | intent | requirement | method | data | mapspec | render/export | final | neg | 多轮 | 恢复/取消 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| f01-school-points-map | F01 | ● | ● | ○ | | ● | ● | ● | | | |
-| f02a-heatmap-method | F02 | | | ●/○ | | ● | ● | ○ | | | |
-| f02b-sparse-heatmap-degraded | F02 | | | ● | | ● | | ○ | ✓ | | |
-| f03-admin-aggregation | F03 | | | ●/○ | | ● | ● | ○ | | | |
-| f04a-density-denominator | F04 | | | ●/○ | | | ● | ○ | | | |
-| f04b-visual-for-quantitative | F04 | | | | | ● | | ○ | ✓ | | |
-| f05-temporal-points | F05 | ● | | ●/○ | | | ● | ○ | | | |
-| f06-raster-ndvi | F06 | ● | | ● | | | | ○ | | | |
-| f07-spatial-join | F07 | | | ●/○ | ● | | ● | ○ | | | |
-| f08-no-coordinates | F08 | | | ○ | | ● | | ○ | ✓ | | |
-| f09-wrong-crs | F09 | | | ● | | | | ○ | ✓ | | |
-| f10-nodata-raster | F10 | | | ● | | | | ○ | | | |
-| f11-unit-conflict | F11 | | | ○ | | | | ○ | ✓ | | |
-| f12-multiturn-edit-chain | F12 | | | | | ● | ●/○ | ○ | | ✓ | |
-| f13-cross-session-recovery | F13 | | | | | ● | ●/○ | ● | | ✓ | ✓ |
-| f14-user-cancel | F14 | | | | | | ○ | ○ | | | ✓ |
-| f15-tier3-governance | F15 | ● | | | | | | ○ | ✓ | | |
-| f16-export-offline | F16 | | | ○ | | ● | ● | ● | | | |
-| f17-render-work-envelope | F17 | | | | | | ● | | | | |
-| f18-wrong-dataset | F18 | | | | ● | | | ● | ✓ | | |
-| f19-requirement-multiturn | F19 | ● | ● | | | ● | | | | ✓ | |
+| 场景 | family | intent | req | method | data | mapspec | rend/exp | final | neg | 多轮 | 恢复/取消 | 缺口披露 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| f01-school-points-map | F01 | ● | ● |  |  | ● | ● | ● |  |  |  |  |
+| f02a-heatmap-method | F02 |  |  | ● |  | ● | ● | ○ |  |  |  |  |
+| f02b-sparse-heatmap-degraded | F02 |  |  | ● |  | ● |  | ○ | ✓ |  |  |  |
+| f03-admin-aggregation | F03 |  |  | ● |  | ● | ● | ○ |  |  |  |  |
+| f04a-density-denominator | F04 |  |  | ● |  |  | ● | ○ |  |  |  |  |
+| f04b-visual-for-quantitative | F04 |  |  | ● |  | ● |  | ○ | ✓ |  |  |  |
+| f05-temporal-points | F05 | ● |  | ● |  |  | ● | ○ |  |  |  |  |
+| f06-raster-ndvi | F06 | ● |  | ● |  |  |  | ○ |  |  |  |  |
+| f07-spatial-join | F07 |  |  | ● | ● |  | ● | ○ |  |  |  |  |
+| f08-no-coordinates | F08 |  |  | ● |  | ● |  | ○ | ✓ |  |  |  |
+| f09-wrong-crs | F09 |  |  | ● |  |  |  | ○ | ✓ |  |  | gap |
+| f10-nodata-raster | F10 |  |  | ● |  |  |  | ○ |  |  |  |  |
+| f11-unit-conflict | F11 |  |  | ● |  |  |  | ○ | ✓ |  |  | gap |
+| f12-multiturn-edit-chain | F12 |  |  |  |  | ● | ● | ○ |  | ✓ |  |  |
+| f13-cross-session-recovery | F13 |  |  |  |  | ● | ● | ● |  | ✓ | ✓ |  |
+| f14-user-cancel | F14 |  |  | ● |  | ● |  | ○ |  |  | ✓ |  |
+| f15-tier3-governance | F15 | ● |  | ● |  |  |  | ○ | ✓ |  |  |  |
+| f16-export-offline | F16 |  |  |  |  | ● | ● | ● |  |  |  |  |
+| f17-render-work-envelope | F17 |  |  |  |  |  | ● |  |  |  |  |  |
+| f18-wrong-dataset | F18 |  |  |  | ● |  |  | ● | ✓ |  |  |  |
+| f19-requirement-multiturn | F19 | ● | ● |  |  | ● |  |  |  | ✓ |  |  |
 
 machine-readable 版本：`python scripts/g05_task_acceptance.py report
 <run.json> --coverage`（faces/turns/checks/ok/first_failing_stage）。
+
+负例分层（诚实口径）：
+- **注入敏感负例**（判错面随注入翻转，有反转测试防线）：f02b（样本量→
+  热力资格）、f08（无坐标→无点位层）、f15（tier-3 治理，运行时守卫）；
+- **缺口披露型**（注入在当前生产接线下不改变判错面，钉扎『不放行+
+  现状行为』并声明缺口归属）：f04b、f09、f11、f18。
 
 ## 3. 离线诚实语义（为什么正例也期望 blocked）
 
@@ -82,7 +91,7 @@ machine-readable 版本：`python scripts/g05_task_acceptance.py report
 | # | 发现 | 证据 | 处置 |
 |---|---|---|---|
 | G05-F1 | 错误 CRS 坐标（投影平面坐标谎称 WGS84）在**产品路径**只触发分析侧告警（`to_utm_gdf` polar warning），点位层仍被组装——CRS 域校验无产品级接线 | f18 场景实测：layer_types=['circle']；任务级判据不放大（blocked），但错误地图已交付 | f18 场景 `not_evaluated` 声明披露；修复归 data-qualification 方向（不在本分支造第二判定面） |
-| G05-F2 | `not_in` 类列表期望在自研评估器上曾有标量成员语义 bug（`['circle'] not in ['circle']` 恒真 → 假绿） | TestBehaviorInversion 在 f18 反转中抓住；已修（集合式互斥） | 评估器修正 + 反转测试常驻（所有 not_in 期望受保护） |
+| G05-F2 | `not_in` 类列表期望在自研评估器初版是标量成员语义（`['circle'] not in ['circle']` 恒真 → vacuous 假绿） | W2 校准 f18 期望时发现（实际 layer_types=['circle'] 而检查恒过）；评审 Round 1 确认 | 已修（集合式互斥语义）+ 边界单测钉死（TestEvaluatorOpBoundaries）+ f02b/f08 反转测试常驻保护 |
 | G05-F3 | 离线能力矩阵：poi_query/admin_boundary_query/raster_source/ndvi 无任何离线工具（network-only），矢量任务全族离线终态不可达 satisfied | 探查：planner recipe mandatory 行 × algorithm_registry tool_to_capability 交叉 | 语义钉扎（§3）；将来接入离线数据源后场景期望应重校准 |
 
 ## 5. 判错归因（failure taxonomy）
@@ -97,7 +106,7 @@ governance_violation`。归因链：失配检查 → face → 权威模块
 ## 6. 质量门（本地，不依赖线上 CI）
 
 ```bash
-pytest tests/acceptance/gis_agent -m cartography --no-cov --timeout=120 -q   # 41 绿
+pytest tests/acceptance/gis_agent -m cartography --no-cov --timeout=120 -q   # 45 绿
 ruff check tests/acceptance/ scripts/g05_task_acceptance.py                  # clean
 python scripts/g05_task_acceptance.py run --profile smoke                    # exit 0
 python scripts/g05_task_acceptance.py pin                                    # 无漂移

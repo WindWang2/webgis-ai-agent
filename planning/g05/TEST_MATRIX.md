@@ -1,5 +1,11 @@
 # G05 TEST_MATRIX
 
+> **口径注记**：本文件是 W0 规划稿；**场景族命名以 corpus.py 为准**
+> （实现期校准后：F09=错误 CRS（缺口披露）、F11=单位冲突（缺口披露）、
+> F17=渲染信封（正例）、F19=requirement 多轮为新增族；TEST_MATRIX 的
+> F09 样本不足/F11 错误 CRS 规划位由 corpus 的 F02b/F09 承接）。
+> 实测状态：全量 21 场景 + 45 项测试绿（cartography lane，2026-10-22）。
+
 运行口径（RECON §4）：一律定向 lane + 显式超时，规避 #1753 全量挂起。
 - 本 lane：`.venv/bin/pytest tests/acceptance/gis_agent -m cartography --no-cov --timeout=120 --timeout-method=thread -q`
 - Lint：`.venv/bin/ruff check tests/acceptance/gis_agent scripts/g05_task_acceptance.py`

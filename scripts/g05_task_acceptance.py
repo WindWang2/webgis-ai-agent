@@ -32,7 +32,7 @@ REPORT_DIR = REPO_ROOT / "reports" / "g05"
 PIN_PATH = (REPO_ROOT / "tests" / "acceptance" / "gis_agent" / "fixtures"
             / "task_scenarios" / "scenarios.json")
 
-SMOKO_IDS = [
+SMOKE_IDS = [
     "f01-school-points-map",
     "f02a-heatmap-method",
     "f02b-sparse-heatmap-degraded",
@@ -63,7 +63,7 @@ def _select(profile: str, only_ids):
         return [by_id[i] for i in only_ids]
     if profile == "smoke":
         by_id = {s.id: s for s in scenarios}
-        return [by_id[i] for i in SMOKO_IDS]
+        return [by_id[i] for i in SMOKE_IDS]
     if profile == "focused":
         return [s for s in scenarios
                 if not any(t in s.tags for t in ("raster",))]
@@ -136,24 +136,31 @@ def _cmd_compare(args) -> int:
     base = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
     curr = json.loads(Path(args.run).read_text(encoding="utf-8"))
     base_by = {r["scenario_id"]: r for r in base.get("runs", [])}
+    curr_by = {r["scenario_id"]: r for r in curr.get("runs", [])}
     new_failures, fixed = [], []
-    for r in curr.get("runs", []):
-        prev = base_by.get(r["scenario_id"])
+    for sid, r in curr_by.items():
+        prev = base_by.get(sid)
         if prev is None:
             continue
-        was_ok, is_ok = prev.get("error") == "" and _ok_of(prev), r["scenario_id"] and _ok_of(r)
+        was_ok, is_ok = _ok_of(prev), _ok_of(r)
         if not is_ok and was_ok:
-            first = _first_mismatch(r)
-            new_failures.append((r["scenario_id"], first))
+            new_failures.append((sid, _first_mismatch(r)))
         elif is_ok and not was_ok:
-            fixed.append(r["scenario_id"])
+            fixed.append(sid)
+    missing = [sid for sid in base_by if sid not in curr_by]
+    added = [sid for sid in curr_by if sid not in base_by]
     print(f"baseline={args.baseline} run={args.run}")
-    print(f"new_failures={len(new_failures)} fixed={len(fixed)}")
+    print(f"new_failures={len(new_failures)} fixed={len(fixed)} "
+          f"missing_in_run={len(missing)} added_in_run={len(added)}")
     for sid, first in new_failures:
         print(f"  NEW-FAIL {sid} first_failing_stage={first}")
     for sid in fixed:
         print(f"  FIXED    {sid}")
-    return 1 if new_failures else 0
+    for sid in missing:
+        print(f"  MISSING  {sid} (baseline 有而本次未跑——profile 不同或中断)")
+    for sid in added:
+        print(f"  ADDED    {sid}")
+    return 1 if new_failures or missing else 0
 
 
 def _ok_of(run: dict) -> bool:

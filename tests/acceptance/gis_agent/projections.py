@@ -23,7 +23,6 @@ async def build_task_evidence(session_id: str, scenario) -> Dict[str, Any]:
         plan = None
     chapter = getattr(plan, "gis_chapter", None) if plan else None
     evidence["plan"] = _project_plan(plan)
-    chapter = getattr(plan, "gis_chapter", None) if plan else None
     evidence["chapter"] = chapter if isinstance(chapter, dict) else None
     evidence["chapter_summary"] = _project_chapter_summary(chapter)
 

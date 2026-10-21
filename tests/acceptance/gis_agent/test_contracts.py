@@ -128,3 +128,40 @@ class TestVerdictSemantics:
         assert _verdict_of("x", exp("regex", "^x$"))[0] is CheckVerdict.PASS
         assert _verdict_of(None, exp("absent", None))[0] is CheckVerdict.PASS
         assert _verdict_of([1], exp("exists", None))[0] is CheckVerdict.PASS
+
+
+class TestEvaluatorOpBoundaries:
+    """P3-15：op 边界语义钉死（空容器对称 / None 泄漏）。"""
+
+    def test_exists_absent_symmetric_on_empty_containers(self):
+        from .reporting import _verdict_of
+        from .contracts import CheckVerdict
+        exp_exists = Expectation(id="e", face=Face.DATA, kind="k",
+                                 path="a", op="exists")
+        exp_absent = Expectation(id="e", face=Face.DATA, kind="k",
+                                 path="a", op="absent")
+        for empty in ({}, [], "", None):
+            assert _verdict_of(empty, exp_exists)[0] is CheckVerdict.FAIL, \
+                f"exists({empty!r}) 必须判 FAIL"
+            assert _verdict_of(empty, exp_absent)[0] is CheckVerdict.PASS, \
+                f"absent({empty!r}) 必须判 PASS"
+
+    def test_not_in_semantics_documented(self):
+        from .reporting import _verdict_of, MISSING
+        from .contracts import CheckVerdict
+        exp = Expectation(id="e", face=Face.DATA, kind="k", path="a",
+                          op="not_in", value=["x"])
+        # None（路径存在但值为空）：不含被排除值 → PASS（排除语义）
+        assert _verdict_of(None, exp)[0] is CheckVerdict.PASS
+        # 路径缺席：NOT_EVALUATED（缺席不冒充排除成立）
+        verdict, _ = _verdict_of(MISSING, exp)
+        assert verdict is CheckVerdict.NOT_EVALUATED
+
+    def test_not_in_list_semantics(self):
+        from .reporting import _verdict_of
+        exp = Expectation(id="e", face=Face.DATA, kind="k", path="a",
+                          op="not_in", value=["heatmap", "fill"])
+        from .contracts import CheckVerdict
+        assert _verdict_of(["circle"], exp)[0] is CheckVerdict.PASS
+        assert _verdict_of(["circle", "heatmap"], exp)[0] is CheckVerdict.FAIL
+        assert _verdict_of("heatmap", exp)[0] is CheckVerdict.FAIL

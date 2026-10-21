@@ -82,9 +82,11 @@ def _verdict_of(actual: Any, exp: Expectation) -> tuple[CheckVerdict, str]:
     elif op == "le":
         ok = _num(actual) is not None and _num(actual) <= float(want)
     elif op == "exists":
-        ok = actual is not None and actual != "" and actual != []
+        ok = actual is not None and actual != "" \
+            and actual != [] and actual != {}
     elif op == "absent":
-        ok = actual is None or actual == "" or actual == []
+        ok = actual is None or actual == "" \
+            or actual == [] or actual == {}
     elif op == "regex":
         ok = bool(re.search(str(want), str(actual)))
     else:

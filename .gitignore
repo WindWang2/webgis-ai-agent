@@ -15,6 +15,9 @@ scripts/
 !/scripts/ci-local.sh
 # G05：任务级验收本地入口（run/compare/report/pin；planning/g05 契约）
 !/scripts/g05_task_acceptance.py
+# G05：本地运行产物（CLI 报告）与栅格 fixture 工作区（validate_data_path 允许区）
+/reports/
+/tmp/
 !/scripts/verify_skills_lock.py
 # 债务棘轮（#1377）：存量债"只减不增"门禁 + 入库基线
 !/scripts/debt_ratchet.py

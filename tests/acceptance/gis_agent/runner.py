@@ -42,13 +42,6 @@ from .contracts import AgentStep, CheckResult, ScenarioContract, ScenarioRunResu
 _STEP_RESULT_KEYS = ("step_result", "result", "data")
 
 
-def build_registry() -> ToolRegistry:
-    r = ToolRegistry()
-    init_tools(r)
-    set_tool_registry(r)
-    return r
-
-
 #: 进程级 registry 缓存：根 conftest 的 autouse 复位会在每个测试前把
 #: ``agent_pi_bridge._tool_registry`` 清回 None（tests/conftest.py
 #: _reset_chat_engine_singletons），因此 fixture 必须按测试重注入 —— 这里
@@ -94,14 +87,13 @@ class TaskScenarioRunner:
         await session_data_manager.clear_session(sid)
         refs: Dict[str, str] = {}
         step_outcomes: Dict[str, _StepOutcome] = {}
-        auto_layers: List[str] = []
         error = ""
         settle_records: List[Dict[str, Any]] = []
         evidence: Optional[Dict[str, Any]] = None
         try:
             await asyncio.wait_for(
                 self._run_turns(scenario, sid, refs, step_outcomes,
-                                auto_layers, settle_records),
+                                settle_records),
                 timeout=scenario.timeout_s,
             )
             # 证据必须在 clear_session 之前收集（session 数据目录即证据源）
@@ -132,7 +124,7 @@ class TaskScenarioRunner:
     # ── turn 循环 ────────────────────────────────────────────────────────
 
     async def _run_turns(self, scenario, sid, refs, step_outcomes,
-                         auto_layers, settle_records) -> None:
+                         settle_records) -> None:
         rt = get_runtime(sid)
         first = True
         for turn in scenario.turns:
@@ -142,10 +134,7 @@ class TaskScenarioRunner:
             await rt.begin_turn(turn.turn_id, host="pi", message=turn.message)
             await register_active_pi_turn(sid, turn.turn_id)
             for step in turn.steps:
-                outcome = await self._exec_step(
-                    sid, turn, step, refs, step_outcomes)
-                if not outcome.is_error and not step.expect_error:
-                    auto_layers.extend(outcome.layer_ids)
+                await self._exec_step(sid, turn, step, refs, step_outcomes)
             if turn.leave_unsettled:
                 # 进程死亡/中断语义：turn 不结算（kernel 对账留给下一 turn）
                 await unregister_active_pi_turn(sid, turn.turn_id)
@@ -178,7 +167,8 @@ class TaskScenarioRunner:
         name, arguments = self._resolve_call(step, turn, refs, step_outcomes)
         # 镜像生产 HTTP 路由（app/api/routes/pi_tools.py:70-71）：token 验证
         # 后写入 verifiedTurnId，dispatch_tool 据此绑定 turn 级 RuntimeContext
-        # （requirement IR / 记忆等 session 绑定缝依赖该上下文）。
+        # （18 阶段链发射等据此解析 turn 归属）。诚实边界：该绑定的效果在
+        # 本 lane 的证据面内不可直接观测（见 docs/quality §3 边界声明）。
         req = PiToolRequest(
             toolCallId=call_id, name=name, arguments=arguments,
             sessionId=sid, verifiedTurnId=turn.turn_id,

@@ -5,11 +5,9 @@ registry/sid 生命周期模式复制自 tests/test_harness_kernel_e2e_scenarios
 """
 from __future__ import annotations
 
-import uuid
 
 import pytest
 
-from app.services.session_data import session_data_manager
 
 from .runner import TaskScenarioRunner, ensure_registry_injected
 
@@ -17,14 +15,6 @@ from .runner import TaskScenarioRunner, ensure_registry_injected
 @pytest.fixture
 def g05_registry():
     return ensure_registry_injected()
-
-
-@pytest.fixture
-async def g05_sid():
-    session_id = f"sess-g05-fx-{uuid.uuid4().hex[:8]}"
-    await session_data_manager.clear_session(session_id)
-    yield session_id
-    await session_data_manager.clear_session(session_id)
 
 
 @pytest.fixture
