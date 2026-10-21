@@ -21,6 +21,14 @@ from app.services.dataset_semantics.builder import (
     derive_descriptor_from_v3,
     descriptor_payload_bytes,
 )
+from app.services.dataset_semantics.preflight import (
+    MAX_PREFLIGHT_DATASETS,
+    PREFLIGHT_CHECKS,
+    PreflightGap,
+    PreflightReport,
+    TypedAlternative,
+    preflight_multi_dataset,
+)
 from app.services.dataset_semantics.projections import (
     descriptor_resolver_profile,
     descriptor_semantic_view,
@@ -103,6 +111,12 @@ __all__ = [
     "collect_session_evidence",
     "primary_binding",
     "role_qualification_evidence",
+    "PREFLIGHT_CHECKS",
+    "MAX_PREFLIGHT_DATASETS",
+    "PreflightGap",
+    "PreflightReport",
+    "TypedAlternative",
+    "preflight_multi_dataset",
     "TransformationRecord",
     "lineage_for_ref",
     "lineage_provenance_mint",
