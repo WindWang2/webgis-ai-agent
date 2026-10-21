@@ -12,3 +12,7 @@
 | D8 | task 级 failure taxonomy 独立定义（attribution.py），不修改 HarnessFailureClass | 工具执行面词汇 ≠ 任务级归因；只读引用 classify_harness_failure 做底层分类来源 | 扩展 HarnessFailureClass——动 #1760 邻接生产文件 |
 | D9 | 多轮/跨会话场景基于 kernel S2/S5 模式扩展，session store 用真实持久化缝（tmp_path 落盘） | 跨会话恢复断言需要真实序列化往返 | 纯内存——测不出序列化丢失 |
 | D10 | 不等待 #1759/#1760 合并；G05 场景只依赖 master 已有接口；对 G01/G02 语义对齐通过场景命名/注释表达，不 import 其分支代码 | 任务书 WP-D.15 | cherry-pick 并发分支——引入未评审依赖 |
+
+| D11 | 离线诚实语义（2026-10-22 实证）：矢量任务 recipe 恒含 mandatory poi_query（±admin_boundary_query），其工具面全部 network=True；栅格任务 raster_source/ndvi 同样仅网络工具 → 离线终态全族不可达 satisfied。场景钉扎 fail-closed 红线（blocked/failed + task_complete=False）而非伪造成功 | 探查：planner mandatory 行 × algorithm_registry tool_to_capability 交叉（10+ query 变体）；f01/f13/f16/f18 实测落 terminal 块 | 场景全部期望 satisfied——离线沙箱不可达，必然假绿 |
+| D12 | 终验 pending（needs_execution，mandatory 行从未执行）形态按生产语义不落完成块 → 该形态场景的完成面期望为显式 not_evaluated（钉扎缺席防回归）+ needs_execution 行可见性正向断言 | f02a/f02b/f03 等 15 场景实测：finalize status=pending，块不持久化 | 期望 blocked——与生产『pending 不持久化』语义冲突，会把场景写成恒红 |
+| D13 | f12 多轮 goal_key 探查：goal_key=scope\|subject\|task，follow-up 措辞必须保持三元组一致才走 replaced 路径（supersede 语义见 kernel S2） | goal_key() 离线探查 5 组措辞 | 任意 follow-up 措辞 + replaced 期望——键漂移必红 |
