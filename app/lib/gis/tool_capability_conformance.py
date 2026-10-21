@@ -452,12 +452,27 @@ def _audit_dispatch(descriptor: Any) -> FaceVerdict:
     return _verdict(FACE_DISPATCH, STATUS_PASS, "gate_facts_coherent", detail)
 
 
+#: 输出语义类型 → dispatch chokepoint 是否**无条件**把 FC 形状结果铸成
+#: geojson ref（tool_dispatch_service：顶层 FC / ``geojson`` 键 / ``data``
+#: 包裹 FC 三种形状都入 session ref store）。对这些输出族，ref 产出是
+#: 结构性事实，不依赖逐工具 produced_refs 声明。
+_STRUCTURAL_REF_OUTPUT_TYPES = frozenset({
+    "geojson", "geojson_fc", "geojson_feature", "geojson_layer",
+})
+
+
 def _audit_result(descriptor: Any) -> FaceVerdict:
     """结果面：输出契约的结构声明（ref-first 纪律的静态面）。
 
-    ref_offload 声明却无 produced_refs = warning（大产物承诺 offload 但
-    没有声明产出 ref 种类，信封契约缺口）；result_size_policy unknown /
-    output_semantic_type 缺席 = 完整度 warning。
+    ref_offload 声明却无 produced_refs 的判定分两档：
+
+    - geojson 输出族 → **结构性 pass**：dispatch chokepoint 对 FC 形状
+      结果无条件铸 ref（行为事实，非逐工具声明依赖）；
+    - 其他输出族（text/stats/map_product…）→ warning：offload 行为依赖
+      未声明的实现细节，produced_refs 缺席就是信封契约缺口。
+
+    result_size_policy unknown / output_semantic_type 缺席 = 完整度
+    warning。
     """
     policy = str(getattr(descriptor, "result_size_policy", "") or "unknown")
     produced = tuple(getattr(descriptor, "produced_refs", ()) or ())
@@ -467,6 +482,10 @@ def _audit_result(descriptor: Any) -> FaceVerdict:
             FACE_RESULT, STATUS_WARNING, "result_size_unknown",
             "result_size_policy not declared")
     if policy == "ref_offload" and not produced:
+        if out_type in _STRUCTURAL_REF_OUTPUT_TYPES:
+            return _verdict(
+                FACE_RESULT, STATUS_PASS, "ref_structural_offload",
+                f"{out_type} results are ref-offloaded at the dispatch chokepoint")
         return _verdict(
             FACE_RESULT, STATUS_WARNING, "ref_offload_without_ref_contract",
             "ref_offload declared without produced_refs contract")
@@ -480,6 +499,7 @@ def _audit_result(descriptor: Any) -> FaceVerdict:
 def _audit_science(
     descriptor: Any, facts: ConformanceFacts,
     algorithm_by_id: Mapping[str, Any],
+    contract_tools: Optional[Mapping[str, set]] = None,
 ) -> FaceVerdict:
     """科学语义面：args schema × ParameterContract 的离线交叉校验。
 
@@ -491,6 +511,13 @@ def _audit_science(
     - enum 分叉：两侧枚举集不一致（schema enum 存在才比较）；
     - range 分叉：schema 范围比契约更宽（schema 最小值 < 契约最小值等）；
     - 契约参数在 schema 缺席：契约描述的算法参数工具不暴露（漂移披露）。
+
+    **家族并集豁免**：一个契约可以服务一族算法/工具（如
+    ``science_temporal_analysis`` 同时覆盖物候/立方体/异常三工具，
+    ``network_od_matrix`` 同时覆盖离线与 amap provider）。某参数缺席于
+    本工具 schema、但**同契约的兄弟工具**（``tool_candidates`` 家族）
+    已暴露 → 家族并集分工，不是漂移（detail 披露豁免数）；全族无人
+    暴露才是真死参数（如未接线的能力），照报 warning。
 
     unit 只在契约侧存在（schema 无单位通道），无第二真相可比较，不判。
     """
@@ -515,7 +542,23 @@ def _audit_science(
     required = schema.get("required") if isinstance(schema, dict) else None
     required = {str(r) for r in required} if isinstance(required, (list, tuple)) else set()
 
+    def _sibling_exposes(pname: str, cid: str) -> bool:
+        """同契约家族中是否有别的工具在 schema 里暴露该参数。"""
+        if not contract_tools:
+            return False
+        for sibling in contract_tools.get(cid, ()):
+            if sibling == descriptor.name:
+                continue
+            s_schema = _schema_for(facts.registry, sibling)
+            if not isinstance(s_schema, dict):
+                continue
+            s_props = s_schema.get("properties")
+            if isinstance(s_props, dict) and pname in s_props:
+                return True
+        return False
+
     issues: List[str] = []
+    family_waived = 0
     for cid in dict.fromkeys(contract_ids):
         contract = facts.parameter_contracts.get(cid)
         if contract is None:
@@ -525,6 +568,9 @@ def _audit_science(
             pname = str(getattr(spec, "name", ""))
             prop = properties.get(pname)
             if not isinstance(prop, dict):
+                if _sibling_exposes(pname, cid):
+                    family_waived += 1
+                    continue
                 issues.append(f"{cid}.{pname}: absent from schema")
                 continue
             is_required = pname in required
@@ -563,9 +609,10 @@ def _audit_science(
         return _verdict(
             FACE_SCIENCE, STATUS_WARNING, "contract_divergence",
             "; ".join(issues[:MAX_SCIENCE_ISSUES]) + more)
-    return _verdict(
-        FACE_SCIENCE, STATUS_PASS, "contract_aligned",
-        f"contracts {','.join(dict.fromkeys(contract_ids))} aligned with schema")
+    detail = f"contracts {','.join(dict.fromkeys(contract_ids))} aligned with schema"
+    if family_waived:
+        detail += f"; {family_waived} param(s) via family-union siblings"
+    return _verdict(FACE_SCIENCE, STATUS_PASS, "contract_aligned", detail)
 
 
 # ── 审计入口 ─────────────────────────────────────────────────────
@@ -595,13 +642,17 @@ def audit_tool_conformance(
     descriptor = facts.registry.descriptor(str(name))
     derived_capability_tools: Dict[str, set] = {}
     algorithm_by_id: Dict[str, Any] = {}
+    contract_tools: Dict[str, set] = {}
     for algo in facts.algorithms:
         aid = str(getattr(algo, "id", "") or "")
         if aid:
             algorithm_by_id[aid] = algo
+        candidates = {str(t) for t in (getattr(algo, "tool_candidates", None) or ())}
         for cap in getattr(algo, "capabilities", None) or ():
-            derived_capability_tools.setdefault(str(cap), set()).update(
-                str(t) for t in (getattr(algo, "tool_candidates", None) or ()))
+            derived_capability_tools.setdefault(str(cap), set()).update(candidates)
+        ref = str(getattr(algo, "parameter_contract_ref", "") or "")
+        if ref:
+            contract_tools.setdefault(ref, set()).update(candidates)
 
     pi_verdict, schema_fp = _audit_pi_native(descriptor, facts)
     face_verdicts = (
@@ -612,7 +663,7 @@ def audit_tool_conformance(
         _audit_proxy(descriptor),
         _audit_dispatch(descriptor),
         _audit_result(descriptor),
-        _audit_science(descriptor, facts, algorithm_by_id),
+        _audit_science(descriptor, facts, algorithm_by_id, contract_tools),
     )
     faces = tuple(sorted(face_verdicts, key=lambda v: v.face))
     payload = {

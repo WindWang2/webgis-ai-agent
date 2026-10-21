@@ -330,8 +330,21 @@ def test_result_unknown_policy_warns():
 
 def test_result_ref_offload_without_refs_warns():
     from app.lib.gis.tool_capability_conformance import _audit_result
-    v = _audit_result(_result_descriptor(result_size_policy="ref_offload", produced_refs=()))
+    # 非 geojson 输出族：offload 行为依赖未声明实现细节 → warning
+    v = _audit_result(_result_descriptor(
+        result_size_policy="ref_offload", produced_refs=(),
+        output_semantic_type="stats"))
     assert (v.status, v.reason) == (STATUS_WARNING, "ref_offload_without_ref_contract")
+
+
+def test_result_geojson_ref_offload_structural_pass():
+    """geojson 输出族：dispatch chokepoint 对 FC 形状无条件铸 ref——
+    结构性 pass，不要求逐工具 produced_refs 声明。"""
+    from app.lib.gis.tool_capability_conformance import _audit_result
+    v = _audit_result(_result_descriptor(
+        result_size_policy="ref_offload", produced_refs=(),
+        output_semantic_type="geojson_fc"))
+    assert (v.status, v.reason) == (STATUS_PASS, "ref_structural_offload")
 
 
 def test_result_missing_output_type_warns():
@@ -430,6 +443,58 @@ def test_science_missing_contract_registration_warns():
     facts = _facts(_sci_registry(), algorithms=(_ALGO_WITH_CONTRACT,), contracts={})
     v = audit_tool_conformance("sci_tool", facts).face(FACE_SCIENCE)
     assert v.reason == "contract_divergence" and "ctest" in v.detail
+
+
+def test_science_family_union_sibling_waiver():
+    """同契约家族的兄弟工具暴露了该参数 → 家族并集分工，不是漂移；
+    全族无人暴露才是死参数（照报 warning）。"""
+    from pydantic import BaseModel as _BM
+
+    class _FullArgs(_BM):
+        distance: float
+        unit: Literal["m", "km"] = "m"
+        extra_knob: float = 1.0
+
+    class _PartialArgs(_BM):
+        distance: float
+        unit: Literal["m", "km"] = "m"
+
+    r = ToolRegistry()
+    r.register(
+        "fam_full", "f", func=_noop, args_model=_FullArgs, algorithms=["algo_x"],
+        side_effect="pure", network=False, deterministic=True,
+        result_size_policy="bounded")
+    r.register(
+        "fam_partial", "p", func=_noop, args_model=_PartialArgs, algorithms=["algo_x"],
+        side_effect="pure", network=False, deterministic=True,
+        result_size_policy="bounded")
+    algo = SimpleNamespace(
+        id="algo_x", capabilities=("cap_a",),
+        tool_candidates=("fam_full", "fam_partial"),
+        parameter_contract_ref="ctest")
+    contract = _contract("ctest", [
+        ParameterSpec(name="distance", type="number", required=True),
+        ParameterSpec(name="unit", type="enum", default="m", enum_values=["m", "km"]),
+        ParameterSpec(name="extra_knob", type="number", default=1.0),
+        ParameterSpec(name="dead_knob", type="number", default=0.5),
+    ])
+    facts = _facts(r, algorithms=(algo,), contracts={"ctest": contract})
+    partial = audit_tool_conformance("fam_partial", facts).face(FACE_SCIENCE)
+    assert (partial.status, partial.reason) == (STATUS_WARNING, "contract_divergence")
+    assert "dead_knob" in partial.detail and "extra_knob" not in partial.detail
+    full = audit_tool_conformance("fam_full", facts).face(FACE_SCIENCE)
+    assert (full.status, full.reason) == (STATUS_WARNING, "contract_divergence")
+    assert "dead_knob" in full.detail
+    # 剔除死参数后两个工具都 pass，partial 披露家族豁免
+    clean = _contract("ctest", [
+        ParameterSpec(name="distance", type="number", required=True),
+        ParameterSpec(name="unit", type="enum", default="m", enum_values=["m", "km"]),
+        ParameterSpec(name="extra_knob", type="number", default=1.0),
+    ])
+    facts2 = _facts(r, algorithms=(algo,), contracts={"ctest": clean})
+    partial2 = audit_tool_conformance("fam_partial", facts2).face(FACE_SCIENCE)
+    assert (partial2.status, partial2.reason) == (STATUS_PASS, "contract_aligned")
+    assert "family-union" in partial2.detail
 
 
 def test_science_direct_without_schema():

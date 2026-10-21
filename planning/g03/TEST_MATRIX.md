@@ -41,3 +41,6 @@
 | 10-21 | 回归:docs_drift+parity+tool_catalog+surface_v2 / pi_tool_spec+surface_receipt+reason_code_parity | 0 | 47 + 45 passed | 新工具入 registry 后 |
 | 10-21 | `scripts/check_tool_descriptor_coverage.py` | 0 | 357 工具 5 字段全 100% PASS | |
 | 10-21 | `python -m app.lib.gis.execution_catalog_docs`(docs 重生成) | 0 | 356→357 工具,manifest 更新 | |
+| 10-21 | `-m pytest tests/unit/gis_tool_conformance/`(W4 后,含 live 棘轮) | 0 | **94 passed** | 引擎细化:geojson 结构性 ref pass(41→4)+ 家族并集豁免 |
+| 10-21 | 修复面回归:spatial_stats/point_pattern/rs_v3/kriging_v4/contracts_vnext/qualification | 0 | 141 passed(1 处钉扎更新:kriging 契约 v3→v4 为设计内变更) | ripley/cloud_qc/kriging 三修复 |
+| 10-21 | 活审计复跑 | 0 | 357 工具:0 fail / 176 warning / 181 pass;contract_divergence 0(原 7);ref_offload 4(原 41,4 个真含糊项披露) | |

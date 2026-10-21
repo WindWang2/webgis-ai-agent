@@ -618,9 +618,13 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 description="r_max = 比例 × min(窗宽,窗高)；上限 0.5（半窗）",
             ),
             ParameterSpec(
-                name="envelopes", type="integer", default=99, minimum=1, maximum=499,
+                # G03 对账修正：契约默认与工具现值对齐 —— 工具路径此前从未
+                # 把 envelopes 传进实现（实现默认 0 = 纯描述），契约旧默认
+                # 99 是「文档里模拟了、实际没跑」的声明漂移。默认 0（描述
+                # 性），>0 输出 CSR 包络与秩 p 值（固定种子 42）。
+                name="envelopes", type="integer", default=0, minimum=0, maximum=499,
                 unit="count",
-                description="CSR 模拟包络次数（固定种子 42）",
+                description="CSR 模拟包络次数（0=纯描述；固定种子 42）",
             ),
         ],
     ),

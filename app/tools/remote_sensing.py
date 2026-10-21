@@ -2092,7 +2092,8 @@ def register_rs_tools(registry: ToolRegistry):
         contract_params: Dict[str, Any] = {
             "brightness_percentile": brightness_percentile}
         if brightness_thresholds is not None:
-            contract_params["brightness_threshold"] = brightness_thresholds
+            # 契约参数名已与工具签名对齐（G03：brightness_thresholds）
+            contract_params["brightness_thresholds"] = brightness_thresholds
         if ndvi_max_abs is not None:
             contract_params["ndvi_max_abs"] = ndvi_max_abs
         params = apply_contract("cloud_qc_analysis", contract_params)
