@@ -1,0 +1,2755 @@
+{
+ "count": 21,
+ "kind": "g05-task-scenarios",
+ "scenarios": [
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "意图→计划→数据存储→产品组装→结算全链。poi_query/admin_boundary_query 工具面离线不可达 → 终验 fail-closed；已交付部分产品（MapSpec 图层/组件/导出语义一致性）仍可断言。『不得假成功』红线。",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "intent",
+     "id": "f01-intent-scope",
+     "kind": "intent_resolved",
+     "note": "",
+     "op": "exists",
+     "path": "chapter_summary.recipe_id",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f01-mapspec-exists",
+     "kind": "mapspec_present",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.exists",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f01-points-layer",
+     "kind": "mapspec_layer",
+     "note": "",
+     "op": "contains",
+     "path": "mapspec.layer_types",
+     "value": "circle"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f01-components",
+     "kind": "mapspec_component",
+     "note": "",
+     "op": "exists",
+     "path": "mapspec.component_types",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f01-export-check",
+     "kind": "export_status",
+     "note": "",
+     "op": "in",
+     "path": "export.status",
+     "value": [
+      "pass",
+      "warning"
+     ]
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f01-requirement-doc",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.exists",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "final_answer",
+     "id": "f01-verdict",
+     "kind": "goal_verdict",
+     "note": "离线数据源缺口 → 诚实 BLOCKED/FAILED，不得假成功",
+     "op": "in",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": [
+      "blocked",
+      "failed"
+     ]
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "final_answer",
+     "id": "f01-task-incomplete",
+     "kind": "task_complete",
+     "note": "",
+     "op": "eq",
+     "path": "map_product.task_complete",
+     "value": false
+    }
+   ],
+   "family": "F01",
+   "id": "f01-school-points-map",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "baseline",
+    "points"
+   ],
+   "timeout_s": 60,
+   "title": "成都小学点位分布 → 点位图产品（离线诚实降级）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "看看成都小学都在哪里，标出点位",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:schools}}",
+        "title": "成都市小学点位分布（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "看看成都小学都在哪里，标出点位"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points_dense",
+     "name": "dense",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f02a-heatmap-layer",
+     "kind": "mapspec_layer",
+     "note": "40 点 ≥ HEATMAP_MIN_POINTS → 热力层有资格",
+     "op": "contains",
+     "path": "mapspec.layer_types",
+     "value": "heatmap"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f02a-export",
+     "kind": "export_status",
+     "note": "",
+     "op": "in",
+     "path": "export.status",
+     "value": [
+      "pass",
+      "warning"
+     ]
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f02a-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f02a-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F02",
+   "id": "f02a-heatmap-method",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "method",
+    "heatmap"
+   ],
+   "timeout_s": 60,
+   "title": "小学热力图（样本充足 → 热力层资格通过）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都小学热力图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points_dense",
+        "name": "dense"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "geojson": "{{ref:dense}}",
+        "render_type": "native"
+       },
+       "call_id": "heat",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "heatmap_data"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:dense}}",
+        "title": "成都市小学热力图（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "成都小学热力图"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points_sparse",
+     "name": "sparse",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f02b-no-heatmap",
+     "kind": "sample_size",
+     "note": "3 点 < HEATMAP_MIN_POINTS(10) → 热力层确定性禁用",
+     "op": "not_in",
+     "path": "mapspec.layer_types",
+     "value": [
+      "heatmap"
+     ]
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f02b-points-fallback",
+     "kind": "mapspec_layer",
+     "note": "降级为点图交付",
+     "op": "contains",
+     "path": "mapspec.layer_types",
+     "value": "circle"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f02b-fallback-evidence",
+     "kind": "sample_size",
+     "note": "降级决策必须留痕（fallbacks 数组）",
+     "op": "ge",
+     "path": "chapter_summary.fallback_count",
+     "value": 1
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f02b-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f02b-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F02",
+   "id": "f02b-sparse-heatmap-degraded",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "method",
+    "sample-size",
+    "negative"
+   ],
+   "timeout_s": 60,
+   "title": "稀疏样本热力请求 → 热力资格拒绝（invalid_method 注入）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都小学热力图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points_sparse",
+        "name": "sparse"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:sparse}}",
+        "title": "成都市小学热力图（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "成都小学热力图"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "district_polygons",
+     "name": "districts",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "真实离线聚合链：spatial_aggregate(points_ref, polygons_ref) 完成 admin_aggregation 行（产物 ref 由 dispatch 卸载）；poi_query/admin_boundary_query 离线不可达 → 诚实降级。",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f03-agg-row-done",
+     "kind": "tool_receipt",
+     "note": "spatial_stats→point_profile + spatial_aggregate→admin_aggregation 两行真实工具完成",
+     "op": "ge",
+     "path": "plan.progress.status_counts.complete",
+     "value": 2
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f03-mapspec",
+     "kind": "mapspec_layer",
+     "note": "",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f03-export",
+     "kind": "export_status",
+     "note": "",
+     "op": "in",
+     "path": "export.status",
+     "value": [
+      "pass",
+      "warning"
+     ]
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f03-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f03-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F03",
+   "id": "f03-admin-aggregation",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "admin",
+    "aggregation"
+   ],
+   "timeout_s": 60,
+   "title": "各区小学计数 → 行政聚合 + 分级统计图",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "统计各区小学数量",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "district_polygons",
+        "name": "districts"
+       },
+       "call_id": "store2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "features": "{{ref:schools}}"
+       },
+       "call_id": "profile",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "spatial_stats"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "points": "{{ref:schools}}",
+        "polygons": "{{ref:districts}}"
+       },
+       "call_id": "agg",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "spatial_aggregate"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "overlay_refs": [
+         "{{ref:districts}}"
+        ],
+        "primary_ref": "{{ref:schools}}",
+        "title": "成都各区小学数量（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "统计各区小学数量"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points_dense",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "district_polygons",
+     "name": "districts",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f04a-agg-done",
+     "kind": "tool_receipt",
+     "note": "",
+     "op": "ge",
+     "path": "plan.progress.status_counts.complete",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f04a-export",
+     "kind": "export_status",
+     "note": "",
+     "op": "in",
+     "path": "export.status",
+     "value": [
+      "pass",
+      "warning"
+     ]
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f04a-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f04a-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F04",
+   "id": "f04a-density-denominator",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "density",
+    "denominator"
+   ],
+   "timeout_s": 60,
+   "title": "定量面密度（denominator_kind=area 显式分母）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都各区小学每平方公里密度",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points_dense",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "district_polygons",
+        "name": "districts"
+       },
+       "call_id": "store2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "denominator_kind": "area",
+        "points": "{{ref:schools}}",
+        "polygons": "{{ref:districts}}"
+       },
+       "call_id": "rate",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "spatial_aggregate"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:schools}}",
+        "title": "成都各区小学密度（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "成都各区小学每平方公里密度"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points_dense",
+     "name": "dense",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f04b-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f04b-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f04b-heatmap-authored-anyway",
+     "kind": "mapspec_layer",
+     "note": "错误方法的产品仍被组装（可观测、可归因），但判据不放行",
+     "op": "contains",
+     "path": "mapspec.layer_types",
+     "value": "heatmap"
+    }
+   ],
+   "family": "F04",
+   "id": "f04b-visual-for-quantitative",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "method",
+    "density",
+    "negative"
+   ],
+   "timeout_s": 60,
+   "title": "定量密度诉求 → 视觉热力交付（invalid_method 注入）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都各区小学每平方公里密度",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points_dense",
+        "name": "dense"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "geojson": "{{ref:dense}}",
+        "render_type": "native"
+       },
+       "call_id": "heat",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "heatmap_data"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:dense}}",
+        "title": "成都小学密度热力（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "成都各区小学每平方公里密度"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "temporal_school_points",
+     "name": "temporal",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "intent",
+     "id": "f05-recipe",
+     "kind": "intent_resolved",
+     "note": "",
+     "op": "exists",
+     "path": "chapter_summary.recipe_id",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f05-profile-done",
+     "kind": "tool_receipt",
+     "note": "",
+     "op": "ge",
+     "path": "plan.progress.status_counts.complete",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f05-export",
+     "kind": "export_status",
+     "note": "",
+     "op": "in",
+     "path": "export.status",
+     "value": [
+      "pass",
+      "warning"
+     ]
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f05-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f05-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F05",
+   "id": "f05-temporal-points",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "temporal_chart: 时序图表组件的数值正确性属 science oracle 层（tests/science_oracles），本场景只断言时间语义进链不丢失"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "temporal"
+   ],
+   "timeout_s": 60,
+   "title": "时序点位 → 时间语义保留在意图与产品链",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都2015到2025年小学设点变化，按年份看分布",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "temporal_school_points",
+        "name": "temporal"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "features": "{{ref:temporal}}"
+       },
+       "call_id": "stats",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "spatial_stats"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:temporal}}",
+        "title": "成都小学设点时序（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "成都2015到2025年小学设点变化，按年份看分布"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_nir",
+     "name": "nir",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "raster_red",
+     "name": "red",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f06-bandmath-done",
+     "kind": "tool_receipt",
+     "note": "raster_calculator→band_math + spatial_stats→point_profile 真实离线完成",
+     "op": "ge",
+     "path": "plan.progress.status_counts.complete",
+     "value": 2
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "intent",
+     "id": "f06-recipe-raster",
+     "kind": "intent_resolved",
+     "note": "",
+     "op": "eq",
+     "path": "chapter_summary.recipe_id",
+     "value": "raster_distribution"
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f06-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f06-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F06",
+   "id": "f06-raster-ndvi",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "raster",
+    "ndvi"
+   ],
+   "timeout_s": 60,
+   "title": "NIR/RED → NDVI 波段运算（离线 raster_calculator）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "NIR和RED波段算NDVI出图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_nir",
+        "name": "nir"
+       },
+       "call_id": "s1",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_red",
+        "name": "red"
+       },
+       "call_id": "s2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "s3",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "expression": "(A - B) / (A + B)",
+        "raster_a": "{{ref:nir}}",
+        "raster_b": "{{ref:red}}"
+       },
+       "call_id": "ndvi",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "raster_calculator"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "features": "{{ref:schools}}"
+       },
+       "call_id": "stats",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "spatial_stats"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "NIR和RED波段算NDVI出图"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "district_polygons",
+     "name": "districts",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "data",
+     "id": "f07-join-step-ok",
+     "kind": "tool_receipt",
+     "note": "",
+     "op": "ge",
+     "path": "plan.progress.status_counts.complete",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f07-export",
+     "kind": "export_status",
+     "note": "",
+     "op": "in",
+     "path": "export.status",
+     "value": [
+      "pass",
+      "warning"
+     ]
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f07-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f07-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F07",
+   "id": "f07-spatial-join",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "join"
+   ],
+   "timeout_s": 60,
+   "title": "点↔面空间连接（属性挂接）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "把这些小学点和行政区关联起来，标注所属区",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "district_polygons",
+        "name": "districts"
+       },
+       "call_id": "store2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "left_layer": "{{ref:schools}}",
+        "predicate": "intersects",
+        "right_layer": "{{ref:districts}}"
+       },
+       "call_id": "join",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "spatial_join"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:schools}}",
+        "title": "小学所属区标注（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "把这些小学点和行政区关联起来，标注所属区"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "no_coord_table",
+     "name": "table",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f08-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f08-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f08-no-fake-points",
+     "kind": "mapspec_layer",
+     "note": "无坐标行不得被伪造成点位图层",
+     "op": "not_in",
+     "path": "mapspec.layer_types",
+     "value": [
+      "circle"
+     ]
+    }
+   ],
+   "family": "F08",
+   "id": "f08-no-coordinates",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "clarification_loop: 生产澄清闭环（requirement_ir clarify）的多轮对话行为由其专属测试覆盖；本场景断言 fail-closed 语义"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "negative",
+    "no-coords"
+   ],
+   "timeout_s": 60,
+   "title": "无经纬度名单 → 出图请求诚实拒绝/降级",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "把这份小学名单画到地图上",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "no_coord_table",
+        "name": "table"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": true,
+       "arguments": {
+        "primary_ref": "{{ref:table}}",
+        "title": "小学名单地图（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "把这份小学名单画到地图上"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "wrong_crs_points",
+     "name": "bad",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f09-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f09-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f09-failure-visible",
+     "kind": "tool_receipt",
+     "note": "失败/拒绝必须对计划可见（failed 行或无完成行）",
+     "op": "exists",
+     "path": "plan.progress.status_counts",
+     "value": null
+    }
+   ],
+   "family": "F09",
+   "id": "f09-wrong-crs",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "negative",
+    "crs"
+   ],
+   "timeout_s": 60,
+   "title": "错误 CRS 坐标 → 空间分析确定性拒绝",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "分析这些点位的分布",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "wrong_crs_points",
+        "name": "bad"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": true,
+       "arguments": {
+        "features": "{{ref:bad}}"
+       },
+       "call_id": "stats",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "spatial_stats"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "分析这些点位的分布"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_nodata",
+     "name": "nodata",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f10-bandmath-done",
+     "kind": "tool_receipt",
+     "note": "",
+     "op": "ge",
+     "path": "plan.progress.status_counts.complete",
+     "value": 2
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f10-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f10-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F10",
+   "id": "f10-nodata-raster",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "nodata_pixel_accounting: nodata 掩膜数值口径由 raster_math 单测与 science oracle 覆盖；本场景断言链路行为不炸、不假成功"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "raster",
+    "nodata"
+   ],
+   "timeout_s": 60,
+   "title": "含 nodata 像元的栅格运算 → 缺测不进统计",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "这片区域做植被指数分析",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_nodata",
+        "name": "nodata"
+       },
+       "call_id": "s1",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "s2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "expression": "A * 1",
+        "raster_a": "{{ref:nodata}}"
+       },
+       "call_id": "calc",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "raster_calculator"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "features": "{{ref:schools}}"
+       },
+       "call_id": "stats",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "spatial_stats"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "这片区域做植被指数分析"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "unit_conflict_points",
+     "name": "mixed",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f11-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f11-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F11",
+   "id": "f11-unit-conflict",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "unit_invariant_detection: 单位一致性检测器由 G01/G02 方向与 data_quality 管线覆盖；本场景钉扎任务级判据不放行"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "negative",
+    "units"
+   ],
+   "timeout_s": 60,
+   "title": "字段单位混标 → 统计不得静默当成同单位",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "分析这些学校的规模",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "unit_conflict_points",
+        "name": "mixed"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": true,
+       "arguments": {
+        "features": "{{ref:mixed}}"
+       },
+       "call_id": "stats",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "spatial_stats"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "分析这些学校的规模"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points_dense",
+     "name": "dense",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f12-t2-replaced",
+     "kind": "revision_monotonic",
+     "note": "同 goal follow-up 必须留在同一 envelope（replaced）",
+     "op": "eq",
+     "path": "plan.replaced",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f12-layers-preserved",
+     "kind": "visibility_preserved",
+     "note": "agent 再组合不得丢弃已交付图层",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f12-components",
+     "kind": "mapspec_component",
+     "note": "",
+     "op": "exists",
+     "path": "mapspec.component_types",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f12-export",
+     "kind": "export_status",
+     "note": "",
+     "op": "in",
+     "path": "export.status",
+     "value": [
+      "pass",
+      "warning"
+     ]
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f12-revision-positive",
+     "kind": "revision_monotonic",
+     "note": "",
+     "op": "ge",
+     "path": "mapspec.mutation_revision",
+     "value": 1
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f12-no-claim",
+     "kind": "goal_verdict",
+     "note": "finalize pending（含 replace 后的 void 行），完成块不持久化，完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    }
+   ],
+   "family": "F12",
+   "id": "f12-multiturn-edit-chain",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "multiturn",
+    "user-wins"
+   ],
+   "timeout_s": 60,
+   "title": "多轮：点位图 → 隐藏热力 → 改标题 → 再组装",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都小学点位分布",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points_dense",
+        "name": "dense"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "geojson": "{{ref:dense}}",
+        "render_type": "native"
+       },
+       "call_id": "heat",
+       "expect_error": false,
+       "kind": "execute",
+       "query": "",
+       "tool": "heatmap_data"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:dense}}",
+        "title": "成都市小学分布（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都小学点位分布，加上标题",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:dense}}",
+        "title": "成都市小学点位（模拟）"
+       },
+       "call_id": "product2",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "component_type": "title",
+        "options": {
+         "text": "成都市小学点位（模拟）"
+        }
+       },
+       "call_id": "title",
+       "expect_error": false,
+       "kind": "component_update",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "成都小学点位分布"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f13-t1-interrupted",
+     "kind": "render_seq",
+     "note": "",
+     "op": "eq",
+     "path": "plan.turns[0].status",
+     "value": "interrupted"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f13-resume-count",
+     "kind": "revision_monotonic",
+     "note": "",
+     "op": "ge",
+     "path": "plan.recovery.resume_count",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f13-mapspec-after-recovery",
+     "kind": "mapspec_layer",
+     "note": "",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f13-export",
+     "kind": "export_status",
+     "note": "",
+     "op": "in",
+     "path": "export.status",
+     "value": [
+      "pass",
+      "warning"
+     ]
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "final_answer",
+     "id": "f13-verdict",
+     "kind": "goal_verdict",
+     "note": "离线数据源缺口 → 诚实 BLOCKED/FAILED，不得假成功",
+     "op": "in",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": [
+      "blocked",
+      "failed"
+     ]
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "final_answer",
+     "id": "f13-task-incomplete",
+     "kind": "task_complete",
+     "note": "",
+     "op": "eq",
+     "path": "map_product.task_complete",
+     "value": false
+    }
+   ],
+   "family": "F13",
+   "id": "f13-cross-session-recovery",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "true_process_restart: 真·跨进程恢复（Redis 信封持久化跨 pod）由 kernel S5/recovery 专属测试覆盖；本场景在 dispatch 缝内驱动同一 interrupted→resume 对账语义"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "recovery",
+    "multiturn"
+   ],
+   "timeout_s": 60,
+   "title": "中断（未结算）→ 新 turn 恢复 → 续绘完成产品",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": true,
+     "message": "看看成都小学都在哪里，标出点位",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "继续，把图画完",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:schools}}",
+        "title": "成都市小学点位分布（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "看看成都小学都在哪里，标出点位"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f14-cancelled-status",
+     "kind": "render_seq",
+     "note": "",
+     "op": "eq",
+     "path": "plan.turns[0].status",
+     "value": "cancelled"
+    },
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f14-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f14-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    }
+   ],
+   "family": "F14",
+   "id": "f14-user-cancel",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "cancel"
+   ],
+   "timeout_s": 60,
+   "title": "用户取消 → turn 以 cancelled 结算，不假成功",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "统计各区小学数量",
+     "settle_cause": "user_cancel",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "统计各区小学数量"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "not_evaluated",
+     "face": "final_answer",
+     "id": "f15-no-claim",
+     "kind": "goal_verdict",
+     "note": "mandatory 行 needs_execution → finalize pending，完成块不持久化（生产语义），完成面诚实缺席",
+     "op": "eq",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f15-needs-execution-visible",
+     "kind": "tool_receipt",
+     "note": "未执行能力行对计划可见（诚实披露，不是静默完成）",
+     "op": "ge",
+     "path": "plan.progress.mandatory_pending",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "intent",
+     "id": "f15-intent-or-empty",
+     "kind": "intent_resolved",
+     "note": "治理拒绝后章节状态诚实（无完成面）",
+     "op": "exists",
+     "path": "chapter_summary",
+     "value": null
+    }
+   ],
+   "family": "F15",
+   "id": "f15-tier3-governance",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "governance",
+    "tier3",
+    "negative"
+   ],
+   "timeout_s": 60,
+   "title": "tier-3 破坏性工具经 Pi 缝 → TIER3_CONFIRMATION_REQUIRED",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "清理一下会话数据",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": true,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "danger",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "refresh_skill_surface"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "清理一下会话数据"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f16-mapspec",
+     "kind": "mapspec_layer",
+     "note": "",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f16-export-consistency",
+     "kind": "export_status",
+     "note": "导出能力缺席时必须诚实 unsupported/not_evaluated，不得假 pass",
+     "op": "in",
+     "path": "export.status",
+     "value": [
+      "pass",
+      "warning",
+      "unsupported",
+      "not_evaluated"
+     ]
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f16-no-fake-pass",
+     "kind": "export_aspect",
+     "note": "有图层产品的导出一致性不得落在 fail",
+     "op": "absent",
+     "path": "export.failed_aspects",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "final_answer",
+     "id": "f16-verdict",
+     "kind": "goal_verdict",
+     "note": "离线数据源缺口 → 诚实 BLOCKED/FAILED，不得假成功",
+     "op": "in",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": [
+      "blocked",
+      "failed"
+     ]
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "final_answer",
+     "id": "f16-task-incomplete",
+     "kind": "task_complete",
+     "note": "",
+     "op": "eq",
+     "path": "map_product.task_complete",
+     "value": false
+    }
+   ],
+   "family": "F16",
+   "id": "f16-export-offline",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "export"
+   ],
+   "timeout_s": 60,
+   "title": "产品导出（离线）→ 导出语义一致性 manifest 判定",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "看看成都小学都在哪里，标出点位，导出成图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:schools}}",
+        "title": "成都市小学点位分布（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": true,
+       "arguments": {
+        "title": "成都市小学点位分布（模拟数据）"
+       },
+       "call_id": "export",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "export_thematic_map"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "看看成都小学都在哪里，标出点位，导出成图"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points_dense",
+     "name": "dense",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f17-envelope-exists",
+     "kind": "render_seq",
+     "note": "",
+     "op": "eq",
+     "path": "render_work.exists",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f17-schema-version",
+     "kind": "render_seq",
+     "note": "",
+     "op": "eq",
+     "path": "render_work.schema_version",
+     "value": "render_work.v1"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f17-layer-works",
+     "kind": "render_seq",
+     "note": "",
+     "op": "ge",
+     "path": "render_work.layer_work_count",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f17-revision-aligned",
+     "kind": "render_seq",
+     "note": "",
+     "op": "ge",
+     "path": "render_work.revision",
+     "value": 1
+    }
+   ],
+   "family": "F17",
+   "id": "f17-render-work-envelope",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "render-work"
+   ],
+   "timeout_s": 60,
+   "title": "产品渲染工作信封（render_work.v1）投影与 revision 对齐",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都小学热力图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points_dense",
+        "name": "dense"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:dense}}",
+        "title": "成都市小学热力图（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "成都小学热力图"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "wrong_crs_points",
+     "name": "bad",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "final_answer",
+     "id": "f18-not-satisfied",
+     "kind": "goal_verdict",
+     "note": "错误数据下任务判据不得满足（实测落块为 terminal 态）",
+     "op": "not_in",
+     "path": "map_product.goal_satisfaction_verdict",
+     "value": [
+      "satisfied"
+     ]
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "data",
+     "id": "f18-blocking-reason",
+     "kind": "dataset_ref",
+     "note": "终验落块必须携带可归因的裁决词",
+     "op": "in",
+     "path": "map_product.product_verdict",
+     "value": [
+      "BLOCKED_BY_DATA",
+      "BLOCKED_BY_METHOD",
+      "NEEDS_REPAIR",
+      "READY_WITH_WARNINGS",
+      "FAILED"
+     ]
+    }
+   ],
+   "family": "F18",
+   "id": "f18-wrong-dataset",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "crs_domain_violation_not_blocked_at_product: 错误 CRS 坐标在产品路径只触发分析侧告警（to_utm_gdf polar warning），点位层仍被组装——CRS 域校验的产品级接线属 data-qualification 方向，本分支如实披露该覆盖缺口（不造第二判定面）"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "negative",
+    "wrong-dataset",
+    "attribution"
+   ],
+   "timeout_s": 60,
+   "title": "错误数据集注入 → 判错面与正例可区分",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "看看成都小学都在哪里，标出点位",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "wrong_crs_points",
+        "name": "bad"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": true,
+       "arguments": {
+        "primary_ref": "{{ref:bad}}",
+        "title": "成都市小学点位分布（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "看看成都小学都在哪里，标出点位"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f19-requirement-persist",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.exists",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f19-revision-positive",
+     "kind": "requirement_state",
+     "note": "多轮 patch/重放下文档 revision 前进",
+     "op": "ge",
+     "path": "requirement.revision",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "intent",
+     "id": "f19-same-envelope",
+     "kind": "intent_resolved",
+     "note": "同主题 follow-up 不应 supersede 成无关新世界",
+     "op": "eq",
+     "path": "plan.superseded",
+     "value": false
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f19-mapspec",
+     "kind": "mapspec_layer",
+     "note": "",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 1
+    }
+   ],
+   "family": "F19",
+   "id": "f19-requirement-multiturn",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "multiturn",
+    "requirement"
+   ],
+   "timeout_s": 60,
+   "title": "多轮意图重放 → requirement 文档存活 + 同 envelope",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "看看成都小学都在哪里，标出点位",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "加上各区数量的说明",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "primary_ref": "{{ref:schools}}",
+        "title": "成都市小学点位分布（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "看看成都小学都在哪里，标出点位"
+  }
+ ],
+ "schema_version": "task_scenario.v1"
+}

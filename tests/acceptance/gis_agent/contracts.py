@@ -74,7 +74,7 @@ class TurnSpec(BaseModel):
     """一个用户 turn：消息 + scripted 行为 + settle 语义。"""
 
     turn_id: str
-    message: str
+    message: str = Field(..., min_length=1)
     steps: List[AgentStep] = Field(default_factory=list)
     settle_cause: str = Field(
         "success", description="settle_turn cause：success/user_cancel/timeout/"
@@ -123,11 +123,15 @@ class Expectation(BaseModel):
     kind: str = Field(
         ..., description="检查类别：goal_verdict/mapspec_layer/export_status/"
                          "tool_receipt/requirement_state/revision_monotonic/...")
-    path: str = Field(..., description="TaskEvidence 投影内 dotted path")
-    op: str = Field("eq", description="eq/ne/in/contains/ge/le/exists/absent/regex")
+    path: str = Field(..., min_length=1,
+                      description="TaskEvidence 投影内 dotted path")
+    op: str = Field("eq", description="eq/ne/in/not_in/contains/ge/le/exists/"
+                                      "absent/regex")
     value: Any = None
     expected_verdict: str = Field(
-        "pass", description="pass|fail|not_evaluated —— 本场景期望该检查的判定")
+        "pass",
+        description="pass|fail|not_evaluated —— 本场景期望该检查的判定",
+        pattern="^(pass|fail|not_evaluated)$")
     note: str = ""
 
 

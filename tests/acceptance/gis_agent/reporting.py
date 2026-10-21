@@ -68,7 +68,13 @@ def _verdict_of(actual: Any, exp: Expectation) -> tuple[CheckVerdict, str]:
     elif op == "in":
         ok = actual in (want or [])
     elif op == "not_in":
-        ok = actual not in (want or [])
+        if isinstance(want, (list, tuple, set)):
+            # 列表语义：期望词表中任何元素都不得出现在 actual（集合式互斥）
+            ok = not any(w in (actual or []) for w in want) \
+                if isinstance(actual, (list, tuple, set)) \
+                else actual not in want
+        else:
+            ok = actual != want
     elif op == "contains":
         ok = want in (actual or [])
     elif op == "ge":

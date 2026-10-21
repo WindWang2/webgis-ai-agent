@@ -13,6 +13,8 @@ scripts/
 # 该目录承载测试 import 的守卫脚本，必须入库。
 !/frontend/scripts/
 !/scripts/ci-local.sh
+# G05：任务级验收本地入口（run/compare/report/pin；planning/g05 契约）
+!/scripts/g05_task_acceptance.py
 !/scripts/verify_skills_lock.py
 # 债务棘轮（#1377）：存量债"只减不增"门禁 + 入库基线
 !/scripts/debt_ratchet.py

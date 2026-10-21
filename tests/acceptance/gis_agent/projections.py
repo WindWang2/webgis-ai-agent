@@ -23,16 +23,27 @@ async def build_task_evidence(session_id: str, scenario) -> Dict[str, Any]:
         plan = None
     chapter = getattr(plan, "gis_chapter", None) if plan else None
     evidence["plan"] = _project_plan(plan)
+    chapter = getattr(plan, "gis_chapter", None) if plan else None
     evidence["chapter"] = chapter if isinstance(chapter, dict) else None
+    evidence["chapter_summary"] = _project_chapter_summary(chapter)
 
     # ── MapSpec（MapSpecStore 读 API）──────────────────────────────────
     spec: Optional[Dict[str, Any]] = None
+    revision = 0
     try:
         from app.services.mapspec_store import mapspec_store
         spec = await mapspec_store.get_mapspec(session_id)
     except Exception:  # noqa: BLE001
         spec = None
+    try:
+        from app.services.session_data import session_data_manager
+        state = await session_data_manager.get_map_state(session_id)
+        revision = int((state or {}).get("_cartographic_mutation_revision") or 0)
+    except Exception:  # noqa: BLE001
+        revision = 0
     evidence["mapspec"] = _project_mapspec(spec)
+    if isinstance(evidence["mapspec"], dict):
+        evidence["mapspec"]["mutation_revision"] = revision
 
     # ── 完成块（goal_satisfaction / task_complete / product_verdict）──
     evidence["map_product"] = _project_map_product(chapter)
@@ -94,6 +105,29 @@ def _project_plan(plan) -> Optional[Dict[str, Any]]:
             "checkpoint_id": plan.recovery.checkpoint_id,
         },
         "decision_kinds": sorted({d.kind for d in plan.decisions}),
+    }
+
+
+def _project_chapter_summary(chapter) -> Optional[Dict[str, Any]]:
+    """章节关键事实的有界摘要（fallback/methodology/intent 面）。"""
+    if not isinstance(chapter, dict):
+        return None
+    intent = chapter.get("intent") or {}
+    fallbacks = chapter.get("fallbacks") or []
+    return {
+        "recipe_id": str(chapter.get("recipe_id") or ""),
+        "intent_task": str(intent.get("task") or ""),
+        "intent_scope": str((intent.get("scope") or {}).get("name") or ""),
+        "intent_subject": str((intent.get("subject") or {}).get("category") or ""),
+        "intent_output": sorted(
+            str(x) for x in (intent.get("output_intents") or [])[:6]),
+        "fallback_reason_codes": sorted({
+            str(fb.get("reason_code") or "") for fb in fallbacks
+            if isinstance(fb, dict)} - {""}),
+        "fallback_count": len(fallbacks),
+        "methodology_warning_count": len(chapter.get("methodology_warnings") or []),
+        "status": str(chapter.get("status") or ""),
+        "query": str(chapter.get("query") or "")[:80],
     }
 
 
@@ -226,17 +260,17 @@ async def _project_render_work(session_id: str) -> Optional[Dict[str, Any]]:
         env = await get_render_work_envelope(session_id)
         if env is None:
             return None
-        layer_works = list(getattr(env, "layer_works", []) or [])
-        component_works = list(getattr(env, "component_works", []) or [])
+        layer_work = list(getattr(env, "layer_work", ()) or ())
+        component_work = list(getattr(env, "component_work", ()) or ())
         return {
             "exists": True,
             "work_id": str(getattr(env, "work_id", "") or ""),
             "schema_version": str(getattr(env, "schema_version", "") or ""),
-            "revision": getattr(env, "revision", None),
-            "layer_work_count": len(layer_works),
-            "component_work_count": len(component_works),
+            "revision": getattr(env, "mapspec_revision", None),
+            "layer_work_count": len(layer_work),
+            "component_work_count": len(component_work),
             "layer_work_layer_ids": [
-                str(getattr(w, "layer_id", "") or "") for w in layer_works
+                str(getattr(w, "layer_id", "") or "") for w in layer_work
             ],
         }
     except Exception:  # noqa: BLE001
