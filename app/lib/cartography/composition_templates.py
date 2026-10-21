@@ -228,12 +228,20 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
 ]
 
 
+#: 资产模板命名空间（G04 template assets）：DB/内置资产的物化模板专用。
+#: 系统 seed/pack id（composition.*）不可经 upsert_asset 写入或覆盖；
+#: 资产 id 与系统 id 物理不可撞（前缀隔离 + register fail-closed 双保险）。
+ASSET_TEMPLATE_PREFIX = "asset."
+
+
 class CompositionTemplateRegistry:
     def __init__(self) -> None:
         self._by_id: Dict[str, MapCompositionTemplate] = {}
+        self._asset_revisions: Dict[str, int] = {}
 
     def load_builtins(self) -> None:
         self._by_id.clear()
+        self._asset_revisions.clear()
         for tpl in SEED_COMPOSITION_TEMPLATES:
             self._by_id[tpl.id] = tpl
         # V3（ADR-0101 D1）：seed 之后按确定性顺序载入域包模板。
@@ -248,6 +256,38 @@ class CompositionTemplateRegistry:
         if tpl.id in self._by_id:
             raise ValueError(f"duplicate composition template id: {tpl.id}")
         self._by_id[tpl.id] = tpl
+
+    # ── 资产模板（G04）：单调 revision upsert，仅 asset.* 命名空间 ──────
+    def upsert_asset(self, tpl: MapCompositionTemplate, *, revision: int) -> bool:
+        """资产物化模板的惰性合并入口（单调：revision 回退忽略）。
+
+        服务层 resolve 时调用：DB/内置资产物化后写入注册表，使既有消费方
+        （plan_composition / conformance / product identity）零改动可见。
+        仅接受 ``asset.*`` id —— 系统 seed/pack id 不可经此覆盖。
+        """
+        if not tpl.id.startswith(ASSET_TEMPLATE_PREFIX):
+            raise ValueError(
+                f"upsert_asset requires '{ASSET_TEMPLATE_PREFIX}*' id, "
+                f"got {tpl.id}")
+        if int(revision) < 1:
+            raise ValueError("asset revision must be >= 1")
+        current = self._asset_revisions.get(tpl.id)
+        if current is not None and int(revision) <= current:
+            return False
+        self._by_id[tpl.id] = tpl
+        self._asset_revisions[tpl.id] = int(revision)
+        return True
+
+    def asset_revision_of(self, template_id: str) -> Optional[int]:
+        """资产模板当前注册 revision（非资产/未注册 → None）。"""
+        return self._asset_revisions.get(template_id)
+
+    def drop_asset(self, template_id: str) -> bool:
+        """移除资产模板（退役/测试重置；仅 asset.* 命名空间）。"""
+        if not template_id.startswith(ASSET_TEMPLATE_PREFIX):
+            return False
+        self._asset_revisions.pop(template_id, None)
+        return self._by_id.pop(template_id, None) is not None
 
     def get(self, template_id: str) -> Optional[MapCompositionTemplate]:
         return self._by_id.get(template_id)
@@ -277,51 +317,61 @@ class CompositionTemplateRegistry:
             candidates.append(tpl)
         return sorted(candidates, key=lambda t: (t.priority, t.id))
 
+    def validate_template(self, tpl: MapCompositionTemplate) -> List[str]:
+        """单模板创作期校验（fallback/类型词表/preferred/模型/zone）。
+
+        G04 资产发布门复用同一口径（validate_asset_template）——资产与
+        系统模板走同一道闸，不另立第二校验器。
+        """
+        issues: List[str] = []
+        if tpl.fallback_template and tpl.fallback_template not in self._by_id:
+            issues.append(f"composition {tpl.id}: fallback {tpl.fallback_template} not found")
+        for slot in tpl.component_slots:
+            if not slot.allowed_component_types and slot.cardinality in ("required", "forbidden"):
+                # required/forbidden 槽位无类型清单 = 永远无法满足/永不禁止
+                # （组合校验按 allowed_component_types 匹配实例）
+                issues.append(
+                    f"composition {tpl.id} slot {slot.id}: cardinality "
+                    f"{slot.cardinality} requires non-empty allowed_component_types")
+        from app.lib.cartography.component_registry import get_component_registry
+        from app.lib.cartography.component_templates import (
+            get_component_template_registry,
+        )
+        comp_reg = get_component_registry()
+        tmpl_reg = get_component_template_registry()
+        for slot in tpl.component_slots:
+            for ctype in slot.allowed_component_types:
+                if ctype not in comp_reg.all_ids:
+                    issues.append(f"composition {tpl.id} slot {slot.id}: unknown component type {ctype}")
+            for pt in slot.preferred_templates:
+                if not tmpl_reg.has(pt):
+                    issues.append(f"composition {tpl.id} slot {slot.id}: preferred template {pt} not found")
+        # V3（ADR-0101 D2）：compatible_map_models 必须可解析
+        # （模型目录真实存在；别名也接受），防模板虚构模型契约。
+        from app.lib.cartography.model_library import get_map_model_registry
+        model_reg = get_map_model_registry()
+        for mid in tpl.compatible_map_models:
+            if model_reg.resolve(mid) is None:
+                issues.append(
+                    f"composition {tpl.id}: compatible_map_model '{mid}' 未注册")
+        # F11（ADR-0214 D5）：创作期 conformance —— slot zone 必须落
+        # 在允许类型 descriptor 位置并集内（appenditive；存量
+        # seed/pack 必须零 issue，测试锁）。函数级 import 防环
+        # （conformance 引用本模块的模板类型）。
+        from app.lib.cartography.composition_conformance import (
+            validate_template_slot_zones,
+        )
+        for zone_issue in validate_template_slot_zones(tpl):
+            slot_id = zone_issue.ids[0] if zone_issue.ids else ""
+            issues.append(
+                f"composition {tpl.id} slot {slot_id}: {zone_issue.message}")
+        return issues
+
     def validate(self) -> List[str]:
         issues: List[str] = []
         try:
-            from app.lib.cartography.component_registry import get_component_registry
-            from app.lib.cartography.component_templates import get_component_template_registry
-            comp_reg = get_component_registry()
-            tmpl_reg = get_component_template_registry()
             for tpl in self._by_id.values():
-                if tpl.fallback_template and tpl.fallback_template not in self._by_id:
-                    issues.append(f"composition {tpl.id}: fallback {tpl.fallback_template} not found")
-                for slot in tpl.component_slots:
-                    if not slot.allowed_component_types and slot.cardinality in ("required", "forbidden"):
-                        # required/forbidden 槽位无类型清单 = 永远无法满足/永不禁止
-                        # （组合校验按 allowed_component_types 匹配实例）
-                        issues.append(
-                            f"composition {tpl.id} slot {slot.id}: cardinality "
-                            f"{slot.cardinality} requires non-empty allowed_component_types")
-                    for ctype in slot.allowed_component_types:
-                        if ctype not in comp_reg.all_ids:
-                            issues.append(f"composition {tpl.id} slot {slot.id}: unknown component type {ctype}")
-                    for pt in slot.preferred_templates:
-                        if not tmpl_reg.has(pt):
-                            issues.append(f"composition {tpl.id} slot {slot.id}: preferred template {pt} not found")
-                # V3（ADR-0101 D2）：compatible_map_models 必须可解析
-                # （模型目录真实存在；别名也接受），防模板虚构模型契约。
-                try:
-                    from app.lib.cartography.model_library import get_map_model_registry
-                    model_reg = get_map_model_registry()
-                    for mid in tpl.compatible_map_models:
-                        if model_reg.resolve(mid) is None:
-                            issues.append(
-                                f"composition {tpl.id}: compatible_map_model '{mid}' 未注册")
-                except Exception as e:  # pragma: no cover - 防御性
-                    issues.append(f"composition {tpl.id}: model cross-check error: {e}")
-                # F11（ADR-0214 D5）：创作期 conformance —— slot zone 必须落
-                # 在允许类型 descriptor 位置并集内（appenditive；存量
-                # seed/pack 必须零 issue，测试锁）。函数级 import 防环
-                # （conformance 引用本模块的模板类型）。
-                from app.lib.cartography.composition_conformance import (
-                    validate_template_slot_zones,
-                )
-                for zone_issue in validate_template_slot_zones(tpl):
-                    slot_id = zone_issue.ids[0] if zone_issue.ids else ""
-                    issues.append(
-                        f"composition {tpl.id} slot {slot_id}: {zone_issue.message}")
+                issues.extend(self.validate_template(tpl))
         except Exception as e:
             issues.append(f"composition validation error: {e}")
         return issues
@@ -355,6 +405,7 @@ __all__ = [
     "ComponentSlot",
     "MapCompositionTemplate",
     "CompositionTemplateRegistry",
+    "ASSET_TEMPLATE_PREFIX",
     "get_composition_template_registry",
     "reset_composition_template_registry",
     "SEED_COMPOSITION_TEMPLATES",
