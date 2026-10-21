@@ -1931,6 +1931,7 @@
      "session_id": {
       "anyOf": [
        {
+        "maxLength": 128,
         "type": "string"
        },
        {
@@ -20107,7 +20108,7 @@
   },
   "/api/v1/data-fabric/catalog/{item_id}/features/stream": {
    "get": {
-    "description": "NDJSON 流式取数（W12：流控/取消的生产接线）。\n\n``manager.stream_catalog_item_features`` 此前零 REST 消费方 —— 本端点\n是它的第一个生产面：每行一个 GeoJSON Feature，内存上界 = 泵有界队列\n（64 条）而非数据集总量；``limit`` 封顶响应行数。终结语义诚实：正常\n结束才有 ``{\"_eof\": true, \"count\": N}`` 尾行，客户端断开/取消静默\n终止（无 _eof = truncated）。\n\n取消：客户端断开 → Starlette 取消生成器 → finally 里 cancel_token\n取消 → 泵线程停 + 上游迭代器 close（协作取消，绝不悬挂/泄漏）。\n鉴权在流开始前完成（_prep 在 manager-loop 上跑完 tenant 门 + adapter\n治理解析）。",
+    "description": "NDJSON 流式取数（W12：流控/取消的生产接线）。\n\n``manager.stream_catalog_item_features`` 此前零 REST 消费方 —— 本端点\n是它的第一个生产面：每行一个 GeoJSON Feature，内存上界 = 泵有界队列\n（64 条）而非数据集总量；``limit`` 封顶响应行数。终结语义诚实：正常\n结束才有 ``{\"_eof\": true, \"count\": N}`` 尾行，客户端断开/取消静默\n终止（无 _eof = truncated）。\n\n取消：客户端断开 → Starlette 取消生成器 → finally 里 cancel_token\n取消 → 泵线程停 + 上游迭代器 close（协作取消，绝不悬挂/泄漏）。\n鉴权在流开始前完成（_prep 在 per-request manager worker loop 上跑完\ntenant 门 + adapter 治理解析，PERF-03/#1683）。",
     "operationId": "stream_catalog_item_features_http_api_v1_data_fabric_catalog__item_id__features_stream_get",
     "parameters": [
      {
@@ -20515,6 +20516,33 @@
        ],
        "description": "Filter by source type",
        "title": "Source Type"
+      }
+     },
+     {
+      "description": "页大小（数据源数）",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 200,
+       "description": "页大小（数据源数）",
+       "maximum": 1000,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "分页偏移",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "description": "分页偏移",
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
       }
      }
     ],

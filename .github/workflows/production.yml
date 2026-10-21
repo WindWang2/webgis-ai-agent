@@ -150,10 +150,13 @@ jobs:
         # docs/dev/ads-v1-source-onboarding.md §3 定为必过（0 错误才算过），
         # 但此前无任何 workflow/test 引用（#1734）—— config/sources/*.yaml
         # 的重复 ID / bbox 失真 / 明文凭据 / 能力声明与 adapter 不符从未在
-        # CI 现形。只依赖 pydantic + pyyaml（版本与 requirements.lock 对齐，
-        # TEST-10 pin 纪律），不装全量 dev-req —— lint lane 要保持快。
+        # CI 现形。只依赖 pydantic + pyyaml + requests（版本与 requirements.lock
+        # 对齐，TEST-10 pin 纪律），不装全量 dev-req —— lint lane 要保持快；
+        # requests 是能力声明核对 import app.services.data_fabric.registry 的
+        # 传递依赖（adapter → security → requests.adapters），漏装则整步
+        # ModuleNotFoundError 红——PR #1758 首次接线时即复现，已修。
         run: |
-          pip install pydantic==2.13.5 pyyaml==6.0.3
+          pip install pydantic==2.13.5 pyyaml==6.0.3 requests==2.34.2
           python scripts/check_source_registry.py
 
       - name: Install Frontend Deps
