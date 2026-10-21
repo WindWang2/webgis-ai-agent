@@ -63,3 +63,38 @@ ingest / query / map / replay 四条路径上语义身份不可对账，"数据�
   inputs 证据）；**后续工作**：MapSpec 重放/恢复面调用 `evaluate_reuse` 的生产接线、
   qualification 生产调用方传入 descriptor、recovery durable facts 写入
   descriptor_fingerprint（context_bridge 已备缝）。
+
+## 增补（G01 · 2026-10-21）：多角色绑定与恢复面接线
+
+原 Out of Scope 的三项后续工作，G01 落地如下（全部 additive，缺省 = 基线行为）：
+
+1. **多数据集 → 任务角色的权威绑定**（`dataset_semantics/role_binding.py`）：
+   会话语证按 ref_id 排序（≤16、零数据扫描）→ 每角色六态绑定
+   （bound/not_found/ambiguous/not_authorized/stale/partial）。同名/同证据
+   多候选 → `ambiguous` 带候选清单，**绝不取首个**；显式绑定 ref 越出会话
+   作用域 → `not_authorized` fail-closed（不泄漏指纹）；记录面指纹锚在场
+   （显式或证据路径命中）→ 复用 `evaluate_reuse` 判 stale。角色词表复用
+   `workflow_schema.DATA_ROLES`，绑定层与资格层状态词表显式分层不混用。
+   `primary_session_descriptor` 保留为单 descriptor 兼容 shim。
+2. **角色级资格供给**（`qualify_workflow_data_roles` 增 `role_evidence`）：
+   `{role → {descriptor, expected_descriptor_fingerprint}}` 在场时命中角色用
+   **各自**数据集事实裁决（多数据 session 第二数据集事实可达）；
+   `compile_workflow` / `compile_workflow_v4` 全链透传；生产入口
+   `semantic_tools.compile_workflow_semantics` 首编定 recipe → 绑定 →
+   角色证据为权威重编译（不再传 primary descriptor），输出
+   `data_role_bindings`（审计面）。
+3. **恢复链语义身份**（`project_runtime/resume.py`
+   `_reconcile_descriptor_semantics`）：durable resume 在载荷重水合后把旧
+   session 语义 store 的 descriptor 迁入新 session（指针改写指纹不变，
+   与 resume_anchor 同一模式），并按 MapSpec 快照 source 冻结指纹对账
+   （evaluate_reuse → valid/recompute/unknown）；verdict 落
+   `ResumeReceipt.descriptor_reconciliation`，漂移只披露不阻断（消费面
+   按 verdict 重评，不静默续渲染）。
+4. **metadata-only 兼容预检**（`dataset_semantics/preflight.py`）：
+   多数据联接的 CRS/bbox 相交/时间覆盖重叠（月精度，open-ended 不外推）/
+   同名字段单位/密度-分母/期望角色判据，typed gaps（Agent 可消费最小澄清）；
+   unknown ≠ pass（证据不足不判 compatible）；接入 semantic_tools 输出
+   `data_preflight`（advisory）。
+
+诊断速查见 `docs/dataset-readiness-diagnostic-matrix.md`；验收矩阵见
+`tests/unit/dataset_semantics/`（角色绑定/接线/恢复/预检/成都六场景）。

@@ -12,3 +12,5 @@
 | D8 | preflight 只读 descriptor/bbox/crs/temporal/units（metadata-only），不触数据 | 禁止每 turn 扫大表；深度检查走既有后台任务 | 即时扫描：违反资源纪律 |
 | D9 | 测试目录 tests/unit/dataset_semantics/（新建子目录） | 主责测试独立成区（提示要求）；引用既有 conftest | — |
 | D10 | 不跑全量后端套件（#1753 ~80% 挂起）；只跑目标目录 + ruff | 提示明确禁止无超时全量 | — |
+| D11 | planner finalize / chat plan_orchestrator / workflow_runtime 不注入 role evidence | planner 无 session 锚（_evaluate_workflow_contract 签名无 session_id，穿线需动 3+ 调用方）；语义证据生产已达 semantic_tools 真实入口（advisory 编译工具，含 data_role_bindings/data_preflight 审计面）；主链注入留作后续 additive 缝 | 大手术穿线：超出「小范围生产桥只碰实证必要的缝」边界 |
+| D12 | 时间判据月精度 + not_applicable 细分 | 复审 P1/P2：年粒度假 pass、静态数据误伤；open-ended 不外推端点 | 整年区间硬比：假结论 |
