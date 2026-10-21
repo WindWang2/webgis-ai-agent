@@ -7,11 +7,11 @@ clean origin/master 基线区分存量/新增。
 
 | # | 命令 | 覆盖 | 基线结果 |
 |---|---|---|---|
-| B1 | `python -m pytest tests/unit/gis/test_scientific_contracts_vnext.py tests/unit/gis/test_scientific_errors_v4.py -q --no-header` | 既有科学契约 | 待记录 |
-| B2 | `python -m pytest tests/unit/gis/test_algorithm_resolver.py -q --no-header`（若无此文件用 grep 找 resolver 测试） | resolver 既有行为 | 待记录 |
-| B3 | `python -m pytest tests/unit/gis_harness/test_profile_resolver_seam_v4.py -q --no-header` | resolver 事实缝 | 待记录 |
-| B4 | `python -m pytest tests/science_oracles/ -q --no-header -x --timeout=300` | 冻结语料回归 | 待记录 |
-| B5 | `python -m ruff check <changed paths>` | lint | 待记录 |
+| B1 | 同左 | 既有科学契约 | 47P（改动前后一致） |
+| B2 | resolver 相邻批：test_capability_registry_parity/test_algorithm_registry_phase2/test_gis_lib_registries/test_cost_model/test_reproducible_gis_runtime | resolver 既有行为 | 85P+26P（前后一致） |
+| B3 | 同左 | resolver 事实缝 | 45P（前后一致） |
+| B4 | 同左 | 冻结语料回归 | 2272P（W1 后） |
+| B5 | ruff check 全部改动路径 | lint | All checks passed |
 
 ## 新增（G02）
 
