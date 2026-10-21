@@ -95,7 +95,8 @@ class TestBehaviorInversion:
             + result.summary_line())
 
     def test_tier3_guard_inverted_must_error(self):
-        """治理防线反转：expect_error 移除后 tier-3 派发成功 = 假注入。"""
+        """结构一致性检查（行为证据在 TestTier3GuardBehavioral）：反转后
+        expect_error 必须确为 False（防篡改演练配置自身出错）。"""
         from .contracts import StepKind
         scenario = scenarios_by_id()["f15-tier3-governance"]
         data = scenario.model_dump(mode="json")

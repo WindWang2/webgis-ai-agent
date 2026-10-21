@@ -114,8 +114,11 @@ FACE_AUTHORITY: Dict[str, str] = {
 class Expectation(BaseModel):
     """一条可判定期望：对 TaskEvidence 投影的 path 断言。
 
-    ``expected_verdict``：该检查的目标判定（pass/fail/not_evaluated）——
-    负例场景的期望即 fail；评测统计以三态口径汇报。
+    ``expected_verdict``：该检查的目标判定（pass/fail/not_evaluated）。
+    语料口径注记：负例通过「对降级不变量的 pass 期望 + not_evaluated
+    诚实缺席钉扎 + 行为反转测试」达成（见 docs/quality §2 负例分层）；
+    expected_verdict="fail" 为受支持的 DSL 能力（单测覆盖），语料暂无
+    使用——若使用须配合反转防线防止恒绿。
     """
 
     id: str

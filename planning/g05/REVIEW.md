@@ -71,3 +71,65 @@
 3. P1 #3：最小修复为修正 runner 注释与 docs 诚实边界；理想修复为增加 turn 绑定副作用的可观测断言。
 4. P2 #4/#5：`.gitignore` 补 `/reports/` 与 `/tmp/`（两行）。
 5. P2 #6/#8/#14：文档以机器输出重生成热区图、修正 G05-F2 证据归因与「41→38」数字。
+
+## Round 2 复审（2026-10-22）
+
+- 复审员：第二轮独立 reviewer（未参与实现与 Round 1）；审查对象 = commit `f4474846`（清偿提交）相对 `e3ff7228` 的 diff + 当前代码实跑。
+- 方法：逐项核销 Round 1 findings（diff 精读 + 实测复现）、全量命令链终验、docs §2 热区图 231 格脚本逐格比对、compare 五场景手工构造实测、f09/f11 真跑取证。
+
+### 结论：APPROVE
+
+P1×3：2 项全清、1 项实质清偿（残留悬空文档引用，降级为非阻塞）。P2×7：5 清 / 1 部分 / 1 未清（均为非阻塞文档/口径项）。P3×6：5 清 / 1 清偿留残留措辞。无新回归引入；关键命令链全绿。无阻塞项，可合并。
+
+### 逐项核销表
+
+| Round 1 # | 级别 | 判定 | 证据（实测） |
+|---|---|---|---|
+| 1 | P1 | **已清偿** | `scripts/g05_task_acceptance.py:145` `was_ok, is_ok = _ok_of(prev), _ok_of(r)`；死表达式已删。手工构造旧格式基线（无 error 键）+ 同场景 fail → 输出 `NEW-FAIL f01... first_failing_stage=intent/f01-intent`，**exit 1**；missing 场景 → `MISSING f02a...`，**exit 1**；无变化 → exit 0；error 键回归 → `NEW-FAIL ... first_failing_stage=runner` exit 1；fixed+added → exit 0（语义正确）。单测 `TestCliCompareRegression` ×2 进 lane（45 内） |
+| 2 | P1 | **已清偿** | f09 重写为缺口披露型：title/docstring 与实测一致（分析放行）；假绿 `f09-failure-visible`（exists on status_counts）已删；新增 `f09-analysis-passes-through`（`plan.progress.status_counts.complete ge 1`）——**真跑实测 actual=1 pass**，polar warning 在场（`to_utm_gdf: ... polar ... EPSG:3413`），`f09-needs-execution-visible` actual=5（判据不放行）；not_evaluated 声明 `crs_domain_validation_gap` + tag `gap-disclosure`；note 明示「CRS 域校验落地后本期望需重校准」（tripwire 语义成立：校验落地 complete→0 时本期望翻红提醒重校准）。pin 同步重生成（21 scenarios，无漂移） |
+| 3 | P1 | **部分清偿（实质已诚实，残留非阻塞）** | runner.py:168-171 注释已删除虚假的「requirement IR / 记忆依赖」声明，改为诚实口径「该绑定的效果在本 lane 的证据面内不可直接观测」——失实陈述本身已清偿。**但**注释引用「见 docs/quality §3 边界声明」为悬空引用：docs §3（离线诚实语义）不含任何 turn 绑定边界声明（grep 全 docs/planning 无），commit message 所称「docs §3 边界声明」未落地。未增加可观测钉扎（Round 1 已标注为可选的理想修复） |
+| 4 | P2 | **已清偿** | `.gitignore:19 /reports/`：`git check-ignore reports/g05/run-x.json` 命中 exit 0；live probe `touch reports/.probe` 不出现在 git status |
+| 5 | P2 | **已清偿** | `.gitignore:20 /tmp/`：`git check-ignore tmp/g05-rasters/probe.tif` 命中 exit 0；live probe 不污染 status（采用 finding 建议的第一方案；栅格物理残留仍是本机 tmp 下 gitignored 文件，可接受） |
+| 6 | P2 | **已清偿** | 脚本逐格比对 docs §2 表格 vs corpus（21 行 × 11 列 = **231 格，0 错**，含 7 面 × 21 = 147 面格 + neg/多轮/恢复取消/缺口披露 4 标记列）；文档写入生成口径注记。21 行齐全无缺行 |
+| 7 | P2 | **部分清偿** | f11 诚实重标注：title「缺口披露（判据不放行）」+ tag `gap-disclosure` + not_evaluated 扩充 + docs §2 负例分层（注入敏感 f02b/f08/f15 vs 缺口披露 f04b/f09/f11/f18）——「负例标签名不副实」已修复。残留：f11 仍无注入差异化 tripwire 期望（单位检测落地不会使任何 f11 期望翻红），与 f09 的 complete-ge-1 tripwire 不对称 |
+| 8 | P2 | **已清偿** | G05-F2 行改为「W2 校准 f18 期望时发现…评审 Round 1 确认」+「f02b/f08 反转测试常驻保护」——与 test_task_failures.py 实际（TestBehaviorInversion 恰为 f02b/f08 两反转）+ 新增 TestEvaluatorOpBoundaries 一致 |
+| 9 | P2 | **未清偿** | `contracts.py:118` docstring「负例场景的期望即 fail」原文未动（git diff e3ff7228..f4474846 -- contracts.py 为空）；corpus 仍 0 条 fail 期望（71 pass + 15 not_evaluated）。docs §2 负例分层部分缓解了误读，但设计口径 vs 实现口径的矛盾陈述仍在。commit message 亦未声称清偿本项 |
+| 10 | P2 | **已清偿** | attribution.py:86-95 改为独立 `infra_error` 桶（authority 标注 "runner infrastructure (not the system under test)"）；单测 `test_runner_error_not_governance` 断言 governance_violation 缺席 / infra_error 在场。残留（轻微）：docs §5 仍写「九类」未提及 taxonomy 外的 infra_error 桶 |
+| 11 | P3 | **已清偿** | 新增 `TestTier3GuardBehavioral::test_tier3_inverted_actually_errors`：真跑 g05_runner + `assert not result.ok`（行为证据成立）；旧结构测试保留为补充（其「必居其一」承诺现有兄弟测试背书） |
+| 12 | P3 | **已清偿** | projections.py 重复赋值死行已删（diff 确认） |
+| 13 | P3 | **已清偿** | `build_registry()` 删、`auto_layers` 收集链删、conftest `g05_sid` fixture 删、`SMOKO_IDS`→`SMOKE_IDS`（diff 逐一确认） |
+| 14 | P3 | **已清偿** | docs §6「45 绿」与实测一致（本复审批 45 passed）；TEST_MATRIX 顶部加「规划稿，以 corpus 为准」口径注记；ledger 补 W1–W5 记账行 |
+| 15 | P3 | **已清偿** | reporting.py exists/absent 对 `{}` 对称处理（`!= {}` / `== {}`）；`TestEvaluatorOpBoundaries` ×3 钉死空容器对称 / not_in None=PASS·MISSING=NOT_EVALUATED / not_in 集合式互斥语义 |
+| 16 | P3 | **已清偿** | compare 增加 missing/added 判定与披露行；missing 使 exit 1（实测见 #1） |
+
+### 无新问题引入（diff e3ff7228..f4474846 审查）
+
+- **范围**：15 文件全部落在 G05 路径（tests/acceptance/gis_agent、scripts/g05_task_acceptance.py、planning/g05、docs/quality/g05、.gitignore、.goal-loop-ledger.md）；无生产/共享基建改动（out-of-scope grep 为空）。
+- **compare 重写**：五场景手工实测（真回归 exit 1 / missing exit 1 / 恒等 exit 0 / error 回归 exit 1+stage=runner / fixed+added exit 0）语义全部正确；added-only 不判失败（新场景非回归，合理）。
+- **exists/absent `{}` 语义变化**：heavy 全量真跑 21/21 ok、pass=71 fail=0 not_evaluated=15、mismatches=0（与 Round 1 同口径数字）——无既有期望被新语义误伤；唯一受 `exists({})` 行为影响的消费方正是被删除的假绿检查 f09-failure-visible。
+- **attribution infra_error**：TAXONOMY_CODES 九类原样（test_taxonomy_vocabulary 仍绿）；infra_error 仅在 attribute_run 输出层新增，attribute_runs 聚合按输出键迭代，自然携带；无既有归因路径回归。
+- **runner _run_turns 签名收窄**（去 auto_layers）：全 lane 45 绿证实无遗漏调用方。
+
+### 关键命令链终验（退出码实录）
+
+| # | 命令 | 结果 | 退出码 |
+|---|---|---|---|
+| 1 | `.venv/bin/pytest tests/acceptance/gis_agent -m cartography --no-cov --timeout=300 --timeout-method=thread -q` | **45 passed**（25.52s） | **0** |
+| 2 | `.venv/bin/ruff check tests/acceptance/ scripts/g05_task_acceptance.py` | All checks passed! | **0** |
+| 3 | `.venv/bin/python scripts/g05_task_acceptance.py run --profile smoke --out /tmp/g05-r2.json` | 5/5 ok；pass=25 fail=0 ne=3；mismatches=0 | **0** |
+| 4 | `.venv/bin/python scripts/g05_task_acceptance.py pin` | pin up-to-date（21 scenarios）无漂移 | **0** |
+| 5 | `.venv/bin/pytest tests/test_ci_local_gate_contract.py tests/test_pytest_module_name_uniqueness.py --no-cov --timeout=120 -q` | 19 passed（5.33s） | **0** |
+| 6 | （附加）`run --profile heavy --out /tmp/g05r2-heavy.json` | 21/21 ok；pass=71 fail=0 ne=15；mismatches=0 | **0** |
+| 7 | （附加）`git check-ignore reports/g05/run-x.json tmp/g05-rasters/probe.tif` | 两规则均命中（.gitignore:19,20） | **0** |
+
+### 残留风险表（合并风险评估）
+
+| 项 | 级别 | 风险 | 评估 |
+|---|---|---|---|
+| P1-3 残留 | P3（降级） | runner.py:171 注释引用「docs/quality §3 边界声明」悬空——docs §3 无 turn 绑定边界声明；commit message 声称的 docs 落地未兑现 | **non-blocker**：注释主体已诚实（不可观测性就地声明），虚假归因已删；建议合并前顺手在 docs §3 补两行声明或改注释指向本 REVIEW |
+| P2-9 未清偿 | P3（降级） | contracts.py:118「负例场景的期望即 fail」与 0 条 fail 期望的实现矛盾 | **non-blocker**：纯 docstring 口径；docs §2 分层已部分消歧 |
+| P2-7 残留 | P3（降级） | f11 无注入差异化 tripwire（单位检测落地不会翻红任何 f11 期望）；与 f09 的 tripwire 不对称 | **non-blocker**：诚实重标注已完成，无假绿；可作为 data-qualification 方向接线后的重校准备忘 |
+| 本轮新发现（轻微） | P3 | (a) docs §2「缺口披露」列（tag 驱动：f09/f11）与 §2 末分层 prose（f04b/f09/f11/f18）口径不一；(b) docs §5「九类」未提及 infra_error 第十桶 | **non-blocker**：纯文档一致性，不影响判定面 |
+| 旧结构测试残留 | P3 | test_tier3_guard_inverted_must_error（同义反复断言）仍在，行为性措辞由新兄弟测试背书 | **non-blocker** |
+
+**最终 verdict：APPROVE**——P1 全部实质清偿（P1-3 残留为悬空文档引用，非阻塞）、命令链全绿、无新回归、无越界。残留 5 项均为 non-blocker 文档/口径级，可合并后随手清偿。

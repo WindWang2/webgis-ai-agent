@@ -28,8 +28,8 @@ pytest tests/acceptance/gis_agent -m cartography --no-cov --timeout=120 -q
 ## 2. 覆盖热区图（场景 × 断言面）
 
 图例：● = 该面有 pass 级期望；○ = 该面有 not_evaluated 级期望（诚实缺席
-钉扎）；neg = 负例注入；gap = 缺口披露型（注入不改变判错面，钉扎系统
-现状红线，见 §3/§4）。**本表由脚本从 corpus 逐期望生成**（生成口径：
+钉扎）；neg = 负例注入；gap = 语料 tag 标记的缺口披露型（f09/f11；f04b/f18
+在分层口径下同属缺口披露型——其判错面亦不随注入翻转，见下方负例分层）。**本表由脚本从 corpus 逐期望生成**（生成口径：
 `python -c "from tests.acceptance.gis_agent.corpus import all_scenarios; ..."`
 按 face×expected_verdict 聚合），corpus 变更后须同步重生成。
 
@@ -86,6 +86,15 @@ machine-readable 版本：`python scripts/g05_task_acceptance.py report
 这两条不是场景缺陷，而是被 G05 钉扎的系统红线：**数据源缺席时任务
 判据 fail-closed，已交付的部分产品仍可断言**。
 
+### 边界声明：turn 绑定缝（verifiedTurnId）
+
+runner 镜像生产路由把 `verifiedTurnId` 写入每个 dispatch（生产中由
+pi-tools 路由在 token 验证后写入）。诚实边界：该绑定驱动的 18 阶段链
+发射等副作用在本 lane 的证据投影内**不可直接观测**（Round 1 篡改演练
+D2 证实：移除绑定全 lane 仍绿）——requirement 文档的创建实际经
+dispatch 服务的 session 通道达成，不依赖该字段。保留镜像是为了生产
+路径一致性，不声称其效果被钉扎。
+
 ## 4. 真实发现（本方向产出、如实披露）
 
 | # | 发现 | 证据 | 处置 |
@@ -101,7 +110,9 @@ stale_render / lost_interaction / export_parity / unsupported /
 governance_violation`。归因链：失配检查 → face → 权威模块
 （`contracts.FACE_AUTHORITY`）→ 检查定位。CLI `report` 的
 `first_failing_stage` 即首坏环节；`attribution.attribute_runs` 提供批量
-热区。底层工具执行面分类复用 `HarnessFailureClass`（只读）。
+热区。runner 级故障（超时/基础设施错误）独立入 `infra_error` 桶，不计入
+上述九类（不是被审系统的治理违例）。底层工具执行面分类复用
+`HarnessFailureClass`（只读）。
 
 ## 6. 质量门（本地，不依赖线上 CI）
 
