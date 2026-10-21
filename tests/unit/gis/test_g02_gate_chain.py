@@ -392,3 +392,64 @@ class TestReviewFollowupPins:
         source = inspect.getsource(product_runtime)
         assert '"science_findings"' in source
         assert '"science_blocked"' in source
+
+
+# ── 6. 复审轮 P3 加固 ────────────────────────────────────────────────
+class TestReroundPins:
+    def test_bounded_projection_keeps_numeric_zero(self):
+        # 复审 P3-1：record 无 numeric 字段 → 用鸭子类型钉住 v==0 半边
+        # （cost_score=0.0 竞争证据不得被 truthiness 投影剥除）。
+        from types import SimpleNamespace
+
+        from app.services.gis_harness.tools import bounded_selection_evidence
+
+        class _WithModelDump(SimpleNamespace):
+            def model_dump(self):
+                return dict(self.__dict__)
+
+        stub = _WithModelDump(capability="c", status="resolved",
+                              cost_score=0.0, empty_list=[], reason="")
+        d = bounded_selection_evidence(stub)
+        assert d["cost_score"] == 0.0
+        assert "empty_list" not in d and "reason" not in d
+
+    def test_stale_seed_science_block_invalidates_reuse(self, monkeypatch):
+        # 复审 P3-2：rerun 复用路径的科学硬拒 → seed 判 stale（不静默复用）。
+        from types import SimpleNamespace
+
+        from app.schemas.project_schema import WorkflowStepSpec
+        from app.services.workflow_engine import WorkflowEngine as WE
+
+        spec = WorkflowStepSpec(
+            step_id="s1", tool_name="gwr_regression", capability="gwr",
+            algorithm_preference="spatial.gwr")
+
+        class _AllRejectedResolver:
+            def resolve(self, capability, available_tools=None, profile=None,
+                        **kw):
+                return SimpleNamespace(
+                    status="unavailable", tool="", algorithm="",
+                    reason="scientific_precondition:x:y:INVALID_METHOD",
+                    rejected=["scientific_precondition:x:y:INVALID_METHOD"],
+                    fallback_trail=[], fallback_candidates=[],
+                    not_evaluated=[], scientific_warnings=[],
+                    required_transformations=[])
+
+        import app.lib.gis.algorithm_resolver as ar_mod
+        monkeypatch.setattr(
+            ar_mod, "get_algorithm_resolver",
+            lambda: _AllRejectedResolver(), raising=True)
+
+        class _Reg:
+            def list_tools(self):
+                return ["gwr_regression"]
+
+        # _stale_seed_steps(steps, seed_completed, tool_registry, ...)
+        # 是 async staticmethod；画像由其内部按 session 派生（stub resolver
+        # 不依赖画像即返回科学拒绝）。
+        import asyncio
+
+        stale = asyncio.run(WE._stale_seed_steps(
+            [spec], seed_completed=["s1"], tool_registry=_Reg(),
+            available={"gwr_regression"}))
+        assert stale == ["s1"], "科学硬拒的种子步必须判 stale 重执行"
