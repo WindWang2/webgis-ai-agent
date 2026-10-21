@@ -153,6 +153,9 @@ def _interval(d: Any) -> Optional[Tuple[int, int, bool]]:
         # end 缺席/open-ended：区间未知，止点保守取同起点（不外推）。
         return start_val, start_val, False
     end_val = pe[0] * 12 + (pe[1] - 1 if pe[1] else 11)
+    if end_val < start_val:
+        # 倒挂区间（start > end，病态元数据）→ 不可判（review N1）。
+        return None
     month_precise = ps[1] is not None and pe[1] is not None
     return start_val, end_val, month_precise
 
@@ -230,11 +233,15 @@ def preflight_multi_dataset(
     """
     report = PreflightReport()
     # 形状归一：接受 {标签 → descriptor} 或 role_qualification_evidence 的
-    # 产物形状 {角色 → {descriptor, expected_descriptor_fingerprint}}。
+    # 产物形状 {角色 → {descriptor, expected_descriptor_fingerprint}}；
+    # 条目 descriptor 缺席（None 形状）按未绑定跳过（review N2）。
     items: List[Tuple[str, Any]] = []
     for k, v in list(datasets.items())[:MAX_PREFLIGHT_DATASETS]:
-        if isinstance(v, dict) and v.get("descriptor") is not None:
-            v = v.get("descriptor")
+        if isinstance(v, dict):
+            inner = v.get("descriptor")
+            if inner is None:
+                continue
+            v = inner
         if v is not None:
             items.append((str(k)[:64], v))
     if not items:

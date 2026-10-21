@@ -416,10 +416,13 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                             ]
                             # WP-C：绑定证据面的 metadata-only 兼容预检
                             # （typed gaps 供澄清回路；零数据扫描）。
+                            # expected_roles 只取 required 角色（review N3：
+                            # 可选角色缺席不构成任务缺口）。
                             data_preflight = preflight_multi_dataset(
                                 evidence_map,
                                 expected_roles=tuple(
                                     r.role for r in wf_profile.data_roles
+                                    if getattr(r, "required", True)
                                 )).to_bounded_dict()
                 except Exception:  # noqa: BLE001 — 角色接线失败 = 原行为
                     logger.warning(

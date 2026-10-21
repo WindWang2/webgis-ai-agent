@@ -227,3 +227,20 @@ def test_same_year_different_months_not_false_pass():
     b = _descriptor(key="b", coverage=("2021-11", "2021-12"))
     rep = preflight_multi_dataset({"a": a, "b": b})
     assert any(g.code == "PREFLIGHT_TEMPORAL_DISJOINT" for g in rep.gaps)
+
+
+def test_inverted_coverage_interval_not_judged():
+    """review N1：倒挂区间（start>end 病态元数据）→ 不可判，不产假缺口。"""
+    a = _descriptor(key="a", coverage=("2021-12", "2021-01"))
+    b = _descriptor(key="b", coverage=("2021-06", "2021-07"))
+    rep = preflight_multi_dataset({"a": a, "b": b})
+    assert not any(g.code == "PREFLIGHT_TEMPORAL_DISJOINT" for g in rep.gaps)
+
+
+def test_none_descriptor_entry_skipped():
+    """review N2：{role: {"descriptor": None}} 形状按未绑定（不假 pass）。"""
+    a = _descriptor(key="a")
+    rep = preflight_multi_dataset(
+        {"subject": {"descriptor": None}, "other": a},
+        expected_roles=("subject",))
+    assert any(g.code == "PREFLIGHT_ROLE_MISSING" for g in rep.gaps)
