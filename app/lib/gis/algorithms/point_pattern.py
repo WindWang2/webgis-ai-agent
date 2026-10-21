@@ -478,7 +478,10 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
     ParameterContract(
         # v2（Foundation V2 A3）：可选 envelopes（0=关，输出键不变）；
         # additive —— 旧工具按名取参不受新默认键影响，parity 只查必填参数。
-        id="ripley_k_analysis", version=2,
+        # v3（G03 对账修正）：envelopes 默认 99→0、下限 1→0 —— 工具路径
+        # 此前从未把 envelopes 传进实现（实现默认 0 = 纯描述），旧默认 99
+        # 是「文档里模拟了、实际没跑」的声明漂移；工具同步暴露透传。
+        id="ripley_k_analysis", version=3,
         description="Ripley's K：r 网格步数、最大半径比例与可选 CSR 包络。",
         parameters=[
             ParameterSpec(
@@ -618,10 +621,6 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 description="r_max = 比例 × min(窗宽,窗高)；上限 0.5（半窗）",
             ),
             ParameterSpec(
-                # G03 对账修正：契约默认与工具现值对齐 —— 工具路径此前从未
-                # 把 envelopes 传进实现（实现默认 0 = 纯描述），契约旧默认
-                # 99 是「文档里模拟了、实际没跑」的声明漂移。默认 0（描述
-                # 性），>0 输出 CSR 包络与秩 p 值（固定种子 42）。
                 name="envelopes", type="integer", default=0, minimum=0, maximum=499,
                 unit="count",
                 description="CSR 模拟包络次数（0=纯描述；固定种子 42）",

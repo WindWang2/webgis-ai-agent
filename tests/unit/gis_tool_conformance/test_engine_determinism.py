@@ -88,7 +88,10 @@ def test_single_tool_audit_failure_does_not_break_summary():
     by_tool = {rep.tool: rep for rep in s.reports}
     assert by_tool["tool_001"].overall == STATUS_FAIL
     assert by_tool["tool_001"].faces[0].reason == "audit_error"
-    assert by_tool["tool_000"].overall != STATUS_FAIL or True  # 其余工具不受影响
+    # 其余工具不受单点审计缺陷影响：保持 pass 且无 audit_error 面
+    for name in ("tool_000", "tool_002", "tool_003"):
+        assert by_tool[name].overall != STATUS_FAIL, name
+        assert all(v.reason != "audit_error" for v in by_tool[name].faces), name
 
 
 def test_to_dict_detail_bounded():

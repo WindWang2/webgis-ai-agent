@@ -42,7 +42,7 @@ app/tools/registry.py register()/@tool        ← 唯一注册权威(_metadata �
 
 ## 3. 与 open PR 的交叠(详矩阵见 PR_OVERLAP_MATRIX.md)
 
-- **#1758**(OPEN,~429 文件):交叠仅 4 文件,其中 3 个(evidence.py/geocompute_tools.py/cartography_tools.py)本方向**不触碰**;`execution_catalog_staleness.py` 的 #1758 改动是容错加固,本方向不改该文件,语义兼容
+- **#1758**(OPEN,~429 文件):点名交叠 4 文件,其中 3 个(evidence.py/geocompute_tools.py/cartography_tools.py)本方向**不触碰**;`execution_catalog_staleness.py` 的 #1758 改动是容错加固,本方向不改该文件,语义兼容。另有 2 处 hunk 级交叠(spatial_stats.py、pyproject.toml)在 PR_OVERLAP_MATRIX 修正披露(W5 review 发现)
 - **#1701/#1698**(dependabot):requirements 上界,零交叠
 - 已 merge 的 #1620/#1755/#1756/#1757:是本方向的**依赖基线**(复用其 ABI 与错误码表),非竞争
 

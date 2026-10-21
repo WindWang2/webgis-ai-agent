@@ -404,7 +404,12 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             max_distance_ratio=float(params["max_distance_ratio"]),
             envelopes=int(params["envelopes"]),
         )
-        payload = {"success": True, "summary": result["summary"], "data": result}
+        # spatial_operator 统一包装成 GeoAnalysisResult：数据体在 .data、
+        # 摘要在 .summary（与同文件 quadrat/moran/geary 的消费惯例一致）。
+        # 此前 result["summary"] 对 GeoAnalysisResult 下标访问必抛
+        # TypeError —— master 上该工具 dispatch 实际全坏（G03 执行面
+        # 审计发现,静态对账看不见的实现层缺陷）。
+        payload = {"success": True, "summary": result.summary, "data": result.data}
         _attach_scientific_evidence(
             payload, "point_pattern.ripley_k", tool="ripley_k_analysis",
             parameters_applied={
@@ -412,7 +417,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 "max_distance_ratio": float(params["max_distance_ratio"]),
                 "envelopes": int(params["envelopes"]),
             },
-            feature_count=result.get("n"),
+            feature_count=result.data.get("n"),
             crs=extract_declared_crs(data) or "EPSG:4326",
         )
         return payload

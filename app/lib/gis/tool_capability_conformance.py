@@ -39,8 +39,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "STATUS_PASS",
@@ -454,11 +457,10 @@ def _audit_dispatch(descriptor: Any) -> FaceVerdict:
 
 #: 输出语义类型 → dispatch chokepoint 是否**无条件**把 FC 形状结果铸成
 #: geojson ref（tool_dispatch_service：顶层 FC / ``geojson`` 键 / ``data``
-#: 包裹 FC 三种形状都入 session ref store）。对这些输出族，ref 产出是
-#: 结构性事实，不依赖逐工具 produced_refs 声明。
-_STRUCTURAL_REF_OUTPUT_TYPES = frozenset({
-    "geojson", "geojson_fc", "geojson_feature", "geojson_layer",
-})
+#: 包裹 FC 三种形状都入 session ref store）。集合只收**形状可证**的成员：
+#: ``geojson_fc`` 与 FC 形状规则一一对应；更宽泛的 "geojson"（可能是裸
+#: Feature）不满足任何形状条件，不纳入 —— 宁可 warning 也不虚构 pass。
+_STRUCTURAL_REF_OUTPUT_TYPES = frozenset({"geojson_fc"})
 
 
 def _audit_result(descriptor: Any) -> FaceVerdict:
@@ -697,11 +699,24 @@ def audit_registry_conformance(
             break
         try:
             reports.append(audit_tool_conformance(name, facts))
-        except Exception:  # noqa: BLE001 — 单工具审计缺陷不得中断全量报告
+        except Exception as exc:  # noqa: BLE001 — 单工具审计缺陷不得中断全量报告
+            logger.warning(
+                "[tool-conformance] audit raised for %s: %s: %s",
+                name, type(exc).__name__, exc, exc_info=True)
+            # 降级报告保持 8 面不变式（消费者按 face 名取值，缺面=KeyError）：
+            # 全面 not_evaluated + registration 面 fail，异常细节进日志与 detail。
             reports.append(ToolConformanceReport(
                 tool=name, tool_id=f"{name}@?", overall=STATUS_FAIL,
-                faces=(_verdict(FACE_REGISTRATION, STATUS_FAIL, "audit_error",
-                                "auditor raised; see logs"),),
+                faces=tuple(sorted(
+                    (
+                        _verdict(
+                            f,
+                            STATUS_FAIL if f == FACE_REGISTRATION
+                            else STATUS_NOT_EVALUATED,
+                            "audit_error",
+                            f"auditor raised {type(exc).__name__}; see warning log",
+                        ) for f in CONFORMANCE_FACES
+                    ), key=lambda v: v.face)),
                 fingerprint=""))
     by_overall: Dict[str, int] = {}
     reason_counts: Dict[str, int] = {}
