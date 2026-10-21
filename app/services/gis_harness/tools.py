@@ -252,6 +252,18 @@ def _product_composition_identity(
         return None
 
 
+def bounded_selection_evidence(record) -> dict:
+    """G02：selection → LLM 面证据的有界投影。
+
+    空值字段（""/[]/None）不入证据 —— 科学 evidence 字段 additive 后
+    空语法占位会使大载荷产品（G4 150k POI 的 24KB descriptor 预算，
+    test_benchmark_harness 钉扎）无谓超限；数值 0 是合法证据值（如
+    cost_score=0.0）不剥（review P3-2）。非空证据照常全量转录，
+    record 本体不受影响（tests/unit/gis/test_g02_gate_chain.py 钉扎）。
+    """
+    return {k: v for k, v in record.model_dump().items() if v or v == 0}
+
+
 def register_gis_harness_tools(registry: ToolRegistry):
     """注册 GIS Harness 工具（tier 1：意图解析廉价且恒可用）。"""
 
@@ -1448,11 +1460,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     for r in plan.data_requirements
                 ],
                 "algorithm_selection": [
-                    # G02：有界投影 —— 空值字段（""/[]）不入 LLM 面证据
-                    # （科学 evidence 字段 additive 后空语法占位会使大载荷
-                    # 产品（G4 150k POI 的 24KB descriptor 预算）无谓超限；
-                    # 非空证据照常全量转录，record 本体不受影响）。
-                    {k: v for k, v in r.model_dump().items() if v}
+                    bounded_selection_evidence(r)
                     for r in plan.algorithm_selections
                 ],
                 "map_model_selection": plan.map_model_selection,

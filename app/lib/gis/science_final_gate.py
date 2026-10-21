@@ -208,10 +208,11 @@ def run_science_final_gate(
                         f"plan={plan_digest} execute={exec_digest}"
                         "（数据事实在 plan 后变化；执行门已按新事实复验）")))
 
-    # 有界 + 截断后重算
+    # 有界 + 截断后重算（disclosures 单条同 detail 上界 —— review P3-4：
+    # frm/to 可来自任意鸭子类型 selection，不依赖注册表 id 约束时防溢出）
     findings = findings[:_MAX_FINDINGS]
     return ScienceGateResult(
         findings=findings,
         blocked=blocked,
-        disclosures=disclosures[:8],
+        disclosures=[d[:_MAX_DETAIL] for d in disclosures[:8]],
     )

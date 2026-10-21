@@ -139,8 +139,13 @@ class WorkflowEngine:
 
     #: G02：执行期科学硬拒码前缀。这些拒绝只在画像事实在场时才可能产生
     #: （resolver 对事实缺席一律 deferred 放行），因此命中即为**事实
-    #: 支持的科学违反**（plan→execute 之间数据变化的 TOCTOU 硬风险），
+    #: 支持科学前提的违反**（plan→execute 之间数据变化的 TOCTOU 硬风险），
     #: 执行入口必须 fail-closed，不得静默回退 recorded tool。
+    #:
+    #: 边界取舍（保守兼容，review P3-2）：missing_fields /
+    #: input_type_mismatch / over_render_cap 同为事实在场拒绝，但属数据
+    #: 契约/渲染规模面而非方法学前提面 —— 保持兼容回退（重放旧 manifest
+    #: 不被错杀）；升级为硬拒须先审全量历史 manifest 的重放面。
     SCIENCE_REJECTION_PREFIXES = (
         "scientific_precondition:",
         "crs_class_mismatch:",
@@ -1409,6 +1414,12 @@ class WorkflowEngine:
             _tool, _cap, algo, evidence = WorkflowEngine.resolve_step_tool(
                 spec, tool_registry, available=available, profile=step_profile
             )
+            # G02（review P2-3）：复用种子步同样受科学硬拒约束 —— 数据
+            # 事实已违反方法前提的旧结果不得静默复用（fail-closed 与主
+            # 执行路径一致）。
+            if evidence.get("science_hard_block"):
+                stale.append(sid)
+                continue
             if evidence.get("resolver_status") != "resolved":
                 continue  # registry unavailable → keep honest reuse
             recorded = spec.algorithm_preference or ""

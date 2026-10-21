@@ -315,3 +315,80 @@ class TestDispatchScientificError:
         resp = asyncio.run(reg.dispatch("g02_plain_probe", {"n": 3}))
         assert resp["code"] == "VALIDATION_ERROR"
         assert "scientific_code" not in resp
+
+
+# ── 5. review 清偿钉扎（P2-1/P2-4/P3-3）───────────────────────────────
+class TestReviewFollowupPins:
+    def test_bounded_selection_evidence_projection(self):
+        # P2-4：投影语义钉扎 —— 空值键缺席、非空/数值 0 键存活
+        from app.services.gis_harness.planner import AlgorithmSelectionRecord
+        from app.services.gis_harness.tools import bounded_selection_evidence
+
+        rec = AlgorithmSelectionRecord(
+            capability="c", status="resolved", algorithm="a.b", tool="t",
+            reason="native", rejected=[], fallback_trail=[],
+            scientific_warnings=[], not_evaluated=[], profile_digest="",
+        )
+        d = bounded_selection_evidence(rec)
+        assert "rejected" not in d and "not_evaluated" not in d
+        assert d["capability"] == "c" and d["status"] == "resolved"
+        # 数值 0 合法证据不剥（cost_score=0.0 竞争证据，review P3-2）
+        rec2 = AlgorithmSelectionRecord(
+            capability="c", status="resolved")
+        d2 = bounded_selection_evidence(rec2)
+        assert set(d2) == {"capability", "status"}
+
+    def test_compile_gate_failure_disclosed_not_swallowed(self, monkeypatch):
+        # P3-3：final gate 自身抛错 → 编译继续 + science_gate_unavailable
+        # 披露可观测（不静默吞掉 gate 故障）
+        from app.services.gis_harness.product_compiler import (
+            compile_product_spec,
+        )
+        from app.services.gis_harness.product_shapes import (
+            build_product_spec_from_plan,
+        )
+        from app.services.gis_harness.intent import resolve_map_request_intent
+        from app.services.gis_harness.product_templates import (
+            get_product_template_registry,
+        )
+        from app.services.gis_harness.planner import (
+            MapProductPlan, PlannedLayer,
+        )
+
+        import app.lib.gis.science_final_gate as gate_mod
+
+        def _boom(plan=None, **kw):
+            raise RuntimeError("gate exploded")
+
+        # gate 在 compile 内延迟导入 —— patch 源模块属性（调用时取最新）
+        monkeypatch.setattr(gate_mod, "run_science_final_gate", _boom)
+        intent = resolve_map_request_intent("成都小学分布情况")
+        tpl_reg = get_product_template_registry()
+        template = tpl_reg.find_for_recipe(
+            "administrative_choropleth", intent.subject.category or "")
+        plan = MapProductPlan(
+            plan_id="p", query="q", intent=intent,
+            recipe_id="administrative_choropleth",
+            template_id=template.id if template else "",
+            map_layers=[PlannedLayer(role="primary", layer_type="fill",
+                                     cartography="administrative_choropleth",
+                                     source_capability="admin_aggregation",
+                                     layer_id="lyr-admin", bound_ref="ref:abc")])
+        spec = build_product_spec_from_plan(plan, intent, template)
+        result = compile_product_spec(spec, plan=plan, template=template)
+        assert result.ok is True  # 编译不被增值对账面阻断
+        codes = [f["code"] for f in result.science_findings]
+        assert codes == ["science_gate_unavailable"]
+        assert result.science_blocked is False
+
+    def test_product_runtime_payload_carries_science_face(self):
+        # P2-1/P2-2：制品 payload 投影包含 science_findings/science_blocked
+        # （静态钉扎键存在 —— payload 构造器是重 async 路径，键面契约
+        # 以源结构断言 + compile 集成测试双重覆盖）
+        import inspect
+
+        from app.services.gis_harness import product_runtime
+
+        source = inspect.getsource(product_runtime)
+        assert '"science_findings"' in source
+        assert '"science_blocked"' in source

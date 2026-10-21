@@ -125,9 +125,10 @@ def build_method_use_contract(algorithm_id: str) -> MethodUseContract:
     if not capabilities:
         findings.append("no_capability_binding")
 
+    bounded_preconditions = list(algo.scientific_preconditions)[:12]
     precond_desc = {
         pid: _precondition_description(pid)
-        for pid in algo.scientific_preconditions
+        for pid in bounded_preconditions
     }
     for pid, desc in precond_desc.items():
         if not desc:
@@ -150,7 +151,9 @@ def build_method_use_contract(algorithm_id: str) -> MethodUseContract:
         else:
             contract_id = contract.id
             contract_version = contract.version
-            for spec in contract.parameters:
+            # P3-1（review）：显式截断到模型 max_length —— 超限参数集
+            # 截断而非触发 ValidationError（模块契约：绝不抛错）。
+            for spec in contract.parameters[:24]:
                 parameters.append(ContractParameter(
                     name=spec.name,
                     type=spec.type,
@@ -188,7 +191,7 @@ def build_method_use_contract(algorithm_id: str) -> MethodUseContract:
         unit_requirements=algo.unit_requirements,
         geometry_requirements=list(algo.geometry_requirements)[:8],
         min_features=algo.min_features,
-        scientific_preconditions=list(algo.scientific_preconditions)[:12],
+        scientific_preconditions=bounded_preconditions,
         precondition_descriptions=precond_desc,
         parameters=parameters,
         parameter_contract_id=contract_id,
