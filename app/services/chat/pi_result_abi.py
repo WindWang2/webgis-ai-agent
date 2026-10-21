@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 RESULT_ABI_VERSION = "pi_result.v1"
 RESULT_ABI_POLICY = "pi_result_abi.v1"
 
+#: 取消路径机器码（H01：收编进 dispatch_reason_codes 单一事实源）。
+OPERATION_CANCELLED = "OPERATION_CANCELLED"
+
 #: 总闸（默认 ON；=0 → details 不挂 envelope，master 行为）。
 PI_RESULT_ABI_ENV = "PI_RESULT_ABI"
 
@@ -71,7 +74,7 @@ def build_result_envelope(
     if cancelled:
         envelope["status"] = "cancelled"
         envelope["summary"] = "Tool execution was cancelled before completion."
-        envelope["error"] = {"class": "cancelled", "code": "OPERATION_CANCELLED"}
+        envelope["error"] = {"class": "cancelled", "code": OPERATION_CANCELLED}
         return envelope
 
     status = str(getattr(result, "status", "") or "")
@@ -116,17 +119,18 @@ def build_result_envelope(
     evidence: Dict[str, Any] = {}
     capability_evidence = getattr(result, "capability_evidence", None)
     if isinstance(capability_evidence, dict):
-        evidence["capability_bind"] = {
-            k: capability_evidence[k]
-            for k in ("decision", "code", "capability_id")
-            if k in capability_evidence
-        }
+        # H01（K1）：投影 capability_bind 的真实生产者键
+        # （capability_bind.py CapabilityBindOutcome.evidence）——master 曾抽
+        # ``decision/code/capability_id``（生产者无这些键）导致 capability id
+        # 永远丢失。全部有界，无 payload 泄漏。
+        evidence["capability_bind"] = _bounded_capability_evidence(
+            capability_evidence
+        )
     action_evidence = getattr(result, "action_evidence", None)
     if isinstance(action_evidence, dict):
-        evidence["action_ir"] = {
-            k: action_evidence[k]
-            for k in ("decision", "code") if k in action_evidence
-        }
+        # H01（K1）：action IR evidence 真实键（gis_action/service.py）——
+        # master 曾抽 ``decision/code`` 恒空导致整键省略、plan_id 不可见。
+        evidence["action_ir"] = _bounded_action_evidence(action_evidence)
     if evidence:
         envelope["evidence"] = evidence
 
@@ -149,14 +153,73 @@ def build_result_envelope(
     return envelope
 
 
+def _bounded_capability_evidence(ev: Dict[str, Any]) -> Dict[str, Any]:
+    """capability_bind evidence → 有界投影（键与生产者 ``capability_bind.py``
+    逐位对齐；alternatives 压成 capability 字符串防嵌套泄漏）。"""
+    out: Dict[str, Any] = {}
+    for key in ("action", "capability", "status", "code"):
+        value = ev.get(key)
+        if value:
+            out[key] = str(value)[:128]
+    if not out.get("capability"):
+        # allowed 路径 capability id 在 ``rank_capability``（命中候选行）。
+        rank_cap = ev.get("rank_capability")
+        if rank_cap:
+            out["capability"] = str(rank_cap)[:128]
+    reason_codes = [str(c)[:64] for c in (ev.get("reason_codes") or []) if c]
+    if reason_codes:
+        out["reason_codes"] = reason_codes[:4]
+    alternatives: List[str] = []
+    for alt in (ev.get("alternatives") or [])[:2]:
+        if isinstance(alt, dict):
+            # 生产者形状（capability_bind.py 全部三路径）是 {"kind","id",...}
+            # —— id 是替代能力/工具名；"capability"/"tool" 仅防御性兼容。
+            name = (
+                alt.get("id") or alt.get("capability")
+                or alt.get("tool") or ""
+            )
+            if name:
+                alternatives.append(str(name)[:128])
+        elif alt:
+            alternatives.append(str(alt)[:128])
+    if alternatives:
+        out["alternatives"] = alternatives
+    return out
+
+
+def _bounded_action_evidence(ev: Dict[str, Any]) -> Dict[str, Any]:
+    """action IR evidence → 有界投影（键与生产者 ``gis_action/service.py``
+    逐位对齐；只取标识/状态/finding 码，不取 args 内容）。"""
+    out: Dict[str, Any] = {}
+    for key in ("plan_id", "kind", "status"):
+        value = ev.get(key)
+        if value:
+            out[key] = str(value)[:64]
+    finding_codes = [str(c)[:64] for c in (ev.get("finding_codes") or []) if c]
+    if finding_codes:
+        out["finding_codes"] = finding_codes[:4]
+    return out
+
+
 def _error_class(error_msg: str, raw: Any) -> str:
-    """错误分类（封闭词表；不透传原始异常文本）。"""
+    """错误分类（封闭词表 ``dispatch_reason_codes.ERROR_CLASSES``；不透传
+    原始异常文本）。
+
+    H01（K7）：registry/dispatch 权威机器码先经确定性映射
+    （``ERROR_CLASS_BY_CODE``），文本匹配仅作无结构错误的兜底。
+    """
     if isinstance(raw, dict):
-        code = str(raw.get("code") or raw.get("error") or "")
-        if code == "CAPABILITY_INELIGIBLE":
-            return "capability_ineligible"
-        if "validation" in code.lower():
-            return "schema_validation"
+        code = str(raw.get("code") or raw.get("error") or "").strip()
+        if code:
+            from app.services.gis_harness.hotpath_convergence.dispatch_reason_codes import (
+                ERROR_CLASS_BY_CODE,
+            )
+
+            mapped = ERROR_CLASS_BY_CODE.get(code)
+            if mapped:
+                return mapped
+            if "validation" in code.lower():
+                return "schema_validation"
     text = (error_msg or "").lower()
     if "timeout" in text or "timed out" in text:
         return "timeout"

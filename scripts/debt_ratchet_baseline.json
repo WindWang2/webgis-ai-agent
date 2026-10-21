@@ -256,6 +256,7 @@
     "app/services/gis_harness/skills/hotpath.py": 1,
     "app/services/gis_harness/skills/situation.py": 1,
     "app/services/gis_harness/template_catalog.py": 1,
+    "app/services/gis_harness/tools.py": 1,
     "app/services/gis_harness/trace_store.py": 4,
     "app/services/gis_harness/visual_observation/blob_refs.py": 1,
     "app/services/gis_harness/visual_observation/store.py": 1,
@@ -348,7 +349,7 @@
     "scripts/measure_scenario_timing.py": 1
   },
   "god_modules": {
-    "app/agent_pi_bridge.py": 3327,
+    "app/agent_pi_bridge.py": 3336,
     "app/api/routes/chat.py": 2451,
     "app/extensions_platform/host.py": 2165,
     "app/lib/cartography/semantic_checks.py": 2584,
@@ -359,8 +360,8 @@
     "app/services/chat/execution_engine.py": 3199,
     "app/services/data_fabric/query/federation.py": 2380,
     "app/services/geocompute/executor.py": 2393,
-    "app/services/gis_harness/planner.py": 2098,
-    "app/services/gis_harness/tools.py": 2185,
+    "app/services/gis_harness/planner.py": 2170,
+    "app/services/gis_harness/tools.py": 2265,
     "app/services/modelops/engine.py": 2319,
     "app/tools/advanced_spatial.py": 2842,
     "app/tools/registry.py": 2082,
@@ -1012,6 +1013,6 @@
     "scripts/situation_inspect.py": 1,
     "scripts/symbology_audit.py": 1
   },
-  "unannotated_defs_pct": 10.93,
-  "dict_str_any": 6978
+  "unannotated_defs_pct": 10.92,
+  "dict_str_any": 7018
 }

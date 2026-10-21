@@ -224,6 +224,17 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "hillshade_not_vectorizable", "warning",
             "山体阴影图层无法以矢量形式表达，已在导出件中省略（layer: {detail}）",
         ),
+        # —— H02（任务书 §D）SVG 矢量链 ref 水合披露 ——
+        RenderDiagnosticSpec(
+            "layer_ref_unavailable", "warning",
+            "图层引用的数据在矢量导出时不可用（未水合 inline 数据），"
+            "该层未进入导出件（layer: {detail}）",
+        ),
+        # —— H02（任务书 §C）版面文本确定性截断披露 ——
+        RenderDiagnosticSpec(
+            "title_truncated", "warning",
+            "标题/副标题超出确定性上限已截断（{detail}）",
+        ),
         RenderDiagnosticSpec(
             "vector_pdf_unavailable", "warning",
             "服务端矢量 PDF 引擎不可用，已回退栅格导出",
@@ -450,6 +461,17 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "hillshade_not_vectorizable": (
         "app.services.mapspec_to_svg",
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    # H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（双端孪生发射）
+    "layer_ref_unavailable": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    # H02（任务书 §C）：版面文本截断披露（exporter/vector-svg-export 发射；
+    # layout-description 置 truncated 标记为单源决策点）
+    "title_truncated": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/vector-svg-export.ts",
     ),
 }
 

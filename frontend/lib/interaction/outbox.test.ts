@@ -63,8 +63,13 @@ function createHarness(overrides: Partial<InteractionOutboxOptions> = {}): Harne
     respondWith: (factory) => { responder = factory; },
     advance: async (ms) => {
       now.mockReturnValue(now() + ms);
-      vi.advanceTimersByTime(ms);
-      await flushMicrotasks();
+      // advanceTimersByTimeAsync 而非 advanceTimersByTime + 定次微任务冲刷：
+      // POST 回调里 await response.json() 消费体流所需微任务跳数随
+      // Node/undici 版本浮动，固定 3 跳在部分版本不足 —— settleBatch 迟至本轮
+      // advance 之后才跑，重试定时器才被创建，重试断言恒挂。async 版在推进
+      // 时钟前先放行挂起的 promise，对齐 outbox「定时器回调内做异步 IO」的
+      // 真实形态。
+      await vi.advanceTimersByTimeAsync(ms);
     },
     storage,
   };

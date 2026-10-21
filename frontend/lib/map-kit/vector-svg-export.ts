@@ -126,14 +126,19 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     // 补 data-export-content="mixed"；label 截断/预算诊断不属于层近似，
     // 不参与 mixed 判定（review-r1 修正：长标签不再误标 mixed）。
     let layerApproximations = 0;
+    const refUnavailableLayers: string[] = [];
     const compiled = compileMapSpecToSvg(input.spec, {
       targetDpi: 72,
       width,
       height,
       padding: 0,
-      onDiagnostic: (code) => {
+      onDiagnostic: (code, detail) => {
         if (code === 'layer_approximated_heatmap' || code === 'layer_approximated_extrusion') {
           layerApproximations += 1;
+        }
+        // H02（任务书 §D）：ref 未水合的层省略 → 结构化披露（不静默）。
+        if (code === 'layer_ref_unavailable' && refUnavailableLayers.length < 8) {
+          refUnavailableLayers.push(detail || 'unknown');
         }
       },
     });
@@ -141,6 +146,20 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     const degradations: ExportDegradation[] = [
       { code: 'basemap_omitted_vector_svg', detail: '矢量 SVG 不含栅格底图' },
     ];
+    if (refUnavailableLayers.length > 0) {
+      degradations.push({
+        code: 'layer_ref_unavailable',
+        detail: refUnavailableLayers.join(','),
+      });
+    }
+    // H02（任务书 §C）：版面文本确定性截断披露（IR 单源标记）。
+    const truncatedTexts = input.layout.texts.filter((t) => t.truncated);
+    if (truncatedTexts.length > 0) {
+      degradations.push({
+        code: 'title_truncated',
+        detail: truncatedTexts.map((t) => t.kind).join(','),
+      });
+    }
     const dataSvg = truncateCompiledLabels(compiled, degradations);
     // 内容态：层近似诊断（heatmap/extrusion）或产物内近似标记在场 → mixed；
     // 纯矢量数据层 → vector（label 截断不算层近似）。

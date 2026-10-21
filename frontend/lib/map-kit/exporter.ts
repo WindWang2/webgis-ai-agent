@@ -2217,6 +2217,17 @@ async function runExportInternal(
               : '出版档色彩为 sRGB 近似',
       });
     }
+    // H02（任务书 §C）：版面文本确定性截断披露（IR 单源标记 → 画布链
+    // 与 SVG 链同码披露，超长标题不静默溢出画幅）。
+    const truncatedTextKinds = publicationLayout.texts
+      .filter((t) => t.truncated)
+      .map((t) => t.kind);
+    if (truncatedTextKinds.length > 0) {
+      chromeDegradations.push({
+        code: 'title_truncated',
+        detail: truncatedTextKinds.join(','),
+      });
+    }
 
     if (fmt === 'svg') {
       // V5（ADR-0118 W5）真矢量优先；ac-08（ADR-0157 P2）版面决策全部
@@ -2226,8 +2237,18 @@ async function runExportInternal(
       let svgDegradations: ExportDegradation[];
       try {
         const { buildVectorSvgExport } = await import('./vector-svg-export');
+        // H02（任务书 §D）：SVG 矢量链与 live/publication 同款 ref 水合
+        //（缓存命中注入 inlineData；不触发后台拉取）。未命中的层由
+        // 孪生侧 layer_ref_unavailable 结构化披露，不再静默丢层。
+        const { injectResolvedRefSources } = await import(
+          '@/lib/mapspec/ref-source-resolver'
+        );
+        const hydratedSpec = injectResolvedRefSources(
+          committedSpec as never,
+          null,
+        ) as typeof committedSpec;
         const vector = buildVectorSvgExport({
-          spec: committedSpec,
+          spec: hydratedSpec,
           layout: publicationLayout,
           dpi,
           fallbackRaster: () => buildSvgText(exportCanvas, title, dataUrl),

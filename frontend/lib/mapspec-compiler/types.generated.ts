@@ -25,6 +25,9 @@ export interface InterpolateStyleMethod {
   field: string;
   stops: Array<[number, string | number]>;
   interpolation?: InterpolateInterpolation;
+  /** H02（任务书 §B）：legend_spec.nodata 的无数据色 —— null/missing
+   *  特征值分派到此色而非最低类；全部下降点同语义。 */
+  nodata?: string;
 }
 
 export interface StepStyleMethod {
@@ -32,6 +35,8 @@ export interface StepStyleMethod {
   field: string;
   stops: Array<[number, string | number]>;
   default?: string | number;
+  /** 同 InterpolateStyleMethod.nodata。 */
+  nodata?: string;
 }
 
 export interface MatchStyleMethod {

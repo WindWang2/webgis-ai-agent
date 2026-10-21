@@ -402,7 +402,14 @@ def _resolve_paint_value(
 
     if method == "step":
         f = val.get("field")
-        prop_val = _safe_float(props.get(f), default=float("nan")) if (props and isinstance(props, dict) and f) else float("nan")
+        raw_val = props.get(f) if (props and isinstance(props, dict) and f) else None
+        # H02 §B：nodata guard —— null/missing 分派无数据色（与 live
+        # withNoDataGuard / TS 孪生 noDataHit 同语义，空串归数值路径：
+        # to-number("")==0 落最低类，三端一致）；NaN 行为保持不变。
+        nodata = val.get("nodata")
+        if isinstance(nodata, str) and nodata and raw_val is None:
+            return nodata
+        prop_val = _safe_float(raw_val, default=float("nan"))
         stops = val.get("stops", [])
         if not isinstance(stops, list) or not stops:
             return val.get("default", fallback)
@@ -417,7 +424,11 @@ def _resolve_paint_value(
 
     if method == "interpolate":
         f = val.get("field")
-        prop_val = _safe_float(props.get(f), default=float("nan")) if (props and isinstance(props, dict) and f) else float("nan")
+        raw_val = props.get(f) if (props and isinstance(props, dict) and f) else None
+        nodata = val.get("nodata")
+        if isinstance(nodata, str) and nodata and raw_val is None:
+            return nodata
+        prop_val = _safe_float(raw_val, default=float("nan"))
         stops = val.get("stops", [])
         if not isinstance(stops, list) or not stops:
             return val.get("default", fallback)
@@ -1462,6 +1473,14 @@ def compile_mapspec_to_svg_detailed(
 
                     data = _source_geojson(src)
                     if not isinstance(data, dict):
+                        # H02（任务书 §D）：ref 未水合的层不得静默消失 ——
+                        # 与 TS 孪生 layer_ref_unavailable 同码披露（review
+                        # P2-3：Python 出版链同样适用"严禁 silent omit"）。
+                        _emit_diag(
+                            "layer_ref_unavailable",
+                            detail="",
+                            layer_id=layer.get("id"),
+                        )
                         continue
                     features = data.get("features", [data]) if data.get("type") == "FeatureCollection" else [data]
                     if not isinstance(features, list):

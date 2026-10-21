@@ -1,4 +1,49 @@
 # Changelog
+## [Unreleased] - 2026-10-20 (feat/h01-gis-harness-capability-foundation-vnext)
+
+### Fixed (harness: 资格→完成判据收敛 + Pi 结果契约, H01)
+- `pi_result_abi`（K1）：`evidence.capability_bind` / `evidence.action_ir`
+  改为投影真实生产者键（`capability_bind.py` / `gis_action/service.py`）——
+  master 抽取键与生产者键错配导致 capability id 永远丢失、action_ir 证据
+  恒空整键省略；现 capability/plan_id/kind/finding_codes 有界可见。
+- `pi_result_abi._error_class`（K7）：registry/dispatch 权威机器码
+  （UNKNOWN_TOOL / TIER3_CONFIRMATION_REQUIRED / CREDENTIALS_REQUIRED /
+  PERMISSION_DENIED / PROVIDER_UNAVAILABLE / SCHEMA_VALIDATION_REJECTED）
+  先经确定性映射（新增 `provider_unavailable` class 成员），文本匹配仅
+  兜底；桥内 not-found / tier-3 拒绝带稳定机器码 details（先例
+  native_surface_reject）。
+- `runtime_situation.to_qualification_dict`（K5）：加性携带
+  `granted_permissions`（空列表 = 供给成功零授予，与未供给可区分；
+  纯派生键，等价性 digest 剔除以保 planner/dispatch 四面等价契约）。
+
+### Added (harness: 资格→完成判据收敛, H01)
+- `hotpath_convergence/dispatch_reason_codes.py`（K8）：跨层机器码单一
+  事实源（常量与生产者字面量逐位一致由测试钉住）+ `ERROR_CLASS_BY_CODE`
+  确定性映射 + `TURN_DROP_PARITY`（turn drop code ↔ dispatch canonical
+  事实码对照）。
+- `pi_tool_spec.PiToolSpecV1.required_permission`（K5）：descriptor 权限
+  闸的先验披露（条件序列化：未声明不出键，既有工具 spec 指纹零漂移）；
+  `qualify_surface` 消费 `granted_permissions`：阳性缺席才逐出
+  （`permission_not_granted`；截断/未供给 = unknown 不排除）。
+- `pi_turn_context`（K6）：turn 面资格逐出披露 `[工具面资格]` 段
+  （≤6 条 / ≤900 字符 / `PI_SURFACE_DISCLOSURE=0` 杀开关）——模型可见
+  逐出原因并可自纠。
+- finalize 契约（K2/K3）：`planner._evaluate_workflow_contract` 加性携带
+  `data_qualifications`（五态 + reason_codes）与 `fallback_tier`（与编译器
+  同源 `qualify_workflow_data_roles` / `resolve_fallback_tier`）；
+  `evaluate_completion_contract` / `derive_product_verdict` 消费：blocked
+  资格（未被声明允许降级覆盖）→ BLOCKED_BY_DATA；degraded/minimal 档 →
+  READY 封顶 READY_WITH_WARNINGS（回退披露义务）。
+- 任务语义存续守卫（K4）：`F_TASK_SEMANTIC_DOWNGRADED` +
+  `TASK_SEMANTIC_FAMILY_GUARDS` —— 受保护分析任务（analytical_density）
+  由纯视觉族（visual_density）交付 → BLOCKED_BY_METHOD，渲染质量不得
+  掩盖语义违约。
+- 场景工厂：`tests/unit/gis_harness/test_h01_capability_scenarios.py`
+  （21 场景 × 展示/统计/密度/分母/热点/服务区/POI 丢失/字段缺失/空数据/
+  少点降级/CRS×2/单位误配/凭据/网络/ref 失效/权限/schema 改版/旧会话
+  恢复/重复回执/parity + 5 组 metamorphic）全经生产函数。
+- 一致性守卫：`test_pi_h01_reason_code_parity.py`（词表漂移即红）。
+
 ## [Unreleased] - 2026-10-18 (zcode/durable-project-cartographic-runtime-v1, ADR-0226)
 
 ### Added (harness: durable project cartographic runtime V1, ADR-0226)

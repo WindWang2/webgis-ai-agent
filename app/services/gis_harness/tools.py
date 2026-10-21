@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -199,6 +200,56 @@ async def _project_verified_recipes() -> set:
     while len(_verified_recipes_cache) > _VERIFIED_CACHE_MAX:
         _verified_recipes_cache.pop(next(iter(_verified_recipes_cache)))
     return verified
+
+
+def _product_composition_identity(
+    plan: Any,
+    component_dicts: List[Dict[str, Any]],
+    existing_spec: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """H02-G3：产品组合身份块（layout.composition）的有界投影。
+
+    模板缺席/未注册 → None（layout_set 的 composition=None 即"不触碰"）。
+    用户显式契约身份（contract_id 非空）在场 → None：agent 再制图不得
+    覆盖用户的组合契约（user-wins）。``applied_revision=0`` 与契约工具的
+    ``int(expected_revision or 0)`` 同口径（产品路径未钉 revision）。
+    """
+    compo_id = str(
+        (getattr(plan, "template_selection", None) or {}).get(
+            "composition_template_id")
+        or ""
+    )
+    if not compo_id:
+        return None
+    try:
+        from app.lib.cartography.component_abi import (
+            COMPONENT_ABI_VERSION,
+            versions_projection,
+        )
+        from app.lib.cartography.composition_contract import CompositionIdentity
+        from app.lib.cartography.composition_templates import (
+            get_composition_template_registry,
+        )
+
+        tpl = get_composition_template_registry().get(compo_id)
+        if tpl is None:
+            return None
+        existing = ((existing_spec or {}).get("layout") or {}).get("composition")
+        if (
+            isinstance(existing, dict)
+            and str(existing.get("contract_id") or "")
+        ):
+            return None
+        identity = CompositionIdentity(
+            template_id=tpl.id,
+            template_version=str(getattr(tpl, "schema_version", 1)),
+            component_abi_version=COMPONENT_ABI_VERSION,
+            component_versions=versions_projection(
+                [str(c.get("type") or "") for c in component_dicts]),
+        )
+        return identity.to_bounded_dict()
+    except Exception:  # noqa: BLE001 — 身份是增值披露，缺席不阻断组装
+        return None
 
 
 def register_gis_harness_tools(registry: ToolRegistry):
@@ -1053,8 +1104,37 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 and str(_existing.get("id")) not in _composed_ids
             ):
                 component_dicts.append(_existing)
+        # H02-W3：被锁组件（workbench.lockedComponentIds = 用户 pin 通道）
+        # 的 placement/position 在 agent 再组合中保持用户决策 —— omission
+        # 守卫保护存在性，空间决策同样不可被组合默认值覆写（user-wins）。
+        try:
+            from app.contracts.workbench_locks import locked_component_ids_of
+
+            _pinned = {
+                str(c.get("id")): c
+                for c in (spec.get("layout") or {}).get("components") or []
+                if isinstance(c, dict)
+            }
+            for _lock_id in locked_component_ids_of(spec):
+                _prev = _pinned.get(_lock_id)
+                _new = next(
+                    (c for c in component_dicts
+                     if str(c.get("id")) == _lock_id), None,
+                )
+                if _prev is None or _new is None:
+                    continue
+                if _prev.get("placement") is not None:
+                    _new["placement"] = copy.deepcopy(_prev["placement"])
+                if _prev.get("position"):
+                    _new["position"] = _prev["position"]
+        except Exception:  # noqa: BLE001 — pin 保持是增值面，不阻断组装
+            pass
         layout_res = await mapspec_store.layout_set(
             session_id, components=component_dicts,
+            # H02-G3：产品组合身份随同一 layout 事务落地（ADR-0214 D2/D3
+            # composition 通道）—— 物理 MapSpec 可追溯产品模板契约；
+            # 用户显式契约身份（contract_id 非空）不覆盖（user-wins）。
+            composition=_product_composition_identity(plan, component_dicts, spec),
         )
         if not layout_res.get("success"):
             msg = f"layout components commit failed: {layout_res.get('message')}"
