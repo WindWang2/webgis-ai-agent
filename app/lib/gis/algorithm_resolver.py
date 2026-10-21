@@ -56,6 +56,11 @@ class AlgorithmResolution(BaseModel):
     # 拒绝时建议的数据变换（如「重投影到 UTM」）。
     scientific_warnings: List[str] = Field(default_factory=list)
     required_transformations: List[str] = Field(default_factory=list)
+    # G02（additive）：not_evaluated 披露 —— PASS 但证据缺席（deferred）
+    # 的前置条件清单（"pid: 原因"）。资格不变（deferred-PASS 仍是 PASS），
+    # 但 evidence/final gate/制品层据此区分「证明通过」与「未评估通过」，
+    # 未知 ≠ 科学通过。
+    not_evaluated: List[str] = Field(default_factory=list)
     # V4（ADR-0104 #5，additive）：plan-time backend 证据 —— 选中算法的
     # 实现变体 + 资源分层（backend_selection.select_backend 纯函数投影，
     # 消费本 resolution 的 ExecutionPlan 面记录）。空 = 算法未声明变体或
@@ -133,20 +138,22 @@ class AlgorithmResolver:
         *,
         profile: Optional[Dict[str, Any]],
         available_tools: Optional[Any],
-    ) -> tuple[str, str, List[str]]:
-        """返回 (tool, reason, warnings)；tool 为空表示拒绝。
+    ) -> tuple[str, str, List[str], List[str]]:
+        """返回 (tool, reason, warnings, not_evaluated)；tool 为空表示拒绝。
 
         warnings 只在通过时非空（科学前置条件的 PASS_WITH_WARNINGS），
-        随 resolution evidence 上报，不阻断选择。
+        随 resolution evidence 上报，不阻断选择。not_evaluated（G02）同
+        只在通过时非空 —— PASS 但 deferred（事实缺席）的前置条件披露，
+        同样不阻断选择（资格兼容承诺不变）。
         """
         if algo.runtime_status != "native":
-            return "", f"algorithm_not_native:{algo.id}", []
+            return "", f"algorithm_not_native:{algo.id}", [], []
         if not algo.tool_candidates:
-            return "", f"no_tool_candidates:{algo.id}", []
+            return "", f"no_tool_candidates:{algo.id}", [], []
         if available_tools is not None:
             tool = next((t for t in algo.tool_candidates if t in available_tools), "")
             if not tool:
-                return "", f"tool_unavailable:{algo.id}", []
+                return "", f"tool_unavailable:{algo.id}", [], []
         else:
             tool = algo.tool_candidates[0]
         # 以下检查只在 profile 提供了对应事实时生效（descriptor 派生画像
@@ -155,7 +162,7 @@ class AlgorithmResolver:
             geom = _dominant_geometry(profile)
             if algo.geometry_requirements and geom != "unknown" and \
                     geom not in algo.geometry_requirements:
-                return "", f"geometry_mismatch:{algo.id}:input={geom}", []
+                return "", f"geometry_mismatch:{algo.id}:input={geom}", [], []
             # V2(P3)：input_artifact_types 契约消费 —— 声明了输入词表的
             # 算法，在画像携带已知 artifactType（DatasetProfile 适配）时
             # 校验成员关系。未知（None/未注册词）不判死——诚实缺省。
@@ -169,14 +176,14 @@ class AlgorithmResolver:
                         return "", (
                             f"input_type_mismatch:{algo.id}:"
                             f"have={declared_input}"
-                        ), []
+                        ), [], []
             if algo.min_features is not None:
                 count = profile.get("featureCount")
                 if isinstance(count, (int, float)) and int(count) < algo.min_features:
                     return "", (
                         f"insufficient_features:{algo.id}:"
                         f"{int(count)}<{algo.min_features}"
-                    ), []
+                    ), [], []
             # ADR-0083：渲染上限门 —— 声明了 max_features_hint 的算法
             # （原生渲染通道，如 density.visual.heatmap 的 FETCH_FEATURE_CAP）
             # 在超限时拒绝，触发算法/能力级 fallback（聚合通道）。
@@ -186,13 +193,13 @@ class AlgorithmResolver:
                     return "", (
                         f"over_render_cap:{algo.id}:"
                         f"{int(count)}>{algo.max_features_hint}"
-                    ), []
+                    ), [], []
             if algo.required_fields:
                 known = _profile_fields(profile)
                 if known is not None:
                     missing = [f for f in algo.required_fields if f not in known]
                     if missing:
-                        return "", f"missing_fields:{algo.id}:{','.join(missing)}", []
+                        return "", f"missing_fields:{algo.id}:{','.join(missing)}", [], []
             # ── ADR-0099 科学门 1：CRS 类（crs_class 声明时才激活；
             # 数据 CRS 未知 → 放行，诚实缺省哲学不变）。拒绝理由内嵌
             # 重投影建议（;transform=…），由 resolve 汇入
@@ -214,18 +221,25 @@ class AlgorithmResolver:
                             f"crs_class_mismatch:{algo.id}:"
                             f"needs={algo.crs_class}:data={data_class}"
                             f";transform={hint}"
-                        ), []
+                        ), [], []
             # ── ADR-0099 科学门 2：声明式前置条件（五值判定）──────────
             if algo.scientific_preconditions:
                 from app.lib.gis.scientific_preconditions import (
                     evaluate_preconditions,
+                    pass_evidence_state,
                 )
 
                 warnings: List[str] = []
+                unevaluated: List[str] = []
                 for result in evaluate_preconditions(
                         algo.scientific_preconditions, profile):
                     if result.verdict == "PASS_WITH_WARNINGS":
                         warnings.append(
+                            f"{result.precondition_id}: {result.message}")
+                    elif pass_evidence_state(result) == "unknown_deferred":
+                        # G02：PASS-by-ignorance 单独披露 —— 未知 ≠ 科学
+                        # 通过；资格不变，evidence 层可对账。
+                        unevaluated.append(
                             f"{result.precondition_id}: {result.message}")
                     elif result.verdict in (
                             "REQUIRES_TRANSFORM", "INSUFFICIENT_DATA",
@@ -235,9 +249,9 @@ class AlgorithmResolver:
                             f"{result.precondition_id}:{result.verdict}")
                         if result.transform_hint:
                             reason += f";transform={result.transform_hint}"
-                        return "", reason, []
-                return tool, "", warnings
-        return tool, "", []
+                        return "", reason, [], []
+                return tool, "", warnings, unevaluated
+        return tool, "", [], []
 
     def _candidate_reason(
         self, algo: AlgorithmDescriptor, tool: str, profile: Optional[Dict[str, Any]],
@@ -310,12 +324,12 @@ class AlgorithmResolver:
         )
 
         rejected: List[str] = []
-        eligible: List[tuple[AlgorithmDescriptor, str, List[str]]] = []
+        eligible: List[tuple[AlgorithmDescriptor, str, List[str], List[str]]] = []
         for algo in candidates:
-            tool, why, warns = self._check_candidate(
+            tool, why, warns, unevaluated = self._check_candidate(
                 algo, profile=profile, available_tools=available_tools)
             if tool:
-                eligible.append((algo, tool, warns))
+                eligible.append((algo, tool, warns, unevaluated))
             else:
                 rejected.append(why)
 
@@ -327,10 +341,11 @@ class AlgorithmResolver:
             # 大规模切换由 max_features_hint 硬门 + capability fallback
             # 承担。单候选直通（cost evidence 留空表示无竞争）。
             scored = []
-            for algo, tool, sci_warns in eligible:
+            for algo, tool, sci_warns, sci_uneval in eligible:
                 score, breakdown = score_algorithm(algo, policy=policy)
                 scored.append(
-                    (algo.priority, score, algo.id, algo, tool, breakdown, sci_warns))
+                    (algo.priority, score, algo.id, algo, tool, breakdown,
+                     sci_warns, sci_uneval))
             if len(scored) > 1:
                 scored.sort(key=lambda t: (t[0], t[1], t[2]))
             # 显式算法请求（克里金 vertical slice）：用户点名算法（如
@@ -367,7 +382,7 @@ class AlgorithmResolver:
                             semantics=hinted_algo.fallback_semantics.get(
                                 best_entry[2], "approximation"),
                         )]
-            _, best_score, _, best, best_tool, best_bd, best_warns = scored[0]
+            _, best_score, _, best, best_tool, best_bd, best_warns, best_uneval = scored[0]
             reason = self._candidate_reason(best, best_tool, profile)
             contested = len(scored) > 1
             if hinted:
@@ -389,6 +404,7 @@ class AlgorithmResolver:
                 cost_score=best_score if contested else None,
                 cost_breakdown=best_bd if contested else "",
                 scientific_warnings=best_warns[:_MAX_REJECTIONS],
+                not_evaluated=best_uneval[:_MAX_REJECTIONS],
                 backend_variant=bv,
                 backend=bb,
                 scale_tier=bt,
@@ -413,7 +429,7 @@ class AlgorithmResolver:
                 fb = self.algorithms.get(fb_id)
                 if fb is None or fb.runtime_status != "native":
                     continue
-                tool, why, fb_warns = self._check_candidate(
+                tool, why, fb_warns, fb_uneval = self._check_candidate(
                     fb, profile=profile, available_tools=available_tools)
                 if tool:
                     fb_bv, fb_bb, fb_bt, fb_brs = _backend_evidence(fb.id, feature_count)
@@ -434,6 +450,7 @@ class AlgorithmResolver:
                         fallback_trail=trail[:_MAX_FALLBACK_TRAIL],
                         fallback_candidates=[fb.id],
                         scientific_warnings=fb_warns[:_MAX_REJECTIONS],
+                        not_evaluated=fb_uneval[:_MAX_REJECTIONS],
                         backend_variant=fb_bv,
                         backend=fb_bb,
                         scale_tier=fb_bt,
