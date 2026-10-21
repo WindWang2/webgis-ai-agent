@@ -86,8 +86,13 @@ def test_single_tool_audit_failure_does_not_break_summary():
             result_size_policy="bounded", output_semantic_type="object")
     s = audit_registry_conformance(_facts(r))
     by_tool = {rep.tool: rep for rep in s.reports}
-    assert by_tool["tool_001"].overall == STATUS_FAIL
-    assert by_tool["tool_001"].faces[0].reason == "audit_error"
+    degraded = by_tool["tool_001"]
+    assert degraded.overall == STATUS_FAIL
+    # 降级报告保持 8 面不变式（消费者按 face 名取值，缺面=KeyError）
+    assert len(degraded.faces) == 8
+    assert tuple(v.face for v in degraded.faces) == tuple(
+        sorted(v.face for v in degraded.faces))
+    assert all(v.reason == "audit_error" for v in degraded.faces)
     # 其余工具不受单点审计缺陷影响：保持 pass 且无 audit_error 面
     for name in ("tool_000", "tool_002", "tool_003"):
         assert by_tool[name].overall != STATUS_FAIL, name

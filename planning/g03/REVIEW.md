@@ -36,6 +36,37 @@
 
 未达门槛(P0×1 + P1×2)→ 修复后进入复审。
 
-## 第二轮(复审)
+## 第二轮(复审,commit 4200f29e + 4182a93a 之后)
 
-(修复 commit 后由同一审查员复审,结论待填)
+**程序披露**:本环境无 SendMessage 工具(无法继续原审查员上下文),且
+3 个子代理累计上限(A 勘察/B 实施/C 第一轮审查)已用满——第二轮按
+「同审查员复审」不可达。改为**主 Agent 机械化逐项复验**(每项修复配
+可复现证据),在 PR 中如实披露;不伪造独立第二轮。
+
+### 逐项复验证据
+
+| 第一轮发现 | 复验方式 | 结果 |
+|---|---|---|
+| P0 ripley envelopes 透传断裂 | `grep envelopes app/services/spatial_analyzer.py`(:393 形参、:404 透传)+ test_ripley_dispatch.py 3 测试经真实 dispatch | ✓ 修复(3 passed) |
+| P0+ master 既有 GeoAnalysisResult 下标 bug | clean origin/master 临时 worktree 实证复现 → 修复后 `.summary`/`.data` 属性访问,dispatch 测试断言 success=True + data 为 dict | ✓ 修复 |
+| P1 CLI 未入库 | `git ls-files scripts/check_tool_capability_conformance.py` 输出该路径;diff 含 .gitignore 白名单 | ✓ 入库 |
+| P1 恒真断言 | `grep -c "or True" tests/unit/gis_tool_conformance/*.py` 全部为 0;断言改为真实比较并扩展(其余工具无 audit_error 面) | ✓ 修复 |
+| P2 audit_error 无日志/单面 | 降级报告 8 面不变式入测(len==8+排序+全 reason);logger.warning 带 exc_info | ✓ 修复 |
+| P2 结构集过宽 | `_STRUCTURAL_REF_OUTPUT_TYPES == {"geojson_fc"}`(源码);活审计 ref_offload 集合仍精确 4 个 | ✓ 修复 |
+| P2 交叠披露失实 | PR_OVERLAP_MATRIX/RECON 已含 spatial_stats.py(#1735 hunk 186-331 vs 本 diff 363+)与 pyproject.toml(白名单纯新增)及合并预案 | ✓ 修正 |
+| P3 ripley 契约升版 | point_pattern.py v2→v3 + test_point_pattern_v2.py:361 钉 version==3 且 default==0 | ✓ 修复 |
+| P3 docs/dev 指南 | docs/dev/tool-conformance.md 已交付(commit 4182a93a) | ✓ 交付 |
+
+### 回归复验
+
+- `tests/unit/gis_tool_conformance/` 全量:**97 passed**(faces/determinism/
+  xwalk/tool/scale/e2e×2/live 棘轮/ripley dispatch)
+- ripley 回归电池(spatial_stats/point_pattern):**143 passed**(前次)
+- ruff(app/ + tests + scripts):**All checks passed**
+- 活 registry 审计:357 工具 0 fail;契约分叉 0;ref_offload 披露集 4
+
+### 第二轮结论
+
+第一轮全部 P0/P1 已修复并有机械证据;P2 全部修复;P3 除两处「保持
+原样」(防御路径归因、家族豁免宽度——均为 warning 级披露且 docstring
+论证)外均已处置。**无遗留 P0/P1,达提交门槛。**

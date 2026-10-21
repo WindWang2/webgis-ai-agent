@@ -44,3 +44,6 @@
 | 10-21 | `-m pytest tests/unit/gis_tool_conformance/`(W4 后,含 live 棘轮) | 0 | **94 passed** | 引擎细化:geojson 结构性 ref pass(41→4)+ 家族并集豁免 |
 | 10-21 | 修复面回归:spatial_stats/point_pattern/rs_v3/kriging_v4/contracts_vnext/qualification | 0 | 141 passed(1 处钉扎更新:kriging 契约 v3→v4 为设计内变更) | ripley/cloud_qc/kriging 三修复 |
 | 10-21 | 活审计复跑 | 0 | 357 工具:0 fail / 176 warning / 181 pass;contract_divergence 0(原 7);ref_offload 4(原 41,4 个真含糊项披露) | |
+| 10-21 | W5 修复后全量:gis_tool_conformance(含 ripley dispatch) | 0 | **97 passed** | P0/P1 修复验证 |
+| 10-21 | ripley 回归电池(spatial_stats×2 + point_pattern×2) | 0 | 143 passed(与 G03 套件合并跑) | |
+| 10-21 | `-m ruff check app/ tests/unit/gis_tool_conformance/ tests/unit/lib/test_point_pattern_v2.py scripts/...` | 0 | All checks passed | 全部改动面 |
