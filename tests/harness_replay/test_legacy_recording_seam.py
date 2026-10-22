@@ -6,7 +6,7 @@
   只有一条录制」的盲区；
 - 插桩在 emit_turn_summary 之后、TURN_EVIDENCE.remove 之前（与 bridge
   的 settle 顺序一致）；
-- 录制调用被 try/except 包裹（记录面绝不阻断 settle）。
+- 录制调用被 try/except 或 best_effort 裹住（记录面绝不阻断 settle）。
 """
 from __future__ import annotations
 
@@ -70,10 +70,17 @@ def test_recording_call_is_exception_shielded():
     ]
     assert len(call_sites) >= 2
     for idx in call_sites:
-        # 向上最近 20 行内必有 try:，向下最近 15 行内必有 except Exception。
+        # 向上最近 20 行内必有裹护。认可两种形态（never-raises 纪律不变，
+        # 裹护形式随 #1549 演进）：
+        #   (a) 裸 try: + 向下 15 行内 except Exception 兜底；
+        #   (b) ``with best_effort(...)`` —— 原语自身吞 Exception 并留痕
+        #       （tests/unit/test_best_effort.py 钉住其 never-raises 与
+        #       错误码/证据计数），比裸 pass 更强：降级可见而非静默。
         upward = "\n".join(lines[max(0, idx - 20):idx])
         downward = "\n".join(lines[idx:idx + 15])
-        assert "try:" in upward, f"line {idx + 1}: 记录调用未裹 try"
+        if "with best_effort(" in upward:
+            continue
+        assert "try:" in upward, f"line {idx + 1}: 记录调用未裹 try/best_effort"
         assert "except Exception" in downward, \
             f"line {idx + 1}: 记录调用缺 except 兜底"
 
