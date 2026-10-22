@@ -27,10 +27,14 @@ DISCLOSED_REF_OFFLOAD = {
 }
 
 #: 完整度债务上限（W4 基线：只许下降，回升即红）。
+#: binding_unbacked 61→63：G04 两个组合模板资产工具（list/save，
+#: app/tools/composition_tools.py）与存量 60 个交互/编排/CRUD 工具同型 ——
+#: 声明 capability 是家族语义，路由面不经算法候选（_audit_planner docstring
+#: 认定的合法态）。metadata_incomplete 158：G04 两工具已补 network=False。
 _CEILINGS = {
     "metadata_incomplete": 158,
     "result_size_unknown": 76,
-    "binding_unbacked": 61,
+    "binding_unbacked": 63,
 }
 
 
