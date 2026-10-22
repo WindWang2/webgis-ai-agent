@@ -342,6 +342,7 @@
 | webgis_layer_remove | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
 | webgis_layer_upsert | 1.0#cv1 | stable | state_mutation | medium | medium | medium | thematic_cartography |
 | webgis_layout_set | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
+| webgis_list_composition_template_assets | 1.0#cv1 | stable | pure | fast | light | small | thematic_cartography |
 | webgis_map_combine | 1.0#cv1 | stable | state_mutation | medium | medium | medium | thematic_cartography |
 | webgis_map_intent | 1.0#cv3 | stable | deterministic_compute | fast | light | small | thematic_cartography |
 | webgis_map_product | 1.0#cv2 | stable | state_mutation | medium | medium | medium | thematic_cartography |
@@ -350,6 +351,7 @@
 | webgis_project_init | 1.0#cv1 | stable | state_mutation | fast | light | small | map_export_publishing |
 | webgis_rollback | 1.0#cv1 | stable | state_mutation | medium | medium | medium | workspace_snapshot |
 | webgis_runtime_validate | 1.0#cv1 | stable | artifact_creation | slow | medium | medium | map_export_publishing |
+| webgis_save_composition_template | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
 | webgis_source_profile | 1.0#cv1 | stable | state_mutation | medium | medium | medium | point_profile |
 | webgis_state_get | 1.0#cv1 | stable | pure | fast | light | small | workspace_state_inspection |
 | webgis_validate | 1.0#cv1 | stable | pure | fast | light | small | map_export_publishing |
