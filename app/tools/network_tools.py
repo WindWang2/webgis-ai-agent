@@ -17,6 +17,7 @@ from app.lib.gis.parameter_contracts import apply_contract
 from app.lib.gis.scientific_evidence import Diagnostic, build_evidence
 from app.services.network.engine import NetworkGraphEngine
 from app.services.network.models import TravelProfile
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +150,12 @@ def trim_network_result(payload: Dict[str, Any], max_features: int = 50) -> Dict
     # notice LIED (payload stayed multi-MB while claiming it was trimmed). The
     # fallback now compresses those shapes for real, records explicit
     # ``_*_trimmed`` summaries, and only claims truncation when it happened.
-    try:
+    # #1549：兜底截断失败 = 超限载荷可能直灌 LLM 上下文（不变量 #2 风险面）；
+    # 经 best_effort 可见降级。
+    with best_effort(
+        "network-payload-budget-trim",
+        "tools-network-payload-trim-best-effort",
+    ):
         import json
         if len(json.dumps(out)) > 40000:
             truncated = _truncate_network_fallback(out)
@@ -164,8 +170,6 @@ def trim_network_result(payload: Dict[str, Any], max_features: int = 50) -> Dict
                     "Payload exceeds the context budget with no further compressible "
                     "fields; narrow the analysis scope and retry."
                 )
-    except Exception:
-        pass
 
     return out
 

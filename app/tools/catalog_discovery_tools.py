@@ -30,6 +30,7 @@ from typing import Any, Dict
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+from app.utils.best_effort import best_effort
 
 _ALLOWED_GEOMETRY = ("point", "line", "polygon", "raster", "table", "unknown")
 _ALLOWED_CRS = ("geographic", "projected", "unknown", "")
@@ -217,12 +218,15 @@ def register_catalog_discovery_tools(registry: ToolRegistry):
         # review P2-2：生产调用必须带 registry —— 否则 requires_credentials/
         # required_permission 恒读不到，credential_missing/policy_denied 两态
         # 在生产不可达（快照会把 registry 闸必拒的工具报成 available）。
-        try:
+        # #1549：registry 缺席退化为主持有面缺失；经 best_effort 可见降级。
+        registry = None
+        with best_effort(
+            "tool-registry-probe",
+            "tools-catalog-registry-probe-best-effort",
+        ):
             from app.agent_pi_bridge import try_get_tool_registry
 
             registry = try_get_tool_registry()
-        except Exception:  # noqa: BLE001 — registry 缺席退化为主持有面缺失
-            registry = None
         try:
             snapshot = build_capability_runtime_snapshot(
                 caps or None, registry=registry)
@@ -269,12 +273,15 @@ def register_catalog_discovery_tools(registry: ToolRegistry):
                     "detail": "provide the registry canonical tool name"}
         # 生产 registry 经 bridge 持有面取（与 capability_runtime_status 同款
         # 供给纪律）；缺席退化为主持面缺失错误，绝不引导离线 bootstrap。
-        try:
+        # #1549：bridge 缺席退化，不伪装成功；经 best_effort 可见降级。
+        registry = None
+        with best_effort(
+            "tool-registry-probe",
+            "tools-catalog-registry-probe-best-effort",
+        ):
             from app.agent_pi_bridge import try_get_tool_registry
 
             registry = try_get_tool_registry()
-        except Exception:  # noqa: BLE001 — bridge 缺席退化，不伪装成功
-            registry = None
         if registry is None:
             return {"error": "registry_unavailable",
                     "detail": "live tool registry not attached to this process"}

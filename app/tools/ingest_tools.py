@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools.upload_tools import _resolve_session_id
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +126,14 @@ def register_ingest_tools(registry: ToolRegistry) -> None:
                 "error": result.error or "ingest failed",
             }
 
-        try:
+        # #1549：描述符缺席按 None（与 store 契约一致）；经 best_effort 可见降级。
+        descriptor = None
+        with best_effort(
+            "ref-descriptor-fetch",
+            "tools-ingest-ref-descriptor-best-effort",
+            ctx={"ref": str(result.ref_id)[:64]},
+        ):
             descriptor = await session_data_manager.get_ref_descriptor(sid, result.ref_id)
-        except Exception:  # noqa: BLE001 — 描述符缺席按 None（与 store 契约一致）
-            descriptor = None
 
         quality = result.quality_summary or {}
         issues = quality.get("issues") or []

@@ -34,6 +34,7 @@ from app.tools.descriptor import (
     schema_fingerprint as _schema_fingerprint_fn,
     validate_descriptor_fields,
 )
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -1223,7 +1224,13 @@ class ToolRegistry:
             # 附带 plan_id/plan_revision；失败时附 failure_class/recovery_action。
             plan_id = plan_revision = step_id = failure_class = recovery_action = None
             if session_id:
-                try:
+                # #1549：plan 归属投影失败 → 指标行缺 plan_id/step_id；
+                # 经 best_effort 可见降级（账本归因缺席不再无痕）。
+                with best_effort(
+                    "tool-metrics-plan-projection",
+                    "tools-registry-metrics-plan-projection-best-effort",
+                    ctx={"session": session_id},
+                ):
                     from app.services.planning.store import plan_store as _plan_store
                     _canon = _plan_store.peek(session_id)
                     if _canon is not None:
@@ -1236,10 +1243,14 @@ class ToolRegistry:
                             if _cs.status == _StepStatus.running or _cs.tool == name:
                                 step_id = _cs.id
                                 break
-                except Exception:  # noqa: BLE001
-                    pass
             if error_cls is not None:
-                try:
+                # #1549：失败分类失败 → 指标行缺 failure_class/recovery_action；
+                # 经 best_effort 可见降级（恢复语义账缺席不再无痕）。
+                with best_effort(
+                    "tool-metrics-failure-classify",
+                    "tools-registry-metrics-failure-classify-best-effort",
+                    ctx={"tool": name},
+                ):
                     from app.services.planning.recovery import (
                         classify_error as _classify_error,
                         recovery_action_for as _recovery_action_for,
@@ -1255,17 +1266,21 @@ class ToolRegistry:
                         _fc = _classify_error(code=_code, error_type=_etype, message=_emsg)
                     failure_class = _fc.value
                     recovery_action = _recovery_action_for(_fc).value
-                except Exception:  # noqa: BLE001
-                    pass
             # #691：result 为 MapSpec 产物时补 revision/fingerprint（无遍历，取即有字段）
             _mapspec_revision = _mapspec_fingerprint = None
             if isinstance(result, dict):
                 _mapspec_revision = result.get("mutation_revision")
                 if _mapspec_revision is not None:
-                    try:
-                        _mapspec_revision = int(_mapspec_revision)
-                    except Exception:
-                        _mapspec_revision = None
+                    # #1549：revision 强转失败按 None（账本字段缺席）；
+                    # 经 best_effort 可见降级。
+                    _rev_raw = _mapspec_revision
+                    _mapspec_revision = None
+                    with best_effort(
+                        "mapspec-revision-coerce",
+                        "tools-registry-mapspec-revision-best-effort",
+                        ctx={"tool": name},
+                    ):
+                        _mapspec_revision = int(_rev_raw)
                 _mapspec_fingerprint = result.get("mapspec_fingerprint")
                 if not isinstance(_mapspec_fingerprint, str) or not _mapspec_fingerprint:
                     _mapspec_fingerprint = None
@@ -1296,19 +1311,24 @@ class ToolRegistry:
             # legacy engines, and deduped calls return before here). Recorded
             # AFTER tool_metrics so a failure here never suppresses the metrics
             # row.
-            try:
+            # #1549：turn 证据记账失败绝不阻断；经 best_effort 可见降级。
+            with best_effort(
+                "turn-evidence-tool-call",
+                "tools-registry-turn-evidence-best-effort",
+                ctx={"tool": name},
+            ):
                 from app.lib.runtime.evidence import current_turn_evidence
                 _tev = current_turn_evidence()
                 if _tev is not None:
                     _tev.add_tool_call(duration_ms=duration_ms,
                                        failure_class=failure_class)
-            except Exception:  # noqa: BLE001
-                pass
             cache_hit_var.reset(token)
-            try:
+            # #1549：hint var 复位失败绝不阻断；经 best_effort 可见降级。
+            with best_effort(
+                "arg-size-hint-reset",
+                "tools-registry-arg-size-hint-reset-best-effort",
+            ):
                 _arg_size_hint_var.reset(_hint_token)
-            except Exception:
-                pass
 
         return result
 
@@ -1484,7 +1504,12 @@ class ToolRegistry:
                 # 仍应走校验（否则非法调用静默通过）。Any 字段永远通过，旁路只
                 # 省掉昂贵的 deep dump。
                 _has_hard_error = False
-                try:
+                # #1549：探针自身故障 → 不旁路（保守走完整校验）；经
+                # best_effort 可见降级。
+                with best_effort(
+                    "pydantic-bypass-probe",
+                    "tools-registry-pydantic-bypass-probe-best-effort",
+                ):
                     # 轻量探针：只验必填/类型表层（不触发深拷贝）—— 用 model_fields
                     # 做最小门；此处先以“无必填缺失”作为旁路准入，结构错误由下游
                     # 工具自检/错误面兜底（大载荷本就是透传给 session 层的）。
@@ -1502,8 +1527,6 @@ class ToolRegistry:
                                 break
                     if not _has_hard_error:
                         _pydantic_bypass = True
-                except Exception:
-                    _pydantic_bypass = False
             if _pydantic_bypass:
                 # dict 直通：工具以 dict 形态收参，无需 normalize；跳过
                 # model_dump 的 O(features) 深拷贝。

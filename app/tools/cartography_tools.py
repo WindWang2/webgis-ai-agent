@@ -9,6 +9,7 @@ from app.tools.registry import ToolRegistry, tool
 from app.services.mapspec_store import mapspec_store
 from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import is_unavailable_ref
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -565,26 +566,29 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
           # Raster Artifact V4（ADR-0091 §22）：磁盘栅格铸造即登记 ——
           # registry 持 ref/血缘/bbox（一等产物记录），PNG 路径与 URL 只是
           # 实现细节。注册失败绝不阻断图层挂载（增值记录纪律）。
-          try:
+          # #1549：登记是增值记录；失败经 best_effort 可见降级。
+          with best_effort(
+            "raster-artifact-register",
+            "tools-cartography-raster-register-best-effort",
+            ctx={"session": session_id},
+          ):
             from app.services.artifact_registry import register_artifact
 
             await register_artifact(
-                session_id,
-                artifact_id=image_ref,
-                artifact_type="raster_surface",
-                producer_tool="add_layer",
-                descriptor=(
-                    {"bbox": bounds}
-                    if isinstance(bounds, list) and len(bounds) == 4 else None
-                ),
-                metadata={
-                    "storage": "disk_png",
-                    "layer_id": str(reviewed_layer.get("id") or ""),
-                    "serving_route": f"/api/v1/sessions/{session_id}/raster/{raster_id}.png",
-                },
+              session_id,
+              artifact_id=image_ref,
+              artifact_type="raster_surface",
+              producer_tool="add_layer",
+              descriptor=(
+                {"bbox": bounds}
+                if isinstance(bounds, list) and len(bounds) == 4 else None
+              ),
+              metadata={
+                "storage": "disk_png",
+                "layer_id": str(reviewed_layer.get("id") or ""),
+                "serving_route": f"/api/v1/sessions/{session_id}/raster/{raster_id}.png",
+              },
             )
-          except Exception:  # noqa: BLE001 — 登记是增值记录
-            pass
           commands.append({
               "command": "add_heatmap_raster",
               "params": {

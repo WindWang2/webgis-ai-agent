@@ -13,6 +13,7 @@ from typing import Awaitable, Callable, Optional
 
 from app.tools.chinese_maps.http import _tianditu_get
 from app.tools.chinese_maps._shaping import shape_poi_collection
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,12 @@ def _resolve_city_adcode(city: str) -> str | None:
     if not name:
         return None
     # 1. 优先本地 SHP
-    try:
+    # #1549：SHP 解析失败 → 内置映射兜底；经 best_effort 可见降级。
+    with best_effort(
+        "city-adcode-shp-resolve",
+        "tools-chinese-maps-adcode-shp-best-effort",
+        ctx={"city": name[:32]},
+    ):
         from app.tools.local_admin import _load_level, _LEVEL_ADCODE_COL, _LEVEL_NAME_COL
 
         for level in ("city", "district", "province"):
@@ -72,17 +78,27 @@ def _resolve_city_adcode(city: str) -> str | None:
             adcode_col = next((c for c in adcode_cols if c in gdf.columns), None)
             if not name_col or not adcode_col:
                 continue
-            try:
+            # #1549：单级匹配失败跳到下一级；经 best_effort 可见降级。
+            mask = None
+            with best_effort(
+                "city-adcode-level-match",
+                "tools-chinese-maps-adcode-level-best-effort",
+                ctx={"level": level},
+            ):
                 mask = gdf[name_col].astype(str).str.contains(name, na=False, regex=False)
-            except Exception:
+            if mask is None:
                 continue
             if not mask.any():
                 bare = name[:-1] if name.endswith("市") else None
                 if bare:
-                    try:
+                    # #1549：裸名重试失败按未命中；经 best_effort 可见降级。
+                    mask = None
+                    with best_effort(
+                        "city-adcode-level-match",
+                        "tools-chinese-maps-adcode-level-best-effort",
+                        ctx={"level": level, "bare": bare[:32]},
+                    ):
                         mask = gdf[name_col].astype(str).str.contains(bare, na=False, regex=False)
-                    except Exception:
-                        mask = None
                     if mask is None or not mask.any():
                         continue
                 else:
@@ -96,8 +112,6 @@ def _resolve_city_adcode(city: str) -> str | None:
                 if code.isdigit():
                     return code.zfill(6)
                 return code
-    except Exception:
-        pass
     # 2. 内置常见城市映射兜底（保障无 SHP 的 CI / 单测环境）
     if name in _FALLBACK_CITY_ADCODE:
         return _FALLBACK_CITY_ADCODE[name]

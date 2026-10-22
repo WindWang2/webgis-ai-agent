@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.core.base_layers import resolve_provider_id_to_name
 from app.schemas.template_schema import SEED_TEMPLATES
 from app.tools.registry import ToolRegistry, tool
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -85,14 +86,16 @@ def _caller_identity() -> tuple[Optional[str], Optional[int]]:
     No identity → builtin-only scope (matches HTTP anonymous gallery).
     Role/admin is not threaded through ToolExecutionContext today.
     """
-    try:
+    # #1549：context unavailable → anonymous；经 best_effort 可见降级。
+    with best_effort(
+        "caller-identity-resolve",
+        "tools-templates-caller-identity-best-effort",
+    ):
         from app.services.provenance.context import get_tool_execution_context
 
         ctx = get_tool_execution_context()
         if ctx is not None:
             return ctx.user_id, ctx.org_id
-    except Exception:  # noqa: BLE001 — context unavailable → anonymous
-        pass
     return None, None
 
 
@@ -390,13 +393,18 @@ def register_template_tools(registry: ToolRegistry):
             thematic_ref = pipeline.get("thematic")
             requires_field = False
             if thematic_ref:
-                try:
+                # #1549：variant 探测失败保守按需 field（拒绝不完整的组合）；
+                # 经 best_effort 可见降级。
+                requires_field = True
+                with best_effort(
+                    "composite-thematic-variant-probe",
+                    "tools-templates-composite-variant-best-effort",
+                    ctx={"thematic": str(thematic_ref)[:64]},
+                ):
                     from app.schemas.template_registry import get_template_registry as _get_reg
                     _thematic_tmpl = _get_reg().get(thematic_ref)
                     _variant = (_thematic_tmpl or {}).get("payload", {}).get("variant", "choropleth")
                     requires_field = _variant == "choropleth"
-                except Exception:
-                    requires_field = True
             if requires_field and not (field or ""):
                 return {
                     "error": (

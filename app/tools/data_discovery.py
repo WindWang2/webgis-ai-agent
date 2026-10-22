@@ -18,20 +18,23 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools.upload_tools import _resolve_session_id
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
 
 def _caller_identity() -> tuple[Optional[str], Optional[int]]:
     """(user_id, org_id) from the tool execution context（project_tools 同款）。"""
-    try:
+    # #1549：context unavailable → anonymous；经 best_effort 可见降级。
+    with best_effort(
+        "caller-identity-resolve",
+        "tools-data-discovery-caller-identity-best-effort",
+    ):
         from app.services.provenance.context import get_tool_execution_context
 
         ctx = get_tool_execution_context()
         if ctx is not None:
             return ctx.user_id, ctx.org_id
-    except Exception:  # noqa: BLE001 — context unavailable → anonymous
-        pass
     return None, None
 
 

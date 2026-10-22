@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -86,13 +87,16 @@ def _extract_rows(payload: Any) -> Tuple[List[Dict[str, Any]], str]:
 
 def _plasma_colors() -> List[str]:
     """Single color source for the flow legend/paint (MapModel default palette)."""
-    try:
+    # #1549：legend is best-effort；经 best_effort 可见降级。
+    with best_effort(
+        "plasma-palette-read",
+        "tools-flow-plasma-palette-best-effort",
+    ):
         from app.lib.cartography.palettes import COLOR_PALETTES
 
         colors = COLOR_PALETTES.get("Plasma") or []
         return [str(c) for c in colors[:8]]
-    except Exception:  # noqa: BLE001 — legend is best-effort
-        return []
+    return []
 
 
 class _FlowAccumulator:

@@ -208,7 +208,17 @@ def _attach_render_work(
     runtime_observation_seq 投影，不重读 state —— 并行工具调用下重读会把
     G+1 代信封挂到 G 代 step 上（并发撕裂），且省一次指纹重算。
     """
-    try:
+    # #1549：信封缺席（投影失败）不阻断 step_result —— envelope 是对账
+    # 增值面，不是 mapspec 载体本身；失败经 best_effort 可见降级。
+    # **本地投影**（review P2-5）：从 lifecycle 已验证的
+    # mapspec/mutation_revision/fingerprint/runtime_observation_seq 投影，
+    # 不重读 state —— 并行工具调用下重读会把 G+1 代信封挂到 G 代 step 上
+    # （并发撕裂），且省一次指纹重算。
+    with best_effort(
+        "render-work-envelope-attach",
+        "tool-dispatch-render-work-envelope-best-effort",
+        ctx={"session": session_id},
+    ):
         from app.services.render_work_supply import emit_render_work_envelope
 
         mapspec = lifecycle.get("mapspec")
@@ -223,11 +233,6 @@ def _attach_render_work(
         )
         if envelope is not None:
             result["render_work"] = envelope.to_dict()
-    except Exception:  # noqa: BLE001 — fail-open
-        logger.debug(
-            "[render-work] envelope attach failed for %s", session_id,
-            exc_info=True,
-        )
 
 
 def _get_governor_adapter(registry: "ToolRegistry"):
@@ -236,7 +241,12 @@ def _get_governor_adapter(registry: "ToolRegistry"):
     Governor 任何异常在其内部 fail-open；本函数只在 import/构造层面兜底 ——
     governor 包缺席时行为与主线完全一致。
     """
-    try:
+    # #1549：import/构造层面兜底经 best_effort 可见降级 —— governor 包缺席时
+    # 行为与主线完全一致（kill-switch / 依赖缺失 → None 直通）。
+    with best_effort(
+        "governor-adapter-init",
+        "tool-dispatch-governor-adapter-best-effort",
+    ):
         from app.services.governor.dispatch_adapter import (
             GovernorDispatchAdapter,
             surface_enabled,
@@ -250,10 +260,7 @@ def _get_governor_adapter(registry: "ToolRegistry"):
             get_governor(),
             metadata_fn=meta_fn if callable(meta_fn) else None,
         )
-    except Exception:  # noqa: BLE001 — 直通纪律（governor 绝不阻断调度面）
-        logger.debug("[resource-governor] adapter unavailable; passthrough",
-                     exc_info=True)
-        return None
+    return None
 
 
 class ToolDispatchService:
@@ -420,7 +427,14 @@ class ToolDispatchService:
                         situation is None or isinstance(situation, dict)):
                     situation = await _merge_situation(situation, session_id) or None
             capability_evidence: Optional[Dict[str, Any]] = None
-            try:
+            _bind = None
+            # #1549：绑定/证据面绝不阻断调度面；失败经 best_effort 可见降级
+            # （fail-open 纪律不变：图缺席/异常/闸关 → 放行）。
+            with best_effort(
+                "capability-bind",
+                "tool-dispatch-capability-bind-best-effort",
+                ctx={"tool": tool_name},
+            ):
                 from app.services.gis_harness.hotpath_convergence import (
                     CAPABILITY_BIND_POLICY_VERSION,
                     CAPABILITY_INELIGIBLE_CODE,
@@ -431,8 +445,6 @@ class ToolDispatchService:
                 _bind = bind_tool_capability(
                     tool_name, registry=self._registry,
                     session_id=session_id, situation=situation)
-            except Exception:  # noqa: BLE001 — 绑定/证据绝不阻断调度面
-                _bind = None
             if _bind is not None:
                 capability_evidence = dict(_bind.evidence or {})
                 with best_effort(
@@ -688,7 +700,13 @@ class ToolDispatchService:
             input_shapes: Optional[Dict[str, dict]] = None
             reused_result: Optional[Dict[str, Any]] = None
             if os.getenv("GIS_ANALYSIS_REUSE", "1") != "0":
-                try:
+                # #1549：复用是纯加速，查找失败绝不阻塞执行；经 best_effort
+                # 可见降级（跳过复用 = 如实重算，不留静默痕迹）。
+                with best_effort(
+                    "analysis-reuse-lookup",
+                    "tool-dispatch-analysis-reuse-best-effort",
+                    ctx={"tool": tool_name},
+                ):
                     from app.lib.gis.algorithm_registry import get_algorithm_registry
                     from app.lib.gis.analysis_reuse import (
                         compute_analysis_key,
@@ -710,14 +728,18 @@ class ToolDispatchService:
                             if analysis_key is not None:
                                 input_shapes = await snapshot_input_shapes(session_id, _parsed)
                                 raster_fps = None
-                                try:
+                                # #1549：指纹是增值记录，绝不阻塞执行；失败经
+                                # best_effort 可见降级（None = 不参与复用匹配）。
+                                with best_effort(
+                                    "analysis-reuse-raster-fingerprints",
+                                    "tool-dispatch-reuse-raster-fp-best-effort",
+                                    ctx={"tool": tool_name},
+                                ):
                                     from app.lib.gis.analysis_reuse import (
                                         snapshot_raster_fingerprints,
                                     )
 
                                     raster_fps = snapshot_raster_fingerprints(_parsed) or None
-                                except Exception:  # noqa: BLE001
-                                    raster_fps = None
                                 reuse = await find_reusable_artifact(
                                     session_id,
                                     analysis_key=analysis_key,
@@ -739,10 +761,6 @@ class ToolDispatchService:
                                     }
                                     if reuse.get("bbox"):
                                         reused_result["bbox"] = reuse["bbox"]
-                except Exception:  # noqa: BLE001 — 复用是纯加速：查找失败绝不阻塞执行
-                    logger.debug(
-                        "[AnalysisReuse] lookup skipped tool=%s", tool_name, exc_info=True
-                    )
 
             # 2. 执行（registry 内部全权处理 ref 解析、校验、异常捕获与自愈）
             # #909 wave bound: the registry call (+ store + MapSpec authoring below) is
@@ -758,14 +776,19 @@ class ToolDispatchService:
                 # 执行后 typed 结果回填（喂断路/EWMA/排序因子）。
                 # 全链 fail-open：健康面缺席/kill switch = 逐位既有行为。
                 _provider_executed = False
-                try:
+                _provider_allowed = True
+                # #1549：健康面读取失败 fail-open（逐位既有行为）；经 best_effort
+                # 可见降级，避免断路器缺席被静默当成「全部健康」。
+                with best_effort(
+                    "provider-health-check",
+                    "tool-dispatch-provider-health-best-effort",
+                    ctx={"tool": tool_name},
+                ):
                     from app.services.capability_runtime.dispatch_recording import (
                         provider_allow as _provider_allow,
                     )
 
                     _provider_allowed = _provider_allow(tool_name)
-                except Exception:  # noqa: BLE001
-                    _provider_allowed = True
                 if not _provider_allowed:
                     from app.services.capability_runtime.dispatch_recording import (
                         PROVIDER_UNAVAILABLE_CODE,
@@ -817,13 +840,19 @@ class ToolDispatchService:
                                 # 保持 tier3/plan-approved user-wins 流不变）。
                                 # 零配置 → 直通；kill switch
                                 # GIS_TOOL_SECURITY_SUPPLY（默认 ON）。
-                                try:
+                                # #1549：供给面直通兜底经 best_effort 可见降级。
+                                _cred_scope = None
+                                with best_effort(
+                                    "credential-scope-bind",
+                                    "tool-dispatch-credential-scope-best-effort",
+                                    ctx={"session": session_id},
+                                ):
                                     from app.services.gis_harness.hotpath_convergence.security_supply import (
                                         bind_session_credentials as _bind_creds,
                                     )
 
                                     _cred_scope = _bind_creds(session_id or "")
-                                except Exception:  # noqa: BLE001 — 供给面直通兜底
+                                if _cred_scope is None:
                                     from contextlib import nullcontext as _nullctx
 
                                     _cred_scope = _nullctx()
@@ -840,7 +869,13 @@ class ToolDispatchService:
                                     if _governor_adapter is not None:
                                         # #1408: pass active turn_id into ResourceDemand
                                         # (adapter accepts it; call site previously omitted).
-                                        try:
+                                        # #1549：turn_id 读取失败按空串（demand 仍上报）；
+                                        # 经 best_effort 可见降级，不静默丢归因字段。
+                                        _turn_id = ""
+                                        with best_effort(
+                                            "runtime-context-turn-id",
+                                            "tool-dispatch-turn-id-best-effort",
+                                        ):
                                             from app.lib.runtime.context import (
                                                 current_runtime_context,
                                             )
@@ -850,8 +885,6 @@ class ToolDispatchService:
                                                 if _rt is not None and _rt.turn_id
                                                 else ""
                                             )
-                                        except Exception:  # noqa: BLE001
-                                            _turn_id = ""
                                         result = await _governor_adapter.run(
                                             tool_name=tool_name,
                                             tool_args=tool_args_raw,
@@ -865,7 +898,13 @@ class ToolDispatchService:
                                         result = await self._registry.dispatch(
                                             tool_name, tool_args_raw, session_id=session_id)
                                     # H05：成功/typed 失败结果回填（记录面绝不阻断）。
-                                    try:
+                                    # #1549：回填失败经 best_effort 可见降级 —— 健康面
+                                    # 证据缺席不再是无痕 pass。
+                                    with best_effort(
+                                        "dispatch-outcome-record",
+                                        "tool-dispatch-dispatch-record-best-effort",
+                                        ctx={"tool": tool_name},
+                                    ):
                                         from app.services.capability_runtime.dispatch_recording import (
                                             record_dispatch_outcome as _record_outcome,
                                         )
@@ -875,22 +914,23 @@ class ToolDispatchService:
                                             started_at=_dispatch_started,
                                             result=result,
                                         )
-                                    except Exception:  # noqa: BLE001
-                                        pass
                     finally:
                         await self._session_wave_gate.release(session_id or "")
                 except OperationCancelled:
                     # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
                     # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
                     # H05：取消不是 provider 证据 —— 只归还半开 trial 名额。
-                    try:
+                    # #1549：trial 归还失败经 best_effort 可见降级。
+                    with best_effort(
+                        "provider-trial-release",
+                        "tool-dispatch-trial-release-best-effort",
+                        ctx={"tool": tool_name},
+                    ):
                         from app.services.capability_runtime.dispatch_recording import (
                             release_provider_trial as _release_trial,
                         )
 
                         _release_trial(tool_name)
-                    except Exception:  # noqa: BLE001
-                        pass
                     self._release_key(executed_tools, tool_key, session_id or "")
                     raise
                 except asyncio.CancelledError:
@@ -898,14 +938,17 @@ class ToolDispatchService:
                     # 两个 handler —— 硬取消（task.cancel()）若不在此外释放占位键，
                     # 本 turn 内同参重试会一直收到「并发在飞」谎言（实际无结果）。
                     # H05：同上 —— 硬取消只归还 trial 名额，不记 provider 失败。
-                    try:
+                    # #1549：trial 归还失败经 best_effort 可见降级。
+                    with best_effort(
+                        "provider-trial-release",
+                        "tool-dispatch-trial-release-best-effort",
+                        ctx={"tool": tool_name},
+                    ):
                         from app.services.capability_runtime.dispatch_recording import (
                             release_provider_trial as _release_trial,
                         )
 
                         _release_trial(tool_name)
-                    except Exception:  # noqa: BLE001
-                        pass
                     self._release_key(executed_tools, tool_key, session_id or "")
                     raise
                 except Exception as e:
@@ -913,23 +956,30 @@ class ToolDispatchService:
                     # 纪律不变）。到达执行后（_provider_executed）才记失败 ——
                     # 门/槽获取阶段的基建故障不是 provider-down 证据。
                     if _provider_executed:
-                        try:
+                        # #1549：失败回填失败经 best_effort 可见降级 —— 断路器
+                        # 收不到失败证据时，日志/turn 计数仍留痕。
+                        with best_effort(
+                            "dispatch-outcome-record",
+                            "tool-dispatch-dispatch-record-best-effort",
+                            ctx={"tool": tool_name},
+                        ):
                             from app.services.capability_runtime.dispatch_recording import (
                                 record_dispatch_outcome as _record_outcome,
                             )
 
                             _record_outcome(tool_name, exc=e)
-                        except Exception:  # noqa: BLE001
-                            pass
                     else:
-                        try:
+                        # #1549：trial 归还失败经 best_effort 可见降级。
+                        with best_effort(
+                            "provider-trial-release",
+                            "tool-dispatch-trial-release-best-effort",
+                            ctx={"tool": tool_name},
+                        ):
                             from app.services.capability_runtime.dispatch_recording import (
                                 release_provider_trial as _release_trial,
                             )
 
                             _release_trial(tool_name)
-                        except Exception:  # noqa: BLE001
-                            pass
                     from app.tools._utils import std_error_response
                     error_msg = sanitize_error_msg(str(e))
                     result = std_error_response(
@@ -1151,27 +1201,39 @@ class ToolDispatchService:
                 )
             # P1（ADR-0082）：产物铸造即登记（dispatch seam 只登记 ref 与
             # 工具名；plan-apply seam 稍后补充 capability/lineage 并 upsert）。
-            try:
+            # #1549：登记失败不影响产物本身；经 best_effort 可见降级 —— 证据链
+            # 阶段 12 缺席不再是无痕 debug。
+            with best_effort(
+                "artifact-registry-register",
+                "tool-dispatch-artifact-register-best-effort",
+                ctx={"tool": tool_name},
+            ):
                 from app.services.artifact_registry import register_tool_artifact
 
                 raster_fps = None
                 if _parsed is not None:
-                    from app.lib.gis.analysis_reuse import snapshot_raster_fingerprints
+                    # #1549：指纹是增值记录，绝不阻塞；失败经 best_effort 可见降级。
+                    with best_effort(
+                        "artifact-register-raster-fingerprints",
+                        "tool-dispatch-register-raster-fp-best-effort",
+                        ctx={"tool": tool_name},
+                    ):
+                        from app.lib.gis.analysis_reuse import snapshot_raster_fingerprints
 
-                    try:
                         raster_fps = snapshot_raster_fingerprints(_parsed) or None
-                    except Exception:  # noqa: BLE001 — 指纹是增值记录，绝不阻塞
-                        raster_fps = None
                 # V3 data foundation：输入 ref revision 快照（保形状覆写的
                 # 复用盲区守卫；增值记录，失败不阻塞）。
                 ref_revs = None
                 if _parsed is not None:
-                    from app.lib.gis.analysis_reuse import snapshot_ref_revisions
+                    # #1549：revision 快照失败经 best_effort 可见降级。
+                    with best_effort(
+                        "artifact-register-ref-revisions",
+                        "tool-dispatch-register-ref-revs-best-effort",
+                        ctx={"tool": tool_name},
+                    ):
+                        from app.lib.gis.analysis_reuse import snapshot_ref_revisions
 
-                    try:
                         ref_revs = await snapshot_ref_revisions(session_id, _parsed) or None
-                    except Exception:  # noqa: BLE001
-                        ref_revs = None
                 # Kriging slice review F1: the uncertainty surface registers
                 # under a SUFFIXED analysis_key — find_reusable_artifact picks
                 # the newest record per key, so an identical-keyed derived
@@ -1208,12 +1270,6 @@ class ToolDispatchService:
                             from app.lib.runtime.gis_trace import Stage
 
                             emit_chain(Stage.ARTIFACT_CREATION, ref=minted[:64], tool=tool_name)
-            except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
-                logger.debug(
-                    "[ArtifactRegistry] dispatch registration skipped tool=%s",
-                    tool_name,
-                    exc_info=True,
-                )
             # Canonical MapSpec layer authoring points at an existing
             # session-owned analysis ref instead of returning the dataset
             # again.  Preserve that stable identity through the existing SSE
@@ -1264,12 +1320,16 @@ class ToolDispatchService:
                 # Advertising one as ``geojson_ref`` would mount an empty
                 # FeatureCollection and falsely ACK the raster as displayed.
                 geojson_ref = result_ref
-                try:
+                # #1549：descriptor 缓存缺席按 None（前端回退全量下载）；经
+                # best_effort 可见降级，不静默丢挂载证据。
+                with best_effort(
+                    "ref-descriptor-fetch",
+                    "tool-dispatch-ref-descriptor-best-effort",
+                    ctx={"ref": result_ref[:64]},
+                ):
                     ref_descriptor = await self._session_data.get_ref_descriptor(
                         session_id, result_ref
                     )
-                except Exception:
-                    ref_descriptor = None
 
         # A display-producing GIS result must enter the existing MapSpec
         # lifecycle before the frontend mounts it. This is presentation
@@ -1286,12 +1346,15 @@ class ToolDispatchService:
                 # 非 RedisError 异常）会在工具已成功执行、ref 已落库之后令整个
                 # dispatch 抛错 —— LLM 被告知重试一个副作用已发生的工具。
                 # 与 :469-474 一致按「descriptor 缺失」处理。
-                try:
+                # #1549：缺失路径经 best_effort 可见降级。
+                with best_effort(
+                    "ref-descriptor-fetch",
+                    "tool-dispatch-ref-descriptor-best-effort",
+                    ctx={"ref": str(geojson_ref)[:64]},
+                ):
                     ref_descriptor = await self._session_data.get_ref_descriptor(
                         session_id, geojson_ref
                     )
-                except Exception:
-                    ref_descriptor = None
             result = await self._author_display_result(
                 session_id=session_id,
                 tool_call_id=str(tc.get("id") or "result"),
@@ -1370,10 +1433,13 @@ class ToolDispatchService:
         # pi_event_mapper never needs asyncio.run() (which would raise inside
         # the already-running FastAPI event loop and get silently swallowed).
         if geojson_ref and ref_descriptor is None:
-            try:
+            # #1549：non-fatal —— 前端回退全量下载；失败经 best_effort 可见降级。
+            with best_effort(
+                "ref-descriptor-fetch",
+                "tool-dispatch-ref-descriptor-best-effort",
+                ctx={"ref": str(geojson_ref)[:64]},
+            ):
                 ref_descriptor = await self._session_data.get_ref_descriptor(session_id, geojson_ref)
-            except Exception:  # noqa: BLE001 — non-fatal: frontend falls back to full download
-                logger.debug("ref_descriptor fetch failed for %s", geojson_ref, exc_info=True)
 
         # P2-9：成功完成 → 标记 completed（后续同参重复走 post-success 文案）。
         self._mark_completed(tool_key, session_id or "")
@@ -1692,19 +1758,18 @@ class ToolDispatchService:
                 raise RuntimeError("raster display result has no addressable image")
             # P1（ADR-0082）：栅格产物登记（ref:raster/*；capability 上下文
             # 由 plan-apply seam 的 density 行补充）。
-            try:
+            # #1549：登记失败经 best_effort 可见降级（证据链缺席留痕）。
+            with best_effort(
+                "artifact-registry-register-raster",
+                "tool-dispatch-artifact-register-raster-best-effort",
+                ctx={"tool": tool_name},
+            ):
                 from app.services.artifact_registry import register_tool_artifact
 
                 if isinstance(image_ref, str) and image_ref.startswith("ref:"):
                     await register_tool_artifact(
                         session_id, image_ref, tool=tool_name, result=result
                     )
-            except Exception:  # noqa: BLE001
-                logger.debug(
-                    "[ArtifactRegistry] raster registration skipped tool=%s",
-                    tool_name,
-                    exc_info=True,
-                )
             # #533: 把可寻址的 image URL 放回 authored + 命令 params。此前
             # authoring 把 producer 的 data-URL image 剥掉后，命令 params 里
             # 没有 image → 前端 add_heatmap_raster 校验器拒绝（invalid_params）
@@ -1716,11 +1781,16 @@ class ToolDispatchService:
             if isinstance(image_ref, str) and image_ref.startswith("ref:raster/"):
                 raster_id = image_ref[len("ref:raster/"):]
                 image_url = f"/api/v1/sessions/{session_id}/raster/{raster_id}.png"
-                try:
+                # #1549：owner_token 缺席 → 匿名 URL（前端挂载会 401）；经
+                # best_effort 可见降级，不静默产出打不开的图层 URL。
+                session_token = None
+                with best_effort(
+                    "session-owner-token-lookup",
+                    "tool-dispatch-session-token-best-effort",
+                    ctx={"session": session_id},
+                ):
                     from app.services.session_ownership import lookup_session_owner_token
                     session_token = await lookup_session_owner_token(session_id)
-                except Exception:
-                    session_token = None
                 if session_token:
                     image_url = f"{image_url}?token={session_token}"
             layer = {

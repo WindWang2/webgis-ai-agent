@@ -11,6 +11,7 @@ from app.lib.cartography.chart_kinds import (
     CHART_KINDS,
     resolve_chart_kind as _resolve_chart_kind,
 )
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -382,12 +383,16 @@ async def _resolve_layer_for_data_ref(session_id: str, data: Any) -> str:
     ref = data.strip() if isinstance(data, str) else ""
     if not ref.startswith("ref:"):
         return ""
-    try:
+    # #1549：读失败 → 不绑定（诚实省略）；经 best_effort 可见降级。
+    spec: dict = {}
+    with best_effort(
+        "mapspec-read-for-layer-resolve",
+        "tools-chart-mapspec-read-best-effort",
+        ctx={"session": session_id},
+    ):
         from app.services.mapspec_store import mapspec_store
 
         spec = await mapspec_store.get_mapspec(session_id) or {}
-    except Exception:  # noqa: BLE001 — 读失败 → 不绑定（诚实省略）
-        return ""
     families: set = set()
     raw_sources = spec.get("sources") or {}
     # review 修复：旧会话 sources 可能是 list 形态 —— 与其它消费面同款
