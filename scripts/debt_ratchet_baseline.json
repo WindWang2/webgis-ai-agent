@@ -365,7 +365,7 @@
     "app/services/modelops/engine.py": 2319,
     "app/tools/advanced_spatial.py": 2842,
     "app/tools/registry.py": 2082,
-    "app/tools/remote_sensing.py": 2674,
+    "app/tools/remote_sensing.py": 2675,
     "app/tools/terrain_analysis.py": 2170
   },
   "assertless_tests": {
@@ -1013,6 +1013,6 @@
     "scripts/situation_inspect.py": 1,
     "scripts/symbology_audit.py": 1
   },
-  "unannotated_defs_pct": 10.92,
-  "dict_str_any": 7018
+  "unannotated_defs_pct": 10.9,
+  "dict_str_any": 7024
 }

@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.lib.gis.tool_capability_conformance import (  # noqa: E402
     STATUS_FAIL,
     STATUS_WARNING,
+    ToolConformanceReport,
     audit_registry_conformance,
     audit_tool_conformance,
     collect_live_facts,
@@ -43,7 +44,7 @@ def _face_mark(status: str) -> str:
     return _MARK.get(status, "·")
 
 
-def _print_report(report) -> None:
+def _print_report(report: ToolConformanceReport) -> None:
     print(f"\n{report.tool}  ({report.tool_id})  overall={report.overall}  fp={report.fingerprint}")
     for v in report.faces:
         reason = f" {v.reason}" if v.reason else ""
