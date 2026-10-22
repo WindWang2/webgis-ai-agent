@@ -360,11 +360,11 @@
     "app/services/chat/execution_engine.py": 3199,
     "app/services/data_fabric/query/federation.py": 2380,
     "app/services/geocompute/executor.py": 2393,
-    "app/services/gis_harness/planner.py": 2170,
-    "app/services/gis_harness/tools.py": 2265,
+    "app/services/gis_harness/planner.py": 2189,
+    "app/services/gis_harness/tools.py": 2281,
     "app/services/modelops/engine.py": 2319,
     "app/tools/advanced_spatial.py": 2842,
-    "app/tools/registry.py": 2082,
+    "app/tools/registry.py": 2101,
     "app/tools/remote_sensing.py": 2675,
     "app/tools/terrain_analysis.py": 2170
   },
@@ -755,7 +755,6 @@
     "app/services/gis_harness/skills/planning_projection.py": 1,
     "app/services/gis_harness/skills/policy.py": 2,
     "app/services/gis_harness/skills/retrieval.py": 1,
-    "app/services/gis_harness/tools.py": 1,
     "app/services/gis_harness/trace_store.py": 1,
     "app/services/gis_harness/visual_observation/blob_refs.py": 1,
     "app/services/gis_harness/visual_observation/taxonomy.py": 1,
@@ -1013,6 +1012,6 @@
     "scripts/situation_inspect.py": 1,
     "scripts/symbology_audit.py": 1
   },
-  "unannotated_defs_pct": 10.9,
-  "dict_str_any": 7024
+  "unannotated_defs_pct": 10.86,
+  "dict_str_any": 7053
 }

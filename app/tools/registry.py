@@ -13,6 +13,7 @@ from enum import Enum
 
 from app.services.session_data import session_data_manager
 from app.lib.geo_processor.core import GeoAnalysisResult
+from app.lib.gis.scientific_errors import ScientificError
 
 from app.services.jobs.cancellation import OperationCancelled
 from app.services.llm_result_formatter import is_error_like_result
@@ -1679,6 +1680,24 @@ class ToolRegistry:
                 error_type="TimeoutError",
                 correction_hint="工具耗时超过预算，请缩小数据范围或参数规模后重试。",
             )
+        except ScientificError as e:
+            # G02：科学失败的 typed 面必须穿透 dispatch —— 此前落入
+            # ValueError 分支被扁平化为 VALIDATION_ERROR，scientific_code/
+            # guidance/ref（H06 evidence）全部丢失，LLM/最终制品无法对账
+            # 科学拒绝原因。错误信封 additive 扩展（scientific_code 等
+            # 只增不改既有键语义）。
+            resp = std_error_response(
+                str(e),
+                code=e.scientific_code,
+                error_type=type(e).__name__,
+                correction_hint=getattr(e, "correction_hint", "") or "",
+            )
+            sci = e.to_dict()
+            for key in ("guidance", "ref"):
+                if sci.get(key):
+                    resp[f"scientific_{key}"] = sci[key]
+            resp["scientific_detail"] = sci.get("detail", str(e))[:400]
+            return resp
         except ValueError as e:
             return std_error_response(
                 str(e),

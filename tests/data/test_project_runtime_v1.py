@@ -587,6 +587,108 @@ class TestCrossSessionResume:
         state = await session_data_manager.get_map_state(sid_b)
         assert state["_cartographic_mutation_revision"] == 2
 
+    async def test_descriptor_semantics_reconciled_on_resume(self, db):
+        """G01/WP-B6：恢复链数据集语义身份 —— 迁移 + 记录面对账。
+
+        - 快照期 source 带 descriptor_fingerprint（记录面，经 MapSpecStore
+          绑定路径铸造）；
+        - freeze 后旧 session 语义前进（数据 revision 前进）→ resume 时
+          迁移 descriptor 到新 session（指针改写、指纹不变）且记录面 ≠
+          当前 → recompute 披露（不静默续渲染）；
+        - 对照组：语义未漂移 → valid。
+        """
+        from app.services.dataset_semantics import (
+            derive_descriptor,
+            get_dataset_semantic_store,
+        )
+        from app.services.dataset_semantics.store import (
+            reset_dataset_semantic_store,
+        )
+        from app.lib.gis.dataset_profile import DatasetProfile
+
+        reset_dataset_semantic_store()  # DATA_DIR 隔离后重建基座
+
+        def _desc(feature_count: int, key: str):
+            p = DatasetProfile(
+                source="ref_descriptor", feature_count=feature_count,
+                geometry_types=["Point"], crs="EPSG:4326",
+                fields={"name": "string"}, fields_status="explicit",
+            )
+            feats = [
+                {"geometry": {"type": "Point",
+                              "coordinates": [116.32 + i * 0.001, 39.98]},
+                 "properties": {"name": f"poi-{i}"}}
+                for i in range(feature_count)
+            ]
+            return derive_descriptor(p, dataset_key=key, features=feats)
+
+        sem = get_dataset_semantic_store()
+        from app.services.mapspec.store import MapSpecStore
+        from app.services.project_runtime.resume import resume_runtime_snapshot
+
+        # ── 漂移场景：freeze 后旧 session 语义前进 ──────────────────────
+        sid_a = "rt-dsr-session-a"
+        await _seed_session(sid_a)
+        spec = await MapSpecStore().get_mapspec(sid_a)
+        ref_key = spec["sources"]["poi"]["ref"]
+        v1 = _desc(3, ref_key)
+        await sem.put(sid_a, ref_key, v1)
+        # 记录面：source 落冻结时的语义指纹（生产由 source 首绑铸造；
+        # 此处直接落键模拟同一记录面 —— freeze 冻结的就是这个值）。
+        spec["sources"]["poi"]["descriptor_fingerprint"] = (
+            v1.descriptor_fingerprint)
+        await MapSpecStore().save_mapspec(sid_a, spec, mutation_revision=4)
+        spec_saved = await MapSpecStore().get_mapspec(sid_a)
+        assert (spec_saved["sources"]["poi"].get("descriptor_fingerprint")
+                == v1.descriptor_fingerprint), "记录面指纹必须冻结在 spec 上"
+
+        snapshot = await _freeze(db, sid_a)
+        v2 = _desc(9, ref_key)  # 内容证据变化 → 语义前进
+        assert v2.descriptor_fingerprint != v1.descriptor_fingerprint
+        await sem.put(sid_a, ref_key, v2)
+
+        receipt = await resume_runtime_snapshot(
+            db, project_id="proj-rt1", snapshot_id=snapshot.snapshot_id,
+            user_id="u_rt",
+        )
+        rec = receipt.descriptor_reconciliation
+        assert rec.get("v") == 1
+        assert rec["migrated"] >= 1
+        new_ref = receipt.ref_map[ref_key]
+        check = next(c for c in rec["checks"] if c["ref"] == new_ref)
+        assert check["verdict"] == "recompute"  # 记录面 v1 ≠ 当前 v2
+        assert new_ref in rec["stale_refs"]
+        assert any("dataset semantics" in d for d in receipt.disclosures)
+        # 新 session 语义 store：迁移后 descriptor 指纹 = v2（身份连续，
+        # dataset_key 指针已改写为新 ref）。
+        migrated = await sem.get(receipt.session_id, new_ref)
+        assert migrated.ok
+        assert migrated.descriptor.descriptor_fingerprint == (
+            v2.descriptor_fingerprint)
+        assert migrated.descriptor.dataset_key == new_ref
+
+        # ── 对照组：语义未漂移 → valid ─────────────────────────────────
+        sid_c = "rt-dsr-session-c"
+        await _seed_session(sid_c)
+        spec_c = await MapSpecStore().get_mapspec(sid_c)
+        ref_c = spec_c["sources"]["poi"]["ref"]
+        d_c = _desc(3, ref_c)
+        await sem.put(sid_c, ref_c, d_c)
+        spec_c["sources"]["poi"]["descriptor_fingerprint"] = (
+            d_c.descriptor_fingerprint)
+        await MapSpecStore().save_mapspec(sid_c, spec_c, mutation_revision=4)
+        snapshot_c = await _freeze(db, sid_c, label="corpus-c")
+        receipt_c = await resume_runtime_snapshot(
+            db, project_id="proj-rt1", snapshot_id=snapshot_c.snapshot_id,
+            user_id="u_rt",
+        )
+        rec_c = receipt_c.descriptor_reconciliation
+        new_ref_c = receipt_c.ref_map[ref_c]
+        check_c = next(
+            (c for c in rec_c["checks"] if c["ref"] == new_ref_c), None)
+        assert check_c is not None and check_c["verdict"] == "valid"
+        assert not rec_c["stale_refs"]
+
     async def test_dataset_version_changed_disclosed(self, db):
         from app.models.project import ProjectDataset
         from app.services.project_runtime.resume import resume_runtime_snapshot

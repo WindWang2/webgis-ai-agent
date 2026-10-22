@@ -26,6 +26,8 @@ scripts/
 # Science V6 taxonomy 覆盖矩阵审计（Goal 07 Phase A；审计文档的一致性门依赖它）
 !/scripts/science_taxonomy_audit.py
 !/scripts/gen_science_benchmark_manifest.py
+# G02：MethodUseContract 只读检视/契约校验 CLI（退出码机读，供审计/CI-local 消费）
+!/scripts/inspect_method_contract.py
 # 工作流目录生成器（test_workflow_guards 的 catalog 一致性门依赖它）
 !/scripts/gen_workflow_catalog.py
 !/scripts/gen_science_oracles.py

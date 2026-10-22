@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,9 @@ from app.services.gis_harness.tools_component import (  # noqa: F401 — re-expo
 )
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry, tool
+
+if TYPE_CHECKING:
+    from app.services.gis_harness.planner import AlgorithmSelectionRecord
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +255,19 @@ def _product_composition_identity(
         return None
 
 
-def register_gis_harness_tools(registry: ToolRegistry):
+def bounded_selection_evidence(record: AlgorithmSelectionRecord) -> dict:
+    """G02：selection → LLM 面证据的有界投影。
+
+    空值字段（""/[]/None）不入证据 —— 科学 evidence 字段 additive 后
+    空语法占位会使大载荷产品（G4 150k POI 的 24KB descriptor 预算，
+    test_benchmark_harness 钉扎）无谓超限；数值 0 是合法证据值（如
+    cost_score=0.0）不剥（review P3-2）。非空证据照常全量转录，
+    record 本体不受影响（tests/unit/gis/test_g02_gate_chain.py 钉扎）。
+    """
+    return {k: v for k, v in record.model_dump().items() if v or v == 0}
+
+
+def register_gis_harness_tools(registry: ToolRegistry) -> None:
     """注册 GIS Harness 工具（tier 1：意图解析廉价且恒可用）。"""
 
     @tool(
@@ -1448,7 +1463,8 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     for r in plan.data_requirements
                 ],
                 "algorithm_selection": [
-                    r.model_dump() for r in plan.algorithm_selections
+                    bounded_selection_evidence(r)
+                    for r in plan.algorithm_selections
                 ],
                 "map_model_selection": plan.map_model_selection,
                 "template_selection": plan.template_selection,
