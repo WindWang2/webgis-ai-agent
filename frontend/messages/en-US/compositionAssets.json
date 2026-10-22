@@ -10,7 +10,9 @@
     "visibility": "Visibility",
     "private": "Private",
     "org": "Org-shared",
-    "project": "Project-shared"
+    "project": "Project-shared",
+    "projectId": "Project ID",
+    "projectIdPlaceholder": "Project ID"
   },
   "badge": {
     "builtin": "Built-in"

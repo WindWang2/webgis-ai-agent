@@ -25,6 +25,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -64,6 +65,8 @@ COMPOSITION_PURPOSES = (
     "classified_categorical",
     "change_comparison",
 )
+
+logger = logging.getLogger(__name__)
 
 
 async def _spec_of(session_id: str) -> Dict[str, Any]:
@@ -706,8 +709,10 @@ def register_composition_tools(registry: ToolRegistry) -> None:
                 return {"rows": rows}
             except CompositionAssetError as exc:
                 return {"rows": [], "error_reason": exc.reason}
-            except Exception as exc:  # noqa: BLE001 — DB 失败降级 builtin-only
-                return {"rows": [], "error_reason": f"db_unavailable: {exc}"}
+            except Exception:  # noqa: BLE001 — DB 失败降级 builtin-only（不泄漏异常文本）
+                logger.debug(
+                    "composition asset list DB query failed", exc_info=True)
+                return {"rows": [], "error_reason": "db_unavailable"}
             finally:
                 db.close()
 
@@ -727,12 +732,16 @@ def register_composition_tools(registry: ToolRegistry) -> None:
             "visibility": str(r.get("visibility") or "")[:12],
             "latest_revision": int(r.get("latest_revision") or 0),
         } for r in outcome["rows"][:limit])
+        # 截断后计数与载荷一致（不虚报总量；截断事实如实披露）
+        truncated = len(assets) > 24
         out: Dict[str, Any] = {
             "success": True,
             "assets": assets[:24],
-            "asset_count": len(assets),
+            "asset_count": min(len(assets), 24),
             "reason_codes": [],
         }
+        if truncated:
+            out["truncated"] = True
         if outcome.get("error_reason"):
             out["reason_codes"] = [str(outcome["error_reason"])[:48]]
             out["disclosure"] = "DB 资产不可用，仅返回内置资产"

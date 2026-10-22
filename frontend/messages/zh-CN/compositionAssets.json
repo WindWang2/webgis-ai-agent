@@ -10,7 +10,9 @@
     "visibility": "可见性",
     "private": "私人",
     "org": "组织共享",
-    "project": "项目共享"
+    "project": "项目共享",
+    "projectId": "项目 ID",
+    "projectIdPlaceholder": "项目 ID"
   },
   "badge": {
     "builtin": "内置"

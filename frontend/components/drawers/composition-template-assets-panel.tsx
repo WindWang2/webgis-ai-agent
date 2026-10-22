@@ -49,6 +49,7 @@ export function CompositionTemplateAssetsPanel({
   const [saving, setSaving] = useState(false);
   const [visibility, setVisibility] = useState<CompositionAssetVisibility>('private');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,6 +85,7 @@ export function CompositionTemplateAssetsPanel({
       const res = await compositionTemplateAssetsApi.create({
         session_id: sessionId,
         visibility,
+        project_id: visibility === 'project' ? projectId : undefined,
       });
       if (res.validation && res.validation.length > 0) {
         setNotice({ tone: 'error', text: t('notice.publishGateFailed') });
@@ -99,7 +101,7 @@ export function CompositionTemplateAssetsPanel({
     } finally {
       setSaving(false);
     }
-  }, [sessionId, visibility, t, load]);
+  }, [sessionId, visibility, projectId, t, load]);
 
   if (!open) return null;
 
@@ -211,6 +213,16 @@ export function CompositionTemplateAssetsPanel({
           <option value="org">{t('save.org')}</option>
           <option value="project">{t('save.project')}</option>
         </select>
+        {visibility === 'project' && (
+          <input
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            placeholder={t('save.projectIdPlaceholder')}
+            aria-label={t('save.projectId')}
+            data-testid="project-id-input"
+            className="w-24 rounded border border-[var(--theme-border)] bg-[var(--theme-surface)] px-1 py-0.5 text-xs"
+          />
+        )}
         <button
           type="button"
           onClick={() => void handleSave()}
