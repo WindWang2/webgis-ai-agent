@@ -358,8 +358,9 @@ def test_point_pattern_v2_registry_and_contracts():
                 "knox_analysis", "ripley_k_envelope_analysis"):
         assert contract_registry.has(cid), cid
     ripley_contract = contract_registry.get("ripley_k_analysis")
-    assert ripley_contract.version == 2  # additive envelopes param bump
+    assert ripley_contract.version == 3  # v2: additive envelopes; v3 (G03): 默认 99→0 对齐工具现值
     assert ripley_contract.spec("envelopes") is not None
+    assert ripley_contract.spec("envelopes").default == 0
 
     from app.services.gis_harness.registry_validation import (
         validate_algorithm_tool_parameter_parity,

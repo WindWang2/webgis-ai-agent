@@ -100,6 +100,8 @@ ignore = ["E402"]
 # 测试目录整体豁免（调试/捕获合法），下列为 CLI 文件白名单。
 "tests/**" = ["T20"]
 "manage.py" = ["T20"]
+# G02：MethodUseContract 只读检视 CLI（stdout 即契约，同 manage.py 规）
+"scripts/inspect_method_contract.py" = ["T20"]
 "app/extensions_platform/cli.py" = ["T20"]
 "app/extensions_platform/worker/server.py" = ["T20"]
 "app/lib/cartography/standards/catalog.py" = ["T20"]

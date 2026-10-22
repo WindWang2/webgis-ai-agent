@@ -339,6 +339,9 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
             # 执行；review R1 P2：不用裸 asyncio.run，避免逐调用重建
             # loop/连接池与将来注册策略变化的静默降级面）。
             session_descriptor = None
+            role_bindings_summary: List[Dict[str, Any]] = []
+            role_evidence: Optional[Dict[str, Dict[str, Any]]] = None
+            data_preflight: Dict[str, Any] = {}
             if session_id:
                 try:
                     from app.services.dataset_semantics import (
@@ -356,6 +359,76 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
             c = compile_workflow_v4(
                 query, recipe_id=recipe_id or "", profile=profile,
                 descriptor=session_descriptor)
+
+            # G01/WP-B：多数据 session 的角色级接线 —— 首编确定 recipe 后，
+            # 用 recipe 的 data_roles 需求对会话语义证据做确定性绑定
+            # （bound/ambiguous/stale/not_found/not_authorized/partial），
+            # 命中角色以**各自**数据集事实重编译资格（第二数据集事实不再
+            # 被单 profile 假设吞掉）。绑定是纯读零扫描；失败 = 原行为。
+            if session_id:
+                try:
+                    from app.services.dataset_semantics import (
+                        collect_session_evidence,
+                        preflight_multi_dataset,
+                        role_qualification_evidence,
+                    )
+                    from app.services.dataset_semantics.qualification_bridge import (
+                        recorded_fingerprints,
+                    )
+                    from app.services.dataset_semantics.role_binding import (
+                        bind_session_roles,
+                    )
+                    from app.services.geocompute._async_bridge import (
+                        run_coro_sync,
+                    )
+                    from app.services.gis_harness.recipes import (
+                        get_recipe_registry,
+                    )
+
+                    wf_profile = getattr(
+                        get_recipe_registry().get(c.base.recipe_id),
+                        "workflow", None)
+                    if wf_profile is not None and wf_profile.data_roles:
+                        records = run_coro_sync(
+                            collect_session_evidence(session_id))
+                        if records:
+                            expected = run_coro_sync(
+                                recorded_fingerprints(session_id))
+                            report = bind_session_roles(
+                                wf_profile.data_roles, records,
+                                session_id=session_id,
+                                expected_fingerprints=expected)
+                            evidence_map = role_qualification_evidence(report)
+                            if evidence_map:
+                                role_evidence = evidence_map
+                                # 重编译：角色绑定证据为权威（review P2：
+                                # 不再同时传 primary descriptor —— 否则
+                                # ambiguous/缺席角色会被 primary 数据集
+                                # 事实裁决，「不拿别的数据集顶替」被中和）。
+                                c = compile_workflow_v4(
+                                    query, recipe_id=recipe_id or "",
+                                    profile=profile,
+                                    descriptor=None,
+                                    role_evidence=role_evidence)
+                            role_bindings_summary = [
+                                b.to_bounded_dict()
+                                for b in report.bindings[:16]
+                            ]
+                            # WP-C：绑定证据面的 metadata-only 兼容预检
+                            # （typed gaps 供澄清回路；零数据扫描）。
+                            # expected_roles 只取 required 角色（review N3：
+                            # 可选角色缺席不构成任务缺口）。
+                            data_preflight = preflight_multi_dataset(
+                                evidence_map,
+                                expected_roles=tuple(
+                                    r.role for r in wf_profile.data_roles
+                                    if getattr(r, "required", True)
+                                )).to_bounded_dict()
+                except Exception:  # noqa: BLE001 — 角色接线失败 = 原行为
+                    logger.warning(
+                        "[semantic_tools] role binding skipped sid=%s",
+                        session_id, exc_info=True)
+
             mq = c.method_qualification or {}
             rejected = [
                 {"method": q.get("method_id"),
@@ -392,15 +465,23 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                 },
                 "package_fingerprint": c.package_fingerprint,
                 "reason_codes": c.reason_codes[:10],
+                # G01/WP-B：角色绑定审计面（Agent 可消费的澄清输入）——
+                # ambiguous 带候选清单（两个同名数据集 → 问用户，不猜）；
+                # stale 带期望指纹（记录面 vs 当前语义）；not_authorized
+                # 拒绝跨作用域解析。
+                "data_role_bindings": role_bindings_summary,
+                # G01/WP-C：多数据兼容预检（metadata-only；typed gaps）。
+                "data_preflight": data_preflight,
                 # 与 orchestrator 证据同源披露（review R2 MINOR-1）
                 "qualification_basis": (
-                    "profile_grounded" if profile
+                    "role_grounded" if role_evidence
+                    else "profile_grounded" if profile
                     else "profile_absent_neutral"),
                 "note": (
                     "确定性编译产物（advisory/audit）：rejected 方法不得绕过；"
                     + (
                         "方法选择由数据画像事实驱动。"
-                        if profile
+                        if (profile or role_evidence)
                         else "未提供数据画像：资格裁决为 unknown 中性态，"
                              "选择由方法质量与专业优先序决定，数据到位后重评。"
                     )

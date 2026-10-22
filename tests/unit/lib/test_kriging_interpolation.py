@@ -358,8 +358,12 @@ def test_kriging_tool_fc_crs_member_4490_honored():
 
 def test_kriging_tool_invalid_crs_structured_error():
     """Unsupported declared CRS surfaces as the registry's structured error
-    envelope (code VALIDATION_ERROR) carrying the CRS rejection message —
-    never a silent WGS84 fallback."""
+    envelope carrying the CRS rejection message — never a silent WGS84
+    fallback.
+
+    G02 typed 面穿透后 code = scientific_code（INVALID_CRS）而非旧扁平化的
+    VALIDATION_ERROR；信封仍携带 CRS 拒绝消息（断言 intent 不变）。
+    """
     reg = _tool_registry()
     fc = _points_fc(n=120, seed=13)
     result = asyncio.run(
@@ -369,7 +373,8 @@ def test_kriging_tool_invalid_crs_structured_error():
     )
     assert isinstance(result, dict)
     assert result.get("success") is False
-    assert result.get("code") == "VALIDATION_ERROR"
+    assert result.get("code") == "INVALID_CRS"
+    assert result.get("error_type") == "KrigingCrsError"
     assert "EPSG:31370" in result.get("message", "")
     assert "静默" in result.get("message", "")
 

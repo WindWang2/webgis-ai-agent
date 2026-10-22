@@ -251,6 +251,12 @@ def produce_product_layer(
                     c.model_dump() for c in compile_result.chart_requirements[:6]],
                 "fallbacks": list(compile_result.fallbacks)[:6],
                 "decisions": list(compile_result.decisions)[:6],
+                # G02（review P2-1/P2-2）：final gate 科学对账面入制品
+                # payload —— not_evaluated/非等价 fallback 披露与 block
+                # 旗标在三段对账的 final 段可见（有界 ≤6 条）。
+                "science_findings": list(
+                    compile_result.science_findings)[:6],
+                "science_blocked": compile_result.science_blocked,
             },
             "product_completeness": completeness.to_dict(),
             # H02-G6：conformance 快照（与契约预检同真值；不阻断组装，
