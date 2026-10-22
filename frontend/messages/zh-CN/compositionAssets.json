@@ -1,0 +1,41 @@
+{
+  "title": "组合模板资产",
+  "action": {
+    "close": "关闭",
+    "refresh": "刷新",
+    "apply": "应用"
+  },
+  "save": {
+    "mine": "保存为我的模板",
+    "visibility": "可见性",
+    "private": "私人",
+    "org": "组织共享",
+    "project": "项目共享",
+    "projectId": "项目 ID",
+    "projectIdPlaceholder": "项目 ID"
+  },
+  "badge": {
+    "builtin": "内置"
+  },
+  "section": {
+    "builtin": "内置模板",
+    "mine": "我的模板"
+  },
+  "detail": {
+    "assetId": "资产 ID",
+    "fingerprint": "指纹",
+    "visibility": "可见性",
+    "models": "兼容模型"
+  },
+  "notice": {
+    "saved": "已保存：{id}",
+    "saveFailed": "保存失败",
+    "loadFailed": "加载失败",
+    "dbUnavailable": "自定义资产暂不可用，仅显示内置模板",
+    "publishGateFailed": "发布门校验未通过，资产保存为草稿"
+  },
+  "empty": {
+    "title": "暂无模板资产",
+    "description": "先应用一个版式，再「保存为我的模板」即可复用"
+  }
+}

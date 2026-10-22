@@ -366,12 +366,14 @@ def register_spatial_stats_tools(registry: ToolRegistry):
     @tool(registry, name="ripley_k_analysis",
     anti_examples=("直接把点分簇分类（用 spatial_cluster）",),
            description="Ripley's K 点格局分析（各向同性边缘校正）：K(r)/L(r)/CSR参考πr²，"
-                       "描述性判断聚集/均匀/随机随半径的变化；需米制坐标（自动投影UTM），无显著性p值",
+                       "描述性判断聚集/均匀/随机随半径的变化；需米制坐标（自动投影UTM），"
+                       "envelopes=0（默认）时无显著性包络/p值，envelopes>0 输出固定种子 CSR 包络与秩 p 值",
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "n_steps": "r 网格步数（4-32，默认10）",
                "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
+               "envelopes": "CSR 模拟包络次数（0-499，默认0=纯描述；固定种子42）",
            },
            side_effect="deterministic_compute",
            network=False,
@@ -386,27 +388,36 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            unit_semantics="meters",
            failure_modes=("invalid_args", "missing_data"))
     def ripley_k_analysis(geojson: Any, n_steps: int = 10,
-                          max_distance_ratio: float = 0.25) -> dict:
+                          max_distance_ratio: float = 0.25,
+                          envelopes: int = 0) -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
             raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
         params = apply_contract("ripley_k_analysis", {
             "n_steps": n_steps,
             "max_distance_ratio": max_distance_ratio,
+            "envelopes": envelopes,
         })
         result = SpatialAnalyzer.ripley_k(
             data,
             n_steps=int(params["n_steps"]),
             max_distance_ratio=float(params["max_distance_ratio"]),
+            envelopes=int(params["envelopes"]),
         )
-        payload = {"success": True, "summary": result["summary"], "data": result}
+        # spatial_operator 统一包装成 GeoAnalysisResult：数据体在 .data、
+        # 摘要在 .summary（与同文件 quadrat/moran/geary 的消费惯例一致）。
+        # 此前 result["summary"] 对 GeoAnalysisResult 下标访问必抛
+        # TypeError —— master 上该工具 dispatch 实际全坏（G03 执行面
+        # 审计发现,静态对账看不见的实现层缺陷）。
+        payload = {"success": True, "summary": result.summary, "data": result.data}
         _attach_scientific_evidence(
             payload, "point_pattern.ripley_k", tool="ripley_k_analysis",
             parameters_applied={
                 "n_steps": int(params["n_steps"]),
                 "max_distance_ratio": float(params["max_distance_ratio"]),
+                "envelopes": int(params["envelopes"]),
             },
-            feature_count=result.get("n"),
+            feature_count=result.data.get("n"),
             crs=extract_declared_crs(data) or "EPSG:4326",
         )
         return payload

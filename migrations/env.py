@@ -68,6 +68,7 @@ import app.models.spatial_memory  # noqa: F401, E402  (方向 9/ADR-0183: gis_sp
 import app.models.spatial_events  # noqa: F401, E402  (空间事件控制平面四表)
 import app.models.harness_journal  # noqa: F401, E402  (H04/ADR-0216: turn_events 会话账本)
 import app.models.gis_context  # noqa: F401, E402  (ADR-0206: gis_working_contexts)
+import app.models.composition_template_asset  # noqa: F401, E402  (G04: composition_template_assets(_versions))
 import app.models.ads_fabric  # noqa: F401, E402  (ADR-0175/0178: ads_* 三张账本镜像)
 # 注意：漏 import 任何一个 model 模块，autogenerate 都会把该模块的表当作
 # 「metadata 里不存在」→ 对已迁移库生成 drop_table（数据丢失风险）。

@@ -36,9 +36,33 @@ class PreconditionResult:
     message: str = ""
     transform_hint: str = ""
     facts_used: Dict[str, Any] = field(default_factory=dict)
+    # G02：显式 deferred 标志 —— verdict=PASS 且本标志为 True 表示
+    # 「通过是因为事实缺席（未知 ≠ 满足）」，而非证据支持的方法学通过。
+    # 显式字段而非 facts_used 启发式：temporal_field_required 等 checker
+    # 的 fact-backed PASS 不带 facts_used，启发式必错。五值 verdict 语义
+    # 与候选资格完全不变（deferred-PASS 仍是 PASS）；差异只进入
+    # not_evaluated 披露面与最终制品的科学 evidence 对账。
+    deferred: bool = False
 
     def __post_init__(self) -> None:
         self.message = self.message[:_MAX_MSG]
+
+
+#: PASS 判决的证据态词表（G02）：proven_pass = 事实在场且满足；
+#: unknown_deferred = 事实缺席（诚实降级，最终制品须以 not_evaluated 披露）。
+PRECONDITION_EVIDENCE_STATES = ("proven_pass", "unknown_deferred")
+
+
+def pass_evidence_state(result: PreconditionResult) -> str:
+    """PASS 判决的证据态分类（非 PASS 返回空串）。
+
+    unknown ≠ pass 的单一语义出口：resolver 保持 deferred-PASS 的候选
+    资格（兼容承诺），但 evidence/制品层据此区分「证明通过」与
+    「未评估通过」—— 后者在 final gate 前必须以 not_evaluated 披露。
+    """
+    if result.verdict != "PASS":
+        return ""
+    return "unknown_deferred" if result.deferred else "proven_pass"
 
 
 # ── 事实读取助手（缺省安全）──────────────────────────────────────────
@@ -72,14 +96,14 @@ def _numeric_fields(profile: Dict[str, Any]) -> List[str]:
 def _check_numeric_field_required(profile: Dict[str, Any]) -> PreconditionResult:
     rid = "numeric_field_required"
     if not _fields_known(profile):
-        return PreconditionResult(rid, "PASS", "fields unknown — deferred")
+        return PreconditionResult(rid, "PASS", "fields unknown — deferred", deferred=True)
     # V4（ADR-0104 #4）：键缺席 = 证据缺席 ≠ 证据证明违反 —— deferred。
     # 此前「fields 已知但 numericFields 键不在」直接 INSUFFICIENT_DATA，
     # 而该键在 descriptor 派生画像上从无生产方 → 结构性 false-reject。
     # 修复后只有**在场且为空**的清单（权威口径，见
     # DatasetProfile.to_resolver_profile 的权威规则）才构成真缺席拒绝。
     if "numericFields" not in (profile or {}):
-        return PreconditionResult(rid, "PASS", "numeric fields unknown — deferred")
+        return PreconditionResult(rid, "PASS", "numeric fields unknown — deferred", deferred=True)
     numeric = _numeric_fields(profile)
     if numeric:
         return PreconditionResult(rid, "PASS", facts_used={"numericFields": len(numeric)})
@@ -92,7 +116,7 @@ def _check_nonzero_variance(profile: Dict[str, Any]) -> PreconditionResult:
     rid = "nonzero_variance_required"
     var = _fact(profile, "valueVariance", int, float)
     if var is None:
-        return PreconditionResult(rid, "PASS", "variance unknown — deferred")
+        return PreconditionResult(rid, "PASS", "variance unknown — deferred", deferred=True)
     if float(var) > 0.0:
         return PreconditionResult(rid, "PASS", facts_used={"valueVariance": float(var)})
     return PreconditionResult(
@@ -105,7 +129,7 @@ def _check_projected_crs(profile: Dict[str, Any]) -> PreconditionResult:
     rid = "projected_crs_required"
     crs = _fact(profile, "crs", str)
     if not crs:
-        return PreconditionResult(rid, "PASS", "crs unknown — deferred")
+        return PreconditionResult(rid, "PASS", "crs unknown — deferred", deferred=True)
     data_class = classify_crs(crs)
     if data_class in ("projected", "projected_local_metric"):
         return PreconditionResult(rid, "PASS", facts_used={"crsClass": data_class})
@@ -122,7 +146,7 @@ def _check_local_metric_crs(profile: Dict[str, Any]) -> PreconditionResult:
     rid = "local_metric_crs_required"
     crs = _fact(profile, "crs", str)
     if not crs:
-        return PreconditionResult(rid, "PASS", "crs unknown — deferred")
+        return PreconditionResult(rid, "PASS", "crs unknown — deferred", deferred=True)
     data_class = classify_crs(crs)
     if data_class == "projected_local_metric":
         return PreconditionResult(rid, "PASS", facts_used={"crsClass": data_class})
@@ -145,7 +169,7 @@ def _check_temporal_field_required(profile: Dict[str, Any]) -> PreconditionResul
     rid = "temporal_field_required"
     has_time = _fact(profile, "hasTimeField", bool)
     if has_time is None:
-        return PreconditionResult(rid, "PASS", "time field status unknown — deferred")
+        return PreconditionResult(rid, "PASS", "time field status unknown — deferred", deferred=True)
     if has_time:
         return PreconditionResult(rid, "PASS")
     return PreconditionResult(
@@ -156,7 +180,7 @@ def _check_min_temporal_observations(n_min: int, profile: Dict[str, Any]) -> Pre
     rid = f"min_temporal_observations:{n_min}"
     count = _int_fact(profile, "temporalObservationCount")
     if count is None:
-        return PreconditionResult(rid, "PASS", "observation count unknown — deferred")
+        return PreconditionResult(rid, "PASS", "observation count unknown — deferred", deferred=True)
     if count >= n_min:
         return PreconditionResult(rid, "PASS", facts_used={"temporalObservationCount": count})
     if count >= max(2, n_min // 2):
@@ -180,7 +204,7 @@ def _check_raster_band_required(n_bands: int, profile: Dict[str, Any]) -> Precon
     rid = f"raster_band_required:{n_bands}"
     count = _int_fact(profile, "bandCount")
     if count is None:
-        return PreconditionResult(rid, "PASS", "band count unknown — deferred")
+        return PreconditionResult(rid, "PASS", "band count unknown — deferred", deferred=True)
     if count >= n_bands:
         return PreconditionResult(rid, "PASS", facts_used={"bandCount": count})
     return PreconditionResult(
@@ -199,7 +223,7 @@ def _check_band_semantics_required(profile: Dict[str, Any]) -> PreconditionResul
     rid = "band_semantics_required"
     roles = _fact(profile, "bandSemantics", list)
     if roles is None:
-        return PreconditionResult(rid, "PASS", "band semantics unknown — deferred")
+        return PreconditionResult(rid, "PASS", "band semantics unknown — deferred", deferred=True)
     if [r for r in roles if str(r)]:
         return PreconditionResult(rid, "PASS", facts_used={"bandSemantics": len(roles)})
     return PreconditionResult(
@@ -212,7 +236,7 @@ def _check_point_support_required(profile: Dict[str, Any]) -> PreconditionResult
     rid = "point_support_required"
     types = _fact(profile, "geometryTypes", list)
     if not types:
-        return PreconditionResult(rid, "PASS", "geometry unknown — deferred")
+        return PreconditionResult(rid, "PASS", "geometry unknown — deferred", deferred=True)
     families = {str(t) for t in types}
     if families & {"Point", "MultiPoint"}:
         return PreconditionResult(rid, "PASS", facts_used={"geometryTypes": sorted(families)})
@@ -225,7 +249,7 @@ def _check_positive_weights_required(profile: Dict[str, Any]) -> PreconditionRes
     rid = "positive_weights_required"
     has_negative = _fact(profile, "hasNegativeWeights", bool)
     if has_negative is None:
-        return PreconditionResult(rid, "PASS", "weight signs unknown — deferred")
+        return PreconditionResult(rid, "PASS", "weight signs unknown — deferred", deferred=True)
     if not has_negative:
         return PreconditionResult(rid, "PASS")
     return PreconditionResult(
@@ -241,7 +265,7 @@ def _check_grid_identity_match(profile: Dict[str, Any]) -> PreconditionResult:
     rid = "grid_identity_match"
     grid = profile.get("grid") if isinstance(profile.get("grid"), dict) else None
     if not grid:
-        return PreconditionResult(rid, "PASS", "grid facts unknown — deferred")
+        return PreconditionResult(rid, "PASS", "grid facts unknown — deferred", deferred=True)
     missing = [k for k in ("crs", "width", "height") if grid.get(k) in (None, "")]
     if missing:
         return PreconditionResult(
@@ -256,11 +280,11 @@ def _check_grid_identity_match(profile: Dict[str, Any]) -> PreconditionResult:
 def _check_binary_field_required(profile: Dict[str, Any]) -> PreconditionResult:
     rid = "binary_field_required"
     if not _fields_known(profile):
-        return PreconditionResult(rid, "PASS", "fields unknown — deferred")
+        return PreconditionResult(rid, "PASS", "fields unknown — deferred", deferred=True)
     # V4：与 numeric_field_required 同修复 —— binaryFields 键缺席 = 证据
     # 缺席 → deferred；在场且为空（权威口径）才是真缺席拒绝。
     if "binaryFields" not in (profile or {}):
-        return PreconditionResult(rid, "PASS", "binary fields unknown — deferred")
+        return PreconditionResult(rid, "PASS", "binary fields unknown — deferred", deferred=True)
     binary = _fact(profile, "binaryFields", list) or []
     if binary:
         return PreconditionResult(rid, "PASS", facts_used={"binaryFields": len(binary)})
@@ -278,7 +302,7 @@ def _check_min_numeric_samples(n_min: int, profile: Dict[str, Any]) -> Precondit
         # featureCount 是上界代理（有数值字段时近似成立）
         count = _int_fact(profile, "featureCount")
     if count is None:
-        return PreconditionResult(rid, "PASS", "sample count unknown — deferred")
+        return PreconditionResult(rid, "PASS", "sample count unknown — deferred", deferred=True)
     if count >= n_min:
         return PreconditionResult(rid, "PASS", facts_used={"sampleCount": count})
     if count >= max(2, int(n_min * 0.5)):

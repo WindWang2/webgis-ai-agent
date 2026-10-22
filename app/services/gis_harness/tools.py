@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,9 @@ from app.services.gis_harness.tools_component import (  # noqa: F401 — re-expo
 )
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry, tool
+
+if TYPE_CHECKING:
+    from app.services.gis_harness.planner import AlgorithmSelectionRecord
 
 logger = logging.getLogger(__name__)
 
@@ -240,19 +243,45 @@ def _product_composition_identity(
             and str(existing.get("contract_id") or "")
         ):
             return None
+        # G04：资产模板（builtin；DB 资产不进全局注册表）→ 强版本引用
+        # （id+revision），取代弱 schema_version 语义。
+        asset_id = ""
+        asset_revision = 0
+        template_version = str(getattr(tpl, "schema_version", 1))
+        if tpl.id.startswith("asset."):
+            registry_ref = get_composition_template_registry()
+            revision = registry_ref.asset_revision_of(tpl.id)
+            if revision is not None:
+                asset_id = tpl.id
+                asset_revision = int(revision)
+                template_version = f"asset-r{asset_revision}"
         identity = CompositionIdentity(
             template_id=tpl.id,
-            template_version=str(getattr(tpl, "schema_version", 1)),
+            template_version=template_version,
             component_abi_version=COMPONENT_ABI_VERSION,
             component_versions=versions_projection(
                 [str(c.get("type") or "") for c in component_dicts]),
+            asset_id=asset_id,
+            asset_revision=asset_revision,
         )
         return identity.to_bounded_dict()
     except Exception:  # noqa: BLE001 — 身份是增值披露，缺席不阻断组装
         return None
 
 
-def register_gis_harness_tools(registry: ToolRegistry):
+def bounded_selection_evidence(record: AlgorithmSelectionRecord) -> dict:
+    """G02：selection → LLM 面证据的有界投影。
+
+    空值字段（""/[]/None）不入证据 —— 科学 evidence 字段 additive 后
+    空语法占位会使大载荷产品（G4 150k POI 的 24KB descriptor 预算，
+    test_benchmark_harness 钉扎）无谓超限；数值 0 是合法证据值（如
+    cost_score=0.0）不剥（review P3-2）。非空证据照常全量转录，
+    record 本体不受影响（tests/unit/gis/test_g02_gate_chain.py 钉扎）。
+    """
+    return {k: v for k, v in record.model_dump().items() if v or v == 0}
+
+
+def register_gis_harness_tools(registry: ToolRegistry) -> None:
     """注册 GIS Harness 工具（tier 1：意图解析廉价且恒可用）。"""
 
     @tool(
@@ -1448,7 +1477,8 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     for r in plan.data_requirements
                 ],
                 "algorithm_selection": [
-                    r.model_dump() for r in plan.algorithm_selections
+                    bounded_selection_evidence(r)
+                    for r in plan.algorithm_selections
                 ],
                 "map_model_selection": plan.map_model_selection,
                 "template_selection": plan.template_selection,

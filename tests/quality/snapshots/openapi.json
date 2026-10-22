@@ -596,6 +596,87 @@
     "title": "AssessRequest",
     "type": "object"
    },
+   "AssetCreateRequest": {
+    "properties": {
+     "description": {
+      "default": "",
+      "maxLength": 400,
+      "title": "Description",
+      "type": "string"
+     },
+     "name": {
+      "default": "",
+      "maxLength": 255,
+      "title": "Name",
+      "type": "string"
+     },
+     "payload": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "显式 TemplateAssetPayload（与 session_id 至少其一；同时给出时显式 payload 优先）",
+      "title": "Payload"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     },
+     "publish": {
+      "default": true,
+      "title": "Publish",
+      "type": "boolean"
+     },
+     "session_id": {
+      "default": "",
+      "description": "从该会话派生（save-as-my-template）",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "visibility": {
+      "default": "private",
+      "title": "Visibility",
+      "type": "string"
+     }
+    },
+    "title": "AssetCreateRequest",
+    "type": "object"
+   },
+   "AssetNewVersionRequest": {
+    "properties": {
+     "payload": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Payload"
+     },
+     "publish": {
+      "default": true,
+      "title": "Publish",
+      "type": "boolean"
+     },
+     "session_id": {
+      "default": "",
+      "description": "从该会话派生新内容（需会话属主；与 payload 二选一）",
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "title": "AssetNewVersionRequest",
+    "type": "object"
+   },
    "AtlasRequestPolicy": {
     "additionalProperties": false,
     "description": "C14：atlas 分页策略（POST /export/vector-pdf 可选 ``atlas`` 字段）。\n\ndrivers 封闭词表：frames（spec 显式多帧即页）/ category（属性去重值\n分页）/ feature（要素切片分页）。页数诚实封顶（≤20，超出截断并披露\n``atlas_truncated``）；category 必填 ``categoryProperty``；category/\nfeature 需要 spec 携带内联 geojson 源（服务端 typed 拒绝缺失面）。",
@@ -9997,6 +10078,18 @@
     "title": "ResumeAnchorResponse",
     "type": "object"
    },
+   "RetireRequest": {
+    "properties": {
+     "note": {
+      "default": "",
+      "maxLength": 500,
+      "title": "Note",
+      "type": "string"
+     }
+    },
+    "title": "RetireRequest",
+    "type": "object"
+   },
    "ReviewCommentRequest": {
     "description": "POST .../comments：锚定评论（anchor 可省略 = 一般性讨论）。",
     "properties": {
@@ -19360,6 +19453,402 @@
     "tags": [
      "Agent Ops Cockpit",
      "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/composition-template-assets": {
+   "get": {
+    "operationId": "list_composition_template_assets_api_v1_composition_template_assets_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "include_retired",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Include Retired",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_builtin",
+      "required": false,
+      "schema": {
+       "default": true,
+       "title": "Include Builtin",
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Composition Template Assets Api V1 Composition Template Assets Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Composition Template Assets",
+    "tags": [
+     "组合模板资产（G04）",
+     "组合模板资产（G04）"
+    ]
+   },
+   "post": {
+    "operationId": "create_composition_template_asset_api_v1_composition_template_assets_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AssetCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Composition Template Asset Api V1 Composition Template Assets Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Composition Template Asset",
+    "tags": [
+     "组合模板资产（G04）",
+     "组合模板资产（G04）"
+    ]
+   }
+  },
+  "/api/v1/composition-template-assets/{asset_id}": {
+   "get": {
+    "operationId": "get_composition_template_asset_api_v1_composition_template_assets__asset_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Composition Template Asset Api V1 Composition Template Assets  Asset Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Composition Template Asset",
+    "tags": [
+     "组合模板资产（G04）",
+     "组合模板资产（G04）"
+    ]
+   }
+  },
+  "/api/v1/composition-template-assets/{asset_id}/restore/{revision}": {
+   "post": {
+    "operationId": "restore_asset_revision_api_v1_composition_template_assets__asset_id__restore__revision__post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Restore Asset Revision Api V1 Composition Template Assets  Asset Id  Restore  Revision  Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Restore Asset Revision",
+    "tags": [
+     "组合模板资产（G04）",
+     "组合模板资产（G04）"
+    ]
+   }
+  },
+  "/api/v1/composition-template-assets/{asset_id}/retire": {
+   "post": {
+    "operationId": "retire_asset_route_api_v1_composition_template_assets__asset_id__retire_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RetireRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Retire Asset Route Api V1 Composition Template Assets  Asset Id  Retire Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Retire Asset Route",
+    "tags": [
+     "组合模板资产（G04）",
+     "组合模板资产（G04）"
+    ]
+   }
+  },
+  "/api/v1/composition-template-assets/{asset_id}/versions": {
+   "post": {
+    "operationId": "new_asset_version_api_v1_composition_template_assets__asset_id__versions_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AssetNewVersionRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response New Asset Version Api V1 Composition Template Assets  Asset Id  Versions Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "New Asset Version",
+    "tags": [
+     "组合模板资产（G04）",
+     "组合模板资产（G04）"
+    ]
+   }
+  },
+  "/api/v1/composition-template-assets/{asset_id}/versions/{revision}/publish": {
+   "post": {
+    "operationId": "publish_asset_version_api_v1_composition_template_assets__asset_id__versions__revision__publish_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Publish Asset Version Api V1 Composition Template Assets  Asset Id  Versions  Revision  Publish Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Publish Asset Version",
+    "tags": [
+     "组合模板资产（G04）",
+     "组合模板资产（G04）"
     ]
    }
   },

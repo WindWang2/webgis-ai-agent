@@ -1821,10 +1821,13 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="brightness_percentile", type="number", default=97.5,
                 minimum=50.0, maximum=100.0,
-                description="亮度分位阈值（缺省 97.5；显式 brightness_threshold 优先）",
+                description="亮度分位阈值（缺省 97.5；显式 brightness_thresholds 优先）",
             ),
+            # G03 对账修正：参数名与工具签名逐位对齐（契约章程）——工具
+            # 参数是 brightness_thresholds（复数），旧契约名 brightness_threshold
+            # 与 schema 对不上号（G03 science 面对账发现的命名漂移）。
             ParameterSpec(
-                name="brightness_threshold", type="number", minimum=0.0,
+                name="brightness_thresholds", type="number", minimum=0.0,
                 description="显式亮度绝对阈值（给定则跳过分位阈值）",
             ),
             ParameterSpec(

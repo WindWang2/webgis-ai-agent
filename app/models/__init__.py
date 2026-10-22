@@ -86,6 +86,10 @@ from app.models.data_lifecycle import (  # noqa: F401 — 模型注册 + 再导�
 from app.models.template_version import (  # noqa: F401 — 模型注册 + 再导出（V9）
     TemplateVersion,
 )
+from app.models.composition_template_asset import (  # noqa: F401 — 模型注册 + 再导出（G04）
+    CompositionTemplateAsset,
+    CompositionTemplateAssetVersion,
+)
 from app.models.cartography_quality import (  # noqa: F401 — 模型注册 + 再导出（AC-10/ADR-0159）
     CartographyQualityRun,
     CartographyQualityBaseline,
@@ -105,6 +109,8 @@ __all__ = [
     "LifecyclePolicy",
     "GcPlan",
     "TemplateVersion",
+    "CompositionTemplateAsset",
+    "CompositionTemplateAssetVersion",
     "CartographyQualityRun",
     "CartographyQualityBaseline",
     "CartographyQualityWaiver",

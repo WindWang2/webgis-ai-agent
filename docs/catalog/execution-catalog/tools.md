@@ -22,6 +22,7 @@
 | buffer_analysis | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | proximity_buffer |
 | cancel_execution_run | 1.0#cv1 | stable | state_mutation | fast | light | small | plan_workflow_orchestration |
 | capability_runtime_status | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
+| catalog_conformance | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | catalog_discover | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | catalog_lookup | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | central_feature | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | geometry_centroid |

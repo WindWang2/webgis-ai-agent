@@ -578,6 +578,17 @@ class AlgorithmSelectionRecord(BaseModel):
     backend: str = ""
     scale_tier: str = ""
     runtime_strategy: str = ""
+    # G02（additive）：科学门 evidence 转录 —— 此前 resolver 的
+    # scientific_warnings/required_transformations 在此处被丢弃，下游
+    # workflow_compiler.compute_transformations 读 plan dump 的同名字段
+    # 恒为空（转录断链）。not_evaluated 为 PASS-deferred 披露（G02 W1）。
+    scientific_warnings: List[str] = Field(default_factory=list)
+    required_transformations: List[str] = Field(default_factory=list)
+    not_evaluated: List[str] = Field(default_factory=list)
+    # G02：plan 侧画像 freshness token（science_profile_digest 的共享键
+    # 集；空 = 画像缺席）。final gate 与执行 evidence 的 profile_digest
+    # 对账即三段 freshness 证据链。
+    profile_digest: str = ""
 
 
 class PlannedLayer(BaseModel):
@@ -723,6 +734,7 @@ class MapProductPlanner:
         """capability → DataRequirement/AnalysisStep + 裁决证据。"""
         from app.lib.gis.algorithm_resolver import get_algorithm_resolver
         from app.lib.gis.capability_registry import get_capability_registry
+        from app.lib.gis.science_final_gate import science_profile_digest
         from app.services.gis_harness.plan_graph import infer_dependency_edges
         caps = get_capability_registry()
         resolver = get_algorithm_resolver()
@@ -752,6 +764,13 @@ class MapProductPlanner:
                 backend=resolution_result.backend,
                 scale_tier=resolution_result.scale_tier,
                 runtime_strategy=resolution_result.runtime_strategy,
+                scientific_warnings=list(resolution_result.scientific_warnings),
+                required_transformations=list(
+                    resolution_result.required_transformations),
+                not_evaluated=list(resolution_result.not_evaluated),
+                profile_digest=(
+                    science_profile_digest(profile)
+                    if isinstance(profile, dict) else ""),
             )
             selections.append(record)
             # audit #825: 调用方传入注册表可见工具时，解析不到真实工具的

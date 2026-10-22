@@ -404,6 +404,10 @@ class ResumeReceipt(BaseModel):
     artifacts_expired: int = 0
     degraded: List[Dict[str, str]] = Field(default_factory=list)
     disclosures: List[str] = Field(default_factory=list)
+    # G01/WP-B6：恢复链数据集语义身份对账（v/migrated/migration_failed/
+    # checks[{ref,verdict,reason_codes,fp16}]/stale_refs/unknown_refs；
+    # 空 dict = 快照恢复路径未执行或无 ref —— 消费面按缺席披露）。
+    descriptor_reconciliation: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("missing_refs")
     @classmethod
