@@ -42,6 +42,17 @@ COMPOSITION_TOOL_REASON_CODES = (
     "props_invalid",
     "component_not_found",
     "replace_same_role_required",
+    # G04 模板资产面（composition_assets.ASSET_REASON_CODES 的工具侧投影）
+    "asset_not_found",
+    "asset_forbidden",
+    "asset_draft",
+    "asset_retired",
+    "asset_revision_not_found",
+    "asset_version_not_published",
+    "asset_payload_error",
+    "asset_publish_gate_failed",
+    "asset_conflict",
+    "asset_invalid_visibility",
 )
 
 #: purpose 词表（presets 单一事实在 component_presets.PURPOSE_PRESETS；
@@ -215,10 +226,20 @@ def register_composition_tools(registry: ToolRegistry) -> None:
         }
 
     class ApplyCompositionArgs(BaseModel):
-        contract_id: str = Field(description="组合契约 id（contract.core.*）")
+        contract_id: str = Field(
+            default="",
+            description="组合契约 id（contract.core.*）；与 template_asset_id "
+                        "二选一")
         expected_revision: Optional[int] = Field(
             default=None,
             description="乐观并发：先读 mutation_revision，落后会被 superseded")
+        template_asset_id: str = Field(
+            default="",
+            description="模板资产 id（asset.*，builtin/用户/项目资产）；"
+                        "提供时忽略 contract_id，按资产物化契约应用")
+        template_asset_revision: Optional[int] = Field(
+            default=None,
+            description="钉版本应用（缺省 = 当前已发布版）；旧图重放用")
 
     @tool(
         registry,
@@ -229,6 +250,9 @@ def register_composition_tools(registry: ToolRegistry) -> None:
             "只填空槽位、保留用户已有组件编辑、用户锁定（workbench "
             "lockedComponentIds）的组件零触碰并披露。应用前自动做 conformance "
             "预检（导出能力缺口/版本兼容为 error 时拒绝落盘）。"
+            "\n也可传 template_asset_id 直接应用模板资产（asset.*：builtin/"
+            "用户/项目组合模板资产；可选 template_asset_revision 钉版本重放）"
+            "——同一写入通道与预检，身份块携带资产 id+revision。"
             "\n同一契约重复应用幂等（零重复创建）；应用后 layout.composition "
             "携带模板/契约/ABI 版本身份（进入指纹链）。"
             "\n单组件微调用 webgis_component_update；本工具是版面级组合。"
@@ -262,6 +286,8 @@ def register_composition_tools(registry: ToolRegistry) -> None:
         session_id: Optional[str] = None,
         contract_id: str = "",
         expected_revision: Optional[int] = None,
+        template_asset_id: str = "",
+        template_asset_revision: Optional[int] = None,
     ) -> dict:
         from app.lib.cartography.composition_contract import (
             ContractApplyError,
@@ -273,7 +299,55 @@ def register_composition_tools(registry: ToolRegistry) -> None:
         if not session_id:
             return {"success": False, "reason_codes": ["missing_session"],
                     "message": "Missing session_id"}
-        contract = get_contract_registry().get(contract_id)
+
+        # G04 资产分支：DB/builtin 资产 → 物化模板 + 派生契约（显式钉版本
+        # 模板，不依赖全局注册表现值；DB 资产不进注册表——跨租户纪律）。
+        # 钉 revision = 重放语义（旧图/退役资产的显式恢复应用）；缺省
+        # revision = current 新应用语义（retire/draft 拒绝）。
+        resolved_asset = None
+        if template_asset_id:
+            _pinned = template_asset_revision is not None
+
+            def _resolve() -> Dict[str, Any]:
+                from app.services.templates.composition_assets import (
+                    CompositionAssetError,
+                    resolve_asset,
+                )
+                from app.core.database import SessionLocal
+
+                db = SessionLocal()
+                try:
+                    resolved = resolve_asset(
+                        db, template_asset_id, template_asset_revision,
+                        mode="for_replay" if _pinned else "for_apply")
+                    return {
+                        "contract": resolved.contract,
+                        "template": resolved.template,
+                        "asset_id": resolved.asset_id,
+                        "asset_revision": resolved.revision,
+                        "bounded": resolved.to_bounded_dict(),
+                    }
+                except CompositionAssetError as exc:
+                    return {"error_reason": exc.reason,
+                            "error_detail": str(exc)}
+                finally:
+                    db.close()
+
+            import asyncio
+
+            outcome = await asyncio.to_thread(_resolve)
+            if "error_reason" in outcome:
+                return {
+                    "success": False,
+                    "reason_codes": [outcome["error_reason"]],
+                    "message": str(outcome.get("error_detail") or "")[:200],
+                }
+            resolved_asset = outcome
+
+        if resolved_asset is not None:
+            contract = resolved_asset["contract"]
+        else:
+            contract = get_contract_registry().get(contract_id)
         if contract is None:
             from app.lib.cartography.composition_contract import (
                 get_contract_registry as gcr,
@@ -330,7 +404,12 @@ def register_composition_tools(registry: ToolRegistry) -> None:
 
         revision = int(expected_revision or 0)
         try:
-            new_spec, report = apply_contract(spec, contract, revision=revision)
+            apply_kwargs: Dict[str, Any] = {"revision": revision}
+            if resolved_asset is not None:
+                apply_kwargs["template"] = resolved_asset["template"]
+                apply_kwargs["asset_id"] = resolved_asset["asset_id"]
+                apply_kwargs["asset_revision"] = resolved_asset["asset_revision"]
+            new_spec, report = apply_contract(spec, contract, **apply_kwargs)
         except ContractApplyError as exc:
             return {"success": False, "reason_codes": ["contract_apply_error"],
                     "message": str(exc)[:200]}
@@ -352,6 +431,8 @@ def register_composition_tools(registry: ToolRegistry) -> None:
             "report": report.to_bounded_dict(),
             "component_abi_version": COMPONENT_ABI_VERSION,
         }
+        if resolved_asset is not None:
+            out["template_asset"] = resolved_asset["bounded"]
         if warnings:
             out["conformance_warnings"] = warnings
         if res.get("mapspec_fingerprint"):
@@ -549,4 +630,230 @@ def register_composition_tools(registry: ToolRegistry) -> None:
                 ([LOCK_REASON_USER_WINS] if is_locked else []) +
                 (["props_invalid"] if props_issues else [])),
             "plan": plan,
+        }
+
+    # ── G04 模板资产工具面 ────────────────────────────────────────────
+
+    class ListTemplateAssetsArgs(BaseModel):
+        include_builtin: bool = Field(
+            default=True, description="是否包含内置 4 族资产（asset.builtin.*）")
+        include_retired: bool = Field(
+            default=False, description="是否包含已退役 DB 资产")
+        limit: int = Field(
+            default=12, ge=1, le=20, description="DB 资产返回上限")
+
+    @tool(
+        registry,
+        tier=2, domains=["report"], name="webgis_list_composition_template_assets",
+        capabilities=["thematic_cartography"],
+        description=(
+            "列出当前调用者可见的组合模板资产（只读）：内置 4 族 + 私人/org/"
+            "项目 DB 资产（builtin ∪ creator ∪ org ∪ 项目；匿名只见 builtin）。"
+            "\n每项携带 asset_id、revision、status、fingerprint、兼容 MapModel "
+            "与导出目标 —— 供 webgis_apply_composition 的 template_asset_id "
+            "选择。结构化过滤，无自由文本 query。"
+        ),
+        args_model=ListTemplateAssetsArgs,
+        side_effect="pure",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("模板", "资产", "组合", "列表", "template-asset"),
+        output_semantic_type="json",
+        result_size_policy="bounded",
+        failure_modes=("invalid_args",),
+        summary="按调用者作用域列出组合模板资产（builtin + 私人/org/项目）。",
+        examples=("我保存过哪些组合模板资产", "项目里有哪些可用版式资产"),
+        anti_examples=("搜索『好看的热力图版式』——不接受自由文本 query",),
+    )
+    async def webgis_list_composition_template_assets(
+        include_builtin: bool = True,
+        include_retired: bool = False,
+        limit: int = 12,
+    ) -> dict:
+        from app.lib.cartography.template_assets import (
+            BUILTIN_TEMPLATE_ASSETS,
+            asset_reference_of,
+            materialize_template,
+        )
+
+        assets: List[Dict[str, Any]] = []
+        if include_builtin:
+            for rec in BUILTIN_TEMPLATE_ASSETS:
+                try:
+                    tpl = materialize_template(rec)
+                    ref = asset_reference_of(rec, tpl)
+                except Exception:  # noqa: BLE001 — 单个内置资产损坏不阻塞列表
+                    continue
+                assets.append(ref.to_bounded_dict())
+
+        def _list_db() -> Dict[str, Any]:
+            from app.core.database import SessionLocal
+            from app.services.templates.composition_assets import (
+                CompositionAssetError,
+                list_assets,
+                tool_caller_identity,
+            )
+
+            user_id, org_id = tool_caller_identity()
+            db = SessionLocal()
+            try:
+                rows = list_assets(
+                    db, user_id=user_id, org_id=org_id, role=None,
+                    include_retired=include_retired, limit=limit)
+                return {"rows": rows}
+            except CompositionAssetError as exc:
+                return {"rows": [], "error_reason": exc.reason}
+            except Exception as exc:  # noqa: BLE001 — DB 失败降级 builtin-only
+                return {"rows": [], "error_reason": f"db_unavailable: {exc}"}
+            finally:
+                db.close()
+
+        import asyncio
+
+        outcome = await asyncio.to_thread(_list_db)
+        assets.extend({
+            "asset_id": str(r.get("asset_id"))[:64],
+            "revision": int(r.get("current_revision") or 0),
+            "status": str(r.get("status") or "")[:12],
+            "builtin": False,
+            "fingerprint": str(r.get("fingerprint") or "")[:80],
+            "template_id": str(r.get("asset_id"))[:64],
+            "name": str(r.get("name") or "")[:80],
+            "compatible_map_models": [],
+            "output_targets": [],
+            "visibility": str(r.get("visibility") or "")[:12],
+            "latest_revision": int(r.get("latest_revision") or 0),
+        } for r in outcome["rows"][:limit])
+        out: Dict[str, Any] = {
+            "success": True,
+            "assets": assets[:24],
+            "asset_count": len(assets),
+            "reason_codes": [],
+        }
+        if outcome.get("error_reason"):
+            out["reason_codes"] = [str(outcome["error_reason"])[:48]]
+            out["disclosure"] = "DB 资产不可用，仅返回内置资产"
+        return out
+
+    class SaveCompositionTemplateArgs(BaseModel):
+        session_id: str = Field(description="来源会话（读当前 MapSpec）")
+        name: str = Field(default="", max_length=80, description="资产名")
+        description: str = Field(
+            default="", max_length=400, description="资产描述")
+        visibility: str = Field(
+            default="private",
+            description="private / org / project（project 需 project_id）")
+        project_id: str = Field(
+            default="", description="visibility=project 时的项目 id")
+        publish: bool = Field(
+            default=True, description="创建后立即发布（过发布门校验）")
+
+    @tool(
+        registry,
+        tier=2, domains=["report"], name="webgis_save_composition_template",
+        capabilities=["thematic_cartography"],
+        description=(
+            "把当前会话的组合版式保存为**我的模板资产**（save-as-my-template）："
+            "从 live MapSpec 派生组合模板（在系统基底上=参数绑定差异变体；"
+            "否则 inline），落库为 draft/published 资产，供本用户/org/项目"
+            "经 webgis_apply_composition 复用。默认私人可见。"
+            "\n用户组件编辑（在场实例）成为 required 槽位——重放可复原结构；"
+            "不触碰当前会话状态。"
+        ),
+        args_model=SaveCompositionTemplateArgs,
+        side_effect="state_mutation",
+        deterministic=False,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("模板", "资产", "保存", "save-as-my-template"),
+        output_semantic_type="json",
+        result_size_policy="bounded",
+        required_context=("map_state",),
+        data_mutations=("session_state",),
+        failure_modes=("invalid_args", "missing_data"),
+        summary="会话组合版式 → 模板资产（scoped 可见性 + 版本化）。",
+        examples=("把我调好的版式保存为我的模板", "把这个版式存到项目共享"),
+        anti_examples=("直接改当前地图——本工具只读会话并落资产",),
+    )
+    async def webgis_save_composition_template(
+        session_id: Optional[str] = None,
+        name: str = "",
+        description: str = "",
+        visibility: str = "private",
+        project_id: str = "",
+        publish: bool = True,
+    ) -> dict:
+        from app.services.templates.composition_assets import (
+            CompositionAssetError,
+            create_asset,
+            derive_payload_from_spec,
+            tool_caller_identity,
+        )
+
+        if not session_id:
+            return {"success": False, "reason_codes": ["missing_session"],
+                    "message": "Missing session_id"}
+        spec = await _spec_of(session_id)
+        layout = spec.get("layout") if isinstance(spec, dict) else None
+        components = (
+            [c for c in (layout.get("components") or []) if isinstance(c, dict)]
+            if isinstance(layout, dict) else [])
+        if not components:
+            return {
+                "success": False,
+                "reason_codes": ["asset_payload_error"],
+                "message": "当前会话无组件版面可保存",
+            }
+        payload = derive_payload_from_spec(spec)
+        if name:
+            payload.name = name[:80]
+        if description:
+            payload.description = description[:400]
+        user_id, org_id = tool_caller_identity()
+
+        def _create() -> Dict[str, Any]:
+            from app.core.database import SessionLocal
+
+            db = SessionLocal()
+            try:
+                asset, version = create_asset(
+                    db, payload=payload,
+                    visibility=visibility,
+                    project_id=project_id or None,
+                    creator_id=user_id, org_id=org_id,
+                    publish=publish)
+                return {
+                    "asset_id": asset.id, "revision": version.revision,
+                    "status": version.status,
+                    "validation": (version.validation or [])[:8],
+                    "fingerprint": (version.fingerprint or "")[:80],
+                }
+            except CompositionAssetError as exc:
+                return {"error_reason": exc.reason, "error_detail": str(exc)}
+            finally:
+                db.close()
+
+        import asyncio
+
+        outcome = await asyncio.to_thread(_create)
+        if "error_reason" in outcome:
+            return {
+                "success": False,
+                "reason_codes": [outcome["error_reason"]],
+                "message": str(outcome.get("error_detail") or "")[:200],
+            }
+        return {
+            "success": True,
+            "reason_codes": [],
+            "asset_id": outcome["asset_id"],
+            "revision": outcome["revision"],
+            "status": outcome["status"],
+            "validation": outcome["validation"],
+            "fingerprint": outcome["fingerprint"],
+            "message": (
+                "已保存为模板资产；应用：webgis_apply_composition "
+                "template_asset_id=…"),
         }

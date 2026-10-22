@@ -372,6 +372,38 @@ async def upload_map_export(
 
             authoritative = await mapspec_store.get_mapspec(session_id)
             if isinstance(authoritative, dict) and authoritative:
+                # G04：组合身份携带 DB 资产模板时，为 requiredness 维度注入
+                # 显式模板（会话属主可见性内解析；DB 资产不进全局注册表）。
+                # 不可见/失效 → None，manifest 诚实降级 not_evaluated。
+                extra_templates = None
+                _layout = authoritative.get("layout")
+                _identity = _layout.get("composition") \
+                    if isinstance(_layout, dict) else None
+                _asset_id = str(
+                    (_identity or {}).get("asset_id") or "") \
+                    if isinstance(_identity, dict) else ""
+                if _asset_id:
+                    from app.services.templates.composition_assets import (
+                        resolve_replay_template,
+                    )
+
+                    def _resolve_asset_template():
+                        from app.core.database import SessionLocal
+
+                        db_sync = SessionLocal()
+                        try:
+                            return resolve_replay_template(
+                                db_sync, _asset_id,
+                                (_identity or {}).get("asset_revision")
+                                or None,
+                                user_id=_user.get("user_id") or None
+                                if isinstance(_user, dict) else None)
+                        finally:
+                            db_sync.close()
+
+                    _tpl = await asyncio.to_thread(_resolve_asset_template)
+                    if _tpl is not None:
+                        extra_templates = {_asset_id: _tpl}
                 # 大 spec 的指纹遍历/序列化与文件写一致卸载出事件循环
                 #（#427/#592 同款纪律；review P3）。
                 report = await asyncio.to_thread(
@@ -379,6 +411,7 @@ async def upload_map_export(
                     authoritative,
                     export_format=ext.lstrip("."),
                     diagnostics=accepted_diagnostics,
+                    extra_templates=extra_templates,
                 )
                 manifest_bytes = json.dumps(
                     report, ensure_ascii=False, sort_keys=True,

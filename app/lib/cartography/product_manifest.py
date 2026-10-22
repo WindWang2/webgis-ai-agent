@@ -198,11 +198,18 @@ def build_product_manifest(
         ],
     }
     if isinstance(identity, dict) and identity.get("template_id"):
-        manifest["composition"] = {
+        composition_block: Dict[str, Any] = {
             "template_id": _bounded_str(identity.get("template_id")),
             "template_version": _bounded_str(identity.get("template_version"), 16),
             "component_abi_version": identity.get("component_abi_version"),
         }
+        # G04 additive：组合来源是模板资产时投影强引用（id+revision）。
+        asset_id = _bounded_str(identity.get("asset_id"), 64)
+        if asset_id:
+            composition_block["asset_id"] = asset_id
+            composition_block["asset_revision"] = \
+                identity.get("asset_revision") or 0
+        manifest["composition"] = composition_block
     time_block = spec.get("time")
     if isinstance(time_block, dict) and time_block:
         # 键白名单 + 有界字符串（review P2：time 块任意键原文透传会把
@@ -245,11 +252,17 @@ def verify_export_semantic_consistency(
     *,
     export_format: str = "",
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    extra_templates: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """live（权威 MapSpec）↔ export（交付事实）语义一致性验证报告。
 
     每个维度给出既有词表的状态与有界证据；缺证据 → not_evaluated，
     绝不 PASS；能力缺失且已披露 → unsupported（不计 fail）。
+
+    G04 additive：``extra_templates`` 允许调用方（services 层）为组合身份
+    中的**DB 资产模板**注入显式模板对象（钉版本重放；DB 资产不进全局
+    注册表 —— 见 services/templates/composition_assets.py 的注册表纪律）。
+    既有调用方不传 → 行为逐位不变。
     """
     manifest = build_product_manifest(
         spec, export_format=export_format, diagnostics=diagnostics)
@@ -310,6 +323,9 @@ def verify_export_semantic_consistency(
 
             tpl = get_composition_template_registry().get(
                 str(identity.get("template_id")))
+            if tpl is None and extra_templates:
+                # G04：DB 资产模板显式注入（调用方已过可见性解析）
+                tpl = extra_templates.get(str(identity.get("template_id")))
             if tpl is None:
                 checks.append({
                     "aspect": "component_requiredness",
