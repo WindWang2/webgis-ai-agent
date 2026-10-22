@@ -24,6 +24,10 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tests.acceptance.gis_agent.contracts import ScenarioContract
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -48,12 +52,15 @@ def _init_env() -> None:
         os.environ.setdefault(key, value)
 
 
-def _load_corpus():
+def _load_corpus() -> list[ScenarioContract]:
     from tests.acceptance.gis_agent.corpus import all_scenarios
     return all_scenarios()
 
 
-def _select(profile: str, only_ids):
+def _select(
+    profile: str,
+    only_ids: list[str] | None,
+) -> list[ScenarioContract]:
     scenarios = _load_corpus()
     if only_ids:
         by_id = {s.id: s for s in scenarios}
@@ -70,7 +77,10 @@ def _select(profile: str, only_ids):
     return scenarios
 
 
-async def _run(scenarios, out_path: Path) -> int:
+async def _run(
+    scenarios: list[ScenarioContract],
+    out_path: Path,
+) -> int:
     from tests.acceptance.gis_agent.reporting import (
         coverage_matrix,
         render_text_report,
@@ -103,7 +113,7 @@ async def _run(scenarios, out_path: Path) -> int:
     return 0 if ok else 1
 
 
-def _cmd_run(args) -> int:
+def _cmd_run(args: argparse.Namespace) -> int:
     _init_env()
     scenarios = _select(args.profile, args.scenario)
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -111,7 +121,7 @@ def _cmd_run(args) -> int:
     return asyncio.run(_run(scenarios, out))
 
 
-def _cmd_pin(args) -> int:
+def _cmd_pin(args: argparse.Namespace) -> int:
     scenarios = _load_corpus()
     payload = {
         "kind": "g05-task-scenarios",
@@ -132,7 +142,7 @@ def _cmd_pin(args) -> int:
     return 0
 
 
-def _cmd_compare(args) -> int:
+def _cmd_compare(args: argparse.Namespace) -> int:
     base = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
     curr = json.loads(Path(args.run).read_text(encoding="utf-8"))
     base_by = {r["scenario_id"]: r for r in base.get("runs", [])}
@@ -176,7 +186,7 @@ def _first_mismatch(run: dict) -> str:
     return "runner" if run.get("error") else ""
 
 
-def _cmd_report(args) -> int:
+def _cmd_report(args: argparse.Namespace) -> int:
     data = json.loads(Path(args.run).read_text(encoding="utf-8"))
     print(json.dumps(data.get("summary", {}), ensure_ascii=False, indent=1))
     if args.coverage:
@@ -188,7 +198,7 @@ def _cmd_report(args) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="g05_task_acceptance")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
