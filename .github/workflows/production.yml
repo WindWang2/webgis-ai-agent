@@ -1008,6 +1008,21 @@ jobs:
         # TEST-10（#1657）：uv 必须 pin —— 解析器版本变化会改变选版结果，
         # diff 的红/绿会随 uv 升级漂移而无法归因。版本为 CI 当天
         # （2026-10-18）实测锁定。
+        #
+        # #1754 维护者决策（2026-10-23，master 55731498 实测）：**保持响亮
+        # 失败，暂不重新生成 lock**。当前已知漂移 41 行，含两个 major 升级
+        # 与三个新传递依赖，属供应链决策而非机械刷新：
+        #   - huggingface-hub 1.33.0 → 2.2.0（major；sentence-transformers
+        #     的依赖，牵动 geoai 语义检索面）
+        #   - python-dateutil 2.9.0.post0 → 3.0.0（major）
+        #   - 新增 httpcore2 / httpx2 / truststore（huggingface-hub 2.x 传递）
+        #   - fastapi 0.156.8 → 0.161.0、sentence-transformers 6.1.0 → 6.2.0
+        #     等 minor/patch 升级
+        # 不重生成的理由：master 尚有存量红灯（Backend Tests 50 项），此刻
+        # 一次性升级几十个依赖会使新增失败与存量失败无法归因；须先清偿存量
+        # 红灯，再以独立 dependency 波次做升级评审 + real-services lane 全量
+        # 验证。因此本步的红是**已知且已登记的待刷新状态**，不是新回归 ——
+        # 读到红时先比对上述清单，清单外的新增漂移才是真信号。
         run: |
           pip install uv==0.13.1
           uv pip compile requirements.txt -o /tmp/requirements.lock.fresh
