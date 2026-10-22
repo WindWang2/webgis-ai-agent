@@ -355,7 +355,8 @@ def test_apply_contract_pinned_template_used(registry, variant_record):
         template=tpl_r1,
         asset_id="asset.test.variant1", asset_revision=1)
     created_types = report.created
-    assert any("chart" in c for c in created_types) or report.preserved
+    assert any("chart" in c for c in created_types), (
+        "钉 r1 模板必须物化 chart_panel（r2 把它禁用）")
     # 身份块钉 r1
     assert report.identity.asset_revision == 1
 

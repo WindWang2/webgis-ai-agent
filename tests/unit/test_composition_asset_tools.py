@@ -329,3 +329,32 @@ async def test_list_db_assets_scoped_to_caller(registry, db_assets, caller):
     assert len(db_rows) == 1
     assert db_rows[0]["visibility"] == "private"
     assert db_rows[0]["revision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_save_foreign_session_rejected(registry, db_assets, caller):
+    """review P3-3：save 工具的会话属主守卫——他人会话 → missing_session
+    （不泄露存在性；与 REST 双胞胎 404 对齐）。"""
+    from app.core.database import get_async_db
+    from app.models.db_model import Conversation
+
+    foreign = f"g04-foreign-{uuid.uuid4().hex[:8]}"
+    gen = get_async_db()
+    adb = await gen.__anext__()
+    try:
+        adb.add(Conversation(id=foreign, user_id="u2", title="foreign"))
+        await adb.commit()
+    finally:
+        await gen.aclose()
+    # 他人会话：守卫拒绝（在 spec 读取之前）
+    res = await registry.dispatch(
+        "webgis_save_composition_template",
+        {"session_id": foreign}, session_id=foreign)
+    assert res["success"] is False
+    assert res["reason_codes"] == ["missing_session"]
+    # 不存在的会话同样拒绝
+    res2 = await registry.dispatch(
+        "webgis_save_composition_template",
+        {"session_id": "g04-nonexistent"}, session_id="g04-nonexistent")
+    assert res2["success"] is False
+    assert res2["reason_codes"] == ["missing_session"]

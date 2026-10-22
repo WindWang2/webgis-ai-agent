@@ -392,6 +392,26 @@ def test_derive_payload_preserves_all_edits_after_real_apply():
         ), f"{ctype} 无对应 base 槽位（派生必丢编辑）"
 
 
+def test_derive_payload_preserves_user_position_edit():
+    """review P3-1：用户移动 legend 后，派生必须携带 legend 的 position
+    覆写（旧实现按实例 id 匹配会整体丢失此编辑）。"""
+    from app.lib.cartography.composition_contract import (
+        SEED_CONTRACTS,
+        apply_contract,
+    )
+    seed = next(c for c in SEED_CONTRACTS
+                if c.contract_id == "contract.core.basic_thematic")
+    spec, _ = apply_contract({"version": "1.6", "layout": {}}, seed)
+    legend = next(c for c in spec["layout"]["components"]
+                  if c["type"] == "legend")
+    legend["position"] = "bottom-right"  # 用户从默认 bottom-left 移走
+    payload = svc.derive_payload_from_spec(spec)
+    assert payload.base_template_id == "composition.standard_analysis"
+    legend_ov = payload.slot_overrides.get("legend", {})
+    assert legend_ov.get("position_zone") == "bottom-right", (
+        "用户位置编辑必须作为 legend 槽位覆写保留")
+
+
 def test_derive_payload_falls_back_inline_for_extra_components():
     """review P1-2：用户新增组件不在基底 → 诚实降级 inline（不吞编辑）。"""
     from app.lib.cartography.composition_contract import (
@@ -411,7 +431,7 @@ def test_derive_payload_falls_back_inline_for_extra_components():
 
 
 def test_pinned_draft_revision_apply_rejected(db):
-    """review P2-1：钉版本应用不得绕过发布门（draft 拒绝）。"""
+    """review P2-1：钉版本应用不得绕过发布门（for_apply 拒 draft）。"""
     bad = _payload(
         slot_overrides={"chart_panel": {"preferred_templates": ["ghost/x"]}})
     asset, v1 = svc.create_asset(db, payload=bad, creator_id="u1")
@@ -419,6 +439,26 @@ def test_pinned_draft_revision_apply_rejected(db):
     with pytest.raises(svc.CompositionAssetError) as ei:
         svc.resolve_asset_for(db, asset.id, 1, user_id="u1")
     assert ei.value.reason == "asset_version_not_published"
+
+
+def test_pinned_draft_revision_replay_rejected(db):
+    """review P2-1：重放面（for_replay）同样拒 draft——未过发布门的
+    载荷不进渲染；retired-published 仍可重放。"""
+    bad = _payload(
+        slot_overrides={"chart_panel": {"preferred_templates": ["ghost/x"]}})
+    asset, _ = svc.create_asset(db, payload=bad, creator_id="u1")
+    with pytest.raises(svc.CompositionAssetError) as ei:
+        svc.resolve_asset_for(db, asset.id, 1, mode="for_replay",
+                              user_id="u1")
+    assert ei.value.reason == "asset_version_not_published"
+    # 对照：published → retire 后重放放行（旧图打开语义）
+    good = _payload()
+    asset2, _ = svc.create_asset(db, payload=good, creator_id="u1",
+                                 publish=True)
+    svc.retire_asset(db, asset2.id, user_id="u1")
+    replay = svc.resolve_asset_for(db, asset2.id, 1, mode="for_replay",
+                                   user_id="u1")
+    assert replay.record.status == "retired"
 
 
 def test_project_asset_foreign_project_rejected(db):

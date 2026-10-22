@@ -82,7 +82,7 @@ class AssetCreateRequest(BaseModel):
 
 class AssetNewVersionRequest(BaseModel):
     session_id: str = Field(
-        default="", description="从该会话重新派生（缺省保留原 payload）")
+        default="", description="从该会话派生新内容（需会话属主；与 payload 二选一）")
     payload: Optional[Dict[str, Any]] = Field(default=None)
     publish: bool = Field(default=True)
 

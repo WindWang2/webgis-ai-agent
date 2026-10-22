@@ -341,9 +341,16 @@ async def test_corrupt_identity_block_tolerated(registry, clean_session):
         components=spec["layout"]["components"],
         origin="user", actor="corrupt")
     reloaded = await mapspec_store.get_mapspec(clean_session)
-    # 宽容读：坏类型 template_id → None（不抛、不阻塞会话读路径）
+    # 宽容读契约（不抛、不阻塞）：坏类型 template_id 被 str 规范化，
+    # 缺块/非 dict layout → None。两种输入都不得抛异常。
     ident = read_composition_identity(reloaded)
-    assert ident is None or isinstance(ident.template_id, str)
+    if ident is not None:
+        assert isinstance(ident.template_id, str)
+    coerced = read_composition_identity(
+        {"layout": {"composition": {"template_id": 12345}}})
+    assert coerced is not None and coerced.template_id == "12345"
+    assert read_composition_identity({"layout": {}}) is None
+    assert read_composition_identity({"layout": {"composition": 5}}) is None
 
 
 @pytest.mark.asyncio
