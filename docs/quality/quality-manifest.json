@@ -420,6 +420,8 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis/test_g02_contract_semantics.py",
+    "tests/unit/gis/test_g02_gate_chain.py",
     "tests/unit/lib/test_geostat_v3.py"
    ],
    "uncertainty_outputs": [
@@ -443,6 +445,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis/test_g02_contract_semantics.py",
     "tests/unit/lib/test_backend_dispatch_v5.py",
     "tests/unit/lib/test_geostat_v3.py"
    ],
@@ -762,6 +765,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/lib/test_regression_kriging.py"
    ],
    "uncertainty_outputs": [
@@ -2384,6 +2388,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/lib/test_rs_v3.py"
    ],
    "uncertainty_outputs": []
@@ -3477,6 +3482,8 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis/test_g02_gate_chain.py",
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/lib/test_gwr_local_inference.py",
     "tests/unit/lib/test_spatial_regression_v2.py"
    ],
@@ -4459,6 +4466,7 @@
    "scientific_status": "VALIDATED",
    "tests": [
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/lib/test_completeness_v3.py",
     "tests/unit/test_gis_algorithm_audit_fixes.py",
     "tests/unit/test_network_algo_hotspots.py",
@@ -5578,6 +5586,7 @@
     "tests/unit/evaluation/test_replay_and_metrics.py",
     "tests/unit/gis/test_data_contracts_v2.py",
     "tests/unit/gis/test_execution_catalog_discovery.py",
+    "tests/unit/gis/test_g02_gate_chain.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_capability_benchmark.py",
     "tests/unit/gis_harness/test_capability_resolution.py",
@@ -5721,7 +5730,9 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py"
+   ]
   },
   {
    "category": "statistics",
@@ -5762,6 +5773,8 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis/test_g02_contract_semantics.py",
+    "tests/unit/gis/test_g02_gate_chain.py",
     "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/gis_harness/test_workflow_v4_semantics.py",
     "tests/unit/lib/test_geostat_v3.py"
@@ -5859,6 +5872,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis/test_g02_contract_semantics.py",
     "tests/unit/lib/test_cokriging_lmc_v4.py",
     "tests/unit/lib/test_geostat_v3.py"
    ]
@@ -6321,6 +6335,8 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis/test_g02_gate_chain.py",
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/lib/test_gwr_local_inference.py",
     "tests/unit/lib/test_spatial_regression_v2.py"
    ]
@@ -7305,6 +7321,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_regression_kriging.py"
@@ -7934,6 +7951,7 @@
    "tests": [
     "tests/test_tool_registry_async_policy.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/requirement_ir/test_build.py",
     "tests/unit/gis_harness/requirement_ir/test_clarify.py",
@@ -8359,7 +8377,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "43b709fb0dd78fe6ce0a4022ec416d7d8f3e3deee319fac3a43b7c93756286d9",
+ "fingerprint": "38cf323e2607ef88cc6c5e8a67f09a8d3c69f3160b3be5252329d4e98ff10834",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8722,6 +8740,7 @@
     "遥感"
    ],
    "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/lib/test_rs_v3.py"
    ],
    "tier": 2
@@ -8850,6 +8869,7 @@
     "插值"
    ],
    "tests": [
+    "tests/unit/gis/test_g02_gate_chain.py",
     "tests/unit/lib/test_geostat_v3.py"
    ],
    "tier": 2
@@ -11754,6 +11774,8 @@
     "空间异质性"
    ],
    "tests": [
+    "tests/unit/gis/test_g02_gate_chain.py",
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/lib/test_local_spatial_stats_v2.py"
    ],
    "tier": 2
@@ -12466,6 +12488,8 @@
    "tests": [
     "tests/science_oracles/test_edge_cases_oracles.py",
     "tests/science_oracles/test_geostat_oracles.py",
+    "tests/unit/gis/test_g02_gate_chain.py",
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/test_capability_descriptors_v7.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
@@ -15017,6 +15041,7 @@
     "插值"
    ],
    "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_regression_kriging.py"
@@ -17490,6 +17515,7 @@
    "tests": [
     "tests/test_tool_registry_async_policy.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/requirement_ir/test_build.py",
     "tests/unit/gis_harness/requirement_ir/test_clarify.py",

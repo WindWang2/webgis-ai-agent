@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,9 @@ from app.services.gis_harness.tools_component import (  # noqa: F401 — re-expo
 )
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry, tool
+
+if TYPE_CHECKING:
+    from app.services.gis_harness.planner import AlgorithmSelectionRecord
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +255,7 @@ def _product_composition_identity(
         return None
 
 
-def bounded_selection_evidence(record) -> dict:
+def bounded_selection_evidence(record: AlgorithmSelectionRecord) -> dict:
     """G02：selection → LLM 面证据的有界投影。
 
     空值字段（""/[]/None）不入证据 —— 科学 evidence 字段 additive 后
@@ -264,7 +267,7 @@ def bounded_selection_evidence(record) -> dict:
     return {k: v for k, v in record.model_dump().items() if v or v == 0}
 
 
-def register_gis_harness_tools(registry: ToolRegistry):
+def register_gis_harness_tools(registry: ToolRegistry) -> None:
     """注册 GIS Harness 工具（tier 1：意图解析廉价且恒可用）。"""
 
     @tool(
