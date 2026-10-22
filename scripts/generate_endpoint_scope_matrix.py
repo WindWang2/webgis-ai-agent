@@ -113,6 +113,10 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "mission-runtime": ("mission:read", "mission:write"),
     # Agent Ops Cockpit：只读运维投影面（设计上无写端点；诊断读语义）
     "cockpit": "diag:read",
+    # G04/ADR-0214 组合模板资产 REST 面：与 templates 域同族语义（制图
+    # 模板资产的数据面读/写；鉴权纪律照抄 template_versions.py 的
+    # get_current_user(_optional)，scope 由域推导，不引入 require_scope）。
+    "composition-template-assets": ("gis:read", "gis:write"),
     # 任务组合控制面（只读项目聚合投影 —— projects 域读语义）
     "portfolio": "projects:read",
     # ADR 事件驱动空间作业面：org 域内事件读 + watch/ingest/webhook 写

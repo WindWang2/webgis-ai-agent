@@ -59,6 +59,13 @@ GET,/api/v1/cockpit/missions/{mission_id}/timeline,diag:read,N,Y
 GET,/api/v1/cockpit/sessions/{session_id}/evidence,diag:read,N,Y
 GET,/api/v1/cockpit/sessions/{session_id}/skill,diag:read,N,Y
 GET,/api/v1/cockpit/sessions/{session_id}/trace,diag:read,N,Y
+GET,/api/v1/composition-template-assets,gis:read,N,Y
+POST,/api/v1/composition-template-assets,gis:write,N,Y
+GET,/api/v1/composition-template-assets/{asset_id},gis:read,N,Y
+POST,/api/v1/composition-template-assets/{asset_id}/restore/{revision},gis:write,N,Y
+POST,/api/v1/composition-template-assets/{asset_id}/retire,gis:write,N,Y
+POST,/api/v1/composition-template-assets/{asset_id}/versions,gis:write,N,Y
+POST,/api/v1/composition-template-assets/{asset_id}/versions/{revision}/publish,gis:write,N,Y
 GET,/api/v1/config/llm,admin:read,Y,N
 POST,/api/v1/config/llm,admin:write,Y,N
 POST,/api/v1/config/llm/test,admin:write,Y,N

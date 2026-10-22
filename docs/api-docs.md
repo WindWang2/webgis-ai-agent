@@ -801,6 +801,18 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/templates/{template_id}/versions/{version}` | Get Version Endpoint | object |
 | `POST` | `/api/v1/templates/{template_id}/versions/{version}/deprecate` | Deprecate Version Endpoint | object |
 
+### 组合模板资产（G04）
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/composition-template-assets` | List Composition Template Assets | object |
+| `POST` | `/api/v1/composition-template-assets` | Create Composition Template Asset | object |
+| `GET` | `/api/v1/composition-template-assets/{asset_id}` | Get Composition Template Asset | object |
+| `POST` | `/api/v1/composition-template-assets/{asset_id}/versions` | New Asset Version | object |
+| `POST` | `/api/v1/composition-template-assets/{asset_id}/versions/{revision}/publish` | Publish Asset Version | object |
+| `POST` | `/api/v1/composition-template-assets/{asset_id}/retire` | Retire Asset Route | object |
+| `POST` | `/api/v1/composition-template-assets/{asset_id}/restore/{revision}` | Restore Asset Revision | object |
+
 ### Data Fabric / 数据织网
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1115,6 +1127,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：393（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：400（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
