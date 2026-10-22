@@ -5581,6 +5581,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/cartography/test_h02_product_pipeline_gaps.py",
     "tests/fixtures/product_corpus/gen_product_corpus.py",
     "tests/unit/evaluation/test_replay_and_metrics.py",
@@ -5632,6 +5633,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/test_pi_session_plan_host.py",
     "tests/unit/gis/test_execution_catalog_discovery.py",
     "tests/unit/gis/test_gis_lib_registries.py",
@@ -5698,6 +5700,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/benchmarks/test_spatial_science_benchmarks.py",
     "tests/test_618_backend_p3.py",
     "tests/test_audit_simple_fixes.py",
@@ -6883,6 +6886,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/benchmarks/test_job_runtime_perf.py",
     "tests/benchmarks/test_spatial_science_benchmarks.py",
     "tests/data/test_lakehouse_completion_v8.py",
@@ -7052,6 +7056,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/benchmarks/test_gis_registry_perf.py",
     "tests/cartography/test_representation_projection_v1.py",
     "tests/data/test_dirty_corpus_oracle.py",
@@ -7143,6 +7148,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/cartography/test_cartographic_phase4_rules.py",
     "tests/unit/gis/test_backend_sdk_v3.py",
     "tests/unit/gis/test_cost_model.py",
@@ -7271,6 +7277,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/test_spatial_tasks.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_capability_benchmark.py",
@@ -7681,6 +7688,7 @@
    "supports_large_data": true,
    "tests": [
     "frontend/test/fixtures/workflow-runtime-fixtures.ts",
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/test_spatial_tasks.py",
     "tests/unit/gis/test_algo_conformance_v2.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
@@ -8381,7 +8389,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "f69327c1d8db07dca9297ddb02df0411ae9c7963c77a61b3bfd96ddae9e3f272",
+ "fingerprint": "729e9b883588bc8b3e3cdc7232d614a3bb86abb27de82d5474f9aa3fb85ef858",
  "gate": {
   "fields": {
    "capabilities": {
@@ -9342,6 +9350,7 @@
    ],
    "tests": [
     "frontend/test/results/normalize.test.ts",
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_mapspec_store.py",
@@ -10336,6 +10345,7 @@
     "高清"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/test_context_builder_round2.py",
     "tests/test_export_frames_v5.py",
     "tests/test_export_phase3.py",
@@ -10419,6 +10429,7 @@
     "数字高程模型"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis/test_algo_conformance_v2.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
@@ -11952,6 +11963,7 @@
    ],
    "tests": [
     "frontend/test/results/normalize.test.ts",
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/benchmarks/test_gis_registry_perf.py",
     "tests/cartography/test_cartographic_quality_review.py",
     "tests/conftest.py",
@@ -14852,6 +14864,7 @@
     "差值"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/lib/test_geo_raster_v5.py",
     "tests/unit/test_domain_c_raster.py",
@@ -15060,6 +15073,8 @@
     "registry"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
+    "tests/acceptance/gis_agent/test_task_failures.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_pi_cancellation_unified.py"
    ],
@@ -16703,6 +16718,7 @@
     "密度"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/benchmarks/test_gis_registry_perf.py",
     "tests/harness_replay/test_receipt_level_replay.py",
     "tests/harness_replay/test_replay_shrink.py",
@@ -16841,6 +16857,7 @@
    ],
    "tests": [
     "frontend/test/fixtures/workflow-runtime-fixtures.ts",
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/test_spatial_tasks.py",
     "tests/unit/gis/test_algo_conformance_v2.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
@@ -16920,6 +16937,7 @@
    ],
    "tests": [
     "frontend/test/results/normalize.test.ts",
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/benchmarks/test_perf_harness.py",
     "tests/test_cartography_tools.py",
     "tests/test_kde_contours_caching.py",
@@ -18067,6 +18085,7 @@
     "harness"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/contracts.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
     "tests/test_pi_session_plan_host.py",
     "tests/test_tool_meta_contract.py",
@@ -18214,6 +18233,7 @@
     "component"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/runner.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/gis_harness/test_component_tools_v2.py",
     "tests/unit/gis_harness/test_golden_cases_v2.py",
@@ -18507,6 +18527,8 @@
     "map intent"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/contracts.py",
+    "tests/acceptance/gis_agent/runner.py",
     "tests/benchmarks/test_planner_runtime_perf.py",
     "tests/test_gis_memory_wiring.py",
     "tests/test_gis_situation_compile_diff.py",
@@ -18575,6 +18597,8 @@
     "成图"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/contracts.py",
+    "tests/acceptance/gis_agent/runner.py",
     "tests/benchmarks/test_planner_runtime_perf.py",
     "tests/cartography/test_h02_product_pipeline_gaps.py",
     "tests/governor/test_estimation.py",
@@ -18656,6 +18680,7 @@
     "product edit"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/runner.py",
     "tests/unit/gis_harness/test_product_wiring.py",
     "tests/unit/test_tool_registry_rationalization.py"
    ],
