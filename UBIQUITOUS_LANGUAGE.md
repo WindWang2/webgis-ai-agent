@@ -114,7 +114,7 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | ---- | ---------- | ---------------- |
 | **GIS Skill** | A versioned, machine-validated contract for a reusable **domain procedure** (e.g. `point_distribution_analysis`) — ordered steps, decision points, statistical/geographic/temporal semantics, quality obligations, fallbacks, completion evidence. Lives in `app/services/gis_harness/skills/library/`. | prompt skill, agent skill, tool |
 | **Chat prompt skill (legacy)** | The `.md`/`.py` assets under `app/skills/` injected into chat prompts or loaded as executable tools. NOT a GIS Skill; unstructured, unversioned. | skill (ambiguous), runtime skill |
-| **Developer skill** | An agent-workflow SKILL.md (tdd, review, gstack) under `agent/skills/` or `.agents/skills/`. Coding-process knowledge, never consumed by the product runtime. | skill |
+| **Developer skill** | An agent-workflow SKILL.md (tdd, review, gstack) under `.agents/skills/`. Coding-process knowledge, never consumed by the product runtime. | skill |
 | **SkillCard** | The bounded first-layer projection of a GIS Skill (id/description/when_to_use/requirements) shown before selection; the full procedure is read on demand. | full skill dump (forbidden) |
 | **SkillResolver** | The deterministic-first selector over GIS Skills (ranked + confidence + reasons + rejected-with-fallback + clarification). Zero LLM. | recommender, LLM picker |
 | **SkillComposition** | An explicit, acyclic, bounded-depth (≤4) ordering of GIS Skills across job phases (analysis → cartography → delivery). Distinct from **CompositeRecipe**, which composes cartographic layers within a plan. | recipe composite |
@@ -163,7 +163,7 @@ opinionated glossary; where it disagrees with older docs, this file wins.
   `overall_passed` gate flag. Canonical: the **Cartography Verdict** token is `pass`;
   `overall_passed` is the gate flag and never enters the inject (#657).
 - **"skill"** meant three different things: chat prompt skills (`app/skills/`), executable skill
-  scripts (`app/skills/*.py`), and developer skills (`agent/skills/`). Canonical (ADR-0182): the
+  scripts (`app/skills/*.py`), and developer skills (`.agents/skills/`). Canonical (ADR-0182): the
   structured domain procedure is the **GIS Skill**; say "prompt skill" or "developer skill" for the
   other two; never use bare "skill" when context could span them.
 - **"runtime"** was used for both the **headless runtime** (Playwright, record-only) and the live
