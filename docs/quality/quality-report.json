@@ -24,16 +24,16 @@
     "capabilities": 160,
     "findings": 9,
     "recipes": 166,
-    "tools": 356
+    "tools": 359
    },
    "findings_by_code": {
     "ALGO_HEAVY_NO_VARIANTS": 1,
     "TOOL_UNTESTED": 8
    },
-   "fingerprint": "43b709fb0dd78fe6ce0a4022ec416d7d8f3e3deee319fac3a43b7c93756286d9",
+   "fingerprint": "729e9b883588bc8b3e3cdc7232d614a3bb86abb27de82d5474f9aa3fb85ef858",
    "gate": {
     "pass": true,
-    "total": 356
+    "total": 359
    }
   },
   "scenario_corpus": {

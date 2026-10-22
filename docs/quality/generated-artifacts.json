@@ -57,7 +57,7 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_REPORT.md": {
-   "content_fingerprint": "44b8db2cad4983e78aa7a27d3c707db155532721af1201ca3b1945f519c19265",
+   "content_fingerprint": "38916145aaa6ce9f22116cfbe6dd1b6dd5346c718c56c9bc265164db1c6713d0",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
    "input_fingerprint": "430a066a6c0bdeb182d326049e9723db73364e387fb9f3bb2e2ca434529b4d85",
@@ -147,7 +147,7 @@
    "scope": "global"
   },
   "docs/quality/quality-report.json": {
-   "content_fingerprint": "d4ac83346f014a8980568ced3b5bb565f7aeef6380cba2c58ef939c1c6842d50",
+   "content_fingerprint": "172ac91374147198dcc008ae54cc92ca6de97bffaf30c735b739d6aa0555307a",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
    "input_fingerprint": "430a066a6c0bdeb182d326049e9723db73364e387fb9f3bb2e2ca434529b4d85",
