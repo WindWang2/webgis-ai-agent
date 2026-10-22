@@ -1,4 +1,4 @@
-"""Product Runtime —— 语义产品层的生产编排（ADR-0183 §8 接线面）。
+"""Product Runtime —— 语义产品层的生产编排（ADR-0258 §8 接线面）。
 
 职责：把纯函数层（shapes → compiler → completeness）接到生产工具路径：
 

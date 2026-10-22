@@ -1,4 +1,4 @@
-"""F08：并发计划 simulation / property tests（ADR-0214 验收面）。
+"""F08：并发计划 simulation / property tests（ADR-0264 验收面）。
 
 方向 DoD 的「可证明」部分：
 

@@ -1,4 +1,4 @@
-"""多 session 压力测试（R19，ADR-0182 D12）：1/4/8/16 并发 synthetic session。
+"""多 session 压力测试（R19，ADR-0254 D12）：1/4/8/16 并发 synthetic session。
 
 **不开真实 Next/browser/raster 进程** —— FakeExecutor 走真实 governor 管线
 （准入/背压/账本/归还），执行时长压缩为零。断言：

@@ -1,4 +1,4 @@
-"""V6 下推决策契约测试（ADR-0118 W7）：fetch 窗口/聚合下推裁决/边界解释。"""
+"""V6 下推决策契约测试（ADR-0247 W7）：fetch 窗口/聚合下推裁决/边界解释。"""
 
 from app.services.data_fabric.query.federated.enumerator import (
     EnumerationContext,
@@ -53,7 +53,7 @@ def _ctx(rows_by_source=None, kinds=None):
 
 
 def test_fetch_windows_v5_parity_identity():
-    """V5 奇偶默认：窗口恒等（放宽属显式契约变更 —— ADR-0118 follow-up）。
+    """V5 奇偶默认：窗口恒等（放宽属显式契约变更 —— ADR-0247 follow-up）。
 
     差分语料证明放宽会改变结果（V5 欠取漏配 vs V6 找回）—— 红线：优化器
     不改变结果语义。

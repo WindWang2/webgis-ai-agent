@@ -1,4 +1,4 @@
-# Spatial Data Lakehouse & Cube V6 (ADR-0118)
+# Spatial Data Lakehouse & Cube V6 (ADR-0249)
 
 V6 在 Data Control Plane V5 之上建立 durable spatial lakehouse：统一数据
 身份、chunk、revision、lazy materialization、object storage 与项目级

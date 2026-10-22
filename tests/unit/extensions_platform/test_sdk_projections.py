@@ -1,4 +1,4 @@
-"""SDK 投影测试（ADR-0104 Wave 3-7）：algorithm / provider / cartography /
+"""SDK 投影测试（ADR-0243 Wave 3-7）：algorithm / provider / cartography /
 recipe 经 ExtensionContext 投影到权威 registry 并可零残留回滚。"""
 
 from __future__ import annotations

@@ -3,7 +3,7 @@
 status: Accepted
 date: 2026-09-04
 relates-to: ADR-0076 (SessionPlan truth), ADR-0085 (goal→product graph),
-ADR-0087/0088 (action intent), ADR-0096 (plane boundary)
+ADR-0087/0088 (action intent), ADR-0235 (plane boundary)
 
 ## Context
 

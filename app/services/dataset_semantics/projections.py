@@ -1,4 +1,4 @@
-"""Descriptor Projections —— GISDatasetDescriptor 的单向投影出口（ADR-0215 D2）。
+"""Descriptor Projections —— GISDatasetDescriptor 的单向投影出口（ADR-0265 D2）。
 
 纪律（不可妥协）：
 
@@ -45,7 +45,7 @@ def descriptor_to_dataset_profile(descriptor: GISDatasetDescriptor) -> DatasetPr
         if "temporal_dimension" in entry.roles and not time_field:
             time_field = name
     # 清单成员是构建期显式证据的冻结投影 —— 直接还原，不从 dtype 重推
-    # （dtype 与清单是两路证据；重推会放大证据，见 ADR-0215 D2）。
+    # （dtype 与清单是两路证据；重推会放大证据，见 ADR-0265 D2）。
     numeric = [str(x) for x in descriptor.numeric_fields]
     categorical = [str(x) for x in descriptor.categorical_fields]
     binary = [str(x) for x in descriptor.binary_fields]

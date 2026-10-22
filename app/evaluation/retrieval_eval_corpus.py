@@ -1,4 +1,4 @@
-"""Retrieval V5 open-loop query→tool 评测语料（ADR-0118 决策 D7）。
+"""Retrieval V5 open-loop query→tool 评测语料（ADR-0248 决策 D7）。
 
 V4 基线的缺口（Phase-0 审计 §7）：``retrieval_corpus`` 由 306 意图
 golden + paraphrase 层生成，期望工具经 AlgorithmRegistry **capability

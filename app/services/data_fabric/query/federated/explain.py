@@ -1,4 +1,4 @@
-"""V6 Explain（ADR-0118 W9）：计划树 + est vs actual + 边界/物化/变换披露。
+"""V6 Explain（ADR-0247 W9）：计划树 + est vs actual + 边界/物化/变换披露。
 
 确定性文本（同输入同行文）；不含 secret/连接信息。``exec_result`` 缺省时
 只渲染计划侧（dry-run/EXPLAIN 形态）。

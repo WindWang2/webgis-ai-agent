@@ -1,6 +1,6 @@
 """Lakehouse V6 Wave 6 — Zarr cube store（group + consolidated + CoW 修订）。
 
-覆盖面（ADR-0118 Zarr V6）：
+覆盖面（ADR-0249 Zarr V6）：
 - 真实写/读：group cube（每 band 一个 (time,y,x) 数组）、grid/铺排/dtype
   校验（复用 foundation）、round-trip 值一致；
 - consolidated metadata：写后 zarr.json 在场（缺席 = 诚实降级）；

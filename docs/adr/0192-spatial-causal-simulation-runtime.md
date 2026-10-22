@@ -3,7 +3,7 @@
 **Status:** Accepted（分支 `agent/08-spatial-causal-simulation-runtime`）
 **Date:** 2026-09-15
 **关联:** ADR-0052（durable job）、ADR-0096（geocompute 数据面边界）、ADR-0047（MVT 数据面）、
-ADR-0118（GeoParquet row-group 剪枝）、ADR-0155（MapSpec additive 演进）、规划任务 B011（ST-GCN，前瞻）
+ADR-0249（GeoParquet row-group 剪枝）、ADR-0155（MapSpec additive 演进）、规划任务 B011（ST-GCN，前瞻）
 
 ## 背景
 

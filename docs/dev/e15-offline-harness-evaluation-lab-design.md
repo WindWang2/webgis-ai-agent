@@ -3,9 +3,9 @@
 - 状态：Accepted（随实现 PR 一起评审）
 - 日期：2026-09-29
 - 基线：`origin/master@77d2678d`
-- 关联：ADR-0104 D3（质量平台"派生 + 闸"形态）、ADR-0183（trace/replay v1）、
-  ADR-0212（replay 闭环 v2）、ADR-0214（oracle v3 / 视觉观察 / 资源调度）、
-  ADR-0204-f03（单结算 seam）、#1555（j1 journey page.evaluate 绕过真实 UI）、
+- 关联：ADR-0245 D3（质量平台"派生 + 闸"形态）、ADR-0256（trace/replay v1）、
+  ADR-0212（replay 闭环 v2）、ADR-0262/ADR-0263/ADR-0264（oracle v3 / 视觉观察 / 资源调度）、
+  ADR-0259-f03（单结算 seam）、#1555（j1 journey page.evaluate 绕过真实 UI）、
   #1552（evaluation corpus / science_oracles 测试薄弱）
 
 ## 1. 问题

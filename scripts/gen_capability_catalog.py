@@ -13,7 +13,7 @@
 
 用法：``python scripts/gen_capability_catalog.py``（工作树根目录执行）。
 输出确定性：同注册表状态必产生字节相同的文档（CI diff 校验；
-无时间戳 —— ADR-0118 同款纪律）。
+无时间戳 —— ADR-0250 同款纪律）。
 """
 from __future__ import annotations
 

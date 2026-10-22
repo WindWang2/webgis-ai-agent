@@ -1,4 +1,4 @@
-"""扩展平台开发者 CLI 测试（ADR-0104 / Wave 13）。
+"""扩展平台开发者 CLI 测试（ADR-0243 / Wave 13）。
 
 直接驱动 :func:`app.extensions_platform.cli.main`（不启子进程、不碰网络
 /LLM）；扩展目录构造方式与 test_host_lifecycle.py 一致（合成包 + 真实

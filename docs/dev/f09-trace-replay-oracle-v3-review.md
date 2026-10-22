@@ -3,7 +3,7 @@
 - Reviewer：Subagent C（独立深审，非实现者自评）
 - 审查范围：`9e1ad229..7cce90d0`（8 WP 实现 + 文档）
 - 清偿 commit：本文件所在 commit（review-fix）
-- 设计/勘察：`f09-trace-replay-oracle-v3-{design,recon}.md`；ADR-0214
+- 设计/勘察：`f09-trace-replay-oracle-v3-{design,recon}.md`；ADR-0262
 
 ## Review 结论概要
 

@@ -1,4 +1,4 @@
-"""F08 / ADR-0214 D3：计划级 feasibility（DAG → aggregate → 裁决）。
+"""F08 / ADR-0264 D3：计划级 feasibility（DAG → aggregate → 裁决）。
 
 验收面：
 - dag_waves：拓扑分层确定性、分支并行、环收敛不死循环、

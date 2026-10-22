@@ -477,9 +477,9 @@
   user-wins 守卫拒绝携带稳定 error_code（不再靠中文子串识别）。
 
 # Changelog
-## [Unreleased] - 2026-09-29 (zcode/h04-durable-turn-journal-causal-ledger, ADR-0216)
+## [Unreleased] - 2026-09-29 (zcode/h04-durable-turn-journal-causal-ledger, ADR-0268)
 
-### Added (harness: durable turn journal — 可恢复/可追因/幂等的执行账本, ADR-0216)
+### Added (harness: durable turn journal — 可恢复/可追因/幂等的执行账本, ADR-0268)
 - `turn_events` durable 账本（`app/models/harness_journal.py` + migration
   `0096_harness_turn_journal`）：session 级 append-only 事实投影，
   `event_id` UNIQUE 判重（canonical 行复用 envelope 确定性幂等键
@@ -490,7 +490,7 @@
   `_ledger_record`）：`_event`/`_journal` append 后 fire-and-forget；
   fail-open（账本故障只丢投影 + 计数 + 限频日志，绝不反噬 chat 热路径，
   与 envelope 保存的 fail-closed 刻意不同）；`map_mutated` 行携带
-  `mutation_revision` 凭证引用（不替代 ADR-0183 receipt）；
+  `mutation_revision` 凭证引用（不替代 ADR-0257 receipt）；
   `end_turn` 的 `turn_ended` 行补结构化 `detail.status/tool_calls`。
 - TurnJournalSink（`app/services/turn_journal/sink.py`）：有界队列
   （1024，满拒新保最老 + `journal_sink_drop`）、to_thread 落库、停机
@@ -552,9 +552,9 @@
   零执行）+ ADR-0217 + golden 快照（`tests/unit/gis/golden/action_ir_v1.json`）。
 
 # Changelog
-## [Unreleased] - 2026-09-29 (zcode/c13-visual-observation-critique-repair-e2e, ADR-0217)
+## [Unreleased] - 2026-09-29 (zcode/c13-visual-observation-critique-repair-e2e, ADR-0272)
 
-### Added (harness: 制图视觉感知闭环 E2E — stale 硬门 / blob 生命周期 / AUTO_SAFE 分级 / 拒绝记忆 / 前端采集与审批 UI, ADR-0217)
+### Added (harness: 制图视觉感知闭环 E2E — stale 硬门 / blob 生命周期 / AUTO_SAFE 分级 / 拒绝记忆 / 前端采集与审批 UI, ADR-0272)
 - **stale 观测硬门（旧观测不得驱动新地图）**：`latest_screenshot_for`
   改严格匹配（revision 必须相等、指纹双方非空须相等，移除 F15「滞后
   一拍」回退）；provider `_eval_rules` 第二道纵深门
@@ -594,11 +594,11 @@
   map-panel）：plan 零突变预览 → 结构化 ops diff（层/op/touches_locked
   知情披露）→ 批准（approved=true + expected_revision CAS）/ 拒绝
   （拒绝记忆）；不展示内部推理；`map.visualRepair.*` 双语 32 键。
-- OpenAPI 快照显式刷新（additive）；ADR-0217 + `docs/dev/c13-visual-
+- OpenAPI 快照显式刷新（additive）；ADR-0272 + `docs/dev/c13-visual-
   observation-e2e-design.md`。
-## [Unreleased] - 2026-09-26 (zcode/f01-dataset-semantic-contract-vnext, ADR-0215)
+## [Unreleased] - 2026-09-26 (zcode/f01-dataset-semantic-contract-vnext, ADR-0265)
 
-### Added (gis: dataset semantic contract vNext, ADR-0215)
+### Added (gis: dataset semantic contract vNext, ADR-0265)
 - `GISDatasetDescriptor` v1（`app/lib/gis/dataset_descriptor.py`）：数据语义的
   versioned/bounded/deterministic 权威契约记录 —— descriptor 指纹
   （`dsd-v1:`）与 schema 指纹（`dsd-schema-v1:`）复用 V3 fingerprints 原语；
@@ -720,7 +720,7 @@
 - **pre-existing（master 既有红）**：`tests/cartography/test_vector_pdf_route.py`
   鉴权 override 未随 #1483 换用 `get_current_user_with_version` → 3 用例 401 红
   （纯测试侧修复）。
-## [Unreleased] - 2026-09-26 (feat/f09-trace-replay-oracle-v3, ADR-0214)
+## [Unreleased] - 2026-09-26 (feat/f09-trace-replay-oracle-v3, ADR-0262)
 
 ### Added (harness: trace/replay oracle v3 — 可回放 → 可判错)
 - **T4 receipt 级 ToolDispatchService 重放**（#1486 deferred 缺口清偿）：
@@ -765,9 +765,9 @@
   marker）+ 邻域回归（decision provenance / gis_trace / dispatch /
   graph / engine structural）全绿；设计/勘察见
   `docs/dev/f09-trace-replay-oracle-v3-{design,recon}.md`。
-## [Unreleased] - 2026-09-26 (zcode/f15-visual-observation-repair, ADR-0214)
+## [Unreleased] - 2026-09-26 (zcode/f15-visual-observation-repair, ADR-0263)
 
-### Added (harness: visual-observation-repair, ADR-0214)
+### Added (harness: visual-observation-repair, ADR-0263)
 - Provider-neutral 视觉观察契约：`VisualObservationInput/Result` +
   `VisualScreenshotRef`（ref-only 纪律 —— 字节只在 provider 评估瞬间解析
   进内存，trace/journal/map_product 只允许 ref+sha 摘要）——
@@ -812,7 +812,7 @@
   含 CAS/批准门/锁双 origin 语义/收敛硬停）/
   `test_visual_regression_corpus.py`（15，golden_images 10 样本确定性
   钉住 + finalization 级反翻转）；设计/勘察见
-  `docs/dev/f15-visual-observation-{design,recon}.md`、ADR-0214。
+  `docs/dev/f15-visual-observation-{design,recon}.md`、ADR-0263。
 ## [Unreleased] - 2026-09-26 (f10-cartographic-grammar-production, ADR-0205)
 
 ### Added (cartography: grammar production adoption, F10)
@@ -854,9 +854,9 @@
 - M9：`create_thematic_map` layer_meta 下发 `scale_visibility_hints` /
   `scale_tier`（grammar ScaleDecision 消费面）；对账测试锁定
   scale_rules↔label_plan 同界 + scene_lod 差异如实披露。
-## [Unreleased] - 2026-09-26 (feat/f12-map-plan-compiler, ADR-0214)
+## [Unreleased] - 2026-09-26 (feat/f12-map-plan-compiler, ADR-0260)
 
-### Added (carto: map-plan-compiler, F12 / ADR-0214)
+### Added (carto: map-plan-compiler, F12 / ADR-0260)
 - versioned **MapPlanIR**（refs-only / content-addressed / 有界）：
   `app/lib/cartography/plan_ir.py` —— requirements/datasets/authorities/
   analysis outputs 全部引用权威决策（fingerprint + schema_version），
@@ -879,11 +879,11 @@
   receipt,apply,finalization}_v1.py` + `test_plan_compiler_corpus_v1.py`
   （中文 NL → MapSpec diff → completeness/replay 端到端语料）+
   `test_map_plan_tools_v1.py`（76 项）。
-- 设计/勘察：`docs/adr/0214-map-plan-compiler.md`、
+- 设计/勘察：`docs/adr/0260-map-plan-compiler.md`、
   `docs/dev/f12-map-plan-compiler-{recon,decisions}.md`。
-## [Unreleased] - 2026-09-26 (feat/f02-gis-intent-requirement-ir, ADR-0215)
+## [Unreleased] - 2026-09-26 (feat/f02-gis-intent-requirement-ir, ADR-0266)
 
-### Added (gis: session-scoped requirement IR — typed 契约 + user-wins patch, ADR-0215)
+### Added (gis: session-scoped requirement IR — typed 契约 + user-wins patch, ADR-0266)
 - Requirement IR 新包 `app/services/gis_harness/requirement_ir/`（13 子
   模块，包内纯函数零 IO，`service.py` 唯一 IO 面）：会话级持久化
   Requirement 文档 —— typed 契约、字段级 provenance、`GISIntentSpec`
@@ -905,11 +905,11 @@
 - 测试：`tests/unit/gis_harness/requirement_ir/` 11 文件 145 用例
   （契约 round-trip、patch CAS/幂等/回放不变式、digest 稳定性、投影
   出口、review 修复回归）。
-- 设计/勘察/评审：`docs/adr/0215-gis-intent-requirement-ir.md`、
+- 设计/勘察/评审：`docs/adr/0266-gis-intent-requirement-ir.md`、
   `docs/dev/f02-gis-intent-requirement-ir-{decisions,recon,review}.md`。
-## [Unreleased] - 2026-09-26 (feat/f03-harness-lifecycle-convergence, ADR-0204)
+## [Unreleased] - 2026-09-26 (feat/f03-harness-lifecycle-convergence, ADR-0259)
 
-### Added (harness: pi bridge turn 结算单 seam 化, ADR-0204)
+### Added (harness: pi bridge turn 结算单 seam 化, ADR-0259)
 - 单一结算 seam：`_settle_turn_outcome`（`app/agent_pi_bridge.py`）——
   stream/non-stream 双路径的 turn 结算收敛到同一出口；
   `_hk_turn_status` 扩展 error/abort_source 维度；`PiBridge.abort(source=)`
@@ -939,7 +939,7 @@
   tracker 记 `complete_task`，与取消真相矛盾。
 - 既有测试修复：`test_pi_cancellation_unified.py` 的
   `_FakeBridge.abort` 签名过期（缺 `source=`）致 2 用例红，修复后
-  9/9；设计/勘察见 `docs/adr/0204-f03-harness-lifecycle-convergence.md`、
+  9/9；设计/勘察见 `docs/adr/0259-f03-harness-lifecycle-convergence.md`、
   `docs/dev/f03-harness-lifecycle-recon.md`、`docs/dev/f03-lifecycle-review.md`。
 ## [Unreleased] - 2026-09-26 (feat/f04-typed-context-assembly-budget)
 
@@ -1048,9 +1048,9 @@
   `test_foundation_v2_infra.py::test_catalog_doc_matches_registry_projection`
   与 `test_workflow_guards.py::test_catalog_matches_registry`
   （ALGORITHM_CATALOG.md / workflow-catalog.md 漂移修复）。
-## [Unreleased] - 2026-09-26 (feat/f08-workflow-resource-scheduler, ADR-0214)
+## [Unreleased] - 2026-09-26 (feat/f08-workflow-resource-scheduler, ADR-0264)
 
-### Added (workflow: 节点级 governor 资源治理接线, ADR-0214)
+### Added (workflow: 节点级 governor 资源治理接线, ADR-0264)
 - 节点级 typed ResourceEstimate（`app/services/workflow_runtime/estimate.py`）：
   先验唯一来自 governor.estimation（render 面走 render_budget、export
   面走新 `governor/export_budget.py`），诚实标注 `Subsystem.WORKFLOW`；
@@ -1068,7 +1068,7 @@
   run_id/node_attempt/node_deadline_s（打通 #1408 管道）。
 - 测试：7 文件 83 用例（预算生命周期/泄漏、governor link fail-open、
   估算 parity、plan feasibility、资源模拟、worker 容量、export 估算）。
-- 设计/评审：`docs/adr/0214-workflow-resource-scheduler-convergence.md`、
+- 设计/评审：`docs/adr/0264-workflow-resource-scheduler-convergence.md`、
   `docs/dev/f08-workflow-resource-scheduler-{recon,review}.md`。
 
 ### Changed (workflow: resource scheduler)
@@ -1112,9 +1112,9 @@
   CAS（stale → superseded 拒绝）；组件锁单一事实沿用
   `spec.workbench.lockedComponentIds`，载荷含锁组件 →
   `component_locked:user_wins` 提前拒绝。
-## [Unreleased] - 2026-09-26 (feat/f13-mapspec-render-runtime-data-plane, ADR-0214)
+## [Unreleased] - 2026-09-26 (feat/f13-mapspec-render-runtime-data-plane, ADR-0261)
 
-### Added (carto: MapSpec→渲染运行时数据面事务语义, ADR-0214)
+### Added (carto: MapSpec→渲染运行时数据面事务语义, ADR-0261)
 - RenderWorkProjection（`app/lib/cartography/render_work_projection.py`）：
   零扫描渲染估工（只读 spec 骨架 + 源 profile），未知要素按 2000/层
   保守先验并带 `features_estimated` 披露；governor 侧
@@ -1136,7 +1136,7 @@
   （`frontend/lib/telemetry/render-probes.ts`，patchLatencyMs/ttfrMs/
   dataPlane 计数/cacheBytes/renderFailures，perf 块 ≤2KB 上行）。
 - 测试：后端 3 文件 50 用例 + 前端 3 文件 35 用例。
-- 设计/勘察/评审：`docs/adr/0214-mapspec-render-runtime-data-plane.md`、
+- 设计/勘察/评审：`docs/adr/0261-mapspec-render-runtime-data-plane.md`、
   `docs/dev/f13-render-runtime-{design,recon,review}.md`。
 
 ### Changed (carto: render data plane)
@@ -1151,9 +1151,9 @@
   正在显示的数据——pin 接线 + sweep 修复 pinned 集合跨会话单调增长
   风险。
 
-## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
+## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0209)
 
-### Added (harness: map-verify-repair-loop, ADR-0204)
+### Added (harness: map-verify-repair-loop, ADR-0209)
 - UnifiedFinding 契约补全（additive）：`finding_id` / `finding_class`
   类别轴（semantic / gis_correctness / cartographic / visual /
   runtime_display / export，`derive_finding_class` 单一推导点）/
@@ -1179,9 +1179,9 @@
   `test_verify_repair_loop_wiring.py`（7）；设计/勘察见
   `docs/dev/map-verify-repair-loop-{design,recon}.md`。
 
-## [Unreleased] - 2026-09-20 (carto/cartographic-grammar-v1, ADR-0204)
+## [Unreleased] - 2026-09-20 (carto/cartographic-grammar-v1, ADR-0205)
 
-### Added (carto: cartographic-grammar-v1, ADR-0204)
+### Added (carto: cartographic-grammar-v1, ADR-0205)
 - 制图语法基座（事前规划层）：`app/lib/cartography/visual_variables.py`
   （测量语义冻结词表 × 视觉变量适配矩阵，Bertin/Mackinlay 表达力三分集
   + 稳定 reason code `GRAMMAR.CHAN.*`；`infer_measurement_kind` 确定性
@@ -1201,7 +1201,7 @@
 - critique 消费面：`quality_loop.review_cartography /
   review_and_repair_cartography` 新增可选 `grammar_decision` → 只读
   `grammar_audit` 段（缺失 not_evaluated，绝不影响 status）。
-- 文档：`docs/adr/0204-cartographic-grammar-visual-variables.md`、
+- 文档：`docs/adr/0205-cartographic-grammar-visual-variables.md`、
   `docs/dev/cartographic-grammar-foundation.md`（含 recon 与验收矩阵）。
 - 测试：`tests/cartography/test_visual_variables_v1.py`（33）/
   `test_grammar_solver_v1.py`（33）/ `test_scale_rules_v1.py`（21）/
@@ -1214,9 +1214,9 @@
   （即"留空由引擎裁决"推荐路径）在 master 上必崩；本 PR 修复并由
   wiring 测试锁定。
 
-## [Unreleased] - 2026-09-20 (harness/trace-replay-closed-loop-v2, ADR-0204)
+## [Unreleased] - 2026-09-20 (harness/trace-replay-closed-loop-v2, ADR-0212)
 
-### Added (harness: trace/replay 闭环 + 决策溯源 v2, ADR-0204)
+### Added (harness: trace/replay 闭环 + 决策溯源 v2, ADR-0212)
 - 统一 DecisionRecord（决策溯源）：确定性内容地址 decision_id / inputs_digest /
   alternatives / 结构化 reason_codes / policy_version —— `app/lib/runtime/decision_record.py`；
   生产发射点：planner `CANDIDATE_WORKFLOWS`（plan_selection，候选稳定序 →
@@ -3461,7 +3461,7 @@ ADR/work records rather than CHANGELOG are summarized below.
 - Semantic render-scene oracle (`describeRenderScene`) with golden corpus and
   live-composition semantics checks — live ↔ export parity assertions on
   meaning (presence/visibility/disclosure), not pixels.
-- Spatial Data Lakehouse & Cube V6 (ADR-0118 spatial-data-lakehouse-cube-v6): durable DataObject identity —
+- Spatial Data Lakehouse & Cube V6 (ADR-0249 spatial-data-lakehouse-cube-v6): durable DataObject identity —
   manifests are content-addressed (id = canonical sha256, deterministic,
   owner-scoped, with input reuse fingerprints and an environment
   fingerprint), published through the existing BlobStore CAS with free
@@ -3544,7 +3544,7 @@ ADR/work records rather than CHANGELOG are summarized below.
   durable-node await polling silently failed (fail-open). They now return a
   session instance (same discipline as the jobs subsystem).
 
-### Added (Workbench V5 & Collaboration — ADR-0105)
+### Added (Workbench V5 & Collaboration — ADR-0246)
 - Workbench organization state (nested group tree / membership / layer locks /
   workbench mode) is now durable: new `patch_workbench_state` MapSpec mutation
   intent persists a `WorkbenchDocV5` into the session's `mapspec["workbench"]`
@@ -3584,7 +3584,7 @@ ADR/work records rather than CHANGELOG are summarized below.
   rename/remove/assign/lock/drop mutations are undoable doc commands;
   group removal promotes children.
 
-### Added (Harness V5 — ADR-0118 gis-harness-autonomous-runtime-v5)
+### Added (Harness V5 — ADR-0248 gis-harness-autonomous-runtime-v5)
 - Durable trace V5: session trace-chain JSONL is now multi-worker safe
   (cross-process flock + per-session monotonic `seq` + settle idempotency);
   FINAL_VERDICT records are never dropped by the rolling window; chains survive
@@ -3708,7 +3708,7 @@ ADR/work records rather than CHANGELOG are summarized below.
 ## [Unreleased] - 2026-09-08
 
 ### Added
-- GIS Extension Platform V1（ADR-0104 gis-extension-platform-v1）：第三方/内部扩展的统一宿主
+- GIS Extension Platform V1（ADR-0243 gis-extension-platform-v1）：第三方/内部扩展的统一宿主
   `app/extensions_platform/` —— `GisExtensionManifest`（fail-closed、
   schema 版本化、命名空间强制、保留词表）、typed 诊断码、扩展 API/核心
   版本窗口兼容判定、权限模型（声明≠授权、typed 拒绝、仅可收窄）、

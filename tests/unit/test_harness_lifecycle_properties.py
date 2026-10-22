@@ -1,4 +1,4 @@
-"""F03 lifecycle property / chaos tests（ADR-0204-f03 D6 重放不变量）。
+"""F03 lifecycle property / chaos tests（ADR-0259-f03 D6 重放不变量）。
 
 仓规生成式纪律（tests/fixtures/generative.py）：seeded ``random.Random``、
 有界迭代、零新依赖（不用 hypothesis）—— 同 seed 同序列，失败可精确重放。

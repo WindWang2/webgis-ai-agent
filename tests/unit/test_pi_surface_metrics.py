@@ -1,4 +1,4 @@
-"""Pi 工具面指标 + 回归门测试（ADR-0180 D5 / typed-tool-surface M3/T9）。
+"""Pi 工具面指标 + 回归门测试（ADR-0253 D5 / typed-tool-surface M3/T9）。
 
 - 计数器语义：invalid_tool_name / schema_validation_rejected /
   proxy_wrapped / direct_surface / last surface projection；

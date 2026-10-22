@@ -1,7 +1,7 @@
 # F02 — GIS Intent & Requirement IR — Design
 
 - Date: 2026-09-26（实现） / 2026-09-27（本文为合并后补记的 design，G06 文档债补齐）
-- ADR: `docs/adr/0215-gis-intent-requirement-ir.md`
+- ADR: `docs/adr/0266-gis-intent-requirement-ir.md`
 - Recon: `docs/dev/f02-gis-intent-requirement-ir-recon.md`；Decisions: `docs/dev/f02-gis-intent-requirement-ir-decisions.md`；Review: `docs/dev/f02-gis-intent-requirement-ir-review.md`
 - 实现基线: `origin/master @ 9e1ad229`；Merge: PR #1507（`0141f527`）
 - 状态: 已合并（merged）。本文全部内容以合并后代码为事实源，可 rg 核对。

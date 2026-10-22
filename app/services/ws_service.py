@@ -248,7 +248,7 @@ async def handle_layers_reordered(session_id: str, data: dict):
 
 
 async def handle_situation_interaction(session_id: str, data: dict):
-    """结构化交互观察摄入（ADR-0180 S4）：去重 + generation 单调 + 有界环。
+    """结构化交互观察摄入（ADR-0252 S4）：去重 + generation 单调 + 有界环。
 
     前端把 Harness 需要感知的轮间交互（viewport/selection/focus/rendered/
     gesture/display mode/pending mutation）以小型观察帧上报；服务端内容

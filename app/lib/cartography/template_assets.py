@@ -24,7 +24,7 @@ ADR-0214 在非目标里显式留白「用户自定义 composition template 的 
 - ``TemplateAssetReference``：有界引用 DTO（agent 工具载荷）。
 
 红线：纯函数、确定性、有界；lib 不 import services（ADR-0216）；组件类型
-词表不因资产扩容（ADR-0101 —— 覆写只能引用既有类型）。
+词表不因资产扩容（ADR-0238 —— 覆写只能引用既有类型）。
 """
 from __future__ import annotations
 

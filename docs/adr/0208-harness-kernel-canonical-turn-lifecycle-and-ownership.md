@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-09-20
-- 关联：ADR-0180（Pi-native Harness Kernel + SessionPlan 契约）、ADR-0076（SessionPlan 计划真相）、ADR-0079（GIS Harness Runtime v2 原子状态）、ADR-0100（Pi Runtime v6 cancellation，"agent_settled 是唯一 turn 终结者"）、ADR-0134（V7 只读派生投影）、ADR-0182（Resource Governor）、ADR-0197（Durable Mission Runtime）
+- 关联：ADR-0180（Pi-native Harness Kernel + SessionPlan 契约）、ADR-0076（SessionPlan 计划真相）、ADR-0079（GIS Harness Runtime v2 原子状态）、ADR-0100（Pi Runtime v6 cancellation，"agent_settled 是唯一 turn 终结者"）、ADR-0134（V7 只读派生投影）、ADR-0254（Resource Governor）、ADR-0197（Durable Mission Runtime）
 - 分支：`fix/harness-kernel-canonical-lifecycle`
 
 ## Context
@@ -128,7 +128,7 @@ bridge 流式/非流式共用的 `_hk_turn_status` 纯函数（行为逐位不�
 | Workflow runtime | StageState、意图差异同步、graph events | workflow_instance / hooks | V5/V7 投影输入 | gis_chapter["workflow_runtime_v6"] | instance version |
 | V7 状态机/PlanRuntime | RuntimePhase 派生、plan version/fingerprint、replan_pending、loop 预算 | `runtime_state_machine` 派生器 / `plan_runtime` 写点 | 本 ADR 的 phase_adapter 对照 | gis_chapter["runtime_state"]/["plan_runtime"] | version/fingerprint |
 | Evidence / Claim | 工具证据 ref、trace JSONL | ToolDispatchService / trace_store | kernel step evidence（ref 引用，不复制内容） | session_data / trace 分段 | seq 单调 |
-| Resource Governor | 预算/租约/成本账 | governor facade（ADR-0182） | kernel 不复制预算（V7 复用 LOOP_BUDGETS 同纪律） | governor 域 | 自有 |
+| Resource Governor | 预算/租约/成本账 | governor facade（ADR-0254） | kernel 不复制预算（V7 复用 LOOP_BUDGETS 同纪律） | governor 域 | 自有 |
 
 边界不变量：kernel 对 capability 行**只关联不复制**；对 MapSpec/GeoJSON
 **只持 ref**；对 mission/governor **零写**。任何新能力先回答"写者在矩阵

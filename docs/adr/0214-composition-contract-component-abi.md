@@ -2,9 +2,9 @@
 
 - 状态：Accepted（本分支）
 - 日期：2026-09-26
-- 关联：ADR-0088（组件库 v2：MapSpec 单一存储 / renderer 真值矩阵）、
-  ADR-0101（模板库 v3：pack 化 / TemplateSpecV2 / golden corpus）、
-  ADR-0103（design system v4：descriptor 能力字段 / catalog 导出）、
+- 关联：ADR-0232（组件库 v2：MapSpec 单一存储 / renderer 真值矩阵）、
+  ADR-0238（模板库 v3：pack 化 / TemplateSpecV2 / golden corpus）、
+  ADR-0240（design system v4：descriptor 能力字段 / catalog 导出）、
   ADR-0070（PatchComponentIntent 单变更入口）、ADR-0072（user-wins 守卫）、
   ADR-0152（symbology 唯一裁决）、ADR-0160（W0.3 备选组合调用契约定稿，
   W5 接线面）、ADR-0205（grammar 规划层）、ADR-0211（export lineage /
@@ -50,7 +50,7 @@ support/a11y/compat/deps/defaults），由 descriptor + renderer 真值矩阵 +
 schema 用**有界受限词汇**（type/enum/default/max/min/bounded），不做全量
 JSON Schema；每类型声明与 `validate_props` 纯校验配套。registry.validate
 新增 fail-closed 交叉检查：每个 native 组件类型必须有 ABI 条目、ABI 引用
-的组件模板 id 必须可解析。**不新增 ComponentType 成员**（ADR-0101/0103
+的组件模板 id 必须可解析。**不新增 ComponentType 成员**（ADR-0238/0103
 红线）。
 
 D2 **TemplateContract v1 是装订层，不是第二模板真相。** 新增

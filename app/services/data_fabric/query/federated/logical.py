@@ -1,4 +1,4 @@
-"""V6 typed logical plan IR（ADR-0118 W1）。
+"""V6 typed logical plan IR（ADR-0247 W1）。
 
 计划树是 V6 优化器的结构化真相：节点可序列化、canonical 化、确定性哈希。
 语义载体（谓词 AST）**引用** ``query/predicates.py`` 的同一批模型 —— 本模块

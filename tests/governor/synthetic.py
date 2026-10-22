@@ -1,4 +1,4 @@
-"""Synthetic workload + fake executor（R17/R19，ADR-0182 D12）。
+"""Synthetic workload + fake executor（R17/R19，ADR-0254 D12）。
 
 校准脚本、chaos 测试与多 session 压测的**公共基座**：
 

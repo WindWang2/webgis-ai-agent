@@ -1,4 +1,4 @@
-"""GIS Spatial Reasoning Memory: gis_spatial_memories（方向 9，ADR-0183）
+"""GIS Spatial Reasoning Memory: gis_spatial_memories（方向 9，ADR-0255）
 
 Revision ID: 0080_gis_spatial_memories
 Revises: 0071_ads_acquisition_facts

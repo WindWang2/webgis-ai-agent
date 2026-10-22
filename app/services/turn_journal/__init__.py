@@ -1,4 +1,4 @@
-"""Harness Turn Journal（H04 / ADR-0216）：会话级 durable turn 事件账本。
+"""Harness Turn Journal（H04 / ADR-0268）：会话级 durable turn 事件账本。
 
 authority 声明：envelope（SessionPlan / harness_kernel）仍是 live 权威；
 本包只是其 append-only 事实投影（崩溃取证 + 因果查询 + retention），

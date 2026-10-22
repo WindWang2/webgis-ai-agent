@@ -1,4 +1,4 @@
-"""System Scenarios（ADR-0104 Wave 2/5/6 集成）—— 跨阶段全链场景。
+"""System Scenarios（ADR-0245 Wave 2/5/6 集成）—— 跨阶段全链场景。
 
 Phase 0 审计（08-e2e-scenario-map.md）的最大缺口：没有场景横跨
 plan → tools → artifacts → MapSpec → verify。本文件补齐最小闭环：

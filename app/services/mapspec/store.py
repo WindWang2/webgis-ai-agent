@@ -315,7 +315,7 @@ class MapSpecStore:
         layers 写。携带 layer_op 时跳过幂等短路（layers 字段与 spec 内容
         是两个表示，spec 等值不蕴含 layers 已写）。
 
-        方向 8（ADR-0183）: ``extra_fields``（如 `_mutation_dedup` 幂等存证）
+        方向 8（ADR-0257）: ``extra_fields``（如 `_mutation_dedup` 幂等存证）
         并入同一 commit 事务 —— 存证与 spec 原子同代，消灭「已提交但同 id
         可重放」的 crash 窗口。携带 extra_fields 时永不走 no-op 短路。
         """

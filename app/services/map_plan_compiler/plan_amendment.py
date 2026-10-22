@@ -1,4 +1,4 @@
-"""Typed plan amendment（F12 多轮演进词表，ADR-0214 D2）。
+"""Typed plan amendment（F12 多轮演进词表，ADR-0260 D2）。
 
 封闭词表 + 有界载荷：每个 amendment 只指名一个目标节点；未知 kind 在
 构造期即被 Literal 拒绝。投影/编译器对未知目标一律 fail-closed。

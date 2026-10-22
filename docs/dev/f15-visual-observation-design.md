@@ -1,6 +1,6 @@
 # F15 Design — Production Visual Observation / Critique / Repair
 
-关联：ADR-0214（本方向）、ADR-0209（verify→critique→repair 闭环）、
+关联：ADR-0263（本方向）、ADR-0209（verify→critique→repair 闭环）、
 ADR-0185（VLM critic runtime）、ADR-0186（visual self-healing）、
 ADR-0119 W9（visual seam）。
 

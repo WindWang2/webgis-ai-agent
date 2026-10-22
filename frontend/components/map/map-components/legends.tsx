@@ -161,7 +161,7 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
     );
   }
   const compact = variant === 'compact';
-  // V3（ADR-0101 D3）：horizontal —— 图例项横向排布换行（窄图幅横向空间
+  // V3（ADR-0238 D3）：horizontal —— 图例项横向排布换行（窄图幅横向空间
   // 充裕时），其余变体保持纵向。
   const layoutClass = variant === 'horizontal'
     ? `flex flex-row flex-wrap ${compact ? 'mt-0.5 gap-x-2 gap-y-0.5' : 'mt-1 gap-x-3 gap-y-1'}`

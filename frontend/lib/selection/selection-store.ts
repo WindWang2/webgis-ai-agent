@@ -1,6 +1,6 @@
 /**
  * SelectionContext — 统一跨视图选择契约（Workspace V2 / Goal D，落地
- * ADR-0088 组件库 deferred 的 map-chart 联动；V4 扩展 brush/filter/谓词，
+ * ADR-0232 组件库 deferred 的 map-chart 联动；V4 扩展 brush/filter/谓词，
  * 见 ADR-0091）。
  *
  * 单一选择上下文（不是 mapSelection/chartSelection/tableSelection 三套

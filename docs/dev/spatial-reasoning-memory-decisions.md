@@ -86,7 +86,7 @@ invalidation_rule(ttl|dataset_version|manual|scope_gone)`
   LRU 淘汰 + dataset_version 失效抽检）；预算 session≤80 / project≤400 / user≤200 每 org。
 - 理由：与 harvest 同事务位点，最省；后台 worker 属 data-lifecycle 域，不越界。
 
-## D10 ADR-0183 / 迁移 0080（手动分配 + watermark 推进）
+## D10 ADR-0255 / 迁移 0080（手动分配 + watermark 推进）
 
 - open PR #1274/#1275/#1277 已占 0180；#1276 占 0181；#1278 占 0182 → 本分支取 **0183**；
   `ownership.json.adr_watermark: 137 → 183`。

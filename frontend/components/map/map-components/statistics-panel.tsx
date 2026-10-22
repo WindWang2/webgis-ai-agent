@@ -51,7 +51,7 @@ function parseStats(raw: unknown): StatsPayload | null {
 function StatisticsPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
 const t = useT();
   const patched = usePlacementPatchedComponent(component);
-  // V3（ADR-0101 D3）：kpi —— 大数字指标卡（执行摘要/汇报场景）；
+  // V3（ADR-0238 D3）：kpi —— 大数字指标卡（执行摘要/汇报场景）；
   // 未知变体回退 default（与 legend 族约定一致）。
   const rawVariant = resolveVariant(patched, 'default');
   const variant = rawVariant === 'compact' || rawVariant === 'kpi' ? rawVariant : 'default';

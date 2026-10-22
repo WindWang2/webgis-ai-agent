@@ -415,7 +415,7 @@ def qualify_data_role(
     ``req`` 是 workflow_schema.DataRoleRequirement（duck-typed 以避免
     import 环）；``role_status`` 是 resolve_data_roles 的解析状态。
 
-    ADR-0215 descriptor 消费面（全部 additive，缺席 = 现状不变）：
+    ADR-0265 descriptor 消费面（全部 additive，缺席 = 现状不变）：
     - ``descriptor`` 在场而 ``resolver_profile`` 缺席 → 事实供给走
       descriptor 投影（planner qualification 与其他消费面同一语义出口）；
     - ``expected_descriptor_fingerprint``（记录面/MapSpec 当时引用的指纹）
@@ -493,7 +493,7 @@ def qualify_data_role(
             confidence=1.0,
         )
 
-    # ── descriptor freshness guard（ADR-0215）：记录面指纹 ≠ 当前语义 ──
+    # ── descriptor freshness guard（ADR-0265）：记录面指纹 ≠ 当前语义 ──
     # 记录面（MapSpec/plan/context）引用过 descriptor 指纹时，语义版本
     # 漂移必须产生可解释的降级 —— 数据变了不能按旧语义判资格。
     if descriptor is not None and str(expected_descriptor_fingerprint or ""):

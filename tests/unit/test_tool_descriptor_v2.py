@@ -1,4 +1,4 @@
-"""ADR-0101 Wave 1: ToolDescriptor V2 契约与指纹测试。
+"""ADR-0237 Wave 1: ToolDescriptor V2 契约与指纹测试。
 
 锁定语义：
 - ToolRegistry 仍是唯一注册中心；descriptor 只是派生投影；

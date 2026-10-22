@@ -1,4 +1,4 @@
-"""Dataset Semantics Builder —— 推导边界上的 descriptor 铸造（ADR-0215 D1/D6）。
+"""Dataset Semantics Builder —— 推导边界上的 descriptor 铸造（ADR-0265 D1/D6）。
 
 职责边界（不越界）：
 

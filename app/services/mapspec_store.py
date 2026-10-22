@@ -266,7 +266,7 @@ class MapSpecStore:
             "profile": profile,
             "profile_fingerprint": "profile-sha256:" + hashlib.sha256(profile_payload).hexdigest(),
         }
-        # ADR-0215：source 携带 dataset 语义契约指纹（引用 + 指纹，不搬运
+        # ADR-0265：source 携带 dataset 语义契约指纹（引用 + 指纹，不搬运
         # 数据/全量 schema）。解析优先级：① store 已有（ref 曾被 ingest
         # 铸造）→ 同一指纹复用；② ref descriptor 元数据在场 → 零扫描补铸；
         # ③ inline 载荷 → 从授权扫描产物就地投影。additive evidence：任一步
@@ -342,7 +342,7 @@ class MapSpecStore:
                 "url-sha256:" + hashlib.sha256(geojson_data.encode()).hexdigest()
             )
 
-        # H08 绑定复用门（ADR-0215 D7 消费面生产接线）：同 source 重绑定时，
+        # H08 绑定复用门（ADR-0265 D7 消费面生产接线）：同 source 重绑定时，
         # 记录面（上一次持久化绑定的 descriptor_fingerprint）vs 当前（本次
         # 解析的 descriptor）经 evaluate_reuse_with_history 语义对账 → 有界
         # 复用裁决随 source 落图面（数据语义变了 → stale/recompute + 字段级

@@ -1,4 +1,4 @@
-"""Pi 边界 pre-dispatch 校验闸测试（ADR-0180 D3/D4 / typed-tool-surface M2）。
+"""Pi 边界 pre-dispatch 校验闸测试（ADR-0253 D3/D4 / typed-tool-surface M2）。
 
 - 玩具工具：精确锁定分层规则（unknown-field / required / 标量硬错 /
   无字符串叶升级档 / oversized 跳过 / extra=allow 豁免）；

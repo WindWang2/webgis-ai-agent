@@ -1,6 +1,6 @@
 """Lakehouse V6 Wave 5 — Raster lakehouse（原子写 + COG DataObject）。
 
-覆盖面（ADR-0118）：
+覆盖面（ADR-0249）：
 - save_png 原子发布：失败不留半截 PNG（全仓持久写统一纪律的最后一例）；
 - COG → DataObject：内容寻址身份、grid identity（header-only）、有界
   chunk checksums、materialize 回原字节；

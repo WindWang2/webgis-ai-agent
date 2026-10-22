@@ -3,11 +3,11 @@
 - 状态: Accepted
 - 日期: 2026-09-17
 - 线: collab/spatial-review-approval-v1
-- 关联: ADR-0119（Workbench V6 协作，本 ADR 的通知平面基底）、ADR-0183（mutation transactions：CAS/幂等/信封，合并回放的语义来源）、ADR-0138（审查 proposal 复用 14 Body mutation 契约）、#1328 Evidence/Claim Graph（claim 锚点来源）、ADR-0195（合并回放同样过空间反幻觉守护网关）
+- 关联: ADR-0119（Workbench V6 协作，本 ADR 的通知平面基底）、ADR-0257（mutation transactions：CAS/幂等/信封，合并回放的语义来源）、ADR-0138（审查 proposal 复用 14 Body mutation 契约）、#1328 Evidence/Claim Graph（claim 锚点来源）、ADR-0195（合并回放同样过空间反幻觉守护网关）
 
 ## 1. 背景
 
-CollabEventBus/WS（ADR-0119）解决了**多人事件同步**，MapSpec mutation transaction（ADR-0183）解决了**单笔突变的 CAS/幂等/审计**；但科研/政务制图还需要**可追责的变更治理**：用户或 Agent 提出地图/分析修改提案 → 审查者按 feature/layer/claim 锚定评论 → 批准或拒绝 → 以事务方式合并。此前仓库不存在任何 proposal/审查/批准工作流（Phase 0 全量勘察确认，含全部 open PR）。
+CollabEventBus/WS（ADR-0119）解决了**多人事件同步**，MapSpec mutation transaction（ADR-0257）解决了**单笔突变的 CAS/幂等/审计**；但科研/政务制图还需要**可追责的变更治理**：用户或 Agent 提出地图/分析修改提案 → 审查者按 feature/layer/claim 锚定评论 → 批准或拒绝 → 以事务方式合并。此前仓库不存在任何 proposal/审查/批准工作流（Phase 0 全量勘察确认，含全部 open PR）。
 
 词表注意：本 ADR 的 **review = governance review（评审/会签）**，与 MapSpec "lifecycle review" 和 harness "stored review" 无关（UBIQUITOUS_LANGUAGE §Flagged ambiguities 已有前两者的歧义标注）。
 

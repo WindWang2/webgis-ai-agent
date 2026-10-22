@@ -1,4 +1,4 @@
-"""ADR-0101 Wave 8: trace 事件模式 + replay harness 测试。"""
+"""ADR-0237 Wave 8: trace 事件模式 + replay harness 测试。"""
 import pytest
 
 from app.evaluation.replay import (

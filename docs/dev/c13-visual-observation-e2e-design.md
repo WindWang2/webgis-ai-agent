@@ -2,7 +2,7 @@
 
 方向：Screenshot/Scene Observation → Critique → Safe Repair 的生产闭环。
 基线：`origin/master = 77d2678d`（2026-09-29 fetch，PR #1569 之后）。
-前置：F15（PR #1500 / ADR-0214）已交付 provider/taxonomy/fusion/store/
+前置：F15（PR #1500 / ADR-0263）已交付 provider/taxonomy/fusion/store/
 recurrence/两步 repair；其 review P2-1/P2-2/P2-5 与 Out of Scope 明确把
 blob 生命周期、前端采集与审批 UI 留给后续 —— 即本方向。
 
@@ -29,7 +29,7 @@ blob 生命周期、前端采集与审批 UI 留给后续 —— 即本方向。
 5. **前端零接线**：`captureMapCanvas` 存在但未接 `/visual-snapshots`；
    无 approval/preview/diff UI（grep 全 0 命中）。
 
-## 三、设计决策（详见 ADR-0217）
+## 三、设计决策（详见 ADR-0272）
 
 - **D1 stale 双门**：管线严格匹配（revision+指纹）+ provider 纵深门 +
   `observed_revision` 证据盖章与修复面新鲜度过滤。

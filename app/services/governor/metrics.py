@@ -1,4 +1,4 @@
-"""Governor 观测面（R16；ADR-0182 D11）。
+"""Governor 观测面（R16；ADR-0254 D11）。
 
 prometheus-client 原语进默认 REGISTRY（与 ``app/lib/observability/metrics.py``
 同惯例，随既有 instrumentator /metrics 暴露）。**封闭标签词表**纪律：

@@ -1,4 +1,4 @@
-"""User-approved visual repair 契约模型（F15，ADR-0214 决策四）。
+"""User-approved visual repair 契约模型（F15，ADR-0263 决策四）。
 
 两步提案/应用：plan（零突变预览，闭包 ⊆ healer 四类呈现面微变异）→
 apply（显式 ``approved=true`` + CAS）。截图上传通道的请求面也在此

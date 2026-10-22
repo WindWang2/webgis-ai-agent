@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """工具描述符富化覆盖率闸（ADR-0103）。
 
-ADR-0104 起实现收敛到 ``app/lib/quality/manifest.py``（QualityManifest
+ADR-0245 起实现收敛到 ``app/lib/quality/manifest.py``（QualityManifest
 编译器的闸子集）；本脚本只是薄壳，保持历史 CLI / 测试 import 面：
 ``GATE_THRESHOLDS`` / ``collect()`` / ``gate()``。
 

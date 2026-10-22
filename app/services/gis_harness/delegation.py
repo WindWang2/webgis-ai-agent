@@ -21,7 +21,7 @@ V7 契约（**机制复用，不重建 agent 框架**）：
 - **实验性接入点**：``delegate_cartography_qa`` 供显式调用方下发
   cartography_reviewer 复核；``GIS_HARNESS_DELEGATION=1`` 只解除该
   helper 的门控。当前 finalizer 和上下文组装尚未调用本模块，设置变量
-  不会开启生产自动复核。执行体经 DelegationGateway（ADR-0216）：
+  不会开启生产自动复核。执行体经 DelegationGateway（ADR-0269）：
   每会话并发租约、取消收尾、receipt 验证已由协议层补齐；工具/时间
   预算仍由角色档 + SubagentDispatcher 既有通道承担。
 """
@@ -246,7 +246,7 @@ async def delegate(
 ) -> DelegationRecord:
     """执行一次受控委派（handoff → gateway → dispatcher → 台账回写）。
 
-    执行体经 ``DelegationGateway``（ADR-0216）：每会话并发租约、因果
+    执行体经 ``DelegationGateway``（ADR-0269）：每会话并发租约、因果
     台账、receipt 验证（缺证据不得当成功）、取消传播 —— 本模块此前自认
     缺口的「并发去重/取消收尾」由此补齐。``dispatcher`` 注入 seam 不变
     （测试 fake 兼容）。失败回收：首败且 recovery ``repair`` 预算有余 →

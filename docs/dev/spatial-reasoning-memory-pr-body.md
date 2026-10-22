@@ -1,4 +1,4 @@
-## 方向 9：GIS Spatial Reasoning Memory v1 — 可复用的 GIS 世界事实记忆（ADR-0183）
+## 方向 9：GIS Spatial Reasoning Memory v1 — 可复用的 GIS 世界事实记忆（ADR-0255）
 
 **执行时基线 SHA：`origin/master @ 580b33e9`**（PR #1272 ads-v1 合并后）。
 执行期间 master 未前移（`git rev-list HEAD..origin/master` = 0），无 rebase/merge 需要。
@@ -46,7 +46,7 @@
 | 0b7050f5 | M1 契约 + 写策略 + 存储 + 迁移（27 tests） |
 | 4d3cd47c | M2+M3 检索/投影/收割/生产接线（18 tests） |
 | de227ab4 | M4 安全/租户加固（8 tests；投影层 sensitive 纵深拦截） |
-| 68d7b812 | M5 评估语料 32 场景 + ADR-0183 + 契约 schema 导出/漂移测试（11 tests） |
+| 68d7b812 | M5 评估语料 32 场景 + ADR-0255 + 契约 schema 导出/漂移测试（11 tests） |
 | f0d93b3f | 迁移改段 0072→0080（协议 §2 越段纠正） |
 | 9721f73e | 独立 review 修复 F1-F15（见 §7） |
 

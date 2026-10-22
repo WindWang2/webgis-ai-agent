@@ -1,4 +1,4 @@
-"""Determinism 红线（ADR-0104 Wave 12）。
+"""Determinism 红线（ADR-0245 Wave 12）。
 
 行为认证：same input → same output（规划双跑、算法双跑、artifact
 round-trip）。声明认证：seed policy 自洽 + 派生表字节一致。

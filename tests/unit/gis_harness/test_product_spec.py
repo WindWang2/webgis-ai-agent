@@ -1,4 +1,4 @@
-"""MapProductSpec v1（ADR-0183 M1/M2）单元测试。
+"""MapProductSpec v1（ADR-0258 M1/M2）单元测试。
 
 不变式：versioned / bounded / serializable / fail-closed 校验 /
 digest 确定性 / 视图关系图 dangling+cycle 拒绝。

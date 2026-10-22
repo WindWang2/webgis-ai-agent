@@ -1,6 +1,6 @@
 """ReplayTrace sanitize：白名单键 + 秘密剥离 + 字节上限 + 降级 digest-only。
 
-纪律（decisions D5 / ADR-0183 决策二）：
+纪律（decisions D5 / ADR-0256 决策二）：
 - **不进 trace**：prompt/CoT/消息历史全文（``llm_payload``、``messages``、
   ``reasoning``…）、原始 GeoJSON/结果体（只留 ref + digest + 尺寸）、
   任何键名命中秘密模式的值；
@@ -9,7 +9,7 @@
 - 与生产先例对齐：链 payload 已过 ``bound_meta``（app/lib/runtime/trace.py），
   provenance 已有 ``redact_provenance_args`` —— 本模块是打包层的最后一道。
 
-秘密净化原语（键级名单 / 值级模式）自 ADR-0214 D1 起由中立模块
+秘密净化原语（键级名单 / 值级模式）自 ADR-0262 D1 起由中立模块
 ``app/lib/redaction`` 权威提供，本模块 re-export 保持兼容。
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ import hashlib
 import json
 from typing import Any, Dict, Tuple
 
-# ADR-0214 D1：秘密净化原语已下沉中立模块（app.lib.redaction）——本包
+# ADR-0262 D1：秘密净化原语已下沉中立模块（app.lib.redaction）——本包
 # re-export 保持既有 import 面（schema/roundtrip/外部消费方）逐字兼容。
 from app.lib.redaction import (  # noqa: F401 — re-export 兼容面
     SECRET_KEY_MARKERS,

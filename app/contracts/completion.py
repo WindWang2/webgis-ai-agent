@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 #: finding detail 截断上界（与 services 侧 MapCompletionResult 语义一致）。
 MAX_FINDING_DETAIL = 160
 
-# F13（ADR-0214 D3）：结构化 apply ACK 的失败归因披露 —— per-layer
+# F13（ADR-0261 D3）：结构化 apply ACK 的失败归因披露 —— per-layer
 # applied↔failed 的机器可读 reason（此前只能从 layer 在场性反推）。
 # transient/可自愈语义与 P9 渲染族一致：warning，不推翻 status。
 F_RENDER_APPLY_FAILED = "render_apply_failed"

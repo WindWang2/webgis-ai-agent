@@ -12,7 +12,7 @@
 | `artifacts`（:200） | storage_ref（会话 ref 游标）、upload_record_id FK、layer_id FK、content_fingerprint、metadata_json（晋升加 content_status/content_location/content_payload_sha256/content_summary） | 行✓ | storage_ref✗；晋升 content_location✓ |
 | `artifact_lineages`（:246） | 父边、producing_tool/capability/algorithm、mapspec_fingerprint、workflow_run_id、parameters、source_dataset_id/fingerprint | ✓ | ✓ |
 | `carto_project_facts`（:287） | 项目级制图先验，upsert (project_id,kind,subject) | ✓ | ✓ |
-| `map_products`（:345） | 版本账本：product_fingerprint、input fps、compute_plan、output fps、mapspec_snapshot（ADR-0099）、5 维 diff_summary、parent_version_no、lineage_kind(fork/restore/merge/rerun/auto) | ✓ | ✓ |
+| `map_products`（:345） | 版本账本：product_fingerprint、input fps、compute_plan、output fps、mapspec_snapshot（ADR-0236）、5 维 diff_summary、parent_version_no、lineage_kind(fork/restore/merge/rerun/auto) | ✓ | ✓ |
 | `conversations`/`messages`（db_model.py:209,226） | 聊天史含 tool_result JSON。**无 project_id 列** | ✓ | ✓ |
 | uploads/reports/layers/analysis_tasks | 上传/报告/图层元数据 | ✓ | ✓ |
 | 会话 store（session_data.py:19-618，SESSION_TTL=4h :20） | ref 载荷（LRU 200/50MB）、map_state（图层呈现/base_layer/viewport w/ seq/inline mapspec/_gis_provenance 64 上限/_cartographic_review/observation）、aliases、event log(20)、map-action ACK(200)、descriptors | 内存后端✗；Redis✓ 但 4h TTL | ✗ |

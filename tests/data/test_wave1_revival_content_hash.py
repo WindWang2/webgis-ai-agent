@@ -136,7 +136,7 @@ def _canonical_hash(payload):
 
 
 def test_content_hash_default_on(monkeypatch):
-    """V6（ADR-0118）：默认开启 —— 内容摘要默认参与 ref 身份。"""
+    """V6（ADR-0249）：默认开启 —— 内容摘要默认参与 ref 身份。"""
     from app.schemas.ref_descriptor import compute_descriptor
 
     monkeypatch.delenv("WEBGIS_REF_CONTENT_HASH", raising=False)

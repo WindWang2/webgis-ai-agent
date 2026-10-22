@@ -74,7 +74,7 @@ class TestNewRecipeSelectionAndEligibility:
             "suitability_assessment", "risk_exposure",
         }
         assert decision <= set(reg.all_ids)
-        # Workflow V2（Goal C / ADR-0101）：17 个 V1 seed 之外，领域包
+        # Workflow V2（Goal C / ADR-0239）：17 个 V1 seed 之外，领域包
         # 追加专业工作流 recipe（catalog 由 registry 生成，见
         # docs/workflows/workflow-catalog.md）。
         # 2026-09 扩容：+interpolation_uncertainty_map、+rs_scene_inventory

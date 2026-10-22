@@ -1,4 +1,4 @@
-"""Trace Completeness 红线（ADR-0104 Wave 5）。
+"""Trace Completeness 红线（ADR-0245 Wave 5）。
 
 行为认证（真实 trace 形态）：
 - GisTraceChain 认证：task class 必备阶段 / correlation / 失败码 / 体量上界；

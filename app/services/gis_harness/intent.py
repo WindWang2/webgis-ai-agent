@@ -56,7 +56,7 @@ TaskType = Literal[
     "site_selection",            # 「选址/最优位置」→ 多准则候选评价（MCDA）
     "suitability_assessment",    # 「适宜性/适建区」→ 因子标准化加权适宜面
     "risk_exposure",             # 「风险/暴露/危险源」→ 影响区×受体暴露评价
-    # ── Workflow V2（Goal C / ADR-0101）：专业领域任务族（纯加法）──────
+    # ── Workflow V2（Goal C / ADR-0239）：专业领域任务族（纯加法）──────
     "terrain_analysis",          # 「坡度/坡向/山体阴影/视域」→ 地形衍生产品
     "watershed_analysis",        # 「流域/汇水/水文」→ DEM 水文产品
     "spatial_autocorrelation",   # 「莫兰/空间自相关」→ global/local 统计产品
@@ -86,7 +86,7 @@ AnalysisIntent = Literal[
     "mcda_evaluation",           # 多准则决策评价（WSM/TOPSIS）
     "overlay_weighted",          # 因子标准化加权叠加（适宜性）
     "exposure_assessment",       # 影响区×受体暴露评价
-    # ── Workflow V2（Goal C / ADR-0101）：专业领域分析意图（纯加法）────
+    # ── Workflow V2（Goal C / ADR-0239）：专业领域分析意图（纯加法）────
     "terrain_derivatives",       # 地形衍生（坡度/坡向/山体阴影/视域）
     "hydrology_analysis",        # 水文分析（填洼/流向/汇流累积/流域划分）
     "autocorrelation_analysis",  # 空间自相关（global/local Moran/Geary）
@@ -566,7 +566,7 @@ def apply_proactive_memory_hints(
     - ``intent.scope`` 已由 fresh 解析（name 非空）→ 永不覆盖；
     - 存在唯一高置信 ``resolved_place`` 判定 → 回填 scope（名称/层级），
       ``matched_rules`` 与 ``assumptions`` 披露、置信 ×0.9 折扣
-      （记忆先验弱于 fresh 解析，与 ADR-0183 R6 同口径）；
+      （记忆先验弱于 fresh 解析，与 ADR-0255 R6 同口径）；
     - 其余卡片家族只写 ``intent_evidence["proactive_memory"]`` 供 harness
       消费——intent 不承载非其职责的记忆内容。
     """

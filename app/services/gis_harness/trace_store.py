@@ -1,6 +1,6 @@
 """证据链持久化 V6 —— 分段 / 增量读 / 压缩（ADR-0119 决策 D6）。
 
-V5（ADR-0118 D1）交付：flock 跨进程互斥 + 单调 seq + settle 幂等 +
+V5（ADR-0248 D1）交付：flock 跨进程互斥 + 单调 seq + settle 幂等 +
 FINAL_VERDICT trim 保护 + pinned 防驱逐。残留缺口（baseline G4）：
 - ``read_chains``/``last_seq`` 每次全量 JSONL 解析；
 - trim 在锁内全量 read→rewrite（O(n) 写放大）；

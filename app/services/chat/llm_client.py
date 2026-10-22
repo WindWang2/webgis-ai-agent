@@ -763,7 +763,7 @@ async def _call_llm_stream_attempt(
         # （等价旧 ``async with client.stream`` 的释放语义）。
         await response.aclose()
 
-    # ADR-0101 Wave 8（§35 诚实 settle）：既无 [DONE] 哨兵又无 finish_reason
+    # ADR-0237 Wave 8（§35 诚实 settle）：既无 [DONE] 哨兵又无 finish_reason
     # 帧 → 流被截断（连接中断/网关裁剪）。此时把残缺内容包装成正常 done 是
     # 假成功 —— 模型回合会被当作完整回合持久化。显式抛错交给编排层处理。
     if not (saw_done_sentinel or saw_finish_reason):

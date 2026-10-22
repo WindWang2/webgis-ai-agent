@@ -1,4 +1,4 @@
-"""Component Variant Library V3 — 变体一等公民契约测试（ADR-0101 D3）。
+"""Component Variant Library V3 — 变体一等公民契约测试（ADR-0238 D3）。
 
 锁定：
 - descriptor.variants ↔ ComponentTemplate 双向覆盖（native 模板变体全部

@@ -1,4 +1,4 @@
-"""Determinism Certification（ADR-0104 Wave 12）——可复现性派生认证。
+"""Determinism Certification（ADR-0245 Wave 12）——可复现性派生认证。
 
 两条腿：
 - **行为认证**（tests）：规划双跑逐位一致；代表性算法双跑结果一致；

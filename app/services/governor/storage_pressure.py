@@ -1,4 +1,4 @@
-"""Storage / Artifact 压力只读视图（R15，ADR-0182 D10）。
+"""Storage / Artifact 压力只读视图（R15，ADR-0254 D10）。
 
 artifact/ref/cache/export 的**存储子系统已存在**（artifact_cache LRU
 5GiB、chunk cache 1GiB、S3 multipart、org_quota 存储 100GiB，recon §1）

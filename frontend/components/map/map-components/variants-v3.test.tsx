@@ -4,7 +4,7 @@ import { renderComponent } from './index';
 import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
 
 /**
- * V3（ADR-0101 D3）— 组件变体库 live 渲染契约：
+ * V3（ADR-0238 D3）— 组件变体库 live 渲染契约：
  * 每个新 native 变体在 live 渲染器上有确定性视觉表达（data-variant /
  * 布局类），未知变体确定性回退默认（不崩 chrome）。与后端
  * descriptor.variants / component templates 同词表（registry 三方对账由

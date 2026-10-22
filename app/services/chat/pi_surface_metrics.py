@@ -1,4 +1,4 @@
-"""Pi 工具面进程级指标（ADR-0180 D5 / T9）。
+"""Pi 工具面进程级指标（ADR-0253 D5 / T9）。
 
 四个回归门指标的单一事实源：
 - ``invalid_tool_name``：面外裸名 / wrap-reject（resolve_pi_tool_call reject）；

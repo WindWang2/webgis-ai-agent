@@ -201,7 +201,7 @@ class IngestPipeline:
         result.ref_id = ref_id
         result.steps_completed.append("store")
 
-        # 5b) Dataset semantic descriptor（ADR-0215）：语义契约铸造 + 有界持久化。
+        # 5b) Dataset semantic descriptor（ADR-0265）：语义契约铸造 + 有界持久化。
         # additive evidence —— descriptor 任一步失败只少一个指纹键，绝不阻断
         # ingest 主链（诚实降级：消费面按 DESCRIPTOR_MISSING 披露）。
         descriptor_fingerprint = ""

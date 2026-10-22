@@ -1,4 +1,4 @@
-"""Data Provider Extension SDK（ADR-0104 / Wave 7）。
+"""Data Provider Extension SDK（ADR-0243 / Wave 7）。
 
 第三方把外部 GIS 系统接入为 data fabric 的 source type：实现（或复用）核心
 ``GeospatialDataSourceAdapter`` ABC，SDK 负责注册进**唯一**的

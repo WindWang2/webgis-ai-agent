@@ -541,7 +541,7 @@ async def _dispatch_tool_bound(
         tool_name, arguments, allow_passthrough=False, registered_surface=_registered
     )
     if resolved.kind == "reject":
-        # ADR-0180 D5：面外裸名 / wrap-reject 计数（invalid tool-name rate）。
+        # ADR-0253 D5：面外裸名 / wrap-reject 计数（invalid tool-name rate）。
         try:
             from app.services.chat.pi_surface_metrics import record_invalid_tool_name
 
@@ -554,7 +554,7 @@ async def _dispatch_tool_bound(
             details={"error": "native_surface_reject", "tool": tool_name},
             isError=True,
         )
-    # ADR-0180 D5：proxy 长尾 vs 注册面直调分类计数（proxy fallback rate）。
+    # ADR-0253 D5：proxy 长尾 vs 注册面直调分类计数（proxy fallback rate）。
     # 记录点在存在性/tier/闸检查**之后**（review nit）：进入真实 dispatch
     # 的调用才计入 fallback 分母，避免未派发调用稀释 proxy_fallback_rate。
     _proxied = request.name == EXECUTE_PROXY_NAME and resolved.kind == "execute"
@@ -634,7 +634,7 @@ async def _dispatch_tool_bound(
     # content = denial_text（llm_payload），details = CAPABILITY_INELIGIBLE
     # details（raw_result），与下方 PiToolResponse 组装同一条链。
 
-    # ADR-0180 D3：pre-dispatch 严格校验闸（dedup / wave 排队 / ref 解析
+    # ADR-0253 D3：pre-dispatch 严格校验闸（dedup / wave 排队 / ref 解析
     # 之前）。机器可读 typed error（schema_validation_rejected），不伪装成
     # 工具业务失败；registry dispatch 内部校验保持原样（本闸是前置快路径，
     # 零误拒优先 —— 漏拒由 registry 兜底）。闸自身异常内部已吞（放行）。
@@ -715,7 +715,7 @@ async def _dispatch_tool_bound(
     except Exception:  # noqa: BLE001 — 闸装配故障绝不阻断 dispatch
         logger.debug("[PiBridge] input gate unavailable tool=%s", tool_name, exc_info=True)
 
-    # ADR-0180 D5：proxy 长尾 vs 注册面直调分类计数（proxy fallback rate）——
+    # ADR-0253 D5：proxy 长尾 vs 注册面直调分类计数（proxy fallback rate）——
     # 已通过存在性/tier/闸，进入真实 dispatch 的调用才计数。
     try:
         from app.services.chat.pi_surface_metrics import record_surface_call
@@ -1226,7 +1226,7 @@ def active_turn_correlation(
     return None, None, None
 
 
-#: F03（ADR-0204-f03 D3）：turn 级 abort 来源台账（进程内有界）。
+#: F03（ADR-0259-f03 D3）：turn 级 abort 来源台账（进程内有界）。
 #: ``PiBridge.abort`` 在命中目标 turn 时记录 (turn_id → source)；单结算 seam
 #: 在 finally 消费并清除。来源词表：``user``（用户任务/会话取消）、
 #: ``system``（会话删除等系统清理）、``policy``（看门狗/预算中止）。
@@ -1723,7 +1723,7 @@ class PiBridge:
     async def abort(self, session_id: Optional[str] = None, *, source: str = "user") -> dict:
         """Abort the currently-running Pi prompt (fire-and-forget from callers).
 
-        ``source`` (F03/ADR-0204-f03 D3): who ordered the stop — ``user``
+        ``source`` (F03/ADR-0259-f03 D3): who ordered the stop — ``user``
         (task/session cancel), ``system`` (session deletion cleanup) or
         ``policy`` (watchdog/budget). Recorded per turn and consumed by the
         settle seam so the kernel records ``cancelled`` (user) vs ``aborted``
@@ -2282,7 +2282,7 @@ class PiBridge:
                     _cleanup_turn_state(turn_sid)
                     # Clear the active-turn markers before releasing the lock.
                     self._active_turn_sid = None
-                    # F03（ADR-0204-f03 D1）：单结算 seam —— abort 来源消费、
+                    # F03（ADR-0259-f03 D1）：单结算 seam —— abort 来源消费、
                     # 拒答降级、outcome-aware 投影（error/cancel/abort 也收口）、
                     # kernel end_turn 与 tracker 结算全部收敛于这一处，与
                     # stream_prompt 共用同一实现。必须在释放 turn lease 之前
@@ -2331,7 +2331,7 @@ class PiBridge:
                     await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
                     rt_ev.mark_ended()
                     emit_turn_summary(rt_ev)
-                    # R10（ADR-0183）：env-gated 轨迹录制（默认关闸 no-op；
+                    # R10（ADR-0256）：env-gated 轨迹录制（默认关闸 no-op；
                     # never-raises；记录面绝不阻断 settle）——非流式 prompt 路径。
                     try:
                         from app.lib.harness.replay.recorder import (
@@ -2893,7 +2893,7 @@ class PiBridge:
                     self._active_turn_sid = None
                     if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                         self._current_turn = None
-                    # F03（ADR-0204-f03 D1）：单结算 seam —— abort 来源消费、
+                    # F03（ADR-0259-f03 D1）：单结算 seam —— abort 来源消费、
                     # 拒答降级、outcome-aware 投影（error/cancel/abort 也收口）、
                     # kernel end_turn 与 tracker 结算全部收敛于这一处，与
                     # non-stream prompt 共用同一实现。必须在释放 turn lease
@@ -2951,7 +2951,7 @@ class PiBridge:
                         rt_ev.settle(Outcome.SUCCEEDED)
                     rt_ev.mark_ended()
                     emit_turn_summary(rt_ev)
-                    # R10（ADR-0183）：env-gated 轨迹录制（默认关闸 no-op；
+                    # R10（ADR-0256）：env-gated 轨迹录制（默认关闸 no-op；
                     # never-raises；只读收集本 turn 的 chain/summary/product
                     # 打包为离线重放 artifact）。记录面绝不阻断 settle。
                     try:

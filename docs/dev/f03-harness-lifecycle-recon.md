@@ -122,7 +122,7 @@ bridge/tracker/V7/StageState 全是投影；投影失真用 parity 观测暴露�
   `_FakeBridge.abort` 签名过期；本分支已修复该 fake（`source=` kwarg），
   修复后 9/9 全绿（master 为 7/9）——作为 pre-existing 测试修复随本 PR 交付。
 
-## 6. 交付台账（与 ADR-0204-f03 决策对应）
+## 6. 交付台账（与 ADR-0259-f03 决策对应）
 
 | 决策 | 实现 | 测试 |
 |---|---|---|

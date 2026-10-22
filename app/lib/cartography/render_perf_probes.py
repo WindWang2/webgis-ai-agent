@@ -1,4 +1,4 @@
-"""RenderPerfProbes —— 渲染性能探针的 versioned 契约（F13，ADR-0214 D5）。
+"""RenderPerfProbes —— 渲染性能探针的 versioned 契约（F13，ADR-0261 D5）。
 
 前端 ``frontend/lib/telemetry/render-probes.ts`` 采集的 TTFR / patch
 latency / 数据面计数随 observation ``perf`` 块上行 —— 本模块是服务端

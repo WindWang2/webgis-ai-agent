@@ -1,4 +1,4 @@
-"""三层背压闸（R5，ADR-0182 D6）：session / subsystem-channel / global。
+"""三层背压闸（R5，ADR-0254 D6）：session / subsystem-channel / global。
 
 结构（自外向内）：
 

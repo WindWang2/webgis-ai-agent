@@ -61,7 +61,7 @@
 - `tests/unit/workflow_runtime/` 与 `tests/governor/` 无 skip/xfail。
 - #1484 PR body 披露的存量隔离问题（`test_capability_graph_v8.py::test_ra3_cross_scope_model_no_false_duplicate` 顺序依赖）属于 harness 面文件，与本方向改动面不相交；落地时以干净基线复跑区分。
 
-## 架构决策摘要（详见 ADR-0214）
+## 架构决策摘要（详见 ADR-0264）
 
 - rg.v1 是唯一数值真相：workflow 节点估算经新桥 `workflow_runtime/estimate.py` 投影 `estimate_for_tool`/`render_budget`/`export_budget`，禁止第二份先验表；parity（同工具同参数 → dims+resource_class 全等）测试锁定。
 - 节点执行统一过 governor：`workflow_runtime/governor_link.py` 在 `_run_node_claimed` 包裹 `_invoke`（admit→execute→complete→calibration），kill-switch `GIS_WORKFLOW_GOVERNOR=0`，一切 governor 异常 fail-open。

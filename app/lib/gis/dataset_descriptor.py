@@ -1,4 +1,4 @@
-"""GISDatasetDescriptor —— 数据集语义的权威契约记录（ADR-0215，方向 F01）。
+"""GISDatasetDescriptor —— 数据集语义的权威契约记录（ADR-0265，方向 F01）。
 
 #1488（ADR-0207）回答"怎么推"语义（measurement/field_resolver/scale_semantics
 是推导的单一事实源，本模块不改其内部）；本模块回答"推出来的语义是**哪个版本**"：
@@ -10,7 +10,7 @@
   上限 MAX_DESCRIPTOR_BYTES 由 store 层强制（契约层拒绝超限构造输出）；
 - **deterministic**：``descriptor_fingerprint`` 对全部语义内容哈希（canonical JSON、
   排序键）；``derived_at`` 等易变字段不入指纹 —— 同一数据集版本在 ingest / query /
-  map / replay 四条路径恒产出同一指纹（ADR-0215 DoD #1）；
+  map / replay 四条路径恒产出同一指纹（ADR-0265 DoD #1）；
 - **单向映射**：descriptor → 既有四形状的投影（to_dataset_profile /
   to_measurement_profile / semantic_view / d1_view）全部**委托既有实现**，词表零
   复制；禁止反向（任何模块不得从原始数据另猜一份 descriptor 已有的语义）；
@@ -386,7 +386,7 @@ class GISDatasetDescriptor(BaseModel):
         ``license``/``attribution``（权利元数据 —— 补全归因不改变数据语义，
         入指纹会让许可补全误判为内容变更）
         —— 语义身份 ≠ 指针身份：同一数据语义无论从哪条路径、哪个指针
-        到达，指纹必须相同（ADR-0215 DoD #1）。
+        到达，指纹必须相同（ADR-0265 DoD #1）。
         """
         return {
             "descriptor_version": self.descriptor_version,

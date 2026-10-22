@@ -107,7 +107,7 @@ function mapspecLayerId(layerId: string): string {
 // expected_revision，后到者必然 409 被回滚（“按钮看起来坏了”）。
 let userMutationChain: Promise<unknown> = Promise.resolve();
 
-/* ── 方向 8（ADR-0183 / U4）：mutation 身份 + 队列观测 ────────────────────
+/* ── 方向 8（ADR-0257 / U4）：mutation 身份 + 队列观测 ────────────────────
  *
  * - newMutationId：每笔乐观 mutation 的客户端幂等键（服务端以 c:<id> 做
  *   锁内去重 —— 弱网重试返回已提交世代而非二次执行）。

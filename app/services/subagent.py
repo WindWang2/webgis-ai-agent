@@ -159,7 +159,7 @@ def select_tools_for_subagent(
     - extra_tools 按名字白名单纳入 — 用于强制带上某个具体工具（SEC-F2：
       tier-3 工具仍受 exclude_tier3 约束，父 turn 无可委托的确认）。
     - 子代理永远看不到 spawn_subagent / propose_plan，防止递归与计划嵌套。
-    - ADR-0101 Wave 7 + review R1 MAJOR（fail-closed）：allow_mutation=False
+    - ADR-0237 Wave 7 + review R1 MAJOR（fail-closed）：allow_mutation=False
       采用**allow-list** —— 只保留显式声明为只读类（pure /
       deterministic_compute / cacheable_read）的工具。UNCLASSIFIED（存量全库
       默认）意味着「未知」，未知不可入只读面（此前黑名单式剔除对未分类工具
@@ -286,7 +286,7 @@ class SubagentDispatcher:
                 error="subagent recursion depth limit exceeded (max=2); nested spawn is not allowed",
                 lineage={"depth": _depth},
             )
-        # ADR-0101 Wave 7：角色档（显式策略，无未约束子代理）。角色提供的
+        # ADR-0237 Wave 7：角色档（显式策略，无未约束子代理）。角色提供的
         # 域/预算与调用方显式参数取**交集/更严者** —— 角色收紧，调用方不能
         # 经参数越权放宽。
         from app.services.subagent_roles import (

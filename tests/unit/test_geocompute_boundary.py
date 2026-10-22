@@ -1,4 +1,4 @@
-"""GeoCompute/Data Plane boundary enforcement (ADR-0096 D1).
+"""GeoCompute/Data Plane boundary enforcement (ADR-0235 D1).
 
 The GeoCompute / Data Plane layers must stay free of Agent/Product Plane concerns:
 no gis_harness internals, no Pi bridge, no chat/turn semantics, no tool-registry

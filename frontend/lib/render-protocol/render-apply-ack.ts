@@ -1,5 +1,5 @@
 /**
- * RenderApplyAck — desired→apply→ACK 事务语义的前端投影（F13，ADR-0214 D3）。
+ * RenderApplyAck — desired→apply→ACK 事务语义的前端投影（F13，ADR-0261 D3）。
  *
  * 纪律（与 layer-status.ts 同款）：
  *
@@ -377,7 +377,7 @@ export function buildRenderApplyAck({
           ? 'partial'
           : 'applied');
   // reconcile 报错 = apply 管线本身异常（applied spec 可能是旧一轮的
-  // 落定面）—— 事务级降级：绝不宣称全量 applied（ADR-0214 D3 的
+  // 落定面）—— 事务级降级：绝不宣称全量 applied（ADR-0261 D3 的
   // apply_error 披露语义；文本照旧 advisory 随 ack.reconcile_error 上行）。
   const degradedStatus: ApplyAckStatus =
     reconcileError && status === 'applied' ? 'partial' : status;

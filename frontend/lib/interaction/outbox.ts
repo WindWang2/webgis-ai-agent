@@ -197,7 +197,7 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let generation = 0;
   /**
-   * 服务端已记账水印，按**会话**作用域（ADR-0225 C7：client_seq 契约是
+   * 服务端已记账水印，按**会话**作用域（ADR-0227 C7：client_seq 契约是
    * per-(session, tab) 从 1 起）。实例级标量会在会话切换后把新会话整批
    * `client_seq ≤ 旧水印` 的事件静默剪掉（永不发送）——旧会话的迟到/重试
    * 响应只应裁剪同一会话的队列条目。

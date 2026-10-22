@@ -33,7 +33,7 @@ function NorthArrowView({ component, ctx }: { component: MapSpecComponent; ctx: 
   // V3：统一走 resolveVariant（options.variant > 目录 variant 字段 >
   // 缺省）—— 组件变体的目录通道不再被绕过。
   const variant = resolveVariant(component, 'compass_minimal_black');
-  // V3（ADR-0101 D3）：monochrome —— 灰度渲染（黑白出版/打印友好），
+  // V3（ADR-0238 D3）：monochrome —— 灰度渲染（黑白出版/打印友好），
   // glyph 仍是 compass（单色语义），仅色彩通道去饱和。
   const mono = variant === 'monochrome';
   // AC-07（ADR-0156 P4）：真北/磁北偏角注记 —— bbox 中心偶极子近似

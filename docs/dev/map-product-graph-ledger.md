@@ -14,7 +14,7 @@
 ## M0 — 概念谱系收敛 ☑
 
 - 目标：确认唯一语义产品 owner（D1）；谱系文档化。
-- 改动：`docs/adr/0183-semantic-map-product-graph-v1.md`（新增）；谱系表入 ADR §2。
+- 改动：`docs/adr/0258-semantic-map-product-graph-v1.md`（新增）；谱系表入 ADR §2。
 - 契约：无代码契约变更。
 - 测试：无（文档里程碑）。
 - 兼容：零代码改动，零回滚面。

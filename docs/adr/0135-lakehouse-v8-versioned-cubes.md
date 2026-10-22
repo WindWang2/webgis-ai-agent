@@ -2,7 +2,7 @@
 
 - status: Accepted
 - date: 2026-09-10
-- relates-to: ADR-0118 (Spatial Data Lakehouse & Cube V6), ADR-0122 (Spatial Lakehouse V7), ADR-0119 (ModelOps / dataset versions), ADR-0101 (Data Fabric V4)
+- relates-to: ADR-0249 (Spatial Data Lakehouse & Cube V6), ADR-0122 (Spatial Lakehouse V7), ADR-0119 (ModelOps / dataset versions), ADR-0101 (Data Fabric V4)
 
 ## Context
 

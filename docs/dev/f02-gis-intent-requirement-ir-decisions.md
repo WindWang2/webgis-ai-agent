@@ -1,6 +1,6 @@
 # F02 — GIS Intent & Requirement IR · Architecture Decisions
 
-配套 recon：`f02-gis-intent-requirement-ir-recon.md`；ADR：`docs/adr/0215-gis-intent-requirement-ir.md`。
+配套 recon：`f02-gis-intent-requirement-ir-recon.md`；ADR：`docs/adr/0266-gis-intent-requirement-ir.md`。
 
 ## D-01 单包落点，包内分层
 
@@ -61,4 +61,4 @@ IR 不写 MapSpec、不选工具、不算 grammar/completeness 结果。
 
 ## D-12 ADR 编号避让
 
-open PR 分支已占用 ADR-0204–0214 → 本方向使用 **ADR-0215**，文件独立，无文件级冲突。
+open PR 分支已占用 ADR-0204–0214 → 本方向使用 **ADR-0266**，文件独立，无文件级冲突。

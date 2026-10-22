@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""生成 docs/quality/certifications/SECURITY_CONTROLS.md（ADR-0104 Wave 15）。
+"""生成 docs/quality/certifications/SECURITY_CONTROLS.md（ADR-0245 Wave 15）。
 
 认证表是派生物：契约（app/lib/quality/security_manifest.py 的控制→实现→测试
 映射）+ 门禁校验现状。

@@ -862,7 +862,7 @@ def merge_map_product_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> No
             raw.get("methodology_warnings") or [])[:8]
     if "fallbacks" in raw:
         chapter["fallbacks"] = list(raw.get("fallbacks") or [])[:8]
-    # ADR-0183：语义产品层 —— spec 载荷（spec_version+digest+spec）键在场即
+    # ADR-0258：语义产品层 —— spec 载荷（spec_version+digest+spec）键在场即
     # 整体替换（presence 语义与上方各键一致；缺席 = 旧版本工具结果，零漂移）。
     # CAS 守卫（review P1）：写入者携带其读取基线的 digest（base_spec_digest）；
     # 当前 chapter 的 spec 已被并发写入者移动 → 跳过覆盖并把冲突记入
@@ -893,7 +893,7 @@ def merge_map_product_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> No
 
 
 def merge_product_edit_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> None:
-    """webgis_product_edit 结果 → 章节合并（ADR-0183 M6）。
+    """webgis_product_edit 结果 → 章节合并（ADR-0258 M6）。
 
     键语义：``product_spec`` 键在场即整体替换（编辑后的 spec 权威态）；
     缺席（编辑被拒/失败）→ chapter 原值不动 —— spec 只在编辑成功时落账。
@@ -1109,7 +1109,7 @@ async def _apply_tool_result_unlocked(
         return events, None
 
     if tool_name == "webgis_product_edit" and plan.gis_chapter is not None:
-        # ADR-0183 M6：语义产品编辑 —— 只动 chapter["product_spec"]，能力行
+        # ADR-0258 M6：语义产品编辑 —— 只动 chapter["product_spec"]，能力行
         # 状态与 DAG 不受编辑影响（编辑改的是"产品是什么"，不是"执行到哪"）。
         merge_product_edit_result(plan.gis_chapter, raw)
         if lock is not None and lock.lost:

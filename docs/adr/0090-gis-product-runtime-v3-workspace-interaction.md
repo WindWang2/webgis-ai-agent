@@ -19,7 +19,7 @@ master 已完整落地并有测试锁定。真实缺口集中在两处：
    （chart 信号甚至处于断线状态 —— planner 从未把 recipe.export_profile
    写进 template_selection，`chart:required` 合成只在测试手工注入时生效）；
 2. **工作区（Workspace）交互层**：图层无状态词表、组件无管理入口、无
-   dock 基座、map↔chart 无共享选择（ADR-0088 组件库明确 deferred 的项）。
+   dock 基座、map↔chart 无共享选择（ADR-0232 组件库明确 deferred 的项）。
 
 ## 2. Decision
 
@@ -149,7 +149,7 @@ hidden（期望关闭）≠ stale（期望在场、runtime 分歧 → runtime re
   导出会被工作区状态污染；
 - **选择过滤走 map-action 命令通道**：每类选择一次命令往返 + 可能的
   层重建；live-spec 复用通道零成本且已被图例过滤验证；
-- **为 change_detection 新增产品模板**：违反 ADR-0088 D8 反垂直膨胀
+- **为 change_detection 新增产品模板**：违反 ADR-0232 D8 反垂直膨胀
   guard（与 remote_sensing 结构重复）—— 任务条件能力是正确粒度。
 
 ## 6. Compatibility

@@ -82,7 +82,7 @@ _LAZY: dict[str, tuple[str, str]] = {
         "app.services.agent_swarm.delegation_contracts",
         "MAX_SWARM_TASKS",
     ),
-    # delegation protocol（H07/ADR-0216）
+    # delegation protocol（H07/ADR-0269）
     "DelegationPhase": ("app.services.agent_swarm.delegation", "DelegationPhase"),
     "DelegationStatus": ("app.services.agent_swarm.delegation", "DelegationStatus"),
     "DelegationFailureReason": (

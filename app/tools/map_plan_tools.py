@@ -1,4 +1,4 @@
-"""Map Plan Compiler 工具面（F12 / ADR-0214 D7，additive）。
+"""Map Plan Compiler 工具面（F12 / ADR-0260 D7，additive）。
 
 ``webgis_compile_map_plan``：把中文自然语言需求经
 ``resolve_intent_adaptive（规则快路径，零 LLM）→ MapProductPlanner →

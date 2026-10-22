@@ -14,7 +14,7 @@
 - 本地并行分支（未 open PR）：`harness/gis-capability-graph-v1`（已有 Capability/ExecutionGraph
   M1-M5 设计，**占用 ADR-0181**）、`harness/pi-native-kernel-sessionplan-v1`。
 - ADR 号占用：master 已至 0179；#1274 与 #1275 的 PR 标题均声称 ADR-0180；capability-graph
-  分支占用 0181。**本线使用 ADR-0182**。
+  分支占用 0181。**本线使用 ADR-0254**。
 
 ## D1. 身份与命名：Harness Governor ≠ geocompute ResourceGovernor
 
@@ -34,7 +34,7 @@
 | 能力 | 已有实现 | governor 的姿态 |
 |---|---|---|
 | 数据获取成本 | `estimate_cost`（`data_fabric/planning/cost_model.py:84`，ADR-0173） | R2 projection 的数据面价格表来源 |
-| context token 预算 | `context_budget.py`（BudgetPlan/measure/GisBudgetAdvisor，ADR-0101/0103/0104） | R12 只做 allocation + priority hints，绝不重写 tokenizer |
+| context token 预算 | `context_budget.py`（BudgetPlan/measure/GisBudgetAdvisor，ADR-0237/0103/0104） | R12 只做 allocation + priority hints，绝不重写 tokenizer |
 | geocompute 用量 | `GLOBAL_GOVERNOR.usage_full()` | 只读视图喂 admission |
 | provider 健康 | `get_breaker_registry().state()`（circuit_breaker.py:129,195）+ `provider_health.health_tracker` | R11 只读输入，不重建 breaker |
 | 协作式取消 | `app/lib/cancellation.py`（CancellationToken/link/checkpoint/registry） | R9 挂靠该主干 |

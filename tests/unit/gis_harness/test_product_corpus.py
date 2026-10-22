@@ -1,4 +1,4 @@
-"""Golden product corpus 回归（ADR-0183 M9）。
+"""Golden product corpus 回归（ADR-0258 M9）。
 
 54 个产品语义 fixture（zh/en、缺数据、降级、输出变体、编辑序列、组件族
 扫描）驱动五面回归：schema 校验、编译确定性（digest 稳定）、语义绑定

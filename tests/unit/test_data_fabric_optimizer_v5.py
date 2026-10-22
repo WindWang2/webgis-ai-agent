@@ -1074,7 +1074,7 @@ class TestChainTool:
         assert res["status"] == "error"
 
     def test_non_chainable_id_joins_v6_tree_executes(self, chain_env):
-        """V6（ADR-0118）：同一星形 join graph 是合法**树** —— 成功执行。
+        """V6（ADR-0247）：同一星形 join graph 是合法**树** —— 成功执行。
 
         V5 左深链契约（不成链 typed 失败）由上一测试以 engine="v5" 锁定；
         V6 cost-based 枚举接受树形 join graph（链是特例），这是 V6 的

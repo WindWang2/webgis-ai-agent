@@ -75,7 +75,7 @@ def _bound_structured(value: Any, depth: int = 0) -> Any:
         return value
     text = str(value)[:_STRUCT_STR_MAX]
     # 值级秘密剥离兜底（review P2-1：精确键名名单拦不住 `X-Api-Key` 这类
-    # 表单键下的秘密值；单点复用 app.lib.redaction —— ADR-0214 D1 中立
+    # 表单键下的秘密值；单点复用 app.lib.redaction —— ADR-0262 D1 中立
     # 模块，失败降级原串）。
     try:
         from app.lib.redaction import scrub_secret_strings

@@ -3,11 +3,11 @@
 - 分支：`zcode/f02-gis-intent-requirement-ir-20260926-9e1ad229`
 - worktree：`../wt-webgis-f02-gis-intent-requirement-ir-20260926-9e1ad229`
 - 基线：origin/master `9e1ad229`（2026-09-24）
-- ADR：`docs/adr/0215-gis-intent-requirement-ir.md`
+- ADR：`docs/adr/0266-gis-intent-requirement-ir.md`
 
 ## 里程碑
 
-1. `72288938` docs：recon（五列表 + open-PR overlap 检查）+ decisions（D-01..D-12）+ ADR-0215。
+1. `72288938` docs：recon（五列表 + open-PR overlap 检查）+ decisions（D-01..D-12）+ ADR-0266。
 2. `9e5b4bcf` feat：requirement_ir 包（11 模块）+ 8 场景 corpus + tools 加法接线 + 169 tests。
 3. review-fix：Subagent C 独立深审（APPROVE-WITH-FIXES）→ 3×P1 + 10×P2 修复 + 8 条回归测试（`docs/dev/f02-gis-intent-requirement-ir-review.md`）。
 

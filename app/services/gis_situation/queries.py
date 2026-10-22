@@ -1,4 +1,4 @@
-"""Situation 查询 API（方向 2 S6，ADR-0180）。
+"""Situation 查询 API（方向 2 S6，ADR-0252）。
 
 业务代码不再散落地读 ``map_state`` 字典键 —— 从 GISSituation 的命名事实
 做纯函数查询。全部只读、确定性、partial（unknown → None/空，绝不猜默认）。

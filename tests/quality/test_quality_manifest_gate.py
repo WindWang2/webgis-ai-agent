@@ -1,4 +1,4 @@
-"""Quality Manifest 红线闸（ADR-0104）。
+"""Quality Manifest 红线闸（ADR-0245）。
 
 三条红线：
 1. 提交的 docs/quality/QUALITY_MANIFEST.md 与 quality-manifest.json 必须与

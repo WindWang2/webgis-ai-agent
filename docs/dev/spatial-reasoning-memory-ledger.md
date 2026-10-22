@@ -54,7 +54,7 @@
 ## M5 — 评估语料 + ADR + 契约导出（R9+R7 文档面，本次提交）
 
 - 改动：`eval.py`（32 场景回放框架）、`tests/test_gis_memory_eval_corpus.py`（7 项）、
-  `docs/adr/0183-gis-spatial-reasoning-memory.md`、
+  `docs/adr/0255-gis-spatial-reasoning-memory.md`、
   `docs/dev/spatial-memory-contracts/gis-spatial-memory.schema.json` +
   漂移测试（4 项）、`docs/gis-harness.md` 新节、store.py 偏好路由
   supersede 修正（显式用户来源，ADR-0069 自身语义）。

@@ -1,4 +1,4 @@
-"""Pi 激活面 schema 字节预算测试（ADR-0180 D2 / typed-tool-surface M1）。
+"""Pi 激活面 schema 字节预算测试（ADR-0253 D2 / typed-tool-surface M1）。
 
 - apply_surface_byte_budget：native 前门恒保留；动态候选贪心装入；
   超预算记因 byte_budget；schema_size 缺席按 0；预算 0 = 关闭；

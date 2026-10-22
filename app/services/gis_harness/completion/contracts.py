@@ -67,7 +67,7 @@ F_RENDER_LAYER_MISSING = "render_layer_missing"
 F_RENDER_SOURCE_MISSING = "render_source_missing"
 F_RENDER_COMPONENT_MISSING = "render_component_missing"
 F_RENDER_ERROR = "render_error"
-# V5 W5（ADR-0118 D5）：rendered-state telemetry 深化 —— requested intent ↔
+# V5 W5（ADR-0248 D5）：rendered-state telemetry 深化 —— requested intent ↔
 # actual rendered state 的逐层核对照 面。全部 optional-telemetry 门控：
 # 旧客户端不带新字段 → 不产生新 finding（向后兼容，诚实缺席披露）。
 F_RENDER_INCOMPLETE = "render_incomplete"
@@ -641,7 +641,7 @@ class MapCompletionResult:
     # 对象面供 repair planner 消费；``to_dict`` 序列化为有界 dict 列表。
     # None/空 = 评估器未配置或未触发（零行为变化）。
     visual_findings: Optional[List[Any]] = None
-    # 视觉观察环披露（F15/ADR-0214）：跨运行 recurrence 记账摘要
+    # 视觉观察环披露（F15/ADR-0263）：跨运行 recurrence 记账摘要
     # {"recorded","recurrent","hard_stopped":[fp…]}。空 dict = 未记账
     # （评估器未配置/记账异常 —— ``to_dict`` 缺键不写，零漂移）。
     visual_loop: Dict[str, Any] = field(default_factory=dict)

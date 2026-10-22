@@ -88,7 +88,7 @@ def activate(ctx) -> None:
 | `parameters` | `Optional[dict]` | `None` | Explicit JSON-schema-ish parameter dict (overrides inference) |
 | `field_extras` | `Optional[dict[str, dict]]` | `None` | Per-field extras merged into the generated schema |
 
-### Descriptor extensions (ADR-0101/0103 vocabulary)
+### Descriptor extensions (ADR-0237/0103 vocabulary)
 
 Passed through verbatim to the core registry descriptor kwargs when non-`None`
 /non-empty: `status`, `deprecation_of`, `requires_credentials`,

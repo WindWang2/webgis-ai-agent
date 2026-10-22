@@ -276,11 +276,11 @@ class CartographicRuntimeObservationRequest(BaseModel):
     # offscreen/重叠检查的坐标基准）。None = 客户端未上报（旧构建），
     # 服务端按「证据缺席」降级：不做像素级判定，不产生误伤 finding。
     canvas: Optional[dict[str, Any]] = None
-    # F13（ADR-0214 D3）：结构化 apply ACK（render_apply_ack.v1）。
+    # F13（ADR-0261 D3）：结构化 apply ACK（render_apply_ack.v1）。
     # DTO 层只做形状 + 尺寸门（词表/版本/stale 对账在 ingest 内经
     # validate_render_apply_ack 以服务端盖章 revision 完成后落库）。
     apply_ack: Optional[dict[str, Any]] = None
-    # F13（ADR-0214 D5）：渲染性能探针块（render_perf_probes.v1）。
+    # F13（ADR-0261 D5）：渲染性能探针块（render_perf_probes.v1）。
     # 归一在 DTO 层完成（纯数字/封闭键）—— 非法载荷 → None 按证据缺席。
     perf: Optional[dict[str, Any]] = None
 

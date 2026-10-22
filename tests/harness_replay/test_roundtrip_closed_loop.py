@@ -99,7 +99,7 @@ class TestRoundtripClosedLoop:
         scenario = traces_to_scenario([trace])
         assert scenario is not None
         assert scenario.category == "recorded"
-        # ADR-0214 D3：recorded 场景带 expect_recorded tag（回填的可失败
+        # ADR-0262 D3：recorded 场景带 expect_recorded tag（回填的可失败
         # 期望 —— status pin 来自录制的 TOOL_RESULTS 终态事实）。
         assert scenario.tags[0] == "recorded"
         assert "expect_recorded" in scenario.tags

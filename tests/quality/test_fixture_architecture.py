@@ -1,4 +1,4 @@
-"""Fixture 架构红线（ADR-0104 Wave 18）。
+"""Fixture 架构红线（ADR-0245 Wave 18）。
 
 合成样本库（tests/fixtures/gis_samples.py）的三条契约：
 - 确定性：同参数两次构造逐位一致；

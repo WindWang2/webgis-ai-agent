@@ -2,12 +2,12 @@
 
 - 状态: Proposed
 - 日期: 2026-09-10
-- 关联: ADR-0118（Semantic Workflow Compiler V4 —— methodology family V4 即本 ADR 的基座）、ADR-0092（Analysis Patterns）、ADR-0101（Recipe Conformance / Cartographic Template Library V3）、ADR-0103（Cartographic Design System V4）
+- 关联: ADR-0251（Semantic Workflow Compiler V4 —— methodology family V4 即本 ADR 的基座）、ADR-0092（Analysis Patterns）、ADR-0239/ADR-0238（Recipe Conformance / Cartographic Template Library V3）、ADR-0240（Cartographic Design System V4）
 - Epic: `feat/gis-methodology-template-intelligence-v2`（Epic 11）
 
 ## 1. 上下文
 
-Workflow Compiler V4（ADR-0118）落地了 12 个方法论族与 44 个候选方法的
+Workflow Compiler V4（ADR-0251）落地了 12 个方法论族与 44 个候选方法的
 确定性资格裁决，但方法知识仍然**散落**在 6+ 处 canonical 词表里
 （ontology 任务、methodology 候选、capability/algorithm 的 map-model 兼容
 声明、artifact 的 typical_map_models、组件目录、recipe packs），没有单一

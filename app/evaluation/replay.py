@@ -1,4 +1,4 @@
-"""Replay harness（ADR-0101 Wave 8, §34）—— 三种确定性重放模式。
+"""Replay harness（ADR-0237 Wave 8, §34）—— 三种确定性重放模式。
 
 1. **Tool replay**（``replay_tools``）：给定录制的 (tool, args) 序列 +
    会话夹具，重新 dispatch **声明为可安全重放**的工具（描述符

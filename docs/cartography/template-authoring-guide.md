@@ -1,6 +1,6 @@
 # Template Authoring Guide — 如何新增 model / variant / template
 
-> 所有登记都走 registry（ADR-0101 D3：变体是 registry 事实，不是前端条件）。
+> 所有登记都走 registry（ADR-0238 D3：变体是 registry 事实，不是前端条件）。
 > 登记后跑 `python -m pytest tests/cartography tests/unit/gis_harness --no-cov`
 > 与 `python -m app.lib.cartography.catalog_docs --check`（生成文档需刷新时
 > 先重新生成）。

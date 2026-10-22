@@ -1,4 +1,4 @@
-"""ADR-0101 Wave 7: 子代理角色库 / 层级预算 / 隔离强化测试。"""
+"""ADR-0237 Wave 7: 子代理角色库 / 层级预算 / 隔离强化测试。"""
 import asyncio
 
 import pytest

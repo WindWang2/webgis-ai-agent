@@ -1,4 +1,4 @@
-"""failure trace 最小化契约（ADR-0214 D8，WP7）。"""
+"""failure trace 最小化契约（ADR-0262 D8，WP7）。"""
 from __future__ import annotations
 
 import copy

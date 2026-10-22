@@ -1,4 +1,4 @@
-"""Benchmark runner 库（B9/B10，ADR-0183 决策六）：scripts/replay_bench.py 的主体。
+"""Benchmark runner 库（B9/B10，ADR-0256 决策六）：scripts/replay_bench.py 的主体。
 
 资源纪律：
 - 顺序执行（并发 = 1，天然有界；视觉裁判 env 注入是进程级状态，禁并发）；
@@ -89,7 +89,7 @@ async def run_one(replayer: OfflineReplayer, scenario: Scenario,
         "turns": len(result.turns),
         "exact_diff_count": sum(len(t.exact_diffs) for t in result.turns),
         "metric_row_count": len(result.metrics_rows),
-        # ADR-0214 D7：结构化投影（diff_reports 的下钻定位面）。
+        # ADR-0262 D7：结构化投影（diff_reports 的下钻定位面）。
         "projection": _projection_of(result),
     }
     if result.deferred_levels:
@@ -148,7 +148,7 @@ def _drift_attributes(scenario: Scenario, *,
 
 
 def _projection_of(result) -> Dict[str, Any]:
-    """场景级结构化投影（ADR-0214 D7）：digest 漂移的下钻定位面。
+    """场景级结构化投影（ADR-0262 D7）：digest 漂移的下钻定位面。
 
     只含确定性事实（passed/evaluated/allowed/status/selected/指纹）——
     计时与自由文本不进投影。
@@ -290,7 +290,7 @@ def compare_results(report: Dict[str, Any], baseline_path: str) -> Dict[str, Any
 BASELINE_KIND = "replay_bench_baseline"
 
 
-# ── differential replay（ADR-0214 D7）：digest 漂移 → step 级结构化 delta ────
+# ── differential replay（ADR-0262 D7）：digest 漂移 → step 级结构化 delta ────
 
 
 def diff_reports(baseline_path: str, current_path: str) -> Dict[str, Any]:

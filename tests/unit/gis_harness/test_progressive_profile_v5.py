@@ -1,4 +1,4 @@
-"""Harness V5 Progressive DatasetProfile 契约（ADR-0118 D4）。
+"""Harness V5 Progressive DatasetProfile 契约（ADR-0248 D4）。
 
 验收锚点（Epic V5）：
 - cheap → deep 渐进加深：显式入口、cheap provenance 保留、deep 失败

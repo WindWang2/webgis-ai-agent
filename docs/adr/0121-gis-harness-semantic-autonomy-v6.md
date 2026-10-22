@@ -3,7 +3,7 @@
 **Date:** 2026-09-09
 **Status:** Proposed
 **Branch:** `feat/harness-v6-semantic-autonomy`
-**Baselines:** ADR-0118（Harness V5，可恢复/可诊断/渲染可证）· 审计 `.agent-work/harness-v6/00-baseline.md`
+**Baselines:** ADR-0248（Harness V5，可恢复/可诊断/渲染可证）· 审计 `.agent-work/harness-v6/00-baseline.md`
 
 ## Context
 

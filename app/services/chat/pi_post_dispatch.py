@@ -368,7 +368,7 @@ class TurnSettleOutcome:
     ``failed``（超时/进程死亡/发送失败/未分类异常）。
 
     完成度奖励（final gate + map_finalization 披露）只属于 ``clean``；
-    非 clean 结算走 reduced settle（ADR-0204-f03 D2）：跳过终验与产品披露
+    非 clean 结算走 reduced settle（ADR-0259-f03 D2）：跳过终验与产品披露
     （错误不伪装成 completed），但补齐 WorkflowInstance / RuntimeState
     (turn_settled) / checkpoint / 证据链 USER_OUTPUT + persist（错误同样
     有可回放证据）。

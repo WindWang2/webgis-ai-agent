@@ -1,4 +1,4 @@
-"""V6 空间统计（ADR-0118 W2）：确定性网格直方图 + 几何复杂度 + CRS。
+"""V6 空间统计（ADR-0247 W2）：确定性网格直方图 + 几何复杂度 + CRS。
 
 「诚实有界」延伸（statistics.py 文化的延续）：
 - 直方图计数可以是 **measured**（adapter/collector 提供逐格计数）或

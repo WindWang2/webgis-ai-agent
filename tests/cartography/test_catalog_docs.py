@@ -1,4 +1,4 @@
-"""Catalog docs freshness — 生成文档与 registry 零漂移（ADR-0101 §文档）.
+"""Catalog docs freshness — 生成文档与 registry 零漂移（ADR-0238 §文档）.
 
 docs/cartography/ 的目录文件是 registry 的生成产物；registry 变更后未
 重新生成会在本测试爆出。

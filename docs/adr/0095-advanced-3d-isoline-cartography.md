@@ -2,7 +2,7 @@
 
 - 状态: Accepted
 - 日期: 2026-09-03
-- 关联: ADR-0015 (Legend Spec), ADR-0036 (MapSpec Layer Model), ADR-0078 (Unified Thematic Style), ADR-0088 (Cartographic Component Library V2), ADR-0092 (Reproducible Professional GIS Runtime)
+- 关联: ADR-0015 (Legend Spec), ADR-0036 (MapSpec Layer Model), ADR-0078 (Unified Thematic Style), ADR-0232 (Cartographic Component Library V2), ADR-0092 (Reproducible Professional GIS Runtime)
 
 ## Context
 

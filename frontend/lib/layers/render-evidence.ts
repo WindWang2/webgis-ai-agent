@@ -3,7 +3,7 @@
  * RenderObservation's per-layer verdicts (Workspace V2 / Goal C2).
  *
  * This is a *projection of an observation*, not new map truth: MapSpec stays
- * the only desired-state authority (ADR-0088). The layer manager derives a
+ * the only desired-state authority (ADR-0232). The layer manager derives a
  * closed status vocabulary from three existing facts — the store row, the
  * committed MapSpec revision, and this observed-runtime evidence — instead of
  * keeping a parallel status field in the store.

@@ -5,7 +5,7 @@
 - 关联：ADR-0187（swarm 总控编排：委派织物 / Governor / receipt 总线）、
   ADR-0188（专家包基座：BaseSpecialistAgent / RBAC / 输出契约）、
   ADR-0183（Goal Satisfaction Evaluator：false_pass_rate==0 / 不造第二
-  verdict / PASS_CAPABLE_CLASSES）、ADR-0180（situation world model：
+  verdict / PASS_CAPABLE_CLASSES）、ADR-0252（situation world model：
   unknown 显式成事实）、ADR-0152（symbology v2 唯一裁决）、ADR-0118
   （AUTO_SAFE 修复与 user-wins 抑制）、ADR-0078（no-data 语义）、
   ADR-0061（无证据 ≠ fail）

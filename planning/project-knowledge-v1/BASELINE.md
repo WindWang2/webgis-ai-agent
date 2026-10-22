@@ -28,7 +28,7 @@ The harnessDirections (Directions 01–05, PRs #1320/#1327/#1328/#1329 merged; #
 - **#1320 / ADR-0197** — Durable GIS Mission Runtime (`app/services/mission_runtime/`, tables `gis_missions*`, migration 0091). Missions carry `org_id/user_id/project_id` + ref inventories (artifact/map_product/evidence buckets) — the future `applies_to`/`produced` relation source.
 - **#1328 (Direction 03)** — Spatial Evidence / Claim / Provenance Graph (`app/services/gis_harness/evidence_claim/`): `ClaimStatus`, `RelationType` (incl. `derived_from`/`supersedes`/`invalidates`), `Scope.aoi_ref`/temporal, positive-proof invariant.
 - **#1329 (Direction 04)** — Hot-path Convergence (`gis_harness/hotpath_convergence/`): mission bind, skill bind, claim ingest flags; `GIS_MISSION_HOTPATH` default OFF.
-- Earlier: **ADR-0183/#1305-era** GIS Spatial Reasoning Memory (`app/services/gis_memory/`, table `gis_spatial_memories`, migration 0080) and **ADR-0190** proactive retrieval (`AssociativeIndex`, `ProactiveRetriever.awake`, `MemoryContextCard`).
+- Earlier: **ADR-0255/#1305-era** GIS Spatial Reasoning Memory (`app/services/gis_memory/`, table `gis_spatial_memories`, migration 0080) and **ADR-0190** proactive retrieval (`AssociativeIndex`, `ProactiveRetriever.awake`, `MemoryContextCard`).
 - **ADR-0069** cartography project fact ledger (`carto_project_facts` table, `app/services/cartography/project_memory.py`) — the single preference-truth that gis_memory routes to.
 
 ## Planning-dir convention note

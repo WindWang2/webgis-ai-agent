@@ -1,4 +1,4 @@
-"""Vector lakehouse window scan — Spatial Lakehouse V6 (Wave 4, ADR-0118).
+"""Vector lakehouse window scan — Spatial Lakehouse V6 (Wave 4, ADR-0249).
 
 lazy materialization 的 vector 侧读路径：**ref-only + row-group 剪枝**。
 

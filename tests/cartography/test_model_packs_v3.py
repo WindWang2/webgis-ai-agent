@@ -1,4 +1,4 @@
-"""Model Packs V3 — 模型库域包扩容契约测试（ADR-0101 D1/D2）。
+"""Model Packs V3 — 模型库域包扩容契约测试（ADR-0238 D1/D2）。
 
 锁定：
 - pack 加载：确定性、无 id 冲突、seed 不变；

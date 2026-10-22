@@ -1,6 +1,6 @@
 # F13 设计 — MapSpec → Render Runtime & Data Plane
 
-ADR：`docs/adr/0214-mapspec-render-runtime-data-plane.md`。Recon：`f13-render-runtime-recon.md`。
+ADR：`docs/adr/0261-mapspec-render-runtime-data-plane.md`。Recon：`f13-render-runtime-recon.md`。
 
 ## 0. 设计原则
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Golden product corpus 生成器（ADR-0183 M9）。
+"""Golden product corpus 生成器（ADR-0258 M9）。
 
 确定性合成 54+ 产品语义案例（zh/en、缺数据、降级、输出变体、编辑序列、
 组件族扫描）。只在本仓库开发流程中运行一次（或语料需要演进时重跑），
@@ -240,7 +240,7 @@ add("inset-edit-zh", query="成都各区小学数量对比，加主城区插图"
     expected_views_after=["map", "stats_panel", "inset"])
 
 out = {"version": "1.0",
-       "description": "Semantic Map Product Graph golden corpus (ADR-0183 M9)",
+       "description": "Semantic Map Product Graph golden corpus (ADR-0258 M9)",
        "cases": cases}
 p = pathlib.Path(__file__).resolve().parent  # scripts/
 target = p / "product_cases.json"

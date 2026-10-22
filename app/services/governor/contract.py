@@ -1,4 +1,4 @@
-"""Harness 资源治理契约（rg.v1，ADR-0182）。
+"""Harness 资源治理契约（rg.v1，ADR-0254）。
 
 Governor V1 的**唯一契约真相**：估算、需求、预算、预留、用量、裁决六类核心
 类型 + 确定性分级。设计红线（决策日志 D4）：
@@ -175,7 +175,7 @@ class Subsystem(str, Enum):
     EXPORT = "export"
     STORAGE = "storage"
     TASK_QUEUE = "task_queue"
-    #: workflow_runtime 节点执行（ADR-0214 D1/D2）：节点级 ResourceEstimate
+    #: workflow_runtime 节点执行（ADR-0264 D1/D2）：节点级 ResourceEstimate
     #: 的诚实归因 —— 数值口径与工具面同一 rg.v1，子系统标注区分归属。
     WORKFLOW = "workflow"
 

@@ -1,4 +1,4 @@
-"""S3-compatible BlobStore backend — Spatial Lakehouse V6 (Wave 2, ADR-0118).
+"""S3-compatible BlobStore backend — Spatial Lakehouse V6 (Wave 2, ADR-0249).
 
 单一事实源边界：这是 ``durable_blob_store.BlobStore`` 的**第二实现**，
 不是第二内容后端 —— 接口/键布局/原子发布/digest 校验纪律与

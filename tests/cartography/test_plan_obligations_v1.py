@@ -1,4 +1,4 @@
-"""编译前 obligations 六闸测试（F12 / ADR-0214 D4）。
+"""编译前 obligations 六闸测试（F12 / ADR-0260 D4）。
 
 锁定：blocking 闸（锁冲突 / data refs / 组件词表 / renderer / export /
 blueprint）fail-closed；advisory 闸（scale/CRS）只 warn 不阻塞。

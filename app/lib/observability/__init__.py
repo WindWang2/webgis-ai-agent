@@ -1,4 +1,4 @@
-"""Structured Observability 事件面（ADR-0104 Wave 6）。"""
+"""Structured Observability 事件面（ADR-0245 Wave 6）。"""
 from app.lib.observability.events import (
     EVENT_CATALOG,
     LoggingSink,

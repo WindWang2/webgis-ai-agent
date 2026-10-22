@@ -1,4 +1,4 @@
-"""Receipt 契约测试（F12 / ADR-0214 D5）。
+"""Receipt 契约测试（F12 / ADR-0260 D5）。
 
 锁定：内容寻址 receipt_id（时序证据不入身份）、decision_record 溯源、
 有界环、stale 判定、序列化 round-trip。

@@ -6330,7 +6330,7 @@
     "type": "object"
    },
    "MapProductMergeRequest": {
-    "description": "POST /map-products/merge 请求体（ADR-0099 受限维度合并）。",
+    "description": "POST /map-products/merge 请求体（ADR-0236 受限维度合并）。",
     "examples": [
      {
       "from_version_no": 1,
@@ -30632,7 +30632,7 @@
   },
   "/api/v1/projects/{project_id}/map-products/merge": {
    "post": {
-    "description": "Constrained dimension merge (ADR-0099): combine a style-only change\nwith an analysis-only change. Both sides moving the same dimension is a\nstructural conflict and is refused honestly — no silent pick-a-winner.",
+    "description": "Constrained dimension merge (ADR-0236): combine a style-only change\nwith an analysis-only change. Both sides moving the same dimension is a\nstructural conflict and is refused honestly — no silent pick-a-winner.",
     "operationId": "merge_map_product_versions_api_v1_projects__project_id__map_products_merge_post",
     "parameters": [
      {
@@ -30815,7 +30815,7 @@
   },
   "/api/v1/projects/{project_id}/map-products/{version_no}/fork": {
    "post": {
-    "description": "Fork a new version lineage from a historical version (ADR-0099).\n\nThe fork row copies the source provenance (inputs/plan/outputs/snapshot)\nand records the lineage edge; it is evidence of a branch point, not a\nGit-style mutable pointer.",
+    "description": "Fork a new version lineage from a historical version (ADR-0236).\n\nThe fork row copies the source provenance (inputs/plan/outputs/snapshot)\nand records the lineage edge; it is evidence of a branch point, not a\nGit-style mutable pointer.",
     "operationId": "fork_map_product_version_api_v1_projects__project_id__map_products__version_no__fork_post",
     "parameters": [
      {
@@ -30890,7 +30890,7 @@
   },
   "/api/v1/projects/{project_id}/map-products/{version_no}/open": {
    "get": {
-    "description": "Read-only inspection of a historical version (ADR-0099 open).\n\nNever touches current session state. Reports what the version carries\n(snapshot, provenance) and which restore modes are honestly available —\ncapability gaps degrade inside ``restore_modes``, open itself always\nsucceeds for an existing version.",
+    "description": "Read-only inspection of a historical version (ADR-0236 open).\n\nNever touches current session state. Reports what the version carries\n(snapshot, provenance) and which restore modes are honestly available —\ncapability gaps degrade inside ``restore_modes``, open itself always\nsucceeds for an existing version.",
     "operationId": "open_map_product_version_api_v1_projects__project_id__map_products__version_no__open_get",
     "parameters": [
      {
@@ -30948,7 +30948,7 @@
   },
   "/api/v1/projects/{project_id}/map-products/{version_no}/rerun": {
    "post": {
-    "description": "Rerun the analysis a version represents (ADR-0099): bind version →\nrun → first changed step (five-dimension diff drill-down) → incremental\nrerun. Style-only versions are refused — the machine contract says no\nrecomputation is needed (use restore style_only instead).",
+    "description": "Rerun the analysis a version represents (ADR-0236): bind version →\nrun → first changed step (five-dimension diff drill-down) → incremental\nrerun. Style-only versions are refused — the machine contract says no\nrecomputation is needed (use restore style_only instead).",
     "operationId": "rerun_map_product_version_api_v1_projects__project_id__map_products__version_no__rerun_post",
     "parameters": [
      {
@@ -31006,7 +31006,7 @@
   },
   "/api/v1/projects/{project_id}/map-products/{version_no}/restore": {
    "post": {
-    "description": "Restore a version into a live session (ADR-0099).\n\n``style_only`` applies the version snapshot's presentation state through\nthe MapSpec lifecycle engine (lock + validation + transaction); the\nfive-dimension diff of the recorded restore row is the machine-readable\nproof that no analysis recomputation happened. ``full`` requires a bound\nworkflow run and delegates to the rerun path (fresh artifacts, honest\ninput-drift disclosure) — never a silent in-place resurrection.",
+    "description": "Restore a version into a live session (ADR-0236).\n\n``style_only`` applies the version snapshot's presentation state through\nthe MapSpec lifecycle engine (lock + validation + transaction); the\nfive-dimension diff of the recorded restore row is the machine-readable\nproof that no analysis recomputation happened. ``full`` requires a bound\nworkflow run and delegates to the rerun path (fresh artifacts, honest\ninput-drift disclosure) — never a silent in-place resurrection.",
     "operationId": "restore_map_product_version_api_v1_projects__project_id__map_products__version_no__restore_post",
     "parameters": [
      {

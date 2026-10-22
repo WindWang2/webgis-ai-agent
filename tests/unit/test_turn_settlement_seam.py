@@ -1,4 +1,4 @@
-"""F03（ADR-0204-f03 D1/D3）：单结算 seam 的终点 × 终态语义矩阵。
+"""F03（ADR-0259-f03 D1/D3）：单结算 seam 的终点 × 终态语义矩阵。
 
 同一 fake RPC 驱动 ``PiBridge.prompt`` / ``PiBridge.stream_prompt``，断言
 每个 turn 终点（clean / 用户取消 / system 中止 / policy 中止 / stall /

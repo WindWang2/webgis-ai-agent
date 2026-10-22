@@ -1,4 +1,4 @@
-"""GIS Intent & Requirement IR（F02 / ADR-0215）。
+"""GIS Intent & Requirement IR（F02 / ADR-0266）。
 
 公开面（单向消费纪律见 docs/dev/f02-gis-intent-requirement-ir-decisions.md）：
 

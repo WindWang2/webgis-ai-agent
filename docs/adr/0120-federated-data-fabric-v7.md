@@ -1,7 +1,7 @@
 # ADR-0120: Federated Data Fabric V7 — Adaptive Distributed Spatial Data Plane
 
 ## Status
-Accepted（Epic 03，2026-09-09；前身 ADR-0118 Federated Spatial Query Optimizer V6）
+Accepted（Epic 03，2026-09-09；前身 ADR-0247 Federated Spatial Query Optimizer V6）
 
 ## Context
 V6 优化器（cost-based join 树枚举/流式批执行/Bloom/自适应链重排）之下缺少
@@ -41,7 +41,7 @@ V7 **不是第三套查询引擎** —— 是 V6 之下的联邦数据面治理�
 - 采集纪律 **plumb, not scrape**：只收割响应本就携带的事实；持久层
   advisory fail-open（append-only + prune，scope 进行 —— 跨租户不串）。
 
-### 4. Server CRS Transform Placement（兑现 ADR-0118 KL#2）
+### 4. Server CRS Transform Placement（兑现 ADR-0247 KL#2）
 - 发现并修复 V6 潜在缺陷：PostGIS/ArcGIS 默认交付 4326 而规划器按声明
   原生 SRID 做本地对齐 → 原生≠4326 的源混合 CRS 链双重变换（静默错坐标）。
 - 修复 = placement 本体：`QuerySpec` extra `output_crs`（已验证通道：
@@ -55,7 +55,7 @@ V7 **不是第三套查询引擎** —— 是 V6 之下的联邦数据面治理�
 - 双通道分离：过滤 bbox 语义不变（WHERE 作用于原生列）；output_crs 只
   影响交付几何编码。值白名单（EPSG:\d{4,5} / OGC:CRS84）。
 
-### 5. Safe Aggregate Pushdown（收口 ADR-0118 KL#6）
+### 5. Safe Aggregate Pushdown（收口 ADR-0247 KL#6）
 - 语义陷阱：aggregate_join = join 后按右列分组聚合，右行随左侧匹配数
   重复计数；源侧 GROUP BY 每右行计一次 → fan-out>1 不等价（V6 拒绝的原因）。
 - R-C1 五条件（全满足才下推）：纯属性等值 join；group_by ⊇ join 键；
@@ -65,7 +65,7 @@ V7 **不是第三套查询引擎** —— 是 V6 之下的联邦数据面治理�
   匹配或全不匹配（不匹配组被最终 join 丢弃）⇒ 源侧 GROUP BY ≡ join-后
   聚合（逐位）。差分语料锁定（下推 on/off 同结果）。
 
-### 6. Bushy Adaptive Replan（兑现 ADR-0118 KL#4）
+### 6. Bushy Adaptive Replan（兑现 ADR-0247 KL#4）
 - 执行后观测基数偏差 ≥4×（与链形同阈）→ **一次**整树重排：观测行数
   pinned 回同一 planner 重枚举，新计划 hash 不同**且严格更优**才重执行；
   `order_strategy="given"` 禁用；MAX_REPLANS=1；

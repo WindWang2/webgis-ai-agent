@@ -1,4 +1,4 @@
-"""Turn event ledger：durable append-only 账本（H04 / ADR-0216）。
+"""Turn event ledger：durable append-only 账本（H04 / ADR-0268）。
 
 同步 SQLAlchemy 会话经 ``asyncio.to_thread`` 下放（仿 SpatialEventLedger /
 workflow InstanceStore）；``factory`` 可注入（测试用临时 SQLite）。

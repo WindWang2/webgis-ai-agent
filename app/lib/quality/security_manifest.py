@@ -1,4 +1,4 @@
-"""Security Control → Test Manifest（ADR-0104 Wave 15，audit §6 平台配方）。
+"""Security Control → Test Manifest（ADR-0245 Wave 15，audit §6 平台配方）。
 
 把安全控制映射到（a）实现锚点（file + 必须存在的代码字符串）和（b）回归测试
 节点（pytest node id）。``validate_security_manifest()`` 是门禁：

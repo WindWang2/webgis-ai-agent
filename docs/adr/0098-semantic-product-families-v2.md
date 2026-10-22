@@ -2,7 +2,7 @@
 
 status: Accepted
 date: 2026-09-04
-relates-to: ADR-0092 (Phase C semantic layer), ADR-0094 (Spatial Decision V3)
+relates-to: ADR-0092 (Phase C semantic layer), ADR-0234 (Spatial Decision V3)
 
 ## Context
 

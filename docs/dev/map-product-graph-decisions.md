@@ -54,7 +54,7 @@
 
 ## D5 ADR 编号取 0183（编号占用核验：master ≤0179；在途 PR 占 0180×3 / 0181 / 0182×2）
 
-- 裁定：本方向主 ADR = `0183-semantic-map-product-graph-v1.md`；若 PR 时点 0183
+- 裁定：本方向主 ADR = `0258-semantic-map-product-graph-v1.md`（重编号前为 0183）；若 PR 时点 0183
   已被并行分支占用，rebase 时顺延为当时最小未占用号并在 PR body 归因（不询问用户）。
 
 ## D6 测试基线 = scoped + cartography marker；全量回归只跑受影响域

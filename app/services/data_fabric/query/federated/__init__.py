@@ -1,4 +1,4 @@
-"""Federated Spatial Query Optimizer V6（ADR-0118）。
+"""Federated Spatial Query Optimizer V6（ADR-0247）。
 
 纵向深化 V5 链式联邦：typed logical plan → statistics → spatial cost →
 physical alternatives（left-deep + bushy）→ pushdown → 流式执行 → runtime

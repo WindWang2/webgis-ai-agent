@@ -1,4 +1,4 @@
-"""Governor 校准 CLI（R17，ADR-0182 D12）。
+"""Governor 校准 CLI（R17，ADR-0254 D12）。
 
 跑 synthetic corpus（small/medium/large/extreme × vector/raster/acquisition/
 cartography/export/long_context）穿过真实 governor 管线，采集：

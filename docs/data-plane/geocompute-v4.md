@@ -7,7 +7,7 @@ operational contracts each one upholds.
 > **V5 note:** the data control plane build on top of V4 (durable artifact
 > store, workspace V4, ingest seam, capability queues, governor gauges,
 > quota/retention/GC) is documented in `v5-data-control-plane.md`
-> (ADR-0104). This guide remains accurate for the V4 execution/query plane
+> (ADR-0242). This guide remains accurate for the V4 execution/query plane
 > it describes.
 
 ## Execution plane (`app/services/geocompute/`)

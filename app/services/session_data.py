@@ -904,7 +904,7 @@ class MemorySessionStore(BaseSessionStore):
         """#750: single-process deployment — an in-memory marker with expiry."""
         import time as _time
         self._clearing_markers[session_id] = _time.monotonic() + ttl_s
-        # 方向 9（ADR-0183）：会话终结 → 待写记忆候选一并丢弃（review F5：
+        # 方向 9（ADR-0255）：会话终结 → 待写记忆候选一并丢弃（review F5：
         # 防止已清理会话的候选在下个同 id 会话复活；缓冲本身另有全局 LRU）。
         try:
             from app.services.gis_memory.pending import pending_memory_buffer

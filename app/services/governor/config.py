@@ -1,4 +1,4 @@
-"""Governor 配置：env 旋钮 + provisional 预算 manifest（ADR-0182 D5/D12）。
+"""Governor 配置：env 旋钮 + provisional 预算 manifest（ADR-0254 D5/D12）。
 
 env 直读（``os.getenv``）与 ``tool_dispatch_service.py`` 的
 ``TOOL_WAVE_CONCURRENCY`` 同惯例 —— 不触 ``app/core/config.py``（并行线热区

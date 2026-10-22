@@ -1,6 +1,6 @@
 """Lakehouse V6 Wave 9 — workspace durability for lakehouse refs.
 
-覆盖面（ADR-0118 Workspace V5 durability）：
+覆盖面（ADR-0249 Workspace V5 durability）：
 - fabric-parquet：binary lane（stat 预检 → 读 → sha256 → CAS put）+ 原子
   restore 写回同一磁盘位；
 - cube：manifest lane（manifest-only 发布，零字节拷贝）+ verify 四态 +

@@ -366,7 +366,7 @@ def export_ref_exists(session_id: str, ref: str) -> bool:
         return False
 
 
-# ── Fabric GeoParquet 磁盘工件 V6（ADR-0118 Wave 3）───────────────────────
+# ── Fabric GeoParquet 磁盘工件 V6（ADR-0249 Wave 3）───────────────────────
 # ref:fabric-parquet/<id> → DATA_DIR/<sid>/fabric-geoparquet/<id>.parquet 的
 # 一等生存期：与 raster disk-cursor 完全同形（注册 + O(1) stat 探测 + GC
 # unlink）。此前该 ref 只写不读（无 resolver、无台账、GC 盲区）—— V6 起是
@@ -410,7 +410,7 @@ def fabric_parquet_ref_exists(session_id: str, ref: str) -> bool:
         return False
 
 
-# ── Lakehouse Cube 磁盘工件 V6（ADR-0118 Wave 7）─────────────────────────
+# ── Lakehouse Cube 磁盘工件 V6（ADR-0249 Wave 7）─────────────────────────
 # ref:cube/<id> → DATA_DIR/<sid>/lakehouse-cubes/<id>.zarr（**目录**形态
 # 的 disk-cursor —— zarr store 是目录树）。与 raster/fabric-parquet 完全
 # 同形（注册 + O(1) 探测 + GC 清除），仅"文件 → 目录"语义差。
@@ -1067,7 +1067,7 @@ async def collect_orphan_refs(
                             records[aid].status = A_EXPIRED
                             records[aid].updated_at = time.time()
                     elif is_fabric_parquet_ref(aid):
-                        # V6（ADR-0118）：GeoParquet 磁盘工件孤儿 —— unlink
+                        # V6（ADR-0249）：GeoParquet 磁盘工件孤儿 —— unlink
                         # parquet（与 raster PNG 同款活引用复检纪律；注册已使其
                         # 对 sweep 可见，不再是 GC 盲区）。
                         import asyncio as _asyncio

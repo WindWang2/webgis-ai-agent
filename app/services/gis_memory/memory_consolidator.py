@@ -1,6 +1,6 @@
 """会话 Settle 记忆整合（ADR-0190）：晋升 / 固化 / 审计。
 
-位点纪律（与 ADR-0183 harvest 同源——「记忆永远滞后证据一个身位」）：
+位点纪律（与 ADR-0255 harvest 同源——「记忆永远滞后证据一个身位」）：
 ``consolidate_session`` 在 chat 路由 turn 结束的 ``harvest_spatial_memory``
 **之后**异步执行，绝不阻断 turn：
 

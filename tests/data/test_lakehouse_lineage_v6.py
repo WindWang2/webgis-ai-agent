@@ -1,6 +1,6 @@
 """Lakehouse V6 Wave 10 — DataObject lineage / 可复现性证据。
 
-覆盖面（ADR-0118）：
+覆盖面（ADR-0249）：
 - manifest 血缘面：source_refs（输入边）+ producer（capability/algorithm，
   写时 redact）+ input_fingerprint（复用键）+ environment_fingerprint；
 - 环境指纹：确定性（同环境同值）、有界（无路径/主机名/时间/凭据）；

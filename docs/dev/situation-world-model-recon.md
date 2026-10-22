@@ -108,7 +108,7 @@ system+`[环境感知]`(build_map_state_summary: store map_state+list_refs+event
 
 **扩展**：`bind_turn_prompt` 的 env_block 注入位（chat.py 两处构造点）→ 由 Situation 投影接管（flag+fallback）；`_cartographic_context_observation` 通道 → 增加交互环存储 `_situation_interactions`（S4）；`ChatContextAssembler`/legacy 路径不改。
 
-**新建**：`app/services/gis_situation/`（facts/contract/compiler/diff/observation/projection/queries/consistency/inspector），ADR-0180，S0-S9 测试。
+**新建**：`app/services/gis_situation/`（facts/contract/compiler/diff/observation/projection/queries/consistency/inspector），ADR-0252，S0-S9 测试。
 
 **不做**：持久化 Spatial Memory（方向 9）、mutation 完整事务引擎（方向 8）、Data Fabric descriptor 重做、Pi history memory 重写、通用 agent loop、legacy ChatEngine 路径接管、#1270 hygiene。
 

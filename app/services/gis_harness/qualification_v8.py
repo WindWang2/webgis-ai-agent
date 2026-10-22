@@ -99,7 +99,7 @@ class QualificationContext:
     # RuntimeContext
     dependency_available: Dict[str, bool] = field(default_factory=dict)
     credentials_present: Dict[str, bool] = field(default_factory=dict)
-    # ── F06（ADR-0215，additive 全默认 —— 既有构造点零破坏）────────────
+    # ── F06（ADR-0267，additive 全默认 —— 既有构造点零破坏）────────────
     # 运行时可用性（worker/backend 探针事实）：与 dependency_available
     # **命名空间隔离** —— 后者被 #1402 权限门作为「已声明授予面」消费
     # （非空 + 权限缺席 → deny），可用性事实混入会把零配置部署的

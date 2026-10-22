@@ -41,7 +41,7 @@ function ColorbarView({ component, ctx }: { component: MapSpecComponent; ctx: Re
   const colors = legend && (legend.type === 'continuous' || legend.type === 'divergent') ? (legend as unknown as { palette_colors: string[] }).palette_colors : undefined;
   if (!colors || colors.length < 2) return null;
   // D7：slim = 更细色条；compact = 紧凑内边距；report = 卡片加宽 + 刻度强调
-  // V3（ADR-0101 D3）：scientific = 中间刻度行（两端 + 3 个内插读数）；
+  // V3（ADR-0238 D3）：scientific = 中间刻度行（两端 + 3 个内插读数）；
   // stepped = 离散色阶块（palette_colors 分箱，而非连续渐变）。
   const variant = resolveVariant(component, '');
   // 方向载体：options.orientation 优先；variant horizontal/vertical 与

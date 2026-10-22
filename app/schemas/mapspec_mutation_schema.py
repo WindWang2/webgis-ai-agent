@@ -13,7 +13,7 @@ from app.contracts.cartography_components import ComponentPlacement
 
 
 class ClientMutationIdMixin(BaseModel):
-    """方向 8（ADR-0183）：客户端幂等键（可选，向后兼容）。
+    """方向 8（ADR-0257）：客户端幂等键（可选，向后兼容）。
 
     前端乐观队列为每笔用户 mutation 生成（uuid v4）；服务端以
     ``c:<client_mutation_id>`` 为 mutation_id 做锁内幂等去重 —— 同 id 重放
@@ -239,7 +239,7 @@ class MutationApplyResponse(BaseModel):
     runtime_observation_seq: int = 0
     mutation_revision: int
     origin: str = "user"
-    # 方向 8（ADR-0183）：信封回声 + 幂等重放标记（缺省 = 旧行为）。
+    # 方向 8（ADR-0257）：信封回声 + 幂等重放标记（缺省 = 旧行为）。
     duplicate: bool = False
     mutation_id: Optional[str] = None
     producer_class: Optional[str] = None

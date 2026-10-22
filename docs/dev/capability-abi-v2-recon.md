@@ -18,7 +18,7 @@
 | 扩展包认证 | `capability_certification.py`（ADR-0201 六段管线，指纹绑定报告） | 不在本方向 |
 | dispatch 绑定（仅 Pi） | `hotpath_convergence/capability_bind.py`（#1477，GIS_CAPABILITY_DISPATCH_BIND） | 见缺口② |
 | 凭证/权限闸 | registry `CREDENTIALS_REQUIRED` / `PERMISSION_DENIED`（#1402） | 机制在、供应链未接 |
-| Governor | ADR-0182 + #1472（DF cost / turn_id / durable budget） | 不触碰 |
+| Governor | ADR-0254 + #1472（DF cost / turn_id / durable budget） | 不触碰 |
 
 ## 真实缺口（本方向交付对齐）
 

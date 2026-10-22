@@ -53,7 +53,7 @@
 
 ## D7 — ADR 与文档
 
-- 新 **ADR-0180**（下一个空闲号，Subagent A 核对 master=0179、无在途占号）：记录 D2/D3/D5 三个增量契约。
+- 新 **ADR-0253**（下一个空闲号，Subagent A 核对 master=0179、无在途占号）：记录 D2/D3/D5 三个增量契约。
 - 更新 `docs/agent-runtime/tool-surface.md` 的 Pi 动态注册面小节。
 - 测试锚点：`tests/unit/test_pi_surface_budget.py`、`tests/unit/test_pi_input_gate.py`、`tests/unit/test_pi_surface_metrics.py`、`tests/unit/test_pi_surface_parity.py`。
 

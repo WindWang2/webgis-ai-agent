@@ -109,7 +109,7 @@ export interface ExportChromeElement {
   insetMainBbox?: { west: number; south: number; east: number; north: number };
   insetBoundary?: [number, number][];
   /**
-   * V3（ADR-0101 D6）：披露族（methodology/uncertainty/decision）导出载荷
+   * V3（ADR-0238 D6）：披露族（methodology/uncertainty/decision）导出载荷
    * —— 三种面板归一化为「标题 + 文本行」，与 live 渲染器同一防御式解析
    * 语义（坏载荷 → 面板缺席，不伪造）。
    */
@@ -455,7 +455,7 @@ export function buildExportTableData(
 
 
 
-// ── V3（ADR-0101 D6）：披露族导出解析（与 live 渲染器同语义）────────────
+// ── V3（ADR-0238 D6）：披露族导出解析（与 live 渲染器同语义）────────────
 // 归一化为「标题 + 文本行」；坏载荷 → undefined（面板缺席，不伪造）。
 
 function _parseMethodology(raw: unknown): ExportChromeElement['disclosure'] {
@@ -1602,7 +1602,7 @@ export function drawChromeStatsPanel(
 }
 
 /**
- * V3（ADR-0101 D6）：披露族导出（methodology / uncertainty / decision）。
+ * V3（ADR-0238 D6）：披露族导出（methodology / uncertainty / decision）。
  * 归一化「标题 + 文本行」卡片；methodology 带警示色左边条（与 live
  * border-status-warning 同语义）。collapsed 导出折叠标题条（E-2 约定）。
  */
@@ -2452,7 +2452,7 @@ export function drawChromeMapBorder(
     ctx.stroke();
     return;
   }
-  // V3（ADR-0101 D6）：neatline —— 外细实线 + 内虚线（与 live map-border
+  // V3（ADR-0238 D6）：neatline —— 外细实线 + 内虚线（与 live map-border
   // neatline 同语义：经典内图廓）。
   if (variant === 'neatline') {
     ctx.lineWidth = d.scalePx(1);

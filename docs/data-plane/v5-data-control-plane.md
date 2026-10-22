@@ -1,6 +1,6 @@
 # Data Control Plane V4 + GeoCompute V5 + Durable Workspace — Data Plane Guide
 
-ADR-0104 (`docs/adr/0104-data-control-geocompute-platform-v5.md`) is the
+ADR-0242 (`docs/adr/0242-data-control-geocompute-platform-v5.md`) is the
 governing design document. This guide maps what now exists to code, states the
 operational contracts, and lists every new env var / route / tool. Predecessor
 guides: `geocompute-v4.md` (V4 execution + query plane) and

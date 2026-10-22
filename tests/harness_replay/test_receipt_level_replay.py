@@ -1,4 +1,4 @@
-"""T4 receipt 级 ToolDispatchService 重放契约（ADR-0214 D6，WP1）。
+"""T4 receipt 级 ToolDispatchService 重放契约（ADR-0262 D6，WP1）。
 
 钉死的行为：
 - 沙箱内跑**真实** ToolDispatchService：ok 收据 → status ok + ref 铸出；

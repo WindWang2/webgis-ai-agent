@@ -1,4 +1,4 @@
-"""编译前 obligations / conformance 六闸（F12 / ADR-0214 D4）。
+"""编译前 obligations / conformance 六闸（F12 / ADR-0260 D4）。
 
 纯函数：MapPlanIR + 当前 MapSpec → ObligationReport。任何 **blocking**
 发现都会让编译器产出空 mutation 集（fail-closed：宁可不出图，不出错图）。

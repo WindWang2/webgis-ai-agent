@@ -22,7 +22,7 @@ from app.services.tool_dispatch_service import (
 
 
 def _trace_emit(turn_id: str, kind: str, /, **meta) -> None:
-    """ADR-0101 Wave 8：trace 事件发射（turn 缺席时静默 —— 观测绝不阻断执行）。"""
+    """ADR-0237 Wave 8：trace 事件发射（turn 缺席时静默 —— 观测绝不阻断执行）。"""
     if not turn_id:
         return
     try:
@@ -55,7 +55,7 @@ class ToolExecutionResult:
     background_job_ids: list[str] = field(default_factory=list)
     #: 工具是否因取消而中止（区别于普通错误 —— 取消绝不触发 retry，规范 §17）
     cancelled: bool = False
-    #: ADR-0101 Wave 6：canonical 调用签名（无进展检测/replay/trace 共用词汇）
+    #: ADR-0237 Wave 6：canonical 调用签名（无进展检测/replay/trace 共用词汇）
     call_signature: str = ""
     #: 模式级无进展原因码（exact_repeat_failure / alias_oscillation / ...）
     no_progress_reasons: list[str] = field(default_factory=list)
@@ -340,7 +340,7 @@ class ToolExecutionPipeline:
         except Exception as e:  # noqa: BLE001 — widget 摘取是增值面
             logger.warning("[ToolPipeline] widget extraction failed for %s: %s",
                            tool_name, e)
-        # ADR-0101 Wave 6：canonical 签名 + 模式级原因码（additive 观测，
+        # ADR-0237 Wave 6：canonical 签名 + 模式级原因码（additive 观测，
         # 绝不改变成功/失败判定 —— 连败阈值语义保持既有）。
         try:
             from app.services.chat.no_progress import canonical_call_signature

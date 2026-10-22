@@ -48,7 +48,7 @@ class SpecialistRuntime(Protocol):
 class SubagentDispatcherRuntime:
     """生产适配器：把 SpecialistAssignment 交给既有 SubagentDispatcher。
 
-    角色是策略不是执行体（ADR-0101）：``SwarmSpecialistRole`` 映射到
+    角色是策略不是执行体（ADR-0237）：``SwarmSpecialistRole`` 映射到
     ``subagent_roles`` 角色档，未知角色名降级为无角色委派并披露。
     任何装配/执行异常都折算 FAILED 券，绝不向上抛。
     """

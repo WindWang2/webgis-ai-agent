@@ -20,7 +20,7 @@ function formatMeters(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(m % 1000 === 0 ? 0 : 1)} km` : `${m} m`;
 }
 
-// V3（ADR-0101 D3）：dual_unit 变体的英制换算 —— 与公制同一根比例尺条
+// V3（ADR-0238 D3）：dual_unit 变体的英制换算 —— 与公制同一根比例尺条
 // （同 px 宽度），按该段实际代表距离换算 ft/mi，不是独立第二根尺。
 function formatImperial(meters: number): string {
   const feet = meters * 3.28084;

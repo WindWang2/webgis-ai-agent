@@ -1,4 +1,4 @@
-"""生产视觉观察 provider（F15/ADR-0214 决策二）—— seam 的首个仓库内 callable。
+"""生产视觉观察 provider（F15/ADR-0263 决策二）—— seam 的首个仓库内 callable。
 
 部署形态（未配置 = 零行为变化，m1 语义逐字节保留）::
 
@@ -9,7 +9,7 @@
 - ``evaluate(snapshot)`` 是 seam 契约（sync、返回 findings 列表）；
   ``evaluate_observation(input)`` 是全保真内部入口（含 fail-closed
   reason 面），测试/诊断直接消费；
-- 三模式见 ADR-0214：rules_only（像素判据、离线）/ vlm（ADR-0185 引擎，
+- 三模式见 ADR-0263：rules_only（像素判据、离线）/ vlm（ADR-0185 引擎，
   截图字节经 ref 解析）/ hybrid（融合）；
 - async 引擎在 sync seam 下经一次性 worker thread + ``asyncio.run`` 桥接
   （不污染调用方事件循环），墙钟预算到点即放弃（返回 not_evaluated

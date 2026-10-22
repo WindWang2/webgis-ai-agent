@@ -1,7 +1,7 @@
 # GIS Semantic Workflow V3 —— 任务本体、Typed Planning 与最终地图确认闭环
 
 > 状态：已实现（feature branch `feat/gis-semantic-workflow-v3`）
-> 前置：[Workflow 架构（ADR-0101）](./architecture.md) · [Recipe DSL V2](./recipe-dsl.md)
+> 前置：[Workflow 架构（ADR-0239）](./architecture.md) · [Recipe DSL V2](./recipe-dsl.md)
 
 ## 一句话
 

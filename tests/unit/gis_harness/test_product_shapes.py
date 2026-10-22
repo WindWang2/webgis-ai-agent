@@ -1,4 +1,4 @@
-"""Product Shapes（ADR-0183 M3）单元测试。
+"""Product Shapes（ADR-0258 M3）单元测试。
 
 不变式：shape 只引用既有词表（PRODUCT_ARCHETYPES / output_intents /
 chart_kinds）；builder 纯函数、同输入同 spec；required 只来自显式信号。

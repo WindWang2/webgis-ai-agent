@@ -1,4 +1,4 @@
-"""Harness V5 live-failure corpus + 端到端恢复场景（ADR-0118 D9）。
+"""Harness V5 live-failure corpus + 端到端恢复场景（ADR-0248 D9）。
 
 验收锚点（Epic V5）：
 - 八类真实故障（provider timeout / transient DB / empty-partial / 地图源

@@ -1,4 +1,4 @@
-"""ExtensionContext：扩展激活期拿到的投影门面（ADR-0104 / Wave 2-7）。
+"""ExtensionContext：扩展激活期拿到的投影门面（ADR-0243 / Wave 2-7）。
 
 扩展入口的 ``activate(ctx)`` 只见到这个对象。所有注册都走投影管线：
 

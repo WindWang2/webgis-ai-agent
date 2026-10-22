@@ -1,4 +1,4 @@
-"""F08 / ADR-0214 D4：worker 容量二值化（NO_CAPABLE_WORKER vs RESOURCE_EXHAUSTED）。
+"""F08 / ADR-0264 D4：worker 容量二值化（NO_CAPABLE_WORKER vs RESOURCE_EXHAUSTED）。
 
 验收面：
 - profile_capacity：声明槽位/占用求和；load 未上报 → fail-open（占用 0）；

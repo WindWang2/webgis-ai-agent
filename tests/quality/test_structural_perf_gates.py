@@ -1,4 +1,4 @@
-"""Structural Perf Gates（ADR-0104 Wave 11）——上下文预算的确定性闸。
+"""Structural Perf Gates（ADR-0245 Wave 11）——上下文预算的确定性闸。
 
 与墙钟 harness（tests/benchmarks/test_perf_harness.py，warn/fail 带）互补：
 这里只放**对机器不敏感的结构量**——canonical 查询的工具 schema 字节数与
@@ -35,7 +35,7 @@ CASES = {
 
 
 def _catalog():
-    # ADR-0104：闸必须对进程内 registry 污染免疫 —— 同一 pytest 进程里
+    # ADR-0245：闸必须对进程内 registry 污染免疫 —— 同一 pytest 进程里
     # 更早的测试模块可能向全局单例注册过额外条目；闸测量前重置为
     # builtins（单一事实源口径）。
     from app.lib.gis.algorithm_registry import reset_algorithm_registry

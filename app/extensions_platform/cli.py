@@ -1,4 +1,4 @@
-"""扩展平台开发者 CLI（ADR-0104 / Wave 13）。
+"""扩展平台开发者 CLI（ADR-0243 / Wave 13）。
 
 ``python -m app.extensions_platform <command>``：只读诊断 + 脚手架。
 

@@ -24,7 +24,7 @@ export interface MapProductVersionSummary {
   workflow_run_id?: string | null;
   mapspec_revision?: number | null;
   created_at: string;
-  /** ADR-0099 lifecycle（旧行缺省 null/undefined）。 */
+  /** ADR-0236 lifecycle（旧行缺省 null/undefined）。 */
   label?: string | null;
   lineage_kind?: MapProductLineageKind;
   parent_version_no?: number | null;
@@ -149,7 +149,7 @@ export async function rerunWorkflowRunFromStep(
   });
 }
 
-// ── Lifecycle V2（ADR-0099）──────────────────────────────────────────────────
+// ── Lifecycle V2（ADR-0236）──────────────────────────────────────────────────
 
 /** Lineage badge vocabulary (fork/restore/merge/rerun/auto; null = linear). */
 export type MapProductLineageKind =

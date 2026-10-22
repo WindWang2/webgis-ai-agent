@@ -1,4 +1,4 @@
-"""离线确定性重放器（B3，ADR-0183 决策三 / D6）。
+"""离线确定性重放器（B3，ADR-0256 决策三 / D6）。
 
 **决策重放，而非 LLM 重生成**：scenario/录制 trace 提供冻结的工具调用
 与收据（canned dispatch-shaped results），重放器在进程内重执行确定性
@@ -13,7 +13,7 @@
 - **T3 bind-gate 级（dispatch_backed + tool_registry 的场景，ADR-0212
   决策五）**：逐 op 过生产同函数 ``check_tool_capability_at_dispatch``，
   比对 allow/deny + alternatives；
-- **T4 receipt 级（receipt_backed 的场景，ADR-0214 D6）**：真实
+- **T4 receipt 级（receipt_backed 的场景，ADR-0262 D6）**：真实
   ``ToolDispatchService.dispatch`` 在进程内沙箱重放（recorded provider +
   内存 session store），比对 status/ref 铸造/错误折叠 + dedup 合同。
 
@@ -55,7 +55,7 @@ class ScenarioOp:
     is_error: bool = False
     error_msg: str = ""
     duration_ms: float = 0.0
-    #: 折叠错误码（录制 TOOL_RESULTS 的 code 键；ADR-0214 review P2-2
+    #: 折叠错误码（录制 TOOL_RESULTS 的 code 键；ADR-0262 review P2-2
     #: —— T4 fake provider 以同 code 重建错误，pin 与实测同量纲）。
     error_code: str = ""
 
@@ -116,12 +116,12 @@ class Scenario:
     # T3 bind-gate fixture：tool → capability 声明（缺席 + dispatch_backed
     # → not_run 诚实标注）。
     tool_registry: Dict[str, List[str]] = field(default_factory=dict)
-    # ── ADR-0214 additive ──────────────────────────────────────────────
+    # ── ADR-0262 additive ──────────────────────────────────────────────
     #: "recorded" = expect 由录制事实回填（roundtrip）；"" = 手写语料。
     expect_source: str = ""
     #: 校准收据（回填期被裁掉的期望叶 + 原因；可审计，非绿-by-construction）。
     expect_calibration: List[Dict[str, Any]] = field(default_factory=list)
-    #: T4 receipt 级：真实 ToolDispatchService 沙箱重放（ADR-0214 D6）。
+    #: T4 receipt 级：真实 ToolDispatchService 沙箱重放（ADR-0262 D6）。
     receipt_backed: bool = False
 
     @classmethod
@@ -440,9 +440,9 @@ class TurnReplayResult:
     evidence_count: int = 0
     #: T3 bind-gate 重放条目（dispatch_backed + tool_registry 提供时）。
     dispatch_decisions: List[Dict[str, Any]] = field(default_factory=list)
-    #: ADR-0214 D3：决策重推导条目（scenario 级事实，挂首 turn 展示）。
+    #: ADR-0262 D3：决策重推导条目（scenario 级事实，挂首 turn 展示）。
     decision_rederive: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    #: ADR-0214 D6：T4 receipt 级实测投影 {receipt: {...}, receipt_repeat: {...}}。
+    #: ADR-0262 D6：T4 receipt 级实测投影 {receipt: {...}, receipt_repeat: {...}}。
     receipt_actual: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -538,7 +538,7 @@ class OfflineReplayer:
         t2_used = False
         t3_used = False
         t4_used = False
-        # ADR-0214 D3：决策重推导（scenario 级一次；capability_resolution
+        # ADR-0262 D3：决策重推导（scenario 级一次；capability_resolution
         # 面用冻结 inputs 重跑生产 capability_status）→ 挂首 turn 展示，
         # expect 可钉 `decision_rederive.<decision_id>.selected`。
         rederive = self._rederive_decisions(scenario.decisions)
@@ -557,7 +557,7 @@ class OfflineReplayer:
                 t4_used = True
             turn_results.append(result)
 
-        # ADR-0212 决策五 + ADR-0214 D6：T3 = capability bind gate 重放；
+        # ADR-0212 决策五 + ADR-0262 D6：T3 = capability bind gate 重放；
         # T4 = receipt 级真实 ToolDispatchService 沙箱重放（原 deferred
         # 「receipt_redispatch」已实装）。声明了却没跑成 → not_run 诚实
         # 翻红（绝不静默当绿）。
@@ -735,7 +735,7 @@ class OfflineReplayer:
             dispatch_decisions=dispatch_entries,
             decision_rederive=(rederive if index == 0 else {}),
         )
-        # T4 receipt 级（ADR-0214 D6）：真实 dispatch 合同沙箱重放。
+        # T4 receipt 级（ADR-0262 D6）：真实 dispatch 合同沙箱重放。
         if scenario.receipt_backed:
             try:
                 from app.lib.harness.replay.receipt import (
@@ -810,13 +810,13 @@ class OfflineReplayer:
                     for entry in r.dispatch_decisions
                 ],
             }
-            # ADR-0214 D3：决策重推导结论入 digest（挂首 turn，scenario 级）。
+            # ADR-0262 D3：决策重推导结论入 digest（挂首 turn，scenario 级）。
             if r.decision_rederive:
                 entry["decision_rederive"] = {
                     did: str(e.get("selected") or "")
                     for did, e in r.decision_rederive.items()
                 }
-            # ADR-0214 D6：T4 receipt 合同结论入 digest（status/ref/code
+            # ADR-0262 D6：T4 receipt 合同结论入 digest（status/ref/code
             # 结构面；计时与 ref 字符串不进）。
             if r.receipt_actual:
                 entry["receipt"] = r.receipt_actual

@@ -112,7 +112,7 @@ class EventKind:
     #: 与 RETRY_EXHAUSTED 区分 —— 后者语义是"重试预算耗尽"，本 kind 是
     #: "策略拒绝，预算未耗尽，重驱需显式指令"。
     SIDE_EFFECT_NO_AUTO_RETRY = "side_effect_no_auto_retry"
-    #: ADR-0214 D3：计划级资源 feasibility 披露/拒绝（observe 披露 +
+    #: ADR-0264 D3：计划级资源 feasibility 披露/拒绝（observe 披露 +
     #: enforce 拒绝都发本事件；payload = PlanFeasibility.to_bounded_dict）。
     PLAN_ADMISSION = "plan_admission"
 

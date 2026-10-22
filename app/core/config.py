@@ -184,7 +184,7 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_S: float = 120.0        # 非流式请求超时；流式 read = max(180, 1.5×)
     LLM_MAX_TOKENS: int = 16384         # 执行角色默认输出预算
     LLM_TEMPERATURE: Optional[float] = None  # None = 不发送（用 provider 默认）
-    # ADR-0101/0102：主模型上下文窗（tokens）。None/0 = 未知（预算器按 8k
+    # ADR-0237/0102：主模型上下文窗（tokens）。None/0 = 未知（预算器按 8k
     # 保守规划）；按模型精细值可配 MODEL_DESCRIPTORS_FILE 描述符。
     LLM_CONTEXT_WINDOW: Optional[int] = None
     # 标题/摘要等辅助任务的廉价模型；空回退 LLM_MODEL
@@ -216,7 +216,7 @@ class Settings(BaseSettings):
     CHAT_MAX_ROUNDS: int = 60
     TURN_TOTAL_TIMEOUT_S: float = 900.0
 
-    # ── GIS Extension Platform（ADR-0104）────────────────────────────
+    # ── GIS Extension Platform（ADR-0243）────────────────────────────
     # 默认全关：不配置 EXTENSIONS_DIRS 时启动行为与旧版完全一致。
     # EXTENSIONS_DIRS: os.pathsep 冒号分隔的扩展根目录列表（<root>/<ext>/manifest.json）。
     # EXTENSIONS_ALLOW/BLOCK: 逗号分隔的扩展 id 信任白/黑名单（block 优先）。

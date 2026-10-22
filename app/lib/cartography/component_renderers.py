@@ -160,7 +160,7 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
             "（不虚构范围）"
         ),
     ),
-    # ── V3（ADR-0101 D6）：披露族导出真值升级 ─────────────────────────
+    # ── V3（ADR-0238 D6）：披露族导出真值升级 ─────────────────────────
     # 此前 exporters=[]（披露是工作区语义）；V3 落地 canvas 导出绘制
     # （drawChromeDisclosurePanel：方法论/不确定性/决策三面板归一化
     # 「标题 + 文本行」卡片），exporter.ts 同链分发 —— 不再靠豁免掩盖。

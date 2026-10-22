@@ -46,7 +46,7 @@ class TurnEventRow(Base):
                 primary_key=True, autoincrement=True)
     #: 幂等键：canonical 行 = envelope 的 ``kind:turn_id:causal_id``；
     #: legacy _journal 行 = ``legacy:{kind}:{turn_id}:{seq}``（无稳定幂等
-    #: 语义，at-least-once —— 已知边界，见 ADR-0216）。
+    #: 语义，at-least-once —— 已知边界，见 ADR-0268）。
     event_id = Column(String(160), nullable=False)
     session_id = Column(String(64), nullable=False)
     turn_id = Column(String(80), nullable=False, default="")

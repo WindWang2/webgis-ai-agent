@@ -1,4 +1,4 @@
-"""Harness V5 统一失败分类与 typed remediation 契约（ADR-0118 D2）。
+"""Harness V5 统一失败分类与 typed remediation 契约（ADR-0248 D2）。
 
 验收锚点（Epic V5）：失败进入 typed diagnose/repair 而不是 generic
 TOOL_ERROR；retry/replan 有严格预算（全表 max_attempts ≤ 3）；预算

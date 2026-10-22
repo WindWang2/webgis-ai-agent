@@ -45,7 +45,7 @@ export interface RefFetchRequest {
 }
 
 /**
- * 数据面缓存键（F13/ADR-0214 D4 单一构造点）：
+ * 数据面缓存键（F13/ADR-0261 D4 单一构造点）：
  *   无 revision → `sessionId::refId`（既有格式，向后兼容）
  *   有 revision → `sessionId::refId@rev`
  * 键格式知识只住在本函数 —— pin / 优先级 / 取消全部经它派生。
@@ -297,7 +297,7 @@ export class DataPlaneScheduler {
   }
 
   /**
-   * 可见性 pin（F13/ADR-0214 D4 接线：预算逐出永不触碰可见显示数据）。
+   * 可见性 pin（F13/ADR-0261 D4 接线：预算逐出永不触碰可见显示数据）。
    * revision 无关：该 ref 的**全部**缓存代次同 pin/unpin —— 隐藏层
    * unpin 后由后续写入的自然逐出回收。返回受影响条目数（幂等）。
    */

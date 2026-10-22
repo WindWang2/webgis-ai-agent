@@ -2,7 +2,7 @@
 
 - status: Accepted
 - date: 2026-09-11
-- relates-to: ADR-0135 (Lakehouse V8 Versioned Cubes), ADR-0118 (Spatial Data Lakehouse & Cube V6), ADR-0122 (Spatial Lakehouse V7)
+- relates-to: ADR-0135 (Lakehouse V8 Versioned Cubes), ADR-0249 (Spatial Data Lakehouse & Cube V6), ADR-0122 (Spatial Lakehouse V7)
 - line: feat/lakehouse-ui-v9（纯前端线，后端零改动）
 
 ## Context

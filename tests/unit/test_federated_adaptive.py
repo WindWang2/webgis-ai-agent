@@ -1,4 +1,4 @@
-"""V6 自适应执行契约测试（ADR-0118 W8）：观测/受护栏重排/确定性 fallback。"""
+"""V6 自适应执行契约测试（ADR-0247 W8）：观测/受护栏重排/确定性 fallback。"""
 from app.services.data_fabric.query.federated.adaptive import (
     AdaptiveController,
     evaluate_tail_orders,

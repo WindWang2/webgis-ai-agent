@@ -1,6 +1,6 @@
 # GIS Extension Platform Architecture
 
-Authoritative decision records: `docs/adr/0104-gis-extension-platform-v1.md`
+Authoritative decision records: `docs/adr/0243-gis-extension-platform-v1.md`
 (V1) and `docs/adr/0105-gis-extension-platform-v2.md` (V2).
 This page describes what the platform **is** on branch
 `feat/extensions-v2-isolated-runtime`, not aspirations.

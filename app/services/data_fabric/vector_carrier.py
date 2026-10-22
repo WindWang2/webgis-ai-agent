@@ -567,7 +567,7 @@ def table_to_geoparquet(
 ) -> None:
     """Arrow Table → GeoParquet（geo 元数据随 schema 落盘）。
 
-    V6（ADR-0118）新增：row-group 粒度控制 + 显式列统计 + row-group bbox
+    V6（ADR-0249）新增：row-group 粒度控制 + 显式列统计 + row-group bbox
     地图（schema metadata ``webgis:row_groups``，从真实几何算得）—— 窗口
     扫描据此做 row-group 剪枝（lazy 读路径的结构性基础）。计算失败/依赖
     缺失 → 不写该键（诚实缺省，绝不虚构剪枝证据）。

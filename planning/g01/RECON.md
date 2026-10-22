@@ -32,7 +32,7 @@ worktree：`../webgis-g01-dataset-readiness` · 分支：`feat/g01-dataset-seman
 ### 1.4 replay/recovery 面
 
 - **已接线**：workflow resume 锚（`resume_anchor.py:368-388` 语义 store 跨 session 迁移 + `resume_verify.py:161-170` `evaluate_reuse` 对账）；MapSpec 重绑定（mapspec_store.py:365-379）。
-- **缺口（ADR-0215 明示 follow-up）**：durable project runtime（`project_runtime/resume.py:112-251` + `rebind.py:198-270`）全包 grep `dataset_semantics|descriptor_fingerprint` **零命中** —— 恢复链只做载荷重水合 + ref 键位改写，descriptor 语义身份不迁移、不对账。rebind 的 `semantics_preserved` 只要求 source 指纹字节一致（rebind.py:110-119），不复核新 session 语义 store。
+- **缺口（ADR-0265 明示 follow-up）**：durable project runtime（`project_runtime/resume.py:112-251` + `rebind.py:198-270`）全包 grep `dataset_semantics|descriptor_fingerprint` **零命中** —— 恢复链只做载荷重水合 + ref 键位改写，descriptor 语义身份不迁移、不对账。rebind 的 `semantics_preserved` 只要求 source 指纹字节一致（rebind.py:110-119），不复核新 session 语义 store。
 - **零调用 API**：`qualification_bridge.descriptor_evidence`（全仓 0 调用）；projections 四件套生产 0 调用。
 
 ### 1.5 map_plan_compiler

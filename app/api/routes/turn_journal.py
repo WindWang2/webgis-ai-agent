@@ -1,4 +1,4 @@
-"""Harness Turn Journal 只读诊断面（H04 / ADR-0216）。
+"""Harness Turn Journal 只读诊断面（H04 / ADR-0268）。
 
 纪律：
 - 全端点 ``require_owned_session``（与 chat /sessions/{id}/plan 同款会话

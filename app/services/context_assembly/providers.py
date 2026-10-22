@@ -172,7 +172,7 @@ class ProjectKnowledgeProvider(BaseProvider):
 
 
 class GisMemoryProvider(BaseProvider):
-    """ADR-0183 GIS spatial-memory prior (narrow interface, fail-open)."""
+    """ADR-0255 GIS spatial-memory prior (narrow interface, fail-open)."""
 
     provider_id = "gis_memory"
     domain = ContextDomain.GIS_MEMORY
@@ -201,7 +201,7 @@ class GisMemoryProvider(BaseProvider):
         return [bounded_item(
             item_id="memory:gis", provider_id=self.provider_id,
             domain=self.domain, content=text,
-            # ADR-0183: org-scoped cross-session prior — renderable anywhere
+            # ADR-0255: org-scoped cross-session prior — renderable anywhere
             # inside its org, never outside it.
             scope="project" if req.project_id else "turn",
             scope_id=req.project_id or req.session_id,

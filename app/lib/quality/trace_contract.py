@@ -1,4 +1,4 @@
-"""Trace Completeness Contract（ADR-0104 Wave 5）——trace 完整性认证。
+"""Trace Completeness Contract（ADR-0245 Wave 5）——trace 完整性认证。
 
 复用既有 trace 词表，不建第二 tracing backend：
 - ``GisTraceChain`` 的 18 规范阶段（app/lib/runtime/gis_trace.py，ADR-0103 §十）

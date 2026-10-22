@@ -1,4 +1,4 @@
-"""Spatial Lakehouse V6 perf harness (nightly-only, ADR-0118).
+"""Spatial Lakehouse V6 perf harness (nightly-only, ADR-0249).
 
 风格契约（test_data_control_plane_v5.py 同款）：synthetic fixtures、确定性
 种子、有界内存；**结构性证据优先**（row-group 剪枝比 / chunk 触达数 /

@@ -1,4 +1,4 @@
-# GeoWorkflow Architecture —— 专业 GIS 工作流知识库与编译管线（Goal C / ADR-0101）
+# GeoWorkflow Architecture —— 专业 GIS 工作流知识库与编译管线（Goal C / ADR-0239）
 
 ## 一句话
 

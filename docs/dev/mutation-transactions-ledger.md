@@ -48,7 +48,7 @@
 
 | 任务 | 证据 |
 |---|---|
-| ADR | `docs/adr/0183-mutation-transactions-v1.md`（0183 安全号：0180-0182 被 #1274/#1275/#1277/#1276/#1278/#1279 占用） |
+| ADR | `docs/adr/0257-mutation-transactions-v1.md`（0183 安全号：0180-0182 被 #1274/#1275/#1277/#1276/#1278/#1279 占用） |
 | Cartography 门禁（release-blocking marker） | `pytest -m cartography` → **958 passed, 4 skipped**（135s） |
 | 定向回归（改动面） | mapspec 52 / map-commands 134 / collab v6 / concurrency / user-presentation / gis_world_state / finalize_display / adapter 套件全绿；`tsc --noEmit` 对改动文件零错误 |
 | master 预存失败归因 | `tests/unit/test_mapspec_store.py::test_validate_and_compile` 在干净 master 工作树**同样失败**（WinError 2 Node CLI 解析，#1270 修复域）——非本线回归。新 worktree 首跑 `test_workspace_v4` 失败为环境差异（fresh `data/webgis.db` 缺 schema；`Base.metadata.create_all` 后 46/46 全绿，master 工作树同文件 27 passed 一致） |

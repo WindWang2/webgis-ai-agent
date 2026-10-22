@@ -4,7 +4,7 @@
 披露。**禁止 silent last-write-wins**：任何拒绝/跳过/回退都必须携带
 本表中的 code（binding 的 ``error_code``、投影的 errors 列表回传）。
 
-裁决总原则（与 W15/#1070/ADR-0215 D-05 同源）：
+裁决总原则（与 W15/#1070/ADR-0266 D-05 同源）：
 user 显式决策 > requirement 用户锁 > agent 建议 > system 修复。
 CAS 过期不是冲突而是并发事实（SUPERSEDED，可携新基线重试）。
 """

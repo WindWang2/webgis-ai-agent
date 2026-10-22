@@ -16,7 +16,7 @@ import app.tools._utils as _utils
 import app.core.database as core_db
 import app.api.routes.ws as ws_module
 
-# ── ADR-0104 Wave 17：顺序依赖修复 ────────────────────────────────────────
+# ── ADR-0245 Wave 17：顺序依赖修复 ────────────────────────────────────────
 # _make_app_with_session 会永久改写 _utils.async_db_session 与
 # ws_module.get_rate_limiter（模块级补丁无恢复），并泄漏 mkdtemp 目录 ——
 # 同进程内后续测试文件被这些残留污染。autouse fixture 每测试后恢复快照

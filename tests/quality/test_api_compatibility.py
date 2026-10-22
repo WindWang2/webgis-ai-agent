@@ -1,4 +1,4 @@
-"""API Compatibility 红线（ADR-0104 Wave 16）。
+"""API Compatibility 红线（ADR-0245 Wave 16）。
 
 - 后端 OpenAPI 快照（tests/quality/snapshots/openapi.json）；
 - 当前 schema vs 快照：breaking 变化直接红（additive 允许但计数）；

@@ -1,4 +1,4 @@
-"""MapPlanIR 契约测试（F12 / ADR-0214 D1）。
+"""MapPlanIR 契约测试（F12 / ADR-0260 D1）。
 
 锁定：版本化、内容寻址、确定性指纹、refs-only 有界性（payload 走私 =
 构造期拒绝）、frozen 不可变性。

@@ -1,4 +1,4 @@
-"""Security regression suite（audit Wave 15 / ADR-0104 §6 平台配方）。
+"""Security regression suite（audit Wave 15 / ADR-0245 §6 平台配方）。
 
 把安全审计（.agent-work/quality-v1/06-security-regression-map.md）的头部缺口
 固化为真实回归测试：

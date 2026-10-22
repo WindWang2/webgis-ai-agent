@@ -47,7 +47,7 @@ from app.models.intent_learning import (  # noqa: F401 — 模型注册 + 再导
     CartoFeedbackSignal,
     CartoRecipeAffinity,
 )
-from app.models.spatial_memory import (  # noqa: F401 — 模型注册 + 再导出（方向 9，ADR-0183）
+from app.models.spatial_memory import (  # noqa: F401 — 模型注册 + 再导出（方向 9，ADR-0255）
     GISSpatialMemory,
 )
 from app.models.spatial_events import (  # noqa: F401 — 模型注册 + 再导出
@@ -63,7 +63,7 @@ from app.models.mission import (  # noqa: F401 — Direction 01 / ADR-0197
 from app.models.project_knowledge import (  # noqa: F401 — 模型注册 + 再导出
     ProjectKnowledgeEntry,
 )
-from app.models.harness_journal import (  # noqa: F401 — 模型注册 + 再导出（H04/ADR-0216）
+from app.models.harness_journal import (  # noqa: F401 — 模型注册 + 再导出（H04/ADR-0268）
     TurnEventRow,
 )
 from app.models.gis_context import (  # noqa: F401 — 模型注册 + 再导出（ADR-0206 / Direction 06）

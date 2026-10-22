@@ -1,7 +1,7 @@
 # ADR-0194: 混合能动性人机空间画布协同（Mixed-Initiative Spatial Canvas Co-Pilot v1）
 
 状态：已接受（2026-09-15）
-关联：ADR-0180（GIS Situation 编译器与前端交互观察）、ADR-0138（对话 schema 契约）、ADR-0081（完成度终验）、#521（客户端载荷有界化）
+关联：ADR-0252（GIS Situation 编译器与前端交互观察）、ADR-0138（对话 schema 契约）、ADR-0081（完成度终验）、#521（客户端载荷有界化）
 
 ## 1. 背景与靶心
 
@@ -23,7 +23,7 @@
 
 ### 决策二：摄取镜像 `record_interaction` 纪律（不新造机制）
 
-`app/services/gis_situation/canvas_affordance.py` 完全镜像 `observation.py::record_interaction` 的纪律（ADR-0180 S4）：
+`app/services/gis_situation/canvas_affordance.py` 完全镜像 `observation.py::record_interaction` 的纪律（ADR-0252 S4）：
 
 - **白名单规范化**：逐 action 键白名单投影，未知键丢弃；几何类型封闭（Polygon/LineString/Point/MultiPolygon），顶点数 ≤ 256，单 action 字节预算 8KB，信封 ≤ 12 actions / 64KB；
 - **内容寻重**：`(action_id)` + payload 哈希去重，双通道重复上报不双计；
@@ -32,7 +32,7 @@
 
 ### 决策三：情境注入走上下文投影位，不改 GISSituation 契约
 
-`GISSituation` 是 `extra=forbid` 的封闭契约（ADR-0180），本次**不**新增 partition。画布事实的注入点：
+`GISSituation` 是 `extra=forbid` 的封闭契约（ADR-0252），本次**不**新增 partition。画布事实的注入点：
 
 1. `canvas_affordance.render_affordance_context_block(ring)` 渲染有界 `[画布意图]` 文本块（用户刚框选的范围 bbox、涉及图层、顶点数、测量值、最近的 widget_reply），由 `chat.py::_build_situation_env_block` 在结构化 `[GIS 情境]` 之后追加（fail-open，渲染失败不阻断 turn）；
 2. 同时提供 `affordance_facts(ring) -> list[SitFact]`（`known()` 事实，source=`canvas_affordance`，ref 指向 ring 条目），供查询 API 与后续编译器集成使用；
@@ -96,6 +96,6 @@
 
 ## 6. 后续接口点
 
-- 编译器集成：`affordance_facts` 可在 ADR-0180 编译器新增 partition 时直接复用（本 ADR 不做）。
+- 编译器集成：`affordance_facts` 可在 ADR-0252 编译器新增 partition 时直接复用（本 ADR 不做）。
 - widget 生命周期扩展：`unmount_widget`/`expires_at` 过期回收（本期只做 mount + 前端手动关闭）。
-- 服务端按 `candidate_picker` 裁决驱动 MapSpec mutation transaction（衔接 ADR-0183 事务系统）。
+- 服务端按 `candidate_picker` 裁决驱动 MapSpec mutation transaction（衔接 ADR-0257 事务系统）。

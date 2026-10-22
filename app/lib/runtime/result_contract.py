@@ -1,4 +1,4 @@
-"""工具结果契约视图（ADR-0101 Wave 2, §11）。
+"""工具结果契约视图（ADR-0237 Wave 2, §11）。
 
 现状：200+ 工具返回**约定形状的 dict**（std_error_response 错误形状、
 llm_payload、ref: 游标、GeoJSON FC……），这是既成事实契约，重写所有工具

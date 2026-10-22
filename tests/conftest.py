@@ -162,7 +162,7 @@ _ENV_BASELINE = {
         # 测试钉 false：生产/dev 默认 true（仓内 vendor/pi）。pytest 不得
         # 每个 TestClient lifespan 拉起 Node 子进程。
         "USE_NEW_AGENT": "false",
-        # GIS Extension Platform（ADR-0104）——与 Settings 默认等价的
+        # GIS Extension Platform（ADR-0243）——与 Settings 默认等价的
         # 安全值（默认全关；空白名单/黑名单/授权表；空目录）。
         "EXTENSIONS_ENABLED": "false",
         "EXTENSIONS_DIRS": "",
@@ -198,7 +198,7 @@ _ENV_BASELINE = {
         "EXTENSIONS_CERTIFICATION_TRUST": "evidence",
         "EXTENSIONS_CERTIFICATION_KEY": "",
         "STAC_API_URL": "https://earth-search.aws.element84.com/v1",
-        # Spatial Lakehouse V6（ADR-0118）：对象存储后端选择（默认 filesystem
+        # Spatial Lakehouse V6（ADR-0249）：对象存储后端选择（默认 filesystem
         # = 行为零变化）。s3 凭据钉空串 —— 测试进程绝不持有真实 secret。
         "WEBGIS_OBJECT_STORE_BACKEND": "filesystem",
         "WEBGIS_S3_ENDPOINT_URL": "",

@@ -85,7 +85,7 @@
 - Inspector：`scripts/situation_inspect.py`（人类/JSON 双形态 +
   `--dump-schema`）→ `docs/dev/situation-contracts/gis-situation.schema.json`
   （契约漂移测试守护）。
-- 文档：ADR-0180；`docs/gis-harness.md` 增补「情境 ≠ 聊天历史」节；
+- 文档：ADR-0252；`docs/gis-harness.md` 增补「情境 ≠ 聊天历史」节；
   本 ledger。
 - 测试总量：52 项 focused 全绿（contract 8 / compile-diff 10 /
   projection-queries-consistency 17 / observation-turn 12 / perf 5）。
@@ -98,7 +98,7 @@
 ## M7 — 独立 review + 修复 + PR（完成）
 
 - Review（subagent B，四轴）：**P0 = 0**；P1 × 5、P2 × 9。
-- P1 全部修复（详见 ADR-0180 §6）：
+- P1 全部修复（详见 ADR-0252 §6）：
   - P1-1 投影 [制图] 节同轮三重注入 verdict → 删节（DC-3 落实）；
   - P1-2 注入块 ACTIVE_TOOLS marker 中和缺口 + 转义覆盖缺口 →
     attach_turn_context 统一中和 + 投影补 6 类字段 fence；

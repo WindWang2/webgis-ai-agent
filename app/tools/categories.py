@@ -50,7 +50,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.composition_tools": "inspection",
     # ADR-0215：证据复核/重验证回执（bind_mission 恢复上下文，名字覆盖）
     "app.tools.context_revalidation_tools": "inspection",
-    # ADR-0214 D7：编译链经 MapSpecLifecycleEngine CAS 提交 —— mutation 面
+    # ADR-0260 D7：编译链经 MapSpecLifecycleEngine CAS 提交 —— mutation 面
     "app.tools.map_plan_tools": "map_mutation",
     # RS Temporal Cube：时序立方体对齐/融合/特征（describe 检视名字覆盖）
     "app.tools.rs_cube_tools": "analysis",

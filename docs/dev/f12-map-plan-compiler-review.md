@@ -16,7 +16,7 @@
 | F 工具面 | PASS（修复后） | 声明面与实际突变面相符；amendments ≤16 真实强制；`layer_bindings` 补齐数据绑定选择通道 |
 | G 测试质量 | PASS | 负例走真引擎（锁阻塞/stale CAS/blocked/非法 amendment）；mutant 推演锁定（paint 整包→minimal 测试红；CAS 恒值→corpus 红） |
 | H 兼容性 | PASS | decision_record additive kind 无消费方破坏；manifest/binding conformance 19 passed；lifecycle 回归 29 passed |
-| I 文档一致性 | PASS（修复后） | ADR-0214 四处漂移已按实现修正 |
+| I 文档一致性 | PASS（修复后） | ADR-0260 四处漂移已按实现修正 |
 
 ## 发现与清偿
 
@@ -34,7 +34,7 @@
 - `bound_layer_id` → `options.layerId` 映射（ensure/patch 双分支）+ 测试。
 - superseded/error 回执改采信引擎锁内一致读的当前 spec/revision。
 - `map_mutations` 声明补 `remove_layer`/`component`/`theme`。
-- ADR-0214 文实漂移 ×4 修正。
+- ADR-0260 文实漂移 ×4 修正。
 - determinism 补 current dict 键插入序不变性测试。
 - obligations 组件词表剔除引擎工厂不支持的 `basemap`。
 - >64 步计划幂等重放受引擎 dedup FIFO 约束 → 已在 ADR D5 披露（安全 superseded 中止）。

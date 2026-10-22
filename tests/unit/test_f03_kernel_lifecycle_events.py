@@ -1,4 +1,4 @@
-"""F03（ADR-0204-f03）：canonical lifecycle 生产语义测试。
+"""F03（ADR-0259-f03）：canonical lifecycle 生产语义测试。
 
 覆盖四个新生产事实（全部确定性：内存 session store、假章节数据，无 LLM /
 无 Pi 子进程）：

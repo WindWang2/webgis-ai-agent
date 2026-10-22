@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Quality Runner（ADR-0104 Wave 19）——本地一键质量车道。
+"""Quality Runner（ADR-0245 Wave 19）——本地一键质量车道。
 
 不引入新 build system；车道 = 既有 pytest marker/目录 + 前端 npm scripts 的
 受控封装。资源纪律：车道串行（无 xdist；本仓库未装 xdist，且全量并发会

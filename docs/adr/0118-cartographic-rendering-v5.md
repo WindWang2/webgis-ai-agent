@@ -2,10 +2,10 @@
 
 日期：2026-09-09
 状态：Proposed（随 feat/cartography-v5-rendering-engine 分支交付）
-前置：ADR 0103（制图设计系统 V4，本 ADR 的空间由其非目标显式留白）、
-ADR 0104-professional（Workbench V4，ExportChromeModel.degradations）、
+前置：ADR 0240（制图设计系统 V4，本 ADR 的空间由其非目标显式留白）、
+ADR 0244-professional（Workbench V4，ExportChromeModel.degradations）、
 ADR 0081（map product completion runtime / live↔export parity）、
-ADR 0088（组件库 / MapSpec 唯一 desired 状态）
+ADR 0232（组件库 / MapSpec 唯一 desired 状态）
 
 ## 背景
 
@@ -144,7 +144,7 @@ resolveMapComponents 单点解析/图例族/label 通道/降级码），golden c
 - 后端全量 typed MapSpec pydantic 契约（dict 自由度是 layout drift 类
   缺陷的结构性温床，但改动面横跨全部 intent/API，需独立 Epic）。
 - Gastner-Newman cartogram 算法 + 多画幅 MapSpec spec 级模型。
-- MapLibre 原生 raster-dem hillshade 图层接线（ADR-0103 非目标的解除）。
+- MapLibre 原生 raster-dem hillshade 图层接线（ADR-0240 非目标的解除）。
 - CJK 字体资产化（子集化内嵌）后 PDF 文本层全矢量。
 - capture.mjs 视觉基线接入自动 image-diff 门禁（当前为语义 oracle +
   人工 diff 通道）。

@@ -328,7 +328,7 @@ async def run_map_finalization(
     #   码撞名翻转 layer/component_status —— review #7）；
     # - 唯一裁决效应是 READY → READY_WITH_WARNINGS 诚实降档（warning
     #   计入 verdict 警告面），永不产生 error/blocked（review #12）。
-    # F15（ADR-0214）：ref-only 截图引用仅在评估器已配置时读取（未配置
+    # F15（ADR-0263）：ref-only 截图引用仅在评估器已配置时读取（未配置
     # 零 I/O 零行为变化）；评估后做跨运行 recurrence 记账（披露面）。
     _visual_evaluator_ready = False
     try:
@@ -375,7 +375,7 @@ async def run_map_finalization(
         screenshot=_screenshot_entry,
     )
 
-    # F15（ADR-0214 决策五）：跨运行 recurrence 记账（纯披露面，
+    # F15（ADR-0263 决策五）：跨运行 recurrence 记账（纯披露面，
     # fail-open —— 账本任何异常不阻断终验、不改变 findings）。
     _hard_stopped_fps: set = set()
     if visual_findings:
@@ -433,7 +433,7 @@ async def run_map_finalization(
                     code=namespaced,
                     # 硬停条目披露面降 info（不再贡献 verdict 警告面），
                     # 收据如实入 detail —— 修复请求已两度未生效，继续
-                    # 计 warning 是对抗性重复索要（ADR-0214 决策五）。
+                    # 计 warning 是对抗性重复索要（ADR-0263 决策五）。
                     severity="info" if hard_stopped else "warning",
                     target=str(getattr(uf, "affected_entity", "") or "map")[:64],
                     detail=(
@@ -616,7 +616,7 @@ def _assemble_visual_snapshot(
     投影 + 观察摘要 + 确定性 findings 清单），由评估器实现自行决定是否
     需要外发（§42 隐私边界归评估器，不归本管线）。
 
-    F15（ADR-0214 决策一）additive：``session_id`` / ``mapspec_revision``
+    F15（ADR-0263 决策一）additive：``session_id`` / ``mapspec_revision``
     / ``screenshot`` ref-only 摘要（``VisualScreenshotRef.to_dict`` 形状，
     永无字节）—— 观察契约的稳定键面。
     """

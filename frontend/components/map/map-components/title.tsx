@@ -5,7 +5,7 @@ import { registerComponentRenderer } from './registry';
 import { positionClass, resolvePosition, positionStyle, resolveVariant } from './helpers';
 import type { RendererContext } from './types';
 
-// V3（ADR-0101 D3）标题变体 —— 与 descriptor.variants / component templates
+// V3（ADR-0238 D3）标题变体 —— 与 descriptor.variants / component templates
 // 同词表：minimal（轻量）/ academic（缺省，现状样式）/ report（加粗强调）/
 // presentation（大字演示）/ government（公文加宽字距）。未知变体确定性
 // 回退 academic（与 legend 族约定一致，不崩 chrome）。

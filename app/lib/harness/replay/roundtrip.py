@@ -1,10 +1,10 @@
-"""录制轨迹 → 可重放场景（方向 8 / ADR-0212 决策三；ADR-0214 D3 expect 回填）。
+"""录制轨迹 → 可重放场景（方向 8 / ADR-0212 决策三；ADR-0262 D3 expect 回填）。
 
 recorder 产出的 ReplayTrace 不再是 write-only：真实流量沉淀为回归
 场景（``Scenario``），经 ``OfflineReplayer`` 离线确定性重放 —— 「录制
 → 重放」闭环的最后一块。
 
-**expect 回填（ADR-0214 D3，去 green-by-construction）**：recorded 场景的
+**expect 回填（ADR-0262 D3，去 green-by-construction）**：recorded 场景的
 expect 从录制事实派生（`goal` ← map_product.task_complete、
 `decision_rederive` ← 决策索引、`dispatch` ← dispatch_evidence），再经
 :func:`calibrate_recorded_scenario` 对当前重放环境做一次校准 —— 与当前
@@ -75,7 +75,7 @@ def _is_degraded(trace: Dict[str, Any]) -> bool:
     return False
 
 
-# ── 候选 expect 派生（录制事实 → 期望树；ADR-0214 D3）────────────────────────
+# ── 候选 expect 派生（录制事实 → 期望树；ADR-0262 D3）────────────────────────
 
 
 def _dispatch_pins(
@@ -274,7 +274,7 @@ def trace_to_scenario(trace: Any) -> Optional[Scenario]:
     return traces_to_scenario([trace])
 
 
-# ── expect 校准（ADR-0214 D3：录制事实 × 当前重放环境）────────────────────────
+# ── expect 校准（ADR-0262 D3：录制事实 × 当前重放环境）────────────────────────
 
 _DROP_SENTINEL = object()
 

@@ -300,7 +300,7 @@ class TestLauncherCrashFallback:
         assert status.state == "failed"
 
     async def test_governor_acquire_failure_settles_failed_receipt(self):
-        """acquire 相位兜底（H07/ADR-0216 清偿 PR #1529 登记的缺口）：
+        """acquire 相位兜底（H07/ADR-0269 清偿 PR #1529 登记的缺口）：
         governor.acquire 抛非取消异常 → 诚实 FAILED 崩溃券（真实失败原因
         入 receipt），集群裁决 failed —— 不再卡 READY / 静默判成功。"""
         governor = ExplodingGovernor()

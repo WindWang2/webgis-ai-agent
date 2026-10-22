@@ -1,4 +1,4 @@
-"""Decision / Analysis 表达模型域包（ADR-0101 §B1 + Design System V4）。
+"""Decision / Analysis 表达模型域包（ADR-0238 §B1 + Design System V4）。
 
 native：site-selection / MCDA 评分面（V3）+ V4 原生化的敏感性分析呈现
 （情景对比经面板/图表族表达）与加权叠加面 / GWR 系数面 / OLS 残差面 /

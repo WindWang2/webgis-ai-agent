@@ -86,7 +86,7 @@
 
 ### Must Not Touch
 
-- `app/services/gis_harness/components.py` 的 `ComponentType` Literal（ADR-0101/0103
+- `app/services/gis_harness/components.py` 的 `ComponentType` Literal（ADR-0238/0103
   non-goal：不新增成员；schema/components/descriptor/template 四层锁步）。
 - `app/lib/cartography/component_renderers.py::_SUPPORT_MATRIX`（单一 renderer 真值，测试锁）。
 - `app/lib/cartography/symbology.py::resolve_symbology`（ADR-0152 单一裁决）。

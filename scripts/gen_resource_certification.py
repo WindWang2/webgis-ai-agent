@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """生成 docs/quality/certifications/ 的 CANCELLATION_COVERAGE 与
-RESOURCE_SAFETY 认证表（ADR-0104 Wave 9/10）。
+RESOURCE_SAFETY 认证表（ADR-0245 Wave 9/10）。
 
 用法：
     python scripts/gen_resource_certification.py            # 写入

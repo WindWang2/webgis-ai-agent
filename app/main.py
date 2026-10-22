@@ -43,7 +43,7 @@ from app.api.routes import spatial_events as spatial_events_routes  # noqa: E402
 from app.api.routes import portfolio as portfolio_routes  # noqa: E402
 from app.api.routes import geoai as geoai_routes  # noqa: E402  # ADR-0198（Platform 11）
 from app.api.routes import cockpit as cockpit_routes  # noqa: E402  # Agent Ops Cockpit (read-only projections)
-from app.api.routes import turn_journal as turn_journal_routes  # noqa: E402  # H04 ADR-0216 durable turn journal diagnostics
+from app.api.routes import turn_journal as turn_journal_routes  # noqa: E402  # H04 ADR-0268 durable turn journal diagnostics
 from app.api.routes import ws_collab
 from app.api.routes import review_proposals
 from app.api.routes import visual_repairs
@@ -252,7 +252,7 @@ async def lifespan(app: FastAPI):
 
     registry = ToolRegistry()
     init_tools(registry)
-    # ADR-0104：扩展平台引导（默认全关）。必须发生在 runtime manifest 编译
+    # ADR-0243：扩展平台引导（默认全关）。必须发生在 runtime manifest 编译
     # 之前——扩展投影的工具/算法要进入同一份 manifest 与 cross-registry
     # 校验；任何扩展失败只影响自身（typed diagnostic），绝不阻断启动。
     if settings.EXTENSIONS_ENABLED:
@@ -415,7 +415,7 @@ async def lifespan(app: FastAPI):
     workflow_recovery_task = asyncio.create_task(
         _periodic_workflow_recovery_sweep())
 
-    # H04（ADR-0216）：turn_events 账本 compaction/retention 清扫——
+    # H04（ADR-0268）：turn_events 账本 compaction/retention 清扫——
     # 长会话事实账本的有界性保障。阶段期限/间隔 env 可调（见
     # _turn_journal_sweep_config）；interval=0 关闭。
     turn_journal_sweep_task = asyncio.create_task(
@@ -1096,7 +1096,7 @@ app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
 app.include_router(review_proposals.router, prefix="/api/v1", tags=["审查会签"])
-# F15（ADR-0214）：user-approved visual repair + 截图 ref-only 通道。
+# F15（ADR-0263）：user-approved visual repair + 截图 ref-only 通道。
 app.include_router(visual_repairs.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(workflow_resume_routes.router, prefix="/api/v1", tags=["AI对话"])
 # ADR-0097: 显式分析图 — SessionPlan/MapSpec/证据的只读派生投影端点。
@@ -1145,7 +1145,7 @@ app.include_router(storymap_routes.router, prefix="/api/v1", tags=["StoryMap"])
 app.include_router(pi_tools.router, tags=["PI工具"])
 # Spatial Event Control Plane + Mission Portfolio（只读投影；additive）。
 app.include_router(spatial_events_routes.router, prefix="/api/v1", tags=["Spatial Events"])
-app.include_router(turn_journal_routes.router, prefix="/api/v1", tags=["Harness Turn Journal"])  # H04 ADR-0216（只读诊断）
+app.include_router(turn_journal_routes.router, prefix="/api/v1", tags=["Harness Turn Journal"])  # H04 ADR-0268（只读诊断）
 app.include_router(portfolio_routes.router, prefix="/api/v1", tags=["Mission Portfolio"])
 
 # ── API v2（V9 契约基石，ADR-0138 / P7）─────────────────────────────

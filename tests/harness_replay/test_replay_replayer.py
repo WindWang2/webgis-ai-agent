@@ -359,7 +359,7 @@ class TestDeterminism:
         result = await OfflineReplayer().replay_scenario(scenario)
         assert "t3_bind" in result.levels_run
         assert result.not_run == []
-        # ADR-0214 D6：T4 receipt 级已实装 —— 只对显式 receipt_backed 场景
+        # ADR-0262 D6：T4 receipt 级已实装 —— 只对显式 receipt_backed 场景
         # 运行；本场景未声明 → 不跑 T4、无 deferred 披露（诚实缺席）。
         assert result.deferred_levels == []
         assert "t4_receipt" not in result.levels_run

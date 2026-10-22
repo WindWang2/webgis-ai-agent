@@ -1,4 +1,4 @@
-"""Polygon / 统计面表达模型域包（ADR-0101 §B1 + Design System V4）。
+"""Polygon / 统计面表达模型域包（ADR-0238 §B1 + Design System V4）。
 
 native：normalized/diverging choropleth、suitability/risk/vulnerability/
 equity/zoning 语义分级面（V3）+ V4 原生化的 bivariate choropleth（双变量

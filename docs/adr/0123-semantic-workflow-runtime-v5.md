@@ -2,7 +2,7 @@
 
 - 状态：Proposed
 - 日期：2026-09-09
-- 关联：ADR-0118（Semantic Workflow Compiler V4）、ADR-0101（GeoWorkflow
+- 关联：ADR-0251（Semantic Workflow Compiler V4）、ADR-0239（GeoWorkflow
   Recipe & Conformance Foundation）、ADR-0096（GeoCompute 执行平面）、
   ADR-0052（统一 durable job runtime）、ADR-0082（Artifact Runtime）
 

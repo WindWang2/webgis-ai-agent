@@ -1,4 +1,4 @@
-"""ADR-0101 Wave 8: Model-provider 契约测试（§35 全场景）。
+"""ADR-0237 Wave 8: Model-provider 契约测试（§35 全场景）。
 
 用 httpx.MockTransport 模拟 OpenAI 兼容 provider 的 12 种病态/正常行为，
 锁定「runtime 必须诚实 settle」：不吞错、不静默成功、不重复 token。

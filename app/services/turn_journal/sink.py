@@ -1,6 +1,6 @@
 """Turn journal sink：kernel 事件 seam → durable 账本的旁路写入（H04）。
 
-纪律（ADR-0216）：
+纪律（ADR-0268）：
 - **fail-open**：账本任何故障（DB 不可用/降级）绝不阻塞 chat 热路径——
   丢的是崩溃取证能力，不是正确性。降级以 ``hk_metrics`` 计数 +
   限频 warning 暴露；与 envelope 保存的 fail-closed 语义（session lock

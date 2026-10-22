@@ -29,7 +29,7 @@ class ComponentSelection(BaseModel):
 
 
 def _template_selectable(tmpl_reg, template_id: str) -> bool:
-    """V3（ADR-0101 D3）：planned/unavailable 模板不可被选入最终产品。
+    """V3（ADR-0238 D3）：planned/unavailable 模板不可被选入最终产品。
 
     前瞻变体（如 legend/bivariate）以 planned 模板登记 roadmap，目录可见、
     resolver 不选 —— 与 descriptor 级 runtime_status 门控同语义。

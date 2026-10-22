@@ -126,7 +126,7 @@ async def record_source_fingerprints(
 ) -> None:
     """数据绑定事实 → recovery_state.source_fingerprints（durable facts 生产者）。
 
-    H08（ADR-0215 D7 消费面接线）：``_data_domain`` 投影与恢复验证早已
+    H08（ADR-0265 D7 消费面接线）：``_data_domain`` 投影与恢复验证早已
     预留 ``source_fingerprints`` 读面，此前无生产者（恒空）。生产点 =
     数据落 session 的缝（ingest 成功 / mapspec 绑定成功），经
     ``context_bridge`` 两函数升级为 {ref, fingerprint, descriptor_fingerprint}

@@ -635,7 +635,7 @@ class MapProductPlan(BaseModel):
     # roles 缺席时在此留档；产品仍可产出（数量/密度可评），但结论边界
     # 必须随 plan 证据下行，绝不允许把数量分布伪装成公平性结论。
     methodology_warnings: List[Dict[str, Any]] = Field(default_factory=list)
-    # Workflow V2（Goal C / ADR-0101）：workflow 契约评估摘要（有界 dict，
+    # Workflow V2（Goal C / ADR-0239）：workflow 契约评估摘要（有界 dict，
     # schema_version/roles/obligations/method_blockers/data_blockers）。
     # None = 纯 V1 recipe（无 workflow 画像），行为与历史一致。
     workflow_contract: Optional[Dict[str, Any]] = None

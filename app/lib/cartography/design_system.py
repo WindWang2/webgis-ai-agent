@@ -122,7 +122,7 @@ def build_design_system_manifest() -> Dict[str, Any]:
             for s in [renderer_reg.support_for(t)]
             if s is not None
         },
-        # F13（ADR-0214 D6）：图层类型 capability 声明面 —— 组合/规划面
+        # F13（ADR-0261 D6）：图层类型 capability 声明面 —— 组合/规划面
         # 执行前显式 unsupported（与 rendererCapability 同链导出，矩阵
         # 真相 = layer_capability.LAYER_TYPE_SUPPORT，只描述已实现）。
         "layerCapability": {

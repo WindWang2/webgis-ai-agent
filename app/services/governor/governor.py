@@ -1,4 +1,4 @@
-"""HarnessResourceGovernor — 跨域资源协调 facade（ADR-0182）。
+"""HarnessResourceGovernor — 跨域资源协调 facade（ADR-0254）。
 
 Governor V1 的**唯一门面**。组合：三级账本（R4）+ 三层背压（R5）+ 准入
 策略（R3）+ 健康只读视图（R11）+ RetryBudget（R10）+ 取消协调（R9）+

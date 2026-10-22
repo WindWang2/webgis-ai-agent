@@ -381,7 +381,7 @@ async def test_dispatch_keeps_real_tool_name_and_structural_mutation(monkeypatch
     fake_registry = MagicMock()
     fake_registry.list_tools = MagicMock(return_value=["webgis_view_set"])
     fake_registry.metadata = MagicMock(return_value={"tier": 1})
-    # ADR-0180 pre-dispatch 闸：mock registry 不得提供参数模型（None = 无校验，
+    # ADR-0253 pre-dispatch 闸：mock registry 不得提供参数模型（None = 无校验，
     # 与本测试 mock 掉 dispatch 的意图一致 —— 否则 MagicMock 自动属性会让
     # unknown-field 探针把一切参数判成 unknown）。
     fake_registry.args_model = MagicMock(return_value=None)

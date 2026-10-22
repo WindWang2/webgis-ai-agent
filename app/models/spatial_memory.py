@@ -1,4 +1,4 @@
-"""GIS Spatial Reasoning Memory 模型（方向 9，ADR-0183）。
+"""GIS Spatial Reasoning Memory 模型（方向 9，ADR-0255）。
 
 ``gis_spatial_memories`` —— GIS 世界事实的可复用记忆（resolved_place /
 dataset 语义 / 字段角色 / CRS 结论 / 分析产物 ref / 成功策略 / provider

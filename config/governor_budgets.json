@@ -1,6 +1,6 @@
 {
   "version": "rg.v1",
-  "description": "Harness Resource Governor provisional budgets (ADR-0182). Seeded from baseline evidence (recon doc + tool-surface cost priors), ALL provisional=true: observe-and-warn until calibrated via scripts/perf/calibrate_governor.py. Do not hand-edit thresholds without a calibration run.",
+  "description": "Harness Resource Governor provisional budgets (ADR-0254). Seeded from baseline evidence (recon doc + tool-surface cost priors), ALL provisional=true: observe-and-warn until calibrated via scripts/perf/calibrate_governor.py. Do not hand-edit thresholds without a calibration run.",
   "budgets": [
     {
       "scope": "global",

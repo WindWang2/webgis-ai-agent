@@ -1,4 +1,4 @@
-"""V6 Explain 契约测试（ADR-0118 W9）：确定性/树渲染/est vs actual。"""
+"""V6 Explain 契约测试（ADR-0247 W9）：确定性/树渲染/est vs actual。"""
 
 from app.services.data_fabric.query.federated.enumerator import (
     EnumerationContext,

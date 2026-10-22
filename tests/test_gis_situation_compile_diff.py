@@ -1,4 +1,4 @@
-"""SituationCompiler + diff/快照守卫测试（方向 2 S2/S3，ADR-0180）。
+"""SituationCompiler + diff/快照守卫测试（方向 2 S2/S3，ADR-0252）。
 
 覆盖：有界扇出（单次 map_state 读）、partial source unavailable 降级、
 descriptor-first（绝不 resolve payload）、viewport 取数优先级、确定性、

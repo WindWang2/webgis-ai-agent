@@ -1,4 +1,4 @@
-"""Export work budget（ADR-0214 D7）。
+"""Export work budget（ADR-0264 D7）。
 
 与 :mod:`governor.render_budget` 同构的纯函数估工：export 面（PDF/PNG/
 矢量导出）的形状输入 → governor 契约 :class:`ResourceEstimate`，供

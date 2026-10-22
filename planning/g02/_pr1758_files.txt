@@ -147,7 +147,7 @@ docker-compose.yml
 docs/DEPLOYMENT.md
 docs/SETUP_INSTRUCTIONS.md
 docs/adr/0216-architecture-boundaries-contract-kernel.md
-docs/adr/0228-ci-toolchain-no-runner-image-drift.md
+docs/adr/0273-ci-toolchain-no-runner-image-drift.md
 docs/architecture.md
 docs/catalog/execution-catalog/execution-catalog.manifest.json
 docs/catalog/execution-catalog/summary.md

@@ -142,7 +142,7 @@ class CartographyRecipe(BaseModel):
     validation_rules: List[str] = []
     export_profile: Dict[str, Any] = Field(default_factory=dict)
     priority: int = 50                  # 同分候选时的稳定排序
-    # ── V2（Goal C / ADR-0101）：Workflow Recipe DSL 扩展（additive）────
+    # ── V2（Goal C / ADR-0239）：Workflow Recipe DSL 扩展（additive）────
     # schema_version=1 为 V1 seed 语义；带 workflow 画像的 recipe 声明 V2。
     schema_version: int = 1
     # 工作流画像：数据角色 / 科学义务 / 完成契约 / 语义回退 / 专业关键词。
@@ -1588,7 +1588,7 @@ class RecipeRegistry:
         return self._by_id.get(recipe_id)
 
     def unregister(self, recipe_id: str) -> bool:
-        """ADR-0104：扩展 recipe 卸载回滚用。从 by-id / by-task / by-domain /
+        """ADR-0243：扩展 recipe 卸载回滚用。从 by-id / by-task / by-domain /
         关键词倒排与内容指纹缓存中清干净目标 recipe；目标不存在返回 False
         （幂等）。ASCII 整词集合按剩余倒排重建（关键词可能被多条 recipe
         共享，不能按条目直接摘除）。核心种子 recipe 从不调用。"""

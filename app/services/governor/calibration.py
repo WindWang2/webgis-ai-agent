@@ -9,7 +9,7 @@ actual/estimated 比值统计。
   占用常数级；
 - **只观测不反馈**：运行时统计绝不自动修改估算先验/预算阈值 —— 先验更新
   只能经 :func:`suggest_priors` 产出离线建议文件、人工评审后显式改表
-  （ADR-0182 provisional 纪律同源）；漂移兜底靠 provisional 预算 +
+  （ADR-0254 provisional 纪律同源）；漂移兜底靠 provisional 预算 +
   admission 硬上限，不靠自学习；
 - **绝不阻断**：record/stats 的任何异常由调用方兜底（dispatch complete
   记账同纪律）。
@@ -253,7 +253,7 @@ def suggest_priors(snapshot: Dict, *,
         "note": (
             "offline suggestion only — applying requires explicit edit of "
             "governor/estimation.py priors or governor_budgets.json "
-            "(provisional discipline, ADR-0182/0204); mean_ratio is a "
+            "(provisional discipline, ADR-0254/0204); mean_ratio is a "
                 "central tendency and does not capture distribution shape — "
                 "check max_ratio alongside"),
         "drift_band": list(drift_band),

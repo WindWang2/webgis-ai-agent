@@ -1,5 +1,5 @@
 /**
- * V3（ADR-0101 D6）— 披露族 canvas 导出契约：
+ * V3（ADR-0238 D6）— 披露族 canvas 导出契约：
  * methodology_note / uncertainty_panel / decision_panel 从「仅 interactive」
  * 升级为导出可消费（drawChromeDisclosurePanel）。与 live 渲染器同一防御式
  * 解析语义：坏载荷 → 面板缺席（不伪造）；collapsed → 折叠标题条（E-2）。

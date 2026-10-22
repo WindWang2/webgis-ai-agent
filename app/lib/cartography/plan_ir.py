@@ -1,4 +1,4 @@
-"""MapPlanIR —— 版本化制图计划中间表示（F12 / ADR-0214 D1）。
+"""MapPlanIR —— 版本化制图计划中间表示（F12 / ADR-0260 D1）。
 
 planner/LLM 负责意图与选择（哪个数据集、哪种植被表达、用户改了什么），
 本 IR 是它们与 MapSpec mutation 之间的**确定性中间层**：所有输入一律引用
@@ -60,7 +60,7 @@ EvidenceKind = Literal[
     "lock_snapshot", "amendment", "analysis_output", "disclosure",
 ]
 
-#: 多轮 amendment 封闭词表（ADR-0214 D2）。
+#: 多轮 amendment 封闭词表（ADR-0260 D2）。
 AmendmentKind = Literal[
     "add_chart", "set_layer_visibility", "restyle_layer", "set_title",
     "add_export", "pin_component_zone", "remove_layer", "remove_component",

@@ -29,7 +29,7 @@
 
 ## 3. 前端状态所有权现状与反弹风险
 
-- 所有权链：服务端 MapSpec（唯一 desired 权威，ADR-0088）→ `frontend/lib/mapspec/session-cursor.ts` committed 镜像 + pending overlay（`getPendingPresentation` :156 导出）→ `composeLiveMapSpec` → `MapSpecRuntime.appliedSpec` → MapLibre。
+- 所有权链：服务端 MapSpec（唯一 desired 权威，ADR-0232）→ `frontend/lib/mapspec/session-cursor.ts` committed 镜像 + pending overlay（`getPendingPresentation` :156 导出）→ `composeLiveMapSpec` → `MapSpecRuntime.appliedSpec` → MapLibre。
 - 已建防反弹机制：revision 单调守卫 + 迟到文档拒绝（session-cursor.ts:119-154）；乐观 pending per-op 身份（:160-213）；串行链 `enqueueUserMutation`（user-mutation.ts:100-166）；提交收敛序 + 409 回灌（:217-255）；可见性单事务（map-commands/visibility-transaction.ts）；styleEpoch（runtime.ts）。
 - **已建状态派生（复用，不造第二套）**：`frontend/lib/layers/layer-status.ts` 封闭词表 `loading|ready|rendering|hidden|stale|failed|expired`——从三事实（HUD 行 / committed revision / render-evidence）只读派生；`use-layer-statuses.ts` 订阅两代次。
 - 残余风险：别名层字符串约定（live-spec.ts:54-67）；pending 滞留压制服务端真相；`renderer._rawDataBySource` 隐式数据态（#1409 已补 (source,input,viewport) 三元组身份）；HUD-only 行窗口。

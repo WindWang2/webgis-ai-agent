@@ -1,6 +1,6 @@
 """Lakehouse V6 Wave 4 — GeoParquet 写入升级 + 窗口扫描（row-group 剪枝）。
 
-覆盖面（ADR-0118 lazy materialization 的 vector 侧）：
+覆盖面（ADR-0249 lazy materialization 的 vector 侧）：
 - 写入：row-group 粒度 + 显式列统计 + row-group bbox 地图（schema metadata
   ``webgis:row_groups``，从真实几何算得）；
 - 剪枝：空间不相交的 row-group **不被读取**（结构性证据 row_groups_read

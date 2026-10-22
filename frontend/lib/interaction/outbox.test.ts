@@ -253,7 +253,7 @@ describe('interaction outbox · 水印同步（ack 丢失收敛）', () => {
   });
 
   it('水印按会话作用域：旧会话的迟到 ack 不裁剪新会话的低序号事件', async () => {
-    // ADR-0225 C7：client_seq 是 per-(session, tab) 从 1 起 —— 会话切换后
+    // ADR-0227 C7：client_seq 是 per-(session, tab) 从 1 起 —— 会话切换后
     // 旧会话的迟到/重试响应不得把新会话整批 client_seq ≤ 旧水印 的事件静默
     // 剪掉（曾被实例级标量水印剪掉 → 新会话事件永不发送）。
     let activeSession = 'sess-a';

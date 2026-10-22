@@ -1,4 +1,4 @@
-"""Component Binding & Multi-Layer Semantics V3 — 绑定契约测试（ADR-0101 D7）.
+"""Component Binding & Multi-Layer Semantics V3 — 绑定契约测试（ADR-0238 D7）.
 
 锁定：
 - 实例 id 确定性：同输入重复 compose 的 id 集合/顺序完全稳定；

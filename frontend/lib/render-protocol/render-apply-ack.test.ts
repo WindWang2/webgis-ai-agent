@@ -1,5 +1,5 @@
 /**
- * RenderApplyAck builder 契约测试（F13，ADR-0214 D3）。
+ * RenderApplyAck builder 契约测试（F13，ADR-0261 D3）。
  *
  * 锁定：纯投影各态、user-wins pending 弃权、unsupported 显式、
  * settle 语义（mapIdle=false → pending 非失败）、stale 判定、有界截断。

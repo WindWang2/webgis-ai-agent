@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-09-13
-- 关联：ADR-0076（SessionPlan 是 Pi 路径计划真相）、ADR-0077（wrap vendored Pi）、ADR-0055（session 拥有 GIS 世界）、ADR-0006（统一调度）、ADR-0022（Pi dispatch cache）、docs/research/pi-host-seams.md
+- 关联：ADR-0076（SessionPlan 是 Pi 路径计划真相）、ADR-0231（wrap vendored Pi）、ADR-0055（session 拥有 GIS 世界）、ADR-0006（统一调度）、ADR-0022（Pi dispatch cache）、docs/research/pi-host-seams.md
 - 分支：`harness/pi-native-kernel-sessionplan-v1`
 
 ## Context

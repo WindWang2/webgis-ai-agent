@@ -1,4 +1,4 @@
-"""recorded 场景 expect 回填 + 校准契约（ADR-0214 D3，WP2）。
+"""recorded 场景 expect 回填 + 校准契约（ADR-0262 D3，WP2）。
 
 钉死的行为：
 - trace 捕获 dispatch bind 双面证据（dispatch_evidence）→ roundtrip 派生

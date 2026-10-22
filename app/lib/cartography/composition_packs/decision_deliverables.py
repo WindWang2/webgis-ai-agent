@@ -1,4 +1,4 @@
-"""决策 / 交付物域组合包（ADR-0101 §B2）。
+"""决策 / 交付物域组合包（ADR-0238 §B2）。
 
 - site_selection_decision / mcda_score_report：决策场景（决策面板可选、
   方法论披露可选）；

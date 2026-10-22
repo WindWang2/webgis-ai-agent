@@ -1,4 +1,4 @@
-"""Dataset Semantics —— GISDatasetDescriptor 全链契约包（ADR-0215）。
+"""Dataset Semantics —— GISDatasetDescriptor 全链契约包（ADR-0265）。
 
 公共出口（单一导入面；消费方禁止绕过本包直取内部模块）：
 

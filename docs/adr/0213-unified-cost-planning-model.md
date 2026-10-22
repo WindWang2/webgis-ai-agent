@@ -1,7 +1,7 @@
 # ADR-0213: Unified Cost / Resource / Planning Model
 
 - 状态：Accepted（direction 7）
-- 关联：ADR-0182（Harness Resource Governor v1）、ADR-0136/0137（capability graph
+- 关联：ADR-0254（Harness Resource Governor v1）、ADR-0136/0137（capability graph
   V7/V8）、#1472（governor-dispatch-gaps）、#1401（retry/replan fail-closed）、
   #1477（capability dispatch bind）
 - 勘察/规格：`docs/dev/unified-cost-planning-recon.md`、`docs/dev/unified-cost-planning-spec.md`

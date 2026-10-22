@@ -1,4 +1,4 @@
-"""声明式工具参数归一化层（ADR-0101 Wave 2, §10）。
+"""声明式工具参数归一化层（ADR-0237 Wave 2, §10）。
 
 历史回顾：registry._normalize_tool_arguments 此前是按工具硬编码的 if 链
 （geojson 家族、POI、行政区划、缓冲区、专题图、地图产品、图层 upsert），

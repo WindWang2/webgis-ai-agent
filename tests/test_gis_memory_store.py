@@ -1,4 +1,4 @@
-"""GIS Spatial Reasoning Memory 契约/写策略/存储测试（方向 9，ADR-0183）。
+"""GIS Spatial Reasoning Memory 契约/写策略/存储测试（方向 9，ADR-0255）。
 
 纪律红线（全部有断言锁定）：
 - 写入 evidence-gated fail-closed：无证据/低置信/未知 kind 一律拒；

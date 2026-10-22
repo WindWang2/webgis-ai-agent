@@ -128,7 +128,7 @@ descriptor_enrichment / static_analysis 四个高吞吐角色按白名单过滤�
 测试锚点：`tests/unit/test_tool_surface_v3.py`、
 `tests/unit/test_pi_dynamic_surface.py`。
 
-## V1.5 加固（ADR-0180）
+## V1.5 加固（ADR-0253）
 
 `harness/pi-typed-tool-surface-v1` 在不改变上述投影语义的前提下补三个生产缺口：
 

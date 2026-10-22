@@ -11,7 +11,7 @@
 | # | 发现（file:line 为初审时点） | 处置 |
 | --- | --- | --- |
 | **P0-1** | NODE_NOT_EXECUTABLE 提前 return 及「begin 之后、invoke 守护之前」的任何异常/`close` 实参求值失败都会**泄漏 governor 预留**（reviewer 以最小复现脚本实证 admits=1/completed=0/LEAKED=1） | `_run_node_claimed` 引入 `_release_budget` helper：close 实参求值失败兜底归还；选型链整体包 try/except BaseException → 归还后 re-raise；NODE_NOT_EXECUTABLE 先归还再落终态。回归测试 `test_node_not_executable_releases_budget` 锁定 complete==1 |
-| **P1-1** | 计划准入门不受 `GIS_WORKFLOW_GOVERNOR=0` 门控，与 ADR-0214 D2/D3「整体直通」矛盾 | `_plan_admission_gate` 入口检查 `workflow_surface_enabled()`；回归测试 `test_kill_switch_disables_plan_gate` |
+| **P1-1** | 计划准入门不受 `GIS_WORKFLOW_GOVERNOR=0` 门控，与 ADR-0264 D2/D3「整体直通」矛盾 | `_plan_admission_gate` 入口检查 `workflow_surface_enabled()`；回归测试 `test_kill_switch_disables_plan_gate` |
 | **P1-2** | provisional 估算先验经 `min()` 变成 durable worker 硬 kill 信号，可覆盖用户显式 `node_timeout_s`（估算错误被升格为执行失败） | 语义回归 ADR 文本：显式 `node_timeout_s` 恒胜；未配置时才由估算 wall 上界派生（再与 run 剩余取紧者）。回归测试 `test_explicit_timeout_not_cut_by_estimate` |
 
 ## P2 处置

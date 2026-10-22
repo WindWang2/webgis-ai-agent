@@ -122,7 +122,7 @@ def compute_product_fingerprint(
 
 
 class MapProductService:
-    # ── Lifecycle V2（ADR-0099）lineage 词表 ──────────────────────────
+    # ── Lifecycle V2（ADR-0236）lineage 词表 ──────────────────────────
     LINEAGE_KINDS = ("linear", "fork", "restore", "merge", "rerun", "auto")
 
     @staticmethod
@@ -270,7 +270,7 @@ class MapProductService:
             f"map product version insert failed after retries (project {project_id})"
         )
 
-    # ── Lifecycle V2（ADR-0099）────────────────────────────────────────
+    # ── Lifecycle V2（ADR-0236）────────────────────────────────────────
     # 语义：版本行不可变，所有生命周期操作都是**新增行**（append-only 证据）。
     # open = 只读检视（不落任何状态）；restore/fork/merge/rerun = 新行 +
     # lineage 边；auto = run 完成后的幂等自动记录。绝无 "改历史"。
@@ -283,7 +283,7 @@ class MapProductService:
         mapspec_snapshot: Optional[Dict[str, Any]] = None,
         label: Optional[str] = None,
     ) -> Optional[MapProductVersion]:
-        """Run 完成后的幂等自动记录（ADR-0099 auto-record）。
+        """Run 完成后的幂等自动记录（ADR-0236 auto-record）。
 
         同一 (workflow_run_id, product_fingerprint) 已有行 → 返回既有行，
         绝不重复记录。快照 best-effort：session 缺席/过期 → 行仍记录，
@@ -405,7 +405,7 @@ class MapProductService:
         session_id: str,
         actor: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """style-only restore：版本快照的表达面 → 活会话（ADR-0099）。
+        """style-only restore：版本快照的表达面 → 活会话（ADR-0236）。
 
         数据/计算不动 —— 五维 diff 的 style-only 契约在此是操作语义：
         恢复后记录的新版本 diff 只含 style 维（机器可证）。走
@@ -520,7 +520,7 @@ class MapProductService:
         label: Optional[str] = None,
         actor: Optional[str] = None,
     ) -> MapProductVersion:
-        """从历史版本开新谱系（ADR-0099 fork）。
+        """从历史版本开新谱系（ADR-0236 fork）。
 
         fork 是证据行：复制来源版本的 provenance（inputs/plan/outputs/
         snapshot），parent 指向来源，lineage_kind=fork。之后的版本按线性
@@ -559,7 +559,7 @@ class MapProductService:
         label: Optional[str] = None,
         actor: Optional[str] = None,
     ) -> MapProductVersion:
-        """受限合并（ADR-0099 constrained merge）。
+        """受限合并（ADR-0236 constrained merge）。
 
         只允许**维度不相交**的合并：一方仅样式变化（style-only），另一方
         仅分析变化（data/algorithm/parameter-only）—— 合并 = 分析侧的

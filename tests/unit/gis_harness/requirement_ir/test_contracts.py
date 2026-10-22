@@ -1,4 +1,4 @@
-"""F02 Requirement IR 契约单测（ADR-0215）。
+"""F02 Requirement IR 契约单测（ADR-0266）。
 
 覆盖：schema 版本化、round-trip 序列化、extra=forbid 边界、有界性、
 Provenance ownership 语义、Ambiguity/PatchRecord 形状。

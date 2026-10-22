@@ -1,4 +1,4 @@
-"""Situation 投影 / 查询 API / 一致性测试（方向 2 S5/S6/S7，ADR-0180）。"""
+"""Situation 投影 / 查询 API / 一致性测试（方向 2 S5/S6/S7，ADR-0252）。"""
 import json
 
 import pytest

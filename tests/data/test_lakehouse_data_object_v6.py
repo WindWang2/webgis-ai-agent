@@ -1,6 +1,6 @@
 """Lakehouse V6 Wave 1 — durable DataObject identity + session content hash.
 
-覆盖面（ADR-0118 身份契约）：
+覆盖面（ADR-0249 身份契约）：
 - manifest 确定性：同 (kind, owner, 内容, 参数) ⇒ 同 DataObject id；
 - 内容寻址默认参与身份：republish 全 CAS 命中（deduped），blob 零重写；
 - owner 隔离：跨 owner 同内容 = 不同逻辑对象；越权物化/解析被拒；

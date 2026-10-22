@@ -1,4 +1,4 @@
-"""Spatiotemporal cube store — Spatial Lakehouse V6 (Wave 6-7, ADR-0118).
+"""Spatiotemporal cube store — Spatial Lakehouse V6 (Wave 6-7, ADR-0249).
 
 Zarr V6 cube 运行时：**group + per-band 数组 + consolidated metadata +
 内容寻址修订**。单一事实源边界：

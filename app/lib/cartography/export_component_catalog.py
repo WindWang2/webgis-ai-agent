@@ -73,7 +73,7 @@ def build_catalog() -> dict:
             },
         }
         components.append(entry)
-    # V3（ADR-0101 D3/D4）：additive —— themes/palettes 描述层随目录
+    # V3（ADR-0238 D3/D4）：additive —— themes/palettes 描述层随目录
     # 导出（颜色 hex 不入目录：thematic 真值 palettes.py、chrome 真值
     # 前端 token；这里只有 id 与推导元数据）。
     palettes = [

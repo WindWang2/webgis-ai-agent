@@ -1,4 +1,4 @@
-"""Visual Observation / Critique / Repair（F15，ADR-0214）。
+"""Visual Observation / Critique / Repair（F15，ADR-0263）。
 
 生产级视觉观察闭环的接线包：provider-neutral 观察契约（contracts）、
 封闭 taxonomy 归一（taxonomy）、跨域融合（fusion，deterministic wins）、

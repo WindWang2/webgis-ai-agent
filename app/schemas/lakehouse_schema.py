@@ -1,4 +1,4 @@
-"""Lakehouse REST schemas — Spatial Lakehouse V6 (ADR-0118).
+"""Lakehouse REST schemas — Spatial Lakehouse V6 (ADR-0249).
 
 有界请求/响应模型（所有 session 域端点强制所有权守卫；响应直接暴露
 服务层 dict 的诚实形态 —— 包括 durable 披露与剪枝证据）。

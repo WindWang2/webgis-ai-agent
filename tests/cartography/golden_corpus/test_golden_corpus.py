@@ -1,4 +1,4 @@
-"""Golden Corpus V3 — 结构化 golden 契约测试（ADR-0101 D8）.
+"""Golden Corpus V3 — 结构化 golden 契约测试（ADR-0238 D8）.
 
 - 全用例矩阵回归：digest 与 committed golden 逐字段一致；
 - 属性不变量：双跑一致、无 planned 泄漏、required 槽满足、binding 零冲突；

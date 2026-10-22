@@ -83,7 +83,7 @@ def test_optional_params_not_required():
 
 
 def test_tool_decorator_execution_policy_and_kwargs():
-    """ADR-0101 契约变更：注册 kwarg 收紧为显式白名单。
+    """ADR-0237 契约变更：注册 kwarg 收紧为显式白名单。
 
     此前 **kwargs 被静默吞掉（拼写错误的描述符字段无声失效）。V2 起
     未知 kwarg 注册期显式失败 —— tool_a/tool_b 的 extra_option/custom_param

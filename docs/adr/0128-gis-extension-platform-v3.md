@@ -2,7 +2,7 @@
 
 日期：2026-09-10
 状态：Proposed（随 feat/extensions-v3-secure-ecosystem 分支交付）
-前置：ADR-0104（V1）、ADR-0105（V2）
+前置：ADR-0243（V1）、ADR-0105（V2）
 
 ## 背景
 

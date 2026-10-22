@@ -1,4 +1,4 @@
-"""执行策略审计（ADR-0101 Wave 6, §25）。
+"""执行策略审计（ADR-0237 Wave 6, §25）。
 
 ToolExecutionPolicy（INLINE/ASYNC/THREAD/CELERY，ADR-0043）的正确性此前
 只有两条注册期规则：async+THREAD/CELERY 自动路由 ASYNC（#374）、cost 枚举

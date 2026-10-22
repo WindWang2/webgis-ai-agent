@@ -1,4 +1,4 @@
-"""Plan 提交器测试（F12 / ADR-0214 D5）—— 真引擎 write-seam。
+"""Plan 提交器测试（F12 / ADR-0260 D5）—— 真引擎 write-seam。
 
 锁定：逐步 CAS 链式提交；superseded 中止（陈旧计划绝不静默续跑）；
 幂等重放（同编译重复 apply = duplicate no-op、revision 不推进）；
@@ -108,7 +108,7 @@ async def test_replay_same_compilation_is_all_duplicates(clean_session):
     first = await apply_plan(clean_session, compilation, engine=engine)
     assert first.status == "applied"
 
-    # 陈旧 CAS 前提下重放同一编译：幂等去重优先于 superseded（ADR-0183）
+    # 陈旧 CAS 前提下重放同一编译：幂等去重优先于 superseded（ADR-0257）
     replay = await apply_plan(clean_session, compilation, engine=engine)
     assert replay.status == "applied"
     assert all(a.duplicate for a in replay.receipt.applied)

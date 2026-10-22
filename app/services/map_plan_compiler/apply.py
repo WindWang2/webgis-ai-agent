@@ -1,4 +1,4 @@
-"""Plan mutation 提交器（F12 / ADR-0214 D5/D7）。
+"""Plan mutation 提交器（F12 / ADR-0260 D5/D7）。
 
 唯一提交通道 = ``MapSpecLifecycleEngine.apply_mutation``（不绕开
 ADR-0068 dispatch 拥有者，不造第二写路径）：

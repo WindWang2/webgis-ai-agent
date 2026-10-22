@@ -1,4 +1,4 @@
-"""方向 8（ADR-0183）：Mutation Transactions — 幂等/precedence/reconciliation/
+"""方向 8（ADR-0257）：Mutation Transactions — 幂等/precedence/reconciliation/
 竞态确定性测试（U2/U3/U7/U8/U9）。
 
 Barrier/event 驱动（asyncio.Event + 显式 await 点），零 sleep：所有"同时"，

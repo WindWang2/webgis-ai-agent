@@ -1,4 +1,4 @@
-"""经度约定与 antimeridian 处理（Harness V5 W3 — ADR-0118 决策 D3）。
+"""经度约定与 antimeridian 处理（Harness V5 W3 — ADR-0248 决策 D3）。
 
 V4 基线：0-360 / antimeridian 的真实处理只存在于 MVT 瓦片切分
 （``app/services/mvt.py``），分析/数据面没有任何通用几何级归一 ——

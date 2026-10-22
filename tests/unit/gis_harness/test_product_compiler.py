@@ -1,4 +1,4 @@
-"""Product Compiler（ADR-0183 M4/M5）单元测试。
+"""Product Compiler（ADR-0258 M4/M5）单元测试。
 
 不变式：纯函数确定性（同输入同 digest）；explicit choice 优先；词表单源
 （component_registry / chart_kinds / composition 槽位）；fallback 可解释。

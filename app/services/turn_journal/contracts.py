@@ -1,4 +1,4 @@
-"""Turn journal contracts：账本行契约 + 载荷纪律（H04 / ADR-0216）。
+"""Turn journal contracts：账本行契约 + 载荷纪律（H04 / ADR-0268）。
 
 ``TurnEventRecord`` 是 envelope 事件行（``harness_kernel.models.PlanDecision``）
 的 durable 投影形态：字段同名同义（kind/host/turn_id/note/detail/seq/

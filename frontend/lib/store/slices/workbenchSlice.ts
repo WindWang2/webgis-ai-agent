@@ -9,7 +9,7 @@ import { emitComparisonModeChanged } from '@/lib/interaction/bus';
  * Workbench slice — Workbench V4 统一工作区投影（Goal C / Wave 1）→
  * V5 组织态运行时载体（W1/W3）。
  *
- * 设计边界（ADR-0104 + V5 修订）：
+ * 设计边界（ADR-0244 + V5 修订）：
  * - 本 slice 是 **UI projection / transient state**，绝不承载地图语义真相：
  *   权威地图内容仍以 MapSpec / backend contract 为准（session-cursor 镜像 +
  *   user-mutation CAS 串行链），图层语义分组仍在 `Layer.group`。这里只放

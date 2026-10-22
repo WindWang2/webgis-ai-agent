@@ -1,4 +1,4 @@
-// 方向 8（ADR-0183 / U4）：pending per-op 身份（ST-P3-3 收口）。
+// 方向 8（ADR-0257 / U4）：pending per-op 身份（ST-P3-3 收口）。
 // 身份记在旁路 meta 表 —— pending 本体形状不变，compose 零感知。
 import { beforeEach, describe, expect, it } from 'vitest';
 import {

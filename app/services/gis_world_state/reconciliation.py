@@ -1,4 +1,4 @@
-"""Desired vs observed reconciliation —— 地图状态对账（方向 8 / ADR-0183 U7）。
+"""Desired vs observed reconciliation —— 地图状态对账（方向 8 / ADR-0257 U7）。
 
 对账四方（priorities，与任务书 U7 对齐）：
 

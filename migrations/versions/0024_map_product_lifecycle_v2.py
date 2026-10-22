@@ -1,10 +1,10 @@
-"""Map Product lifecycle V2: snapshot + lineage columns (ADR-0099)
+"""Map Product lifecycle V2: snapshot + lineage columns (ADR-0236)
 
 Revision ID: 0024_map_product_lifecycle
 Revises: 0023_data_fabric_v2_catalog
 Create Date: 2026-09-04
 
-ADR-0099：版本生命周期操作（open / restore / fork / rerun / merge /
+ADR-0236：版本生命周期操作（open / restore / fork / rerun / merge /
 auto-record）需要版本行携带：
 - ``mapspec_snapshot`` —— 该版本定稿时的 MapSpec 文档快照（有界、可空；
   旧版本无快照 = 诚实的 open 降级：可对比不可回放）；

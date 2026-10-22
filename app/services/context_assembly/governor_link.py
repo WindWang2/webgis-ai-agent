@@ -1,6 +1,6 @@
 """Governor link for the LLM-context resource dimension (F04).
 
-Wires context assembly into ADR-0182's governor on the already-contracted
+Wires context assembly into ADR-0254's governor on the already-contracted
 ``Subsystem.LLM_CONTEXT`` × ``Dimension.CONTEXT_TOKENS`` axis — the piece
 that was missing between the contract (rg.v1) and any caller:
 

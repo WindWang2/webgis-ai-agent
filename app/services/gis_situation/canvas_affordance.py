@@ -9,7 +9,7 @@
 ``ui_actions.mount_widget`` 声明式部件（4 类封闭词表），经
 ``validate_widget_spec`` 双向校验后由引擎以 ``ui_action`` SSE 事件下发。
 
-纪律（与 observation.py 同源，ADR-0180 S4）：
+纪律（与 observation.py 同源，ADR-0252 S4）：
 - 白名单规范化：未知键丢弃，几何类型/坐标/顶点/字节四重封顶；
 - 内容寻重：同 action 双通道双报（即时端点 + turn 捎带）不双计；
 - 有界环（16）+ 单调 sequence，全程持 session 锁；

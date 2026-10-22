@@ -1,4 +1,4 @@
-"""Harness V5 统一失败分类与 typed remediation（ADR-0118 决策 D2）。
+"""Harness V5 统一失败分类与 typed remediation（ADR-0248 决策 D2）。
 
 V4 基线的缺口（Phase-0 审计）：dispatch 面只有 4 个泛化 code
 （VALIDATION_ERROR / NOT_FOUND / UNKNOWN_TOOL / TOOL_ERROR），planning

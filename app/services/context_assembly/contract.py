@@ -51,10 +51,10 @@ class ContextDomain(str, Enum):
     CARTOGRAPHY_VERDICT = "cartography_verdict"      # [CARTOGRAPHY_VERDICT]
     CARTOGRAPHY_MEMORY = "cartography_memory"        # [CARTOGRAPHY_MEMORY] (ADR-0069)
     PROJECT_KNOWLEDGE = "project_knowledge"          # <project_knowledge> (#1395)
-    GIS_MEMORY = "gis_memory"                        # [GIS_MEMORY] (ADR-0183)
+    GIS_MEMORY = "gis_memory"                        # [GIS_MEMORY] (ADR-0255)
     GIS_CONTEXT_CARD = "gis_context_card"            # [GIS_CONTEXT] (ADR-0206)
     SESSION_PLAN = "session_plan"                    # SessionPlan bounded projection
-    ENVIRONMENT = "environment"                      # [GIS 情境]/[环境感知] (ADR-0180)
+    ENVIRONMENT = "environment"                      # [GIS 情境]/[环境感知] (ADR-0252)
     TOOL_SURFACE = "tool_surface"                    # [工具面提示] (V4)
     EVICTED_REFS = "evicted_refs"                    # ADR-0104 #6 tombstone
     V6_BLOCKS = "v6_blocks"                          # V6 Wave 13 three-layer blocks

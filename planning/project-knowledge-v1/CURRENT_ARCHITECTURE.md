@@ -12,7 +12,7 @@ All paths relative to repo root. Every load-bearing claim cites file:line at the
 - **Workflows**: `wf_<16hex>`, immutable `WorkflowRevision` (`wfrev_<16hex>`) with `graph_fingerprint`; revision publish is idempotent (same fingerprint reuses revision; `revision_no = max+1` with unique index + IntegrityError retry) (`project_service.py:563-653`). Runs: `WorkflowRun` rows scoped `project_id` (`project_service.py:743-759`).
 - **Existing project read-model precedent**: `get_project_context_summary` / `get_project_fingerprint` (`project_service.py:131-290`) read only scalar aggregates (counts + max-modified) into frozen dataclasses `ProjectFingerprint` / `ProjectContextSummary` (`app/services/project_context_types.py:29-99`); `ProjectContextSummary.render()` emits the byte-stable `<active_project_workspace>` block (:83-99). A process LRU (`app/services/chat/project_context_cache.py`) keyed by `ProjectFingerprint.cache_key()` is invalidated on every mutation via `_invalidate_project_context_cache` (`project_service.py:66-83`, called at :353, :394, :484, :587, :712). **This fingerprint-on-read + invalidate-on-write pattern is the exact staleness template to reuse.**
 
-## 2. gis_memory (ADR-0183/0190) — the memory store we must NOT re-implement
+## 2. gis_memory (ADR-0255/0190) — the memory store we must NOT re-implement
 
 Package `app/services/gis_memory/` (contract/store/retrieval/projection/proactive_retriever/associative_index/memory_consolidator/harvest/queries/policy/sanitizer/pending/eval all exist; no other files).
 

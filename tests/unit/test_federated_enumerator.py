@@ -1,4 +1,4 @@
-"""V6 join 枚举契约测试（ADR-0118 W4）：DP 子集枚举/bushy/剪枝/确定性/CRS。"""
+"""V6 join 枚举契约测试（ADR-0247 W4）：DP 子集枚举/bushy/剪枝/确定性/CRS。"""
 
 import pytest
 

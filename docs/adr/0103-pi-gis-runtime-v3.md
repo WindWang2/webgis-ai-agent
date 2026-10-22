@@ -6,7 +6,7 @@
 
 ## Context
 
-After ADR-0101 (tool platform V2) and ADR-0102 (model runtime foundation),
+After ADR-0237 (tool platform V2) and ADR-0102 (model runtime foundation),
 four structural gaps remained:
 
 1. **Descriptor richness ≈ 0.** The descriptor mechanism was complete but

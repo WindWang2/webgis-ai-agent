@@ -2,7 +2,7 @@
 
 - 状态：Proposed（随 `agent/04-specialist-agents-pack-data-compute` 分支评审）
 - 日期：2026-09-14
-- 关联：ADR-0101 Wave 7（子代理角色档 §30/隔离 §31/层级预算 §32）、
+- 关联：ADR-0237 Wave 7（子代理角色档 §30/隔离 §31/层级预算 §32）、
   ADR-0104 决策 7（专家子代理团队 + 并行委派）、ADR-0170（ads-v1 契约
   D1–D4）、ADR-0174（DS4 声明式回退链）、ADR-0096（GeoCompute 执行图）、
   ADR-0052（durable job / Celery First）、ADR-0094（诚实默认）

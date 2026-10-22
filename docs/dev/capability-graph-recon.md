@@ -54,7 +54,7 @@ V7 描述符只在 tool surface rerank 有一个消费点；能力图不是 plan
 | #1271 AC-V11（ADR-0160-0169，已合并） | intent learning、recipe、symbology、label、layout、export、quality baseline | recipe eligibility/affinity 语义是 C3/C5 的**复用对象**（不复制实现，直接调用）；无文件级冲突预期 | 复用 + 调用 |
 | #1272 ADS-V1（ADR-0170-0179，已合并） | source registry、retrieval、fallback chains、version pinning | ADS fallback/retrieval 是数据供给 provider 事实；C1 把 adapters/sources 投影入图（只读） | 投影，不改其内部 |
 | #1270 CI hygiene（open） | `app/services/mapspec/coordinator.py`、`frontend/lib/mapspec-compiler/compiler.ts`、`docs/quality/*`、`tests/conftest.py` | 仅 `docs/quality/*` 生成物 ledger 可能同窗重生成 | 不吞入；若 quality manifest 因本任务新增生成物需刷新，PR 中归因说明 |
-| tts 线（worktree 锁定，0c933375 仅 docs，未提交代码） | 计划：pi surface 字节预算 / input gate / metrics；**拟占 ADR-0180** | 本任务只提供**只读 capability query protocol**，不动 pi surface | 接口让位：本任务取 ADR-0181 |
+| tts 线（worktree 锁定，0c933375 仅 docs，未提交代码） | 计划：pi surface 字节预算 / input gate / metrics；**拟占 ADR-0253** | 本任务只提供**只读 capability query protocol**，不动 pi surface | 接口让位：本任务取 ADR-0181 |
 
 ## 4. 硬编码地图点审计（C0 输入，勘察 top-15）
 

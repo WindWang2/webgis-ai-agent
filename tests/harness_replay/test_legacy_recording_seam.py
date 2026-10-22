@@ -1,4 +1,4 @@
-"""legacy 录制面统一契约（ADR-0214 D5，WP4）。
+"""legacy 录制面统一契约（ADR-0262 D5，WP4）。
 
 钉死的行为：
 - legacy ChatExecutionEngine 的两个 settle 点（chat 非流式 / chat_stream）

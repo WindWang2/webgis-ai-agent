@@ -1,4 +1,4 @@
-"""失败 triage 六分类（B11，ADR-0183 决策六）。
+"""失败 triage 六分类（B11，ADR-0256 决策六）。
 
 禁止裸 "snapshot changed"：每次 red 必须给出机器可读类别 + 证据路径：
 

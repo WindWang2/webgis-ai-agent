@@ -322,7 +322,7 @@ async def _record_frontend_cartographic_observation(
         str(focus_layer_raw)[:128]
         if isinstance(focus_layer_raw, str) and focus_layer_raw else ""
     )
-    # ADR-0180 review P1-5：前端未上报 is_3d 时保留缺席（None）——
+    # ADR-0252 review P1-5：前端未上报 is_3d 时保留缺席（None）——
     # bool() 强转会伪造 known(False)，下游情境层会把 3D 用户错标为 2D。
     is_3d_raw = map_state.get("is_3d")
 
@@ -366,7 +366,7 @@ async def _record_frontend_cartographic_observation(
 async def _build_situation_env_block(
     session_id: Optional[str], req_map_state: Optional[dict]
 ) -> str:
-    """[环境感知] 位的结构化升级（ADR-0180，方向 2）。
+    """[环境感知] 位的结构化升级（ADR-0252，方向 2）。
 
     优先 SituationCompiler 的有界 [GIS 情境] 投影（事实带 source/revision，
     覆盖 legacy env block 读不到的维度：数据/分析/制图/交付/约束 + 上轮
@@ -1023,7 +1023,7 @@ async def chat_completions(
                 # exists — memory lags evidence by one step and can never
                 # short-circuit review. Best-effort; never fails the turn.
                 await harvest_project_memory(pi_session_id, req.project_id)
-                # 方向 9（ADR-0183）：GIS 空间记忆收割（同位点，绝不抛）。
+                # 方向 9（ADR-0255）：GIS 空间记忆收割（同位点，绝不抛）。
                 try:
                     from app.services.gis_memory.harvest import (
                         harvest_spatial_memory,
@@ -1282,7 +1282,7 @@ async def chat_stream(
             project_id=req.project_id,
         )
         # Pi 兼容：环境感知块（与 legacy 的 [环境感知] 系统消息同源同纪律）。
-        # ADR-0180：优先结构化 [GIS 情境] 投影，kill-switch/异常回落原文。
+        # ADR-0252：优先结构化 [GIS 情境] 投影，kill-switch/异常回落原文。
         environment_context = await _build_situation_env_block(
             pi_session_id, req.map_state
         )
@@ -1333,7 +1333,7 @@ async def chat_stream(
                 # verdict exists. Best-effort like the transcript/title writes
                 # above — memory is additive context, never a turn blocker.
                 await harvest_project_memory(pi_session_id, req.project_id)
-                # 方向 9（ADR-0183）：GIS 空间记忆收割（pending 候选排空 +
+                # 方向 9（ADR-0255）：GIS 空间记忆收割（pending 候选排空 +
                 # MapSpec 剖面 + GC），同位点同纪律，绝不抛。
                 try:
                     from app.services.gis_memory.harvest import (
@@ -1865,7 +1865,7 @@ async def push_cartographic_runtime_observation(
             # V6 W8：canvas 经有界校验后落库（DTO 已归一，此处再门一次 ——
             # 直接构造 DTO 的内部路径同样收敛到同一投影；非法/缺席即省略）。
             canvas = _bounded_canvas(req.canvas)
-            # F13（ADR-0214 D3）：apply ACK 以服务端盖章 revision 对账后
+            # F13（ADR-0261 D3）：apply ACK 以服务端盖章 revision 对账后
             # 落库 —— 词表/版本 fail-closed；ACK 自带 revision ≠ 盖章值
             # → ``stale: true``（保留披露，findings 派生跳过）。
             apply_ack = None
@@ -1920,7 +1920,7 @@ async def push_cartographic_runtime_observation(
                 # V6 W8：canvas 在场（校验通过）才落键 —— 缺席/非法时省略，
                 # 下游 offscreen 检查按「证据缺席」整体缺席（诚实降级）。
                 **({"canvas": canvas} if canvas is not None else {}),
-                # F13（ADR-0214 D3/D5）：apply ACK 与 perf 探针块在场
+                # F13（ADR-0261 D3/D5）：apply ACK 与 perf 探针块在场
                 # （校验通过）才落键 —— 缺席/非法/旧客户端均按证据缺席。
                 **({"apply_ack": apply_ack} if apply_ack is not None else {}),
                 **({"perf": req.perf} if req.perf is not None else {}),

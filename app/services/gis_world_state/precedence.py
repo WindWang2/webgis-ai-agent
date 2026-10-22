@@ -1,4 +1,4 @@
-"""Precedence / ownership 阶梯 —— 突变冲突的确定性裁决（方向 8 / ADR-0183）。
+"""Precedence / ownership 阶梯 —— 突变冲突的确定性裁决（方向 8 / ADR-0257）。
 
 阶梯（D-02，任务书初始思想按代码事实调整后落码）：
 

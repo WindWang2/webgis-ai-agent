@@ -1,4 +1,4 @@
-"""F12 端到端语料测试（ADR-0214 DoD-8）。
+"""F12 端到端语料测试（ADR-0260 DoD-8）。
 
 中文自然语言需求 → resolve_intent_adaptive（规则快路径，零 LLM）→
 MapProductPlanner → MapPlanIR 投影 → obligations → 确定性编译 →

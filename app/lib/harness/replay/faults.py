@@ -1,4 +1,4 @@
-"""故障注入（B6，ADR-0183 决策八 / D8）：在 replayer 环境边界编译故障。
+"""故障注入（B6，ADR-0256 决策八 / D8）：在 replayer 环境边界编译故障。
 
 故障规格 ``{type, target_turn?, target?}`` 由 :func:`apply_faults` 纯变换到
 场景（op 收据 / ref 表 / visual judge 声明），**不给生产代码埋测试钩子**。

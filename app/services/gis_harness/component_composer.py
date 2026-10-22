@@ -81,7 +81,7 @@ class ComponentComposer:
                     slot_by_type.setdefault(ctype, slot)
 
         components: List[CartographyComponent] = []
-        # V3（ADR-0101 D7）：实例 id 确定性唯一 —— 同 id 冲突时保先
+        # V3（ADR-0238 D7）：实例 id 确定性唯一 —— 同 id 冲突时保先
         # （组合输入受 resolver 类型唯一性约束，正常不触发；防御 overrides
         # /展开路径的退化输入，保证 MapSpec 组件 id 恢复可寻址）。
         seen_ids: set = set()

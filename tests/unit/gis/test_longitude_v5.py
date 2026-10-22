@@ -1,4 +1,4 @@
-"""Harness V5 经度约定 / antimeridian 硬化契约（ADR-0118 D3）。
+"""Harness V5 经度约定 / antimeridian 硬化契约（ADR-0248 D3）。
 
 验收锚点（Epic V5）：0-360 / antimeridian 有测试 ——
 - 约定检测确定性（pm180 / e360 / ambiguous 三值，不猜等价情形）；

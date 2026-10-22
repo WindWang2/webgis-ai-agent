@@ -1,4 +1,4 @@
-"""制图跨系统回归认证（ADR-0104 Wave 14）。
+"""制图跨系统回归认证（ADR-0245 Wave 14）。
 
 不是前端 golden 重写，而是**用服务端权威机器**做跨系统语义认证：
 分析产物 → 转换器（analysis_cartography_converter）→ MapSpecLifecycleEngine

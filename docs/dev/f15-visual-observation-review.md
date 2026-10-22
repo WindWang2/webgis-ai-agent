@@ -1,4 +1,4 @@
-# F15 Independent Review — 视觉观察/批评/修复闭环（ADR-0214）
+# F15 Independent Review — 视觉观察/批评/修复闭环（ADR-0263）
 
 - 审查人：Subagent C（独立审查员，与实现者分离，全程只读 + 实跑测试）
 - 审查对象：`origin/master(9e1ad229)...HEAD`，实现 commit `b6a51e32`、
@@ -28,10 +28,10 @@ verifier、默认关零行为变化、user-wins、单一真相（无第二 findi
 | P2-1 | `_prune_blob` 跨会话内容寻址共享窗口（A 淘汰删掉 B 引用的 blob → B 侧诚实缺席） | docstring 如实披露窗口 + 降级语义（resolve 失败 = 诚实缺席绝不误判）；跨会话 refcount/GC 记 Out of Scope |
 | P2-2 | vshot 孤儿 blob 无 GC（clear_session 不清 blob） | 同上记 Out of Scope（单会话 4MiB×8 上界成立；全仓唯一 `vshot-` 写面便于后续前缀清扫） |
 | P2-3 | `_visual_*` 私有键随 map-state 端点下发前端 | 已修：chat.py 沿 `_situation_*` 先例 pop 三键 |
-| P2-4 | plan/product 面 severity 未封顶与 ADR 措辞冲突 | 澄清而非改行为：plan 面保留 error 级是 **ADR-0209 决策四的既定语义**（error → deferred/requires_user_approval，是用户批准流的前提）；ADR-0214 §1 措辞已改为「披露面封顶 warning / plan 面保留 error 级」 |
+| P2-4 | plan/product 面 severity 未封顶与 ADR 措辞冲突 | 澄清而非改行为：plan 面保留 error 级是 **ADR-0209 决策四的既定语义**（error → deferred/requires_user_approval，是用户批准流的前提）；ADR-0263 §1 措辞已改为「披露面封顶 warning / plan 面保留 error 级」 |
 | P2-5 | blob 键无会话绑定（当前不可利用，纵深防御） | 记 Out of Scope（今日无任何按 ref 读字节的用户入口；若未来加该类端点必须先加会话校验） |
 | P2-6 | user-wins 措辞与实现相悖（design/route docstring/测试头） | 已修：统一为「user origin 是自有锁的唯一 override，批准经 `touches_locked` 披露后知情执行；agent/system 自动路径仍被 guard 拒绝」 |
-| P2-7 | 账本/提案/索引 RMW 竞态未披露 | 已在 ADR-0214 决策五补「last-write-wins、欠计可接受（只会欠披露不会过披露）」 |
+| P2-7 | 账本/提案/索引 RMW 竞态未披露 | 已在 ADR-0263 决策五补「last-write-wins、欠计可接受（只会欠披露不会过披露）」 |
 
 ## Nit 清偿
 

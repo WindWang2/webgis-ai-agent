@@ -1,4 +1,4 @@
-"""权限模型与信任裁决测试（ADR-0104 Wave 10-11）。"""
+"""权限模型与信任裁决测试（ADR-0243 Wave 10-11）。"""
 
 from __future__ import annotations
 
