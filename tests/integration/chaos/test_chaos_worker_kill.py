@@ -82,7 +82,8 @@ async def _backdate_heartbeat(job_id: str, *, seconds: int) -> None:
     from app.core.database import AsyncSessionLocal
     from app.models.db_model import AnalysisTask
 
-    cutoff = dt.datetime.utcnow() - dt.timedelta(seconds=seconds)
+    cutoff = dt.datetime.now(dt.timezone.utc).replace(
+        tzinfo=None) - dt.timedelta(seconds=seconds)
     async with AsyncSessionLocal() as db:
         await db.execute(
             sa.update(AnalysisTask)

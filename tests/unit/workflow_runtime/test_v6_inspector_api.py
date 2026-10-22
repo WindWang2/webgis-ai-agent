@@ -9,6 +9,7 @@ from __future__ import annotations
 
 
 import pytest
+from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -213,8 +214,8 @@ def test_clone_endpoint(env):
     # 克隆只对终态实例开放
     svc.store.update_instance(inst["instance_id"],
                               fields={"status": C.InstanceStatus.SUCCEEDED,
-                                      "terminal_at": __import__("datetime")
-                                      .datetime.utcnow()})
+                                      "terminal_at": datetime.now(timezone.utc)
+                                      .replace(tzinfo=None)})
     r = client.post(f"/api/v1/workflow-runtime/instances/"
                     f"{inst['instance_id']}/clone", headers=_AUTH,
                     json={"skip_nodes": ["output:zone"]})

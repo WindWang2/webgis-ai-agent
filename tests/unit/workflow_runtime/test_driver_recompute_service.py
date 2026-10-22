@@ -279,7 +279,7 @@ def test_cancel_propagates_to_descendants(env):
 def test_recovery_resets_orphans_and_completes(env, factory):
     """崩溃恢复：孤儿 RUNNING（节点租约过期）复位 READY 后可继续执行。"""
     import sqlalchemy as sa
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from app.models.db_model import WorkflowInstanceNodeRow
 
@@ -295,7 +295,8 @@ def test_recovery_resets_orphans_and_completes(env, factory):
             sa.update(WorkflowInstanceNodeRow)
             .where(WorkflowInstanceNodeRow.instance_id == inst["instance_id"],
                    WorkflowInstanceNodeRow.node_id == "data:subject")
-            .values(lease_expires_at=datetime.utcnow() - timedelta(seconds=1))
+            .values(lease_expires_at=datetime.now(timezone.utc)
+                    .replace(tzinfo=None) - timedelta(seconds=1))
         )
         db.commit()
     assert store.find_orphan_running_nodes(inst["instance_id"]) == \

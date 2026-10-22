@@ -154,16 +154,18 @@ ignore = ["E402"]
 "tests/unit/test_raster_large_windowed.py" = ["F841", "E702"]
 # #1551 棘轮基线（2026-09-30 锁定 48 处/31 文件）——只允许逐文件删除条目，
 # 新增裸 naive datetime 即 lint 失败。
+# 2026-10-23（#1551 清偿轮次）：DTZ003（裸 datetime.utcnow()）全库清零 ——
+# app 2 处改 datetime.now(timezone.utc)（表自身 default 即 aware），tests 20 处
+# + 1 处 Column default 按 DB naive 列边界约定写
+# datetime.now(timezone.utc).replace(tzinfo=None)（与 clock.to_db_utc /
+# 各 store _utcnow 同口径），上述 14 个文件的 DTZ003 条目整体删除；剩余条目
+# 均为 DTZ001/005/011/901 等其他 naive 形态（不在本轮范围）。
 "app/lib/quality/manifest.py" = ["DTZ011"]
 "app/services/chat/context/session_overview.py" = ["DTZ005"]
 "app/services/data_fabric/semantic/time_parser.py" = ["DTZ011"]
-"app/services/data_lifecycle/gc_plan.py" = ["DTZ003"]
 "app/services/mission_runtime/store.py" = ["DTZ901"]
 "app/services/spatial_decision/evidence_hardening.py" = ["DTZ005"]
-"app/services/templates/versioning.py" = ["DTZ003"]
 "app/services/workflow_runtime/store.py" = ["DTZ901"]
-"tests/data/test_lifecycle_policy_v9.py" = ["DTZ003"]
-"tests/integration/chaos/test_chaos_worker_kill.py" = ["DTZ003"]
 "tests/test_chat_history_routes.py" = ["DTZ001"]
 "tests/test_explorer_quality.py" = ["DTZ001"]
 "tests/test_gis_memory_retrieval.py" = ["DTZ001"]
@@ -173,18 +175,8 @@ ignore = ["E402"]
 "tests/test_tool_cache.py" = ["DTZ001"]
 "tests/unit/test_p4_explorer_quality_scores.py" = ["DTZ001"]
 "tests/unit/spatial_events/test_contracts.py" = ["DTZ001"]
-"tests/unit/spatial_events/test_invalidation_e2e.py" = ["DTZ003"]
 "tests/unit/spatial_events/test_service.py" = ["DTZ001"]
-"tests/unit/test_data_fabric_stats_v4.py" = ["DTZ003"]
 "tests/unit/turn_journal/test_clock.py" = ["DTZ001"]
-"tests/unit/workflow_runtime/test_p4_driver_retry_gates.py" = ["DTZ003"]
-"tests/unit/workflow_runtime/test_p4_recovery_sweep_injection.py" = ["DTZ003"]
-"tests/unit/workflow_runtime/test_p4_store_run_lease.py" = ["DTZ003"]
-"tests/unit/workflow_runtime/test_driver_recompute_service.py" = ["DTZ003"]
-"tests/unit/workflow_runtime/test_store_registry_reuse.py" = ["DTZ003"]
-"tests/unit/workflow_runtime/test_v6_clone_nested.py" = ["DTZ003"]
-"tests/unit/workflow_runtime/test_v6_cluster_dispatch.py" = ["DTZ003"]
-"tests/unit/workflow_runtime/test_v6_durable_journal_recovery.py" = ["DTZ003"]
 
 # #1377 ISSUE-057：mypy 引入 —— 白名单棘轮模式。
 # files= 列出必须保持干净的模块（当前 app/core 24 文件全绿起步），

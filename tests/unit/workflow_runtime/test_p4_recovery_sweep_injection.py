@@ -44,8 +44,8 @@ def _backdate_lease(store, iid: str, node_id: str, seconds: float = 1.0) -> None
             sa.update(WorkflowInstanceNodeRow)
             .where(WorkflowInstanceNodeRow.instance_id == iid,
                    WorkflowInstanceNodeRow.node_id == node_id)
-            .values(lease_expires_at=_dt.datetime.utcnow()
-                    - _dt.timedelta(seconds=seconds))
+            .values(lease_expires_at=_dt.datetime.now(_dt.timezone.utc)
+                    .replace(tzinfo=None) - _dt.timedelta(seconds=seconds))
         )
         db.commit()
 
@@ -81,7 +81,9 @@ def test_sweep_resets_orphaned_lease_expired_nodes(store) -> None:
         from app.models.db_model import WorkflowInstanceRow
         db.execute(sa2.update(WorkflowInstanceRow)
                    .where(WorkflowInstanceRow.instance_id == iid)
-                   .values(run_lease_expires_at=_dt.datetime.utcnow() - _dt.timedelta(seconds=1)))
+                   .values(run_lease_expires_at=_dt.datetime.now(
+                       _dt.timezone.utc).replace(tzinfo=None)
+                       - _dt.timedelta(seconds=1)))
         db.commit()
     report = RC.sweep_recoverable(store)
     assert report["orphan_reset"] >= 1

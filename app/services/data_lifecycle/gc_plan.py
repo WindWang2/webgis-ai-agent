@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -82,7 +82,7 @@ def create_gc_plan(
     """
     from app.models.data_lifecycle import LifecyclePolicy
 
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc)
     if not kinds:
         # DATA-09：默认 kinds 必须剔除 observe-only 类 —— 此前默认列表含
         # lakehouse_dataset，随后又被下面的守卫拒绝，默认建计划恒抛。

@@ -70,8 +70,10 @@ def _seed_worker_cache(worker="w1", key="k1", hit_days_ago=30):
     with SessionLocal() as db:
         db.merge(GeoComputeWorkerCache(
             worker_id=worker, cache_key=key, owner_scope="scope-x",
-            size_bytes=1234, cached_at=datetime.utcnow(),
-            last_hit_at=datetime.utcnow() - timedelta(days=hit_days_ago),
+            size_bytes=1234,
+            cached_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            last_hit_at=datetime.now(timezone.utc).replace(
+                tzinfo=None) - timedelta(days=hit_days_ago),
         ))
         db.commit()
 

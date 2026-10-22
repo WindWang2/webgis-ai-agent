@@ -190,13 +190,13 @@ def _backdate_node_lease(factory, iid: str, node_id: str,
                          null_lease: bool = False) -> None:
     """测试辅助：把节点租约回拨到过去（模拟 worker 死亡）或清空（旧式认领）。"""
     import sqlalchemy as sa
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from app.models.db_model import WorkflowInstanceNodeRow
 
     with factory() as db:
-        values: dict = {"lease_expires_at": datetime.utcnow()
-                        - timedelta(seconds=seconds)}
+        values: dict = {"lease_expires_at": datetime.now(timezone.utc)
+                        .replace(tzinfo=None) - timedelta(seconds=seconds)}
         if null_lease:
             values = {"lease_expires_at": None, "heartbeat_at": None}
         db.execute(

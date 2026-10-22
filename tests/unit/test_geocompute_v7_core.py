@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -326,8 +327,10 @@ class TestLocality:
         with factory() as db:
             db.add(WCache(worker_id="w2", cache_key="not-a-hash",
                           owner_scope="o:x", size_bytes=1,
-                          cached_at=__import__("datetime").datetime.utcnow(),
-                          last_hit_at=__import__("datetime").datetime.utcnow()))
+                          cached_at=datetime.now(timezone.utc).replace(
+                              tzinfo=None),
+                          last_hit_at=datetime.now(timezone.utc).replace(
+                              tzinfo=None)))
             db.commit()
         assert registry.worker_holds("w2", "u:o", ["fp-1"]) == 0
 
