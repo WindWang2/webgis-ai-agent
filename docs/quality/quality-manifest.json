@@ -5529,8 +5529,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 178,
-  "mention": 170,
+  "dispatch": 180,
+  "mention": 169,
   "none": 8
  },
  "capabilities": [
@@ -6905,6 +6905,8 @@
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_intent.py",
     "tests/unit/gis_harness/test_product_facets.py",
+    "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
+    "tests/unit/gis_tool_conformance/test_engine_faces.py",
     "tests/unit/lib/test_rs_fusion_v1.py",
     "tests/unit/lib/test_rs_pipeline_v1.py",
     "tests/unit/lib/test_rs_samples_v1.py",
@@ -7034,7 +7036,8 @@
    "status": "planned",
    "supports_large_data": true,
    "tests": [
-    "tests/unit/gis/test_platform_capabilities.py"
+    "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_tool_conformance/test_catalog_conformance_tool.py"
    ]
   },
   {
@@ -7234,6 +7237,7 @@
    "supports_large_data": true,
    "tests": [
     "frontend/test/results/normalize.test.ts",
+    "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/test_raster_runtime_v3.py",
     "tests/unit/test_raster_tools.py",
     "tests/unit/test_spatial_analyzer_deepening.py"
@@ -8292,7 +8296,7 @@
   "capabilities": 160,
   "findings": 9,
   "recipes": 166,
-  "tools": 356
+  "tools": 357
  },
  "findings": [
   {
@@ -8369,7 +8373,7 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 178,
+  "behavioral_dispatch": 180,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
   "pass": true,
@@ -8377,7 +8381,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "38cf323e2607ef88cc6c5e8a67f09a8d3c69f3160b3be5252329d4e98ff10834",
+ "fingerprint": "5be61894f6315585de36508ef8645c7f9b63c65b1f254d631edf5029a0f7878a",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8417,7 +8421,7 @@
    }
   },
   "pass": true,
-  "total": 356
+  "total": 357
  },
  "manifest_version": 2,
  "recipes": {
@@ -8561,6 +8565,7 @@
    ],
    "tests": [
     "tests/jobs/test_job_agent_bridge.py",
+    "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_deep_review_gis_102_task_wiring.py"
    ],
@@ -8649,6 +8654,7 @@
     "tests/cartography/test_mutation_transactions.py",
     "tests/cartography/test_visual_judge_selfheal.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_tool_conformance/test_live_registry_audit.py",
     "tests/unit/test_676_flip_red.py",
     "tests/unit/test_apply_template_contract_557.py",
     "tests/unit/test_symbology_consistency_matrix.py",
@@ -9014,6 +9020,34 @@
    "execution_policy": "thread",
    "latency_class": "fast",
    "memory_class": "light",
+   "name": "catalog_conformance",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "catalog",
+    "conformance",
+    "契约",
+    "对账",
+    "目录"
+   ],
+   "tests": [
+    "tests/unit/gis_tool_conformance/test_catalog_conformance_tool.py",
+    "tests/unit/gis_tool_conformance/test_e2e_poi_scenario.py",
+    "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
    "name": "catalog_discover",
    "requires_confirmation": false,
    "scale_class": "small",
@@ -9279,6 +9313,7 @@
     "义务"
    ],
    "tests": [
+    "tests/unit/dataset_semantics/test_role_qualification_wiring_v1.py",
     "tests/unit/gis_harness/test_workflow_v4_production.py"
    ],
    "tier": 2
@@ -9307,6 +9342,7 @@
    ],
    "tests": [
     "frontend/test/results/normalize.test.ts",
+    "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_mapspec_store.py",
     "tests/unit/test_planning_v3_scenarios.py",
@@ -9343,6 +9379,7 @@
     "tests/benchmarks/test_spatial_science_benchmarks.py",
     "tests/science_oracles/test_edge_cases_oracles.py",
     "tests/science_oracles/test_spectral_oracles.py",
+    "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/lib/test_ndwi_naming_parity.py",
     "tests/unit/lib/test_spectral_science_vnext.py",
     "tests/unit/lib/test_tasseled_cap.py"
@@ -9582,6 +9619,7 @@
    ],
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_tool_conformance/test_live_registry_audit.py",
     "tests/unit/test_3d_extrusion_cartography.py"
    ],
    "tier": 2
@@ -9652,6 +9690,7 @@
     "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/gis_harness/representation_binding/test_review_fixes.py",
+    "tests/unit/gis_tool_conformance/test_live_registry_audit.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_cartography.py",
     "tests/unit/test_specialist_carto_auditor.py",
@@ -10382,6 +10421,7 @@
    "tests": [
     "tests/unit/gis/test_algo_conformance_v2.py",
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/test_tool_catalog.py"
    ],
    "tier": 2
@@ -11934,6 +11974,7 @@
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_map_completion.py",
     "tests/unit/gis_harness/test_plan_graph.py",
+    "tests/unit/gis_tool_conformance/test_e2e_poi_scenario.py",
     "tests/unit/test_690_heatmap_guard.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_argument_normalization.py",
@@ -12054,6 +12095,7 @@
     "solar"
    ],
    "tests": [
+    "tests/unit/gis_tool_conformance/test_live_registry_audit.py",
     "tests/unit/lib/test_hydrology_v4.py"
    ],
    "tier": 2
@@ -13694,6 +13736,7 @@
     "点格局"
    ],
    "tests": [
+    "tests/unit/gis_tool_conformance/test_e2e_poi_scenario.py",
     "tests/unit/lib/test_geostat_v3.py",
     "tests/unit/lib/test_nearest_contract.py",
     "tests/unit/test_audit4_gis_fixes.py",
@@ -14562,6 +14605,7 @@
     "tests/unit/gis_harness/test_planner.py",
     "tests/unit/gis_harness/test_procedure_seam_v1.py",
     "tests/unit/gis_harness/test_v2_runner_tiers.py",
+    "tests/unit/gis_tool_conformance/test_e2e_poi_scenario.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_execution_stability_v3.py",
@@ -14808,6 +14852,7 @@
     "差值"
    ],
    "tests": [
+    "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/lib/test_geo_raster_v5.py",
     "tests/unit/test_domain_c_raster.py",
     "tests/unit/test_geocompute_v8_fabric.py",
@@ -14874,6 +14919,7 @@
    ],
    "tests": [
     "frontend/test/results/normalize.test.ts",
+    "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/test_raster_runtime_v3.py",
     "tests/unit/test_raster_tools.py",
     "tests/unit/test_spatial_analyzer_deepening.py"
@@ -15350,7 +15396,7 @@
    "tier": 2
   },
   {
-   "behavior": "mention",
+   "behavior": "dispatch",
    "capabilities": [
     "point_pattern_analysis"
    ],
@@ -15371,6 +15417,7 @@
     "point pattern"
    ],
    "tests": [
+    "tests/unit/gis_tool_conformance/test_ripley_dispatch.py",
     "tests/unit/lib/test_point_pattern_v2.py"
    ],
    "tier": 2
@@ -16885,6 +16932,7 @@
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/test_model_injection.py",
     "tests/unit/gis_harness/test_v2_runner_tiers.py",
+    "tests/unit/gis_tool_conformance/test_ripley_dispatch.py",
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_spatial_stats_tool_evidence.py",
     "tests/unit/test_argument_normalization.py",

@@ -390,6 +390,7 @@ class SpatialAnalyzer:
         features: Any,
         n_steps: int = 10,
         max_distance_ratio: float = 0.25,
+        envelopes: int = 0,
         callback: Optional[Callable] = None,
     ) -> Dict:
         res = to_utm_gdf(features)
@@ -399,7 +400,8 @@ class SpatialAnalyzer:
         gdf, _ = res
         xy = extract_centroids(gdf)
         return _ripley_k(xy, n_steps=n_steps,
-                         max_distance_ratio=max_distance_ratio)
+                         max_distance_ratio=max_distance_ratio,
+                         envelopes=envelopes)
 
     @classmethod
     @spatial_operator(name="Quadrat chi-square")

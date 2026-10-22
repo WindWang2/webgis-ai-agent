@@ -463,7 +463,8 @@ class TestManifestV4:
             k for k in manifest.__dict__
         } or manifest.parameter_contracts
         assert manifest.parameter_contracts.get("kriging_interpolation", {}).get(
-            "version") == 3  # v3 (Foundation V2): +solve_backend/anisotropy/block-CV 等 optional 参数
+            "version") == 4  # v4 (G03): 修剪死参数 matern_smoothness（工具 variogram 枚举
+            # 不含 matern 家族，参数在工具面永远不可达）；v3 = Foundation V2 可选项
         assert "variogram_model" in manifest.parameter_contracts[
             "kriging_interpolation"]["parameters"]
         assert "method" in manifest.parameter_contracts[

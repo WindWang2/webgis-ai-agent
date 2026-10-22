@@ -249,13 +249,17 @@ _SEED_CONTRACTS: List[ParameterContract] = [
             ),
         ],
     ),
-    ParameterContract(
-        # v3（插值域 Foundation V2 · A2）：新增可选参数 matern_smoothness /
-        # anisotropy_angle / anisotropy_ratio / cv_scheme / solve_backend ——
-        # 全部带默认值（默认 = 历史行为，零破坏）；version 提升使指纹反映
-        # 契约面变化。variogram_model 枚举保持生产 3+auto 词表不变（matern/
-        # wave/cubic 为库级 fit_variogram 的显式 opt-in 家族）。
-        id="kriging_interpolation", version=3,
+        ParameterContract(
+            # v3（插值域 Foundation V2 · A2）：新增可选参数 anisotropy_angle /
+            # anisotropy_ratio / cv_scheme / solve_backend —— 全部带默认值
+            # （默认 = 历史行为，零破坏）；version 提升使指纹反映契约面变化。
+            # variogram_model 枚举保持生产 3+auto 词表不变（matern/wave/cubic
+            # 为库级 fit_variogram 的显式 opt-in 家族）。
+            # v4（G03 对账修正）：修剪 matern_smoothness —— 工具的
+            # variogram_model 枚举不含 matern 家族，该参数在工具面永远
+            # 不可达（死参数；库级 Matérn 文档见 variogram 域包契约）。
+            # 契约章程是与工具签名逐位对齐，故移除而非保留。
+            id="kriging_interpolation", version=4,
         description="克里金插值（OK 默认；UK 线性漂移）：经验半变异函数 + 有界 LS 拟合 + k 邻域系统。",
         parameters=[
             ParameterSpec(
@@ -301,11 +305,6 @@ _SEED_CONTRACTS: List[ParameterContract] = [
                     "KED 辅助漂移变量字段名（method=external_drift 时必需；"
                     "目标处漂移经 IDW 近似，approximate 语义披露）"
                 ),
-            ),
-            ParameterSpec(
-                name="matern_smoothness", type="number", default=0.5,
-                minimum=0.1, maximum=5.0, unit="ratio",
-                description="Matérn 平滑度 ν（0.1-5.0，默认 0.5）；仅 matern 模型使用",
             ),
             ParameterSpec(
                 name="anisotropy_angle", type="number", default=0.0,

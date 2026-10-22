@@ -301,3 +301,5 @@ frontend/package-lock.json
 /node_modules
 /frontend/node_modules
 .venv
+# 工具能力 8 面对账 CLI（G03）：测试/CI 引用的入库脚本
+!/scripts/check_tool_capability_conformance.py
