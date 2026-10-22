@@ -741,7 +741,7 @@ async def export_map_as_pdf(
 
 
 @router.get("/export/download/{filename}", tags=["地图制图"])
-def download_map_export(filename: str, _user: dict = Depends(get_current_user_with_version)):
+def download_map_export(filename: str, _user: dict = Depends(get_current_user_with_version)) -> FileResponse:
     """下载生成的专题地图成果（PNG / PDF）— 需验证文件所有权。"""
     safe_filename = os.path.basename(filename)
     filepath = os.path.join(_exports_dir_str(), safe_filename)

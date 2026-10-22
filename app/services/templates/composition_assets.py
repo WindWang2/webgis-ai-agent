@@ -74,7 +74,7 @@ ASSET_REASON_CODES = (
 class CompositionAssetError(Exception):
     """资产生命周期操作非法（reason code 即 message 前缀；路由层映射 4xx）。"""
 
-    def __init__(self, reason: str, detail: str = ""):
+    def __init__(self, reason: str, detail: str = "") -> None:
         self.reason = reason
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
@@ -82,21 +82,21 @@ class CompositionAssetError(Exception):
 class CompositionAssetForbiddenError(CompositionAssetError):
     """调用者无权读写目标资产（跨租户 IDOR 守卫）—— 403。"""
 
-    def __init__(self, detail: str = ""):
+    def __init__(self, detail: str = "") -> None:
         super().__init__("asset_forbidden", detail)
 
 
 class CompositionAssetNotFoundError(CompositionAssetError):
     """资产不存在或不可见（不可见与不存在同返 404 语义）—— 404。"""
 
-    def __init__(self, detail: str = ""):
+    def __init__(self, detail: str = "") -> None:
         super().__init__("asset_not_found", detail)
 
 
 class CompositionAssetConflictError(CompositionAssetError):
     """并发版本创建冲突且重试耗尽 —— 409。"""
 
-    def __init__(self, detail: str = ""):
+    def __init__(self, detail: str = "") -> None:
         super().__init__("asset_conflict", detail)
 
 
@@ -104,7 +104,7 @@ class CompositionAssetConflictError(CompositionAssetError):
 
 
 def _caller_project_ids(db: Any, user_id: Optional[str],
-                        org_id) -> List[str]:
+                        org_id: Any) -> List[str]:
     """调用者可见的项目 id（属主或同 org 项目；有界 64）。"""
     if user_id is None:
         return []
@@ -118,8 +118,9 @@ def _caller_project_ids(db: Any, user_id: Optional[str],
     return [str(r) for r in rows]
 
 
-def asset_scope_clause(user_id: Optional[str], org_id, role: Optional[str],
-                       project_ids: Optional[List[str]] = None):
+def asset_scope_clause(user_id: Optional[str], org_id: Any,
+                       role: Optional[str],
+                       project_ids: Optional[List[str]] = None) -> Any:
     """可见性谓词（None = admin 不限；匿名 = 一律不可见 DB 资产）。
 
     显式 visibility 模型：private → 仅 creator；org → 同 org；
@@ -145,7 +146,7 @@ def asset_scope_clause(user_id: Optional[str], org_id, role: Optional[str],
 
 
 def asset_visible(asset: CompositionTemplateAsset, user_id: Optional[str],
-                  org_id, role: Optional[str] = None,
+                  org_id: Any, role: Optional[str] = None,
                   project_ids: Optional[List[str]] = None) -> bool:
     if role == "admin":
         return True
@@ -172,7 +173,7 @@ def can_write_asset(asset: CompositionTemplateAsset, user_id: Optional[str],
 
 
 def _project_accessible(project: Any, user_id: Optional[str],
-                        org_id) -> bool:
+                        org_id: Any) -> bool:
     """项目归属：属主本人或同 org 成员（org_id 非 None 时）。"""
     if user_id is None:
         return False
@@ -182,7 +183,7 @@ def _project_accessible(project: Any, user_id: Optional[str],
 
 
 def _require_writable(db: Any, asset_id: str, user_id: Optional[str],
-                      org_id=None, role: Optional[str] = None,
+                      org_id: Any = None, role: Optional[str] = None,
                       ) -> CompositionTemplateAsset:
     """404（不可见/不存在）优先于 403（可见不可写）—— 不泄露存在性。"""
     project_ids = _caller_project_ids(db, user_id, org_id)
@@ -193,8 +194,8 @@ def _require_writable(db: Any, asset_id: str, user_id: Optional[str],
     return asset
 
 
-def _get_asset_or_404(db: Any, asset_id: str, user_id: Optional[str], org_id,
-                      role: Optional[str],
+def _get_asset_or_404(db: Any, asset_id: str, user_id: Optional[str],
+                      org_id: Any, role: Optional[str],
                       project_ids: Optional[List[str]] = None,
                       ) -> CompositionTemplateAsset:
     asset = db.get(CompositionTemplateAsset, asset_id)
@@ -286,7 +287,7 @@ def create_asset(
     visibility: str = "private",
     project_id: Optional[str] = None,
     creator_id: Optional[str],
-    org_id=None,
+    org_id: Any = None,
     name: str = "",
     description: str = "",
     publish: bool = False,
@@ -365,7 +366,7 @@ def publish_version(
     revision: Optional[int],
     *,
     user_id: Optional[str],
-    org_id=None,
+    org_id: Any = None,
     role: Optional[str] = None,
 ) -> CompositionTemplateAssetVersion:
     """发布指定版本（写谓词 creator/admin；发布门 fail-closed）。"""
@@ -382,7 +383,7 @@ def new_version(
     payload: TemplateAssetPayload,
     *,
     user_id: Optional[str],
-    org_id=None,
+    org_id: Any = None,
     role: Optional[str] = None,
     publish: bool = False,
 ) -> CompositionTemplateAssetVersion:
@@ -405,7 +406,7 @@ def retire_asset(
     asset_id: str,
     *,
     user_id: Optional[str],
-    org_id=None,
+    org_id: Any = None,
     role: Optional[str] = None,
     note: str = "",
 ) -> CompositionTemplateAsset:
@@ -428,7 +429,7 @@ def restore_revision(
     from_revision: int,
     *,
     user_id: Optional[str],
-    org_id=None,
+    org_id: Any = None,
     role: Optional[str] = None,
     publish: bool = True,
 ) -> CompositionTemplateAssetVersion:
@@ -466,7 +467,8 @@ def _require_version(db: Any, asset_id: str,
 class ResolvedAsset:
     """解析结果（record + 物化模板 + 派生契约；内存对象，不落库）。"""
 
-    def __init__(self, record: TemplateAssetRecord, template, contract):
+    def __init__(self, record: TemplateAssetRecord, template: Any,
+                 contract: Any) -> None:
         self.record = record
         self.template = template
         self.contract = contract
@@ -512,7 +514,7 @@ def resolve_asset_for(
     *,
     mode: str = "for_apply",
     user_id: Optional[str] = None,
-    org_id=None,
+    org_id: Any = None,
     role: Optional[str] = None,
     project_ids: Optional[List[str]] = None,
 ) -> ResolvedAsset:
@@ -603,14 +605,14 @@ def tool_caller_identity() -> Tuple[Optional[str], Any]:
         ctx = get_tool_execution_context()
         if ctx is not None:
             return ctx.user_id, ctx.org_id
-    except Exception:  # noqa: BLE001 — 上下文缺席 → 匿名
-        pass
+    except Exception as exc:  # noqa: BLE001 — 上下文缺席 → 匿名
+        logger.debug("tool execution context unavailable, falling back to anonymous: %s", exc)
     return None, None
 
 
 def resolve_asset(db: Any, asset_id: str, revision: Optional[int] = None,
                   *, mode: str = "for_apply",
-                  user_id: Optional[str] = None, org_id=None,
+                  user_id: Optional[str] = None, org_id: Any = None,
                   role: Optional[str] = None) -> ResolvedAsset:
     """工具面便捷入口（身份默认取 ToolExecutionContext，可显式覆盖）。"""
     if user_id is None:
@@ -627,7 +629,7 @@ def resolve_replay_template(
     revision: Optional[int] = None,
     *,
     user_id: Optional[str] = None,
-    org_id=None,
+    org_id: Any = None,
     role: Optional[str] = None,
 ) -> Optional[Any]:
     """旧图重渲染/导出的显式模板解析（不进全局注册表）。
@@ -651,7 +653,7 @@ def list_assets(
     db: Any,
     *,
     user_id: Optional[str],
-    org_id,
+    org_id: Any,
     role: Optional[str] = None,
     include_retired: bool = False,
     limit: int = MAX_LIST_ASSETS,
@@ -690,8 +692,8 @@ def list_assets(
     return out
 
 
-def list_versions(db: Any, asset_id: str, *, user_id: Optional[str], org_id,
-                  role: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_versions(db: Any, asset_id: str, *, user_id: Optional[str],
+                  org_id: Any, role: Optional[str] = None) -> List[Dict[str, Any]]:
     project_ids = _caller_project_ids(db, user_id, org_id)
     _get_asset_or_404(db, asset_id, user_id, org_id, role, project_ids)
     rows = (

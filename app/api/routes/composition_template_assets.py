@@ -102,7 +102,9 @@ def _builtin_refs() -> list[Dict[str, Any]]:
     return out
 
 
-def _sync_list(user_id, org_id, role, include_retired: bool):
+def _sync_list(user_id: Optional[str], org_id: Any,
+                 role: Optional[str],
+                 include_retired: bool) -> list[Dict[str, Any]]:
     from app.core.database import SessionLocal
     from app.services.templates.composition_assets import list_assets
 
@@ -175,7 +177,9 @@ async def _resolve_payload_or_session(
     return payload
 
 
-def _sync_create(payload, visibility, project_id, user_id, org_id, publish):
+def _sync_create(payload: TemplateAssetPayload, visibility: str,
+                   project_id: str, user_id: Optional[str], org_id: Any,
+                   publish: bool) -> Dict[str, Any]:
     from app.core.database import SessionLocal
     from app.services.templates.composition_assets import create_asset
 
@@ -213,7 +217,8 @@ async def create_composition_template_asset(
     return {"success": True, **result}
 
 
-def _sync_versions(asset_id, user_id, org_id, role):
+def _sync_versions(asset_id: str, user_id: Optional[str], org_id: Any,
+                     role: Optional[str]) -> list[Dict[str, Any]]:
     from app.core.database import SessionLocal
     from app.services.templates.composition_assets import list_versions
 
@@ -253,7 +258,7 @@ async def new_asset_version(
     if body.payload is not None or body.session_id:
         payload = await _resolve_payload_or_session(create_body, user, db)
 
-    def _sync():
+    def _sync() -> Dict[str, Any]:
         from app.core.database import SessionLocal
         from app.services.templates.composition_assets import new_version
 
@@ -290,7 +295,7 @@ async def publish_asset_version(
 ) -> dict:
     user_id, org_id, role = _actor(user)
 
-    def _sync():
+    def _sync() -> Dict[str, Any]:
         from app.core.database import SessionLocal
         from app.services.templates.composition_assets import publish_version
 
@@ -318,7 +323,7 @@ async def retire_asset_route(
 ) -> dict:
     user_id, org_id, role = _actor(user)
 
-    def _sync():
+    def _sync() -> Dict[str, Any]:
         from app.core.database import SessionLocal
         from app.services.templates.composition_assets import retire_asset
 
@@ -346,7 +351,7 @@ async def restore_asset_revision(
 ) -> dict:
     user_id, org_id, role = _actor(user)
 
-    def _sync():
+    def _sync() -> Dict[str, Any]:
         from app.core.database import SessionLocal
         from app.services.templates.composition_assets import restore_revision
 
