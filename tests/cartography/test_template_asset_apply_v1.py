@@ -42,6 +42,20 @@ FAMILY_NAMES = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _registry_pristine():
+    """进程级组合注册表隔离：builtin 资产 upsert 会留在全局单例，
+    不重置会污染其他文件的模板计数断言（review P2-3）。"""
+    from app.lib.cartography.composition_templates import (
+        get_composition_template_registry,
+        reset_composition_template_registry,
+    )
+    reset_composition_template_registry()
+    get_composition_template_registry()
+    yield
+    reset_composition_template_registry()
+
+
 @pytest.fixture
 def registry():
     r = ToolRegistry()
@@ -327,9 +341,9 @@ async def test_corrupt_identity_block_tolerated(registry, clean_session):
         components=spec["layout"]["components"],
         origin="user", actor="corrupt")
     reloaded = await mapspec_store.get_mapspec(clean_session)
-    # read_composition_identity 宽容处理（值被规范化或 None，不崩）
-    assert read_composition_identity(reloaded) is None or isinstance(
-        read_composition_identity(reloaded).template_id, str)
+    # 宽容读：坏类型 template_id → None（不抛、不阻塞会话读路径）
+    ident = read_composition_identity(reloaded)
+    assert ident is None or isinstance(ident.template_id, str)
 
 
 @pytest.mark.asyncio
@@ -388,7 +402,9 @@ def test_family_templates_satisfy_required_slots_after_apply():
         tpl = materialize_template(rec)
         from app.lib.cartography.template_assets import derive_contract
         contract = derive_contract(rec, tpl)
-        new_spec, report = apply_contract(_minimal_spec(), contract)
+        # 与工具链同口径：显式传物化模板（不依赖注册表现值）
+        new_spec, report = apply_contract(
+            _minimal_spec(), contract, template=tpl)
         present = {c["type"] for c in new_spec["layout"]["components"]}
         for slot in tpl.component_slots:
             if slot.cardinality == "required":

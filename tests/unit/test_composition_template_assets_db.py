@@ -355,3 +355,87 @@ def test_fingerprint_recompute_matches_stored(db):
         db, asset.id, user_id="u1", org_id=None)[0]
     resolved = svc.resolve_asset_for(db, asset.id, user_id="u1")
     assert asset_fingerprint(resolved.record) == version["fingerprint"]
+
+
+# ── review 修复回归（P1-2 / P2-1 / P2-2 / P2-3）──────────────────────────
+
+
+def test_derive_payload_preserves_all_edits_after_real_apply():
+    """review P1-2：真实 apply 后派生必须覆盖全部组件（实例 id ≠ 槽位 id）。"""
+    from app.lib.cartography.composition_contract import (
+        SEED_CONTRACTS,
+        apply_contract,
+    )
+
+    seed = next(c for c in SEED_CONTRACTS
+                if c.contract_id == "contract.core.basic_thematic")
+    spec, _report = apply_contract({"version": "1.6", "layout": {}}, seed)
+    payload = svc.derive_payload_from_spec(spec)
+    assert payload.base_template_id == "composition.standard_analysis"
+    assert payload.inline_template is None
+    # apply 物化的每个组件都必须在 overrides 或「与 base 无差异」集中
+    # —— 统计面板/图例/指北针/比例尺/归属等实例 id（legend-main 等）必须
+    # 解析回 base 槽位，不允许静默丢弃。
+    from app.lib.cartography.composition_templates import (
+        get_composition_template_registry,
+    )
+    base = get_composition_template_registry().get("composition.standard_analysis")
+    base_slots = {s.id: s.model_dump() for s in base.component_slots}
+    # 关键：派生 slot id 集合必须 ⊆ base 槽位集合（解析回槽位，不是实例 id）
+    for slot_id in payload.slot_overrides:
+        assert slot_id in base_slots, f"{slot_id} 不是 base 槽位 id"
+    # 每个在场组件类型都至少被一个 base 槽位覆盖
+    present_types = {c["type"] for c in spec["layout"]["components"]}
+    for ctype in present_types:
+        assert any(
+            ctype in s["allowed_component_types"] for s in base_slots.values()
+        ), f"{ctype} 无对应 base 槽位（派生必丢编辑）"
+
+
+def test_derive_payload_falls_back_inline_for_extra_components():
+    """review P1-2：用户新增组件不在基底 → 诚实降级 inline（不吞编辑）。"""
+    from app.lib.cartography.composition_contract import (
+        SEED_CONTRACTS,
+        apply_contract,
+    )
+    seed = next(c for c in SEED_CONTRACTS
+                if c.contract_id == "contract.core.basic_thematic")
+    spec, _ = apply_contract({"version": "1.6", "layout": {}}, seed)
+    spec["layout"]["components"].append({
+        "id": "uncertainty-panel", "type": "uncertainty_panel",
+        "enabled": True, "position": "bottom-left"})
+    payload = svc.derive_payload_from_spec(spec)
+    assert payload.inline_template is not None, "新增组件必须保真（inline）"
+    ids = {s["id"] for s in payload.inline_template["component_slots"]}
+    assert "uncertainty-panel" in ids
+
+
+def test_pinned_draft_revision_apply_rejected(db):
+    """review P2-1：钉版本应用不得绕过发布门（draft 拒绝）。"""
+    bad = _payload(
+        slot_overrides={"chart_panel": {"preferred_templates": ["ghost/x"]}})
+    asset, v1 = svc.create_asset(db, payload=bad, creator_id="u1")
+    assert v1.validation  # draft 且校验未过
+    with pytest.raises(svc.CompositionAssetError) as ei:
+        svc.resolve_asset_for(db, asset.id, 1, user_id="u1")
+    assert ei.value.reason == "asset_version_not_published"
+
+
+def test_project_asset_foreign_project_rejected(db):
+    """review P2-2：project 资产不可挂到无归属关系的外国项目。"""
+    from app.models.project import Project
+    db.add(Project(id="proj-foreign", org_id=99, owner_id="other",
+                   name="Foreign"))
+    db.commit()
+    with pytest.raises(svc.CompositionAssetForbiddenError):
+        svc.create_asset(
+            db, payload=_payload(), creator_id="u1", org_id=1,
+            visibility="project", project_id="proj-foreign")
+    # 同 org 项目可挂
+    db.add(Project(id="proj-same-org", org_id=1, owner_id="colleague",
+                   name="Shared"))
+    db.commit()
+    asset, _ = svc.create_asset(
+        db, payload=_payload(), creator_id="u1", org_id=1,
+        visibility="project", project_id="proj-same-org")
+    assert asset.project_id == "proj-same-org"

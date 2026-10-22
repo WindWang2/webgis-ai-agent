@@ -24,6 +24,20 @@ from app.services.provenance.context import (
 from app.services.templates import composition_assets as svc
 
 
+@pytest.fixture(autouse=True)
+def _registry_pristine():
+    """进程级组合注册表隔离：builtin 资产 upsert 会留在全局单例，
+    不重置会污染其他文件的模板计数断言（review P2-3）。"""
+    from app.lib.cartography.composition_templates import (
+        get_composition_template_registry,
+        reset_composition_template_registry,
+    )
+    reset_composition_template_registry()
+    get_composition_template_registry()
+    yield
+    reset_composition_template_registry()
+
+
 @pytest.fixture
 def registry():
     r = ToolRegistry()
@@ -33,9 +47,20 @@ def registry():
 
 
 @pytest.fixture
-async def clean_session():
+async def clean_session(db_assets):
+    """会话 + Conversation 主行（save 工具的属主守卫要求行存在且归属 u1）。"""
     sid = f"g04-ta-{uuid.uuid4().hex[:8]}"
     await session_data_manager.clear_session(sid)
+    # 主行走 async 隔离库（工具属主守卫 verify_session_owner 读同一库）
+    from app.core.database import get_async_db
+    from app.models.db_model import Conversation
+    _gen = get_async_db()
+    _adb = await _gen.__anext__()
+    try:
+        _adb.add(Conversation(id=sid, user_id="u1", title="g04-ta"))
+        await _adb.commit()
+    finally:
+        await _gen.aclose()
     yield sid
     await session_data_manager.clear_session(sid)
     session_dir = BASE_STORAGE_DIR / sid
@@ -208,7 +233,7 @@ async def test_apply_unknown_asset_not_found(registry, clean_session,
 
 
 @pytest.mark.asyncio
-async def test_apply_asset_other_user_403(registry, clean_session, db_assets,
+async def test_apply_asset_other_user_not_found(registry, clean_session, db_assets,
                                           caller):
     """跨用户私有资产 → asset_not_found（不泄露存在性）。"""
     session = db_assets

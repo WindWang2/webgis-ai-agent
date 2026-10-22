@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -796,6 +797,25 @@ def register_composition_tools(registry: ToolRegistry) -> None:
         if not session_id:
             return {"success": False, "reason_codes": ["missing_session"],
                     "message": "Missing session_id"}
+        # 会话属主守卫（与 REST 双胞胎对齐）：session_id 是调用方声称值，
+        # 读取其版面派生资产前必须过所有权校验（匿名会话 token 见
+        # verify_session_owner 的 owner_token 通道）。
+        user_id, org_id = tool_caller_identity()
+        from app.services.auth_history_bridge import verify_session_owner
+
+        from app.core.database import get_async_db
+        db_gen = get_async_db()
+        db = await db_gen.__anext__()
+        try:
+            await verify_session_owner(db, session_id, user_id=user_id)
+        except HTTPException:
+            return {
+                "success": False,
+                "reason_codes": ["missing_session"],
+                "message": "Session not found or not owned by caller",
+            }
+        finally:
+            await db_gen.aclose()
         spec = await _spec_of(session_id)
         layout = spec.get("layout") if isinstance(spec, dict) else None
         components = (

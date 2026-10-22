@@ -171,6 +171,16 @@ def can_write_asset(asset: CompositionTemplateAsset, user_id: Optional[str],
         and str(asset.creator_id) == str(user_id)
 
 
+def _project_accessible(project: Any, user_id: Optional[str],
+                        org_id) -> bool:
+    """项目归属：属主本人或同 org 成员（org_id 非 None 时）。"""
+    if user_id is None:
+        return False
+    if project.owner_id is not None and str(project.owner_id) == str(user_id):
+        return True
+    return org_id is not None and project.org_id == org_id
+
+
 def _require_writable(db: Any, asset_id: str, user_id: Optional[str],
                       org_id=None, role: Optional[str] = None,
                       ) -> CompositionTemplateAsset:
@@ -289,9 +299,15 @@ def create_asset(
             raise CompositionAssetError(
                 "asset_invalid_visibility", "project requires project_id")
         from app.models.project import Project
-        if db.get(Project, project_id) is None:
+        project = db.get(Project, project_id)
+        if project is None:
             raise CompositionAssetError(
                 "asset_invalid_visibility", f"project {project_id} not found")
+        # 项目归属校验：creator 必须是项目属主或同 org（防止把资产挂到
+        # 外国项目造成跨租户披露）。
+        if not _project_accessible(project, creator_id, org_id):
+            raise CompositionAssetForbiddenError(
+                f"project {project_id} not accessible to creator")
     elif project_id:
         raise CompositionAssetError(
             "asset_invalid_visibility",
@@ -502,10 +518,12 @@ def resolve_asset_for(
 ) -> ResolvedAsset:
     """资产解析（builtin 代码资产优先；DB 资产过可见性）。
 
-    - ``for_apply``（新应用）：DB 资产须 asset.status=published 且目标版本
-      status=published；revision=None → current_revision。
-    - ``for_replay``（钉版本重放，旧图打开/导出）：版本行存在即放行（含
-      retired/draft——只读重放，status 如实披露）。
+    - ``for_apply``（新应用；含显式钉版本）：DB 资产须 asset.status=
+      published 且目标版本 status=published；revision=None →
+      current_revision。**draft 永不可应用**（发布门是准入闸，钉版本
+      不绕过 —— 否则 org/project 成员可把同事未过校验的草稿写进自己图）。
+    - ``for_replay``（旧图打开/导出重放）：版本须 published 或 retired
+      （曾发布过、只读重放）；draft 拒绝（未过发布门的载荷不进渲染）。
 
     注册表纪律：只有 builtin（公共命名空间）资产 upsert 进组合注册表；
     DB 资产不全局注册（防跨租户元数据泄漏），apply/导出走本函数返回的
@@ -541,6 +559,11 @@ def resolve_asset_for(
             raise CompositionAssetError(
                 "asset_version_not_published",
                 f"{asset_id[:48]}@r{revision}:{version.status}")
+    elif version.status == "draft":
+        # 重放面也拒绝 draft：未过发布门的载荷不渲染（只读不降低准入）
+        raise CompositionAssetError(
+            "asset_version_not_published",
+            f"{asset_id[:48]}@r{revision}:draft")
     try:
         tpl = materialize_template(record)
     except TemplateAssetError as exc:
@@ -735,7 +758,10 @@ def derive_payload_from_spec(spec: Dict[str, Any]) -> TemplateAssetPayload:
         ctype = str(comp.get("type") or "")
         if not ctype:
             continue
-        slot_id = str(comp.get("id") or ctype)[:32]
+        # 派生 slot id 优先解析到 base 槽位（实例 id 与槽位 id 不同名：
+        # 实例 id 走 INSTANCE_ID_BY_TYPE 约定如 legend→legend-main）。
+        # 解析不到 → 用组件自身 slot 身份（组件 id/类型）承载。
+        slot_id = _resolve_slot_id(comp, base, ctype)
         if slot_id in seen_slot_ids:
             continue
         seen_slot_ids.add(slot_id)
@@ -760,9 +786,13 @@ def derive_payload_from_spec(spec: Dict[str, Any]) -> TemplateAssetPayload:
     if base is not None:
         base_slots = {s.id: s.model_dump() for s in base.component_slots}
         overrides: Dict[str, Dict[str, Any]] = {}
+        unresolved = 0
         for slot in derived_slots:
             base_slot = base_slots.get(slot["id"])
             if base_slot is None:
+                # 用户新增的组件不在基底槽位表中：无法用差异覆写表达，
+                # 计入 unresolved → 走 inline（保真，不做半份变体）。
+                unresolved += 1
                 continue
             diff = {
                 k: v for k, v in slot.items()
@@ -770,6 +800,9 @@ def derive_payload_from_spec(spec: Dict[str, Any]) -> TemplateAssetPayload:
             }
             if diff:
                 overrides[slot["id"]] = diff
+        if unresolved:
+            # 诚实降级：不能把新增组件吞掉（重放必须复原用户结构）
+            return _inline_payload_from_slots(derived_slots)
         return TemplateAssetPayload(
             base_template_id=base.id,
             slot_overrides=overrides,
@@ -778,6 +811,25 @@ def derive_payload_from_spec(spec: Dict[str, Any]) -> TemplateAssetPayload:
             tags=["saved-from-session"],
         )
 
+    return _inline_payload_from_slots(derived_slots)
+
+
+def _resolve_slot_id(comp: Dict[str, Any], base: Any, ctype: str) -> str:
+    """组件实例 → 基底模板槽位 id（类型匹配首个允许该类型的槽位）。
+
+    匹配不到的实例 → 自身 id（承载用户新增组件；上层 unresolved 逻辑
+    决定是否降级 inline）。不猜：多槽位同型时取**声明序首个**（与
+    apply_contract 的「allowed_component_types 顺序即偏好序」同口径）。
+    """
+    if base is not None:
+        for slot in base.component_slots:
+            if ctype in (slot.allowed_component_types or []):
+                return slot.id
+    return str(comp.get("id") or ctype)[:32]
+
+
+def _inline_payload_from_slots(
+        derived_slots: List[Dict[str, Any]]) -> TemplateAssetPayload:
     return TemplateAssetPayload(
         inline_template={
             "id": "asset.saved_from_session",

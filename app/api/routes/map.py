@@ -383,9 +383,12 @@ async def upload_map_export(
                     (_identity or {}).get("asset_id") or "") \
                     if isinstance(_identity, dict) else ""
                 if _asset_id:
+                    from app.core.auth import actor_ids as _actor_ids
                     from app.services.templates.composition_assets import (
                         resolve_replay_template,
                     )
+                    _uid, _org = _actor_ids(_user)
+                    _role = _user.get("role") if isinstance(_user, dict) else None
 
                     def _resolve_asset_template():
                         from app.core.database import SessionLocal
@@ -396,8 +399,7 @@ async def upload_map_export(
                                 db_sync, _asset_id,
                                 (_identity or {}).get("asset_revision")
                                 or None,
-                                user_id=_user.get("user_id") or None
-                                if isinstance(_user, dict) else None)
+                                user_id=_uid, org_id=_org, role=_role)
                         finally:
                             db_sync.close()
 
