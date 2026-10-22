@@ -21,6 +21,14 @@ from app.services.dataset_semantics.builder import (
     derive_descriptor_from_v3,
     descriptor_payload_bytes,
 )
+from app.services.dataset_semantics.preflight import (
+    MAX_PREFLIGHT_DATASETS,
+    PREFLIGHT_CHECKS,
+    PreflightGap,
+    PreflightReport,
+    TypedAlternative,
+    preflight_multi_dataset,
+)
 from app.services.dataset_semantics.projections import (
     descriptor_resolver_profile,
     descriptor_semantic_view,
@@ -41,11 +49,27 @@ from app.services.dataset_semantics.provenance import (
 from app.services.dataset_semantics.qualification_bridge import (
     descriptor_evidence,
     primary_session_descriptor,
+    recorded_fingerprints,
+    session_role_binding,
 )
 from app.services.dataset_semantics.reuse import (
     ReuseDecision,
     evaluate_reuse,
     evaluate_reuse_with_history,
+)
+from app.services.dataset_semantics.role_binding import (
+    MAX_BINDING_CANDIDATES,
+    MAX_ROLE_BINDING_REFS,
+    REF_READ_STATUSES,
+    ROLE_BINDING_STATUSES,
+    RefSemanticRecord,
+    RoleBinding,
+    RoleBindingReport,
+    RoleCandidate,
+    bind_session_roles,
+    collect_session_evidence,
+    primary_binding,
+    role_qualification_evidence,
 )
 from app.services.dataset_semantics.store import (
     DatasetSemanticStore,
@@ -73,6 +97,26 @@ __all__ = [
     "descriptor_to_measurement_profile",
     "descriptor_evidence",
     "primary_session_descriptor",
+    "recorded_fingerprints",
+    "session_role_binding",
+    "ROLE_BINDING_STATUSES",
+    "REF_READ_STATUSES",
+    "MAX_ROLE_BINDING_REFS",
+    "MAX_BINDING_CANDIDATES",
+    "RefSemanticRecord",
+    "RoleBinding",
+    "RoleBindingReport",
+    "RoleCandidate",
+    "bind_session_roles",
+    "collect_session_evidence",
+    "primary_binding",
+    "role_qualification_evidence",
+    "PREFLIGHT_CHECKS",
+    "MAX_PREFLIGHT_DATASETS",
+    "PreflightGap",
+    "PreflightReport",
+    "TypedAlternative",
+    "preflight_multi_dataset",
     "TransformationRecord",
     "lineage_for_ref",
     "lineage_provenance_mint",

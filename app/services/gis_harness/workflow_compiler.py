@@ -143,6 +143,7 @@ def compile_workflow(
     min_points_default: int = 10,
     descriptor: Optional[Any] = None,
     expected_descriptor_fingerprint: str = "",
+    role_evidence: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> WorkflowCompilation:
     """把 query/intent 确定性编译为 WorkflowCompilation（15 阶段）。
 
@@ -156,6 +157,12 @@ def compile_workflow(
     fingerprint``（记录面/MapSpec 当时引用的指纹）与当前指纹不符 →
     DESCRIPTOR_STALE_* 诚实降级（freshness guard，ADR-0215 D6）。
     编译仍是纯函数：descriptor/expected 是显式输入，缺省 = 与基线同输出。
+
+    G01/WP-B：``role_evidence``（``{role → {descriptor,
+    expected_descriptor_fingerprint}}``，role_binding 的
+    role_qualification_evidence 产物形状）在场时，命中角色用**自己的**
+    数据集事实裁决资格（多数据 session 的第二数据集事实可达）；
+    条目缺席的角色回退全局 descriptor（行为与基线一致）。
     """
     from app.services.gis_harness.intent import merge_intent_hints
     from app.services.gis_harness.planner import MapProductPlanner
@@ -280,6 +287,7 @@ def compile_workflow(
                 crs_projection_obligation=crs_obligation,
                 descriptor=descriptor,
                 expected_descriptor_fingerprint=expected_descriptor_fingerprint,
+                role_evidence=role_evidence,
             )
         role_states = {q.role: q.state for q in quals}
         record = _stage_record(
