@@ -35,6 +35,7 @@ import zhOnboarding from '@/messages/zh-CN/onboarding.json'
 import zhHud from '@/messages/zh-CN/hud.json'
 import zhTable from '@/messages/zh-CN/table.json'
 import zhModelops from '@/messages/zh-CN/modelops.json'
+import zhCompositionAssets from '@/messages/zh-CN/compositionAssets.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
@@ -63,6 +64,7 @@ import enOnboarding from '@/messages/en-US/onboarding.json'
 import enHud from '@/messages/en-US/hud.json'
 import enTable from '@/messages/en-US/table.json'
 import enModelops from '@/messages/en-US/modelops.json'
+import enCompositionAssets from '@/messages/en-US/compositionAssets.json'
 import enMarket from '@/messages/en-US/market.json'
 import type { AppLocale } from './config'
 
@@ -95,6 +97,7 @@ export interface AppMessages {
   table: typeof zhTable
   modelops: typeof zhModelops
   market: typeof zhMarket
+  compositionAssets: typeof zhCompositionAssets
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -108,6 +111,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     sidebar: zhSidebar,
     map: zhMap,
     drawers: zhDrawers,
+    compositionAssets: zhCompositionAssets,
     story: zhStory,
     geoai: zhGeoai,
     commands: zhCommands,
@@ -139,6 +143,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     sidebar: enSidebar as unknown as AppMessages['sidebar'],
     map: enMap as unknown as AppMessages['map'],
     drawers: enDrawers as unknown as AppMessages['drawers'],
+    compositionAssets: enCompositionAssets as unknown as AppMessages['compositionAssets'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],
     commands: enCommands as unknown as AppMessages['commands'],
