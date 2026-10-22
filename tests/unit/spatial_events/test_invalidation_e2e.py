@@ -59,6 +59,7 @@ def wf_env():
     # 直接落包行（typed_dag 与生产一致的最小形态）
     from app.models.db_model import WorkflowPackageRow
     from datetime import datetime as _dt
+    from datetime import timezone as _tz
 
     with factory() as db:
         db.add(WorkflowPackageRow(
@@ -75,7 +76,7 @@ def wf_env():
             status="published",
             owner_scope="u:a",
             org_id="org-a",
-            created_at=_dt.utcnow(),
+            created_at=_dt.now(_tz.utc).replace(tzinfo=None),
         ))
         db.commit()
     inst = store.create_instance(

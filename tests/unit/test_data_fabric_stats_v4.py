@@ -77,7 +77,7 @@ class TestDurableStatisticsStore:
 
     def test_expired_row_is_rejected(self, stats_db):
         # DB 比较用 naive-UTC（repo 约定）：expires_at 拨到「UTC 过去」。
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         store = DurableStatisticsStore(ttl_s=3600)
         store.save(DatasetStatistics(dataset_fingerprint="fp-b", row_count=7))
@@ -86,7 +86,8 @@ class TestDurableStatisticsStore:
 
             row = db.query(DatasetStatisticsRecord).order_by(
                 DatasetStatisticsRecord.id.desc()).first()
-            row.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            row.expires_at = datetime.now(timezone.utc).replace(
+                tzinfo=None) - timedelta(seconds=1)
             db.commit()
         assert store.load("fp-b") is None
 
@@ -114,7 +115,7 @@ class TestDurableStatisticsStore:
         assert store.prune() == 0
 
     def test_prune_removes_expired_and_caps_retention(self, stats_db):
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         store = DurableStatisticsStore(ttl_s=3600, max_rows=5)
         for i in range(8):
@@ -124,7 +125,8 @@ class TestDurableStatisticsStore:
 
             row = db.query(DatasetStatisticsRecord).order_by(
                 DatasetStatisticsRecord.id.desc()).first()
-            row.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            row.expires_at = datetime.now(timezone.utc).replace(
+                tzinfo=None) - timedelta(seconds=1)
             db.commit()
         removed = store.prune()
         assert removed >= 1  # 至少清掉过期行（+ 超上限的旧行）

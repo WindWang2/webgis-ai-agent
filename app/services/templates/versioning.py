@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from app.models.template_version import TemplateVersion
@@ -307,7 +307,7 @@ def deprecate_version(
                 f"template '{template_id}' is not writable by this caller"
             )
     row = get_version(db, template_id, version)
-    row.deprecated_at = datetime.utcnow()
+    row.deprecated_at = datetime.now(timezone.utc)
     row.deprecation_note = str(note or "")[:500]
     db.commit()
     return row

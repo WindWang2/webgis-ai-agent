@@ -108,8 +108,8 @@ def test_worker_sweep_dead_and_revive_requires_register(factory):
         db.execute(
             sa.update(WorkflowWorkerRow)
             .where(WorkflowWorkerRow.worker_id == "w-old")
-            .values(last_heartbeat_at=_dt.datetime.utcnow()
-                    - _dt.timedelta(seconds=120))
+            .values(last_heartbeat_at=_dt.datetime.now(_dt.timezone.utc)
+                    .replace(tzinfo=None) - _dt.timedelta(seconds=120))
         )
         db.commit()
     swept = reg.sweep_dead(ttl_s=90.0)
@@ -258,7 +258,8 @@ def test_remote_worker_death_no_permanent_zombie(factory):
     from app.models.db_model import WorkflowInstanceRow
 
     with factory() as db:
-        past = _dt.datetime.utcnow() - _dt.timedelta(seconds=1)
+        past = _dt.datetime.now(_dt.timezone.utc).replace(
+            tzinfo=None) - _dt.timedelta(seconds=1)
         db.execute(sa.update(WorkflowInstanceNodeRow)
                    .where(WorkflowInstanceNodeRow.instance_id == iid)
                    .values(lease_expires_at=past))

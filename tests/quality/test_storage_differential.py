@@ -23,7 +23,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -64,7 +64,8 @@ CHILD = Table(
     Column("flag", Boolean(), nullable=True),
     Column("payload", Text(), nullable=True),
     Column("rank_value", Integer(), nullable=True),
-    Column("created_at", DateTime(), nullable=True, default=datetime.utcnow),
+    Column("created_at", DateTime(), nullable=True,
+           default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)),
 )
 
 

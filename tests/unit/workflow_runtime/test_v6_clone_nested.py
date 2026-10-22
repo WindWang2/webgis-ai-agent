@@ -216,7 +216,9 @@ def test_retry_failed_nodes_within_budget(factory):
                           reason="EXEC_FAIL:NODE_TIMEOUT",
                           patch={"attempts_increment": True})
     store.update_instance(iid, fields={"status": C.InstanceStatus.FAILED,
-                                       "terminal_at": _dt.datetime.utcnow()})
+                                       "terminal_at": _dt.datetime.now(
+                                           _dt.timezone.utc).replace(
+                                               tzinfo=None)})
     result = asyncio.run(rig.svc.retry_failed_nodes(iid,
                                                     owner_scope="u:abc"))
     assert result["requeued"] == ["transform:buffer:subject"]

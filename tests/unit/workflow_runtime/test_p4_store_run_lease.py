@@ -89,7 +89,8 @@ def test_expired_lease_is_preemptible(store) -> None:
         db.execute(
             sa.update(WorkflowInstanceRow)
             .where(WorkflowInstanceRow.instance_id == iid)
-            .values(run_lease_expires_at=_dt.datetime.utcnow() - _dt.timedelta(seconds=1))
+            .values(run_lease_expires_at=_dt.datetime.now(_dt.timezone.utc)
+                    .replace(tzinfo=None) - _dt.timedelta(seconds=1))
         )
         db.commit()
     assert _acquire(store, iid, "rt-next") is True

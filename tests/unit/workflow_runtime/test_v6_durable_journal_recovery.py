@@ -66,7 +66,8 @@ def _backdate(store, iid: str, node_id: str, seconds: float = 1.0,
             sa.update(WorkflowInstanceNodeRow)
             .where(WorkflowInstanceNodeRow.instance_id == iid,
                    WorkflowInstanceNodeRow.node_id == node_id)
-            .values(**{field: _dt.datetime.utcnow()
+            .values(**{field: _dt.datetime.now(_dt.timezone.utc)
+                       .replace(tzinfo=None)
                        - _dt.timedelta(seconds=seconds)})
         )
         db.commit()
@@ -85,8 +86,8 @@ def _expire_run_lease(store, iid: str, token: str = "rt-dead") -> None:
         db.execute(
             sa.update(WorkflowInstanceRow)
             .where(WorkflowInstanceRow.instance_id == iid)
-            .values(run_lease_expires_at=_dt.datetime.utcnow()
-                    - _dt.timedelta(seconds=1))
+            .values(run_lease_expires_at=_dt.datetime.now(_dt.timezone.utc)
+                    .replace(tzinfo=None) - _dt.timedelta(seconds=1))
         )
         db.commit()
 

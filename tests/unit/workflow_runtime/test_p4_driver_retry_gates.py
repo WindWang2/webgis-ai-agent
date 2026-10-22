@@ -49,8 +49,8 @@ def _gate(store, iid: str, node_id: str, seconds: float) -> None:
             sa.update(WorkflowInstanceNodeRow)
             .where(WorkflowInstanceNodeRow.instance_id == iid,
                    WorkflowInstanceNodeRow.node_id == node_id)
-            .values(next_ready_at=_dt.datetime.utcnow()
-                    + _dt.timedelta(seconds=seconds))
+            .values(next_ready_at=_dt.datetime.now(_dt.timezone.utc)
+                    .replace(tzinfo=None) + _dt.timedelta(seconds=seconds))
         )
         db.commit()
 
