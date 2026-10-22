@@ -361,7 +361,7 @@
     "app/services/data_fabric/query/federation.py": 2380,
     "app/services/geocompute/executor.py": 2393,
     "app/services/gis_harness/planner.py": 2189,
-    "app/services/gis_harness/tools.py": 2281,
+    "app/services/gis_harness/tools.py": 2295,
     "app/services/modelops/engine.py": 2319,
     "app/tools/advanced_spatial.py": 2842,
     "app/tools/registry.py": 2101,
@@ -1012,6 +1012,6 @@
     "scripts/situation_inspect.py": 1,
     "scripts/symbology_audit.py": 1
   },
-  "unannotated_defs_pct": 10.86,
-  "dict_str_any": 7053
+  "unannotated_defs_pct": 10.81,
+  "dict_str_any": 7086
 }

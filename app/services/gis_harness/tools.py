@@ -243,12 +243,26 @@ def _product_composition_identity(
             and str(existing.get("contract_id") or "")
         ):
             return None
+        # G04：资产模板（builtin；DB 资产不进全局注册表）→ 强版本引用
+        # （id+revision），取代弱 schema_version 语义。
+        asset_id = ""
+        asset_revision = 0
+        template_version = str(getattr(tpl, "schema_version", 1))
+        if tpl.id.startswith("asset."):
+            registry_ref = get_composition_template_registry()
+            revision = registry_ref.asset_revision_of(tpl.id)
+            if revision is not None:
+                asset_id = tpl.id
+                asset_revision = int(revision)
+                template_version = f"asset-r{asset_revision}"
         identity = CompositionIdentity(
             template_id=tpl.id,
-            template_version=str(getattr(tpl, "schema_version", 1)),
+            template_version=template_version,
             component_abi_version=COMPONENT_ABI_VERSION,
             component_versions=versions_projection(
                 [str(c.get("type") or "") for c in component_dicts]),
+            asset_id=asset_id,
+            asset_revision=asset_revision,
         )
         return identity.to_bounded_dict()
     except Exception:  # noqa: BLE001 — 身份是增值披露，缺席不阻断组装

@@ -5529,7 +5529,7 @@
   }
  ],
  "behavioral": {
-  "dispatch": 180,
+  "dispatch": 182,
   "mention": 169,
   "none": 8
  },
@@ -8296,7 +8296,7 @@
   "capabilities": 160,
   "findings": 9,
   "recipes": 166,
-  "tools": 357
+  "tools": 359
  },
  "findings": [
   {
@@ -8373,7 +8373,7 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 180,
+  "behavioral_dispatch": 182,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
   "pass": true,
@@ -8381,7 +8381,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "5be61894f6315585de36508ef8645c7f9b63c65b1f254d631edf5029a0f7878a",
+ "fingerprint": "f69327c1d8db07dca9297ddb02df0411ae9c7963c77a61b3bfd96ddae9e3f272",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8421,7 +8421,7 @@
    }
   },
   "pass": true,
-  "total": 357
+  "total": 359
  },
  "manifest_version": 2,
  "recipes": {
@@ -18037,7 +18037,9 @@
     "apply"
    ],
    "tests": [
+    "tests/cartography/test_template_asset_apply_v1.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_composition_asset_tools.py",
     "tests/unit/test_composition_tools_v1.py"
    ],
    "tier": 2
@@ -18432,6 +18434,32 @@
    "capabilities": [
     "thematic_cartography"
    ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_list_composition_template_assets",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "模板",
+    "资产",
+    "组合",
+    "列表",
+    "template-asset"
+   ],
+   "tests": [
+    "tests/unit/test_composition_asset_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "async",
    "latency_class": "medium",
@@ -18714,6 +18742,31 @@
     "tests/harness_replay/test_replay_replayer.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_fail_closed_cartography_review.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": false,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_save_composition_template",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "模板",
+    "资产",
+    "保存",
+    "save-as-my-template"
+   ],
+   "tests": [
+    "tests/unit/test_composition_asset_tools.py"
    ],
    "tier": 2
   },

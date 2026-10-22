@@ -1,0 +1,41 @@
+{
+  "title": "Composition template assets",
+  "action": {
+    "close": "Close",
+    "refresh": "Refresh",
+    "apply": "Apply"
+  },
+  "save": {
+    "mine": "Save as my template",
+    "visibility": "Visibility",
+    "private": "Private",
+    "org": "Org-shared",
+    "project": "Project-shared",
+    "projectId": "Project ID",
+    "projectIdPlaceholder": "Project ID"
+  },
+  "badge": {
+    "builtin": "Built-in"
+  },
+  "section": {
+    "builtin": "Built-in templates",
+    "mine": "My templates"
+  },
+  "detail": {
+    "assetId": "Asset ID",
+    "fingerprint": "Fingerprint",
+    "visibility": "Visibility",
+    "models": "Compatible models"
+  },
+  "notice": {
+    "saved": "Saved: {id}",
+    "saveFailed": "Save failed",
+    "loadFailed": "Load failed",
+    "dbUnavailable": "Custom assets unavailable; showing built-in templates only",
+    "publishGateFailed": "Publish gate failed; asset saved as draft"
+  },
+  "empty": {
+    "title": "No template assets yet",
+    "description": "Apply a composition first, then 'Save as my template' to reuse it"
+  }
+}

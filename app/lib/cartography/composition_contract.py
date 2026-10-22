@@ -29,7 +29,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,9 @@ from app.lib.cartography.component_abi import (
     instance_id_for_type,
     versions_projection,
 )
+
+if TYPE_CHECKING:  # 仅类型；运行时函数级导入防环
+    from app.lib.cartography.composition_templates import MapCompositionTemplate
 
 CONTRACT_SCHEMA_VERSION = 1
 
@@ -121,7 +124,11 @@ class CompositionContractV1(BaseModel):
 
 
 class CompositionIdentity(BaseModel):
-    """layout.composition 身份块（ADR-0214 D3；随 layout 入指纹）。"""
+    """layout.composition 身份块（ADR-0214 D3；随 layout 入指纹）。
+
+    G04 additive：``asset_id`` / ``asset_revision`` —— 组合来源是模板资产时
+    携带强引用（id+revision），否则空/0（旧 spec 逐位不变，兼容读写）。
+    """
 
     template_id: str
     template_version: str
@@ -130,6 +137,8 @@ class CompositionIdentity(BaseModel):
     component_abi_version: int = COMPONENT_ABI_VERSION
     component_versions: Dict[str, str] = Field(default_factory=dict)
     applied_revision: int = 0
+    asset_id: str = ""
+    asset_revision: int = 0
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
@@ -141,6 +150,8 @@ class CompositionIdentity(BaseModel):
             "component_versions": dict(
                 sorted(self.component_versions.items())[:MAX_COMPONENT_VERSIONS]),
             "applied_revision": self.applied_revision,
+            "asset_id": self.asset_id[:_MAX_ID_ATTR],
+            "asset_revision": self.asset_revision,
         }
 
 
@@ -255,6 +266,9 @@ def apply_contract(
     contract: CompositionContractV1,
     *,
     revision: int = 0,
+    template: Optional[MapCompositionTemplate] = None,
+    asset_id: str = "",
+    asset_revision: int = 0,
 ) -> Tuple[Dict[str, Any], ApplyReport]:
     """把契约确定性重放到 MapSpec（纯函数：不改输入，返回新 spec + 报告）。
 
@@ -266,6 +280,12 @@ def apply_contract(
       composer 主链路（本模块只建 primary 单实例并披露）；
     - links：slot → 实例解析后并入 ``component_links``（同端点同型幂等）；
     - 写 ``layout.composition`` 身份块（版本入指纹）。
+
+    G04 additive：``template`` 允许调用方传入**钉版本的物化资产模板**（id 必须
+    等于 ``contract.template_id``）——注册表里是「最新已发布」版本，钉旧
+    revision 重放必须用调用方解析的旧模板，不回退到注册表现值。
+    ``asset_id``/``asset_revision`` 写入身份块（空/0 = 非资产来源，旧调用方
+    零变化）。
     """
     from app.lib.cartography.component_registry import get_component_registry
     from app.lib.cartography.composition_templates import (
@@ -275,7 +295,14 @@ def apply_contract(
         get_component_template_registry,
     )
 
-    tpl = get_composition_template_registry().get(contract.template_id)
+    if template is not None:
+        if template.id != contract.template_id:
+            raise ContractApplyError(
+                "contract_apply_error: template_id_mismatch "
+                f"{template.id[:_MAX_ID_ATTR]}")
+        tpl = template
+    else:
+        tpl = get_composition_template_registry().get(contract.template_id)
     if tpl is None:
         raise ContractApplyError(
             f"contract_apply_error: template_not_found {contract.template_id[:_MAX_ID_ATTR]}")
@@ -444,6 +471,8 @@ def apply_contract(
             [str(c.get("type") or "") for c in components],
             cap=MAX_COMPONENT_VERSIONS),
         applied_revision=int(revision),
+        asset_id=str(asset_id or "")[:_MAX_ID_ATTR],
+        asset_revision=int(asset_revision or 0),
     )
     layout["composition"] = identity.model_dump()
     report.identity = identity
@@ -477,6 +506,8 @@ def read_composition_identity(spec: Dict[str, Any]) -> Optional[CompositionIdent
             component_abi_version=int(raw.get("component_abi_version") or COMPONENT_ABI_VERSION),
             component_versions=versions,
             applied_revision=int(raw.get("applied_revision") or 0),
+            asset_id=str(raw.get("asset_id") or ""),
+            asset_revision=int(raw.get("asset_revision") or 0),
         )
     except Exception:  # 防御性：身份块损坏不阻塞读路径
         return None

@@ -54,6 +54,7 @@ from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 from app.api.routes import data_quality as data_quality_routes
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
+from app.api.routes import composition_template_assets as composition_template_assets_routes
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -1118,6 +1119,7 @@ app.include_router(project_routes.router, prefix="/api/v1", tags=["项目工作�
 app.include_router(data_quality_routes.router, prefix="/api/v1", tags=["数据质量 V9"])
 app.include_router(data_lifecycle_routes.router, prefix="/api/v1", tags=["数据生命周期 V9"])
 app.include_router(template_versions_routes.router, prefix="/api/v1", tags=["地图制图模板 V9（版本化）"])
+app.include_router(composition_template_assets_routes.router, prefix="/api/v1", tags=["组合模板资产（G04）"])
 app.include_router(data_fabric.router, prefix="/api/v1", tags=["Data Fabric / 数据织网"])
 app.include_router(lakehouse_routes.router, prefix="/api/v1", tags=["Lakehouse / 空间数据湖仓"])
 app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["Lakehouse / 数据集版本（V8）"])
