@@ -1013,6 +1013,6 @@
     "scripts/situation_inspect.py": 1,
     "scripts/symbology_audit.py": 1
   },
-  "unannotated_defs_pct": 10.92,
-  "dict_str_any": 7018
+  "unannotated_defs_pct": 10.89,
+  "dict_str_any": 7039
 }
