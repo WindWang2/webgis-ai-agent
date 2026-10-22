@@ -742,21 +742,37 @@ def qualify_workflow_data_roles(
     descriptor: Optional[Any] = None,
     expected_descriptor_fingerprint: str = "",
     recorded_descriptor: Optional[Any] = None,
+    role_evidence: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> List[DataQualification]:
-    """workflow 全部数据角色的资格裁决（compiler qualify_data 阶段）。"""
+    """workflow 全部数据角色的资格裁决（compiler qualify_data 阶段）。
+
+    G01/WP-B：``role_evidence``（``{role → {descriptor,
+    expected_descriptor_fingerprint}}``，role_binding.role_qualification_evidence
+    的产物形状）在场时，**该角色用自己的数据集事实**裁决 —— 多数据
+    session 第二数据集不再被单 profile 假设吞掉。条目缺席的角色回退到
+    全局 ``descriptor``/``expected``（行为与基线一致）。
+    """
     status_by_role = {r.role: r.status for r in role_resolutions or []}
-    return [
-        qualify_data_role(
+    out: List[DataQualification] = []
+    for req in data_roles:
+        entry = (role_evidence or {}).get(req.role) or {}
+        role_descriptor = entry.get("descriptor")
+        role_expected = str(entry.get("expected_descriptor_fingerprint") or "")
+        has_role_entry = (
+            role_descriptor is not None or role_expected != "")
+        out.append(qualify_data_role(
             req, status_by_role.get(req.role, "unresolved"),
-            resolver_profile=resolver_profile,
+            resolver_profile=(
+                None if role_descriptor is not None else resolver_profile),
             crs_projection_obligation=crs_projection_obligation,
             semantic_profile=semantic_profile,
-            descriptor=descriptor,
-            expected_descriptor_fingerprint=expected_descriptor_fingerprint,
+            descriptor=role_descriptor if has_role_entry else descriptor,
+            expected_descriptor_fingerprint=(
+                role_expected if has_role_entry
+                else expected_descriptor_fingerprint),
             recorded_descriptor=recorded_descriptor,
-        )
-        for req in data_roles
-    ]
+        ))
+    return out
 
 
 __all__ = [
