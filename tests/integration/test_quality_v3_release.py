@@ -109,8 +109,12 @@ def test_missing_report_is_not_silent_pass(mod, fast_gates):
 def test_known_gaps_disclose_existing_limitations(mod, fast_gates):
     state, _ = mod.build_state(None, None)
     gap_ids = {g["id"] for g in state["known_gaps"]}
-    assert "adr-duplicate-118" in gap_ids, "存量 ADR 撞号必须披露"
+    # #1679 清偿后 ADR 编号唯一：撞号缺口应清零（曾登记 adr-duplicate-*
+    # 19 条）。此处反向钉住 —— 撞号复活即重新进入 known_gaps 披露面。
+    adr_gaps = {g for g in gap_ids if g.startswith("adr-duplicate-")}
+    assert not adr_gaps, f"ADR 撞号复发：{sorted(adr_gaps)}"
     assert "real-lane-opt-in" in gap_ids
+    assert "browser-e2e" in gap_ids
 
 
 def test_state_is_deterministic_and_serializable(mod, fast_gates):
