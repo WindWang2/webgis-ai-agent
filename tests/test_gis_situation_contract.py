@@ -1,4 +1,4 @@
-"""GISSituation 契约测试（方向 2 S1，ADR-0180）。
+"""GISSituation 契约测试（方向 2 S1，ADR-0252）。
 
 覆盖：SitFact 状态词表与序列化纪律（unknown 无 value）、GISSituation
 严格 schema（extra=forbid）、round-trip 序列化、确定性、契约 schema 导出

@@ -1,4 +1,4 @@
-"""扩展 SDK 公共出口（ADR-0104）。
+"""扩展 SDK 公共出口（ADR-0243）。
 
 import 契约（Round-1 审计 M7 修订）：
 - **允许**：本包（``app.extensions_platform.sdk``）、自身标准库/三方

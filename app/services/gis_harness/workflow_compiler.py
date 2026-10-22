@@ -155,7 +155,7 @@ def compile_workflow(
     ``descriptor``（GISDatasetDescriptor）在场 → 资格裁决消费 descriptor
     投影事实（决策面不再依赖 profile 的二次推导）；``expected_descriptor_
     fingerprint``（记录面/MapSpec 当时引用的指纹）与当前指纹不符 →
-    DESCRIPTOR_STALE_* 诚实降级（freshness guard，ADR-0215 D6）。
+    DESCRIPTOR_STALE_* 诚实降级（freshness guard，ADR-0265 D6）。
     编译仍是纯函数：descriptor/expected 是显式输入，缺省 = 与基线同输出。
 
     G01/WP-B：``role_evidence``（``{role → {descriptor,

@@ -1,4 +1,4 @@
-"""RenderWorkProjection 会话供给（F13，ADR-0214 D2）。
+"""RenderWorkProjection 会话供给（F13，ADR-0261 D2）。
 
 把 :mod:`app.lib.cartography.render_work_projection` 的纯投影接到生产
 会话面上：读会话 MapSpec（desired state 单一真相）+ 当前 CAS 修订

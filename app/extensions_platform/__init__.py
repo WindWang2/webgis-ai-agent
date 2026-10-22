@@ -1,4 +1,4 @@
-"""GIS Extension Platform（ADR-0104）。
+"""GIS Extension Platform（ADR-0243）。
 
 统一、可验证、可版本化、可限制权限的扩展体系：第三方以
 ``GisExtensionManifest`` 声明 + SDK spec 描述扩展，宿主在既有权威

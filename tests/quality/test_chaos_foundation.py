@@ -1,4 +1,4 @@
-"""Chaos 框架自身红线（ADR-0104 Wave 7+8）。
+"""Chaos 框架自身红线（ADR-0245 Wave 7+8）。
 
 锁定 tests/fixtures/chaos.py 的三条平台契约：
 

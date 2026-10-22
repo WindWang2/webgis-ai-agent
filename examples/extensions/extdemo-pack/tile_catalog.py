@@ -1,4 +1,4 @@
-"""ExtDemo 静态瓦片目录 adapter（ADR-0104 Wave 14 示例包）。
+"""ExtDemo 静态瓦片目录 adapter（ADR-0243 Wave 14 示例包）。
 
 给扩展作者演示 ``GeospatialDataSourceAdapter`` ABC 的最小**诚实**实现：
 

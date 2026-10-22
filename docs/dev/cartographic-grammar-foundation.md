@@ -1,7 +1,7 @@
 # Cartographic Grammar & Constraint Solver Foundation — 设计与勘察（方向 4）
 
 状态：本文件随 `feat/cartographic-grammar-solver` 分支交付；ADR 见
-`docs/adr/0204-cartographic-grammar-visual-variables.md`。
+`docs/adr/0205-cartographic-grammar-visual-variables.md`。
 
 ## 0. Recon（2026-09-20，origin/master=5a4d4632）
 
@@ -13,7 +13,7 @@
 | 分布驱动分类裁决 | `visualization_plan.py::choose_classification` | ADR-0073 |
 | 双变量/时序/不确定度/成本提示 | `symbology_v2.py` | ADR-0162 |
 | 标注字段挑选 + 策略编排（C4 基础） | `label_plan.py`（choose_label_field / plan_label_strategy / build_label_spec） | ADR-0154 |
-| 布局槽位求解（碰撞/exclusive/堆叠/page profile） | `layout_solver.py`（solve_layout_v2/v3）+ `layout_constraints.py` | ADR-0101 |
+| 布局槽位求解（碰撞/exclusive/堆叠/page profile） | `layout_solver.py`（solve_layout_v2/v3）+ `layout_constraints.py` | ADR-0238 |
 | 必配组件基线 | `component_composer.required_components_for` | ADR-0156 |
 | zoom 分档（标注密度/符号/terrain/抽稀） | `label_plan.DEFAULT_ZOOM_BANDS`、`scene_lod.LOD_BANDS` | ADR-0154 / ADR-0199 |
 | 事后语义校验（含 `carto.visualvar.overload` Bertin 通道过载） | `semantic_checks.py`（≈50 检查） | ADR-0078 |

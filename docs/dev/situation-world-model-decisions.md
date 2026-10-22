@@ -100,7 +100,7 @@
   随会话生命周期）；不新增 Alembic 表。
 - 理由：会话级状态在会话存储已有成熟 TTL/清理语义；避免迁移面。
 
-## DC-10 ADR-0180；文档落 docs/dev + docs/gis-harness.md 增补
+## DC-10 ADR-0252；文档落 docs/dev + docs/gis-harness.md 增补
 
 - 决策：ADR 编号 0180（0160-0179 已占）；设计细节以
   `docs/dev/situation-world-model-*.md` + ADR 承载；`docs/gis-harness.md`

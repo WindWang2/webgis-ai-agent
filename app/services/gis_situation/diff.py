@@ -1,4 +1,4 @@
-"""Situation delta / invalidation / 快照前进（方向 2 S3，ADR-0180）。
+"""Situation delta / invalidation / 快照前进（方向 2 S3，ADR-0252）。
 
 ``diff_situation(before, after)`` 产出**分组**的稳定变更契约，供
 SessionPlan / ExecutionGraph / Goal evaluator / turn 投影消费：

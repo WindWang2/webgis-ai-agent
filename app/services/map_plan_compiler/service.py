@@ -1,4 +1,4 @@
-"""MapPlanCompilerService —— F12 门面（ADR-0214 D7）。
+"""MapPlanCompilerService —— F12 门面（ADR-0260 D7）。
 
 把 project → check → compile → apply → finalize 串成一个可测、可注入
 的门面；调用方（Pi 工具 / 未来 planner 接线）只面对本门面。任务流程

@@ -1,4 +1,4 @@
-"""Quality Manifest —— 质量清单派生编译器（ADR-0104）。
+"""Quality Manifest —— 质量清单派生编译器（ADR-0245）。
 
 QualityManifest 是**投影**，不是事实源：
 
@@ -10,7 +10,7 @@ QualityManifest 是**投影**，不是事实源：
 - 派生 findings（registered-but-untested、descriptor 富化缺口、
   capability 无生产者、artifact 类型无测试等）；
 - 描述符富化覆盖率闸（ADR-0103 语义；``scripts/check_tool_descriptor_coverage.py``
-  自 ADR-0104 起是本模块的薄壳，历史 import 面 ``GATE_THRESHOLDS`` /
+  自 ADR-0245 起是本模块的薄壳，历史 import 面 ``GATE_THRESHOLDS`` /
   ``collect()`` / ``gate()`` 保持不变）；
 - 内容敏感稳定指纹（canonical JSON，sha256；不含时间戳）。
 
@@ -52,7 +52,7 @@ GATE_FIELDS: Tuple[str, ...] = (
     "capabilities",
 )
 GATE_THRESHOLDS: Dict[str, int] = {
-    # ADR-0118 收紧：Quality V2 收敛后全部字段实测 100%（291 可执行工具）。
+    # ADR-0250 收紧：Quality V2 收敛后全部字段实测 100%（291 可执行工具）。
     # 阈值统一 95%（新工具留 5% 余量），任何批量回退即红；上调需后续 ADR。
     "side_effect": 95,
     "tags": 95,

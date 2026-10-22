@@ -1,6 +1,6 @@
 """Dataset Semantics Context Bridge —— descriptor 指纹进入 context/恢复面。
 
-ADR-0215 D7：context reuse 与 dataset fingerprint 的联动缝。recovery
+ADR-0265 D7：context reuse 与 dataset fingerprint 的联动缝。recovery
 durable facts 的 ``source_fingerprints`` 条目（{ref, fingerprint}）在此
 获得语义维度升级（+descriptor_fingerprint）：
 

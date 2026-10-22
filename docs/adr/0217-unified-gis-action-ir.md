@@ -8,7 +8,7 @@
 
 ## 背景与问题
 
-仓库已有三层意图/计划结构：`MapRequestIntent`（理解，ADR-0150/0215）→ `MapProductPlan`（任务编排）→ `MapPlanIR`（制图表达面，ADR-0214）→ `compile_plan`（最小 MapSpec mutations）。执行入口也已统一（`ToolDispatchService` 单一调度点）。但仍缺**执行语义层**：
+仓库已有三层意图/计划结构：`MapRequestIntent`（理解，ADR-0150/0215）→ `MapProductPlan`（任务编排）→ `MapPlanIR`（制图表达面，ADR-0260）→ `compile_plan`（最小 MapSpec mutations）。执行入口也已统一（`ToolDispatchService` 单一调度点）。但仍缺**执行语义层**：
 
 1. LLM 手工拼工具序列直接进 registry（`webgis_layer_upsert` 等 tier1 直写引擎）——无 typed plan、无 contract validation、无 diff、无补偿语义；
 2. 分析/取数/聚合/导出等行为不在任何 IR 内——不可 diff、不可 replay 到动作粒度；

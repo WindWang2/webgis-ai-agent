@@ -1,4 +1,4 @@
-"""Durable DataObject identity — Spatial Lakehouse V6 (Wave 1, ADR-0118).
+"""Durable DataObject identity — Spatial Lakehouse V6 (Wave 1, ADR-0249).
 
 单一事实源边界：本模块是 lakehouse 数据对象的**身份层**，不是第二个
 store —— 字节真相只有 BlobStore（``durable_blob_store``，唯一内容持久

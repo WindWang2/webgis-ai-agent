@@ -1,7 +1,7 @@
 # OGC / STAC Integration Status
 
 The GIS Extension Platform also hardens the core data fabric's OGC/STAC
-paths (ADR-0104 decisions 9; branch commit "fix(gis-standards): OGC/STAC
+paths (ADR-0243 decisions 9; branch commit "fix(gis-standards): OGC/STAC
 honesty + SSRF gates"). Everything below describes code that **exists** on
 `feat/gis-extension-platform-v1`, pinned by
 `tests/unit/extensions_platform/test_ogc_stac_hardening.py` (21 offline

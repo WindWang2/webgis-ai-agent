@@ -1,4 +1,4 @@
-"""Layout Constraint Solver V2 — 确定性组件布局求解（ADR-0101 D5）.
+"""Layout Constraint Solver V2 — 确定性组件布局求解（ADR-0238 D5）.
 
 把 layout_constraints.py 的「检测」升级为「求解」：多图例、图例+色条、
 面板栈叠、窄视口、A4 版式下的槽位分配与溢出处置。

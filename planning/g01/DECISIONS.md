@@ -2,7 +2,7 @@
 
 | # | 决策 | 理由 | 备选与否决原因 |
 |---|---|---|---|
-| D1 | 角色绑定放 `app/services/dataset_semantics/role_binding.py`（新文件，主责区） | ADR-0215 的服务包即语义权威面；避免碰 workflow_schema（#1758 相邻区外但为 C3 稳定契约，不宜动） | 改 resolve_data_roles 本体：会动 conformance corpus 依赖的稳定契约，风险大收益小 |
+| D1 | 角色绑定放 `app/services/dataset_semantics/role_binding.py`（新文件，主责区） | ADR-0265 的服务包即语义权威面；避免碰 workflow_schema（#1758 相邻区外但为 C3 稳定契约，不宜动） | 改 resolve_data_roles 本体：会动 conformance corpus 依赖的稳定契约，风险大收益小 |
 | D2 | 词表复用 DATA_ROLES（15 值），不新造角色 | 单一事实源；方法级 requires_roles 已依赖该词表 | 新语义角色词表：违反 SSOT |
 | D3 | 绑定状态词表：bound / not_found / ambiguous / stale / partial（+not_authorized 经读取失败码） | 提示要求的五类区分；与 qualify 五态（eligible/…）显式不同层——绑定层管「哪个数据集」，资格层管「数据行不行」，不混用 | 复用 QUALIFICATION_STATES：语义混淆 |
 | D4 | 确定性排序：refs 按 ref_id 字典序排序后再绑 | dict 迭代序跨后端不稳定（内存 vs Redis）；「首个命中」即当前歧义根源 | 声明序：ref 无声明序字段 |

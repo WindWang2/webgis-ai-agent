@@ -1,4 +1,4 @@
-"""Spatial Data Lakehouse & Cube V6 (ADR-0118).
+"""Spatial Data Lakehouse & Cube V6 (ADR-0249).
 
 组合层（composition layer）：本包**不是**第二个 registry/store —— 字节
 真相只有 ``durable_blob_store.BlobStore`` 一份，会话台账归

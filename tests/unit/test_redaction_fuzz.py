@@ -1,4 +1,4 @@
-"""app.lib.redaction 中立模块契约（ADR-0214 D1，WP8）。
+"""app.lib.redaction 中立模块契约（ADR-0262 D1，WP8）。
 
 fuzz / negative 纪律：种子化伪随机载荷（确定性、无 hypothesis 依赖）+
 对抗秘密形态；钉死的不变量：

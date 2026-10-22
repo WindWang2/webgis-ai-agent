@@ -2,7 +2,7 @@
 
 - 状态：Accepted（随本 PR 交付）
 - 日期：2026-10-16
-- 关联：ADR-0180（K9 缓行项，本 ADR 清偿）、ADR-0204-f03（bridge 单结算 seam 与
+- 关联：ADR-0180（K9 缓行项，本 ADR 清偿）、ADR-0259-f03（bridge 单结算 seam 与
   `settle_turn_projections`——本 ADR 的直接前驱）、ADR-0208（canonical turn lifecycle
   / ownership matrix / "不迁移 agent_settled 四连触发" 的显式 Out-of-Scope）、
   ADR-0210（Pi↔Harness 边界与 dispatch 披露管线）、ADR-0079（MapSpec authority）、
@@ -10,7 +10,7 @@
 
 ## Context
 
-F03（ADR-0204-f03）把 Pi stream/non-stream 的 turn 结算收敛到 bridge 单 seam
+F03（ADR-0259-f03）把 Pi stream/non-stream 的 turn 结算收敛到 bridge 单 seam
 `PiBridge._settle_turn_outcome`，效果管线落在 `app/services/chat/pi_post_dispatch.py`
 的 `settle_turn_projections`。清偿后仍残留三块结构债：
 
@@ -118,7 +118,7 @@ P  lifecycle_parity                    parity 快照 + phase_adapter 投影（�
   receipt cache 只是进程内编排幂等（不是第二真相源——「turn 是否已结算」的
   持久真相只在 kernel 台账）。
 - **refusal 降级**仅正规路径（clean 且非 pre_terminated）：判据仍是
-  `turn_refusal_candidate`（ADR-0204-f03 D3）。`pre_terminated`（legacy）的
+  `turn_refusal_candidate`（ADR-0259-f03 D3）。`pre_terminated`（legacy）的
   终态已由锁内 `safe_end_turn` 写定，降级窗口已关闭，不追改（user-wins /
   first-wins 纪律）。
 

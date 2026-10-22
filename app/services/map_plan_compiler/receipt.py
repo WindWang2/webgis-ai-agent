@@ -1,4 +1,4 @@
-"""Compile receipt —— 编译回执与对账（F12 / ADR-0214 D5）。
+"""Compile receipt —— 编译回执与对账（F12 / ADR-0260 D5）。
 
 receipt 是「IR 编译 → mutation 提交 → MapSpec revision」链路的**机械可查
 证据**：内容寻址（同编译同 id）、有界投影（复用 DecisionRecord 纪律）、

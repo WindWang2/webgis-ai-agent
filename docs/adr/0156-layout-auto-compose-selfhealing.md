@@ -2,7 +2,7 @@
 
 - 状态: Accepted（本 PR 落地）
 - 日期: 2026-09-13
-- 关联: ADR-0084（Cartographic Layout Engine）；ADR-0101（Design System V3/V4）；ADR-0118（Rendering V5）；ADR-0126（Rendering V6 Publication Engine）；adaptive-cartography 01/02/03/04/09 线
+- 关联: ADR-0084（Cartographic Layout Engine）；ADR-0238（Design System V3/V4）；ADR-0118（Rendering V5）；ADR-0126（Rendering V6 Publication Engine）；adaptive-cartography 01/02/03/04/09 线
 
 ## Context
 

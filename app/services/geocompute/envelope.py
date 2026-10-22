@@ -19,11 +19,11 @@
 - **fail-open**（与守卫既有姿态一致）：未知形状 / 投影异常 → ``{}``
   （不设约束），绝不因投影层把节点打成失败；
 - **unknown ≠ 约束**：placement 层对 unknown 维不设门槛 —— ``unknown≠0``
-  的保守**记账**是 governor 进程内准入的权威（ADR-0182），放置守卫只在
+  的保守**记账**是 governor 进程内准入的权威（ADR-0254），放置守卫只在
   有意义（known/estimated 且带数值）时拒绝；
 - **开关**：``WEBGIS_PLACEMENT_ENVELOPE_PROJECTION=0`` 关闭 rg.v1 /
   plan-node 投影（``min_*`` 透传不受影响）；默认开启；
-- envelope 只走 task_kwargs，不进幂等键（ADR-0214 D5 既有纪律）。
+- envelope 只走 task_kwargs，不进幂等键（ADR-0264 D5 既有纪律）。
 """
 from __future__ import annotations
 

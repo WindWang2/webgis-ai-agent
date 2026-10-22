@@ -13,7 +13,7 @@
 | 决策日志 | docs/dev/typed-tool-surface-decisions.md | — | D1-D8 |
 | 台账 | docs/dev/typed-tool-surface-ledger.md | — | 本文件 |
 
-## M1 — per-turn 面字节预算 + 披露面（T2 残留 / ADR-0180 D2）
+## M1 — per-turn 面字节预算 + 披露面（T2 残留 / ADR-0253 D2）
 
 | 任务 | 文件 | 测试 | 证据 |
 | --- | --- | --- | --- |
@@ -21,7 +21,7 @@
 | compute_turn_active_tools 集成 + 链发射披露字段 | 同上 | test_pi_surface_budget.py::integration | disclosure 带 surface_budget/budget_dropped |
 | 默认 32KB 依据 | decisions D2 | probe | native7=17,277B、median=528B → 典型 turn 不变 |
 
-## M2 — pre-dispatch strict validation + typed error（T4/T7 / ADR-0180 D3/D4）
+## M2 — pre-dispatch strict validation + typed error（T4/T7 / ADR-0253 D3/D4）
 
 | 任务 | 文件 | 测试 | 证据 |
 | --- | --- | --- | --- |
@@ -30,7 +30,7 @@
 | bridge 接线（dedup/wave 之前）+ SCHEMA_VALIDATION_REJECTED details | app/agent_pi_bridge.py | test_pi_input_gate.py::dispatch_reject_path | issues+retryable 机器可读；不进 tool_failed/harness_failure |
 | pi_surface_metrics 计数接线 | app/services/chat/pi_surface_metrics.py + bridge | test_pi_surface_metrics.py | reject/proxy/direct 计数面 |
 
-## M3 — surface metrics + 回归门（T9 / ADR-0180 D5）
+## M3 — surface metrics + 回归门（T9 / ADR-0253 D5）
 
 | 任务 | 文件 | 测试 | 证据 |
 | --- | --- | --- | --- |
@@ -44,7 +44,7 @@
 | --- | --- | --- | --- |
 | 校验双向 parity（gate 拒⇒registry 拒；gate 漏 ⇒ registry 权威） | — | tests/unit/test_pi_surface_parity.py（6） | 真实 dispatch（session_id=""）对照 |
 | 入口等价（裸名 vs proxy 内名同 (tool,args)）+ tier 双路不可达 + 单一 schema 真相 | — | 同上 | resolve 相等断言 + dump⊆args_model 键面 |
-| ADR-0180 | docs/adr/0180-pi-typed-tool-surface-hardening.md | — | 编号对账：master 最高 0179、无在途占号 |
+| ADR-0253 | docs/adr/0253-pi-typed-tool-surface-hardening.md | — | 编号对账：master 最高 0179、无在途占号 |
 | tool-surface.md V1.5 小节 | docs/agent-runtime/tool-surface.md | — | 与实装一致 |
 
 ## 验收对照（DoD）
@@ -60,7 +60,7 @@
 - [x] master 预存失败基线归因（#1270 记录的 8 failures 为 quality artifact staleness 域，零交集；唯一中途失败为本线契约冲突已修复）
 - [x] 资源使用受控（无全量 build；focused tests 串行；无前端改动故跳过 next build）
 - [x] 独立 review 完成并修复 P0/P1（Subagent B APPROVE-WITH-FIXES：1 P1 + 2 P2 + 4 nit 全部修复，commit a3c90ef5；修复后 gate+parity 20/20、consolidated 111、integration-side 44 全绿）
-- [x] 文档/ADR/ledger/生成物一致（ADR-0180 + tool-surface.md V1.5；无生成物触碰）
+- [x] 文档/ADR/ledger/生成物一致（ADR-0253 + tool-surface.md V1.5；无生成物触碰）
 - [ ] 独立 PR 已创建（未 merge、未 auto-merge）
 
 ## 与并行线的兼容声明

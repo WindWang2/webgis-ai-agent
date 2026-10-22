@@ -1,4 +1,4 @@
-"""F15 user-approved visual repair 端点回归（ADR-0214 决策四）。
+"""F15 user-approved visual repair 端点回归（ADR-0263 决策四）。
 
 不变式：
 1. plan 零突变（revision 不动）；闭包 ⊆ healer 四类呈现面微变异；

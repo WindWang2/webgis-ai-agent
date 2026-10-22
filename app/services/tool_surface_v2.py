@@ -1,4 +1,4 @@
-"""统一模型可见工具面投影（ADR-0101 Wave 3, §12-14）。
+"""统一模型可见工具面投影（ADR-0237 Wave 3, §12-14）。
 
 ToolSurface V2 是**投影**，不是第二个注册中心（不变式 #3）：唯一输入是
 ToolRegistry 真相（descriptor + schema）与既有 ToolCatalog 选择语义

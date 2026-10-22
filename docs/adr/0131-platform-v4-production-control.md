@@ -2,7 +2,7 @@
 
 日期：2026-09-11
 状态：Proposed（随 feat/platform-v4-production-control 分支交付）
-前置：ADR-0104/0105/0128（扩展平台 V1–V3）、ADR-0118（Quality/Reliability/Security V2）、Quality V3（无独立 ADR，落 docs/quality/）、ADR-0046（性能回归 harness）
+前置：ADR-0243/0105/0128（扩展平台 V1–V3）、ADR-0250（Quality/Reliability/Security V2）、Quality V3（无独立 ADR，落 docs/quality/）、ADR-0046（性能回归 harness）
 
 ## 背景
 

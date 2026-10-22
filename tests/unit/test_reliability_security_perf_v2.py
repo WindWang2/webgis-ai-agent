@@ -1,4 +1,4 @@
-"""ADR-0101 Wave 9: 可靠性语料 + 安全强化 + 大注册表性能。
+"""ADR-0237 Wave 9: 可靠性语料 + 安全强化 + 大注册表性能。
 
 - 语料执行：app/evaluation/reliability_corpus.py 的 19 类场景经
   simulate_agent_loop 跑在真实 registry 上（无 LLM/无网络）；

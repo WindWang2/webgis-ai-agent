@@ -1,4 +1,4 @@
-"""Contract Drift Gates（ADR-0104 Wave 4）——跨 registry 契约漂移检测。
+"""Contract Drift Gates（ADR-0245 Wave 4）——跨 registry 契约漂移检测。
 
 每个 validator 返回 ``DriftIssue`` 列表。severity 语义：
 - ``BLOCKER``：运行期必然破损的契约（悬空引用 / 前端调用不存在的后端路由 /

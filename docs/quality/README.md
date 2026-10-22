@@ -1,4 +1,4 @@
-# Quality Platform（ADR-0104）
+# Quality Platform（ADR-0245）
 
 跨子系统的质量基础设施：生成式清单、契约漂移闸、场景语料、混沌与认证。
 `QUALITY_MANIFEST.md` / `quality-manifest.json` / `CONTRACT_DRIFT_REPORT.*` /

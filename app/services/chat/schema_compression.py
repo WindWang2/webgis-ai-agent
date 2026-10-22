@@ -1,4 +1,4 @@
-"""模型可见 schema 压缩（ADR-0101 Wave 3, §14）。
+"""模型可见 schema 压缩（ADR-0237 Wave 3, §14）。
 
 原则：**不隐藏任何校验性约束**（required / 类型 / enum 全保留），压缩的是
 冗余文本与 pydantic 序列化噪音：

@@ -1,4 +1,4 @@
-"""per-tool governor estimate/actual 入链契约（ADR-0214 D4，WP3）。
+"""per-tool governor estimate/actual 入链契约（ADR-0264 D4，WP3）。
 
 钉死的行为：
 - dispatch 适配器 finally 把 estimate/actual 有界投影进 TurnEvidence

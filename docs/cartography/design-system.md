@@ -1,6 +1,6 @@
 # Cartographic Design System V3
 
-> ADR-0101 的实现总览。分支：`feat/cartographic-template-library-v3`。
+> ADR-0238 的实现总览。分支：`feat/cartographic-template-library-v3`。
 
 ## Map Product 组成
 
@@ -38,7 +38,7 @@ Map Product
    全部同输入同输出。
 4. **Additive**：seed id / 既有 fallback 链 / 旧消费者行为不变（测试锁定）。
 
-## 与 ADR-0088 的关系
+## 与 ADR-0232 的关系
 
 0088 的契约全部继承（图例族 binding 级冲突、all_thematic 逐层展开、
 inset 纯 SVG 投影、annotation 三形态、floating placement、archetype

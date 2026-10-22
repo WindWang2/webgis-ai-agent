@@ -1,4 +1,4 @@
-"""Delegation Protocol（H07/ADR-0216）—— 委派请求的生命周期基座。
+"""Delegation Protocol（H07/ADR-0269）—— 委派请求的生命周期基座。
 
 本模块是 Master→Subagent 委派的**单一执行语义**（lease/预算/deadline/
 取消传播/迟到与重复结果隔离/receipt 验证/因果台账），供三条既有委派

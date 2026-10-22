@@ -43,19 +43,19 @@ scripts/
 !/scripts/gis_bench_v2.py
 # E15 离线 Harness 评测实验室 CLI（统一 ScenarioSpec runner；tests/lab 契约测试依赖）
 !/scripts/eval_lab.py
-# Quality Platform 生成器（ADR-0104：manifest / drift report / 场景语料，
+# Quality Platform 生成器（ADR-0245：manifest / drift report / 场景语料，
 # 对应的字节一致性闸测试 import 它们，必须入库）
 !/scripts/check_tool_descriptor_coverage.py
 !/scripts/gen_quality_manifest.py
 !/scripts/gen_drift_report.py
 !/scripts/gen_trace_certification.py
-# GIS Situation inspector（ADR-0180 S9：观测面 + 契约 schema 唯一改动口；
+# GIS Situation inspector（ADR-0252 S9：观测面 + 契约 schema 唯一改动口；
 # 契约漂移测试 import 的 schema 由它生成，必须入库）
 !/scripts/situation_inspect.py
-# Turn Journal 诊断 CLI（H04 / ADR-0216：运维只读面；PR body 引用，
+# Turn Journal 诊断 CLI（H04 / ADR-0268：运维只读面；PR body 引用，
 # 与 /api/v1/harness/turn-journal 同一读模型，必须入库）
 !/scripts/turn_journal_inspect.py
-# Replay Benchmark CLI（ADR-0183 决策六：bench 库的命令行入口；ADR 文档
+# Replay Benchmark CLI（ADR-0256 决策六：bench 库的命令行入口；ADR 文档
 # 引用它 —— adr-link 棘轮要求入库）
 !/scripts/replay_bench.py
 # Skill Induction 批处理 CLI（ADR-0191：轨迹自合成的运维入口；单元测试
@@ -74,7 +74,7 @@ scripts/
 !/scripts/perf/
 !/scripts/gen_config_schema.py
 !/scripts/gen_app_inventory.py
-# Quality V2（ADR-0118）：staleness 前置检查脚本（generated-artifacts 账本
+# Quality V2（ADR-0250）：staleness 前置检查脚本（generated-artifacts 账本
 # 的闸测试引用其退出码语义，必须入库 —— history: check_tool_descriptor_
 # coverage.py 漏入库曾使 master 全量收集红）
 !/scripts/check_generated_staleness.py

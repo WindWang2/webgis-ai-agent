@@ -813,7 +813,7 @@ def record_map_product_version(
                 detail=f"WorkflowRun {req.workflow_run_id} not found in project {project_id}",
             )
     try:
-        # ADR-0099：携带会话时服务端抓取 MapSpec 快照（restore/open 的
+        # ADR-0236：携带会话时服务端抓取 MapSpec 快照（restore/open 的
         # 授权依据）与操作者；指纹/差分仍然是服务端计算，客户端不可伪造。
         # SEC-08：会话所有权校验先行 —— 跨租户 session_id 一律 404
         # （review C1：无守卫的 session_id 是跨租户读写原语）。
@@ -852,7 +852,7 @@ def open_map_product_version(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    """Read-only inspection of a historical version (ADR-0099 open).
+    """Read-only inspection of a historical version (ADR-0236 open).
 
     Never touches current session state. Reports what the version carries
     (snapshot, provenance) and which restore modes are honestly available —
@@ -881,7 +881,7 @@ async def restore_map_product_version(
     user: Dict[str, Any] = Depends(get_current_user),
     owner_token: Optional[str] = Depends(get_owner_token),
 ):
-    """Restore a version into a live session (ADR-0099).
+    """Restore a version into a live session (ADR-0236).
 
     ``style_only`` applies the version snapshot's presentation state through
     the MapSpec lifecycle engine (lock + validation + transaction); the
@@ -977,7 +977,7 @@ def fork_map_product_version(
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Fork a new version lineage from a historical version (ADR-0099).
+    """Fork a new version lineage from a historical version (ADR-0236).
 
     The fork row copies the source provenance (inputs/plan/outputs/snapshot)
     and records the lineage edge; it is evidence of a branch point, not a
@@ -1004,7 +1004,7 @@ def merge_map_product_versions(
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Constrained dimension merge (ADR-0099): combine a style-only change
+    """Constrained dimension merge (ADR-0236): combine a style-only change
     with an analysis-only change. Both sides moving the same dimension is a
     structural conflict and is refused honestly — no silent pick-a-winner."""
     user_id, org_id = actor_ids(user)
@@ -1035,7 +1035,7 @@ async def rerun_map_product_version(
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Rerun the analysis a version represents (ADR-0099): bind version →
+    """Rerun the analysis a version represents (ADR-0236): bind version →
     run → first changed step (five-dimension diff drill-down) → incremental
     rerun. Style-only versions are refused — the machine contract says no
     recomputation is needed (use restore style_only instead)."""

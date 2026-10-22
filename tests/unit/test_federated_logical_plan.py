@@ -1,4 +1,4 @@
-"""V6 typed logical plan IR 契约测试（ADR-0118 W1）。
+"""V6 typed logical plan IR 契约测试（ADR-0247 W1）。
 
 覆盖：chain → 树构建、canonical hash 确定性、语义敏感性、序列化往返、
 全部节点形状（scan/filter/project/join/aggregate/sort/limit/reproject）。

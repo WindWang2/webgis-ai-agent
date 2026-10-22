@@ -7,7 +7,7 @@
 
 | # | 发现 | 处置 |
 | --- | --- | --- |
-| P0-1 | `ProjectKnowledgeProvider`/`GisMemoryProvider` 未标注 sensitivity（默认 SESSION_LOCAL、scope_id=project/org id）→ scope gate 按 session 比对必然失败，项目会话默认路径静默丢失 `<project_knowledge>` 与 `[GIS_MEMORY]` 两块 | knowledge → `PROJECT_SCOPED`；gis_memory → `ORG_SCOPED`（ADR-0183 语义）；新增 provider 全链路 gate 测试（`test_review_gate_v1.py::test_project_knowledge_item_survives_scope_gate` / `test_gis_memory_item_survives_scope_gate` / `test_cross_tenant_items_still_denied`——修复不打开跨租户门） |
+| P0-1 | `ProjectKnowledgeProvider`/`GisMemoryProvider` 未标注 sensitivity（默认 SESSION_LOCAL、scope_id=project/org id）→ scope gate 按 session 比对必然失败，项目会话默认路径静默丢失 `<project_knowledge>` 与 `[GIS_MEMORY]` 两块 | knowledge → `PROJECT_SCOPED`；gis_memory → `ORG_SCOPED`（ADR-0255 语义）；新增 provider 全链路 gate 测试（`test_review_gate_v1.py::test_project_knowledge_item_survives_scope_gate` / `test_gis_memory_item_survives_scope_gate` / `test_cross_tenant_items_still_denied`——修复不打开跨租户门） |
 
 ## P1
 

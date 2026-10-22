@@ -95,7 +95,7 @@ Legacy ChatEngine path（`USE_NEW_AGENT=false` 回退）: `chat.py:1112` → `ex
 | observability events | `emit_event`（EVENT_CATALOG 白名单） | **app/ 内零调用点（events.py:105 自己注明）——不能假设它在生产流动** |
 | geocompute trace | `emit` + `replay_trace(events)` 确定性不变量校验器（replay.py:31） | ring + logs |
 | GISRuntimeTrace | gis_harness/trace.py:78（finalization/repair/observation 计数） | 内存 |
-| turn trace（ADR-0101 W8） | app/lib/runtime/trace.py:153 TraceRegistry（17 事件种类，docstring 自述 "debug bundle / replay 输入"） | 内存 |
+| turn trace（ADR-0237 W8） | app/lib/runtime/trace.py:153 TraceRegistry（17 事件种类，docstring 自述 "debug bundle / replay 输入"） | 内存 |
 
 关键含义：**真正在流动的持久面是 trace_v6 JSONL + turn summary 日志 + tool_metrics JSONL + 质量事实库**。recorder 的职责是把前两者在 settle 时刻原子打包成单个自包含 artifact（补上 64 条窗口的有损问题），而不是新造事件总线。
 
@@ -168,7 +168,7 @@ Legacy ChatEngine path（`USE_NEW_AGENT=false` 回退）: `chat.py:1112` → `ex
 | #1271 merged AC-V11 | wave ratchet `aggregate_observations_by_wave` | wave 维度 | **复用**（benchmark wave 语义） | — |
 | #1272 merged ADS-V1 | data_fabric matrix/facts、offline fixture/guard、FactsStore.ratchet_check | fixture/guard/ledger 模式 | **复用** | — |
 
-**ADR 占号**：master 最高 0179；分支已占 0180×3 / 0181×1 / 0182×2。**0183 全网未占用** → 本线 claim `docs/adr/0183-harness-replay-benchmark-explainability.md`（独特文件名，与任何分支无文件冲突）。
+**ADR 占号**：master 最高 0179；分支已占 0180×3 / 0181×1 / 0182×2。**0183 全网未占用** → 本线 claim `docs/adr/0256-harness-replay-benchmark-explainability.md`（独特文件名，与任何分支无文件冲突）。
 
 ---
 

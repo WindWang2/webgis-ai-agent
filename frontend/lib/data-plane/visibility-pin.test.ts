@@ -1,5 +1,5 @@
 /**
- * F13 data plane 身份与 pin 契约测试（ADR-0214 D4）。
+ * F13 data plane 身份与 pin 契约测试（ADR-0261 D4）。
  *
  * 锁定：dataRevision 进缓存键（同 ref 异 revision 是不同条目/不同网络
  * 往返 —— #1112 同 ref 覆盖不串数据）；键解析对称；setRefPinned

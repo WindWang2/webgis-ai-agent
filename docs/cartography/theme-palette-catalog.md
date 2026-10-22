@@ -1,7 +1,7 @@
 # Theme & Palette Catalog
 
 > 由 registry 生成；颜色真值：`palettes.py`（thematic 色带）与前端
-> design tokens（chrome）。本目录只登记描述与引用（ADR-0101 D4）。
+> design tokens（chrome）。本目录只登记描述与引用（ADR-0238 D4）。
 
 ## Palettes
 

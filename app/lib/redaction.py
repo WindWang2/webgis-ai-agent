@@ -1,4 +1,4 @@
-"""秘密净化原语（中立模块，ADR-0214 D1）。
+"""秘密净化原语（中立模块，ADR-0262 D1）。
 
 值级/键级秘密识别与剥离的**唯一权威实现**。历史上住在
 ``app/lib/harness/replay/sanitize.py``（测试 oracle 包），而生产 runtime

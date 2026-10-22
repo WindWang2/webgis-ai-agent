@@ -1,4 +1,4 @@
-"""ADR-0101 Wave 3: 统一工具面投影 + 确定性检索 + schema 压缩测试。
+"""ADR-0237 Wave 3: 统一工具面投影 + 确定性检索 + schema 压缩测试。
 
 锁定语义：
 - ToolSurfaceProjector 是投影不是注册中心（同输入必同输出、指纹确定性）；

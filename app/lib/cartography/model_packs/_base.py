@@ -1,4 +1,4 @@
-"""model_packs 共享构造 helper（ADR-0101 D1/D2）。"""
+"""model_packs 共享构造 helper（ADR-0238 D1/D2）。"""
 from __future__ import annotations
 
 from typing import List

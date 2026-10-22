@@ -1,4 +1,4 @@
-"""Tool Extension SDK（ADR-0104 / Wave 3）。
+"""Tool Extension SDK（ADR-0243 / Wave 3）。
 
 第三方以声明式 spec 描述工具，SDK 负责：
 - 校验（词表封闭 + 宿主规则：tier<=2、destructive 禁用、network ⇒
@@ -8,7 +8,7 @@
 - 权限包裹：声明了 ``required_permissions`` 的工具在执行前检查授权，
   失败抛 typed :class:`ExtensionPermissionDenied`。
 
-描述符字段（ADR-0101/0103 V3 词表）是 spec 的一等字段；parity 测试锁定
+描述符字段（ADR-0237/0103 V3 词表）是 spec 的一等字段；parity 测试锁定
 本字段集合与核心 ``ToolRegistry._DESCRIPTOR_KWARGS`` 一致。
 
 用法（扩展入口模块内）::
@@ -78,7 +78,7 @@ class ToolExtensionSpec:
     args_model: Optional[type] = None
     parameters: Optional[dict] = None
     field_extras: Optional[dict[str, dict]] = None
-    # ── ADR-0101/0103 描述符扩展字段（与核心 _DESCRIPTOR_KWARGS 同源）──
+    # ── ADR-0237/0103 描述符扩展字段（与核心 _DESCRIPTOR_KWARGS 同源）──
     status: Optional[str] = None
     deprecation_of: Optional[str] = None
     requires_credentials: list[str] = field(default_factory=list)

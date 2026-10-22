@@ -1,4 +1,4 @@
-"""F13 render 通道生产接线测试（ADR-0214 D2）。
+"""F13 render 通道生产接线测试（ADR-0261 D2）。
 
 锁定：会话投影缓存与 fail-open、dispatch adapter 仅对 render 族工具
 供给 render_input、estimate 细化真实生效（RENDER_WORK_UNITS 维在位）。

@@ -1,4 +1,4 @@
-"""Situation → bounded model context 投影（方向 2 S5，ADR-0180）。
+"""Situation → bounded model context 投影（方向 2 S5，ADR-0252）。
 
 ``render_situation_for_context(situation)`` 把 GISSituation 渲染为有界
 确定性文本块，注入 Pi turn 的 env_block 位（chat.py → bind_turn_prompt）。

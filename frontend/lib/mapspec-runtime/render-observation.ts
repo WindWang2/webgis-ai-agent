@@ -94,13 +94,13 @@ export interface RenderObservation {
   viewport: Record<string, unknown>;
   reconcile_error: string;
   /**
-   * F13（ADR-0214 D3）：结构化 apply ACK —— per-layer/组件应用结果 +
+   * F13（ADR-0261 D3）：结构化 apply ACK —— per-layer/组件应用结果 +
    * 封闭 reason code。pending 用户操作涉及的层不进 ACK（user-wins）。
    * 类型单源 = render-protocol 的 RenderApplyAck（type-only import，
    * 无运行时环；不手写镜像防漂移）。
    */
   apply_ack?: RenderApplyAck;
-  /** F13（ADR-0214 D5）：有界性能探针块（TTFR/patch latency/data 面计数）。 */
+  /** F13（ADR-0261 D5）：有界性能探针块（TTFR/patch latency/data 面计数）。 */
   perf?: RenderPerfBlock;
   // raster_image 等额外证据字段由底层采集器携带（有界预算由后端 DTO 把关）
   [key: string]: unknown;
@@ -328,7 +328,7 @@ export function collectRenderObservation({
   } catch {
     canvas = undefined;
   }
-  // F13（ADR-0214 D3/D5）：settle 打点 → 结构化 apply ACK + perf 块。
+  // F13（ADR-0261 D3/D5）：settle 打点 → 结构化 apply ACK + perf 块。
   // ACK 是 (desired, applied, pending) 的纯投影；mounted 组件 id 集复用
   // 本函数的 observeComponents 派生（单一计算源，无第二推导）。
   noteRenderSettled({ mapIdle });

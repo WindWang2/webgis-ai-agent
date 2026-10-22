@@ -1,4 +1,4 @@
-"""F08 / ADR-0214：driver 侧预算生命周期与计划准入门（集成）。
+"""F08 / ADR-0264：driver 侧预算生命周期与计划准入门（集成）。
 
 验收面：
 - 计划准入：enforce+违规 → 实例快速失败 RESOURCE_BUDGET_EXCEEDED（诚实

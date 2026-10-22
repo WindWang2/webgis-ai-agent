@@ -43,7 +43,7 @@ Legend: EXISTS (reuse as-is) / PARTIAL (extend without duplicating) / MISSING (b
 
 ## Where the projection's storage lives (decision)
 
-**New table via the repo's canonical pattern** — one bounded table `project_knowledge_entries` (model + migration ≥0093), sync SQLAlchemy DAO free functions, caller commits, `org_id` NOT NULL + composite indexes + partial unique index for active entries, row budget per `(org_id, project_id)` mirroring `SCOPE_BUDGET` (`gis_memory/store.py:48-53`). This mirrors `gis_spatial_memories` (ADR-0183) and `carto_project_facts` (ADR-0069). An in-process hot index (optional, phase 2) may cache entries like `AssociativeIndex` but durability and correctness live in the table.
+**New table via the repo's canonical pattern** — one bounded table `project_knowledge_entries` (model + migration ≥0093), sync SQLAlchemy DAO free functions, caller commits, `org_id` NOT NULL + composite indexes + partial unique index for active entries, row budget per `(org_id, project_id)` mirroring `SCOPE_BUDGET` (`gis_memory/store.py:48-53`). This mirrors `gis_spatial_memories` (ADR-0255) and `carto_project_facts` (ADR-0069). An in-process hot index (optional, phase 2) may cache entries like `AssociativeIndex` but durability and correctness live in the table.
 
 **Rejected**: (a) new kinds in `gis_spatial_memories` — kind vocab is closed by DB CheckConstraint and semantically "learned GIS facts", not identity projections; would pollute retrieval and the write gate. (b) In-memory only — not invalidatable/durable across restarts. (c) JSON blob on `projects.metadata_json` — unbounded, no indexes, no per-entry status.
 

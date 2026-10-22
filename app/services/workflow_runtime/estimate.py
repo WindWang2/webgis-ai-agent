@@ -1,4 +1,4 @@
-"""Workflow 节点 → rg.v1 ResourceEstimate 桥（ADR-0214 D1）。
+"""Workflow 节点 → rg.v1 ResourceEstimate 桥（ADR-0264 D1）。
 
 #1484（ADR-0213）把估算统一到 ``governor.estimation`` 的先验表，但
 workflow_runtime 节点执行面没有数值口径 —— 本桥是 workflow 节点的唯一
@@ -11,7 +11,7 @@ workflow_runtime 节点执行面没有数值口径 —— 本桥是 workflow 节
   parity 不变式（同一工具/参数/证据 → dims 逐维全等 + resource_class 相同）
   由测试锁定；subsystem 归因诚实标注 ``Subsystem.WORKFLOW``；
 - render 面：``render_budget.render_input_from_spec_summary``（既有投影）；
-  export 面：``export_budget.export_work_from_summary``（ADR-0214 D7）；
+  export 面：``export_budget.export_work_from_summary``（ADR-0264 D7）；
 - 节点声明覆盖（``resources.memory_class``/``latency_class``/
   ``estimated_memory_mb``/``estimated_wall_s``/``vram_bytes``）＝ 同表切片
   或显式申报，绝无隐式表；

@@ -1,4 +1,4 @@
-"""确定性编译器：MapPlanIR → 有序最小 MapSpec mutations（F12 / ADR-0214 D3）。
+"""确定性编译器：MapPlanIR → 有序最小 MapSpec mutations（F12 / ADR-0260 D3）。
 
 纯函数、零 I/O、零 LLM。同输入（``ir.ir_fingerprint`` + base spec +
 ``base_revision``）字节级同输出：

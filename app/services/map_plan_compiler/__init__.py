@@ -1,6 +1,6 @@
-"""Map Plan Compiler —— MapPlanIR → 有序最小 MapSpec mutations（F12 / ADR-0214）。
+"""Map Plan Compiler —— MapPlanIR → 有序最小 MapSpec mutations（F12 / ADR-0260）。
 
-包结构（单一真相纪律见 ADR-0214 D8）：
+包结构（单一真相纪律见 ADR-0260 D8）：
 
 - ``projector``  : 权威输出（MapProductPlan / GrammarDecision / lock 快照）→ MapPlanIR
                    投影 + typed amendment 多轮演进；不推断语义。

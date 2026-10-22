@@ -301,7 +301,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         compatible_map_models=[
             "administrative_choropleth", "aggregate_grid", "hotspot_overlay",
             "proximity_overlay", "administrative_aggregation", "proportional_symbol",
-            # V3（ADR-0101 B1/B7）
+            # V3（ADR-0238 B1/B7）
             "normalized_choropleth", "diverging_choropleth", "suitability_classes",
             "risk_exposure_classes", "vulnerability_index", "equity_assessment",
             "change_comparison_map", "site_selection_result", "mcda_score_map",
@@ -693,7 +693,7 @@ class ComponentRegistry:
         return self._version
 
     def unregister(self, descriptor_id: str) -> bool:
-        """ADR-0104：扩展 cartography 组件卸载回滚用。清理全部索引
+        """ADR-0243：扩展 cartography 组件卸载回滚用。清理全部索引
         （by-id / by-type / by-category）并推进注册代次；目标不存在返回
         False（幂等）。种子组件从不调用。"""
         desc = self._by_id.get(descriptor_id)

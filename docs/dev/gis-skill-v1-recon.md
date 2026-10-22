@@ -14,7 +14,7 @@
 |----|------|--------------|
 | #1273 | qc-loop review & optimize 收敛 | 无冲突（质量线） |
 | #1274 | Pi typed tool surface hardening | 不触碰 Pi schema；只加只读 tier-2 工具 |
-| #1275 | GIS Situation / World Model（ADR-0180） | 未合并；Skill 层用 `SituationLike` Protocol 松耦合 |
+| #1275 | GIS Situation / World Model（ADR-0253） | 未合并；Skill 层用 `SituationLike` Protocol 松耦合 |
 | #1270 | CI adaptive hygiene | 无冲突 |
 
 本地未合并分支：`harness/gis-capability-graph-v1`（领先 master 6 提交：

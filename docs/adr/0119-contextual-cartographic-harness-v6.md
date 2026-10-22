@@ -2,13 +2,13 @@
 
 - 状态：Proposed
 - 日期：2026-09-09
-- 关联：ADR-0118（Semantic Workflow Compiler V4）、
-  ADR-0104（GIS Harness Autonomous Runtime V4）、ADR-0103（Cartographic Design System V4）、
+- 关联：ADR-0251（Semantic Workflow Compiler V4）、
+  ADR-0104（GIS Harness Autonomous Runtime V4）、ADR-0240（Cartographic Design System V4）、
   ADR-0099（空间科学平台）
 
 ## 背景
 
-Compiler V4（ADR-0118）交付了 15+8 阶段确定性编译器、12 方法族与 typed DAG，
+Compiler V4（ADR-0251）交付了 15+8 阶段确定性编译器、12 方法族与 typed DAG，
 但 Phase-0 审计（`.agent-work/contextual-cartographic-harness-v6/00-baseline.md`，
 HEAD 8a33e3a5）证实多系统平行、回路未闭环：
 

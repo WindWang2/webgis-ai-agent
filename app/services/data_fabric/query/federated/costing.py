@@ -1,4 +1,4 @@
-"""V6 空间成本（ADR-0118 W3）：空间选择性估计 + CRS 变换决策。
+"""V6 空间成本（ADR-0247 W3）：空间选择性估计 + CRS 变换决策。
 
 纯函数（无 IO、无 shapely/pyproj 依赖）—— 规划期只做估计与决策；
 真实几何变换在执行期（executor）用 pyproj 落地。
@@ -252,7 +252,7 @@ def decide_crs_transform(
     - 空间 join 且 CRS 不同 → 必须对齐。server 变换每行成本 ≈ 本地的
       1/15，但 server placement 需要跨 adapter 的 output.crs 下推管道
       （legacy QuerySpec 无该字段）—— ``allow_server=False``（当前默认）
-      时只产本地变换决策；server 是显式 follow-up（ADR-0118 Known
+      时只产本地变换决策；server 是显式 follow-up（ADR-0247 Known
       Limitations），计划绝不声称执行不了的 placement；
     - 属性 join 不比较几何 → 只记录 correctness note（几何列随行输出，
       结果 CRS 混合如实披露），不做变换。

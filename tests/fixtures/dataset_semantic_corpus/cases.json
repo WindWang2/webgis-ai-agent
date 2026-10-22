@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "F01 中英文高风险语义 corpus（ADR-0215）：数量vs密度 / 比率vs总量 / 百分比vs分数 / 带符号变化 / 类别 / 时间字段 / 坐标字段 / 未知单位 / 冲突单位。期望值锁定 #1488（ADR-0207）推导的实测行为，作为全链（derive → descriptor → compare）回归基线。",
+  "description": "F01 中英文高风险语义 corpus（ADR-0265）：数量vs密度 / 比率vs总量 / 百分比vs分数 / 带符号变化 / 类别 / 时间字段 / 坐标字段 / 未知单位 / 冲突单位。期望值锁定 #1488（ADR-0207）推导的实测行为，作为全链（derive → descriptor → compare）回归基线。",
   "cases": [
     {
       "id": "count_vs_density_zh",

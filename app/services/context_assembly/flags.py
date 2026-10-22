@@ -36,7 +36,7 @@ def governor_link_enabled() -> bool:
 
 def enforce_mode() -> bool:
     """``GIS_CONTEXT_BUDGET_ENFORCE=1``: allocator caps become hard (omit
-    instead of warn-only). Default observe-first (ADR-0182 provisional
+    instead of warn-only). Default observe-first (ADR-0254 provisional
     discipline): caps are enforced for pools but total-window overrun is
     reported, not asserted."""
     return _flag("GIS_CONTEXT_BUDGET_ENFORCE", "0")

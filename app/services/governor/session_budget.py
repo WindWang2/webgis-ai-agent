@@ -1,4 +1,4 @@
-"""Session / Goal / Turn 三级预算账本（R4，ADR-0182 D5/D12）。
+"""Session / Goal / Turn 三级预算账本（R4，ADR-0254 D5/D12）。
 
 治理对象**不是单个工具**而是执行聚合：turn ⊂ goal ⊂ session ⊂ global，
 请求沿链检查全部祖先（geocompute ``ResourceGovernor.reserve`` 同款

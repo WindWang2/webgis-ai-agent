@@ -1,4 +1,4 @@
-"""最终显示确认 —— deterministic finalization check（F12 / ADR-0214 D6）。
+"""最终显示确认 —— deterministic finalization check（F12 / ADR-0260 D6）。
 
 DoD「最终完成状态能证明期望图层/组件确实已显示」的机械对账：
 

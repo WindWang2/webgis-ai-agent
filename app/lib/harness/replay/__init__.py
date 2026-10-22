@@ -1,4 +1,4 @@
-"""Harness Replay + Benchmark + Explainability（方向 10，ADR-0183）。
+"""Harness Replay + Benchmark + Explainability（方向 10，ADR-0256）。
 
 轨迹级回归体系的 app 侧库层：
 
@@ -13,7 +13,7 @@
 - :mod:`.triage`      失败六分类（禁止裸 "snapshot changed"）；
 - :mod:`.bench`       benchmark runner（scripts/replay_bench.py 是 CLI 入口）。
 
-设计约束（全部承自 ADR-0183 / docs/dev/harness-replay-benchmark-decisions.md）：
+设计约束（全部承自 ADR-0256 / docs/dev/harness-replay-benchmark-decisions.md）：
 Pi 仍是 Agent Host；本包只读既有生产缝（GisTraceChain / TurnEvidence /
 PiAgentHarness / HarnessEvaluator / MapSpec lifecycle / cartography ratchet），
 不新建任何平行 planner/store/registry/质量指标体系。

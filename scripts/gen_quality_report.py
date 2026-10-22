@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""生成 docs/quality/QUALITY_REPORT.{md,json}（ADR-0104 Wave 20）。
+"""生成 docs/quality/QUALITY_REPORT.{md,json}（ADR-0245 Wave 20）。
 
 静态质量报告 = 各派生工件的**聚合投影**（不重复计算语义）：
 - QualityManifest（能力覆盖 / findings / 富化闸）

@@ -1,4 +1,4 @@
-"""中英文高风险语义 corpus 测试（ADR-0215 V8 验收矩阵）。
+"""中英文高风险语义 corpus 测试（ADR-0265 V8 验收矩阵）。
 
 corpus：tests/fixtures/dataset_semantic_corpus/cases.json
 覆盖：数量vs密度 / 比率vs总量 / 百分比vs分数 / 带符号变化 / 类别 /

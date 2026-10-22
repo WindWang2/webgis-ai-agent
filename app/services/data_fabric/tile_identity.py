@@ -14,7 +14,7 @@ route/请求生命周期。本模块是目录 MVT 身份的唯一推导点，并
 │                    │ → 新键 + invalidate_item，与 route 无关。     │
 │ 会话 ref MVT/PNG   │ 键 = (session_id, ref_id, z, x, y) + epoch    │
 │ (routes/layer.py)  │ 代际守卫；URL v=<content_revision> 使同 ref   │
-│                    │ 不同修订 = 不同条目（ADR-0214 D4 / #1112）。  │
+│                    │ 不同修订 = 不同条目（ADR-0261 D4 / #1112）。  │
 │ 会话 FC 整包       │ ETag = 内容寻址 sha256(body)[:16]，gzip/plain │
 │ (routes/layer.py)  │ 各表示可再验证（gzip 必须 mtime=0）。         │
 │ 栅格窗口           │ 缓存键含 data identity + style（样式≠数据，   │

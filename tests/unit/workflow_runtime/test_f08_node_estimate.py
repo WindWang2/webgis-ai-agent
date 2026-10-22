@@ -1,4 +1,4 @@
-"""F08 / ADR-0214 D1：workflow 节点 ResourceEstimate 桥（parity 不变式）。
+"""F08 / ADR-0264 D1：workflow 节点 ResourceEstimate 桥（parity 不变式）。
 
 验收面：
 - **parity**：同一工具/参数/证据下，workflow 节点桥与 dispatch

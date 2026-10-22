@@ -17,7 +17,7 @@ support/accessibility/compatibility/dependencies/defaults）。
 - fail-closed：每个注册的 native 组件类型必须有 ABI 元数据条目
   （``validate_component_abi``；由 ``ComponentRegistry.validate`` 接线），
   条目引用未注册类型 → ``abi_meta_orphan``。本表不扩 ComponentType 词表
-  （ADR-0101/0103 非目标）。
+  （ADR-0238/0103 非目标）。
 
 纯函数、确定性、有界载荷；本模块不做布局、不做渲染、不改 MapSpec。
 """

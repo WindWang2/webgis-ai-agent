@@ -1,4 +1,4 @@
-"""GIS Spatial Reasoning Memory（方向 9，ADR-0183）。
+"""GIS Spatial Reasoning Memory（方向 9，ADR-0255）。
 
 可复用的 GIS 世界事实记忆：resolved_place / boundary_ref /
 dataset_semantics / field_role / crs_resolution / analysis_artifact /

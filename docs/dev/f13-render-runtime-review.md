@@ -1,4 +1,4 @@
-# F13 独立 Review 报告与清偿（ADR-0214）
+# F13 独立 Review 报告与清偿（ADR-0261）
 
 - Reviewer：Subagent C（独立深审，非实现者自评）；范围 `origin/master...HEAD`（基线 9e1ad229）。
 - 结论：**PASS-WITH-FIXES** → P0/P1 全部修复，P2 全部清偿，P3 修复廉价项、其余记录在案。

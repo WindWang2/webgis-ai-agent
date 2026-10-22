@@ -1,4 +1,4 @@
-"""Transformation Provenance —— 语义谱系 DAG（H08 / ADR-0215 延伸）。
+"""Transformation Provenance —— 语义谱系 DAG（H08 / ADR-0265 延伸）。
 
 回答的问句：「这张地图的这层，是从哪个源数据、经什么算法/参数来的？」
 

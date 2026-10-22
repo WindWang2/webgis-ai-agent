@@ -85,7 +85,7 @@
 - `app/api/routes/interaction_events.py`：POST 批量摄入 + GET 投影；main.py 注册。
 - `app/services/gis_situation/compiler.py`：compile_interaction 优先 IR ledger（回退 legacy ring）；
   _interaction_sequence 并入 IR server_seq。
-- ADR-0225（分配器给 0220 与 open PR #1615 撞号 → 手动 0224 + watermark 224，ADR 内说明）。
+- ADR-0227（分配器给 0220 与 open PR #1615 撞号 → 手动 0224 + watermark 224，ADR 内说明）。
 
 ### 前端
 - `frontend/lib/interaction/`：contract.ts / contract-manifest.ts（双闸镜像）/ outbox.ts
@@ -113,7 +113,7 @@
 ## Phase 3 独立 review + 清偿（2026-10-18）
 
 - Reviewer（subagent，未参与实现）从 origin/master...HEAD 全量重读：0 P0 / 5 P1 / 4 P2 / 6 P3。
-- 全部清偿（详见 ADR-0225「独立 review 清偿」节）：
+- 全部清偿（详见 ADR-0227「独立 review 清偿」节）：
   - P1-1 渲染断裂（_render_interactions IR 双形态）；P1-2 恢复面剥离 IR 内部键；
   - P1-3 reorder 假 committed；P1-4 agent 相机/comparison 归因污染（FE-3 判别 + origin 参数）；
   - P1-5 failed/superseded 跨会话 emit；P2-1 假 gap（新实例宽容 + 切会话重置 seq）；

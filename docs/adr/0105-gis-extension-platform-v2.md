@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR-0104 落地了扩展平台 V1：投影而非平行、manifest 唯一契约、命名空间
+ADR-0243 落地了扩展平台 V1：投影而非平行、manifest 唯一契约、命名空间
 强制、权限声明 ≠ 授权、trusted-code boundary、三轴版本化。V1 同时诚实地
 留下了一批已知边界（docs/extension-platform/limitations.md Round-1 前的
 版本）：

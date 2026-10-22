@@ -2,7 +2,7 @@
   "$id": "docs/dev/spatial-memory-contracts/gis-spatial-memory.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "GISSpatialMemoryRecord",
-  "description": "GIS Spatial Reasoning Memory 记录契约（方向 9，ADR-0183）。模型面/日志面用 include_audit=false 形状；审计面追加 include_audit=true 的字段。漂移测试 tests/test_gis_memory_schema_drift.py 守护本文件与 contract.py 的一致性。",
+  "description": "GIS Spatial Reasoning Memory 记录契约（方向 9，ADR-0255）。模型面/日志面用 include_audit=false 形状；审计面追加 include_audit=true 的字段。漂移测试 tests/test_gis_memory_schema_drift.py 守护本文件与 contract.py 的一致性。",
   "type": "object",
   "required": [
     "id", "kind", "scope", "subject", "value", "refs",

@@ -3,7 +3,7 @@
 
 - 状态：Accepted（本地验证；随 PR `feat/harness-v7-agentic-runtime` 交付）
 - 日期：2026-09-10
-- 关联：ADR-0104（Workflow V4 typed DAG）、ADR-0118（Harness V5 可恢复
+- 关联：ADR-0104（Workflow V4 typed DAG）、ADR-0248（Harness V5 可恢复
   runtime）、ADR-0119（Harness V6 semantic autonomy）
 
 ## 背景

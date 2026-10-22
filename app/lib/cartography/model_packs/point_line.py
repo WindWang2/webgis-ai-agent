@@ -1,4 +1,4 @@
-"""Point / Line / Network 表达模型域包（ADR-0101 §B1 + Design System V4）。
+"""Point / Line / Network 表达模型域包（ADR-0238 §B1 + Design System V4）。
 
 native：categorized/graduated point、categorized/graduated line、
 service-area 叠加（V3）+ V4 原生化的 dot-density（确定性撒点）、cluster

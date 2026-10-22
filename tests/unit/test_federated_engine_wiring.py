@@ -1,4 +1,4 @@
-"""V6 引擎接线契约测试（ADR-0118 W10）：engine 分派/回退/typed 错误/工具形状。"""
+"""V6 引擎接线契约测试（ADR-0247 W10）：engine 分派/回退/typed 错误/工具形状。"""
 
 import json
 

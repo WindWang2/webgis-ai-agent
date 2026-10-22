@@ -1,4 +1,4 @@
-"""统计 / 密度探索域组合包（ADR-0101 §B2）。
+"""统计 / 密度探索域组合包（ADR-0238 §B2）。
 
 - statistical_report：choropleth 族的报告版组合（统计推荐 + 图表可选 +
   PDF 版式）—— 与既有 statistical_map（interactive 主导）错位互补；

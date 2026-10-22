@@ -1,4 +1,4 @@
-"""Cartography / Workflow 扩展声明（ADR-0104 / Wave 5-6）。
+"""Cartography / Workflow 扩展声明（ADR-0243 / Wave 5-6）。
 
 两个轻量声明形态：宿主在投影期把它们翻译为对应权威 registry 的注册
 调用（翻译逻辑在 context.py，本模块只承载可校验的数据）。

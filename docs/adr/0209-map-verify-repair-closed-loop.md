@@ -3,7 +3,7 @@
 - 状态: Accepted
 - 日期: 2026-09-20
 - 线: feat/map-verify-repair-loop
-- 关联: ADR-0081（Map Product Finalizer）、ADR-0086（render observation）、ADR-0088（runtime repair）、ADR-0118/0119（V6 统一 findings W6–W11、visual seam W9）、ADR-0134（V7 意图验收闭环）、ADR-0183（goal satisfaction）
+- 关联: ADR-0081（Map Product Finalizer）、ADR-0086（render observation）、ADR-0088（runtime repair）、ADR-0250/0119（V6 统一 findings W6–W11、visual seam W9）、ADR-0134（V7 意图验收闭环）、ADR-0183（goal satisfaction）
 
 ## 1. 背景
 

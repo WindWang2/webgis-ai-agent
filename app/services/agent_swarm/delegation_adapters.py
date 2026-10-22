@@ -1,4 +1,4 @@
-"""Delegation Protocol 生产适配器（H07/ADR-0216）。
+"""Delegation Protocol 生产适配器（H07/ADR-0269）。
 
 把既有 ``SubagentDispatcher``（ADR-0104 的 ChatEngine 微会话委派）包装成
 ``SubagentRunner``，使 harness 程序化委派与 ``spawn_subagent`` 工具单发

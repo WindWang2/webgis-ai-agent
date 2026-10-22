@@ -1,4 +1,4 @@
-"""扩展生命周期测试（ADR-0104 Wave 2）。
+"""扩展生命周期测试（ADR-0243 Wave 2）。
 
 用真实 ToolRegistry + 合成扩展目录驱动完整状态机：
 activate / degrade / 回滚原子性 / 卸载零残留 / reload 幂等 / 依赖环 /

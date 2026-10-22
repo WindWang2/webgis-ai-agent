@@ -3,10 +3,10 @@
 - 状态: Accepted
 - 日期: 2026-09-14
 - 线: harness/gis-skill-procedure-library-v1（与全部 Harness 主线并行的独立线）
-- 关联: ADR-0097（Goal Graph）、ADR-0101（Workflow Recipe DSL V2）、ADR-0137
+- 关联: ADR-0097（Goal Graph）、ADR-0239（Workflow Recipe DSL V2）、ADR-0137
   （Capability Graph V8）、ADR-0150/0151（意图理解 / recipe 资格 V4）、
   ADR-0160~0169（AC-V11）、ADR-0170~0179（ads-v1）；
-  未合并分支 ADR-0180（Situation，#1275）/ ADR-0181（Capability Graph v1）
+  未合并分支 ADR-0252（Situation，#1275）/ ADR-0181（Capability Graph v1）
 
 ## 1. 背景与问题
 

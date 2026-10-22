@@ -72,7 +72,7 @@ plan_candidates_v8 第一个生产调用方）；#1470 改过 `qualification_v8.
 
 ## 8. 绝对禁止重复实现
 
-- 不重写 Governor / admission / backpressure（ADR-0182 刚落地，#1472/#1388 刚加固）；
+- 不重写 Governor / admission / backpressure（ADR-0254 刚落地，#1472/#1388 刚加固）；
 - 不新增第二套先验表或第二套 ResourceEstimate；
 - 不做商业计费、GPU 压测、全量数据扫描式估算；
 - 不动 geocompute `ResourceBudget`（rows/bytes/nodes L1 权威在其树）；

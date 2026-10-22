@@ -1,4 +1,4 @@
-"""F15 生产视觉 provider 单元回归（ADR-0214 决策二）。
+"""F15 生产视觉 provider 单元回归（ADR-0263 决策二）。
 
 不变式：
 1. 默认关（``GIS_VISUAL_EVALUATOR`` 未配置）= 零行为变化；配置后失败

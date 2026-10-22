@@ -1,4 +1,4 @@
-"""Workflow Recipe DSL V2（workflow_schema）回归锁（Goal C / ADR-0101）。
+"""Workflow Recipe DSL V2（workflow_schema）回归锁（Goal C / ADR-0239）。
 
 不变式：
 - DSL 校验是纯函数（词表谓词注入，不依赖 registry 单例）；

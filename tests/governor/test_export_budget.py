@@ -1,4 +1,4 @@
-"""F08 / ADR-0214 D7：ExportWork 契约与 render/export 窄 seam。
+"""F08 / ADR-0264 D7：ExportWork 契约与 render/export 窄 seam。
 
 验收面：
 - 公式确定性 + 单调性（页/层/像素/图表递增 → 估工不減）；

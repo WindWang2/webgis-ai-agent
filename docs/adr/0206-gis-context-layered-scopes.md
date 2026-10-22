@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-09-20
 - Line: `harness/gis-context-layered-scopes-v1`
-- Related: ADR-0197 (Durable Mission Runtime), ADR-0180 (GIS Situation / World Model),
+- Related: ADR-0197 (Durable Mission Runtime), ADR-0252 (GIS Situation / World Model),
   ADR-0134 (Context Layers V7), ADR-0119 (Durable Context V6), ADR-0069 (Project Cartographic
   Memory), ADR-0033 (Deep ChatContextAssembler), ADR-0038 (KnowledgeEngine), ADR-0190
   (Proactive Spatial Memory), project_knowledge projection (`GIS_PROJECT_KNOWLEDGE`),

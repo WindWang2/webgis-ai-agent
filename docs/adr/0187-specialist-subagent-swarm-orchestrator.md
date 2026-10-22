@@ -4,7 +4,7 @@
 - 日期：2026-09-14
 - 关联：ADR-0184（Execution Graph + Incremental Replanning）、
   ADR-0180（Pi-native Harness Kernel / SessionPlan）、ADR-0104（Subagent
-  并行委派）、ADR-0101（Subagent 角色档与层级预算）、ADR-0076（SessionPlan
+  并行委派）、ADR-0237（Subagent 角色档与层级预算）、ADR-0076（SessionPlan
   事实源）
 - 编号说明：任务书（agent-03 track）指定占用 0187；0185/0186 为姊妹 track
   （01/02）预留区间，本 ADR 不与其争用。

@@ -1,4 +1,4 @@
-"""扩展平台一致性语料库执行（ADR-0104 / Wave 15）。
+"""扩展平台一致性语料库执行（ADR-0243 / Wave 15）。
 
 ≥2000 个确定性 case；manifest 层 case 纯内存，policy/lifecycle 层 case
 物化临时目录 + 独立 ToolRegistry。整库不触网络、不用 LLM、无随机源。

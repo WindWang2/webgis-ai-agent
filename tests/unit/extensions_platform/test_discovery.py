@@ -1,4 +1,4 @@
-"""发现与指纹测试（ADR-0104 Wave 2）：有界、确定性、fail-closed-per-extension。"""
+"""发现与指纹测试（ADR-0243 Wave 2）：有界、确定性、fail-closed-per-extension。"""
 
 from __future__ import annotations
 

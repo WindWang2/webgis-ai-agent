@@ -1,4 +1,4 @@
-"""T4 receipt 级 ToolDispatchService 重放（ADR-0214 D6，WP1）。
+"""T4 receipt 级 ToolDispatchService 重放（ADR-0262 D6，WP1）。
 
 #1486 遗留的「receipt 级经 ToolDispatchService 重发」在本模块实装：
 在进程内沙箱跑**真实**的 :meth:`ToolDispatchService.dispatch` ——

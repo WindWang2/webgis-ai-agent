@@ -1,4 +1,4 @@
-"""MapProductSpec v1 —— 语义地图产品文档（ADR-0183）。
+"""MapProductSpec v1 —— 语义地图产品文档（ADR-0258）。
 
 「地图产品」是一等语义对象，位于 User Goal / Recipe 与 MapSpec 之间：
 
@@ -60,7 +60,7 @@ ViewKind = Literal[VIEW_KINDS]  # type: ignore[valid-type]
 #: 视图角色（对齐 PlannedLayer.role 词汇，但语义是产品面不是图层绑定面）
 VIEW_ROLES = ("primary", "secondary", "context")
 
-#: 视图间关系词表（ADR-0183 §3；方向性见 _DIRECTIONAL_RELATIONS）
+#: 视图间关系词表（ADR-0258 §3；方向性见 _DIRECTIONAL_RELATIONS）
 RELATION_KINDS = (
     "same_dataset",        # 两视图同源数据
     "derived_statistic",   # dst 由 src 派生（聚合/统计）
@@ -94,7 +94,7 @@ EDIT_OPS = (
 )
 EditOp = Literal[EDIT_OPS]  # type: ignore[valid-type]
 
-#: ── 单一真相映射（ADR-0183 review 收敛：compiler / graph / tools 统一引用，
+#: ── 单一真相映射（ADR-0258 review 收敛：compiler / graph / tools 统一引用，
 #: 不再各持一份 kind→词表映射 —— CA-P1-3 不加重）────────────────────────
 #: spec 视图 kind → 支撑的 MapSpec 组件族（渲染组件类型）
 VIEW_KIND_COMPONENT_FAMILIES: Dict[str, Tuple[str, ...]] = {

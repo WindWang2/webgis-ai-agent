@@ -1,4 +1,4 @@
-"""ExtDemo 示例扩展包端到端测试（ADR-0104 Wave 14）。
+"""ExtDemo 示例扩展包端到端测试（ADR-0243 Wave 14）。
 
 被测对象是仓库内真实存在的 examples/extensions/extdemo-pack（活文档 +
 集成测试夹具二合一）：拷贝到 tmp_path 后用 ExtensionHost 驱动完整生命周期

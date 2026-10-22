@@ -1,4 +1,4 @@
-"""GISDatasetDescriptor v1 契约测试（ADR-0215 V1/V2/V3/V9 验收矩阵）。
+"""GISDatasetDescriptor v1 契约测试（ADR-0265 V1/V2/V3/V9 验收矩阵）。
 
 - V1 契约：有界性 / 确定性 / 序列化 roundtrip / fail-closed / 指针类字段
   （dataset_key/source_refs/provenance/derived_at）不入指纹；

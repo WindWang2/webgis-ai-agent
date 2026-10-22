@@ -728,7 +728,7 @@ class DataFabricManager:
             metadata=dict(item.descriptor_json or {}).get("metadata", {}),
         )
         fp = item.fingerprint or dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
-        # ADR-0215：query 路径的 dataset 语义契约指纹（零扫描投影，O(fields)）。
+        # ADR-0265：query 路径的 dataset 语义契约指纹（零扫描投影，O(fields)）。
         # additive evidence：失败只少一个键，不影响 explain 主链。
         descriptor_fingerprint = ""
         try:

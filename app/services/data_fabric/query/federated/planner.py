@@ -1,4 +1,4 @@
-"""V6 联邦计划入口（ADR-0118 W7）：request → EnumerationContext → 计划树。
+"""V6 联邦计划入口（ADR-0247 W7）：request → EnumerationContext → 计划树。
 
 纯函数解析（无 adapter IO）：统计/能力事实来自请求自带的提示
 （``estimated_rows`` / ``stats_hints``）；adapter 探测升级由调用方
@@ -132,7 +132,7 @@ def derive_fetch_windows(ctx: EnumerationContext, budget: Any) -> Dict[str, int]
     曾经的 build 侧放宽设计（窗口 → ``min(budget.max_rows, MAX_JOIN_CANDIDATES)``）
     在差分语料中造成**结果分歧**：V5 的窗口欠取会漏掉窗口外的匹配行，V6 放宽
     后会找回它们 —— 「优化器不改变结果语义」红线胜过覆盖改进。窗口放宽属于
-    显式契约变更（跟随 ADR-0118 Known Limitations 的 follow-up），当前不启用。
+    显式契约变更（跟随 ADR-0247 Known Limitations 的 follow-up），当前不启用。
 
     返回空 dict（``apply_fetch_windows`` 对空窗口为恒等）。
     """

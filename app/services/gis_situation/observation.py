@@ -1,4 +1,4 @@
-"""前端交互观察契约（方向 2 S4，ADR-0180）。
+"""前端交互观察契约（方向 2 S4，ADR-0252）。
 
 Harness 需要感知的轮间交互以**小型结构化观察**进入后端：viewport /
 selection / layer focus / layer visibility / map rendered / gesture /

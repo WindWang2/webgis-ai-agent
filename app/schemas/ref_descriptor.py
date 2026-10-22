@@ -26,7 +26,7 @@ class RefDescriptor:
         estimated_bytes: Rough size estimate (feature-count heuristic; exact
             byte count is not computed to avoid blocking the store() hot path)
         content_hash: Payload digest (Wave 1, audit §7.9). **V6 default ON**
-            (ADR-0118): the sha256 of the canonical payload is computed for
+            (ADR-0249): the sha256 of the canonical payload is computed for
             payloads ≤1MB — still off the event loop (both store backends run
             compute_descriptor via asyncio.to_thread). Evidence field for
             dedup/identity tooling — note nothing in the ref runtime yet
@@ -283,7 +283,7 @@ def is_raster_capable(data) -> bool:
     return isinstance(data, dict) and ("file_path" in data or "path" in data)
 
 
-# ── content_hash 默认参与身份（V6 Wave 1，ADR-0118）───────────────────────
+# ── content_hash 默认参与身份（V6 Wave 1，ADR-0249）───────────────────────
 # 环境开关 WEBGIS_REF_CONTENT_HASH：对 ≤1MB 载荷计算 canonical sha256 写入
 # RefDescriptor.content_hash —— 会话层内容身份。**V6 起默认开启**；显式设
 # "0/false/no/off" 可关回历史行为（恒 None）。哈希口径复用既有 canonical
@@ -396,7 +396,7 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     else:
         estimated_bytes = estimate_bytes(0)
     
-    # content_hash: default-ON since V6 (ADR-0118). Still off the store hot
+    # content_hash: default-ON since V6 (ADR-0249). Still off the store hot
     # path's event loop — both store backends run compute_descriptor via
     # asyncio.to_thread. Only payloads ≤1MB are hashed (cost gate; bigger
     # keeps None). WEBGIS_REF_CONTENT_HASH=0/false/no/off restores the legacy

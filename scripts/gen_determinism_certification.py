@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""生成 docs/quality/certifications/DETERMINISM.md（ADR-0104 Wave 12）。
+"""生成 docs/quality/certifications/DETERMINISM.md（ADR-0245 Wave 12）。
 
 用法：
     python scripts/gen_determinism_certification.py            # 写入

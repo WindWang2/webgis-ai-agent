@@ -1,4 +1,4 @@
-"""SpatialMemory 契约（方向 9 R1，ADR-0183）。
+"""SpatialMemory 契约（方向 9 R1，ADR-0255）。
 
 本模块是记忆子系统的**唯一类型真相**：kind/scope/status/证据源的 closed
 vocab、写入请求、检索结果、有界序列化。持久化模型在

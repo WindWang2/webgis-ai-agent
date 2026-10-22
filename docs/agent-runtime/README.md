@@ -1,6 +1,6 @@
 # Agent Tool Platform + Model Runtime + Trace/Replay Foundation V2
 
-实现分支：`feat/agent-tool-model-runtime-v2` · ADR：[0101](../adr/0101-agent-tool-model-runtime-v2.md) · [0102](../adr/0102-model-provider-runtime-foundation.md)
+实现分支：`feat/agent-tool-model-runtime-v2` · ADR：[0237](../adr/0237-agent-tool-model-runtime-v2.md) · [0102](../adr/0102-model-provider-runtime-foundation.md)
 
 V3 增量：`feat/pi-gis-runtime-v3` · ADR：[0103](../adr/0103-pi-gis-runtime-v3.md)
 —— 描述符富化与覆盖率 gate / 动态工具面 / live 模型路由 / 证据链与重放。

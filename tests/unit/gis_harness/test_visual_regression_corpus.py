@@ -1,4 +1,4 @@
-"""F15 视觉回归 corpus + pipeline 级接线回归（ADR-0214）。
+"""F15 视觉回归 corpus + pipeline 级接线回归（ADR-0263）。
 
 不变式：
 1. corpus 确定性：golden_images 同图恒同 findings（pixel rules 逐条钉住）；

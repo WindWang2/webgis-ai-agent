@@ -1,4 +1,4 @@
-"""Quality Report 红线（ADR-0104 Wave 20）。
+"""Quality Report 红线（ADR-0245 Wave 20）。
 
 报告是各派生工件的聚合投影：字节一致 + 聚合值与源工件一致。
 """

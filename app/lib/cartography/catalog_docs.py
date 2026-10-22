@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Catalog docs generator — 由 registry 生成制图目录文档（ADR-0101 §文档）.
+"""Catalog docs generator — 由 registry 生成制图目录文档（ADR-0238 §文档）.
 
 单一真值是 registry（component/composition/model/theme），docs/cartography/
 下的目录文档是**生成产物**：
@@ -26,7 +26,7 @@ def _model_catalog() -> str:
         "# Map Model Catalog",
         "",
         "> 由 `app.lib.cartography.catalog_docs` 从 MapModelRegistry 生成；",
-        "> 手改无效。真值：`model_library.py` + `model_packs/`（ADR-0101）。",
+        "> 手改无效。真值：`model_library.py` + `model_packs/`（ADR-0238）。",
         "",
         f"共 {reg.count} 个模型（native {len(reg.native_ids())} / planned {len(reg.planned_ids())}）。",
         "",
@@ -133,7 +133,7 @@ def _theme_catalog() -> str:
         "# Theme & Palette Catalog",
         "",
         "> 由 registry 生成；颜色真值：`palettes.py`（thematic 色带）与前端",
-        "> design tokens（chrome）。本目录只登记描述与引用（ADR-0101 D4）。",
+        "> design tokens（chrome）。本目录只登记描述与引用（ADR-0238 D4）。",
         "",
         "## Palettes",
         "",
@@ -191,7 +191,7 @@ def _parity_matrix() -> str:
         )
     lines.append("")
     lines.append(
-        "已知限制（诚实登记，ADR-0101 D6）：\n"
+        "已知限制（诚实登记，ADR-0238 D6）：\n"
         "- `table_panel` 仅 interactive —— 工作区交互面不是制图产物面（Runtime V4 产品决策）。\n"
         "- 报告 vector SVG（python 孪生 mapspec_to_svg）不含 chrome marginalia；\n"
         "  画布导出（png/pdf/svg-包装）的 chrome 由 exporter/composeLayout 承载。\n"

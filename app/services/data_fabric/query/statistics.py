@@ -53,7 +53,7 @@ class DatasetStatistics(BaseModel):
     # ---- V4 additive（ADR-0101 D6）：footer/文件级事实 ----
     row_group_count: Optional[int] = Field(default=None, ge=0)
     total_bytes: Optional[int] = Field(default=None, ge=0)  # 压缩后文件字节
-    # ---- V6 additive（ADR-0118 W2）：空间统计（dict 形态避免反向依赖）----
+    # ---- V6 additive（ADR-0247 W2）：空间统计（dict 形态避免反向依赖）----
     crs: Optional[str] = None  # 源 CRS 声明（如 "EPSG:4326"）
     avg_vertices: Optional[float] = Field(
         default=None, gt=0
@@ -103,7 +103,7 @@ def statistics_from_descriptor(descriptor: Any) -> Optional[DatasetStatistics]:
         overview_levels=_coerce_int(meta.get("overview_levels")),
         row_group_count=_coerce_int(meta.get("num_row_groups")),
         revision_strength=meta.get("revision_strength", "weak"),
-        # V6 additive（ADR-0118 W2）：CRS / 复杂度 / 空间直方图 meta。
+        # V6 additive（ADR-0247 W2）：CRS / 复杂度 / 空间直方图 meta。
         crs=_coerce_str(meta.get("srs") or meta.get("crs")),
         avg_vertices=_coerce_positive_float(meta.get("avg_vertices")),
         spatial_histogram=(

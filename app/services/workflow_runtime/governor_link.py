@@ -1,4 +1,4 @@
-"""Workflow 节点执行的 governor 接线（ADR-0214 D2）。
+"""Workflow 节点执行的 governor 接线（ADR-0264 D2）。
 
 workflow_runtime 与 governor 的**唯一**连接面（对齐工具面
 ``governor/dispatch_adapter.py`` 的职责边界）：节点执行统一走
@@ -127,7 +127,7 @@ class NodeBudgetSession:
                 "[workflow-governor] complete accounting failed node=%s",
                 self.node_key)
         if status == "completed":
-            # 校准只观测（ADR-0214 D6）；异常绝不外泄
+            # 校准只观测（ADR-0264 D6）；异常绝不外泄
             try:
                 from app.services.governor.calibration import (
                     get_calibration_store,

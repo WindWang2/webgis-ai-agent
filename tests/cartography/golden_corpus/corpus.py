@@ -1,4 +1,4 @@
-"""Golden Corpus builder — 结构化 golden 语料（ADR-0101 D8）.
+"""Golden Corpus builder — 结构化 golden 语料（ADR-0238 D8）.
 
 确定性用例矩阵：native 模型 × 兼容组合模板 × output target × locale ×
 page profile + 边界用例（planned 泄漏门、缺 context、fallback 触发、

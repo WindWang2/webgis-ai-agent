@@ -1,4 +1,4 @@
-"""Composition Packs V3 — 组合模板域包契约测试（ADR-0101 D1）。
+"""Composition Packs V3 — 组合模板域包契约测试（ADR-0238 D1）。
 
 锁定：
 - pack 加载确定性、seed 不变、id 唯一；

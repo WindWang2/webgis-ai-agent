@@ -279,7 +279,7 @@ async def _reconcile_descriptor_semantics(
     new_sid: str,
     ref_map: Dict[str, str],
 ) -> Dict[str, Any]:
-    """恢复链数据集语义身份：迁移 + 记录面对账（G01/WP-B6，ADR-0215 补缝）。
+    """恢复链数据集语义身份：迁移 + 记录面对账（G01/WP-B6，ADR-0265 补缝）。
 
     1. **迁移**：旧 session 语义 store 的 descriptor 随载荷迁入新 session
        （``dataset_key`` 指针改写、指纹不变 —— 与 resume_anchor 的

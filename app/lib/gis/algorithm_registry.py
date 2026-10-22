@@ -409,7 +409,7 @@ class AlgorithmRegistry:
         return self._by_id.get(algorithm_id)
 
     def unregister(self, algorithm_id: str) -> bool:
-        """ADR-0104：扩展卸载回滚用。清理 by-id 与 by-capability 索引并
+        """ADR-0243：扩展卸载回滚用。清理 by-id 与 by-capability 索引并
         失效全部派生缓存；目标不存在返回 False（幂等）。核心种子算法
         从不调用——生命周期由 load_builtins 决定。"""
         if algorithm_id not in self._by_id:

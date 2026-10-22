@@ -1,5 +1,5 @@
 """RenderApplyAck —— desired→apply→ACK 事务语义的 versioned 契约
-（F13，ADR-0214 D3）。
+（F13，ADR-0261 D3）。
 
 前端 reconcile 落定后，此前只有自由文本 ``reconcile_error`` + 有界 error
 环 —— per-layer/组件的应用结果、失败归因、部分应用事实没有结构化回流。

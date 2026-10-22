@@ -1,4 +1,4 @@
-// 方向 8（ADR-0183 / U4）：每笔用户 mutation 携带客户端幂等键 —— 弱网重试
+// 方向 8（ADR-0257 / U4）：每笔用户 mutation 携带客户端幂等键 —— 弱网重试
 // 由服务端幂等去重收敛；队列观测（深度/峰值/样本环）只读不扰语义。
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHudStore } from '@/lib/store/useHudStore';

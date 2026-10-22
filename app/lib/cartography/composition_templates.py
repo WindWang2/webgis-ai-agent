@@ -244,7 +244,7 @@ class CompositionTemplateRegistry:
         self._asset_revisions.clear()
         for tpl in SEED_COMPOSITION_TEMPLATES:
             self._by_id[tpl.id] = tpl
-        # V3（ADR-0101 D1）：seed 之后按确定性顺序载入域包模板。
+        # V3（ADR-0238 D1）：seed 之后按确定性顺序载入域包模板。
         # seed id 不受影响；pack 撞 id 直接拒绝（域包必须自洽）。
         from app.lib.cartography.composition_packs import COMPOSITION_PACK_TEMPLATES
         for tpl in COMPOSITION_PACK_TEMPLATES:
@@ -346,7 +346,7 @@ class CompositionTemplateRegistry:
             for pt in slot.preferred_templates:
                 if not tmpl_reg.has(pt):
                     issues.append(f"composition {tpl.id} slot {slot.id}: preferred template {pt} not found")
-        # V3（ADR-0101 D2）：compatible_map_models 必须可解析
+        # V3（ADR-0238 D2）：compatible_map_models 必须可解析
         # （模型目录真实存在；别名也接受），防模板虚构模型契约。
         from app.lib.cartography.model_library import get_map_model_registry
         model_reg = get_map_model_registry()

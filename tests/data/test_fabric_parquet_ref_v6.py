@@ -2,7 +2,7 @@
 
 此前 ``ref:fabric-parquet/<id>`` 只写不读（无 resolver、无台账、GC 盲区，
 materialization_service 内 TODO(fabric-artifact-ledger)）。本文件锁定 V6
-契约（ADR-0118）：
+契约（ADR-0249）：
 
 - 路径单点：``fabric_parquet_path`` 唯一路径派生（charset 白名单防 traversal）；
 - 写后台账注册：ref 进 ledger（type=fabric_geoparquet，真实 descriptor）；

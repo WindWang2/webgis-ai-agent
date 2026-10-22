@@ -1,4 +1,4 @@
-"""确定性 rules-half（F15/ADR-0214 决策二）—— 像素可度量事实 → taxonomy。
+"""确定性 rules-half（F15/ADR-0263 决策二）—— 像素可度量事实 → taxonomy。
 
 复用 ``local_visual_criteria.evaluate_local_visual`` 的确定性像素判据
 （零网络、零随机、同图恒同结果），把 non-pass 维度按**事实级映射**归一

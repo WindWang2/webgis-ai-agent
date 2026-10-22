@@ -1,6 +1,6 @@
 """Dataset Semantics Role Binding —— 多数据集 → 任务角色的权威绑定（G01/WP-A）。
 
-ADR-0215 留下的最大歧义：多数据 session 的语义供给是「首个命中」
+ADR-0265 留下的最大歧义：多数据 session 的语义供给是「首个命中」
 （``primary_session_descriptor`` 取 list_refs 迭代序首个 ok descriptor），
 且整套资格链只有一个 resolver_profile/descriptor 服务全部角色 —— 第二个
 数据集的事实永远进不了资格裁决。本模块把「哪个数据集扮演哪个角色」升级为

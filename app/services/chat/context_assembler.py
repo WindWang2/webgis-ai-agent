@@ -211,7 +211,7 @@ class ContextAssemblyResult:
     estimated_tokens: int
     history_turns_included: int
     layer_count: int
-    # ADR-0101 Wave 5：模型感知预算度量（可观测；不改变组装/截断行为）。
+    # ADR-0237 Wave 5：模型感知预算度量（可观测；不改变组装/截断行为）。
     # None = 调用方未提供 context_window（无法规划）；dict = BudgetReport.as_dict()。
     budget_report: Optional[dict] = None
     # V6 Wave 13：三层上下文块字节度量（blocks_metric；无块时空 dict）。
@@ -663,7 +663,7 @@ class ChatContextAssembler:
             # 兼容旧调用（测试/benchmark 只传字符数）：ASCII-heavy 近似。
             total_tokens += int(tools_payload_chars / 4) + 1
 
-        # ADR-0101 Wave 5：模型感知预算度量（加观测不加行为 —— 截断权仍在
+        # ADR-0237 Wave 5：模型感知预算度量（加观测不加行为 —— 截断权仍在
         # 既有组件；超预算以 violations 留痕，供 trace/debug bundle 消费）。
         # ADR-0104 #6：策略开启时 advisor 的建议在此被真实执行（本模块只是
         # 编排；建议源仍是 GisBudgetAdvisor，执行器是 context_policy）。
@@ -777,7 +777,7 @@ class ChatContextAssembler:
                     "[CONTEXT-BUDGET] session=%s over budget: %s",
                     session_id, _report.violations,
                 )
-            # ADR-0182：token 消耗事实 → governor 会话账本（R12 只读记账；
+            # ADR-0254：token 消耗事实 → governor 会话账本（R12 只读记账；
             # governor 缺席/关闭时静默跳过，绝不阻断组装）。
             try:
                 from app.services.governor.context_link import record_context_report

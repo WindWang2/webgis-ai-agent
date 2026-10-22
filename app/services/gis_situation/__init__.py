@@ -1,4 +1,4 @@
-"""GIS Situation（方向 2，ADR-0180）—— 结构化会话世界情境。
+"""GIS Situation（方向 2，ADR-0252）—— 结构化会话世界情境。
 
 与相邻模块的分工（防重复施工）：
 - ``gis_world_state``：mutation 门面 + pull 型读模型工具

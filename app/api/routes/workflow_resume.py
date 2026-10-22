@@ -1,4 +1,4 @@
-"""Project-level workflow resume 路由（Harness V5 — ADR-0118 决策 D8）。
+"""Project-level workflow resume 路由（Harness V5 — ADR-0248 决策 D8）。
 
 - 写锚点：``POST /chat/sessions/{session_id}/workflow-resume-anchor``
   （require_owned_session —— 与其它 session 写通道同门）。

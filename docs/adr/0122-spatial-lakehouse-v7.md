@@ -2,7 +2,7 @@
 
 - status: Accepted
 - date: 2026-09-09
-- relates-to: ADR-0118 (Spatial Data Lakehouse & Cube V6), ADR-0096 (raster runtime non-goals), ADR-0101 (GeoCompute Data Fabric V4), ADR-0103 (Data Artifact Workspace V3)
+- relates-to: ADR-0249 (Spatial Data Lakehouse & Cube V6), ADR-0096 (raster runtime non-goals), ADR-0101 (GeoCompute Data Fabric V4), ADR-0241 (Data Artifact Workspace V3)
 
 ## Context
 

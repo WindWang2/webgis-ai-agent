@@ -1,4 +1,4 @@
-"""Wave 5（ADR-0101 D8 续）：批式载体输入 / 统一聚合累加器 / 批边界取消。
+"""Wave 5（ADR-0237 D8 续）：批式载体输入 / 统一聚合累加器 / 批边界取消。
 
 - ``iter_features_to_arrow_batches``：schema 冻结、漂移 typed 错误与
   coerce 策略、惰性消费（生成器 side-effect 计数）、空批容忍、

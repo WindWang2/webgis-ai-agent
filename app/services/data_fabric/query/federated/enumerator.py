@@ -1,4 +1,4 @@
-"""V6 join 枚举（ADR-0118 W4）：join graph 上的子集 DP，left-deep + bushy。
+"""V6 join 枚举（ADR-0247 W4）：join graph 上的子集 DP，left-deep + bushy。
 
 ADR-0101 D7 明示 deferred 的 "bushy join-tree search" 在此落地：
 
@@ -193,7 +193,7 @@ def _crs_transform_meta(
 
     V7（ADR-0119 W8）：``server_capable`` 标记（left, right）两侧是否为
     **scan-like 且 caps 声明 output_crs_pushdown** —— 此时允许 server
-    placement（ADR-0118 KL#2 兑现）；子树侧维持本地（无法回溯重扫）。
+    placement（ADR-0247 KL#2 兑现）；子树侧维持本地（无法回溯重扫）。
     """
     from app.services.data_fabric.query.federated.costing import decide_crs_transform
 

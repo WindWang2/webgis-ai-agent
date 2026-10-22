@@ -1,4 +1,4 @@
-"""differential replay 契约（ADR-0214 D7，WP6）：digest 漂移 → step 级 delta。"""
+"""differential replay 契约（ADR-0262 D7，WP6）：digest 漂移 → step 级 delta。"""
 from __future__ import annotations
 
 import json

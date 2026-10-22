@@ -1,4 +1,4 @@
-"""F08 / ADR-0214 D2：NodeGovernorLink 生命周期（预算不泄漏）。
+"""F08 / ADR-0264 D2：NodeGovernorLink 生命周期（预算不泄漏）。
 
 验收面：
 - pass-through：kill-switch（GIS_WORKFLOW_GOVERNOR=0）/ 无估算 /

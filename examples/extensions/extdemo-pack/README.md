@@ -1,6 +1,6 @@
 # extdemo-pack — GIS Extension Platform 示例扩展包
 
-本包是扩展平台（ADR-0104）的**活文档 + 集成测试夹具**：既给扩展作者当
+本包是扩展平台（ADR-0243）的**活文档 + 集成测试夹具**：既给扩展作者当
 样板照抄，也被 `tests/unit/extensions_platform/test_example_pack.py` 端到端
 驱动（发现 → 校验 → 激活 → 投影核对 → 派发 → 停用 → 零残留）。
 

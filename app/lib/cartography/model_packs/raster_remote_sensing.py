@@ -1,4 +1,4 @@
-"""Raster / 遥感 / 时序表达模型域包（ADR-0101 §B1 + Design System V4）。
+"""Raster / 遥感 / 时序表达模型域包（ADR-0238 §B1 + Design System V4）。
 
 native：terrain 解析面、光谱指数面、变化对比面（V3）+ V4 原生化：
 hillshade（服务端 Horn 预渲染灰度 + raster 层）、classified raster

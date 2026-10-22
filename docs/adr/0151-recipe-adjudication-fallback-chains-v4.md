@@ -4,7 +4,7 @@
 - 日期: 2026-09-13
 - 分支: `adaptive-cartography/02-recipe-adjudication`
 - 关联: ADR-0119（Contextual Cartographic Harness V6）、ADR-0121（语义自治）、
-  ADR-0129（GIS 方法论与模板智能，统一资格报告哲学）、ADR-0101（Workflow Recipe DSL）
+  ADR-0129（GIS 方法论与模板智能，统一资格报告哲学）、ADR-0239（Workflow Recipe DSL）
 - 编号说明: docs/adr 现有 watermark 为 0147；0148-0150 为并行线
   （adaptive-cartography/00、01 等）预留，本线按任务书预分配取 0151。
 

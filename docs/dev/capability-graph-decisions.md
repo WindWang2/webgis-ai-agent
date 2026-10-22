@@ -25,7 +25,7 @@ Pi 动态 surface 归方向 4（tts 线已锁定 worktree），本任务不动�
 
 ## D3 — ADR 编号取 0181，让出 0180
 
-勘察：tts 线（方向 4）decisions D7 明确拟占 ADR-0180（当前未建文件）。
+勘察：tts 线（方向 4）decisions D7 明确拟占 ADR-0252（当前未建文件）。
 本任务取 **ADR-0181**，避免并行线撞号。若最终 tts 未用 0180，留空无害。
 
 ## D4 — resolve_capabilities 的排序语义：ability-first，recipe 保持既有权威

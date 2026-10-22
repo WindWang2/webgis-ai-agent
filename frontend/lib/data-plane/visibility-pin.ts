@@ -1,5 +1,5 @@
 /**
- * VisibilityPin — 可见层数据 pin 生命周期（F13，ADR-0214 D4）。
+ * VisibilityPin — 可见层数据 pin 生命周期（F13，ADR-0261 D4）。
  *
  * 调度器缓存的字节预算 LRU 此前会把**正在显示**的层数据逐出（大图层
  * 场景下显示数据被预算压力挤掉 → 重新拉取/闪烁）。`pinRef`/`setPinned`

@@ -235,7 +235,7 @@ class RollbackIntent:
 
 @dataclass
 class RestoreStyleIntent:
-    """Map Product 版本的样式态恢复（ADR-0099 style-only restore）。
+    """Map Product 版本的样式态恢复（ADR-0236 style-only restore）。
 
     从版本携带的 mapspec_snapshot 恢复**表达面**：view / layout+components /
     basemap / time / 逐层 paint+visible+opacity（按 layer_id 匹配当前 spec，

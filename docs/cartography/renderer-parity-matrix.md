@@ -27,7 +27,7 @@
 | title | ✓ | ✓ | ✓ | ✓ | — | exporter runExport 读取 options.text 绘制画布标题（native） |
 | uncertainty_panel | ✓ | ✓ | ✓ | ✓ | — | V3：不确定性披露（区间/置信度/样本限制）live + canvas 导出同链（native） |
 
-已知限制（诚实登记，ADR-0101 D6）：
+已知限制（诚实登记，ADR-0238 D6）：
 - `table_panel` 仅 interactive —— 工作区交互面不是制图产物面（Runtime V4 产品决策）。
 - 报告 vector SVG（python 孪生 mapspec_to_svg）不含 chrome marginalia；
   画布导出（png/pdf/svg-包装）的 chrome 由 exporter/composeLayout 承载。

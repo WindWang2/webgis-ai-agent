@@ -1,4 +1,4 @@
-"""Durable Trace V5 —— 多 worker 安全持久化契约（ADR-0118 D1）。
+"""Durable Trace V5 —— 多 worker 安全持久化契约（ADR-0248 D1）。
 
 验收锚点（Epic V5）：
 - multi-worker trace 不丢事件：多进程并发 append 同一会话文件 →

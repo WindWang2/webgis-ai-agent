@@ -1,4 +1,4 @@
-"""交互观察摄入（S4）+ turn context 集成（M4）测试（ADR-0180）。
+"""交互观察摄入（S4）+ turn context 集成（M4）测试（ADR-0252）。
 
 覆盖：内容寻重去重、client_generation 单调、payload 白名单规范化、
 有界环、kill-switch 回落、编译失败 fail-open、WS handler 通道、

@@ -1,4 +1,4 @@
-"""Structured Observability 红线（ADR-0104 Wave 6）。
+"""Structured Observability 红线（ADR-0245 Wave 6）。
 
 - 词表锁：EVENT_CATALOG 覆盖 Harness/Data/Compute/Cartography 四面的
   业务事件；词表外 event 抛错（漂移即红）；

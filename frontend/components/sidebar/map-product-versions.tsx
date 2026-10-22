@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Map Product version workspace (ADR-0092 A6 + ADR-0099 lifecycle V2):
+ * Map Product version workspace (ADR-0092 A6 + ADR-0236 lifecycle V2):
  * version timeline + pairwise five-dimension diff inspector + lifecycle
  * operations (open / fork / restore-style / merge).
  *
@@ -500,7 +500,7 @@ export function MapProductVersionsPanel({
                       {t('sidebar.versions.rerunFrom', { step: rerunStep })}
                     </button>
                   )}
-                  {/* ADR-0099 constrained merge：样式-only × 分析-only 可合；
+                  {/* ADR-0236 constrained merge：样式-only × 分析-only 可合；
                       同维冲突由后端拒绝（409），文案如实呈现。 */}
                   <button
                     type="button"

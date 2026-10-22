@@ -1,4 +1,4 @@
-"""Harness V5 rendered-state observation 契约（ADR-0118 D5）。
+"""Harness V5 rendered-state observation 契约（ADR-0248 D5）。
 
 验收锚点（Epic V5）：地图 finalization 能检测请求层与实际渲染状态不
 一致 ——

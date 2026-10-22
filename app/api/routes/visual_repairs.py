@@ -1,4 +1,4 @@
-"""User-approved visual repair 路由（F15，ADR-0214 决策四 + C13 闭环）。
+"""User-approved visual repair 路由（F15，ADR-0263 决策四 + C13 闭环）。
 
 四个端点（全部 ``require_owned_session``，scope ``session:write``）：
 

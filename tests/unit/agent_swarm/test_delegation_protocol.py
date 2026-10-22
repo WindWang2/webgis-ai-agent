@@ -1,4 +1,4 @@
-"""Delegation Protocol（H07/ADR-0216）协议级测试。
+"""Delegation Protocol（H07/ADR-0269）协议级测试。
 
 覆盖面（对应 DoD 验证清单）：
 - 状态机：合法/非法转移、终态封闭；

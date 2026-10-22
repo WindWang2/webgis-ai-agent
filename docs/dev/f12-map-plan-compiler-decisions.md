@@ -1,4 +1,4 @@
-# F12 Map Plan Compiler — 设计决策（ADR-0214 配套）
+# F12 Map Plan Compiler — 设计决策（ADR-0260 配套）
 
 基线：`origin/master = 9e1ad229`；Worktree：`wt-webgis-f12-map-plan-compiler-20260926-9e1ad229`。
 
@@ -62,7 +62,7 @@ GrammarDecision (方向4)   DatasetMeasurementProfile (方向2)   workbench 锁�
 | P2-1 | ComponentIntent.bound_layer_id 被编译器丢弃 | `_component_delta` 映射 `options.layerId`（ensure/patch 双分支）+ 测试 |
 | P2-3 | superseded 回执的 final_revision/fingerprint 不反映会话当前态 | superseded/error 分支采信引擎锁内一致读回执 |
 | P2-4 | map_mutations 声明缺 remove token | 补 remove_layer/component/theme |
-| P2-5 | ADR-0214 四处文实漂移 | 已按实现修正（相位序/闸面/receipt 语义/工具声明） |
+| P2-5 | ADR-0260 四处文实漂移 | 已按实现修正（相位序/闸面/receipt 语义/工具声明） |
 | P2-6 | determinism 未覆盖 dict 插入序 | 新增 current 键插入序不变性测试 |
 | P2-7 | 组件词表含引擎工厂不支持的 basemap | obligations 词表剔除 `_ENGINE_UNSUPPORTED_COMPONENTS` |
 | P2-2/8 | >64 步重放受引擎 dedup FIFO 限制；compile_plan 纯 CPU 在事件循环 | 前者已在 ADR D5 披露（安全 superseded 中止）；后者记录为后续 `asyncio.to_thread` 方向 |

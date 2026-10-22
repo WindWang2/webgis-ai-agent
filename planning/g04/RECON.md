@@ -61,4 +61,4 @@ worktree：`/home/kevin/project/webgis-g04-template-assets`，分支 `feat/g04-c
 
 ## 7. 红线（实现必须遵守）
 
-lib 不 import services（ADR-0216）；槽位语义单一真值在 MapCompositionTemplate（契约只引用）；组件突变单一入口不变；ComponentType 词表不扩（ADR-0101）；工具载荷有界+结构化 reason codes+禁自由文本 query；不建第二注册表/第二 MapSpec 写入口/第二产品一致性 checker（ADR-0214/0228）；`org_id IS NULL` ≠ public；agent 不得代用户置锁。
+lib 不 import services（ADR-0216）；槽位语义单一真值在 MapCompositionTemplate（契约只引用）；组件突变单一入口不变；ComponentType 词表不扩（ADR-0238）；工具载荷有界+结构化 reason codes+禁自由文本 query；不建第二注册表/第二 MapSpec 写入口/第二产品一致性 checker（ADR-0214/0228）；`org_id IS NULL` ≠ public；agent 不得代用户置锁。

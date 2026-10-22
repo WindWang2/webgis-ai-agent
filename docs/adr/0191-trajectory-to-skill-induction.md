@@ -12,7 +12,7 @@
 ## 1. 背景与问题
 
 ADR-0182 建立了版本化的 GIS 技能库（37 个 core 技能，YAML 资产 +
-fail-loud 装载），ADR-0183 建立了轨迹级可重放单元（ReplayTrace，
+fail-loud 装载），ADR-0256 建立了轨迹级可重放单元（ReplayTrace，
 `replay-recordings/<sid>/<tid>.json`）与任务级满意度裁决
 （GoalSatisfactionReport 经 completion pipeline 写入 finalization 块，
 随 trace.verdict 持久化）。但整条链在"沉淀"方向是断的：

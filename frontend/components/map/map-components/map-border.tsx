@@ -74,7 +74,7 @@ function MapBorderRenderer(component: MapSpecComponent) {
     );
   }
 
-  // V3（ADR-0101 D3）：neatline —— 外细实线 + 内虚线（经典地图内图廓）。
+  // V3（ADR-0238 D3）：neatline —— 外细实线 + 内虚线（经典地图内图廓）。
   if (variant === 'neatline') {
     return (
       <div data-testid="spec-chrome-map-border" aria-hidden>

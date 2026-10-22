@@ -136,7 +136,7 @@ class Driver:
                 self.store.acquire_run_lease, instance_id,
                 owner_scope=self.owner_scope, token=run_token):
             return {"status": "busy", "states": {}}
-        # ADR-0214 D3：计划级资源 feasibility（observe 披露 / enforce 拒绝）。
+        # ADR-0264 D3：计划级资源 feasibility（observe 披露 / enforce 拒绝）。
         # 位于全部资格语义之后、任何节点派发之前 —— 资源裁决绝不越过
         # capability/permission/data qualification 硬门。
         adm = await self._plan_admission_gate(instance_id, dag)
@@ -160,12 +160,12 @@ class Driver:
     async def _plan_admission_gate(
         self, instance_id: str, dag: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        """计划级资源 feasibility（ADR-0214 D3）：observe 披露 / enforce 拒绝。
+        """计划级资源 feasibility（ADR-0264 D3）：observe 披露 / enforce 拒绝。
 
         - limits 未登记（manifest scope=workflow 缺席）→ 零裁决零开销
           （provisional 纪律：先观测后拦截）；
         - **受 workflow 面 kill-switch 门控**（GIS_WORKFLOW_GOVERNOR=0 →
-          整体直通，review P1-1：与 ADR-0214 D2/D3 的「整体直通」语义
+          整体直通，review P1-1：与 ADR-0264 D2/D3 的「整体直通」语义
           一致）；
         - 违规时发 journal ``PLAN_ADMISSION`` 事件（payload 有界）；
         - enforce 命中 → 实例快速失败 ``RESOURCE_BUDGET_EXCEEDED``
@@ -603,7 +603,7 @@ class Driver:
     ) -> None:
         """认领后的执行体（租约续期包裹中运行；所有终态路径经此收口）。
 
-        ``input_rows``：上游 descriptor 的行数证据（ADR-0214 D1 估算细化
+        ``input_rows``：上游 descriptor 的行数证据（ADR-0264 D1 估算细化
         输入；缺省 0 = 无证据）。
         """
         store = self.store
@@ -699,7 +699,7 @@ class Driver:
             **(node.get("params") or {}),
             **(node_params.get(node_id) or {}),
         }
-        # ADR-0214 D1/D2：节点级 ResourceEstimate + governor 预算会话。
+        # ADR-0264 D1/D2：节点级 ResourceEstimate + governor 预算会话。
         # 估算/准入均 fail-open（桥或 governor 异常 → 直通，行为不变）；
         # 拒绝（enforce）→ typed 失败，节点不执行。
         _estimate = None
@@ -803,7 +803,7 @@ class Driver:
             elif self.dispatcher is not None:
                 # V6 派发面（local/durable 由 env 决策；durable 复用 geocompute
                 # durable 通道的幂等键/心跳/WORKER_LOSS 既有真相）。
-                # ADR-0214 D5：run_id/node_attempt/node_deadline_s 与节点估算
+                # ADR-0264 D5：run_id/node_attempt/node_deadline_s 与节点估算
                 # 穿透 —— run_events 关联、attempt 证据、worker 硬超时、worker
                 # 侧资源申报（#1408 管道在本侧的喂入点）。
                 # worker 硬超时语义（review P1-2）：显式 node_timeout_s 是
@@ -887,20 +887,20 @@ class Driver:
             else:
                 outcome = await _invoke()
         except NoCapableWorker as exc:
-            # #1400 语义（ADR-0214 D4 保持分界）：零合格 worker = 确定性
+            # #1400 语义（ADR-0264 D4 保持分界）：零合格 worker = 确定性
             # 失败，一次落终态，绝不白耗重试预算。
             outcome = GeoComputeNodeOutcome(
                 ok=False, error_code="NO_CAPABLE_WORKER",
                 error_message=str(exc)[:200],
                 failure_class="deterministic_unsupported")
         except WorkerCapacityExhausted as exc:
-            # ADR-0214 D4：worker 在但槽满 = 瞬时饱和，走退避重试。
+            # ADR-0264 D4：worker 在但槽满 = 瞬时饱和，走退避重试。
             outcome = GeoComputeNodeOutcome(
                 ok=False, error_code="RESOURCE_EXHAUSTED",
                 error_message=str(exc)[:200],
                 failure_class="transient_remote")
         except BaseException:
-            # 释放完备性（ADR-0214 D2）：deadline-abandon（任务被 cancel →
+            # 释放完备性（ADR-0264 D2）：deadline-abandon（任务被 cancel →
             # CancelledError）与未预期异常都恰好归还一次预留，绝不泄漏
             # 通道槽位（对齐工具面 RUN-10 纪律）。
             await _release_budget(cancelled=True)
@@ -1471,7 +1471,7 @@ def _estimate_deadline_s(estimate: Any) -> Optional[float]:
     """估算 wall max × 2 + 30s → worker 硬超时（有界 [30, 3600] 秒）。
 
     仅在无显式超时（node_timeout_s / run 剩余预算）时派生 —— 让 durable
-    worker 在估算上界处停表，而不是白跑到默认等待上限（ADR-0214 D5）。
+    worker 在估算上界处停表，而不是白跑到默认等待上限（ADR-0264 D5）。
     """
     try:
         from app.services.governor.contract import Dimension

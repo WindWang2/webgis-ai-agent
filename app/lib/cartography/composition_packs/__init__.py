@@ -1,4 +1,4 @@
-"""Composition Template Domain Packs — 组合模板域包聚合（ADR-0101 D1）.
+"""Composition Template Domain Packs — 组合模板域包聚合（ADR-0238 D1）.
 
 seed 模板（composition_templates.SEED_COMPOSITION_TEMPLATES）保持不变；
 本包按域组织扩充模板，``CompositionTemplateRegistry.load_builtins()``

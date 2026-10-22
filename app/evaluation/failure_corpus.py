@@ -1,4 +1,4 @@
-"""Live-failure evaluation corpus（Harness V5 — ADR-0118 决策 D9）。
+"""Live-failure evaluation corpus（Harness V5 — ADR-0248 决策 D9）。
 
 V4 基线缺口：runtime corpus 全部 deterministic simulation（plan-tier
 query→plan 期望），**无真实运行时故障注入类目** —— provider 超时、DB

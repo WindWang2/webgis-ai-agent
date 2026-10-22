@@ -4,7 +4,7 @@
 - 日期：2026-09-17
 - 基线：origin/master `faa453a8935101378c23eb6694a42c3616d9c670`
 - 关联：ADR-0094（Data Fabric 安全面 / SSRFSafeHTTPAdapter）、#925（LLM 内网
-  endpoint 豁免）、#662（RAG_EMBEDDING_OFFLINE）、ADR-0104/ADR-0119
+  endpoint 豁免）、#662（RAG_EMBEDDING_OFFLINE）、ADR-0243/ADR-0119
   （扩展平台 network allowlist / 隔离）、ADR-0138（typed 错误信封）
 
 ## 背景

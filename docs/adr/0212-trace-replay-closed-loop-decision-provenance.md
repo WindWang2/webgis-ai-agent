@@ -3,11 +3,11 @@
 - 状态: Accepted
 - 日期: 2026-09-20
 - 线: harness/trace-replay-closed-loop-v2（方向 8）
-- 关联: ADR-0183（replay/benchmark/explainability v1 —— 本线全部复用其契约）、ADR-0103 §十（18 阶段链）、ADR-0181（capability resolution）、V9-decision-chain/#1395（dispatch bind）、ADR-0159（ratchet/质量事实）
+- 关联: ADR-0256（replay/benchmark/explainability v1 —— 本线全部复用其契约）、ADR-0103 §十（18 阶段链）、ADR-0181（capability resolution）、V9-decision-chain/#1395（dispatch bind）、ADR-0159（ratchet/质量事实）
 
 ## 1. 背景与偏移说明
 
-本方向原始任务书预设 T1-T6 六个工作包。勘察（2026-09-20，origin/master=5a4d4632）确认 ADR-0183 v1 已完整落地：ReplayTrace v1 打包层、settle 缝录制器、T1 证据级 + T2 变异级离线重放、140 场景语料、10 型故障注入、ratchet 接流、explain/triage/bench CLI、72 个 replay 测试。**机械重做即是重复建设**，故按任务书规则第 7 条，工作重心迁移到 v1 遗留的结构性缺口（r10 ledger 未解决项 + 勘察新发现），即本 ADR 的四个决策。
+本方向原始任务书预设 T1-T6 六个工作包。勘察（2026-09-20，origin/master=5a4d4632）确认 ADR-0256 v1 已完整落地：ReplayTrace v1 打包层、settle 缝录制器、T1 证据级 + T2 变异级离线重放、140 场景语料、10 型故障注入、ratchet 接流、explain/triage/bench CLI、72 个 replay 测试。**机械重做即是重复建设**，故按任务书规则第 7 条，工作重心迁移到 v1 遗留的结构性缺口（r10 ledger 未解决项 + 勘察新发现），即本 ADR 的四个决策。
 
 真实缺口（勘察证据）：
 

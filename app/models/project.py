@@ -201,7 +201,7 @@ class WorkflowRun(Base):
 
 
 class WorkflowResumeAnchor(Base):
-    """Harness V5 项目级 resume 锚点（ADR-0118 决策 D8）。
+    """Harness V5 项目级 resume 锚点（ADR-0248 决策 D8）。
 
     chat turn 证据链此前只有 session TTL 半边的持久性（session store +
     24h ref spill）—— session 过期即无法继续。本表把「从哪里继续」的
@@ -486,7 +486,7 @@ class MapProductVersion(Base):
     #  output_changed, vs_version_no} — machine-readable diff vs previous row.
     diff_summary = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    # ── Lifecycle V2（ADR-0099，migration 0024；全部可空新增列）─────────
+    # ── Lifecycle V2（ADR-0236，migration 0024；全部可空新增列）─────────
     # 版本定稿时的 MapSpec 文档快照（有界）。open/restore(style-only) 的
     # 授权依据；旧行无快照 = 诚实的 open 降级（可对比、不可回放）。
     mapspec_snapshot = Column(JSON, nullable=True)
@@ -501,7 +501,7 @@ class MapProductVersion(Base):
 
     @property
     def snapshot_available(self) -> bool:
-        """ADR-0099：快照在场性（response 投影用；旧行 = False 诚实缺省）。"""
+        """ADR-0236：快照在场性（response 投影用；旧行 = False 诚实缺省）。"""
         return bool(self.mapspec_snapshot)
 
     __table_args__ = (

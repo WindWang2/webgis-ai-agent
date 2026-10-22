@@ -1,4 +1,4 @@
-"""Lakehouse disaster recovery — V6 (ADR-0118) + V7 scrub (ADR-0119).
+"""Lakehouse disaster recovery — V6 (ADR-0249) + V7 scrub (ADR-0119).
 
 数据对象级 DR 组合层（不建第二存储）：
 

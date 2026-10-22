@@ -15,7 +15,7 @@
  * - side-by-side（V5/W6 真双面板）：主地图画布收缩为左半幅（map-panel 的
  *   容器随 comparison 状态收窄 —— 主图视口真实变为半宽），副图占右半幅，
  *   双方相机同步 → 两窗格覆盖同一地理范围，构成有效对比。V4「主图零改动」
- *   约束下双半屏永不共地理的问题由此解除（ADR-0104 已知取舍的收敛）。
+ *   约束下双半屏永不共地理的问题由此解除（ADR-0244 已知取舍的收敛）。
  * - parity（W6）：副图与主图共享同一 compose 通道 —— is3D/terrain、
  *   activeFilters、selectionFilters 全部透传主图同款状态；副图层族的
  *   legend_spec 经同一 LegendStack 组件渲染（pane 内缩放排版）。

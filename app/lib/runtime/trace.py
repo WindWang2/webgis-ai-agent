@@ -1,4 +1,4 @@
-"""Agent 执行 trace 事件模式（ADR-0101 Wave 8, §33）。
+"""Agent 执行 trace 事件模式（ADR-0237 Wave 8, §33）。
 
 有界事件模式，覆盖一轮的完整生命周期：
 

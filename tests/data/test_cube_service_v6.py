@@ -1,6 +1,6 @@
 """Lakehouse V6 Wave 7 — session cube 生产路径 + ref:cube disk-cursor。
 
-覆盖面（ADR-0118）：
+覆盖面（ADR-0249）：
 - build_session_cube：时间片栅格 → zarr cube + `ref:cube/<id>` + DataObject
   （血缘 = 输入栅格指纹；复用键 = 输入+时间轴+chunking）；
 - ref:cube disk-cursor：路径派生（charset 白名单）、probe_ref、GC rmtree；

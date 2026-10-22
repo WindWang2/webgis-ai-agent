@@ -1,7 +1,7 @@
 # F03 — Harness Lifecycle Convergence — Design
 
 - Date: 2026-09-26（实现） / 2026-09-27（本文为合并后补记的 design，G06 文档债补齐）
-- ADR: `docs/adr/0204-f03-harness-lifecycle-convergence.md`
+- ADR: `docs/adr/0259-f03-harness-lifecycle-convergence.md`
 - Recon: `docs/dev/f03-harness-lifecycle-recon.md`；Review: `docs/dev/f03-lifecycle-review.md`；Ownership: `docs/dev/f03-lifecycle-ownership-matrix.csv`
 - 实现基线: `origin/master @ 9e1ad229`；Merge: PR #1506（`0cffb226`）
 - 状态: 已合并（merged）。本文全部内容以合并后代码为事实源，可 rg 核对。

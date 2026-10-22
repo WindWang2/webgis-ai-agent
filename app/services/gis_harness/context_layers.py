@@ -129,7 +129,7 @@ def _data_domain(recovery: Dict[str, Any]) -> Dict[str, Any]:
             continue
         item = {"ref": _bounded_str((f or {}).get("ref"), 64),
                 "fingerprint": _bounded_str((f or {}).get("fingerprint"), 32)}
-        # ADR-0215 additive：dataset 语义契约指纹（生产方在场即透传；
+        # ADR-0265 additive：dataset 语义契约指纹（生产方在场即透传；
         # 缺席 = 旧事实合法，投影不虚构）。
         dsd = _bounded_str((f or {}).get("descriptor_fingerprint"), 48)
         if dsd:

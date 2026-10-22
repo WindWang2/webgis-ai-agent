@@ -1,4 +1,4 @@
-"""Pi 边界 pre-dispatch 参数校验闸（ADR-0180 D3/D4）。
+"""Pi 边界 pre-dispatch 参数校验闸（ADR-0253 D3/D4）。
 
 在 ``agent_pi_bridge._dispatch_tool_bound`` 中、ToolDispatchService.dispatch
 **之前**运行：schema 非法调用在 dedup / wave 排队 / ref 解析之前被拒，

@@ -1,4 +1,4 @@
-"""Product Compiler —— MapProductSpec → ProductCompileResult（ADR-0183 §5，M4/M5）。
+"""Product Compiler —— MapProductSpec → ProductCompileResult（ADR-0258 §5，M4/M5）。
 
 纯函数、确定性（同 (spec, plan, 模板/registry 状态) 同输出同 digest）、
 零 IO、零 LLM。产出是**组合 IR + 执行需求 refs**（方向 5 ExecutionGraph

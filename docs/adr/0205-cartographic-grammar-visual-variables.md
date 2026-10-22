@@ -3,7 +3,7 @@
 - 状态：Accepted（本分支）
 - 日期：2026-09-20
 - 关联：ADR-0152（symbology 唯一裁决）、ADR-0073（分布驱动分类 +
-  model library）、ADR-0154（标注计划契约）、ADR-0101（布局求解器）、
+  model library）、ADR-0154（标注计划契约）、ADR-0238（布局求解器）、
   ADR-0156（component composer）、ADR-0200（义务 rule graph 与 QA
   pack）、ADR-0118（user-wins 抑制）、ADR-0189（痛点出处：不推理视觉
   变量通道占用）、ADR-0199（multiscale LOD）

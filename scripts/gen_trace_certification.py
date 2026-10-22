@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""生成 docs/quality/certifications/TRACE_COMPLETENESS.md（ADR-0104 Wave 5）。
+"""生成 docs/quality/certifications/TRACE_COMPLETENESS.md（ADR-0245 Wave 5）。
 
 认证表是派生物：契约（app/lib/quality/trace_contract.py）+ 运行时填充现状
 （静态发现 app/ 内真实 record 站点）。

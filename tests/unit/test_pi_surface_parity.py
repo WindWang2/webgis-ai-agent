@@ -1,4 +1,4 @@
-"""Pi/legacy 校验与闸 parity 测试（ADR-0180 D4 / typed-tool-surface M4/T8）。
+"""Pi/legacy 校验与闸 parity 测试（ADR-0253 D4 / typed-tool-surface M4/T8）。
 
 不是要求暴露数量相同，而是钉住：
 - **校验等价**：gate 拒绝 ⇒ registry dispatch 同样 VALIDATION_ERROR

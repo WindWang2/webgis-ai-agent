@@ -1,5 +1,5 @@
 /**
- * RenderPerfProbes 契约测试（F13，ADR-0214 D5）。
+ * RenderPerfProbes 契约测试（F13，ADR-0261 D5）。
  *
  * 锁定：desired 变化 → settle 的 patch latency、会话级 TTFR 一次性、
  * 诚实缺席（无 desired 记录不虚构 0）、reset 语义、块形状有界。

@@ -1,4 +1,4 @@
-"""准入控制策略（R3，ADR-0182 D5）。
+"""准入控制策略（R3，ADR-0254 D5）。
 
 五值决策：``accept / accept_with_limits / degrade / defer / reject``。
 确定性有序规则链（同输入必同决策）：

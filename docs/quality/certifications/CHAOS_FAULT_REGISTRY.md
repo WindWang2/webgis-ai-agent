@@ -1,4 +1,4 @@
-# Chaos 故障注册表（ADR-0104 Wave 7+8）
+# Chaos 故障注册表（ADR-0245 Wave 7+8）
 
 > 本文件是**派生物**：唯一事实源 = `tests/fixtures/chaos.py` 的 `FAULTS`
 > 注册表。再生：`python scripts/gen_chaos_registry.py`；字节一致性闸：

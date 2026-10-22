@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""GIS Situation inspector（方向 2 S9，ADR-0180）。
+"""GIS Situation inspector（方向 2 S9，ADR-0252）。
 
 用法：
 

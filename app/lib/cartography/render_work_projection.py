@@ -1,5 +1,5 @@
 """RenderWorkProjection —— MapSpec → versioned RenderWorkInput 纯投影
-（F13，ADR-0214 D1；消费 R13 估工模型 ADR-0182）。
+（F13，ADR-0261 D1；消费 R13 估工模型 ADR-0254）。
 
 #1484 留下的缺口：``RenderWorkInput`` 与 ``render_formula.v1`` 只有估工
 模型和 governor seam，没有任何从真实 MapSpec 生产输入的代码 —— render

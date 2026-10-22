@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /**
- * V3（ADR-0101 D4）— cartographic theme 对比度基础检查。
+ * V3（ADR-0238 D4）— cartographic theme 对比度基础检查。
  *
  * 后端 CartographicThemeDescriptor 的 chrome 颜色是对本文件语义 token 的
  * **引用**（真值唯一在此）；本测试对 :root 与 .dark 两个 profile 实测

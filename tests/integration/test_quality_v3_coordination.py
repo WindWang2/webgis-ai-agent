@@ -257,24 +257,25 @@ def test_real_adr_scan_parses_corpus():
     current = adr_mod.scan(REPO)
     assert len(current.adrs) > 120
     by_file = {a.file: a for a in current.adrs}
-    info = by_file["docs/adr/0118-quality-reliability-security-platform-v2.md"]
-    assert info.title_number == 118
-    assert 104 in info.references, "前置 ADR 0104 必须被解析为引用"
+    info = by_file["docs/adr/0250-quality-reliability-security-platform-v2.md"]
+    assert info.title_number == 250
+    assert 245 in info.references, "前置 ADR 0245 必须被解析为引用"
 
 
 def test_real_adr_duplicates_are_known_limitations_at_watermark():
+    """#1679 后存量撞号全部重编号消解：scan 不再报告任何重复编号。
+
+    重编号前此处断言的是存量 known limitation（6×0118 / 3×0180 / 5×0183，
+    由 ownership 水位兜底）；docs/adr/ 编号唯一后，重复集必须为空，
+    watermark 之上更不得红（见 tests/test_adr_numbering_contract.py）。
+    """
     current = adr_mod.scan(REPO)
     dups = current.duplicates()
-    assert 118 in dups and len(dups[118]) == 6, "存量 6×0118 必须可见"
-    # 方向 10 合并期实录：0180×3（typed-surface / situation / kernel 三线并行
-    # 各自分配 0180）与 0183×2（srm / replay-bench）是已入库的撞号存量 ——
-    # 与 6×0118 同为 known limitation，由 ownership 水位统一兜住。
-    assert 180 in dups and len(dups[180]) == 3, "存量 3×0180 必须可见"
-    assert 183 in dups and len(dups[183]) == 5, "存量 5×0183（伞号复用）必须可见"
+    assert dups == {}, f"ADR 撞号应已全部消解，实测剩余：{dups}"
     watermark = json.loads(
         (REPO / "docs/integration/ownership.json").read_text(encoding="utf-8")
     )["adr_watermark"]
-    assert adr_mod.check_watermark(REPO, watermark) == [], "水位之下不得红"
+    assert adr_mod.check_watermark(REPO, watermark) == [], "水位之上不得红"
 
 
 def test_watermark_reds_on_new_duplicate(tmp_path):

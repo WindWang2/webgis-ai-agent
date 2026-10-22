@@ -1,4 +1,4 @@
-"""测试引用发现（Quality Manifest 的派生源之一，ADR-0104）。
+"""测试引用发现（Quality Manifest 的派生源之一，ADR-0245）。
 
 扫描 backend/frontend 测试源码，建立「registry 标识符 → 引用它的测试文件」
 索引。这是**只读投影**：不修改任何测试；静态引用只是必要条件证据，
@@ -71,7 +71,7 @@ def _git_tracked_files(root: str) -> Optional[frozenset]:
 
 
 def _iter_scan_files(root: Path) -> List[Path]:
-    """只扫 git 已跟踪文件（ADR-0104 R1 修复）：未跟踪/在飞的文件不得
+    """只扫 git 已跟踪文件（ADR-0245 R1 修复）：未跟踪/在飞的文件不得
     进入字节闸证据面，否则本地再生会把未提交状态烤进 manifest。"""
     files: List[Path] = []
     tracked = _git_tracked_files(str(root))

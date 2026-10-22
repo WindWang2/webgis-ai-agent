@@ -211,7 +211,7 @@ def _csr_envelope_curves(curve_fn, n: int, window: tuple, draws: int,
     xmin, ymin, xmax, ymax = window
     out = np.empty((draws, n_steps))
     for i in range(draws):
-        # CSR 模拟是 draws × O(n²) 的重循环（ADR-0104 Wave 9）：每个 draw
+        # CSR 模拟是 draws × O(n²) 的重循环（ADR-0245 Wave 9）：每个 draw
         # 一个协作式取消检查点——K/L/G/F/J 的 envelope 都经过这里。
         checkpoint()
         sim_xy = np.column_stack([
@@ -1031,7 +1031,7 @@ def cross_k(
         rng = np.random.default_rng(_FIXED_SEED)
         sims = np.empty((permutations, n_steps))
         for i in range(permutations):
-            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0245 Wave 9）：
             # 每次置换一个协作式取消检查点。
             checkpoint()
             sims[i] = _k12(lab[rng.permutation(n)])
@@ -1201,7 +1201,7 @@ def knox_test(
         rng = np.random.default_rng(_FIXED_SEED)
         sim_counts = np.empty(permutations)
         for i in range(permutations):
-            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0245 Wave 9）：
             # 每次置换一个协作式取消检查点。
             checkpoint()
             tp = times[rng.permutation(n)]
@@ -1398,7 +1398,7 @@ def space_time_k(
         rng = np.random.default_rng(_FIXED_SEED)
         sim_stats = np.empty(permutations)
         for i in range(permutations):
-            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0245 Wave 9）：
             # 每次置换一个协作式取消检查点。
             checkpoint()
             sim_stats[i] = float(np.max(_kst(times[rng.permutation(n)]) - ref))
@@ -1509,7 +1509,7 @@ def mantel_test(
         rng = np.random.default_rng(_FIXED_SEED)
         sim = np.empty(permutations)
         for i in range(permutations):
-            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0245 Wave 9）：
             # 每次置换一个协作式取消检查点。
             checkpoint()
             # 单一置换同时重标 i 与 j 侧 —— 两侧必须同一标签流
@@ -1688,7 +1688,7 @@ def cross_pair_correlation(
         rng = np.random.default_rng(_FIXED_SEED)
         sims = np.empty((permutations, n_steps))
         for i in range(permutations):
-            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0245 Wave 9）：
             # 每次置换一个协作式取消检查点。
             checkpoint()
             sims[i] = _pcf_from_k(_k12(lab[rng.permutation(n)]), r_grid,

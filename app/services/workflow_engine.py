@@ -858,7 +858,7 @@ class WorkflowEngine:
                         "[WorkflowEngine] artifact promotion failed for run %s: %s",
                         run_id, e,
                     )
-            # ADR-0099: run 完成 → 幂等自动记录一条 Map Product 版本
+            # ADR-0236: run 完成 → 幂等自动记录一条 Map Product 版本
             # （同 run+指纹去重；snapshot best-effort —— 会话缺席/过期仍记
             # 录，只是 open 降级为 compare-only）。失败绝不影响 run。
             # review m8：置于 session 守卫之外 —— 无会话的项目 run 同样入账。

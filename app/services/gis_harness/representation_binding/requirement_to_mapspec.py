@@ -3,7 +3,7 @@
 只做两件事，别无旁枝：
 
 1. ``build_binding_proposals``（纯函数）：从 RequirementDocument 的
-   **显式用户选择**（字段级 origin=user，ADR-0215 ownership）派生
+   **显式用户选择**（字段级 origin=user，ADR-0266 ownership）派生
    RepresentationBinding 提案——目标只允许现有 registry intent kind
    或既有 grammar face，绝不新造命令词表；
 2. ``apply_binding`` / ``apply_pending_bindings_safe``：构造现有
@@ -157,7 +157,7 @@ def build_binding_proposals(
     """从需求文档派生绑定提案（纯函数、确定性、有界 ≤16）。
 
     只读**用户显式**表达面（字段级 origin=user）且文档未超替——
-    "已接受"以字段级 ownership 判定（ADR-0215：user 即最高优先，
+    "已接受"以字段级 ownership 判定（ADR-0266：user 即最高优先，
     lifecycle=accepted 是整档状态而非表达面门槛）。
     """
     if doc.lifecycle == "superseded":

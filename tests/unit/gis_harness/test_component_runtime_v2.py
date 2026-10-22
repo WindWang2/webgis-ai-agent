@@ -164,7 +164,7 @@ def test_statistics_panel_component_factory():
 
 
 def test_valid_variants_from_descriptor_registry():
-    # V3（ADR-0101 D3）：+ monochrome；V4（Design System）：+ dual_convention
+    # V3（ADR-0238 D3）：+ monochrome；V4（Design System）：+ dual_convention
     assert set(valid_variants_for_type("north_arrow")) == {
         "compass_minimal_black", "compass_needle", "compass_rose", "arrow_simple",
         "monochrome", "dual_convention",

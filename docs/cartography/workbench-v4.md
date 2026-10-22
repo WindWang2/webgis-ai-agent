@@ -1,6 +1,6 @@
 # Professional Workbench V4（Goal C）
 
-> 实现记录；架构决策见 `docs/adr/0104-professional-cartography-workbench-v4.md`。Phase 0 审计（8 份）为分支工作产物，不入库；结论已并入本文。
+> 实现记录；架构决策见 `docs/adr/0244-professional-cartography-workbench-v4.md`。Phase 0 审计（8 份）为分支工作产物，不入库；结论已并入本文。
 
 ## 子系统地图
 
@@ -14,7 +14,7 @@
 | 模式化 shell + agent `set_mode` | `frontend/components/layout/nav-rail.tsx` / `frontend/lib/map-commands/workbenchCommands.ts` | `nav-rail.test.tsx` / `workbenchCommands.test.ts` |
 | 组件交互 V4（snap/置顶/键盘缩放折叠隐藏） | `frontend/components/map/map-components/floating-chrome.tsx` | `floating-chrome.wave4.test.tsx` |
 | 图表双向联动（门禁对齐/chart_highlight 修复/视野联动） | `frontend/components/chat/chart-core.tsx` / `frontend/components/map/map-components/chart-panel.tsx` / `frontend/lib/map-commands/chartCommands.ts` | `chart-linkage.wave5.test.tsx` |
-| 对比工作台（swipe + V5 真双面板，ADR-0105） | `frontend/components/map/comparison/` | `comparison-sync.test.ts` / `comparison-view.test.tsx` |
+| 对比工作台（swipe + V5 真双面板，ADR-0246） | `frontend/components/map/comparison/` | `comparison-sync.test.ts` / `comparison-view.test.tsx` |
 | typed 样式意图 | `frontend/lib/styles/style-intent.ts` / `frontend/lib/map-commands/styleCommands.ts` | `style-intent.test.ts` |
 | 导出 parity + 显式降级 | `frontend/lib/map-kit/export-chrome.ts` / `exporter.ts` | `export-chrome.parity.test.ts` |
 | 布局几何语料 / 500 层压力 | `frontend/test/visual/workbench-layout-corpus.test.tsx` / `frontend/test/workbench-stress-500.test.tsx` | — |
@@ -33,7 +33,7 @@
 
 - 图层 intent 状态机与 session-cursor 的手工合并（审计 02 B7/B9）未合一：turn-focus 的轮次收起是受控分叉（pending 压制、不落盘）。
 - side-by-side 在 V4 诚实下线（「主图不动」约束下双半屏永不共地理）。
-  **V5（ADR-0105）已恢复为真双面板**：side-by-side 激活时主图画布收缩为
+  **V5（ADR-0246）已恢复为真双面板**：side-by-side 激活时主图画布收缩为
   左半幅，副图占右半幅、相机同步 —— 双窗格为真实半宽视口；副视图 parity
   （is3D/terrain、图例过滤、选择过滤、副图族图例）已实现。大规模内联
   GeoJSON 的视口确定性网格抽稀见 W7（预算 5000）。

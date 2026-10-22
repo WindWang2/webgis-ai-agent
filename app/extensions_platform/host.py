@@ -1,4 +1,4 @@
-"""扩展生命周期运行时（ADR-0104 / Wave 2, 10-12）。
+"""扩展生命周期运行时（ADR-0243 / Wave 2, 10-12）。
 
 状态机::
 
@@ -1507,7 +1507,7 @@ class ExtensionHost:
                 )
             )
 
-    # ── disable / enable（ADR-0104 Wave 2：运维开关，非失败态）────────
+    # ── disable / enable（ADR-0243 Wave 2：运维开关，非失败态）────────
     def disable(self, extension_id: str) -> list[ExtensionDiagnostic]:
         """运维显式停用：active 的先停用回滚，之后拒绝再激活。"""
         record = self._records.get(extension_id)

@@ -1,6 +1,6 @@
 {
  "version": "1.0",
- "description": "Semantic Map Product Graph golden corpus (ADR-0183 M9)",
+ "description": "Semantic Map Product Graph golden corpus (ADR-0258 M9)",
  "cases": [
   {
    "id": "arch-distribution_overview-zh",

@@ -138,7 +138,7 @@ async def materialize_ref_payload(
             "byte_size": len(data),
         }, None
     if is_fabric_parquet_ref(ref):
-        # V6（ADR-0118）：GeoParquet 磁盘工件 —— binary lane 与 raster PNG
+        # V6（ADR-0249）：GeoParquet 磁盘工件 —— binary lane 与 raster PNG
         # 同款（stat 预检 → 读字节 → sha256 → CAS put）。
         path = fabric_parquet_path(session_id, ref)
         if path is None:
@@ -175,7 +175,7 @@ async def materialize_ref_payload(
             "byte_size": len(data),
         }, None
     if is_cube_ref(ref):
-        # V6（ADR-0118）：lakehouse cube —— **manifest lane**。cube 是目录树，
+        # V6（ADR-0249）：lakehouse cube —— **manifest lane**。cube 是目录树，
         # 快照指针携带其内容寻址 manifest（零字节拷贝的 manifest-only 发布；
         # 预统计超预算直接诚实跳过）。深层 chunk 校验/物化归 DR
         # （lakehouse.verify_data_object / materialize_data_object）。

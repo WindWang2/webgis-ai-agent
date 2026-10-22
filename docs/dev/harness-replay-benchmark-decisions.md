@@ -1,6 +1,6 @@
 # Decisions — Harness Replay + Benchmark + Explainability (R10)
 
-配套: `docs/dev/harness-replay-benchmark-recon.md`（事实底座）、`docs/dev/harness-replay-benchmark-ledger.md`（里程碑账本）、`docs/adr/0183-harness-replay-benchmark-explainability.md`。
+配套: `docs/dev/harness-replay-benchmark-recon.md`（事实底座）、`docs/dev/harness-replay-benchmark-ledger.md`（里程碑账本）、`docs/adr/0256-harness-replay-benchmark-explainability.md`。
 原则: Pi 仍是 Agent Host；本线只建 Pi 下方的 GIS-native replay/评测/解释能力；一切指标复用 #1269 基座。
 
 ## D1 — ReplayTrace = 打包层，不是第二套 trace
@@ -20,9 +20,9 @@
 **决策**: 不加 Alembic 迁移。轨迹质量观测用 `record_quality_run(lane="replay", source="replay_bench", checks=[...])` 入现有四表（lane 为自由字符串截 20 字符，cartography_metrics_store.py:219 已核实）；基线走 `quality_ratchet_gate.py baseline --from-json`；ratchet 数学直接调 `evaluate_ratchet`。migrations/.alloc.json 不领号。
 **理由**: 防重复 + 资源约束（无 DB schema 风险）；`collect_observation_rows(lanes=("replay",))` 天然可查。
 
-## D4 — ADR-0183，独特文件名
+## D4 — ADR-0256，独特文件名
 
-**决策**: `docs/adr/0183-harness-replay-benchmark-explainability.md`。已核验 master ≤0179、open 分支占 0180×3/0181/0182×2，0183 未被任何分支占用。仓库已有 0180/0182 撞号先例（不同文件名并存），本号撞号风险最低。
+**决策**: `docs/adr/0256-harness-replay-benchmark-explainability.md`。已核验 master ≤0179、open 分支占 0180×3/0181/0182×2，0183 未被任何分支占用。仓库已有 0180/0182 撞号先例（不同文件名并存），本号撞号风险最低。
 
 ## D5 — Sanitize 纪律：白名单 + 上限 + 剥离
 

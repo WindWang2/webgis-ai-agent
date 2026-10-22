@@ -1,4 +1,4 @@
-"""Explainability bundle（B8，ADR-0183 决策六）。
+"""Explainability bundle（B8，ADR-0256 决策六）。
 
 给开发者的因果链产物（JSON + Markdown）：
 

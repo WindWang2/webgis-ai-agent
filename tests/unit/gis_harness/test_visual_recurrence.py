@@ -1,4 +1,4 @@
-"""F15 跨运行视觉 recurrence 账本回归（ADR-0214 决策五）。
+"""F15 跨运行视觉 recurrence 账本回归（ADR-0263 决策五）。
 
 不变式：
 1. 同一指纹出现 ≥ MAX_VISUAL_RECURRENCE_RUNS（3）次 → 硬停（newly 披露

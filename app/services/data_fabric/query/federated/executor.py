@@ -1,4 +1,4 @@
-"""V6 物理执行器（ADR-0118 W6）：计划树 → 有界批执行。
+"""V6 物理执行器（ADR-0247 W6）：计划树 → 有界批执行。
 
 语义红线：与 V5 链式联邦**逐位一致**的行形状与预算行为 ——
 - 行形状复用 ``federation.attribute_join_local / spatial_join_local /

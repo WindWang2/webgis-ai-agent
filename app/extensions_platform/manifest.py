@@ -1,4 +1,4 @@
-"""GisExtensionManifest：扩展包的正式声明契约（ADR-0104 / Wave 1）。
+"""GisExtensionManifest：扩展包的正式声明契约（ADR-0243 / Wave 1）。
 
 设计原则：
 - **fail closed**：pydantic ``extra="forbid"`` + 严格类型；任何未知字段、

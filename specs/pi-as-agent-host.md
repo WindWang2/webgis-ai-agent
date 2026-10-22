@@ -125,4 +125,4 @@ SessionPlan wire is **stream-only by contract**: `session_plan_updated` / `sessi
 
 ## Further Notes
 
-Parent wayfinder map: GitHub “Pi as the agent host”. Research notes: vendored Pi as non-coding host; Pi vs ChatEngine host seams. Throwaway surface walk lives on git branch `prototype/pi-native-surface`. Next implementation should add ADR-0076 and ADR-0077 as accepted records beside this spec. `/to-spec` does not implement.
+Parent wayfinder map: GitHub “Pi as the agent host”. Research notes: vendored Pi as non-coding host; Pi vs ChatEngine host seams. Throwaway surface walk lives on git branch `prototype/pi-native-surface`. Next implementation should add ADR-0076 and ADR-0231 as accepted records beside this spec. `/to-spec` does not implement.

@@ -1,4 +1,4 @@
-"""Product Completeness Validator —— 语义完整性（ADR-0183 §7，M8）。
+"""Product Completeness Validator —— 语义完整性（ADR-0258 §7，M8）。
 
 回答「这个产品是否构成用户要求的产品」，与两套既有核验**正交**：
 

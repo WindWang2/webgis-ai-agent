@@ -86,7 +86,7 @@ class AdapterRegistry:
         return spec
 
     def unregister(self, canonical: str) -> bool:
-        """ADR-0104：扩展数据 provider 卸载回滚用——移除 canonical 及其
+        """ADR-0243：扩展数据 provider 卸载回滚用——移除 canonical 及其
         全部别名键；目标不存在返回 False（幂等）。内置 source type 从不
         调用（append-only 契约只对扩展写入放开）。"""
         key = canonical.lower().strip()

@@ -1,4 +1,4 @@
-"""Product Completeness Validator（ADR-0183 M8）单元测试。
+"""Product Completeness Validator（ADR-0258 M8）单元测试。
 
 正交性：语义完整性 ≠ binding 完成度（planner）≠ 渲染/视口核验（completion/）。
 全部检查确定性、结构化、code 可断言。

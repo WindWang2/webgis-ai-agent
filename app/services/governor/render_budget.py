@@ -1,4 +1,4 @@
-"""Map render work budget（R13，ADR-0182 D10）。
+"""Map render work budget（R13，ADR-0254 D10）。
 
 与 V11 quality 轴**完全分离**：quality 回答"好不好"，本模块只回答
 "跑不跑得动"。纯函数估工模型——输入制图面形状（layer/feature/label/pixel/

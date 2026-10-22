@@ -1,4 +1,4 @@
-"""Harness Turn Journal: durable turn event ledger + workflow turn link (H04 / ADR-0216)
+"""Harness Turn Journal: durable turn event ledger + workflow turn link (H04 / ADR-0268)
 
 Revision ID: 0096_harness_turn_journal
 Revises: 0095_gis_working_contexts

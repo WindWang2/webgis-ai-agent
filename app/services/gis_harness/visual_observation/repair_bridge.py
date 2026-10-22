@@ -1,4 +1,4 @@
-"""视觉 finding → 自愈缺陷翻译桥 + 修复提案存储（F15/ADR-0214 决策四）。
+"""视觉 finding → 自愈缺陷翻译桥 + 修复提案存储（F15/ADR-0263 决策四）。
 
 **单一真相纪律**：taxonomy → HEALABLE 类别的翻译只构造 healer 可分类的
 鸭子 critique（legacy 维度 + 证据标记词），分类/定位一律交回

@@ -10,7 +10,7 @@
 - Subagent A（1/2）完成 Phase 0 全仓勘察 → `docs/dev/harness-resource-v1-recon.md`
   （预算盘点矩阵 30+ 子系统、缺口 G1-G12、集成缝、并行线热区、重试乘数表）。
 - `docs/dev/harness-resource-v1-decisions.md`（D0-D14）落盘。
-- ADR 领号：**ADR-0182**（0180 归 #1274/#1275 标题、0181 归 capability-graph 分支）。
+- ADR 领号：**ADR-0254**（0180 归 #1274/#1275 标题、0181 归 capability-graph 分支）。
 
 ## M1 — 契约与基座 ✅
 
@@ -113,7 +113,7 @@
 
 ## M8 — 交付
 
-- [x] ADR-0182 落盘。
+- [x] ADR-0254 落盘。
 - [x] final regression：governor 138 项 + 受影响域回归（error_sanitization/
   pi_bridge_lock/tool_error_classification×2/subagent_context_isolation）183 项。
 - [x] push + **PR #1279**（2026-09-14；不等待线上 CI、未自动 merge、保持 open）。

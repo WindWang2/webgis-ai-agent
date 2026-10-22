@@ -1,4 +1,4 @@
-"""Harness V5：workflow_resume_anchors 表（ADR-0118 决策 D8）。
+"""Harness V5：workflow_resume_anchors 表（ADR-0248 决策 D8）。
 
 独立 revision（0032）—— 与其他并行 Epic 的 migration 无交叉。
 """

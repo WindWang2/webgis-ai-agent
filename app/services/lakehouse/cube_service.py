@@ -1,4 +1,4 @@
-"""Session cube service — Spatial Lakehouse V6 (Wave 7, ADR-0118).
+"""Session cube service — Spatial Lakehouse V6 (Wave 7, ADR-0249).
 
 时空 cube 的**会话生产路径**：一组网格一致的时间片栅格 → zarr cube
 （``ref:cube/<id>`` disk-cursor + 内容寻址 DataObject）。

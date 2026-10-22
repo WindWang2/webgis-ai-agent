@@ -55,7 +55,7 @@ POST /api/v1/chat/stream (SSE)                      app/api/routes/chat.py:1113
 
 ### 2.1 Replay Oracle v3（tests/harness_replay/ + app/lib/harness/replay/）
 - **库**：`app/lib/harness/replay/__init__.py` 模块清单；`schema.py:45 ReplayTrace`（18 阶段证据链打包，schema_version=1，additive-only）；`replayer.py:508 OfflineReplayer`、`:533 replay_scenario`、`:44 SCENARIO_SCHEMA_VERSION=1`、`:102 Scenario`（turns/ops/mutations/expect/dispatch_backed/receipt_backed/tool_registry）。
-- **层级**：T1 证据级 / T2 变异级 / T3 bind-gate / T4 receipt 级真实 dispatch 沙箱重放（ADR-0214 D6 实装）；声明未跑→`not_run` 诚实翻红（replayer.py:564-572）。
+- **层级**：T1 证据级 / T2 变异级 / T3 bind-gate / T4 receipt 级真实 dispatch 沙箱重放（ADR-0262 D6 实装）；声明未跑→`not_run` 诚实翻红（replayer.py:564-572）。
 - **场景语料**：`scenarios.py` 生成器（≥100 core 单轮 + ≥30 多轮，17 类别，tests/harness_replay/test_replay_corpus.py:21-50 钉死）；fixture 提交在 `tests/fixtures/replay/scenarios/`（141 个 JSON，实测计数），与生成器逐字节 pin（test_replay_corpus.py:52-66）。
 - **测试文件**：test_replay_corpus / test_replay_replayer / test_replay_faults（10 类故障注入）/ test_replay_ratchet / test_roundtrip_closed_loop / test_receipt_level_replay 等 16 个。
 - **运行**：`pytest tests/harness_replay/ -m cartography --no-cov`（文件内 `pytestmark = pytest.mark.cartography`）；CLI `python scripts/replay_bench.py`（suite/seed/offline/compare/baseline，scripts/replay_bench.py:26 main）。
@@ -77,7 +77,7 @@ POST /api/v1/chat/stream (SSE)                      app/api/routes/chat.py:1113
 - `tests/test_harness_kernel_e2e_scenarios.py`：**7 个最小验收场景**（S1 成都小学→plan 生命周期 / S2 同信封 followup / S3 失败重试不重复副作用 / S4 SSE 断线重连状态单调 / S5 Pi 重启会话恢复 / S6 legacy host parity / S7 MapSpec+cartography 共存无死锁），行号 133-385；走**真实 Pi dispatch 缝**（dispatch_tool，无 LLM/无 Pi 子进程）；数据依赖注记：query_local_poi 依赖本机 gd_pois.gpkg，能力/失败链用 heatmap_data inline geojson（文件头 docstring 1-28 行）。**这是 G05 task 场景 runner 的最近亲**。
 
 ### 2.5 其他既有 fixtures
-- `tests/fixtures/gis_samples.py`：确定性合成样本（point_fc:31/polygon_fc:50/line_fc:74/bad_crs_fc:101/invalid_geometry_fc:108/missing_field_fc:124/zero_variance_fc:133/temporal_fc:141/tiny_raster:163；成都 bbox 内，ADR-0104 Wave 18）。
+- `tests/fixtures/gis_samples.py`：确定性合成样本（point_fc:31/polygon_fc:50/line_fc:74/bad_crs_fc:101/invalid_geometry_fc:108/missing_field_fc:124/zero_variance_fc:133/temporal_fc:141/tiny_raster:163；成都 bbox 内，ADR-0245 Wave 18）。
 - `tests/fixtures/pi_mocks.py`：Pi 子进程 I/O mock（make_readline:13/make_mock_process:26/事件工厂 63-141）。
 - `tests/fixtures/replay/baseline.json`（replay bench 基线）；`tests/fixtures/chaos.py`（故障注册表）。
 - `tests/cartography/fixtures/`、`tests/fixtures/product_corpus/`、`dataset_semantic_corpus/`、`export_semantic_corpus/`。
@@ -88,7 +88,7 @@ POST /api/v1/chat/stream (SSE)                      app/api/routes/chat.py:1113
   - `tests/test_harness_kernel_e2e_scenarios.py` 的模式：`set_tool_registry(ToolRegistry)` + init_tools + 真实 dispatch_tool（见 §2.4）。
   - `tests/fixtures/pi_mocks.py` 的 mock process 工厂（伪造 Pi stdout 行协议）。
 - **ScriptedToolProvider + FaultInjector**（执行面 fake，最可复用）：`app/lib/harness/lab/fakes.py:73 ScriptedToolProvider`（(tool,args) 精确匹配→cursor 回退的脚本化收据）、`:160 FaultInjector`（latency/timeout/disconnect/cancel/malformed_result/duplicate_event/restart 故障矩阵）、`:21 LabClock`（虚拟时钟）；契约测试 `tests/lab/test_lab_fakes.py`；lab runner/spec/settlement 在 `app/lib/harness/lab/{runner,spec,settlement}.py`。
-- **T4 receipt 沙箱**：ToolDispatchService 构造参数 `session_data`（ADR-0214 D6，tool_dispatch_service.py:274-281）允许注入进程内沙箱替身做零副作用重放——G05 失败注入/跨会话恢复测试可直接复用该缝。
+- **T4 receipt 沙箱**：ToolDispatchService 构造参数 `session_data`（ADR-0262 D6，tool_dispatch_service.py:274-281）允许注入进程内沙箱替身做零副作用重放——G05 失败注入/跨会话恢复测试可直接复用该缝。
 - **dataset provider**：`tests/fixtures/gis_samples.py`（合成 FC/raster）；`tests/data/fabric_fixtures.py`（fake_source_server/patched_safe_sessions，tests/conftest.py:497 引入）。
 - **legacy LLM provider fake**（若需要 legacy 面）：tests/conftest.py 已钉 `LLM_API_KEY=your-api-key-here` 等假 env（conftest.py:28-30）；chat_engine 系测试自带 mock，G05 不应走此面。
 

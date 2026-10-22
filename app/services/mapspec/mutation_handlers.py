@@ -967,7 +967,7 @@ async def _handle_restorestyle(ctx: MutationContext) -> HandlerOut:
     loaded = ctx.loaded
     intent = ctx.intent
 
-    # ADR-0099 style-only restore：表达面（view/layout/
+    # ADR-0236 style-only restore：表达面（view/layout/
     # basemap/time/逐层 paint+presentation）来自版本快照，
     # 数据层与计算计划不动。快照里存在而当前 spec 缺席的
     # layer_id 如实跳过（记入 result notes —— 恢复是诚实

@@ -1,4 +1,4 @@
-"""GisExtensionManifest 契约测试（ADR-0104 Wave 1）。"""
+"""GisExtensionManifest 契约测试（ADR-0243 Wave 1）。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""统一成本估算投影（R2，ADR-0182 D2/D4）。
+"""统一成本估算投影（R2，ADR-0254 D2/D4）。
 
 把各域**已有的**成本语义投影为 governor 契约的 :class:`ResourceEstimate`：
 
@@ -49,7 +49,7 @@ _TOOL_CLASS_PRIOR: Dict[str, Tuple[float, float, float, float, float, float]] = 
 _LLM_USD_PER_1K_TOKENS = 0.002
 
 #: workflow 节点输入行数 → wall 兜底吞吐先验（行/秒；provisional）。
-#: 驻留本表（ADR-0214 D1 单一先验真相；review P2-4）—— workflow 估算桥
+#: 驻留本表（ADR-0264 D1 单一先验真相；review P2-4）—— workflow 估算桥
 #: 仅在无更强 wall 证据时消费。
 WORKFLOW_ROWS_THROUGHPUT = 50_000.0
 

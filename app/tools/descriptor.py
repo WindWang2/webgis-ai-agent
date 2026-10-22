@@ -1,4 +1,4 @@
-"""ToolDescriptor V2 —— 工具描述符契约与指纹（Agent Tool Platform V2, ADR-0101）。
+"""ToolDescriptor V2 —— 工具描述符契约与指纹（Agent Tool Platform V2, ADR-0237）。
 
 ToolRegistry 仍是唯一的执行真相（ADR-0006/0014/0019/0043）。本模块**不**引入
 第二个注册中心：ToolDescriptor 是从注册期元数据 + args model + schema **派生**

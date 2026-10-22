@@ -8,7 +8,7 @@ agent-03 任务书（专业化空间智能体集群总控编排与任务分派�
 对账：任务书点名的 `ExecutionGraphDriver` 在 master 上并无字面类——执行图
 的真实驱动面是 `app/services/workflow_runtime/`（`machine.py` 纯函数 +
 `NodeState` 词表 + V5 Driver/InstanceStore）；子代理委派先例
-`SubagentDispatcher`（ADR-0104）/`subagent_roles`（ADR-0101）已在产。本 PR
+`SubagentDispatcher`（ADR-0104）/`subagent_roles`（ADR-0237）已在产。本 PR
 **不新造第五/六套 DAG、不做第二 Agent 框架**（对齐 ADR-0184 D1 与
 subagent.py 既有不变式），只补四个真实缺口（S1-S4）：
 

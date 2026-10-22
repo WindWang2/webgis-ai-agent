@@ -1,4 +1,4 @@
-"""Algorithm Extension SDK（ADR-0104 / Wave 4）。
+"""Algorithm Extension SDK（ADR-0243 / Wave 4）。
 
 第三方算法以 :class:`AlgorithmExtensionSpec` 描述，SDK 构造核心
 ``AlgorithmDescriptor``（app/lib/gis/algorithm_registry.py）并做宿主规则

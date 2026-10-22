@@ -1,4 +1,4 @@
-"""MapPlanIR 投影层（F12 / ADR-0214 D2）。
+"""MapPlanIR 投影层（F12 / ADR-0260 D2）。
 
 职责边界：把**权威决策产物**（MapProductPlan / GrammarDecision / workbench
 锁快照）转录为 refs-only MapPlanIR；多轮演进走 typed PlanAmendment →
@@ -266,7 +266,7 @@ def compute_plan_fingerprint(plan: Any) -> str:
     return "planfp-" + digest_of(body)[:32]
 
 
-# ── 多轮 amendment（ADR-0214 D2）────────────────────────────────────────
+# ── 多轮 amendment（ADR-0260 D2）────────────────────────────────────────
 
 _AMENDMENT_UNSET = object()
 

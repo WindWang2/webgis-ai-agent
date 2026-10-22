@@ -4,11 +4,11 @@
 - 日期：2026-10-18
 - 方向：Goal 03（RenderWork Protocol V1）
 - 基线：master `ddd10fb4`
-- 前置：ADR-0214（F13 render runtime recon 及其 D1/D3/D5/D6 落地）、ADR-0180（settle/K9）、#1617（MapSpec v1.6 RepresentationAtScale，2026-10-18 已合并 —— 本 ADR 前向兼容消费）
+- 前置：ADR-0261（F13 render runtime recon 及其 D1/D3/D5/D6 落地）、ADR-0180（settle/K9）、#1617（MapSpec v1.6 RepresentationAtScale，2026-10-18 已合并 —— 本 ADR 前向兼容消费）
 
 ## 背景与问题
 
-ADR-0214（F13）清偿了 render runtime 的第一批缺口：apply ACK v1
+ADR-0261（F13）清偿了 render runtime 的第一批缺口：apply ACK v1
 （per-layer/组件 + 封闭 reason code + revision-stale 门）、估工投影
 （governor 预算面）、图层类型 capability 矩阵、data revision 缓存键、
 可见层 pin、渲染探针 v1。但执行闭环仍缺一层**工作身份绑定**：
@@ -44,7 +44,7 @@ scheme 前缀不当身份）、`session_id`、
 发射时刻的观察环位置（metadata），进指纹会让同代信封跨通道（SSE seq=N
 vs 恢复面 seq=N+1）指纹不等）。
 
-与 ADR-0214 D1 估工投影的分工：估工投影回答"这活多大"（governor
+与 ADR-0261 D1 估工投影的分工：估工投影回答"这活多大"（governor
 admission），执行信封回答"这是哪一代工作、依赖哪些数据身份"（对账）。
 
 ### D2 — invalidation hints（显式失效语义）
@@ -105,7 +105,7 @@ aggregate_grid/generalized）无预计算工件供给链，仍 = false。信封�
 `capability_fingerprint`（canonical manifest sha256）是 Python/TS parity
 锚；`design_system.renderCapabilityManifest` 导出（fail-open）。
 
-### D6 — 会话供给（fail-open，照 ADR-0214 D2 纪律）
+### D6 — 会话供给（fail-open，照 ADR-0261 D2 纪律）
 
 `app/services/render_work_supply.py`：per-session LRU（身份键
 `(fingerprint, revision, seq)`，≤128）+ last-emitted 记忆（invalidation

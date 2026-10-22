@@ -1,4 +1,4 @@
-"""跨域 finding 融合（F15/ADR-0214 决策三）—— deterministic wins。
+"""跨域 finding 融合（F15/ADR-0263 决策三）—— deterministic wins。
 
 同一 ``(entity, taxonomy 类)`` 上，视觉 finding 与确定性 finding 同因时：
 视觉条目**保留在披露面**（不删减证据）但清空 ``repair_class`` 并附加

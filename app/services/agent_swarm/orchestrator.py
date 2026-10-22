@@ -12,7 +12,7 @@
 调度红线：状态词表/转移合法性一律来自 ``workflow_runtime``（ADR-0187
 D2 不新造图 IR）；launcher 体内全量兜底，单点失败绝不击穿集群 ——
 assignment 构造 / governor.acquire / execute 三相位任何非取消异常都
-折算诚实 FAILED 崩溃券（H07/ADR-0216 清偿 PR #1529 登记的 acquire
+折算诚实 FAILED 崩溃券（H07/ADR-0269 清偿 PR #1529 登记的 acquire
 相位 fail-open 缺口），任务生命周期经 ``delegation.DelegationLedger``
 记账（phase 历史 + 因果 ids + fencing）。
 """
@@ -354,7 +354,7 @@ class SwarmOrchestrator:
         self._projection: Optional[WorldStateProjection] = None
         self._cancelled = False
         self._status: Optional[SwarmExecutionStatus] = None
-        # H07/ADR-0216：每 run 委派台账（phase 历史 + causal ids + fencing）。
+        # H07/ADR-0269：每 run 委派台账（phase 历史 + causal ids + fencing）。
         self._delegation_ledger: Optional[DelegationLedger] = None
 
     # ── 主入口 ──
@@ -457,7 +457,7 @@ class SwarmOrchestrator:
         self._refresh_status()
 
     async def _launcher(self, task_id: str) -> None:
-        """单任务生命周期：CREATED→ACQUIRING→RUNNING→终态（ADR-0216）。
+        """单任务生命周期：CREATED→ACQUIRING→RUNNING→终态（ADR-0269）。
 
         全量兜底红线（PR #1529 登记缺口的本体清偿）：assignment 构造、
         governor.acquire、execute 三个相位中**任何**非取消异常都折算为

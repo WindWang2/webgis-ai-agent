@@ -1,7 +1,7 @@
 """Skill 选择的事实面 —— SituationLike Protocol 与 SelectionFacts
 （ADR-0182 §2.4；goal S29）。
 
-Situation 分支（#1275，ADR-0180）未合并：本模块用 typing.Protocol 做
+Situation 分支（#1275，ADR-0252）未合并：本模块用 typing.Protocol 做
 **结构性松耦合** —— `GISSituation` 合并后天然满足协议（同名字段），
 本线零改动。事实缺席 = unknown（unknown ≠ 不满足，与 eligibility 红线
 一致），绝不虚构。

@@ -395,7 +395,7 @@ async def apply_gis_mutation(
     - user-wins 守卫（见模块 docstring）——违例返回 is_error 结果而非抛出，
       与工具错误契约（{"error": ...} + correction_hint）对齐；
     - 成功后追加 provenance（best-effort）；
-    - 方向 8（ADR-0183）：信封（mutation_id 幂等键 / producer_class 优先级
+    - 方向 8（ADR-0257）：信封（mutation_id 幂等键 / producer_class 优先级
       分类 / client_optimistic_id / reason）随链路透传 —— mutation_id 缺席时
       服务端铸造（每笔突变必有身份）；producer_class 缺席时由
       ``classify_producer`` 按 (origin, actor) 确定性推导。信封回声在
@@ -507,7 +507,7 @@ async def apply_gis_mutation(
             )
         except Exception:  # noqa: BLE001 — 事件面绝不阻断 mutation
             pass
-        # F03（ADR-0204-f03 D4）：canonical ``map_mutated`` 事件 —— 每次
+        # F03（ADR-0259-f03 D4）：canonical ``map_mutated`` 事件 —— 每次
         # 成功 mutation 恰一条（kernel 侧按 mutation_id 幂等）。归因只信
         # envelope.turn_id（不猜测活跃 turn —— 迟到回调不得污染 successor
         # turn）；通知平面纪律：绝不阻断 mutation 主路径。
@@ -572,7 +572,7 @@ async def apply_gis_mutation_batch(
     - user-wins 守卫逐 intent 在锁内复检（refused 项跳过并上报）；
     - 全批一条 provenance（batch 摘要），不再逐条灌 ring（#1070 F-2 的
       驱逐压力）。
-    - 方向 8（ADR-0183）：批级单信封（mutation_id 幂等键覆盖整批 —— 批是
+    - 方向 8（ADR-0257）：批级单信封（mutation_id 幂等键覆盖整批 —— 批是
       一个事务，重放整批命中幂等返回存证 revision，不二次落盘）。
     """
     for intent in intents:
@@ -740,7 +740,7 @@ async def apply_gis_mutation_batch(
             )
         except Exception:  # noqa: BLE001 — 通知平面绝不影响主路径
             logger.debug("[gis_world_state] collab batch publish skipped", exc_info=True)
-        # F03（ADR-0204-f03 D4）：批是一个事务 → 恰一条 canonical
+        # F03（ADR-0259-f03 D4）：批是一个事务 → 恰一条 canonical
         # ``map_mutated``（批级单信封 mutation_id 为幂等键）。归因与迟到
         # 纪律同单笔路径。
         try:

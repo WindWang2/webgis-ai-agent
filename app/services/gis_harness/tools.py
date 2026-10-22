@@ -355,7 +355,7 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
             hints["geometry_expectation"] = geometry_hint
         intent = merge_intent_hints(base, hints)
 
-        # 方向 9（ADR-0183）R6 复用缝：本轮 scope 未解析（「再看看医院」）
+        # 方向 9（ADR-0255）R6 复用缝：本轮 scope 未解析（「再看看医院」）
         # 且调用方未给 scope_hint 时，以记忆里最近仍可信的 resolved_place
         # 兜底——fresh 解析永远优先；兜底走 hint_applied 披露 + 置信折扣，
         # 是「沿用上次的范围」的显式先验，不是本轮事实。
@@ -693,7 +693,7 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
             out["skill_guidance"] = skill_guidance
         if hotpath_pi:
             out["hotpath_pi_context"] = hotpath_pi
-        # F02（ADR-0215）：requirement IR 面——omittable 加法键（仿
+        # F02（ADR-0266）：requirement IR 面——omittable 加法键（仿
         # skill_guidance 先例：fail-open，绝不阻断意图主链路；复用同一
         # 解析产物保证 intent 载荷与 requirement 文档一致）。
         # 方向 3 修复（ADR-0219 recon 同期独立发现）：此前调用把 session_id
@@ -1318,7 +1318,7 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                     ))
                     plan.completeness = planner.assess_completeness(plan)
 
-        # ── 语义产品层（ADR-0183）：spec 构建/编辑存活合并 + 编译 + 语义
+        # ── 语义产品层（ADR-0258）：spec 构建/编辑存活合并 + 编译 + 语义
         # 完整性 —— additive 结果键，降级绝不阻断既有组装路径。既有 spec
         # 读取自 SessionPlan chapter（用户此前的 product edit 存活于此）。
         product_layer: Dict[str, Any] = {}
@@ -1389,7 +1389,7 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
             product_guidance.append(
                 f"⚠ {len(authoring_failures)} 项图层/组件提交失败 —— 产品不完整，需补数据或重试"
             )
-        # ADR-0183：语义产品面投影（views/completeness 摘要到 LLM，有界）。
+        # ADR-0258：语义产品面投影（views/completeness 摘要到 LLM，有界）。
         _pc = product_layer.get("product_completeness") or {}
         if _pc:
             _views_n = len(product_layer.get("product_views") or [])
@@ -1498,7 +1498,7 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                    if authoring_failures else "")
             ),
         })
-        # ADR-0183：语义产品层 additive 键（product_spec/product_views/
+        # ADR-0258：语义产品层 additive 键（product_spec/product_views/
         # product_compile/product_completeness 或 product_compile_fallback）。
         out.update(product_layer)
         if authoring_failures and not bound_layers:

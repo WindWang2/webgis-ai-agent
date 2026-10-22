@@ -1,4 +1,4 @@
-"""Map Product lifecycle V2 (ADR-0099) — open / fork / merge / auto-record /
+"""Map Product lifecycle V2 (ADR-0236) — open / fork / merge / auto-record /
 style-only restore semantics.
 
 版本行不可变：所有生命周期操作都是新增行（append-only 证据）+ lineage

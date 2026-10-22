@@ -31,7 +31,7 @@
 
 ## P2（记录为后续项，不在本 PR）
 
-- representation 面（hidden_layer_ids/palette）尚无下游消费者接线——projection 六出口之外的 MapSpec mutation 接线属后续方向（已在 ADR-0215 后果节注明）。
+- representation 面（hidden_layer_ids/palette）尚无下游消费者接线——projection 六出口之外的 MapSpec mutation 接线属后续方向（已在 ADR-0266 后果节注明）。
 - document_id 为无密钥 sha256 截断（48-bit）——仅 session 内自见，爆破面极小；未来可换 HMAC(session_key)。
 - 归因匹配（前后缀 startswith）偏宽松；并发 gather 场景测试。
 - `classify._EDIT_CUES` 的裸「导出/下载」在有文档时会把全新 export 任务判为 edit——当前语义恰为"给既有需求加交付义务"，与 corpus export_publication 场景一致；若未来出现"整单换图"话语再细分。

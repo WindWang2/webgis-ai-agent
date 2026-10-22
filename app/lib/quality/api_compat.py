@@ -1,4 +1,4 @@
-"""API Compatibility Suite（ADR-0104 Wave 16 / Quality V2 Wave W6）。
+"""API Compatibility Suite（ADR-0245 Wave 16 / Quality V2 Wave W6）。
 
 契约面 1 —— HTTP：FastAPI OpenAPI schema（131 paths 量级）。规则：
 

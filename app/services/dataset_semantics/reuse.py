@@ -1,4 +1,4 @@
-"""Dataset Semantics Reuse —— 指纹对账 → 诚实复用裁决（ADR-0215 D6/D7）。
+"""Dataset Semantics Reuse —— 指纹对账 → 诚实复用裁决（ADR-0265 D6/D7）。
 
 MapSpec 重放 / context restore / 结论复用的统一问句："当时用的数据语义
 版本，和现在的一样吗？"

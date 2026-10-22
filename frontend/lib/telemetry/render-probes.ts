@@ -1,5 +1,5 @@
 /**
- * RenderPerfProbes — 渲染性能探针（F13，ADR-0214 D5）。
+ * RenderPerfProbes — 渲染性能探针（F13，ADR-0261 D5）。
  *
  * 此前 TTFR / patch latency / data bytes / cache hit / render failure
  * 全仓零埋点：perf-counters 自述 test-only，data-plane observability 是

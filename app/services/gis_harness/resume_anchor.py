@@ -1,4 +1,4 @@
-"""Project-level Resume Anchor（Harness V5 — ADR-0118 决策 D8）。
+"""Project-level Resume Anchor（Harness V5 — ADR-0248 决策 D8）。
 
 V4 基线缺口：plan / workflow_instance / map_product / observation 全部
 session-TTL 绑定；RELOAD_REF 的 durable 半边（RefSpill）只有 24h TTL。

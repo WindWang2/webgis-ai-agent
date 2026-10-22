@@ -1,4 +1,4 @@
-"""Harness Resource Governor（V1，ADR-0182）。
+"""Harness Resource Governor（V1，ADR-0254）。
 
 跨域 Resource / Cost / Budget / Backpressure / Admission / Scheduling
 Governor 的公共 API。身份与分界（决策日志 D1/D2）：

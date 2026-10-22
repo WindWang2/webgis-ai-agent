@@ -1,4 +1,4 @@
-"""Structured Observability（ADR-0104 Wave 6）——vendor-neutral 事件面。
+"""Structured Observability（ADR-0245 Wave 6）——vendor-neutral 事件面。
 
 设计契约：
 - **事件词表收敛**：Harness / Data / Compute / Cartography 四个面的业务事件

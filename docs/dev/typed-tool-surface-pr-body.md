@@ -1,4 +1,4 @@
-# PR body 草稿（typed-tool-surface / ADR-0180）
+# PR body 草稿（typed-tool-surface / ADR-0253）
 
 > 最终 body 以本文件为准（review 结论回填后提交）。
 
@@ -6,7 +6,7 @@
 
 方向 4（Pi Typed Dynamic Tool Surface）落地。Phase 0 对账结论：任务书假设的"master 只有万能 webgis_execute"已被 ADR-0103（#1150）/0104/0119 系列超越——spawn dump v2 已把 316 个 registry 工具以真实 schema 注册进 Pi 扩展、per-turn `WEBGIS_ACTIVE_TOOLS`→`setActiveTools` 动态面、V3 选择器（reasons/dropped/confidence/abstain）、proxy wrap-reject 均已在产。本 PR 不造第二套动态面，只补三个真实缺口（T2/T4+T7/T9）+ T8 parity 钉：
 
-1. **per-turn 激活面 schema 字节预算**（ADR-0180 D2）：`apply_surface_byte_budget` 按 `registry.schema_size`（#1062 缓存）贪心装入动态候选；native7 前门 + proxy 常量恒保留（前门不可失）；默认 32KB（`PI_SURFACE_BYTE_BUDGET`，0=off）；裁剪记因 `byte_budget` 进 disclosure + `Stage.TOOL_SURFACE` 链发射新字段（surface_bytes/surface_budget/budget_dropped）。spawn dump 不动（dormant 不压缩——单一真相纪律）。
+1. **per-turn 激活面 schema 字节预算**（ADR-0253 D2）：`apply_surface_byte_budget` 按 `registry.schema_size`（#1062 缓存）贪心装入动态候选；native7 前门 + proxy 常量恒保留（前门不可失）；默认 32KB（`PI_SURFACE_BYTE_BUDGET`，0=off）；裁剪记因 `byte_budget` 进 disclosure + `Stage.TOOL_SURFACE` 链发射新字段（surface_bytes/surface_budget/budget_dropped）。spawn dump 不动（dormant 不压缩——单一真相纪律）。
 2. **Pi 边界 pre-dispatch 输入闸**（D3/D4）：`pi_input_gate.validate_pi_tool_arguments` 在 dedup/wave 排队/ref 解析**之前**做零误拒分层校验——同一归一化声明表 → unknown-field（#828 同语义含 extra=allow 豁免）→ required → 容器-标量结构错位（解析只换字符串叶、绝不把容器变标量）→ 无字符串叶子树的 per-field TypeAdapter 探针（复用 registry #1113 P3-3 同一 helper）→ 全树无字符串叶时升级为与 dispatch 同一 `model_validate` → oversized 与 registry #699 同款旁路 → 闸自身故障 fail-open。拒绝返回 `SCHEMA_VALIDATION_REJECTED`（field-path issues + 修复证据 + retryable），不再伪装成工具业务失败（不占 dedup、不进 wave 队列、无 tool_failed 事件/harness_failure 分类）；同时保持 v3 Phase E 计划契约——`apply_tool_result(success=False)` best-effort 记账，能力行仍标 failed（可重试），由既有契约测试钉住。`ToolRegistry.args_model()` 新公开只读访问器：闸与 dispatch 共享同一 Pydantic 模型对象（语义零漂移的唯一途径）。
 3. **面指标 + 回归门**（D5）：`pi_surface_metrics` 进程级计数（invalid_tool_name / schema_validation_rejected / proxy_wrapped / direct_surface）+ 最近面投影快照 + 有界拒绝样本；`/api/v1/metrics/digest` additive `pi_surface` 段（admin 门不变）。回归门：golden 面质量（必达工具/tier-3 零泄漏/预算内）+ gate 有界时延（快速拒绝证明非法调用不进 wave 排队）。
 4. **parity（T8）**：gate 拒 ⇒ registry VALIDATION_ERROR（真实模型双向断言）；registry 拒 ⇒ gate 同拒或设计内字符串叶保守放行；裸名直调与 `webgis_execute(inner)` 解析出同一 (tool, args)；tier-3 双路不可达；dump 参数键面 ⊆ args_model 字段（单一 schema 真相）。
@@ -30,7 +30,7 @@ per-turn 面：V3 select → 名单 → **apply_surface_byte_budget（32KB 默�
 
 - 新增 32 tests（4 文件）全绿：budget 8 / input-gate 12 / metrics+gate 6 / parity 6。
 - 受影响面回归全绿：pi_* unit 112 + pi bridge/concurrency/auth 111 + dispatch/normalization 49 + root pi（session-plan host/status fail-closed/runtime observability）34 + pi integration 25 + metrics API 2 + API compatibility contract 12 = 345。
-- ruff（CI 同口径 `ruff check app/ tests/`）对全部改动文件 0 finding。bandit 本地未安装；改动无 SQL/exec/密钥面（ADR-0180 代码审阅可证），线上 security gate 不受本线影响。
+- ruff（CI 同口径 `ruff check app/ tests/`）对全部改动文件 0 finding。bandit 本地未安装；改动无 SQL/exec/密钥面（ADR-0253 代码审阅可证），线上 security gate 不受本线影响。
 - `git diff origin/master...HEAD` 文件面核对：16 文件（6 app + 6 docs + 4 tests），无无关文件、无 frontend 文件 → 按资源纪律跳过 `next build`（无 TS/前端面可编译变化）。
 
 ## master 预存失败对照

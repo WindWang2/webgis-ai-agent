@@ -1,4 +1,4 @@
-"""测试专用确定性故障注入框架（ADR-0104 Wave 7+8）。
+"""测试专用确定性故障注入框架（ADR-0245 Wave 7+8）。
 
 **生产关闭是结构性的**：本模块只存在于 ``tests/`` 包内，``app/`` 任何代码
 都不允许 import 它（由 tests/quality/test_chaos_foundation.py 的结构测试

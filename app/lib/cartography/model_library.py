@@ -183,7 +183,7 @@ class MapModel(BaseModel):
     # 几何多态模型按输入几何族切换 layer_type（audit #832 知识收编；
     # 非多态模型缺省 maplibre_layer_type）
     geometry_layer_types: Dict[str, str] = Field(default_factory=dict)
-    # V3（ADR-0101）：表达能力降级链 —— 当前模型不可用（数据形态不满足等）
+    # V3（ADR-0238）：表达能力降级链 —— 当前模型不可用（数据形态不满足等）
     # 时推荐退到的模型 id；空 = 无声明。validate 校验其可解析且无环。
     fallback_model_id: str = ""
     # ── V4（Design System）：模型级产品需求描述（纯增量，全默认值）─────
@@ -495,7 +495,7 @@ class MapModelRegistry:
         self._alias.clear()
         for model in SEED_MAP_MODELS:
             self.register(model)
-        # V3（ADR-0101 D1）：seed 之后按确定性顺序载入域包扩充模型。
+        # V3（ADR-0238 D1）：seed 之后按确定性顺序载入域包扩充模型。
         # pack 与既有 id 撞车时显式抛错（与 composition packs 同策略）——
         # 静默忽略会让 pack 模型无信号丢失。
         from app.lib.cartography.model_packs import MODEL_PACK_MODELS
@@ -525,7 +525,7 @@ class MapModelRegistry:
         return self._by_id.get(model_id)
 
     def unregister(self, model_id: str) -> bool:
-        """ADR-0104：扩展 map model 卸载回滚用。移除本体并清掉指向它的
+        """ADR-0243：扩展 map model 卸载回滚用。移除本体并清掉指向它的
         别名；目标不存在返回 False（幂等）。种子/域包模型从不调用。"""
         if model_id not in self._by_id:
             return False
@@ -599,7 +599,7 @@ def validate_model_library() -> List[str]:
             model.classification not in CLASSIFICATION_METHODS
         ):
             issues.append(f"{model.id}: classification '{model.classification}' 非法")
-        # V3（ADR-0101 D2/D7）：降级链可解析 + 无自环；推荐组件必须是
+        # V3（ADR-0238 D2/D7）：降级链可解析 + 无自环；推荐组件必须是
         # ComponentType 词表成员；native 模型图层必须在前端运行时支持族内。
         if model.fallback_model_id:
             if model.fallback_model_id == model.id:

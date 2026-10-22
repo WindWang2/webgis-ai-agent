@@ -3,15 +3,15 @@
 - 状态：Proposed
 - 日期：2026-09-15
 - 分支：`agent/06-proactive-spatial-memory-associative`
-- 关联：ADR-0183（GIS Spatial Reasoning Memory v1——表、契约、写入门、
+- 关联：ADR-0255（GIS Spatial Reasoning Memory v1——表、契约、写入门、
   passive `[GIS_MEMORY]` 注入）、ADR-0069（项目制图事实账本）、
   ADR-0139（V9 tenancy）、ADR-0150/0161（意图语义 / 可学习意图）、
-  ADR-0180（Situation World Model）、迁移 0080（`gis_spatial_memories`）
+  ADR-0252（Situation World Model）、迁移 0080（`gis_spatial_memories`）
 
 ## 上下文
 
 迁移 0080 已建立 `gis_spatial_memories` 物理表（session/project/user 三
-作用域 + 租户隔离），ADR-0183 交付了完整的写侧（evidence-gated 门、
+作用域 + 租户隔离），ADR-0255 交付了完整的写侧（evidence-gated 门、
 supersede 链、预算淘汰）与一条 **passive** 读取通道（chat 路由每轮拼接
 `[GIS_MEMORY]` 文本块）。但该表在实际交互流程中仍未被**主动激活**：
 
@@ -66,7 +66,7 @@ supersede 链、预算淘汰）与一条 **passive** 读取通道（chat 路由�
      返回（top1 score ≥ 阈值 0.62 且领先 top2 ≥ 0.08 余量），并列/低置信
      返回 None 交由澄清流程——消歧绝不静默赌博；
    - scope 优先级 session > project > user（与 retrieval 权重同序），
-     fresh 解析永远优先于记忆（调用侧保证，同 ADR-0183 R6 纪律）。
+     fresh 解析永远优先于记忆（调用侧保证，同 ADR-0255 R6 纪律）。
 
 4. **`memory_consolidator.py`：会话 Settle 整合（晋升/降级/固化）**。
    - 位点：chat 路由 turn 结束 `harvest_spatial_memory` **之后**异步执行
@@ -96,7 +96,7 @@ supersede 链、预算淘汰）与一条 **passive** 读取通道（chat 路由�
      卡片时回填 `intent.scope`，审计通道：`matched_rules +=
      ["memory_proactive_scope:<subject>"]`、`intent_evidence[
      "proactive_memory"]`、`assumptions` 披露；fresh scope 永不覆盖；
-     置信折扣 ×0.9（同 ADR-0183 R6 口径）；
+     置信折扣 ×0.9（同 ADR-0255 R6 口径）；
    - `resolve_intent_adaptive` 增加可选 `org_id`/`user_id`/`use_memory`
      参数：内部 best-effort 探查 proactive retriever（fail-open）后应用
      上述纯函数；`resolve_map_request_intent` 保持纯函数（零 I/O）不变，
@@ -110,7 +110,7 @@ supersede 链、预算淘汰）与一条 **passive** 读取通道（chat 路由�
 
 8. **可观测与降级**：`AwakeResult.trace`（signals、候选数、耗时）记入
    `intent_evidence`；consolidator 输出 `{promoted, pinned, swept}` 计数；
-   引擎任何故障 = 退回 ADR-0183 的 passive 通道（绝不比现状更差）。
+   引擎任何故障 = 退回 ADR-0255 的 passive 通道（绝不比现状更差）。
 
 ## 后果
 

@@ -3,7 +3,7 @@
 状态：Accepted（2026-10-22）
 关联：ADR-0214（Composition Contract / Component ABI，本 ADR 收口其显式留白的
 「用户自定义 composition template 的 DB 存储面」）；ADR-0228（Product
-Manifest，组合身份投影的 additive 扩展）；ADR-0101（pack 化扩容纪律）。
+Manifest，组合身份投影的 additive 扩展）；ADR-0238（pack 化扩容纪律）。
 
 ## 背景
 

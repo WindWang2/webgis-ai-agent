@@ -27,7 +27,7 @@ PR_LANE_PERF_FILES = (
     "test_dispatch_stall_perf.py",
     "test_perf_large_workspace.py",
     "test_data_control_plane_v5.py",
-    # ADR-0104 Wave 11：墙钟断言统一 perf 车道（原散落在 --cov 主车道，
+    # ADR-0245 Wave 11：墙钟断言统一 perf 车道（原散落在 --cov 主车道，
     # 与 #664 隔离策略冲突；接线见 production.yml test-perf 与 ci-local.sh）
     "test_gis_registry_perf.py",
     "test_template_registry_perf.py",
@@ -53,7 +53,7 @@ NIGHTLY_ONLY_PERF_FILES = {
         "flaky under PR load / --cov"
     ),
     "test_lakehouse_v6.py": (
-        "ADR-0118: depends on the optional geo stack (zarr is not a "
+        "ADR-0249: depends on the optional geo stack (zarr is not a "
         "requirements.txt dependency — PR lane would skip or red at import) "
         "and carries wall-clock ratio bands; structural evidence stays "
         "deterministic for nightly"

@@ -12,7 +12,7 @@
  *     批量显隐/不透明度/移入分组/删除（layer-ops，锁定层自动跳过）；
  *   - 搜索：SearchField 子串过滤（id/name/ref）。
  *
- * 状态纪律（ADR-0104）：分组/选择/锁定/隔离是 UI projection（workbenchSlice，
+ * 状态纪律（ADR-0244）：分组/选择/锁定/隔离是 UI projection（workbenchSlice，
  * 会话级不持久化）；地图语义真相仍只在 MapSpec / backend contract。
  */
 import React, { useMemo, useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';

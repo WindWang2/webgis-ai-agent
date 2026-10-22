@@ -50,7 +50,7 @@ class RuntimeCorrelationFilter(logging.Filter):
         record.session_id = getattr(ctx, "session_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
         record.turn_id = getattr(ctx, "turn_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
         record.run_id = getattr(ctx, "run_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
-        # ADR-0104 Wave 6：活动项目进关联主干（session 域与 project 域的桥接
+        # ADR-0245 Wave 6：活动项目进关联主干（session 域与 project 域的桥接
         # 已由 RuntimeContext.project_id 承载；日志面补齐同一字段）。
         record.project_id = getattr(ctx, "project_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
         # Platform V4（ADR-0131 D2）：trace 维度进 LogRecord（文本格式串不变，

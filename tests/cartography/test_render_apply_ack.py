@@ -1,4 +1,4 @@
-"""RenderApplyAck / perf 探针契约测试（F13，ADR-0214 D3/D5）。
+"""RenderApplyAck / perf 探针契约测试（F13，ADR-0261 D3/D5）。
 
 锁定：fail-closed 结构校验、封闭词表收敛、有界截断披露、stale ACK
 不产生 findings、DTO 归一门、validate_render_observation 消费链。

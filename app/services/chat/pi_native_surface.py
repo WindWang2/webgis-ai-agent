@@ -255,7 +255,7 @@ def dump_native_tools(path: Path) -> Path:
 #: per-turn 动态面开关（默认开；PI_DYNAMIC_TOOL_SURFACE=0 退回冻结 7 工具 + proxy）
 _PI_DYNAMIC_TOOL_SURFACE = os.getenv("PI_DYNAMIC_TOOL_SURFACE", "1") != "0"
 
-#: per-turn 激活面 schema 字节预算（ADR-0180 D2）。口径 = registry.schema_size
+#: per-turn 激活面 schema 字节预算（ADR-0253 D2）。口径 = registry.schema_size
 #: （#1062 缓存，``len(json.dumps(schema, ensure_ascii=False))`` 字符数），
 #: 与 V2 ToolCatalog 的 24KB 预算同量纲。默认 32KB：native7 前门实测
 #: ≈17.3K、中位 schema ≈528 —— 32KB 保留 ADR-0103 典型 30 工具 turn 不变，
@@ -283,7 +283,7 @@ def apply_surface_byte_budget(
     *,
     disclosure: Optional[Dict[str, Any]] = None,
 ) -> tuple[list[str], Dict[str, Any]]:
-    """激活名单 schema 字节预算（ADR-0180 D2）：只影响「本轮激活谁」。
+    """激活名单 schema 字节预算（ADR-0253 D2）：只影响「本轮激活谁」。
 
     - native 前门（NATIVE_TOOL_NAMES）+ proxy 常量先入账、**恒保留**——
       前门不可失（fail-open 到 native 面，绝不因预算吞掉 map_intent/status）；
@@ -682,7 +682,7 @@ def compute_turn_active_tools(
             safe = list(qualification["selected"])
             if disclosure is not None and qualification["dropped"]:
                 disclosure["qualification_dropped"] = qualification["dropped"][:12]
-        # ADR-0180 D2：激活面 schema 字节预算 —— 只裁动态候选，native 前门
+        # ADR-0253 D2：激活面 schema 字节预算 —— 只裁动态候选，native 前门
         # 恒保留；裁剪记因（disclosure + 链发射 + metrics），绝不阻断 turn。
         try:
             safe, budget_info = apply_surface_byte_budget(
@@ -721,7 +721,7 @@ def compute_turn_active_tools(
                     "[PiNativeSurface] surface receipt mint failed", exc_info=True
                 )
         # V4 Wave 8：证据链阶段 7（TOOL_SURFACE）——per-turn 动态面裁决入链
-        # （emit-once：每 turn 一条；上下文缺席静默跳过）。ADR-0180 追加
+        # （emit-once：每 turn 一条；上下文缺席静默跳过）。ADR-0253 追加
         # surface_bytes/budget 披露字段（additive，观测面）。
         try:
             from app.lib.runtime.chain_emitters import emit_chain_once
@@ -741,7 +741,7 @@ def compute_turn_active_tools(
             emit_chain_once(Stage.TOOL_SURFACE, **_emit_kwargs)
         except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn
             pass
-        # ADR-0180 D5：面投影快照进 pi_surface_metrics（last-wins，观测面）。
+        # ADR-0253 D5：面投影快照进 pi_surface_metrics（last-wins，观测面）。
         try:
             from app.services.chat.pi_surface_metrics import record_surface_projection
 

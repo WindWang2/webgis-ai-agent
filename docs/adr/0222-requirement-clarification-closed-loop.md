@@ -2,7 +2,7 @@
 
 - 状态：Proposed（随 `zcode/requirement-clarification-closed-loop` 分支评审）
 - 日期：2026-10-16
-- 关联：ADR-0215（F02 Requirement IR）、ADR-0208（refused turn 语义）、
+- 关联：ADR-0266（F02 Requirement IR）、ADR-0208（refused turn 语义）、
   ADR-0180（SessionPlan kernel envelope）、ADR-0183（goal satisfaction
   投影）、SEC-08（匿名会话 owner_token）
 

@@ -1,4 +1,4 @@
-"""截图存储与 ref-only 纪律（F15/ADR-0214 决策六 + C13 blob lifecycle）。
+"""截图存储与 ref-only 纪律（F15/ADR-0263 决策六 + C13 blob lifecycle）。
 
 PNG 魔数 + ≤4 MiB 校验 → sha256 → 内容寻址 blob（``vshot-<sha>``，复用
 晋升内容库根，天然去重）；会话索引 ``map_state["_visual_screenshots"]``

@@ -1,4 +1,4 @@
-"""跨运行视觉 recurrence 账本（F15/ADR-0214 决策五）—— 披露面硬停。
+"""跨运行视觉 recurrence 账本（F15/ADR-0263 决策五）—— 披露面硬停。
 
 同一 ``recurrence_fingerprint``（UnifiedFinding 既有铸造点，零新哈希）的
 视觉缺陷在 ≥ ``MAX_VISUAL_RECURRENCE_RUNS`` 次 finalization 运行中反复

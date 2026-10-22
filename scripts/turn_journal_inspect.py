@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Turn journal 只读诊断 CLI（H04 / ADR-0216）。
+"""Turn journal 只读诊断 CLI（H04 / ADR-0268）。
 
 给 session（可选 turn）输出：因果树、未终局 turn、悬挂步骤恢复分类、
 最后一致 mutation revision、账本体量。只读——本脚本绝不写账本、

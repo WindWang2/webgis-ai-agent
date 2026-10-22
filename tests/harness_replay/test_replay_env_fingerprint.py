@@ -1,4 +1,4 @@
-"""环境指纹 v2 契约（ADR-0214 D2，WP5）：封闭白名单 + drift 分类 + digest 记忆化。"""
+"""环境指纹 v2 契约（ADR-0262 D2，WP5）：封闭白名单 + drift 分类 + digest 记忆化。"""
 from __future__ import annotations
 
 import pytest

@@ -8,7 +8,7 @@
  *   - workbenchSlice.selectedLayerIds（批量操作多选）
  *
  * 纪律：只读、无副作用、不写 store / MapSpec —— 分组与选择是 UI projection，
- * 权威地图内容仍以 MapSpec / backend contract 为准（ADR-0104）。
+ * 权威地图内容仍以 MapSpec / backend contract 为准（ADR-0244）。
  * 派生顺序恒等于 store 数组序（= z-order），分组只切分视图不改顺序。
  */
 import type { Layer } from '@/lib/types/layer';

@@ -1,4 +1,4 @@
-"""无进展 / 重复调用检测 V2（ADR-0101 Wave 6, §29）。
+"""无进展 / 重复调用检测 V2（ADR-0237 Wave 6, §29）。
 
 现状：legacy 引擎有连败计数（is_suspicious_result 过滤 + 阈值 3）+ 去重
 哨兵（(normalize_tool_name(tool), 原始 args 串)）。两个盲区：

@@ -236,7 +236,7 @@ def _attach_render_work(
 
 
 def _get_governor_adapter(registry: "ToolRegistry"):
-    """ADR-0182：governor 适配器懒构造（kill-switch / 依赖缺失 → None 直通）。
+    """ADR-0254：governor 适配器懒构造（kill-switch / 依赖缺失 → None 直通）。
 
     Governor 任何异常在其内部 fail-open；本函数只在 import/构造层面兜底 ——
     governor 包缺席时行为与主线完全一致。
@@ -275,7 +275,7 @@ class ToolDispatchService:
     ) -> None:
         self._registry = registry
         self._fire_broadcast = fire_broadcast
-        # ADR-0214 D6：session 存储提为可选依赖（None = 既有模块级单例，
+        # ADR-0262 D6：session 存储提为可选依赖（None = 既有模块级单例，
         # 生产行为逐位不变）—— receipt 级重放（T4）经此注入进程内沙箱
         # 替身，保证重放零真实外部副作用。
         self._session_data = (
@@ -857,7 +857,7 @@ class ToolDispatchService:
 
                                     _cred_scope = _nullctx()
                                 with _cred_scope:
-                                    # ADR-0182 Harness Resource Governor：估算 → 准入 →
+                                    # ADR-0254 Harness Resource Governor：估算 → 准入 →
                                     # 预留 → 执行 → 记账/归还。拒绝/降级返回错误族
                                     # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
                                     # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
@@ -1031,7 +1031,7 @@ class ToolDispatchService:
                 result["correction_hint"] = sanitize_error_msg(result["correction_hint"])
             correction_hint = result.get("correction_hint")
             # V5：typed diagnose —— 泛化错误码之上的统一失败分类 +
-            # 有界 remediation 裁决（ADR-0118 D2）。记录面绝不阻断。
+            # 有界 remediation 裁决（ADR-0248 D2）。记录面绝不阻断。
             with best_effort(
                 "failure-taxonomy-classify",
                 "tool-dispatch-taxonomy-best-effort",
@@ -1049,7 +1049,7 @@ class ToolDispatchService:
                     tool_name=tool_name,
                     session_id=session_id or "",
                 )
-                # 方向 9（ADR-0183）：provider_failure 记忆候选入 pending
+                # 方向 9（ADR-0255）：provider_failure 记忆候选入 pending
                 # 缓冲（org 由 turn 端 harvest 烙印；TTL 7d 默认；零 IO、
                 # 绝不阻断——durable authority 仍是 RecoveryLedger）。
                 _hf = result.get("harness_failure") or {}

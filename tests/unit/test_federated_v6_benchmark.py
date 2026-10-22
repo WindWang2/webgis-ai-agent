@@ -1,4 +1,4 @@
-"""V6 联邦基准（ADR-0118 W12）：结构性断言，不设整机 wall-clock 门。
+"""V6 联邦基准（ADR-0247 W12）：结构性断言，不设整机 wall-clock 门。
 
 度量维度（全部可解释、可复现）：
 - **transferred rows**（Σ per_source_rows）：下推 on/off、semi-join/bloom on/off；

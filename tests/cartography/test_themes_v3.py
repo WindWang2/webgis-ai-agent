@@ -1,4 +1,4 @@
-"""Cartographic Theme & Palette V3 — 主题/调色板描述层契约测试（ADR-0101 D4）。
+"""Cartographic Theme & Palette V3 — 主题/调色板描述层契约测试（ADR-0238 D4）。
 
 锁定：
 - PaletteDescriptor 不复制 hex（推导自 palettes.py）；print-safe 推导确定；

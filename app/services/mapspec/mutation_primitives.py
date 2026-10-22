@@ -55,7 +55,7 @@ BLOCKING_VALIDATION_CODES = {
 }
 
 
-# ─── 方向 8（ADR-0183）：mutation_id 幂等去重索引 ─────────────────────────────
+# ─── 方向 8（ADR-0257）：mutation_id 幂等去重索引 ─────────────────────────────
 #
 # 键 `_mutation_dedup` 存 map_state（cache 层，随 commit 单事务落地）；值：
 # mutation_id → {"revision", "ts", "origin", "committed": True}，FIFO 上限
@@ -417,7 +417,7 @@ def user_lock_pin_hit(
     mapspec: Optional[Dict[str, Any]],
     intent: "MutationIntent",
 ) -> bool:
-    """方向 8（ADR-0183 D2）：user 意图是否触及 workbench 锁面（USER_PINNED 判据）。
+    """方向 8（ADR-0257 D2）：user 意图是否触及 workbench 锁面（USER_PINNED 判据）。
 
     两类命中：(a) 目标（层/组件族）命中既有锁集 —— 用户对已 pin 资产的
     操作；(b) SetWorkbenchState 写入非空锁集 —— 用户 pin 决策本身。

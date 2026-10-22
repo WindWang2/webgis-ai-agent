@@ -1,4 +1,4 @@
-"""GISSituation —— 结构化 GIS 情境契约 v1（方向 2 S1，ADR-0180）。
+"""GISSituation —— 结构化 GIS 情境契约 v1（方向 2 S1，ADR-0252）。
 
 把"聊天上下文"升级为有来源、有新鲜度、有 revision、有界的会话世界状态。
 十一个 context 分区对齐任务书模型；每个分区由命名 SitFact 组成（严格

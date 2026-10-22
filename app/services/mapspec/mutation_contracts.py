@@ -51,7 +51,7 @@ class MapSpecResult:
     # #1220（audit3 C-6）：此前重复声明（str "" 与 Optional[str] None
     # 并存，第二声明胜出）—— 单一权威声明。
     error_code: Optional[str] = None
-    # 方向 8（ADR-0183）：突变信封回声 —— 幂等键与优先级分类。
+    # 方向 8（ADR-0257）：突变信封回声 —— 幂等键与优先级分类。
     # duplicate=True：同 mutation_id 已在此前世代提交过；本次按幂等重放处理
     # （返回存证 revision + 当前权威 spec，不重复执行操作、不递增 revision）。
     mutation_id: Optional[str] = None
@@ -162,7 +162,7 @@ class MapSpecBatchResult:
     mapspec_fingerprint: Optional[str] = None
     cartographic_review: Optional[Dict[str, Any]] = None
     warnings: List[str] = field(default_factory=list)
-    # 方向 8（ADR-0183）：信封回声（同 MapSpecResult）。
+    # 方向 8（ADR-0257）：信封回声（同 MapSpecResult）。
     mutation_id: Optional[str] = None
     producer_class: Optional[str] = None
     duplicate: bool = False

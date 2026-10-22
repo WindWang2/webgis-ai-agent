@@ -1,5 +1,5 @@
 /**
- * 披露族共享标签映射（ADR-0101 D6：live 渲染器与 canvas 导出同一
+ * 披露族共享标签映射（ADR-0238 D6：live 渲染器与 canvas 导出同一
  * 词表 —— kind 内码不得泄漏到可见/可读文本）。
  */
 export const UNCERTAINTY_KIND_LABELS: Record<string, string> = {

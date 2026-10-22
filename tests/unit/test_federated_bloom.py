@@ -1,4 +1,4 @@
-"""V6 Bloom 半连接契约测试（ADR-0118 W5）：无假阴性/确定性/饱和降级/盈利阈值。"""
+"""V6 Bloom 半连接契约测试（ADR-0247 W5）：无假阴性/确定性/饱和降级/盈利阈值。"""
 
 from app.services.data_fabric.query.federated.bloom import (
     BloomFilter,

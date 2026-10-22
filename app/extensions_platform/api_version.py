@@ -1,4 +1,4 @@
-"""扩展平台版本契约（ADR-0104 / Wave 12）。
+"""扩展平台版本契约（ADR-0243 / Wave 12）。
 
 三个独立的版本轴：
 - ``CORE_API_VERSION``：本仓库扩展平台宿主接口（ExtensionContext / 投影

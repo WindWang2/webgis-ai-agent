@@ -1,4 +1,4 @@
-"""Harness V5 Subagent accounting 契约（ADR-0118 D6）。
+"""Harness V5 Subagent accounting 契约（ADR-0248 D6）。
 
 验收锚点（Epic V5）：
 - 子代理 token/usage 记账：引擎既有 usage 通道（ContextVar 继承）落到

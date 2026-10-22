@@ -1,6 +1,6 @@
 """Lakehouse V6 Wave 11 — DR：损坏模拟 / 修复 / 孤儿与缺失扫描。
 
-覆盖面（ADR-0118 DR + GC 验收）：
+覆盖面（ADR-0249 DR + GC 验收）：
 - 工作副本损坏检测（逐文件 digest vs manifest）；
 - 从 BlobStore 修复（先全量验真后写盘；owner 校验）；
 - chunk 备份去重（重备份 CAS 命中）；

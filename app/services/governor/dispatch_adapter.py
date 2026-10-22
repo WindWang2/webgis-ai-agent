@@ -50,7 +50,7 @@ _TRACKED_LOCK = threading.Lock()
 _COUNT_KEYS = ("feature_count", "featureCount", "count", "total",
                "row_count", "rows")
 
-#: render 细化通道的 subsystem 集（F13/ADR-0214 D2）：这些工具的执行
+#: render 细化通道的 subsystem 集（F13/ADR-0261 D2）：这些工具的执行
 #: 成本由「当前地图的渲染面形状」主导 —— 当前 MapSpec 投影作为细化
 #: 证据供给 estimate_for_tool（R13 seam；#1408 df_cost 通道同款模式）。
 _RENDER_REFINED_SUBSYSTEMS = frozenset({
@@ -126,7 +126,7 @@ def _project_resource_usage(
     attempt: int,
     wall_s: float,
 ) -> None:
-    """ADR-0214 D4（R16 链上面）：estimate/actual 有界投影进 TurnEvidence。
+    """ADR-0262 D4（R16 链上面）：estimate/actual 有界投影进 TurnEvidence。
 
     per-tool 资源事实从此有持久落点（trace.governor ← to_summary）——
     资源策略漂移（估算置信度劣化、wall 超估算倍增）可按 tool 定位。
@@ -243,7 +243,7 @@ def _project_df_cost(args: Dict[str, Any]) -> Optional[DfCostView]:
         return None
 
 
-#: 公共别名（ADR-0214：workflow 节点估算桥消费同一条 DF 成本投影路径，
+#: 公共别名（ADR-0264：workflow 节点估算桥消费同一条 DF 成本投影路径，
 #: parity 不变式要求两面对 args 的投影函数逐字相同）。
 project_df_cost = _project_df_cost
 
@@ -309,7 +309,7 @@ class GovernorDispatchAdapter:
         started = time.monotonic()
         # R6：短窗内重复派发按重试计（governor RetryBudget 咨询 + 实扣）
         attempt = _recent_attempt(session_id, tool_name)
-        # F13/ADR-0214 D2：render 族工具喂当前地图渲染面投影（细化估工；
+        # F13/ADR-0261 D2：render 族工具喂当前地图渲染面投影（细化估工；
         # fail-open —— 投影缺席回退档位先验）。
         render_input = None
         try:
@@ -495,7 +495,7 @@ class GovernorDispatchAdapter:
                 "suggestions": list(decision.suggestions),
                 "degrade_options": degrade.get("steps", []),
                 "degrade_semantics": degrade.get("best_semantics"),
-                "adr": "ADR-0182",
+                "adr": "ADR-0254",
             },
         }
 

@@ -1,7 +1,7 @@
 """RenderWorkEnvelope —— MapSpec → versioned 执行信封的纯投影
 （Goal 03 RenderWork Protocol V1，ADR-0225）。
 
-与 :mod:`app.lib.cartography.render_work_projection`（ADR-0214 D1，**估工**
+与 :mod:`app.lib.cartography.render_work_projection`（ADR-0261 D1，**估工**
 投影 → governor 预算面）的分工：本模块是**执行信封** —— 描述"这一代
 desired state 要被执行成什么样的渲染工作"，供前端 runtime 对账与 ACK
 绑定。二者都是 MapSpec 的派生只读投影，互不替代：

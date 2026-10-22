@@ -1,4 +1,4 @@
-"""Provider 健康只读视图（R11，ADR-0182 D2）。
+"""Provider 健康只读视图（R11，ADR-0254 D2）。
 
 Data Fabric 的 per-source 熔断器（``CircuitBreakerRegistry``）与 provider
 health 是**既有 owner**——governor 绝不重建 breaker，只消费其状态作为

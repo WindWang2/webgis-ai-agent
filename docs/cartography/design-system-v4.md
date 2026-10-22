@@ -1,11 +1,11 @@
 # Cartographic Design System V4
 
-> 分支：`feat/cartographic-design-system-v4` · 上游：ADR-0101（V3）
+> 分支：`feat/cartographic-design-system-v4` · 上游：ADR-0238（V3）
 > 状态：本文档描述 V4 落地后的实际能力（非 roadmap）。planned 能力诚实登记。
 
 ## 1. V4 是什么
 
-V3（ADR-0101）建立了「Map Product = Model + Roles + Composition + Slots +
+V3（ADR-0238）建立了「Map Product = Model + Roles + Composition + Slots +
 Variants + Theme + Layout + Output」的产品公式。V4 把它升级为完整的
 **Design System**：
 

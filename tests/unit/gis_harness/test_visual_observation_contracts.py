@@ -1,4 +1,4 @@
-"""F15 视觉观察契约/taxonomy/融合 单元回归（ADR-0214）。
+"""F15 视觉观察契约/taxonomy/融合 单元回归（ADR-0263）。
 
 不变式：
 1. snapshot 键面 ref-only：``to_snapshot`` 永不含字节/敏感载荷，

@@ -1,4 +1,4 @@
-"""Map Model Domain Packs — 制图模型库 V3 域包聚合（ADR-0101 D1/D2）.
+"""Map Model Domain Packs — 制图模型库 V3 域包聚合（ADR-0238 D1/D2）.
 
 seed 模型（model_library.SEED_MAP_MODELS）保持不变；本包按域组织扩充模型，
 ``MapModelRegistry.load_builtins()`` 在 seed 之后按确定性顺序载入。

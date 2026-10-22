@@ -1,4 +1,4 @@
-"""Raster lakehouse publication — Spatial Lakehouse V6 (Wave 5, ADR-0118).
+"""Raster lakehouse publication — Spatial Lakehouse V6 (Wave 5, ADR-0249).
 
 COG/GeoTIFF → durable DataObject（blob + manifest，BlobStore CAS）：
 

@@ -1,4 +1,4 @@
-"""Provider-neutral 视觉观察契约（F15/ADR-0214 决策一）。
+"""Provider-neutral 视觉观察契约（F15/ADR-0263 决策一）。
 
 ``VisualObservationInput`` 是 finalizer seam 与生产 provider 之间的稳定
 输入面（render revision / ref-only screenshot / viewport·component 框 /

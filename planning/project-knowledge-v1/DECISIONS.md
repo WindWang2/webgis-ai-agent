@@ -1,6 +1,6 @@
 # DECISIONS — ProjectKnowledgeProjection v1 (ADR-style; most conservative, most compatible choice wins)
 
-**D1 — Storage backend: one new bounded table `project_knowledge_entries`, following the ADR-0183/ADR-0069 store pattern.**
+**D1 — Storage backend: one new bounded table `project_knowledge_entries`, following the ADR-0255/ADR-0069 store pattern.**
 Sync SQLAlchemy model + migration (≥0093), DAO free functions that only flush (caller commits), `org_id` NOT NULL, composite index `(org_id, project_id, entity_kind, status)`, partial unique index for active rows on the natural key, per-project row budget (default 400, mirroring `SCOPE_BUDGET[SCOPE_PROJECT]`, `gis_memory/store.py:48-53`).
 *Alternatives*: (a) reuse `gis_spatial_memories` with new kinds — rejected: closed kind vocab + CheckConstraint, write-gate evidence sources don't apply to identity projections, would corrupt memory retrieval semantics; (b) in-memory index only — rejected: not durable, can't support invalidation contracts or cross-mission reuse after restart; (c) column on `projects` — rejected: unbounded JSON, no isolation of statuses. (a)+(b) hybrid rejected for v1 complexity.
 

@@ -227,7 +227,7 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
         id="categorical-legend/compact", component_type="categorical_legend", category="legend.categorical",
         name="Compact Categorical", variant="compact", priority=20,
     ),
-    # ── V3（ADR-0101 D3）：variant library 扩容 ────────────────────────
+    # ── V3（ADR-0238 D3）：variant library 扩容 ────────────────────────
     # 新变体的 priority 一律大于该类型既有首个模板 —— resolver 无偏好时
     # 取 (priority, id) 首个，扩容不得改变既有缺省选型（golden 兼容）。
     # V3 标题/副标题模板不带 default_style —— 标题排版唯一真值是渲染器
@@ -618,7 +618,7 @@ class ComponentTemplateRegistry:
                         issues.append(f"template {tpl.id}: unknown component type {tpl.component_type}")
                 if not cat_reg.has(tpl.category):
                     issues.append(f"template {tpl.id}: unknown category {tpl.category}")
-                # V3（ADR-0101 D3）：native 模板的 variant 必须在 descriptor
+                # V3（ADR-0238 D3）：native 模板的 variant 必须在 descriptor
                 # variants 词表内（渲染器真实支持集）；planned 模板豁免 ——
                 # 它们就是尚未落地的 roadmap 变体，resolver 不会选择。
                 desc = comp_reg.get(tpl.component_type) or comp_reg.get_by_type(tpl.component_type)

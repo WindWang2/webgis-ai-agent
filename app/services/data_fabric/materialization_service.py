@@ -345,7 +345,7 @@ class MaterializationService:
         = ref:fabric-parquet/<id>`` 与磁盘 ``path`` —— 对齐 raster PNG 磁盘
         ref 先例的最小诚实语义（路径不透明，ref 即 cursor）。
 
-        V6（ADR-0118）闭合此前的 write-only 悬空引用：
+        V6（ADR-0249）闭合此前的 write-only 悬空引用：
 
         - **路径单点**：``artifact_registry.fabric_parquet_path`` 是唯一路径
           派生（本函数不再自带目录约定）；

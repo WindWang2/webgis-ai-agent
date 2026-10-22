@@ -57,7 +57,7 @@ async def apply_user_mapspec_mutation(
         raise HTTPException(status_code=400, detail=str(exc))
     # GISWorldState 门面（C2）：语义与 engine.apply_mutation 一致，额外记录
     # provenance（用户决策链——user-wins 守卫与 reload 审计的依据）。
-    # 方向 8（ADR-0183）：客户端幂等键 `c:<client_mutation_id>` —— 引擎锁内
+    # 方向 8（ADR-0257）：客户端幂等键 `c:<client_mutation_id>` —— 引擎锁内
     # 去重，同 id 重放（弱网重试）返回已提交世代而非二次执行；缺席时门面
     # 铸造服务端 id（行为与 master 一致）。
     from app.services.gis_world_state import apply_gis_mutation

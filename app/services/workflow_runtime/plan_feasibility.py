@@ -1,4 +1,4 @@
-"""Workflow DAG → 计划级资源 feasibility（ADR-0214 D3）。
+"""Workflow DAG → 计划级资源 feasibility（ADR-0264 D3）。
 
 把 #1484 的 ``governor.plan_aggregation``（critical path / parallel live
 peak / retry 乘数 / cache 折扣 / unknown 保守地板）接到 workflow DAG：

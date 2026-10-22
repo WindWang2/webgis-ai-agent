@@ -1,4 +1,4 @@
-"""投影层测试（F12 / ADR-0214 D2）。
+"""投影层测试（F12 / ADR-0260 D2）。
 
 锁定：MapProductPlan/GrammarDecision → MapPlanIR 纯投影；多轮 amendment
 确定性 + 锁目标 fail-closed + 未知名目标 fail-closed。

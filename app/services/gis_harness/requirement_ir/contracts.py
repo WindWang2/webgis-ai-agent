@@ -1,10 +1,10 @@
-"""Requirement IR typed contracts（F02 / ADR-0215）。
+"""Requirement IR typed contracts（F02 / ADR-0266）。
 
 版本化、可序列化、有界的需求中间表示：把"用户到底要什么"从
 prompt 文本与散落的 state 中收拢为稳定文档，供 lifecycle / patch /
 digest / clarification / 下游投影消费。
 
-设计约束（ADR-0215 / docs/dev/f02-gis-intent-requirement-ir-decisions.md）：
+设计约束（ADR-0266 / docs/dev/f02-gis-intent-requirement-ir-decisions.md）：
 
 - **单一理解真相**：:class:`GISIntentSpec.core` 内嵌既有
   :class:`~app.services.gis_harness.intent.MapRequestIntent`——本模块

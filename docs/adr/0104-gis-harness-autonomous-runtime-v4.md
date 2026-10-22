@@ -3,8 +3,8 @@
 **Date:** 2026-09-07
 **Status:** Proposed
 **Branch:** `feat/gis-harness-autonomous-runtime-v4`
-**Baselines:** ADR-0101 (GeoWorkflow Recipe & Conformance), ADR-0103 (Pi GIS Runtime V3),
-ADR-0103 (Data/Artifact/Workspace V3)
+**Baselines:** ADR-0239 (GeoWorkflow Recipe & Conformance), ADR-0241 (Pi GIS Runtime V3),
+ADR-0241 (Data/Artifact/Workspace V3)
 **Audits:** `.agent-work/harness-v4/01..08` (read-only, master@16d1c70)
 
 ## Context

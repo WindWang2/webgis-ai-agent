@@ -1,4 +1,4 @@
-"""Harness V5 project-level resume anchor 契约（ADR-0118 决策 D8）。
+"""Harness V5 project-level resume anchor 契约（ADR-0248 决策 D8）。
 
 验收锚点（Epic V5）：interrupted workflow 可恢复 / session 过期后能在
 项目权限下安全 resume ——

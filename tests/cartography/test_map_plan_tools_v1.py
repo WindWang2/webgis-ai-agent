@@ -1,4 +1,4 @@
-"""webgis_compile_map_plan 工具面测试（F12 / ADR-0214 D7）。
+"""webgis_compile_map_plan 工具面测试（F12 / ADR-0260 D7）。
 
 锁定：additive 注册进 ToolRegistry；compile_and_apply / finalize 两个
 操作经真实会话端到端可用；bounded summary 形状稳定。

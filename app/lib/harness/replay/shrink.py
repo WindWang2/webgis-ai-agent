@@ -1,4 +1,4 @@
-"""failure trace 最小化 / shrinking（ADR-0214 D8，WP7）。
+"""failure trace 最小化 / shrinking（ADR-0262 D8，WP7）。
 
 多轮失败场景 → 最小可复现：确定性 delta-debug（分块折半 → 单元素删除），
 oracle = 「场景仍红」。裁剪维度按信息密度排序：

@@ -36,7 +36,7 @@ KIND_LEGEND = "legend"
 KIND_INSET = "inset"
 KIND_EXPORT = "export"
 KIND_NARRATIVE = "narrative"
-# ADR-0183：产品语义视图 facet（spec 在场时投影；组件承载欠账可见）
+# ADR-0258：产品语义视图 facet（spec 在场时投影；组件承载欠账可见）
 KIND_COMPARISON = "comparison"
 KIND_TIME_PANEL = "time_panel"
 
@@ -359,7 +359,7 @@ def build_product_graph(
             )
         )
 
-    # ADR-0183：产品语义视图投影 —— spec 在场时，spec 视图是"应然构成"的
+    # ADR-0258：产品语义视图投影 —— spec 在场时，spec 视图是"应然构成"的
     # 第一真相源（用户编辑存活于此）。组件 facet 已在场的 kind 不重复投影
     # （dedup by kind）；comparison/time_panel 语义面以 chart 族组件为物理
     # 承载（承载在场 = done，缺席 = pending 欠账）。派生只读不变式不变：
@@ -713,7 +713,7 @@ def build_facet_completion(
                 facet.required = contract.chart_required or (
                     str(node.metadata.get("spec_required") or "") == "1")
         elif node.kind in (KIND_COMPARISON, KIND_TIME_PANEL):
-            # ADR-0183：spec 语义面对 —— 必需性来自 spec 视图的 required
+            # ADR-0258：spec 语义面对 —— 必需性来自 spec 视图的 required
             # 标志（用户点名必真；shape 缺省不做 facet 必需，信息性披露）。
             facet.component_ids = [node.key]
             facet.required = str(node.metadata.get("spec_required") or "") == "1"

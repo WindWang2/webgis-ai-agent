@@ -1,4 +1,4 @@
-"""时序 / 风险环境 / 规划公平域组合包（ADR-0101 §B2）。"""
+"""时序 / 风险环境 / 规划公平域组合包（ADR-0238 §B2）。"""
 from __future__ import annotations
 
 from typing import List

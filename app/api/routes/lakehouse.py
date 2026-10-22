@@ -1,4 +1,4 @@
-"""Spatial Lakehouse REST routes — V6 (ADR-0118).
+"""Spatial Lakehouse REST routes — V6 (ADR-0249).
 
 最小生产面：manifest 读取 / 矢量窗口扫描 / cube 构建 / cube 窗口读 /
 cube 修订 / 对象完整性校验。安全边界：
@@ -12,7 +12,7 @@ cube 修订 / 对象完整性校验。安全边界：
   POST 端点**不**使用 ``require_owned_session`` 依赖 —— 它解析的是 query
   参数，会与 body 的 session_id 脱钩（review B1 跨租户访问）；守卫与
   业务操作必须绑定同一 session 标识。``project_id`` 在 REST 面显式拒绝
-  （项目域发布通道尚不存在，见 ADR-0118 non-goals）。
+  （项目域发布通道尚不存在，见 ADR-0249 non-goals）。
 - **资源边界**：scan max_rows 硬预算（≤200k）；cube 时间步 ≤512；cube
   窗口读必须至少给出一个有限切片且元素非负（防全 cube OOM）；错误
   消息对客户端脱敏（不含服务器路径）。

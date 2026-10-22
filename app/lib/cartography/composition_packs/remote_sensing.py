@@ -1,4 +1,4 @@
-"""遥感 / SAR 域组合包（ADR-0101 §B2）。
+"""遥感 / SAR 域组合包（ADR-0238 §B2）。
 
 - rs_index_report：光谱指数面 + colorbar + 出版版式（native 模型即刻可用）；
 - rs_classification：分级栅格（classified_raster 为 planned —— 模板先行

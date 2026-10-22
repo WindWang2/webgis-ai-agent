@@ -1,4 +1,4 @@
-"""RetryBudget（R10，ADR-0182 D8）：防指数重试风暴。
+"""RetryBudget（R10，ADR-0254 D8）：防指数重试风暴。
 
 既有仓里 ≥10 处独立重试点（recon §3.7：tool/HTTP/Data Fabric/workflow/
 Pi/self-heal），最坏情形级联乘数 3×2×5×3 —— 无任何聚合视图。V1 的

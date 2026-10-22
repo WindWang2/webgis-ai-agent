@@ -1,4 +1,4 @@
-"""语义产品层生产接线（ADR-0183）集成测试。
+"""语义产品层生产接线（ADR-0258）集成测试。
 
 覆盖：produce_product_layer 结果键、编辑存活合并（replay 不覆盖用户编辑）、
 session_plan 合并键 presence 语义、webgis_product_edit 的 apply_tool_result

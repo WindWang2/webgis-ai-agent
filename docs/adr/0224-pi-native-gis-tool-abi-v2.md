@@ -5,7 +5,7 @@
 - 方向：Goal 04 —— Pi ↔ Python GIS Harness 的正式 native tool ABI
 - 基线：master `ddd10fb4`
 - 前置：ADR-0103（动态工具面 spawn 超集 + per-turn setActiveTools）、
-  ADR-0180（D2 字节预算 / D3 input gate / D5 metrics）、ADR-0104（turn
+  ADR-0253（D2 字节预算 / D3 input gate / D5 metrics）、ADR-0243（turn
   token 回调鉴权）、ADR-0215（RuntimeSituation 供给）
 
 ## 背景与问题

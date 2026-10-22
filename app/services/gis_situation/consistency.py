@@ -1,4 +1,4 @@
-"""Situation 一致性检查与 reconciliation 语义（方向 2 S7，ADR-0180）。
+"""Situation 一致性检查与 reconciliation 语义（方向 2 S7，ADR-0252）。
 
 覆盖任务书点名的失联面（desired MapSpec vs 前端观察、选中/聚焦层被移除、
 stale viewport、失败修复循环）—— **只报告状态级协调事实**（改写 situation

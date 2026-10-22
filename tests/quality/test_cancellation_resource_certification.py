@@ -1,4 +1,4 @@
-"""Cancellation & Resource Safety 红线（ADR-0104 Wave 9/10）。
+"""Cancellation & Resource Safety 红线（ADR-0245 Wave 9/10）。
 
 行为认证（不只看表）：
 - 置换检验/CSR envelope 的取消（Wave 9 修复的 point_pattern 盲区）；

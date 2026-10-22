@@ -1,6 +1,6 @@
 # H04 — Durable Harness Turn Journal 设计与实现说明
 
-> ADR-0216 是长期决策记录；本文是工程实现视图（数据流、接线点、运维面、验证）。
+> ADR-0268 是长期决策记录；本文是工程实现视图（数据流、接线点、运维面、验证）。
 
 ## 数据流
 
@@ -61,7 +61,7 @@ chat turn（Pi bridge / legacy engine）
 
 ## 已知边界
 
-- legacy `_journal` 行无稳定幂等键 → at-least-once（ADR-0216 D1）。
+- legacy `_journal` 行无稳定幂等键 → at-least-once（ADR-0268 D1）。
 - `_compactable_turns_sync` 以"最后事件 = turn_ended"筛压缩候选：late
   callback 在终局后落账的 turn 不会被压缩（保守多留行，retention 兜底）。
 - 诊断 API 鉴权复用会话所有权（`require_owned_session`）；跨 session 聚合

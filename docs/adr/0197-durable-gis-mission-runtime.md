@@ -4,7 +4,7 @@
 - Date: 2026-09-15
 - Line: `harness/durable-gis-mission-runtime-v1`
 - Related: ADR-0187 (Swarm), ADR-0184 (Execution Graph), ADR-0180 (Harness Kernel / SessionPlan),
-  ADR-0182 (Resource Governor), ADR-0077 (multi-pod turn ownership), ADR-0052 (durable job runtime),
+  ADR-0254 (Resource Governor), ADR-0077 (multi-pod turn ownership), ADR-0052 (durable job runtime),
   GeoCompute cluster lease_epoch fencing (V6)
 
 ## Context

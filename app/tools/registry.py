@@ -288,7 +288,7 @@ _ALIAS_LOOKUP_MAX_DISTINCT = 1024
 
 
 # ---------------------------------------------------------------------------
-# ADR-0101 Wave 2：参数归一化已下沉 app/tools/argument_normalization.py
+# ADR-0237 Wave 2：参数归一化已下沉 app/tools/argument_normalization.py
 # （声明式规则表 + 修复证据）。此处保留私有兼容别名 —— 既有测试与内部
 # 引用不经改写继续工作；行为契约由声明表逐字迁移并有测试钉住。
 # ---------------------------------------------------------------------------
@@ -487,7 +487,7 @@ class ToolRegistry:
         #       3 = 仅在 LLM 显式 list_available_tools 后才看见 (rare / heavy)
         # domains: tier 2 工具属于哪些主题，用于关键词触发
         self._metadata: dict[str, dict[str, Any]] = {}
-        # ADR-0101: 描述符/指纹缓存（register / update_args_model 时失效）。
+        # ADR-0237: 描述符/指纹缓存（register / update_args_model 时失效）。
         self._descriptor_cache: dict[str, ToolDescriptor] = {}
         self._schema_fp_cache: dict[str, str] = {}
         self._descriptor_fp_cache: dict[str, str] = {}
@@ -522,7 +522,7 @@ class ToolRegistry:
             return func
         return decorator
 
-    # ADR-0101：描述符扩展字段（全部可选，缺省派生；存量工具零改动兼容）。
+    # ADR-0237：描述符扩展字段（全部可选，缺省派生；存量工具零改动兼容）。
     # 未知 kwarg 一律注册期显式失败 —— 此前 **kwargs 静默吞掉拼写错误，
     # 声明了半天字段实际没生效，是描述符契约最大的隐性漂移源。
     # ADR-0103（V3）：新增 I/O 工件契约 / 会话态 / 资源分级 / 安全权限 /
@@ -565,7 +565,7 @@ class ToolRegistry:
         声明一个 extra 重建整套 pydantic 模型。显式 args_model 优先（其
         自带 extras 生效，此处忽略）。
 
-        描述符扩展字段（ADR-0101，全部可选）：
+        描述符扩展字段（ADR-0237，全部可选）：
         status / summary / deprecation_of / side_effect / requires_credentials /
         capabilities / algorithms / provider_dependencies / output_semantic_type /
         produced_refs / accepts_ref_types / network / deterministic /
@@ -710,7 +710,7 @@ class ToolRegistry:
             val = kwargs.get(key)
             return tuple(val) if val else ()
 
-        # ADR-0101：描述符字段与 tier/domains 同源存入 _metadata（单一存储，
+        # ADR-0237：描述符字段与 tier/domains 同源存入 _metadata（单一存储，
         # descriptor() 只是投影构造器）。tier>=3 强制 destructive 副作用类，
         # 未标注也不许低于 destructive —— 安全分类不允许「忘了标就是纯读」。
         effective_side_effect = side_effect
@@ -758,7 +758,7 @@ class ToolRegistry:
             "failure_modes": list(kwargs.get("failure_modes") or []),
             "fallback_tool": kwargs.get("fallback_tool"),
         }
-        # ADR-0101 Wave 6：注册期执行策略审计（warning 级留痕不阻断；
+        # ADR-0237 Wave 6：注册期执行策略审计（warning 级留痕不阻断；
         # error 级发现由 tests/unit/test_execution_policy_audit.py 对活注册表钉零）。
         try:
             from app.tools.policy_audit import audit_registration
@@ -863,15 +863,15 @@ class ToolRegistry:
         return self._schemas
 
     def has(self, name: str) -> bool:
-        """扩展平台投影（ADR-0104）：注册前碰撞检查用；只读。"""
+        """扩展平台投影（ADR-0243）：注册前碰撞检查用；只读。"""
         return name in self._tools
 
     def tool_names(self) -> list[str]:
-        """扩展平台投影（ADR-0104）：引用存在性检查用；确定性排序。"""
+        """扩展平台投影（ADR-0243）：引用存在性检查用；确定性排序。"""
         return sorted(self._tools.keys())
 
     def unregister(self, name: str) -> bool:
-        """ADR-0104：扩展卸载回滚用——把一次 register 的全部痕迹清干净。
+        """ADR-0243：扩展卸载回滚用——把一次 register 的全部痕迹清干净。
 
         只服务扩展投影的 undo；核心工具从不调用。清理面与 register 的
         写入面一一对应（_tools/_models/_schemas/_schema_sizes/_metadata +
@@ -915,7 +915,7 @@ class ToolRegistry:
         for s in self._schemas:
             if s["function"]["name"] == name:
                 s["function"]["parameters"] = new_params
-        # ADR-0101：schema 变更 → 入参指纹/描述符/全库指纹全部失效
+        # ADR-0237：schema 变更 → 入参指纹/描述符/全库指纹全部失效
         self._schema_fp_cache.pop(name, None)
         self._descriptor_cache.pop(name, None)
         self._descriptor_fp_cache.pop(name, None)
@@ -944,7 +944,7 @@ class ToolRegistry:
         return size
 
     def args_model(self, name: str) -> Optional[Type[BaseModel]]:
-        """工具的权威参数模型（只读公开访问器，ADR-0180 D3）。
+        """工具的权威参数模型（只读公开访问器，ADR-0253 D3）。
 
         Pi 边界 pre-dispatch 校验闸与 dispatch 内部用**同一个** Pydantic
         model —— 语义零漂移的唯一途径就是共享模型对象本身，而不是任何
@@ -983,7 +983,7 @@ class ToolRegistry:
         return dict(self._metadata)
 
     # ------------------------------------------------------------------
-    # ADR-0101: ToolDescriptor V2 投影与指纹
+    # ADR-0237: ToolDescriptor V2 投影与指纹
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -1336,7 +1336,7 @@ class ToolRegistry:
         """执行工具，包含 Pydantic 校验与透明解引用"""
         from app.tools._utils import std_error_response
 
-        # ADR-0101 Wave 2：每次 dispatch 开始先清报告（last-dispatch-wins，
+        # ADR-0237 Wave 2：每次 dispatch 开始先清报告（last-dispatch-wins，
         # dispatch 返回后调用方可读取本次修复证据 —— trace/pipeline 消费）。
         normalization_report_var.set(())
 
@@ -1349,7 +1349,7 @@ class ToolRegistry:
         model = self._models.get(real_name)
         name = real_name
 
-        # ADR-0101：PLANNED = 占位声明、未实现 —— 绝不可执行（别名也不可借道）。
+        # ADR-0237：PLANNED = 占位声明、未实现 —— 绝不可执行（别名也不可借道）。
         if meta.get("status") == ToolStatus.PLANNED.value:
             return std_error_response(
                 f"工具 {name} 状态为 planned（尚未实现），不可执行",
@@ -1603,7 +1603,7 @@ class ToolRegistry:
                         correction_hint=f"Validation Error: {message}. Please check the tool definition and ensure all required parameters are provided with correct types."
                     )
 
-        # ADR-0101 Wave 9（§40 载荷安全）：非有限浮点（NaN/±Infinity）在
+        # ADR-0237 Wave 9（§40 载荷安全）：非有限浮点（NaN/±Infinity）在
         # JSON 标准里不存在，但 Python json.loads 默认接受 —— 下游
         # json.dumps(strict)/前端/DB 全会炸，且错误在远离注入点的位置爆发。
         # 预算化扫描（与 GeoJSON 校验同门：oversized 载荷跳过深扫，交给
@@ -1657,7 +1657,7 @@ class ToolRegistry:
                 correction_hint=f"GeoJSON Validation Error: {str(e)}"
             )
 
-        # ADR-0101 Wave 2：归一化修复证据暴露给 trace（dispatch() finally 中复位）。
+        # ADR-0237 Wave 2：归一化修复证据暴露给 trace（dispatch() finally 中复位）。
         normalization_report_var.set(_norm_repairs)
 
         # 执行函数

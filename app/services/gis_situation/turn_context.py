@@ -1,4 +1,4 @@
-"""Turn context 集成助手（方向 2 M4，ADR-0180；主动记忆切片见 ADR-0190）。
+"""Turn context 集成助手（方向 2 M4，ADR-0252；主动记忆切片见 ADR-0190）。
 
 chat.py 的两个 Pi 分支把 ``environment_context`` 的构造委托给
 ``build_situation_turn_context``：

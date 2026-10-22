@@ -1,4 +1,4 @@
-"""Dataset Semantics 生产接线测试（ADR-0215 V5/V6 验收矩阵）。
+"""Dataset Semantics 生产接线测试（ADR-0265 V5/V6 验收矩阵）。
 
 - V5 四路径同一指纹：ingest 铸造的 descriptor 指纹 = mapspec ref 路径
   解析的指纹 = store 现读指纹（同一数据集 → 同一语义身份）；

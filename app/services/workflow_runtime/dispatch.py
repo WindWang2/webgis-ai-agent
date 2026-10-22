@@ -96,7 +96,7 @@ def node_profile(node: Dict[str, Any]) -> str:
 
 
 class WorkerCapacityExhausted(Exception):
-    """有覆盖该 profile 的活跃 worker，但声明槽位已全部在飞（ADR-0214 D4）。
+    """有覆盖该 profile 的活跃 worker，但声明槽位已全部在飞（ADR-0264 D4）。
 
     与 :class:`NoCapableWorker` 的语义分界：后者是「没有任何 worker 能跑
     这个 profile」（确定性，重试只会复现）；本类是「能跑但此刻满载」
@@ -155,7 +155,7 @@ def choose_dispatch(
     - auto：重 profile（raster/heavy_cpu/high_memory）且存在活跃 durable
       worker 覆盖该 profile → durable；否则 local；
     - 隔离开启且行数超阈值：必须 durable（无合格 worker → NoCapableWorker；
-      worker 在但槽满 → WorkerCapacityExhausted，ADR-0214 D4）。
+      worker 在但槽满 → WorkerCapacityExhausted，ADR-0264 D4）。
     """
     profile = node_profile(node)
     mode = dispatch_mode()
@@ -200,7 +200,7 @@ class LocalDispatcher:
     ) -> GeoComputeNodeOutcome:
         # run_id/node_attempt/node_deadline_s/resource_envelope 是 durable
         # 通道的派发元数据（run_events 关联 / attempt 证据 / worker 硬超时
-        # / rg.v1 资源申报，ADR-0214 D5）。进程内路径不消费（预算记账在
+        # / rg.v1 资源申报，ADR-0264 D5）。进程内路径不消费（预算记账在
         # driver 侧 governor_link 完成）；签名保持多态对齐。
         del run_id, node_attempt, node_deadline_s, resource_envelope
         from app.services.workflow_runtime.driver import (
@@ -318,7 +318,7 @@ class DurableDispatcher:
     ) -> GeoComputeNodeOutcome:
         # #1408: propagate plan budget / node deadline / placement into
         # durable dispatch (previously dropped) and align wait cap.
-        # ADR-0214 D5：deadline 优先级 op_node 声明 > plan budget >
+        # ADR-0264 D5：deadline 优先级 op_node 声明 > plan budget >
         # driver 显式值 —— driver 侧传入值（估算派生，advisory）只作
         # fallback，绝不覆盖 plan 内已声明的执行界（review P2-3）。
         node_deadline = getattr(op_node, "deadline_s", None)
@@ -409,7 +409,7 @@ class AutoDispatcher:
                 error_message=str(exc)[:200],
                 failure_class="deterministic_unsupported")
         except WorkerCapacityExhausted as exc:
-            # ADR-0214 D4：worker 在但槽满 —— 瞬时饱和，退避重试。
+            # ADR-0264 D4：worker 在但槽满 —— 瞬时饱和，退避重试。
             return GeoComputeNodeOutcome(
                 ok=False, error_code="RESOURCE_EXHAUSTED",
                 error_message=str(exc)[:200],
@@ -450,7 +450,7 @@ def _dispatch_sync(
 ) -> dict:
     """Submit durable job with plan budget / deadline / placement (#1408).
 
-    ADR-0214 D5：``resource_envelope`` 显式传入（driver 侧 rg.v1 节点估算
+    ADR-0264 D5：``resource_envelope`` 显式传入（driver 侧 rg.v1 节点估算
     快照）优先于节点 ``resources`` 声明投影；``run_id``/``node_attempt``
     显式传入优先于 runtime context 推断。
     """

@@ -1,4 +1,4 @@
-"""Product Shapes —— 产品原型 → 视图构成（ADR-0183 §4，M3）。
+"""Product Shapes —— 产品原型 → 视图构成（ADR-0258 §4，M3）。
 
 PRODUCT_ARCHETYPES（product_templates.py，P7 防模板膨胀词表）已经是产品
 类型目录；本模块给每个原型定义**视图构成缺省**：

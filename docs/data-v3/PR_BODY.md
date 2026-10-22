@@ -4,7 +4,7 @@ Establishes the **Data Control Plane** for the WebGIS AI agent: a unified, versi
 
 ## Architecture
 
-New contract layer `app/lib/data/` (pure, zero-I/O) + stateful services (`data_profile`, `data_catalog`, `data_lifecycle`, `workspace`, `data_ingest`) + agent surface (`tools/data_discovery.py`). Ownership map and design decisions: `docs/data-plane/v3-foundation/architecture.md`; decision record: `docs/adr/0103-data-artifact-workspace-foundation-v3.md`; phase-0 evidence: `docs/data-v3/audit/01..06`.
+New contract layer `app/lib/data/` (pure, zero-I/O) + stateful services (`data_profile`, `data_catalog`, `data_lifecycle`, `workspace`, `data_ingest`) + agent surface (`tools/data_discovery.py`). Ownership map and design decisions: `docs/data-plane/v3-foundation/architecture.md`; decision record: `docs/adr/0241-data-artifact-workspace-foundation-v3.md`; phase-0 evidence: `docs/data-v3/audit/01..06`.
 
 ## Artifact Contract V3
 

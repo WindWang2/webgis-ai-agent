@@ -1,4 +1,4 @@
-"""角色感知上下文预算管理器（ADR-0101 Wave 5, §22）。
+"""角色感知上下文预算管理器（ADR-0237 Wave 5, §22）。
 
 现状（audit）：历史有 6000 token 软预算（history_compression），system 块
 （环境感知/项目块/裁决/工具 schema）**无界**叠加 —— 真实 prompt 规模只有

@@ -224,7 +224,7 @@ def _ledger_record(
     event_id: str = "",
     seq: int = 0,
 ) -> None:
-    """账本旁路投影（H04/ADR-0216）：fire-and-forget，绝不反噬 kernel。
+    """账本旁路投影（H04/ADR-0268）：fire-and-forget，绝不反噬 kernel。
 
     envelope 是 live 权威；账本只做崩溃取证/因果查询/retention。任何
     异常都被 sink 吞掉（fail-open + 计数），这里再兜一层 import/构造面。
@@ -971,7 +971,7 @@ class GISSessionRuntime:
                     host=host, turn_id=turn_id, causal_id=tool_call_id,
                     note=str((plan.gis_chapter or {}).get("query") or "")[:200],
                 )
-                # F03（ADR-0204-f03 D3）：给本章提出的澄清问题盖提出者章 ——
+                # F03（ADR-0259-f03 D3）：给本章提出的澄清问题盖提出者章 ——
                 # ``refused`` 降级只认「提出澄清的那个 turn」（review P2-1：
                 # 否则历史遗留的未解决澄清会把后续任意零执行 turn 误降级）。
                 # 旧章节（无章）永远不降级 —— 保守偏向既有 completed 语义。
@@ -1227,7 +1227,7 @@ class GISSessionRuntime:
         host: PlanHost = "pi",
     ) -> bool:
         """Journal one successful MapSpec mutation as a canonical ``map_mutated``
-        event (F03 / ADR-0204-f03 D4).
+        event (F03 / ADR-0259-f03 D4).
 
         Emitted from the mutation facade's post-success block (once per
         successful mutation, batch = one batch event). Idempotent on

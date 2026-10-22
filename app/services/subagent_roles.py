@@ -1,4 +1,4 @@
-"""子代理角色库 + 层级预算（ADR-0101 Wave 7, §30/§32）。
+"""子代理角色库 + 层级预算（ADR-0237 Wave 7, §30/§32）。
 
 此前 subagent 只有「任意 unrestricted 子代理」一个形态：调用方随手给
 domains/extra_tools，max_rounds 是唯一预算。V2 引入**显式角色档**：
@@ -388,7 +388,7 @@ def resolve_budget_class(name: str) -> Dict[str, float]:
 class SubagentBudget:
     """单次子代理运行的预算计数器（线程内使用；asyncio 单线程模型）。
 
-    V5 W6（ADR-0118 D6）：新增 LLM usage 记账（prompt/completion/total
+    V5 W6（ADR-0248 D6）：新增 LLM usage 记账（prompt/completion/total
     tokens + provider 上报次数）。来源是子代理运行的专属 TurnEvidence
     （bind_turn_evidence 让引擎既有的 usage 通道落到子累加器），运行
     结束经 ``join_turn_evidence`` 汇入本预算 —— token/成本不再不可观测。

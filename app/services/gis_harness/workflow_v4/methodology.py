@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 #: 方法论族 schema 版本（进入 registry 指纹）。
 METHODOLOGY_SCHEMA_VERSION = 4
 
-#: 方法论族（稳定词表，纯加法演进）。覆盖 ADR-0118 的方法论面：
+#: 方法论族（稳定词表，纯加法演进）。覆盖 ADR-0251 的方法论面：
 #: 描述制图 / 分布密度 / 插值 / 分区统计 / 适宜性 / 网络 / 地形水文 /
 #: 遥感 / 变化检测 / 空间统计 / 多准则 / 组合制图，
 #: 及 Epic 11 纯加法补齐的邻近缓冲（proximity）。

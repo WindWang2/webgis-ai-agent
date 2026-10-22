@@ -1,4 +1,4 @@
-"""Workflow Recipe DSL V2 —— 专业 GIS 工作流契约层（Goal C / ADR-0101）。
+"""Workflow Recipe DSL V2 —— 专业 GIS 工作流契约层（Goal C / ADR-0239）。
 
 在 :class:`CartographyRecipe`（制图方法契约）之上，additive 地建立更完整的
 分析方法 DSL：数据角色（C3）、科学义务（C4）、完成契约（C7 的声明侧）、

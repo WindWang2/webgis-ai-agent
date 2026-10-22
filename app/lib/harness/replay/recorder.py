@@ -1,4 +1,4 @@
-"""生产录制器（B2，ADR-0183 决策二）：S13 settle 缝的 env-gated 打包。
+"""生产录制器（B2，ADR-0256 决策二）：S13 settle 缝的 env-gated 打包。
 
 - **总闸**：``HARNESS_REPLAY_RECORD``（默认关 —— 零生产开销语义：关闸时
   只做一次 env 读）；
@@ -119,7 +119,7 @@ def collect_turn(
 
     degraded = not chain_dict or turn_summary is None
     # ADR-0212：录制时 capability registry 指纹（重放期 drift 归因面）。
-    # ADR-0214 D2：环境指纹 v2 —— 封闭白名单（行为开关/policy 版本/
+    # ADR-0262 D2：环境指纹 v2 —— 封闭白名单（行为开关/policy 版本/
     # source 指纹/manifest/预算摘要），缺席段诚实降级，绝不阻断录制。
     env_payload: Dict[str, Any] = {}
     try:

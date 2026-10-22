@@ -19,7 +19,7 @@ artifact_registry.py/governor/* 冻结面零触碰、8 个 open PR 热区全部 
 |---|---|---|
 | P1-1 | `to_dict`/`from_dict` 漏 `crosses_antimeridian` → 跨反子午线数据集 descriptor 入库即永久 corrupt（实测复现；同指纹 no-op 无自愈路径） | ✅ 两处补齐 + 富 descriptor（全可选字段填满）store roundtrip 回归测试 |
 | P1-2 | 改 mapspec_schema 未再生成 `types.generated.ts` → 投影幂等契约测试确定性失败 | ✅ `python -m app.lib.cartography.ts_projection` 再生成（+2 行 additive） |
-| P1-3 | ADR/设计文档声称 replay/restore、context 桥、qualification guard 有生产调用点，实际为库面 + 可选参数（文档承诺 > 实现事实） | ✅ 修订 ADR-0215 Decision 4/5 与设计文档 D6：如实声明"库面 + seams 已交付，生产消费接线为后续工作"（Out of Scope 列明）；commit 措辞以文档为准 |
+| P1-3 | ADR/设计文档声称 replay/restore、context 桥、qualification guard 有生产调用点，实际为库面 + 可选参数（文档承诺 > 实现事实） | ✅ 修订 ADR-0265 Decision 4/5 与设计文档 D6：如实声明"库面 + seams 已交付，生产消费接线为后续工作"（Out of Scope 列明）；commit 措辞以文档为准 |
 | P1-4 | `_prune_sync` 跨写者竞态：keep 集合仅含本次写入者历史，可删除 head 正指向的载荷 | ✅ prune 先重读 head，keep = history ∪ {head 指纹}；head 不可读时保守不删；竞态回归测试锁定 |
 | P2-1 | 指纹含证据域字段 → ingest 富证据与 fabric/inline 薄证据指纹如实不同，文档"四路径同指纹"过强 | ✅ 文档口径修正：同一证据域内一致（ingest↔store↔mapspec-ref 主链）；跨证据域必须经 `evaluate_reuse`/`compare_descriptors`，不得裸字符串相等 |
 | P2-2 | 同指纹 no-op 不校验载荷存在 → 无自愈能力 | ✅ no-op 早退前查载荷在盘；缺失则重写修复（回归测试） |

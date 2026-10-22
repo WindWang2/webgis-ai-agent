@@ -1,4 +1,4 @@
-"""LayerTypeCapability —— 图层类型渲染支持的机器真值（F13，ADR-0214 D6）。
+"""LayerTypeCapability —— 图层类型渲染支持的机器真值（F13，ADR-0261 D6）。
 
 与 :mod:`app.lib.cartography.component_renderers`（组件族矩阵）同纪律：
 

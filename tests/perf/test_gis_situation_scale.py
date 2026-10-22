@@ -1,4 +1,4 @@
-"""Situation 规模/预算基准（方向 2 S8，ADR-0180）。
+"""Situation 规模/预算基准（方向 2 S8，ADR-0252）。
 
 约束（任务书）：
 - compile latency 有界（合成 10/100/1000 层会话）；

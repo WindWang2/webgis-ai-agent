@@ -2,9 +2,9 @@
 
 - 状态: Accepted
 - 日期: 2026-09-15
-- 关联: ADR-0183（Map Mutation Transactions）、ADR-0072（GISWorldState 读模型）、
-  ADR-0099（Map Product fork_version）、ADR-0058（revision CAS）、ADR-0120（MapSpec 契约 schema）、
-  ADR-0104/0118（前端 Comparison View / Workbench）
+- 关联: ADR-0257（Map Mutation Transactions）、ADR-0072（GISWorldState 读模型）、
+  ADR-0236（Map Product fork_version）、ADR-0058（revision CAS）、ADR-0120（MapSpec 契约 schema）、
+  ADR-0244/0118（前端 Comparison View / Workbench）
 - 分支: `agent/09-counterfactual-whatif-scenario-branching`
 
 ## 1. 背景与问题
@@ -27,7 +27,7 @@ mutation 都覆盖前态（auto checkpoint 只保留回滚点，不保留平行�
 
 ### D1. 分支隔离模型 = 会话命名空间（branch-scoped session namespace）
 
-`ScenarioBranch` 的存储与事务隔离**不新造机制**，复用 ADR-0183 的全部事务机器
+`ScenarioBranch` 的存储与事务隔离**不新造机制**，复用 ADR-0257 的全部事务机器
 （per-session 分布式锁、mutation revision CAS、幂等去重、auto checkpoint、原子
 落盘、失败回滚、user-wins 守卫、provenance）。实现方式：
 
@@ -123,7 +123,7 @@ MapSpec 契约**版本化 additive 演进**（对齐 ADR-0120 W2/W3 先例）：
 | 备选 | 否决理由 |
 |---|---|
 | 单会话内多套 MapSpec 键（`mapspec@branchA`） | 绕开 store/engine 全部事务面：锁、CAS、checkpoint、dedup、provenance、user-wins 都要重写一遍；且 `save_mapspec` 的落盘布局按 session 目录组织，旁路键会成为第二个事实源 |
-| Postgres 版本树（复用 MapProduct lineage DAG） | MapProduct 是发布态（正式版本），fork 语义声明过「无 branch 列、无移动指针」（ADR-0099）；把未定型的推演分支灌入发布谱系会污染 lineage 审计 |
+| Postgres 版本树（复用 MapProduct lineage DAG） | MapProduct 是发布态（正式版本），fork 语义声明过「无 branch 列、无移动指针」（ADR-0236）；把未定型的推演分支灌入发布谱系会污染 lineage 审计 |
 | 内存对象树（branch = spec deepcopy 链） | 会话重启/TTL 过期即失忆；Redis 内存随分支数无界；与「磁盘优先、cache 不持有磁盘没有的 state」契约冲突 |
 | 仅前端双地图对比（不动后端） | 无法回答指标差分问题；分支状态不持久，刷新即丢；多轮推演不可累积 |
 

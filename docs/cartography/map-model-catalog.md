@@ -1,7 +1,7 @@
 # Map Model Catalog
 
 > 由 `app.lib.cartography.catalog_docs` 从 MapModelRegistry 生成；
-> 手改无效。真值：`model_library.py` + `model_packs/`（ADR-0101）。
+> 手改无效。真值：`model_library.py` + `model_packs/`（ADR-0238）。
 
 共 80 个模型（native 77 / planned 3）。
 

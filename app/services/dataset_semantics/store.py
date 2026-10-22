@@ -1,4 +1,4 @@
-"""Dataset Semantics Store —— 语义 descriptor 的有界持久化（ADR-0215 D5）。
+"""Dataset Semantics Store —— 语义 descriptor 的有界持久化（ADR-0265 D5）。
 
 布局（session 内、内容寻址、与 MapSpec 同一 DATA_DIR 基座）：
 

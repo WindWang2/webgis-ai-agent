@@ -1,7 +1,7 @@
 """场景分支管理器（ADR-0193 §D1/D2）——What-If 推演分支的 fork/干预/回滚。
 
 隔离模型（结构性保证，非约定式）：每个 ScenarioBranch 映射到一个**派生会话
-id** ``{parent_sid}__wif_{branch_id}``，完整复用 ADR-0183 的 MapSpec 事务机器
+id** ``{parent_sid}__wif_{branch_id}``，完整复用 ADR-0257 的 MapSpec 事务机器
 —— 分支会话拥有独立的 MapSpec 文档、修订计数（CAS）、分布式锁、幂等去重、
 auto checkpoint 与 provenance 环。因此任一分支上的修改/回滚**不可能**影响
 另一分支或父会话（不同 Redis hash key、不同磁盘目录、不同锁作用域）。
@@ -15,7 +15,7 @@ auto checkpoint 与 provenance 环。因此任一分支上的修改/回滚**不�
   注册表移除（内存释放机制，见 review/AGENT-09-REVIEW.md）。
 
 防重复施工：单次型 What-If 评估在 ``app/tools/what_if_simulate.py``（不动）；
-发布谱系 fork 在 ``map_product_service.fork_version``（ADR-0099，语义不互通）。
+发布谱系 fork 在 ``map_product_service.fork_version``（ADR-0236，语义不互通）。
 """
 from __future__ import annotations
 

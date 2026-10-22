@@ -1,4 +1,4 @@
-"""Cartographic Theme & Palette Descriptors — 制图主题/调色板描述层（ADR-0101 D4）.
+"""Cartographic Theme & Palette Descriptors — 制图主题/调色板描述层（ADR-0238 D4）.
 
 设计约束（不建立平行颜色事实）：
 
@@ -484,7 +484,7 @@ class CartographicThemeRegistry:
         # 推荐清单只含已注册色带（注册表是权威；主题引用陈旧 id 时收敛）
         return [i for i in ids if i in self._palettes]
 
-    # ── 扩展投影（ADR-0104）──
+    # ── 扩展投影（ADR-0243）──
     def register_theme(self, theme: CartographicThemeDescriptor) -> None:
         """扩展 cartography SDK 投影入口：注册表本是只读目录，扩展运行时
         注入是唯一的动态写路径。同 id 已存在时抛错（扩展侧先查后写，

@@ -3,8 +3,8 @@
 - Status: Proposed
 - Date: 2026-09-17
 - Line: `extensions/gis-pack-sdk-certification-v2`
-- Related: ADR-0104 (extension platform V1), ADR-0105 (V2 worker/supply chain),
-  ADR-0119 (V3 trust store/marketplace/streaming), ADR-0101/0102/0103 (tool surface),
+- Related: ADR-0243 (extension platform V1), ADR-0105 (V2 worker/supply chain),
+  ADR-0119 (V3 trust store/marketplace/streaming), ADR-0237/0102/0103 (tool surface),
   ADR-0182 (skill library / SkillPolicy), audit issues #1337/#1338/#1339 (skill
   code-execution boundary)
 

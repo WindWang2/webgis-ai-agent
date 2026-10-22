@@ -6,14 +6,14 @@
   status/version + capability→provider 边 + fallback/conflict 边）的规范
   投影 sha256 —— 录制时进 ``ReplayTrace.env``，重放时对当前 registry
   重算比对，漂移即显式披露（drift ≠ fail，但 digest 漂移有了归因面）。
-  进程图按 graph 实例记忆化（ADR-0214 D2：graph 指纹未变 = 同实例 = 零
+  进程图按 graph 实例记忆化（ADR-0262 D2：graph 指纹未变 = 同实例 = 零
   重投影；录制热路径 ~255ms/turn 的重复投影成本归零）。
 - ``collect_env_fingerprint``：环境指纹 v2（封闭白名单）—— 行为开关布尔
   / policy 版本 / source 内容指纹 / runtime manifest 指纹 / 预算文件摘要
   / python-platform 标识。绝不收录任意 env 值。
 - ``env_drift``：v2 环境指纹的分类比对 —— 输出「哪一类环境事实变了」
   （registry/policy/runtime_flags/sources/manifest/budgets/runtime），
-  `behavioral=True` 表示影响决策行为的环境面（ADR-0214 D2）。
+  `behavioral=True` 表示影响决策行为的环境面（ADR-0262 D2）。
 - ``rederive_capability_decision``：用决策记录里冻结的 inputs
   （capability + situation）离线重跑同源 ``capability_status``，重建
   决策的 selected/alternatives —— 决策级 delta 把「digest 变了」钉到
@@ -41,7 +41,7 @@ _KIND_DISPATCH_DENIAL = "capability_dispatch_denial"
 
 # ── registry digest ──────────────────────────────────────────────────────────
 
-#: 进程图 digest 记忆化（ADR-0214 D2）：graph 实例为弱引用键 —— 指纹未变
+#: 进程图 digest 记忆化（ADR-0262 D2）：graph 实例为弱引用键 —— 指纹未变
 #: 时 ``get_capability_graph`` 返回同一实例，命中零重投影；重建即新实例，
 #: 旧条目随之失效。显式传入 ``graph=`` 的调用方（测试 stub）不走记忆化。
 _DIGEST_MEMO: "weakref.WeakKeyDictionary[Any, str]" = weakref.WeakKeyDictionary()
@@ -170,7 +170,7 @@ def registry_drift(recorded_digest: str, current_digest: str) -> Optional[Dict[s
     }
 
 
-# ── 环境指纹 v2（ADR-0214 D2：封闭白名单 + drift 分类）───────────────────────
+# ── 环境指纹 v2（ADR-0262 D2：封闭白名单 + drift 分类）───────────────────────
 
 ENV_SCHEMA_VERSION = 2
 

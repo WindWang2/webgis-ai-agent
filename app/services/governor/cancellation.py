@@ -1,4 +1,4 @@
-"""取消协调（R9，ADR-0182 D9）。
+"""取消协调（R9，ADR-0254 D9）。
 
 取消源词表：user_cancel / session_replaced / plan_invalidated / timeout /
 client_disconnect。cancel 后的硬保证：

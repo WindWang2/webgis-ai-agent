@@ -126,7 +126,7 @@ import {
 import { useCartographicObservation } from "@/lib/hooks/use-cartographic-observation"
 import { HoverTooltipOverlay } from "./hover-tooltip-overlay"
 import { useFeatureSelection } from "@/lib/hooks/use-feature-selection"
-// F13（ADR-0214 D4）：可见层 pin 生命周期随地图在场激活 —— 模块级
+// F13（ADR-0261 D4）：可见层 pin 生命周期随地图在场激活 —— 模块级
 // HUD store 订阅（与 tab 显隐无关），会话切换自动 sweep 旧会话 pin。
 import "@/lib/data-plane/visibility-pin"
 

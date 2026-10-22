@@ -4,11 +4,11 @@
 - 日期：2026-10-16
 - 方向：Requirement ↔ MapSpec 混合主动制图一致性（User-Wins Representation Binding）
 - 基线：master `fd1acd7c`
-- 前置：ADR-0215（Requirement IR）、ADR-0183（Mutation Envelope/Transactions）、W15（MapSpec 状态三分类与锁分区）、#1070（durable presentation owner）
+- 前置：ADR-0266（Requirement IR）、ADR-0257（Mutation Envelope/Transactions）、W15（MapSpec 状态三分类与锁分区）、#1070（durable presentation owner）
 
 ## 背景与问题
 
-ADR-0215 建立了 RequirementDocument（"用户要什么"）并明确留下后续项：
+ADR-0266 建立了 RequirementDocument（"用户要什么"）并明确留下后续项：
 *"representation 面（用户隐藏图层/锁定图层/palette）目前只入 IR 与
 digest，其 MapSpec mutation 接线属后续方向"*。侦察确认该接线为零——
 两侧系统各自成熟但互不连通（recon 2026-10-16：`apply_user_patches` 与
@@ -75,7 +75,7 @@ proposed→applied|refused|superseded|ineligible|skipped。
 ### C3 requirement → MapSpec（`requirement_to_mapspec.py`）
 
 - `build_binding_proposals(doc, mapspec, expected_revision)`（纯函数）：
-  只读**字段级 origin=user** 的表达面（"显式且已接受"以 ADR-0215 的
+  只读**字段级 origin=user** 的表达面（"显式且已接受"以 ADR-0266 的
   字段级 ownership 判定——user 即最高优先；文档 superseded 不绑定）。
   hidden→`PatchLayerPresentationIntent`（族扩展：roads 覆盖 roads-1）、
   locked→`PatchWorkbenchDeltaIntent(locksAdd)`（绝对值语义幂等）、
@@ -165,7 +165,7 @@ char cap 1200、kill-switch `GIS_REQUIREMENT_CONTEXT_BLOCK=0`）。不重复
 - **投影已知边界**：逐层 paint/布局坐标/ReorderLayers 不进
   requirement（MapSpec 是这些面的权威，requirement 不镜像）；UI 上
   的样式面板改色不反推 palette 名（paint→palette 反查不确定，palette
-  pin 只来自用户话语/澄清）；`ws_legacy` 直写通道（ADR-0183 D4 已披露
+  pin 只来自用户话语/澄清）；`ws_legacy` 直写通道（ADR-0257 D4 已披露
   的债）无 CAS 回执，不投影；basemap/scene/scenario 本期不绑定；
   component 的 user-wins 硬守卫不在引擎呈现守卫面——agent 可临时翻转
   用户禁用的组件，下一轮 C3 绑定回放收敛回用户语义（窗口期不一致
@@ -212,4 +212,4 @@ char cap 1200、kill-switch `GIS_REQUIREMENT_CONTEXT_BLOCK=0`）。不重复
 - component 的 user-wins 硬守卫不在引擎呈现守卫面：agent 可临时翻转
   用户禁用的组件，下一轮 C3 绑定回放收敛（窗口期不一致披露）；
 - 跨进程 requirement 双写仍是 fail-open（seq fencing best-effort），
-  与 ADR-0215 既有披露一致。
+  与 ADR-0266 既有披露一致。

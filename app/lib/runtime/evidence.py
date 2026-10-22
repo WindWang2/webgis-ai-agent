@@ -236,7 +236,7 @@ class TurnEvidence:
             return [dict(e) for e in getattr(self, "_capability_dispatches", [])]
 
     def add_resource_usage(self, entry: Dict) -> None:
-        """ADR-0214 D4：per-tool governor estimate/actual 投影（R16 链上面）。
+        """ADR-0264 D4：per-tool governor estimate/actual 投影（R16 链上面）。
 
         有界（每 turn ≤16 条，FIFO）；entry 由 governor dispatch 适配器
         构造（tool/class/wall 级，无参数无 payload）。非 dict 输入忽略。
@@ -355,7 +355,7 @@ class TurnEvidence:
             # ADR-0204 D4：capability dispatch 绑定证据（allowed/refused；
             # 有界 ≤16，redacted —— 只含 id/code/score）。
             "capability_dispatches": self.capability_dispatches(),
-            # ADR-0214 D4：per-tool estimate/actual 投影（有界 ≤16；
+            # ADR-0264 D4：per-tool estimate/actual 投影（有界 ≤16；
             # wall/计数级，无 payload）—— plan cost delta 的链上事实。
             "resource_usage": self.resource_usages(),
             "warnings": warnings,

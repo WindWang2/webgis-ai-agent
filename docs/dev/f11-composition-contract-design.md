@@ -109,7 +109,7 @@ class CompositionContractV1(BaseModel):
   1. 读 `spec.layout.components`；对每个 contract slot：已有**未锁**实例且
      类型 ∈ slot → 保留（用户编辑不重置）；已有**锁**实例 → 跳过（披露）；
   2. 缺失槽位 → 按 preferred_template/`component_composer` 既有展开语义
-     生成实例（legend 族 per-layer 展开沿用 ADR-0088 D2，不重写）；
+     生成实例（legend 族 per-layer 展开沿用 ADR-0232 D2，不重写）；
   3. links → `layout.component_links` 增量边（同型同端点幂等：已存在不重复）；
   4. 写 `layout.composition` 身份块（§3）+ 每新实例 `provenance`；
   5. ApplyReport：`created/replaced_preserved/locked_skipped/links_added/

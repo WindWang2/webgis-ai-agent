@@ -1,4 +1,4 @@
-"""ADR-0101 Wave 6: 执行策略审计 + 无进展 V2 + 取消竞态测试。"""
+"""ADR-0237 Wave 6: 执行策略审计 + 无进展 V2 + 取消竞态测试。"""
 import asyncio
 
 import pytest

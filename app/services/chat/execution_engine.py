@@ -472,7 +472,7 @@ class ChatExecutionEngine:
                     user_text, session_id=session_id, declared_domains=declared,
                     turn_id=turn_id,
                 )
-            # ADR-0101 Wave 3: V2 投影后处理 —— 生命周期过滤 + 检索补强 +
+            # ADR-0237 Wave 3: V2 投影后处理 —— 生命周期过滤 + 检索补强 +
             # 原因/指纹留痕。仅对真实 ToolCatalog 生效（subagent 冻结目录的
             # 白名单是权威边界，检索绝不越权补工具）。失败 → 既有行为不变。
             schemas = self._augment_tool_surface(
@@ -519,7 +519,7 @@ class ChatExecutionEngine:
             else:
                 logger.debug("[ToolSurfaceV2] %s", proj.summary_line())
             self.last_surface_projection = proj
-            # ADR-0101 Wave 8：工具面选定事件 → trace（turn 缺席时静默）
+            # ADR-0237 Wave 8：工具面选定事件 → trace（turn 缺席时静默）
             # #1549：turn id 读取 / trace 发射失败绝不阻断工具面选择；经
             # best_effort 可见降级（trace 事件缺席不再是无痕 pass）。
             _turn = ""
@@ -1387,7 +1387,7 @@ class ChatExecutionEngine:
                         if getattr(self, "is_subagent_engine", False)
                         else legacy_bind_engine_lock(session_id, lock)
                     )
-                    # F09 录制面（ADR-0214 D5）：final text 载体先声明 —— 异常
+                    # F09 录制面（ADR-0262 D5）：final text 载体先声明 —— 异常
                     # 路径留空串，录制仍发生（失败 trace 是回归基座的样本）。
                     _final_text = ""
                     if _hk_lock_token is not None:
@@ -1466,7 +1466,7 @@ class ChatExecutionEngine:
                         self._trim_session_tail(messages)
                         rt_ev.mark_ended()
                         emit_turn_summary(rt_ev)
-                        # F09（ADR-0214 D5）：legacy 非流式 settle 的 env-gated
+                        # F09（ADR-0262 D5）：legacy 非流式 settle 的 env-gated
                         # 轨迹录制 —— 与 Pi bridge 同一录制缝（maybe_record_turn
                         # 默认关闸 no-op、never-raises）。map_product 缺席由
                         # 录制器 degraded 诚实标注。
@@ -3058,7 +3058,7 @@ class ChatExecutionEngine:
         # terminal point settled an outcome, it stays None (honest).
         ctx.rt_ev.mark_ended()
         emit_turn_summary(ctx.rt_ev)
-        # F09（ADR-0214 D5）：legacy 流式 settle 的 env-gated 轨迹
+        # F09（ADR-0262 D5）：legacy 流式 settle 的 env-gated 轨迹
         # 录制 —— 与 Pi bridge / 非流式同一录制缝。final text 取
         # 内存尾部的末条 assistant 消息（缺席留空串诚实降级）。
         # #1549：记录面绝不阻断 settle；失败经 best_effort 可见降级。

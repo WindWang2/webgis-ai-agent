@@ -1,4 +1,4 @@
-"""ReplayTrace v1 —— 18 阶段证据链的打包层（B1，ADR-0183 决策一）。
+"""ReplayTrace v1 —— 18 阶段证据链的打包层（B1，ADR-0256 决策一）。
 
 **不是第二套 trace**：字段全部来自既有生产缝的当轮事实 —
 
@@ -36,7 +36,7 @@ _FINAL_TEXT_MAX = 2000
 #: D5 整体预算（超限降级 digest-only 形态并置 truncated，绝不无界）。
 _TRACE_BUDGET_BYTES = 512 * 1024
 
-#: ADR-0214 D4：governor 资源投影 schema 版本（trace.governor）。
+#: ADR-0262 D4：governor 资源投影 schema 版本（trace.governor）。
 _GOVERNOR_SCHEMA_VERSION = 1
 _GOVERNOR_ENTRIES_MAX = 16
 
@@ -62,7 +62,7 @@ class ReplayTrace:
     governor: Optional[Dict[str, Any]] = None  # 预留（#1279）
     chain: Dict[str, Any] = field(default_factory=dict)   # Stage 1-18 全量
     decisions: List[Dict[str, Any]] = field(default_factory=list)  # ADR-0212
-    #: ADR-0214 D3（additive）：dispatch bind 双面证据（allowed/refused，
+    #: ADR-0262 D3（additive）：dispatch bind 双面证据（allowed/refused，
     #: id/code 级）—— roundtrip 的 expect 回填面（无它则逐 call 的
     #: allowed 事实在 trace 里缺席）。
     dispatch_evidence: List[Dict[str, Any]] = field(default_factory=list)
@@ -323,7 +323,7 @@ def build_trace(
         situation_revision = _situation_revision_from_raw(raw_decisions)
     sanitized_chain = sanitize_value(chain_dict, str_limit=400)
 
-    # ADR-0214 D3（additive）：dispatch bind 双面证据（TurnEvidence 的
+    # ADR-0262 D3（additive）：dispatch bind 双面证据（TurnEvidence 的
     # capability_dispatches，经 to_summary 透传）。id/code 级、无参数无
     # 凭证；域感知消毒与决策索引同通道（rank/score/alternatives 面保真）。
     raw_dispatch = summary.get("capability_dispatches")
@@ -378,7 +378,7 @@ def build_trace(
         verdict["final_verdict"] = sanitize_value(
             final_verdict_records[-1], str_limit=300)
 
-    # ADR-0214 D4：per-tool governor estimate/actual → trace.governor
+    # ADR-0262 D4：per-tool governor estimate/actual → trace.governor
     # （预留字段实接）。plan cost delta = turn 级估算墙钟 vs 实际墙钟
     # （资源策略漂移的定位面；数值只在 tolerant 观测行，不参与 digest 判定）。
     raw_usage = summary.get("resource_usage")

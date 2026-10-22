@@ -1,6 +1,6 @@
 # Limitations (honest list)
 
-What the GIS Extension Platform (ADR-0104 V1 + ADR-0105 V2) deliberately
+What the GIS Extension Platform (ADR-0243 V1 + ADR-0105 V2) deliberately
 does **not** do. Each item is a real boundary in the code on this branch,
 documented as such — no aspiration, no marketing.
 

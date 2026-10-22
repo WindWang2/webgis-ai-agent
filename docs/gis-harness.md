@@ -403,7 +403,7 @@ harness **每轮推送**的感知层，二者共享同一批权威 store。
 （authoritative facts / stale / omitted / conflicts / 投影预算）；
 契约 schema 由 `--dump-schema` 刷新并受测试守护。
 
-## GIS Spatial Reasoning Memory（方向 9，ADR-0183）
+## GIS Spatial Reasoning Memory（方向 9，ADR-0255）
 
 跨会话/会话/用户三作用域的 **GIS 世界事实记忆**（与 ADR-0069 项目制图先验互补）：
 

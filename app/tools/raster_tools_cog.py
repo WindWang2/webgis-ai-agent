@@ -100,7 +100,7 @@ def register_raster_cog_tools(registry: ToolRegistry):
                 "bands": report.get("bands"),
             },
         }
-        # V6（ADR-0118）：COG → durable DataObject（内容寻址身份 + grid
+        # V6（ADR-0249）：COG → durable DataObject（内容寻址身份 + grid
         # identity + 有界 chunk checksums）。session 上下文缺席时诚实跳过
         # （owner scope 不可虚构）；发布失败不阻断转换结果。
         if session_id:

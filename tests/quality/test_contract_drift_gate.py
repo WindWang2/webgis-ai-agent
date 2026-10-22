@@ -1,4 +1,4 @@
-"""Contract Drift Gate（ADR-0104 Wave 4）红线测试。
+"""Contract Drift Gate（ADR-0245 Wave 4）红线测试。
 
 - 提交的 CONTRACT_DRIFT_REPORT.{md,json} 与当前派生字节一致；
 - BLOCKER / MAJOR 必须清零（漂移即红）；

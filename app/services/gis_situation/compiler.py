@@ -1,4 +1,4 @@
-"""SituationCompiler —— GISSituation 唯一生产编译器（方向 2 S2，ADR-0180）。
+"""SituationCompiler —— GISSituation 唯一生产编译器（方向 2 S2，ADR-0252）。
 
 从权威 stores 读取并编译单一 GISSituation：
 - **单次 map_state 全量读**（PERF-08 / #1068(E-5) 纪律）；其余为定向读；

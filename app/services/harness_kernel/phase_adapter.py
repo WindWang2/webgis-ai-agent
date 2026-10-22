@@ -52,7 +52,7 @@ def project_runtime_phase(canonical_phase: str) -> str:
     return CANONICAL_TO_RUNTIME_PHASE.get(str(canonical_phase or ""), "idle")
 
 
-# ── F03: same-domain vocabulary renderings (ADR-0204-f03 D5) ────────────────
+# ── F03: same-domain vocabulary renderings (ADR-0259-f03 D5) ────────────────
 #
 # StageState (workflow_instance) and GoalNodeStatus (goal_graph) stay DERIVED
 # projections owned by their modules; these renderings are the single

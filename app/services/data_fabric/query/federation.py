@@ -364,7 +364,7 @@ def _aggregate_with_right(rows, aggs, group_by):
     """分组聚合（R4-M5：标量累加器，不再复制全部成员行——峰值内存 O(组数)）。
 
     stddev 为样本口径（与 Postgres STDDEV 一致）：在线 Welford。
-    V6（ADR-0118 W6）：增量内核提取为 ``_AggregateState``（单一语义真相），
+    V6（ADR-0247 W6）：增量内核提取为 ``_AggregateState``（单一语义真相），
     本函数与 V6 流式执行器共用同一实现 —— 逐位行为不变。
     """
     state = _AggregateState(aggs, group_by)
@@ -853,7 +853,7 @@ class FederatedChainRequest:
     #: 奇偶校验由既有链测试锁定，几何不变量守卫防止空间跳端点被裁剪成
     #: 静默空结果）；``derive_projection=False`` 显式退出（输出形状复原）。
     derive_projection: bool = True
-    #: 执行引擎（V6 additive，ADR-0118）：``"v5"``（默认，位级不变）或
+    #: 执行引擎（V6 additive，ADR-0247）：``"v5"``（默认，位级不变）或
     #: ``"v6"``（cost-based 枚举 + 流式批执行；非 typed 异常回退 v5）。
     engine: str = "v5"
     # ── V7（ADR-0119 W12 additive）──
@@ -1143,7 +1143,7 @@ def validate_chain_shape(
     """链请求结构校验（V5/V6 单一真相；M1，评审 R1）。
 
     V6 的 ``execute_chain_v6`` 以 ``check_crs_mix=False`` 调用 —— 混 CRS 在
-    V6 是可执行的（计划内变换，ADR-0118），其余契约（limit/join 数/join
+    V6 是可执行的（计划内变换，ADR-0247），其余契约（limit/join 数/join
     字段/spatial_op/group_by）两引擎逐字一致。
     """
     if len(req.sources) < 2:
@@ -1709,7 +1709,7 @@ __all__ = [
 ]
 
 
-# ── V6 引擎（ADR-0118 W10）：cost-based 枚举 + 流式批执行 ──────────────────
+# ── V6 引擎（ADR-0247 W10）：cost-based 枚举 + 流式批执行 ──────────────────
 
 
 def _make_bushy_replan_fn(req, original_plan):
