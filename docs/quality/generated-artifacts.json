@@ -45,7 +45,7 @@
    "content_fingerprint": "4527d3bbe47fd564d7ff476bd3987c4ab57e571d7b2d8de33715c4cb62512c76",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "779953315c14996b6b709491e894f620bebf928b5f29495d1558af63c3de356c",
+   "input_fingerprint": "3098a220c665a2ebe03c1277a14bd04711b30b38ccabe0b88bf2aa914399de71",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -135,7 +135,7 @@
    "content_fingerprint": "e5cfffd789c9254a774430186bb1888f2308f3a9772a2419c5f171d46d5d5df5",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "779953315c14996b6b709491e894f620bebf928b5f29495d1558af63c3de356c",
+   "input_fingerprint": "3098a220c665a2ebe03c1277a14bd04711b30b38ccabe0b88bf2aa914399de71",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
