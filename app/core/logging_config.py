@@ -21,7 +21,9 @@ from typing import Any
 # 覆盖）。真正创建推迟到首个文件 handler 需要时（_ensure_log_dir），失败即
 # 降级为「无文件 handler、控制台照常」—— 日志配置永远不能成为进程起不来
 # 的理由。
-LOG_DIR = Path(os.environ.get("LOG_DIR", "/tmp/webgis-logs"))
+# nosec B108（CWE-377）：/tmp 默认值是上述 (a)/(b) 缺陷的刻意修正，非疏漏；
+# 多租户敏感度由 LOG_DIR 环境变量覆盖承接（k8s emptyDir 即每 Pod 私有）。
+LOG_DIR = Path(os.environ.get("LOG_DIR", "/tmp/webgis-logs"))  # nosec B108
 
 
 def _ensure_log_dir() -> bool:
