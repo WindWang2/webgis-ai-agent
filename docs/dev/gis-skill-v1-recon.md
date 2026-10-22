@@ -29,7 +29,7 @@ provider 投影 + `resolve_capabilities` facade + ADR-0181）、
 |------|------|------|--------|
 | Runtime GIS 声明文档 | `app/skills/*.md`（6 个） | YAML frontmatter（name/description）+ 自然语言正文 | `app/tools/skills.py::_md_skills`；GET `/api/v1/chat/skills`；`execution_engine` prompt 注入；前端 `skills-hub.tsx` |
 | Runtime 可执行技能脚本 | `app/skills/*.py` | importlib 加载注册进 ToolRegistry（`load_skills`） | 同一 loader；`create_new_skill` 工具可运行时写盘 |
-| Developer/Agent 开发技能 | `agent/skills/`（41）+ `.agents/skills/`（99） | SKILL.md（tdd/review/gstack…） | 外部 skills CLI；根 `skills-lock.json`（无仓内代码消费方） |
+| Developer/Agent 开发技能 | `.agents/skills/`（99；双轨中的陈旧轨 `agent/skills/` 已于 #1680 删除） | SKILL.md（tdd/review/gstack…） | 外部 skills CLI；根 `skills-lock.json`（无仓内代码消费方） |
 
 要点：
 - 目录/API 层面 developer 与 runtime skill 未混装，但 `app/skills/` 内部
