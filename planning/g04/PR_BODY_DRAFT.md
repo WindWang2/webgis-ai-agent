@@ -60,12 +60,12 @@ MapSpec/Harness 真实消费 + 窄前端入口），不动模板引擎、不重�
 
 | 面 | 命令 | 结果 |
 |---|---|---|
-| 制图 lane 回归 | `pytest -m cartography --no-cov -q` | **2345P/19S/3xf/0F**（基线 2345P/19S/3xf/0F，逐项一致） |
-| G04 新测试 | 4 个文件 | 21+22+10+14+11 = **78 passed** |
+| 制图 lane 回归（双跑） | `pytest -m cartography --no-cov -q` | **2345P/19S/3xf/0F ×2**（基线 2345P/19S/3xf/0F，逐项一致） |
+| G04 新测试 | 5 个文件 | 21+24+10+15+11 = **81 passed** |
 | 存量受影响面 | tools/contract/manifest/templates-api/template-versions/golden-factory | **179 passed** |
 | 迁移/元数据闸 | alembic metadata + deploy wiring + model registration | **32 passed** |
 | ruff | `ruff check app/ tests/` | All checks passed |
-| 前端 | tsc / vitest / eslint / CJK 门 | exit 0 / 23+9 passed / exit 0 / passed |
+| 前端 | tsc / vitest / eslint / CJK 门 | exit 0 / 14+9+6 passed / exit 0 / passed |
 | 顺序矩阵 | e2e + composition_packs_v3 交叉 | 23 passed（review P2-3 复现场景转绿） |
 
 跳过/未覆盖（如实披露）：全库 suite 未跑（#1753 已知挂起）；多 pod Redis 并发
@@ -77,7 +77,9 @@ MapSpec/Harness 真实消费 + 窄前端入口），不动模板引擎、不重�
   P1×2（env import 缺失致元数据闸红；save 派生按实例 id 丢 5/8 编辑）、
   P2×3（钉版本绕过发布门、外国项目挂靠、注册表顺序污染）+ P3×20。
 - 修复：5 个 commit，每项配红测试回归（P1-2/P2-1/P2-2/P2-3 均有钉住测试）。
-- R2（同 reviewer 复审）：结论见 `planning/g04/REVIEW.md` 追加节。
+- R2（同 reviewer 复审）：**SHIP** —— 6 项 blocking 全部关闭（附复现证据），
+  无新 P0/P1/P2；R2 建议项（for_replay draft 覆盖、用户位置编辑保真、属主
+  守卫负测试、宽容读契约钉死）已全部落地并绿。详见 `planning/g04/REVIEW.md`。
 
 ## 风险 / 回退
 
@@ -92,3 +94,15 @@ MapSpec/Harness 真实消费 + 窄前端入口），不动模板引擎、不重�
 
 组件级细粒度权限；资产跨 org 市场；模板继承链（version parent）；资产
 使用统计/推荐排序。
+
+
+## 已知限制（P3 未修项，reviewer 两轮确认非阻塞）
+
+- org-NULL JWT token 创建的资产无法 org 共享（样式模板线同款历史约束）；
+- `list_assets` 有 N+1（上限 50 行，有界）；
+- builtin 资产 detail GET 返回 404（列表已含全部信息，需详情走 version 面）；
+- 资产指纹不含 base 模板漂移（base 版本链由系统侧负责）；
+- mapspec-only 会话（无 Conversation 主行）不能再保存为模板（属主守卫
+  fail-closed 的行为变化，R2-P3-4 已披露）；
+- `app/tools/composition_tools.py` 新增 `fastapi.HTTPException` import
+  （import-boundary 测试通过：红线是 tools→app.api，非 fastapi 本身）。
