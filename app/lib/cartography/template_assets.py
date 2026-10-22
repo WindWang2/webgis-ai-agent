@@ -378,6 +378,9 @@ BUILTIN_TEMPLATE_ASSETS: Tuple[TemplateAssetRecord, ...] = (
                 },
                 "chart_panel": {"max_count": 2},
             },
+            # 基底 statistical_report 携带 export_layout 槽位 → 仅 png/pdf
+            # （interactive 目标下 conformance 正确拒绝 export-only 版式）
+            output_targets=["png", "pdf"],
             tags=["choropleth", "graduated", "report"],
         ),
         builtin=True,
@@ -402,11 +405,16 @@ BUILTIN_TEMPLATE_ASSETS: Tuple[TemplateAssetRecord, ...] = (
                     "preferred_templates": ["chart-panel/report"],
                 },
             },
+            # 基底携带 export_layout 槽位（报告版式）→ 仅 png/pdf 目标
+            # （interactive 目标下 conformance 正确拒绝 export-only 版式）
+            output_targets=["png", "pdf"],
             tags=["temporal", "change", "comparison"],
         ),
         builtin=True,
     ),
-    # 4) 遥感分类/变化专题图（分类版式基底：出版图例绑定 + svg 导出目标）。
+    # 4) 遥感分类/变化专题图（分类版式基底：出版图例绑定；**不含
+    # interactive** —— 基底槽位携带 export_layout，interactive 目标下
+    # conformance 正确拒绝（export-only 版式）。发布目标保持 png/pdf。
     TemplateAssetRecord(
         asset_id="asset.builtin.rs_classification_change",
         revision=1,
@@ -414,7 +422,7 @@ BUILTIN_TEMPLATE_ASSETS: Tuple[TemplateAssetRecord, ...] = (
             name="遥感分类/变化专题",
             description=(
                 "遥感分类专题版式：分类图例（紧凑样式绑定）+ 经纬网可选 + "
-                "png/pdf/svg 出版目标（rs_classification 变体）。"),
+                "png/pdf 出版目标（rs_classification 变体）。"),
             base_template_id="composition.rs_classification",
             slot_overrides={
                 "legend": {"preferred_templates": ["legend/compact"]},
@@ -423,7 +431,6 @@ BUILTIN_TEMPLATE_ASSETS: Tuple[TemplateAssetRecord, ...] = (
                     "preferred_templates": ["graticule/light"],
                 },
             },
-            output_targets=["png", "pdf", "svg"],
             tags=["remote-sensing", "classification", "publication"],
         ),
         builtin=True,
