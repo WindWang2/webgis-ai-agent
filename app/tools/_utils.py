@@ -9,6 +9,7 @@ from typing import Any, List, Optional
 logger = logging.getLogger(__name__)
 
 from app.lib.tool_cache import cached_tool  # noqa: F401
+from app.utils.best_effort import best_effort
 
 
 def sanitize_json_obj(obj: Any) -> Any:
@@ -282,12 +283,15 @@ async def resolve_ref_payload(session_id: str, ref_or_alias: str) -> Any:
     if not session_id or not ref_or_alias:
         return None
     ref_id = ref_or_alias
-    try:
+    # #1549：unresolved alias: treat as raw ref id；失败经 best_effort 可见降级。
+    with best_effort(
+        "resolve-ref-alias",
+        "tools-utils-resolve-alias-best-effort",
+        ctx={"ref": str(ref_or_alias)[:64]},
+    ):
         alias_ref = await session_data_manager.resolve_alias(session_id, ref_or_alias)
         if alias_ref and alias_ref != ref_or_alias:
             ref_id = alias_ref
-    except Exception:  # noqa: BLE001 — unresolved alias: treat as raw ref id
-        pass
     try:
         return await session_data_manager.get(session_id, ref_id)
     except Exception as e:  # noqa: BLE001 — store outage is disclosed upstream

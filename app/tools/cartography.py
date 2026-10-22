@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,12 @@ def _requirement_grammar_pins() -> dict:
     接线点发布）。fail-open（缺席/故障/kill-switch → 空 dict，行为与
     接线前一致）；只含 user-owned pin（rule/llm 推断值绝不冒充用户偏好）。
     """
-    try:
+    # #1549：pin 面绝不阻断出图；fail-open（缺席/故障/kill-switch → 空 dict，
+    # 行为与接线前一致）经 best_effort 可见降级。
+    with best_effort(
+        "requirement-grammar-pins",
+        "tools-cartography-grammar-pins-best-effort",
+    ):
         from app.services.gis_harness.representation_binding.flags import (
             requirement_binding_enabled,
         )
@@ -70,8 +76,7 @@ def _requirement_grammar_pins() -> dict:
         rt = current_runtime_context()
         session_id = str(getattr(rt, "session_id", "") or "") if rt else ""
         return pin_snapshot(session_id)
-    except Exception:  # noqa: BLE001 — pin 面绝不阻断出图
-        return {}
+    return {}
 
 
 def _safe_parse_geojson(geojson: Any) -> dict | None:

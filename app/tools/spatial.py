@@ -12,6 +12,7 @@ from app.lib.cartography.palettes import (
     HEATMAP_LEGEND_PALETTE_KEY,
     NATIVE_HEATMAP_COLORS,
 )
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,12 @@ def _adjudicate_heatmap_palette(palette: str, data: dict, weight_field: Optional
     # F10（M1 调用点迁移）：权重场语义统一推导——nominal 权重对热力表达
     # 不适用（披露不阻断）；带符号权重幅值疏密会掩盖正负语义（披露建议
     # 聚合面）。色族仍由 requested_palette 偏好锁定（热力族契约不变）。
-    try:
+    # #1549：语义推导不阻断；经 best_effort 可见降级。
+    _weight_sem = None
+    with best_effort(
+        "weight-semantic-derive",
+        "tools-spatial-weight-semantic-best-effort",
+    ):
         from app.lib.cartography.semantic_inputs import derive_semantic_inputs
         _weight_sem = derive_semantic_inputs(
             str(weight_field or ""), value_samples=(
@@ -155,8 +161,6 @@ def _adjudicate_heatmap_palette(palette: str, data: dict, weight_field: Optional
                 if isinstance(f, dict)
             ) if weight_field else None,
         )
-    except Exception:  # noqa: BLE001 - 语义推导不阻断
-        _weight_sem = None
     decision = symbology_decision_from_values(
         weight_values,
         context=context,  # type: ignore[arg-type]

@@ -23,6 +23,7 @@ from app.utils.coord_transform import wgs84_to_gcj02, gcj02_to_wgs84, transform_
 
 from app.tools.chinese_maps.http import _amap_get, _speed_mps
 from app.tools.chinese_maps._shaping import shape_poi_collection
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +79,14 @@ class AmapProvider:
         _total = None
         for _k in ("count", "total"):
             if _k in data:
-                try:
+                # #1549：total 透传失败按 None（诚实省略分页总数）；
+                # 经 best_effort 可见降级。
+                with best_effort(
+                    "provider-total-parse",
+                    "tools-chinese-maps-total-parse-best-effort",
+                    ctx={"provider": "amap"},
+                ):
                     _total = int(str(data[_k]).strip())
-                except Exception:
-                    _total = None
                 break
         return shape_poi_collection(
             pois,

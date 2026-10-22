@@ -12,6 +12,7 @@ from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
 from app.services.spatial_quality_service import SpatialQualityEngine
 from app.schemas.project_schema import WorkflowCreate, WorkflowGraphSpec, WorkflowStepSpec
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +24,16 @@ def _caller_identity() -> tuple[Optional[str], Optional[int], Optional[str]]:
     engine calls made from tools must thread it through so run rows and the
     ToolExecutionContext the engine sets carry the real caller, not NULL.
     """
-    try:
+    # #1549：context unavailable → anonymous；经 best_effort 可见降级。
+    with best_effort(
+        "caller-identity-resolve",
+        "tools-project-caller-identity-best-effort",
+    ):
         from app.services.provenance.context import get_tool_execution_context
 
         ctx = get_tool_execution_context()
         if ctx is not None:
             return ctx.user_id, ctx.org_id, ctx.session_id
-    except Exception:  # noqa: BLE001 — context unavailable → anonymous
-        pass
     return None, None, None
 
 
@@ -140,10 +143,14 @@ def register_project_tools(registry: ToolRegistry) -> None:
         else:
             # Legacy manual steps: disclose unknown tool ids at SAVE time — a
             # hallucinated tool name would otherwise only fail at run time.
-            try:
+            # #1549：registry 列举失败按空集（保存期披露降级）；经
+            # best_effort 可见降级。
+            known_tools = set()
+            with best_effort(
+                "known-tools-list",
+                "tools-project-known-tools-best-effort",
+            ):
                 known_tools = set(registry.list_tools())
-            except Exception:  # noqa: BLE001
-                known_tools = set()
             unknown = sorted({
                 str(s.get("tool_name") or "")
                 for s in steps

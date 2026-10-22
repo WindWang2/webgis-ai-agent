@@ -25,6 +25,7 @@ from app.services.data_fabric.errors import (
     UNSUPPORTED_SOURCE,
     DataFabricError,
 )
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -67,20 +68,26 @@ def _resolve_source(profile_id, session_id):
     if adapter is None:
         return None
     profile = None
-    try:
+    # #1549：mock/部分 seam 下 profile 可缺席；经 best_effort 可见降级。
+    with best_effort(
+        "connection-profile-read",
+        "tools-data-fabric-profile-best-effort",
+        ctx={"profile": str(profile_id)[:64]},
+    ):
         profile = connection_manager.get_profile(profile_id, owner=session_id)
-    except Exception:  # noqa: BLE001 - mock/部分 seam 下 profile 可缺席
-        profile = None
     source_type = ""
     if profile is not None:
-        try:
+        # #1549：attach_prebuilt 收编失败落 legacy 构造；经 best_effort 可见降级。
+        with best_effort(
+            "fabric-attach-prebuilt",
+            "tools-data-fabric-attach-prebuilt-best-effort",
+            ctx={"profile": str(profile_id)[:64]},
+        ):
             resolved = get_fabric_runtime().attach_prebuilt(
                 profile, adapter, owner=session_id
             )
             if resolved is not None:
                 return resolved
-        except Exception:  # noqa: BLE001
-            pass
         source_type = str(getattr(profile, "source_type", "") or "")
     if not source_type:
         source_type = str(
@@ -746,10 +753,13 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 caps = None
                 probe = getattr(adapter, "capabilities_v2", None)
                 if probe is not None:
-                    try:
+                    # #1549：capabilities 探针失败按 None（落静态词表）；
+                    # 经 best_effort 可见降级。
+                    with best_effort(
+                        "adapter-capabilities-probe",
+                        "tools-data-fabric-caps-probe-best-effort",
+                    ):
                         caps = probe(descriptor)
-                    except Exception:
-                        caps = None
                 if not isinstance(caps, AdapterCapabilitiesV2):
                     caps = getattr(adapter, "_caps", None)
                 if not isinstance(caps, AdapterCapabilitiesV2):

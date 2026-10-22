@@ -11,6 +11,7 @@ from app.utils.coord_transform import wgs84_to_bd09, bd09_to_wgs84, transform_ge
 
 from app.tools.chinese_maps.http import _baidu_get
 from app.tools.chinese_maps._shaping import shape_poi_collection
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +62,14 @@ class BaiduProvider:
         _total = None
         for _k in ("total", "count"):
             if _k in data:
-                try:
+                # #1549：total 透传失败按 None（诚实省略分页总数）；
+                # 经 best_effort 可见降级。
+                with best_effort(
+                    "provider-total-parse",
+                    "tools-chinese-maps-total-parse-best-effort",
+                    ctx={"provider": "baidu"},
+                ):
                     _total = int(str(data[_k]).strip())
-                except Exception:
-                    _total = None
                 break
         return shape_poi_collection(
             pois,

@@ -11,6 +11,7 @@ import logging
 from typing import Optional
 
 from app.tools.registry import ToolRegistry, tool
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,11 @@ def register_geocompute_tools(registry: ToolRegistry):
         caller: Optional[dict] = None
         project_id: Optional[str] = None
         context_session_id: Optional[str] = None
-        try:
+        # #1549：身份增强失败按匿名隔离（fail-closed）；经 best_effort 可见降级。
+        with best_effort(
+            "caller-identity-resolve",
+            "tools-geocompute-caller-identity-best-effort",
+        ):
             from app.services.provenance.context import get_tool_execution_context
 
             tc = get_tool_execution_context()
@@ -126,8 +131,6 @@ def register_geocompute_tools(registry: ToolRegistry):
                               "org_id": getattr(tc, "org_id", None)}
                 project_id = getattr(tc, "project_id", None) or None
                 context_session_id = getattr(tc, "session_id", None) or None
-        except Exception:  # noqa: BLE001 - 身份增强失败按匿名隔离
-            caller = None
         # #1708（SEC）：会话隔离承诺落地 —— 显式 session_id 必须与调用方
         # 执行上下文的会话身份一致，否则 typed 拒绝（fail-closed，先于
         # 任何节点执行）：materialize 会把载荷写进该 session 的数据存储
@@ -218,16 +221,18 @@ def register_geocompute_tools(registry: ToolRegistry):
         # 与 execute_execution_plan 同一身份真相：ToolExecutionContext 的
         # caller 派生 owner 域；无上下文按匿名隔离（fail-closed）—— 匿名域
         # 与真实用户的 run 互不可见。
+        # #1549：身份解析失败按匿名隔离（fail-closed）；经 best_effort 可见降级。
         caller: Optional[dict] = None
-        try:
+        with best_effort(
+            "caller-identity-resolve",
+            "tools-geocompute-caller-identity-best-effort",
+        ):
             from app.services.provenance.context import get_tool_execution_context
 
             tc = get_tool_execution_context()
             if tc is not None and getattr(tc, "user_id", None):
                 caller = {"user_id": str(tc.user_id),
                           "org_id": getattr(tc, "org_id", None)}
-        except Exception:  # noqa: BLE001 - 身份解析失败按匿名隔离
-            caller = None
         run = engine.get_run(run_id, owner_scope=owner_scope_for(caller))
         if run is None:
             return {"status": "not_found", "run_id": run_id, "cancelled": False}

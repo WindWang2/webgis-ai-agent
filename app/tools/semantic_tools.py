@@ -25,6 +25,7 @@ from app.lib.gis.semantic_profile import (
     derive_semantic_profile,
 )
 from app.lib.gis.pattern_projection import project_patterns
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +344,13 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
             role_evidence: Optional[Dict[str, Dict[str, Any]]] = None
             data_preflight: Dict[str, Any] = {}
             if session_id:
-                try:
+                # #1549：供给缺席 = 原行为；经 best_effort 可见降级（第二数据
+                # 集语义面缺席不再无痕）。
+                with best_effort(
+                    "session-semantic-descriptor-fetch",
+                    "tools-semantic-session-descriptor-best-effort",
+                    ctx={"session": session_id},
+                ):
                     from app.services.dataset_semantics import (
                         primary_session_descriptor,
                     )
@@ -353,8 +360,6 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
 
                     session_descriptor = run_coro_sync(
                         primary_session_descriptor(session_id))
-                except Exception:  # noqa: BLE001 — 供给缺席 = 原行为
-                    session_descriptor = None
 
             c = compile_workflow_v4(
                 query, recipe_id=recipe_id or "", profile=profile,

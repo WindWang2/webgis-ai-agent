@@ -363,6 +363,7 @@
     "app/services/gis_harness/planner.py": 2189,
     "app/services/gis_harness/tools.py": 2295,
     "app/services/modelops/engine.py": 2319,
+    "app/services/tool_dispatch_service.py": 2068,
     "app/tools/advanced_spatial.py": 2842,
     "app/tools/registry.py": 2101,
     "app/tools/remote_sensing.py": 2675,

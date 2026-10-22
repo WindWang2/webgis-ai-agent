@@ -96,6 +96,7 @@ from app.lib.runtime.evidence import (
     current_turn_evidence,
     emit_turn_summary,
 )
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -446,8 +447,12 @@ class ChatExecutionEngine:
             # Runtime V4（§28）：阶段感知工具面 —— plan（内存真相）纯派生的
             # preferred/allowed 偏好，经 catalog 并入（零 IO、零持久化、
             # 不是第二 planner）。None/异常 → 既有行为不变。
+            # #1549：面编译失败不阻断工具选择；经 best_effort 可见降级。
             surface = None
-            try:
+            with best_effort(
+                "tool-surface-compile",
+                "chat-engine-tool-surface-compile-best-effort",
+            ):
                 from app.services.gis_harness.tool_surface import compile_tool_surface
 
                 surface = compile_tool_surface(
@@ -455,8 +460,6 @@ class ChatExecutionEngine:
                     registry_meta=None,
                 )
                 logger.debug("[ToolSurface] %s", surface.projection_line())
-            except Exception:  # noqa: BLE001 — 面编译失败不阻断工具选择
-                surface = None
             # catalog 替身（subagent _FrozenCatalog 等）可能不接受 surface
             # kwarg —— 签名探测降级，行为回到既有 select_schemas。
             if self._catalog_accepts_surface():
@@ -517,14 +520,21 @@ class ChatExecutionEngine:
                 logger.debug("[ToolSurfaceV2] %s", proj.summary_line())
             self.last_surface_projection = proj
             # ADR-0101 Wave 8：工具面选定事件 → trace（turn 缺席时静默）
-            try:
-                _turn = ""
-                try:
-                    _rt = rt_ctx.current_runtime_context()
-                    _turn = getattr(_rt, "turn_id", "") or "" if _rt else ""
-                except Exception:  # noqa: BLE001
-                    pass
-                if _turn:
+            # #1549：turn id 读取 / trace 发射失败绝不阻断工具面选择；经
+            # best_effort 可见降级（trace 事件缺席不再是无痕 pass）。
+            _turn = ""
+            with best_effort(
+                "runtime-context-turn-id",
+                "chat-engine-runtime-turn-id-best-effort",
+            ):
+                _rt = rt_ctx.current_runtime_context()
+                _turn = getattr(_rt, "turn_id", "") or "" if _rt else ""
+            if _turn:
+                with best_effort(
+                    "tool-surface-trace-emit",
+                    "chat-engine-tool-surface-trace-best-effort",
+                    ctx={"turn": _turn},
+                ):
                     from app.lib.runtime.trace import (
                         EVENT_TOOL_SURFACE_SELECTED,
                         get_trace_registry,
@@ -536,8 +546,6 @@ class ChatExecutionEngine:
                         fingerprint=proj.fingerprint,
                         retrieval_added=len(proj.retrieval_added),
                     )
-            except Exception:  # noqa: BLE001
-                pass
             return proj.schemas
         except Exception:  # noqa: BLE001 — 投影失败绝不阻断工具选择
             logger.debug("[ToolSurfaceV2] augment failed; falling back", exc_info=True)
@@ -931,7 +939,13 @@ class ChatExecutionEngine:
                 "save_message suppressed for %s: session is being cleared", session_id
             )
             return
-        try:
+        # #1549：marker check must never block saves；失败经 best_effort 可见
+        # 降级（跨副本清理探测缺席不再是无痕 pass）。
+        with best_effort(
+            "session-clearing-marker-check",
+            "chat-engine-clearing-marker-best-effort",
+            ctx={"session": session_id},
+        ):
             if await asyncio.wait_for(
                 session_data_manager.is_session_clearing(session_id),
                 timeout=2.0,
@@ -945,8 +959,6 @@ class ChatExecutionEngine:
                     session_id,
                 )
                 return
-        except Exception:  # noqa: BLE001 - marker check must never block saves
-            pass
         try:
             if tool_result is not None and isinstance(tool_result, str) and len(tool_result) > _TOOL_PAYLOAD_MAX_CHARS:
                 tool_result = _clamp_tool_payload(tool_result) + "...[truncated]"
@@ -1047,10 +1059,15 @@ class ChatExecutionEngine:
             plan = plan_orchestrator.get_plan(session_id)
             has_plan = plan is not None
             active_domains = list(plan.domains) if plan else []
-            try:
+            # #1549：refs 列举失败 → 空（has_data_refs 判否）；经 best_effort
+            # 可见降级，避免规划分类拿到虚构的「无数据」事实。
+            refs = {}
+            with best_effort(
+                "session-refs-list",
+                "chat-engine-session-refs-best-effort",
+                ctx={"session": session_id},
+            ):
                 refs = await session_data_manager.list_refs(session_id)
-            except Exception:  # noqa: BLE001
-                refs = {}
             # P2-6（recovery P2 / Pi#3）：session_has_refs 必须排除计划自身的
             # ref（ref:plan-* 与 plan-current / plan-id:* 别名）——否则"仅存了
             # 一个计划、没有任何数据"的会话会被 ref_reuse 误判。
@@ -1325,18 +1342,18 @@ class ChatExecutionEngine:
                     yield
                 finally:
                     if _hk_settle_turn and turn_id and rt_ev is not None:
-                        try:
+                        # #1549：清理路径绝不抛错（与 chat_stream 侧 finally
+                        # 同纪律；settle_after_lock 自身 never-raise，此处兜
+                        # import 失败等意外面）—— 经 best_effort 可见降级。
+                        with best_effort(
+                            "post-lock-settle",
+                            "chat-engine-post-lock-settle-best-effort",
+                            ctx={"session": session_id},
+                        ):
                             from app.services.harness_kernel import legacy_adapter
 
                             await legacy_adapter.settle_after_lock(
                                 session_id, turn_id, rt_ev=rt_ev
-                            )
-                        except Exception:  # noqa: BLE001 — 清理路径绝不抛错（与
-                            # chat_stream 侧 finally 同纪律；settle_after_lock
-                            # 自身 never-raise，此处兜 import 失败等意外面）
-                            logger.debug(
-                                "[chat_execution_engine] post-lock settle failed session=%s",
-                                session_id, exc_info=True,
                             )
 
             async with _post_lock_settle(), lock:
@@ -1374,15 +1391,16 @@ class ChatExecutionEngine:
                     # 路径留空串，录制仍发生（失败 trace 是回归基座的样本）。
                     _final_text = ""
                     if _hk_lock_token is not None:
-                        try:
+                        # #1549：begin_turn 投影失败经 best_effort 可见降级
+                        # （best-effort，绝不阻断）。
+                        with best_effort(
+                            "harness-begin-turn",
+                            "chat-engine-harness-begin-turn-best-effort",
+                            ctx={"session": session_id},
+                        ):
                             from app.services.harness_kernel import legacy_adapter
 
                             await legacy_adapter.begin_turn(session_id, turn_id, message=message)
-                        except Exception:
-                            logger.debug(
-                                "[chat_execution_engine] harness begin_turn projection failed session=%s",
-                                session_id, exc_info=True,
-                            )
                     try:
                         result = await self._chat_locked(
                             message, session_id, messages, skill_name, user_id, project_id,
@@ -1425,18 +1443,19 @@ class ChatExecutionEngine:
                             # （不自取锁，无死锁面）；settle_after_lock 收到的
                             # pre_terminated=True 正以此为前提。
                             _hk_settle_turn = True
+                            # #1549：safe_end_turn 投影失败经 best_effort 可见降级。
                             try:
-                                from app.services.harness_kernel import legacy_adapter
+                                with best_effort(
+                                    "harness-safe-end-turn",
+                                    "chat-engine-harness-safe-end-turn-best-effort",
+                                    ctx={"session": session_id},
+                                ):
+                                    from app.services.harness_kernel import legacy_adapter
 
-                                await legacy_adapter.safe_end_turn(
-                                    session_id, turn_id,
-                                    status=legacy_adapter.status_from_outcome(rt_ev),
-                                )
-                            except Exception:
-                                logger.debug(
-                                    "[chat_execution_engine] harness safe_end_turn projection failed session=%s",
-                                    session_id, exc_info=True,
-                                )
+                                    await legacy_adapter.safe_end_turn(
+                                        session_id, turn_id,
+                                        status=legacy_adapter.status_from_outcome(rt_ev),
+                                    )
                             finally:
                                 legacy_unbind_engine_lock(_hk_lock_token)
                         # P1: the turn's cleanup drained — deregister the turn task so
@@ -1451,7 +1470,12 @@ class ChatExecutionEngine:
                         # 轨迹录制 —— 与 Pi bridge 同一录制缝（maybe_record_turn
                         # 默认关闸 no-op、never-raises）。map_product 缺席由
                         # 录制器 degraded 诚实标注。
-                        try:
+                        # #1549：记录面绝不阻断 settle；失败经 best_effort 可见降级。
+                        with best_effort(
+                            "turn-replay-record",
+                            "chat-engine-replay-record-best-effort",
+                            ctx={"session": session_id},
+                        ):
                             from app.lib.harness.replay.recorder import (
                                 maybe_record_turn,
                             )
@@ -1460,8 +1484,6 @@ class ChatExecutionEngine:
                                 turn_id=turn_id,
                                 final_text=_final_text[:2000],
                             )
-                        except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
-                            pass
                         TURN_EVIDENCE.remove(turn_id)
         finally:
             # P1（deep-review）：早注册的兜底注销 —— 覆盖 map_state 持久化失败、
@@ -1740,11 +1762,15 @@ class ChatExecutionEngine:
                         _dec_step_n: Optional[int] = None
                         _dec_fc: Optional[str] = None
                         _dec_ra: Optional[str] = None
-                        try:
+                        # #1549：决策日志参数解码失败按空 dict（记录降级）；
+                        # 经 best_effort 可见降级，不静默丢决策证据字段。
+                        _dec_args = {}
+                        with best_effort(
+                            "decision-args-decode",
+                            "chat-engine-decision-args-best-effort",
+                        ):
                             _args_raw = (tc.get("function", {}) or {}).get("arguments") or "{}"
                             _dec_args = json.loads(_args_raw) if isinstance(_args_raw, str) else (_args_raw or {})
-                        except Exception:  # noqa: BLE001
-                            _dec_args = {}
                         if isinstance(exec_res, Exception):
                             if cancelled:
                                 continue  # 取消路径：已完成但失败的工具不写失败消息
@@ -2081,16 +2107,16 @@ class ChatExecutionEngine:
             # 的 safe_end_turn 已预终态化，S1）。never-raise、有界预算，绝不
             # 在生成器清理路径上二次抛错。
             if ctx is not None and getattr(ctx, "hk_lock_token", None) is not None:
-                try:
+                # #1549：清理路径绝不抛错；settle 失败经 best_effort 可见降级。
+                with best_effort(
+                    "post-lock-settle",
+                    "chat-engine-post-lock-settle-best-effort",
+                    ctx={"session": ctx.session_id},
+                ):
                     from app.services.harness_kernel import legacy_adapter
 
                     await legacy_adapter.settle_after_lock(
                         ctx.session_id, ctx.turn_id, rt_ev=ctx.rt_ev
-                    )
-                except Exception:  # noqa: BLE001 — 清理路径绝不抛错
-                    logger.debug(
-                        "[chat_execution_engine] post-lock settle failed session=%s",
-                        ctx.session_id, exc_info=True,
                     )
             # P1（deep-review）：早注册的兜底注销 —— 覆盖锁等待期断连/取消、
             # 以及未进入 turn 主体的异常路径；正常路径已由
@@ -2136,16 +2162,17 @@ class ChatExecutionEngine:
                 else legacy_bind_engine_lock(ctx.session_id, ctx.lock)
             )
             if ctx.hk_lock_token is not None:
-                try:
+                # #1549：begin_turn 投影失败经 best_effort 可见降级
+                # （best-effort，绝不阻断）。
+                with best_effort(
+                    "harness-begin-turn",
+                    "chat-engine-harness-begin-turn-best-effort",
+                    ctx={"session": ctx.session_id},
+                ):
                     from app.services.harness_kernel import legacy_adapter
 
                     await legacy_adapter.begin_turn(
                         ctx.session_id, ctx.turn_id, message=ctx.message
-                    )
-                except Exception:
-                    logger.debug(
-                        "[chat_execution_engine] harness begin_turn projection failed session=%s",
-                        ctx.session_id, exc_info=True,
                     )
             owner_token = self.get_session_owner_token(ctx.session_id)
             ctx.owner_token = owner_token
@@ -2700,10 +2727,13 @@ class ChatExecutionEngine:
                         exec_res = t.result()
                     except asyncio.CancelledError:
                         # F7/F8: 被抢占取消的 step 记 cancelled，不留 running
-                        try:
+                        # #1549：记账失败经 best_effort 可见降级（step 台账
+                        # 缺席不再是无痕 pass）。
+                        with best_effort(
+                            "tracker-cancel-step",
+                            "chat-engine-tracker-cancel-step-best-effort",
+                        ):
                             self.tracker.cancel_step(task.id, step.id)
-                        except Exception:
-                            pass
                         yield ctx.emitter.step_cancelled(task.id, step.id, tool_name)
                         continue
                     except Exception as e:  # noqa: BLE001 防御（execute_tool_call 内部已兜底）
@@ -2764,10 +2794,12 @@ class ChatExecutionEngine:
                     if getattr(exec_res, "cancelled", False):
                         # F8: 取消不是工具故障 —— step 记 cancelled
                         # 并发 step_cancelled，区别于 step_error。
-                        try:
+                        # #1549：记账失败经 best_effort 可见降级。
+                        with best_effort(
+                            "tracker-cancel-step",
+                            "chat-engine-tracker-cancel-step-best-effort",
+                        ):
                             self.tracker.cancel_step(task.id, step.id)
-                        except Exception:
-                            pass
                         yield ctx.emitter.step_cancelled(task.id, step.id, tool_name)
                         yield ctx.emitter.tool_result(tool_name, msg_result_str)
                     elif outcome.status == "repeated":
@@ -2998,18 +3030,19 @@ class ChatExecutionEngine:
         # ADR-0180：stream turn 结算进 kernel 台账（shield+预算
         # +吞异常，R5）。
         if ctx.hk_lock_token is not None:
+            # #1549：safe_end_turn 投影失败经 best_effort 可见降级。
             try:
-                from app.services.harness_kernel import legacy_adapter
+                with best_effort(
+                    "harness-safe-end-turn",
+                    "chat-engine-harness-safe-end-turn-best-effort",
+                    ctx={"session": ctx.session_id},
+                ):
+                    from app.services.harness_kernel import legacy_adapter
 
-                await legacy_adapter.safe_end_turn(
-                    ctx.session_id, ctx.turn_id,
-                    status=legacy_adapter.status_from_outcome(ctx.rt_ev),
-                )
-            except Exception:
-                logger.debug(
-                    "[chat_execution_engine] harness safe_end_turn projection failed session=%s",
-                    ctx.session_id, exc_info=True,
-                )
+                    await legacy_adapter.safe_end_turn(
+                        ctx.session_id, ctx.turn_id,
+                        status=legacy_adapter.status_from_outcome(ctx.rt_ev),
+                    )
             finally:
                 legacy_unbind_engine_lock(ctx.hk_lock_token)
         # P1: the turn's cleanup drained — deregister the turn task so
@@ -3028,7 +3061,12 @@ class ChatExecutionEngine:
         # F09（ADR-0214 D5）：legacy 流式 settle 的 env-gated 轨迹
         # 录制 —— 与 Pi bridge / 非流式同一录制缝。final text 取
         # 内存尾部的末条 assistant 消息（缺席留空串诚实降级）。
-        try:
+        # #1549：记录面绝不阻断 settle；失败经 best_effort 可见降级。
+        with best_effort(
+            "turn-replay-record",
+            "chat-engine-replay-record-best-effort",
+            ctx={"session": ctx.session_id},
+        ):
             from app.lib.harness.replay.recorder import (
                 maybe_record_turn,
             )
@@ -3042,8 +3080,6 @@ class ChatExecutionEngine:
                 turn_id=ctx.turn_id,
                 final_text=_stream_final_text,
             )
-        except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
-            pass
         TURN_EVIDENCE.remove(ctx.turn_id)
         ctx.tev_cm.__exit__(None, None, None)
         ctx.rt_cm.__exit__(None, None, None)

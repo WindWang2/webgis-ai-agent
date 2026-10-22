@@ -24,6 +24,7 @@ from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
 from app.tools._utils import trim_features
 from app.services.temporal.engine import TemporalEngine
 from app.services.temporal.models import TemporalFilter, TemporalAggregation
+from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,12 @@ def trim_temporal_result(payload: Any, max_features: int = 50) -> Any:
             trimmed_hotspots.append(hs)
         out["hotspots"] = trimmed_hotspots
 
-    try:
+    # #1549：兜底截断失败 = 超限载荷可能直灌 LLM 上下文（不变量 #2 风险面）；
+    # 经 best_effort 可见降级。
+    with best_effort(
+        "temporal-payload-budget-trim",
+        "tools-temporal-payload-trim-best-effort",
+    ):
         import json
         if len(json.dumps(out)) > 40000:
             out["_payload_notice"] = "Payload truncated for context safety (>40,000 chars). Use layer endpoints for full GeoJSON access."
@@ -103,8 +109,6 @@ def trim_temporal_result(payload: Any, max_features: int = 50) -> Any:
                     for item in obj:
                         _truncate_features(item)
             _truncate_features(out)
-    except Exception:
-        pass
 
     return out
 

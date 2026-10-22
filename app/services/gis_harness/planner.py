@@ -71,13 +71,16 @@ def _chain_affinity_prior(recipe: Any) -> Optional[Dict[str, float]]:
     targets = [link.to for link in (recipe.fallback_links or [])]
     if not targets:
         return None
-    try:
+    # #1549：先验不可得 ≠ 失败，诚实退回无先验；经 best_effort 可见降级。
+    with best_effort(
+        "chain-affinity-prior",
+        "gis-harness-planner-affinity-prior-best-effort",
+    ):
         from app.services.cartography.intent_learning import (
             recipe_affinity_weights_sync,
         )
         return recipe_affinity_weights_sync(targets)
-    except Exception:  # noqa: BLE001 —— 先验不可得 ≠ 失败，诚实退回无先验
-        return None
+    return None
 
 
 def _composition_alternatives_evidence(
@@ -91,7 +94,11 @@ def _composition_alternatives_evidence(
     ``select_composition_alternatives` 本体自此有生产调用（grep 断言
     锁定）。fail-safe：投影/求解失败 → 空 dict（证据缺席 ≠ 规划失败）。
     """
-    try:
+    # #1549：证据缺席 ≠ 规划失败（fail-safe）；经 best_effort 可见降级。
+    with best_effort(
+        "composition-alternatives-evidence",
+        "gis-harness-planner-alternatives-evidence-best-effort",
+    ):
         from app.lib.cartography.composition_selection import (
             TaskCartographyContext,
             composition_alternatives_payload,
@@ -146,8 +153,7 @@ def _composition_alternatives_evidence(
             artifact_types=artifact_types,
         )
         return composition_alternatives_payload(ctx)
-    except Exception:  # noqa: BLE001 —— 证据缺席 ≠ 规划失败（fail-safe）
-        return {}
+    return {}
 
 
 #: intent task 词表 → 组合选择类目（审定静态映射；表外类目兜底
@@ -180,14 +186,16 @@ def _record_chain_exhausted_failure(recipe: Any) -> None:
     """
     if not (recipe.fallback_links or []):
         return
-    try:
+    # #1549：记账失败不影响降级主链路；经 best_effort 可见降级。
+    with best_effort(
+        "record-chain-exhausted-failure",
+        "gis-harness-planner-chain-exhausted-best-effort",
+    ):
         from app.services.cartography.intent_learning import (
             _get_session_local, record_recipe_outcome,
         )
         with _get_session_local() as db:
             record_recipe_outcome(db, recipe_id=recipe.id, success=False)
-    except Exception:  # noqa: BLE001 —— 记账失败不影响降级主链路
-        return
 
 def capability_tool_map() -> Dict[str, List[str]]:
     """capability → 有序工具候选。
@@ -470,12 +478,14 @@ def _interpolation_fact_signals(
     if crs_class not in ("geographic", "projected", "projected_local_metric"):
         crs = p.get("crs")
         if isinstance(crs, str) and crs:
-            try:
+            # #1549：分类失败按 unknown；经 best_effort 可见降级。
+            with best_effort(
+                "crs-classify",
+                "gis-harness-planner-crs-classify-best-effort",
+            ):
                 from app.lib.gis.crs_safety import classify_crs
 
                 crs_class = classify_crs(crs)
-            except Exception:  # noqa: BLE001 — 分类失败按 unknown
-                crs_class = None
         else:
             crs_class = None
     if crs_class:
@@ -810,15 +820,17 @@ class MapProductPlanner:
         # PLANNING_V1=0 时即便调用方显式传入 situation 也逐位回退历史行为
         # （第 12 层资格罚分 + 证据附加一并关闭；review P2）。
         if situation is not None:
-            try:
+            # #1549：门面缺席按关闭处理；经 best_effort 可见降级。
+            with best_effort(
+                "capability-planning-v1-gate",
+                "gis-harness-planner-planning-v1-gate-best-effort",
+            ):
                 from app.services.gis_harness.capability_resolution import (
                     capability_planning_v1_enabled,
                 )
 
                 if not capability_planning_v1_enabled():
                     situation = None
-            except Exception:  # noqa: BLE001 — 门面缺席按关闭处理
-                situation = None
         # v2(R4)：memo 命中直接返回既有 plan（确定性规划器，同输入同输出）。
         # available_tools 参与（工具面变化改变 resolution evidence）；
         # project_verified 参与（#864 项目记忆排序）。测试可用 use_memo=False
@@ -948,7 +960,12 @@ class MapProductPlanner:
 
         memo_key = None
         if use_memo:
-            try:
+            # #1549：memo 失败退直算；经 best_effort 可见降级（确定性不变，
+            # 仅失去命中加速）。
+            with best_effort(
+                "plan-memo-lookup",
+                "gis-harness-planner-memo-best-effort",
+            ):
                 # v2(review R3-P1-3)：intent 全量参与键 —— task/subject/
                 # output_intents 等字段都改变 plan 输出，只按 query 键会在
                 # 同 query 不同 intent 时返回错误计划（复现于 review）。
@@ -970,8 +987,6 @@ class MapProductPlanner:
                     cached = self._plan_memo.get(memo_key)
                     if cached is not None:
                         return cached.model_copy(deep=True)
-            except Exception:  # noqa: BLE001 — memo 失败退直算
-                memo_key = None
 
         plan = MapProductPlan(
             plan_id=_plan_id(intent.query, recipe.id),
@@ -1027,7 +1042,11 @@ class MapProductPlanner:
         # 不改变 capabilities 集合与后续裁决 —— 选择影响已由
         # select_candidates 第 12 层完成）。失败绝不阻断规划。
         if situation is not None:
-            try:
+            # #1549：证据是增值，绝不阻断规划；失败经 best_effort 可见降级。
+            with best_effort(
+                "capability-resolution-evidence",
+                "gis-harness-planner-capability-evidence-best-effort",
+            ):
                 from app.services.gis_harness.capability_resolution import (
                     GoalRequirements,
                     capability_planning_v1_enabled,
@@ -1052,8 +1071,6 @@ class MapProductPlanner:
                         phase="capability_resolution",
                         decisions=resolution.to_decision_records(),
                     )
-            except Exception:  # noqa: BLE001 — 证据是增值，绝不阻断规划
-                plan.capability_evidence = {}
 
         # 图层角色：来自产品模板或 recipe 声明（layer_type 由模型库推导）
         if template:
@@ -1233,15 +1250,17 @@ class MapProductPlanner:
         """
         # kill switch 在 planner 层生效（与 plan_from_intent 同语义）。
         if situation is not None:
-            try:
+            # #1549：门面缺席按关闭处理；经 best_effort 可见降级。
+            with best_effort(
+                "capability-planning-v1-gate",
+                "gis-harness-planner-planning-v1-gate-best-effort",
+            ):
                 from app.services.gis_harness.capability_resolution import (
                     capability_planning_v1_enabled,
                 )
 
                 if not capability_planning_v1_enabled():
                     situation = None
-            except Exception:  # noqa: BLE001 — 门面缺席按关闭处理
-                situation = None
         recipe = self.recipes.get(plan.recipe_id)
         finalized = plan.model_copy(deep=True)
         if recipe is None:
@@ -1967,7 +1986,12 @@ class MapProductPlanner:
             # 旧读者零漂移）。
             data_qualifications: List[Dict[str, Any]] = []
             fallback_tier = ""
-            try:
+            # #1549：资格投影失败如实缺席；经 best_effort 可见降级（键缺席 =
+            # 旧读者零漂移，但日志/turn 计数留痕）。
+            with best_effort(
+                "data-qualification-projection",
+                "gis-harness-planner-qualification-best-effort",
+            ):
                 from app.services.gis_harness.data_qualification import (
                     qualify_workflow_data_roles,
                 )
@@ -1996,7 +2020,11 @@ class MapProductPlanner:
                 # minimal 披露（两者同样只会进一步降档），差异方向诚实：
                 # finalize tier 是上界，仅 planned-capability 子场景可偏乐观。
                 ontology_task_id = ""
-                try:
+                # #1549：本体锚缺席不阻断；经 best_effort 可见降级。
+                with best_effort(
+                    "ontology-anchor-match",
+                    "gis-harness-planner-ontology-anchor-best-effort",
+                ):
                     from app.services.gis_harness.gis_ontology import (
                         get_task_ontology,
                     )
@@ -2005,17 +2033,12 @@ class MapProductPlanner:
                         plan.intent, limit=1)
                     if _onto:
                         ontology_task_id = str(_onto[0].task_id)
-                except Exception:  # noqa: BLE001 — 本体锚缺席不阻断
-                    ontology_task_id = ""
                 fallback_tier = resolve_fallback_tier(
                     ontology_task_id=ontology_task_id,
                     data_states=tuple(str(q.state) for q in quals),
                     method_blockers=tuple(contract.method_blockers),
                     data_blockers=tuple(contract.data_blockers),
                 ).tier
-            except Exception:  # noqa: BLE001 — 资格投影失败如实缺席
-                data_qualifications = []
-                fallback_tier = ""
             # 合并去重：同一 warning_code 已在 plan（如 pattern projection 的
             # 规划期披露）时不再重复追加 —— 披露幂等，证据不冗余。
             existing_codes = {
