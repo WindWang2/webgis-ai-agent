@@ -6,6 +6,10 @@
  * 性能契约（§2 P1）：5000 条命令单次查询 <16ms。实现为 O(n·m) 子序列
  * 扫描 + 逐条 O(1) 附加分，配 `buildSearchIndex` 预 lowers 所有参与字段，
  * 避免查询期重复字符串分配。
+ *
+ * 注：测试阈值于 #1598 放宽至 32ms（median）/ 48ms（p95）——共享 CI runner
+ * 负载方差曾把实测均值推到 21.5ms，击穿原 16ms 预算（runner flake，非退化）。
+ * 算法量级契约不变：O(n²) 级退化仍会被 fuzzy.test.ts 断言捕获。
  */
 
 export interface FuzzyMatch {
