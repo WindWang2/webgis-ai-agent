@@ -347,6 +347,10 @@ jobs:
   test-backend-gate:
     name: Backend Tests
     runs-on: ubuntu-latest
+    # 治理不变量（tests/test_ci_workflow_governance_contract.py）：所有 job
+    # 必须有正的 timeout-minutes。本 job 只跑 shell 断言，10 分钟绰绰有余，
+    # 但绝不能省 —— 缺值即治理测试红。
+    timeout-minutes: 10
     needs: [test-backend]
     if: always()
     steps:
