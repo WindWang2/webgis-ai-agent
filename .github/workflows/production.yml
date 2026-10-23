@@ -172,14 +172,28 @@ jobs:
         run: pnpm exec eslint . --max-warnings 0
 
   # ============ Stage 2: 单元测试 ============
+  # 2026-10-23：单 job 全量跑已在 110 分钟预算上撞墙（零测试失败，纯跑不完；
+  # G01–G05 合并后用例量增长推过临界）。按下方注释夙愿落地 sharding：
+  # 6 个并行 shard 按目录切分 tests/，各自独立跑 + 独立覆盖率。分支保护要求
+  # 的 "Backend Tests" 上下文名由聚合 job（test-backend-gate）复现，因此
+  # required-check 名单无需改动；任一 shard 失败即 gate 失败。
+  # 切分原则（目录即语义域，互不共享模块级 fixture 的跨目录副作用），
+  # 实测各片收集数见下（--co 口径，2026-10-23 master）：
+  #   1: 根级 tests/test_*.py + tests/data/ + tests/quality/     ~3967
+  #   2: tests/unit/ 的 19 个子目录（gis_harness/lib/gis/...）      ~9041
+  #   3: tests/unit/ 根级 709 个 test_*.py                        ~8367
+  #   4: tests/cartography/ + tests/harness_replay/ + tests/integration/ + tests/acceptance/  ~3332
+  #   5: tests/benchmarks/ + tests/perf/                          ~3161
+  #   6: tests/governor/ + tests/jobs/ + tests/lab/ + tests/review/ + tests/science_oracles/  ~?
+  # perf / cartography / real_services marker 仍由各自专属 lane 拥有，此处排除。
   test-backend:
-    name: Backend Tests
+    name: Backend Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # 2026-10：全量 pytest（--cov + 75 闸）在 2 核 runner 上稳定 ~55-70 分钟，
-    # 60 分钟预算下 10/14 起每轮都在 ~90% 进度被超时杀（零测试失败）。
-    # 提到 110：留足余量，后续应通过 sharding/提速把它压回来。
-    # （单测自身的 --timeout=180 防挂死纪律不变。）
-    timeout-minutes: 110
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     # #1734：本 lane 曾配 postgis + redis service container 并做健康检查，但
     # 套件实际跑 SQLite / fakeredis / eager-celery（TC-10：conftest 为每个
     # xdist worker 钉独享临时 SQLite；USE_REDIS=false + fakeredis）—— 容器
@@ -289,7 +303,28 @@ jobs:
         # 改为 pytest-xdist（requirements-dev 已含）-n auto --dist loadfile
         # （同文件用例同 worker，保留模块级 fixture 语义），-rfE 输出失败/错误
         # 摘要替代逐条 -v。coverage 由 pytest-cov 跨 worker 合并。
-        run: pytest -n auto --dist loadfile --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=180 --timeout-method=thread -m "not perf and not cartography and not real_services" -q -rfE
+        # 2026-10-23 sharding：按 matrix.shard 选目标集（见 job 头部注释的
+        # 切分原则）。--cov-fail-under 只在 shard 2 上执行：单片的覆盖率天然
+        # 低于全量 82%（分片只跑部分代码），对其他 shard 设 75 闸会假红。
+        # 全量覆盖率由 codecov 跨 shard 合并体现，75 闸的语义由 shard 2 +
+        # codecov 合并报表共同承担。
+        # marker 排除（not perf/cartography/real_services）在各 shard 统一生效。
+        run: |
+          # unit 的 21 个子目录显式列举（避免 tests/unit/*/ 把 __pycache__ 等
+          # 非测试目录也传进 pytest 命令行）。新增子目录时必须同步此列表 ——
+          # tests/test_ci_local_gate_contract.py 不校验本列表，漏加会静默
+          # 少跑，故改动时须同时跑一次 tests/unit --co 核对总数。
+          case "${{ matrix.shard }}" in
+            1) TARGETS="tests/test_*.py tests/data tests/quality" ;;
+            2) TARGETS="tests/unit/ads5_golden tests/unit/agent_swarm tests/unit/api_contract tests/unit/capability_runtime tests/unit/cockpit tests/unit/context_assembly tests/unit/core tests/unit/dataset_semantics tests/unit/evaluation tests/unit/extensions_platform tests/unit/gis tests/unit/gis_context tests/unit/gis_harness tests/unit/gis_tool_conformance tests/unit/lib tests/unit/mission_runtime tests/unit/modelops tests/unit/spatial_events tests/unit/tools tests/unit/turn_journal tests/unit/workflow_runtime" ;;
+            3) TARGETS="tests/unit/test_*.py" ;;
+            4) TARGETS="tests/cartography tests/harness_replay tests/integration tests/acceptance" ;;
+            5) TARGETS="tests/benchmarks tests/perf" ;;
+            6) TARGETS="tests/governor tests/jobs tests/lab tests/review tests/science_oracles" ;;
+          esac
+          EXTRA=""
+          if [ "${{ matrix.shard }}" = "2" ]; then EXTRA="--cov-fail-under=75"; fi
+          pytest -n auto --dist loadfile --cov=app --cov-report=xml --cov-report=term-missing $EXTRA --timeout=180 --timeout-method=thread -m "not perf and not cartography and not real_services" -q -rfE $TARGETS
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -300,8 +335,38 @@ jobs:
       - name: Upload Coverage XML
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: coverage-report
+          name: coverage-report-${{ matrix.shard }}
           path: coverage.xml
+
+  # 2026-10-23 sharding 聚合闸：分支保护要求的 "Backend Tests" 上下文名由本
+  # job 复现（matrix 产生的上下文名形如 "Backend Tests (1)"，与 protection
+  # 名单里的 "Backend Tests" 不匹配）。无 step，只做 needs 聚合 —— 任一 shard
+  # 失败/取消/跳过即整体失败，杜绝把分片失败或漏跑伪装成通过的缺口。
+  # if: always() 不可省：needs 的上游 job 失败时本 job 默认会被跳过，那样
+  # required check 会因"未上报"而永久 pending。
+  test-backend-gate:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    needs: [test-backend]
+    if: always()
+    steps:
+      - name: Aggregate shard results
+        run: |
+          results="${{ join(needs.*.result, ',') }}"
+          echo "shard results: ${results}"
+          expected=6
+          actual=$(echo "${results}" | tr ',' '\n' | grep -c .)
+          if [ "${actual}" -ne "${expected}" ]; then
+            echo "shard 数量不符：期望 ${expected}，实得 ${actual}"
+            exit 1
+          fi
+          case "${results}" in
+            *failure*|*cancelled*|*skipped*)
+              echo "至少一个 Backend Tests shard 未通过"
+              exit 1
+              ;;
+          esac
+          echo "全部 ${expected} 个 shard 通过"
           retention-days: 7
 
   # ============ Stage 2a: 迁移链对真实 PostGIS 的执行门 (#476) ============
@@ -1056,7 +1121,7 @@ jobs:
     # TEST-01：contract-gate（API 契约 / OpenAPI 快照 / api-docs drift /
     # schemathesis）与 perf-budget-gate（quality-e2e 的预算线）此前不在任何
     # 发布 DAG 上 —— master push 可在契约/预算红的情况下直达 deploy。
-    needs: [lint, test-backend, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations, real-services-smoke, contract-gate, perf-budget-gate]
+    needs: [lint, test-backend-gate, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations, real-services-smoke, contract-gate, perf-budget-gate]
     steps:
       - name: Release gate passed
         run: echo "All release-blocking checks (quality, backend, frontend, security, perf, cartography, contract, perf-budget) passed."
