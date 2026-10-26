@@ -201,6 +201,16 @@ export const viewCommands: Record<string, CommandEntry> = {
       /* scene 由 MapSpec 协调通道应用；命令即确认 */
     },
   },
+  // v1.7（G3D02）：三维场景资产表写入 —— 同 set_map_scene 确认语义：
+  // 事务在后端 mapspec_store.set_scene_assets 落 MapSpec，前端经
+  // map-panel 的 sceneAssetsIdentity 效应驱动 scene3d 管理器幂等差分；
+  // 命令项不二次执行渲染（防双写漂移）。
+  set_scene_assets: {
+    requiredParams: (p) => p['assets'] === undefined || Array.isArray(p['assets']),
+    run(): void {
+      /* scene.assets 由 MapSpec 协调通道应用；命令即确认 */
+    },
+  },
   fly_to: {
     requiredParams: (p) => Array.isArray(p.center) && p.center.length === 2,
     run(ctx) {

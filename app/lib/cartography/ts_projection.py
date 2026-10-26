@@ -53,7 +53,7 @@ FIELD_TS_OVERRIDES: dict[str, dict[str, str]] = {
     "MapSpecFrame": {"extent": "[number, number, number, number]"},
     # v1.7（G3D02）：地理锚点/范围是定长元组（lng/lat 与 w/s/e/n 定序）
     "SceneAssetPlacement": {"anchor": "[number, number]"},
-    "MapSpecModelSource": {
+    "Model3dMapSpecSource": {
         "bbox": "[number, number, number, number]",
     },
     "GeoJSONMapSpecSource": {

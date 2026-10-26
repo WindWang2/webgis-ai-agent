@@ -1338,3 +1338,13 @@ export function raiseCustomOverlayLayers(map: Map): void {
     } catch { /* silent */ }
   }
 }
+
+// ── G3D02 v1.7：三维场景资产缝（scene3d 内核的 renderer 门面）──────────
+// 语义同 enable3DTerrain 的命令式缝：map-panel 在 reconcile settle 后与
+// scene 变更效应处调用；幂等差分（id + source revision 键控）。
+export {
+  syncSceneAssets,
+  disposeSceneAssets,
+  describeScene3dAssets,
+  pickScene3d,
+} from './scene3d';

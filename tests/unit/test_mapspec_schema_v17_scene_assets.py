@@ -141,7 +141,7 @@ class TestSceneAssetsContract:
 
     def test_scene_assets_exported_to_ts_projection_models(self):
         for name in (
-            "MapSpecModelSource", "SceneAssetSpec", "SceneAssetPlacement",
+            "Model3dMapSpecSource", "SceneAssetSpec", "SceneAssetPlacement",
             "SceneAssetVertical", "SceneAssetLodPolicy",
         ):
             assert any(n == name for n, _ in ms.SCHEMA_EXPORT_MODELS), name

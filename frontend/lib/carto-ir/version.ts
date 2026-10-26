@@ -29,11 +29,13 @@ export const SUPPORTED_MAPSPEC_VERSIONS = [
   "1.4",
   "1.5",
   "1.6",
+  // v1.7（G3D02）：scene.assets + model3d 源（纯 additive）。
+  "1.7",
 ] as const;
 
 export type SupportedMapSpecVersion = (typeof SUPPORTED_MAPSPEC_VERSIONS)[number];
 
-export const LATEST_SUPPORTED_MAPSPEC_VERSION: SupportedMapSpecVersion = "1.6";
+export const LATEST_SUPPORTED_MAPSPEC_VERSION: SupportedMapSpecVersion = "1.7";
 
 /** 版本缺省口径（= 后端 DEFAULT_VERSION）。 */
 export const DEFAULT_MAPSPEC_VERSION = "1.0";
@@ -190,6 +192,9 @@ const UPGRADERS: Record<string, Upgrader> = {
   // 1.6（方向 5）：layer.representation 可选；缺失 = 层缺省表达 + 渲染端
   // 既有计数推断，存量 spec 语义不变。
   "1.5->1.6": identityUpgrade,
+  // 1.7（G3D02）：model3d 源 + scene.assets 可选；缺失 = 无 3D 资产，
+  // 存量 spec 语义不变。
+  "1.6->1.7": identityUpgrade,
 };
 
 function identityUpgrade(_spec: Record<string, unknown>, _d: MigrationDisclosure[]): void {

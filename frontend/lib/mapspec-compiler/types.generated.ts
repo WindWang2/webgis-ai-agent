@@ -87,7 +87,7 @@ export interface MapSpecLayerLayout {
 export interface MapSpec {
   version: string;
   view?: MapSpecView;
-  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | MapSpecModelSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
+  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | Model3dMapSpecSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
   layers: MapSpecLayer[];
   layout?: MapSpecLayoutConfig;
   thresholds?: MapThresholds;
@@ -107,7 +107,8 @@ export type MapSpecSource =
   | VectorMapSpecSource
   | RasterMapSpecSource
   | RasterDemMapSpecSource
-  | DataFabricMapSpecSource;
+  | DataFabricMapSpecSource
+  | Model3dMapSpecSource;
 
 export interface GeoJSONMapSpecSource {
   type: "geojson";
@@ -351,7 +352,7 @@ export interface SceneCameraSpec {
   transition_ms?: number;
 }
 
-export interface MapSpecModelSource {
+export interface Model3dMapSpecSource {
   type: "model3d";
   format: "gltf" | "glb" | "3dtiles";
   url?: string;

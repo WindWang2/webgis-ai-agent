@@ -253,7 +253,7 @@ class RasterDemMapSpecSource(_SpecModel):
     encoding: Optional[Literal["mapbox", "terrarium"]] = None
 
 
-class MapSpecModelSource(_SpecModel):
+class Model3dMapSpecSource(_SpecModel):
     """model3d 源（v1.7 additive，G3D02）—— 3D Tiles / glTF 资产的数据面指针。
 
     纪律（与 scene.terrain 的「指针不是第二数据面」同源）：本源只承载
@@ -290,7 +290,7 @@ MapSpecSource = Union[
     RasterMapSpecSource,
     RasterDemMapSpecSource,
     DataFabricMapSpecSource,
-    MapSpecModelSource,
+    Model3dMapSpecSource,
 ]
 
 
@@ -886,7 +886,7 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("MapSceneConfig", MapSceneConfig),
     ("TerrainSceneSpec", TerrainSceneSpec),
     ("SceneCameraSpec", SceneCameraSpec),
-    ("MapSpecModelSource", MapSpecModelSource),
+    ("Model3dMapSpecSource", Model3dMapSpecSource),
     ("SceneAssetSpec", SceneAssetSpec),
     ("SceneAssetPlacement", SceneAssetPlacement),
     ("SceneAssetVertical", SceneAssetVertical),

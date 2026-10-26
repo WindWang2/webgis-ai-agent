@@ -34,6 +34,8 @@ import { snapshotChartRenderStates } from '@/lib/map-components/chart-render-reg
 import { buildRenderApplyAck } from '@/lib/render-protocol/render-apply-ack';
 import type { RenderApplyAck } from '@/lib/render-protocol/render-apply-ack';
 import { noteRenderSettled, snapshotRenderPerfBlock } from '@/lib/telemetry/render-probes';
+// G3D02 v1.7：3D 场景资产状态环（有界观察披露 —— observation 上行面）。
+import { sceneAssetStatusSnapshot } from '@/lib/map-kit/scene3d/status';
 import type { RenderPerfBlock } from '@/lib/telemetry/render-probes';
 
 /** Map 'idle' may never fire (raster churn / animation) — settle is bounded.
@@ -383,6 +385,13 @@ export function collectRenderObservation({
     charts: snapshotChartRenderStates().slice(0, MAX_OBSERVED_COMPONENTS),
     apply_ack: applyAck,
     perf,
+    // G3D02 v1.7：3D 资产状态快照（有界 16 条；mounted/load_failed/
+    // degraded/unavailable —— 后端观察面与降级披露消费）。
+    scene3d_assets: sceneAssetStatusSnapshot().slice(-16).map((e) => ({
+      asset_id: e.assetId,
+      code: e.code,
+      ...(e.reason ? { reason: e.reason } : {}),
+    })),
     ...(canvas ? { canvas } : {}),
   };
 }
