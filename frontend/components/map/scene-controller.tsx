@@ -101,7 +101,7 @@ export function SceneController() {
         try {
           const { useToastStore } = await import('@/components/ui/toast');
           useToastStore.getState().addToast(
-            t('sceneApplyFailed'), 'warning');
+            t('sceneController.sceneApplyFailed'), 'warning');
         } catch { /* toast 不可用不影响状态收敛 */
         }
       }

@@ -8,7 +8,7 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| `python -m pytest tests/cartography/ -q --no-cov -m cartography` | **2024 passed**（含 D1 24 项新测试、golden corpus 再生成后 585 项、死码门 95 项） |
+| `python -m pytest tests/cartography/ -q --no-cov -m cartography` | **2050 passed**（含 D1 24 项新测试 + R1/R2 回归、golden corpus 再生成后 585 项、死码门 95 项） |
 | `python -m pytest tests/unit/test_scene_quality_gate.py tests/unit/test_scene_tools.py -q --no-cov` | **42 passed**（D2 扩展 10 项） |
 | `python -m pytest tests/cartography/test_scene_export_honesty.py -q --no-cov -m cartography` | **12 passed**（含前后端阈值互锁） |
 | `python -m pytest tests/cartography/test_user_scene_mutation_api.py -q --no-cov -m cartography` | **6 passed**（D3 HTTP 契约） |
@@ -20,7 +20,7 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| `npx vitest run --maxWorkers=2` | **480 文件 / 4533 passed + 1 expected-fail**（全量） |
+| `npx vitest run --maxWorkers=2` | **481 文件 / 4538 passed + 1 expected-fail**（全量，含 R1/R2 修复后复跑） |
 | `npx tsc --noEmit && npx tsc -p tsconfig.test.json --noEmit` | **0 错误** |
 | `npx eslint . --max-warnings 0` | **0 错误 0 警告** |
 
