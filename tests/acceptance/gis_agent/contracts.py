@@ -48,6 +48,9 @@ class StepKind(str, Enum):
     COMPONENT_UPDATE = "component_update"
     PRODUCT_EDIT = "product_edit"
     RAW = "raw"                    # 按名直调（如 webgis_cartography_status）
+    INTERACTION_EVENT = "interaction_event"  # G3D04：注入 Interaction IR 事件
+    # （arguments.events = InteractionEventV1 最小字段集列表；经真实
+    # ingest_interaction_batch 摄入，供 user-wins 相机守卫/失效裁决 E2E）
 
 
 class AgentStep(BaseModel):

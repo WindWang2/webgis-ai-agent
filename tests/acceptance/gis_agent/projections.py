@@ -56,6 +56,10 @@ async def build_task_evidence(session_id: str, scenario) -> Dict[str, Any]:
     # ── 导出语义一致性（product_manifest 纯函数，h02 同源判定）────────
     evidence["export"] = _project_export(spec)
 
+    # ── G3D04：3D 完成判定（scene3d 双门）+ Interaction IR 投影 ──────
+    evidence["scene3d"] = _project_scene3d(spec, revision)
+    evidence["interaction"] = await _project_interaction(session_id)
+
     # ── 最终答复（dispatch 缝不可观测的最终文本 → 诚实 not_evaluated 面）
     evidence["final_answer"] = {
         "observable": False,
@@ -192,6 +196,34 @@ def _project_mapspec(spec) -> Optional[Dict[str, Any]]:
         "sources": sorted((spec.get("sources") or {}).keys()),
         "title": ((spec.get("layout") or {}).get("title") or {}).get("text", "")
         if isinstance((spec.get("layout") or {}).get("title"), dict) else "",
+        # G3D04：scene/view 投影（维度/地形绑定/相机档/视图态）
+        "scene": _project_scene(spec.get("scene")),
+        "view": _project_view(spec.get("view")),
+    }
+
+
+def _project_scene(scene) -> Optional[Dict[str, Any]]:
+    if not isinstance(scene, dict):
+        return None
+    terrain = scene.get("terrain") if isinstance(scene.get("terrain"), dict) else {}
+    camera = scene.get("camera") if isinstance(scene.get("camera"), dict) else {}
+    return {
+        "mode": str(scene.get("mode") or ""),
+        "terrain_source": str(terrain.get("source") or ""),
+        "exaggeration": terrain.get("exaggeration"),
+        "camera_pitch": camera.get("pitch"),
+        "camera_bearing": camera.get("bearing"),
+    }
+
+
+def _project_view(view) -> Optional[Dict[str, Any]]:
+    if not isinstance(view, dict):
+        return None
+    return {
+        "pitch": view.get("pitch"),
+        "bearing": view.get("bearing"),
+        "zoom": view.get("zoom"),
+        "center": view.get("center"),
     }
 
 
@@ -239,6 +271,7 @@ async def _project_requirement(session_id: str) -> Optional[Dict[str, Any]]:
             return None
         doc = RequirementDocument.model_validate(state.document)
         summary = req_svc.summarize(doc)
+        scene = doc.intent.scene
         return {
             "exists": True,
             "document_id": str(summary.get("document_id") or ""),
@@ -248,6 +281,20 @@ async def _project_requirement(session_id: str) -> Optional[Dict[str, Any]]:
             "revision": summary.get("revision"),
             "requirement_digest": str(summary.get("requirement_digest") or ""),
             "folded_patch_count": getattr(state, "folded_patch_count", 0),
+            # G3D04：SceneSpec 投影（typed 3D 需求面）
+            "scene": {
+                "dimension": scene.dimension,
+                "degrade_reason": scene.degrade_reason,
+                "terrain_requested": scene.terrain_requested,
+                "extrusion_requested": scene.extrusion_requested,
+                "exaggeration": scene.exaggeration,
+                "camera_pitch": scene.camera_pitch,
+                "camera_bearing": scene.camera_bearing,
+                "analysis_goals": list(scene.analysis_goals),
+                "scene_locks": sorted(
+                    f"{lock.scope}={lock.value}" for lock in doc.intent.locks
+                    if lock.scope in ("scene_mode", "scene_camera")),
+            },
         }
     except Exception:  # noqa: BLE001 — requirement 面缺席不影响其他证据
         return None
@@ -307,3 +354,31 @@ def _project_export(spec) -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — 判定面异常如实暴露
         return {"available": False, "status": "", "check_statuses": [],
                 "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+def _project_scene3d(spec: Optional[Dict[str, Any]],
+                     revision: int) -> Optional[Dict[str, Any]]:
+    """G3D04：scene3d 双门 verdict 投影（真实 spec + 真实 revision 证据）。"""
+    if not isinstance(spec, dict):
+        return None
+    try:
+        from app.services.gis_harness.scene3d.verdict import build_scene3d_verdict
+
+        receipt = {"mutation_revision": revision} if revision else {}
+        verdict = build_scene3d_verdict(mapspec=spec, scene_apply_receipt=receipt)
+        return verdict.model_dump()
+    except Exception:  # noqa: BLE001 — scene3d 面缺席不影响其他证据
+        return None
+
+
+async def _project_interaction(session_id: str) -> Optional[Dict[str, Any]]:
+    """Interaction IR 有界投影（user-wins 相机/失效裁决的观测面）。"""
+    try:
+        from app.services.gis_harness.interaction_ir.projection import (
+            interaction_snapshot_via_store,
+        )
+        from app.services.session_data import session_data_manager
+
+        return await interaction_snapshot_via_store(session_data_manager, session_id)
+    except Exception:  # noqa: BLE001
+        return None

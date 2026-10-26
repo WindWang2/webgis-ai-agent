@@ -1,5 +1,5 @@
 {
- "count": 21,
+ "count": 47,
  "kind": "g05-task-scenarios",
  "scenarios": [
   {
@@ -2752,6 +2752,2276 @@
     }
    ],
    "user_goal": "看看成都小学都在哪里，标出点位"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-01-dim",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.dimension",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-01-terrain",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.terrain_requested",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-01-lock",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "contains",
+     "path": "requirement.scene.scene_locks",
+     "value": "scene_mode=3d"
+    }
+   ],
+   "family": "F20",
+   "id": "f20-01-terrain-intent",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "intent"
+   ],
+   "timeout_s": 60,
+   "title": "3D 意图：立体地形 → dimension=3d + terrain 表达",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "展示成都市的立体地形",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "展示成都市的立体地形"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-02-extrusion",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.extrusion_requested",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-02-no-dim",
+     "kind": "requirement_state",
+     "note": "白模 cue 是挤出表达，不隐含整图维度偏好",
+     "op": "eq",
+     "path": "requirement.scene.dimension",
+     "value": ""
+    }
+   ],
+   "family": "F20",
+   "id": "f20-02-extrusion-intent",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "intent"
+   ],
+   "timeout_s": 60,
+   "title": "3D 意图：建筑白模 → extrusion_requested + 证据义务",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "添加建筑白模",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "添加建筑白模"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-03-dim",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.dimension",
+     "value": ""
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-03-terrain",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.terrain_requested",
+     "value": null
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-03-goals",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.analysis_goals",
+     "value": []
+    }
+   ],
+   "family": "F20",
+   "id": "f20-03-no-inference",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "intent",
+    "negative"
+   ],
+   "timeout_s": 60,
+   "title": "零推断：分布请求 → scene 全默认",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都小学分布情况",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "成都小学分布情况"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-04-dim",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.dimension",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-04-bearing",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.camera_bearing",
+     "value": 45.0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-04-goal",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "contains",
+     "path": "requirement.scene.analysis_goals",
+     "value": "viewshed"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f20-04-medium",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "contains",
+     "path": "requirement.scene.analysis_goals",
+     "value": "viewshed"
+    }
+   ],
+   "family": "F20",
+   "id": "f20-04-composite-intent",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "intent",
+    "composite"
+   ],
+   "timeout_s": 60,
+   "title": "复合 3D 意图：维度+地形+方位+视域+PNG 媒介",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都小学分布加立体地形，从西南方向看，再算可视域，导出 PNG",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "成都小学分布加立体地形，从西南方向看，再算可视域，导出 PNG"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f21-01-mode",
+     "kind": "mapspec_scene",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.scene.mode",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f21-01-revision",
+     "kind": "revision_monotonic",
+     "note": "",
+     "op": "ge",
+     "path": "mapspec.mutation_revision",
+     "value": 1
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f21-01-verdict",
+     "kind": "scene3d_verdict",
+     "note": "挤出 3d 无 terrain 时 scene_quality 或有 warning，degraded 是诚实结论",
+     "op": "in",
+     "path": "scene3d.verdict",
+     "value": [
+      "completed",
+      "degraded"
+     ]
+    }
+   ],
+   "family": "F21",
+   "id": "f21-01-extrusion-3d-applied",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "representation"
+   ],
+   "timeout_s": 60,
+   "title": "表达链：白模证据 → apply_scene_representation → scene=3d",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "展示成都建筑白模（含高度数据）",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "layer": {
+         "extrusion": {
+          "height_field": "height",
+          "stats": {
+           "valid": 25
+          }
+         },
+         "id": "bldg",
+         "source": "features",
+         "type": "fill-extrusion"
+        }
+       },
+       "call_id": "bldg",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_layer_upsert"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "user_dimension": "3d"
+       },
+       "call_id": "apply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "展示成都建筑白模（含高度数据）"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f21-02-not-3d",
+     "kind": "mapspec_scene",
+     "note": "无证据绝不 3d（fail-closed）",
+     "op": "ne",
+     "path": "mapspec.scene.mode",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f21-02-pref-kept",
+     "kind": "requirement_state",
+     "note": "降级不撤回用户偏好（IR 保留）",
+     "op": "eq",
+     "path": "requirement.scene.dimension",
+     "value": "3d"
+    }
+   ],
+   "family": "F21",
+   "id": "f21-02-no-evidence-degrade",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "representation",
+    "negative",
+    "honesty"
+   ],
+   "timeout_s": 60,
+   "title": "诚实降级：显式 3D 无证据 → 2d + degradations + 偏好保留",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "把地图切换成 3D 视图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "user_dimension": "3d"
+       },
+       "call_id": "apply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "把地图切换成 3D 视图"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f21-03-not-3d",
+     "kind": "mapspec_scene",
+     "note": "",
+     "op": "ne",
+     "path": "mapspec.scene.mode",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f21-03-medium",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.dimension",
+     "value": "3d"
+    }
+   ],
+   "family": "F21",
+   "id": "f21-03-static-medium",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "representation",
+    "negative"
+   ],
+   "timeout_s": 60,
+   "title": "静态媒介：打印用 3D → 降级非 3d",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "导出一张打印用的立体地图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "medium": "print",
+        "user_dimension": "3d"
+       },
+       "call_id": "apply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "导出一张打印用的立体地图"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f21-04-pref",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.terrain_requested",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f21-04-verdict-na",
+     "kind": "scene3d_verdict",
+     "note": "纯能力探测无 scene 写入，无 3D 面可判——completed 是『探测完成』而非『3D 完成』（display 门 not_applicable）",
+     "op": "eq",
+     "path": "scene3d.verdict",
+     "value": "completed"
+    }
+   ],
+   "family": "F21",
+   "id": "f21-04-terrain-unavailable",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "capability",
+    "negative"
+   ],
+   "timeout_s": 60,
+   "title": "能力门：无 raster-dem 源 → terrain unavailable + alternatives",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "叠加地形起伏效果",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "init",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_project_init"
+      },
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "caps",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "get_3d_capabilities"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "叠加地形起伏效果"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f21-05-no-scene",
+     "kind": "mapspec_scene",
+     "note": "被拒事务不得留下半成品 scene",
+     "op": "eq",
+     "path": "mapspec.scene",
+     "value": null
+    }
+   ],
+   "family": "F21",
+   "id": "f21-05-dangling-terrain",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "negative",
+    "guard"
+   ],
+   "timeout_s": 60,
+   "title": "边界：悬空 terrain.source → set_map_scene 拒绝",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "叠加不存在的地形源",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "init",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_project_init"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "scene": {
+         "mode": "2.5d",
+         "terrain": {
+          "source": "ghost"
+         }
+        }
+       },
+       "call_id": "bad",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "set_map_scene"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "叠加不存在的地形源"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f22-01-pitch",
+     "kind": "mapspec_view",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.view.pitch",
+     "value": 45.0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f22-01-bearing",
+     "kind": "mapspec_view",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.view.bearing",
+     "value": 45.0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f22-01-ir",
+     "kind": "requirement_state",
+     "note": "用户方位话语进 IR（cue）",
+     "op": "eq",
+     "path": "requirement.scene.camera_bearing",
+     "value": 45.0
+    }
+   ],
+   "family": "F22",
+   "id": "f22-01-camera-applies",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "camera"
+   ],
+   "timeout_s": 60,
+   "title": "相机链：fly_camera → SetView 事务（pitch/bearing 落 spec）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "从西南方向看这座城市",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "bearing": 45.0,
+        "pitch": 45.0
+       },
+       "call_id": "fly",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "fly_camera"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "从西南方向看这座城市"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "data",
+     "id": "f22-02-viewport",
+     "kind": "interaction_state",
+     "note": "Interaction IR 摄入可观测",
+     "op": "eq",
+     "path": "interaction.viewport.pitch",
+     "value": 65.0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f22-02-not-yanked",
+     "kind": "mapspec_view",
+     "note": "agent 相机不得偷改用户镜头",
+     "op": "ne",
+     "path": "mapspec.view.pitch",
+     "value": 30.0
+    }
+   ],
+   "family": "F22",
+   "id": "f22-02-user-wins-camera",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "camera",
+    "user-wins",
+    "negative",
+    "interaction"
+   ],
+   "timeout_s": 60,
+   "title": "user-wins：用户手动调镜头后 fly_camera 被抑制",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "看地图（用户随后手动调整视角）",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "init",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_project_init"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "events": [
+         {
+          "client_seq": 1,
+          "kind": "viewport_settled",
+          "payload": {
+           "bearing": 88.0,
+           "center": [
+            104.0,
+            30.6
+           ],
+           "pitch": 65.0,
+           "zoom": 11.0
+          }
+         }
+        ]
+       },
+       "call_id": "vp",
+       "expect_error": false,
+       "kind": "interaction_event",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "pitch": 30.0
+       },
+       "call_id": "fly",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "fly_camera"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "看地图（用户随后手动调整视角）"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f22-03-mode",
+     "kind": "mapspec_scene",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.scene.mode",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f22-03-pitch",
+     "kind": "mapspec_view",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.view.pitch",
+     "value": 30.0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f22-03-ir-pitch",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.camera_pitch",
+     "value": 30.0
+    }
+   ],
+   "family": "F22",
+   "id": "f22-03-camera-scene",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "camera",
+    "composition"
+   ],
+   "timeout_s": 60,
+   "title": "组合：场景切换后相机跟随（3d 档位相机）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "切成 3D 视图并压低视角俯仰角 30 度",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "layer": {
+         "extrusion": {
+          "height_field": "height",
+          "stats": {
+           "valid": 25
+          }
+         },
+         "id": "bldg",
+         "source": "features",
+         "type": "fill-extrusion"
+        }
+       },
+       "call_id": "bldg",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_layer_upsert"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "user_dimension": "3d"
+       },
+       "call_id": "apply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "bearing": -15.0,
+        "pitch": 30.0
+       },
+       "call_id": "fly",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "fly_camera"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "切成 3D 视图并压低视角俯仰角 30 度"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f22-04-bearing",
+     "kind": "mapspec_view",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.view.bearing",
+     "value": -135.0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f22-04-ir-once",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.camera_bearing",
+     "value": -135.0
+    }
+   ],
+   "family": "F22",
+   "id": "f22-04-repeat-camera",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "camera",
+    "idempotent",
+    "multiturn"
+   ],
+   "timeout_s": 60,
+   "title": "重复请求：相同相机载荷重复下发 → 视图值稳定",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "从东北方向看",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "bearing": -135.0
+       },
+       "call_id": "fly",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "fly_camera"
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "从东北方向看（重复）",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "bearing": -135.0
+       },
+       "call_id": "fly2",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "fly_camera"
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "从东北方向看，再说一次"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f23-01-goal",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "contains",
+     "path": "requirement.scene.analysis_goals",
+     "value": "viewshed"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f23-01-no-scene",
+     "kind": "mapspec_scene",
+     "note": "decline 不产生任何场景/分析副作用",
+     "op": "eq",
+     "path": "mapspec.scene",
+     "value": null
+    }
+   ],
+   "family": "F23",
+   "id": "f23-01-viewshed-no-dem",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "analysis",
+    "negative",
+    "decline"
+   ],
+   "timeout_s": 60,
+   "title": "分析门：无 DEM 能力 → run_3d_analysis typed decline",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "计算塔台的通视范围",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "init",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_project_init"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "observer_x": 104.0,
+        "observer_y": 30.6,
+        "raster_path": "dem.tif"
+       },
+       "call_id": "run",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "计算塔台的通视范围"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f23-02-goal",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "contains",
+     "path": "requirement.scene.analysis_goals",
+     "value": "viewshed"
+    }
+   ],
+   "family": "F23",
+   "id": "f23-02-missing-path",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "analysis",
+    "negative",
+    "decline"
+   ],
+   "timeout_s": 60,
+   "title": "分析门：缺 raster_path → typed decline（不猜路径）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "算视域（没给数据）",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "observer_x": 1.0,
+        "observer_y": 1.0
+       },
+       "call_id": "run",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "算视域（没给数据）"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f23-03-goal",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "contains",
+     "path": "requirement.scene.analysis_goals",
+     "value": "skyline"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f23-03-no-side-effect",
+     "kind": "mapspec_scene",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.scene",
+     "value": null
+    }
+   ],
+   "family": "F23",
+   "id": "f23-03-skyline-pending",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "analysis",
+    "negative",
+    "decline"
+   ],
+   "timeout_s": 60,
+   "title": "分析门：skyline 待 G3D03 → typed decline + alternatives",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "评估天际线影响",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "init",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_project_init"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "skyline"
+       },
+       "call_id": "run",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "评估天际线影响"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f23-04-goal",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "contains",
+     "path": "requirement.scene.analysis_goals",
+     "value": "viewshed"
+    }
+   ],
+   "family": "F23",
+   "id": "f23-04-missing-observer",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "analysis",
+    "negative",
+    "decline"
+   ],
+   "timeout_s": 60,
+   "title": "分析门：缺观察点 → typed decline",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "算个视域（没说观察点）",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "raster_path": "dem.tif"
+       },
+       "call_id": "run",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "算个视域（没说观察点）"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f24-01-layer",
+     "kind": "mapspec_layer",
+     "note": "",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 1
+    }
+   ],
+   "family": "F24",
+   "id": "f24-01-layer-hidden",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "interaction_mutation_link: layer_visibility_changed 的 mutation 链接需要前端真实 client_mutation_id 与 mapspec mutation 对账，离线注入无对应 mutation → attempted_not_applied 语义（不伪造 committed）"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "interaction"
+   ],
+   "timeout_s": 60,
+   "title": "交互：隐藏结果层 → user_overrides 投影可观测",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "出图后隐藏白模层",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "layer": {
+         "extrusion": {
+          "height_field": "height",
+          "stats": {
+           "valid": 25
+          }
+         },
+         "id": "bldg",
+         "source": "features",
+         "type": "fill-extrusion"
+        }
+       },
+       "call_id": "bldg",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_layer_upsert"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "events": [
+         {
+          "client_mutation_id": "m-hide-1",
+          "client_seq": 1,
+          "kind": "layer_visibility_changed",
+          "payload": {
+           "layer_id": "bldg",
+           "visible": false
+          }
+         }
+        ]
+       },
+       "call_id": "hide",
+       "expect_error": false,
+       "kind": "interaction_event",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "出图后隐藏白模层"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "data",
+     "id": "f24-02-selection",
+     "kind": "interaction_state",
+     "note": "",
+     "op": "eq",
+     "path": "interaction.selection.feature_id",
+     "value": "peak-b"
+    }
+   ],
+   "family": "F24",
+   "id": "f24-02-observer-selected",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "interaction"
+   ],
+   "timeout_s": 60,
+   "title": "交互：点选新观察点 → selection 投影（失效裁决输入面）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "看地图并点选一个山头",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "events": [
+         {
+          "client_seq": 1,
+          "kind": "feature_selected",
+          "payload": {
+           "feature_id": "peak-b",
+           "layer_id": "peaks"
+          }
+         }
+        ]
+       },
+       "call_id": "sel",
+       "expect_error": false,
+       "kind": "interaction_event",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "看地图并点选一个山头"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "data",
+     "id": "f24-03-aoi",
+     "kind": "interaction_state",
+     "note": "",
+     "op": "eq",
+     "path": "interaction.active_aoi.geometry_type",
+     "value": "Polygon"
+    }
+   ],
+   "family": "F24",
+   "id": "f24-03-aoi-drawn",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "interaction"
+   ],
+   "timeout_s": 60,
+   "title": "交互：绘制 AOI → active_aoi 投影",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "圈一个分析范围",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "events": [
+         {
+          "client_seq": 1,
+          "kind": "aoi_drawn",
+          "payload": {
+           "geometry_type": "Polygon",
+           "vertex_count": 5
+          }
+         }
+        ]
+       },
+       "call_id": "aoi",
+       "expect_error": false,
+       "kind": "interaction_event",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "圈一个分析范围"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f25-01-dim",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.dimension",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f25-01-lock",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "contains",
+     "path": "requirement.scene.scene_locks",
+     "value": "scene_mode=3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f25-01-revision",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "ge",
+     "path": "requirement.revision",
+     "value": 1
+    }
+   ],
+   "family": "F25",
+   "id": "f25-01-dimension-change",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "multiturn",
+    "requirement"
+   ],
+   "timeout_s": 60,
+   "title": "多轮：2D → 3D 维度演进（IR patch + 锁换新）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "成都小学分布",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "切成 3D 视图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "成都小学分布（随后切 3D）"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f25-02-dim",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "eq",
+     "path": "requirement.scene.dimension",
+     "value": "2d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f25-02-lock",
+     "kind": "requirement_state",
+     "note": "",
+     "op": "contains",
+     "path": "requirement.scene.scene_locks",
+     "value": "scene_mode=2d"
+    }
+   ],
+   "family": "F25",
+   "id": "f25-02-back-to-2d",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "multiturn",
+    "user-wins"
+   ],
+   "timeout_s": 60,
+   "title": "多轮：3D → 2D 回切（用户改主意，锁换新不挡 owner）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "切成 3D 视图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "改成 2D 平面地图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "先 3D 后改回平面"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f25-03-dim-kept",
+     "kind": "requirement_state",
+     "note": "user scene_mode 锁跨任务携带（D-05 user-wins 存活）",
+     "op": "eq",
+     "path": "requirement.scene.dimension",
+     "value": "3d"
+    }
+   ],
+   "family": "F25",
+   "id": "f25-03-pref-survives",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "multiturn",
+    "carry"
+   ],
+   "timeout_s": 60,
+   "title": "跨任务：3D 偏好在新任务重建后存活（carried locks）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "展示成都市的立体地形",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "查询附近的咖啡店",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "先立体地形，再查询咖啡店"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f26-01-mode",
+     "kind": "mapspec_scene",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.scene.mode",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f26-01-verdict",
+     "kind": "scene3d_verdict",
+     "note": "",
+     "op": "in",
+     "path": "scene3d.verdict",
+     "value": [
+      "completed",
+      "degraded"
+     ]
+    }
+   ],
+   "family": "F26",
+   "id": "f26-01-interrupted-reapply",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "reentry",
+    "recovery"
+   ],
+   "timeout_s": 60,
+   "title": "重入：scene 应用后中断（未结算）→ 再入同 scene 稳定",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": true,
+     "message": "展示成都建筑白模（含高度数据）",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "layer": {
+         "extrusion": {
+          "height_field": "height",
+          "stats": {
+           "valid": 25
+          }
+         },
+         "id": "bldg",
+         "source": "features",
+         "type": "fill-extrusion"
+        }
+       },
+       "call_id": "bldg",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_layer_upsert"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "user_dimension": "3d"
+       },
+       "call_id": "apply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "继续，把 3D 场景配好",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "user_dimension": "3d"
+       },
+       "call_id": "reapply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "建筑白模 3D（中途进程被打断）"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f26-02-mode",
+     "kind": "mapspec_scene",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.scene.mode",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f26-02-pitch-kept",
+     "kind": "mapspec_view",
+     "note": "scene 应用不重置既有视图",
+     "op": "eq",
+     "path": "mapspec.view.pitch",
+     "value": 40.0
+    }
+   ],
+   "family": "F26",
+   "id": "f26-02-camera-then-scene",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "reentry",
+    "camera"
+   ],
+   "timeout_s": 60,
+   "title": "重入：相机已落 → 中断 → 场景再入（相机不被重置）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": true,
+     "message": "从西南方向看",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "bearing": 45.0,
+        "pitch": 40.0
+       },
+       "call_id": "fly",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "fly_camera"
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "切成 3D 视图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "layer": {
+         "extrusion": {
+          "height_field": "height",
+          "stats": {
+           "valid": 25
+          }
+         },
+         "id": "bldg",
+         "source": "features",
+         "type": "fill-extrusion"
+        }
+       },
+       "call_id": "bldg",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_layer_upsert"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "user_dimension": "3d"
+       },
+       "call_id": "apply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "调视角后切 3D（中途打断）"
+  },
+  {
+   "datasets": [],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f26-03-not-25d-dangling",
+     "kind": "mapspec_scene",
+     "note": "无核实源绝不绑 terrain（半成品防线）",
+     "op": "eq",
+     "path": "mapspec.scene.terrain_source",
+     "value": ""
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f26-03-mode",
+     "kind": "mapspec_scene",
+     "note": "2.5d 唯一垂直通道是 terrain；无源即诚实退 2d",
+     "op": "in",
+     "path": "mapspec.scene.mode",
+     "value": [
+      "2d",
+      ""
+     ]
+    }
+   ],
+   "family": "F26",
+   "id": "f26-03-verdict-honesty",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "negative",
+    "verdict",
+    "honesty"
+   ],
+   "timeout_s": 60,
+   "title": "判据诚实：2.5d 悬空 terrain → verdict blocked（显示门）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "用地形但数据面缺席",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "terrain_requested": true,
+        "user_dimension": "2.5d"
+       },
+       "call_id": "apply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "用地形但数据面缺席"
   }
  ],
  "schema_version": "task_scenario.v1"
