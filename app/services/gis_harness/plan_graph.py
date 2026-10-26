@@ -209,7 +209,14 @@ def _capability_meta(capability: str) -> tuple[str, str]:
 
     caps = get_capability_registry()
     d = caps.get(capability)
-    kind = "requirement" if getattr(d, "category", "") == "data_access" else "analysis"
+    category = getattr(d, "category", "")
+    # G3D04：presentation 类能力（scene_representation 等）派生 scene 节点
+    if category == "presentation":
+        kind = "scene"
+    elif category == "data_access":
+        kind = "requirement"
+    else:
+        kind = "analysis"
     cost = str(getattr(d, "preferred_execution", "") or "")
     return kind, cost
 

@@ -472,7 +472,7 @@ class TestO12PerformanceBudget:
             elapsed = time.perf_counter() - t0
         finally:
             monkeypatch.setattr(builtins, "open", real_open)
-        assert contracts == get_algorithm_registry().count == 237
+        assert contracts == get_algorithm_registry().count == 240  # G3D04：+3 platform 绑定（scene_representation/terrain_scene_binding/scene_camera_action）
         assert resolves > 0
         assert elapsed < 2.0, f"237 算法 resolve+契约投影 {elapsed:.2f}s 超预算"
 

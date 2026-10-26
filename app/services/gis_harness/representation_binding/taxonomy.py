@@ -38,6 +38,7 @@ SemanticDimension = Literal[
     "title_content",        # 显式标题/内容
     "palette",              # 色带 pin（grammar face）
     "representation",       # 表达类型 pin（grammar face）
+    "scene_mode",           # G3D04：2d/2.5d/3d 场景维度（requirement.scene 面）
     "undo_rebaseline",      # 用户 undo 后的语义重定基
     "none",
 ]
@@ -58,6 +59,11 @@ _TAXONOMY_TABLE: Dict[str, tuple] = {
     "SetWorkbenchStateIntent": ("requirement_significant", "layer_lock"),
     "PatchWorkbenchDeltaIntent": ("requirement_significant", "layer_lock"),
     "RemoveLayerIntent": ("requirement_significant", "layer_visibility"),
+    # G3D04：用户 2D↔3D 场景切换是持久且跨轮有语义的 presentation 选择
+    # （与 palette/geometry_kind 同层级）——user origin 投影回
+    # requirement.scene.dimension（agent origin 不投影：agent 决策不是
+    # 用户偏好，见 semantic_projection 的 origin 门）。
+    "SetSceneIntent": ("requirement_significant", "scene_mode"),
     # ── presentation-ephemeral（永不进入 requirement） ──────────────────
     "SetViewIntent": ("presentation_ephemeral", "none"),
     # ── system repair（不冒充用户偏好） ────────────────────────────────
@@ -71,7 +77,6 @@ _TAXONOMY_TABLE: Dict[str, tuple] = {
     "InitProjectIntent": ("unbound", "none"),
     "CheckpointIntent": ("unbound", "none"),
     "SetScenarioModeIntent": ("unbound", "none"),
-    "SetSceneIntent": ("unbound", "none"),
     "ReorderLayersIntent": ("unbound", "none"),
     # Rollback/RestoreStyle：语义随 origin 动态判定——user 的 undo 触发语义
     # 重定基（undo_rebaseline），agent/system 的回滚属组织面不投影。

@@ -162,4 +162,19 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ["webgis_context_bind_mission", "webgis_context_revalidate"],
         deterministic=False,
     ),
+    # G3D04：三维表达/地形绑定/相机动作——presentation 面工具绑定契约
+    # （能力登记见 capabilities/scene3d.py；科学分析走 terrain.viewshed，
+    # 本绑定只覆盖表达编排面，不承载科学元数据）。
+    _platform_binding(
+        "scene_representation", "三维场景表达决策（工具面绑定契约）",
+        ["get_3d_capabilities", "run_3d_analysis"],
+    ),
+    _platform_binding(
+        "terrain_scene_binding", "地形场景绑定（工具面绑定契约）",
+        ["apply_scene_representation"],
+    ),
+    _platform_binding(
+        "scene_camera_action", "场景相机动作（工具面绑定契约）",
+        ["fly_camera"],
+    ),
 ]
