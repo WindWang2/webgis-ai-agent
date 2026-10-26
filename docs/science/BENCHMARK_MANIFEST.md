@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：129/237 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：133/241 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
@@ -123,11 +123,13 @@
 | `terrain.hypsometry` | O(N)（确定性直方） | approximate | 8B/cell | — | coarse | rtol=1e-09,atol=0 | low/low | — |
 | `terrain.landform` | — | — | 32B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
 | `terrain.least_cost_path` | — | — | 8B/cell | — | none | rtol=1e-09,atol=1e-09 | low/low | THREAD |
+| `terrain.line_of_sight` | — | approximate | 16B/cell | — | chunk_boundary | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.ls_factor` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.morphometry` | — | — | 40B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.openness` | — | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.pfafstetter` | O(S log S)（干流上溯 + 支流归属 BFS，S=河网像元） | exact | 24B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-12,atol=0 | medium/medium | — |
 | `terrain.pfafstetter_multilevel` | O(L·S log S)（L=层级 ≤4；每段主干走法 + 支流归属 BFS） | exact | 24B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-12,atol=0 | medium/medium | — |
+| `terrain.profile` | — | approximate | 16B/cell | — | chunk_boundary | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.roughness` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.shreve` | O(N log N)（与 Strahler 同拓扑机器） | exact | 24B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-12,atol=0 | medium/medium | — |
 | `terrain.sink_fill` | O(N log N) | — | 32B/cell cells≤50000000 | full_heap(numpy,[1,50000000],exact);chunked_band(numpy,[,∞],approximate) | chunk_boundary | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
@@ -137,6 +139,8 @@
 | `terrain.spi` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.strahler` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
 | `terrain.streams` | — | — | 16B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
+| `terrain.surface_area` | — | approximate | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | low/medium | THREAD |
+| `terrain.surface_distance` | — | approximate | 16B/cell | — | chunk_boundary | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.tpi` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.tri` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.twi` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
