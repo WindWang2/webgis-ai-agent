@@ -8,6 +8,9 @@
 export interface GlbFixtureOptions {
   /** 三角形数（生成立方体重复铺开；默认 1 = 单三角）。 */
   triangles?: number;
+  /** 顶点模式 cover：三角形在 East-Up 平面内包住原点（拾取旅程用 ——
+   *  屏心射线命中内部而非边界顶点）。 */
+  coverOrigin?: boolean;
   material?: {
     baseColorFactor?: [number, number, number, number];
     doubleSided?: boolean;
@@ -29,10 +32,17 @@ export function buildGlbFixture(opts: GlbFixtureOptions = {}): ArrayBuffer {
   const positions = new Float32Array(triangles * 9);
   for (let t = 0; t < triangles; t++) {
     const o = t * 9;
-    // 每个三角 z 提升 1：可预测有界几何
-    positions[o + 0] = 0; positions[o + 1] = 0; positions[o + 2] = t;
-    positions[o + 3] = 1; positions[o + 4] = 0; positions[o + 5] = t;
-    positions[o + 6] = 0; positions[o + 7] = 1; positions[o + 8] = t;
+    if (opts.coverOrigin) {
+      // East-Up 平面内包住原点的三角（glTF y-up：y = 高度）。
+      positions[o + 0] = -1; positions[o + 1] = -1; positions[o + 2] = t;
+      positions[o + 3] = 2; positions[o + 4] = 1; positions[o + 5] = t;
+      positions[o + 6] = -1; positions[o + 7] = 3; positions[o + 8] = t;
+    } else {
+      // 每个三角 z 提升 1：可预测有界几何
+      positions[o + 0] = 0; positions[o + 1] = 0; positions[o + 2] = t;
+      positions[o + 3] = 1; positions[o + 4] = 0; positions[o + 5] = t;
+      positions[o + 6] = 0; positions[o + 7] = 1; positions[o + 8] = t;
+    }
   }
   const normals = new Float32Array(triangles * 9);
   for (let i = 0; i < normals.length; i += 3) {

@@ -16,8 +16,16 @@
 import * as THREE from 'three';
 
 export interface Scene3dLayerHooks {
-  /** 帧回调（manager 注入：拾取矩阵快照 / 调度 tick）。 */
-  onFrame?: (mvp: number[]) => void;
+  /**
+   * 帧回调（manager 注入：拾取矩阵快照 / 调度 tick）。
+   *
+   * @param mvp mercator 像素世界 → clip（MapLibre v6 语义：世界 =
+   *   mercator[0,1] × worldSize，z = 海拔 × pixelPerMeter 同域 —— 见
+   *   maplibre transform._viewProjMatrix 源：x/y 平移 merc[0,1]、z 缩放
+   *   pixelPerMeter，透视距为像素单位）。
+   * @param worldScale 本帧 worldSize（512·2^zoom；placement 乘它进像素域）。
+   */
+  onFrame?: (mvp: number[] | Float32Array, worldScale: number) => void;
 }
 
 export interface RendererCarrier {
@@ -87,6 +95,8 @@ export function makeScene3dCustomLayer(params: {
   assetId: string;
   map: object;
   group: THREE.Group;
+  /** [0,1] mercator 域放置矩阵（manager 持有；每帧 × worldScale）。 */
+  placement: () => number[];
   hooks?: Scene3dLayerHooks;
   /** 渲染降档（弱机：关抗锯齿/光照简化由 manager 在 renderer 上配置）。 */
   onRenderError?: (err: unknown) => void;
@@ -101,19 +111,27 @@ export function makeScene3dCustomLayer(params: {
   const layerId = `scene3d-${params.assetId}`;
   let carrier: RendererCarrier | null = null;
   let groupMounted = false;
+  const scaleMat = new THREE.Matrix4();
 
-  return {
+  const mapRef = params.map as { getZoom?: () => number } | undefined;
+  const layer = {
     id: layerId,
-    type: 'custom',
-    renderingMode: '3d',
-    onAdd(_map, gl) {
+    type: 'custom' as const,
+    renderingMode: '3d' as const,
+    map: mapRef,
+    onAdd(_map: unknown, gl: WebGLRenderingContext | WebGL2RenderingContext) {
       carrier = acquireRenderer(params.map, gl);
       if (carrier && !groupMounted) {
         carrier.scene.add(params.group);
         groupMounted = true;
       }
     },
-    onRemove(_map, _gl) {
+    /** 本帧 worldSize（MapLibre transform tileSize=512 × 2^zoom）。 */
+    _worldScale(this: { map?: { getZoom?: () => number } }): number {
+      const zoom = this.map?.getZoom?.();
+      return 512 * Math.pow(2, typeof zoom === 'number' && Number.isFinite(zoom) ? zoom : 0);
+    },
+    onRemove(_map: unknown, _gl: unknown) {
       if (carrier && groupMounted) {
         carrier.scene.remove(params.group);
         groupMounted = false;
@@ -121,21 +139,25 @@ export function makeScene3dCustomLayer(params: {
       releaseRenderer(params.map);
       carrier = null;
     },
-    render(gl, args) {
+    render(gl: WebGLRenderingContext | WebGL2RenderingContext, args: unknown) {
       if (!carrier) {
         carrier = acquireRenderer(params.map, gl);
-        if (carrier && !groupMounted) {
+        if (!carrier) return;
+        if (!groupMounted) {
           carrier.scene.add(params.group);
           groupMounted = true;
         }
-        if (!carrier) return;
       }
       const mvp = extractMvp(args);
       if (!mvp) return;
+      // 本帧世界尺度：placement（[0,1] mercator 域）× W 进像素世界。
+      const layerThis = this as unknown as { map?: { getZoom?: () => number }; _worldScale(): number };
+      const worldScale = layerThis._worldScale();
+      applyPlacement(params.group, params.placement(), worldScale, scaleMat);
       try {
         carrier.camera.projectionMatrix.fromArray(mvp);
         carrier.camera.projectionMatrixInverse.copy(carrier.camera.projectionMatrix).invert();
-        params.hooks?.onFrame?.(mvp);
+        params.hooks?.onFrame?.(mvp, worldScale);
         const renderer = carrier.renderer;
         renderer.resetState();
         renderer.render(carrier.scene, carrier.camera);
@@ -144,6 +166,24 @@ export function makeScene3dCustomLayer(params: {
       }
     },
   };
+  return layer;
+}
+
+/**
+ * 应用像素世界放置：group.matrix = S(worldScale) · placement。
+ * （均匀缩放与旋转交换 → 等价 T(anchor·W)·R·F·S(meterUnit·W)；
+ * MapLibre mercator-z 与 x/y 同 ×W —— 见 hooks.onFrame 语义注记。）
+ */
+export function applyPlacement(
+  group: THREE.Group,
+  placement: number[],
+  worldScale: number,
+  scratch: THREE.Matrix4,
+): void {
+  scratch.makeScale(worldScale, worldScale, worldScale);
+  group.matrix.fromArray(placement).premultiply(scratch);
+  group.matrixAutoUpdate = false;
+  group.matrixWorldNeedsUpdate = true;
 }
 
 interface RenderArgsLike {
@@ -151,8 +191,10 @@ interface RenderArgsLike {
   defaultProjectionData?: { mainMatrix?: number[] };
 }
 
-function extractMvp(args: unknown): number[] | null {
+function extractMvp(args: unknown): number[] | Float32Array | null {
   const a = args as RenderArgsLike | undefined;
   const mvp = a?.modelViewProjectionMatrix ?? a?.defaultProjectionData?.mainMatrix;
-  return Array.isArray(mvp) && mvp.length === 16 ? mvp : null;
+  // MapLibre 的 mat4 是 Float32Array（非普通数组 —— Array.isArray 会误拒）。
+  if (mvp && typeof mvp === 'object' && mvp.length === 16) return mvp;
+  return null;
 }

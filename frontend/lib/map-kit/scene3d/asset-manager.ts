@@ -73,8 +73,10 @@ interface MountedAsset {
   controller: AbortController;
   tickTimer: ReturnType<typeof setTimeout> | null;
   lastTickAt: number;
-  /** 最近帧 MVP（拾取/眼位/视锥消费）。 */
+  /** 最近帧 MVP（拾取/眼位/视锥消费；像素世界域）。 */
   lastMvp: Mat4 | null;
+  /** 最近帧 worldSize（placement×W 进像素域 —— 与 lastMvp 同帧配对）。 */
+  lastWorldScale: number;
   loadInFlight: number;
   /** 挂载世代（sync 差分时旧代在途回调作废）。 */
   generation: number;
@@ -101,6 +103,7 @@ type MapLike = {
   getCanvasContainer?: () => { clientHeight: number };
   getContainer?: () => { clientHeight: number };
   queryTerrainElevation?: (lngLat: { lng: number; lat: number }) => number | null;
+  getZoom?: () => number;
 } & object;
 
 const managers = new WeakMap<object, Scene3DManager>();
@@ -222,6 +225,10 @@ export class Scene3DManager {
   pick(px: number, py: number, canvasWidth: number, canvasHeight: number): Scene3dPickHit | null {
     const ray = this.rayFromPixel(px, py, canvasWidth, canvasHeight);
     if (!ray) return null;
+    // 世界域射线（像素 mercator）—— Raycaster 按各 mesh 的 matrixWorld
+    // （含 group 的 placement×W，渲染期更新）自行换算；**不得**预变换到
+    // 局部（Mesh.raycast 会再乘 inverse(matrixWorld) —— 双重变换会让
+    // 包围球早退，永远 0 命中）。
     const raycaster = new THREE.Raycaster();
     raycaster.ray.origin.set(ray.origin.x, ray.origin.y, ray.origin.z);
     raycaster.ray.direction.set(ray.direction.x, ray.direction.y, ray.direction.z);
@@ -229,10 +236,6 @@ export class Scene3DManager {
     let best: { hit: THREE.Intersection; asset: MountedAsset } | null = null;
     for (const asset of this.mounted.values()) {
       if (!asset.visible) continue;
-      const inv = invertMat4(asset.placement);
-      if (!inv) continue;
-      const localRaycaster = new THREE.Raycaster();
-      localRaycaster.ray.copy(raycaster.ray).applyMatrix4(new THREE.Matrix4().fromArray(inv));
       const targets: THREE.Object3D[] = [];
       if (asset.singleModel) {
         asset.singleModel.root.traverse((o) => { if ((o as THREE.Mesh).isMesh) targets.push(o); });
@@ -242,8 +245,7 @@ export class Scene3DManager {
           if (entry.model) entry.model.root.traverse((o) => { if ((o as THREE.Mesh).isMesh) targets.push(o); });
         }
       }
-      // 局部空间 = 米制（placement 含米→世界换算），distance 即米。
-      const hits = localRaycaster.intersectObjects(targets, false);
+      const hits = raycaster.intersectObjects(targets, false);
       if (hits.length > 0 && (!best || hits[0].distance < best.hit.distance)) {
         best = { hit: hits[0], asset };
       }
@@ -251,17 +253,21 @@ export class Scene3DManager {
     if (!best) return null;
     const mesh = best.hit.object as THREE.Mesh;
     const meta = (mesh.userData?.scene3d ?? {}) as { nodeName?: string | null; extras?: unknown };
-    const worldPoint = transformPoint(best.asset.placement, {
-      x: best.hit.point.x, y: best.hit.point.y, z: best.hit.point.z,
-    });
+    // 命中点已在像素世界（matrixWorld 域）；除 W 回 [0,1] mercator 转地理。
+    const w = best.asset.lastWorldScale || 1;
+    const worldPoint = { x: best.hit.point.x / w, y: best.hit.point.y / w, z: best.hit.point.z / w };
+    const ll = worldToLngLatAlt(worldPoint);
+    // 像素距离 → 米：pixelPerMeter = W / circumferenceAtLatitude(anchor)。
+    const anchor = this.anchorOf(best.asset);
+    const pixelPerMeter = (best.asset.lastWorldScale || 1) / (2 * Math.PI * 6371008.8 * Math.cos(anchor.lat * Math.PI / 180));
     return {
       assetId: best.asset.assetId,
       sourceId: best.asset.sourceId,
       tileId: typeof mesh.userData?.scene3dTileId === 'string' ? mesh.userData.scene3dTileId : null,
       nodeName: meta.nodeName ?? null,
       extras: best.hit.object.userData?.scene3dTileExtras ?? meta.extras ?? undefined,
-      lngLat: worldToLngLatAlt(worldPoint),
-      distanceM: best.hit.distance,
+      lngLat: ll,
+      distanceM: best.hit.distance / (pixelPerMeter || 1),
     };
   }
 
@@ -276,13 +282,14 @@ export class Scene3DManager {
   }
 
   /** 观察面：当前挂载摘要。 */
-  describe(): { assetId: string; format: string; visible: boolean; tilesReady: number | null; state: string }[] {
+  describe(): { assetId: string; format: string; visible: boolean; tilesReady: number | null; state: string; hasRenderFrame: boolean }[] {
     return [...this.mounted.values()].map((a) => ({
       assetId: a.assetId,
       format: a.format,
       visible: a.visible,
       tilesReady: a.tiles ? [...a.tiles.values()].filter((t) => t.model).length : null,
       state: a.singleModel || (a.tiles && a.tileset) ? 'mounted' : 'loading',
+      hasRenderFrame: !!a.lastMvp,
     }));
   }
 
@@ -330,6 +337,7 @@ export class Scene3DManager {
       tickTimer: null,
       lastTickAt: 0,
       lastMvp: null,
+      lastWorldScale: 1,
       loadInFlight: 0,
       generation: 0,
     };
@@ -340,10 +348,12 @@ export class Scene3DManager {
       assetId,
       map: this.map,
       group: mounted.group,
+      placement: () => mounted.placement,
       hooks: {
-        onFrame: (mvp) => {
+        onFrame: (mvp, worldScale) => {
           if (mounted.generation !== generation) return;
-          mounted.lastMvp = mvp.slice() as Mat4;
+          mounted.lastMvp = Array.from(mvp as ArrayLike<number>) as Mat4;
+          mounted.lastWorldScale = worldScale;
         },
       },
       onRenderError: () => {
@@ -445,12 +455,8 @@ export class Scene3DManager {
     );
   }
 
-  /** placement 应用到渲染图（单模型直接挂矩阵；tileset 由外层 group 承载）。 */
+  /** placement 变更记录（渲染矩阵由 custom layer 每帧按 worldScale 应用）。 */
   private applyPlacement(mounted: MountedAsset): void {
-    mounted.group.matrix.fromArray(mounted.placement);
-    mounted.group.matrixAutoUpdate = false;
-    // matrixAutoUpdate=false 下矩阵直改必须显式传播（renderer 不感知）。
-    mounted.group.matrixWorldNeedsUpdate = true;
     if (mounted.singleModel) {
       mounted.singleModel.root.matrix.identity();
       mounted.singleModel.root.matrixAutoUpdate = false;
@@ -494,11 +500,12 @@ export class Scene3DManager {
 
     const eye = this.eyeFromMvp(mounted.lastMvp);
     if (!eye) return; // 首帧未渲染：等 onFrame 提供矩阵
-    const eyeEnu = worldToEnu(mounted.placement, eye);
+    const placementPx = pixelPlacement(mounted);
+    const eyeEnu = worldToEnu(placementPx, eye);
 
     const worldPlanes = mounted.lastMvp ? frustumPlanesFromMat4(mounted.lastMvp) : null;
     const enuPlanes = worldPlanes
-      ? worldPlanes.map((p) => planeToLocalSpace(p, mounted.placement))
+      ? worldPlanes.map((p) => planeToLocalSpace(p, placementPx))
       : null;
 
     const loadedSet = new Set<string>();
@@ -590,6 +597,13 @@ export class Scene3DManager {
       tiles.delete(entry.tile.id);
       excess -= 1;
     }
+  }
+
+  /** 锚点地理位（placement 平移分量反解；[0,1] mercator 域）。 */
+  private anchorOf(mounted: MountedAsset): { lng: number; lat: number } {
+    const w: WorldCoord = { x: mounted.placement[12], y: mounted.placement[13], z: mounted.placement[14] };
+    const ll = worldToLngLatAlt(w);
+    return { lng: ll.lng, lat: ll.lat };
   }
 
   private canvasHeight(): number {
@@ -705,6 +719,18 @@ function collectTiles(tile: TileNode, into: Map<string, TileEntry>): void {
     into.set(tile.id, { tile, model: null, loading: false, lastUsed: 0 });
   }
   for (const c of tile.children) collectTiles(c, into);
+}
+
+/** 像素世界 placement：S(W)·placement（与最近帧 mvp 同域）。 */
+function pixelPlacement(asset: MountedAsset): Mat4 {
+  const w = asset.lastWorldScale;
+  const m = asset.placement.slice() as Mat4;
+  // 均匀缩放预乘：T(a)·R·F·S(u) → S(W)·… = T(aW)·R·F·S(uW)
+  m[0] *= w; m[1] *= w; m[2] *= w;
+  m[4] *= w; m[5] *= w; m[6] *= w;
+  m[8] *= w; m[9] *= w; m[10] *= w;
+  m[12] *= w; m[13] *= w; m[14] *= w;
+  return m;
 }
 
 function matEquals(a: Mat4, b: Mat4): boolean {

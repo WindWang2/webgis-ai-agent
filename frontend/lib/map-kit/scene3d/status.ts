@@ -38,6 +38,18 @@ export function recordSceneAssetStatus(
     at: Date.now(),
   });
   if (ring.length > RING_MAX) ring = ring.slice(-RING_MAX);
+  mirrorToWindow();
+}
+
+/**
+ * dev-only 观察窗（map-panel `__mapErrors` 同款纪律：生产零暴露、有界、
+ * 仅开发诊断/旅程断言消费）。jsdom/测试环境无 window 时静默跳过。
+ */
+function mirrorToWindow(): void {
+  if (typeof window === 'undefined' || process.env.NODE_ENV !== 'development') return;
+  try {
+    (window as unknown as { __scene3dAssets?: unknown }).__scene3dAssets = ring.slice(-16);
+  } catch { /* 环境异常不影响主链 */ }
 }
 
 /** 去重快照（同资产同码只留最新一条；环序返回）。 */

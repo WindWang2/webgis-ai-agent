@@ -64,9 +64,8 @@ describe('parseTileset', () => {
 
   it('rejects 1.0 content.url', () => {
     const doc = buildTilesetFixture() as unknown as {
-      root: { content: Record<string, unknown> };
+      root: { content?: Record<string, unknown> };
     };
-    delete doc.root.content;
     doc.root.content = { url: 'root.b3dm' };
     expect(() => parseTileset(doc, OPTS)).toThrowError(/content\.url/);
   });

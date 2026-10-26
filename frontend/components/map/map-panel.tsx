@@ -55,6 +55,30 @@ export function sceneCameraIdentity(committed: unknown): string {
 /** Identity of spec-driven 3D scene assets（v1.7 G3D02）：mode + 资产
  *  （id/source/visible/placement/lod 的稳定串）。图层开关等 presentation
  *  变更不触发 3D 同步效应（资产挂载是 scene 域事实）。 */
+/** dev-only 3D 拾取观察窗（__mapErrors 同款纪律：生产零暴露、有界；
+ * 旅程/诊断消费）。 */
+function noteScene3dPickDebug(
+  point: { x: number; y: number },
+  canvas: { clientWidth?: number; clientHeight?: number } | undefined,
+  hit: { assetId: string } | null,
+  debugAssets?: unknown,
+  camera?: { center?: unknown; zoom?: unknown; pitch?: unknown; bearing?: unknown },
+): void {
+  if (process.env.NODE_ENV !== 'development') return
+  try {
+    ;(window as unknown as { __scene3dPick?: unknown }).__scene3dPick = {
+      at: `${Math.round(point.x)},${Math.round(point.y)}`,
+      canvas: `${canvas?.clientWidth ?? 0}x${canvas?.clientHeight ?? 0}`,
+      hit: hit ? hit.assetId : null,
+      ...(debugAssets ? { assets: debugAssets } : {}),
+      ...(camera ? {
+        center: camera.center ? `${(camera.center as { lng?: number }).lng?.toFixed(4)},${(camera.center as { lat?: number }).lat?.toFixed(4)}` : null,
+        zoom: camera.zoom, pitch: camera.pitch, bearing: camera.bearing,
+      } : {}),
+    }
+  } catch { /* 环境异常不影响主链 */ }
+}
+
 export function sceneAssetsIdentity(committed: unknown): string {
   const scene = (committed as {
     scene?: {
@@ -1036,12 +1060,24 @@ export function MapPanel({
         canvas?.clientWidth ?? 800,
         canvas?.clientHeight ?? 600,
       )
+      noteScene3dPickDebug(evt.point, canvas, hit3d, renderer.describeScene3dAssets(map), {
+        center: map.getCenter?.(), zoom: map.getZoom?.(), pitch: map.getPitch?.(), bearing: map.getBearing?.(),
+      })
       if (hit3d) {
         setScene3dPick({ ...hit3d, x: evt.point.x, y: evt.point.y })
         emitFeatureSelected({
           layerId: `scene3d:${hit3d.assetId}`,
           featureId: hit3d.tileId ?? hit3d.nodeName ?? undefined,
-          properties: { scene3d_asset: hit3d.assetId, source_id: hit3d.sourceId },
+          properties: {
+            scene3d_asset: hit3d.assetId,
+            source_id: hit3d.sourceId,
+            ...(hit3d.tileId ? { tile_id: hit3d.tileId } : {}),
+            ...(hit3d.nodeName ? { node_name: hit3d.nodeName } : {}),
+            distance_m: Math.round(hit3d.distanceM),
+            lng: Number(hit3d.lngLat.lng.toFixed(6)),
+            lat: Number(hit3d.lngLat.lat.toFixed(6)),
+            altitude_m: Math.round(hit3d.lngLat.altitudeM),
+          },
           datasetRef: hit3d.sourceId,
         })
         return
@@ -1071,6 +1107,7 @@ export function MapPanel({
         canvas?.clientWidth ?? 800,
         canvas?.clientHeight ?? 600,
       )
+      noteScene3dPickDebug(evt.point, canvas, hit3d)
       if (hit3d) {
         const extrasProps = hit3d.extras && typeof hit3d.extras === 'object'
           ? hit3d.extras as Record<string, unknown>
