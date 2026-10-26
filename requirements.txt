@@ -125,7 +125,7 @@ weasyprint>=70.0  # V6 ADR-0120: publication vector PDF（可选依赖，缺席�
 # （c31c29c3 dependabot 同款 bump）对齐 —— 下限落后于 lock 时
 # `pip install -c requirements.lock -r requirements.txt` 会挑到旧版，
 # 且 Lockfile Freshness 门禁的「lock 是否新鲜」判断被下限掩盖。
-pypdf>=6.21.0  # V6 ADR-0120: PDF 结构化读取（页数/文本提取验证）
+pypdf>=6.21.2  # V6 ADR-0120: PDF 结构化读取（页数/文本提取验证）
 
 # RAG & Vector Search
 # audit ISSUE-060（#1343）：下界提到 5.6.0 —— CVE-2026-68770 本地模型加载
