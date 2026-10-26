@@ -59,6 +59,43 @@ async def _interaction_snapshot(session_id: str) -> Dict[str, Any]:
     return await interaction_snapshot_via_store(session_data_manager, session_id)
 
 
+async def _record_degrade_reason(
+    session_id: str, decision: Any, apply_receipt: Dict[str, Any],
+) -> Optional[str]:
+    """决策降级注记 → Requirement IR ``scene.degrade_reason``（agent 记账）。
+
+    返回记录结果面（recorded/cleared/skipped/error:code）；任何失败都
+    fail-open——披露缺席不阻断场景应用。
+    """
+    try:
+        from app.services.gis_harness.requirement_ir.service import (
+            TurnPatch,
+            apply_user_patches,
+        )
+        from app.services.session_data import session_data_manager
+
+        notes = list(getattr(decision, "degradations", []) or [])
+        reason = notes[0].code if notes else ""
+        revision = apply_receipt.get("mutation_revision")
+        patch = TurnPatch(
+            op="set", path="scene.degrade_reason", value=reason,
+            actor="agent", turn=int(revision or 0),
+            reason="scene3d decision disclosure" if reason
+                   else "scene3d decision: no degradation",
+            op_id=f"scene3d-degrade-rev{revision if revision is not None else 'na'}",
+        )
+        res = await apply_user_patches(session_data_manager, session_id, [patch])
+        errors = [str(e) for e in (res.get("errors") or [])]
+        if "requirement_document_absent" in errors:
+            return "skipped"      # 会话尚无需求文档（如未走 intent）——非错误
+        if errors:
+            return f"error:{','.join(errors[:2])}"
+        return "recorded" if reason else "cleared"
+    except Exception as exc:  # noqa: BLE001 — 披露面 fail-open
+        logger.warning("degrade_reason recording failed: %s", exc)
+        return "error:exception"
+
+
 def register_scene_orchestration_tools(registry: ToolRegistry):
     """注册 G3D04 场景编排工具面。"""
 
@@ -191,6 +228,10 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
             evidence = verify_vertical_evidence(mapspec)
             capabilities = probe_scene3d_capabilities(
                 evidence, geometry_kinds=_geometry_kinds_of(mapspec), medium=medium)
+            # terrain 源选择：显式指定优先；否则在**已核实**源中取第一个
+            # （编排层的证据支撑选择，不是猜测——decision 只认核实过的 id）
+            verified_dem = dem_source_id or (
+                evidence.dem_source_ids()[:1] or [None])[0]
             decision = decide_representation(
                 user_dimension=user_dimension if user_dimension in ("2d", "2.5d", "3d") else "",
                 terrain_requested=terrain_requested,
@@ -199,7 +240,7 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                 medium=medium, purpose=purpose, reduced_motion=reduced_motion,
                 geometry_kinds=_geometry_kinds_of(mapspec),
                 evidence=evidence, capabilities=capabilities,
-                dem_source_id=dem_source_id,
+                dem_source_id=verified_dem,
             )
             out: Dict[str, Any] = {
                 "success": True,
@@ -217,6 +258,11 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                     out[key] = res[key]
             if res.get("mapspec") is not None:
                 out["scene_applied"] = (res.get("mapspec") or {}).get("scene")
+            # D4 披露闭环（review P1-4）：降级注记落 IR（agent 记账，
+            # 跨轮可见）；无降级时清除旧注记。失败 fail-open（披露缺席
+            # 不阻断场景应用，errors 透出）。
+            out["degrade_reason_recorded"] = await _record_degrade_reason(
+                session_id, decision, res)
             return out
         except Exception as e:  # noqa: BLE001
             logger.error("apply_scene_representation failed: %s", e)
@@ -273,6 +319,10 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                 raw_bearing = float(bearing) % 360.0
                 requested["bearing"] = raw_bearing - 360.0 if raw_bearing > 180.0 else raw_bearing
             if center:
+                if not isinstance(center, (list, tuple)) or len(center) < 2:
+                    return {"success": False, "command": "fly_camera",
+                            "error": "invalid center: expect [lng, lat]",
+                            "reason_code": "invalid_args"}
                 requested["center"] = [float(center[0]), float(center[1])]
             if zoom is not None:
                 requested["zoom"] = max(0.0, min(24.0, float(zoom)))
@@ -488,8 +538,10 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                 "analysis_goal": "viewshed",
                 "result_layer_id": result_layer_id or "",
                 "observer_feature_id": observer_feature_id or "",
-                "dem_source_id": dem_source_id
-                or (evidence.dem_source_ids()[:1] or [""])[0],
+                # 只绑定显式提供的源 id——raster_path 与 spec 源的对应关系
+                # 本层不可核实，回填会把失效溯源建立在猜测上（零编造纪律）
+                "dem_source_id": dem_source_id or "",
+                "dem_source_binding": "explicit" if dem_source_id else "none",
                 "observer_x": float(observer_x),
                 "observer_y": float(observer_y),
                 "staleness_schema": "scene3d_staleness.v1",

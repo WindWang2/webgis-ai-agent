@@ -59,6 +59,27 @@ def _matches_preference(axis: str, requested: Any, preference: Dict[str, Any]) -
     return abs(got - want) <= tolerance
 
 
+def _request_matches_viewport(requested: Dict[str, Any], viewport: Dict[str, Any]) -> bool:
+    """请求的**全部相机轴**与用户当前 viewport 等值（center 容差内）。"""
+    if not requested:
+        return False
+    for axis, tolerance in (("pitch", _EPS_PITCH), ("bearing", _EPS_BEARING),
+                            ("zoom", _EPS_ZOOM)):
+        if axis in requested:
+            want = _num(viewport.get(axis))
+            got = _num(requested[axis])
+            if want is None or got is None or abs(got - want) > tolerance:
+                return False
+    if "center" in requested:
+        vp_center = viewport.get("center")
+        if isinstance(vp_center, (list, tuple)) and len(vp_center) >= 2:
+            if _center_differs(requested["center"], vp_center):
+                return False
+        else:
+            return False    # 用户 viewport 带 center 请求才谈得上同步
+    return True
+
+
 def _num(value: Any) -> Optional[float]:
     try:
         if isinstance(value, bool):
@@ -110,8 +131,12 @@ def user_viewport_diverges(
     if vp_zoom is not None and (sp_zoom is None
                                 or abs(vp_zoom - sp_zoom) > _EPS_ZOOM):
         diverged = True
-    if _center_differs(viewport.get("center"), spec.get("center")):
-        diverged = True
+    vp_center = viewport.get("center")
+    if isinstance(vp_center, (list, tuple)) and len(vp_center) >= 2:
+        # 与标量轴同语义：spec 缺 center（用户平移未提交）也算活跃
+        if _center_differs(vp_center, spec.get("center")) or not isinstance(
+                spec.get("center"), (list, tuple)):
+            diverged = True
     return viewport if diverged else None
 
 
@@ -152,9 +177,23 @@ def plan_camera(
         and not _matches_preference(axis, clean[axis], preference))
 
     # ── 整体抑制：用户镜头已偏离 spec（手动调节未提交） ─────────────────
+    # 例外（review P2-2）：请求值与用户**当前 viewport** 逐轴等值 = 把
+    # spec 同步到用户镜头（user-wins 一致动作），放行并标注 sync 语义。
     diverged = user_viewport_diverges(interaction_snapshot, spec_view)
 
     if diverged is not None and clean:
+        if _request_matches_viewport(clean, diverged):
+            remaining = {a: v for a, v in clean.items() if a not in locks}
+            if remaining:
+                return CameraPlan(
+                    status="apply",
+                    reason_code="SCENE_CAMERA_SYNC_TO_USER_VIEWPORT",
+                    detail="请求值与用户当前 viewport 等值——按用户镜头同步 spec"
+                           "（user-wins 一致动作，非程序性运镜）",
+                    suppressed_axes=sorted(set(clean) & {"pitch", "bearing"} & locks),
+                    view=remaining,
+                    user_viewport=diverged,
+                )
         return CameraPlan(
             status="user_wins_suppressed",
             reason_code="SCENE_CAMERA_USER_VIEWPORT_ACTIVE",

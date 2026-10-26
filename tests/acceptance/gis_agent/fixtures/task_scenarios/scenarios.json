@@ -3178,6 +3178,16 @@
      "op": "eq",
      "path": "requirement.scene.dimension",
      "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "requirement",
+     "id": "f21-02-degrade-recorded",
+     "kind": "requirement_state",
+     "note": "review P1-4：降级注记落 IR 跨轮可见（D4 披露闭环）",
+     "op": "regex",
+     "path": "requirement.scene.degrade_reason",
+     "value": "SCENE_USER_3D_NO_HEIGHT_EVIDENCE"
     }
    ],
    "family": "F21",

@@ -68,10 +68,17 @@ def derive_requirements(spec: GISIntentSpec) -> MapRequirementSpec:
             "scene.dimension", pinned=pinned_scene,
             capability="scene_representation")
     if spec.scene.analysis_goals:
+        # capability 引用 registry 真实 id（plan_graph._capability_meta 消费）
+        goal_capability = {
+            "viewshed": "terrain_viewshed",
+            "line_of_sight": "terrain_viewshed",   # LOS 待 G3D03，暂借近族
+            "skyline": "terrain_viewshed",
+            "terrain_profile": "terrain_contours",
+        }.get(spec.scene.analysis_goals[0], "")
         add("analysis",
             f"完成 3D 分析（{','.join(spec.scene.analysis_goals)}）",
             "scene.analysis_goals",
-            capability=spec.scene.analysis_goals[0])
+            capability=goal_capability)
     return MapRequirementSpec(items=items[:64])
 
 

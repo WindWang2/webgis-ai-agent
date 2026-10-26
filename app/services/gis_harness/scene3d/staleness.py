@@ -103,17 +103,24 @@ def evaluate_staleness(
             )
 
     # ── 显示失效：结果层被用户隐藏（分析不失效，可见性失效） ─────────
+    # user_overrides 的真实投影形状是 list（projection.py 按 override_order
+    # 输出）；dict 形态仅为兼容旧测试构造（review P1-2 修正）。
     overrides = snap.get("user_overrides")
-    if isinstance(overrides, dict) and binding.result_layer_id:
-        entry = overrides.get(binding.result_layer_id)
-        if isinstance(entry, dict) and entry.get("visible") is False:
-            return StaleVerdict(
-                state="display_stale",
-                reason_code="SCENE_STALE_RESULT_HIDDEN",
-                detail=f"结果层 {binding.result_layer_id} 被用户隐藏——"
-                       "分析结论仍有效，但不可宣称'用户可见'",
-                recommended_action="disclose_hidden",
-            )
+    override_entries = overrides if isinstance(overrides, list) else (
+        list(overrides.values()) if isinstance(overrides, dict) else [])
+    if binding.result_layer_id:
+        for entry in override_entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("layer_id") == binding.result_layer_id \
+                    and entry.get("visible") is False:
+                return StaleVerdict(
+                    state="display_stale",
+                    reason_code="SCENE_STALE_RESULT_HIDDEN",
+                    detail=f"结果层 {binding.result_layer_id} 被用户隐藏——"
+                           "分析结论仍有效，但不可宣称'用户可见'",
+                    recommended_action="disclose_hidden",
+                )
 
     # viewport/相机变化**不**进入失效判定（视域与镜头无关——显式拒绝
     # 把相机当分析输入的范畴错误；调用方不得据 viewport_settled 失效）。

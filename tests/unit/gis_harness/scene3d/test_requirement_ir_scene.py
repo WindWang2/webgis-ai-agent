@@ -90,6 +90,9 @@ def test_patch_rejects_unknown_and_invalid_values():
         _patch(doc, path="scene.dimension", value="4d")
     with pytest.raises(PatchValueInvalid):
         _patch(doc, path="scene.exaggeration", value=99.0)
+    # 契约 gt=0：写边界放行 0 会造成 load 侧毒状态（review P1-3）
+    with pytest.raises(PatchValueInvalid):
+        _patch(doc, path="scene.exaggeration", value=0.0)
     with pytest.raises(PatchValueInvalid):
         _patch(doc, path="scene.camera_bearing", value=270.0)
     with pytest.raises(PatchValueInvalid):

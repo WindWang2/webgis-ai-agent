@@ -106,10 +106,10 @@ def decide_representation(
     # ── 用户偏好 → 决策核输入（证据只来自核实结论） ──────────────────
     wants_3d = user_dimension == "3d"
     wants_extrusion = bool(extrusion_requested or (wants_3d and ev.has_height))
+    # 零推断：未表达维度时即便证据在也不默认地形
     wants_terrain = bool(
         terrain_requested
-        or (user_dimension in ("2.5d", "3d") and ev.has_elevation)
-        or (user_dimension == "" and False))  # 零推断：未表达不默认地形
+        or (user_dimension in ("2.5d", "3d") and ev.has_elevation))
 
     intent = SceneIntent(
         purpose=purpose if purpose in {
@@ -183,10 +183,11 @@ def decide_representation(
                                f"{entry.reason_code}"))
 
     scene_config = decision_to_scene_config(core)
-    # terrain 绑定：决策含地形时把已核实 raster-dem 源 id 写入 source
+    # terrain 绑定：决策含地形时把已核实 raster-dem 源 id 写入 source。
+    # dem_source_id 只认已核实源——不回填猜测（零编造纪律）。
     if core.terrain and "terrain" in scene_config:
-        chosen = dem_source_id or (ev.dem_source_ids()[:1] or [None])[0]
-        if chosen and chosen in ev.dem_source_ids():
+        chosen = dem_source_id
+        if chosen is not None and chosen in ev.dem_source_ids():
             scene_config["terrain"]["source"] = chosen
             scene_config["terrain"]["elevation_ref"] = chosen
         else:
@@ -196,23 +197,41 @@ def decide_representation(
                 degradations.append(DegradationNote(
                     code="SCENE_USER_TERRAIN_NO_DEM",
                     user_preference=user_dimension or "terrain",
-                    applied_mode="2.5d" if core.mode == "2.5d" else core.mode,
+                    applied_mode=core.mode,
                     detail="决策含地形但无可绑定 raster-dem 源 id——"
                            "scene 配置省略 terrain"))
-                if core.mode == "2.5d":
-                    # 地形是 2.5d 的唯一垂直通道：无源即退 2d
-                    scene_config["mode"] = "2d"
+            if core.mode == "2.5d":
+                # 地形是 2.5d 的唯一垂直通道：无源即退 2d
+                scene_config["mode"] = "2d"
+
+    # ── 输出面与实际配置对账（review P1-1）：terrain 被省略时 2.5d 的
+    # 唯一垂直通道消失——决策输出必须报告**实际应用档**（scene_config），
+    # 而不是决策核的中间结论。Pi 看到的 mode 即地图将落的 mode。
+    applied_mode = str(scene_config.get("mode") or "2d")
+    if applied_mode != core.mode:
+        if not any(d.code == "SCENE_MODE_TERRAIN_OMITTED" for d in degradations):
+            degradations.append(DegradationNote(
+                code="SCENE_MODE_TERRAIN_OMITTED",
+                user_preference=user_dimension or "terrain",
+                applied_mode=applied_mode,
+                detail=f"决策核建议 {core.mode}，但无可绑定地形源——"
+                       f"实际应用 {applied_mode}"))
+        if applied_mode == "2d":
+            # 地形是 2.5d 的唯一垂直通道：无源即退 2d
+            scene_config["mode"] = "2d"
+            # 相机建议随档位重置（2.5d 轻透视不适用）
+            scene_config.pop("camera", None)
 
     return RepresentationDecision(
-        mode=core.mode,
+        mode=applied_mode,  # type: ignore[arg-type]
         extrusion=core.extrusion,
         terrain=core.terrain and "terrain" in scene_config,
         user_dimension=user_dimension,
-        user_dimension_respected=(user_dimension in ("", core.mode)),
+        user_dimension_respected=(user_dimension in ("", applied_mode)),
         degradations=degradations[:4],
         reason_codes=core.reason_codes()[:8],
-        recommended_pitch=core.recommended_pitch,
-        recommended_bearing=core.recommended_bearing,
+        recommended_pitch=core.recommended_pitch if applied_mode == core.mode else 0.0,
+        recommended_bearing=core.recommended_bearing if applied_mode == core.mode else 0.0,
         recommended_exaggeration=core.recommended_exaggeration,
         camera_transition_ms=core.camera_transition_ms,
         scene_config=scene_config,

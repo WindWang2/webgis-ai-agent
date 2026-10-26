@@ -118,8 +118,17 @@ class TestApplySceneRepresentation:
     async def test_honest_degradation_without_evidence(
             self, registry, session_id):
         """无证据会话：用户 3D → 降级执行 + degradations 可见（不伪造 3D）。"""
+        from app.services.gis_harness.requirement_ir.service import (
+            ensure_document,
+        )
+        from app.services.gis_harness.intent import MapRequestIntent
         from app.services.mapspec_store import mapspec_store
+        from app.services.session_data import session_data_manager
 
+        # IR 披露闭环需要需求文档在场（无 intent 的会话记 skipped）
+        await ensure_document(session_data_manager, session_id,
+                              "把地图切换成 3D 视图", turn=1,
+                              core=MapRequestIntent(task="distribution_overview"))
         await mapspec_store.init_project(session_id)
         res = await registry.dispatch("apply_scene_representation", {
             "session_id": session_id, "user_dimension": "3d",
@@ -129,6 +138,16 @@ class TestApplySceneRepresentation:
         codes = {d["code"] for d in res["decision"]["degradations"]}
         assert "SCENE_USER_3D_NO_HEIGHT_EVIDENCE" in codes
         assert res["decision"]["user_dimension"] == "3d"
+        # D4 披露闭环（review P1-4）：降级注记落 IR 跨轮可见
+        assert res.get("degrade_reason_recorded") == "recorded"
+        from app.services.gis_harness.requirement_ir.service import (
+            get_requirement_view,
+        )
+        from app.services.session_data import session_data_manager
+
+        view = await get_requirement_view(session_data_manager, session_id)
+        scene_view = view.get("scene") or {}
+        assert scene_view.get("degrade_reason") == "SCENE_USER_3D_NO_HEIGHT_EVIDENCE"
 
 
 class TestFlyCamera:
@@ -234,7 +253,9 @@ class TestRun3DAnalysis:
             assert 0.0 <= res["result"]["visible_fraction"] <= 1.0
             assert res["method_use_contract"]["algorithm_id"] == "terrain.viewshed"
             assert res["staleness_binding"]["analysis_goal"] == "viewshed"
-            assert res["staleness_binding"]["dem_source_id"] == "dem"
+            # P2-4：未显式提供源 id 时不回填猜测
+            assert res["staleness_binding"]["dem_source_id"] == ""
+            assert res["staleness_binding"]["dem_source_binding"] == "none"
         finally:
             if os.path.exists(path):
                 os.unlink(path)

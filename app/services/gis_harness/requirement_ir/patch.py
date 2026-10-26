@@ -77,10 +77,12 @@ _LOCK_SCOPE_PATHS: Dict[str, Tuple[str, ...]] = {
     "audience": ("audience",),
     "export_format": ("output.formats",),
     "aoi": ("aoi.name", "aoi.level"),
-    # G3D04：维度/地形/挤出/夸张与相机偏好是跨轮 user-wins 面
+    # G3D04：维度/地形/挤出/夸张与相机偏好是跨轮 user-wins 面。
+    # degrade_reason 是决策层的系统记账（agent 写入、非用户偏好）——
+    # 不在锁保护内（review P1-4：披露生命周期由决策层管理）。
     "scene_mode": (
         "scene.dimension", "scene.terrain_requested", "scene.extrusion_requested",
-        "scene.exaggeration", "scene.degrade_reason"),
+        "scene.exaggeration"),
     "scene_camera": ("scene.camera_pitch", "scene.camera_bearing"),
 }
 
@@ -198,6 +200,16 @@ def _v_opt_float(path: str, value: Any, lo: float, hi: float) -> Optional[float]
     return float(value)
 
 
+def _v_opt_float_exclusive_lo(
+        path: str, value: Any, lo: float, hi: float) -> Optional[float]:
+    """下界排他（契约 gt=lo；写边界放行 lo 会造成 load 侧 model_validate
+    失败的"毒状态"——review P1-3）。"""
+    result = _v_opt_float(path, value, lo, hi)
+    if result is not None and result <= lo:
+        raise PatchValueInvalid(path, f"expect float in ({lo},{hi}]")
+    return result
+
+
 def _v_scene_goals(path: str, value: Any) -> Tuple[str, ...]:
     if not isinstance(value, (list, tuple)) or len(value) > 4:
         raise PatchValueInvalid(path, "expect list[str] <=4 (viewshed/line_of_sight/"
@@ -291,7 +303,7 @@ _SETTERS: Dict[str, Tuple[Callable[[GISIntentSpec, Any], None], Callable[[str, A
     "scene.extrusion_requested": (
         lambda s, v: setattr(s.scene, "extrusion_requested", v), lambda p, v: _v_opt_bool(p, v)),
     "scene.exaggeration": (
-        lambda s, v: setattr(s.scene, "exaggeration", v), lambda p, v: _v_opt_float(p, v, 0.0, 10.0)),
+        lambda s, v: setattr(s.scene, "exaggeration", v), lambda p, v: _v_opt_float_exclusive_lo(p, v, 0.0, 10.0)),
     "scene.camera_pitch": (
         lambda s, v: setattr(s.scene, "camera_pitch", v), lambda p, v: _v_opt_float(p, v, 0.0, 85.0)),
     "scene.camera_bearing": (

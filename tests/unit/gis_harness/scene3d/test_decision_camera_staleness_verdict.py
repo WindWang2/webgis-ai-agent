@@ -56,8 +56,10 @@ def test_evidence_requires_url_for_dem():
 
 
 def test_evidence_height_requires_valid_samples():
+    # 层在场但 stats.valid=0（fixture 显式携带无效采样）——不得记证据
     bundle = verify_vertical_evidence(_spec_with_dem(extrusion_valid=0))
     assert bundle.has_height is False
+    assert bundle.height_attribute == []
     bundle2 = verify_vertical_evidence(_spec_with_dem(extrusion_valid=42))
     assert bundle2.has_height is True
     assert bundle2.height_attribute[0].ref == "bldg"
@@ -127,11 +129,39 @@ def test_decision_user_3d_with_evidence_applies_3d_and_binds_terrain():
     decision = decide_representation(
         user_dimension="3d", terrain_requested=True,
         evidence=verify_vertical_evidence(_spec_with_dem(extrusion_valid=10)),
-        geometry_kinds=["polygon"])
+        geometry_kinds=["polygon"], dem_source_id="dem1")
     assert decision.mode == "3d" and decision.terrain
     assert not decision.degraded
     assert decision.scene_config["terrain"]["source"] == "dem1"
     assert decision.scene_config["terrain"]["elevation_ref"] == "dem1"
+
+
+def test_decision_ghost_dem_binding_reports_applied_mode_honestly():
+    """review P1-1 锚：传入未核实 dem_source_id 时，决策**输出面**必须报告
+    实际应用档（terrain 省略 → 2.5d 退 2d），不能 Pi 看到 2.5d 而地图落 2d。"""
+    decision = decide_representation(
+        user_dimension="2.5d", terrain_requested=True,
+        evidence=verify_vertical_evidence(_spec_with_dem()),
+        geometry_kinds=["raster"], dem_source_id="ghost")
+    assert "terrain" not in decision.scene_config
+    assert decision.mode == "2d", (
+        f"输出面必须报实际应用档，got {decision.mode}")
+    assert decision.scene_config["mode"] == decision.mode
+    assert decision.user_dimension_respected is False
+    codes = {d.code for d in decision.degradations}
+    assert "SCENE_USER_TERRAIN_NO_DEM" in codes
+    assert "SCENE_MODE_TERRAIN_OMITTED" in codes
+    assert {d.applied_mode for d in decision.degradations
+            if d.code == "SCENE_MODE_TERRAIN_OMITTED"} == {"2d"}
+
+
+def test_decision_does_not_auto_bind_dem_without_explicit_id():
+    """review P2-4 锚：decision 层不回填 DEM 源（工具层的显式选择才可信）。"""
+    decision = decide_representation(
+        user_dimension="2.5d", terrain_requested=True,
+        evidence=verify_vertical_evidence(_spec_with_dem()),
+        geometry_kinds=["raster"])
+    assert "terrain" not in decision.scene_config or         decision.scene_config["terrain"].get("source") != "dem1"
 
 
 def test_decision_user_3d_without_evidence_degrades_but_keeps_preference():
@@ -173,8 +203,11 @@ def test_decision_exaggeration_clamped_by_core():
     decision = decide_representation(
         user_dimension="2.5d", terrain_requested=True, exaggeration=25.0,
         evidence=verify_vertical_evidence(_spec_with_dem()),
-        geometry_kinds=["raster"])
-    assert decision.scene_config.get("terrain", {}).get("exaggeration", 1.0) <= 10.0
+        geometry_kinds=["raster"], dem_source_id="dem1")
+    # terrain 真实绑定在场（无绑定则钳制断言空过——review P2-7c）
+    assert decision.scene_config.get("terrain", {}).get("source") == "dem1"
+    assert decision.scene_config["terrain"]["exaggeration"] <= 10.0
+    assert "SCENE_EXAGGERATION_CLAMPED" in decision.reason_codes
 
 
 # ── 相机 user-wins ───────────────────────────────────────────────────
@@ -227,6 +260,25 @@ def test_camera_locked_axis_allows_user_preference_value():
     assert plan2.suppressed_axes == ["pitch"]
 
 
+def test_camera_sync_to_user_viewport_allowed():
+    """review P2-2：请求与用户当前 viewport 等值 = 同步 spec（放行）。"""
+    snapshot = {"viewport": {"pitch": 65.0, "bearing": 42.0, "zoom": 11.0}}
+    spec_view = {"pitch": 0.0, "bearing": 0.0, "zoom": 10.0}
+    plan = plan_camera({"pitch": 65.0}, interaction_snapshot=snapshot,
+                       spec_view=spec_view)
+    assert plan.status == "apply"
+    assert plan.reason_code == "SCENE_CAMERA_SYNC_TO_USER_VIEWPORT"
+
+
+def test_camera_center_only_divergence_with_missing_spec_center():
+    """review P2-1：用户平移（center）而 spec 缺 center 也算镜头活跃。"""
+    snapshot = {"viewport": {"center": [104.1, 30.7], "zoom": 11.0}}
+    plan = plan_camera({"pitch": 50.0}, interaction_snapshot=snapshot,
+                       spec_view={"zoom": 11.0})
+    assert plan.status == "user_wins_suppressed"
+    assert plan.reason_code == "SCENE_CAMERA_USER_VIEWPORT_ACTIVE"
+
+
 def test_camera_empty_request_typed():
     plan = plan_camera({})
     assert plan.status == "user_wins_suppressed"
@@ -269,11 +321,13 @@ def test_staleness_dem_source_gone():
 
 def test_staleness_result_hidden_is_display_stale_not_stale():
     """隐藏结果层 ≠ 分析失效（分析正确性与可见性是两个门）。"""
+    # 真实投影形状：user_overrides 是 list（projection.py 按 order 输出）
     verdict = evaluate_staleness(
         _binding(),
-        interaction_snapshot={"user_overrides": {
-            "viewshed-1": {"layer_id": "viewshed-1", "visible": False}}},
+        interaction_snapshot={"user_overrides": [
+            {"layer_id": "viewshed-1", "visible": False}]},
         current_dem_source_ids=["dem1"])
+    assert verdict.state == "display_stale"
     assert verdict.state == "display_stale"
     assert not verdict.needs_recompute
     assert verdict.recommended_action == "disclose_hidden"
