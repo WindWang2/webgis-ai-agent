@@ -10,7 +10,16 @@ create_all-coexistence guard 可重入 DDL；spec 载荷有界性在服务层
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 
 from app.core.database import Base
 
@@ -29,7 +38,6 @@ class StoryMapAsset(Base):
         String(255),
         ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
     )
     title = Column(String(255), nullable=False, default="StoryMap 专报")
     #: StoryMapSpec 的 JSON 序列（服务层限 ≤512KB；schema_version ≥1.0）
@@ -38,6 +46,13 @@ class StoryMapAsset(Base):
     revision = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    # R1-P2（评审修复）：与 migration 0099 同名同形（create_all 引导的
+    # 库与迁移库约束一致；此前 inline unique=True 无名且缺 CHECK）。
+    __table_args__ = (
+        UniqueConstraint("conversation_id", name="uq_sma_conversation"),
+        CheckConstraint("revision >= 1", name="ck_sma_revision"),
+    )
 
 
 __all__ = ["StoryMapAsset"]

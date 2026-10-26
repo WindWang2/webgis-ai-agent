@@ -137,3 +137,41 @@ class TestFrontendDisclosureModuleContract:
         assert "svg_3d_perspective_degrade" in source
         assert "sceneExportDisclosure" in source
         assert "vectorSceneDegradeReceipt" in source
+
+
+class TestR1ReviewFixes:
+    """R1 评审修复的回归锁定。"""
+
+    def test_manifest_threshold_interlocked_with_quality_gate(self):
+        """manifest scale_trust 阈值 = scene_quality.SCALE_TRUST_PITCH_MAX
+        （单一事实源；边界 10°/10.1° 双探）。"""
+        from app.lib.cartography.scene_quality import SCALE_TRUST_PITCH_MAX
+        assert SCALE_TRUST_PITCH_MAX == 10.0
+        boundary = _spec("3d", view_pitch=SCALE_TRUST_PITCH_MAX)
+        assert build_product_manifest(boundary, export_format="png")[
+            "scene"]["scale_trust"] == "reliable"
+        over = _spec("3d", view_pitch=SCALE_TRUST_PITCH_MAX + 0.1)
+        assert build_product_manifest(over, export_format="png")[
+            "scene"]["scale_trust"] == "perspective"
+
+    def test_nan_view_pitch_falls_back_to_camera(self):
+        """NaN view.pitch 视同缺席 → 回退 camera.pitch（检查不被静默压制）。"""
+        spec = _spec("3d")
+        spec["view"]["pitch"] = float("nan")  # camera.pitch=50 应生效
+        from app.lib.cartography.scene_quality import evaluate_scene_quality
+        spec["layout"]["components"] = [{"id": "s", "type": "scale_bar"}]
+        report = evaluate_scene_quality(spec)
+        assert [f for f in report["findings"]
+                if f["code"] == "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE"]
+        # manifest 同语义
+        m = build_product_manifest(spec, export_format="png")
+        assert m["scene"]["scale_trust"] == "perspective"
+
+    def test_factory_rejects_oversized_points(self):
+        from app.services.gis_harness.components import (
+            elevation_profile_component,
+        )
+        big = [{"distance_m": float(i), "elevation_m": 1.0}
+               for i in range(501)]
+        with pytest.raises(ValueError):
+            elevation_profile_component(points=big)

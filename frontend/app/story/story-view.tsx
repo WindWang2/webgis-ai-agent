@@ -34,7 +34,8 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 // #552: 地图还原（视口 + 底图 + 图层）在 lib/session/map-state-restore ——
 // helper 不得作为页面导出（CI `next build` 拒绝非 Page 导出字段）。
 import { applyStoryMapState, type SessionMapState } from '@/lib/session/map-state-restore';
-import { commitUserScene } from '@/lib/mapspec/scene-mutation';
+import { commitUserScene, mergeSceneRotary } from '@/lib/mapspec/scene-mutation';
+import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
 import {
   loadSessionStorySpec,
   saveSessionStorySpec,
@@ -269,6 +270,10 @@ export function StoryView(): React.ReactElement {
   // mode/exaggeration 时经用户场景通道写入会话 spec（与场景控制器/Agent
   // 同一 SetSceneIntent 管线；播放端不是第二真相源）。null/缺省 = 沿用
   // 当前场景（不写）。连带 hud is3D 联动（地形效果闸门）。
+  // R1-P1a（评审修复）：与 committed scene **合并**后提交 —— SetSceneIntent
+  // 整笔替换，keyframe 只带两旋钮：缺 terrain.source 的载荷必 422，且
+  // mode=2d 章节会把会话 terrain（源/垂直基准）整块抹掉。合并保留既有
+  // terrain 块、仅覆盖声明过的旋钮；失败（非 committed）toast 提示。
   useEffect(() => {
     if (!specView || !specActiveId) return;
     const scene = specView.scenes[specActiveId];
@@ -276,10 +281,16 @@ export function StoryView(): React.ReactElement {
     const { is3D, setIs3D } = useHudStore.getState();
     const next3D = scene.mode === '3d' || scene.mode === '2.5d';
     if (next3D && !is3D) setIs3D(true);
-    void commitUserScene({
-      ...(scene.mode ? { mode: scene.mode } : {}),
-      ...(scene.exaggeration !== undefined ? { terrain: { exaggeration: scene.exaggeration } } : {}),
+    const committed = getCommittedMapSpec() as
+      | { scene?: Parameters<typeof mergeSceneRotary>[1] }
+      | null;
+    const payload = mergeSceneRotary(scene, committed?.scene, null);
+    void commitUserScene(payload).then((outcome) => {
+      if (outcome.outcome === 'failed') {
+        useToastStore.getState().addToast(t('sceneApplyFailed'), 'warning');
+      }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 章节切换驱动；合并读当前 committed
   }, [specView, specActiveId]);
 
 
@@ -470,7 +481,12 @@ export function StoryView(): React.ReactElement {
       return;
     }
     if (!map) return;
-    const takeOver = () => {
+    // R1-P1b（评审修复）：pitchstart/rotatestart 在 maplibre 相机渲染环
+    // 对**任何** pitch/bearing 变化都触发（含程序化 flyTo/jumpTo，无
+    // originalEvent）—— autoplay 的章节 fly_to 会自暂停。手势事件带
+    // originalEvent（map-panel 手势仲裁同款门控），仅其到场才判接管。
+    const takeOver = (e?: { originalEvent?: unknown }) => {
+      if (!e || !e.originalEvent) return;
       setPlaying(false);
       setTakeoverPaused(true);
     };

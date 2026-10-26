@@ -20,7 +20,6 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import { commitUserScene, type UserScenePayload } from '@/lib/mapspec/scene-mutation';
 import { useT } from '@/lib/i18n/useT';
-import { devOnly } from '@/lib/utils/logger';
 
 type SceneMode = '2d' | '2.5d' | '3d';
 
@@ -48,13 +47,19 @@ function readScene(): CommittedScene | null {
   return spec?.scene ?? null;
 }
 
-function hasTerrainEvidence(): boolean {
+function terrainEvidence(): { ready: boolean; sourceId: string | null } {
+  // R1-P2（评审修复）：证据与源 id 同源解析 —— 滑杆提交必须带
+  // terrain.source（MapSceneConfig 必填），此前只判证据不解析源 id，
+  // 无 terrain 块时提交 {exaggeration} 必 422。
   const spec = getCommittedMapSpec() as
     | { sources?: Record<string, { type?: string }> }
     | null;
   const sources = spec?.sources;
-  if (!sources || typeof sources !== 'object') return false;
-  return Object.values(sources).some((s) => s?.type === 'raster-dem');
+  if (!sources || typeof sources !== 'object') {
+    return { ready: false, sourceId: null };
+  }
+  const entry = Object.entries(sources).find(([, s]) => s?.type === 'raster-dem');
+  return entry ? { ready: true, sourceId: entry[0] } : { ready: false, sourceId: null };
 }
 
 function prefersReducedMotion(): boolean {
@@ -78,7 +83,7 @@ export function SceneController() {
   );
   const scene = readScene();
   // 每渲染直读（sources 扫描廉价；committed 变更由 liveGeneration 驱动重渲染）。
-  const terrainReady = hasTerrainEvidence();
+  const terrain = terrainEvidence();
   const mode: SceneMode =
     scene?.mode === '2.5d' || scene?.mode === '3d' ? scene.mode : '2d';
   const exaggeration = scene?.terrain?.exaggeration ?? 1;
@@ -91,16 +96,22 @@ export function SceneController() {
     setBusy(true);
     try {
       const outcome = await commitUserScene(next);
-      if (outcome.outcome !== 'committed') {
-        // superseded/failed：committed 真相随响应回灌 → 本组件显示态自动
-        // 对齐（无本地乐观场景状态需要回滚）。失败给可观测日志。
-        devOnly.log('scene mutation outcome:', outcome.outcome);
+      if (outcome.outcome === 'failed') {
+        // R1-P2：失败可见（此前仅 dev 日志 —— 滑杆回弹零解释）。
+        try {
+          const { useToastStore } = await import('@/components/ui/toast');
+          useToastStore.getState().addToast(
+            t('sceneApplyFailed'), 'warning');
+        } catch { /* toast 不可用不影响状态收敛 */
+        }
       }
+      // superseded：committed 真相随响应回灌 → 显示态自动对齐（无本地
+      // 乐观场景状态需要回滚），不额外打扰。
     } finally {
       busyRef.current = false;
       setBusy(false);
     }
-  }, []);
+  }, [t]);
 
   const setMode = useCallback(
     (next: SceneMode) => {
@@ -127,13 +138,16 @@ export function SceneController() {
 
   const setExaggeration = useCallback(
     (value: number) => {
-      if (!terrainReady) return;
+      if (!terrain.ready) return;
+      // terrain.source 必填：committed scene 有 terrain 用其 source，
+      // 否则用证据解析出的 raster-dem 源 id。
+      const source = scene?.terrain?.source ?? terrain.sourceId ?? undefined;
       void apply({
         ...(scene ?? { mode: '3d' as SceneMode }),
-        terrain: { ...(scene?.terrain ?? {}), exaggeration: value },
+        terrain: { ...(scene?.terrain ?? {}), ...(source ? { source } : {}), exaggeration: value },
       });
     },
-    [apply, scene, terrainReady],
+    [apply, scene, terrain],
   );
 
   const nudgeCamera = useCallback(
@@ -219,13 +233,13 @@ export function SceneController() {
             max={EXAGGERATION_MAX}
             step={EXAGGERATION_STEP}
             value={exaggeration}
-            disabled={!terrainReady || busy}
+            disabled={!terrain.ready || busy}
             onChange={(e) => setExaggeration(Number(e.target.value))}
             className="w-full accent-[color:var(--agent-accent)]"
             aria-describedby="scene-exaggeration-note"
           />
           <p id="scene-exaggeration-note" className="mb-3 text-[11px] leading-4 text-ink-secondary">
-            {terrainReady
+            {terrain.ready
               ? t('sceneController.exaggerationNote')
               : t('sceneController.exaggerationDisabled')}
           </p>

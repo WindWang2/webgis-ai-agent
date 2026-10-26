@@ -39,6 +39,35 @@ interface MutationResponse {
   correction_hint?: string;
 }
 
+/**
+ * R1-P1a（评审修复）：章节/控制器场景旋钮与 committed scene 的合并 ——
+ * SetSceneIntent 整笔替换，而叙事 keyframe 只带 mode/exaggeration 两个
+ * 旋钮：直发会因缺 terrain.source 422，且 mode=2d 会把会话 terrain
+ * （源/垂直单位/基准）整块抹掉。合并规则：保留既有 terrain（含 source），
+ * 仅覆盖声明过的旋钮；无既有 terrain 且未声明 source 时不携带 terrain。
+ */
+export function mergeSceneRotary(
+  rotary: { mode?: UserScenePayload['mode']; exaggeration?: number },
+  committedScene: UserScenePayload | null | undefined,
+  terrainSourceId: string | null | undefined,
+): UserScenePayload | null {
+  const existingTerrain = committedScene?.terrain ?? undefined;
+  const nextTerrain =
+    rotary.exaggeration !== undefined
+      ? { ...(existingTerrain ?? {}), exaggeration: rotary.exaggeration }
+      : existingTerrain;
+  const source = nextTerrain?.source ?? terrainSourceId ?? undefined;
+  const terrain =
+    nextTerrain && (source || Object.keys(nextTerrain).length > 0)
+      ? { ...nextTerrain, ...(source ? { source } : {}) }
+      : undefined;
+  return {
+    ...(committedScene ?? {}),
+    ...(rotary.mode ? { mode: rotary.mode } : {}),
+    ...(terrain ? { terrain } : {}),
+  };
+}
+
 export type SceneCommitOutcome =
   | { outcome: 'committed'; revision?: number }
   | { outcome: 'superseded'; revision?: number }

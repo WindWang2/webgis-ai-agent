@@ -515,8 +515,13 @@ def elevation_profile_component(
     if profile_ref:
         options["profileRef"] = profile_ref[:128]
     if points is not None:
+        # R1-P3（评审修复）：超界 fail-closed（此前静默截断重塑数据）——
+        # 与 validate_elevation_profile_payload 其它路径同纪律。
+        if len(points) > MAX_PROFILE_POINTS:
+            raise ValueError(
+                f"points 超过上限 {MAX_PROFILE_POINTS} 点（不静默截断）")
         clean: List[Dict[str, Any]] = []
-        for p in points[:MAX_PROFILE_POINTS]:
+        for p in points:
             d, e = p.get("distance_m"), p.get("elevation_m")
             if not isinstance(d, (int, float)) or not isinstance(e, (int, float)):
                 raise ValueError("points 项必须含数值 distance_m/elevation_m")

@@ -70,5 +70,6 @@
   "saveAssetTitle": "保存为可恢复的会话资产（后续打开优先恢复）",
   "assetSaved": "StoryMap 资产已保存（第 {revision} 版）",
   "assetSaveFailed": "StoryMap 资产保存失败",
-  "assetSaveNoSession": "无会话：资产保存需要会话上下文"
+  "assetSaveNoSession": "无会话：资产保存需要会话上下文",
+  "sceneApplyFailed": "章节场景应用失败，已保持当前场景"
 }

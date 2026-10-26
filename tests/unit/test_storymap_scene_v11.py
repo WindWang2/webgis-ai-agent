@@ -294,3 +294,29 @@ class TestAssetRoutes:
             # 前一用例顺序共享 session 时可能已保存 —— 用新会话验证
             pytest.skip("shared session state; covered by service tests")
         assert resp.status_code == 404
+
+
+class TestR1ConcurrentSave:
+    async def test_two_concurrent_first_saves_both_succeed(self, db_env):
+        """R1-P1c：双标签并发首存不 500 —— 输家走 UPDATE+1 路径。"""
+        import asyncio as aio
+
+        _, factory = db_env
+        conv = Conversation(id=f"sess-{uuid.uuid4().hex[:8]}")
+        async with factory() as db:
+            db.add(conv)
+            await db.commit()
+        spec_a = StoryMapSpec.model_validate(_spec_doc())
+        doc_b = _spec_doc()
+        doc_b["metadata"]["title"] = "并发第二笔"
+        spec_b = StoryMapSpec.model_validate(doc_b)
+
+        async def save(sp):
+            async with factory() as db:
+                result = await save_story_spec(db, conv, sp)
+                await db.commit()
+                return result
+
+        ra, rb = await aio.gather(save(spec_a), save(spec_b))
+        revisions = sorted([ra["revision"], rb["revision"]])
+        assert revisions == [1, 2]  # 双存都落、revision 单调不撞

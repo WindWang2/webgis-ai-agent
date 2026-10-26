@@ -19,6 +19,7 @@ severity 词表：blocking（拒绝/必须修复）> warning（放行 + 披露�
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Dict, List, Optional
 
 #: 质量门 reason code 词表（封闭集合；测试锁定）。
@@ -48,8 +49,10 @@ _EXAGGERATION_DISCLOSURE = 1.5
 
 #: G3D05：屏幕比例尺可信阈 —— 有效 pitch（view.pitch 优先，回退
 #: scene.camera.pitch）超过该值时透视压缩使屏幕比例尺不可信，必须由
-#: scene_disclosure 组件披露而非静默展示。
-_SCALE_TRUST_PITCH_MAX = 10.0
+#: scene_disclosure 组件披露而非静默展示。**单一事实源**：product_manifest
+#: 与前端 scene-export-disclosure.ts（同值镜像 + 契约测试互锁）消费。
+SCALE_TRUST_PITCH_MAX = 10.0
+_SCALE_TRUST_PITCH_MAX = SCALE_TRUST_PITCH_MAX  # 模块内历史别名
 
 #: G3D05：高俯仰下 symbol 标注被地形/挤出体遮挡风险的提示阈。
 _LABEL_OCCLUSION_PITCH = 45.0
@@ -229,11 +232,16 @@ def evaluate_scene_quality(
     view = spec.get("view")
     if isinstance(view, dict):
         vp = view.get("pitch")
-        if isinstance(vp, (int, float)) and not isinstance(vp, bool):
+        # R1-P2（评审修复）：非有限值视同缺席（NaN 会使比较恒 False 静默
+        # 压制两项检查）—— 与前端 effectivePitch 的 Number.isFinite 回退
+        # 语义对齐。
+        if (isinstance(vp, (int, float)) and not isinstance(vp, bool)
+                and math.isfinite(vp)):
             effective_pitch = float(vp)
     if effective_pitch is None and isinstance(camera, dict):
         cp = camera.get("pitch")
-        if isinstance(cp, (int, float)) and not isinstance(cp, bool):
+        if (isinstance(cp, (int, float)) and not isinstance(cp, bool)
+                and math.isfinite(cp)):
             effective_pitch = float(cp)
     layout = spec.get("layout")
     components = []

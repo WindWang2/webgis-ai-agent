@@ -564,8 +564,9 @@ def _build_default_registry() -> MutationRegistry:
     reg.register(IntentDescriptor(
         intent_cls=SetSceneIntent,
         handler=_h._handle_setscene,
-        effect_class=PRESENTATION, provenance_detail=_pd_none,
-   ), body_cls=SetSceneBody, body_codec=_codec_set_scene)
+        effect_class=PRESENTATION, op_label="调整场景",
+        provenance_detail=_pd_none,
+    ), body_cls=SetSceneBody, body_codec=_codec_set_scene)
     reg.register(IntentDescriptor(
         intent_cls=SetScenarioModeIntent,
         handler=_h._handle_setscenariomode,

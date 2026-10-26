@@ -32,18 +32,39 @@ async def save_story_spec(
     if len(text.encode("utf-8")) > MAX_STORY_SPEC_BYTES:
         raise ValueError(
             f"story spec exceeds {MAX_STORY_SPEC_BYTES} bytes budget")
+    # R1-P1c（评审修复）：双标签并发首存 —— SELECT-then-INSERT 竞态窗口
+    # 内两笔都走 INSERT，后者撞 conversation 唯一约束炸 IntegrityError →
+    # 裸 500。捕获后回滚并按"行已存在"重走 UPDATE+1 路径一次（SQLite/
+    # PostgreSQL 同语义；不加锁不长事务；每次保存仍单调 +1）。
+    from sqlalchemy.exc import IntegrityError
+
+    title = (spec.metadata.title or "StoryMap 专报")[:255]
     row = await db.scalar(
         select(StoryMapAsset).where(StoryMapAsset.conversation_id == conv.id)
     )
-    title = (spec.metadata.title or "StoryMap 专报")[:255]
-    if row is None:
-        row = StoryMapAsset(
-            conversation_id=conv.id, title=title, spec=text, revision=1)
-        db.add(row)
-    else:
+    if row is not None:
         row.title = title
         row.spec = text
         row.revision = int(row.revision or 1) + 1
+        await db.flush()
+        return {"revision": int(row.revision), "title": row.title}
+    row = StoryMapAsset(
+        conversation_id=conv.id, title=title, spec=text, revision=1)
+    db.add(row)
+    try:
+        await db.flush()
+        return {"revision": 1, "title": row.title}
+    except IntegrityError:
+        await db.rollback()
+    # 竞态输家：行已被并发首存 —— 重读并按保存语义 +1。
+    row = await db.scalar(
+        select(StoryMapAsset).where(StoryMapAsset.conversation_id == conv.id)
+    )
+    if row is None:
+        raise
+    row.title = title
+    row.spec = text
+    row.revision = int(row.revision or 1) + 1
     await db.flush()
     return {"revision": int(row.revision), "title": row.title}
 

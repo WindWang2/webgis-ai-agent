@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 PRODUCT_MANIFEST_SCHEMA_VERSION = "cartographic_product_manifest.v1"
@@ -260,20 +261,25 @@ def _scene_provenance(spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if cam_out:
             out["camera"] = cam_out
     # 比例尺可信度：view.pitch（导出时刻相机）优先，回退 camera.pitch；
-    # 与 scene_quality._SCALE_TRUST_PITCH_MAX 同阈（10°）。
+    # 阈值单一事实源 scene_quality.SCALE_TRUST_PITCH_MAX（R1-P2 评审修复：
+    # 此前硬编码 10.0 无互锁，改阈值会静默分叉）。
+    from app.lib.cartography.scene_quality import SCALE_TRUST_PITCH_MAX
+
     view = spec.get("view")
     pitch: Optional[float] = None
     if isinstance(view, dict):
         vp = view.get("pitch")
-        if isinstance(vp, (int, float)) and not isinstance(vp, bool):
+        if (isinstance(vp, (int, float)) and not isinstance(vp, bool)
+                and math.isfinite(vp)):
             pitch = float(vp)
     if pitch is None and isinstance(camera, dict):
         cp = camera.get("pitch")
-        if isinstance(cp, (int, float)) and not isinstance(cp, bool):
+        if (isinstance(cp, (int, float)) and not isinstance(cp, bool)
+                and math.isfinite(cp)):
             pitch = float(cp)
     if pitch is not None:
         out["scale_trust"] = (
-            "perspective" if pitch > 10.0 else "reliable"
+            "perspective" if pitch > SCALE_TRUST_PITCH_MAX else "reliable"
         )
     return out
 

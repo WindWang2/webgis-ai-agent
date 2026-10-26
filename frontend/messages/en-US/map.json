@@ -282,11 +282,11 @@
     "bearing": "Bearing",
     "bearingUp": "Increase bearing",
     "bearingDown": "Decrease bearing",
-    "verticalDatum": "Vertical datum",
     "datumUndeclared": "undeclared",
     "reducedMotionHint": "Scene transitions animate unless the system prefers reduced motion.",
     "reducedMotionOn": "Reduced motion detected: scene transitions have no animation.",
     "unitSuffix": "({unit})",
-    "verticalDatumLabel": "Vertical datum: "
+    "verticalDatumLabel": "Vertical datum: ",
+    "sceneApplyFailed": "Scene change not applied; current scene kept"
   }
 }
