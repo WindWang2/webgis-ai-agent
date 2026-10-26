@@ -176,6 +176,29 @@ class TestSetSceneAssetsTransactions:
         assert not res.is_error
         assert res.mapspec["scene"]["mode"] == "3d"
 
+    async def test_set_scene_bypass_with_bad_assets_rejected(self, engine_with_spec):
+        """review P1：set_map_scene 携带 assets 走同一域校验（无旁路）。"""
+        engine, session = engine_with_spec
+        bad_scene = {
+            "mode": "3d",
+            "assets": [{
+                "id": "x", "source": "model-a",
+                "placement": {"anchor": [0, 0], "scale": -5},
+            }],
+        }
+        res = await engine.apply_mutation(
+            session, SetSceneIntent(scene=bad_scene))
+        assert res.is_error
+        assert "SCENE_ASSET" in res.error_msg
+
+    async def test_empty_clear_without_scene_seat_is_noop(self, engine_with_spec):
+        """review P2：空表清空 + 无 scene 座 → 不凭空造 3d 档。"""
+        engine, session = engine_with_spec
+        res = await engine.apply_mutation(session, SetSceneAssetsIntent(assets=[]))
+        assert not res.is_error
+        spec = await engine.store.get_mapspec(session)
+        assert spec is None or "scene" not in (spec or {})
+
     async def test_layers_sources_untouched(self, engine_with_spec):
         """presentation 面：数据/图层分支零变化。"""
         engine, session = engine_with_spec

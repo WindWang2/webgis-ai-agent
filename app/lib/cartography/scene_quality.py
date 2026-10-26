@@ -88,8 +88,10 @@ def _placement_domain_error(anchor: Any, placement: Dict[str, Any]) -> Optional[
     lng, lat = float(anchor[0]), float(anchor[1])
     if not (-180.0 <= lng <= 180.0):
         return f"placement.anchor longitude {lng} outside [-180, 180]"
-    if not (-90.0 <= lat <= 90.0):
-        return f"placement.anchor latitude {lat} outside [-90, 90]"
+    if abs(lat) > 85.0511:
+        # MapLibre/Web Mercator 世界边界（review P2-3）：±90 是合法 WGS84，
+        # 但渲染在世界外 —— 域校验按渲染契约收口。
+        return f"placement.anchor latitude {lat} outside Web Mercator domain [-85.0511, 85.0511]"
     for key in ("heading_deg", "pitch_deg", "roll_deg", "altitude_m"):
         v = placement.get(key)
         if v is not None and (not _is_number(v) or v != v or v in (float("inf"), float("-inf"))):
@@ -99,8 +101,8 @@ def _placement_domain_error(anchor: Any, placement: Dict[str, Any]) -> Optional[
         if _is_number(v) and not (-360.0 <= float(v) <= 360.0):
             return f"placement.{key} {v} outside [-360, 360]"
     scale = placement.get("scale")
-    if scale is not None and (not _is_number(scale) or not (0 < float(scale))):
-        return f"placement.scale {scale!r} must be > 0"
+    if scale is not None and (not _is_number(scale) or not (0 < float(scale) < float("inf"))):
+        return f"placement.scale {scale!r} must be a finite number > 0"
     return None
 
 
@@ -293,7 +295,8 @@ def evaluate_scene_quality(spec: Dict[str, Any]) -> Dict[str, Any]:
                     ))
             order = asset.get("render_order")
             if order is not None and (
-                not _is_number(order) or not (0 <= int(order) <= MAX_SCENE_ASSET_RENDER_ORDER)
+                not _is_number(order)
+                or not (0 <= float(order) <= MAX_SCENE_ASSET_RENDER_ORDER)
             ):
                 findings.append(_finding(
                     "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
@@ -311,7 +314,7 @@ def evaluate_scene_quality(spec: Dict[str, Any]) -> Dict[str, Any]:
                         layer_id=asset_id or None,
                     ))
                 mvt = lod.get("max_visible_tiles")
-                if mvt is not None and (not _is_number(mvt) or not (0 < int(mvt))):
+                if mvt is not None and (not _is_number(mvt) or not (0 < float(mvt) < float("inf"))):
                     findings.append(_finding(
                         "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
                         f"asset '{asset_id}' lod.max_visible_tiles {mvt!r} must be > 0",

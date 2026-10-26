@@ -151,7 +151,11 @@ export function buildTilesetFixture(opts: {
         0, 0, 1, 0,
         0, 0, 0, 1,
       ],
-      boundingVolume: { region: [104.05, 30.66, 104.07, 30.68, 0, 200] },
+      // OGC 3D Tiles region：经纬弧度（104.05°→1.81886rad 等）+ 米高程。
+      boundingVolume: { region: [
+        (104.05 * Math.PI) / 180, (30.66 * Math.PI) / 180,
+        (104.07 * Math.PI) / 180, (30.68 * Math.PI) / 180, 0, 200,
+      ] },
       geometricError: 256,
       refine: opts.refine ?? 'REPLACE',
       content: { uri: `root.${opts.contentExt ?? 'glb'}` },

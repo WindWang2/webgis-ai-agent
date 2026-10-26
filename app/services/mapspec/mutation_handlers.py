@@ -1165,6 +1165,7 @@ async def _handle_setscene(ctx: MutationContext) -> HandlerOut:
         MapSceneConfig,
         SCENE_MODES,
     )
+    from app.lib.cartography.scene_quality import evaluate_scene_quality
 
     scene_value = intent.scene
     if scene_value is not None:
@@ -1227,6 +1228,28 @@ async def _handle_setscene(ctx: MutationContext) -> HandlerOut:
                     ),
                     correction_hint="方位角以正北为 0。",
                 )
+    # v1.7（G3D02，review P1）：set_map_scene 携带 scene.assets 时过与
+    # SetSceneAssetsIntent 同一域校验（SCENE_ASSET_* 单源裁决 —— 否则
+    # anchor/scale 越界值可经旁路写入）。
+    if scene_value is not None and isinstance(scene_value.get("assets"), list):
+        probe = {**(loaded or {}), "scene": scene_value}
+        quality_probe = evaluate_scene_quality(probe)
+        asset_blockings_probe = [
+            f for f in quality_probe.get("findings", [])
+            if str(f.get("code", "")).startswith("SCENE_ASSET_")
+            and f.get("severity") == "blocking"
+        ]
+        if asset_blockings_probe:
+            first_probe = asset_blockings_probe[0]
+            return MapSpecResult(
+                is_error=True,
+                origin=origin,
+                error_msg=(
+                    f"scene.assets 域校验失败（{len(asset_blockings_probe)} 项 blocking）："
+                    f"{first_probe.get('code')}: {first_probe.get('detail')}"
+                ),
+                correction_hint="assets 请经 set_scene_assets 工具写入（域校验单源）。",
+            )
     mapspec = {**loaded} if loaded else {}
     if scene_value is None:
         mapspec.pop("scene", None)
@@ -1272,10 +1295,15 @@ async def _handle_setsceneassets(ctx: MutationContext) -> HandlerOut:
 
     mapspec = {**loaded} if loaded else {}
     scene_value = mapspec.get("scene")
-    if not isinstance(scene_value, dict):
+    # review P2：空列表清空 + 无 scene 座时不凭空发明 3d 档（清空语义
+    # 顺带翻转缺省 2d 场景是未声明的行为变化）—— 只有非空资产表才建座。
+    if not isinstance(scene_value, dict) and assets:
         # 3D 资产隐含 3D 场景：缺座时建 3d 档（不静默发明 2.5d）。
         scene_value = {"mode": "3d"}
 
+    if not assets and not isinstance(scene_value, dict):
+        # 清空 + 无座：no-op（不造 {"mode":"3d","assets":[]}）。
+        return MutationPlan(mapspec=mapspec)
     merged_scene = {**scene_value, "assets": copy.deepcopy(assets)}
     try:
         MapSceneConfig.model_validate(merged_scene)

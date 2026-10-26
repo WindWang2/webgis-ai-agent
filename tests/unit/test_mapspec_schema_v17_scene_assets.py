@@ -200,6 +200,22 @@ class TestSceneAssetQualityGate:
         codes = {f["code"] for f in report["findings"]}
         assert "SCENE_ASSET_PLACEMENT_RANGE" in codes
 
+    def test_infinite_scale_blocks(self):
+        """review P1：0 < inf 通过旧检查 —— 有限性门。"""
+        spec = _asset_spec()
+        spec["scene"]["assets"][0]["placement"]["scale"] = float("inf")
+        report = evaluate_scene_quality(spec)
+        codes = {f["code"] for f in report["findings"]}
+        assert "SCENE_ASSET_PLACEMENT_RANGE" in codes
+
+    def test_polar_latitude_blocks(self):
+        """review P2：|lat|>85.0511 出 Web Mercator 世界域。"""
+        spec = _asset_spec()
+        spec["scene"]["assets"][0]["placement"]["anchor"] = [104.06, 89.0]
+        report = evaluate_scene_quality(spec)
+        codes = {f["code"] for f in report["findings"]}
+        assert "SCENE_ASSET_PLACEMENT_RANGE" in codes
+
     def test_nonpositive_scale_blocks(self):
         spec = _asset_spec()
         spec["scene"]["assets"][0]["placement"]["scale"] = 0

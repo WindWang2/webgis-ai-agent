@@ -20,6 +20,14 @@ import { identityMat4, multiplyMat4, translationMat4 } from '../geo';
 export const MAX_TRIANGLES_PER_ASSET = 5_000_000;
 export const MAX_VERTICES_PER_ASSET = 5_000_000;
 export const MAX_JSON_BYTES = 8 * 1024 * 1024;
+/**
+ * 解码预算（review P0）：按**展开后字节数**计（Float32 化的 accessor
+ * 载荷），在分配前检查 —— 防御「多 primitive 共享同一巨型 accessor」/
+ * 「无 bufferView 谎报 count」两类放大炸弹（分配后才检查救不了 OOM）。
+ */
+export const MAX_DECODED_BYTES_PER_ASSET = 256 * 1024 * 1024;
+/** 单 accessor 展开后上限（无 bufferView accessor 的 count 谎报防线）。 */
+export const MAX_DECODED_BYTES_PER_ACCESSOR = 64 * 1024 * 1024;
 
 export type GltfRejectCode =
   | 'not_gltf'
@@ -262,6 +270,9 @@ export async function parseGltf(
   let totalTriangles = 0;
   let totalVertices = 0;
   let meshCount = 0;
+  /** 累计解码字节（review P0：分配前预算 —— 多 primitive 共享巨型 accessor
+   *  与谎报 count 的两类放大炸弹在此拦截）。 */
+  let decodedBytes = 0;
 
   const decodeAccessor = (index: number, expectNormalizedOk = false): { typed: Float32Array; normalizedUByte: boolean } => {
     const acc = doc.accessors?.[index];
@@ -271,8 +282,20 @@ export async function parseGltf(
     const compBytes = COMPONENT_BYTES[acc.componentType];
     if (!compBytes) throw new GltfParseError('unsupported_feature', `componentType ${acc.componentType}`);
     const count = acc.count;
-    if (!Number.isInteger(count) || count < 0) throw new GltfParseError('corrupt', 'accessor.count invalid');
+    if (!Number.isInteger(count) || count < 0 || count > MAX_VERTICES_PER_ASSET * 4) {
+      throw new GltfParseError('corrupt', 'accessor.count invalid');
+    }
     const byteLength = compBytes * arity * count;
+    // 展开后（Float32 化）大小 —— 分配前检查（review P0-1）。
+    const expandedBytes = count * arity * 4;
+    if (expandedBytes > MAX_DECODED_BYTES_PER_ACCESSOR
+        || decodedBytes + expandedBytes > MAX_DECODED_BYTES_PER_ASSET) {
+      throw new GltfParseError(
+        'budget_exceeded',
+        `accessor ${index} decoded size ${expandedBytes}B exceeds budget (asset total ${decodedBytes}B + ${expandedBytes}B > ${MAX_DECODED_BYTES_PER_ASSET}B)`,
+      );
+    }
+    decodedBytes += expandedBytes;
     if (acc.bufferView === undefined) {
       // sparse/无 bufferView accessor（如 min/max-only）：返回零值（消费面按缺失处理）
       return { typed: new Float32Array(count * arity), normalizedUByte: false };
@@ -308,6 +331,13 @@ export async function parseGltf(
     if (!acc) throw new GltfParseError('corrupt', `indices accessor ${index} missing`);
     if (acc.type !== 'SCALAR') throw new GltfParseError('corrupt', 'indices must be SCALAR');
     const count = acc.count;
+    // 索引展开 Uint32 —— 分配前预算（同 P0-1）。
+    const expandedBytes = count * 4;
+    if (expandedBytes > MAX_DECODED_BYTES_PER_ACCESSOR
+        || decodedBytes + expandedBytes > MAX_DECODED_BYTES_PER_ASSET) {
+      throw new GltfParseError('budget_exceeded', `indices accessor ${index} exceeds decoded budget`);
+    }
+    decodedBytes += expandedBytes;
     const view = sliceBufferView(buffers, doc.bufferViews, acc.bufferView ?? -1);
     const base = acc.byteOffset ?? 0;
     const out = new Uint32Array(count);

@@ -23,16 +23,20 @@ interface FakeMapCalls {
 function makeFakeMap() {
   const calls: FakeMapCalls = { addLayer: [], removeLayer: [], on: [], off: [], repaints: 0 };
   const listeners = new Map<string, Set<() => void>>();
+  const layers = new Set<string>();
   const map = {
     calls,
+    _layers: layers,
     addLayer: (layer: unknown) => {
       calls.addLayer.push(layer);
-      const impl = layer as { onAdd?: () => void };
-      // fake map 不驱动渲染 —— 只记录；custom layer 不调用 onAdd（无 GL）。
-      void impl;
+      const impl = layer as { id?: string };
+      if (impl?.id) layers.add(impl.id);
     },
-    removeLayer: (id: string) => calls.removeLayer.push(id),
-    getLayer: () => undefined,
+    removeLayer: (id: string) => {
+      layers.delete(id);
+      calls.removeLayer.push(id);
+    },
+    getLayer: (id: string) => (layers.has(id) ? { id } : undefined),
     on: (ev: string, h: () => void) => {
       calls.on.push(ev);
       if (!listeners.has(ev)) listeners.set(ev, new Set());
@@ -225,6 +229,21 @@ describe('Scene3DManager.sync', () => {
     expect(map.calls.on.filter((e) => e === 'move')).toHaveLength(1);
     mgr.sync(specWith([]));
     expect(map.calls.off.filter((e) => e === 'move')).toHaveLength(1);
+    mgr.dispose();
+  });
+
+  it('basemap setStyle sweep (layer missing) forces remount', async () => {
+    const map = makeFakeMap();
+    const mgr = new Scene3DManager(map as never);
+    const spec = specWith([ASSET]);
+    mgr.sync(spec);
+    await settle();
+    // setStyle 非 diff 回退抹层且不回调 onRemove —— sync 必须重挂。
+    (map as unknown as { _layers: Set<string> })._layers?.clear?.();
+    const s2 = mgr.sync(spec);
+    expect(s2.mounted).toBe(1);
+    await settle();
+    expect(map.calls.addLayer.length).toBeGreaterThanOrEqual(2);
     mgr.dispose();
   });
 

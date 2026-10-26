@@ -66,17 +66,82 @@ export interface FetchOptions {
   maxBytes?: number;
 }
 
+/**
+ * 带预算的响应体读取（review P1：content-length 可省略/伪造 —— 声明头
+ * 只是快路径；body 必须流式累计，超限 cancel）。超时覆盖到 body 读完。
+ */
+async function readBodyWithBudget(
+  res: Response,
+  url: string,
+  maxBytes: number,
+  controller: AbortController,
+  timeoutMs: number,
+  outerSignal: AbortSignal | undefined,
+): Promise<ArrayBuffer> {
+  const timer = setTimeout(
+    () => controller.abort(new DOMException('scene3d timeout', 'TimeoutError')),
+    timeoutMs,
+  );
+  const onOuterAbort = () => controller.abort(outerSignal?.reason);
+  outerSignal?.addEventListener('abort', onOuterAbort, { once: true });
+  try {
+    if (res.body && typeof res.body.getReader === 'function') {
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Scene3dResourceFailure('payload_too_large', url, `streamed ${total} > ${maxBytes}`);
+        }
+        chunks.push(value);
+      }
+      const out = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) {
+        out.set(c, off);
+        off += c.byteLength;
+      }
+      return out.buffer;
+    }
+    // 无流 API 的环境兜底（node polyfill 路径）
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > maxBytes) {
+      throw new Scene3dResourceFailure('payload_too_large', url, `${buf.byteLength} > ${maxBytes}`);
+    }
+    return buf;
+  } catch (e) {
+    if (e instanceof Scene3dResourceFailure) throw e;
+    if (outerSignal?.aborted) throw new Scene3dResourceFailure('aborted', url);
+    if (e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      throw new Scene3dResourceFailure('timeout', url);
+    }
+    throw new Scene3dResourceFailure('network_error', url);
+  } finally {
+    clearTimeout(timer);
+    outerSignal?.removeEventListener('abort', onOuterAbort);
+  }
+}
+
 async function fetchWithBudget(
   url: string,
   kind: 'json' | 'binary',
   opts: FetchOptions = {},
-): Promise<Response> {
+): Promise<{ res: Response; body: () => Promise<ArrayBuffer> }> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? (kind === 'json' ? MAX_JSON_BYTES : MAX_BINARY_BYTES);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new DOMException('scene3d timeout', 'TimeoutError')), timeoutMs);
   const onOuterAbort = () => controller.abort(opts.signal?.reason);
   opts.signal?.addEventListener('abort', onOuterAbort, { once: true });
+  if (opts.signal?.aborted) {
+    clearTimeout(timer);
+    throw new Scene3dResourceFailure('aborted', url);
+  }
   let res: Response;
   try {
     res = await fetch(url, {
@@ -87,10 +152,7 @@ async function fetchWithBudget(
     });
   } catch (e) {
     if (opts.signal?.aborted) throw new Scene3dResourceFailure('aborted', url);
-    if (e instanceof DOMException && e.name === 'TimeoutError') {
-      throw new Scene3dResourceFailure('timeout', url);
-    }
-    if (e instanceof DOMException && e.name === 'AbortError') {
+    if (e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
       throw new Scene3dResourceFailure('timeout', url);
     }
     throw new Scene3dResourceFailure('network_error', url);
@@ -105,15 +167,15 @@ async function fetchWithBudget(
   if (declared && declared > maxBytes) {
     throw new Scene3dResourceFailure('payload_too_large', url, `${declared} > ${maxBytes}`);
   }
-  return res;
+  return {
+    res,
+    body: () => readBodyWithBudget(res, url, maxBytes, controller, timeoutMs, opts.signal),
+  };
 }
 
 export async function fetchJson<T = unknown>(url: string, opts: FetchOptions = {}): Promise<T> {
-  const res = await fetchWithBudget(url, 'json', opts);
-  const buf = await res.arrayBuffer();
-  if (buf.byteLength > (opts.maxBytes ?? MAX_JSON_BYTES)) {
-    throw new Scene3dResourceFailure('payload_too_large', url);
-  }
+  const { body } = await fetchWithBudget(url, 'json', opts);
+  const buf = await body();
   try {
     return JSON.parse(new TextDecoder().decode(buf)) as T;
   } catch {
@@ -122,10 +184,6 @@ export async function fetchJson<T = unknown>(url: string, opts: FetchOptions = {
 }
 
 export async function fetchBinary(url: string, opts: FetchOptions = {}): Promise<ArrayBuffer> {
-  const res = await fetchWithBudget(url, 'binary', opts);
-  const buf = await res.arrayBuffer();
-  if (buf.byteLength > (opts.maxBytes ?? MAX_BINARY_BYTES)) {
-    throw new Scene3dResourceFailure('payload_too_large', url);
-  }
-  return buf;
+  const { body } = await fetchWithBudget(url, 'binary', opts);
+  return body();
 }

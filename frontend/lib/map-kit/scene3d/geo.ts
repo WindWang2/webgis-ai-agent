@@ -240,7 +240,7 @@ export interface AssetPlacementInput {
   headingDeg?: number;
   /** ENU 俯仰（度；绕东轴，抬升为正）。 */
   pitchDeg?: number;
-  /** ENU 翻滚（度；绕天轴）。 */
+  /** ENU 翻滚（度；绕北轴 N）。 */
   rollDeg?: number;
   /** 米制缩放因子（>0）。 */
   scale?: number;

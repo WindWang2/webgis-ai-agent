@@ -17,7 +17,9 @@ import type { MapSpec, Model3dMapSpecSource, SceneAssetSpec } from '@/lib/mapspe
 import {
   buildPlacementMatrix,
   frustumPlanesFromMat4,
+  gltfToEnuFix,
   invertMat4,
+  multiplyMat4,
   planeToLocalSpace,
   worldToLngLatAlt,
   type Mat4,
@@ -49,6 +51,8 @@ interface TileEntry {
   model: BuiltModel | null;
   loading: boolean;
   lastUsed: number;
+  /** 失败退避：上次失败时间戳（review P1 —— 200ms tick 不重打同一 404）。 */
+  failedAt: number | null;
 }
 
 interface LodPolicyView {
@@ -185,7 +189,13 @@ export class Scene3DManager {
       const revision = assetRevisionKey(sourceEntry);
       const existing = this.mounted.get(assetId);
       if (existing) {
-        if (existing.sourceId !== asset.source || existing.revision !== revision) {
+        // review P1：basemap setStyle（非 diff 回退路径）会抹掉 custom layer
+        // 且不触发 onRemove —— manager 状态与 map 实际层可能脱节。层缺失
+        // 即强制重挂（幂等恢复点；getLayer 缺席 = 地图上没有 scene3d-<id>）。
+        const layerAlive = (() => {
+          try { return !!this.map.getLayer?.(`scene3d-${assetId}`); } catch { return false; }
+        })();
+        if (existing.sourceId !== asset.source || existing.revision !== revision || !layerAlive) {
           this.unmountAsset(assetId);
           removedCount += 1;
         } else {
@@ -382,6 +392,16 @@ export class Scene3DManager {
           'data fabric hydration for model3d refs not yet available',
         );
       }
+      // review P1（数据诚信）：datum 非椭球时披露 —— EGM96 正高与椭球高
+      // 差（大地水准面差距 ±100m 量级）不换算（无格网模型），按椭球高渲染
+      // 是显式降级而非静默假定。
+      const datum = (asset.vertical as { datum?: string } | undefined)?.datum;
+      if (datum && datum !== 'ellipsoid') {
+        recordSceneAssetStatus(
+          assetId, 'degraded',
+          `vertical_datum_${datum}_rendered_as_ellipsoid_height`,
+        );
+      }
       if (format === '3dtiles') {
         await this.loadTileset(mounted, asset, baseUrl, mounted.controller.signal);
       } else {
@@ -525,21 +545,25 @@ export class Scene3DManager {
     );
     mounted.prevRender = decision.render;
 
+    // 卸载 = 释放模型但**保留 entry**（review P0：删 entry 会让调度器后续
+    // 选中该 tile 时 tiles.get 为空而静默跳过 —— 相机拉回即永久破洞）。
     for (const id of decision.unload) {
       const entry = tiles.get(id);
       if (!entry || !entry.model) continue;
       mounted.group.remove(entry.model.root);
       entry.model.dispose();
       entry.model = null;
-      if (!entry.loading) tiles.delete(id);
     }
     this.evictTileLru(mounted);
 
     const maxLoads = this.options.maxConcurrentTileLoads ?? 4;
+    const now = Date.now();
     for (const id of decision.load) {
       if (mounted.loadInFlight >= maxLoads) break;
       const entry = tiles.get(id);
       if (!entry || entry.loading) continue;
+      // 失败退避：30s TTL 内不重试同一失败 tile（相机静止时不空转）。
+      if (entry.failedAt !== null && now - entry.failedAt < 30_000) continue;
       void this.loadTile(mounted, entry);
     }
     this.map.triggerRepaint?.();
@@ -557,9 +581,20 @@ export class Scene3DManager {
       if (mounted.generation !== generation) return;
       const parsed = await parseGltf(buffer);
       if (mounted.generation !== generation) return;
+      // review P1：加载完成时核对仍在 render 集 —— 相机已移走的 tile
+      // 不入 group（否则 REPLACE 父子同屏 z-fighting，且永不被 unload 差集
+      // 清除）。entry 保留（可在需要时重载）。
+      if (!mounted.prevRender.has(entry.tile.id)) {
+        recordSceneAssetStatus(mounted.assetId, 'degraded', `tile_expired:${entry.tile.id}`);
+        return;
+      }
       const built = buildModel(parsed);
       entry.model = built;
-      built.root.matrix.fromArray(entry.tile.localToEnu);
+      // OGC 3D Tiles 1.1：tile 的 glTF 内容依规范是 y-up —— 运行时施加
+      // y-up→z-up（tile 帧是 z-up ENU；等价 CesiumJS Y_UP_TO_Z_UP）。
+      built.root.matrix.fromArray(
+        multiplyMat4(entry.tile.localToEnu, gltfToEnuFix()) as Mat4,
+      );
       built.root.matrixAutoUpdate = false;
       built.root.matrixWorldNeedsUpdate = true;
       built.root.traverse((o) => {
@@ -574,6 +609,7 @@ export class Scene3DManager {
       this.scheduleAsset(mounted, true); // 渐进细化再调度
     } catch {
       if (mounted.generation === generation && !mounted.controller.signal.aborted) {
+        entry.failedAt = Date.now();
         recordSceneAssetStatus(mounted.assetId, 'degraded', `tile_load_failed:${entry.tile.id}`);
       }
     } finally {
@@ -593,8 +629,8 @@ export class Scene3DManager {
       if (mounted.prevRender.has(entry.tile.id)) continue;
       entry.model?.dispose();
       if (entry.model) mounted.group.remove(entry.model.root);
+      // LRU 语义：驱逐模型、保留 entry —— tile 可按 SSE 重新加载。
       entry.model = null;
-      tiles.delete(entry.tile.id);
       excess -= 1;
     }
   }
@@ -716,7 +752,7 @@ function worldToEnu(placement: Mat4, world: WorldCoord): WorldCoord {
 
 function collectTiles(tile: TileNode, into: Map<string, TileEntry>): void {
   if (tile.contentUri) {
-    into.set(tile.id, { tile, model: null, loading: false, lastUsed: 0 });
+    into.set(tile.id, { tile, model: null, loading: false, lastUsed: 0, failedAt: null });
   }
   for (const c of tile.children) collectTiles(c, into);
 }

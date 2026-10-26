@@ -15,6 +15,7 @@
 import type { Mat4, WorldCoord } from '../geo';
 import {
   enuFromEcefRotation,
+  geodeticToEcef,
   identityMat4,
   multiplyMat4,
   transformPoint,
@@ -137,12 +138,20 @@ export function parseTileset(
   }
   const identity = identityMat4();
   const hasEcefTransform = !!rootTransform && !matEquals(rootTransform, identity);
-  // ECEF→ENU(anchor) 折算：localToEnu = R_enu_from_ecef · T_root（仅根层；
-  // 子 tile transform 相对根，已含在乘链里）。
-  const ecefToEnu = hasEcefTransform
-    ? enuFromEcefRotation(opts.anchor.lat, opts.anchor.lng)
-    : identity;
-  const rootLocalToEnu = multiplyMat4(ecefToEnu, rootTransform ?? identity);
+  // ECEF 锚定折算（OGC 3D Tiles 语义）：tileset 根 transform 把 tile 局部
+  // 带到 ECEF 世界。ENU(anchor) 视图需要
+  //   localToEnu = R_enu←ecef · (T_root − T_ecef(anchor))
+  // （仅旋转根姿态、直接当 ENU 偏移是错的 —— 平移列是 tileset 原点的
+  // ECEF 位置，不扣锚点会偏 ~6371km）。恒等根 = tile 局部即锚点 ENU
+  //（常见于本地生成器，无 ECEF 折算）。
+  let rootLocalToEnu: Mat4;
+  if (hasEcefTransform && rootTransform) {
+    const anchorEcef = geodeticToEcef(opts.anchor.lat, opts.anchor.lng, 0);
+    const derooted = translationSub(rootTransform, anchorEcef);
+    rootLocalToEnu = multiplyMat4(enuFromEcefRotation(opts.anchor.lat, opts.anchor.lng), derooted);
+  } else {
+    rootLocalToEnu = identity;
+  }
 
   let count = 0;
   const root = parseTile(ts.root, '0', opts, rootLocalToEnu, (t) => {
@@ -177,7 +186,9 @@ function parseTile(
   if (!bv) throw new TilesetParseError('corrupt', `tile ${id} missing boundingVolume`);
   let sphereEnu: { cx: number; cy: number; cz: number; radiusM: number };
   if (Array.isArray(bv.region) && bv.region.length === 6) {
-    // region: [w, s, e, n, minH, maxH]（WGS84 度 + 米）→ 相对锚点的 ENU 球。
+    // OGC 3D Tiles boundingVolume.region：[west, south, east, north,
+    // minHeight, maxHeight]，经纬为**弧度**、高程米（规范明文；按度解释
+    // 会让合规数据集偏数千公里）。
     sphereEnu = regionToEnuSphere(bv.region, opts.anchor);
   } else if (Array.isArray(bv.box) && bv.box.length === 12) {
     sphereEnu = boxToEnuSphere(bv.box, localToEnu);
@@ -234,25 +245,40 @@ function parseTile(
   return tick(node);
 }
 
-/** region（WGS84 度 + 米高程）→ 锚点 ENU 包围球（小范围平面近似）。 */
+/** 平面近似：小范围弧度差 → 米（会话级 tileset 范围误差 <0.5%）。 */
+const METERS_PER_RADIAN = 111_320.0 * (180 / Math.PI);
+
+/** region（规范：经纬**弧度** + 高程米）→ 锚点 ENU 包围球（小范围平面近似）。 */
 function regionToEnuSphere(
   region: number[],
   anchor: { lng: number; lat: number },
 ): { cx: number; cy: number; cz: number; radiusM: number } {
-  const [w, s, e, n, minH, maxH] = region;
-  const meanLat = (s + n) / 2;
-  const meanLng = (w + e) / 2;
-  const DEG = Math.PI / 180;
-  const metersPerDegLat = 111_320.0;
-  const metersPerDegLng = 111_320.0 * Math.cos(meanLat * DEG);
-  const cx = (meanLng - anchor.lng) * metersPerDegLng;
-  const cy = (meanLat - anchor.lat) * metersPerDegLat;
+  const [wRad, sRad, eRad, nRad, minH, maxH] = region;
+  const meanLatRad = (sRad + nRad) / 2;
+  const anchorLatRad = anchor.lat * Math.PI / 180;
+  const metersPerRadLng = METERS_PER_RADIAN * Math.cos(meanLatRad);
+  const cx = (eRad + wRad) / 2 * metersPerRadLng
+    - anchor.lng * Math.PI / 180 * metersPerRadLng;
+  const cy = (nRad + sRad) / 2 * METERS_PER_RADIAN
+    - anchorLatRad * METERS_PER_RADIAN;
   const cz = (minH + maxH) / 2;
-  const halfX = Math.abs(e - w) / 2 * metersPerDegLng;
-  const halfY = Math.abs(n - s) / 2 * metersPerDegLat;
+  const halfX = Math.abs(eRad - wRad) / 2 * metersPerRadLng;
+  const halfY = Math.abs(nRad - sRad) / 2 * METERS_PER_RADIAN;
   const halfZ = Math.abs(maxH - minH) / 2;
   const radius = Math.sqrt(halfX * halfX + halfY * halfY + halfZ * halfZ);
   return { cx, cy, cz, radiusM: Math.max(radius, 1) };
+}
+
+/** 列主序矩阵平移列扣减 ECEF 锚点（P0-3：锚定折算的位置分量）。 */
+function translationSub(m: Mat4, anchorEcef: { x: number; y: number; z: number }): Mat4 {
+  // 把 R·p + t − anchor 变换写成齐次：[R | t']，t' = t − anchor…注意 ENU
+  // 视图还差一步旋转 —— 正确的组合是 M = R · T(−anchor) · T_root，即先
+  // 扣锚点再旋转。列主序下等价于把平移列先减 anchor（在 ECEF 域）再左乘 R。
+  const out = m.slice() as Mat4;
+  out[12] -= anchorEcef.x;
+  out[13] -= anchorEcef.y;
+  out[14] -= anchorEcef.z;
+  return out;
 }
 
 /** box（center + 3 半轴向量，tile 局部）→ ENU 包围球。 */

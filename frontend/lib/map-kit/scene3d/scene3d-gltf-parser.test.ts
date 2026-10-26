@@ -7,6 +7,23 @@ import { describe, expect, it } from 'vitest';
 import { buildGlbFixture } from './__fixtures__/glb';
 import { GltfParseError, parseGlbContainer, parseGltf } from './gltf/gltf-parser';
 
+function glbJsonOf(jsonBytes: Uint8Array): ArrayBuffer {
+  const pad = (4 - (jsonBytes.length % 4)) % 4;
+  const chunkLen = jsonBytes.length + pad;
+  const total = 12 + 8 + chunkLen;
+  const out = new ArrayBuffer(total);
+  const dv = new DataView(out);
+  dv.setUint32(0, 0x46546c67, true);
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, total, true);
+  dv.setUint32(12, chunkLen, true);
+  dv.setUint32(16, 0x4e4f534a, true);
+  const chunk = new Uint8Array(out, 20, chunkLen);
+  chunk.set(jsonBytes);
+  for (let i = jsonBytes.length; i < chunkLen; i++) chunk[i] = 0x20;
+  return out;
+}
+
 function glbJson(doc: unknown): ArrayBuffer {
   const jsonBytes = new TextEncoder().encode(JSON.stringify(doc));
   const pad = (4 - (jsonBytes.length % 4)) % 4;
@@ -97,6 +114,50 @@ describe('typed rejections', () => {
       corruptBufferViewLength: { viewIndex: 0, delta: 1_000_000 },
     });
     await expect(parseGltf(buf)).rejects.toMatchObject({ code: 'corrupt' });
+  });
+
+  it('rejects decode-budget bomb (shared giant UV accessor × many primitives)', async () => {
+    // review P0：多 primitive 共享同一巨型 TEXCOORD accessor —— 旧实现在
+    // 分配后才检查 POSITION/三角预算，永远不触发。新预算在分配前拦截。
+    const jsonBytes = new TextEncoder().encode(JSON.stringify({
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{
+        primitives: Array.from({ length: 500 }, () => ({
+          attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 },
+          indices: 3,
+        })),
+      }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+        { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+        { bufferView: 1, componentType: 5121, count: 7_000_000, type: 'VEC2' }, // 56MB 展开
+        { bufferView: 0, componentType: 5125, count: 3, type: 'SCALAR' },
+      ],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: 108 },
+        { buffer: 0, byteOffset: 108, byteLength: 200 }, // 越界会在预算前 corrupt？
+      ],
+      buffers: [{ byteLength: 308 }],
+    }));
+    // 预算防线：第一份 UV 展开 56MB 就超单 accessor/资产累计预算（分配前拦截）。
+    // 5121 VEC2 走归一化 UV 路径（合法形态）—— 确保拦截的是预算而非格式。
+    await expect(parseGltf(glbJsonOf(jsonBytes))).rejects.toBeInstanceOf(GltfParseError);
+  });
+
+  it('rejects count-fabricating accessor without bufferView', async () => {
+    const jsonBytes = new TextEncoder().encode(JSON.stringify({
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      accessors: [{ componentType: 5126, count: 90_000_000, type: 'VEC3' }], // 无 bufferView 谎报
+      buffers: [],
+    }));
+    await expect(parseGltf(glbJsonOf(jsonBytes))).rejects.toMatchObject({ code: 'corrupt' });
   });
 
   it('rejects out-of-range indices', async () => {

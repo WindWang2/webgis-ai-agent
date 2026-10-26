@@ -1,6 +1,7 @@
 {
  "adr": "ADR-0160",
  "blocking_codes": {
+  "change": "v3（G3D02 v1.7）：+ SCENE_ASSET_SOURCE_REF/_TYPE/DUPLICATE_ID",
   "codes": [
    "INVALID_SOURCE_REF",
    "INVALID_STOPS_COUNT",
@@ -12,7 +13,9 @@
    "SCENE_ASSET_DUPLICATE_ID"
   ],
   "defined_in": "app/services/mapspec/lifecycle_engine.py BLOCKING_VALIDATION_CODES",
-  "emitted_by": "app/services/mapspec/coordinator.py"
+  "emitted_by": "app/services/mapspec/coordinator.py",
+  "updated_at": "2026-10-27",
+  "version": 3
  },
  "blocking_codes_history": {
   "1": [
