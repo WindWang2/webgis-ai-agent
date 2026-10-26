@@ -75,6 +75,19 @@ class SetViewBody(ClientMutationIdMixin):
     bearing: Optional[float] = None
 
 
+class SetSceneBody(ClientMutationIdMixin):
+    """G3D05（ADR-0275）：用户场景控制器写通道。
+
+    与 Agent 的 set_map_scene 工具汇入同一 SetSceneIntent 事务管线
+    （幂等/409/503 语义一致）；scene=None = 清除场景回平面。shape 由
+    引擎内 MapSceneConfig 严格校验，非法值整笔拒绝。
+    """
+
+    intent: Literal["set_scene"]
+    expected_revision: int = Field(ge=0)
+    scene: Optional[dict[str, Any]] = None
+
+
 class RemoveLayerBody(ClientMutationIdMixin):
     intent: Literal["remove_layer"]
     expected_revision: int = Field(ge=0)
@@ -182,6 +195,7 @@ UserMapSpecMutationRequest = Annotated[
         PatchLayerStyleBody,
         PatchComponentBody,
         SetViewBody,
+        SetSceneBody,
         RemoveLayerBody,
         RemoveComponentBody,
         DuplicateComponentBody,
