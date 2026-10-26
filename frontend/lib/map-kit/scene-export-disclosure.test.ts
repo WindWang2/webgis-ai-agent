@@ -22,7 +22,12 @@ describe('effectivePitch', () => {
   });
   it('returns null when both absent or non-finite', () => {
     expect(effectivePitch(null, null)).toBeNull();
-    expect(effectivePitch(Number.NaN, 30)).toBeNull();
+    expect(effectivePitch(Number.NaN, Number.NaN)).toBeNull();
+  });
+
+  it('non-finite view pitch falls back to scene pitch', () => {
+    // NaN 的 view pitch 视同缺席（防上游注入 NaN 直达渲染）。
+    expect(effectivePitch(Number.NaN, 30)).toBe(30);
   });
 });
 
