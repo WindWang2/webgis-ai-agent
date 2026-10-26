@@ -209,6 +209,10 @@ def decide_representation(
     # 而不是决策核的中间结论。Pi 看到的 mode 即地图将落的 mode。
     applied_mode = str(scene_config.get("mode") or "2d")
     if applied_mode != core.mode:
+        # 注记 applied_mode 与顶层输出对账（R2 P3：NO_DEM 注记不再报中间档）
+        for note in degradations:
+            if note.code == "SCENE_USER_TERRAIN_NO_DEM":
+                note.applied_mode = applied_mode
         if not any(d.code == "SCENE_MODE_TERRAIN_OMITTED" for d in degradations):
             degradations.append(DegradationNote(
                 code="SCENE_MODE_TERRAIN_OMITTED",
@@ -216,11 +220,8 @@ def decide_representation(
                 applied_mode=applied_mode,
                 detail=f"决策核建议 {core.mode}，但无可绑定地形源——"
                        f"实际应用 {applied_mode}"))
-        if applied_mode == "2d":
-            # 地形是 2.5d 的唯一垂直通道：无源即退 2d
-            scene_config["mode"] = "2d"
-            # 相机建议随档位重置（2.5d 轻透视不适用）
-            scene_config.pop("camera", None)
+        # 相机建议随实际档位重置（2.5d 轻透视不适用）
+        scene_config.pop("camera", None)
 
     return RepresentationDecision(
         mode=applied_mode,  # type: ignore[arg-type]
@@ -228,7 +229,12 @@ def decide_representation(
         terrain=core.terrain and "terrain" in scene_config,
         user_dimension=user_dimension,
         user_dimension_respected=(user_dimension in ("", applied_mode)),
-        degradations=degradations[:4],
+        # OMITTED 注记是输出面对账的见证——截断时优先保留（R2 P3）
+        degradations=(degradations[:4] if len(degradations) <= 4 else
+                      [d for d in degradations
+                       if d.code == "SCENE_MODE_TERRAIN_OMITTED"][:1]
+                      + [d for d in degradations[:4]
+                         if d.code != "SCENE_MODE_TERRAIN_OMITTED"])[:4],
         reason_codes=core.reason_codes()[:8],
         recommended_pitch=core.recommended_pitch if applied_mode == core.mode else 0.0,
         recommended_bearing=core.recommended_bearing if applied_mode == core.mode else 0.0,

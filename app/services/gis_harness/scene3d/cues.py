@@ -30,7 +30,9 @@ _EXTRUSION_RE = re.compile(
     r"白模|建筑(物)?(立体|挤出|拉伸|高度)模型?|立体建筑|(立体)?拉伸|挤出|"
     r"extrusion|building.*(3d|height|extrud)")
 _EXAGGERATION_RE = re.compile(
-    r"(?P<qualifier>垂直|高程|地形)?夸张(?:系数|地形|起伏)?\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*倍?")
+    r"(?P<qualifier>垂直|高程|地形)?夸张(?:系数|地形|起伏)?"
+    r"(?:改成|改为|调(?:整)?到?|设为|为|至|调整至)?\s*"
+    r"(?P<value>[0-9]+(?:\.[0-9]+)?)\s*倍?")
 _PITCH_RE = re.compile(
     r"俯仰|低角度|贴近地面看|仰视|鸟瞰|俯视角?|pitch", re.IGNORECASE)
 _PITCH_NUM_RE = re.compile(

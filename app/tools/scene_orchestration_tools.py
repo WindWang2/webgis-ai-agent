@@ -77,12 +77,21 @@ async def _record_degrade_reason(
         notes = list(getattr(decision, "degradations", []) or [])
         reason = notes[0].code if notes else ""
         revision = apply_receipt.get("mutation_revision")
+        # op_id 绑定决策状态指纹：同状态幂等（重放不重复记账），状态变化
+        # 产生新 op_id（R2 P3：裸 revna 会让不同状态互相吞记账）
+        from app.services.gis_harness.workflow_instance import canonical_fingerprint
+
+        state_fp = canonical_fingerprint({
+            "reason": reason, "mode": getattr(decision, "mode", ""),
+            "terrain": bool(getattr(decision, "terrain", False)),
+            "rev": revision,
+        })[:10]
         patch = TurnPatch(
             op="set", path="scene.degrade_reason", value=reason,
             actor="agent", turn=int(revision or 0),
             reason="scene3d decision disclosure" if reason
                    else "scene3d decision: no degradation",
-            op_id=f"scene3d-degrade-rev{revision if revision is not None else 'na'}",
+            op_id=f"scene3d-degrade-{state_fp}",
         )
         res = await apply_user_patches(session_data_manager, session_id, [patch])
         errors = [str(e) for e in (res.get("errors") or [])]
@@ -333,27 +342,25 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
             camera_locks: List[str] = []
             user_camera: Dict[str, Any] = {}
             try:
-                from app.services.gis_harness.requirement_ir.service import (
-                    get_requirement_view,
-                )
+                from app.services.gis_harness.requirement_ir import service as req_svc
                 from app.services.session_data import session_data_manager
 
-                view = await get_requirement_view(session_data_manager, session_id)
-                if isinstance(view, dict):
+                # R2 N-3：直接读文档全量锁/相机偏好——summarize 的 locks[:8]
+                # 截断会让 scene_camera 锁在 8 把 layer 锁之后不可见（守卫降级）
+                state = await req_svc.load_state(session_data_manager, session_id)
+                if state is not None:
+                    doc = req_svc._doc_from(state.document)
                     camera_locks = [
-                        str(lock.get("value"))
-                        for lock in view.get("locks") or []
-                        if isinstance(lock, dict)
-                        and lock.get("scope") == "scene_camera"
-                        and lock.get("value") in ("pitch", "bearing")
+                        str(lock.value) for lock in doc.intent.locks
+                        if lock.scope == "scene_camera"
+                        and lock.value in ("pitch", "bearing")
                     ]
-                    scene = view.get("scene")
-                    if isinstance(scene, dict):
-                        # 用户显式相机偏好（等值下发=执行用户选择）
-                        if scene.get("camera_pitch") is not None:
-                            user_camera["pitch"] = scene["camera_pitch"]
-                        if scene.get("camera_bearing") is not None:
-                            user_camera["bearing"] = scene["camera_bearing"]
+                    scene_spec = doc.intent.scene
+                    # 用户显式相机偏好（等值下发=执行用户选择）
+                    if scene_spec.camera_pitch is not None:
+                        user_camera["pitch"] = scene_spec.camera_pitch
+                    if scene_spec.camera_bearing is not None:
+                        user_camera["bearing"] = scene_spec.camera_bearing
             except Exception:  # noqa: BLE001 — IR 缺席不阻塞相机（守卫主面是交互快照）
                 camera_locks = []
 

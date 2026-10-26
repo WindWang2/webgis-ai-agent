@@ -33,7 +33,6 @@ class AnalysisBinding(BaseModel):
     dem_source_id: str = Field("", max_length=128)
     observer_x: Optional[float] = None
     observer_y: Optional[float] = None
-    spec_mutation_revision: Optional[int] = None
 
     def observer_fingerprint(self) -> str:
         return f"{self.observer_feature_id or ''}|{self.observer_x},{self.observer_y}"
@@ -61,7 +60,6 @@ def evaluate_staleness(
     *,
     interaction_snapshot: Optional[Dict[str, Any]] = None,
     current_dem_source_ids: Optional[List[str]] = None,
-    current_mutation_revision: Optional[int] = None,
 ) -> StaleVerdict:
     """一条 3D 分析结果的失效裁决（纯函数，确定性）。
 
@@ -69,7 +67,6 @@ def evaluate_staleness(
         binding: 分析登记（观察点/DEM 绑定/结果层）。
         interaction_snapshot: ``project_interaction_snapshot`` 产物。
         current_dem_source_ids: 当前 spec 的 raster-dem 源 id 集。
-        current_mutation_revision: 当前 MapSpec mutation revision。
     """
     snap = interaction_snapshot if isinstance(interaction_snapshot, dict) else {}
 

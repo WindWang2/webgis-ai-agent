@@ -226,3 +226,66 @@ def test_lock_carry_to_rebuilt_spec():
     doc = build_document("新任务", _core(), carried_locks=[lock])
     assert doc.intent.scene.dimension == "3d"
     assert doc.intent.field_provenance["scene.dimension"].is_user()
+
+
+# ── R2 评审锚（N-1/N-2）：锁内用户重表达不被静默丢弃 ────────────────
+
+
+def _apply_all(doc, patches):
+    for p in patches:
+        doc, applied = apply_patch(doc, p)
+        assert applied
+    return doc
+
+
+def test_r2_n1_user_cue_after_scene_lock_not_silently_dropped():
+    """R2 N-1 反证锚：genesis 3D 播种 scene_mode 锁后，用户对夸张/地形/
+    挤出/相机轴的**新表达**必须产生 patch（锁只挡 agent，不挡 owner）。"""
+    doc = build_document("切换成三维视图", _core())  # 播种 scene_mode=3d 锁
+    assert any(lock.scope == "scene_mode" for lock in doc.intent.locks)
+
+    for query, path, value in (
+        ("把垂直夸张改成 5 倍", "scene.exaggeration", 5.0),
+        ("加上地形起伏效果", "scene.terrain_requested", True),
+        ("建筑要立体挤出", "scene.extrusion_requested", True),
+        ("俯仰角 60 度", "scene.camera_pitch", 60.0),
+    ):
+        doc = build_document("切换成三维视图", _core())
+        # genesis 锁在场（模拟 3D 请求后的常态）
+        patches = diff_to_patches(doc, _core(), turn=1, query=query)
+        set_patches = [p for p in patches if p.op == "set" and p.path == path]
+        assert set_patches, f"{query!r} 的 cue 被静默丢弃（R2 N-1 回归）"
+        # CAS 链式：应用全量 patch（子集会断 expected_revision 链）
+        doc2 = _apply_all(doc, patches)
+        assert getattr(doc2.intent.scene, path.split(".")[1]) == value
+
+
+def test_r2_n1_camera_bearing_expressible_when_pitch_locked():
+    """pitch 锁不得挡 bearing 表达（锁路径误伤新轴）。"""
+    doc = build_document("压低视角俯仰角 30 度", _core())
+    assert any(lock.scope == "scene_camera" and lock.value == "pitch"
+               for lock in doc.intent.locks)
+    patches = diff_to_patches(doc, _core(), turn=1, query="朝正北方向看")
+    assert any(p.path == "scene.camera_bearing" and p.value == 0.0
+               for p in patches if p.op == "set")
+
+
+def test_r2_n2_degrade_reason_clear_does_not_steal_agent_ownership():
+    """R2 N-2 反证锚：用户重表达维度后，agent 仍可写 degrade_reason
+    （清除走 system actor，不把 field_provenance 抢成 user）。"""
+    doc = build_document("切换成三维视图", _core())
+    # agent 首次记账
+    doc, _ = _patch(doc, path="scene.degrade_reason",
+                    value="SCENE_USER_3D_NO_HEIGHT_EVIDENCE", actor="agent",
+                    turn=1)
+    # 用户重表达（cue 链清除旧注记 → system actor）
+    patches = diff_to_patches(doc, _core(), turn=2, query="换成 2.5D 视图")
+    clear = [p for p in patches if p.path == "scene.degrade_reason"]
+    assert clear and clear[0].actor == "system"
+    doc2 = _apply_all(doc, patches)
+    assert doc2.intent.scene.degrade_reason == ""
+    # agent 再次记账不得 PatchConflict（所有权未被 user 抢占）
+    doc3, applied = _patch(doc2, path="scene.degrade_reason",
+                           value="SCENE_USER_TERRAIN_NO_DEM", actor="agent",
+                           turn=3)
+    assert applied and doc3.intent.scene.degrade_reason == "SCENE_USER_TERRAIN_NO_DEM"

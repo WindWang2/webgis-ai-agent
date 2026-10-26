@@ -269,3 +269,47 @@ class TestRun3DAnalysis:
             "observer_x": 0, "observer_y": 0})
         assert res["declined"] is True
         assert res["reason_code"] == "SCENE_ANALYSIS_MISSING_RASTER_PATH"
+
+
+class TestReview2Anchors:
+    @pytest.mark.asyncio
+    async def test_r2_n3_camera_locks_visible_beyond_eight_locks(
+            self, registry, session_id):
+        """R2 N-3 反证锚：8 把 layer 锁之后再表达相机偏好，fly_camera
+        守卫仍能看到 scene_camera 锁（summarize[:8] 截断不可降级守卫）。"""
+        from app.services.gis_harness.requirement_ir.service import (
+            TurnPatch,
+            apply_user_patches,
+        )
+        from app.services.mapspec_store import mapspec_store
+        from app.services.session_data import session_data_manager
+
+        from app.services.gis_harness.requirement_ir.service import (
+            ensure_document,
+        )
+
+        await ensure_document(session_data_manager, session_id,
+                              "看地图", turn=0)
+        await mapspec_store.init_project(session_id)
+        # 用户显式相机偏好 + 8 把 layer_visibility 锁（挤占 summarize 截断面）
+        await apply_user_patches(session_data_manager, session_id, [
+            TurnPatch(op="set", path="scene.camera_pitch", value=30.0,
+                      actor="user", turn=1,
+                      reason="user camera preference"),
+            TurnPatch(op="add_lock", value={"scope": "scene_camera",
+                                            "value": "pitch"},
+                      actor="user", turn=1, reason="lock"),
+        ] + [
+            TurnPatch(op="add_lock", value={"scope": "layer_visibility",
+                                            "value": f"layer-{i}"},
+                      actor="user", turn=2, reason="filler")
+            for i in range(8)
+        ])
+        # agent 请求偏离用户偏好的 pitch → 必须被抑制
+        res = await registry.dispatch("fly_camera", {
+            "session_id": session_id, "pitch": 65.0})
+        assert res["success"] is True
+        assert res["status"] == "user_wins_suppressed", res
+        assert "pitch" in res.get("suppressed_axes", [])
+        spec = await mapspec_store.get_mapspec(session_id)
+        assert (spec or {}).get("view", {}).get("pitch") != 65.0

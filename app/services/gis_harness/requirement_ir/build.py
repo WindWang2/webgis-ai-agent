@@ -313,11 +313,12 @@ def diff_to_patches(
     old_spec = old.intent
     patches: List[PatchRecord] = []
 
-    def emit(op: str, path: str = "", value: Any = None, reason: str = "") -> None:
+    def emit(op: str, path: str = "", value: Any = None, reason: str = "",
+             actor: str = "user") -> None:
         patches.append(PatchRecord(
             op_id=f"edit-{turn}-{len(patches) + 1}-"
                   f"{canonical_fingerprint({'p': path, 'v': value, 'o': op})[:8]}",
-            turn=turn, actor="user", op=op,  # type: ignore[arg-type]
+            turn=turn, actor=actor, op=op,  # type: ignore[arg-type]
             path=path, value=value, reason=reason,
             expected_revision=old.revision + len(patches),
         ))
@@ -462,7 +463,12 @@ def _emit_scene_cue_patches(
     共用 cues.py 词面，投影语义一致）。
 
     维度 cue 附 ``scene_mode`` 锁（用户显式维度选择跨轮存活）；相机角度
-    cue 附 ``scene_camera`` 锁。幂等：值相同不发射；已锁字段跳过（保留锁）。
+    cue 附 ``scene_camera`` 锁。幂等：值相同不发射。
+
+    review R2 N-1：cue patch 是**用户话语的投影**（actor=user）——scene 面
+    不做 `_locked` 发射守卫（锁在 patch 层只挡非 user actor；挡 owner 的
+    重表达=静默丢弃用户最新意愿）。锁的角色是防 agent 覆盖，不是防用户
+    改主意；维度换锁经 remove+add 保持单值。
     """
     from app.services.gis_harness.scene3d.cues import extract_scene3d_cues
 
@@ -473,53 +479,46 @@ def _emit_scene_cue_patches(
     scene = spec.scene
     if cues.dimension:
         touched.add("scene.dimension")
-        existing_scene_lock = next(
-            (lock for lock in spec.locks
-             if lock.scope == "scene_mode" and lock.value != cues.dimension),
-            None)
-        if not _locked(spec, "scene.dimension") \
-                and cues.dimension != scene.dimension:
+        if cues.dimension != scene.dimension:
+            stale_lock = next(
+                (lock for lock in spec.locks
+                 if lock.scope == "scene_mode" and lock.value != cues.dimension),
+                None)
+            if stale_lock is not None:
+                emit("remove_lock",
+                     value={"scope": "scene_mode", "value": stale_lock.value},
+                     reason="user re-expressed scene dimension")
             emit("set", "scene.dimension", cues.dimension,
                  f"scene dimension cue: {cues.dimension}")
-            # 维度切换是新的显式选择——清除旧降级注记（新决策会重判）
+            # 旧降级注记失效（system 记账清除——不抢占 agent 记账所有权，
+            # review R2 N-2：user actor 清除会把 field_provenance 置 user，
+            # 之后 agent 永久 PatchConflict）
             if scene.degrade_reason:
-                emit("set", "scene.degrade_reason", "", "re-expressed by user")
+                emit("set", "scene.degrade_reason", "",
+                     "re-expressed: previous degradation note invalidated",
+                     actor="system")
             if ("scene_mode", cues.dimension) not in existing_locks:
                 emit("add_lock", value={"scope": "scene_mode", "value": cues.dimension},
                      reason="explicit user scene choice")
-        elif existing_scene_lock is not None and cues.dimension != scene.dimension:
-            # 同一用户改主意：先解除自己的旧锁，再表达新选择（锁不挡 owner）
-            emit("remove_lock",
-                 value={"scope": "scene_mode", "value": existing_scene_lock.value},
-                 reason="user re-expressed scene dimension")
-            emit("set", "scene.dimension", cues.dimension,
-                 f"scene dimension cue: {cues.dimension}")
-            if scene.degrade_reason:
-                emit("set", "scene.degrade_reason", "", "re-expressed by user")
-            emit("add_lock", value={"scope": "scene_mode", "value": cues.dimension},
-                 reason="explicit user scene choice")
     if cues.terrain_requested is not None:
         touched.add("scene.terrain_requested")
-        if not _locked(spec, "scene.terrain_requested") \
-                and cues.terrain_requested != scene.terrain_requested:
+        if cues.terrain_requested != scene.terrain_requested:
             emit("set", "scene.terrain_requested", cues.terrain_requested,
                  "terrain expression requested by user")
     if cues.extrusion_requested is not None:
         touched.add("scene.extrusion_requested")
-        if not _locked(spec, "scene.extrusion_requested") \
-                and cues.extrusion_requested != scene.extrusion_requested:
+        if cues.extrusion_requested != scene.extrusion_requested:
             emit("set", "scene.extrusion_requested", cues.extrusion_requested,
                  "vertical extrusion requested by user")
     if cues.exaggeration is not None:
         touched.add("scene.exaggeration")
         clamped = round(min(10.0, max(0.01, cues.exaggeration)), 4)
-        if not _locked(spec, "scene.exaggeration") and clamped != scene.exaggeration:
+        if clamped != scene.exaggeration:
             emit("set", "scene.exaggeration", clamped,
                  f"exaggeration cue: {clamped}")
     if cues.camera_pitch is not None:
         touched.add("scene.camera_pitch")
-        if not _locked(spec, "scene.camera_pitch") \
-                and cues.camera_pitch != scene.camera_pitch:
+        if cues.camera_pitch != scene.camera_pitch:
             emit("set", "scene.camera_pitch", cues.camera_pitch,
                  f"camera pitch cue: {cues.camera_pitch}")
             if ("scene_camera", "pitch") not in existing_locks:
@@ -527,8 +526,7 @@ def _emit_scene_cue_patches(
                      reason="explicit user camera choice")
     if cues.camera_bearing is not None:
         touched.add("scene.camera_bearing")
-        if not _locked(spec, "scene.camera_bearing") \
-                and cues.camera_bearing != scene.camera_bearing:
+        if cues.camera_bearing != scene.camera_bearing:
             emit("set", "scene.camera_bearing", cues.camera_bearing,
                  f"camera bearing cue ({cues.bearing_source})")
             if ("scene_camera", "bearing") not in existing_locks:
@@ -537,12 +535,12 @@ def _emit_scene_cue_patches(
     if cues.analysis_goals:
         touched.add("scene.analysis_goals")
         merged = tuple(dict.fromkeys([*scene.analysis_goals, *cues.analysis_goals]))[:4]
-        if not _locked(spec, "scene.analysis_goals") and merged != scene.analysis_goals:
+        if merged != scene.analysis_goals:
             emit("set", "scene.analysis_goals", list(merged),
                  f"3d analysis goal cue: {','.join(cues.analysis_goals)}")
     if cues.medium:
         touched.add("output.medium")
-        if not _locked(spec, "output.medium") and cues.medium != spec.output.medium:
+        if cues.medium != spec.output.medium:
             emit("set", "output.medium", cues.medium,
                  f"output medium cue: {cues.medium}")
     return touched
