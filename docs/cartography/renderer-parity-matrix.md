@@ -12,6 +12,7 @@
 | chart_panel | ✓ | ✓ | ✓ | ✓ | — | ADR-0081：canvas 导出绘制静态图表（与 live 同一数据协议 chart/chartRef）（native） |
 | continuous_colorbar | ✓ | ✓ | ✓ | ✓ | — | ADR-0081：导出绘制渐变 ramp + min/max/unit（与 live colorbar 同形态）（native） |
 | decision_panel | ✓ | ✓ | ✓ | ✓ | — | V3：决策面板（候选排名 + 权重来源 + 硬约束否决）（native） |
+| elevation_profile | ✓ | ✓ | ✓ | ✓ | — | G3D05：线路高程剖面 —— live 折线面板（native） |
 | export_layout | — | ✓ | ✓ | — | — | exporter 读取 paperSize/orientation/dpi 版面参数（native） |
 | graticule | ✓ | ✓ | ✓ | ✓ | — | P3：live 经纬网渲染器落地（#1089 deferred 补齐）—— 与导出侧 _drawGraticules 共享 graticule-math 间隔/吸附语义（live SVG overlay，真实 bounds 比例定位）（native） |
 | inset_map | ✓ | ✓ | ✓ | ✓ | — | v2 P1 全链路：live 轻量静态 SVG 投影（不 mount 第二个 maplibre runtime）+ 导出 drawChromeInset 同链（native） |
@@ -21,6 +22,7 @@
 | methodology_note | ✓ | ✓ | ✓ | ✓ | — | V3：方法论披露随产品渲染（稳定警告码 + 文案）（native） |
 | north_arrow | ✓ | ✓ | ✓ | ✓ | — | exporter 读取 enabled 开关（native） |
 | scale_bar | ✓ | ✓ | ✓ | ✓ | — | 同 north_arrow（enabled 开关）（native） |
+| scene_disclosure | ✓ | ✓ | ✓ | ✓ | — | G3D05：三维场景诚实披露卡 —— mode/exaggeration/垂直基准/比例尺可信度随 pitch 派生（native） |
 | statistics_panel | ✓ | ✓ | ✓ | ✓ | — | ADR-0081：canvas 导出绘制统计卡（placement 感知（native） |
 | subtitle | ✓ | ✓ | ✓ | ✓ | — | ADR-0081：exporter 经共享 resolveMapComponents 读 subtitle 组件（canvas 与 PDF 文本层同链）（native） |
 | table_panel | ✓ | ✓ | ✓ | ✓ | — | Runtime V4：交互表格面板（虚拟化 + 跨视图 SelectionContext 联动）（native） |

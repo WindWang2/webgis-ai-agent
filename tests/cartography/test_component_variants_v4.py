@@ -32,7 +32,8 @@ def test_v4_variant_count_target():
     reg = get_component_registry()
     total = sum(len(d.variants) for d in reg.native_descriptors())
     assert total >= 100, f"V4 变体目标 100+，实际 {total}"
-    assert reg.count == 20
+    # G3D05（ADR-0275）：+scene_disclosure/+elevation_profile → 22
+    assert reg.count == 22
 
 
 def test_v4_bidirectional_variant_template_coverage():

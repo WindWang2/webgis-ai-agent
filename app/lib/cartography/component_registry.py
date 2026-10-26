@@ -167,6 +167,8 @@ COMPONENT_SEMANTIC_ROLES: dict = {
     "methodology_note": "disclosure",
     "uncertainty_panel": "disclosure",
     "decision_panel": "disclosure",
+    "scene_disclosure": "disclosure",
+    "elevation_profile": "statistics",
 }
 
 
@@ -191,6 +193,8 @@ _COMPONENT_EXAMPLES: dict = {
     "methodology_note": "分母缺失/近似方法的诚实披露卡",
     "uncertainty_panel": "克里金方差/样本限制披露",
     "decision_panel": "MCDA 权重来源与候选排名面板",
+    "scene_disclosure": "三维场景模式/夸张系数/垂直基准/比例尺可信度披露卡",
+    "elevation_profile": "沿线路的高程剖面折线面板（距离-高程轴）",
 }
 
 
@@ -223,6 +227,10 @@ COMPONENT_SEARCH_KEYWORDS: dict = {
     "decision_panel": ["决策", "多准则", "权重", "排名", "decision", "mcda"],
     "label_layer": ["标注", "注记", "标签", "label", "annotation", "地名",
                     "标注字段", "避让", "压盖"],
+    "scene_disclosure": ["场景披露", "三维", "3d", "透视", "夸张", "垂直基准",
+                         "比例尺可信", "scene", "disclosure", "场景说明"],
+    "elevation_profile": ["剖面", "高程剖面", "纵断面", "海拔", "profile",
+                          "elevation", "路线剖面", "地形剖面"],
 }
 
 
@@ -248,6 +256,8 @@ COMPONENT_PREVIEWS: dict = {
     "uncertainty_panel": {"glyph": "±", "accent": "#525252"},
     "decision_panel": {"glyph": "⚖", "accent": "#525252"},
     "label_layer": {"glyph": "A", "accent": "#0f766e"},
+    "scene_disclosure": {"glyph": "◈", "accent": "#0e7490"},
+    "elevation_profile": {"glyph": "∠", "accent": "#4d7c0f"},
 }
 
 
@@ -616,6 +626,52 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         # role="note"：labels 是地图上的文字注记（同 annotation 族语义），
         # 非 chrome/img；前端 aria 消费见 map-components 可达性契约。
         accessibility={"role": "note", "label_zh": "标注图层"},
+    ),
+    # ── G3D05（ADR-0275）：三维制图产品组件族 ─────────────────────────
+    # 场景披露：内容**绑定 spec.scene 单一真相**（mode/exaggeration/
+    # vertical_unit/elevation_ref + 比例尺可信度随 pitch 派生），渲染与
+    # 导出两侧同源派生，组件 options 只承载样式与附注 —— 防第二真相
+    # （validate_scene_disclosure_payload 禁止 options 复制场景字段）。
+    MapComponentDescriptor(
+        id="scene_disclosure", category="disclosure.scene_disclosure",
+        type="scene_disclosure",
+        name="Scene Disclosure", name_zh="场景披露",
+        description="3D scene honesty card — mode/terrain exaggeration/"
+                    "vertical datum derived from spec.scene (single truth) "
+                    "+ perspective scale-trust badge (ADR-0275)",
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        default_variant="default", variants=["default", "compact"],
+        default_position="bottom-right",
+        allowed_positions=["bottom-right", "bottom-left", "top-right", "top-left", "none"],
+        cardinality="zero_or_one", priority=45, runtime_status="native",
+        required_context=["scene"],
+        states=["visible", "hidden", "collapsed"], collision_class="panel",
+        responsive="hide", interactions=["toggle_collapse"],
+        accessibility={"role": "note", "label_zh": "场景披露"},
+    ),
+    # 线路高程剖面：沿线路的 {distance_m, elevation_m} 序列（有界）或
+    # ref:profile-* 工件绑定；live 面板与导出（canvas 图表链/矢量孪生）
+    # 同一数据协议。数值证据来自 G3D03 量测契约（未合并时由 inline
+    # 数据/fixture 驱动，不虚构来源）。
+    MapComponentDescriptor(
+        id="elevation_profile", category="analysis.elevation_profile",
+        type="elevation_profile",
+        name="Elevation Profile", name_zh="高程剖面",
+        description="Route elevation profile panel — monotone distance/elevation "
+                    "series (bounded) or profileRef artifact binding (ADR-0275)",
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        default_variant="default", variants=["default", "compact"],
+        default_position="bottom-left",
+        allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
+        cardinality="multiple", requires_layer_binding=True,
+        priority=44, runtime_status="native",
+        required_context=["elevation_series"],
+        tags=["analysis", "terrain", "profile", "剖面"],
+        states=["visible", "hidden", "collapsed"], collision_class="panel",
+        responsive="hide",
+        accessibility={"role": "img", "label_zh": "高程剖面"},
     ),
 ]
 

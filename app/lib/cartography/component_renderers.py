@@ -195,6 +195,27 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         component_type="label_layer", renderers=[], exporters=[],
         note="labels render via MapSpec layer.label sublayer (runtime/compiler/SVG); component is the binding+strategy surface",
     ),
+    # ── G3D05（ADR-0275）：三维制图产品组件族 ─────────────────────────
+    # 场景披露：内容从 spec.scene 单一真相派生（live 面板 / canvas
+    # drawChromeDisclosurePanel / 矢量孪生 _parse_disclosure 三链同源）。
+    "scene_disclosure": ComponentRendererSupport(
+        component_type="scene_disclosure", publication=True,
+        renderers=["interactive"], exporters=["png", "pdf", "svg"],
+        note=(
+            "G3D05：三维场景诚实披露卡 —— mode/exaggeration/垂直基准/"
+            "比例尺可信度随 pitch 派生；三链渲染均读 spec.scene，"
+            "组件 options 不复制场景状态"
+        ),
+    ),
+    "elevation_profile": ComponentRendererSupport(
+        component_type="elevation_profile", publication=True,
+        renderers=["interactive"], exporters=["png", "pdf", "svg"],
+        note=(
+            "G3D05：线路高程剖面 —— live 折线面板；导出复用图表渲染链"
+            "（canvas drawChromeChart / 矢量孪生 render_chart_panel），"
+            "points/profileRef 与 chart 同协议"
+        ),
+    ),
 }
 
 
