@@ -1328,6 +1328,13 @@ def compile_mapspec_to_svg_detailed(
         if not isinstance(mapspec, dict):
             mapspec = {}
 
+        # G3D05（ADR-0275）：矢量孪生无法保留三维透视模型 —— mode!=2d
+        # 必发结构化降级收据（不冒充可编辑 3D 矢量；2d 语义零噪音）。
+        _scene = mapspec.get("scene")
+        if isinstance(_scene, dict) and _scene.get("mode") in ("3d", "2.5d"):
+            _emit_diag("svg_3d_perspective_degrade",
+                       detail=str(_scene.get("mode")))
+
         try:
             target_dpi_val = float(target_dpi)
             if not _math.isfinite(target_dpi_val) or target_dpi_val <= 0:

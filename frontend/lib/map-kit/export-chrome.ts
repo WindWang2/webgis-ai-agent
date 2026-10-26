@@ -154,6 +154,11 @@ export type ExportDegradationCode =
   | 'atlas_page_skipped'
   | 'atlas_page_limit_truncated'
   | 'terrain_3d_scale_caveat'
+  /* G3D05（ADR-0275）：透视比例尺不可信（pitch>10° 且比例尺在场；
+   * 发射器 scene-export-disclosure.ts 判定 → exporter 汇入）与矢量
+   * 3D 透视降级收据（后端孪生编译期发射，前端矢量路径同语义）。 */
+  | 'scale_unreliable_perspective'
+  | 'svg_3d_perspective_degrade'
   /* ADR-0199：场景协议披露（发射器 mapspec-runtime/adapter 证据环 →
    * exporter 汇入；词表权威在 app/lib/cartography/render_diagnostics.py）。 */
   | 'scene_extrusion_no_height_evidence'

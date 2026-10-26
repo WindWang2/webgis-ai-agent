@@ -23,6 +23,7 @@ import {
   type ExportDegradation,
 } from './export-chrome';
 import { DEFAULT_STACK_STEP_PX } from '@/lib/map-components/resolve-layout';
+import { sceneExportDisclosure } from './scene-export-disclosure';
 export type { ExportChromeModel } from './export-chrome';
 import { API_BASE } from '@/lib/api/config';
 import { apiFetch, isApiError } from '@/lib/api/transport';
@@ -1206,6 +1207,8 @@ export interface ExportDeps {
 interface ExportCommittedSpec {
   layout?: { components?: MapSpecComponent[] };
   layers?: MapSpecLayer[];
+  /** G3D05：场景块（mode/camera/terrain）—— 透视比例尺披露的判定输入。 */
+  scene?: { mode?: string; camera?: { pitch?: number } } | null;
 }
 
 /**
@@ -2158,6 +2161,26 @@ async function runExportInternal(
     ];
     if (storeState.is3D && showScaleEffective) {
       chromeDegradations.push({ code: 'terrain_3d_scale_caveat' });
+    }
+    // G3D05（ADR-0275）：透视比例尺诚实 —— pitch>10° 且比例尺在场时按
+    // 披露组件在场与否发 scale_unreliable_perspective（判定单源
+    // scene-export-disclosure.ts；scene_disclosure 在场时文案降为
+    // 「仅供参考」，缺披露时明示不可信）。
+    const sceneDisclosureModel = sceneExportDisclosure({
+      viewPitch: map.getPitch(),
+      scenePitch:
+        (committedSpec?.scene?.camera as { pitch?: number } | undefined)
+          ?.pitch ?? null,
+      hasScaleBar: showScaleEffective,
+      hasSceneDisclosure: (committedSpec?.layout?.components ?? []).some(
+        (c) => c.type === 'scene_disclosure' && c.enabled !== false,
+      ),
+    });
+    if (sceneDisclosureModel.scaleDiagnostic) {
+      chromeDegradations.push({
+        code: sceneDisclosureModel.scaleDiagnostic.code,
+        detail: sceneDisclosureModel.scaleDiagnostic.detail,
+      });
     }
     // ADR-0199：场景证据门控披露 —— is3D 下因无高度证据未挤出的图层
     //（adapter 证据环登记）汇入导出降级面；detail 有界（≤200 字符）。

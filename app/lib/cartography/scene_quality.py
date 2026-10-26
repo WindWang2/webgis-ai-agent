@@ -32,6 +32,11 @@ SCENE_QUALITY_CODES = (
     "SCENE_PITCH_EXTREME",
     "SCENE_VERTICAL_UNIT_UNKNOWN",
     "SCENE_LEGEND_DRIFT",
+    # G3D05（ADR-0275）：三维制图产品向 —— 透视比例尺诚实 / 标注遮挡
+    # 风险 / 矢量导出降级披露。
+    "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE",
+    "SCENE_LABEL_OCCLUSION_RISK",
+    "SCENE_EXPORT_VECTOR_DEGRADE",
 )
 
 #: pitch 硬上限（MapLibre 合法域）与产品建议上限。
@@ -40,6 +45,18 @@ _PITCH_ADVICE_MAX = 60.0
 
 #: 失真披露阈（>1.5 需披露 —— scene_planning 同口径单源）。
 _EXAGGERATION_DISCLOSURE = 1.5
+
+#: G3D05：屏幕比例尺可信阈 —— 有效 pitch（view.pitch 优先，回退
+#: scene.camera.pitch）超过该值时透视压缩使屏幕比例尺不可信，必须由
+#: scene_disclosure 组件披露而非静默展示。
+_SCALE_TRUST_PITCH_MAX = 10.0
+
+#: G3D05：高俯仰下 symbol 标注被地形/挤出体遮挡风险的提示阈。
+_LABEL_OCCLUSION_PITCH = 45.0
+
+#: 矢量导出目标（render_diagnostics.EXPORT_TARGETS 同口径的子集 ——
+#: 这三条通道无法保留透视模型，mode!=2d 必须显式降级）。
+_VECTOR_TARGETS = ("pdf", "svg", "print")
 
 #: finding 形状键（有界、可序列化）。
 _FINDING_KEYS = {"code", "severity", "detail", "layer_id"}
@@ -88,11 +105,20 @@ def check_legend_invariance(
     return None
 
 
-def evaluate_scene_quality(spec: Dict[str, Any]) -> Dict[str, Any]:
+def evaluate_scene_quality(
+    spec: Dict[str, Any],
+    *,
+    export_targets: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """spec → 场景质量报告 {passed, blocking_count, findings}。
 
     findings 按严重度排序（blocking 在前）；无 scene 的 spec 直接通过
     （存量 2d 语义零门槛 —— 向后兼容是 Oracle 条款）。
+
+    G3D05 增补：``export_targets`` 由导出/ACK 调用方传入（interactive
+    场景缺省 None = 跳过矢量降级检查）；含矢量目标且 mode!=2d 时产出
+    ``SCENE_EXPORT_VECTOR_DEGRADE`` info —— 降级本身合法（矢量孪生是
+    平面投影），但**未被披露的降级**是误导，质量门负责点名。
     """
     findings: List[Dict[str, Any]] = []
     scene = spec.get("scene")
@@ -193,6 +219,78 @@ def evaluate_scene_quality(spec: Dict[str, Any]) -> Dict[str, Any]:
             "scene.mode=3d but no extrusion layer and no terrain; mode claim "
             "is empty",
         ))
+
+    # ── G3D05：透视比例尺诚实（ADR-0275）────────────────────────────────
+    # 有效 pitch = view.pitch（当前相机，导出时刻的真相）优先，回退
+    # scene.camera.pitch（推荐档）。> 阈值时屏幕比例尺被透视压缩失真：
+    # 有 scene_disclosure 组件在场 = 已披露（info 化）；缺披露组件且
+    # 仍展示比例尺 = warning（静默误导）。
+    effective_pitch: Optional[float] = None
+    view = spec.get("view")
+    if isinstance(view, dict):
+        vp = view.get("pitch")
+        if isinstance(vp, (int, float)) and not isinstance(vp, bool):
+            effective_pitch = float(vp)
+    if effective_pitch is None and isinstance(camera, dict):
+        cp = camera.get("pitch")
+        if isinstance(cp, (int, float)) and not isinstance(cp, bool):
+            effective_pitch = float(cp)
+    layout = spec.get("layout")
+    components = []
+    if isinstance(layout, dict) and isinstance(layout.get("components"), list):
+        components = [c for c in layout["components"] if isinstance(c, dict)]
+    has_scale_bar = any(
+        c.get("type") == "scale_bar" and c.get("enabled", True) for c in components
+    )
+    has_scene_disclosure = any(
+        c.get("type") == "scene_disclosure" and c.get("enabled", True)
+        for c in components
+    )
+    if (
+        effective_pitch is not None
+        and effective_pitch > _SCALE_TRUST_PITCH_MAX
+        and has_scale_bar
+    ):
+        if has_scene_disclosure:
+            findings.append(_finding(
+                "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE", "info",
+                f"pitch {effective_pitch} > {_SCALE_TRUST_PITCH_MAX}: screen "
+                "scale bar is perspective-compressed; scene_disclosure "
+                "present (trust badge disclosed)",
+            ))
+        else:
+            findings.append(_finding(
+                "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE", "warning",
+                f"pitch {effective_pitch} > {_SCALE_TRUST_PITCH_MAX}: screen "
+                "scale bar is perspective-compressed and unreliable — add a "
+                "scene_disclosure component or remove the scale bar (silent "
+                "misleading scale is not acceptable)",
+            ))
+
+    # ── G3D05：标注遮挡风险（高俯仰 + 有标注层）─────────────────────────
+    if (
+        effective_pitch is not None
+        and effective_pitch > _LABEL_OCCLUSION_PITCH
+        and any(isinstance(l, dict) and l.get("label") for l in layers)
+    ):
+        findings.append(_finding(
+            "SCENE_LABEL_OCCLUSION_RISK", "info",
+            f"pitch {effective_pitch} > {_LABEL_OCCLUSION_PITCH} with label "
+            "layers: terrain/extrusions may occlude labels at high pitch; "
+            "review label visibility (VLM readability axis adjudicates)",
+        ))
+
+    # ── G3D05：矢量导出降级披露（调用方声明导出目标时检查）──────────────
+    if export_targets and mode in ("3d", "2.5d"):
+        vector_targets = [t for t in export_targets if t in _VECTOR_TARGETS]
+        if vector_targets:
+            findings.append(_finding(
+                "SCENE_EXPORT_VECTOR_DEGRADE", "info",
+                f"vector export ({','.join(vector_targets)}) cannot preserve "
+                f"the {mode} perspective model; output degrades to a flat 2D "
+                "projection with a typed degradation receipt — do not claim "
+                "editable 3D vectors",
+            ))
 
     blocking = sum(1 for f in findings if f["severity"] == "blocking")
     findings.sort(key=lambda f: 0 if f["severity"] == "blocking" else 1)
