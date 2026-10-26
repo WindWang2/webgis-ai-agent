@@ -49,7 +49,7 @@ RUN pnpm run build
 FROM node:26-bookworm-slim@sha256:298992629d69bbd5b2b03ad57094d8e4fcb3a8eeb7c4e25d29de656519568913 AS node-runtime
 
 # Stage 3: Backend Python Dependencies
-FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS backend-deps
+FROM python:3.15-slim-bookworm@sha256:575f8bc12ec26542e0678bc6b60e385218248019d433157ec327264a78c3a853 AS backend-deps
 WORKDIR /app/backend
 
 # Install GDAL/GEOS/PROJ system libraries required by rasterio, pyogrio, geopandas
@@ -65,7 +65,7 @@ RUN pip install --no-cache-dir --break-system-packages \
     && uv pip install --system --no-cache -r requirements.lock
 
 # Stage 4: Final Runner
-FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runner
+FROM python:3.15-slim-bookworm@sha256:575f8bc12ec26542e0678bc6b60e385218248019d433157ec327264a78c3a853 AS runner
 WORKDIR /app/backend
 
 # #662：生产容器离线加载 RAG embedding 模型 —— 未缓存时首用秒级失败（有界），
