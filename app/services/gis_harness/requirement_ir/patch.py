@@ -57,6 +57,12 @@ _NORMALIZATIONS = ("none", "per_area", "per_capita", "custom")
 _GRANULARITIES = ("none", "year", "quarter", "month", "day")
 _SRKINDS = ("none", "within", "intersects", "near", "service_area", "drainage_to", "along")
 _COMPONENTS = ("title", "legend", "scale_bar", "north_arrow", "labels", "attribution")
+# G3D04：scene 面词表（与 contracts 对齐，写边界校验用）
+_SCENE_DIMENSIONS = ("", "2d", "2.5d", "3d")
+_SCENE_GOALS = ("viewshed", "line_of_sight", "skyline", "terrain_profile")
+_SCENE_ROLES = ("elevation", "subject", "receptor", "constraint")
+_VERTICAL_KINDS = ("height_attribute", "elevation_dem")
+_MEDIA = ("", "interactive", "screen", "print", "export_png", "export_pdf", "export_svg")
 
 # lock scope → 受保护 path 前缀（user-wins 锁定面）
 _LOCK_SCOPE_PATHS: Dict[str, Tuple[str, ...]] = {
@@ -71,6 +77,11 @@ _LOCK_SCOPE_PATHS: Dict[str, Tuple[str, ...]] = {
     "audience": ("audience",),
     "export_format": ("output.formats",),
     "aoi": ("aoi.name", "aoi.level"),
+    # G3D04：维度/地形/挤出/夸张与相机偏好是跨轮 user-wins 面
+    "scene_mode": (
+        "scene.dimension", "scene.terrain_requested", "scene.extrusion_requested",
+        "scene.exaggeration", "scene.degrade_reason"),
+    "scene_camera": ("scene.camera_pitch", "scene.camera_bearing"),
 }
 
 
@@ -178,6 +189,63 @@ def _v_datasets(path: str, value: Any) -> Tuple[str, ...]:
     return items[:16]
 
 
+def _v_opt_float(path: str, value: Any, lo: float, hi: float) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not lo <= float(value) <= hi:
+        raise PatchValueInvalid(path, f"expect float in [{lo},{hi}]")
+    return float(value)
+
+
+def _v_scene_goals(path: str, value: Any) -> Tuple[str, ...]:
+    if not isinstance(value, (list, tuple)) or len(value) > 4:
+        raise PatchValueInvalid(path, "expect list[str] <=4 (viewshed/line_of_sight/"
+                                      "skyline/terrain_profile)")
+    out = []
+    for item in value:
+        if not isinstance(item, str) or item not in _SCENE_GOALS:
+            raise PatchValueInvalid(path, f"expect one of {_SCENE_GOALS}")
+        out.append(item)
+    return tuple(dict.fromkeys(out))
+
+
+def _v_scene_roles(path: str, value: Any) -> Dict[str, str]:
+    if not isinstance(value, dict) or len(value) > 8:
+        raise PatchValueInvalid(path, "expect dict[str,str] <=8")
+    out: Dict[str, str] = {}
+    for key, role in value.items():
+        if not isinstance(role, str) or role not in _SCENE_ROLES:
+            raise PatchValueInvalid(path, f"role expect one of {_SCENE_ROLES}")
+        out[str(key)[:128]] = role
+    return out
+
+
+def _v_vertical_evidence(path: str, value: Any) -> List[Dict[str, Any]]:
+    from app.services.gis_harness.requirement_ir.contracts import VerticalEvidenceRecord
+
+    if not isinstance(value, (list, tuple)) or len(value) > 8:
+        raise PatchValueInvalid(path, "expect list[VerticalEvidenceRecord] <=8")
+    records = []
+    for item in value:
+        try:
+            records.append(VerticalEvidenceRecord.model_validate(item).model_dump())
+        except Exception as exc:  # noqa: BLE001 — 写边界 typed 拒绝
+            raise PatchValueInvalid(path, f"invalid vertical evidence: {exc}") from exc
+    return records
+
+
+def _set_vertical_evidence(spec: GISIntentSpec, value: Any) -> None:
+    """写边界：dict → VerticalEvidenceRecord 模型实例（GISIntentSpec 无
+    validate_assignment，setattr 不会自动 coerce——裸 dict 会污染 digest）。"""
+    from app.services.gis_harness.requirement_ir.contracts import VerticalEvidenceRecord
+
+    spec.scene.vertical_evidence = [
+        VerticalEvidenceRecord.model_validate(item)
+        for item in _v_vertical_evidence("scene.vertical_evidence", value)
+    ]
+
+
 # path → (setter(spec_dict, value), validator)
 # setter 直接操作 intent 的对应模型属性（pydantic validate_assignment 面在
 # GISIntentSpec 层不适用，故在各 section 模型上就地赋值——它们同样 forbid extra）。
@@ -213,7 +281,24 @@ _SETTERS: Dict[str, Tuple[Callable[[GISIntentSpec, Any], None], Callable[[str, A
     "output.report": (lambda s, v: setattr(s.output, "report", v), _v_bool),
     "output.dpi": (lambda s, v: setattr(s.output, "dpi", _v_opt_int("output.dpi", v, 72, 1200)), lambda p, v: _v_opt_int(p, v, 72, 1200)),
     "output.output_purpose": (lambda s, v: setattr(s.output, "output_purpose", v), _v_vocab(_OUTPUT_PURPOSES)),
+    "output.medium": (lambda s, v: setattr(s.output, "medium", v), _v_vocab(_MEDIA)),
     "datasets": (lambda s, v: setattr(s, "datasets", _v_datasets("datasets", v)), _v_datasets),
+    # ── G3D04：scene 面写边界 ───────────────────────────────────────────
+    "scene.dimension": (lambda s, v: setattr(s.scene, "dimension", v), _v_vocab(_SCENE_DIMENSIONS)),
+    "scene.degrade_reason": (lambda s, v: setattr(s.scene, "degrade_reason", v), _v_str),
+    "scene.terrain_requested": (
+        lambda s, v: setattr(s.scene, "terrain_requested", v), lambda p, v: _v_opt_bool(p, v)),
+    "scene.extrusion_requested": (
+        lambda s, v: setattr(s.scene, "extrusion_requested", v), lambda p, v: _v_opt_bool(p, v)),
+    "scene.exaggeration": (
+        lambda s, v: setattr(s.scene, "exaggeration", v), lambda p, v: _v_opt_float(p, v, 0.0, 10.0)),
+    "scene.camera_pitch": (
+        lambda s, v: setattr(s.scene, "camera_pitch", v), lambda p, v: _v_opt_float(p, v, 0.0, 85.0)),
+    "scene.camera_bearing": (
+        lambda s, v: setattr(s.scene, "camera_bearing", v), lambda p, v: _v_opt_float(p, v, -180.0, 180.0)),
+    "scene.analysis_goals": (lambda s, v: setattr(s.scene, "analysis_goals", _v_scene_goals("scene.analysis_goals", v)), _v_scene_goals),
+    "scene.dataset_roles": (lambda s, v: setattr(s.scene, "dataset_roles", _v_scene_roles("scene.dataset_roles", v)), _v_scene_roles),
+    "scene.vertical_evidence": (lambda s, v: _set_vertical_evidence(s, v), _v_vertical_evidence),
 }
 for _component in _COMPONENTS:
     _SETTERS[f"components.{_component}"] = (
@@ -306,7 +391,7 @@ def _SECTION_MAP(spec: GISIntentSpec) -> Dict[str, Any]:
         "aoi": spec.aoi, "subject": spec.subject, "time": spec.time,
         "statistics": spec.statistics, "spatial_relation": spec.spatial_relation,
         "representation": spec.representation, "components": spec.components,
-        "output": spec.output, "task": spec.task,
+        "output": spec.output, "task": spec.task, "scene": spec.scene,
     }
 
 
@@ -606,7 +691,7 @@ def _touch_provenance(spec: GISIntentSpec, path: str, provenance: Provenance) ->
         "aoi": spec.aoi, "subject": spec.subject, "time": spec.time,
         "statistics": spec.statistics, "spatial_relation": spec.spatial_relation,
         "representation": spec.representation, "components": spec.components,
-        "output": spec.output, "task": spec.task,
+        "output": spec.output, "task": spec.task, "scene": spec.scene,
     }.get(section_attr)
     if section is not None and not section.provenance.is_user():
         section.provenance = provenance

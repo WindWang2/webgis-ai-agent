@@ -58,6 +58,20 @@ def derive_requirements(spec: GISIntentSpec) -> MapRequirementSpec:
     for lock in spec.locks:
         if lock.scope == "layer_visibility" and lock.value:
             add("map", f"保持图层隐藏: {lock.value}", "locks", pinned=True)
+    # G3D04：3D 表达义务——用户显式维度/分析目标进入义务面（pinned：
+    # 维度受 scene_mode 锁保护时 graceful degradation 不得吞）。
+    if spec.scene.dimension:
+        pinned_scene = any(
+            lock.scope == "scene_mode" and lock.value == spec.scene.dimension
+            for lock in spec.locks)
+        add("map", f"三维表达（{spec.scene.dimension}）",
+            "scene.dimension", pinned=pinned_scene,
+            capability="scene_representation")
+    if spec.scene.analysis_goals:
+        add("analysis",
+            f"完成 3D 分析（{','.join(spec.scene.analysis_goals)}）",
+            "scene.analysis_goals",
+            capability=spec.scene.analysis_goals[0])
     return MapRequirementSpec(items=items[:64])
 
 
