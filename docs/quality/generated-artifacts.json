@@ -45,7 +45,7 @@
    "content_fingerprint": "4527d3bbe47fd564d7ff476bd3987c4ab57e571d7b2d8de33715c4cb62512c76",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "3098a220c665a2ebe03c1277a14bd04711b30b38ccabe0b88bf2aa914399de71",
+   "input_fingerprint": "ec9fcc7542412a0e64904cd092ae4f1978acec8de85882116dbc5e09e799b975",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -93,7 +93,7 @@
    "content_fingerprint": "9ba546f2f3d01d5cbc17144950665596aeaed0fd9941bdc2e71a449ae780c15d",
    "generator": "scripts/gen_determinism_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "5e9663d4c148907cc8374a7ab822a91711d02825e0bc242cb89fa62688e496a0",
+   "input_fingerprint": "2e45cf7aed4545b0c4fedf796508beab9853ed60d4802da7b6213a0a96968e6f",
    "inputs": [
     "app/lib/gis/algorithms"
    ],
@@ -135,7 +135,7 @@
    "content_fingerprint": "e5cfffd789c9254a774430186bb1888f2308f3a9772a2419c5f171d46d5d5df5",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "3098a220c665a2ebe03c1277a14bd04711b30b38ccabe0b88bf2aa914399de71",
+   "input_fingerprint": "ec9fcc7542412a0e64904cd092ae4f1978acec8de85882116dbc5e09e799b975",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -159,10 +159,10 @@
    "scope": "global"
   },
   "docs/science/BENCHMARK_MANIFEST.md": {
-   "content_fingerprint": "4d232888b249881b805945815430b9f42e1269c02b9cf1866359a74adf05f1bb",
+   "content_fingerprint": "e50731be7fdccbacc2a28c5a6a9dce699496b1b66e8604686aa171ed9b31f764",
    "generator": "scripts/gen_science_benchmark_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "b3183ad68368a50ec054ab38550d6c3ba7ae0422b8da611dbaa85caa0a3c6c91",
+   "input_fingerprint": "896b8b144cc39c57e25afd39a6c92648df4e3e76f85ff6af6657588a4158639b",
    "inputs": [
     "app/lib/gis/algorithm_registry.py",
     "app/lib/gis/algorithms"
@@ -173,7 +173,7 @@
    "content_fingerprint": "1c1804f5ad5fd9d8a1278055c4240ce03d77cc779c11eab560a35320a76e954f",
    "generator": "scripts/gen_capability_catalog.py",
    "generator_version": 1,
-   "input_fingerprint": "60b532ec17d132d4e1e8a95afa12977c43aca1a462436b6748a8a7e630edc0aa",
+   "input_fingerprint": "2258ebd8221f86c3671acd1dc66f46a6d551e5e13cd8d70f27261406a9553f27",
    "inputs": [
     "app/lib/gis/capability_registry.py",
     "app/lib/gis/capabilities",
