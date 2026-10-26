@@ -39,6 +39,12 @@ def store_data(entry: Dict[str, Any], data: Any) -> None:
                 entry[_BOUNDS] = data[_BOUNDS]
             if _IMAGE_SIZE in data:
                 entry[_IMAGE_SIZE] = data[_IMAGE_SIZE]
+        elif data.get("type") == "model3d":
+            # v1.7（G3D02）：3D 资产数据面指针（format 词表 + url/ref_id
+            # 身份字段原样透传 —— 放置语义在 scene.assets，两层不混写）。
+            entry["type"] = "model3d"
+            for k, v in data.items():
+                entry[k] = v
         elif "catalog_item_id" in data or data.get("type") in DATAFABRIC_SOURCE_TYPES:
             # DataFabric protocol source (ADR-0050). MUST be checked before
             # the plain-ref branch: a lazy/materialized fabric payload can

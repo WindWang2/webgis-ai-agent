@@ -87,7 +87,7 @@ export interface MapSpecLayerLayout {
 export interface MapSpec {
   version: string;
   view?: MapSpecView;
-  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
+  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | MapSpecModelSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
   layers: MapSpecLayer[];
   layout?: MapSpecLayoutConfig;
   thresholds?: MapThresholds;
@@ -335,6 +335,7 @@ export interface MapSceneConfig {
   reason_code?: string;
   degrade_to?: "2.5d" | "2d";
   reduced_motion?: boolean;
+  assets?: SceneAssetSpec[];
 }
 
 export interface TerrainSceneSpec {
@@ -348,4 +349,47 @@ export interface SceneCameraSpec {
   pitch?: number;
   bearing?: number;
   transition_ms?: number;
+}
+
+export interface MapSpecModelSource {
+  type: "model3d";
+  format: "gltf" | "glb" | "3dtiles";
+  url?: string;
+  ref_id?: string;
+  content_revision?: number;
+  data_fingerprint?: string;
+  descriptor_fingerprint?: string;
+  bbox?: [number, number, number, number];
+}
+
+export interface SceneAssetSpec {
+  id: string;
+  source: string;
+  visible?: boolean;
+  placement?: SceneAssetPlacement;
+  vertical?: SceneAssetVertical;
+  render_order?: number;
+  lod?: SceneAssetLodPolicy;
+  provenance_ref?: string;
+}
+
+export interface SceneAssetPlacement {
+  anchor: [number, number];
+  altitude_m?: number;
+  heading_deg?: number;
+  pitch_deg?: number;
+  roll_deg?: number;
+  scale?: number;
+  ground_clamp?: boolean;
+}
+
+export interface SceneAssetVertical {
+  datum?: "ellipsoid" | "egm96" | "local";
+  unit?: "m";
+  elevation_ref?: string;
+}
+
+export interface SceneAssetLodPolicy {
+  max_sse?: number;
+  max_visible_tiles?: number;
 }

@@ -36,6 +36,7 @@
       "heatmap_density": true,
       "label_placement": true,
       "point_clustering": true,
+      "scene_assets_3d": true,
       "semantic_zoom_representation": true,
       "terrain": true
     },
@@ -48,6 +49,7 @@
     "source_type_levels": {
       "data_fabric": "partial",
       "geojson": "full",
+      "model3d": "partial",
       "pmtiles": "none",
       "raster": "full",
       "raster-dem": "full",
@@ -68,6 +70,7 @@
     "source_kinds": [
       "data_fabric",
       "geojson",
+      "model3d",
       "pmtiles",
       "raster",
       "raster-dem",

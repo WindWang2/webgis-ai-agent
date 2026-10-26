@@ -46,8 +46,28 @@ class SetSceneIntent:
     scene: Optional[Dict[str, Any]] = None
 
 
+@dataclass
+class SetSceneAssetsIntent:
+    """三维场景资产表写入（v1.7，G3D02；presentation 面）。
+
+    **整表替换** ``scene.assets``（id 键控的声明表，不是数据）：只动
+    assets 键，mode/terrain/camera 原样保留 —— agent 增删单个资产 =
+    读当前表 → 合并 → 整表写回（store 层 CAS 保护并发）。空列表 =
+    清空资产；``assets=None`` 拒绝（与「清除」语义显式区分，防误清）。
+
+    scene 分支缺席时以 ``{"mode": "3d"}`` 座位创建（3D 资产隐含 3D
+    场景；结果携带 disclosure 披露默认档来源）。资产域校验（source
+    指针/放置范围/重复 id/预算）经 scene_quality 的 SCENE_ASSET_* 码
+    单源裁决 —— blocking 码整笔拒绝，last-known-good 不变；悬空引用
+    另由 coordinator.validate 写路径双闸。
+    """
+
+    assets: Optional[List[Dict[str, Any]]] = None
+
+
 __all__ = [
     "SetViewIntent",
     "PatchLayerPresentationIntent",
     "SetSceneIntent",
+    "SetSceneAssetsIntent",
 ]

@@ -180,6 +180,56 @@ def validate(mapspec: Dict[str, Any]) -> Dict[str, Any]:
                 ),
             })
 
+    # v1.7（G3D02）：scene.assets 校验 —— 与 terrain 同 fail-closed 口径：
+    # 悬空/错型/无数据指针 = 想象的 3D 证据，写路径拒绝引入。放置域与
+    # 证据披露归 scene_quality（质量门），此处只把数据面引用关死。
+    if isinstance(scene, dict) and isinstance(scene.get("assets"), list):
+        seen_asset_ids = set()
+        for asset in scene["assets"]:
+            if not isinstance(asset, dict):
+                continue
+            asset_id = asset.get("id")
+            if isinstance(asset_id, str) and asset_id:
+                if asset_id in seen_asset_ids:
+                    errors.append({
+                        "code": "SCENE_ASSET_DUPLICATE_ID",
+                        "message": f"duplicate scene asset id '{asset_id}'",
+                    })
+                seen_asset_ids.add(asset_id)
+            asset_source = asset.get("source")
+            if not isinstance(asset_source, str) or not asset_source:
+                errors.append({
+                    "code": "SCENE_ASSET_SOURCE_REF",
+                    "message": "scene.assets[].source must be a non-empty source id",
+                })
+                continue
+            if asset_source not in source_keys:
+                errors.append({
+                    "code": "SCENE_ASSET_SOURCE_REF",
+                    "message": (
+                        f"scene asset '{asset_id}' references missing source "
+                        f"'{asset_source}'"
+                    ),
+                })
+                continue
+            src_entry = sources.get(asset_source) or {}
+            if src_entry.get("type") != "model3d":
+                errors.append({
+                    "code": "SCENE_ASSET_SOURCE_TYPE",
+                    "message": (
+                        f"scene asset '{asset_id}' source '{asset_source}' is "
+                        f"'{src_entry.get('type')}', expected 'model3d'"
+                    ),
+                })
+            elif not (src_entry.get("url") or src_entry.get("ref_id")):
+                errors.append({
+                    "code": "SCENE_ASSET_SOURCE_REF",
+                    "message": (
+                        f"model3d source '{asset_source}' carries neither url "
+                        f"nor ref_id (asset '{asset_id}')"
+                    ),
+                })
+
     return {
         "success": len(errors) == 0,
         "errors": errors,

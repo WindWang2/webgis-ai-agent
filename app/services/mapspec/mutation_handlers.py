@@ -1235,6 +1235,89 @@ async def _handle_setscene(ctx: MutationContext) -> HandlerOut:
     return MutationPlan(mapspec=mapspec)
 
 
+async def _handle_setsceneassets(ctx: MutationContext) -> HandlerOut:
+    """SetSceneAssetsIntent 分支体（v1.7 G3D02；COW 只动 scene.assets 键）。
+
+    域校验单源：合并后的 spec 过 scene_quality，只取 SCENE_ASSET_* 码裁决
+    （blocking → 整笔拒绝；pre-existing 的 terrain/相机问题不由本 intent
+    买单）。scene 缺席时以 {"mode": "3d"} 座位创建并披露。"""
+    origin = ctx.origin
+    loaded = ctx.loaded
+    intent = ctx.intent
+
+    from app.lib.cartography.mapspec_schema import (
+        MapSceneConfig,
+        SCENE_MODES,
+    )
+    from app.lib.cartography.scene_quality import evaluate_scene_quality
+
+    assets = intent.assets
+    if assets is None:
+        return MapSpecResult(
+            is_error=True,
+            origin=origin,
+            error_msg="assets=None 不是合法输入（与「清空」语义显式区分）。",
+            correction_hint="传资产列表（空列表 = 清空 scene.assets）。",
+        )
+    if not isinstance(assets, list) or any(not isinstance(a, dict) for a in assets):
+        return MapSpecResult(
+            is_error=True,
+            origin=origin,
+            error_msg=(
+                f"非法 scene.assets：期望 dict 列表，得到 "
+                f"{type(assets).__name__}。"
+            ),
+            correction_hint="每项资产是 SceneAssetSpec 形状的对象（id/source/placement/...）。",
+        )
+
+    mapspec = {**loaded} if loaded else {}
+    scene_value = mapspec.get("scene")
+    if not isinstance(scene_value, dict):
+        # 3D 资产隐含 3D 场景：缺座时建 3d 档（不静默发明 2.5d）。
+        scene_value = {"mode": "3d"}
+
+    merged_scene = {**scene_value, "assets": copy.deepcopy(assets)}
+    try:
+        MapSceneConfig.model_validate(merged_scene)
+    except Exception as exc:  # noqa: BLE001 — 结构化拒绝
+        return MapSpecResult(
+            is_error=True,
+            origin=origin,
+            error_msg=f"非法 scene.assets 配置：{exc}",
+            correction_hint=(
+                f"mode 仅接受 {list(SCENE_MODES)}；资产需 id/source 字符串；"
+                "source 指向 model3d 源；placement.anchor 为 [lng, lat]。"
+            ),
+        )
+
+    merged_spec = {**mapspec, "scene": merged_scene}
+    quality = evaluate_scene_quality(merged_spec)
+    asset_blockings = [
+        f for f in quality.get("findings", [])
+        if str(f.get("code", "")).startswith("SCENE_ASSET_")
+        and f.get("severity") == "blocking"
+    ]
+    if asset_blockings:
+        first = asset_blockings[0]
+        return MapSpecResult(
+            is_error=True,
+            origin=origin,
+            error_msg=(
+                f"scene.assets 域校验失败（{len(asset_blockings)} 项 blocking）："
+                f"{first.get('code')}: {first.get('detail')}"
+            ),
+            correction_hint=(
+                "资产 source 必须指向 spec 内 model3d 源（url/ref_id 至少其一）；"
+                "id 唯一；anchor 经度 [-180,180]/纬度 [-90,90]；scale > 0。"
+            ),
+        )
+
+    mapspec["scene"] = merged_scene
+    # 座位档披露不另设通道：结果 mapspec.scene.mode 即事实，工具输出原样
+    # 透出（消费方可见「无既有 scene 时 assets 写入创建了 3d 档」）。
+    return MutationPlan(mapspec=mapspec)
+
+
 async def _handle_applyvisualhealpatch(ctx: MutationContext) -> HandlerOut:
     """ApplyVisualHealPatchIntent 分支体（逐字迁移，见模块 docstring 的适配清单）。"""
     origin = ctx.origin

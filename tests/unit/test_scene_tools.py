@@ -145,3 +145,57 @@ async def mapspec_seed(session_id: str) -> None:
         ),
     )
     assert res.is_error is False, res.error_msg
+
+
+class TestSetSceneAssets:
+    @pytest.mark.asyncio
+    async def test_requires_session_and_assets(self, registry):
+        res = await registry.dispatch("set_scene_assets", {})
+        assert res["success"] is False
+        res2 = await registry.dispatch("set_scene_assets", {"session_id": "s"})
+        assert res2["success"] is False  # assets=None 与清空显式区分
+
+    @pytest.mark.asyncio
+    async def test_register_and_replace(self, registry, session_id):
+        await mapspec_seed(session_id)
+        # 先注册 model3d 源（agent 组合流程：UpsertSource → set_scene_assets）
+        from app.services.mapspec import UpsertSourceIntent
+        from app.services.mapspec_store import mapspec_store
+
+        res = await mapspec_store.engine.apply_mutation(
+            session_id,
+            UpsertSourceIntent(
+                source_id="model-a",
+                source={
+                    "type": "model3d",
+                    "format": "3dtiles",
+                    "url": "https://example.test/tileset.json",
+                },
+            ),
+        )
+        assert res.is_error is False
+        res2 = await registry.dispatch("set_scene_assets", {
+            "session_id": session_id,
+            "assets": [{
+                "id": "campus",
+                "source": "model-a",
+                "placement": {"anchor": [104.06, 30.67]},
+            }],
+        })
+        assert res2["success"] is True, res2
+        assert res2["scene_assets_applied"][0]["id"] == "campus"
+
+        res3 = await registry.dispatch("set_scene_assets", {
+            "session_id": session_id, "assets": [],
+        })
+        assert res3["success"] is True
+        assert res3["scene_assets_applied"] == []
+
+    @pytest.mark.asyncio
+    async def test_rejects_dangling_source(self, registry, session_id):
+        await mapspec_seed(session_id)
+        res = await registry.dispatch("set_scene_assets", {
+            "session_id": session_id,
+            "assets": [{"id": "x", "source": "nope", "placement": {"anchor": [0, 0]}}],
+        })
+        assert res["success"] is False
