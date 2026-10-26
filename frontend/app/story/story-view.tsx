@@ -284,7 +284,18 @@ export function StoryView(): React.ReactElement {
     const committed = getCommittedMapSpec() as
       | { scene?: Parameters<typeof mergeSceneRotary>[1] }
       | null;
-    const payload = mergeSceneRotary(scene, committed?.scene, null);
+    // R2-1（评审残余清偿）：committed scene 无 terrain 块时解析 raster-dem
+    // 源 id 兜底（keyframe 只带 exaggeration 也能合法落库，不再 422 空转）。
+    const sources = (
+      getCommittedMapSpec() as
+        | { sources?: Record<string, { type?: string }> }
+        | null
+    )?.sources;
+    const demSourceId =
+      sources && typeof sources === 'object'
+        ? Object.entries(sources).find(([, src]) => src?.type === 'raster-dem')?.[0] ?? null
+        : null;
+    const payload = mergeSceneRotary(scene, committed?.scene, demSourceId);
     void commitUserScene(payload).then((outcome) => {
       if (outcome.outcome === 'failed') {
         useToastStore.getState().addToast(t('sceneApplyFailed'), 'warning');
@@ -493,10 +504,14 @@ export function StoryView(): React.ReactElement {
     map.on('dragstart', takeOver);
     map.on('pitchstart', takeOver);
     map.on('rotatestart', takeOver);
+    // R2-3：滚轮/双指缩放同为用户接管（map-panel 手势仲裁含 zoomstart，
+    // 此前不一致 —— 缩放不打断播放）。
+    map.on('zoomstart', takeOver);
     return () => {
       map?.off('dragstart', takeOver);
       map?.off('pitchstart', takeOver);
       map?.off('rotatestart', takeOver);
+      map?.off('zoomstart', takeOver);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getMapInstance 经 ref 稳定
   }, [playing]);

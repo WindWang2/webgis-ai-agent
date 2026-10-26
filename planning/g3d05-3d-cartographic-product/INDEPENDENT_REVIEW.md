@@ -43,3 +43,23 @@ scene 通道队列/会话守卫；zh/en i18n 键集一致。
 ## 第二轮
 
 见下文追加。
+
+## 第二轮（2026-10-27，另一独立 reviewer，最终门）
+
+**判定：APPROVE_WITH_RESIDUALS**（R1 修复全部验证正确；无新 P0/P1/P2；门禁全绿：cartography 2050、定向 60、前端定向 192 文件 1882、tsc 双项目 0 错、eslint 清零；并发/UX/会话守卫复查干净）。
+
+R1 修复验证要点：mergeSceneRotary 载荷经后端 `_handle_setscene` 校验合法；originalEvent 门控对照 maplibre-gl dist 验证（程序化 flyTo 无 originalEvent、键盘/滚轮带）；IntegrityError 恢复路径事务正确、并发测试真实覆盖竞态。
+
+### P3 残余（4 项，全部清偿于后续 commit）
+
+1. story 章节合并未解析 raster-dem 源 id 兜底 → 已补（R2-1）；
+2. assets.py 竞态分支裸 raise 在 except 帧外（RuntimeError 掩盖原异常）→ 改为持有引用重抛（R2-2）；
+3. 接管未绑 zoomstart（滚轮缩放不打断播放，与 map-panel 仲裁面不一致）→ 已补（R2-3）；
+4. fallback source 路径无测试 → 已补（R2-4）；P1b 门控为 map-panel 已测模式同款，页级测试留作后续。
+
+### 记录为观察（不改）
+
+- 无会话时场景控制操作显示「未生效」toast（诚实可见优于静默；busy 态必复位）；
+- mode=2d 章节不强制关 is3D —— 单向桥的设计行为（用户控制优先，map-panel 注释锚定）。
+
+**最终结论：两轮评审收敛，P0/P1/P2 全清，残余仅文档化的 i18n 键化与页级 E2E 后续项。**

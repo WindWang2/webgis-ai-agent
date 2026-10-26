@@ -158,3 +158,28 @@ describe('SceneController', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
   });
 });
+
+// ── R2-4：fallback source 解析（committed 无 terrain 块但有 dem 源）────
+describe('SceneController fallback terrain source (R2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    commitUserScene.mockReset().mockResolvedValue({ outcome: 'committed' });
+    setIs3D.mockClear();
+  });
+  afterEach(() => cleanup());
+
+  it('slider without committed terrain resolves dem source id into payload', async () => {
+    commitSpec({
+      scene: { mode: '3d' },
+      sources: { dem: { type: 'raster-dem' } },
+    });
+    render(<SceneController />);
+    openPanel();
+    const slider = screen.getByLabelText(/sceneController.exaggeration/, { selector: 'input' });
+    expect((slider as HTMLInputElement).disabled).toBe(false);
+    fireEvent.change(slider, { target: { value: '2' } });
+    await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalled());
+    const payload = commitUserScene.mock.calls[0][0];
+    expect(payload.terrain).toMatchObject({ source: 'dem', exaggeration: 2 });
+  });
+});

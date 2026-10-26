@@ -54,14 +54,17 @@ async def save_story_spec(
     try:
         await db.flush()
         return {"revision": 1, "title": row.title}
-    except IntegrityError:
+    except IntegrityError as exc:
+        # R2-2：裸 raise 在 except 块外执行会 RuntimeError（无活动异常可
+        # 重抛）—— 显式持有引用重抛原异常。
         await db.rollback()
+        _race_exc = exc
     # 竞态输家：行已被并发首存 —— 重读并按保存语义 +1。
     row = await db.scalar(
         select(StoryMapAsset).where(StoryMapAsset.conversation_id == conv.id)
     )
     if row is None:
-        raise
+        raise _race_exc
     row.title = title
     row.spec = text
     row.revision = int(row.revision or 1) + 1
