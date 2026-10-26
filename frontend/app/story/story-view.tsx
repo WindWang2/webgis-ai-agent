@@ -280,7 +280,6 @@ export function StoryView(): React.ReactElement {
       ...(scene.mode ? { mode: scene.mode } : {}),
       ...(scene.exaggeration !== undefined ? { terrain: { exaggeration: scene.exaggeration } } : {}),
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 章节切换驱动；commitUserScene 稳定引用
   }, [specView, specActiveId]);
 
 
