@@ -936,3 +936,49 @@ describe('#1745 面板盒高钳位', () => {
     expect(Math.max(...ys)).toBeLessThanOrEqual(260);
   });
 });
+
+// ── G3D05（ADR-0275）：透视比例尺披露注记 ──────────────────────────────
+
+describe('drawChromeScaleBar perspective note (G3D05)', () => {
+  it('draws the disclosure note under the bar when provided', () => {
+    const calls: string[] = [];
+    const ctx = new Proxy({} as CanvasRenderingContext2D, {
+      get(target, prop) {
+        if (prop === 'fillStyle' || prop === 'font') return undefined;
+        if (prop === 'strokeRect' || prop === 'fillRect') return () => undefined;
+        if (prop === 'fillText') return (text: string) => { calls.push(text); };
+        return typeof prop === 'string' ? undefined : undefined;
+      },
+      set() { return true; },
+    });
+    const d = { ...(DRAW_BASE as object), ctx } as never;
+    drawChromeScaleBar(
+      d,
+      { kind: 'scale_bar', anchor: 'bottom-right' },
+      10, 1,
+      { marginX: 40, note: '透视视角（pitch 45°）：比例尺不可信，仅供参考' },
+    );
+    expect(calls.some((t) => t.includes('仅供参考'))).toBe(true);
+  });
+
+  it('no note → no extra text beyond labels (零视觉噪音)', () => {
+    const calls: string[] = [];
+    const ctx = new Proxy({} as CanvasRenderingContext2D, {
+      get(target, prop) {
+        if (prop === 'fillStyle' || prop === 'font') return undefined;
+        if (prop === 'strokeRect' || prop === 'fillRect') return () => undefined;
+        if (prop === 'fillText') return (text: string) => { calls.push(text); };
+        return undefined;
+      },
+      set() { return true; },
+    });
+    const d = { ...(DRAW_BASE as object), ctx } as never;
+    drawChromeScaleBar(
+      d,
+      { kind: 'scale_bar', anchor: 'bottom-right' },
+      10, 1,
+      { marginX: 40 },
+    );
+    expect(calls.some((t) => t.includes('透视'))).toBe(false);
+  });
+});

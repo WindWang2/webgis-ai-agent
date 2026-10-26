@@ -1173,7 +1173,7 @@ export function drawChromeScaleBar(
   el: ExportChromeElement,
   metersPerPx: number,
   pxPerLogical: number,
-  opts: { marginX: number; marginY?: number },
+  opts: { marginX: number; marginY?: number; note?: string },
 ) {
   const { ctx } = d;
   const logicalW = d.targetW / pxPerLogical;
@@ -1206,12 +1206,20 @@ export function drawChromeScaleBar(
   ctx.font = `bold ${d.scalePx(13)}px ${d.style.fontFamily}`;
   _text(d, '0', bx, by - d.scalePx(4), 'left');
   _text(d, barLabel, bx + barPx, by - d.scalePx(4), 'right');
+  // G3D05（ADR-0275）：透视比例尺披露 —— 有 note 即绘制（小字、警示
+  // 色调；平面视角无 note 零视觉噪音）。披露而非移除。
+  if (opts.note) {
+    ctx.fillStyle = d.darkMode ? 'rgba(251,191,36,0.85)' : '#b45309';
+    ctx.font = `${d.scalePx(10)}px ${d.style.fontFamily}`;
+    _text(d, opts.note.slice(0, 60), bx + barPx, by + barH + d.scalePx(13), 'right');
+  }
   // V3：dual_unit —— 同一根比例尺条的实际代表距离换算英制第二行
   // （与 live scale-bar formatImperial 同式；非独立第二根尺）。
   if (el.variant === 'dual_unit') {
     ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(71,85,105,0.9)';
     ctx.font = `${d.scalePx(11)}px ${d.style.fontFamily}`;
-    _text(d, formatImperialLabel(nice), bx + barPx, by + barH + d.scalePx(12), 'right');
+    const imperialY = opts.note ? by + barH + d.scalePx(26) : by + barH + d.scalePx(12);
+    _text(d, formatImperialLabel(nice), bx + barPx, imperialY, 'right');
   }
 }
 

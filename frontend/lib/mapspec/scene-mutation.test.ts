@@ -7,10 +7,9 @@ vi.mock('@/lib/api/transport', () => {
   class ApiError extends Error {
     status: number;
     body: unknown;
-    constructor(status: number, statusText: string, body?: unknown) {
+    constructor(status: number, _statusText: string, body?: unknown) {
       super(`ApiError ${status}`);
       this.status = status;
-      this.statusText = statusText;
       this.body = body;
     }
   }
@@ -106,7 +105,7 @@ describe('commitUserScene', () => {
     );
     const result = await commitUserScene({ mode: '3d' });
     expect(result.outcome).toBe('superseded');
-    expect(result.revision).toBe(12);
+    if (result.outcome === 'superseded') expect(result.revision).toBe(12);
     expect(setMapSpecRevision).toHaveBeenCalledWith(12);
     expect(commitMapSpecDocument).toHaveBeenCalled();
     expect(apiFetchMock).toHaveBeenCalledTimes(1);

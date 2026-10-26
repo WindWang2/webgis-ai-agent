@@ -63,5 +63,12 @@
     "shareCardFailed": "Share card export failed",
     "noChapters": "No exportable chapters (all hidden or the session is empty)",
     "chapterCount": "{count} chapters"
-  }
+  },
+  "takeoverPaused": "Paused: manual camera interaction detected.",
+  "takeoverResume": "Resume",
+  "saveAsset": "Save StoryMap asset",
+  "saveAssetTitle": "Save as a restorable session asset (restored first on next open)",
+  "assetSaved": "StoryMap asset saved (revision {revision})",
+  "assetSaveFailed": "Failed to save StoryMap asset",
+  "assetSaveNoSession": "No session: asset saving requires a session context"
 }

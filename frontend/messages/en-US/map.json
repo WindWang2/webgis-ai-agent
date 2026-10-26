@@ -265,5 +265,28 @@
     "recheck": "Check again",
     "dismiss": "Dismiss",
     "baseRevision": "Based on revision #{revision}"
+  },
+  "sceneController": {
+    "title": "Scene controller",
+    "trigger": "Scene",
+    "mode": "Scene mode",
+    "mode_2d": "2D",
+    "mode_2_5d": "2.5D",
+    "mode_3d": "3D",
+    "exaggeration": "Terrain exaggeration",
+    "exaggerationNote": "Vertical scale factor; >1 is not true slope and will be disclosed on export.",
+    "exaggerationDisabled": "No elevation source (raster-dem) in this map; exaggeration is locked.",
+    "pitch": "Pitch",
+    "pitchUp": "Increase pitch",
+    "pitchDown": "Decrease pitch",
+    "bearing": "Bearing",
+    "bearingUp": "Increase bearing",
+    "bearingDown": "Decrease bearing",
+    "verticalDatum": "Vertical datum",
+    "datumUndeclared": "undeclared",
+    "reducedMotionHint": "Scene transitions animate unless the system prefers reduced motion.",
+    "reducedMotionOn": "Reduced motion detected: scene transitions have no animation.",
+    "unitSuffix": "({unit})",
+    "verticalDatumLabel": "Vertical datum: "
   }
 }

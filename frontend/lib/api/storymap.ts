@@ -18,6 +18,8 @@ export interface StoryChapterDto {
   linked_widget_ids?: string[];
   highlight_refs?: string[];
   duration_hint_s?: number;
+  /** G3D05 v1.1：本章聚焦图层白名单（空 = 不改变可见性）。 */
+  visible_layer_ids?: string[];
 }
 
 export interface CameraKeyframeDto {
@@ -28,6 +30,8 @@ export interface CameraKeyframeDto {
   pitch: number;
   bearing: number;
   easing?: string;
+  /** G3D05 v1.1：关键帧场景档（缺省沿用当前场景）。 */
+  scene?: { mode?: '2d' | '2.5d' | '3d'; exaggeration?: number };
 }
 
 export interface LinkedWidgetDto {
@@ -88,6 +92,36 @@ export function exportStoryBundle(
     },
     label: 'StoryMap 导出失败',
   });
+}
+
+/** POST /api/v1/storymap/sessions/{id}/spec —— 保存会话 StoryMap 资产。 */
+export function saveSessionStorySpec(
+  sessionId: string,
+  spec: StoryMapSpecDto,
+  init?: { signal?: AbortSignal; ownerToken?: string | null },
+): Promise<{ saved: boolean; revision: number; title: string }> {
+  return apiFetch(`/api/v1/storymap/sessions/${encodeURIComponent(sessionId)}/spec`, {
+    method: 'POST',
+    body: spec as unknown as Record<string, unknown>,
+    ownerToken: init?.ownerToken ?? undefined,
+    signal: init?.signal,
+    label: 'StoryMap 资产保存失败',
+  });
+}
+
+/** GET /api/v1/storymap/sessions/{id}/spec —— 读会话最新 StoryMap 资产。 */
+export function loadSessionStorySpec(
+  sessionId: string,
+  init?: { signal?: AbortSignal; ownerToken?: string | null },
+): Promise<StoryMapSpecDto | null> {
+  return apiFetch<StoryMapSpecDto | null>(
+    `/api/v1/storymap/sessions/${encodeURIComponent(sessionId)}/spec`,
+    {
+      ownerToken: init?.ownerToken ?? undefined,
+      signal: init?.signal,
+      label: 'StoryMap 资产读取失败',
+    },
+  );
 }
 
 /** 响应形状门卫：不合法的 spec 一律按「无编排」处理（静默降级）。
@@ -152,6 +186,8 @@ export interface StorySpecView {
   chapters: NarratorChapter[];
   /** chapter_id → 相机关键帧（取该章 t 最大者，即章节落点镜头）。 */
   cameras: Record<string, NarratorChapter['camera']>;
+  /** G3D05 v1.1：chapter_id → 场景档（null = 沿用当前场景）。 */
+  scenes: Record<string, { mode?: '2d' | '2.5d' | '3d'; exaggeration?: number } | null>;
   widgets: DashboardWidget[];
 }
 
@@ -159,7 +195,11 @@ export interface StorySpecView {
 export function specToNarratorView(spec: StoryMapSpecDto): StorySpecView {
   // 同章多帧取 t 最大者（章节落点镜头）；旧实现 `(kf.t ?? 0) >= 0` 恒真
   // = 死逻辑（恒取数组末条），多帧一上就静默取错相机。
-  const picked = new Map<string, { t: number; camera: NonNullable<NarratorChapter['camera']> }>();
+  const picked = new Map<string, {
+    t: number;
+    camera: NonNullable<NarratorChapter['camera']>;
+    scene: NarratorChapter['scene'];
+  }>();
   for (const kf of spec.camera_keyframes ?? []) {
     const t = typeof kf.t === 'number' && Number.isFinite(kf.t) ? kf.t : 0;
     const cur = picked.get(kf.chapter_id);
@@ -173,6 +213,7 @@ export function specToNarratorView(spec: StoryMapSpecDto): StorySpecView {
           bearing: kf.bearing,
           t,
         },
+        scene: kf.scene ?? null,
       });
     }
   }
@@ -180,6 +221,8 @@ export function specToNarratorView(spec: StoryMapSpecDto): StorySpecView {
   picked.forEach((entry, chapterId) => {
     cameras[chapterId] = entry.camera;
   });
+  const chapterScenes: Record<string, { mode?: '2d' | '2.5d' | '3d'; exaggeration?: number } | null> = {};
+  picked.forEach((entry, chapterId) => { chapterScenes[chapterId] = entry.scene ?? null; });
   const chapters: NarratorChapter[] = (spec.chapters ?? []).map((c) => ({
     id: c.id,
     title: c.title,
@@ -188,6 +231,8 @@ export function specToNarratorView(spec: StoryMapSpecDto): StorySpecView {
     camera: cameras[c.id],
     widgetIds: c.linked_widget_ids ?? [],
     durationHintS: c.duration_hint_s,
+    scene: chapterScenes[c.id] ?? null,
+    visibleLayerIds: c.visible_layer_ids ?? [],
   }));
   const widgets: DashboardWidget[] = (spec.linked_widgets ?? []).map((w) => ({
     id: w.id,
@@ -200,6 +245,7 @@ export function specToNarratorView(spec: StoryMapSpecDto): StorySpecView {
     summary: spec.metadata?.summary ?? '',
     chapters,
     cameras,
+    scenes: chapterScenes,
     widgets,
   };
 }

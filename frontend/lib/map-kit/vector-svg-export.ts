@@ -30,6 +30,7 @@ import {
 } from './svg-marginalia';
 import { deriveLegendModel } from './legend-model';
 import type { ExportDegradation } from './export-chrome';
+import { vectorSceneDegradeReceipt } from './scene-export-disclosure';
 import type { LegendSpec } from './types';
 import type { PublicationLayout } from '../export/layout-description';
 
@@ -146,6 +147,18 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     const degradations: ExportDegradation[] = [
       { code: 'basemap_omitted_vector_svg', detail: '矢量 SVG 不含栅格底图' },
     ];
+    // G3D05（ADR-0275）：三维场景的矢量降级收据 —— scene.mode∈{3d,2.5d}
+    // 必发（判定单源 scene-export-disclosure.vectorSceneDegradeReceipt，
+    // 与后端孪生编译期同语义；2d 零噪音）。
+    const sceneDegradeReceipt = vectorSceneDegradeReceipt(
+      (input.spec as { scene?: { mode?: string } })?.scene?.mode ?? null,
+    );
+    if (sceneDegradeReceipt) {
+      degradations.push({
+        code: sceneDegradeReceipt.code,
+        detail: sceneDegradeReceipt.detail,
+      });
+    }
     if (refUnavailableLayers.length > 0) {
       degradations.push({
         code: 'layer_ref_unavailable',
