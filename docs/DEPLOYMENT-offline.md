@@ -116,7 +116,15 @@ local_geodata / data_fabric_local_roots / data_dirs。
 > `getAvailableTileProviders()` 只暴露本地底图，但**底图切换器等 UI 尚未
 > 消费该过滤**（`MAP_STYLES` 同序号耦合，属前端热区 #1353 后续项）——
 > 运营需提示用户勿点选远程底图条目；远程瓦片请求在离线网络下自然失败。
-> 另：`NEXT_PUBLIC_*` 为构建期内联，切换 profile 需重新构建前端。
+> 另：`NEXT_PUBLIC_*` 为构建期内联，切换 profile 需重新构建前端
+> （只翻转后端 `DEPLOYMENT_PROFILE` 而不重建前端镜像时，浏览器仍按
+> cloud 语义注册远程底图并放行 DEM 兜底 —— 前后端 profile 会静默分叉）。
+>
+> **G3D01 3D 地形诚实边界**：air_gapped 构建下，未绑定会话 DEM 源时
+> 3D 地形被显式禁用并披露 `scene_terrain_no_source_air_gapped`
+> （`lib/map-kit/terrain-governance.ts` 统一守卫，绝不静默回退外网
+> AWS 兜底）；底图/地形瓦片失败经 `scene_basemap_unavailable` /
+> `scene_terrain_unavailable` 进入导出披露面。
 
 ## 6. SBOM
 

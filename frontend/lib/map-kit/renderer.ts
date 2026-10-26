@@ -7,6 +7,12 @@ import { applySourcePatch } from '@/lib/data-plane/patch';
 import type { GeoJsonSourcePatchTarget } from '@/lib/data-plane/patch';
 import { computeFilterThinAsync, VIEWPORT_WORKER_MIN_FEATURES } from '@/lib/data-plane/async-viewport-compute';
 import { useHudStore } from '@/lib/store/useHudStore';
+// G3D01 D6：DEM 兜底源从硬编码 URL 收编为治理画像（terrarium 编码、
+// display_only 资格、多源署名、许可链接齐全；air_gapped 拦截在 map-panel）。
+import {
+  ELEVATION_FALLBACK_ID,
+  ELEVATION_SOURCE_PROFILES,
+} from '@/lib/basemap-profiles.generated';
 // AC-06 (ADR-0155)：符号律 —— 点径/线宽/热力半径/不透明度由 f(zoom, featureCount)
 // 决定，替换本文件此前的硬编码常量（fill-opacity 0.8 / circle-radius 6 / 热力
 // 半径常量 px）。显式用户意图（styleDef/options 显式给值）永远优先于符号律。
@@ -23,6 +29,19 @@ import {
  * 用 WeakMap 让 source 被 GC 时自动清理。
  */
 const _lastGeoJsonData = new WeakMap<object, unknown>();
+
+/**
+ * DEM 兜底源治理画像（G3D01 D6）：url/encoding/attribution 单一来源。
+ * 契约锁保证其在 ELEVATION_SOURCE_PROFILES 中（找不到 = 生成物损坏，
+ * 宁可空串让地形源添加失败也不回退硬编码 URL）。
+ */
+const ELEVATION_FALLBACK = ELEVATION_SOURCE_PROFILES.find(
+  (p) => p.sourceId === ELEVATION_FALLBACK_ID,
+) ?? {
+  url: '',
+  encoding: 'terrarium' as const,
+  attribution: '',
+};
 
 /**
  * 审计 F28：缓存每个 image source 上次用的 url。
@@ -1124,13 +1143,13 @@ export function removeOrphanCustomLayers(
 }
 
 export interface TerrainOptions {
-  /** 等高线/DEM 瓦片 URL — 默认 AWS terrarium */
+  /** 等高线/DEM 瓦片 URL —— 缺省取治理画像 aws-terrarium-public（G3D01 D6） */
   url?: string;
   /**
    * DEM 高程编码（review P1-2）：'terrarium'（elev = R*256+G+B/256−32768）
-   * 或 'mapbox'。默认 'terrarium' —— AWS elevation-tiles-prod 与本系统
-   * terrain-tiles 端点都是 terrarium；此前缺省被 MapLibre 解释为 'mapbox'
-   * → 0m 解码成 ~+829km 的伪地形。
+   * 或 'mapbox'。默认随治理画像（terrarium）—— AWS elevation-tiles-prod 与
+   * 本系统 terrain-tiles 端点都是 terrarium；此前缺省被 MapLibre 解释为
+   * 'mapbox' → 0m 解码成 ~+829km 的伪地形。
    */
   encoding?: 'terrarium' | 'mapbox';
   /** 立体强度，>1 拔高，<1 压低 */
@@ -1139,6 +1158,8 @@ export interface TerrainOptions {
   sourceId?: string;
   /** DEM 源最大 zoom（会话 DEM 端点按 LOD 提供 ≤14；外部源同样适用） */
   maxzoom?: number;
+  /** DEM 源署名 —— 缺省取治理画像（导出面必须可见，数据诚信红线） */
+  attribution?: string;
 }
 
 /**
@@ -1147,8 +1168,10 @@ export interface TerrainOptions {
  */
 export function enable3DTerrain(map: Map, options: TerrainOptions = {}) {
   const sourceId = options.sourceId || 'terrain-aws';
-  const url = options.url || 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
-  const encoding = options.encoding || 'terrarium';
+  const usedFallbackUrl = !options.url;
+  const url = options.url || ELEVATION_FALLBACK.url;
+  const encoding = options.encoding
+    || (ELEVATION_FALLBACK.encoding === 'mapbox' ? 'mapbox' : 'terrarium');
   if (!map.getSource(sourceId)) {
     map.addSource(sourceId, {
       type: 'raster-dem',
@@ -1156,6 +1179,12 @@ export function enable3DTerrain(map: Map, options: TerrainOptions = {}) {
       tileSize: 256,
       maxzoom: options.maxzoom ?? 14,
       encoding,
+      // review R1 P2-1：仅当实际采用兜底 URL 时才携带兜底署名 —— 会话
+      // DEM（用户上传/合成）套用 AWS/SRTM 署名是错误署名；调用方可用
+      // options.attribution 提供源自身署名。
+      attribution: usedFallbackUrl
+        ? (options.attribution || ELEVATION_FALLBACK.attribution)
+        : (options.attribution || ''),
     } as any);
   }
   map.setTerrain({ source: sourceId, exaggeration: options.exaggeration ?? 1.5 });
