@@ -35,6 +35,21 @@ export function disposeSceneAssets(map: object): void {
   getScene3dManager(map).dispose();
 }
 
+/** renderer 缝：WebGL context lost —— 停加载/释放 GPU 侧/资产标 stale。 */
+export function scene3dContextLost(map: object): void {
+  getScene3dManager(map).handleContextLost();
+}
+
+/** renderer 缝：WebGL context restored —— 有限重建（幂等差分重挂）。 */
+export function scene3dContextRestored(map: object, spec: MapSpec | null | undefined): void {
+  getScene3dManager(map).handleContextRestored(spec);
+}
+
+/** 观察面：跨资产累计预算用量。 */
+export function scene3dBudgetUsage(map: object): ReturnType<import('./asset-manager').Scene3DManager['budgetUsage']> {
+  return getScene3dManager(map).budgetUsage();
+}
+
 /** 观察面。 */
 export function describeScene3dAssets(map: object): ReturnType<import('./asset-manager').Scene3DManager['describe']> {
   return getScene3dManager(map).describe();

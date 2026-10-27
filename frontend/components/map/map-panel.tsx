@@ -690,6 +690,31 @@ export function MapPanel({
     syncInteractiveIds()
   }, [currentMapStyle, syncInteractiveIds])
 
+  // G3DV2-B M4：canvas 级 WebGL context lost/restored。MapLibre 的 error
+  // 事件路径只覆盖 fatal 面（弹模态、用户手动重试重建整图）；canvas 事件
+  // 面让 scene3d 在 lost 瞬间停止加载并释放 GPU 侧资源（死 context 上的
+  // 在途解析/上传不再继续），restored 时走有限重建（幂等差分重挂，预算/
+  // 退避语义复用）。MapLibre 自身死亡的场合仍由上方模态承担。
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!map || !mapReady) return
+    const canvas = (map as unknown as { getCanvas?: () => HTMLCanvasElement }).getCanvas?.()
+    if (!canvas || typeof canvas.addEventListener !== 'function') return
+    const onLost = (e: Event) => {
+      e.preventDefault() // 声明自处理 → 浏览器允许 restored 事件
+      renderer.scene3dContextLost(map)
+    }
+    const onRestored = () => {
+      renderer.scene3dContextRestored(map, getCommittedMapSpec())
+    }
+    canvas.addEventListener('webglcontextlost', onLost)
+    canvas.addEventListener('webglcontextrestored', onRestored)
+    return () => {
+      canvas.removeEventListener('webglcontextlost', onLost)
+      canvas.removeEventListener('webglcontextrestored', onRestored)
+    }
+  }, [mapReady])
+
   const liveGeneration = useSyncExternalStore(
     subscribeMapSpecLive,
     getMapSpecLiveGeneration,

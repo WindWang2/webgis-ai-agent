@@ -97,6 +97,20 @@ export function releaseLayerOwnership(map: object, group: THREE.Object3D | null)
   releaseRenderer(map);
 }
 
+/**
+ * 强制退役共享 carrier（G3DV2-B M4：WebGL context lost）。丢失的 gl
+ * context 上一切 WebGL 调用是 no-op（spec 保证），renderer.dispose() 安全；
+ * refCount 不再有意义 —— 死 context 上的 renderer 不可复用，恢复路径
+ * 必须经 acquireRenderer 在新帧上重建。
+ */
+export function forceDisposeCarrier(map: object): void {
+  const carrier = carriers.get(map);
+  if (!carrier) return;
+  carrier.scene.clear();
+  carrier.renderer.dispose();
+  carriers.delete(map);
+}
+
 export function getCarrier(map: object): RendererCarrier | undefined {
   return carriers.get(map);
 }

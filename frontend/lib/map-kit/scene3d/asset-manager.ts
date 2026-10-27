@@ -27,7 +27,7 @@ import {
 } from './geo';
 import { buildModel, type BuiltModel } from './gltf/build';
 import { GltfParseError, parseGltf, type ParsedGltfStats } from './gltf/gltf-parser';
-import { makeScene3dCustomLayer, releaseLayerOwnership } from './custom-layer';
+import { forceDisposeCarrier, makeScene3dCustomLayer, releaseLayerOwnership } from './custom-layer';
 import {
   amountsOfStats,
   budgetDimensionReason,
@@ -99,6 +99,8 @@ interface MountedAsset {
   loadInFlight: number;
   /** 挂载世代（sync 差分时旧代在途回调作废）。 */
   generation: number;
+  /** 加载是否仍在途（终态 mounted/load_failed 落定前为 true —— 取消判定）。 */
+  loadPending: boolean;
 }
 
 export interface Scene3dPickHit {
@@ -163,6 +165,8 @@ export class Scene3DManager {
   private readonly ledger: SceneResourceBudgetLedger;
   /** 跨资产共享下载信号量（per-asset ×4 的乘积放大收口）。 */
   private globalInFlight = 0;
+  /** WebGL context lost 中（M4）：停调度，等待 restored / map 重建。 */
+  private contextLost = false;
 
   constructor(
     private readonly map: MapLike,
@@ -173,7 +177,7 @@ export class Scene3DManager {
 
   /** 幂等差分同步（MapSpec → 挂载集）。返回本次变更摘要（观察面）。 */
   sync(spec: MapSpec | null | undefined): { mounted: number; removed: number; updated: number } {
-    if (this.disposed) return { mounted: 0, removed: 0, updated: 0 };
+    if (this.disposed || this.contextLost) return { mounted: 0, removed: 0, updated: 0 };
     const assets = spec?.scene?.assets ?? [];
     const sources = spec?.sources ?? {};
     const sceneActive = !!spec?.scene && spec.scene.mode !== '2d';
@@ -368,7 +372,55 @@ export class Scene3DManager {
       releaseLayerOwnership(this.map, asset.group);
     }
     this.mounted.delete(assetId);
-    recordSceneAssetStatus(assetId, 'unmounted');
+    // 终态区分（M4）：在途加载被打断 = cancelled（用户取消/revision 换代/
+    // 任务中断），已落定后的移除 = unmounted。
+    recordSceneAssetStatus(assetId, asset.loadPending ? 'cancelled' : 'unmounted');
+  }
+
+  /**
+   * WebGL context lost（M4）：停调度、作废在途回调、释放 GPU 侧资源、
+   * 资产标 context_lost。不卸载层注册（MapLibre 若存活，restored 走有限
+   * 重建；MapLibre 死亡 → map-panel mapKey bump 全量重建，本方法先行
+   * 释放可避免依赖 MapLibre 销毁回调）。
+   */
+  handleContextLost(): void {
+    if (this.disposed || this.contextLost) return;
+    this.contextLost = true;
+    for (const asset of this.mounted.values()) {
+      asset.generation += 1;
+      asset.controller.abort();
+      if (asset.tickTimer) clearTimeout(asset.tickTimer);
+      for (const entry of asset.tiles?.values() ?? []) {
+        entry.model?.dispose();
+        if (entry.model) this.ledger.release(tileOwnerKey(asset.assetId, entry.tile.id));
+        entry.model = null;
+        entry.loading = false;
+      }
+      if (asset.singleModel) {
+        asset.singleModel.dispose();
+        asset.singleModel = null;
+        this.ledger.release(singleOwnerKey(asset.assetId));
+      }
+      asset.group.clear();
+      recordSceneAssetStatus(asset.assetId, 'context_lost', 'webgl_context_lost');
+    }
+    forceDisposeCarrier(this.map);
+  }
+
+  /**
+   * WebGL context restored（M4）：有限重建 —— 复位标记后按当前 spec 幂等
+   * 重挂（与 setStyle 恢复同一条差分路径；预算/退避语义复用）。
+   */
+  handleContextRestored(spec: MapSpec | null | undefined): void {
+    if (!this.contextLost) return;
+    this.contextLost = false;
+    // 层注册在 lost 阶段未动，但模型已释放 —— 走完整卸载+重挂保证一致性
+    //（unmountAsset 会记录 unmounted；随后 sync 记录 loading→mounted）。
+    for (const assetId of [...this.mounted.keys()]) {
+      this.unmountAsset(assetId);
+    }
+    forceDisposeCarrier(this.map); // 死 context 上的 carrier 已在 lost 退役；幂等
+    this.sync(spec);
   }
 
   private async mountAsset(assetId: string, asset: SceneAssetSpec, source: Model3dMapSpecSource): Promise<void> {
@@ -394,6 +446,7 @@ export class Scene3DManager {
       lastWorldScale: 1,
       loadInFlight: 0,
       generation: 0,
+      loadPending: true,
     };
     this.mounted.set(assetId, mounted);
     const generation = mounted.generation;
@@ -419,6 +472,7 @@ export class Scene3DManager {
     try {
       this.map.addLayer?.(customLayer as never);
     } catch {
+      mounted.loadPending = false;
       recordSceneAssetStatus(assetId, 'unavailable', 'custom_layer_rejected');
       this.unmountAsset(assetId);
       return;
@@ -460,6 +514,7 @@ export class Scene3DManager {
         const amounts = amountsOfStats(parsed.stats);
         const overDim = this.acquireWithinBudget(amounts, { assetId });
         if (overDim) {
+          mounted.loadPending = false;
           recordSceneAssetStatus(assetId, 'degraded', budgetDimensionReason(overDim));
           this.unmountAsset(assetId);
           return;
@@ -469,6 +524,7 @@ export class Scene3DManager {
         mounted.group.add(built.root);
         this.applyPlacement(mounted);
         for (const w of parsed.warnings) recordSceneAssetStatus(assetId, 'degraded', w);
+        mounted.loadPending = false;
         recordSceneAssetStatus(assetId, 'mounted', `${parsed.stats.triangles}tri`);
       }
       this.map.triggerRepaint?.();
@@ -478,6 +534,7 @@ export class Scene3DManager {
       const reason = err instanceof GltfParseError || err instanceof TilesetParseError || err instanceof Scene3dResourceFailure
         ? `${err.name}:${err.message}`.slice(0, 120)
         : String(err).slice(0, 120);
+      mounted.loadPending = false;
       recordSceneAssetStatus(assetId, 'load_failed', reason);
       this.unmountAsset(assetId);
     }
@@ -500,6 +557,7 @@ export class Scene3DManager {
     mounted.tileset = parsed;
     mounted.tiles = new Map<string, TileEntry>();
     collectTiles(parsed.root, mounted.tiles);
+    mounted.loadPending = false;
     recordSceneAssetStatus(mounted.assetId, 'mounted', `${parsed.tileCount}tiles`);
     this.scheduleAsset(mounted, true);
   }
@@ -543,7 +601,7 @@ export class Scene3DManager {
   }
 
   private scheduleAsset(mounted: MountedAsset, immediate: boolean): void {
-    if (!mounted.tileset || !mounted.tiles || this.disposed) return;
+    if (!mounted.tileset || !mounted.tiles || this.disposed || this.contextLost) return;
     const throttleMs = this.options.scheduleThrottleMs ?? 200;
     const now = Date.now();
     const run = () => {
