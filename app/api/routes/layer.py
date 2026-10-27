@@ -970,6 +970,133 @@ def _derive_terrain_header(safe_path: str):
         return None
 
 
+@router.get("/layers/terrain-sources", tags=["图层数据"])
+async def list_terrain_sources(
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    token: Optional[str] = Query(None, description="匿名会话 owner token"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(_require_owned_session_qtoken),
+):
+    """地图资源可用性 typed 摘要（G3D-V2-A A6 —— Agent/前端发现面）。
+
+    三腿合成单一真相：
+    - 静态高程画像（ELEVATION_SOURCE_PROFILES × evaluate_elevation_availability
+      的部署期投影 —— 与前端生成镜像同一权威目录，不建第二真相）；
+    - 本会话已注册 DEM ref（摄入 receipt 透传：资格/垂直基准/合成标记）；
+    - 3D 地形总判（对接 get_3d_capabilities 语义；本端点只发布 schema，
+      不实现 C 方向的消费端）。
+
+    会话 DEM 在场 → available；无会话源但有部署可用的远端兜底 →
+    available_with_limits（披露兜底为 display_only/混合基准）；否则
+    unavailable + 解释（air_gapped 等场景 3D 明确不可用，绝不伪造地形）。
+    """
+    import os as _os
+
+    from app.core.config import settings as _settings
+    from app.lib.cartography.basemap_profiles import (
+        ELEVATION_SOURCE_PROFILES,
+        evaluate_elevation_availability,
+    )
+    from app.contracts.terrain_sources import (
+        ElevationProfileAvailability,
+        MapResourceAvailabilitySummary,
+        SessionTerrainSourceEntry,
+        TerrainSourceReceipt,
+    )
+
+    deployment = "air_gapped" if _settings.DEPLOYMENT_PROFILE == "air_gapped" else "cloud"
+    env_map = _os.environ
+
+    profile_entries: list[ElevationProfileAvailability] = []
+    fallback_available = False
+    fallback_id: Optional[str] = None
+    for profile in ELEVATION_SOURCE_PROFILES:
+        avail = evaluate_elevation_availability(profile, env_map, deployment)
+        available = avail.state == "available"
+        if available and profile.kind != "synthetic_local":
+            fallback_available = True
+            fallback_id = profile.source_id
+        profile_entries.append(ElevationProfileAvailability(
+            source_id=profile.source_id,
+            kind=profile.kind,
+            encoding=profile.encoding,
+            qualification=profile.qualification,
+            synthetic=profile.synthetic,
+            vertical_datum=profile.vertical_datum,
+            attribution=profile.attribution,
+            deployment_available=available,
+            unavailable_reason=None if available else (avail.reason_code or "unavailable"),
+        ))
+
+    session_entries: list[SessionTerrainSourceEntry] = []
+    try:
+        refs = await session_data_manager.list_refs(session_id)
+    except Exception:  # noqa: BLE001 — 列举失败按空集披露（诚实降级）
+        refs = {}
+    for ref_id in [r for r in refs if r.startswith("ref:terrain-")]:
+        try:
+            payload = await session_data_manager.get(session_id, ref_id)
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(payload, dict) or payload.get("kind") != "terrain_dem":
+            continue
+        receipt_raw = payload.get("receipt")
+        try:
+            receipt = TerrainSourceReceipt.model_validate(receipt_raw)
+        except Exception:  # noqa: BLE001 — receipt 损坏按 display_only 降级披露
+            receipt = TerrainSourceReceipt(
+                qualification="display_only",
+                reasons=(),
+                content_sha256=str(payload.get("content_sha256") or ""),
+            )
+        session_entries.append(SessionTerrainSourceEntry(
+            ref_id=ref_id,
+            name=str(payload.get("name") or ref_id),
+            receipt=receipt,
+            tiles_url_template=(
+                f"/api/v1/layers/data/{ref_id}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
+            ),
+            tilejson_url=f"/api/v1/layers/data/{ref_id}/terrain-tiles.json",
+        ))
+
+    if session_entries:
+        terrain_status = "available"
+        terrain_reason = "SESSION_TERRAIN_SOURCE"
+        terrain_detail = (
+            f"{len(session_entries)} 个会话 DEM 已注册（资格："
+            + ", ".join(sorted({e.receipt.qualification for e in session_entries}))
+            + "）；tiles/TileJSON URL 见 session_terrain_sources"
+        )
+        terrain_available = True
+    elif fallback_available:
+        terrain_status = "available_with_limits"
+        terrain_reason = "REMOTE_FALLBACK_ONLY"
+        terrain_detail = (
+            f"无会话 DEM；远端兜底 {fallback_id} 可用（display_only，垂直基准"
+            "混合）—— 科学分析需上传并声明垂直基准的 DEM"
+        )
+        terrain_available = True
+    else:
+        terrain_status = "unavailable"
+        terrain_reason = "NO_TERRAIN_SOURCE"
+        terrain_detail = (
+            "无会话 DEM 且部署不允许远端兜底（air_gapped 或兜底源不可用）；"
+            "3D 地形明确不可用 —— 上传合法 DEM（POST /upload + register_ref）后重试"
+        )
+        terrain_available = False
+
+    summary = MapResourceAvailabilitySummary(
+        session_id=session_id,
+        elevation_profiles=tuple(profile_entries),
+        session_terrain_sources=tuple(session_entries),
+        terrain_3d_available=terrain_available,
+        terrain_3d_status=terrain_status,
+        terrain_3d_reason_code=terrain_reason,
+        terrain_3d_detail=terrain_detail,
+    )
+    return summary.model_dump(mode="json")
+
+
 # P-5（#878）：(session, ref) → 已校验 safe_path 的短 TTL 缓存。
 # 栅格 ref 的 payload 只是 file_path dict，但每次读取协议昂贵（metadata +
 # payload GET + WATCH/MULTI）；瓦片风暴时一屏 20-40 瓦片全部重复付费。

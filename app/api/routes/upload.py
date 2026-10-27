@@ -561,6 +561,7 @@ async def _run_raster_ingest_lane(
         declared_vertical_datum=declared_vertical_datum,
         declared_vertical_unit=declared_vertical_unit,
         content_sha256=content_sha256,
+        name=filename,
     )
     receipt_dump: Optional[Dict[str, Any]] = None
     if result.get("receipt") is not None:

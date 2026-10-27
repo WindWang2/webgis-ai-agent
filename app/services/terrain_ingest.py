@@ -456,13 +456,14 @@ def _receipt_unavailable(reasons: list[QualificationReason], content_sha256: Opt
     return TerrainSourceReceipt(qualification="unavailable", reasons=tuple(reasons), content_sha256=content_sha256 or "")
 
 
-def build_terrain_payload(receipt: TerrainSourceReceipt, file_path: Path) -> Dict[str, Any]:
+def build_terrain_payload(receipt: TerrainSourceReceipt, file_path: Path, name: Optional[str] = None) -> Dict[str, Any]:
     """terrain ref 的 session store payload（terrain-tiles 路由读 file_path）。"""
     from datetime import datetime, timezone
 
     return {
         "kind": TERRAIN_REF_KIND,
         "file_path": str(file_path),
+        "name": name or file_path.name,
         "content_sha256": receipt.content_sha256,
         "receipt": receipt.model_dump(mode="json"),
         "registered_at": datetime.now(timezone.utc).isoformat(),
@@ -513,6 +514,7 @@ async def register_session_terrain_source(
     content_sha256: Optional[str] = None,
     idempotent: bool = True,
     manager: Any = None,
+    name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """摄入入口（lane 语义：绝不 raise，错误落 ``error`` 字段）。
 
@@ -552,7 +554,7 @@ async def register_session_terrain_source(
             out["error"] = "; ".join(f"{r.code}: {r.detail}" for r in receipt.reasons)[:400]
             return out
 
-        payload = build_terrain_payload(receipt, normalized_path)
+        payload = build_terrain_payload(receipt, normalized_path, name=name)
         ref_id = await mgr.store(session_id, payload, prefix="terrain")
         out.update(ok=True, ref_id=ref_id)
         if receipt.qualification == "display_only":
