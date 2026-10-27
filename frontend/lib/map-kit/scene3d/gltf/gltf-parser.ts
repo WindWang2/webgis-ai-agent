@@ -504,6 +504,9 @@ export async function parseGltf(
       throw new GltfParseError('budget_exceeded', `indices accessor ${index} exceeds decoded budget`);
     }
     decodedBytes += expandedBytes;
+    // 索引必须绑 bufferView：spec 合法的 sparse-only 索引 accessor 在此
+    // 保守拒绝（corrupt）—— 零基索引全指向顶点 0 是退化几何，不支持
+    // 好过静默错读（review R1-P3-5 / R2 接受的子集边界）。
     const viewIndex = acc.bufferView ?? -1;
     const view = sliceBufferView(buffers, doc.bufferViews, viewIndex);
     // spec：byteStride 仅限顶点属性 bufferView —— 交错索引无法喂 drawElements。

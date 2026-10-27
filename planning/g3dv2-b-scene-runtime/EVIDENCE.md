@@ -9,6 +9,8 @@
 6. `6c2ea304a` M5 工作台交互 + j9 纯 3D ACK 断言（+4 测试）
 7. `ab9145b29` lint 清偿
 8. `858aef27f` j9 toggle 语义修正 + 拾取卡命名空间限定键
+9. `c9373388e` M6 验收账本
+10. `199485ebe` 独立评审 R1 清偿（P2×3 + P3×5 + 披露）
 
 ## 真实浏览器证据（Chromium headless + SwiftShader WebGL）
 - **j9 journey 通过（3/3 次单跑：17.1s / 15.8s / 全量套件内亦过）**：SSE step_result（v1.7 mapspec + fly_to + **render_work 信封**）→ GLB fetch → custom layer 真渲染 → **纯 3D（零 2D 图层）cartographic-observation POST 断言通过**：
@@ -22,7 +24,7 @@
 ## 本地质量门（全部实跑）
 | 门 | 命令 | 结果 |
 | --- | --- | --- |
-| 前端单测 | `npx vitest run --maxWorkers=2` | **4659 passed + 1 expected-fail**（492 文件；唯一红 = `lib/map-commands/catalogue-contract.test.ts`，**origin/master 干净检出同红**——#1829 后端 4 条 3D 命令未注册前端目录，与本分支零文件交集） |
+| 前端单测 | `npx vitest run --maxWorkers=2` | **4660 passed + 1 expected-fail**（评审修复后终跑；唯一红 = `lib/map-commands/catalogue-contract.test.ts`，**origin/master 干净检出同红**——#1829 后端 4 条 3D 命令未注册前端目录，与本分支零文件交集） |
 | TS 类型 | `tsc --noEmit && tsc -p tsconfig.test.json --noEmit` | **0 错误** |
 | Lint | `eslint . --max-warnings 0` | **0 错误 0 警告** |
 | 后端单测 | `pytest tests/cartography/ -q --no-cov` | **2912 passed**；唯一红 = `test_mutation_parity_corpus[set_scene_invalid_mode]`，**origin/master 干净检出同红**（#1829/#1830 遗留，与本分支无关） |
