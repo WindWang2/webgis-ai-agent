@@ -33,8 +33,9 @@
 
 ## 契约快照
 
-- `tests/quality/snapshots/openapi.json`：API_SNAPSHOT_UPDATE=1 再生成（+494/-3，全部为新增路由/字段），复跑 12 passed。
-- `tests/quality/snapshots/api_contract_fields.json`：API_CONTRACT_FIELDS_UPDATE=1 再生成（+24：3 新端点 + upload `terrain` 字段），复跑 1 passed。
+- `tests/quality/snapshots/openapi.json`：API_SNAPSHOT_UPDATE=1 再生成。⚠ 时序更正（独立评审 P1 抓获）：首次再生成先于 terrain-sources 的 response_model 装饰器提交，快照一度陈旧；评审修复轮已重刷并复跑。diff 含少量 master 陈旧漂移行（storymap v1.1 默认值 2 行等，master 快照未跟上 master 自身变更），本 track 净增量 = 3 新路由 + upload `terrain` 字段 + terrain-sources response schema。
+- `tests/quality/snapshots/api_contract_fields.json`：API_CONTRACT_FIELDS_UPDATE=1 再生成（+24 行中约 9 行属 master 陈旧的 pmtiles-tiles/storymap spec 条目，本 track 净增量 = 3 新端点 + upload `terrain` 字段），复跑 1 passed。
+- 修复轮终态：两快照门 + api_compat 合跑 **13 passed**（含字节一致闸），时点在全部代码修复之后。
 
 ## 静态检查
 
@@ -45,3 +46,8 @@
 
 - 摄入剖析：降采样读（≤2048 边），8192 级大图幅走 2048² 用例验证同一代码路径（test_large_grid_profiled_via_decimation）。
 - 换算副本：GDAL block 窗口流式（无整幅进内存）；上传 200MB 上界即副本上界。
+
+## 发布门终态（评审修复轮之后）
+
+- `-m cartography`（2451 项收集）：**2448 passed / 7 skipped / 3 xfailed，exit 0**（305.6s，修复前一轮 128.8s 同绿；时长差异来自并行负载）。
+- 新测试合跑：**66 passed**；受影响回归合跑：**66 passed**；快照门+api_compat：**13 passed**。

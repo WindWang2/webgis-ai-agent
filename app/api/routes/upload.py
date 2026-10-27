@@ -416,6 +416,7 @@ async def upload_files(
                 declared_vertical_datum=vertical_datum,
                 declared_vertical_unit=vertical_unit,
                 content_sha256=content_sha256,
+                owner_token=owner_token,
             )
             session_ref = lane_out["session_ref"]
             terrain_summary = lane_out["terrain"]
@@ -531,6 +532,7 @@ async def _run_raster_ingest_lane(
     declared_vertical_datum: Optional[str],
     declared_vertical_unit: Optional[str],
     content_sha256: Optional[str],
+    owner_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """栅格/DEM 摄入车道（G3D-V2-A）：校验 → 资格 receipt → terrain ref。
 
@@ -570,6 +572,11 @@ async def _run_raster_ingest_lane(
     out["duplicate"] = bool(result.get("duplicate"))
     out["warnings"] = list(result.get("warnings") or [])
     if receipt_dump is not None:
+        # 发布 URL 内嵌会话鉴权参数（评审 P2：消费方照抄即用；匿名会话
+        # 由 owner_token 头补 token query —— 与 /sessions/{sid}/raster 同语义）。
+        auth_qs = f"?session_id={session_id}"
+        if owner_token:
+            auth_qs += f"&token={owner_token}"
         out["terrain"] = {
             "qualification": receipt_dump.get("qualification"),
             "reasons": [
@@ -584,11 +591,11 @@ async def _run_raster_ingest_lane(
             "elevation_min_m": receipt_dump.get("elevation_min_m"),
             "elevation_max_m": receipt_dump.get("elevation_max_m"),
             "tiles_url_template": (
-                f"/api/v1/layers/data/{result['ref_id']}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
+                f"/api/v1/layers/data/{result['ref_id']}/terrain-tiles/{{z}}/{{x}}/{{y}}.png{auth_qs}"
                 if result.get("ref_id") else None
             ),
             "tilejson_url": (
-                f"/api/v1/layers/data/{result['ref_id']}/terrain-tiles.json"
+                f"/api/v1/layers/data/{result['ref_id']}/terrain-tiles.json{auth_qs}"
                 if result.get("ref_id") else None
             ),
         }

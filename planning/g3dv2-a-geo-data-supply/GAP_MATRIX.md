@@ -12,7 +12,7 @@
 | G6 | 地图资源可用性 typed 摘要（Agent/前端发现） | get_3d_capabilities 只见已绑定源 | 无目录级查询 | `GET /layers/terrain-sources`：静态画像可用性投影 + 会话 DEM ref 清单（schema 发布 app/contracts/） |
 | G7 | 匿名会话瓦片取数 | 仅 X-Session-Token 头（MapLibre img 请求带不了头） | 匿名会话 terrain 不可用 | terrain 路由/TileJSON 加法式 `?token=` query（对齐 /sessions/{sid}/raster 先例） |
 | G8 | fixture 契约族（负高程/无 datum/英尺/nodata 洞/畸形 CRS/压缩炸弹/越权 304/超 zoom） | 零散（synthetic/单测） | 无系统性入口契约 | tests/unit/test_terrain_*：10+ 类 fixture + 四段链 |
-| G9 | 离线部署文档 + 可运行合成 fixture | 无 data-plane 文档 | — | docs/data-plane/offline-terrain.md |
+| G9 | 离线部署文档 + 可运行合成 fixture | 无 data-plane 文档 | — | docs/data-plane/terrain-supply-offline.md |
 | G10 | durable 预热 job（DEM→瓦片批量） | 无地形 job 类型 | 按需渲染已满足会话级 MVP | **显式不做**（DECISIONS D4），PR 列 limitation |
 
 明确不做（防重复）：WMTS 服务端瓦片派生（#1771 范围外且无合法源）、静态画像目录变更/前端镜像再生成（零变更）、scene3d/orchestration/planner 消费端（B/C 领地）、#1805/#1797 等既有 issue 修复。

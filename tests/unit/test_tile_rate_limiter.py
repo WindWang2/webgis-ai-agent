@@ -141,23 +141,29 @@ class TestTerrainRouteWiring:
 
 
 class TestOutboundSafeSession:
-    def test_rate_limited_session_raises_typed_error(self):
+    def test_rate_limited_session_raises_typed_error(self, monkeypatch):
+        """send 层包装：类级 stub（实例级替换会杀掉包装 —— 评审 P2 回归锚）。"""
         from app.services.data_fabric.errors import SourceRateLimitedError
         from app.services.data_fabric.security import make_safe_session
 
+        monkeypatch.setattr(
+            requests_lib.Session, "send",
+            lambda self, request, **kwargs: _dummy_response(),
+        )
         session = make_safe_session(rate_limit=("src-x", 1))
-        # 拦截真实网络：send 层替换为哑响应（request 包装层在 send 之前）
-        session.send = lambda request, **kwargs: _dummy_response()  # noqa: ARG005
         r = session.get("https://example.com/api")
         assert r.status_code == 200
         with pytest.raises(SourceRateLimitedError):
             session.get("https://example.com/api")
 
-    def test_no_rate_limit_keeps_legacy_behavior(self):
+    def test_no_rate_limit_keeps_legacy_behavior(self, monkeypatch):
         from app.services.data_fabric.security import make_safe_session
 
+        monkeypatch.setattr(
+            requests_lib.Session, "send",
+            lambda self, request, **kwargs: _dummy_response(),
+        )
         session = make_safe_session()
-        session.send = lambda request, **kwargs: _dummy_response()  # noqa: ARG005
         for _ in range(5):
             assert session.get("https://example.com/api").status_code == 200
 

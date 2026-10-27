@@ -36,8 +36,11 @@
 
 ### 2.2 普通内网（有内网出口，无公网）
 
-- 同 2.1，但远端公共源按 `NETWORK_EGRESS_ALLOW` 白名单决定可达性；
-  不可达时摘要 API 如实标 `deployment_not_permitted`/不可用。
+- 远端公共源的"可用性"由 `evaluate_elevation_availability` 判定，其输入是
+  部署 profile（cloud/air_gapped 二值）——**不感知 egress 白名单内容**：
+  内网部署若需禁用远端兜底，应设 `DEPLOYMENT_PROFILE=air_gapped`（此时
+  摘要如实标 `deployment_not_permitted`），或由部署网络层拦截（应用层
+  egress 守卫的边界见 `docs/DEPLOYMENT-offline.md` §0）。
 - 自托管 PMTiles（内网 MinIO/本地目录）+ 会话 DEM 是主路径。
 
 ### 2.3 自托管离线（`DEPLOYMENT_PROFILE=air_gapped`）
@@ -58,10 +61,11 @@
 | `SESSION_TERRAIN_TILE_RPM` | 1200 | 会话 terrain 瓦片：键=(session, ref) |
 
 超限 → `429` + `Retry-After` + `{"code":"TILE_RATE_LIMITED",...}`。
-≤0 禁用。多 worker 部署为每 worker 独立窗口（总预算 = N × rpm，保守
-方向）；出站 adapter 抓取限流 seam 已就绪
-（`make_safe_session(rate_limit=(source_id, rpm))`），QuotaDecl → 各
-adapter 逐源接线为后续工作（见 planning 账本 R3/R6）。
+≤0 禁用；单键窗口内样本计数另受防滥用上限 4096 钳制（rpm 配置高于 4096
+时按 4096 生效）。多 worker 部署为每 worker 独立窗口（总预算 = N × rpm，
+保守方向）；出站 adapter 抓取限流 seam 已就绪
+（`make_safe_session(rate_limit=(source_id, rpm))`，覆盖重定向每一跳），
+QuotaDecl → 各 adapter 逐源接线为后续工作（见 planning 账本 R3/R6）。
 
 ## 4. 可运行 fixture（零网络）
 

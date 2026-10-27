@@ -240,3 +240,45 @@ class TestTileJsonContract:
         assert terrain["qualification"] == "display_only"
         codes = [x["code"] for x in terrain["reasons"]]
         assert "UNKNOWN_VERTICAL_DATUM" in codes
+
+
+class TestNonIngestedRefErrorCodes:
+    async def test_multiband_ref_422_single_band_code(self, client, env):
+        sid = "sess-tilejson-multi-01"
+        await _seed_conversation(env["db"], sid, user_id=_MOCK_USER["user_id"])
+        import io
+
+        buf = io.BytesIO()
+        with rasterio.open(
+            buf, "w", driver="GTiff", width=32, height=32, count=3, dtype="float32",
+            crs="EPSG:4326", transform=from_bounds(0, 0, 1, 1, width=32, height=32),
+        ) as dst:
+            for b in range(1, 4):
+                dst.write(np.zeros((32, 32), dtype="float32"), b)
+        p = env["tmp"] / "rgb.tif"
+        p.write_bytes(buf.getvalue())
+        ref_id = await env["manager"].store(sid, {"file_path": str(p)}, prefix="raster")
+        r = await client.get(
+            f"/api/v1/layers/data/{ref_id}/terrain-tiles.json?session_id={sid}"
+        )
+        assert r.status_code == 422
+        assert r.json()["detail"]["code"] == "TERRAIN_REQUIRES_SINGLE_BAND"
+
+    async def test_rotated_ref_422_rotated_code(self, client, env):
+        sid = "sess-tilejson-rot-01"
+        await _seed_conversation(env["db"], sid, user_id=_MOCK_USER["user_id"])
+        from rasterio.transform import Affine
+
+        rot = Affine.translation(0, 1) * Affine.rotation(30.0) * Affine.scale(0.01, -0.01)
+        p = env["tmp"] / "rot.tif"
+        with rasterio.open(
+            p, "w", driver="GTiff", width=64, height=64, count=1, dtype="float32",
+            crs="EPSG:4326", transform=rot,
+        ) as dst:
+            dst.write(np.full((64, 64), 500.0, dtype="float32"), 1)
+        ref_id = await env["manager"].store(sid, {"file_path": str(p)}, prefix="raster")
+        r = await client.get(
+            f"/api/v1/layers/data/{ref_id}/terrain-tiles.json?session_id={sid}"
+        )
+        assert r.status_code == 422
+        assert r.json()["detail"]["code"] == "ROTATED_GRID_UNSUPPORTED"

@@ -337,3 +337,45 @@ class TestProfileBudget:
         assert receipt.qualification == "analysis_grade"
         assert receipt.width == 2048 and receipt.height == 2048
         assert receipt.elevation_min_m == pytest.approx(100.0, abs=1.0)
+
+
+class TestReasonVocabularyLock:
+    def test_emitted_codes_are_within_locked_vocabulary(self, tmp_path):
+        """契约锁定：全部 reason code 必须在 _ALL_REASON_CODES 内（消费方按
+        code 全枚举披露 —— 评审 P2：docstring 曾漏 SOURCE_FILE_MISSING/
+        NON_FINITE_PIXELS 两码）。"""
+        from app.services.terrain_ingest import _ALL_REASON_CODES
+
+        assert _ALL_REASON_CODES == frozenset({
+            "TERRAIN_REQUIRES_SINGLE_BAND", "TERRAIN_INGEST_NO_CRS",
+            "CRS_NOT_RESOLVABLE", "ROTATED_GRID_UNSUPPORTED",
+            "UNIT_NOT_CONVERTIBLE", "CORRUPT_ELEVATION", "SOURCE_FILE_MISSING",
+            "UNKNOWN_VERTICAL_DATUM", "UNIT_ASSUMED_M",
+            "SYNTHETIC_DEM_DISPLAY_ONLY", "ELEVATION_OUTLIERS",
+            "ELEVATION_EXTREME_OUTLIERS", "ELEVATION_OUT_OF_RANGE",
+            "VERTICAL_UNIT_CONFLICT", "NON_FINITE_PIXELS",
+            "ANTIMERIDIAN_CROSSING", "POLAR_EXTENT_CLIPPED",
+        })
+
+    def test_docstring_lists_every_code(self):
+        """模块 docstring 与词表集合逐码一致（防漂移）。"""
+        import app.services.terrain_ingest as ti
+
+        for code in ti._ALL_REASON_CODES:
+            assert code in ti.__doc__, f"reason code {code} 未在模块 docstring 披露"
+
+    def test_declared_unit_conflicting_with_tag_is_display_only(self, tmp_path):
+        """评审 P2：声明 m vs tag=US survey foot（3.28 倍差）不得静默采信声明。"""
+        p = _write_dem(tmp_path / "dem.tif", np.full(_SHAPE, 1000.0))
+        with rasterio.open(p, "r+") as src:
+            src.set_band_unit(1, "US survey foot")
+        receipt, _ = validate_dem(p, declared_vertical_datum="EGM96", declared_vertical_unit="m")
+        assert receipt.qualification == "display_only"
+        assert "VERTICAL_UNIT_CONFLICT" in [r.code for r in receipt.reasons]
+        # 一致的声明 + tag 不触发冲突
+        p2 = _write_dem(tmp_path / "dem2.tif", np.full(_SHAPE, 1000.0))
+        with rasterio.open(p2, "r+") as src:
+            src.set_band_unit(1, "ft")
+        receipt2, _ = validate_dem(p2, declared_vertical_datum="EGM96", declared_vertical_unit="ft")
+        assert receipt2.qualification == "analysis_grade"
+        assert "VERTICAL_UNIT_CONFLICT" not in [r.code for r in receipt2.reasons]

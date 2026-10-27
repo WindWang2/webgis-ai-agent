@@ -10,3 +10,4 @@
 | 3 | T3 TileJSON 端点 + terrain 路由 ?token= 匿名支持 + 7 用例（含四段链闭环）+ terrain 回归 30 例 | pytest test_terrain_tilejson.py + terrain 回归 | ✅ 7+30 passed | T4 摘要 API |
 | 4 | T4 可用性摘要 API（静态画像部署投影 + 会话 DEM receipt 透传 + 3D 总判）+ 7 用例 + payload name | pytest test_terrain_sources_summary.py | ✅ 7 passed | T5 quota 执行层 |
 | 5 | T5 tile_rate_limiter（滑动窗+env 配置）+ MVT/PMTiles/terrain 三路由接线 + make_safe_session rate_limit 出站 seam + 9 用例 + df 路由回归 15 例 | pytest test_tile_rate_limiter.py + test_pmtiles_tile_route/test_deep_review_api_data_tiles | ✅ 9+15 passed | T6 文档 |
+| 6 | 独立评审 round1：1×P1+6×P2+P3 若干 → 全部 P1/P2 与可廉价 P3 修复（单位冲突码/词表锁定/URL 鉴权参数/send 层限流/TileJSON 分码/快照重刷/手册如实化）+8 新测试 | 66 新测 + 66 回归 + 13 快照门 + cartography 2448 | ✅ 全绿 | round2 复核 → PR |

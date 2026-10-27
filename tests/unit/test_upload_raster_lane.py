@@ -124,7 +124,7 @@ class TestRasterTerrainLane:
         assert terrain["qualification"] == "analysis_grade"
         assert terrain["vertical_datum"] == "EGM96"
         assert terrain["tiles_url_template"].startswith("/api/v1/layers/data/ref:terrain-")
-        assert terrain["tilejson_url"].endswith("/terrain-tiles.json")
+        assert "/terrain-tiles.json?session_id=" in terrain["tilejson_url"]
         # 上传本体元数据剖析（V4 回归）不受车道影响
         assert body["meta"] and body["meta"].get("band_count") == 1
 
@@ -235,3 +235,20 @@ class TestVectorLaneRegression:
         )
         assert r.status_code == 200
         assert r.json()["ref_registration_error"] is None
+
+
+class TestPublishedUrlsCarryAuth:
+    async def test_terrain_urls_embed_session_id(self, client):
+        r = await client.post(
+            "/api/v1/upload",
+            files={"files": ("dem.tif", _dem_bytes(), "image/tiff")},
+            data={
+                "session_id": "sess-terrain-url-01",
+                "register_ref": "true",
+                "vertical_datum": "EGM96",
+                "vertical_unit": "m",
+            },
+        )
+        terrain = r.json()["terrain"]
+        assert "?session_id=sess-terrain-url-01" in terrain["tiles_url_template"]
+        assert "?session_id=sess-terrain-url-01" in terrain["tilejson_url"]

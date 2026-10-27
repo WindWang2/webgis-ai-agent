@@ -23,8 +23,12 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-#: 与 ElevationSourceProfile.qualification 同词表（str enum 便于 JSON 投影）。
+#: 摄入 receipt 资格（严格 3 值 —— validate_dem 只产这三者）。
 TerrainQualification = Literal["analysis_grade", "display_only", "unavailable"]
+
+#: 投影面资格（含上游画像词表的 "unknown"：无 receipt 的非摄入 raster ref
+#: TileJSON 扩展块等投影场景使用；摄入 receipt 永不产 unknown）。
+ProjectedTerrainQualification = Literal["analysis_grade", "display_only", "unavailable", "unknown"]
 
 #: 垂直高程序序的已知可换算单位（换算因子见 terrain_ingest._UNIT_FACTORS）。
 DeclaredVerticalUnit = Literal["m", "ft", "us_survey_ft"]
@@ -116,7 +120,7 @@ class ElevationProfileAvailability(BaseModel):
     source_id: str
     kind: str
     encoding: str
-    qualification: TerrainQualification
+    qualification: ProjectedTerrainQualification
     synthetic: bool
     vertical_datum: Optional[str] = None
     attribution: str
@@ -146,6 +150,7 @@ __all__ = [
     "MapResourceAvailabilitySummary",
     "QualificationReason",
     "SessionTerrainSourceEntry",
+    "ProjectedTerrainQualification",
     "TerrainQualification",
     "TerrainSourceReceipt",
     "UnitConversionEvidence",

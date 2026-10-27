@@ -153,7 +153,7 @@ class TestSummaryContract:
         assert src["receipt"]["qualification"] == "analysis_grade"
         assert src["receipt"]["vertical_datum"] == "EGM96"
         assert src["tiles_url_template"].startswith("/api/v1/layers/data/ref:terrain-")
-        assert src["tilejson_url"].endswith("/terrain-tiles.json")
+        assert "/terrain-tiles.json?session_id=" in src["tilejson_url"]
 
     async def test_display_only_receipt_passthrough(self, client, env):
         sid = "sess-summary-disp-01"
@@ -199,3 +199,33 @@ class TestSummaryContract:
         # 无会话行 → 404（不泄漏存在性）
         r404 = await client.get("/api/v1/layers/terrain-sources?session_id=sess-unknown-9999")
         assert r404.status_code == 404
+
+
+class TestPublishedUrlsCarryAuth:
+    async def test_urls_embed_session_id(self, client, env):
+        sid = "sess-summary-url-01"
+        await _seed(env, sid)
+        await _register(env, sid)
+        r = await client.get(f"/api/v1/layers/terrain-sources?session_id={sid}")
+        src = r.json()["session_terrain_sources"][0]
+        # 评审 P2：发布 URL 内嵌会话鉴权参数，消费方照抄即用
+        assert f"?session_id={sid}" in src["tiles_url_template"]
+        assert f"?session_id={sid}" in src["tilejson_url"]
+        # 模板可直接 format（z/x/y 占位符仍可替换）
+        assert "{z}" in src["tiles_url_template"] and "{x}" in src["tiles_url_template"]
+
+    async def test_anonymous_urls_embed_token(self, client, env):
+        from app.core.auth import get_current_user_optional
+
+        sid = "sess-summary-url-anon"
+        from app.models.db_model import Conversation
+        async with env["db"]() as db:
+            db.add(Conversation(id=sid, user_id=None, owner_token="tok-url-1"))
+            await db.commit()
+        await _register(env, sid)
+        env["app"].dependency_overrides[get_current_user_optional] = lambda: {}
+        r = await client.get(f"/api/v1/layers/terrain-sources?session_id={sid}&token=tok-url-1")
+        assert r.status_code == 200
+        src = r.json()["session_terrain_sources"][0]
+        assert "&token=tok-url-1" in src["tiles_url_template"]
+        assert "&token=tok-url-1" in src["tilejson_url"]

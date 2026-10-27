@@ -752,7 +752,7 @@ async def get_raster_tile(
 
 async def _require_owned_session_qtoken(
     session_id: str = Query(..., min_length=8, max_length=128),
-    token: Optional[str] = Query(None, description="匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）"),
+    token: Optional[str] = Query(None, max_length=128, description="匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）"),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user_optional),
@@ -777,7 +777,7 @@ async def get_terrain_tile(
     x: int,
     y: int,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
-    token: Optional[str] = Query(None, description="匿名会话 owner token（同 terrain-tiles.json）"),
+    token: Optional[str] = Query(None, max_length=128, description="匿名会话 owner token（同 terrain-tiles.json）"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(_require_owned_session_qtoken),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
@@ -890,10 +890,18 @@ async def get_terrain_tilejson(
         )
     else:
         derived = await asyncio.to_thread(_derive_terrain_header, safe_path)
-        if derived is None:
+        if derived is None or derived[0] is None:
+            # 按失败原因分码（评审 P2：多波段/旋转网格不该错报 CRS 缺失）。
+            code = (derived[1] if derived is not None else None) or "HEADER_UNREADABLE"
+            _code_messages = {
+                "TERRAIN_REQUIRES_CRS": "elevation source has no CRS; refusing to publish TileJSON",
+                "TERRAIN_REQUIRES_SINGLE_BAND": "elevation source must be single-band; refusing to guess which band is elevation",
+                "ROTATED_GRID_UNSUPPORTED": "rotated/non-north-up grid unsupported for terrain windowing",
+                "HEADER_UNREADABLE": "elevation source header could not be read",
+            }
             raise HTTPException(status_code=422, detail={
-                "code": "TERRAIN_REQUIRES_CRS",
-                "message": "elevation source has no CRS; refusing to publish TileJSON",
+                "code": code,
+                "message": _code_messages.get(code, "elevation source unsuitable for terrain"),
             })
         bounds, gsd_m = derived
         from app.services.terrain_ingest import native_zoom_for_gsd
@@ -962,9 +970,11 @@ async def get_terrain_tilejson(
 
 
 def _derive_terrain_header(safe_path: str):
-    """无 receipt 的 raster ref：开文件头推导 (bounds4326, gsd_m)；无 CRS → None。
+    """无 receipt 的 raster ref：开文件头推导 ((bounds4326, gsd_m) | (None, code))。
 
-    纯 header 读取（不碰像素），在 worker 线程执行。
+    纯 header 读取（不碰像素），在 worker 线程执行。失败按因分码：无 CRS /
+    多波段 / 旋转网格（评审 P2：与摄入车道同一结构门，不给旋转网格发
+    TileJSON —— from_bounds 窗口推导对旋转网格会取错窗、伪造高程）。
     """
     try:
         import rasterio
@@ -972,22 +982,24 @@ def _derive_terrain_header(safe_path: str):
 
         with rasterio.open(safe_path) as src:
             if src.crs is None:
-                return None
+                return None, "TERRAIN_REQUIRES_CRS"
             if src.count != 1:
-                return None
+                return None, "TERRAIN_REQUIRES_SINGLE_BAND"
+            from app.services.terrain_ingest import _gsd_meters, _north_up
+
+            if not _north_up(src.transform):
+                return None, "ROTATED_GRID_UNSUPPORTED"
             b = src.bounds
             bounds = [float(v) for v in transform_bounds(src.crs, "EPSG:4326", b.left, b.bottom, b.right, b.top, densify_pts=21)]
-            from app.services.terrain_ingest import _gsd_meters
-
             return bounds, _gsd_meters(src, tuple(bounds))
     except Exception:  # noqa: BLE001 — 推导失败按不可发布处理
-        return None
+        return None, "HEADER_UNREADABLE"
 
 
 @router.get("/layers/terrain-sources", tags=["图层数据"], response_model=MapResourceAvailabilitySummary)
 async def list_terrain_sources(
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
-    token: Optional[str] = Query(None, description="匿名会话 owner token"),
+    token: Optional[str] = Query(None, max_length=128, description="匿名会话 owner token"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(_require_owned_session_qtoken),
 ):
@@ -1013,12 +1025,14 @@ async def list_terrain_sources(
     )
     from app.contracts.terrain_sources import (
         ElevationProfileAvailability,
+        QualificationReason,
         SessionTerrainSourceEntry,
         TerrainSourceReceipt,
     )
 
     deployment = "air_gapped" if _settings.DEPLOYMENT_PROFILE == "air_gapped" else "cloud"
     env_map = _os.environ
+    effective_token = owner_token or token
 
     profile_entries: list[ElevationProfileAvailability] = []
     fallback_available = False
@@ -1059,17 +1073,28 @@ async def list_terrain_sources(
         except Exception:  # noqa: BLE001 — receipt 损坏按 display_only 降级披露
             receipt = TerrainSourceReceipt(
                 qualification="display_only",
-                reasons=(),
+                reasons=(
+                    # typed reason（评审 P3）：消费方可区分"真 display_only"
+                    # 与"receipt 损坏降级"，不是同一语义。
+                    QualificationReason(
+                        code="RECEIPT_UNREADABLE",
+                        detail="stored receipt failed validation; degraded to display_only",
+                    ),
+                ),
                 content_sha256=str(payload.get("content_sha256") or ""),
             )
+        # 发布 URL 内嵌会话鉴权参数（评审 P2：消费方照抄即用，不自拼）。
+        _auth_qs = f"?session_id={session_id}"
+        if effective_token:
+            _auth_qs += f"&token={effective_token}"
         session_entries.append(SessionTerrainSourceEntry(
             ref_id=ref_id,
             name=str(payload.get("name") or ref_id),
             receipt=receipt,
             tiles_url_template=(
-                f"/api/v1/layers/data/{ref_id}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
+                f"/api/v1/layers/data/{ref_id}/terrain-tiles/{{z}}/{{x}}/{{y}}.png{_auth_qs}"
             ),
-            tilejson_url=f"/api/v1/layers/data/{ref_id}/terrain-tiles.json",
+            tilejson_url=f"/api/v1/layers/data/{ref_id}/terrain-tiles.json{_auth_qs}",
         ))
 
     if session_entries:

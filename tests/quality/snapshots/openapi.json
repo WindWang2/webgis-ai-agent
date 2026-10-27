@@ -3354,6 +3354,79 @@
     "title": "DuplicateComponentBody",
     "type": "object"
    },
+   "ElevationProfileAvailability": {
+    "additionalProperties": false,
+    "description": "静态高程画像的部署期可用性投影（摘要 API 的静态腿）。",
+    "properties": {
+     "attribution": {
+      "title": "Attribution",
+      "type": "string"
+     },
+     "deployment_available": {
+      "title": "Deployment Available",
+      "type": "boolean"
+     },
+     "encoding": {
+      "title": "Encoding",
+      "type": "string"
+     },
+     "kind": {
+      "title": "Kind",
+      "type": "string"
+     },
+     "qualification": {
+      "enum": [
+       "analysis_grade",
+       "display_only",
+       "unavailable",
+       "unknown"
+      ],
+      "title": "Qualification",
+      "type": "string"
+     },
+     "source_id": {
+      "title": "Source Id",
+      "type": "string"
+     },
+     "synthetic": {
+      "title": "Synthetic",
+      "type": "boolean"
+     },
+     "unavailable_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unavailable Reason"
+     },
+     "vertical_datum": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vertical Datum"
+     }
+    },
+    "required": [
+     "source_id",
+     "kind",
+     "encoding",
+     "qualification",
+     "synthetic",
+     "attribution",
+     "deployment_available"
+    ],
+    "title": "ElevationProfileAvailability",
+    "type": "object"
+   },
    "EmbedBody": {
     "properties": {
      "model_id": {
@@ -6888,6 +6961,62 @@
     "title": "MapProductVersionSummary",
     "type": "object"
    },
+   "MapResourceAvailabilitySummary": {
+    "additionalProperties": false,
+    "description": "`GET /layers/terrain-sources` 的 response 形状（契约锁定）。",
+    "properties": {
+     "elevation_profiles": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/ElevationProfileAvailability"
+      },
+      "title": "Elevation Profiles",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "session_terrain_sources": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/SessionTerrainSourceEntry"
+      },
+      "title": "Session Terrain Sources",
+      "type": "array"
+     },
+     "terrain_3d_available": {
+      "default": false,
+      "title": "Terrain 3D Available",
+      "type": "boolean"
+     },
+     "terrain_3d_detail": {
+      "default": "",
+      "title": "Terrain 3D Detail",
+      "type": "string"
+     },
+     "terrain_3d_reason_code": {
+      "default": "NO_TERRAIN_SOURCE",
+      "title": "Terrain 3D Reason Code",
+      "type": "string"
+     },
+     "terrain_3d_status": {
+      "default": "unavailable",
+      "enum": [
+       "available",
+       "available_with_limits",
+       "unavailable"
+      ],
+      "title": "Terrain 3D Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "MapResourceAvailabilitySummary",
+    "type": "object"
+   },
    "MapStatePushRequest": {
     "description": "POST /chat/sessions/{session_id}/map-state 请求体。",
     "examples": [
@@ -9239,6 +9368,28 @@
     "title": "ProposalProjectionResponse",
     "type": "object"
    },
+   "QualificationReason": {
+    "additionalProperties": false,
+    "description": "一条可编程消费的不合格/警告因素。",
+    "properties": {
+     "code": {
+      "minLength": 1,
+      "title": "Code",
+      "type": "string"
+     },
+     "detail": {
+      "minLength": 1,
+      "title": "Detail",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "detail"
+    ],
+    "title": "QualificationReason",
+    "type": "object"
+   },
    "QualityAuditResponse": {
     "additionalProperties": true,
     "description": "POST /projects/{project_id}/quality-audit 响应（质检报告投影）。",
@@ -11480,6 +11631,40 @@
     "title": "SessionSummary",
     "type": "object"
    },
+   "SessionTerrainSourceEntry": {
+    "additionalProperties": false,
+    "description": "可用性摘要中的单条会话 DEM 源。",
+    "properties": {
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "receipt": {
+      "$ref": "#/components/schemas/TerrainSourceReceipt"
+     },
+     "ref_id": {
+      "title": "Ref Id",
+      "type": "string"
+     },
+     "tilejson_url": {
+      "title": "Tilejson Url",
+      "type": "string"
+     },
+     "tiles_url_template": {
+      "title": "Tiles Url Template",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "name",
+     "receipt",
+     "tiles_url_template",
+     "tilejson_url"
+    ],
+    "title": "SessionTerrainSourceEntry",
+    "type": "object"
+   },
    "SetLayoutBody": {
     "properties": {
      "client_mutation_id": {
@@ -12815,6 +13000,221 @@
     "title": "TemplateView",
     "type": "object"
    },
+   "TerrainSourceReceipt": {
+    "additionalProperties": false,
+    "description": "DEM 摄入回执 —— 摄入期一锤定音，渲染/发现不再变义。",
+    "properties": {
+     "bbox_epsg4326": {
+      "anyOf": [
+       {
+        "maxItems": 4,
+        "minItems": 4,
+        "prefixItems": [
+         {
+          "type": "number"
+         },
+         {
+          "type": "number"
+         },
+         {
+          "type": "number"
+         },
+         {
+          "type": "number"
+         }
+        ],
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox Epsg4326"
+     },
+     "content_sha256": {
+      "default": "",
+      "title": "Content Sha256",
+      "type": "string"
+     },
+     "crs": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Crs"
+     },
+     "elevation_max_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Elevation Max M"
+     },
+     "elevation_min_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Elevation Min M"
+     },
+     "ground_sample_distance_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ground Sample Distance M"
+     },
+     "height": {
+      "default": 0,
+      "title": "Height",
+      "type": "integer"
+     },
+     "nodata": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Nodata"
+     },
+     "nodata_hole_fraction": {
+      "default": 0.0,
+      "title": "Nodata Hole Fraction",
+      "type": "number"
+     },
+     "non_finite_pixels": {
+      "default": 0,
+      "title": "Non Finite Pixels",
+      "type": "integer"
+     },
+     "outlier_envelope_m": {
+      "default": [
+       -500.0,
+       8850.0
+      ],
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "number"
+       }
+      ],
+      "title": "Outlier Envelope M",
+      "type": "array"
+     },
+     "outlier_pixels": {
+      "default": 0,
+      "title": "Outlier Pixels",
+      "type": "integer"
+     },
+     "qualification": {
+      "enum": [
+       "analysis_grade",
+       "display_only",
+       "unavailable"
+      ],
+      "title": "Qualification",
+      "type": "string"
+     },
+     "reasons": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/QualificationReason"
+      },
+      "title": "Reasons",
+      "type": "array"
+     },
+     "registered_at": {
+      "default": "",
+      "title": "Registered At",
+      "type": "string"
+     },
+     "synthetic": {
+      "default": false,
+      "title": "Synthetic",
+      "type": "boolean"
+     },
+     "unit_conversion": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/UnitConversionEvidence"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "vertical_datum": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vertical Datum"
+     },
+     "vertical_datum_source": {
+      "default": "unavailable",
+      "enum": [
+       "declared",
+       "geotiff_tag",
+       "unavailable"
+      ],
+      "title": "Vertical Datum Source",
+      "type": "string"
+     },
+     "vertical_unit": {
+      "const": "m",
+      "default": "m",
+      "title": "Vertical Unit",
+      "type": "string"
+     },
+     "vertical_unit_source": {
+      "default": "assumed",
+      "enum": [
+       "declared",
+       "geotiff_tag",
+       "assumed"
+      ],
+      "title": "Vertical Unit Source",
+      "type": "string"
+     },
+     "width": {
+      "default": 0,
+      "title": "Width",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "qualification"
+    ],
+    "title": "TerrainSourceReceipt",
+    "type": "object"
+   },
    "TokenResponse": {
     "description": "登录/注册/refresh 的返回。\n\nS41 起新增 `refresh_token` 字段；旧客户端忽略它不会破坏。",
     "examples": [
@@ -12936,6 +13336,41 @@
      }
     },
     "title": "ToolsListResponse",
+    "type": "object"
+   },
+   "UnitConversionEvidence": {
+    "additionalProperties": false,
+    "description": "非米单位 → 米的显式换算证据（DECISIONS D2：不静默换算）。",
+    "properties": {
+     "factor": {
+      "title": "Factor",
+      "type": "number"
+     },
+     "from_unit": {
+      "enum": [
+       "m",
+       "ft",
+       "us_survey_ft"
+      ],
+      "title": "From Unit",
+      "type": "string"
+     },
+     "input_sha256": {
+      "title": "Input Sha256",
+      "type": "string"
+     },
+     "output_sha256": {
+      "title": "Output Sha256",
+      "type": "string"
+     }
+    },
+    "required": [
+     "from_unit",
+     "factor",
+     "input_sha256",
+     "output_sha256"
+    ],
+    "title": "UnitConversionEvidence",
     "type": "object"
    },
    "UploadDeleteResponse": {
@@ -28254,6 +28689,7 @@
       "schema": {
        "anyOf": [
         {
+         "maxLength": 128,
          "type": "string"
         },
         {
@@ -28389,6 +28825,7 @@
       "schema": {
        "anyOf": [
         {
+         "maxLength": 128,
          "type": "string"
         },
         {
@@ -28677,6 +29114,7 @@
       "schema": {
        "anyOf": [
         {
+         "maxLength": 128,
          "type": "string"
         },
         {
@@ -28708,7 +29146,9 @@
      "200": {
       "content": {
        "application/json": {
-        "schema": {}
+        "schema": {
+         "$ref": "#/components/schemas/MapResourceAvailabilitySummary"
+        }
        }
       },
       "description": "Successful Response"

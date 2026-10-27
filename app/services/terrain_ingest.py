@@ -24,12 +24,16 @@
 GDAL block 窗口流式读写（块内 NumPy 向量化，无逐像元 Python 循环）；
 上传本体 200MB 上界即副本上界。
 
-reason code 全词表（契约测试锁定）：
-  TERRAIN_REQUIRES_SINGLE_BAND / TERRAIN_INGEST_NO_CRS /
-  CRS_NOT_RESOLVABLE / ROTATED_GRID_UNSUPPORTED / UNIT_NOT_CONVERTIBLE /
-  CORRUPT_ELEVATION / ELEVATION_OUTLIERS / ELEVATION_EXTREME_OUTLIERS /
-  ELEVATION_OUT_OF_RANGE / UNKNOWN_VERTICAL_DATUM / UNIT_ASSUMED_M /
-  SYNTHETIC_DEM_DISPLAY_ONLY / ANTIMERIDIAN_CROSSING / POLAR_EXTENT_CLIPPED
+reason code 全词表（_ALL_REASON_CODES 锁定 + 契约测试逐码核对）：
+  unavailable 级：TERRAIN_REQUIRES_SINGLE_BAND / TERRAIN_INGEST_NO_CRS /
+    CRS_NOT_RESOLVABLE / ROTATED_GRID_UNSUPPORTED / UNIT_NOT_CONVERTIBLE /
+    CORRUPT_ELEVATION / SOURCE_FILE_MISSING
+  display_only 级：UNKNOWN_VERTICAL_DATUM / UNIT_ASSUMED_M /
+    SYNTHETIC_DEM_DISPLAY_ONLY / ELEVATION_OUTLIERS /
+    ELEVATION_EXTREME_OUTLIERS / ELEVATION_OUT_OF_RANGE /
+    VERTICAL_UNIT_CONFLICT
+  披露级（不降级）：NON_FINITE_PIXELS / ANTIMERIDIAN_CROSSING /
+    POLAR_EXTENT_CLIPPED
 """
 from __future__ import annotations
 
@@ -49,6 +53,21 @@ from app.contracts.terrain_sources import (
     TerrainSourceReceipt,
     UnitConversionEvidence,
 )
+
+#: reason code 全词表（契约锁定：测试断言 emit 的每个码都在此集合内，
+#: 且模块 docstring 与本集合一致 —— 消费方按 code 全枚举披露）。
+_ALL_REASON_CODES: frozenset[str] = frozenset({
+    # unavailable 级
+    "TERRAIN_REQUIRES_SINGLE_BAND", "TERRAIN_INGEST_NO_CRS", "CRS_NOT_RESOLVABLE",
+    "ROTATED_GRID_UNSUPPORTED", "UNIT_NOT_CONVERTIBLE", "CORRUPT_ELEVATION",
+    "SOURCE_FILE_MISSING",
+    # display_only 级
+    "UNKNOWN_VERTICAL_DATUM", "UNIT_ASSUMED_M", "SYNTHETIC_DEM_DISPLAY_ONLY",
+    "ELEVATION_OUTLIERS", "ELEVATION_EXTREME_OUTLIERS", "ELEVATION_OUT_OF_RANGE",
+    "VERTICAL_UNIT_CONFLICT",
+    # 披露级（记录不降级）
+    "NON_FINITE_PIXELS", "ANTIMERIDIAN_CROSSING", "POLAR_EXTENT_CLIPPED",
+})
 
 logger = logging.getLogger(__name__)
 
@@ -284,10 +303,21 @@ def validate_dem(
                 detail="文件自带 SYNTHETIC_DEM=1 标记（自描述合成数据）；永久 display_only，不可分析",
             ))
 
-        # —— 单位解析（声明 > band tag > 假定米） ——
+        # —— 单位解析（声明 > band tag > 假定米；声明与可解析 tag 冲突 = 披露） ——
         tag_unit, tag_present = _resolve_tag_unit((src.units or [""])[0] if src.units else None)
         if unit_key is not None:
             vertical_unit_source = "declared"
+            if tag_unit is not None and tag_unit != unit_key:
+                # 冲突不静默压倒：声明与文件证据矛盾时按声明换算，但资格
+                # 封顶 display_only（评审 P2 —— 3.28 倍高程差不可无声放行）。
+                reasons.append(QualificationReason(
+                    code="VERTICAL_UNIT_CONFLICT",
+                    detail=(
+                        f"声明的垂直单位 {unit_key!r} 与文件 band unit tag "
+                        f"{src.units[0]!r}（解析为 {tag_unit!r}）冲突；按声明处理，"
+                        "仅显示 —— 请核对后以一致声明重新摄入"
+                    ),
+                ))
         elif tag_unit is not None:
             unit_key = tag_unit
             vertical_unit_source = "geotiff_tag"
@@ -417,6 +447,7 @@ def validate_dem(
     display_only_codes = {
         "SYNTHETIC_DEM_DISPLAY_ONLY", "UNKNOWN_VERTICAL_DATUM", "UNIT_ASSUMED_M",
         "ELEVATION_OUTLIERS", "ELEVATION_EXTREME_OUTLIERS", "ELEVATION_OUT_OF_RANGE",
+        "VERTICAL_UNIT_CONFLICT",
     }
     if blocking & display_only_codes:
         qualification = "display_only"
