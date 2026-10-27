@@ -55,9 +55,11 @@ _MAX_ID = 64
 _MAX_FINGERPRINT = 96
 
 #: 源身份字段投影（按 source.type；缺席字段 → None，不虚构）。
+#: v1.7（G3D02）：model3d 进词表 —— 3D 资产数据依赖进信封（revision/
+#: fingerprint/ref 身份字段经下方泛型投影读取，与 geojson/fabric 同形）。
 _SOURCE_KINDS = frozenset({
     "geojson", "vector", "raster", "raster-dem",
-    "data_fabric", "wms", "wmts", "pmtiles",
+    "data_fabric", "wms", "wmts", "pmtiles", "model3d",
 })
 
 

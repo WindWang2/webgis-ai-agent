@@ -34,6 +34,7 @@ from app.schemas.mapspec_mutation_schema import (
     ReorderLayersBody,
     SetLayoutBody,
     SetTimeBody,
+    SetSceneBody,
     SetViewBody,
     SetWorkbenchStateBody,
 )
@@ -57,6 +58,7 @@ from app.services.mapspec.intents import (
     SetBasemapIntent,
     SetLayoutIntent,
     SetSceneIntent,
+    SetSceneAssetsIntent,
     SetScenarioModeIntent,
     SetTimeIntent,
     SetViewIntent,
@@ -256,6 +258,11 @@ def _codec_patch_component(req: Any) -> MutationIntent:
         options=req.options,
         upsert=req.upsert,
     )
+
+
+def _codec_set_scene(req: Any) -> MutationIntent:
+    """G3D05：SetSceneBody → SetSceneIntent（scene 直通；None=清除）。"""
+    return SetSceneIntent(scene=req.scene)
 
 
 def _codec_set_view(req: Any) -> MutationIntent:
@@ -558,7 +565,14 @@ def _build_default_registry() -> MutationRegistry:
     reg.register(IntentDescriptor(
         intent_cls=SetSceneIntent,
         handler=_h._handle_setscene,
-        effect_class=PRESENTATION, provenance_detail=_pd_none,
+        effect_class=PRESENTATION, op_label="调整场景",
+        provenance_detail=_pd_none,
+    ), body_cls=SetSceneBody, body_codec=_codec_set_scene)
+    reg.register(IntentDescriptor(
+        intent_cls=SetSceneAssetsIntent,
+        handler=_h._handle_setsceneassets,
+        effect_class=PRESENTATION, op_label="写入三维场景资产",
+        provenance_detail=_pd_none,
     ))
     reg.register(IntentDescriptor(
         intent_cls=SetScenarioModeIntent,

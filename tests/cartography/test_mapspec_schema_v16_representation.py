@@ -27,15 +27,15 @@ WINDOWS = [
 
 class TestVersionV16:
     def test_known_versions_and_latest(self):
-        assert ms.KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6")
-        assert ms.LATEST_VERSION == "1.6"
+        assert ms.KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7")
+        assert ms.LATEST_VERSION == "1.7"
         assert ms.DEFAULT_VERSION == "1.0"
 
     def test_v15_migrates_identity_to_latest(self):
         legacy = _spec(representation={"windows": WINDOWS})
         legacy["version"] = "1.5"
         r2 = ms.parse_mapspec(legacy)
-        assert r2.effective_version == "1.6"
+        assert r2.effective_version == ms.LATEST_VERSION
         assert r2.migrated is True
         # identity：文档内容不被改写（version 键保持原值）。
         assert r2.document["layers"][0]["representation"]["windows"] == WINDOWS
@@ -45,12 +45,12 @@ class TestVersionV16:
         assert r15.effective_version == "1.5" and r15.migrated is False
 
     def test_forward_version_flagged_and_rejected_by_consumers(self):
-        r = ms.parse_mapspec({"version": "1.7", "view": {}, "sources": {}, "layers": []})
+        r = ms.parse_mapspec({"version": "1.8", "view": {}, "sources": {}, "layers": []})
         assert r.forward_version is True
         # parse 本身永不抛（坏文档可诊断）；publication 消费入口显式拒绝。
         with pytest.raises(ms.MapSpecSchemaError) as exc:
             ms.require_parseable_mapspec(
-                {"version": "1.7", "view": {}, "sources": {}, "layers": []})
+                {"version": "1.8", "view": {}, "sources": {}, "layers": []})
         assert exc.value.code == "mapspec_forward_version"
 
 

@@ -704,18 +704,6 @@
 - status: planned；version: 1.0
 - algorithm `platform.scenario_simulation`（priority=50）→ tools: spatial_decision_v2, spatial_reasoning, what_if_simulate
 
-## scene_camera_action（场景相机动作）
-- status: planned；version: 1.0
-- input: scene_config
-- output: scene_config
-- algorithm `platform.scene_camera_action`（priority=50）→ tools: fly_camera
-
-## scene_representation（三维场景表达决策）
-- status: planned；version: 1.0
-- input: raster_surface
-- output: scene_config
-- algorithm `platform.scene_representation`（priority=50）→ tools: get_3d_capabilities, run_3d_analysis
-
 ## service_area（网络服务区）
 - status: native；version: 1.0
 - input: poi_feature_set, point_feature_set
@@ -944,11 +932,14 @@
 - algorithm `terrain.strahler`（priority=52；scientific=VALIDATED）→ tools: stream_network
 - algorithm `terrain.streams`（priority=51；scientific=VALIDATED）→ tools: stream_network
 
-## terrain_scene_binding（地形场景绑定）
-- status: planned；version: 1.0
-- input: raster_surface
-- output: scene_config
-- algorithm `platform.terrain_scene_binding`（priority=50）→ tools: apply_scene_representation
+## terrain_measurement（三维量测）
+- status: native；version: 1.0
+- input: terrain_surface
+- output: line_feature_set, stats_table
+- algorithm `terrain.line_of_sight`（priority=64；scientific=VALIDATED）→ tools: line_of_sight_analysis
+- algorithm `terrain.profile`（priority=63；scientific=VALIDATED）→ tools: terrain_profile
+- algorithm `terrain.surface_area`（priority=66；scientific=VALIDATED）→ tools: surface_area_analysis
+- algorithm `terrain.surface_distance`（priority=65；scientific=VALIDATED）→ tools: surface_distance_analysis
 
 ## terrain_sky_view（地平线与天空可视因子）
 - status: native；version: 1.0

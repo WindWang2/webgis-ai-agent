@@ -90,6 +90,9 @@ from app.models.composition_template_asset import (  # noqa: F401 — 模型注�
     CompositionTemplateAsset,
     CompositionTemplateAssetVersion,
 )
+from app.models.story_map_asset import (  # noqa: F401 — 模型注册 + 再导出（G3D05/ADR-0275）
+    StoryMapAsset,
+)
 from app.models.cartography_quality import (  # noqa: F401 — 模型注册 + 再导出（AC-10/ADR-0159）
     CartographyQualityRun,
     CartographyQualityBaseline,

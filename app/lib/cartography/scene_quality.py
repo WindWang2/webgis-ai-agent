@@ -19,9 +19,16 @@ severity 词表：blocking（拒绝/必须修复）> warning（放行 + 披露�
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Dict, List, Optional
 
-#: 质量门 reason code 词表（封闭集合；测试锁定）。
+from app.lib.cartography.mapspec_schema import (
+    MAX_SCENE_ASSETS,
+    MAX_SCENE_ASSET_RENDER_ORDER,
+)
+
+#: 质量门 reason code 词表（封闭集合；测试锁定）。v1.7（G3D02）追加
+#: SCENE_ASSET_* 六码（3D 资产数据面完整性 / 放置域 / 证据诚实）。
 SCENE_QUALITY_CODES = (
     "SCENE_TERRAIN_SOURCE_REF",
     "SCENE_TERRAIN_SOURCE_TYPE",
@@ -32,6 +39,18 @@ SCENE_QUALITY_CODES = (
     "SCENE_PITCH_EXTREME",
     "SCENE_VERTICAL_UNIT_UNKNOWN",
     "SCENE_LEGEND_DRIFT",
+    # G3D02（v1.7）：三维场景资产门（源引用/放置域/重复 id/预算/证据）。
+    "SCENE_ASSET_SOURCE_REF",
+    "SCENE_ASSET_SOURCE_TYPE",
+    "SCENE_ASSET_PLACEMENT_RANGE",
+    "SCENE_ASSET_DUPLICATE_ID",
+    "SCENE_ASSET_EXCEEDS_BUDGET",
+    "SCENE_ASSET_NO_EVIDENCE",
+    # G3D05（ADR-0275）：三维制图产品向 —— 透视比例尺诚实 / 标注遮挡
+    # 风险 / 矢量导出降级披露。
+    "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE",
+    "SCENE_LABEL_OCCLUSION_RISK",
+    "SCENE_EXPORT_VECTOR_DEGRADE",
 )
 
 #: pitch 硬上限（MapLibre 合法域）与产品建议上限。
@@ -40,6 +59,20 @@ _PITCH_ADVICE_MAX = 60.0
 
 #: 失真披露阈（>1.5 需披露 —— scene_planning 同口径单源）。
 _EXAGGERATION_DISCLOSURE = 1.5
+
+#: G3D05：屏幕比例尺可信阈 —— 有效 pitch（view.pitch 优先，回退
+#: scene.camera.pitch）超过该值时透视压缩使屏幕比例尺不可信，必须由
+#: scene_disclosure 组件披露而非静默展示。**单一事实源**：product_manifest
+#: 与前端 scene-export-disclosure.ts（同值镜像 + 契约测试互锁）消费。
+SCALE_TRUST_PITCH_MAX = 10.0
+_SCALE_TRUST_PITCH_MAX = SCALE_TRUST_PITCH_MAX  # 模块内历史别名
+
+#: G3D05：高俯仰下 symbol 标注被地形/挤出体遮挡风险的提示阈。
+_LABEL_OCCLUSION_PITCH = 45.0
+
+#: 矢量导出目标（render_diagnostics.EXPORT_TARGETS 同口径的子集 ——
+#: 这三条通道无法保留透视模型，mode!=2d 必须显式降级）。
+_VECTOR_TARGETS = ("pdf", "svg", "print")
 
 #: finding 形状键（有界、可序列化）。
 _FINDING_KEYS = {"code", "severity", "detail", "layer_id"}
@@ -57,6 +90,41 @@ def _legend_digest(legend_spec: Any) -> str:
     if legend_spec is None:
         return ""
     return json.dumps(legend_spec, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _placement_domain_error(anchor: Any, placement: Dict[str, Any]) -> Optional[str]:
+    """v1.7（G3D02）：放置参数域检查 —— 返回缺陷描述或 None。
+
+    域：anchor = [lng∈[-180,180], lat∈[-90,90]]；scale > 0；
+    heading/pitch/roll ∈ [-360, 360]；altitude_m 有限；render_order ∈
+    [0, MAX_SCENE_ASSET_RENDER_ORDER]；lod.max_sse > 0、max_visible_tiles > 0。
+    """
+    if not isinstance(anchor, list) or len(anchor) != 2 \
+            or not all(_is_number(v) for v in anchor):
+        return f"placement.anchor must be [lng, lat] numbers, got {anchor!r}"
+    lng, lat = float(anchor[0]), float(anchor[1])
+    if not (-180.0 <= lng <= 180.0):
+        return f"placement.anchor longitude {lng} outside [-180, 180]"
+    if abs(lat) > 85.0511:
+        # MapLibre/Web Mercator 世界边界（review P2-3）：±90 是合法 WGS84，
+        # 但渲染在世界外 —— 域校验按渲染契约收口。
+        return f"placement.anchor latitude {lat} outside Web Mercator domain [-85.0511, 85.0511]"
+    for key in ("heading_deg", "pitch_deg", "roll_deg", "altitude_m"):
+        v = placement.get(key)
+        if v is not None and (not _is_number(v) or v != v or v in (float("inf"), float("-inf"))):
+            return f"placement.{key} {v!r} is not a finite number"
+    for key in ("heading_deg", "pitch_deg", "roll_deg"):
+        v = placement.get(key)
+        if _is_number(v) and not (-360.0 <= float(v) <= 360.0):
+            return f"placement.{key} {v} outside [-360, 360]"
+    scale = placement.get("scale")
+    if scale is not None and (not _is_number(scale) or not (0 < float(scale) < float("inf"))):
+        return f"placement.scale {scale!r} must be a finite number > 0"
+    return None
 
 
 def check_legend_invariance(
@@ -88,11 +156,20 @@ def check_legend_invariance(
     return None
 
 
-def evaluate_scene_quality(spec: Dict[str, Any]) -> Dict[str, Any]:
+def evaluate_scene_quality(
+    spec: Dict[str, Any],
+    *,
+    export_targets: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """spec → 场景质量报告 {passed, blocking_count, findings}。
 
     findings 按严重度排序（blocking 在前）；无 scene 的 spec 直接通过
     （存量 2d 语义零门槛 —— 向后兼容是 Oracle 条款）。
+
+    G3D05 增补：``export_targets`` 由导出/ACK 调用方传入（interactive
+    场景缺省 None = 跳过矢量降级检查）；含矢量目标且 mode!=2d 时产出
+    ``SCENE_EXPORT_VECTOR_DEGRADE`` info —— 降级本身合法（矢量孪生是
+    平面投影），但**未被披露的降级**是误导，质量门负责点名。
     """
     findings: List[Dict[str, Any]] = []
     scene = spec.get("scene")
@@ -186,6 +263,108 @@ def evaluate_scene_quality(spec: Dict[str, Any]) -> Dict[str, Any]:
                 layer_id=str(layer.get("id")),
             ))
 
+    # ── v1.7（G3D02）：3D 场景资产门 ─────────────────────────────────────
+    assets = scene.get("assets")
+    assets = assets if isinstance(assets, list) else None
+    asset_ids: List[str] = []
+    has_vertical_content = has_vertical_content or bool(assets)
+    if assets is not None:
+        if len(assets) > MAX_SCENE_ASSETS:
+            findings.append(_finding(
+                "SCENE_ASSET_EXCEEDS_BUDGET", "blocking",
+                f"scene.assets has {len(assets)} entries > {MAX_SCENE_ASSETS}",
+            ))
+        seen_ids = set()
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            asset_id = str(asset.get("id") or "")
+            if asset_id:
+                if asset_id in seen_ids:
+                    findings.append(_finding(
+                        "SCENE_ASSET_DUPLICATE_ID", "blocking",
+                        f"duplicate scene asset id '{asset_id}'",
+                        layer_id=asset_id,
+                    ))
+                seen_ids.add(asset_id)
+                asset_ids.append(asset_id)
+            # 数据面完整性（与 coordinator.validate 双闸同口径）。
+            src_id = asset.get("source")
+            src = sources.get(src_id) if isinstance(src_id, str) else None
+            if src is None:
+                findings.append(_finding(
+                    "SCENE_ASSET_SOURCE_REF", "blocking",
+                    f"scene asset '{asset_id}' references missing source '{src_id}'",
+                    layer_id=asset_id or None,
+                ))
+            elif src.get("type") != "model3d":
+                findings.append(_finding(
+                    "SCENE_ASSET_SOURCE_TYPE", "blocking",
+                    f"scene asset '{asset_id}' source '{src_id}' is "
+                    f"'{src.get('type')}', expected 'model3d'",
+                    layer_id=asset_id or None,
+                ))
+            elif not (isinstance(src.get("url"), str) and src.get("url")
+                      or isinstance(src.get("ref_id"), str) and src.get("ref_id")):
+                findings.append(_finding(
+                    "SCENE_ASSET_SOURCE_REF", "blocking",
+                    f"model3d source '{src_id}' carries neither url nor ref_id "
+                    f"(asset '{asset_id}')",
+                    layer_id=asset_id or None,
+                ))
+            # 放置域（显式、不猜：越界值是语义缺陷，不是风格问题）。
+            placement = asset.get("placement")
+            if isinstance(placement, dict):
+                anchor = placement.get("anchor")
+                detail = _placement_domain_error(anchor, placement)
+                if detail:
+                    findings.append(_finding(
+                        "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
+                        f"asset '{asset_id}': {detail}",
+                        layer_id=asset_id or None,
+                    ))
+            order = asset.get("render_order")
+            if order is not None and (
+                not _is_number(order)
+                or not (0 <= float(order) <= MAX_SCENE_ASSET_RENDER_ORDER)
+            ):
+                findings.append(_finding(
+                    "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
+                    f"asset '{asset_id}' render_order {order!r} outside "
+                    f"[0, {MAX_SCENE_ASSET_RENDER_ORDER}]",
+                    layer_id=asset_id or None,
+                ))
+            lod = asset.get("lod")
+            if isinstance(lod, dict):
+                max_sse = lod.get("max_sse")
+                if max_sse is not None and (not _is_number(max_sse) or not (0 < float(max_sse))):
+                    findings.append(_finding(
+                        "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
+                        f"asset '{asset_id}' lod.max_sse {max_sse!r} must be > 0",
+                        layer_id=asset_id or None,
+                    ))
+                mvt = lod.get("max_visible_tiles")
+                if mvt is not None and (not _is_number(mvt) or not (0 < float(mvt) < float("inf"))):
+                    findings.append(_finding(
+                        "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
+                        f"asset '{asset_id}' lod.max_visible_tiles {mvt!r} must be > 0",
+                        layer_id=asset_id or None,
+                    ))
+            # 证据诚实：来源/许可与锚点高程双缺 → 披露（渲染不阻塞）。
+            vertical = asset.get("vertical")
+            has_evidence = bool(
+                isinstance(asset.get("provenance_ref"), str) and asset.get("provenance_ref")
+            ) or bool(
+                isinstance(vertical, dict) and vertical.get("elevation_ref")
+            )
+            if not has_evidence:
+                findings.append(_finding(
+                    "SCENE_ASSET_NO_EVIDENCE", "warning",
+                    f"scene asset '{asset_id}' declares no provenance_ref and no "
+                    "vertical.elevation_ref; placement provenance is unevidenced",
+                    layer_id=asset_id or None,
+                ))
+
     # ── 模式一致性 ────────────────────────────────────────────────────────
     if mode == "3d" and not has_vertical_content and terrain is None:
         findings.append(_finding(
@@ -193,6 +372,83 @@ def evaluate_scene_quality(spec: Dict[str, Any]) -> Dict[str, Any]:
             "scene.mode=3d but no extrusion layer and no terrain; mode claim "
             "is empty",
         ))
+
+    # ── G3D05：透视比例尺诚实（ADR-0275）────────────────────────────────
+    # 有效 pitch = view.pitch（当前相机，导出时刻的真相）优先，回退
+    # scene.camera.pitch（推荐档）。> 阈值时屏幕比例尺被透视压缩失真：
+    # 有 scene_disclosure 组件在场 = 已披露（info 化）；缺披露组件且
+    # 仍展示比例尺 = warning（静默误导）。
+    effective_pitch: Optional[float] = None
+    view = spec.get("view")
+    if isinstance(view, dict):
+        vp = view.get("pitch")
+        # R1-P2（评审修复）：非有限值视同缺席（NaN 会使比较恒 False 静默
+        # 压制两项检查）—— 与前端 effectivePitch 的 Number.isFinite 回退
+        # 语义对齐。
+        if (isinstance(vp, (int, float)) and not isinstance(vp, bool)
+                and math.isfinite(vp)):
+            effective_pitch = float(vp)
+    if effective_pitch is None and isinstance(camera, dict):
+        cp = camera.get("pitch")
+        if (isinstance(cp, (int, float)) and not isinstance(cp, bool)
+                and math.isfinite(cp)):
+            effective_pitch = float(cp)
+    layout = spec.get("layout")
+    components = []
+    if isinstance(layout, dict) and isinstance(layout.get("components"), list):
+        components = [c for c in layout["components"] if isinstance(c, dict)]
+    has_scale_bar = any(
+        c.get("type") == "scale_bar" and c.get("enabled", True) for c in components
+    )
+    has_scene_disclosure = any(
+        c.get("type") == "scene_disclosure" and c.get("enabled", True)
+        for c in components
+    )
+    if (
+        effective_pitch is not None
+        and effective_pitch > _SCALE_TRUST_PITCH_MAX
+        and has_scale_bar
+    ):
+        if has_scene_disclosure:
+            findings.append(_finding(
+                "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE", "info",
+                f"pitch {effective_pitch} > {_SCALE_TRUST_PITCH_MAX}: screen "
+                "scale bar is perspective-compressed; scene_disclosure "
+                "present (trust badge disclosed)",
+            ))
+        else:
+            findings.append(_finding(
+                "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE", "warning",
+                f"pitch {effective_pitch} > {_SCALE_TRUST_PITCH_MAX}: screen "
+                "scale bar is perspective-compressed and unreliable — add a "
+                "scene_disclosure component or remove the scale bar (silent "
+                "misleading scale is not acceptable)",
+            ))
+
+    # ── G3D05：标注遮挡风险（高俯仰 + 有标注层）─────────────────────────
+    if (
+        effective_pitch is not None
+        and effective_pitch > _LABEL_OCCLUSION_PITCH
+        and any(isinstance(l, dict) and l.get("label") for l in layers)
+    ):
+        findings.append(_finding(
+            "SCENE_LABEL_OCCLUSION_RISK", "info",
+            f"pitch {effective_pitch} > {_LABEL_OCCLUSION_PITCH} with label "
+            "layers: terrain/extrusions may occlude labels at high pitch; "
+            "review label visibility (VLM readability axis adjudicates)",
+        ))
+
+    # ── G3D05：矢量导出降级披露（调用方声明导出目标时检查）──────────────
+    if export_targets and mode in ("3d", "2.5d"):
+        vector_targets = [t for t in export_targets if t in _VECTOR_TARGETS]
+        if vector_targets:
+            findings.append(_finding(
+                "SCENE_EXPORT_VECTOR_DEGRADE", "info",
+                f"vector export ({','.join(vector_targets)}) cannot preserve "
+                f"the {mode} perspective model; output degrades to a flat 2D "
+                "projection with a typed degradation receipt — do not claim "
+                "editable 3D vectors",
+            ))
 
     blocking = sum(1 for f in findings if f["severity"] == "blocking")
     findings.sort(key=lambda f: 0 if f["severity"] == "blocking" else 1)

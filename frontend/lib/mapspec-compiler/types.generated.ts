@@ -87,7 +87,7 @@ export interface MapSpecLayerLayout {
 export interface MapSpec {
   version: string;
   view?: MapSpecView;
-  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
+  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | Model3dMapSpecSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
   layers: MapSpecLayer[];
   layout?: MapSpecLayoutConfig;
   thresholds?: MapThresholds;
@@ -107,7 +107,8 @@ export type MapSpecSource =
   | VectorMapSpecSource
   | RasterMapSpecSource
   | RasterDemMapSpecSource
-  | DataFabricMapSpecSource;
+  | DataFabricMapSpecSource
+  | Model3dMapSpecSource;
 
 export interface GeoJSONMapSpecSource {
   type: "geojson";
@@ -268,7 +269,7 @@ export interface ComponentPlacement {
 
 export interface MapSpecComponent {
   id: string;
-  type: "basemap" | "legend" | "continuous_colorbar" | "categorical_legend" | "north_arrow" | "scale_bar" | "title" | "subtitle" | "annotation" | "graticule" | "map_border" | "attribution" | "statistics_panel" | "chart_panel" | "table_panel" | "export_layout" | "inset_map" | "methodology_note" | "uncertainty_panel" | "decision_panel" | "label_layer";
+  type: "basemap" | "legend" | "continuous_colorbar" | "categorical_legend" | "north_arrow" | "scale_bar" | "title" | "subtitle" | "annotation" | "graticule" | "map_border" | "attribution" | "statistics_panel" | "chart_panel" | "table_panel" | "export_layout" | "inset_map" | "methodology_note" | "uncertainty_panel" | "decision_panel" | "label_layer" | "scene_disclosure" | "elevation_profile";
   enabled?: boolean;
   position?: "top-left" | "top-center" | "top-right" | "bottom-left" | "bottom-center" | "bottom-right" | "none";
   priority?: number;
@@ -335,6 +336,7 @@ export interface MapSceneConfig {
   reason_code?: string;
   degrade_to?: "2.5d" | "2d";
   reduced_motion?: boolean;
+  assets?: SceneAssetSpec[];
 }
 
 export interface TerrainSceneSpec {
@@ -348,4 +350,47 @@ export interface SceneCameraSpec {
   pitch?: number;
   bearing?: number;
   transition_ms?: number;
+}
+
+export interface Model3dMapSpecSource {
+  type: "model3d";
+  format: "gltf" | "glb" | "3dtiles";
+  url?: string;
+  ref_id?: string;
+  content_revision?: number;
+  data_fingerprint?: string;
+  descriptor_fingerprint?: string;
+  bbox?: [number, number, number, number];
+}
+
+export interface SceneAssetSpec {
+  id: string;
+  source: string;
+  visible?: boolean;
+  placement?: SceneAssetPlacement;
+  vertical?: SceneAssetVertical;
+  render_order?: number;
+  lod?: SceneAssetLodPolicy;
+  provenance_ref?: string;
+}
+
+export interface SceneAssetPlacement {
+  anchor: [number, number];
+  altitude_m?: number;
+  heading_deg?: number;
+  pitch_deg?: number;
+  roll_deg?: number;
+  scale?: number;
+  ground_clamp?: boolean;
+}
+
+export interface SceneAssetVertical {
+  datum?: "ellipsoid" | "egm96" | "local";
+  unit?: "m";
+  elevation_ref?: string;
+}
+
+export interface SceneAssetLodPolicy {
+  max_sse?: number;
+  max_visible_tiles?: number;
 }

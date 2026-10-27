@@ -15,6 +15,8 @@ export const CHROME_RENDERABLE_TYPES: ReadonlySet<string> = new Set([
   'inset_map',
   // VNext 披露族 + V4 表格面板（与 export 侧同表 —— 反向 parity）。
   'methodology_note', 'uncertainty_panel', 'decision_panel', 'table_panel',
+  // G3D05（ADR-0275）：三维制图产品组件（live 渲染器 + 导出链同表）。
+  'scene_disclosure', 'elevation_profile',
 ]);
 
 /** 装饰族（title/north_arrow 等制图装饰）—— MapDecorations 的让位门。 */

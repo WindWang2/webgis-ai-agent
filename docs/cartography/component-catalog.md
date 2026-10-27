@@ -2,7 +2,7 @@
 
 > 由 registry 生成；真值：`component_registry.py` + `component_templates.py`。
 
-共 20 个组件类型 / 104 个变体模板。
+共 22 个组件类型 / 108 个变体模板。
 
 | type | 类目 | variants | 默认 | 卡数 | 位置 | 绑定 | 状态 |
 |---|---|---|---|---|---|---|---|
@@ -12,6 +12,7 @@
 | chart_panel | analysis.chart_panel | default, compact, transparent, report, bar, horizontal_bar, grouped_bar, stacked_bar, line, area, scatter, histogram, box_plot, pie, donut, radar, rose, timeseries, cumulative, heat_matrix, kpi_card, ranking_list | default | multiple | top-left | — | native |
 | continuous_colorbar | legend.continuous_colorbar | horizontal, vertical, slim, scientific, stepped | horizontal | multiple | bottom-right | layerId | native |
 | decision_panel | disclosure.decision_panel | default, compact | default | zero_or_one | top-left | — | native |
+| elevation_profile | analysis.elevation_profile | default, compact | default | multiple | bottom-left | layerId | native |
 | export_layout | export.page_layout | A4_landscape, A4_portrait, A3_landscape, letter | A4_landscape | single | none | — | native |
 | graticule | navigation.graticule | light, geographic, projected | light | single | none | — | native |
 | inset_map | inset.map | overview, location, hierarchy | overview | zero_or_one | top-right | — | native |
@@ -21,6 +22,7 @@
 | methodology_note | disclosure.methodology_note | default, compact, data_quality | default | zero_or_one | bottom-left | — | native |
 | north_arrow | navigation.north_arrow | compass_minimal_black, compass_needle, compass_rose, arrow_simple, monochrome, dual_convention | compass_minimal_black | single | top-right | — | native |
 | scale_bar | navigation.scale_bar | minimal, boxed, academic, dual_unit | minimal | single | bottom-right | — | native |
+| scene_disclosure | disclosure.scene_disclosure | default, compact | default | zero_or_one | bottom-right | — | native |
 | statistics_panel | analysis.statistics_panel | default, compact, kpi, explanation | default | zero_or_one | top-left | — | native |
 | subtitle | annotation.subtitle | default, academic, report, compact | default | zero_or_one | top-center | — | native |
 | table_panel | analysis.table_panel | default, compact, dense | default | multiple | bottom-right | — | native |
@@ -85,6 +87,10 @@
 - `decision-panel/default`（variant=default）
 - `decision-panel/compact`（variant=compact）
 
+### elevation_profile
+- `elevation-profile/default`（variant=default）
+- `elevation-profile/compact`（variant=compact）
+
 ### export_layout
 - `export-layout/A4-landscape`（variant=A4_landscape）
 - `export-layout/A4-portrait`（variant=A4_portrait）
@@ -142,6 +148,10 @@
 - `scale-bar/boxed`（variant=boxed）
 - `scale-bar/academic`（variant=academic）
 - `scale-bar/dual-unit`（variant=dual_unit）
+
+### scene_disclosure
+- `scene-disclosure/default`（variant=default）
+- `scene-disclosure/compact`（variant=compact）
 
 ### statistics_panel
 - `statistics-panel/default`（variant=default）

@@ -32,6 +32,10 @@ export interface NarratorChapter {
   camera?: NarratorCamera;
   widgetIds?: string[];
   durationHintS?: number;
+  /** G3D05 v1.1（ADR-0275）：章节落点场景档（null/缺省 = 沿用当前场景）。 */
+  scene?: { mode?: '2d' | '2.5d' | '3d'; exaggeration?: number } | null;
+  /** G3D05 v1.1：本章聚焦图层白名单（空 = 不改变可见性）。 */
+  visibleLayerIds?: string[];
 }
 
 export interface StoryNarratorProps {

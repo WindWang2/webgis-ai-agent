@@ -181,7 +181,77 @@ def register_scene_tools(registry: ToolRegistry):
                     out[key] = res[key]
             if res.get("mapspec") is not None:
                 out["scene_applied"] = (res.get("mapspec") or {}).get("scene")
+            # G3D05（ADR-0275）：写入后的 spec 过场景质量门，findings 随
+            # 工具证据回给 Agent（透视比例尺/标注遮挡/夸张披露等 ——
+            # scene_quality_report_safe never-raise，不阻塞写事务）。
+            from app.lib.cartography.scene_quality import scene_quality_report_safe
+            out["scene_quality"] = scene_quality_report_safe(res.get("mapspec"))
             return out
         except Exception as e:  # noqa: BLE001
             logger.error("set_map_scene failed: %s", e)
             return {"success": False, "error": str(e), "command": "set_map_scene"}
+
+    @tool(registry, name="set_scene_assets",
+          capabilities=["thematic_cartography"],
+          tier=2, domains=["mapspec"],
+          description=(
+              "写入三维场景资产表（MapSpec v1.7 scene.assets：3D Tiles "
+              "tileset / glTF/GLB 模型的地理锚定挂载）。整表替换语义：传"
+              "完整资产列表；空列表 = 清空。每个资产 = id + source（必须指向"
+              "spec 内 type=model3d 源：先经 UpsertSource 注册 {type:'model3d',"
+              "format:'3dtiles'|'gltf'|'glb', url}）+ placement{anchor[lng,lat],"
+              "altitude_m,heading_deg,pitch_deg,roll_deg,scale,ground_clamp} + "
+              "vertical{datum,unit,elevation_ref} + render_order/lod/"
+              "provenance_ref。域校验 fail-closed：悬空 source/越界锚点/"
+              "scale<=0/重复 id 整笔拒绝。证据纪律：provenance_ref（资产来源"
+              "/许可）与 vertical.elevation_ref（锚点高程证据）缺失会被质量门"
+              "披露为无证据 —— 真实资产请携带。"
+          ),
+          param_descriptions={
+              "session_id": "会话 ID",
+              "assets": (
+                  "完整资产列表（整表替换）：[{id, source, visible?, "
+                  "placement:{anchor:[lng,lat], altitude_m?, heading_deg?, "
+                  "pitch_deg?, roll_deg?, scale?, ground_clamp?}, vertical?:"
+                  "{datum?:'ellipsoid'|'egm96'|'local', unit?:'m', "
+                  "elevation_ref?}, render_order?, lod?:{max_sse?, "
+                  "max_visible_tiles?}, provenance_ref?}]；[] = 清空"
+              ),
+          },
+          side_effect="state_mutation",
+          deterministic=True,
+          latency_class="fast",
+          memory_class="light",
+          scale_class="small",
+          tags=("scene", "3d", "scene-assets", "3dtiles", "gltf", "资产"),
+          output_semantic_type="map_product",
+          required_context=("map_state",),
+          map_mutations=("theme",),
+          failure_modes=("invalid_args", "revision_conflict"))
+    async def set_scene_assets(
+        session_id: Optional[str] = None,
+        assets: Optional[List[Dict[str, Any]]] = None,
+    ) -> dict:
+        if not session_id:
+            return {"success": False, "message": "Missing session_id", "command": "set_scene_assets"}
+        if assets is None:
+            return {
+                "success": False,
+                "message": "assets=None 非法（与清空语义显式区分）；传 [] 清空。",
+                "command": "set_scene_assets",
+            }
+        try:
+            res = await mapspec_store.set_scene_assets(session_id, assets)
+            out: Dict[str, Any] = {
+                "success": bool(res.get("success", False)),
+                "command": "set_scene_assets",
+            }
+            for key in _EVIDENCE_KEYS:
+                if key in res and res[key] is not None:
+                    out[key] = res[key]
+            if res.get("mapspec") is not None:
+                out["scene_assets_applied"] = ((res.get("mapspec") or {}).get("scene") or {}).get("assets")
+            return out
+        except Exception as e:  # noqa: BLE001
+            logger.error("set_scene_assets failed: %s", e)
+            return {"success": False, "error": str(e), "command": "set_scene_assets"}

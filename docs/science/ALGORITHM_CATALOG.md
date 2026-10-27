@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：163 能力 · 240 算法 · 122 参数契约。
+统计：164 能力 · 244 算法 · 126 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -1626,6 +1626,35 @@ Priority-Flood 填洼（Barnes 2014，epsilon 单调变体）、D∞ 多向流�
   - 假设：面积/周长来自逆 D8 上流域掩膜；周长 = 边界边缘长度和（网格外视作流域外）；basin length = 流域内 MAX upstream 流程长度（最长山脊→出口路径）；form factor = A/L²；elongation = 2√(A/π)/L（Strahler 1957）
   - 局限：basin length 的 MAX 口径对狭长流域外的形状敏感（非主轴拟合）；排水密度继承河网阈值敏感性；pour point 不做河道 snap
   - 资源包络：40B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
+
+## `terrain_measurement` — 三维量测
+
+确定性三维量测族（G3D03）：地形剖面、两点通视线（LOS，可选地球曲率/大气折射）、水平/斜距/地表距离、真实地表面积；输入输出携带垂直基准/单位/采样步长与质量旗标（跨 datum 混算拒绝）。
+
+- **`terrain.profile`** 地形剖面（`native`·成熟度 已验证，契约: `terrain_profile`，出处: `fisher1993`）
+  - 假设：沿折线 ~1 像元步长重采样，bilinear 插值（线性表面精确）；水平距离在网格米制空间（地理栅格 cos(lat) 政策，带向不修正）；垂直基准由调用方声明（GeoTIFF 无 z 元数据；缺省 unknown 披露）
+  - 局限：曲面表面统计为采样近似（无解析误差界；见 ADR-0274 收敛披露）；nodata 采样点在 skip 政策下剔除，跨洞区间不计入爬升/表面统计
+  - 资源包络：16B/像元
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
+- **`terrain.line_of_sight`** 通视线分析（`native`·成熟度 已验证，契约: `line_of_sight_analysis`，出处: `fisher1993`）
+  - 假设：遮挡 = 采样视线与地形的有效间隙 < -1e-9 m（相切记可见，与 viewshed 口径一致）；曲率可选：none（默认）/ earth（R=6371008.8 m）/ earth_refracted（k=0.1307，R_eff=R/(1-k)）；bulge=s(D-s)/(2R_eff) 抬升地形侧；几何视线对称：角色互换（连同各自高度）判定不变（同一 3D 视线段）；高度本身改变视线与可见性
+  - 局限：采样视线 ~1 像元步长：遮挡点定位精度受步长限制（首越界采样点）；折射 k 为标准大气常数（不随气象条件变化；模型披露）
+  - 资源包络：16B/像元
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
+- **`terrain.surface_distance`** 地表距离量测（`native`·成熟度 已验证，契约: `surface_distance_analysis`，出处: `jenness2004`）
+  - 假设：同一折线的水平（网格米制）/ 三维直线斜距 / 地表（沿面采样）距离；不变量 surface ≥ covered_horizontal 无条件成立；surface ≥ horizontal 仅在无跨洞剔除时成立（同一米制空间；平面精确）；半步加密收敛指示 delta_rel 是经验量级，非解析误差界
+  - 局限：曲面地表距离为采样近似（弦和 ≤ 真弧长，加密单调逼近）；地理 CRS 的椭球测地距离由工具层独立报告（参考量，不参与内部一致性）；收敛指示收敛到 bilinear 插值面而非真实地表（步长离散之外的表征偏差不可见）
+  - 资源包络：16B/像元
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
+- **`terrain.surface_area`** 地表面积量测（`native`·成熟度 已验证，契约: `surface_area_analysis`，出处: `jenness2004`）
+  - 假设：每 4 相邻像元中心 quad 拆两三角面（米制空间 cx/cy）；不发明角点高程 —— 像元中心是唯一观测（Jenness 2004 口径）；平面全域精确（含边界）；不变量 roughness_ratio ≥ 1；mask 内 quad 需 4 像元全有效；nodata quad 剔除并披露
+  - 局限：最外圈像元中心不构成 facet（对偶网格口径，meta 披露）；分辨率以下的地表粗糙度不可见（面积随分辨率收敛，Jenness 2004）；mask 边界按像元中心判定：planar_area_m2 是 quad 对多边形的近似（边界半像元不计入）
+  - 资源包络：32B/像元
   - 取消：none
   - 数值容差：rtol=1e-06，atol=1e-09
 

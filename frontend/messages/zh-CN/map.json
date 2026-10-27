@@ -265,5 +265,28 @@
     "recheck": "重新检查",
     "dismiss": "关闭",
     "baseRevision": "基于版本 #{revision}"
+  },
+  "sceneController": {
+    "title": "场景控制器",
+    "trigger": "场景",
+    "mode": "场景模式",
+    "mode_2d": "2D",
+    "mode_2_5d": "2.5D",
+    "mode_3d": "3D",
+    "exaggeration": "地形夸张",
+    "exaggerationNote": "垂直比例夸张系数；>1 时非真实坡度，导出件将披露。",
+    "exaggerationDisabled": "当前地图无高程源（raster-dem），不可调整夸张。",
+    "pitch": "俯仰角",
+    "pitchUp": "增大俯仰角",
+    "pitchDown": "减小俯仰角",
+    "bearing": "方位角",
+    "bearingUp": "增大方位角",
+    "bearingDown": "减小方位角",
+    "datumUndeclared": "未声明",
+    "reducedMotionHint": "跟随系统减弱动效时场景切换将无动画。",
+    "reducedMotionOn": "已检测到减弱动效偏好：场景切换无动画。",
+    "unitSuffix": "（{unit}）",
+    "verticalDatumLabel": "高程基准：",
+    "sceneApplyFailed": "场景调整未生效，已保持当前场景"
   }
 }

@@ -71,6 +71,10 @@ export const COMPONENT_LAYOUT_META: Record<string, ComponentLayoutMeta> = {
   // Workbench V4（Wave 4）：table_panel 与 backend registry defaultPosition
   // 同表（bottom-right）—— resolver/meta/默认表三处单一默认值源（E-9）。
   table_panel: { defaultSlot: 'bottom-right', priority: 4, stackStepPx: 40 },
+  // G3D05（ADR-0275）：三维制图产品族（与 backend registry
+  // defaultPosition / DEFAULT_COMPONENT_ANCHOR 同表 —— E-9 单一默认值源）。
+  scene_disclosure: { defaultSlot: 'bottom-right', priority: 5, stackStepPx: 34 },
+  elevation_profile: { defaultSlot: 'bottom-left', priority: 4, stackStepPx: 40 },
   // P6：全画布/叠加型 —— 无槽（求解器排除，catalog defaultPosition='none'）
   map_border: { defaultSlot: 'none', priority: 70 },
   graticule: { defaultSlot: 'none', priority: 60 },

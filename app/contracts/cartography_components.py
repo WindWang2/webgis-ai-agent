@@ -50,6 +50,14 @@ ComponentType = Literal[
     # options 持有 label_plan 的字段挑选与策略编排（field/mode/topN/
     # priorityField/zoomBands）；rebind(field) 换字段 = 局部突变。
     "label_layer",
+    # ── G3D05（ADR-0275）：三维制图产品组件族 ─────────────────────────
+    # 场景披露：内容绑定 spec.scene 单一真相（mode/exaggeration/垂直
+    # 基准 + 比例尺可信度随 pitch 派生）；options 只承载样式/附注，
+    # 不复制场景状态（防第二真相）。
+    "scene_disclosure",
+    # 线路高程剖面：points 序列 {distance_m, elevation_m}（有界）或
+    # profileRef 工件绑定；导出复用图表渲染链（剖面本质是折线图）。
+    "elevation_profile",
 ]
 
 Position = Literal[
@@ -410,9 +418,87 @@ def validate_decision_payload(options: Any) -> "str | None":
                 return f"decision.rows[{i}].rank 必须是整数"
     return None
 
+MAX_SCENE_DISCLOSURE_NOTES = 4
+
+MAX_SCENE_DISCLOSURE_TEXT = 160
+
+MAX_PROFILE_POINTS = 500
+
+def validate_scene_disclosure_payload(options: Any) -> "str | None":
+    """scene_disclosure options：{variant?, extraNotes?}（有界）。
+
+    场景状态本体（mode/exaggeration/垂直基准/比例尺可信度）**不入
+    options** —— 渲染/导出两侧都从 spec.scene 单一真相派生，组件实例
+    只是槽位占位 + 样式/附注；options 复制场景字段即第二真相，禁止。
+    """
+    if not isinstance(options, dict):
+        return "options 必须是对象"
+    for banned in ("mode", "exaggeration", "pitch", "bearing", "verticalUnit"):
+        if banned in options:
+            return (
+                f"scene_disclosure 不接受 options.{banned} —— 场景状态由 "
+                "spec.scene 单一真相派生，不得复制"
+            )
+    notes = options.get("extraNotes")
+    if notes is None:
+        return None
+    if not isinstance(notes, list):
+        return "extraNotes 必须是字符串数组"
+    if len(notes) > MAX_SCENE_DISCLOSURE_NOTES:
+        return f"extraNotes 超过上限 {MAX_SCENE_DISCLOSURE_NOTES} 条"
+    for i, n in enumerate(notes):
+        if not isinstance(n, str) or not n.strip():
+            return f"extraNotes[{i}] 必须是非空字符串"
+        if len(n) > MAX_SCENE_DISCLOSURE_TEXT:
+            return f"extraNotes[{i}] 超过 {MAX_SCENE_DISCLOSURE_TEXT} 字符"
+    return None
+
+def validate_elevation_profile_payload(options: Any) -> "str | None":
+    """elevation_profile options：{points?, unit?, verticalDatum?, profileRef?}。
+
+    points：[{distance_m, elevation_m}]，≥2 点、≤MAX_PROFILE_POINTS、
+    距离单调不减（沿线路里程）、数值有限 —— NaN/Inf 产出非法 JSON。
+    profileRef：``ref:profile-*`` 工件绑定（与 chartRef 同协议），与
+    points 二选一（points 优先）。
+    """
+    if not isinstance(options, dict):
+        return "options 必须是对象"
+    points = options.get("points")
+    if points is not None:
+        if not isinstance(points, list) or len(points) < 2:
+            return "points 必须是 ≥2 个点的数组 [{distance_m, elevation_m}]"
+        if len(points) > MAX_PROFILE_POINTS:
+            return f"points 超过上限 {MAX_PROFILE_POINTS} 点"
+        prev_distance: Optional[float] = None
+        for i, p in enumerate(points):
+            if not isinstance(p, dict):
+                return f"points[{i}] 必须是对象 {{distance_m, elevation_m}}"
+            for key in ("distance_m", "elevation_m"):
+                v = p.get(key)
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    return f"points[{i}].{key} 必须是数值"
+                if not math.isfinite(float(v)):
+                    return f"points[{i}].{key} 必须是有限数值"
+            d = float(p["distance_m"])
+            if d < 0:
+                return f"points[{i}].distance_m 必须非负"
+            if prev_distance is not None and d < prev_distance:
+                return f"points[{i}].distance_m 必须单调不减（沿线路里程）"
+            prev_distance = d
+    profile_ref = options.get("profileRef")
+    if profile_ref is not None:
+        if not isinstance(profile_ref, str) or not profile_ref.startswith("ref:"):
+            return "profileRef 必须是 'ref:' 前缀的工件引用"
+        if len(profile_ref) > 128:
+            return "profileRef 超过 128 字符"
+    if points is None and profile_ref is None:
+        return "points 与 profileRef 至少提供其一"
+    return None
+
 MULTI_INSTANCE_TYPES = frozenset({
     "legend", "categorical_legend", "continuous_colorbar",
     "chart_panel", "table_panel", "annotation", "inset_map",
+    "elevation_profile",
 })
 
 __all__ = [
@@ -441,5 +527,10 @@ __all__ = [
     "validate_methodology_payload",
     "validate_uncertainty_payload",
     "validate_decision_payload",
+    "MAX_SCENE_DISCLOSURE_NOTES",
+    "MAX_SCENE_DISCLOSURE_TEXT",
+    "MAX_PROFILE_POINTS",
+    "validate_scene_disclosure_payload",
+    "validate_elevation_profile_payload",
     "MULTI_INSTANCE_TYPES",
 ]

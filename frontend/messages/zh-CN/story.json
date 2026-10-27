@@ -63,5 +63,13 @@
     "shareCardFailed": "分享卡导出失败",
     "noChapters": "没有可导出的章节（全部隐藏或会话为空）",
     "chapterCount": "{count} 个章节"
-  }
+  },
+  "takeoverPaused": "已暂停：检测到手动操作地图相机。",
+  "takeoverResume": "继续播放",
+  "saveAsset": "保存 StoryMap 资产",
+  "saveAssetTitle": "保存为可恢复的会话资产（后续打开优先恢复）",
+  "assetSaved": "StoryMap 资产已保存（第 {revision} 版）",
+  "assetSaveFailed": "StoryMap 资产保存失败",
+  "assetSaveNoSession": "无会话：资产保存需要会话上下文",
+  "sceneApplyFailed": "章节场景应用失败，已保持当前场景"
 }

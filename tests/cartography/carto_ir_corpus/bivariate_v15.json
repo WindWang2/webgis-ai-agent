@@ -63,7 +63,7 @@
   },
   "expect": {
     "valid": true,
-    "effective_version": "1.6",
+    "effective_version": "1.7",
     "layer_count": 1,
     "unknown_fields": 0,
     "bivariate": {

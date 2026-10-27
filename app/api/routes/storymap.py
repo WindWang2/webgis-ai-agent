@@ -26,6 +26,7 @@ from app.lib.storymap.story_compiler import compile_story_map
 from app.models.db_model import Conversation
 from app.schemas.storymap_schema import StoryCompileRequest, StoryExportRequest
 from app.services.storymap.story_compiler import compile_for_session
+from app.services.storymap.assets import load_story_spec, save_story_spec
 
 logger = logging.getLogger(__name__)
 
@@ -94,3 +95,48 @@ async def export_storymap(
             },
         )
     return bundle
+
+
+# ── G3D05（ADR-0275 D6）：会话 StoryMap 资产（可恢复的项目资产）────────
+
+
+@router.post("/sessions/{session_id}/spec")
+async def save_session_story_spec(
+    session_id: str,
+    spec: Dict[str, Any],
+    conv: Conversation = Depends(require_owned_session),
+    db: AsyncSession = Depends(get_async_db),
+) -> Any:
+    """保存会话 StoryMapSpec（覆盖式，revision 单调 +1）。
+
+    载荷先过 StoryMapSpec 严格校验（v1.0/v1.1 均可），非法/超界 422 ——
+    不存半合法资产。
+    """
+    try:
+        assert_json_depth(spec)
+        parsed = StoryMapSpec.model_validate(spec)
+        result = await save_story_spec(db, conv, parsed)
+        await db.commit()
+        return {"saved": True, **result}
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/spec", response_model=None)
+async def get_session_story_spec(
+    session_id: str,
+    conv: Conversation = Depends(require_owned_session),
+    db: AsyncSession = Depends(get_async_db),
+) -> Any:
+    """读会话最新 StoryMap 资产；无资产 404；损坏资产 typed 标记不伪造。"""
+    spec = await load_story_spec(db, conv)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="story spec not saved")
+    if spec.get("schema_version") == "corrupt":
+        raise HTTPException(status_code=422, detail={
+            "error": "story_asset_corrupt",
+            "message": "已保存的 StoryMap 资产损坏；重新编译并保存可覆盖恢复。",
+        })
+    return spec

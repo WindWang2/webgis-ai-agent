@@ -2,7 +2,7 @@
 
 > 由 registry 生成；真值：`composition_templates.py` + `composition_packs/`。
 
-共 29 个组合模板（seed 8 + 域包）。
+共 32 个组合模板（seed 8 + 域包）。
 
 ## composition.minimal_interactive（Minimal Interactive）
 
@@ -192,6 +192,45 @@
   - `map_border`：optional（map_border）@ none
   - `export_layout`：required（export_layout）@ none；preferred=export-layout/A4-landscape
 
+## composition.urban_3d_skyline（城市三维天际线图）
+
+- 描述：建筑挤出 + 行政区统计的三维城市产品：挤出高度仅采信有证据的高度字段（scene_planning fail-closed），行政区统计图表与三维场景联动；场景披露必填
+- 版式：presentation；输出：interactive, png
+- 兼容模型：extrusion_3d, administrative_choropleth
+- fallback：composition.statistical_map
+- 标签：scene3d, extrusion, urban, skyline, g3d05
+- 槽位：
+  - `title`：required（title）@ top-center
+  - `subtitle`：optional（subtitle）@ top-center；fallback_zones=top-left
+  - `legend`：conditional（legend, categorical_legend）@ bottom-left；bind_scope=all_thematic
+  - `north_arrow`：required（north_arrow）@ top-right
+  - `scale_bar`：required（scale_bar）@ bottom-right
+  - `scene_disclosure`：required（scene_disclosure）@ bottom-right；fallback_zones=bottom-left
+  - `statistics_panel`：optional（statistics_panel）@ top-left
+  - `chart_panel`：optional（chart_panel）@ top-left；fallback_zones=top-right
+  - `attribution`：required（attribution）@ bottom-left
+  - `map_border`：optional（map_border）@ none
+  - `export_layout`：optional（export_layout）@ none
+
+## composition.viewshed_scene_3d（三维视域场景图）
+
+- 描述：视域分析 + 地形的三维场景产品：观察点视域范围在地形起伏上的呈现，剖面面板可选挂接；场景披露必填
+- 版式：academic；输出：interactive, png
+- 兼容模型：viewshed_map, terrain_analytical_surface
+- fallback：composition.terrain_analysis
+- 标签：scene3d, viewshed, terrain, g3d05
+- 槽位：
+  - `title`：required（title）@ top-center
+  - `subtitle`：optional（subtitle）@ top-center；fallback_zones=top-left
+  - `legend`：conditional（legend, categorical_legend）@ bottom-right；bind_scope=all_thematic
+  - `north_arrow`：required（north_arrow）@ top-right
+  - `scale_bar`：required（scale_bar）@ bottom-right
+  - `scene_disclosure`：required（scene_disclosure）@ bottom-right；fallback_zones=bottom-left
+  - `elevation_profile`：recommended（elevation_profile）@ bottom-left；fallback_zones=bottom-right
+  - `attribution`：required（attribution）@ bottom-left
+  - `map_border`：optional（map_border）@ none
+  - `export_layout`：optional（export_layout）@ none
+
 ## composition.service_area_report（Service Area Report）
 
 - 描述：服务区/可达性报告版式：分类图例 + 统计面板 + A4 版式，回答『N 分钟能到哪』的产品化表达。
@@ -208,6 +247,27 @@
   - `statistics_panel`：recommended（statistics_panel）@ top-left
   - `chart_panel`：optional（chart_panel）@ top-left；fallback_zones=top-right
   - `export_layout`：required（export_layout）@ none；preferred=export-layout/A4-portrait
+
+## composition.terrain_3d_scene（三维地形场景图）
+
+- 描述：地形+晕渲+等高线的三维专题产品：透视相机下的地形起伏表达，场景披露（夸张/垂直基准/比例尺可信度）必填；矢量导出自动降级 2.5D 并附收据
+- 版式：academic；输出：interactive, png
+- 兼容模型：terrain_analytical_surface, elevation_tint_hillshade, hillshade, isoline_contour
+- fallback：composition.remote_sensing_map
+- 标签：scene3d, terrain, hillshade, g3d05
+- 槽位：
+  - `title`：required（title）@ top-center
+  - `subtitle`：optional（subtitle）@ top-center；fallback_zones=top-left
+  - `legend`：conditional（continuous_colorbar, legend）@ bottom-right；bind_scope=all_thematic
+  - `north_arrow`：required（north_arrow）@ top-right
+  - `scale_bar`：required（scale_bar）@ bottom-right
+  - `scene_disclosure`：required（scene_disclosure）@ bottom-right；fallback_zones=bottom-left
+  - `elevation_profile`：optional（elevation_profile）@ bottom-left；fallback_zones=bottom-right
+  - `statistics_panel`：optional（statistics_panel）@ top-left
+  - `chart_panel`：optional（chart_panel）@ top-left；fallback_zones=top-right
+  - `attribution`：required（attribution）@ bottom-left
+  - `map_border`：optional（map_border）@ none
+  - `export_layout`：optional（export_layout）@ none
 
 ## composition.terrain_analysis（Terrain Analysis Map）
 

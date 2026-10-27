@@ -464,6 +464,7 @@ def _render_special(x: float, y: float, title: str, kind: str,
 
 def render_chart_panel(
     x: float, y: float, chart: Any, *, width: float = CHART_WIDTH,
+    kind_label: str = "chart",
 ) -> Tuple[str, str, List[str]]:
     """图表面板 → (svg 组, 状态, 截断注记清单)。
 
@@ -487,7 +488,7 @@ def render_chart_panel(
             + _text(x + 10.0, y + 36.0, f"图表类型 {kind} 暂不支持矢量导出",
                     size=9.0, fill="#b45309")
         )
-        return (f'<g class="chrome-panel" data-kind="chart">{body}</g>', "unsupported", [])
+        return (f'<g class="chrome-panel" data-kind="{kind_label}">{body}</g>', "unsupported", [])
 
     truncations: List[str] = []
     shown_cap = MAX_POINTS * (len(series) or 1)
@@ -563,7 +564,8 @@ def render_chart_panel(
     if category_rows and len(category_rows) > MAX_BARS:
         truncations.append(f"chart categories {len(category_rows)}→{MAX_BARS}")
 
-    group = f'<g class="chrome-panel" data-kind="chart">{body}</g>' if body else ""
+    group = (f'<g class="chrome-panel" data-kind="{kind_label}">{body}</g>'
+             if body else "")
     return (group, status, truncations)
 
 

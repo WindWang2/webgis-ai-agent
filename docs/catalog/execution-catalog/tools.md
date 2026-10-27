@@ -147,6 +147,7 @@
 | landform_classify | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_geomorphometry |
 | landscape_metrics_analysis | 1.0#cv1 | stable | deterministic_compute | medium | medium | large | landscape_metrics |
 | least_cost_path_analysis | 1.0#cv1 | stable | deterministic_compute | fast | light | medium | least_cost_path_analysis |
+| line_of_sight_analysis | 1.0#cv1 | stable | deterministic_compute | fast | heavy | large | terrain_measurement |
 | linear_unmixing | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | spectral_unmixing |
 | list_analysis_assets | 1.0#cv1 | stable | pure | fast | light | small | workspace_state_inspection |
 | list_available_tools | 1.0#cv1 | stable | pure | fast | light | small | meta_tool_surface |
@@ -304,6 +305,8 @@
 | standard_deviational_ellipse | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | directional_distribution_analysis |
 | stream_network | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_hydrology_advanced |
 | suggest_analysis_patterns | 1.0#cv1 | stable | pure | fast | light | small | dataset_profiling_quality |
+| surface_area_analysis | 1.0#cv1 | stable | deterministic_compute | fast | heavy | large | terrain_measurement |
+| surface_distance_analysis | 1.0#cv1 | stable | deterministic_compute | fast | heavy | large | terrain_measurement |
 | switch_base_layer | 1.0#cv1 | stable | state_mutation | fast | light | small | layer_display_control |
 | tasseled_cap | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | tasseled_cap_transformation |
 | temporal_aggregate | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | temporal_aggregate |
@@ -319,6 +322,7 @@
 | temporal_trend | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | temporal_trend |
 | terrain_derivatives | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | terrain_derivatives |
 | terrain_openness_analysis | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_geomorphometry |
+| terrain_profile | 1.0#cv1 | stable | deterministic_compute | fast | heavy | large | terrain_measurement |
 | tin_interpolation | 1.0#cv1 | stable | deterministic_compute | slow | heavy | medium | triangulation_interpolation |
 | topographic_index | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_wetness_indices |
 | transform_coordinates | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | crs_transformation |

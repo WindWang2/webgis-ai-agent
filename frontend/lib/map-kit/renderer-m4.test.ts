@@ -225,6 +225,24 @@ describe('3D terrain', () => {
     disable3DTerrain(m as any);
     expect(m.setTerrain).toHaveBeenCalledWith(null);
   });
+
+  // G3D01 review R1 P2-1：署名随实际数据源 —— 仅兜底 URL 才带兜底署名。
+  it('custom session DEM url carries no AWS fallback attribution', () => {
+    const m = makeMockMap();
+    enable3DTerrain(m as any, {
+      url: '/api/v1/layers/data/ref-dem/terrain-tiles/{z}/{x}/{y}.png',
+      sourceId: 'dem',
+    });
+    const def = (m.addSource as any).mock.calls[0][1];
+    expect(def.attribution).toBe('');
+  });
+
+  it('fallback url carries governed fallback attribution', () => {
+    const m = makeMockMap();
+    enable3DTerrain(m as any, {});
+    const def = (m.addSource as any).mock.calls[0][1];
+    expect(def.attribution).toContain('SRTM');
+  });
 });
 
 

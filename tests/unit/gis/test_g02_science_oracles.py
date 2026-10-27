@@ -16,8 +16,9 @@ oracle 组（≥8，编号即 PLAN.md W4 清单）：
  O9 TOCTOU：plan 合格 → 执行画像劣化 → 引擎级 fail-closed（真 DB 引擎环）
  O10 测地面积披露（aggregation 权威库对照 + area_crs 契约）
  O11 并发/幂等（resolver 纯函数双线程一致；gate 双跑一致）
- O12 性能基线（237 算法 resolve+契约 < 2s；投影零 IO 断言）
+ O12 性能基线（241 算法 resolve+契约 < 2s；投影零 IO 断言）
 """
+
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -48,65 +49,81 @@ def _fresh_resolver():
 def _cap_of(algorithm_id: str) -> str:
     reg = get_algorithm_registry()
     for cid in get_capability_registry().all_ids:
-        if any(a.id == algorithm_id
-               for a in reg.algorithms_for_capability(cid)):
+        if any(a.id == algorithm_id for a in reg.algorithms_for_capability(cid)):
             return cid
     raise AssertionError(algorithm_id)
 
 
-GWR = "gwr"                                  # spatial.gwr：无 fallback
+GWR = "gwr"  # spatial.gwr：无 fallback
 GWR_TOOLS = {"gwr_regression"}
-BAND = "band_statistics"                     # remote.band_correlation
+BAND = "band_statistics"  # remote.band_correlation
 BAND_TOOLS = {"band_correlation_table"}
-TEMPORAL = "temporal_trend"                  # temporal.trend
+TEMPORAL = "temporal_trend"  # temporal.trend
 TEMPORAL_TOOLS = {"temporal_trend"}
 
 
 def _resolve(cap, profile, tools):
-    return get_algorithm_resolver().resolve(
-        cap, profile=profile, available_tools=tools)
+    return get_algorithm_resolver().resolve(cap, profile=profile, available_tools=tools)
 
 
 # ── O1 数值字段（负例：权威口径的空清单）───────────────────────────────
 class TestO1NumericFieldRequired:
     def test_known_fields_without_numeric_rejected(self):
-        res = _resolve(GWR, {
-            "fields": {"name": {}, "code": {}},
-            "numericFields": [],       # 在场且为空 = 权威缺席
-            "geometryTypes": ["Polygon"],
-            "crs": "EPSG:32648",
-        }, GWR_TOOLS)
+        res = _resolve(
+            GWR,
+            {
+                "fields": {"name": {}, "code": {}},
+                "numericFields": [],  # 在场且为空 = 权威缺席
+                "geometryTypes": ["Polygon"],
+                "crs": "EPSG:32648",
+            },
+            GWR_TOOLS,
+        )
         assert res.status == "unavailable"
         assert any(
-            "scientific_precondition:spatial.gwr:numeric_field_required"
-            in r for r in res.rejected)
+            "scientific_precondition:spatial.gwr:numeric_field_required" in r
+            for r in res.rejected
+        )
 
     def test_unknown_fields_deferred_disclosed(self):
-        res = _resolve(GWR, {"geometryTypes": ["Polygon"],
-                             "crs": "EPSG:32648"}, GWR_TOOLS)
+        res = _resolve(
+            GWR, {"geometryTypes": ["Polygon"], "crs": "EPSG:32648"}, GWR_TOOLS
+        )
         # 事实缺席 → 资格保留 + not_evaluated 披露（未知 ≠ 科学通过）
         assert res.status == "resolved"
-        assert any(e.startswith("numeric_field_required:")
-                   for e in res.not_evaluated)
+        assert any(e.startswith("numeric_field_required:") for e in res.not_evaluated)
 
 
 # ── O2 非零方差（负例：常量场）─────────────────────────────────────────
 class TestO2NonzeroVariance:
     def test_zero_variance_rejected(self):
-        res = _resolve(GWR, {
-            "fields": {"pop": {}}, "numericFields": ["pop"],
-            "valueVariance": 0.0,
-            "geometryTypes": ["Polygon"], "crs": "EPSG:32648",
-        }, GWR_TOOLS)
+        res = _resolve(
+            GWR,
+            {
+                "fields": {"pop": {}},
+                "numericFields": ["pop"],
+                "valueVariance": 0.0,
+                "geometryTypes": ["Polygon"],
+                "crs": "EPSG:32648",
+            },
+            GWR_TOOLS,
+        )
         assert res.status == "unavailable"
         assert any("nonzero_variance_required" in r for r in res.rejected)
 
     def test_positive_variance_proven_pass(self):
-        res = _resolve(GWR, {
-            "fields": {"pop": {}}, "numericFields": ["pop"],
-            "valueVariance": 12.5, "numericSampleCount": 64,
-            "geometryTypes": ["Polygon"], "crs": "EPSG:32648",
-        }, GWR_TOOLS)
+        res = _resolve(
+            GWR,
+            {
+                "fields": {"pop": {}},
+                "numericFields": ["pop"],
+                "valueVariance": 12.5,
+                "numericSampleCount": 64,
+                "geometryTypes": ["Polygon"],
+                "crs": "EPSG:32648",
+            },
+            GWR_TOOLS,
+        )
         assert res.status == "resolved"
         assert res.not_evaluated == []
 
@@ -114,28 +131,30 @@ class TestO2NonzeroVariance:
 # ── O3 样本量带状（min_numeric_samples:8）──────────────────────────────
 class TestO3MinSamplesBands:
     BASE = {
-        "fields": {"pop": {}}, "numericFields": ["pop"],
+        "fields": {"pop": {}},
+        "numericFields": ["pop"],
         "valueVariance": 4.0,
-        "geometryTypes": ["Polygon"], "crs": "EPSG:32648",
+        "geometryTypes": ["Polygon"],
+        "crs": "EPSG:32648",
     }
 
     def test_sufficient_samples_proven(self):
         res = _resolve(GWR, {**self.BASE, "numericSampleCount": 64}, GWR_TOOLS)
         assert res.status == "resolved"
-        assert not any("min_numeric_samples" in e
-                       for e in res.not_evaluated + res.scientific_warnings)
+        assert not any(
+            "min_numeric_samples" in e
+            for e in res.not_evaluated + res.scientific_warnings
+        )
 
     def test_warning_band(self):
         res = _resolve(GWR, {**self.BASE, "numericSampleCount": 5}, GWR_TOOLS)
         assert res.status == "resolved"
-        assert any("min_numeric_samples:8" in w
-                   for w in res.scientific_warnings)
+        assert any("min_numeric_samples:8" in w for w in res.scientific_warnings)
 
     def test_below_floor_rejected(self):
         res = _resolve(GWR, {**self.BASE, "numericSampleCount": 3}, GWR_TOOLS)
         assert res.status == "unavailable"
-        assert any("min_numeric_samples:8:INSUFFICIENT_DATA" in r
-                   for r in res.rejected)
+        assert any("min_numeric_samples:8:INSUFFICIENT_DATA" in r for r in res.rejected)
 
 
 # ── O4 栅格波段（负例）────────────────────────────────────────────────
@@ -148,8 +167,7 @@ class TestO4RasterBand:
     def test_band_count_unknown_deferred(self):
         res = _resolve(BAND, {"crs": "EPSG:32650"}, BAND_TOOLS)
         assert res.status == "resolved"
-        assert any(e.startswith("raster_band_required:2:")
-                   for e in res.not_evaluated)
+        assert any(e.startswith("raster_band_required:2:") for e in res.not_evaluated)
 
 
 # ── O5 时间字段（负例）────────────────────────────────────────────────
@@ -162,20 +180,29 @@ class TestO5TemporalField:
     def test_observation_count_band(self):
         # temporal.trend 声明 min_temporal_observations:8 —— 观测数 3
         # < max(2, 8//2)=4 → INSUFFICIENT_DATA（趋势声明不可得）。
-        res = _resolve(TEMPORAL, {
-            "hasTimeField": True, "temporalObservationCount": 3,
-        }, TEMPORAL_TOOLS)
+        res = _resolve(
+            TEMPORAL,
+            {
+                "hasTimeField": True,
+                "temporalObservationCount": 3,
+            },
+            TEMPORAL_TOOLS,
+        )
         assert res.status == "unavailable"
         assert any("min_temporal_observations:8" in r for r in res.rejected)
 
     def test_observation_warning_band(self):
         # 观测数 4（≥4 且 <8）→ PASS_WITH_WARNINGS（只能描述性解读）
-        res = _resolve(TEMPORAL, {
-            "hasTimeField": True, "temporalObservationCount": 4,
-        }, TEMPORAL_TOOLS)
+        res = _resolve(
+            TEMPORAL,
+            {
+                "hasTimeField": True,
+                "temporalObservationCount": 4,
+            },
+            TEMPORAL_TOOLS,
+        )
         assert res.status == "resolved"
-        assert any("min_temporal_observations:8" in w
-                   for w in res.scientific_warnings)
+        assert any("min_temporal_observations:8" in w for w in res.scientific_warnings)
 
 
 # ── O6 CRS 门 + transform 提议贯通 plan 转录 ──────────────────────────
@@ -188,31 +215,39 @@ class TestO6CrsTransformChain:
         planner = MapProductPlanner()
         # 地理 CRS 违反 PROJECTED_REQUIRED → 拒 + transform 提议
         _, _, selections = planner._resolve_capabilities(
-            [cap], resolve_map_request_intent("成都回归分析"),
+            [cap],
+            resolve_map_request_intent("成都回归分析"),
             available_tools=GWR_TOOLS,
-            profile={"crs": "EPSG:4326", "geometryTypes": ["Polygon"],
-                     "bbox": [104.0, 30.6, 104.1, 30.7],
-                     "fields": {"pop": {}}, "numericFields": ["pop"],
-                     "valueVariance": 5.0, "numericSampleCount": 64},
+            profile={
+                "crs": "EPSG:4326",
+                "geometryTypes": ["Polygon"],
+                "bbox": [104.0, 30.6, 104.1, 30.7],
+                "fields": {"pop": {}},
+                "numericFields": ["pop"],
+                "valueVariance": 5.0,
+                "numericSampleCount": 64,
+            },
         )
         rec = next(s for s in selections if s.capability == cap)
         assert rec.status == "unavailable"
         # 转录断链修复：required_transformations 不再恒空
         assert rec.required_transformations, "transform 提议必须转录"
-        assert any("reproject" in t.lower()
-                   for t in rec.required_transformations)
+        assert any("reproject" in t.lower() for t in rec.required_transformations)
 
     def test_resolver_level_transform_hint(self):
-        res = _resolve(GWR, {
-            "crs": "EPSG:4326", "geometryTypes": ["Polygon"],
-            "bbox": [104.0, 30.6, 104.1, 30.7],
-        }, GWR_TOOLS)
+        res = _resolve(
+            GWR,
+            {
+                "crs": "EPSG:4326",
+                "geometryTypes": ["Polygon"],
+                "bbox": [104.0, 30.6, 104.1, 30.7],
+            },
+            GWR_TOOLS,
+        )
         assert res.status == "unavailable"
-        assert any("crs_class_mismatch:spatial.gwr" in r
-                   for r in res.rejected)
+        assert any("crs_class_mismatch:spatial.gwr" in r for r in res.rejected)
         # 拒绝码内嵌 ;transform=reproject to <UTM>，被 resolve 汇成清单
-        assert any("reproject" in t.lower()
-                   for t in res.required_transformations)
+        assert any("reproject" in t.lower() for t in res.required_transformations)
 
 
 # ── O7 fallback 语义披露贯通三段 ──────────────────────────────────────
@@ -222,36 +257,46 @@ class TestO7FallbackSemantics:
         res = get_algorithm_resolver().resolve(
             "regression_kriging",
             profile={"numericSampleCount": 3, "crs": "EPSG:32648"},
-            available_tools={"regression_kriging", "kriging_interpolation"})
+            available_tools={"regression_kriging", "kriging_interpolation"},
+        )
         assert res.status == "resolved"
         trail_semantics = [f.semantics for f in res.fallback_trail]
         assert any(s and s != "equivalent" for s in trail_semantics)
 
         # 执行段 evidence 携带同一语义
         spec = WorkflowStepSpec(
-            step_id="s1", tool_name="regression_kriging",
+            step_id="s1",
+            tool_name="regression_kriging",
             capability="regression_kriging",
-            algorithm_preference="interpolation.regression_kriging")
+            algorithm_preference="interpolation.regression_kriging",
+        )
         _, _, _, ev = WorkflowEngine.resolve_step_tool(
-            spec, _Reg({"regression_kriging", "kriging_interpolation"}),
+            spec,
+            _Reg({"regression_kriging", "kriging_interpolation"}),
             available={"regression_kriging", "kriging_interpolation"},
-            profile={"numericSampleCount": 3, "crs": "EPSG:32648"})
-        assert any(t["semantics"] != "equivalent"
-                   for t in ev.get("fallback_trail", []))
+            profile={"numericSampleCount": 3, "crs": "EPSG:32648"},
+        )
+        assert any(t["semantics"] != "equivalent" for t in ev.get("fallback_trail", []))
 
         # final 段：非等价替换 → finding + 产品披露面
         from app.services.gis_harness.planner import AlgorithmSelectionRecord
         from app.services.gis_harness.planner import MapProductPlan
         from app.services.gis_harness.intent import resolve_map_request_intent
+
         rec = AlgorithmSelectionRecord(
-            capability="regression_kriging", status=res.status,
-            algorithm=res.algorithm, tool=res.tool,
-            fallback_trail=[f.model_dump() for f in res.fallback_trail])
+            capability="regression_kriging",
+            status=res.status,
+            algorithm=res.algorithm,
+            tool=res.tool,
+            fallback_trail=[f.model_dump() for f in res.fallback_trail],
+        )
         plan = MapProductPlan(
-            plan_id="p", query="q",
+            plan_id="p",
+            query="q",
             intent=resolve_map_request_intent("克里金插值"),
             recipe_id="spatial_analysis",
-            algorithm_selections=[rec])
+            algorithm_selections=[rec],
+        )
         gate = run_science_final_gate(plan)
         assert any(f.code == "G-FALLBACK-SEMANTICS" for f in gate.findings)
 
@@ -263,20 +308,27 @@ class TestO7FallbackSemantics:
         from app.services.gis_harness.product_templates import (
             get_product_template_registry,
         )
+
         intent = resolve_map_request_intent("成都人口分布图")
         template = get_product_template_registry().find_for_recipe(
-            "poi_distribution_overview", intent.subject.category or "")
+            "poi_distribution_overview", intent.subject.category or ""
+        )
         plan2 = MapProductPlan(
-            plan_id="p2", query="q", intent=intent,
+            plan_id="p2",
+            query="q",
+            intent=intent,
             recipe_id="poi_distribution_overview",
             template_id=template.id if template else "",
-            algorithm_selections=[rec])
+            algorithm_selections=[rec],
+        )
         spec2 = build_product_spec_from_plan(plan2, intent, template)
         compiled = compile_product_spec(spec2, plan=plan2, template=template)
         codes = [f["code"] for f in compiled.science_findings]
         assert "G-FALLBACK-SEMANTICS" in codes
-        assert any(fb.get("code") == "science_fallback_substitution"
-                   for fb in compiled.fallbacks)
+        assert any(
+            fb.get("code") == "science_fallback_substitution"
+            for fb in compiled.fallbacks
+        )
 
 
 # ── O8 dispatch typed 穿透（InvalidCRS 负例）──────────────────────────
@@ -290,7 +342,8 @@ class TestO8DispatchTypedErrors:
         def probe(crs: str = "EPSG:4326") -> dict:
             raise InvalidCRS(
                 "距离类算法需要投影 CRS，得到地理 CRS",
-                ref={"precondition": "projected_crs_required"})
+                ref={"precondition": "projected_crs_required"},
+            )
 
         reg.register("g02_o8_probe", "probe", probe)
         resp = asyncio.run(reg.dispatch("g02_o8_probe", {"crs": "EPSG:4326"}))
@@ -315,20 +368,28 @@ class TestO9ToctouEngineLevel:
         )
 
         degraded = {
-            "fields": {"name": {}}, "numericFields": [],
-            "geometryTypes": ["Polygon"], "crs": "EPSG:32648",
+            "fields": {"name": {}},
+            "numericFields": [],
+            "geometryTypes": ["Polygon"],
+            "crs": "EPSG:32648",
         }
 
         async def _fake_profile(session_id, tool_args):
             return degraded
 
         monkeypatch.setattr(
-            WE, "_resolver_profile_for_args", staticmethod(_fake_profile))
+            WE, "_resolver_profile_for_args", staticmethod(_fake_profile)
+        )
 
-        steps = [WorkflowStepSpec(
-            step_id="gwr_step", tool_name="gwr_regression",
-            capability="gwr", algorithm_preference="spatial.gwr",
-            args_template={"formula": "y~x"})]
+        steps = [
+            WorkflowStepSpec(
+                step_id="gwr_step",
+                tool_name="gwr_regression",
+                capability="gwr",
+                algorithm_preference="spatial.gwr",
+                args_template={"formula": "y~x"},
+            )
+        ]
         pid, wid = f"proj_{uuid4hex()}", f"wf_{uuid4hex()}"
         _mk_project_and_workflow(pid, wid, steps)
 
@@ -346,40 +407,57 @@ class TestO9ToctouEngineLevel:
                 return {"success": True}
 
         reg = _NoDispatch()
-        run = asyncio.run(WE.execute_workflow_run(
-            db=next(_session()), workflow_id=wid, tool_registry=reg,
-            expected_project_id=pid,
-        ))
+        run = asyncio.run(
+            WE.execute_workflow_run(
+                db=next(_session()),
+                workflow_id=wid,
+                tool_registry=reg,
+                expected_project_id=pid,
+            )
+        )
         assert run.status == "failed"
         assert reg.calls == [], "科学硬拒后绝不派发工具"
-        assert "science" in (run.error_message or "").lower() \
+        assert (
+            "science" in (run.error_message or "").lower()
             or "precondition" in (run.error_message or "").lower()
+        )
         # trace 保留结构化证据（error_code 机读）
         trace = run.execution_trace or []
-        blocked_entries = [t for t in trace
-                           if t.get("error_code") == "SCIENCE_PRECONDITION_FAILED"]
+        blocked_entries = [
+            t for t in trace if t.get("error_code") == "SCIENCE_PRECONDITION_FAILED"
+        ]
         assert blocked_entries, trace
         ev = blocked_entries[0].get("resolution_evidence", {})
-        assert ev.get("science_hard_block", "").startswith(
-            "scientific_precondition:")
+        assert ev.get("science_hard_block", "").startswith("scientific_precondition:")
 
     def test_data_growth_between_stages_disclosed_not_blocked(self):
         """非破坏性 TOCTOU（数据规模变化）→ final gate freshness 披露。"""
         from types import SimpleNamespace
 
         plan_digest = science_profile_digest(
-            {"numericSampleCount": 64, "featureCount": 64, "crs": "EPSG:32648"})
+            {"numericSampleCount": 64, "featureCount": 64, "crs": "EPSG:32648"}
+        )
         exec_digest = science_profile_digest(
-            {"numericSampleCount": 128, "featureCount": 128, "crs": "EPSG:32648"})
+            {"numericSampleCount": 128, "featureCount": 128, "crs": "EPSG:32648"}
+        )
         rec = SimpleNamespace(
-            capability="gwr", status="resolved", algorithm="spatial.gwr",
-            fallback_trail=[], not_evaluated=[],
-            profile_digest=plan_digest)
+            capability="gwr",
+            status="resolved",
+            algorithm="spatial.gwr",
+            fallback_trail=[],
+            not_evaluated=[],
+            profile_digest=plan_digest,
+        )
         gate = run_science_final_gate(
             SimpleNamespace(algorithm_selections=[rec]),
-            execution_evidence={"s1": {
-                "capability": "gwr", "resolver_status": "resolved",
-                "profile_digest": exec_digest}})
+            execution_evidence={
+                "s1": {
+                    "capability": "gwr",
+                    "resolver_status": "resolved",
+                    "profile_digest": exec_digest,
+                }
+            },
+        )
         codes = [f.code for f in gate.findings]
         assert "G-FRESHNESS" in codes
         assert gate.blocked is False
@@ -392,14 +470,15 @@ class TestO10GeodesicAreaDisclosure:
         from shapely.geometry import Polygon
 
         from app.lib.geo_analysis.aggregation import _metric_zone_area_m2
+
         # 10°×10°（跨 >6° 单 UTM 带）→ 必须走测地 + area_crs 披露
         poly = Polygon([(100, 0), (110, 0), (110, 10), (100, 10)])
-        gdf = geopandas.GeoDataFrame(
-            geometry=[poly], crs="EPSG:4326")
+        gdf = geopandas.GeoDataFrame(geometry=[poly], crs="EPSG:4326")
         areas, crs_used, _data_class = _metric_zone_area_m2(gdf)
         assert crs_used == "geodesic:WGS84"
         # 权威库对照（pyproj Geod 同椭球同几何 —— 一致性 oracle）
         from pyproj import Geod
+
         geod = Geod(ellps="WGS84")
         expected = abs(geod.geometry_area_perimeter(poly)[0])
         assert areas.iloc[0] == pytest.approx(expected, rel=1e-9)
@@ -411,34 +490,47 @@ class TestO10GeodesicAreaDisclosure:
 class TestO11ConcurrencyIdempotence:
     PROFILES = [
         {"crs": "EPSG:4326", "geometryTypes": ["Polygon"]},
-        {"crs": "EPSG:32648", "geometryTypes": ["Polygon"],
-         "numericFields": ["v"], "numericSampleCount": 64,
-         "valueVariance": 3.0},
+        {
+            "crs": "EPSG:32648",
+            "geometryTypes": ["Polygon"],
+            "numericFields": ["v"],
+            "numericSampleCount": 64,
+            "valueVariance": 3.0,
+        },
     ]
 
     def test_resolver_thread_deterministic(self):
         def work(profile):
-            return get_algorithm_resolver().resolve(
-                GWR, profile=profile, available_tools=GWR_TOOLS).model_dump()
+            return (
+                get_algorithm_resolver()
+                .resolve(GWR, profile=profile, available_tools=GWR_TOOLS)
+                .model_dump()
+            )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(work, p) for p in self.PROFILES * 3]
             results = [f.result() for f in futures]
         by_profile = {}
         for profile, dump in zip(self.PROFILES * 3, results):
-            by_profile.setdefault(id(profile), set()).add(
-                str(sorted(dump.items())))
+            by_profile.setdefault(id(profile), set()).add(str(sorted(dump.items())))
         for variants in by_profile.values():
             assert len(variants) == 1, "同画像并发 resolve 必须逐位一致"
 
     def test_gate_idempotent(self):
         from types import SimpleNamespace
 
-        plan = SimpleNamespace(algorithm_selections=[SimpleNamespace(
-            capability="gwr", status="resolved", algorithm="spatial.gwr",
-            fallback_trail=[{"from": "a", "to": "b", "semantics": "proxy"}],
-            not_evaluated=["numeric_field_required: x"],
-            profile_digest="d1")])
+        plan = SimpleNamespace(
+            algorithm_selections=[
+                SimpleNamespace(
+                    capability="gwr",
+                    status="resolved",
+                    algorithm="spatial.gwr",
+                    fallback_trail=[{"from": "a", "to": "b", "semantics": "proxy"}],
+                    not_evaluated=["numeric_field_required: x"],
+                    profile_digest="d1",
+                )
+            ]
+        )
         r1 = run_science_final_gate(plan).model_dump()
         r2 = run_science_final_gate(plan).model_dump()
         assert r1 == r2
@@ -453,8 +545,11 @@ class TestO12PerformanceBudget:
 
         caps = get_capability_registry().all_ids
         resolver = get_algorithm_resolver()
-        profile = {"crs": "EPSG:4326", "geometryTypes": ["Polygon"],
-                   "featureCount": 100}
+        profile = {
+            "crs": "EPSG:4326",
+            "geometryTypes": ["Polygon"],
+            "featureCount": 100,
+        }
 
         # 零 IO 断言：契约投影与 resolve 循环内不得打开任何文件
         real_open = builtins.open
@@ -466,13 +561,17 @@ class TestO12PerformanceBudget:
         try:
             t0 = time.perf_counter()
             resolves = sum(
-                1 for cid in caps
-                if resolver.resolve(cid, profile=profile).status == "resolved")
+                1
+                for cid in caps
+                if resolver.resolve(cid, profile=profile).status == "resolved"
+            )
             contracts = sum(1 for _ in iter_method_use_contracts())
             elapsed = time.perf_counter() - t0
         finally:
             monkeypatch.setattr(builtins, "open", real_open)
-        assert contracts == get_algorithm_registry().count == 240  # G3D04：+3 platform 绑定（scene_representation/terrain_scene_binding/scene_camera_action）
+        # 合并 master（G3D03 measurement 族 +4 与 G3D04 platform 绑定 +3
+        # 叠加）后注册表真值由 scripts/gen_science_catalog.py 重算锁定。
+        assert contracts == get_algorithm_registry().count == 244
         assert resolves > 0
         assert elapsed < 2.0, f"{get_algorithm_registry().count} 算法 resolve+契约投影 {elapsed:.2f}s 超预算"
 

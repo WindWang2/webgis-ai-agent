@@ -127,6 +127,7 @@ from app.services.mapspec.intents import (  # noqa: E402
     RestoreStyleIntent,  # noqa: F401
     SetBasemapIntent,  # noqa: F401
     SetLayoutIntent,  # noqa: F401
+    SetSceneAssetsIntent,  # noqa: F401
     SetSceneIntent,  # noqa: F401
     SetScenarioModeIntent,  # noqa: F401
     SetTimeIntent,  # noqa: F401

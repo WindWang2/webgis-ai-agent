@@ -5,7 +5,7 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**24/75** 个重计算文件含取消检查点。
+- 覆盖：**25/76** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
@@ -30,6 +30,7 @@
 | app/lib/geo_analysis/kriging.py | 9 | 87 | certified |
 | app/lib/geo_analysis/kriging_simulation.py | 2 | 9 | certified |
 | app/lib/geo_analysis/kriging_st.py | 1 | 5 | certified |
+| app/lib/geo_analysis/measurements.py | 3 | 11 | certified |
 | app/lib/geo_analysis/network.py | 3 | 30 | certified |
 | app/lib/geo_analysis/phenology.py | 0 | 0 | no-checkpoints |
 | app/lib/geo_analysis/point_pattern.py | 6 | 76 | certified |

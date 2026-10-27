@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 PRODUCT_MANIFEST_SCHEMA_VERSION = "cartographic_product_manifest.v1"
@@ -220,7 +221,67 @@ def build_product_manifest(
                       "label", "note_type")
             if isinstance(time_block.get(k), (str, int, float))
         }
+    # G3D05（ADR-0275）：场景溯源块 —— 交互 3D 导出的可复现锚点
+    # （相机 + 场景模式 + terrain 源/夸张/垂直语义 + 比例尺可信度判定）。
+    # 仅在 spec.scene 在场时投影；无场景 = 存量 2D 语义零噪音。
+    scene_block = _scene_provenance(spec)
+    if scene_block is not None:
+        manifest["scene"] = scene_block
     return manifest
+
+
+def _scene_provenance(spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """spec.scene → 有界溯源投影（None = 无场景，不写块）。"""
+    scene = spec.get("scene")
+    if not isinstance(scene, dict) or not scene:
+        return None
+    out: Dict[str, Any] = {"mode": _bounded_str(scene.get("mode"), 8)}
+    terrain = scene.get("terrain")
+    if isinstance(terrain, dict):
+        terrain_out: Dict[str, Any] = {}
+        src = _bounded_str(terrain.get("source"), 64)
+        if src:
+            terrain_out["source"] = src
+        ex = terrain.get("exaggeration")
+        if isinstance(ex, (int, float)) and not isinstance(ex, bool):
+            terrain_out["exaggeration"] = float(ex)
+        for key in ("vertical_unit", "elevation_ref"):
+            val = _bounded_str(terrain.get(key), 48)
+            if val:
+                terrain_out[key] = val
+        if terrain_out:
+            out["terrain"] = terrain_out
+    camera = scene.get("camera")
+    if isinstance(camera, dict):
+        cam_out: Dict[str, Any] = {}
+        for key in ("pitch", "bearing"):
+            v = camera.get(key)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                cam_out[key] = float(v)
+        if cam_out:
+            out["camera"] = cam_out
+    # 比例尺可信度：view.pitch（导出时刻相机）优先，回退 camera.pitch；
+    # 阈值单一事实源 scene_quality.SCALE_TRUST_PITCH_MAX（R1-P2 评审修复：
+    # 此前硬编码 10.0 无互锁，改阈值会静默分叉）。
+    from app.lib.cartography.scene_quality import SCALE_TRUST_PITCH_MAX
+
+    view = spec.get("view")
+    pitch: Optional[float] = None
+    if isinstance(view, dict):
+        vp = view.get("pitch")
+        if (isinstance(vp, (int, float)) and not isinstance(vp, bool)
+                and math.isfinite(vp)):
+            pitch = float(vp)
+    if pitch is None and isinstance(camera, dict):
+        cp = camera.get("pitch")
+        if (isinstance(cp, (int, float)) and not isinstance(cp, bool)
+                and math.isfinite(cp)):
+            pitch = float(cp)
+    if pitch is not None:
+        out["scale_trust"] = (
+            "perspective" if pitch > SCALE_TRUST_PITCH_MAX else "reliable"
+        )
+    return out
 
 
 def _layer_field_consistency(

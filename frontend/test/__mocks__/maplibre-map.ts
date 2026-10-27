@@ -352,6 +352,10 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     boxZoom: { enable: vi.fn(), disable: vi.fn(), isEnabled: vi.fn(() => true) },
     getCanvas: vi.fn(() => makeCanvasLike()),
     getContainer: vi.fn(() => (typeof document !== 'undefined' ? document.createElement('div') : null)),
+    // G3D02 v1.7：scene3d 调度消费（canvas 高度）；缺省 null = 「无地形」
+    // 的诚实缺席（ground_clamp 披露降级，不虚构高程）。
+    getCanvasContainer: vi.fn(() => (typeof document !== 'undefined' ? document.createElement('div') : null)),
+    queryTerrainElevation: vi.fn(() => null),
     hasImage: vi.fn((id: string) => images.has(id)),
     removeImage: vi.fn((id: string) => {
       images.delete(id);

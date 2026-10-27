@@ -540,6 +540,41 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
         supported_outputs=["interactive", "png", "pdf", "svg"],
         tags=["label", "ac-05"],
     ),
+    # ── G3D05（ADR-0275）：三维制图产品组件模板 ─────────────────────
+    ComponentTemplate(
+        id="scene-disclosure/default", component_type="scene_disclosure",
+        category="disclosure.scene_disclosure",
+        name="Default Scene Disclosure", variant="default",
+        default_options={"variant": "default"}, priority=10,
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+        tags=["scene3d", "g3d05"],
+    ),
+    ComponentTemplate(
+        id="scene-disclosure/compact", component_type="scene_disclosure",
+        category="disclosure.scene_disclosure",
+        name="Compact Scene Disclosure", variant="compact",
+        default_options={"variant": "compact"}, priority=20,
+        default_style={"fontSize": "11px"},
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+        tags=["scene3d", "g3d05"],
+    ),
+    ComponentTemplate(
+        id="elevation-profile/default", component_type="elevation_profile",
+        category="analysis.elevation_profile",
+        name="Default Elevation Profile", variant="default",
+        default_options={"variant": "default", "unit": "m"}, priority=10,
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+        tags=["scene3d", "profile", "g3d05"],
+    ),
+    ComponentTemplate(
+        id="elevation-profile/compact", component_type="elevation_profile",
+        category="analysis.elevation_profile",
+        name="Compact Elevation Profile", variant="compact",
+        default_options={"variant": "compact", "unit": "m"}, priority=20,
+        default_style={"fontSize": "11px"},
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+        tags=["scene3d", "profile", "g3d05"],
+    ),
 ]
 # ── V4：图表 kind preset 模板（chart_kinds 词表；violin planned 不设）──
 _CHART_KIND_TEMPLATES = [

@@ -1,10 +1,18 @@
-"""可用底图供应商目录 (后端 single source of truth)。
+"""可用底图供应商目录 (后端 LLM 感知端)。
 
-前端 `frontend/lib/providers.ts` 是渲染端真相；这里是 LLM 感知端真相。
-两边的 name 必须严格一致（switch_base_layer 工具靠它精确匹配）。
-名字漂移时，把这份目录补齐即可，无需改其他逻辑。
+G3D01 起，本模块**派生自** ``app/lib/cartography/basemap_profiles.py``
+的 typed 治理目录（单一事实源）：name/keywords/license/attribution 漂移
+由 ``tests/cartography/test_basemap_profile_projection.py`` 与前端
+``basemap-profiles.contract.test.ts`` 双侧契约锁拦截，不再手工同步。
+前端 ``frontend/lib/providers.ts`` 仍是渲染端真相（env 门控逻辑在手写端），
+两侧一致性同样由契约测试保证。
 """
 from typing import TypedDict
+
+from app.lib.cartography.basemap_profiles import (
+    BASEMAP_PROVIDER_PROFILES,
+    iter_llm_catalog,
+)
 
 
 class BaseLayerInfo(TypedDict):
@@ -12,21 +20,9 @@ class BaseLayerInfo(TypedDict):
     keywords: list[str]
 
 
-# name 与 frontend/lib/providers.ts 必须严格一致
-BASE_LAYER_CATALOG: list[BaseLayerInfo] = [
-    {"name": "Carto Positron 矢量", "keywords": ["carto-positron", "positron", "浅色矢量", "学术", "矢量底图"]},
-    {"name": "Carto Dark Matter 矢量", "keywords": ["carto-dark-vec", "dark-matter", "深色矢量", "夜间矢量", "大屏"]},
-    {"name": "Carto 浅色", "keywords": ["浅色", "light", "白色", "亮色"]},
-    {"name": "Carto 深色", "keywords": ["深色", "dark", "黑色", "暗色"]},
-    {"name": "OSM 地图", "keywords": ["osm", "街道", "地图", "street"]},
-    {"name": "ESRI 影像", "keywords": ["影像", "卫星", "satellite", "航拍", "鸟瞰"]},
-    {"name": "ESRI 地形", "keywords": ["地形", "topo", "晕渲", "terrain"]},
-    {"name": "OpenTopoMap", "keywords": ["opentopomap", "山体", "等高线"]},
-    {"name": "高德影像", "keywords": ["高德影像", "amap img", "高德卫"]},
-    {"name": "高德矢量", "keywords": ["高德矢量", "amap vec", "高德街"]},
-    {"name": "天地图矢量", "keywords": ["天地图矢量", "天地图", "tianditu vec", "tianditu"]},
-    {"name": "天地图影像", "keywords": ["天地图影像", "天地图卫星", "天地图卫", "tianditu img", "tianditu satellite"]},
-]
+# 派生自 basemap_profiles.BASEMAP_PROVIDER_PROFILES（llm_visible 过滤）。
+# 本目录 = LLM 可提议的底图全集；前端按 env/部署 profile 决定渲染注册。
+BASE_LAYER_CATALOG: list[BaseLayerInfo] = iter_llm_catalog()
 
 
 def get_base_layer_names() -> list[str]:
@@ -34,21 +30,14 @@ def get_base_layer_names() -> list[str]:
 
 
 def _providers_by_id() -> dict[str, str]:
-    """providerId → canonical name（id 与前端 TILE_PROVIDERS.id 对齐）。"""
-    return {
-        "carto-positron": "Carto Positron 矢量",
-        "carto-dark-vec": "Carto Dark Matter 矢量",
-        "carto-light": "Carto 浅色",
-        "carto-dark": "Carto 深色",
-        "osm": "OSM 地图",
-        "esri-img": "ESRI 影像",
-        "esri-topo": "ESRI 地形",
-        "opentopomap": "OpenTopoMap",
-        "amap-img": "高德影像",
-        "amap-vec": "高德矢量",
-        "tianditu-vec": "天地图矢量",
-        "tianditu-img": "天地图影像",
-    }
+    """providerId → canonical name（id 与前端 TILE_PROVIDERS.id 对齐）。
+
+    注意（review R2 P2-2）：本映射**不过滤** llm_visible（local-xyz 在册）——
+    它服务于模板种子 providerId 解析（历史载荷可能携带 local-xyz）；前端
+    未配置 env 时 switch_base_layer 会显式 target_not_found（诚实失败），
+    与 BASE_LAYER_CATALOG 的 llm_visible 过滤刻意不对称。
+    """
+    return {p.provider_id: p.name for p in BASEMAP_PROVIDER_PROFILES}
 
 
 # 模板种子里的 providerId 别名 → 规范名（种子词汇与前端 TILE_PROVIDERS.id 有出入：

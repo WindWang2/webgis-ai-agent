@@ -63,9 +63,13 @@ Number = Union[StrictInt, StrictFloat]
 #: 1.5 = CartoIR 语义层类型化（layer.visibility/bivariate/data_binding，
 #: C11 —— 渲染端 ABI 版本协商与 visibility/bivariate 原生表示）；
 #: 1.6 = 语义缩放表达协议（layer.representation.zoom 窗口计划，方向 5 ——
-#: renderer 把窗口编译为 MapLibre 原生 minzoom/maxzoom 门，零 per-frame JS）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6")
-LATEST_VERSION = "1.6"
+#: renderer 把窗口编译为 MapLibre 原生 minzoom/maxzoom 门，零 per-frame JS）；
+#: 1.7 = 三维场景资产（G3D02 —— model3d 源 + scene.assets 引用：3D Tiles
+#: tileset / glTF/GLB 资产的地理锚定挂载；scene 只持 source 指针 + 放置
+#: 参数，数据面仍由 source 承载，与 scene.terrain 同「指针不是第二数据面」
+#: 纪律。纯 additive：缺失 = 无 3D 资产，存量 spec 行为不变）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7")
+LATEST_VERSION = "1.7"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -135,6 +139,26 @@ REPRESENTATION_MODES: Tuple[str, ...] = (
 
 #: 每层表达窗口数上限（norm 后实际 ≤ 带数；防病理文档放大）。
 MAX_REPRESENTATION_WINDOWS = 8
+
+# ── v1.7 additive：三维场景资产（G3D02）──────────────────────────────────
+
+#: model3d 源的资产格式词表（glTF 2.0 文本 / GLB 二进制 / OGC 3D Tiles 1.1
+#: tileset）。词表外的格式经 invalid_fields 披露（typed 拒绝语义不变）。
+SCENE_ASSET_FORMATS: Tuple[str, ...] = ("gltf", "glb", "3dtiles")
+
+#: 每场景 3D 资产数上限（放置声明是稀有操作，不是数据；32 与
+#: MAX_ACK_SOURCES 等预算面同量级，防病理文档放大）。
+MAX_SCENE_ASSETS = 32
+
+#: 垂直基准词表（v1.7）。``ellipsoid`` = WGS84 椭球高；``egm96`` =
+#: EGM96 正高（近似大地水准面）；``local`` = 场景局部基准（无全球换算
+#: 证据，消费方披露使用）。缺失 datum 不拒绝 —— 质量门披露
+#: ``SCENE_ASSET_NO_EVIDENCE``（绝不静默假定全球基准）。
+SCENE_ASSET_VERTICAL_DATUMS: Tuple[str, ...] = ("ellipsoid", "egm96", "local")
+
+#: render_order 上界（下界 0；MapLibre custom layer 按挂载序入栈，
+#: render_order 折算为挂载序 —— 有界防病理值）。
+MAX_SCENE_ASSET_RENDER_ORDER = 1000
 
 #: zoom 域（MapLibre 契约；窗口钳制域）。
 REPRESENTATION_ZOOM_MIN = 0.0
@@ -229,12 +253,44 @@ class RasterDemMapSpecSource(_SpecModel):
     encoding: Optional[Literal["mapbox", "terrarium"]] = None
 
 
+class Model3dMapSpecSource(_SpecModel):
+    """model3d 源（v1.7 additive，G3D02）—— 3D Tiles / glTF 资产的数据面指针。
+
+    纪律（与 scene.terrain 的「指针不是第二数据面」同源）：本源只承载
+    **数据身份**（格式词表 + url/ref 指针 + revision/fingerprint + 可选
+    地理 bbox 证据）；放置语义（锚点/朝向/缩放/垂直基准）在
+    ``scene.assets[].placement/vertical``，两层绝不分叉混写。
+
+    - ``format``：``gltf``（glTF 2.0 JSON）/ ``glb``（GLB 二进制容器）/
+      ``3dtiles``（OGC 3D Tiles 1.1 tileset.json 入口）。渲染端按子集
+      消费（能力边界 typed 披露，不静默降级）。
+    - ``url``：https 或同源相对 URL（前端资源策略再校验；SSRF 责任在
+      服务端消费链）。``ref_id``：data fabric ref（水合链供给前消费方
+      按 typed unavailable 披露，不虚构载荷）。二者至少其一（写路径
+      coordinator 校验，schema 层保留半成品可诊断性）。
+    - ``bbox``：可选 [w, s, e, n] 地理范围证据（tileset 未必自带；缺失
+      不阻塞 —— 调度器按需 fetch 后以实测范围为准）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["model3d"]
+    format: Literal[SCENE_ASSET_FORMATS]  # type: ignore[valid-type]
+    url: Optional[StrictStr] = None
+    ref_id: Optional[StrictStr] = None
+    content_revision: Optional[Number] = None
+    data_fingerprint: Optional[StrictStr] = None
+    descriptor_fingerprint: Optional[StrictStr] = None
+    bbox: Optional[List[Number]] = None  # [w, s, e, n]
+
+
 MapSpecSource = Union[
     GeoJSONMapSpecSource,
     VectorMapSpecSource,
     RasterMapSpecSource,
     RasterDemMapSpecSource,
     DataFabricMapSpecSource,
+    Model3dMapSpecSource,
 ]
 
 
@@ -270,6 +326,82 @@ class SceneCameraSpec(_SpecModel):
     transition_ms: Optional[Number] = None
 
 
+# ── v1.7 additive：三维场景资产（G3D02）──────────────────────────────────
+
+
+class SceneAssetVertical(_SpecModel):
+    """3D 资产垂直基准声明（v1.7 additive）。
+
+    数据诚信红线：datum 缺失不拒绝但由质量门披露（绝不静默假定全球基准）；
+    ``unit`` 现仅 "m"（其他单位需要换算证据，暂不开放词表位）；
+    ``elevation_ref`` 是锚点高程的证据 ref（session ref / artifact id）——
+    与 extrusion.elevation_ref 同「有/无证据」二分口径。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    datum: Optional[Literal[SCENE_ASSET_VERTICAL_DATUMS]] = None  # type: ignore[valid-type]
+    unit: Optional[Literal["m"]] = None
+    elevation_ref: Optional[StrictStr] = None
+
+
+class SceneAssetPlacement(_SpecModel):
+    """3D 资产放置参数（v1.7 additive）—— 地理锚定 + ENU 姿态 + 缩放。
+
+    朝向约定（显式、不猜）：``heading/pitch/roll`` 为局部 ENU（东-北-天）
+    框角度（度，右手系）；模型内部轴系由格式规范固定（glTF y-up、
+    3D Tiles z-up），渲染端按规范校正 —— 本块不设 up_axis 配置位，
+    防止调用方发明约定。``scale`` 为米制缩放因子（>0；写路径校验）。
+    ``altitude_m`` 缺省 0（放置约定，非编造数据）；``ground_clamp``
+    声明贴地意图（terrain 在场时用 queryTerrainElevation，缺席时披露
+    不阻塞）。范围校验（lng/lat 域、角度域、scale>0、render_order 域）
+    在写路径 handler 与质量门 —— schema 层保留坏文档可诊断性。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    anchor: List[Number]  # [lng, lat]
+    altitude_m: Optional[Number] = None
+    heading_deg: Optional[Number] = None
+    pitch_deg: Optional[Number] = None
+    roll_deg: Optional[Number] = None
+    scale: Optional[Number] = None
+    ground_clamp: Optional[StrictBool] = None
+
+
+class SceneAssetLodPolicy(_SpecModel):
+    """3D 资产 LOD 策略（v1.7 additive）—— 渲染预算的**收紧**声明。
+
+    ``max_sse``：屏幕空间误差预算（像素；缺省渲染端档位 16）。``max_visible_tiles``：
+    同时可见 tile 上限（只能收紧机器档位上限，不能放宽 —— 防病理 spec
+    把弱机拖死）。策略是提示非命令：渲染端以机器档位为硬顶、策略值取
+    min（诚实降级披露）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    max_sse: Optional[Number] = None
+    max_visible_tiles: Optional[StrictInt] = None
+
+
+class SceneAssetSpec(_SpecModel):
+    """单个 3D 场景资产（v1.7 additive）—— source 指针 + 放置/证据声明。
+
+    ``source`` 必须指向 spec.sources 内 model3d 源 id（dangling/错型由
+    coordinator.validate 的 SCENE_ASSET_SOURCE_REF/_TYPE 阻塞 —— 与
+    scene.terrain 同 fail-closed 口径）。``render_order`` 折算挂载序
+    （大者后挂=更靠近相机侧绘制）。``provenance_ref``：资产来源/许可
+    证据 ref（缺失由质量门披露 SCENE_ASSET_NO_EVIDENCE）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: StrictStr
+    source: StrictStr
+    visible: Optional[StrictBool] = None
+    placement: Optional[SceneAssetPlacement] = None
+    vertical: Optional[SceneAssetVertical] = None
+    render_order: Optional[StrictInt] = None
+    lod: Optional[SceneAssetLodPolicy] = None
+    provenance_ref: Optional[StrictStr] = None
+
+
 class MapSceneConfig(_SpecModel):
     """顶层场景配置（v1.4 additive；缺失 = 既有 2d 语义）。
 
@@ -279,6 +411,8 @@ class MapSceneConfig(_SpecModel):
     - ``camera``：场景建议相机档。
     - ``reason_code``：决策溯源（scene_planning.REASON_CODES 词表）。
     - ``degrade_to``：声明的回退档（退化链 3d→2.5d→2d 的既有意图记录）。
+    - ``assets``（v1.7，G3D02）：3D 场景资产表（id 键控；source 指针 +
+      放置/垂直基准/LOD 声明）。缺失 = 无 3D 资产，存量行为不变。
     """
 
     model_config = ConfigDict(extra="allow")
@@ -289,6 +423,9 @@ class MapSceneConfig(_SpecModel):
     reason_code: Optional[StrictStr] = None
     degrade_to: Optional[Literal["2.5d", "2d"]] = None
     reduced_motion: Optional[StrictBool] = None
+    #: v1.7 additive（G3D02）：三维场景资产表（有界 MAX_SCENE_ASSETS）。
+    assets: Optional[List[SceneAssetSpec]] = Field(
+        default=None, max_length=MAX_SCENE_ASSETS)
 
 
 class MapSpecLabelZoomBand(_SpecModel):
@@ -567,6 +704,10 @@ COMPONENT_TYPES = (
     # layer.label 子层渲染）；CartographyComponent.to_mapspec() 落
     # MapSpec 的组件通道，必须能过本 schema 校验。
     "label_layer",
+    # G3D05（ADR-0275）：三维制图产品组件 —— 场景披露（内容绑定
+    # spec.scene，options 仅样式/附注）与线路高程剖面（points/ref 工件）。
+    "scene_disclosure",
+    "elevation_profile",
 )
 
 
@@ -749,6 +890,11 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("MapSceneConfig", MapSceneConfig),
     ("TerrainSceneSpec", TerrainSceneSpec),
     ("SceneCameraSpec", SceneCameraSpec),
+    ("Model3dMapSpecSource", Model3dMapSpecSource),
+    ("SceneAssetSpec", SceneAssetSpec),
+    ("SceneAssetPlacement", SceneAssetPlacement),
+    ("SceneAssetVertical", SceneAssetVertical),
+    ("SceneAssetLodPolicy", SceneAssetLodPolicy),
 )
 
 
@@ -834,6 +980,9 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # 1.6 相对 1.5 纯 additive（layer.representation 可选；缺失 = 层缺省
     # 表达 + 渲染端既有计数推断，存量 spec 语义不变。方向 5）。
     ("1.5", "1.6"): lambda doc: doc,
+    # 1.7 相对 1.6 纯 additive（model3d 源类型 + scene.assets 可选；缺失 =
+    # 无 3D 资产，存量 spec 语义不变。G3D02）。
+    ("1.6", "1.7"): lambda doc: doc,
 }
 
 

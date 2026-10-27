@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.lib.runtime.gis_trace import Stage
-from app.lib.storymap.camera_planner import plan_camera_for_bbox
+from app.lib.storymap.camera_planner import plan_camera_for_bbox, scene_for_arc
 from app.lib.storymap.spec import (
     ARC_TITLES_ZH,
     NARRATIVE_ARC,
@@ -317,12 +317,19 @@ def _format_stat_value(value: Any) -> str:
 
 def _build_chapter(arc_role: ArcRole, steps: Sequence[TraceStep],
                    fallback_bbox: Optional[Sequence[float]],
-                   step_bboxes: Sequence[Optional[List[float]]]):
+                   step_bboxes: Sequence[Optional[List[float]]],
+                   *, scene_enabled: bool = False):
     bbox = _union_bbox(step_bboxes) or fallback_bbox or _DEFAULT_BBOX
     narrative = _chapter_narrative(arc_role, steps)
     widgets = _harvest_widgets(steps, arc_role)
     view = plan_camera_for_bbox(bbox, arc_role)
     view.pop("aspect", None)
+    # G3D05 v1.1：高程证据在场时按弧角色投影场景档；缺证据不写 scene
+    #（沿用会话平面场景 —— fail-closed，不虚构立体叙事）。
+    if scene_enabled:
+        arc_scene = scene_for_arc(arc_role)
+        if arc_scene:
+            view["scene"] = arc_scene
     keyframe = CameraKeyframe(chapter_id=f"arc-{arc_role}", t=0.0, **view)
     refs = []
     for w in widgets:
@@ -345,14 +352,16 @@ def _build_chapter(arc_role: ArcRole, steps: Sequence[TraceStep],
     return chapter, keyframe, widgets, audio
 
 
-def _chapters_from_messages(messages: Sequence[Mapping[str, Any]]):
+def _chapters_from_messages(messages: Sequence[Mapping[str, Any]],
+                            *, scene_enabled: bool = False):
     """无 trace 降级：首条消息→引言，最后一条→建言（单条只出引言）。"""
     if not messages:
         raise ValueError("cannot compile from an empty message list")
     chapters, keyframes, widgets, audios = [], [], [], []
 
     def emit(role: ArcRole, content: str, source_idx: int):
-        chapter, kf, ws, audio = _build_chapter_from_text(role, content, source_idx)
+        chapter, kf, ws, audio = _build_chapter_from_text(
+            role, content, source_idx, scene_enabled=scene_enabled)
         chapters.append(chapter)
         keyframes.append(kf)
         widgets.extend(ws)
@@ -371,10 +380,15 @@ def _message_content(message: Mapping[str, Any]) -> str:
     return content if isinstance(content, str) else ""
 
 
-def _build_chapter_from_text(arc_role: ArcRole, content: str, source_idx: int):
+def _build_chapter_from_text(arc_role: ArcRole, content: str, source_idx: int,
+                             *, scene_enabled: bool = False):
     narrative = f"## {ARC_TITLES_ZH[arc_role]}\n{content.strip() or '（无正文）'}"
     view = plan_camera_for_bbox(_DEFAULT_BBOX, arc_role)
     view.pop("aspect", None)
+    if scene_enabled:
+        arc_scene = scene_for_arc(arc_role)
+        if arc_scene:
+            view["scene"] = arc_scene
     chapter = StoryChapter(
         id=f"arc-{arc_role}",
         title=ARC_TITLES_ZH[arc_role],
@@ -394,8 +408,13 @@ def compile_story_map(
     session_id: str = "",
     turn_id: str = "",
     title: Optional[str] = None,
+    scene_enabled: bool = False,
 ) -> StoryMapSpec:
-    """证据链（优先）或消息列表 → StoryMapSpec。二者必居其一。"""
+    """证据链（优先）或消息列表 → StoryMapSpec。二者必居其一。
+
+    G3D05 v1.1：``scene_enabled`` 由调用方按会话高程证据决定（服务壳
+    检查 mapspec 是否有 raster-dem 源）；True 时按弧角色投影
+    keyframe.scene（2.5d 解剖/推演镜头），False（缺省）= 不写 scene。"""
     if trace is None and not messages:
         raise ValueError("compile_story_map requires a trace or messages")
 
@@ -433,6 +452,7 @@ def compile_story_map(
             bucket_bboxes = [step_bboxes[i] for i in bucket_indexes]
             chapter, kf, ws, audio = _build_chapter(
                 arc_role, bucket, session_bbox, bucket_bboxes,
+                scene_enabled=scene_enabled,
             )
             chapters.append(chapter)
             keyframes.append(kf)
@@ -447,7 +467,8 @@ def compile_story_map(
                     "trace contains no recognizable stage records and no "
                     "messages were provided for fallback"
                 )
-            chapters, keyframes, all_widgets, audios = _chapters_from_messages(list(messages))
+            chapters, keyframes, all_widgets, audios = _chapters_from_messages(
+                list(messages), scene_enabled=scene_enabled)
             summary = _message_content(messages[-1]).strip()
         else:
             summary = next((str(s.payload["final_text"]).strip() for s in steps
@@ -458,7 +479,8 @@ def compile_story_map(
                                 if isinstance(s.payload.get(k), str)
                                 and s.payload[k].strip()), "")
     else:
-        chapters, keyframes, all_widgets, audios = _chapters_from_messages(list(messages))
+        chapters, keyframes, all_widgets, audios = _chapters_from_messages(
+            list(messages), scene_enabled=scene_enabled)
         summary = _message_content(messages[-1]).strip()
 
     return StoryMapSpec(

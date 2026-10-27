@@ -548,6 +548,58 @@ CASES = [
         "actions": [{"class": "SetSceneIntent", "fields": {"scene": {"mode": "4d"}}}],
     },
     {
+        # v1.7（G3D02）：scene.assets 表写入 —— model3d 源由 seed 预置，
+        # valid 写入 + 清空两步。
+        "name": "set_scene_assets_write_then_clear",
+        "seed": [
+            {
+                "class": "UpsertSourceIntent",
+                "fields": {
+                    "source_id": "model-3d",
+                    "source": {
+                        "type": "model3d",
+                        "format": "3dtiles",
+                        "url": "https://example.test/tileset.json",
+                    },
+                },
+            }
+        ],
+        "actions": [
+            {
+                "class": "SetSceneAssetsIntent",
+                "fields": {
+                    "assets": [
+                        {
+                            "id": "asset-a",
+                            "source": "model-3d",
+                            "placement": {"anchor": [104.06, 30.67], "scale": 1.0},
+                            "vertical": {"datum": "egm96", "unit": "m"},
+                        }
+                    ]
+                },
+            },
+            {"class": "SetSceneAssetsIntent", "fields": {"assets": []}},
+        ],
+    },
+    {
+        # 悬空 model3d 源 → SCENE_ASSET_SOURCE_REF 阻塞（fail-closed 锚）。
+        "name": "set_scene_assets_dangling_source_blocking",
+        "actions": [
+            {
+                "class": "SetSceneAssetsIntent",
+                "fields": {
+                    "assets": [
+                        {
+                            "id": "asset-bad",
+                            "source": "no-such-model",
+                            "placement": {"anchor": [0.0, 0.0]},
+                        }
+                    ]
+                },
+            }
+        ],
+    },
+    {
         "name": "set_scene_terrain_ref_blocking",
         "actions": [
             {

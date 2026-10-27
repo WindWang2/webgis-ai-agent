@@ -622,6 +622,91 @@ def _parse_disclosure(comp: Any) -> Tuple[str, List[str], bool, Tuple[int, ...]]
     return ("", [], False, ())
 
 
+def _parse_scene_disclosure(
+    mapspec: Dict[str, Any], comp: Any,
+) -> Tuple[str, List[str]]:
+    """G3D05：scene_disclosure → (title, rows)，内容派生自 spec.scene。
+
+    矢量孪生通道语义：本通道渲染的是**平面 2D 投影**——scene.mode=3d
+    时如实披露"矢量导出已降级"；比例尺在本通道可信（无透视），与
+    canvas 透视截图通道（比例尺仅供参考）语义区分、不矛盾。
+    无 scene 块时返回空 rows（面板缺席，不虚构场景状态）。
+    """
+    scene = mapspec.get("scene") if isinstance(mapspec, dict) else None
+    if not isinstance(scene, dict):
+        return ("场景披露", [])
+    rows: List[str] = []
+    mode = scene.get("mode")
+    if mode == "3d":
+        rows.append("矢量导出为 2D 投影（三维透视不可矢量化，已降级）")
+        rows.append("原场景模式：3D 透视")
+    elif mode == "2.5d":
+        rows.append("矢量导出为 2D 投影（2.5D 场景已按平面表达）")
+        rows.append("原场景模式：2.5D")
+    else:
+        rows.append("场景模式：2D")
+    terrain = scene.get("terrain")
+    if isinstance(terrain, dict):
+        exag = terrain.get("exaggeration")
+        if isinstance(exag, (int, float)) and not isinstance(exag, bool):
+            exag_s = f"地形夸张系数：{exag:g}×"
+            if float(exag) > 1.0:
+                exag_s += "（垂直比例夸张，非真实坡度）"
+            rows.append(exag_s)
+        v_unit = terrain.get("vertical_unit")
+        if isinstance(v_unit, str) and v_unit:
+            rows.append(f"垂直单位：{v_unit}")
+        elev_ref = terrain.get("elevation_ref")
+        if isinstance(elev_ref, str) and elev_ref:
+            rows.append(f"高程基准：{elev_ref}")
+        elif rows and rows[0].startswith("矢量导出"):
+            rows.append("高程基准：未声明")
+    opts = comp.options or {}
+    for note in (opts.get("extraNotes") or [])[:4]:
+        if isinstance(note, str) and note.strip():
+            rows.append(note)
+    return ("场景披露", rows[:16])
+
+
+def _profile_to_chart(comp: Any) -> Optional[Dict[str, Any]]:
+    """G3D05：elevation_profile options.points → 矢量图表链 chart dict。
+
+    距离（m）格式化为 km 标签、高程为值；剖面本质是折线图，复用
+    ``render_chart_panel``（与 chart_panel 同渲染器，无第二套绘制）。
+    points 缺席/非法 → None（装配层记 profile_ref_unavailable）。
+    """
+    opts = comp.options or {}
+    points = opts.get("points")
+    if not isinstance(points, list) or len(points) < 2:
+        return None
+    chart_points: List[Dict[str, Any]] = []
+    for p in points:
+        if not isinstance(p, dict):
+            return None
+        d, e = p.get("distance_m"), p.get("elevation_m")
+        if not isinstance(d, (int, float)) or not isinstance(e, (int, float)):
+            return None
+        if isinstance(d, bool) or isinstance(e, bool):
+            return None
+        chart_points.append({
+            "name": f"{float(d) / 1000.0:.2f}km"
+            if float(d) >= 1000.0 else f"{float(d):.0f}m",
+            "value": float(e),
+        })
+    unit = opts.get("unit") if isinstance(opts.get("unit"), str) else "m"
+    title = "高程剖面"
+    datum = opts.get("verticalDatum")
+    if isinstance(datum, str) and datum:
+        title += f"（基准：{datum}）"
+    return {
+        "type": "line",
+        "title": title,
+        "points": chart_points,
+        "yAxisLabel": f"高程（{unit}）",
+        "xAxisLabel": "线路里程",
+    }
+
+
 def _parse_annotation(comp: Any) -> Tuple[List[str], List[Tuple[float, float]]]:
     """annotation → (静态行, callout 锚点列表)。行 ≤8、callout ≤8。"""
     opts = comp.options or {}
@@ -851,7 +936,7 @@ def _render_chrome_groups(
     tl_y = m + 8.0
     for comp in enabled:
         if comp.type in ("annotation", "statistics_panel", "chart_panel",
-                         "decision_panel"):
+                         "decision_panel", "elevation_profile"):
             # review P0-1②：组件级防御 —— 单组件渲染异常降级为该组件的
             # 结构化省略回执，绝不放大为整页编译失败（全空白 + 零证据）。
             try:
@@ -935,6 +1020,31 @@ def _render_chrome_groups(
                                             str(kind)[:32])
                             parts.append(frag)  # 占位卡入图（同前端占位语义）
                             tl_y += 58.0
+                            continue
+                        frag_h = _chart_panel_height(chart)
+                elif comp.type == "elevation_profile":
+                    # G3D05：剖面 = 距离-高程折线，投影为 line chart 复用
+                    # 矢量图表链（同一渲染器，无第二套折线绘制）。points
+                    # 缺席且 profileRef 绑定 → 结构化省略（不伪造内联数据）。
+                    chart = _profile_to_chart(comp)
+                    if chart is None:
+                        ref = (comp.options or {}).get("profileRef")
+                        _record_omitted(
+                            comp, "profile_ref_unavailable",
+                            f"ref {ref} 不可用" if isinstance(ref, str) and ref
+                            else "profile points 缺失或非法")
+                        continue
+                    if collapsed:
+                        frag = _render_collapsed_bar(m, tl_y, "profile",
+                                                     chart.get("title") or "高程剖面")
+                        frag_h = 30.0
+                    else:
+                        frag, status, prof_trunc = _render_chart_panel(
+                            m, tl_y, chart, kind_label="profile")
+                        truncations.extend(prof_trunc)
+                        if status != "drawn":
+                            _record_omitted(comp, "profile_ref_unavailable",
+                                            "剖面载荷非法")
                             continue
                         frag_h = _chart_panel_height(chart)
                 else:  # decision_panel
@@ -1088,6 +1198,34 @@ def _render_chrome_groups(
             _record_omitted(comp, "component_skipped_invalid",
                             type(exc).__name__)
 
+    # G3D05（ADR-0275）：场景披露 —— 内容派生自 spec.scene 单一真相。
+    # 矢量孪生是平面 2D 投影：比例尺在本通道可信，但三维场景已降级，
+    # 披露行必须如实写明（不冒充透视成品、也不静默吞掉降级事实）。
+    for comp in enabled:
+        if comp.type != "scene_disclosure":
+            continue
+        try:
+            sd_title, sd_rows = _parse_scene_disclosure(mapspec, comp)
+            if not sd_rows:
+                continue
+            collapsed = bool(getattr(comp, "collapsed", False))
+            if collapsed:
+                frag_h_sd = 30.0
+                frag = _render_collapsed_bar(m, legend_bottom - frag_h_sd - 10.0,
+                                             "scene", sd_title)
+            else:
+                frag_h_sd = 34.0 + 14.0 * len(sd_rows)
+                frag = _render_disclosure_panel(
+                    m, legend_bottom - frag_h_sd - 10.0, "scene",
+                    sd_title, sd_rows, accent=False)
+            parts.append(frag)
+            _mark_rendered(comp.type)
+        except Exception as exc:  # noqa: BLE001 — P0-1②：单组件降级
+            logger.warning("[mapspec-to-svg] component %s render failed: %s",
+                           getattr(comp, "id", "?"), exc)
+            _record_omitted(comp, "component_skipped_invalid",
+                            type(exc).__name__)
+
     # 矩阵未置位的 enabled 组件 = publication 矢量链丢弃（catch-all 回执）。
     # review P2-2：结构上非 chrome 的类型（绑定面/canvas-only）豁免 ——
     # 它们本就不该由 chrome 绘制，告警属语义噪音。
@@ -1189,6 +1327,13 @@ def compile_mapspec_to_svg_detailed(
     try:
         if not isinstance(mapspec, dict):
             mapspec = {}
+
+        # G3D05（ADR-0275）：矢量孪生无法保留三维透视模型 —— mode!=2d
+        # 必发结构化降级收据（不冒充可编辑 3D 矢量；2d 语义零噪音）。
+        _scene = mapspec.get("scene")
+        if isinstance(_scene, dict) and _scene.get("mode") in ("3d", "2.5d"):
+            _emit_diag("svg_3d_perspective_degrade",
+                       detail=str(_scene.get("mode")))
 
         try:
             target_dpi_val = float(target_dpi)
