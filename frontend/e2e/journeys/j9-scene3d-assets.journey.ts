@@ -228,8 +228,9 @@ test.describe('journey-9 三维场景资产 @smoke', () => {
     await canvas.click({
       position: { x: Math.round(box!.width / 2), y: Math.round(box!.height / 2) },
     });
-    // G3DV2-B M5：拾取卡标签 i18n 化（zh-CN locale 固定）。
-    await expect(page.locator('[aria-label="3D 资产拾取"]')).toBeVisible({ timeout: 8_000 });
+    // G3DV2-B M5：拾取卡标签 i18n 化（zh-CN locale 固定）；12s —— 全量
+    // 套件并行负载下（dev server 编译竞态）拾取渲染需要余量。
+    await expect(page.locator('[aria-label="3D 资产拾取"]')).toBeVisible({ timeout: 12_000 });
 
     // 4) Interaction IR feature_selected（closed 词表复用，layer_id 带
     //    scene3d: 前缀 —— 观察层事实，不造第二事件族）。

@@ -47,11 +47,13 @@ vi.mock('@/lib/utils/logger', () => ({
 }));
 
 // G3DV2-B M5：本地表象控制缝（renderer 门面）—— 单测打桩隔离 THREE 链。
-const scene3dSetAssetPresentation = vi.fn(() => true);
-const scene3dApplyLightingPreset = vi.fn(() => true);
+const scene3dSetAssetPresentation = vi.fn<(map: unknown, assetId: string, patch: { visible?: boolean; opacity?: number }) => boolean>(() => true);
+const scene3dApplyLightingPreset = vi.fn<(map: unknown, preset: string) => boolean>(() => true);
 vi.mock('@/lib/map-kit/renderer', () => ({
-  scene3dSetAssetPresentation: (...args: unknown[]) => scene3dSetAssetPresentation(...args),
-  scene3dApplyLightingPreset: (...args: unknown[]) => scene3dApplyLightingPreset(...args),
+  scene3dSetAssetPresentation: (...args: Parameters<typeof scene3dSetAssetPresentation>) =>
+    scene3dSetAssetPresentation(...args),
+  scene3dApplyLightingPreset: (...args: Parameters<typeof scene3dApplyLightingPreset>) =>
+    scene3dApplyLightingPreset(...args),
 }));
 
 import { SceneController } from './scene-controller';
