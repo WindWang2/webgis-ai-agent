@@ -126,6 +126,7 @@ function createDeps(): ExportDeps {
       getCenter: vi.fn(() => ({ lat: 39.9, lng: 116.4 })),
       getZoom: vi.fn(() => 10),
       getBearing: vi.fn(() => 0),
+    getPitch: vi.fn(() => 0),
       once: vi.fn((_event: string, cb: () => void) => cb()),
     } as any,
     getHudState: () => hudState,

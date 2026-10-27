@@ -106,6 +106,9 @@ _SEED_CATEGORIES: List[ComponentCategory] = [
     ComponentCategory(id="disclosure.methodology_note", name="disclosure.methodology_note", name_zh="方法论披露", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
     ComponentCategory(id="disclosure.uncertainty_panel", name="disclosure.uncertainty_panel", name_zh="不确定性面板", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
     ComponentCategory(id="disclosure.decision_panel", name="disclosure.decision_panel", name_zh="决策面板", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
+    # ── G3D05（ADR-0275）：三维制图产品组件类目 ──────────────────────
+    ComponentCategory(id="disclosure.scene_disclosure", name="disclosure.scene_disclosure", name_zh="场景披露", parent="disclosure", placement_domain="panel", output_targets=["interactive", "png", "pdf", "svg"]),
+    ComponentCategory(id="analysis.elevation_profile", name="analysis.elevation_profile", name_zh="高程剖面", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf", "svg"]),
     # ── inset sub ──────────────────────────────────────────────────
     ComponentCategory(id="inset.map", name="inset.map", name_zh="插图", parent="inset", placement_domain="overlay", output_targets=["interactive", "png", "pdf"]),
     ComponentCategory(id="inset.overview_map", name="inset.overview_map", name_zh="总览图", parent="inset", placement_domain="overlay", output_targets=["interactive", "png", "pdf"]),

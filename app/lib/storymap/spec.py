@@ -11,7 +11,9 @@ from typing import List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-STORYMAP_SPEC_SCHEMA_VERSION = "1.0"
+# G3D05（ADR-0275）v1.1：additive —— keyframe.scene（mode/exaggeration）
+# 与 chapter.visible_layer_ids；v1.0 文档 round-trip 不变。
+STORYMAP_SPEC_SCHEMA_VERSION = "1.1"
 
 # 叙事弧（引言 → 宏观态势 → 重点解剖 → 动态推演 → 决策建言），保序即章节序。
 ArcRole = Literal[
@@ -124,6 +126,19 @@ def estimate_duration(markdown: str) -> float:
     return float(min(120, max(2, math.ceil(n / _NARRATION_CHARS_PER_SECOND))))
 
 
+class KeyframeScene(_StoryModel):
+    """v1.1：关键帧携带的场景状态（G3D05）。
+
+    只覆盖**叙事镜头关心的两个旋钮**：mode（2d/2.5d/3d 表达）与
+    terrain exaggeration —— 完整场景配置（terrain 源/垂直基准等）仍由
+    会话 MapSpec.scene 单一真相持有，StoryMap 不复制第二份（与
+    scene_disclosure 组件同一防漂移纪律）。字段缺省 = 沿用当前场景。
+    """
+
+    mode: Optional[Literal["2d", "2.5d", "3d"]] = None
+    exaggeration: Optional[float] = Field(None, gt=0.0, le=10.0)
+
+
 class CameraKeyframe(_StoryModel):
     """单个相机关键帧：章内归一进度 t 处的观察位姿。"""
 
@@ -139,6 +154,8 @@ class CameraKeyframe(_StoryModel):
     pitch: float = Field(0.0, ge=PITCH_MIN, le=PITCH_MAX)
     bearing: float = Field(0.0, ge=BEARING_MIN, le=BEARING_MAX)
     easing: Literal["linear", "ease_in_out"] = "ease_in_out"
+    # v1.1：场景随镜头走（缺省 = 不改变当前场景）。
+    scene: Optional[KeyframeScene] = None
 
 
 class StoryChapter(_StoryModel):
@@ -151,6 +168,10 @@ class StoryChapter(_StoryModel):
     source_stage_ids: List[int] = Field(default_factory=list)  # 证据链阶段追溯
     linked_widget_ids: List[str] = Field(default_factory=list)
     highlight_refs: List[str] = Field(default_factory=list)
+    # v1.1（G3D05）：本章聚焦图层白名单（MapSpec layer id；≤32，有界）。
+    # 空列表 = 不改变图层可见性（沿用会话当前状态），非"全部隐藏"。
+    visible_layer_ids: List[str] = Field(
+        default_factory=list, max_length=32)
     duration_hint_s: Optional[float] = Field(None, ge=0.0)
 
     @model_validator(mode="after")
@@ -189,7 +210,7 @@ class StoryMapMetadata(_StoryModel):
     summary: str = ""
     theme: str = "dark-carto"
     language: str = "zh-CN"
-    engine_version: str = "storymap-1.0"
+    engine_version: str = "storymap-1.1"
 
 
 class StoryMapSpec(_StoryModel):

@@ -38,10 +38,16 @@ export function resolveFilterState(
 }
 
 /** Identity of spec-driven 3D camera (mode + explicit pitch/bearing/transition).
- *  Layer toggles bump liveGeneration but must not easeTo north-up (#1385 F01). */
+ *  Layer toggles bump liveGeneration but must not easeTo north-up (#1385 F01).
+ *  G3D05：terrain 身份（source/exaggeration）并入 —— 仅改夸张系数也必须
+ *  重放地形效果（enable3DTerrain 的 setTerrain 参数随身份变化）。 */
 export function sceneCameraIdentity(committed: unknown): string {
   const scene = (committed as {
-    scene?: { mode?: string; camera?: { pitch?: number; bearing?: number; transition_ms?: number } }
+    scene?: {
+      mode?: string
+      camera?: { pitch?: number; bearing?: number; transition_ms?: number }
+      terrain?: { source?: string; exaggeration?: number }
+    }
   } | null)?.scene
   if (!scene || typeof scene !== "object") return "2d"
   const mode = typeof scene.mode === "string" && scene.mode ? scene.mode : "2d"
@@ -49,7 +55,10 @@ export function sceneCameraIdentity(committed: unknown): string {
   const pitch = camera && typeof camera.pitch === "number" ? camera.pitch : ""
   const bearing = camera && typeof camera.bearing === "number" ? camera.bearing : ""
   const transition = camera && typeof camera.transition_ms === "number" ? camera.transition_ms : ""
-  return `${mode}:${pitch}:${bearing}:${transition}`
+  const terrain = scene.terrain
+  const exag = terrain && typeof terrain.exaggeration === "number" ? terrain.exaggeration : ""
+  const terrainSrc = terrain && typeof terrain.source === "string" ? terrain.source : ""
+  return `${mode}:${pitch}:${bearing}:${transition}:${exag}:${terrainSrc}`
 }
 
 /** Identity of spec-driven 3D scene assets（v1.7 G3D02）：mode + 资产
@@ -98,6 +107,7 @@ export function sceneAssetsIdentity(committed: unknown): string {
   return `${mode}#${digest}`
 }
 import { MapActionHandler } from "./map-action-handler"
+import { SceneController } from "./scene-controller"
 import { SketchEditor } from "./sketch-editor"
 import { SpatialSketchTool } from "@/components/copilot/spatial-sketch-tool"
 import { WidgetHost } from "@/components/copilot/generative-widgets/widget-host"
@@ -742,6 +752,18 @@ export function MapPanel({
     if (!map || !mapReady) return
     renderer.syncSceneAssets(map, getCommittedMapSpec())
   }, [mapReady, sceneAssetsKey, currentMapStyle])
+
+  // G3D05（ADR-0275）：Agent 场景写入 → is3D 单向桥。此前 set_map_scene
+  // 只写 spec，is3D 闸门留在 false，Agent 的 3D 场景从不激活（语义动作
+  // 人机分叉）。单向：scene.mode∈{3d,2.5d} 时拉起 is3D；scene 缺席/2d
+  // **不强制关闭** —— 用户本地 3D 开关（无会话/遗留路径）不被服务端
+  // 状态回拽，用户控制优先。
+  useEffect(() => {
+    const sceneMode = (getCommittedMapSpec() as any)?.scene?.mode
+    if ((sceneMode === "3d" || sceneMode === "2.5d") && !useHudStore.getState().is3D) {
+      useHudStore.getState().setIs3D(true)
+    }
+  }, [sceneCameraKey, sceneAssetsKey])
 
   // Reconcile the committed MapSpec plus a pending overlay. HUD is a cache
   // and source payload host, not the Desired author (ADR-0054 / #643).
@@ -1792,6 +1814,11 @@ export function MapPanel({
         brushSelectActive={brushSelectActive}
         onToggleBrushSelect={() => useHudStore.getState().setActiveMapTool(brushSelectActive ? null : 'brush_select')}
       />
+
+      {/* G3D05（ADR-0275）：场景控制器 —— 2D/2.5D/3D 人机同语义操作面
+          （读写均走 committed MapSpec.scene；Agent set_map_scene 与用户
+          操作汇合同一事务管线）。 */}
+      <SceneController />
 
       {/* Runtime V4：框选矩形覆盖层 —— 命令式更新（mousedown/mousemove 直接
           写 style，60Hz 拖拽零 React 渲染；display 由 paintRect 管理）。 */}

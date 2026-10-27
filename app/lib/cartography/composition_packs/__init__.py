@@ -20,12 +20,13 @@ from app.lib.cartography.composition_packs.domain_reports import (
 )
 from app.lib.cartography.composition_packs.network_transport import NETWORK_TRANSPORT_PACK
 from app.lib.cartography.composition_packs.remote_sensing import REMOTE_SENSING_PACK
+from app.lib.cartography.composition_packs.scene_3d import SCENE_3D_PACK
 from app.lib.cartography.composition_packs.statistical import STATISTICAL_PACK
 from app.lib.cartography.composition_packs.terrain_hydrology import TERRAIN_HYDROLOGY_PACK
 from app.lib.cartography.composition_templates import MapCompositionTemplate
 
 # 确定性顺序（统计 → 网络 → 地形水文 → 遥感 → 时序 → 风险环境 →
-# 规划公平 → 决策 → 交付物）；新增域包在此追加。
+# 规划公平 → 决策 → 交付物 → 三维场景）；新增域包在此追加。
 COMPOSITION_PACK_TEMPLATES: List[MapCompositionTemplate] = [
     *STATISTICAL_PACK,
     *NETWORK_TRANSPORT_PACK,
@@ -37,6 +38,7 @@ COMPOSITION_PACK_TEMPLATES: List[MapCompositionTemplate] = [
     *DECISION_PACK,
     *DELIVERABLES_PACK,
     *CORE_PURPOSES_PACK,
+    *SCENE_3D_PACK,
 ]
 
 __all__ = ["COMPOSITION_PACK_TEMPLATES"]

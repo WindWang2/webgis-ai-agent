@@ -222,6 +222,10 @@ class TestGateWiring:
             "SCENE_ASSET_DUPLICATE_ID",
             "SCENE_ASSET_EXCEEDS_BUDGET",
             "SCENE_ASSET_NO_EVIDENCE",
+            # G3D05（ADR-0275）：三维制图产品向扩展
+            "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE",
+            "SCENE_LABEL_OCCLUSION_RISK",
+            "SCENE_EXPORT_VECTOR_DEGRADE",
         }
 
     def test_blocking_codes_match_coordinator_validate(self):
@@ -230,3 +234,123 @@ class TestGateWiring:
         spec["scene"]["terrain"]["source"] = "missing-dem"
         assert evaluate_scene_quality(spec)["passed"] is False
         assert validate_mapspec(spec)["success"] is False
+
+
+# ── G3D05（ADR-0275）：三维制图产品向质量检查 ────────────────────────────
+
+
+def _spec_3d(**overrides):
+    spec = {
+        "version": "1.6",
+        "view": {"center": [104.0, 30.6], "zoom": 11, "pitch": 0, "bearing": 0},
+        "sources": {"dem": {"type": "raster-dem"}},
+        "layers": [],
+        "scene": {
+            "mode": "3d",
+            "terrain": {"source": "dem", "exaggeration": 1.0, "vertical_unit": "m"},
+            "camera": {"pitch": 50, "bearing": -15},
+        },
+        "layout": {"components": []},
+    }
+    spec.update(overrides)
+    return spec
+
+
+class TestScaleTrustPerspective:
+    def test_pitch_with_scale_bar_no_disclosure_warns(self):
+        spec = _spec_3d(view={"center": [104, 30.6], "zoom": 11, "pitch": 45})
+        spec["layout"]["components"] = [{"id": "s", "type": "scale_bar"}]
+        report = evaluate_scene_quality(spec)
+        warns = [f for f in report["findings"]
+                 if f["code"] == "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE"]
+        assert warns and warns[0]["severity"] == "warning"
+        assert "scene_disclosure" in warns[0]["detail"]
+
+    def test_pitch_with_scale_bar_and_disclosure_downgrades_to_info(self):
+        spec = _spec_3d(view={"center": [104, 30.6], "zoom": 11, "pitch": 45})
+        spec["layout"]["components"] = [
+            {"id": "s", "type": "scale_bar"},
+            {"id": "sd", "type": "scene_disclosure"},
+        ]
+        report = evaluate_scene_quality(spec)
+        findings = [f for f in report["findings"]
+                    if f["code"] == "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE"]
+        assert findings and findings[0]["severity"] == "info"
+
+    def test_flat_view_scale_trusted_no_finding(self):
+        spec = _spec_3d(view={"center": [104, 30.6], "zoom": 11, "pitch": 0})
+        spec["layout"]["components"] = [{"id": "s", "type": "scale_bar"}]
+        report = evaluate_scene_quality(spec)
+        assert not [f for f in report["findings"]
+                    if f["code"] == "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE"]
+
+    def test_camera_pitch_fallback_used_when_view_pitch_absent(self):
+        # view 无 pitch 键 → 回退 scene.camera.pitch（推荐档）；注意
+        # view.pitch=0 是合法的当前平面相机，必须优先于推荐档（下一个
+        # 用例锁该语义）。
+        spec = _spec_3d()
+        spec["view"] = {"center": [104, 30.6], "zoom": 11}
+        spec["layout"]["components"] = [{"id": "s", "type": "scale_bar"}]
+        report = evaluate_scene_quality(spec)
+        assert [f for f in report["findings"]
+                if f["code"] == "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE"]
+
+    def test_view_pitch_zero_wins_over_camera_recommendation(self):
+        spec = _spec_3d()  # view.pitch=0（用户在平面视角） vs camera.pitch=50
+        spec["layout"]["components"] = [{"id": "s", "type": "scale_bar"}]
+        report = evaluate_scene_quality(spec)
+        assert not [f for f in report["findings"]
+                    if f["code"] == "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE"]
+
+    def test_disabled_scale_bar_not_flagged(self):
+        spec = _spec_3d(view={"center": [104, 30.6], "zoom": 11, "pitch": 45})
+        spec["layout"]["components"] = [
+            {"id": "s", "type": "scale_bar", "enabled": False}]
+        report = evaluate_scene_quality(spec)
+        assert not [f for f in report["findings"]
+                    if f["code"] == "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE"]
+
+
+class TestLabelOcclusion:
+    def test_high_pitch_with_labels_info(self):
+        spec = _spec_3d(view={"center": [104, 30.6], "zoom": 11, "pitch": 55})
+        spec["layers"] = [{"id": "l1", "type": "symbol", "label": {"mode": "top_n"}}]
+        report = evaluate_scene_quality(spec)
+        occl = [f for f in report["findings"]
+                if f["code"] == "SCENE_LABEL_OCCLUSION_RISK"]
+        assert occl and occl[0]["severity"] == "info"
+
+    def test_low_pitch_no_flag(self):
+        spec = _spec_3d(view={"center": [104, 30.6], "zoom": 11, "pitch": 30})
+        spec["layers"] = [{"id": "l1", "type": "symbol", "label": {"mode": "top_n"}}]
+        report = evaluate_scene_quality(spec)
+        assert not [f for f in report["findings"]
+                    if f["code"] == "SCENE_LABEL_OCCLUSION_RISK"]
+
+
+class TestVectorExportDegrade:
+    def test_3d_vector_targets_info(self):
+        report = evaluate_scene_quality(_spec_3d(), export_targets=["svg", "png"])
+        deg = [f for f in report["findings"]
+               if f["code"] == "SCENE_EXPORT_VECTOR_DEGRADE"]
+        assert deg and deg[0]["severity"] == "info"
+        assert "svg" in deg[0]["detail"]
+
+    def test_2d_mode_no_degrade_finding(self):
+        spec = _spec_3d()
+        spec["scene"] = {"mode": "2d"}
+        report = evaluate_scene_quality(spec, export_targets=["svg"])
+        assert not [f for f in report["findings"]
+                    if f["code"] == "SCENE_EXPORT_VECTOR_DEGRADE"]
+
+    def test_no_targets_skips_check(self):
+        report = evaluate_scene_quality(_spec_3d())
+        assert not [f for f in report["findings"]
+                    if f["code"] == "SCENE_EXPORT_VECTOR_DEGRADE"]
+
+
+def test_scene_quality_codes_vocabulary_extended():
+    for code in ("SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE",
+                 "SCENE_LABEL_OCCLUSION_RISK",
+                 "SCENE_EXPORT_VECTOR_DEGRADE"):
+        assert code in SCENE_QUALITY_CODES

@@ -28,6 +28,24 @@ ARC_BEARING_BIAS: Dict[str, float] = {
     "dynamic_simulation": -20.0,
 }
 
+# G3D05（v1.1）：弧角色 → 叙事场景默认档（keyframe.scene 投影源）。
+# 解剖/推演在低空倾斜镜头下值得立体表达（2.5d + 温和夸张 1.5，均在
+# scene_planning 证据门之内 —— 夸张声明随场景披露披露，不虚构证据）；
+# 引言/宏观/建言保持平面叙事。编译器只在会话具备高程证据时投影该档
+# （无证据 → 不写 scene，沿用平面 —— fail-closed 同源）。
+ARC_SCENE_DEFAULTS: Dict[str, Dict[str, object]] = {
+    "introduction": {"mode": "2d"},
+    "macro_situation": {"mode": "2d"},
+    "focus_dissection": {"mode": "2.5d", "exaggeration": 1.5},
+    "dynamic_simulation": {"mode": "2.5d", "exaggeration": 1.5},
+    "recommendation": {"mode": "2d"},
+}
+
+
+def scene_for_arc(arc_role: ArcRole | str) -> Dict[str, object] | None:
+    """弧角色 → 场景默认档（无该角色映射 → None = 不改变场景）。"""
+    return ARC_SCENE_DEFAULTS.get(str(arc_role))
+
 ZOOM_MIN, ZOOM_MAX = 3.0, 18.0
 PITCH_MAX = 60.0
 # 跨度收缩阈值（°）：极小 bbox 追加俯仰强调微观；超大 bbox 压平为平面叙事。

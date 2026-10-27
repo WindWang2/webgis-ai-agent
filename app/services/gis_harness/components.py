@@ -24,6 +24,7 @@ from app.contracts.cartography_components import (  # noqa: F401
     MAX_TABLE_COLUMN_NAME,
     MAX_TABLE_COLUMNS,
     MAX_UNCERTAINTY_ITEMS,
+    MAX_PROFILE_POINTS,
     MULTI_INSTANCE_TYPES,
     CartographyComponent,
     ComponentPlacement,
@@ -32,8 +33,10 @@ from app.contracts.cartography_components import (  # noqa: F401
     normalize_placement,
     validate_annotation_payload,
     validate_decision_payload,
+    validate_elevation_profile_payload,
     validate_inset_payload,
     validate_methodology_payload,
+    validate_scene_disclosure_payload,
     validate_stats_payload,
     validate_table_binding,
     validate_uncertainty_payload,
@@ -464,6 +467,76 @@ def decision_panel_component(
     return CartographyComponent(
         id=component_id, type="decision_panel", position=position,
         priority=48, variant=coerce_variant("decision_panel", variant),
+        options=options,
+    )
+
+def scene_disclosure_component(
+    extra_notes: Optional[List[str]] = None,
+    component_id: str = "scene-disclosure",
+    variant: str = "default",
+    position: str = "bottom-right",
+) -> CartographyComponent:
+    """场景披露组件（G3D05 / ADR-0275）。
+
+    内容（mode/exaggeration/垂直基准/比例尺可信度）由渲染与导出两侧
+    从 spec.scene 单一真相派生；options 只承载附注，禁止复制场景字段
+    （validate_scene_disclosure_payload fail-closed）。
+    """
+    options: Dict[str, Any] = {}
+    if extra_notes:
+        options["extraNotes"] = [str(n)[:160] for n in extra_notes[:4]]
+    err = validate_scene_disclosure_payload(options)
+    if err:
+        raise ValueError(err)
+    return CartographyComponent(
+        id=component_id, type="scene_disclosure", position=position,
+        priority=45, variant=coerce_variant("scene_disclosure", variant),
+        options=options,
+    )
+
+def elevation_profile_component(
+    points: Optional[List[Dict[str, Any]]] = None,
+    profile_ref: str = "",
+    unit: str = "m",
+    vertical_datum: str = "",
+    component_id: str = "elevation-profile",
+    variant: str = "default",
+    position: str = "bottom-left",
+) -> CartographyComponent:
+    """高程剖面组件（G3D05 / ADR-0275）。
+
+    points：{distance_m, elevation_m} 单调里程序列（≤MAX_PROFILE_POINTS、
+    有限数值）；或 profile_ref（ref:profile-* 工件绑定，G3D03 量测契约
+    合并后由其填充）。二者至少其一，校验 fail-closed。
+    """
+    options: Dict[str, Any] = {"unit": unit[:8]}
+    if vertical_datum:
+        options["verticalDatum"] = vertical_datum[:32]
+    if profile_ref:
+        options["profileRef"] = profile_ref[:128]
+    if points is not None:
+        # R1-P3（评审修复）：超界 fail-closed（此前静默截断重塑数据）——
+        # 与 validate_elevation_profile_payload 其它路径同纪律。
+        if len(points) > MAX_PROFILE_POINTS:
+            raise ValueError(
+                f"points 超过上限 {MAX_PROFILE_POINTS} 点（不静默截断）")
+        clean: List[Dict[str, Any]] = []
+        for p in points:
+            d, e = p.get("distance_m"), p.get("elevation_m")
+            if not isinstance(d, (int, float)) or not isinstance(e, (int, float)):
+                raise ValueError("points 项必须含数值 distance_m/elevation_m")
+            if isinstance(d, bool) or isinstance(e, bool):
+                raise ValueError("points 项必须含数值 distance_m/elevation_m")
+            if not math.isfinite(float(d)) or not math.isfinite(float(e)):
+                raise ValueError("points 数值必须有限（NaN/Inf 非法）")
+            clean.append({"distance_m": float(d), "elevation_m": float(e)})
+        options["points"] = clean
+    err = validate_elevation_profile_payload(options)
+    if err:
+        raise ValueError(err)
+    return CartographyComponent(
+        id=component_id, type="elevation_profile", position=position,
+        priority=44, variant=coerce_variant("elevation_profile", variant),
         options=options,
     )
 

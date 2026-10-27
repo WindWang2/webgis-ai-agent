@@ -90,6 +90,10 @@ _PANEL_KIND_TO_TYPE: Dict[str, str] = {
     "methodology": "methodology_note",
     "uncertainty": "uncertainty_panel",
     "decision": "decision_panel",
+    # G3D05（ADR-0275）：三维制图产品面板族（profile 与 chart 同渲染
+    # 链但独立 data-kind；scene 内容派生自 spec.scene，非 options 内联）。
+    "scene": "scene_disclosure",
+    "profile": "elevation_profile",
 }
 
 #: 组件 type → chrome-panel data-kind（反向表，expected 面消费）。
@@ -104,6 +108,9 @@ _PANEL_INLINE_DATA: Dict[str, Tuple[str, Optional[str]]] = {
     "methodology_note": ("warnings", None),
     "uncertainty_panel": ("uncertainty", None),
     "decision_panel": ("rows", None),
+    "elevation_profile": ("points", None),
+    # scene_disclosure 内容派生自 spec.scene；options 内联面 = 附注行。
+    "scene_disclosure": ("extraNotes", None),
 }
 
 _COLOR_PREFIX_RE = re.compile(r"^(#|rgb|hsl)", re.IGNORECASE)

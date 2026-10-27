@@ -177,6 +177,17 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "底图瓦片源加载失败（网络/401/403/429），底图可能缺失；"
             "可切换其他可用底图或配置本地底图（{detail}）",
         ),
+        # —— G3D05（ADR-0275）：三维制图产品导出诚实 ——
+        RenderDiagnosticSpec(
+            "scale_unreliable_perspective", "warning",
+            "透视视角（pitch>{detail}°）下屏幕比例尺被透视压缩失真，"
+            "导出件比例尺仅供参考；场景披露卡应随图注明",
+        ),
+        RenderDiagnosticSpec(
+            "svg_3d_perspective_degrade", "info",
+            "矢量导出无法保留三维透视模型，已降级为 2D 平面投影表达"
+            "（scene.mode={detail}）—— 不是可编辑的 3D 矢量",
+        ),
         RenderDiagnosticSpec(
             "scene_terrain_no_source_air_gapped", "warning",
             "离线(air_gapped)部署且未绑定会话 DEM 源，3D 地形已显式禁用"
@@ -421,12 +432,22 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "frontend/lib/mapspec-runtime/runtime.ts",
         "frontend/lib/map-kit/export-chrome.ts",
     ),
+    # G3D01 底图/地形源治理披露 ——
     "scene_basemap_unavailable": (
         "frontend/lib/mapspec-runtime/runtime.ts",
         "frontend/lib/map-kit/export-chrome.ts",
     ),
     "scene_terrain_no_source_air_gapped": (
         "frontend/lib/map-kit/terrain-governance.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    # G3D05（ADR-0275）：矢量孪生编译期发射（scene.mode!=2d 必发）；
+    # 前端 canvas 投影链的透视比例尺披露发射器随 scene-export-disclosure
+    # 模块在同一 PR 内登记（frontend/lib/map-kit/scene-export-disclosure.ts
+    # + export-chrome.ts —— 见 EMITTER_REGISTRY 前端段）。
+    "svg_3d_perspective_degrade": ("app.services.mapspec_to_svg",),
+    "scale_unreliable_perspective": (
+        "frontend/lib/map-kit/scene-export-disclosure.ts",
         "frontend/lib/map-kit/export-chrome.ts",
     ),
     # ADR-0157 P1：高 DPI 渲染策略 —— 发射器在 lib/export/highdpi.ts 单源；

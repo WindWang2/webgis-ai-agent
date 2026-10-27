@@ -24,7 +24,22 @@ async def compile_for_session(db: AsyncSession, conv: Conversation) -> object:
         {"role": m.role, "content": m.content or ""}
         for m in result.scalars().all()
     ]
-    return compile_story_map(messages=messages, session_id=str(conv.id))
+    # G3D05 v1.1：会话 mapspec 有 raster-dem 源才投影叙事场景档
+    #（fail-closed —— 无高程证据不虚构立体叙事）。
+    scene_enabled = False
+    try:
+        from app.services.mapspec.store import mapspec_store_instance
+
+        stored = await mapspec_store_instance.get_mapspec(str(conv.id))
+        sources = stored.get("sources") if isinstance(stored, dict) else None
+        scene_enabled = isinstance(sources, dict) and any(
+            isinstance(src, dict) and src.get("type") == "raster-dem"
+            for src in sources.values()
+        )
+    except Exception:  # noqa: BLE001 — 证据探测失败按无证据处理
+        scene_enabled = False
+    return compile_story_map(
+        messages=messages, session_id=str(conv.id), scene_enabled=scene_enabled)
 
 
 __all__ = ["compile_for_session"]

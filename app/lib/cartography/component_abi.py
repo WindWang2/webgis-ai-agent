@@ -233,6 +233,23 @@ COMPONENT_ABI_META: Dict[str, ComponentABIMeta] = {
     "methodology_note": ComponentABIMeta(props_schema={
         "style": _f("str", max_len=32),
     }),
+    # G3D05（ADR-0275）：三维制图产品组件。scene_disclosure 场景状态
+    # 由 spec.scene 派生，props 只承载样式与附注（payload 校验器禁写
+    # 场景字段）；elevation_profile 数据走 points/profileRef（结构化
+    # payload 校验在 validate_elevation_profile_payload）。
+    "scene_disclosure": ComponentABIMeta(props_schema={
+        "variant": _f("str", enum=("default", "compact"), default="default",
+                      description="披露卡样式变体"),
+    }),
+    "elevation_profile": ComponentABIMeta(props_schema={
+        "variant": _f("str", enum=("default", "compact"), default="default",
+                      description="剖面面板样式变体"),
+        "profileRef": _f("str", max_len=128,
+                         description="ref:profile-* 工件绑定（与 points 二选一）"),
+        "unit": _f("str", max_len=8, default="m", description="高程单位"),
+        "verticalDatum": _f("str", max_len=32,
+                            description="垂直基准（如 EGM96；缺省=未声明）"),
+    }),
     # options 键级为空的类型：显式空表（有 ABI 条目 = 版本可被身份块捕获）。
     # 注：basemap 是 renderer 矩阵占位（EXPORT_PARITY_EXEMPT_TYPES），非
     # 注册 descriptor，不入本表 —— 见 validate_component_abi orphan 审计。
@@ -441,6 +458,9 @@ _RENDERER_CONSUMED_KEYS: Dict[str, set] = {
     "north_arrow": {"showDeclination"},
     "continuous_colorbar": {"ticks"},
     "graticule": {"opacity"},
+    # G3D05：scene_disclosure 场景状态从 spec.scene 派生（无 options 键）；
+    # elevation_profile 工件绑定与垂直基准由前端剖面面板/工件通道消费。
+    "elevation_profile": {"profileRef", "verticalDatum"},
 }
 
 

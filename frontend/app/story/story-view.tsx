@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { useMap } from 'react-map-gl/maplibre';
+import type { Map as MaplibreMap } from 'maplibre-gl';
 import {
   ArrowDown,
   ArrowUp,
@@ -17,8 +18,7 @@ import {
   HardDriveDownload,
   Pencil,
   Share2,
-  X,
-} from 'lucide-react';
+  X, Save } from 'lucide-react';
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
@@ -35,6 +35,12 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 // #552: 地图还原（视口 + 底图 + 图层）在 lib/session/map-state-restore ——
 // helper 不得作为页面导出（CI `next build` 拒绝非 Page 导出字段）。
 import { applyStoryMapState, type SessionMapState } from '@/lib/session/map-state-restore';
+import { commitUserScene, mergeSceneRotary } from '@/lib/mapspec/scene-mutation';
+import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import {
+  loadSessionStorySpec,
+  saveSessionStorySpec,
+} from '@/lib/api/storymap';
 import { useToastStore } from '@/components/ui/toast';
 import { MapErrorBoundary } from '@/components/map/map-error-boundary';
 import { useT } from '@/lib/i18n/useT';
@@ -111,6 +117,8 @@ export function StoryView(): React.ReactElement {
   // 播放器
   const [activeId, setActiveId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  // G3D05：用户接管相机暂停标记（区别于自然播完/手动暂停 —— 恢复按钮提示）
+  const [takeoverPaused, setTakeoverPaused] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<string | null>(null);
   const [mapFade, setMapFade] = useState(false);
 
@@ -259,6 +267,45 @@ export function StoryView(): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- cameras/visibleChapters 由 activePos 驱动即可
   }, [activePos, reducedMotion, specView, specActiveId]);
 
+  // G3D05（ADR-0275 D6）：章节场景档应用 —— v1.1 keyframe.scene 携带
+  // mode/exaggeration 时经用户场景通道写入会话 spec（与场景控制器/Agent
+  // 同一 SetSceneIntent 管线；播放端不是第二真相源）。null/缺省 = 沿用
+  // 当前场景（不写）。连带 hud is3D 联动（地形效果闸门）。
+  // R1-P1a（评审修复）：与 committed scene **合并**后提交 —— SetSceneIntent
+  // 整笔替换，keyframe 只带两旋钮：缺 terrain.source 的载荷必 422，且
+  // mode=2d 章节会把会话 terrain（源/垂直基准）整块抹掉。合并保留既有
+  // terrain 块、仅覆盖声明过的旋钮；失败（非 committed）toast 提示。
+  useEffect(() => {
+    if (!specView || !specActiveId) return;
+    const scene = specView.scenes[specActiveId];
+    if (!scene || (!scene.mode && scene.exaggeration === undefined)) return;
+    const { is3D, setIs3D } = useHudStore.getState();
+    const next3D = scene.mode === '3d' || scene.mode === '2.5d';
+    if (next3D && !is3D) setIs3D(true);
+    const committed = getCommittedMapSpec() as
+      | { scene?: Parameters<typeof mergeSceneRotary>[1] }
+      | null;
+    // R2-1（评审残余清偿）：committed scene 无 terrain 块时解析 raster-dem
+    // 源 id 兜底（keyframe 只带 exaggeration 也能合法落库，不再 422 空转）。
+    const sources = (
+      getCommittedMapSpec() as
+        | { sources?: Record<string, { type?: string }> }
+        | null
+    )?.sources;
+    const demSourceId =
+      sources && typeof sources === 'object'
+        ? Object.entries(sources).find(([, src]) => src?.type === 'raster-dem')?.[0] ?? null
+        : null;
+    const payload = mergeSceneRotary(scene, committed?.scene, demSourceId);
+    void commitUserScene(payload).then((outcome) => {
+      if (outcome.outcome === 'failed') {
+        useToastStore.getState().addToast(t('sceneApplyFailed'), 'warning');
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 章节切换驱动；合并读当前 committed
+  }, [specView, specActiveId]);
+
+
   // 会话装载（#552：错误可见、清残留、匿名引导 —— 契约与测试锁定）
   useEffect(() => {
     const controller = new AbortController();
@@ -266,6 +313,7 @@ export function StoryView(): React.ReactElement {
     setLoadError(null);
     setMessages([]);
     setPlaying(false);
+    setTakeoverPaused(false);
     setActiveId(null);
     setChapterState(null);
     setMapState(null);
@@ -328,23 +376,41 @@ export function StoryView(): React.ReactElement {
         // 用户在此期间 seek/播放必须被视为有效导航。
         if (msgs.length > 0 && !controller.signal.aborted) {
           setLoading(false);
+          // G3D05（ADR-0275 D6）：会话已保存的 StoryMap 资产优先（可恢复的
+          // 项目资产）；无资产/损坏（422）→ 现场编译（既有语义）。
+          let specApplied = false;
           try {
-            const spec = await compileStorySpec(
-              {
-                session_id: sessionId,
-                messages: msgs.map((m) => ({ role: m.role, content: m.content })),
-              },
-              { signal: controller.signal },
-            );
-            if (!controller.signal.aborted && isValidStorySpecDto(spec)) {
-              setStorySpec(spec);
-              // 迟到落位（评审 P2-3）：慢后端响应不得覆盖用户已进行的 seek/播放
+            const saved = await loadSessionStorySpec(
+              sessionId, { signal: controller.signal, ownerToken });
+            if (!controller.signal.aborted && isValidStorySpecDto(saved)) {
+              setStorySpec(saved);
               if (!userNavigatedRef.current) {
-                setActiveId(spec.chapters[0]?.id ?? null);
+                setActiveId(saved.chapters[0]?.id ?? null);
               }
+              specApplied = true;
             }
           } catch {
-            /* 编排降级：回放主链路不受影响 */
+            /* 无资产（404）或旧后端：编译路径兜底 */
+          }
+          if (!specApplied && !controller.signal.aborted) {
+            try {
+              const spec = await compileStorySpec(
+                {
+                  session_id: sessionId,
+                  messages: msgs.map((m) => ({ role: m.role, content: m.content })),
+                },
+                { signal: controller.signal },
+              );
+              if (!controller.signal.aborted && isValidStorySpecDto(spec)) {
+                setStorySpec(spec);
+                // 迟到落位（评审 P2-3）：慢后端响应不得覆盖用户已进行的 seek/播放
+                if (!userNavigatedRef.current) {
+                  setActiveId(spec.chapters[0]?.id ?? null);
+                }
+              }
+            } catch {
+              /* 编排降级：回放主链路不受影响 */
+            }
           }
         }
       } catch (err) {
@@ -371,6 +437,7 @@ export function StoryView(): React.ReactElement {
       return atEnd ? playlist[0] : (cur ?? playlist[0] ?? null);
     });
     setPlaying(true);
+    setTakeoverPaused(false);
   }, [playing, playlist]);
 
   const handleShare = useCallback(() => {
@@ -415,6 +482,40 @@ export function StoryView(): React.ReactElement {
       useToastStore.getState().addToast(describeApiError(err, t('shareCardFailed')), 'error');
     }
   }, [getMapInstance, activeChapter, activePos, visibleChapters.length, t]);
+  // G3D05：用户接管相机 → 暂停自动播放（Pause & Resume，用户控制优先）。
+  // 手势判定用 dragstart/pitchstart/rotatestart（非程序化 easeTo）。
+  useEffect(() => {
+    if (!playing) return;
+    let map: MaplibreMap | null = null;
+    try {
+      map = getMapInstance();
+    } catch {
+      return;
+    }
+    if (!map) return;
+    // R1-P1b（评审修复）：pitchstart/rotatestart 在 maplibre 相机渲染环
+    // 对**任何** pitch/bearing 变化都触发（含程序化 flyTo/jumpTo，无
+    // originalEvent）—— autoplay 的章节 fly_to 会自暂停。手势事件带
+    // originalEvent（map-panel 手势仲裁同款门控），仅其到场才判接管。
+    const takeOver = (e?: { originalEvent?: unknown }) => {
+      if (!e || !e.originalEvent) return;
+      setPlaying(false);
+      setTakeoverPaused(true);
+    };
+    map.on('dragstart', takeOver);
+    map.on('pitchstart', takeOver);
+    map.on('rotatestart', takeOver);
+    // R2-3：滚轮/双指缩放同为用户接管（map-panel 手势仲裁含 zoomstart，
+    // 此前不一致 —— 缩放不打断播放）。
+    map.on('zoomstart', takeOver);
+    return () => {
+      map?.off('dragstart', takeOver);
+      map?.off('pitchstart', takeOver);
+      map?.off('rotatestart', takeOver);
+      map?.off('zoomstart', takeOver);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getMapInstance 经 ref 稳定
+  }, [playing]);
 
   const handleNarrativePdf = useCallback(async () => {
     const map = getMapInstance();
@@ -480,6 +581,30 @@ export function StoryView(): React.ReactElement {
         setBundleExporting(false);
       }
     }, [storySpec, t]);
+
+  // G3D05（ADR-0275 D6）：保存会话 StoryMap 资产（可恢复项目资产；
+  // POST /storymap/sessions/{id}/spec，revision 单调 +1）。
+  const handleSaveAsset = useCallback(async () => {
+    if (!storySpec) return;
+    const sid = sessionIdRef.current;
+    if (!sid) {
+      useToastStore.getState().addToast(t('assetSaveNoSession'), 'warning');
+      return;
+    }
+    setBundleExporting(true);
+    try {
+      const ownerToken = await requestStoryOwnerToken(sid);
+      const res = await saveSessionStorySpec(sid, storySpec, { ownerToken });
+      if (sessionIdRef.current !== sid) return;
+      useToastStore.getState().addToast(t('assetSaved', { revision: res.revision }), 'success');
+    } catch (err) {
+      if (sessionIdRef.current !== sid) return;
+      devOnly.error('story asset save failed:', err);
+      useToastStore.getState().addToast(describeApiError(err, t('assetSaveFailed')), 'error');
+    } finally {
+      setBundleExporting(false);
+    }
+  }, [storySpec, t]);
 
   if (loading) {
     return (
@@ -547,15 +672,26 @@ export function StoryView(): React.ReactElement {
                 <FileDown className="h-4 w-4" />
               </button>
               {specView ? (
-                <button
-                  aria-label={t('exportBundle')}
-                  title={t('exportBundleTitle')}
-                  onClick={() => void handleExportBundle()}
-                  disabled={bundleExporting || Boolean(pdfProgress)}
-                  className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
-                >
-                  <HardDriveDownload className="h-4 w-4" />
-                </button>
+                <>
+                  <button
+                    aria-label={t('saveAsset')}
+                    title={t('saveAssetTitle')}
+                    onClick={() => void handleSaveAsset()}
+                    disabled={bundleExporting || Boolean(pdfProgress)}
+                    className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
+                  >
+                    <Save className="h-4 w-4" />
+                  </button>
+                  <button
+                    aria-label={t('exportBundle')}
+                    title={t('exportBundleTitle')}
+                    onClick={() => void handleExportBundle()}
+                    disabled={bundleExporting || Boolean(pdfProgress)}
+                    className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
+                  >
+                    <HardDriveDownload className="h-4 w-4" />
+                  </button>
+                </>
               ) : null}
               <button
                 aria-label={t('immersive')}
@@ -609,6 +745,21 @@ export function StoryView(): React.ReactElement {
           {pdfProgress ? (
             <p role="status" className="px-1 pb-1 text-caption text-status-info" data-testid="story-pdf-progress">
               {pdfProgress}
+            </p>
+          ) : null}
+          {takeoverPaused && !playing ? (
+            <p role="status" data-testid="story-takeover-paused" className="px-1 pb-1 text-caption text-status-warning">
+              {t('takeoverPaused')}
+              <button
+                type="button"
+                className="ml-2 underline hover:text-ink"
+                onClick={() => {
+                  setTakeoverPaused(false);
+                  setPlaying(true);
+                }}
+              >
+                {t('takeoverResume')}
+              </button>
             </p>
           ) : null}
         </div>

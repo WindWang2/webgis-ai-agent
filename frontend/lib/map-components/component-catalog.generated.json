@@ -215,6 +215,33 @@
       }
     },
     {
+      "type": "elevation_profile",
+      "variants": [
+        "default",
+        "compact"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "bottom-left",
+      "category": "analysis.elevation_profile",
+      "runtimeStatus": "native",
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "semanticRole": "statistics",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "∠",
+        "accent": "#4d7c0f"
+      }
+    },
+    {
       "type": "export_layout",
       "variants": [
         "A4_landscape",
@@ -468,6 +495,33 @@
       "preview": {
         "glyph": "↔",
         "accent": "#1f2933"
+      }
+    },
+    {
+      "type": "scene_disclosure",
+      "variants": [
+        "default",
+        "compact"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "bottom-right",
+      "category": "disclosure.scene_disclosure",
+      "runtimeStatus": "native",
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "semanticRole": "disclosure",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "◈",
+        "accent": "#0e7490"
       }
     },
     {

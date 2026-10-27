@@ -154,6 +154,11 @@ export type ExportDegradationCode =
   | 'atlas_page_skipped'
   | 'atlas_page_limit_truncated'
   | 'terrain_3d_scale_caveat'
+  /* G3D05（ADR-0275）：透视比例尺不可信（pitch>10° 且比例尺在场；
+   * 发射器 scene-export-disclosure.ts 判定 → exporter 汇入）与矢量
+   * 3D 透视降级收据（后端孪生编译期发射，前端矢量路径同语义）。 */
+  | 'scale_unreliable_perspective'
+  | 'svg_3d_perspective_degrade'
   /* ADR-0199：场景协议披露（发射器 mapspec-runtime/adapter 证据环 →
    * exporter 汇入；词表权威在 app/lib/cartography/render_diagnostics.py）。 */
   | 'scene_extrusion_no_height_evidence'
@@ -1173,7 +1178,7 @@ export function drawChromeScaleBar(
   el: ExportChromeElement,
   metersPerPx: number,
   pxPerLogical: number,
-  opts: { marginX: number; marginY?: number },
+  opts: { marginX: number; marginY?: number; note?: string },
 ) {
   const { ctx } = d;
   const logicalW = d.targetW / pxPerLogical;
@@ -1206,12 +1211,20 @@ export function drawChromeScaleBar(
   ctx.font = `bold ${d.scalePx(13)}px ${d.style.fontFamily}`;
   _text(d, '0', bx, by - d.scalePx(4), 'left');
   _text(d, barLabel, bx + barPx, by - d.scalePx(4), 'right');
+  // G3D05（ADR-0275）：透视比例尺披露 —— 有 note 即绘制（小字、警示
+  // 色调；平面视角无 note 零视觉噪音）。披露而非移除。
+  if (opts.note) {
+    ctx.fillStyle = d.darkMode ? 'rgba(251,191,36,0.85)' : '#b45309';
+    ctx.font = `${d.scalePx(10)}px ${d.style.fontFamily}`;
+    _text(d, opts.note.slice(0, 60), bx + barPx, by + barH + d.scalePx(13), 'right');
+  }
   // V3：dual_unit —— 同一根比例尺条的实际代表距离换算英制第二行
   // （与 live scale-bar formatImperial 同式；非独立第二根尺）。
   if (el.variant === 'dual_unit') {
     ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(71,85,105,0.9)';
     ctx.font = `${d.scalePx(11)}px ${d.style.fontFamily}`;
-    _text(d, formatImperialLabel(nice), bx + barPx, by + barH + d.scalePx(12), 'right');
+    const imperialY = opts.note ? by + barH + d.scalePx(26) : by + barH + d.scalePx(12);
+    _text(d, formatImperialLabel(nice), bx + barPx, imperialY, 'right');
   }
 }
 

@@ -118,6 +118,8 @@ const CHROME_RENDERABLE_TYPES: ReadonlySet<string> = new Set([
   'continuous_colorbar', 'legend', 'categorical_legend',
   'annotation', 'statistics_panel', 'chart_panel', 'map_border', 'graticule',
   'inset_map',
+  // G3D05（ADR-0275）：三维制图产品组件（live 渲染器在场，观察如实挂载）。
+  'scene_disclosure', 'elevation_profile',
 ]);
 
 /**

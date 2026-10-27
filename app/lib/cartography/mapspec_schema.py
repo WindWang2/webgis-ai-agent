@@ -704,6 +704,10 @@ COMPONENT_TYPES = (
     # layer.label 子层渲染）；CartographyComponent.to_mapspec() 落
     # MapSpec 的组件通道，必须能过本 schema 校验。
     "label_layer",
+    # G3D05（ADR-0275）：三维制图产品组件 —— 场景披露（内容绑定
+    # spec.scene，options 仅样式/附注）与线路高程剖面（points/ref 工件）。
+    "scene_disclosure",
+    "elevation_profile",
 )
 
 

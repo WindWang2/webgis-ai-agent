@@ -23,6 +23,7 @@ import {
   type ExportDegradation,
 } from './export-chrome';
 import { DEFAULT_STACK_STEP_PX } from '@/lib/map-components/resolve-layout';
+import { sceneExportDisclosure } from './scene-export-disclosure';
 export type { ExportChromeModel } from './export-chrome';
 import { API_BASE } from '@/lib/api/config';
 import { apiFetch, isApiError } from '@/lib/api/transport';
@@ -127,6 +128,12 @@ export interface ComposeLayoutOptions {
   /** Layout template style overrides (colors, fonts, margins, graticule, watermark). */
   style?: LayoutStyle;
   /**
+   * G3D05（ADR-0275）：透视比例尺披露文案（pitch>10° 且比例尺在场时由
+   * scene-export-disclosure 判定；绘制在比例尺下方的小字注记 —— 披露
+   * 而非移除，平面视角缺省无注记）。
+   */
+  scaleNote?: string;
+  /**
    * ADR-0081：spec 驱动的 chrome 模型（placement/anchor 语义
    * 来自 resolveMapComponents —— live/export 共用解析层）。在场且 fromSpec
    * 时，title/subtitle/罗盘/比例尺/图例/色条/署名/浮动面板全部按模型槽位
@@ -230,6 +237,7 @@ export function composeLayout(
     mapBearing = 0,
     thematicLayer,
     pixelsPerLogicalPx,
+    scaleNote,
   } = options;
 
   const dark_mode = theme === 'dark';
@@ -298,7 +306,7 @@ export function composeLayout(
     // 3. Scale bar（anchor 槽位 —— bottom-right 缺省，与 live 一致）
     if (chrome.scaleBar && showScale && mapCenter && mapZoom !== undefined) {
       const metersPerPx = metersPerPixelAt(mapZoom, mapCenter.lat);
-      drawChromeScaleBar(d, chrome.scaleBar, metersPerPx, pxPerLogical, { marginX, marginY: stackOffset(chrome.scaleBar, mBottom) });
+      drawChromeScaleBar(d, chrome.scaleBar, metersPerPx, pxPerLogical, { marginX, marginY: stackOffset(chrome.scaleBar, mBottom), note: scaleNote });
     }
 
     // 4. Compass（旋转符号与 live 对齐：-bearing）
@@ -1206,6 +1214,8 @@ export interface ExportDeps {
 interface ExportCommittedSpec {
   layout?: { components?: MapSpecComponent[] };
   layers?: MapSpecLayer[];
+  /** G3D05：场景块（mode/camera/terrain）—— 透视比例尺披露的判定输入。 */
+  scene?: { mode?: string; camera?: { pitch?: number } } | null;
 }
 
 /**
@@ -2115,6 +2125,20 @@ async function runExportInternal(
     // review-r1：提取为局部变量 —— 3D 比例尺 caveat 与 composeLayout 同一口径。
     const showScaleEffective =
       req.showScale ?? req.include_scale ?? specShowScale ?? true;
+    // G3D05（ADR-0275）：透视比例尺披露 —— composeLayout 前判定（判定
+    // 单源 scene-export-disclosure.ts）：视觉注记随比例尺入图 + 诊断随
+    // 导出消息（下方 chromeDegradations 汇入）；scene_disclosure 组件在
+    // 场时文案降为「仅供参考」，缺披露时明示不可信。
+    const sceneDisclosureModel = sceneExportDisclosure({
+      viewPitch: map.getPitch(),
+      scenePitch:
+        (committedSpec?.scene?.camera as { pitch?: number } | undefined)
+          ?.pitch ?? null,
+      hasScaleBar: showScaleEffective,
+      hasSceneDisclosure: (committedSpec?.layout?.components ?? []).some(
+        (c) => c.type === 'scene_disclosure' && c.enabled !== false,
+      ),
+    });
     MapExporterEngine.composeLayout(exportCanvas, effTitle, effSubtitle, {
       dpi,
       theme,
@@ -2137,6 +2161,7 @@ async function runExportInternal(
       legendSpec,
       heatmapLegend,
       chrome: chromeModel,
+      scaleNote: sceneDisclosureModel.scaleNoteZh ?? undefined,
     });
 
     const dataUrl = exportCanvas.toDataURL('image/png');
@@ -2158,6 +2183,13 @@ async function runExportInternal(
     ];
     if (storeState.is3D && showScaleEffective) {
       chromeDegradations.push({ code: 'terrain_3d_scale_caveat' });
+    }
+    // G3D05（ADR-0275）：诊断汇入（视觉注记已随 composeLayout 入图）。
+    if (sceneDisclosureModel.scaleDiagnostic) {
+      chromeDegradations.push({
+        code: sceneDisclosureModel.scaleDiagnostic.code,
+        detail: sceneDisclosureModel.scaleDiagnostic.detail,
+      });
     }
     // ADR-0199：场景证据门控披露 —— is3D 下因无高度证据未挤出的图层
     //（adapter 证据环登记）汇入导出降级面；detail 有界（≤200 字符）。

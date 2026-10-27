@@ -181,6 +181,11 @@ def register_scene_tools(registry: ToolRegistry):
                     out[key] = res[key]
             if res.get("mapspec") is not None:
                 out["scene_applied"] = (res.get("mapspec") or {}).get("scene")
+            # G3D05（ADR-0275）：写入后的 spec 过场景质量门，findings 随
+            # 工具证据回给 Agent（透视比例尺/标注遮挡/夸张披露等 ——
+            # scene_quality_report_safe never-raise，不阻塞写事务）。
+            from app.lib.cartography.scene_quality import scene_quality_report_safe
+            out["scene_quality"] = scene_quality_report_safe(res.get("mapspec"))
             return out
         except Exception as e:  # noqa: BLE001
             logger.error("set_map_scene failed: %s", e)
