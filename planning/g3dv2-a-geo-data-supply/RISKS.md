@@ -16,3 +16,4 @@
 
 - R10：上传 GeoTIFF 的换算副本放在同一 upload_dir（delete_upload 清整个目录天然覆盖；孤儿目录纪律 #546 同款兜底）。
 - R11：openapi/字段契约快照已按官方机制再生成（API_SNAPSHOT_UPDATE / API_CONTRACT_FIELDS_UPDATE），diff 全部为加法（新路由 + upload.terrain 字段）。
+- R12（评审 P3 记账）：客户端自定 session_id 含 `{`/`&` 时其自身 tiles_url_template 不可 .format()（自损无跨权边界；与既有 tilejson 端点同模式）。后续可与 raster.py 的 session_id 字符集正则一并对齐。

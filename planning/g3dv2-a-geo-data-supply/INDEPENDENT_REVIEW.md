@@ -38,3 +38,11 @@
 ## 第二轮复核（修复后由原评审者上下文继续，或新评审者抽核修复面）
 
 见下方追加记录。
+
+## 第二轮复核（新评审者，未参与实现与第一轮；逐项实跑验证）
+
+- a–g 全部**已修复**（证据行号：security.py:474-485 send 层；layer.py:1087-1097 URL 鉴权；terrain_ingest.py:310-322+450 冲突码；:59-71 词表；layer.py:988-991 北向上+分码；手册 §2.2 如实化）；HEAD 实跑 api_compatibility **12 passed**。
+- 修复本身无新 P1/P2：effective_token 与守卫同语义；send 包装与 SSRF adapter 互不遮蔽（requests 2.34.2 源码级核对，redirect 逐跳双防线）；词表分轨两处用对；owner_token 链完整。
+- 测试抽核：TestNonIngestedRefErrorCodes 真实 rasterio fixture + 真实 HTTP，非 mock 断言。
+- P3 残留（记账不阻塞）：客户端自定 session_id 含花括号可使其自身 tiles_url_template 不可 .format()（自损无跨权；既有 tilejson 端点同模式）。
+- **最终结论：可合。**
