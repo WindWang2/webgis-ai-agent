@@ -6,7 +6,7 @@
 # 或 registry API（无 docker 环境时）。
 
 # Stage 1: Frontend Dependencies
-FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS frontend-deps
+FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS frontend-deps
 WORKDIR /app/frontend
 # pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。corepack 随
 # node:22 内置；pin pnpm@10 与 CI workflow 的 pnpm/action-setup 版本一致。
@@ -16,7 +16,7 @@ COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Stage 2: Frontend Builder
-FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS frontend-builder
+FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS frontend-builder
 WORKDIR /app/frontend
 RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
@@ -72,7 +72,7 @@ COPY vendor/ ./vendor/
 # 基线；alpine 的 musl 二进制不可用）只复制 node 单二进制 —— 运行时只需
 # `node server.js` 与 Pi RPC 的 `node rpc-entry.js`，npm/corepack 不入
 # 镜像以控制体积。digest 与 Dockerfile.prod 的 node-runtime 阶段一致。
-FROM node:26-bookworm-slim@sha256:86f07bc9c5dce4578cf37e5a418b7bfc7f817cda25cde66e2b66e95ed86c4567 AS node-runtime
+FROM node:26-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS node-runtime
 
 # Stage 5: Runner
 FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS runner
