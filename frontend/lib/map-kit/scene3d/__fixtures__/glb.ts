@@ -21,6 +21,16 @@ export interface GlbFixtureOptions {
   corruptBufferViewLength?: { viewIndex: number; delta: number };
   /** 篡改缝：indices 越界值。 */
   corruptIndexValue?: number;
+  /** 交错布局：POSITION/NORMAL 共享 byteStride=24 的 bufferView（glTF 交错
+   *  顶点属性常见形态 —— G3DV2-B 严格解析回归位）。 */
+  interleave?: boolean;
+  /** sparse POSITION：base 全零 + sparse indices/values 覆写前 k 个顶点
+   *  （G3DV2-B sparse accessor 回归位；k ≤ 顶点数）。 */
+  sparsePositions?: number;
+  /** 篡改缝：把第 j 个 sparse index 改成越界值。 */
+  corruptSparseIndex?: number;
+  /** NORMAL 用归一化整型（normalized:true；5120→/127、5122→/32767）。 */
+  normalsComponent?: 5120 | 5122;
 }
 
 function align4(n: number): number {
@@ -60,22 +70,109 @@ export function buildGlbFixture(opts: GlbFixtureOptions = {}): ArrayBuffer {
     indices[indices.length - 1] = opts.corruptIndexValue;
   }
 
-  // BIN chunk：positions | normals | indices（4 字节对齐）
-  const posBytes = new Uint8Array(positions.buffer);
-  const normBytes = new Uint8Array(normals.buffer);
+  // 归一化整型 NORMAL（5120→/127、5122→/32767；首顶点取 -1 分量走负满幅）
+  const normalsInt = opts.normalsComponent;
+  const normArityBytes = normalsInt === 5120 ? 1 : normalsInt === 5122 ? 2 : 4;
+  const encodeNormal = (v: number): number => {
+    if (normalsInt === 5120) return Math.max(-127, Math.min(127, Math.round(v * 127)));
+    if (normalsInt === 5122) return Math.max(-32767, Math.min(32767, Math.round(v * 32767)));
+    return v;
+  };
+
+  // sparse POSITION：base 全零 + 前 k 顶点真值经 indices/values 覆写。
+  const sparseK = Math.max(0, Math.min(opts.sparsePositions ?? 0, positions.length / 3));
+  const spIdx = new Uint16Array(sparseK);
+  const spVal = new Float32Array(sparseK * 3);
+  for (let i = 0; i < sparseK; i++) {
+    spIdx[i] = typeof opts.corruptSparseIndex === 'number' && i === 0
+      ? opts.corruptSparseIndex
+      : i;
+    spVal[i * 3] = positions[i * 3];
+    spVal[i * 3 + 1] = positions[i * 3 + 1];
+    spVal[i * 3 + 2] = positions[i * 3 + 2];
+  }
+  const posBase = sparseK > 0 ? new Float32Array(positions.length) : positions;
+
   const idxBytes = new Uint8Array(indices.buffer);
-  const binLength = align4(posBytes.length) + align4(normBytes.length)
-    + (indexed ? align4(idxBytes.length) : 0);
+  const binParts: { bytes: Uint8Array }[] = [];
+  const views: { buffer: number; byteOffset: number; byteLength: number; byteStride?: number }[] = [];
+  const pushPart = (bytes: Uint8Array, stride?: number): number => {
+    const viewIndex = views.length;
+    const byteOffset = binParts.reduce((n, p) => n + align4(p.bytes.length), 0);
+    binParts.push({ bytes });
+    views.push({ buffer: 0, byteOffset, byteLength: bytes.length, ...(stride !== undefined ? { byteStride: stride } : {}) });
+    return viewIndex;
+  };
+
+  const accessors: Record<string, unknown>[] = [];
+  let posAccessor: Record<string, unknown>;
+  let normAccessor: Record<string, unknown>;
+
+  if (opts.interleave) {
+    // 交错：每顶点记录 [px,py,pz,nx,ny,nz]（24B stride）
+    const vertexCount = positions.length / 3;
+    const record = new Float32Array(vertexCount * 6);
+    for (let v = 0; v < vertexCount; v++) {
+      record[v * 6 + 0] = positions[v * 3];
+      record[v * 6 + 1] = positions[v * 3 + 1];
+      record[v * 6 + 2] = positions[v * 3 + 2];
+      record[v * 6 + 3] = normals[v * 3];
+      record[v * 6 + 4] = normals[v * 3 + 1];
+      record[v * 6 + 5] = normals[v * 3 + 2];
+    }
+    const view = pushPart(new Uint8Array(record.buffer), 24);
+    posAccessor = { bufferView: view, byteOffset: 0, componentType: 5126, count: vertexCount, type: 'VEC3' };
+    normAccessor = { bufferView: view, byteOffset: 12, componentType: 5126, count: vertexCount, type: 'VEC3' };
+  } else {
+    const posViewIdx = pushPart(new Uint8Array(posBase.buffer));
+    posAccessor = {
+      bufferView: posViewIdx,
+      componentType: 5126,
+      count: positions.length / 3,
+      type: 'VEC3',
+      ...(sparseK > 0
+        ? {
+            sparse: {
+              count: sparseK,
+              indices: { bufferView: -1, componentType: 5123 }, // 占位，BIN 排布后回填
+              values: { bufferView: -1 },
+            },
+          }
+        : {}),
+    };
+    if (normalsInt) {
+      const encoded = new (normalsInt === 5120 ? Int8Array : Int16Array)(normals.length);
+      for (let i = 0; i < normals.length; i++) encoded[i] = encodeNormal(normals[i]);
+      const view = pushPart(new Uint8Array(encoded.buffer, encoded.byteOffset, encoded.byteLength));
+      normAccessor = { bufferView: view, componentType: normalsInt, count: normals.length / 3, type: 'VEC3', normalized: true };
+    } else {
+      const view = pushPart(new Uint8Array(normals.buffer));
+      normAccessor = { bufferView: view, componentType: 5126, count: normals.length / 3, type: 'VEC3' };
+    }
+  }
+
+  accessors.push(posAccessor, normAccessor);
+  if (indexed) {
+    const view = pushPart(idxBytes);
+    accessors.push({ bufferView: view, componentType: 5125, count: indices.length, type: 'SCALAR' });
+  }
+  if (sparseK > 0) {
+    const sparse = (posAccessor as { sparse: { indices: { bufferView: number }; values: { bufferView: number } } }).sparse;
+    sparse.indices.bufferView = pushPart(new Uint8Array(spIdx.buffer));
+    sparse.values.bufferView = pushPart(new Uint8Array(spVal.buffer));
+  }
+
+  if (opts.corruptBufferViewLength?.viewIndex !== undefined && views[opts.corruptBufferViewLength.viewIndex]) {
+    views[opts.corruptBufferViewLength.viewIndex].byteLength += opts.corruptBufferViewLength.delta;
+  }
+
+  const binLength = binParts.reduce((n, p) => n + align4(p.bytes.length), 0);
   const bin = new Uint8Array(binLength);
   let off = 0;
-  bin.set(posBytes, off); off += align4(posBytes.length);
-  bin.set(normBytes, off); off += align4(normBytes.length);
-  if (indexed) bin.set(idxBytes, off);
-
-  const posView = { buffer: 0, byteOffset: 0, byteLength: posBytes.length };
-  const normView = { buffer: 0, byteOffset: align4(posBytes.length), byteLength: normBytes.length };
-  const idxView = { buffer: 0, byteOffset: align4(posBytes.length) + align4(normBytes.length), byteLength: idxBytes.length };
-  if (opts.corruptBufferViewLength?.viewIndex === 0) posView.byteLength += opts.corruptBufferViewLength.delta;
+  for (const p of binParts) {
+    bin.set(p.bytes, off);
+    off += align4(p.bytes.length);
+  }
 
   const materialDef = opts.material === null
     ? undefined
@@ -99,14 +196,8 @@ export function buildGlbFixture(opts: GlbFixtureOptions = {}): ArrayBuffer {
       }],
     }],
     ...(materialDef ? { materials: [materialDef] } : {}),
-    accessors: [
-      { bufferView: 0, componentType: 5126, count: positions.length / 3, type: 'VEC3' },
-      { bufferView: 1, componentType: 5126, count: normals.length / 3, type: 'VEC3' },
-      ...(indexed
-        ? [{ bufferView: 2, componentType: 5125, count: indices.length, type: 'SCALAR' }]
-        : []),
-    ],
-    bufferViews: [posView, normView, ...(indexed ? [idxView] : [])],
+    accessors,
+    bufferViews: views,
     buffers: [{ byteLength: binLength }],
   };
   const jsonBytes = new TextEncoder().encode(JSON.stringify(json));
@@ -139,6 +230,10 @@ export function buildTilesetFixture(opts: {
   rootGeometricError?: number;
   refine?: 'REPLACE' | 'ADD';
   childRefine?: 'REPLACE' | 'ADD';
+  /** 子 tile 省略 refine（继承性回归位：应继承根的 refine）。 */
+  omitChildRefine?: boolean;
+  /** 篡改缝：根 refine 写非法值（typed 拒绝回归位）。 */
+  invalidRootRefine?: string;
   contentExt?: string;
 } = {}): Record<string, unknown> {
   return {
@@ -157,13 +252,15 @@ export function buildTilesetFixture(opts: {
         (104.07 * Math.PI) / 180, (30.68 * Math.PI) / 180, 0, 200,
       ] },
       geometricError: 256,
-      refine: opts.refine ?? 'REPLACE',
+      ...(opts.invalidRootRefine !== undefined
+        ? { refine: opts.invalidRootRefine }
+        : { refine: opts.refine ?? 'REPLACE' }),
       content: { uri: `root.${opts.contentExt ?? 'glb'}` },
       children: [
         {
           boundingVolume: { box: [0, 0, 50, 50, 0, 0, 0, 50, 0, 0, 0, 50] },
           geometricError: 0,
-          refine: opts.childRefine ?? 'REPLACE',
+          ...(opts.omitChildRefine ? {} : { refine: opts.childRefine ?? 'REPLACE' }),
           content: { uri: `child-a.${opts.contentExt ?? 'glb'}` },
         },
         {
