@@ -1924,6 +1924,11 @@ async def push_cartographic_runtime_observation(
                 # （校验通过）才落键 —— 缺席/非法/旧客户端均按证据缺席。
                 **({"apply_ack": apply_ack} if apply_ack is not None else {}),
                 **({"perf": req.perf} if req.perf is not None else {}),
+                # G3DV2-B M1：scene3d 资产状态快照在场（DTO 已归一为
+                # ≤16 条 {asset_id, code, reason?} 封闭词表）才落键 ——
+                # 纯 3D 会话的应用证据从观察面持久化（此前被 DTO 静默丢弃）。
+                **({"scene3d_assets": req.scene3d_assets}
+                   if req.scene3d_assets is not None else {}),
                 "map_idle": bool(req.map_idle) if req.map_idle is not None else None,
                 "observed_at": req.observed_at,
             }

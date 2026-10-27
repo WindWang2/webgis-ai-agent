@@ -19,6 +19,8 @@ export const RENDER_WORK_MANIFEST = {
   max_layer_work: 128,
   max_component_work: 32,
   max_diagnostics: 8,
+  // G3DV2-B M1：scene.assets 执行工作项预算（scene_work[]）。
+  max_scene_work: 32,
   source_kinds: [
     'geojson', 'vector', 'raster', 'raster-dem',
     'data_fabric', 'wms', 'wmts', 'pmtiles', 'model3d',

@@ -5,6 +5,6 @@
 - **D3 累计预算层级**：账本放 Scene3dManager（单 map 单例，跨资产天然共享），不放全局单例（多 map/比较视图不互相挤占）。上限默认保守值，spec policy 可收紧不可放宽超过机器上限。
 - **D4 refCount 泄漏修法**：unmountAsset 检测 layer 已不存在（setStyle 清扫）时显式走 releaseRenderer 路径；acquireRenderer 拒绝复用不健康 carrier。不依赖 MapLibre onRemove 语义承诺。
 - **D5 context-lost 分层**：canvas 级 `webglcontextlost`（preventDefault 争取 restore）+ `webglcontextrestored` 自动有限重建（re-sync 同 revision）；MapLibre 自身死亡（error 事件 fatal）仍走既有 WebGL 模态人工重试。不承诺无 GPU 环境行为。
-- **D6 纯 3D ACK 指纹**：HUD 行 `_mapspecFingerprint` 优先语义完全保留；新增 spec 级回退仅当 HUD 无指纹时启用，且仅对含 scene.assets 的 spec 生效 —— 不改变任何既有 2D 会话行为。
+- **D6 纯 3D ACK 指纹**：HUD 行 `_mapspecFingerprint` 优先语义完全保留；新增第三级回退 = 执行信封 `mapspec_fingerprint`（后端 cartographic_fingerprint 同源、render-work store 已按会话持有），仅当信封 revision 与会话游标 revision 一致时启用（陈旧信封不可用；服务端 stale 门兜底）。不设 scene.assets 存在性前置（语义与既有 cursor 回退同构 —— fp 见证 committed spec；实测 2D 会话行为不变，纯 3D 会话从首轮起可 POST）。
 - **D7 per-asset 控制真相层**：visible 走 spec 单真相（commitUserScene 管线）；opacity/lighting/视角书签为本地表象控制（不持久化、明确披露），避免为本轮引入 MapSpec v1.8 契约膨胀。
 - **D8 Draco/KTX2/implicit tiling**：维持 typed 拒绝 + 能力披露，本轮不引入解码依赖（许可/兼容/安全验证窗口不足，任务书允许渐进）。

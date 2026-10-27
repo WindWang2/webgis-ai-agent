@@ -160,8 +160,23 @@ export function useCartographicObservation({
     // 会把上一会话留存的 attested 指纹发给新会话的观测（跨会话串数据，
     // INV-2：session A 的指纹/响应不得进入 session B）。
     const cursorBelongsToSession = cursor.sessionId === sessionId
+    // G3DV2-B M1：纯 3D 会话（零 HUD 图层）的指纹回退 —— 执行信封自带
+    // mapspec_fingerprint（后端 cartographic_fingerprint 同源）且已按会话
+    // 存于 render-work store。只在信封 revision 与游标 revision 一致时启用
+    //（陈旧信封指纹必然被服务端 stale 门拒收，revision 对齐让回退只在
+    // 「确属当前代」时发生；HUD 行/游标语义完全不变 —— 2D 会话零行为差）。
+    const workEnvelope = sessionId ? getLatestRenderWork(sessionId) : undefined
+    const envelopeFp =
+      workEnvelope?.mapspec_fingerprint
+      && workEnvelope.mapspec_revision === cursor.revision
+        ? workEnvelope.mapspec_fingerprint
+        : undefined
     const fingerprint: string | undefined = generation?._mapspecFingerprint
       ?? (cursorBelongsToSession ? cursorFp : undefined)
+      ?? envelopeFp
+    if (!generation?._mapspecFingerprint && fingerprint) {
+      setMapSpecFingerprint(fingerprint)
+    }
     if (!map || !sessionId || !fingerprint) return
 
     // P9：error 监听一次性注册（幂等；卸载/替换时摘除旧监听）。
@@ -202,7 +217,8 @@ export function useCartographicObservation({
         pendingRemovedIds: getPendingRemoved(),
         // ADR-0225：执行信封（work echo + per-source 数据代次对账）+
         // apply 时刻 style epoch —— 同会话才取（旧会话信封绝不进新会话）。
-        work: getLatestRenderWork(sessionId),
+        // G3DV2-B M1：与指纹门共用同一份 store 读取（无二次查询）。
+        work: workEnvelope ?? getLatestRenderWork(sessionId),
         styleEpoch: runtimeRef.current?.getStyleEpoch(),
       })
       // Workspace V2（Goal C2）：把最新观察的 per-layer 判定投影进有界

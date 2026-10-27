@@ -89,7 +89,8 @@ class TestGoldenReplay:
 
     def test_all_scenarios_replay(self, golden):
         scenarios = golden["scenarios"]
-        assert len(scenarios) == 12
+        # G3DV2-B M1：s13_scene3d_pure_3d_work（纯 3D scene_work 面）。
+        assert len(scenarios) == 13
         for name, sc in scenarios.items():
             inp = {k: v for k, v in sc["projector_input"].items() if k != "previous"}
             previous = None

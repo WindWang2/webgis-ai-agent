@@ -1120,6 +1120,16 @@
       "title": "Pitch",
       "type": "number"
      },
+     "scene": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/KeyframeScene"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
      "t": {
       "default": 0.0,
       "maximum": 1.0,
@@ -1616,6 +1626,21 @@
       "maxItems": 8,
       "title": "Runtime Errors",
       "type": "array"
+     },
+     "scene3d_assets": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scene3D Assets"
      },
      "style_loaded": {
       "title": "Style Loaded",
@@ -5239,6 +5264,43 @@
      "status"
     ],
     "title": "JobView",
+    "type": "object"
+   },
+   "KeyframeScene": {
+    "additionalProperties": true,
+    "description": "v1.1：关键帧携带的场景状态（G3D05）。\n\n只覆盖**叙事镜头关心的两个旋钮**：mode（2d/2.5d/3d 表达）与\nterrain exaggeration —— 完整场景配置（terrain 源/垂直基准等）仍由\n会话 MapSpec.scene 单一真相持有，StoryMap 不复制第二份（与\nscene_disclosure 组件同一防漂移纪律）。字段缺省 = 沿用当前场景。",
+    "properties": {
+     "exaggeration": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0.0,
+        "maximum": 10.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Exaggeration"
+     },
+     "mode": {
+      "anyOf": [
+       {
+        "enum": [
+         "2d",
+         "2.5d",
+         "3d"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mode"
+     }
+    },
+    "title": "KeyframeScene",
     "type": "object"
    },
    "LLMConfig": {
@@ -11497,6 +11559,53 @@
     "title": "SetLayoutBody",
     "type": "object"
    },
+   "SetSceneBody": {
+    "description": "G3D05（ADR-0275）：用户场景控制器写通道。\n\n与 Agent 的 set_map_scene 工具汇入同一 SetSceneIntent 事务管线\n（幂等/409/503 语义一致）；scene=None = 清除场景回平面。shape 由\n引擎内 MapSceneConfig 严格校验，非法值整笔拒绝。",
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "set_scene",
+      "title": "Intent",
+      "type": "string"
+     },
+     "scene": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scene"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision"
+    ],
+    "title": "SetSceneBody",
+    "type": "object"
+   },
    "SetTimeBody": {
     "properties": {
      "client_mutation_id": {
@@ -12179,6 +12288,14 @@
      "title": {
       "title": "Title",
       "type": "string"
+     },
+     "visible_layer_ids": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Visible Layer Ids",
+      "type": "array"
      }
     },
     "required": [
@@ -12294,7 +12411,7 @@
     "additionalProperties": true,
     "properties": {
      "engine_version": {
-      "default": "storymap-1.0",
+      "default": "storymap-1.1",
       "title": "Engine Version",
       "type": "string"
      },
@@ -12374,7 +12491,7 @@
       "$ref": "#/components/schemas/StoryMapMetadata"
      },
      "schema_version": {
-      "default": "1.0",
+      "default": "1.1",
       "title": "Schema Version",
       "type": "string"
      }
@@ -16998,6 +17115,7 @@
           "remove_layer": "#/components/schemas/RemoveLayerBody",
           "reorder_layers": "#/components/schemas/ReorderLayersBody",
           "set_layout": "#/components/schemas/SetLayoutBody",
+          "set_scene": "#/components/schemas/SetSceneBody",
           "set_time": "#/components/schemas/SetTimeBody",
           "set_view": "#/components/schemas/SetViewBody"
          },
@@ -17015,6 +17133,9 @@
          },
          {
           "$ref": "#/components/schemas/SetViewBody"
+         },
+         {
+          "$ref": "#/components/schemas/SetSceneBody"
          },
          {
           "$ref": "#/components/schemas/RemoveLayerBody"
@@ -34658,6 +34779,144 @@
      }
     ],
     "summary": "Compile Session Storymap",
+    "tags": [
+     "StoryMap",
+     "StoryMap"
+    ]
+   }
+  },
+  "/api/v1/storymap/sessions/{session_id}/spec": {
+   "get": {
+    "description": "读会话最新 StoryMap 资产；无资产 404；损坏资产 typed 标记不伪造。",
+    "operationId": "get_session_story_spec_api_v1_storymap_sessions__session_id__spec_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Session Story Spec",
+    "tags": [
+     "StoryMap",
+     "StoryMap"
+    ]
+   },
+   "post": {
+    "description": "保存会话 StoryMapSpec（覆盖式，revision 单调 +1）。\n\n载荷先过 StoryMapSpec 严格校验（v1.0/v1.1 均可），非法/超界 422 ——\n不存半合法资产。",
+    "operationId": "save_session_story_spec_api_v1_storymap_sessions__session_id__spec_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": true,
+        "title": "Spec",
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Save Session Story Spec Api V1 Storymap Sessions  Session Id  Spec Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Save Session Story Spec",
     "tags": [
      "StoryMap",
      "StoryMap"

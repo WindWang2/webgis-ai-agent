@@ -40,6 +40,7 @@ from app.lib.cartography.render_work_envelope import (  # noqa: E402
     MAX_DATA_DEPENDENCIES,
     MAX_DIAGNOSTICS,
     MAX_LAYER_WORK,
+    MAX_SCENE_WORK,
     RENDER_WORK_SCHEMA_VERSION,
     _SOURCE_KINDS,
 )
@@ -60,6 +61,7 @@ def contract_manifest() -> dict:
             "max_layer_work": MAX_LAYER_WORK,
             "max_component_work": MAX_COMPONENT_WORK,
             "max_diagnostics": MAX_DIAGNOSTICS,
+            "max_scene_work": MAX_SCENE_WORK,
             "source_kinds": sorted(_SOURCE_KINDS),
         },
         "apply_ack": {
@@ -101,6 +103,10 @@ def _spec(layers, sources=None, components=None):
 
 def _geojson_source(revision, fp="d-" + "0" * 8):
     return {"type": "geojson", "content_revision": revision, "descriptor_fingerprint": fp}
+
+
+def _model3d_source(revision, url="https://assets.test/campus.glb"):
+    return {"type": "model3d", "format": "glb", "url": url, "content_revision": revision}
 
 
 def scenarios() -> list:
@@ -423,6 +429,52 @@ def scenarios() -> list:
                 "pendingRemovedIds": [],
                 "applied_layers": [ly["id"] for ly in ten_layers[:5]],
                 "applied_sources": {"src-main": 4},
+                "mounted_component_ids": [],
+            },
+        },
+        {
+            # G3DV2-B M1：纯 3D 会话（零 2D 图层）—— scene_work 是唯一的
+            # 执行工作面（layer_work 空；model3d 走 data_dependencies）。
+            # ACK 面：sources[] 对账 model3d revision + scene3d_assets 观察
+            # 上行（j9 journey 断言）。
+            "name": "s13_scene3d_pure_3d_work",
+            "projector": {
+                "mapspec": {
+                    "version": "1.7",
+                    "view": {"center": [104.06, 30.67], "zoom": 15.5},
+                    "sources": {"model-a": _model3d_source(2)},
+                    "layers": [],
+                    "scene": {
+                        "mode": "3d",
+                        "assets": [
+                            {
+                                "id": "campus",
+                                "source": "model-a",
+                                "placement": {"anchor": [104.06, 30.67]},
+                                "visible": True,
+                            },
+                            {
+                                "id": "tower",
+                                "source": "model-a",
+                                "placement": {"anchor": [104.07, 30.68]},
+                                "visible": False,
+                            },
+                        ],
+                    },
+                    "layout": {"components": []},
+                },
+                "session_id": "sess-A",
+                "revision": 13,
+                "fingerprint": "carto-sha256:" + "c" * 64,
+                "observation_seq": 60,
+            },
+            "ack": {
+                "revision": 13,
+                "mapIdle": True,
+                "pendingLayerIds": [],
+                "pendingRemovedIds": [],
+                "applied_layers": [],
+                "applied_sources": {"model-a": 2},
                 "mounted_component_ids": [],
             },
         },
