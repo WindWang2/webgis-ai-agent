@@ -391,3 +391,100 @@ class TestBindingStoreDiscipline:
         })
         bindings = await load_analysis_bindings(session_id)
         assert bindings == []
+
+
+class TestStalenessSemanticsReviewFixes:
+    """review B1/E1 修正的回归锚。"""
+
+    @pytest.mark.asyncio
+    async def test_non_observer_analysis_not_stamped_and_stays_fresh(
+        self, registry, session_id, dem_path
+    ):
+        """review B1：非观察者分析（cut_fill）不盖选择戳——用户换选
+        别的要素不得把线路/区域语义分析误判旧。"""
+        await _seed(session_id)
+        await _ledger_write(session_id, [{
+            "kind": "feature_selected",
+            "payload": {"feature_id": "peak-a", "layer_id": "peaks"},
+            "server_seq": 1,
+        }])
+        res = await registry.dispatch("run_3d_analysis", {
+            "session_id": session_id, "analysis": "cut_fill_volume",
+            "raster_path": dem_path,
+            "polygon": [[500100.0, 3999900.0], [500400.0, 3999900.0],
+                        [500400.0, 3999600.0], [500100.0, 3999600.0],
+                        [500100.0, 3999900.0]],
+            "reference": "mean"})
+        assert res["success"] is True
+        assert res["staleness_binding"]["observer_feature_id"] == ""
+        await _ledger_write(session_id, [{
+            "kind": "feature_selected",
+            "payload": {"feature_id": "peak-b", "layer_id": "peaks"},
+            "server_seq": 2,
+        }])
+        from app.services.gis_harness.scene3d.analysis_binding_store import (
+            evaluate_session_staleness,
+        )
+
+        evaluations = await evaluate_session_staleness(session_id)
+        assert evaluations, "binding must be registered"
+        assert all(e["verdict"]["state"] == "fresh" for e in evaluations), (
+            "换选要素不得判旧非观察者语义分析（review B1 假阳性反证）"
+        )
+
+    @pytest.mark.asyncio
+    async def test_observer_analysis_stamped_selection_stays_fresh(
+        self, registry, session_id, dem_path
+    ):
+        """观察者分析（LOS 无显式 feature id）盖当前选择戳——同选择
+        不自判旧，换选才失效。"""
+        await _seed(session_id)
+        await _ledger_write(session_id, [{
+            "kind": "feature_selected",
+            "payload": {"feature_id": "peak-a", "layer_id": "peaks"},
+            "server_seq": 1,
+        }])
+        res = await registry.dispatch("run_3d_analysis", {
+            "session_id": session_id, "analysis": "line_of_sight",
+            "raster_path": dem_path,
+            "observer_x": 500100.0, "observer_y": 3_999_900.0,
+            "target_x": 500500.0, "target_y": 3_999_500.0})
+        assert res["success"] is True
+        assert res["staleness_binding"]["observer_feature_id"] == "peak-a"
+        from app.services.gis_harness.scene3d.analysis_binding_store import (
+            evaluate_session_staleness,
+        )
+
+        # 同选择：fresh
+        evaluations = await evaluate_session_staleness(session_id)
+        assert all(e["verdict"]["state"] == "fresh" for e in evaluations)
+        # 换选：LOS（观察者语义）判旧
+        await _ledger_write(session_id, [{
+            "kind": "feature_selected",
+            "payload": {"feature_id": "peak-c", "layer_id": "peaks"},
+            "server_seq": 2,
+        }])
+        evaluations = await evaluate_session_staleness(session_id)
+        assert any(
+            e["verdict"]["reason_code"] == "SCENE_STALE_OBSERVER_MOVED"
+            for e in evaluations
+        )
+
+    @pytest.mark.asyncio
+    async def test_cross_family_params_filtered_and_echoed(
+        self, registry, session_id, dem_path
+    ):
+        """review G4/G3：跨族参数被过滤并回显；未知 options 键回显。"""
+        await _seed(session_id)
+        res = await registry.dispatch("run_3d_analysis", {
+            "session_id": session_id, "analysis": "cut_fill_volume",
+            "raster_path": dem_path,
+            "polygon": [[500100.0, 3999900.0], [500400.0, 3999900.0],
+                        [500400.0, 3999600.0], [500100.0, 3999600.0],
+                        [500100.0, 3999900.0]],
+            "reference": "mean",
+            "observer_x": 999.0,  # 跨族污染参数
+            "options": '{"typo_key": 1}'})
+        assert res["success"] is True
+        assert res["ignored_top_level_params"] == ["observer_x"]
+        assert res["ignored_options_keys"] == ["typo_key"]

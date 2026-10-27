@@ -5800,6 +5800,16 @@
      "op": "eq",
      "path": "mapspec.layer_count",
      "value": 0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-06-reason",
+     "kind": "decline_code",
+     "note": "review F1：钉 typed decline 码——意外 bug 失败不得绿",
+     "op": "eq",
+     "path": "scripted_errors.vs",
+     "value": "SCENE_CAP_VIEWSHED_NO_DEM"
     }
    ],
    "family": "F27",
@@ -5899,6 +5909,16 @@
      "op": "eq",
      "path": "mapspec.layer_count",
      "value": 0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-07-reason",
+     "kind": "decline_code",
+     "note": "跨 datum 拒绝的语义必须可辨（非泛化失败）",
+     "op": "regex",
+     "path": "scripted_error_messages.vol",
+     "value": "VERTICAL_REFERENCE_MISMATCH|mixing heights"
     }
    ],
    "family": "F27",
@@ -6025,6 +6045,16 @@
      "op": "eq",
      "path": "mapspec.layer_count",
      "value": 0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-08-reason",
+     "kind": "decline_code",
+     "note": "nodata 观察点的类型化语义必须可辨",
+     "op": "regex",
+     "path": "scripted_error_messages.vs",
+     "value": "observer cell is nodata|NoValidObservations|NO_VALID_OBSERVATIONS"
     }
    ],
    "family": "F27",
@@ -6129,6 +6159,16 @@
      "op": "eq",
      "path": "mapspec.layer_count",
      "value": 0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-09-reason",
+     "kind": "decline_code",
+     "note": "",
+     "op": "eq",
+     "path": "scripted_errors.vs",
+     "value": "SCENE_ANALYSIS_BAD_OPTIONS_JSON"
     }
    ],
    "family": "F27",

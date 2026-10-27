@@ -85,9 +85,10 @@ def raster_mask_polygons(
 
     - 掩膜为 True 的像元（``valid`` 给出时还须有效）归并为 cell-edge
       对齐的多边形（4-连通），含洞；世界坐标由 ``transform`` 仿射给出；
-    - 输出有界：多边形按面积降序保留至多 ``max_polygons`` 个；顶点总数
-      超 ``max_total_vertices`` 时按面积阈值（像元数二进位阶梯）升档
-      淘汰直至入预算或达 ``_MAX_AREA_STEP_CELLS``；
+    - 输出有界性（诚实口径，review E1）：多边形**数**硬有界（max_polygons
+      截断）；顶点**预算**按面积阈值（像元数二进位阶梯）升档淘汰**尽力**
+      达成——单个大连通多边形自身可超预算（淘汰不削环），此时 meta 标记
+      ``vertex_budget_exceeded=true``（消费方不得宣称严格有界）；
     - 被淘汰的像元不消失：``unattributed_cells`` /
       ``unattributed_area_m2`` 在 meta 中披露（stats 与几何可对账）。
 
@@ -190,6 +191,10 @@ def raster_mask_polygons(
             kept = polys[:1]  # 至少保留最大多边形（几何通道不空转）
             break
     checkpoint()
+    # 预算诚实披露（review E1）：单个大连通多边形自身即可超顶点预算
+    # （面积阈值淘汰只删多边形、不削环）——此时如实标记，消费方不得
+    # 把输出当作严格有界（记账恒等式不受影响）。
+    vertex_budget_exceeded = _vertex_count(kept) > int(max_total_vertices)
 
     kept_ids = {id(p) for p in kept}
     dropped = [p for p in polys if id(p) not in kept_ids]
@@ -223,6 +228,7 @@ def raster_mask_polygons(
         )
     attributed_cells = int(round(kept_area_crs / cell_area))
     meta["polygon_count"] = len(kept)
+    meta["vertex_budget_exceeded"] = vertex_budget_exceeded
     meta["attributed_cells"] = attributed_cells
     meta["dropped_polygon_count"] = len(dropped)
     meta["unattributed_cells"] = n_cells - attributed_cells

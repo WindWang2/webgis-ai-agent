@@ -149,8 +149,26 @@ def test_vertex_budget_raises_area_threshold_deterministically():
     fc1, meta1 = raster_mask_polygons(m, _TF, max_total_vertices=400)
     fc2, meta2 = raster_mask_polygons(m, _TF, max_total_vertices=400)
     assert meta1 == meta2  # 确定性
-    assert meta1["vertex_count"] <= 400 or meta1["area_threshold_cells"] >= 64
+    # 预算达成或如实披露（review F2：不允许 or 恒真吞掉超预算路径）
+    if meta1["vertex_count"] > 400:
+        assert meta1["vertex_budget_exceeded"] is True
+    else:
+        assert meta1["vertex_budget_exceeded"] is False
     assert meta1["attributed_cells"] + meta1["unattributed_cells"] == int(
+        np.count_nonzero(m)
+    )
+
+
+def test_single_large_polygon_exceeding_budget_is_disclosed():
+    """review E1 反证：渗流噪声形成的大连通团块（锯齿边界）自身超顶点
+    预算（GDAL 消共线顶点后仍是数万级）——必须显式披露
+    vertex_budget_exceeded，不冒充有界；记账恒等式不受影响。"""
+    rng = np.random.default_rng(0)
+    m = rng.random((300, 300)) > 0.42
+    _fc, meta = raster_mask_polygons(m, _TF, max_total_vertices=20000)
+    assert meta["vertex_count"] > 20000  # 前提：真的超预算
+    assert meta["vertex_budget_exceeded"] is True
+    assert meta["attributed_cells"] + meta["unattributed_cells"] == int(
         np.count_nonzero(m)
     )
 

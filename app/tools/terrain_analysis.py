@@ -2924,6 +2924,10 @@ def _register_measurement_tools(registry: ToolRegistry) -> None:
         # 组件（chart-artifact 工件通道）。面板可用性优先于逐点保真：
         # ≤512 点均匀抽稀（z_m 恒为米）；统计与 GeoJSON 仍按全采样口径。
         _chart_stride = max(1, math.ceil(len(prof["points"]) / 512))
+        _chart_slice = prof["points"][::_chart_stride]
+        # review G6：抽稀不丢末端点（线路终点是剖面语义的一部分）
+        if _chart_stride > 1 and prof["points"][-1] not in _chart_slice:
+            _chart_slice = _chart_slice + [prof["points"][-1]]
         _chart_points = [
             {
                 "name": (
@@ -2933,7 +2937,7 @@ def _register_measurement_tools(registry: ToolRegistry) -> None:
                 ),
                 "value": p["z_m"],
             }
-            for p in prof["points"][::_chart_stride]
+            for p in _chart_slice
             if p["z_m"] is not None
         ]
         if len(_chart_points) >= 2:
@@ -3581,13 +3585,14 @@ def _register_measurement_tools(registry: ToolRegistry) -> None:
         ]
         if bool(params["include_geometry"]):
             # 挖方/填方分区面：dz 符号掩膜 → cell-edge 对齐多边形
-            # （与可视几何同一多边形化纪律；mean 模式 base 来自 stats）。
+            # （与可视几何同一多边形化纪律）。换算因子/基准面取 meta
+            # 单一真相（review C1：不自带 0.3048 第二份；base_z_m 未
+            # 舍入——stats.base_z 是 6 位回显，分区判定不得与其漂移）。
             _z, valid = terrain_lib._prepare(arr, eff_nodata)
-            z_m = _z * (0.3048 if str(params["z_units"]) == "ft" else 1.0)
+            z_to_m = float(meta["z_to_m"])
+            z_m = _z * z_to_m
             in_region = mask & valid
-            dz = z_m - float(stats["base_z"]) * (
-                0.3048 if str(params["z_units"]) == "ft" else 1.0
-            )
+            dz = z_m - float(meta["base_z_m"])
             for kind, region_mask in (
                 ("cut_region", in_region & (dz > 0)),
                 ("fill_region", in_region & (dz < 0)),

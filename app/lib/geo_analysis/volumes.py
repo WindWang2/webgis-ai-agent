@@ -87,6 +87,12 @@ def cut_fill_volume(
         meta: 采样口径 / nodata 政策 / 垂直基准 / 边界披露 / 方法。
     """
     cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    # review A4：非有限/病态像元尺寸防护（_validate_cell_sizes 只查 >0）
+    # ——inf cell 会产出 inf 体积（宁可拒绝也不输出伪数值）。
+    if not (math.isfinite(cy) and math.isfinite(cx)) or cy > 1e9 or cx > 1e9:
+        raise ValueError(
+            f"cell sizes must be finite and <= 1e9 m (got cy={cy!r}, cx={cx!r})"
+        )
     if reference not in REFERENCE_MODES:
         raise ValueError(
             f"reference must be one of {REFERENCE_MODES} (got {reference!r})"
@@ -203,6 +209,10 @@ def cut_fill_volume(
         "vertical_datum": vref["vertical_datum"],
         "z_units": vref["z_units"],
         "z_unit_transformations": vref["transformations"],
+        # review C1：换算因子单一真相暴露（工具层分区几何复用，不自带
+        # 0.3048 第二份）；base_z_m 未舍入（stats.base_z 是 6 位回显）。
+        "z_to_m": vref["z_to_m"],
+        "base_z_m": base_m,
         "max_invalid_fraction": max_invalid_fraction,
         "invalid_fraction": round(invalid_fraction, 6),
         "boundary_cells": boundary_cells,
@@ -212,7 +222,11 @@ def cut_fill_volume(
         "volume_unit": "m³ (metres; z converted via z_to_m, cell area metric)",
         "sign_convention": "net = cut − fill; positive means excavate more "
         "than you fill",
-        "method": "cell-center midpoint quadrature: each usable cell "
+        "method": "cell-center midpoint quadrature (exact for degree<=1 "
+        "surfaces in the discrete cell-sum sense — analytical oracles are "
+        "hand-computed closed forms of the same discretization; curved "
+        "surfaces converge with resolution, no analytic bound claimed): "
+        "each usable cell "
         "contributes (z_center − base) × cell_area, truncated positive part "
         "counted as cut, negative as fill; midpoint rule is exact for "
         "planar (≤degree-1) surfaces — see analytical oracles; curved "

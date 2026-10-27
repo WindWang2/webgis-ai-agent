@@ -181,3 +181,67 @@ def test_terrain_profile_tool_seeds_profile_chart(tmp_path, monkeypatch):
     assert len(seed["chart"]["data"]) >= 2
     assert len(seed["chart"]["data"]) <= 512
     assert res["meta"]["profile_chart_points"] == len(seed["chart"]["data"])
+
+
+@pytest.mark.asyncio
+async def test_parsed_init_regression_reuse_disabled(tmp_path, monkeypatch):
+    """review F3：GIS_ANALYSIS_REUSE=0 时 _parsed 未初始化的
+    UnboundLocalError（经 best_effort 掩盖 → artifact 登记被静默跳过）
+    不得回归——关闭复用后 geojson 工具的产物仍必须登记。"""
+    import os
+
+    import numpy as np
+
+    os.makedirs(_REPO_DATA, exist_ok=True)
+    import uuid as _uuid
+
+    import rasterio
+
+    n = 40
+    r, c = np.mgrid[0:n, 0:n].astype(float)
+    cone = np.clip(100.0 - 2.0 * np.hypot(r - 20, c - 20), 0.0, None)
+    raster = os.path.join(_REPO_DATA, f"test_parsed_dem_{_uuid.uuid4().hex[:8]}.tif")
+    with rasterio.open(
+        raster, "w", driver="GTiff", height=n, width=n, count=1,
+        dtype="float64",
+        transform=rasterio.transform.Affine(10.0, 0.0, 0.0, 0.0, -10.0, float(n * 10)),
+        crs="EPSG:32650",
+    ) as dst:
+        dst.write(cone, 1)
+
+    monkeypatch.setenv("GIS_ANALYSIS_REUSE", "0")
+    from app.services.artifact_registry import list_artifacts
+    from app.services.session_data import session_data_manager
+    from app.services.tool_dispatch_service import ToolDispatchService
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    init_tools(reg)
+    svc = ToolDispatchService(registry=reg)
+    session_id = f"parsed-reg-{_uuid.uuid4().hex[:8]}"
+    try:
+        tc = {
+            "id": "tc-parsed-1",
+            "function": {
+                "name": "terrain_profile",
+                "arguments": {
+                    "raster_path": raster,
+                    "vertices": "[[5.0, 395.0], [395.0, 395.0]]",
+                },
+            },
+        }
+        result = await svc.dispatch(tc, session_id, set())
+        assert result.status == "ok", result.error_msg
+        artifacts = await list_artifacts(session_id)
+        by_producer = [
+            a for a in artifacts if a.producer_tool == "terrain_profile"
+        ]
+        assert by_producer, (
+            "reuse disabled: artifact registration must still run "
+            "(_parsed pre-init regression, review F3)"
+        )
+    finally:
+        if os.path.exists(raster):
+            os.unlink(raster)
+        await session_data_manager.clear_session(session_id)

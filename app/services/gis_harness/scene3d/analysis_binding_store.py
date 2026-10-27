@@ -62,17 +62,25 @@ async def register_analysis_binding(
 ) -> Dict[str, Any]:
     """登记/刷新一条分析绑定（同 goal+layer+observer 幂等覆盖，FIFO 有界）。
 
-    选择上下文戳记：调用方未显式给 observer_feature_id 时，用登记时刻的
-    Interaction IR selection 补全——分析是**响应当前选择**做出的，之后
-    同一选择不得把它判旧（换选别的要素才失效）。上下文读取失败按无选择
-    处理（fail-open，不阻塞登记）。
+    选择上下文戳记（review B1 修正）：**仅观察者语义目标**（viewshed/
+    line_of_sight）在调用方未显式给 observer_feature_id 时用登记时刻的
+    Interaction IR selection 补全——这类分析的结果是"当前所选观察点"的
+    函数，之后同一选择不得把它判旧（换选别的要素才失效）。非观察者目标
+    （profile/surface/volume 是线路/区域语义）**不戳记**：它们不是选择点
+    的函数——盖章会让 staleness 的观察者语义收窄被击穿（换选要素不得
+    误判线路/区域分析为旧）。上下文读取失败按无选择处理（fail-open，
+    不阻塞登记）。
     """
     from app.services.gis_harness.interaction_ir.projection import (
         interaction_snapshot_via_store,
     )
+    from app.services.gis_harness.scene3d.staleness import _OBSERVER_GOALS
     from app.services.session_data import session_data_manager
 
-    if not binding.observer_feature_id:
+    if (
+        not binding.observer_feature_id
+        and binding.analysis_goal in _OBSERVER_GOALS
+    ):
         try:
             snap = await interaction_snapshot_via_store(
                 session_data_manager, session_id
@@ -106,6 +114,9 @@ async def register_analysis_binding(
         "success": bool(ok),
         "binding_count": len(kept),
         "evicted_oldest": evicted,
+        # 回传（可能被选择上下文补全后的）最终绑定——调用方 echo 与
+        # 存储同一形态（echo 原始对象会与裁决所见漂移）。
+        "binding": binding.model_dump(),
     }
 
 

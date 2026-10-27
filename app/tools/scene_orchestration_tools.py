@@ -53,6 +53,7 @@ _SCENE3D_ANALYSIS_TABLE: Dict[str, Dict[str, Any]] = {
         "tool": "viewshed_analysis",
         "capability_key": "viewshed_analysis",
         "required": ("raster_path", "observer_x", "observer_y"),
+        "family": "observer",
         "algorithm": "terrain.viewshed",
         "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
         "alternatives": [
@@ -65,6 +66,7 @@ _SCENE3D_ANALYSIS_TABLE: Dict[str, Dict[str, Any]] = {
         "capability_key": "line_of_sight",
         "required": ("raster_path", "observer_x", "observer_y",
                      "target_x", "target_y"),
+        "family": "observer",
         "algorithm": "terrain.line_of_sight",
         "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
         "alternatives": [
@@ -76,6 +78,7 @@ _SCENE3D_ANALYSIS_TABLE: Dict[str, Dict[str, Any]] = {
         "tool": "terrain_profile",
         "capability_key": "terrain_measurement",
         "required": ("raster_path", "vertices"),
+        "family": "polyline",
         "algorithm": "terrain.profile",
         "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
         "alternatives": [
@@ -87,6 +90,7 @@ _SCENE3D_ANALYSIS_TABLE: Dict[str, Dict[str, Any]] = {
         "tool": "surface_distance_analysis",
         "capability_key": "terrain_measurement",
         "required": ("raster_path", "vertices"),
+        "family": "polyline",
         "algorithm": "terrain.surface_distance",
         "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
         "alternatives": [
@@ -98,6 +102,7 @@ _SCENE3D_ANALYSIS_TABLE: Dict[str, Dict[str, Any]] = {
         "tool": "surface_area_analysis",
         "capability_key": "terrain_measurement",
         "required": ("raster_path", "polygon"),
+        "family": "polygon",
         "algorithm": "terrain.surface_area",
         "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
         "alternatives": [
@@ -109,6 +114,7 @@ _SCENE3D_ANALYSIS_TABLE: Dict[str, Dict[str, Any]] = {
         "tool": "cut_fill_volume_analysis",
         "capability_key": "cut_fill_volume",
         "required": ("raster_path", "polygon"),
+        "family": "polygon",
         "algorithm": "terrain.cut_fill_volume",
         "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
         "alternatives": [
@@ -116,6 +122,18 @@ _SCENE3D_ANALYSIS_TABLE: Dict[str, Dict[str, Any]] = {
             "surface_area_analysis（面积而非体积，语义不同）",
         ],
     },
+}
+
+#: 参数族 → 该族分析接受的顶层参数（review G4：跨族参数不交叉污染——
+#: 给土方传 observer_x 是调用方错误，泛化透传只会得到内层工具的 generic
+#: 校验错，不如在编排层就按族过滤并留下 typed 提示）。
+_FAMILY_PARAMS = {
+    "observer": {"raster_path", "observer_x", "observer_y", "target_x",
+                 "target_y", "observer_height", "target_height",
+                 "max_distance"},
+    "polyline": {"raster_path", "vertices"},
+    "polygon": {"raster_path", "polygon", "base_z", "reference",
+                "max_invalid_fraction"},
 }
 
 
@@ -588,7 +606,7 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                     "command": command,
                     "declined": True,
                     "reason_code": "SCENE_CAP_ALGORITHM_PENDING_G3D03",
-                    "message": f"analysis={analysis!r} 暂不可用",
+                    "message": f"analysis={analysis!r} 暂不可用 [SCENE_CAP_ALGORITHM_PENDING_G3D03]",
                     "alternatives": [
                         "viewshed（视域掩膜）", "line_of_sight（两点通视）",
                         "terrain_profile / surface_distance / surface_area",
@@ -606,7 +624,10 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                     "command": command,
                     "declined": True,
                     "reason_code": spec_entry["decline_code"],
-                    "message": f"{analysis} 需要 DEM 数据事实（capability 门拒绝）",
+                    "message": (
+                        f"{analysis} 需要 DEM 数据事实（capability 门拒绝）"
+                        f" [{spec_entry['decline_code']}]"
+                    ),
                     "alternatives": spec_entry["alternatives"],
                 }
             if not raster_path:
@@ -614,36 +635,46 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                         "declined": True,
                         "reason_code": "SCENE_ANALYSIS_MISSING_RASTER_PATH",
                         "message": "缺 raster_path（DEM GeoTIFF 真实 ref 路径）——"
-                                   "本工具不猜测数据路径",
+                                   "本工具不猜测数据路径 [SCENE_ANALYSIS_MISSING_RASTER_PATH]",
                         "alternatives": []}
-            # 必需参数按分析族分派检查（观察点族 / 折线族 / 多边形族）。
+            # 必需参数按分析族分派检查（观察点族 / 折线族 / 多边形族）；
+            # 跨族参数按族过滤（review G4）——不向内层工具透传无关参数。
+            family_allowed = _FAMILY_PARAMS[spec_entry["family"]]
             args: Dict[str, Any] = {"raster_path": raster_path}
+            candidate: Dict[str, Any] = {}
             if observer_x is not None:
-                args["observer_x"] = float(observer_x)
+                candidate["observer_x"] = float(observer_x)
             if observer_y is not None:
-                args["observer_y"] = float(observer_y)
+                candidate["observer_y"] = float(observer_y)
             if target_x is not None:
-                args["target_x"] = float(target_x)
+                candidate["target_x"] = float(target_x)
             if target_y is not None:
-                args["target_y"] = float(target_y)
+                candidate["target_y"] = float(target_y)
             if vertices is not None:
-                args["vertices"] = vertices
+                candidate["vertices"] = vertices
             if polygon is not None:
-                args["polygon"] = polygon
+                candidate["polygon"] = polygon
             if base_z is not None:
-                args["base_z"] = float(base_z)
+                candidate["base_z"] = float(base_z)
             if analysis == "cut_fill_volume":
-                args["reference"] = reference
+                candidate["reference"] = reference
             # #1829 兼容约定：viewshed/LOS 的三项高度/距离参数保持顶层
             # 可选（options JSON 同名键优先生效）。
             if observer_height is not None:
-                args["observer_height"] = float(observer_height)
+                candidate["observer_height"] = float(observer_height)
             if target_height is not None:
-                args["target_height"] = float(target_height)
+                candidate["target_height"] = float(target_height)
             if max_distance is not None:
-                args["max_distance"] = float(max_distance)
+                candidate["max_distance"] = float(max_distance)
+            ignored_top_level: List[str] = []
+            for key, value in candidate.items():
+                if key in family_allowed:
+                    args[key] = value
+                else:
+                    ignored_top_level.append(key)
             # options JSON 透传（目标工具的 apply_contract 是参数权威——
             # 编排层不做第二套校验）。
+            ignored_options: List[str] = []
             if options:
                 try:
                     extra = json.loads(options) if isinstance(options, str) else options
@@ -651,17 +682,23 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                     return {"success": False, "command": command,
                             "declined": True,
                             "reason_code": "SCENE_ANALYSIS_BAD_OPTIONS_JSON",
-                            "message": f"options 不是合法 JSON：{exc}",
+                            "message": f"options 不是合法 JSON：{exc} [SCENE_ANALYSIS_BAD_OPTIONS_JSON]",
                             "alternatives": []}
                 if isinstance(extra, dict):
-                    for key in ("observer_height", "target_height",
-                                "max_distance", "curvature", "observer_z",
-                                "target_z", "sampling_step_m", "nodata_policy",
-                                "vertical_datum", "z_units",
-                                "override_vertical_datum",
-                                "max_invalid_fraction", "include_geometry"):
+                    passthrough = ("observer_height", "target_height",
+                                   "max_distance", "curvature", "observer_z",
+                                   "target_z", "sampling_step_m", "nodata_policy",
+                                   "vertical_datum", "z_units",
+                                   "override_vertical_datum",
+                                   "max_invalid_fraction", "include_geometry")
+                    for key in passthrough:
                         if key in extra and extra[key] is not None:
                             args[key] = extra[key]
+                    # review G3：未知 options 键不静默丢弃（typo 参数按
+                    # 默认值跑是 fail-open）——回显给调用方。
+                    ignored_options = [
+                        k for k in extra if k not in passthrough
+                    ]
             missing = [
                 key for key in spec_entry["required"] if args.get(key) in (None, "", [])
             ]
@@ -669,7 +706,8 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                 return {"success": False, "command": command,
                         "declined": True,
                         "reason_code": "SCENE_ANALYSIS_MISSING_PARAMS",
-                        "message": f"缺必需参数：{', '.join(missing)}（analysis={analysis}）",
+                        "message": f"缺必需参数：{', '.join(missing)}（analysis={analysis}）"
+                        " [SCENE_ANALYSIS_MISSING_PARAMS]",
                         "alternatives": []}
 
             from app.agent_pi_bridge import try_get_tool_registry
@@ -701,12 +739,22 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
             result = await registry.dispatch(
                 tool_name, dispatch_args, session_id=session_id)
             if not isinstance(result, dict) or not result.get("success"):
+                inner = result if isinstance(result, dict) else {}
+                inner_kind = str(
+                    inner.get("reason_code")
+                    or inner.get("code")
+                    or inner.get("error")
+                    or inner.get("message")
+                    or ""
+                )[:160]
                 return {
                     "success": False,
                     "command": command,
                     "declined": False,
-                    "message": f"{tool_name} 执行失败（真实 dispatch）",
-                    "execution": result if isinstance(result, dict) else None,
+                    "message": (
+                        f"{tool_name} 执行失败（真实 dispatch）：{inner_kind}"
+                    ),
+                    "execution": inner or None,
                 }
 
             # MethodUseContract 摘要（科学适用性披露面；权威在 registries）
@@ -744,6 +792,11 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
             except Exception as exc:  # noqa: BLE001 — 登记失败不吞分析结果
                 binding_ack["register_error"] = str(exc)[:160]
 
+            _echo_binding = (
+                binding_ack.get("binding")
+                if isinstance(binding_ack.get("binding"), dict)
+                else binding.model_dump()
+            )
             # 产物提升（G3D-V2-C）：嵌套 dispatch 的 geojson/profile_chart
             # 提升到编排层结果——外层 ToolDispatchService 缝据此铸
             # ref:geojson-*/ref:profile-* 并挂层/挂剖面组件（与直调目标
@@ -754,10 +807,12 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                 "analysis": analysis,
                 "result": result,
                 "method_use_contract": method_digest,
-                "staleness_binding": {**binding.model_dump(),
+                "staleness_binding": {**_echo_binding,
                                       "dem_source_binding": "explicit" if dem_source_id else "none"},
                 "staleness_binding_ack": binding_ack,
                 "prior_stale_analyses": prior_stale,
+                "ignored_top_level_params": ignored_top_level,
+                "ignored_options_keys": ignored_options,
             }
             if isinstance(result.get("geojson"), (dict, list)):
                 out["geojson"] = result["geojson"]
