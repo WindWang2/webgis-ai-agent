@@ -171,6 +171,17 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "scene_terrain_unavailable", "warning",
             "场景声明了地形但高程源不可用，已按无地形平面呈现（{detail}）",
         ),
+        # —— G3D01 底图/地形源治理披露 ——
+        RenderDiagnosticSpec(
+            "scene_basemap_unavailable", "warning",
+            "底图瓦片源加载失败（网络/401/403/429），底图可能缺失；"
+            "可切换其他可用底图或配置本地底图（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "scene_terrain_no_source_air_gapped", "warning",
+            "离线(air_gapped)部署且未绑定会话 DEM 源，3D 地形已显式禁用"
+            "（绝不回退外网兜底；{detail}）",
+        ),
         # —— V6（ADR-0120）多帧聚合元披露 ——
         RenderDiagnosticSpec(
             "diagnostics_truncated", "warning",
@@ -408,6 +419,14 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     ),
     "scene_terrain_unavailable": (
         "frontend/lib/mapspec-runtime/runtime.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "scene_basemap_unavailable": (
+        "frontend/lib/mapspec-runtime/runtime.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "scene_terrain_no_source_air_gapped": (
+        "frontend/lib/map-kit/terrain-governance.ts",
         "frontend/lib/map-kit/export-chrome.ts",
     ),
     # ADR-0157 P1：高 DPI 渲染策略 —— 发射器在 lib/export/highdpi.ts 单源；

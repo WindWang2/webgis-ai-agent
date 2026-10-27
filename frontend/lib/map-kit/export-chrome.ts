@@ -158,6 +158,11 @@ export type ExportDegradationCode =
    * exporter 汇入；词表权威在 app/lib/cartography/render_diagnostics.py）。 */
   | 'scene_extrusion_no_height_evidence'
   | 'scene_terrain_unavailable'
+  /* G3D01：底图/地形源失效披露（发射器 mapspec-runtime/runtime.ts 的
+   * basemap 瓦片错误 handler 与 map-kit/terrain-governance.ts 的
+   * air_gapped 守卫 → exporter 汇入；词表权威同上）。 */
+  | 'scene_basemap_unavailable'
+  | 'scene_terrain_no_source_air_gapped'
   /* ADR-0157 P1：高 DPI 渲染策略（发射器 lib/export/highdpi.ts）。 */
   | 'highdpi_rerender_timeout_degraded'
   | 'raster_tile_detail_limited_highdpi'

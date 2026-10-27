@@ -119,6 +119,8 @@ import {
   formatArea,
 } from "@/lib/map-kit/navigation"
 import { MapSpecRuntime } from "@/lib/mapspec-runtime"
+// G3D01：地形挂载治理入口（air_gapped 降级 + 证据披露；见 terrain-governance.ts）。
+import { applyTerrain3D } from "@/lib/map-kit/terrain-governance"
 import { composeLiveMapSpec } from "@/lib/mapspec/live-spec"
 import {
   injectResolvedRefSources,
@@ -197,7 +199,7 @@ interface MapPanelProps {
 
 import { useMapAction } from "@/lib/contexts/map-action-context"
 
-function getMapStyle(option: MapStyleOption, index: number): string | StyleSpecification {
+export function getMapStyle(option: MapStyleOption, index: number): string | StyleSpecification {
   if (option.type === "raster") {
     const sourceId = `raster-tiles-${index}`;
     const layerId = `raster-tiles-layer-${index}`;
@@ -208,7 +210,11 @@ function getMapStyle(option: MapStyleOption, index: number): string | StyleSpeci
           type: "raster",
           tiles: [option.url],
           tileSize: 256,
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          // G3D01 D7：per-provider 署名（providers.ts 治理目录携带）。
+          // 此前对所有 raster provider 硬编码 OSM 署名 —— 对 Carto/ESRI/
+          // OpenTopoMap/高德等是错误的署名（许可红线），且丢失 OSM 链接外的
+          // 其他数据来源信息。空串 = 无署名数据（契约测试保证不为空）。
+          attribution: option.attribution || "",
         },
       },
       layers: [
@@ -712,7 +718,10 @@ export function MapPanel({
       cameraCfg && typeof cameraCfg.transition_ms === "number" ? cameraCfg.transition_ms : 1000
 
     if (is3D) {
-      renderer.enable3DTerrain(map, buildSceneTerrainOptions())
+      // G3D01 D6：地形挂载统一走治理入口（air_gapped 无会话 DEM 时显式
+      // 禁用并披露证据，绝不静默回退外网兜底 —— review R1 P1-1 后两个
+      // 挂载点共用同一守卫）。
+      applyTerrain3D(map, buildSceneTerrainOptions())
       map.easeTo({ pitch, bearing, duration: transitionMs })
     } else {
       renderer.disable3DTerrain(map)
@@ -803,9 +812,11 @@ export function MapPanel({
         // ADR-0199（review P1-1）：与 toggle effect 共用 buildSceneTerrainOptions
         // —— 此前这里硬编码 { exaggeration: 1.5 }，每次 reconcile 都会把
         // spec 声明的诚实 exaggeration/DEM 源悄悄改回默认（伪垂直比例）。
+        // G3D01（review R1 P1-1）：走治理入口 applyTerrain3D —— 此前底图
+        // 切换后这里无条件 enable，air_gapped 部署会静默重新挂上外网兜底。
         if (map) {
           if (is3D) {
-            renderer.enable3DTerrain(map, buildSceneTerrainOptions())
+            applyTerrain3D(map, buildSceneTerrainOptions())
           } else {
             renderer.disable3DTerrain(map)
           }
