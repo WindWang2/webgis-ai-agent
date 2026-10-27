@@ -24,6 +24,9 @@ from app.schemas.layer_schema import (
     SessionFeaturePageResponse,
 )
 from app.services.auth_history_bridge import require_owned_session, verify_session_owner
+from app.core.auth import get_current_user_optional, get_owner_token
+from app.core.database import get_async_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.lib.geojson_serializer import serialize_geojson
 from app.models.db_model import Conversation
 from app.services.mvt import (
@@ -746,6 +749,26 @@ async def get_raster_tile(
     return _png_tile_response(png_bytes, if_none_match)
 
 
+async def _require_owned_session_qtoken(
+    session_id: str = Query(..., min_length=8, max_length=128),
+    token: Optional[str] = Query(None, description="匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）"),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user_optional),
+) -> Conversation:
+    """terrain 数据面专用守卫：X-Session-Token 头之外接受 ``?token=`` query。
+
+    MapLibre 的 raster-dem 瓦片取数走 <img>/fetch，无法附带自定义请求头 ——
+    匿名会话此前完全无法消费 terrain 瓦片。语义与 SEC-08 既有先例
+    （/sessions/{sid}/raster/{id}.png?token=，tool_dispatch_service）一致：
+    头优先，query 兜底；ref_id+session_id+token 共同构成能力令牌。
+    """
+    user_id = _user.get("user_id") if isinstance(_user, dict) else None
+    return await verify_session_owner(
+        db, session_id=session_id, user_id=user_id, owner_token=owner_token or token
+    )
+
+
 @router.get("/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png", tags=["图层数据"])
 async def get_terrain_tile(
     ref_id: str,
@@ -753,8 +776,9 @@ async def get_terrain_tile(
     x: int,
     y: int,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    token: Optional[str] = Query(None, description="匿名会话 owner token（同 terrain-tiles.json）"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
-    _conv: Conversation = Depends(require_owned_session),
+    _conv: Conversation = Depends(_require_owned_session_qtoken),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
 ):
     """terrarium 编码的地形瓦片（ADR-0199：MapLibre raster-dem 数据面）。
@@ -777,7 +801,7 @@ async def get_terrain_tile(
 
     from app.services.raster_tile_service import TerrainTileError, render_terrarium_tile
 
-    safe_path = await _resolve_raster_tile_path(session_id, ref_id, owner_token)
+    safe_path = await _resolve_raster_tile_path(session_id, ref_id, owner_token or token)
 
     async def _compute() -> bytes:
         return await asyncio.to_thread(render_terrarium_tile, safe_path, z, x, y, 256)
@@ -792,6 +816,158 @@ async def get_terrain_tile(
             raise HTTPException(status_code=503, detail={"code": e.code, "message": e.message})
         raise HTTPException(status_code=422, detail={"code": e.code, "message": e.message})
     return _png_tile_response(png_bytes, if_none_match)
+
+
+@router.get("/layers/data/{ref_id}/terrain-tiles.json", tags=["图层数据"])
+async def get_terrain_tilejson(
+    ref_id: str,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    token: Optional[str] = Query(None, description="匿名会话 owner token（tiles URL 将原样携带）"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(_require_owned_session_qtoken),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+):
+    """会话 terrain 源的 TileJSON（G3D-V2-A A4）。
+
+    TileJSON 3.0.0 核心字段（tiles/bounds/minzoom/maxzoom/attribution）+
+    ``terrain`` 扩展块（encoding/垂直单位/垂直基准/资格 receipt 摘要）——
+    MapLibre ``raster-dem`` source 的机器可读入口，消费者不再手拼瓦片 URL。
+
+    - 鉴权先于任何计算（与瓦片路由同款守卫；匿名 ?token= 支持）；
+    - bounds 来自摄入 receipt（EPSG:4326）；非摄入路径（无 receipt 的
+      raster ref）现场开文件头推导，CRS 缺失 → 422 fail-closed（与瓦片
+      路由语义对齐，绝不给无 CRS 的"地形"发 TileJSON）；
+    - qualification=unavailable 的源在摄入期已不注册 —— 本端点服务的都
+      是可渲染源；receipt 的 display_only 因素原样透传（消费者自行拒绝
+      科学用途）。
+    """
+    if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
+        raise HTTPException(status_code=400, detail="非法 ref_id")
+
+    effective_token = owner_token or token
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=effective_token)
+    if not res.success or not res.data:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "栅格数据不可用")
+    payload = res.data if isinstance(res.data, dict) else {}
+    raster_path = payload.get("file_path") or payload.get("path")
+    if not isinstance(raster_path, str) or not raster_path:
+        raise HTTPException(status_code=400, detail="栅格数据缺少有效路径")
+
+    from app.utils.path import validate_data_path
+    from app.core.config import settings
+
+    try:
+        safe_path = validate_data_path(raster_path, settings.DATA_DIR)
+    except ValueError as e:
+        logger.warning(f"[layer] terrain tilejson path rejected: {e}")
+        raise HTTPException(status_code=400, detail="非法栅格路径")
+
+    receipt_data = payload.get("receipt") if payload.get("kind") == "terrain_dem" else None
+
+    # bounds/zoom：receipt 优先；无 receipt（非摄入路径）现场开文件头推导。
+    if isinstance(receipt_data, dict) and receipt_data.get("bbox_epsg4326"):
+        bounds = [float(v) for v in receipt_data["bbox_epsg4326"]]
+        gsd_m = receipt_data.get("ground_sample_distance_m")
+        from app.services.terrain_ingest import native_zoom_for_gsd
+
+        maxzoom = native_zoom_for_gsd(
+            gsd_m, tuple(bounds) if len(bounds) == 4 else None
+        )
+    else:
+        derived = await asyncio.to_thread(_derive_terrain_header, safe_path)
+        if derived is None:
+            raise HTTPException(status_code=422, detail={
+                "code": "TERRAIN_REQUIRES_CRS",
+                "message": "elevation source has no CRS; refusing to publish TileJSON",
+            })
+        bounds, gsd_m = derived
+        from app.services.terrain_ingest import native_zoom_for_gsd
+
+        maxzoom = native_zoom_for_gsd(gsd_m, tuple(bounds))
+
+    tiles_url = (
+        f"/api/v1/layers/data/{ref_id}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
+        f"?session_id={session_id}"
+    )
+    if effective_token:
+        tiles_url += f"&token={effective_token}"
+
+    synthetic = bool(receipt_data.get("synthetic")) if isinstance(receipt_data, dict) else False
+    attribution = "User-provided elevation data (session-owned)"
+    if synthetic:
+        attribution += " — SYNTHETIC DEM, display only"
+
+    terrain_block: Dict[str, Any] = {
+        "encoding": "terrarium",
+        "qualification": (
+            receipt_data.get("qualification", "unknown")
+            if isinstance(receipt_data, dict) else "unknown"
+        ),
+        "vertical_unit": "m",
+        "vertical_datum": receipt_data.get("vertical_datum") if isinstance(receipt_data, dict) else None,
+        "vertical_datum_source": receipt_data.get("vertical_datum_source") if isinstance(receipt_data, dict) else "unavailable",
+        "synthetic": synthetic,
+        "ground_sample_distance_m": gsd_m,
+        "nodata": receipt_data.get("nodata") if isinstance(receipt_data, dict) else None,
+        "nodata_hole_fraction": receipt_data.get("nodata_hole_fraction") if isinstance(receipt_data, dict) else None,
+        "unit_conversion": receipt_data.get("unit_conversion") if isinstance(receipt_data, dict) else None,
+        "reasons": [
+            {"code": r.get("code"), "detail": r.get("detail")}
+            for r in (receipt_data.get("reasons") or [])
+        ] if isinstance(receipt_data, dict) else [],
+        "elevation_min_m": receipt_data.get("elevation_min_m") if isinstance(receipt_data, dict) else None,
+        "elevation_max_m": receipt_data.get("elevation_max_m") if isinstance(receipt_data, dict) else None,
+    }
+
+    body = {
+        "tilejson": "3.0.0",
+        "name": f"session-dem:{ref_id}",
+        "description": "Session-registered terrain source (terrarium-encoded XYZ)",
+        "version": "1.0.0",
+        "attribution": attribution,
+        "tiles": [tiles_url],
+        "bounds": bounds,
+        "minzoom": 0,
+        "maxzoom": maxzoom,
+        # 扩展块（非 TileJSON 标准字段；消费者按扩展命名空间理解）
+        "terrain": terrain_block,
+    }
+    import json as _json
+
+    body_bytes = _json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    etag = '"%s"' % hashlib.sha256(body_bytes).hexdigest()[:16]
+    headers = {
+        "Cache-Control": "private, max-age=30",
+        "ETag": etag,
+        "X-Content-Type-Options": "nosniff",
+    }
+    if _etag_matches(if_none_match, etag):
+        return Response(status_code=304, headers=headers)
+    return Response(content=body_bytes, media_type="application/json", headers=headers)
+
+
+def _derive_terrain_header(safe_path: str):
+    """无 receipt 的 raster ref：开文件头推导 (bounds4326, gsd_m)；无 CRS → None。
+
+    纯 header 读取（不碰像素），在 worker 线程执行。
+    """
+    try:
+        import rasterio
+        from rasterio.warp import transform_bounds
+
+        with rasterio.open(safe_path) as src:
+            if src.crs is None:
+                return None
+            if src.count != 1:
+                return None
+            b = src.bounds
+            bounds = [float(v) for v in transform_bounds(src.crs, "EPSG:4326", b.left, b.bottom, b.right, b.top, densify_pts=21)]
+            from app.services.terrain_ingest import _gsd_meters
+
+            return bounds, _gsd_meters(src, tuple(bounds))
+    except Exception:  # noqa: BLE001 — 推导失败按不可发布处理
+        return None
 
 
 # P-5（#878）：(session, ref) → 已校验 safe_path 的短 TTL 缓存。
