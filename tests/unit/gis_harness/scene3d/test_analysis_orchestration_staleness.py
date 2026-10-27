@@ -200,15 +200,17 @@ class TestRun3DAnalysisAllFamilies:
         assert res["success"] is True, res
         assert res["result"]["meta"]["observer_height"] == 5.0
         assert res["result"]["meta"]["max_distance_m"] == 300.0
-        # 几何默认开启（include_geometry 经 options 可关）
-        assert "geojson" in res["result"]
+        # 几何默认开启（include_geometry 经 options 可关）——geojson 提升
+        # 到编排层结果（外层 dispatch 缝的挂层通道）
+        assert res.get("result_geojson_hoisted") is True
+        assert isinstance(res.get("geojson"), dict)
         res2 = await registry.dispatch("run_3d_analysis", {
             "session_id": session_id, "analysis": "viewshed",
             "raster_path": dem_path,
             "observer_x": 500100.0, "observer_y": 3_999_900.0,
             "options": '{"include_geometry": false}'})
         assert res2["success"] is True
-        assert "geojson" not in res2["result"]
+        assert "geojson" not in res2 and "geojson" not in res2["result"]
 
 
 # ── 2. 失效裁决生产闭环 ────────────────────────────────────────────

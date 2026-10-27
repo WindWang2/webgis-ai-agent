@@ -60,9 +60,31 @@ async def load_analysis_bindings(session_id: str) -> List[AnalysisBinding]:
 async def register_analysis_binding(
     session_id: str, binding: AnalysisBinding
 ) -> Dict[str, Any]:
-    """登记/刷新一条分析绑定（同 goal+layer+observer 幂等覆盖，FIFO 有界）。"""
+    """登记/刷新一条分析绑定（同 goal+layer+observer 幂等覆盖，FIFO 有界）。
+
+    选择上下文戳记：调用方未显式给 observer_feature_id 时，用登记时刻的
+    Interaction IR selection 补全——分析是**响应当前选择**做出的，之后
+    同一选择不得把它判旧（换选别的要素才失效）。上下文读取失败按无选择
+    处理（fail-open，不阻塞登记）。
+    """
+    from app.services.gis_harness.interaction_ir.projection import (
+        interaction_snapshot_via_store,
+    )
     from app.services.session_data import session_data_manager
 
+    if not binding.observer_feature_id:
+        try:
+            snap = await interaction_snapshot_via_store(
+                session_data_manager, session_id
+            )
+            sel = snap.get("selection") if isinstance(snap.get("selection"), dict) else {}
+            sel_feature = str((sel or {}).get("feature_id") or "")
+            if sel_feature:
+                binding = binding.model_copy(
+                    update={"observer_feature_id": sel_feature[:128]}
+                )
+        except Exception:  # noqa: BLE001 — 上下文缺席按无选择处理
+            pass
     bindings = await load_analysis_bindings(session_id)
     kept = [
         b

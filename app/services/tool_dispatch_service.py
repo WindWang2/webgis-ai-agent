@@ -699,6 +699,11 @@ class ToolDispatchService:
             analysis_key: Optional[str] = None
             input_shapes: Optional[Dict[str, dict]] = None
             reused_result: Optional[Dict[str, Any]] = None
+            # _parsed 在复用块内条件赋值；非能力工具（fly_camera 等）走到
+            # 下方 artifact 登记块的 `if _parsed is not None` 时未绑定 →
+            # UnboundLocalError 经 best_effort 掩盖成警告、登记被静默跳过
+            # （G3D-V2-C E2E 显形；预初始化恢复登记路径）。
+            _parsed = None
             if os.getenv("GIS_ANALYSIS_REUSE", "1") != "0":
                 # #1549：复用是纯加速，查找失败绝不阻塞执行；经 best_effort
                 # 可见降级（跳过复用 = 如实重算，不留静默痕迹）。

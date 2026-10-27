@@ -60,6 +60,10 @@ async def build_task_evidence(session_id: str, scenario) -> Dict[str, Any]:
     evidence["scene3d"] = _project_scene3d(spec, revision)
     evidence["interaction"] = await _project_interaction(session_id)
 
+    # ── G3D-V2-C：3D 分析绑定与失效裁决（analysis_binding_store 只读）──
+    evidence["scene3d_analysis"] = await _project_scene3d_analysis(
+        session_id, spec)
+
     # ── 最终答复（dispatch 缝不可观测的最终文本 → 诚实 not_evaluated 面）
     evidence["final_answer"] = {
         "observable": False,
@@ -161,6 +165,51 @@ def _project_progress(plan) -> Dict[str, Any]:
         "mandatory_complete": all(
             r["status"] not in ("pending", "failed") for r in mandatory),
     }
+
+
+async def _project_scene3d_analysis(
+    session_id: str, spec: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """G3D-V2-C：分析绑定台账 + 当前失效裁决（生产只读模块投影）。
+
+    无绑定时返回 None（未运行过 3D 分析——不是错误）；有绑定时给出
+    有界 evaluations（binding/staleness 摘要：goal/observer/状态/码）。
+    """
+    try:
+        from app.services.gis_harness.scene3d.analysis_binding_store import (
+            evaluate_session_staleness,
+            load_analysis_bindings,
+        )
+
+        bindings = await load_analysis_bindings(session_id)
+        if not bindings:
+            return None
+        evaluations = await evaluate_session_staleness(session_id, mapspec=spec)
+        return {
+            "binding_count": len(bindings),
+            "analysis_goals": sorted({b.analysis_goal for b in bindings}),
+            "stale_reason_codes": sorted({
+                (e.get("verdict") or {}).get("reason_code") or ""
+                for e in evaluations
+                if (e.get("verdict") or {}).get("state") != "fresh"
+            } - {""}),
+            "all_fresh": all(
+                (e.get("verdict") or {}).get("state") == "fresh"
+                for e in evaluations
+            ),
+            "evaluations": [
+                {
+                    "analysis_goal": (e.get("binding") or {}).get("analysis_goal"),
+                    "state": (e.get("verdict") or {}).get("state"),
+                    "reason_code": (e.get("verdict") or {}).get("reason_code"),
+                    "recommended_action": (e.get("verdict") or {}).get(
+                        "recommended_action"),
+                }
+                for e in evaluations
+            ],
+        }
+    except Exception:  # noqa: BLE001 — 只读取证面 fail-open
+        return None
 
 
 def _project_mapspec(spec) -> Optional[Dict[str, Any]]:

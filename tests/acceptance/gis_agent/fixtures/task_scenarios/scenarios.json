@@ -1,5 +1,5 @@
 {
- "count": 47,
+ "count": 61,
  "kind": "g05-task-scenarios",
  "scenarios": [
   {
@@ -5032,6 +5032,2102 @@
     }
    ],
    "user_goal": "用地形但数据面缺席"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-01-layer",
+     "kind": "mapspec_layer",
+     "note": "剖面 3D LineString + LOS 双线均经 geojson 通道挂层",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 2
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-01-profile-comp",
+     "kind": "mapspec_component",
+     "note": "剖面图 ref:profile-* 工件 + 组件自动挂接（M2c 缝）",
+     "op": "contains",
+     "path": "mapspec.component_types",
+     "value": "elevation_profile"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-01-binding",
+     "kind": "analysis_binding",
+     "note": "",
+     "op": "contains",
+     "path": "scene3d_analysis.analysis_goals",
+     "value": "terrain_profile"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-01-binding-los",
+     "kind": "analysis_binding",
+     "note": "",
+     "op": "contains",
+     "path": "scene3d_analysis.analysis_goals",
+     "value": "line_of_sight"
+    }
+   ],
+   "family": "F27",
+   "id": "f27-01-profile-then-los",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "multiturn",
+    "analysis"
+   ],
+   "timeout_s": 60,
+   "title": "多轮：地形剖面 → 两点通视（全算法编排正例）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "沿这条线路给个地形剖面",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "terrain_profile",
+        "raster_path": "{{ref:dem}}",
+        "vertices": [
+         [
+          500050.0,
+          3999950.0
+         ],
+         [
+          500550.0,
+          3999950.0
+         ]
+        ]
+       },
+       "call_id": "prof",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "再查一下线路两端能不能互相看见",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "line_of_sight",
+        "observer_x": 500050.0,
+        "observer_y": 3999950.0,
+        "raster_path": "{{ref:dem}}",
+        "target_x": 500550.0,
+        "target_y": 3999950.0
+       },
+       "call_id": "los",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "沿这条线路给个地形剖面"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-02-fill-layer",
+     "kind": "mapspec_layer",
+     "note": "可视面 Polygon → fill 图层（converter geojson 通道）",
+     "op": "contains",
+     "path": "mapspec.layer_types",
+     "value": "fill"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-02-binding",
+     "kind": "analysis_binding",
+     "note": "",
+     "op": "contains",
+     "path": "scene3d_analysis.analysis_goals",
+     "value": "viewshed"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-02-fresh",
+     "kind": "analysis_binding",
+     "note": "",
+     "op": "eq",
+     "path": "scene3d_analysis.all_fresh",
+     "value": true
+    }
+   ],
+   "family": "F27",
+   "id": "f27-02-viewshed-layer",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "viewshed",
+    "analysis"
+   ],
+   "timeout_s": 60,
+   "title": "视域：观察点视域面挂图（几何不再是 stats-only）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "从这个观察点算能看到哪些范围",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "dem_source_id": "dem",
+        "observer_feature_id": "obs-1",
+        "observer_x": 500305.0,
+        "observer_y": 3999695.0,
+        "options": "{\"max_distance\": 250}",
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "vs",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "从这个观察点算能看到哪些范围"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-03-stale-code",
+     "kind": "analysis_binding",
+     "note": "",
+     "op": "contains",
+     "path": "scene3d_analysis.stale_reason_codes",
+     "value": "SCENE_STALE_OBSERVER_MOVED"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-03-not-fresh",
+     "kind": "analysis_binding",
+     "note": "",
+     "op": "eq",
+     "path": "scene3d_analysis.all_fresh",
+     "value": false
+    }
+   ],
+   "family": "F27",
+   "id": "f27-03-observer-stale",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "staleness",
+    "interaction"
+   ],
+   "timeout_s": 60,
+   "title": "失效：换观察点 → 视域判旧（SCENE_STALE_OBSERVER_MOVED）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "先算这个点的视域，然后我想看看另一个山头",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "dem_source_id": "dem",
+        "observer_feature_id": "obs-1",
+        "observer_x": 500305.0,
+        "observer_y": 3999695.0,
+        "options": "{\"max_distance\": 250}",
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "vs",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "换成那个山头",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "events": [
+         {
+          "client_seq": 1,
+          "kind": "feature_selected",
+          "payload": {
+           "feature_id": "peak-b",
+           "layer_id": "peaks"
+          }
+         }
+        ]
+       },
+       "call_id": "sel",
+       "expect_error": false,
+       "kind": "interaction_event",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "user_dimension": "3d"
+       },
+       "call_id": "apply2",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "先算这个点的视域，然后我想看看另一个山头"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-04-fresh",
+     "kind": "analysis_binding",
+     "note": "视域是观察点的函数，与镜头无关——相机不进失效判定",
+     "op": "eq",
+     "path": "scene3d_analysis.all_fresh",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-04-camera-applied",
+     "kind": "mapspec_view",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.view.pitch",
+     "value": 60.0
+    }
+   ],
+   "family": "F27",
+   "id": "f27-04-camera-fresh",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "staleness",
+    "camera",
+    "negative"
+   ],
+   "timeout_s": 60,
+   "title": "不失效：camera-only 变化 → 分析保持 fresh",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "算完视域后换个角度看",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "dem_source_id": "dem",
+        "observer_feature_id": "obs-1",
+        "observer_x": 500305.0,
+        "observer_y": 3999695.0,
+        "options": "{\"max_distance\": 250}",
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "vs",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      },
+      {
+       "allow_error": true,
+       "arguments": {
+        "bearing": 120.0,
+        "pitch": 60.0
+       },
+       "call_id": "fly",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "fly_camera"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "user_dimension": "3d"
+       },
+       "call_id": "apply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "算完视域后换个角度看"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-05-fill-layer",
+     "kind": "mapspec_layer",
+     "note": "挖方/填方分区 Polygon 挂层",
+     "op": "contains",
+     "path": "mapspec.layer_types",
+     "value": "fill"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-05-binding",
+     "kind": "analysis_binding",
+     "note": "",
+     "op": "contains",
+     "path": "scene3d_analysis.analysis_goals",
+     "value": "cut_fill_volume"
+    }
+   ],
+   "family": "F27",
+   "id": "f27-05-cut-fill",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "volume",
+    "analysis"
+   ],
+   "timeout_s": 60,
+   "title": "土方：基准面 cut/fill 分区挂图（解析 oracle 口径）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "估算这块场地的平整土方量",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "cut_fill_volume",
+        "polygon": [
+         [
+          500100.0,
+          3999900.0
+         ],
+         [
+          500400.0,
+          3999900.0
+         ],
+         [
+          500400.0,
+          3999600.0
+         ],
+         [
+          500100.0,
+          3999600.0
+         ],
+         [
+          500100.0,
+          3999900.0
+         ]
+        ],
+        "raster_path": "{{ref:dem}}",
+        "reference": "mean"
+       },
+       "call_id": "vol",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "估算这块场地的平整土方量"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-06-no-layer",
+     "kind": "mapspec_layer",
+     "note": "decline 不产生任何分析/图层副作用",
+     "op": "eq",
+     "path": "mapspec.layer_count",
+     "value": 0
+    }
+   ],
+   "family": "F27",
+   "id": "f27-06-no-dem-source",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "negative",
+    "decline",
+    "qualification"
+   ],
+   "timeout_s": 60,
+   "title": "资格：无 raster-dem 源 → 分析门拒绝（不猜数据资格）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "直接对这片做视域分析（没绑定数据源）",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "init",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_project_init"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "observer_x": 500305.0,
+        "observer_y": 3999695.0,
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "vs",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "直接对这片做视域分析（没绑定数据源）"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-07-no-layer",
+     "kind": "mapspec_layer",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.layer_count",
+     "value": 0
+    }
+   ],
+   "family": "F27",
+   "id": "f27-07-datum-mismatch",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "negative",
+    "vertical-datum"
+   ],
+   "timeout_s": 60,
+   "title": "垂直基准：跨 datum 混算 → VERTICAL_REFERENCE_MISMATCH",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "按 EGM96 基准面算土方（DEM 声明的是椭球高）",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "cut_fill_volume",
+        "base_z": 50.0,
+        "options": "{\"vertical_datum\": \"ellipsoid_height\", \"override_vertical_datum\": \"geoid_height_egm96\"}",
+        "polygon": [
+         [
+          500100.0,
+          3999900.0
+         ],
+         [
+          500400.0,
+          3999900.0
+         ],
+         [
+          500400.0,
+          3999600.0
+         ],
+         [
+          500100.0,
+          3999600.0
+         ],
+         [
+          500100.0,
+          3999900.0
+         ]
+        ],
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "vol",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "按 EGM96 基准面算土方（DEM 声明的是椭球高）"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_nodata",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-08-no-layer",
+     "kind": "mapspec_layer",
+     "note": "失败分析不挂层——宁拒不给错的视域",
+     "op": "eq",
+     "path": "mapspec.layer_count",
+     "value": 0
+    }
+   ],
+   "family": "F27",
+   "id": "f27-08-nodata-observer",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "negative",
+    "nodata"
+   ],
+   "timeout_s": 60,
+   "title": "nodata：观察点无高程 → 分析类型化失败",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "在数据洞正中央做视域",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_nodata",
+        "name": "dem"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "observer_x": 500300.0,
+        "observer_y": 3999700.0,
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "vs",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "在数据洞正中央做视域"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-09-no-layer",
+     "kind": "mapspec_layer",
+     "note": "",
+     "op": "eq",
+     "path": "mapspec.layer_count",
+     "value": 0
+    }
+   ],
+   "family": "F27",
+   "id": "f27-09-bad-options",
+   "negative": true,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "negative",
+    "invalid-args"
+   ],
+   "timeout_s": 60,
+   "title": "参数：options 非法 JSON → SCENE_ANALYSIS_BAD_OPTIONS_JSON",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "做个视域（参数传坏了）",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "observer_x": 500305.0,
+        "observer_y": 3999695.0,
+        "options": "{not-json",
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "vs",
+       "expect_error": true,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "做个视域（参数传坏了）"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-10-layer",
+     "kind": "mapspec_layer",
+     "note": "取消轮无分析副作用；重跑轮视域面正常挂图",
+     "op": "contains",
+     "path": "mapspec.layer_types",
+     "value": "fill"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-10-binding",
+     "kind": "analysis_binding",
+     "note": "",
+     "op": "contains",
+     "path": "scene3d_analysis.analysis_goals",
+     "value": "viewshed"
+    }
+   ],
+   "family": "F27",
+   "id": "f27-10-cancel-resume",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "interruption",
+    "resume"
+   ],
+   "timeout_s": 60,
+   "title": "中断：user_cancel → 下一轮重跑分析成功",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "算视域",
+     "settle_cause": "user_cancel",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "重新算视域",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "dem_source_id": "dem",
+        "observer_x": 500305.0,
+        "observer_y": 3999695.0,
+        "options": "{\"max_distance\": 250}",
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "vs",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "算视域（中途取消后再来）"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-11-mode",
+     "kind": "mapspec_scene",
+     "note": "静态媒介禁 3D 透视档（诚实降级，偏好保留）",
+     "op": "ne",
+     "path": "mapspec.scene.mode",
+     "value": "3d"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-11-profile-layer",
+     "kind": "mapspec_layer",
+     "note": "分析结果不随媒介降级——剖面线照常挂图",
+     "op": "contains",
+     "path": "mapspec.layer_types",
+     "value": "line"
+    }
+   ],
+   "family": "F27",
+   "id": "f27-11-print-degrade",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "degrade",
+    "print"
+   ],
+   "timeout_s": 60,
+   "title": "2D 退化：静态媒介 → 3d 档禁用，剖面/图层照常",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "出一张打印用的线路剖面图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "medium": "print",
+        "user_dimension": "3d"
+       },
+       "call_id": "apply",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "apply_scene_representation"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "terrain_profile",
+        "raster_path": "{{ref:dem}}",
+        "vertices": [
+         [
+          500050.0,
+          3999950.0
+         ],
+         [
+          500550.0,
+          3999950.0
+         ]
+        ]
+       },
+       "call_id": "prof",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "出一张打印用的线路剖面图"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-12-profile-comp",
+     "kind": "mapspec_component",
+     "note": "",
+     "op": "contains",
+     "path": "mapspec.component_types",
+     "value": "elevation_profile"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f27-12-export-consistent",
+     "kind": "export_status",
+     "note": "",
+     "op": "eq",
+     "path": "export.available",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f27-12-export-no-failed",
+     "kind": "export_status",
+     "note": "图层/组件/ref 工件在导出投影中语义一致（零失败面）",
+     "op": "eq",
+     "path": "export.failed_aspects",
+     "value": []
+    }
+   ],
+   "family": "F27",
+   "id": "f27-12-export",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "export"
+   ],
+   "timeout_s": 60,
+   "title": "导出：分析产品导出语义一致（图层/组件/披露随行）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "把剖面成果导出",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "terrain_profile",
+        "raster_path": "{{ref:dem}}",
+        "vertices": [
+         [
+          500050.0,
+          3999950.0
+         ],
+         [
+          500550.0,
+          3999950.0
+         ]
+        ]
+       },
+       "call_id": "prof",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "title": "线路高程剖面图"
+       },
+       "call_id": "export",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "export_thematic_map"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "把剖面成果导出"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-13-layers",
+     "kind": "mapspec_layer",
+     "note": "距离线 + 面积面挂层（#1773 工具经 #1829 编排）",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 2
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-13-goals",
+     "kind": "analysis_binding",
+     "note": "",
+     "op": "contains",
+     "path": "scene3d_analysis.analysis_goals",
+     "value": "surface_area"
+    }
+   ],
+   "family": "F27",
+   "id": "f27-13-distance-area",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "measurement"
+   ],
+   "timeout_s": 60,
+   "title": "量测：地表距离 + 地表面积编排（#1773↔#1829 接缝）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "这条线路的沿线地表距离多少？再算这块坡的真实面积",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "surface_distance",
+        "raster_path": "{{ref:dem}}",
+        "vertices": [
+         [
+          500050.0,
+          3999950.0
+         ],
+         [
+          500550.0,
+          3999950.0
+         ]
+        ]
+       },
+       "call_id": "dist",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "再算真实面积",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "surface_area",
+        "polygon": [
+         [
+          500100.0,
+          3999900.0
+         ],
+         [
+          500400.0,
+          3999900.0
+         ],
+         [
+          500400.0,
+          3999600.0
+         ],
+         [
+          500100.0,
+          3999600.0
+         ],
+         [
+          500100.0,
+          3999900.0
+         ]
+        ],
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "area",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "这条线路的沿线地表距离多少？再算这块坡的真实面积"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "raster_dem_cone",
+     "name": "dem",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-14-layers",
+     "kind": "mapspec_layer",
+     "note": "剖面线 + 视域面 + LOS 双线",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 3
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f27-14-profile-comp",
+     "kind": "mapspec_component",
+     "note": "",
+     "op": "contains",
+     "path": "mapspec.component_types",
+     "value": "elevation_profile"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "data",
+     "id": "f27-14-camera",
+     "kind": "interaction_state",
+     "note": "改显示角度 = 用户 viewport（user-wins：agent 相机不偷改用户镜头）",
+     "op": "eq",
+     "path": "interaction.viewport.pitch",
+     "value": 60.0
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f27-14-fresh-after-camera",
+     "kind": "analysis_binding",
+     "note": "改显示角度（camera-only）不判旧——空间事实与视角无关",
+     "op": "eq",
+     "path": "scene3d_analysis.all_fresh",
+     "value": true
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "render_export",
+     "id": "f27-14-export",
+     "kind": "export_status",
+     "note": "",
+     "op": "eq",
+     "path": "export.failed_aspects",
+     "value": []
+    }
+   ],
+   "family": "F27",
+   "id": "f27-14-full-journey",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "scene3d",
+    "g3dv2c",
+    "multiturn",
+    "journey",
+    "acceptance"
+   ],
+   "timeout_s": 60,
+   "title": "全链：剖面→换点→通视→改角度→导出（任务级闭环）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "沿这条线路给个地形剖面",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "raster_dem_cone",
+        "name": "dem"
+       },
+       "call_id": "store-dem",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "source": {
+         "type": "raster-dem",
+         "url": "https://example.test/dem/{z}/{x}/{y}.png"
+        },
+        "source_id": "dem"
+       },
+       "call_id": "src-dem",
+       "expect_error": false,
+       "kind": "mapspec_source",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "terrain_profile",
+        "raster_path": "{{ref:dem}}",
+        "vertices": [
+         [
+          500050.0,
+          3999950.0
+         ],
+         [
+          500550.0,
+          3999950.0
+         ]
+        ]
+       },
+       "call_id": "prof",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "换到山顶那个观察点",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "events": [
+         {
+          "client_seq": 1,
+          "kind": "feature_selected",
+          "payload": {
+           "feature_id": "peak-a",
+           "layer_id": "peaks"
+          }
+         }
+        ]
+       },
+       "call_id": "sel",
+       "expect_error": false,
+       "kind": "interaction_event",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "viewshed",
+        "dem_source_id": "dem",
+        "observer_feature_id": "peak-a",
+        "observer_x": 500305.0,
+        "observer_y": 3999695.0,
+        "options": "{\"max_distance\": 250}",
+        "raster_path": "{{ref:dem}}"
+       },
+       "call_id": "vs",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t2"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "山顶能看到线路终点吗",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent3",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "analysis": "line_of_sight",
+        "observer_x": 500305.0,
+        "observer_y": 3999695.0,
+        "raster_path": "{{ref:dem}}",
+        "target_x": 500450.0,
+        "target_y": 3999550.0
+       },
+       "call_id": "los",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "run_3d_analysis"
+      }
+     ],
+     "turn_id": "t3"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "换个角度看",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent4",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "events": [
+         {
+          "client_seq": 2,
+          "kind": "viewport_settled",
+          "payload": {
+           "bearing": 45.0,
+           "center": [
+            500305.0,
+            3999695.0
+           ],
+           "pitch": 60.0,
+           "zoom": 15.0
+          }
+         }
+        ]
+       },
+       "call_id": "vp",
+       "expect_error": false,
+       "kind": "interaction_event",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": true,
+       "arguments": {
+        "bearing": 60.0,
+        "pitch": 55.0
+       },
+       "call_id": "fly",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "fly_camera"
+      }
+     ],
+     "turn_id": "t4"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "导出这张图",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent5",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "title": "山地通视分析图"
+       },
+       "call_id": "export",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "export_thematic_map"
+      }
+     ],
+     "turn_id": "t5"
+    }
+   ],
+   "user_goal": "沿线路给剖面，换到山顶观察点查与终点的通视，调整视角后导出"
   }
  ],
  "schema_version": "task_scenario.v1"

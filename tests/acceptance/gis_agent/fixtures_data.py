@@ -217,10 +217,65 @@ VECTOR_FACTORIES = {
     "temporal_school_points": temporal_school_points,
 }
 
+def _dem_cone_matrix(n: int = 61, nodata_patch: bool = False) -> "list":
+    """确定性锥形山体 DEM（61×61，无随机源；nodata_patch = 中央 5×5 洞）。
+
+    投影 CRS（EPSG:32648）下 cell 10 m、UL 原点 (500000, 4000000)——
+    与场景 F27 观察点/折线坐标同一坐标系。模拟合成数据（simulated）。
+    """
+    import math as _math
+
+    out = []
+    for r in range(n):
+        row = []
+        for c in range(n):
+            if nodata_patch and 28 <= r <= 32 and 28 <= c <= 32:
+                row.append(-9999.0)
+            else:
+                d = _math.hypot(r - 30, c - 30)
+                row.append(round(max(0.0, 100.0 - 2.0 * d), 4))
+        out.append(row)
+    return out
+
+
+def _write_dem_tif(path: Path, matrix: "list", nodata=None) -> str:
+    import rasterio
+    from rasterio.transform import from_origin
+    import numpy as np
+
+    arr = np.array(matrix, dtype="float32")
+    height, width = arr.shape
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        path, "w", driver="GTiff", width=width, height=height,
+        count=1, dtype="float32", crs="EPSG:32648",
+        transform=from_origin(500000.0, 4_000_000.0, 10.0, 10.0),
+        nodata=nodata,
+    ) as dst:
+        dst.write(arr, 1)
+    return str(path)
+
+
+def raster_dem_cone(tmp_root: Path) -> str:
+    """G3D-V2-C F27：合成锥形 DEM（正例分析数据资格）。"""
+    return _write_dem_tif(tmp_root / "g05_sim_dem_cone.tif", _dem_cone_matrix())
+
+
+def raster_dem_nodata(tmp_root: Path) -> str:
+    """G3D-V2-C F27：中央 nodata 洞的锥形 DEM（负例：观察点落洞）。"""
+    return _write_dem_tif(
+        tmp_root / "g05_sim_dem_nodata.tif",
+        _dem_cone_matrix(nodata_patch=True),
+        nodata=-9999.0,
+    )
+
+
 RASTER_FACTORIES = {
     "raster_nir": raster_nir,
     "raster_red": raster_red,
     "raster_nodata": raster_nodata,
+    "raster_dem_cone": raster_dem_cone,
+    "raster_dem_nodata": raster_dem_nodata,
 }
 
 ALL_DATASET_KINDS = sorted({*VECTOR_FACTORIES, *RASTER_FACTORIES})

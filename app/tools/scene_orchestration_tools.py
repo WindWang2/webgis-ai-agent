@@ -749,7 +749,11 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
             except Exception as exc:  # noqa: BLE001 — 登记失败不吞分析结果
                 binding_ack["register_error"] = str(exc)[:160]
 
-            return {
+            # 产物提升（G3D-V2-C）：嵌套 dispatch 的 geojson/profile_chart
+            # 提升到编排层结果——外层 ToolDispatchService 缝据此铸
+            # ref:geojson-*/ref:profile-* 并挂层/挂剖面组件（与直调目标
+            # 工具同一上链通道；编排是薄包装，不是第二执行真相）。
+            out: Dict[str, Any] = {
                 "success": True,
                 "command": command,
                 "analysis": analysis,
@@ -760,6 +764,16 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                 "staleness_binding_ack": binding_ack,
                 "prior_stale_analyses": prior_stale,
             }
+            if isinstance(result.get("geojson"), (dict, list)):
+                out["geojson"] = result["geojson"]
+                slim_inner = {
+                    k: v for k, v in result.items() if k != "geojson"
+                }
+                out["result"] = slim_inner
+                out["result_geojson_hoisted"] = True
+            if isinstance(result.get("profile_chart"), dict):
+                out["profile_chart"] = result["profile_chart"]
+            return out
         except Exception as e:  # noqa: BLE001
             logger.error("run_3d_analysis failed: %s", e)
             return {"success": False, "error": str(e), "command": command}
