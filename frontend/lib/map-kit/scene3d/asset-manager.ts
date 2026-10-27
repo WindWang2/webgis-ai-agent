@@ -101,6 +101,12 @@ interface MountedAsset {
   generation: number;
   /** 加载是否仍在途（终态 mounted/load_failed 落定前为 true —— 取消判定）。 */
   loadPending: boolean;
+  /**
+   * 本地表象覆盖（G3DV2-B M5，user-wins 表象层）：
+   * visible=false 隐藏 / opacity∈[0.05,1] —— 不进 MapSpec（非持久
+   * desired-state），spec 同步后仍生效；卸载/换代即复位（重挂新实例）。
+   */
+  presentation: { visible: boolean | null; opacity: number | null };
 }
 
 export interface Scene3dPickHit {
@@ -227,7 +233,7 @@ export class Scene3DManager {
           const visible = asset.visible !== false;
           if (existing.visible !== visible) {
             existing.visible = visible;
-            existing.group.visible = visible;
+            this.applyPresentation(existing);
             updatedCount += 1;
           }
           const nextPlacement = this.placementOf(asset, existing.format);
@@ -322,12 +328,43 @@ export class Scene3DManager {
     return this.ledger.usage();
   }
 
+  /**
+   * 本地表象覆盖（M5）：visible/opacity —— user-wins 表象层，不写 spec、
+   * 不持久；spec 可见性之上收窄（spec 隐藏的资产不可经本地开关复活）。
+   * 返回 false = 资产未挂载（调用方可提示）。
+   */
+  setAssetPresentation(
+    assetId: string,
+    patch: { visible?: boolean; opacity?: number },
+  ): boolean {
+    const asset = this.mounted.get(assetId);
+    if (!asset) return false;
+    if (typeof patch.visible === 'boolean') asset.presentation.visible = patch.visible;
+    if (typeof patch.opacity === 'number' && Number.isFinite(patch.opacity)) {
+      asset.presentation.opacity = Math.min(1, Math.max(0.05, patch.opacity));
+    }
+    this.applyPresentation(asset);
+    this.map.triggerRepaint?.();
+    return true;
+  }
+
+  /** 表象应用到 group 与全部已挂模型（新模型挂载点同样调用）。 */
+  private applyPresentation(asset: MountedAsset): void {
+    asset.group.visible = asset.visible && asset.presentation.visible !== false;
+    const opacity = asset.presentation.opacity;
+    if (opacity !== null) {
+      applyOpacityToModel(asset.singleModel, opacity);
+      for (const entry of asset.tiles?.values() ?? []) applyOpacityToModel(entry.model, opacity);
+    }
+  }
+
   /** 观察面：当前挂载摘要。 */
-  describe(): { assetId: string; format: string; visible: boolean; tilesReady: number | null; state: string; hasRenderFrame: boolean }[] {
+  describe(): { assetId: string; format: string; visible: boolean; visibleEffective: boolean; tilesReady: number | null; state: string; hasRenderFrame: boolean }[] {
     return [...this.mounted.values()].map((a) => ({
       assetId: a.assetId,
       format: a.format,
       visible: a.visible,
+      visibleEffective: a.visible && a.presentation.visible !== false,
       tilesReady: a.tiles ? [...a.tiles.values()].filter((t) => t.model).length : null,
       state: a.singleModel || (a.tiles && a.tileset) ? 'mounted' : 'loading',
       hasRenderFrame: !!a.lastMvp,
@@ -447,6 +484,7 @@ export class Scene3DManager {
       loadInFlight: 0,
       generation: 0,
       loadPending: true,
+      presentation: { visible: null, opacity: null },
     };
     this.mounted.set(assetId, mounted);
     const generation = mounted.generation;
@@ -479,6 +517,7 @@ export class Scene3DManager {
     }
     mounted.group.visible = mounted.visible;
     this.applyPlacement(mounted);
+    this.applyPresentation(mounted);
 
     try {
       const baseUrl = typeof source.url === 'string' && source.url ? source.url : null;
@@ -736,6 +775,7 @@ export class Scene3DManager {
       });
       mounted.group.add(built.root);
       entry.lastUsed = Date.now();
+      this.applyPresentation(mounted); // 表象（透明度）覆盖新挂 tile
       this.map.triggerRepaint?.();
       this.scheduleAsset(mounted, true); // 渐进细化再调度
     } catch {
@@ -941,6 +981,21 @@ function singleOwnerKey(assetId: string): string {
 
 function tileOwnerKey(assetId: string, tileId: string): string {
   return `${assetId}\u0000${tileId}`;
+}
+
+/** 表象透明度：遍历挂模型材质（transparent 开关随 1.0 边界）。 */
+function applyOpacityToModel(model: BuiltModel | null, opacity: number): void {
+  if (!model) return;
+  model.root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mat = mesh.material as THREE.MeshStandardMaterial | undefined;
+    if (mat && typeof mat.opacity === 'number') {
+      mat.transparent = opacity < 1;
+      mat.opacity = opacity;
+      mat.needsUpdate = true;
+    }
+  });
 }
 
 /** 像素世界 placement：S(W)·placement（与最近帧 mvp 同域）。 */

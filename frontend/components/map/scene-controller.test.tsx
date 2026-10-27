@@ -46,6 +46,14 @@ vi.mock('@/lib/utils/logger', () => ({
   devOnly: () => undefined,
 }));
 
+// G3DV2-B M5：本地表象控制缝（renderer 门面）—— 单测打桩隔离 THREE 链。
+const scene3dSetAssetPresentation = vi.fn(() => true);
+const scene3dApplyLightingPreset = vi.fn(() => true);
+vi.mock('@/lib/map-kit/renderer', () => ({
+  scene3dSetAssetPresentation: (...args: unknown[]) => scene3dSetAssetPresentation(...args),
+  scene3dApplyLightingPreset: (...args: unknown[]) => scene3dApplyLightingPreset(...args),
+}));
+
 import { SceneController } from './scene-controller';
 
 const openPanel = () => {
@@ -154,8 +162,52 @@ describe('SceneController', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     openPanel();
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('radiogroup')).toBeTruthy();
+    // G3DV2-B M5：模式组 + 光照组两个 radiogroup —— 按 aria-label 精确定位。
+    expect(screen.getByRole('radiogroup', { name: 'sceneController.mode' })).toBeTruthy();
+    expect(screen.getByRole('radiogroup', { name: 'sceneController.lighting' })).toBeTruthy();
     expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('renders per-asset presentation controls and drives renderer seam (M5)', () => {
+    commitSpec({
+      scene: {
+        mode: '3d',
+        assets: [{ id: 'campus', source: 'model-a', visible: true }],
+      },
+      sources: {},
+    });
+    const getMap = () => ({ getCenter: () => ({ lng: 104, lat: 30 }) }) as never;
+    render(<SceneController getMap={getMap} />);
+    openPanel();
+    const checkbox = screen.getByRole('checkbox');
+    expect(checkbox.getAttribute('id')).toBe('scene-asset-campus');
+    fireEvent.click(checkbox); // 本地隐藏
+    expect(scene3dSetAssetPresentation).toHaveBeenCalledWith(
+      expect.anything(), 'campus', { visible: false },
+    );
+    // 光照预设 → 渲染缝
+    fireEvent.click(screen.getByRole('radio', { name: 'sceneController.lighting_soft' }));
+    expect(scene3dApplyLightingPreset).toHaveBeenCalledWith(expect.anything(), 'soft');
+  });
+
+  it('saves and applies local viewpoints via getMap seam (M5)', () => {
+    commitSpec({ scene: { mode: '3d' }, sources: {} });
+    const easeTo = vi.fn();
+    const getMap = () => ({
+      getCenter: () => ({ lng: 104.06, lat: 30.67 }),
+      getZoom: () => 15.5,
+      getPitch: () => 60,
+      getBearing: () => 20,
+      easeTo,
+    }) as never;
+    render(<SceneController getMap={getMap} />);
+    openPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.saveViewpoint' }));
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.applyViewpoint' }));
+    expect(easeTo).toHaveBeenCalledTimes(1);
+    expect(easeTo.mock.calls[0][0]).toMatchObject({
+      center: [104.06, 30.67], zoom: 15.5, pitch: 60, bearing: 20,
+    });
   });
 });
 

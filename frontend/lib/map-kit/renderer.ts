@@ -1380,4 +1380,6 @@ export {
   scene3dContextLost,
   scene3dContextRestored,
   scene3dBudgetUsage,
+  scene3dSetAssetPresentation,
+  scene3dApplyLightingPreset,
 } from './scene3d';

@@ -64,6 +64,7 @@ export function acquireRenderer(map: object, gl?: WebGLRenderingContext | WebGL2
     const hemi = new THREE.HemisphereLight(0xffffff, 0x8d8d8d, 1.1);
     hemi.position.set(0.2, -1, 0.3); // mercator 空间的"天"方向（z 上）
     scene.add(hemi);
+    if (pendingLighting) applyLightingToScene(scene, pendingLighting);
     carrier = { renderer, camera, scene, refCount: 1 };
     carriers.set(map, carrier);
     return carrier;
@@ -109,6 +110,43 @@ export function forceDisposeCarrier(map: object): void {
   carrier.scene.clear();
   carrier.renderer.dispose();
   carriers.delete(map);
+}
+
+// ── 光照预设（G3DV2-B M5）────────────────────────────────────────────────
+
+export type Scene3dLightingPreset = 'neutral' | 'soft' | 'bright';
+
+/** 预设 → 光强（纯函数，测试可离线断言）。 */
+export function presetLighting(preset: Scene3dLightingPreset): { ambient: number; hemisphere: number } {
+  switch (preset) {
+    case 'soft': return { ambient: 1.15, hemisphere: 0.75 };
+    case 'bright': return { ambient: 2.0, hemisphere: 1.4 };
+    default: return { ambient: 1.6, hemisphere: 1.1 };
+  }
+}
+
+/** carrier 尚未创建时的待应用预设（首帧 acquireRenderer 落地）。 */
+let pendingLighting: Scene3dLightingPreset | null = null;
+
+function applyLightingToScene(scene: THREE.Scene, preset: Scene3dLightingPreset): void {
+  const { ambient, hemisphere } = presetLighting(preset);
+  scene.traverse((o) => {
+    const light = o as THREE.AmbientLight & THREE.HemisphereLight;
+    if ((light as THREE.AmbientLight).isAmbientLight) light.intensity = ambient;
+    else if ((light as THREE.HemisphereLight).isHemisphereLight) light.intensity = hemisphere;
+  });
+}
+
+/**
+ * 应用光照预设（本地表象，不进 spec）。carrier 未建时记忆预设，
+ * 首帧创建即生效。返回是否已实际应用（false = 已记忆待应用）。
+ */
+export function applyLightingPreset(map: object, preset: Scene3dLightingPreset): boolean {
+  pendingLighting = preset;
+  const carrier = carriers.get(map);
+  if (!carrier) return false;
+  applyLightingToScene(carrier.scene, preset);
+  return true;
 }
 
 export function getCarrier(map: object): RendererCarrier | undefined {

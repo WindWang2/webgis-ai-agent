@@ -157,3 +157,31 @@ describe('WebGL context lost / restored', () => {
     mgr.dispose();
   });
 });
+
+describe('local presentation overrides (M5)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const buf = buildGlbFixture({ triangles: 1 });
+      return new Response(buf, { status: 200, headers: { 'content-length': String(buf.byteLength) } });
+    }));
+  });
+
+  it('visible/opacity overrides apply to mounted model and survive re-sync', async () => {
+    const map = makeFakeMap();
+    const mgr = new Scene3DManager(map as never);
+    mgr.sync(specWith([ASSET]));
+    await settle();
+    expect(mgr.setAssetPresentation('campus', { visible: false, opacity: 0.4 })).toBe(true);
+    const desc = mgr.describe().find((a) => a.assetId === 'campus');
+    expect(desc?.visibleEffective).toBe(false);
+    // spec 重同步（无变更）不重置表象
+    mgr.sync(specWith([ASSET]));
+    expect(mgr.describe().find((a) => a.assetId === 'campus')?.visibleEffective).toBe(false);
+    // spec 层隐藏叠加：spec visible=false + 本地 true 仍隐藏（spec 优先收窄）
+    mgr.setAssetPresentation('campus', { visible: true });
+    mgr.sync(specWith([{ ...ASSET, visible: false }]));
+    expect(mgr.describe().find((a) => a.assetId === 'campus')?.visibleEffective).toBe(false);
+    expect(mgr.setAssetPresentation('unknown', { visible: false })).toBe(false);
+    mgr.dispose();
+  });
+});

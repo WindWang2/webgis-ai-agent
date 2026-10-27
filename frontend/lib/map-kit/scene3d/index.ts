@@ -50,6 +50,21 @@ export function scene3dBudgetUsage(map: object): ReturnType<import('./asset-mana
   return getScene3dManager(map).budgetUsage();
 }
 
+/** 表象面（M5，user-wins 本地覆盖 —— 不进 spec/不持久）。 */
+export function scene3dSetAssetPresentation(
+  map: object,
+  assetId: string,
+  patch: { visible?: boolean; opacity?: number },
+): boolean {
+  return getScene3dManager(map).setAssetPresentation(assetId, patch);
+}
+
+export {
+  applyLightingPreset as scene3dApplyLightingPreset,
+  presetLighting,
+} from './custom-layer';
+export type { Scene3dLightingPreset } from './custom-layer';
+
 /** 观察面。 */
 export function describeScene3dAssets(map: object): ReturnType<import('./asset-manager').Scene3DManager['describe']> {
   return getScene3dManager(map).describe();

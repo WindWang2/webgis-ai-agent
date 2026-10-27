@@ -10,7 +10,7 @@
  */
 'use client';
 
-import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Boxes, ChevronDown } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import {
@@ -20,6 +20,8 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import { commitUserScene, type UserScenePayload } from '@/lib/mapspec/scene-mutation';
 import { useT } from '@/lib/i18n/useT';
+import * as renderer from '@/lib/map-kit/renderer';
+import type { Scene3dLightingPreset } from '@/lib/map-kit/scene3d';
 
 type SceneMode = '2d' | '2.5d' | '3d';
 
@@ -30,6 +32,24 @@ const EXAGGERATION_STEP = 0.25;
 const PITCH_MAX = 85;
 const PITCH_STEP = 5;
 const BEARING_STEP = 15;
+const LIGHTING_PRESETS: Scene3dLightingPreset[] = ['neutral', 'soft', 'bright'];
+
+/** 相机视图读取/应用缝（map-panel 注入；缺席时视角区禁用）。 */
+interface MapViewSeam {
+  getCenter?: () => { lng: number; lat: number };
+  getZoom?: () => number;
+  getPitch?: () => number;
+  getBearing?: () => number;
+  easeTo?: (options: Record<string, unknown>) => void;
+}
+
+interface SavedViewpoint {
+  id: number;
+  center: { lng: number; lat: number };
+  zoom: number;
+  pitch: number;
+  bearing: number;
+}
 
 interface CommittedScene {
   mode?: SceneMode;
@@ -40,6 +60,7 @@ interface CommittedScene {
     elevation_ref?: string;
   } | null;
   camera?: { pitch?: number; bearing?: number };
+  assets?: Array<{ id: string; source?: string; visible?: boolean } | null>;
 }
 
 function readScene(): CommittedScene | null {
@@ -70,11 +91,28 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-export function SceneController() {
+export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null } = {}) {
   const t = useT('map');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  // 本地表象态（M5）：光照预设 + 视角书签 —— 不进 spec，组件持有。
+  const [lighting, setLighting] = useState<Scene3dLightingPreset>('neutral');
+  const [viewpoints, setViewpoints] = useState<SavedViewpoint[]>([]);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const nextViewpointId = useRef(1);
+  // Escape 关闭（focus 在对话框内时）；dialog 容器 tabIndex=-1 承接焦点。
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    dialogRef.current?.addEventListener('keydown', onKey);
+    return () => dialogRef.current?.removeEventListener('keydown', onKey);
+  }, [open]);
   // liveGeneration 触发重渲染；场景读 committed（单一真相）。
   useSyncExternalStore(
     subscribeMapSpecLive,
@@ -172,6 +210,62 @@ export function SceneController() {
 
   const elevationRef = scene?.terrain?.elevation_ref;
   const verticalUnit = scene?.terrain?.vertical_unit;
+  const sceneAssets = (scene?.assets ?? []).filter(
+    (a): a is { id: string; source?: string; visible?: boolean } => !!a && typeof a.id === 'string',
+  );
+
+  // ── 本地表象控制（M5）：直接驱动渲染管理器，不写 spec/不持久 ──────
+  const mapForPresentation = getMap?.() ?? null;
+  const setAssetVisible = useCallback(
+    (assetId: string, visible: boolean) => {
+      const map = getMap?.() as unknown as object | null;
+      if (!map) return;
+      renderer.scene3dSetAssetPresentation(map, assetId, { visible });
+    },
+    [getMap],
+  );
+  const setAssetOpacity = useCallback(
+    (assetId: string, opacity: number) => {
+      const map = getMap?.() as unknown as object | null;
+      if (!map) return;
+      renderer.scene3dSetAssetPresentation(map, assetId, { opacity });
+    },
+    [getMap],
+  );
+  const setLightingPreset = useCallback(
+    (preset: Scene3dLightingPreset) => {
+      setLighting(preset);
+      const map = getMap?.() as unknown as object | null;
+      if (map) renderer.scene3dApplyLightingPreset(map, preset);
+    },
+    [getMap],
+  );
+
+  const saveViewpoint = useCallback(() => {
+    const map = getMap?.();
+    if (!map?.getCenter || !map.getZoom) return;
+    const center = map.getCenter();
+    const vp: SavedViewpoint = {
+      id: nextViewpointId.current++,
+      center: { lng: center.lng, lat: center.lat },
+      zoom: map.getZoom(),
+      pitch: map.getPitch?.() ?? 0,
+      bearing: map.getBearing?.() ?? 0,
+    };
+    setViewpoints((prev) => [...prev.slice(-7), vp]); // 有界 8 条
+  }, [getMap]);
+  const applyViewpoint = useCallback(
+    (vp: SavedViewpoint) => {
+      getMap?.()?.easeTo?.({
+        center: [vp.center.lng, vp.center.lat],
+        zoom: vp.zoom,
+        pitch: vp.pitch,
+        bearing: vp.bearing,
+        duration: prefersReducedMotion() ? 0 : 800,
+      });
+    },
+    [getMap],
+  );
 
   return (
     <div className="pointer-events-auto absolute right-2 top-14 z-20 print:hidden">
@@ -196,9 +290,11 @@ export function SceneController() {
       </button>
       {open && (
         <div
+          ref={dialogRef}
           role="dialog"
           aria-label={t('sceneController.title')}
-          className="mt-1 w-64 rounded-md border border-edge-subtle bg-surface-panel p-3 text-xs text-ink shadow-lg"
+          tabIndex={-1}
+          className="mt-1 w-64 rounded-md border border-edge-subtle bg-surface-panel p-3 text-xs text-ink shadow-lg focus:outline-none"
         >
           {/* 模式分段 */}
           <div role="radiogroup" aria-label={t('sceneController.mode')} className="mb-3 flex gap-1">
@@ -278,6 +374,99 @@ export function SceneController() {
                 >+</button>
               </div>
             </div>
+          </div>
+
+          {/* 3D 资产表象（本地覆盖 —— 不写会话 spec） */}
+          {sceneAssets.length > 0 && (
+            <div className="mb-3 border-t border-edge-subtle pt-2">
+              <span className="mb-1 block text-ink-secondary">{t('sceneController.assets')}</span>
+              {sceneAssets.map((asset) => (
+                <div key={asset.id} className="mb-1.5">
+                  <label className="flex items-center gap-1.5" htmlFor={`scene-asset-${asset.id}`}>
+                    <input
+                      id={`scene-asset-${asset.id}`}
+                      type="checkbox"
+                      checked={asset.visible !== false}
+                      disabled={!mapForPresentation}
+                      onChange={(e) => setAssetVisible(asset.id, e.target.checked)}
+                    />
+                    <span className="flex-1 truncate font-mono">{asset.id}</span>
+                  </label>
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={1}
+                    step={0.05}
+                    defaultValue={1}
+                    disabled={!mapForPresentation}
+                    onChange={(e) => setAssetOpacity(asset.id, Number(e.target.value))}
+                    className="w-full accent-[color:var(--agent-accent)]"
+                    aria-label={t('sceneController.assetOpacity', { id: asset.id })}
+                  />
+                </div>
+              ))}
+              <p className="text-[11px] leading-4 text-ink-secondary">{t('sceneController.assetsLocalNote')}</p>
+            </div>
+          )}
+
+          {/* 光照预设（本地表象） */}
+          <div className="mb-3 border-t border-edge-subtle pt-2">
+            <span className="mb-1 block text-ink-secondary">{t('sceneController.lighting')}</span>
+            <div role="radiogroup" aria-label={t('sceneController.lighting')} className="flex gap-1">
+              {LIGHTING_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  role="radio"
+                  aria-checked={preset === lighting}
+                  onClick={() => setLightingPreset(preset)}
+                  className={`flex-1 rounded-sm border px-1.5 py-1 transition-colors ${
+                    preset === lighting
+                      ? 'border-status-accent bg-status-accent-soft font-bold text-status-accent'
+                      : 'border-edge-subtle text-ink-secondary hover:bg-surface-hover'
+                  }`}
+                >
+                  {t(`sceneController.lighting_${preset}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 视角书签（本地，不进 spec） */}
+          <div className="mb-3 border-t border-edge-subtle pt-2">
+            <span className="mb-1 block text-ink-secondary">{t('sceneController.viewpoints')}</span>
+            <button
+              type="button"
+              disabled={!mapForPresentation}
+              onClick={saveViewpoint}
+              className="mb-1 w-full rounded-sm border border-edge-subtle px-2 py-1 text-ink-secondary hover:bg-surface-hover disabled:opacity-50"
+            >
+              {t('sceneController.saveViewpoint')}
+            </button>
+            {viewpoints.length === 0 ? (
+              <p className="text-[11px] leading-4 text-ink-secondary">{t('sceneController.noViewpoints')}</p>
+            ) : (
+              viewpoints.map((vp, i) => (
+                <div key={vp.id} className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => applyViewpoint(vp)}
+                    aria-label={t('sceneController.applyViewpoint', { n: i + 1 })}
+                    className="flex-1 truncate rounded-sm border border-edge-subtle px-1.5 py-0.5 text-left font-mono text-[11px] hover:bg-surface-hover"
+                  >
+                    {`z${vp.zoom.toFixed(1)} p${Math.round(vp.pitch)}° b${Math.round(vp.bearing)}°`}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t('sceneController.removeViewpoint', { n: i + 1 })}
+                    onClick={() => setViewpoints((prev) => prev.filter((v) => v.id !== vp.id))}
+                    className="rounded-sm border border-edge-subtle px-1.5 hover:bg-surface-hover"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))
+            )}
           </div>
 
           {/* 垂直语义披露行 */}

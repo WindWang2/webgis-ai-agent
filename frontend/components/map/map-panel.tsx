@@ -1724,14 +1724,14 @@ export function MapPanel({
             className="absolute z-30 w-64 rounded-lg border border-slate-200 bg-white/95 p-3 text-xs shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200"
             style={{ left: Math.min(scene3dPick.x + 12, 9999), top: scene3dPick.y + 12 }}
             role="status"
-            aria-label="3D asset pick"
+            aria-label={t("map.scene3dPick.title")}
           >
             <div className="mb-1 flex items-center justify-between">
               <span className="font-semibold">3D {scene3dPick.assetId}</span>
               <button
                 type="button"
                 className="rounded px-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
-                aria-label="close 3d pick"
+                aria-label={t("map.scene3dPick.close")}
                 onClick={() => {
                   setScene3dPick(null)
                   emitFeatureDeselected({ layerId: `scene3d:${scene3dPick.assetId}` })
@@ -1741,15 +1741,15 @@ export function MapPanel({
               </button>
             </div>
             <dl className="space-y-0.5 font-mono text-[11px] leading-relaxed">
-              <div className="flex justify-between gap-2"><dt className="text-slate-500">source</dt><dd className="truncate">{scene3dPick.sourceId}</dd></div>
+              <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.source")}</dt><dd className="truncate">{scene3dPick.sourceId}</dd></div>
               {scene3dPick.tileId && (
-                <div className="flex justify-between gap-2"><dt className="text-slate-500">tile</dt><dd className="truncate">{scene3dPick.tileId}</dd></div>
+                <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.tile")}</dt><dd className="truncate">{scene3dPick.tileId}</dd></div>
               )}
               {scene3dPick.nodeName && (
-                <div className="flex justify-between gap-2"><dt className="text-slate-500">node</dt><dd className="truncate">{scene3dPick.nodeName}</dd></div>
+                <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.node")}</dt><dd className="truncate">{scene3dPick.nodeName}</dd></div>
               )}
-              <div className="flex justify-between gap-2"><dt className="text-slate-500">lng/lat</dt><dd>{scene3dPick.lngLat.lng.toFixed(5)}, {scene3dPick.lngLat.lat.toFixed(5)}</dd></div>
-              <div className="flex justify-between gap-2"><dt className="text-slate-500">alt/dist</dt><dd>{Math.round(scene3dPick.lngLat.altitudeM)}m / {Math.round(scene3dPick.distanceM)}m</dd></div>
+              <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.lngLat")}</dt><dd>{scene3dPick.lngLat.lng.toFixed(5)}, {scene3dPick.lngLat.lat.toFixed(5)}</dd></div>
+              <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.altDist")}</dt><dd>{Math.round(scene3dPick.lngLat.altitudeM)}m / {Math.round(scene3dPick.distanceM)}m</dd></div>
             </dl>
           </div>
         )}
@@ -1843,7 +1843,8 @@ export function MapPanel({
       {/* G3D05（ADR-0275）：场景控制器 —— 2D/2.5D/3D 人机同语义操作面
           （读写均走 committed MapSpec.scene；Agent set_map_scene 与用户
           操作汇合同一事务管线）。 */}
-      <SceneController />
+      {/* M5：getMap 缝供本地表象控制（资产显隐/透明度/光照/视角书签）。 */}
+      <SceneController getMap={() => (mapRef.current?.getMap() ?? null) as never} />
 
       {/* Runtime V4：框选矩形覆盖层 —— 命令式更新（mousedown/mousemove 直接
           写 style，60Hz 拖拽零 React 渲染；display 由 paintRect 管理）。 */}
