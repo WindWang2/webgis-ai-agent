@@ -146,7 +146,75 @@ def derive_sections(
     spec.purpose = purpose
     if purpose:
         spec.field_provenance["purpose"] = Provenance(origin="rule")
+    # G3D04：genesis 话语的 3D cue → SceneSpec（用户显式表达 → 字段级
+    # origin=user，user-wins 从第一轮即生效；无 cue → 全默认零推断）。
+    if _apply_scene_cues_to_spec(spec, query):
+        _seed_scene_locks_from_cues(spec)
     return spec
+
+
+def _seed_scene_locks_from_cues(spec: GISIntentSpec) -> None:
+    """显式维度/相机表达 → user lock（genesis 即锁；超替重建路径同样成立）。
+
+    同 scope 不同值的旧锁被替换（最新表达 wins）；锁数有界（MAX_LOCKS）。
+    """
+    from app.services.gis_harness.requirement_ir.contracts import UserLock
+
+    def _upsert(scope: str, value: str) -> None:
+        for lock in [item for item in spec.locks if item.scope == scope]:
+            if lock.value != value:
+                spec.locks.remove(lock)
+        if not any(item.scope == scope and item.value == value
+                   for item in spec.locks) and len(spec.locks) < 32:
+            spec.locks.append(UserLock(
+                scope=scope, value=value,  # type: ignore[arg-type]
+                provenance=Provenance(origin="user", evidence_refs=("utterance",))))
+
+    if spec.scene.dimension:
+        _upsert("scene_mode", spec.scene.dimension)
+    if spec.scene.camera_pitch is not None:
+        _upsert("scene_camera", "pitch")
+    if spec.scene.camera_bearing is not None:
+        _upsert("scene_camera", "bearing")
+
+
+def _apply_scene_cues_to_spec(spec: GISIntentSpec, query: str) -> bool:
+    """3D cue → SceneSpec/OutputSpec.medium 就地投影（纯确定性）。
+
+    返回是否命中任何 cue。cue 是用户话语的直接表达——字段级
+    provenance 记 user（agent 后续不可静默覆盖，patch 层强制）。
+    """
+    from app.services.gis_harness.scene3d.cues import extract_scene3d_cues
+
+    cues = extract_scene3d_cues(query)
+    if not cues.has_any():
+        return False
+    user_prov = Provenance(origin="user", evidence_refs=("utterance",))
+    if cues.dimension:
+        spec.scene.dimension = cues.dimension  # type: ignore[assignment]
+        spec.field_provenance["scene.dimension"] = user_prov
+    if cues.terrain_requested is not None:
+        spec.scene.terrain_requested = cues.terrain_requested
+        spec.field_provenance["scene.terrain_requested"] = user_prov
+    if cues.extrusion_requested is not None:
+        spec.scene.extrusion_requested = cues.extrusion_requested
+        spec.field_provenance["scene.extrusion_requested"] = user_prov
+    if cues.exaggeration is not None:
+        spec.scene.exaggeration = min(10.0, max(0.01, cues.exaggeration))
+        spec.field_provenance["scene.exaggeration"] = user_prov
+    if cues.camera_pitch is not None:
+        spec.scene.camera_pitch = cues.camera_pitch
+        spec.field_provenance["scene.camera_pitch"] = user_prov
+    if cues.camera_bearing is not None:
+        spec.scene.camera_bearing = cues.camera_bearing
+        spec.field_provenance["scene.camera_bearing"] = user_prov
+    if cues.analysis_goals:
+        spec.scene.analysis_goals = cues.analysis_goals  # type: ignore[assignment]
+        spec.field_provenance["scene.analysis_goals"] = user_prov
+    if cues.medium:
+        spec.output.medium = cues.medium  # type: ignore[assignment]
+        spec.field_provenance["output.medium"] = user_prov
+    return True
 
 
 def build_document(
@@ -165,8 +233,20 @@ def build_document(
     if carried_locks:
         spec.locks = list(carried_locks)[:32]
         for lock in spec.locks:
-            # user locks 是显式选择，落 representation 等对应面（user-wins 存活）
+            # user locks 是显式选择，落 representation 等对应面（user-wins 存活）。
+            # G3D04：本话语已显式表达维度时，新表达优先——跳过冲突的旧
+            # scene_mode 携带锁（最新用户表达 wins，不留双真相）。
+            if lock.scope == "scene_mode" and spec.scene.dimension \
+                    and lock.value != spec.scene.dimension:
+                continue
             _apply_lock_to_spec(spec, lock)
+        spec.locks = [
+            lock for lock in spec.locks
+            if not (lock.scope == "scene_mode" and spec.scene.dimension
+                    and lock.value != spec.scene.dimension)]
+        # 本话语的 cue 锁在携带合并后重播种（携带段以 list(carried) 覆盖
+        # 了 derive_sections 播种的锁——最新表达必须在场）
+        _seed_scene_locks_from_cues(spec)
     doc_id = document_id or f"req-{canonical_fingerprint({'q': query[:200], 't': turn})[:12]}"
     doc = RequirementDocument(
         document_id=doc_id,
@@ -202,6 +282,15 @@ def _apply_lock_to_spec(spec: GISIntentSpec, lock: UserLock) -> None:
     elif lock.scope == "layer_visibility" and scope_value:
         hidden = tuple(dict.fromkeys([*spec.representation.hidden_layer_ids, scope_value]))
         spec.representation.hidden_layer_ids = hidden
+    # G3D04：场景维度/相机锁在超替重建时落回对应面（user-wins 存活）
+    elif lock.scope == "scene_mode" and scope_value in ("2d", "2.5d", "3d"):
+        spec.scene.dimension = scope_value  # type: ignore[assignment]
+        spec.field_provenance["scene.dimension"] = lock.provenance
+    elif lock.scope == "scene_camera":
+        if scope_value == "pitch" and spec.scene.camera_pitch is not None:
+            spec.field_provenance["scene.camera_pitch"] = lock.provenance
+        elif scope_value == "bearing" and spec.scene.camera_bearing is not None:
+            spec.field_provenance["scene.camera_bearing"] = lock.provenance
 
 
 def diff_to_patches(
@@ -224,11 +313,12 @@ def diff_to_patches(
     old_spec = old.intent
     patches: List[PatchRecord] = []
 
-    def emit(op: str, path: str = "", value: Any = None, reason: str = "") -> None:
+    def emit(op: str, path: str = "", value: Any = None, reason: str = "",
+             actor: str = "user") -> None:
         patches.append(PatchRecord(
             op_id=f"edit-{turn}-{len(patches) + 1}-"
                   f"{canonical_fingerprint({'p': path, 'v': value, 'o': op})[:8]}",
-            turn=turn, actor="user", op=op,  # type: ignore[arg-type]
+            turn=turn, actor=actor, op=op,  # type: ignore[arg-type]
             path=path, value=value, reason=reason,
             expected_revision=old.revision + len(patches),
         ))
@@ -304,10 +394,10 @@ _QUERY_TASK_SIGNAL_RE = re.compile(
 
 
 def _emit_cue_patches(spec: GISIntentSpec, query: str, emit) -> set:
-    """隐藏/显示图层、换色、导出格式、出版 —— cue → user patches。
+    """隐藏/显示图层、换色、导出格式、出版、3D 表达 —— cue → user patches。
 
-    只发射"值确有变化"的 patch（幂等：重复话语零 patch）；换色/隐藏附
-    user lock（显式选择 user-wins 存活）。返回**话语触及**的 path 集合
+    只发射"值确有变化"的 patch（幂等：重复话语零 patch）；换色/隐藏/维度
+    附 user lock（显式选择 user-wins 存活）。返回**话语触及**的 path 集合
     （无论是否发射——幂等重放时同样要抑制对应面的差分）。
     """
     touched: set = set()
@@ -315,6 +405,9 @@ def _emit_cue_patches(spec: GISIntentSpec, query: str, emit) -> set:
     if not q:
         return touched
     existing_locks = {(lock.scope, lock.value) for lock in spec.locks}
+
+    # ── G3D04：3D 表达 cue（维度/地形/挤出/夸张/相机/媒介/分析目标） ──
+    touched |= _emit_scene_cue_patches(spec, q, emit, existing_locks)
 
     hide = _LAYER_HIDE_RE.search(q)
     if hide:
@@ -360,6 +453,96 @@ def _emit_cue_patches(spec: GISIntentSpec, query: str, emit) -> set:
         touched.add("output.publish")
         if not spec.output.publish:
             emit("set", "output.publish", True, "publication requested by user")
+    return touched
+
+
+def _emit_scene_cue_patches(
+    spec: GISIntentSpec, q: str, emit, existing_locks: set,
+) -> set:
+    """3D cue → user patches（edit 轮；与 genesis 的 _apply_scene_cues_to_spec
+    共用 cues.py 词面，投影语义一致）。
+
+    维度 cue 附 ``scene_mode`` 锁（用户显式维度选择跨轮存活）；相机角度
+    cue 附 ``scene_camera`` 锁。幂等：值相同不发射。
+
+    review R2 N-1：cue patch 是**用户话语的投影**（actor=user）——scene 面
+    不做 `_locked` 发射守卫（锁在 patch 层只挡非 user actor；挡 owner 的
+    重表达=静默丢弃用户最新意愿）。锁的角色是防 agent 覆盖，不是防用户
+    改主意；维度换锁经 remove+add 保持单值。
+    """
+    from app.services.gis_harness.scene3d.cues import extract_scene3d_cues
+
+    touched: set = set()
+    cues = extract_scene3d_cues(q)
+    if not cues.has_any():
+        return touched
+    scene = spec.scene
+    if cues.dimension:
+        touched.add("scene.dimension")
+        if cues.dimension != scene.dimension:
+            stale_lock = next(
+                (lock for lock in spec.locks
+                 if lock.scope == "scene_mode" and lock.value != cues.dimension),
+                None)
+            if stale_lock is not None:
+                emit("remove_lock",
+                     value={"scope": "scene_mode", "value": stale_lock.value},
+                     reason="user re-expressed scene dimension")
+            emit("set", "scene.dimension", cues.dimension,
+                 f"scene dimension cue: {cues.dimension}")
+            # 旧降级注记失效（system 记账清除——不抢占 agent 记账所有权，
+            # review R2 N-2：user actor 清除会把 field_provenance 置 user，
+            # 之后 agent 永久 PatchConflict）
+            if scene.degrade_reason:
+                emit("set", "scene.degrade_reason", "",
+                     "re-expressed: previous degradation note invalidated",
+                     actor="system")
+            if ("scene_mode", cues.dimension) not in existing_locks:
+                emit("add_lock", value={"scope": "scene_mode", "value": cues.dimension},
+                     reason="explicit user scene choice")
+    if cues.terrain_requested is not None:
+        touched.add("scene.terrain_requested")
+        if cues.terrain_requested != scene.terrain_requested:
+            emit("set", "scene.terrain_requested", cues.terrain_requested,
+                 "terrain expression requested by user")
+    if cues.extrusion_requested is not None:
+        touched.add("scene.extrusion_requested")
+        if cues.extrusion_requested != scene.extrusion_requested:
+            emit("set", "scene.extrusion_requested", cues.extrusion_requested,
+                 "vertical extrusion requested by user")
+    if cues.exaggeration is not None:
+        touched.add("scene.exaggeration")
+        clamped = round(min(10.0, max(0.01, cues.exaggeration)), 4)
+        if clamped != scene.exaggeration:
+            emit("set", "scene.exaggeration", clamped,
+                 f"exaggeration cue: {clamped}")
+    if cues.camera_pitch is not None:
+        touched.add("scene.camera_pitch")
+        if cues.camera_pitch != scene.camera_pitch:
+            emit("set", "scene.camera_pitch", cues.camera_pitch,
+                 f"camera pitch cue: {cues.camera_pitch}")
+            if ("scene_camera", "pitch") not in existing_locks:
+                emit("add_lock", value={"scope": "scene_camera", "value": "pitch"},
+                     reason="explicit user camera choice")
+    if cues.camera_bearing is not None:
+        touched.add("scene.camera_bearing")
+        if cues.camera_bearing != scene.camera_bearing:
+            emit("set", "scene.camera_bearing", cues.camera_bearing,
+                 f"camera bearing cue ({cues.bearing_source})")
+            if ("scene_camera", "bearing") not in existing_locks:
+                emit("add_lock", value={"scope": "scene_camera", "value": "bearing"},
+                     reason="explicit user camera choice")
+    if cues.analysis_goals:
+        touched.add("scene.analysis_goals")
+        merged = tuple(dict.fromkeys([*scene.analysis_goals, *cues.analysis_goals]))[:4]
+        if merged != scene.analysis_goals:
+            emit("set", "scene.analysis_goals", list(merged),
+                 f"3d analysis goal cue: {','.join(cues.analysis_goals)}")
+    if cues.medium:
+        touched.add("output.medium")
+        if cues.medium != spec.output.medium:
+            emit("set", "output.medium", cues.medium,
+                 f"output medium cue: {cues.medium}")
     return touched
 
 

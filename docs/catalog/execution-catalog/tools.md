@@ -10,6 +10,7 @@
 | analyze_vegetation_index | 1.0#cv1 | stable | artifact_creation | slow | heavy | large | spectral_index |
 | apply_layer_filter | 1.0#cv1 | stable | state_mutation | fast | light | small | layer_display_control |
 | apply_layer_style | 1.0#cv1 | stable | state_mutation | fast | medium | medium | thematic_cartography |
+| apply_scene_representation | 1.0#cv1 | stable | state_mutation | fast | light | small | scene_representation, terrain_scene_binding |
 | apply_template | 1.0#cv1 | stable | state_mutation | medium | medium | medium | thematic_cartography |
 | attribute_filter | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | data_source_pipeline |
 | audit_spatial_quality | 1.0#cv1 | stable | deterministic_compute | medium | heavy | medium | dataset_profiling_quality |
@@ -76,6 +77,7 @@
 | fishnet_grid | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | grid_binning |
 | flow_analysis | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_hydrology |
 | flow_length_analysis | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_hydrology_advanced |
+| fly_camera | 1.0#cv1 | stable | state_mutation | fast | light | small | scene_camera_action |
 | fly_to_location | 1.0#cv1 | stable | state_mutation | fast | light | small | map_viewport_control |
 | g_f_j_analysis | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | nearest_neighbor_functions |
 | geary_c | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | global_gearys_c |
@@ -94,6 +96,7 @@
 | geodetector_ecological | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | geographical_detector |
 | geodetector_risk | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | geographical_detector |
 | geomorphon_analysis | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_geomorphometry |
+| get_3d_capabilities | 1.0#cv1 | stable | cacheable_read | fast | light | small | scene_camera_action, scene_representation, terrain_scene_binding |
 | get_admin_division | 1.0#cv1 | stable | cacheable_read | fast | medium | medium | admin_boundary_query |
 | get_child_districts | 1.0#cv1 | stable | cacheable_read | fast | medium | medium | admin_boundary_query |
 | get_district | 1.0#cv1 | stable | cacheable_read | fast | medium | medium | admin_boundary_query |
@@ -246,6 +249,7 @@
 | rs_cube_sample_split | 1.0#cv1 | stable | deterministic_compute | fast | light | small | rs_sample_split |
 | rs_joint_fusion_stack | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | rs_joint_fusion |
 | rs_temporal_feature_pack | 1.0#cv1 | stable | deterministic_compute | medium | heavy | medium | rs_temporal_feature_pack |
+| run_3d_analysis | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | scene_representation |
 | run_spatial_simulation | 1.0#cv1 | stable | destructive | slow | heavy | large | scenario_simulation |
 | rx_anomaly | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | rx_anomaly_detection |
 | sample_random_points | 1.0#cv1 | stable | deterministic_compute | fast | light | medium | spatial_sampling |

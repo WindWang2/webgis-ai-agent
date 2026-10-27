@@ -232,6 +232,17 @@ def summarize(doc: RequirementDocument) -> Dict[str, Any]:
              "origin": item.provenance.origin}
             for item in doc.intent.locks[:8]
         ],
+        # G3D04：SceneSpec 有界投影（3D 决策/相机 user-wins 的读面）
+        "scene": {
+            "dimension": doc.intent.scene.dimension,
+            "degrade_reason": doc.intent.scene.degrade_reason,
+            "terrain_requested": doc.intent.scene.terrain_requested,
+            "extrusion_requested": doc.intent.scene.extrusion_requested,
+            "exaggeration": doc.intent.scene.exaggeration,
+            "camera_pitch": doc.intent.scene.camera_pitch,
+            "camera_bearing": doc.intent.scene.camera_bearing,
+            "analysis_goals": list(doc.intent.scene.analysis_goals),
+        },
         "patch_count": len(doc.patches) + doc.folded_patch_count,
         "user_owned_paths": sorted([
             path for path, prov in doc.intent.field_provenance.items()

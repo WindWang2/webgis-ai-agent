@@ -39,7 +39,7 @@ def canonical_core(doc: RequirementDocument) -> Dict[str, Any]:
         for key in ("title", "legend", "scale_bar", "north_arrow", "labels", "attribution")
         if getattr(intent.components, key) is not None
     }
-    return {
+    core = {
         "v": REQUIREMENT_DIGEST_VERSION,
         "task": {
             "kind": intent.task.kind,
@@ -83,9 +83,29 @@ def canonical_core(doc: RequirementDocument) -> Dict[str, Any]:
             "publish": intent.output.publish,
             "report": intent.output.report,
             "dpi": intent.output.dpi,
+            **({"medium": intent.output.medium} if intent.output.medium else {}),
         },
         "locks": sorted([list(lock.canonical()) for lock in intent.locks]),
     }
+    # G3D04：scene 块条件包含——无 3D 表达的文档 digest 与历史逐字节一致
+    # （存量 pinned 语义零漂移）；有表达时进语义核（变更检测覆盖 3D 面）。
+    if not intent.scene.is_default():
+        core["scene"] = {
+            "dimension": intent.scene.dimension,
+            "degrade_reason": intent.scene.degrade_reason,
+            "terrain_requested": intent.scene.terrain_requested,
+            "extrusion_requested": intent.scene.extrusion_requested,
+            "exaggeration": intent.scene.exaggeration,
+            "camera_pitch": intent.scene.camera_pitch,
+            "camera_bearing": intent.scene.camera_bearing,
+            "analysis_goals": list(intent.scene.analysis_goals),
+            "dataset_roles": dict(sorted(intent.scene.dataset_roles.items())),
+            "vertical_evidence": [
+                {"kind": e.kind, "ref": e.ref, "verified": e.verified}
+                for e in intent.scene.vertical_evidence
+            ],
+        }
+    return core
 
 
 def requirement_digest(doc: RequirementDocument) -> str:

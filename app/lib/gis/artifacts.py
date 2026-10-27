@@ -161,6 +161,14 @@ SEED_ARTIFACT_TYPES: List[ArtifactTypeDescriptor] = [
         id="network_graph", name_zh="网络图", geometry_kind="network",
         category="network",
     ),
+    ArtifactTypeDescriptor(
+        # G3D04：场景表达配置（MapSpec v1.4 scene 块的编排产物投影：
+        # mode/terrain/camera——指针+参数，不是第二数据面）。
+        id="scene_config", name_zh="场景配置", geometry_kind="unknown",
+        category="scene",
+        description="2d/2.5d/3d 场景档配置（scene_planning 决策 → SetSceneIntent "
+                    "事务写入的 presentation 产物）。",
+    ),
 ]
 
 

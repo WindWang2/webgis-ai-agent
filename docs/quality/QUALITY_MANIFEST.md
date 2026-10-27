@@ -3,16 +3,16 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`33f91620894257cb…`
+- 内容指纹：`d765858713b30d8d…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 363 | 351 | 12 |
-| algorithms | 241 | 181 | 1 |
-| capabilities | 161 | 112 | 0 |
-| artifact_types | 22 | 22 | 0 |
+| tools | 368 | 360 | 8 |
+| algorithms | 244 | 184 | 1 |
+| capabilities | 164 | 115 | 0 |
+| artifact_types | 23 | 23 | 0 |
 | recipes | 166 | 166（conformance 由 workflow 闸保护） | 0 |
 
 ## 描述符富化闸（ADR-0103，可执行工具）
@@ -25,31 +25,26 @@
 | memory_class | 100% | 95% | PASS（缺 0） |
 | capabilities | 100% | 95% | PASS（缺 0） |
 
-**gate: PASS**（`total=363`）
+**gate: PASS**（`total=368`）
 
 ## 行为化覆盖与 findings 棘轮（Quality V2）
 
-- 工具行为证据：dispatch **182** / mention 169 / none 12（dispatch 覆盖率 50%）
-- findings 棘轮：**FAIL**（dispatch 下限 163，当前 182；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
-  - 违规：`TOOL_UNTESTED` 当前 12 > 基线 8
+- 工具行为证据：dispatch **187** / mention 173 / none 8（dispatch 覆盖率 51%）
+- findings 棘轮：**PASS**（dispatch 下限 163，当前 187；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
 
 ## Findings（派生线索，非缺陷判定）
 
 > 静态引用 ≠ 行为覆盖。findings 只回答"哪里没有任何测试证据"，修复优先级需结合 02-coverage-risk-map 的风险分级。
 
-### TOOL_UNTESTED（12）
+### TOOL_UNTESTED（8）
 
 - `habitat_suitability_analysis`（medium）— registered tool without any static test reference
-- `line_of_sight_analysis`（medium）— registered tool without any static test reference
 - `modelops_model_history`（medium）— registered tool without any static test reference
 - `modelops_record_metrics`（medium）— registered tool without any static test reference
 - `resolve_field_semantics`（medium）— registered tool without any static test reference
 - `sample_random_points`（medium）— registered tool without any static test reference
 - `sample_stratified_points`（medium）— registered tool without any static test reference
 - `sample_systematic_grid`（medium）— registered tool without any static test reference
-- `surface_area_analysis`（medium）— registered tool without any static test reference
-- `surface_distance_analysis`（medium）— registered tool without any static test reference
-- `terrain_profile`（medium）— registered tool without any static test reference
 - `ts_smooth_gapfill`（medium）— registered tool without any static test reference
 
 ### TOOL_DESTRUCTIVE_UNTESTED（0）

@@ -81,6 +81,9 @@ _TOOL_MODULES = [
     ("app.tools.simulation_tools", "register_simulation_tools"),
     # ADR-0199：多尺度场景工具面（plan_map_scene / set_map_scene）
     ("app.tools.scene_tools", "register_scene_tools"),
+    # G3D04：三维意图编排工具面（get_3d_capabilities / apply_scene_representation
+    # / fly_camera / run_3d_analysis；独立模块防与 G3D02 scene_tools 并发冲突）
+    ("app.tools.scene_orchestration_tools", "register_scene_orchestration_tools"),
     # ADR-0215：情境重验证 / mission 跨 session 续接工具面（独立模块防并发冲突）
     ("app.tools.context_revalidation_tools", "register_context_revalidation_tools"),
     # F07：ExecutionCatalog 只读发现工具面（capability-first discovery，

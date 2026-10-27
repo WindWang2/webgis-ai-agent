@@ -1916,6 +1916,42 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "scene_camera_action"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_scene_camera_action"
+   ],
+   "deterministic": true,
+   "id": "platform.scene_camera_action",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "scene_representation"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_scene_representation"
+   ],
+   "deterministic": true,
+   "id": "platform.scene_representation",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "temporal_filtering"
    ],
    "category": "platform",
@@ -1924,6 +1960,24 @@
    ],
    "deterministic": true,
    "id": "platform.temporal_filtering",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_scene_binding"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_terrain_scene_binding"
+   ],
+   "deterministic": true,
+   "id": "platform.terrain_scene_binding",
    "memory_cost": "low",
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
@@ -4837,7 +4891,9 @@
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
-   "tests": [],
+   "tests": [
+    "tests/unit/test_terrain_measurement_tools.py"
+   ],
    "uncertainty_outputs": []
   },
   {
@@ -4956,7 +5012,9 @@
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
-   "tests": [],
+   "tests": [
+    "tests/unit/test_terrain_measurement_tools.py"
+   ],
    "uncertainty_outputs": []
   },
   {
@@ -5175,7 +5233,9 @@
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
-   "tests": [],
+   "tests": [
+    "tests/unit/test_terrain_measurement_tools.py"
+   ],
    "uncertainty_outputs": []
   },
   {
@@ -5254,6 +5314,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py",
     "tests/unit/lib/test_terrain_science_vnext.py"
    ],
    "uncertainty_outputs": []
@@ -5548,6 +5609,12 @@
    ]
   },
   {
+   "id": "scene_config",
+   "tests": [
+    "tests/unit/gis_harness/scene3d/test_decision_camera_staleness_verdict.py"
+   ]
+  },
+  {
    "id": "service_area",
    "tests": [
     "tests/benchmarks/bench_gis_perf_539_540.py",
@@ -5596,14 +5663,15 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
     "tests/unit/gis_harness/test_typed_dag_v4.py",
-    "tests/unit/lib/test_terrain_science_vnext.py"
+    "tests/unit/lib/test_terrain_science_vnext.py",
+    "tests/unit/test_terrain_measurement_tools.py"
    ]
   }
  ],
  "behavioral": {
-  "dispatch": 182,
-  "mention": 169,
-  "none": 12
+  "dispatch": 187,
+  "mention": 173,
+  "none": 8
  },
  "capabilities": [
   {
@@ -7631,6 +7699,36 @@
    ]
   },
   {
+   "category": "presentation",
+   "deterministic": true,
+   "domain": "cartography",
+   "id": "scene_camera_action",
+   "producer_algorithms": [
+    "platform.scene_camera_action"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
+    "tests/unit/gis/test_platform_capabilities.py"
+   ]
+  },
+  {
+   "category": "presentation",
+   "deterministic": true,
+   "domain": "cartography",
+   "id": "scene_representation",
+   "producer_algorithms": [
+    "platform.scene_representation"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
+    "tests/unit/gis/test_platform_capabilities.py"
+   ]
+  },
+  {
    "category": "network",
    "deterministic": true,
    "domain": "network",
@@ -8168,6 +8266,21 @@
    "tests": []
   },
   {
+   "category": "presentation",
+   "deterministic": true,
+   "domain": "cartography",
+   "id": "terrain_scene_binding",
+   "producer_algorithms": [
+    "platform.terrain_scene_binding"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
+    "tests/unit/gis/test_platform_capabilities.py"
+   ]
+  },
+  {
    "category": "raster",
    "deterministic": true,
    "domain": "raster",
@@ -8386,12 +8499,12 @@
   }
  ],
  "counts": {
-  "algorithms": 241,
-  "artifact_types": 22,
-  "capabilities": 161,
-  "findings": 13,
+  "algorithms": 244,
+  "artifact_types": 23,
+  "capabilities": 164,
+  "findings": 9,
   "recipes": 166,
-  "tools": 363
+  "tools": 368
  },
  "findings": [
   {
@@ -8408,14 +8521,6 @@
    "domain": "tools",
    "severity": "medium",
    "subject": "habitat_suitability_analysis",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "line_of_sight_analysis",
    "surface": "tools"
   },
   {
@@ -8471,50 +8576,20 @@
    "detail": "registered tool without any static test reference",
    "domain": "tools",
    "severity": "medium",
-   "subject": "surface_area_analysis",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "surface_distance_analysis",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "terrain_profile",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
    "subject": "ts_smooth_gapfill",
    "surface": "tools"
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 182,
+  "behavioral_dispatch": 187,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
-  "pass": false,
-  "violations": [
-   {
-    "baseline": 8,
-    "code": "TOOL_UNTESTED",
-    "current": 12
-   }
-  ],
+  "pass": true,
+  "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "33f91620894257cbebe41e1b4f4538bb90b842848223d18c87a0a32236dd02a8",
+ "fingerprint": "d765858713b30d8d3a308d57641c49ce6c5ebcb12f46b4a6ecd6d84c7c4b0777",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8554,7 +8629,7 @@
    }
   },
   "pass": true,
-  "total": 363
+  "total": 368
  },
  "manifest_version": 2,
  "recipes": {
@@ -8760,6 +8835,35 @@
     "tests/unit/tools/test_behavioral_map_extras.py"
    ],
    "tier": 1
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "scene_representation",
+    "terrain_scene_binding"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "apply_scene_representation",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "scene",
+    "3d",
+    "representation",
+    "降级",
+    "场景"
+   ],
+   "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
+    "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py"
+   ],
+   "tier": 2
   },
   {
    "behavior": "dispatch",
@@ -10743,6 +10847,35 @@
   {
    "behavior": "dispatch",
    "capabilities": [
+    "scene_camera_action"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "fly_camera",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "scene",
+    "3d",
+    "camera",
+    "相机",
+    "视角",
+    "user-wins"
+   ],
+   "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
+    "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
     "map_viewport_control"
    ],
    "deterministic": true,
@@ -11264,6 +11397,36 @@
    ],
    "tests": [
     "tests/unit/lib/test_terrain_geomorphometry_v2.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "scene_representation",
+    "terrain_scene_binding",
+    "scene_camera_action"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "get_3d_capabilities",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "scene",
+    "3d",
+    "能力发现",
+    "capability",
+    "能力"
+   ],
+   "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
+    "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py"
    ],
    "tier": 2
   },
@@ -12760,15 +12923,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "mention",
    "capabilities": [
     "terrain_measurement"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "heavy",
    "name": "line_of_sight_analysis",
@@ -12783,7 +12943,10 @@
     "遮挡",
     "三维量测"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/test_measurement_mapspec_wiring.py",
+    "tests/unit/test_terrain_measurement_tools.py"
+   ],
    "tier": 2
   },
   {
@@ -15775,6 +15938,35 @@
   {
    "behavior": "dispatch",
    "capabilities": [
+    "scene_representation"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "medium",
+   "memory_class": "heavy",
+   "name": "run_3d_analysis",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "3d",
+    "viewshed",
+    "视域",
+    "通视",
+    "编排",
+    "失效"
+   ],
+   "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
+    "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
     "scenario_simulation"
    ],
    "deterministic": true,
@@ -16710,7 +16902,10 @@
     "切换"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
+    "tests/cartography/test_user_scene_mutation_api.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_scene_assets_lifecycle_mutations.py",
     "tests/unit/test_scene_tools.py"
    ],
    "tier": 2
@@ -16745,6 +16940,33 @@
     "tests/unit/test_planning_v3_scenarios.py"
    ],
    "tier": 1
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "set_scene_assets",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "scene",
+    "3d",
+    "scene-assets",
+    "3dtiles",
+    "gltf",
+    "资产"
+   ],
+   "tests": [
+    "tests/unit/test_scene_tools.py"
+   ],
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -17378,15 +17600,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "mention",
    "capabilities": [
     "terrain_measurement"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "heavy",
    "name": "surface_area_analysis",
@@ -17401,19 +17620,19 @@
     "三维量测",
     "面积"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/test_measurement_mapspec_wiring.py",
+    "tests/unit/test_terrain_measurement_tools.py"
+   ],
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "mention",
    "capabilities": [
     "terrain_measurement"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "heavy",
    "name": "surface_distance_analysis",
@@ -17428,7 +17647,10 @@
     "三维量测",
     "距离"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/test_measurement_mapspec_wiring.py",
+    "tests/unit/test_terrain_measurement_tools.py"
+   ],
    "tier": 2
   },
   {
@@ -17849,15 +18071,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "mention",
    "capabilities": [
     "terrain_measurement"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "heavy",
    "name": "terrain_profile",
@@ -17872,7 +18091,11 @@
     "三维量测",
     "高差"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/lib/test_terrain_measurements.py",
+    "tests/unit/test_measurement_mapspec_wiring.py",
+    "tests/unit/test_terrain_measurement_tools.py"
+   ],
    "tier": 2
   },
   {
@@ -18121,6 +18344,8 @@
     "瞭望"
    ],
    "tests": [
+    "tests/unit/gis_harness/scene3d/test_decision_camera_staleness_verdict.py",
+    "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py",
     "tests/unit/lib/test_terrain_science_vnext.py"
    ],
    "tier": 2
@@ -18619,6 +18844,7 @@
     "制图"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/cartography/test_cartographic_quality_review.py",
     "tests/cartography/test_cartography_closed_loop.py",
     "tests/cartography/test_thematic_convergence.py",
@@ -18941,6 +19167,7 @@
     "基线配置"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_cartography_tools_evidence.py",
     "tests/unit/test_harness_interaction_v3.py",

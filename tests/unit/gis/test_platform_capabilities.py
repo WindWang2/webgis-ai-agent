@@ -80,6 +80,10 @@ PLATFORM_BINDINGS = {
     # ADR-0215（f05）：与 app/lib/gis/algorithms/platform.py 逐字对齐
     "gis_context_revalidation": [
         "webgis_context_bind_mission", "webgis_context_revalidate"],
+    # G3D04：三维表达编排面（成员互斥：apply 归地形绑定组，fly 归相机组）
+    "scene_representation": ["get_3d_capabilities", "run_3d_analysis"],
+    "terrain_scene_binding": ["apply_scene_representation"],
+    "scene_camera_action": ["fly_camera"],
 }
 
 # 平台绑定声明的全集（防工具在域间漂移：同一工具只能声明一个平台能力）
@@ -189,6 +193,18 @@ def test_platform_capability_temporal_filtering(live_registry):
 
 def test_platform_capability_directional_distribution_analysis(live_registry):
     _assert_binding("directional_distribution_analysis", live_registry)
+
+
+def test_platform_capability_scene_representation(live_registry):
+    _assert_binding("scene_representation", live_registry)
+
+
+def test_platform_capability_terrain_scene_binding(live_registry):
+    _assert_binding("terrain_scene_binding", live_registry)
+
+
+def test_platform_capability_scene_camera_action(live_registry):
+    _assert_binding("scene_camera_action", live_registry)
 
 
 def test_platform_capability_gis_context_revalidation(live_registry):

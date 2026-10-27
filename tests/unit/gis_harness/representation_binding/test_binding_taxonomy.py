@@ -65,9 +65,22 @@ class TestTaxonomyTable:
             assert classify_mutation(kind, "agent").taxonomy == "data_science", kind
 
     def test_unbound_kinds(self):
+        # G3D04：SetSceneIntent 从 unbound 升为 requirement_significant
+        # （scene_mode）——用户 2D↔3D 切换跨轮投影回 requirement.scene。
         for kind in ("InitProjectIntent", "CheckpointIntent", "SetScenarioModeIntent",
-                     "SetSceneIntent", "ReorderLayersIntent"):
+                     "ReorderLayersIntent"):
             assert classify_mutation(kind, "user").taxonomy == "unbound", kind
+
+    def test_scene_intent_user_origin_projects(self):
+        taxonomy = classify_mutation("SetSceneIntent", "user")
+        assert taxonomy.taxonomy == "requirement_significant"
+        assert taxonomy.dimension == "scene_mode"
+        assert taxonomy.projects_to_requirement is True
+
+    def test_scene_intent_agent_origin_does_not_project(self):
+        taxonomy = classify_mutation("SetSceneIntent", "agent")
+        assert taxonomy.taxonomy == "requirement_significant"
+        assert taxonomy.projects_to_requirement is False
 
     def test_unknown_kind_fail_closed(self):
         taxonomy = classify_mutation("NotARealIntent", "user")

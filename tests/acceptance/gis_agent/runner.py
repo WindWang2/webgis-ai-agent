@@ -154,6 +154,35 @@ class TaskScenarioRunner:
                 "has_map_product_payload": outcome.map_product is not None,
             })
 
+    async def _ingest_interaction(self, sid: str, step: AgentStep,
+                                  call_id: str) -> "_StepOutcome":
+        """G3D04：注入用户交互事件（真实 Interaction IR 摄入面，零 HTTP）。"""
+        from app.services.gis_harness.interaction_ir.ingest import (
+            ingest_interaction_batch,
+        )
+        from app.services.session_data import session_data_manager
+
+        events = step.arguments.get("events")
+        if not isinstance(events, list) or not events:
+            raise AssertionError(
+                f"interaction step {step.call_id} requires arguments.events")
+        batch = []
+        for idx, event in enumerate(events):
+            if not isinstance(event, dict):
+                raise AssertionError("interaction event must be a dict")
+            batch.append({
+                "event_id": event.get("event_id") or f"{call_id}-e{idx}",
+                "kind": str(event.get("kind") or ""),
+                "client_instance_id": str(event.get("client_instance_id") or "g05"),
+                "client_seq": int(event.get("client_seq") or idx + 1),
+                "actor": "user",
+                "payload": event.get("payload") or {},
+            })
+        await ingest_interaction_batch(session_data_manager, sid, batch)
+        return _StepOutcome(call_id=step.call_id, ok=True, is_error=False,
+                            payload={"ingested": len(batch)}, text="",
+                            layer_ids=[])
+
     # ── 单步执行（真实 dispatch 缝）────────────────────────────────────
 
     async def _exec_step(self, sid: str, turn: TurnSpec, step: AgentStep,
@@ -163,6 +192,9 @@ class TaskScenarioRunner:
 
         if step.kind == StepKind.STORE_DATA:
             return await self._store_dataset(sid, step, refs, call_id)
+
+        if step.kind == StepKind.INTERACTION_EVENT:
+            return await self._ingest_interaction(sid, step, call_id)
 
         name, arguments = self._resolve_call(step, turn, refs, step_outcomes)
         # 镜像生产 HTTP 路由（app/api/routes/pi_tools.py:70-71）：token 验证

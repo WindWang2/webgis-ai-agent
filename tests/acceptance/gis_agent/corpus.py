@@ -1094,3 +1094,737 @@ def f19_requirement_multiturn() -> ScenarioContract:
         not_evaluated=COMMON_NOT_EVALUATED,
         tags=["multiturn", "requirement"],
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# G3D04 · F20–F26 三维意图/表达/相机/分析/交互/编排/恢复 场景族
+# ══════════════════════════════════════════════════════════════════════
+
+_EXTRUSION_LAYER = {
+    "id": "bldg", "type": "fill-extrusion", "source": "features",
+    "extrusion": {"height_field": "height", "stats": {"valid": 25}},
+}
+
+
+def _interaction_step(call_id: str, events: list) -> AgentStep:
+    return _step(call_id, StepKind.INTERACTION_EVENT, arguments={"events": events})
+
+
+# ── F20 3D 意图理解（cue → Requirement IR typed 投影） ────────────────
+
+@register
+def f20_01_terrain_intent() -> ScenarioContract:
+    return ScenarioContract(
+        id="f20-01-terrain-intent", family="F20",
+        title="3D 意图：立体地形 → dimension=3d + terrain 表达",
+        user_goal="展示成都市的立体地形",
+        turns=[TurnSpec(turn_id="t1", message="展示成都市的立体地形",
+                        steps=[_step("intent", StepKind.INTENT)])],
+        expectations=[
+            _exp("f20-01-dim", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.dimension", value="3d"),
+            _exp("f20-01-terrain", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.terrain_requested", value=True),
+            _exp("f20-01-lock", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.scene_locks", op="contains",
+                 value="scene_mode=3d"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED, tags=["scene3d", "intent"],
+    )
+
+
+@register
+def f20_02_extrusion_intent() -> ScenarioContract:
+    return ScenarioContract(
+        id="f20-02-extrusion-intent", family="F20",
+        title="3D 意图：建筑白模 → extrusion_requested + 证据义务",
+        user_goal="添加建筑白模",
+        turns=[TurnSpec(turn_id="t1", message="添加建筑白模",
+                        steps=[_step("intent", StepKind.INTENT)])],
+        expectations=[
+            _exp("f20-02-extrusion", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.extrusion_requested", value=True),
+            _exp("f20-02-no-dim", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.dimension", value="",
+                 note="白模 cue 是挤出表达，不隐含整图维度偏好"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED, tags=["scene3d", "intent"],
+    )
+
+
+@register
+def f20_03_no_inference() -> ScenarioContract:
+    """零推断负例：无 3D 词面的分布请求不得产生任何 3D 需求。"""
+    return ScenarioContract(
+        id="f20-03-no-inference", family="F20", negative=True,
+        title="零推断：分布请求 → scene 全默认",
+        user_goal="成都小学分布情况",
+        turns=[TurnSpec(turn_id="t1", message="成都小学分布情况",
+                        steps=[_step("intent", StepKind.INTENT)])],
+        expectations=[
+            _exp("f20-03-dim", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.dimension", value=""),
+            _exp("f20-03-terrain", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.terrain_requested", value=None),
+            _exp("f20-03-goals", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.analysis_goals", value=[]),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED, tags=["scene3d", "intent", "negative"],
+    )
+
+
+@register
+def f20_04_composite_intent() -> ScenarioContract:
+    return ScenarioContract(
+        id="f20-04-composite-intent", family="F20",
+        title="复合 3D 意图：维度+地形+方位+视域+PNG 媒介",
+        user_goal="成都小学分布加立体地形，从西南方向看，再算可视域，导出 PNG",
+        turns=[TurnSpec(
+            turn_id="t1",
+            message="成都小学分布加立体地形，从西南方向看，再算可视域，导出 PNG",
+            steps=[_step("intent", StepKind.INTENT)])],
+        expectations=[
+            _exp("f20-04-dim", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.dimension", value="3d"),
+            _exp("f20-04-bearing", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.camera_bearing", value=45.0),
+            _exp("f20-04-goal", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.analysis_goals", op="contains",
+                 value="viewshed"),
+            _exp("f20-04-medium", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.analysis_goals", op="contains",
+                 value="viewshed"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED, tags=["scene3d", "intent", "composite"],
+    )
+
+
+# ── F21 表达决策与诚实降级 ────────────────────────────────────────────
+
+@register
+def f21_01_extrusion_evidence_applies_3d() -> ScenarioContract:
+    """正例链：挤出证据层（真实 dispatch）→ 决策 3d → SetScene 事务。"""
+    return ScenarioContract(
+        id="f21-01-extrusion-3d-applied", family="F21",
+        title="表达链：白模证据 → apply_scene_representation → scene=3d",
+        user_goal="展示成都建筑白模（含高度数据）",
+        turns=[TurnSpec(
+            turn_id="t1", message="展示成都建筑白模（含高度数据）",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("bldg", StepKind.RAW, tool="webgis_layer_upsert",
+                      arguments={"layer": dict(_EXTRUSION_LAYER)}),
+                _step("apply", StepKind.RAW, tool="apply_scene_representation",
+                      arguments={"user_dimension": "3d"}),
+            ])],
+        expectations=[
+            _exp("f21-01-mode", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene.mode", value="3d"),
+            _exp("f21-01-revision", Face.MAPSPEC, "revision_monotonic",
+                 "mapspec.mutation_revision", op="ge", value=1),
+            _exp("f21-01-verdict", Face.RENDER_EXPORT, "scene3d_verdict",
+                 "scene3d.verdict", op="in", value=["completed", "degraded"],
+                 note="挤出 3d 无 terrain 时 scene_quality 或有 warning，"
+                      "degraded 是诚实结论"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED, tags=["scene3d", "representation"],
+    )
+
+
+@register
+def f21_02_no_evidence_honest_degrade() -> ScenarioContract:
+    """负例（诚实降级）：用户显式 3D 无证据 → 不上 3d + 偏好保留。"""
+    return ScenarioContract(
+        id="f21-02-no-evidence-degrade", family="F21", negative=True,
+        title="诚实降级：显式 3D 无证据 → 2d + degradations + 偏好保留",
+        user_goal="把地图切换成 3D 视图",
+        turns=[TurnSpec(
+            turn_id="t1", message="把地图切换成 3D 视图",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("apply", StepKind.RAW, tool="apply_scene_representation",
+                      arguments={"user_dimension": "3d"}),
+            ])],
+        expectations=[
+            _exp("f21-02-not-3d", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene.mode", op="ne", value="3d",
+                 note="无证据绝不 3d（fail-closed）"),
+            _exp("f21-02-pref-kept", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.dimension", value="3d",
+                 note="降级不撤回用户偏好（IR 保留）"),
+            _exp("f21-02-degrade-recorded", Face.REQUIREMENT,
+                 "requirement_state", "requirement.scene.degrade_reason",
+                 op="regex", value="SCENE_USER_3D_NO_HEIGHT_EVIDENCE",
+                 note="review P1-4：降级注记落 IR 跨轮可见（D4 披露闭环）"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "representation", "negative", "honesty"],
+    )
+
+
+@register
+def f21_03_static_medium_degrades() -> ScenarioContract:
+    return ScenarioContract(
+        id="f21-03-static-medium", family="F21", negative=True,
+        title="静态媒介：打印用 3D → 降级非 3d",
+        user_goal="导出一张打印用的立体地图",
+        turns=[TurnSpec(
+            turn_id="t1", message="导出一张打印用的立体地图",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("apply", StepKind.RAW, tool="apply_scene_representation",
+                      arguments={"user_dimension": "3d", "medium": "print"}),
+            ])],
+        expectations=[
+            _exp("f21-03-not-3d", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene.mode", op="ne", value="3d"),
+            _exp("f21-03-medium", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.dimension", value="3d"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "representation", "negative"],
+    )
+
+
+@register
+def f21_04_terrain_unavailable_typed() -> ScenarioContract:
+    """能力发现：无 DEM → terrain unavailable + alternatives（typed）。"""
+    return ScenarioContract(
+        id="f21-04-terrain-unavailable", family="F21", negative=True,
+        title="能力门：无 raster-dem 源 → terrain unavailable + alternatives",
+        user_goal="叠加地形起伏效果",
+        turns=[TurnSpec(
+            turn_id="t1", message="叠加地形起伏效果",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("init", StepKind.RAW, tool="webgis_project_init",
+                      arguments={}),
+                _step("caps", StepKind.RAW, tool="get_3d_capabilities",
+                      arguments={}),
+            ])],
+        expectations=[
+            _exp("f21-04-pref", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.terrain_requested", value=True),
+            _exp("f21-04-verdict-na", Face.RENDER_EXPORT, "scene3d_verdict",
+                 "scene3d.verdict", value="completed",
+                 note="纯能力探测无 scene 写入，无 3D 面可判——completed "
+                      "是『探测完成』而非『3D 完成』（display 门 not_applicable）"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "capability", "negative"],
+    )
+
+
+@register
+def f21_05_dangling_terrain_rejected() -> ScenarioContract:
+    """边界（既有工具守卫）：set_map_scene 悬空 terrain.source 必须被拒。"""
+    return ScenarioContract(
+        id="f21-05-dangling-terrain", family="F21", negative=True,
+        title="边界：悬空 terrain.source → set_map_scene 拒绝",
+        user_goal="叠加不存在的地形源",
+        turns=[TurnSpec(
+            turn_id="t1", message="叠加不存在的地形源",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("init", StepKind.RAW, tool="webgis_project_init",
+                      arguments={}),
+                _step("bad", StepKind.RAW, tool="set_map_scene",
+                      arguments={"scene": {"mode": "2.5d",
+                                           "terrain": {"source": "ghost"}}},
+                      expect_error=True),
+            ])],
+        expectations=[
+            _exp("f21-05-no-scene", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene", value=None,
+                 note="被拒事务不得留下半成品 scene"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "negative", "guard"],
+    )
+
+
+# ── F22 相机动作与 user-wins ──────────────────────────────────────────
+
+@register
+def f22_01_fly_camera_applies() -> ScenarioContract:
+    return ScenarioContract(
+        id="f22-01-camera-applies", family="F22",
+        title="相机链：fly_camera → SetView 事务（pitch/bearing 落 spec）",
+        user_goal="从西南方向看这座城市",
+        turns=[TurnSpec(
+            turn_id="t1", message="从西南方向看这座城市",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("fly", StepKind.RAW, tool="fly_camera",
+                      arguments={"pitch": 45.0, "bearing": 45.0}),
+            ])],
+        expectations=[
+            _exp("f22-01-pitch", Face.MAPSPEC, "mapspec_view",
+                 "mapspec.view.pitch", value=45.0),
+            _exp("f22-01-bearing", Face.MAPSPEC, "mapspec_view",
+                 "mapspec.view.bearing", value=45.0),
+            _exp("f22-01-ir", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.camera_bearing", value=45.0,
+                 note="用户方位话语进 IR（cue）"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED, tags=["scene3d", "camera"],
+    )
+
+
+@register
+def f22_02_user_camera_suppresses_agent() -> ScenarioContract:
+    """user-wins 反例：用户 viewport 活跃 → agent 相机动作 typed 抑制。"""
+    return ScenarioContract(
+        id="f22-02-user-wins-camera", family="F22", negative=True,
+        title="user-wins：用户手动调镜头后 fly_camera 被抑制",
+        user_goal="看地图（用户随后手动调整视角）",
+        turns=[TurnSpec(
+            turn_id="t1", message="看地图（用户随后手动调整视角）",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("init", StepKind.RAW, tool="webgis_project_init",
+                      arguments={}),
+                _interaction_step("vp", [{
+                    "kind": "viewport_settled", "client_seq": 1,
+                    "payload": {"center": [104.0, 30.6], "zoom": 11.0,
+                                "bearing": 88.0, "pitch": 65.0}}]),
+                _step("fly", StepKind.RAW, tool="fly_camera",
+                      arguments={"pitch": 30.0},
+                      allow_error=False),
+            ])],
+        expectations=[
+            _exp("f22-02-viewport", Face.DATA, "interaction_state",
+                 "interaction.viewport.pitch", value=65.0,
+                 note="Interaction IR 摄入可观测"),
+            _exp("f22-02-not-yanked", Face.MAPSPEC, "mapspec_view",
+                 "mapspec.view.pitch", op="ne", value=30.0,
+                 note="agent 相机不得偷改用户镜头"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "camera", "user-wins", "negative", "interaction"],
+    )
+
+
+@register
+def f22_03_camera_scene_composition() -> ScenarioContract:
+    return ScenarioContract(
+        id="f22-03-camera-scene", family="F22",
+        title="组合：场景切换后相机跟随（3d 档位相机）",
+        user_goal="切成 3D 视图并压低视角俯仰角 30 度",
+        turns=[TurnSpec(
+            turn_id="t1", message="切成 3D 视图并压低视角俯仰角 30 度",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("bldg", StepKind.RAW, tool="webgis_layer_upsert",
+                      arguments={"layer": dict(_EXTRUSION_LAYER)}),
+                _step("apply", StepKind.RAW, tool="apply_scene_representation",
+                      arguments={"user_dimension": "3d"}),
+                _step("fly", StepKind.RAW, tool="fly_camera",
+                      arguments={"pitch": 30.0, "bearing": -15.0}),
+            ])],
+        expectations=[
+            _exp("f22-03-mode", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene.mode", value="3d"),
+            _exp("f22-03-pitch", Face.MAPSPEC, "mapspec_view",
+                 "mapspec.view.pitch", value=30.0),
+            _exp("f22-03-ir-pitch", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.camera_pitch", value=30.0),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED, tags=["scene3d", "camera", "composition"],
+    )
+
+
+@register
+def f22_04_repeat_camera_stable() -> ScenarioContract:
+    return ScenarioContract(
+        id="f22-04-repeat-camera", family="F22",
+        title="重复请求：相同相机载荷重复下发 → 视图值稳定",
+        user_goal="从东北方向看，再说一次",
+        turns=[
+            TurnSpec(turn_id="t1", message="从东北方向看",
+                     steps=[_step("intent", StepKind.INTENT),
+                            _step("fly", StepKind.RAW, tool="fly_camera",
+                                  arguments={"bearing": -135.0})]),
+            TurnSpec(turn_id="t2", message="从东北方向看（重复）",
+                     steps=[_step("intent2", StepKind.INTENT),
+                            _step("fly2", StepKind.RAW, tool="fly_camera",
+                                  arguments={"bearing": -135.0})]),
+        ],
+        expectations=[
+            _exp("f22-04-bearing", Face.MAPSPEC, "mapspec_view",
+                 "mapspec.view.bearing", value=-135.0),
+            _exp("f22-04-ir-once", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.camera_bearing", value=-135.0),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "camera", "idempotent", "multiturn"],
+    )
+
+
+# ── F23 3D 分析（viewshed 编排 + typed decline） ─────────────────────
+
+@register
+def f23_01_viewshed_decline_no_dem() -> ScenarioContract:
+    return ScenarioContract(
+        id="f23-01-viewshed-no-dem", family="F23", negative=True,
+        title="分析门：无 DEM 能力 → run_3d_analysis typed decline",
+        user_goal="计算塔台的通视范围",
+        turns=[TurnSpec(
+            turn_id="t1", message="计算塔台的通视范围",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("init", StepKind.RAW, tool="webgis_project_init",
+                      arguments={}),
+                _step("run", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "viewshed",
+                                 "raster_path": "dem.tif",
+                                 "observer_x": 104.0, "observer_y": 30.6},
+                      expect_error=True),
+            ])],
+        expectations=[
+            _exp("f23-01-goal", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.analysis_goals", op="contains",
+                 value="viewshed"),
+            _exp("f23-01-no-scene", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene", value=None,
+                 note="decline 不产生任何场景/分析副作用"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "analysis", "negative", "decline"],
+    )
+
+
+@register
+def f23_02_missing_raster_path_decline() -> ScenarioContract:
+    return ScenarioContract(
+        id="f23-02-missing-path", family="F23", negative=True,
+        title="分析门：缺 raster_path → typed decline（不猜路径）",
+        user_goal="算视域（没给数据）",
+        turns=[TurnSpec(
+            turn_id="t1", message="算视域（没给数据）",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("run", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "viewshed",
+                                 "observer_x": 1.0, "observer_y": 1.0},
+                      expect_error=True),
+            ])],
+        expectations=[
+            _exp("f23-02-goal", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.analysis_goals", op="contains",
+                 value="viewshed"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "analysis", "negative", "decline"],
+    )
+
+
+@register
+def f23_03_pending_kind_decline() -> ScenarioContract:
+    return ScenarioContract(
+        id="f23-03-skyline-pending", family="F23", negative=True,
+        title="分析门：skyline 待 G3D03 → typed decline + alternatives",
+        user_goal="评估天际线影响",
+        turns=[TurnSpec(
+            turn_id="t1", message="评估天际线影响",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("init", StepKind.RAW, tool="webgis_project_init",
+                      arguments={}),
+                _step("run", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "skyline"}, expect_error=True),
+            ])],
+        expectations=[
+            _exp("f23-03-goal", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.analysis_goals", op="contains",
+                 value="skyline"),
+            _exp("f23-03-no-side-effect", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene", value=None),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "analysis", "negative", "decline"],
+    )
+
+
+@register
+def f23_04_missing_observer_decline() -> ScenarioContract:
+    return ScenarioContract(
+        id="f23-04-missing-observer", family="F23", negative=True,
+        title="分析门：缺观察点 → typed decline",
+        user_goal="算个视域（没说观察点）",
+        turns=[TurnSpec(
+            turn_id="t1", message="算个视域（没说观察点）",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("run", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "viewshed",
+                                 "raster_path": "dem.tif"},
+                      expect_error=True),
+            ])],
+        expectations=[
+            _exp("f23-04-goal", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.analysis_goals", op="contains",
+                 value="viewshed"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "analysis", "negative", "decline"],
+    )
+
+
+# ── F24 交互失效（Interaction IR 感知） ──────────────────────────────
+
+@register
+def f24_01_layer_hidden_override() -> ScenarioContract:
+    return ScenarioContract(
+        id="f24-01-layer-hidden", family="F24",
+        title="交互：隐藏结果层 → user_overrides 投影可观测",
+        user_goal="出图后隐藏白模层",
+        turns=[TurnSpec(
+            turn_id="t1", message="出图后隐藏白模层",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("bldg", StepKind.RAW, tool="webgis_layer_upsert",
+                      arguments={"layer": dict(_EXTRUSION_LAYER)}),
+                _interaction_step("hide", [{
+                    "kind": "layer_visibility_changed", "client_seq": 1,
+                    "client_mutation_id": "m-hide-1",
+                    "payload": {"layer_id": "bldg", "visible": False}}]),
+            ])],
+        expectations=[
+            _exp("f24-01-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=1),
+        ],
+        not_evaluated=[
+            *COMMON_NOT_EVALUATED,
+            "interaction_mutation_link: layer_visibility_changed 的 mutation "
+            "链接需要前端真实 client_mutation_id 与 mapspec mutation 对账，"
+            "离线注入无对应 mutation → attempted_not_applied 语义（不伪造 committed）",
+        ],
+        tags=["scene3d", "interaction"],
+    )
+
+
+@register
+def f24_02_observer_selection() -> ScenarioContract:
+    return ScenarioContract(
+        id="f24-02-observer-selected", family="F24",
+        title="交互：点选新观察点 → selection 投影（失效裁决输入面）",
+        user_goal="看地图并点选一个山头",
+        turns=[TurnSpec(
+            turn_id="t1", message="看地图并点选一个山头",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _interaction_step("sel", [{
+                    "kind": "feature_selected", "client_seq": 1,
+                    "payload": {"layer_id": "peaks", "feature_id": "peak-b"}}]),
+            ])],
+        expectations=[
+            _exp("f24-02-selection", Face.DATA, "interaction_state",
+                 "interaction.selection.feature_id", value="peak-b"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED, tags=["scene3d", "interaction"],
+    )
+
+
+@register
+def f24_03_aoi_drawn() -> ScenarioContract:
+    return ScenarioContract(
+        id="f24-03-aoi-drawn", family="F24",
+        title="交互：绘制 AOI → active_aoi 投影",
+        user_goal="圈一个分析范围",
+        turns=[TurnSpec(
+            turn_id="t1", message="圈一个分析范围",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _interaction_step("aoi", [{
+                    "kind": "aoi_drawn", "client_seq": 1,
+                    "payload": {"geometry_type": "Polygon",
+                                "vertex_count": 5}}]),
+            ])],
+        expectations=[
+            _exp("f24-03-aoi", Face.DATA, "interaction_state",
+                 "interaction.active_aoi.geometry_type", value="Polygon"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED, tags=["scene3d", "interaction"],
+    )
+
+
+# ── F25 多轮 3D 需求演进 ─────────────────────────────────────────────
+
+@register
+def f25_01_dimension_change_multiturn() -> ScenarioContract:
+    return ScenarioContract(
+        id="f25-01-dimension-change", family="F25",
+        title="多轮：2D → 3D 维度演进（IR patch + 锁换新）",
+        user_goal="成都小学分布（随后切 3D）",
+        turns=[
+            TurnSpec(turn_id="t1", message="成都小学分布",
+                     steps=[_step("intent", StepKind.INTENT)]),
+            TurnSpec(turn_id="t2", message="切成 3D 视图",
+                     steps=[_step("intent2", StepKind.INTENT)]),
+        ],
+        expectations=[
+            _exp("f25-01-dim", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.dimension", value="3d"),
+            _exp("f25-01-lock", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.scene_locks", op="contains",
+                 value="scene_mode=3d"),
+            _exp("f25-01-revision", Face.REQUIREMENT, "requirement_state",
+                 "requirement.revision", op="ge", value=1),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "multiturn", "requirement"],
+    )
+
+
+@register
+def f25_02_dimension_back_to_2d() -> ScenarioContract:
+    return ScenarioContract(
+        id="f25-02-back-to-2d", family="F25",
+        title="多轮：3D → 2D 回切（用户改主意，锁换新不挡 owner）",
+        user_goal="先 3D 后改回平面",
+        turns=[
+            TurnSpec(turn_id="t1", message="切成 3D 视图",
+                     steps=[_step("intent", StepKind.INTENT)]),
+            TurnSpec(turn_id="t2", message="改成 2D 平面地图",
+                     steps=[_step("intent2", StepKind.INTENT)]),
+        ],
+        expectations=[
+            _exp("f25-02-dim", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.dimension", value="2d"),
+            _exp("f25-02-lock", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.scene_locks", op="contains",
+                 value="scene_mode=2d"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "multiturn", "user-wins"],
+    )
+
+
+@register
+def f25_03_scene_preference_survives_new_task() -> ScenarioContract:
+    return ScenarioContract(
+        id="f25-03-pref-survives", family="F25",
+        title="跨任务：3D 偏好在新任务重建后存活（carried locks）",
+        user_goal="先立体地形，再查询咖啡店",
+        turns=[
+            TurnSpec(turn_id="t1", message="展示成都市的立体地形",
+                     steps=[_step("intent", StepKind.INTENT)]),
+            TurnSpec(turn_id="t2", message="查询附近的咖啡店",
+                     steps=[_step("intent2", StepKind.INTENT)]),
+        ],
+        expectations=[
+            _exp("f25-03-dim-kept", Face.REQUIREMENT, "requirement_state",
+                 "requirement.scene.dimension", value="3d",
+                 note="user scene_mode 锁跨任务携带（D-05 user-wins 存活）"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "multiturn", "carry"],
+    )
+
+
+# ── F26 重入/恢复/中断 ───────────────────────────────────────────────
+
+@register
+def f26_01_interrupted_scene_reapply() -> ScenarioContract:
+    return ScenarioContract(
+        id="f26-01-interrupted-reapply", family="F26",
+        title="重入：scene 应用后中断（未结算）→ 再入同 scene 稳定",
+        user_goal="建筑白模 3D（中途进程被打断）",
+        turns=[
+            TurnSpec(
+                turn_id="t1", message="展示成都建筑白模（含高度数据）",
+                steps=[
+                    _step("intent", StepKind.INTENT),
+                    _step("bldg", StepKind.RAW, tool="webgis_layer_upsert",
+                          arguments={"layer": dict(_EXTRUSION_LAYER)}),
+                    _step("apply", StepKind.RAW,
+                          tool="apply_scene_representation",
+                          arguments={"user_dimension": "3d"}),
+                ],
+                leave_unsettled=True),
+            TurnSpec(
+                turn_id="t2", message="继续，把 3D 场景配好",
+                steps=[
+                    _step("intent2", StepKind.INTENT),
+                    _step("reapply", StepKind.RAW,
+                          tool="apply_scene_representation",
+                          arguments={"user_dimension": "3d"}),
+                ]),
+        ],
+        expectations=[
+            _exp("f26-01-mode", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene.mode", value="3d"),
+            _exp("f26-01-verdict", Face.RENDER_EXPORT, "scene3d_verdict",
+                 "scene3d.verdict", op="in",
+                 value=["completed", "degraded"]),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "reentry", "recovery"],
+    )
+
+
+@register
+def f26_02_camera_then_interrupt_scene_kept() -> ScenarioContract:
+    return ScenarioContract(
+        id="f26-02-camera-then-scene", family="F26",
+        title="重入：相机已落 → 中断 → 场景再入（相机不被重置）",
+        user_goal="调视角后切 3D（中途打断）",
+        turns=[
+            TurnSpec(
+                turn_id="t1", message="从西南方向看",
+                steps=[
+                    _step("intent", StepKind.INTENT),
+                    _step("fly", StepKind.RAW, tool="fly_camera",
+                          arguments={"pitch": 40.0, "bearing": 45.0}),
+                ],
+                leave_unsettled=True),
+            TurnSpec(
+                turn_id="t2", message="切成 3D 视图",
+                steps=[
+                    _step("intent2", StepKind.INTENT),
+                    _step("bldg", StepKind.RAW, tool="webgis_layer_upsert",
+                          arguments={"layer": dict(_EXTRUSION_LAYER)}),
+                    _step("apply", StepKind.RAW,
+                          tool="apply_scene_representation",
+                          arguments={"user_dimension": "3d"}),
+                ]),
+        ],
+        expectations=[
+            _exp("f26-02-mode", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene.mode", value="3d"),
+            _exp("f26-02-pitch-kept", Face.MAPSPEC, "mapspec_view",
+                 "mapspec.view.pitch", value=40.0,
+                 note="scene 应用不重置既有视图"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "reentry", "camera"],
+    )
+
+
+@register
+def f26_03_verdict_blocked_without_evidence() -> ScenarioContract:
+    """完成判据负例：scene 写入但无 mutation 证据 → verdict 不 completed。"""
+    return ScenarioContract(
+        id="f26-03-verdict-honesty", family="F26", negative=True,
+        title="判据诚实：2.5d 悬空 terrain → verdict blocked（显示门）",
+        user_goal="用地形但数据面缺席",
+        turns=[TurnSpec(
+            turn_id="t1", message="用地形但数据面缺席",
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("apply", StepKind.RAW, tool="apply_scene_representation",
+                      arguments={"user_dimension": "2.5d",
+                                 "terrain_requested": True}),
+            ])],
+        expectations=[
+            _exp("f26-03-not-25d-dangling", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene.terrain_source", value="",
+                 note="无核实源绝不绑 terrain（半成品防线）"),
+            _exp("f26-03-mode", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene.mode", op="in", value=["2d", ""],
+                 note="2.5d 唯一垂直通道是 terrain；无源即诚实退 2d"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["scene3d", "negative", "verdict", "honesty"],
+    )

@@ -56,6 +56,8 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.rs_cube_tools": "analysis",
     # ADR-0199：多尺度场景 —— plan 只读投影（set 事务写入名字覆盖）
     "app.tools.scene_tools": "inspection",
+    # G3D04：三维编排 —— 能力探测只读；representation/相机/分析名字覆盖细分
+    "app.tools.scene_orchestration_tools": "inspection",
     "app.tools.geocompute_tools": "analysis",           # 执行平面；validate/run 查询名字覆盖
     "app.tools.layer_manager": "map_mutation",
     "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
@@ -100,6 +102,10 @@ _MODULE_DEFAULTS: Dict[str, str] = {
 
 # 工具名覆盖（模块默认之外的精确归类）
 _NAME_OVERRIDES: Dict[str, str] = {
+    # G3D04 scene_orchestration_tools：module 默认 inspection，3 个名字覆盖细分
+    "apply_scene_representation": "map_mutation",
+    "fly_camera": "map_mutation",
+    "run_3d_analysis": "analysis",
     # gis_harness.tools：计划 2 + 组件突变 1 + 检视 2
     "webgis_map_intent": "planning",
     "webgis_map_product": "planning",

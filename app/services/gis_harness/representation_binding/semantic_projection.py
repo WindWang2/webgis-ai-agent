@@ -224,6 +224,24 @@ def build_projection_patches(
         })
         return patches
 
+    # G3D04：用户场景切换 → requirement.scene.dimension（绝对值语义：以
+    # 提交后权威 spec 的 scene.mode 为准，与 hidden_layer_ids 同构）。
+    # scene 清除（None）→ dimension 归 "2d"（平面是显式状态而非"未表达"）。
+    if kind == "SetSceneIntent":
+        scene = (result_mapspec or {}).get("scene") if isinstance(result_mapspec, dict) else None
+        if isinstance(scene, dict) and str(scene.get("mode") or "") in ("2d", "2.5d", "3d"):
+            applied_mode = str(scene["mode"])
+        else:
+            applied_mode = "2d"
+        patches.append({
+            "op": "set", "path": "scene.dimension",
+            "value": applied_mode,
+            "reason": f"scene mode switched: {reason}",
+            "op_id": f"rbp:{mutation_id}:scene",
+            "turn": turn,
+        })
+        return patches
+
     # 其余 requirement-significant 面（style/layout/duplicate/rebind）：
     # MapSpec 是这些面的权威（requirement 不镜像逐层 paint/布局坐标），
     # 有意不投影（ADR-0219 已知边界）——skip reason 见 projection_skip_reason。

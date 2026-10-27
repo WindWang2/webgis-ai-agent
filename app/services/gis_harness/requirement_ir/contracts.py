@@ -74,8 +74,30 @@ SpatialRelationKind = Literal[
 ]
 LockScope = Literal[
     "palette", "geometry_kind", "layer_visibility", "layer_lock", "component",
-    "measure", "group_by", "purpose", "audience", "export_format", "aoi", "other",
+    "measure", "group_by", "purpose", "audience", "export_format", "aoi",
+    "scene_mode", "scene_camera", "other",
 ]
+"""G3D04：``scene_mode``（2d/2.5d/3d 维度与地形/挤出/夸张偏好）与
+``scene_camera``（pitch/bearing 用户相机选择）是跨轮 user-wins 面。"""
+
+#: 输出媒介词表（scene 决策的媒介门输入；对齐 scene_planning.SceneIntent.medium）。
+MediumVocab = Literal[
+    "", "interactive", "screen", "print", "export_png", "export_pdf", "export_svg",
+]
+
+#: 3D 维度偏好（""=未表达；规范形对齐 MapSpec SCENE_MODES）。
+SceneDimensionVocab = Literal["", "2d", "2.5d", "3d"]
+
+#: 3D 分析目标词表（G3D04；分析编排的 typed 目标面）。
+SceneAnalysisGoalVocab = Literal[
+    "viewshed", "line_of_sight", "skyline", "terrain_profile",
+]
+
+#: 3D 数据角色词表（G3D04；对齐 workflow_schema DATA_ROLES 的 3D 子集）。
+SceneDatasetRoleVocab = Literal["elevation", "subject", "receptor", "constraint"]
+
+#: 垂直证据种类（G3D04；证据必须来自已核实数据事实，见 scene3d.evidence）。
+VerticalEvidenceKind = Literal["height_attribute", "elevation_dem"]
 
 
 # ── 基础载体 ─────────────────────────────────────────────────────────
@@ -233,6 +255,8 @@ class OutputSpec(_Section):
     report: bool = False
     output_purpose: str = Field("screen_16_9", max_length=32)  # grammar OUTPUT_PURPOSES 词表
     dpi: Optional[int] = Field(None, ge=72, le=1200)
+    # G3D04：输出媒介（interactive 允许透视/动效；静态媒介诚实禁 3D）。
+    medium: MediumVocab = ""
 
 
 class RepresentationSpec(_Section):
@@ -261,6 +285,59 @@ class RequiredComponentsSpec(_Section):
     attribution: Optional[bool] = None
 
 
+class VerticalEvidenceRecord(BaseModel):
+    """一条已核实的垂直证据（G3D04）。
+
+    ``verified=True`` 必须来自真实数据事实采样（extrusion stats.valid>0 /
+    raster-dem ref 注册回执），由 scene3d.evidence 生产；本记录只承载
+    结论与溯源，不承载猜测。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: VerticalEvidenceKind
+    ref: str = Field("", max_length=128)            # 数据事实溯源（ref/layer id/回执 id）
+    verified: bool = False
+    detail: str = Field("", max_length=MAX_TEXT)
+
+
+class SceneSpec(_Section):
+    """三维表达需求（G3D04 M2）。
+
+    只记录**用户显式表达**与已核实证据；"分布情况"类话语不推断 3D
+    （无 cue → 全默认）。用户显式 3D 而证据/媒介不允许时，偏好保留、
+    ``degrade_reason`` 记录降级原因（诚实降级，不静默吞偏好）。
+    决策权威在 scene3d.decision（包既有 plan_scene 决策核）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provenance: Provenance = Field(default_factory=lambda: EMPTY_PROVENANCE)
+    state: SlotState = "proposed"
+    dimension: SceneDimensionVocab = ""             # 用户维度偏好（""=未表达）
+    degrade_reason: str = Field("", max_length=64)  # 显式偏好被降级的 reason code
+    terrain_requested: Optional[bool] = None        # 用户显式地形表达（None=未表达）
+    extrusion_requested: Optional[bool] = None      # 用户显式立体挤出（None=未表达）
+    exaggeration: Optional[float] = Field(None, gt=0.0, le=10.0)
+    camera_pitch: Optional[float] = Field(None, ge=0.0, le=85.0)
+    camera_bearing: Optional[float] = Field(None, ge=-180.0, le=180.0)
+    analysis_goals: Tuple[SceneAnalysisGoalVocab, ...] = Field((), max_length=4)
+    dataset_roles: Dict[str, SceneDatasetRoleVocab] = Field(
+        default_factory=dict, max_length=8)
+    vertical_evidence: List[VerticalEvidenceRecord] = Field(
+        default_factory=list, max_length=8)
+
+    def is_default(self) -> bool:
+        """全默认判定（digest 条件包含与"无表达"守卫共用）。"""
+        return (
+            self.dimension == "" and self.degrade_reason == ""
+            and self.terrain_requested is None and self.extrusion_requested is None
+            and self.exaggeration is None and self.camera_pitch is None
+            and self.camera_bearing is None and not self.analysis_goals
+            and not self.dataset_roles and not self.vertical_evidence
+        )
+
+
 class GISIntentSpec(BaseModel):
     """理解面：core（单一真相）+ typed sections + 歧义账本 + 字段级 provenance。"""
 
@@ -278,6 +355,7 @@ class GISIntentSpec(BaseModel):
     purpose: str = Field("", max_length=32)         # standards MAP_PURPOSES 词表（"" = 未表达）
     audience: str = Field("", max_length=32)        # standards MAP_AUDIENCES 词表
     representation: RepresentationSpec = Field(default_factory=RepresentationSpec)
+    scene: SceneSpec = Field(default_factory=SceneSpec)  # G3D04：三维表达需求
     components: RequiredComponentsSpec = Field(default_factory=RequiredComponentsSpec)
     output: OutputSpec = Field(default_factory=OutputSpec)
     ambiguities: List[Ambiguity] = Field(default_factory=list, max_length=MAX_AMBIGUITIES)

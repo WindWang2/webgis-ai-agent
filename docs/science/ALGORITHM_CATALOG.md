@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：161 能力 · 241 算法 · 126 参数契约。
+统计：164 能力 · 244 算法 · 126 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -1101,6 +1101,22 @@ SAR 地形效应校正：RTC gamma 平坦化（Small 2011，γ_flat=σ⁰·cosθ
   - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
   - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
+## `scene_camera_action` — 场景相机动作
+
+3D 相机 pitch/bearing/center/zoom 动作（编译为 SetViewIntent）；用户相机选择 user-wins 优先——用户 viewport 已实时，agent 不偷改。
+
+- **`platform.scene_camera_action`** 场景相机动作（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
+## `scene_representation` — 三维场景表达决策
+
+用户 3D 偏好 × 垂直证据（高度字段/raster-dem）× 媒介 → 2d/2.5d/3d 场景档决策与 SetSceneIntent 事务切换；显式 3D 无证据时诚实降级并保留偏好（fail-closed，不伪造高度/地形）。
+
+- **`platform.scene_representation`** 三维场景表达决策（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
 ## `service_area` — 网络服务区
 
 等时圈/网络可达服务区。
@@ -1641,6 +1657,14 @@ Priority-Flood 填洼（Barnes 2014，epsilon 单调变体）、D∞ 多向流�
   - 资源包络：32B/像元
   - 取消：none
   - 数值容差：rtol=1e-06，atol=1e-09
+
+## `terrain_scene_binding` — 地形场景绑定
+
+已核实 raster-dem 源绑定到 scene.terrain（source/exaggeration/elevation_ref）；无合格源时 typed unavailable + alternatives。
+
+- **`platform.terrain_scene_binding`** 地形场景绑定（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
 ## `terrain_sky_view` — 地平线与天空可视因子
 

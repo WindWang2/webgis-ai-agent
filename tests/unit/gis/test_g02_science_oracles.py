@@ -569,10 +569,11 @@ class TestO12PerformanceBudget:
             elapsed = time.perf_counter() - t0
         finally:
             monkeypatch.setattr(builtins, "open", real_open)
-        # G3D03（ADR-0274）：terrain.measurement 族 +4 算法 → 241
-        assert contracts == get_algorithm_registry().count == 241
+        # 合并 master（G3D03 measurement 族 +4 与 G3D04 platform 绑定 +3
+        # 叠加）后注册表真值由 scripts/gen_science_catalog.py 重算锁定。
+        assert contracts == get_algorithm_registry().count == 244
         assert resolves > 0
-        assert elapsed < 2.0, f"241 算法 resolve+契约投影 {elapsed:.2f}s 超预算"
+        assert elapsed < 2.0, f"{get_algorithm_registry().count} 算法 resolve+契约投影 {elapsed:.2f}s 超预算"
 
 
 # ── helpers ───────────────────────────────────────────────────────────
