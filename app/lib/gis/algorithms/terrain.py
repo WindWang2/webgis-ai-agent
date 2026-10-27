@@ -1856,6 +1856,46 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ],
         parameter_contract_ref="surface_area_analysis",
     ),
+    AlgorithmDescriptor(
+        id="terrain.cut_fill_volume",
+        name="基准面土方量（cut/fill）",
+        category="terrain_analysis",
+        capabilities=["terrain_measurement", "volume_estimation"],
+        input_artifact_types=["terrain_surface"],
+        output_artifact_type="stats_table",
+        tool_candidates=["cut_fill_volume_analysis"],
+        approximate=True,
+        cpu_cost="low",
+        memory_cost="medium",
+        io_cost="low",
+        preferred_execution_policy="THREAD",
+        priority=65,
+        algorithm_family="terrain_measurement",
+        method_references=["midpoint_quadrature"],
+        assumptions=[
+            "像元中心中点求积：每像元贡献 (z_center − base) × cell_area，"
+            "正部为 cut、负部为 fill；像元中心是唯一观测（不发明角点高程）",
+            "中点求积对 ≤1 次多项式表面精确（平面/斜面解析 oracle 闭式可验）",
+            "基准面 constant（绝对高程）或 mean（区域有效像元均值，net=0 恒等）",
+        ],
+        limitations=[
+            "曲面上为离散近似（误差随分辨率收敛，不宣称解析误差界）",
+            "掩膜像元 all-or-nothing（多边形栅格化边界半像元误差以 boundary_cells 披露）",
+            "nodata 像元剔除；invalid_fraction 超 max_invalid_fraction 类型化失败",
+            "体积是相对基准面的工程量，不是地质储量——分层地质/压实系数不在模型内",
+        ],
+        crs_class="RASTER_GRID",
+        scientific_preconditions=["raster_band_required:1"],
+        uncertainty_outputs=[],
+        random_seed_policy="deterministic",
+        numerical_tolerance="平面/斜面/台阶 fixture：cut/fill 与闭式解析值差 <1e-6 m³",
+        scientific_status="VALIDATED",
+        conformance_tests=[
+            "tests/unit/lib/test_terrain_volumes.py::test_flat_plane_constant_base_exact",
+            "tests/unit/lib/test_terrain_volumes.py::test_tilted_plane_mean_base_closed_form",
+        ],
+        parameter_contract_ref="cut_fill_volume_analysis",
+    ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -1905,8 +1945,12 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
     ),
     ParameterContract(
         id="viewshed_analysis",
-        version=1,
-        description="视域分析：观察点位置、高度与最大视线距离。",
+        version=2,
+        description=(
+            "视域分析：观察点位置、高度、最大视线距离与可视几何输出开关"
+            "（v2：additive include_geometry——#1829 stats-only 的补全，"
+            "几何与统计可分离消费，统计字段两模式逐位一致）。"
+        ),
         parameters=[
             ParameterSpec(
                 name="observer_x",
@@ -1944,6 +1988,15 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 minimum=10,
                 maximum=50000,
                 description="最大视线距离（米；窗口内生效）",
+            ),
+            ParameterSpec(
+                name="include_geometry",
+                type="boolean",
+                default=True,
+                description=(
+                    "输出可视区 GeoJSON 面（cell-edge 对齐、有界多边形化、"
+                    "含 nodata 排除与覆盖披露）；False 回到纯 stats"
+                ),
             ),
         ],
     ),
@@ -2589,6 +2642,81 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 default="m",
                 enum_values=["m", "ft"],
                 description="DEM 高程存储单位",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="cut_fill_volume_analysis",
+        version=1,
+        description=(
+            "基准面土方量：基准面模式/绝对高程、nodata 阈值与垂直基准声明"
+            "（多边形为数据输入，工具层校验）。"
+        ),
+        parameters=[
+            ParameterSpec(
+                name="reference",
+                type="enum",
+                default="constant",
+                enum_values=["constant", "mean"],
+                description=(
+                    "基准面模式：constant（base_z 绝对高程）| mean（区域"
+                    "有效像元均值——平衡挖填/平整检验）"
+                ),
+            ),
+            ParameterSpec(
+                name="base_z",
+                type="number",
+                description=(
+                    "constant 模式的基准面绝对高程（DEM z_units；datum 声明"
+                    "须与 DEM 一致，混算类型化拒绝）"
+                ),
+            ),
+            ParameterSpec(
+                name="max_invalid_fraction",
+                type="number",
+                default=0.5,
+                minimum=0.0,
+                maximum=1.0,
+                unit="ratio",
+                description="区域内 nodata 像元比例上限（超过类型化失败）",
+            ),
+            ParameterSpec(
+                name="vertical_datum",
+                type="enum",
+                default="unknown",
+                enum_values=[
+                    "ellipsoid_height",
+                    "geoid_height_egm96",
+                    "geoid_height_egm2008",
+                    "orthometric_local",
+                    "unknown",
+                ],
+                description="DEM 高程垂直基准声明",
+            ),
+            ParameterSpec(
+                name="override_vertical_datum",
+                type="enum",
+                enum_values=[
+                    "ellipsoid_height",
+                    "geoid_height_egm96",
+                    "geoid_height_egm2008",
+                    "orthometric_local",
+                    "unknown",
+                ],
+                description="基准面高程的垂直基准声明（缺省继承 DEM 声明；不同即拒绝）",
+            ),
+            ParameterSpec(
+                name="z_units",
+                type="enum",
+                default="m",
+                enum_values=["m", "ft"],
+                description="DEM 高程存储单位",
+            ),
+            ParameterSpec(
+                name="include_geometry",
+                type="boolean",
+                default=True,
+                description="输出挖方/填方分区 GeoJSON 面（cell-edge 对齐，有界）",
             ),
         ],
     ),

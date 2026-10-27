@@ -30,6 +30,8 @@ from app.utils.path import validate_data_path
 
 from app.lib.geo_analysis import measurements as measurements_lib
 from app.lib.geo_analysis import terrain as terrain_lib
+from app.lib.geo_analysis import viewshed_geometry as viewshed_geometry_lib
+from app.lib.geo_analysis import volumes as volumes_lib
 from app.lib.geo_analysis.raster_guard import (
     RasterResourceExceededError,
     RasterResourceGuard,
@@ -565,11 +567,12 @@ def register_terrain_tools(registry: ToolRegistry):
         registry,
         name="viewshed_analysis",
         description=(
-            "DEM 视域分析：观察点可见范围布尔判定（视线角扇区扫描），返回可见比例/可见面积/科学证据。"
+            "DEM 视域分析：观察点可见范围布尔判定（视线角扇区扫描），返回可见比例/可见面积"
+            "+ 可视区 GeoJSON 面（ref 化挂图）+ 科学证据。"
             "\n何时用：瞭望塔/监控选址、景观通视评价、军事/规划遮蔽分析。"
             "\n何时不用：(1) 成本路径/可达性 — 网络分析；(2) 简单缓冲 — buffer_analysis。"
             "\n关键约束：无地球曲率/大气折射；观察者默认离地 2m；最大视线距离 10-50000m；"
-            "地理 DEM 自动按 cos(lat) 换算米制距离。"
+            "地理 DEM 自动按 cos(lat) 换算米制距离；include_geometry=False 回到纯 stats。"
         ),
         tier=2,
         domains=["raster"],
@@ -581,6 +584,7 @@ def register_terrain_tools(registry: ToolRegistry):
             "observer_height": "观察者离地高度（米，默认 2）",
             "target_height": "目标离地高度（米，默认 0 = 地表）",
             "max_distance": "最大视线距离（米，默认 5000）",
+            "include_geometry": "输出可视区 GeoJSON 面（默认 True；False 回纯 stats）",
         },
         side_effect="deterministic_compute",
         network=False,
@@ -589,8 +593,8 @@ def register_terrain_tools(registry: ToolRegistry):
         memory_class="heavy",
         scale_class="large",
         tags=("视域", "可见性", "viewshed", "通视", "瞭望"),
-        output_semantic_type="stats",
-        result_size_policy="inline_small",
+        output_semantic_type="geojson_fc",
+        result_size_policy="bounded",
         crs_semantics="crs_agnostic",
         failure_modes=("invalid_args", "missing_data", "memory"),
     )
@@ -601,6 +605,7 @@ def register_terrain_tools(registry: ToolRegistry):
         observer_height: float = 2,
         target_height: float = 0,
         max_distance: float = 5000,
+        include_geometry: bool = True,
     ) -> dict:
         params = apply_contract(
             "viewshed_analysis",
@@ -610,6 +615,7 @@ def register_terrain_tools(registry: ToolRegistry):
                 "observer_height": observer_height,
                 "target_height": target_height,
                 "max_distance": max_distance,
+                "include_geometry": include_geometry,
             },
         )
         arr, transform, crs, eff_nodata, bounds = _read_terrain_window(
@@ -634,6 +640,34 @@ def register_terrain_tools(registry: ToolRegistry):
             "visible_cells": int(res["visible"].sum()),
             "meta": meta,
         }
+        if bool(params["include_geometry"]):
+            # 可视几何（G3D-V2-C）：与内核同口径的有效掩膜（_prepare 是
+            # 内核与 measurements 共用的 DEM 制备单一真相），cell-edge
+            # 对齐归并；stats 字段不受几何分支影响（逐位一致）。
+            _z, valid = terrain_lib._prepare(arr, eff_nodata)
+            fc, geo_meta = viewshed_geometry_lib.visibility_geometry(
+                res["visible"],
+                valid,
+                transform,
+                cell_size=cy,
+                cell_size_x=cx,
+            )
+            for feat in fc["features"]:
+                feat["properties"].update(
+                    {
+                        "visible_fraction": res["visible_fraction"],
+                        "observer_x": float(params["observer_x"]),
+                        "observer_y": float(params["observer_y"]),
+                        "observer_height_m": float(params["observer_height"]),
+                        "max_distance_m": float(params["max_distance"]),
+                    }
+                )
+            payload["geojson"] = fc
+            payload["visibility_geometry"] = {
+                k: v
+                for k, v in geo_meta.items()
+                if k != "geometry_meta"
+            }
         return _terrain_evidence(
             payload,
             "terrain.viewshed",
@@ -644,6 +678,7 @@ def register_terrain_tools(registry: ToolRegistry):
                 "observer_height": float(params["observer_height"]),
                 "target_height": float(params["target_height"]),
                 "max_distance": float(params["max_distance"]),
+                "include_geometry": bool(params["include_geometry"]),
             },
             crs=crs,
             diagnostics=_base_diagnostics(
@@ -3398,6 +3433,177 @@ def _register_measurement_tools(registry: ToolRegistry) -> None:
                 extra=(
                     Diagnostic(name="usable_quads", value=float(stats["usable_quads"])),
                     Diagnostic(name="roughness_ratio", value=stats["roughness_ratio"]),
+                ),
+            ),
+            transformations=_measurement_transformations(transformations, cy, cx, meta),
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(
+        registry,
+        name="cut_fill_volume_analysis",
+        description=(
+            "DEM 基准面土方量：多边形区域内挖方/填方/净方（cut/fill/net，m³），"
+            "基准面 constant（绝对高程）或 mean（区域均值——平衡挖填）；"
+            "返回统计 + 挖方/填方分区 GeoJSON（ref 化挂图）+ 科学证据。"
+            "\n何时用：场平/基坑/道路土方平衡估算、以 DEM 为真的工程量初算。"
+            "\n何时不用：(1) 面积 — surface_area_analysis；(2) 剖面 — terrain_profile；"
+            "(3) 地质储量/分层开挖（需地质模型，本工具不做）。"
+            "\n关键约束：像元中心中点求积（平面/斜面精确，曲面随分辨率收敛）；"
+            "基准面 datum 与 DEM 不一致类型化拒绝；nodata 超阈类型化失败；"
+            "边界半像元误差以 boundary_cells 披露。"
+        ),
+        tier=2,
+        domains=["raster"],
+        cost="light",
+        param_descriptions={
+            "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+            "polygon": "区域多边形顶点 [[x, y], ...]（栅格 CRS 单位；JSON 文本或内联数组，3-1024 点）",
+            "reference": "基准面模式：constant（默认，需 base_z）| mean（区域均值）",
+            "base_z": "constant 模式的基准面绝对高程（DEM z_units）",
+            "max_invalid_fraction": "区域内 nodata 像元比例上限（默认 0.5）",
+            "vertical_datum": "DEM 垂直基准声明（默认 unknown）",
+            "override_vertical_datum": "基准面高程的垂直基准声明（不同即拒绝）",
+            "z_units": "DEM 高程单位：m（默认）| ft",
+            "include_geometry": "输出挖方/填方分区 GeoJSON 面（默认 True）",
+        },
+        side_effect="deterministic_compute",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="heavy",
+        scale_class="large",
+        tags=("土方", "挖方", "填方", "体积", "三维量测", "cut", "fill"),
+        output_semantic_type="geojson_fc",
+        result_size_policy="bounded",
+        crs_semantics="crs_agnostic",
+        failure_modes=("invalid_args", "missing_data", "memory"),
+    )
+    def cut_fill_volume_analysis(
+        raster_path: str,
+        polygon: list | str,
+        reference: str = "constant",
+        base_z: float | None = None,
+        max_invalid_fraction: float = 0.5,
+        vertical_datum: str = "unknown",
+        override_vertical_datum: str | None = None,
+        z_units: str = "m",
+        include_geometry: bool = True,
+    ) -> dict:
+        contract_params: Dict[str, Any] = {
+            "reference": reference,
+            "max_invalid_fraction": max_invalid_fraction,
+            "vertical_datum": vertical_datum,
+            "z_units": z_units,
+        }
+        if base_z is not None:
+            contract_params["base_z"] = float(base_z)
+        if override_vertical_datum is not None:
+            contract_params["override_vertical_datum"] = override_vertical_datum
+        contract_params["include_geometry"] = include_geometry
+        params = apply_contract("cut_fill_volume_analysis", contract_params)
+        poly = _parse_point_seq(
+            polygon, name="polygon", min_points=3, max_points=1024
+        )
+        arr, transform, crs, eff_nodata, bounds = _read_terrain_window(
+            raster_path, None
+        )
+        cy, cx, transformations = _metric_cell_sizes(crs, transform, bounds)
+        import rasterio.transform as rio_transform
+        from rasterio.features import geometry_mask
+
+        poly_ring = [[x, y] for x, y in poly]
+        if poly_ring[0] != poly_ring[-1]:
+            poly_ring.append(poly_ring[0])
+        mask = geometry_mask(
+            [{"type": "Polygon", "coordinates": [poly_ring]}],
+            out_shape=(int(arr.shape[0]), int(arr.shape[1])),
+            transform=rio_transform.Affine(*transform[:6]),
+            invert=True,
+        )
+        stats, meta = volumes_lib.cut_fill_volume(
+            arr,
+            cy,
+            cell_size_x=cx,
+            mask=mask,
+            reference=str(params["reference"]),
+            base_z=params.get("base_z"),
+            nodata=eff_nodata,
+            max_invalid_fraction=float(params["max_invalid_fraction"]),
+            z_units=str(params["z_units"]),
+            vertical_datum=str(params["vertical_datum"]),
+            override_vertical_datum=params.get("override_vertical_datum"),
+        )
+        features: List[Dict[str, Any]] = [
+            {
+                "type": "Feature",
+                "properties": {
+                    "kind": "cut_fill_site",
+                    **{k: v for k, v in stats.items()},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[list(p) for p in poly_ring]],
+                },
+            }
+        ]
+        if bool(params["include_geometry"]):
+            # 挖方/填方分区面：dz 符号掩膜 → cell-edge 对齐多边形
+            # （与可视几何同一多边形化纪律；mean 模式 base 来自 stats）。
+            _z, valid = terrain_lib._prepare(arr, eff_nodata)
+            z_m = _z * (0.3048 if str(params["z_units"]) == "ft" else 1.0)
+            in_region = mask & valid
+            dz = z_m - float(stats["base_z"]) * (
+                0.3048 if str(params["z_units"]) == "ft" else 1.0
+            )
+            for kind, region_mask in (
+                ("cut_region", in_region & (dz > 0)),
+                ("fill_region", in_region & (dz < 0)),
+            ):
+                region_fc, region_meta = viewshed_geometry_lib.raster_mask_polygons(
+                    region_mask,
+                    transform,
+                    kind=kind,
+                )
+                for feat in region_fc["features"]:
+                    feat["properties"]["zone"] = kind
+                    features.append(feat)
+                meta.setdefault("region_geometry", {})[kind] = {
+                    k: v
+                    for k, v in region_meta.items()
+                    if k in ("polygon_count", "attributed_cells", "dropped_polygon_count")
+                }
+        fc = {"type": "FeatureCollection", "features": features}
+        payload: Dict[str, Any] = {
+            "success": True,
+            **stats,
+            "quality_flags": meta["quality_flags"],
+            "geojson": fc,
+            "meta": meta,
+        }
+        return _terrain_evidence(
+            payload,
+            "terrain.cut_fill_volume",
+            tool="cut_fill_volume_analysis",
+            parameters_applied={
+                "n_polygon_vertices": len(poly),
+                "reference": str(params["reference"]),
+                "base_z": stats["base_z"],
+                "max_invalid_fraction": float(params["max_invalid_fraction"]),
+                "vertical_datum": str(params["vertical_datum"]),
+                "override_vertical_datum": params.get("override_vertical_datum"),
+                "z_units": str(params["z_units"]),
+                "include_geometry": bool(params["include_geometry"]),
+            },
+            crs=crs,
+            diagnostics=_base_diagnostics(
+                transform,
+                arr.shape[0],
+                arr.shape[1],
+                extra=(
+                    Diagnostic(name="cut_volume_m3", value=float(stats["cut_volume_m3"])),
+                    Diagnostic(name="fill_volume_m3", value=float(stats["fill_volume_m3"])),
+                    Diagnostic(name="net_volume_m3", value=float(stats["net_volume_m3"])),
                 ),
             ),
             transformations=_measurement_transformations(transformations, cy, cx, meta),
