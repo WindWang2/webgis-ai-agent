@@ -16,9 +16,6 @@ import pytest
 
 from app.lib.cartography.composition_conformance import conformance_report
 from app.lib.cartography.composition_packs import COMPOSITION_PACK_TEMPLATES
-from app.lib.cartography.composition_packs.analysis_products import (
-    ANALYSIS_PRODUCTS_PACK,
-)
 from app.lib.cartography.composition_templates import (
     get_composition_template_registry,
 )

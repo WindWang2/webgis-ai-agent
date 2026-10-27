@@ -193,8 +193,6 @@ def raster_mask_polygons(
 
     kept_ids = {id(p) for p in kept}
     dropped = [p for p in polys if id(p) not in kept_ids]
-    kept_area = sum(p[1] for p in kept)
-    dropped_area = sum(p[1] for p in dropped)
 
     features: List[Dict[str, Any]] = []
     for rings, _area_crs in kept:

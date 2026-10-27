@@ -576,9 +576,6 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
                 register_analysis_binding,
                 stale_verdicts_only,
             )
-            from app.services.gis_harness.scene3d.capabilities import (
-                probe_scene3d_capabilities,
-            )
             from app.services.gis_harness.scene3d.evidence import (
                 verify_vertical_evidence,
             )
@@ -601,8 +598,6 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
 
             mapspec = await mapspec_store.get_mapspec(session_id)
             evidence = verify_vertical_evidence(mapspec)
-            capabilities = probe_scene3d_capabilities(
-                evidence, geometry_kinds=_geometry_kinds_of(mapspec))
             # 数据资格门：六类分析的输入都是 terrain_surface——DEM 证据
             # 缺席统一 typed decline（不猜测数据路径）。
             if not (evidence.dem_source_ids() or evidence.has_elevation):
