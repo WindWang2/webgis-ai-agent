@@ -72,7 +72,6 @@ export function buildGlbFixture(opts: GlbFixtureOptions = {}): ArrayBuffer {
 
   // 归一化整型 NORMAL（5120→/127、5122→/32767；首顶点取 -1 分量走负满幅）
   const normalsInt = opts.normalsComponent;
-  const normArityBytes = normalsInt === 5120 ? 1 : normalsInt === 5122 ? 2 : 4;
   const encodeNormal = (v: number): number => {
     if (normalsInt === 5120) return Math.max(-127, Math.min(127, Math.round(v * 127)));
     if (normalsInt === 5122) return Math.max(-32767, Math.min(32767, Math.round(v * 32767)));

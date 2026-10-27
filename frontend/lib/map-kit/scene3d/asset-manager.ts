@@ -26,7 +26,7 @@ import {
   type WorldCoord,
 } from './geo';
 import { buildModel, type BuiltModel } from './gltf/build';
-import { GltfParseError, parseGltf, type ParsedGltfStats } from './gltf/gltf-parser';
+import { GltfParseError, parseGltf } from './gltf/gltf-parser';
 import { forceDisposeCarrier, makeScene3dCustomLayer, releaseLayerOwnership } from './custom-layer';
 import {
   amountsOfStats,

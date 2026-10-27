@@ -104,14 +104,16 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
   // Escape 关闭（focus 在对话框内时）；dialog 容器 tabIndex=-1 承接焦点。
   useEffect(() => {
     if (!open) return;
+    const node = dialogRef.current;
+    if (!node) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
         setOpen(false);
       }
     };
-    dialogRef.current?.addEventListener('keydown', onKey);
-    return () => dialogRef.current?.removeEventListener('keydown', onKey);
+    node.addEventListener('keydown', onKey);
+    return () => node.removeEventListener('keydown', onKey);
   }, [open]);
   // liveGeneration 触发重渲染；场景读 committed（单一真相）。
   useSyncExternalStore(
