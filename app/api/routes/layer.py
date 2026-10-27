@@ -799,6 +799,19 @@ async def get_terrain_tile(
     if not (0 <= z <= 20) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         raise HTTPException(status_code=400, detail="非法瓦片坐标")
 
+    # A5（#1771 D11 清偿）：会话+ref 级请求率限制 —— 鉴权依赖已过、路径解析
+    # 与缓存/渲染之前；超限 429 + Retry-After（绝不静默渲染无限瓦片）。
+    from app.services.data_fabric.tile_rate_limiter import (
+        enforce_tile_rate,
+        session_terrain_tile_rpm,
+    )
+
+    enforce_tile_rate(
+        f"session:terrain:{session_id}:{ref_id}",
+        session_terrain_tile_rpm(),
+        scope="session_terrain_tile",
+    )
+
     from app.services.raster_tile_service import TerrainTileError, render_terrarium_tile
 
     safe_path = await _resolve_raster_tile_path(session_id, ref_id, owner_token or token)

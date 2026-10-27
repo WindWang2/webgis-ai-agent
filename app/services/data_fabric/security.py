@@ -449,14 +449,38 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
         return super().send(request, **kwargs)
 
 
-def make_safe_session(allow_private: bool = False):
+def make_safe_session(allow_private: bool = False, rate_limit=None):
     """Return a ``requests.Session`` whose every request (incl. redirects) is
     SSRF-validated. Adapters MUST use this instead of a bare ``requests.Session``.
+
+    G3D-V2-A A5（#1771 D11 清偿）：``rate_limit=(key, rpm)`` 给全部出站请求
+    （GET/POST/重定向皆经 ``session.request``）挂滑动窗限流，超限抛
+    ``SourceRateLimitedError``（typed，绝不静默抓取）。键建议带 source_id
+    （如 ``"outbound:<source_id>"``），配额来自 SourceDefinition.QuotaDecl
+    或 operator 配置 —— 摄入方（adapter 构造处）负责传入；未传 = 不限流
+    （既有行为），接线进度见 planning/g3dv2-a-geo-data-supply/RISKS.md。
     """
     session = requests.Session()
     adapter = SSRFSafeHTTPAdapter(allow_private=allow_private)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
+    if rate_limit is not None:
+        from app.services.data_fabric.errors import SourceRateLimitedError
+        from app.services.data_fabric.tile_rate_limiter import check_rate
+
+        key, rpm = rate_limit
+        _orig_request = session.request
+
+        def _rate_limited_request(method, url, **kwargs):
+            allowed, retry_after = check_rate(f"outbound:{key}", int(rpm))
+            if not allowed:
+                raise SourceRateLimitedError(
+                    f"outbound rate limit ({rpm}/min) exceeded for source "
+                    f"'{key}'; retry after {retry_after}s"
+                )
+            return _orig_request(method, url, **kwargs)
+
+        session.request = _rate_limited_request
     return session
 
 
