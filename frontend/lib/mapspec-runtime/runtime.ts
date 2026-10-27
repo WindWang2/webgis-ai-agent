@@ -193,6 +193,10 @@ export class MapSpecRuntime {
     // 没有 handler，地形失效只是 MapLibre 控制台错误 = 静默降级，违背
     // "绝不静默降级" 红线。每遍 reconcile 由 adapter 重建证据环，本源在
     // applyPatchDebounced 落定前后的错误都归属当时的 spec。
+    // G3D01 D8：同一通道扩展到底图 raster 源（map-panel getMapStyle 合成
+    // 的 `raster-tiles-{index}`）—— 断网/瓦片 401/403/429 时底图失效
+    // 不再只是控制台错误，`scene_basemap_unavailable` 证据进入 observation/
+    // 导出披露面（行动依据：切换可用 provider 或配置本地底图）。
     this.terrainErrorHandler = (e: unknown) => {
       const srcId = (e as { sourceId?: unknown } | null)?.sourceId;
       if (typeof srcId !== "string") return;
@@ -200,6 +204,10 @@ export class MapSpecRuntime {
         ?.scene?.terrain;
       if (terrain && terrain.source === srcId) {
         recordSceneEvidence("scene_terrain_unavailable", srcId);
+        return;
+      }
+      if (/^raster-tiles-\d+$/.test(srcId)) {
+        recordSceneEvidence("scene_basemap_unavailable", srcId);
       }
     };
     // 最小 map 桩（测试/半销毁 map）可能没有事件面 —— 防御性挂载。

@@ -2171,6 +2171,24 @@ async function runExportInternal(
         }
       }
     }
+    // ADR-0199 + G3D01（review R2 P1-1）：地形/底图源失效披露 ——
+    // scene_terrain_unavailable（raster-dem 瓦片失败）、
+    // scene_basemap_unavailable（底图 raster 瓦片失败，不限 is3D）与
+    // scene_terrain_no_source_air_gapped（air_gapped 无会话 DEM 显式降级）
+    // 汇入导出降级面；detail 有界。此前 scene_terrain_unavailable 只进
+    // 证据环无消费方（"最后一公里"缺口），底图失效完全静默。
+    for (const ev of sceneEvidenceSnapshot()) {
+      if (
+        ev.code === 'scene_terrain_unavailable'
+        || ev.code === 'scene_basemap_unavailable'
+        || ev.code === 'scene_terrain_no_source_air_gapped'
+      ) {
+        chromeDegradations.push({
+          code: ev.code,
+          detail: ev.layerId.slice(0, 200),
+        });
+      }
+    }
 
     // ADR-0157 P2：版面描述中间层（单一决策记录）—— canvas 消费
     // chromeModel 字段（既有绘制面不变），SVG/PDF 消费全量字段（texts/
