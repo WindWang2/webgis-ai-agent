@@ -8,7 +8,7 @@
  */
 
 /** MapSpec 已知契约版本（= 后端 KNOWN_VERSIONS）。 */
-export const CONTRACT_MAPSPEC_VERSIONS = ["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"] as const;
+export const CONTRACT_MAPSPEC_VERSIONS = ["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"] as const;
 
 /** 最新契约版本（= 后端 LATEST_VERSION = 词表末位）。 */
 export const CONTRACT_LATEST_MAPSPEC_VERSION: (typeof CONTRACT_MAPSPEC_VERSIONS)[number] =

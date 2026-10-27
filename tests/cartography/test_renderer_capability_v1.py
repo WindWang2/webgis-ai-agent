@@ -15,6 +15,7 @@ from app.lib.cartography import renderer_capability as rc
 from app.lib.cartography.layer_capability import LAYER_TYPE_SUPPORT
 from app.lib.cartography.mapspec_schema import (
     DataFabricMapSpecSource,
+    Model3dMapSpecSource,
     GeoJSONMapSpecSource,
     RasterDemMapSpecSource,
     RasterMapSpecSource,
@@ -45,7 +46,7 @@ class TestManifestSingleSource:
         literals = set()
         for model in (
             GeoJSONMapSpecSource, VectorMapSpecSource, RasterMapSpecSource,
-            RasterDemMapSpecSource,
+            RasterDemMapSpecSource, Model3dMapSpecSource,
         ):
             field = model.model_fields["type"]
             literals.update(field.annotation.__args__)

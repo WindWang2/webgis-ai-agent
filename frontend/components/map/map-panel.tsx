@@ -51,6 +51,52 @@ export function sceneCameraIdentity(committed: unknown): string {
   const transition = camera && typeof camera.transition_ms === "number" ? camera.transition_ms : ""
   return `${mode}:${pitch}:${bearing}:${transition}`
 }
+
+/** Identity of spec-driven 3D scene assets（v1.7 G3D02）：mode + 资产
+ *  （id/source/visible/placement/lod 的稳定串）。图层开关等 presentation
+ *  变更不触发 3D 同步效应（资产挂载是 scene 域事实）。 */
+/** dev-only 3D 拾取观察窗（__mapErrors 同款纪律：生产零暴露、有界；
+ * 旅程/诊断消费）。 */
+function noteScene3dPickDebug(
+  point: { x: number; y: number },
+  canvas: { clientWidth?: number; clientHeight?: number } | undefined,
+  hit: { assetId: string } | null,
+  debugAssets?: unknown,
+  camera?: { center?: unknown; zoom?: unknown; pitch?: unknown; bearing?: unknown },
+): void {
+  if (process.env.NODE_ENV !== 'development') return
+  try {
+    ;(window as unknown as { __scene3dPick?: unknown }).__scene3dPick = {
+      at: `${Math.round(point.x)},${Math.round(point.y)}`,
+      canvas: `${canvas?.clientWidth ?? 0}x${canvas?.clientHeight ?? 0}`,
+      hit: hit ? hit.assetId : null,
+      ...(debugAssets ? { assets: debugAssets } : {}),
+      ...(camera ? {
+        center: camera.center ? `${(camera.center as { lng?: number }).lng?.toFixed(4)},${(camera.center as { lat?: number }).lat?.toFixed(4)}` : null,
+        zoom: camera.zoom, pitch: camera.pitch, bearing: camera.bearing,
+      } : {}),
+    }
+  } catch { /* 环境异常不影响主链 */ }
+}
+
+export function sceneAssetsIdentity(committed: unknown): string {
+  const scene = (committed as {
+    scene?: {
+      mode?: string
+      assets?: Array<{
+        id?: string; source?: string; visible?: boolean
+        placement?: unknown; lod?: unknown
+      }>
+    }
+  } | null)?.scene
+  if (!scene || typeof scene !== "object") return "none"
+  const mode = typeof scene.mode === "string" && scene.mode ? scene.mode : "2d"
+  const assets = scene.assets ?? []
+  const digest = assets
+    .map((a) => `${a.id ?? ''}@${a.source ?? ''}:${a.visible === false ? '0' : '1'}:${JSON.stringify(a.placement ?? null)}:${JSON.stringify(a.lod ?? null)}`)
+    .join('|')
+  return `${mode}#${digest}`
+}
 import { MapActionHandler } from "./map-action-handler"
 import { SketchEditor } from "./sketch-editor"
 import { SpatialSketchTool } from "@/components/copilot/spatial-sketch-tool"
@@ -96,8 +142,10 @@ import { PoiInfoPanel } from "@/components/map/poi-info-panel"
 import {
   emitViewportSettled,
   emitFeatureDeselected,
+  emitFeatureSelected,
   emitMeasurementCreated,
 } from "@/lib/interaction/bus"
+import type { Scene3dPickHit } from "@/lib/map-kit/scene3d"
 import { ComparisonView } from "@/components/map/comparison"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
@@ -616,6 +664,9 @@ export function MapPanel({
       syncInteractiveIds()
     }
     return () => {
+      // G3D02 v1.7：map 重建（WebGL retry / unmount）时释放 3D 资产
+      // （THREE renderer/geometry/texture 随 map 实例退役）。
+      renderer.disposeSceneAssets(map)
       runtimeRef.current?.dispose()
       runtimeRef.current = null
     }
@@ -677,6 +728,20 @@ export function MapPanel({
       map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
     }
   }, [is3D, mapReady, sceneCameraKey, buildSceneTerrainOptions])
+
+  // G3D02 v1.7：3D 场景资产同步效应（terrain 同款模式）。scene 域事实
+  // （mode/assets）变化或底图切换（custom layer 被 setStyle 抹除后重放）
+  // 时驱动 scene3d 管理器幂等差分；2d 模式 = 全部卸载（诚实降级）。
+  const sceneAssetsKey = useSyncExternalStore(
+    subscribeMapSpecLive,
+    () => sceneAssetsIdentity(getCommittedMapSpec()),
+    () => sceneAssetsIdentity(getCommittedMapSpec()),
+  )
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!map || !mapReady) return
+    renderer.syncSceneAssets(map, getCommittedMapSpec())
+  }, [mapReady, sceneAssetsKey, currentMapStyle])
 
   // Reconcile the committed MapSpec plus a pending overlay. HUD is a cache
   // and source payload host, not the Desired author (ADR-0054 / #643).
@@ -755,6 +820,11 @@ export function MapPanel({
           } else {
             renderer.disable3DTerrain(map)
           }
+        }
+        // G3D02 v1.7：reconcile 落定后重放 3D 资产同步（basemap setStyle
+        // 抹除 custom layer 后的恢复点 —— 与 terrain 重挂同时机；幂等）。
+        if (map) {
+          renderer.syncSceneAssets(map, spec)
         }
         issueCartographicObservation({ map, spec, layers })
       })
@@ -883,6 +953,9 @@ export function MapPanel({
     features: any[]
   } | null>(null)
 
+  // G3D02 v1.7（M5）：3D 拾取检视卡（asset/tile/node 元数据 + 命中坐标）。
+  const [scene3dPick, setScene3dPick] = useState<(Scene3dPickHit & { x: number; y: number }) | null>(null)
+
   // 交互测量工具状态（HUD 联动）。V7：模式真相迁 toolSlice（与框选/绘制
   // 互斥，会话切换自动复位）；在途测量点是瞬时草稿，保留本地 state。
   const activeMapTool = useHudStore((s) => s.activeMapTool)
@@ -989,7 +1062,39 @@ export function MapPanel({
     // 只查询我们自己添加的 __ 子图层；底图瓦片层不应吃 click。
     const ids = interactiveIdsRef.current
     if (ids.length === 0) {
+      // G3D02：无交互式二维层时仍尝试 3D 拾取（资产可以是唯一图层）。
+      const canvas = map.getCanvas?.()
+      const hit3d = renderer.pickScene3d(
+        map,
+        evt.point.x,
+        evt.point.y,
+        canvas?.clientWidth ?? 800,
+        canvas?.clientHeight ?? 600,
+      )
+      noteScene3dPickDebug(evt.point, canvas, hit3d, renderer.describeScene3dAssets(map), {
+        center: map.getCenter?.(), zoom: map.getZoom?.(), pitch: map.getPitch?.(), bearing: map.getBearing?.(),
+      })
+      if (hit3d) {
+        setScene3dPick({ ...hit3d, x: evt.point.x, y: evt.point.y })
+        emitFeatureSelected({
+          layerId: `scene3d:${hit3d.assetId}`,
+          featureId: hit3d.tileId ?? hit3d.nodeName ?? undefined,
+          properties: {
+            scene3d_asset: hit3d.assetId,
+            source_id: hit3d.sourceId,
+            ...(hit3d.tileId ? { tile_id: hit3d.tileId } : {}),
+            ...(hit3d.nodeName ? { node_name: hit3d.nodeName } : {}),
+            distance_m: Math.round(hit3d.distanceM),
+            lng: Number(hit3d.lngLat.lng.toFixed(6)),
+            lat: Number(hit3d.lngLat.lat.toFixed(6)),
+            altitude_m: Math.round(hit3d.lngLat.altitudeM),
+          },
+          datasetRef: hit3d.sourceId,
+        })
+        return
+      }
       if (useHudStore.getState().selectedFeature) emitFeatureDeselected()
+      setScene3dPick(null)
       setSelectedFeature(null)
       setPoiPanel(null)
       return
@@ -1003,11 +1108,47 @@ export function MapPanel({
       features = []
     }
     if (!features || features.length === 0) {
+      // G3D02 v1.7（M5）：二维未命中 → 3D raycast 拾取（模型/tile 元数据
+      // 经 Interaction IR feature_selected 上行 —— 词表复用，语义同要素选中）。
+      const canvas = map.getCanvas?.()
+      const hit3d = renderer.pickScene3d(
+        map,
+        evt.point.x,
+        evt.point.y,
+        canvas?.clientWidth ?? 800,
+        canvas?.clientHeight ?? 600,
+      )
+      noteScene3dPickDebug(evt.point, canvas, hit3d)
+      if (hit3d) {
+        const extrasProps = hit3d.extras && typeof hit3d.extras === 'object'
+          ? hit3d.extras as Record<string, unknown>
+          : {}
+        setScene3dPick({ ...hit3d, x: evt.point.x, y: evt.point.y })
+        emitFeatureSelected({
+          layerId: `scene3d:${hit3d.assetId}`,
+          featureId: hit3d.tileId ?? hit3d.nodeName ?? undefined,
+          properties: {
+            scene3d_asset: hit3d.assetId,
+            source_id: hit3d.sourceId,
+            ...(hit3d.tileId ? { tile_id: hit3d.tileId } : {}),
+            ...(hit3d.nodeName ? { node_name: hit3d.nodeName } : {}),
+            distance_m: Math.round(hit3d.distanceM),
+            lng: Number(hit3d.lngLat.lng.toFixed(6)),
+            lat: Number(hit3d.lngLat.lat.toFixed(6)),
+            altitude_m: Math.round(hit3d.lngLat.altitudeM),
+            ...extrasProps,
+          },
+          datasetRef: hit3d.sourceId,
+        })
+        return
+      }
       if (useHudStore.getState().selectedFeature) emitFeatureDeselected()
+      setScene3dPick(null)
       setSelectedFeature(null)
       setPoiPanel(null)
       return
     }
+    setScene3dPick(null)
     const point: [number, number] = [evt.lngLat.lng, evt.lngLat.lat]
     // v2 重设计：单/多要素统一进纯 DOM 悬浮窗（候选列表内置），只写快照，
     // 不触发高亮图层、不触发自动聚焦。Runtime V4：shift 点选在同层追加
@@ -1529,12 +1670,48 @@ export function MapPanel({
             onZoomToFeature={handleZoomToFeature}
           />
         )}
+        {/* G3D02 v1.7（M5）：3D 拾取检视卡 —— asset/tile/node 元数据 +
+            命中地理坐标（简洁卡片；与 POI 面板互斥展示）。 */}
+        {scene3dPick && (
+          <div
+            className="absolute z-30 w-64 rounded-lg border border-slate-200 bg-white/95 p-3 text-xs shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200"
+            style={{ left: Math.min(scene3dPick.x + 12, 9999), top: scene3dPick.y + 12 }}
+            role="status"
+            aria-label="3D asset pick"
+          >
+            <div className="mb-1 flex items-center justify-between">
+              <span className="font-semibold">3D {scene3dPick.assetId}</span>
+              <button
+                type="button"
+                className="rounded px-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+                aria-label="close 3d pick"
+                onClick={() => {
+                  setScene3dPick(null)
+                  emitFeatureDeselected({ layerId: `scene3d:${scene3dPick.assetId}` })
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <dl className="space-y-0.5 font-mono text-[11px] leading-relaxed">
+              <div className="flex justify-between gap-2"><dt className="text-slate-500">source</dt><dd className="truncate">{scene3dPick.sourceId}</dd></div>
+              {scene3dPick.tileId && (
+                <div className="flex justify-between gap-2"><dt className="text-slate-500">tile</dt><dd className="truncate">{scene3dPick.tileId}</dd></div>
+              )}
+              {scene3dPick.nodeName && (
+                <div className="flex justify-between gap-2"><dt className="text-slate-500">node</dt><dd className="truncate">{scene3dPick.nodeName}</dd></div>
+              )}
+              <div className="flex justify-between gap-2"><dt className="text-slate-500">lng/lat</dt><dd>{scene3dPick.lngLat.lng.toFixed(5)}, {scene3dPick.lngLat.lat.toFixed(5)}</dd></div>
+              <div className="flex justify-between gap-2"><dt className="text-slate-500">alt/dist</dt><dd>{Math.round(scene3dPick.lngLat.altitudeM)}m / {Math.round(scene3dPick.distanceM)}m</dd></div>
+            </dl>
+          </div>
+        )}
         <HoverTooltipOverlay
           mapRef={mapRef}
           interactiveIdsRef={interactiveIdsRef}
           layerIdsSetRef={layerIdsSetRef}
           layersMapRef={layersMapRef}
-          visible={!poiPanel && !selectedFeature}
+          visible={!poiPanel && !selectedFeature && !scene3dPick}
         />
       </Map>
       </div>

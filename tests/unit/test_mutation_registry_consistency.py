@@ -94,6 +94,8 @@ def test_effect_class_matches_presentation_baseline():
         "RebindComponentIntent",
         "ApplyVisualHealPatchIntent",
         "SetSceneIntent",
+        # v1.7（G3D02）：scene.assets 表写入（presentation 面）。
+        "SetSceneAssetsIntent",
     }
     actual = {
         d.intent_cls.__name__
@@ -130,6 +132,9 @@ def test_op_labels_match_legacy_table():
         "RestoreStyleIntent": "恢复样式版本",
         "SetWorkbenchStateIntent": "更新工作台组织",
         "SetScenarioModeIntent": "切换推演模式",
+        # v1.7（G3D02）：新表意图的有意标签（journal 可读性 —— 行为变更
+        # 经本表显式登记评审）。
+        "SetSceneAssetsIntent": "写入三维场景资产",
     }
     for d in MUTATION_REGISTRY.all():
         if d.intent_cls.__name__ in legacy:
@@ -207,6 +212,10 @@ def test_blocking_codes_single_source_and_emitter_subset():
         "NON_INCREASING_STOPS",
         "SCENE_TERRAIN_SOURCE_REF",
         "SCENE_TERRAIN_SOURCE_TYPE",
+        # v1.7（G3D02）：3D 资产引用完整性（同 terrain 口径）。
+        "SCENE_ASSET_SOURCE_REF",
+        "SCENE_ASSET_SOURCE_TYPE",
+        "SCENE_ASSET_DUPLICATE_ID",
     }
     # emitter 面：coordinator 源内出现的校验码字面量必须都在表内
     import app.services.mapspec.coordinator as coordinator

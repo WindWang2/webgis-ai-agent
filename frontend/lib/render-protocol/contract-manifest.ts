@@ -21,7 +21,7 @@ export const RENDER_WORK_MANIFEST = {
   max_diagnostics: 8,
   source_kinds: [
     'geojson', 'vector', 'raster', 'raster-dem',
-    'data_fabric', 'wms', 'wmts', 'pmtiles',
+    'data_fabric', 'wms', 'wmts', 'pmtiles', 'model3d',
   ],
 } as const;
 
@@ -60,6 +60,8 @@ export const RENDERER_CAPABILITY_MANIFEST = {
     wms: 'none',
     wmts: 'none',
     pmtiles: 'none',
+    // v1.7（G3D02）：live custom-layer 通道实装；headless 不消费。
+    model3d: 'partial',
   } as const,
   feature_support: {
     point_clustering: true,
@@ -71,5 +73,7 @@ export const RENDERER_CAPABILITY_MANIFEST = {
     generalization: false,
     export_svg: true,
     export_pdf: true,
+    // v1.7（G3D02）：scene.assets → three.js custom layer（受控子集）。
+    scene_assets_3d: true,
   } as const,
 } as const;

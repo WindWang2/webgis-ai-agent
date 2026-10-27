@@ -73,6 +73,15 @@ SOURCE_TYPE_SUPPORT: Dict[str, Dict[str, Any]] = {
     "wms": {"level": LEVEL_NONE, "channels": [], "note": "schema 词表位，无机器消费方"},
     "wmts": {"level": LEVEL_NONE, "channels": [], "note": "schema 词表位，无机器消费方"},
     "pmtiles": {"level": LEVEL_NONE, "channels": [], "note": "schema 词表位，无机器消费方"},
+    # v1.7（G3D02）：model3d 源 —— live 渲染端 scene3d custom-layer 通道
+    # 实装（glTF/GLB/3D Tiles 1.1 subset）；headless 编译器不消费（与
+    # data_fabric 的 partial 同「声明通道 + 注明边界」纪律）。ref_id 水合
+    # 供给链未建 —— url 通道 supported，ref 通道 typed unavailable 披露。
+    "model3d": {
+        "level": LEVEL_PARTIAL,
+        "channels": ["live-custom-layer"],
+        "note": "scene.assets → MapLibre custom layer（live 通道）；headless 编译不消费；ref_id 未水合前 typed unavailable",
+    },
 }
 
 # ── feature 面（truth = compiler.ts/runtime.ts 实况；只描述已实现）─────
@@ -96,6 +105,14 @@ FEATURE_SUPPORT: Dict[str, Dict[str, Any]] = {
     "fill_extrusion_3d": {
         "supported": True,
         "note": "fill-extrusion 编译；视觉依赖地图 pitch",
+    },
+    # v1.7（G3D02）：3D 场景资产（scene.assets + model3d 源）的 live 渲染
+    # 通道 —— 受控子集（glTF 2.0 mesh/PBR 子集、GLB、3D Tiles 1.1
+    # glTF-content subset），能力边界经渲染端 typed unavailable 错误显式
+    # 披露；skin/animation/Draco 等超集特征不支持。
+    "scene_assets_3d": {
+        "supported": True,
+        "note": "scene.assets → three.js custom layer（受控子集：glTF/GLB/3D Tiles 1.1；超集特征 typed 披露）",
     },
     "semantic_zoom_representation": {
         # #1617（MapSpec v1.6 RepresentationAtScale）已合并（2026-10-18）：

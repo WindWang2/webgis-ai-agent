@@ -16,6 +16,7 @@
      "initial_fingerprint": "carto-sha256:53f5b1dfa0a1056afe3e4c778e0467bacdbc1f998d39bac9245e07c8977e5ce9",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -70,6 +71,7 @@
      "initial_fingerprint": "carto-sha256:9b4d242ab7ca662d1a0ea5b1bf75723528ee3c1bff93f86c9b313631b0e9926d",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -124,6 +126,7 @@
      "initial_fingerprint": "carto-sha256:53f5b1dfa0a1056afe3e4c778e0467bacdbc1f998d39bac9245e07c8977e5ce9",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -180,6 +183,7 @@
      "initial_fingerprint": "carto-sha256:d32da568510690e63d3625a275cfb1e399b9cec0defa97fdc67eca7bfa4cb012",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -309,6 +313,7 @@
      "initial_fingerprint": "carto-sha256:e188ff660bb006f15463067186d8175afcb5d5c389168f0e4b06ee4fdd8d745e",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -387,6 +392,7 @@
      "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -443,6 +449,7 @@
      "initial_fingerprint": "carto-sha256:7e1fdb9f66d850f0f6a3032a9ca7a126647facc97043480d2cf7a949bd32cf50",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -516,6 +523,7 @@
      "initial_fingerprint": "carto-sha256:1e84a1c8bcc58bbdaa2de6629e1c0eaf4a49f274be9d17cf5418a3606144ee9b",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -644,6 +652,7 @@
      "initial_fingerprint": "carto-sha256:b69b5b2f3835c7d76d16d4e6debdf0803006dd76d368c48e674cac11c78f8e3b",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -757,6 +766,7 @@
      "initial_fingerprint": "carto-sha256:ef79aec0cc5408e8422a98df87482b9409c904eddfdf402d6f0818b1dedf9716",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -1061,6 +1071,7 @@
      "initial_fingerprint": "carto-sha256:24d0528829a1d929608af981230afb0034ddcfcd13949600bfd8634a116897a1",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -1365,6 +1376,7 @@
      "initial_fingerprint": "carto-sha256:f0c855e3f8cdaea7eaed75a12e4b2f5595c0db51fa13e2d50ff8c0298b26133d",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -1478,6 +1490,7 @@
      "initial_fingerprint": "carto-sha256:8c962858b252e900d5faf1045215aa4f612f9009ca0a252a9e2096a369952513",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -1549,6 +1562,7 @@
      "initial_fingerprint": "carto-sha256:a7397156d9692d42cec7533de6562a5025c20c4329b44cc37920e206bcf9dd32",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -1603,6 +1617,7 @@
      "initial_fingerprint": "carto-sha256:d8d3e140a996ebb17f222b05121b0d655cf60ee017a06d108bbc29b5a4cd090f",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -1873,6 +1888,7 @@
      "initial_fingerprint": "carto-sha256:80bad6d287e82bdbfdcd392974ec2ee63340c44e1aa8e76f5a539774bfe62f31",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -2504,6 +2520,7 @@
      "initial_fingerprint": "carto-sha256:857d727d19edc9528c53d789fa05ce17dd3dd50616ad5e3264f18e1e76e86510",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -2773,6 +2790,7 @@
      "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -2897,6 +2915,7 @@
      "initial_fingerprint": "carto-sha256:cc30c0e776ab0feee7e08680a5a3d91a75bbd093ab701934804e44e3409fe496",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -3027,6 +3046,7 @@
      "initial_fingerprint": "carto-sha256:c0776ca3d4be569cfc89ec7d7d506a27e7965ab66b6fab48864fb4b37fd49a53",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -3100,6 +3120,7 @@
      "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -3154,6 +3175,7 @@
      "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -3193,6 +3215,131 @@
    }
   }
  ],
+ "set_scene_assets_dangling_source_blocking": [
+  {
+   "result": {
+    "correction_hint": "资产 source 必须指向 spec 内 model3d 源（url/ref_id 至少其一）；id 唯一；anchor 经度 [-180,180]/纬度 [-90,90]；scale > 0。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "scene.assets 域校验失败（1 项 blocking）：SCENE_ASSET_SOURCE_REF: scene asset 'asset-bad' references missing source 'no-such-model'",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_scene_assets_write_then_clear": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:a635251ef07dcfa16d40b66127fe5154c803b1d255a9e2d18670fff06f8b8322",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:a635251ef07dcfa16d40b66127fe5154c803b1d255a9e2d18670fff06f8b8322",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "representation_report": null,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:a635251ef07dcfa16d40b66127fe5154c803b1d255a9e2d18670fff06f8b8322",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:a635251ef07dcfa16d40b66127fe5154c803b1d255a9e2d18670fff06f8b8322",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:a635251ef07dcfa16d40b66127fe5154c803b1d255a9e2d18670fff06f8b8322",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "representation_report": null,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:a635251ef07dcfa16d40b66127fe5154c803b1d255a9e2d18670fff06f8b8322",
+    "mutation_revision": 3,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 3,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
  "set_scene_camera_pitch_out_of_range": [
   {
    "result": {
@@ -3216,7 +3363,7 @@
     "correction_hint": "mode 仅接受 ['2d', '2.5d', '3d']；terrain.source 必须是非空字符串（raster-dem 源 id）。",
     "has_mapspec": false,
     "layer_ids": [],
-    "message": "非法 scene 配置：1 validation error for MapSceneConfig\nmode\n  Input should be '2d', '2.5d' or '3d' [type=literal_error, input_value='4d', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+    "message": "非法 scene 配置：1 validation error for MapSceneConfig\nmode\n  Input should be '2d', '2.5d' or '3d' [type=literal_error, input_value='4d', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.14/v/literal_error",
     "origin": "agent",
     "success": false
    },
@@ -3261,6 +3408,7 @@
      "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -3315,6 +3463,7 @@
      "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -3371,6 +3520,7 @@
      "initial_fingerprint": "carto-sha256:928298d6499d2b625125dfc36b7f47ab1b759a9c41249cc1d4ed732dfdab3e40",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -3427,6 +3577,7 @@
      "initial_fingerprint": "carto-sha256:c3245466e5d808c0287bc929d22c3c69b94964c47060b07b3a722f346fdae482",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -3483,6 +3634,7 @@
      "initial_fingerprint": "carto-sha256:7d6a063ba6d7046d3ee54dacedbb1248e86e26361010b4e8767d62e94debb64f",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -3539,6 +3691,7 @@
      "initial_fingerprint": "carto-sha256:c8927cc8ecbbfa32e17a856ee955c10bf35011805c1dbe0be0f44245a6aaebe9",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -3790,6 +3943,7 @@
      "initial_fingerprint": "carto-sha256:b85ab327747f76523f1c965a0e89d3b55cd809ae15647ade74fb9d61ecfc95f0",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -4041,6 +4195,7 @@
      "initial_fingerprint": "carto-sha256:b56bf6f8edcdcc0880f2cf65cf8a4a87386411f91b8e62829fbd8794befaaa8a",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -4326,6 +4481,7 @@
      "initial_fingerprint": "carto-sha256:55f8c649df0db9b162b4dca4d15d1a75b2e30c367c02e3273e88973398c7413a",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [
        {
@@ -4577,6 +4733,7 @@
      "initial_fingerprint": "carto-sha256:4ea43cded9d21e06784e273277d389e4db3117367d0a5a3aad475a7c657249ad",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -4631,6 +4788,7 @@
      "initial_fingerprint": "carto-sha256:4cd287e19ce443824fc8361839c8b7ca239aeb78b12bbf6c0e3ee1be669b518f",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -4779,6 +4937,7 @@
      "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,
@@ -4935,6 +5094,7 @@
      "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
      "locked_suppressed": [],
      "repair_count": 0,
+     "representation_report": null,
      "review": {
       "checks": [],
       "complete": false,

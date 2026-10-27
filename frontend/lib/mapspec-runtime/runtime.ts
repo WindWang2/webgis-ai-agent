@@ -1023,6 +1023,13 @@ export class MapSpecRuntime {
       this.sourceFeatureCounts.delete(id);
     }
     const existingSource = this.map.getSource(id) as { type?: string } | undefined;
+    if (source.type === 'model3d') {
+      // v1.7（G3D02）：model3d 不是 MapLibre style source —— 挂载/调度/
+      // dispose 由 map-kit/scene3d 管理器全权负责（map-panel scene effect
+      // 与 reconcile.then 同步驱动）。此处仅登记数据面存在（applied spec
+      // 的 sources 供 ACK per-source 对账消费），绝不 addSource。
+      return;
+    }
     if (existingSource && (replaceExisting || existingSource.type !== source.type)) {
       // The reconciler has already scheduled every dependent layer for
       // recompile. Replace the definition instead of relying on renderer

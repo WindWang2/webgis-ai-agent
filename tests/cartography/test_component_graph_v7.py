@@ -78,8 +78,8 @@ class TestSchemaV12Links:
     def test_known_versions_include_12(self):
         # ADR-0193：1.3 additive（顶层 scenario_mode）—— 1.2 仍在已知词表。
         # C11：1.5 additive（CartoIR 语义层）—— 1.2 仍随词表存续。
-        assert LATEST_VERSION == "1.6"
-        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6")
+        assert LATEST_VERSION == "1.7"
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7")
 
     def test_links_round_trip_fidelity(self):
         spec = _spec_with_links([

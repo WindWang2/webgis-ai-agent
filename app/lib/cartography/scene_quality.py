@@ -21,7 +21,13 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-#: 质量门 reason code 词表（封闭集合；测试锁定）。
+from app.lib.cartography.mapspec_schema import (
+    MAX_SCENE_ASSETS,
+    MAX_SCENE_ASSET_RENDER_ORDER,
+)
+
+#: 质量门 reason code 词表（封闭集合；测试锁定）。v1.7（G3D02）追加
+#: SCENE_ASSET_* 六码（3D 资产数据面完整性 / 放置域 / 证据诚实）。
 SCENE_QUALITY_CODES = (
     "SCENE_TERRAIN_SOURCE_REF",
     "SCENE_TERRAIN_SOURCE_TYPE",
@@ -32,6 +38,12 @@ SCENE_QUALITY_CODES = (
     "SCENE_PITCH_EXTREME",
     "SCENE_VERTICAL_UNIT_UNKNOWN",
     "SCENE_LEGEND_DRIFT",
+    "SCENE_ASSET_SOURCE_REF",
+    "SCENE_ASSET_SOURCE_TYPE",
+    "SCENE_ASSET_PLACEMENT_RANGE",
+    "SCENE_ASSET_DUPLICATE_ID",
+    "SCENE_ASSET_EXCEEDS_BUDGET",
+    "SCENE_ASSET_NO_EVIDENCE",
 )
 
 #: pitch 硬上限（MapLibre 合法域）与产品建议上限。
@@ -57,6 +69,41 @@ def _legend_digest(legend_spec: Any) -> str:
     if legend_spec is None:
         return ""
     return json.dumps(legend_spec, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _placement_domain_error(anchor: Any, placement: Dict[str, Any]) -> Optional[str]:
+    """v1.7（G3D02）：放置参数域检查 —— 返回缺陷描述或 None。
+
+    域：anchor = [lng∈[-180,180], lat∈[-90,90]]；scale > 0；
+    heading/pitch/roll ∈ [-360, 360]；altitude_m 有限；render_order ∈
+    [0, MAX_SCENE_ASSET_RENDER_ORDER]；lod.max_sse > 0、max_visible_tiles > 0。
+    """
+    if not isinstance(anchor, list) or len(anchor) != 2 \
+            or not all(_is_number(v) for v in anchor):
+        return f"placement.anchor must be [lng, lat] numbers, got {anchor!r}"
+    lng, lat = float(anchor[0]), float(anchor[1])
+    if not (-180.0 <= lng <= 180.0):
+        return f"placement.anchor longitude {lng} outside [-180, 180]"
+    if abs(lat) > 85.0511:
+        # MapLibre/Web Mercator 世界边界（review P2-3）：±90 是合法 WGS84，
+        # 但渲染在世界外 —— 域校验按渲染契约收口。
+        return f"placement.anchor latitude {lat} outside Web Mercator domain [-85.0511, 85.0511]"
+    for key in ("heading_deg", "pitch_deg", "roll_deg", "altitude_m"):
+        v = placement.get(key)
+        if v is not None and (not _is_number(v) or v != v or v in (float("inf"), float("-inf"))):
+            return f"placement.{key} {v!r} is not a finite number"
+    for key in ("heading_deg", "pitch_deg", "roll_deg"):
+        v = placement.get(key)
+        if _is_number(v) and not (-360.0 <= float(v) <= 360.0):
+            return f"placement.{key} {v} outside [-360, 360]"
+    scale = placement.get("scale")
+    if scale is not None and (not _is_number(scale) or not (0 < float(scale) < float("inf"))):
+        return f"placement.scale {scale!r} must be a finite number > 0"
+    return None
 
 
 def check_legend_invariance(
@@ -185,6 +232,108 @@ def evaluate_scene_quality(spec: Dict[str, Any]) -> Dict[str, Any]:
                 "be fabricated by the renderer — attach extrusion.height_field",
                 layer_id=str(layer.get("id")),
             ))
+
+    # ── v1.7（G3D02）：3D 场景资产门 ─────────────────────────────────────
+    assets = scene.get("assets")
+    assets = assets if isinstance(assets, list) else None
+    asset_ids: List[str] = []
+    has_vertical_content = has_vertical_content or bool(assets)
+    if assets is not None:
+        if len(assets) > MAX_SCENE_ASSETS:
+            findings.append(_finding(
+                "SCENE_ASSET_EXCEEDS_BUDGET", "blocking",
+                f"scene.assets has {len(assets)} entries > {MAX_SCENE_ASSETS}",
+            ))
+        seen_ids = set()
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            asset_id = str(asset.get("id") or "")
+            if asset_id:
+                if asset_id in seen_ids:
+                    findings.append(_finding(
+                        "SCENE_ASSET_DUPLICATE_ID", "blocking",
+                        f"duplicate scene asset id '{asset_id}'",
+                        layer_id=asset_id,
+                    ))
+                seen_ids.add(asset_id)
+                asset_ids.append(asset_id)
+            # 数据面完整性（与 coordinator.validate 双闸同口径）。
+            src_id = asset.get("source")
+            src = sources.get(src_id) if isinstance(src_id, str) else None
+            if src is None:
+                findings.append(_finding(
+                    "SCENE_ASSET_SOURCE_REF", "blocking",
+                    f"scene asset '{asset_id}' references missing source '{src_id}'",
+                    layer_id=asset_id or None,
+                ))
+            elif src.get("type") != "model3d":
+                findings.append(_finding(
+                    "SCENE_ASSET_SOURCE_TYPE", "blocking",
+                    f"scene asset '{asset_id}' source '{src_id}' is "
+                    f"'{src.get('type')}', expected 'model3d'",
+                    layer_id=asset_id or None,
+                ))
+            elif not (isinstance(src.get("url"), str) and src.get("url")
+                      or isinstance(src.get("ref_id"), str) and src.get("ref_id")):
+                findings.append(_finding(
+                    "SCENE_ASSET_SOURCE_REF", "blocking",
+                    f"model3d source '{src_id}' carries neither url nor ref_id "
+                    f"(asset '{asset_id}')",
+                    layer_id=asset_id or None,
+                ))
+            # 放置域（显式、不猜：越界值是语义缺陷，不是风格问题）。
+            placement = asset.get("placement")
+            if isinstance(placement, dict):
+                anchor = placement.get("anchor")
+                detail = _placement_domain_error(anchor, placement)
+                if detail:
+                    findings.append(_finding(
+                        "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
+                        f"asset '{asset_id}': {detail}",
+                        layer_id=asset_id or None,
+                    ))
+            order = asset.get("render_order")
+            if order is not None and (
+                not _is_number(order)
+                or not (0 <= float(order) <= MAX_SCENE_ASSET_RENDER_ORDER)
+            ):
+                findings.append(_finding(
+                    "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
+                    f"asset '{asset_id}' render_order {order!r} outside "
+                    f"[0, {MAX_SCENE_ASSET_RENDER_ORDER}]",
+                    layer_id=asset_id or None,
+                ))
+            lod = asset.get("lod")
+            if isinstance(lod, dict):
+                max_sse = lod.get("max_sse")
+                if max_sse is not None and (not _is_number(max_sse) or not (0 < float(max_sse))):
+                    findings.append(_finding(
+                        "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
+                        f"asset '{asset_id}' lod.max_sse {max_sse!r} must be > 0",
+                        layer_id=asset_id or None,
+                    ))
+                mvt = lod.get("max_visible_tiles")
+                if mvt is not None and (not _is_number(mvt) or not (0 < float(mvt) < float("inf"))):
+                    findings.append(_finding(
+                        "SCENE_ASSET_PLACEMENT_RANGE", "blocking",
+                        f"asset '{asset_id}' lod.max_visible_tiles {mvt!r} must be > 0",
+                        layer_id=asset_id or None,
+                    ))
+            # 证据诚实：来源/许可与锚点高程双缺 → 披露（渲染不阻塞）。
+            vertical = asset.get("vertical")
+            has_evidence = bool(
+                isinstance(asset.get("provenance_ref"), str) and asset.get("provenance_ref")
+            ) or bool(
+                isinstance(vertical, dict) and vertical.get("elevation_ref")
+            )
+            if not has_evidence:
+                findings.append(_finding(
+                    "SCENE_ASSET_NO_EVIDENCE", "warning",
+                    f"scene asset '{asset_id}' declares no provenance_ref and no "
+                    "vertical.elevation_ref; placement provenance is unevidenced",
+                    layer_id=asset_id or None,
+                ))
 
     # ── 模式一致性 ────────────────────────────────────────────────────────
     if mode == "3d" and not has_vertical_content and terrain is None:

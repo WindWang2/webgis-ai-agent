@@ -16,6 +16,7 @@ from app.services.mapspec.visual_healer import VisualCritiqueItem
 # lib/cartography 消费方直取；此处 re-export 保持 leaf 模块 import 面零破坏）。
 from app.contracts.mapspec_intents import (  # noqa: F401
     PatchLayerPresentationIntent,
+    SetSceneAssetsIntent,
     SetSceneIntent,
     SetViewIntent,
 )
@@ -412,5 +413,6 @@ MutationIntent = Union[
     SetWorkbenchStateIntent,
     SetScenarioModeIntent,
     SetSceneIntent,
+    SetSceneAssetsIntent,
     ApplyVisualHealPatchIntent,
 ]
