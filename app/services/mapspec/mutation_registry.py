@@ -58,6 +58,7 @@ from app.services.mapspec.intents import (
     SetBasemapIntent,
     SetLayoutIntent,
     SetSceneIntent,
+    SetSceneAssetsIntent,
     SetScenarioModeIntent,
     SetTimeIntent,
     SetViewIntent,
@@ -567,6 +568,12 @@ def _build_default_registry() -> MutationRegistry:
         effect_class=PRESENTATION, op_label="调整场景",
         provenance_detail=_pd_none,
     ), body_cls=SetSceneBody, body_codec=_codec_set_scene)
+    reg.register(IntentDescriptor(
+        intent_cls=SetSceneAssetsIntent,
+        handler=_h._handle_setsceneassets,
+        effect_class=PRESENTATION, op_label="写入三维场景资产",
+        provenance_detail=_pd_none,
+    ))
     reg.register(IntentDescriptor(
         intent_cls=SetScenarioModeIntent,
         handler=_h._handle_setscenariomode,

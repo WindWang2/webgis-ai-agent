@@ -52,6 +52,11 @@ BLOCKING_VALIDATION_CODES = {
     # 垂直证据，引入此类错误的 mutation 必须被拒绝（review P1-1 修复）。
     "SCENE_TERRAIN_SOURCE_REF",
     "SCENE_TERRAIN_SOURCE_TYPE",
+    # v1.7（G3D02）：3D 场景资产同口径 —— 悬空/错型/无数据指针的 model3d
+    # 引用与重复资产 id 都是 mutation 引入的真实语义缺陷。
+    "SCENE_ASSET_SOURCE_REF",
+    "SCENE_ASSET_SOURCE_TYPE",
+    "SCENE_ASSET_DUPLICATE_ID",
 }
 
 

@@ -20708,6 +20708,96 @@
     ]
    }
   },
+  "/api/v1/data-fabric/catalog/{item_id}/pmtiles-tiles/{z}/{x}/{y}": {
+   "get": {
+    "description": "目录 PMTiles 归档的 server-side XYZ 瓦片（G3D01 自托管底图路径）。\n\n- 权限：与 /query、MVT 瓦片路由一致（auth + tenant 归属门），且鉴权\n  先于缓存查找（API-01）。\n- 协议适配 only：缓存/治理解析/构建收敛全部下沉\n  ``app.services.data_fabric.pmtiles_tile_service``（复用既有\n  PMTilesAdapter.read_tile_bytes：字节帽/解压炸弹守卫/本地路径治理）。\n- 空瓦片（归档无该 zxy）= 204；命中返回原始归档字节（不重压缩）+\n  内容寻址 ETag（If-None-Match 304）+ 归档声明的 content-type。\n- 用途：NEXT_PUBLIC_LOCAL_BASEMAP_URL / MapSpec raster source 指向本\n  路由，浏览器瓦片流量收敛到本服务（受配额与缓存治理）。",
+    "operationId": "get_catalog_pmtiles_tile_api_v1_data_fabric_catalog__item_id__pmtiles_tiles__z___x___y__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "item_id",
+      "required": true,
+      "schema": {
+       "title": "Item Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "z",
+      "required": true,
+      "schema": {
+       "title": "Z",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "x",
+      "required": true,
+      "schema": {
+       "title": "X",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "y",
+      "required": true,
+      "schema": {
+       "title": "Y",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "If-None-Match",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "If-None-Match"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Catalog Pmtiles Tile",
+    "tags": [
+     "Data Fabric / 数据织网",
+     "Data Fabric / 数据织网"
+    ]
+   }
+  },
   "/api/v1/data-fabric/catalog/{item_id}/preview": {
    "get": {
     "description": "获取 Spatial Catalog 项的有界样例数据预览\n\nRequires authentication: preview triggers a server-side remote fetch against\nthe source endpoint, so anonymous callers must not be able to initiate it.\n\nEvent-loop safety (#425/#565): the whole manager call (ownership gate +\nDB lookups + blocking adapter fetch) runs in a worker thread's own event\nloop with a thread-local session. Oversized remote results surface as an\nactionable 413, not an unbounded payload.",

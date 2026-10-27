@@ -35,6 +35,7 @@ from app.schemas.data_fabric_schema import (  # noqa: F401 - 模块属性保持
 )
 from app.services.data_fabric.manager import data_fabric_manager
 from app.services.data_fabric.tile_service import catalog_tile_service
+from app.services.data_fabric.pmtiles_tile_service import pmtiles_tile_service
 from app.services.data_fabric.errors import (
     DataFabricError,
     InvalidQueryError,
@@ -907,6 +908,82 @@ async def get_catalog_mvt_tile(
     # 观测：缓存状态与构建路径（hit/miss/bypass × cache/server_mvt/python_fallback）。
     resp.headers["X-Tile-Cache"] = result.cache_state
     resp.headers["X-Tile-Source"] = result.source
+    return resp
+
+
+@router.get(
+    "/data-fabric/catalog/{item_id}/pmtiles-tiles/{z}/{x}/{y}",
+    tags=["Data Fabric / 数据织网"],
+)
+async def get_catalog_pmtiles_tile(
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    user: Dict[str, Any] = Depends(get_current_user),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+):
+    """目录 PMTiles 归档的 server-side XYZ 瓦片（G3D01 自托管底图路径）。
+
+    - 权限：与 /query、MVT 瓦片路由一致（auth + tenant 归属门），且鉴权
+      先于缓存查找（API-01）。
+    - 协议适配 only：缓存/治理解析/构建收敛全部下沉
+      ``app.services.data_fabric.pmtiles_tile_service``（复用既有
+      PMTilesAdapter.read_tile_bytes：字节帽/解压炸弹守卫/本地路径治理）。
+    - 空瓦片（归档无该 zxy）= 204；命中返回原始归档字节（不重压缩）+
+      内容寻址 ETag（If-None-Match 304）+ 归档声明的 content-type。
+    - 用途：NEXT_PUBLIC_LOCAL_BASEMAP_URL / MapSpec raster source 指向本
+      路由，浏览器瓦片流量收敛到本服务（受配额与缓存治理）。
+    """
+    if not (0 <= z <= 22) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+        raise HTTPException(status_code=400, detail="非法瓦片坐标")
+
+    async def _serve_tile(session: Session):
+        # API-01：鉴权必须在缓存查找**之前**（同 MVT 路由）。
+        _authorize_catalog_item(session, item_id, user)
+        item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+        if not item:
+            raise ValueError(f"Catalog item '{item_id}' not found")
+        ds_model = item.data_source or (
+            session.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
+        )
+        return await pmtiles_tile_service.serve_pmtiles_tile(item, ds_model, z, x, y)
+
+    try:
+        result = await _run_async_manager(_serve_tile)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except UnsupportedSourceError as e:
+        raise HTTPException(status_code=422, detail=str(e) or "该数据集类型不支持 PMTiles 瓦片服务")
+    except DataFabricError as e:
+        # #766 同族：归档读取失败 ≠ 空瓦片 —— typed 502，全文仅在服务端日志。
+        logger.error(
+            f"PMTiles tile read failed for '{item_id}' {z}/{x}/{y}: {e}", exc_info=True
+        )
+        raise HTTPException(status_code=502, detail="瓦片读取失败")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"PMTiles tile read failed for '{item_id}' {z}/{x}/{y}: {e}", exc_info=True
+        )
+        raise HTTPException(status_code=502, detail="瓦片读取失败")
+
+    if result.body is None:
+        return Response(status_code=204)
+
+    headers = {
+        "Cache-Control": "private, max-age=60",
+        "ETag": result.etag,
+        "X-Content-Type-Options": "nosniff",
+        "X-Dataset-Fingerprint": result.fingerprint[:16],
+    }
+    if if_none_match:
+        candidate = if_none_match.strip()
+        if candidate == "*" or candidate.strip('"') == result.etag.strip('"'):
+            return Response(status_code=304, headers=headers)
+    resp = Response(content=result.body, media_type=result.content_type, headers=headers)
+    resp.headers["X-Tile-Cache"] = result.cache_state
     return resp
 
 

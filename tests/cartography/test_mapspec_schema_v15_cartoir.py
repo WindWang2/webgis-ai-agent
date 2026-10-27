@@ -89,7 +89,7 @@ class TestUpgradePath:
         r = ms.parse_mapspec(doc)
         # v1.6 起逐级迁到最新（1.4→1.5→1.6 全 identity）；显式 1.5 target
         # 锁定 1.5 语义本身。
-        assert r.effective_version == "1.6"
+        assert r.effective_version == ms.LATEST_VERSION
         r15 = ms.parse_mapspec(doc, target_version="1.5")
         assert r15.effective_version == "1.5"
         assert r.migrated is True

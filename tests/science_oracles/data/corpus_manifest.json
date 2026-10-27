@@ -67,9 +67,9 @@
    "sha256": "92a74914cdad3e50b71b375992d94d224dcca3a037944d3e9d7a5488cac875d9"
   },
   "terrain.json": {
-   "case_count": 216,
+   "case_count": 229,
    "domain": "terrain",
-   "sha256": "3f26d729f2cb4baa99be4fc43cca981e621d8c61dde9aeeae076d4f1aba59edf"
+   "sha256": "35a37201de38af3991d9f64525c6bed5f2e8c9dfdc51cbc10f5e9222615b76b5"
   }
  },
  "generated_by": "scripts/gen_science_oracles.py"

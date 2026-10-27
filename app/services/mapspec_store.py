@@ -15,6 +15,7 @@ from app.services.mapspec import (
     InitProjectIntent,
     SetViewIntent,
     SetSceneIntent,
+    SetSceneAssetsIntent,
     UpsertSourceIntent,
     UpsertLayerIntent,
     PatchComponentIntent,
@@ -192,6 +193,36 @@ class MapSpecStore:
         res = await self._apply(
             session_id,
             SetSceneIntent(scene=scene),
+            origin=origin,
+            actor=actor,
+            expected_revision=expected_revision,
+            mutation_id=mutation_id,
+        )
+        return _with_evidence(res, {
+            "success": not res.is_error,
+            "mapspec": res.mapspec,
+        })
+
+    async def set_scene_assets(
+        self,
+        session_id: str,
+        assets: Optional[List[Dict[str, Any]]] = None,
+        *,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
+        expected_revision: Optional[int] = None,
+        mutation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """三维场景资产表写入（v1.7 G3D02；presentation 面）。
+
+        整表替换 ``scene.assets``（mode/terrain/camera 原样保留）；空列表 =
+        清空；``None`` 拒绝（语义显式区分）。域校验单源走 scene_quality
+        的 SCENE_ASSET_* blocking 码（handler 内）；悬空引用由
+        coordinator.validate 写路径双闸阻塞。
+        """
+        res = await self._apply(
+            session_id,
+            SetSceneAssetsIntent(assets=assets),
             origin=origin,
             actor=actor,
             expected_revision=expected_revision,

@@ -6,6 +6,9 @@
  */
 
 export type ProviderId =
+  | "openfreemap-libre"
+  | "openfreemap-positron"
+  | "openfreemap-bright"
   | "carto-light"
   | "carto-dark"
   | "carto-positron"
@@ -48,6 +51,34 @@ export interface TileProvider {
 const _TIANDITU_TOKEN = process.env.NEXT_PUBLIC_TIANDITU_TOKEN || "";
 
 const _REMOTE_PROVIDERS: TileProvider[] = [
+  // G3D01：OpenFreeMap 开源矢量样式（MIT 样式 / OSM 数据 ODbL / 免 key、
+  // 无请求上限、商用允许 —— 许可事实 2026-10-26 核验 openfreemap.org）。
+  // 治理画像（license/tos/缓存策略）在 basemap-profiles.generated.ts，
+  // 由 lib/basemap-profiles.contract.test.ts 与后端目录锁定。
+  {
+    id: "openfreemap-libre",
+    name: "OpenFreeMap Libre",
+    attribution: "© OpenFreeMap © OpenMapTiles Data from OpenStreetMap",
+    url: "https://openfreemap.org/style/libre",
+    type: "vector",
+    keywords: ["openfreemap", "libre", "开源矢量", "开源底图", "free"],
+  },
+  {
+    id: "openfreemap-positron",
+    name: "OpenFreeMap Positron",
+    attribution: "© OpenFreeMap © OpenMapTiles Data from OpenStreetMap",
+    url: "https://openfreemap.org/style/positron",
+    type: "vector",
+    keywords: ["openfreemap", "positron", "开源浅色", "浅色矢量", "学术"],
+  },
+  {
+    id: "openfreemap-bright",
+    name: "OpenFreeMap Bright",
+    attribution: "© OpenFreeMap © OpenMapTiles Data from OpenStreetMap",
+    url: "https://openfreemap.org/style/bright",
+    type: "vector",
+    keywords: ["openfreemap", "bright", "开源彩色", "彩色矢量"],
+  },
   {
     id: "carto-positron",
     name: "Carto Positron 矢量",

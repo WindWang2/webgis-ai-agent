@@ -7,6 +7,7 @@
   —— 杜绝「声称科学权威却无处审计」；
 - 只登记确有把握的经典出处；宁缺毋滥。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -143,6 +144,21 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Engineering & Remote Sensing, 66(1), 87–90.",
         ),
         MethodReference(
+            # ── G3D03（ADR-0274）：三维量测族 ──────────────────────────
+            "fisher1993",
+            "Line-of-sight / viewshed uncertainty taxonomy",
+            "Fisher, P. F. (1993). Algorithm and Implementation Uncertainty "
+            "in Viewshed Analysis. International Journal of Geographical "
+            "Information Systems, 7(4), 331–347.",
+        ),
+        MethodReference(
+            "jenness2004",
+            "Landscape surface area from DEM (triangle facets)",
+            "Jenness, J. S. (2004). Calculating Landscape Surface Area from "
+            "Digital Elevation Models. Wildlife Society Bulletin, 32(3), "
+            "829–839.",
+        ),
+        MethodReference(
             "weiss2001",
             "TPI / slope position landform classes",
             "Weiss, A. D. (2001). Topographic Position and Landforms Analysis "
@@ -238,8 +254,7 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
         MethodReference(
             "cochran1977",
             "Sampling design (simple random / systematic / stratified)",
-            "Cochran, W. G. (1977). Sampling Techniques (3rd ed.). "
-            "John Wiley & Sons.",
+            "Cochran, W. G. (1977). Sampling Techniques (3rd ed.). John Wiley & Sons.",
         ),
         MethodReference(
             "teitz_bart1968",
@@ -351,8 +366,7 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
         MethodReference(
             "cliff_ord1973",
             "Join count statistics / spatial autocorrelation theory",
-            "Cliff, A. D., & Ord, J. K. (1973). Spatial Autocorrelation. "
-            "Pion, London.",
+            "Cliff, A. D., & Ord, J. K. (1973). Spatial Autocorrelation. Pion, London.",
         ),
         MethodReference(
             "wartenberg1985",

@@ -92,8 +92,9 @@ def test_total_code_count_is_45(contract) -> None:
 def test_blocking_codes_frozen(contract) -> None:
     from app.services.mapspec.lifecycle_engine import BLOCKING_VALIDATION_CODES
     assert set(BLOCKING_VALIDATION_CODES) == set(contract["blocking_codes"]["codes"])
-    # v2：3 既有码 + SCENE_TERRAIN_SOURCE_REF/_TYPE（ADR-0199，显式契约变更）。
-    assert len(BLOCKING_VALIDATION_CODES) == 5
+    # v2：3 既有码 + SCENE_TERRAIN_SOURCE_REF/_TYPE（ADR-0199，显式契约变更）；
+    # v3（G3D02 v1.7）：+ SCENE_ASSET_SOURCE_REF/_TYPE/DUPLICATE_ID。
+    assert len(BLOCKING_VALIDATION_CODES) == 8
     # blocking 码不属于 semantic_checks 44 码族（coordinator 直发射）
     upper, dotted = _scan_source_codes()
     assert not (set(BLOCKING_VALIDATION_CODES) & (upper | dotted))

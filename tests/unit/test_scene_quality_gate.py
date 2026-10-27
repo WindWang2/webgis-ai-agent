@@ -215,6 +215,13 @@ class TestGateWiring:
             "SCENE_PITCH_EXTREME",
             "SCENE_VERTICAL_UNIT_UNKNOWN",
             "SCENE_LEGEND_DRIFT",
+            # v1.7（G3D02）：3D 场景资产门（源引用/放置域/重复 id/预算/证据）。
+            "SCENE_ASSET_SOURCE_REF",
+            "SCENE_ASSET_SOURCE_TYPE",
+            "SCENE_ASSET_PLACEMENT_RANGE",
+            "SCENE_ASSET_DUPLICATE_ID",
+            "SCENE_ASSET_EXCEEDS_BUDGET",
+            "SCENE_ASSET_NO_EVIDENCE",
             # G3D05（ADR-0275）：三维制图产品向扩展
             "SCENE_SCALE_UNTRUSTWORTHY_PERSPECTIVE",
             "SCENE_LABEL_OCCLUSION_RISK",

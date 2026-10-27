@@ -90,6 +90,14 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['mock'],
     owner: 'quality-e2e-v9',
   },
+  {
+    id: 'j9',
+    file: 'journeys/j9-scene3d-assets.journey.ts',
+    title: '三维场景资产（MapSpec v1.7 → custom layer → 拾取 IR）',
+    smoke: true,
+    modes: ['mock'],
+    owner: 'quality-e2e-v9',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);
