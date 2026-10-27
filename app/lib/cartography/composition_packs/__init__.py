@@ -20,6 +20,9 @@ from app.lib.cartography.composition_packs.domain_reports import (
 )
 from app.lib.cartography.composition_packs.network_transport import NETWORK_TRANSPORT_PACK
 from app.lib.cartography.composition_packs.remote_sensing import REMOTE_SENSING_PACK
+from app.lib.cartography.composition_packs.analysis_products import (
+    ANALYSIS_PRODUCTS_PACK,
+)
 from app.lib.cartography.composition_packs.scene_3d import SCENE_3D_PACK
 from app.lib.cartography.composition_packs.statistical import STATISTICAL_PACK
 from app.lib.cartography.composition_packs.terrain_hydrology import TERRAIN_HYDROLOGY_PACK
@@ -39,6 +42,7 @@ COMPOSITION_PACK_TEMPLATES: List[MapCompositionTemplate] = [
     *DELIVERABLES_PACK,
     *CORE_PURPOSES_PACK,
     *SCENE_3D_PACK,
+    *ANALYSIS_PRODUCTS_PACK,
 ]
 
 __all__ = ["COMPOSITION_PACK_TEMPLATES"]
