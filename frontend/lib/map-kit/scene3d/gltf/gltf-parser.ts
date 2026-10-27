@@ -82,8 +82,21 @@ export interface ParsedGltf {
   roots: ParsedNode[];
   materials: ParsedMaterial[];
   textures: ParsedTexture[];
-  stats: { triangles: number; vertices: number; meshes: number };
+  stats: ParsedGltfStats;
   warnings: string[];
+}
+
+/** 资源账目（G3DV2-B M3：跨资产累计预算的计量输入）。 */
+export interface ParsedGltfStats {
+  triangles: number;
+  vertices: number;
+  meshes: number;
+  /** 几何 buffer 字节（position/normal/uv/index 展开后总和）。 */
+  geometryBytes: number;
+  /** 内嵌纹理字节。 */
+  textureBytes: number;
+  /** 材质数。 */
+  materialCount: number;
 }
 
 /** 外部 .bin buffer 装载器（glTF JSON 形态的 buffer0；GLB 自带 bin 不需要）。 */
@@ -284,6 +297,7 @@ export async function parseGltf(
   let totalTriangles = 0;
   let totalVertices = 0;
   let meshCount = 0;
+  let geometryBytes = 0;
   /** 累计解码字节（review P0：分配前预算 —— 多 primitive 共享巨型 accessor
    *  与谎报 count 的两类放大炸弹在此拦截）。 */
   let decodedBytes = 0;
@@ -580,6 +594,8 @@ export async function parseGltf(
           indices,
           materialIndex: typeof prim.material === 'number' ? prim.material : null,
         });
+        geometryBytes += positions.byteLength + (normals?.byteLength ?? 0)
+          + (uvs?.byteLength ?? 0) + (indices?.byteLength ?? 0);
       }
     }
     const children = (n.children ?? []).map((c) => parseNode(c, visiting));
@@ -603,7 +619,14 @@ export async function parseGltf(
     roots,
     materials,
     textures,
-    stats: { triangles: Math.round(totalTriangles), vertices: totalVertices, meshes: meshCount },
+    stats: {
+      triangles: Math.round(totalTriangles),
+      vertices: totalVertices,
+      meshes: meshCount,
+      geometryBytes,
+      textureBytes: textures.reduce((n, t) => n + t.bytes.byteLength, 0),
+      materialCount: materials.length,
+    },
     warnings,
   };
 }

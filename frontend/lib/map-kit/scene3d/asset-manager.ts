@@ -26,8 +26,16 @@ import {
   type WorldCoord,
 } from './geo';
 import { buildModel, type BuiltModel } from './gltf/build';
-import { GltfParseError, parseGltf } from './gltf/gltf-parser';
-import { makeScene3dCustomLayer } from './custom-layer';
+import { GltfParseError, parseGltf, type ParsedGltfStats } from './gltf/gltf-parser';
+import { makeScene3dCustomLayer, releaseLayerOwnership } from './custom-layer';
+import {
+  amountsOfStats,
+  budgetDimensionReason,
+  SceneResourceBudgetLedger,
+  type ResourceBudgetAmounts,
+  type ResourceBudgetLimits,
+  type SceneResourceUsage,
+} from './resource-budget';
 import { fetchBinary, fetchJson, Scene3dResourceFailure } from './resource';
 import { recordSceneAssetStatus } from './status';
 import { parseTileset, TilesetParseError, type ParsedTileset, type TileNode } from './tiles3d/tileset';
@@ -40,10 +48,12 @@ export interface Scene3dSyncOptions {
   machineMinSse?: number;
   /** 调度节流（ms；默认 200）。 */
   scheduleThrottleMs?: number;
-  /** tile 并发加载上限（默认 4）。 */
+  /** tile 并发加载上限（默认 4；G3DV2-B 起为跨资产共享信号量）。 */
   maxConcurrentTileLoads?: number;
   /** tile 缓存上限（默认 96）。 */
   tileCacheSize?: number;
+  /** 跨资产累计预算覆盖（只能收紧默认值的对应维度）。 */
+  budgetLimits?: Partial<ResourceBudgetLimits>;
 }
 
 interface TileEntry {
@@ -53,7 +63,12 @@ interface TileEntry {
   lastUsed: number;
   /** 失败退避：上次失败时间戳（review P1 —— 200ms tick 不重打同一 404）。 */
   failedAt: number | null;
+  /** 预算退避：载入被预算推迟的时间戳（短退避 —— 压力解除即可恢复）。 */
+  budgetDeferredAt: number | null;
 }
+
+/** 预算退避（远短于失败退避：预算压力是暂态，404 是持久态）。 */
+const TILE_BUDGET_BACKOFF_MS = 5_000;
 
 interface LodPolicyView {
   maxSse: number;
@@ -144,11 +159,17 @@ export class Scene3DManager {
   private mounted = new Map<string, MountedAsset>();
   private moveHandler: (() => void) | null = null;
   private disposed = false;
+  /** 跨资产累计资源预算（G3DV2-B M3）。 */
+  private readonly ledger: SceneResourceBudgetLedger;
+  /** 跨资产共享下载信号量（per-asset ×4 的乘积放大收口）。 */
+  private globalInFlight = 0;
 
   constructor(
     private readonly map: MapLike,
     private readonly options: Scene3dSyncOptions = {},
-  ) {}
+  ) {
+    this.ledger = new SceneResourceBudgetLedger(options.budgetLimits ?? {});
+  }
 
   /** 幂等差分同步（MapSpec → 挂载集）。返回本次变更摘要（观察面）。 */
   sync(spec: MapSpec | null | undefined): { mounted: number; removed: number; updated: number } {
@@ -289,6 +310,12 @@ export class Scene3DManager {
       this.unmountAsset(assetId);
     }
     this.detachMoveHandler();
+    this.ledger.releaseAll();
+  }
+
+  /** 观察面：跨资产累计预算用量（telemetry/测试消费；零分配快照）。 */
+  budgetUsage(): SceneResourceUsage {
+    return this.ledger.usage();
   }
 
   /** 观察面：当前挂载摘要。 */
@@ -319,10 +346,27 @@ export class Scene3DManager {
     asset.generation += 1; // 作废在途回调
     asset.controller.abort();
     if (asset.tickTimer) clearTimeout(asset.tickTimer);
-    for (const entry of asset.tiles?.values() ?? []) entry.model?.dispose();
+    for (const entry of asset.tiles?.values() ?? []) {
+      entry.model?.dispose();
+      this.ledger.release(tileOwnerKey(assetId, entry.tile.id));
+    }
     asset.singleModel?.dispose();
+    // 记账释放无条件：acquire 与 build 赋值之间存在窗口，按 owner 键释放幂等。
+    this.ledger.release(singleOwnerKey(assetId));
     asset.group.clear();
-    try { this.map.removeLayer?.(`scene3d-${assetId}`); } catch { /* setStyle 已清除 */ }
+    // G5 泄漏修复：setStyle 清扫的 layer 不会回调 onRemove —— removeLayer
+    // 会抛错且 refCount 永不归零。层已不在 map 上时显式补齐归属释放。
+    const layerId = `scene3d-${assetId}`;
+    let layerPresent = false;
+    try { layerPresent = !!this.map.getLayer?.(layerId); } catch { layerPresent = false; }
+    if (layerPresent) {
+      // 正常路径：MapLibre removeLayer 同步回调 onRemove → releaseRenderer。
+      try { this.map.removeLayer?.(layerId); } catch { /* 实现层异常：onRemove 语义归属 MapLibre */ }
+    } else {
+      // 清扫路径：层已不在 map 上（setStyle 抹除且无 onRemove）—— 补齐
+      // group 摘除 + refCount 归还，否则每次 setStyle 循环泄漏一份归属。
+      releaseLayerOwnership(this.map, asset.group);
+    }
     this.mounted.delete(assetId);
     recordSceneAssetStatus(assetId, 'unmounted');
   }
@@ -411,6 +455,15 @@ export class Scene3DManager {
           externalBufferLoader: (uri) => fetchBinary(uri, { signal: mounted.controller.signal }),
         });
         if (mounted.generation !== generation) return;
+        // 跨资产累计预算（M3）：先尝试逐出不可见 tile 腾挪，仍超限则
+        // typed degraded（不静默装下超预算内容）。
+        const amounts = amountsOfStats(parsed.stats);
+        const overDim = this.acquireWithinBudget(amounts, { assetId });
+        if (overDim) {
+          recordSceneAssetStatus(assetId, 'degraded', budgetDimensionReason(overDim));
+          this.unmountAsset(assetId);
+          return;
+        }
         const built = buildModel(parsed);
         mounted.singleModel = built;
         mounted.group.add(built.root);
@@ -553,17 +606,21 @@ export class Scene3DManager {
       mounted.group.remove(entry.model.root);
       entry.model.dispose();
       entry.model = null;
+      this.ledger.release(tileOwnerKey(mounted.assetId, id));
     }
     this.evictTileLru(mounted);
 
     const maxLoads = this.options.maxConcurrentTileLoads ?? 4;
     const now = Date.now();
     for (const id of decision.load) {
-      if (mounted.loadInFlight >= maxLoads) break;
+      // 跨资产共享信号量：N 资产 × per-asset 上限的乘积放大在此收口。
+      if (this.globalInFlight >= maxLoads) break;
       const entry = tiles.get(id);
       if (!entry || entry.loading) continue;
       // 失败退避：30s TTL 内不重试同一失败 tile（相机静止时不空转）。
       if (entry.failedAt !== null && now - entry.failedAt < 30_000) continue;
+      // 预算退避（短）：压力解除后即可恢复，不需要相机事件。
+      if (entry.budgetDeferredAt !== null && now - entry.budgetDeferredAt < TILE_BUDGET_BACKOFF_MS) continue;
       void this.loadTile(mounted, entry);
     }
     this.map.triggerRepaint?.();
@@ -573,6 +630,7 @@ export class Scene3DManager {
     if (!entry.tile.contentUri || entry.loading) return;
     entry.loading = true;
     mounted.loadInFlight += 1;
+    this.globalInFlight += 1;
     const generation = mounted.generation;
     try {
       const buffer = await fetchBinary(entry.tile.contentUri, {
@@ -586,6 +644,21 @@ export class Scene3DManager {
       // 清除）。entry 保留（可在需要时重载）。
       if (!mounted.prevRender.has(entry.tile.id)) {
         recordSceneAssetStatus(mounted.assetId, 'degraded', `tile_expired:${entry.tile.id}`);
+        return;
+      }
+      // 累计预算（M3）：超限先逐出不可见 tile；仍超限则本 tile 延后
+      //（budgetDeferred 短退避）—— 单 tile 不击穿全局预算也不标失败。
+      const amounts = amountsOfStats(parsed.stats);
+      const overDim = this.acquireWithinBudget(amounts, {
+        assetId: mounted.assetId,
+        tileId: entry.tile.id,
+      });
+      if (overDim) {
+        entry.budgetDeferredAt = Date.now();
+        recordSceneAssetStatus(
+          mounted.assetId, 'degraded',
+          `${budgetDimensionReason(overDim)}:${entry.tile.id}`,
+        );
         return;
       }
       const built = buildModel(parsed);
@@ -615,6 +688,7 @@ export class Scene3DManager {
     } finally {
       entry.loading = false;
       mounted.loadInFlight = Math.max(0, mounted.loadInFlight - 1);
+      this.globalInFlight = Math.max(0, this.globalInFlight - 1);
     }
   }
 
@@ -631,7 +705,52 @@ export class Scene3DManager {
       if (entry.model) mounted.group.remove(entry.model.root);
       // LRU 语义：驱逐模型、保留 entry —— tile 可按 SSE 重新加载。
       entry.model = null;
+      this.ledger.release(tileOwnerKey(mounted.assetId, entry.tile.id));
       excess -= 1;
+    }
+  }
+
+  /**
+   * 预算执行（M3）：计入 `pending` 前先逐出不可见 tile（跨资产 LRU）腾挪；
+   * 腾挪后在预算内 → 记账到 owner 并返回 null；仍超限 → 不记账，返回超限
+   * 维度（调用方 typed degraded / 延后）。
+   */
+  private acquireWithinBudget(
+    pending: ResourceBudgetAmounts,
+    owner: { assetId: string; tileId?: string },
+  ): ReturnType<SceneResourceBudgetLedger['wouldExceed']> {
+    this.evictForBudget(pending);
+    const overDim = this.ledger.wouldExceed(pending);
+    if (overDim) return overDim;
+    this.ledger.acquire(
+      owner.tileId ? tileOwnerKey(owner.assetId, owner.tileId) : singleOwnerKey(owner.assetId),
+      pending,
+    );
+    return null;
+  }
+
+  /** 跨资产逐出不可见 tile 直到 `pending` 可计入或无可逐出。 */
+  private evictForBudget(pending: ResourceBudgetAmounts): void {
+    for (;;) {
+      const overDim = this.ledger.wouldExceed(pending);
+      if (!overDim) return;
+      // 候选：已缓存模型 + 不在本资产 render 集（可见内容受保护）。
+      const candidates: { asset: MountedAsset; entry: TileEntry }[] = [];
+      for (const asset of this.mounted.values()) {
+        if (!asset.tiles) continue;
+        for (const entry of asset.tiles.values()) {
+          if (entry.model && !asset.prevRender.has(entry.tile.id)) {
+            candidates.push({ asset, entry });
+          }
+        }
+      }
+      if (candidates.length === 0) return;
+      candidates.sort((a, b) => a.entry.lastUsed - b.entry.lastUsed);
+      const { asset, entry } = candidates[0];
+      asset.group.remove(entry.model!.root);
+      entry.model!.dispose();
+      entry.model = null;
+      this.ledger.release(tileOwnerKey(asset.assetId, entry.tile.id));
     }
   }
 
@@ -752,9 +871,18 @@ function worldToEnu(placement: Mat4, world: WorldCoord): WorldCoord {
 
 function collectTiles(tile: TileNode, into: Map<string, TileEntry>): void {
   if (tile.contentUri) {
-    into.set(tile.id, { tile, model: null, loading: false, lastUsed: 0, failedAt: null });
+    into.set(tile.id, { tile, model: null, loading: false, lastUsed: 0, failedAt: null, budgetDeferredAt: null });
   }
   for (const c of tile.children) collectTiles(c, into);
+}
+
+/** 预算记账 owner 键：单模型 / tile（与释放路径一一对应）。 */
+function singleOwnerKey(assetId: string): string {
+  return `${assetId}\u0000single`;
+}
+
+function tileOwnerKey(assetId: string, tileId: string): string {
+  return `${assetId}\u0000${tileId}`;
 }
 
 /** 像素世界 placement：S(W)·placement（与最近帧 mvp 同域）。 */

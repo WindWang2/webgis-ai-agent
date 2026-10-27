@@ -83,6 +83,20 @@ export function releaseRenderer(map: object): void {
   }
 }
 
+/**
+ * 显式释放一个 layer 的共享归属（G3DV2-B G5 泄漏修复）：
+ * basemap setStyle 会清扫 custom layer 且**不回调 onRemove** —— 此时
+ * manager 的 removeLayer 抛错被吞，refCount 永不归零（每次 setStyle 循环
+ * 还会 +1）。层已不在 map 上时由 manager 调本函数补齐：摘 group +
+ * releaseRenderer，与 onRemove 语义对齐。
+ */
+export function releaseLayerOwnership(map: object, group: THREE.Object3D | null): void {
+  const carrier = carriers.get(map);
+  if (!carrier) return;
+  if (group) carrier.scene.remove(group);
+  releaseRenderer(map);
+}
+
 export function getCarrier(map: object): RendererCarrier | undefined {
   return carriers.get(map);
 }
