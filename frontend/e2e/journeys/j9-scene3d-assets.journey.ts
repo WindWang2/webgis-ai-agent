@@ -210,12 +210,14 @@ test.describe('journey-9 三维场景资产 @smoke', () => {
     expect(pureAck!.fp).toBe(RENDER_WORK.mapspec_fingerprint);
     expect(pureAck!.ack?.work?.work_id).toBe(RENDER_WORK.work_id);
 
-    // 3) 真实用户路径：开启 3D 视角（HUD toggle —— spec camera 档仅在
+    // 3) 真实用户路径：确保 3D 视角开启（HUD toggle —— spec camera 档仅在
     //    is3D 时生效，ADR-0199 既有语义），pitch 60 下 wall 模型面向相机。
     //    G3DV2-B M5 修正：实际 aria-label 是 map.toolbar.toggle3d
-    //    （zh-CN「切换3D视图」）—— 旧选择器从未命中（best-effort 掩盖）。
+    //    （zh-CN「切换3D视图」）—— 旧选择器从未命中。spec mode=3d 时
+    //    is3D 桥已拉起：仅在未开启（aria-pressed=false）时点击，否则
+    //    会把已开的 3D 关掉（相机拍平 → 屏心点击落空）。
     const toggle3d = page.locator('button[aria-label="切换3D视图"]').first();
-    if (await toggle3d.count()) {
+    if ((await toggle3d.count()) && (await toggle3d.getAttribute('aria-pressed')) === 'false') {
       await toggle3d.click();
     }
     const canvas = page.locator('canvas').first();

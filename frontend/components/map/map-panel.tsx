@@ -267,6 +267,9 @@ export function MapPanel({
   sessionTokenRef,
 }: MapPanelProps) {
   const t = useT();
+  // G3DV2-B M5：拾取卡文案走 map 命名空间限定键 —— 全键字面量会被
+  // maplibre-mock-surface 静态扫描误判为 MapLibre 成员访问（前缀点链）。
+  const tMap = useT('map');
   void _onRemoveLayer;
   void _onToggleLayer;
 
@@ -1724,14 +1727,14 @@ export function MapPanel({
             className="absolute z-30 w-64 rounded-lg border border-slate-200 bg-white/95 p-3 text-xs shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200"
             style={{ left: Math.min(scene3dPick.x + 12, 9999), top: scene3dPick.y + 12 }}
             role="status"
-            aria-label={t("map.scene3dPick.title")}
+            aria-label={tMap('scene3dPick.title')}
           >
             <div className="mb-1 flex items-center justify-between">
               <span className="font-semibold">3D {scene3dPick.assetId}</span>
               <button
                 type="button"
                 className="rounded px-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
-                aria-label={t("map.scene3dPick.close")}
+                aria-label={tMap('scene3dPick.close')}
                 onClick={() => {
                   setScene3dPick(null)
                   emitFeatureDeselected({ layerId: `scene3d:${scene3dPick.assetId}` })
@@ -1741,15 +1744,15 @@ export function MapPanel({
               </button>
             </div>
             <dl className="space-y-0.5 font-mono text-[11px] leading-relaxed">
-              <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.source")}</dt><dd className="truncate">{scene3dPick.sourceId}</dd></div>
+              <div className="flex justify-between gap-2"><dt className="text-slate-500">{tMap('scene3dPick.source')}</dt><dd className="truncate">{scene3dPick.sourceId}</dd></div>
               {scene3dPick.tileId && (
-                <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.tile")}</dt><dd className="truncate">{scene3dPick.tileId}</dd></div>
+                <div className="flex justify-between gap-2"><dt className="text-slate-500">{tMap('scene3dPick.tile')}</dt><dd className="truncate">{scene3dPick.tileId}</dd></div>
               )}
               {scene3dPick.nodeName && (
-                <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.node")}</dt><dd className="truncate">{scene3dPick.nodeName}</dd></div>
+                <div className="flex justify-between gap-2"><dt className="text-slate-500">{tMap('scene3dPick.node')}</dt><dd className="truncate">{scene3dPick.nodeName}</dd></div>
               )}
-              <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.lngLat")}</dt><dd>{scene3dPick.lngLat.lng.toFixed(5)}, {scene3dPick.lngLat.lat.toFixed(5)}</dd></div>
-              <div className="flex justify-between gap-2"><dt className="text-slate-500">{t("map.scene3dPick.altDist")}</dt><dd>{Math.round(scene3dPick.lngLat.altitudeM)}m / {Math.round(scene3dPick.distanceM)}m</dd></div>
+              <div className="flex justify-between gap-2"><dt className="text-slate-500">{tMap('scene3dPick.lngLat')}</dt><dd>{scene3dPick.lngLat.lng.toFixed(5)}, {scene3dPick.lngLat.lat.toFixed(5)}</dd></div>
+              <div className="flex justify-between gap-2"><dt className="text-slate-500">{tMap('scene3dPick.altDist')}</dt><dd>{Math.round(scene3dPick.lngLat.altitudeM)}m / {Math.round(scene3dPick.distanceM)}m</dd></div>
             </dl>
           </div>
         )}
