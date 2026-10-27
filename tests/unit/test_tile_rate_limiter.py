@@ -81,7 +81,6 @@ class TestEnforceGuard:
 
 class TestTerrainRouteWiring:
     async def test_third_request_429(self, tmp_path, monkeypatch):
-        from contextlib import asynccontextmanager
 
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient

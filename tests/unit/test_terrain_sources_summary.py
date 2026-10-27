@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pytest
 import pytest_asyncio
 import rasterio
 from fastapi import FastAPI
@@ -39,7 +38,7 @@ async def env(tmp_path, monkeypatch):
     engine = create_async_engine(db_url, connect_args={"check_same_thread": False})
     db_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
 
-    from app.core.auth import get_current_user_optional, get_owner_token
+    from app.core.auth import get_current_user_optional
     from app.core.database import get_async_db
     from app.api.routes import layer as layer_routes
     from app.models.db_model import Base

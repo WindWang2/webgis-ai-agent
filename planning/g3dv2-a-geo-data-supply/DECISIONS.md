@@ -10,3 +10,11 @@
 - **D8 复用而非新表**：DEM ref 即 session_data ref（payload 自带 descriptor），不建 DB 表、不动 UploadRecord schema。资格词表沿用 ElevationSourceProfile 的 qualification 枚举，不并表。
 - **D9 压缩炸弹/超大图幅**：上传已有 200MB 硬顶 + SEC-F6 cap+1 读；剖析降采样 ≤2048 边；瓦片渲染窗口读有界（#595 纪律）。摄入校验沿用，不新增解压面。超深 zoom（>22）在路由既有 400。
 - **D10 旋转/非北向网格**：transform 含旋转（b≠0）或 d≥0 → unavailable `ROTATED_GRID_UNSUPPORTED`（from_bounds 窗口推导假设轴对齐；不猜）。
+
+## 执行期增补（T1–T7 落地时）
+
+- **D11 单位假定的资格影响（D2 细化）**：band tag 缺失且未声明 → 假定米（UNIT_ASSUMED_M）→ 资格封顶 display_only；analysis_grade 要求单位"声明或 tag 确认"。补救路径明确（重新上传并声明 vertical_unit=m），不是永久降级。
+- **D12 极端尖峰分级**：包络 (-500, 8850)m 外为 outlier；占比 >0.1% → ELEVATION_OUTLIERS（display_only）；|v|>15000m 任意出现 → ELEVATION_EXTREME_OUTLIERS（display_only）；超 Terrarium 编码域 → ELEVATION_OUT_OF_RANGE（披露）。非有限值占比 >1% → unavailable CORRUPT_ELEVATION。洞（nodata/哨兵）只统计不降级——洞是披露事实不是插值理由。
+- **D13 quota 执行层范围裁定**：服务侧三路由（目录 MVT/PMTiles + 会话 terrain）接入真实执行（键=租户+源 / 会话+ref）；出站侧 make_safe_session 增加 rate_limit 参数（typed SourceRateLimitedError），QuotaDecl→各 adapter 逐源接线**列为后续**（需 ConnectionProfile 增字段+全部 adapter 会话构造点改造，侵入面大，不在本 PR 强行半接线成死代码）。
+- **D14 response_model 契约**：terrain-sources 声明 response_model=MapResourceAvailabilitySummary（FastAPI 序列化）；terrain-tiles.json 因 ETag 字节稳定序列化 + 304 手工构造 Response，按既有 pmtiles 先例进 EXCLUSIONS（注明理由）。
+- **D15 既有红灯不吞**：test_all_json_endpoints_have_response_model 在 origin/master@70dab2b9 即红（pmtiles-tiles/storymap spec 缺 response_model，detached 实测）；scene_quality.py E741 同为 master 既有。本 track 不修（避让矩阵），EVIDENCE 记录对照证据。

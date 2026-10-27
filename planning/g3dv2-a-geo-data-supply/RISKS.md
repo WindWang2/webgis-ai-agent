@@ -11,3 +11,8 @@
 | R7 | C 的 analysis 门消费 receipt 时误解 display_only | contracts schema 文档 + 契约测试锁形状；reasons[].code 全部枚举披露 |
 | R8 | master 在 PR 期间前移 | push 前重 fetch + rebase + 重跑定向门（任务书 §6） |
 | R9 | quota 接线改变现有瓦片路由响应形状 | 429 仅在超限时出现；默认 rpm 宽松（600/1200），正常测试序列远达不到 |
+
+## 执行期增补
+
+- R10：上传 GeoTIFF 的换算副本放在同一 upload_dir（delete_upload 清整个目录天然覆盖；孤儿目录纪律 #546 同款兜底）。
+- R11：openapi/字段契约快照已按官方机制再生成（API_SNAPSHOT_UPDATE / API_CONTRACT_FIELDS_UPDATE），diff 全部为加法（新路由 + upload.terrain 字段）。

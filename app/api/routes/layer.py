@@ -23,6 +23,7 @@ from app.schemas.layer_schema import (
     LayerTypesResponse,
     SessionFeaturePageResponse,
 )
+from app.contracts.terrain_sources import MapResourceAvailabilitySummary
 from app.services.auth_history_bridge import require_owned_session, verify_session_owner
 from app.core.auth import get_current_user_optional, get_owner_token
 from app.core.database import get_async_db
@@ -983,7 +984,7 @@ def _derive_terrain_header(safe_path: str):
         return None
 
 
-@router.get("/layers/terrain-sources", tags=["图层数据"])
+@router.get("/layers/terrain-sources", tags=["图层数据"], response_model=MapResourceAvailabilitySummary)
 async def list_terrain_sources(
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
     token: Optional[str] = Query(None, description="匿名会话 owner token"),
@@ -1012,7 +1013,6 @@ async def list_terrain_sources(
     )
     from app.contracts.terrain_sources import (
         ElevationProfileAvailability,
-        MapResourceAvailabilitySummary,
         SessionTerrainSourceEntry,
         TerrainSourceReceipt,
     )
@@ -1098,7 +1098,7 @@ async def list_terrain_sources(
         )
         terrain_available = False
 
-    summary = MapResourceAvailabilitySummary(
+    return MapResourceAvailabilitySummary(
         session_id=session_id,
         elevation_profiles=tuple(profile_entries),
         session_terrain_sources=tuple(session_entries),
@@ -1107,7 +1107,6 @@ async def list_terrain_sources(
         terrain_3d_reason_code=terrain_reason,
         terrain_3d_detail=terrain_detail,
     )
-    return summary.model_dump(mode="json")
 
 
 # P-5（#878）：(session, ref) → 已校验 safe_path 的短 TTL 缓存。

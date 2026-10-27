@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
@@ -199,7 +198,7 @@ class TestTileJsonContract:
         # 对 token → 200 且 tiles URL 携带 token（MapLibre 可直接消费）
         r2 = await client.get(f"{base}?session_id={sid}&token=tok-anon-123")
         assert r2.status_code == 200, r2.text
-        assert f"&token=tok-anon-123" in r2.json()["tiles"][0]
+        assert "&token=tok-anon-123" in r2.json()["tiles"][0]
 
     async def test_retired_ref_404(self, client, env):
         sid = "sess-tilejson-retire-01"

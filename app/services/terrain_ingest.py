@@ -45,7 +45,6 @@ import rasterio
 from rasterio.warp import transform_bounds
 
 from app.contracts.terrain_sources import (
-    DeclaredVerticalUnit,
     QualificationReason,
     TerrainSourceReceipt,
     UnitConversionEvidence,
@@ -315,7 +314,6 @@ def validate_dem(
         with np.errstate(invalid="ignore"):
             finite = np.isfinite(sample)
         non_finite = int((~finite).sum())
-        valid_vals = sample[finite]
         # 哨兵（-9999）与声明 nodata 都按"洞"统计：洞是披露事实，不是插值理由。
         sentinel_mask = finite & (sample == -9999.0)
         nodata_mask = sentinel_mask.copy()
