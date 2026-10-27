@@ -4825,6 +4825,24 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "terrain_measurement"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_terrain_measurements.py::test_los_curvature_matches_analytic_grid"
+   ],
+   "deterministic": true,
+   "id": "terrain.line_of_sight",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "terrain_wetness_indices"
    ],
    "category": "terrain_analysis",
@@ -4917,6 +4935,24 @@
    "deterministic": true,
    "id": "terrain.pfafstetter_multilevel",
    "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_measurement"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_terrain_measurements.py::test_profile_inclined_plane_exact"
+   ],
+   "deterministic": true,
+   "id": "terrain.profile",
+   "memory_cost": "low",
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
@@ -5104,6 +5140,42 @@
    "tests": [
     "tests/unit/lib/test_terrain_hydrology_v2.py"
    ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_measurement"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_terrain_measurements.py::test_surface_area_inclined_plane_exact"
+   ],
+   "deterministic": true,
+   "id": "terrain.surface_area",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_measurement"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_terrain_measurements.py::test_surface_distance_inclined_plane_exact"
+   ],
+   "deterministic": true,
+   "id": "terrain.surface_distance",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
    "uncertainty_outputs": []
   },
   {
@@ -5531,7 +5603,7 @@
  "behavioral": {
   "dispatch": 182,
   "mention": 169,
-  "none": 8
+  "none": 12
  },
  "capabilities": [
   {
@@ -8084,6 +8156,21 @@
    "category": "raster",
    "deterministic": true,
    "domain": "raster",
+   "id": "terrain_measurement",
+   "producer_algorithms": [
+    "terrain.line_of_sight",
+    "terrain.profile",
+    "terrain.surface_area",
+    "terrain.surface_distance"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "raster",
+   "deterministic": true,
+   "domain": "raster",
    "id": "terrain_sky_view",
    "producer_algorithms": [
     "terrain.horizon_angle",
@@ -8299,12 +8386,12 @@
   }
  ],
  "counts": {
-  "algorithms": 237,
+  "algorithms": 241,
   "artifact_types": 22,
-  "capabilities": 160,
-  "findings": 9,
+  "capabilities": 161,
+  "findings": 13,
   "recipes": 166,
-  "tools": 359
+  "tools": 363
  },
  "findings": [
   {
@@ -8321,6 +8408,14 @@
    "domain": "tools",
    "severity": "medium",
    "subject": "habitat_suitability_analysis",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "line_of_sight_analysis",
    "surface": "tools"
   },
   {
@@ -8376,6 +8471,30 @@
    "detail": "registered tool without any static test reference",
    "domain": "tools",
    "severity": "medium",
+   "subject": "surface_area_analysis",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "surface_distance_analysis",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "terrain_profile",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
    "subject": "ts_smooth_gapfill",
    "surface": "tools"
   }
@@ -8384,12 +8503,18 @@
   "behavioral_dispatch": 182,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
-  "pass": true,
-  "violations": [],
+  "pass": false,
+  "violations": [
+   {
+    "baseline": 8,
+    "code": "TOOL_UNTESTED",
+    "current": 12
+   }
+  ],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "729e9b883588bc8b3e3cdc7232d614a3bb86abb27de82d5474f9aa3fb85ef858",
+ "fingerprint": "33f91620894257cbebe41e1b4f4538bb90b842848223d18c87a0a32236dd02a8",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8429,7 +8554,7 @@
    }
   },
   "pass": true,
-  "total": 359
+  "total": 363
  },
  "manifest_version": 2,
  "recipes": {
@@ -12632,6 +12757,33 @@
    "tests": [
     "tests/unit/lib/test_cost_distance_v6.py"
    ],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [
+    "terrain_measurement"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "flags": [
+    "untested"
+   ],
+   "latency_class": "fast",
+   "memory_class": "heavy",
+   "name": "line_of_sight_analysis",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "通视",
+    "视线",
+    "LOS",
+    "遮挡",
+    "三维量测"
+   ],
+   "tests": [],
    "tier": 2
   },
   {
@@ -17226,6 +17378,60 @@
    "tier": 2
   },
   {
+   "behavior": "none",
+   "capabilities": [
+    "terrain_measurement"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "flags": [
+    "untested"
+   ],
+   "latency_class": "fast",
+   "memory_class": "heavy",
+   "name": "surface_area_analysis",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "地表面积",
+    "真实面积",
+    "粗糙比",
+    "三维量测",
+    "面积"
+   ],
+   "tests": [],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [
+    "terrain_measurement"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "flags": [
+    "untested"
+   ],
+   "latency_class": "fast",
+   "memory_class": "heavy",
+   "name": "surface_distance_analysis",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "地表距离",
+    "坡面距离",
+    "斜距",
+    "三维量测",
+    "距离"
+   ],
+   "tests": [],
+   "tier": 2
+  },
+  {
    "behavior": "mention",
    "capabilities": [
     "layer_display_control"
@@ -17640,6 +17846,33 @@
    "tests": [
     "tests/unit/lib/test_terrain_geomorphometry_v2.py"
    ],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [
+    "terrain_measurement"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "flags": [
+    "untested"
+   ],
+   "latency_class": "fast",
+   "memory_class": "heavy",
+   "name": "terrain_profile",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "剖面",
+    "纵断面",
+    "profile",
+    "三维量测",
+    "高差"
+   ],
+   "tests": [],
    "tier": 2
   },
   {

@@ -10,6 +10,7 @@
 - 不滥用：只有**科学性**失败（样本不足/CRS 非法/退化数据/病态系统）用
   这些类型；普通参数校验继续走 pydantic / ValueError。
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional, Tuple
@@ -176,6 +177,33 @@ class NoValidObservations(ScientificError):
         return "check nodata/valid_range settings or widen the analysis window"
 
 
+class VerticalReferenceMismatch(ScientificError):
+    """垂直基准声明非法或不一致（ADR-0274 三维量测契约）。
+
+    两种触发：datum 不在闭合词表；绝对高程覆盖值的 datum 与 DEM 声明
+    不同。语义是**拒绝混算**而非换算 —— 本仓库不内置 geoid 模型，
+    EGM96↔椭球等跨 datum 转换必须由外部模型先表达一致。
+    """
+
+    scientific_code = "VERTICAL_REFERENCE_MISMATCH"
+
+    def _default_hint(self) -> str:
+        return (
+            "declare both height sources with the same vertical datum "
+            "(or re-express externally); unknown is allowed only as a "
+            "single-source honest default"
+        )
+
+
+class VerticalUnitMismatch(ScientificError):
+    """DEM 高程单位声明非法（闭合词表 m|ft 之外）。"""
+
+    scientific_code = "VERTICAL_UNIT_MISMATCH"
+
+    def _default_hint(self) -> str:
+        return "declare DEM elevation units as 'm' or 'ft' (ft converts ×0.3048)"
+
+
 class ScientificPreconditionFailed(ScientificError):
     """声明式科学前置条件未通过（resolver/planner 同款条件的运行时面）。"""
 
@@ -190,8 +218,9 @@ class ScientificPreconditionFailed(ScientificError):
         guidance: Optional[Tuple[str, ...] | list] = None,
         ref: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__(detail, correction_hint=correction_hint,
-                         guidance=guidance, ref=ref)
+        super().__init__(
+            detail, correction_hint=correction_hint, guidance=guidance, ref=ref
+        )
         self.precondition_id = precondition_id
 
     def to_dict(self) -> dict:
@@ -224,8 +253,9 @@ class ResourceScaleMismatch(ScientificError):
         guidance: Optional[Tuple[str, ...] | list] = None,
         ref: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__(detail, correction_hint=correction_hint,
-                         guidance=guidance, ref=ref)
+        super().__init__(
+            detail, correction_hint=correction_hint, guidance=guidance, ref=ref
+        )
         self.estimated = estimated
         self.limit = limit
 

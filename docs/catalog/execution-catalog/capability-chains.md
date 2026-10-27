@@ -932,6 +932,15 @@
 - algorithm `terrain.strahler`（priority=52；scientific=VALIDATED）→ tools: stream_network
 - algorithm `terrain.streams`（priority=51；scientific=VALIDATED）→ tools: stream_network
 
+## terrain_measurement（三维量测）
+- status: native；version: 1.0
+- input: terrain_surface
+- output: line_feature_set, stats_table
+- algorithm `terrain.line_of_sight`（priority=64；scientific=VALIDATED）→ tools: line_of_sight_analysis
+- algorithm `terrain.profile`（priority=63；scientific=VALIDATED）→ tools: terrain_profile
+- algorithm `terrain.surface_area`（priority=66；scientific=VALIDATED）→ tools: surface_area_analysis
+- algorithm `terrain.surface_distance`（priority=65；scientific=VALIDATED）→ tools: surface_distance_analysis
+
 ## terrain_sky_view（地平线与天空可视因子）
 - status: native；version: 1.0
 - input: terrain_surface

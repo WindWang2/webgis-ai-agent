@@ -14,10 +14,10 @@
 
 ## 总览
 
-- capability 词表：160 条（图内 160 节点）
-- 图节点 987 / 边 3187 / graph fingerprint `42f687c18a1858c6`
-- provider 面：algorithm 237，component 20，model 0，provider(adapters) 15，template 8，tool 359，workflow(recipes) 166
-- 域分布：`general` 71，`network` 14，`platform` 17，`raster` 55，`statistics` 1，`temporal` 2
+- capability 词表：161 条（图内 161 节点）
+- 图节点 996 / 边 3203 / graph fingerprint `75f6f060f7230327`
+- provider 面：algorithm 241，component 20，model 0，provider(adapters) 15，template 8，tool 363，workflow(recipes) 166
+- 域分布：`general` 71，`network` 14，`platform` 17，`raster` 56，`statistics` 1，`temporal` 2
 
 ## Capability 词表
 
@@ -168,6 +168,7 @@
 | `terrain_hillshade` | raster | raster | native | — | yes | — | — |
 | `terrain_hydrology` | raster | raster | native | — | yes | — | — |
 | `terrain_hydrology_advanced` | raster | raster | native | — | yes | — | — |
+| `terrain_measurement` | raster | raster | native | — | yes | — | — |
 | `terrain_sky_view` | raster | raster | native | — | yes | — | — |
 | `terrain_slope` | raster | raster | native | — | yes | — | — |
 | `terrain_viewshed` | raster | raster | native | — | yes | — | — |
@@ -188,9 +189,9 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 73 | 1 | 79 | 6 | 0 |
+| 74 | 1 | 79 | 6 | 0 |
 
-### orphan_capability（73）
+### orphan_capability（74）
 
 - capability accessibility has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability areal_interpolation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -259,6 +260,7 @@
 - capability temporal_smoothing has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability terrain_geomorphometry has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability terrain_hydrology_advanced has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability terrain_measurement has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability terrain_sky_view has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability terrain_wetness_indices has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability trend_surface has no algorithm/tool provider and is not referenced by any workflow/template/fallback
