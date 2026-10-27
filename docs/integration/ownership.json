@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "adr_watermark": 228,
-  "migration_watermark": 98,
+  "adr_watermark": 276,
+  "migration_watermark": 99,
   "rules": [
     {
       "pattern": "docs/adr/*",

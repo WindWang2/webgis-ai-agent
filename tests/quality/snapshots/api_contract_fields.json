@@ -218,6 +218,9 @@
  "GET /api/v1/data-fabric/catalog/{item_id}/features/stream": {
   "__type__": "unknown"
  },
+ "GET /api/v1/data-fabric/catalog/{item_id}/pmtiles-tiles/{z}/{x}/{y}": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/data-fabric/catalog/{item_id}/preview": {
   "__model__": "CatalogPreviewResponse"
  },
@@ -654,6 +657,9 @@
   "refresh_age_s": "null|number",
   "status": "string",
   "stuck_jobs": "integer|null"
+ },
+ "GET /api/v1/storymap/sessions/{session_id}/spec": {
+  "__type__": "unknown"
  },
  "GET /api/v1/tasks": {
   "__model__": "TaskListResponse",
@@ -1605,6 +1611,9 @@
   "linked_widgets": "array<LinkedWidget>",
   "metadata": "StoryMapMetadata",
   "schema_version": "string"
+ },
+ "POST /api/v1/storymap/sessions/{session_id}/spec": {
+  "__type__": "unknown"
  },
  "POST /api/v1/tasks/jobs/{job_id}/retry": {
   "__model__": "JobRetryResponse",
