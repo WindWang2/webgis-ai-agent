@@ -2919,6 +2919,38 @@ def _register_measurement_tools(registry: ToolRegistry) -> None:
             "geojson": fc,
             "meta": meta,
         }
+        # 剖面图 artifact 种子（G3D-V2-C / ADR-0276）：dispatch 缝认
+        # profile_chart 键 → 铸 ref:profile-* + upsert elevation_profile
+        # 组件（chart-artifact 工件通道）。面板可用性优先于逐点保真：
+        # ≤512 点均匀抽稀（z_m 恒为米）；统计与 GeoJSON 仍按全采样口径。
+        _chart_stride = max(1, math.ceil(len(prof["points"]) / 512))
+        _chart_points = [
+            {
+                "name": (
+                    f"{p['distance_m'] / 1000:.2f}km"
+                    if p["distance_m"] >= 1000
+                    else f"{p['distance_m']:.0f}m"
+                ),
+                "value": p["z_m"],
+            }
+            for p in prof["points"][::_chart_stride]
+            if p["z_m"] is not None
+        ]
+        if len(_chart_points) >= 2:
+            payload["profile_chart"] = {
+                "chart": {
+                    "type": "line",
+                    "title": "高程剖面",
+                    "data": _chart_points,
+                    "x_label": "线路里程",
+                    "y_label": "高程（m）",
+                }
+            }
+            meta["profile_chart_points"] = len(_chart_points)
+            if _chart_stride > 1:
+                meta["quality_flags"] = list(meta["quality_flags"]) + [
+                    f"profile_chart_downsampled:stride={_chart_stride}"
+                ]
         return _terrain_evidence(
             payload,
             "terrain.profile",

@@ -114,8 +114,17 @@ async def get_session_chart_artifact(
     与 /layers/data/{ref}（GeoJSON 序列化面）不同，chart artifact 是
     {chart: ChartData} 小载荷（生成时已受 100KB/500 点上限约束）——
     直接 JSON 返回，无分块序列化需求。所有权校验复用 require_owned_session。
+
+    G3D-V2-C（ADR-0276）：elevation_profile 面板的 ``ref:profile-*``
+    工件走同一 {chart: ChartData} 协议与端点（前端 loadChartArtifact
+    同一拉取面）——剖面族与图表族共享校验/缓存纪律，不另开第二端点。
     """
-    if not ref_id or not ref_id.startswith("ref:chart-") or len(ref_id) > 128:
+    _CHART_REF_PREFIXES = ("ref:chart-", "ref:profile-")
+    if (
+        not ref_id
+        or len(ref_id) > 128
+        or not ref_id.startswith(_CHART_REF_PREFIXES)
+    ):
         raise HTTPException(status_code=400, detail="非法 chart artifact ref")
     from app.services.session_data import session_data_manager
 
