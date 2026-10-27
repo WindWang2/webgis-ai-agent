@@ -109,7 +109,9 @@ async def upload_files(
     session_id: Optional[str] = Form(None, description="关联的会话 ID"),
     crs: Optional[str] = Form(None, description="声明坐标系（如 EPSG:4326）。CSV 无 CRS 元数据：声明则可信转换，缺省则如实按 unknown 披露"),
     dedup: bool = Form(True, description="同会话同内容（sha256）幂等复用既有上传记录"),
-    register_ref: bool = Form(False, description="注册到会话产物台账（V3 摄入管线增值车道，仅矢量；失败不阻断上传）"),
+    register_ref: bool = Form(False, description="注册到会话产物台账（矢量走 V3 摄入管线；栅格走 DEM 摄入车道；失败不阻断上传）"),
+    vertical_datum: Optional[str] = Form(None, description="DEM 垂直基准声明（如 EGM96/EGM2008/ellipsoid(WGS84)/local）。不声明且文件不可读出时仅显示，绝不偷换"),
+    vertical_unit: Optional[str] = Form(None, description="DEM 高程单位声明（m/ft/us_survey_ft）。非米单位生成换算副本并留证据"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id", description="存在即视为请求 register_ref（值不作为会话来源——归属一律以已校验的 session_id 表单为准）"),
     _user: dict = Depends(get_current_user_optional_with_version),
@@ -399,23 +401,42 @@ async def upload_files(
     # 触发：register_ref=True 或 X-Session-Id 头在场。best-effort 纪律与
     # dispatch-seam 相同 —— 车道任何失败（含未预期异常）都不阻断上传本体，
     # 只如实记入 ref_registration_error。会话归属已在上面的 DB 块校验。
+    # 矢量走 V3 管线；栅格走 G3D-V2-A DEM 摄入车道（校验/资格/terrain ref）。
     session_ref: Optional[str] = None
     profile_summary: Optional[Dict[str, Any]] = None
     quality_summary: Optional[Dict[str, Any]] = None
     ref_registration_error: Optional[str] = None
+    terrain_summary: Optional[Dict[str, Any]] = None
     if register_ref or x_session_id is not None:
-        lane_out = await _run_ingest_lane(
-            session_id=session_id,
-            meta=meta,
-            filename=filename,
-            declared_crs=crs,
-        )
-        session_ref = lane_out["session_ref"]
-        profile_summary = lane_out["profile_summary"]
-        quality_summary = lane_out["quality"]
-        ref_registration_error = lane_out["error"]
-        if lane_out.get("duplicate") and session_ref:
-            warnings.append(f"会话中已存在相同内容的数据引用，复用 {session_ref}")
+        if meta.get("file_type") == "raster":
+            lane_out = await _run_raster_ingest_lane(
+                session_id=session_id,
+                meta=meta,
+                filename=filename,
+                declared_vertical_datum=vertical_datum,
+                declared_vertical_unit=vertical_unit,
+                content_sha256=content_sha256,
+            )
+            session_ref = lane_out["session_ref"]
+            terrain_summary = lane_out["terrain"]
+            ref_registration_error = lane_out["error"]
+            if lane_out.get("duplicate") and session_ref:
+                warnings.append(f"会话中已存在相同内容的 DEM 引用，复用 {session_ref}")
+            for w in lane_out.get("warnings") or []:
+                warnings.append(str(w))
+        else:
+            lane_out = await _run_ingest_lane(
+                session_id=session_id,
+                meta=meta,
+                filename=filename,
+                declared_crs=crs,
+            )
+            session_ref = lane_out["session_ref"]
+            profile_summary = lane_out["profile_summary"]
+            quality_summary = lane_out["quality"]
+            ref_registration_error = lane_out["error"]
+            if lane_out.get("duplicate") and session_ref:
+                warnings.append(f"会话中已存在相同内容的数据引用，复用 {session_ref}")
 
     return UploadResponse(
         id=record.id,
@@ -435,6 +456,7 @@ async def upload_files(
         profile_summary=profile_summary,
         quality=quality_summary,
         ref_registration_error=ref_registration_error,
+        terrain=terrain_summary,
     )
 
 
@@ -498,6 +520,79 @@ async def _run_ingest_lane(
     except Exception as e:  # noqa: BLE001 — 增值车道失败不影响上传本体
         logger.warning("会话登记车道失败（不影响上传）: %s", e)
         out["error"] = f"ingest lane failed: {e}"
+    return out
+
+
+async def _run_raster_ingest_lane(
+    *,
+    session_id: Optional[str],
+    meta: Dict[str, Any],
+    filename: str,
+    declared_vertical_datum: Optional[str],
+    declared_vertical_unit: Optional[str],
+    content_sha256: Optional[str],
+) -> Dict[str, Any]:
+    """栅格/DEM 摄入车道（G3D-V2-A）：校验 → 资格 receipt → terrain ref。
+
+    纪律与矢量车道一致：绝不 raise，错误落 ``error``；``unavailable`` 是
+    诚实结果 —— receipt 照发（``terrain`` 字段），error 同时携带 reason
+    codes 供前端/Agent 消费。只注册 GeoTIFF（parse_raster 已白名单 GTiff）。
+    """
+    from app.services.terrain_ingest import register_session_terrain_source
+
+    out: Dict[str, Any] = {
+        "session_ref": None,
+        "terrain": None,
+        "error": None,
+        "duplicate": False,
+        "warnings": [],
+    }
+    if not session_id:
+        out["error"] = "register_ref requested but no session_id; terrain registration skipped"
+        return out
+    output_path = meta.get("output_path")
+    if not output_path or not Path(output_path).exists():
+        out["error"] = "parsed raster output missing; terrain lane skipped"
+        return out
+
+    result = await register_session_terrain_source(
+        session_id,
+        Path(output_path),
+        declared_vertical_datum=declared_vertical_datum,
+        declared_vertical_unit=declared_vertical_unit,
+        content_sha256=content_sha256,
+    )
+    receipt_dump: Optional[Dict[str, Any]] = None
+    if result.get("receipt") is not None:
+        receipt_dump = result["receipt"].model_dump(mode="json")
+    out["session_ref"] = result.get("ref_id")
+    out["duplicate"] = bool(result.get("duplicate"))
+    out["warnings"] = list(result.get("warnings") or [])
+    if receipt_dump is not None:
+        out["terrain"] = {
+            "qualification": receipt_dump.get("qualification"),
+            "reasons": [
+                {"code": r.get("code"), "detail": r.get("detail")}
+                for r in receipt_dump.get("reasons", [])
+            ],
+            "vertical_datum": receipt_dump.get("vertical_datum"),
+            "vertical_unit_source": receipt_dump.get("vertical_unit_source"),
+            "unit_conversion": receipt_dump.get("unit_conversion"),
+            "synthetic": receipt_dump.get("synthetic"),
+            "nodata_hole_fraction": receipt_dump.get("nodata_hole_fraction"),
+            "elevation_min_m": receipt_dump.get("elevation_min_m"),
+            "elevation_max_m": receipt_dump.get("elevation_max_m"),
+            "tiles_url_template": (
+                f"/api/v1/layers/data/{result['ref_id']}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
+                if result.get("ref_id") else None
+            ),
+            "tilejson_url": (
+                f"/api/v1/layers/data/{result['ref_id']}/terrain-tiles.json"
+                if result.get("ref_id") else None
+            ),
+        }
+    if result.get("error"):
+        out["error"] = str(result["error"])[:400]
     return out
 
 
