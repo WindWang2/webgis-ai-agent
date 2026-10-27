@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { useMap } from 'react-map-gl/maplibre';
+import type { Map as MaplibreMap } from 'maplibre-gl';
 import {
   ArrowDown,
   ArrowUp,
@@ -485,7 +486,7 @@ export function StoryView(): React.ReactElement {
   // 手势判定用 dragstart/pitchstart/rotatestart（非程序化 easeTo）。
   useEffect(() => {
     if (!playing) return;
-    let map: maplibregl.Map | null = null;
+    let map: MaplibreMap | null = null;
     try {
       map = getMapInstance();
     } catch {
