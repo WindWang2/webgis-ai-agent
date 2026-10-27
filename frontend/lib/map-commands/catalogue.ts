@@ -7,6 +7,7 @@ import { queryCommands } from './queryCommands';
 import { chartCommands } from './chartCommands';
 import { workbenchCommands } from './workbenchCommands';
 import { styleCommands } from './styleCommands';
+import { sceneCommands } from './sceneCommands';
 
 export type { MapCommandContext, CommandValidator, CommandEntry } from './types';
 
@@ -28,6 +29,7 @@ export const COMMAND_CATALOGUE = {
   ...chartCommands,
   ...workbenchCommands,
   ...styleCommands,
+  ...sceneCommands,
 } as const;
 
 export type MapCommandName = keyof typeof COMMAND_CATALOGUE;
