@@ -96,9 +96,12 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  // 本地表象态（M5）：光照预设 + 视角书签 —— 不进 spec，组件持有。
+  // 本地表象态（M5）：光照预设 + 视角书签 + 资产显隐覆盖 —— 不进 spec，
+  // 组件持有（review R1-P2-2：受控 checkbox 若直接读 spec visible，任意
+  // liveGeneration 重渲染会把本地隐藏态在 UI 上弹回勾选，形成死角开关）。
   const [lighting, setLighting] = useState<Scene3dLightingPreset>('neutral');
   const [viewpoints, setViewpoints] = useState<SavedViewpoint[]>([]);
+  const [assetVisibility, setAssetVisibility] = useState<Record<string, boolean>>({});
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const nextViewpointId = useRef(1);
   // Escape 关闭（focus 在对话框内时）；dialog 容器 tabIndex=-1 承接焦点。
@@ -222,6 +225,7 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
     (assetId: string, visible: boolean) => {
       const map = getMap?.() as unknown as object | null;
       if (!map) return;
+      setAssetVisibility((prev) => ({ ...prev, [assetId]: visible }));
       renderer.scene3dSetAssetPresentation(map, assetId, { visible });
     },
     [getMap],
@@ -382,31 +386,35 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
           {sceneAssets.length > 0 && (
             <div className="mb-3 border-t border-edge-subtle pt-2">
               <span className="mb-1 block text-ink-secondary">{t('sceneController.assets')}</span>
-              {sceneAssets.map((asset) => (
-                <div key={asset.id} className="mb-1.5">
-                  <label className="flex items-center gap-1.5" htmlFor={`scene-asset-${asset.id}`}>
+              {sceneAssets.map((asset) => {
+                // 有效可见 = spec visible ∧ 本地覆盖未隐藏（spec 隐藏优先）。
+                const effectiveVisible = asset.visible !== false && assetVisibility[asset.id] !== false;
+                return (
+                  <div key={asset.id} className="mb-1.5">
+                    <label className="flex items-center gap-1.5" htmlFor={`scene-asset-${asset.id}`}>
+                      <input
+                        id={`scene-asset-${asset.id}`}
+                        type="checkbox"
+                        checked={effectiveVisible}
+                        disabled={!mapForPresentation || asset.visible === false}
+                        onChange={(e) => setAssetVisible(asset.id, e.target.checked)}
+                      />
+                      <span className="flex-1 truncate font-mono">{asset.id}</span>
+                    </label>
                     <input
-                      id={`scene-asset-${asset.id}`}
-                      type="checkbox"
-                      checked={asset.visible !== false}
-                      disabled={!mapForPresentation}
-                      onChange={(e) => setAssetVisible(asset.id, e.target.checked)}
+                      type="range"
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      defaultValue={1}
+                      disabled={!mapForPresentation || !effectiveVisible}
+                      onChange={(e) => setAssetOpacity(asset.id, Number(e.target.value))}
+                      className="w-full accent-[color:var(--agent-accent)]"
+                      aria-label={t('sceneController.assetOpacity', { id: asset.id })}
                     />
-                    <span className="flex-1 truncate font-mono">{asset.id}</span>
-                  </label>
-                  <input
-                    type="range"
-                    min={0.05}
-                    max={1}
-                    step={0.05}
-                    defaultValue={1}
-                    disabled={!mapForPresentation}
-                    onChange={(e) => setAssetOpacity(asset.id, Number(e.target.value))}
-                    className="w-full accent-[color:var(--agent-accent)]"
-                    aria-label={t('sceneController.assetOpacity', { id: asset.id })}
-                  />
-                </div>
-              ))}
+                  </div>
+                );
+              })}
               <p className="text-[11px] leading-4 text-ink-secondary">{t('sceneController.assetsLocalNote')}</p>
             </div>
           )}

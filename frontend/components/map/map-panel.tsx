@@ -704,6 +704,10 @@ export function MapPanel({
     const canvas = (map as unknown as { getCanvas?: () => HTMLCanvasElement }).getCanvas?.()
     if (!canvas || typeof canvas.addEventListener !== 'function') return
     const onLost = (e: Event) => {
+      // review R1-P3-7：preventDefault 会让浏览器/MapLibre 的自动恢复路径
+      // 变为可达 —— 仅在确有 scene3d 资产挂载时接管（2D 会话保持既有
+      // 行为：无 preventDefault → fatal 模态人工重试，零行为差）。
+      if (renderer.describeScene3dAssets(map).length === 0) return
       e.preventDefault() // 声明自处理 → 浏览器允许 restored 事件
       renderer.scene3dContextLost(map)
     }

@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MapSpec } from '@/lib/mapspec-compiler/types.generated';
-import { buildGlbFixture } from './__fixtures__/glb';
+import { buildGlbFixture, buildTilesetFixture } from './__fixtures__/glb';
 import { Scene3DManager } from './asset-manager';
 import { releaseLayerOwnership } from './custom-layer';
 import {
@@ -214,6 +214,91 @@ describe('setStyle sweep ownership release (G5 leak fix)', () => {
     // 每轮 2 次清扫卸载（强制重挂的 unmount + 最终 sync([]) 移除），每次
     // 释放一份归属 —— 与重挂时的 acquire 一一配对，不随 setStyle 次数净增。
     expect(releaseLayerOwnership).toHaveBeenCalledTimes(6);
+    mgr.dispose();
+  });
+});
+
+describe('tile budget deferral (review R1-P2-3)', () => {
+  it('defers (not fails) an over-budget tile; loads after pressure release', async () => {
+    const map = makeFakeMap();
+    // 预算只够一个 tile 的几何（每 tile GLB fixture = 2 三角）。
+    const mgr = new Scene3DManager(map as never, { budgetLimits: { maxTriangles: 3 } });
+    const tilesetUrl = 'https://assets.test/tiles/tileset.json';
+    const spec = {
+      version: '1.7',
+      sources: {
+        'tiles-src': { type: 'model3d', format: '3dtiles', url: tilesetUrl, content_revision: 1 },
+      } as never,
+      layers: [],
+      scene: {
+        mode: '3d',
+        assets: [{
+          id: 'city', source: 'tiles-src',
+          placement: { anchor: [104.06, 30.67], altitude_m: 0 }, visible: true,
+        }] as never,
+      } as never,
+    } as never;
+    // tileset.json + 两个子 tile GLB
+    const tilesetDoc = buildTilesetFixture();
+    const glb = buildGlbFixture({ triangles: 2 });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === tilesetUrl) {
+        return new Response(JSON.stringify(tilesetDoc), {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'content-length': '1' },
+        });
+      }
+      if (url.endsWith('.glb')) {
+        return new Response(glb, {
+          status: 200,
+          headers: { 'content-length': String(glb.byteLength) },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    }));
+    mgr.sync(spec);
+    await settle(40);
+    // 挂载面：tileset 已解析、entries 就绪
+    const described = mgr.describe().find((a) => a.assetId === 'city');
+    expect(described).toBeTruthy();
+
+    // 私有态驱动 loadTile（fake map 无 onFrame/MVP，调度循环在测试 harness
+    // 不可驱动 —— 直测预算门语义；prevRender 预置使 tile 过期检查放行）。
+    const internals = mgr as unknown as {
+      mounted: Map<string, {
+        tiles: Map<string, { tile: { id: string; contentUri: string }; model: unknown; budgetDeferredAt: number | null; loading: boolean }>;
+        prevRender: Set<string>;
+      }>;
+      loadTile: (m: unknown, e: unknown) => Promise<void>;
+    };
+    const mounted = internals.mounted.get('city');
+    expect(mounted).toBeTruthy();
+    const entries = [...mounted!.tiles.values()];
+    expect(entries.length).toBeGreaterThanOrEqual(2);
+    for (const e of entries) mounted!.prevRender.add(e.tile.id);
+
+    await internals.loadTile(mounted, entries[0]);
+    await internals.loadTile(mounted, entries[1]);
+    // 第二个 tile 被预算推迟（非失败）：无模型、budgetDeferredAt 打点、
+    // degraded budget_exceeded 记录、首个 tile 正常挂载。
+    expect(entries[0].model).toBeTruthy();
+    expect(entries[1].model).toBeFalsy();
+    expect(entries[1].budgetDeferredAt).not.toBeNull();
+    const statuses = sceneAssetStatusSnapshot();
+    expect(statuses.some((e) => e.assetId === 'city' && e.code === 'degraded'
+      && e.reason?.startsWith('budget_exceeded:triangles'))).toBe(true);
+    expect(mgr.budgetUsage().triangles).toBe(2);
+
+    // 压力腾挪（evictForBudget）：tile1 移出 render 集（相机移走）后再载
+    // tile2 —— 逐出不可见 tile1 腾出预算，tile2 成功载入（不 deferred）。
+    mounted!.prevRender.delete(entries[0].tile.id);
+    await internals.loadTile(mounted, entries[1]);
+    expect(entries[1].model).toBeTruthy();
+    expect(entries[0].model).toBeFalsy(); // LRU 逐出（不可见）
+    expect(mgr.budgetUsage().triangles).toBe(2); // 释放后重记，不叠加
+    // 整资产卸载 → 记账清零（deferred/逐出路径的归还语义）。
+    mgr.sync({ ...(spec as object), scene: { mode: '2d', assets: [] } } as never);
+    expect(mgr.budgetUsage().triangles).toBe(0);
     mgr.dispose();
   });
 });

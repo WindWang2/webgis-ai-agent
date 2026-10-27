@@ -11,7 +11,7 @@
 | #1773（已合并） | 三维量测（剖面/LOS/面积）、垂直基准治理 | 不触碰 app/lib/gis/geo_analysis 与量测 UI |
 | #1829（已合并） | Agent 三维编排工具、SceneSpec Requirement IR、user-wins 相机仲裁 | 只读消费 viewCommands/scene-mutation 语义；不新增 planner 工具 |
 | #1830（已合并） | scene-controller、scene_disclosure 组件、StoryMap 场景 keyframe、scene-export-disclosure、scene-mutation API | **复用 commitUserScene/mergeSceneRotary 管线**做 per-asset 控制扩展；不改 StoryMap 播放器 |
-| #1835（OPEN，A 方向） | DEM 数据供给生产化（app/services/data_fabric DEM、Terrarium XYZ、quota 执行层、可用性发现） | **零接触**：不改 app/services/data_fabric、DEM 瓦片生产、quota 供给面 |
+| #1835（OPEN，A 方向） | DEM 数据供给生产化（app/services/data_fabric DEM、Terrarium XYZ、quota 执行层、可用性发现） | 代码面零接触（不改 data_fabric/DEM/quota）；**唯一文件交集 = tests/quality/snapshots/openapi.json**（双方都再生成快照 —— 后合并方机械重跑 API_SNAPSHOT_UPDATE=1 即可，评审 R1-P3-9 取证） |
 | issues #1797/#1805/#1809–#1811/#1821/#1824/#1826/#1827 | 他人审查 backlog | 不抢修；若 scene3d 正交修复涉及同文件，仅限 scene3d 命名空间内的行为 |
 
 ## 文件级写入计划（本 track 预期修改面）

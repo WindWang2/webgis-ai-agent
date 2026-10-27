@@ -52,7 +52,11 @@ export interface Scene3dSyncOptions {
   maxConcurrentTileLoads?: number;
   /** tile 缓存上限（默认 96）。 */
   tileCacheSize?: number;
-  /** 跨资产累计预算覆盖（只能收紧默认值的对应维度）。 */
+  /**
+   * 跨资产累计预算维度覆盖（review R1-P3-10：直接覆写默认值 —— 收紧或
+   * 放宽由调用方负责；生产调用方不传，spec 侧 lod 策略的"只能收紧"
+   * 语义在 policyOf 维持不变）。
+   */
   budgetLimits?: Partial<ResourceBudgetLimits>;
 }
 
@@ -96,7 +100,6 @@ interface MountedAsset {
   lastMvp: Mat4 | null;
   /** 最近帧 worldSize（placement×W 进像素域 —— 与 lastMvp 同帧配对）。 */
   lastWorldScale: number;
-  loadInFlight: number;
   /** 挂载世代（sync 差分时旧代在途回调作废）。 */
   generation: number;
   /** 加载是否仍在途（终态 mounted/load_failed 落定前为 true —— 取消判定）。 */
@@ -276,7 +279,9 @@ export class Scene3DManager {
 
     let best: { hit: THREE.Intersection; asset: MountedAsset } | null = null;
     for (const asset of this.mounted.values()) {
-      if (!asset.visible) continue;
+      // 表象隐藏的资产不可拾取（review R1-P2-1：three intersect 不看
+      // group.visible —— 本地隐藏必须显式跳过，否则隐形资产仍开检视卡）。
+      if (!asset.visible || asset.presentation.visible === false) continue;
       const targets: THREE.Object3D[] = [];
       if (asset.singleModel) {
         asset.singleModel.root.traverse((o) => { if ((o as THREE.Mesh).isMesh) targets.push(o); });
@@ -481,7 +486,6 @@ export class Scene3DManager {
       lastTickAt: 0,
       lastMvp: null,
       lastWorldScale: 1,
-      loadInFlight: 0,
       generation: 0,
       loadPending: true,
       presentation: { visible: null, opacity: null },
@@ -726,7 +730,6 @@ export class Scene3DManager {
   private async loadTile(mounted: MountedAsset, entry: TileEntry): Promise<void> {
     if (!entry.tile.contentUri || entry.loading) return;
     entry.loading = true;
-    mounted.loadInFlight += 1;
     this.globalInFlight += 1;
     const generation = mounted.generation;
     try {
@@ -758,7 +761,15 @@ export class Scene3DManager {
         );
         return;
       }
-      const built = buildModel(parsed);
+      let built: BuiltModel;
+      try {
+        built = buildModel(parsed);
+      } catch (err) {
+        // 记账归还（review R1-P3-4：acquire→build 抛错窗口不归还会在 30s
+        // 退避重试下叠加幻影占用；release 按 owner 键幂等）。
+        this.ledger.release(tileOwnerKey(mounted.assetId, entry.tile.id));
+        throw err;
+      }
       entry.model = built;
       // OGC 3D Tiles 1.1：tile 的 glTF 内容依规范是 y-up —— 运行时施加
       // y-up→z-up（tile 帧是 z-up ENU；等价 CesiumJS Y_UP_TO_Z_UP）。
@@ -785,7 +796,6 @@ export class Scene3DManager {
       }
     } finally {
       entry.loading = false;
-      mounted.loadInFlight = Math.max(0, mounted.loadInFlight - 1);
       this.globalInFlight = Math.max(0, this.globalInFlight - 1);
     }
   }
@@ -827,7 +837,12 @@ export class Scene3DManager {
     return null;
   }
 
-  /** 跨资产逐出不可见 tile 直到 `pending` 可计入或无可逐出。 */
+  /**
+   * 跨资产逐出不可见 tile 直到 `pending` 可计入或无可逐出。
+   * 已知窗口（review R1-P3-6）：prevRender 以 200ms 节流刷新 —— 相机刚
+   * 移入的新可见 tile 在窗口内可能被按旧 render 集逐出（下一 tick 自愈
+   * 重载；自限瞬态，非不变量违约的常态路径）。
+   */
   private evictForBudget(pending: ResourceBudgetAmounts): void {
     for (;;) {
       const overDim = this.ledger.wouldExceed(pending);

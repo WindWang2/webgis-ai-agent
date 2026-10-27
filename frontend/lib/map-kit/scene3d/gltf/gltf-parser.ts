@@ -493,6 +493,10 @@ export async function parseGltf(
     if (!acc) throw new GltfParseError('corrupt', `indices accessor ${index} missing`);
     if (acc.type !== 'SCALAR') throw new GltfParseError('corrupt', 'indices must be SCALAR');
     const count = acc.count;
+    // typed 校验（review R1-P3-5：负/非整 count 会以裸 RangeError 冒泡）。
+    if (!Number.isInteger(count) || count < 0) {
+      throw new GltfParseError('corrupt', `indices accessor ${index} count invalid`);
+    }
     // 索引展开 Uint32 —— 分配前预算（同 P0-1）。
     const expandedBytes = count * 4;
     if (expandedBytes > MAX_DECODED_BYTES_PER_ACCESSOR
@@ -510,6 +514,7 @@ export async function parseGltf(
       throw new GltfParseError('corrupt', `indices accessor ${index} must not be normalized`);
     }
     const base = acc.byteOffset ?? 0;
+    if (base < 0) throw new GltfParseError('corrupt', `indices accessor ${index} byteOffset invalid`);
     const out = new Uint32Array(count);
     const dv = new DataView(view.buffer, view.byteOffset, view.byteLength);
     if (acc.componentType === 5125) {

@@ -64,7 +64,9 @@ export function acquireRenderer(map: object, gl?: WebGLRenderingContext | WebGL2
     const hemi = new THREE.HemisphereLight(0xffffff, 0x8d8d8d, 1.1);
     hemi.position.set(0.2, -1, 0.3); // mercator 空间的"天"方向（z 上）
     scene.add(hemi);
-    if (pendingLighting) applyLightingToScene(scene, pendingLighting);
+    if (pendingLightingByMap.has(map)) {
+      applyLightingToScene(scene, pendingLightingByMap.get(map)!);
+    }
     carrier = { renderer, camera, scene, refCount: 1 };
     carriers.set(map, carrier);
     return carrier;
@@ -125,8 +127,9 @@ export function presetLighting(preset: Scene3dLightingPreset): { ambient: number
   }
 }
 
-/** carrier 尚未创建时的待应用预设（首帧 acquireRenderer 落地）。 */
-let pendingLighting: Scene3dLightingPreset | null = null;
+/** carrier 尚未创建时的待应用预设（按 map 作用域 —— review R1-P3-10：
+ *  模块级单值会让 map A 的预设渗入 map B（比较视图）的首帧 carrier）。 */
+const pendingLightingByMap = new WeakMap<object, Scene3dLightingPreset>();
 
 function applyLightingToScene(scene: THREE.Scene, preset: Scene3dLightingPreset): void {
   const { ambient, hemisphere } = presetLighting(preset);
@@ -142,7 +145,7 @@ function applyLightingToScene(scene: THREE.Scene, preset: Scene3dLightingPreset)
  * 首帧创建即生效。返回是否已实际应用（false = 已记忆待应用）。
  */
 export function applyLightingPreset(map: object, preset: Scene3dLightingPreset): boolean {
-  pendingLighting = preset;
+  pendingLightingByMap.set(map, preset);
   const carrier = carriers.get(map);
   if (!carrier) return false;
   applyLightingToScene(carrier.scene, preset);
