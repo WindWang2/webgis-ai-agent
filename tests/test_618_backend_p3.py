@@ -141,8 +141,10 @@ def test_item11_save_workflow_rolls_back_when_revision_fails(db_session, monkeyp
 
     monkeypatch.setattr(ProjectService, "_publish_revision", staticmethod(boom))
 
+    # F-11（03ea5e537）后 org 项目需同 org 调用方 —— 匿名/跨 org 一律
+    # IDOR 拒绝（本测试焦点是 revision 失败回滚，不是访问控制）。
     with pytest.raises(RuntimeError, match="revision publish failed"):
-        ProjectService.save_workflow(db_session, proj.id, _wf_create())
+        ProjectService.save_workflow(db_session, proj.id, _wf_create(), org_id=org.id)
 
     assert db_session.execute(select(Workflow)).scalars().all() == []
     assert db_session.execute(select(WorkflowRevision)).scalars().all() == []
@@ -154,7 +156,7 @@ def test_item11_update_workflow_rolls_back_graph_when_revision_fails(db_session,
     db_session.add(proj)
     db_session.commit()
 
-    wf = ProjectService.save_workflow(db_session, proj.id, _wf_create())
+    wf = ProjectService.save_workflow(db_session, proj.id, _wf_create(), org_id=org.id)
     old_graph = dict(wf.graph_spec)
     old_rev = wf.current_revision_id
     assert old_rev  # first save published a revision
@@ -171,12 +173,13 @@ def test_item11_update_workflow_rolls_back_graph_when_revision_fails(db_session,
         ]
     }
     with pytest.raises(RuntimeError, match="revision publish failed"):
-        ProjectService.update_workflow(db_session, proj.id, wf.id, graph_spec=new_graph)
+        ProjectService.update_workflow(db_session, proj.id, wf.id, graph_spec=new_graph, org_id=org.id)
 
     fresh = db_session.get(Workflow, wf.id)
     assert fresh.graph_spec == old_graph
     assert fresh.current_revision_id == old_rev
-    assert len(ProjectService.list_workflow_revisions(db_session, proj.id, wf.id)) == 1
+    revisions = ProjectService.list_workflow_revisions(db_session, proj.id, wf.id, org_id=org.id)
+    assert revisions is not None and len(revisions) == 1
 
 
 # ── item 14: geocode expand_km longitude uses cos(lat) ──────────────────────

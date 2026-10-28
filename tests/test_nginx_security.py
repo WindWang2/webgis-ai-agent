@@ -1,4 +1,5 @@
 """Security: Nginx CORS must use allow-list, not echo any Origin."""
+import re
 
 
 def test_nginx_cors_not_wildcard_echo():
@@ -26,6 +27,8 @@ class TestSecureComposeInlineNginxParity:
     """
 
     def test_embedded_nginx_conf_matches_repo_conf(self):
+        import re
+
         import yaml
 
         with open("docker-compose.prod.secure.yml", encoding="utf-8") as f:
@@ -174,12 +177,20 @@ class TestCspSingleSource:
     nginx 自己生成的 50x 错误页改为在 location = /50x.html 显式保留。
     """
 
-    def test_nginx_conf_does_not_inject_csp(self):
+    def test_nginx_conf_server_level_does_not_inject_csp(self):
+        """#1635 收敛 + #1732 修正：server/http 级**不得**注入 CSP（CSP 唯一
+        来源是 frontend/next.config.mjs —— 边缘再叠一份更严策略会把应用侧
+        放宽的指令在生产栈完全中和）；但 location 级（SSE 流式响应）必须
+        重复全部安全头 —— location 级 add_header 一出现即替换 server 级
+        继承（#1732）。两者由 _SERVER_BLOCKS 区分。"""
         with open("deploy/nginx/nginx.conf", encoding="utf-8") as f:
             nginx = f.read()
-        assert "add_header Content-Security-Policy" not in nginx, (
-            "nginx 不得注入 CSP —— CSP 唯一来源是 frontend/next.config.mjs；"
-            "边缘再叠一份更严策略会把应用侧放宽的指令在生产栈完全中和（#1635）"
+        # server 级 = http{}/server{} 直接体（不含 location 块）—— 用
+        # location 块剔除后检查剩余部分。
+        stripped = re.sub(r"location[^{]*\{[^}]*\}", "", nginx)
+        assert "add_header Content-Security-Policy" not in stripped, (
+            "nginx server 级不得注入 CSP —— CSP 唯一来源是 "
+            "frontend/next.config.mjs（#1635）"
         )
 
     def test_secure_compose_inline_does_not_inject_csp(self):
@@ -188,9 +199,10 @@ class TestCspSingleSource:
         with open("docker-compose.prod.secure.yml", encoding="utf-8") as f:
             compose = yaml.safe_load(f)
         embedded = compose["configs"]["webgis_nginx_conf"]["content"]
-        assert "add_header Content-Security-Policy" not in embedded, (
-            "compose 内联 nginx 副本不得注入 CSP（与 deploy/nginx/nginx.conf "
-            "同一不变量，见 test_nginx_conf_does_not_inject_csp）"
+        stripped = re.sub(r"location[^{]*\{[^}]*\}", "", embedded)
+        assert "add_header Content-Security-Policy" not in stripped, (
+            "compose 内联 nginx 副本 server 级不得注入 CSP"
+            "（与 deploy/nginx/nginx.conf 同一不变量）"
         )
 
     def test_next_config_is_the_single_csp_source(self):

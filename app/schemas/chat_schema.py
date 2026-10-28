@@ -129,7 +129,7 @@ class ChatRequest(BaseModel):
     skill_name: Optional[str] = Field(None, max_length=128, description="要激活的技能名称")
     project_id: Optional[str] = Field(
         None,
-        max_length=128,
+        max_length=64,
         description=(
             "Active project workspace id; when set, the chat context "
             "assembler renders the project-summary block (datasets + "
