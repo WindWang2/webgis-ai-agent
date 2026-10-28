@@ -9,7 +9,8 @@ G3D01 起，本模块**派生自** ``app/lib/cartography/basemap_profiles.py``
 """
 from typing import TypedDict
 
-from app.lib.cartography.basemap_profiles import (
+# ADR-0216 分层：画像 kernel 契约在 app/contracts（app.core 禁依赖 app.lib）。
+from app.contracts.basemap_profiles import (
     BASEMAP_PROVIDER_PROFILES,
     iter_llm_catalog,
 )

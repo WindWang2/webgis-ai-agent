@@ -877,6 +877,19 @@ async def get_catalog_mvt_tile(
         # API-01：鉴权必须在缓存查找**之前** —— 否则跨租户调用者用已知
         # item_id 命中缓存即可拿到字节流。
         _authorize_catalog_item(session, item_id, user)
+        # A5（#1771 D11 清偿）：同租户同源请求率限制 —— 鉴权之后、缓存/构建
+        # 之前；超限 429 + Retry-After，绝不静默排空或无限抓取。
+        from app.services.data_fabric.tile_rate_limiter import (
+            data_fabric_tile_rpm,
+            enforce_tile_rate,
+        )
+
+        _tenant = user.get("org_id") or user.get("user_id") or "anon"
+        enforce_tile_rate(
+            f"df:catalog:{_tenant}:{item_id}",
+            data_fabric_tile_rpm(),
+            scope="data_fabric_catalog_tile",
+        )
         item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
         if not item:
             raise ValueError(f"Catalog item '{item_id}' not found")
@@ -941,6 +954,18 @@ async def get_catalog_pmtiles_tile(
     async def _serve_tile(session: Session):
         # API-01：鉴权必须在缓存查找**之前**（同 MVT 路由）。
         _authorize_catalog_item(session, item_id, user)
+        # A5（#1771 D11 清偿）：同 MVT 路由的租户+源限流（鉴权后、缓存前）。
+        from app.services.data_fabric.tile_rate_limiter import (
+            data_fabric_tile_rpm,
+            enforce_tile_rate,
+        )
+
+        _tenant = user.get("org_id") or user.get("user_id") or "anon"
+        enforce_tile_rate(
+            f"df:pmtiles:{_tenant}:{item_id}",
+            data_fabric_tile_rpm(),
+            scope="data_fabric_pmtiles_tile",
+        )
         item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
         if not item:
             raise ValueError(f"Catalog item '{item_id}' not found")

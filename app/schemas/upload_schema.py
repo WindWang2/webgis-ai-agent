@@ -70,6 +70,10 @@ class UploadResponse(BaseModel):
     profile_summary: Optional[Dict[str, Any]] = None
     quality: Optional[Dict[str, Any]] = None
     ref_registration_error: Optional[str] = None
+    # ---- G3D-V2-A additive：DEM 摄入车道产物 ----
+    # ``terrain``：注册结果摘要（qualification/reasons/ref_id/tiles 模板）；
+    # unavailable 是诚实结果不是失败（错误同时进 ref_registration_error）。
+    terrain: Optional[Dict[str, Any]] = None
 
 
 class UploadListResponse(BaseModel):

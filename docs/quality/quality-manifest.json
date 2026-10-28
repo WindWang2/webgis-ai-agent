@@ -7709,7 +7709,6 @@
    "status": "planned",
    "supports_large_data": true,
    "tests": [
-    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/gis/test_platform_capabilities.py"
    ]
   },
@@ -7724,7 +7723,6 @@
    "status": "planned",
    "supports_large_data": true,
    "tests": [
-    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/gis/test_platform_capabilities.py"
    ]
   },
@@ -8276,7 +8274,6 @@
    "status": "planned",
    "supports_large_data": true,
    "tests": [
-    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/gis/test_platform_capabilities.py"
    ]
   },
@@ -8589,7 +8586,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "d765858713b30d8d3a308d57641c49ce6c5ebcb12f46b4a6ecd6d84c7c4b0777",
+ "fingerprint": "33cbd40a6df5182cc88231ec19e01927d06da8fdb979e89c63b4e34c52c0fcbd",
  "gate": {
   "fields": {
    "capabilities": {

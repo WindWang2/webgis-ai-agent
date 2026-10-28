@@ -237,8 +237,15 @@ def estimate_frame_bytes(gdf: gpd.GeoDataFrame) -> int:
             continue
         if isinstance(series.dtype, pd.CategoricalDtype):
             total += _OBJECT_CELL_BYTES * n
-        elif np.issubdtype(series.dtype, np.number):
-            total += int(series.dtype.itemsize) * n
         else:
-            total += _OBJECT_CELL_BYTES * n
+            try:
+                numeric = np.issubdtype(series.dtype, np.number)
+            except TypeError:
+                # pandas StringDtype（pandas 3 / geopandas 1.2 扩展 dtype）对
+                # np.issubdtype 不可解释 —— 按对象列估算，绝不静默失败。
+                numeric = False
+            if numeric:
+                total += int(series.dtype.itemsize) * n
+            else:
+                total += _OBJECT_CELL_BYTES * n
     return int(total)
