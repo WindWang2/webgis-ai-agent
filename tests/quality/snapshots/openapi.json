@@ -16968,7 +16968,7 @@
   },
   "/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}": {
    "get": {
-    "description": "chart_panel 的 ref-backed 数据通道（D2 ref 路径）。\n\n与 /layers/data/{ref}（GeoJSON 序列化面）不同，chart artifact 是\n{chart: ChartData} 小载荷（生成时已受 100KB/500 点上限约束）——\n直接 JSON 返回，无分块序列化需求。所有权校验复用 require_owned_session。",
+    "description": "chart_panel 的 ref-backed 数据通道（D2 ref 路径）。\n\n与 /layers/data/{ref}（GeoJSON 序列化面）不同，chart artifact 是\n{chart: ChartData} 小载荷（生成时已受 100KB/500 点上限约束）——\n直接 JSON 返回，无分块序列化需求。所有权校验复用 require_owned_session。\n\nG3D-V2-C（ADR-0276）：elevation_profile 面板的 ``ref:profile-*``\n工件走同一 {chart: ChartData} 协议与端点（前端 loadChartArtifact\n同一拉取面）——剖面族与图表族共享校验/缓存纪律，不另开第二端点。",
     "operationId": "get_session_chart_artifact_api_v1_chat_sessions__session_id__chart_artifacts__ref_id__get",
     "parameters": [
      {

@@ -64,6 +64,8 @@ _TAXONOMY_TABLE: Dict[str, tuple] = {
     # requirement.scene.dimension（agent origin 不投影：agent 决策不是
     # 用户偏好，见 semantic_projection 的 origin 门）。
     "SetSceneIntent": ("requirement_significant", "scene_mode"),
+    # v1.7（G3D02）：三维场景资产表 —— 跨轮保持的制图语义（资产挂载决策）。
+    "SetSceneAssetsIntent": ("requirement_significant", "scene_assets"),
     # ── presentation-ephemeral（永不进入 requirement） ──────────────────
     "SetViewIntent": ("presentation_ephemeral", "none"),
     # ── system repair（不冒充用户偏好） ────────────────────────────────

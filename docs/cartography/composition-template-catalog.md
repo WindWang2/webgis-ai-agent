@@ -2,7 +2,7 @@
 
 > 由 registry 生成；真值：`composition_templates.py` + `composition_packs/`。
 
-共 32 个组合模板（seed 8 + 域包）。
+共 35 个组合模板（seed 8 + 域包）。
 
 ## composition.minimal_interactive（Minimal Interactive）
 
@@ -172,6 +172,67 @@
   - `attribution`：required（attribution）@ bottom-left
   - `statistics_panel`：optional（statistics_panel）@ top-left
   - `chart_panel`：optional（chart_panel）@ top-left；fallback_zones=top-right
+
+## composition.earthwork_cut_fill（土方工程地形图）
+
+- 描述：基准面土方量的工程制图产品：挖方/填方分区（发散设色）+ 场平范围 + 土方统计（cut/fill/net m³）+ 方法注记（中点求积/分辨率/nodata 披露）；场景披露必填（垂直基准是土方量语义的一部分）
+- 版式：report；输出：interactive, png
+- 兼容模型：diverging_choropleth, terrain_analytical_surface
+- fallback：composition.terrain_analysis
+- 标签：earthwork, cut, fill, volume, g3dv2c
+- 槽位：
+  - `title`：required（title）@ top-center
+  - `subtitle`：optional（subtitle）@ top-center；fallback_zones=top-left
+  - `legend`：conditional（legend, categorical_legend）@ bottom-right；bind_scope=all_thematic
+  - `north_arrow`：required（north_arrow）@ top-right
+  - `scale_bar`：required（scale_bar）@ bottom-right
+  - `scene_disclosure`：required（scene_disclosure）@ bottom-right；fallback_zones=bottom-left
+  - `methodology_note`：required（methodology_note）@ bottom-right；fallback_zones=bottom-left
+  - `statistics_panel`：required（statistics_panel）@ top-left
+  - `chart_panel`：optional（chart_panel）@ top-left；fallback_zones=top-right
+  - `attribution`：required（attribution）@ bottom-left
+  - `map_border`：optional（map_border）@ none
+  - `export_layout`：optional（export_layout）@ none
+
+## composition.route_profile_joint（沿线高程剖面联合制图）
+
+- 描述：线路/管线/道路纵断面的 2D 联合制图产品：线路走向图 + elevation_profile 剖面面板（ref:profile-* 工件绑定）+ 爬升/坡度统计；纯 2D 表达，矢量导出合法；剖面垂直基准随面板披露
+- 版式：report；输出：interactive, png, pdf, svg
+- 兼容模型：graduated_line
+- fallback：composition.terrain_analysis
+- 标签：profile, route, elevation, g3dv2c
+- 槽位：
+  - `title`：required（title）@ top-center
+  - `subtitle`：optional（subtitle）@ top-center；fallback_zones=top-left
+  - `legend`：conditional（legend）@ bottom-right；bind_scope=all_thematic
+  - `north_arrow`：required（north_arrow）@ top-right
+  - `scale_bar`：required（scale_bar）@ bottom-right
+  - `elevation_profile`：required（elevation_profile）@ bottom-left；fallback_zones=bottom-right
+  - `statistics_panel`：required（statistics_panel）@ top-left
+  - `methodology_note`：recommended（methodology_note）@ bottom-right；fallback_zones=bottom-left
+  - `attribution`：required（attribution）@ bottom-left
+  - `map_border`：optional（map_border）@ none
+  - `export_layout`：optional（export_layout）@ none
+
+## composition.mountain_los_obstruction（山地通视与遮挡图）
+
+- 描述：观察点视域面 + 两点通视线 + 首遮挡点的山地三维分析产品：视域/LOS 结果在地形起伏上的联合呈现，通视统计与遮挡诊断面板联动；场景披露（垂直基准/比例尺可信度）必填
+- 版式：academic；输出：interactive, png
+- 兼容模型：viewshed_map, terrain_analytical_surface, graduated_line
+- fallback：composition.viewshed_scene_3d
+- 标签：scene3d, los, viewshed, obstruction, g3dv2c
+- 槽位：
+  - `title`：required（title）@ top-center
+  - `subtitle`：optional（subtitle）@ top-center；fallback_zones=top-left
+  - `legend`：conditional（legend, categorical_legend）@ bottom-right；bind_scope=all_thematic
+  - `north_arrow`：required（north_arrow）@ top-right
+  - `scale_bar`：required（scale_bar）@ bottom-right
+  - `scene_disclosure`：required（scene_disclosure）@ bottom-right；fallback_zones=bottom-left
+  - `statistics_panel`：required（statistics_panel）@ top-left
+  - `chart_panel`：optional（chart_panel）@ top-left；fallback_zones=top-right
+  - `attribution`：required（attribution）@ bottom-left
+  - `map_border`：optional（map_border）@ none
+  - `export_layout`：optional（export_layout）@ none
 
 ## composition.flow_map_report（Flow Map Report）
 

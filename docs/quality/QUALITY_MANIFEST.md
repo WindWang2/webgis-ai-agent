@@ -3,15 +3,15 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`33cbd40a6df5182c…`
+- 内容指纹：`22a025c0f7903f62…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 368 | 360 | 8 |
-| algorithms | 244 | 184 | 1 |
-| capabilities | 164 | 115 | 0 |
+| tools | 369 | 361 | 8 |
+| algorithms | 245 | 185 | 1 |
+| capabilities | 165 | 116 | 0 |
 | artifact_types | 23 | 23 | 0 |
 | recipes | 166 | 166（conformance 由 workflow 闸保护） | 0 |
 
@@ -25,11 +25,11 @@
 | memory_class | 100% | 95% | PASS（缺 0） |
 | capabilities | 100% | 95% | PASS（缺 0） |
 
-**gate: PASS**（`total=368`）
+**gate: PASS**（`total=369`）
 
 ## 行为化覆盖与 findings 棘轮（Quality V2）
 
-- 工具行为证据：dispatch **187** / mention 173 / none 8（dispatch 覆盖率 51%）
+- 工具行为证据：dispatch **187** / mention 174 / none 8（dispatch 覆盖率 51%）
 - findings 棘轮：**PASS**（dispatch 下限 163，当前 187；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
 
 ## Findings（派生线索，非缺陷判定）

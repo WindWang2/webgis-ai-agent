@@ -4638,6 +4638,30 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "terrain_measurement",
+    "volume_estimation"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_terrain_volumes.py::test_flat_plane_constant_base_exact",
+    "tests/unit/lib/test_terrain_volumes.py::test_tilted_plane_mean_base_closed_form"
+   ],
+   "deterministic": true,
+   "id": "terrain.cut_fill_volume",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
+    "tests/unit/gis_harness/scene3d/test_analysis_orchestration_staleness.py",
+    "tests/unit/test_3d_analysis_product_tools.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "terrain_hydrology_advanced"
    ],
    "category": "terrain_analysis",
@@ -4892,6 +4916,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis_harness/scene3d/test_analysis_orchestration_staleness.py",
     "tests/unit/test_terrain_measurement_tools.py"
    ],
    "uncertainty_outputs": []
@@ -5013,6 +5038,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis_harness/scene3d/test_analysis_orchestration_staleness.py",
     "tests/unit/test_terrain_measurement_tools.py"
    ],
    "uncertainty_outputs": []
@@ -5315,7 +5341,8 @@
    "scientific_status": "VALIDATED",
    "tests": [
     "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py",
-    "tests/unit/lib/test_terrain_science_vnext.py"
+    "tests/unit/lib/test_terrain_science_vnext.py",
+    "tests/unit/lib/test_viewshed_geometry.py"
    ],
    "uncertainty_outputs": []
   },
@@ -5670,7 +5697,7 @@
  ],
  "behavioral": {
   "dispatch": 187,
-  "mention": 173,
+  "mention": 174,
   "none": 8
  },
  "capabilities": [
@@ -8254,6 +8281,7 @@
    "domain": "raster",
    "id": "terrain_measurement",
    "producer_algorithms": [
+    "terrain.cut_fill_volume",
     "terrain.line_of_sight",
     "terrain.profile",
     "terrain.surface_area",
@@ -8261,7 +8289,9 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis_harness/scene3d/test_decision_camera_staleness_verdict.py"
+   ]
   },
   {
    "category": "presentation",
@@ -8420,6 +8450,18 @@
    "tests": []
   },
   {
+   "category": "raster",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "volume_estimation",
+   "producer_algorithms": [
+    "terrain.cut_fill_volume"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "analysis",
    "deterministic": true,
    "domain": "general",
@@ -8496,12 +8538,12 @@
   }
  ],
  "counts": {
-  "algorithms": 244,
+  "algorithms": 245,
   "artifact_types": 23,
-  "capabilities": 164,
+  "capabilities": 165,
   "findings": 9,
   "recipes": 166,
-  "tools": 368
+  "tools": 369
  },
  "findings": [
   {
@@ -8586,7 +8628,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "33cbd40a6df5182cc88231ec19e01927d06da8fdb979e89c63b4e34c52c0fcbd",
+ "fingerprint": "22a025c0f7903f62d618c1208763e61bbb21864b299714cc87b2e1540cf88b17",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8626,7 +8668,7 @@
    }
   },
   "pass": true,
-  "total": 368
+  "total": 369
  },
  "manifest_version": 2,
  "recipes": {
@@ -8858,6 +8900,7 @@
    "tests": [
     "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/scene3d/test_analysis_orchestration_staleness.py",
     "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py"
    ],
    "tier": 2
@@ -9992,6 +10035,34 @@
    "tier": 2
   },
   {
+   "behavior": "mention",
+   "capabilities": [
+    "terrain_measurement"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "heavy",
+   "name": "cut_fill_volume_analysis",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "土方",
+    "挖方",
+    "填方",
+    "体积",
+    "三维量测",
+    "cut",
+    "fill"
+   ],
+   "tests": [
+    "tests/unit/test_3d_analysis_product_tools.py"
+   ],
+   "tier": 2
+  },
+  {
    "behavior": "dispatch",
    "capabilities": [
     "areal_interpolation"
@@ -10866,6 +10937,7 @@
    "tests": [
     "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/scene3d/test_analysis_orchestration_staleness.py",
     "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py"
    ],
    "tier": 2
@@ -15951,12 +16023,15 @@
     "viewshed",
     "视域",
     "通视",
+    "剖面",
+    "土方",
     "编排",
     "失效"
    ],
    "tests": [
     "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/scene3d/test_analysis_orchestration_staleness.py",
     "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py"
    ],
    "tier": 2
@@ -18089,8 +18164,11 @@
     "高差"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
+    "tests/unit/gis_harness/scene3d/test_analysis_orchestration_staleness.py",
     "tests/unit/lib/test_terrain_measurements.py",
     "tests/unit/test_measurement_mapspec_wiring.py",
+    "tests/unit/test_profile_artifact_seam.py",
     "tests/unit/test_terrain_measurement_tools.py"
    ],
    "tier": 2
@@ -18343,7 +18421,8 @@
    "tests": [
     "tests/unit/gis_harness/scene3d/test_decision_camera_staleness_verdict.py",
     "tests/unit/gis_harness/scene3d/test_scene_orchestration_tools.py",
-    "tests/unit/lib/test_terrain_science_vnext.py"
+    "tests/unit/lib/test_terrain_science_vnext.py",
+    "tests/unit/test_3d_analysis_product_tools.py"
    ],
    "tier": 2
   },

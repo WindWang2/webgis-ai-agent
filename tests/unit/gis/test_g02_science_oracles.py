@@ -571,7 +571,8 @@ class TestO12PerformanceBudget:
             monkeypatch.setattr(builtins, "open", real_open)
         # 合并 master（G3D03 measurement 族 +4 与 G3D04 platform 绑定 +3
         # 叠加）后注册表真值由 scripts/gen_science_catalog.py 重算锁定。
-        assert contracts == get_algorithm_registry().count == 244
+        # G3D-V2-C：+1（terrain.cut_fill_volume）
+        assert contracts == get_algorithm_registry().count == 245
         assert resolves > 0
         assert elapsed < 2.0, f"{get_algorithm_registry().count} 算法 resolve+契约投影 {elapsed:.2f}s 超预算"
 

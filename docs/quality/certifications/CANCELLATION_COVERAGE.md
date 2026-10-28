@@ -5,7 +5,7 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**25/76** 个重计算文件含取消检查点。
+- 覆盖：**26/78** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
@@ -70,6 +70,8 @@
 | app/lib/geo_analysis/trend_surface.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_analysis/ts_smoothing.py | 0 | 0 | no-checkpoints |
 | app/lib/geo_analysis/uncertainty.py | 0 | 5 | no-checkpoints |
+| app/lib/geo_analysis/viewshed_geometry.py | 2 | 14 | certified |
+| app/lib/geo_analysis/volumes.py | 0 | 2 | no-checkpoints |
 | app/lib/geo_raster/__init__.py | 0 | 1 | no-checkpoints |
 | app/lib/geo_raster/chunk.py | 0 | 23 | no-checkpoints |
 | app/lib/geo_raster/cog.py | 0 | 5 | no-checkpoints |

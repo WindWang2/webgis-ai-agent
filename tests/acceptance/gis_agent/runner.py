@@ -99,6 +99,37 @@ class TaskScenarioRunner:
             # 证据必须在 clear_session 之前收集（session 数据目录即证据源）
             from .projections import build_task_evidence
             evidence = await build_task_evidence(sid, scenario)
+            # G3D-V2-C（review F1）：负例 decline 的类型码进证据面——
+            # expect_error 步只断言"真的失败"，不区分失败原因；此处把
+            # 失败载荷的 reason_code 按步收集，供期望钉 typed decline
+            # （消除"任何意外 bug 失败也绿"的恒绿路径）。
+            scripted_errors: Dict[str, Any] = {}
+            scripted_error_messages: Dict[str, Any] = {}
+            for outcome in step_outcomes.values():
+                if not outcome.is_error:
+                    continue
+                payload = outcome.payload if isinstance(outcome.payload, dict) else {}
+                text = str(payload.get("_text") or outcome.text or "")
+                # error 步的 content 文本常非 JSON——类型码从文本兜底
+                # 提取（JSON 形态 "reason_code": "..." 与消息内嵌
+                # [TYPED_CODE] 两种形态）。
+                m = re.search(r'"reason_code"\s*:\s*"([^"]+)"', text)
+                m2 = re.search(r"\[([A-Z][A-Z0-9_]{6,})\]", text)
+                scripted_errors[outcome.call_id.split("::")[-1]] = (
+                    payload.get("reason_code")
+                    or (m.group(1) if m else None)
+                    or (m2.group(1) if m2 else None)
+                    or payload.get("code")
+                    or payload.get("detail")
+                    or "error"
+                )
+                scripted_error_messages[outcome.call_id.split("::")[-1]] = str(
+                    payload.get("message")
+                    or payload.get("error")
+                    or text
+                )[:200]
+            evidence["scripted_errors"] = scripted_errors
+            evidence["scripted_error_messages"] = scripted_error_messages
         except asyncio.TimeoutError:
             error = f"scenario timeout after {scenario.timeout_s}s"
         except Exception as exc:  # noqa: BLE001 — runner 级失败如实上报
@@ -154,6 +185,33 @@ class TaskScenarioRunner:
                 "has_map_product_payload": outcome.map_product is not None,
             })
 
+    async def _upsert_spec_source(self, sid: str, step: AgentStep,
+                                  call_id: str) -> "_StepOutcome":
+        """G3D-V2-C：注册 spec 源（真实 UpsertSourceIntent 事务，零 HTTP）。
+
+        arguments = {source_id, source}（source 为 MapSpecSource 形状；
+        raster-dem 源是 3D 分析数据资格的 scripted 等价物——生产注册面
+        归 A 方向 DEM 管线，这里走同一 mapspec 引擎事务缝）。
+        """
+        from app.services.mapspec import UpsertSourceIntent
+        from app.services.mapspec_store import mapspec_store
+
+        source_id = str(step.arguments.get("source_id") or "")
+        source = step.arguments.get("source")
+        if not source_id or not isinstance(source, dict):
+            raise AssertionError(
+                f"mapspec_source step {step.call_id} requires "
+                "source_id + source dict")
+        res = await mapspec_store.engine.apply_mutation(
+            sid, UpsertSourceIntent(source_id=source_id, source=source))
+        ok = not res.is_error
+        return _StepOutcome(
+            call_id=step.call_id, ok=ok, is_error=res.is_error,
+            payload={"source_id": source_id,
+                     "error": (res.error_msg or "")[:160]},
+            text="", layer_ids=[],
+        )
+
     async def _ingest_interaction(self, sid: str, step: AgentStep,
                                   call_id: str) -> "_StepOutcome":
         """G3D04：注入用户交互事件（真实 Interaction IR 摄入面，零 HTTP）。"""
@@ -195,6 +253,9 @@ class TaskScenarioRunner:
 
         if step.kind == StepKind.INTERACTION_EVENT:
             return await self._ingest_interaction(sid, step, call_id)
+
+        if step.kind == StepKind.MAPSPEC_SOURCE:
+            return await self._upsert_spec_source(sid, step, call_id)
 
         name, arguments = self._resolve_call(step, turn, refs, step_outcomes)
         # 镜像生产 HTTP 路由（app/api/routes/pi_tools.py:70-71）：token 验证

@@ -77,12 +77,12 @@ async def _commit_layer(sid: str, layer_id: str = "pop_layer") -> None:
 
 @pytest.mark.asyncio
 async def test_webgis_map_combine_behavioral(registry, session_base):
-    # validation：geojson 不在声明参数模型里 → 显式拒绝（unknown param 闸）
+    # validation：geojson 形状非法（缺 features）→ 显式拒绝（参数模型字段
+    # 校验先于 unknown-param 闸 —— 拒绝语义即契约，消息由模型层产生）。
     bad = await registry.dispatch("webgis_map_combine", {
         "session_id": "bdw-combine", "geojson": {"type": "FeatureCollection"}})
     assert isinstance(bad, dict) and bad.get("success") is False, bad
     assert bad.get("code") == "VALIDATION_ERROR"
-    assert "geojson" in (bad.get("message") or "")
 
     # happy path：5 槽位规范组合 → MapSpec 组装（未提交会话）
     assembled = await registry.dispatch("webgis_map_combine", {

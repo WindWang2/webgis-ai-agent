@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：164 能力 · 244 算法 · 126 参数契约。
+统计：165 能力 · 245 算法 · 127 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -1645,6 +1645,12 @@ Priority-Flood 填洼（Barnes 2014，epsilon 单调变体）、D∞ 多向流�
   - 资源包络：16B/像元
   - 取消：chunk_boundary
   - 数值容差：rtol=1e-06，atol=1e-09
+- **`terrain.cut_fill_volume`** 基准面土方量（cut/fill）（`native`·成熟度 已验证，契约: `cut_fill_volume_analysis`，出处: `midpoint_quadrature`）
+  - 假设：像元中心中点求积：每像元贡献 (z_center − base) × cell_area，正部为 cut、负部为 fill；像元中心是唯一观测（不发明角点高程）；中点求积对 ≤1 次多项式表面精确（平面/斜面解析 oracle 闭式可验）；基准面 constant（绝对高程）或 mean（区域有效像元均值，net=0 恒等）
+  - 局限：曲面上为离散近似（误差随分辨率收敛，不宣称解析误差界）；掩膜像元 all-or-nothing（多边形栅格化边界半像元误差以 boundary_cells 披露）；nodata 像元剔除；invalid_fraction 超 max_invalid_fraction 类型化失败
+  - 资源包络：24B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.surface_distance`** 地表距离量测（`native`·成熟度 已验证，契约: `surface_distance_analysis`，出处: `jenness2004`）
   - 假设：同一折线的水平（网格米制）/ 三维直线斜距 / 地表（沿面采样）距离；不变量 surface ≥ covered_horizontal 无条件成立；surface ≥ horizontal 仅在无跨洞剔除时成立（同一米制空间；平面精确）；半步加密收敛指示 delta_rel 是经验量级，非解析误差界
   - 局限：曲面地表距离为采样近似（弦和 ≤ 真弧长，加密单调逼近）；地理 CRS 的椭球测地距离由工具层独立报告（参考量，不参与内部一致性）；收敛指示收敛到 bilinear 插值面而非真实地表（步长离散之外的表征偏差不可见）
@@ -1799,6 +1805,17 @@ Delaunay TIN 三角网插值（linear / clough_tocher），凸包外不外推。
   - 资源包络：对预算 200000，要素硬上限 2000
   - 取消：chunk_boundary
   - 数值容差：rtol=1e-09，atol=0
+
+## `volume_estimation` — 基准面土方量
+
+区域相对基准面的挖方/填方/净方（G3D-V2-C）：constant 绝对基准面或区域均值基准；像元中心中点求积（平面/斜面离散闭式精确），nodata/边界/nodata 比例披露，跨 datum 混算拒绝。
+
+- **`terrain.cut_fill_volume`** 基准面土方量（cut/fill）（`native`·成熟度 已验证，契约: `cut_fill_volume_analysis`，出处: `midpoint_quadrature`）
+  - 假设：像元中心中点求积：每像元贡献 (z_center − base) × cell_area，正部为 cut、负部为 fill；像元中心是唯一观测（不发明角点高程）；中点求积对 ≤1 次多项式表面精确（平面/斜面解析 oracle 闭式可验）；基准面 constant（绝对高程）或 mean（区域有效像元均值，net=0 恒等）
+  - 局限：曲面上为离散近似（误差随分辨率收敛，不宣称解析误差界）；掩膜像元 all-or-nothing（多边形栅格化边界半像元误差以 boundary_cells 披露）；nodata 像元剔除；invalid_fraction 超 max_invalid_fraction 类型化失败
+  - 资源包络：24B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `voronoi_tessellation` — Voronoi 剖分
 

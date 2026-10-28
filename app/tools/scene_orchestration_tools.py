@@ -10,14 +10,17 @@
 - ``fly_camera``（事务）：相机动作 → 既有 ``SetViewIntent``
   （mapspec_store.set_view）；user-wins 守卫（Interaction IR viewport 偏离
   / IR scene_camera 锁）命中时 typed 抑制，绝不偷改用户镜头。
-- ``run_3d_analysis``（分析）：capability 门 → 既有 ``viewshed_analysis``
-  经 registry 真实 dispatch（单一执行真相）→ 证据 + 失效绑定记录
-  （观察点/DEM/结果层 → staleness 裁决面）。
+- ``run_3d_analysis``（分析）：capability 门 → 六类三维分析经 registry
+  真实 dispatch（单一执行真相：viewshed/line_of_sight/terrain_profile/
+  surface_distance/surface_area/cut_fill_volume）→ 证据 + MethodUseContract
+  摘要 + 失效绑定登记与旧绑定对账（analysis_binding_store——观察点/DEM/
+  结果层 → staleness 裁决面）。
 
 证据诚实边界：垂直证据只认 spec 内真实 raster-dem 源与 extrusion 采样
 结论（scene3d.evidence）；无证据 → 诚实降级（偏好保留 + typed 注记），
 绝不伪造高度/地形。
 """
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -39,6 +42,98 @@ _LAYER_TYPE_TO_GEOMETRY = {
     "circle": "point", "symbol": "point", "heatmap": "point",
     "line": "line", "fill": "polygon", "fill-extrusion": "polygon",
     "raster": "raster", "hillshade": "raster",
+}
+
+#: G3D-V2-C（ADR-0276）：run_3d_analysis 的可编排分析族——#1829 时代
+#: 仅 viewshed（decline 码自认欠账「待 G3D03」），#1773 四量测与本轮
+#: cut/fill 现已全部经真实 registry dispatch 接入。表驱动：每个分析
+#: 声明目标工具 + 必需参数 + 能力键（decline 码/alternatives 一致口径）。
+_SCENE3D_ANALYSIS_TABLE: Dict[str, Dict[str, Any]] = {
+    "viewshed": {
+        "tool": "viewshed_analysis",
+        "capability_key": "viewshed_analysis",
+        "required": ("raster_path", "observer_x", "observer_y"),
+        "family": "observer",
+        "algorithm": "terrain.viewshed",
+        "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
+        "alternatives": [
+            "先经数据面注册 raster-dem 源（G3D01 DEM 管线）",
+            "缓冲区近似可见性（语义不同，须向用户披露差异）",
+        ],
+    },
+    "line_of_sight": {
+        "tool": "line_of_sight_analysis",
+        "capability_key": "line_of_sight",
+        "required": ("raster_path", "observer_x", "observer_y",
+                     "target_x", "target_y"),
+        "family": "observer",
+        "algorithm": "terrain.line_of_sight",
+        "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
+        "alternatives": [
+            "先经数据面注册 raster-dem 源（G3D01 DEM 管线）",
+            "viewshed 掩膜 + 观察点（语义差异须披露）",
+        ],
+    },
+    "terrain_profile": {
+        "tool": "terrain_profile",
+        "capability_key": "terrain_measurement",
+        "required": ("raster_path", "vertices"),
+        "family": "polyline",
+        "algorithm": "terrain.profile",
+        "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
+        "alternatives": [
+            "先经数据面注册 raster-dem 源（G3D01 DEM 管线）",
+            "2D 折线量测（无高程语义，须披露差异）",
+        ],
+    },
+    "surface_distance": {
+        "tool": "surface_distance_analysis",
+        "capability_key": "terrain_measurement",
+        "required": ("raster_path", "vertices"),
+        "family": "polyline",
+        "algorithm": "terrain.surface_distance",
+        "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
+        "alternatives": [
+            "先经数据面注册 raster-dem 源（G3D01 DEM 管线）",
+            "2D 平面距离（无地形语义，须披露差异）",
+        ],
+    },
+    "surface_area": {
+        "tool": "surface_area_analysis",
+        "capability_key": "terrain_measurement",
+        "required": ("raster_path", "polygon"),
+        "family": "polygon",
+        "algorithm": "terrain.surface_area",
+        "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
+        "alternatives": [
+            "先经数据面注册 raster-dem 源（G3D01 DEM 管线）",
+            "2D 平面面积（无粗糙度语义，须披露差异）",
+        ],
+    },
+    "cut_fill_volume": {
+        "tool": "cut_fill_volume_analysis",
+        "capability_key": "cut_fill_volume",
+        "required": ("raster_path", "polygon"),
+        "family": "polygon",
+        "algorithm": "terrain.cut_fill_volume",
+        "decline_code": "SCENE_CAP_VIEWSHED_NO_DEM",
+        "alternatives": [
+            "先经数据面注册 raster-dem 源（G3D01 DEM 管线）",
+            "surface_area_analysis（面积而非体积，语义不同）",
+        ],
+    },
+}
+
+#: 参数族 → 该族分析接受的顶层参数（review G4：跨族参数不交叉污染——
+#: 给土方传 observer_x 是调用方错误，泛化透传只会得到内层工具的 generic
+#: 校验错，不如在编排层就按族过滤并留下 typed 提示）。
+_FAMILY_PARAMS = {
+    "observer": {"raster_path", "observer_x", "observer_y", "target_x",
+                 "target_y", "observer_height", "target_height",
+                 "max_distance"},
+    "polyline": {"raster_path", "vertices"},
+    "polygon": {"raster_path", "polygon", "base_z", "reference",
+                "max_invalid_fraction"},
 }
 
 
@@ -272,6 +367,29 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
             # 不阻断场景应用，errors 透出）。
             out["degrade_reason_recorded"] = await _record_degrade_reason(
                 session_id, decision, res)
+            # G3D-V2-C（ADR-0276）：场景突变后对账 3D 分析绑定——观察点
+            # 语义漂移/DEM 源消失的 Agent 可观察 ACK（stale_analyses 有界
+            # 投影；fresh 不上行省 token）。相机通道不消费本面（fly_camera
+            # 与 SetViewIntent 不触发失效——视域与镜头无关）。
+            try:
+                from app.services.gis_harness.scene3d.analysis_binding_store import (
+                    evaluate_session_staleness,
+                    stale_verdicts_only,
+                )
+
+                out["stale_analyses"] = stale_verdicts_only(
+                    await evaluate_session_staleness(
+                        session_id,
+                        mapspec=res.get("mapspec")
+                        if isinstance(res.get("mapspec"), dict)
+                        else mapspec,
+                    )
+                )
+            except Exception as staleness_exc:  # noqa: BLE001 — 只读对账面 fail-open
+                logger.warning(
+                    "apply_scene_representation staleness check failed: %s",
+                    staleness_exc,
+                )
             return out
         except Exception as e:  # noqa: BLE001
             logger.error("apply_scene_representation failed: %s", e)
@@ -403,23 +521,34 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
           capabilities=["scene_representation"],
           tier=2, domains=["raster"],
           description=(
-              "3D 分析编排（当前支持 viewshed）：先过 capability 门（DEM 证据 +"
-              " viewshed_analysis 工具注册），不可用即 typed decline + "
-              "alternatives；可用则经 registry 真实 dispatch viewshed_analysis"
-              "（单一执行真相），返回科学证据 + MethodUseContract 摘要 + "
-              "失效绑定（观察点/DEM 源/结果层，供 staleness 裁决与重算）。"
-              "\n何时不用：非视域分析（line_of_sight/skyline 待科学面补齐——"
-              "decline 会给 alternatives）。"
+              "3D 分析编排（viewshed/line_of_sight/terrain_profile/"
+              "surface_distance/surface_area/cut_fill_volume 六类）：先过 "
+              "capability 门（DEM 证据 + 目标工具注册），不可用即 typed "
+              "decline + alternatives；可用则经 registry 真实 dispatch 目标"
+              "分析工具（单一执行真相），返回科学证据 + MethodUseContract 摘要"
+              " + 失效绑定登记与旧绑定对账（观察点/DEM 源/结果层——拖点/换源"
+              "判旧、camera-only 不判旧的 staleness 裁决面）。"
+              "\n何时不用：天际线 skyline（算法未实现——decline 给 alternatives）。"
           ),
           param_descriptions={
               "session_id": "会话 ID",
-              "analysis": "分析目标（当前仅 viewshed）",
+              "analysis": "分析目标：viewshed | line_of_sight | terrain_profile | "
+                          "surface_distance | surface_area | cut_fill_volume",
               "raster_path": "DEM GeoTIFF 路径（data_dir 内；来自数据面步骤的真实 ref）",
               "observer_x": "观察点世界 x（栅格 CRS 单位）",
               "observer_y": "观察点世界 y（栅格 CRS 单位）",
-              "observer_height": "观察者离地高度（米，默认 2）",
+              "target_x": "目标点世界 x（line_of_sight 必需）",
+              "target_y": "目标点世界 y（line_of_sight 必需）",
+              "vertices": "折线顶点 [[x,y],...]（terrain_profile/surface_distance；JSON 文本或内联）",
+              "polygon": "区域多边形顶点 [[x,y],...]（surface_area/cut_fill_volume）",
+              "base_z": "cut_fill_volume 基准面绝对高程（reference=constant 时必需）",
+              "reference": "cut_fill_volume 基准面模式：constant（默认）| mean",
+              "observer_height": "观察者离地高度（米，默认 2；#1829 兼容顶层参数）",
               "target_height": "目标离地高度（米，默认 0）",
-              "max_distance": "最大视线距离（米，默认 5000）",
+              "max_distance": "最大视线距离（米，默认 5000；viewshed/LOS）",
+              "options": "其余分析参数 JSON（curvature/observer_z/sampling_step_m/nodata_policy/vertical_datum/"
+                         "curvature/observer_z/sampling_step_m/nodata_policy/vertical_datum/"
+                         "z_units 等——由目标工具的参数契约校验）",
               "dem_source_id": "绑定的 spec 内 raster-dem 源 id（失效对账用，可选）",
               "result_layer_id": "结果挂载层 id（失效对账用，可选）",
               "observer_feature_id": "观察点要素 id（用户点选语义，失效对账用，可选）",
@@ -430,7 +559,7 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
           latency_class="medium",
           memory_class="heavy",
           scale_class="large",
-          tags=("3d", "viewshed", "视域", "通视", "编排", "失效"),
+          tags=("3d", "viewshed", "视域", "通视", "剖面", "土方", "编排", "失效"),
           output_semantic_type="stats",
           result_size_policy="inline_small",
           crs_semantics="crs_agnostic",
@@ -442,9 +571,16 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
         raster_path: str = "",
         observer_x: Optional[float] = None,
         observer_y: Optional[float] = None,
-        observer_height: float = 2,
-        target_height: float = 0,
-        max_distance: float = 5000,
+        target_x: Optional[float] = None,
+        target_y: Optional[float] = None,
+        vertices: Optional[List[List[float]]] = None,
+        polygon: Optional[List[List[float]]] = None,
+        base_z: Optional[float] = None,
+        reference: str = "constant",
+        observer_height: Optional[float] = None,
+        target_height: Optional[float] = None,
+        max_distance: Optional[float] = None,
+        options: Optional[str] = None,
         dem_source_id: Optional[str] = None,
         result_layer_id: Optional[str] = None,
         observer_feature_id: Optional[str] = None,
@@ -453,82 +589,179 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
         if not session_id:
             return {"success": False, "message": "Missing session_id", "command": command}
         try:
-            from app.services.gis_harness.scene3d.capabilities import (
-                probe_scene3d_capabilities,
+            from app.services.gis_harness.scene3d.analysis_binding_store import (
+                evaluate_session_staleness,
+                register_analysis_binding,
+                stale_verdicts_only,
             )
             from app.services.gis_harness.scene3d.evidence import (
                 verify_vertical_evidence,
             )
+            from app.services.gis_harness.scene3d.staleness import AnalysisBinding
 
-            if analysis != "viewshed":
+            spec_entry = _SCENE3D_ANALYSIS_TABLE.get(analysis)
+            if spec_entry is None:
                 return {
                     "success": False,
                     "command": command,
                     "declined": True,
                     "reason_code": "SCENE_CAP_ALGORITHM_PENDING_G3D03",
-                    "message": f"analysis={analysis!r} 暂不可用",
+                    "message": f"analysis={analysis!r} 暂不可用 [SCENE_CAP_ALGORITHM_PENDING_G3D03]",
                     "alternatives": [
-                        "viewshed（视域掩膜；语义差异须披露）"] if analysis in (
-                        "line_of_sight", "skyline") else [],
+                        "viewshed（视域掩膜）", "line_of_sight（两点通视）",
+                        "terrain_profile / surface_distance / surface_area",
+                        "cut_fill_volume（基准面土方）",
+                    ],
                 }
 
             mapspec = await mapspec_store.get_mapspec(session_id)
             evidence = verify_vertical_evidence(mapspec)
-            capabilities = probe_scene3d_capabilities(
-                evidence, geometry_kinds=_geometry_kinds_of(mapspec))
-            entry = capabilities.entry("viewshed_analysis")
-            if entry is None or entry.unavailable:
+            # 数据资格门：六类分析的输入都是 terrain_surface——DEM 证据
+            # 缺席统一 typed decline（不猜测数据路径）。
+            if not (evidence.dem_source_ids() or evidence.has_elevation):
                 return {
                     "success": False,
                     "command": command,
                     "declined": True,
-                    "reason_code": entry.reason_code if entry else "SCENE_CAP_UNKNOWN",
-                    "message": "viewshed 能力不可用（capability 门拒绝）",
-                    "alternatives": entry.alternatives if entry else [],
+                    "reason_code": spec_entry["decline_code"],
+                    "message": (
+                        f"{analysis} 需要 DEM 数据事实（capability 门拒绝）"
+                        f" [{spec_entry['decline_code']}]"
+                    ),
+                    "alternatives": spec_entry["alternatives"],
                 }
             if not raster_path:
                 return {"success": False, "command": command,
                         "declined": True,
                         "reason_code": "SCENE_ANALYSIS_MISSING_RASTER_PATH",
                         "message": "缺 raster_path（DEM GeoTIFF 真实 ref 路径）——"
-                                   "本工具不猜测数据路径",
+                                   "本工具不猜测数据路径 [SCENE_ANALYSIS_MISSING_RASTER_PATH]",
                         "alternatives": []}
-            if observer_x is None or observer_y is None:
+            # 必需参数按分析族分派检查（观察点族 / 折线族 / 多边形族）；
+            # 跨族参数按族过滤（review G4）——不向内层工具透传无关参数。
+            family_allowed = _FAMILY_PARAMS[spec_entry["family"]]
+            args: Dict[str, Any] = {"raster_path": raster_path}
+            candidate: Dict[str, Any] = {}
+            if observer_x is not None:
+                candidate["observer_x"] = float(observer_x)
+            if observer_y is not None:
+                candidate["observer_y"] = float(observer_y)
+            if target_x is not None:
+                candidate["target_x"] = float(target_x)
+            if target_y is not None:
+                candidate["target_y"] = float(target_y)
+            if vertices is not None:
+                candidate["vertices"] = vertices
+            if polygon is not None:
+                candidate["polygon"] = polygon
+            if base_z is not None:
+                candidate["base_z"] = float(base_z)
+            if analysis == "cut_fill_volume":
+                candidate["reference"] = reference
+            # #1829 兼容约定：viewshed/LOS 的三项高度/距离参数保持顶层
+            # 可选（options JSON 同名键优先生效）。
+            if observer_height is not None:
+                candidate["observer_height"] = float(observer_height)
+            if target_height is not None:
+                candidate["target_height"] = float(target_height)
+            if max_distance is not None:
+                candidate["max_distance"] = float(max_distance)
+            ignored_top_level: List[str] = []
+            for key, value in candidate.items():
+                if key in family_allowed:
+                    args[key] = value
+                else:
+                    ignored_top_level.append(key)
+            # options JSON 透传（目标工具的 apply_contract 是参数权威——
+            # 编排层不做第二套校验）。
+            ignored_options: List[str] = []
+            if options:
+                try:
+                    extra = json.loads(options) if isinstance(options, str) else options
+                except json.JSONDecodeError as exc:
+                    return {"success": False, "command": command,
+                            "declined": True,
+                            "reason_code": "SCENE_ANALYSIS_BAD_OPTIONS_JSON",
+                            "message": f"options 不是合法 JSON：{exc} [SCENE_ANALYSIS_BAD_OPTIONS_JSON]",
+                            "alternatives": []}
+                if isinstance(extra, dict):
+                    passthrough = ("observer_height", "target_height",
+                                   "max_distance", "curvature", "observer_z",
+                                   "target_z", "sampling_step_m", "nodata_policy",
+                                   "vertical_datum", "z_units",
+                                   "override_vertical_datum",
+                                   "max_invalid_fraction", "include_geometry")
+                    for key in passthrough:
+                        if key in extra and extra[key] is not None:
+                            args[key] = extra[key]
+                    # review G3：未知 options 键不静默丢弃（typo 参数按
+                    # 默认值跑是 fail-open）——回显给调用方。
+                    ignored_options = [
+                        k for k in extra if k not in passthrough
+                    ]
+            missing = [
+                key for key in spec_entry["required"] if args.get(key) in (None, "", [])
+            ]
+            if missing:
                 return {"success": False, "command": command,
                         "declined": True,
-                        "reason_code": "SCENE_ANALYSIS_MISSING_OBSERVER",
-                        "message": "缺观察点坐标（observer_x/observer_y）",
+                        "reason_code": "SCENE_ANALYSIS_MISSING_PARAMS",
+                        "message": f"缺必需参数：{', '.join(missing)}（analysis={analysis}）"
+                        " [SCENE_ANALYSIS_MISSING_PARAMS]",
                         "alternatives": []}
 
             from app.agent_pi_bridge import try_get_tool_registry
             registry = try_get_tool_registry()
-            if registry is None or not registry.has("viewshed_analysis"):
+            tool_name = spec_entry["tool"]
+            if registry is None or not registry.has(tool_name):
                 return {"success": False, "command": command, "declined": True,
                         "reason_code": "SCENE_CAP_TOOL_NOT_REGISTERED",
-                        "message": "viewshed_analysis 未注册", "alternatives": []}
+                        "message": f"{tool_name} 未注册", "alternatives": []}
 
-            result = await registry.dispatch("viewshed_analysis", {
-                "raster_path": raster_path,
-                "observer_x": float(observer_x),
-                "observer_y": float(observer_y),
-                "observer_height": float(observer_height),
-                "target_height": float(target_height),
-                "max_distance": float(max_distance),
-            }, session_id=session_id)
+            # 执行前对账旧绑定：上一轮分析的失效结论随本次 ACK 上行
+            #（agent 可观察——"换观察点后旧视域已判旧"）。
+            prior_stale: List[Dict[str, Any]] = []
+            try:
+                prior_stale = stale_verdicts_only(
+                    await evaluate_session_staleness(
+                        session_id, mapspec=mapspec,
+                        dem_source_ids=evidence.dem_source_ids() or None,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 — 只读对账面 fail-open
+                logger.warning("staleness pre-check failed: %s", exc)
+
+            dispatch_args = dict(args)
+            if "vertices" in dispatch_args and isinstance(dispatch_args["vertices"], list):
+                dispatch_args["vertices"] = json.dumps(dispatch_args["vertices"])
+            if "polygon" in dispatch_args and isinstance(dispatch_args["polygon"], list):
+                dispatch_args["polygon"] = json.dumps(dispatch_args["polygon"])
+            result = await registry.dispatch(
+                tool_name, dispatch_args, session_id=session_id)
             if not isinstance(result, dict) or not result.get("success"):
+                inner = result if isinstance(result, dict) else {}
+                inner_kind = str(
+                    inner.get("reason_code")
+                    or inner.get("code")
+                    or inner.get("error")
+                    or inner.get("message")
+                    or ""
+                )[:160]
                 return {
                     "success": False,
                     "command": command,
                     "declined": False,
-                    "message": "viewshed_analysis 执行失败（真实 dispatch）",
-                    "execution": result if isinstance(result, dict) else None,
+                    "message": (
+                        f"{tool_name} 执行失败（真实 dispatch）：{inner_kind}"
+                    ),
+                    "execution": inner or None,
                 }
 
             # MethodUseContract 摘要（科学适用性披露面；权威在 registries）
             method_digest: Dict[str, Any] = {}
             try:
                 from app.lib.gis.method_use_contract import build_method_use_contract
-                contract = build_method_use_contract("terrain.viewshed")
+                contract = build_method_use_contract(spec_entry["algorithm"])
                 method_digest = {
                     "algorithm_id": contract.algorithm_id,
                     "capabilities": contract.capabilities,
@@ -541,26 +774,56 @@ def register_scene_orchestration_tools(registry: ToolRegistry):
             except Exception as exc:  # noqa: BLE001 — 披露面失败不吞分析结果
                 method_digest = {"error": str(exc)[:200]}
 
-            binding = {
-                "analysis_goal": "viewshed",
-                "result_layer_id": result_layer_id or "",
-                "observer_feature_id": observer_feature_id or "",
+            binding = AnalysisBinding(
+                analysis_goal=analysis,
                 # 只绑定显式提供的源 id——raster_path 与 spec 源的对应关系
                 # 本层不可核实，回填会把失效溯源建立在猜测上（零编造纪律）
-                "dem_source_id": dem_source_id or "",
-                "dem_source_binding": "explicit" if dem_source_id else "none",
-                "observer_x": float(observer_x),
-                "observer_y": float(observer_y),
-                "staleness_schema": "scene3d_staleness.v1",
-            }
-            return {
+                dem_source_id=dem_source_id or "",
+                result_layer_id=result_layer_id or "",
+                observer_feature_id=observer_feature_id or "",
+                observer_x=float(observer_x) if observer_x is not None else None,
+                observer_y=float(observer_y) if observer_y is not None else None,
+            )
+            binding_ack: Dict[str, Any] = {"staleness_schema": "scene3d_staleness.v1"}
+            try:
+                binding_ack.update(
+                    await register_analysis_binding(session_id, binding)
+                )
+            except Exception as exc:  # noqa: BLE001 — 登记失败不吞分析结果
+                binding_ack["register_error"] = str(exc)[:160]
+
+            _echo_binding = (
+                binding_ack.get("binding")
+                if isinstance(binding_ack.get("binding"), dict)
+                else binding.model_dump()
+            )
+            # 产物提升（G3D-V2-C）：嵌套 dispatch 的 geojson/profile_chart
+            # 提升到编排层结果——外层 ToolDispatchService 缝据此铸
+            # ref:geojson-*/ref:profile-* 并挂层/挂剖面组件（与直调目标
+            # 工具同一上链通道；编排是薄包装，不是第二执行真相）。
+            out: Dict[str, Any] = {
                 "success": True,
                 "command": command,
-                "analysis": "viewshed",
+                "analysis": analysis,
                 "result": result,
                 "method_use_contract": method_digest,
-                "staleness_binding": binding,
+                "staleness_binding": {**_echo_binding,
+                                      "dem_source_binding": "explicit" if dem_source_id else "none"},
+                "staleness_binding_ack": binding_ack,
+                "prior_stale_analyses": prior_stale,
+                "ignored_top_level_params": ignored_top_level,
+                "ignored_options_keys": ignored_options,
             }
+            if isinstance(result.get("geojson"), (dict, list)):
+                out["geojson"] = result["geojson"]
+                slim_inner = {
+                    k: v for k, v in result.items() if k != "geojson"
+                }
+                out["result"] = slim_inner
+                out["result_geojson_hoisted"] = True
+            if isinstance(result.get("profile_chart"), dict):
+                out["profile_chart"] = result["profile_chart"]
+            return out
         except Exception as e:  # noqa: BLE001
             logger.error("run_3d_analysis failed: %s", e)
             return {"success": False, "error": str(e), "command": command}

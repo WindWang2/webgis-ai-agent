@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "b3ffe01a446c82bee6cb73135fe3d1d0f88ef6aa85c5552525be8096e12a3488",
+   "input_fingerprint": "8f8bcedf48c1d7d23e732e843b70fb81c9b593d72dc6b2f8d9207c2e8f88de86",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -42,10 +42,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "afe213700636f2cb89736def4f88d59881e4a21f35ef29cb65852d1d3926f995",
+   "content_fingerprint": "f94be5c7638d2ed28052cbd586e78000be740d1bedd291435d3752ecbbce44de",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "95d471ba2b24176b20356e54af827fbd905b7e344468c245bb692c6a78398298",
+   "input_fingerprint": "ce8501064628e35ec8c1ac8ce32a3e19c6567c86880b93bd6c4b3ef0e4e01395",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -57,10 +57,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_REPORT.md": {
-   "content_fingerprint": "57caab5f8aaffba829cd8954006b86f4edf266adb84fa5bdcf7dd10b6d3716cc",
+   "content_fingerprint": "bf3a0ca4cca0fd3ec4d135c965844333e8a4397b91ba50e248b4868007c952dc",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "17f75494c8702b990d9bcd7845b801b73f422fa8ad9982c346ec40241fb8d09c",
+   "input_fingerprint": "73b0eaff9a84f1c18e0b79ee0fa1628849b5309a0dfc2e5e5359334f1f6bb34c",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -69,10 +69,10 @@
    "scope": "global"
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
-   "content_fingerprint": "b8208b98da35f1ee9032b611972b68f369c6414fdc51c11c6ca078363a252b2d",
+   "content_fingerprint": "a7bf741a613405060db53d13cfb6f349f24050f28344504fdce9ef286fb4f8aa",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "0bf862c655b179f1fdcd0f782d98cc2f86fa2e155c26b4d4774ed14ab664b662",
+   "input_fingerprint": "2d916a0eaf60bf8a8bc0758c2919b86389b719024161c2605f696cd90006c96d",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -93,17 +93,17 @@
    "content_fingerprint": "86f50f58316ec3a7c8d8b2ca9feb658fead814995e0b0a7f036a056a88a7c1aa",
    "generator": "scripts/gen_determinism_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "8a290cdb246d85eab6838c8b1e3595fbac886e691505c791fd43d2dc4a151a77",
+   "input_fingerprint": "30527e841dd1104113d70040673844610153316c3b11435a2b64b092a6fc7175",
    "inputs": [
     "app/lib/gis/algorithms"
    ],
    "scope": "global"
   },
   "docs/quality/certifications/RESOURCE_SAFETY.md": {
-   "content_fingerprint": "bf7d89cf4e1288f41b61da9a1ade58793ded297b00f444d933e6aae3347ed6d8",
+   "content_fingerprint": "7559ceb3f57854c654df5e799135c33fe59d6852bc0782188e351f85c09ceee8",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "0bf862c655b179f1fdcd0f782d98cc2f86fa2e155c26b4d4774ed14ab664b662",
+   "input_fingerprint": "2d916a0eaf60bf8a8bc0758c2919b86389b719024161c2605f696cd90006c96d",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "b3ffe01a446c82bee6cb73135fe3d1d0f88ef6aa85c5552525be8096e12a3488",
+   "input_fingerprint": "8f8bcedf48c1d7d23e732e843b70fb81c9b593d72dc6b2f8d9207c2e8f88de86",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -132,10 +132,10 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "fc3861e23643d0b30caece6e05e34f29bd81b7410f43cc4f1d6941e6a44aec2c",
+   "content_fingerprint": "98a339eef941f7e5a1e92d8a213fc5c9befbf379b5cffb497f28c948be4df216",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "95d471ba2b24176b20356e54af827fbd905b7e344468c245bb692c6a78398298",
+   "input_fingerprint": "ce8501064628e35ec8c1ac8ce32a3e19c6567c86880b93bd6c4b3ef0e4e01395",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -147,10 +147,10 @@
    "scope": "global"
   },
   "docs/quality/quality-report.json": {
-   "content_fingerprint": "eb6c103bb5059c46c6baa1afc5a3bd2fb7d97e8b68dd8fa84b5b898d249ee1c5",
+   "content_fingerprint": "03792d6dc74c8b614e59504043fdc1e4f7b8fef7edb23ebeee9cf8040cfab4d2",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "17f75494c8702b990d9bcd7845b801b73f422fa8ad9982c346ec40241fb8d09c",
+   "input_fingerprint": "73b0eaff9a84f1c18e0b79ee0fa1628849b5309a0dfc2e5e5359334f1f6bb34c",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -159,10 +159,10 @@
    "scope": "global"
   },
   "docs/science/BENCHMARK_MANIFEST.md": {
-   "content_fingerprint": "ddb8115816ac867f479ac417e6892c0e932fb881db6e95d726ca8bae13831b8a",
+   "content_fingerprint": "09100a6669d336f246a24f4133c65b07d6e907b1c8954822ef88a45fa1ce8582",
    "generator": "scripts/gen_science_benchmark_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "b986107a386087e4f1d5dcb7482cf6d01eba52891cc2f8f49d61ac72fb6bab97",
+   "input_fingerprint": "f9f1d81de259e2fdc6da0cef3bebd86197577756525707b2ad59fd1b3d27eaec",
    "inputs": [
     "app/lib/gis/algorithm_registry.py",
     "app/lib/gis/algorithms"
@@ -170,10 +170,10 @@
    "scope": "global"
   },
   "docs/science/CAPABILITY_CATALOG.md": {
-   "content_fingerprint": "ad76c6dea299e335e884d478b1f1c1a67637bd15bcf240453973ac300ec787e2",
+   "content_fingerprint": "4c908099be63fb33139f7397f55ad2ebcc498471a454c5f8fdad17ccb09d99fc",
    "generator": "scripts/gen_capability_catalog.py",
    "generator_version": 1,
-   "input_fingerprint": "be35c77ce94001decacbd338544c53ce7f1792665d1d7e7ca23a55b31651747e",
+   "input_fingerprint": "201095628cd2c69ff6a13f647e4853ac949cd59def9e04fba5fecb28ee9e8734",
    "inputs": [
     "app/lib/gis/capability_registry.py",
     "app/lib/gis/capabilities",

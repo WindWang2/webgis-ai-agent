@@ -699,6 +699,11 @@ class ToolDispatchService:
             analysis_key: Optional[str] = None
             input_shapes: Optional[Dict[str, dict]] = None
             reused_result: Optional[Dict[str, Any]] = None
+            # _parsed 在复用块内条件赋值；非能力工具（fly_camera 等）走到
+            # 下方 artifact 登记块的 `if _parsed is not None` 时未绑定 →
+            # UnboundLocalError 经 best_effort 掩盖成警告、登记被静默跳过
+            # （G3D-V2-C E2E 显形；预初始化恢复登记路径）。
+            _parsed = None
             if os.getenv("GIS_ANALYSIS_REUSE", "1") != "0":
                 # #1549：复用是纯加速，查找失败绝不阻塞执行；经 best_effort
                 # 可见降级（跳过复用 = 如实重算，不留静默痕迹）。
@@ -1166,6 +1171,18 @@ class ToolDispatchService:
                 # the ref. Registry-level dispatch (runner/tests) still sees
                 # the inline FC — the seam is the only minting consumer.
                 result.pop("uncertainty", None)
+            # G3D-V2-C（ADR-0276）：剖面图 artifact。与 #517/uncertainty
+            # 同一「认可键 → ref」纪律：工具只给 {chart: ChartData} 数据，
+            # 缝负责铸造（prefix=profile → ref:profile-*）并剥内联体——
+            # elevation_profile 面板经 chart-artifact 工件通道拉取。
+            profile_ref: Optional[str] = None
+            if isinstance(result.get("profile_chart"), dict):
+                profile_ref = await self._session_data.store(
+                    session_id, result["profile_chart"], prefix="profile"
+                )
+                result = dict(result)
+                result["profile_ref"] = profile_ref
+                result.pop("profile_chart", None)
             if result.get("type") == "heatmap_raster":
                 heatmap_ref = await self._session_data.store(
                     session_id, result, prefix="heatmap"
@@ -1182,6 +1199,7 @@ class ToolDispatchService:
                 is_unavailable_ref(geojson_ref)
                 or is_unavailable_ref(heatmap_ref)
                 or is_unavailable_ref(uncertainty_ref)
+                or is_unavailable_ref(profile_ref)
             ):
                 self._release_key(executed_tools, tool_key, session_id or "")
                 return ToolDispatchResult(
@@ -1653,6 +1671,47 @@ class ToolDispatchService:
             ):
                 if lifecycle.get(key) is not None:
                     result[key] = lifecycle[key]
+            # G3D-V2-C（ADR-0276）：剖面伴生组件。带 profile_ref 的分析
+            # （terrain_profile 等）在层挂载后 upsert elevation_profile
+            # 面板——失败是 additive 证据（层已挂，面板缺席可披露，不推翻
+            # 已完成的制图授权）；成功则刷新权威 mapspec/指纹（组件突变
+            # 产生新代）供下方一致性校验与 render_work 信封消费。
+            _profile_ref = result.get("profile_ref")
+            if isinstance(_profile_ref, str) and _profile_ref.startswith("ref:profile-"):
+                try:
+                    _meta_info = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+                    _datum = str(_meta_info.get("vertical_datum") or "").strip()
+                    comp = await mapspec_store.patch_component(
+                        session_id,
+                        component_id="elevation-profile",
+                        component_type="elevation_profile",
+                        options={
+                            "profileRef": _profile_ref,
+                            "unit": "m",
+                            **({"verticalDatum": _datum} if _datum else {}),
+                        },
+                        upsert=True,
+                        actor=f"tool:{tool_name}",
+                    )
+                    if comp.get("success") and isinstance(comp.get("mapspec"), dict):
+                        mapspec = comp["mapspec"]
+                        result["mapspec"] = mapspec
+                        result["mapspec_fingerprint"] = (
+                            cartographic_fingerprint(mapspec)
+                        )
+                        lifecycle["mapspec"] = mapspec
+                    result["profile_component"] = {
+                        "component_id": "elevation-profile",
+                        "component_type": "elevation_profile",
+                        "profile_ref": _profile_ref,
+                        "success": bool(comp.get("success")),
+                    }
+                except Exception as profile_exc:  # noqa: BLE001 — additive
+                    result["profile_component"] = {
+                        "component_id": "elevation-profile",
+                        "profile_ref": _profile_ref,
+                        "error": str(profile_exc)[:160],
+                    }
             # Defensive consistency check: never attach a runtime generation
             # whose fingerprint is not the just-persisted desired state.
             if result.get("mapspec_fingerprint") != cartographic_fingerprint(mapspec):
