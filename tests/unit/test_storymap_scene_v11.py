@@ -4,7 +4,6 @@
 v1.0 round-trip 兼容、弧角色场景档投影（证据门 fail-closed）、资产
 save/load/损坏 typed 标记、HTTP 端点（所有权守卫 + 422/404 语义）。
 """
-import asyncio
 import uuid
 
 import pytest
