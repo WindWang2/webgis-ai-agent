@@ -971,7 +971,7 @@
      },
      "register_ref": {
       "default": false,
-      "description": "注册到会话产物台账（V3 摄入管线增值车道，仅矢量；失败不阻断上传）",
+      "description": "注册到会话产物台账（矢量走 V3 摄入管线；栅格走 DEM 摄入车道；失败不阻断上传）",
       "title": "Register Ref",
       "type": "boolean"
      },
@@ -986,6 +986,30 @@
       ],
       "description": "关联的会话 ID",
       "title": "Session Id"
+     },
+     "vertical_datum": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "DEM 垂直基准声明（如 EGM96/EGM2008/ellipsoid(WGS84)/local）。不声明且文件不可读出时仅显示，绝不偷换",
+      "title": "Vertical Datum"
+     },
+     "vertical_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "DEM 高程单位声明（m/ft/us_survey_ft）。非米单位生成换算副本并留证据",
+      "title": "Vertical Unit"
      }
     },
     "required": [
@@ -1119,6 +1143,16 @@
       "minimum": 0.0,
       "title": "Pitch",
       "type": "number"
+     },
+     "scene": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/KeyframeScene"
+       },
+       {
+        "type": "null"
+       }
+      ]
      },
      "t": {
       "default": 0.0,
@@ -1999,7 +2033,7 @@
      "project_id": {
       "anyOf": [
        {
-        "maxLength": 128,
+        "maxLength": 64,
         "type": "string"
        },
        {
@@ -3318,6 +3352,79 @@
      "component_id"
     ],
     "title": "DuplicateComponentBody",
+    "type": "object"
+   },
+   "ElevationProfileAvailability": {
+    "additionalProperties": false,
+    "description": "静态高程画像的部署期可用性投影（摘要 API 的静态腿）。",
+    "properties": {
+     "attribution": {
+      "title": "Attribution",
+      "type": "string"
+     },
+     "deployment_available": {
+      "title": "Deployment Available",
+      "type": "boolean"
+     },
+     "encoding": {
+      "title": "Encoding",
+      "type": "string"
+     },
+     "kind": {
+      "title": "Kind",
+      "type": "string"
+     },
+     "qualification": {
+      "enum": [
+       "analysis_grade",
+       "display_only",
+       "unavailable",
+       "unknown"
+      ],
+      "title": "Qualification",
+      "type": "string"
+     },
+     "source_id": {
+      "title": "Source Id",
+      "type": "string"
+     },
+     "synthetic": {
+      "title": "Synthetic",
+      "type": "boolean"
+     },
+     "unavailable_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unavailable Reason"
+     },
+     "vertical_datum": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vertical Datum"
+     }
+    },
+    "required": [
+     "source_id",
+     "kind",
+     "encoding",
+     "qualification",
+     "synthetic",
+     "attribution",
+     "deployment_available"
+    ],
+    "title": "ElevationProfileAvailability",
     "type": "object"
    },
    "EmbedBody": {
@@ -5241,6 +5348,43 @@
     "title": "JobView",
     "type": "object"
    },
+   "KeyframeScene": {
+    "additionalProperties": true,
+    "description": "v1.1：关键帧携带的场景状态（G3D05）。\n\n只覆盖**叙事镜头关心的两个旋钮**：mode（2d/2.5d/3d 表达）与\nterrain exaggeration —— 完整场景配置（terrain 源/垂直基准等）仍由\n会话 MapSpec.scene 单一真相持有，StoryMap 不复制第二份（与\nscene_disclosure 组件同一防漂移纪律）。字段缺省 = 沿用当前场景。",
+    "properties": {
+     "exaggeration": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0.0,
+        "maximum": 10.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Exaggeration"
+     },
+     "mode": {
+      "anyOf": [
+       {
+        "enum": [
+         "2d",
+         "2.5d",
+         "3d"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mode"
+     }
+    },
+    "title": "KeyframeScene",
+    "type": "object"
+   },
    "LLMConfig": {
     "description": "当前生效的 LLM 配置（api_key 恒为掩码）。",
     "examples": [
@@ -6815,6 +6959,62 @@
      "created_at"
     ],
     "title": "MapProductVersionSummary",
+    "type": "object"
+   },
+   "MapResourceAvailabilitySummary": {
+    "additionalProperties": false,
+    "description": "`GET /layers/terrain-sources` 的 response 形状（契约锁定）。",
+    "properties": {
+     "elevation_profiles": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/ElevationProfileAvailability"
+      },
+      "title": "Elevation Profiles",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "session_terrain_sources": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/SessionTerrainSourceEntry"
+      },
+      "title": "Session Terrain Sources",
+      "type": "array"
+     },
+     "terrain_3d_available": {
+      "default": false,
+      "title": "Terrain 3D Available",
+      "type": "boolean"
+     },
+     "terrain_3d_detail": {
+      "default": "",
+      "title": "Terrain 3D Detail",
+      "type": "string"
+     },
+     "terrain_3d_reason_code": {
+      "default": "NO_TERRAIN_SOURCE",
+      "title": "Terrain 3D Reason Code",
+      "type": "string"
+     },
+     "terrain_3d_status": {
+      "default": "unavailable",
+      "enum": [
+       "available",
+       "available_with_limits",
+       "unavailable"
+      ],
+      "title": "Terrain 3D Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "MapResourceAvailabilitySummary",
     "type": "object"
    },
    "MapStatePushRequest": {
@@ -9168,6 +9368,28 @@
     "title": "ProposalProjectionResponse",
     "type": "object"
    },
+   "QualificationReason": {
+    "additionalProperties": false,
+    "description": "一条可编程消费的不合格/警告因素。",
+    "properties": {
+     "code": {
+      "minLength": 1,
+      "title": "Code",
+      "type": "string"
+     },
+     "detail": {
+      "minLength": 1,
+      "title": "Detail",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "detail"
+    ],
+    "title": "QualificationReason",
+    "type": "object"
+   },
    "QualityAuditResponse": {
     "additionalProperties": true,
     "description": "POST /projects/{project_id}/quality-audit 响应（质检报告投影）。",
@@ -11409,6 +11631,40 @@
     "title": "SessionSummary",
     "type": "object"
    },
+   "SessionTerrainSourceEntry": {
+    "additionalProperties": false,
+    "description": "可用性摘要中的单条会话 DEM 源。",
+    "properties": {
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "receipt": {
+      "$ref": "#/components/schemas/TerrainSourceReceipt"
+     },
+     "ref_id": {
+      "title": "Ref Id",
+      "type": "string"
+     },
+     "tilejson_url": {
+      "title": "Tilejson Url",
+      "type": "string"
+     },
+     "tiles_url_template": {
+      "title": "Tiles Url Template",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "name",
+     "receipt",
+     "tiles_url_template",
+     "tilejson_url"
+    ],
+    "title": "SessionTerrainSourceEntry",
+    "type": "object"
+   },
    "SetLayoutBody": {
     "properties": {
      "client_mutation_id": {
@@ -11495,6 +11751,53 @@
      "expected_revision"
     ],
     "title": "SetLayoutBody",
+    "type": "object"
+   },
+   "SetSceneBody": {
+    "description": "G3D05（ADR-0275）：用户场景控制器写通道。\n\n与 Agent 的 set_map_scene 工具汇入同一 SetSceneIntent 事务管线\n（幂等/409/503 语义一致）；scene=None = 清除场景回平面。shape 由\n引擎内 MapSceneConfig 严格校验，非法值整笔拒绝。",
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "set_scene",
+      "title": "Intent",
+      "type": "string"
+     },
+     "scene": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scene"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision"
+    ],
+    "title": "SetSceneBody",
     "type": "object"
    },
    "SetTimeBody": {
@@ -12179,6 +12482,14 @@
      "title": {
       "title": "Title",
       "type": "string"
+     },
+     "visible_layer_ids": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Visible Layer Ids",
+      "type": "array"
      }
     },
     "required": [
@@ -12294,7 +12605,7 @@
     "additionalProperties": true,
     "properties": {
      "engine_version": {
-      "default": "storymap-1.0",
+      "default": "storymap-1.1",
       "title": "Engine Version",
       "type": "string"
      },
@@ -12374,7 +12685,7 @@
       "$ref": "#/components/schemas/StoryMapMetadata"
      },
      "schema_version": {
-      "default": "1.0",
+      "default": "1.1",
       "title": "Schema Version",
       "type": "string"
      }
@@ -12689,6 +13000,221 @@
     "title": "TemplateView",
     "type": "object"
    },
+   "TerrainSourceReceipt": {
+    "additionalProperties": false,
+    "description": "DEM 摄入回执 —— 摄入期一锤定音，渲染/发现不再变义。",
+    "properties": {
+     "bbox_epsg4326": {
+      "anyOf": [
+       {
+        "maxItems": 4,
+        "minItems": 4,
+        "prefixItems": [
+         {
+          "type": "number"
+         },
+         {
+          "type": "number"
+         },
+         {
+          "type": "number"
+         },
+         {
+          "type": "number"
+         }
+        ],
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox Epsg4326"
+     },
+     "content_sha256": {
+      "default": "",
+      "title": "Content Sha256",
+      "type": "string"
+     },
+     "crs": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Crs"
+     },
+     "elevation_max_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Elevation Max M"
+     },
+     "elevation_min_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Elevation Min M"
+     },
+     "ground_sample_distance_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ground Sample Distance M"
+     },
+     "height": {
+      "default": 0,
+      "title": "Height",
+      "type": "integer"
+     },
+     "nodata": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Nodata"
+     },
+     "nodata_hole_fraction": {
+      "default": 0.0,
+      "title": "Nodata Hole Fraction",
+      "type": "number"
+     },
+     "non_finite_pixels": {
+      "default": 0,
+      "title": "Non Finite Pixels",
+      "type": "integer"
+     },
+     "outlier_envelope_m": {
+      "default": [
+       -500.0,
+       8850.0
+      ],
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "number"
+       }
+      ],
+      "title": "Outlier Envelope M",
+      "type": "array"
+     },
+     "outlier_pixels": {
+      "default": 0,
+      "title": "Outlier Pixels",
+      "type": "integer"
+     },
+     "qualification": {
+      "enum": [
+       "analysis_grade",
+       "display_only",
+       "unavailable"
+      ],
+      "title": "Qualification",
+      "type": "string"
+     },
+     "reasons": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/QualificationReason"
+      },
+      "title": "Reasons",
+      "type": "array"
+     },
+     "registered_at": {
+      "default": "",
+      "title": "Registered At",
+      "type": "string"
+     },
+     "synthetic": {
+      "default": false,
+      "title": "Synthetic",
+      "type": "boolean"
+     },
+     "unit_conversion": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/UnitConversionEvidence"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "vertical_datum": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vertical Datum"
+     },
+     "vertical_datum_source": {
+      "default": "unavailable",
+      "enum": [
+       "declared",
+       "geotiff_tag",
+       "unavailable"
+      ],
+      "title": "Vertical Datum Source",
+      "type": "string"
+     },
+     "vertical_unit": {
+      "const": "m",
+      "default": "m",
+      "title": "Vertical Unit",
+      "type": "string"
+     },
+     "vertical_unit_source": {
+      "default": "assumed",
+      "enum": [
+       "declared",
+       "geotiff_tag",
+       "assumed"
+      ],
+      "title": "Vertical Unit Source",
+      "type": "string"
+     },
+     "width": {
+      "default": 0,
+      "title": "Width",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "qualification"
+    ],
+    "title": "TerrainSourceReceipt",
+    "type": "object"
+   },
    "TokenResponse": {
     "description": "登录/注册/refresh 的返回。\n\nS41 起新增 `refresh_token` 字段；旧客户端忽略它不会破坏。",
     "examples": [
@@ -12810,6 +13336,41 @@
      }
     },
     "title": "ToolsListResponse",
+    "type": "object"
+   },
+   "UnitConversionEvidence": {
+    "additionalProperties": false,
+    "description": "非米单位 → 米的显式换算证据（DECISIONS D2：不静默换算）。",
+    "properties": {
+     "factor": {
+      "title": "Factor",
+      "type": "number"
+     },
+     "from_unit": {
+      "enum": [
+       "m",
+       "ft",
+       "us_survey_ft"
+      ],
+      "title": "From Unit",
+      "type": "string"
+     },
+     "input_sha256": {
+      "title": "Input Sha256",
+      "type": "string"
+     },
+     "output_sha256": {
+      "title": "Output Sha256",
+      "type": "string"
+     }
+    },
+    "required": [
+     "from_unit",
+     "factor",
+     "input_sha256",
+     "output_sha256"
+    ],
+    "title": "UnitConversionEvidence",
     "type": "object"
    },
    "UploadDeleteResponse": {
@@ -13035,6 +13596,18 @@
        }
       ],
       "title": "Session Ref"
+     },
+     "terrain": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Terrain"
      },
      "warnings": {
       "default": [],
@@ -16998,6 +17571,7 @@
           "remove_layer": "#/components/schemas/RemoveLayerBody",
           "reorder_layers": "#/components/schemas/ReorderLayersBody",
           "set_layout": "#/components/schemas/SetLayoutBody",
+          "set_scene": "#/components/schemas/SetSceneBody",
           "set_time": "#/components/schemas/SetTimeBody",
           "set_view": "#/components/schemas/SetViewBody"
          },
@@ -17015,6 +17589,9 @@
          },
          {
           "$ref": "#/components/schemas/SetViewBody"
+         },
+         {
+          "$ref": "#/components/schemas/SetSceneBody"
          },
          {
           "$ref": "#/components/schemas/RemoveLayerBody"
@@ -28079,6 +28656,115 @@
     ]
    }
   },
+  "/api/v1/layers/data/{ref_id}/terrain-tiles.json": {
+   "get": {
+    "description": "会话 terrain 源的 TileJSON（G3D-V2-A A4）。\n\nTileJSON 3.0.0 核心字段（tiles/bounds/minzoom/maxzoom/attribution）+\n``terrain`` 扩展块（encoding/垂直单位/垂直基准/资格 receipt 摘要）——\nMapLibre ``raster-dem`` source 的机器可读入口，消费者不再手拼瓦片 URL。\n\n- 鉴权先于任何计算（与瓦片路由同款守卫；匿名 ?token= 支持）；\n- bounds 来自摄入 receipt（EPSG:4326）；非摄入路径（无 receipt 的\n  raster ref）现场开文件头推导，CRS 缺失 → 422 fail-closed（与瓦片\n  路由语义对齐，绝不给无 CRS 的\"地形\"发 TileJSON）；\n- qualification=unavailable 的源在摄入期已不注册 —— 本端点服务的都\n  是可渲染源；receipt 的 display_only 因素原样透传（消费者自行拒绝\n  科学用途）。",
+    "operationId": "get_terrain_tilejson_api_v1_layers_data__ref_id__terrain_tiles_json_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "maxLength": 128,
+       "minLength": 8,
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
+      "in": "query",
+      "name": "token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
+       "title": "Token"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     },
+     {
+      "in": "header",
+      "name": "If-None-Match",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "If-None-Match"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Terrain Tilejson",
+    "tags": [
+     "图层管理",
+     "图层数据"
+    ]
+   }
+  },
   "/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png": {
    "get": {
     "description": "terrarium 编码的地形瓦片（ADR-0199：MapLibre raster-dem 数据面）。\n\n与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**\n（R/G/B = 海拔三通道）。fail-closed：非单波段 / 无 CRS 的 ref 拒绝渲染\n（422 结构化错误码，不伪造地形）；nodata → 透明像素。\n\n安全：与 sibling raster-tiles 路由同款 ``require_owned_session`` 依赖 ——\nDB 层校验 session_id 归属当前用户/owner token（跨租户 DEM 读取在此\n拒绝；review P0-1 修复）。\n\n缓存：走 raster_tile_service 内部 LRU（8 元组键空间与 color 隔离）+\nsingle-flight 去重；错误响应不缓存。",
@@ -28125,8 +28811,29 @@
       "name": "session_id",
       "required": true,
       "schema": {
+       "maxLength": 128,
+       "minLength": 8,
        "title": "Session Id",
        "type": "string"
+      }
+     },
+     {
+      "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
+      "in": "query",
+      "name": "token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
+       "title": "Token"
       }
      },
      {
@@ -28377,6 +29084,92 @@
      }
     ],
     "summary": "Get Layer Descriptor",
+    "tags": [
+     "图层管理",
+     "图层数据"
+    ]
+   }
+  },
+  "/api/v1/layers/terrain-sources": {
+   "get": {
+    "description": "地图资源可用性 typed 摘要（G3D-V2-A A6 —— Agent/前端发现面）。\n\n三腿合成单一真相：\n- 静态高程画像（ELEVATION_SOURCE_PROFILES × evaluate_elevation_availability\n  的部署期投影 —— 与前端生成镜像同一权威目录，不建第二真相）；\n- 本会话已注册 DEM ref（摄入 receipt 透传：资格/垂直基准/合成标记）；\n- 3D 地形总判（对接 get_3d_capabilities 语义；本端点只发布 schema，\n  不实现 C 方向的消费端）。\n\n会话 DEM 在场 → available；无会话源但有部署可用的远端兜底 →\navailable_with_limits（披露兜底为 display_only/混合基准）；否则\nunavailable + 解释（air_gapped 等场景 3D 明确不可用，绝不伪造地形）。",
+    "operationId": "list_terrain_sources_api_v1_layers_terrain_sources_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "maxLength": 128,
+       "minLength": 8,
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
+      "in": "query",
+      "name": "token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
+       "title": "Token"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MapResourceAvailabilitySummary"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Terrain Sources",
     "tags": [
      "图层管理",
      "图层数据"
@@ -34658,6 +35451,144 @@
      }
     ],
     "summary": "Compile Session Storymap",
+    "tags": [
+     "StoryMap",
+     "StoryMap"
+    ]
+   }
+  },
+  "/api/v1/storymap/sessions/{session_id}/spec": {
+   "get": {
+    "description": "读会话最新 StoryMap 资产；无资产 404；损坏资产 typed 标记不伪造。",
+    "operationId": "get_session_story_spec_api_v1_storymap_sessions__session_id__spec_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Session Story Spec",
+    "tags": [
+     "StoryMap",
+     "StoryMap"
+    ]
+   },
+   "post": {
+    "description": "保存会话 StoryMapSpec（覆盖式，revision 单调 +1）。\n\n载荷先过 StoryMapSpec 严格校验（v1.0/v1.1 均可），非法/超界 422 ——\n不存半合法资产。",
+    "operationId": "save_session_story_spec_api_v1_storymap_sessions__session_id__spec_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": true,
+        "title": "Spec",
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Save Session Story Spec Api V1 Storymap Sessions  Session Id  Spec Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Save Session Story Spec",
     "tags": [
      "StoryMap",
      "StoryMap"

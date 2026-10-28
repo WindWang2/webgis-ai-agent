@@ -42,6 +42,12 @@ PR_LANE_PERF_FILES = (
 # test-perf file list: they are wall-clock / large-N and trip the PR
 # 180s thread timeout (or flake under shared runners).
 NIGHTLY_ONLY_PERF_FILES = {
+    # H02 W9 制图清单装配/校验预算为墙钟断言（upper_ms 档位）—— PR 共享
+    # runner 负载下 flake，留 nightly（结构性证据由 cartography marker 承担）。
+    "test_h02_cartography_perf.py": (
+        "manifest assembly / verify semantics wall-clock budgets (upper_ms "
+        "bands); flaky under PR load / --cov"
+    ),
     "test_perf_harness_v2.py": (
         "event-loop lag is a wall-clock assertion; flaky under PR load / --cov"
     ),

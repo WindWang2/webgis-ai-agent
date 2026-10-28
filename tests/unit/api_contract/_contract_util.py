@@ -39,6 +39,9 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/uploads/{upload_id}/geojson"): "GeoJSON passthrough (application/geo+json)",
     ("GET", "/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf"): "vector tile bytes",
     ("GET", "/metrics"): "Prometheus exposition format",
+    # ── G3D-V2-A：TileJSON 手工构造 Response（ETag 字节稳定序列化 + 304 语义，
+    #    response_model 介入会破坏 ETag 可重现性；同族先例 pmtiles-tiles）──
+    ("GET", "/api/v1/layers/data/{ref_id}/terrain-tiles.json"): "custom Response with byte-stable ETag/304",
 }
 
 

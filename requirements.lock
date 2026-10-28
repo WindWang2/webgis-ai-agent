@@ -326,7 +326,7 @@ pyparsing==3.3.3
     # via
     #   matplotlib
     #   rasterio
-pypdf==6.21.1
+pypdf==6.21.2
     # via -r requirements.txt
 pyphen==0.18.1
     # via weasyprint

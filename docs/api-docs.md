@@ -555,6 +555,8 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/layers/descriptor/{ref_id}` | Get Layer Descriptor | LayerDescriptorResponse |
 | `GET` | `/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png` | Get Raster Tile | object |
 | `GET` | `/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png` | Get Terrain Tile | object |
+| `GET` | `/api/v1/layers/data/{ref_id}/terrain-tiles.json` | Get Terrain Tilejson | object |
+| `GET` | `/api/v1/layers/terrain-sources` | List Terrain Sources | MapResourceAvailabilitySummary |
 | `GET` | `/api/v1/layer-types` | Get Layer Types | LayerTypesResponse |
 
 ### 报告生成
@@ -829,6 +831,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/data-fabric/catalog/{item_id}/preview` | Preview Catalog Item | CatalogPreviewResponse |
 | `POST` | `/api/v1/data-fabric/catalog/{item_id}/explain` | Explain Catalog Item | CatalogExplainResponse |
 | `GET` | `/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf` | Get Catalog Mvt Tile | object |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}/pmtiles-tiles/{z}/{x}/{y}` | Get Catalog Pmtiles Tile | object |
 | `POST` | `/api/v1/data-fabric/catalog/{item_id}/query` | Query Catalog Item | CatalogQueryResponse |
 | `GET` | `/api/v1/data-fabric/catalog/{item_id}/features` | Get Catalog Item Features Page | CatalogFeaturesPageResponse |
 | `GET` | `/api/v1/data-fabric/catalog/{item_id}/features/stream` | Stream Catalog Item Features Http | object |
@@ -1013,6 +1016,8 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/storymap/compile` | Compile Storymap | StoryMapSpec |
 | `POST` | `/api/v1/storymap/sessions/{session_id}/compile` | Compile Session Storymap | StoryMapSpec |
 | `POST` | `/api/v1/storymap/export` | Export Storymap | object |
+| `POST` | `/api/v1/storymap/sessions/{session_id}/spec` | Save Session Story Spec | object |
+| `GET` | `/api/v1/storymap/sessions/{session_id}/spec` | Get Session Story Spec | object |
 
 ### PI工具
 
@@ -1127,6 +1132,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：400（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：405（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

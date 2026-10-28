@@ -275,7 +275,7 @@ async def test_probe_data_source_read_and_commit_off_loop(monkeypatch):
     )
 
     res = await _assert_loop_responsive_while(
-        lambda: df.probe_data_source("src-1", user=None)
+        lambda: df.probe_data_source("src-1", user={"user_id": "u-admin", "role": "admin"})
     )
     assert observed.get("thread") != _main_thread, (
         "probe_data_source ran its DB read/commit on the event loop thread"

@@ -67,10 +67,16 @@ class TestDedup:
         # 时依旧跳过；故意篡改字节的场景见下一个测试。）
         path = tmp_path / first.location
         mtime_before = path.stat().st_mtime_ns
+        content_before = path.read_bytes()
+        ino_before = path.stat().st_ino
         second = store.put_blob(key, data, "json")
         assert second.put_new is False
         assert second.location == first.location
-        assert path.stat().st_mtime_ns == mtime_before
+        # CP-09：去重命中**故意** os.utime 刷新 mtime（promotion GC 保护
+        # 信号）—— skip 的契约是「内容/inode 不被重写」，不是「mtime 冻结」。
+        assert path.read_bytes() == content_before
+        assert path.stat().st_ino == ino_before
+        assert path.stat().st_mtime_ns >= mtime_before
 
     def test_put_blob_rewrites_corrupt_existing(self, store, tmp_path):
         """round-1 review MINOR：skip 路径信任前先验 —— 既有文件损坏/被

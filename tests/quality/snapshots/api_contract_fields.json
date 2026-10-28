@@ -218,6 +218,9 @@
  "GET /api/v1/data-fabric/catalog/{item_id}/features/stream": {
   "__type__": "unknown"
  },
+ "GET /api/v1/data-fabric/catalog/{item_id}/pmtiles-tiles/{z}/{x}/{y}": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/data-fabric/catalog/{item_id}/preview": {
   "__model__": "CatalogPreviewResponse"
  },
@@ -352,6 +355,9 @@
  "GET /api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png": {
   "__type__": "unknown"
  },
+ "GET /api/v1/layers/data/{ref_id}/terrain-tiles.json": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png": {
   "__type__": "unknown"
  },
@@ -373,6 +379,16 @@
   "raster_capable": "boolean",
   "ref_id": "string",
   "session_id": "string"
+ },
+ "GET /api/v1/layers/terrain-sources": {
+  "__model__": "MapResourceAvailabilitySummary",
+  "elevation_profiles": "array<ElevationProfileAvailability>",
+  "session_id": "string",
+  "session_terrain_sources": "array<SessionTerrainSourceEntry>",
+  "terrain_3d_available": "boolean",
+  "terrain_3d_detail": "string",
+  "terrain_3d_reason_code": "string",
+  "terrain_3d_status": "string"
  },
  "GET /api/v1/local-data/admin/children": {
   "__model__": "AdminChildrenResponse",
@@ -655,6 +671,9 @@
   "status": "string",
   "stuck_jobs": "integer|null"
  },
+ "GET /api/v1/storymap/sessions/{session_id}/spec": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/tasks": {
   "__model__": "TaskListResponse",
   "tasks": "array<TaskStatusResponse>"
@@ -755,6 +774,7 @@
   "quality": "null|object",
   "ref_registration_error": "null|string",
   "session_ref": "null|string",
+  "terrain": "null|object",
   "warnings": "array<string>"
  },
  "GET /api/v1/uploads/{upload_id}/geojson": {
@@ -1606,6 +1626,9 @@
   "metadata": "StoryMapMetadata",
   "schema_version": "string"
  },
+ "POST /api/v1/storymap/sessions/{session_id}/spec": {
+  "__type__": "unknown"
+ },
  "POST /api/v1/tasks/jobs/{job_id}/retry": {
   "__model__": "JobRetryResponse",
   "attempt": "integer",
@@ -1649,6 +1672,7 @@
   "quality": "null|object",
   "ref_registration_error": "null|string",
   "session_ref": "null|string",
+  "terrain": "null|object",
   "warnings": "array<string>"
  },
  "POST /api/v1/workflow-runtime/instances": {

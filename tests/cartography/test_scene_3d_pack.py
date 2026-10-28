@@ -22,7 +22,6 @@ from app.contracts.cartography_components import (
 )
 from app.lib.cartography.composition_conformance import conformance_report
 from app.lib.cartography.composition_packs import COMPOSITION_PACK_TEMPLATES
-from app.lib.cartography.composition_packs.scene_3d import SCENE_3D_PACK
 from app.lib.cartography.composition_templates import (
     get_composition_template_registry,
 )
