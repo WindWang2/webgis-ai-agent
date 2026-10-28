@@ -4653,6 +4653,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/gis_harness/scene3d/test_analysis_orchestration_staleness.py",
     "tests/unit/test_3d_analysis_product_tools.py"
    ],
@@ -8627,7 +8628,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "6dbf0e2d56c98c976045797980220806f72074749834a31880ad82a116b7d8ed",
+ "fingerprint": "22a025c0f7903f62d618c1208763e61bbb21864b299714cc87b2e1540cf88b17",
  "gate": {
   "fields": {
    "capabilities": {

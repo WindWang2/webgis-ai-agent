@@ -361,3 +361,90 @@ describe('useCartographicObservation work echo wiring (ADR-0225)', () => {
     expect(body.perf?.work_receipt).toBeUndefined();
   });
 });
+
+describe('useCartographicObservation pure-3D fingerprint gate (G3DV2-B M1)', () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+    resetRenderWorkStore();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetRenderWorkStore();
+  });
+
+  const PURE_3D_SPEC = {
+    version: '1.7',
+    sources: {
+      'model-a': { type: 'model3d', format: 'glb', url: 'https://assets.test/c.glb', content_revision: 1 },
+    },
+    layers: [],
+    scene: { mode: '3d', assets: [{ id: 'campus', source: 'model-a', visible: true }] },
+  } as never;
+
+  function envelopeOf(revision: number, fp: string) {
+    return {
+      schema_version: 'render_work.v1',
+      work_id: `rw-${revision}-abc123def456`,
+      session_id: 'sid-3d',
+      mapspec_revision: revision,
+      mapspec_fingerprint: fp,
+      observation_target_seq: 1,
+      data_dependencies: [{ source_id: 'model-a', kind: 'model3d', revision: '1' }],
+      layer_work: [],
+      component_work: [],
+      scene_work: [{ asset_id: 'campus', source_id: 'model-a', format: 'glb', visible: true, revision: '1' }],
+      invalidation: { data_changed: [], layers_added: [], layers_removed: [], components_changed: [] },
+      required_capabilities: ['model3d'],
+      diagnostics: [],
+      work_fingerprint: 'wf-' + 'e'.repeat(16),
+    };
+  }
+
+  async function issuePure3D(envelope?: Record<string, unknown>) {
+    const { setMapSpecSessionCursor } = await import('@/lib/mapspec/session-cursor');
+    const dispatchAction = vi.fn();
+    const runtimeRef = { current: null as MapSpecRuntime | null };
+    const hook = renderHook(
+      ({ sessionId }) => useCartographicObservation({
+        runtimeRef, sessionId, ownerToken: null, dispatchAction,
+      }),
+      { initialProps: { sessionId: 'sid-3d' } },
+    );
+    vi.mocked(apiFetch).mockImplementation(async () => ({}) as never);
+    // 顺序：挂载效应（会 resetRenderWorkStore）先跑 → 再定游标/注信封。
+    setMapSpecSessionCursor('sid-3d', 5, null);
+    if (envelope) expect(ingestRenderWork(envelope, 'sid-3d')).toBe(true);
+    hook.result.current({
+      map: { getStyle: () => ({ layers: [] }) } as never,
+      spec: PURE_3D_SPEC,
+      layers: [], // 纯 3D：零 HUD 图层 —— 无任何 _mapspecFingerprint
+    });
+    await flushAsync();
+    return hook;
+  }
+
+  it('posts observation using envelope fingerprint when no HUD layer fp exists', async () => {
+    const fp = 'carto-sha256:' + 'd'.repeat(64);
+    // 信封 revision 与游标 revision 一致 → 指纹可用
+    await issuePure3D(envelopeOf(5, fp));
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = vi.mocked(apiFetch).mock.calls[0];
+    expect(String(url)).toContain('cartographic-observation');
+    // apiFetch 收对象体（内部序列化）—— 断言直接读对象。
+    const body = (init as { body: Record<string, unknown> }).body;
+    expect(body.mapspec_fingerprint).toBe(fp);
+    expect(Array.isArray(body.scene3d_assets)).toBe(true);
+  });
+
+  it('skips posting when envelope revision lags the session cursor', async () => {
+    const fp = 'carto-sha256:' + 'd'.repeat(64);
+    await issuePure3D(envelopeOf(4, fp));
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('skips posting when no envelope and no HUD/cursor fingerprint', async () => {
+    await issuePure3D();
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+});

@@ -79,6 +79,7 @@ GET,/api/v1/data-fabric/catalog/{item_id}/descriptor,gis:read,N,Y
 POST,/api/v1/data-fabric/catalog/{item_id}/explain,gis:write,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/features,gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/features/stream,gis:read,N,Y
+GET,/api/v1/data-fabric/catalog/{item_id}/pmtiles-tiles/{z}/{x}/{y},gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/preview,gis:read,N,Y
 POST,/api/v1/data-fabric/catalog/{item_id}/query,gis:write,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf,gis:read,N,Y
@@ -190,9 +191,11 @@ GET,/api/v1/layers/data/{ref_id},gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/feature/{feature_id},gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/features,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png,gis:read,N,N
+GET,/api/v1/layers/data/{ref_id}/terrain-tiles.json,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt,gis:read,N,N
 GET,/api/v1/layers/descriptor/{ref_id},gis:read,N,N
+GET,/api/v1/layers/terrain-sources,gis:read,N,N
 GET,/api/v1/local-data/admin/children,gis:read,N,N
 GET,/api/v1/local-data/admin/{level}/boundary,gis:read,N,N
 GET,/api/v1/local-data/osm/catalog,gis:read,N,Y
@@ -295,6 +298,8 @@ GET,/api/v1/status/detailed,gis:read,N,Y
 POST,/api/v1/storymap/compile,session:write,N,Y
 POST,/api/v1/storymap/export,session:write,N,Y
 POST,/api/v1/storymap/sessions/{session_id}/compile,session:write,N,N
+GET,/api/v1/storymap/sessions/{session_id}/spec,session:read,N,N
+POST,/api/v1/storymap/sessions/{session_id}/spec,session:write,N,N
 GET,/api/v1/tasks,jobs:read,N,N
 GET,/api/v1/tasks/jobs,jobs:read,N,Y
 DELETE,/api/v1/tasks/jobs/{job_id},jobs:write,N,Y

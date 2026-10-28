@@ -1,12 +1,13 @@
 /**
- * Journey 9 — 三维场景资产端到端（G3D02 v1.7）：MapSpec scene.assets →
- * MapLibre custom layer 真渲染 → 观察上行 → 3D 拾取 IR。
+ * Journey 9 — 三维场景资产端到端（G3D02 v1.7 + G3DV2-B）：MapSpec
+ * scene.assets → MapLibre custom layer 真渲染 → 纯 3D 观察上行 → 3D 拾取 IR。
  *
  * 真实链路断言（mock 档 = 仅后端 stub，浏览器内全部真实）：
  *  1. 对话 turn 的 step_result 携带 v1.7 MapSpec（model3d 源 + scene.assets）
  *     与 fly_to 命令（生产投递路径 —— 与其他 journey 同款 SSE 回放）；
  *  2. scene3d 管理器 fetch GLB（fixture 路由供给）并挂载 custom layer；
- *  3. render observation POST 携带 scene3d_assets: mounted（真实渲染证据）；
+ *  3. 纯 3D（零 2D 图层）render observation POST：指纹走执行信封回退
+ *     （G3DV2-B M1），scene3d_assets 携带 mounted + apply_ack work echo；
  *  4. 点击模型 → 3D 检视卡 + Interaction IR feature_selected（词表复用）；
  *  5. 全程无 JS 错误、无 WebGL fatal（window.__mapErrors 环为空）。
  */
@@ -48,6 +49,28 @@ const MAPSPEC = {
   },
 };
 
+/**
+ * G3DV2-B M1：执行信封随 step_result 下发（生产路径 —— 后端 envelope
+ * projector 的产出形态；mock 档手工供给）。revision=4 与 mutation_revision
+ * 对齐 —— 客户端指纹回退的 revision 门据此放行纯 3D 观察 POST。
+ */
+const RENDER_WORK = {
+  schema_version: 'render_work.v1',
+  work_id: 'rw-4-j9scene3dack01',
+  session_id: 's-j9',
+  mapspec_revision: 4,
+  mapspec_fingerprint: `carto-sha256:${'9'.repeat(64)}`,
+  observation_target_seq: 1,
+  data_dependencies: [{ source_id: 'model-a', kind: 'model3d', revision: '1' }],
+  layer_work: [],
+  component_work: [],
+  scene_work: [{ asset_id: 'campus', source_id: 'model-a', format: 'glb', visible: true, revision: '1' }],
+  invalidation: { data_changed: [], layers_added: [], layers_removed: [], components_changed: [] },
+  required_capabilities: ['model3d'],
+  diagnostics: [],
+  work_fingerprint: `wf-j9-${'0'.repeat(16)}`,
+};
+
 function scene3dTurn(): string {
   return [
     sse('session', { session_id: 's-j9' }),
@@ -68,6 +91,7 @@ function scene3dTurn(): string {
         summary: '三维场景资产已挂载。',
         command: 'fly_to',
         params: { center: ANCHOR, zoom: 15.5, pitch: 60, bearing: 0 },
+        render_work: RENDER_WORK,
       },
     }),
     sse('task_complete', { task_id: 't-j9' }),
@@ -78,7 +102,7 @@ function scene3dTurn(): string {
 /** 旅程专属路由：GLB fixture + observation/IR 采集。 */
 async function installScene3dRoutes(page: Page, seen: {
   glbHits: number;
-  observations: Array<{ scene3d?: unknown }>;
+  observations: Array<{ scene3d?: unknown; ack?: { work?: { work_id?: string } }; fp?: string }>;
   interactionEvents: Array<Record<string, unknown>>;
 }): Promise<void> {
   await page.route(GLB_URL, async (route) => {
@@ -92,8 +116,16 @@ async function installScene3dRoutes(page: Page, seen: {
     });
   });
   await page.route(/\/cartographic-observation(\?|$)/, async (route) => {
-    const body = route.request().postDataJSON() as { apply_ack?: unknown; scene3d_assets?: unknown };
-    seen.observations.push({ scene3d: body?.scene3d_assets });
+    const body = route.request().postDataJSON() as {
+      apply_ack?: { work?: { work_id?: string } };
+      scene3d_assets?: unknown;
+      mapspec_fingerprint?: string;
+    };
+    seen.observations.push({
+      scene3d: body?.scene3d_assets,
+      ack: body?.apply_ack,
+      fp: body?.mapspec_fingerprint,
+    });
     await route.fulfill({
       status: 200, contentType: 'application/json', body: '{"accepted":true}',
       headers: corsFor(route.request().headers()['origin']),
@@ -117,7 +149,11 @@ test.describe('journey-9 三维场景资产 @smoke', () => {
     world.pushChat(scene3dTurn());
     await seedAuthUser(page);
     await installJourneyStubs(page, world);
-    const seen = { glbHits: 0, observations: [] as Array<{ scene3d?: unknown }>, interactionEvents: [] as Array<Record<string, unknown>> };
+    const seen = {
+      glbHits: 0,
+      observations: [] as Array<{ scene3d?: unknown; ack?: { work?: { work_id?: string } }; fp?: string }>,
+      interactionEvents: [] as Array<Record<string, unknown>>,
+    };
     await installScene3dRoutes(page, seen);
 
     const consoleErrors: string[] = [];
@@ -138,8 +174,7 @@ test.describe('journey-9 三维场景资产 @smoke', () => {
       .toBeGreaterThanOrEqual(1);
 
     // 2) 挂载状态的页面内证据（dev-only 观察窗 __scene3dAssets —— 与
-    //    __mapErrors 同款纪律；observation POST 的覆盖在 vitest 集成层，
-    //    其指纹认证链依赖图层代 —— 纯 3D spec 的观察缺口见 EVIDENCE 已知限制）。
+    //    __mapErrors 同款纪律）。
     await expect
       .poll(
         () => page.evaluate(() => {
@@ -159,10 +194,30 @@ test.describe('journey-9 三维场景资产 @smoke', () => {
       )
       .toContain('campus');
 
-    // 3) 真实用户路径：开启 3D 视角（HUD toggle —— spec camera 档仅在
+    // 2b) 纯 3D 真 ACK（G3DV2-B M1）：零 2D 图层会话的观察 POST ——
+    //     指纹走执行信封回退（HUD/游标无指纹可用），scene3d_assets 携带
+    //     mounted 证据，apply_ack 回显信封 work_id（真实 ACK 面）。
+    await expect
+      .poll(
+        () => JSON.stringify(seen.observations),
+        { timeout: 15_000 },
+      )
+      .toContain('mounted');
+    const pureAck = seen.observations.find(
+      (o) => Array.isArray(o.scene3d) && o.scene3d.length > 0,
+    );
+    expect(pureAck, 'pure-3D observation POST must carry scene3d_assets').toBeTruthy();
+    expect(pureAck!.fp).toBe(RENDER_WORK.mapspec_fingerprint);
+    expect(pureAck!.ack?.work?.work_id).toBe(RENDER_WORK.work_id);
+
+    // 3) 真实用户路径：确保 3D 视角开启（HUD toggle —— spec camera 档仅在
     //    is3D 时生效，ADR-0199 既有语义），pitch 60 下 wall 模型面向相机。
-    const toggle3d = page.locator('button[aria-label="切换至 3D 视角"]').first();
-    if (await toggle3d.count()) {
+    //    G3DV2-B M5 修正：实际 aria-label 是 map.toolbar.toggle3d
+    //    （zh-CN「切换3D视图」）—— 旧选择器从未命中。spec mode=3d 时
+    //    is3D 桥已拉起：仅在未开启（aria-pressed=false）时点击，否则
+    //    会把已开的 3D 关掉（相机拍平 → 屏心点击落空）。
+    const toggle3d = page.locator('button[aria-label="切换3D视图"]').first();
+    if ((await toggle3d.count()) && (await toggle3d.getAttribute('aria-pressed')) === 'false') {
       await toggle3d.click();
     }
     const canvas = page.locator('canvas').first();
@@ -173,7 +228,9 @@ test.describe('journey-9 三维场景资产 @smoke', () => {
     await canvas.click({
       position: { x: Math.round(box!.width / 2), y: Math.round(box!.height / 2) },
     });
-    await expect(page.locator('[aria-label="3D asset pick"]')).toBeVisible({ timeout: 8_000 });
+    // G3DV2-B M5：拾取卡标签 i18n 化（zh-CN locale 固定）；12s —— 全量
+    // 套件并行负载下（dev server 编译竞态）拾取渲染需要余量。
+    await expect(page.locator('[aria-label="3D 资产拾取"]')).toBeVisible({ timeout: 12_000 });
 
     // 4) Interaction IR feature_selected（closed 词表复用，layer_id 带
     //    scene3d: 前缀 —— 观察层事实，不造第二事件族）。

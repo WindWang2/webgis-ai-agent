@@ -205,3 +205,209 @@ describe('budgets', () => {
     await expect(parseGltf(glbJson(doc))).rejects.toBeInstanceOf(GltfParseError);
   });
 });
+
+/** JSON + BIN 双 chunk GLB（自定义 doc + 二进制测试用）。 */
+function glbJsonBin(doc: unknown, bin: Uint8Array): ArrayBuffer {
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(doc));
+  const jsonLen = (jsonBytes.length + 3) & ~3;
+  const binLen = (bin.length + 3) & ~3;
+  const total = 12 + 8 + jsonLen + (binLen > 0 ? 8 + binLen : 0);
+  const out = new ArrayBuffer(total);
+  const dv = new DataView(out);
+  dv.setUint32(0, 0x46546c67, true);
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, total, true);
+  dv.setUint32(12, jsonLen, true);
+  dv.setUint32(16, 0x4e4f534a, true);
+  const jsonChunk = new Uint8Array(out, 20, jsonLen);
+  jsonChunk.set(jsonBytes);
+  for (let i = jsonBytes.length; i < jsonLen; i++) jsonChunk[i] = 0x20;
+  if (binLen > 0) {
+    dv.setUint32(20 + jsonLen, binLen, true);
+    dv.setUint32(24 + jsonLen, 0x004e4942, true);
+    new Uint8Array(out, 28 + jsonLen, binLen).set(bin);
+  }
+  return out;
+}
+
+describe('strict accessor semantics (G3DV2-B: byteStride/sparse/normalized)', () => {
+  it('reads interleaved POSITION/NORMAL (byteStride=24) correctly', async () => {
+    const plain = await parseGltf(buildGlbFixture({ triangles: 3 }));
+    const interleaved = await parseGltf(buildGlbFixture({ triangles: 3, interleave: true }));
+    const p = interleaved.roots[0].primitives[0];
+    expect(Array.from(p.positions)).toEqual(Array.from(plain.roots[0].primitives[0].positions));
+    expect(Array.from(p.normals ?? [])).toEqual(Array.from(plain.roots[0].primitives[0].normals ?? []));
+    expect(p.indices?.length).toBe(9);
+  });
+
+  it('applies sparse POSITION override over zero base', async () => {
+    const reference = await parseGltf(buildGlbFixture({ triangles: 3 }));
+    const k = 4; // 9 顶点中前 4 个经 sparse 覆写
+    const sparse = await parseGltf(buildGlbFixture({ triangles: 3, sparsePositions: k }));
+    const pos = sparse.roots[0].primitives[0].positions;
+    const ref = reference.roots[0].primitives[0].positions;
+    for (let v = 0; v < 9; v++) {
+      for (let c = 0; c < 3; c++) {
+        const expected = v < k ? ref[v * 3 + c] : 0;
+        expect(pos[v * 3 + c]).toBeCloseTo(expected, 6);
+      }
+    }
+  });
+
+  it('decodes normalized integer NORMAL (5120 byte / 5122 short)', async () => {
+    for (const component of [5120, 5122] as const) {
+      const parsed = await parseGltf(buildGlbFixture({ triangles: 1, normalsComponent: component }));
+      const n = parsed.roots[0].primitives[0].normals;
+      expect(n).not.toBeNull();
+      // fixture 法线 = (0,0,1) → 编码满幅 → 解码回 ±1.0
+      expect(n![0]).toBeCloseTo(0, 5);
+      expect(n![2]).toBeCloseTo(1, 4);
+    }
+  });
+
+  it('rejects sparse index out of range', async () => {
+    await expect(parseGltf(buildGlbFixture({
+      triangles: 1, sparsePositions: 2, corruptSparseIndex: 9_999,
+    }))).rejects.toMatchObject({ code: 'corrupt' });
+  });
+
+  it('rejects indices accessor on strided bufferView (spec: attributes only)', async () => {
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    const indices = new Uint32Array([0, 1, 2]);
+    const bin = new Uint8Array(positions.byteLength + indices.byteLength);
+    bin.set(new Uint8Array(positions.buffer), 0);
+    bin.set(new Uint8Array(indices.buffer), positions.byteLength);
+    const doc = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+        { bufferView: 1, componentType: 5125, count: 3, type: 'SCALAR' },
+      ],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: positions.byteLength },
+        // 非法：indices bufferView 带 byteStride（spec 限顶点属性）
+        { buffer: 0, byteOffset: positions.byteLength, byteLength: indices.byteLength, byteStride: 16 },
+      ],
+      buffers: [{ byteLength: bin.length }],
+    };
+    await expect(parseGltf(glbJsonBin(doc, bin))).rejects.toMatchObject({ code: 'corrupt' });
+  });
+
+  it('rejects invalid byteStride (below element size)', async () => {
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    const bin = new Uint8Array(positions.buffer);
+    const doc = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' }],
+      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: bin.length, byteStride: 8 }],
+      buffers: [{ byteLength: bin.length }],
+    };
+    await expect(parseGltf(glbJsonBin(doc, bin))).rejects.toMatchObject({ code: 'corrupt' });
+  });
+
+  it('rejects integer POSITION (quantized requires unsupported extensions)', async () => {
+    const positions = new Uint8Array([128, 128, 128, 255, 0, 0, 0, 255, 0]);
+    const doc = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      accessors: [{ bufferView: 0, componentType: 5121, count: 3, type: 'VEC3', normalized: true }],
+      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 9 }],
+      buffers: [{ byteLength: 9 }],
+    };
+    void positions;
+    await expect(parseGltf(glbJsonBin(doc, new Uint8Array(9)))).rejects.toMatchObject({ code: 'unsupported_feature' });
+  });
+
+  it('rejects integer attribute without normalized:true', async () => {
+    const doc = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 } }] }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+        { bufferView: 0, componentType: 5121, count: 3, type: 'VEC3', normalized: false },
+      ],
+      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 108 }],
+      buffers: [{ byteLength: 108 }],
+    };
+    await expect(parseGltf(glbJsonBin(doc, new Uint8Array(108)))).rejects.toMatchObject({ code: 'unsupported_feature' });
+  });
+
+  it('supports sparse-only accessor (no base bufferView)', async () => {
+    // base 无 bufferView（零值）+ sparse 全量覆写 —— spec 合法形态
+    const values = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    const idx = new Uint16Array([0, 1, 2]);
+    const bin = new Uint8Array(idx.byteLength + values.byteLength);
+    bin.set(new Uint8Array(idx.buffer), 0);
+    bin.set(new Uint8Array(values.buffer), idx.byteLength);
+    const doc = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      accessors: [{
+        componentType: 5126,
+        count: 3,
+        type: 'VEC3',
+        sparse: {
+          count: 3,
+          indices: { bufferView: 0, componentType: 5123 },
+          values: { bufferView: 1 },
+        },
+      }],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: idx.byteLength },
+        { buffer: 0, byteOffset: idx.byteLength, byteLength: values.byteLength },
+      ],
+      buffers: [{ byteLength: bin.length }],
+    };
+    const parsed = await parseGltf(glbJsonBin(doc, bin));
+    expect(Array.from(parsed.roots[0].primitives[0].positions)).toEqual(Array.from(values));
+    expect(parsed.stats.triangles).toBe(1);
+  });
+
+  it('rejects strided sparse bufferView (must be tightly packed)', async () => {
+    const idx = new Uint16Array([0]);
+    const values = new Float32Array([1, 2, 3]);
+    const bin = new Uint8Array(idx.byteLength + values.byteLength);
+    bin.set(new Uint8Array(idx.buffer), 0);
+    bin.set(new Uint8Array(values.buffer), idx.byteLength);
+    const doc = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      accessors: [{
+        componentType: 5126,
+        count: 3,
+        type: 'VEC3',
+        sparse: {
+          count: 1,
+          indices: { bufferView: 0, componentType: 5123 },
+          values: { bufferView: 1 },
+        },
+      }],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: idx.byteLength },
+        { buffer: 0, byteOffset: idx.byteLength, byteLength: values.byteLength, byteStride: 16 },
+      ],
+      buffers: [{ byteLength: bin.length }],
+    };
+    await expect(parseGltf(glbJsonBin(doc, bin))).rejects.toMatchObject({ code: 'corrupt' });
+  });
+});

@@ -80,6 +80,20 @@ describe('parseTileset', () => {
     const doc = { ...buildTilesetFixture(), extensionsRequired: ['3DTILES_implicit_tiling'] } as unknown;
     expect(() => parseTileset(doc, OPTS)).toThrowError(/implicit_tiling/);
   });
+
+  it('rejects invalid refine value (no silent REPLACE coercion)', () => {
+    // G3DV2-B G6：曾静默 coerce REPLACE —— ADD/REPLACE 写错的数据集得到
+    // 错误渲染语义；现 typed 拒绝。
+    const doc = buildTilesetFixture({ invalidRootRefine: 'MIXED' });
+    expect(() => parseTileset(doc, OPTS)).toThrowError(/refine 'MIXED' invalid/);
+  });
+
+  it('child refine inherits from parent when unspecified (OGC semantics)', () => {
+    const ts = parseTileset(buildTilesetFixture({ refine: 'ADD', omitChildRefine: true }), OPTS);
+    expect(ts.root.refine).toBe('ADD');
+    expect(ts.root.children[0].refine).toBe('ADD'); // 未声明 → 继承根 ADD
+    expect(ts.root.children[1].refine).toBe('REPLACE'); // 显式声明优先
+  });
 });
 
 function fixtureNodes(): TileNode {

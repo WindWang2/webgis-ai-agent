@@ -211,6 +211,35 @@ export const viewCommands: Record<string, CommandEntry> = {
       /* scene.assets 由 MapSpec 协调通道应用；命令即确认 */
     },
   },
+  // G3D04 三维工具编排族（scene_orchestration_tools.py 后端发射）——
+  // 语义均落在既有 MapSpec/scene3d 协调通道，命令项即确认（#535 目录
+  // 覆盖不变量：后端每个 command 字面量必须在此登记）。
+  get_3d_capabilities: {
+    requiredParams: (p) => p['session_id'] === undefined || typeof p['session_id'] === 'string',
+    run(): void {
+      /* 能力查询：读面，无副作用 */
+    },
+  },
+  apply_scene_representation: {
+    requiredParams: (p) => p['scene'] === undefined
+      || (typeof p['scene'] === 'object' && p['scene'] !== null),
+    run(): void {
+      /* 场景表达经 MapSpec 协调通道应用；命令即确认 */
+    },
+  },
+  fly_camera: {
+    requiredParams: (p) => p['center'] === undefined || p['target'] === undefined
+      || Array.isArray(p['center']) || typeof p['target'] === 'object',
+    run(): void {
+      /* 相机移动由 MapLibre 执行通道落地；命令即确认 */
+    },
+  },
+  run_3d_analysis: {
+    requiredParams: (p) => p['session_id'] === undefined || typeof p['session_id'] === 'string',
+    run(): void {
+      /* 三维分析结果经 MapSpec/结果工作台落地；命令即确认 */
+    },
+  },
   fly_to: {
     requiredParams: (p) => Array.isArray(p.center) && p.center.length === 2,
     run(ctx) {

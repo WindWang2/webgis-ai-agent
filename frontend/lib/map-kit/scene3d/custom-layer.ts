@@ -64,6 +64,9 @@ export function acquireRenderer(map: object, gl?: WebGLRenderingContext | WebGL2
     const hemi = new THREE.HemisphereLight(0xffffff, 0x8d8d8d, 1.1);
     hemi.position.set(0.2, -1, 0.3); // mercator 空间的"天"方向（z 上）
     scene.add(hemi);
+    if (pendingLightingByMap.has(map)) {
+      applyLightingToScene(scene, pendingLightingByMap.get(map)!);
+    }
     carrier = { renderer, camera, scene, refCount: 1 };
     carriers.set(map, carrier);
     return carrier;
@@ -81,6 +84,72 @@ export function releaseRenderer(map: object): void {
     carrier.renderer.dispose();
     carriers.delete(map);
   }
+}
+
+/**
+ * 显式释放一个 layer 的共享归属（G3DV2-B G5 泄漏修复）：
+ * basemap setStyle 会清扫 custom layer 且**不回调 onRemove** —— 此时
+ * manager 的 removeLayer 抛错被吞，refCount 永不归零（每次 setStyle 循环
+ * 还会 +1）。层已不在 map 上时由 manager 调本函数补齐：摘 group +
+ * releaseRenderer，与 onRemove 语义对齐。
+ */
+export function releaseLayerOwnership(map: object, group: THREE.Object3D | null): void {
+  const carrier = carriers.get(map);
+  if (!carrier) return;
+  if (group) carrier.scene.remove(group);
+  releaseRenderer(map);
+}
+
+/**
+ * 强制退役共享 carrier（G3DV2-B M4：WebGL context lost）。丢失的 gl
+ * context 上一切 WebGL 调用是 no-op（spec 保证），renderer.dispose() 安全；
+ * refCount 不再有意义 —— 死 context 上的 renderer 不可复用，恢复路径
+ * 必须经 acquireRenderer 在新帧上重建。
+ */
+export function forceDisposeCarrier(map: object): void {
+  const carrier = carriers.get(map);
+  if (!carrier) return;
+  carrier.scene.clear();
+  carrier.renderer.dispose();
+  carriers.delete(map);
+}
+
+// ── 光照预设（G3DV2-B M5）────────────────────────────────────────────────
+
+export type Scene3dLightingPreset = 'neutral' | 'soft' | 'bright';
+
+/** 预设 → 光强（纯函数，测试可离线断言）。 */
+export function presetLighting(preset: Scene3dLightingPreset): { ambient: number; hemisphere: number } {
+  switch (preset) {
+    case 'soft': return { ambient: 1.15, hemisphere: 0.75 };
+    case 'bright': return { ambient: 2.0, hemisphere: 1.4 };
+    default: return { ambient: 1.6, hemisphere: 1.1 };
+  }
+}
+
+/** carrier 尚未创建时的待应用预设（按 map 作用域 —— review R1-P3-10：
+ *  模块级单值会让 map A 的预设渗入 map B（比较视图）的首帧 carrier）。 */
+const pendingLightingByMap = new WeakMap<object, Scene3dLightingPreset>();
+
+function applyLightingToScene(scene: THREE.Scene, preset: Scene3dLightingPreset): void {
+  const { ambient, hemisphere } = presetLighting(preset);
+  scene.traverse((o) => {
+    const light = o as THREE.AmbientLight & THREE.HemisphereLight;
+    if ((light as THREE.AmbientLight).isAmbientLight) light.intensity = ambient;
+    else if ((light as THREE.HemisphereLight).isHemisphereLight) light.intensity = hemisphere;
+  });
+}
+
+/**
+ * 应用光照预设（本地表象，不进 spec）。carrier 未建时记忆预设，
+ * 首帧创建即生效。返回是否已实际应用（false = 已记忆待应用）。
+ */
+export function applyLightingPreset(map: object, preset: Scene3dLightingPreset): boolean {
+  pendingLightingByMap.set(map, preset);
+  const carrier = carriers.get(map);
+  if (!carrier) return false;
+  applyLightingToScene(carrier.scene, preset);
+  return true;
 }
 
 export function getCarrier(map: object): RendererCarrier | undefined {

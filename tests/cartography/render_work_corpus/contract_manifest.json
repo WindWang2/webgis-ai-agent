@@ -66,6 +66,7 @@
     "max_data_dependencies": 64,
     "max_diagnostics": 8,
     "max_layer_work": 128,
+    "max_scene_work": 32,
     "schema_version": "render_work.v1",
     "source_kinds": [
       "data_fabric",

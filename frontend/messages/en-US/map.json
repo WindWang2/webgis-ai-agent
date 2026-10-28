@@ -287,6 +287,27 @@
     "reducedMotionOn": "Reduced motion detected: scene transitions have no animation.",
     "unitSuffix": "({unit})",
     "verticalDatumLabel": "Vertical datum: ",
-    "sceneApplyFailed": "Scene change not applied; current scene kept"
+    "sceneApplyFailed": "Scene change not applied; current scene kept",
+    "assets": "3D Assets",
+    "assetsLocalNote": "Visibility/opacity are local display controls, not persisted to the session scene",
+    "assetOpacity": "{id} opacity",
+    "lighting": "Lighting",
+    "lighting_neutral": "Neutral",
+    "lighting_soft": "Soft",
+    "lighting_bright": "Bright",
+    "viewpoints": "Viewpoints",
+    "saveViewpoint": "Save current view",
+    "noViewpoints": "No saved viewpoints",
+    "applyViewpoint": "Apply viewpoint {n}",
+    "removeViewpoint": "Remove viewpoint {n}"
+  },
+  "scene3dPick": {
+    "title": "3D asset pick",
+    "close": "Close 3D pick card",
+    "source": "Source",
+    "tile": "Tile",
+    "node": "Node",
+    "lngLat": "Lng/Lat",
+    "altDist": "Alt/Dist"
   }
 }
