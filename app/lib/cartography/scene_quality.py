@@ -429,7 +429,7 @@ def evaluate_scene_quality(
     if (
         effective_pitch is not None
         and effective_pitch > _LABEL_OCCLUSION_PITCH
-        and any(isinstance(l, dict) and l.get("label") for l in layers)
+        and any(isinstance(lyr, dict) and lyr.get("label") for lyr in layers)
     ):
         findings.append(_finding(
             "SCENE_LABEL_OCCLUSION_RISK", "info",

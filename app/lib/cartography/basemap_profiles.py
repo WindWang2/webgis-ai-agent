@@ -32,7 +32,6 @@ verified/缓存策略），但不进入 ``config/sources/*.yaml`` 注册表。
 """
 from __future__ import annotations
 
-import re
 from typing import Literal, Mapping, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator

@@ -27,7 +27,6 @@ class TestSecureComposeInlineNginxParity:
     """
 
     def test_embedded_nginx_conf_matches_repo_conf(self):
-        import re
 
         import yaml
 
