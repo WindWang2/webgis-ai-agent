@@ -50,4 +50,4 @@
 | ≥12 任务级场景 | ✅ F27=14（pin 61） |
 | 本地确定性质量门 | ✅ 本分支域全绿（12 项既有红全部 master 对照归因留档） |
 | 独立 review→fix→复验 | ✅ 两轮，9/9 CLOSED |
-| PR 已创建 | 进行中（push + gh pr create） |
+| PR 已创建 | ✅ **PR #1867**（gh 返回号；关键 oracle 二次复跑 73 passed 防侥幸） |
