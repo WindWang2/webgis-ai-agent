@@ -22,6 +22,8 @@ export const RENDER_WORK_SCHEMA_VERSION = 'render_work.v1' as const;
 export const MAX_DATA_DEPENDENCIES = 64;
 export const MAX_LAYER_WORK = 128;
 export const MAX_COMPONENT_WORK = 32;
+/** G3DV2-B M1：scene.assets 执行工作项预算（镜像 MAX_SCENE_WORK）。 */
+export const MAX_SCENE_WORK = 32;
 export const MAX_DIAGNOSTICS = 8;
 
 const MAX_ID = 64;
@@ -32,6 +34,8 @@ const MAX_FINGERPRINT = 96;
 const SOURCE_KINDS: ReadonlySet<string> = new Set([
   'geojson', 'vector', 'raster', 'raster-dem',
   'data_fabric', 'wms', 'wmts', 'pmtiles',
+  // v1.7（G3D02，G3DV2-B 补齐镜像遗漏）：3D 资产数据依赖。
+  'model3d',
 ]);
 
 export interface RenderWorkDataDependency {
@@ -55,6 +59,15 @@ export interface RenderWorkComponentItem {
   enabled: boolean;
 }
 
+/** G3DV2-B M1：scene3d 资产执行工作项（纯 3D 会话的 ACK 对账面）。 */
+export interface RenderWorkSceneAssetItem {
+  asset_id: string;
+  source_id: string;
+  format: string;
+  visible: boolean;
+  revision?: string;
+}
+
 export interface RenderWorkEnvelope {
   schema_version: typeof RENDER_WORK_SCHEMA_VERSION;
   work_id: string;
@@ -65,6 +78,7 @@ export interface RenderWorkEnvelope {
   data_dependencies: RenderWorkDataDependency[];
   layer_work: RenderWorkLayerItem[];
   component_work: RenderWorkComponentItem[];
+  scene_work: RenderWorkSceneAssetItem[];
   invalidation: {
     style_only?: boolean;
     data_changed: string[];
@@ -163,6 +177,26 @@ export function parseRenderWorkEnvelope(raw: unknown): RenderWorkEnvelope | null
     }
   }
 
+  // G3DV2-B M1：scene_work（旧信封缺席 = 空数组 —— additive 解析不拒收）。
+  const sceneWork: RenderWorkSceneAssetItem[] = [];
+  if (Array.isArray(r.scene_work)) {
+    for (const s of r.scene_work) {
+      if (sceneWork.length >= MAX_SCENE_WORK) break;
+      if (typeof s !== 'object' || s === null) continue;
+      const e = s as Record<string, unknown>;
+      const aid = boundedId(e.asset_id);
+      if (!aid) continue;
+      sceneWork.push({
+        asset_id: aid,
+        source_id: boundedId(e.source_id),
+        format: boundedId(e.format),
+        visible: e.visible !== false,
+        ...(boundedRev(e.revision) !== undefined
+          ? { revision: boundedRev(e.revision) } : {}),
+      });
+    }
+  }
+
   const invRaw = typeof r.invalidation === 'object' && r.invalidation !== null
     ? (r.invalidation as Record<string, unknown>)
     : {};
@@ -187,6 +221,7 @@ export function parseRenderWorkEnvelope(raw: unknown): RenderWorkEnvelope | null
     data_dependencies: deps,
     layer_work: layerWork,
     component_work: componentWork,
+    scene_work: sceneWork,
     invalidation: {
       ...(invRaw.style_only === undefined || typeof invRaw.style_only !== 'boolean'
         ? {} : { style_only: invRaw.style_only }),

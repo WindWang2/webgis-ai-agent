@@ -7,9 +7,13 @@
  * 能力边界（typed 拒绝/降级，绝不静默）：
  * - 拒绝（GltfParseError.unsupported_feature）：extensionsRequired 非空
  *   （Draco/量化/KHR_materials_* 等）、外部 image URI、多 primitive 之外的
- *   扩展拓扑。
+ *   扩展拓扑、裸整型 POSITION/未归一化整型属性。
  * - 降级（warnings，渲染继续）：animations/skins/morph targets 忽略
  *   （静态渲染是合法表达）；缺 NORMAL 用 flat shading；可选扩展忽略。
+ * - accessor 严格语义（G3DV2-B）：bufferView.byteStride 交错属性按步进
+ *   正确读取（紧密打包为特例）；sparse accessor 按 spec 应用 indices/values
+ *   覆写；normalized 整型全词表（5120/5121/5122/5123）；indices/sparse
+ *   bufferView 必须紧密打包（spec 语义，typed 拒绝）。
  * - 恶意文件防护：accessor 字节区间逐个对 bufferView/buffer 越界校验；
  *   三角/顶点/字节数预算（超限 typed 拒绝，防 OOM/显存炸弹）。
  */
@@ -78,8 +82,21 @@ export interface ParsedGltf {
   roots: ParsedNode[];
   materials: ParsedMaterial[];
   textures: ParsedTexture[];
-  stats: { triangles: number; vertices: number; meshes: number };
+  stats: ParsedGltfStats;
   warnings: string[];
+}
+
+/** 资源账目（G3DV2-B M3：跨资产累计预算的计量输入）。 */
+export interface ParsedGltfStats {
+  triangles: number;
+  vertices: number;
+  meshes: number;
+  /** 几何 buffer 字节（position/normal/uv/index 展开后总和）。 */
+  geometryBytes: number;
+  /** 内嵌纹理字节。 */
+  textureBytes: number;
+  /** 材质数。 */
+  materialCount: number;
 }
 
 /** 外部 .bin buffer 装载器（glTF JSON 形态的 buffer0；GLB 自带 bin 不需要）。 */
@@ -136,16 +153,26 @@ interface JsonMaterial {
   doubleSided?: boolean;
 }
 
+interface JsonSparseBlock {
+  count: number;
+  indices: { bufferView: number; byteOffset?: number; componentType: number };
+  values: { bufferView: number; byteOffset?: number };
+}
+
 interface JsonAccessor {
   bufferView?: number;
   byteOffset?: number;
   componentType: number;
   count: number;
   type: string;
+  normalized?: boolean;
+  sparse?: JsonSparseBlock;
 }
 
 const COMPONENT_BYTES: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 };
 const TYPE_ARITY: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
+/** 归一化整型除数（spec §5.14.2：v/max；有符号负满幅 clamp 到 -1.0）。 */
+const NORMALIZED_DIVISORS: Record<number, number> = { 5120: 127, 5121: 255, 5122: 32767, 5123: 65535 };
 
 // ── GLB 容器 ─────────────────────────────────────────────────────────────
 
@@ -270,11 +297,129 @@ export async function parseGltf(
   let totalTriangles = 0;
   let totalVertices = 0;
   let meshCount = 0;
+  let geometryBytes = 0;
   /** 累计解码字节（review P0：分配前预算 —— 多 primitive 共享巨型 accessor
    *  与谎报 count 的两类放大炸弹在此拦截）。 */
   let decodedBytes = 0;
 
-  const decodeAccessor = (index: number, expectNormalizedOk = false): { typed: Float32Array; normalizedUByte: boolean } => {
+  /** 单分量读取（交错/紧密共用；归一化按 spec 除数换算）。 */
+  const readComponent = (dv: DataView, abs: number, componentType: number, normalized: boolean): number => {
+    switch (componentType) {
+      case 5126: return dv.getFloat32(abs, true);
+      case 5121: {
+        const v = dv.getUint8(abs);
+        return normalized ? v / NORMALIZED_DIVISORS[5121] : v;
+      }
+      case 5123: {
+        const v = dv.getUint16(abs, true);
+        return normalized ? v / NORMALIZED_DIVISORS[5123] : v;
+      }
+      case 5120: {
+        const v = dv.getInt8(abs);
+        return normalized ? Math.max(v / NORMALIZED_DIVISORS[5120], -1) : v;
+      }
+      case 5122: {
+        const v = dv.getInt16(abs, true);
+        return normalized ? Math.max(v / NORMALIZED_DIVISORS[5122], -1) : v;
+      }
+      default:
+        throw new GltfParseError('unsupported_feature', `componentType ${componentType}`);
+    }
+  };
+
+  /**
+   * 属性 bufferView 步进：byteStride 未定义 = 紧密打包（元素大小即步长）；
+   * 定义时必须 ≥ 元素字节数且为分量大小整数倍（spec 语义），否则 typed
+   * 拒绝 —— 这是「交错文件静默错读」的根治点。
+   */
+  const attributeStrideOf = (
+    viewIndex: number,
+    compBytes: number,
+    elemBytes: number,
+    accessorIndex: number,
+  ): number => {
+    const stride = doc.bufferViews?.[viewIndex]?.byteStride;
+    if (stride === undefined) return elemBytes;
+    if (!Number.isInteger(stride) || stride < elemBytes || stride % compBytes !== 0) {
+      throw new GltfParseError(
+        'corrupt',
+        `bufferView ${viewIndex} byteStride ${stride} invalid for accessor ${accessorIndex} (element ${elemBytes}B, component ${compBytes}B)`,
+      );
+    }
+    return stride;
+  };
+
+  /**
+   * sparse accessor 覆写（spec §5.14.2.3）：indices/values 必须紧密打包、
+   * componentType 词表校验、越界 index typed 拒绝；解码预算先行（防
+   * 「base 小 + sparse 巨大」的绕预算形态）。
+   */
+  const applySparse = (
+    acc: JsonAccessor,
+    count: number,
+    arity: number,
+    accessorIndex: number,
+    write: (elIdx: number, valDv: DataView, row: number) => void,
+  ): void => {
+    const sp = acc.sparse;
+    if (!sp) return;
+    const sparseCount = sp.count;
+    if (!Number.isInteger(sparseCount) || sparseCount < 0 || sparseCount > count) {
+      throw new GltfParseError('corrupt', `accessor ${accessorIndex} sparse.count ${sparseCount} invalid`);
+    }
+    if (typeof sp.indices?.bufferView !== 'number' || typeof sp.values?.bufferView !== 'number') {
+      throw new GltfParseError('corrupt', `accessor ${accessorIndex} sparse missing bufferView`);
+    }
+    const idxComp = sp.indices.componentType;
+    if (idxComp !== 5121 && idxComp !== 5123 && idxComp !== 5125) {
+      throw new GltfParseError('corrupt', `accessor ${accessorIndex} sparse.indices.componentType ${idxComp}`);
+    }
+    const compBytes = COMPONENT_BYTES[acc.componentType];
+    const elemBytes = compBytes * arity;
+    const sparseExpanded = sparseCount * 4 + sparseCount * arity * 4;
+    if (decodedBytes + sparseExpanded > MAX_DECODED_BYTES_PER_ASSET) {
+      throw new GltfParseError(
+        'budget_exceeded',
+        `accessor ${accessorIndex} sparse decoded ${sparseExpanded}B exceeds budget (${decodedBytes}B used)`,
+      );
+    }
+    decodedBytes += sparseExpanded;
+    if (doc.bufferViews?.[sp.indices.bufferView]?.byteStride !== undefined
+        || doc.bufferViews?.[sp.values.bufferView]?.byteStride !== undefined) {
+      throw new GltfParseError('corrupt', `accessor ${accessorIndex} sparse bufferViews must be tightly packed`);
+    }
+    const idxView = sliceBufferView(buffers, doc.bufferViews, sp.indices.bufferView);
+    const valView = sliceBufferView(buffers, doc.bufferViews, sp.values.bufferView);
+    const idxCompBytes = COMPONENT_BYTES[idxComp];
+    const idxBase = sp.indices.byteOffset ?? 0;
+    const valBase = sp.values.byteOffset ?? 0;
+    if (idxBase + sparseCount * idxCompBytes > idxView.byteLength) {
+      throw new GltfParseError('corrupt', `accessor ${accessorIndex} sparse indices overrun bufferView`);
+    }
+    if (valBase + sparseCount * elemBytes > valView.byteLength) {
+      throw new GltfParseError('corrupt', `accessor ${accessorIndex} sparse values overrun bufferView`);
+    }
+    const idxDv = new DataView(idxView.buffer, idxView.byteOffset, idxView.byteLength);
+    const valDv = new DataView(valView.buffer, valView.byteOffset, valView.byteLength);
+    const readSparseIndex = (j: number): number => {
+      const abs = idxBase + j * idxCompBytes;
+      if (idxComp === 5125) return idxDv.getUint32(abs, true);
+      if (idxComp === 5123) return idxDv.getUint16(abs, true);
+      return idxDv.getUint8(abs);
+    };
+    for (let j = 0; j < sparseCount; j++) {
+      const elIdx = readSparseIndex(j);
+      if (elIdx >= count) {
+        throw new GltfParseError('corrupt', `accessor ${accessorIndex} sparse index ${elIdx} >= count ${count}`);
+      }
+      write(elIdx, valDv, valBase + j * elemBytes);
+    }
+  };
+
+  const decodeAccessor = (
+    index: number,
+    semantic: 'POSITION' | 'NORMAL' | 'TEXCOORD_0',
+  ): { typed: Float32Array; normalized: boolean } => {
     const acc = doc.accessors?.[index];
     if (!acc) throw new GltfParseError('corrupt', `accessor ${index} missing`);
     const arity = TYPE_ARITY[acc.type];
@@ -285,8 +430,9 @@ export async function parseGltf(
     if (!Number.isInteger(count) || count < 0 || count > MAX_VERTICES_PER_ASSET * 4) {
       throw new GltfParseError('corrupt', 'accessor.count invalid');
     }
-    const byteLength = compBytes * arity * count;
-    // 展开后（Float32 化）大小 —— 分配前检查（review P0-1）。
+    const elemBytes = compBytes * arity;
+    // 展开后（Float32 化）大小 —— 分配前检查（review P0-1；先于语义门，
+    // 「预算拦截而非格式拦截」是既有测试锁定的顺序）。
     const expandedBytes = count * arity * 4;
     if (expandedBytes > MAX_DECODED_BYTES_PER_ACCESSOR
         || decodedBytes + expandedBytes > MAX_DECODED_BYTES_PER_ASSET) {
@@ -296,34 +442,50 @@ export async function parseGltf(
       );
     }
     decodedBytes += expandedBytes;
-    if (acc.bufferView === undefined) {
-      // sparse/无 bufferView accessor（如 min/max-only）：返回零值（消费面按缺失处理）
-      return { typed: new Float32Array(count * arity), normalizedUByte: false };
+    // 语义门：POSITION 仅 FLOAT（归一化 [-1,1] / 裸整型坐标都不可解释为
+    // 几何语义，量化形态必带 extensionsRequired 已在入口拒绝）。
+    if (acc.componentType !== 5126) {
+      if (semantic === 'POSITION') {
+        throw new GltfParseError(
+          'unsupported_feature',
+          `POSITION componentType ${acc.componentType} requires unsupported quantization extensions`,
+        );
+      }
+      if (acc.normalized !== true) {
+        throw new GltfParseError(
+          'unsupported_feature',
+          `integer ${semantic} accessor without normalized:true (quantized attributes require unsupported extensions)`,
+        );
+      }
     }
-    const view = sliceBufferView(buffers, doc.bufferViews, acc.bufferView);
-    const base = acc.byteOffset ?? 0;
-    if (base + byteLength > view.byteLength) {
-      throw new GltfParseError('corrupt', `accessor ${index} range [${base}, ${base + byteLength}) overruns bufferView (${view.byteLength})`);
-    }
+    const normalized = acc.componentType !== 5126 && acc.normalized === true;
     const out = new Float32Array(count * arity);
-    const dv = new DataView(view.buffer, view.byteOffset + base, byteLength);
-    if (acc.componentType === 5126) {
-      for (let i = 0; i < out.length; i++) out[i] = dv.getFloat32(i * 4, true);
-      return { typed: out, normalizedUByte: false };
+    if (acc.bufferView !== undefined) {
+      const view = sliceBufferView(buffers, doc.bufferViews, acc.bufferView);
+      const stride = attributeStrideOf(acc.bufferView, compBytes, elemBytes, index);
+      const base = acc.byteOffset ?? 0;
+      const span = count === 0 ? 0 : (count - 1) * stride + elemBytes;
+      if (base < 0 || base + span > view.byteLength) {
+        throw new GltfParseError(
+          'corrupt',
+          `accessor ${index} range [${base}, ${base + span}) overruns bufferView (${view.byteLength}B, stride ${stride})`,
+        );
+      }
+      const dv = new DataView(view.buffer, view.byteOffset, view.byteLength);
+      for (let i = 0; i < count; i++) {
+        const row = base + i * stride;
+        for (let c = 0; c < arity; c++) {
+          out[i * arity + c] = readComponent(dv, row + c * compBytes, acc.componentType, normalized);
+        }
+      }
     }
-    if (!expectNormalizedOk) {
-      throw new GltfParseError('unsupported_feature', 'normalized accessor outside TEXCOORD subset');
-    }
-    // 归一化整型（仅 UV 子集：ubyte/ushort → [0,1]）
-    if (acc.componentType === 5121) {
-      for (let i = 0; i < out.length; i++) out[i] = dv.getUint8(i) / 255;
-      return { typed: out, normalizedUByte: true };
-    }
-    if (acc.componentType === 5123) {
-      for (let i = 0; i < out.length; i++) out[i] = dv.getUint16(i * 2, true) / 65535;
-      return { typed: out, normalizedUByte: true };
-    }
-    throw new GltfParseError('unsupported_feature', `normalized componentType ${acc.componentType}`);
+    // sparse（base 无 bufferView = sparse-only accessor 合法形态，out 已零初始化）
+    applySparse(acc, count, arity, index, (elIdx, valDv, row) => {
+      for (let c = 0; c < arity; c++) {
+        out[elIdx * arity + c] = readComponent(valDv, row + c * compBytes, acc.componentType, normalized);
+      }
+    });
+    return { typed: out, normalized };
   };
 
   const decodeIndices = (index: number, vertexCount: number): Uint32Array => {
@@ -331,6 +493,10 @@ export async function parseGltf(
     if (!acc) throw new GltfParseError('corrupt', `indices accessor ${index} missing`);
     if (acc.type !== 'SCALAR') throw new GltfParseError('corrupt', 'indices must be SCALAR');
     const count = acc.count;
+    // typed 校验（review R1-P3-5：负/非整 count 会以裸 RangeError 冒泡）。
+    if (!Number.isInteger(count) || count < 0) {
+      throw new GltfParseError('corrupt', `indices accessor ${index} count invalid`);
+    }
     // 索引展开 Uint32 —— 分配前预算（同 P0-1）。
     const expandedBytes = count * 4;
     if (expandedBytes > MAX_DECODED_BYTES_PER_ACCESSOR
@@ -338,22 +504,40 @@ export async function parseGltf(
       throw new GltfParseError('budget_exceeded', `indices accessor ${index} exceeds decoded budget`);
     }
     decodedBytes += expandedBytes;
-    const view = sliceBufferView(buffers, doc.bufferViews, acc.bufferView ?? -1);
+    // 索引必须绑 bufferView：spec 合法的 sparse-only 索引 accessor 在此
+    // 保守拒绝（corrupt）—— 零基索引全指向顶点 0 是退化几何，不支持
+    // 好过静默错读（review R1-P3-5 / R2 接受的子集边界）。
+    const viewIndex = acc.bufferView ?? -1;
+    const view = sliceBufferView(buffers, doc.bufferViews, viewIndex);
+    // spec：byteStride 仅限顶点属性 bufferView —— 交错索引无法喂 drawElements。
+    if (doc.bufferViews?.[viewIndex]?.byteStride !== undefined) {
+      throw new GltfParseError('corrupt', `indices accessor ${index} bufferView must be tightly packed`);
+    }
+    if (acc.normalized === true) {
+      throw new GltfParseError('corrupt', `indices accessor ${index} must not be normalized`);
+    }
     const base = acc.byteOffset ?? 0;
+    if (base < 0) throw new GltfParseError('corrupt', `indices accessor ${index} byteOffset invalid`);
     const out = new Uint32Array(count);
-    const dv = new DataView(view.buffer, view.byteOffset + base, view.byteLength - base);
+    const dv = new DataView(view.buffer, view.byteOffset, view.byteLength);
     if (acc.componentType === 5125) {
       if (base + count * 4 > view.byteLength) throw new GltfParseError('corrupt', 'indices overrun');
-      for (let i = 0; i < count; i++) out[i] = dv.getUint32(i * 4, true);
+      for (let i = 0; i < count; i++) out[i] = dv.getUint32(base + i * 4, true);
     } else if (acc.componentType === 5123) {
       if (base + count * 2 > view.byteLength) throw new GltfParseError('corrupt', 'indices overrun');
-      for (let i = 0; i < count; i++) out[i] = dv.getUint16(i * 2, true);
+      for (let i = 0; i < count; i++) out[i] = dv.getUint16(base + i * 2, true);
     } else if (acc.componentType === 5121) {
       if (base + count > view.byteLength) throw new GltfParseError('corrupt', 'indices overrun');
-      for (let i = 0; i < count; i++) out[i] = dv.getUint8(i);
+      for (let i = 0; i < count; i++) out[i] = dv.getUint8(base + i);
     } else {
       throw new GltfParseError('unsupported_feature', `indices componentType ${acc.componentType}`);
     }
+    // sparse 索引（规范允许；values 与 accessor 同 componentType 的无符号标量）
+    applySparse(acc, count, 1, index, (elIdx, valDv, row) => {
+      if (acc.componentType === 5125) out[elIdx] = valDv.getUint32(row, true);
+      else if (acc.componentType === 5123) out[elIdx] = valDv.getUint16(row, true);
+      else out[elIdx] = valDv.getUint8(row);
+    });
     // 索引值域防护（越界索引在构建期是 OOB 写路径）
     for (let i = 0; i < out.length; i++) {
       if (out[i] >= vertexCount) {
@@ -391,16 +575,16 @@ export async function parseGltf(
         if (typeof posIdx !== 'number') {
           throw new GltfParseError('corrupt', 'primitive without POSITION');
         }
-        const positions = decodeAccessor(posIdx).typed;
+        const positions = decodeAccessor(posIdx, 'POSITION').typed;
         const vertices = positions.length / 3;
         totalVertices += vertices;
         if (totalVertices > MAX_VERTICES_PER_ASSET) {
           throw new GltfParseError('budget_exceeded', `vertices > ${MAX_VERTICES_PER_ASSET}`);
         }
         const normIdx = prim.attributes?.NORMAL;
-        const normals = typeof normIdx === 'number' ? decodeAccessor(normIdx).typed : null;
+        const normals = typeof normIdx === 'number' ? decodeAccessor(normIdx, 'NORMAL').typed : null;
         const uvIdx = prim.attributes?.TEXCOORD_0;
-        const uvs = typeof uvIdx === 'number' ? decodeAccessor(uvIdx, true).typed : null;
+        const uvs = typeof uvIdx === 'number' ? decodeAccessor(uvIdx, 'TEXCOORD_0').typed : null;
         let indices: Uint32Array | null = null;
         if (typeof prim.indices === 'number') {
           indices = decodeIndices(prim.indices, vertices);
@@ -418,6 +602,8 @@ export async function parseGltf(
           indices,
           materialIndex: typeof prim.material === 'number' ? prim.material : null,
         });
+        geometryBytes += positions.byteLength + (normals?.byteLength ?? 0)
+          + (uvs?.byteLength ?? 0) + (indices?.byteLength ?? 0);
       }
     }
     const children = (n.children ?? []).map((c) => parseNode(c, visiting));
@@ -441,7 +627,14 @@ export async function parseGltf(
     roots,
     materials,
     textures,
-    stats: { triangles: Math.round(totalTriangles), vertices: totalVertices, meshes: meshCount },
+    stats: {
+      triangles: Math.round(totalTriangles),
+      vertices: totalVertices,
+      meshes: meshCount,
+      geometryBytes,
+      textureBytes: textures.reduce((n, t) => n + t.bytes.byteLength, 0),
+      materialCount: materials.length,
+    },
     warnings,
   };
 }

@@ -283,6 +283,11 @@ class CartographicRuntimeObservationRequest(BaseModel):
     # F13（ADR-0261 D5）：渲染性能探针块（render_perf_probes.v1）。
     # 归一在 DTO 层完成（纯数字/封闭键）—— 非法载荷 → None 按证据缺席。
     perf: Optional[dict[str, Any]] = None
+    # G3DV2-B M1：scene3d 资产状态快照（纯 3D 会话的真 ACK 面 —— 前端
+    # status ring 有界 16 条投影 {asset_id, code, reason?}）。词表与前端
+    # scene3d/status.ts 同源；非法载荷 → None 按证据缺席（诚实降级，
+    # 绝不 422 整个观察）。
+    scene3d_assets: Optional[list[dict[str, Any]]] = None
 
     @field_validator("canvas", mode="before")
     @classmethod
@@ -290,6 +295,38 @@ class CartographicRuntimeObservationRequest(BaseModel):
         # 非法 canvas 不 422 —— 按证据缺席省略（旧客户端零新 finding
         # 语义）；只保留 {width, height} 投影（多发键不透传）。
         return _bounded_canvas(value)
+
+    @field_validator("scene3d_assets", mode="before")
+    @classmethod
+    def _normalize_scene3d_assets(cls, value: Any) -> Any:
+        # 与 canvas/perf 同款纪律：非 list / 超界 / 词表外 code / 非法形状
+        # → None（证据缺席）；合法条目只保留 {asset_id, code, reason} 投影
+        # （at 等多余键不透传 —— 持久层最小化）。整批 ≤16 与前端环投影同值。
+        if not isinstance(value, list):
+            return None
+        allowed_codes = {
+            "mounted", "unmounted", "loading", "load_failed",
+            "unavailable", "degraded", "cancelled", "context_lost",
+        }
+        out: list[dict[str, Any]] = []
+        for entry in value[:16]:
+            if not isinstance(entry, dict):
+                continue
+            asset_id = entry.get("asset_id")
+            code = entry.get("code")
+            if not isinstance(asset_id, str) or not asset_id:
+                continue
+            if not isinstance(code, str) or code not in allowed_codes:
+                continue
+            reason = entry.get("reason")
+            item: dict[str, Any] = {
+                "asset_id": asset_id[:64],
+                "code": code,
+            }
+            if isinstance(reason, str) and reason:
+                item["reason"] = reason[:120]
+            out.append(item)
+        return out or None
 
     @field_validator("apply_ack", mode="before")
     @classmethod

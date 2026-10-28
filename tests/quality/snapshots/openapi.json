@@ -1651,6 +1651,21 @@
       "title": "Runtime Errors",
       "type": "array"
      },
+     "scene3d_assets": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scene3D Assets"
+     },
      "style_loaded": {
       "title": "Style Loaded",
       "type": "boolean"

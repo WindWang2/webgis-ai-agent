@@ -287,6 +287,27 @@
     "reducedMotionOn": "已检测到减弱动效偏好：场景切换无动画。",
     "unitSuffix": "（{unit}）",
     "verticalDatumLabel": "高程基准：",
-    "sceneApplyFailed": "场景调整未生效，已保持当前场景"
+    "sceneApplyFailed": "场景调整未生效，已保持当前场景",
+    "assets": "3D 资产",
+    "assetsLocalNote": "显隐/透明度为本地显示控制，不写入会话场景",
+    "assetOpacity": "{id} 透明度",
+    "lighting": "光照",
+    "lighting_neutral": "标准",
+    "lighting_soft": "柔和",
+    "lighting_bright": "明亮",
+    "viewpoints": "视角书签",
+    "saveViewpoint": "保存当前视角",
+    "noViewpoints": "暂无视角书签",
+    "applyViewpoint": "应用视角 {n}",
+    "removeViewpoint": "移除视角 {n}"
+  },
+  "scene3dPick": {
+    "title": "3D 资产拾取",
+    "close": "关闭 3D 拾取卡",
+    "source": "数据源",
+    "tile": "瓦片",
+    "node": "节点",
+    "lngLat": "经纬度",
+    "altDist": "高程/距离"
   }
 }

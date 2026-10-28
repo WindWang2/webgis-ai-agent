@@ -44,6 +44,7 @@ describe('contract manifest triple-lock (JSON ≡ TS)', () => {
     expect(RENDER_WORK_MANIFEST.max_layer_work).toBe(manifest.render_work.max_layer_work);
     expect(RENDER_WORK_MANIFEST.max_component_work).toBe(manifest.render_work.max_component_work);
     expect(RENDER_WORK_MANIFEST.max_diagnostics).toBe(manifest.render_work.max_diagnostics);
+    expect(RENDER_WORK_MANIFEST.max_scene_work).toBe(manifest.render_work.max_scene_work);
     expect([...RENDER_WORK_MANIFEST.source_kinds].sort()).toEqual(manifest.render_work.source_kinds);
   });
 
@@ -128,8 +129,9 @@ function buildForScenario(name: string) {
 }
 
 describe('golden scenario semantics (real builder)', () => {
-  it('has 12 scenarios', () => {
-    expect(Object.keys(golden.scenarios)).toHaveLength(12);
+  it('has 13 scenarios', () => {
+    // G3DV2-B M1：s13_scene3d_pure_3d_work（纯 3D scene_work 面）。
+    expect(Object.keys(golden.scenarios)).toHaveLength(13);
   });
 
   it('s01: ten layers fully applied + work echo + source applied', () => {
@@ -225,5 +227,21 @@ describe('golden scenario semantics (real builder)', () => {
     expect(ack.layers).toHaveLength(5);
     expect(ack.layers.every((l) => l.status === 'applied')).toBe(true);
     expect(ack.sources?.[0]).toMatchObject({ status: 'applied', data_revision: '4' });
+  });
+
+  it('s13: pure 3D — scene_work evidence + model3d source reconciliation', () => {
+    // G3DV2-B M1：纯 3D 会话（零 2D 图层）的真 ACK 面 —— scene_work 是
+    // 唯一的执行工作项投影；model3d 源走 sources[] 对账。
+    const sc = golden.scenarios.s13_scene3d_pure_3d_work;
+    const work = parseRenderWorkEnvelope(sc.envelope);
+    expect(work).not.toBeNull();
+    expect(work!.layer_work).toHaveLength(0);
+    expect(work!.scene_work).toEqual([
+      { asset_id: 'campus', source_id: 'model-a', format: 'glb', visible: true, revision: '2' },
+      { asset_id: 'tower', source_id: 'model-a', format: 'glb', visible: false, revision: '2' },
+    ]);
+    const ack = buildForScenario('s13_scene3d_pure_3d_work');
+    expect(ack.layers).toHaveLength(0);
+    expect(ack.sources?.[0]).toMatchObject({ source_id: 'model-a', status: 'applied', data_revision: '2' });
   });
 });

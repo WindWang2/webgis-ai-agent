@@ -47,6 +47,7 @@ RENDER_WORK_SCHEMA_VERSION = "render_work.v1"
 MAX_DATA_DEPENDENCIES = 64
 MAX_LAYER_WORK = 128
 MAX_COMPONENT_WORK = 32
+MAX_SCENE_WORK = 32
 MAX_DIAGNOSTICS = 8
 _MAX_ID = 64
 #: 指纹保留全长（cartographic_fingerprint 形如 ``carto-sha256:<64hex>``
@@ -98,6 +99,22 @@ class ComponentWork:
 
 
 @dataclass(frozen=True)
+class SceneAssetWork:
+    """一个 scene3d 资产的执行工作项（G3DV2-B M1：纯 3D 会话的 ACK 面）。
+
+    与 LayerWork 同形纪律：id/绑定源/格式/可见性/数据代次 —— 绝无
+    placement/LOD/style 载荷（那些留在 MapSpec，信封只供对账）。
+    """
+
+    asset_id: str
+    source_id: str
+    format: str
+    visible: bool
+    #: 源级数据代次（与 data_dependencies 的 revision 同源键）。
+    revision: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class InvalidationHints:
     """相对前一份信封的失效语义（style-only patch vs data reload 的显式化）。
 
@@ -127,12 +144,13 @@ class RenderWorkEnvelope:
     data_dependencies: Tuple[DataDependency, ...]
     layer_work: Tuple[LayerWork, ...]
     component_work: Tuple[ComponentWork, ...]
-    invalidation: InvalidationHints
+    scene_work: Tuple[SceneAssetWork, ...] = ()
+    invalidation: InvalidationHints = field(default_factory=InvalidationHints)
     #: 本信封要求 renderer 具备的能力键（layer types / source kinds /
     #: component types；封闭词表来自 renderer_capability）。
-    required_capabilities: Tuple[str, ...]
-    diagnostics: Tuple[str, ...]
-    work_fingerprint: str
+    required_capabilities: Tuple[str, ...] = ()
+    diagnostics: Tuple[str, ...] = ()
+    work_fingerprint: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """有界 dict 投影（SSE/map_state/诊断面；不含任何载荷）。"""
@@ -169,6 +187,16 @@ class RenderWorkEnvelope:
                     "enabled": w.enabled,
                 }
                 for w in self.component_work
+            ],
+            "scene_work": [
+                {
+                    "asset_id": s.asset_id,
+                    "source_id": s.source_id,
+                    "format": s.format,
+                    "visible": s.visible,
+                    **({"revision": s.revision} if s.revision is not None else {}),
+                }
+                for s in self.scene_work
             ],
             "invalidation": {
                 **({"style_only": self.invalidation.style_only}
@@ -316,6 +344,38 @@ def project_render_work_envelope(
         for c in components
     )
 
+    # scene_work（G3DV2-B M1）：scene.assets → 执行工作项（纯 3D 会话
+    # 「零 2D 图层」时的 ACK 对账面；id/源绑定/格式/可见性/代次 —— 无
+    # placement/LOD/style 载荷）。源缺席/非 dict → format="unknown"
+    # 披露性保留（与 data_dependencies 的 kind 词表外策略同形）。
+    scene = mapspec.get("scene")
+    assets_raw = (
+        scene.get("assets") if isinstance(scene, dict) else None
+    ) or []
+    assets = [
+        a for a in assets_raw
+        if isinstance(a, dict) and _bounded_id(a.get("id"))
+    ]
+    truncated_scene = len(assets) > MAX_SCENE_WORK
+    if truncated_scene:
+        diagnostics.append(f"scene_work truncated at {MAX_SCENE_WORK}")
+        assets = assets[:MAX_SCENE_WORK]
+
+    def _scene_asset_work(asset: Dict[str, Any]) -> SceneAssetWork:
+        source_id = _bounded_id(asset.get("source"))
+        source = source_map.get(source_id)
+        source_dict = source if isinstance(source, dict) else None
+        dep = _data_dependency(source_id, source)
+        return SceneAssetWork(
+            asset_id=_bounded_id(asset.get("id")),
+            source_id=source_id,
+            format=_bounded_id(source_dict.get("format")) if source_dict else "unknown",
+            visible=asset.get("visible") is not False,
+            revision=dep.revision,
+        )
+
+    scene_work = tuple(_scene_asset_work(a) for a in assets)
+
     # invalidation hints：previous 在场才可比（首份 → 全 unknown，不虚构）。
     invalidation = InvalidationHints()
     if previous is not None:
@@ -392,6 +452,12 @@ def project_render_work_envelope(
             [w.component_id, w.component_type, w.enabled]
             for w in component_work
         ],
+        # G3DV2-B M1：scene 工作项进入 work 身份（scene_work 是真实执行
+        # 面 —— 纯 3D 代的 work_fingerprint 必须与含 scene 的 spec 区分）。
+        "scene_work": [
+            [s.asset_id, s.source_id, s.format, s.visible, s.revision]
+            for s in scene_work
+        ],
         "required_capabilities": caps,
     }
     work_fp = _fingerprint_payload(semantic)
@@ -406,6 +472,7 @@ def project_render_work_envelope(
         data_dependencies=deps,
         layer_work=layer_work,
         component_work=component_work,
+        scene_work=scene_work,
         invalidation=invalidation,
         required_capabilities=tuple(caps),
         diagnostics=tuple(diagnostics[:MAX_DIAGNOSTICS]),
@@ -418,10 +485,12 @@ __all__ = [
     "MAX_DATA_DEPENDENCIES",
     "MAX_LAYER_WORK",
     "MAX_COMPONENT_WORK",
+    "MAX_SCENE_WORK",
     "MAX_DIAGNOSTICS",
     "DataDependency",
     "LayerWork",
     "ComponentWork",
+    "SceneAssetWork",
     "InvalidationHints",
     "RenderWorkEnvelope",
     "project_render_work_envelope",

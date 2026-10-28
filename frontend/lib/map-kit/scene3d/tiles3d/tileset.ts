@@ -154,7 +154,8 @@ export function parseTileset(
   }
 
   let count = 0;
-  const root = parseTile(ts.root, '0', opts, rootLocalToEnu, (t) => {
+  // OGC 3D Tiles：tile 未声明 refine 时继承父 tile（根默认 REPLACE）。
+  const root = parseTile(ts.root, '0', opts, rootLocalToEnu, 'REPLACE', (t) => {
     count += 1;
     if (count > MAX_TILES_PER_TILESET) {
       throw new TilesetParseError('budget_exceeded', `tiles > ${MAX_TILES_PER_TILESET}`);
@@ -175,6 +176,7 @@ function parseTile(
   id: string,
   opts: { tilesetUrl: string; anchor: { lng: number; lat: number }; resolveUri: (b: string, u: string) => string | null },
   parentToEnu: Mat4,
+  parentRefine: 'REPLACE' | 'ADD',
   tick: (t: TileNode) => TileNode,
 ): TileNode {
   const tileTransform = Array.isArray(raw.transform) && raw.transform.length === 16
@@ -226,8 +228,13 @@ function parseTile(
     }
   }
 
+  // refine 严格化（G3DV2-B G6）：非法值 typed 拒绝（曾静默 coerce REPLACE，
+  // ADD/REPLACE 写错的数据集会得到错误渲染语义）；未声明继承父 tile。
   const refineRaw = typeof raw.refine === 'string' ? raw.refine.toUpperCase() : null;
-  const refine: 'REPLACE' | 'ADD' = refineRaw === 'ADD' ? 'ADD' : 'REPLACE';
+  if (refineRaw !== null && refineRaw !== 'ADD' && refineRaw !== 'REPLACE') {
+    throw new TilesetParseError('corrupt', `tile ${id} refine '${raw.refine}' invalid (REPLACE|ADD)`);
+  }
+  const refine: 'REPLACE' | 'ADD' = refineRaw ?? parentRefine;
 
   const node: TileNode = {
     id,
@@ -241,7 +248,7 @@ function parseTile(
     children: [],
   };
   const children = raw.children ?? [];
-  node.children = children.map((c, i) => parseTile(c, `${id}/${i}`, opts, localToEnu, tick));
+  node.children = children.map((c, i) => parseTile(c, `${id}/${i}`, opts, localToEnu, refine, tick));
   return tick(node);
 }
 

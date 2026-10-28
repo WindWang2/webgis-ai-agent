@@ -1,9 +1,9 @@
 /**
- * scene3d/status — 资产状态环（G3D02 M4/M7）。
+ * scene3d/status — 资产状态环（G3D02 M4/M7；G3DV2-B 增 cancelled/context_lost）。
  *
- * 有界（64 条）per-asset 状态事件环：加载/挂载/失败/降级的观察披露面，
- * 供 render-observation 附带上行（后端 telemetry/质量面可见）。与
- * adapter 的 sceneEvidence 环同款纪律：只登记不裁决，去重快照。
+ * 有界（64 条）per-asset 状态事件环：加载/挂载/失败/降级/取消/上下文丢失
+ * 的观察披露面，供 render-observation 附带上行（后端 telemetry/质量面可见）。
+ * 与 adapter 的 sceneEvidence 环同款纪律：只登记不裁决，去重快照。
  */
 
 export type SceneAssetStatusCode =
@@ -12,7 +12,11 @@ export type SceneAssetStatusCode =
   | 'loading'
   | 'load_failed'
   | 'unavailable'
-  | 'degraded';
+  | 'degraded'
+  /** G3DV2-B：加载中途被取消（revision 换代/卸载/任务取消打断在途加载）。 */
+  | 'cancelled'
+  /** G3DV2-B：WebGL context lost —— 资产停加载、GPU 侧已释放、等待恢复。 */
+  | 'context_lost';
 
 export interface SceneAssetStatusEvent {
   assetId: string;

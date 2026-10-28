@@ -110,9 +110,10 @@
           "fill",
           "geojson"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "c56f1751569df1ea35c05b9ca2220cc9cb05378f1e66dda48c63bbf5a3079e3b",
+        "work_fingerprint": "efa62175a26ea11b2933296aeee02cbf734bafd4d69ce699624fed720aa8418d",
         "work_id": "rw-7-111111111111"
       },
       "projector_input": {
@@ -257,9 +258,10 @@
           "geojson",
           "voxel"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "6f74a4fcfbd5b8a91dddb1936da179753fb4b206e0c6b2d9fb2aff40d688f722",
+        "work_fingerprint": "f59fb9b13fbcc591c752ac29614a38b6a37edf1dfb757f00cf5c1d40ea644d38",
         "work_id": "rw-8-fp-222222222"
       },
       "projector_input": {
@@ -414,9 +416,10 @@
           "fill",
           "geojson"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "778ac2baf173d81c65b300f718b14b8a45af179a9c35892f47f2bcad52ea62f1",
+        "work_fingerprint": "2f31f8d70fa37f309c25b23b722c0461ce90cb7aacfbb3c34234c8e8f60e7a0e",
         "work_id": "rw-9-fp-333333333"
       },
       "projector_input": {
@@ -622,9 +625,10 @@
           "fill",
           "geojson"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "b87034c4264e8c69938492514203bbcd6ceca1e303df7d97c68f66bc3f470948",
+        "work_fingerprint": "1f738965d9d698ccf086bea91ca09717d3394d7c847bbde6abb9b93407480848",
         "work_id": "rw-10-fp-444444444"
       },
       "projector_input": {
@@ -772,9 +776,10 @@
           "circle",
           "geojson"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-B",
-        "work_fingerprint": "efb03cec0ec81e0981ce127b7120a726dd60990316c7bf288b0def98fe1b6fcc",
+        "work_fingerprint": "71805530e292b91f93ea16f9cedfe6ffb404787160fea39a94c828d2eb147d14",
         "work_id": "rw-3-fp-555555555"
       },
       "projector_input": {
@@ -862,9 +867,10 @@
           "geojson",
           "line"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-C",
-        "work_fingerprint": "4b5ff47972ebd5e321f973a0200cbb44c86f8d344c6fed92842836b5d8f0b5a6",
+        "work_fingerprint": "134f4d742ea9b966b4cacbba40b001f9eaaaeee910fc694b68518dd0f6711982",
         "work_id": "rw-2-fp-666666666"
       },
       "projector_input": {
@@ -963,9 +969,10 @@
           "fill",
           "geojson"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-D",
-        "work_fingerprint": "c5f91bf7728288ff65c81ba28867a6928be192964b55249cdcf429752d37ee0b",
+        "work_fingerprint": "c94b96e3d49f1e3b6ba773bc8ef08b7c3773c833c6c9c2a017f8465c700ae396",
         "work_id": "rw-5-fp-777777777"
       },
       "projector_input": {
@@ -1060,9 +1067,10 @@
           "circle",
           "geojson"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-E",
-        "work_fingerprint": "2bd2093ef76b2c51ed3062049640d877144b770f424d77fbe4fd6ce2f9489be2",
+        "work_fingerprint": "077d9dbb57d73081077891a4ecd64c260498a05031cc1ddb14f6c27c75160ba4",
         "work_id": "rw-11-fp-888888888"
       },
       "projector_input": {
@@ -1172,9 +1180,10 @@
           "raster-dem",
           "vector"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-F",
-        "work_fingerprint": "ae188f0ec4e4d2214e0d72c41f783173c480b797c4a0b9ecb4bc7b1fc9dd2150",
+        "work_fingerprint": "c06f16ad3b243550aea3fea3113f1ef1d31824897bda5c132d58ad1c6eecfef1",
         "work_id": "rw-4-fp-999999999"
       },
       "projector_input": {
@@ -1270,9 +1279,10 @@
           "circle",
           "data_fabric"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-G",
-        "work_fingerprint": "f39c643b774d9102a7433125a3430f0624a9a66ca3b5b8aa297ea36f15e244aa",
+        "work_fingerprint": "eea2c9292464c1934f92f3de7e0607b09707238b076f1855736750958d25037b",
         "work_id": "rw-6-fp-aaaaaaaaa"
       },
       "projector_input": {
@@ -1421,9 +1431,10 @@
           "fill",
           "geojson"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "c56f1751569df1ea35c05b9ca2220cc9cb05378f1e66dda48c63bbf5a3079e3b",
+        "work_fingerprint": "efa62175a26ea11b2933296aeee02cbf734bafd4d69ce699624fed720aa8418d",
         "work_id": "rw-7-111111111111"
       },
       "projector_input": {
@@ -1597,9 +1608,10 @@
           "fill",
           "geojson"
         ],
+        "scene_work": [],
         "schema_version": "render_work.v1",
         "session_id": "sess-A",
-        "work_fingerprint": "64be5e0fec7f295d22e76ffa187ced3056e6c4880b9054c8a4adf2ed5dd55503",
+        "work_fingerprint": "5a7ea407def5bca137925e12bd632ffc89625c3348a9df975f61e1d707ab1996",
         "work_id": "rw-12-fp-bbbbbbbbb"
       },
       "projector_input": {
@@ -1659,6 +1671,118 @@
         "observation_seq": 50,
         "previous": "s04_same_ref_revision_changed",
         "revision": 12,
+        "session_id": "sess-A"
+      }
+    },
+    "s13_scene3d_pure_3d_work": {
+      "ack_input": {
+        "applied_layers": [],
+        "applied_sources": {
+          "model-a": 2
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 13
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "kind": "model3d",
+            "revision": "2",
+            "source_id": "model-a"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [],
+        "mapspec_fingerprint": "carto-sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "mapspec_revision": 13,
+        "observation_target_seq": 60,
+        "required_capabilities": [
+          "model3d"
+        ],
+        "scene_work": [
+          {
+            "asset_id": "campus",
+            "format": "glb",
+            "revision": "2",
+            "source_id": "model-a",
+            "visible": true
+          },
+          {
+            "asset_id": "tower",
+            "format": "glb",
+            "revision": "2",
+            "source_id": "model-a",
+            "visible": false
+          }
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-A",
+        "work_fingerprint": "4af23923e135fe3d2fa18396c99c225458543aa7b325b0eca48b7a6db4debb81",
+        "work_id": "rw-13-cccccccccccc"
+      },
+      "projector_input": {
+        "fingerprint": "carto-sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "mapspec": {
+          "layers": [],
+          "layout": {
+            "components": []
+          },
+          "scene": {
+            "assets": [
+              {
+                "id": "campus",
+                "placement": {
+                  "anchor": [
+                    104.06,
+                    30.67
+                  ]
+                },
+                "source": "model-a",
+                "visible": true
+              },
+              {
+                "id": "tower",
+                "placement": {
+                  "anchor": [
+                    104.07,
+                    30.68
+                  ]
+                },
+                "source": "model-a",
+                "visible": false
+              }
+            ],
+            "mode": "3d"
+          },
+          "sources": {
+            "model-a": {
+              "content_revision": 2,
+              "format": "glb",
+              "type": "model3d",
+              "url": "https://assets.test/campus.glb"
+            }
+          },
+          "version": "1.7",
+          "view": {
+            "center": [
+              104.06,
+              30.67
+            ],
+            "zoom": 15.5
+          }
+        },
+        "observation_seq": 60,
+        "revision": 13,
         "session_id": "sess-A"
       }
     }
