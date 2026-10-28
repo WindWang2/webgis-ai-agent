@@ -21,9 +21,33 @@
 - 进行中：tests/unit 全量串行（后台）；前端 vitest 4626/4628（1 失败为
   data-plane.perf 并行负载抖动，单跑通过——零前端改动，等机器空闲复跑）
 
-## 无歧义下一步
+## 终局记录（2026-10-28）
 
-1. 后端 unit 全量结果落盘 → 记录；
-2. vitest 空闲复跑确认绿；
-3. 独立 review subagent（未参与实现）→ INDEPENDENT_REVIEW.md → 修 P0/P1/P2 → 复验；
-4. master 前移复查 → push → gh pr create。
+- 独立评审两轮完成：第一轮 1×P1+2×P2+7×P3 → 全部清偿（commit 5a82cd646）；
+  第二轮复验 9/9 CLOSED，结论「可合」（含证伪实验复跑 + F1 反证对拍）。
+- tests/unit 全量（17567 passed / 40 failed）→ 逐项归因：25 项为本分支
+  引发（注册表/目录/快照再生 + _parsed 行为恢复 + 前端目录欠账），全部
+  清偿；12 项 master 既有红（干净 worktree 对照同失败：metadata 棘轮
+  158/159、binding taxonomy、execution catalog、component catalog、
+  export corpus、mutation registry、platform build info、behavioral
+  webgis、response model coverage——#1829/#1830 遗留）；2 项 runtime
+  fixture（Playwright）在 origin/master + 同一 node_modules 下同样失败
+  （环境性，双向对照完成）；1 项 vitest perf 抖动（单跑通过）。
+- 修复后再全量复跑受影响域：lib/gis/gis_tool_conformance/scene3d/
+  dispatch/profile/tool ×2232 passed + 1 既有棘轮红（已归因）。
+- 前端：typecheck ✓ eslint 0 warning ✓ vitest 4626/4628（1 抖动 + 1
+  expected fail）+ catalogue-contract 修复后 2/2。
+- master 无前移（交付前复查 origin/master == 70dab2b）。
+
+## 验收 Oracle 对照（goal-loop 完成判定）
+
+| Oracle | 结果 |
+|---|---|
+| 基线核对+排除矩阵 | ✅ BASELINE/PR_OVERLAP（实时 gh 核对） |
+| ≥1 新算法解析 oracle | ✅ cut/fill 16 例闭式（<1e-6 m³） |
+| LOS/profile/viewshed 零回归 | ✅ 25+36 例 + stats 逐位一致 |
+| 图层+剖面+ACK+导出+失效判定 | ✅ F27-01/02/04/12/14 |
+| ≥12 任务级场景 | ✅ F27=14（pin 61） |
+| 本地确定性质量门 | ✅ 本分支域全绿（12 项既有红全部 master 对照归因留档） |
+| 独立 review→fix→复验 | ✅ 两轮，9/9 CLOSED |
+| PR 已创建 | 进行中（push + gh pr create） |

@@ -1857,6 +1857,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         parameter_contract_ref="surface_area_analysis",
     ),
     AlgorithmDescriptor(
+        resource_envelope=ResourceEnvelope(
+            bytes_per_cell=24,
+            notes="单遍压缩布尔索引（dz 正负部）；无实现层硬上限（输入侧栅格守卫）",
+        ),
+        cancellation_profile="none",
+        tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
         id="terrain.cut_fill_volume",
         name="基准面土方量（cut/fill）",
         category="terrain_analysis",

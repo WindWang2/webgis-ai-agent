@@ -159,6 +159,16 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "829–839.",
         ),
         MethodReference(
+            # G3D-V2-C（ADR-0276）：土方量求积口径——像元中心中点求积
+            # 对 ≤1 次多项式精确（离散闭式），曲面随分辨率收敛。
+            "midpoint_quadrature",
+            "Cell-center midpoint quadrature for cut/fill volume",
+            "Midpoint rule (rectangle rule) on regular grids: exact for "
+            "polynomials of degree ≤ 1 over each cell; see any numerical "
+            "analysis textbook treatment of Newton–Cotes quadrature "
+            "(e.g. Burden & Faires, Numerical Analysis, §4.3).",
+        ),
+        MethodReference(
             "weiss2001",
             "TPI / slope position landform classes",
             "Weiss, A. D. (2001). Topographic Position and Landforms Analysis "

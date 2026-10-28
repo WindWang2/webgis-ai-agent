@@ -14,10 +14,10 @@
 
 ## 总览
 
-- capability 词表：161 条（图内 161 节点）
-- 图节点 996 / 边 3203 / graph fingerprint `75f6f060f7230327`
-- provider 面：algorithm 241，component 20，model 0，provider(adapters) 15，template 8，tool 363，workflow(recipes) 166
-- 域分布：`general` 71，`network` 14，`platform` 17，`raster` 56，`statistics` 1，`temporal` 2
+- capability 词表：165 条（图内 165 节点）
+- 图节点 1032 / 边 3243 / graph fingerprint `6628886e8f4a28bf`
+- provider 面：algorithm 245，component 22，model 10，provider(adapters) 15，template 8，tool 369，workflow(recipes) 166
+- 域分布：`cartography` 3，`general` 71，`network` 14，`platform` 17，`raster` 57，`statistics` 1，`temporal` 2
 
 ## Capability 词表
 
@@ -137,6 +137,8 @@
 | `sar_terrain_geometry_correction` | raster | raster | native | — | yes | — | — |
 | `sar_texture` | raster | raster | native | — | yes | — | — |
 | `scenario_simulation` | platform | platform | planned | — | no | — | — |
+| `scene_camera_action` | cartography | presentation | planned | — | yes | — | — |
+| `scene_representation` | cartography | presentation | planned | — | yes | — | — |
 | `service_area` | network | network | native | — | yes | — | — |
 | `shortest_path` | network | network | native | — | yes | — | — |
 | `space_time_interaction` | general | density | native | — | yes | — | — |
@@ -169,6 +171,7 @@
 | `terrain_hydrology` | raster | raster | native | — | yes | — | — |
 | `terrain_hydrology_advanced` | raster | raster | native | — | yes | — | — |
 | `terrain_measurement` | raster | raster | native | — | yes | — | — |
+| `terrain_scene_binding` | cartography | presentation | planned | — | yes | — | — |
 | `terrain_sky_view` | raster | raster | native | — | yes | — | — |
 | `terrain_slope` | raster | raster | native | — | yes | — | — |
 | `terrain_viewshed` | raster | raster | native | — | yes | — | — |
@@ -179,6 +182,7 @@
 | `trend_surface` | general | analysis | native | — | yes | — | — |
 | `triangulation_interpolation` | general | analysis | native | — | yes | — | — |
 | `variogram_analysis` | general | analysis | native | — | yes | — | — |
+| `volume_estimation` | raster | raster | native | — | yes | — | — |
 | `voronoi_tessellation` | general | analysis | native | — | yes | — | — |
 | `weights_sensitivity` | general | statistics | native | — | yes | — | — |
 | `workspace_snapshot` | general | data_access | native | — | no | — | — |
@@ -189,9 +193,9 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 74 | 1 | 79 | 6 | 0 |
+| 66 | 1 | 80 | 6 | 0 |
 
-### orphan_capability（74）
+### orphan_capability（66）
 
 - capability accessibility has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability areal_interpolation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -224,15 +228,6 @@
 - capability local_join_count has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mantel_test has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mnf_transform has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_change_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_embedding has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_image_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_instance_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_object_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_promptable_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_super_resolution has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_temporal_classification has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_temporal_forecast has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability nearest_neighbor_functions has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability network_centrality has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability pair_correlation_function has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -266,11 +261,12 @@
 - capability trend_surface has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability triangulation_interpolation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability variogram_analysis has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability volume_estimation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability weights_sensitivity has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（79）
+### unreachable_tool（80）
 
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
 - tool capability_runtime_status is not exposed by any algorithm and has no capability/deprecation link
@@ -330,6 +326,7 @@
 - tool search_datasets is not exposed by any algorithm and has no capability/deprecation link
 - tool search_spatial_catalog is not exposed by any algorithm and has no capability/deprecation link
 - tool set_map_scene is not exposed by any algorithm and has no capability/deprecation link
+- tool set_scene_assets is not exposed by any algorithm and has no capability/deprecation link
 - tool update_layer_appearance is not exposed by any algorithm and has no capability/deprecation link
 - tool validate_execution_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_action_plan is not exposed by any algorithm and has no capability/deprecation link

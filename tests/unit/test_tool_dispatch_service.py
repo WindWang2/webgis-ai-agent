@@ -372,10 +372,16 @@ async def test_raster_result_ref_never_masquerades_as_geojson(
     )
 
     assert result.status == "ok"
+    # 不变量：raster 身份停留在图像路径——不铸 geojson ref、不进 GeoJSON
+    # 挂载授权（ref_descriptor 面不消费）。
     assert result.geojson_ref is None
     assert result.ref_descriptor is None
     assert result.raw_result["result_ref"] == "ref:raster/r1"
-    descriptor.assert_not_awaited()
+    # G3D-V2-C（_parsed 预初始化修复）：artifact 登记路径对非能力工具
+    # 恢复运行（master 上被 UnboundLocalError 经 best_effort 静默跳过）
+    # ——登记内部合法咨询 descriptor（ref revisions），不再断言"从未
+    # 被等"。栅格不冒充 GeoJSON 的不变量由上面三行钉住。
+    assert descriptor.await_count <= 1
 
 
 @pytest.mark.asyncio

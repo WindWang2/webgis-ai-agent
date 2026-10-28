@@ -53,6 +53,26 @@
 - tests/acceptance/gis_agent：61 场景全绿（pin 已更新 61）；
 - tests/unit 全量：见 LOOP_STATE（后台串行运行，结果落盘）。
 
+## 全量 unit lane 归因账（终局）
+
+tests/unit 全量：17567 passed / 40 failed / 25 errors → 处置：
+- **25 项本分支引发并已清偿**：volume_estimation 能力/midpoint_quadrature
+  方法引用/descriptor vnext 三字段注册 + 全目录再生（science catalog×3/
+  benchmark/quality manifest）；G02 计数 pin 244→245；#535 幽灵命令
+  （sceneCommands 补登，master 即红）；_parsed 行为恢复的一处断言语义
+  更新（raster 不冒充 GeoJSON 的不变量改由 geojson_ref/ref_descriptor/
+  result_ref 三行钉住——不再钉"descriptor 从未被等"这一 bug 副作用）。
+- **12 项 master 既有红**（干净 worktree 对照同败）：metadata 棘轮
+  （159==159，新增工具不在名单）、binding taxonomy×2、execution catalog
+  drift、component catalog parity、export semantic corpus、mutation
+  registry×2、platform build info、behavioral webgis、response model
+  coverage、debt ratchet。
+- **2 项 Playwright runtime fixture**：origin/master + 同一 node_modules
+  复跑同败（环境性；worktree 全新 pnpm install）。
+- **1 项 vitest data-plane.perf**：并行负载抖动，单跑 5/5 通过（两轮复现
+  同一模式）。
+- 修复后受影响域复跑 2232 passed + 1 既有棘轮红（已归因）。
+
 ## 既有债务的显性清偿（非重叠最小修复，证据齐全）
 
 - tool_dispatch_service `_parsed` 未初始化：E2E 显形的 UnboundLocalError

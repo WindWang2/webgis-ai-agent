@@ -175,4 +175,20 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         compatible_map_models=["raster_surface"],
         purpose_template="三维地形量测",
     ),
+    # ── G3D-V2-C（ADR-0276）：基准面土方量能力 ────────────────────
+    CapabilityDescriptor(
+        id="volume_estimation",
+        name="基准面土方量",
+        category="raster",
+        domain="raster",
+        description=(
+            "区域相对基准面的挖方/填方/净方（G3D-V2-C）：constant 绝对基准"
+            "面或区域均值基准；像元中心中点求积（平面/斜面离散闭式精确），"
+            "nodata/边界/nodata 比例披露，跨 datum 混算拒绝。"
+        ),
+        input_artifact_types=["terrain_surface"],
+        output_artifact_types=["polygon_feature_set", "stats_table"],
+        compatible_map_models=["raster_surface"],
+        purpose_template="土方量估算",
+    ),
 ]
