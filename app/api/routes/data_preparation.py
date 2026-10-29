@@ -231,24 +231,30 @@ async def preview_plan(
 ):
     """dry-run 预演（采样 ≤2000 行；不落任何 store）。"""
     await _require_session(session_id, _user, owner_token)
+    from app.services.data_preparation.executor import _exec_lock
+
     plan = await _load_owned_plan(plan_id, session_id)
     if plan.state == "discarded":
         raise HTTPException(status_code=409, detail="PLAN_DISCARDED")
-    if plan.state in ("executed", "verified", "rolled_back"):
-        # executed 计划不得经 preview 状态回退后被作废（review R1 #5：
-        # 状态机不变量 —— 已执行计划的台账必须保持 executed 终态）。
-        raise HTTPException(status_code=409,
-                            detail=f"PLAN_ALREADY_{plan.state.upper()}")
-    payload = await session_data_manager.get(session_id, plan.input_ref)
-    if payload is None:
-        raise HTTPException(status_code=404, detail="input ref missing")
-    try:
-        result = dry_run(payload, plan)
-    except ExecError as exc:
-        raise HTTPException(status_code=_EXEC_STATUS.get(exc.code, 400),
-                            detail=f"{exc.code}: {exc.detail}") from exc
-    plan.state = "previewed"
-    await save_plan(plan)
+    # 与 execute 同一把 (session, plan_hash) 锁 + 锁内重读状态：preview 的
+    # load→dry-run→save 窗口内 execute 完成时，旧副本回存会把 executed 打回
+    # previewed 再被 discard（R2-3 竞态）—— 锁内重读后按终态拒绝。
+    async with _exec_lock(session_id, plan.plan_hash):
+        plan = await _load_owned_plan(plan_id, session_id) or plan
+        if plan.state in ("executed", "verified", "rolled_back"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"PLAN_ALREADY_{plan.state.upper()}")
+        payload = await session_data_manager.get(session_id, plan.input_ref)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="input ref missing")
+        try:
+            result = dry_run(payload, plan)
+        except ExecError as exc:
+            raise HTTPException(status_code=_EXEC_STATUS.get(exc.code, 400),
+                                detail=f"{exc.code}: {exc.detail}") from exc
+        plan.state = "previewed"
+        await save_plan(plan)
     return PreviewResponse(
         plan_id=result["plan_id"], sampled_rows=result["sampled_rows"],
         truncated=result["truncated"],

@@ -12,3 +12,19 @@
 | R8 | descriptor 写回与 #1759 恢复链冲突（版本爆炸/指纹漂移） | 低/高 | 写走既有 store 版本化（MAX 8）；evidence=user_confirmed 单独标记；复用 reuse 对账测试加负例 |
 | R9 | 迁移撞号（若需 DB 表） | 低/低 | 目标无新表（计划存 ref store + artifact metadata）；如需再走 allocator + watermark |
 | R10 | 测试与并行 subagent 抢资源 | 中/低 | 窄面单进程默认；宽面错峰；文件锁由主 Agent 单入口 |
+
+## R2 复审残差（P3，已披露不阻塞）
+
+- R2-2 内容锚首跑盲区：空指纹计划在构建与首次执行之间被原地覆写时无先例
+  收据可比对（前置链窄：无 descriptor + 覆写窗口）。后续：计划携带构建时
+  内容哈希，执行前对账。
+- R2-4 _EXEC_LOCKS 无回收（每 (session,plan_hash) 一条，量级可忽略）；
+  asyncio.Lock 绑定首次 acquire 的事件循环 —— 单 loop 生产安全，多 loop
+  嵌入场景需换 per-loop 工厂。
+- R2-6 幂等重入 O(n)×2（deepcopy + canonical sha256）：双锚校验的必要代价；
+  大表后续可让计划携带锚做前置短路。
+
+## master 既有红灯（非本分支引入，干净锚点同口径复现）
+
+- tests/data/test_data_profile_raster_band_cap_1716.py 三例（band cap 1716）
+  在 origin/master@4b3629c9（/tmp/master-check 只读复跑）同样失败。

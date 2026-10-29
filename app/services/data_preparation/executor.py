@@ -376,7 +376,11 @@ def _load_receipts_sync(path: Path) -> List[PreparationReceipt]:
 
 
 def _append_receipt_sync(path: Path, receipt: PreparationReceipt) -> None:
-    records = [r for r in _load_receipts_sync(path) if r.plan_hash != receipt.plan_hash]
+    # ring 去重键 = (plan_hash, input_ref)：空指纹计划同 hash 不同数据集
+    # 各留各的收据，不互逐（R2-1）。
+    records = [r for r in _load_receipts_sync(path)
+               if not (r.plan_hash == receipt.plan_hash
+                       and r.input_ref == receipt.input_ref)]
     records.append(receipt)
     records = records[-_MAX_RECEIPTS:]
     path.parent.mkdir(parents=True, exist_ok=True)

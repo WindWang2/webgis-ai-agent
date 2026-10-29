@@ -1,8 +1,10 @@
 """数据准备工具 —— prepare_dataset 四态判别式（M6；契约 §6）。
 
 状态语义（closed 词表，诚实优先）：
-- ``blocked``：存在 blocked 级 finding（如 AXIS_ORDER_SUSPECT / CRS 缺失）——
-  绝不自动执行，也不谎称可执行；
+- ``blocked``：存在**不可自动解决**的 blocked 级 finding（建议码 ∉
+  _AUTO_RESOLVABLE，如 AXIS_ORDER_SUSPECT 须用户确认、CRS 须声明；注意
+  filter_rows 类 blocked —— 越界行过滤有硬闸兜底 —— 可自动解决，不算硬
+  阻断，收据摘要的 blocked:true 是事实披露）—— 绝不自动执行，也不谎称可执行；
 - ``requires_input``：字段角色存在澄清项（needs_clarification 且未被
   role_hints 解决）—— 返回澄清问题（候选 + 置信度 + 原因码，无样本值）；
 - ``ready``：无阻断、无澄清，但 auto_execute=false —— 一切就绪待确认执行
