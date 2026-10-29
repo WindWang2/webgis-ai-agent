@@ -52,6 +52,7 @@ from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 # V9 data-lifecycle（ADR-0140）：质量规则引擎 / 统一生命周期策略 —— 新增路由
 # 文件，不改任何既有路由的签名/response_model（§8 冲突契约）。
 from app.api.routes import data_quality as data_quality_routes
+from app.api.routes import data_preparation as data_preparation_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
 from app.api.routes import composition_template_assets as composition_template_assets_routes
@@ -1107,6 +1108,7 @@ app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
 app.include_router(jobs_routes.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
+app.include_router(data_preparation_routes.router, prefix="/api/v1", tags=["数据准备"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(ws_collab.router, prefix="/api/v1", tags=["WebSocket 协作"])
