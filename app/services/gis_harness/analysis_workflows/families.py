@@ -85,12 +85,13 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               params={"denominator_kind": "area"},
               deps=("zones_count",),
               outputs=("density_zones",)),
-        # 每万人密度：外部分母角色缺失 → typed skipped（optional），
+        # 每万人密度：分母 = 带人口字段的区面层（role:denominator 绑定，
+        # qualifier.field 指明字段名）。缺失 → typed skipped，
         # 绝不拿 area 密度或原始计数冒充（ADR-0099）。
         _step("per_capita_rate", "spatial_aggregate",
-              {"points": "role:subject", "polygons": "role:boundary"},
+              {"points": "role:subject", "polygons": "role:denominator"},
               capability="admin_aggregation",
-              params={"denominator_kind": "field"},
+              params={"denominator_kind": "field", "denominator": "population"},
               deps=("zones_count",),
               optional=True,
               outputs=("rate_zones",)),
