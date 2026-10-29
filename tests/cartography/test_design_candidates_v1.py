@@ -234,3 +234,26 @@ def test_primary_model_alignment() -> None:
            if c.candidate_id == cs.selected_candidate_id]
     assert sel and sel[0].map_model_id == "visual_heatmap"
     assert cs.selection_basis.startswith("planner_primary")
+
+
+def test_requested_infeasible_model_typed_blocked_with_reason_type() -> None:
+    """用户显式要求与数据形态不匹配 → typed block（分型：几何 vs 产物）。"""
+    # aggregate_grid 需 grid_aggregate 产物（先跑格网聚合）——对原始点数据
+    ctx = _chengdu_points_ctx(user_requested_models=("aggregate_grid",))
+    cs = generate_design_candidates(ctx)
+    grid = [c for c in cs.candidates if c.map_model_id == "aggregate_grid"]
+    assert grid, "不可行的用户显式要求也必须可见（typed block）"
+    assert grid[0].suitability == CandidateSuitability.BLOCKED
+    assert "DATA_REQUIREMENT_UNMET" in grid[0].condition_codes
+    assert any("先执行对应分析" in r for r in grid[0].condition_reasons_zh)
+    assert cs.user_request_handling["typed_blocked"] == ["aggregate_grid"]
+
+    # administrative_choropleth 需 polygon 几何——对点数据是几何不匹配
+    ctx2 = _chengdu_points_ctx(
+        user_requested_models=("administrative_choropleth",))
+    cs2 = generate_design_candidates(ctx2)
+    chor = [c for c in cs2.candidates
+            if c.map_model_id == "administrative_choropleth"]
+    assert chor
+    assert chor[0].suitability == CandidateSuitability.BLOCKED
+    assert "GEOMETRY_INCOMPATIBLE" in chor[0].condition_codes

@@ -339,6 +339,18 @@ def _affinity_categories_for(model_id: str) -> Tuple[str, ...]:
     )[:2]
 
 
+def _model_feasible(model: Any, task_ctx: Any) -> bool:
+    """单模型可行域判定（与组合层 ``_candidate_map_models`` 同款硬过滤：
+    几何 ∩ 产物；不复制评分）。"""
+    if task_ctx.geometry_kind not in (model.geometry_kinds or []):
+        return False
+    artifact_set = set(task_ctx.artifact_types)
+    if artifact_set and model.accepted_artifact_types:
+        if not (artifact_set & set(model.accepted_artifact_types)):
+            return False
+    return True
+
+
 def _apply_rules(
     ctx: DesignTaskContext,
     model: Any,
@@ -479,15 +491,50 @@ def generate_design_candidates(
     pool = _pool_from_composition(ctx)
     _augment_with_affinity_families(ctx, pool)
 
-    # 用户显式要求但组合层未给出的模型：定向类目再检索一次（仍走同一
-    # 组合选择器，不旁路）；再不可得则组件面用模型自带 recommended。
+    # 用户显式要求但组合层未给出的模型：①定向类目再检索一次（仍走同一
+    # 组合选择器）；②仍被每类目 top-N 截断挤出 → 可行域直判（复用组合层
+    # 同款几何∩产物硬过滤），可行即入池（组合面留空，诚实标注）；
+    # ③不可行 → 以 GEOMETRY_INCOMPATIBLE typed block 呈现（用户要求可见，
+    # 不静默丢弃、不假成功）。
     requested = [m for m in ctx.user_requested_models if model_reg.resolve(m)]
+    incompatible_requested: Dict[str, MapDesignCandidate] = {}
+    task_ctx_for_feasibility = None
     for model_id in requested:
         if model_id not in pool:
             extra = _pool_from_composition(
                 ctx, extra_categories=_affinity_categories_for(model_id))
             if model_id in extra:
                 pool[model_id] = extra[model_id]
+                continue
+            model = model_reg.get(model_id)
+            if model is None:
+                continue
+            if task_ctx_for_feasibility is None:
+                task_ctx_for_feasibility = _task_ctx_from_design(ctx)
+            if _model_feasible(model, task_ctx_for_feasibility):
+                pool[model_id] = {
+                    "composition": "", "score": 0.0, "slots": [],
+                    "reasons": ["用户显式要求（可行域直判，组合层未覆盖）"],
+                }
+            else:
+                blocked = _apply_rules(ctx, model, {
+                    "composition": "", "score": 0.0, "slots": [],
+                    "reasons": ["用户显式要求（与数据形态不匹配）"],
+                })
+                blocked.suitability = CandidateSuitability.BLOCKED
+                _tctx = task_ctx_for_feasibility
+                if _tctx.geometry_kind not in (model.geometry_kinds or []):
+                    blocked.condition_codes.append("GEOMETRY_INCOMPATIBLE")
+                    blocked.condition_reasons_zh.append(
+                        f"表达需 {','.join(model.geometry_kinds or ['?'])} 几何，"
+                        f"数据为 {_tctx.geometry_kind}——不可行")
+                else:
+                    blocked.condition_codes.append("DATA_REQUIREMENT_UNMET")
+                    blocked.condition_reasons_zh.append(
+                        "在场产物不满足表达数据要求（需 "
+                        + ", ".join(model.accepted_artifact_types[:3])
+                        + "）——先执行对应分析产出该数据，再切换表达")
+                incompatible_requested[model_id] = blocked
 
     if not pool:
         return DesignCandidateSet()
@@ -542,6 +589,7 @@ def generate_design_candidates(
         is_primary = c.map_model_id == primary_model_id
         return (0 if is_primary else 1, -(c.score - penalty), c.map_model_id)
 
+    requested_overrides.update(incompatible_requested)
     merged = (list(by_family.values()) + rate_semantic_survivors
               + list(requested_overrides.values()))
     if primary_cand is not None and primary_model_id not in requested:
