@@ -172,6 +172,7 @@ def _legend_digest_and_classification(
 
 def _page_fingerprint(
     binding_fields: Dict[str, Any], *, spec: AtlasJobSpec, ir_fingerprint: str,
+    structural_fingerprint: str,
 ) -> str:
     projection = {
         "binding": binding_fields,
@@ -179,6 +180,10 @@ def _page_fingerprint(
         "atlas_title": spec.atlas.atlas_title,
         "target_dpi": spec.target_dpi,
         "ir_fingerprint": ir_fingerprint,
+        # R1-P1：页有效文档的结构指纹（layers/paint/thresholds/view/scene/
+        # scenario_mode + 源描述符与 feature_count —— 同步链 C14 review P2
+        # 同款投影）。样式/阈值/视角变化必须轮换页指纹，否则缓存误命中。
+        "structural_fingerprint": structural_fingerprint,
         "compiler_key": ATLAS_COMPILER_KEY,
     }
     return _ATLAS_PAGE_FP_PREFIX + digest_of(projection)[:40]
@@ -200,34 +205,18 @@ def _inline_feature_collections(doc: Dict[str, Any]) -> Dict[str, List[Dict[str,
     return out
 
 
-def _document_data_digest(document: Dict[str, Any]) -> str:
-    """文档级数据内容 digest（全部内联 geojson 源要素；逐计划一次）。"""
-    collections = _inline_feature_collections(document)
+def _page_features_digest(effective_doc: Dict[str, Any], layer_id: str) -> str:
+    """页数据内容 digest（R1-P1 修复：页渲染输入的**全部**数据内容）。
+
+    页面渲染不止画过滤层 —— 其余内联层照常入图，其内容变化必须轮换指纹
+    （否则缓存命中旧页）。``effective_doc`` 已由 ``_page_effective_doc``
+    把目标源过滤为本页要素，其余源为全量 —— 直接投影全部源即得
+    「目标源页粒度 + 其余源全敏感」的正确身份。
+    """
+    _ = layer_id  # 过滤已发生在 effective_doc（保留签名便于阅读调用意图）
+    collections = _inline_feature_collections(effective_doc)
     projection = {sid: feats for sid, feats in sorted(collections.items())}
     return "atlasdata-sha256:" + digest_of(projection)[:40]
-
-
-def _page_features_digest(effective_doc: Dict[str, Any], layer_id: str) -> str:
-    """页数据内容 digest：过滤层要素（有过滤层）否则文档级全量。"""
-    if layer_id:
-        layers = effective_doc.get("layers")
-        sources = (effective_doc.get("sources")
-                   if isinstance(effective_doc.get("sources"), dict) else {})
-        target_sid = None
-        if isinstance(layers, list):
-            for layer in layers:
-                if isinstance(layer, dict) and layer.get("id") == layer_id:
-                    target_sid = layer.get("source")
-                    break
-        src = sources.get(target_sid) if isinstance(target_sid, str) else None
-        if isinstance(src, dict):
-            payload = src.get("inlineData")
-            if not isinstance(payload, dict):
-                payload = src.get("data") if isinstance(src.get("data"), dict) else {}
-            feats = payload.get("features")
-            if isinstance(feats, list):
-                return "atlasdata-sha256:" + digest_of(feats)[:40]
-    return _document_data_digest(effective_doc)
 
 
 def _page_feature_count(effective_doc: Dict[str, Any], layer_id: str) -> int:
@@ -286,9 +275,18 @@ def plan_atlas_binding(spec: AtlasJobSpec, document: Dict[str, Any]) -> AtlasPla
         bindings.append(AtlasPageBinding(
             **binding_fields,
             classification=classification,
-            fingerprint=_page_fingerprint(binding_fields, spec=spec, ir_fingerprint=ir_fp),
+            fingerprint=_page_fingerprint(
+                binding_fields, spec=spec, ir_fingerprint=ir_fp,
+                structural_fingerprint=_effective_structural_fingerprint(effective)),
         ))
     return AtlasPlan(ir=pub_ir, bindings=bindings)
+
+
+def _effective_structural_fingerprint(effective_doc: Dict[str, Any]) -> str:
+    """页有效文档结构指纹（委托同步链同一投影 —— 单一事实源）。"""
+    from app.services.publication_export import _structural_fingerprint
+
+    return _structural_fingerprint(effective_doc)
 
 
 __all__ = [

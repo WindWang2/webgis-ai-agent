@@ -130,3 +130,27 @@ def test_typed_failure_on_missing_category_values():
         plan_atlas_binding(_spec(), doc)
     assert getattr(ei.value, "code", "") in ("atlas_source_unavailable",
                                              "atlas_no_pages")
+
+
+def test_non_target_layer_content_change_rotates_fingerprints():
+    """R1-P1 回归：非目标层（schools）内容变化必须轮换全部页指纹。"""
+    doc = district_document()
+    before = [b.fingerprint for b in plan_atlas_binding(_spec(), doc).content_pages]
+
+    doc2 = district_document()
+    for f in doc2["sources"]["schools"]["inlineData"]["features"]:
+        f["properties"]["name"] = "改名后的学校"  # 计数/几何不变的内容变更
+    after = [b.fingerprint for b in plan_atlas_binding(_spec(), doc2).content_pages]
+    assert after != before
+
+
+def test_layer_paint_change_rotates_fingerprints():
+    """R1-P1 回归：样式（paint/阈值）变化轮换页指纹（结构指纹并入）。"""
+    doc = district_document()
+    before = [b.fingerprint for b in plan_atlas_binding(_spec(), doc).content_pages]
+
+    doc2 = district_document()
+    doc2["layers"][0]["paint"]["fill-color"] = "#9d174d"
+    doc2["thresholds"] = {"maxFeatures": 77}
+    after = [b.fingerprint for b in plan_atlas_binding(_spec(), doc2).content_pages]
+    assert after != before

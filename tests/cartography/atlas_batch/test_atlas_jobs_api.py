@@ -232,3 +232,34 @@ def test_manifest_download_content_matches(api_env, spec_store):
     assert manifest["atlas"]["classification_scope"] == "shared"
     assert manifest["disclosures"]["simulated_data"] is True
     assert manifest["qa"]["page_count_expected"] == 3
+
+
+def test_submit_requires_authenticated_owner(api_env, spec_store):
+    """R1-P2：匿名提交 → 401 typed（产物下载走属主通道，不产出无人可下载的 PDF）。"""
+    from app.core.auth import get_current_user_optional
+
+    api_env["client"].app.dependency_overrides[get_current_user_optional] = \
+        lambda: {"user_id": "anonymous"}
+    resp = api_env["client"].post("/api/v1/atlas/jobs", json=_body())
+    assert resp.status_code == 401
+    assert (resp.json().get("data") or {}).get("code") == "atlas_owner_required"
+
+
+def test_submit_strict_policy_conversion(api_env, spec_store):
+    """R1-P2：类型强转/未知键 → typed 400（不静默吞、不 500）。"""
+    bad = _body()
+    bad["atlas"] = {**bad["atlas"], "featuresPerPage": "abc"}
+    resp = api_env["client"].post("/api/v1/atlas/jobs", json=bad)
+    assert resp.status_code == 400
+    assert (resp.json().get("data") or {}).get("code") == "atlas_policy_invalid"
+
+    unknown = _body()
+    unknown["atlas"] = {**unknown["atlas"], "rogueKey": 1}
+    resp = api_env["client"].post("/api/v1/atlas/jobs", json=unknown)
+    assert resp.status_code == 400
+    assert "rogueKey" in (resp.json().get("data") or {}).get("message", "")
+
+    fake_bool = _body()
+    fake_bool["atlas"] = {**fake_bool["atlas"], "includeCover": "false"}
+    resp = api_env["client"].post("/api/v1/atlas/jobs", json=fake_bool)
+    assert resp.status_code == 400

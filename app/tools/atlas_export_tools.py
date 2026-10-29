@@ -79,10 +79,16 @@ def register_atlas_export_tools(registry: ToolRegistry):
             submit_atlas_job,
         )
 
-        session = _resolve_session_id(session_id) if session_id is None else session_id
+        # R1-P1：session_id 是调用方声称值（prompt-injection 可伪造）—— 一律经
+        # 运行时上下文归属校验（与 upload_tools 同纪律），不因显式提供而直通。
+        session = _resolve_session_id(session_id)
+        if not session:
+            return {"error": "session_id 未通过归属校验（与当前会话不符或无会话上下文）",
+                    "code": "session_forbidden"}
+
         try:
             spec = build_atlas_job_spec(
-                session_id=str(session or ""),
+                session_id=str(session),
                 atlas_policy={
                     "driver": driver,
                     "layer_id": layer_id,
@@ -98,6 +104,15 @@ def register_atlas_export_tools(registry: ToolRegistry):
             )
         except Exception as ex:  # noqa: BLE001 — typed 校验面 → 结构化错误返回
             return {"error": str(ex), "code": getattr(ex, "code", "invalid_args")}
+
+        # R1-P2：图册产物下载走属主（user_id）通道 —— 匿名（无 owner）提交会
+        # 产出无人可下载的 PDF，诚实拒绝而不是静默半成品。
+        from app.services.jobs.context import current_origin
+
+        origin = current_origin()
+        if origin is None or not origin.owner_id:
+            return {"error": "批量图册导出需要已认证用户（产物下载走属主通道）",
+                    "code": "atlas_owner_required"}
 
         result = submit_atlas_job(spec)
         return {

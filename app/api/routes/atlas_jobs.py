@@ -59,15 +59,49 @@ class AtlasJobDetailResponse(BaseModel):
     artifacts: Dict[str, Any] = Field(default_factory=dict)
 
 
+_ALLOWED_POLICY_KEYS = {
+    "driver", "layerId", "categoryProperty", "featuresPerPage",
+    "pageBudget", "includeCover", "atlasTitle",
+}
+
+
 def _policy_from_request(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """camelCase 请求投影 → AtlasPolicy 构造键（缺省与 vector-pdf 同值）。"""
+    """camelCase 请求投影 → AtlasPolicy 构造键（严格转换；缺省与 vector-pdf 同值）。
+
+    R1-P2：类型强转/未知键/伪布尔一律 typed 400（``atlas_policy_invalid``），
+    不静默吞也不 500。
+    """
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "atlas_policy_invalid", "message": "atlas 必须是对象"})
+    unknown = set(raw.keys()) - _ALLOWED_POLICY_KEYS
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "atlas_policy_invalid",
+                    "message": f"atlas 含未知键: {', '.join(sorted(unknown))}"})
+    try:
+        features_per_page = int(raw.get("featuresPerPage") or 50)
+        page_budget = int(raw.get("pageBudget") or 20)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "atlas_policy_invalid",
+                    "message": "featuresPerPage/pageBudget 必须是整数"})
+    include_cover_raw = raw.get("includeCover")
+    if include_cover_raw is not None and not isinstance(include_cover_raw, bool):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "atlas_policy_invalid",
+                    "message": "includeCover 必须是布尔值"})
     return {
         "driver": str(raw.get("driver") or "frames"),
         "layer_id": str(raw.get("layerId") or ""),
         "category_property": str(raw.get("categoryProperty") or ""),
-        "features_per_page": int(raw.get("featuresPerPage") or 50),
-        "page_budget": int(raw.get("pageBudget") or 20),
-        "include_cover": bool(raw.get("includeCover")),
+        "features_per_page": features_per_page,
+        "page_budget": page_budget,
+        "include_cover": bool(include_cover_raw),
         "atlas_title": str(raw.get("atlasTitle") or ""),
     }
 
@@ -81,6 +115,13 @@ async def submit_atlas_export_job(
 ) -> AtlasSubmitResponse:
     """提交批量图册 durable job（幂等；重复提交复用同一 job 行）。"""
     user_id = (user or {}).get("user_id") if (user or {}).get("user_id") not in (None, "anonymous") else None
+    # R1-P2：产物下载走属主（user_id）通道 —— 匿名提交会产出无人可下载的
+    # PDF，诚实拒绝（401 typed）而不是静默半成品。
+    if user_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "atlas_owner_required",
+                    "message": "批量图册导出需要已认证用户（产物下载走属主通道）"})
     await verify_session_owner(
         db, body.session_id, user_id=user_id, owner_token=owner_token)
 
@@ -105,8 +146,10 @@ async def submit_atlas_export_job(
             detail={"code": getattr(ex, "code", "atlas_policy_invalid"),
                     "message": str(ex)})
 
-    # committed spec 存在性 + dry-run 规划（纯规划无渲染）
+    # committed spec 存在性 + dry-run 规划（纯规划无渲染；R1-P2：与执行面
+    # 同口径先水合 ref: 载体源，否则 ref 形态 spec 会被误判无页/页数失真）
     from app.services.mapspec_store import mapspec_store
+    from app.services.publication_export import hydrate_ref_sources_sync
 
     document = await mapspec_store.get_mapspec(body.session_id)
     if not isinstance(document, dict):
@@ -115,7 +158,8 @@ async def submit_atlas_export_job(
             detail={"code": "atlas_spec_missing",
                     "message": f"会话 {body.session_id} 无已提交的权威 MapSpec"})
     try:
-        plan_summary = dry_run_plan(spec, document)
+        plan_summary = dry_run_plan(
+            spec, hydrate_ref_sources_sync(document, body.session_id))
     except MapSpecSchemaError as ex:
         raise HTTPException(
             status_code=400,

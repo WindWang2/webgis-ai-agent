@@ -33,23 +33,32 @@ def tool_env(atlas_exports, atlas_job_db, atlas_spec_store, monkeypatch):
     return atlas_spec_store
 
 
+def _owner_ctx():
+    """生产 agent 流的 origin 等价物（owner 闸 + job creator_id 来源）。"""
+    from app.services.jobs.context import JobOrigin, use_origin
+
+    return use_origin(JobOrigin(
+        session_id="sess-atlas-test", owner_id="atlas-tool-user"))
+
+
 async def test_export_atlas_registered_and_dispatches(registry, tool_env):
     schemas = {s.get("function", {}).get("name") for s in registry.get_schemas()}
     assert "export_atlas" in schemas
 
-    result = await registry.dispatch(
-        "export_atlas",
-        {
-            "session_id": "sess-atlas-test",
-            "driver": "category",
-            "layer_id": "districts",
-            "category_property": "district",
-            "include_cover": True,
-            "atlas_title": "工具图册",
-            "classification_scope": "shared",
-        },
-        session_id="sess-atlas-test",
-    )
+    with _owner_ctx():
+        result = await registry.dispatch(
+            "export_atlas",
+            {
+                "session_id": "sess-atlas-test",
+                "driver": "category",
+                "layer_id": "districts",
+                "category_property": "district",
+                "include_cover": True,
+                "atlas_title": "工具图册",
+                "classification_scope": "shared",
+            },
+            session_id="sess-atlas-test",
+        )
     # submit 面返回 job 句柄（dispatch 契约的 dict 直返）
     assert result.get("job_id"), result
     assert result.get("status") in ("analysis_task_started",
@@ -59,16 +68,43 @@ async def test_export_atlas_registered_and_dispatches(registry, tool_env):
 
 
 async def test_export_atlas_idempotent_double_dispatch(registry, tool_env):
-    r1 = await registry.dispatch("export_atlas", {
-        "session_id": "sess-atlas-test", "driver": "category",
-        "layer_id": "districts", "category_property": "district",
-        "atlas_title": "幂等图册"}, session_id="sess-atlas-test")
-    r2 = await registry.dispatch("export_atlas", {
-        "session_id": "sess-atlas-test", "driver": "category",
-        "layer_id": "districts", "category_property": "district",
-        "atlas_title": "幂等图册"}, session_id="sess-atlas-test")
+    with _owner_ctx():
+        r1 = await registry.dispatch("export_atlas", {
+            "session_id": "sess-atlas-test", "driver": "category",
+            "layer_id": "districts", "category_property": "district",
+            "atlas_title": "幂等图册"}, session_id="sess-atlas-test")
+        r2 = await registry.dispatch("export_atlas", {
+            "session_id": "sess-atlas-test", "driver": "category",
+            "layer_id": "districts", "category_property": "district",
+            "atlas_title": "幂等图册"}, session_id="sess-atlas-test")
     assert r1["job_id"] == r2["job_id"]
     assert r2.get("idempotent_reuse") is True
+
+
+async def test_export_atlas_requires_owner(registry, tool_env):
+    """R1-P2：无 owner（匿名 agent 流）→ typed 拒绝，不产出无人可下载的 PDF。"""
+    result = await registry.dispatch("export_atlas", {
+        "session_id": "sess-atlas-test", "driver": "category",
+        "layer_id": "districts", "category_property": "district",
+    }, session_id="sess-atlas-test")
+    assert result.get("code") == "atlas_owner_required"
+
+
+async def test_export_atlas_foreign_session_rejected(registry, tool_env):
+    """R1-P1：显式他人 session_id 不因『显式提供』绕过归属校验。"""
+    from contextlib import ExitStack
+
+    from app.core.runtime_context import bind_runtime_context
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            bind_runtime_context(session_id="sess-verified-mine"))
+        stack.enter_context(_owner_ctx())
+        result = await registry.dispatch("export_atlas", {
+            "session_id": "sess-someone-else", "driver": "category",
+            "layer_id": "districts", "category_property": "district",
+        }, session_id="sess-someone-else")
+    assert result.get("code") == "session_forbidden"
 
 
 async def test_export_atlas_typed_error_dict(registry, tool_env):

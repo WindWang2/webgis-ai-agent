@@ -70,6 +70,22 @@ class AtlasJobError(Exception):
         super().__init__(f"{code}: {message}")
 
 
+def _evidence_view(record: Dict[str, Any]) -> Dict[str, Any]:
+    """页记录 → 落库证据投影（剔除内存页体 svg 与原始诊断全量）。"""
+    return {
+        "page_id": record.get("page_id"),
+        "title": record.get("title"),
+        "page_number": record.get("page_number"),
+        "fingerprint": record.get("fingerprint"),
+        "status": record.get("status"),
+        "error": record.get("error"),
+        "svg_bytes": record.get("svg_bytes"),
+        "feature_count": record.get("feature_count"),
+        "diagnostics": list(record.get("diagnostics") or [])[:16],
+        "degradations": list(record.get("degradations") or [])[:8],
+    }
+
+
 def _atomic_write(path: str, data: bytes) -> None:
     """临时文件 + os.replace（与既有导出纪律一致：半文件不可见）。"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -274,6 +290,7 @@ def execute_atlas_job(
             job.checkpoint()
 
     page_records: List[Dict[str, Any]] = []
+    qa_notes: List[str] = []
     try:
         _progress(3, "加载权威 MapSpec")
         document, mapspec_revision = _load_committed_document(spec)
@@ -288,7 +305,6 @@ def execute_atlas_job(
 
         pages = plan.ir.pages
         total = len(pages)
-        status_path = os.path.join(attempt_dir, "status.json")
         cache_hits = 0
         compiled_count = 0
 
@@ -334,23 +350,31 @@ def execute_atlas_job(
                 "fingerprint": fp,
                 "status": "rendered" if error is None else "failed",
                 "error": error,
+                # R1-P2：页体留内存（组装期不再回读共享缓存 —— 多 worker 逐出
+                # 竞态下裸读会 FileNotFoundError；总量受 96MB 累积预算约束，
+                # 与同步链同口径）。持久面只落缓存目录（跨 job 复用）。
+                "svg": svg,
                 "svg_bytes": len(svg) if svg else 0,
                 "feature_count": binding.feature_count,
                 "diagnostics": diagnostics,
+                # R1-P3：页级降级 = 本页 warning/error 诊断（manifest 投影源）
+                "degradations": [
+                    {"code": d.get("code", ""), "detail": d.get("detail", "")}
+                    for d in diagnostics
+                    if d.get("severity") in ("warning", "error")
+                ][:8],
             }
             page_records.append(record)
             _progress(6 + int(84 * (idx + 1) / total),
                       f"页 {idx + 1}/{total} · {binding.page_id}"
                       + ("（缓存命中）" if page_hit else ""))
-            _atomic_write(status_path, json.dumps(
-                {"spec_version": ATLAS_JOB_SPEC_VERSION, "pages": page_records},
-                ensure_ascii=False).encode("utf-8"))
 
         failed = [r for r in page_records if r["status"] != "rendered"]
         if failed:
             summary = {
                 "spec_version": ATLAS_JOB_SPEC_VERSION,
-                "pages": page_records,
+                # 页体（svg）只留内存 —— 证据投影剔除，不落库
+                "pages": [_evidence_view(r) for r in page_records],
                 "page_count_expected": total,
                 "page_count_rendered": total - len(failed),
                 "failed_page_ids": [r["page_id"] for r in failed][:21],
@@ -370,7 +394,8 @@ def execute_atlas_job(
         )
         if not qa_report.passed:
             _persist_result_summary(int(job_id), {
-                "spec_version": ATLAS_JOB_SPEC_VERSION, "pages": page_records,
+                "spec_version": ATLAS_JOB_SPEC_VERSION,
+                "pages": [_evidence_view(r) for r in page_records],
                 "page_count_expected": total, "page_count_rendered": total,
                 "qa": qa_report.model_dump(),
             })
@@ -383,8 +408,8 @@ def execute_atlas_job(
         for page, record in zip(pages, page_records):
             page_specs.append((
                 f"p{page.page_number - 1}",
-                # status.json 只存指纹，页体从缓存按指纹取（内存中已有则直用）
-                _svg_of(plan, page, record, cache_dir),
+                # R1-P2：页体来自本 attempt 内存（不回读共享缓存）
+                record["svg"],
                 page.paper.width_mm, page.paper.height_mm,
             ))
 
@@ -407,11 +432,17 @@ def execute_atlas_job(
                 f"矢量 PDF 渲染器持续占用（重试 {retry + 1} 次仍忙）；页进度已缓存，"
                 "请稍后重试本任务（不会重渲染已过页）") from last_busy
 
-        pdf_page_count = count_pdf_pages(pdf_bytes, fallback=len(page_specs))
-        qa_report = verify_pdf_page_count(qa_report, pdf_page_count)
+        # R1-P3：pypdf 缺席时页数复核不可执行 —— 显式披露（note），不用
+        # 「fallback=计划数」伪装通过。
+        pdf_page_count = count_pdf_pages(pdf_bytes, fallback=-1)
+        if pdf_page_count < 0:
+            qa_notes.append("pdf_page_count_unverified: pypdf 不可用，第三元页数复核未执行")
+        else:
+            qa_report = verify_pdf_page_count(qa_report, pdf_page_count)
         if not qa_report.passed:
             _persist_result_summary(int(job_id), {
-                "spec_version": ATLAS_JOB_SPEC_VERSION, "pages": page_records,
+                "spec_version": ATLAS_JOB_SPEC_VERSION,
+                "pages": [_evidence_view(r) for r in page_records],
                 "page_count_expected": total, "page_count_rendered": total,
                 "qa": qa_report.model_dump(),
             })
@@ -426,7 +457,12 @@ def execute_atlas_job(
         stamp = int(time.time())
         pdf_filename = f"atlas_{job_id}_{stamp}.pdf"
         manifest_filename = f"atlas_{job_id}_{stamp}.manifest.json"
-        owner_id = str(meta.get("creator_id") or "anonymous")
+        owner_id = str(meta.get("creator_id") or "")
+        if not owner_id:
+            # 提交面已拒绝匿名（REST 401 / 工具 typed 错误）；此处防御性披露
+            # —— 无属主时 sidecar 写 anonymous（下载路由对任何人都 fail-closed）。
+            owner_id = "anonymous"
+            qa_notes.append("atlas_owner_missing: job 行无 creator_id，产物下载将 fail-closed")
 
         manifest_records = []
         for page, binding, record in zip(pages, plan.bindings, page_records):
@@ -442,6 +478,7 @@ def execute_atlas_job(
         notes = ["页头/页码为批量路径注入（同步 vector-pdf 路由不含）"]
         notes.extend(
             f"degradations: {d.get('code')}" for d in plan.ir.degradations[:4])
+        notes.extend(qa_notes)
         manifest = build_atlas_manifest(
             spec=spec, plan=plan, page_records=manifest_records, qa_report=qa_report,
             job_meta={
@@ -522,14 +559,6 @@ def execute_atlas_job(
     finally:
         # 取消/失败/成功统一清理本 job 工作目录（页级证据已在 DB/缓存）。
         shutil.rmtree(work_dir, ignore_errors=True)
-
-
-def _svg_of(plan: Any, page: Any, record: Dict[str, Any], cache_dir: str) -> str:
-    """组装期按指纹从缓存取页体（executor 主循环后 svg 内存不再持有）。"""
-    fp = str(record.get("fingerprint") or "")
-    path = os.path.join(cache_dir, f"{fp}.svg")
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
 
 
 __all__ = ["AtlasJobError", "execute_atlas_job"]

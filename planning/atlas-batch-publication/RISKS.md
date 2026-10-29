@@ -11,7 +11,7 @@
 | R7 | 50MB 级 spec 在 worker 重复物化内存放大 | 页文档浅拷贝（`_page_filtered_doc` 既有模式）；SVG 累积预算沿用 96MB；manifest 只存 digest | 中（与同步链同级） |
 | R8 | owner/租户越权（下载他人图册/看他人 job） | 下载走既有属主 fail-closed；atlas API owner 三元组 + verify_session_owner；非属主 404；测试覆盖跨用户负例 | 低 |
 | R9 | 取消后临时文件泄漏 | 取消路径 finally 清 attempt 目录；测试断言目录不存在；缓存目录除外（内容寻址非 job 私有） | 低 |
-| R10 | 数据变更后旧缓存页误命中 | 指纹含 feature_count/结构指纹/legend_digest/编译器键；数据内容变更→content_revision→结构指纹变→指纹变 | 内容级碰撞理论残余（sha256 截 40hex，可接受） |
+| R10 | 数据变更后旧缓存页误命中 | 页指纹含：页过滤后**全部内联源要素内容** digest（目标层页粒度 + 其余源全敏感）+ 页有效文档结构指纹（layers/paint/thresholds/view/scene，同步链同款投影）+ legend_digest + 编译器键（R1 清偿后） | 内容级碰撞理论残余（sha256 截 40hex，可接受） |
 | R11 | 前端 TasksTab/词表改动破坏既有任务渲染 | kind 词表 additive；新分支渲染不动旧 kind 路径；vitest 全量回归 | 低 |
 | R12 | eager 模式（无 Redis 本地测试）与真实 Celery 行为差 | executor 核心逻辑与 celery 装饰解耦（纯函数入口 `execute_atlas_job(job_id)`），任务体薄壳；两态都测 | 部署态 worker 队列配置需 ops 关注（披露） |
 | R13 | 12 区验收依赖中文字体（CI 无 CJK → tofu） | `_cjk_font_face_css` vendored 内嵌既有机制复用；验收测试断言文本可提取（pypdf）而非像素 | 无 CJK 字体环境 PDF 文本层仍在（字形内嵌） |
