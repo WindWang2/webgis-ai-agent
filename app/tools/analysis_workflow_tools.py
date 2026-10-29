@@ -207,17 +207,39 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
         # 同 id 同契约指纹的重复 plan 幂等保留既有运行态（envelopes/
         # receipts 不被空状态覆写），指纹变化 = 显式重规划才换新状态。
         from app.services.distributed_lock import session_lock_registry
+
+        def _binding_refs(contracts: Any) -> Dict[str, str]:
+            refs: Dict[str, str] = {}
+            for role, binding in (contracts or {}).items():
+                if isinstance(binding, dict):
+                    refs[role] = str(binding.get("ref", "") or "")
+                else:
+                    refs[role] = str(getattr(binding, "ref", "") or "")
+            return refs
+
         async with session_lock_registry.lock(
                 f"awf:{wf_id}", fail_on_degraded=True):
             existing = await _load_state(session_id, wf_id)
+            # B1：复用谓词 = 契约指纹 **且 数据绑定一致**——contract_
+            # fingerprint 刻意不含绑定（重算语义：同内容换 ref 不变指纹），
+            # 但 plan 的幂等复用必须钉住绑定：同 id 换绑 = 显式重规划
+            # （新状态），绝不静默复用旧绑定（换绑的合规通道是 recompute）。
+            new_refs = _binding_refs(result.contract.data_contracts)
+            old_refs = _binding_refs(
+                (existing.contract_snapshot or {}).get("data_contracts")
+                if existing is not None else None)
             if (existing is not None
-                    and existing.contract_fingerprint == result.fingerprint):
+                    and existing.contract_fingerprint == result.fingerprint
+                    and old_refs == new_refs):
                 state = existing
                 state.log("plan_idempotent_reuse")
             else:
                 state = new_state(result.contract,
                                   contract_fingerprint=result.fingerprint)
                 apply_plan_verdicts(state, result.step_verdicts)
+                if existing is not None:
+                    state.log("plan_replanned",
+                              reason="binding_or_contract_changed")
             await _persist_state(session_id, state)
         return {
             "success": True,
@@ -315,15 +337,30 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
         only: Optional[set] = None
         if only_steps:
             try:
-                only = set(json.loads(only_steps))
+                parsed_only = json.loads(only_steps)
             except (json.JSONDecodeError, TypeError):
                 return {"success": False, "command": command,
                         "reason_code": "AWF_BAD_JSON",
                         "message": "only_steps 必须是步骤 id 的 JSON 数组"}
+            # B6b：拒绝裸字符串（set("ab") 拆字符成怪过滤器——静默错行为）
+            if not isinstance(parsed_only, list) or not all(
+                    isinstance(x, str) for x in parsed_only):
+                return {"success": False, "command": command,
+                        "reason_code": "AWF_BAD_JSON",
+                        "message": "only_steps 必须是字符串数组（非裸字符串）"}
+            only = set(parsed_only)
         from app.services.distributed_lock import session_lock_registry
         async with session_lock_registry.lock(
                 f"awf:{workflow_id}", fail_on_degraded=True):
-            state = await _load_state(session_id, workflow_id) or state
+            # B4：锁内 load 失败（Redis/alias 抖动）→ 诚实 decline——
+            # 不回退锁外快照（可能缺锁窗口内他方写回）。
+            reloaded = await _load_state(session_id, workflow_id)
+            if reloaded is None:
+                return {"success": False, "command": command, "declined": True,
+                        "reason_code": "AWF_STATE_UNREADABLE",
+                        "message": "锁内状态读取失败（不使用可能陈旧的快照）",
+                        "alternatives": ["webgis_analysis_workflow_status"]}
+            state = reloaded
             if state.running_stale():
                 state.log("resume_after_stale")
             executor = WorkflowExecutor(
@@ -533,13 +570,12 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
                     contract, state, current_identities=current_identities):
                 affected.add(drift["step_id"])
                 affected.update(drift.get("downstream") or [])
-            for sid in affected:
-                entry = state.steps.get(sid)
-                if entry is not None and entry.state == "satisfied":
-                    entry.state = "stale"
-                    state.log("step_stale", step=sid)
-            # 复裁决：数据补齐解除阻断（fresh=ready 且旧 blocked/skipped/stale
-            # → pending）；数据仍缺 → 保持 typed blocked/skipped（P1-1）。
+            # B2：affected 中的 satisfied 步骤**不**强制 stale——执行器的指纹
+            # 精确裁决负责复用（同身份 → step_reused 零重跑；漂移 → 重跑），
+            # 与工具描述「指纹对账→只重跑受影响子图」一致。
+            # 复裁决：数据补齐解除阻断（fresh 非 blocked/skipped 且旧
+            # blocked/skipped/failed → pending）；数据仍缺 → 保持 typed
+            # blocked/skipped（P1-1）。
             fresh = new_state(contract, contract_fingerprint=replan.fingerprint)
             apply_plan_verdicts(fresh, replan.step_verdicts)
             for sid, entry in fresh.steps.items():
@@ -547,10 +583,10 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
                 if cur is None:
                     continue
                 # apply_plan_verdicts 只写非 ready 裁决——fresh 态 pending
-                # 即「复裁决不再阻断」；旧 blocked/skipped/stale/failed →
+                # 即「复裁决不再阻断」；旧 blocked/skipped/failed →
                 # 解除为 pending（数据补齐路径）。
-                if entry.state not in ("blocked", "skipped") and                         cur.state in ("blocked", "skipped", "stale",
-                                      "failed"):
+                if (entry.state not in ("blocked", "skipped")
+                        and cur.state in ("blocked", "skipped", "failed")):
                     cur.state = "pending"
                     cur.reason_code = ""
                     cur.message = ""

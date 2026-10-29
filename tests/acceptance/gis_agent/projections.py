@@ -171,9 +171,10 @@ def _project_progress(plan) -> Dict[str, Any]:
 async def _project_analysis_workflow(session_id: str) -> Optional[Dict[str, Any]]:
     """goal-02 F28：分析工作流运行态投影（METHOD 面）。
 
-    扫描 session refs 里的 ``ref:awf-state-*``（编排层状态块），取最近
-    一个可反序列化的投影 {workflow_id, status, steps, layers, receipts}。
-    fail-open：无状态/损坏 → None。
+    权威寻址 = 别名（``analysis_workflow.v1:<workflow_id>``，工具层单写者
+    落址）——当前会话的**当前工作流**（单工作流语义；多工作流会话里后
+    plan 者覆写 alias，即「最新 plan 的工作流」）。uuid ref 排序无时间
+    语义，不用于选择。fail-open：无状态/损坏 → None。
     """
     try:
         from app.services.session_data import session_data_manager
@@ -203,6 +204,11 @@ async def _project_analysis_workflow(session_id: str) -> Optional[Dict[str, Any]
                     for sid, env in envelopes.items()
                     if (env or {}).get("ref")},
                 "receipts": sorted((payload.get("receipts") or {}).keys()),
+                # B5：run 侧执行证据（负例防「run 退化 no-op 也绿」——
+                # workflow_start/end 事件证明 run 真实驱动过状态机）
+                "run_log_events": [
+                    (e or {}).get("event", "")
+                    for e in (payload.get("run_log") or [])][-8:],
             }
         return None
     except Exception:  # noqa: BLE001 — 投影面 fail-open

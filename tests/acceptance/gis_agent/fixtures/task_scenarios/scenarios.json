@@ -7387,6 +7387,16 @@
      "op": "eq",
      "path": "analysis_workflow.step_reasons.isochrone",
      "value": "AWF_NO_NETWORK_FOR_ACCESSIBILITY"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-02-run-drove-state",
+     "kind": "analysis_workflow",
+     "note": "run 侧证据：状态机被真实驱动（非 plan 裁决冒充）",
+     "op": "contains",
+     "path": "analysis_workflow.run_log_events",
+     "value": "workflow_start"
     }
    ],
    "family": "F28",
@@ -7689,6 +7699,16 @@
      "op": "eq",
      "path": "analysis_workflow.step_reasons.change_diff",
      "value": "AWF_TEMPORAL_MISMATCH"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-04-run-drove-state",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "contains",
+     "path": "analysis_workflow.run_log_events",
+     "value": "workflow_start"
     }
    ],
    "family": "F28",

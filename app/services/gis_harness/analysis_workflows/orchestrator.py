@@ -10,9 +10,9 @@ store 与 registry。裁决语义：
   无分母——只给计数/面积密度，绝不伪装率）；
 - **temporal 族**：baseline/target_time 年份（qualifier 时间事实）缺失
   或相同 → typed AWF_TEMPORAL_MISMATCH（不静默差分）；
-- **科学前置**：有画像事实 → 用 scientific_preconditions 既有评估器；
-  无事实 → unknown（步骤照常 ready——前置的权威裁决在算法层/执行层，
-  本层不重复实现科学语义）。
+- **科学前置**：本层只做**声明性引用**（step.preconditions 进契约与
+  receipt 披露）；权威裁决在执行层 dispatch/算法层 scientific
+  preconditions——本层不重复评估（避免第二套科学语义）。
 
 诚实红线：plan 期不猜测 ref（dataset_hint 只是供给线索）；缺数据给
 alternatives（获取通道 + 可行替代分析），绝不编造「等一下就有了」。

@@ -214,3 +214,121 @@ async def test_final_gate_projection_blocks_on_science_rejection():
         entry.state = "satisfied"
     gate2 = run_final_gate(ok_state)
     assert gate2["blocked"] is False
+
+
+async def test_repeated_dispatch_status_is_honest_failure():
+    """B3 钉扎：dispatch 缝 repeated 拦截 → 步骤诚实失败（不吞成空成功）。"""
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        AnalysisStepSpec,
+    )
+    from app.services.gis_harness.analysis_workflows.executor import (
+        WorkflowExecutor,
+    )
+
+    class _Outcome:
+        status = "repeated"
+        raw_result = {"success": True, "note": "Loop blocked"}
+        geojson_ref = None
+        error_msg = None
+        ref_descriptor = None
+
+    async def _repeated_dispatch(tool, args, session_id):
+        return _Outcome()
+
+    contract = build_contract("hazard_exposure", workflow_id="awf.rep.t")
+    contract = contract.model_copy(update={"steps": (
+        AnalysisStepSpec(step_id="only", tool_name="buffer_analysis",
+                         role_inputs={"geojson": "role:hazard"},
+                         step_params={"distance": 100.0, "unit": "m"}),)})
+    contract.data_contracts["hazard"] = DataRoleBinding(
+        role="hazard", ref="ref:geojson-abc")
+    state = new_state(contract, contract_fingerprint="fp")
+    executor = WorkflowExecutor(
+        registry=None, session_data=None, dispatch=_repeated_dispatch)
+    await executor._run_step("s", contract, contract.steps[0], state)
+    entry = state.steps["only"]
+    assert entry.state == "failed"
+    assert entry.reason_code == "TOOL_DISPATCH_REPEATED"
+    assert state.receipts == {}
+
+
+async def test_upstream_budget_gate_blocks_oversized_intermediate():
+    """B7/P2-1b 钉扎：step: 上游产物超预算 → typed blocked（不无界传递）。"""
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        AnalysisStepSpec,
+    )
+    from app.services.gis_harness.analysis_workflows.executor import (
+        WorkflowExecutor,
+    )
+    contract = build_contract("hazard_exposure", workflow_id="awf.up.t")
+    contract = contract.model_copy(update={"steps": (
+        AnalysisStepSpec(step_id="up", tool_name="buffer_analysis",
+                         role_inputs={"geojson": "role:hazard"}),
+        AnalysisStepSpec(step_id="down", tool_name="spatial_join",
+                         role_inputs={"left_layer": "role:receptor",
+                                      "right_layer": "step:up"},
+                         depends_on=("up",)))})
+    contract.data_contracts["hazard"] = DataRoleBinding(
+        role="hazard", ref="ref:geojson-h")
+    contract.data_contracts["receptor"] = DataRoleBinding(
+        role="receptor", ref="ref:geojson-r")
+    state = new_state(contract, contract_fingerprint="fp")
+    state.steps["up"].state = "satisfied"
+    executor = WorkflowExecutor(registry=None, session_data=None,
+                                max_features=10)
+    # 直接注入超限上游产物（绕过 store——单元级钉扎门行为）
+    executor._step_payloads["up"] = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "properties": {},
+                      "geometry": {"type": "Point",
+                                   "coordinates": [104.0, 30.6]}}] * 11}
+    args, identities, warnings = await executor._resolve_inputs(
+        "s", contract, contract.steps[1], state)
+    assert args is None
+    assert any("AWF_BUDGET_EXCEEDED" in w for w in warnings)
+
+
+async def test_plan_rebinding_same_id_is_replan_not_silent_reuse(registry):
+    """B1 钉扎：同 id 换绑 → 显式重规划（新裁决持久化），不静默复用旧绑定。"""
+    import json as _json
+    from app.tools.registry import ToolRegistry
+    from app.tools import init_tools
+    from app.agent_pi_bridge import set_tool_registry
+    reg = ToolRegistry()
+    init_tools(reg)
+    set_tool_registry(reg)
+    from app.services.session_data import session_data_manager
+    S = "awf-b1-session"
+    pois = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"id": i},
+         "geometry": {"type": "Point",
+                      "coordinates": [104.006 + (i % 6) * 0.0055,
+                                      30.605 + (i // 6) * 0.0042]}}
+        for i in range(12)]}
+    dists = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"district": "n", "population": 1},
+         "geometry": {"type": "Polygon", "coordinates": [[
+             [104.00, 30.60], [104.04, 30.60], [104.04, 30.632],
+             [104.00, 30.632], [104.00, 30.60]]]}}]}
+    pr = await session_data_manager.store(S, pois, prefix="geojson")
+    dr = await session_data_manager.store(S, dists, prefix="geojson")
+    # plan 1：无 denominator
+    p1 = await reg.dispatch("webgis_analysis_workflow_plan", {
+        "family": "admin_facility_distribution", "workflow_id": "awf.b1.fixed",
+        "role_refs": _json.dumps({"subject": pr, "boundary": dr}),
+        "session_id": S})
+    assert p1["success"]
+    # plan 2：同 id + 补 denominator → 必须重规划（per_capita ready 持久化）
+    p2 = await reg.dispatch("webgis_analysis_workflow_plan", {
+        "family": "admin_facility_distribution", "workflow_id": "awf.b1.fixed",
+        "role_refs": _json.dumps({"subject": pr, "boundary": dr,
+                                  "denominator": dr}),
+        "session_id": S})
+    assert p2["workflow_id"] == "awf.b1.fixed"
+    run = await reg.dispatch("webgis_analysis_workflow_run", {
+        "workflow_id": "awf.b1.fixed", "session_id": S})
+    assert run["status"] == "satisfied"
+    steps = {s["step_id"]: s["state"] for s in run["steps"]}
+    assert steps["per_capita_rate"] == "satisfied"   # 新绑定真实生效
+    ev = run["evidence"]
+    assert "per_capita_rate" in ev["steps_executed"]

@@ -268,3 +268,26 @@ async def test_run_max_features_clamped_server_side(registry):
     assert run["status"] == "blocked"
     steps = {s["step_id"]: s for s in run["steps"]}
     assert steps["zones_count"]["reason_code"] == "AWF_BUDGET_EXCEEDED"
+
+
+async def test_recompute_noop_reuses_by_fingerprint(registry):
+    """B2 钉扎：原样重发绑定（同身份）→ 指纹复用，零重跑零重铸。"""
+    import json as _json
+    poi_ref, dist_ref = await _store_fixtures()
+    plan = await registry.dispatch("webgis_analysis_workflow_plan", {
+        "family": "admin_facility_distribution",
+        "role_refs": _json.dumps({"subject": poi_ref, "boundary": dist_ref}),
+        "session_id": SESSION})
+    wf = plan["workflow_id"]
+    run = await registry.dispatch("webgis_analysis_workflow_run", {
+        "workflow_id": wf, "session_id": SESSION})
+    assert run["status"] == "satisfied"
+    first = {item["step_id"]: item["ref"] for item in run["layers"]}
+    rec = await registry.dispatch("webgis_analysis_workflow_recompute", {
+        "workflow_id": wf,
+        "role_refs": _json.dumps({"subject": poi_ref, "boundary": dist_ref}),
+        "session_id": SESSION})
+    assert rec["success"], rec
+    assert rec["recomputed_steps"] == []          # 同身份 → 零重新 dispatch
+    assert {item["step_id"]: item["ref"]
+            for item in rec["layers"]} == first   # 产物 ref 不重铸

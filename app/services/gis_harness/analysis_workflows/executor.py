@@ -247,6 +247,12 @@ class WorkflowExecutor:
                               "dispatch error")[:300]
                     return {"success": False, "message": msg,
                             "reason_code": "TOOL_DISPATCH_ERROR"}
+                if str(status) == "repeated":
+                    # 去重拦截无产物（同 turn 同参数重复调用语义）——
+                    # 诚实失败而非把空载荷当成功。
+                    return {"success": False,
+                            "message": "dispatch 去重拦截（repeated）",
+                            "reason_code": "TOOL_DISPATCH_REPEATED"}
                 payload = raw if isinstance(raw, dict) else {}
                 out = dict(payload) if payload else {"success": True}
                 # 分发缝铸 ref 后剥内联 FC（slim 纪律）——ref 与行数事实
@@ -296,7 +302,8 @@ class WorkflowExecutor:
             entry.touch()
             state.log("step_cancelled", step=step.step_id)
             return
-        if not self._registry.has(step.tool_name):
+        if (self._dispatch_fn is None
+                and not self._registry.has(step.tool_name)):
             entry.state = "blocked"
             entry.reason_code = f"{AWF_TOOL_UNREGISTERED}:{step.tool_name}"
             entry.message = f"工具 {step.tool_name} 未注册"
