@@ -146,7 +146,9 @@ async def inspect_source(
         report = None
 
     fields: Dict[str, FieldProfile] = dict(vp.fields)
-    proposals: List[FieldProposal] = propose_field_roles(fields, user_hints=user_hints)
+    row_count = len(features)
+    proposals: List[FieldProposal] = propose_field_roles(
+        fields, user_hints=user_hints, row_count=row_count)
     receipt: SpatialInspectionReceipt = build_spatial_receipt(
         profile, quality_report=report, proposals=proposals,
         crs_source="declared" if crs else "")

@@ -70,6 +70,7 @@ class ReasonCode(str, enum.Enum):
     """提案原因码（稳定词表；UI 层负责双语渲染，不进业务逻辑）。"""
 
     NAME_EXACT = "name_exact"               # 归一化字段名与词表整词相等
+    NAME_SUFFIX = "name_suffix"             # 词尾命中（合成名词中心语：学校名称→名称）
     SYNONYM_ZH = "synonym_zh"               # 中文同义词命中
     SYNONYM_EN = "synonym_en"               # 英文同义词命中
     DTYPE_CONSISTENT = "dtype_consistent"   # dtype 与角色一致（数值角色+number）
@@ -78,6 +79,7 @@ class ReasonCode(str, enum.Enum):
     RANGE_PLANE_PROJECTED = "range_plane_projected"  # 值域呈投影量级（>|180|）
     TIME_PARSED = "time_parsed"             # 时间样本/提示命中
     CATEGORY_CARDINALITY = "category_cardinality"    # 低基数字符串
+    NAME_CARDINALITY = "name_cardinality"            # 近唯一标签列（名称佐证）
     NUMERIC_MEASURE = "numeric_measure"     # 数值度量语义
     ID_UNIQUENESS = "id_uniqueness"         # 唯一性 = 行数
     USER_HINT = "user_hint"                 # 用户/Agent 提示

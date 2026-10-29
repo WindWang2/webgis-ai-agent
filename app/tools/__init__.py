@@ -68,6 +68,8 @@ _TOOL_MODULES = [
     ("app.tools.data_discovery", "register_data_discovery_tools"),
     ("app.tools.workspace_tools", "register_workspace_tools"),
     ("app.tools.ingest_tools", "register_ingest_tools"),
+    # 数据准备域：inspect→propose→prepare→bind 工具面（独立模块防并发冲突）
+    ("app.tools.data_preparation_tools", "register_data_preparation_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
     ("app.tools.flow_tools", "register_flow_tools"),
     ("app.tools.dasymetric_tools", "register_dasymetric_tools"),

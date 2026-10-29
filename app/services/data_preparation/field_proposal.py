@@ -122,9 +122,18 @@ def _norm(name: str) -> str:
 
 
 def _name_hit(field_norm: str, role: str) -> Tuple[Optional[ReasonCode], int]:
-    """词表匹配 → (原因码, 命中词长)。整词 = 归一化字段名等于同义词归一化；
-    否则子串命中。返回 None = 未命中。命中词长用于特异性排序（长词优先）。"""
+    """词表匹配 → (原因码, 命中词长)。三档：
+
+    - 整词：归一化字段名 == 同义词（「经度」「name」）；
+    - 词尾：字段名以同义词结尾 —— 合成名词的**中心语**在尾部（中英通用：
+      「学校名称」= 学校的名称、「school_name」同理、「学校编号」→ id 而非
+      name）。词尾命中按近整词计分，解决「学校编号 同时含 学校(名称词)/编号
+      (id 词)」的等权并列；
+    - 子串：弱命中（前缀/中缀修饰语）。
+    命中词长用于特异性排序（长词优先）。"""
     best: Optional[Tuple[ReasonCode, int]] = None
+    _rank = {ReasonCode.SYNONYM_EN: 0, ReasonCode.SYNONYM_ZH: 0,
+             ReasonCode.NAME_SUFFIX: 1, ReasonCode.NAME_EXACT: 2}
     for lang in ("zh", "en"):
         for term in ROLE_SYNONYMS[role][lang]:
             t = _norm(term)
@@ -132,14 +141,17 @@ def _name_hit(field_norm: str, role: str) -> Tuple[Optional[ReasonCode], int]:
                 continue
             if field_norm == t:
                 code = ReasonCode.NAME_EXACT
+            elif field_norm.endswith(t):
+                code = ReasonCode.NAME_SUFFIX
             elif t in field_norm:
                 code = ReasonCode.SYNONYM_ZH if lang == "zh" else ReasonCode.SYNONYM_EN
             else:
                 continue
-            if best is None or len(t) > best[1] or (
-                len(t) == best[1] and code == ReasonCode.NAME_EXACT
+            cur = (code, len(t))
+            if best is None or _rank[cur[0]] > _rank[best[0]] or (
+                _rank[cur[0]] == _rank[best[0]] and cur[1] > best[1]
             ):
-                best = (code, len(t))
+                best = cur
     return (best[0], best[1]) if best else (None, 0)
 
 
@@ -164,6 +176,7 @@ def _propose_one(
     fp: FieldProfile,
     *,
     user_hints: Mapping[str, str],
+    row_count: int = 0,
 ) -> FieldProposal:
     """单字段 → 提案（全部判定确定性、可解释）。"""
     fname = _norm(fp.name)
@@ -199,6 +212,8 @@ def _propose_one(
     # 1) 名称证据（特异性序：admin_code / 坐标对 先于泛角色）。
     #    admin_code：整词/长词优先 —— 防「学校代码」误入（代码已不入 id 词表，
     #    行政区划代码只归 admin_code）；行政区名称列同样归 admin_code。
+    #    词尾命中（NAME_SUFFIX）按近整词计分 ——「学校编号」的 id 证据（词尾
+    #    「编号」=中心语）必须压过「学校」（name 词、修饰语）的子串证据。
     ordered_roles = ("admin_code", "lon", "lat", "x", "y", "address", "denominator",
                      "weight", "time", "name", "category", "value", "id")
     for role in ordered_roles:
@@ -209,7 +224,12 @@ def _propose_one(
         if role in NUMERIC_PROPOSAL_ROLES and not is_numeric:
             rejected.append((role, ReasonCode.RANGE_CONFLICT.value))
             continue
-        base = 0.78 if code == ReasonCode.NAME_EXACT else 0.62
+        if code == ReasonCode.NAME_EXACT:
+            base = 0.80
+        elif code == ReasonCode.NAME_SUFFIX:
+            base = 0.76
+        else:
+            base = 0.62
         conf = base + min(term_len, 10) * 0.008  # 长词（更特异）微加成
         _add(role, conf, code)
 
@@ -247,10 +267,22 @@ def _propose_one(
         for axis in ("x", "y"):
             if axis in scores and projected:
                 _add(axis, scores[axis] + 0.12, ReasonCode.RANGE_PLANE_PROJECTED)
-        # id：唯一性佐证（unique_count 达 scanned 行数；封顶集合视为不足证据）。
-        if "id" in scores and fp.unique_count is not None and not fp.unique_capped:
-            if fp.unique_count >= max(fp.null_count + 1, 1) and fp.unique_count > 1:
+
+    # id：唯一性佐证（字符串主键同样适用 —— 不在数值/值域块内）。
+    # 有行数口径时要求 unique≈row；封顶集合视为不足证据。
+    if "id" in scores and fp.unique_count is not None and not fp.unique_capped:
+        if row_count > 1:
+            if fp.unique_count >= row_count:
                 _add("id", scores["id"] + 0.15, ReasonCode.ID_UNIQUENESS)
+        elif fp.unique_count >= max(fp.null_count + 1, 1) and fp.unique_count > 1:
+            _add("id", scores["id"] + 0.15, ReasonCode.ID_UNIQUENESS)
+
+    # name：标签列基数佐证（名称近唯一 + 字符串 dtype —— 名称列每要素一个
+    # 标签，类别列低基数；无行数口径时不佐证）。
+    if ("name" in scores and is_stringish and fp.unique_count is not None
+            and not fp.unique_capped and row_count >= 8
+            and fp.unique_count >= 0.9 * row_count):
+        _add("name", scores["name"] + 0.08, ReasonCode.NAME_CARDINALITY)
 
     # dtype 佐证：数值角色 + number dtype。
     for role in list(scores):
@@ -326,14 +358,18 @@ def propose_field_roles(
     fields: Mapping[str, FieldProfile],
     *,
     user_hints: Mapping[str, str] | None = None,
+    row_count: int = 0,
 ) -> List[FieldProposal]:
-    """字段画像集 → 提案列表（确定性；≤64 字段，超长诚实截断）。"""
+    """字段画像集 → 提案列表（确定性；≤64 字段，超长诚实截断）。
+
+    ``row_count``：数据集行数口径（唯一性佐证的基准；0 = 无口径，不佐证）。
+    """
     hints = dict(user_hints or {})
     out: List[FieldProposal] = []
     for name, fp in list(fields.items())[:_MAX_FIELDS_PROPOSED]:
         if not isinstance(fp, FieldProfile):
             continue
-        out.append(_propose_one(fp, user_hints=hints))
+        out.append(_propose_one(fp, user_hints=hints, row_count=row_count))
     return out
 
 

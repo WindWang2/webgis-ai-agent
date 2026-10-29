@@ -38,6 +38,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.data_discovery": "inspection",           # 目录/画像/lineage 只读发现
     "app.tools.data_fabric_tools": "data_access",
     "app.tools.ingest_tools": "data_access",            # 入库（detect→profile→register）
+    "app.tools.data_preparation_tools": "data_access",  # 数据准备（inspect→propose→prepare→bind）
     "app.tools.raster_tools_cog": "transformation",     # COG 转换
     "app.tools.explorer_tools": "data_access",
     "app.tools.geocoding": "data_access",
