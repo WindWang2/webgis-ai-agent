@@ -86,3 +86,12 @@ API_CONTRACT_FIELDS_UPDATE=1 pytest tests/unit/api_contract/test_field_contract.
 - **Playwright 真浏览器 smoke**：本任务组件级（vitest）+ API e2e（eager Celery 真链）覆盖主语义；真浏览器旅程未跑（后续可补 j1 旅程旁挂用例）。
 - **远端 CI**：任务纪律明确不等待；本地等价面已全绿。
 - **真实 Celery worker（Redis broker + 独立进程）**：以 eager 内联 + worker simulation 覆盖（与 tests/jobs/test_job_celery_e2e.py 同诚实口径）；跨进程重投/心跳路径依赖既有 jobs 框架测试。
+
+## R1/R2 独立评审与终跑（2026-10-30）
+
+- R1：2×P1 + 4×P2 + 5×P3 → 全部清偿（commit 44ecd8a9e）；atlas_batch 46 绿。
+- R2（终审）：R1 清偿逐条复核成立；新发现 1×P2 + 5×P3 → 全部清偿（commit 2571f3699）。
+- 终跑：`pytest tests/cartography -q --deselect <master 既有红>` → **2969 passed**；
+  出版族+jobs+API 契约+端点矩阵 351 绿；ruff 全仓绿。
+- 前端自 4f93ae707 后零 diff —— 全量 vitest 493 文件/4667 用例绿结论有效。
+- master 复查：origin/master 仍为 4b3629c90（无 rebase 需要；PR 前二次去重确认）。
