@@ -7,8 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field
 class EditOpModel(BaseModel):
     """编辑操作（discriminated by `op`；词表见 feature_edit.contracts.EDIT_OPS）。"""
 
-    model_config = ConfigDict(extra="forbid")
-
     op: Literal["set_fields", "rename_field", "repair_geometry", "move_by", "snap_to_ref"]
     fields: Optional[Dict[str, Any]] = None           # set_fields
     fixes: Optional[List[str]] = None                 # repair_geometry

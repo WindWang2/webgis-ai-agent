@@ -308,6 +308,8 @@
     "geometrySummary": "Geometry: {before} → {after} vertices",
     "moreFeatures": "…{count} more features",
     "header": "{count} features · {ref}…",
-    "colon": ": "
+    "colon": ": ",
+    "undoConflict": "Data was modified by another change — refresh the edit history and retry",
+    "undoFailed": "Undo/redo request failed ({phase}) — retry available"
   }
 }

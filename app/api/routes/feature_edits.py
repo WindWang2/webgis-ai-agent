@@ -63,8 +63,8 @@ async def preview_feature_edit(
     summary = summarize_plan(plan)
     summary["preview"] = plan.get("preview") or []
     summary["validation"] = findings
+    # plan 暂存在 service.build_and_store_plan 内完成（R2 P3-4：不再二次写）。
     if plan.get("committable"):
-        await fe_executor.store_plan(session_id, plan)
         summary["expires_in_s"] = PLAN_TTL_S
     return summary
 
@@ -81,7 +81,10 @@ async def get_feature_edit_plan(
     summary = summarize_plan(plan)
     summary["preview"] = plan.get("preview") or []
     summary["created_at"] = plan.get("created_at")
-    if plan_expired(plan):
+    # R2 P3-3：applied 判定前置（已提交的 plan 不因 TTL 显示过期）。
+    if plan.get("status") == "applied":
+        summary["status"] = "applied"
+    elif plan_expired(plan):
         summary["status"] = "expired"
     return summary
 

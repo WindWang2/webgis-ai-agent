@@ -70,6 +70,7 @@ import {
 } from '@/lib/api/chat';
 import { decideFeatureEditPlan, redoFeatureEdit, undoFeatureEdit } from '@/lib/api/feature-edit';
 import { featureEditCommand } from '@/lib/workbench/undo';
+import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import { ApiError } from '@/lib/api/transport';
 
 // #742: stable identity — an inline options object churned send/bridge/
@@ -552,11 +553,13 @@ export function useSSEStream(options: UseSSEStreamOptions) {
           && descriptor.mvt_capable === true
           && typeof (row as { _tileUrl?: unknown })._tileUrl === 'string';
         if (isMvt) {
-          // R1 P2-8：MVT 层不内联 GeoJSON —— 只推进 descriptor revision，
-          // 瓦片取数走服务端 epoch 失效 + URL v= 缓存键。
+          // R1 P2-8 + R2 P2-1：MVT 层不内联 GeoJSON —— descriptor revision
+          // 与 _tileUrl（v= 缓存键）必须一起重建，否则组合 spec 零变化、
+          // reconciler 不重加 source，地图持续显示旧瓦片。
           cur.updateLayer(row.id, {
+            _tileUrl: buildMvtTileUrl(refId, sid, revision),
             _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
-          }, { source: 'server' });
+          } as never, { source: 'server' });
         } else {
           cur.updateLayer(row.id, {
             source: res.fc as unknown as never,
@@ -1241,8 +1244,10 @@ export function useSSEStream(options: UseSSEStreamOptions) {
               }));
           })
           .catch(() => {
+            // R2 P2-3：网络/503 失败 ≠ 已拒绝 —— 置 error（可重试），
+            // 服务端真相仍是 pending。
             setMessages((prev) =>
-              setFeatureEditProposalStatus(prev, { planId: proposal.plan_id, status: 'rejected' }));
+              setFeatureEditProposalStatus(prev, { planId: proposal.plan_id, status: 'error' }));
           });
         return;
       }
@@ -1275,6 +1280,17 @@ export function useSSEStream(options: UseSSEStreamOptions) {
                 refreshDatasetLayer(sid, proposal.ref_id, r.receipt.content_revision_after);
               }
               return r;
+            },
+            onError: (phase, err) => {
+              // R2 P3-9：409 = 数据已被并发修改（如 Agent 又提交了一笔）；
+              // 其余为网络/服务端错误。toast 收敛，操作记录仍保留命令。
+              const status = (err as { status?: number })?.status;
+              useToastStore.getState().addToast(
+                status === 409
+                  ? t('chat.editProposal.undoConflict')
+                  : t('chat.editProposal.undoFailed', { phase }),
+                status === 409 ? 'warning' : 'error',
+              );
             },
           });
         })

@@ -117,17 +117,19 @@ export function featureEditCommand(args: {
   refId: string;
   undo: () => Promise<unknown>;
   redo: () => Promise<unknown>;
+  /** R2 P3-9：void 包装会吞错 —— 失败（如 409 冲突）交调用方 toast 收敛。 */
+  onError?: (phase: 'undo' | 'redo', err: unknown) => void;
 }): void {
+  const run = (phase: 'undo' | 'redo') => {
+    const p = phase === 'undo' ? args.undo() : args.redo();
+    void p.catch((err: unknown) => args.onError?.(phase, err));
+  };
   recordCommand({
     label: args.label,
     kind: 'feature_edit',
     actor: args.actor,
-    undo: () => {
-      void args.undo();
-    },
-    redo: () => {
-      void args.redo();
-    },
+    undo: () => run('undo'),
+    redo: () => run('redo'),
   });
 }
 

@@ -149,7 +149,7 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         memory_class="light",
         description=(
             "读取一个数据集（ref:…）的要素编辑历史（有界 journal）：每笔 "
-            "seq/kind(apply|undo|redo|materialize)/actor/origin/变更要素数/数据版本。"
+            "seq/kind(apply|undo|redo)/actor/origin/变更要素数/数据版本。"
             "含 dropped 计数（FIFO 溢出披露）。undo/redo 由用户在界面执行"
             "（编辑提案卡/操作日志），走同一 CAS 写路径。"
         ),

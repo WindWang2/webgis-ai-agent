@@ -70,18 +70,19 @@ def _turn_lock_held(session_id: str) -> bool:
 @contextlib.asynccontextmanager
 async def _edit_lock(session_id: str):
     """编辑互斥：turn 内透传（父锁已序列化），否则自取分布式会话锁。"""
+    # 加锁顺序恒「分布式 → 进程」（R2 P2-2）：turn 路径本身是「全 turn
+    # 分布式锁 → 工具内进程锁」，REST 先进程后分布式会与之 ABBA —— turn
+    # 进行中用户点 approve（常规路径）时在跑 turn 被冻结至多整个 acquire 预算。
     passthrough = _turn_lock_held(session_id)
-    distributed = None
-    if not passthrough:
-        distributed = session_lock_registry.lock(
-            session_id, fail_on_degraded=True, fail_on_lost=True
-        )
-    proc = _process_lock(session_id)
-    async with proc:
-        if distributed is not None:
-            async with distributed:
-                yield
-        else:
+    if passthrough:
+        async with _process_lock(session_id):
+            yield
+        return
+    distributed = session_lock_registry.lock(
+        session_id, fail_on_degraded=True, fail_on_lost=True
+    )
+    async with distributed:
+        async with _process_lock(session_id):
             yield
 
 
@@ -330,7 +331,14 @@ async def commit_plan(
         # append_entry 保证——这里改的是刚构造、尚未共享的对象）。
         entry = journals[ref_id]["entries"][-1]
         entry["content_revision_after"] = revision_after
-        await _save_journal(session_id, journals, ref_id)
+        # R1 P2-7 + R2 P3-1：overwrite 已成、账未落 —— 大声披露（恢复路径
+        # 见 ADR「崩溃窗口」）。
+        if await _save_journal(session_id, journals, ref_id) is False:
+            logger.error(
+                "[feature_edit] journal write FAILED after overwrite for %s/%s (rev %s) — "
+                "undo for this entry unavailable until next edit",
+                session_id, ref_id, revision_after,
+            )
         _pending_receipt_entry = entry
 
     # ── 销账（锁内完成主体；receipt 在盖章后回写 plan，供幂等重放回放） ──
@@ -347,7 +355,9 @@ async def commit_plan(
     receipt["stamp_status"] = stamp_status
     receipt["mapspec_revision"] = mapspec_revision
     # receipt 快照入 plan（幂等重放/决策端二次点击原样回放，不再跑盖章）。
-    await _mark_plan_status_unlocked(
+    # R2 P3-2：此点已在 _edit_lock 之外 —— 用锁定变体（与并发 store_plan
+    # 的整 dict RMW 串行），不得绕过。
+    await _mark_plan_status(
         session_id, plan_id, "applied", extra={"receipt": receipt, "entry_seq": entry.get("seq")}
     )
     _broadcast_dataset_updated(session_id, ref_id, revision_after, [d.get("wfid") for d in deltas][:64])
@@ -515,7 +525,12 @@ async def _apply_inverse_locked(
     descriptor_after = await session_data_manager.get_ref_descriptor(session_id, ref_id) or {}
     stored = journals[ref_id]["entries"][-1]
     stored["content_revision_after"] = int(descriptor_after.get("content_revision") or revision_before + 1)
-    await _save_journal(session_id, journals, ref_id)
+    if await _save_journal(session_id, journals, ref_id) is False:
+        logger.error(
+            "[feature_edit] journal write FAILED after overwrite for %s/%s (rev %s, %s) — "
+            "undo/redo for this entry unavailable until next edit",
+            session_id, ref_id, stored["content_revision_after"], kind,
+        )
     return stored
 
 
