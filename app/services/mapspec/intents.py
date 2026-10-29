@@ -344,9 +344,21 @@ class SetTimeIntent:
 
 
 @dataclass
+class RefreshDataRevisionIntent:
+    """要素编辑后的数据新鲜度盖章（/goal 03）。
+
+    仅对 sources 中 ref 匹配 ``ref_id`` 的条目更新 ``content_revision`` 键
+    —— 不触碰显隐/样式/组件（user-wins 面零影响）。origin 恒 system
+    （服务端在编辑提交后内部调用，无 REST codec）。
+    """
+
+    ref_id: str
+    content_revision: int
+
+
+@dataclass
 class SetScenarioModeIntent:
     """What-If 推演视图协议（ADR-0193）：顶层 ``scenario_mode`` 写入。
-
     ``split_view`` / ``swipe_compare`` 进入推演对比视图；``None`` 退出
     （键从 spec 移除，非推演语义）。COW 只拷顶层分支；非法值整笔拒绝
     （is_error，last-known-good 不变）。前端按

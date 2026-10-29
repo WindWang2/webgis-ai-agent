@@ -1118,6 +1118,39 @@ async def _handle_settime(ctx: MutationContext) -> HandlerOut:
     return MutationPlan(mapspec=mapspec)
 
 
+async def _handle_refreshdatarevision(ctx: MutationContext) -> HandlerOut:
+    """RefreshDataRevisionIntent 分支体（/goal 03 要素编辑盖章）。
+
+    只对 sources 中 ref 匹配的条目更新 ``content_revision``；无匹配或已是
+    目标值 → terminal 非 error 回执（不推进 revision，不进 commit 面）。
+    COW：sources 顶层分支浅拷，逐条目新建（与 loaded 的条目不共享）。
+    """
+    loaded = ctx.loaded
+    intent = ctx.intent
+
+    mapspec = {**loaded} if loaded else {}
+    sources = dict(loaded.get("sources", {})) if loaded else {}
+    matched = 0
+    for source_id, entry in sources.items():
+        if not isinstance(entry, dict):
+            continue
+        ref = entry.get("ref_id") or entry.get("ref") or (
+            entry.get("url") if isinstance(entry.get("url"), str) and str(entry.get("url")).startswith("ref:") else None
+        )
+        if ref != intent.ref_id:
+            continue
+        matched += 1
+        if entry.get("content_revision") == intent.content_revision:
+            continue
+        sources[source_id] = {**entry, "content_revision": int(intent.content_revision)}
+    if matched == 0:
+        return MapSpecResult(mapspec=mapspec, origin=ctx.origin, warnings=["no source references the ref"])
+    if sources == (loaded or {}).get("sources"):
+        return MapSpecResult(mapspec=mapspec, origin=ctx.origin, warnings=["content_revision already current"])
+    mapspec["sources"] = sources
+    return MutationPlan(mapspec=mapspec)
+
+
 async def _handle_setscenariomode(ctx: MutationContext) -> HandlerOut:
     """SetScenarioModeIntent 分支体（逐字迁移，见模块 docstring 的适配清单）。"""
     origin = ctx.origin
