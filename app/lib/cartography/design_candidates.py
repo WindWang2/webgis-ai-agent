@@ -100,6 +100,9 @@ class DesignTaskContext(BaseModel):
 
     task_categories: Tuple[str, ...] = ()
     geometry_kind: str = "polygon"
+    #: 在场次数据几何（overlay 面/线数据）：主表达几何之外可用的表达面。
+    #: 成都学校（点）+ 行政区（面）→ 面族表达（区级统计）可行。
+    secondary_geometry_kinds: Tuple[str, ...] = ()
     variable_kind: str = "continuous"
     statistic: str = ""
     artifact_types: Tuple[str, ...] = ()
@@ -314,9 +317,17 @@ def _augment_with_affinity_families(
             covered.add(_expression_family(model))
     for category in task_ctx.task_categories:
         for model_id in _CATEGORY_MODEL_AFFINITY.get(category, ()):
-            if model_id in pool or model_id not in feasible:
+            if model_id in pool:
                 continue
-            family = _expression_family(feasible[model_id])
+            model = model_reg.get(model_id)
+            if model is None:
+                continue
+            # 扩展可行域：主几何（组合层同款）∪ 次几何（overlay 面数据）。
+            if model_id not in feasible and not _model_feasible_extended(
+                    model, ctx):
+                continue
+            via_secondary = model_id not in feasible
+            family = _expression_family(model)
             if model_id in _RATE_SEMANTIC_MODELS:
                 # 率/密度语义模型与原始计数是不同语义层级（分母门控对），
                 # 无条件入池——REQUIRED_SATISFIED/MISSING 的对照解释是
@@ -335,7 +346,9 @@ def _augment_with_affinity_families(
                 "composition": "",
                 "score": 0.0,
                 "slots": [],
-                "reasons": [f"类目亲和 {category}（组合层未覆盖，按亲和表补齐）"],
+                "reasons": [(
+                    f"类目亲和 {category}（overlay 次几何表达）" if via_secondary
+                    else f"类目亲和 {category}（组合层未覆盖，按亲和表补齐）")],
             }
             covered.add(family)
 
@@ -355,6 +368,27 @@ def _model_feasible(model: Any, task_ctx: Any) -> bool:
     """单模型可行域判定（与组合层 ``_candidate_map_models`` 同款硬过滤：
     几何 ∩ 产物；不复制评分）。"""
     if task_ctx.geometry_kind not in (model.geometry_kinds or []):
+        return False
+    artifact_set = set(task_ctx.artifact_types)
+    if artifact_set and model.accepted_artifact_types:
+        if not (artifact_set & set(model.accepted_artifact_types)):
+            return False
+    return True
+
+
+def _model_feasible_extended(model: Any, ctx: DesignTaskContext) -> bool:
+    """扩展可行域：主几何 ∪ 次几何（overlay 面数据在场面族表达可行）。
+
+    组合层候选池只认主几何（其词表语义）；表达层候选在 overlay 面数据
+    在场时，面族（区级统计/归一化）对同一制图任务是合法表达——按
+    DesignTaskContext 的结构化事实判定，不猜。
+    """
+    task_ctx = _task_ctx_from_design(ctx)
+    if _model_feasible(model, task_ctx):
+        return True
+    if model.geometry_kinds and not (
+            {ctx.geometry_kind, *ctx.secondary_geometry_kinds}
+            & set(model.geometry_kinds)):
         return False
     artifact_set = set(task_ctx.artifact_types)
     if artifact_set and model.accepted_artifact_types:
@@ -523,7 +557,7 @@ def generate_design_candidates(
                 continue
             if task_ctx_for_feasibility is None:
                 task_ctx_for_feasibility = _task_ctx_from_design(ctx)
-            if _model_feasible(model, task_ctx_for_feasibility):
+            if _model_feasible_extended(model, ctx):
                 pool[model_id] = {
                     "composition": "", "score": 0.0, "slots": [],
                     "reasons": ["用户显式要求（可行域直判，组合层未覆盖）"],

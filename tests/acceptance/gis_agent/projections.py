@@ -378,6 +378,9 @@ async def _project_requirement(session_id: str) -> Optional[Dict[str, Any]]:
             "revision": summary.get("revision"),
             "requirement_digest": str(summary.get("requirement_digest") or ""),
             "folded_patch_count": getattr(state, "folded_patch_count", 0),
+            # carto-design（M6）：user-wins 表达 pin（design-select 落档面）
+            "representation_pin": str(
+                doc.intent.representation.geometry_kind or ""),
             # G3D04：SceneSpec 投影（typed 3D 需求面）
             "scene": {
                 "dimension": scene.dimension,

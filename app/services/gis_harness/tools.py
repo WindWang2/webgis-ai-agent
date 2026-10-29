@@ -1335,6 +1335,30 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
             )
             from app.services.gis_harness.planner import _TASK_CATEGORY_BY_INTENT
 
+            _geom_kind_cache: Dict[str, str] = {}
+            # overlay 次几何/字段证据（扩展可行域与跨源分母投影用）：
+            # 成都学校（点主数据）+ 行政区（overlay 面，含 population）→
+            # 面族表达可行 + 分母可来自 overlay。描述符读取廉价。
+            _secondary_geoms: List[str] = []
+            _overlay_fields: List[str] = []
+            for _oref in (overlay_refs or [])[:4]:
+                _odesc = await session_data_manager.get_ref_descriptor(
+                    session_id, _oref)
+                if not _odesc:
+                    continue
+                for _g in (_odesc.get("geometry_types")
+                           or _odesc.get("geometryTypes") or []):
+                    _cat = {"Point": "point", "MultiPoint": "point",
+                            "LineString": "line", "MultiLineString": "line",
+                            "Polygon": "polygon", "MultiPolygon": "polygon",
+                            }.get(str(_g))
+                    if _cat and _cat != _geom_kind_cache.get("primary") \
+                            and _cat not in _secondary_geoms:
+                        _secondary_geoms.append(_cat)
+                _of = _odesc.get("field_schema") or _odesc.get("fields")
+                if isinstance(_of, dict):
+                    _overlay_fields.extend(
+                        str(f).lower() for f in _of.keys())
             _geom_types = set((profile or {}).get("geometryTypes") or [])
             if _geom_types:
                 from app.services.gis_harness.recipes import _geometry_category
@@ -1345,6 +1369,7 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                 _geom_kind = {"point": "point", "line": "line",
                               "polygon": "polygon", "raster": "raster"}.get(
                     str(intent.geometry_expectation or ""), "polygon")
+            _geom_kind_cache["primary"] = _geom_kind
             # 分母证据：DENOMINATOR_FIELD_HINTS 单一事实源词表命中（字段名
             # 级匹配；宁缺毋滥——无命中即无分母，不猜）。
             _fields = (profile or {}).get("fields") or {}
@@ -1355,7 +1380,14 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
             )
             _denom_field = next(
                 (f for f in _field_names
-                 if any(h in f for h in DENOMINATOR_FIELD_HINTS)), "")
+                 if any(h in f for h in DENOMINATOR_FIELD_HINTS)),
+                # 跨源分母：主数据无分母字段时，overlay（如行政区 population）
+                # 字段词表命中同样成立——分母证据来源如实标注 overlay。
+                next((f for f in _overlay_fields
+                      if any(h in f for h in DENOMINATOR_FIELD_HINTS)), ""))
+            _denom_source = (
+                "profile" if _denom_field and _denom_field in _field_names
+                else ("overlay" if _denom_field else "profile"))
             # 时相证据：意图声明 change_detection 且 profile 存在时相字段
             # 才认定双期可达（声明与数据双证据）。
             _temporal_periods = 2 if (
@@ -1400,12 +1432,19 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                 geometry_kind=_geom_kind,
                 statistic="density" if intent.task == "density_analysis"
                 else "count",
-                artifact_types={
-                    "point": ("point_feature_set", "admin_aggregate_table"),
-                    "line": ("line_feature_set", "admin_aggregate_table"),
-                    "polygon": ("polygon_feature_set", "admin_aggregate_table"),
-                    "raster": ("raster_surface",),
-                }.get(_geom_kind, ("admin_aggregate_table",)),
+                artifact_types=tuple(dict.fromkeys((
+                    *{
+                        "point": ("point_feature_set", "admin_aggregate_table"),
+                        "line": ("line_feature_set", "admin_aggregate_table"),
+                        "polygon": ("polygon_feature_set", "admin_aggregate_table"),
+                        "raster": ("raster_surface",),
+                    }.get(_geom_kind, ("admin_aggregate_table",)),
+                    # overlay 面数据在场 → 行政边界产物面成立（面族表达证据）
+                    * (("admin_boundary_set",) if "polygon" in _secondary_geoms
+                       else ()),
+                ))),
+                secondary_geometry_kinds=tuple(
+                    g for g in _secondary_geoms if g != _geom_kind),
                 point_count=int((profile or {}).get("featureCount") or 0)
                 if _geom_kind == "point" else 0,
                 point_count_basis="profile" if (
@@ -1415,7 +1454,7 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                 denominator=_DenomEvidence(
                     field=_denom_field, available=bool(_denom_field),
                     unit="人口" if _denom_field else "",
-                    source="profile"),
+                    source=_denom_source),
                 temporal_periods=_temporal_periods,
                 user_requested_models=_user_models,
                 scale_hint=str(getattr(intent.scope, "level", "") or ""),
@@ -1424,8 +1463,30 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                 (primary_bound or {}).get("cartography") or "")
             _cand_set = _gen_design_candidates(
                 _design_ctx, primary_model_id=_primary_bound_model)
+            # design_digest：LLM 上下文预算（MSG_MAX_CHARS=2500）放不下的
+            # 全量候选——紧凑投影（模型/族/适宜性/一句理由）随 summary 面
+            # 保留（llm_result_formatter 键保留）；全量候选走 details 面
+            # （64KB 预算）与原始结果。
+            _digest_cands = [
+                {"m": c.map_model_id, "f": c.expression_family,
+                 "s": c.suitability.value,
+                 **({"why": (c.condition_reasons_zh[0]
+                             or c.reasons_zh[0])[:60]}
+                    if (c.condition_reasons_zh or c.reasons_zh) and
+                    c.suitability != "suitable" else {})}
+                for c in _cand_set.candidates[:4]
+            ]
             design_payload = {
                 "design_candidates": _cand_set.to_bounded_dict(),
+                "design_digest": {
+                    "count": len(_cand_set.candidates),
+                    "selected": _cand_set.selected_candidate_id[:48],
+                    "candidates": _digest_cands,
+                    "blocked": [c.map_model_id for c in _cand_set.candidates
+                                if c.suitability.value == "blocked"],
+                    "honored": list(
+                        _cand_set.user_request_handling.get("honored") or [])[:4],
+                },
                 "design_decision_trace": _build_trace(
                     _design_ctx, _cand_set,
                     intent_summary={
@@ -1715,6 +1776,15 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
             grammar_face_pins,
         )
 
+        if not session_id:
+            # RAW/编排面（同 apply_scene_representation 惯例）：sessionId 由
+            # dispatch 层经 RuntimeContext 提供。
+            try:
+                from app.lib.runtime.context import current_runtime_context
+                _rt = current_runtime_context()
+                session_id = str(getattr(_rt, "session_id", "") or "") if _rt else ""
+            except Exception:  # noqa: BLE001
+                session_id = ""
         if not session_id or not map_model_id:
             return {"success": False, "message": "Missing session_id/map_model_id"}
 
