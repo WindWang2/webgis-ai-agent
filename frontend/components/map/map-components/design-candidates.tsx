@@ -91,7 +91,10 @@ function DesignCandidatesView({
       component={patched}
       title={t('map.designCandidates.title')}
       topSlotIndexes={ctx?.topSlotIndexes}
-      defaultPosition={patched.position || 'top-left'}
+      bottomSlotIndexes={ctx?.bottomSlotIndexes}
+      testId="spec-chrome-design-candidates"
+      dataVariant={variant}
+      bodyClassName={variant === 'compact' ? 'p-1.5' : 'p-2'}
     >
       {!design ? (
         <div className="p-3 text-xs text-neutral-500">
