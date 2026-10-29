@@ -172,6 +172,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
         _step("hotspot", "hotspot_analysis",
               {"geojson": "step:grid_stats"},
               capability="hotspot",
+              params={"value_field": "count"},
               deps=("grid_stats",),
               optional=True,
               outputs=("hotspot_zones",)),
