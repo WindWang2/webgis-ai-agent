@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "8f8bcedf48c1d7d23e732e843b70fb81c9b593d72dc6b2f8d9207c2e8f88de86",
+   "input_fingerprint": "1cb27ad918d9531d87f5f3f4b5967b3bdcc234762e399acccbe6fe79e1104a93",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -45,7 +45,7 @@
    "content_fingerprint": "f94be5c7638d2ed28052cbd586e78000be740d1bedd291435d3752ecbbce44de",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "ce8501064628e35ec8c1ac8ce32a3e19c6567c86880b93bd6c4b3ef0e4e01395",
+   "input_fingerprint": "1e6e40431cb3d780d1c2733273966fa667a4b2d69ab99a77bf8ad29c1abb8a48",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -90,7 +90,7 @@
    "scope": "global"
   },
   "docs/quality/certifications/DETERMINISM.md": {
-   "content_fingerprint": "86f50f58316ec3a7c8d8b2ca9feb658fead814995e0b0a7f036a056a88a7c1aa",
+   "content_fingerprint": "e15d6206e282e3d7294f6ad50cabe87f05b6865df0bb96e793074e90ebac048e",
    "generator": "scripts/gen_determinism_certification.py",
    "generator_version": 1,
    "input_fingerprint": "30527e841dd1104113d70040673844610153316c3b11435a2b64b092a6fc7175",
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "8f8bcedf48c1d7d23e732e843b70fb81c9b593d72dc6b2f8d9207c2e8f88de86",
+   "input_fingerprint": "1cb27ad918d9531d87f5f3f4b5967b3bdcc234762e399acccbe6fe79e1104a93",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -135,7 +135,7 @@
    "content_fingerprint": "98a339eef941f7e5a1e92d8a213fc5c9befbf379b5cffb497f28c948be4df216",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "ce8501064628e35ec8c1ac8ce32a3e19c6567c86880b93bd6c4b3ef0e4e01395",
+   "input_fingerprint": "1e6e40431cb3d780d1c2733273966fa667a4b2d69ab99a77bf8ad29c1abb8a48",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
