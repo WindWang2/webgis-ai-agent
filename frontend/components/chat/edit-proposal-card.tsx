@@ -24,14 +24,15 @@ interface EditProposalCardProps {
 type EditT = ReturnType<typeof useT>;
 
 function opLabel(t: EditT, op: FeatureEditOpSummary['op']): string {
-  const key = {
-    set_fields: 'chat.editProposal.opSetFields',
-    rename_field: 'chat.editProposal.opRenameField',
-    repair_geometry: 'chat.editProposal.opRepairGeometry',
-    move_by: 'chat.editProposal.opMoveBy',
-    snap_to_ref: 'chat.editProposal.opSnapToRef',
-  }[op];
-  return t(key);
+  // 字面量键分支（i18n 静态扫描盲区棘轮不认计算键）
+  switch (op) {
+    case 'set_fields': return t('chat.editProposal.opSetFields');
+    case 'rename_field': return t('chat.editProposal.opRenameField');
+    case 'repair_geometry': return t('chat.editProposal.opRepairGeometry');
+    case 'move_by': return t('chat.editProposal.opMoveBy');
+    case 'snap_to_ref': return t('chat.editProposal.opSnapToRef');
+    default: return op;
+  }
 }
 
 function opSummaryText(op: FeatureEditOpSummary): string {

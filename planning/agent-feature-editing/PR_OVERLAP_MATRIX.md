@@ -35,3 +35,13 @@
 - `webgis-wt-g3dv2-a-data` / `webgis-wt-g3dv2-b-scene`：分支 HEAD 均已被合并进 master（#1835/#1836），无在途冲突。
 - 中心文件 patch 均为行级新增（见 PLAN D10）；与上述已合并方向无文件级竞争（g3dv2 系不触碰 mapspec mutation registry / feature 面）。
 - 若网络恢复后发现 open PR 与本任务实质重叠 → 按 LOOP_STATE 预案缩窄到未覆盖子任务并重写本矩阵。
+
+## 二次去重（PR 创建前，2026-10-29 网络恢复后实核）
+
+- `git fetch origin master` 成功；origin/master 仍 = `4b3629c90`（无新提交，无需 rebase）。
+- Open PR 仅 **#1868**（feat(sdo) 多源空间数据自动准备与语义绑定工作台）：
+  - 实质能力对比：#1868 = **新数据源**的 inspect→propose→validate→prepare→bind（摄入前准备/语义绑定）；
+    本分支 = **既有数据集要素**的编辑/校验/撤销（写入路径/CAS/信任边界/盖章联动）——互补不重叠。
+  - 文件交集仅 3 个琐碎点：`app/main.py`（各 +1 行 router import）、`app/tools/__init__.py`（各 +1 行模块注册）、`docs/dev/endpoint-scope-matrix.csv`（生成物，合并时再生）。无语义冲突。
+- Open issues：#1842–#1866 为审计汇总（Low/Medium 为主）+ #1847（org 上下文安全）。本分支不触碰 `_mission_binding`/相关路径；按任务书边界，既有审计债的批量清偿不在本分支范围（新增代码自身的安全面已按不变量实现并测试）。
+- 结论：**无实质冲突，方向按原计划推进。**
