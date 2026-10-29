@@ -1116,10 +1116,211 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                 )):
                     opts["palette"] = palette
                 comp.options = opts
+        # ── 设计候选 + 决策 trace（/goal cartography-design M2）：表达模型
+        # 层 2–4 候选（含数据资格 typed 门控与降级路径）+ 「为何选/为何弃」
+        # 决策链。增值证据面：best_effort 降级不阻断组装（同 #1549 纪律）；
+        # 投影只来自结构化事实（intent task / profile / bound_layers），
+        # 无 query 字符串。
+        design_payload: Dict[str, Any] = {}
+        try:
+            from app.lib.cartography.design_candidates import (
+                DenominatorEvidence as _DenomEvidence,
+                DesignTaskContext as _DesignCtx,
+                generate_design_candidates as _gen_design_candidates,
+            )
+            from app.lib.cartography.design_decision_trace import (
+                build_design_decision_trace as _build_trace,
+            )
+            from app.services.gis_harness.planner import _TASK_CATEGORY_BY_INTENT
+
+            _geom_kind_cache: Dict[str, str] = {}
+            # overlay 次几何/字段证据（扩展可行域与跨源分母投影用）：
+            # 成都学校（点主数据）+ 行政区（overlay 面，含 population）→
+            # 面族表达可行 + 分母可来自 overlay。描述符读取廉价。
+            _secondary_geoms: List[str] = []
+            _overlay_fields: List[str] = []
+            for _oref in (overlay_refs or [])[:4]:
+                _odesc = await session_data_manager.get_ref_descriptor(
+                    session_id, _oref)
+                if not _odesc:
+                    continue
+                for _g in (_odesc.get("geometry_types")
+                           or _odesc.get("geometryTypes") or []):
+                    _cat = {"Point": "point", "MultiPoint": "point",
+                            "LineString": "line", "MultiLineString": "line",
+                            "Polygon": "polygon", "MultiPolygon": "polygon",
+                            }.get(str(_g))
+                    if _cat and _cat != _geom_kind_cache.get("primary") \
+                            and _cat not in _secondary_geoms:
+                        _secondary_geoms.append(_cat)
+                _of = _odesc.get("field_schema") or _odesc.get("fields")
+                if isinstance(_of, dict):
+                    _overlay_fields.extend(
+                        str(f).lower() for f in _of.keys())
+            _geom_types = set((profile or {}).get("geometryTypes") or [])
+            if _geom_types:
+                from app.services.gis_harness.recipes import _geometry_category
+                _gcat = _geometry_category(list(_geom_types))
+                _geom_kind = {"point": "point", "line": "line"}.get(
+                    _gcat, "polygon")
+            else:
+                _geom_kind = {"point": "point", "line": "line",
+                              "polygon": "polygon", "raster": "raster"}.get(
+                    str(intent.geometry_expectation or ""), "polygon")
+            _geom_kind_cache["primary"] = _geom_kind
+            # 分母证据：DENOMINATOR_FIELD_HINTS 单一事实源词表命中（字段名
+            # 级匹配；宁缺毋滥——无命中即无分母，不猜）。
+            _fields = (profile or {}).get("fields") or {}
+            _field_names = [str(f).lower() for f in (
+                _fields.keys() if isinstance(_fields, dict) else [])]
+            from app.services.gis_harness.workflow_schema import (
+                DENOMINATOR_FIELD_HINTS,
+            )
+            _denom_field = next(
+                (f for f in _field_names
+                 if any(h in f for h in DENOMINATOR_FIELD_HINTS)),
+                # 跨源分母：主数据无分母字段时，overlay（如行政区 population）
+                # 字段词表命中同样成立——分母证据来源如实标注 overlay。
+                next((f for f in _overlay_fields
+                      if any(h in f for h in DENOMINATOR_FIELD_HINTS)), ""))
+            _denom_source = (
+                "profile" if _denom_field and _denom_field in _field_names
+                else ("overlay" if _denom_field else "profile"))
+            # 时相证据：意图声明 change_detection 且 profile 存在时相字段
+            # 才认定双期可达（声明与数据双证据）。
+            _temporal_periods = 2 if (
+                intent.task == "change_detection"
+                and any(h in f for f in _field_names
+                        for h in ("year", "date", "period", "time", "年份"))
+            ) else 0
+            # 用户显式表达要求投影：只来自 typed 信号 —— ① intent 规则引擎
+            # 的 bare_density_visual（裸「密度」视觉概览语义锁，G16/G17/C018；
+            # visual_heatmap 注册别名即 density_overview）；② user-wins 表达
+            # pin（design_select 固化，apply_pending_bindings 已发布快照）。
+            # 不做 NL 二次猜测；两者缺席 → 无显式要求（自动推荐语义）。
+            _pinned_model = ""
+            try:
+                from app.lib.cartography.model_library import (
+                    get_map_model_registry as _design_model_reg,
+                )
+                from app.services.gis_harness.representation_binding.requirement_to_mapspec import (
+                    _load_document,
+                    grammar_face_pins,
+                )
+                _pin_doc = await _load_document(session_id)
+                if _pin_doc is not None:
+                    _pinned_raw = str(
+                        grammar_face_pins(_pin_doc).get("pinned_representation")
+                        or "")
+                    # pin 存归一化词（别名可解析）——canonical 到注册 id，
+                    # 与候选 map_model_id 同一比对空间。
+                    if _pinned_raw:
+                        _pm = _design_model_reg().resolve(_pinned_raw)
+                        _pinned_model = _pm.id if _pm is not None else ""
+            except Exception:  # noqa: BLE001 — pin 缺席 = 无显式要求
+                _pinned_model = ""
+            _user_models = tuple(dict.fromkeys(filter(None, (
+                _pinned_model,
+                "visual_heatmap" if "bare_density_visual" in (
+                    intent.matched_rules or []) else "",
+            ))))
+            _design_ctx = _DesignCtx(
+                task_categories=_TASK_CATEGORY_BY_INTENT.get(
+                    str(intent.task or ""), ("thematic_cartography",)),
+                geometry_kind=_geom_kind,
+                statistic="density" if intent.task == "density_analysis"
+                else "count",
+                artifact_types=tuple(dict.fromkeys((
+                    *{
+                        "point": ("point_feature_set", "admin_aggregate_table"),
+                        "line": ("line_feature_set", "admin_aggregate_table"),
+                        "polygon": ("polygon_feature_set", "admin_aggregate_table"),
+                        "raster": ("raster_surface",),
+                    }.get(_geom_kind, ("admin_aggregate_table",)),
+                    # overlay 面数据在场 → 行政边界产物面成立（面族表达证据）
+                    * (("admin_boundary_set",) if "polygon" in _secondary_geoms
+                       else ()),
+                ))),
+                secondary_geometry_kinds=tuple(
+                    g for g in _secondary_geoms if g != _geom_kind),
+                point_count=int((profile or {}).get("featureCount") or 0)
+                if _geom_kind == "point" else 0,
+                point_count_basis="profile" if (
+                    _geom_kind == "point"
+                    and isinstance((profile or {}).get("featureCount"), int)
+                ) else "unknown",
+                denominator=_DenomEvidence(
+                    field=_denom_field, available=bool(_denom_field),
+                    unit="人口" if _denom_field else "",
+                    source=_denom_source),
+                temporal_periods=_temporal_periods,
+                user_requested_models=_user_models,
+                scale_hint=str(getattr(intent.scope, "level", "") or ""),
+            )
+            _primary_bound_model = str(
+                (primary_bound or {}).get("cartography") or "")
+            _cand_set = _gen_design_candidates(
+                _design_ctx, primary_model_id=_primary_bound_model)
+            # design_digest：LLM 上下文预算（MSG_MAX_CHARS=2500）放不下的
+            # 全量候选——紧凑投影（模型/族/适宜性/一句理由）随 summary 面
+            # 保留（llm_result_formatter 键保留）；全量候选走 details 面
+            # （64KB 预算）与原始结果。
+            _digest_cands = [
+                {"m": c.map_model_id, "f": c.expression_family,
+                 "s": c.suitability.value,
+                 **({"why": (c.condition_reasons_zh[0]
+                             or c.reasons_zh[0])[:60]}
+                    if (c.condition_reasons_zh or c.reasons_zh) and
+                    c.suitability != "suitable" else {})}
+                for c in _cand_set.candidates[:4]
+            ]
+            design_payload = {
+                "design_candidates": _cand_set.to_bounded_dict(),
+                "design_digest": {
+                    "count": len(_cand_set.candidates),
+                    "selected": _cand_set.selected_candidate_id[:48],
+                    "candidates": _digest_cands,
+                    "blocked": [c.map_model_id for c in _cand_set.candidates
+                                if c.suitability.value == "blocked"],
+                    "honored": list(
+                        _cand_set.user_request_handling.get("honored") or [])[:4],
+                },
+                "design_decision_trace": _build_trace(
+                    _design_ctx, _cand_set,
+                    intent_summary={
+                        "task": intent.task,
+                        "scope": intent.scope.name,
+                        "subject": intent.subject.category,
+                        "geometry": intent.geometry_expectation,
+                    },
+                    mapspec_fingerprint=str(out.get("mapspec_fingerprint") or ""),
+                    primary_bound_model=_primary_bound_model,
+                ),
+            }
+        except Exception as _design_exc:  # noqa: BLE001 — 证据面降级
+            logger.warning(
+                "webgis_map_product design candidates degraded: %s", _design_exc)
+            design_payload = {"design_candidates_degraded": {
+                "code": "design_candidates_error",
+                "detail": str(_design_exc)[:160],
+            }}
+
         if title:
             from app.services.gis_harness.components import title_component
             components = [c for c in components if c.type != "title"]
             components.append(title_component(title))
+        # 设计候选面板（/goal carto-design M7）：design 成功 → 只读披露组件
+        # 随产品落 layout（options.design = design_digest 有界投影；接受
+        # 动作经 webgis_map_design_select 统一 action，面板不带状态机）。
+        if isinstance(design_payload.get("design_digest"), dict):
+            from app.services.gis_harness.components import CartographyComponent
+            components = [
+                c for c in components if c.type != "design_candidates"]
+            components.append(CartographyComponent(
+                id="design-candidates", type="design_candidates",
+                position="top-left", priority=49,
+                options={"design": design_payload["design_digest"]},
+            ))
         component_dicts = [c.to_mapspec() for c in components]
         # #1068(E-7): layout_set 整表替换组件表 —— 用户经
         # webgis_component_update create=true 建的浮动面板（chart/statistics）
@@ -1318,194 +1519,6 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                     ))
                     plan.completeness = planner.assess_completeness(plan)
 
-        # ── 设计候选 + 决策 trace（/goal cartography-design M2）：表达模型
-        # 层 2–4 候选（含数据资格 typed 门控与降级路径）+ 「为何选/为何弃」
-        # 决策链。增值证据面：best_effort 降级不阻断组装（同 #1549 纪律）；
-        # 投影只来自结构化事实（intent task / profile / bound_layers），
-        # 无 query 字符串。
-        design_payload: Dict[str, Any] = {}
-        try:
-            from app.lib.cartography.design_candidates import (
-                DenominatorEvidence as _DenomEvidence,
-                DesignTaskContext as _DesignCtx,
-                generate_design_candidates as _gen_design_candidates,
-            )
-            from app.lib.cartography.design_decision_trace import (
-                build_design_decision_trace as _build_trace,
-            )
-            from app.services.gis_harness.planner import _TASK_CATEGORY_BY_INTENT
-
-            _geom_kind_cache: Dict[str, str] = {}
-            # overlay 次几何/字段证据（扩展可行域与跨源分母投影用）：
-            # 成都学校（点主数据）+ 行政区（overlay 面，含 population）→
-            # 面族表达可行 + 分母可来自 overlay。描述符读取廉价。
-            _secondary_geoms: List[str] = []
-            _overlay_fields: List[str] = []
-            for _oref in (overlay_refs or [])[:4]:
-                _odesc = await session_data_manager.get_ref_descriptor(
-                    session_id, _oref)
-                if not _odesc:
-                    continue
-                for _g in (_odesc.get("geometry_types")
-                           or _odesc.get("geometryTypes") or []):
-                    _cat = {"Point": "point", "MultiPoint": "point",
-                            "LineString": "line", "MultiLineString": "line",
-                            "Polygon": "polygon", "MultiPolygon": "polygon",
-                            }.get(str(_g))
-                    if _cat and _cat != _geom_kind_cache.get("primary") \
-                            and _cat not in _secondary_geoms:
-                        _secondary_geoms.append(_cat)
-                _of = _odesc.get("field_schema") or _odesc.get("fields")
-                if isinstance(_of, dict):
-                    _overlay_fields.extend(
-                        str(f).lower() for f in _of.keys())
-            _geom_types = set((profile or {}).get("geometryTypes") or [])
-            if _geom_types:
-                from app.services.gis_harness.recipes import _geometry_category
-                _gcat = _geometry_category(list(_geom_types))
-                _geom_kind = {"point": "point", "line": "line"}.get(
-                    _gcat, "polygon")
-            else:
-                _geom_kind = {"point": "point", "line": "line",
-                              "polygon": "polygon", "raster": "raster"}.get(
-                    str(intent.geometry_expectation or ""), "polygon")
-            _geom_kind_cache["primary"] = _geom_kind
-            # 分母证据：DENOMINATOR_FIELD_HINTS 单一事实源词表命中（字段名
-            # 级匹配；宁缺毋滥——无命中即无分母，不猜）。
-            _fields = (profile or {}).get("fields") or {}
-            _field_names = [str(f).lower() for f in (
-                _fields.keys() if isinstance(_fields, dict) else [])]
-            from app.services.gis_harness.workflow_schema import (
-                DENOMINATOR_FIELD_HINTS,
-            )
-            _denom_field = next(
-                (f for f in _field_names
-                 if any(h in f for h in DENOMINATOR_FIELD_HINTS)),
-                # 跨源分母：主数据无分母字段时，overlay（如行政区 population）
-                # 字段词表命中同样成立——分母证据来源如实标注 overlay。
-                next((f for f in _overlay_fields
-                      if any(h in f for h in DENOMINATOR_FIELD_HINTS)), ""))
-            _denom_source = (
-                "profile" if _denom_field and _denom_field in _field_names
-                else ("overlay" if _denom_field else "profile"))
-            # 时相证据：意图声明 change_detection 且 profile 存在时相字段
-            # 才认定双期可达（声明与数据双证据）。
-            _temporal_periods = 2 if (
-                intent.task == "change_detection"
-                and any(h in f for f in _field_names
-                        for h in ("year", "date", "period", "time", "年份"))
-            ) else 0
-            # 用户显式表达要求投影：只来自 typed 信号 —— ① intent 规则引擎
-            # 的 bare_density_visual（裸「密度」视觉概览语义锁，G16/G17/C018；
-            # visual_heatmap 注册别名即 density_overview）；② user-wins 表达
-            # pin（design_select 固化，apply_pending_bindings 已发布快照）。
-            # 不做 NL 二次猜测；两者缺席 → 无显式要求（自动推荐语义）。
-            _pinned_model = ""
-            try:
-                from app.lib.cartography.model_library import (
-                    get_map_model_registry as _design_model_reg,
-                )
-                from app.services.gis_harness.representation_binding.requirement_to_mapspec import (
-                    _load_document,
-                    grammar_face_pins,
-                )
-                _pin_doc = await _load_document(session_id)
-                if _pin_doc is not None:
-                    _pinned_raw = str(
-                        grammar_face_pins(_pin_doc).get("pinned_representation")
-                        or "")
-                    # pin 存归一化词（别名可解析）——canonical 到注册 id，
-                    # 与候选 map_model_id 同一比对空间。
-                    if _pinned_raw:
-                        _pm = _design_model_reg().resolve(_pinned_raw)
-                        _pinned_model = _pm.id if _pm is not None else ""
-            except Exception:  # noqa: BLE001 — pin 缺席 = 无显式要求
-                _pinned_model = ""
-            _user_models = tuple(dict.fromkeys(filter(None, (
-                _pinned_model,
-                "visual_heatmap" if "bare_density_visual" in (
-                    intent.matched_rules or []) else "",
-            ))))
-            _design_ctx = _DesignCtx(
-                task_categories=_TASK_CATEGORY_BY_INTENT.get(
-                    str(intent.task or ""), ("thematic_cartography",)),
-                geometry_kind=_geom_kind,
-                statistic="density" if intent.task == "density_analysis"
-                else "count",
-                artifact_types=tuple(dict.fromkeys((
-                    *{
-                        "point": ("point_feature_set", "admin_aggregate_table"),
-                        "line": ("line_feature_set", "admin_aggregate_table"),
-                        "polygon": ("polygon_feature_set", "admin_aggregate_table"),
-                        "raster": ("raster_surface",),
-                    }.get(_geom_kind, ("admin_aggregate_table",)),
-                    # overlay 面数据在场 → 行政边界产物面成立（面族表达证据）
-                    * (("admin_boundary_set",) if "polygon" in _secondary_geoms
-                       else ()),
-                ))),
-                secondary_geometry_kinds=tuple(
-                    g for g in _secondary_geoms if g != _geom_kind),
-                point_count=int((profile or {}).get("featureCount") or 0)
-                if _geom_kind == "point" else 0,
-                point_count_basis="profile" if (
-                    _geom_kind == "point"
-                    and isinstance((profile or {}).get("featureCount"), int)
-                ) else "unknown",
-                denominator=_DenomEvidence(
-                    field=_denom_field, available=bool(_denom_field),
-                    unit="人口" if _denom_field else "",
-                    source=_denom_source),
-                temporal_periods=_temporal_periods,
-                user_requested_models=_user_models,
-                scale_hint=str(getattr(intent.scope, "level", "") or ""),
-            )
-            _primary_bound_model = str(
-                (primary_bound or {}).get("cartography") or "")
-            _cand_set = _gen_design_candidates(
-                _design_ctx, primary_model_id=_primary_bound_model)
-            # design_digest：LLM 上下文预算（MSG_MAX_CHARS=2500）放不下的
-            # 全量候选——紧凑投影（模型/族/适宜性/一句理由）随 summary 面
-            # 保留（llm_result_formatter 键保留）；全量候选走 details 面
-            # （64KB 预算）与原始结果。
-            _digest_cands = [
-                {"m": c.map_model_id, "f": c.expression_family,
-                 "s": c.suitability.value,
-                 **({"why": (c.condition_reasons_zh[0]
-                             or c.reasons_zh[0])[:60]}
-                    if (c.condition_reasons_zh or c.reasons_zh) and
-                    c.suitability != "suitable" else {})}
-                for c in _cand_set.candidates[:4]
-            ]
-            design_payload = {
-                "design_candidates": _cand_set.to_bounded_dict(),
-                "design_digest": {
-                    "count": len(_cand_set.candidates),
-                    "selected": _cand_set.selected_candidate_id[:48],
-                    "candidates": _digest_cands,
-                    "blocked": [c.map_model_id for c in _cand_set.candidates
-                                if c.suitability.value == "blocked"],
-                    "honored": list(
-                        _cand_set.user_request_handling.get("honored") or [])[:4],
-                },
-                "design_decision_trace": _build_trace(
-                    _design_ctx, _cand_set,
-                    intent_summary={
-                        "task": intent.task,
-                        "scope": intent.scope.name,
-                        "subject": intent.subject.category,
-                        "geometry": intent.geometry_expectation,
-                    },
-                    mapspec_fingerprint=str(out.get("mapspec_fingerprint") or ""),
-                    primary_bound_model=_primary_bound_model,
-                ),
-            }
-        except Exception as _design_exc:  # noqa: BLE001 — 证据面降级
-            logger.warning(
-                "webgis_map_product design candidates degraded: %s", _design_exc)
-            design_payload = {"design_candidates_degraded": {
-                "code": "design_candidates_error",
-                "detail": str(_design_exc)[:160],
-            }}
 
         # ── 语义产品层（ADR-0258）：spec 构建/编辑存活合并 + 编译 + 语义
         # 完整性 —— additive 结果键，降级绝不阻断既有组装路径。既有 spec

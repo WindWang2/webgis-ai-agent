@@ -81,6 +81,15 @@ async def test_product_result_carries_design_candidates_and_trace(registry, sid)
     assert trace["dataFacts"], "数据资格事实行必须在场（Agent 可解释面）"
     assert trace["selected"]["candidateId"], "选定候选必须可寻址"
     assert trace["selected"]["mapModel"], trace["selected"]
+    # M7：设计候选只读面板随产品落 layout.components（前端结果交互入口）
+    spec = res.get("mapspec") or {}
+    comp_types = {c.get("type") for c in
+                  (spec.get("layout") or {}).get("components") or []}
+    assert "design_candidates" in comp_types, "候选面板必须随产品进入 layout"
+    design_comp = next(c for c in
+                       (spec.get("layout") or {}).get("components") or []
+                       if c.get("type") == "design_candidates")
+    assert design_comp.get("options", {}).get("design", {}).get("count", 0) >= 2
 
 
 @pytest.mark.asyncio

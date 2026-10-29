@@ -46,6 +46,10 @@ ComponentType = Literal[
     "methodology_note",         # 方法论披露（警告码 + 文案，随产品渲染）
     "uncertainty_panel",        # 不确定性面板（区间/置信度/样本限制）
     "decision_panel",           # 决策面板（候选排名/权重来源/硬约束否决）
+    # ── carto-design（/goal 04）：设计候选面板（表达方案对比 + typed
+    # blocked + user-wins 指引；接受动作经 webgis_map_design_select 统一
+    # action，面板只读不自带状态机）。
+    "design_candidates",
     # ── ac-05（ADR-0154）：标注图层（可寻址的标注绑定/决策面）────────
     # options 持有 label_plan 的字段挑选与策略编排（field/mode/topN/
     # priorityField/zoomBands）；rebind(field) 换字段 = 局部突变。
@@ -383,6 +387,28 @@ def validate_uncertainty_payload(options: Any) -> "str | None":
         for i, it in enumerate(items):
             if not isinstance(it, dict) or not isinstance(it.get("label"), str):
                 return f"uncertainty.items[{i}] 必须含 label 字符串"
+    return None
+
+def validate_design_candidates_payload(options: Any) -> "str | None":
+    """design_candidates options.design：{count?, candidates?, blocked?, honored?}。
+
+    只读披露面板载荷（design_digest 有界投影）；缺省 = 空面板（数据缺席
+    不是错误）。防御式：坏形状拒绝，坏条目跳过。
+    """
+    if not isinstance(options, dict):
+        return "options 必须是对象"
+    design = options.get("design")
+    if design is None:
+        return None
+    if not isinstance(design, dict):
+        return "options.design 必须是对象"
+    cands = design.get("candidates")
+    if cands is not None and not isinstance(cands, list):
+        return "options.design.candidates 必须是数组"
+    if isinstance(cands, list):
+        for i, item in enumerate(cands[:8]):
+            if not isinstance(item, dict):
+                return f"design.candidates[{i}] 必须是对象"
     return None
 
 def validate_decision_payload(options: Any) -> "str | None":

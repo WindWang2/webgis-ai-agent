@@ -309,5 +309,14 @@
     "node": "节点",
     "lngLat": "经纬度",
     "altDist": "高程/距离"
+  },
+  "designCandidates": {
+    "title": "设计方案候选",
+    "suitable": "适宜",
+    "conditional": "有条件",
+    "blocked": "受限",
+    "selected": "当前方案",
+    "acceptHint": "告诉 Agent「就用某个方案」即可固化（user-wins，后续成图与自动调整不再改写）",
+    "none": "暂无设计方案候选"
   }
 }
