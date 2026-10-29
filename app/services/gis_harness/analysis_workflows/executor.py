@@ -104,6 +104,10 @@ class WorkflowExecutor:
         self._dispatch_fn = dispatch
         #: 本次运行内步骤产物（内存 FC，供 step: 下游直传不重复水合）
         self._step_payloads: Dict[str, Dict[str, Any]] = {}
+        #: (role, ref) → (payload, identity) 角色水合缓存（同输入多消费
+        #: 步骤只水合一次；预算门在首水合处一次性裁决）
+        self._role_cache: Dict[Tuple[str, str], Tuple[
+            Optional[Dict[str, Any]], str]] = {}
 
     # ── 输入解析 ─────────────────────────────────────────────────────────
 
@@ -180,11 +184,16 @@ class WorkflowExecutor:
                     warnings.append(
                         f"数据角色 {role} 未绑定 [AWF_DATA_ROLE_MISSING:{role.upper()}]")
                     return None, identities, warnings
-                payload, ident, hydrate_warnings = await self._hydrate(
-                    session_id, ref, param, step.step_id)
-                warnings.extend(hydrate_warnings)
-                if payload is None and hydrate_warnings:
-                    return None, identities, warnings
+                cache_key = (role, ref)
+                if cache_key in self._role_cache:
+                    payload, ident = self._role_cache[cache_key]
+                else:
+                    payload, ident, hydrate_warnings = await self._hydrate(
+                        session_id, ref, param, step.step_id)
+                    warnings.extend(hydrate_warnings)
+                    if payload is None and hydrate_warnings:
+                        return None, identities, warnings
+                    self._role_cache[cache_key] = (payload, ident)
                 args[param] = payload
                 identities[param] = ident
             else:  # step:<upstream>
@@ -204,6 +213,13 @@ class WorkflowExecutor:
                             f"上游步骤 {upstream} 的产物不可水合（ref 失效）")
                         return None, identities, warnings
                     self._step_payloads[upstream] = payload
+                # P2-1b：step: 上游输入同受预算门（中间产物可能远大于源输入）
+                upstream_count = _feature_count(payload)
+                if upstream_count > self._max_features:
+                    warnings.append(
+                        f"上游 {upstream} 产物行数 {upstream_count} 超预算"
+                        f" {self._max_features} [AWF_BUDGET_EXCEEDED]")
+                    return None, identities, warnings
                 args[param] = payload
                 identities[param] = f"fp:{entry.fingerprint}"
         return args, identities, warnings

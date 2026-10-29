@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.services.gis_harness.analysis_workflows.contracts import (
+    UNIT_VOCABULARY,
     AnalysisStepSpec,
     AnalysisWorkflowContract,
     DataRoleBinding,
@@ -135,8 +136,9 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               outputs=("exposed_receptors",)),
     ),
     "temporal_change": (
-        # 矢量双期差分：target − baseline；年份/CRS/范围对齐由 orchestrator
-        # 的 temporal 门裁决（AWF_TEMPORAL_MISMATCH），差分本身委托既有 overlay。
+        # 矢量双期差分：target − baseline；orchestrator 的 temporal 门只裁决
+        # 年份画像（存在/顺序/不同——AWF_TEMPORAL_MISMATCH）；CRS/覆盖范围
+        # 对齐由内层工具的 CRS 纪律与执行层把关，本层不重复实现。
         _step("change_diff", "overlay_analysis",
               {"layer_a": "role:target_time", "layer_b": "role:baseline"},
               capability="geometry_overlay",
@@ -309,6 +311,16 @@ def build_contract(
                 raise ValueError(
                     f"步骤 {step.step_id} 参数覆盖越界: {sorted(unknown)}"
                     f"（合法键: {sorted(step.step_params)}）")
+            # P2-2：单位类参数覆盖必须联动 unit_contract——否则证据面（envelope
+            # /receipt 的 units）声称旧单位而计算用新单位（声明与计算脱节）。
+            if "unit" in step_over and step.unit_contract:
+                new_unit = str(step_over["unit"])
+                if new_unit not in UNIT_VOCABULARY:
+                    raise ValueError(
+                        f"步骤 {step.step_id} 单位越界: {new_unit}"
+                        f"（词表: {UNIT_VOCABULARY}）")
+                step.unit_contract = {
+                    param: new_unit for param in step.unit_contract}
             step.step_params.update(step_over)
         steps.append(step)
     # optional 步骤的依赖若被剔除，须同步修剪（契约 DAG 仍须闭合）

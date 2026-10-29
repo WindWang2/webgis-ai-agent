@@ -176,3 +176,95 @@ async def test_run_unknown_workflow_declined(registry):
         "workflow_id": "awf.ghost.000", "session_id": SESSION})
     assert res["success"] is False
     assert res["reason_code"] == "AWF_WORKFLOW_NOT_FOUND"
+
+
+async def test_recompute_unblocks_with_new_data_and_reports_honestly(registry):
+    """P1-1 清偿钉扎：补齐缺失角色 → 解除阻断真实执行；recomputed_steps
+    只报真实重新 dispatch 的步骤。"""
+    poi_ref, dist_ref = await _store_fixtures()
+    plan1 = await registry.dispatch("webgis_analysis_workflow_plan", {
+        "family": "service_accessibility",
+        "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
+        "session_id": SESSION})
+    wf = plan1["workflow_id"]
+    assert plan1["runnable"] is False                 # 无路网 blocked
+    run1 = await registry.dispatch("webgis_analysis_workflow_run", {
+        "workflow_id": wf, "session_id": SESSION})
+    assert run1["status"] == "blocked"
+    assert run1["layers"] == []                       # 零执行零产物
+
+    # 补齐路网 → recompute 解除阻断（不需要换 workflow_id 重新 plan）
+    roads = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"road_id": "h0"},
+             "geometry": {"type": "LineString", "coordinates": [
+                 [104.00, 30.605], [104.04, 30.605]]}},
+            {"type": "Feature", "properties": {"road_id": "v0"},
+             "geometry": {"type": "LineString", "coordinates": [
+                 [104.01, 30.60], [104.01, 30.63]]}}]}
+    road_ref = await session_data_manager.store(SESSION, roads,
+                                                prefix="geojson")
+    rec = await registry.dispatch("webgis_analysis_workflow_recompute", {
+        "workflow_id": wf,
+        "role_refs": json.dumps({"network": road_ref}),
+        "session_id": SESSION})
+    assert rec["success"], rec
+    assert rec["status"] == "satisfied"
+    # 诚实报告：列出的步骤全部真实重新执行过（有产物/ref）
+    layers = {item["step_id"]: item for item in rec["layers"]}
+    assert set(rec["recomputed_steps"]) == {
+        "isochrone", "coverage_zones"}                  # population skipped
+    assert layers["isochrone"]["ref"].startswith("ref:geojson")
+
+
+async def test_plan_idempotent_preserves_run_state(registry):
+    """P1-2/P3-3 清偿钉扎：同 id 同指纹重复 plan 不清空运行态。"""
+    poi_ref, dist_ref = await _store_fixtures()
+    plan1 = await registry.dispatch("webgis_analysis_workflow_plan", {
+        "family": "admin_facility_distribution",
+        "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
+        "session_id": SESSION})
+    wf = plan1["workflow_id"]
+    run = await registry.dispatch("webgis_analysis_workflow_run", {
+        "workflow_id": wf, "session_id": SESSION})
+    assert run["status"] == "satisfied"
+    first_layers = {item["step_id"]: item["ref"]
+                    for item in run["layers"]}
+    # 重复 plan（同绑定）→ 状态保留（幂等复用，非空覆写）
+    plan2 = await registry.dispatch("webgis_analysis_workflow_plan", {
+        "family": "admin_facility_distribution",
+        "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
+        "session_id": SESSION})
+    assert plan2["workflow_id"] == wf
+    status = await registry.dispatch("webgis_analysis_workflow_status", {
+        "workflow_id": wf, "session_id": SESSION})
+    assert status["status"] == "satisfied"             # 不是被重置的 pending
+    assert set(status["receipts"]) == {"zones_count", "area_density"}
+    assert {item["step_id"]: item["ref"]
+            for item in status["layers"]} == first_layers
+
+
+async def test_run_max_features_clamped_server_side(registry):
+    """P2-1a 清偿钉扎：max_features 不可被调用方解锁（只能调低）。"""
+    big = {"type": "FeatureCollection",
+           "features": [
+               {"type": "Feature", "properties": {"id": i},
+                "geometry": {"type": "Point",
+                             "coordinates": [104.006 + (i % 6) * 0.0055,
+                                             30.605 + (i // 6) * 0.0042]}}
+               for i in range(150_000)]}
+    big_ref = await session_data_manager.store(SESSION, big, prefix="geojson")
+    _, dist_ref = await _store_fixtures()
+    plan = await registry.dispatch("webgis_analysis_workflow_plan", {
+        "family": "admin_facility_distribution",
+        "role_refs": json.dumps({"subject": big_ref, "boundary": dist_ref}),
+        "session_id": SESSION})
+    # 尝试用超大 max_features 解锁 → 服务端钳制回默认上限 → 仍 typed blocked
+    run = await registry.dispatch("webgis_analysis_workflow_run", {
+        "workflow_id": plan["workflow_id"],
+        "max_features": 10**12,
+        "session_id": SESSION})
+    assert run["status"] == "blocked"
+    steps = {s["step_id"]: s for s in run["steps"]}
+    assert steps["zones_count"]["reason_code"] == "AWF_BUDGET_EXCEEDED"

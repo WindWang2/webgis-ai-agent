@@ -130,3 +130,20 @@ def test_statistical_zones_declares_grid_identity_precondition():
     preconds = {p for s in contract.steps for p in s.preconditions}
     assert "grid_identity_match" in preconds
     assert "point_support_required" in preconds
+
+
+def test_unit_override_syncs_unit_contract():
+    """P2-2 清偿钉扎：单位覆盖必须联动 unit_contract（声明与计算不脱节）。"""
+    contract = families.build_contract(
+        "hazard_exposure", workflow_id="awf.t.unit",
+        params_overrides={"hazard_buffer": {"distance": 2.0, "unit": "km"}})
+    step = next(s for s in contract.steps if s.step_id == "hazard_buffer")
+    assert step.step_params["unit"] == "km"
+    assert step.unit_contract == {"distance": "km"}   # 联动（不是残留 "m"）
+
+
+def test_unit_override_invalid_unit_rejected():
+    with pytest.raises(ValueError, match="单位越界"):
+        families.build_contract(
+            "hazard_exposure", workflow_id="awf.t.unit2",
+            params_overrides={"hazard_buffer": {"unit": "furlongs"}})

@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -40,7 +41,9 @@ from app.services.gis_harness.analysis_workflows.orchestrator import (
     plan_workflow,
 )
 from app.services.gis_harness.analysis_workflows.recompute import (
+    collect_stale_steps,
     downstream_closure,
+    ref_identity,
 )
 from app.services.gis_harness.analysis_workflows.state import (
     apply_plan_verdicts,
@@ -183,7 +186,12 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
             return {"success": False, "command": command, "declined": True,
                     "reason_code": "AWF_BAD_JSON",
                     "message": f"参数 JSON 非法：{exc}", "alternatives": []}
-        wf_id = workflow_id or f"awf.{family}.{abs(hash((family, role_refs or ''))) % 10**10}"
+        # P3-1：内容寻址 id（sha256 前 10 hex——str hash 受 PYTHONHASHSEED
+        # 随机化，跨进程不稳定，与工具 deterministic=True 声明冲突）
+        digest = hashlib.sha256(
+            f"{family}|{role_refs or ''}|{params or ''}".encode(
+                "utf-8")).hexdigest()[:10]
+        wf_id = workflow_id or f"awf.{family}.{digest}"
         try:
             result = plan_workflow(
                 family, workflow_id=wf_id, bindings=bindings,
@@ -195,10 +203,22 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
                     "reason_code": AWF_UNKNOWN_FAMILY,
                     "message": f"未知族 {family}（词表: {FAMILY_IDS}）",
                     "alternatives": list(FAMILY_IDS)}
-        state = new_state(result.contract,
-                          contract_fingerprint=result.fingerprint)
-        apply_plan_verdicts(state, result.step_verdicts)
-        await _persist_state(session_id, state)
+        # P1-2/P3-3：单写者协议——plan 的 load/init/persist 全程持锁；
+        # 同 id 同契约指纹的重复 plan 幂等保留既有运行态（envelopes/
+        # receipts 不被空状态覆写），指纹变化 = 显式重规划才换新状态。
+        from app.services.distributed_lock import session_lock_registry
+        async with session_lock_registry.lock(
+                f"awf:{wf_id}", fail_on_degraded=True):
+            existing = await _load_state(session_id, wf_id)
+            if (existing is not None
+                    and existing.contract_fingerprint == result.fingerprint):
+                state = existing
+                state.log("plan_idempotent_reuse")
+            else:
+                state = new_state(result.contract,
+                                  contract_fingerprint=result.fingerprint)
+                apply_plan_verdicts(state, result.step_verdicts)
+            await _persist_state(session_id, state)
         return {
             "success": True,
             "command": command,
@@ -259,6 +279,13 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
         session_id: Optional[str] = None,
     ) -> dict:
         command = "webgis_analysis_workflow_run"
+        # P2-1a：预算是安全上限不是可协商参数——服务端钳制到
+        # [1, DEFAULT_MAX_FEATURES]（调用方只能调低，不能解锁）。
+        try:
+            max_features = max(1, min(int(max_features),
+                                      DEFAULT_MAX_FEATURES))
+        except (TypeError, ValueError):
+            max_features = DEFAULT_MAX_FEATURES
         if not session_id:
             return {"success": False, "message": "Missing session_id",
                     "command": command}
@@ -424,66 +451,6 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
         if not session_id:
             return {"success": False, "message": "Missing session_id",
                     "command": command}
-        state = await _load_state(session_id, workflow_id)
-        if state is None:
-            return {"success": False, "command": command, "declined": True,
-                    "reason_code": "AWF_WORKFLOW_NOT_FOUND",
-                    "message": f"工作流 {workflow_id} 不存在",
-                    "alternatives": ["webgis_analysis_workflow_plan"]}
-        from app.services.gis_harness.analysis_workflows.contracts import (
-            AnalysisWorkflowContract,
-        )
-        contract = AnalysisWorkflowContract.model_validate(
-            state.contract_snapshot)
-        try:
-            bindings = _parse_bindings(role_refs)
-            param_changes = (json.loads(params) if isinstance(params, str)
-                             else params) if params else {}
-        except (ValueError, json.JSONDecodeError) as exc:
-            return {"success": False, "command": command,
-                    "reason_code": "AWF_BAD_JSON",
-                    "message": f"参数 JSON 非法：{exc}"}
-        # 重建契约（角色/参数变更进新快照），plan 复裁决
-        merged_bindings = dict(contract.data_contracts)
-        for role, binding in bindings.items():
-            merged_bindings[role] = binding
-        merged_params = {
-            s.step_id: dict(s.step_params) for s in contract.steps}
-        for step_id, changes in (param_changes or {}).items():
-            if step_id not in merged_params:
-                return {"success": False, "command": command,
-                        "reason_code": "AWF_UNKNOWN_STEP",
-                        "message": f"未知步骤 {step_id}"}
-            merged_params[step_id].update(changes or {})
-        replan = plan_workflow(
-            contract.family, workflow_id=workflow_id,
-            bindings=merged_bindings, params_overrides=merged_params,
-            recipe_refs=contract.recipe_refs,
-            tool_exists=(lambda n: True))
-        contract = replan.contract
-        state.contract_snapshot = contract.model_dump()
-        state.contract_fingerprint = replan.fingerprint
-        # 直接消费者 + 下游闭包 = 需重跑面；其余步骤保持 satisfied 复用
-        affected: set = set()
-        for role in bindings:
-            for step in contract.steps:
-                if any(v == f"role:{role}" for v in step.role_inputs.values()):
-                    affected.add(step.step_id)
-        for step_id in (param_changes or {}):
-            affected.add(step_id)
-        affected |= downstream_closure(contract, affected)
-        for sid in affected:
-            entry = state.steps.get(sid)
-            if entry is not None and entry.state == "satisfied":
-                entry.state = "stale"
-                state.log("step_stale", step=sid)
-        # 复裁决（数据补齐可解除阻断）
-        fresh = new_state(contract, contract_fingerprint=replan.fingerprint)
-        apply_plan_verdicts(fresh, replan.step_verdicts)
-        for sid, entry in fresh.steps.items():
-            if entry.state in ("blocked", "skipped"):
-                state.steps[sid].state = entry.state
-                state.steps[sid].reason_code = entry.reason_code
         registry_sync = _registry_sync()
         dispatch_fn = _production_dispatch()
         if registry_sync is None or dispatch_fn is None:
@@ -491,26 +458,129 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
                     "reason_code": "AWF_REGISTRY_UNAVAILABLE",
                     "message": "工具注册表/分发服务不可用", "alternatives": []}
         from app.services.distributed_lock import session_lock_registry
+        # P1-2：recompute 的 load→mutate→persist 全程持锁（与 run 同协议；
+        # 锁外快照会被并发 run 的写回覆盖 = 丢失更新）。
         async with session_lock_registry.lock(
                 f"awf:{workflow_id}", fail_on_degraded=True):
+            state = await _load_state(session_id, workflow_id)
+            if state is None:
+                return {"success": False, "command": command, "declined": True,
+                        "reason_code": "AWF_WORKFLOW_NOT_FOUND",
+                        "message": f"工作流 {workflow_id} 不存在",
+                        "alternatives": ["webgis_analysis_workflow_plan"]}
+            from app.services.gis_harness.analysis_workflows.contracts import (
+                AnalysisWorkflowContract,
+            )
+            contract = AnalysisWorkflowContract.model_validate(
+                state.contract_snapshot)
+            try:
+                bindings = _parse_bindings(role_refs)
+                param_changes = (json.loads(params) if isinstance(params, str)
+                                 else params) if params else {}
+            except (ValueError, json.JSONDecodeError) as exc:
+                return {"success": False, "command": command,
+                        "reason_code": "AWF_BAD_JSON",
+                        "message": f"参数 JSON 非法：{exc}"}
+            # 重建契约（角色/参数变更进新快照），plan 复裁决
+            merged_bindings = dict(contract.data_contracts)
+            for role, binding in bindings.items():
+                merged_bindings[role] = binding
+            merged_params = {
+                s.step_id: dict(s.step_params) for s in contract.steps}
+            for step_id, changes in (param_changes or {}).items():
+                if step_id not in merged_params:
+                    return {"success": False, "command": command,
+                            "reason_code": "AWF_UNKNOWN_STEP",
+                            "message": f"未知步骤 {step_id}"}
+                merged_params[step_id].update(changes or {})
+            replan = plan_workflow(
+                contract.family, workflow_id=workflow_id,
+                bindings=merged_bindings, params_overrides=merged_params,
+                recipe_refs=contract.recipe_refs,
+                tool_exists=(lambda n: True))
+            contract = replan.contract
+            state.contract_snapshot = contract.model_dump()
+            state.contract_fingerprint = replan.fingerprint
+            # 需重跑面 = 显式变更（新绑定角色/参数）的直接消费者+下游闭包
+            affected: set = set()
+            for role in bindings:
+                for step in contract.steps:
+                    if any(v == f"role:{role}"
+                           for v in step.role_inputs.values()):
+                        affected.add(step.step_id)
+            for step_id in (param_changes or {}):
+                affected.add(step_id)
+            affected |= downstream_closure(contract, affected)
+            # P2-1c：全量指纹对账——未显式提及角色的原地 overwrite（revision
+            # bump）也会被 collect_stale_steps 抓到，杜绝「子集外静默服旧」。
+            current_identities: Dict[str, Dict[str, str]] = {}
+            for role, binding in contract.data_contracts.items():
+                if not binding.ref:
+                    continue
+                try:
+                    desc = await session_data_manager.get_ref_descriptor(
+                        session_id, binding.ref)
+                except Exception:  # noqa: BLE001 — descriptor 优化面 fail-open
+                    desc = None
+                ident = ref_identity(
+                    binding.ref, (desc or {}).get("content_revision"))
+                for step in contract.steps:
+                    for param, source in step.role_inputs.items():
+                        if source == f"role:{role}":
+                            current_identities.setdefault(role, {})[
+                                param] = ident
+            for drift in collect_stale_steps(
+                    contract, state, current_identities=current_identities):
+                affected.add(drift["step_id"])
+                affected.update(drift.get("downstream") or [])
+            for sid in affected:
+                entry = state.steps.get(sid)
+                if entry is not None and entry.state == "satisfied":
+                    entry.state = "stale"
+                    state.log("step_stale", step=sid)
+            # 复裁决：数据补齐解除阻断（fresh=ready 且旧 blocked/skipped/stale
+            # → pending）；数据仍缺 → 保持 typed blocked/skipped（P1-1）。
+            fresh = new_state(contract, contract_fingerprint=replan.fingerprint)
+            apply_plan_verdicts(fresh, replan.step_verdicts)
+            for sid, entry in fresh.steps.items():
+                cur = state.steps.get(sid)
+                if cur is None:
+                    continue
+                # apply_plan_verdicts 只写非 ready 裁决——fresh 态 pending
+                # 即「复裁决不再阻断」；旧 blocked/skipped/stale/failed →
+                # 解除为 pending（数据补齐路径）。
+                if entry.state not in ("blocked", "skipped") and                         cur.state in ("blocked", "skipped", "stale",
+                                      "failed"):
+                    cur.state = "pending"
+                    cur.reason_code = ""
+                    cur.message = ""
+                    state.log("step_unblocked", step=sid)
+                elif entry.state in ("blocked", "skipped"):
+                    cur.state = entry.state
+                    cur.reason_code = entry.reason_code
+                    cur.message = entry.message
             executor = WorkflowExecutor(
                 registry=registry_sync,
                 session_data=session_data_manager,
                 persist=(lambda st: _persist_state(session_id, st)),
                 dispatch=dispatch_fn,
             )
-            # stale → pending（执行器按指纹精确裁决复用）
-            for sid in affected:
-                if sid in state.steps and state.steps[sid].state == "stale":
-                    state.steps[sid].state = "pending"
+            attempts_before = {sid: e.attempts
+                               for sid, e in state.steps.items()}
             state = await executor.execute(
                 session_id, contract, state, only_steps=affected or None)
+            # P1-1：recomputed_steps 只报真实重新 dispatch 的步骤
+            #（attempts 增长），不再报「计划内」集。
+            recomputed = sorted(
+                sid for sid in affected
+                if state.steps.get(sid) is not None
+                and state.steps[sid].attempts > attempts_before.get(sid, 0))
         return {
             "success": state.status == "satisfied",
             "command": command,
             "workflow_id": workflow_id,
             "status": state.status,
-            "recomputed_steps": sorted(affected),
+            "recomputed_steps": recomputed,
             "reused_steps": sorted(
                 sid for sid, e in state.steps.items()
                 if e.state == "satisfied" and sid not in affected),

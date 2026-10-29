@@ -19,8 +19,8 @@ from app.services.gis_harness.analysis_workflows.contracts import (
     AnalysisWorkflowContract,
 )
 
-#: 工具 → 算法目录 id（receipt 的 MethodUseContract 锚点；工具族演化
-#: 时 additive 扩展——未列工具按 unknown 处理并披露）。
+#: 工具 → 算法目录 id（receipt 的 MethodUseContract 锚点投影；权威在
+#: 算法目录本身——未列工具按 unknown 处理并显式披露，绝不猜 id）。
 TOOL_ALGORITHM_IDS: Dict[str, Tuple[str, ...]] = {
     "spatial_aggregate": ("spatial.aggregate.admin", "spatial.aggregate.rates"),
     "isochrone_network": ("network.isochrone.local",),
@@ -28,7 +28,6 @@ TOOL_ALGORITHM_IDS: Dict[str, Tuple[str, ...]] = {
     "buffer_analysis": ("geometry.buffer",),
     "h3_binning": ("spatial.grid.h3",),
     "hotspot_analysis": ("spatial.hotspot.local",),
-    "zonal_stats": ("remote.change.raster",),   # 非本任务族，占位对齐目录
 }
 
 #: receipt 有界预算（警告/证据键截断——大科学证据块走 ref 不进 receipt）。
