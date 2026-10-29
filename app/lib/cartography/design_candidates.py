@@ -317,6 +317,18 @@ def _augment_with_affinity_families(
             if model_id in pool or model_id not in feasible:
                 continue
             family = _expression_family(feasible[model_id])
+            if model_id in _RATE_SEMANTIC_MODELS:
+                # 率/密度语义模型与原始计数是不同语义层级（分母门控对），
+                # 无条件入池——REQUIRED_SATISFIED/MISSING 的对照解释是
+                # 候选引擎的核心价值，不因组合层字母序截断而缺席。
+                pool[model_id] = {
+                    "composition": "",
+                    "score": 0.0,
+                    "slots": [],
+                    "reasons": [
+                        f"类目亲和 {category}（率语义候选，分母门控对）"],
+                }
+                continue
             if family in covered:
                 continue
             pool[model_id] = {
