@@ -213,7 +213,12 @@ class TestPlanLifecycle:
             params={"session_id": sid, "session_hash": plan["plan_hash"]})
         assert resp.status_code == 200
         assert resp.json()["output_ref"] == receipt["output_ref"]
-        # 5) executed 不可作废
+        # 5) executed 不可 preview（状态回退缺口，R1 #5）也不可作废
+        resp = await client.post(
+            f"/api/v1/data-preparation/plan/{plan['plan_id']}/preview",
+            params={"session_id": sid})
+        assert resp.status_code == 409
+        assert "PLAN_ALREADY_EXECUTED" in str(resp.json())
         resp = await client.delete(
             f"/api/v1/data-preparation/plan/{plan['plan_id']}",
             params={"session_id": sid})

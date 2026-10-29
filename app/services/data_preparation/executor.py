@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -65,6 +66,11 @@ class PreparationReceipt(BaseModel):
     input_ref: str
     output_ref: str
     output_fingerprint: str = ""      # dsd-v1:…（输出 descriptor 指纹）
+    # 输入内容锚（canonical payload sha256 前 16 位）。幂等双锚的第二锚：
+    # descriptor 指纹缺席（铸造失败是 ingest 的诚实降级面）时，内容锚
+    # 仍然把收据钉在这份具体数据上 —— 同 hash 同 ref 但数据已替换的
+    # 重入会因内容锚不匹配而 STALE_INPUT（review R1 #1/#4）。
+    input_content_hash: str = ""
     quality_before: Dict[str, int] = Field(default_factory=dict)   # code → count
     quality_after: Dict[str, int] = Field(default_factory=dict)
     row_before: int = 0
@@ -404,8 +410,37 @@ async def find_receipt(session_id: str, plan_hash: str) -> Optional[PreparationR
 
 # ── 执行主链 ───────────────────────────────────────────────────────────────
 
+#: 每 (session, plan_hash) 执行锁（并发幂等 —— review R1 #6：两个并发
+#: execute 同计划会铸出两个 prepared ref；串行化后第二个命中既有收据）。
+_EXEC_LOCKS: Dict[str, "asyncio.Lock"] = {}
+
+
+def _exec_lock(session_id: str, plan_hash: str) -> "asyncio.Lock":
+    key = f"{session_id}:{plan_hash}"
+    lock = _EXEC_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _EXEC_LOCKS[key] = lock
+    return lock
+
+
+def _content_hash(payload: Any) -> str:
+    """canonical payload → sha256 前 16 位（内容锚；与 deepcopy 同 O(n) 量级）。"""
+    try:
+        blob = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                          separators=(",", ":"), default=str).encode("utf-8")
+    except Exception:  # noqa: BLE001 — 不可序列化按 str 兜底（仍确定）
+        blob = str(payload).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 async def execute_plan(plan: PreparationPlan) -> PreparationReceipt:
     """幂等执行计划 → receipt（原件不可变；typed 失败抛 ExecError）。"""
+    async with _exec_lock(plan.session_id, plan.plan_hash):
+        return await _execute_plan_locked(plan)
+
+
+async def _execute_plan_locked(plan: PreparationPlan) -> PreparationReceipt:
     from app.services.artifact_registry import register_artifact
     from app.services.dataset_semantics import (
         derive_descriptor_from_v3,
@@ -414,26 +449,38 @@ async def execute_plan(plan: PreparationPlan) -> PreparationReceipt:
     from app.services.dataset_semantics.provenance import record_transformation
     from app.services.session_data import session_data_manager
 
-    # 0) 幂等：同 plan_hash 已执行 → 既有 receipt。
-    existing = await find_receipt(plan.session_id, plan.plan_hash)
-    if existing is not None:
-        return existing
-
     stored = await get_plan(plan.session_id, plan.plan_id)
     if stored is None:
         raise ExecError("PLAN_NOT_FOUND", plan.plan_id)
     if stored.state == "discarded":
         raise ExecError("PLAN_DISCARDED", plan.plan_id)
 
-    # 1) 载入 + 指纹对账（数据替换后旧计划必须拒执行）。
+    # 1) 载入 + 双锚对账（descriptor 指纹 + 内容哈希；数据替换后旧计划
+    #    必须拒执行）。内容锚独立于 descriptor 铸造是否成功 —— ingest 的
+    #    descriptor 铸造是 additive 降级面，无 descriptor 的 ref 真实存在。
     payload = await session_data_manager.get(plan.session_id, plan.input_ref)
     if payload is None:
         raise ExecError("INPUT_REF_MISSING", plan.input_ref)
+    content_hash = _content_hash(payload)
     rec = await get_dataset_semantic_store().get(plan.session_id, plan.input_ref)
     current_fp = rec.descriptor.descriptor_fingerprint if rec.ok and rec.descriptor else ""
     if plan.input_fingerprint and current_fp and current_fp != plan.input_fingerprint:
         raise ExecError("STALE_INPUT",
                         f"输入数据已变化（{current_fp[:24]}… ≠ 计划锚 {plan.input_fingerprint[:24]}…）")
+
+    # 0) 幂等（在对账之后）：同 (plan_hash, input_ref) 且内容锚一致 →
+    #    既有 receipt；内容锚不一致 = 数据已替换 → STALE_INPUT（绝不把
+    #    A 数据集的收据当 B 的 —— review R1 #1）。
+    existing = await find_receipt(plan.session_id, plan.plan_hash)
+    if existing is not None:
+        if existing.input_ref != plan.input_ref:
+            existing = None          # 同 hash 不同数据集（空指纹碰撞）：真执行
+        elif existing.input_content_hash and existing.input_content_hash != content_hash:
+            raise ExecError(
+                "STALE_INPUT",
+                f"输入内容已变化（{content_hash} ≠ 收据锚 {existing.input_content_hash}）")
+        else:
+            return existing
 
     # 2) 执行变换（或纯元数据计划零拷贝）。
     before_counts, before_rows = _quality_counts(payload)
@@ -449,7 +496,14 @@ async def execute_plan(plan: PreparationPlan) -> PreparationReceipt:
         if not output_ref:
             raise ExecError("STORE_FAILED", "session store refused prepared payload")
     else:
-        new_payload, evidence, degraded = payload, [], []
+        # 纯元数据计划零拷贝；步证据仍逐条记录（与 dry-run 口径一致，
+        # review R1 #9）。
+        new_payload = payload
+        degraded = []
+        evidence = [{"type": s.type, "role": getattr(s, "role", ""),
+                     "field": getattr(s, "field", ""),
+                     "source": getattr(s, "source", ""), "data_changed": False}
+                    for s in plan.steps if s.type == "field_mapping"]
         output_ref = plan.input_ref
 
     after_counts, after_rows = _quality_counts(new_payload)
@@ -499,6 +553,7 @@ async def execute_plan(plan: PreparationPlan) -> PreparationReceipt:
         input_ref=plan.input_ref,
         output_ref=output_ref,
         output_fingerprint=output_fingerprint[:96],
+        input_content_hash=content_hash,
         quality_before=before_counts,
         quality_after=after_counts,
         row_before=before_rows,

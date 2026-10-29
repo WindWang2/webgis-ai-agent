@@ -161,7 +161,9 @@ async def create_plan(
             axis_evidence = dict(f.evidence)
         if f.code in ("crs_missing", "crs_suspicious"):
             crs_source = crs_source or "assumed"
-    if result["receipt"].srs and not crs_source:
+    if result["receipt"].crs_source:
+        crs_source = result["receipt"].crs_source
+    elif result["receipt"].srs:
         crs_source = "declared"
 
     steps = [dict(s) for s in (req.steps or [])]
@@ -232,6 +234,11 @@ async def preview_plan(
     plan = await _load_owned_plan(plan_id, session_id)
     if plan.state == "discarded":
         raise HTTPException(status_code=409, detail="PLAN_DISCARDED")
+    if plan.state in ("executed", "verified", "rolled_back"):
+        # executed 计划不得经 preview 状态回退后被作废（review R1 #5：
+        # 状态机不变量 —— 已执行计划的台账必须保持 executed 终态）。
+        raise HTTPException(status_code=409,
+                            detail=f"PLAN_ALREADY_{plan.state.upper()}")
     payload = await session_data_manager.get(session_id, plan.input_ref)
     if payload is None:
         raise HTTPException(status_code=404, detail="input ref missing")

@@ -45,19 +45,24 @@ async def _dispatch(registry, args: dict, session_id: str):
     return result.raw_result
 
 
-def _school_payload(n=20, bad_every=0, swap=False):
+def _school_payload(n=20, bad_every=0, swap=False, geom_only_bad=False):
+    """geom_only_bad：GeoJSON 形态 —— 坏坐标只在几何里、属性列不含坐标
+    （列值域不被污染，质量旗标仍触发自动过滤 —— auto prepared 的真实形态；
+    CSV 上传形态则坏值同时污染列，诚实路径是先过滤再映射，见 E2E）。"""
     features = []
     for i in range(n):
         lon, lat = 104.0 + (i % 10) * 0.01, 30.0 + (i % 5) * 0.01
         if bad_every and i % bad_every == 0:
             lon, lat = 999.0, 999.0
         coords = [lat, lon] if swap else [lon, lat]
+        props = {"学校编号": f"S{i:03d}", "学校名称": f"第{i}小学"}
+        if not geom_only_bad:
+            props["经度"] = lat if swap else lon
+            props["纬度"] = lon if swap else lat
         features.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": coords},
-            "properties": {"学校编号": f"S{i:03d}", "学校名称": f"第{i}小学",
-                           "经度": lat if swap else lon,
-                           "纬度": lon if swap else lat},
+            "properties": props,
         })
     return {"geojson": {"type": "FeatureCollection", "features": features},
             "crs": "EPSG:4326"}
@@ -117,7 +122,9 @@ class TestDispatchRealChain:
         payload_blob = json.dumps(result.llm_payload, ensure_ascii=False)
         # 30 行数据本体绝不进 payload：即便全量序列化也远小于数据本体
         assert len(payload_blob) < 6000
-        assert "第29小学" not in payload_blob or "sample" not in result.llm_payload
+        # 两条独立红线（R1 #11：原弱析取拆分）—— 无行样本值 + 无样本键
+        assert "第29小学" not in payload_blob
+        assert "sample" not in result.llm_payload
         assert result.raw_result["status"] in ("ready", "requires_input")
 
 
@@ -169,8 +176,11 @@ class TestFourStateSemantics:
         assert out["proposal"].get("神秘列") == "category"
 
     async def test_prepared_state_full_auto(self, registry):
+        # GeoJSON 形态：坏几何行 + 干净属性列 → 映射高置信 + 质量旗标
+        # 触发自动过滤 → auto_execute 一步到位 prepared
         sid = "sess-tool-8"
-        ref = await _seed_ref(sid, _school_payload(20, bad_every=10))
+        ref = await _seed_ref(sid, _school_payload(20, bad_every=10,
+                                                   geom_only_bad=True))
         out = await _dispatch(
             registry, {"source_ref": ref, "auto_execute": True}, sid)
         assert out["status"] == "prepared"
@@ -181,6 +191,16 @@ class TestFourStateSemantics:
         out2 = await _dispatch(registry, {"source_ref": out["output_ref"]}, sid)
         assert out2["status"] == "ready"
         assert out2["receipt_summary"]["blocked"] is False
+
+    async def test_auto_execute_respects_clarifications(self, registry):
+        """R1 #2 清偿回归：CSV 形态脏列 → 澄清项存在 → auto 也不执行。"""
+        sid = "sess-tool-10"
+        ref = await _seed_ref(sid, _school_payload(20, bad_every=10))
+        out = await _dispatch(
+            registry, {"source_ref": ref, "auto_execute": True}, sid)
+        assert out["status"] == "requires_input"
+        assert out["clarifications"]
+        assert "output_ref" not in out
 
     async def test_blocked_never_executes_even_with_auto(self, registry):
         sid = "sess-tool-9"

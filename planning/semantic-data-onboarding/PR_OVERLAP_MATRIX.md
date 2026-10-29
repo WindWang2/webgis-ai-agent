@@ -19,8 +19,17 @@
 | #1549/#1551/#1598/#1679/#1680 修复类 | 无重叠 | — |
 | dependabot #1764–#1768, #1770, #1772, #1831–#1833 | 依赖 | 不碰 |
 
-## 开放 PR / issues（待网络恢复后必须补查）
+## 开放 PR / issues（2026-10-29 23:4x 网络恢复后二次去重 —— 已完成）
 
-- `gh pr list --state open`：挂起（TLS 断）。锚点后新开 PR 风险低但非零。
-- issues #1842–#1866（审查类）：挂起。若其中存在与本方向重叠的安全 issue，按任务纪律只防本任务新引入风险，不抢修。
-- 复核时点：① push 前；② gh pr create 前。两次都记录到 EVIDENCE.md。
+- `gh pr list --state open` → **(none)**：零重叠。
+- `git fetch origin master` → 仍为 4b3629c90（未前移，无需 rebase）。
+- issues #1842–#1866：全部为 2026-10 大审查系（S1–S7 汇总 + High 若干）的
+  **既有**发现。与本任务的关系裁决：
+  - 跨租户身份伪造类（#1841 events 注入 / #1842/#1843 记忆 org/user 取自
+    map_state / #1847 _mission_binding）：本任务**未引入同类面** —— 新端点
+    session 归属一律 DB 校验（authorize_session_write，404 不泄露），工具走
+    _resolve_session_id（verified runtime context，LLM 提供的 session_id 不可信）。
+  - #1844（质量规则环截断）/ #1854（dataset_semantics Medium）/ #1851（数据源
+    面板 Medium）：既有代码的独立清偿面，本 diff 对这些文件零修改（仅 import/
+    additive），不抢修、不冲突。
+- 复核时点：① push 前 ✅（本节）；② gh pr create 前 ✅（同一次，间隔内无新提交）。

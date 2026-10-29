@@ -149,9 +149,14 @@ async def inspect_source(
     row_count = len(features)
     proposals: List[FieldProposal] = propose_field_roles(
         fields, user_hints=user_hints, row_count=row_count)
+    # crs_source 优先透传 payload 自带披露（parser 写入 assumed 等，
+    # review R1 #7：此前只推导 declared/空，assumed 证据被丢弃）。
+    declared_source = ""
+    if isinstance(payload, dict):
+        declared_source = str(payload.get("crs_source") or "")[:32]
     receipt: SpatialInspectionReceipt = build_spatial_receipt(
         profile, quality_report=report, proposals=proposals,
-        crs_source="declared" if crs else "")
+        crs_source=declared_source or ("declared" if crs else ""))
     sample, truncated = bounded_sample(features)
     return {
         "input_ref": source_ref,

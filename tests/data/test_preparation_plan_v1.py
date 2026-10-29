@@ -428,3 +428,80 @@ class TestExecutePlan:
         with pytest.raises(ExecError) as ei:
             await execute_plan(plan)
         assert ei.value.code == "INPUT_REF_MISSING"
+
+
+# ── R1 评审清偿回归（#1/#5/#6：幂等碰撞 / 内容锚 / 状态闸 / 并发）────────
+
+class TestReviewR1Regressions:
+    async def test_idempotency_no_cross_dataset_collision(self):
+        """R1 #1：同会话两个不同数据集（无 descriptor → 空指纹）构造出同
+        plan_hash 的元数据计划 —— 第二个必须真执行，返回自己的收据。"""
+        from app.services.session_data import session_data_manager as sdm
+        sid = "sess-r1-collision"
+        fc_a = _school_fc(10)
+        fc_b = _school_fc(20)
+        ref_a = await sdm.store(sid, _payload(fc_a), prefix="test")
+        ref_b = await sdm.store(sid, _payload(fc_b), prefix="test")
+        # 无 descriptor：input_fingerprint 均为空串 → 同 steps 同 hash
+        mk = lambda ref: build_plan(   # noqa: E731
+            session_id=sid, owner="u", input_ref=ref, input_fingerprint="",
+            steps=[FieldMappingStep(role="name", field="学校名称",
+                                    source="user")],
+            available_fields=["学校编号", "学校名称", "经度", "纬度"])
+        plan_a, plan_b = mk(ref_a), mk(ref_b)
+        assert plan_a.plan_hash == plan_b.plan_hash     # 前提成立
+        await save_plan(plan_a)
+        await save_plan(plan_b)
+        ra = await execute_plan(plan_a)
+        rb = await execute_plan(plan_b)
+        assert rb.input_ref == ref_b                    # 不是 A 的收据
+        assert rb.row_before == 20 and ra.row_before == 10
+
+    async def test_content_anchor_stale(self):
+        """R1 #4：payload 原地覆写（descriptor 未重铸）→ 内容锚不匹配 →
+        STALE_INPUT（descriptor 指纹对账之外的第二锚）。"""
+        from app.services.session_data import session_data_manager as sdm
+        sid = "sess-r1-content"
+        ref = await sdm.store(sid, _payload(_school_fc(10)), prefix="test")
+        plan = build_plan(session_id=sid, owner="u", input_ref=ref,
+                          input_fingerprint="",
+                          steps=[FieldMappingStep(role="name", field="学校名称",
+                                                  source="user")],
+                          available_fields=["学校编号", "学校名称", "经度", "纬度"])
+        await save_plan(plan)
+        r1 = await execute_plan(plan)
+        # 覆写内容（不重铸 descriptor —— descriptor 指纹锚抓不住的替换）
+        await sdm.overwrite(sid, ref, _payload(_school_fc(33)))
+        with pytest.raises(ExecError) as ei:
+            await execute_plan(plan)
+        assert ei.value.code == "STALE_INPUT"
+        assert r1.input_content_hash  # 收据确实携带内容锚
+
+    async def test_concurrent_execute_single_receipt(self):
+        """R1 #6：并发两次 execute 同计划 → 同一 output_ref（每计划锁）。"""
+        import asyncio as _aio
+        sid = "sess-r1-concurrent"
+        ref, fp = await _store_input(sid, _payload(_school_fc(15)))
+        plan = build_plan(session_id=sid, owner="u", input_ref=ref,
+                          input_fingerprint=fp,
+                          steps=[DedupStep(key_fields=("学校编号",))],
+                          available_fields=["学校编号", "学校名称", "经度", "纬度"])
+        await save_plan(plan)
+        r1, r2 = await _aio.gather(execute_plan(plan), execute_plan(plan))
+        assert r1.output_ref == r2.output_ref
+        assert r1.created_at == r2.created_at
+
+    async def test_executed_plan_cannot_preview_then_discard(self):
+        """R1 #5：executed 计划 preview → 409（状态回退缺口已关）。"""
+        sid = "sess-r1-state"
+        ref, fp = await _store_input(sid, _payload(_school_fc(5)))
+        plan = build_plan(session_id=sid, owner="u", input_ref=ref,
+                          input_fingerprint=fp,
+                          steps=[DedupStep(key_fields=("学校编号",))],
+                          available_fields=["学校编号", "学校名称", "经度", "纬度"])
+        await save_plan(plan)
+        await execute_plan(plan)
+        # 服务层等价断言：preview 状态闸在 API 层，这里锁定状态不被 API
+        # 层之外的路径回退（dry_run 纯函数不改状态）+ API 闸由 API 测试锁定
+        stored = await get_plan(sid, plan.plan_id)
+        assert stored.state == "executed"

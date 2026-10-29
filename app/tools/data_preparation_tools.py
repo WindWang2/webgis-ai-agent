@@ -148,7 +148,10 @@ def register_data_preparation_tools(registry: ToolRegistry) -> None:
              "rejected": [[r, code] for r, code in p.rejected]}
             for p in proposals if p.needs_clarification
         ][:_MAX_CLARIFICATIONS]
-        if clarifications and not auto_execute:
+        # 澄清项存在 → requires_input，与 auto_execute 无关（契约与参数描述
+        # 同口径：auto 只在「无阻断且无澄清」时执行 —— review R1 #2 曾让
+        # auto 路径静默丢弃歧义字段并谎报 prepared）。
+        if clarifications:
             return {
                 "success": True,
                 "status": "requires_input",

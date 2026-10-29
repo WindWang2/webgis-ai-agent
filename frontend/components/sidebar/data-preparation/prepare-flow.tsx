@@ -98,9 +98,15 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
         && !roleChoices[p.field])
       .map((p) => p.field);
   }, [inspection, roleChoices]);
+  // 哨兵：显式「无角色」选择（区别于未选择，R1 #10）。
+  const NO_ROLE = '__none__';
 
+  // 与后端工具 _AUTO_RESOLVABLE 同一策略口径：severity=blocked 是事实，
+  // 是否阻断执行是策略 —— suggestion=filter_rows（有硬闸兜底的自动过滤）
+  // 不算硬阻断；switch_xy/declare_crs 等须用户确认的才是。
   const hardBlocked = useMemo(
-    () => (inspection?.receipt.findings ?? []).some((f) => f.severity === 'blocked'),
+    () => (inspection?.receipt.findings ?? []).some(
+      (f) => f.severity === 'blocked' && f.suggestion !== 'filter_rows'),
     [inspection],
   );
 
@@ -136,7 +142,7 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
     try {
       // 步集 = 用户确认的角色映射（全部 source=user）+ auto 安全步（越界过滤）。
       const steps = Object.entries(roleChoices)
-        .filter(([, role]) => role)
+        .filter(([, role]) => role && role !== NO_ROLE)
         .map(([field, role]) => ({ type: 'field_mapping', role, field, source: 'user' }));
       const planRes = await dataPreparationApi.createPlan(
         { session_id: sessionId, source_ref: sourceRef, steps, auto_steps: true },
@@ -440,6 +446,7 @@ function FieldRoleRow({
           onChange={(e) => onChange(e.target.value)}
         >
           <option value="">{t('noCandidate')}</option>
+          <option value="__none__">—</option>
           {options.map((r) => (
             <option key={r} value={r}>{r}</option>
           ))}

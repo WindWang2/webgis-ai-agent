@@ -68,7 +68,10 @@ function makeInspection(overrides: Record<string, unknown> = {}) {
       row_count: 20,
       sample_rows_scanned: 20,
       findings: [
-        { code: 'impossible_coordinates', severity: 'warn', message_zh: '2 行越界',
+        // 真实后端形状：impossible_coordinates 是 error→blocked，建议码
+        // filter_rows 可自动解决 —— 前端闸镜像该策略（R1 #3 曾用假 warn
+        // 掩盖语义冲突）。
+        { code: 'impossible_coordinates', severity: 'blocked', message_zh: '2 行越界',
           evidence: {}, suggestion: 'filter_rows', field: '' },
       ],
       blocked: false,
@@ -128,6 +131,8 @@ describe('PrepareFlow', () => {
     });
     expect(await screen.findByTestId('dp-receipt')).toBeTruthy();
     expect(screen.getByTestId('dp-findings').children.length).toBe(1);
+    // filter_rows 可自动解决 → 无 blockedHint、执行不因它禁用（闸一致性）
+    expect(screen.queryByTestId('dp-blocked-hint')).toBeNull();
     expect(screen.getByTestId('dp-mapping')).toBeTruthy();
     expect(screen.getByTestId('dp-sample')).toBeTruthy();
   });
@@ -149,7 +154,7 @@ describe('PrepareFlow', () => {
     });
   });
 
-  it('阻断发现禁用执行（绝不呈现可继续）', async () => {
+  it('阻断发现禁用执行（绝不呈现可继续）；可自动解决的 blocked（filter_rows）不拦截', async () => {
     const inspection = makeInspection();
     inspection.receipt.findings = [
       { code: 'axis_order_suspect', severity: 'blocked', message_zh: '疑似对调',

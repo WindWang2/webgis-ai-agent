@@ -121,16 +121,20 @@ def _norm(name: str) -> str:
     return re.sub(r"[\s_\-]+", "", str(name or "")).lower()
 
 
-def _name_hit(field_norm: str, role: str) -> Tuple[Optional[ReasonCode], int]:
-    """词表匹配 → (原因码, 命中词长)。三档：
+def _name_hit(field_norm: str, role: str, field_raw: str = "") -> Tuple[Optional[ReasonCode], int]:
+    """词表匹配 → (原因码, 命中词长)。四档：
 
     - 整词：归一化字段名 == 同义词（「经度」「name」）；
     - 词尾：字段名以同义词结尾 —— 合成名词的**中心语**在尾部（中英通用：
       「学校名称」= 学校的名称、「school_name」同理、「学校编号」→ id 而非
       name）。词尾命中按近整词计分，解决「学校编号 同时含 学校(名称词)/编号
-      (id 词)」的等权并列；
+      (id 词)」的等权并列；仅对多字符词成立；
+    - 分词整词（单字母词专用）：x/y/w 等单字母同义词只按原始字段名的
+      分词边界命中（「utm_x」token 含 x ✓；「max」不含 ✗）—— 单字母
+      子串匹配是纯噪音（review R1 #8）；
     - 子串：弱命中（前缀/中缀修饰语）。
     命中词长用于特异性排序（长词优先）。"""
+    tokens = {tok.lower() for tok in re.split(r"[^0-9a-zA-Z\u4e00-\u9fff]+", str(field_raw or "")) if tok}
     best: Optional[Tuple[ReasonCode, int]] = None
     _rank = {ReasonCode.SYNONYM_EN: 0, ReasonCode.SYNONYM_ZH: 0,
              ReasonCode.NAME_SUFFIX: 1, ReasonCode.NAME_EXACT: 2}
@@ -141,6 +145,11 @@ def _name_hit(field_norm: str, role: str) -> Tuple[Optional[ReasonCode], int]:
                 continue
             if field_norm == t:
                 code = ReasonCode.NAME_EXACT
+            elif len(t) == 1:
+                if t in tokens:
+                    code = ReasonCode.NAME_EXACT      # 分词整词（utm_x → x）
+                else:
+                    continue                          # 单字母不做子串/词尾
             elif field_norm.endswith(t):
                 code = ReasonCode.NAME_SUFFIX
             elif t in field_norm:
@@ -217,7 +226,7 @@ def _propose_one(
     ordered_roles = ("admin_code", "lon", "lat", "x", "y", "address", "denominator",
                      "weight", "time", "name", "category", "value", "id")
     for role in ordered_roles:
-        code, term_len = _name_hit(fname, role)
+        code, term_len = _name_hit(fname, role, fp.name)
         if code is None:
             continue
         # dtype 闸（与 semantic_profile._dtype_allows 同纪律）。
@@ -350,7 +359,7 @@ def name_role_hit(field: str, role: str) -> Optional[ReasonCode]:
     """
     if role not in PROPOSAL_ROLES:
         return None
-    code, _ = _name_hit(_norm(field), role)
+    code, _ = _name_hit(_norm(field), role, field)
     return code
 
 
