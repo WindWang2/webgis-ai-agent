@@ -51,6 +51,9 @@ class JobView(BaseModel):
     background_job_ids: list[str] = Field(default_factory=list)
     error: Optional[str] = Field(default=None, description="单行错误摘要，绝不含 traceback")
     result_ref: Optional[str] = Field(default=None, description="结果指针（artifact id / 路径）")
+    #: 批量图册 job 的页级状态（additive；仅 kind=atlas_export 且 result_summary
+    #: 携带 pages 时填充 —— 有界 ≤21 条、单行 error、无载荷/无坐标）。
+    page_status: Optional[list[dict]] = None
     step_count: int = 0
     created_at: Optional[str] = None
     started_at: Optional[str] = None
@@ -86,6 +89,36 @@ class JobRetryResponse(BaseModel):
 ACTIVE_POLL_INTERVAL_MS = 3000
 
 
+def _atlas_page_status(record: AnalysisTask) -> Optional[list[dict]]:
+    """atlas_export job → 有界页级状态投影（安全摘要面）。
+
+    只在 kind=atlas_export 且 ``result_summary.pages`` 在场时投影；每页只保留
+    展示字段（page_id/title/page_number/status/单行 error），≤21 条 —— 与
+    MAX_ATLAS_PAGES + 封面同界。任何形状异常 → None（视图层绝不因增值字段炸）。
+    """
+    if str(record.job_kind or "") != "atlas_export":
+        return None
+    summary = record.result_summary
+    if not isinstance(summary, dict):
+        return None
+    pages = summary.get("pages")
+    if not isinstance(pages, list):
+        return None
+    out: list[dict] = []
+    for raw in pages[:21]:
+        if not isinstance(raw, dict):
+            continue
+        err = raw.get("error")
+        out.append({
+            "page_id": str(raw.get("page_id") or "")[:64],
+            "title": str(raw.get("title") or "")[:96],
+            "page_number": int(raw.get("page_number") or 0),
+            "status": str(raw.get("status") or "")[:24],
+            "error": (str(err).splitlines()[0][:160] if err else None),
+        })
+    return out or None
+
+
 def job_from_record(record: AnalysisTask) -> JobView:
     """durable 行 → JobView。只读安全字段。"""
     status = coerce_status(record.status)
@@ -113,6 +146,7 @@ def job_from_record(record: AnalysisTask) -> JobView:
         agent_step_id=record.agent_step_id,
         error=error,
         result_ref=record.result_ref,
+        page_status=_atlas_page_status(record),
         created_at=_iso(record.created_at),
         started_at=_iso(record.started_at),
         finished_at=_iso(record.completed_at),

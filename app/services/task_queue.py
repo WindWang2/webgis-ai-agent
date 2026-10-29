@@ -19,7 +19,7 @@ celery_app = Celery(
 # ADR-0192：时空动态仿真推演 durable job（hydro_diffusion / traffic_propagation）。
 include=["app.services.spatial_tasks", "app.tasks.explorer.task_chain", "app.services.geocompute.tasks",
          "app.services.data_quality.jobs", "app.services.data_lifecycle.jobs",
-         "app.services.simulation.tasks"]
+         "app.services.simulation.tasks", "app.services.atlas_batch.tasks"]
 )
 
 # ── GeoCompute V5 异构队列（audit 06 §6.1 step 1）────────────────────────
