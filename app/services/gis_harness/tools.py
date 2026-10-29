@@ -1322,14 +1322,26 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
         # 随产品落 layout（options.design = design_digest 有界投影；接受
         # 动作经 webgis_map_design_select 统一 action，面板不带状态机）。
         if isinstance(design_payload.get("design_digest"), dict):
+            from app.contracts.cartography_components import (
+                validate_design_candidates_payload,
+            )
             from app.services.gis_harness.components import CartographyComponent
-            components = [
-                c for c in components if c.type != "design_candidates"]
-            components.append(CartographyComponent(
-                id="design-candidates", type="design_candidates",
-                position="top-left", priority=49,
-                options={"design": design_payload["design_digest"]},
-            ))
+            _design_options = {"design": design_payload["design_digest"]}
+            # F4（评审 R2）：面板载荷过契约校验器（与其它披露面板工厂
+            # 同纪律；坏形状拒绝落组件而不是静默绕过）。
+            _design_invalid = validate_design_candidates_payload(
+                {"design": _design_options["design"]})
+            if _design_invalid is None:
+                components = [
+                    c for c in components if c.type != "design_candidates"]
+                components.append(CartographyComponent(
+                    id="design-candidates", type="design_candidates",
+                    position="top-left", priority=49,
+                    options=_design_options,
+                ))
+            else:
+                out.setdefault("warnings", []).append(
+                    f"design candidates panel skipped: {_design_invalid}")
         component_dicts = [c.to_mapspec() for c in components]
         # #1068(E-7): layout_set 整表替换组件表 —— 用户经
         # webgis_component_update create=true 建的浮动面板（chart/statistics）

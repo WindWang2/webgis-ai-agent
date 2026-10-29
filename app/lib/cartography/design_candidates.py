@@ -94,7 +94,8 @@ class DenominatorEvidence(BaseModel):
     field: str = ""
     available: bool = False
     unit: str = ""            # 人口/面积等单位语义
-    source: str = "profile"   # profile|intent|dataset_semantics
+    source: str = "profile"   # profile|overlay|intent|dataset_semantics
+    #（overlay = 主数据无分母、overlay 数据词表命中的跨源投影，M6）
 
 
 class DesignTaskContext(BaseModel):
@@ -386,8 +387,11 @@ def _model_feasible_extended(model: Any, ctx: DesignTaskContext) -> bool:
 
     组合层候选池只认主几何（其词表语义）；表达层候选在 overlay 面数据
     在场时，面族（区级统计/归一化）对同一制图任务是合法表达——按
-    DesignTaskContext 的结构化事实判定，不猜。
+    DesignTaskContext 的结构化事实判定，不猜。planned 模型不可行
+    （F1：与组合层 native_ids() 同款过滤，未实现的表达不推荐）。
     """
+    if getattr(model, "runtime_status", "native") != "native":
+        return False
     task_ctx = _task_ctx_from_design(ctx)
     if _model_feasible(model, task_ctx):
         return True
@@ -551,7 +555,11 @@ def generate_design_candidates(
     if (_density_semantics or ctx.denominator.available) and _polygon_surface:
         for _mid in _RATE_SEMANTIC_MODELS:
             _model = model_reg.get(_mid)
-            if _model is None or not _model_feasible_extended(_model, ctx):
+            # F1（评审 R2）：只注入 native 模型（组合层单一事实源同款
+            # 过滤——planned 模型不得作为可实施方案推荐，也不可被 pin）。
+            if (_model is None
+                    or getattr(_model, "runtime_status", "native") != "native"
+                    or not _model_feasible_extended(_model, ctx)):
                 continue
             if _mid not in pool:
                 pool[_mid] = {
@@ -562,7 +570,7 @@ def generate_design_candidates(
                         else "用户密度语义 + 面表达面（率语义候选，分母"
                         "门控对——无分母时 blocked 披露）")],
                 }
-            # 门控对的原始计数千半边：率模型的降级链目标（如
+            # 门控对的原始计数半边：率模型的降级链目标（如
             # normalized→administrative_choropleth）同批入池——blocked 与
             # 可用替代必须成对可见。
             _fb = getattr(_model, "fallback_model_id", "") or ""
@@ -574,6 +582,10 @@ def generate_design_candidates(
                     "reasons": ["分母门控对的原始计数对照（降级链目标）"],
                 }
                 _pair_fallback_ids.add(_fb)
+            # F7（评审 R2）：只注入一对（审定序首个可行 native 率模型 +
+            # 其降级目标）——全部率模型注入会使候选面退化为单一 area_stat
+            # 族，破坏「2–4 个可比较表达方案」的族多样性契约。
+            break
 
     # 用户显式要求但组合层未给出的模型：①定向类目再检索一次（仍走同一
     # 组合选择器）；②仍被每类目 top-N 截断挤出 → 可行域直判（复用组合层
@@ -686,23 +698,47 @@ def generate_design_candidates(
     # 降级目标（全部率模型占席会反把原始计数对照挤出，评审 R1 实证）。
     _pair_reserved = (
         _density_semantics or ctx.denominator.available) and _polygon_surface
-    _rate_reserved_ids: set = set()
+    _rate_reserved_ids: set = set()      # 率成员（硬席位，溢出不弃）
+    _fallback_reserved_ids: set = set()  # 对照成员（软席位，溢出可弃——
+    # 其信息保留在率候选的 degradation_path，成对语义不丢失）
     if _pair_reserved:
         _merged_ids = {c.map_model_id for c in merged}
         for _mid in _RATE_SEMANTIC_MODELS:  # 审定优先序（normalized 优先）
             if _mid in _merged_ids:
                 _rate_reserved_ids.add(_mid)
                 for _fb in _fallback_chain(_mid, model_reg)[:1]:
-                    _rate_reserved_ids.add(_fb)
+                    _fallback_reserved_ids.add(_fb)
                 break
+    _pair_all = _rate_reserved_ids | _fallback_reserved_ids
     reserved = [
         c for c in merged
         if c.user_requested or c.map_model_id == primary_model_id
-        or c.map_model_id in _rate_reserved_ids]
+        or c.map_model_id in _pair_all]
     rest = [c for c in merged
             if not (c.user_requested or c.map_model_id == primary_model_id
-                    or c.map_model_id in _rate_reserved_ids)]
+                    or c.map_model_id in _pair_all)]
     candidates = (reserved + rest)[:MAX_DESIGN_CANDIDATES]
+    # F3（评审 R2）：席位溢出角落（pin + bare_density + primary + 对 = 5 > 4）
+    # 此前按排序切，blocked 率半边可能殿后被挤出——「门控对成对可见」是
+    # 铁律：缺席时从尾部剔除非对内、非用户/非 primary 候选换入。
+    _final_ids = {c.map_model_id for c in candidates}
+    for _pair_id in sorted(_rate_reserved_ids):
+        if _pair_id in _final_ids:
+            continue
+        _pair_cand = next(
+            (c for c in merged if c.map_model_id == _pair_id), None)
+        if _pair_cand is None:
+            continue
+        for _i in range(len(candidates) - 1, -1, -1):
+            _c = candidates[_i]
+            # 可换出：非硬席位者。对照成员（软席位）亦可被率成员换出——
+            # 其表达保留在率候选 degradation_path，成对语义不丢失。
+            if (_c.map_model_id not in _rate_reserved_ids
+                    and not _c.user_requested
+                    and _c.map_model_id != primary_model_id):
+                candidates[_i] = _pair_cand
+                _final_ids = {c.map_model_id for c in candidates}
+                break
 
     # selected 对齐：primary 优先；缺席则取首个非 blocked；全 blocked 如实空。
     selected_id = ""

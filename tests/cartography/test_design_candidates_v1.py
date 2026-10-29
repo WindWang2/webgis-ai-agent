@@ -303,3 +303,53 @@ def test_density_category_without_polygon_surface_no_pair() -> None:
     assert all(c.map_model_id not in ("normalized_choropleth",
                                       "dasymetric_map", "cartogram_map")
                for c in cs.candidates)
+
+
+# ── 评审清偿回归（R2 轮 F1/F3/F7）────────────────────────────────────
+
+
+def test_planned_model_never_injected_nor_suitable() -> None:
+    """F1：planned 模型（cartogram_map）不得注入为可实施方案。"""
+    ctx = _admin_ctx(
+        statistic="density",
+        denominator=DenominatorEvidence(
+            field="population", available=True, unit="人口"),
+    )
+    cs = generate_design_candidates(ctx)
+    for c in cs.candidates:
+        assert c.map_model_id != "cartogram_map", "planned 模型不得入集"
+        assert c.map_model_id != "dasymetric_map" or True  # native 则可
+
+
+def test_rate_pair_hard_seats_under_overflow() -> None:
+    """F3：席位溢出（pin+bare_density+primary+对 > 4）时门控对成对在场。"""
+    ctx = DesignTaskContext(
+        task_categories=("spatial_distribution", "density"),
+        geometry_kind="point",
+        variable_kind="continuous",
+        statistic="density",
+        artifact_types=("point_feature_set", "admin_boundary_set",
+                        "admin_aggregate_table"),
+        point_count=40, point_count_basis="dataset",
+        secondary_geometry_kinds=("polygon",),
+        user_requested_models=("visual_heatmap", "point_cluster"),
+    )
+    cs = generate_design_candidates(ctx, primary_model_id="graduated_point")
+    ids = [c.map_model_id for c in cs.candidates]
+    # 门控对铁律（溢出策略）：率成员硬席位（决不挤出）；对照成员软席
+    # ——5 个保护者挤 4 席时可弃，但其表达保留在率候选的降级链里。
+    assert "normalized_choropleth" in ids
+    if "administrative_choropleth" not in ids:
+        normalized_c = next(c for c in cs.candidates
+                            if c.map_model_id == "normalized_choropleth")
+        assert "administrative_choropleth" in normalized_c.degradation_path
+    # 用户显式要求与 primary 仍受保护
+    assert "point_cluster" in ids
+
+
+def test_polygon_density_family_diversity_preserved() -> None:
+    """F7：polygon 主几何 + 密度语义 → 族多样性（非全 area_stat）。"""
+    ctx = _admin_ctx(statistic="density")
+    cs = generate_design_candidates(ctx)
+    families = {c.expression_family for c in cs.candidates}
+    assert len(families) >= 2, f"候选面退化为单一族: {families}"

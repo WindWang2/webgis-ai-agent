@@ -553,6 +553,7 @@ __all__ = [
     "validate_methodology_payload",
     "validate_uncertainty_payload",
     "validate_decision_payload",
+    "validate_design_candidates_payload",
     "MAX_SCENE_DISCLOSURE_NOTES",
     "MAX_SCENE_DISCLOSURE_TEXT",
     "MAX_PROFILE_POINTS",

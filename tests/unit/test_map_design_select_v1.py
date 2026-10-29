@@ -112,14 +112,28 @@ async def test_select_idempotent(registry, sid):
 @pytest.mark.asyncio
 async def test_select_refuses_retargeting_and_unknown(registry, sid):
     await _ensure_doc(sid)
-    retarget = await registry.dispatch(
+    # R2 F2 后：精确注册 id（含 dot_density_map）如实 pin 原模型——
+    # 不再因归一化子串塌缩被 typed 拒绝（静默改道的反面是诚实精确）。
+    exact = await registry.dispatch(
         "webgis_map_design_select",
         {"query": _QUERY, "session_id": sid, "map_model_id": "dot_density_map"},
         session_id=sid,
     )
-    assert retarget["success"] is False
-    assert retarget["error_code"] == "pin_target_mismatch"
-    assert "改道" in retarget["message"]
+    assert exact["success"] is True, exact
+    assert exact["pinned_model"] == "dot_density_map"
+
+    # 别名输入经 registry.resolve 先行 canonical 化 → 同样如实 pin 其
+    # canonical 模型（"ratio_choropleth" 是 normalized_choropleth 别名；
+    # F2 精确 id 预检后塌缩只发生在 NL 层，工具层不可达——mismatch 分支
+    # 保留为防御性守卫）。
+    alias = await registry.dispatch(
+        "webgis_map_design_select",
+        {"query": _QUERY, "session_id": sid,
+         "map_model_id": "ratio_choropleth"},
+        session_id=sid,
+    )
+    assert alias["success"] is True, alias
+    assert alias["pinned_model"] == "normalized_choropleth"
 
     unknown = await registry.dispatch(
         "webgis_map_design_select",
@@ -159,9 +173,11 @@ async def test_select_visual_heatmap_roundtrip_via_ir_bridge(registry, sid):
 
 
 @pytest.mark.asyncio
-async def test_select_normalized_choropleth_typed_refusal(registry, sid):
-    """P1-1：normalized_choropleth 归一化塌缩到 choropleth 别名（指向
-    administrative_choropleth）——typed 拒绝并指明改道目标。"""
+async def test_select_normalized_choropleth_pins_after_exact_id_precheck(
+        registry, sid):
+    """R2 F2：normalize 精确注册 id 预检后，率语义模型可 pin（此前
+    "normalized_choropleth" 含 "choropleth" 子串被塌缩改道而 typed 拒绝，
+    整个率语义 user-wins 路线不可达）。"""
     await _ensure_doc(sid)
     res = await registry.dispatch(
         "webgis_map_design_select",
@@ -169,6 +185,5 @@ async def test_select_normalized_choropleth_typed_refusal(registry, sid):
          "map_model_id": "normalized_choropleth"},
         session_id=sid,
     )
-    assert res["success"] is False
-    assert res["error_code"] == "pin_target_mismatch"
-    assert "administrative_choropleth" in res["message"]
+    assert res["success"] is True, res
+    assert res["pinned_model"] == "normalized_choropleth"
