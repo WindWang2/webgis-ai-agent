@@ -105,9 +105,11 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
         coalesce=COALESCE_REPLACE_PENDING,
     ),
     # ── 观察型：要素选择/取消（有限载荷：引用 + 字段名 + 几何摘要）──────
+    # /goal 03 additive：selected_ids（多选集，normalize 的 list 面纪律
+    # ≤8 标量元素）—— 框选/多选对 Agent 可见；单选时缺席（向后兼容）。
     _k(
         "feature_selected",
-        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref"),
+        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
     _k(

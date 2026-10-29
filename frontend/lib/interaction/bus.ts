@@ -192,19 +192,27 @@ export function emitFeatureSelected(info: {
   layerId: string;
   featureId?: string | number;
   properties?: Record<string, unknown>;
-  bbox?: [number, number, number, number] | null;
+  bbox?: [number, number, number] | null;
   datasetRef?: string;
+  /** 多选集（/goal 03 additive）：与 featureId 同源解析的选中 id 集；
+   * 服务端 list 面纪律 ≤8 标量元素，这里额外按 32 字符裁剪保 512B 载荷预算。 */
+  selectedIds?: ReadonlyArray<string | number>;
 }): void {
   // review P3-2：几何摘要只用 bbox（geometry 参数从未被消费 —— 删除，
   // 调用方不再白传全量几何）。
   const names = fieldNamesOf(info.properties);
   const digest = bboxDigest(info.bbox);
+  const selectedIds = (info.selectedIds ?? [])
+    .map((id) => String(id).slice(0, 32))
+    .filter(Boolean)
+    .slice(0, 8);
   emitInteraction('feature_selected', {
     layer_id: info.layerId,
     ...(info.featureId !== undefined ? { feature_id: String(info.featureId).slice(0, 128) } : {}),
     ...(names ? { field_names: names } : {}),
     ...(digest ? { geometry_digest: digest } : {}),
     ...(info.datasetRef ? { dataset_ref: info.datasetRef } : {}),
+    ...(selectedIds.length > 1 ? { selected_ids: selectedIds } : {}),
   });
 }
 
