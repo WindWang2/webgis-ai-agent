@@ -81,8 +81,12 @@ def build_design_decision_trace(
             k: str(v)[:64] for k, v in (intent_summary or {}).items()
         } if intent_summary else {},
         "dataFacts": _data_facts(ctx)[:_MAX_FACTS],
-        "candidates": [c.to_bounded_dict()
-                       for c in candidate_set.candidates],
+        # 候选只留紧凑引用（模型/适宜性）——全量投影在结果载荷的
+        # design_candidates 键（同一工具结果内不重复携带，评审 R1 后
+        # G4 大数据契约尺寸复核：重复全量会无谓多 ~2.5KB）。
+        "candidates": [
+            {"m": c.map_model_id, "s": c.suitability.value}
+            for c in candidate_set.candidates],
         "selected": {
             "candidateId": (selected.candidate_id[:64]
                             if selected else "absent:no-eligible-candidate"),
