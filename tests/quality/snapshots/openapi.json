@@ -3562,7 +3562,7 @@
       "title": "Op",
       "type": "string"
      },
-     "target_ref": {
+     "ref_id": {
       "anyOf": [
        {
         "type": "string"
@@ -3571,7 +3571,7 @@
         "type": "null"
        }
       ],
-      "title": "Target Ref"
+      "title": "Ref Id"
      },
      "to": {
       "anyOf": [
