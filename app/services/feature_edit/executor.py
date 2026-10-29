@@ -247,6 +247,16 @@ async def commit_plan(
             new_payload = new_fc
 
         fp_after = compute_payload_fingerprint(new_payload)
+        # 链指纹定义在「物化后空间」：物化是一次性数据集身份升级（首次编辑
+        # 落 _wfid），不属于可撤销的编辑效果 —— undo 恢复的是数据编辑而非
+        # 去物化。非物化提交的 fp_chain_before 即 fp_now。
+        if materialized:
+            pre_chain_payload: Any = (
+                {**payload, "geojson": fc} if isinstance(payload, dict) and isinstance(payload.get("geojson"), dict) else fc
+            )
+            fp_chain_before = compute_payload_fingerprint(pre_chain_payload)
+        else:
+            fp_chain_before = fp_now
         entry = {
             "kind": "apply",
             "idempotency_key": key,
@@ -260,7 +270,7 @@ async def commit_plan(
                 "materialized": materialized,
                 "plan_id": plan_id,
             },
-            "fingerprint_before": fp_now,
+            "fingerprint_before": fp_chain_before,
             "fingerprint_after": fp_after,
             "content_revision_before": current_revision,
             "content_revision_after": current_revision,  # overwrite 后更新
@@ -278,9 +288,13 @@ async def commit_plan(
         entry = journals[ref_id]["entries"][-1]
         entry["content_revision_after"] = revision_after
         await _save_journal(session_id, journals, ref_id)
-        await _mark_plan_status(
-            session_id, plan_id, "applied", extra={"entry_seq": entry.get("seq"), "applied_at": time.time()}
-        )
+        _pending_receipt_entry = entry
+
+    # ── 销账（锁内完成主体；receipt 在盖章后回写 plan，供幂等重放回放） ──
+    entry = _pending_receipt_entry
+    await _mark_plan_status(
+        session_id, plan_id, "applied", extra={"entry_seq": entry.get("seq"), "applied_at": time.time()}
+    )
 
     # ── 锁外：MapSpec 盖章 + 广播（引擎自取会话锁，绝不嵌套） ──
     receipt = _receipt(entry)
@@ -289,6 +303,10 @@ async def commit_plan(
     )
     receipt["stamp_status"] = stamp_status
     receipt["mapspec_revision"] = mapspec_revision
+    # receipt 快照入 plan（幂等重放/决策端二次点击原样回放，不再跑盖章）。
+    await _mark_plan_status(
+        session_id, plan_id, "applied", extra={"receipt": receipt, "entry_seq": entry.get("seq")}
+    )
     _broadcast_dataset_updated(session_id, ref_id, revision_after, [d.get("wfid") for d in deltas][:64])
     return receipt
 

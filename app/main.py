@@ -33,7 +33,7 @@ from app.core.idempotency import IdempotencyMiddleware
 from prometheus_client import Counter
 from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes, feature_edits as feature_edits_routes
 from app.api.routes import atlas_jobs as atlas_jobs_routes  # noqa: E402  # 批量图册发布
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
 from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0226
@@ -1097,6 +1097,7 @@ app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
+app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对话"])  # /goal 03 feature editing
 app.include_router(review_proposals.router, prefix="/api/v1", tags=["审查会签"])
 # F15（ADR-0263）：user-approved visual repair + 截图 ref-only 通道。
 app.include_router(visual_repairs.router, prefix="/api/v1", tags=["AI对话"])
