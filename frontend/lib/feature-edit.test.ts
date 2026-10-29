@@ -76,6 +76,39 @@ describe('stepResultDecision · featureEditProposal', () => {
     );
     expect(decision.featureEditProposal).toBeNull();
   });
+
+  it('commit 工具成功回执 → featureEditCommit（数据刷新 + 卡片推进依据）', () => {
+    const decision = stepResultDecision(
+      {
+        tool: 'webgis_feature_edit_commit',
+        result: {
+          success: true,
+          plan_id: 'fep-9',
+          ref_id: 'ref:data-x',
+          entry_seq: 3,
+          content_revision_after: 8,
+          stamp_status: 'deferred',
+        },
+      } as never,
+      ctx,
+    );
+    expect(decision.featureEditCommit).toMatchObject({
+      plan_id: 'fep-9',
+      ref_id: 'ref:data-x',
+      content_revision_after: 8,
+    });
+  });
+
+  it('commit 被拒（CONFIRMATION_REQUIRED）不产生刷新决策', () => {
+    const decision = stepResultDecision(
+      {
+        tool: 'webgis_feature_edit_commit',
+        result: { success: false, code: 'CONFIRMATION_REQUIRED', plan_id: 'fep-9' },
+      } as never,
+      ctx,
+    );
+    expect(decision.featureEditCommit).toBeNull();
+  });
 });
 
 describe('message reducer · featureEditProposal', () => {

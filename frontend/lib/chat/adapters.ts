@@ -261,6 +261,8 @@ export interface StepResultDecision {
   planProposal: PlanProposalPayload | null;
   /** /goal 03：webgis_feature_edit_preview 结果 → 消息编辑提案卡挂载。 */
   featureEditProposal: import('@/lib/types/feature-edit').FeatureEditProposalState | null;
+  /** /goal 03：commit 工具自动提交回执（数据刷新 + 卡片推进）。 */
+  featureEditCommit: { plan_id: string; ref_id: string; content_revision_after?: number; receipt?: Record<string, unknown> } | null;
   /** deep_explore explorer_task → 独立进度流（#518）。 */
   explorerTaskId: string | null;
   /** 图层挂载决策。 */
@@ -338,6 +340,23 @@ export function stepResultDecision(
       validation: [],
       expected_content_revision: r.expected_content_revision ?? 0,
       expires_in_s: r.expires_in_s,
+    };
+  }
+
+  // /goal 03 R1 P1-3：Agent 自动提交回执 → 数据刷新 + 卡片终态推进。
+  let featureEditCommit: {
+    plan_id: string;
+    ref_id: string;
+    content_revision_after?: number;
+    receipt?: Record<string, unknown>;
+  } | null = null;
+  if (tool === 'webgis_feature_edit_commit' && result?.success && typeof result?.plan_id === 'string') {
+    featureEditCommit = {
+      plan_id: result.plan_id as string,
+      ref_id: String(result.ref_id ?? ''),
+      content_revision_after:
+        typeof result.content_revision_after === 'number' ? result.content_revision_after : undefined,
+      receipt: result as Record<string, unknown>,
     };
   }
 
@@ -438,7 +457,7 @@ export function stepResultDecision(
 
   const chart = result?.chart ?? null;
 
-  return { workbenchCapture, toolStatus, planProposal, featureEditProposal, explorerTaskId, layerMount, chart, chip };
+  return { workbenchCapture, toolStatus, planProposal, featureEditProposal, featureEditCommit, explorerTaskId, layerMount, chart, chip };
 }
 
 // ── 消息副作用汇总（hook 执行面用）────────────────────────────────────

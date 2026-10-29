@@ -127,6 +127,7 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
             return {
                 "success": True,
                 "plan_id": plan_id,
+                "ref_id": receipt.get("ref_id"),
                 "entry_seq": receipt.get("entry_seq"),
                 "content_revision_after": receipt.get("content_revision_after"),
                 "changed_wfids": receipt.get("changed_wfids"),
