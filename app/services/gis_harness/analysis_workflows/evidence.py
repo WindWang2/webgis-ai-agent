@@ -167,3 +167,63 @@ def evidence_summary(
             if r.warnings},
         "risk_notes": list(contract.risk_notes),
     }
+
+
+#: 执行层科学硬拒前缀（对齐 workflow_engine.SCIENCE_REJECTION_PREFIXES
+#: 单一语义——此处只引用不复制判定逻辑）。
+def _science_hard_block_reason(reason_code: str) -> str:
+    prefixes = (
+        "scientific_precondition:", "crs_class_mismatch:",
+        "insufficient_features:", "geometry_mismatch:")
+    for prefix in prefixes:
+        if reason_code.startswith(prefix):
+            return reason_code
+    return ""
+
+
+def final_gate_execution_evidence(
+    state: Any,
+) -> Dict[str, Dict[str, Any]]:
+    """运行态 → G02 ``run_science_final_gate`` 的 execution_evidence 投影。
+
+    键契约（science_final_gate.py:11）：``capability`` / ``profile_digest``
+    （输入指纹合成——freshness 面）/ ``science_hard_block``（执行层科学
+    硬拒前缀命中时非空 → G-SCIENCE-BLOCKED）。
+    """
+    projection: Dict[str, Dict[str, Any]] = {}
+    steps_by_id: Dict[str, Any] = {}
+    snapshot_steps = (state.contract_snapshot or {}).get("steps") or []
+    for step in snapshot_steps:
+        if isinstance(step, dict) and step.get("step_id"):
+            steps_by_id[step["step_id"]] = step
+    for step_id, entry in state.steps.items():
+        spec = steps_by_id.get(step_id, {})
+        receipt = state.receipts.get(step_id) or {}
+        ev: Dict[str, Any] = {
+            "capability": str(spec.get("capability", "") or ""),
+            "profile_digest": str(entry.fingerprint or "")[:64],
+        }
+        block = _science_hard_block_reason(entry.reason_code or "")
+        if block:
+            ev["science_hard_block"] = block
+        elif receipt:
+            ev["method_algorithm_ids"] = list(
+                receipt.get("algorithm_ids") or [])
+        if entry.state == "satisfied" or block:
+            projection[step_id] = ev
+    return projection
+
+
+def run_final_gate(state: Any) -> Dict[str, Any]:
+    """对工作流运行态跑 G02 终局门（fail-open：门内部绝不抛错）。"""
+    from app.lib.gis.science_final_gate import run_science_final_gate
+    result = run_science_final_gate(
+        plan=None, execution_evidence=final_gate_execution_evidence(state))
+    return {
+        "blocked": result.blocked,
+        "findings": [
+            {"code": f.code, "severity": f.severity,
+             "subject": f.subject, "detail": f.detail}
+            for f in result.findings],
+        "disclosures": list(result.disclosures),
+    }

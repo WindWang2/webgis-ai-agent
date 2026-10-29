@@ -92,6 +92,8 @@ class WorkflowExecutor:
         persist: Optional[Callable[[WorkflowRunState], Any]] = None,
         cancel_token: Any = None,
         current_turn: int = 0,
+        dispatch: Optional[Callable[[str, Dict[str, Any], str],
+                                    Any]] = None,
     ):
         self._registry = registry
         self._sd = session_data
@@ -99,6 +101,7 @@ class WorkflowExecutor:
         self._persist = persist
         self._cancel_token = cancel_token
         self._turn = current_turn
+        self._dispatch_fn = dispatch
         #: 本次运行内步骤产物（内存 FC，供 step: 下游直传不重复水合）
         self._step_payloads: Dict[str, Dict[str, Any]] = {}
 
@@ -207,6 +210,51 @@ class WorkflowExecutor:
 
     # ── 执行 ─────────────────────────────────────────────────────────────
 
+    async def _dispatch(self, tool_name: str, args: Dict[str, Any],
+                        session_id: str) -> Dict[str, Any]:
+        """单入口分发：注入的 dispatch 可调用（生产=ToolDispatchService，
+        含 capability 记账/guardrail/复用/ref 卸载）优先；回落 registry
+        （直调语义——单测用）。
+
+        返回统一形状 ``{"success", "data"?, "geojson"?, "stats"?,
+        "scientific_evidence"?, "warnings"?, "dispatch_ref"?}``；
+        ``dispatch_ref`` = 分发缝已铸造的 ref（复用，不重铸）。
+        """
+        if self._dispatch_fn is not None:
+            outcome = await self._dispatch_fn(tool_name, args, session_id)
+            # ToolDispatchResult → dict（status 判别式）
+            status = getattr(outcome, "status", None)
+            if status is not None:
+                raw = getattr(outcome, "raw_result", None)
+                if str(status) == "error":
+                    msg = str(getattr(outcome, "error_msg", "") or
+                              "dispatch error")[:300]
+                    return {"success": False, "message": msg,
+                            "reason_code": "TOOL_DISPATCH_ERROR"}
+                payload = raw if isinstance(raw, dict) else {}
+                out = dict(payload) if payload else {"success": True}
+                # 分发缝铸 ref 后剥内联 FC（slim 纪律）——ref 与行数事实
+                # 从 result_ref / geojson_ref / ref_descriptor 透传。
+                ref = (getattr(outcome, "geojson_ref", None)
+                       or str(payload.get("result_ref", "") or ""))
+                if ref:
+                    out.setdefault("dispatch_ref", ref)
+                desc = getattr(outcome, "ref_descriptor", None)
+                if isinstance(desc, dict):
+                    try:
+                        out.setdefault(
+                            "dispatch_feature_count",
+                            int(desc.get("feature_count", 0) or 0))
+                    except (TypeError, ValueError):
+                        pass
+                return out
+            return outcome if isinstance(outcome, dict) else {
+                "success": False, "message": "dispatch 返回形状异常"}
+        result = await self._registry.dispatch(
+            tool_name, args, session_id=session_id)
+        return result if isinstance(result, dict) else {
+            "success": False, "message": "dispatch 返回形状异常"}
+
     def _cancelled(self) -> bool:
         token = self._cancel_token
         if token is None:
@@ -270,8 +318,8 @@ class WorkflowExecutor:
             await self._persist(state)
 
         try:
-            result = await self._registry.dispatch(
-                step.tool_name, args, session_id=session_id)
+            result = await self._dispatch(
+                step.tool_name, args, session_id)
         except OperationCancelled:
             entry.state = "cancelled"
             entry.reason_code = "CANCELLED"
@@ -299,9 +347,10 @@ class WorkflowExecutor:
             state.log("step_failed", step=step.step_id, code=entry.reason_code)
             return
 
-        # 产物：FC → session store 铸 ref（prefix=geojson 与 dispatch 缝同族）
+        # 产物：分发缝已铸 ref（dispatch_ref/结果内 ref:）直接沿用；
+        # 未铸（registry 直调路径）才由本层 store（prefix=geojson 同族）。
         fc = _extract_fc(result)
-        ref = _extract_ref(result)
+        ref = _extract_ref(result) or str(result.get("dispatch_ref", "") or "")
         if fc is not None and not ref:
             if self._sd is not None:
                 try:
@@ -324,6 +373,8 @@ class WorkflowExecutor:
             result.get("stats"), dict) else {}
         result_warnings = [str(w) for w in (
             result.get("warnings") or []) if w]
+        feature_count = _feature_count(fc) if fc else int(
+            result.get("dispatch_feature_count", 0) or 0)
         envelope = AnalysisArtifactEnvelope(
             step_id=step.step_id,
             workflow_id=contract.workflow_id,
@@ -331,8 +382,9 @@ class WorkflowExecutor:
             ref=ref,
             crs=str(result.get("crs", "") or ""),
             units=dict(step.unit_contract),
-            feature_count=_feature_count(fc) if fc else 0,
-            empty=(fc is not None and _feature_count(fc) == 0),
+            feature_count=feature_count,
+            empty=((fc is not None and _feature_count(fc) == 0)
+                   or (fc is None and ref != "" and feature_count == 0)),
             stats={k: stats[k] for k in sorted(stats)
                    [:MAX_ENVELOPE_STATS_KEYS]} if stats else {},
             warnings=tuple(result_warnings[:8]),

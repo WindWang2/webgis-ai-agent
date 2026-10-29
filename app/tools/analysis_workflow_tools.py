@@ -26,6 +26,7 @@ from app.services.gis_harness.analysis_workflows.contracts import (
 from app.services.gis_harness.analysis_workflows.evidence import (
     StepReceipt,
     evidence_summary,
+    run_final_gate,
 )
 from app.services.gis_harness.analysis_workflows.executor import (
     DEFAULT_MAX_FEATURES,
@@ -80,6 +81,29 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
     def _registry_sync() -> Any:
         from app.agent_pi_bridge import try_get_tool_registry
         return try_get_tool_registry()
+
+    def _production_dispatch():
+        """步骤分发 = 共享 ToolDispatchService（capability 记账/guardrail/
+        复用/ref 卸载/SessionPlan 行——内层步骤与 Pi 直调同一生产缝）。
+
+        返回 None = 服务不可用（诚实 decline，不回落旁路）。
+        """
+        import uuid as _uuid
+        from app.agent_pi_bridge import (
+            _get_shared_dispatch_service,
+            try_get_tool_registry,
+        )
+        if try_get_tool_registry() is None:
+            return None
+
+        async def _dispatch(tool_name: str, args: Dict[str, Any],
+                            session_id: str):
+            service = _get_shared_dispatch_service()
+            tc = {"id": f"awf-{_uuid.uuid4().hex[:8]}",
+                  "function": {"name": tool_name, "arguments": args}}
+            return await service.dispatch(tc, session_id, set())
+
+        return _dispatch
 
     def _parse_bindings(raw: Optional[str]) -> Dict[str, DataRoleBinding]:
         """role_refs JSON → 绑定（支持 {"role": "ref:..."} 与
@@ -245,10 +269,11 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
                     "message": f"工作流 {workflow_id} 不存在——先 plan",
                     "alternatives": ["webgis_analysis_workflow_plan"]}
         registry_sync = _registry_sync()
-        if registry_sync is None:
+        dispatch_fn = _production_dispatch()
+        if registry_sync is None or dispatch_fn is None:
             return {"success": False, "command": command, "declined": True,
                     "reason_code": "AWF_REGISTRY_UNAVAILABLE",
-                    "message": "工具注册表不可用", "alternatives": []}
+                    "message": "工具注册表/分发服务不可用", "alternatives": []}
         from app.services.gis_harness.analysis_workflows.contracts import (
             AnalysisWorkflowContract,
         )
@@ -279,6 +304,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
                 session_data=session_data_manager,
                 max_features=max_features,
                 persist=(lambda st: _persist_state(session_id, st)),
+                dispatch=dispatch_fn,
             )
             state = await executor.execute(
                 session_id, contract, state, only_steps=only)
@@ -300,6 +326,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
                  "output_roles": list(env.output_roles)}
                 for sid, env in state.envelopes.items() if env.ref],
             "evidence": summary,
+            "science_gate": run_final_gate(state),
             "run_log_tail": state.run_log[-6:],
         }
 
@@ -458,10 +485,11 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
                 state.steps[sid].state = entry.state
                 state.steps[sid].reason_code = entry.reason_code
         registry_sync = _registry_sync()
-        if registry_sync is None:
+        dispatch_fn = _production_dispatch()
+        if registry_sync is None or dispatch_fn is None:
             return {"success": False, "command": command, "declined": True,
                     "reason_code": "AWF_REGISTRY_UNAVAILABLE",
-                    "message": "工具注册表不可用", "alternatives": []}
+                    "message": "工具注册表/分发服务不可用", "alternatives": []}
         from app.services.distributed_lock import session_lock_registry
         async with session_lock_registry.lock(
                 f"awf:{workflow_id}", fail_on_degraded=True):
@@ -469,6 +497,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
                 registry=registry_sync,
                 session_data=session_data_manager,
                 persist=(lambda st: _persist_state(session_id, st)),
+                dispatch=dispatch_fn,
             )
             # stale → pending（执行器按指纹精确裁决复用）
             for sid in affected:

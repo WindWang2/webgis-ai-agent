@@ -1,5 +1,5 @@
 {
- "count": 61,
+ "count": 66,
  "kind": "g05-task-scenarios",
  "scenarios": [
   {
@@ -7168,6 +7168,803 @@
     }
    ],
    "user_goal": "沿线路给剖面，换到山顶观察点查与终点的通视，调整视角后导出"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "district_polygons",
+     "name": "districts",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "webgis_analysis_workflow_plan→run 真实 dispatch 编排：denominator 绑定带 population 字段的区面层 → per_capita 步骤执行；receipts 有界投影。",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-01-wf-status",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "eq",
+     "path": "analysis_workflow.status",
+     "value": "satisfied"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-01-wf-count",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "eq",
+     "path": "analysis_workflow.steps.zones_count",
+     "value": "satisfied"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-01-wf-density",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "eq",
+     "path": "analysis_workflow.steps.area_density",
+     "value": "satisfied"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-01-wf-rate",
+     "kind": "analysis_workflow",
+     "note": "denominator 绑定区面 population 字段 → 率步骤执行",
+     "op": "eq",
+     "path": "analysis_workflow.steps.per_capita_rate",
+     "value": "satisfied"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-01-wf-receipts",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "contains",
+     "path": "analysis_workflow.receipts",
+     "value": "zones_count"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "mapspec",
+     "id": "f28-01-mapspec",
+     "kind": "mapspec_layer",
+     "note": "",
+     "op": "ge",
+     "path": "mapspec.layer_count",
+     "value": 1
+    }
+   ],
+   "family": "F28",
+   "id": "f28-01-admin-distribution",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "nl_family_choice: 场景→族的选择由 scripted plan 调用代替（生产面由 Pi LLM + 技能库解析）",
+    "persistent_dataset_supply: 数据角色的持久数据集供给（data_fabric 通道）不在本 lane——F28 用合成 store_data 种子"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "analysis_workflow",
+    "admin",
+    "distribution",
+    "goal-02"
+   ],
+   "timeout_s": 60,
+   "title": "行政区设施分布：三步工作流（计数/面积密度/每万人率）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "统计各区小学数量、每平方公里密度和每万人学校数",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "district_polygons",
+        "name": "districts"
+       },
+       "call_id": "store2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "family": "admin_facility_distribution",
+        "role_refs": "{\"subject\": \"{{ref:schools}}\", \"boundary\": \"{{ref:districts}}\", \"denominator\": \"{{ref:districts}}\"}"
+       },
+       "call_id": "plan",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_plan"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "workflow_id": "{{step:plan:workflow_id}}"
+       },
+       "call_id": "run",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_run"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "overlay_refs": [
+         "{{ref:schools}}"
+        ],
+        "primary_ref": "{{ref:districts}}",
+        "title": "成都各区小学分布与密度（模拟数据）"
+       },
+       "call_id": "product",
+       "expect_error": false,
+       "kind": "product",
+       "query": "",
+       "tool": ""
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "统计各区小学数量、每平方公里密度和每万人学校数"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "district_polygons",
+     "name": "districts",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-02-plan-honest",
+     "kind": "analysis_workflow",
+     "note": "run 执行后工作流整体 blocked（isochrone 无路网）",
+     "op": "eq",
+     "path": "analysis_workflow.status",
+     "value": "blocked"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-02-blocked-code",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "eq",
+     "path": "analysis_workflow.step_reasons.isochrone",
+     "value": "AWF_NO_NETWORK_FOR_ACCESSIBILITY"
+    }
+   ],
+   "family": "F28",
+   "id": "f28-02-no-network-blocked",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "nl_family_choice: 场景→族的选择由 scripted plan 调用代替（生产面由 Pi LLM + 技能库解析）",
+    "persistent_dataset_supply: 数据角色的持久数据集供给（data_fabric 通道）不在本 lane——F28 用合成 store_data 种子"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "analysis_workflow",
+    "accessibility",
+    "negative",
+    "goal-02"
+   ],
+   "timeout_s": 60,
+   "title": "可达性：无路网 typed 阻断（不得『15 分钟可达』结论）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "小学 15 分钟步行可达范围",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "district_polygons",
+        "name": "districts"
+       },
+       "call_id": "store2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "family": "service_accessibility",
+        "role_refs": "{\"subject\": \"{{ref:schools}}\", \"boundary\": \"{{ref:districts}}\"}"
+       },
+       "call_id": "plan",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_plan"
+      },
+      {
+       "allow_error": true,
+       "arguments": {
+        "workflow_id": "{{step:plan:workflow_id}}"
+       },
+       "call_id": "run",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_run"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "小学 15 分钟步行可达范围"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "district_polygons",
+     "name": "districts",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "road_network",
+     "name": "roads",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-03-wf-status",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "eq",
+     "path": "analysis_workflow.status",
+     "value": "satisfied"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-03-isochrone",
+     "kind": "analysis_workflow",
+     "note": "真 Dijkstra 路网等时圈（速度表/STRtree 投影）",
+     "op": "eq",
+     "path": "analysis_workflow.steps.isochrone",
+     "value": "satisfied"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-03-coverage",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "eq",
+     "path": "analysis_workflow.steps.coverage_zones",
+     "value": "satisfied"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-03-pop-skipped",
+     "kind": "analysis_workflow",
+     "note": "无人口点数据 → 覆盖人口 typed skipped 不伪装",
+     "op": "eq",
+     "path": "analysis_workflow.steps.coverage_population",
+     "value": "skipped"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-03-layer-ref",
+     "kind": "analysis_workflow",
+     "note": "等时圈产物 ref:geojson-* 可被 map_product 消费",
+     "op": "exists",
+     "path": "analysis_workflow.layers.isochrone",
+     "value": null
+    }
+   ],
+   "family": "F28",
+   "id": "f28-03-accessibility-network",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "nl_family_choice: 场景→族的选择由 scripted plan 调用代替（生产面由 Pi LLM + 技能库解析）",
+    "persistent_dataset_supply: 数据角色的持久数据集供给（data_fabric 通道）不在本 lane——F28 用合成 store_data 种子"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "analysis_workflow",
+    "accessibility",
+    "network",
+    "goal-02"
+   ],
+   "timeout_s": 60,
+   "title": "可达性：真路网等时圈 + 覆盖区（覆盖人口 typed skipped）",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "沿路网算小学 15 分钟步行可达范围和各区覆盖",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "district_polygons",
+        "name": "districts"
+       },
+       "call_id": "store2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "road_network",
+        "name": "roads"
+       },
+       "call_id": "store3",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "family": "service_accessibility",
+        "role_refs": "{\"subject\": \"{{ref:schools}}\", \"boundary\": \"{{ref:districts}}\", \"network\": \"{{ref:roads}}\"}"
+       },
+       "call_id": "plan",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_plan"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "workflow_id": "{{step:plan:workflow_id}}"
+       },
+       "call_id": "run",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_run"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "沿路网算小学 15 分钟步行可达范围和各区覆盖"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "district_polygons",
+     "name": "phase_a",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "district_polygons",
+     "name": "phase_b",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-04-blocked",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "eq",
+     "path": "analysis_workflow.status",
+     "value": "blocked"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-04-code",
+     "kind": "analysis_workflow",
+     "note": "同年份双期 → 拒绝静默差分",
+     "op": "eq",
+     "path": "analysis_workflow.step_reasons.change_diff",
+     "value": "AWF_TEMPORAL_MISMATCH"
+    }
+   ],
+   "family": "F28",
+   "id": "f28-04-temporal-mismatch",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "nl_family_choice: 场景→族的选择由 scripted plan 调用代替（生产面由 Pi LLM + 技能库解析）",
+    "persistent_dataset_supply: 数据角色的持久数据集供给（data_fabric 通道）不在本 lane——F28 用合成 store_data 种子"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "analysis_workflow",
+    "temporal",
+    "negative",
+    "goal-02"
+   ],
+   "timeout_s": 60,
+   "title": "多期变化：年份未对齐 typed 拒绝",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "对比这两期建成区变化",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "district_polygons",
+        "name": "phase_a"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "district_polygons",
+        "name": "phase_b"
+       },
+       "call_id": "store2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "family": "temporal_change",
+        "role_refs": "{\"baseline\": {\"ref\": \"{{ref:phase_a}}\", \"qualifier\": {\"year\": 2023}}, \"target_time\": {\"ref\": \"{{ref:phase_b}}\", \"qualifier\": {\"year\": 2023}}}"
+       },
+       "call_id": "plan",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_plan"
+      },
+      {
+       "allow_error": true,
+       "arguments": {
+        "workflow_id": "{{step:plan:workflow_id}}"
+       },
+       "call_id": "run",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_run"
+      }
+     ],
+     "turn_id": "t1"
+    }
+   ],
+   "user_goal": "对比这两期建成区变化"
+  },
+  {
+   "datasets": [
+    {
+     "dataset_kind": "school_points",
+     "name": "schools",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "school_points_dense",
+     "name": "schools_v2",
+     "note": "",
+     "simulated": true
+    },
+    {
+     "dataset_kind": "district_polygons",
+     "name": "districts",
+     "note": "",
+     "simulated": true
+    }
+   ],
+   "description": "",
+   "expectations": [
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-05-final-status",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "eq",
+     "path": "analysis_workflow.status",
+     "value": "satisfied"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-05-count",
+     "kind": "analysis_workflow",
+     "note": "",
+     "op": "eq",
+     "path": "analysis_workflow.steps.zones_count",
+     "value": "satisfied"
+    },
+    {
+     "expected_verdict": "pass",
+     "face": "method",
+     "id": "f28-05-layer",
+     "kind": "analysis_workflow",
+     "note": "重算后产物 ref 存在（新数据 → 新 ref）",
+     "op": "exists",
+     "path": "analysis_workflow.layers.zones_count",
+     "value": null
+    }
+   ],
+   "family": "F28",
+   "id": "f28-05-recompute",
+   "negative": false,
+   "not_evaluated": [
+    "nl_understanding: Pi LLM 的 NL→tool-call 决策由 scripted steps 代替，语义理解正确性不在本 lane 判定（见 contracts.py 设计披露）",
+    "final_text: 最终答复文本经 Pi transcript 持久化，dispatch 缝不可观测",
+    "render_pixels: 前端真实渲染像素不可观测；渲染证据以 RenderWorkEnvelope投影与导出语义一致性（verify_export_semantic_consistency）为准",
+    "nl_family_choice: 场景→族的选择由 scripted plan 调用代替（生产面由 Pi LLM + 技能库解析）",
+    "persistent_dataset_supply: 数据角色的持久数据集供给（data_fabric 通道）不在本 lane——F28 用合成 store_data 种子"
+   ],
+   "schema_version": "task_scenario.v1",
+   "tags": [
+    "analysis_workflow",
+    "recompute",
+    "multiturn",
+    "goal-02"
+   ],
+   "timeout_s": 60,
+   "title": "局部重算：输入变更 → 受影响子图重跑",
+   "turns": [
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "先按区统计小学，再换新数据重算",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points",
+        "name": "schools"
+       },
+       "call_id": "store",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "district_polygons",
+        "name": "districts"
+       },
+       "call_id": "store2",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "family": "admin_facility_distribution",
+        "role_refs": "{\"subject\": \"{{ref:schools}}\", \"boundary\": \"{{ref:districts}}\"}"
+       },
+       "call_id": "plan",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_plan"
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "workflow_id": "{{step:plan:workflow_id}}"
+       },
+       "call_id": "run",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_run"
+      }
+     ],
+     "turn_id": "t1"
+    },
+    {
+     "failure_class": "",
+     "failure_detail": "",
+     "leave_unsettled": false,
+     "message": "换新数据重算",
+     "settle_cause": "success",
+     "steps": [
+      {
+       "allow_error": false,
+       "arguments": {},
+       "call_id": "intent2",
+       "expect_error": false,
+       "kind": "intent",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "dataset_kind": "school_points_dense",
+        "name": "schools_v2"
+       },
+       "call_id": "store3",
+       "expect_error": false,
+       "kind": "store_data",
+       "query": "",
+       "tool": ""
+      },
+      {
+       "allow_error": false,
+       "arguments": {
+        "role_refs": "{\"subject\": \"{{ref:schools_v2}}\"}",
+        "workflow_id": "{{step:plan:workflow_id}}"
+       },
+       "call_id": "recompute",
+       "expect_error": false,
+       "kind": "raw",
+       "query": "",
+       "tool": "webgis_analysis_workflow_recompute"
+      }
+     ],
+     "turn_id": "t2"
+    }
+   ],
+   "user_goal": "先按区统计小学，再换新数据重算"
   }
  ],
  "schema_version": "task_scenario.v1"

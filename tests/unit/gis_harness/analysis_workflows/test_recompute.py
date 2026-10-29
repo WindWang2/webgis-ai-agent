@@ -193,3 +193,24 @@ async def test_downstream_closure_pure_function():
     closure = downstream_closure(contract, {"isochrone"})
     assert closure == {"coverage_zones", "coverage_population"}
     assert downstream_closure(contract, {"coverage_population"}) == set()
+
+
+async def test_final_gate_projection_blocks_on_science_rejection():
+    """G02 终局门接线：执行层科学硬拒 → G-SCIENCE-BLOCKED（工具失败不 pass）。"""
+    from app.services.gis_harness.analysis_workflows.evidence import (
+        run_final_gate,
+    )
+    contract = build_contract("hazard_exposure", workflow_id="awf.gate.t")
+    state = new_state(contract, contract_fingerprint="fp")
+    state.steps["hazard_buffer"].state = "failed"
+    state.steps["hazard_buffer"].reason_code = (
+        "scientific_precondition:local_metric_crs_required")
+    gate = run_final_gate(state)
+    assert gate["blocked"] is True
+    assert any(f["code"] == "G-SCIENCE-BLOCKED" for f in gate["findings"])
+    # 正常满足态：无阻断
+    ok_state = new_state(contract, contract_fingerprint="fp")
+    for entry in ok_state.steps.values():
+        entry.state = "satisfied"
+    gate2 = run_final_gate(ok_state)
+    assert gate2["blocked"] is False

@@ -21,6 +21,11 @@
 3. `gh issue list --state open` → 检查 #1842–#1866 审查 issues 是否覆盖本方向实质能力；若是 → 按任务书缩窄条款处理并记录。
 4. 结果追加到本文件 §3。
 
-## 3. 复核记录（待网络）
+## 3. 复核记录
 
 - 2026-10-29 初始：fetch/gh 均 TLS 失败（见 BASELINE 网络注记）；本地 refs 已含基线。待补。
+- **2026-10-29 深夜（网络恢复后第一次复核）**：
+  - `git fetch origin master`：**master 未前移**（仍 4b3629c90）——分支无需 rebase。
+  - `gh pr list --state open`：**0 个 open PR**——无在途冲突。
+  - `gh issue list --state open`（#1842–#1866）：全部为审查类 issue（S1–S7 audit 汇总 + 6 High：gis_memory 租户隔离 ×3、仿真 durable 幂等、交通仿真串行、数据质量环截断）。**无一覆盖「多步分析流程组装」实质能力**；本任务不改 gis_memory/simulation/data_quality/交通仿真路径，按任务书隔离条款不越界清偿。
+  - `gh auth status`：token 有效（网络恢复后 keyring 正常），PR 创建通道可用。
