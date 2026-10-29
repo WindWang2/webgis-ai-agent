@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 from app.services.gis_harness.analysis_workflows.contracts import (
     AWF_UNKNOWN_FAMILY,
     DataRoleBinding,
+    canonical_json,
 )
 from app.services.gis_harness.analysis_workflows.evidence import (
     StepReceipt,
@@ -209,12 +210,18 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
         from app.services.distributed_lock import session_lock_registry
 
         def _binding_refs(contracts: Any) -> Dict[str, str]:
+            """绑定身份 = ref + qualifier（R2b P3：qualifier 是 temporal 门
+            的唯一裁决输入，同 ref 换 qualifier = 不同绑定解释）。"""
             refs: Dict[str, str] = {}
             for role, binding in (contracts or {}).items():
                 if isinstance(binding, dict):
-                    refs[role] = str(binding.get("ref", "") or "")
+                    ref = str(binding.get("ref", "") or "")
+                    qualifier = binding.get("qualifier") or {}
                 else:
-                    refs[role] = str(getattr(binding, "ref", "") or "")
+                    ref = str(getattr(binding, "ref", "") or "")
+                    qualifier = getattr(binding, "qualifier", {}) or {}
+                refs[role] = canonical_json(
+                    {"ref": ref, "qualifier": qualifier})
             return refs
 
         async with session_lock_registry.lock(

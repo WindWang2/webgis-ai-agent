@@ -1,6 +1,6 @@
 # LOOP_STATE
 
-- 阶段：M0/M1 完成 → M2 契约层 TDD
-- 基线：4b3629c90；分支：zcode/gis-analytical-workflows-vnext
-- 网络：国际 TLS 断（周期重试）；gh token 失效
-- 下一步：contracts.py + families.py TDD
+- 阶段：M0-M9 实现完成 → 回归 + R1 独立评审进行中
+- 基线：4b3629c90；分支：zcode/gis-analytical-workflows-vnext；7 commits
+- 网络：已恢复（fetch/gh 通）
+- 下一步：R1 findings 清偿 → R2 复审 → 终验双跑 → PR

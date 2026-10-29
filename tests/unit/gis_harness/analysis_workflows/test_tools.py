@@ -291,3 +291,35 @@ async def test_recompute_noop_reuses_by_fingerprint(registry):
     assert rec["recomputed_steps"] == []          # 同身份 → 零重新 dispatch
     assert {item["step_id"]: item["ref"]
             for item in rec["layers"]} == first   # 产物 ref 不重铸
+
+
+async def test_plan_qualifier_change_is_replan(registry):
+    """R2b P3 钉扎：同 id 同 ref 只改 qualifier.year → 显式重规划
+    （temporal 门裁决轴不撕裂）。"""
+    import json as _json
+    from app.services.session_data import session_data_manager as sdm
+    phase = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"year": 1},
+         "geometry": {"type": "Polygon", "coordinates": [[
+             [104.0, 30.6], [104.01, 30.6], [104.01, 30.61],
+             [104.0, 30.61], [104.0, 30.6]]]}}]}
+    ref = await sdm.store(SESSION, phase, prefix="geojson")
+    p1 = await registry.dispatch("webgis_analysis_workflow_plan", {
+        "family": "temporal_change", "workflow_id": "awf.qual.t",
+        "role_refs": _json.dumps({
+            "baseline": {"ref": ref, "qualifier": {"year": 2023}},
+            "target_time": {"ref": ref, "qualifier": {"year": 2023}}}),
+        "session_id": SESSION})
+    assert p1["runnable"] is False                   # 同年 → MISMATCH
+    p2 = await registry.dispatch("webgis_analysis_workflow_plan", {
+        "family": "temporal_change", "workflow_id": "awf.qual.t",
+        "role_refs": _json.dumps({
+            "baseline": {"ref": ref, "qualifier": {"year": 2018}},
+            "target_time": {"ref": ref, "qualifier": {"year": 2023}}}),
+        "session_id": SESSION})
+    assert p2["runnable"] is True                    # 年份对齐 → ready
+    st = await registry.dispatch("webgis_analysis_workflow_status", {
+        "workflow_id": "awf.qual.t", "session_id": SESSION})
+    steps = {s["step_id"]: s for s in st["steps"]}
+    assert steps["change_diff"]["state"] == "pending"   # 新裁决持久化
+    assert steps["change_diff"]["reason_code"] == ""    # 不再持旧 MISMATCH
