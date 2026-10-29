@@ -299,6 +299,15 @@
     "approving": "Committing…",
     "approve": "Apply changes",
     "reject": "Reject",
-    "undoLabel": "Feature edit"
+    "undoLabel": "Feature edit",
+    "opSetFields": "Field update",
+    "opRenameField": "Field rename",
+    "opRepairGeometry": "Geometry repair",
+    "opMoveBy": "Displacement (m)",
+    "opSnapToRef": "Snap to target lines",
+    "geometrySummary": "Geometry: {before} → {after} vertices",
+    "moreFeatures": "…{count} more features",
+    "header": "{count} features · {ref}…",
+    "colon": ": "
   }
 }

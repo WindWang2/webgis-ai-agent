@@ -21,13 +21,18 @@ interface EditProposalCardProps {
   onDecide?: (planId: string, action: 'approve' | 'reject') => void;
 }
 
-const OP_LABELS: Record<FeatureEditOpSummary['op'], string> = {
-  set_fields: '字段更新',
-  rename_field: '字段重命名',
-  repair_geometry: '几何修复',
-  move_by: '位移（米）',
-  snap_to_ref: '吸附到目标线',
-};
+type EditT = ReturnType<typeof useT>;
+
+function opLabel(t: EditT, op: FeatureEditOpSummary['op']): string {
+  const key = {
+    set_fields: 'chat.editProposal.opSetFields',
+    rename_field: 'chat.editProposal.opRenameField',
+    repair_geometry: 'chat.editProposal.opRepairGeometry',
+    move_by: 'chat.editProposal.opMoveBy',
+    snap_to_ref: 'chat.editProposal.opSnapToRef',
+  }[op];
+  return t(key);
+}
 
 function opSummaryText(op: FeatureEditOpSummary): string {
   switch (op.op) {
@@ -52,7 +57,7 @@ function formatValue(v: unknown): string {
   return String(v);
 }
 
-function DiffRows({ preview }: { preview: FeatureEditPreviewItem[] }) {
+function DiffRows({ preview, t }: { preview: FeatureEditPreviewItem[]; t: EditT }) {
   const rows = preview.slice(0, 12);
   return (
     <div className="space-y-1.5">
@@ -74,13 +79,13 @@ function DiffRows({ preview }: { preview: FeatureEditPreviewItem[] }) {
             : null}
           {item.geometry ? (
             <div className="text-xs text-sky-400">
-              几何：{item.geometry.positions_before ?? '?'} → {item.geometry.positions_after ?? '?'} 顶点
+              {t('chat.editProposal.geometrySummary', { before: item.geometry.positions_before ?? '?', after: item.geometry.positions_after ?? '?' })}
             </div>
           ) : null}
         </div>
       ))}
       {preview.length > rows.length ? (
-        <div className="text-xs text-neutral-500">…其余 {preview.length - rows.length} 个要素</div>
+        <div className="text-xs text-neutral-500">{t('chat.editProposal.moreFeatures', { count: preview.length - rows.length })}</div>
       ) : null}
     </div>
   );
@@ -100,7 +105,7 @@ export function EditProposalCard({ proposal, disabled, onDecide }: EditProposalC
         <span className="font-medium">
           {t('chat.editProposal.title')}
           <span className="ml-2 text-xs font-normal text-neutral-400">
-            {proposal.n_targets} 个要素 · {proposal.ref_id.slice(0, 24)}…
+            {t('chat.editProposal.header', { count: proposal.n_targets, ref: proposal.ref_id.slice(0, 24) })}
           </span>
         </span>
         <span
@@ -115,17 +120,17 @@ export function EditProposalCard({ proposal, disabled, onDecide }: EditProposalC
       <ul className="mb-2 space-y-0.5 text-xs text-neutral-300">
         {proposal.ops.map((op, i) => (
           <li key={`${op.op}-${i}`}>
-            · {OP_LABELS[op.op]}：<span className="text-neutral-400">{opSummaryText(op)}</span>
+            · {opLabel(t, op.op)}{t('chat.editProposal.colon')}<span className="text-neutral-400">{opSummaryText(op)}</span>
           </li>
         ))}
         {proposal.schema_ops.map((s, i) => (
           <li key={`schema-${i}`}>
-            · {t('chat.editProposal.rename')}：{s.from ?? '?'} → {s.to ?? '?'}
+            · {t('chat.editProposal.rename')}{t('chat.editProposal.colon')}{s.from ?? '?'} → {s.to ?? '?'}
           </li>
         ))}
       </ul>
 
-      {proposal.preview.length > 0 ? <DiffRows preview={proposal.preview} /> : null}
+      {proposal.preview.length > 0 ? <DiffRows preview={proposal.preview} t={t} /> : null}
 
       {proposal.status === 'applied' && proposal.receipt ? (
         <div className="mt-2 text-xs text-emerald-400" data-testid="edit-proposal-applied-receipt">
