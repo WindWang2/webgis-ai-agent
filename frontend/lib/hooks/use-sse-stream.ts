@@ -41,6 +41,8 @@ import {
   attachClarification,
   attachLayerChip,
   attachPlanProposal,
+  attachFeatureEditProposal,
+  setFeatureEditProposalStatus,
   attachAgentPlan,
   clearThinkingFlag,
   finalizeAgentPlan,
@@ -66,6 +68,8 @@ import {
   getPendingClarification,
   submitClarificationAnswer,
 } from '@/lib/api/chat';
+import { decideFeatureEditPlan, redoFeatureEdit, undoFeatureEdit } from '@/lib/api/feature-edit';
+import { featureEditCommand } from '@/lib/workbench/undo';
 import { ApiError } from '@/lib/api/transport';
 
 // #742: stable identity — an inline options object churned send/bridge/
@@ -649,6 +653,12 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             plan: decision.planProposal!,
           }));
         }
+        if (decision.featureEditProposal) {
+          setMessages((prev) => attachFeatureEditProposal(prev, {
+            messageId: thinkingId,
+            proposal: decision.featureEditProposal!,
+          }));
+        }
         if (decision.explorerTaskId) {
           startExplorerProgressStream(decision.explorerTaskId);
         }
@@ -1141,6 +1151,88 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     [bridge, getMapSnapshot, userLocation, setMessages]
   );
 
+  // /goal 03：提案卡决策（approve = owner REST 同事务执行；reject 双写
+  // 服务端状态）。applied 后：地图数据增量刷新（content_revision 缓存键）
+  // + undo 栈登记（反向走同一 REST CAS 路径）。
+  const handleFeatureEditDecision = useCallback(
+    (proposal: import('@/lib/types/feature-edit').FeatureEditProposalState, action: 'approve' | 'reject') => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      if (action === 'reject') {
+        setMessages((prev) =>
+          setFeatureEditProposalStatus(prev, { planId: proposal.plan_id, status: 'rejected' }));
+        void decideFeatureEditPlan(sid, proposal.plan_id, 'reject', sessionTokenRef.current || undefined)
+          .catch(() => undefined); // 拒绝的服务端记账失败不影响 UI 终态
+        return;
+      }
+      setMessages((prev) =>
+        setFeatureEditProposalStatus(prev, { planId: proposal.plan_id, status: 'approving' }));
+      decideFeatureEditPlan(sid, proposal.plan_id, 'approve', sessionTokenRef.current || undefined)
+        .then((result) => {
+          setMessages((prev) =>
+            setFeatureEditProposalStatus(prev, {
+              planId: proposal.plan_id, status: 'applied', receipt: result.receipt }));
+          const revision = result.receipt?.content_revision_after;
+          if (typeof revision === 'number' && revision > 0) {
+            refreshDatasetLayer(sid, proposal.ref_id, revision);
+          }
+          featureEditCommand({
+            label: t('chat.editProposal.undoLabel'),
+            actor: 'user',
+            refId: proposal.ref_id,
+            undo: () => undoFeatureEdit(sid, proposal.ref_id, sessionTokenRef.current || undefined) as Promise<unknown>,
+            redo: () => redoFeatureEdit(sid, proposal.ref_id, sessionTokenRef.current || undefined) as Promise<unknown>,
+          });
+        })
+        .catch((err: unknown) => {
+          const status = (err as { status?: number })?.status;
+          const code = (err as { body?: { code?: string } })?.body?.code;
+          setMessages((prev) =>
+            setFeatureEditProposalStatus(prev, {
+              planId: proposal.plan_id,
+              status: status === 410 ? 'expired' : status === 409 ? (code === 'stale_revision' ? 'stale' : 'conflicted') : 'error',
+              error: status ? undefined : String((err as Error)?.message ?? err),
+            }));
+        });
+    },
+    [setMessages, sessionIdRef, sessionTokenRef, t],
+  );
+
+  // /goal 03：编辑提交后的受影响数据层增量刷新 —— 按 ref 找 HUD 层、以
+  // 新 content_revision 走数据面（单飞/ETag；MVT 层走服务端 epoch 失效），
+  // 不 restyle、不动 user-wins 显隐。
+  const refreshDatasetLayer = useCallback((sid: string, refId: string, revision: number) => {
+    try {
+      const hud = useHudStore.getState();
+      const layer = (hud.layers as Array<{ id: string; _refId?: string }>).find(
+        (l) => l._refId === refId,
+      );
+      if (!layer) return;
+      void requestRefFC({
+        sessionId: sid,
+        refId,
+        dataRevision: revision,
+        ownerToken: sessionTokenRef.current || undefined,
+        urgency: 'interactive',
+        reasonCode: 'feature-edit:applied',
+      }).then((res) => {
+        if (!res.fc) return;
+        const cur = useHudStore.getState();
+        const row = (cur.layers as unknown as Array<Record<string, unknown> & { id: string; _refId?: string }>).find(
+          (l) => l._refId === refId,
+        );
+        if (!row) return;
+        const descriptor = (row._descriptor as Record<string, unknown> | undefined) ?? {};
+        cur.updateLayer(row.id, {
+          source: res.fc as unknown as never,
+          _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
+        }, { source: 'server' });
+      });
+    } catch {
+      // 刷新失败：SSE mapspec 盖章镜像会随后收敛（content_revision 管线）
+    }
+  }, [sessionTokenRef]);
+
   useEffect(() => {
     handleSendRef.current = handleSend;
   }, [handleSend]);
@@ -1153,6 +1245,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     handleSend,
     handlePlanAction,
     handleClarificationSubmit,
+    handleFeatureEditDecision,
     refreshPendingClarification,
     bridge,
     agentRuntime,

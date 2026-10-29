@@ -284,5 +284,21 @@
     "copiedTitle": "已复制到剪贴板",
     "blockAria": "代码块",
     "blockAriaWithLang": "{lang} 代码块"
+  },
+  "editProposal": {
+    "title": "要素编辑提案",
+    "safe": "安全属性面",
+    "needsApproval": "需确认",
+    "rename": "全库字段重命名",
+    "applied": "已提交",
+    "undoHint": "可在操作记录中撤销",
+    "rejected": "已拒绝，数据未改动",
+    "conflict": "数据已被其他修改更新，提案已失效（可重新预览）",
+    "expired": "提案已过期（10 分钟），请重新预览",
+    "error": "提交失败，可重试",
+    "approving": "提交中…",
+    "approve": "确认修改",
+    "reject": "拒绝",
+    "undoLabel": "要素编辑"
   }
 }

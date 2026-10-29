@@ -259,6 +259,8 @@ export interface StepResultDecision {
   toolStatus: { tool: string; stepId?: string; extra?: Partial<ToolCallEntry> } | null;
   /** propose_plan 结果 → 消息 plan 挂载。 */
   planProposal: PlanProposalPayload | null;
+  /** /goal 03：webgis_feature_edit_preview 结果 → 消息编辑提案卡挂载。 */
+  featureEditProposal: import('@/lib/types/feature-edit').FeatureEditProposalState | null;
   /** deep_explore explorer_task → 独立进度流（#518）。 */
   explorerTaskId: string | null;
   /** 图层挂载决策。 */
@@ -310,6 +312,32 @@ export function stepResultDecision(
       destructive_steps: planResult.destructive_steps ?? [],
       steps_preview: planResult.steps_preview ?? [],
       status: 'pending',
+    };
+  }
+
+  // /goal 03：要素编辑预览 → 提案卡（plan_id 存在即挂载；非 committable 的
+  // 预览不会带 plan_id，模型按 findings 原文转述）。
+  let featureEditProposal: import('@/lib/types/feature-edit').FeatureEditProposalState | null = null;
+  if (tool === 'webgis_feature_edit_preview' && result?.success && typeof result?.plan_id === 'string') {
+    const r = result as {
+      plan_id: string; ref_id: string; safe?: boolean; n_targets?: number;
+      ops?: import('@/lib/types/feature-edit').FeatureEditOpSummary[];
+      schema_ops?: Array<{ from?: string; to?: string }>;
+      preview?: import('@/lib/types/feature-edit').FeatureEditPreviewItem[];
+      expected_content_revision?: number; expires_in_s?: number;
+    };
+    featureEditProposal = {
+      plan_id: r.plan_id,
+      ref_id: r.ref_id,
+      status: 'pending',
+      safe: r.safe === true,
+      n_targets: r.n_targets ?? 0,
+      ops: r.ops ?? [],
+      schema_ops: r.schema_ops ?? [],
+      preview: r.preview ?? [],
+      validation: [],
+      expected_content_revision: r.expected_content_revision ?? 0,
+      expires_in_s: r.expires_in_s,
     };
   }
 
@@ -410,7 +438,7 @@ export function stepResultDecision(
 
   const chart = result?.chart ?? null;
 
-  return { workbenchCapture, toolStatus, planProposal, explorerTaskId, layerMount, chart, chip };
+  return { workbenchCapture, toolStatus, planProposal, featureEditProposal, explorerTaskId, layerMount, chart, chip };
 }
 
 // ── 消息副作用汇总（hook 执行面用）────────────────────────────────────

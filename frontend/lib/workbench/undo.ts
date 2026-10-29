@@ -108,6 +108,29 @@ export function recordCommand(cmd: Omit<WorkbenchCommand, 'id' | 'ts' | 'session
   emitChange();
 }
 
+/** /goal 03：要素编辑命令 —— undo/redo 反向走同一 REST CAS 写路径
+ * （/feature-edits/{ref}/undo|redo；服务端 journal head 语义，409 冲突
+ * 由调用方 toast 收敛）。async 发起即忘（与 presentation 重放同纪律）。 */
+export function featureEditCommand(args: {
+  label: string;
+  actor: 'user' | 'agent';
+  refId: string;
+  undo: () => Promise<unknown>;
+  redo: () => Promise<unknown>;
+}): void {
+  recordCommand({
+    label: args.label,
+    kind: 'feature_edit',
+    actor: args.actor,
+    undo: () => {
+      void args.undo();
+    },
+    redo: () => {
+      void args.redo();
+    },
+  });
+}
+
 /** 不可逆操作仅入 journal（如 remove_layer 落账）—— 不进 undo 栈。 */
 export function journalOnly(entry: {
   type: OpLogEntry['type'];

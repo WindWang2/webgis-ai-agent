@@ -192,7 +192,7 @@ export function emitFeatureSelected(info: {
   layerId: string;
   featureId?: string | number;
   properties?: Record<string, unknown>;
-  bbox?: [number, number, number] | null;
+  bbox?: [number, number, number, number] | null;
   datasetRef?: string;
   /** 多选集（/goal 03 additive）：与 featureId 同源解析的选中 id 集；
    * 服务端 list 面纪律 ≤8 标量元素，这里额外按 32 字符裁剪保 512B 载荷预算。 */

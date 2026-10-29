@@ -1396,7 +1396,6 @@ export function MapPanel({
         emitFeatureSelected({
           layerId: family,
           featureId: projection.selected_ids[0],
-          bbox,
           datasetRef: brushRef?.startsWith('ref:') ? brushRef : undefined,
           selectedIds: projection.selected_ids,
         })
