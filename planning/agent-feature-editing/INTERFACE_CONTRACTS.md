@@ -49,7 +49,7 @@ class EditOp:                    # discriminated union
     {op: "rename_field", from: str, to: str}
     {op: "repair_geometry", fixes: ["make_valid","close_ring","dedupe_vertices"]}
     {op: "move_by", dx_m: float, dy_m: float}                  # 米，必填
-    {op: "snap_to_ref", target_ref: str, tolerance_m: float}   # 米，必填
+    {op: "snap_to_ref", ref_id: str, tolerance_m: float}      # 米，必填（ref_id 搭 registry skip 名单）
 ```
 
 ### executor.py（唯一写路径）

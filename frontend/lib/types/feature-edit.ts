@@ -87,7 +87,7 @@ export interface FeatureEditUndoResult {
 
 export interface FeatureEditHistoryEntry {
   seq: number;
-  kind: 'apply' | 'undo' | 'redo' | 'materialize';
+  kind: 'apply' | 'undo' | 'redo';
   actor?: string;
   origin?: string;
   changed: number;
