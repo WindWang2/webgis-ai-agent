@@ -21,5 +21,8 @@
   并发双收据）均有清偿后回归锁定。
 - 清偿后全量回归：后端 227 passed（14 文件面）；前端 sidebar 270 passed
   （45 文件）+ tsc 0 错；ruff/import-boundaries/scope-matrix 绿。
-- R2 复审：进行中（结果待记）。
-- push + gh pr create：待 R2 后执行。
+- R2 复审：**APPROVE**（12/12 CLEARED、4 复现不可复现；新发现 6 项全 P3，
+  R2-1/3/5 当场修复、R2-2/4/6 记 RISKS 残差）。
+- push：zcode/gis-data-onboarding-semantic-vnext → origin（新分支）。
+- **PR #1868 已创建**：https://github.com/WindWang2/webgis-ai-agent/pull/1868
+  （未合并、未等线上 CI；PR body 存档 docs/dev/sdo-pr-body.md）。
