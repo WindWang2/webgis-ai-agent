@@ -5,7 +5,7 @@
 用户说「成都小学分布、各区数量差异、密度热点，做一张专题图」时，系统现在基于**数据种类与表达目标**产出 2–4 个可比较的表达模型层设计方案（点图/聚合/密度面/区级统计/双期对比），每个候选带「为什么合适/为什么不合适/科学局限/降级路径」的 typed 证据；选定方案经 user-wins pin 固化（后续成图与自动调整不再改写）；决策链（intent→数据资格→候选→选择→分类→组合）作为一等工件随产品下发，Agent 可解释、前端可见、QA 可反查。
 
 - master 起始：`4b3629c90`（origin/master，2026-10-29）
-- 分支：`zcode/cartography-design-choices-vnext`；PR 前最新 commit：见 PR commits（12 个原子提交：M0 规划 → M1 引擎 → M2 接线 → M3 选择 → M4 检查码 → M5 五族 → M6 G05 → M7 前端 → 评审清偿 ×3）
+- 分支：`zcode/cartography-design-choices-vnext`（14 个原子提交：M0 规划 → M1 引擎 → M2 接线 → M3 选择 → M4 检查码 → M5 五族 → M6 G05 → M7 前端 → R1 评审清偿 → G4 收口 → 前端 tsc 对齐 → R2 评审清偿）
 
 ## 差异化（不重复建设）
 
@@ -36,7 +36,7 @@ master 已有：组合模板层候选（composition_selection）、recipe 级多
 | 生产接线/选择 | `pytest tests/unit/test_map_product_design_trace_v1.py tests/unit/test_map_design_select_v1.py`（真实 registry.dispatch） | 4+6 passed |
 | G05 验收 | `pytest tests/acceptance/gis_agent -m cartography --no-cov --timeout=120 -q` | 45 passed（含 FD 族 3 新场景；pin 64 场景经 CLI） |
 | requirement_ir/绑定回归 | `pytest tests/unit/gis_harness/ tests/unit/test_clarification_loop.py` | 2733+ passed |
-| 后端全量相关面 | `pytest tests/cartography/ tests/unit/gis_harness/ + design 单测` | **5679 passed, 0 failed** |
+| 后端全量相关面 | `pytest tests/cartography/ tests/unit/gis_harness/ + design 单测` | **5701 passed, 0 failed**（R2 清偿后终值） |
 | 前端 | `pnpm exec vitest run components/map/map-components`；`pnpm exec tsc --noEmit`；eslint（改动文件） | 134 passed / 零错 / 零告警 |
 | lint | `ruff check app/ tests/` | 全绿 |
 | mypy | 白名单棘轮模式，白名单文件（app/core 等 4 处）本分支未触碰 | 门禁不受影响 |
@@ -51,7 +51,7 @@ component-catalog.generated.json / types.generated.ts / catalog docs（component
 
 两轮独立上下文评审（未参与实现）：
 - **R1**：3 P1 + 2 P2 + 9 P3 → 全部清偿（commit c16ed762a），细节映射见 `planning/semantic-cartographic-design/INDEPENDENT_REVIEW.md`。
-- **R2**：见同文件 Round 2 段（本 PR 创建前完成，无 P0/P1 残留为提交条件）。
+- **R2**（agent_56ee4180，独立上下文）：R1 清偿全部实证通过（含 80 注册模型 pin 往返枚举：71/80 可用、9 拒绝均诚实且与测试锁一致）；新发现 2 P2（planned 模型被推荐可 pin、率语义模型不可 pin）+ 6 P3 → 全部清偿（cbefe52f5，含共享总账历史恢复）。专项扫描（并发/幂等/载荷截断/前端防御/G05 details 合并/契约 W8/requirement_ir 幂等副作用）无新问题。两轮共 6 处负例翻转验证均真实翻红。
 
 ## 回滚
 
