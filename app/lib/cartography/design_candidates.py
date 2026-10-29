@@ -16,7 +16,8 @@
   BLOCKED（不可计算），降级链指向原始计数 choropleth，并携带面积偏误披露；
   原始计数模型在用户语义为密度/率时 → CONDITIONAL（DENOMINATOR_MISSING，
   「显示原始计数，不得标注为每万人密度」）。
-- R2 过密点图：point_count ≥ POINT_OVERPLOT_THRESHOLD（点可读性启发阈值）
+- R2 过密点图：point_count ≥ POINT_OVERPLOT_THRESHOLD（本模块新定的点
+  可读性启发阈值——非既有权威，只降级推荐不做硬拦截）
   → point 族候选 CONDITIONAL（POINT_OVERPLOT_RISK），聚合/密度族获得对照
   理由。点数证据缺失（basis=unknown）不裁决（诚实缺席）。
 - R3 热力诚实：密度面族恒带 KDE 披露（KDE_NOT_POPULATION_DENSITY）；点数
@@ -25,8 +26,9 @@
   用户显式要求热力也被 typed block（不静默换方案、不假成功）。
 - R4 时相对比：temporal_periods ≥ 2 → 任务类目补充 change_detection（结构化
   事实派生，非 query），change/temporal 族候选自然进入池。
-- R5 聚合质心谬误：admin_aggregate_table 在场 + point/symbol 族候选 →
-  AGGREGATE_CENTROID_PLACEMENT（聚合值定位在质心，位置不具要素精度）。
+- R5 聚合质心谬误：admin_aggregate_table 在场 + 比例符号（symbol_scalar）
+  族候选 → AGGREGATE_CENTROID_PLACEMENT（聚合值定位在质心，位置不具要素
+  精度；point 族逐要素定位不受此谬误影响，不触发）。
 - R6 分类装配：graduated 模型 + 分布统计在场 → choose_classification 结论
   装配；统计缺席 → CLASSIFICATION_DEFERRED（不编造）。
 """
@@ -285,7 +287,10 @@ def _pool_from_composition(
                 "slots": cand.slot_components,
                 "reasons": cand.reasons,
             }
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — 降级可观测（P3-11）
+        import logging
+        logging.getLogger(__name__).warning(
+            "[design_candidates] composition pool degraded: %s", exc)
         return {}
     return pool
 
@@ -536,6 +541,39 @@ def generate_design_candidates(
 
     pool = _pool_from_composition(ctx)
     _augment_with_affinity_families(ctx, pool)
+    # P1-3（评审）：密度/分布类目在亲和表中无率语义模型——用户语义为
+    # 密度/率，或分母在场，且存在面表达面（主/次 polygon）时，率语义
+    # 模型按可行域直接入池（分母门控对不依赖类目路由运气）。
+    _pair_fallback_ids: set = set()
+    _polygon_surface = (
+        ctx.geometry_kind == "polygon" or "polygon" in ctx.secondary_geometry_kinds)
+    _density_semantics = ctx.statistic in _DENSITY_CLAIM_STATISTICS
+    if (_density_semantics or ctx.denominator.available) and _polygon_surface:
+        for _mid in _RATE_SEMANTIC_MODELS:
+            _model = model_reg.get(_mid)
+            if _model is None or not _model_feasible_extended(_model, ctx):
+                continue
+            if _mid not in pool:
+                pool[_mid] = {
+                    "composition": "", "score": 0.0, "slots": [],
+                    "reasons": [(
+                        "分母在场 + 面表达面（率语义候选，分母门控对）"
+                        if ctx.denominator.available
+                        else "用户密度语义 + 面表达面（率语义候选，分母"
+                        "门控对——无分母时 blocked 披露）")],
+                }
+            # 门控对的原始计数千半边：率模型的降级链目标（如
+            # normalized→administrative_choropleth）同批入池——blocked 与
+            # 可用替代必须成对可见。
+            _fb = getattr(_model, "fallback_model_id", "") or ""
+            _fb_model = model_reg.get(_fb) if _fb else None
+            if _fb_model is not None and _fb not in pool and \
+                    _model_feasible_extended(_fb_model, ctx):
+                pool[_fb] = {
+                    "composition": "", "score": 0.0, "slots": [],
+                    "reasons": ["分母门控对的原始计数对照（降级链目标）"],
+                }
+                _pair_fallback_ids.add(_fb)
 
     # 用户显式要求但组合层未给出的模型：①定向类目再检索一次（仍走同一
     # 组合选择器）；②仍被每类目 top-N 截断挤出 → 可行域直判（复用组合层
@@ -599,7 +637,7 @@ def generate_design_candidates(
         if model_id in requested:
             requested_overrides[model_id] = cand
             continue
-        if model_id in _RATE_SEMANTIC_MODELS:
+        if model_id in _RATE_SEMANTIC_MODELS or model_id in _pair_fallback_ids:
             rate_semantic_survivors.append(cand)
             continue
         fam = cand.expression_family
@@ -643,10 +681,27 @@ def generate_design_candidates(
     merged.sort(key=_rank)
     # 用户显式要求与 planner 实况候选保留席位（blocked 也必须可见——
     # typed block 是可解释决策，不是静默丢弃），其余按序补足上限。
-    reserved = [c for c in merged
-                if c.user_requested or c.map_model_id == primary_model_id]
+    # 分母门控对在密度语义/分母证据在场时占保留席位——cap-4 罚分排序
+    # 不得把门控对挤出（入池 ≠ 入集）。只保留**首个**率语义模型 + 其直接
+    # 降级目标（全部率模型占席会反把原始计数对照挤出，评审 R1 实证）。
+    _pair_reserved = (
+        _density_semantics or ctx.denominator.available) and _polygon_surface
+    _rate_reserved_ids: set = set()
+    if _pair_reserved:
+        _merged_ids = {c.map_model_id for c in merged}
+        for _mid in _RATE_SEMANTIC_MODELS:  # 审定优先序（normalized 优先）
+            if _mid in _merged_ids:
+                _rate_reserved_ids.add(_mid)
+                for _fb in _fallback_chain(_mid, model_reg)[:1]:
+                    _rate_reserved_ids.add(_fb)
+                break
+    reserved = [
+        c for c in merged
+        if c.user_requested or c.map_model_id == primary_model_id
+        or c.map_model_id in _rate_reserved_ids]
     rest = [c for c in merged
-            if not (c.user_requested or c.map_model_id == primary_model_id)]
+            if not (c.user_requested or c.map_model_id == primary_model_id
+                    or c.map_model_id in _rate_reserved_ids)]
     candidates = (reserved + rest)[:MAX_DESIGN_CANDIDATES]
 
     # selected 对齐：primary 优先；缺席则取首个非 blocked；全 blocked 如实空。

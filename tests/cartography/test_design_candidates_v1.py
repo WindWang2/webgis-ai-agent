@@ -164,8 +164,7 @@ def test_aggregate_centroid_placement_disclosed() -> None:
     symbol = [c for c in cs.candidates
               if c.expression_family == "symbol_scalar"]
     assert symbol, "用户显式要求的候选必须可见（保留席位）"
-    assert "AGGREGATE_CENTROP_PLACEMENT" in symbol[0].condition_codes \
-        or "AGGREGATE_CENTROID_PLACEMENT" in symbol[0].condition_codes
+    assert "AGGREGATE_CENTROID_PLACEMENT" in symbol[0].condition_codes
     point = [c for c in cs.candidates if c.expression_family == "point"]
     for p in point:
         assert "AGGREGATE_CENTROID_PLACEMENT" not in p.condition_codes
@@ -257,3 +256,50 @@ def test_requested_infeasible_model_typed_blocked_with_reason_type() -> None:
     assert chor
     assert chor[0].suitability == CandidateSuitability.BLOCKED
     assert "GEOMETRY_INCOMPATIBLE" in chor[0].condition_codes
+
+
+# ── 评审清偿回归（R1 轮 P1-1/P1-3/P2-4）───────────────────────────────
+
+
+def test_rate_pair_injected_for_density_categories_with_overlay() -> None:
+    """P1-3：density/spatial_distribution 类目 + overlay 面数据 → 门控对。
+
+    类目亲和表不含率语义模型——分母/密度语义 + 面表达面时按可行域注入，
+    门控对（blocked 率模型 + 原始计数对照）占保留席位不被 cap 挤出。
+    """
+    ctx = _chengdu_points_ctx(
+        statistic="density",
+        secondary_geometry_kinds=("polygon",),
+    )
+    cs = generate_design_candidates(ctx)
+    ids = [c.map_model_id for c in cs.candidates]
+    assert "normalized_choropleth" in ids, "率语义候选必须入集（非仅入池）"
+    assert "administrative_choropleth" in ids, "原始计数对照同批可见"
+    normalized = next(c for c in cs.candidates
+                      if c.map_model_id == "normalized_choropleth")
+    assert normalized.suitability == CandidateSuitability.BLOCKED
+    assert normalized.denominator_condition == DenominatorCondition.REQUIRED_MISSING
+
+
+def test_rate_pair_satisfied_with_denominator_and_overlay() -> None:
+    ctx = _chengdu_points_ctx(
+        statistic="density",
+        secondary_geometry_kinds=("polygon",),
+        denominator=DenominatorEvidence(
+            field="population", available=True, unit="人口"),
+    )
+    cs = generate_design_candidates(ctx)
+    normalized = [c for c in cs.candidates
+                  if c.map_model_id == "normalized_choropleth"]
+    assert normalized
+    assert normalized[0].denominator_condition == DenominatorCondition.REQUIRED_SATISFIED
+    assert normalized[0].suitability == CandidateSuitability.SUITABLE
+
+
+def test_density_category_without_polygon_surface_no_pair() -> None:
+    """负向：无面表达面（纯点、无 overlay）→ 率语义候选不注入。"""
+    ctx = _chengdu_points_ctx(statistic="density")
+    cs = generate_design_candidates(ctx)
+    assert all(c.map_model_id not in ("normalized_choropleth",
+                                      "dasymetric_map", "cartogram_map")
+               for c in cs.candidates)

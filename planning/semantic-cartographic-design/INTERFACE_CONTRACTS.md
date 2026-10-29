@@ -6,8 +6,10 @@
 class DenominatorEvidence(BaseModel):
     field: str = ""            # 分母字段名（空 = 无）
     available: bool = False
-    unit: str = ""             # 人口/面积等单位语义
-    source: str = "profile"    # profile|intent|dataset_semantics
+    unit: str = ""             # 人口/户数等单位语义（按字段词表语义标注）
+    source: str = "profile"    # profile|overlay|intent|dataset_semantics
+                              #（overlay = 主数据无分母、overlay 数据命中的
+                              # 跨源投影——M6 清偿评审 P3-7 增补）
 
 class DesignTaskContext(BaseModel):
     task_categories: Tuple[str, ...] = ()
@@ -22,7 +24,9 @@ class DesignTaskContext(BaseModel):
     user_requested_models: Tuple[str, ...] = ()   # 显式表达要求（heatmap 等）
     scale_hint: str = ""
     output_target: str = "interactive"
-    measurement: str = ""                   # MeasurementKind 投影
+    secondary_geometry_kinds: Tuple[str, ...] = ()  # overlay 次几何（M6：
+    # 点主数据 + 行政区 overlay → 面族表达可行；评审 P3-7 对齐——
+    # measurement 字段未实现，从契约移除）
 ```
 
 ## 2. MapDesignCandidate / DesignCandidateSet

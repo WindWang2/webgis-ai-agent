@@ -139,3 +139,36 @@ async def test_select_requires_document(registry, sid):
     )
     assert res["success"] is False
     assert res["error_code"] == "requirement_document_absent"
+
+
+# ── 评审清偿回归（R1 轮 P1-1/P1-2）───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_select_visual_heatmap_roundtrip_via_ir_bridge(registry, sid):
+    """P1-1：visual_heatmap（norm→heatmap 经 IR 桥回 visual_heatmap）必须可 pin。"""
+    await _ensure_doc(sid)
+    res = await registry.dispatch(
+        "webgis_map_design_select",
+        {"query": _QUERY, "session_id": sid,
+         "map_model_id": "visual_heatmap"},
+        session_id=sid,
+    )
+    assert res["success"] is True, res
+    assert res["pinned_model"] == "visual_heatmap"
+
+
+@pytest.mark.asyncio
+async def test_select_normalized_choropleth_typed_refusal(registry, sid):
+    """P1-1：normalized_choropleth 归一化塌缩到 choropleth 别名（指向
+    administrative_choropleth）——typed 拒绝并指明改道目标。"""
+    await _ensure_doc(sid)
+    res = await registry.dispatch(
+        "webgis_map_design_select",
+        {"query": _QUERY, "session_id": sid,
+         "map_model_id": "normalized_choropleth"},
+        session_id=sid,
+    )
+    assert res["success"] is False
+    assert res["error_code"] == "pin_target_mismatch"
+    assert "administrative_choropleth" in res["message"]

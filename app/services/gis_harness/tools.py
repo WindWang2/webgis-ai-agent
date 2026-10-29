@@ -1133,7 +1133,6 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
             )
             from app.services.gis_harness.planner import _TASK_CATEGORY_BY_INTENT
 
-            _geom_kind_cache: Dict[str, str] = {}
             # overlay 次几何/字段证据（扩展可行域与跨源分母投影用）：
             # 成都学校（点主数据）+ 行政区（overlay 面，含 population）→
             # 面族表达可行 + 分母可来自 overlay。描述符读取廉价。
@@ -1150,8 +1149,7 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                             "LineString": "line", "MultiLineString": "line",
                             "Polygon": "polygon", "MultiPolygon": "polygon",
                             }.get(str(_g))
-                    if _cat and _cat != _geom_kind_cache.get("primary") \
-                            and _cat not in _secondary_geoms:
+                    if _cat and _cat not in _secondary_geoms:
                         _secondary_geoms.append(_cat)
                 _of = _odesc.get("field_schema") or _odesc.get("fields")
                 if isinstance(_of, dict):
@@ -1167,7 +1165,6 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                 _geom_kind = {"point": "point", "line": "line",
                               "polygon": "polygon", "raster": "raster"}.get(
                     str(intent.geometry_expectation or ""), "polygon")
-            _geom_kind_cache["primary"] = _geom_kind
             # 分母证据：DENOMINATOR_FIELD_HINTS 单一事实源词表命中（字段名
             # 级匹配；宁缺毋滥——无命中即无分母，不猜）。
             _fields = (profile or {}).get("fields") or {}
@@ -1188,10 +1185,13 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                 else ("overlay" if _denom_field else "profile"))
             # 时相证据：意图声明 change_detection 且 profile 存在时相字段
             # 才认定双期可达（声明与数据双证据）。
+            from app.services.gis_harness.workflow_schema import (
+                TIME_FIELD_HINTS,
+            )
             _temporal_periods = 2 if (
                 intent.task == "change_detection"
                 and any(h in f for f in _field_names
-                        for h in ("year", "date", "period", "time", "年份"))
+                        for h in TIME_FIELD_HINTS)
             ) else 0
             # 用户显式表达要求投影：只来自 typed 信号 —— ① intent 规则引擎
             # 的 bare_density_visual（裸「密度」视觉概览语义锁，G16/G17/C018；
@@ -1228,8 +1228,13 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                 task_categories=_TASK_CATEGORY_BY_INTENT.get(
                     str(intent.task or ""), ("thematic_cartography",)),
                 geometry_kind=_geom_kind,
-                statistic="density" if intent.task == "density_analysis"
-                else "count",
+                statistic=(
+                    "density" if (
+                        str(getattr(intent, "measure", "") or "")
+                        in ("density", "rate", "ratio")
+                        or intent.task in ("analytical_density",
+                                           "concentration_analysis"))
+                    else "count"),
                 artifact_types=tuple(dict.fromkeys((
                     *{
                         "point": ("point_feature_set", "admin_aggregate_table"),
@@ -1251,7 +1256,11 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                 ) else "unknown",
                 denominator=_DenomEvidence(
                     field=_denom_field, available=bool(_denom_field),
-                    unit="人口" if _denom_field else "",
+                    unit=(
+                        "户数" if _denom_field and any(
+                            h in _denom_field
+                            for h in ("household", "户数"))
+                        else ("人口" if _denom_field else "")),
                     source=_denom_source),
                 temporal_periods=_temporal_periods,
                 user_requested_models=_user_models,
@@ -1813,17 +1822,28 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
         # 比对，别名经 registry.resolve 归一）→ typed 拒绝，绝不静默 pin
         # 到另一个模型。
         normalized = normalize_geometry_kind(model.id)
-        resolved_model = get_map_model_registry().resolve(normalized)
-        resolved_back = resolved_model.id if resolved_model is not None else ""
+        # 往返校验必须走与写入/读回**同一 seam**：requirement IR 归一化 →
+        # grammar_face_pins 的 _resolve_representation_model（IR 桥表）→
+        # registry canonical（别名归一）。此前只做 registry.resolve 会把
+        # visual_heatmap（norm→heatmap）等合法模型误拒。
+        from app.services.gis_harness.representation_binding.requirement_to_mapspec import (
+            _resolve_representation_model,
+        )
+        _raw_back = _resolve_representation_model(normalized) or ""
+        _canon_back = get_map_model_registry().resolve(_raw_back) \
+            if _raw_back else None
+        resolved_back = _canon_back.id if _canon_back is not None else ""
         if resolved_back != model.id:
             return {
                 "success": False,
                 "error_code": "pin_target_mismatch",
                 "message": (
-                    f"'{model.id}' 经 IR 归一化为 '{normalized}'，重解析到 "
-                    f"'{resolved_back or '（无）'}' —— 词表改道，拒绝 pin"
-                    "（可用 IR 词表：heatmap/choropleth/proportional_symbol/"
-                    "isoline/point/flow 或可直解的注册模型 id）"),
+                    f"'{model.id}' 经 IR 归一化为 '{normalized}'，读写 seam "
+                    f"重解析到 '{resolved_back or '（无）'}' —— 词表改道，拒绝"
+                    " pin（可往返的模型 id 如：visual_heatmap/point_cluster/"
+                    "aggregate_grid/isoline_contour/administrative_choropleth/"
+                    "simple_point_map/proportional_symbol；改道语义请改 pin "
+                    "重解析到的目标模型）"),
                 "requested_model": model.id,
                 "normalized_kind": normalized,
             }

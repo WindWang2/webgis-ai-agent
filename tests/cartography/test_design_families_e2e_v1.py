@@ -175,3 +175,20 @@ async def test_f5_chart_map_coherence_on_committed_spec(registry, sid):
                   (spec.get("layout") or {}).get("components") or []}
     if any(ly.get("type") == "heatmap" for ly in spec.get("layers") or []):
         assert "continuous_colorbar" in comp_types
+
+
+# ── 评审清偿回归（R1 轮 P1-2：密度语义经 intent.measure 单源投影）────
+
+
+async def test_density_measure_projects_rate_semantics(registry, sid):
+    """「成都小学密度分布」类查询 → statistic=density → 原始计数披露可达。"""
+    res = await _product(registry, sid, _points(40), "成都各区小学密度分布对比")
+    dc = res["design_candidates"]
+    # 密度语义 + 无分母 → 门控对在场（blocked normalized 或原始计数披露）
+    ids = [c["mapModel"] for c in dc["candidates"]]
+    codes = {c["mapModel"]: c["conditionCodes"] for c in dc["candidates"]}
+    if "administrative_choropleth" in ids:
+        assert "DENOMINATOR_MISSING" in codes["administrative_choropleth"], \
+            "用户密度语义 → 原始计数候选必须带『不得标注为每万人』披露"
+    facts = res["design_decision_trace"]["dataFacts"]
+    assert any("分母" in f for f in facts)
