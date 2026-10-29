@@ -14,7 +14,7 @@ class EditOpModel(BaseModel):
     fixes: Optional[List[str]] = None                 # repair_geometry
     dx_m: Optional[float] = None                      # move_by（米，必填）
     dy_m: Optional[float] = None                      # move_by（米，必填）
-    target_ref: Optional[str] = None                  # snap_to_ref
+    ref_id: Optional[str] = None                      # snap_to_ref（skip 解引用名单键）
     tolerance_m: Optional[float] = None               # snap_to_ref（米，必填）
     # rename_field 的 from/to（`from` 是 Python 保留字 → 别名）
     from_field: Optional[str] = Field(default=None, alias="from")

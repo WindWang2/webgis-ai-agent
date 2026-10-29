@@ -100,13 +100,13 @@ def _validate_op_shapes(ops: List[Any]) -> List[Dict[str, Any]]:
                 finding("unit_required", "move_by requires numeric dx_m/dy_m (meters)")
             )
         elif kind == "snap_to_ref" and not (
-            isinstance(op.get("target_ref"), str)
+            isinstance(op.get("ref_id"), str)
             and isinstance(op.get("tolerance_m"), (int, float))
         ):
             findings.append(
                 finding(
                     "unit_required",
-                    "snap_to_ref requires target_ref and numeric tolerance_m (meters)",
+                    "snap_to_ref requires ref_id and numeric tolerance_m (meters)",
                 )
             )
     return findings
@@ -160,7 +160,10 @@ def derive_changes(
             deltas.extend(geom_deltas)
             op_summaries.append({"op": kind, "dx_m": op.get("dx_m"), "dy_m": op.get("dy_m")})
         elif kind == "snap_to_ref":
-            target_ref = op.get("target_ref")
+            # 字段名 ref_id：registry 参数解引用的既有 skip 名单覆盖嵌套
+            # dict 键 —— 游标身份直达工具（transparent resolution 会把
+            # ref: 字符串内联成整个 FeatureCollection）。
+            target_ref = op.get("ref_id")
             if target_ref not in target_payloads:
                 findings.append(finding("dataset_not_editable", "snap target ref unavailable", target_ref=str(target_ref)[:64]))
             else:

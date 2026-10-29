@@ -37,7 +37,7 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
             "数据版本（content_revision + 指纹）。返回有界摘要与 plan_id（TTL 10 分钟）。"
             "词表：set_fields（批量字段，类型/枚举校验）、rename_field、"
             "repair_geometry（make_valid/close_ring/dedupe_vertices）、"
-            "move_by（dx_m/dy_m 米制必填）、snap_to_ref（target_ref+tolerance_m）。"
+            "move_by（dx_m/dy_m 米制必填）、snap_to_ref（ref_id+tolerance_m）。"
             "✅ 用于：用户说「把选中的这三所学校类型改为小学」→ 本工具出预览。"
             "❌ 不做：隐式智能移位/无单位位移/词表外新值（校验 findings 会拒绝）。"
         ),
@@ -183,7 +183,7 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
                     "kind": e.get("kind"),
                     "actor": e.get("actor"),
                     "origin": e.get("origin"),
-                    "changed": len(e.get("deltas") or []),
+                    "changed": len({d.get("wfid") for d in e.get("deltas") or [] if isinstance(d, dict)}),
                     "schema_ops": e.get("schema_ops") or [],
                     "content_revision_after": e.get("content_revision_after"),
                 }

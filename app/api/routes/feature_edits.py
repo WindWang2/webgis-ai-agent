@@ -215,7 +215,7 @@ async def feature_edit_history(
                 "kind": e.get("kind"),
                 "actor": e.get("actor"),
                 "origin": e.get("origin"),
-                "changed": len(e.get("deltas") or []),
+                "changed": len({d.get("wfid") for d in e.get("deltas") or [] if isinstance(d, dict)}),
                 "schema_ops": e.get("schema_ops") or [],
                 "content_revision_after": e.get("content_revision_after"),
                 "created_at": e.get("created_at"),

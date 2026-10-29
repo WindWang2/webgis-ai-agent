@@ -127,7 +127,7 @@ def _receipt(entry: Dict[str, Any], stamp_status: str = "pending", mapspec_revis
         "entry_seq": entry.get("seq"),
         "kind": entry.get("kind"),
         "ref_id": entry.get("ref_id"),
-        "changed_wfids": [d.get("wfid") for d in entry.get("deltas") or []][:64],
+        "changed_wfids": list(dict.fromkeys(d.get("wfid") for d in entry.get("deltas") or []))[:64],
         "schema_ops": entry.get("schema_ops") or [],
         "content_revision_after": entry.get("content_revision_after"),
         "fingerprint_after": entry.get("fingerprint_after"),
@@ -167,9 +167,9 @@ async def _load_ref(session_id: str, ref_id: str) -> Tuple[Any, Dict[str, Any]]:
 
 def _prefetch_target_refs(ops: List[Dict[str, Any]]) -> List[str]:
     return [
-        op["target_ref"]
+        op["ref_id"]
         for op in ops
-        if isinstance(op, dict) and op.get("op") == "snap_to_ref" and isinstance(op.get("target_ref"), str)
+        if isinstance(op, dict) and op.get("op") == "snap_to_ref" and isinstance(op.get("ref_id"), str)
     ]
 
 

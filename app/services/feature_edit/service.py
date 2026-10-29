@@ -58,7 +58,7 @@ async def build_and_store_plan(
 
     target_payloads: Dict[str, Any] = {}
     for op in ops:
-        target_ref = op.get("target_ref") if isinstance(op, dict) else None
+        target_ref = op.get("ref_id") if isinstance(op, dict) else None
         if op.get("op") == "snap_to_ref" and isinstance(target_ref, str):
             target_payloads[target_ref] = await session_data_manager.get(session_id, target_ref)
 

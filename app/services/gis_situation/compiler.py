@@ -533,7 +533,7 @@ def compile_interaction(
                     "kind": entry.get("kind"),
                     "actor": entry.get("actor"),
                     "origin": entry.get("origin"),
-                    "changed_features": len(entry.get("deltas") or []),
+                    "changed_features": len({d.get("wfid") for d in entry.get("deltas") or [] if isinstance(d, dict)}),
                     "schema_ops": len(entry.get("schema_ops") or []),
                     "content_revision_after": entry.get("content_revision_after"),
                     "journal_dropped": dropped or None,

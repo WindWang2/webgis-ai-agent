@@ -137,8 +137,11 @@ def apply_deltas_to_features(
         hit = by_wfid.get(wfid)
         if hit is None:
             continue
-        i, feature = hit
-        new_feature = copy.deepcopy(feature)
+        i, _feature = hit
+        # 同一要素可命中多个 delta（一个 op 一条：先字段后几何）——基于
+        # out[i] 的**当前态**累积，绝不由原始要素重新拷贝（否则后一个
+        # delta 静默抹掉前一个的效果）。
+        new_feature = copy.deepcopy(out[i])
         props = new_feature.get("properties")
         if not isinstance(props, dict):
             props = {}
