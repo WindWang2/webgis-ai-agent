@@ -48,6 +48,9 @@ class StepStateEntry(BaseModel):
     attempts: int = 0
     updated_at: float = 0.0
 
+    def touch(self) -> None:
+        self.updated_at = time.time()
+
 
 class WorkflowRunState(BaseModel):
     """一个工作流实例的持久运行态。"""
@@ -81,7 +84,8 @@ class WorkflowRunState(BaseModel):
 
 def new_state(contract: AnalysisWorkflowContract, *,
               contract_fingerprint: str) -> WorkflowRunState:
-    """从契约初始化运行态（步骤全 pending；blocked 裁决由 orchestrator 写）。"""
+    """从契约初始化运行态（步骤全 pending；blocked/skipped 裁决由
+    ``apply_plan_verdicts`` 从 plan 结果灌入——plan 与 state 单向流动）。"""
     return WorkflowRunState(
         workflow_id=contract.workflow_id,
         family=contract.family,
@@ -92,6 +96,30 @@ def new_state(contract: AnalysisWorkflowContract, *,
         },
         contract_snapshot=contract.model_dump(),
     )
+
+
+def apply_plan_verdicts(state: WorkflowRunState,
+                        step_verdicts: list) -> WorkflowRunState:
+    """把 plan 期 typed 裁决（blocked/skipped）写入运行态。
+
+    只写入非 ready 裁决；ready 保持现状（可能已有 satisfied 历史——
+    幂等复用优先）。参数类型为 orchestrator.StepPlanVerdict 列表
+    （避免循环 import，按鸭子类型消费）。
+    """
+    for verdict in step_verdicts:
+        entry = state.steps.get(verdict.step_id)
+        if entry is None:
+            continue
+        if verdict.verdict == "blocked":
+            entry.state = "blocked"
+            entry.reason_code = verdict.reason_code
+            entry.message = verdict.message
+        elif verdict.verdict == "skipped":
+            entry.state = "skipped"
+            entry.reason_code = verdict.reason_code
+            entry.message = verdict.message
+    state.status = verdict_of(state)
+    return state
 
 
 def state_to_payload(state: WorkflowRunState) -> Dict[str, Any]:

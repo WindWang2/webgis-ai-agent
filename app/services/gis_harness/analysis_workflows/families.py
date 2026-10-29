@@ -99,13 +99,13 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
     "service_accessibility": (
         _step("isochrone", "isochrone_network",
               {"network_layer": "role:network", "facilities": "role:subject"},
-              capability="network_isochrone",
+              capability="service_area",
               params={"travel_time": 15.0, "mode": "walking"},
               units={"travel_time": "min"},
               outputs=("service_area",)),
         _step("coverage_zones", "overlay_analysis",
               {"layer_a": "step:isochrone", "layer_b": "role:boundary"},
-              capability="overlay_analysis",
+              capability="geometry_overlay",
               params={"how": "intersection"},
               deps=("isochrone",),
               outputs=("coverage_zones",)),
@@ -119,14 +119,18 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
     "hazard_exposure": (
         _step("hazard_buffer", "buffer_analysis",
               {"geojson": "role:hazard"},
-              capability="buffer_analysis",
+              capability="geometry_buffer",
               params={"distance": 1000.0, "unit": "m"},
               units={"distance": "m"},
               outputs=("hazard_zone",)),
-        _step("exposure_intersect", "overlay_analysis",
-              {"layer_a": "step:hazard_buffer", "layer_b": "role:receptor"},
-              capability="overlay_analysis",
-              params={"how": "intersection"},
+        # 暴露清单：受体点 within 危险源缓冲区（spatial_join 语义——
+        # overlay(polygon×point) 因 keep_geom_type 丢点几何，不是本步骤
+        # 的正确算子）。M:N 基数（重叠缓冲区内一受体多行）由族披露声明。
+        _step("exposure_intersect", "spatial_join",
+              {"left_layer": "role:receptor",
+               "right_layer": "step:hazard_buffer"},
+              capability="spatial_join",
+              params={"join_type": "inner", "predicate": "within"},
               deps=("hazard_buffer",),
               outputs=("exposed_receptors",)),
     ),
@@ -135,14 +139,14 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
         # 的 temporal 门裁决（AWF_TEMPORAL_MISMATCH），差分本身委托既有 overlay。
         _step("change_diff", "overlay_analysis",
               {"layer_a": "role:target_time", "layer_b": "role:baseline"},
-              capability="overlay_analysis",
+              capability="geometry_overlay",
               params={"how": "difference"},
               outputs=("change_areas",)),
         # 变化面积/百分比：把差分面回投到目标期做占比（identity 保留
         # 目标期完整几何 + 差分标记），统计口径由 stats 投影披露。
         _step("change_share", "overlay_analysis",
               {"layer_a": "role:target_time", "layer_b": "step:change_diff"},
-              capability="overlay_analysis",
+              capability="geometry_overlay",
               params={"how": "identity"},
               deps=("change_diff",),
               outputs=("change_share_zones",)),
@@ -150,7 +154,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
     "statistical_zones": (
         _step("grid_stats", "h3_binning",
               {"geojson": "role:subject"},
-              capability="h3_grid_stats",
+              capability="grid_binning",
               params={"resolution": 8, "stat_method": "count"},
               preconds=("point_support_required",),
               outputs=("grid_zones",)),
@@ -167,7 +171,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               outputs=("rate_grid",)),
         _step("hotspot", "hotspot_analysis",
               {"geojson": "step:grid_stats"},
-              capability="hotspot_analysis",
+              capability="hotspot",
               deps=("grid_stats",),
               optional=True,
               outputs=("hotspot_zones",)),
@@ -240,6 +244,8 @@ _FAMILY_NOTES: Dict[str, Tuple[str, ...]] = {
     "hazard_exposure": (
         "缓冲半径是暴露筛查代理——真实影响场随危险源类型/地形/气象变化；"
         "阈值结论应给敏感性区间而非单值断言",
+        "暴露清单是 M:N 空间连接（重叠缓冲区内一个受体出现多行）——"
+        "受体计数不得把清单行数当独立受体数（需按受体 id 去重口径披露）",
     ),
     "temporal_change": (
         "双期差分要求年份/CRS/覆盖范围对齐；分类口径不一致时面积变化不可比"

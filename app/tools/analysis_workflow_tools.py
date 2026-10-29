@@ -1,0 +1,492 @@
+"""Analysis Workflow 工具面（goal-02 M4）—— Pi/Agent 可调用的生产入口。
+
+四个 tier-1 工具（先例：scene_orchestration_tools / plan_mode 工具族）：
+
+- ``webgis_analysis_workflow_plan``    场景→契约+typed 裁决（零执行）
+- ``webgis_analysis_workflow_run``     执行 pending 步骤（真实 dispatch/幂等/可取消）
+- ``webgis_analysis_workflow_status``  状态/产物/lineage/失效 只读投影
+- ``webgis_analysis_workflow_recompute`` 输入或参数变更→受影响子图重算
+
+纪律：
+- 执行真相 = registry.dispatch（与 Pi 直调工具同缝）；
+- 状态单键持久（session store alias）+ per-workflow 分布式锁；
+- 返回载荷有界（refs/统计键/receipts 投影——FC 本体绝不进上下文）；
+- 命令发射 = 工具名本身（不新增前端 command 字符串面）。
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, Dict, Optional
+
+from app.services.gis_harness.analysis_workflows.contracts import (
+    AWF_UNKNOWN_FAMILY,
+    DataRoleBinding,
+)
+from app.services.gis_harness.analysis_workflows.evidence import (
+    StepReceipt,
+    evidence_summary,
+)
+from app.services.gis_harness.analysis_workflows.executor import (
+    DEFAULT_MAX_FEATURES,
+    WorkflowExecutor,
+)
+from app.services.gis_harness.analysis_workflows.families import (
+    FAMILY_IDS,
+    family_label,
+)
+from app.services.gis_harness.analysis_workflows.orchestrator import (
+    plan_workflow,
+)
+from app.services.gis_harness.analysis_workflows.recompute import (
+    downstream_closure,
+)
+from app.services.gis_harness.analysis_workflows.state import (
+    apply_plan_verdicts,
+    new_state,
+    state_alias,
+    state_from_payload,
+    state_to_payload,
+)
+from app.services.session_data import session_data_manager
+from app.tools.registry import ToolRegistry, tool
+
+logger = logging.getLogger(__name__)
+
+def register_analysis_workflow_tools(registry: ToolRegistry):
+    """注册 4 个分析工作流工具（append-only；不改既有工具）。"""
+
+    # ── 内部助手 ─────────────────────────────────────────────────────────
+
+    async def _load_state(session_id: str, workflow_id: str):
+        alias = state_alias(workflow_id)
+        try:
+            ref = await session_data_manager.resolve_alias(session_id, alias)
+        except Exception:  # noqa: BLE001 — Redis 降级时按无状态处理
+            ref = alias
+        payload = None
+        try:
+            payload = await session_data_manager.get(session_id, ref)
+        except Exception:  # noqa: BLE001
+            payload = None
+        return state_from_payload(payload if isinstance(payload, dict) else {})
+
+    async def _persist_state(session_id: str, state) -> None:
+        ref = await session_data_manager.store(
+            session_id, state_to_payload(state), prefix="awf-state")
+        await session_data_manager.set_alias(
+            session_id, ref, state_alias(state.workflow_id))
+
+    def _registry_sync() -> Any:
+        from app.agent_pi_bridge import try_get_tool_registry
+        return try_get_tool_registry()
+
+    def _parse_bindings(raw: Optional[str]) -> Dict[str, DataRoleBinding]:
+        """role_refs JSON → 绑定（支持 {"role": "ref:..."} 与
+        {"role": {"ref": ..., "qualifier": {...}}} 两种形态）。"""
+        if not raw:
+            return {}
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(data, dict):
+            raise ValueError("role_refs 必须是 {role: ref|{ref,qualifier}} 对象")
+        bindings: Dict[str, DataRoleBinding] = {}
+        for role, value in data.items():
+            if isinstance(value, str):
+                bindings[role] = DataRoleBinding(role=role, ref=value)
+            elif isinstance(value, dict):
+                bindings[role] = DataRoleBinding(
+                    role=role,
+                    ref=str(value.get("ref", "") or ""),
+                    qualifier=dict(value.get("qualifier") or {}),
+                    dataset_hint=str(value.get("dataset_hint", "") or ""))
+            else:
+                raise ValueError(f"角色 {role} 的绑定形态非法")
+        return bindings
+
+    # ── 工具 1：plan ─────────────────────────────────────────────────────
+
+    @tool(
+        registry, name="webgis_analysis_workflow_plan",
+        capabilities=["plan_workflow_orchestration"],
+        tier=1,
+        description=(
+            "多步 GIS 分析工作流规划：把用户场景装配成带数据角色合同/科学前置/"
+            "单位契约的步骤 DAG，并给出 typed 裁决（缺数据→blocked+获取建议；"
+            "无路网→不得给等时数值结论；缺分母→只给计数不伪装密度）。**不执行**。"
+            "\n五族：admin_facility_distribution（行政区设施分布）/ "
+            "service_accessibility（路网可达性）/ hazard_exposure（风险暴露）/"
+            " temporal_change（多期变化）/ statistical_zones（统计分区）。"
+            "\n何时不用：单工具即可回答的问题（直接调该工具）；"
+            "LLM 自由组合非常规步骤（用 propose_plan）。"
+        ),
+        param_descriptions={
+            "family": "工作流族 id（五族词表之一）",
+            "role_refs": (
+                "数据角色绑定 JSON：{role: 'ref:geojson-…'} 或 "
+                "{role: {'ref': …, 'qualifier': {'year': 2018}}}；"
+                "temporal 族必须带 qualifier.year"),
+            "params": "步骤参数覆盖 JSON：{step_id: {参数名: 值}}",
+            "workflow_id": "复用既有工作流 id（默认按族+内容派生）",
+        },
+        side_effect="state_mutation",
+        data_mutations=["session_state"],
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("分析工作流", "多步分析", "编排", "analysis workflow", "plan"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=("invalid_args", "missing_data"),
+    )
+    async def webgis_analysis_workflow_plan(
+        family: str,
+        role_refs: Optional[str] = None,
+        params: Optional[str] = None,
+        workflow_id: str = "",
+        session_id: Optional[str] = None,
+    ) -> dict:
+        command = "webgis_analysis_workflow_plan"
+        if not session_id:
+            return {"success": False, "message": "Missing session_id",
+                    "command": command}
+        try:
+            bindings = _parse_bindings(role_refs)
+            overrides = (json.loads(params) if isinstance(params, str)
+                         else params) if params else None
+        except (ValueError, json.JSONDecodeError) as exc:
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": "AWF_BAD_JSON",
+                    "message": f"参数 JSON 非法：{exc}", "alternatives": []}
+        wf_id = workflow_id or f"awf.{family}.{abs(hash((family, role_refs or ''))) % 10**10}"
+        try:
+            result = plan_workflow(
+                family, workflow_id=wf_id, bindings=bindings,
+                params_overrides=overrides,
+                tool_exists=(lambda n: True),  # run 期再真实校验注册面
+            )
+        except KeyError:
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": AWF_UNKNOWN_FAMILY,
+                    "message": f"未知族 {family}（词表: {FAMILY_IDS}）",
+                    "alternatives": list(FAMILY_IDS)}
+        state = new_state(result.contract,
+                          contract_fingerprint=result.fingerprint)
+        apply_plan_verdicts(state, result.step_verdicts)
+        await _persist_state(session_id, state)
+        return {
+            "success": True,
+            "command": command,
+            "workflow_id": wf_id,
+            "family": family,
+            "family_label": family_label(family),
+            "runnable": result.runnable,
+            "steps": [
+                {"step_id": v.step_id, "verdict": v.verdict,
+                 "reason_code": v.reason_code, "tool": next(
+                     (s.tool_name for s in result.contract.steps
+                      if s.step_id == v.step_id), ""),
+                 "message": v.message}
+                for v in result.step_verdicts],
+            "blocked_reasons": list(result.blocked_reasons),
+            "alternatives": list(result.alternatives),
+            "visualization_hints": list(result.visualization_hints),
+            "risk_notes": list(result.contract.risk_notes),
+            "next_action": (
+                "webgis_analysis_workflow_run" if result.runnable
+                else "先按 alternatives 补数据角色绑定，再重新 plan"),
+        }
+
+    # ── 工具 2：run ──────────────────────────────────────────────────────
+
+    @tool(
+        registry, name="webgis_analysis_workflow_run",
+        capabilities=["plan_workflow_orchestration"],
+        tier=1,
+        description=(
+            "执行分析工作流的 pending 步骤：每步经真实工具分发（单一执行真相），"
+            "产物铸 ref:geojson-*、每步留 MethodUseContract receipt；同输入幂等"
+            "（已 satisfied 且指纹未变的步骤直接复用，不重复写产物）。"
+            "\n返回有界摘要（refs/统计/证据）——大数据不进上下文。"
+            "\n何时不用：未经 plan 建立工作流（先调 plan）。"
+        ),
+        param_descriptions={
+            "workflow_id": "plan 返回的工作流 id",
+            "only_steps": "只执行指定步骤 id 的 JSON 数组（默认全部 pending）",
+            "max_features": "单输入行数预算（默认 100000，超限 typed blocked）",
+        },
+        side_effect="deterministic_compute",
+        network=False,
+        deterministic=True,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        tags=("分析工作流", "执行", "多步分析", "run", "evidence"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=("invalid_args", "missing_data", "capability_unavailable",
+                       "memory"),
+    )
+    async def webgis_analysis_workflow_run(
+        workflow_id: str,
+        only_steps: Optional[str] = None,
+        max_features: int = DEFAULT_MAX_FEATURES,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        command = "webgis_analysis_workflow_run"
+        if not session_id:
+            return {"success": False, "message": "Missing session_id",
+                    "command": command}
+        state = await _load_state(session_id, workflow_id)
+        if state is None:
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": "AWF_WORKFLOW_NOT_FOUND",
+                    "message": f"工作流 {workflow_id} 不存在——先 plan",
+                    "alternatives": ["webgis_analysis_workflow_plan"]}
+        registry_sync = _registry_sync()
+        if registry_sync is None:
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": "AWF_REGISTRY_UNAVAILABLE",
+                    "message": "工具注册表不可用", "alternatives": []}
+        from app.services.gis_harness.analysis_workflows.contracts import (
+            AnalysisWorkflowContract,
+        )
+        try:
+            contract = AnalysisWorkflowContract.model_validate(
+                state.contract_snapshot)
+        except Exception:  # noqa: BLE001 — 快照损坏=诚实失败
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": "AWF_CONTRACT_SNAPSHOT_CORRUPT",
+                    "message": "契约快照不可解析（需重新 plan）",
+                    "alternatives": ["webgis_analysis_workflow_plan"]}
+        only: Optional[set] = None
+        if only_steps:
+            try:
+                only = set(json.loads(only_steps))
+            except (json.JSONDecodeError, TypeError):
+                return {"success": False, "command": command,
+                        "reason_code": "AWF_BAD_JSON",
+                        "message": "only_steps 必须是步骤 id 的 JSON 数组"}
+        from app.services.distributed_lock import session_lock_registry
+        async with session_lock_registry.lock(
+                f"awf:{workflow_id}", fail_on_degraded=True):
+            state = await _load_state(session_id, workflow_id) or state
+            if state.running_stale():
+                state.log("resume_after_stale")
+            executor = WorkflowExecutor(
+                registry=registry_sync,
+                session_data=session_data_manager,
+                max_features=max_features,
+                persist=(lambda st: _persist_state(session_id, st)),
+            )
+            state = await executor.execute(
+                session_id, contract, state, only_steps=only)
+        summary = evidence_summary(contract, {
+            k: StepReceipt.model_validate(v)
+            for k, v in state.receipts.items()})
+        return {
+            "success": state.status in ("satisfied",),
+            "command": command,
+            "workflow_id": workflow_id,
+            "status": state.status,
+            "steps": [
+                {"step_id": sid, "state": e.state,
+                 "reason_code": e.reason_code, "ref": e.envelope_ref_hint}
+                for sid, e in state.steps.items()],
+            "layers": [
+                {"step_id": sid, "ref": env.ref,
+                 "feature_count": env.feature_count,
+                 "output_roles": list(env.output_roles)}
+                for sid, env in state.envelopes.items() if env.ref],
+            "evidence": summary,
+            "run_log_tail": state.run_log[-6:],
+        }
+
+    # ── 工具 3：status ───────────────────────────────────────────────────
+
+    @tool(
+        registry, name="webgis_analysis_workflow_status",
+        capabilities=["plan_workflow_orchestration"],
+        tier=1,
+        description=(
+            "查询分析工作流状态：步骤三态/产物 ref/输入指纹/失效视图/"
+            "证据摘要。用于回看哪步失败、检查产物 lineage、判断是否需要重算。"
+        ),
+        param_descriptions={"workflow_id": "工作流 id"},
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("分析工作流", "状态", "status", "lineage"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=("missing_data",),
+    )
+    async def webgis_analysis_workflow_status(
+        workflow_id: str,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        command = "webgis_analysis_workflow_status"
+        if not session_id:
+            return {"success": False, "message": "Missing session_id",
+                    "command": command}
+        state = await _load_state(session_id, workflow_id)
+        if state is None:
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": "AWF_WORKFLOW_NOT_FOUND",
+                    "message": f"工作流 {workflow_id} 不存在",
+                    "alternatives": ["webgis_analysis_workflow_plan"]}
+        return {
+            "success": True,
+            "command": command,
+            "workflow_id": workflow_id,
+            "status": state.status,
+            "steps": [
+                {"step_id": sid, "state": e.state,
+                 "reason_code": e.reason_code, "attempts": e.attempts,
+                 "fingerprint": e.fingerprint[:16]}
+                for sid, e in state.steps.items()],
+            "layers": [
+                {"step_id": sid, "ref": env.ref,
+                 "feature_count": env.feature_count,
+                 "stats": env.stats, "warnings": list(env.warnings)}
+                for sid, env in state.envelopes.items()],
+            "receipts": list(state.receipts.keys()),
+            "run_log_tail": state.run_log[-8:],
+        }
+
+    # ── 工具 4：recompute ────────────────────────────────────────────────
+
+    @tool(
+        registry, name="webgis_analysis_workflow_recompute",
+        capabilities=["plan_workflow_orchestration"],
+        tier=1,
+        description=(
+            "选择性局部重算：输入数据或步骤参数变更后，只重跑受影响子图"
+            "（指纹对账 → stale 步骤及其下游闭包）；未受影响步骤的产物直接"
+            "复用（ref 不重铸）。纯样式变更不属于本工具范围（配色等呈现态"
+            "永不触发科学重算）。"
+            "\n何时不用：首次执行（用 run）；只改了图例/配色（无需重算）。"
+        ),
+        param_descriptions={
+            "workflow_id": "工作流 id",
+            "role_refs": "变更后的角色绑定 JSON（未变更的角色可省略）",
+            "params": "变更后的步骤参数 JSON（只列变更的步骤）",
+        },
+        side_effect="deterministic_compute",
+        network=False,
+        deterministic=True,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        tags=("分析工作流", "重算", "失效", "recompute", "增量"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=("invalid_args", "missing_data"),
+    )
+    async def webgis_analysis_workflow_recompute(
+        workflow_id: str,
+        role_refs: Optional[str] = None,
+        params: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        command = "webgis_analysis_workflow_recompute"
+        if not session_id:
+            return {"success": False, "message": "Missing session_id",
+                    "command": command}
+        state = await _load_state(session_id, workflow_id)
+        if state is None:
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": "AWF_WORKFLOW_NOT_FOUND",
+                    "message": f"工作流 {workflow_id} 不存在",
+                    "alternatives": ["webgis_analysis_workflow_plan"]}
+        from app.services.gis_harness.analysis_workflows.contracts import (
+            AnalysisWorkflowContract,
+        )
+        contract = AnalysisWorkflowContract.model_validate(
+            state.contract_snapshot)
+        try:
+            bindings = _parse_bindings(role_refs)
+            param_changes = (json.loads(params) if isinstance(params, str)
+                             else params) if params else {}
+        except (ValueError, json.JSONDecodeError) as exc:
+            return {"success": False, "command": command,
+                    "reason_code": "AWF_BAD_JSON",
+                    "message": f"参数 JSON 非法：{exc}"}
+        # 重建契约（角色/参数变更进新快照），plan 复裁决
+        merged_bindings = dict(contract.data_contracts)
+        for role, binding in bindings.items():
+            merged_bindings[role] = binding
+        merged_params = {
+            s.step_id: dict(s.step_params) for s in contract.steps}
+        for step_id, changes in (param_changes or {}).items():
+            if step_id not in merged_params:
+                return {"success": False, "command": command,
+                        "reason_code": "AWF_UNKNOWN_STEP",
+                        "message": f"未知步骤 {step_id}"}
+            merged_params[step_id].update(changes or {})
+        replan = plan_workflow(
+            contract.family, workflow_id=workflow_id,
+            bindings=merged_bindings, params_overrides=merged_params,
+            recipe_refs=contract.recipe_refs,
+            tool_exists=(lambda n: True))
+        contract = replan.contract
+        state.contract_snapshot = contract.model_dump()
+        state.contract_fingerprint = replan.fingerprint
+        # 直接消费者 + 下游闭包 = 需重跑面；其余步骤保持 satisfied 复用
+        affected: set = set()
+        for role in bindings:
+            for step in contract.steps:
+                if any(v == f"role:{role}" for v in step.role_inputs.values()):
+                    affected.add(step.step_id)
+        for step_id in (param_changes or {}):
+            affected.add(step_id)
+        affected |= downstream_closure(contract, affected)
+        for sid in affected:
+            entry = state.steps.get(sid)
+            if entry is not None and entry.state == "satisfied":
+                entry.state = "stale"
+                state.log("step_stale", step=sid)
+        # 复裁决（数据补齐可解除阻断）
+        fresh = new_state(contract, contract_fingerprint=replan.fingerprint)
+        apply_plan_verdicts(fresh, replan.step_verdicts)
+        for sid, entry in fresh.steps.items():
+            if entry.state in ("blocked", "skipped"):
+                state.steps[sid].state = entry.state
+                state.steps[sid].reason_code = entry.reason_code
+        registry_sync = _registry_sync()
+        if registry_sync is None:
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": "AWF_REGISTRY_UNAVAILABLE",
+                    "message": "工具注册表不可用", "alternatives": []}
+        from app.services.distributed_lock import session_lock_registry
+        async with session_lock_registry.lock(
+                f"awf:{workflow_id}", fail_on_degraded=True):
+            executor = WorkflowExecutor(
+                registry=registry_sync,
+                session_data=session_data_manager,
+                persist=(lambda st: _persist_state(session_id, st)),
+            )
+            # stale → pending（执行器按指纹精确裁决复用）
+            for sid in affected:
+                if sid in state.steps and state.steps[sid].state == "stale":
+                    state.steps[sid].state = "pending"
+            state = await executor.execute(
+                session_id, contract, state, only_steps=affected or None)
+        return {
+            "success": state.status == "satisfied",
+            "command": command,
+            "workflow_id": workflow_id,
+            "status": state.status,
+            "recomputed_steps": sorted(affected),
+            "reused_steps": sorted(
+                sid for sid, e in state.steps.items()
+                if e.state == "satisfied" and sid not in affected),
+            "layers": [
+                {"step_id": sid, "ref": env.ref,
+                 "feature_count": env.feature_count}
+                for sid, env in state.envelopes.items() if env.ref],
+        }
