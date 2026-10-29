@@ -21,7 +21,6 @@ from app.services.feature_edit.attr_ops import (
     validate_set_fields,
 )
 from app.services.feature_edit.contracts import (
-    ATTRIBUTE_OPS,
     EDIT_OPS,
     MAX_OPS_PER_PLAN,
     MAX_PLAN_TARGETS,
@@ -65,7 +64,9 @@ def plan_safe_classification(
         return False
     if n_targets > MAX_SAFE_COMMIT_TARGETS:
         return False
-    return all(op.get("op") in ATTRIBUTE_OPS for op in ops)
+    # R1 P2-4：rename_field 是数据集级 schema 变更（全库列名），爆炸半径与
+    # 目标要素数无关 —— 恒不 safe（仅 set_fields 可 auto）。
+    return all(op.get("op") == "set_fields" for op in ops)
 
 
 def _validate_op_shapes(ops: List[Any]) -> List[Dict[str, Any]]:
@@ -180,6 +181,10 @@ def derive_changes(
             feats, _ = apply_deltas_to_features(working.get("features") or [], deltas)
             feats, _ = apply_schema_ops_to_features(feats, schema_ops)
             working = {**working, "features": feats}
+            if schema_ops:
+                # R1 P2-5：rename 改变字段面 —— 校验证据必须随工作视图重算
+                # （否则 rename 后按旧 profile 误拒/静默重建旧列）。
+                field_profiles = profile_fields(working)
     return deltas, schema_ops, findings, op_summaries
 
 
@@ -241,6 +246,17 @@ def build_plan(
     wfids = sorted(set(wfid_map.values()))
     if len(wfids) > MAX_PLAN_TARGETS:
         findings.append(finding("target_limit_exceeded", "too many target features", limit=MAX_PLAN_TARGETS))
+    from app.services.feature_edit.contracts import GEOMETRY_OPS as _GEO_OPS, MAX_GEOMETRY_TARGETS
+
+    has_geometry = any(op.get("op") in _GEO_OPS for op in ops if isinstance(op, dict))
+    if has_geometry and len(wfids) > MAX_GEOMETRY_TARGETS:
+        findings.append(
+            finding(
+                "target_limit_exceeded",
+                "geometry-edit plans are bounded to fewer targets (journal undo-fidelity budget)",
+                limit=MAX_GEOMETRY_TARGETS,
+            )
+        )
 
     deltas, schema_ops, derive_findings, op_summaries = derive_changes(
         preview_fc, ops if isinstance(ops, list) else [], wfids, target_payloads or {}

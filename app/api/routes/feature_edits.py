@@ -16,7 +16,6 @@ from app.schemas.feature_edit_schema import (
     PolicyPutRequest,
 )
 from app.services.auth_history_bridge import require_owned_session
-from app.services.data_ingest.pipeline import compute_payload_fingerprint
 from app.services.distributed_lock import (
     LockContentionError,
     LockDegradedError,
@@ -24,8 +23,9 @@ from app.services.distributed_lock import (
 )
 from app.services.feature_edit import executor as fe_executor
 from app.services.feature_edit import policy as fe_policy
+from app.services.feature_edit import service as fe_service
 from app.services.feature_edit.contracts import PLAN_TTL_S
-from app.services.feature_edit.plan import build_plan, plan_expired, summarize_plan
+from app.services.feature_edit.plan import plan_expired, summarize_plan
 from app.services.session_data import session_data_manager
 
 router = APIRouter(prefix="/chat", tags=["AI对话"])
@@ -38,11 +38,6 @@ async def _load_payload(session_id: str, ref_id: str) -> Any:
     return payload
 
 
-async def _current_revision(session_id: str, ref_id: str) -> int:
-    descriptor = await session_data_manager.get_ref_descriptor(session_id, ref_id) or {}
-    return int(descriptor.get("content_revision") or 0)
-
-
 @router.post("/sessions/{session_id}/feature-edits/preview")
 async def preview_feature_edit(
     session_id: str,
@@ -50,43 +45,21 @@ async def preview_feature_edit(
     _conv: Conversation = Depends(require_owned_session),
 ) -> Dict[str, Any]:
     ops = [op.model_dump(by_alias=True, exclude_none=True) for op in req.ops]
-    ref_id = req.target.ref_id
-    selection_view = None
-    if req.target.mode == "selection":
-        from app.services.gis_harness.interaction_ir.projection import (
-            interaction_snapshot_via_store,
-        )
-
-        snapshot = await interaction_snapshot_via_store(session_data_manager, session_id)
-        selection_view = (snapshot or {}).get("selection") or {}
-        sel_ref = selection_view.get("dataset_ref")
-        if not ref_id and isinstance(sel_ref, str) and sel_ref.startswith("ref:"):
-            ref_id = sel_ref
-    if not ref_id or not str(ref_id).startswith("ref:"):
-        raise HTTPException(status_code=400, detail="ref_id (ref:…) is required")
-    payload = await _load_payload(session_id, ref_id)
-    revision = await _current_revision(session_id, ref_id)
-
-    # snap 目标预取（预览纯读；目标不可达出 finding 而非 500）
-    target_payloads: Dict[str, Any] = {}
-    for op in ops:
-        target_ref = op.get("target_ref")
-        if op.get("op") == "snap_to_ref" and isinstance(target_ref, str):
-            target_payloads[target_ref] = await session_data_manager.get(session_id, target_ref)
-
-    plan, findings = build_plan(
-        ref_id=ref_id,
-        payload=payload,
+    # 预览编排统一走 service（与工具路径同一条：目标解析/IR 投影 try 守卫/
+    # snap 预取字段名 ref_id —— R1 P1-1/P2-6：路由侧第二份实现曾用旧字段名
+    # target_ref，导致 REST 面 snap 预览恒被拒）。
+    plan, findings = await fe_service.build_and_store_plan(
+        session_id,
+        ref_id=req.target.ref_id,
+        feature_ids=req.target.feature_ids,
         ops=ops,
-        requested_ids=req.target.feature_ids,
-        selection=selection_view,
-        dataset_fingerprint=compute_payload_fingerprint(payload),
-        content_revision=revision,
-        target_payloads=target_payloads,
     )
     if findings and not plan:
-        # 不可建 plan（载荷不可编辑/无目标等）——400 带封闭 code。
-        raise HTTPException(status_code=400, detail={"code": findings[0]["code"], "findings": findings})
+        first = findings[0]
+        # 跨会话/不存在统一 404（不泄存在性差异）；其余不可建 plan 400 带封闭 code。
+        if first.get("code") == "dataset_not_found":
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        raise HTTPException(status_code=400, detail={"code": first.get("code"), "findings": findings})
     summary = summarize_plan(plan)
     summary["preview"] = plan.get("preview") or []
     summary["validation"] = findings
@@ -124,11 +97,12 @@ async def decide_feature_edit_plan(
     plan = await fe_executor.get_plan(session_id, plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail="Plan not found")
+    # R1 P3-7：applied 判定前置 —— 已提交的 plan 不因 TTL 显示“过期”。
+    if plan.get("status") == "applied":
+        return {"status": "applied", "receipt": plan.get("receipt") or {"entry_seq": plan.get("entry_seq")}}
     if plan_expired(plan):
         await fe_executor._mark_plan_status(session_id, plan_id, "expired")
         raise HTTPException(status_code=410, detail="Plan expired — request a new preview")
-    if plan.get("status") == "applied":
-        return {"status": "applied", "receipt": plan.get("receipt") or {"entry_seq": plan.get("entry_seq")}}
     if plan.get("status") != "pending" or not plan.get("committable"):
         raise HTTPException(status_code=409, detail={"code": "plan_state_invalid", "status": plan.get("status")})
     if req.action == "reject":

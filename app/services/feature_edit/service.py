@@ -58,7 +58,11 @@ async def build_and_store_plan(
 
     target_payloads: Dict[str, Any] = {}
     for op in ops:
-        target_ref = op.get("ref_id") if isinstance(op, dict) else None
+        # R1 P2-6：非 dict op（模型垃圾输入）在预取段就跳过 —— 形状校验在
+        # build_plan 里 fail-closed，这里不得先崩。
+        if not isinstance(op, dict):
+            continue
+        target_ref = op.get("ref_id")
         if op.get("op") == "snap_to_ref" and isinstance(target_ref, str):
             target_payloads[target_ref] = await session_data_manager.get(session_id, target_ref)
 

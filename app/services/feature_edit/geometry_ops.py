@@ -150,7 +150,7 @@ def repair_geometry(
         try:
             geom = shape(geometry)
         except Exception:
-            findings.append(finding("geometry_invalid_after", "existing geometry unparseable", wfid=wfid))
+            findings.append(finding("invalid_op", "existing geometry unparseable", wfid=wfid))
             continue
         geom = _repair_structure(
             geom, dedupe="dedupe_vertices" in fixes, close="close_ring" in fixes

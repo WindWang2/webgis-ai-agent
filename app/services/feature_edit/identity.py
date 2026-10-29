@@ -56,12 +56,16 @@ def materialize_wfids(
 
 
 def has_wfids(fc: Dict[str, Any]) -> bool:
-    """数据集是否已完成 WFID 物化（以首条要素为准——物化是全量原子动作）。"""
+    """数据集是否已完成 WFID 物化（全量校验 —— R1 P3-9：部分物化的数据集
+    返回 False，materialize_wfids 会确定性补齐缺失（fingerprint:index 稳定）。"""
     features = fc.get("features") or []
     if not features:
         return False
-    props = features[0].get("properties") if isinstance(features[0], dict) else None
-    return isinstance(props, dict) and isinstance(props.get(WFID_PROP), str)
+    for feature in features:
+        props = feature.get("properties") if isinstance(feature, dict) else None
+        if not (isinstance(props, dict) and isinstance(props.get(WFID_PROP), str)):
+            return False
+    return True
 
 
 def index_by_wfid(fc: Dict[str, Any]) -> Dict[str, int]:

@@ -61,10 +61,11 @@ def store():
 
 @contextmanager
 def _patched_store(store):
+    from app.services.feature_edit import service as fe_service
+
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(fe_routes, "session_data_manager", store)
-        mp.setattr(fe_executor, "session_data_manager", store)
-        mp.setattr(fe_policy, "session_data_manager", store)
+        for mod in (fe_routes, fe_executor, fe_policy, fe_service):
+            mp.setattr(mod, "session_data_manager", store)
         yield
 
 

@@ -203,7 +203,9 @@ def build_attr_deltas(
             continue
         field_changes: Dict[str, Dict[str, Any]] = {}
         for name, value in fields.items():
-            before = props.get(name) if isinstance(props, dict) else None
-            field_changes[name] = {"before": before, "after": value}
+            present = isinstance(props, dict) and name in props
+            before = props.get(name) if present else None
+            # presence 显式（R1 P1-2）：undo 需要区分“原本缺失”与“值为 null”
+            field_changes[name] = {"before": before, "after": value, "before_absent": not present}
         deltas.append({"wfid": wfid, "fields": field_changes})
     return deltas

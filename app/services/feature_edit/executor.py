@@ -49,7 +49,10 @@ def _process_lock(session_id: str) -> asyncio.Lock:
     lock = _PROCESS_LOCKS.get(session_id)
     if lock is None:
         if len(_PROCESS_LOCKS) > _PROCESS_LOCK_CAP:
-            _PROCESS_LOCKS.clear()  # 会话级低频写路径，简单容量回收即可
+            # R1 P2-1：只回收未持有的锁 —— 整表 clear 会把在持锁清掉，
+            # 同会话双写者进入临界区（进程内互斥失效）。
+            for sid in [k for k, v in _PROCESS_LOCKS.items() if not v.locked()]:
+                _PROCESS_LOCKS.pop(sid, None)
         lock = _PROCESS_LOCKS[session_id] = asyncio.Lock()
     return lock
 
@@ -108,7 +111,7 @@ async def _load_journals(session_id: str) -> Dict[str, Dict[str, Any]]:
     return journals if isinstance(journals, dict) else {}
 
 
-async def _save_journal(session_id: str, journals: Dict[str, Dict[str, Any]], ref_id: str) -> None:
+async def _save_journal(session_id: str, journals: Dict[str, Dict[str, Any]], ref_id: str) -> bool:
     """写回 + LRU 逐出（≤ MAX_JOURNALS_PER_SESSION 个活跃 journal）。"""
     if len(journals) > MAX_JOURNALS_PER_SESSION:
         def _last_ts(j: Dict[str, Any]) -> float:
@@ -119,7 +122,7 @@ async def _save_journal(session_id: str, journals: Dict[str, Dict[str, Any]], re
             : len(journals) - MAX_JOURNALS_PER_SESSION
         ]:
             journals.pop(key, None)
-    await session_data_manager.set_map_state_fields(session_id, {JOURNALS_STATE_KEY: journals})
+    return await session_data_manager.set_map_state_fields(session_id, {JOURNALS_STATE_KEY: journals})
 
 
 def _receipt(entry: Dict[str, Any], stamp_status: str = "pending", mapspec_revision: Optional[int] = None) -> Dict[str, Any]:
@@ -187,7 +190,9 @@ async def commit_plan(
     journal → 锁外 MapSpec 盖章 + 广播。返回 receipt。"""
     plan_id = plan.get("plan_id") or ""
     ref_id = plan.get("ref_id") or ""
-    key = idempotency_key or f"plan:{plan_id}"
+    # R1 P2-10：journal 幂等键强制 plan 命名空间 —— 客户端自定义 Idempotency-Key
+    # 跨 plan 复用时不得命中他 plan 的账（重放错回执）。
+    key = f"{idempotency_key}:{plan_id}" if idempotency_key else f"plan:{plan_id}"
 
     async with _edit_lock(session_id):
         payload, descriptor = await _load_ref(session_id, ref_id)
@@ -205,7 +210,7 @@ async def commit_plan(
             int(plan.get("expected_content_revision") or -1) != current_revision
             or str(plan.get("expected_fingerprint") or "") != fp_now
         ):
-            await _mark_plan_status(session_id, plan_id, "conflicted")
+            await _mark_plan_status_unlocked(session_id, plan_id, "conflicted")
             raise FeatureEditConflict(
                 "stale_revision",
                 {
@@ -257,6 +262,44 @@ async def commit_plan(
             fp_chain_before = compute_payload_fingerprint(pre_chain_payload)
         else:
             fp_chain_before = fp_now
+        # R1 P3-8：no-op 编辑（非物化、无 schema 变更、指纹不变）不写不
+        # bump —— 同值 set 入账只会制造空版本与内存/Redis 后端 revision
+        # 语义漂移；plan 销账为 applied（receipt 标 no_changes）。
+        if not materialized and not schema_ops and fp_after == fp_chain_before:
+            await _mark_plan_status_unlocked(
+                session_id,
+                plan_id,
+                "applied",
+                extra={
+                    "entry_seq": None,
+                    "receipt": {
+                        "entry_seq": None,
+                        "kind": "apply",
+                        "ref_id": ref_id,
+                        "changed_wfids": [],
+                        "content_revision_after": current_revision,
+                        "stamp_status": "skipped_no_changes",
+                        "actor": actor,
+                        "origin": origin,
+                        "no_changes": True,
+                    },
+                },
+            )
+            return {
+                "entry_seq": None,
+                "kind": "apply",
+                "ref_id": ref_id,
+                "changed_wfids": [],
+                "schema_ops": [],
+                "content_revision_after": current_revision,
+                "fingerprint_after": fp_after,
+                "actor": actor,
+                "origin": origin,
+                "idempotency_key": key,
+                "undo_of_seq": None,
+                "stamp_status": "skipped_no_changes",
+                "mapspec_revision": None,
+            }
         entry = {
             "kind": "apply",
             "idempotency_key": key,
@@ -304,7 +347,7 @@ async def commit_plan(
     receipt["stamp_status"] = stamp_status
     receipt["mapspec_revision"] = mapspec_revision
     # receipt 快照入 plan（幂等重放/决策端二次点击原样回放，不再跑盖章）。
-    await _mark_plan_status(
+    await _mark_plan_status_unlocked(
         session_id, plan_id, "applied", extra={"receipt": receipt, "entry_seq": entry.get("seq")}
     )
     _broadcast_dataset_updated(session_id, ref_id, revision_after, [d.get("wfid") for d in deltas][:64])
@@ -483,7 +526,7 @@ async def load_plans(session_id: str) -> Dict[str, Dict[str, Any]]:
     return plans if isinstance(plans, dict) else {}
 
 
-async def store_plan(session_id: str, plan: Dict[str, Any]) -> None:
+async def _store_plan_unlocked(session_id: str, plan: Dict[str, Any]) -> None:
     from app.services.feature_edit.contracts import MAX_ACTIVE_PLANS, PLAN_TTL_S
 
     plans = await load_plans(session_id)
@@ -495,7 +538,16 @@ async def store_plan(session_id: str, plan: Dict[str, Any]) -> None:
     while len(plans) > MAX_ACTIVE_PLANS:
         oldest = min(plans, key=lambda p: float(plans[p].get("created_at") or 0))
         plans.pop(oldest, None)
-    await session_data_manager.set_map_state_fields(session_id, {PLANS_STATE_KEY: plans})
+    ok = await session_data_manager.set_map_state_fields(session_id, {PLANS_STATE_KEY: plans})
+    if ok is False:
+        logger.warning("[feature_edit] plan store write returned False for %s", session_id)
+
+
+async def store_plan(session_id: str, plan: Dict[str, Any]) -> None:
+    # R1 P2-3：plans 是整 dict 读-改-写 —— 并发决策/预览/回写互相覆盖；
+    # 公共入口持进程锁串行（跨进程窗口由 journal CAS/幂等兜底，ADR 披露）。
+    async with _process_lock(session_id):
+        await _store_plan_unlocked(session_id, plan)
 
 
 async def get_plan(session_id: str, plan_id: str) -> Optional[Dict[str, Any]]:
@@ -507,6 +559,15 @@ async def get_plan(session_id: str, plan_id: str) -> Optional[Dict[str, Any]]:
 
 
 async def _mark_plan_status(
+    session_id: str, plan_id: str, status: str, extra: Optional[Dict[str, Any]] = None
+) -> None:
+    # R1 P2-3：同款进程内串行。commit 路径自身已持 _process_lock（_edit_lock
+    # 的进程锁段），asyncio.Lock 不可重入 —— 内部路径改调未锁变体。
+    async with _process_lock(session_id):
+        await _mark_plan_status_unlocked(session_id, plan_id, status, extra)
+
+
+async def _mark_plan_status_unlocked(
     session_id: str, plan_id: str, status: str, extra: Optional[Dict[str, Any]] = None
 ) -> None:
     plans = await load_plans(session_id)

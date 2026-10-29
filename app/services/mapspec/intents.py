@@ -404,6 +404,7 @@ class PatchWorkbenchDeltaIntent:
 
 MutationIntent = Union[
     InitProjectIntent,
+    RefreshDataRevisionIntent,
     SetViewIntent,
     UpsertSourceIntent,
     UpsertLayerIntent,

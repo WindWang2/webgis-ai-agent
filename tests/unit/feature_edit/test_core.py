@@ -68,7 +68,7 @@ class TestJournal:
         assert j["head_seq"] == 1 and j["entries"][0]["seq"] == 1
         inv = invert_entry(j["entries"][0])
         assert inv["kind"] == "undo" and inv["deltas"][0]["fields"]["type"] == {
-            "before": "小学", "after": "中学"
+            "before": "小学", "after": "中学", "before_absent": False, "after_absent": False,
         }
         assert inv["fingerprint_before"] == "b" and inv["fingerprint_after"] == "a"
 

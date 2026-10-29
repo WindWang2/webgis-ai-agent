@@ -25,6 +25,10 @@ PLAN_TTL_S = 600                    # plan 生存期（10 分钟）
 MAX_RENAME_LENGTH = 64              # 字段名长度上限
 MAX_MOVE_METERS = 10_000.0          # move_by 单次位移防呆上限（10km）
 MAX_SNAP_TOLERANCE_M = 500.0        # snap 容差上限
+# R1 P2-2：几何 plan 目标数收紧 —— journal 单条需内嵌 before/after 全量几何
+# （undo 保真），20×2048 顶点会击穿 64KB 预算；10×1024 上限 ≈ 250KB 最坏
+# 单条（append_entry 的字节闸保底 ≥1 条，预算语义见 ADR）。
+MAX_GEOMETRY_TARGETS = 10
 
 # ─── 稳定要素身份 ──────────────────────────────────────────────────────────
 WFID_PROP = "_wfid"                 # 物化稳定 id 的 properties 键（系统保留）
@@ -49,7 +53,8 @@ DEFAULT_POLICY_MODE = "confirm_all"
 PLAN_STATUSES = frozenset({"pending", "applied", "rejected", "expired", "conflicted"})
 
 # journal entry kind
-ENTRY_KINDS = frozenset({"materialize", "apply", "undo", "redo"})
+# 物化事实记在 apply entry 的 op_summary.materialized（R1 P3-5：不单列 kind）
+ENTRY_KINDS = frozenset({"apply", "undo", "redo"})
 
 # ─── finding codes（封闭集：preview/commit 的否定性结果一律从这里取） ──────
 FINDING_CODES = frozenset({

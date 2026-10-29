@@ -34,8 +34,9 @@ __all__ = [
     "count_positions",
 ]
 
-# 几何编辑/undo 保真的顶点规模门（超限 finding geometry_too_complex）。
-MAX_GEOMETRY_POSITIONS = 2048
+# 几何编辑/undo 保真的顶点规模门（超限 finding geometry_too_complex；
+# R1 P2-2 预算收紧 2048→1024，与 MAX_GEOMETRY_TARGETS 联合保证 journal 单条有界）。
+MAX_GEOMETRY_POSITIONS = 1024
 
 
 def new_journal() -> Dict[str, Any]:
@@ -151,10 +152,13 @@ def apply_deltas_to_features(
             for name, change in fields.items():
                 if not isinstance(change, dict):
                     continue
-                if "after" in change and change["after"] is not None:
-                    props[name] = change["after"]
-                else:
+                # R1 P1-2：presence 显式化 —— after_absent=true 才是“删键”，
+                # after=None 是“写 null”（undo 依赖 before_absent 精确还原
+                # 缺失态；旧实现把 null 一律 pop，null 赋值的 entry 永不可撤销）。
+                if change.get("after_absent") is True:
                     props.pop(name, None)
+                else:
+                    props[name] = change.get("after")
         if delta.get("geometry_after") is not None:
             new_feature["geometry"] = copy.deepcopy(delta["geometry_after"])
         out[i] = new_feature
@@ -209,7 +213,12 @@ def invert_deltas(deltas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         fields = delta.get("fields")
         if isinstance(fields, dict):
             inv["fields"] = {
-                name: {"before": change.get("after"), "after": change.get("before")}
+                name: {
+                    "before": change.get("after"),
+                    "after": change.get("before"),
+                    "after_absent": bool(change.get("before_absent")),
+                    "before_absent": bool(change.get("after_absent")),
+                }
                 for name, change in fields.items()
                 if isinstance(change, dict)
             }
