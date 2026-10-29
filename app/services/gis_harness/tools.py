@@ -1318,6 +1318,111 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
                     ))
                     plan.completeness = planner.assess_completeness(plan)
 
+        # ── 设计候选 + 决策 trace（/goal cartography-design M2）：表达模型
+        # 层 2–4 候选（含数据资格 typed 门控与降级路径）+ 「为何选/为何弃」
+        # 决策链。增值证据面：best_effort 降级不阻断组装（同 #1549 纪律）；
+        # 投影只来自结构化事实（intent task / profile / bound_layers），
+        # 无 query 字符串。
+        design_payload: Dict[str, Any] = {}
+        try:
+            from app.lib.cartography.design_candidates import (
+                DenominatorEvidence as _DenomEvidence,
+                DesignTaskContext as _DesignCtx,
+                generate_design_candidates as _gen_design_candidates,
+            )
+            from app.lib.cartography.design_decision_trace import (
+                build_design_decision_trace as _build_trace,
+            )
+            from app.services.gis_harness.planner import _TASK_CATEGORY_BY_INTENT
+
+            _geom_types = set((profile or {}).get("geometryTypes") or [])
+            if _geom_types:
+                from app.services.gis_harness.recipes import _geometry_category
+                _gcat = _geometry_category(list(_geom_types))
+                _geom_kind = {"point": "point", "line": "line"}.get(
+                    _gcat, "polygon")
+            else:
+                _geom_kind = {"point": "point", "line": "line",
+                              "polygon": "polygon", "raster": "raster"}.get(
+                    str(intent.geometry_expectation or ""), "polygon")
+            # 分母证据：DENOMINATOR_FIELD_HINTS 单一事实源词表命中（字段名
+            # 级匹配；宁缺毋滥——无命中即无分母，不猜）。
+            _fields = (profile or {}).get("fields") or {}
+            _field_names = [str(f).lower() for f in (
+                _fields.keys() if isinstance(_fields, dict) else [])]
+            from app.services.gis_harness.workflow_schema import (
+                DENOMINATOR_FIELD_HINTS,
+            )
+            _denom_field = next(
+                (f for f in _field_names
+                 if any(h in f for h in DENOMINATOR_FIELD_HINTS)), "")
+            # 时相证据：意图声明 change_detection 且 profile 存在时相字段
+            # 才认定双期可达（声明与数据双证据）。
+            _temporal_periods = 2 if (
+                intent.task == "change_detection"
+                and any(h in f for f in _field_names
+                        for h in ("year", "date", "period", "time", "年份"))
+            ) else 0
+            # 用户显式表达要求投影：只来自 intent 规则引擎的 typed 信号
+            # （bare_density_visual = 裸「密度」视觉概览语义锁，G16/G17/C018；
+            # visual_heatmap 的注册别名即 density_overview）——不做 NL 二次
+            # 猜测。规则头缺席 → 无显式要求（自动推荐语义）。
+            _user_models = (
+                ("visual_heatmap",)
+                if "bare_density_visual" in (intent.matched_rules or []) else ()
+            )
+            _design_ctx = _DesignCtx(
+                task_categories=_TASK_CATEGORY_BY_INTENT.get(
+                    str(intent.task or ""), ("thematic_cartography",)),
+                geometry_kind=_geom_kind,
+                statistic="density" if intent.task == "density_analysis"
+                else "count",
+                artifact_types={
+                    "point": ("point_feature_set", "admin_aggregate_table"),
+                    "line": ("line_feature_set", "admin_aggregate_table"),
+                    "polygon": ("polygon_feature_set", "admin_aggregate_table"),
+                    "raster": ("raster_surface",),
+                }.get(_geom_kind, ("admin_aggregate_table",)),
+                point_count=int((profile or {}).get("featureCount") or 0)
+                if _geom_kind == "point" else 0,
+                point_count_basis="profile" if (
+                    _geom_kind == "point"
+                    and isinstance((profile or {}).get("featureCount"), int)
+                ) else "unknown",
+                denominator=_DenomEvidence(
+                    field=_denom_field, available=bool(_denom_field),
+                    unit="人口" if _denom_field else "",
+                    source="profile"),
+                temporal_periods=_temporal_periods,
+                user_requested_models=_user_models,
+                scale_hint=str(getattr(intent.scope, "level", "") or ""),
+            )
+            _primary_bound_model = str(
+                (primary_bound or {}).get("cartography") or "")
+            _cand_set = _gen_design_candidates(
+                _design_ctx, primary_model_id=_primary_bound_model)
+            design_payload = {
+                "design_candidates": _cand_set.to_bounded_dict(),
+                "design_decision_trace": _build_trace(
+                    _design_ctx, _cand_set,
+                    intent_summary={
+                        "task": intent.task,
+                        "scope": intent.scope.name,
+                        "subject": intent.subject.category,
+                        "geometry": intent.geometry_expectation,
+                    },
+                    mapspec_fingerprint=str(out.get("mapspec_fingerprint") or ""),
+                    primary_bound_model=_primary_bound_model,
+                ),
+            }
+        except Exception as _design_exc:  # noqa: BLE001 — 证据面降级
+            logger.warning(
+                "webgis_map_product design candidates degraded: %s", _design_exc)
+            design_payload = {"design_candidates_degraded": {
+                "code": "design_candidates_error",
+                "detail": str(_design_exc)[:160],
+            }}
+
         # ── 语义产品层（ADR-0258）：spec 构建/编辑存活合并 + 编译 + 语义
         # 完整性 —— additive 结果键，降级绝不阻断既有组装路径。既有 spec
         # 读取自 SessionPlan chapter（用户此前的 product edit 存活于此）。
@@ -1447,6 +1552,7 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
             "guidance": product_guidance[:10],
             "intent": {"task": intent.task, "scope": intent.scope.name,
                        "subject": intent.subject.category},
+            **design_payload,
             "map_product_evidence": {
                 "intent_resolution": {
                     "query": intent.query, "task": intent.task,
