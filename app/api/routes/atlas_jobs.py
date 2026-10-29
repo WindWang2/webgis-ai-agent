@@ -81,14 +81,20 @@ def _policy_from_request(raw: Dict[str, Any]) -> Dict[str, Any]:
             status_code=400,
             detail={"code": "atlas_policy_invalid",
                     "message": f"atlas 含未知键: {', '.join(sorted(unknown))}"})
-    try:
-        features_per_page = int(raw.get("featuresPerPage") or 50)
-        page_budget = int(raw.get("pageBudget") or 20)
-    except (TypeError, ValueError):
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "atlas_policy_invalid",
-                    "message": "featuresPerPage/pageBudget 必须是整数"})
+    def _strict_int(key: str, default: int) -> int:
+        """R2-B：仅接受真 int（bool/float/数字串一律 400；键缺席用默认）。"""
+        if key not in raw:
+            return default
+        val = raw.get(key)
+        if isinstance(val, bool) or not isinstance(val, int):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "atlas_policy_invalid",
+                        "message": f"{key} 必须是整数"})
+        return val
+
+    features_per_page = _strict_int("featuresPerPage", 50)
+    page_budget = _strict_int("pageBudget", 20)
     include_cover_raw = raw.get("includeCover")
     if include_cover_raw is not None and not isinstance(include_cover_raw, bool):
         raise HTTPException(
@@ -147,9 +153,11 @@ async def submit_atlas_export_job(
                     "message": str(ex)})
 
     # committed spec 存在性 + dry-run 规划（纯规划无渲染；R1-P2：与执行面
-    # 同口径先水合 ref: 载体源，否则 ref 形态 spec 会被误判无页/页数失真）
+    # 同口径先水合 ref: 载体源，否则 ref 形态 spec 会被误判无页/页数失真。
+    # R2-A：async 路由直接 await async 水合本体 —— run_sync 桥在运行 loop
+    # 内会 RuntimeError→500）
     from app.services.mapspec_store import mapspec_store
-    from app.services.publication_export import hydrate_ref_sources_sync
+    from app.services.publication_export import hydrate_ref_sources
 
     document = await mapspec_store.get_mapspec(body.session_id)
     if not isinstance(document, dict):
@@ -159,7 +167,7 @@ async def submit_atlas_export_job(
                     "message": f"会话 {body.session_id} 无已提交的权威 MapSpec"})
     try:
         plan_summary = dry_run_plan(
-            spec, hydrate_ref_sources_sync(document, body.session_id))
+            spec, await hydrate_ref_sources(document, body.session_id))
     except MapSpecSchemaError as ex:
         raise HTTPException(
             status_code=400,

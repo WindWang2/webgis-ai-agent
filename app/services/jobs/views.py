@@ -108,11 +108,15 @@ def _atlas_page_status(record: AnalysisTask) -> Optional[list[dict]]:
     for raw in pages[:21]:
         if not isinstance(raw, dict):
             continue
+        try:  # R2-D：畸形 result_summary 行跳过（docstring「形状异常→None」语义）
+            page_number = int(raw.get("page_number") or 0)
+        except (TypeError, ValueError):
+            continue
         err = raw.get("error")
         out.append({
             "page_id": str(raw.get("page_id") or "")[:64],
             "title": str(raw.get("title") or "")[:96],
-            "page_number": int(raw.get("page_number") or 0),
+            "page_number": page_number,
             "status": str(raw.get("status") or "")[:24],
             "error": (str(err).splitlines()[0][:160] if err else None),
         })

@@ -632,11 +632,11 @@ def render_pdf_exclusive(render_fn):
 
 
 
-def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+async def hydrate_ref_sources(payload: Dict[str, Any], session_id: str) -> Dict[str, Any]:
     """R1-M5：内联 ``ref:`` 载体矢量源（会话数据面），使导出渲染与 live
-    同一份数据。同步包装（持久 loop 经 run_sync，连接池跨调用复用）；best-effort per source
-    （水合失败的 ref 保持原样，由 unhydrated 检测诚实拒绝）。"""
-    from app.core.async_runner import run_sync
+    同一份数据。**async 本体**（R2-A：async 路由直接 await，不再经 run_sync
+    桥）；best-effort per source（水合失败的 ref 保持原样，由 unhydrated
+    检测诚实拒绝）。"""
     import copy as _copy
 
     sources = payload.get("sources")
@@ -658,20 +658,24 @@ def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[s
     if not refs:
         return spec
 
-    async def _hydrate() -> None:
-        from app.services.session_data import session_data_manager
+    from app.services.session_data import session_data_manager
 
-        for src, ref in refs:
-            try:
-                payload_data = await session_data_manager.get(session_id, ref)
-            except Exception as ex:  # noqa: BLE001 - per-source best-effort
-                logger.warning("publication pdf: ref %s hydration failed: %s", ref, ex)
-                payload_data = None
-            if isinstance(payload_data, dict):
-                src["inlineData"] = payload_data
-
-    run_sync(_hydrate())
+    for src, ref in refs:
+        try:
+            payload_data = await session_data_manager.get(session_id, ref)
+        except Exception as ex:  # noqa: BLE001 - per-source best-effort
+            logger.warning("publication pdf: ref %s hydration failed: %s", ref, ex)
+            payload_data = None
+        if isinstance(payload_data, dict):
+            src["inlineData"] = payload_data
     return spec
+
+
+def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+    """同步包装（worker 线程无运行 loop 时经 run_sync 持久 loop）。"""
+    from app.core.async_runner import run_sync
+
+    return run_sync(hydrate_ref_sources(payload, session_id))
 
 
 def _unhydrated_geojson_keys(doc: Dict[str, Any]) -> List[str]:

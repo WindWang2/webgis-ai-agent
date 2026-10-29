@@ -15,4 +15,5 @@
 | R11 | 前端 TasksTab/词表改动破坏既有任务渲染 | kind 词表 additive；新分支渲染不动旧 kind 路径；vitest 全量回归 | 低 |
 | R12 | eager 模式（无 Redis 本地测试）与真实 Celery 行为差 | executor 核心逻辑与 celery 装饰解耦（纯函数入口 `execute_atlas_job(job_id)`），任务体薄壳；两态都测 | 部署态 worker 队列配置需 ops 关注（披露） |
 | R13 | 12 区验收依赖中文字体（CI 无 CJK → tofu） | `_cjk_font_face_css` vendored 内嵌既有机制复用；验收测试断言文本可提取（pypdf）而非像素 | 无 CJK 字体环境 PDF 文本层仍在（字形内嵌） |
+| R14.1 | planner 逐页对全部内联源做 canonical digest（21 页×大 spec 为 O(页数×载荷) 序列化） | 正确性优先取舍（R1-P1 缓存误命中防线）；dry-run/executor 各一次；超大 spec 由既有载荷上限约束 | 大内联数据提交时有秒级规划开销（可观测，不阻断） |
 | R14 | `product_manifest.py` 为共享演化点（#1830 也在扩） | 只读消费 build_product_manifest 摘要；不改其签名/结构；若 master 前移则 rebase 对账 | 低 |

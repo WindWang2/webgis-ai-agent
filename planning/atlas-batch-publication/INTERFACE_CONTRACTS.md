@@ -40,18 +40,22 @@ def plan_atlas_binding(spec: AtlasJobSpec, document: dict) -> AtlasPlanBinding
 # = PublicationIR（plan_publication_pages 复用） + 每页 feature_count/legend_digest/fingerprint
 ```
 
-指纹输入（canonical JSON sha256，截 40hex）：`{page_id,title,page_number,page_count,paper{w,h,profile},bounds,filter 身份三元组,feature_offset/limit,feature_count,legend_digest,classification_scope,target_dpi,ir_fingerprint,compiler_key}`；`compiler_key = f"{PUBLICATION_IR_VERSION}|svg-compiler-v1"`（编译语义变更时 bump）。
+指纹输入（canonical JSON sha256，截 40hex）：`{page_id,title,page_number,page_count,paper{w,h,profile},bounds,filter 身份三元组,feature_offset/limit,feature_count,data_digest,legend_digest,classification_scope,atlas_title,target_dpi,ir_fingerprint,structural_fingerprint,compiler_key}`；
+- `data_digest` = 页有效文档**全部内联源要素** canonical digest（目标层页粒度 + 其余源全敏感 —— R1-P1 清偿）；
+- `structural_fingerprint` = 页有效文档结构指纹（`publication_export._structural_fingerprint` 同款：layers/paint/thresholds/view/scene/scenario_mode + 源描述符）；
+- `compiler_key = f"{PUBLICATION_IR_VERSION}|atlas-svg-v1|pagehdr-v1"`（页头注入代次也入键）。
 
 ## 3. 页级状态与结果（executor → AnalysisTask）
 
 ```python
-# status.json（job 工作目录）& result_summary（终态，同一形状）
+# result_summary（终态；页体 svg 只留内存不落库 —— R2-P3 清偿）
 {
   "spec_version": "atlas_job.v1",
   "plan_fingerprint": "<ir_fingerprint>",
   "pages": [
     {"page_id","title","page_number","fingerprint","status":"rendered|failed",
-     "feature_count","error": str|None, "svg_bytes": int}
+     "feature_count","error": str|None, "svg_bytes": int,
+     "diagnostics": [...≤16], "degradations": [...≤8 warning+]}
   ],
   "page_count_expected": int, "page_count_rendered": int,
   "qa": {...门结果...}, "cache_hits": int,
@@ -68,14 +72,14 @@ JobView additive：`page_status: list[PageStatusView] | None`（≤21 条；page
   body: `AtlasJobSubmitRequest{session_id, atlas: AtlasRequestPolicy(既有 schema 复用), classification_scope, target_dpi?, title?}`
   语义：committed spec 存在性预检（mapspec_store.get_mapspec + 基本可规划性 dry-run——plan 在提交线程跑一次（有界 ≤50ms 级，纯规划无渲染），失败 → 400 typed）→ `submit_durable_job(celery_task=run_atlas_export, kind=atlas_export, idempotent=True)`。
   resp: `{success, job_id, status, idempotent_reuse, poll_url}`。
-  错误码：`atlas_spec_missing`(404)、`atlas_policy_invalid`/`atlas_local_requires_frames`/`mapspec_ref_sources_unhydrated`(400)、`atlas_session_missing`(403/404)。
+  错误码：`atlas_owner_required`(401，匿名拒绝 —— 产物下载走属主通道)、`atlas_spec_missing`(404)、`atlas_policy_invalid`/`atlas_local_requires_frames`/`mapspec_ref_sources_unhydrated`/`atlas_source_unavailable`(400)。提交面与执行面同口径先 async 水合 `ref:` 源（R2-A）。
 - `GET /api/v1/atlas/jobs/{job_id}`：JobView + `pages`（同 status.json 页数组）+ `artifacts`（下载 URL：`/api/v1/export/download/{filename}`）。非属主 → 404（不泄露存在性；owner 三元组判定与 jobs.py 同款）。
 - 取消/重试复用 `POST /tasks/jobs/{id}/cancel|retry`（既有）。
 
 ## 5. Agent 工具（app/tools/atlas_export_tools.py）
 
 `export_atlas(session_id, driver="category", layer_id="", category_property="", features_per_page=50, page_budget=20, include_cover=True, atlas_title="", classification_scope="shared", target_dpi=300)`：
-- origin contextvar 自动携带 owner/agent 链；`submit_durable_job`；返回 `{status:"submitted", job_id, poll_url, message}`。
+- session_id 一律经 `_resolve_session_id` 运行时归属校验（显式提供不直通，R1-P1）；无 origin owner（匿名 agent 流）→ typed `atlas_owner_required`（R1-P2）；origin contextvar 自动携带 owner/agent 链；`submit_durable_job`；返回 `{status, job_id, task_id, idempotent_reuse, message, poll_hint}`。
 - 注册：`app/tools/__init__.py` 导出 + 既有 registry/dispatch 面（与 nature_resources NDVI 同模式）；真实 `dispatch_tool` 链测试。
 
 ## 6. 图册 manifest（manifest.py）
@@ -93,7 +97,7 @@ JobView additive：`page_status: list[PageStatusView] | None`（≤21 条；page
      "data": {"filter_layer_id","filter_property","filter_value","feature_offset","feature_limit","feature_count"},
      "classification": {"scope","legend_digest","class_count","method","palette_id","field"},
      "page_fingerprint", "product_manifest_digest",   # 每页单图语义证据（#1755 v1）摘要锚点
-     "degradations": [...], "render_diagnostics_digest"
+     "degradations": [...warning+ 诊断≤8], "render_diagnostics": [...≤16]
   }],
   "qa": {"page_count_expected","page_count_actual","duplicate_page_ids":[],"missing":[],"ordering_ok":bool,
           "classification_consistent":bool|null,"comparability_disclosed":bool},

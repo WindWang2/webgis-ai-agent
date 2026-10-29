@@ -224,11 +224,11 @@ def _load_committed_document(spec: AtlasJobSpec) -> Tuple[Dict[str, Any], int]:
     """committed spec 加载 + ref 水合 + 出版校验 → (document, mapspec revision)。"""
     from app.services.mapspec_store import mapspec_store
     from app.services.publication_export import (
-        hydrate_ref_sources_sync,
+        hydrate_ref_sources,
         validate_publication_payload,
     )
 
-    async def _load() -> Tuple[Optional[Dict[str, Any]], int]:
+    async def _load() -> Tuple[Optional[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
         payload = await mapspec_store.get_mapspec(spec.session_id)
         revision = 0
         try:
@@ -238,14 +238,15 @@ def _load_committed_document(spec: AtlasJobSpec) -> Tuple[Dict[str, Any], int]:
             revision = int((state or {}).get("_cartographic_mutation_revision") or 0)
         except Exception:  # noqa: BLE001
             revision = 0
-        return payload, revision
+        hydrated = await hydrate_ref_sources(payload, spec.session_id) \
+            if isinstance(payload, dict) else None
+        return payload, revision, hydrated
 
-    payload, revision = _run_async_blocking(_load())
+    payload, revision, hydrated = _run_async_blocking(_load())
     if not isinstance(payload, dict):
         raise AtlasJobError(
             "atlas_spec_missing",
             f"会话 {spec.session_id} 无已提交的权威 MapSpec（先在地图工作台提交）")
-    hydrated = hydrate_ref_sources_sync(payload, spec.session_id)
     try:
         parsed = validate_publication_payload(hydrated)
     except MapSpecSchemaError as ex:
@@ -519,7 +520,10 @@ def execute_atlas_job(
                         db=session,
                         owner_token=meta.get("owner_token"),
                         title=spec.title or spec.atlas.atlas_title,
-                        vector=True, pages=int(pdf_page_count),
+                        vector=True,
+                        # R2-C：pypdf 缺席（-1）时血缘记 0（契约缺省=未提供），
+                        # 不落哨兵负数
+                        pages=int(pdf_page_count) if pdf_page_count > 0 else 0,
                         target_dpi=int(spec.target_dpi),
                         degradation_codes=[
                             str(d.get("code")) for d in sink.to_payload()

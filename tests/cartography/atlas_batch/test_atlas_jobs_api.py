@@ -263,3 +263,42 @@ def test_submit_strict_policy_conversion(api_env, spec_store):
     fake_bool["atlas"] = {**fake_bool["atlas"], "includeCover": "false"}
     resp = api_env["client"].post("/api/v1/atlas/jobs", json=fake_bool)
     assert resp.status_code == 400
+
+
+def _ref_document(districts=2):
+    """ref: 载体源形态的 committed spec（水合路径专用）。"""
+    doc = district_document(districts=districts)
+    doc = json.loads(json.dumps(doc))  # deep copy
+    payload = doc["sources"]["districts"]["inlineData"]
+    doc["sources"]["districts"] = {
+        "type": "geojson", "ref": "ref:session-data:districts"}
+    return doc, payload
+
+
+def test_submit_with_ref_source_hydrates_in_dryrun(api_env, spec_store, monkeypatch):
+    """R2-A：ref: 源在提交线程被 async 水合（不 500）；水合失败 → typed 400。"""
+    doc, payload = _ref_document()
+    spec_store["document"] = doc
+
+    # 负例：会话数据不可得 → ref 保持未水合 → dry-run typed 400（绝不是 500）
+    async def miss(*_a, **_k):
+        raise KeyError("no session data")
+
+    from app.services import session_data as sd_mod
+
+    monkeypatch.setattr(sd_mod.session_data_manager, "get", miss)
+    resp = api_env["client"].post("/api/v1/atlas/jobs", json=_body())
+    assert resp.status_code == 400
+    # dry-run 的 typed 拒绝（ref 未水合 → 无内联要素可用；执行面同场景为
+    # mapspec_ref_sources_unhydrated —— 两处都是 400，绝不是 500）
+    assert (resp.json().get("data") or {}).get("code") in (
+        "mapspec_ref_sources_unhydrated", "atlas_source_unavailable")
+
+    # 正例：水合成功 → dry-run 正常出计划
+    async def hit(session_id, ref):
+        return payload
+
+    monkeypatch.setattr(sd_mod.session_data_manager, "get", hit)
+    resp = api_env["client"].post("/api/v1/atlas/jobs", json=_body())
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["plan"]["page_count"] == 3
