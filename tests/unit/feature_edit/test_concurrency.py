@@ -11,7 +11,6 @@ import asyncio
 
 import pytest
 
-from app.services.data_ingest.pipeline import compute_payload_fingerprint
 from app.services.feature_edit import executor as fe_executor
 from app.services.feature_edit import service as fe_service
 from app.services.session_data import MemorySessionStore

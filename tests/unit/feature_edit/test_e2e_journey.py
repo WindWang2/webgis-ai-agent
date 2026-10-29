@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 from app.api.routes import feature_edits as fe_routes
 from app.services.data_ingest.pipeline import get_ingest_pipeline
 from app.services.feature_edit import executor as fe_executor
-from app.services.feature_edit import service as fe_service
 from app.services.session_data import session_data_manager
 from app.tools.feature_edit_tools import register_feature_edit_tools
 from app.tools.registry import ToolRegistry
