@@ -21,20 +21,6 @@ interface EditProposalCardProps {
   onDecide?: (planId: string, action: 'approve' | 'reject') => void;
 }
 
-type EditT = ReturnType<typeof useT>;
-
-function opLabel(t: EditT, op: FeatureEditOpSummary['op']): string {
-  // 字面量键分支（i18n 静态扫描盲区棘轮不认计算键）
-  switch (op) {
-    case 'set_fields': return t('chat.editProposal.opSetFields');
-    case 'rename_field': return t('chat.editProposal.opRenameField');
-    case 'repair_geometry': return t('chat.editProposal.opRepairGeometry');
-    case 'move_by': return t('chat.editProposal.opMoveBy');
-    case 'snap_to_ref': return t('chat.editProposal.opSnapToRef');
-    default: return op;
-  }
-}
-
 function opSummaryText(op: FeatureEditOpSummary): string {
   switch (op.op) {
     case 'set_fields':
@@ -58,7 +44,8 @@ function formatValue(v: unknown): string {
   return String(v);
 }
 
-function DiffRows({ preview, t }: { preview: FeatureEditPreviewItem[]; t: EditT }) {
+function DiffRows({ preview }: { preview: FeatureEditPreviewItem[] }) {
+  const t = useT();
   const rows = preview.slice(0, 12);
   return (
     <div className="space-y-1.5">
@@ -94,6 +81,14 @@ function DiffRows({ preview, t }: { preview: FeatureEditPreviewItem[]; t: EditT 
 
 export function EditProposalCard({ proposal, disabled, onDecide }: EditProposalCardProps) {
   const t = useT();
+  // 字面量键在组件作用域内（t 来自本地 useT —— i18n 盲区棘轮可静态判定）
+  const labels: Record<FeatureEditOpSummary['op'], string> = {
+    set_fields: t('chat.editProposal.opSetFields'),
+    rename_field: t('chat.editProposal.opRenameField'),
+    repair_geometry: t('chat.editProposal.opRepairGeometry'),
+    move_by: t('chat.editProposal.opMoveBy'),
+    snap_to_ref: t('chat.editProposal.opSnapToRef'),
+  };
   const terminal = ['applied', 'rejected', 'stale', 'conflicted', 'expired'].includes(proposal.status);
   const busy = proposal.status === 'approving';
 
@@ -121,7 +116,7 @@ export function EditProposalCard({ proposal, disabled, onDecide }: EditProposalC
       <ul className="mb-2 space-y-0.5 text-xs text-neutral-300">
         {proposal.ops.map((op, i) => (
           <li key={`${op.op}-${i}`}>
-            · {opLabel(t, op.op)}{t('chat.editProposal.colon')}<span className="text-neutral-400">{opSummaryText(op)}</span>
+            · {labels[op.op]}{t('chat.editProposal.colon')}<span className="text-neutral-400">{opSummaryText(op)}</span>
           </li>
         ))}
         {proposal.schema_ops.map((s, i) => (
@@ -131,7 +126,7 @@ export function EditProposalCard({ proposal, disabled, onDecide }: EditProposalC
         ))}
       </ul>
 
-      {proposal.preview.length > 0 ? <DiffRows preview={proposal.preview} t={t} /> : null}
+      {proposal.preview.length > 0 ? <DiffRows preview={proposal.preview} /> : null}
 
       {proposal.status === 'applied' && proposal.receipt ? (
         <div className="mt-2 text-xs text-emerald-400" data-testid="edit-proposal-applied-receipt">
