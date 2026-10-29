@@ -73,6 +73,12 @@
   "message": "string",
   "success": "boolean"
  },
+ "GET /api/v1/atlas/jobs/{job_id}": {
+  "__model__": "AtlasJobDetailResponse",
+  "artifacts": "object",
+  "job": "object",
+  "pages": "array<unknown>"
+ },
  "GET /api/v1/auth/me": {
   "__model__": "MeResponse",
   "email": "null|string",
@@ -700,6 +706,7 @@
   "kind": "string",
   "message": "null|string",
   "name": "string",
+  "page_status": "array<object>|null",
   "progress": "integer|null",
   "project_id": "null|string",
   "result_ref": "null|string",
@@ -903,6 +910,16 @@
  "GET /healthz": {
   "__model__": "LivenessResponse",
   "status": "string"
+ },
+ "POST /api/v1/atlas/jobs": {
+  "__model__": "AtlasSubmitResponse",
+  "idempotent_reuse": "boolean",
+  "job_id": "string",
+  "message": "string",
+  "plan": "null|object",
+  "poll_url": "string",
+  "status": "string",
+  "success": "boolean"
  },
  "POST /api/v1/auth/login": {
   "__model__": "TokenResponse",

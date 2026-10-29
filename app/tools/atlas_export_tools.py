@@ -17,7 +17,7 @@ def register_atlas_export_tools(registry: ToolRegistry):
 
     @tool(
         registry, name="export_atlas",
-        capabilities=["atlas_export"],
+        capabilities=["map_export_publishing"],  # 平台能力包既有词汇（platform.py）
         tier=2, domains=["cartography"],
         description=(
             "批量专题图册导出（durable job，异步）：以会话已提交的权威 MapSpec "

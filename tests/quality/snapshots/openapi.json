@@ -677,6 +677,30 @@
     "title": "AssetNewVersionRequest",
     "type": "object"
    },
+   "AtlasJobDetailResponse": {
+    "properties": {
+     "artifacts": {
+      "additionalProperties": true,
+      "title": "Artifacts",
+      "type": "object"
+     },
+     "job": {
+      "additionalProperties": true,
+      "title": "Job",
+      "type": "object"
+     },
+     "pages": {
+      "items": {},
+      "title": "Pages",
+      "type": "array"
+     }
+    },
+    "required": [
+     "job"
+    ],
+    "title": "AtlasJobDetailResponse",
+    "type": "object"
+   },
    "AtlasRequestPolicy": {
     "additionalProperties": false,
     "description": "C14：atlas 分页策略（POST /export/vector-pdf 可选 ``atlas`` 字段）。\n\ndrivers 封闭词表：frames（spec 显式多帧即页）/ category（属性去重值\n分页）/ feature（要素切片分页）。页数诚实封顶（≤20，超出截断并披露\n``atlas_truncated``）；category 必填 ``categoryProperty``；category/\nfeature 需要 spec 携带内联 geojson 源（服务端 typed 拒绝缺失面）。",
@@ -765,6 +789,101 @@
      }
     },
     "title": "AtlasRequestPolicy",
+    "type": "object"
+   },
+   "AtlasSubmitRequest": {
+    "description": "提交请求（atlas 策略字段复用既有 AtlasRequestPolicy 形状）。",
+    "properties": {
+     "atlas": {
+      "additionalProperties": true,
+      "title": "Atlas",
+      "type": "object"
+     },
+     "classification_scope": {
+      "default": "shared",
+      "pattern": "^(shared|local)$",
+      "title": "Classification Scope",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "simulated_data": {
+      "default": false,
+      "title": "Simulated Data",
+      "type": "boolean"
+     },
+     "target_dpi": {
+      "default": 300,
+      "maximum": 600.0,
+      "minimum": 72.0,
+      "title": "Target Dpi",
+      "type": "integer"
+     },
+     "title": {
+      "default": "",
+      "maxLength": 160,
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "AtlasSubmitRequest",
+    "type": "object"
+   },
+   "AtlasSubmitResponse": {
+    "properties": {
+     "idempotent_reuse": {
+      "default": false,
+      "title": "Idempotent Reuse",
+      "type": "boolean"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+     },
+     "plan": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Plan"
+     },
+     "poll_url": {
+      "default": "",
+      "title": "Poll Url",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "success": {
+      "default": true,
+      "title": "Success",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "job_id",
+     "status"
+    ],
+    "title": "AtlasSubmitResponse",
     "type": "object"
    },
    "AudioNarrative": {
@@ -5280,6 +5399,21 @@
       "description": "展示名。不含用户原始请求原文",
       "title": "Name",
       "type": "string"
+     },
+     "page_status": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Status"
      },
      "progress": {
       "anyOf": [
@@ -16220,6 +16354,137 @@
     "tags": [
      "Security Admin (V9)",
      "Security Admin (V9)"
+    ]
+   }
+  },
+  "/api/v1/atlas/jobs": {
+   "post": {
+    "description": "提交批量图册 durable job（幂等；重复提交复用同一 job 行）。",
+    "operationId": "submit_atlas_export_job_api_v1_atlas_jobs_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AtlasSubmitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AtlasSubmitResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Submit Atlas Export Job",
+    "tags": [
+     "地图制图",
+     "地图制图"
+    ]
+   }
+  },
+  "/api/v1/atlas/jobs/{job_id}": {
+   "get": {
+    "description": "图册 job 详情（页级状态 + 产物链接；非属主 404 不泄露存在性）。",
+    "operationId": "get_atlas_export_job_api_v1_atlas_jobs__job_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AtlasJobDetailResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Atlas Export Job",
+    "tags": [
+     "地图制图",
+     "地图制图"
     ]
    }
   },
