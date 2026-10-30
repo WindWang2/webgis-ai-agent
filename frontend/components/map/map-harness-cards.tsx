@@ -107,17 +107,17 @@ function ReceiptCard(props: {
             data-testid={`map-op-status-${receipt.operation_id}`}
             className={`text-xs font-semibold ${STATUS_TONE[status] || 'text-ink'}`}
           >
-            {t(`map.mapOp.status_${status || 'unknown'}`)}
+            {t(`map.opCard.status_${status || 'unknown'}`)}
           </span>
           <span className="ml-2 text-micro text-ink-muted">
-            {t('map.mapOp.rev')} {receipt.final_revision ?? receipt.mutation_revision ?? '—'}
-            {receipt.replayed ? ` · ${t('map.mapOp.replayed')}` : ''}
+            {t('map.opCard.rev')} {receipt.final_revision ?? receipt.mutation_revision ?? '—'}
+            {receipt.replayed ? ` · ${t('map.opCard.replayed')}` : ''}
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            aria-label={expanded ? t('map.mapOp.collapse') : t('map.mapOp.expand')}
+            aria-label={expanded ? t('map.opCard.collapse') : t('map.opCard.expand')}
             onClick={() => setExpanded((v) => !v)}
             className="text-ink-muted hover:text-ink"
           >
@@ -126,7 +126,7 @@ function ReceiptCard(props: {
           <button
             type="button"
             data-testid={`map-op-dismiss-${receipt.operation_id}`}
-            aria-label={t('map.mapOp.dismiss')}
+            aria-label={t('map.opCard.dismiss')}
             onClick={() => dismissOperationReceipt(receipt.operation_id)}
             className="text-ink-muted hover:text-ink"
           >
@@ -156,7 +156,7 @@ function ReceiptCard(props: {
           {effects.slice(0, 8).map((eff) => (
             <li key={eff.index} className="flex items-baseline justify-between gap-2 text-micro">
               <span className="truncate text-ink">
-                {t(`map.mapOp.${EFFECT_LABEL_KEYS[eff.kind] || 'effectOther'}`)}
+                {t(`map.opCard.${EFFECT_LABEL_KEYS[eff.kind] || 'effectOther'}`)}
                 {(eff.targets?.length ?? 0) > 0 ? ` · ${eff.targets!.join(', ')}` : ''}
               </span>
               <span
@@ -165,11 +165,11 @@ function ReceiptCard(props: {
                     : eff.state === 'failed' ? 'text-rose-600'
                     : 'text-ink-muted'
                 }`}
-                title={eff.reason_code ? t(`map.mapOp.reason_${eff.reason_code}`) : undefined}
+                title={eff.reason_code ? t(`map.opCard.reason_${eff.reason_code}`) : undefined}
               >
                 {eff.reason_code === 'user_wins'
-                  ? t('map.mapOp.state_user_wins')
-                  : t(`map.mapOp.state_${eff.state || 'planned'}`)}
+                  ? t('map.opCard.state_user_wins')
+                  : t(`map.opCard.state_${eff.state || 'planned'}`)}
               </span>
             </li>
           ))}
@@ -184,13 +184,13 @@ function ReceiptCard(props: {
           onClick={() => void approve()}
           className="mt-2 w-full rounded-md border border-edge-subtle bg-surface px-2 py-1 text-micro font-medium text-ink hover:bg-surface-overlay disabled:opacity-50"
         >
-          {committing ? t('map.mapOp.committing') : t('map.mapOp.approveRemoval')}
+          {committing ? t('map.opCard.committing') : t('map.opCard.approveRemoval')}
         </button>
       ) : null}
 
       {error ? (
         <p data-testid={`map-op-error-${receipt.operation_id}`} className="mt-1 text-micro text-rose-600">
-          {t('map.mapOp.commitFailed')}: {error.slice(0, 120)}
+          {t('map.opCard.commitFailed')}: {error.slice(0, 120)}
         </p>
       ) : null}
     </div>
@@ -224,7 +224,7 @@ function DisplayConfirmationCard(props: {
         setDone(true);
         onAcked({ ...status, confirmed: true, pending: false });
       } else {
-        setError(t('map.displayConfirm.notConfirmed'));
+        setError(t('map.finalAck.notConfirmed'));
       }
     } catch (err) {
       setError(String((err as Error)?.message || err).slice(0, 140));
@@ -243,12 +243,12 @@ function DisplayConfirmationCard(props: {
       <header className="mb-1.5 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-xs font-semibold text-ink">
           <Eye className="h-3.5 w-3.5" aria-hidden />
-          {t('map.displayConfirm.title')}
+          {t('map.finalAck.title')}
         </span>
         <EyeOff className="h-3.5 w-3.5 text-ink-muted" aria-hidden />
       </header>
       <p className="mb-2 text-micro leading-relaxed text-ink">
-        {t('map.displayConfirm.body')}
+        {t('map.finalAck.body')}
       </p>
       <div className="flex gap-2">
         <button
@@ -258,7 +258,7 @@ function DisplayConfirmationCard(props: {
           onClick={() => void acknowledge()}
           className="flex-1 rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-micro font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
         >
-          {acking ? t('map.displayConfirm.acking') : t('map.displayConfirm.ack')}
+          {acking ? t('map.finalAck.acking') : t('map.finalAck.ack')}
         </button>
         <button
           type="button"
@@ -266,7 +266,7 @@ function DisplayConfirmationCard(props: {
           onClick={() => setDone(true)}
           className="rounded-md border border-edge-subtle px-2 py-1 text-micro text-ink-muted hover:bg-surface-overlay"
         >
-          {t('map.displayConfirm.later')}
+          {t('map.finalAck.later')}
         </button>
       </div>
       {error ? (
