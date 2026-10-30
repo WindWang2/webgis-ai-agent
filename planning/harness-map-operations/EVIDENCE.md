@@ -19,7 +19,7 @@
 |---|---|---|
 | 新增单测 | receipt-bus 7 + mapOperationsCommands 4 + map-harness-cards 5 | **16 passed** |
 | maplibre mock 契约 | `test/maplibre-mock-surface.test.ts` | passed（i18n 键 opCard/finalAck 按先例白名单化） |
-| 全量 | `pnpm -C frontend exec vitest run --maxWorkers=2` | 首轮 4676 pass + 1 fail（mock-surface，见上，已修）；**终轮见下** |
+| 全量 | `pnpm -C frontend exec vitest run --maxWorkers=2` | 首轮 4676 pass + 1 fail（mock-surface，见上，已修）；**终轮 exit 0 全绿**（280s，494+ 文件） |
 | typecheck | `pnpm -C frontend typecheck` | 0 error |
 | lint | `pnpm -C frontend lint`（--max-warnings 0） | clean |
 
