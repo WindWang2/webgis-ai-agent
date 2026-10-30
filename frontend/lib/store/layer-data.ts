@@ -121,7 +121,30 @@ export async function ensureLayerData(
     } catch (e: any) {
       if (e && (e.status === 404 || e?.status === 403)) {
         // 404 → feature not found → honest fallback; 403 should propagate? but treat as fallback for selection UX
-        if (e.status === 404) return { status: 'fallback' };
+        if (e.status === 404) {
+          // Track B（M3/M6）：无链内 id 的 MVT 层，点击命中的是瓦片 field 1
+          // 位置 id（自然索引+1，revision 内稳定）——链内寻址 404 后按
+          // id_mode=positional 重试一次（整数才可能；混合数据集里链内
+          // 命中的要素不会走到这里）。仍 404 → 诚实 fallback。
+          if (opts?.signal?.aborted) return { status: 'cancelled' };
+          const fidStr = String(fid);
+          if (/^\d+$/.test(fidStr)) {
+            try {
+              const posUrl = `${url}&id_mode=positional`;
+              const feature = await apiFetch<Record<string, unknown>>(posUrl, {
+                ownerToken: token ?? undefined,
+                label: 'Feature detail (positional) error',
+                signal: opts?.signal,
+              });
+              if (opts?.signal?.aborted) return { status: 'cancelled' };
+              if (resolveSessionId(layer) !== sid) return { status: 'cancelled' };
+              return { status: 'single-feature', feature };
+            } catch {
+              return { status: 'fallback' };
+            }
+          }
+          return { status: 'fallback' };
+        }
       }
       throw e;
     }
