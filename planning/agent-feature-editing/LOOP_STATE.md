@@ -16,3 +16,10 @@ recon → gap → plan → implement → local test → independent review → f
 
 ## 提交纪律
 每里程碑原子 commit；PR 前二次去重 + diff --check + 敏感扫描 + 生成物一致性。
+
+## R1 后状态（2026-10-29）
+- R1（P1×3/P2×10/P3×10）全部清偿；测试：后端 feature_edit 64 绿 + R1 回归钉 9 条；前端全量 494 文件/4674 绿。
+- R2（清偿复核）进行中。
+
+## 终局（2026-10-30）
+R3 PR-ready。待：终局后端全量摘要 → push → gh pr create。

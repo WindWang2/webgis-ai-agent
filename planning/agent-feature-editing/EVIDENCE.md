@@ -14,3 +14,11 @@
 - 前端：tsc --noEmit 绿；eslint 新文件零错误（硬编码 CJK 清零，i18n zh-CN/en-US 双语资源）；vitest 新增 11 绿 + 邻域 410 绿（全量见 M9 记录）。
 - ADR-0277 落盘 + watermark 277 + ADR 编号契约测试 3 绿。
 - 环境注记：Playwright/真实浏览器在本机未配置——地图渲染消费路径以 mapspec 盖章 + content_revision 管线断言代替（诚实降级，非跳过宣称）；前端交互面由组件测试覆盖。
+
+## M9 证据（2026-10-30）
+
+- 独立评审三轮：R1（P1×3/P2×10/P3×10 清偿 + 回归钉 9 条）→ R2（P0=0/P1=0/P2×3/P3×9 清偿）→ R3（五点验证 ✅ PR-ready）。全过程 INDEPENDENT_REVIEW.md。
+- 后端全量：tests/ 除 1 个既有环境基线红（mutation_parity golden 的 pydantic 2.13 错误消息 URL 漂移——基线 4b3629c9 干净检出同样红，与本分支无关）全绿。
+- 前端全量：vitest 494 文件 / 4674 测试绿 + tsc --noEmit 绿（一次并行跑观察到 1 例偶发失败，复跑两次全绿——flaky 披露）。
+- 生成物：openapi/endpoint-matrix/api-docs/staleness 账本/situation schema/ADR 编号契约 全绿。
+- 二次去重（网络恢复后）：origin/master 无前进（4b3629c90）；唯一 open PR #1868 与本分支实质能力无重叠（文件交集仅 3 个琐碎生成物/单行注册点）。
