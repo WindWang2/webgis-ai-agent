@@ -12361,6 +12361,17 @@
       ],
       "title": "Bbox Mode"
      },
+     "duplicate_id_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Duplicate Id Count"
+     },
      "feature_count": {
       "anyOf": [
        {
@@ -12380,10 +12391,28 @@
       "title": "Features",
       "type": "array"
      },
+     "id_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id Mode"
+     },
      "pagination": {
       "additionalProperties": true,
       "title": "Pagination",
       "type": "object"
+     },
+     "reason_codes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Reason Codes",
+      "type": "array"
      },
      "revision": {
       "anyOf": [
@@ -12395,6 +12424,17 @@
        }
       ],
       "title": "Revision"
+     },
+     "total_matching": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Total Matching"
      },
      "type": {
       "default": "FeatureCollection",
@@ -31088,9 +31128,194 @@
     ]
    }
   },
+  "/api/v1/layers/data/{ref_id}/aggregate": {
+   "get": {
+    "description": "会话 ref 的分组聚合（Track B vNext）—— 视口/过滤统计的服务端真值。\n\n诚实规则：超 AGG_SCAN_LIMIT → 422（不是慢扫）；sum/mean/min/max 只吃\n数值，非数值计入 non_numeric_count；null 键计入 null_key_count；组溢出\n并入 ``__other__`` + truncated=true。响应携带 total_matching/revision，\n消费端（图表/Agent）不得把部分集聚合表述为全量。",
+    "operationId": "get_session_layer_aggregate_api_v1_layers_data__ref_id__aggregate_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "分组字段（properties 键）",
+      "in": "query",
+      "name": "group_by",
+      "required": true,
+      "schema": {
+       "description": "分组字段（properties 键）",
+       "maxLength": 64,
+       "title": "Group By",
+       "type": "string"
+      }
+     },
+     {
+      "description": "count|sum|mean|min|max",
+      "in": "query",
+      "name": "agg",
+      "required": false,
+      "schema": {
+       "default": "count",
+       "description": "count|sum|mean|min|max",
+       "title": "Agg",
+       "type": "string"
+      }
+     },
+     {
+      "description": "聚合数值字段（agg≠count 必填）",
+      "in": "query",
+      "name": "agg_field",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 64,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "聚合数值字段（agg≠count 必填）",
+       "title": "Agg Field"
+      }
+     },
+     {
+      "description": "窗口 'w,s,e,n'（经纬度，粗滤）",
+      "in": "query",
+      "name": "bbox",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "窗口 'w,s,e,n'（经纬度，粗滤）",
+       "title": "Bbox"
+      }
+     },
+     {
+      "description": "typed 谓词 AST（JSON，同 /features）",
+      "in": "query",
+      "name": "where",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 2048,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "typed 谓词 AST（JSON，同 /features）",
+       "title": "Where"
+      }
+     },
+     {
+      "description": "组数上限（溢出并入 __other__）",
+      "in": "query",
+      "name": "max_groups",
+      "required": false,
+      "schema": {
+       "default": 64,
+       "description": "组数上限（溢出并入 __other__）",
+       "maximum": 256,
+       "minimum": 1,
+       "title": "Max Groups",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "revision guard",
+      "in": "query",
+      "name": "v",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "revision guard",
+       "title": "V"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Session Layer Aggregate",
+    "tags": [
+     "图层管理",
+     "图层数据"
+    ]
+   }
+  },
   "/api/v1/layers/data/{ref_id}/feature/{feature_id}": {
    "get": {
-    "description": "Return a single GeoJSON Feature by its id property (server-side lookup, wire carries one feature).",
+    "description": "Return a single GeoJSON Feature by its id property (server-side lookup, wire carries one feature).\n\n``id_mode=positional``：MVT 位置 id 回查（Track B）——无链内稳定 id 的\n数据集以 FC 自然索引+1 寻址；越界/非整数 → 404/400。链内寻址语义不变。",
     "operationId": "get_session_layer_feature_api_v1_layers_data__ref_id__feature__feature_id__get",
     "parameters": [
      {
@@ -31118,6 +31343,24 @@
       "schema": {
        "title": "Session Id",
        "type": "string"
+      }
+     },
+     {
+      "description": "寻址模式：缺省=链内稳定 id；'positional'=位置 id（FC 自然索引+1，仅 revision 内稳定）",
+      "in": "query",
+      "name": "id_mode",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "寻址模式：缺省=链内稳定 id；'positional'=位置 id（FC 自然索引+1，仅 revision 内稳定）",
+       "title": "Id Mode"
       }
      },
      {
@@ -31171,7 +31414,7 @@
   },
   "/api/v1/layers/data/{ref_id}/features": {
    "get": {
-    "description": "会话 ref 的窗口/分页要素读（W12 数据平面 vNext）。\n\n浏览语义补全（ADR-0047 浏览半边）：显示走 MVT 之外，属性表/检查器/\n选择详情可按小批窗口浏览 —— 2 万～10 万要素的 inline-only ref 不再\n被迫整包拉取。稳定序 = FC 自然序（revision 内不可变）；``v`` 与服务端\n当前 content_revision 不符 → 409（绝不静默跨版拼接页）。响应携带当前\nrevision 与 descriptor feature_count，供客户端续页与决策。",
+    "description": "会话 ref 的窗口/分页要素读（W12 数据平面 vNext）。\n\n浏览语义补全（ADR-0047 浏览半边）：显示走 MVT 之外，属性表/检查器/\n选择详情可按小批窗口浏览 —— 2 万～10 万要素的 inline-only ref 不再\n被迫整包拉取。稳定序 = FC 自然序（revision 内不可变）；``v`` 与服务端\n当前 content_revision 不符 → 409（绝不静默跨版拼接页）。响应携带当前\nrevision 与 descriptor feature_count，供客户端续页与决策。\n\nTrack B vNext（additive）：``order`` 排序序（v2 cursor 绑定 order 摘要）、\n``where`` typed 谓词、``total_matching``（可证才给，超限 null）、\n``truncated``/``is_complete``/``reason_codes`` 诚实元数据、``id_mode``\n稳定 id 披露（无链内 id 的要素投影位置 id，仅 revision 内稳定）。",
     "operationId": "get_session_layer_features_page_api_v1_layers_data__ref_id__features_get",
     "parameters": [
      {
@@ -31279,6 +31522,44 @@
        ],
        "description": "客户端持有的 content_revision（revision guard）",
        "title": "V"
+      }
+     },
+     {
+      "description": "单字段排序：'<field>' 升序 / '-<field>' 降序（缺失值恒最后）",
+      "in": "query",
+      "name": "order",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 129,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "单字段排序：'<field>' 升序 / '-<field>' 降序（缺失值恒最后）",
+       "title": "Order"
+      }
+     },
+     {
+      "description": "typed 谓词 AST（JSON）：{field,op:eq|ne|in|between|contains|startswith,...} / {op:and|or,terms} / {op:not,term}",
+      "in": "query",
+      "name": "where",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 2048,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "typed 谓词 AST（JSON）：{field,op:eq|ne|in|between|contains|startswith,...} / {op:and|or,terms} / {op:not,term}",
+       "title": "Where"
       }
      },
      {
