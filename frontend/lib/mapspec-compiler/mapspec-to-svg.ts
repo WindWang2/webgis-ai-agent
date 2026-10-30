@@ -31,12 +31,83 @@ export interface MapSpecToSvgOptions {
 }
 
 import { computeOversampleBoost, resolveOversampledTileGrid, mercY } from "../map-kit/oversample";
+import { wrapLabelMultilingual } from "@/lib/label-geometry";
 import {
   estimateLabelBox,
   fitLabel,
   MAX_LABELS_PER_EXPORT,
   solveExportLabels,
 } from "./label-solver";
+
+/** 线标注 repeat 锚点上限（Python _LINE_REPEAT_MAX_ANCHORS 同值）。 */
+const LINE_REPEAT_MAX_ANCHORS = 4;
+
+/** symbol-placement=line 的等距 repeat 锚点（≤4；Python _line_repeat_anchors
+ *  逐分支孪生）：首锚在弧长中点，向两侧按 spacing 扩展；总长 < 2×spacing
+ *  时返回空（调用方回退单中点锚）。 */
+function lineRepeatAnchors(
+  coords: unknown,
+  project: (c: [number, number]) => [string, string],
+  dpiSpacing: number,
+): Array<{ x: number; y: number; angle: number }> {
+  if (!Array.isArray(coords) || coords.length < 2 || dpiSpacing <= 0) return [];
+  const pts: Array<[number, number]> = [];
+  for (const c of coords) {
+    if (Array.isArray(c) && c.length >= 2) {
+      try {
+        const [px, py] = project(c as [number, number]);
+        pts.push([Number(px), Number(py)]);
+      } catch {
+        return [];
+      }
+    }
+  }
+  if (pts.length < 2) return [];
+  const segLens: number[] = [];
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    segLens.push(l);
+    total += l;
+  }
+  if (total <= 0 || total < 2 * dpiSpacing) return [];
+
+  const anchorAt = (s: number) => {
+    let acc = 0;
+    for (let i = 0; i < segLens.length; i += 1) {
+      const l = segLens[i];
+      if (acc + l >= s || i === segLens.length - 1) {
+        const t = l <= 0 ? 0 : Math.min(1, Math.max(0, (s - acc) / l));
+        return {
+          x: pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t,
+          y: pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t,
+          angle: (Math.atan2(pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0]) * 180) / Math.PI,
+        };
+      }
+      acc += l;
+    }
+    return { x: pts[pts.length - 1][0], y: pts[pts.length - 1][1], angle: 0 };
+  };
+
+  const mid = total / 2;
+  const positions = [mid];
+  let k = 1;
+  while (positions.length < LINE_REPEAT_MAX_ANCHORS) {
+    let added = false;
+    if (mid + k * dpiSpacing <= total) {
+      positions.push(mid + k * dpiSpacing);
+      added = true;
+    }
+    if (positions.length < LINE_REPEAT_MAX_ANCHORS && mid - k * dpiSpacing >= 0) {
+      positions.push(mid - k * dpiSpacing);
+      added = true;
+    }
+    if (!added) break;
+    k += 1;
+  }
+  positions.sort((a, b) => a - b);
+  return positions.map((s) => anchorAt(s));
+}
 
 /**
  * Escapes a string for safe interpolation into an SVG attribute value.
@@ -825,38 +896,68 @@ function compileMapSpecToSvgBody(
           // W6：确定性碰撞模式 —— 收集请求供全图求解（与 Python 孪生同构）。
           // 注意 project() 返回 fmtNum 字符串：数值用途须 Number() 还原。
           // MINOR-7：截断诊断与 Python 孪生同发射（label_truncated）。
-          const [fittedText, textTruncated] = fitLabel(String(rawText));
+          const [, textTruncated] = fitLabel(String(rawText));
           if (textTruncated) {
             options.onDiagnostic?.("label_truncated", `layer=${layer.id} len=${String(rawText).length}`);
           }
+          // Track B（M9，Python 孪生同构）：折行（≈8em，13 窄字符位，≤2 行，
+          // CJK 按字/拉丁按词）—— 折行后单行恒 <MAX_CHARS，截断兜底由上方
+          // fitLabel 口径覆盖，不重复发射诊断。
+          const collText = wrapLabelMultilingual(String(rawText), 13, 2).join("\n");
           let lkind: "point" | "line" | "polygon" = "point";
-          let lang = 0;
           if (geom.type === "LineString" && Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
             lkind = "line";
-            const mi = Math.floor(geom.coordinates.length / 2);
-            const pa = project(geom.coordinates[mi - 1] ?? geom.coordinates[0]);
-            const pb = project(geom.coordinates[mi] ?? geom.coordinates[1]);
-            lang = (Math.atan2(Number(pb[1]) - Number(pa[1]), Number(pb[0]) - Number(pa[0])) * 180) / Math.PI;
           } else if (geom.type === "Polygon" || geom.type === "MultiPolygon") {
             lkind = "polygon";
           }
-          labelRequests.push({
-            id: `lbl${labelRequests.length}-${layer.id}-${fmtNum((coord as [number, number])[0])}-${fmtNum((coord as [number, number])[1])}`,
-            // 与 Python 孪生 fitted_text 同口径（>60 code points 截断）
-            text: fittedText,
-            kind: lkind,
-            x: Number(x),
-            y: Number(y),
-            angle: lang,
-            fontPx: baseSize * dpiScale,
-            fontSizeAttr: fontSize,
-            color,
-            opacity,
-            fontFamily,
-            haloWidth,
-            haloColor,
-            haloOpacity,
-          });
+          // Track B（M9）：layer.label.priorityField 数值代理 → importance。
+          const labelCfg = (layer as { label?: Record<string, unknown> }).label;
+          const pf = labelCfg && typeof labelCfg === "object"
+            ? (labelCfg.priorityField ?? labelCfg.priority_field)
+            : undefined;
+          let importance: number | null = null;
+          if (typeof pf === "string" && pf) {
+            const pv = props[pf];
+            if (typeof pv === "number" && Number.isFinite(pv)) importance = pv;
+          }
+          // 锚点集：默认单锚；line + symbol-placement=line → 等距 repeat
+          // 锚（≤4，间距 250px×dpiScale，对齐 MapLibre symbol-spacing 缺省）。
+          let anchors: Array<{ x: number; y: number; angle: number }> = [];
+          if (lkind === "line" && String(layout["symbol-placement"] ?? "") === "line") {
+            anchors = lineRepeatAnchors(geom.coordinates, project, 250 * dpiScale);
+          }
+          if (anchors.length === 0) {
+            let lang = 0;
+            if (lkind === "line") {
+              const coordsArr = geom.coordinates as [number, number][];
+              const mi = Math.floor(coordsArr.length / 2);
+              const pa = project(coordsArr[mi - 1] ?? coordsArr[0]);
+              const pb = project(coordsArr[mi] ?? coordsArr[1]);
+              lang = (Math.atan2(Number(pb[1]) - Number(pa[1]), Number(pb[0]) - Number(pa[0])) * 180) / Math.PI;
+            }
+            anchors = [{ x: Number(x), y: Number(y), angle: lang }];
+          }
+          for (let ai = 0; ai < anchors.length; ai += 1) {
+            const a = anchors[ai];
+            const idSuffix = ai === 0 ? "" : `-r${ai}`;
+            labelRequests.push({
+              id: `lbl${labelRequests.length}${idSuffix}-${layer.id}-${fmtNum((coord as [number, number])[0])}-${fmtNum((coord as [number, number])[1])}`,
+              text: collText,
+              kind: lkind,
+              x: a.x,
+              y: a.y,
+              angle: a.angle,
+              fontPx: baseSize * dpiScale,
+              fontSizeAttr: fontSize,
+              color,
+              opacity,
+              fontFamily,
+              haloWidth,
+              haloColor,
+              haloOpacity,
+              importance,
+            });
+          }
           return;
         }
 
@@ -874,16 +975,27 @@ function compileMapSpecToSvgBody(
 
   let labelsGroup = "";
   if (collisionMode && labelRequests.length > 0) {
+    // Track B（M9，Python 孪生同构）：priority = importance 稳定名次
+    // （priorityField 数值大者先保，live Top-N 同向；并列按收集序；
+    // 全缺 → 名次=收集序，既有行为不变）。
+    const order = labelRequests
+      .map((r: { importance?: number | null }, i: number) => ({
+        imp: typeof r.importance === "number" ? r.importance : -Infinity,
+        i,
+      }))
+      .sort((a, b) => b.imp - a.imp || a.i - b.i);
+    const rankOf = new Map<number, number>();
+    order.forEach((o, rank) => rankOf.set(o.i, rank));
     const solution = solveExportLabels(
-      labelRequests.map((r, i) => ({
-        id: r.id,
-        text: r.text,
-        kind: r.kind,
-        x: r.x,
-        y: r.y,
-        angle: r.angle,
-        fontSize: r.fontPx,
-        priority: i,
+      labelRequests.map((r: Record<string, unknown>, i: number) => ({
+        id: r.id as string,
+        text: r.text as string,
+        kind: r.kind as "point" | "line" | "polygon",
+        x: r.x as number,
+        y: r.y as number,
+        angle: r.angle as number,
+        fontSize: r.fontPx as number,
+        priority: rankOf.get(i) ?? i,
       })),
       [0, 0, scaledWidth, scaledHeight],
       labelBudget,
@@ -894,9 +1006,11 @@ function compileMapSpecToSvgBody(
       if (p.status !== "placed") continue;
       const r = byId.get(p.id)!;
       const fs = r.fontPx;
+      const lines = String(r.text).split("\n");
       let tx: number, ty: number, anchor: string, baseline: string, transform = "";
       if (r.kind === "point") {
         // 渲染映射：求解盒左下角 → 基线 y（上升部补偿）—— Python 孪生同式。
+        // 多行：盒高（行数口径）参与基线补偿，行距 1.2em。
         const h = estimateLabelBox(r.text, fs)[1];
         tx = p.x;
         ty = p.y + h - 0.25 * fs;
@@ -909,13 +1023,27 @@ function compileMapSpecToSvgBody(
         baseline = "central";
         transform = p.angle !== 0 ? ` transform="rotate(${fmtNum(p.angle)} ${fmtNum(p.x)} ${fmtNum(p.y)})"` : "";
       }
+      const lineY = (k: number, n: number): number =>
+        r.kind === "point"
+          ? ty + k * 1.2 * fs
+          : ty + (k - (n - 1) / 2) * 1.2 * fs;
+      // 多行 tspan（每行绝对 y，fmtNum 确定性）；单行保持既有无 tspan 形态。
+      const textBody =
+        lines.length === 1
+          ? escapeSvgAttr(lines[0])
+          : lines
+              .map(
+                (ln, k) =>
+                  `<tspan x="${fmtNum(tx)}" y="${fmtNum(lineY(k, lines.length))}">${escapeSvgAttr(ln)}</tspan>`,
+              )
+              .join("");
       let haloMain = "";
       if (r.haloWidth !== null) {
-        haloMain += `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="none" stroke="${r.haloColor}" stroke-width="${r.haloWidth}" stroke-opacity="${r.haloOpacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${escapeSvgAttr(r.text)}</text>\n`;
+        haloMain += `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="none" stroke="${r.haloColor}" stroke-width="${r.haloWidth}" stroke-opacity="${r.haloOpacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${textBody}</text>\n`;
       }
       parts.push(
         haloMain +
-          `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="${r.color}" fill-opacity="${r.opacity}" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${escapeSvgAttr(r.text)}</text>`,
+          `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="${r.color}" fill-opacity="${r.opacity}" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${textBody}</text>`,
       );
     }
     if (solution.stats.suppressed > 0) {
