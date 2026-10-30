@@ -59,10 +59,9 @@ export async function postDisplayAck(
 export async function fetchMapOperations(
   sessionId: string,
   ownerToken?: string | null,
-  limit = 8,
 ): Promise<MapOperationReceiptView[]> {
   const resp = await apiFetch<{ operations?: MapOperationReceiptView[] }>(
-    `${_base(sessionId)}/map-operations?limit=${limit}`,
+    `${_base(sessionId)}/map-operations`,
     { ownerToken, label: 'Map operations list error' },
   );
   return Array.isArray(resp?.operations) ? resp.operations : [];

@@ -125,6 +125,11 @@ async def _read_revision(session_id: str) -> int:
         return 0
 
 
+async def read_current_revision(session_id: str) -> int:
+    """当前 mutation revision 的公共只读面（owner 批准路由的 CAS 基线）。"""
+    return await _read_revision(session_id)
+
+
 async def _load_spec(session_id: str) -> Optional[Dict[str, Any]]:
     try:
         from app.services.mapspec.store import mapspec_store_instance
@@ -181,7 +186,7 @@ class _CompiledEffect:
 
     __slots__ = (
         "index", "effect", "resolution", "intent", "before", "after",
-        "state", "reason_code", "note",
+        "state", "reason_code", "note", "deferred",
     )
 
     def __init__(self, index: int, effect: MapOperationEffect, resolution: ResolvedTarget):
@@ -194,6 +199,9 @@ class _CompiledEffect:
         self.state = "planned"
         self.reason_code = ""
         self.note = ""
+        # deferred：symbol 类 intent 在执行时才构建（读新鲜 spec）——
+        # 编译期快照的 presentation 字段不可信（独立评审 B-1/P0）。
+        self.deferred = False
 
 
 async def _compile_effects(
@@ -256,7 +264,6 @@ def _compile_single(ce: _CompiledEffect, spec: Optional[Dict[str, Any]]) -> None
         PatchLayerStyleIntent,
         ReorderLayersIntent,
         RemoveLayerIntent,
-        UpsertLayerIntent,
     )
 
     effect = ce.effect
@@ -352,13 +359,15 @@ def _compile_single(ce: _CompiledEffect, spec: Optional[Dict[str, Any]]) -> None
             ce.reason_code = RC_NOOP
             ce.note = "符号尺寸已是请求值"
             return
-        new_layer = dict(lyr)
-        new_bucket = dict(cur_bucket)
-        new_bucket[paint_key] = after_val
-        new_layer[bucket] = new_bucket
-        # 红线：symbol 读改写只触碰尺寸键，visible/opacity 保持原样
-        # （presentation 面必须走守卫路径，不得经 upsert 洗白）。
-        ce.intent = UpsertLayerIntent(layer=new_layer)
+        # 红线（独立评审 B-1/P0）：symbol intent **延迟到执行时构建** ——
+        # 编译期快照携带的 presentation 字段（透明度族 paint / 显隐）不可
+        # 信：process_layer_ingestion 会给缺失键注入默认值（visibility→
+        # "visible"），编译期剥离无法阻止整层 upsert 把陈旧 presentation
+        # 写回 —— (1) 回滚本操作内先前已提交的显隐/透明度；(2) 洗白编译
+        # -落盘窗口内用户的 opacity 决策（opacity 不在 upsert 守卫面）。
+        # 执行时读新鲜 spec + CAS 链（expected_revision=链上 revision）：
+        # 微竞态（读后用户写）由引擎 CAS 拒绝 superseded，fail-closed。
+        ce.deferred = True
 
     elif kind == KIND_MOVE_LAYER:
         layer_id = ce.resolution.targets[0]
@@ -505,22 +514,80 @@ def _effect_receipt_view(ce: _CompiledEffect) -> Dict[str, Any]:
     return out
 
 
+def _build_deferred_symbol(ce: _CompiledEffect, spec: Optional[Dict[str, Any]]) -> None:
+    """执行时构建 symbol intent（B-1/P0 修复的核心）。
+
+    从**新鲜 spec** 读该层的当前 paint/layout，只覆盖请求的尺寸键，其余
+    字段原样携带（含刚提交的用户/本操作显隐与透明度）。intent 为 None
+    表示执行时已满足请求值（noop）。
+    """
+    from app.services.mapspec.intents import UpsertLayerIntent
+
+    layer_id = ce.resolution.targets[0]
+    lyr = _find_layer(spec, layer_id)
+    if lyr is None:
+        raise ValueError(f"图层 {layer_id!r} 已不在当前 MapSpec")
+    prop = ce.effect.symbol_property or ""
+    bucket_key = _SYMBOL_TARGET_KEYS.get(prop)
+    if bucket_key is None:
+        raise ValueError(f"symbol_property {prop!r} 不支持")
+    bucket, paint_key = bucket_key
+    cur_bucket = lyr.get(bucket) if isinstance(lyr.get(bucket), dict) else {}
+    before_val = cur_bucket.get(paint_key)
+    if ce.effect.symbol_value is not None:
+        after_val = float(ce.effect.symbol_value)
+    else:
+        base = float(before_val) if isinstance(before_val, (int, float)) and before_val else None
+        if base is None:
+            raise ValueError(
+                f"层 {layer_id} 的 {paint_key} 无现值，相对缩放需要 symbol_value 绝对值"
+            )
+        after_val = round(base * float(ce.effect.symbol_scale), 4)  # type: ignore[arg-type]
+    if after_val < 0:
+        raise ValueError("symbol 值不能为负")
+    ce.before = {paint_key: before_val}
+    ce.after = {paint_key: after_val}
+    if isinstance(before_val, (int, float)) and abs(float(before_val) - after_val) < 1e-9:
+        ce.intent = None
+        return
+    new_layer = dict(lyr)
+    new_bucket = dict(cur_bucket)
+    new_bucket[paint_key] = after_val
+    new_layer[bucket] = new_bucket
+    ce.intent = UpsertLayerIntent(layer=new_layer)
+
+
 def _status_of(states: List[str], reason_codes: List[str], superseded: bool,
                clarification: bool, pending_confirm: bool) -> str:
+    """状态聚合（独立评审 B-3/C-1 修正）：
+
+    - superseded 永远显式披露（部分已生效 → partial，零生效 → superseded）
+      —— 不得聚合为 committed 掩盖未尝试的效果；
+    - 全失败（零 applied 且有 failed）→ "failed"，与部分失败区分；
+    - 全 skipped：全 noop → noop；存在被拒 → rejected。
+    """
     if clarification:
         return RC_CLARIFICATION_NEEDED
     if pending_confirm:
         return RC_CONFIRMATION_REQUIRED
-    if superseded and "applied" not in states:
-        return RC_SUPERSEDED
+    applied = states.count("applied")
+    if superseded:
+        return "partial" if applied > 0 else RC_SUPERSEDED
     if "failed" in states:
-        return "partial"
-    if "applied" in states:
+        return "partial" if applied > 0 else "failed"
+    if applied:
         return "committed"
-    # 无 applied：全部 skipped —— 区分「全是 noop」与「存在被拒项」
     if reason_codes and all(rc == RC_NOOP for rc in reason_codes):
         return "noop"
     return "rejected"
+
+
+#: 参与幂等重放的状态集（独立评审 C-2：咨询态回执 —— clarification/
+#: noop/rejected —— 不粘滞 operation_id；同 id 重试必须重新编译裁决，
+#: 否则与「重试复用同一 id」的工具指示组合成死锁）。
+_REPLAYABLE_STATUSES = frozenset({
+    "committed", "partial", "superseded", "failed", RC_CONFIRMATION_REQUIRED,
+})
 
 
 def _user_wins(result: Any) -> bool:
@@ -570,20 +637,32 @@ async def commit_map_operation(
     *,
     origin: str = "agent",
     user_ack: bool = False,
+    bypass_replay: bool = False,
 ) -> Dict[str, Any]:
-    """提交操作（CAS 链）。返回 receipt（同时持久化进回执环）。"""
+    """提交操作（CAS 链）。返回 receipt（同时持久化进回执环）。
+
+    ``bypass_replay``：owner 批准 pending(confirmation_required) 操作的
+    受控提交路由专用 —— 同 operation_id 的旧回执就是本次批准的 pending
+    条目，重放门必须放行让效果真实执行（独立评审 A-5：也不再需要
+    「先删 pending 再提交」的窗口 —— 提交失败时 pending 条目保留，
+    owner 可重试批准）。
+    """
     from app.services.gis_world_state import (
         apply_gis_mutation,
         apply_gis_mutation_batch,
     )
 
-    # 1) 幂等重放：同 operation_id 已有回执 → 原样返回（标记 replayed）。
-    ring = await _read_ring(session_id)
-    for existing in ring:
-        if existing.get("operation_id") == request.operation_id:
-            replay = dict(existing)
-            replay["replayed"] = True
-            return replay
+    # 1) 幂等重放：同 operation_id 已有**已执行**回执 → 原样返回（标记
+    #    replayed）。咨询态回执（clarification/noop/rejected）不粘滞 ——
+    #    世界可能已变，重试必须重新编译裁决（独立评审 C-2）。
+    if not bypass_replay:
+        ring = await _read_ring(session_id)
+        for existing in ring:
+            if (existing.get("operation_id") == request.operation_id
+                    and existing.get("status") in _REPLAYABLE_STATUSES):
+                replay = dict(existing)
+                replay["replayed"] = True
+                return replay
 
     spec = await _load_spec(session_id)
     compiled, clarification = await _compile_effects(session_id, request, spec)
@@ -684,8 +763,19 @@ async def commit_map_operation(
 
     if not superseded:
         for ce in compiled:
-            if ce.intent is None or ce.state in ("applied", "skipped"):
+            if (ce.intent is None and not ce.deferred) or ce.state in ("applied", "skipped"):
                 continue
+            if ce.deferred:
+                fresh_spec = await _load_spec(session_id)
+                try:
+                    _build_deferred_symbol(ce, fresh_spec)
+                except ValueError as exc:
+                    ce.state, ce.reason_code = "skipped", RC_VALIDATION_REJECTED
+                    ce.note = str(exc)[:160]
+                    continue
+                if ce.intent is None:  # 执行时已满足请求值 → noop
+                    ce.state, ce.reason_code = "skipped", RC_NOOP
+                    continue
             try:
                 result = await apply_gis_mutation(
                     session_id,
@@ -750,6 +840,10 @@ async def commit_map_operation(
         "applied_count": states.count("applied"),
         "skipped_count": states.count("skipped"),
         "failed_count": states.count("failed"),
+        # 独立评审 B-3：chain_aborted（中链 superseded 后未尝试的效果）
+        # 必须进计数 —— 不得从任何聚合面消失。
+        "aborted_count": states.count("planned"),
+        "superseded": bool(superseded),
         "untouched_layer_count": max(0, before_layer_count - len(applied_targets)),
     })
     if final_spec is not None:
@@ -794,14 +888,25 @@ def _receipt_message(receipt: Dict[str, Any]) -> str:
     applied = receipt.get("applied_count", 0)
     skipped = receipt.get("skipped_count", 0)
     failed = receipt.get("failed_count", 0)
+    aborted = receipt.get("aborted_count", 0)
     if status == "committed":
         return f"地图操作已提交：{applied} 项生效" + (
             f"，{skipped} 项保留用户决策" if skipped else ""
         )
     if status == "partial":
+        if receipt.get("superseded"):
+            return (
+                f"地图操作部分完成：{applied} 项生效；其余被并发修改取代"
+                f"（{aborted} 项未尝试）——请基于当前地图重发剩余意图。"
+            )
         return (
             f"地图操作部分完成：{applied} 项生效、{failed} 项失败、"
             f"{skipped} 项跳过；失败项见 effects[].reason_code。"
+        )
+    if status == "failed":
+        return (
+            f"地图操作失败：{failed} 项全部未生效"
+            f"（{skipped} 项跳过）；失败项见 effects[].reason_code。"
         )
     if status == RC_SUPERSEDED:
         return "操作被并发修改取代（revision 已前进），未完成的效果未尝试；请基于当前地图重发。"
@@ -847,6 +952,7 @@ def mint_operation_id() -> str:
 
 __all__ = [
     "preview_map_operation",
+    "read_current_revision",
     "commit_map_operation",
     "get_operation_receipt",
     "list_operation_receipts",

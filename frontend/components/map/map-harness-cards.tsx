@@ -19,12 +19,14 @@ import { useT } from '@/lib/i18n/useT';
 import {
   commitPendingMapOperation,
   fetchDisplayConfirmation,
+  fetchMapOperations,
   postDisplayAck,
   type DisplayConfirmationStatus,
 } from '@/lib/api/map-operations';
 import {
   dismissOperationReceipt,
   getOperationReceipts,
+  pushOperationReceipt,
   setReceiptBusSession,
   subscribeReceipts,
   updateOperationReceipt,
@@ -318,6 +320,18 @@ export function MapHarnessCards(props: {
     mountTimer = setTimeout(() => {
       if (confirmStatusRef.current?.mode === 'auto') return;
       void hydrate();
+      // 独立评审 D-4：跨刷新恢复 —— 拉服务端回执环回填 bus（刷新后
+      // agent 操作历史重现；fetch 失败静默 —— 环是披露面不是正确性面）。
+      void (async () => {
+        try {
+          const remote = await fetchMapOperations(sessionId, ownerToken);
+          for (const receipt of remote.slice(0, 3)) {
+            pushOperationReceipt(receipt, sessionId);
+          }
+        } catch {
+          /* 恢复失败不打扰用户 */
+        }
+      })();
     }, 5000);
     const unsubscribe = subscribeMapSpecLive(() => {
       if (debounce) clearTimeout(debounce);

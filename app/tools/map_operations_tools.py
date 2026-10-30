@@ -134,8 +134,10 @@ def register_map_operation_tools(registry: ToolRegistry):
 
         # 前端/LLM 双面载荷：receipt（commit 时含 commands/mapspec）+ 摘要
         result: Dict[str, Any] = dict(receipt)
+        # 独立评审 C-1："failed"（全部效果未生效）不是成功的中止态 ——
+        # 与 noop/rejected（世界已满足/被拒）不同，它要求 LLM 修正重试。
         result["success"] = receipt.get("status") in (
-            "preview", "committed", "noop", "partial", "rejected",
+            "preview", "committed", "noop", "partial", "superseded", "rejected",
             "confirmation_required", "clarification_needed",
         )
         if not result["success"]:

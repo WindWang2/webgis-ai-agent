@@ -359,7 +359,12 @@
     "reason_validation_rejected": "校验拒绝",
     "reason_chain_aborted": "前序失败，本效果未尝试",
     "reason_confirmation_required": "等待用户确认",
-    "reason_clarification_needed": "目标不明确"
+    "reason_clarification_needed": "目标不明确",
+    "status_failed": "失败",
+    "reason_component_not_found": "目标组件不存在",
+    "reason_paint_key_unsupported": "paint 键不在持久白名单",
+    "reason_symbol_property_unsupported": "符号属性不支持",
+    "reason_internal_error": "内部错误"
   },
   "displayConfirm": {
     "title": "地图显示确认",

@@ -359,7 +359,12 @@
     "reason_validation_rejected": "Validation rejected",
     "reason_chain_aborted": "Aborted after earlier failure",
     "reason_confirmation_required": "Awaiting user confirmation",
-    "reason_clarification_needed": "Ambiguous target"
+    "reason_clarification_needed": "Ambiguous target",
+    "status_failed": "Failed",
+    "reason_component_not_found": "Target component not found",
+    "reason_paint_key_unsupported": "Paint key not in the persistent allowlist",
+    "reason_symbol_property_unsupported": "Symbol property unsupported",
+    "reason_internal_error": "Internal error"
   },
   "displayConfirm": {
     "title": "Display confirmation",

@@ -18,8 +18,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.core.client_ip import client_ip_from
+from app.core.rate_limiter import get_rate_limiter
 from app.models.db_model import Conversation
 from app.schemas.map_operation_schema import (
     MapOperationCommitRequest,
@@ -31,6 +33,11 @@ from app.services.auth_history_bridge import require_owned_session
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["AI对话"])
+
+# 独立评审 A-2：批准路由触发环写 + 编译 + 引擎链 —— 与 display-ack 同款
+# 限速（own-session 面的背压，非安全边界）。
+_RATE_LIMIT_MAX = 60
+_RATE_LIMIT_WINDOW = 60
 
 
 async def _raise_if_deleted(session_id: str) -> None:
@@ -86,6 +93,7 @@ async def commit_pending_map_operation(
     session_id: str,
     operation_id: str,
     req: MapOperationCommitRequest,
+    request: Request,
     _conv: Conversation = Depends(require_owned_session),
 ):
     """owner 批准 pending 敏感操作（confirmation_required → 提交）。
@@ -99,10 +107,16 @@ async def commit_pending_map_operation(
     from app.services.gis_harness.map_operations import (
         MapOperationRequest,
         commit_map_operation,
-        drop_receipt,
         get_operation_receipt,
+        read_current_revision,
     )
-    from app.services.gis_harness.map_operations.service import _read_revision
+
+    client_ip = client_ip_from(request)
+    limiter = await get_rate_limiter()
+    if not await limiter.is_allowed(
+        f"map_op_commit:{client_ip}", _RATE_LIMIT_MAX, _RATE_LIMIT_WINDOW
+    ):
+        raise HTTPException(status_code=429, detail="Too many map operation commits")
 
     pending = await get_operation_receipt(session_id, operation_id)
     if pending is None:
@@ -133,7 +147,7 @@ async def commit_pending_map_operation(
             effects=raw_effects,
             expected_revision=req.expected_revision
             if req.expected_revision is not None
-            else await _read_revision(session_id),
+            else await read_current_revision(session_id),
             actor="owner_commit",
             user_ack=True,
             note=(stored_request.get("note") or None),
@@ -144,9 +158,11 @@ async def commit_pending_map_operation(
             detail={"error": "pending_payload_invalid", "message": str(exc)},
         ) from exc
 
-    await drop_receipt(session_id, operation_id)
+    # 独立评审 A-5：不再「先删 pending 再提交」—— bypass_replay 放行重放
+    # 门（旧回执就是本次批准的 pending 条目）；提交失败时 pending 保留，
+    # owner 可重试批准。成功后 _persist_receipt 自然以最终回执覆盖同 id。
     receipt = await commit_map_operation(
-        session_id, request, origin="user", user_ack=True,
+        session_id, request, origin="user", user_ack=True, bypass_replay=True,
     )
     payload: Any = dict(receipt)
     return MapOperationReceiptResponse(

@@ -17,6 +17,7 @@ from app.services.gis_harness.map_operations.service import (
     list_operation_receipts,
     mint_operation_id,
     preview_map_operation,
+    read_current_revision,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "list_operation_receipts",
     "drop_receipt",
     "mint_operation_id",
+    "read_current_revision",
 ]
