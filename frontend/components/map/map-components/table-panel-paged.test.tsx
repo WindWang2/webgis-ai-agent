@@ -204,4 +204,32 @@ describe('table_panel server-paged body (MVT layers)', () => {
     }, { timeout: 3000 });
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
+
+  it('R1-P1-1: load-more 409 mid-pagination surfaces conflict banner + reload works', async () => {
+    seedMvtLayer();
+    // 首页 200；续页 409（翻页中途覆写 —— revision guard 的主场）
+    mockFetch.mockResolvedValueOnce(pageOf(
+      Array.from({ length: 2 }, (_, i) => makeFeature(i)),
+      { nextCursor: 'c2', hasMore: true, isComplete: false },
+    ));
+    mockFetch.mockRejectedValueOnce(new PagedRevisionConflict(9));
+    render(renderComponent(tableComponent({ layerId: 'mvt-layer' }), RendererContext) as never);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('table-panel-row').length).toBe(2);
+    });
+    fireEvent.click(screen.getByTestId('table-panel-load-more'));
+    // 续页 409 → 横幅可见（不静默）；已加载行保留
+    await waitFor(() => {
+      expect(screen.getByTestId('table-panel-paged-error').textContent).toContain('版本 9');
+    });
+    expect(screen.getAllByTestId('table-panel-row').length).toBe(2);
+    // 重载：采纳新 revision 9（不重发旧 v）→ 恢复
+    mockFetch.mockResolvedValueOnce(pageOf([makeFeature(0)], { revision: 9 }));
+    fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
+    await waitFor(() => {
+      expect(screen.getAllByTestId('table-panel-row').length).toBe(1);
+    });
+    const lastCall = mockFetch.mock.calls.at(-1)?.[0];
+    expect(lastCall?.revision).toBe(9);
+  });
 });

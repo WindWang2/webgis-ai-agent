@@ -366,3 +366,70 @@ async def test_aggregate_over_limit_422(client, monkeypatch):
         assert r.json()["detail"]["error"] == "aggregate_over_limit"
     finally:
         fa.AGG_SCAN_LIMIT = orig
+
+
+# ─── R1/R2 评审清偿：聚合撞名/null 组/位置 revision guard ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_aggregate_overflow_key_disambiguation(client, monkeypatch):
+    features = []
+    for i in range(12):
+        props = {"g": "__other__" if i < 6 else f"k{i}"}
+        features.append({
+            "type": "Feature", "geometry": {"type": "Point", "coordinates": [104.0, 30.0]},
+            "properties": props,
+        })
+    _install_store(monkeypatch, data={"type": "FeatureCollection", "features": features})
+    r = await client.get("/api/v1/layers/data/ref-page/aggregate", params={
+        "session_id": _VALID_SID, "group_by": "g", "max_groups": 3,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    keys = [row["key"] for row in body["rows"]]
+    # 真实 __other__ 组保留原名；溢出行改用递进哨兵且 is_overflow=true
+    assert keys.count("__other__") == 1
+    overflow_rows = [row for row in body["rows"] if row.get("is_overflow")]
+    assert len(overflow_rows) == 1
+    assert overflow_rows[0]["key"] != "__other__"
+    assert sum(row["count"] for row in body["rows"]) == 12
+
+
+@pytest.mark.asyncio
+async def test_aggregate_null_group_always_disclosed(client, monkeypatch):
+    features = []
+    for i in range(4):
+        features.append({
+            "type": "Feature", "geometry": {"type": "Point", "coordinates": [104.0, 30.0]},
+            "properties": {"g": f"k{i}"},
+        })
+    for i in range(3):  # null 键组（count=3 < 名额竞争线）
+        features.append({
+            "type": "Feature", "geometry": {"type": "Point", "coordinates": [104.0, 30.0]},
+            "properties": {"g": None},
+        })
+    _install_store(monkeypatch, data={"type": "FeatureCollection", "features": features})
+    r = await client.get("/api/v1/layers/data/ref-page/aggregate", params={
+        "session_id": _VALID_SID, "group_by": "g", "max_groups": 2,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    keys = [row["key"] for row in body["rows"]]
+    assert None in keys, "null 键组必须恒单独披露（不并入 __other__）"
+    assert body["null_key_count"] == 3
+    assert sum(row["count"] for row in body["rows"]) == 7
+
+
+@pytest.mark.asyncio
+async def test_positional_feature_revision_guard(client, monkeypatch):
+    _install_store(monkeypatch, data=_FC_NOID)
+    ok = await client.get("/api/v1/layers/data/ref-page/feature/2", params={
+        "session_id": _VALID_SID, "id_mode": "positional", "v": 5,
+    })
+    assert ok.status_code == 200, ok.text
+    assert ok.headers.get("x-content-revision") == "5"
+    stale = await client.get("/api/v1/layers/data/ref-page/feature/2", params={
+        "session_id": _VALID_SID, "id_mode": "positional", "v": 4,
+    })
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["error"] == "revision_conflict"

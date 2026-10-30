@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import pytest
 
 from app.services.gis_harness.map_critique import (
     C_EXPORT_LABEL_BUDGET,
@@ -88,7 +87,6 @@ class TestCheckExportLabelDiagnostics:
         assert tr.severity == "info"
 
     def test_compile_failure_is_silent_absence(self, monkeypatch):
-        import app.services.gis_harness.map_critique as mc
 
         def _boom(*a, **k):
             raise RuntimeError("compile down")

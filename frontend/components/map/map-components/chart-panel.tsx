@@ -376,7 +376,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
               <span>
                 {mc('agg.evidence', {
                   scanned: viewportAgg.meta.scanned,
-                  matched: viewportAgg.meta.totalMatching,
+                  matched: viewportAgg.meta.totalMatching ?? '?',
                   groups: viewportAgg.meta.groupCount,
                   revision: viewportAgg.meta.revision ?? '?',
                 })}

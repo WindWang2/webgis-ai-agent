@@ -148,6 +148,9 @@ def aggregate_features(
                 if bucket["_max"] is None or v > bucket["_max"]:
                     bucket["_max"] = v
 
+    # null 键组恒单独披露（docstring 承诺）：不参与名额竞争、不并入
+    # __other__（R2 评审 —— 此前落榜 null 组会被静默并进溢出行）。
+    null_bucket = groups.pop(None, None)
     ordered = sorted(
         groups.items(), key=lambda kv: (-kv[1]["count"], _key_sort_token(kv[0]))
     )
@@ -167,10 +170,18 @@ def aggregate_features(
                 other["_min"] = b["_min"]
             if b["_max"] is not None and (other["_max"] is None or b["_max"] > other["_max"]):
                 other["_max"] = b["_max"]
-        rows.append(_row(_OTHER_KEY, other, agg))
+        # 溢出键撞名消歧（R1/R2 评审）：真实组值恰为哨兵时，溢出行改用
+        # 递进哨兵并携带 is_overflow=true（消费端可结构化识别）。
+        overflow_key = _overflow_key(groups)
+        row = _row(overflow_key, other, agg)
+        row["is_overflow"] = True
+        rows.append(row)
+    if null_bucket is not None:
+        rows.append(_row(None, null_bucket, agg))
+    named_groups = len(groups) + (1 if null_bucket is not None else 0)
     return {
         "rows": rows,
-        "group_count": len(groups),
+        "group_count": len(groups) if null_bucket is None else named_groups,
         "is_complete": not truncated,
         "truncated": truncated,
         "scanned": scanned,
@@ -178,6 +189,17 @@ def aggregate_features(
         "null_key_count": null_key_count,
         "non_numeric_count": non_numeric,
     }
+
+
+def _overflow_key(groups: Dict[Any, Dict[str, Any]]) -> str:
+    """溢出合并行键：缺省 ``__other__``；真实组占名时递进消歧（确定性）。"""
+    taken = {k for k in groups.keys() if isinstance(k, str)}
+    candidate = _OTHER_KEY
+    n = 2
+    while candidate in taken:
+        candidate = f"{_OTHER_KEY}#{n}"
+        n += 1
+    return candidate
 
 
 def _key_sort_token(key: Any) -> Tuple[int, Any]:

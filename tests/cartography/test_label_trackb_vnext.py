@@ -174,3 +174,27 @@ class TestLineRepeat:
         result = compile_mapspec_to_svg_detailed(spec, target_dpi=72, width=1000, height=200, padding=10)
         body = _placed_texts(result.svg)
         assert body.count("成渝高速") == 1, "无 symbol-placement=line → 单中点锚（既有行为）"
+
+
+class TestLineRepeatBounding:
+    def test_100k_coordinate_line_bounded(self):
+        """R2-P1-2：超长线锚点计算有界（坐标帽 20k 采样）。"""
+        import time as _time
+
+        coords = [[104.0 + i * 0.00002, 30.6] for i in range(100_000)]
+        project_calls = {"n": 0}
+
+        def project(c):
+            project_calls["n"] += 1
+            return (f"{c[0]:.6f}", f"{c[1]:.6f}")
+
+        from app.services.mapspec_to_svg import _line_repeat_anchors
+
+        # mock 投影返回原始度数（像素空间总长 2.0）—— 用小 spacing 触发
+        # repeat 路径（total > 2×spacing），核心断言是 project 调用数有界。
+        t0 = _time.perf_counter()
+        anchors = _line_repeat_anchors(coords, project, 0.0005)
+        dt = (_time.perf_counter() - t0) * 1000
+        assert project_calls["n"] <= 20_001  # 坐标帽内
+        assert 2 <= len(anchors) <= 4
+        assert dt < 300, f"100k 坐标线锚点计算 {dt:.0f}ms 超界"

@@ -130,7 +130,11 @@ export async function ensureLayerData(
           const fidStr = String(fid);
           if (/^\d+$/.test(fidStr)) {
             try {
-              const posUrl = `${url}&id_mode=positional`;
+              // 位置 id 仅 revision 内稳定：带 descriptor 快照 revision 作
+              // guard —— 覆写后旧位置 id 直接 409，不静默命中别的要素。
+              const rev = layer._descriptor?.content_revision;
+              const revQ = typeof rev === 'number' ? `&v=${rev}` : '';
+              const posUrl = `${url}${revQ}&id_mode=positional`;
               const feature = await apiFetch<Record<string, unknown>>(posUrl, {
                 ownerToken: token ?? undefined,
                 label: 'Feature detail (positional) error',

@@ -173,6 +173,16 @@ def register_layer_browse_tools(registry: ToolRegistry):
             return {"error": f"参数非法: {e}"}
         except FeatureRevisionConflict:  # pragma: no cover - 防御（page_features 不发射）
             return {"error": "revision_conflict"}
+        # 取数后复查（R1 评审：与 REST 双查对称 —— 覆写落在 descriptor 读与
+        # 取数之间时，不得把新载荷贴旧 revision 标签返回）。
+        live_descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
+        live_revision = live_descriptor.get("content_revision") if live_descriptor else None
+        if current_revision is not None and live_revision is not None and int(live_revision) != int(current_revision):
+            return {
+                "error": "revision_conflict",
+                "current_revision": live_revision,
+                "hint": "计算期间数据被覆写，请以 current_revision 重新分页",
+            }
 
         reason_codes: List[str] = []
         if window_bbox is not None:
@@ -281,6 +291,11 @@ def register_layer_browse_tools(registry: ToolRegistry):
             return {"error": "aggregate_over_limit", "feature_count": e.feature_count}
         except FeaturePageError as e:
             return {"error": f"参数非法: {e}"}
+        # 取数后复查（同 features 工具 —— 双查对称）。
+        live_descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
+        live_revision = live_descriptor.get("content_revision") if live_descriptor else None
+        if current_revision is not None and live_revision is not None and int(live_revision) != int(current_revision):
+            return {"error": "revision_conflict", "current_revision": live_revision}
 
         reason_codes = ["aggregate_full_scan"]
         if window_bbox is not None:

@@ -192,7 +192,8 @@ export interface LayerAggregate {
   isComplete: boolean;
   truncated: boolean;
   scanned: number;
-  totalMatching: number;
+  /** 缺失 → null（诚实未知），绝不默认 0。 */
+  totalMatching: number | null;
   nullKeyCount: number;
   nonNumericCount: number;
   revision: number | null;
@@ -238,10 +239,11 @@ export async function fetchLayerAggregate(params: LayerAggregateParams): Promise
   return {
     rows: (raw.rows as AggregateRow[] | undefined) ?? [],
     groupCount: (raw.group_count as number | undefined) ?? 0,
-    isComplete: (raw.is_complete as boolean | undefined) ?? true,
+    // R2 评审：缺省方向必须朝「未知/不完整」，不是「已知/完整」。
+    isComplete: (raw.is_complete as boolean | undefined) ?? false,
     truncated: (raw.truncated as boolean | undefined) ?? false,
     scanned: (raw.scanned as number | undefined) ?? 0,
-    totalMatching: (raw.total_matching as number | undefined) ?? 0,
+    totalMatching: (raw.total_matching as number | null | undefined) ?? null,
     nullKeyCount: (raw.null_key_count as number | undefined) ?? 0,
     nonNumericCount: (raw.non_numeric_count as number | undefined) ?? 0,
     revision: (raw.revision as number | null) ?? null,

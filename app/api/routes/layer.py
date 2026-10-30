@@ -441,6 +441,7 @@ async def get_session_layer_feature(
     id_mode: Optional[str] = Query(
         None, description="寻址模式：缺省=链内稳定 id；'positional'=位置 id（FC 自然索引+1，仅 revision 内稳定）"
     ),
+    v: Optional[int] = Query(None, alias="v", description="revision guard（位置 id 仅 revision 内稳定，强烈建议携带）"),
     _conv: Conversation = Depends(require_owned_session),
 ):
     """Return a single GeoJSON Feature by its id property (server-side lookup, wire carries one feature).
@@ -465,6 +466,15 @@ async def get_session_layer_feature(
             raise HTTPException(status_code=400, detail="位置 id 必须是整数")
         if pos < 1:
             raise HTTPException(status_code=400, detail="位置 id 从 1 开始")
+        # 位置 id 仅 revision 内稳定（R1 评审）：携带 v 时显式 409 ——
+        # 覆写后旧位置 id 会静默命中另一个要素，绝不跨版寻址。
+        _pos_descriptor = await session_data_manager.get_ref_descriptor(session_id, ref_id)
+        _pos_revision = _pos_descriptor.get("content_revision") if _pos_descriptor else None
+        if v is not None and _pos_revision is not None and int(v) != int(_pos_revision):
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "revision_conflict", "current_revision": _pos_revision},
+            )
 
         def _positional_lookup(features: list) -> Optional[dict]:
             idx = pos - 1
@@ -506,7 +516,10 @@ async def get_session_layer_feature(
         return Response(
             content=body,
             media_type="application/json",
-            headers={"X-Content-Type-Options": "nosniff"},
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                **({"X-Content-Revision": str(_pos_revision)} if _pos_revision is not None else {}),
+            },
         )
 
     # P-2（#875）：MVT 瓦片路径的进程内空间索引常驻同一 ref 的 features

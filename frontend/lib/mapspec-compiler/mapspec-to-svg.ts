@@ -41,6 +41,9 @@ import {
 
 /** 线标注 repeat 锚点上限（Python _LINE_REPEAT_MAX_ANCHORS 同值）。 */
 const LINE_REPEAT_MAX_ANCHORS = 4;
+/** repeat 锚点计算的参与坐标帽（Python _LINE_REPEAT_MAX_POINTS 同值；
+ *  超长线确定性跨步采样，project 调用数有界）。 */
+const LINE_REPEAT_MAX_POINTS = 20000;
 
 /** symbol-placement=line 的等距 repeat 锚点（≤4；Python _line_repeat_anchors
  *  逐分支孪生）：首锚在弧长中点，向两侧按 spacing 扩展；总长 < 2×spacing
@@ -51,8 +54,17 @@ function lineRepeatAnchors(
   dpiSpacing: number,
 ): Array<{ x: number; y: number; angle: number }> {
   if (!Array.isArray(coords) || coords.length < 2 || dpiSpacing <= 0) return [];
+  // 坐标帽：超长线确定性跨步采样（首/尾点恒保留），与 Python 孪生同式。
+  let coordsList: unknown[] = coords;
+  if (coordsList.length > LINE_REPEAT_MAX_POINTS) {
+    const step = coordsList.length / LINE_REPEAT_MAX_POINTS;
+    coordsList = Array.from(
+      { length: LINE_REPEAT_MAX_POINTS },
+      (_, k) => coordsList[Math.min(coordsList.length - 1, Math.floor(k * step))],
+    );
+  }
   const pts: Array<[number, number]> = [];
-  for (const c of coords) {
+  for (const c of coordsList) {
     if (Array.isArray(c) && c.length >= 2) {
       try {
         const [px, py] = project(c as [number, number]);

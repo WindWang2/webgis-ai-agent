@@ -141,6 +141,10 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
   });
   const [reloadNonce, setReloadNonce] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  // R1 P2-5：409 后 reload 必须采纳服务端 current_revision 作新锚点 ——
+  // 沿用 layer._descriptor 快照里的旧 v 会立刻再 409（死路按钮）。用 ref
+  // 而非 state：conflict 不自动重取（横幅+手动重载契约），仅读取时生效。
+  const conflictRevisionRef = useRef<number | null>(null);
 
   // 首页（查询身份变化即重取并作废旧请求）。
   useEffect(() => {
@@ -148,6 +152,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    const anchorRevision = conflictRevisionRef.current ?? descriptorRevision;
     setState((s) => ({ ...s, status: 'loading', error: null, rows: [], nextCursor: null, loadingMore: false }));
     let cancelled = false;
     let retried429 = false;
@@ -155,7 +160,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
     const fetchFirstPage = async (): Promise<void> => {
       try {
         const page = await fetchFeaturePage({
-          sessionId, refId, revision: descriptorRevision ?? undefined,
+          sessionId, refId, revision: anchorRevision ?? undefined,
           limit: PAGE_LIMIT, order: orderParam, where, bbox: bbox ?? undefined,
           ownerToken, signal: controller.signal,
         });
@@ -163,6 +168,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
         const rows = rowsFromPage(page.features);
         const columns = mergeColumns([], page.features);
         setColumnsState(columns);
+        conflictRevisionRef.current = null;
         setState({
           status: 'ready', rows, columns, nextCursor: page.nextCursor,
           totalMatching: page.totalMatching, featureCount: page.featureCount,
@@ -174,6 +180,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
       } catch (err) {
         if (cancelled || controller.signal.aborted) return;
         const e = classifyError(err);
+        if (e.kind === 'conflict') conflictRevisionRef.current = e.currentRevision;
         if (e.kind === 'rate' && !retried429) {
           retried429 = true;
           await new Promise((r) => setTimeout(r, RATE_RETRY_MS));
@@ -220,7 +227,11 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
         }));
       } catch (err) {
         if (controller?.signal?.aborted) return;
-        setState((s) => ({ ...s, loadingMore: false, error: classifyError(err) }));
+        const e = classifyError(err);
+        if (e.kind === 'conflict') conflictRevisionRef.current = e.currentRevision;
+        // R1 P1-1：续页 409/429 必须可见 —— status:'error' 使面板横幅渲染
+        //（reload 可恢复）；已累积行保留在 state 供恢复后比对。
+        setState((s) => ({ ...s, status: 'error', loadingMore: false, error: e }));
       }
     })();
   }, [state.status, state.nextCursor, state.loadingMore, state.revision, sessionId, refId, orderParam, where, bbox, ownerToken]);

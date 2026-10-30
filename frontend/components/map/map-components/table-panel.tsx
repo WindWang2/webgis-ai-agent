@@ -238,20 +238,20 @@ function PagedTableBody({
           {tp('paged.countLine', { shown: table.rows.length, matched: matchedText, total: totalText })}
         </span>
       </div>
-      {table.status === 'error' ? (
+      {table.error != null ? (
         <div role="alert" className="flex flex-col gap-1 rounded-xs border border-status-danger/40 bg-status-danger-soft/30 px-2 py-1.5 text-caption" data-testid="table-panel-paged-error">
-          {table.error?.kind === 'conflict' ? (
+          {table.error.kind === 'conflict' ? (
             <>
               <span>{tp('paged.conflictTitle', { revision: table.error.currentRevision ?? '?' })}</span>
               <button type="button" onClick={table.reload} className="self-start rounded-xs border border-map-chrome-border px-2 py-0.5">
                 {tp('paged.conflictReload')}
               </button>
             </>
-          ) : table.error?.kind === 'rate' ? (
+          ) : table.error.kind === 'rate' ? (
             <span>{tp('paged.rateLimited')}</span>
-          ) : table.error?.kind === 'forbidden' ? (
+          ) : table.error.kind === 'forbidden' ? (
             <span>{tp('paged.forbidden')}</span>
-          ) : table.error?.kind === 'notfound' ? (
+          ) : table.error.kind === 'notfound' ? (
             <span>{tp('paged.notFound')}</span>
           ) : (
             <>
@@ -262,11 +262,12 @@ function PagedTableBody({
             </>
           )}
         </div>
-      ) : table.status === 'loading' ? (
+      ) : null}
+      {table.status === 'loading' && total === 0 ? (
         <div className="flex h-full min-h-16 items-center justify-center text-caption text-map-chrome-ink-muted" role="status">
           {t('map.table.loading')}
         </div>
-      ) : total === 0 ? (
+      ) : total === 0 && table.error == null ? (
         <div className="flex h-full min-h-16 items-center justify-center text-caption text-map-chrome-ink-muted" role="status">
           {tp('paged.emptyPage')}
         </div>

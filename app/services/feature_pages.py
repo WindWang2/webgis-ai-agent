@@ -35,6 +35,8 @@ import binascii
 import hashlib
 import json
 import math
+import threading
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 #: 每请求 bbox 前向扫描预算（要素数）—— 有界 CPU，页密度与正确性解耦。
@@ -47,6 +49,10 @@ MAX_FIELDS = 64
 #: 绝不用 returned/已扫描数假冒全量。
 TOTAL_EXACT_LIMIT = 250_000
 
+#: order（排序序）的 FC 大小上限 —— 排序需要 O(n log n) 全量排列，超限
+#: typed 400 拒绝（与 count/aggregate 的有界纪律一致），不做慢扫。
+ORDER_SCAN_LIMIT = 500_000
+
 #: typed 谓词 AST 约束（见 INTERFACE_CONTRACTS §1）。
 FILTER_MAX_JSON_BYTES = 2048
 FILTER_MAX_TERMS = 16
@@ -54,9 +60,12 @@ FILTER_MAX_DEPTH = 4
 FILTER_MAX_VALUES = 64
 FILTER_MAX_FIELD_LEN = 64
 
-#: order/total/id_mode 派生结构的进程内小缓存（键 = 调用方传入的
-#: (ref, revision, spec)）；只存派生数组/计数，绝不持 FC 强引用。
-_DERIVED_CACHE_MAX = 16
+#: 排序/total/id_mode 派生结构的进程内缓存：真 LRU（命中即续期）+
+#: 权重预算（Σ排列长度 ≤ 8M int ≈ 64MB 驻留帽）+ 线程锁（asyncio.to_thread
+#: 走线程池，非单线程 —— R2 评审修正）。键 = (ref, revision, spec)；值只存
+#: 派生数组/计数，绝不持 FC 强引用。
+_DERIVED_CACHE_MAX_ENTRIES = 32
+_DERIVED_CACHE_MAX_WEIGHT = 8_000_000
 
 #: 稳定 id 解析链 —— 与 #1873 feature_edit.identity / 前端 FEATURE_ID_KEYS
 #: 三方同源（layer.py::_find_feature_by_id 同链）。
@@ -67,20 +76,49 @@ FEATURE_ID_KEYS: Tuple[str, ...] = (
 _CURSOR_VERSION = 1
 _CURSOR_VERSION_SORTED = 2
 
-_derived_cache: Dict[Tuple[str, str, str], Any] = {}
+_derived_cache: "OrderedDict[Tuple[str, str, str], Any]" = OrderedDict()
+_derived_cache_weight = 0
+_derived_cache_lock = threading.Lock()
 
 
-def _derived_cached(key: Tuple[str, str, str], build):
-    """(ref, revision, spec) → 派生值的小 LRU（FIFO 驱逐，无锁：route 侧
-    asyncio.to_thread 单线程语义下足够；值是不可变数组/计数，竞态无害）。"""
-    hit = _derived_cache.get(key)
-    if hit is not None:
-        return hit
-    if len(_derived_cache) >= _DERIVED_CACHE_MAX:
-        _derived_cache.pop(next(iter(_derived_cache)))
+def _derived_cached(key: Tuple[str, str, str], build, weight: int = 1):
+    """(ref, revision, spec) → 派生值（真 LRU + 权重帽；命中续期）。
+
+    权重 = 派生结构的元素量级（排序排列 = n），全局预算
+    ``_DERIVED_CACHE_MAX_WEIGHT`` —— 防止 16+ 个 200k-500k 排列的百 MB 级
+    驻留（R2 P1-1）。逐出从 LRU 尾部开始直至回到预算内。
+    """
+    global _derived_cache_weight
+    with _derived_cache_lock:
+        hit = _derived_cache.get(key)
+        if hit is not None:
+            _derived_cache.move_to_end(key)
+            return hit
     value = build()
-    _derived_cache[key] = value
+    with _derived_cache_lock:
+        if key in _derived_cache:
+            _derived_cache.move_to_end(key)
+            return _derived_cache[key]
+        _derived_cache[key] = value
+        _derived_cache_weight += max(1, weight)
+        while _derived_cache and (
+            len(_derived_cache) > _DERIVED_CACHE_MAX_ENTRIES
+            or _derived_cache_weight > _DERIVED_CACHE_MAX_WEIGHT
+        ):
+            _, evicted = _derived_cache.popitem(last=False)
+            _derived_cache_weight -= max(1, _weight_of(evicted))
     return value
+
+
+def _weight_of(value: Any) -> int:
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict):
+        for v in value.values():
+            if isinstance(v, list):
+                return len(v)
+        return 1
+    return 1
 
 
 class FeaturePageError(ValueError):
@@ -119,7 +157,7 @@ def decode_page_cursor(
         payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
         version = payload.get("v")
         idx = payload["i"]
-        if not isinstance(idx, int) or idx < 0:
+        if isinstance(idx, bool) or not isinstance(idx, int) or idx < 0:
             raise FeaturePageError("cursor index must be a non-negative integer")
         if version == _CURSOR_VERSION:
             if order is not None:
@@ -234,8 +272,11 @@ def sorted_permutation_cached(
     if cache_key is None:
         return sorted_permutation(features, order)
     ref, revision = cache_key
-    return _derived_cached((ref, str(revision), f"order:{order_digest(order)}"),
-                           lambda: sorted_permutation(features, order))
+    return _derived_cached(
+        (ref, str(revision), f"order:{order_digest(order)}"),
+        lambda: sorted_permutation(features, order),
+        weight=len(features),
+    )
 
 
 # ─── where（typed 谓词 AST —— allowlist，无任意表达式） ────────────────────
@@ -367,7 +408,13 @@ def evaluate_where(where: Dict[str, Any], feature: Any) -> bool:
             return value is not None
         return value is None or not _num_eq(value, target)
     if op == "in":
-        return any(value is not None and _num_eq(value, t) for t in where["values"])
+        for t in where["values"]:
+            if t is None:
+                if value is None:
+                    return True
+            elif value is not None and _num_eq(value, t):
+                return True
+        return False
     if op == "between":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False
@@ -407,10 +454,10 @@ def count_matching(
     n = len(features)
     if n > TOTAL_EXACT_LIMIT:
         return None
-    if cache_key is not None and where is not None:
+    if cache_key is not None and (where is not None or bbox is not None):
         ref, revision = cache_key
         cached = _derived_cached(
-            (ref, str(revision), f"total:{where_digest(where)}:{bbox!r}"),
+            (ref, str(revision), f"total:{where_digest(where) if where else '-'}:{bbox!r}"),
             lambda: _count_scan(features, where, bbox),
         )
         return cached
@@ -582,6 +629,9 @@ def page_features(
         raise FeaturePageError("payload is not a FeatureCollection")
     n = len(features)
     if order is not None:
+        if n > ORDER_SCAN_LIMIT:
+            raise FeaturePageError(
+                f"order unsupported for feature_count > {ORDER_SCAN_LIMIT} (use natural order)")
         perm = sorted_permutation_cached(features, order, cache_key)
         position = decode_page_cursor(cursor, order) if cursor else 0
         if position >= n:

@@ -25,7 +25,7 @@ import type { Layer } from '@/lib/types/layer';
 
 export interface ViewportAggregateMeta {
   scanned: number;
-  totalMatching: number;
+  totalMatching: number | null;
   groupCount: number;
   truncated: boolean;
   nullKeyCount: number;

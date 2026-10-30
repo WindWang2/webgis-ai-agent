@@ -192,3 +192,38 @@ async def test_missing_ref_not_found(registry):
     out = await _run(registry, "webgis_layer_features_page",
                      {"ref_id": "ref:missing", "limit": 5}, store)
     assert out["error"] == "数据不可用"
+
+
+@pytest.mark.asyncio
+async def test_features_page_post_fetch_revision_recheck(registry):
+    """R1-P2-2：计算期间覆写 → 取数后复查必须报 revision_conflict。"""
+    store = _FakeRefStore(_fc(30))
+    orig = (
+        session_data_manager.resolve_alias,
+        session_data_manager.get_ref_descriptor,
+        session_data_manager.get_ref_data_shared,
+    )
+    orig_descriptor = store.get_ref_descriptor
+
+    calls = {"n": 0}
+
+    async def _advancing_descriptor(session_id, ref):
+        d = await orig_descriptor(session_id, ref)
+        calls["n"] += 1
+        if d is not None and calls["n"] > 1:
+            d["content_revision"] = 6  # 取数后 revision 前进（首次读仍是 5）
+        return d
+
+    orig_shared = store.get_ref_data_shared
+    session_data_manager.resolve_alias = store.resolve_alias
+    session_data_manager.get_ref_descriptor = _advancing_descriptor
+    session_data_manager.get_ref_data_shared = orig_shared
+    try:
+        handler = registry._tools["webgis_layer_features_page"]
+        out = await handler(ref_id="ref:schools", limit=5, session_id="s1")
+        assert out["error"] == "revision_conflict"
+        assert out["current_revision"] == 6
+    finally:
+        session_data_manager.resolve_alias = orig[0]
+        session_data_manager.get_ref_descriptor = orig[1]
+        session_data_manager.get_ref_data_shared = orig[2]

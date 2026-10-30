@@ -232,7 +232,6 @@ class TestTotalMatching:
             fp.TOTAL_EXACT_LIMIT = orig
 
     def test_count_cached_by_cache_key(self):
-        import app.services.feature_pages as fp
 
         fc = _fc(*[_f({"t": "x"}, f"i{i}") for i in range(8)])
         where = {"field": "t", "op": "eq", "value": "x"}
@@ -300,3 +299,66 @@ class TestIdMode:
             assert full["truncated"] is False
         finally:
             fp.WINDOW_SCAN_BUDGET = orig
+
+
+# ─── R1/R2 评审清偿回归 ────────────────────────────────────────────────────
+
+
+class TestReviewFixes:
+    def test_in_with_null_matches_missing(self):
+        f = _f({"t": None}, "a")
+        g = _f({"t": "x"}, "b")
+        ast = parse_where_param('{"field":"t","op":"in","values":[null,"x"]}')
+        assert evaluate_where(ast, f) is True   # null 值命中缺席
+        assert evaluate_where(ast, g) is True   # 字符串值照常
+        assert evaluate_where(parse_where_param('{"field":"t","op":"in","values":["y"]}'), f) is False
+
+    def test_cursor_rejects_bool_index(self):
+        import base64 as _b64
+
+        def _cursor(payload: dict) -> str:
+            return _b64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+
+        with pytest.raises(FeaturePageError):
+            decode_page_cursor(_cursor({"v": 1, "i": True}))
+
+    def test_order_over_limit_rejected(self):
+        import app.services.feature_pages as fp
+
+        fc = _fc(*[_f({"v": i}, f"i{i}") for i in range(5)])
+        orig = fp.ORDER_SCAN_LIMIT
+        fp.ORDER_SCAN_LIMIT = 4
+        try:
+            with pytest.raises(FeaturePageError, match="order unsupported"):
+                page_features(fc, limit=10, order=("v", 1))
+        finally:
+            fp.ORDER_SCAN_LIMIT = orig
+
+    def test_bbox_only_count_cached(self):
+
+        fc = _fc(*[_f({"t": "x", "lon": 104.0 + (i % 3) * 0.1}, f"i{i}") for i in range(10)])
+        key = ("ref:c", "1")
+        first = count_matching(fc["features"], where=None, bbox=(104.0, 30.0, 104.15, 31.0), cache_key=key)
+        assert first == 7  # lon ∈ {104.0, 104.1}（i%3 ∈ {0,1}）
+        # 改数据后同 cache_key 命中缓存（bbox-only 也缓存）
+        fc["features"].append(_f({"t": "x", "lon": 104.05}, "extra"))
+        again = count_matching(fc["features"], where=None, bbox=(104.0, 30.0, 104.15, 31.0), cache_key=key)
+        assert again == 7
+
+    def test_derived_cache_weight_eviction(self):
+        import app.services.feature_pages as fp
+
+        fc = _fc(*[_f({"v": i}, f"i{i}") for i in range(100)])
+        with fp._derived_cache_lock:
+            fp._derived_cache.clear()
+            fp._derived_cache_weight = 0
+        with fp._derived_cache_lock:
+            weight0 = fp._derived_cache_weight
+        # 填 3 个 100 权重排列后手动压低预算帽验证 LRU 逐出逻辑可达
+        for k in range(3):
+            page_features(fc, limit=5, order=("v", 1), cache_key=(f"ref:w{k}", "1"))
+        with fp._derived_cache_lock:
+            assert fp._derived_cache_weight <= fp._DERIVED_CACHE_MAX_WEIGHT
+            assert len(fp._derived_cache) <= fp._DERIVED_CACHE_MAX_ENTRIES
+        assert weight0 == 0
+        fp._derived_cache.clear()

@@ -241,6 +241,10 @@ def _safe_float(val: Any, default: float = 0.0) -> float:
 
 #: 线标注 repeat 锚点上限（对齐 MapLibre symbol-spacing 多贴的有界子集）。
 _LINE_REPEAT_MAX_ANCHORS = 4
+#: repeat 锚点计算的参与坐标帽（R2 评审：单条百万坐标线的 project 逐点
+#: 循环不可中断 —— 确定性跨步采样到帽内再算锚点，语义是等距近似的
+#: 有界化，不改变正常线的输出）。
+_LINE_REPEAT_MAX_POINTS = 20_000
 
 
 def _line_repeat_anchors(
@@ -256,8 +260,14 @@ def _line_repeat_anchors(
     """
     if not isinstance(coords, list) or len(coords) < 2 or _dpi_spacing <= 0:
         return []
+    # 坐标帽：超长线确定性跨步采样（首/尾点恒保留），project 调用数有界。
+    coords_list: List[Any] = coords
+    if len(coords_list) > _LINE_REPEAT_MAX_POINTS:
+        step = len(coords_list) / _LINE_REPEAT_MAX_POINTS
+        coords_list = [coords_list[min(len(coords_list) - 1, int(k * step))]
+                       for k in range(_LINE_REPEAT_MAX_POINTS)]
     pts: List[Tuple[float, float]] = []
-    for c in coords:
+    for c in coords_list:
         if isinstance(c, (list, tuple)) and len(c) >= 2:
             try:
                 px, py = project(c)
