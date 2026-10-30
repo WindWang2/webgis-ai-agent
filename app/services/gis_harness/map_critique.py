@@ -42,6 +42,11 @@ C_INVALID_BOUNDS = "invalid_result_bounds"
 C_EXPORT_COMPLETENESS = "export_component_missing"
 C_LABEL_COLLISION = "label_collision"
 C_OVERLAY_MISMATCH = "planned_observed_mismatch"
+# Track B（M13）：导出标注确定性 findings（证据面，不建新 verdict engine ——
+# 严重度只有 warning/info，修复路由留给既有 user/agent 通道）。
+C_EXPORT_LABEL_BUDGET = "export_label_budget_exceeded"
+C_EXPORT_LABEL_SUPPRESSED = "export_label_suppressed"
+C_EXPORT_LABEL_TRUNCATED = "export_label_truncated"
 
 #: 出版件组件完整性词表（消费既有组件类型词表 —— 不建第三词表）。
 _PUBLICATION_COMPONENTS: Tuple[str, ...] = ("title", "north_arrow", "scale_bar")
@@ -285,6 +290,95 @@ def check_overlay_mismatch(
     return []
 
 
+# ── Track B（M13）：导出标注确定性 findings（只读编译适配） ────────────────
+
+
+def check_export_label_diagnostics(
+    mapspec: Optional[Dict[str, Any]],
+) -> List[MapCompletionFinding]:
+    """确定性导出编译的标注证据（budget/抑制/截断）→ bounded findings。
+
+    只读适配（不建 verdict engine）：spec 声明 deterministic 碰撞 + 出版
+    导出时，用 ``compile_mapspec_to_svg_detailed`` 的确定性 diagnostics
+    产出**证据级** finding（warning/info）：
+    - ``label_budget_exceeded``：MAX_LABELS_PER_EXPORT 预算外的标注被丢 ——
+      出版图可能少名字（warning）；
+    - ``label_collision_relaxed``：抑制数超过放置数一半 —— 密度告警
+      （warning）；
+    - ``label_truncated``：文本被截断（info，可读性披露）。
+
+    编译失败/条件不满足 → 零 finding（诚实缺席，绝不猜）。修复路由（若
+    用户/Agent 决定收口）走既有组件/图层 mutation 通道，不在本检查内。
+    """
+    if not isinstance(mapspec, dict):
+        return []
+    labels_cfg = (mapspec.get("layout") or {}).get("labels") if isinstance(mapspec.get("layout"), dict) else None
+    if not isinstance(labels_cfg, dict) or labels_cfg.get("collision") != "deterministic":
+        return []
+    exports = [str(e) for e in (mapspec.get("exports") or [])]
+    if not any(e.lower() in ("png", "pdf", "svg", "jpg") for e in exports):
+        return []
+    has_symbol = any(
+        isinstance(ly, dict) and ly.get("type") in ("symbol", "text")
+        for ly in (mapspec.get("layers") or [])
+    )
+    if not has_symbol:
+        return []
+    try:
+        from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
+
+        result = compile_mapspec_to_svg_detailed(
+            mapspec, target_dpi=96, width=800, height=600, padding=20
+        )
+    except Exception:  # noqa: BLE001 - 证据面：编译失败不给结论
+        logger.debug("export label diagnostics compile failed", exc_info=True)
+        return []
+    findings: List[MapCompletionFinding] = []
+    for d in getattr(result, "diagnostics", []) or []:
+        code = d.get("code")
+        detail = str(d.get("detail") or "")[:120]
+        if code == "label_budget_exceeded":
+            findings.append(MapCompletionFinding(
+                code=C_EXPORT_LABEL_BUDGET,
+                severity="warning",
+                target="labels",
+                detail=f"deterministic export dropped labels beyond budget ({detail})",
+            ))
+        elif code == "label_collision_relaxed":
+            placed = _parse_placed(detail)
+            suppressed = _parse_suppressed(detail)
+            if placed is not None and suppressed is not None and suppressed * 2 > placed:
+                findings.append(MapCompletionFinding(
+                    code=C_EXPORT_LABEL_SUPPRESSED,
+                    severity="warning",
+                    target="labels",
+                    detail=(f"deterministic export suppressed {suppressed} of "
+                            f"{placed + suppressed} labels (density/fidelity risk)"),
+                ))
+        elif code == "label_truncated":
+            findings.append(MapCompletionFinding(
+                code=C_EXPORT_LABEL_TRUNCATED,
+                severity="info",
+                target="labels",
+                detail=f"export labels truncated ({detail})",
+            ))
+    return findings
+
+
+def _parse_placed(detail: str) -> Optional[int]:
+    try:
+        return int(detail.split("placed=")[1].split()[0])
+    except (IndexError, ValueError):
+        return None
+
+
+def _parse_suppressed(detail: str) -> Optional[int]:
+    try:
+        return int(detail.split("suppressed=")[1].split()[0])
+    except (IndexError, ValueError):
+        return None
+
+
 # ── 聚合入口 ─────────────────────────────────────────────────────────────
 
 
@@ -302,6 +396,7 @@ def critique_map_state(
     findings.extend(check_publication_components(chapter, mapspec))
     findings.extend(check_label_collision(observation))
     findings.extend(check_overlay_mismatch(chapter, observation))
+    findings.extend(check_export_label_diagnostics(mapspec))
     return findings[:12]
 
 
@@ -311,10 +406,14 @@ __all__ = [
     "C_EXPORT_COMPLETENESS",
     "C_LABEL_COLLISION",
     "C_OVERLAY_MISMATCH",
+    "C_EXPORT_LABEL_BUDGET",
+    "C_EXPORT_LABEL_SUPPRESSED",
+    "C_EXPORT_LABEL_TRUNCATED",
     "check_blank_map",
     "check_invalid_bounds",
     "check_publication_components",
     "check_label_collision",
     "check_overlay_mismatch",
+    "check_export_label_diagnostics",
     "critique_map_state",
 ]
