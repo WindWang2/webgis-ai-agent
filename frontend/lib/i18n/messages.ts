@@ -17,6 +17,7 @@ import zhTweaks from '@/messages/zh-CN/tweaks.json'
 import zhSidebar from '@/messages/zh-CN/sidebar.json'
 import zhMap from '@/messages/zh-CN/map.json'
 import zhMapTable from '@/messages/zh-CN/mapTable.json'
+import zhMapChart from '@/messages/zh-CN/mapChart.json'
 import zhDrawers from '@/messages/zh-CN/drawers.json'
 import zhStory from '@/messages/zh-CN/story.json'
 import zhGeoai from '@/messages/zh-CN/geoai.json'
@@ -48,6 +49,7 @@ import enTweaks from '@/messages/en-US/tweaks.json'
 import enSidebar from '@/messages/en-US/sidebar.json'
 import enMap from '@/messages/en-US/map.json'
 import enMapTable from '@/messages/en-US/mapTable.json'
+import enMapChart from '@/messages/en-US/mapChart.json'
 import enDrawers from '@/messages/en-US/drawers.json'
 import enStory from '@/messages/en-US/story.json'
 import enGeoai from '@/messages/en-US/geoai.json'
@@ -82,6 +84,7 @@ export interface AppMessages {
   sidebar: typeof zhSidebar
   map: typeof zhMap
   mapTable: typeof zhMapTable
+  mapChart: typeof zhMapChart
   drawers: typeof zhDrawers
   story: typeof zhStory
   geoai: typeof zhGeoai
@@ -117,6 +120,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     sidebar: zhSidebar,
     map: zhMap,
     mapTable: zhMapTable,
+    mapChart: zhMapChart,
     drawers: zhDrawers,
     compositionAssets: zhCompositionAssets,
     dataPreparation: zhDataPreparation,
@@ -151,6 +155,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     sidebar: enSidebar as unknown as AppMessages['sidebar'],
     map: enMap as unknown as AppMessages['map'],
     mapTable: enMapTable as unknown as AppMessages['mapTable'],
+    mapChart: enMapChart as unknown as AppMessages['mapChart'],
     drawers: enDrawers as unknown as AppMessages['drawers'],
     compositionAssets: enCompositionAssets as unknown as AppMessages['compositionAssets'],
     dataPreparation: enDataPreparation as unknown as AppMessages['dataPreparation'],
