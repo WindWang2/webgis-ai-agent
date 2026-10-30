@@ -116,6 +116,7 @@ import { MapDecorations } from "./map-decorations"
 import { CHROME_RENDERABLE_TYPES, specHasDecorationComponent } from '@/lib/map-components/chrome-types'
 import { MapToolbarHUD, type MeasureMode } from "./map-toolbar-hud"
 import { VisualRepairCard } from "./visual-repair-card"
+import { MapHarnessCards } from "./map-harness-cards"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
 import { remountCustomOverlays } from "@/lib/map-kit/custom-overlay-registry"
@@ -1843,6 +1844,10 @@ export function MapPanel({
       {/* C13：视觉修复审批/预览/diff 卡片（自包含；拒绝记忆在后端）。
           挂在工具 HUD 同侧 —— 观察/截图闭环的生产入口。 */}
       <VisualRepairCard sessionId={sessionId} ownerToken={ownerToken} />
+
+      {/* ADR-0278：地图操作回执卡 + 最终显示确认卡（receipt-bus 驱动；
+          显示确认自水合，auto 模式永不显示 —— 历史行为零变化）。 */}
+      <MapHarnessCards sessionId={sessionId} ownerToken={ownerToken} />
 
       {/* Interactive Floating GIS Toolbar HUD */}
       <MapToolbarHUD

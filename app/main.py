@@ -1103,9 +1103,6 @@ app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对�
 # ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
 app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["AI对话"])
-# ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
-app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])
-app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(review_proposals.router, prefix="/api/v1", tags=["审查会签"])
 # F15（ADR-0263）：user-approved visual repair + 截图 ref-only 通道。
 app.include_router(visual_repairs.router, prefix="/api/v1", tags=["AI对话"])
