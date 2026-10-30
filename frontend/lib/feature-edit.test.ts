@@ -33,7 +33,7 @@ describe('stepResultDecision · featureEditProposal', () => {
   it('preview 工具成功结果 → 提案载荷（plan_id/ref/ops/preview）', () => {
     const decision = stepResultDecision(
       {
-        tool: 'webgis_feature_edit_preview',
+        tool: 'vector_feature_edit_preview',
         result: {
           success: true,
           plan_id: 'fep-1',
@@ -61,7 +61,7 @@ describe('stepResultDecision · featureEditProposal', () => {
   it('失败/无 plan_id 的预览不挂卡', () => {
     const decision = stepResultDecision(
       {
-        tool: 'webgis_feature_edit_preview',
+        tool: 'vector_feature_edit_preview',
         result: { success: false, code: 'ENUM_VIOLATION', findings: [] },
       } as never,
       ctx,
@@ -80,7 +80,7 @@ describe('stepResultDecision · featureEditProposal', () => {
   it('commit 工具成功回执 → featureEditCommit（数据刷新 + 卡片推进依据）', () => {
     const decision = stepResultDecision(
       {
-        tool: 'webgis_feature_edit_commit',
+        tool: 'vector_feature_edit_commit',
         result: {
           success: true,
           plan_id: 'fep-9',
@@ -102,7 +102,7 @@ describe('stepResultDecision · featureEditProposal', () => {
   it('commit 被拒（CONFIRMATION_REQUIRED）不产生刷新决策', () => {
     const decision = stepResultDecision(
       {
-        tool: 'webgis_feature_edit_commit',
+        tool: 'vector_feature_edit_commit',
         result: { success: false, code: 'CONFIRMATION_REQUIRED', plan_id: 'fep-9' },
       } as never,
       ctx,

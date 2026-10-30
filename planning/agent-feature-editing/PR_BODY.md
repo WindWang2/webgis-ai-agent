@@ -26,7 +26,7 @@
 
 ## 测试与验证（本地，不等远端 CI）
 
-- 后端：tests/unit/feature_edit/** 64 绿（core/routes/tools/concurrency/e2e/r1 回归钉）+ 邻域（interaction_ir/situation/contract/mutation parity 子集/tool registry）163+ 绿；全量 tests/ 除 1 个**既有环境基线红**（`test_mutation_parity_corpus[set_scene_invalid_mode]`：pydantic 2.13 错误消息 URL 漂移，基线 commit 同样红，与本分支无关——见 EVIDENCE）。
+- 后端：tests/unit/feature_edit/** 64 绿（core/routes/tools/concurrency/e2e/r1 回归钉）；工具命名 vector_feature_edit_*（preview tier-1 恒可见入口；commit/history tier-2 走 list_available_tools 自救——dataset 域 schema 预算既有临界，命名与 tier 选择保证不挤占既有工具（audit4 reproject 红线测试钉住））+ 邻域（interaction_ir/situation/contract/mutation parity 子集/tool registry）163+ 绿；全量 tests/ 除 1 个**既有环境基线红**（`test_mutation_parity_corpus[set_scene_invalid_mode]`：pydantic 2.13 错误消息 URL 漂移，基线 commit 同样红，与本分支无关——见 EVIDENCE）。
 - 前端：tsc --noEmit 绿；eslint 新文件零错误；vitest 全量 494 文件 / 4674 测试绿。
 - 生成物：openapi 快照 / endpoint-scope-matrix / api-docs / staleness 账本均用项目生成器再生，check_generated_staleness 绿；situation schema dump 再生；ADR 编号契约绿。
 - 未跑项如实披露：Playwright/真实浏览器（本机未配置）——地图渲染消费路径以 mapspec 盖章 + content_revision 管线断言代替；vendor/pi 子模块网络受限（既有环境基线）。

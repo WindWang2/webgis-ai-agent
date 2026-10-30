@@ -23,32 +23,25 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
-        tier=2,
-        domains=["dataset"],
-        name="webgis_feature_edit_preview",
+        tier=1,
+        name="vector_feature_edit_preview",
         side_effect="deterministic_compute",
         tags=["要素编辑", "feature edit", "编辑预览", "批量字段", "geometry fix"],
-        capabilities=["dataset_ingest", "data_quality"],
+        capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="medium",
         description=(
-            "为当前选中的（或显式指定的）数据集要素构建**编辑预览**（纯读，不写数据）："
-            "解析目标要素 → 校验词表/类型/枚举/单位 → 计算 before/after diff → 绑定"
-            "数据版本（content_revision + 指纹）。返回有界摘要与 plan_id（TTL 10 分钟）。"
-            "词表：set_fields（批量字段，类型/枚举校验）、rename_field、"
-            "repair_geometry（make_valid/close_ring/dedupe_vertices）、"
-            "move_by（dx_m/dy_m 米制必填）、snap_to_ref（ref_id+tolerance_m）。"
-            "✅ 用于：用户说「把选中的这三所学校类型改为小学」→ 本工具出预览。"
-            "❌ 不做：隐式智能移位/无单位位移/词表外新值（校验 findings 会拒绝）。"
+            "数据集要素编辑预览（纯读）：类型/枚举/单位校验 + before/after diff + "
+            "plan_id（TTL 10min）。词表 set_fields/rename_field/repair_geometry/"
+            "move_by(米制)/snap_to_ref。违规即拒。"
         ),
         param_descriptions={
-            "ops": "编辑操作列表（≤8），如 [{\"op\":\"set_fields\",\"fields\":{\"type\":\"小学\"}}]",
-            "ref_id": "目标数据集 ref（ref:…）；缺省取当前地图选中的 dataset_ref",
-            "feature_ids": "显式目标要素 id 列表；缺省取当前选中集（含多选 selected_ids）",
-            "session_id": "会话 id（运行时注入，无需传）",
+            "ops": "编辑操作（≤8），如 [{\"op\":\"set_fields\",\"fields\":{\"type\":\"小学\"}}]",
+            "ref_id": "目标 ref（ref:…）；缺省取当前选中",
+            "feature_ids": "目标要素 id；缺省取选中集",
         },
     )
-    async def webgis_feature_edit_preview(
+    async def webgis_vector_feature_edit_preview(
         ops: List[Dict[str, Any]],
         ref_id: Optional[str] = None,
         feature_ids: Optional[List[str]] = None,
@@ -88,7 +81,7 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         registry,
         tier=2,
         domains=["dataset"],
-        name="webgis_feature_edit_commit",
+        name="vector_feature_edit_commit",
         side_effect="state_mutation",
         data_mutations=["session_state"],
         tags=["要素编辑", "feature edit", "提交", "数据修改"],
@@ -97,7 +90,7 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         memory_class="medium",
         deterministic=False,
         description=(
-            "提交一个已预览的编辑 plan（plan_id 来自 webgis_feature_edit_preview）。"
+            "提交一个已预览的编辑 plan（plan_id 来自 vector_feature_edit_preview）。"
             "执行链：会话锁 + 数据版本 CAS（过期即 STALE_REVISION 带冲突 diff）→"
             "应用变更（不触碰原始上传文件；journal 全程留痕 before/after）→ 数据"
             "content_revision 递增 → MapSpec 数据源新鲜度盖章 → 地图增量刷新。"
@@ -105,14 +98,14 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
             "**自动执行条件**（其余一律 CONFIRMATION_REQUIRED，等用户在提案卡 approve）："
             "纯属性编辑 + 校验零 findings + ≤50 要素 + 会话策略 allow_safe_attribute。"
             "几何位移/吸附/修复永远需要用户显式确认。undo 走 "
-            "webgis_feature_edit_history 查看后由用户在界面执行。"
+            "webgis_vector_feature_edit_history 查看后由用户在界面执行。"
         ),
         param_descriptions={
-            "plan_id": "webgis_feature_edit_preview 返回的 plan_id",
+            "plan_id": "webgis_vector_feature_edit_preview 返回的 plan_id",
             "session_id": "会话 id（运行时注入，无需传）",
         },
     )
-    async def webgis_feature_edit_commit(
+    async def webgis_vector_feature_edit_commit(
         plan_id: str,
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -120,7 +113,7 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
             return {"success": False, "code": "MISSING_SESSION", "message": "Missing session_id"}
         if not isinstance(plan_id, str) or not plan_id.startswith("fep-"):
             return {"success": False, "code": "INVALID_ARGS",
-                    "message": "plan_id must come from webgis_feature_edit_preview"}
+                    "message": "plan_id must come from webgis_vector_feature_edit_preview"}
         result = await fe_service.agent_commit(session_id, plan_id)
         if result.get("success"):
             receipt = result.get("receipt") or {}
@@ -141,25 +134,19 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         registry,
         tier=2,
         domains=["dataset"],
-        name="webgis_feature_edit_history",
+        name="vector_feature_edit_history",
         side_effect="cacheable_read",
         tags=["要素编辑", "edit history", "撤销", "审计"],
         capabilities=["dataset_ingest"],
         latency_class="fast",
         memory_class="light",
         description=(
-            "读取一个数据集（ref:…）的要素编辑历史（有界 journal）：每笔 "
-            "seq/kind(apply|undo|redo)/actor/origin/变更要素数/数据版本。"
-            "含 dropped 计数（FIFO 溢出披露）。undo/redo 由用户在界面执行"
-            "（编辑提案卡/操作日志），走同一 CAS 写路径。"
+            "读数据集（ref:…）的要素编辑历史（有界 journal：seq/kind/actor/"
+            "变更要素数/数据版本 + dropped 披露）。undo/redo 由用户在界面执行。"
         ),
-        param_descriptions={
-            "ref_id": "数据集 ref（ref:…）",
-            "limit": "返回条数上限（默认 20，最大 50）",
-            "session_id": "会话 id（运行时注入，无需传）",
-        },
+        param_descriptions={"ref_id": "数据集 ref（ref:…）", "limit": "条数（≤50）"},
     )
-    async def webgis_feature_edit_history(
+    async def webgis_vector_feature_edit_history(
         ref_id: str,
         limit: int = 20,
         session_id: Optional[str] = None,

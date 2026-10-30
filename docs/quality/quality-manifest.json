@@ -5696,7 +5696,7 @@
   }
  ],
  "behavioral": {
-  "dispatch": 187,
+  "dispatch": 190,
   "mention": 174,
   "none": 8
  },
@@ -8543,7 +8543,7 @@
   "capabilities": 165,
   "findings": 9,
   "recipes": 166,
-  "tools": 369
+  "tools": 372
  },
  "findings": [
   {
@@ -8620,7 +8620,7 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 187,
+  "behavioral_dispatch": 190,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
   "pass": true,
@@ -8628,7 +8628,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "22a025c0f7903f62d618c1208763e61bbb21864b299714cc87b2e1540cf88b17",
+ "fingerprint": "8250dc40eab80e203fb318064ab47ea2bdb9b10d4675bc9b3d7fb1f14c88d85b",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8668,7 +8668,7 @@
    }
   },
   "pass": true,
-  "total": 369
+  "total": 372
  },
  "manifest_version": 2,
  "recipes": {
@@ -18396,6 +18396,84 @@
     "tests/unit/lib/test_geostat_v3.py"
    ],
    "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "dataset_ingest"
+   ],
+   "deterministic": false,
+   "execution_policy": "async",
+   "latency_class": "medium",
+   "memory_class": "medium",
+   "name": "vector_feature_edit_commit",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "要素编辑",
+    "feature edit",
+    "提交",
+    "数据修改"
+   ],
+   "tests": [
+    "tests/unit/feature_edit/test_e2e_journey.py",
+    "tests/unit/feature_edit/test_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "dataset_ingest"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "vector_feature_edit_history",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "要素编辑",
+    "edit history",
+    "撤销",
+    "审计"
+   ],
+   "tests": [
+    "tests/unit/feature_edit/test_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "dataset_ingest"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "medium",
+   "memory_class": "medium",
+   "name": "vector_feature_edit_preview",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "要素编辑",
+    "feature edit",
+    "编辑预览",
+    "批量字段",
+    "geometry fix"
+   ],
+   "tests": [
+    "tests/unit/feature_edit/test_e2e_journey.py",
+    "tests/unit/feature_edit/test_tools.py"
+   ],
+   "tier": 1
   },
   {
    "behavior": "mention",

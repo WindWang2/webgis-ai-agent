@@ -52,7 +52,7 @@ class TestPreviewTool:
         sid = "sess-tool1"
         ref = await store.store(sid, {"geojson": SCHOOLS}, prefix="data")
         result = await registry.dispatch(
-            "webgis_feature_edit_preview",
+            "vector_feature_edit_preview",
             {
                 "ref_id": ref,
                 "feature_ids": ["sch-1", "sch-3"],
@@ -69,7 +69,7 @@ class TestPreviewTool:
         sid = "sess-tool2"
         ref = await store.store(sid, {"geojson": SCHOOLS}, prefix="data")
         result = await registry.dispatch(
-            "webgis_feature_edit_preview",
+            "vector_feature_edit_preview",
             {
                 "ref_id": ref,
                 "feature_ids": ["sch-1"],
@@ -106,7 +106,7 @@ class TestPreviewTool:
             },
         )
         result = await registry.dispatch(
-            "webgis_feature_edit_preview",
+            "vector_feature_edit_preview",
             {"ops": [{"op": "set_fields", "fields": {"type": "中学"}}]},
             session_id=sid,
         )
@@ -118,7 +118,7 @@ class TestCommitToolPolicyGate:
     async def _preview(self, registry, store, sid, ops):
         ref = await store.store(sid, {"geojson": SCHOOLS}, prefix="data")
         result = await registry.dispatch(
-            "webgis_feature_edit_preview",
+            "vector_feature_edit_preview",
             {"ref_id": ref, "feature_ids": ["sch-1"], "ops": ops},
             session_id=sid,
         )
@@ -129,7 +129,7 @@ class TestCommitToolPolicyGate:
         sid = "sess-tool4"
         plan_id = await self._preview(registry, store, sid, [{"op": "set_fields", "fields": {"type": "小学"}}])
         result = await registry.dispatch(
-            "webgis_feature_edit_commit", {"plan_id": plan_id}, session_id=sid
+            "vector_feature_edit_commit", {"plan_id": plan_id}, session_id=sid
         )
         assert result["success"] is False
         assert result["code"] == "CONFIRMATION_REQUIRED"
@@ -147,13 +147,13 @@ class TestCommitToolPolicyGate:
         await fe_policy.set_policy(sid, "allow_safe_attribute")
         plan_id = await self._preview(registry, store, sid, [{"op": "set_fields", "fields": {"type": "小学"}}])
         result = await registry.dispatch(
-            "webgis_feature_edit_commit", {"plan_id": plan_id}, session_id=sid
+            "vector_feature_edit_commit", {"plan_id": plan_id}, session_id=sid
         )
         assert result["success"] is True, result
         assert result["content_revision_after"] >= 2
         # 幂等：同 plan_id 再提交不写第二版
         result2 = await registry.dispatch(
-            "webgis_feature_edit_commit", {"plan_id": plan_id}, session_id=sid
+            "vector_feature_edit_commit", {"plan_id": plan_id}, session_id=sid
         )
         assert result2["success"] is True
         assert result2.get("entry_seq") == result.get("entry_seq")
@@ -166,7 +166,7 @@ class TestCommitToolPolicyGate:
         await fe_policy.set_policy(sid, "allow_safe_attribute")
         plan_id = await self._preview(registry, store, sid, [{"op": "move_by", "dx_m": 30.0, "dy_m": 0.0}])
         result = await registry.dispatch(
-            "webgis_feature_edit_commit", {"plan_id": plan_id}, session_id=sid
+            "vector_feature_edit_commit", {"plan_id": plan_id}, session_id=sid
         )
         assert result["success"] is False and result["code"] == "CONFIRMATION_REQUIRED"
 
@@ -178,13 +178,13 @@ class TestCommitToolPolicyGate:
         await fe_policy.set_policy(sid, "allow_safe_attribute")
         ref = await store.store(sid, {"geojson": SCHOOLS}, prefix="data")
         plan_id = (await registry.dispatch(
-            "webgis_feature_edit_preview",
+            "vector_feature_edit_preview",
             {"ref_id": ref, "feature_ids": ["sch-1"], "ops": [{"op": "set_fields", "fields": {"type": "小学"}}]},
             session_id=sid,
         ))["plan_id"]
-        await registry.dispatch("webgis_feature_edit_commit", {"plan_id": plan_id}, session_id=sid)
+        await registry.dispatch("vector_feature_edit_commit", {"plan_id": plan_id}, session_id=sid)
         hist = await registry.dispatch(
-            "webgis_feature_edit_history", {"ref_id": ref}, session_id=sid
+            "vector_feature_edit_history", {"ref_id": ref}, session_id=sid
         )
         assert hist["success"] is True
         assert hist["head_seq"] == 1

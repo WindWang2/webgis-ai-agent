@@ -539,6 +539,9 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         ownerToken: sessionTokenRef.current || undefined,
         urgency: 'interactive',
         reasonCode: 'feature-edit:applied',
+        // 会话切换中止纪律（test_layer_fetch_abort 契约：数据面取数必须
+        // 挂 layerFetchAbortRef 的 signal）。
+        signal: layerFetchAbortRef.current?.signal,
       }).then((res) => {
         if (!res.fc) return;
         const cur = useHudStore.getState();

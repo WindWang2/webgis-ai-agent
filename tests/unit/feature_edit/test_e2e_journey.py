@@ -122,7 +122,7 @@ async def test_school_type_edit_journey(client, store):
     reg = ToolRegistry()
     register_feature_edit_tools(reg)
     preview = await reg.dispatch(
-        "webgis_feature_edit_preview",
+        "vector_feature_edit_preview",
         {
             "ops": [
                 {"op": "set_fields", "fields": {"type": "小学"}},
@@ -137,7 +137,7 @@ async def test_school_type_edit_journey(client, store):
     plan_id = preview["plan_id"]
 
     # ④ Agent 尝试直接提交（confirm_all 默认策略）→ typed 拒绝
-    blocked = await reg.dispatch("webgis_feature_edit_commit", {"plan_id": plan_id}, session_id=sid)
+    blocked = await reg.dispatch("vector_feature_edit_commit", {"plan_id": plan_id}, session_id=sid)
     assert blocked["success"] is False and blocked["code"] == "CONFIRMATION_REQUIRED"
     journals = await fe_executor._load_journals(sid)
     assert journals == {}  # 数据未动

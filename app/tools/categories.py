@@ -152,6 +152,10 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # project_tools：空间质检是检视（只读评估）
     "audit_spatial_quality": "inspection",
     "repair_spatial_dataset": "transformation",
+    # feature_edit_tools（/goal 03）：预览/历史只读检视；提交是数据状态突变
+    "vector_feature_edit_preview": "inspection",
+    "vector_feature_edit_history": "inspection",
+    "vector_feature_edit_commit": "transformation",
     # geocompute_tools：计划校验与 run 查询是只读检视
     "validate_execution_plan": "inspection",
     "get_execution_run": "inspection",

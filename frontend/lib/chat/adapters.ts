@@ -259,7 +259,7 @@ export interface StepResultDecision {
   toolStatus: { tool: string; stepId?: string; extra?: Partial<ToolCallEntry> } | null;
   /** propose_plan 结果 → 消息 plan 挂载。 */
   planProposal: PlanProposalPayload | null;
-  /** /goal 03：webgis_feature_edit_preview 结果 → 消息编辑提案卡挂载。 */
+  /** /goal 03：vector_feature_edit_preview 结果 → 消息编辑提案卡挂载。 */
   featureEditProposal: import('@/lib/types/feature-edit').FeatureEditProposalState | null;
   /** /goal 03：commit 工具自动提交回执（数据刷新 + 卡片推进）。 */
   featureEditCommit: { plan_id: string; ref_id: string; content_revision_after?: number; receipt?: Record<string, unknown> } | null;
@@ -320,7 +320,7 @@ export function stepResultDecision(
   // /goal 03：要素编辑预览 → 提案卡（plan_id 存在即挂载；非 committable 的
   // 预览不会带 plan_id，模型按 findings 原文转述）。
   let featureEditProposal: import('@/lib/types/feature-edit').FeatureEditProposalState | null = null;
-  if (tool === 'webgis_feature_edit_preview' && result?.success && typeof result?.plan_id === 'string') {
+  if (tool === 'vector_feature_edit_preview' && result?.success && typeof result?.plan_id === 'string') {
     const r = result as {
       plan_id: string; ref_id: string; safe?: boolean; n_targets?: number;
       ops?: import('@/lib/types/feature-edit').FeatureEditOpSummary[];
@@ -350,7 +350,7 @@ export function stepResultDecision(
     content_revision_after?: number;
     receipt?: Record<string, unknown>;
   } | null = null;
-  if (tool === 'webgis_feature_edit_commit' && result?.success && typeof result?.plan_id === 'string') {
+  if (tool === 'vector_feature_edit_commit' && result?.success && typeof result?.plan_id === 'string') {
     featureEditCommit = {
       plan_id: result.plan_id as string,
       ref_id: String(result.ref_id ?? ''),
