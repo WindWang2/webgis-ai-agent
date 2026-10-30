@@ -510,14 +510,17 @@ async def get_session_layer_feature(
         )
 
     # P-2（#875）：MVT 瓦片路径的进程内空间索引常驻同一 ref 的 features
-    # 列表 —— 命中时零 Redis 流量、零 json.loads，直接在已解析列表上扫描
-    # （鉴权与会话归属同 MVT 路由：require_owned_session 已校验）。
+    # 列表 —— 命中时零 Redis 流量、零 json.loads；链内 id 寻址走懒构建的
+    # id→自然索引（O(1)，重复 id 首中即返，与线性扫语义一致），把 50k-200k
+    # 要素下每次点击 O(n) 扫描的尾延迟消掉。
     from app.services.mvt import spatial_index_cache
     index_entry = spatial_index_cache.get((session_id, ref_id))
     if index_entry is not None:
-        feature = await asyncio.to_thread(
-            _find_feature_by_id, {"features": index_entry.features}, feature_id
-        )
+        def _indexed_lookup(entry) -> Optional[dict]:
+            idx = entry.feature_id_index().get(str(feature_id))
+            return entry.features[idx] if idx is not None else None
+
+        feature = await asyncio.to_thread(_indexed_lookup, index_entry)
         if not feature:
             raise HTTPException(status_code=404, detail="要素不存在")
         body = await serialize_geojson(feature, pretty=False)

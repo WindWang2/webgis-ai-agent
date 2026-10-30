@@ -38,11 +38,45 @@ import time
 from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from app.services.feature_pages import FEATURE_ID_KEYS
 from app.services.singleflight import SingleFlight
 
 logger = logging.getLogger(__name__)
 
 _LAYER_NAME = "data"
+
+
+def _chain_stable_id(feature: Any) -> Optional[str]:
+    """FEATURE_ID_KEYS 链（顶层 id 优先）→ 稳定 id；无 → None。
+
+    与 feature_pages.resolve_feature_stable_id / layer.py::_find_feature_by_id
+    同链同语义（常量取自 feature_pages 单一真相，避免三处漂移）。
+    """
+    if not isinstance(feature, dict):
+        return None
+    top = feature.get("id")
+    if isinstance(top, (str, int)) and not isinstance(top, bool):
+        return str(top)
+    props = feature.get("properties")
+    if isinstance(props, dict):
+        for key in FEATURE_ID_KEYS:
+            value = props.get(key)
+            if isinstance(value, (str, int)) and not isinstance(value, bool):
+                return str(value)
+    return None
+
+
+def _positional_feature_id(feature: Any, natural_index: int) -> Optional[int]:
+    """要素 → MVT field 1 id：无链内稳定 id 时 = FC 自然索引+1，否则 None。
+
+    位置 id 仅 revision 内稳定（锚点 = revision 内不可变的 FC 数组，与
+    feature_pages cursor 同源）；跨 revision 不可寻址，也不进入 feature_edit
+    写通道（#1873 WFID 独立）。有链内 id 的要素返回 None —— 瓦片字节与
+    master 保持一致，前端继续用 properties 字段过滤寻址。
+    """
+    if not isinstance(feature, dict) or _chain_stable_id(feature) is not None:
+        return None
+    return natural_index + 1 if natural_index >= 0 else None
 _EXTENT = 4096
 
 # wire types
@@ -214,8 +248,15 @@ def _double_bytes(v: float) -> bytes:
     return struct.pack("<d", v)
 
 
-def _encode_feature(geometry: bytes, tags: List[int], type_: int = _GT_POINT) -> bytes:
+def _encode_feature(
+    geometry: bytes, tags: List[int], type_: int = _GT_POINT, feature_id: Optional[int] = None
+) -> bytes:
     out = bytearray()
+    # MVT field 1 (uint64 feature id)：仅给「无链内稳定 id」的要素编码位置
+    # id（FC 自然索引+1，revision 内稳定）—— 有链内 id 的数据集保持字节
+    # 不变（ETag/瓦片缓存奇偶性），其要素寻址继续走 properties 字段过滤。
+    if feature_id is not None and feature_id > 0:
+        out += _field(1, _VARINT) + _varint(feature_id)
     out += _field(3, _VARINT) + _varint(type_)
     if tags:
         tag_bytes = bytearray()
@@ -1038,10 +1079,11 @@ def _type_id_for(gtype: str) -> Optional[int]:
 def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
     """Assemble the final MVT tile bytes from encoded feature records.
 
-    Each record is ``(type_id, geometry_bytes, properties)``. Property keys and
-    values are deduplicated in first-seen order, exactly as the wire format
-    requires. Returns b"" when no feature produced geometry (a valid empty tile
-    message with no layer).
+    Each record is ``(type_id, geometry_bytes, properties, feature_id)`` —
+    ``feature_id``（MVT field 1）仅对无链内稳定 id 的要素非 None（位置 id
+    = FC 自然索引+1）。Property keys and values are deduplicated in
+    first-seen order, exactly as the wire format requires. Returns b"" when no
+    feature produced geometry (a valid empty tile message with no layer).
     """
     keys: List[str] = []
     key_idx: Dict[str, int] = {}
@@ -1061,7 +1103,9 @@ def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
         return value_idx[encoded]
 
     feature_msgs: List[bytes] = []
-    for type_id, geom_bytes, props in records:
+    for record in records:
+        type_id, geom_bytes, props = record[0], record[1], record[2]
+        fid = record[3] if len(record) > 3 else None
         tags: List[int] = []
         for k, v in (props or {}).items():
             encoded = _encode_value(v)
@@ -1069,7 +1113,7 @@ def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
                 continue
             tags.append(_k(k))
             tags.append(_v(encoded))
-        feature_msgs.append(_encode_feature(geom_bytes, tags, type_id))
+        feature_msgs.append(_encode_feature(geom_bytes, tags, type_id, feature_id=fid))
 
     if not feature_msgs:
         return b""  # empty tile: valid empty message (no layer)
@@ -1089,7 +1133,7 @@ def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
     return bytes(tile)
 
 
-def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
+def encode_tile(features_data, z: int, x: int, y: int, natural_indices=None) -> bytes:
     """Encode features into a raw (uncompressed) MVT tile for (z, x, y).
 
     ``features_data`` may be a list of GeoJSON feature dicts, a bare
@@ -1101,10 +1145,15 @@ def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
     shapely geometries on each call. The index-aware path
     (``encode_tile_from_index``) reuses geometries already built by the spatial
     index and produces byte-identical output.
+
+    ``natural_indices``（可选，与输入要素列表平行）：各要素在源 FC 里的
+    自然索引 —— 子集调用（index 回退路径）必须显式传入，位置 id（MVT
+    field 1）才与全量路径一致；缺省按输入列表枚举（全量输入时即自然序）。
     """
     features = _to_feature_dicts(features_data)
-    records: List[Tuple[int, bytes, Dict[str, Any]]] = []
-    for f in features:
+    indices = natural_indices if natural_indices is not None else range(len(features))
+    records: List[Tuple[int, bytes, Dict[str, Any], Optional[int]]] = []
+    for natural_index, f in zip(indices, features):
         geometry = f.get("geometry")
         if not isinstance(geometry, dict):
             continue
@@ -1119,10 +1168,12 @@ def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
         if type_id is None:
             continue
         props = f.get("properties") or {}
+        fid = _positional_feature_id(f, natural_index)
         # Issue #598: an AM-crossing geometry may yield several pieces; each
-        # is emitted as its own feature record (cursor-relative MVT commands).
+        # is emitted as its own feature record (cursor-relative MVT commands),
+        # carrying the same feature id (同一要素的分裂件，同 id 正确).
         for geom_bytes in _encode_geometry_pieces(gtype, coords, z, x, y):
-            records.append((type_id, geom_bytes, props))
+            records.append((type_id, geom_bytes, props, fid))
     return _assemble_mvt(records)
 
 
@@ -1155,9 +1206,12 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
     (shapely unavailable).
     """
     if not _SHAPELY or entry.geoms is None:
-        return encode_tile(entry.query_tile(z, x, y), z, x, y)
-    records: List[Tuple[int, bytes, Dict[str, Any]]] = []
-    for feature, geom_lonlat, geom_z0, crosses_am in entry.query_candidates(z, x, y):
+        indices = entry._candidate_indices(z, x, y)
+        return encode_tile(
+            [entry.features[i] for i in indices], z, x, y, natural_indices=indices
+        )
+    records: List[Tuple[int, bytes, Dict[str, Any], Optional[int]]] = []
+    for natural_index, (feature, geom_lonlat, geom_z0, crosses_am) in entry.query_candidates_indexed(z, x, y):
         geometry = feature.get("geometry")
         gtype = geometry.get("type") if isinstance(geometry, dict) else None
         # GeometryCollections and unsupported types are excluded at index-build
@@ -1169,12 +1223,13 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
         if type_id is None:
             continue
         props = feature.get("properties") or {}
+        fid = _positional_feature_id(feature, natural_index)
         if gtype in _IS_POINT:
             coords = geometry.get("coordinates")
             pts = coords if gtype == "MultiPoint" else [coords]
             geom_bytes = _encode_points(pts, z, x, y)
             if geom_bytes is not None:
-                records.append((type_id, geom_bytes, props))
+                records.append((type_id, geom_bytes, props, fid))
         else:
             coords = geometry.get("coordinates") if isinstance(geometry, dict) else None
             # #1003: AM-crossing flag precomputed at index-build time; the old
@@ -1189,7 +1244,7 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
                 # affects the rare AM-crossing features; the cached-geometry
                 # fast path below is unchanged.
                 for geom_bytes in _encode_geometry_pieces(gtype, coords, z, x, y):
-                    records.append((type_id, geom_bytes, props))
+                    records.append((type_id, geom_bytes, props, fid))
             else:
                 try:
                     geom_bytes = _encode_line_polygon_from_geoms(gtype, geom_lonlat, geom_z0, z, x, y)
@@ -1202,9 +1257,9 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
                     logger.warning("mvt: shapely encode failed, using pure-python fallback", exc_info=True)
                     geom_bytes = None
                     for gb in _encode_geometry_pieces(gtype, coords, z, x, y):
-                        records.append((type_id, gb, props))
+                        records.append((type_id, gb, props, fid))
                 if geom_bytes is not None:
-                    records.append((type_id, geom_bytes, props))
+                    records.append((type_id, geom_bytes, props, fid))
     return _assemble_mvt(records)
 
 
@@ -1229,7 +1284,7 @@ class SpatialIndexEntry:
 
     __slots__ = (
         "key", "features", "geoms", "geoms_lonlat", "crosses_am",
-        "tree", "bounds", "estimated_bytes",
+        "tree", "bounds", "estimated_bytes", "id_index",
     )
 
     def __init__(self, key, features, geoms, geoms_lonlat, crosses_am, tree, bounds,
@@ -1245,6 +1300,10 @@ class SpatialIndexEntry:
         self.tree = tree
         self.bounds = bounds
         self.estimated_bytes = estimated_bytes
+        # 链内稳定 id → 自然索引（懒构建，first-wins；重复 id 的寻址语义 =
+        # 首中即返，与 layer.py::_find_feature_by_id 一致）。单要素详情端点
+        # 用它把 O(n) 线性扫降为 O(1)。
+        self.id_index: Optional[Dict[str, int]] = None
 
     def _candidate_indices(self, z: int, x: int, y: int) -> List[int]:
         """Insertion-ordered feature indices whose bbox intersects the tile."""
@@ -1276,6 +1335,25 @@ class SpatialIndexEntry:
             (self.features[i], self.geoms_lonlat[i], self.geoms[i], self.crosses_am[i])
             for i in self._candidate_indices(z, x, y)
         ]
+
+    def query_candidates_indexed(self, z: int, x: int, y: int):
+        """同 ``query_candidates``，但携带 (natural_index, tuple) —— 瓦片编码
+        需要自然索引推导位置 id（MVT field 1，仅无链内 id 的要素）。"""
+        return [
+            (i, (self.features[i], self.geoms_lonlat[i], self.geoms[i], self.crosses_am[i]))
+            for i in self._candidate_indices(z, x, y)
+        ]
+
+    def feature_id_index(self) -> Dict[str, int]:
+        """链内稳定 id → 自然索引（懒构建一次；并发重复构建幂等无害）。"""
+        if self.id_index is None:
+            index: Dict[str, int] = {}
+            for i, f in enumerate(self.features):
+                sid = _chain_stable_id(f)
+                if sid is not None and sid not in index:
+                    index[sid] = i
+            self.id_index = index
+        return self.id_index
 
 
 def _pure_bounds(gtype: str, coords) -> Optional[Tuple[float, float, float, float]]:
