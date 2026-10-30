@@ -31364,6 +31364,24 @@
       }
      },
      {
+      "description": "revision guard（位置 id 仅 revision 内稳定，强烈建议携带）",
+      "in": "query",
+      "name": "v",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "revision guard（位置 id 仅 revision 内稳定，强烈建议携带）",
+       "title": "V"
+      }
+     },
+     {
       "in": "header",
       "name": "X-Session-Token",
       "required": false,
