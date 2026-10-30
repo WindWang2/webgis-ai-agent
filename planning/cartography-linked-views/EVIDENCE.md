@@ -51,3 +51,7 @@
 2. chart 来源选择对分页表只过滤已加载页（诚实窗口语义，未下推类别 where）。
 3. 磁盘/Redis 后端的 200k 端到端（含真实 json.loads）未在本机复现——HTTP 层以 mock store 验证协议，服务函数以真实 200k FC 验证计算。
 4. openapi snapshot 待最终提交时统一刷新（与 #1871/#1873 的生成物冲突最小化策略）。
+
+## Master 既有红灯（隔离证据，非本分支引入）
+
+`tests/unit/test_export_semantic_corpus.py::test_matrix_covers_all_chrome_component_types` 在**干净 origin/master 4b3629c90**（/tmp/master-check worktree）同样失败：elevation_profile/scene_disclosure（3D 系列 PR #1830/#1867 引入的组件类型）未进 _MATRIX_CASES。属 3D 组件所有者的既有缺口；本分支不越界修（该矩阵不在 Track B 责任文件集）。本分支上其余 68/69 用例全绿。
