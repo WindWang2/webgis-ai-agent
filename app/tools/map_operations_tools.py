@@ -55,7 +55,7 @@ def register_map_operation_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="webgis_map_operation",
-        capabilities=["map_presentation_control"],
+        capabilities=["layer_display_control", "map_viewport_control"],
         domains=["mapspec"],
         tier=2,
         args_model=WebgisMapOperationArgs,

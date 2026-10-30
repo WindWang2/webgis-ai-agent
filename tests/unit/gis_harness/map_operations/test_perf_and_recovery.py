@@ -21,7 +21,6 @@ from app.services.gis_harness.map_operations import (
     mint_operation_id,
     preview_map_operation,
 )
-from app.services.mapspec.store import mapspec_store_instance
 from app.services.session_data import session_data_manager
 
 
