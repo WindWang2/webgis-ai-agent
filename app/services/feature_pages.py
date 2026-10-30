@@ -19,11 +19,20 @@ inline-only ref 在 ref-source-resolver 直接拒绝挂载，属性浏览无从�
   —— 稀疏 bbox 只影响页密度，不影响正确性。
 - **fields 投影**：properties 白名单（id/geometry 保留）；字段数上限
   MAX_FIELDS。
+- **order**（vNext）：单字段排序，稳定序 = 排序序（v2 cursor 绑定 order
+  摘要，混用/换序 → 400）；缺失值恒排最后。
+- **where**（vNext）：typed 谓词 AST（allowlist op，深度/项数/值数有界，
+  无任意 SQL/JS）。
+- **total_matching**（vNext）：filter/bbox 存在且 n ≤ TOTAL_EXACT_LIMIT 时
+  精确全扫（按 ref+revision+谓词缓存）；超限 → None（诚实未知）。
+- **位置 id 投影**（vNext）：无链内稳定 id 的要素在响应中投影顶层
+  ``id``=自然索引+1（仅 revision 内稳定，与 #1873 WFID 写通道无关）。
 """
 from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -34,7 +43,44 @@ WINDOW_SCAN_BUDGET = 10_000
 #: fields 投影白名单上限。
 MAX_FIELDS = 64
 
+#: filter/bbox 精确 total_matching 的全扫上限 —— 超限返回 None（total_unknown），
+#: 绝不用 returned/已扫描数假冒全量。
+TOTAL_EXACT_LIMIT = 250_000
+
+#: typed 谓词 AST 约束（见 INTERFACE_CONTRACTS §1）。
+FILTER_MAX_JSON_BYTES = 2048
+FILTER_MAX_TERMS = 16
+FILTER_MAX_DEPTH = 4
+FILTER_MAX_VALUES = 64
+FILTER_MAX_FIELD_LEN = 64
+
+#: order/total/id_mode 派生结构的进程内小缓存（键 = 调用方传入的
+#: (ref, revision, spec)）；只存派生数组/计数，绝不持 FC 强引用。
+_DERIVED_CACHE_MAX = 16
+
+#: 稳定 id 解析链 —— 与 #1873 feature_edit.identity / 前端 FEATURE_ID_KEYS
+#: 三方同源（layer.py::_find_feature_by_id 同链）。
+FEATURE_ID_KEYS: Tuple[str, ...] = (
+    "id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id",
+)
+
 _CURSOR_VERSION = 1
+_CURSOR_VERSION_SORTED = 2
+
+_derived_cache: Dict[Tuple[str, str, str], Any] = {}
+
+
+def _derived_cached(key: Tuple[str, str, str], build):
+    """(ref, revision, spec) → 派生值的小 LRU（FIFO 驱逐，无锁：route 侧
+    asyncio.to_thread 单线程语义下足够；值是不可变数组/计数，竞态无害）。"""
+    hit = _derived_cache.get(key)
+    if hit is not None:
+        return hit
+    if len(_derived_cache) >= _DERIVED_CACHE_MAX:
+        _derived_cache.pop(next(iter(_derived_cache)))
+    value = build()
+    _derived_cache[key] = value
+    return value
 
 
 class FeaturePageError(ValueError):
@@ -49,20 +95,43 @@ class FeatureRevisionConflict(Exception):
         super().__init__(f"ref revision advanced (current={current_revision!r})")
 
 
-def encode_page_cursor(index: int) -> str:
-    raw = json.dumps({"v": _CURSOR_VERSION, "i": int(index)}, separators=(",", ":"))
+def encode_page_cursor(index: int, order: Optional[Tuple[str, int]] = None) -> str:
+    if order is None:
+        raw = json.dumps({"v": _CURSOR_VERSION, "i": int(index)}, separators=(",", ":"))
+    else:
+        raw = json.dumps(
+            {"v": _CURSOR_VERSION_SORTED, "o": order_digest(order), "i": int(index)},
+            separators=(",", ":"),
+        )
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
-def decode_page_cursor(token: str) -> int:
-    """不透明 cursor → 下一起始下标。任何畸形输入都是 typed 400，绝不静默当第 0 页。"""
+def decode_page_cursor(
+    token: str, order: Optional[Tuple[str, int]] = None
+) -> int:
+    """不透明 cursor → 下一起始位置。任何畸形输入都是 typed 400，绝不静默当第 0 页。
+
+    v1 = 自然序索引；v2 = 排序序位置（绑定 order 摘要 —— 换排序字段/方向后
+    旧 v2 cursor 的位置语义失效，显式 400 而不是静默错位页）。
+    """
     try:
         padded = token + "=" * (-len(token) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        version = payload.get("v")
         idx = payload["i"]
         if not isinstance(idx, int) or idx < 0:
             raise FeaturePageError("cursor index must be a non-negative integer")
-        return idx
+        if version == _CURSOR_VERSION:
+            if order is not None:
+                raise FeaturePageError("natural-order cursor used with order param")
+            return idx
+        if version == _CURSOR_VERSION_SORTED:
+            if order is None:
+                raise FeaturePageError("sorted cursor requires the same order param")
+            if payload.get("o") != order_digest(order):
+                raise FeaturePageError("cursor order digest mismatch")
+            return idx
+        raise FeaturePageError(f"unsupported cursor version: {version!r}")
     except FeaturePageError:
         raise
     except (binascii.Error, ValueError, KeyError, TypeError, UnicodeDecodeError) as e:
@@ -105,6 +174,322 @@ def parse_fields_param(raw: Optional[str]) -> Optional[List[str]]:
     return ordered
 
 
+# ─── order（单字段排序，v2 cursor） ────────────────────────────────────────
+
+
+def parse_order_param(raw: Optional[str]) -> Optional[Tuple[str, int]]:
+    """``"<field>"`` 升序 / ``"-<field>"`` 降序 → (field, +1|-1)。
+
+    排序键 = properties[field]；全序分桶：数值桶(0) < 字符串桶(1) < 缺失桶(2)，
+    桶内按值比较；缺失值（无 properties/无字段/bool/NaN/容器）恒排最后，
+    与方向无关；并列按自然索引稳定。
+    """
+    if raw is None or raw == "":
+        return None
+    field = raw[1:] if raw.startswith("-") else raw
+    if not field or len(field) > FILTER_MAX_FIELD_LEN:
+        raise FeaturePageError("order field must be 1-64 chars")
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in field):
+        raise FeaturePageError("order field contains control characters")
+    return (field, -1 if raw.startswith("-") else 1)
+
+
+def order_digest(order: Tuple[str, int]) -> str:
+    return hashlib.sha256(f"{order[0]}|{order[1]}".encode()).hexdigest()[:8]
+
+
+def _sort_bucket(value: Any) -> Optional[Tuple[int, Any]]:
+    """值 → (桶号, 可比值)；None = 缺失桶（不可比：bool/NaN/容器/null/缺席）。"""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return (0, value) if math.isfinite(value) else None
+    if isinstance(value, str):
+        return (1, value)
+    return None
+
+
+def sorted_permutation(
+    features: List[Any], order: Tuple[str, int]
+) -> List[int]:
+    """FC 自然序 → 排序后自然索引序列（确定性、稳定、缺失恒最后）。"""
+    field, direction = order
+    present: List[Tuple[Tuple[int, Any], int]] = []
+    missing: List[int] = []
+    for i, f in enumerate(features):
+        props = f.get("properties") if isinstance(f, dict) else None
+        value = props.get(field) if isinstance(props, dict) else None
+        bucketed = _sort_bucket(value)
+        if bucketed is None:
+            missing.append(i)
+        else:
+            present.append((bucketed, i))
+    present.sort(key=lambda item: item[0], reverse=(direction < 0))
+    return [i for _, i in present] + missing
+
+
+def sorted_permutation_cached(
+    features: List[Any], order: Tuple[str, int], cache_key: Optional[Tuple[str, str]]
+) -> List[int]:
+    if cache_key is None:
+        return sorted_permutation(features, order)
+    ref, revision = cache_key
+    return _derived_cached((ref, str(revision), f"order:{order_digest(order)}"),
+                           lambda: sorted_permutation(features, order))
+
+
+# ─── where（typed 谓词 AST —— allowlist，无任意表达式） ────────────────────
+
+_LEAF_OPS = ("eq", "ne", "in", "between", "contains", "startswith", "gte", "gt", "lte", "lt")
+_RANGE_OPS = ("between", "gte", "gt", "lte", "lt")
+_COMPOSITE_OPS = ("and", "or", "not")
+
+
+def _validate_leaf(node: Dict[str, Any], depth: int) -> Dict[str, Any]:
+    op = node.get("op")
+    if op not in _LEAF_OPS:
+        raise FeaturePageError(f"unknown filter op: {op!r}")
+    if op in ("and", "or", "not"):  # pragma: no cover - guarded by caller
+        raise FeaturePageError("composite op reached leaf validation")
+    field = node.get("field")
+    if not isinstance(field, str) or not field or len(field) > FILTER_MAX_FIELD_LEN:
+        raise FeaturePageError("filter field must be a 1-64 char string")
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in field):
+        raise FeaturePageError("filter field contains control characters")
+    out: Dict[str, Any] = {"op": op, "field": field}
+    if op == "eq" or op == "ne":
+        if "value" not in node:
+            raise FeaturePageError(f"{op} requires 'value'")
+        out["value"] = _check_scalar(node["value"], op)
+    elif op == "in":
+        values = node.get("values")
+        if not isinstance(values, list) or not values or len(values) > FILTER_MAX_VALUES:
+            raise FeaturePageError(f"in requires 1-{FILTER_MAX_VALUES} 'values'")
+        out["values"] = [_check_scalar(v, op) for v in values]
+    elif op == "between":
+        bounds = []
+        for key in ("gte", "lte"):
+            if key not in node:
+                raise FeaturePageError("between requires 'gte' and 'lte'")
+            v = _check_scalar(node[key], op)
+            if not isinstance(v, (int, float)) or isinstance(v, bool):
+                raise FeaturePageError("between bounds must be numeric")
+            bounds.append(v)
+        if bounds[0] > bounds[1]:
+            raise FeaturePageError("between requires gte <= lte")
+        out["gte"], out["lte"] = bounds
+    elif op in _RANGE_OPS:
+        # 数值范围单界算子：{"field":F,"op":gte|gt|lte|lt,"value":N}
+        v = _check_scalar(node.get("value"), op)
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            raise FeaturePageError(f"{op} requires a numeric 'value'")
+        out["value"] = v
+    else:  # contains / startswith
+        v = _check_scalar(node.get("value"), op)
+        if not isinstance(v, str):
+            raise FeaturePageError(f"{op} requires a string 'value'")
+        out["value"] = v
+    return out
+
+
+def _check_scalar(value: Any, op: str) -> Any:
+    ok = value is None or isinstance(value, (bool, int, float, str))
+    if not ok:
+        raise FeaturePageError(f"{op} values must be scalar (str/number/bool/null)")
+    return value
+
+
+def _validate_ast(node: Any, depth: int = 0) -> Dict[str, Any]:
+    if depth > FILTER_MAX_DEPTH:
+        raise FeaturePageError(f"filter nesting exceeds depth {FILTER_MAX_DEPTH}")
+    if not isinstance(node, dict):
+        raise FeaturePageError("filter node must be an object")
+    op = node.get("op")
+    if op in _COMPOSITE_OPS:
+        if op == "not":
+            if "term" not in node:
+                raise FeaturePageError("not requires 'term'")
+            return {"op": "not", "term": _validate_ast(node["term"], depth + 1)}
+        terms = node.get("terms")
+        if not isinstance(terms, list) or not terms or len(terms) > FILTER_MAX_TERMS:
+            raise FeaturePageError(f"{op} requires 1-{FILTER_MAX_TERMS} 'terms'")
+        return {"op": op, "terms": [_validate_ast(t, depth + 1) for t in terms]}
+    return _validate_leaf(node, depth)
+
+
+def parse_where_param(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+    """JSON 字符串 → 已校验 typed 谓词 AST；畸形一律 typed 400。"""
+    if raw is None or raw == "":
+        return None
+    if len(raw) > FILTER_MAX_JSON_BYTES:
+        raise FeaturePageError(f"filter exceeds {FILTER_MAX_JSON_BYTES} bytes")
+    try:
+        node = json.loads(raw)
+    except ValueError as e:
+        raise FeaturePageError(f"filter is not valid JSON: {e}") from e
+    return _validate_ast(node)
+
+
+def where_digest(where: Dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(where, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:10]
+
+
+def _num_eq(a: Any, b: Any) -> bool:
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return float(a) == float(b)
+    return type(a) is type(b) and a == b
+
+
+def evaluate_where(where: Dict[str, Any], feature: Any) -> bool:
+    """已校验 AST × 单要素 → bool。缺席/null 语义：eq null 命中缺席或 null；
+    其余叶算子对缺席值不命中（不抛错）。"""
+    op = where["op"]
+    if op == "and":
+        return all(evaluate_where(t, feature) for t in where["terms"])
+    if op == "or":
+        return any(evaluate_where(t, feature) for t in where["terms"])
+    if op == "not":
+        return not evaluate_where(where["term"], feature)
+    props = feature.get("properties") if isinstance(feature, dict) else None
+    value = props.get(where["field"]) if isinstance(props, dict) else None
+    if op == "eq":
+        target = where["value"]
+        if target is None:
+            return value is None
+        return value is not None and _num_eq(value, target)
+    if op == "ne":
+        target = where["value"]
+        if target is None:
+            return value is not None
+        return value is None or not _num_eq(value, target)
+    if op == "in":
+        return any(value is not None and _num_eq(value, t) for t in where["values"])
+    if op == "between":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        if not math.isfinite(value):
+            return False
+        return where["gte"] <= value <= where["lte"]
+    if op in _RANGE_OPS:
+        # 单界数值范围：非数值/缺失不命中（诚实：不猜类型）
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        if not math.isfinite(value):
+            return False
+        bound = where["value"]
+        if op == "gte":
+            return value >= bound
+        if op == "gt":
+            return value > bound
+        if op == "lte":
+            return value <= bound
+        return value < bound
+    # contains / startswith —— 仅字符串字段（大小写不敏感）
+    if not isinstance(value, str):
+        return False
+    needle = where["value"].lower()
+    haystack = value.lower()
+    return haystack.startswith(needle) if op == "startswith" else needle in haystack
+
+
+def count_matching(
+    features: List[Any],
+    *,
+    where: Optional[Dict[str, Any]],
+    bbox: Optional[Tuple[float, float, float, float]],
+    cache_key: Optional[Tuple[str, str]] = None,
+) -> Optional[int]:
+    """filter×bbox 精确匹配总数；n > TOTAL_EXACT_LIMIT → None（诚实未知）。"""
+    n = len(features)
+    if n > TOTAL_EXACT_LIMIT:
+        return None
+    if cache_key is not None and where is not None:
+        ref, revision = cache_key
+        cached = _derived_cached(
+            (ref, str(revision), f"total:{where_digest(where)}:{bbox!r}"),
+            lambda: _count_scan(features, where, bbox),
+        )
+        return cached
+    return _count_scan(features, where, bbox)
+
+
+def _count_scan(
+    features: List[Any],
+    where: Optional[Dict[str, Any]],
+    bbox: Optional[Tuple[float, float, float, float]],
+) -> int:
+    total = 0
+    for f in features:
+        if where is not None and not evaluate_where(where, f):
+            continue
+        if bbox is not None and not _feature_intersects_bbox(f, bbox):
+            continue
+        total += 1
+    return total
+
+
+# ─── 稳定 id 投影（M3 前半：浏览通道的位置 id 披露） ───────────────────────
+
+
+def resolve_feature_stable_id(feature: Any) -> Optional[str]:
+    """FEATURE_ID_KEYS 链（顶层 id 优先）→ 稳定 id；无 → None。
+
+    与 #1873 feature_edit.identity.resolve_feature_id 同语义（本模块不依赖
+    feature_edit，避免服务方向反转）。
+    """
+    if not isinstance(feature, dict):
+        return None
+    top = feature.get("id")
+    if isinstance(top, (str, int)) and not isinstance(top, bool):
+        return str(top)
+    props = feature.get("properties")
+    if isinstance(props, dict):
+        for key in FEATURE_ID_KEYS:
+            value = props.get(key)
+            if isinstance(value, (str, int)) and not isinstance(value, bool):
+                return str(value)
+    return None
+
+
+def id_mode_of(
+    features: List[Any], cache_key: Optional[Tuple[str, str]] = None
+) -> Dict[str, Any]:
+    """{"id_mode": native|positional|mixed, "positional_count": int, "duplicate_id_count": int}。
+
+    duplicate_id_count = 链内 id 重复的要素数（首个持有者之外）——重复 id 的
+    寻址语义是"首中即返"（layer.py::_find_feature_by_id 现状），必须披露。
+    """
+    def scan() -> Dict[str, Any]:
+        seen: set = set()
+        with_id = 0
+        duplicates = 0
+        for f in features:
+            sid = resolve_feature_stable_id(f)
+            if sid is None:
+                continue
+            with_id += 1
+            if sid in seen:
+                duplicates += 1
+            else:
+                seen.add(sid)
+        n = len(features)
+        mode = "native" if with_id == n and n > 0 else (
+            "positional" if with_id == 0 else "mixed"
+        )
+        if n == 0:
+            mode = "native"
+        return {"id_mode": mode, "positional_count": n - with_id, "duplicate_id_count": duplicates}
+
+    if cache_key is None:
+        return scan()
+    ref, revision = cache_key
+    return _derived_cached((ref, str(revision), "id_mode"), scan)
+
+
 def _geometry_bbox(coords: Any) -> Optional[Tuple[float, float, float, float]]:
     """递归求任意 GeoJSON 坐标结构的 (minx, miny, maxx, maxy)。"""
     if isinstance(coords, (list, tuple)) and coords and isinstance(coords[0], (int, float)):
@@ -142,15 +527,28 @@ def _feature_intersects_bbox(feature: Any, bbox: Tuple[float, float, float, floa
     return not (b[2] < w or b[0] > e or b[3] < s or b[1] > n)
 
 
-def project_feature(feature: Any, fields: Optional[Sequence[str]]) -> Any:
-    """properties 白名单投影（id/geometry/其它顶层键保留）。"""
-    if not fields or not isinstance(feature, dict):
+def project_feature(
+    feature: Any,
+    fields: Optional[Sequence[str]],
+    positional_id: Optional[int] = None,
+) -> Any:
+    """properties 白名单投影（id/geometry/其它顶层键保留）。
+
+    positional_id：要素无链内稳定 id 时投影顶层 ``id``（= FC 自然索引+1），
+    供表格行/选择过滤以 ``$id`` 寻址 —— 仅 revision 内稳定（reason_code
+    ``positional_id_projected`` 披露）；有链内 id 的要素绝不覆盖其 id。
+    """
+    if not fields and positional_id is None:
         return feature
-    props = feature.get("properties")
-    projected = feature
-    if isinstance(props, dict):
-        projected = dict(feature)
-        projected["properties"] = {k: v for k, v in props.items() if k in fields}
+    if not isinstance(feature, dict):
+        return feature
+    projected = dict(feature)
+    if fields:
+        props = feature.get("properties")
+        if isinstance(props, dict):
+            projected["properties"] = {k: v for k, v in props.items() if k in fields}
+    if positional_id is not None and projected.get("id") is None:
+        projected["id"] = positional_id
     return projected
 
 
@@ -161,52 +559,119 @@ def page_features(
     cursor: Optional[str] = None,
     bbox: Optional[Tuple[float, float, float, float]] = None,
     fields: Optional[Sequence[str]] = None,
+    order: Optional[Tuple[str, int]] = None,
+    where: Optional[Dict[str, Any]] = None,
+    cache_key: Optional[Tuple[str, str]] = None,
 ) -> Dict[str, Any]:
     """FC → 稳定序窗口页。
 
     返回::
 
         {"features": [...], "next_cursor": str|None, "has_more": bool,
-         "returned": int, "scanned": int}
+         "returned": int, "scanned": int, "truncated": bool,
+         "positional_ids": int}
 
-    扫描语义：从 cursor 前向收集 bbox 匹配至 ``limit`` 或扫描预算耗尽；
-    停止点即下一页 cursor（不漏要素，CPU 有界）。无 bbox 时即纯切片。
+    扫描语义：从 cursor 前向收集 bbox/where 匹配至 ``limit`` 或扫描预算耗尽；
+    停止点即下一页 cursor（不漏要素，CPU 有界）。无 bbox/where 时即纯切片。
+    ``truncated`` = 因 WINDOW_SCAN_BUDGET 停止且该页未集满（页密度被预算
+    削减的显式信号，与 has_more 正交）。``order`` 时稳定序 = 排序序（v2
+    cursor 绑定 order 摘要）。位置 id 只投影给无链内 id 的要素。
     """
     features = fc.get("features") if isinstance(fc, dict) else None
     if not isinstance(features, list):
         raise FeaturePageError("payload is not a FeatureCollection")
     n = len(features)
+    if order is not None:
+        perm = sorted_permutation_cached(features, order, cache_key)
+        position = decode_page_cursor(cursor, order) if cursor else 0
+        if position >= n:
+            return {"features": [], "next_cursor": None, "has_more": False,
+                    "returned": 0, "scanned": 0, "truncated": False, "positional_ids": 0}
+        out: List[Any] = []
+        positional_ids = 0
+        i = position
+        scan_cap = min(n, position + WINDOW_SCAN_BUDGET)
+        while i < scan_cap and len(out) < limit:
+            natural = perm[i]
+            f = features[natural]
+            i += 1
+            if where is not None and not evaluate_where(where, f):
+                continue
+            if bbox is not None and not _feature_intersects_bbox(f, bbox):
+                continue
+            pid: Optional[int] = None
+            if resolve_feature_stable_id(f) is None:
+                pid = natural + 1
+                positional_ids += 1
+            out.append(project_feature(f, fields, pid))
+        has_more = i < n
+        truncated = len(out) < limit and i >= scan_cap and i < n
+        return {
+            "features": out,
+            "next_cursor": encode_page_cursor(i, order) if has_more else None,
+            "has_more": has_more,
+            "returned": len(out),
+            "scanned": i - position,
+            "truncated": truncated,
+            "positional_ids": positional_ids,
+        }
     start = decode_page_cursor(cursor) if cursor else 0
     if start >= n:
-        return {"features": [], "next_cursor": None, "has_more": False, "returned": 0, "scanned": 0}
-    out: List[Any] = []
+        return {"features": [], "next_cursor": None, "has_more": False,
+                "returned": 0, "scanned": 0, "truncated": False, "positional_ids": 0}
+    out = []
+    positional_ids = 0
     i = start
     scan_cap = min(n, start + WINDOW_SCAN_BUDGET)
     while i < scan_cap and len(out) < limit:
         f = features[i]
         i += 1
+        if where is not None and not evaluate_where(where, f):
+            continue
         if bbox is not None and not _feature_intersects_bbox(f, bbox):
             continue
-        out.append(project_feature(f, fields))
+        pid = None
+        if resolve_feature_stable_id(f) is None:
+            pid = i  # i 已自增 = 自然索引+1
+            positional_ids += 1
+        out.append(project_feature(f, fields, pid))
     has_more = i < n
+    truncated = len(out) < limit and i >= scan_cap and i < n
     return {
         "features": out,
         "next_cursor": encode_page_cursor(i) if has_more else None,
         "has_more": has_more,
         "returned": len(out),
         "scanned": i - start,
+        "truncated": truncated,
+        "positional_ids": positional_ids,
     }
 
 
 __all__ = [
     "WINDOW_SCAN_BUDGET",
     "MAX_FIELDS",
+    "TOTAL_EXACT_LIMIT",
+    "FILTER_MAX_JSON_BYTES",
+    "FILTER_MAX_TERMS",
+    "FILTER_MAX_DEPTH",
+    "FILTER_MAX_VALUES",
+    "FEATURE_ID_KEYS",
     "FeaturePageError",
     "FeatureRevisionConflict",
     "encode_page_cursor",
     "decode_page_cursor",
     "parse_bbox_param",
     "parse_fields_param",
+    "parse_order_param",
+    "parse_where_param",
+    "evaluate_where",
+    "order_digest",
+    "where_digest",
+    "sorted_permutation",
+    "count_matching",
+    "resolve_feature_stable_id",
+    "id_mode_of",
     "page_features",
     "project_feature",
 ]
