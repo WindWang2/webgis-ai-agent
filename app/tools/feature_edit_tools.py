@@ -23,7 +23,8 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
-        tier=1,
+        tier=2,
+        domains=["dataset"],
         name="vector_feature_edit_preview",
         side_effect="deterministic_compute",
         tags=["要素编辑", "feature edit", "编辑预览", "批量字段", "geometry fix"],

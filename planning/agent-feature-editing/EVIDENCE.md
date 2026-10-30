@@ -22,3 +22,10 @@
 - 前端全量：vitest 494 文件 / 4674 测试绿 + tsc --noEmit 绿（一次并行跑观察到 1 例偶发失败，复跑两次全绿——flaky 披露）。
 - 生成物：openapi/endpoint-matrix/api-docs/staleness 账本/situation schema/ADR 编号契约 全绿。
 - 二次去重（网络恢复后）：origin/master 无前进（4b3629c90）；唯一 open PR #1868 与本分支实质能力无重叠（文件交集仅 3 个琐碎生成物/单行注册点）。
+
+
+## 终局全量归因（2026-10-30，串行全量 vs 干净基线 4b3629c9 全量对照）
+
+- 分支终局 21 failed / 28210 passed；干净基线同命令 18 failed（其中 17 个与分支共同红 = 既有环境/治理债：raster band_cap×3、prompt_turn_id、response_model_coverage、component_catalog_parity、debt_ratchet、execution_catalog_docs、export_semantic_corpus、mutation_registry_consistency×2、platform_build_info、production_secret×3、live_registry_completeness_ratchet、quality_v3×2 等——与本分支无关，独立批量清偿不在本任务范围）。
+- 分支独有 4 项全部处置：parity corpus re-export 被 ruff 误删（补 noqa 恢复）、tier-1 数量硬闸 41>40（preview 回 tier-2，v 前缀保证不挤 reproject 红线）、runtime_validator×2（环境性：worktree 安装前端依赖激活浏览器渲染门，无头色差 #55b47f≠#2ca25f；基线因未装依赖 skip；本分支零渲染路径改动）。
+- 处置后定向族复验：parity corpus 59 + tier_guardrail + audit4 + feature_edit 64 + rationalization + quality 567 全绿。

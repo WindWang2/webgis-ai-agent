@@ -130,6 +130,7 @@ from app.services.mapspec.intents import (  # noqa: E402
     SetSceneAssetsIntent,  # noqa: F401
     SetSceneIntent,  # noqa: F401
     SetScenarioModeIntent,  # noqa: F401
+    RefreshDataRevisionIntent,  # noqa: F401 — /goal 03 corpus/parity 引用面
     SetTimeIntent,  # noqa: F401
     SetViewIntent,  # noqa: F401
     SetWorkbenchStateIntent,  # noqa: F401
