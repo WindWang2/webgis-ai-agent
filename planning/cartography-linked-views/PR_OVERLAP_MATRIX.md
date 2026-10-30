@@ -28,3 +28,7 @@
 | frontend/lib/api/* | - | - | - | ⚠️ (atlas-jobs) | ⚠️ (feature-edit) | ✅ 新文件 layer-browse.ts 零冲突 |
 
 结论：Track B 与六个 open PR 的核心面无交集；仅生成物/登记表三处弱冲突，策略=最后一次性提交+PR 说明披露。
+
+## 增补（2026-10-31 提交前复查）
+
+新 PR **#1874（map-ops，Track A：情境化地图操作事务与可验证终验）** 与本分支文件交集 = 3，全部为登记/生成物：`app/tools/categories.py`、`app/tools/__init__.py`、`tests/quality/snapshots/openapi.json` —— 各自 additive 行/可再生快照，rebase 零语义冲突；功能面（地图操作事务/终验）与本分支（MVT 查询/联动/标注/单页导出）零重叠。origin/master 未前进（HEAD..origin/master 为空）。
