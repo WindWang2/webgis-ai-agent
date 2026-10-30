@@ -47,7 +47,8 @@ const LINE_REPEAT_MAX_POINTS = 20000;
 
 /** symbol-placement=line 的等距 repeat 锚点（≤4；Python _line_repeat_anchors
  *  逐分支孪生）：首锚在弧长中点，向两侧按 spacing 扩展；总长 < 2×spacing
- *  时返回空（调用方回退单中点锚）。 */
+ *  时返回空（调用方回退单中点锚）。坐标帽采样：首点恒保留；尾点在一般 N
+ *  下被采样略去（弧长轻微低估，双孪生同式 —— R3 评审措辞修正）。 */
 function lineRepeatAnchors(
   coords: unknown,
   project: (c: [number, number]) => [string, string],
@@ -913,9 +914,17 @@ function compileMapSpecToSvgBody(
             options.onDiagnostic?.("label_truncated", `layer=${layer.id} len=${String(rawText).length}`);
           }
           // Track B（M9，Python 孪生同构）：折行（≈8em，13 窄字符位，≤2 行，
-          // CJK 按字/拉丁按词）—— 折行后单行恒 <MAX_CHARS，截断兜底由上方
-          // fitLabel 口径覆盖，不重复发射诊断。
-          const collText = wrapLabelMultilingual(String(rawText), 13, 2).join("\n");
+          // CJK 按字/拉丁按词）。15-59 字名折行截尾 → 补发 wrapped 口径
+          // 诊断（R3 评审：静默丢字必须披露；>60 已由上方 fitLabel 覆盖）。
+          const wrapLines = wrapLabelMultilingual(String(rawText), 13, 2);
+          const wrappedLen = wrapLines.reduce((n, ln) => n + Array.from(ln).length, 0);
+          if (wrappedLen < Array.from(String(rawText)).length) {
+            options.onDiagnostic?.(
+              "label_truncated",
+              `layer=${layer.id} wrapped-drop len=${Array.from(String(rawText)).length}`,
+            );
+          }
+          const collText = wrapLines.join("\n");
           let lkind: "point" | "line" | "polygon" = "point";
           if (geom.type === "LineString" && Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
             lkind = "line";

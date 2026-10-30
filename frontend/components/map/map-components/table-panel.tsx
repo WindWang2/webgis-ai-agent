@@ -273,7 +273,9 @@ function PagedTableBody({
         </div>
       ) : (
         <>
-          {/* 表头：服务端排序（asc → desc → 自然序） */}
+          {/* 表头：服务端排序（asc → desc → 自然序）。ARIA：row 归属
+              table/rowgroup（R3 评审），行可聚焦可键盘选择。 */}
+          <div className="flex flex-col" role="table">
           <div className="flex shrink-0 border-b border-map-chrome-border" role="rowgroup">
             {columns.map((col) => (
               <button
@@ -296,6 +298,7 @@ function PagedTableBody({
             onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
             className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
             data-testid="table-panel-scroll"
+            role="rowgroup"
           >
             <div style={{ height: total * ROW_HEIGHT, position: 'relative' }}>
               <div style={{ transform: `translateY(${start * ROW_HEIGHT}px)` }}>
@@ -306,11 +309,18 @@ function PagedTableBody({
                       key={row.rowId}
                       role="row"
                       aria-selected={selected}
+                      tabIndex={0}
                       data-row-id={row.rowId}
                       data-testid="table-panel-row"
                       onClick={() => handleRowClick(row.rowId)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleRowClick(row.rowId);
+                        }
+                      }}
                       style={{ height: ROW_HEIGHT }}
-                      className={`flex w-full cursor-pointer items-center border-b border-map-chrome-border/40 ${
+                      className={`flex w-full cursor-pointer items-center border-b border-map-chrome-border/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-status-accent ${
                         selected ? 'bg-status-accent-soft' : 'hover:bg-surface-hover/60'
                       }`}
                     >
@@ -328,6 +338,7 @@ function PagedTableBody({
                 })}
               </div>
             </div>
+          </div>
           </div>
           {table.nextCursor && (
             <button
@@ -697,6 +708,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
             onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
             className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
             data-testid="table-panel-scroll"
+            role="rowgroup"
           >
             <div style={{ height: total * ROW_HEIGHT, position: 'relative' }}>
               <div style={{ transform: `translateY(${start * ROW_HEIGHT}px)` }}>
@@ -708,11 +720,18 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
                       key={row.rowId}
                       role="row"
                       aria-selected={selected}
+                      tabIndex={0}
                       data-row-id={row.rowId}
                       data-testid="table-panel-row"
                       onClick={() => handleRowClick(row.rowId)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleRowClick(row.rowId);
+                        }
+                      }}
                       style={{ height: ROW_HEIGHT }}
-                      className={`flex w-full cursor-pointer items-center border-b border-map-chrome-border/40 ${
+                      className={`flex w-full cursor-pointer items-center border-b border-map-chrome-border/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-status-accent ${
                         selected ? 'bg-status-accent-soft' : 'hover:bg-surface-hover/60'
                       }`}
                     >

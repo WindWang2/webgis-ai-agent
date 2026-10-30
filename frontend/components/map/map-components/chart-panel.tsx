@@ -311,18 +311,24 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     bbox: viewport?.bbox ?? null,
     generation: viewport?.generation ?? 0,
   });
+  const mc = useT('mapChart');
   const mvtAggregateChart = React.useMemo(() => {
     if (!mvtAggregateMode || state.status !== 'ready' || viewportAgg.status !== 'ready') return null;
     const data = viewportAgg.rows
       .filter((r) => r.key !== null)
-      .map((r) => ({ name: String(r.key), value: r.count }));
+      // 溢出合并行（__other__ 哨兵/递进变体）本地化展示 —— 原始键不进轴标签
+      .map((r) => ({
+        name: typeof r.key === 'string' && r.key.startsWith('__other__')
+          ? mc('agg.otherCategory')
+          : String(r.key),
+        value: r.count,
+      }));
     if (!data.length) return null;
     // 组溢出行（__other__）保留 —— truncated 证据行披露其语义。
     return { ...state.chart, data };
   }, [mvtAggregateMode, state, viewportAgg]);
 
   const displayChart = mvtAggregateChart ?? extentFilteredChart;
-  const mc = useT('mapChart');
 
   const toggleExtentLinked = () => {
     void commitComponentPatch(patched.id, {

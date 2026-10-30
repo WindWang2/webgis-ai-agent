@@ -9,7 +9,7 @@ vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 
 // Import after mocks
 import { useHudStore } from './useHudStore';
-import { ensureLayerData } from './layer-data';
+import { ensureLayerData, setLayerDataSession } from './layer-data';
 import { _resetDataPlaneForTests } from '@/lib/data-plane/ref-service';
 
 function makeMVTLayer(id = 'ref:big-1', featureCount = 100_000) {
@@ -214,5 +214,26 @@ describe('ensureLayerData seam (#667)', () => {
     const result: any = await ensureLayerData(layer.id, 'selection-detail');
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect(result.status).toBe('fallback');
+  });
+
+  it('R4: session switch mid-flight cancels selection-detail (resolved sid mismatch)', async () => {
+    const layer = makeMVTLayer();
+    useHudStore.getState().addLayer(layer as any);
+    useHudStore.setState({
+      selectedFeature: {
+        layerId: layer.id, point: [0, 0], properties: { id: 'feat-7' },
+        selectedAt: Date.now(), featureId: 'feat-7',
+      } as any,
+    });
+    setLayerDataSession('sid-aaa', null);  // 身份持有者优先于瓦片 URL 兜底
+    let resolveFetch!: (v: any) => void;
+    apiFetchMock.mockReturnValueOnce(new Promise((res) => { resolveFetch = res; }));
+    const promise = ensureLayerData(layer.id, 'selection-detail');
+    // 请求在途时会话切换（身份持有者变化 —— resolveSessionId 解析值随之变化）
+    setLayerDataSession('sid-bbb', null);
+    resolveFetch({ type: 'Feature', id: 'feat-7', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} });
+    const result: any = await promise;
+    expect(result.status).toBe('cancelled');
+    setLayerDataSession(undefined, undefined);
   });
 });

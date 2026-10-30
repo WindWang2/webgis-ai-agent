@@ -257,6 +257,8 @@ def _line_repeat_anchors(
     dpi_scale）扩展，超出线长即停；每个锚点带所在段的方位角（keep-upright
     由求解器负责）。总弧长 < 2×spacing 时只有中点单锚（与旧行为一致）。
     project() 返回 fmt_num 字符串 —— 全程 float() 还原。
+    坐标帽采样：首点恒保留；尾点在一般 N 下落在两个采样格之间而被略去
+    （弧长轻微低估，确定性且双孪生同式 —— R3 评审措辞修正）。
     """
     if not isinstance(coords, list) or len(coords) < 2 or _dpi_spacing <= 0:
         return []
@@ -1998,7 +2000,15 @@ def compile_mapspec_to_svg_detailed(
                                 # 折行宽度预算 13 窄字符位（≈8em）保证单行
                                 # ≤~21 code points，恒低于 MAX_SVG_LABEL_CHARS；
                                 # >60 的整文本已在上文 legacy 口径发射
-                                # label_truncated，此处不重复发射。
+                                # label_truncated。15-59 字名折行截尾
+                                # （R3 评审：静默丢字读者无从得知）→ 补发
+                                # wrapped 口径诊断（区分 legacy 的 60 截断）。
+                                if sum(len(_wl) for _wl in wrap_lines) < len(text_value):
+                                    _emit_diag(
+                                        "label_truncated",
+                                        detail=f"layer={_lid} wrapped-drop len={len(text_value)}",
+                                        layer_id=_lid,
+                                    )
                                 _coll_text = "\n".join(wrap_lines)
 
                                 _label_cfg = layer.get("label")

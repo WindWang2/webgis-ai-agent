@@ -148,7 +148,7 @@ describe('chart_panel viewport aggregate (MVT layers)', () => {
     const dataText = await waitFor(() => {
       const el = screen.getByTestId('chart-core-data');
       expect(el.textContent).toContain('小学=120');
-      expect(el.textContent).toContain('__other__=9');
+      expect(el.textContent).toContain('其他（组合并）=9');
       expect(el.textContent).not.toContain('999');
       return el.textContent ?? '';
     });

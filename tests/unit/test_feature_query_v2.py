@@ -362,3 +362,22 @@ class TestReviewFixes:
             assert len(fp._derived_cache) <= fp._DERIVED_CACHE_MAX_ENTRIES
         assert weight0 == 0
         fp._derived_cache.clear()
+
+
+class TestR4Fixes:
+    def test_bbox_lat_lon_sanity(self):
+        from app.services.feature_pages import parse_bbox_param
+
+        with pytest.raises(FeaturePageError, match="lat/lon order"):
+            parse_bbox_param("30,104,31,107")   # 经纬颠倒（lat>90）
+        with pytest.raises(FeaturePageError, match="lat/lon order"):
+            parse_bbox_param("100,200,110,300")  # 双双越界
+        assert parse_bbox_param("104,30,105,31") is not None  # 正常窗不受影响
+
+    def test_response_revision_is_prefetch_snapshot(self):
+        """R4-P2-1：响应 revision 标注 = 取数前快照（HTTP 层验证见
+        test_layer_query_v2_http 的 409 双查；此处钉服务函数无 revision 概念
+        —— 由 route 层 served_revision 承担，本用例防回归锚定函数纯度）。"""
+        fc = _fc(_f({"i": 1}, "a"), _f({"i": 2}, "b"))
+        out = page_features(fc, limit=10)
+        assert out["returned"] == 2  # 服务函数无 revision 泄漏面

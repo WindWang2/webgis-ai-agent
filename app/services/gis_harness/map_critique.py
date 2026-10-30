@@ -222,10 +222,7 @@ def check_publication_components(
     audit W6 点名的三件套，不重复别人的词表。"""
     if not _planned_layers(chapter):
         return []
-    exports = []
-    if isinstance(mapspec, dict):
-        exports = [str(e) for e in (mapspec.get("exports") or [])]
-    if not any(e.lower() in ("png", "pdf", "svg", "jpg") for e in exports):
+    if isinstance(mapspec, dict) and not _declares_publication_export(mapspec):
         return []  # 交互-only 产品不做出版件要求（不对抗既有模板）
     present = _component_types(mapspec)
     findings: List[MapCompletionFinding] = []
@@ -315,8 +312,7 @@ def check_export_label_diagnostics(
     labels_cfg = (mapspec.get("layout") or {}).get("labels") if isinstance(mapspec.get("layout"), dict) else None
     if not isinstance(labels_cfg, dict) or labels_cfg.get("collision") != "deterministic":
         return []
-    exports = [str(e) for e in (mapspec.get("exports") or [])]
-    if not any(e.lower() in ("png", "pdf", "svg", "jpg") for e in exports):
+    if not _declares_publication_export(mapspec):
         return []
     has_symbol = any(
         isinstance(ly, dict) and ly.get("type") in ("symbol", "text")
@@ -334,10 +330,16 @@ def check_export_label_diagnostics(
         logger.debug("export label diagnostics compile failed", exc_info=True)
         return []
     findings: List[MapCompletionFinding] = []
+    seen_codes: set = set()
     for d in getattr(result, "diagnostics", []) or []:
         code = d.get("code")
         detail = str(d.get("detail") or "")[:120]
+        # 同码去重（首条为准，R3 评审）：label_truncated 每要素一条会把
+        # budget/suppressed 挤出聚合 12 条帽。
+        if code in seen_codes:
+            continue
         if code == "label_budget_exceeded":
+            seen_codes.add(code)
             findings.append(MapCompletionFinding(
                 code=C_EXPORT_LABEL_BUDGET,
                 severity="warning",
@@ -348,6 +350,7 @@ def check_export_label_diagnostics(
             placed = _parse_placed(detail)
             suppressed = _parse_suppressed(detail)
             if placed is not None and suppressed is not None and suppressed * 2 > placed:
+                seen_codes.add(code)
                 findings.append(MapCompletionFinding(
                     code=C_EXPORT_LABEL_SUPPRESSED,
                     severity="warning",
@@ -356,6 +359,7 @@ def check_export_label_diagnostics(
                             f"{placed + suppressed} labels (density/fidelity risk)"),
                 ))
         elif code == "label_truncated":
+            seen_codes.add(code)
             findings.append(MapCompletionFinding(
                 code=C_EXPORT_LABEL_TRUNCATED,
                 severity="info",
@@ -363,6 +367,28 @@ def check_export_label_diagnostics(
                 detail=f"export labels truncated ({detail})",
             ))
     return findings
+
+
+def _declares_publication_export(mapspec: Dict[str, Any]) -> bool:
+    """exports 声明是否含出版格式 —— 兼容 str（"png"）与 dict 形状。
+
+    R3 评审：map_plan_compiler（projector.py:238）产出 ``{"fmt": "png", ...}``
+    dict 元素，``str(dict)`` 永不等于 "png" 会让检查在主管道产物形状下
+    静默失活 —— 按 fmt/format/type 键取值判定。
+    """
+    for e in (mapspec.get("exports") or []):
+        fmt = ""
+        if isinstance(e, str):
+            fmt = e.lower()
+        elif isinstance(e, dict):
+            for key in ("fmt", "format", "type"):
+                v = e.get(key)
+                if isinstance(v, str):
+                    fmt = v.lower()
+                    break
+        if fmt in ("png", "pdf", "svg", "jpg"):
+            return True
+    return False
 
 
 def _parse_placed(detail: str) -> Optional[int]:

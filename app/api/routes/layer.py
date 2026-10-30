@@ -226,15 +226,17 @@ async def get_session_layer_features_page(
     except FeaturePageError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # TOCTOU 收口：descriptor 在取数前读 —— 取数后重读 live revision，
-    # 响应标注的永远是「实际服务出的这份数据」的版本；翻页中途被覆写
-    # （取数前后 revision 变化）也在此显式 409，不静默跨版。
+    # TOCTOU 收口（R4 评审修正）：响应标注的 revision = 取数前快照
+    #（授权这份数据的 descriptor 版本）—— 取数后覆写不再改写标签（关闭
+    # 「旧标签错钉新数据进客户端 revision 缓存键」窗口）；取数后重读 live
+    # revision 仅用于 v 在场时的 409 guard。
+    served_revision = current_revision
     descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
-    current_revision = descriptor.get("content_revision") if descriptor else None
-    if v is not None and current_revision is not None and int(v) != int(current_revision):
+    live_revision = descriptor.get("content_revision") if descriptor else None
+    if v is not None and live_revision is not None and int(v) != int(live_revision):
         raise HTTPException(
             status_code=409,
-            detail={"error": "revision_conflict", "current_revision": current_revision},
+            detail={"error": "revision_conflict", "current_revision": live_revision},
         )
 
     reason_codes: list[str] = []
@@ -265,7 +267,7 @@ async def get_session_layer_features_page(
             "truncated": page["truncated"],
             "is_complete": not page["has_more"],
         },
-        "revision": current_revision,
+        "revision": served_revision,
         "feature_count": descriptor.get("feature_count") if descriptor else len(fc.get("features", [])),
         "bbox_mode": "coarse" if window_bbox is not None else None,
         "total_matching": total_matching,
@@ -364,12 +366,14 @@ async def get_session_layer_aggregate(
     except FeaturePageError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # 同 features：响应 revision 标注 = 取数前快照（R4 评审修正）。
+    served_revision = current_revision
     descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
-    current_revision = descriptor.get("content_revision") if descriptor else None
-    if v is not None and current_revision is not None and int(v) != int(current_revision):
+    live_revision = descriptor.get("content_revision") if descriptor else None
+    if v is not None and live_revision is not None and int(v) != int(live_revision):
         raise HTTPException(
             status_code=409,
-            detail={"error": "revision_conflict", "current_revision": current_revision},
+            detail={"error": "revision_conflict", "current_revision": live_revision},
         )
 
     reason_codes = ["aggregate_full_scan"]
@@ -392,7 +396,7 @@ async def get_session_layer_aggregate(
         "agg": agg,
         "agg_field": agg_field,
         "group_by": group_by,
-        "revision": current_revision,
+        "revision": served_revision,
         "feature_count": descriptor.get("feature_count") if descriptor else None,
         "reason_codes": reason_codes,
     }

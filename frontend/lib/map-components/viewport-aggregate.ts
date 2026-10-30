@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AggregateOverLimit,
+  PagedRevisionConflict,
   fetchLayerAggregate,
   type AggregateRow,
 } from '@/lib/data-plane/paged-features';
@@ -38,6 +39,7 @@ export type ViewportAggregateState =
   | { status: 'loading' }
   | { status: 'ready'; rows: AggregateRow[]; meta: ViewportAggregateMeta }
   | { status: 'overlimit' }
+  | { status: 'conflict' }
   | { status: 'error' };
 
 function extractSessionIdFromTileUrl(tileUrl?: string): string | undefined {
@@ -64,7 +66,11 @@ export function useViewportAggregate({
   enabled, layer, groupBy, bbox, generation,
 }: UseViewportAggregateArgs): ViewportAggregateState {
   const [state, setState] = useState<ViewportAggregateState>({ status: 'idle' });
+  const [reloadNonce, setReloadNonce] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  // R4 评审：409 后采纳服务端 current_revision 重锚（一次），仍失败 →
+  // conflict 态；下一次视口 settle 自然以 descriptor 新 revision 恢复。
+  const conflictRevisionRef = useRef<number | null>(null);
 
   const refId = layer?._refId ?? '';
   const revision = layer?._descriptor?.content_revision ?? null;
@@ -85,6 +91,7 @@ export function useViewportAggregate({
     const controller = new AbortController();
     abortRef.current = controller;
     setState({ status: 'loading' });
+    const anchorRevision = conflictRevisionRef.current ?? revision;
     (async () => {
       try {
         const agg = await fetchLayerAggregate({
@@ -92,12 +99,13 @@ export function useViewportAggregate({
           refId,
           groupBy,
           bbox: bbox!.slice() as [number, number, number, number],
-          revision: revision ?? undefined,
+          revision: anchorRevision ?? undefined,
           maxGroups: 64,
           ownerToken: getSessionIdentity().ownerToken ?? null,
           signal: controller.signal,
         });
         if (controller.signal.aborted) return;
+        conflictRevisionRef.current = null;
         setState({
           status: 'ready',
           rows: agg.rows,
@@ -117,7 +125,22 @@ export function useViewportAggregate({
           setState({ status: 'overlimit' });
           return;
         }
-        setState({ status: 'error' });
+        if (
+          err instanceof PagedRevisionConflict
+          && conflictRevisionRef.current !== err.currentRevision
+        ) {
+          // 一次重锚：旧 revision 被覆写 → 服务端 current_revision 重试
+          conflictRevisionRef.current = err.currentRevision;
+          if (!controller.signal.aborted) {
+            setTimeout(() => {
+              if (!controller.signal.aborted) {
+                setReloadNonce((n) => n + 1);
+              }
+            }, 0);
+          }
+          return;
+        }
+        setState({ status: err instanceof PagedRevisionConflict ? 'conflict' : 'error' });
       }
     })();
     return () => {
@@ -125,7 +148,7 @@ export function useViewportAggregate({
     };
     // bbox 以值键参与（视口坐标连续变化，值不变不重查）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, refId, groupBy, revision, bboxKey, generation]);
+  }, [enabled, refId, groupBy, revision, bboxKey, generation, reloadNonce]);
 
   return state;
 }

@@ -55,7 +55,9 @@ function cjkRatio(text: string): number {
 }
 
 /** CJK 逐字贪心断行（宽度以 0.1em 整数单位累加：窄字符 6 / CJK 10 ——
- *  与 Python wrap_label_text 同口径，避免浮点累加漂移破坏确定性边界）。 */
+ *  与 Python wrap_label_text 同口径，避免浮点累加漂移破坏确定性边界）。
+ *  code point 口径（for-of 按 Unicode 码点迭代）：astral 字符不被劈成
+ *  孤立代理项（R3 评审 —— 与 Python len()/切片语义对齐）。 */
 export function wrapLabelText(text: string, maxChars: number, maxLines: number): string[] {
   const lines = Math.max(1, maxLines);
   const budget = Math.max(1, maxChars) * 6;
@@ -89,29 +91,34 @@ export function wrapLabelMultilingual(
   const mode = cjkRatio(text) >= 0.3 ? "cjk_char" : "latin_word";
   if (mode === "cjk_char") return wrapLabelText(text, chars, lines);
   // latin_word：词边界贪心装箱；超 max_lines 时尾部合并截断进末行。
+  // code point 口径（R3 评审）：长度/切片经 cps 数组，astral 不劈半。
+  const cps = (v: string): string[] => Array.from(v);
+  const join = (v: string[]): string => v.join("");
   const units: string[] = [];
   for (const word of text.split(" ")) {
-    let w = word;
+    let w = cps(word);
     while (w.length > chars) {
-      units.push(w.slice(0, chars));
+      units.push(join(w.slice(0, chars)));
       w = w.slice(chars);
     }
-    if (w) units.push(w);
+    if (w.length) units.push(join(w));
   }
   const packed: string[] = [];
   let cur = "";
   for (const unit of units) {
     const candidate = cur ? `${cur} ${unit}` : unit;
-    if (candidate.length <= chars || !cur) {
-      cur = candidate.length > chars ? candidate.slice(0, chars) : candidate;
+    if (cps(candidate).length <= chars || !cur) {
+      const c = cps(candidate);
+      cur = c.length > chars ? join(c.slice(0, chars)) : candidate;
     } else {
       packed.push(cur);
-      cur = unit.length > chars ? unit.slice(0, chars) : unit;
+      const u = cps(unit);
+      cur = u.length > chars ? join(u.slice(0, chars)) : unit;
     }
   }
   if (cur) packed.push(cur);
   if (packed.length <= lines) return packed;
-  const tail = packed.slice(lines - 1).join(" ").slice(0, chars);
+  const tail = join(cps(packed.slice(lines - 1).join(" ")).slice(0, chars));
   return [...packed.slice(0, lines - 1), tail];
 }
 

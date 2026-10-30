@@ -14,6 +14,9 @@ inline-only ref 在 ref-source-resolver 直接拒绝挂载，属性浏览无从�
 - **revision guard**：客户端带 ``v=<revision>``；与服务端当前 revision
   不符 → :class:`FeatureRevisionConflict`（route → 409 + 当前 revision）
   —— 翻页中途 ref 被覆写时，拼接页是不诚实的数据集，绝不静默跨版。
+  边界（R4 评审披露）：cursor 本身不内嵌 revision —— 不带 ``v`` 的请求
+  在覆写后会以新数据集续页（页内原子纯版、无撕裂）；跨版防护由客户端
+  传 ``v`` 承担（iterateAllFeatures 首页后自动续钉）。
 - **bbox 窗口**：从 cursor 前向扫描、预算内收集匹配。扫描有界（
   WINDOW_SCAN_BUDGET 要素/请求）且**不漏**：扫描停止点即下一页 cursor
   —— 稀疏 bbox 只影响页密度，不影响正确性。
@@ -191,6 +194,10 @@ def parse_bbox_param(raw: Optional[str]) -> Optional[Tuple[float, float, float, 
         raise FeaturePageError("bbox values must be finite")
     if w > e or s > n:
         raise FeaturePageError("bbox must satisfy w<=e and s<=n")
+    if not (-90.0 <= s <= 90.0 and -90.0 <= n <= 90.0):
+        raise FeaturePageError("bbox latitudes must be within [-90, 90] (check lat/lon order)")
+    if not (-180.0 <= w <= 180.0 and -180.0 <= e <= 180.0):
+        raise FeaturePageError("bbox longitudes must be within [-180, 180] (check lat/lon order)")
     return (w, s, e, n)
 
 

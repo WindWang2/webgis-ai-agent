@@ -35,6 +35,35 @@
 | P2-6 | in [null,a] 不命中缺席（与 eq null 不对称） | ✅ 对称语义 + 测试 |
 | P2-7 | 前端聚合缺省向"已知/完整"方向 | ✅ total_matching→null / is_complete→false |
 
-## R3 cartography parity & UX（进行中）
+## R3 cartography parity & UX（2026-10-31）
 
-## R4 adversarial E2E & branch dedup（进行中）
+实测：4 组 spec 双孪生差分（**整份 SVG 字节级相等**，含 21k 点线触发坐标帽）；单行标签与 master 逐字节一致；mutation parity corpus 58P；compiler 域 287P。
+结论：**无 P0；2×P1 + 7×P2**。"未发现"维度：BMP 域双孪生逐分支等价/多行盒口径/既有测试回归/i18n 键对齐/thresholds 分级。
+
+| 级别 | finding | 清偿 |
+|---|---|---|
+| P1-1 | TS 折行 UTF-16 code-unit 口径 → astral 字符孤立代理项（非法 XML）+ 孪生分歧 | ✅ wrapLabelText/wrapLabelMultilingual 全面 code point 化（Array.from）+ astral 回归测试 |
+| P1-2 | check_export_label_diagnostics 的 exports 门在主管道 dict 形状（{fmt:...}）下永不命中（静默失活） | ✅ _declares_publication_export 共享 helper（兼容 str/dict fmt/format/type）；既有 check_publication_components 同病一并修 |
+| P2-3 | 15-59 字名折行截尾静默丢字（无省略号无诊断） | ✅ wrapped-drop 口径补发 label_truncated（双孪生）；省略号渲染留后续（宽度记账风险） |
+| P2-4 | 拉丁连字符硬断/CJK 孤字行（制图质量） | 记录不修：后续制图质量批次（孤立影响小、改动面大） |
+| P2-5 | 坐标帽注释"首/尾点恒保留"失实 | ✅ 双侧注释按事实修正 |
+| P2-6 | PagedTableBody row 无外层 table/grid 角色、行键盘不可达 | ✅ role=table/rowgroup 包裹 + 行 tabIndex/Enter/Space/focus-visible |
+| P2-7 | __other__ 哨兵直出图表轴标签；agg.category/serverMode 死键 | ✅ 溢出行本地化（其他（组合并））+ 死键清理（zh/en 同步） |
+| P2-8 | label_truncated 每要素一条挤掉 budget/suppressed（12 帽）；编译参数固定 96dpi 近似 | ✅ 同码去重；96dpi 保留（evidence 面已声明近似） |
+| P2-9 | 证据链措辞：/tmp/master-check 命名误导 | ✅ EVIDENCE 措辞修正（origin/master tip 4b3629c90 + 本地 master 7b4e41667 双复核） |
+
+## R4 adversarial E2E & branch dedup（2026-10-31）
+
+实测：4 个 /tmp 对抗脚本（并发覆写 20 请求/畸形轰炸 ~70 变体/混合 id 瓦片逐要素解码/TOCTOU 补充）；前端 29 用例。
+结论：**PASS —— 无 P0、无 P1；4×P2**。A1-A5 全场景按设计收敛（无 500/无挂死/无跨版混页/无数据错配）；分支与 7 个 open PR 零功能重复，master 零前进。
+
+| 级别 | finding | 清偿 |
+|---|---|---|
+| P2-1 | 不带 v 的请求存在"响应 revision 标注与实际数据错版"窗口 | ✅ served_revision = 取数前快照（features/aggregate 双端点）；取数后重读仅作 409 guard |
+| P2-2 | cursor 不内嵌 revision（跨版防护依赖客户端 v） | ✅ 模块 docstring 明确披露该边界（cursor 简单性 vs 内嵌 revision 的取舍已文档化） |
+| P2-3 | bbox 无经纬 sanity（lat>90 静默当有效窗） | ✅ |lat|≤90 且 |lon|≤180 typed 400（含 lat/lon order 提示）+ 测试 |
+| P2-4 | positional 重试无 descriptor 时不带 v；聚合 409 无恢复路径；会话切换测试缺口 | ✅ 聚合 hook 一次重锚（采纳 current_revision）+conflict 态；setSessionIdentity 会话切换 cancelled 测试；descriptor 缺席场景保持诚实回退（注释披露） |
+
+## 终局
+
+四轮独立评审（R1 正确性/安全、R2 性能/数值、R3 制图 parity/UX、R4 对抗 E2E/排重）合计：**0×P0；P1 全部清偿；P2 清偿 18 项、记录不修 3 项（均有明确理由与后续归属）**。最终回归：后端 143 + 前端 768（1 例 master 既有预期失败）全绿。

@@ -8,7 +8,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { useViewportAggregate } from '@/lib/map-components/viewport-aggregate';
-import { AggregateOverLimit } from '@/lib/data-plane/paged-features';
+import { AggregateOverLimit, PagedRevisionConflict } from '@/lib/data-plane/paged-features';
 import { setSessionIdentity } from '@/lib/store/session-identity';
 import type { Layer } from '@/lib/types/layer';
 
@@ -140,5 +140,23 @@ describe('useViewportAggregate', () => {
     rerender(<Harness enabled layer={MVT_LAYER} groupBy="类型" bbox={null} generation={1} />);
     expect(mockAgg).not.toHaveBeenCalled();
     expect(screen.getByTestId('agg-status').textContent).toBe('idle');
+  });
+
+  it('R4: 409 conflict re-anchors once with server revision, then recovers', async () => {
+    const responders: Array<() => Promise<unknown>> = [
+      () => Promise.reject(new PagedRevisionConflict(7)),
+      () => Promise.resolve(aggResult({ revision: 7 })),
+    ];
+    mockAgg.mockImplementation(() => {
+      const next = responders.shift();
+      return next ? next() : Promise.resolve(aggResult());
+    });
+    render(<Harness enabled layer={MVT_LAYER} groupBy="类型" bbox={[104, 30, 105, 31]} generation={1} />);
+    // 第一次 409 → 自动以 revision=7 重锚重试 → 恢复 ready
+    await waitFor(() => {
+      expect(screen.getByTestId('agg-status').textContent).toBe('ready');
+    }, { timeout: 3000 });
+    expect(mockAgg).toHaveBeenCalledTimes(2);
+    expect(mockAgg.mock.calls[1][0].revision).toBe(7);
   });
 });

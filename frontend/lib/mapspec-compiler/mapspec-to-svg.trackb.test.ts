@@ -133,4 +133,25 @@ describe('export label convergence (Track B, TS twin)', () => {
     expect(w).toBeCloseTo(wSingle, 10);
     expect(h).toBeCloseTo(2 * 14 * 1.2, 10);
   });
+
+  it('R3-P1-1: astral characters wrap by code point (no lone surrogates)', () => {
+    // Python len()/切片 = code point 口径；TS 侧经 Array.from 对齐。
+    // 含 emoji（🍁 U+1F341）与扩展 B 汉字（𠀀）的混合名。
+    const lines = wrapLabelMultilingual('Toronto 🍁🍁🍁🍁🍁🍁🍁🍁🍁🍁 Park', 13, 2);
+    const joined = lines.join('\n');
+    // 不产生孤立代理项（合法 XML 字符）
+    for (const ch of joined) {
+      const code = ch.codePointAt(0) ?? 0;
+      expect(code >= 0xD800 && code <= 0xDFFF).toBe(false);
+    }
+    expect(Array.from(joined).length).toBeGreaterThan(0);
+    // CJK 扩展 B 名同样不劈半
+    const extB = wrapLabelMultilingual('𠀀𠀁𠀂𠀃𠀄𠀅𠀆𠀇𠀈𠀉 abcdef', 13, 2);
+    for (const ln of extB) {
+      for (const ch of ln) {
+        const code = ch.codePointAt(0) ?? 0;
+        expect(code >= 0xD800 && code <= 0xDFFF).toBe(false);
+      }
+    }
+  });
 });

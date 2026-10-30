@@ -54,4 +54,4 @@
 
 ## Master 既有红灯（隔离证据，非本分支引入）
 
-`tests/unit/test_export_semantic_corpus.py::test_matrix_covers_all_chrome_component_types` 在**干净 origin/master 4b3629c90**（/tmp/master-check worktree）同样失败：elevation_profile/scene_disclosure（3D 系列 PR #1830/#1867 引入的组件类型）未进 _MATRIX_CASES。属 3D 组件所有者的既有缺口；本分支不越界修（该矩阵不在 Track B 责任文件集）。本分支上其余 68/69 用例全绿。
+`tests/unit/test_export_semantic_corpus.py::test_matrix_covers_all_chrome_component_types` 在**干净 origin/master 4b3629c90**（/tmp/master-check worktree）与**本地 master 7b4e41667**（R3 评审独立复核）同样失败：elevation_profile/scene_disclosure（3D 系列 PR #1830/#1867 引入的组件类型）未进 _MATRIX_CASES。属 3D 组件所有者的既有缺口；本分支不越界修（该矩阵不在 Track B 责任文件集）。本分支上其余 68/69 用例全绿。

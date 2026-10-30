@@ -3,10 +3,9 @@
     "evidence": "Viewport aggregate · scanned {scanned} · matched {matched} · groups {groups} · v{revision}",
     "truncated": "group limit hit — merged",
     "nullKeys": "{count} null keys",
-    "serverMode": "Server-side window stats (full scan)",
+    "otherCategory": "Others (merged)",
     "overLimit": "Dataset exceeds the aggregate scan limit; viewport stats unavailable",
     "error": "Failed to fetch viewport stats",
-    "loading": "Aggregating viewport…",
-    "category": "Category"
+    "loading": "Aggregating viewport…"
   }
 }
