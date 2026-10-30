@@ -26,6 +26,10 @@
 - **共享生成物**：openapi snapshot/api-docs/`_TOOL_MODULES`/categories.py 各一处 additive 行，独立提交（cd342d4ed / a1782bab7）便于 rebase。
 - 前端：table-panel/chart-panel/selection-store/viewport-context/paged-features 在 6 个 open PR 中零占用；catalogue.ts/sceneCommands.ts/messages/map.json 全部避开（新文案走新命名空间 mapTable/mapChart）。
 
+## 独立评审（四轮，全部实测）
+
+R1 正确性/安全、R2 性能/数值真值、R3 制图 parity/UX、R4 对抗 E2E/分支排重 —— 各为独立子代理逐文件审查 + 实跑测试 + 探针脚本。合计 **0×P0；P1 全部清偿（5 项：续页错误静默、缓存抖动/驻留、长线 DoS 面、TS astral 口径、critique 门失活）；P2 清偿 18 项、记录不修 3 项（制图断词质量/基准 p95 标注/无边框 bbox 语义，均有理由与后续归属）**。R3 实测双孪生差分 4 组 spec 整份 SVG 字节级相等、单行标签与 master 逐字节一致；R4 对抗场景（并发覆写/畸形轰炸 ~70 变体/混合 id 瓦片逐要素/重复 id 三通道）全部按设计收敛。明细见 `planning/cartography-linked-views/INDEPENDENT_REVIEW.md`。
+
 ## 测试与证据
 
 - 新增测试 100+：后端 58（契约/HTTP/工具/critique/标注/场景/基准）+ 前端 43（hook/组件/孪生）。
