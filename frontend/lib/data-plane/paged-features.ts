@@ -26,6 +26,10 @@ export interface FeaturePageParams {
   cursor?: string | null;
   bbox?: [number, number, number, number];
   fields?: string[];
+  /** 服务端单字段排序：'<field>' / '-<field>'（缺省 = FC 自然序）。 */
+  order?: string;
+  /** typed 谓词 AST（JSON 字符串；服务端 allowlist 校验，畸形 → 400）。 */
+  where?: string;
   ownerToken?: string | null;
   signal?: AbortSignal;
 }
@@ -38,6 +42,38 @@ export interface FeaturePage {
   featureCount: number | null;
   /** bbox='coarse'：窗口粗滤是保守超集（可能含边界外要素，显示层再裁剪）。 */
   bboxMode: 'coarse' | null;
+  /** filter/bbox 的精确匹配总数；null = 未知（绝不以已返回数假冒）。 */
+  totalMatching: number | null;
+  isComplete: boolean;
+  /** 本页因扫描预算停止且未集满（页密度被削减的显式信号）。 */
+  truncated: boolean;
+  reasonCodes: string[];
+  /** 稳定 id 披露：native（全链内 id）/ positional（全位置 id）/ mixed。 */
+  idMode: 'native' | 'positional' | 'mixed' | null;
+  duplicateIdCount: number | null;
+}
+
+/** typed 谓词 AST（客户端构造子 —— 与服务端 allowlist 对齐）。 */
+export type FilterAst =
+  | { field: string; op: 'eq' | 'ne'; value: string | number | boolean | null }
+  | { field: string; op: 'in'; values: Array<string | number> }
+  | { field: string; op: 'between'; gte: number; lte: number }
+  | { field: string; op: 'gte' | 'gt' | 'lte' | 'lt'; value: number }
+  | { field: string; op: 'contains' | 'startswith'; value: string }
+  | { op: 'and' | 'or'; terms: FilterAst[] }
+  | { op: 'not'; term: FilterAst };
+
+/** 搜索框文本 × 列集 → or-contains AST（列数有界，服务端 ≤16 terms 门）。 */
+export function buildSearchFilter(text: string, columns: string[]): string | undefined {
+  const needle = text.trim();
+  if (!needle) return undefined;
+  const fields = columns.filter((c) => c && !c.startsWith('_')).slice(0, 12);
+  if (!fields.length) return undefined;
+  const ast: FilterAst = {
+    op: 'or',
+    terms: fields.map((field) => ({ field, op: 'contains' as const, value: needle })),
+  };
+  return JSON.stringify(ast);
 }
 
 export class PagedRevisionConflict extends Error {
@@ -52,10 +88,14 @@ export class PagedRevisionConflict extends Error {
 interface RawPage {
   type?: string;
   features?: Record<string, unknown>[];
-  pagination?: { next_cursor?: string | null; has_more?: boolean; returned?: number };
+  pagination?: { next_cursor?: string | null; has_more?: boolean; returned?: number; truncated?: boolean; is_complete?: boolean };
   revision?: number | null;
   feature_count?: number | null;
   bbox_mode?: string | null;
+  total_matching?: number | null;
+  reason_codes?: string[];
+  id_mode?: string | null;
+  duplicate_id_count?: number | null;
 }
 
 /** FastAPI HTTPException(detail=…) 的 body 直接就是 detail 字典。 */
@@ -73,10 +113,10 @@ function qs(params: Record<string, string | number | undefined>): string {
   return out.toString();
 }
 
-/** 拉取一页会话 ref 窗口要素（稳定序）。 */
+/** 拉取一页会话 ref 窗口要素（稳定序/排序序）。 */
 export async function fetchFeaturePage(params: FeaturePageParams): Promise<FeaturePage> {
   const {
-    sessionId, refId, revision, limit = 200, cursor, bbox, fields, ownerToken, signal,
+    sessionId, refId, revision, limit = 200, cursor, bbox, fields, order, where, ownerToken, signal,
   } = params;
   const query = qs({
     session_id: sessionId,
@@ -84,6 +124,8 @@ export async function fetchFeaturePage(params: FeaturePageParams): Promise<Featu
     cursor: cursor ?? undefined,
     bbox: bbox ? bbox.join(',') : undefined,
     fields: fields && fields.length ? fields.join(',') : undefined,
+    order,
+    where,
     v: revision,
   });
   let raw: RawPage;
@@ -108,6 +150,102 @@ export async function fetchFeaturePage(params: FeaturePageParams): Promise<Featu
     revision: raw.revision ?? null,
     featureCount: raw.feature_count ?? null,
     bboxMode: raw.bbox_mode === 'coarse' ? 'coarse' : null,
+    totalMatching: raw.total_matching ?? null,
+    isComplete: raw.pagination?.is_complete ?? !raw.pagination?.has_more,
+    truncated: Boolean(raw.pagination?.truncated),
+    reasonCodes: raw.reason_codes ?? [],
+    idMode: raw.id_mode === 'native' || raw.id_mode === 'positional' || raw.id_mode === 'mixed'
+      ? raw.id_mode
+      : null,
+    duplicateIdCount: raw.duplicate_id_count ?? null,
+  };
+}
+
+// ─── 分组聚合（视口/过滤统计的服务端真值） ──────────────────────────────────
+
+export interface LayerAggregateParams {
+  sessionId: string;
+  refId: string;
+  groupBy: string;
+  agg?: 'count' | 'sum' | 'mean' | 'min' | 'max';
+  aggField?: string;
+  bbox?: [number, number, number, number];
+  where?: string;
+  maxGroups?: number;
+  revision?: number;
+  ownerToken?: string | null;
+  signal?: AbortSignal;
+}
+
+export interface AggregateRow {
+  key: string | number | null;
+  count: number;
+  sum?: number | null;
+  mean?: number | null;
+  min?: number | null;
+  max?: number | null;
+}
+
+export interface LayerAggregate {
+  rows: AggregateRow[];
+  groupCount: number;
+  isComplete: boolean;
+  truncated: boolean;
+  scanned: number;
+  totalMatching: number;
+  nullKeyCount: number;
+  nonNumericCount: number;
+  revision: number | null;
+  reasonCodes: string[];
+}
+
+export class AggregateOverLimit extends Error {
+  constructor() {
+    super('aggregate over scan limit');
+    this.name = 'AggregateOverLimit';
+  }
+}
+
+/** 分组聚合（全扫口径，诚实元数据随行）。 */
+export async function fetchLayerAggregate(params: LayerAggregateParams): Promise<LayerAggregate> {
+  const {
+    sessionId, refId, groupBy, agg = 'count', aggField, bbox, where,
+    maxGroups = 64, revision, ownerToken, signal,
+  } = params;
+  const query = qs({
+    session_id: sessionId,
+    group_by: groupBy,
+    agg,
+    agg_field: aggField,
+    bbox: bbox ? bbox.join(',') : undefined,
+    where,
+    max_groups: maxGroups,
+    v: revision,
+  });
+  let raw: Record<string, unknown>;
+  try {
+    raw = await apiFetch<Record<string, unknown>>(
+      `/api/v1/layers/data/${encodeURIComponent(refId)}/aggregate?${query}`,
+      { ownerToken: ownerToken ?? undefined, label: 'Layer aggregate error', signal },
+    );
+  } catch (err) {
+    if (err && typeof err === 'object' && 'status' in err && (err as { status?: number }).status === 422) {
+      const body = (err as { body?: unknown }).body as { detail?: { error?: string } } | undefined;
+      if (body?.detail?.error === 'aggregate_over_limit') throw new AggregateOverLimit();
+    }
+    throw err;
+  }
+  return {
+    rows: (raw.rows as AggregateRow[] | undefined) ?? [],
+    groupCount: (raw.group_count as number | undefined) ?? 0,
+    isComplete: (raw.is_complete as boolean | undefined) ?? true,
+    truncated: (raw.truncated as boolean | undefined) ?? false,
+    scanned: (raw.scanned as number | undefined) ?? 0,
+    totalMatching: (raw.total_matching as number | undefined) ?? 0,
+    nullKeyCount: (raw.null_key_count as number | undefined) ?? 0,
+    nonNumericCount: (raw.non_numeric_count as number | undefined) ?? 0,
+    revision: (raw.revision as number | null) ?? null,
+    reasonCodes: (raw.reason_codes as string[] | undefined) ?? [],
   };
 }
 

@@ -19,6 +19,7 @@ import {
   getTableArtifactsGeneration,
   type TableModel,
 } from '@/lib/map-components/table-data';
+import { usePagedLayerTable, type PagedTableSort } from '@/lib/map-components/paged-table-data';
 import {
   clearSelection,
   getSelection,
@@ -51,7 +52,8 @@ import { useT } from '@/lib/i18n/useT';
  * - table→map：行点击发布 select（source='table'，携带 id_field）；
  * - map/brush→table：行高亮 + 首行 scrollIntoView；
  * - chart→table：filter_field 类别选择 → 行过滤（同字段同类别）；
- * - viewport（§12）：可选行过滤（内联层 + 缓存 bbox；MVT 层诚实不支持）。
+ * - viewport（§12）：可选行过滤（内联层 + 缓存 bbox；MVT 层走服务端
+ *   bbox 窗口下推 —— PagedTableBody）。
  */
 
 const ROW_HEIGHT = 28;
@@ -82,6 +84,278 @@ function detectIdField(model: TableModel): string | null {
     if (row.rowId.startsWith('h-')) return null; // 内容哈希兜底 —— 地图侧无法编译 id 过滤
   }
   return null;
+}
+
+/**
+ * MVT 大图层的服务端分页表格体（Track B · M4）。
+ *
+ * 与 inline 体的分工：inline（≤5000 全量内存）保留本地排序/过滤/视口行
+ * 过滤；MVT 层（此前诚实显示「无内联属性」）改为真实服务端分页浏览 ——
+ * 排序/搜索/视口窗口全部下推（order/where/bbox），客户端只持已翻页行。
+ * 选择联动复用 SelectionContext（同一 store、同一 id_field 语义）；
+ * 位置 id 数据集发布 '$id'（瓦片 field 1 已编码，地图侧 ['id'] 过滤可命中）。
+ */
+function PagedTableBody({
+  layer, layerId, tableRef, preferredColumns,
+}: {
+  layer: Layer;
+  layerId: string;
+  tableRef: string;
+  preferredColumns?: string[];
+}) {
+  const t = useT();
+  const tp = useT('mapTable');
+  const [sortKey, setSortKey] = useState<PagedTableSort | null>(null);
+  const [filterText, setFilterText] = useState('');
+  const [viewportOnly, setViewportOnly] = useState(false);
+
+  useSyncExternalStore(subscribeViewportContext, getViewportGeneration);
+  const viewport = getViewportContext();
+  // bbox 值键 memo：视口 settle 才变（viewport-context 已 debounce+去重）。
+  const bbox = useMemo(
+    () => (viewportOnly && viewport ? viewport.bbox : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 值稳定于 generation
+    [viewportOnly, viewportOnly ? viewport?.generation : 0],
+  );
+
+  const table = usePagedLayerTable({ layer, sort: sortKey, searchText: filterText, bbox });
+
+  useSyncExternalStore(subscribeSelection, getSelectionGeneration);
+  const selection = getSelection();
+  const selectionMatchesLayer = !!selection && (
+    selection.layer_id === layerId
+    || useHudStore.getState().layers.some(
+      (row: Layer) =>
+        (row._mapspecLayerId === layerId && row.id === selection.layer_id)
+        || (row._mapspecLayerId === selection.layer_id && row.id === layerId)));
+  const selectedRowIds = useMemo(() => {
+    if (!selection || !selectionMatchesLayer || selection.source === 'chart') return null;
+    if (!selection.selected_ids.length) return null;
+    return new Set(selection.selected_ids);
+  }, [selection, selectionMatchesLayer]);
+
+  useEffect(() => {
+    return () => {
+      const sel = getSelection();
+      if (sel && sel.source === 'table' && sel.layer_id === layerId) {
+        clearSelection();
+      }
+    };
+  }, [layerId]);
+
+  // id_field：位置 id 数据集 → '$id'（瓦片 field 1）；链内 id → 字段名；
+  // 内容哈希兜底 → 不发布（地图侧无法编译过滤，诚实单向）。
+  const idField = useMemo(() => {
+    if (table.idMode === 'positional') return '$id';
+    for (const row of table.rows.slice(0, 5)) {
+      for (const key of ['id', 'OBJECTID', 'fid', 'osm_id']) {
+        if (row.props[key] != null && row.props[key] !== '') return key;
+      }
+      if (row.rowId.startsWith('h-')) return null;
+    }
+    return null;
+  }, [table.idMode, table.rows]);
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewH, setViewH] = useState(240);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setViewH(el.clientHeight || 240));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const total = table.rows.length;
+  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const end = Math.min(total, Math.ceil((scrollTop + viewH) / ROW_HEIGHT) + OVERSCAN);
+  const slice = table.rows.slice(start, end);
+  const columns = preferredColumns?.length
+    ? preferredColumns.filter((c) => table.columns.includes(c)).concat(
+        table.columns.filter((c) => !preferredColumns!.includes(c)))
+    : table.columns;
+
+  // map→table：选中行滚动定位（inline 体同款语义）。
+  const lastScrollSelRef = useRef<number>(-1);
+  useEffect(() => {
+    if (!selectedRowIds || !scrollRef.current) return;
+    const first = selectedRowIds.values().next().value as string | undefined;
+    if (!first) return;
+    const selRev = selection?.revision ?? -1;
+    if (lastScrollSelRef.current === selRev) return;
+    lastScrollSelRef.current = selRev;
+    const rowIndex = table.rows.findIndex((r) => r.rowId === first);
+    const el = scrollRef.current;
+    if (rowIndex >= 0 && el) {
+      el.scrollTop = Math.max(0, rowIndex * ROW_HEIGHT - (el.clientHeight || 240) / 2);
+    }
+  }, [selectedRowIds, table.rows, selection?.revision]);
+
+  const handleRowClick = (rowId: string) => {
+    const sel = getSelection();
+    if (sel && sel.source === 'table' && sel.layer_id === layerId && sel.selected_ids.length === 1 && sel.selected_ids[0] === rowId) {
+      publishSelection('clear_selection', { source: 'table', layer_id: layerId });
+      return;
+    }
+    publishSelection('select', {
+      source: 'table',
+      layer_id: layerId,
+      selected_ids: [rowId],
+      id_field: idField ?? undefined,
+      artifact_ref: tableRef || undefined,
+    });
+  };
+
+  const matchedText = table.totalMatching != null
+    ? tp('paged.matchedSuffix', { matched: table.totalMatching })
+    : (filterText.trim() || viewportOnly ? tp('paged.matchedUnknown') : '');
+  const totalText = table.featureCount != null ? tp('paged.totalSuffix', { total: table.featureCount }) : '';
+
+  return (
+    <div className="flex h-full min-h-40 flex-col gap-1" data-testid="table-panel-paged" data-paged-status={table.status}>
+      {/* 工具条：搜索（服务端 or-contains 下推）+ 视口窗口 + 计数披露 */}
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          value={filterText}
+          onChange={(e) => setFilterText(e.target.value)}
+          placeholder={t('map.table.filterPh')}
+          aria-label={t('map.table.filterAria')}
+          className="h-6 min-w-0 flex-1 rounded-xs border border-map-chrome-border bg-surface-sunken px-1.5 text-caption text-map-chrome-ink"
+        />
+        <button
+          type="button"
+          aria-pressed={viewportOnly}
+          title={t('map.table.viewportOnlyTitle')}
+          onClick={() => setViewportOnly((v) => !v)}
+          className={`h-6 shrink-0 rounded-xs border border-map-chrome-border px-1.5 text-caption ${
+            viewportOnly ? 'bg-status-accent-soft text-status-accent' : 'text-map-chrome-ink-muted'
+          }`}
+        >
+          {t('map.table.viewport')}
+        </button>
+        <span className="shrink-0 text-caption tabular-nums text-map-chrome-ink-muted" data-testid="table-panel-count">
+          {tp('paged.countLine', { shown: table.rows.length, matched: matchedText, total: totalText })}
+        </span>
+      </div>
+      {table.status === 'error' ? (
+        <div role="alert" className="flex flex-col gap-1 rounded-xs border border-status-danger/40 bg-status-danger-soft/30 px-2 py-1.5 text-caption" data-testid="table-panel-paged-error">
+          {table.error?.kind === 'conflict' ? (
+            <>
+              <span>{tp('paged.conflictTitle', { revision: table.error.currentRevision ?? '?' })}</span>
+              <button type="button" onClick={table.reload} className="self-start rounded-xs border border-map-chrome-border px-2 py-0.5">
+                {tp('paged.conflictReload')}
+              </button>
+            </>
+          ) : table.error?.kind === 'rate' ? (
+            <span>{tp('paged.rateLimited')}</span>
+          ) : table.error?.kind === 'forbidden' ? (
+            <span>{tp('paged.forbidden')}</span>
+          ) : table.error?.kind === 'notfound' ? (
+            <span>{tp('paged.notFound')}</span>
+          ) : (
+            <>
+              <span>{tp('paged.networkError')}</span>
+              <button type="button" onClick={table.reload} className="self-start rounded-xs border border-map-chrome-border px-2 py-0.5">
+                {tp('paged.retry')}
+              </button>
+            </>
+          )}
+        </div>
+      ) : table.status === 'loading' ? (
+        <div className="flex h-full min-h-16 items-center justify-center text-caption text-map-chrome-ink-muted" role="status">
+          {t('map.table.loading')}
+        </div>
+      ) : total === 0 ? (
+        <div className="flex h-full min-h-16 items-center justify-center text-caption text-map-chrome-ink-muted" role="status">
+          {tp('paged.emptyPage')}
+        </div>
+      ) : (
+        <>
+          {/* 表头：服务端排序（asc → desc → 自然序） */}
+          <div className="flex shrink-0 border-b border-map-chrome-border" role="rowgroup">
+            {columns.map((col) => (
+              <button
+                key={col}
+                type="button"
+                onClick={() => setSortKey((prev) =>
+                  prev?.column === col
+                    ? (prev.dir === 1 ? { column: col, dir: -1 } : null)
+                    : { column: col, dir: 1 })}
+                title={tp('paged.sortServerTitle', { column: col })}
+                className="min-w-0 flex-1 truncate px-1.5 py-1 text-left text-caption font-semibold text-map-chrome-ink"
+              >
+                {col}
+                {sortKey?.column === col ? (sortKey.dir === 1 ? ' ▲' : ' ▼') : ''}
+              </button>
+            ))}
+          </div>
+          <div
+            ref={scrollRef}
+            onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            data-testid="table-panel-scroll"
+          >
+            <div style={{ height: total * ROW_HEIGHT, position: 'relative' }}>
+              <div style={{ transform: `translateY(${start * ROW_HEIGHT}px)` }}>
+                {slice.map((row) => {
+                  const selected = selectedRowIds?.has(row.rowId) ?? false;
+                  return (
+                    <div
+                      key={row.rowId}
+                      role="row"
+                      aria-selected={selected}
+                      data-row-id={row.rowId}
+                      data-testid="table-panel-row"
+                      onClick={() => handleRowClick(row.rowId)}
+                      style={{ height: ROW_HEIGHT }}
+                      className={`flex w-full cursor-pointer items-center border-b border-map-chrome-border/40 ${
+                        selected ? 'bg-status-accent-soft' : 'hover:bg-surface-hover/60'
+                      }`}
+                    >
+                      {columns.map((col) => (
+                        <span
+                          key={col}
+                          title={cellText(row.props[col])}
+                          className="min-w-0 flex-1 truncate px-1.5 text-caption text-map-chrome-ink"
+                        >
+                          {cellText(row.props[col])}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          {table.nextCursor && (
+            <button
+              type="button"
+              onClick={table.loadMore}
+              disabled={table.loadingMore}
+              data-testid="table-panel-load-more"
+              className="shrink-0 rounded-xs border border-map-chrome-border px-2 py-1 text-caption text-map-chrome-ink disabled:opacity-60"
+            >
+              {table.loadingMore ? tp('paged.loadingMore') : tp('paged.loadMore')}
+            </button>
+          )}
+          {table.truncated && (
+            <div className="shrink-0 text-caption text-map-chrome-ink-muted">{tp('paged.truncatedPage')}</div>
+          )}
+          {table.idMode === 'positional' && (
+            <div className="shrink-0 text-caption text-map-chrome-ink-muted" data-testid="table-panel-positional-note">
+              {tp('paged.positionalIdNote')}
+            </div>
+          )}
+          {table.duplicateIdCount != null && table.duplicateIdCount > 0 && (
+            <div className="shrink-0 text-caption text-map-chrome-ink-muted">
+              {tp('paged.duplicateIdNote', { count: table.duplicateIdCount })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
@@ -164,9 +438,8 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     if (layerId) {
       const src = boundLayer?.source as { features?: Array<{ properties?: Record<string, unknown>; id?: string | number; geometry?: unknown }> } | undefined;
       const features = src && Array.isArray(src.features) ? src.features : null;
-      if (boundLayer && isMvtLayer(boundLayer) && !features?.length) {
-        return { status: 'unavailable' };
-      }
+      // MVT 层不再短路为 unavailable —— 服务端分页体（PagedTableBody）接管；
+      // 已水合出内联 features 的 MVT 层继续走内存路径（导出/过滤水合结果）。
       if (features && features.length) {
         const records = features.map((f) => f.properties ?? {});
         const topLevelIds = features.map((f) => f.id);
@@ -179,7 +452,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
       return boundLayer ? { status: 'unavailable' } : { status: 'empty' };
     }
     return { status: 'empty' };
-     
+
   }, [tableRef, fetchedRef, layerId, boundLayer, preferredColumns]);
 
   // ── 排序 / 过滤（行索引操作，零复制）─────────────────────────────────
@@ -332,6 +605,13 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     ? (options['title'] as string)
     : boundLayer?.name || (state.status === 'ready' ? t('map.table.defaultTitle') : t('map.table.genericTitle'));
 
+  // MVT 分支：无内联 features 的 MVT 层 → 服务端分页体（真实分页浏览，
+  // 不整包水合；此前是「无内联属性」诚实占位）。
+  const pagedMode = !!(
+    layerId && boundLayer && isMvtLayer(boundLayer)
+    && !(boundLayer.source as { features?: unknown[] } | undefined)?.features?.length
+  );
+
   return (
     <FloatingChrome
       component={patched}
@@ -341,7 +621,14 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
       dataVariant={variant}
       bodyClassName={variant === 'compact' ? 'p-1.5' : 'p-2'}
     >
-      {state.status !== 'ready' ? (
+      {pagedMode ? (
+        <PagedTableBody
+          layer={boundLayer as Layer}
+          layerId={layerId}
+          tableRef={tableRef}
+          preferredColumns={preferredColumns}
+        />
+      ) : state.status !== 'ready' ? (
         <div
           className="flex h-full min-h-16 items-center justify-center px-2 py-3 text-caption text-map-chrome-ink-muted"
           data-state={state.status}
