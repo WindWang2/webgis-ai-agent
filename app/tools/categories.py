@@ -69,6 +69,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.local_osm": "data_access",
     "app.tools.local_stats": "data_access",
     "app.tools.map_view": "map_mutation",
+    "app.tools.map_operations_tools": "map_mutation",   # ADR-0278 表现层操作事务
     "app.tools.meta_tools": "debug_internal",
     "app.tools.modelops_tools": "analysis",
     "app.tools.monitoring_report": "export",

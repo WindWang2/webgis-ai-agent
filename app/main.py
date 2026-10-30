@@ -36,6 +36,8 @@ from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes, feature_edits as feature_edits_routes
 from app.api.routes import atlas_jobs as atlas_jobs_routes  # noqa: E402  # 批量图册发布
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
+from app.api.routes import map_operations as map_operations_routes  # noqa: E402  # ADR-0278
+from app.api.routes import display_confirmation as display_confirmation_routes  # noqa: E402  # ADR-0278
 from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0226
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
@@ -1098,6 +1100,12 @@ app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
 app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对话"])  # /goal 03 feature editing
+# ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
+app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])
+app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["AI对话"])
+# ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
+app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])
+app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(review_proposals.router, prefix="/api/v1", tags=["审查会签"])
 # F15（ADR-0263）：user-approved visual repair + 截图 ref-only 通道。
 app.include_router(visual_repairs.router, prefix="/api/v1", tags=["AI对话"])
