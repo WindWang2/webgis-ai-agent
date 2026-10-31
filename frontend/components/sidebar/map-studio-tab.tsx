@@ -7,6 +7,8 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 import { Download, Printer, History, ChevronDown, Lock } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
 import { downloadWithAuth } from '@/lib/api/authenticated-download';
+import { submitAtlasJob } from '@/lib/api/atlas-jobs';
+import { getSessionIdentity } from '@/lib/store/session-identity';
 import { describeApiError } from '@/lib/api/transport';
 import { useToastStore } from '@/components/ui/toast';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
@@ -171,6 +173,52 @@ export function MapStudioTab() {
     setExports(exports.filter(e => e.id !== id));
   };
 
+  // 批量图册 durable job 提交（与 Agent export_atlas 同一任务 API）：
+  // 不等待渲染 —— 逐页进度/取消/失败页定向重试都在任务中心完成。
+  const handleAtlasBatchSubmit = async () => {
+    const { sessionId, ownerToken } = getSessionIdentity();
+    if (!sessionId) {
+      useToastStore.getState().addToast(t('sidebar.studio.atlasBatchNoSession'), 'error');
+      return;
+    }
+    try {
+      const resp = await submitAtlasJob(
+        {
+          session_id: sessionId,
+          atlas: {
+            driver: exportSettings.atlasDriver ?? 'category',
+            layerId: exportSettings.atlasLayerId || undefined,
+            categoryProperty: exportSettings.atlasCategoryProperty || undefined,
+            includeCover: exportSettings.atlasIncludeCover,
+            atlasTitle: exportSettings.atlasTitle || undefined,
+            pageBudget: 20,
+          },
+          classification_scope: 'shared',
+          target_dpi: exportSettings.dpi >= 72 ? Math.min(600, exportSettings.dpi) : 300,
+          title: exportSettings.atlasTitle || undefined,
+        },
+        { ownerToken },
+      );
+      useToastStore.getState().addToast(
+        resp.idempotent_reuse
+          ? t('sidebar.studio.atlasBatchReused', { jobId: resp.job_id })
+          : t('sidebar.studio.atlasBatchSubmitted', {
+              jobId: resp.job_id,
+              count: resp.plan?.page_count ?? 0,
+            }),
+        'success',
+      );
+      useHudStore.getState().setActiveLeftTab('tasks');
+    } catch (err) {
+      useToastStore.getState().addToast(
+        t('sidebar.studio.atlasBatchFailed', {
+          reason: describeApiError(err, t('sidebar.studio.downloadFailedFallback')),
+        }),
+        'error',
+      );
+    }
+  };
+
   // 折叠时分区标题下的一行摘要
   const filledDocFields = [
     exportSettings.title,
@@ -201,6 +249,7 @@ export function MapStudioTab() {
   const dpiId = useId();
   const atlasToggleId = useId();
   const atlasDriverId = useId();
+  const atlasBatchId = useId();
   const atlasPropId = useId();
   const atlasCoverId = useId();
   const atlasTitleId = useId();
@@ -466,6 +515,19 @@ export function MapStudioTab() {
                             className="w-36 rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                           />
                         </div>
+                        <div className="flex items-center justify-between gap-4">
+                          <label htmlFor={atlasBatchId} className="text-ink-muted">{t('sidebar.studio.atlasBatch')}</label>
+                          <input
+                            id={atlasBatchId}
+                            type="checkbox"
+                            checked={exportSettings.atlasBatch}
+                            onChange={(e) => handleChange('atlasBatch', e.target.checked)}
+                            className="h-4 w-4 accent-[color:var(--agent-accent)]"
+                          />
+                        </div>
+                        {exportSettings.atlasBatch && (
+                          <p className="text-caption text-ink-muted">{t('sidebar.studio.atlasBatchNote')}</p>
+                        )}
                         <p className="text-caption text-ink-muted">{t('sidebar.studio.atlasBudgetNote')}</p>
                       </>
                     )}
@@ -590,6 +652,15 @@ export function MapStudioTab() {
             title={authUser ? undefined : t('sidebar.studio.loginToExportTitle')}
             onClick={() => {
               if (!authUser) return;
+              // 批量模式：提交 durable job（任务中心跟踪），不走同步导出
+              if (
+                exportSettings.format === 'vector-pdf' &&
+                exportSettings.atlasEnabled &&
+                exportSettings.atlasBatch
+              ) {
+                void handleAtlasBatchSubmit();
+                return;
+              }
               dispatchAction({
                 command:
                   exportSettings.format === 'vector-pdf'

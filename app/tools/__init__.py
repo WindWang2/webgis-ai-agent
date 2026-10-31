@@ -24,6 +24,8 @@ _TOOL_MODULES = [
     ("app.tools.gis_action_tools", "register_gis_action_tools"),
     ("app.tools.annotation", "register_annotation_tools"),
     ("app.tools.nature_resources", "register_nature_resource_tools"),
+    # 批量图册发布（atlas durable job 提交面）
+    ("app.tools.atlas_export_tools", "register_atlas_export_tools"),
     ("app.tools.upload_tools", "register_upload_tools"),
     ("app.tools.web_crawler", "register_crawler_tools"),
     ("app.tools.chinese_maps", "register_chinese_map_tools"),

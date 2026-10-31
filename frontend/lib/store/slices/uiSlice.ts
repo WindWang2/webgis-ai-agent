@@ -231,6 +231,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
     atlasLayerId: '',
     atlasIncludeCover: true,
     atlasTitle: '',
+    atlasBatch: false,
   },
   updateExportSettings: (updates) =>
     set((s) => ({

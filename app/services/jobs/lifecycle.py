@@ -50,6 +50,7 @@ class JobKind(str, Enum):
     analysis = "analysis"    # 空间/遥感分析 job（Celery）
     workflow = "workflow"    # WorkflowRun
     explorer = "explorer"    # Explorer chain
+    atlas_export = "atlas_export"  # 批量图册发布 job（Celery；页级 checkpoint/重试）
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。

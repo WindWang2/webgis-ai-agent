@@ -228,7 +228,8 @@
       "agent": "AI 任务",
       "analysis": "空间分析",
       "workflow": "工作流",
-      "explorer": "数据探索"
+      "explorer": "数据探索",
+      "atlas_export": "批量图册"
     },
     "attemptSuffix": " · 第 {count} 次尝试",
     "fromStepSuffix": " · 来自 {step}",
@@ -238,7 +239,14 @@
     "cancelAria": "取消 {name}",
     "retryAria": "重试 {name}",
     "collapseTimelineAria": "收起 {name} 执行时间线",
-    "expandTimelineAria": "展开 {name} 执行时间线"
+    "expandTimelineAria": "展开 {name} 执行时间线",
+    "atlasPages": "图册页（逐页状态）",
+    "atlasPageRendered": "✓ 已渲染",
+    "atlasPageFailed": "✗ 失败",
+    "atlasPdf": "下载 PDF",
+    "atlasManifest": "来源清单",
+    "atlasDownloadPdf": "下载图册 PDF：{name}",
+    "atlasDownloadManifest": "下载可复现来源清单：{name}"
   },
   "studio": {
     "decoration": {
@@ -308,7 +316,13 @@
     "docSummaryEmpty": "尚未填写",
     "docSummaryFilled": "已填写 {filled}/4 项",
     "elementSummary": "{enabled}/{total} 启用",
-    "loginToExportTitle": "导出功能需要登录账号（设置 → 账户）"
+    "loginToExportTitle": "导出功能需要登录账号（设置 → 账户）",
+    "atlasBatch": "后台批量任务",
+    "atlasBatchNote": "提交为后台图册任务：逐页进度、可取消、失败页可定向重试；完成后在任务中心下载 PDF 与来源清单。",
+    "atlasBatchNoSession": "当前无活动会话，无法提交批量图册任务",
+    "atlasBatchSubmitted": "批量图册任务已提交（job {jobId}，规划 {count} 页），可在任务中心查看进度",
+    "atlasBatchReused": "相同的批量图册任务已在执行（job {jobId}），已复用同一任务",
+    "atlasBatchFailed": "批量图册任务提交失败：{reason}"
   },
   "inspector": {
     "emptyTitle": "尚未选择数据集",

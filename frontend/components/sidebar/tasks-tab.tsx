@@ -13,7 +13,7 @@
  */
 'use client';
 
-import { ListChecks, RefreshCw, RotateCcw, X, ClipboardList, ListTree } from 'lucide-react';
+import { ListChecks, RefreshCw, RotateCcw, X, ClipboardList, ListTree, BookOpen } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useT } from '@/lib/i18n/useT';
 
@@ -27,6 +27,7 @@ import { ExplorerProgressPanel } from '@/components/explorer/explorer-progress-p
 import { LoadingState } from '@/components/shared/loading-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { RunTimeline } from '@/components/agent/run-timeline';
+import { downloadWithAuth } from '@/lib/api/authenticated-download';
 
 interface TasksTabProps {
   sessionId?: string | null;
@@ -39,7 +40,14 @@ const KIND_LABEL_KEYS: Record<string, string> = {
   analysis: 'sidebar.tasks.kinds.analysis',
   workflow: 'sidebar.tasks.kinds.workflow',
   explorer: 'sidebar.tasks.kinds.explorer',
+  atlas_export: 'sidebar.tasks.kinds.atlas_export',
 };
+
+/** 图册页级状态徽标色：失败显式红、其余收敛为弱色（不抢任务级状态）。 */
+function atlasPageBadgeClass(status: string): string {
+  if (status === 'failed') return 'text-status-critical';
+  return 'text-ink-muted';
+}
 
 /** 已运行时长。终态用 finished-started，活跃用 now-started。 */
 function formatElapsed(job: JobView, now: number): string {
@@ -143,6 +151,31 @@ function JobCard({
 
       {job.error && <div className="mt-2 text-meta text-status-critical">{job.error}</div>}
 
+      {job.kind === 'atlas_export' && job.page_status && job.page_status.length > 0 && (
+        <div className="mt-2 rounded-sm bg-surface-sunken px-2 py-1.5" data-testid={`atlas-pages-${job.id}`}>
+          <div className="mb-1 text-caption text-ink-secondary">{t('sidebar.tasks.atlasPages')}</div>
+          <ul className="max-h-32 space-y-0.5 overflow-y-auto">
+            {job.page_status.map((p) => (
+              <li key={p.page_id} className="flex items-center justify-between gap-2 text-caption">
+                <span className="truncate text-ink">
+                  {p.page_number}. {p.title || p.page_id}
+                </span>
+                <span
+                  className={`shrink-0 ${atlasPageBadgeClass(p.status)}`}
+                  title={p.error ?? undefined}
+                >
+                  {p.status === 'rendered'
+                    ? t('sidebar.tasks.atlasPageRendered')
+                    : p.status === 'failed'
+                      ? t('sidebar.tasks.atlasPageFailed')
+                      : p.status}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="mt-2 flex items-center justify-between text-meta text-ink-muted">
         <span>{t('sidebar.tasks.elapsed', { time: formatElapsed(job, now) })}</span>
         <div className="flex items-center gap-2">
@@ -163,6 +196,38 @@ function JobCard({
                 {job.result_ref.split('/').pop()}
               </span>
             )
+          )}
+          {job.kind === 'atlas_export' && !job.active && job.result_ref?.endsWith('.pdf') && (
+            <span className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  void downloadWithAuth(
+                    `/api/v1/export/download/${encodeURIComponent(job.result_ref ?? '')}`,
+                    { filename: job.result_ref ?? 'atlas.pdf' },
+                  );
+                }}
+                className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
+                aria-label={t('sidebar.tasks.atlasDownloadPdf', { name: job.name })}
+              >
+                <BookOpen size={12} aria-hidden />
+                {t('sidebar.tasks.atlasPdf')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const manifest = (job.result_ref ?? '').replace(/\.pdf$/, '.manifest.json');
+                  void downloadWithAuth(
+                    `/api/v1/export/download/${encodeURIComponent(manifest)}`,
+                    { filename: manifest },
+                  );
+                }}
+                className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
+                aria-label={t('sidebar.tasks.atlasDownloadManifest', { name: job.name })}
+              >
+                {t('sidebar.tasks.atlasManifest')}
+              </button>
+            </span>
           )}
           {job.cancellable && (
             <button

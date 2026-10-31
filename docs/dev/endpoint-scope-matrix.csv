@@ -4,6 +4,8 @@ GET,/api/v1/admin/orgs/{org_id}/audit,admin:read,Y,N
 GET,/api/v1/admin/orgs/{org_id}/quota,admin:read,Y,N
 PUT,/api/v1/admin/orgs/{org_id}/quota,admin:write,Y,N
 GET,/api/v1/admin/orgs/{org_id}/quota/usage,admin:read,Y,N
+POST,/api/v1/atlas/jobs,gis:write,N,Y
+GET,/api/v1/atlas/jobs/{job_id},gis:read,N,Y
 POST,/api/v1/auth/login,auth:write,N,N
 POST,/api/v1/auth/logout,auth:write,N,Y
 GET,/api/v1/auth/me,session:read,N,Y

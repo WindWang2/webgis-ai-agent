@@ -228,7 +228,8 @@
       "agent": "AI task",
       "analysis": "Spatial analysis",
       "workflow": "Workflow",
-      "explorer": "Data exploration"
+      "explorer": "Data exploration",
+      "atlas_export": "Atlas batch"
     },
     "attemptSuffix": " · attempt {count}",
     "fromStepSuffix": " · from {step}",
@@ -238,7 +239,14 @@
     "cancelAria": "Cancel {name}",
     "retryAria": "Retry {name}",
     "collapseTimelineAria": "Collapse {name} execution timeline",
-    "expandTimelineAria": "Expand {name} execution timeline"
+    "expandTimelineAria": "Expand {name} execution timeline",
+    "atlasPages": "Atlas pages (per-page status)",
+    "atlasPageRendered": "✓ rendered",
+    "atlasPageFailed": "✗ failed",
+    "atlasPdf": "Download PDF",
+    "atlasManifest": "Provenance",
+    "atlasDownloadPdf": "Download atlas PDF: {name}",
+    "atlasDownloadManifest": "Download reproducible provenance manifest: {name}"
   },
   "studio": {
     "decoration": {
@@ -308,7 +316,13 @@
     "docSummaryEmpty": "Not filled in yet",
     "docSummaryFilled": "{filled}/4 filled in",
     "elementSummary": "{enabled}/{total} enabled",
-    "loginToExportTitle": "Export requires signing in (Settings → Account)"
+    "loginToExportTitle": "Export requires signing in (Settings → Account)",
+    "atlasBatch": "Background batch job",
+    "atlasBatchNote": "Submit as a background atlas job: per-page progress, cancellable, failed pages retry individually; download the PDF and provenance manifest from the task center when done.",
+    "atlasBatchNoSession": "No active session; cannot submit an atlas batch job",
+    "atlasBatchSubmitted": "Atlas batch job submitted (job {jobId}, {count} pages planned) — track it in the task center",
+    "atlasBatchReused": "An identical atlas batch job is already running (job {jobId}); reused the same job",
+    "atlasBatchFailed": "Atlas batch job submission failed: {reason}"
   },
   "inspector": {
     "emptyTitle": "No dataset selected",
