@@ -61,6 +61,9 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.scene_orchestration_tools": "inspection",
     "app.tools.geocompute_tools": "analysis",           # 执行平面；validate/run 查询名字覆盖
     "app.tools.layer_manager": "map_mutation",
+    # 分析流程编排（goal-02）：plan/recompute/run/status 四工具 —— 编排层
+    # 归 analysis（消费既有算子，不自建算法面）。
+    "app.tools.analysis_workflow_tools": "analysis",
     "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
     "app.tools.local_admin": "data_access",
     "app.tools.local_osm": "data_access",
