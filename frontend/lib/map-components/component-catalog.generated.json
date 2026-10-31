@@ -215,6 +215,29 @@
       }
     },
     {
+      "type": "design_candidates",
+      "variants": [
+        "default",
+        "compact"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "top-left",
+      "category": "disclosure.design_candidates",
+      "runtimeStatus": "native",
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [],
+      "semanticRole": "disclosure",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "",
+        "accent": ""
+      }
+    },
+    {
       "type": "elevation_profile",
       "variants": [
         "default",
@@ -1800,9 +1823,24 @@
       "message": "高 DPI 导出下栅格瓦片源仍按原 zoom 取图，瓦片细节不随分辨率提升（{detail}）"
     },
     {
+      "code": "scale_unreliable_perspective",
+      "severity": "warning",
+      "message": "透视视角（pitch>{detail}°）下屏幕比例尺被透视压缩失真，导出件比例尺仅供参考；场景披露卡应随图注明"
+    },
+    {
+      "code": "scene_basemap_unavailable",
+      "severity": "warning",
+      "message": "底图瓦片源加载失败（网络/401/403/429），底图可能缺失；可切换其他可用底图或配置本地底图（{detail}）"
+    },
+    {
       "code": "scene_extrusion_no_height_evidence",
       "severity": "info",
       "message": "3D 场景下该面图层缺少已核实的高度字段证据，未做立体挤出（不虚构高度）"
+    },
+    {
+      "code": "scene_terrain_no_source_air_gapped",
+      "severity": "warning",
+      "message": "离线(air_gapped)部署且未绑定会话 DEM 源，3D 地形已显式禁用（绝不回退外网兜底；{detail}）"
     },
     {
       "code": "scene_terrain_unavailable",
@@ -1813,6 +1851,11 @@
       "code": "small_multiple_panel_skipped",
       "severity": "warning",
       "message": "小倍数面板帧渲染失败，已跳过（{detail}）"
+    },
+    {
+      "code": "svg_3d_perspective_degrade",
+      "severity": "info",
+      "message": "矢量导出无法保留三维透视模型，已降级为 2D 平面投影表达（scene.mode={detail}）—— 不是可编辑的 3D 矢量"
     },
     {
       "code": "table_ref_unavailable",

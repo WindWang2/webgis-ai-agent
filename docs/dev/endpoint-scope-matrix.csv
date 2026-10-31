@@ -4,6 +4,8 @@ GET,/api/v1/admin/orgs/{org_id}/audit,admin:read,Y,N
 GET,/api/v1/admin/orgs/{org_id}/quota,admin:read,Y,N
 PUT,/api/v1/admin/orgs/{org_id}/quota,admin:write,Y,N
 GET,/api/v1/admin/orgs/{org_id}/quota/usage,admin:read,Y,N
+POST,/api/v1/atlas/jobs,gis:write,N,Y
+GET,/api/v1/atlas/jobs/{job_id},gis:read,N,Y
 POST,/api/v1/auth/login,auth:write,N,N
 POST,/api/v1/auth/logout,auth:write,N,Y
 GET,/api/v1/auth/me,session:read,N,Y
@@ -103,6 +105,14 @@ POST,/api/v1/data-lifecycle/gc/plans/{plan_id}/rollback,admin:write,Y,N
 GET,/api/v1/data-lifecycle/objects,gis:read,N,Y
 GET,/api/v1/data-lifecycle/policies,gis:read,N,Y
 PUT,/api/v1/data-lifecycle/policies/{name},admin:write,Y,N
+POST,/api/v1/data-preparation/bindings/fields,gis:write,N,Y
+POST,/api/v1/data-preparation/inspect,gis:write,N,Y
+POST,/api/v1/data-preparation/plan,gis:write,N,Y
+DELETE,/api/v1/data-preparation/plan/{plan_id},gis:write,N,Y
+POST,/api/v1/data-preparation/plan/{plan_id}/execute,gis:write,N,Y
+POST,/api/v1/data-preparation/plan/{plan_id}/preview,gis:write,N,Y
+GET,/api/v1/data-preparation/plan/{plan_id}/receipt,gis:read,N,Y
+GET,/api/v1/data-preparation/plans,gis:read,N,Y
 POST,/api/v1/data-quality/autofix/apply,gis:write,N,Y
 POST,/api/v1/data-quality/autofix/dry-run,gis:write,N,Y
 POST,/api/v1/data-quality/evaluate,gis:write,N,Y

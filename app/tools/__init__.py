@@ -24,6 +24,8 @@ _TOOL_MODULES = [
     ("app.tools.gis_action_tools", "register_gis_action_tools"),
     ("app.tools.annotation", "register_annotation_tools"),
     ("app.tools.nature_resources", "register_nature_resource_tools"),
+    # 批量图册发布（atlas durable job 提交面）
+    ("app.tools.atlas_export_tools", "register_atlas_export_tools"),
     ("app.tools.upload_tools", "register_upload_tools"),
     ("app.tools.web_crawler", "register_crawler_tools"),
     ("app.tools.chinese_maps", "register_chinese_map_tools"),
@@ -68,6 +70,8 @@ _TOOL_MODULES = [
     ("app.tools.data_discovery", "register_data_discovery_tools"),
     ("app.tools.workspace_tools", "register_workspace_tools"),
     ("app.tools.ingest_tools", "register_ingest_tools"),
+    # 数据准备域：inspect→propose→prepare→bind 工具面（独立模块防并发冲突）
+    ("app.tools.data_preparation_tools", "register_data_preparation_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
     ("app.tools.flow_tools", "register_flow_tools"),
     ("app.tools.dasymetric_tools", "register_dasymetric_tools"),
@@ -89,6 +93,9 @@ _TOOL_MODULES = [
     # F07：ExecutionCatalog 只读发现工具面（capability-first discovery，
     # 独立模块防并发冲突）
     ("app.tools.catalog_discovery_tools", "register_catalog_discovery_tools"),
+    # goal-02：多步 GIS 分析工作流编排工具面（plan/run/status/recompute；
+    # 独立模块防并发冲突；执行真相=registry.dispatch）
+    ("app.tools.analysis_workflow_tools", "register_analysis_workflow_tools"),
 ]
 
 

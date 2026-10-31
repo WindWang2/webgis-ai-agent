@@ -96,6 +96,186 @@ class PublicationBusyError(Exception):
     """WeasyPrint 渲染槽位占用中（串行化饱和）—— 调用方稍后重试。"""
 
 
+# ── 页级编译接缝（C15 批量图册：同步链与 atlas batch executor 共用）────────
+#
+# 提取自 render_publication_pdf 的逐页循环体：封面/帧覆盖/过滤页文档解析 →
+# 孪生 SVG 编译 → 累积预算闸。语义（诊断码/明细串/预算数学）逐字保持 ——
+# 同步路径改走本接缝后输出字节与诊断负载不变（由既有 atlas pipeline/IR
+# golden 测试锁定）。失败以 PageCompileFailure 携带 typed 证据上抛：
+# 同步链按既有政策 skip + 诊断；批量链按页级失败证据化（不静默空白）。
+
+@dataclass
+class PageCompileOutcome:
+    """单页编译成功结果（svg 为最终页面体；无载荷摘要随行）。"""
+
+    svg: str
+    width_mm: float
+    height_mm: float
+    page: PageLayoutIR
+    svg_bytes: int = 0
+    frame_diagnostics: List[Any] = _dc_field(default_factory=list)
+    rendered_component_types: List[str] = _dc_field(default_factory=list)
+    omitted_components: List[Dict[str, Any]] = _dc_field(default_factory=list)
+
+
+class PageCompileFailure(Exception):
+    """页编译失败（code/detail 与同步链诊断完全同形）。"""
+
+    def __init__(self, code: str, detail: str, exc: Optional[Exception] = None):
+        self.code = code
+        self.detail = detail
+        self.exc = exc
+        super().__init__(f"{code}: {detail}")
+
+
+def compile_publication_page(
+    doc: Dict[str, Any],
+    page: PageLayoutIR,
+    pub_ir: PublicationIR,
+    *,
+    frames_lookup: List[Any],
+    target_dpi: int,
+    max_labels: int,
+    svg_budget_remaining: int,
+) -> PageCompileOutcome:
+    """单页 → :class:`PageCompileOutcome`；失败抛 :class:`PageCompileFailure`。
+
+    ``svg_budget_remaining``：本页加入前剩余的累积 SVG 字节预算
+    （``_MAX_TOTAL_SVG_BYTES - 已累积``）—— 与原循环内 ``_accumulated +
+    len(svg) > _MAX_TOTAL_SVG_BYTES`` 判据等价（len > remaining ⇔ 超限）。
+    """
+    page_w = page.paper.width_mm
+    page_h = page.paper.height_mm
+    if page.cover:
+        return PageCompileOutcome(
+            svg=_render_toc_svg(pub_ir, page), width_mm=page_w, height_mm=page_h,
+            page=page, svg_bytes=0,
+        )
+    # 页文档解析：帧引用 / 过滤页 / 单帧整幅（原循环体逐字）
+    if page.frame_index is not None:
+        frame = frames_lookup[page.frame_index] if page.frame_index < len(frames_lookup) else None
+        frame_doc = _apply_frame_overrides(doc, frame)
+    elif page.filter_layer_id:
+        frame_doc = _page_filtered_doc(doc, page)
+    else:
+        frame_doc = doc
+    try:
+        comp = compile_mapspec_to_svg_detailed(
+            frame_doc,
+            target_dpi=target_dpi,
+            width=int(page_w * 4),
+            height=int(page_h * 4),
+            padding=24,
+            include_chrome=True,
+            bounds=page.bounds,
+            max_labels=max_labels,
+            max_features=min(_effective_max_features(frame_doc), EXPORT_MAX_FEATURES),
+            timeout_ms=min(resolve_spec_timeout_ms(frame_doc), 30000.0),
+        )
+    except Exception as ex:  # noqa: BLE001 — 同步链既有 skip 政策的同一事实源
+        raise PageCompileFailure(
+            "atlas_page_skipped",
+            f"page {page.page_id}: {type(ex).__name__}",
+            exc=ex,
+        ) from ex
+    if len(comp.svg) > svg_budget_remaining:
+        raise PageCompileFailure(
+            "atlas_page_limit_truncated",
+            f"svg budget {_MAX_TOTAL_SVG_BYTES} bytes at page {page.page_id}",
+        )
+    from app.lib.cartography.render_diagnostics import RenderDiagnostic
+
+    frame_items = [
+        RenderDiagnostic(
+            code=d.get("code", ""), severity=d.get("severity", "info"),
+            message=d.get("message", ""), detail=d.get("detail", ""),
+            layer_id=d.get("layer_id"), component_id=d.get("component_id"),
+        )
+        for d in comp.diagnostics
+        if d.get("code") in RENDER_DIAGNOSTICS
+    ]
+    return PageCompileOutcome(
+        svg=comp.svg, width_mm=page_w, height_mm=page_h, page=page,
+        svg_bytes=len(comp.svg),
+        frame_diagnostics=frame_items,
+        rendered_component_types=[str(t) for t in (comp.rendered_component_types or [])],
+        omitted_components=[dict(o) for o in (comp.omitted_components or [])
+                            if isinstance(o, dict)],
+    )
+
+
+def assemble_pages_pdf(
+    page_specs: List[Tuple[str, str, float, float]],
+    *,
+    title: str,
+    sink: DiagnosticSink,
+) -> bytes:
+    """页面 SVG 列表 → PDF bytes（命名 @page + WeasyPrint 互斥 + CJK 内嵌）。
+
+    单页/多页两态与既有 render_publication_pdf 内联实现逐字一致（诊断
+    ``pdf_cjk_font_embedded`` 同位落 sink）；pypdf 页数计数由调用方执行。
+    """
+    if len(page_specs) > 1:
+        rules = [
+            f"@page {name} {{ size: {w_mm}mm {h_mm}mm; margin: 0; }}\n"
+            f".page-{name} {{ page: {name}; }}"
+            for (name, _svg, w_mm, h_mm) in page_specs
+        ]
+        font_face = _cjk_font_face_css()
+        font_stack = f"'Noto Sans SC Embedded', {CSS_FONT_STACK}" if font_face else CSS_FONT_STACK
+        svg_text_rule = (
+            f"svg, svg text {{ font-family: {font_stack}; }}\n" if font_face else ""
+        )
+        html_doc = (
+            '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+            f"{font_face}\n"
+            f"html, body {{ margin: 0; font-family: {font_stack}; }}\n"
+            f"{svg_text_rule}"
+            "svg { width: 100%; height: 100%; }\n"
+            ".page { page-break-after: always; }\n"
+            + "\n".join(rules)
+            + "</style></head><body>"
+            + "".join(
+                f'<div class="page page-{name}">{svg}</div>'
+                for (name, svg, _w, _h) in page_specs
+            )
+            + "</body></html>"
+        )
+        if font_face:
+            sink.add(diagnostic("pdf_cjk_font_embedded"))
+    else:
+        _name, svg0, w0, h0 = page_specs[0]
+        html_doc = _svg_to_page_html(svg0, w0, h0, title=title)
+        if _cjk_font_face_css():
+            sink.add(diagnostic("pdf_cjk_font_embedded"))
+
+    from weasyprint import HTML
+
+    try:
+        return render_pdf_exclusive(
+            lambda: HTML(
+                string=html_doc,
+                url_fetcher=_deny_url_fetcher,  # SSRF/外联全拒（R1-M9）
+                base_url=None,
+            ).write_pdf()
+        )
+    except PublicationBusyError:
+        raise
+    except Exception as ex:
+        logger.error("publication pdf: weasyprint render failed: %s", ex)
+        raise
+
+
+def count_pdf_pages(pdf_bytes: bytes, fallback: int) -> int:
+    """pypdf 页数计数（缺席/异常 → 调用方提供的渲染计数兜底）。"""
+    try:
+        import pypdf
+
+        return len(pypdf.PdfReader(io.BytesIO(pdf_bytes)).pages)
+    except Exception:
+        return fallback
+
+
 @dataclass
 class PublicationPdfResult:
     pdf: bytes
@@ -452,11 +632,11 @@ def render_pdf_exclusive(render_fn):
 
 
 
-def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+async def hydrate_ref_sources(payload: Dict[str, Any], session_id: str) -> Dict[str, Any]:
     """R1-M5：内联 ``ref:`` 载体矢量源（会话数据面），使导出渲染与 live
-    同一份数据。同步包装（持久 loop 经 run_sync，连接池跨调用复用）；best-effort per source
-    （水合失败的 ref 保持原样，由 unhydrated 检测诚实拒绝）。"""
-    from app.core.async_runner import run_sync
+    同一份数据。**async 本体**（R2-A：async 路由直接 await，不再经 run_sync
+    桥）；best-effort per source（水合失败的 ref 保持原样，由 unhydrated
+    检测诚实拒绝）。"""
     import copy as _copy
 
     sources = payload.get("sources")
@@ -478,20 +658,24 @@ def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[s
     if not refs:
         return spec
 
-    async def _hydrate() -> None:
-        from app.services.session_data import session_data_manager
+    from app.services.session_data import session_data_manager
 
-        for src, ref in refs:
-            try:
-                payload_data = await session_data_manager.get(session_id, ref)
-            except Exception as ex:  # noqa: BLE001 - per-source best-effort
-                logger.warning("publication pdf: ref %s hydration failed: %s", ref, ex)
-                payload_data = None
-            if isinstance(payload_data, dict):
-                src["inlineData"] = payload_data
-
-    run_sync(_hydrate())
+    for src, ref in refs:
+        try:
+            payload_data = await session_data_manager.get(session_id, ref)
+        except Exception as ex:  # noqa: BLE001 - per-source best-effort
+            logger.warning("publication pdf: ref %s hydration failed: %s", ref, ex)
+            payload_data = None
+        if isinstance(payload_data, dict):
+            src["inlineData"] = payload_data
     return spec
+
+
+def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+    """同步包装（worker 线程无运行 loop 时经 run_sync 持久 loop）。"""
+    from app.core.async_runner import run_sync
+
+    return run_sync(hydrate_ref_sources(payload, session_id))
 
 
 def _unhydrated_geojson_keys(doc: Dict[str, Any]) -> List[str]:
@@ -510,6 +694,25 @@ def _unhydrated_geojson_keys(doc: Dict[str, Any]) -> List[str]:
             continue
         out.append(str(key))
     return out
+
+
+def validate_publication_payload(payload: Dict[str, Any]):
+    """出版链载荷公共校验入口（C15 批量图册 executor 复用）。
+
+    权威 schema 校验 + ref 载体源内联检查 —— 与
+    ``render_publication_pdf`` 前置段同一事实源；失败沿
+    ``MapSpecSchemaError`` typed 上抛（路由/executor 映射 400/页级证据）。
+    """
+    parsed = require_parseable_mapspec(payload)
+    empty = _unhydrated_geojson_keys(parsed.document)
+    if empty:
+        raise MapSpecSchemaError(
+            "mapspec_ref_sources_unhydrated",
+            "geojson/vector sources carry no inline data: "
+            + ",".join(empty)
+            + " — provide sessionId for hydration or inline the data",
+        )
+    return parsed
 
 
 #: DPI 合法域（印刷 72 线屏下限到喷墨 600 上限；越界钳制并披露生效值）。
@@ -613,80 +816,43 @@ def render_publication_pdf(
     coverage_omitted: List[Dict[str, Any]] = []
     _omitted_seen: set = set()
     atlas_pages_summary: List[Dict[str, Any]] = []
-    from app.lib.cartography.render_diagnostics import RenderDiagnostic
 
     for page in pub_ir.pages:
-        page_w = page.paper.width_mm
-        page_h = page.paper.height_mm
+        # C15：逐页编译统一走接缝（compile_publication_page）—— 同步链与
+        # atlas batch executor 同一事实源；预算数学（含已累积封面页）与
+        # 诊断串逐字保持。
+        _accumulated = sum(len(s) for _n, s, _w, _h in page_specs)
+        try:
+            outcome = compile_publication_page(
+                doc, page, pub_ir,
+                frames_lookup=frames_lookup,
+                target_dpi=target_dpi,
+                max_labels=max_labels,
+                svg_budget_remaining=_MAX_TOTAL_SVG_BYTES - _accumulated,
+            )
+        except PageCompileFailure as pcf:  # 单帧失败不中断 atlas（frame skip 政策）
+            logger.warning("publication pdf: page %s compile failed: %s",
+                           page.page_id, pcf.detail)
+            skipped += 1
+            sink.add(diagnostic(pcf.code, detail=pcf.detail))
+            continue
+        page_specs.append((
+            f"p{page.page_number - 1}", outcome.svg,
+            outcome.width_mm, outcome.height_mm,
+        ))
         if page.cover:
-            # 封面/目录页：确定性文本页（无地图编译面；无数据访问）。
-            page_specs.append((
-                f"p{page.page_number - 1}", _render_toc_svg(pub_ir, page), page_w, page_h,
-            ))
             rendered += 1
             atlas_pages_summary.append(_atlas_page_entry(page))
             continue
-        # 页文档解析：帧引用 / 过滤页 / 单帧整幅
-        if page.frame_index is not None:
-            frame = frames_lookup[page.frame_index] if page.frame_index < len(frames_lookup) else None
-            frame_doc = _apply_frame_overrides(doc, frame)
-        elif page.filter_layer_id:
-            frame_doc = _page_filtered_doc(doc, page)
-        else:
-            frame_doc = doc
-        try:
-            comp = compile_mapspec_to_svg_detailed(
-                frame_doc,
-                target_dpi=target_dpi,
-                # 栅格密度近似 4px/mm（固定，保输出 byte 一致）；target_dpi 驱动
-                # 文本/线宽的 dpi_scale（mapspec_to_svg），不改画布像素尺寸
-                width=int(page_w * 4),
-                height=int(page_h * 4),
-                padding=24,
-                include_chrome=True,
-                bounds=page.bounds,
-                max_labels=max_labels,
-                # R2-M5/M7：服务端绝对封顶（spec 可声明更小预算，不得放大包络）
-                max_features=min(_effective_max_features(frame_doc), EXPORT_MAX_FEATURES),
-                timeout_ms=min(resolve_spec_timeout_ms(frame_doc), 30000.0),
-            )
-        except Exception as ex:  # 单帧失败不中断 atlas（frame skip 政策）
-            logger.warning("publication pdf: page %s compile failed: %s",
-                           page.page_id, ex)
-            skipped += 1
-            sink.add(diagnostic("atlas_page_skipped",
-                                detail=f"page {page.page_id}: {type(ex).__name__}"))
-            continue
-        # R2-M5：累积 SVG 预算 —— 超限停止加帧（诚实披露），防 OOM 放大
-        _accumulated = sum(len(s) for _n, s, _w, _h in page_specs)
-        if _accumulated + len(comp.svg) > _MAX_TOTAL_SVG_BYTES:
-            skipped += 1
-            sink.add(diagnostic(
-                "atlas_page_limit_truncated",
-                detail=f"svg budget {_MAX_TOTAL_SVG_BYTES} bytes at page {page.page_id}",
-            ))
-            continue
-        page_specs.append((f"p{page.page_number - 1}", comp.svg, page_w, page_h))
         if pub_ir.atlas:
             atlas_pages_summary.append(_atlas_page_entry(page))
         # R1-M3：帧级诊断经 extend_frame（子配额 + 溢出显式元披露）
-        frame_items = [
-            RenderDiagnostic(
-                code=d.get("code", ""), severity=d.get("severity", "info"),
-                message=d.get("message", ""), detail=d.get("detail", ""),
-                layer_id=d.get("layer_id"), component_id=d.get("component_id"),
-            )
-            for d in comp.diagnostics
-            if d.get("code") in RENDER_DIAGNOSTICS
-        ]
-        sink.extend_frame(frame_items)
+        sink.extend_frame(outcome.frame_diagnostics)
         rendered += 1
         # F14 D3：帧覆盖聚合（rendered 并集；omitted 按组件去重保序，有界）
-        for _t in comp.rendered_component_types or []:
+        for _t in outcome.rendered_component_types:
             coverage_rendered.add(str(_t))
-        for _o in comp.omitted_components or []:
-            if not isinstance(_o, dict):
-                continue
+        for _o in outcome.omitted_components:
             key = (str(_o.get("component_id") or ""), str(_o.get("type") or ""),
                    str(_o.get("code") or ""))
             if key in _omitted_seen:
@@ -702,65 +868,11 @@ def render_publication_pdf(
     if not page_specs:
         raise MapSpecSchemaError("publication_no_pages", "no frames compiled to pages")
 
-    if len(page_specs) > 1:
-        # R1-M2 修复：named pages（每帧独立 @page size）—— 此前多帧被压成
-        # size:auto，帧页面尺寸静默丢失。
-        rules = [
-            f"@page {name} {{ size: {w_mm}mm {h_mm}mm; margin: 0; }}\n"
-            f".page-{name} {{ page: {name}; }}"
-            for (name, _svg, w_mm, h_mm) in page_specs
-        ]
-        font_face = _cjk_font_face_css()
-        font_stack = f"'Noto Sans SC Embedded', {CSS_FONT_STACK}" if font_face else CSS_FONT_STACK
-        svg_text_rule = (
-            f"svg, svg text {{ font-family: {font_stack}; }}\n" if font_face else ""
-        )
-        html_doc = (
-            '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
-            f"{font_face}\n"
-            f"html, body {{ margin: 0; font-family: {font_stack}; }}\n"
-            f"{svg_text_rule}"
-            "svg { width: 100%; height: 100%; }\n"
-            ".page { page-break-after: always; }\n"
-            + "\n".join(rules)
-            + "</style></head><body>"
-            + "".join(
-                f'<div class="page page-{name}">{svg}</div>'
-                for (name, svg, _w, _h) in page_specs
-            )
-            + "</body></html>"
-        )
-        if font_face:
-            sink.add(diagnostic("pdf_cjk_font_embedded"))
-    else:
-        _name, svg0, w0, h0 = page_specs[0]
-        html_doc = _svg_to_page_html(svg0, w0, h0, title=title)
-        if _cjk_font_face_css():
-            sink.add(diagnostic("pdf_cjk_font_embedded"))
+    # C15：组装统一走接缝（assemble_pages_pdf：命名 @page + WeasyPrint 互斥
+    # + CJK 内嵌诊断），与 atlas batch executor 同一事实源；输出字节不变。
+    pdf_bytes = assemble_pages_pdf(page_specs, title=title, sink=sink)
 
-    # WeasyPrint 串行化（R1-M6）：非阻塞抢锁，忙则结构化拒绝
-    from weasyprint import HTML
-
-    try:
-        pdf_bytes = render_pdf_exclusive(
-            lambda: HTML(
-                string=html_doc,
-                url_fetcher=_deny_url_fetcher,  # SSRF/外联全拒（R1-M9）
-                base_url=None,
-            ).write_pdf()
-        )
-    except PublicationBusyError:
-        raise
-    except Exception as ex:
-        logger.error("publication pdf: weasyprint render failed: %s", ex)
-        raise
-
-    try:
-        import pypdf
-
-        page_count = len(pypdf.PdfReader(io.BytesIO(pdf_bytes)).pages)
-    except Exception:
-        page_count = rendered
+    page_count = count_pdf_pages(pdf_bytes, fallback=rendered)
 
     return PublicationPdfResult(
         pdf=pdf_bytes,

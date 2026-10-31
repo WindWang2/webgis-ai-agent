@@ -130,6 +130,33 @@ class TaskScenarioRunner:
                 )[:200]
             evidence["scripted_errors"] = scripted_errors
             evidence["scripted_error_messages"] = scripted_error_messages
+            # carto-design（M6）：产品步的设计候选有界投影（step 载荷 →
+            # 证据面）。与 scripted_errors 同一收集模式：候选面只在这一个
+            # 通道可达（章节存的是完成摘要，不含 design 键）。
+            design_steps: Dict[str, Any] = {}
+            for outcome in step_outcomes.values():
+                payload = outcome.payload if isinstance(outcome.payload, dict) else {}
+                if "pinned_model" in payload:
+                    # design-select 收据（RAW 步）：pin 落档回执直接入证据面
+                    design_steps[outcome.call_id.split("::")[-1]] = {
+                        "pinned_model": payload.get("pinned_model"),
+                        "pin_success": bool(payload.get("success"))}
+                    continue
+                dc = payload.get("design_candidates")
+                if not isinstance(dc, dict):
+                    continue
+                cands = [c for c in dc.get("candidates") or []
+                         if isinstance(c, dict)]
+                design_steps[outcome.call_id.split("::")[-1]] = {
+                    "count": dc.get("count"),
+                    "models": [c.get("mapModel") for c in cands],
+                    "families": [c.get("family") for c in cands],
+                    "blocked": [c.get("mapModel") for c in cands
+                                if c.get("suitability") == "blocked"],
+                    "honored": ((dc.get("userRequestHandling") or {})
+                                .get("honored") or []),
+                }
+            evidence["design"] = design_steps
         except asyncio.TimeoutError:
             error = f"scenario timeout after {scenario.timeout_s}s"
         except Exception as exc:  # noqa: BLE001 — runner 级失败如实上报
@@ -274,6 +301,15 @@ class TaskScenarioRunner:
             pass
         is_error = bool(res.isError)
         payload = _extract_payload(res)
+        # carto-design：details 面（64KB 预算）保真优先——design_candidates
+        # 在 llm 面只有紧凑 digest，证据面需要全量（models/families/blocked）。
+        if isinstance(payload, dict) and not isinstance(
+                payload.get("design_candidates"), dict):
+            _details = getattr(res, "details", None)
+            if isinstance(_details, dict) and isinstance(
+                    _details.get("design_candidates"), dict):
+                payload = {**payload,
+                           "design_candidates": _details["design_candidates"]}
         outcome = _StepOutcome(
             call_id=step.call_id, ok=not is_error, is_error=is_error,
             payload=payload, text=_content_text(res),

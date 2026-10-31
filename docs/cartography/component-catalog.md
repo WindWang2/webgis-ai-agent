@@ -2,7 +2,7 @@
 
 > 由 registry 生成；真值：`component_registry.py` + `component_templates.py`。
 
-共 22 个组件类型 / 108 个变体模板。
+共 23 个组件类型 / 110 个变体模板。
 
 | type | 类目 | variants | 默认 | 卡数 | 位置 | 绑定 | 状态 |
 |---|---|---|---|---|---|---|---|
@@ -12,6 +12,7 @@
 | chart_panel | analysis.chart_panel | default, compact, transparent, report, bar, horizontal_bar, grouped_bar, stacked_bar, line, area, scatter, histogram, box_plot, pie, donut, radar, rose, timeseries, cumulative, heat_matrix, kpi_card, ranking_list | default | multiple | top-left | — | native |
 | continuous_colorbar | legend.continuous_colorbar | horizontal, vertical, slim, scientific, stepped | horizontal | multiple | bottom-right | layerId | native |
 | decision_panel | disclosure.decision_panel | default, compact | default | zero_or_one | top-left | — | native |
+| design_candidates | disclosure.design_candidates | default, compact | default | zero_or_one | top-left | — | native |
 | elevation_profile | analysis.elevation_profile | default, compact | default | multiple | bottom-left | layerId | native |
 | export_layout | export.page_layout | A4_landscape, A4_portrait, A3_landscape, letter | A4_landscape | single | none | — | native |
 | graticule | navigation.graticule | light, geographic, projected | light | single | none | — | native |
@@ -86,6 +87,10 @@
 ### decision_panel
 - `decision-panel/default`（variant=default）
 - `decision-panel/compact`（variant=compact）
+
+### design_candidates
+- `design-candidates/default`（variant=default）
+- `design-candidates/compact`（variant=compact）
 
 ### elevation_profile
 - `elevation-profile/default`（variant=default）

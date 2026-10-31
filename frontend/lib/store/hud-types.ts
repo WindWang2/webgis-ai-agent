@@ -89,6 +89,7 @@ export interface ExportSettings {
   atlasLayerId?: string;
   atlasIncludeCover?: boolean;
   atlasTitle?: string;
+  atlasBatch?: boolean;
 }
 
 export interface CausalEntry {

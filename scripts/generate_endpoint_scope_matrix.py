@@ -90,8 +90,13 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "data-fabric": ("gis:read", "gis:write"),
     "data-lifecycle": ("gis:read", "gis:write"),
     "data-quality": ("gis:read", "gis:write"),
+    # 数据准备域（inspect/plan/execute/bindings）：会话内数据面读写，
+    # 与 data-quality 同族语义（上传同款 optional auth + 会话所有权检查）
+    "data-preparation": ("gis:read", "gis:write"),
     "explorer": ("gis:read", "gis:write"),
     "export": ("gis:read", "gis:write"),
+    # 批量图册发布（C15）：与 export 同域语义（地图制图产物读写）
+    "atlas": ("gis:read", "gis:write"),
     "extensions": ("extensions:read", "extensions:write"),
     # ADR-0198 GeoAI promptable 平台：数据面推理（models/status/preview 读，
     # prompt-segment/embed/refine 写）——与 data-fabric 的数据面标法同款

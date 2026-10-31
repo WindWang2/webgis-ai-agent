@@ -430,7 +430,7 @@ def _slim_pi_details_payload(result: Any) -> Any:
             encoded = _json.dumps(details_payload, ensure_ascii=False)
             if len(encoded.encode("utf-8")) > 65536:
                 # Keep only essential keys
-                keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id")}
+                keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id", "design_candidates")}
                 if keep:
                     details_payload = keep
                 else:

@@ -677,6 +677,30 @@
     "title": "AssetNewVersionRequest",
     "type": "object"
    },
+   "AtlasJobDetailResponse": {
+    "properties": {
+     "artifacts": {
+      "additionalProperties": true,
+      "title": "Artifacts",
+      "type": "object"
+     },
+     "job": {
+      "additionalProperties": true,
+      "title": "Job",
+      "type": "object"
+     },
+     "pages": {
+      "items": {},
+      "title": "Pages",
+      "type": "array"
+     }
+    },
+    "required": [
+     "job"
+    ],
+    "title": "AtlasJobDetailResponse",
+    "type": "object"
+   },
    "AtlasRequestPolicy": {
     "additionalProperties": false,
     "description": "C14：atlas 分页策略（POST /export/vector-pdf 可选 ``atlas`` 字段）。\n\ndrivers 封闭词表：frames（spec 显式多帧即页）/ category（属性去重值\n分页）/ feature（要素切片分页）。页数诚实封顶（≤20，超出截断并披露\n``atlas_truncated``）；category 必填 ``categoryProperty``；category/\nfeature 需要 spec 携带内联 geojson 源（服务端 typed 拒绝缺失面）。",
@@ -765,6 +789,101 @@
      }
     },
     "title": "AtlasRequestPolicy",
+    "type": "object"
+   },
+   "AtlasSubmitRequest": {
+    "description": "提交请求（atlas 策略字段复用既有 AtlasRequestPolicy 形状）。",
+    "properties": {
+     "atlas": {
+      "additionalProperties": true,
+      "title": "Atlas",
+      "type": "object"
+     },
+     "classification_scope": {
+      "default": "shared",
+      "pattern": "^(shared|local)$",
+      "title": "Classification Scope",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "simulated_data": {
+      "default": false,
+      "title": "Simulated Data",
+      "type": "boolean"
+     },
+     "target_dpi": {
+      "default": 300,
+      "maximum": 600.0,
+      "minimum": 72.0,
+      "title": "Target Dpi",
+      "type": "integer"
+     },
+     "title": {
+      "default": "",
+      "maxLength": 160,
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "AtlasSubmitRequest",
+    "type": "object"
+   },
+   "AtlasSubmitResponse": {
+    "properties": {
+     "idempotent_reuse": {
+      "default": false,
+      "title": "Idempotent Reuse",
+      "type": "boolean"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+     },
+     "plan": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Plan"
+     },
+     "poll_url": {
+      "default": "",
+      "title": "Poll Url",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "success": {
+      "default": true,
+      "title": "Success",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "job_id",
+     "status"
+    ],
+    "title": "AtlasSubmitResponse",
     "type": "object"
    },
    "AudioNarrative": {
@@ -3700,6 +3819,18 @@
     "title": "ExecutePlanRequest",
     "type": "object"
    },
+   "ExecuteResponse": {
+    "properties": {
+     "receipt": {
+      "$ref": "#/components/schemas/ReceiptSummaryOut"
+     }
+    },
+    "required": [
+     "receipt"
+    ],
+    "title": "ExecuteResponse",
+    "type": "object"
+   },
    "ExecutionNodeIn": {
     "properties": {
      "cancellable": {
@@ -4021,6 +4152,146 @@
      "ref"
     ],
     "title": "ExportLineageInfo",
+    "type": "object"
+   },
+   "FieldBindingRequest": {
+    "properties": {
+     "roles": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "description": "{字段名: 提案角色码}（用户确认结果）",
+      "title": "Roles",
+      "type": "object"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "source_ref",
+     "roles"
+    ],
+    "title": "FieldBindingRequest",
+    "type": "object"
+   },
+   "FieldBindingResponse": {
+    "properties": {
+     "bound_fields": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Bound Fields",
+      "type": "array"
+     },
+     "descriptor_fingerprint": {
+      "default": "",
+      "title": "Descriptor Fingerprint",
+      "type": "string"
+     },
+     "skipped": {
+      "items": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "title": "Skipped",
+      "type": "array"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "source_ref"
+    ],
+    "title": "FieldBindingResponse",
+    "type": "object"
+   },
+   "FieldProposalOut": {
+    "properties": {
+     "candidates": {
+      "items": {
+       "$ref": "#/components/schemas/RoleCandidateOut"
+      },
+      "title": "Candidates",
+      "type": "array"
+     },
+     "dtype": {
+      "default": "",
+      "title": "Dtype",
+      "type": "string"
+     },
+     "field": {
+      "title": "Field",
+      "type": "string"
+     },
+     "needs_clarification": {
+      "default": false,
+      "title": "Needs Clarification",
+      "type": "boolean"
+     },
+     "rejected": {
+      "items": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "title": "Rejected",
+      "type": "array"
+     }
+    },
+    "required": [
+     "field"
+    ],
+    "title": "FieldProposalOut",
+    "type": "object"
+   },
+   "FindingOut": {
+    "properties": {
+     "code": {
+      "title": "Code",
+      "type": "string"
+     },
+     "evidence": {
+      "additionalProperties": true,
+      "title": "Evidence",
+      "type": "object"
+     },
+     "field": {
+      "default": "",
+      "title": "Field",
+      "type": "string"
+     },
+     "message_zh": {
+      "default": "",
+      "title": "Message Zh",
+      "type": "string"
+     },
+     "severity": {
+      "title": "Severity",
+      "type": "string"
+     },
+     "suggestion": {
+      "default": "none",
+      "title": "Suggestion",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "severity"
+    ],
+    "title": "FindingOut",
     "type": "object"
    },
    "GCExecuteRequest": {
@@ -4425,6 +4696,75 @@
      "expected_revision"
     ],
     "title": "InitProjectBody",
+    "type": "object"
+   },
+   "InspectRequest": {
+    "properties": {
+     "session_id": {
+      "description": "归属会话（鉴权与 ref 命名空间）",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "description": "会话内数据 ref（如 ref:data-…/ref:prep-…）",
+      "title": "Source Ref",
+      "type": "string"
+     },
+     "user_hints": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "description": "可选角色提示 {字段名: 角色码}（来自用户对话；错误提示会被值域/类型反证并披露）",
+      "title": "User Hints",
+      "type": "object"
+     }
+    },
+    "required": [
+     "session_id",
+     "source_ref"
+    ],
+    "title": "InspectRequest",
+    "type": "object"
+   },
+   "InspectResponse": {
+    "properties": {
+     "input_fingerprint": {
+      "default": "",
+      "title": "Input Fingerprint",
+      "type": "string"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "proposals": {
+      "items": {
+       "$ref": "#/components/schemas/FieldProposalOut"
+      },
+      "title": "Proposals",
+      "type": "array"
+     },
+     "receipt": {
+      "$ref": "#/components/schemas/ReceiptOut"
+     },
+     "sample": {
+      "items": {
+       "$ref": "#/components/schemas/SampleFeatureOut"
+      },
+      "title": "Sample",
+      "type": "array"
+     },
+     "sample_truncated": {
+      "default": false,
+      "title": "Sample Truncated",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "input_ref",
+     "receipt"
+    ],
+    "title": "InspectResponse",
     "type": "object"
    },
    "InstanceCancelResponse": {
@@ -5280,6 +5620,21 @@
       "description": "展示名。不含用户原始请求原文",
       "title": "Name",
       "type": "string"
+     },
+     "page_status": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Status"
      },
      "progress": {
       "anyOf": [
@@ -8665,6 +9020,105 @@
     "title": "PlanExecuteResponse",
     "type": "object"
    },
+   "PlanOut": {
+    "properties": {
+     "input_fingerprint": {
+      "default": "",
+      "title": "Input Fingerprint",
+      "type": "string"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "mutates_data": {
+      "default": false,
+      "title": "Mutates Data",
+      "type": "boolean"
+     },
+     "plan_hash": {
+      "title": "Plan Hash",
+      "type": "string"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     },
+     "steps": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Steps",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan_id",
+     "plan_hash",
+     "state",
+     "input_ref"
+    ],
+    "title": "PlanOut",
+    "type": "object"
+   },
+   "PlanRequest": {
+    "properties": {
+     "auto_steps": {
+      "default": false,
+      "description": "由服务端按收据证据自动补齐安全步（仅 filter_rows 与经用户 hints 确认的 field_mapping）",
+      "title": "Auto Steps",
+      "type": "boolean"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     },
+     "steps": {
+      "description": "closed-union 步集（type 判别）",
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Steps",
+      "type": "array"
+     }
+    },
+    "required": [
+     "session_id",
+     "steps",
+     "source_ref"
+    ],
+    "title": "PlanRequest",
+    "type": "object"
+   },
+   "PlanResponse": {
+    "properties": {
+     "plan": {
+      "$ref": "#/components/schemas/PlanOut"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "PlanResponse",
+    "type": "object"
+   },
    "PlanRunCancelResponse": {
     "additionalProperties": true,
     "description": "POST /geocompute/plans/runs/{run_id}/cancel 响应。",
@@ -8677,6 +9131,29 @@
     "description": "POST /geocompute/plans/runs 响应。",
     "properties": {},
     "title": "PlanRunSubmitResponse",
+    "type": "object"
+   },
+   "PlanStepOut": {
+    "properties": {
+     "data_changed": {
+      "default": false,
+      "title": "Data Changed",
+      "type": "boolean"
+     },
+     "detail": {
+      "additionalProperties": true,
+      "title": "Detail",
+      "type": "object"
+     },
+     "type": {
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type"
+    ],
+    "title": "PlanStepOut",
     "type": "object"
    },
    "PlanValidateResponse": {
@@ -8738,6 +9215,55 @@
      "kind"
     ],
     "title": "PolicyUpsertRequest",
+    "type": "object"
+   },
+   "PreviewResponse": {
+    "properties": {
+     "degraded": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Degraded",
+      "type": "array"
+     },
+     "estimated_rows_after": {
+      "default": 0,
+      "title": "Estimated Rows After",
+      "type": "integer"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "quality_delta_sample": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Quality Delta Sample",
+      "type": "object"
+     },
+     "sampled_rows": {
+      "default": 0,
+      "title": "Sampled Rows",
+      "type": "integer"
+     },
+     "steps": {
+      "items": {
+       "$ref": "#/components/schemas/PlanStepOut"
+      },
+      "title": "Steps",
+      "type": "array"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "plan_id"
+    ],
+    "title": "PreviewResponse",
     "type": "object"
    },
    "ProfileRequest": {
@@ -9834,6 +10360,176 @@
     "title": "RebuildResponse",
     "type": "object"
    },
+   "ReceiptOut": {
+    "properties": {
+     "axis_order_guessed": {
+      "default": "",
+      "title": "Axis Order Guessed",
+      "type": "string"
+     },
+     "blocked": {
+      "default": false,
+      "title": "Blocked",
+      "type": "boolean"
+     },
+     "coordinate_range": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Coordinate Range"
+     },
+     "crs_source": {
+      "default": "",
+      "title": "Crs Source",
+      "type": "string"
+     },
+     "encoding": {
+      "default": "",
+      "title": "Encoding",
+      "type": "string"
+     },
+     "findings": {
+      "items": {
+       "$ref": "#/components/schemas/FindingOut"
+      },
+      "title": "Findings",
+      "type": "array"
+     },
+     "geometry_type": {
+      "default": "",
+      "title": "Geometry Type",
+      "type": "string"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "pk_field": {
+      "default": "",
+      "title": "Pk Field",
+      "type": "string"
+     },
+     "pk_status": {
+      "default": "",
+      "title": "Pk Status",
+      "type": "string"
+     },
+     "row_count": {
+      "default": 0,
+      "title": "Row Count",
+      "type": "integer"
+     },
+     "sample_rows_scanned": {
+      "default": 0,
+      "title": "Sample Rows Scanned",
+      "type": "integer"
+     },
+     "srs": {
+      "default": "",
+      "title": "Srs",
+      "type": "string"
+     },
+     "time_fields": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Time Fields",
+      "type": "array"
+     },
+     "tz_status": {
+      "default": "",
+      "title": "Tz Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "input_ref"
+    ],
+    "title": "ReceiptOut",
+    "type": "object"
+   },
+   "ReceiptSummaryOut": {
+    "properties": {
+     "degraded": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Degraded",
+      "type": "array"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "output_fingerprint": {
+      "default": "",
+      "title": "Output Fingerprint",
+      "type": "string"
+     },
+     "output_ref": {
+      "title": "Output Ref",
+      "type": "string"
+     },
+     "plan_hash": {
+      "title": "Plan Hash",
+      "type": "string"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "quality_after": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Quality After",
+      "type": "object"
+     },
+     "quality_before": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Quality Before",
+      "type": "object"
+     },
+     "row_after": {
+      "default": 0,
+      "title": "Row After",
+      "type": "integer"
+     },
+     "row_before": {
+      "default": 0,
+      "title": "Row Before",
+      "type": "integer"
+     },
+     "user_confirmations": {
+      "items": {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      "title": "User Confirmations",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan_id",
+     "plan_hash",
+     "input_ref",
+     "output_ref"
+    ],
+    "title": "ReceiptSummaryOut",
+    "type": "object"
+   },
    "RecomputePlanResponse": {
     "additionalProperties": true,
     "description": "GET /instances/{instance_id}/recompute-plan 响应。",
@@ -10484,6 +11180,31 @@
     "title": "RevokeRequest",
     "type": "object"
    },
+   "RoleCandidateOut": {
+    "properties": {
+     "confidence": {
+      "title": "Confidence",
+      "type": "number"
+     },
+     "reasons": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Reasons",
+      "type": "array"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     }
+    },
+    "required": [
+     "role",
+     "confidence"
+    ],
+    "title": "RoleCandidateOut",
+    "type": "object"
+   },
    "RotateOwnerTokenResponse": {
     "description": "POST /chat/sessions/{session_id}/rotate-owner-token 响应（#1346）。\n\nowner_token 轮换结果：新 token 立即生效，旧 token 立即失效。",
     "examples": [
@@ -11085,6 +11806,36 @@
      "snapshot_id"
     ],
     "title": "RuntimeSnapshotSummary",
+    "type": "object"
+   },
+   "SampleFeatureOut": {
+    "properties": {
+     "first_position": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "First Position"
+     },
+     "geometry_type": {
+      "default": "",
+      "title": "Geometry Type",
+      "type": "string"
+     },
+     "properties": {
+      "additionalProperties": true,
+      "title": "Properties",
+      "type": "object"
+     }
+    },
+    "title": "SampleFeatureOut",
     "type": "object"
    },
    "SearchRequest": {
@@ -16220,6 +16971,137 @@
     "tags": [
      "Security Admin (V9)",
      "Security Admin (V9)"
+    ]
+   }
+  },
+  "/api/v1/atlas/jobs": {
+   "post": {
+    "description": "提交批量图册 durable job（幂等；重复提交复用同一 job 行）。",
+    "operationId": "submit_atlas_export_job_api_v1_atlas_jobs_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AtlasSubmitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AtlasSubmitResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Submit Atlas Export Job",
+    "tags": [
+     "地图制图",
+     "地图制图"
+    ]
+   }
+  },
+  "/api/v1/atlas/jobs/{job_id}": {
+   "get": {
+    "description": "图册 job 详情（页级状态 + 产物链接；非属主 404 不泄露存在性）。",
+    "operationId": "get_atlas_export_job_api_v1_atlas_jobs__job_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AtlasJobDetailResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Atlas Export Job",
+    "tags": [
+     "地图制图",
+     "地图制图"
     ]
    }
   },
@@ -22715,6 +23597,562 @@
     "tags": [
      "数据生命周期 V9",
      "数据生命周期 V9"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/bindings/fields": {
+   "post": {
+    "description": "用户确认角色写回 descriptor（版本化；address 等无对应角色诚实跳过）。",
+    "operationId": "bind_fields_api_v1_data_preparation_bindings_fields_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/FieldBindingRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FieldBindingResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Bind Fields",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/inspect": {
+   "post": {
+    "description": "检查数据源：空间收据 + 字段角色候选 + 有界样本（≤50 行）。",
+    "operationId": "inspect_api_v1_data_preparation_inspect_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InspectRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InspectResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan": {
+   "post": {
+    "description": "构建准备计划（服务端校验步与收据事实匹配；不执行）。",
+    "operationId": "create_plan_api_v1_data_preparation_plan_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PlanResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Plan",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan/{plan_id}": {
+   "delete": {
+    "description": "作废未执行计划（executed/verified 不可作废 —— 走产物删除面）。",
+    "operationId": "discard_api_v1_data_preparation_plan__plan_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Discard",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan/{plan_id}/execute": {
+   "post": {
+    "description": "幂等执行计划 → prepared ref + 收据（原件不可变）。",
+    "operationId": "execute_api_v1_data_preparation_plan__plan_id__execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ExecuteResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan/{plan_id}/preview": {
+   "post": {
+    "description": "dry-run 预演（采样 ≤2000 行；不落任何 store）。",
+    "operationId": "preview_plan_api_v1_data_preparation_plan__plan_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PreviewResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview Plan",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan/{plan_id}/receipt": {
+   "get": {
+    "description": "查执行收据（幂等键查询；未执行 → 404 诚实披露）。",
+    "operationId": "plan_receipt_api_v1_data_preparation_plan__plan_id__receipt_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "plan_hash（收据幂等键）",
+      "in": "query",
+      "name": "session_hash",
+      "required": true,
+      "schema": {
+       "description": "plan_hash（收据幂等键）",
+       "title": "Session Hash",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plan Receipt",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plans": {
+   "get": {
+    "description": "列出会话内计划（有界 ≤64）。",
+    "operationId": "plans_api_v1_data_preparation_plans_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plans",
+    "tags": [
+     "数据准备"
     ]
    }
   },

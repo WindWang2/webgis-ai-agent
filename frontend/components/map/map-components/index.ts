@@ -23,6 +23,7 @@ import './inset-map';
 import './methodology-note';
 import './uncertainty-panel';
 import './decision-panel';
+import './design-candidates';
 // G3D05（ADR-0275）：三维制图产品组件（场景披露卡 / 线路高程剖面）。
 import './scene-disclosure';
 import './elevation-profile-panel';

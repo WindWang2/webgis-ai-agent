@@ -34,6 +34,7 @@ from prometheus_client import Counter
 from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
+from app.api.routes import atlas_jobs as atlas_jobs_routes  # noqa: E402  # 批量图册发布
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
 from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0226
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
@@ -52,6 +53,7 @@ from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 # V9 data-lifecycle（ADR-0140）：质量规则引擎 / 统一生命周期策略 —— 新增路由
 # 文件，不改任何既有路由的签名/response_model（§8 冲突契约）。
 from app.api.routes import data_quality as data_quality_routes
+from app.api.routes import data_preparation as data_preparation_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
 from app.api.routes import composition_template_assets as composition_template_assets_routes
@@ -1105,8 +1107,10 @@ app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
 # ADR-0052: 统一任务中心必须先注册 —— task.router 的 GET /tasks/{task_id}
 # 会把字面量 "jobs" 当成 task_id 匹配掉。
 app.include_router(jobs_routes.router, prefix="/api/v1", tags=["任务管理"])
+app.include_router(atlas_jobs_routes.router, prefix="/api/v1", tags=["地图制图"])
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
+app.include_router(data_preparation_routes.router, prefix="/api/v1", tags=["数据准备"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(ws_collab.router, prefix="/api/v1", tags=["WebSocket 协作"])

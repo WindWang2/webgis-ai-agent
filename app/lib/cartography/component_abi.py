@@ -260,6 +260,7 @@ COMPONENT_ABI_META: Dict[str, ComponentABIMeta] = {
     "table_panel": ComponentABIMeta(),
     "uncertainty_panel": ComponentABIMeta(),
     "decision_panel": ComponentABIMeta(),
+    "design_candidates": ComponentABIMeta(),
 }
 
 
