@@ -22,6 +22,7 @@ from app.schemas.layer_schema import (
     LayerDescriptorResponse,
     LayerTypesResponse,
     SessionFeaturePageResponse,
+    SessionFeatureAggregateResponse,
 )
 from app.contracts.terrain_sources import MapResourceAvailabilitySummary
 from app.services.auth_history_bridge import require_owned_session, verify_session_owner
@@ -282,7 +283,8 @@ async def get_session_layer_features_page(
     )
 
 
-@router.get("/layers/data/{ref_id}/aggregate", tags=["图层数据"])
+@router.get("/layers/data/{ref_id}/aggregate", tags=["图层数据"],
+             response_model=SessionFeatureAggregateResponse)
 async def get_session_layer_aggregate(
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
