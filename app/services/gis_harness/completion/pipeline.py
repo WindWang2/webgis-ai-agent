@@ -1489,13 +1489,26 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
     # required 模式等待显式 ack —— human confirmation seam）。
     try:
         from app.services.gis_harness.display_confirmation import (
+            display_mode,
             is_display_confirmed,
         )
 
+        _required_seq = int(stored.get("render_observation_seq") or 0)
         payload["display_confirmed"] = await is_display_confirmed(
             session_id,
-            render_seq=int(stored.get("render_observation_seq") or 0),
+            render_seq=_required_seq,
         )
+        # ADR-0278（Track A M8）：required-pending 的 typed 披露 ——
+        # 「地图已裁决 ready」与「用户已看到/认可」是两件事；pending 时
+        # 下游（task_complete/map_finalization 消费者、前端确认卡）得到
+        # needs_user_action 语义而非裸布尔。auto 模式保持旧键形状零漂移。
+        if display_mode() == "required":
+            payload["display_confirmation"] = {
+                "mode": "required",
+                "status": "confirmed" if payload["display_confirmed"] else "pending",
+                "needs_user_action": not payload["display_confirmed"],
+                "required_render_seq": _required_seq,
+            }
     except Exception:  # noqa: BLE001 — 确认面缺席按 auto（True）
         payload["display_confirmed"] = True
     # ADR-0183（G5 接线 W4）：goal satisfaction 投影随 task_complete 面

@@ -20,6 +20,8 @@ POST,/api/v1/chat/sessions/{session_id}/cartographic-observation,session:write,N
 GET,/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id},session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/clarifications/answer,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/clarifications/pending,session:read,N,N
+GET,/api/v1/chat/sessions/{session_id}/display-confirmation,session:read,N,N
+POST,/api/v1/chat/sessions/{session_id}/display-confirmation/ack,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id},session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}/decision,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/feature-edits/policy,session:read,N,N
@@ -31,6 +33,9 @@ POST,/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/undo,session:writ
 POST,/api/v1/chat/sessions/{session_id}/interaction-events,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/interaction-events/projection,session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/map-action-ack,session:write,N,N
+GET,/api/v1/chat/sessions/{session_id}/map-operations,session:read,N,N
+GET,/api/v1/chat/sessions/{session_id}/map-operations/{operation_id},session:read,N,N
+POST,/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}/commit,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/map-state,session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/map-state,session:write,N,N
 POST,/api/v1/chat/sessions/{session_id}/mapspec/mutations,session:write,N,N

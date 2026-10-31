@@ -64,11 +64,14 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     # 分析流程编排（goal-02）：plan/recompute/run/status 四工具 —— 编排层
     # 归 analysis（消费既有算子，不自建算法面）。
     "app.tools.analysis_workflow_tools": "analysis",
+    # 批量图册导出（atlas-batch #1871）：export_atlas —— 出版导出面。
+    "app.tools.atlas_export_tools": "export",
     "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
     "app.tools.local_admin": "data_access",
     "app.tools.local_osm": "data_access",
     "app.tools.local_stats": "data_access",
     "app.tools.map_view": "map_mutation",
+    "app.tools.map_operations_tools": "map_mutation",   # ADR-0278 表现层操作事务
     "app.tools.meta_tools": "debug_internal",
     "app.tools.modelops_tools": "analysis",
     "app.tools.monitoring_report": "export",

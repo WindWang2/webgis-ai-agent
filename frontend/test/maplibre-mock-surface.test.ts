@@ -73,6 +73,10 @@ const NON_API_WHITELIST: Record<string, string> = {
   // C13 视觉修复卡片文案键（map.visualRepair.*）—— i18n catalog 字符串，
   // 键名以 `map.` 开头但非 MapLibre 成员。
   visualRepair: "i18n key string `map.visualRepair.*` in visual-repair-card",
+  // ADR-0278 地图操作回执卡 / 最终显示确认卡文案键 —— 同上，i18n catalog
+  // 字符串而非 MapLibre 成员。
+  opCard: "i18n key string `map.opCard.*` in map-harness-cards",
+  finalAck: "i18n key string `map.finalAck.*` in map-harness-cards",
   // 复位/框选反馈的 toast 文案键（map.toast.* / map.brush.*）—— 键名以
   // `map.` 开头但同样是 i18n catalog 字符串，非 MapLibre 成员。
   toast: "i18n key string `map.toast.*` (focus-reset disclosure) in map-panel",
