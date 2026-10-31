@@ -12347,6 +12347,106 @@
     "title": "SessionDetailResponse",
     "type": "object"
    },
+   "SessionFeatureAggregateResponse": {
+    "description": "会话 ref 分组聚合响应（Track B vNext）。\n\n``total_matching`` 是 filter×bbox 的精确匹配数（全扫口径）；``truncated``\n= 组溢出并入 ``__other__``；``null_key_count``/``non_numeric_count`` 是\n分母/数值准入的诚实披露 —— 消费端不得把部分集聚合表述为全量。",
+    "properties": {
+     "agg": {
+      "default": "count",
+      "title": "Agg",
+      "type": "string"
+     },
+     "agg_field": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agg Field"
+     },
+     "feature_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Feature Count"
+     },
+     "group_by": {
+      "default": "",
+      "title": "Group By",
+      "type": "string"
+     },
+     "group_count": {
+      "default": 0,
+      "title": "Group Count",
+      "type": "integer"
+     },
+     "is_complete": {
+      "default": true,
+      "title": "Is Complete",
+      "type": "boolean"
+     },
+     "non_numeric_count": {
+      "default": 0,
+      "title": "Non Numeric Count",
+      "type": "integer"
+     },
+     "null_key_count": {
+      "default": 0,
+      "title": "Null Key Count",
+      "type": "integer"
+     },
+     "reason_codes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Reason Codes",
+      "type": "array"
+     },
+     "revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revision"
+     },
+     "rows": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Rows",
+      "type": "array"
+     },
+     "scanned": {
+      "default": 0,
+      "title": "Scanned",
+      "type": "integer"
+     },
+     "total_matching": {
+      "default": 0,
+      "title": "Total Matching",
+      "type": "integer"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     }
+    },
+    "title": "SessionFeatureAggregateResponse",
+    "type": "object"
+   },
    "SessionFeaturePageResponse": {
     "description": "会话 ref 窗口分页响应（W12 数据平面 vNext）。\n\nFC 信封 + 分页游标：稳定序 = FC 自然序（revision 内不可变）；\n``next_cursor`` 不透明、单调；``revision`` 为服务出的这份数据的\ncontent_revision（客户端续页必须回传 ``v=<revision>``，不符 → 409）。\n``bbox_mode='coarse'``：窗口粗滤是保守超集（可能含边界外要素，\n显示层再裁剪），绝不漏。",
     "properties": {
@@ -31285,7 +31385,9 @@
      "200": {
       "content": {
        "application/json": {
-        "schema": {}
+        "schema": {
+         "$ref": "#/components/schemas/SessionFeatureAggregateResponse"
+        }
        }
       },
       "description": "Successful Response"
