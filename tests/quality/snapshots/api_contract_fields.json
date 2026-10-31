@@ -376,16 +376,37 @@
  "GET /api/v1/layers/data/{ref_id}": {
   "__type__": "unknown"
  },
+ "GET /api/v1/layers/data/{ref_id}/aggregate": {
+  "__model__": "SessionFeatureAggregateResponse",
+  "agg": "string",
+  "agg_field": "null|string",
+  "feature_count": "integer|null",
+  "group_by": "string",
+  "group_count": "integer",
+  "is_complete": "boolean",
+  "non_numeric_count": "integer",
+  "null_key_count": "integer",
+  "reason_codes": "array<string>",
+  "revision": "integer|null",
+  "rows": "array<object>",
+  "scanned": "integer",
+  "total_matching": "integer",
+  "truncated": "boolean"
+ },
  "GET /api/v1/layers/data/{ref_id}/feature/{feature_id}": {
   "__type__": "unknown"
  },
  "GET /api/v1/layers/data/{ref_id}/features": {
   "__model__": "SessionFeaturePageResponse",
   "bbox_mode": "null|string",
+  "duplicate_id_count": "integer|null",
   "feature_count": "integer|null",
   "features": "array<object>",
+  "id_mode": "null|string",
   "pagination": "object",
+  "reason_codes": "array<string>",
   "revision": "integer|null",
+  "total_matching": "integer|null",
   "type": "string"
  },
  "GET /api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png": {

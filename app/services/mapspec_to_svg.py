@@ -37,6 +37,9 @@ from app.lib.cartography.label_collision import (
 from app.lib.cartography.label_collision import (
     solve_export_labels as _solve_export_labels,
 )
+from app.lib.cartography.label_typography import (
+    wrap_label_multilingual as _wrap_label_multilingual,
+)
 from app.lib.cartography.render_scene import (
     MAX_LEGEND_ITEMS_PER_BOX as _MAX_LEGEND_ITEMS_PER_BOX,
 )
@@ -234,6 +237,88 @@ def _safe_float(val: Any, default: float = 0.0) -> float:
         return f if _math.isfinite(f) else default
     except (ValueError, TypeError):
         return default
+
+
+#: 线标注 repeat 锚点上限（对齐 MapLibre symbol-spacing 多贴的有界子集）。
+_LINE_REPEAT_MAX_ANCHORS = 4
+#: repeat 锚点计算的参与坐标帽（R2 评审：单条百万坐标线的 project 逐点
+#: 循环不可中断 —— 确定性跨步采样到帽内再算锚点，语义是等距近似的
+#: 有界化，不改变正常线的输出）。
+_LINE_REPEAT_MAX_POINTS = 20_000
+
+
+def _line_repeat_anchors(
+    coords: Any, project, _dpi_spacing: float
+) -> List[Tuple[float, float, float]]:
+    """symbol-placement=line 的等距 repeat 锚点（≤4，TS 孪生同构）。
+
+    语义（对齐 live MapLibre 沿线多贴的确定性子集）：首个锚点在线弧长
+    中点，随后向两侧按 ``spacing``（= MapLibre symbol-spacing 缺省 250px ×
+    dpi_scale）扩展，超出线长即停；每个锚点带所在段的方位角（keep-upright
+    由求解器负责）。总弧长 < 2×spacing 时只有中点单锚（与旧行为一致）。
+    project() 返回 fmt_num 字符串 —— 全程 float() 还原。
+    坐标帽采样：首点恒保留；尾点在一般 N 下落在两个采样格之间而被略去
+    （弧长轻微低估，确定性且双孪生同式 —— R3 评审措辞修正）。
+    """
+    if not isinstance(coords, list) or len(coords) < 2 or _dpi_spacing <= 0:
+        return []
+    # 坐标帽：超长线确定性跨步采样（首/尾点恒保留），project 调用数有界。
+    coords_list: List[Any] = coords
+    if len(coords_list) > _LINE_REPEAT_MAX_POINTS:
+        step = len(coords_list) / _LINE_REPEAT_MAX_POINTS
+        coords_list = [coords_list[min(len(coords_list) - 1, int(k * step))]
+                       for k in range(_LINE_REPEAT_MAX_POINTS)]
+    pts: List[Tuple[float, float]] = []
+    for c in coords_list:
+        if isinstance(c, (list, tuple)) and len(c) >= 2:
+            try:
+                px, py = project(c)
+                pts.append((float(px), float(py)))
+            except Exception:
+                return []
+    if len(pts) < 2:
+        return []
+    seg_lens: List[float] = []
+    total = 0.0
+    for i in range(len(pts) - 1):
+        dx = pts[i + 1][0] - pts[i][0]
+        dy = pts[i + 1][1] - pts[i][1]
+        seg_len = _math.hypot(dx, dy)
+        seg_lens.append(seg_len)
+        total += seg_len
+    if total <= 0 or total < 2 * _dpi_spacing:
+        return []
+
+    def _anchor_at(s: float) -> Tuple[float, float, float]:
+        acc = 0.0
+        for i, seg_len in enumerate(seg_lens):
+            if acc + seg_len >= s or i == len(seg_lens) - 1:
+                t = 0.0 if seg_len <= 0 else (s - acc) / seg_len
+                t = min(1.0, max(0.0, t))
+                x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t
+                y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t
+                ang = _math.degrees(_math.atan2(
+                    pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0]))
+                return (x, y, ang)
+            acc += seg_len
+        return pts[-1][0], pts[-1][1], 0.0  # pragma: no cover - 数值边界
+
+    mid = total / 2.0
+    positions = [mid]
+    k = 1
+    while len(positions) < _LINE_REPEAT_MAX_ANCHORS:
+        added = False
+        if mid + k * _dpi_spacing <= total:
+            positions.append(mid + k * _dpi_spacing)
+            added = True
+        if len(positions) < _LINE_REPEAT_MAX_ANCHORS and mid - k * _dpi_spacing >= 0:
+            positions.append(mid - k * _dpi_spacing)
+            added = True
+        if not added:
+            break
+        k += 1
+    positions.sort()
+    return [_anchor_at(s) for s in positions]
 
 
 def _fmt_num(v: Any) -> str:
@@ -1895,43 +1980,98 @@ def compile_mapspec_to_svg_detailed(
                                 # 请求供全图求解（标签组置顶，制图惯例）。
                                 # feature_count 按收集计数（求解抑制的要素
                                 # 在诊断 label_collision_relaxed 中披露）。
+                                #
+                                # Track B（M9）三项确定性收敛（TS 孪生同构，
+                                # INTERFACE_CONTRACTS §6）：
+                                # 1) 折行：CJK 按字/拉丁按词，宽度 ≈8em
+                                #    （13 窄字符位；对齐 live MapLibre
+                                #    text-max-width 8em 缺省），≤2 行；行内
+                                #    仍受 MAX_SVG_LABEL_CHARS 截断兜底；
+                                # 2) 重要度：layer.label.priorityField 数值
+                                #    代理 → 求解 priority=稳定名次（缺失时
+                                #    保持收集序 —— 与 schema「缺省按原序」
+                                #    契约一致，live Top-N 同向：值大先保）；
+                                # 3) 线 repeat：symbol-placement=line 时按
+                                #    MapLibre symbol-spacing 缺省 250px 等距
+                                #    生成 ≤4 个锚点候选（对齐 live 沿线多贴；
+                                #    非 line placement 保持单中点锚）。
+                                wrap_lines = _wrap_label_multilingual(
+                                    text_value, max_chars=13, max_lines=2)
+                                # 折行宽度预算 13 窄字符位（≈8em）保证单行
+                                # ≤~21 code points，恒低于 MAX_SVG_LABEL_CHARS；
+                                # >60 的整文本已在上文 legacy 口径发射
+                                # label_truncated。15-59 字名折行截尾
+                                # （R3 评审：静默丢字读者无从得知）→ 补发
+                                # wrapped 口径诊断（区分 legacy 的 60 截断）。
+                                if sum(len(_wl) for _wl in wrap_lines) < len(text_value):
+                                    _emit_diag(
+                                        "label_truncated",
+                                        detail=f"layer={_lid} wrapped-drop len={len(text_value)}",
+                                        layer_id=_lid,
+                                    )
+                                _coll_text = "\n".join(wrap_lines)
+
+                                _label_cfg = layer.get("label")
+                                _pf = None
+                                if isinstance(_label_cfg, dict):
+                                    _pf = _label_cfg.get("priorityField") or _label_cfg.get("priority_field")
+                                _importance = None
+                                if isinstance(_pf, str) and _pf:
+                                    _pv = props.get(_pf)
+                                    if isinstance(_pv, (int, float)) and not isinstance(_pv, bool) and _math.isfinite(_pv):
+                                        _importance = float(_pv)
+
                                 _gtype_c = geom.get("type")
                                 _coords_c = geom.get("coordinates")
                                 _lkind = "point"
-                                _lang = 0.0
-                                if (
-                                    _gtype_c == "LineString"
-                                    and isinstance(_coords_c, list)
-                                    and len(_coords_c) >= 2
-                                ):
+                                if _gtype_c == "LineString" and isinstance(_coords_c, list) and len(_coords_c) >= 2:
                                     _lkind = "line"
-                                    _mi = len(_coords_c) // 2
-                                    _pa = project(_coords_c[_mi - 1] if _mi >= 1 else _coords_c[0])
-                                    _pb = project(_coords_c[_mi] if _mi >= 1 else _coords_c[1])
-                                    # project() 返回 fmt_num 字符串 —— 角度计算前转 float
-                                    _lang = _math.degrees(_math.atan2(
-                                        float(_pb[1]) - float(_pa[1]),
-                                        float(_pb[0]) - float(_pa[0]),
-                                    ))
                                 elif _gtype_c in ("Polygon", "MultiPolygon"):
                                     _lkind = "polygon"
-                                label_requests.append({
-                                    "id": f"lbl{len(label_requests)}-{_lid}-{_fmt_num(coord[0])}-{_fmt_num(coord[1])}",
-                                    "text": fitted_text,
-                                    "kind": _lkind,
-                                    "x": float(x),
-                                    "y": float(y),
-                                    "angle": _lang,
-                                    "font_px": base_size * dpi_scale,
-                                    "font_size_attr": font_size,
-                                    "color": color,
-                                    "opacity": opacity,
-                                    "font_family": font_family,
-                                    "halo_w": halo_w,
-                                    "halo_color": halo_color,
-                                    "halo_opacity": halo_opacity,
-                                    "layer_id": _lid,
-                                })
+
+                                # 锚点集：默认单锚（point/polygon 中心、line
+                                # 中点）；line + symbol-placement=line → 等距
+                                # repeat 锚（≤4，间距 250px×dpi_scale）。
+                                _anchors: List[Tuple[float, float, float]] = []
+                                if (
+                                    _lkind == "line"
+                                    and str(layout.get("symbol-placement") or "") == "line"
+                                ):
+                                    _anchors = _line_repeat_anchors(
+                                        _coords_c, project, _dpi_spacing=250.0 * dpi_scale
+                                    )
+                                if not _anchors:
+                                    _lang0 = 0.0
+                                    if _lkind == "line":
+                                        _mi = len(_coords_c) // 2
+                                        _pa = project(_coords_c[_mi - 1] if _mi >= 1 else _coords_c[0])
+                                        _pb = project(_coords_c[_mi] if _mi >= 1 else _coords_c[1])
+                                        # project() 返回 fmt_num 字符串 —— 角度计算前转 float
+                                        _lang0 = _math.degrees(_math.atan2(
+                                            float(_pb[1]) - float(_pa[1]),
+                                            float(_pb[0]) - float(_pa[0]),
+                                        ))
+                                    _anchors = [(float(x), float(y), _lang0)]
+                                for _ai, (_ax, _ay, _alang) in enumerate(_anchors):
+                                    _id_suffix = "" if _ai == 0 else f"-r{_ai}"
+                                    label_requests.append({
+                                        "id": f"lbl{len(label_requests)}{_id_suffix}-{_lid}-{_fmt_num(coord[0])}-{_fmt_num(coord[1])}",
+                                        "text": _coll_text,
+                                        "kind": _lkind,
+                                        "x": _ax,
+                                        "y": _ay,
+                                        "angle": _alang,
+                                        "font_px": base_size * dpi_scale,
+                                        "font_size_attr": font_size,
+                                        "color": color,
+                                        "opacity": opacity,
+                                        "font_family": font_family,
+                                        "halo_w": halo_w,
+                                        "halo_color": halo_color,
+                                        "halo_opacity": halo_opacity,
+                                        "layer_id": _lid,
+                                        "importance": _importance,
+                                    })
                                 feature_count += 1
                                 continue
 
@@ -1953,12 +2093,26 @@ def compile_mapspec_to_svg_detailed(
 
         labels_group = ""
         if collision_mode and label_requests:
+            # Track B（M9）：priority = 重要度稳定名次 —— layer.label
+            # .priorityField 数值大者先保（live Top-N 同向），并列按收集序；
+            # 无 priorityField/importance 全缺 → 名次=收集序（schema「缺省
+            # 按原序」契约，既有行为不变）。
+            _order = sorted(
+                range(len(label_requests)),
+                key=lambda i: (
+                    -(label_requests[i]["importance"]
+                      if isinstance(label_requests[i].get("importance"), (int, float))
+                      else float("-inf")),
+                    i,
+                ),
+            )
+            _rank_of = {orig: rank for rank, orig in enumerate(_order)}
             solution = _solve_export_labels(
                 [
                     _CollisionLabel(
                         id=r["id"], text=r["text"], kind=r["kind"],
                         x=r["x"], y=r["y"], angle=r["angle"],
-                        font_size=r["font_px"], priority=i,
+                        font_size=r["font_px"], priority=_rank_of[i],
                     )
                     for i, r in enumerate(label_requests)
                 ],
@@ -1972,9 +2126,11 @@ def compile_mapspec_to_svg_detailed(
                     continue
                 r = by_id[p.id]
                 _fs = r["font_px"]
+                _lines = r["text"].split("\n")
                 if r["kind"] == "point":
                     # 渲染映射：求解盒左下角 → 基线 y（上升部补偿），文本
                     # 起排 —— 盒与可见字形对齐；TS 侧同式（差分 fixtures 锁定）。
+                    # 多行：盒高（estimate 行数口径）参与基线补偿，行距 1.2em。
                     _h = _estimate_collision_box(r["text"], _fs)[1]
                     _tx, _ty = p.x, p.y + _h - 0.25 * _fs
                     _anchor, _baseline, _transform = "start", "auto", ""
@@ -1985,6 +2141,24 @@ def compile_mapspec_to_svg_detailed(
                         f' transform="rotate({_fmt_num(p.angle)} {_fmt_num(p.x)} {_fmt_num(p.y)})"'
                         if p.angle != 0.0 else ""
                     )
+
+                def _line_y(k: int, n: int) -> float:
+                    # point：首行基线 + k×1.2em；line/polygon：行组中心对齐。
+                    if r["kind"] == "point":
+                        return _ty + k * 1.2 * _fs
+                    return _ty + (k - (n - 1) / 2.0) * 1.2 * _fs
+
+                def _text_body() -> str:
+                    if len(_lines) == 1:
+                        return _escape_svg_attr(_lines[0])
+                    # 多行 tspan：每行绝对 y（fmtNum 确定性）；单行标签保持
+                    # 既有无 tspan 形态（byte 稳定）。
+                    return "".join(
+                        f'<tspan x="{_fmt_num(_tx)}" y="{_fmt_num(_line_y(k, len(_lines)))}">'
+                        f"{_escape_svg_attr(ln)}</tspan>"
+                        for k, ln in enumerate(_lines)
+                    )
+
                 _halo_main = ""
                 if r["halo_w"] is not None:
                     _halo_main = (
@@ -1993,14 +2167,14 @@ def compile_mapspec_to_svg_detailed(
                         f'stroke-width="{r["halo_w"]}" stroke-opacity="{r["halo_opacity"]}" '
                         f'stroke-linejoin="round" stroke-linecap="round" '
                         f'text-anchor="{_anchor}" dominant-baseline="{_baseline}"{_transform}>'
-                        f'{_escape_svg_attr(r["text"])}</text>\n'
+                        f'{_text_body()}</text>\n'
                     )
                 parts.append(
                     _halo_main
                     + f'<text x="{_fmt_num(_tx)}" y="{_fmt_num(_ty)}" font-size="{r["font_size_attr"]}" '
                     f'font-family="{r["font_family"]}" fill="{r["color"]}" fill-opacity="{r["opacity"]}" '
                     f'text-anchor="{_anchor}" dominant-baseline="{_baseline}"{_transform}>'
-                    f'{_escape_svg_attr(r["text"])}</text>'
+                    f'{_text_body()}</text>'
                 )
             _sup_n = solution.suppressed_count
             if _sup_n:

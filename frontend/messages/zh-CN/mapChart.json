@@ -1,0 +1,11 @@
+{
+  "agg": {
+    "evidence": "视口聚合 · 扫描 {scanned} · 匹配 {matched} · 分组 {groups} · v{revision}",
+    "truncated": "组数超限已合并",
+    "nullKeys": "空值键 {count}",
+    "otherCategory": "其他（组合并）",
+    "overLimit": "数据量超出聚合上限，视口统计不可用",
+    "error": "视口统计获取失败",
+    "loading": "视口统计中…"
+  }
+}

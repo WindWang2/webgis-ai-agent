@@ -27,6 +27,8 @@ import {
 } from '@/lib/selection/viewport-context';
 import { registerChartRenderState, unregisterChartRenderState } from '@/lib/map-components/chart-render-registry';
 import { commitComponentPatch } from '@/lib/mapspec/component-mutation';
+import { isMvtLayer } from '@/lib/store/layer-data';
+import { useViewportAggregate } from '@/lib/map-components/viewport-aggregate';
 import { useT } from '@/lib/i18n/useT';
 
 /**
@@ -293,6 +295,41 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     return filtered.length > 0 ? { ...state.chart, data: filtered } : state.chart;
   }, [state, extentLinked, extentFilterField, boundRow]);
 
+  // ── Track B（M7/M8）：MVT 层的视口统计走服务端聚合 ───────────────────
+  // inline 层保留 Wave 5 本地过滤（≤5000 有界采样，上方 extentFilteredChart）；
+  // MVT 大图层无内联要素 —— extentLinked 时以 /aggregate（bbox+group_by，
+  // 全扫口径）为窗口真值，图表数据点替换为聚合计数，证据行随行披露。
+  const viewport = getViewportContext();
+  const mvtAggregateMode = !!(
+    extentLinked && extentFilterField && boundRow && isMvtLayer(boundRow)
+    && !(boundRow.source as { features?: unknown[] } | undefined)?.features?.length
+  );
+  const viewportAgg = useViewportAggregate({
+    enabled: mvtAggregateMode,
+    layer: boundRow,
+    groupBy: extentFilterField,
+    bbox: viewport?.bbox ?? null,
+    generation: viewport?.generation ?? 0,
+  });
+  const mc = useT('mapChart');
+  const mvtAggregateChart = React.useMemo(() => {
+    if (!mvtAggregateMode || state.status !== 'ready' || viewportAgg.status !== 'ready') return null;
+    const data = viewportAgg.rows
+      .filter((r) => r.key !== null)
+      // 溢出合并行（__other__ 哨兵/递进变体）本地化展示 —— 原始键不进轴标签
+      .map((r) => ({
+        name: typeof r.key === 'string' && r.key.startsWith('__other__')
+          ? mc('agg.otherCategory')
+          : String(r.key),
+        value: r.count,
+      }));
+    if (!data.length) return null;
+    // 组溢出行（__other__）保留 —— truncated 证据行披露其语义。
+    return { ...state.chart, data };
+  }, [mvtAggregateMode, state, viewportAgg]);
+
+  const displayChart = mvtAggregateChart ?? extentFilteredChart;
+
   const toggleExtentLinked = () => {
     void commitComponentPatch(patched.id, {
       options: { ...(options ?? {}), extentLinked: !extentLinked },
@@ -305,15 +342,17 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
   React.useEffect(() => {
     // review R2 #3：loading/取数中 = pending（非终态）—— 服务端对全 pending
     // 的观察按 warning 披露，绝不把取数竞速误判为「渲染了但无数据」error。
-    const ready = state.status === 'ready' && !!extentFilteredChart
-      && Array.isArray(extentFilteredChart.data) && extentFilteredChart.data.length > 0;
+    const pending = state.status === 'loading'
+      || (mvtAggregateMode && viewportAgg.status === 'loading');
+    const ready = state.status === 'ready' && !!displayChart
+      && Array.isArray(displayChart.data) && displayChart.data.length > 0;
     registerChartRenderState(String(patched.id ?? ''), {
       rendered: ready,
-      data_points: ready ? extentFilteredChart.data.length : 0,
-      pending: state.status === 'loading',
+      data_points: ready ? displayChart.data.length : 0,
+      pending,
     });
     return () => unregisterChartRenderState(String(patched.id ?? ''));
-  }, [state.status, extentFilteredChart, patched.id]);
+  }, [state.status, displayChart, patched.id, mvtAggregateMode, viewportAgg.status]);
 
   const bodyClass = variant === 'compact' ? 'p-1.5' : variant === 'report' ? 'p-3' : 'p-2';
 
@@ -327,14 +366,46 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
       transparent={variant === 'transparent'}
       bodyClassName={bodyClass}
     >
-      {state.status === 'ready' && extentFilteredChart ? (
+      {state.status === 'ready' && displayChart ? (
         <>
           <ChartCore
-            chart={applyKindPreset(extentFilteredChart, kindPreset)}
+            chart={applyKindPreset(displayChart, kindPreset)}
             height={contentHeight(variant, panelHeight)}
             highlightedCategories={highlightedCategories}
             onSelectCategory={handleSelectCategory}
           />
+          {mvtAggregateMode && viewportAgg.status === 'ready' && (
+            <div
+              data-testid="chart-agg-evidence"
+              className="mt-1 flex flex-wrap items-center gap-x-2 text-micro text-map-chrome-ink-muted"
+            >
+              <span>
+                {mc('agg.evidence', {
+                  scanned: viewportAgg.meta.scanned,
+                  matched: viewportAgg.meta.totalMatching ?? '?',
+                  groups: viewportAgg.meta.groupCount,
+                  revision: viewportAgg.meta.revision ?? '?',
+                })}
+              </span>
+              {viewportAgg.meta.truncated && (
+                <span className="rounded-xs bg-status-accent-soft px-1" data-testid="chart-agg-truncated">
+                  {mc('agg.truncated')}
+                </span>
+              )}
+              {viewportAgg.meta.nullKeyCount > 0 && (
+                <span>{mc('agg.nullKeys', { count: viewportAgg.meta.nullKeyCount })}</span>
+              )}
+            </div>
+          )}
+          {mvtAggregateMode && viewportAgg.status === 'loading' && (
+            <div className="mt-1 text-micro text-map-chrome-ink-muted" role="status">{mc('agg.loading')}</div>
+          )}
+          {mvtAggregateMode && viewportAgg.status === 'overlimit' && (
+            <div className="mt-1 text-micro text-map-chrome-ink-muted" role="status">{mc('agg.overLimit')}</div>
+          )}
+          {mvtAggregateMode && viewportAgg.status === 'error' && (
+            <div className="mt-1 text-micro text-map-chrome-ink-muted" role="status">{mc('agg.error')}</div>
+          )}
           {boundLayerId && (
             <button
               type="button"

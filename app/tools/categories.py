@@ -66,6 +66,8 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.analysis_workflow_tools": "analysis",
     # 批量图册导出（atlas-batch #1871）：export_atlas —— 出版导出面。
     "app.tools.atlas_export_tools": "export",
+    # Track B（M14）：图层浏览/聚合只读工具面 —— 数据获取/检视，非突变
+    "app.tools.layer_browse_tools": "data_access",
     "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
     "app.tools.local_admin": "data_access",
     "app.tools.local_osm": "data_access",

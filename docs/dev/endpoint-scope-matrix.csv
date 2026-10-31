@@ -211,6 +211,7 @@ POST,/api/v1/lakehouse/revoke,lakehouse:write,N,Y
 POST,/api/v1/lakehouse/vector/scan,lakehouse:write,N,Y
 GET,/api/v1/layer-types,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id},gis:read,N,N
+GET,/api/v1/layers/data/{ref_id}/aggregate,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/feature/{feature_id},gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/features,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png,gis:read,N,N

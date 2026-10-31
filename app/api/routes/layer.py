@@ -22,6 +22,7 @@ from app.schemas.layer_schema import (
     LayerDescriptorResponse,
     LayerTypesResponse,
     SessionFeaturePageResponse,
+    SessionFeatureAggregateResponse,
 )
 from app.contracts.terrain_sources import MapResourceAvailabilitySummary
 from app.services.auth_history_bridge import require_owned_session, verify_session_owner
@@ -139,6 +140,13 @@ async def get_session_layer_features_page(
     bbox: Optional[str] = Query(None, max_length=128, description="窗口 'w,s,e,n'（经纬度）"),
     fields: Optional[str] = Query(None, max_length=1024, description="properties 投影 CSV"),
     v: Optional[int] = Query(None, alias="v", description="客户端持有的 content_revision（revision guard）"),
+    order: Optional[str] = Query(
+        None, max_length=129, description="单字段排序：'<field>' 升序 / '-<field>' 降序（缺失值恒最后）"
+    ),
+    where: Optional[str] = Query(
+        None, max_length=2048,
+        description="typed 谓词 AST（JSON）：{field,op:eq|ne|in|between|contains|startswith,...} / {op:and|or,terms} / {op:not,term}",
+    ),
 ):
     """会话 ref 的窗口/分页要素读（W12 数据平面 vNext）。
 
@@ -147,14 +155,23 @@ async def get_session_layer_features_page(
     被迫整包拉取。稳定序 = FC 自然序（revision 内不可变）；``v`` 与服务端
     当前 content_revision 不符 → 409（绝不静默跨版拼接页）。响应携带当前
     revision 与 descriptor feature_count，供客户端续页与决策。
+
+    Track B vNext（additive）：``order`` 排序序（v2 cursor 绑定 order 摘要）、
+    ``where`` typed 谓词、``total_matching``（可证才给，超限 null）、
+    ``truncated``/``is_complete``/``reason_codes`` 诚实元数据、``id_mode``
+    稳定 id 披露（无链内 id 的要素投影位置 id，仅 revision 内稳定）。
     """
     import json as _json
 
     from app.services.feature_pages import (
         FeaturePageError,
+        count_matching,
+        id_mode_of,
         page_features,
         parse_bbox_param,
         parse_fields_param,
+        parse_order_param,
+        parse_where_param,
     )
 
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
@@ -163,6 +180,8 @@ async def get_session_layer_features_page(
     try:
         window_bbox = parse_bbox_param(bbox)
         field_list = parse_fields_param(fields)
+        order_spec = parse_order_param(order)
+        where_ast = parse_where_param(where)
     except FeaturePageError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -191,23 +210,51 @@ async def get_session_layer_features_page(
     if not fc:
         raise HTTPException(status_code=404, detail="要素不存在")
 
+    cache_key = (resolved, str(current_revision))
+
     try:
         page = await asyncio.to_thread(
-            page_features, fc, limit=limit, cursor=cursor, bbox=window_bbox, fields=field_list
+            page_features, fc, limit=limit, cursor=cursor, bbox=window_bbox,
+            fields=field_list, order=order_spec, where=where_ast, cache_key=cache_key,
         )
+        total_matching = None
+        if where_ast is not None or window_bbox is not None:
+            total_matching = await asyncio.to_thread(
+                count_matching, fc.get("features", []), where=where_ast,
+                bbox=window_bbox, cache_key=cache_key,
+            )
+        id_info = await asyncio.to_thread(id_mode_of, fc.get("features", []), cache_key)
     except FeaturePageError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # TOCTOU 收口：descriptor 在取数前读 —— 取数后重读 live revision，
-    # 响应标注的永远是「实际服务出的这份数据」的版本；翻页中途被覆写
-    # （取数前后 revision 变化）也在此显式 409，不静默跨版。
+    # TOCTOU 收口（R4 评审修正）：响应标注的 revision = 取数前快照
+    #（授权这份数据的 descriptor 版本）—— 取数后覆写不再改写标签（关闭
+    # 「旧标签错钉新数据进客户端 revision 缓存键」窗口）；取数后重读 live
+    # revision 仅用于 v 在场时的 409 guard。
+    served_revision = current_revision
     descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
-    current_revision = descriptor.get("content_revision") if descriptor else None
-    if v is not None and current_revision is not None and int(v) != int(current_revision):
+    live_revision = descriptor.get("content_revision") if descriptor else None
+    if v is not None and live_revision is not None and int(v) != int(live_revision):
         raise HTTPException(
             status_code=409,
-            detail={"error": "revision_conflict", "current_revision": current_revision},
+            detail={"error": "revision_conflict", "current_revision": live_revision},
         )
+
+    reason_codes: list[str] = []
+    if window_bbox is not None:
+        reason_codes.append("bbox_coarse")
+    if where_ast is not None:
+        reason_codes.append("filter_applied")
+    if order_spec is not None:
+        reason_codes.append(f"sorted:{order_spec[0]}")
+    if page["truncated"]:
+        reason_codes.append("scan_budget_stop")
+    if total_matching is not None:
+        reason_codes.append("total_exact")
+    elif where_ast is not None or window_bbox is not None:
+        reason_codes.append("total_unknown")
+    if page["positional_ids"]:
+        reason_codes.append("positional_id_projected")
 
     payload = {
         "type": "FeatureCollection",
@@ -218,10 +265,142 @@ async def get_session_layer_features_page(
             "limit": limit,
             "returned": page["returned"],
             "scanned": page["scanned"],
+            "truncated": page["truncated"],
+            "is_complete": not page["has_more"],
         },
-        "revision": current_revision,
+        "revision": served_revision,
         "feature_count": descriptor.get("feature_count") if descriptor else len(fc.get("features", [])),
         "bbox_mode": "coarse" if window_bbox is not None else None,
+        "total_matching": total_matching,
+        "id_mode": id_info["id_mode"],
+        "duplicate_id_count": id_info["duplicate_id_count"],
+        "reason_codes": reason_codes,
+    }
+    return Response(
+        content=_json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        media_type="application/json",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/layers/data/{ref_id}/aggregate", tags=["图层数据"],
+             response_model=SessionFeatureAggregateResponse)
+async def get_session_layer_aggregate(
+    ref_id: str,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(require_owned_session),
+    group_by: str = Query(..., max_length=64, description="分组字段（properties 键）"),
+    agg: str = Query("count", description="count|sum|mean|min|max"),
+    agg_field: Optional[str] = Query(
+        None, max_length=64, description="聚合数值字段（agg≠count 必填）"
+    ),
+    bbox: Optional[str] = Query(None, max_length=128, description="窗口 'w,s,e,n'（经纬度，粗滤）"),
+    where: Optional[str] = Query(None, max_length=2048, description="typed 谓词 AST（JSON，同 /features）"),
+    max_groups: int = Query(64, ge=1, le=256, description="组数上限（溢出并入 __other__）"),
+    v: Optional[int] = Query(None, alias="v", description="revision guard"),
+):
+    """会话 ref 的分组聚合（Track B vNext）—— 视口/过滤统计的服务端真值。
+
+    诚实规则：超 AGG_SCAN_LIMIT → 422（不是慢扫）；sum/mean/min/max 只吃
+    数值，非数值计入 non_numeric_count；null 键计入 null_key_count；组溢出
+    并入 ``__other__`` + truncated=true。响应携带 total_matching/revision，
+    消费端（图表/Agent）不得把部分集聚合表述为全量。
+    """
+    import json as _json
+
+    from app.services.feature_aggregate import (
+        AggregateOverLimit,
+        aggregate_features,
+        validate_aggregate_params,
+    )
+    from app.services.feature_pages import (
+        FeaturePageError,
+        parse_bbox_param,
+        parse_where_param,
+    )
+
+    if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
+        raise HTTPException(status_code=400, detail="非法 ref_id")
+    await _layer_data_budget(session_id)
+    try:
+        group_by, agg, agg_field, max_groups = validate_aggregate_params(
+            group_by, agg, agg_field, max_groups
+        )
+        window_bbox = parse_bbox_param(bbox)
+        where_ast = parse_where_param(where)
+    except FeaturePageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    resolved = await session_data_manager.resolve_alias(session_id, ref_id)
+    descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
+    current_revision = descriptor.get("content_revision") if descriptor else None
+    if v is not None and current_revision is not None and int(v) != int(current_revision):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "revision_conflict", "current_revision": current_revision},
+        )
+
+    res = await session_data_manager.get_ref_data_shared(
+        session_id, resolved, owner_token=owner_token
+    )
+    if not res.success:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+    fc = _extract_fc(res.data)
+    if not fc:
+        raise HTTPException(status_code=404, detail="要素不存在")
+
+    try:
+        result = await asyncio.to_thread(
+            aggregate_features, fc, group_by=group_by, agg=agg, agg_field=agg_field,
+            bbox=window_bbox, where=where_ast, max_groups=max_groups,
+        )
+    except AggregateOverLimit as e:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "aggregate_over_limit",
+                "feature_count": e.feature_count,
+                "limit": 500_000,
+            },
+        )
+    except FeaturePageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # 同 features：响应 revision 标注 = 取数前快照（R4 评审修正）。
+    served_revision = current_revision
+    descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
+    live_revision = descriptor.get("content_revision") if descriptor else None
+    if v is not None and live_revision is not None and int(v) != int(live_revision):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "revision_conflict", "current_revision": live_revision},
+        )
+
+    reason_codes = ["aggregate_full_scan"]
+    if window_bbox is not None:
+        reason_codes.append("bbox_coarse")
+    if where_ast is not None:
+        reason_codes.append("filter_applied")
+    if result["truncated"]:
+        reason_codes.append("groups_truncated")
+
+    payload = {
+        "rows": result["rows"],
+        "group_count": result["group_count"],
+        "is_complete": result["is_complete"],
+        "truncated": result["truncated"],
+        "scanned": result["scanned"],
+        "total_matching": result["total_matching"],
+        "null_key_count": result["null_key_count"],
+        "non_numeric_count": result["non_numeric_count"],
+        "agg": agg,
+        "agg_field": agg_field,
+        "group_by": group_by,
+        "revision": served_revision,
+        "feature_count": descriptor.get("feature_count") if descriptor else None,
+        "reason_codes": reason_codes,
     }
     return Response(
         content=_json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
@@ -265,24 +444,102 @@ async def get_session_layer_feature(
     feature_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    id_mode: Optional[str] = Query(
+        None, description="寻址模式：缺省=链内稳定 id；'positional'=位置 id（FC 自然索引+1，仅 revision 内稳定）"
+    ),
+    v: Optional[int] = Query(None, alias="v", description="revision guard（位置 id 仅 revision 内稳定，强烈建议携带）"),
     _conv: Conversation = Depends(require_owned_session),
 ):
-    """Return a single GeoJSON Feature by its id property (server-side lookup, wire carries one feature)."""
+    """Return a single GeoJSON Feature by its id property (server-side lookup, wire carries one feature).
+
+    ``id_mode=positional``：MVT 位置 id 回查（Track B）——无链内稳定 id 的
+    数据集以 FC 自然索引+1 寻址；越界/非整数 → 404/400。链内寻址语义不变。
+    """
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
     if not feature_id or len(feature_id) > 256:
         raise HTTPException(status_code=400, detail="非法 feature_id")
+    if id_mode is not None and id_mode != "positional":
+        raise HTTPException(status_code=400, detail="id_mode 仅支持 'positional'")
     await _layer_data_budget(session_id)
 
+    if id_mode == "positional":
+        from app.services.feature_pages import resolve_feature_stable_id
+
+        try:
+            pos = int(feature_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="位置 id 必须是整数")
+        if pos < 1:
+            raise HTTPException(status_code=400, detail="位置 id 从 1 开始")
+        # 位置 id 仅 revision 内稳定（R1 评审）：携带 v 时显式 409 ——
+        # 覆写后旧位置 id 会静默命中另一个要素，绝不跨版寻址。
+        _pos_descriptor = await session_data_manager.get_ref_descriptor(session_id, ref_id)
+        _pos_revision = _pos_descriptor.get("content_revision") if _pos_descriptor else None
+        if v is not None and _pos_revision is not None and int(v) != int(_pos_revision):
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "revision_conflict", "current_revision": _pos_revision},
+            )
+
+        def _positional_lookup(features: list) -> Optional[dict]:
+            idx = pos - 1
+            if idx >= len(features):
+                return None
+            f = features[idx]
+            if not isinstance(f, dict):
+                return None
+            # 位置寻址仅服务无链内 id 的要素 —— 有链内 id 的要素走链内寻址
+            # （混合数据集里位置 id 与链内 id 是两个命名空间，不混淆）。
+            if resolve_feature_stable_id(f) is not None:
+                return None
+            out = dict(f)
+            out.setdefault("id", pos)
+            return out
+
+        from app.services.mvt import spatial_index_cache
+
+        index_entry = spatial_index_cache.get((session_id, ref_id))
+        if index_entry is not None:
+            feature = await asyncio.to_thread(_positional_lookup, index_entry.features)
+        else:
+            res = await session_data_manager.get_ref_data(
+                session_id, ref_id, owner_token=owner_token
+            )
+            if not res.success:
+                status_code = 403 if res.error_type == "PermissionDenied" else 404
+                raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+            fc = _extract_fc(res.data)
+            if not fc:
+                raise HTTPException(status_code=404, detail="要素不存在")
+            feature = await asyncio.to_thread(_positional_lookup, fc.get("features", []))
+        if not feature:
+            raise HTTPException(
+                status_code=404,
+                detail="位置 id 越界或该要素存在链内稳定 id（请用默认寻址）",
+            )
+        body = await serialize_geojson(feature, pretty=False)
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                **({"X-Content-Revision": str(_pos_revision)} if _pos_revision is not None else {}),
+            },
+        )
+
     # P-2（#875）：MVT 瓦片路径的进程内空间索引常驻同一 ref 的 features
-    # 列表 —— 命中时零 Redis 流量、零 json.loads，直接在已解析列表上扫描
-    # （鉴权与会话归属同 MVT 路由：require_owned_session 已校验）。
+    # 列表 —— 命中时零 Redis 流量、零 json.loads；链内 id 寻址走懒构建的
+    # id→自然索引（O(1)，重复 id 首中即返，与线性扫语义一致），把 50k-200k
+    # 要素下每次点击 O(n) 扫描的尾延迟消掉。
     from app.services.mvt import spatial_index_cache
     index_entry = spatial_index_cache.get((session_id, ref_id))
     if index_entry is not None:
-        feature = await asyncio.to_thread(
-            _find_feature_by_id, {"features": index_entry.features}, feature_id
-        )
+        def _indexed_lookup(entry) -> Optional[dict]:
+            idx = entry.feature_id_index().get(str(feature_id))
+            return entry.features[idx] if idx is not None else None
+
+        feature = await asyncio.to_thread(_indexed_lookup, index_entry)
         if not feature:
             raise HTTPException(status_code=404, detail="要素不存在")
         body = await serialize_geojson(feature, pretty=False)

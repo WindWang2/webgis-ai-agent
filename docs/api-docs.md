@@ -550,6 +550,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/layers/data/{ref_id}` | Get Session Layer Data | object |
 | `GET` | `/api/v1/layers/data/{ref_id}/features` | Get Session Layer Features Page | SessionFeaturePageResponse |
+| `GET` | `/api/v1/layers/data/{ref_id}/aggregate` | Get Session Layer Aggregate | SessionFeatureAggregateResponse |
 | `GET` | `/api/v1/layers/data/{ref_id}/feature/{feature_id}` | Get Session Layer Feature | object |
 | `GET` | `/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt` | Get Mvt Tile | object |
 | `GET` | `/api/v1/layers/descriptor/{ref_id}` | Get Layer Descriptor | LayerDescriptorResponse |
@@ -1165,6 +1166,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：428（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：429（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

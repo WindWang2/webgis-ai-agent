@@ -28,12 +28,98 @@ export function isCjk(ch: string): boolean {
   return CJK_RANGES.some(([lo, hi]) => o >= lo && o <= hi);
 }
 
-/** CJK 1.0em / 其余 0.6em 加权宽；高 = 1.2em（Python 同口径）。 */
+/** CJK 1.0em / 其余 0.6em 加权宽；高 = 1.2em（Python 同口径）。
+ *
+ * 多行（"\n" 分行；Track B 导出折行）：宽 = 最宽行、高 = 行数 × 1.2em
+ * —— 与 Python ``estimate_label_box`` 逐常量一致（parity 冻结）。 */
 export function estimateLabelBox(text: string, fontSize: number): [number, number] {
+  if (text.includes("\n")) {
+    const lines = text.split("\n");
+    let w = 0;
+    for (const ln of lines) w = Math.max(w, estimateLabelBox(ln, fontSize)[0]);
+    return [w, lines.length * fontSize * 1.2];
+  }
   if (!text) return [0, fontSize * 1.2];
   let em = 0;
   for (const ch of text) em += isCjk(ch) ? 1.0 : 0.6;
   return [em * fontSize, fontSize * 1.2];
+}
+
+// ── 多语言断行（Track B 导出折行；Python label_typography 逐常量孪生）────
+
+function cjkRatio(text: string): number {
+  if (!text) return 0;
+  let n = 0;
+  for (const ch of text) if (isCjk(ch)) n += 1;
+  return n / [...text].length;
+}
+
+/** CJK 逐字贪心断行（宽度以 0.1em 整数单位累加：窄字符 6 / CJK 10 ——
+ *  与 Python wrap_label_text 同口径，避免浮点累加漂移破坏确定性边界）。
+ *  code point 口径（for-of 按 Unicode 码点迭代）：astral 字符不被劈成
+ *  孤立代理项（R3 评审 —— 与 Python len()/切片语义对齐）。 */
+export function wrapLabelText(text: string, maxChars: number, maxLines: number): string[] {
+  const lines = Math.max(1, maxLines);
+  const budget = Math.max(1, maxChars) * 6;
+  const out: string[] = [];
+  let cur = "";
+  let curW = 0;
+  for (const ch of text) {
+    const w = isCjk(ch) ? 10 : 6;
+    if (cur && curW + w > budget) {
+      if (out.length === lines - 1) break; // 末行就位：剩余按宽度截断
+      out.push(cur);
+      cur = "";
+      curW = 0;
+    }
+    cur += ch;
+    curW += w;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** 多语言断行：CJK 按字、拉丁按词（单超长词按字符兜底）、auto 按 CJK
+ *  占比 ≥0.3 选策略 —— Python wrap_label_multilingual 逐分支孪生。 */
+export function wrapLabelMultilingual(
+  text: string,
+  maxChars: number,
+  maxLines: number,
+): string[] {
+  const lines = Math.max(1, maxLines);
+  const chars = Math.max(1, maxChars);
+  const mode = cjkRatio(text) >= 0.3 ? "cjk_char" : "latin_word";
+  if (mode === "cjk_char") return wrapLabelText(text, chars, lines);
+  // latin_word：词边界贪心装箱；超 max_lines 时尾部合并截断进末行。
+  // code point 口径（R3 评审）：长度/切片经 cps 数组，astral 不劈半。
+  const cps = (v: string): string[] => Array.from(v);
+  const join = (v: string[]): string => v.join("");
+  const units: string[] = [];
+  for (const word of text.split(" ")) {
+    let w = cps(word);
+    while (w.length > chars) {
+      units.push(join(w.slice(0, chars)));
+      w = w.slice(chars);
+    }
+    if (w.length) units.push(join(w));
+  }
+  const packed: string[] = [];
+  let cur = "";
+  for (const unit of units) {
+    const candidate = cur ? `${cur} ${unit}` : unit;
+    if (cps(candidate).length <= chars || !cur) {
+      const c = cps(candidate);
+      cur = c.length > chars ? join(c.slice(0, chars)) : candidate;
+    } else {
+      packed.push(cur);
+      const u = cps(unit);
+      cur = u.length > chars ? join(u.slice(0, chars)) : unit;
+    }
+  }
+  if (cur) packed.push(cur);
+  if (packed.length <= lines) return packed;
+  const tail = join(cps(packed.slice(lines - 1).join(" ")).slice(0, chars));
+  return [...packed.slice(0, lines - 1), tail];
 }
 
 /** 盒估算（em 单位；CJK 1.0 / 其他 0.6，高 1.2 —— 与 estimateLabelBox 同口径）。 */

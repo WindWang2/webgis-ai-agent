@@ -9,7 +9,7 @@ vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 
 // Import after mocks
 import { useHudStore } from './useHudStore';
-import { ensureLayerData } from './layer-data';
+import { ensureLayerData, setLayerDataSession } from './layer-data';
 import { _resetDataPlaneForTests } from '@/lib/data-plane/ref-service';
 
 function makeMVTLayer(id = 'ref:big-1', featureCount = 100_000) {
@@ -159,5 +159,81 @@ describe('ensureLayerData seam (#667)', () => {
     const r3 = await ensureLayerData(layer.id, 'attribute-table');
     expect(apiFetchMock).not.toHaveBeenCalled();
     expect(r3.status).toBe('already-hydrated');
+  });
+
+  // ─── Track B（M3/M6）：位置 id 单要素回填 ─────────────────────────────
+
+  it('selection-detail numeric id: chain 404 → positional retry succeeds', async () => {
+    const layer = makeMVTLayer();
+    useHudStore.getState().addLayer(layer as any);
+    useHudStore.setState({
+      selectedFeature: {
+        layerId: layer.id, point: [0, 0], properties: { name: 'x' },
+        selectedAt: Date.now(), featureId: 1234,
+      } as any,
+    });
+    // 第一次（链内寻址）404；第二次（id_mode=positional）命中
+    apiFetchMock.mockRejectedValueOnce(Object.assign(new Error('nf'), { status: 404 }));
+    apiFetchMock.mockResolvedValueOnce({
+      type: 'Feature', id: 1234,
+      geometry: { type: 'Point', coordinates: [0, 0] },
+      properties: { name: 'x' },
+    });
+    const result: any = await ensureLayerData(layer.id, 'selection-detail');
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+    const secondUrl = apiFetchMock.mock.calls[1][0] as string;
+    expect(secondUrl).toContain('id_mode=positional');
+    expect(result.status).toBe('single-feature');
+  });
+
+  it('selection-detail numeric id: both chain and positional 404 → honest fallback', async () => {
+    const layer = makeMVTLayer();
+    useHudStore.getState().addLayer(layer as any);
+    useHudStore.setState({
+      selectedFeature: {
+        layerId: layer.id, point: [0, 0], properties: { name: 'x' },
+        selectedAt: Date.now(), featureId: 99999,
+      } as any,
+    });
+    apiFetchMock.mockRejectedValue(Object.assign(new Error('nf'), { status: 404 }));
+    const result: any = await ensureLayerData(layer.id, 'selection-detail');
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe('fallback');
+  });
+
+  it('selection-detail non-numeric id: chain 404 → fallback without positional retry', async () => {
+    const layer = makeMVTLayer();
+    useHudStore.getState().addLayer(layer as any);
+    useHudStore.setState({
+      selectedFeature: {
+        layerId: layer.id, point: [0, 0], properties: { name: 'x' },
+        selectedAt: Date.now(), featureId: 'not-numeric',
+      } as any,
+    });
+    apiFetchMock.mockRejectedValueOnce(Object.assign(new Error('nf'), { status: 404 }));
+    const result: any = await ensureLayerData(layer.id, 'selection-detail');
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('fallback');
+  });
+
+  it('R4: session switch mid-flight cancels selection-detail (resolved sid mismatch)', async () => {
+    const layer = makeMVTLayer();
+    useHudStore.getState().addLayer(layer as any);
+    useHudStore.setState({
+      selectedFeature: {
+        layerId: layer.id, point: [0, 0], properties: { id: 'feat-7' },
+        selectedAt: Date.now(), featureId: 'feat-7',
+      } as any,
+    });
+    setLayerDataSession('sid-aaa', null);  // 身份持有者优先于瓦片 URL 兜底
+    let resolveFetch!: (v: any) => void;
+    apiFetchMock.mockReturnValueOnce(new Promise((res) => { resolveFetch = res; }));
+    const promise = ensureLayerData(layer.id, 'selection-detail');
+    // 请求在途时会话切换（身份持有者变化 —— resolveSessionId 解析值随之变化）
+    setLayerDataSession('sid-bbb', null);
+    resolveFetch({ type: 'Feature', id: 'feat-7', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} });
+    const result: any = await promise;
+    expect(result.status).toBe('cancelled');
+    setLayerDataSession(undefined, undefined);
   });
 });

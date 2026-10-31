@@ -88,4 +88,21 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             purpose_template="{subject} 数据准备",
             version="1.0",
         ),
+
+        # ── Track B（M14）：图层浏览/聚合只读读面 ────────────────────────
+        # 会话 ref 的有界分页浏览（order/where typed AST/bbox/fields）、
+        # 分组聚合（count/sum/mean/min/max 全扫口径）与单要素详情 —— 工具
+        # 直连（webgis_layer_features_page / webgis_layer_aggregate /
+        # webgis_layer_feature_detail），算法面无对应实现者（与 poi_query
+        # 同为数据获取类能力）。
+        CapabilityDescriptor(
+            id="layer_browse", name="图层要素浏览", category="data_access",
+            description="会话图层要素的有界分页浏览与窗口聚合：排序/typed 谓词/"
+                        "bbox 窗口/字段投影、分组计数与单要素详情（只读，不整包拉取）。",
+            preferred_execution="local_first",
+            deterministic=True,
+            supports_large_data=True,
+            purpose_template="{subject} 图层浏览",
+            version="1.0",
+        ),
 ]

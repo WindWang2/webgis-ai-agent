@@ -9,7 +9,7 @@ import { workbenchCommands } from './workbenchCommands';
 import { styleCommands } from './styleCommands';
 import { sceneCommands } from './sceneCommands';
 import { analysisWorkflowCommands } from './analysisWorkflowCommands';
-import { mapOperationsCommands } from './mapOperationsCommands';)
+import { mapOperationsCommands } from './mapOperationsCommands';
 
 export type { MapCommandContext, CommandValidator, CommandEntry } from './types';
 
@@ -33,7 +33,7 @@ export const COMMAND_CATALOGUE = {
   ...styleCommands,
   ...sceneCommands,
   ...analysisWorkflowCommands,
-  ...mapOperationsCommands,)
+  ...mapOperationsCommands,
 } as const;
 
 export type MapCommandName = keyof typeof COMMAND_CATALOGUE;

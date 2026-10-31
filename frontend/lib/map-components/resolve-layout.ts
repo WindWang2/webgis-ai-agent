@@ -67,6 +67,8 @@ export const COMPONENT_LAYOUT_META: Record<string, ComponentLayoutMeta> = {
   // top-right 是 inset_map 的 168px 大槽，decision 落那里必然压插图。
   methodology_note: { defaultSlot: 'bottom-left', priority: 3, stackStepPx: 34 },
   uncertainty_panel: { defaultSlot: 'bottom-right', priority: 3, stackStepPx: 34 },
+  // carto-design（#1870）：设计候选面板 —— 与 chart/statistics 同侧同优先级
+  design_candidates: { defaultSlot: 'top-left', priority: 3 },
   decision_panel: { defaultSlot: 'top-left', priority: 3, stackStepPx: 40 },
   // Workbench V4（Wave 4）：table_panel 与 backend registry defaultPosition
   // 同表（bottom-right）—— resolver/meta/默认表三处单一默认值源（E-9）。
