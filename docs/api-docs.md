@@ -662,6 +662,13 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/tasks/status/{task_id}` | Get Celery Task Status | CeleryTaskStatusResponse |
 | `DELETE` | `/api/v1/tasks/status/{task_id}` | Revoke Celery Task | CeleryTaskRevokeResponse |
 
+### 地图制图
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/atlas/jobs` | Submit Atlas Export Job | AtlasSubmitResponse |
+| `GET` | `/api/v1/atlas/jobs/{job_id}` | Get Atlas Export Job | AtlasJobDetailResponse |
+
 ### 数据上传
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1153,6 +1160,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：421（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：423（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
