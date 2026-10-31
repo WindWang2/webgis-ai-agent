@@ -70,6 +70,8 @@ _TAXONOMY_TABLE: Dict[str, tuple] = {
     "SetViewIntent": ("presentation_ephemeral", "none"),
     # ── system repair（不冒充用户偏好） ────────────────────────────────
     "ApplyVisualHealPatchIntent": ("system_repair", "none"),
+    # /goal 03：要素编辑后的数据新鲜度盖章（origin 恒 system，非用户决策）。
+    "RefreshDataRevisionIntent": ("system_repair", "none"),
     # ── data / science（不属于 representation binding） ────────────────
     "UpsertSourceIntent": ("data_science", "none"),
     "UpsertLayerIntent": ("data_science", "none"),

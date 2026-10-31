@@ -600,6 +600,14 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/interaction-events` | Push Interaction Events | InteractionIngestResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/interaction-events/projection` | Get Interaction Projection | InteractionProjectionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/preview` | Preview Feature Edit | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}` | Get Feature Edit Plan | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}/decision` | Decide Feature Edit Plan | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/undo` | Undo Feature Edit | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/redo` | Redo Feature Edit | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/history` | Feature Edit History | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/policy` | Get Feature Edit Policy | object |
+| `PUT` | `/api/v1/chat/sessions/{session_id}/feature-edits/policy` | Put Feature Edit Policy | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/plan` | Plan Visual Repair | VisualRepairPlanResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/apply` | Apply Visual Repair | VisualRepairApplyResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/reject` | Reject Visual Repair | VisualRepairRejectResponse |
@@ -654,6 +662,13 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/tasks/status/{task_id}` | Get Celery Task Status | CeleryTaskStatusResponse |
 | `DELETE` | `/api/v1/tasks/status/{task_id}` | Revoke Celery Task | CeleryTaskRevokeResponse |
 
+### 地图制图
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/atlas/jobs` | Submit Atlas Export Job | AtlasSubmitResponse |
+| `GET` | `/api/v1/atlas/jobs/{job_id}` | Get Atlas Export Job | AtlasJobDetailResponse |
+
 ### 数据上传
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -663,6 +678,19 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/uploads/{upload_id}` | Get Upload | UploadResponse |
 | `DELETE` | `/api/v1/uploads/{upload_id}` | Delete Upload | UploadDeleteResponse |
 | `GET` | `/api/v1/uploads/{upload_id}/geojson` | Get Upload Geojson | object |
+
+### 数据准备
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/data-preparation/inspect` | Inspect | InspectResponse |
+| `POST` | `/api/v1/data-preparation/plan` | Create Plan | PlanResponse |
+| `POST` | `/api/v1/data-preparation/plan/{plan_id}/preview` | Preview Plan | PreviewResponse |
+| `POST` | `/api/v1/data-preparation/plan/{plan_id}/execute` | Execute | ExecuteResponse |
+| `GET` | `/api/v1/data-preparation/plans` | Plans | object |
+| `DELETE` | `/api/v1/data-preparation/plan/{plan_id}` | Discard | object |
+| `POST` | `/api/v1/data-preparation/bindings/fields` | Bind Fields | FieldBindingResponse |
+| `GET` | `/api/v1/data-preparation/plan/{plan_id}/receipt` | Plan Receipt | object |
 
 ### 知识库管理
 
@@ -1132,6 +1160,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：405（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：423（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

@@ -52,6 +52,9 @@ def test_planning_surface_is_bounded():
         # ADR-0258 M6（#1282）：语义产品编辑与 intent/product 同族 ——
         # 改的是"产品是什么"（product_spec），不是执行面。
         "webgis_product_edit",
+        # carto-design（#1870）：设计候选选择与 intent/product 同族 ——
+        # 定的是"产品用哪个表达方案"（user-wins），不是执行面。
+        "webgis_map_design_select",
         "propose_plan",
         "execute_plan",
         "get_plan_status",

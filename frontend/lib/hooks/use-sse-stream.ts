@@ -41,6 +41,8 @@ import {
   attachClarification,
   attachLayerChip,
   attachPlanProposal,
+  attachFeatureEditProposal,
+  setFeatureEditProposalStatus,
   attachAgentPlan,
   clearThinkingFlag,
   finalizeAgentPlan,
@@ -66,6 +68,9 @@ import {
   getPendingClarification,
   submitClarificationAnswer,
 } from '@/lib/api/chat';
+import { decideFeatureEditPlan, redoFeatureEdit, undoFeatureEdit } from '@/lib/api/feature-edit';
+import { featureEditCommand } from '@/lib/workbench/undo';
+import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import { ApiError } from '@/lib/api/transport';
 
 // #742: stable identity — an inline options object churned send/bridge/
@@ -517,6 +522,59 @@ export function useSSEStream(options: UseSSEStreamOptions) {
   // ADR-0081 finalization 披露去重状态（adapter ctx 注入）。
   const lastFinalizationNoticeRef = useRef<FinalizationNotice | null>(null);
 
+  // /goal 03：编辑提交后的受影响数据层增量刷新 —— 按 ref 找 HUD 层、以
+  // 新 content_revision 走数据面（单飞/ETag；MVT 层走服务端 epoch 失效），
+  // 不 restyle、不动 user-wins 显隐。
+  const refreshDatasetLayer = useCallback((sid: string, refId: string, revision: number) => {
+    try {
+      const hud = useHudStore.getState();
+      const layer = (hud.layers as Array<{ id: string; _refId?: string }>).find(
+        (l) => l._refId === refId,
+      );
+      if (!layer) return;
+      void requestRefFC({
+        sessionId: sid,
+        refId,
+        dataRevision: revision,
+        ownerToken: sessionTokenRef.current || undefined,
+        urgency: 'interactive',
+        reasonCode: 'feature-edit:applied',
+        // 会话切换中止纪律（test_layer_fetch_abort 契约：数据面取数必须
+        // 挂 layerFetchAbortRef 的 signal）。
+        signal: layerFetchAbortRef.current?.signal,
+      }).then((res) => {
+        if (!res.fc) return;
+        const cur = useHudStore.getState();
+        const row = (cur.layers as unknown as Array<Record<string, unknown> & { id: string; _refId?: string }>).find(
+          (l) => l._refId === refId,
+        );
+        if (!row) return;
+        const descriptor = (row._descriptor as Record<string, unknown> | undefined) ?? {};
+        const featureCount = descriptor.feature_count as number | undefined;
+        const isMvt =
+          featureCount !== undefined && featureCount > 5000
+          && descriptor.mvt_capable === true
+          && typeof (row as { _tileUrl?: unknown })._tileUrl === 'string';
+        if (isMvt) {
+          // R1 P2-8 + R2 P2-1：MVT 层不内联 GeoJSON —— descriptor revision
+          // 与 _tileUrl（v= 缓存键）必须一起重建，否则组合 spec 零变化、
+          // reconciler 不重加 source，地图持续显示旧瓦片。
+          cur.updateLayer(row.id, {
+            _tileUrl: buildMvtTileUrl(refId, sid, revision),
+            _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
+          } as never, { source: 'server' });
+        } else {
+          cur.updateLayer(row.id, {
+            source: res.fc as unknown as never,
+            _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
+          }, { source: 'server' });
+        }
+      });
+    } catch {
+      // 刷新失败：SSE mapspec 盖章镜像会随后收敛（content_revision 管线）
+    }
+  }, [sessionTokenRef]);
+
   const onEvent = useCallback(
     (event: SSEEvent) => {
       const data = event.data as any;
@@ -648,6 +706,31 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             messageId: thinkingId,
             plan: decision.planProposal!,
           }));
+        }
+        if (decision.featureEditProposal) {
+          setMessages((prev) => attachFeatureEditProposal(prev, {
+            messageId: thinkingId,
+            proposal: decision.featureEditProposal!,
+          }));
+        }
+        if (decision.featureEditCommit) {
+          const commitInfo = decision.featureEditCommit;
+          // R1 P1-3：Agent 自动提交（policy 放行的 safe 属性面）后数据刷新 +
+          // 对应提案卡推进 applied（此前仅 REST approve 通道刷新地图）。
+          if (commitInfo.ref_id && commitInfo.content_revision_after) {
+            refreshDatasetLayer(sessionIdRef.current ?? '', commitInfo.ref_id, commitInfo.content_revision_after);
+          }
+          if (commitInfo.plan_id) {
+            setMessages((prev) =>
+              setFeatureEditProposalStatus(prev, {
+                planId: commitInfo.plan_id,
+                status: 'applied',
+                receipt: {
+                  entry_seq: (commitInfo.receipt?.entry_seq as number | undefined) ?? undefined,
+                  content_revision_after: commitInfo.content_revision_after,
+                },
+              }));
+          }
         }
         if (decision.explorerTaskId) {
           startExplorerProgressStream(decision.explorerTaskId);
@@ -894,7 +977,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         }
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent, refreshDatasetLayer]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit
@@ -1141,6 +1224,95 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     [bridge, getMapSnapshot, userLocation, setMessages]
   );
 
+
+  // /goal 03：提案卡决策（approve = owner REST 同事务执行；reject 双写
+  // 服务端状态）。applied 后：地图数据增量刷新（content_revision 缓存键）
+  // + undo 栈登记（反向走同一 REST CAS 路径）。
+  const handleFeatureEditDecision = useCallback(
+    (proposal: import('@/lib/types/feature-edit').FeatureEditProposalState, action: 'approve' | 'reject') => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      if (action === 'reject') {
+        setMessages((prev) =>
+          setFeatureEditProposalStatus(prev, { planId: proposal.plan_id, status: 'approving' }));
+        void decideFeatureEditPlan(sid, proposal.plan_id, 'reject', sessionTokenRef.current || undefined)
+          .then((result) => {
+            // R1 P2-9：已 applied 的 plan 拒绝 → 服务端如实回 applied；
+            // 不得谎报“已拒绝，数据未改动”。
+            setMessages((prev) =>
+              setFeatureEditProposalStatus(prev, {
+                planId: proposal.plan_id,
+                status: result.status === 'applied' ? 'applied' : 'rejected',
+                receipt: result.receipt,
+              }));
+          })
+          .catch(() => {
+            // R2 P2-3：网络/503 失败 ≠ 已拒绝 —— 置 error（可重试），
+            // 服务端真相仍是 pending。
+            setMessages((prev) =>
+              setFeatureEditProposalStatus(prev, { planId: proposal.plan_id, status: 'error' }));
+          });
+        return;
+      }
+      setMessages((prev) =>
+        setFeatureEditProposalStatus(prev, { planId: proposal.plan_id, status: 'approving' }));
+      decideFeatureEditPlan(sid, proposal.plan_id, 'approve', sessionTokenRef.current || undefined)
+        .then((result) => {
+          setMessages((prev) =>
+            setFeatureEditProposalStatus(prev, {
+              planId: proposal.plan_id, status: 'applied', receipt: result.receipt }));
+          const revision = result.receipt?.content_revision_after;
+          if (typeof revision === 'number' && revision > 0) {
+            refreshDatasetLayer(sid, proposal.ref_id, revision);
+          }
+          featureEditCommand({
+            label: t('chat.editProposal.undoLabel'),
+            actor: 'user',
+            refId: proposal.ref_id,
+            // R1 P1-3：undo/redo 成功后同款数据刷新（与 approve 一条链路）
+            undo: async () => {
+              const r = await undoFeatureEdit(sid, proposal.ref_id, sessionTokenRef.current || undefined);
+              if (r.receipt?.content_revision_after) {
+                refreshDatasetLayer(sid, proposal.ref_id, r.receipt.content_revision_after);
+              }
+              return r;
+            },
+            redo: async () => {
+              const r = await redoFeatureEdit(sid, proposal.ref_id, sessionTokenRef.current || undefined);
+              if (r.receipt?.content_revision_after) {
+                refreshDatasetLayer(sid, proposal.ref_id, r.receipt.content_revision_after);
+              }
+              return r;
+            },
+            onError: (phase, err) => {
+              // R2 P3-9：409 = 数据已被并发修改（如 Agent 又提交了一笔）；
+              // 其余为网络/服务端错误。toast 收敛，操作记录仍保留命令。
+              const status = (err as { status?: number })?.status;
+              useToastStore.getState().addToast(
+                status === 409
+                  ? t('chat.editProposal.undoConflict')
+                  : t('chat.editProposal.undoFailed', { phase }),
+                status === 409 ? 'warning' : 'error',
+              );
+            },
+          });
+        })
+        .catch((err: unknown) => {
+          const status = (err as { status?: number })?.status;
+          const code = (err as { body?: { detail?: { code?: string }; code?: string } })?.body?.detail?.code
+            ?? (err as { body?: { code?: string } })?.body?.code;
+          setMessages((prev) =>
+            setFeatureEditProposalStatus(prev, {
+              planId: proposal.plan_id,
+              status: status === 410 ? 'expired' : status === 409 ? (code === 'stale_revision' ? 'stale' : 'conflicted') : 'error',
+              error: status ? undefined : String((err as Error)?.message ?? err),
+            }));
+        });
+    },
+    [setMessages, sessionIdRef, sessionTokenRef, refreshDatasetLayer],
+  );
+
+
   useEffect(() => {
     handleSendRef.current = handleSend;
   }, [handleSend]);
@@ -1153,6 +1325,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     handleSend,
     handlePlanAction,
     handleClarificationSubmit,
+    handleFeatureEditDecision,
     refreshPendingClarification,
     bridge,
     agentRuntime,

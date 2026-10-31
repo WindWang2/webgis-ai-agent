@@ -82,6 +82,11 @@ export interface ContextPanelProps {
     answers: { context_key: string; value: string }[],
     waiveKeys: string[],
   ) => void;
+  /** /goal 03：EditProposalCard 决策（approve/reject → REST）。 */
+  onFeatureEditDecision?: (
+    proposal: import('@/lib/types/feature-edit').FeatureEditProposalState,
+    action: 'approve' | 'reject',
+  ) => void;
   /** 方向 3：stale/恢复期重取 pending envelope。 */
   onClarificationRefresh?: () => void;
   agentRuntime?: AgentRuntime | null;
@@ -145,6 +150,7 @@ export function ContextPanel({
   ownerToken,
   onPlanAction,
   onClarificationSubmit,
+  onFeatureEditDecision,
   onClarificationRefresh,
   agentRuntime,
   sessionPlan,
@@ -383,6 +389,7 @@ export function ContextPanel({
                 onCancel={onCancel}
                 onPlanAction={onPlanAction}
                 onClarificationSubmit={onClarificationSubmit}
+                onFeatureEditDecision={onFeatureEditDecision}
                 onClarificationRefresh={onClarificationRefresh}
                 sessionId={sessionId}
                 agentRuntime={agentRuntime}
@@ -481,6 +488,7 @@ export function ContextPanel({
               onCancel={onCancel}
               onPlanAction={onPlanAction}
               onClarificationSubmit={onClarificationSubmit}
+                onFeatureEditDecision={onFeatureEditDecision}
               onClarificationRefresh={onClarificationRefresh}
               sessionId={sessionId}
               agentRuntime={agentRuntime}

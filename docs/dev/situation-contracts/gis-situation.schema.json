@@ -166,6 +166,9 @@
         },
         "display_mode": {
           "$ref": "#/$defs/SitFact"
+        },
+        "feature_edits": {
+          "$ref": "#/$defs/SitFact"
         }
       },
       "required": [

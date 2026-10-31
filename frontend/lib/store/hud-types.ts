@@ -38,7 +38,8 @@ export interface OpLogEntry {
     | 'lock'
     | 'group'
     | 'reorder'
-    | 'lock_conflict';
+    | 'lock_conflict'
+    | 'feature_edit';
   label: string;
   time: string;
   detail?: string;

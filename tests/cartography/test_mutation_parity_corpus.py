@@ -509,6 +509,32 @@ CASES = [
         ],
     },
     {
+        # /goal 03：要素编辑盖章 intent —— seed 挂 ref 源 + upsert 层，盖章只
+        # 改 content_revision（无匹配源时 terminal 警告回执，不进 commit 面）。
+        "name": "refresh_data_revision_stamp",
+        "seed": [
+            {
+                "class": "UpsertSourceIntent",
+                "fields": {
+                    "source_id": "ref-src",
+                    "source": {"type": "geojson", "ref_id": "ref:data-edit1", "content_revision": 1},
+                },
+            },
+            {
+                "class": "UpsertLayerIntent",
+                "fields": {
+                    "layer": {"id": "edited", "type": "circle", "source": "ref-src"},
+                },
+            },
+        ],
+        "actions": [
+            {
+                "class": "RefreshDataRevisionIntent",
+                "fields": {"ref_id": "ref:data-edit1", "content_revision": 2},
+            }
+        ],
+    },
+    {
         "name": "set_time_defaults_merge",
         "actions": [
             {

@@ -284,5 +284,32 @@
     "copiedTitle": "Copied to clipboard",
     "blockAria": "Code block",
     "blockAriaWithLang": "{lang} code block"
+  },
+  "editProposal": {
+    "title": "Feature edit proposal",
+    "safe": "Safe attribute edits",
+    "needsApproval": "Needs approval",
+    "rename": "Dataset-wide field rename",
+    "applied": "Committed",
+    "undoHint": "Undo available in the operations log",
+    "rejected": "Rejected — data unchanged",
+    "conflict": "Data was modified by another change; proposal is stale (re-preview)",
+    "expired": "Proposal expired (10 min) — request a new preview",
+    "error": "Submit failed — retry available",
+    "approving": "Committing…",
+    "approve": "Apply changes",
+    "reject": "Reject",
+    "undoLabel": "Feature edit",
+    "opSetFields": "Field update",
+    "opRenameField": "Field rename",
+    "opRepairGeometry": "Geometry repair",
+    "opMoveBy": "Displacement (m)",
+    "opSnapToRef": "Snap to target lines",
+    "geometrySummary": "Geometry: {before} → {after} vertices",
+    "moreFeatures": "…{count} more features",
+    "header": "{count} features · {ref}…",
+    "colon": ": ",
+    "undoConflict": "Data was modified by another change — refresh the edit history and retry",
+    "undoFailed": "Undo/redo request failed ({phase}) — retry available"
   }
 }

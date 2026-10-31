@@ -50,6 +50,7 @@ from app.services.mapspec.intents import (
     PatchLayerStyleIntent,
     PatchWorkbenchDeltaIntent,
     RebindComponentIntent,
+    RefreshDataRevisionIntent,
     RemoveComponentIntent,
     RemoveLayerIntent,
     ReorderLayersIntent,
@@ -578,6 +579,13 @@ def _build_default_registry() -> MutationRegistry:
         intent_cls=SetScenarioModeIntent,
         handler=_h._handle_setscenariomode,
         op_label="切换推演模式", provenance_detail=_pd_none,
+    ))
+    reg.register(IntentDescriptor(
+        intent_cls=RefreshDataRevisionIntent,
+        handler=_h._handle_refreshdatarevision,
+        # sources-only 盖章：不动 layers/显隐/样式 —— touches_layers=False，
+        # 无 checkpoint（数据真相在 ref/journal，spec 只是新鲜度戳）。
+        op_label="刷新数据版本戳", provenance_detail=_pd_none,
     ))
     reg.register(IntentDescriptor(
         intent_cls=SetTimeIntent,

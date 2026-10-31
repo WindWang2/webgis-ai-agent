@@ -137,6 +137,8 @@ export function useFeatureSelection({
       properties: props,
       bbox: tileBbox,
       datasetRef: parentId?.startsWith('ref:') ? parentId : undefined,
+      // /goal 03：多选集随事件上行（框选/N 连选对 Agent 可见；单选缺席）
+      selectedIds: mergedIds,
     })
     // #667/#668: selection truthfulness — backfill authoritative feature for MVT layers
     if (targetId && isMvt) {

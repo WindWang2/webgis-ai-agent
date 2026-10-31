@@ -1387,6 +1387,19 @@ export function MapPanel({
         matched_count: projection.matched_count,
         bbox,
       })
+      // /goal 03：框选多要素对 Agent 可见（ADR-0227 feature_selected 的
+      // selected_ids additive 扩展；无稳定 id 字段时不上行——语义为空集）。
+      if (projection.id_field && projection.selected_ids.length > 0) {
+        const brushRef = useHudStore.getState().layers.find(
+          (l) => l.id === family && typeof l._refId === 'string',
+        )?._refId as string | undefined
+        emitFeatureSelected({
+          layerId: family,
+          featureId: projection.selected_ids[0],
+          datasetRef: brushRef?.startsWith('ref:') ? brushRef : undefined,
+          selectedIds: projection.selected_ids,
+        })
+      }
       if (!projection.id_field) {
         setBrushFeedback(t('map.brush.matchedNoStableId', { count: projection.matched_count }))
       } else {

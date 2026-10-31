@@ -55,6 +55,7 @@ export function StreamingChatHost({
     handleSend,
     handlePlanAction,
     handleClarificationSubmit,
+    handleFeatureEditDecision,
     refreshPendingClarification,
     bridge,
     agentRuntime,
@@ -92,6 +93,7 @@ export function StreamingChatHost({
       ownerToken={activeSessionToken}
       onPlanAction={handlePlanAction}
       onClarificationSubmit={handleClarificationSubmit}
+      onFeatureEditDecision={handleFeatureEditDecision}
       onClarificationRefresh={refreshPendingClarification}
       agentRuntime={agentRuntime}
       sessionPlan={sessionPlanView}

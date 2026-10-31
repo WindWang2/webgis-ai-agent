@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.services.gis_situation.facts import SitFact
+from app.services.gis_situation.facts import SitFact, unknown
 
 COMPILER_VERSION = 1
 
@@ -151,6 +151,12 @@ class InteractionContext(BaseModel):
     pending_mutations: SitFact    # 进行中后台任务（event_log 派生）
     recent_interactions: SitFact  # S4 交互环投影（有界）
     display_mode: SitFact         # is_3d
+    # /goal 03 additive：持久要素编辑回执（EditActionReceipt 的 situation
+    # 投影 —— journal 最近 ≤5 条，数据面事件非交互事件，不进 IR 词表）。
+    # default_factory=unknown：旧构造方（测试/既有调用）零改动兼容。
+    feature_edits: SitFact = Field(
+        default_factory=lambda: unknown(source="map_state._feature_edit_journals")
+    )
 
 
 class DeliveryContext(BaseModel):
