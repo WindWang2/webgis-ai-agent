@@ -163,6 +163,30 @@ class TestDegradation:
         assert slots.degraded_reason == "llm_unavailable"
         assert slots.subject.value == ""
 
+    def test_extract_slots_with_async_llm_awaits_response(self, monkeypatch) -> None:
+        async def fake_call_llm(_cfg, _messages):
+            return {
+                "choices": [{
+                    "message": {"content": '{"subject":{"value":"医院",'
+                    '"confidence":0.9},"area":{"value":"","confidence":0.0},'
+                    '"measure":{"value":"count","confidence":0.8},'
+                    '"temporal":{"value":"","confidence":0.0},'
+                    '"audience":{"value":"","confidence":0.0},'
+                    '"output_form":{"value":"map","confidence":0.8},'
+                    '"constraints":[],"task_candidate":null,"lang":"zh",'
+                    '"confidence":0.8}'}}
+                ]}
+
+        monkeypatch.setattr(semantic, "llm_available", lambda: True)
+        monkeypatch.setattr(
+            "app.services.chat.llm_client.call_llm", fake_call_llm)
+
+        slots = semantic.extract_slots_with_llm("医院分布")
+
+        assert slots.degraded_reason == ""
+        assert slots.subject.value == "医院"
+        assert slots.subject.source == "llm"
+
     def test_fake_llm_slots_fill_rule_gaps(self, monkeypatch) -> None:
         """规则缺失的槽位由 LLM 槽位补齐；source=llm 可审计。"""
         llm_slots = IntentSlots(
