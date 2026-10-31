@@ -74,4 +74,18 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             deterministic=False,
             purpose_template="{subject} 工作空间快照",
         ),
+
+        # ── 数据准备（sdo #1868）：inspect→propose→prepare→bind 工具面 ───
+        # prepare_dataset 等工具声明 capabilities=["data_preparation"]，
+        # 未注册即 manifest fatal（app 严格模式启动失败）。工具直连类
+        # （与 poi_query 同格），算法面无对应实现者。
+        CapabilityDescriptor(
+            id="data_preparation", name="数据集准备", category="data_access",
+            description="多源空间数据自动准备：字段提案/计划执行/语义绑定"
+                        "（inspect→propose→validate→prepare→bind，只读检视+受控写入）。",
+            preferred_execution="async",
+            deterministic=False,
+            purpose_template="{subject} 数据准备",
+            version="1.0",
+        ),
 ]
