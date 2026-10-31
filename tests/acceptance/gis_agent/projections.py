@@ -61,6 +61,7 @@ async def build_task_evidence(session_id: str, scenario) -> Dict[str, Any]:
     evidence["interaction"] = await _project_interaction(session_id)
 
     # ── G3D-V2-C：3D 分析绑定与失效裁决（analysis_binding_store 只读）──
+    evidence["analysis_workflow"] = await _project_analysis_workflow(session_id)
     evidence["scene3d_analysis"] = await _project_scene3d_analysis(
         session_id, spec)
 
@@ -165,6 +166,53 @@ def _project_progress(plan) -> Dict[str, Any]:
         "mandatory_complete": all(
             r["status"] not in ("pending", "failed") for r in mandatory),
     }
+
+
+async def _project_analysis_workflow(session_id: str) -> Optional[Dict[str, Any]]:
+    """goal-02 F28：分析工作流运行态投影（METHOD 面）。
+
+    权威寻址 = 别名（``analysis_workflow.v1:<workflow_id>``，工具层单写者
+    落址）——当前会话的**当前工作流**（单工作流语义；多工作流会话里后
+    plan 者覆写 alias，即「最新 plan 的工作流」）。uuid ref 排序无时间
+    语义，不用于选择。fail-open：无状态/损坏 → None。
+    """
+    try:
+        from app.services.session_data import session_data_manager
+        refs = await session_data_manager.list_refs(session_id)
+        # 权威寻址 = 别名（analysis_workflow.v1:<workflow_id>，工具层单写者
+        # 落址）；uuid ref 排序无时间语义，不能用来选「最新」。
+        aliased = [r for r, alias in refs.items()
+                   if str(alias).startswith("analysis_workflow.v1:")]
+        for ref in aliased:
+            payload = await session_data_manager.get(session_id, ref)
+            if not isinstance(payload, dict):
+                continue
+            steps = payload.get("steps") or {}
+            envelopes = payload.get("envelopes") or {}
+            return {
+                "workflow_id": payload.get("workflow_id", ""),
+                "family": payload.get("family", ""),
+                "status": payload.get("status", ""),
+                "steps": {
+                    sid: (e or {}).get("state", "")
+                    for sid, e in steps.items()},
+                "step_reasons": {
+                    sid: (e or {}).get("reason_code", "")
+                    for sid, e in steps.items() if (e or {}).get("reason_code")},
+                "layers": {
+                    sid: (env or {}).get("ref", "")
+                    for sid, env in envelopes.items()
+                    if (env or {}).get("ref")},
+                "receipts": sorted((payload.get("receipts") or {}).keys()),
+                # B5：run 侧执行证据（负例防「run 退化 no-op 也绿」——
+                # workflow_start/end 事件证明 run 真实驱动过状态机）
+                "run_log_events": [
+                    (e or {}).get("event", "")
+                    for e in (payload.get("run_log") or [])][-8:],
+            }
+        return None
+    except Exception:  # noqa: BLE001 — 投影面 fail-open
+        return None
 
 
 async def _project_scene3d_analysis(

@@ -206,8 +206,48 @@ def raster_nodata(tmp_root: Path) -> str:
 
 
 #: dataset_kind → (载体类型, 工厂)。geojson = 会话 ref 存储；raster = ./tmp 文件。
+def hazard_points() -> Dict[str, Any]:
+    """goal-02 F28：模拟危险源点（化工厂 2 处，落在学区范围内）。"""
+    x0, y0, x1, y1 = CHENGDU_BBOX
+    feats = []
+    for i, (dx, dy) in enumerate([(0.05, 0.04), (0.09, 0.07)]):
+        feats.append(_pt(x0 + dx, y0 + dy, {
+            "name": f"模拟化工厂-{i + 1}",
+            "hazard_class": "major",
+            "_simulated": True,
+        }))
+    return _fc(feats, _WGS84)
+
+
+def road_network() -> Dict[str, Any]:
+    """goal-02 F28：模拟路网（覆盖学区的纵横网格道路 LineString）。"""
+    x0, y0, x1, y1 = CHENGDU_BBOX
+    feats = []
+    for i in range(5):            # 纵路
+        x = x0 + 0.01 + i * (x1 - x0 - 0.02) / 4
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": [
+                [round(x, 6), y0 + 0.01], [round(x, 6), y1 - 0.01]]},
+            "properties": {"road_id": f"v{i}", "kind": "primary",
+                           "_simulated": True},
+        })
+    for j in range(4):            # 横路
+        y = y0 + 0.02 + j * (y1 - y0 - 0.04) / 3
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": [
+                [x0 + 0.01, round(y, 6)], [x1 - 0.01, round(y, 6)]]},
+            "properties": {"road_id": f"h{j}", "kind": "primary",
+                           "_simulated": True},
+        })
+    return _fc(feats, _WGS84)
+
+
 VECTOR_FACTORIES = {
     "school_points": school_points,
+    "hazard_points": hazard_points,
+    "road_network": road_network,
     "school_points_sparse": school_points_sparse,
     "school_points_dense": school_points_dense,
     "no_coord_table": no_coord_table,

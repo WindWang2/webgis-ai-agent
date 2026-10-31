@@ -91,6 +91,9 @@ _TOOL_MODULES = [
     # F07：ExecutionCatalog 只读发现工具面（capability-first discovery，
     # 独立模块防并发冲突）
     ("app.tools.catalog_discovery_tools", "register_catalog_discovery_tools"),
+    # goal-02：多步 GIS 分析工作流编排工具面（plan/run/status/recompute；
+    # 独立模块防并发冲突；执行真相=registry.dispatch）
+    ("app.tools.analysis_workflow_tools", "register_analysis_workflow_tools"),
 ]
 
 
