@@ -125,10 +125,31 @@
   "schema_version": "string",
   "session_id": "string"
  },
+ "GET /api/v1/chat/sessions/{session_id}/display-confirmation": {
+  "__model__": "DisplayConfirmationStatusResponse",
+  "confirmed": "boolean",
+  "latest_observation_seq": "integer",
+  "mode": "string",
+  "pending": "boolean",
+  "required_render_seq": "integer",
+  "session_id": "string",
+  "verdict_present": "boolean"
+ },
  "GET /api/v1/chat/sessions/{session_id}/interaction-events/projection": {
   "__model__": "InteractionProjectionResponse",
   "projection": "object",
   "schema_version": "string",
+  "session_id": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/map-operations": {
+  "__model__": "MapOperationListResponse",
+  "operations": "array<object>",
+  "session_id": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/map-operations/{operation_id}": {
+  "__model__": "MapOperationReceiptResponse",
+  "operation_id": "string",
+  "receipt": "object",
   "session_id": "string"
  },
  "GET /api/v1/chat/sessions/{session_id}/map-state": {
@@ -980,6 +1001,14 @@
   "observation_sequence": "integer",
   "overall_passed": "boolean|null"
  },
+ "POST /api/v1/chat/sessions/{session_id}/display-confirmation/ack": {
+  "__model__": "DisplayAckResponse",
+  "accepted": "boolean",
+  "confirmed": "boolean",
+  "reason": "null|string",
+  "render_seq": "integer",
+  "task_complete": "boolean|null"
+ },
  "POST /api/v1/chat/sessions/{session_id}/interaction-events": {
   "__model__": "InteractionIngestResponse",
   "accepted": "integer",
@@ -997,6 +1026,12 @@
   "dropped": "integer|null",
   "duplicates": "integer|null",
   "repair_action": "null|object"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/map-operations/{operation_id}/commit": {
+  "__model__": "MapOperationReceiptResponse",
+  "operation_id": "string",
+  "receipt": "object",
+  "session_id": "string"
  },
  "POST /api/v1/chat/sessions/{session_id}/mapspec/mutations": {
   "__model__": "MutationApplyResponse",

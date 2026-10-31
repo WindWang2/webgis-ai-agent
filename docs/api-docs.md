@@ -608,6 +608,11 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/history` | Feature Edit History | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/policy` | Get Feature Edit Policy | object |
 | `PUT` | `/api/v1/chat/sessions/{session_id}/feature-edits/policy` | Put Feature Edit Policy | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/map-operations` | List Map Operations | MapOperationListResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}` | Get Map Operation | MapOperationReceiptResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}/commit` | Commit Pending Map Operation | MapOperationReceiptResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/display-confirmation` | Get Display Confirmation | DisplayConfirmationStatusResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/display-confirmation/ack` | Post Display Ack | DisplayAckResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/plan` | Plan Visual Repair | VisualRepairPlanResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/apply` | Apply Visual Repair | VisualRepairApplyResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/reject` | Reject Visual Repair | VisualRepairRejectResponse |
@@ -1160,6 +1165,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：423（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：428（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

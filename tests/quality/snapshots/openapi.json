@@ -3433,6 +3433,111 @@
     "title": "DeprecateRequest",
     "type": "object"
    },
+   "DisplayAckRequest": {
+    "additionalProperties": false,
+    "description": "owner 显式确认当前地图显示（render_seq=所确认的观察代次）。",
+    "properties": {
+     "render_seq": {
+      "minimum": 0.0,
+      "title": "Render Seq",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "render_seq"
+    ],
+    "title": "DisplayAckRequest",
+    "type": "object"
+   },
+   "DisplayAckResponse": {
+    "properties": {
+     "accepted": {
+      "title": "Accepted",
+      "type": "boolean"
+     },
+     "confirmed": {
+      "title": "Confirmed",
+      "type": "boolean"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     },
+     "render_seq": {
+      "default": 0,
+      "title": "Render Seq",
+      "type": "integer"
+     },
+     "task_complete": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Task Complete"
+     }
+    },
+    "required": [
+     "accepted",
+     "confirmed"
+    ],
+    "title": "DisplayAckResponse",
+    "type": "object"
+   },
+   "DisplayConfirmationStatusResponse": {
+    "description": "最终显示确认状态（GET）。\n\n- mode: auto（历史行为，恒 confirmed）/ required\n- pending: required 且已有终验裁决但未确认（前端确认卡的显示条件）\n- required_render_seq: 当前裁决依据的观察代次（ack 必须 ≥ 此值且\n  等于最新观察代次才算新鲜）",
+    "properties": {
+     "confirmed": {
+      "title": "Confirmed",
+      "type": "boolean"
+     },
+     "latest_observation_seq": {
+      "default": 0,
+      "title": "Latest Observation Seq",
+      "type": "integer"
+     },
+     "mode": {
+      "title": "Mode",
+      "type": "string"
+     },
+     "pending": {
+      "title": "Pending",
+      "type": "boolean"
+     },
+     "required_render_seq": {
+      "default": 0,
+      "title": "Required Render Seq",
+      "type": "integer"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "verdict_present": {
+      "default": false,
+      "title": "Verdict Present",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "session_id",
+     "mode",
+     "confirmed",
+     "pending"
+    ],
+    "title": "DisplayConfirmationStatusResponse",
+    "type": "object"
+   },
    "DuplicateComponentBody": {
     "description": "Component Lifecycle V3（§19）：复制多实例组件。",
     "properties": {
@@ -6988,6 +7093,72 @@
      "message"
     ],
     "title": "MapExportResponse",
+    "type": "object"
+   },
+   "MapOperationCommitRequest": {
+    "additionalProperties": false,
+    "description": "owner 批准 pending 敏感操作（expected_revision 缺省=批准时现读）。",
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     }
+    },
+    "title": "MapOperationCommitRequest",
+    "type": "object"
+   },
+   "MapOperationListResponse": {
+    "description": "回执环只读面（有界，最新在前）。",
+    "properties": {
+     "operations": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Operations",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "MapOperationListResponse",
+    "type": "object"
+   },
+   "MapOperationReceiptResponse": {
+    "description": "单操作回执 / 批准结果（服务端构造的自由形状 + 信封字段）。",
+    "properties": {
+     "operation_id": {
+      "title": "Operation Id",
+      "type": "string"
+     },
+     "receipt": {
+      "additionalProperties": true,
+      "title": "Receipt",
+      "type": "object"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "operation_id"
+    ],
+    "title": "MapOperationReceiptResponse",
     "type": "object"
    },
    "MapProductDiffResponse": {
@@ -18278,6 +18449,146 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/display-confirmation": {
+   "get": {
+    "description": "确认状态（auto → confirmed/pending 恒为 True/False 的历史语义）。",
+    "operationId": "get_display_confirmation_api_v1_chat_sessions__session_id__display_confirmation_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DisplayConfirmationStatusResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Display Confirmation",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/display-confirmation/ack": {
+   "post": {
+    "description": "owner 显式确认当前地图显示（新鲜度门 fail-closed）。",
+    "operationId": "post_display_ack_api_v1_chat_sessions__session_id__display_confirmation_ack_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DisplayAckRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DisplayAckResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Post Display Ack",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}": {
    "get": {
     "operationId": "get_feature_edit_plan_api_v1_chat_sessions__session_id__feature_edits_plans__plan_id__get",
@@ -19117,6 +19428,228 @@
     "tags": [
      "AI对话",
      "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/map-operations": {
+   "get": {
+    "description": "回执环（最新在前，≤8 条；slim 形状无 mapspec 大对象）。",
+    "operationId": "list_map_operations_api_v1_chat_sessions__session_id__map_operations_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MapOperationListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Map Operations",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}": {
+   "get": {
+    "operationId": "get_map_operation_api_v1_chat_sessions__session_id__map_operations__operation_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "operation_id",
+      "required": true,
+      "schema": {
+       "title": "Operation Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MapOperationReceiptResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Map Operation",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}/commit": {
+   "post": {
+    "description": "owner 批准 pending 敏感操作（confirmation_required → 提交）。\n\n批准语义：预览卡已向 owner 披露 before/after；本端点在 owner 身份\n验证通过后，以 origin=user（引擎强制 CAS）重放该操作的效果集。\n基线 revision 在批准时**现读**（不信任预览时的旧值）；并发推进则\nsuperseded 如实返回，绝不盲写。",
+    "operationId": "commit_pending_map_operation_api_v1_chat_sessions__session_id__map_operations__operation_id__commit_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "operation_id",
+      "required": true,
+      "schema": {
+       "title": "Operation Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MapOperationCommitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MapOperationReceiptResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Commit Pending Map Operation",
+    "tags": [
+     "AI对话",
+     "AI对话"
     ]
    }
   },
