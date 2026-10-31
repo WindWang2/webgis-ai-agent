@@ -2558,6 +2558,16 @@ def evaluate_cartography_semantics(
     # 7pre-V7（Goal 08 Phase I）：组件图级 QA —— 重复绑定 / 越界浮动 /
     # 显式边成环。与 LAYOUT_COLLISION 正交（图语义 vs 槽位计数）。
     _check_component_graph_semantics(report, mapspec)
+    # /goal cartography-design M4：跨组件口径 / 视口覆盖 / 密度语义诚实
+    # （场景级新检查簇；证据缺席 not_evaluated，不伪造 pass）。
+    from app.lib.cartography.semantic_checks_maplevel import (
+        _check_chart_map_field_coherence,
+        _check_density_semantics_honesty,
+        _check_viewport_covers_results,
+    )
+    _check_chart_map_field_coherence(report, mapspec)
+    _check_viewport_covers_results(report, mapspec)
+    _check_density_semantics_honesty(report, mapspec)
 
     # 7. Legend / style field consistency (warning).
     legend = (mapspec.get("layout") or {}).get("legend") or {}

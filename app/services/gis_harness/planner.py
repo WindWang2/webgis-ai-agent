@@ -161,6 +161,11 @@ def _composition_alternatives_evidence(
 _TASK_CATEGORY_BY_INTENT = {
     "distribution_overview": ("spatial_distribution",),
     "density_analysis": ("density",),
+    # carto-design（评审 P2-5）：真实任务族此前落入 thematic_cartography
+    # 兜底——定量密度/集中度语义应路由 density 类目（候选引擎类目质量
+    # 依赖本表；density_analysis 为历史 key 保留）。
+    "analytical_density": ("density",),
+    "concentration_analysis": ("density", "hotspot"),
     "aggregation_overview": ("administrative_aggregation",),
     "hotspot_analysis": ("hotspot",),
     "clustering_analysis": ("clustering",),

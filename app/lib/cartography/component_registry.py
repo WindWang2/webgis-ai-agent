@@ -167,6 +167,7 @@ COMPONENT_SEMANTIC_ROLES: dict = {
     "methodology_note": "disclosure",
     "uncertainty_panel": "disclosure",
     "decision_panel": "disclosure",
+    "design_candidates": "disclosure",
     "scene_disclosure": "disclosure",
     "elevation_profile": "statistics",
 }
@@ -193,6 +194,7 @@ _COMPONENT_EXAMPLES: dict = {
     "methodology_note": "分母缺失/近似方法的诚实披露卡",
     "uncertainty_panel": "克里金方差/样本限制披露",
     "decision_panel": "MCDA 权重来源与候选排名面板",
+    "design_candidates": "表达模型层设计候选对比（为何选/为何弃/typed blocked）",
     "scene_disclosure": "三维场景模式/夸张系数/垂直基准/比例尺可信度披露卡",
     "elevation_profile": "沿线路的高程剖面折线面板（距离-高程轴）",
 }
@@ -225,6 +227,8 @@ COMPONENT_SEARCH_KEYWORDS: dict = {
     "methodology_note": ["方法论", "披露", "方法说明", "methodology"],
     "uncertainty_panel": ["不确定性", "方差", "置信", "uncertainty", "误差"],
     "decision_panel": ["决策", "多准则", "权重", "排名", "decision", "mcda"],
+    "design_candidates": ["设计方案", "候选", "表达方案", "备选", "design",
+                           "candidate", "为何选"],
     "label_layer": ["标注", "注记", "标签", "label", "annotation", "地名",
                     "标注字段", "避让", "压盖"],
     "scene_disclosure": ["场景披露", "三维", "3d", "透视", "夸张", "垂直基准",
@@ -599,6 +603,23 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         required_context=["decision"],
         states=["visible", "hidden", "collapsed"], collision_class="panel",
         accessibility={"role": "group", "label_zh": "决策面板"},
+    ),
+    MapComponentDescriptor(
+        id="design_candidates", category="disclosure.design_candidates",
+        type="design_candidates",
+        name="Design Candidates", name_zh="设计方案候选",
+        # 表达模型层候选对比（/goal carto-design）：options.design =
+        # design_digest（模型/族/适宜性/一句理由 + blocked/honored）。
+        # 只读披露面：接受动作经 webgis_map_design_select 统一 action
+        #（agent 与 API 共享，面板不自带状态机）。
+        placement_domain="panel", supported_outputs=["interactive"],
+        renderer_support=["interactive"], exporter_support=[],
+        default_variant="default", variants=["default", "compact"],
+        default_position="top-left", allowed_positions=["top-left", "bottom-right", "bottom-left", "none"],
+        cardinality="zero_or_one", priority=49, runtime_status="native",
+        required_context=["design"],
+        states=["visible", "hidden", "collapsed"], collision_class="panel",
+        accessibility={"role": "group", "label_zh": "设计方案候选面板"},
     ),
     # ── ac-05（ADR-0154）：label_layer 正式注册为可寻址组件 ─────────────
     # taxonomy `content.label_layer`（component_taxonomy.py）首次拿到

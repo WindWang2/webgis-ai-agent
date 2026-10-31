@@ -202,6 +202,14 @@ def normalize_geometry_kind(text: str) -> str:
     value = normalize_text(text)
     if not value:
         return ""
+    # 精确注册 id 预检（carto-design 评审 R2 F2）：整串恰为 model_library
+    # canonical id 时不走同义词子串塌缩——子串匹配会把含同义词的长 id
+    # 改道（"normalized_choropleth" 含 "choropleth" → 塌缩为原始计数
+    # 模型的别名），率语义模型从此无法被 pin。NL 输入永不恰好等于
+    # canonical id，该分支只影响程序化写入（design-select 工具）。
+    from app.lib.cartography.model_library import get_map_model_registry
+    if get_map_model_registry().get(value) is not None:
+        return value[:48]
     for synonyms, kind in _GEOMETRY_KIND_TABLE:
         for synonym in synonyms:
             if synonym in value:

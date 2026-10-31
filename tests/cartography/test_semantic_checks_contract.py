@@ -63,8 +63,9 @@ def _scan_source_codes() -> tuple[set[str], set[str]]:
 def test_contract_file_exists_and_versioned(contract) -> None:
     assert CONTRACT.exists()
     assert contract["contract"] == "semantic-checks"
-    # v2（ADR-0199）：+SCENE_TERRAIN_SOURCE_REF / _TYPE（blocking 集显式扩编）。
-    assert contract["version"] == 2
+    # v3（carto-design M4）：+CHART_MAP_FIELD_COHERENCE / VIEWPORT_COVERS_
+    # RESULTS / DENSITY_SEMANTICS_HONESTY（跨组件口径/视口覆盖/密度诚实）。
+    assert contract["version"] == 3
 
 
 def test_uppercase_codes_frozen(contract) -> None:
@@ -73,7 +74,7 @@ def test_uppercase_codes_frozen(contract) -> None:
         "大写检查码与冻结契约漂移 —— 新增/删除码必须显式更新 "
         "docs/dev/ac-v11-contracts/semantic-checks.v1.json"
     )
-    assert len(upper) == 38
+    assert len(upper) == 41
 
 
 def test_dotted_codes_frozen(contract) -> None:
@@ -83,10 +84,10 @@ def test_dotted_codes_frozen(contract) -> None:
     assert len(dotted) == 7
 
 
-def test_total_code_count_is_45(contract) -> None:
+def test_total_code_count_is_48(contract) -> None:
     total = (len(contract["codes"]["uppercase"])
              + len(contract["codes"]["dotted"]))
-    assert total == 45
+    assert total == 48
 
 
 def test_blocking_codes_frozen(contract) -> None:

@@ -49,6 +49,7 @@ OPTIONAL_AUTH_DEPS = frozenset(
 BODY_OWNERSHIP_CHECKS = frozenset(
     {
         "verify_session_owner",
+        "_require_session",  # data_preparation.py 的会话所有权 helper（upload.py 同款纪律）
         "_verify_session_owner",  # upload.py 的会话所有权 helper
         "require_owned_session",
         "_guard_body_session",

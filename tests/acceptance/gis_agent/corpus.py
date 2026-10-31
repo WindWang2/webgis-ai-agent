@@ -2425,3 +2425,458 @@ def f27_14_full_journey_multiturn() -> ScenarioContract:
         not_evaluated=_F27_NOT_EVALUATED,
         tags=["scene3d", "g3dv2c", "multiturn", "journey", "acceptance"],
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# goal-02 · F28 多步分析工作流族（AnalysisWorkflowContract 编排面）
+# ══════════════════════════════════════════════════════════════════════
+
+_F28_NOT_EVALUATED = COMMON_NOT_EVALUATED + [
+    "nl_family_choice: 场景→族的选择由 scripted plan 调用代替（生产面由 "
+    "Pi LLM + 技能库解析）",
+    "persistent_dataset_supply: 数据角色的持久数据集供给（data_fabric 通道）"
+    "不在本 lane——F28 用合成 store_data 种子",
+]
+
+
+@register
+def f28_01_admin_distribution_workflow() -> ScenarioContract:
+    """行政区设施分布正例：plan→run 真实编排（计数+面积密度+分母率）。"""
+    q = "统计各区小学数量、每平方公里密度和每万人学校数"
+    return ScenarioContract(
+        id="f28-01-admin-distribution", family="F28",
+        title="行政区设施分布：三步工作流（计数/面积密度/每万人率）",
+        description=(
+            "webgis_analysis_workflow_plan→run 真实 dispatch 编排："
+            "denominator 绑定带 population 字段的区面层 → per_capita 步骤"
+            "执行；receipts 有界投影。"),
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "admin_facility_distribution",
+                          "role_refs": (
+                              '{"subject": "{{ref:schools}}", '
+                              '"boundary": "{{ref:districts}}", '
+                              '"denominator": "{{ref:districts}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"}),
+                _step("product", StepKind.PRODUCT,
+                      arguments={
+                          "primary_ref": "{{ref:districts}}",
+                          "overlay_refs": ["{{ref:schools}}"],
+                          "title": "成都各区小学分布与密度（模拟数据）"}),
+            ],
+        )],
+        expectations=[
+            _exp("f28-01-wf-status", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="satisfied"),
+            _exp("f28-01-wf-count", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.zones_count", value="satisfied"),
+            _exp("f28-01-wf-density", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.area_density", value="satisfied"),
+            _exp("f28-01-wf-rate", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.per_capita_rate",
+                 value="satisfied",
+                 note="denominator 绑定区面 population 字段 → 率步骤执行"),
+            _exp("f28-01-wf-receipts", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.receipts", op="contains",
+                 value="zones_count"),
+            _exp("f28-01-mapspec", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=1),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "admin", "distribution", "goal-02"],
+    )
+
+
+@register
+def f28_02_no_network_typed_blocked() -> ScenarioContract:
+    """可达性负例：无路网 → plan typed blocked，run 拒绝数值结论。"""
+    q = "小学 15 分钟步行可达范围"
+    return ScenarioContract(
+        id="f28-02-no-network-blocked", family="F28",
+        title="可达性：无路网 typed 阻断（不得『15 分钟可达』结论）",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "service_accessibility",
+                          "role_refs": (
+                              '{"subject": "{{ref:schools}}", '
+                              '"boundary": "{{ref:districts}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"},
+                      allow_error=True),
+            ],
+        )],
+        expectations=[
+            _exp("f28-02-plan-honest", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="blocked",
+                 note="run 执行后工作流整体 blocked（isochrone 无路网）"),
+            _exp("f28-02-blocked-code", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.step_reasons.isochrone",
+                 value="AWF_NO_NETWORK_FOR_ACCESSIBILITY"),
+            _exp("f28-02-run-drove-state", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.run_log_events", op="contains",
+                 value="workflow_start",
+                 note="run 侧证据：状态机被真实驱动（非 plan 裁决冒充）"),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "accessibility", "negative",
+              "goal-02"],
+    )
+
+
+@register
+def f28_03_accessibility_real_network() -> ScenarioContract:
+    """可达性正例：真路网 → 等时圈 → 覆盖区（人口缺 → skipped）。"""
+    q = "沿路网算小学 15 分钟步行可达范围和各区覆盖"
+    return ScenarioContract(
+        id="f28-03-accessibility-network", family="F28",
+        title="可达性：真路网等时圈 + 覆盖区（覆盖人口 typed skipped）",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+            DatasetSpec(name="roads", dataset_kind="road_network"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("store3", StepKind.STORE_DATA,
+                      arguments={"name": "roads",
+                                 "dataset_kind": "road_network"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "service_accessibility",
+                          "role_refs": (
+                              '{"subject": "{{ref:schools}}", '
+                              '"boundary": "{{ref:districts}}", '
+                              '"network": "{{ref:roads}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"}),
+            ],
+        )],
+        expectations=[
+            _exp("f28-03-wf-status", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="satisfied"),
+            _exp("f28-03-isochrone", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.isochrone", value="satisfied",
+                 note="真 Dijkstra 路网等时圈（速度表/STRtree 投影）"),
+            _exp("f28-03-coverage", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.coverage_zones",
+                 value="satisfied"),
+            _exp("f28-03-pop-skipped", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.coverage_population",
+                 value="skipped",
+                 note="无人口点数据 → 覆盖人口 typed skipped 不伪装"),
+            _exp("f28-03-layer-ref", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.layers.isochrone", op="exists",
+                 note="等时圈产物 ref:geojson-* 可被 map_product 消费"),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "accessibility", "network", "goal-02"],
+    )
+
+
+@register
+def f28_04_temporal_misalignment_rejected() -> ScenarioContract:
+    """时态负例：双期年份相同 → typed 拒绝差分（不静默比较）。"""
+    q = "对比这两期建成区变化"
+    return ScenarioContract(
+        id="f28-04-temporal-mismatch", family="F28",
+        title="多期变化：年份未对齐 typed 拒绝",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="phase_a", dataset_kind="district_polygons"),
+            DatasetSpec(name="phase_b", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "phase_a",
+                                 "dataset_kind": "district_polygons"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "phase_b",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "temporal_change",
+                          "role_refs": (
+                              '{"baseline": {"ref": "{{ref:phase_a}}", '
+                              '"qualifier": {"year": 2023}}, '
+                              '"target_time": {"ref": "{{ref:phase_b}}", '
+                              '"qualifier": {"year": 2023}}}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"},
+                      allow_error=True),
+            ],
+        )],
+        expectations=[
+            _exp("f28-04-blocked", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="blocked"),
+            _exp("f28-04-code", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.step_reasons.change_diff",
+                 value="AWF_TEMPORAL_MISMATCH",
+                 note="同年份双期 → 拒绝静默差分"),
+            _exp("f28-04-run-drove-state", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.run_log_events", op="contains",
+                 value="workflow_start"),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "temporal", "negative", "goal-02"],
+    )
+
+
+@register
+def f28_05_recompute_selective() -> ScenarioContract:
+    """选择性重算：换数据 → 受影响步骤重跑、产物 ref 更新。"""
+    q = "先按区统计小学，再换新数据重算"
+    return ScenarioContract(
+        id="f28-05-recompute", family="F28",
+        title="局部重算：输入变更 → 受影响子图重跑",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points"),
+            DatasetSpec(name="schools_v2", dataset_kind="school_points_dense"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "admin_facility_distribution",
+                          "role_refs": (
+                              '{"subject": "{{ref:schools}}", '
+                              '"boundary": "{{ref:districts}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"}),
+            ],
+        ),
+            TurnSpec(turn_id="t2", message="换新数据重算", steps=[
+                _step("intent2", StepKind.INTENT),
+                _step("store3", StepKind.STORE_DATA,
+                      arguments={"name": "schools_v2",
+                                 "dataset_kind": "school_points_dense"}),
+                _step("recompute", StepKind.RAW,
+                      tool="webgis_analysis_workflow_recompute",
+                      arguments={
+                          "workflow_id": "{{step:plan:workflow_id}}",
+                          "role_refs": '{"subject": "{{ref:schools_v2}}"}'}),
+            ]),
+        ],
+        expectations=[
+            _exp("f28-05-final-status", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="satisfied"),
+            _exp("f28-05-count", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.zones_count", value="satisfied"),
+            _exp("f28-05-layer", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.layers.zones_count", op="exists",
+                 note="重算后产物 ref 存在（新数据 → 新 ref）"),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "recompute", "multiturn", "goal-02"],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# FD 设计候选与 user-wins 表达选择（/goal cartography-design）
+# ══════════════════════════════════════════════════════════════════════
+
+@register
+def fd1_design_candidates_delivered() -> ScenarioContract:
+    """正例：点分布产品 → 表达模型层候选随产品交付（≥2 候选、点族在场）。"""
+    q = "成都市小学分布情况"
+    return ScenarioContract(
+        id="fd1-design-candidates-delivered", family="FD",
+        title="设计候选：分布产品交付 2–4 个可比较表达方案",
+        user_goal=q,
+        datasets=[DatasetSpec(name="schools", dataset_kind="school_points_dense")],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points_dense"}),
+                _step("product", StepKind.PRODUCT,
+                      arguments={"primary_ref": "{{ref:schools}}",
+                                 "title": "成都市小学分布（模拟数据）"}),
+            ],
+        )],
+        expectations=[
+            _exp("fd1-count", Face.METHOD, "design_candidates",
+                 "design.product.count", op="ge", value=2,
+                 note="表达模型层候选必须随产品结果交付（2–4）"),
+            _exp("fd1-point-family", Face.METHOD, "design_family",
+                 "design.product.families", op="contains", value="point",
+                 note="点分布任务必须有点族候选（表达多样性）"),
+            _exp("fd1-no-block", Face.METHOD, "design_blocked",
+                 "design.product.blocked", value=[],
+                 note="40 点足额 → 无 typed blocked 候选"),
+            _exp("fd1-mapspec", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=1),
+            *_pending_honest_exps("fd1"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["design", "candidates"],
+    )
+
+
+@register
+def fd2_denominator_rate_candidates() -> ScenarioContract:
+    """正例：分母在场（district_polygons.population）→ 率语义候选进池。"""
+    q = "成都市各区小学密度统计"
+    return ScenarioContract(
+        id="fd2-denominator-rate-candidates", family="FD",
+        title="分母门控对：population 字段在场 → normalized 候选可计算",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points_dense"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points_dense"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("agg", StepKind.EXECUTE, tool="spatial_aggregate",
+                      arguments={"points": "{{ref:schools}}",
+                                 "polygons": "{{ref:districts}}"}),
+                _step("product", StepKind.PRODUCT,
+                      arguments={"primary_ref": "{{ref:schools}}",
+                                 "overlay_refs": ["{{ref:districts}}"],
+                                 "title": "各区小学密度（模拟数据）"}),
+            ],
+        )],
+        expectations=[
+            _exp("fd2-normalized-in-pool", Face.METHOD, "design_rate",
+                 "design.product.models", op="contains",
+                 value="normalized_choropleth",
+                 note="overlay 行政区（含 population 分母）在场 → 归一化"
+                      "表达可行且分母满足（跨源分母投影）"),
+            _exp("fd2-no-blocked-rate", Face.METHOD, "design_blocked",
+                 "design.product.blocked", value=[],
+                 note="分母在场 → normalized 非 blocked"),
+            _exp("fd2-mapspec", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=1),
+            *_pending_honest_exps("fd2"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["design", "denominator", "rate"],
+    )
+
+
+@register
+def fd3_design_select_pin_honored() -> ScenarioContract:
+    """多轮：候选选择 → user-wins pin 落档 → 下一轮产品 honored。"""
+    q = "成都市小学分布情况"
+    return ScenarioContract(
+        id="fd3-design-select-pin-honored", family="FD",
+        title="user-wins：point_cluster 选定固化 → 下轮候选面 honored",
+        user_goal=q,
+        datasets=[DatasetSpec(name="schools", dataset_kind="school_points_dense")],
+        turns=[
+            TurnSpec(
+                turn_id="t1", message=q,
+                steps=[
+                    _step("intent", StepKind.INTENT),
+                    _step("store", StepKind.STORE_DATA,
+                          arguments={"name": "schools",
+                                     "dataset_kind": "school_points_dense"}),
+                    _step("product", StepKind.PRODUCT,
+                          arguments={"primary_ref": "{{ref:schools}}",
+                                     "title": "成都市小学分布（模拟数据）"}),
+                    _step("select", StepKind.RAW,
+                          tool="webgis_map_design_select",
+                          arguments={"query": q,
+                                     "map_model_id": "point_cluster",
+                                     "reason": "用户要聚合表达"}),
+                ],
+            ),
+            TurnSpec(
+                turn_id="t2", message="重新出图，用我选的聚合方案",
+                steps=[
+                    _step("product2", StepKind.PRODUCT,
+                          arguments={"primary_ref": "{{ref:schools}}",
+                                     "title": "成都市小学分布·聚合（模拟数据）"}),
+                ],
+            ),
+        ],
+        expectations=[
+            _exp("fd3-select-ok", Face.REQUIREMENT, "design_select",
+                 "design.select.pin_success", value=True,
+                 note="pin 写入 + 读回校验成功"),
+            _exp("fd3-pinned-model", Face.REQUIREMENT, "design_pin",
+                 "design.select.pinned_model", value="point_cluster"),
+            _exp("fd3-requirement-pin", Face.REQUIREMENT,
+                 "requirement_pin", "requirement.representation_pin",
+                 value="point_cluster",
+                 note="RequirementDocument 权威面承载 user-wins 表达"),
+            _exp("fd3-next-product-honors", Face.METHOD, "pin_honored",
+                 "design.product2.honored", op="contains",
+                 value="point_cluster",
+                 note="下一轮产品的候选面把 pin 作为用户显式要求"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["design", "user-wins", "multiturn"],
+    )

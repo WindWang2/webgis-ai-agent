@@ -44,6 +44,10 @@ _PRESERVED_META_KEYS = (
     # Kriging slice：不确定面（克里金标准差）的独立 ref。工具 summary 声称
     # 已输出不确定面 —— 没有这个键 LLM 永远拿不到 ref，声明就是假的。
     "uncertainty_ref",
+    # carto-design M2：设计候选紧凑投影（webgis_map_product 的
+    # design_digest；全量 design_candidates 走 details/raw 面）。Agent
+    # 解释「为何选/为何弃」的通道——summary 分支此前整包丢弃。
+    "design_digest",
 )
 
 

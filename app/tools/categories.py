@@ -38,6 +38,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.data_discovery": "inspection",           # 目录/画像/lineage 只读发现
     "app.tools.data_fabric_tools": "data_access",
     "app.tools.ingest_tools": "data_access",            # 入库（detect→profile→register）
+    "app.tools.data_preparation_tools": "data_access",  # 数据准备（inspect→propose→prepare→bind）
     "app.tools.raster_tools_cog": "transformation",     # COG 转换
     "app.tools.explorer_tools": "data_access",
     "app.tools.geocoding": "data_access",
@@ -60,6 +61,9 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.scene_orchestration_tools": "inspection",
     "app.tools.geocompute_tools": "analysis",           # 执行平面；validate/run 查询名字覆盖
     "app.tools.layer_manager": "map_mutation",
+    # 分析流程编排（goal-02）：plan/recompute/run/status 四工具 —— 编排层
+    # 归 analysis（消费既有算子，不自建算法面）。
+    "app.tools.analysis_workflow_tools": "analysis",
     "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
     "app.tools.local_admin": "data_access",
     "app.tools.local_osm": "data_access",

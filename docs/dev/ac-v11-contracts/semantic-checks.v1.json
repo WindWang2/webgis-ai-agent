@@ -65,6 +65,7 @@
   "uppercase": [
    "BBOX_VALIDITY",
    "CATEGORICAL_DOMAIN_CONSISTENCY",
+   "CHART_MAP_FIELD_COHERENCE",
    "CLASSIFICATION_CARDINALITY",
    "CLASSIFICATION_DOMAIN_COVERAGE",
    "CLASSIFICATION_INTEGRITY",
@@ -73,6 +74,7 @@
    "CONTOUR_LEVELS_VALID",
    "CRS_BBOX_COMPATIBILITY",
    "CRS_EVIDENCE",
+   "DENSITY_SEMANTICS_HONESTY",
    "DIVERGENT_DOMAIN",
    "DUPLICATE_LEGEND_BINDING",
    "EMPTY_DATA",
@@ -100,6 +102,7 @@
    "STYLE_EXPRESSION_SUPPORT",
    "THEMATIC_FIELD",
    "THEMATIC_LEGEND",
+   "VIEWPORT_COVERS_RESULTS",
    "VISUAL_OVERLAP"
   ]
  },
@@ -169,7 +172,33 @@
    "resolution": "plan",
    "target_wave": "W1",
    "when": "provenance 不完整"
+  },
+  {
+   "code": "CHART_MAP_FIELD_COHERENCE",
+   "plan": "chart_panel/table_panel 携带字段级绑定（chartRef 派生 field 语义）后精确对账；当前词法族对账为 M4 落地面",
+   "resolution": "plan",
+   "target_wave": "W8",
+   "when": "图或地图单侧无度量语义词法证据"
+  },
+  {
+   "code": "VIEWPORT_COVERS_RESULTS",
+   "plan": "渲染观察（render-observation）下发真实视口像素范围后精确判定；当前为 view center/zoom 尺度推导（2× 余量）",
+   "resolution": "plan",
+   "target_wave": "W8",
+   "when": "view center/zoom 缺席或可见层无 bbox 证据"
+  },
+  {
+   "code": "DENSITY_SEMANTICS_HONESTY",
+   "plan": "data_binding 增补 count/rate 语义类型（v1.5 词表扩展）后字段级判定；当前为图面词法 + 字段名证据",
+   "resolution": "plan",
+   "target_wave": "W8",
+   "when": "密度声称在场但数据字段口径证据不足"
   }
  ],
- "version": 2
+ "version": 3,
+ "version_history": {
+  "1": "初始冻结（ADR-0160）：38 大写 + 7 点分 = 45 码",
+  "2": "+SCENE_TERRAIN_SOURCE_REF/_TYPE（ADR-0199 blocking 集扩编；codes 面未变）",
+  "3": "v2 + carto-design M4 三码：CHART_MAP_FIELD_COHERENCE / VIEWPORT_COVERS_RESULTS / DENSITY_SEMANTICS_HONESTY（41 大写 + 7 点分 = 48 码）"
+ }
 }
