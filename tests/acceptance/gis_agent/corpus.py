@@ -2731,3 +2731,152 @@ def f28_05_recompute_selective() -> ScenarioContract:
         not_evaluated=_F28_NOT_EVALUATED,
         tags=["analysis_workflow", "recompute", "multiturn", "goal-02"],
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# FD 设计候选与 user-wins 表达选择（/goal cartography-design）
+# ══════════════════════════════════════════════════════════════════════
+
+@register
+def fd1_design_candidates_delivered() -> ScenarioContract:
+    """正例：点分布产品 → 表达模型层候选随产品交付（≥2 候选、点族在场）。"""
+    q = "成都市小学分布情况"
+    return ScenarioContract(
+        id="fd1-design-candidates-delivered", family="FD",
+        title="设计候选：分布产品交付 2–4 个可比较表达方案",
+        user_goal=q,
+        datasets=[DatasetSpec(name="schools", dataset_kind="school_points_dense")],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points_dense"}),
+                _step("product", StepKind.PRODUCT,
+                      arguments={"primary_ref": "{{ref:schools}}",
+                                 "title": "成都市小学分布（模拟数据）"}),
+            ],
+        )],
+        expectations=[
+            _exp("fd1-count", Face.METHOD, "design_candidates",
+                 "design.product.count", op="ge", value=2,
+                 note="表达模型层候选必须随产品结果交付（2–4）"),
+            _exp("fd1-point-family", Face.METHOD, "design_family",
+                 "design.product.families", op="contains", value="point",
+                 note="点分布任务必须有点族候选（表达多样性）"),
+            _exp("fd1-no-block", Face.METHOD, "design_blocked",
+                 "design.product.blocked", value=[],
+                 note="40 点足额 → 无 typed blocked 候选"),
+            _exp("fd1-mapspec", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=1),
+            *_pending_honest_exps("fd1"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["design", "candidates"],
+    )
+
+
+@register
+def fd2_denominator_rate_candidates() -> ScenarioContract:
+    """正例：分母在场（district_polygons.population）→ 率语义候选进池。"""
+    q = "成都市各区小学密度统计"
+    return ScenarioContract(
+        id="fd2-denominator-rate-candidates", family="FD",
+        title="分母门控对：population 字段在场 → normalized 候选可计算",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points_dense"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points_dense"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("agg", StepKind.EXECUTE, tool="spatial_aggregate",
+                      arguments={"points": "{{ref:schools}}",
+                                 "polygons": "{{ref:districts}}"}),
+                _step("product", StepKind.PRODUCT,
+                      arguments={"primary_ref": "{{ref:schools}}",
+                                 "overlay_refs": ["{{ref:districts}}"],
+                                 "title": "各区小学密度（模拟数据）"}),
+            ],
+        )],
+        expectations=[
+            _exp("fd2-normalized-in-pool", Face.METHOD, "design_rate",
+                 "design.product.models", op="contains",
+                 value="normalized_choropleth",
+                 note="overlay 行政区（含 population 分母）在场 → 归一化"
+                      "表达可行且分母满足（跨源分母投影）"),
+            _exp("fd2-no-blocked-rate", Face.METHOD, "design_blocked",
+                 "design.product.blocked", value=[],
+                 note="分母在场 → normalized 非 blocked"),
+            _exp("fd2-mapspec", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=1),
+            *_pending_honest_exps("fd2"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["design", "denominator", "rate"],
+    )
+
+
+@register
+def fd3_design_select_pin_honored() -> ScenarioContract:
+    """多轮：候选选择 → user-wins pin 落档 → 下一轮产品 honored。"""
+    q = "成都市小学分布情况"
+    return ScenarioContract(
+        id="fd3-design-select-pin-honored", family="FD",
+        title="user-wins：point_cluster 选定固化 → 下轮候选面 honored",
+        user_goal=q,
+        datasets=[DatasetSpec(name="schools", dataset_kind="school_points_dense")],
+        turns=[
+            TurnSpec(
+                turn_id="t1", message=q,
+                steps=[
+                    _step("intent", StepKind.INTENT),
+                    _step("store", StepKind.STORE_DATA,
+                          arguments={"name": "schools",
+                                     "dataset_kind": "school_points_dense"}),
+                    _step("product", StepKind.PRODUCT,
+                          arguments={"primary_ref": "{{ref:schools}}",
+                                     "title": "成都市小学分布（模拟数据）"}),
+                    _step("select", StepKind.RAW,
+                          tool="webgis_map_design_select",
+                          arguments={"query": q,
+                                     "map_model_id": "point_cluster",
+                                     "reason": "用户要聚合表达"}),
+                ],
+            ),
+            TurnSpec(
+                turn_id="t2", message="重新出图，用我选的聚合方案",
+                steps=[
+                    _step("product2", StepKind.PRODUCT,
+                          arguments={"primary_ref": "{{ref:schools}}",
+                                     "title": "成都市小学分布·聚合（模拟数据）"}),
+                ],
+            ),
+        ],
+        expectations=[
+            _exp("fd3-select-ok", Face.REQUIREMENT, "design_select",
+                 "design.select.pin_success", value=True,
+                 note="pin 写入 + 读回校验成功"),
+            _exp("fd3-pinned-model", Face.REQUIREMENT, "design_pin",
+                 "design.select.pinned_model", value="point_cluster"),
+            _exp("fd3-requirement-pin", Face.REQUIREMENT,
+                 "requirement_pin", "requirement.representation_pin",
+                 value="point_cluster",
+                 note="RequirementDocument 权威面承载 user-wins 表达"),
+            _exp("fd3-next-product-honors", Face.METHOD, "pin_honored",
+                 "design.product2.honored", op="contains",
+                 value="point_cluster",
+                 note="下一轮产品的候选面把 pin 作为用户显式要求"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["design", "user-wins", "multiturn"],
+    )

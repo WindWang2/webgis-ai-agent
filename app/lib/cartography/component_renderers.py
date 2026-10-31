@@ -185,6 +185,13 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
             "绘制排名卡，weightSource 显式入卡"
         ),
     ),
+    "design_candidates": ComponentRendererSupport(
+        component_type="design_candidates", publication=False,
+        renderers=["interactive"],
+        # 只读交互面板（/goal carto-design）：交互渲染器在前端
+        # design-candidates.tsx；导出面不带（候选对比是会话期决策面，
+        # 不是出版图面内容）。
+    ),
     # ── ac-05（ADR-0154）：label_layer 的真值是「经地图层渲染」────────
     # 标注不进 map-components chrome 注册表、也不进 exporter chrome：
     # MapSpec layer.label 的 symbol 子层由 runtime label-layout.ts（live）、

@@ -367,6 +367,17 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
         name="Compact Decision Panel", variant="compact",
         default_style={"fontSize": "11px"}, priority=20,
     ),
+    # ── carto-design（/goal 04）：设计候选面板（只读披露，接受动作经
+    # webgis_map_design_select 统一 action）──────────────────────────
+    ComponentTemplate(
+        id="design-candidates/default", component_type="design_candidates", category="disclosure.design_candidates",
+        name="Default Design Candidates", variant="default", priority=10,
+    ),
+    ComponentTemplate(
+        id="design-candidates/compact", component_type="design_candidates", category="disclosure.design_candidates",
+        name="Compact Design Candidates", variant="compact",
+        default_style={"fontSize": "11px"}, priority=20,
+    ),
     # ── V4：原前瞻变体转正（bivariate/uncertainty/hierarchy 渲染链落地）──
     ComponentTemplate(
         id="legend/bivariate", component_type="legend", category="legend.bivariate",

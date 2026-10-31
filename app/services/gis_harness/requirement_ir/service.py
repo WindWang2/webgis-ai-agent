@@ -454,6 +454,11 @@ async def _apply_user_patches_unlocked(
             errors.append(getattr(exc, "code", "patch_rejected"))
             if getattr(exc, "code", "") == "patch_stale_revision":
                 break
+    if applied == 0 and not errors:
+        # 幂等重放：全部 patch 命中已知 op_id（journal 折叠/重复提交），
+        # 文档零变更——不写 store（同 revision 重写必被单调 seq 栅栏拒绝，
+        # 此前把这种良性重放误报为 requirement_persist_fenced）。
+        return {"applied": 0, "errors": [], "summary": summarize(doc)}
     doc = record_ambiguities(doc, plan_clarifications(doc), doc.updated_turn)
     state, doc = _fold_if_needed(state, doc)
     state.document = doc.model_dump()
