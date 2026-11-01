@@ -80,6 +80,13 @@ _CRS_MARKERS = (
 _TIMEOUT_MARKERS = (
     "timeout", "timed out", "connection", "network", "socket",
     "refused", "reset", "超时", "网络", "连接",
+    # GOAL 05（ADR-0279）：上游瞬态不可用并入 timeout 词汇（类文档语义
+    # "超时/瞬态网络/远端不可达"）。此前 5xx 落 unknown（预算 1）、429
+    # 经 planning 委托折成 budget_exhausted（预算 0，首错即 abort）——
+    # 与瞬态可退避语义相悖；E2E 门（test_e2e_recovery_gates）钉死。
+    "429", "rate limit", "ratelimit", "too many requests", "限流", "请求过于频繁",
+    "500", "502", "503", "504", "bad gateway", "service unavailable",
+    "internal server error", "server error", "服务不可用", "上游错误",
 )
 _STALE_REF_MARKERS = (
     "stale", "expired", "已过期", "已失效", "失效", "ref 不存在",

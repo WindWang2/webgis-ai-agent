@@ -45,6 +45,10 @@ _CRS_AMBIGUOUS_MARKERS = (
 _OUTPUT_EXPIRED_MARKERS = (
     "output expired", "result expired", "产物已过期", "输出已过期",
 )
+_DATA_INVALID_MARKERS = (
+    "data_error", "missing field", "missing required", "缺字段", "字段缺失",
+    "数据缺失", "invalid data", "数据非法", "schema validation",
+)
 _CROSS_SESSION_MARKERS = (
     "cross-session", "belongs to another session", "另一会话", "跨会话",
 )
@@ -158,6 +162,11 @@ def diagnose_tool_failure(
     # 输出/产物过期（运行产物 TTL 到期）
     if _has_any(_OUTPUT_EXPIRED_MARKERS, text):
         return build(GISRecoveryReason.OUTPUT_EXPIRED)
+
+    # 数据缺失/非法信号（场景 A：缺字段 → typed 缺口问用户，而非泛化
+    # unknown 首错即耗尽预算）
+    if _has_any(_DATA_INVALID_MARKERS, text):
+        return build(GISRecoveryReason.DATA_INVALID)
 
     # 粗类默认映射（不发明新语义）
     default_by_class = {

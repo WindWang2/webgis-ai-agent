@@ -156,8 +156,9 @@ def decide_recovery(
 
     hints = [h for h in diagnostic.hints if h in _POLICY_ACTIONS]
 
-    # 0) 取消立即让路 —— 不产生任何补偿副作用
+    # 0) 取消立即让路 —— 不产生任何补偿副作用（取消即任务终态）
     if cancelled:
+        dec["terminal"] = True
         _deny("retry", "cancelled", dec)
         return _finalize(dec)
 
@@ -168,9 +169,12 @@ def decide_recovery(
         _deny("retry", "terminal_disposition", dec)
         return _finalize(dec)
 
-    # 2) 预算耗尽（durable 账本已判 retry_allowed=False）
+    # 2) 预算耗尽（durable 账本已判 retry_allowed=False）—— 只终结
+    # retryable 处置（那是要消耗预算的路径）；needs_user_* / unsafe 的
+    # 出路不是重试，预算无关，照常给出用户路径。
     budget = diagnostic.retry
-    if budget is not None and not budget.retry_allowed:
+    if (diagnostic.disposition is RecoveryDisposition.RETRYABLE
+            and budget is not None and not budget.retry_allowed):
         dec["terminal"] = True
         dec["allowed_actions"] = ["abort_with_disclosure"]
         _deny("retry", "budget_exhausted", dec)
@@ -225,7 +229,9 @@ def decide_recovery(
     dec["allowed_actions"] = [
         a for a in hints if a in _AUTO_SAFE_REPAIRS][:4]
     if "retry" in hints:
-        if profile.retry_safe:
+        if budget is not None and not budget.retry_allowed:
+            _deny("retry", "budget_exhausted", dec)
+        elif profile.retry_safe:
             dec["allowed_actions"].append("retry")
         else:
             _deny("retry", "side_effect_not_retry_safe", dec)

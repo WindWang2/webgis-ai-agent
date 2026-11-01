@@ -127,8 +127,10 @@ def resolve_retry_directive(
                 fail_reasons.append(
                     f"{ref}: owner session unprovable — fail-closed")
             elif owner != current_session_id:
+                # 不回显他会话 ID（跨租户零泄漏：客户端可见面只说
+                # "属于另一会话"，归属细节留服务端日志）
                 fail_reasons.append(
-                    f"{ref}: belongs to session {str(owner)[:16]}… — "
+                    f"{ref}: belongs to another session — "
                     "cross-session refs are not addressable")
         if fail_reasons:
             return RetryDirective(
