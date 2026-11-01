@@ -2468,6 +2468,21 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             )
             import json as _json
             fc = _json.loads(out_gdf.to_json())
+            # GOAL 01（M3 单位科学）：area 分母的库层 rate 是 per m²
+            # （aggregate_with_denominator rate_unit="per_m2"）；显式口径
+            # per_km² 时做确定性换算（×1e6，None/零分母语义原样保留），
+            # 换算链入证据 —— 口径串（个/km²）与数值量级必须一致。
+            if denominator_kind == "area" and norm_evidence.get("rate_unit") == "per_m2":
+                for feat in fc.get("features", []):
+                    props = feat.get("properties") or {}
+                    rate = props.get("rate")
+                    if rate is not None:
+                        props["rate"] = float(rate) * 1e6
+                norm_evidence = dict(norm_evidence)
+                norm_evidence["rate_unit"] = "per_km2"
+                norm_evidence["rate_unit_conversion"] = (
+                    "per_m²→per_km²(factor=1e6) —— 库层 m² 分母率值升格为"
+                    "每平方公里口径")
             descriptor = get_algorithm_registry().get("spatial.aggregate.rates")
             evidence = build_evidence(
                 descriptor, tool="spatial_aggregate",

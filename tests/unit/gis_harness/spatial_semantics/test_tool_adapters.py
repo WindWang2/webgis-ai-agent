@@ -11,7 +11,6 @@
 """
 from __future__ import annotations
 
-import math
 
 import pytest
 from pyproj import Transformer
@@ -175,8 +174,14 @@ async def test_spatial_aggregate_area_density_composes_per_km2(registry) -> None
     # 分母正确性：锦江区 0.02°×0.02° ≈ 4.27 km²（测地面积对照 ±2%）
     zone0 = res["data"]["features"][0]["properties"]
     rate = zone0.get("rate")
+    # 换算链在案：库层 per_m² → 图例口径 per_km²（×1e6）
+    conv = res["scientific_evidence"]["normalization"].get(
+        "rate_unit_conversion", "")
+    assert "per_m²→per_km²" in conv
+    assert res["scientific_evidence"]["normalization"]["rate_unit"] == "per_km2"
     if rate is not None:
-        assert 0 < rate < 10  # 4 个点 / 4.27 km² ≈ 0.94 个/km²
+        # 数值量级与口径一致：8 点两区、每区 ~4.27 km² → ~1-2 个/km²
+        assert 0.5 < rate < 3, f"rate={rate} 与 个/km² 口径量级不符"
 
 
 @pytest.mark.asyncio
@@ -298,15 +303,6 @@ def test_convex_hull_area_unit_factor_for_foot_crs() -> None:
     """英尺系投影输入：area_km2 按 axis factor² 换算（不再错 10.76×）。"""
     pytest.importorskip("geopandas")
     # EPSG:2270 = Pennsylvania North (ftUS) —— 轴单位 US survey foot
-    fc = {
-        "type": "FeatureCollection",
-        "crs": "EPSG:2270",
-        "features": [
-            {"type": "Feature", "geometry": {
-                "type": "Point", "coordinates": [2000000.0, 500000.0]}}
-            for _ in range(4)
-        ],
-    }
     from app.lib.geo_analysis.geometry_ops import _crs_unit_factor
     from pyproj import CRS
 

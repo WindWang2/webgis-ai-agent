@@ -14,7 +14,6 @@ import time
 import pytest
 
 from app.services.gis_harness.spatial_semantics import (
-    DatasetSpatialEvidence,
     SpatialOperationSpec,
     evidence_from_feature_collection,
     preflight_for_feature_collection,

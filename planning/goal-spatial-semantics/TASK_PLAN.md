@@ -52,3 +52,7 @@
 ## 资源纪律
 - pytest -q 定向；ruff check 定向；python -m compileall -q；并发 -j2
 - 无网无密钥 fixture；两次重复运行验证
+
+## 完成状态（M8 收敛）
+- M0-M8 全部完成；测试 74（契约/矩阵/工具/链路/fixture+性能）+ 回归（38/222/19/31/2803）全绿
+- master 既有红灯隔离：test_component_composition×2 / semantic_v2 registry / workflow_guards×3 / 前端 typecheck×2（#1875）—— 干净基线复现，非本 PR 引入
