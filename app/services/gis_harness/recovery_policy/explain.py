@@ -40,7 +40,9 @@ def classify_situation(
         return "computed_not_displayed"
     if science == "not_evaluated" and rendering == "pass":
         return "displayed_unverified"
-    if science == "pass" and rendering == "pass":
+    # R2 复审 P1-1：science 为 None（需求族不存在，N/A slot 已被过滤）
+    # 且渲染 pass → clean —— 纯地图目标全绿不误报 "显示未验证"。
+    if science in (None, "pass") and rendering == "pass":
         return "clean"
     # 混合/未知（warning、单侧缺席组合）：按最弱面诚实降级
     if rendering == "fail":

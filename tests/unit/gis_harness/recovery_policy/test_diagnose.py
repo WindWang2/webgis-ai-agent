@@ -28,6 +28,43 @@ def _tool_failure(message: str = "", *, code=None, status=None,
 
 # ── HTTP 语义族：429 / 5xx / 权限 ─────────────────────────────────────────
 
+class TestProductionShapeNoFalsePositive:
+    """R2 复审 P2-1/P2-4：生产 TDS 形状（status="error"）下，数字子串
+    （坐标/计数）不得触发瞬态/权限判定。"""
+
+    @pytest.mark.parametrize("msg", [
+        "buffered 1500 features outside AOI",
+        "found 4291 candidate POIs in bbox",
+        "column value 502 out of range",
+    ])
+    def test_numeric_substrings_not_transient(self, msg):
+        d = diagnose.diagnose_tool_failure(
+            status="error", message=msg, tool_name="t",
+            harness_failure={"class": "unknown", "attempts": 0,
+                             "max_attempts": 1, "retry_allowed": True},
+            session_id="s")
+        assert d.reason is not GISRecoveryReason.UPSTREAM_SERVER_ERROR
+        assert d.reason is not GISRecoveryReason.RATE_LIMITED
+
+    def test_exported_403_records_not_permission(self):
+        d = diagnose.diagnose_tool_failure(
+            status="error", message="exported 403 records to staging",
+            tool_name="t",
+            harness_failure={"class": "unknown", "attempts": 0,
+                             "max_attempts": 1, "retry_allowed": True},
+            session_id="s")
+        assert d.reason is not GISRecoveryReason.PERMISSION_DENIED
+
+    def test_real_5xx_with_status_error_detected(self):
+        d = diagnose.diagnose_tool_failure(
+            status="error", message="HTTP 503 Service Temporarily "
+                                    "Unavailable from provider",
+            tool_name="t",
+            harness_failure={"class": "unknown", "attempts": 0,
+                             "max_attempts": 1, "retry_allowed": True},
+            session_id="s")
+        assert d.reason is GISRecoveryReason.UPSTREAM_SERVER_ERROR
+
 class TestHttpSemantics:
     @pytest.mark.parametrize("msg", [
         "upstream returned HTTP 429",

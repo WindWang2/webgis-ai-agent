@@ -211,8 +211,9 @@ def reconcile_goal_verification(
     report.slots.append(VerificationSlot(
         slot=SLOT_SCIENTIFIC_QUALITY, status=science_status,
         evidence_refs=science_refs, detail=science_detail,
-        # R1-D：纯地图目标（无科学需求族）不拖低 overall —— 与
-        # legend/export 同款 N/A 纪律；有科学需求或评审缺席才计数。
+        # R1-D：无科学需求族（纯地图目标）不拖低 overall —— 与
+        # legend/export 同款 N/A 纪律；有科学需求才计数（评审缺席的
+        # 封顶只在需求存在时有意义）。
         counts_toward_overall=bool(science_reqs)))
 
     # ── 4/5. layer_visibility 与 actual_rendering ────────────────────

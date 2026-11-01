@@ -34,26 +34,36 @@ _SERVER_ERROR_MARKERS = (
     "bad gateway", "service unavailable",
     "internal server error", "server error", "上游错误", "服务不可用",
 )
-#: HTTP 状态码用词边界 + 语境词双门（R2-1：裸数字子串会撞坐标/计数，
-#: 如 "buffered 1500 features outside AOI" 不得判为 5xx/429）。
-_HTTP_STATUS_WORD_RE: Any = None
 
 
-def _http_status_context(text: str) -> bool:
-    """数字状态码命中后，要求请求/错误语境词在场才认定。"""
-    import re as _re
+def _norm(value: Any) -> str:
+    return str(value or "").strip()
 
-    global _HTTP_STATUS_WORD_RE
-    if _HTTP_STATUS_WORD_RE is None:
-        _HTTP_STATUS_WORD_RE = _re.compile(
-            r"(?<![0-9])(?:429|500|502|503|504)(?![0-9])")
-    if not _HTTP_STATUS_WORD_RE.search(text or ""):
-        return False
-    return any(w in (text or "") for w in (
-        "http", "status", "error", "fail", "upstream", "provider",
-        "response", "returned", "code", "错误", "失败", "上游", "服务"))
+
+def _text_of(*parts: Any) -> str:
+    """把散落的信号源折叠成单一小写检测文本（确定性拼接序）。"""
+    return " ".join(_norm(p) for p in parts if _norm(p)).lower()
+
+
+def _has_any(markers: Sequence[str], text: str) -> bool:
+    t = (text or "").lower()
+    return any(m in t for m in markers)
+
+
+def _ctx_full(status, code, error_type, message) -> str:
+    """数字状态码的语境文本。
+
+    泛化 status（"error"/"failed" —— 生产 TDS 错误结果恒为此形状）不计入
+    语境（否则语境门恒真，"buffered 500 features" 误判瞬态；review 第二轮
+    P2-1）；携带信息量的 status（如 "HTTP 429"）保留。
+    """
+    s = _norm(status).lower()
+    informative = s if s not in ("", "error", "failed") else ""
+    return _text_of(informative, code, error_type, message)
+
+
 _PERMISSION_MARKERS = (
-    "403", "401", "forbidden", "unauthorized", "permission denied",
+    "forbidden", "unauthorized", "permission denied",
     "permission", "access denied", "权限", "授权失败", "未授权", "凭证无效",
 )
 _CRS_AMBIGUOUS_MARKERS = (
@@ -70,20 +80,6 @@ _DATA_INVALID_MARKERS = (
 _CROSS_SESSION_MARKERS = (
     "cross-session", "belongs to another session", "另一会话", "跨会话",
 )
-
-
-def _has_any(markers: Sequence[str], text: str) -> bool:
-    t = (text or "").lower()
-    return any(m in t for m in markers)
-
-
-def _norm(value: Any) -> str:
-    return str(value or "").strip()
-
-
-def _text_of(*parts: Any) -> str:
-    """把散落的信号源折叠成单一小写检测文本（确定性拼接序）。"""
-    return " ".join(_norm(p) for p in parts if _norm(p)).lower()
 
 
 def _build(
@@ -155,19 +151,28 @@ def diagnose_tool_failure(
     if _has_any(_CROSS_SESSION_MARKERS, text):
         return build(GISRecoveryReason.CROSS_SESSION_REF)
 
-    # 权限族：绝不盲目重试（needs_user_approval）
-    if _has_any(_PERMISSION_MARKERS, text):
+    # 权限族：绝不盲目重试（needs_user_approval）—— 数字码 401/403
+    # 同走双门（P2-4："exported 403 records" 不得判权限拒绝）。
+    from app.lib.gis.http_status import has_permission_code_signal
+
+    if _has_any(_PERMISSION_MARKERS, text) or has_permission_code_signal(
+            context_text=_ctx_full(status, code, error_type, message)):
         return build(GISRecoveryReason.PERMISSION_DENIED)
 
     # 限流 / 上游 5xx：瞬态但必须退避（retryable + backoff hint）——
     # 先于粗类 budget_exhausted（429 会被 planning 委托误折叠）。
-    # 数字状态码走 _http_status_context 双门（词边界 + 语境词）。
-    if _has_any(_RATE_LIMIT_MARKERS, text) or (
-            "429" in text and _http_status_context(text)):
+    # 数字状态码走共享双门（词边界 + 语境，语境不含 status 字段）。
+    from app.lib.gis.http_status import (
+        has_rate_limit_signal,
+        has_server_error_signal,
+    )
+
+    _ctx = _ctx_full(status, code, error_type, message)
+    if _has_any(_RATE_LIMIT_MARKERS, text) or has_rate_limit_signal(
+            context_text=_ctx):
         return build(GISRecoveryReason.RATE_LIMITED)
-    if _has_any(_SERVER_ERROR_MARKERS, text) or (
-            any(c in text for c in ("500", "502", "503", "504"))
-            and _http_status_context(text)):
+    if _has_any(_SERVER_ERROR_MARKERS, text) or has_server_error_signal(
+            context_text=_ctx):
         return build(GISRecoveryReason.UPSTREAM_SERVER_ERROR)
 
     # 真预算耗尽（未被上面细化的粗类裁决）

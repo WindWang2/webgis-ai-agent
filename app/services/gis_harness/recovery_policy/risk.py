@@ -62,15 +62,21 @@ def resolve_tool_risk(
     if isinstance(descriptor, Mapping):
         d = descriptor
     elif descriptor is not None:
-        # ToolDescriptor：side_effect_class 可能是枚举
-        raw_sec = getattr(descriptor, "side_effect_class", None)
+        # ToolDescriptor：真实字段名是 ``side_effect``（R2 复审 P2-2：
+        # 读 side_effect_class 曾使 383/383 工具全落 unclassified）；
+        # 兼容旧名/测试替身的 side_effect_class。
+        raw_sec = getattr(descriptor, "side_effect",
+                          getattr(descriptor, "side_effect_class", None))
         sec = str(getattr(raw_sec, "value", raw_sec) or
                   CONSERVATIVE_SIDE_EFFECT_DEFAULT)
-        tier = int(getattr(descriptor, "effective_security_tier",
-                           getattr(descriptor, "tier", 0)) or 0)
+        try:
+            tier = int(getattr(descriptor, "effective_security_tier",
+                               getattr(descriptor, "tier", 0)) or 0)
+        except (TypeError, ValueError):
+            tier = 0
         return ToolRiskProfile(name, sec, tier)
     if d is not None:
-        raw_sec = d.get("side_effect_class")
+        raw_sec = d.get("side_effect", d.get("side_effect_class"))
         sec = str(getattr(raw_sec, "value", raw_sec) or
                   CONSERVATIVE_SIDE_EFFECT_DEFAULT)
         try:

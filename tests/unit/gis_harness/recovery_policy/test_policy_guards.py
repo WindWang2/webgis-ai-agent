@@ -70,6 +70,26 @@ class TestRiskResolution:
         assert p.retry_safe is False
         assert p.tier == 0
 
+    def test_real_descriptor_side_effect_field(self):
+        """R2 复审 P2-2：真实 ToolDescriptor 字段名是 side_effect。"""
+        from app.services.gis_harness.recovery_policy.risk import (
+            ToolRiskProfile,
+            resolve_tool_risk,
+        )
+        from app.tools.descriptor import SideEffectClass, ToolDescriptor
+
+        desc = ToolDescriptor(
+            name="webgis_query_x", description="d",
+            side_effect=SideEffectClass.CACHEABLE_READ, tier=1)
+        p = resolve_tool_risk("webgis_query_x", descriptor=desc)
+        assert p.side_effect_class == "cacheable_read"
+        assert p.retry_safe is True
+        mut = ToolDescriptor(
+            name="webgis_edit_x", description="d",
+            side_effect=SideEffectClass.STATE_MUTATION, tier=1)
+        assert resolve_tool_risk(
+            "webgis_edit_x", descriptor=mut).retry_safe is False
+
     def test_tier3_is_destructive(self):
         p = resolve_tool_risk("webgis_x", descriptor=RISK_TIER3)
         assert p.destructive is True

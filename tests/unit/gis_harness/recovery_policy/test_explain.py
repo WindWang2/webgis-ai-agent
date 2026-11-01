@@ -114,6 +114,13 @@ class TestSituationClassification:
         assert classify_situation(
             science="pass", rendering="pass", export="pass") == "clean"
 
+    def test_na_science_clean(self):
+        """R2 复审 P1-1：N/A 科学槽（None）+ 渲染 pass → clean。"""
+        assert classify_situation(
+            science=None, rendering="pass", export=None) == "clean"
+        assert classify_situation(
+            science=None, rendering="pass", export="pass") == "clean"
+
     def test_priority_export_over_others(self):
         # 导出失败优先披露（用户显式要求的交付物未兑现）
         assert classify_situation(

@@ -88,25 +88,15 @@ _TIMEOUT_MARKERS = (
     "bad gateway", "service unavailable",
     "internal server error", "server error", "服务不可用", "上游错误",
 )
-#: HTTP 状态码词表单独走词边界 + 语境词双门（review R2-1：裸数字子串
-#: 撞坐标/计数，如 "buffered 1500 features" 不得判为瞬态）。
-_HTTP_STATUS_CODES = ("429", "500", "502", "503", "504")
-_HTTP_STATUS_WORD_RE: Any = None
+def _has_http_status_signal(context_text: str) -> bool:
+    """数字状态码词边界 + 语境双门（app/lib/gis/http_status 单一事实源）。
 
+    语境文本**不含 status 字段**（生产 status 恒 error/failed —— R2 复审
+    P2-1：含 status 会让语境门恒真，"buffered 500 features" 误判瞬态）。
+    """
+    from app.lib.gis.http_status import any_http_status_signal
 
-def _has_http_status_signal(text: str) -> bool:
-    """数字状态码命中且语境像请求失败（http/status/error/upstream…）。"""
-    global _HTTP_STATUS_WORD_RE
-    import re as _re
-
-    if _HTTP_STATUS_WORD_RE is None:
-        _HTTP_STATUS_WORD_RE = _re.compile(
-            r"(?<![0-9])(?:429|500|502|503|504)(?![0-9])")
-    if not _HTTP_STATUS_WORD_RE.search(text or ""):
-        return False
-    return any(w in (text or "") for w in (
-        "http", "status", "error", "fail", "upstream", "provider",
-        "response", "returned", "code", "错误", "失败", "上游", "服务"))
+    return any_http_status_signal(context_text=context_text)
 _STALE_REF_MARKERS = (
     "stale", "expired", "已过期", "已失效", "失效", "ref 不存在",
 )
@@ -175,11 +165,19 @@ def classify_harness_failure(
         return HarnessFailureClass.CANCELLED
     if _is_crs_exception(exception) or _has_any(_CRS_MARKERS, text_l):
         return HarnessFailureClass.CRS_ERROR
+    # 语境文本排除泛化 status（P2-1）："error"/"failed" 恒过语境门；
+    # 信息量 status（如 "HTTP 429"）保留。
+    _s_l = (status or "").strip().lower()
+    _s_informative = _s_l if _s_l not in ("", "error", "failed") else ""
+    _ctx_text_l = " ".join(
+        str(x).lower() for x in (_s_informative, code, error_type, message)
+        if x
+    )
     if (
         isinstance(exception, TimeoutError)
         or "timeout" in type_l
         or _has_any(_TIMEOUT_MARKERS, text_l)
-        or _has_http_status_signal(text_l)
+        or _has_http_status_signal(_ctx_text_l)
     ):
         return HarnessFailureClass.TIMEOUT
     if _has_any(_STALE_REF_MARKERS, text_l):

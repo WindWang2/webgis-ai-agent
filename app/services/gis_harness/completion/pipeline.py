@@ -1597,24 +1597,21 @@ def _product_verdict_token(stored: Dict[str, Any]) -> str:
 
 def _user_hidden_layers_from_spec(
     mapspec: Optional[Dict[str, Any]],
-    observation: Optional[Dict[str, Any]],
+    observation: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
-    """R1-E：user-wins 隐藏层的生产来源（纯函数）。
+    """R1-E：user-wins 隐藏层的生产来源（纯函数；spec 单一来源）。
 
     spec 层的 ``cartographic_intent.presentation_owner == "user"`` 且
-    layout 不可见（或观察确认不可见）→ 该层是用户主动隐藏 —— 对账层
-    按尊重处理（warning + 说明），不判 fail、不代用户显现。证据不可
-    证明（无 spec/无 owner 标记）→ 空列表（不授予豁免，fail-closed）。
+    layout visibility == "none" → 该层是用户主动隐藏 —— 对账层按尊重
+    处理（warning + 说明），不判 fail、不代用户显现。证据不可证明
+    （无 spec/无 owner 标记）→ 空列表（不授予豁免，fail-closed）。
+
+    R2 复审 P3-1：观察面层条目无 visible 键（那是 component 级），旧
+    观察臂为死代码已移除 —— agent 无法伪造该组合（变异层拒绝反转
+    用户显隐，见 gis_world_state.mutation）。
     """
     if not isinstance(mapspec, dict):
         return []
-    obs_layers: Dict[str, Dict[str, Any]] = {}
-    raw = (observation or {}).get("layers") \
-        if isinstance(observation, dict) else None
-    if isinstance(raw, list):
-        for e in raw:
-            if isinstance(e, dict) and e.get("id"):
-                obs_layers[str(e["id"])] = e
     hidden: List[str] = []
     for layer in (mapspec.get("layers") or []):
         if not isinstance(layer, dict):
@@ -1630,10 +1627,7 @@ def _user_hidden_layers_from_spec(
         layout = layer.get("layout")
         spec_hidden = isinstance(layout, dict) and str(
             layout.get("visibility") or "").lower() == "none"
-        obs_entry = obs_layers.get(lid)
-        obs_hidden = bool(obs_entry is not None
-                          and obs_entry.get("visible") is False)
-        if spec_hidden or obs_hidden:
+        if spec_hidden:
             hidden.append(lid)
     return hidden[:8]
 
