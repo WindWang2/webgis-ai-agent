@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-from shapely.geometry import shape
 
 from app.lib.cartography.multiscale.export_adjudication import (
     active_representation_window,
