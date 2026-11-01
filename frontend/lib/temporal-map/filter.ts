@@ -80,9 +80,9 @@ function renderIsoLike(dt: Date, formatHint: string): string {
     ).padStart(2, '0')}:${String(local.getUTCSeconds()).padStart(2, '0')}`;
   }
   if (frac) {
-    const micro = String(local.getUTCMilliseconds()).padEnd(3, '0');
-    const width = Math.min(frac.length, 3);
-    base += `.${(micro + '000').slice(0, Math.max(width, frac.length) ? frac.length : 0).slice(0, frac.length)}`;
+    // 毫秒左补零后按数据小数宽度截断（与后端 %06d 截断同语义）。
+    const micro = String(local.getUTCMilliseconds()).padStart(3, '0');
+    base += `.${(micro + '000').slice(0, frac.length)}`;
   }
   return offset === 'Z' ? `${base}Z` : base + offset;
 }

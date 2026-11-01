@@ -229,7 +229,7 @@ class TestCompare:
         # district 是字符串字段（无数值）→ 域探测为空 → classification None
         # + compare_degenerate_range 披露入契约。
         assert out["classification"] is None
-        assert out["status"] == "compared"
+        assert "退化" in out.get("disclosure", "")
         spec = await _committed_spec(sid)
         assert "compare_degenerate_range" in spec["temporal"].get("disclosures", [])
 

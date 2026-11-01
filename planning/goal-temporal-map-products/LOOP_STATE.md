@@ -10,3 +10,6 @@
 | 6 | M5/M6 | compare 固定分级构造性保证 + 导出同帧 + atlas time driver + SVG 时间注记 | 完成 | commit 4bb57cdef；55+31 tests |
 | 7 | M7/M8 | E2E×3 两遍一致 + where terms 语法修正（E2E 抓出真 bug）+ bind 层解析 | 完成 | commit 4955ddbeb；130 合并面 tests |
 | 8 | M9 | 账本终稿 → 独立 review → fix → re-review → PR | 进行中 | 本行 |
+| 9 | M9-R1 | 独立评审 R1（P0×2+P1×5+P2×10） | 清偿 | commit 101e7c08c/7f8978d7b |
+| 10 | M9-R2 | R2 复核 + 新发现 P1×3 清偿 | 清偿 | commit b6b605612 |
+| 11 | M9-R3 | R3 抽检全 verified + P3×3 清偿 → PR | 完成 | INDEPENDENT_REVIEW.md；PR 见最终消息 |
