@@ -177,7 +177,14 @@ def coverage_covjson_doc(
     x_values: Sequence[float] = COVERAGE_AXIS_X_VALUES,
     y_values: Sequence[float] = COVERAGE_AXIS_Y_VALUES,
 ) -> Dict[str, Any]:
-    vals = coverage_values(x_values, y_values)
+    """subset 响应 = **全网格的真子集**（真实服务行为：subset 取原像元）。
+
+    kept 轴值在全轴常量中的索引决定取哪些行列 —— truth 与
+    ``coverage_values()`` 的全网格逐点一致。"""
+    full = coverage_values()
+    x_idx = [COVERAGE_AXIS_X_VALUES.index(v) for v in x_values]
+    y_idx = [COVERAGE_AXIS_Y_VALUES.index(v) for v in y_values]
+    vals = [[full[r][c] for c in x_idx] for r in y_idx]
     flat = [v for row in vals for v in row]
     return {
         "type": "Coverage",

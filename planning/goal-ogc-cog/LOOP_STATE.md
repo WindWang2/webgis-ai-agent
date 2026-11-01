@@ -21,3 +21,8 @@ P0 完成（基线勘察+规划），进入 P1（M1 能力发现 + M7 fixture）
 - 结果：OGC Tiles 消费链闭环 —— adapter.fetch_tile（SSRF 同源模板/display 门/zoom 矩阵/单瓦片字节帽/401/403/429 typed）+ ogc_tiles_proxy（DfTileCache `ogc-tiles:` 前缀/内容寻址 ETag/single-flight）+ 会话鉴权路由（API-01 鉴权先于缓存）+ build_mapspec_source（vector tiles / data_fabric url 双形态，不新增 schema 版本）+ mapspec_source vector passthrough 最小扩展。
 - 测试：proxy/metadata 31 passed；前端 runtime 36 passed（含 2 新增：相对路径 vector 模板 + fabric url→addRasterTileSource）；mapspec_source 回归 57 passed。
 - 缺陷修复记录：①路由测试依赖覆盖错对象（get_current_user vs optional 变体）→ 匿名访问被租户门正确 404（安全门工作正常的证据）；②parse_mapspec 产物访问 .document 而非属性；③zoom 范围断言改为"瓦片请求零增量"（describe 元数据调用属预期）。
+
+### Round 3（2026-11-01）—— P3/M3 完成
+- 结果：coverage_read.py（三态资格门→轴协商（轴名服务声明/封闭经纬名表）→像元预算门（请求前按声明网格+subset 收缩比，不静默降采样）→bounded_get 字节帽→COVJSON/GeoTIFF 封闭解析→COG 落地）+ raster_materialization.py（ref:fabric-cog/ 工件纪律：原子 move/sha256/CAS DataObject/台账）+ artifact_registry.fabric_cog_path。
+- 真值对照：3×3 网格逐点断言（含 nodata 位、transform 半像元角点、north-up 翻转、subset 真子集语义）；ref 可被栅格统计消费（G01 numeric raster 实证）；9 测试绿 + artifact_registry 回归 12 passed。
+- 缺陷修复记录：①north-up yres 符号推导错（降序轴步长已为负，多余取负）——被逐点 transform 断言拦截；②fixture subset 真值语义错（按子网格尺寸重算 ≠ 真实服务的真子集行为）——改为全网格按索引选取。
