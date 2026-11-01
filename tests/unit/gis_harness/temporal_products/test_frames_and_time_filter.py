@@ -172,7 +172,7 @@ class TestTimeFilterCompiler:
         ast = compile_where_ast(frame, "year", "year_int", "year")
         assert ast == {
             "op": "and",
-            "args": [
+            "terms": [
                 {"op": "gte", "field": "year", "value": 2023},
                 {"op": "lt", "field": "year", "value": 2024},
             ],
@@ -181,16 +181,16 @@ class TestTimeFilterCompiler:
     def test_epoch_ms_where_ast(self):
         frame = {"start": "2023-01-01T00:00:00Z", "end": "2024-01-01T00:00:00Z"}
         ast = compile_where_ast(frame, "t", "epoch_ms", "year")
-        assert ast["args"][0]["value"] == 1672531200000
-        assert ast["args"][1]["value"] == 1704067200000
+        assert ast["terms"][0]["value"] == 1672531200000
+        assert ast["terms"][1]["value"] == 1704067200000
 
     def test_iso_string_lexicographic_boundary(self):
         frame = {"start": "2023-04-01T00:00:00Z", "end": "2023-07-01T00:00:00Z"}
         ast = compile_where_ast(frame, "ts", "iso_string", "month")
-        assert ast["args"][0]["value"] == "2023-04-01T00:00:00Z"
-        assert ast["args"][1]["value"] == "2023-07-01T00:00:00Z"
+        assert ast["terms"][0]["value"] == "2023-04-01T00:00:00Z"
+        assert ast["terms"][1]["value"] == "2023-07-01T00:00:00Z"
         # 字典序语义：数据 "2023-06-15T10:00:00Z" ∈ [lo, hi)。
-        assert ast["args"][0]["value"] <= "2023-06-15T10:00:00Z" < ast["args"][1]["value"]
+        assert ast["terms"][0]["value"] <= "2023-06-15T10:00:00Z" < ast["terms"][1]["value"]
 
     def test_date_string_month_boundary_zero_padded(self):
         frame = {"start": "2023-01-01T00:00:00Z", "end": "2023-04-01T00:00:00Z"}
@@ -206,8 +206,8 @@ class TestTimeFilterCompiler:
         mlf = compile_maplibre_filter(frame, "year", "year_int", "year")
         assert mlf == [
             "all",
-            [">=", ["get", "year"], ast["args"][0]["value"]],
-            ["<", ["get", "year"], ast["args"][1]["value"]],
+            [">=", ["get", "year"], ast["terms"][0]["value"]],
+            ["<", ["get", "year"], ast["terms"][1]["value"]],
         ]
 
     def test_fingerprint_stability_and_sensitivity(self):
@@ -225,7 +225,7 @@ class TestTimeFilterCompiler:
         assert u["start"] == "2023-01-01T00:00:00Z"
         assert u["end"] == "2027-01-01T00:00:00Z"
         ast = window_where_ast(u["start"], u["end"], "year", "year_int", "year")
-        assert ast["args"][0]["value"] == 2023 and ast["args"][1]["value"] == 2027
+        assert ast["terms"][0]["value"] == 2023 and ast["terms"][1]["value"] == 2027
 
     def test_equal_interval_breaks_degenerate(self):
         # 分母/域退化 → None（typed 披露路径，不发明 0 宽分级）。
@@ -238,5 +238,5 @@ class TestTimeFilterCompiler:
         # [2023-01-01, 2024-01-01)：2023-12-31 元素命中，2024-01-01 不命中。
         frame = {"start": "2023-01-01T00:00:00Z", "end": "2024-01-01T00:00:00Z"}
         ast = compile_where_ast(frame, "year", "year_int", "year")
-        assert ast["args"][0]["value"] <= 2023 < ast["args"][1]["value"]
-        assert not (ast["args"][0]["value"] <= 2024 < ast["args"][1]["value"])
+        assert ast["terms"][0]["value"] <= 2023 < ast["terms"][1]["value"]
+        assert not (ast["terms"][0]["value"] <= 2024 < ast["terms"][1]["value"])

@@ -67,8 +67,8 @@ describe('三面同源（地图/统计/指纹）', () => {
     expect(expr).toEqual(['all',
       ['>=', ['get', 'year'], 2023],
       ['<', ['get', 'year'], 2024]]);
-    expect((ast.args as { value: unknown }[])[0].value).toBe(2023);
-    expect((ast.args as { value: unknown }[])[1].value).toBe(2024);
+    expect((ast.terms as { value: unknown }[])[0].value).toBe(2023);
+    expect((ast.terms as { value: unknown }[])[1].value).toBe(2024);
   });
   it('fingerprint 随 (revision, frame) 变化', () => {
     const cfg = config();

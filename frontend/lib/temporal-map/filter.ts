@@ -63,7 +63,7 @@ export function temporalWhereAst(
   const hi = normalizeBoundaryValue(frame.end, config.time_representation, config.granularity);
   return {
     op: 'and',
-    args: [
+    terms: [
       { op: 'gte', field: config.time_field, value: lo },
       { op: 'lt', field: config.time_field, value: hi },
     ],
@@ -110,7 +110,17 @@ export function applyTemporalToSpec(
   config: MapSpecTemporalConfig,
   frame?: TemporalFrame | null,
 ): MapSpec {
-  const boundIds = new Set((config.layers || []).map((b) => b.layer_id));
+  // 绑定键族：layer_id ∪ source_ref ∪ ref 别名尾（ref:districts →
+  // districts —— agent 以数据名挂层时的常规命名；命中任一即注入）。
+  const boundIds = new Set<string>();
+  for (const b of config.layers || []) {
+    if (b.layer_id) boundIds.add(b.layer_id);
+    if (b.source_ref) {
+      boundIds.add(b.source_ref);
+      const tail = b.source_ref.replace(/^ref:/, '');
+      if (tail) boundIds.add(tail);
+    }
+  }
   if (boundIds.size === 0) return spec;
   const frames = config.frames || [];
   const effective = frame

@@ -556,12 +556,14 @@ def _time_pages(
         first_layer = layers_raw[0].get("id") if isinstance(layers_raw[0], dict) else None
     for frame in frames:
         page_w, page_h, bounds = page_geometry(None)
+        target_layer = bound_layer or str(first_layer or "")
         page_specs.append({
             "page_id": f"t-{frame.get('id')}",
             "title": str(frame.get("label") or frame.get("id") or "")[:200],
             "frame_index": None,
             "paper": _paper_of(page_w, page_h, None),
             "bounds": bounds,
+            "filter_layer_id": target_layer,
             "time_window": {
                 "frame_id": str(frame.get("id") or ""),
                 "label": str(frame.get("label") or ""),
@@ -570,7 +572,7 @@ def _time_pages(
                 "time_field": str(temporal.get("time_field") or ""),
                 "time_representation": str(temporal.get("time_representation") or ""),
                 "granularity": str(temporal.get("granularity") or ""),
-                "layer_id": bound_layer or str(first_layer or ""),
+                "layer_id": target_layer,
             },
         })
     return page_specs, degradations

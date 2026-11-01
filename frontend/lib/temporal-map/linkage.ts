@@ -50,7 +50,7 @@ export function temporalWindowForRef(refId: string | undefined | null): Temporal
 export function mergeWhereAst(a: WhereAst | undefined, b: WhereAst | undefined): WhereAst | undefined {
   if (!a) return b;
   if (!b) return a;
-  return { op: 'and', args: [a, b] };
+  return { op: 'and', terms: [a, b] };
 }
 
 /** AST → 服务端 where 参数（JSON 串）。 */

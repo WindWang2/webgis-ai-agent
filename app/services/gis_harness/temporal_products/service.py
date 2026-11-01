@@ -144,10 +144,28 @@ async def bind_temporal_view(
         )
 
     frames = buckets_to_contract_frames(probe.buckets)
+    # 缺省 layer_id 解析：committed spec 中引用该 ref 的图层 id（前端
+    # layer.filter 匹配与 atlas 页计数都按 spec 图层 id 绑定）；无匹配
+    # 图层时退回 ref id（统计-only 绑定，渲染面诚实为空）。
+    effective_layer_id = layer_id
+    if not effective_layer_id:
+        from app.services.mapspec.lifecycle_engine import mapspec_lifecycle_engine
+        spec = await mapspec_lifecycle_engine.store.get_mapspec(session_id)
+        if isinstance(spec, dict):
+            sources = spec.get("sources") if isinstance(spec.get("sources"), dict) else {}
+            for lyr in spec.get("layers") or []:
+                if not isinstance(lyr, dict):
+                    continue
+                sid = lyr.get("source")
+                src = sources.get(sid) if isinstance(sid, str) else None
+                src_ref = (src or {}).get("ref_id") or (src or {}).get("ref") if isinstance(src, dict) else None
+                if src_ref == resolved or sid == resolved:
+                    effective_layer_id = str(lyr.get("id") or "")
+                    break
     config: Dict[str, Any] = {
         "schema_version": "temporal_view.v1",
         "enabled": True,
-        "layers": [{"layer_id": layer_id or resolved, "source_ref": resolved}],
+        "layers": [{"layer_id": effective_layer_id or resolved, "source_ref": resolved}],
         "time_field": probe.time_field,
         "time_semantics": probe.semantics,
         "time_representation": probe.representation,
@@ -165,6 +183,8 @@ async def bind_temporal_view(
         "render_path": "client_filter",
         "disclosures": [
             "mvt_no_time_index_client_filter",
+            *([] if (effective_layer_id and effective_layer_id != resolved)
+               else ["layer_binding_ref_alias_tail"]),
         ],
     }
 

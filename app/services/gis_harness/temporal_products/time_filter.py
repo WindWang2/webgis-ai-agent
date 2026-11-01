@@ -67,14 +67,15 @@ def compile_where_ast(
 ) -> WhereAst:
     """帧窗口 [start, end) → feature_pages where AST。
 
-    词表严格对齐 app/services/feature_pages._LEAF_OPS（gte/lt + and）——
-    复用既有服务端过滤通道，零端点协议改动（D2）。
+    词表严格对齐 app/services/feature_pages（叶算子 gte/lt，组合节点
+    ``terms`` —— 与 evaluate_where/parse_where_param 同语法）—— 复用既有
+    服务端过滤通道，零端点协议改动（D2）。
     """
     lo = normalize_boundary_value(frame["start"], representation, granularity)
     hi = normalize_boundary_value(frame["end"], representation, granularity)
     return {
         "op": "and",
-        "args": [
+        "terms": [
             {"op": "gte", "field": time_field, "value": lo},
             {"op": "lt", "field": time_field, "value": hi},
         ],

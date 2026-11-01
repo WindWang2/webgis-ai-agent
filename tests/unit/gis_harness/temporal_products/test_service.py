@@ -203,8 +203,8 @@ class TestCompare:
         # union 窗（2021+2023 students: 100,110,140,150）→ breaks 覆盖 [100,150]。
         assert cls["breaks"][0] == 100 and cls["breaks"][-1] == 150
         # A/B 两窗 where AST 与契约同源。
-        assert out["where_ast_a"]["args"][0]["value"] == 2021
-        assert out["where_ast_b"]["args"][0]["value"] == 2023
+        assert out["where_ast_a"]["terms"][0]["value"] == 2021
+        assert out["where_ast_b"]["terms"][0]["value"] == 2023
         assert out["fingerprint_a"] != out["fingerprint_b"]
 
         spec = await _committed_spec(sid)
@@ -236,7 +236,7 @@ class TestStatusAndUnbind:
         await tp.control_temporal_view(sid, "seek", frame_id="f-2022")
         out = await tp.get_temporal_view(sid)
         assert out["status"] == "bound"
-        assert out["where_ast"]["args"][0]["value"] == 2022
+        assert out["where_ast"]["terms"][0]["value"] == 2022
         assert out["fingerprint"]
 
     async def test_unbind_removes_temporal(self, seeded_ref):
