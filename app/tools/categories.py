@@ -37,6 +37,9 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.dasymetric_tools": "analysis",       # 面插值重分配（量守恒分析）
     "app.tools.data_discovery": "inspection",           # 目录/画像/lineage 只读发现
     "app.tools.data_fabric_tools": "data_access",
+    # GOAL-02：服务发现只读面（inspect_data_service）+ 受控读取/物化（读 =
+    # data_access；瓦片上图名字覆盖 map_mutation 在模块内声明）。
+    "app.tools.ogc_service_tools": "data_access",
     "app.tools.ingest_tools": "data_access",            # 入库（detect→profile→register）
     "app.tools.data_preparation_tools": "data_access",  # 数据准备（inspect→propose→prepare→bind）
     "app.tools.raster_tools_cog": "transformation",     # COG 转换

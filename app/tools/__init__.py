@@ -71,6 +71,8 @@ _TOOL_MODULES = [
     # ADR-0214：组合契约工具面（discover/apply_composition/plan_replace）
     ("app.tools.composition_tools", "register_composition_tools"),
     ("app.tools.data_fabric_tools", "register_data_fabric_tools"),
+    # GOAL-02：OGC 开放服务与远程资产工具面（发现/coverage 读/COG 物化/瓦片上图）
+    ("app.tools.ogc_service_tools", "register_ogc_service_tools"),
     ("app.tools.data_discovery", "register_data_discovery_tools"),
     ("app.tools.workspace_tools", "register_workspace_tools"),
     ("app.tools.ingest_tools", "register_ingest_tools"),

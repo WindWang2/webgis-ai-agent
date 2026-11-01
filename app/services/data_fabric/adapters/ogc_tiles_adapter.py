@@ -146,14 +146,14 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
     # ── adapter 契约 ──────────────────────────────────────────────────
 
     def probe(self) -> bool:
+        """协议可辨识探测：conformance 声明 ogcapi-tiles，或顶层 /tiles
+        端点存在（仅 /collections 200 不算 —— Features/Coverages 服务也有
+        collections，不能凭它宣称瓦片能力）。"""
         if not self.url:
             return False
         try:
-            target = self.url.rstrip("/") + "/collections"
-            resp = self.session.get(target, timeout=5)
-            if resp.status_code in (200, 206):
+            if self._declares_tiles():
                 return True
-            # 非集合布局（顶层 /tiles）：再探一层
             top = self.url.rstrip("/") + "/tiles"
             return self.session.get(top, timeout=5).status_code in (200, 206)
         except Exception as e:  # noqa: BLE001

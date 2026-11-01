@@ -109,11 +109,14 @@ class OGCCoveragesAdapter(GeospatialDataSourceAdapter):
     # ── adapter 契约 ──────────────────────────────────────────────────
 
     def probe(self) -> bool:
+        """协议可辨识探测：conformance 声明 ogcapi-coverages，或存在
+        coverage 集合（itemType=coverage / coverage 链接）。"""
         if not self.url:
             return False
         try:
-            resp = self.session.get(self.url.rstrip("/") + "/collections", timeout=5)
-            return resp.status_code in (200, 206)
+            if self._declares_coverages():
+                return True
+            return bool(self._coverage_collections())
         except Exception as e:  # noqa: BLE001
             logger.debug("[ogc-coverages] probe failed for %s: %s", self.url, e)
             return False

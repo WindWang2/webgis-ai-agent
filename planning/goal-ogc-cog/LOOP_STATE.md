@@ -32,3 +32,7 @@ P0 完成（基线勘察+规划），进入 P1（M1 能力发现 + M7 fixture）
 - 测试：真实 loopback HTTP COG（自写 Range+HEAD 服务器）10 passed；幂等（同参同内容同 data_object_id + CAS deduped）；AOI 窗口语义（窗口 ≪ 整幅）+ 逐点真值；预算拒绝带窗口事实；默认 SSRF fail-closed（loopback 被拒的专门用例）；签名 URL query 脱敏断言；取消令牌。
 - 已知伪影（RISK R2）：GDAL /vsicurl 对 Python http.server 的 .msk/.MSK 首访探测在本机恒定 ~5s×2（curl CLI 亚毫秒、服务端即时响应，GDAL 内部行为）；已用 GDAL_PAM_ENABLED=NO（远程只读正当优化）消除 25s/次，残余 ~10s/open 如实记录。CI 成本 ≈94s/模块。
 - 缺陷修复记录：①ExitStack 改造时 rasterio.Env 用在 import 前；②rasterio read 的元组 window 是 (start,stop) 语义（测试写错为 (offset,size)）；③fixture 需自写 Range/HEAD handler（Python 3.13 http.server 仍不支持 Range）。
+
+### Round 5（2026-11-01）—— P5/M5 完成
+- 结果：ogc_service_tools.py 四工具（inspect_data_service/read_coverage_subset/materialize_remote_raster_asset/add_tile_service_layer）全量注册无重名 + service_qualification.py G01 双轨（tile→display_only 不可数值；coverage-ready/COG ref→numeric_raster）+ probe 语义收紧（conformance/端点可辨识，不再 collections-200 冒充 tiles）+ #1868 契约验证（raster ref → 类型化 InspectError，不伪造收据）。
+- 测试：11 passed（注册纪律/全量装载查重/tiles 与 coverages 自动识别三态/资格双轨/#1868）；discovery 回归 16 passed 不受 probe 收紧影响。
