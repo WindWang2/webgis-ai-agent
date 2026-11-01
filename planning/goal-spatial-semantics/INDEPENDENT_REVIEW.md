@@ -1,0 +1,3 @@
+# INDEPENDENT_REVIEW — GOAL 01
+
+（R1/R2 轮次记录待实施完成后追加）
