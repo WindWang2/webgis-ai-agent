@@ -139,6 +139,12 @@ def decide_recovery(
 
     ``risk`` 优先（ToolRiskProfile，或描述符形 Mapping —— 自动折叠）；
     两者都缺 → 保守（无自动重试）。
+
+    R2-6（幂等键验证责任）：``idempotency_key_present`` 是调用方对
+    "该次调用携带服务端可验证幂等键（如 MapSpec mutation_id CAS）"的
+    事实断言 —— 本纯函数无法验证；生产 TDS 目前**不传**（保持保守：
+    state_mutation 一律不自动重试），仅评测语料显式携带。接入生产需
+    先让 dispatch 侧回传幂等回执，否则豁免不生效。
     """
     profile = risk if isinstance(risk, ToolRiskProfile) else resolve_tool_risk(
         diagnostic.attribution.tool_name, descriptor=risk or descriptor)
