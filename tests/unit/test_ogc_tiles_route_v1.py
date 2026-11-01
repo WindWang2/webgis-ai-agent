@@ -161,4 +161,3 @@ class TestOgcTilesRoute:
             f"/api/v1/data-fabric/catalog/{_ITEM_ID}/ogc-tiles/{z}/{x}/{y}"
         )
         assert r.status_code == 422
-
