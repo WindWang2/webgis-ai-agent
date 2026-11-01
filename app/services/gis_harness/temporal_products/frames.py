@@ -150,6 +150,25 @@ def granularity_from_span(seconds: float, max_frames: int) -> str:
     return "year"
 
 
+_FRAC_RE = re.compile(r"\.(\d+)(Z|[+-]\d{2}:?\d{2})?$")
+_OFFSET_TAIL_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
+
+
+def _iso_shape(value: str) -> str:
+    """ISO datetime 字面形状键：(offset_family, frac_width)。
+
+    offset_family：'Z' / ''（naive）/ 具体偏移串（如 '+08:00'）。
+    """
+    frac_width = 0
+    m = _FRAC_RE.search(value)
+    if m:
+        frac_width = len(m.group(1))
+        value = value[: m.start()] + (m.group(2) or "")
+    tail = _OFFSET_TAIL_RE.search(value)
+    offset = tail.group(1) if tail else ""
+    return f"{offset}|{frac_width}"
+
+
 def _detect_representation(
     raw_values: List[Any],
 ) -> Tuple[str, str, float]:
@@ -191,11 +210,12 @@ def _detect_representation(
         y = [v for v in non_null if _YEAR_RE.match(v)]
         n = len(non_null)
         if len(iso_dt) == n:
-            # 偏移检查（字典序 = 时间序的科学前提）：仅接受全列统一 **Z**
-            # 偏移 —— 非 Z 的统一偏移（如 +08:00）下，边界渲染（Z）与数据
-            # 字面序不一致会错窗（P2 修正：拒绝并建议归一化，不静默错配）。
-            offsets = {v[19:] if len(v) > 19 else "" for v in iso_dt}
-            if len(offsets) == 1 and ("Z" in offsets or "" in offsets):
+            # 形状统一检查（字典序 = 时间序的科学前提，R2 修正）：
+            # - 偏移族全列一致：Z / 无偏移 / 同一 ±HH:MM（渲染同构随族）；
+            # - 小数秒宽度全列一致（0 或定宽 —— 定宽下字典序仍成立）；
+            # - 其余（混合偏移/混合精度）拒绝 —— 边界与数据字面序会错窗。
+            shapes = {_iso_shape(v) for v in iso_dt}
+            if len(shapes) == 1:
                 return "iso_string", iso_dt[0], 0.9
             return "", "", 0.0
         if len(date_only) == n:

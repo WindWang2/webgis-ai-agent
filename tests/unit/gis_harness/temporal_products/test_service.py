@@ -186,7 +186,7 @@ class TestControl:
 
         # unpin 是用户专属操作（agent 代解被拒 —— user-wins 无绕过面）。
         agent_unpin = await tp.control_temporal_view(sid, "unpin")
-        assert agent_unpin["status"] == "refused" and agent_unpin["code"] == "user_pinned"
+        assert agent_unpin["status"] == "refused" and agent_unpin["code"] == "unpin_user_only"
         freed = await tp.control_temporal_view(sid, "unpin", origin="user")
         assert freed["status"] == "applied"
         ok = await tp.control_temporal_view(sid, "seek", frame_id="f-2022")
@@ -229,7 +229,7 @@ class TestCompare:
         # district 是字符串字段（无数值）→ 域探测为空 → classification None
         # + compare_degenerate_range 披露入契约。
         assert out["classification"] is None
-        assert "退化" in out.get("disclosure", "") or out["status"] == "compared"
+        assert out["status"] == "compared"
         spec = await _committed_spec(sid)
         assert "compare_degenerate_range" in spec["temporal"].get("disclosures", [])
 
@@ -330,7 +330,7 @@ class TestReviewRound1Fixes:
         await tp.bind_temporal_view(sid, "ref:schools")
         await tp.control_temporal_view(sid, "seek", frame_id="f-2021", origin="user")
         refused = await tp.control_temporal_view(sid, "unpin")
-        assert refused["code"] == "user_pinned"
+        assert refused["code"] == "unpin_user_only"
         ok = await tp.control_temporal_view(sid, "unpin", origin="user")
         assert ok["status"] == "applied"
 

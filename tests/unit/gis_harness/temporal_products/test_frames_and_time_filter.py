@@ -240,3 +240,62 @@ class TestTimeFilterCompiler:
         ast = compile_where_ast(frame, "year", "year_int", "year")
         assert ast["terms"][0]["value"] <= 2023 < ast["terms"][1]["value"]
         assert not (ast["terms"][0]["value"] <= 2024 < ast["terms"][1]["value"])
+
+
+class TestIsoShapeSemantics:
+    """R2-N1 回归：iso 字面形状（偏移族/小数秒宽度）统一 → 边界同构渲染。"""
+
+    def _fc_iso(self, values):
+        return _fc([{"ts": v} for v in values])
+
+    def test_naive_iso_window_membership(self):
+        # R2 复现样本：A=00:00:00（帧下界精确值）、C=次日 00:00 —— 修复前
+        # A 无处归属、C 归错一天；修复后按 naive 同构渲染，归属正确。
+        probe = detect_time_binding(self._fc_iso([
+            "2023-04-01T00:00:00", "2023-04-01T12:00:00", "2023-04-02T00:00:00",
+        ]), granularity="day")
+        assert probe.ok and probe.representation == "iso_string"
+        frames = buckets_to_contract_frames(probe.buckets)
+        f1, f2 = frames[0], frames[1]
+        ast1 = compile_where_ast(f1, "ts", "iso_string", "day", "UTC", probe.format_hint)
+        ast2 = compile_where_ast(f2, "ts", "iso_string", "day", "UTC", probe.format_hint)
+        lo1, hi1 = ast1["terms"][0]["value"], ast1["terms"][1]["value"]
+        assert (lo1, hi1) == ("2023-04-01T00:00:00", "2023-04-02T00:00:00")
+        # 逐值归属（字符串字典序 = 半开窗口语义）。
+        for v, in_frame_1 in [("2023-04-01T00:00:00", True), ("2023-04-01T12:00:00", True),
+                              ("2023-04-02T00:00:00", False)]:
+            assert (lo1 <= v < hi1) is in_frame_1, v
+        lo2, hi2 = ast2["terms"][0]["value"], ast2["terms"][1]["value"]
+        assert ("2023-04-02T00:00:00" >= lo2) and ("2023-04-02T00:00:00" < hi2)
+
+    def test_uniform_fractional_seconds_accepted(self):
+        # R2-N4：统一毫秒时间戳（日志常见形状）可 bind（修复前整体误拒）。
+        probe = detect_time_binding(self._fc_iso([
+            "2023-04-01T08:00:00.123Z", "2023-04-02T09:30:00.456Z",
+        ]), granularity="day")
+        assert probe.ok and probe.representation == "iso_string"
+        frames = buckets_to_contract_frames(probe.buckets)
+        ast = compile_where_ast(frames[0], "ts", "iso_string", "day", "UTC",
+                                probe.format_hint)
+        assert ast["terms"][0]["value"] == "2023-04-01T00:00:00.000Z"
+
+    def test_mixed_fractional_width_refused(self):
+        probe = detect_time_binding(self._fc_iso([
+            "2023-04-01T08:00:00.1Z", "2023-04-02T08:00:00.123Z",
+        ]), granularity="day")
+        assert not probe.ok and probe.code == "non_uniform_time_format"
+
+    def test_uniform_offset_rendered_in_data_offset(self):
+        # R2-N5：统一 +08:00 可 bind；边界按 +08:00 渲染（同构字典序）。
+        probe = detect_time_binding(self._fc_iso([
+            "2023-04-01T08:00:00+08:00", "2023-04-02T10:30:00+08:00",
+        ]), granularity="day", tz_name="Asia/Shanghai")
+        assert probe.ok, probe.message
+        frames = buckets_to_contract_frames(probe.buckets)
+        ast = compile_where_ast(frames[0], "ts", "iso_string", "day",
+                                "Asia/Shanghai", probe.format_hint)
+        lo, hi = ast["terms"][0]["value"], ast["terms"][1]["value"]
+        assert lo.endswith("+08:00") and hi.endswith("+08:00")
+        # 上海日桶 2023-04-01 = [00:00+08, 次日 00:00+08)。
+        assert lo == "2023-04-01T00:00:00+08:00"
+        assert "2023-04-01T08:00:00+08:00" >= lo and "2023-04-01T08:00:00+08:00" < hi

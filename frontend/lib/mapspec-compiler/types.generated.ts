@@ -403,6 +403,7 @@ export interface MapSpecTemporalConfig {
   time_field: string;
   time_semantics: "event" | "snapshot" | "valid_time";
   time_representation: "iso_string" | "date_string" | "epoch_s" | "epoch_ms" | "year_int";
+  time_format_hint?: string;
   timezone?: string;
   granularity: "year" | "quarter" | "month" | "week" | "day" | "hour";
   extent: unknown;

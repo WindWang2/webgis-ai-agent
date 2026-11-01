@@ -974,6 +974,9 @@ class MapSpecTemporalConfig(_SpecModel):
     time_field: StrictStr = Field(min_length=1, max_length=64)
     time_semantics: Literal[TEMPORAL_SEMANTICS]  # type: ignore[valid-type]
     time_representation: Literal[TEMPORAL_REPRESENTATIONS]  # type: ignore[valid-type]
+    #: 数据字面形状样例（iso_string 的偏移族/小数秒宽度 —— 边界渲染与
+    #  数据同构，字典序 = 时间序；其他表示为空）。
+    time_format_hint: Optional[StrictStr] = Field(default=None, max_length=64)
     #: IANA 时区名（数据锚定；naive 数据的归一口径），缺省 UTC。
     timezone: StrictStr = Field(default="UTC", max_length=64)
     granularity: Literal[TEMPORAL_GRANULARITIES]  # type: ignore[valid-type]

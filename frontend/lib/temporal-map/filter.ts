@@ -27,6 +27,7 @@ export function normalizeBoundaryValue(
   representation: string,
   granularity: string,
   tzName = 'UTC',
+  formatHint = '',
 ): number | string {
   const dt = parseIso(instant);
   switch (representation) {
@@ -45,19 +46,67 @@ export function normalizeBoundaryValue(
         calendarField(dt, tzName, 'day'), 2,
       )}`;
     default:
-      return instant;
+      // iso_string：按数据字面形状同构渲染（R2-N1：naive/偏移/小数秒 ——
+      // 边界串与数据串同构，字典序 = 时间序）。空 hint 缺省 Z。
+      return renderIsoLike(parseIso(instant), formatHint);
   }
 }
 
+const _ISO_SHAPE_RE = /^(.*?)(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})?$/;
+
+/** 按数据形状样例渲染 ISO 边界（镜像后端 render_iso_like）。 */
+function renderIsoLike(dt: Date, formatHint: string): string {
+  const m = _ISO_SHAPE_RE.exec(formatHint);
+  const frac = m?.[2] ?? '';
+  const offset = m?.[3] ?? (formatHint ? '' : 'Z');
+  let local = dt;
+  let base: string;
+  if (offset && offset !== 'Z') {
+    const sign = offset[0] === '-' ? -1 : 1;
+    const hh = Number(offset.slice(1, 3));
+    const mm = offset.length > 3 ? Number(offset.slice(-2)) : 0;
+    const offsetMs = sign * (hh * 60 + mm) * 60_000;
+    local = new Date(dt.getTime() + offsetMs);
+    base = `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, '0')}-${String(
+      local.getUTCDate(),
+    ).padStart(2, '0')}T${String(local.getUTCHours()).padStart(2, '0')}:${String(
+      local.getUTCMinutes(),
+    ).padStart(2, '0')}:${String(local.getUTCSeconds()).padStart(2, '0')}`;
+  } else {
+    base = `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, '0')}-${String(
+      local.getUTCDate(),
+    ).padStart(2, '0')}T${String(local.getUTCHours()).padStart(2, '0')}:${String(
+      local.getUTCMinutes(),
+    ).padStart(2, '0')}:${String(local.getUTCSeconds()).padStart(2, '0')}`;
+  }
+  if (frac) {
+    const micro = String(local.getUTCMilliseconds()).padEnd(3, '0');
+    const width = Math.min(frac.length, 3);
+    base += `.${(micro + '000').slice(0, Math.max(width, frac.length) ? frac.length : 0).slice(0, frac.length)}`;
+  }
+  return offset === 'Z' ? `${base}Z` : base + offset;
+}
+
 /** Date 在 IANA 时区的日历字段（year/month/day；tz 缺省 UTC）。 */
+const _intlFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function intlFormatter(tzName: string): Intl.DateTimeFormat {
+  let fmt = _intlFormatters.get(tzName);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tzName, year: 'numeric', month: '2-digit', day: '2-digit',
+    });
+    _intlFormatters.set(tzName, fmt);
+  }
+  return fmt;
+}
+
 function calendarField(dt: Date, tzName: string, field: 'year' | 'month' | 'day'): number {
   let y = dt.getUTCFullYear();
   let m = dt.getUTCMonth() + 1;
   let d = dt.getUTCDate();
   if (tzName && tzName !== 'UTC') {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: tzName, year: 'numeric', month: '2-digit', day: '2-digit',
-    }).formatToParts(dt);
+    const parts = intlFormatter(tzName).formatToParts(dt);
     const get = (t: string): number => Number(parts.find((pp) => pp.type === t)?.value);
     y = get('year'); m = get('month'); d = get('day');
   }
@@ -74,8 +123,9 @@ export function temporalFilterExpression(
   frame: TemporalFrame,
 ): unknown[] {
   const tz = config.timezone || 'UTC';
-  const lo = normalizeBoundaryValue(frame.start, config.time_representation, config.granularity, tz);
-  const hi = normalizeBoundaryValue(frame.end, config.time_representation, config.granularity, tz);
+  const hint = (config as { time_format_hint?: string }).time_format_hint || '';
+  const lo = normalizeBoundaryValue(frame.start, config.time_representation, config.granularity, tz, hint);
+  const hi = normalizeBoundaryValue(frame.end, config.time_representation, config.granularity, tz, hint);
   return ['all', ['>=', ['get', config.time_field], lo], ['<', ['get', config.time_field], hi]];
 }
 
@@ -85,8 +135,9 @@ export function temporalWhereAst(
   frame: TemporalFrame,
 ): WhereAst {
   const tz = config.timezone || 'UTC';
-  const lo = normalizeBoundaryValue(frame.start, config.time_representation, config.granularity, tz);
-  const hi = normalizeBoundaryValue(frame.end, config.time_representation, config.granularity, tz);
+  const hint = (config as { time_format_hint?: string }).time_format_hint || '';
+  const lo = normalizeBoundaryValue(frame.start, config.time_representation, config.granularity, tz, hint);
+  const hi = normalizeBoundaryValue(frame.end, config.time_representation, config.granularity, tz, hint);
   return {
     op: 'and',
     terms: [

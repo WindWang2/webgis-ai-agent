@@ -29,8 +29,44 @@ def _parse_iso(instant: str) -> datetime:
     return dt
 
 
+def render_iso_like(dt: "datetime", format_hint: str) -> str:
+    """按数据字面形状渲染 ISO 边界（R2-N1 修正）。
+
+    format_hint = 探测期样例值：偏移族（Z / 无 / ±HH:MM）与小数秒宽度
+    随数据渲染 —— 边界串与数据串**同构**，字典序 = 时间序在任何统一
+    形状下成立（naive 渲染 naive、+08:00 渲染 +08:00、.123 渲染 .123）。
+    """
+    import re as _re
+    from datetime import timedelta as _td
+
+    frac_width = 0
+    m = _re.search(r"\.(\d+)(Z|[+-]\d{2}:?\d{2})?$", format_hint)
+    if m:
+        frac_width = len(m.group(1))
+        offset = m.group(2) or ""
+    else:
+        tail = _re.search(r"(Z|[+-]\d{2}:?\d{2})$", format_hint)
+        # 空 hint 缺省 Z 语义（契约帧 instant 本就是 Z 口径）。
+        offset = tail.group(1) if tail else ("Z" if not format_hint else "")
+
+    local = dt
+    if offset and offset != "Z":
+        sign = -1 if offset[0] == "-" else 1
+        hh = int(offset[1:3])
+        mm = int(offset[-2:]) if len(offset) > 3 else 0
+        local = dt.astimezone(timezone(sign * _td(hours=hh, minutes=mm)))
+
+    base = local.strftime("%Y-%m-%dT%H:%M:%S")
+    if frac_width:
+        base += "." + f"{local.microsecond:06d}"[:frac_width]
+    if offset == "Z":
+        return base + "Z"
+    return base + offset
+
+
 def normalize_boundary_value(
-    instant: str, representation: str, granularity: str, tz_name: str = "UTC"
+    instant: str, representation: str, granularity: str, tz_name: str = "UTC",
+    format_hint: str = "",
 ) -> Union[int, str]:
     """契约 instant → 数据表示空间的比较值（契约时区口径）。
 
@@ -60,8 +96,8 @@ def normalize_boundary_value(
         if granularity == "month" or granularity == "quarter":
             return f"{local.year:04d}-{local.month:02d}"
         return f"{local.year:04d}-{local.month:02d}-{local.day:02d}"
-    # iso_string：渲染与探测格式同构（秒级 ISO，UTC-Z）。
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # iso_string：按数据形状渲染（R2-N1：naive/偏移/小数秒同构）。
+    return render_iso_like(dt, format_hint)
 
 
 def compile_where_ast(
@@ -70,6 +106,7 @@ def compile_where_ast(
     representation: str,
     granularity: str,
     tz_name: str = "UTC",
+    format_hint: str = "",
 ) -> WhereAst:
     """帧窗口 [start, end) → feature_pages where AST。
 
@@ -77,8 +114,8 @@ def compile_where_ast(
     ``terms`` —— 与 evaluate_where/parse_where_param 同语法）—— 复用既有
     服务端过滤通道，零端点协议改动（D2）。
     """
-    lo = normalize_boundary_value(frame["start"], representation, granularity, tz_name)
-    hi = normalize_boundary_value(frame["end"], representation, granularity, tz_name)
+    lo = normalize_boundary_value(frame["start"], representation, granularity, tz_name, format_hint)
+    hi = normalize_boundary_value(frame["end"], representation, granularity, tz_name, format_hint)
     return {
         "op": "and",
         "terms": [
@@ -94,14 +131,15 @@ def compile_maplibre_filter(
     representation: str,
     granularity: str,
     tz_name: str = "UTC",
+    format_hint: str = "",
 ) -> List[Any]:
     """帧窗口 → MapLibre filter 表达式（["all", [">=",…], ["<",…]]）。
 
     与 selectionFilters 同语法（map-panel 既有应用面）；值与 where AST
     完全同源 —— 地图与统计同窗的结构性保证。
     """
-    lo = normalize_boundary_value(frame["start"], representation, granularity, tz_name)
-    hi = normalize_boundary_value(frame["end"], representation, granularity, tz_name)
+    lo = normalize_boundary_value(frame["start"], representation, granularity, tz_name, format_hint)
+    hi = normalize_boundary_value(frame["end"], representation, granularity, tz_name, format_hint)
     return [
         "all",
         [">=", ["get", time_field], lo],
@@ -145,10 +183,12 @@ def window_where_ast(
     representation: str,
     granularity: str,
     tz_name: str = "UTC",
+    format_hint: str = "",
 ) -> WhereAst:
     """任意 [start,end) 窗口（非帧）→ where AST（union 窗等场景）。"""
     return compile_where_ast(
-        {"start": start, "end": end}, time_field, representation, granularity, tz_name
+        {"start": start, "end": end}, time_field, representation, granularity,
+        tz_name, format_hint,
     )
 
 
@@ -193,11 +233,12 @@ def apply_time_window_to_doc(
     granularity = str(time_window.get("granularity") or "")
     layer_id = str(time_window.get("layer_id") or "")
     tz_name = str(time_window.get("timezone") or "UTC")
+    fmt_hint = str(time_window.get("time_format_hint") or "")
     if not field or not representation:
         return doc
 
-    lo = normalize_boundary_value(time_window["start"], representation, granularity, tz_name)
-    hi = normalize_boundary_value(time_window["end"], representation, granularity, tz_name)
+    lo = normalize_boundary_value(time_window["start"], representation, granularity, tz_name, fmt_hint)
+    hi = normalize_boundary_value(time_window["end"], representation, granularity, tz_name, fmt_hint)
     numeric = isinstance(lo, (int, float)) and not isinstance(lo, bool)
 
     def _in_window(value: Any) -> bool:

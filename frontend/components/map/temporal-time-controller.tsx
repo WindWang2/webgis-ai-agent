@@ -28,6 +28,7 @@ import {
   activeController,
   getDisplayedTemporalFrame,
   getLiveTemporalFrame,
+  getLiveTemporalGeneration,
   markLiveApplied,
   requestLiveFrame,
   resetTemporalLiveState,
@@ -62,14 +63,15 @@ export function TemporalTimeController() {
     () => specTemporalIdentity(getCommittedMapSpec()),
     () => '',
   );
+  // R2-N3：自愈信号必须用**代计数器**（reset 无条件 bump）—— 用帧 id
+  // 字符串时，从未播放过的会话切换（'' → ''）不触发重注册。
   const liveGeneration = useSyncExternalStore(
     subscribeLiveTemporal,
-    () => `${getLiveTemporalFrame()?.id ?? ''}`,
-    () => '',
+    getLiveTemporalGeneration,
+    getLiveTemporalGeneration,
   );
   const view = useMemo(() => readTemporalView(getCommittedMapSpec()), [temporalKey]);
   const displayed = getDisplayedTemporalFrame();
-  void liveGeneration;
 
   const controllerRef = useRef<TemporalPlaybackController | null>(null);
   if (controllerRef.current === null) {
