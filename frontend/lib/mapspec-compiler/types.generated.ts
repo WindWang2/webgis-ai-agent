@@ -93,6 +93,7 @@ export interface MapSpec {
   thresholds?: MapThresholds;
   scenario_mode?: "split_view" | "swipe_compare";
   scene?: MapSceneConfig;
+  temporal?: MapSpecTemporalConfig;
 }
 
 export interface MapSpecView {
@@ -393,4 +394,57 @@ export interface SceneAssetVertical {
 export interface SceneAssetLodPolicy {
   max_sse?: number;
   max_visible_tiles?: number;
+}
+
+export interface MapSpecTemporalConfig {
+  schema_version?: "temporal_view.v1";
+  enabled: boolean;
+  layers: TemporalLayerBinding[];
+  time_field: string;
+  time_semantics: "event" | "snapshot" | "valid_time";
+  time_representation: "iso_string" | "date_string" | "epoch_s" | "epoch_ms" | "year_int";
+  timezone?: string;
+  granularity: "year" | "quarter" | "month" | "week" | "day" | "hour";
+  extent: unknown;
+  frames: TemporalFrame[];
+  cursor_frame: string;
+  playback?: TemporalPlaybackConfig;
+  compare?: TemporalCompareConfig;
+  missing_policy?: "strict" | "nearest" | "skip";
+  quality?: string[];
+  source_ref: string;
+  content_revision?: number;
+  user_pinned?: boolean;
+  render_path?: "client_filter" | "cube_window" | "none";
+  disclosures?: string[];
+}
+
+export interface TemporalFrame {
+  id: string;
+  label: string;
+  start: string;
+  end: string;
+  feature_count?: number;
+}
+
+export interface TemporalLayerBinding {
+  layer_id: string;
+  source_ref?: string;
+}
+
+export interface TemporalClassification {
+  breaks: number[];
+  scope?: "shared" | "local";
+  method?: string;
+}
+
+export interface TemporalCompareConfig {
+  enabled: boolean;
+  frame_id_b: string;
+  classification?: TemporalClassification;
+}
+
+export interface TemporalPlaybackConfig {
+  playing?: boolean;
+  rate?: number;
 }

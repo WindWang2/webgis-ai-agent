@@ -253,6 +253,9 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
         "view": _bounded_metadata(mapspec.get("view") or {}, budget=budget),
         "layout": _bounded_metadata(mapspec.get("layout") or {}, budget=budget),
         "time": _bounded_metadata(mapspec.get("time") or {}, budget=budget),
+        # v1.8（GOAL 03）：时态控制层进指纹 —— 时间游标/播放/对照任何变化
+        # 都必须是可观察的 spec 变更（displayed_at 门控依赖此投影）。
+        "temporal": _bounded_metadata(mapspec.get("temporal") or {}, budget=budget),
         "sources": projected_sources,
         "layers": projected_layers,
         "source_count": len(sources),
