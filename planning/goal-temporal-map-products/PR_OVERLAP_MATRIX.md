@@ -38,3 +38,6 @@
 
 复查记录：
 - 2026-11-01（M0）：fetch 后 origin/master 仍 `6c5e71c2c`，无 >#1875 PR，无 open PR 交叠。
+
+## 复查记录（终）
+- 2026-11-01（PR 创建前）：origin/master 仍 6c5e71c2c；新 open PR **#1876**（GOAL 01 spatial semantics，`zcode/goal-spatial-semantics-contract-v1`）—— 文件交叠仅 `app/tools/__init__.py`（各自 +1 注册行）与 `app/tools/categories.py`（各自 +1 分类条目），纯 additive 并行添加，合并时无语义冲突；其余零交叠（其 spatial_semantics/ 目录 vs 本 temporal_products/；其 graduated-legend vs 本 temporal-*）。
