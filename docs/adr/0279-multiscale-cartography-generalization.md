@@ -30,7 +30,7 @@ plan/export_adjudication/semantic_checks_scale_profile）只补 v1.6 的
 capability seam：`generalized` 窗从「声明即信」升级为「真实工件 + 窗口
 源覆盖」。`representation.py` 既有函数签名与行为零改动（只读复用）。
 
-### D2 非破坏性 = 新 ref + 窗口源覆盖（MapSpec v1.8 additive）
+### D2 非破坏性 = 新 ref + 窗口源覆盖（MapSpec v1.9 additive（v1.8 由 GOAL 03 / PR #1877 时态层占用 —— 版本号协调，本 PR 登记 1.8 为占位、1.9 为本语义））
 - `MapSpecRepresentationWindow.source`（additive）：artifact 窗携带时
   该窗渲染副本/导出裁决从指定 source 取数；raw 窗恒无（主层语义）。
 - `MapSpecLayer.scale_profile`（additive 开放 dict）：ScaleRepresentation-

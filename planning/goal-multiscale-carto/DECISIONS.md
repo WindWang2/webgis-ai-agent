@@ -61,6 +61,7 @@ D11 — **前端 multiscale 目录**：`frontend/lib/map-kit/multiscale/` 收口
 窗口源覆盖的纯函数 + scale 披露文案模型（live 与导出共享）；compiler/runtime
 只做最小 import 消费。
 
-D12 — MapSpec 版本 v1.7 → v1.8 纯 additive（`MapSpecRepresentationWindow.source:
+D12 — MapSpec 版本 → v1.9 纯 additive（v1.8 由 GOAL 03/#1877 时态层占用 —— 协调登记；`MapSpecRepresentationWindow.source:
 Optional[str]` + `MapSpecLayer.scale_profile: Optional[Dict]` 开放声明）；
 迁移注册表 additive；旧 spec 行为零变化（契约测试锁定）。
+13 — **版本号协调（v1.8 撞号规避）**：open PR #1877（GOAL 03，先开）已占用 1.8=时态层；本 PR 登记 1.8 为协调占位（语义归 #1877）+ 1.9=多尺度档案，任意合并顺序不产生语义撞号。

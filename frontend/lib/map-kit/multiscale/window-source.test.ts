@@ -1,5 +1,5 @@
 /**
- * GOAL 04 M6 —— 多尺度窗口源覆盖（window.source v1.8）前端契约测试。
+ * GOAL 04 M6 —— 多尺度窗口源覆盖（window.source v1.9）前端契约测试。
  *
  * 覆盖三条消费链同语义：
  * 1. carto-ir/representation.ts 归一化携带 source（artifact 窗）；
@@ -16,7 +16,7 @@ import type { MapSpec } from "@/lib/mapspec-compiler/types";
 
 function spec(exportZoom: number): MapSpec {
   return {
-    version: "1.8",
+    version: "1.9",
     view: { center: [104.05, 30.6], zoom: exportZoom },
     sources: {
       roads_src: {
@@ -81,7 +81,7 @@ function spec(exportZoom: number): MapSpec {
   } as never as MapSpec;
 }
 
-describe("resolveRepresentationPlan carries window source (v1.8)", () => {
+describe("resolveRepresentationPlan carries window source (v1.9)", () => {
   it("artifact window keeps source; raw window has none", () => {
     const plan = resolveRepresentationPlan(
       (spec(6) as never as { layers: Array<Record<string, unknown>> }).layers[0] as never,

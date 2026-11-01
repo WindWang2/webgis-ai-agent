@@ -17,7 +17,7 @@
   （representation.py 权威，本模块只读引用不复制词表内容语义）；
   ``tier`` ⊆ ``SCALE_TIERS`` 带名（scale_rules 权威）。
 
-MapSpec 落笔（v1.8 additive）：
+MapSpec 落笔（v1.9 additive）：
 - ``representation_windows_of_profile`` → ``layer.representation.windows``
   （含 artifact 带的 ``window.source`` 源覆盖）；
 - ``to_mapspec_layer_block`` → ``layer.scale_profile``（有界声明 dict）。
@@ -364,7 +364,7 @@ def representation_windows_of_profile(
     """档案 → v1.6 representation windows 声明（含 artifact 源覆盖）。
 
     - 同模式相邻带合并（v1.6 normalize 语义的预处理，减少窗口数）；
-    - artifact 带（generalized/aggregate_grid）带 ``source`` 键（v1.8
+    - artifact 带（generalized/aggregate_grid）带 ``source`` 键（v1.9
       additive：窗口级源覆盖，克隆子层/导出按该 source 取数据）；
     - raw 带不带 source 键（主层 source 语义不变）。
     """
@@ -396,7 +396,7 @@ def representation_windows_of_profile(
 
 
 def to_mapspec_layer_block(profile: ScaleRepresentationProfile) -> Dict[str, Any]:
-    """档案 → ``layer.scale_profile`` 有界声明（v1.8 additive 落笔面）。
+    """档案 → ``layer.scale_profile`` 有界声明（v1.9 additive 落笔面）。
 
     只携带 desired-state 事实（身份/带计划/披露/检查），不带运行时状态；
     可直接 json 序列化进 MapSpec 开放 dict 面。

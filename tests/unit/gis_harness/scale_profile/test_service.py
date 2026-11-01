@@ -120,7 +120,7 @@ async def test_apply_commit_writes_profile_and_artifacts(session):
 
     spec = await mapspec_store_instance.get_mapspec(session)
     layer = next(lyr for lyr in spec["layers"] if lyr["id"] == "roads")
-    # representation 窗口 + source 覆盖（v1.8）
+    # representation 窗口 + source 覆盖（v1.9）
     windows = layer["representation"]["windows"]
     gen = [w for w in windows if w["mode"] == "generalized"]
     assert gen and all("source" in w for w in gen)

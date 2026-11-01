@@ -10,9 +10,10 @@
     "1.5",
     "1.6",
     "1.7",
-    "1.8"
+    "1.8",
+    "1.9"
   ],
-  "latest_mapspec_version": "1.8",
+  "latest_mapspec_version": "1.9",
   "default_mapspec_version": "1.0",
   "visibility_hint_keys": [
     "street_detail_minzoom",

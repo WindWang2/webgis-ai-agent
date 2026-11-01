@@ -147,7 +147,7 @@ def register_scale_profile_tools(registry: ToolRegistry) -> None:
         args_model=ApplyArgs,
         description=(
             "为一个图层落笔多尺度表达档案（ScaleRepresentationProfile.v1，"
-            "MapSpec v1.8）：按道路等级/行政级别等可信字段做语义取舍 + 拓扑"
+            "MapSpec v1.9）：按道路等级/行政级别等可信字段做语义取舍 + 拓扑"
             "安全几何综合，产物存为**新 ref**（原始数据永不修改），MapSpec 经"
             "单事务 CAS 提交（representation windows + layer.scale_profile），"
             "统计/图例口径恒 original_source。"

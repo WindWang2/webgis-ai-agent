@@ -53,7 +53,7 @@ export interface NormalizedRepresentationWindow {
   mode: RepresentationMode;
   reasonCodes: string[];
   /**
-   * v1.8 additive（GOAL 04）：窗口级源覆盖。artifact 窗
+   * v1.9 additive（GOAL 04）：窗口级源覆盖。artifact 窗
    * （generalized/aggregate_grid）携带时，该窗的渲染副本/导出裁决从
    * 此 source id 取数据（spec.sources 内派生工件源）；raw 窗恒无此键
    * （主层 source 语义）。读取语义与后端
@@ -106,7 +106,7 @@ export function resolveRepresentationPlan(
     const reasonCodes = Array.isArray(rawCodes)
       ? rawCodes.filter((c): c is string => typeof c === "string").slice(0, 8)
       : [];
-    // v1.8：窗口源覆盖（仅 artifact 窗携带；非字符串忽略 —— 后端
+    // v1.9：窗口源覆盖（仅 artifact 窗携带；非字符串忽略 —— 后端
     // export_source_override 同语义 fail-safe）。
     const rawSource = (w as { source?: unknown }).source;
     const source =

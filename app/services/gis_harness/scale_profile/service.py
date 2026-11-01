@@ -10,7 +10,7 @@
 - ``apply_scale_representation``：preview 同上；commit —— 工件存**新 ref**
   （非破坏，D2）→ UpsertSource×N + UpsertLayer×1 经 ``apply_gis_mutation_batch``
   单事务 CAS 落 MapSpec（representation windows + layer.scale_profile +
-  v1.8 window.source）→ provenance + 回执环。
+  v1.9 window.source）→ provenance + 回执环。
 
 纪律（DECISIONS D7-D9）：
 - 统计/分类口径恒 original_source：apply 不触碰 legend_spec/classify 面

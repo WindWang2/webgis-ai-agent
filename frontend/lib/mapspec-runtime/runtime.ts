@@ -1384,7 +1384,7 @@ export class MapSpecRuntime {
               reason: "non_point_layer_type", layerType: layer.type,
             }, layer.id);
           }
-          // GOAL 04（v1.8）：artifact 窗携带源覆盖时换用工件源（与
+          // GOAL 04（v1.9）：artifact 窗携带源覆盖时换用工件源（与
           // compiler/导出孪生同语义 —— multiscale window.source 读取链）。
           this.map.addLayer({
             ...baseDef,

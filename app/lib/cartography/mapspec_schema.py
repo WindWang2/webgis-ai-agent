@@ -68,13 +68,17 @@ Number = Union[StrictInt, StrictFloat]
 #: tileset / glTF/GLB 资产的地理锚定挂载；scene 只持 source 指针 + 放置
 #: 参数，数据面仍由 source 承载，与 scene.terrain 同「指针不是第二数据面」
 #: 纪律。纯 additive：缺失 = 无 3D 资产，存量 spec 行为不变）；
-#: 1.8 = 多尺度表达档案（GOAL 04 —— representation 窗口 additive
+#: 1.8 = 时态控制层（GOAL 03 / PR #1877 —— 顶层 temporal：
+#: TemporalViewContract.v1。**版本号协调占位**：该语义由 #1877 落地；
+#: 本分支先行登记 1.8 使两侧任意合并顺序都不产生语义撞号 —— 两分支
+#: 对 KNOWN_VERSIONS 的文字冲突在合并时按此注解消解）；
+#: 1.9 = 多尺度表达档案（GOAL 04 —— representation 窗口 additive
 #: ``source`` 源覆盖键（artifact 带 generalized/aggregate_grid 的派生
 #: 工件源装配）+ ``layer.scale_profile`` 开放声明（ScaleRepresentation-
 #: Profile.v1 投影，权威 = app/lib/cartography/multiscale/profile.py）。
 #: 纯 additive：缺失 = 既有 v1.6/v1.7 语义，存量 spec 行为不变）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8")
-LATEST_VERSION = "1.8"
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9")
+LATEST_VERSION = "1.9"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -582,7 +586,7 @@ class MapSpecRepresentationWindow(_SpecModel):
     max_zoom: Number
     mode: Literal[REPRESENTATION_MODES]  # type: ignore[valid-type]
     reason_codes: List[StrictStr] = Field(default_factory=list)
-    #: v1.8 additive（GOAL 04）：窗口级源覆盖。artifact 模式窗
+    #: v1.9 additive（GOAL 04）：窗口级源覆盖。artifact 模式窗
     #: （generalized/aggregate_grid）携带时，该窗的渲染副本/导出裁决从
     #: 此 source id 取数据（spec.sources 内的派生工件源）；缺失 = 主层
     #: source 语义（v1.6 既有行为）。raw 窗不应携带（校验面披露）。
@@ -654,7 +658,7 @@ class MapSpecLayer(_SpecModel):
     #: v1.6 additive（方向 5）：语义缩放表达窗口计划（缺失 = 层缺省
     #: 表达 + 渲染端既有计数推断；存量 spec 行为不变）。
     representation: Optional[MapSpecLayerRepresentation] = None
-    #: v1.8 additive（GOAL 04）：多尺度表达档案声明（开放 dict —— 与
+    #: v1.9 additive（GOAL 04）：多尺度表达档案声明（开放 dict —— 与
     #: legend_spec 同纪律：本 schema 只做承载，权威形状 =
     #: app/lib/cartography/multiscale/profile.py 的 ScaleRepresentation-
     #: Profile.v1 投影（to_mapspec_layer_block）。缺失 = 层无多尺度档案，
@@ -1000,10 +1004,13 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # 1.7 相对 1.6 纯 additive（model3d 源类型 + scene.assets 可选；缺失 =
     # 无 3D 资产，存量 spec 行为不变。G3D02）。
     ("1.6", "1.7"): lambda doc: doc,
-    # 1.8 相对 1.7 纯 additive（representation 窗口 source 覆盖键 +
+    # 1.8 相对 1.7 纯 additive（顶层 temporal 可选；GOAL 03 / PR #1877 ——
+    # 本分支的版本号协调占位，语义落地在该 PR）。
+    ("1.7", "1.8"): lambda doc: doc,
+    # 1.9 相对 1.8 纯 additive（representation 窗口 source 覆盖键 +
     # layer.scale_profile 可选；缺失 = 既有语义，存量 spec 行为不变。
     # GOAL 04 多尺度制图综合）。
-    ("1.7", "1.8"): lambda doc: doc,
+    ("1.8", "1.9"): lambda doc: doc,
 }
 
 

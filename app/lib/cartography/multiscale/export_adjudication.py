@@ -1,6 +1,6 @@
 """导出/渲染同合同裁决（M6）—— 窗口源覆盖的唯一读取面。
 
-v1.8 的 artifact 窗（generalized/aggregate_grid）携带 ``window.source``
+v1.9 的 artifact 窗（generalized/aggregate_grid）携带 ``window.source``
 （spec.sources 内的派生工件源 id）。本模块提供跨后端 SVG 导出与前端
 孪生（TS 侧 carto-ir/representation.ts 同语义）共用的**纯读取语义**：
 

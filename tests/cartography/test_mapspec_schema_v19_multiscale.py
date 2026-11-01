@@ -1,4 +1,4 @@
-"""MapSpec v1.8（多尺度表达档案）schema 契约测试 —— GOAL 04 / M1。
+"""MapSpec v1.9（多尺度表达档案）schema 契约测试 —— GOAL 04 / M1。
 
 v1.8 纯 additive：
 - representation 窗口新键 ``source``（artifact 带源覆盖）；
@@ -15,7 +15,7 @@ pytestmark = pytest.mark.cartography
 
 def _spec(**layer_extra) -> dict:
     layer = {"id": "L", "source": "S", "type": "line", **layer_extra}
-    return {"version": "1.8", "view": {"center": [104, 30], "zoom": 10},
+    return {"version": "1.9", "view": {"center": [104, 30], "zoom": 10},
             "sources": {
                 "S": {"type": "geojson", "inlineData": {
                     "type": "FeatureCollection", "features": []}},
@@ -35,15 +35,16 @@ WINDOWS_WITH_SOURCE = [
 class TestVersionV18:
     def test_known_versions_and_latest(self):
         assert ms.KNOWN_VERSIONS == (
-            "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8")
-        assert ms.LATEST_VERSION == "1.8"
+            "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8",
+            "1.9")
+        assert ms.LATEST_VERSION == "1.9"
 
-    def test_v17_migrates_identity_to_v18(self):
+    def test_v17_migrates_identity_to_latest(self):
         legacy = _spec(representation={"windows": WINDOWS_WITH_SOURCE},
                        scale_profile={"schema_version": 1})
         legacy["version"] = "1.7"
         r2 = ms.parse_mapspec(legacy)
-        assert r2.effective_version == "1.8" and r2.migrated is True
+        assert r2.effective_version == "1.9" and r2.migrated is True
         # identity：文档内容不被改写。
         assert r2.document["layers"][0]["representation"]["windows"] == (
             WINDOWS_WITH_SOURCE)
@@ -52,8 +53,15 @@ class TestVersionV18:
     def test_forward_version_rejected_by_publication(self):
         with pytest.raises(ms.MapSpecSchemaError) as exc:
             ms.require_parseable_mapspec(
-                {"version": "1.9", "view": {}, "sources": {}, "layers": []})
+                {"version": "2.0", "view": {}, "sources": {}, "layers": []})
         assert exc.value.code == "mapspec_forward_version"
+
+    def test_v18_coordination_slot_accepted(self):
+        # 1.8 = GOAL 03 / PR #1877 协调占位：词表内接受（其 temporal 字段
+        # 在本分支不存在 —— extra=allow 全模型纪律，无字段也合法）。
+        r = ms.parse_mapspec(
+            {"version": "1.8", "view": {}, "sources": {}, "layers": []})
+        assert r.valid is True and r.effective_version == "1.9"
 
 
 class TestWindowSourceOverride:
