@@ -32,8 +32,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from pydantic import BaseModel, ConfigDict
 
 from app.lib.cartography.multiscale.generalize import (
+    BandSpec,
     GeneralizationResult,
-    generalize_features,
+    generalize_features_multiband,
 )
 from app.lib.cartography.multiscale.importance import (
     ImportanceDerivation,
@@ -195,6 +196,9 @@ def build_scale_profile(
             "）——不做要素取舍，保留原始几何/聚合表达（不伪造主干）")
 
     stats_all_match = True
+
+    # ── 第一遍：逐带策略裁决（纯决策，零要素处理）──
+    tier_plans = []
     for tier in SCALE_TIERS:
         scale = build_scale_range(
             tier.min_zoom, tier.max_zoom, tier.name, latitude_hint)
@@ -227,20 +231,34 @@ def build_scale_profile(
                 suppress_reason_codes=["MSP.SELECT.TIER_KEEP_TOP_K"],
             )
         declutter = _tier_decluttering(family, tier, feature_count)
-
-        gen: Optional[GeneralizationResult] = None
         selection_or_geometry_active = bool(
             sel_policy.kept_values) or geom_policy.strategy in (
             "bounded_simplify", "shared_boundary_protect")
-        if selection_or_geometry_active and not pin_raw:
-            gen = generalize_features(
-                features,
-                geometry_policy=geom_policy,
-                selection_policy=sel_policy,
-                latitude_hint=latitude_hint,
-                band_zoom=tier.min_zoom,
-                mandatory_ids=mandatory_ids,
-            )
+        tier_plans.append({
+            "tier": tier, "scale": scale, "geom_policy": geom_policy,
+            "sel_policy": sel_policy, "declutter": declutter,
+            "active": selection_or_geometry_active and not pin_raw,
+        })
+
+    # ── 第二遍：单遍多带综合（一次解析、多带复用 —— M8 性能路径，
+    #    与逐带 generalize_features 输出等价，等价测试锁定）──
+    band_specs = [
+        BandSpec(tp["tier"].name, tp["geom_policy"], tp["sel_policy"],
+                 tp["tier"].min_zoom)
+        for tp in tier_plans if tp["active"]
+    ]
+    multiband_results = generalize_features_multiband(
+        features, band_specs,
+        latitude_hint=latitude_hint, mandatory_ids=mandatory_ids,
+    ) if band_specs else {}
+
+    # ── 第三遍：平凡过滤 + 统计/披露组装 ──
+    for tp in tier_plans:
+        tier, scale = tp["tier"], tp["scale"]
+        geom_policy, sel_policy, declutter = (
+            tp["geom_policy"], tp["sel_policy"], tp["declutter"])
+        gen: Optional[GeneralizationResult] = multiband_results.get(tier.name)
+        if gen is not None:
             nontrivial = (
                 gen.receipt["suppressed_count"] > 0
                 or gen.receipt["geometry_simplified"] > 0)

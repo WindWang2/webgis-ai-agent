@@ -28,8 +28,9 @@ import math
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict
-from shapely.geometry import shape
-from shapely.ops import transform
+import numpy as np
+from shapely import transform as shapely_transform
+from shapely.geometry import LineString, shape
 
 from app.lib.cartography.multiscale.profile import (
     FeatureSelectionPolicy,
@@ -117,16 +118,35 @@ def _dataset_origin(features: Sequence[Dict[str, Any]]) -> Tuple[float, float]:
 
 
 def _metric_transforms(lon0: float, lat0: float):
-    """lon/lat ↔ 局部米（equirectangular @ 原点 —— 近似披露于回执）。"""
+    """lon/lat ↔ 局部米（equirectangular @ 原点 —— 近似披露于回执）。
+
+    用 ``shapely.transform`` 的 numpy 数组路径（每几何部件一次数组运算），
+    不用 ``shapely.ops.transform`` 的逐坐标 Python 回调（200k 要素时差
+    两个数量级 —— M8 性能证据）。
+    """
     kx = _M_PER_DEG_LON_EQ * math.cos(math.radians(lat0))
 
+    def _arr_to_m(coords: "np.ndarray") -> "np.ndarray":
+        out = np.empty_like(coords)
+        out[:, 0] = (coords[:, 0] - lon0) * kx
+        out[:, 1] = (coords[:, 1] - lat0) * _M_PER_DEG_LAT
+        if out.shape[1] > 2:
+            out[:, 2] = coords[:, 2]
+        return out
+
+    def _arr_to_ll(coords: "np.ndarray") -> "np.ndarray":
+        out = np.empty_like(coords)
+        out[:, 0] = coords[:, 0] / kx + lon0
+        out[:, 1] = coords[:, 1] / _M_PER_DEG_LAT + lat0
+        if out.shape[1] > 2:
+            out[:, 2] = coords[:, 2]
+        return out
+
     def to_m(geom: Any) -> Any:
-        return transform(lambda x, y, z=None: (
-            (x - lon0) * kx, (y - lat0) * _M_PER_DEG_LAT), geom)
+        return shapely_transform(geom, _arr_to_m)
 
     def to_ll(geom: Any) -> Any:
-        return transform(lambda x, y, z=None: (
-            lon0 + x / kx, lat0 + y / _M_PER_DEG_LAT), geom)
+        return shapely_transform(geom, _arr_to_ll)
 
     return to_m, to_ll
 
@@ -152,20 +172,26 @@ def _simplify_one(
     to_ll,
     *,
     policy: GeometryGeneralizationPolicy,
+    geom_m_pre: Optional[Any] = None,
 ) -> Tuple[Any, List[str], Dict[str, Any]]:
     """单几何有界简化 → (新 lon/lat 几何, 理由码, 观测)。
 
-    不变量复核失败 → 返回 (原几何, 回退理由, 观测)。空/None 几何原样。
+    ``geom_m_pre``：调用方已完成的米空间投影（多带复用同一解析/投影，
+    性能路径）；缺席时自投影。不变量复核失败 → 返回 (原几何, 回退理由,
+    观测)。空/None 几何原样。
     """
     observations: Dict[str, Any] = {
         "area_error": 0.0, "length_loss": 0.0, "rings_dropped": 0,
     }
     if geom_ll is None or geom_ll.is_empty or tol_m <= 0:
         return geom_ll, [], observations
-    try:
-        geom_m = to_m(geom_ll)
-    except Exception:  # noqa: BLE001 — 投影失败（病态坐标）→ 原样
-        return geom_ll, ["project_failed"], observations
+    if geom_m_pre is not None:
+        geom_m = geom_m_pre
+    else:
+        try:
+            geom_m = to_m(geom_ll)
+        except Exception:  # noqa: BLE001 — 投影失败（病态坐标）→ 原样
+            return geom_ll, ["project_failed"], observations
 
     is_poly = geom_m.geom_type in ("Polygon", "MultiPolygon")
     is_line = geom_m.geom_type in ("LineString", "MultiLineString")
@@ -174,6 +200,21 @@ def _simplify_one(
     if is_poly and policy.min_ring_area_m2 is not None:
         geom_m, dropped = _drop_small_rings(geom_m, float(policy.min_ring_area_m2))
         observations["rings_dropped"] = dropped
+
+    # 线亚像素快路径（DP 等价）：容差 ≥ 线全长时，任一中间顶点到端点弦
+    # 的偏离 ≤ 全长/2 < 容差 —— DP 必然只留端点；直接构造端点线省去 GEOS
+    # 逐点处理（200k 世界带的主流形态，M8 性能证据）。锚点守卫路径不走
+    # 此捷径（锚点存活需真实简化复核）。
+    if (
+        geom_m_pre is not None
+        and geom_m.geom_type == "LineString"
+        and tol_m >= geom_m.length
+        and len(geom_m.coords) > 2
+    ):
+        cs = list(geom_m.coords)
+        fast = LineString([cs[0], cs[-1]])
+        observations["length_loss"] = 0.0
+        return to_ll(fast), ["simplified"], observations
 
     simplified = geom_m.simplify(tol_m, preserve_topology=True)
     if simplified.is_empty:
@@ -437,8 +478,13 @@ def _apply_with_anchor_guard(
     lon0: float,
     *,
     policy: GeometryGeneralizationPolicy,
+    geom_m_pre: Optional[Any] = None,
 ) -> Tuple[Any, List[str], Dict[str, Any]]:
-    """有界简化 + 共享锚点存活守卫（策略为 protect 时逐次减半容差重试）。"""
+    """有界简化 + 共享锚点存活守卫（策略为 protect 时逐次减半容差重试）。
+
+    ``geom_m_pre``：复用的米空间投影（多带路径）；重试减半容差时投影
+    不变（仿射换算线性 —— 复用安全）。
+    """
     my_anchors: List[Tuple[float, float]] = []
     if policy.strategy == "shared_boundary_protect" and anchors:
         my_anchors = [c for c in _all_coords(geom_ll) if (
@@ -449,7 +495,7 @@ def _apply_with_anchor_guard(
     obs: Dict[str, Any] = {}
     for attempt in range(_MAX_ANCHOR_RETRY + 1):
         candidate, codes, obs = _simplify_one(
-            geom_ll, tol, to_m, to_ll, policy=policy)
+            geom_ll, tol, to_m, to_ll, policy=policy, geom_m_pre=geom_m_pre)
         if "simplified" not in codes:
             return candidate, codes, obs
         if not my_anchors:
@@ -506,3 +552,194 @@ __all__ = [
     "GeneralizationResult",
     "generalize_features",
 ]
+
+
+# ── 多带单遍综合（M8 性能路径：一次解析、多带复用）───────────────────────
+
+
+class BandSpec(Tuple):  # type: ignore[misc]
+    """单带规格（tier 键 + 几何/取舍策略 + 带端 zoom）。"""
+
+    __slots__ = ()
+
+    def __new__(cls, tier, geometry_policy, selection_policy, band_zoom=None):
+        return super().__new__(cls, (tier, geometry_policy, selection_policy,
+                                     band_zoom))
+
+    @property
+    def tier(self):
+        return self[0]
+
+    @property
+    def geometry_policy(self):
+        return self[1]
+
+    @property
+    def selection_policy(self):
+        return self[2]
+
+    @property
+    def band_zoom(self):
+        return self[3]
+
+
+def generalize_features_multiband(
+    features: Sequence[Dict[str, Any]],
+    bands: Sequence[BandSpec],
+    *,
+    latitude_hint: float = 0.0,
+    mandatory_ids: FrozenSet[str] = frozenset(),
+) -> Dict[str, GeneralizationResult]:
+    """单遍多带综合（与逐带 ``generalize_features`` 输出等价，见等价测试）。
+
+    性能语义：要素解析（shape）/米空间投影/锚点频次各只算一次，B 个带
+    复用 —— O(N·(parse+project) + B·N·simplify)，替代 B 独立调用的
+    O(B·N·(parse+project))。回执逐带与单带调用同形。
+    """
+    features = list(features)
+    input_count = len(features)
+    if not bands:
+        return {}
+    lon0, lat0 = _dataset_origin(features)
+    to_m, to_ll = _metric_transforms(lon0, lat0)
+    kx = _M_PER_DEG_LON_EQ * math.cos(math.radians(lat0))
+
+    any_protect = any(
+        b.geometry_policy.strategy == "shared_boundary_protect" for b in bands)
+    anchors: Dict[Tuple[float, float], int] = {}
+    anchors_total = 0
+    if any_protect:
+        anchors = {c: n for c, n in _anchor_map(features).items() if n >= 2}
+        anchors_total = len(anchors)
+
+    # 预解析 + 预投影（一次）
+    parsed: List[Tuple[Dict[str, Any], str, Any, Any]] = []  # (f, fid, ll, m)
+    for index, feature in enumerate(features):
+        fid = _stable_feature_id(feature, index)
+        geom_dict = feature.get("geometry")
+        geom_ll: Any = None
+        if geom_dict is not None:
+            try:
+                geom_ll = shape(geom_dict)
+            except Exception:  # noqa: BLE001 — 不可解析几何原样保留
+                geom_ll = None
+        geom_m: Any = None
+        if geom_ll is not None and not geom_ll.is_empty:
+            try:
+                geom_m = to_m(geom_ll)
+            except Exception:  # noqa: BLE001
+                geom_m = None
+        parsed.append((feature, fid, geom_ll, geom_m))
+
+    results: Dict[str, GeneralizationResult] = {}
+    for spec in bands:
+        policy = spec.geometry_policy
+        sel = spec.selection_policy
+        tol_m = _tolerance_meters(policy, latitude_hint, spec.band_zoom)
+        selection_active = bool(sel.kept_values and sel.importance_field)
+
+        reason_counts: Dict[str, int] = {}
+        details: List[Dict[str, Any]] = []
+        kept_features: List[Dict[str, Any]] = []
+        suppressed = suppressed_by_importance = 0
+        mandatory_saved = geometry_simplified = geometry_fallback = 0
+        rings_dropped = 0
+        max_area_error = max_length_loss = 0.0
+
+        def _bump(code: str) -> None:
+            reason_counts[code] = reason_counts.get(code, 0) + 1
+
+        for feature, fid, geom_ll, geom_m in parsed:
+            outcomes: List[str] = []
+            if selection_active:
+                value = _feature_value(feature, sel.importance_field)
+                if value is None:
+                    outcomes.append("kept_unclassified")
+                elif value in sel.kept_values:
+                    outcomes.append("kept_by_importance")
+                elif fid in mandatory_ids:
+                    outcomes.append("kept_mandatory")
+                    mandatory_saved += 1
+                else:
+                    suppressed += 1
+                    suppressed_by_importance += 1
+                    outcomes.append("suppressed_by_importance")
+                    _bump("suppressed_by_importance")
+                    if len(details) < _RECEIPT_DETAIL_LIMIT:
+                        details.append({"id": fid, "outcome": "suppressed",
+                                        "reasons": list(outcomes)})
+                    continue
+            else:
+                outcomes.append("kept_no_selection")
+
+            out_feature = copy.copy(feature)
+            geom_dict = feature.get("geometry")
+            new_geom_dict = geom_dict
+            if (
+                geom_ll is not None
+                and geom_m is not None
+                and policy.strategy in (
+                    "bounded_simplify", "shared_boundary_protect")
+                and tol_m > 0
+            ):
+                result_ll, codes, obs = _apply_with_anchor_guard(
+                    geom_ll, tol_m, to_m, to_ll, anchors, kx, lat0, lon0,
+                    policy=policy, geom_m_pre=geom_m)
+                outcomes.extend(codes)
+                rings_dropped += obs.get("rings_dropped", 0)
+                max_area_error = max(max_area_error,
+                                     obs.get("area_error", 0.0))
+                max_length_loss = max(max_length_loss,
+                                      obs.get("length_loss", 0.0))
+                if "simplified" in codes:
+                    geometry_simplified += 1
+                    new_geom_dict = _mapping(result_ll)
+                elif any(c.endswith(("_failed", "_emptied", "_changed",
+                                     "_result", "_lost", "_exceeded"))
+                         for c in codes):
+                    geometry_fallback += 1
+            elif geom_ll is None and geom_dict is not None:
+                outcomes.append("geometry_unparseable")
+            if new_geom_dict is not geom_dict:
+                out_feature = dict(out_feature)
+                out_feature["geometry"] = new_geom_dict
+            kept_features.append(out_feature)
+            for c in outcomes:
+                _bump(c)
+            if len(details) < _RECEIPT_DETAIL_LIMIT:
+                details.append({"id": fid, "outcome": "kept",
+                                "reasons": outcomes})
+
+        anchors_retained = 0
+        if policy.strategy == "shared_boundary_protect" and anchors:
+            anchors_retained = _count_retained_anchors(kept_features, anchors)
+        receipt = {
+            "strategy": policy.strategy,
+            "tolerance_meters": tol_m,
+            "tolerance_units_declared": policy.tolerance_units,
+            "projection": "equirectangular_local_approx",
+            "input_count": input_count,
+            "kept_count": len(kept_features),
+            "suppressed_count": suppressed,
+            "suppressed_by_importance": suppressed_by_importance,
+            "mandatory_saved": mandatory_saved,
+            "geometry_simplified": geometry_simplified,
+            "geometry_fallback": geometry_fallback,
+            "rings_dropped": rings_dropped,
+            "max_area_error_ratio_observed": round(max_area_error, 9),
+            "max_length_loss_ratio_observed": round(max_length_loss, 9),
+            "anchors_total": anchors_total,
+            "anchors_retained": anchors_retained,
+            "stats_match": (len(kept_features) + suppressed) == input_count,
+            "reason_counts": dict(sorted(reason_counts.items())),
+            "per_feature": details,
+        }
+        results[spec.tier] = GeneralizationResult(
+            feature_collection={"type": "FeatureCollection",
+                                "features": kept_features},
+            receipt=receipt,
+        )
+    return results
+
+
+from shapely.geometry import mapping as _mapping  # noqa: E402 — 局部使用
