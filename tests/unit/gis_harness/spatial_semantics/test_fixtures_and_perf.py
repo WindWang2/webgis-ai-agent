@@ -59,12 +59,12 @@ def test_fixture_polar_and_invalid() -> None:
     r2 = preflight_for_feature_collection(
         fx.invalid_geometry_mixed(), spec=SpatialOperationSpec(**BUFFER_SPEC))
     assert r2.contract.feature_count == 2
-    # 空 FC：无坐标证据 → crs_source=unknown（不猜），非阻塞披露
-    # （下游对空数据本就返回空结果，无语义危险）
+    # 空 FC：无坐标证据 → crs_source=unknown（不猜）；度量敏感操作按
+    # R1-P1 收敛规则 requires_clarification（CRS 未知不放行执行）
     r3 = preflight_for_feature_collection(
         fx.empty_fc(), spec=SpatialOperationSpec(**BUFFER_SPEC))
     assert r3.contract.crs_source == "unknown"
-    assert r3.status == "pass_with_disclosure"
+    assert r3.status == "requires_clarification"
     assert "SSC_UNKNOWN_CRS" in [rc.code for rc in r3.verdict.reason_codes]
 
 

@@ -177,7 +177,7 @@ async def test_spatial_aggregate_area_density_composes_per_km2(registry) -> None
     # 换算链在案：库层 per_m² → 图例口径 per_km²（×1e6）
     conv = res["scientific_evidence"]["normalization"].get(
         "rate_unit_conversion", "")
-    assert "per_m²→per_km²" in conv
+    assert "per_km2" in conv and "1e+06" in conv
     assert res["scientific_evidence"]["normalization"]["rate_unit"] == "per_km2"
     if rate is not None:
         # 数值量级与口径一致：8 点两区、每区 ~4.27 km² → ~1-2 个/km²

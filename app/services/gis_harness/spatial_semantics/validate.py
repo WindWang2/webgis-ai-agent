@@ -100,8 +100,10 @@ def validate_spatial_operation(
     blocked_fields: List[str] = []
 
     def _add(code: str, detail: str, field: str = "") -> None:
+        # 去重按 code（理由码是契约面；field 是补充信息，同码只保留首行 ——
+        # R1 P2：SSC_UNKNOWN_CRS 曾以 source_crs/working_crs 两个 field 重复）。
         if len(reasons) < _MAX_REASON_CODES and not any(
-                r.code == code and r.field == field for r in reasons):
+                r.code == code for r in reasons):
             reasons.append(ContractReasonCode(
                 code=code, detail=detail[:200], field=field[:48]))
 
@@ -221,20 +223,35 @@ def validate_spatial_operation(
         requested = spec.requested_density_denominator
         want_unit = DENSITY_DENOMINATOR_UNIT.get(requested)
         actual = spec.denominator_kind or "none"
-        if want_unit == "population":
-            if actual != "population":
+        if want_unit is None:
+            # R1 P1：词表外口径 fail-closed —— 调用方拼错（如 per_km² 全角）
+            # 绝不静默放行（那会拿到无对账痕迹的"个/km²"结果）。
+            _add("SSC_DENOMINATOR_KIND_MISMATCH",
+                 f"请求口径 {requested!r} 不在词表 "
+                 f"{sorted(DENSITY_DENOMINATOR_UNIT)} —— 拒绝执行而非猜口径",
+                 "stat_denominator")
+            blocked_fields.append("stat_denominator")
+            _repair("clarify_density_unit",
+                    "口径词表：" + "/".join(sorted(DENSITY_DENOMINATOR_UNIT)))
+        elif want_unit == "population":
+            # 人口族分母的载体：工具面 denominator_kind="field"（人口字段）
+            # 或语义层 "population" —— 两者都合法（R1 P1：field 是生产工具
+            # 面唯一可达形态，per_10k_persons 必须可达）。
+            if actual not in ("field", "population"):
                 _add("SSC_DENOMINATOR_KIND_MISMATCH",
                      f"请求口径 {requested}（人口分母）≠ 分母类型 {actual}",
                      "stat_denominator")
                 _repair("switch_denominator",
-                        "二选一：分母换人口字段（per_capita 口径）或请求改 per_km²")
+                        "二选一：分母换人口字段（denominator_kind=field + "
+                        "denominator=<人口字段>）或请求改 per_km²")
         else:
             if actual not in ("area", None):
                 _add("SSC_DENOMINATOR_KIND_MISMATCH",
                      f"请求口径 {requested}（面积分母 {want_unit}）≠ 分母类型 {actual}",
                      "stat_denominator")
                 _repair("switch_denominator",
-                        "二选一：分母换聚合单元面积（area）或请求改对应口径")
+                        "二选一：分母换聚合单元面积（denominator_kind=area）"
+                        "或请求改对应口径")
 
     # ══ 7) 计算空间降级披露（3857/跨带/极区 —— resolve 已给证据）══════
     for rc in space.reason_codes:
@@ -286,6 +303,12 @@ def validate_spatial_operation(
     elif "requires_clarification" in severities or any(
             r.code in ("SSC_DENOMINATOR_KIND_MISMATCH",
                        "SSC_SCOPE_DATA_CRS_MISMATCH") for r in reasons):
+        status = "requires_clarification"
+    elif metric_sensitive and any(
+            r.code in ("SSC_UNKNOWN_CRS", "SSC_CRS_ASSUMED") for r in reasons):
+        # R1 P1：度量敏感操作 + CRS 未知/假设 —— 不放行执行（整数网格局部
+        # 坐标曾被当 WGS84 度静默缓冲）。vocabulary SSC_UNKNOWN_CRS 的
+        # "requires_clarification 处理"承诺在此兑现。
         status = "requires_clarification"
     elif ("degraded" in severities
             or (space.distortion_estimate is not None

@@ -333,8 +333,15 @@ def register_cartography_tools(registry: ToolRegistry):
             # DEGREE_LIKE_METRIC 检查口径失真。
             try:
                 from app.lib.geo_processor.core import extract_declared_crs
+                from app.lib.gis.crs_safety import classify_crs
 
-                _data_crs = extract_declared_crs(data) or "EPSG:4326"
+                _declared = extract_declared_crs(data) or ""
+                # measurement 的 DEGREE_LIKE_METRIC 白名单是精确串匹配
+                # （EPSG:4326/CRS84/…）—— URN 形态（urn:ogc:def:crs:EPSG::
+                # 4326）会静默跳过该检查。地理 CRS（classify_crs 权威判定）
+                # 一律用白名单代表值 4326 参检，投影 CRS 原样（不参检）。
+                _data_crs = ("EPSG:4326" if classify_crs(_declared) == "geographic"
+                             else (_declared or "EPSG:4326"))
             except Exception:  # noqa: BLE001 — CRS 提取失败按规范缺省
                 _data_crs = "EPSG:4326"
             try:

@@ -2432,6 +2432,10 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             preflight_tool_input,
         )
         try:
+            # R1 P1：points 层同样过门（度量分子；此前只查 zones，未声明
+            # 投影样点层逃逸到执行层才报误导性错误）。
+            preflight_tool_input(pts, operation="spatial_aggregate",
+                                 purpose="distance")
             pf = preflight_tool_input(
                 polys, operation="spatial_aggregate",
                 denominator_kind=denominator_kind,
@@ -2468,21 +2472,41 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             )
             import json as _json
             fc = _json.loads(out_gdf.to_json())
-            # GOAL 01（M3 单位科学）：area 分母的库层 rate 是 per m²
-            # （aggregate_with_denominator rate_unit="per_m2"）；显式口径
-            # per_km² 时做确定性换算（×1e6，None/零分母语义原样保留），
-            # 换算链入证据 —— 口径串（个/km²）与数值量级必须一致。
-            if denominator_kind == "area" and norm_evidence.get("rate_unit") == "per_m2":
+            # GOAL 01（M3 单位科学 + R1 P0）：库层 rate 的真实口径是
+            # per-person（field 分母）或 per m²（area 分母）—— 图例口径串
+            # 必须与数值量级一致，换算链入证据：
+            # · area + per_km²（默认图例口径）：×1e6；
+            # · field + 请求 per_10k_persons：×1e4（per-person → 每万人）；
+            # · 其余：不合成口径串（density_unit=""，rate_unit 透传库层真值）。
+            rate_factor = 1.0
+            rate_unit_target = str(norm_evidence.get("rate_unit") or "")
+            if denominator_kind == "area" and rate_unit_target == "per_m2":
+                rate_factor = 1e6
+                rate_unit_target = "per_km2"
+            elif (denominator_kind == "field"
+                  and requested_density_unit == "per_10k_persons"):
+                rate_factor = 1e4
+                rate_unit_target = "per_10k_persons"
+            if rate_factor != 1.0:
                 for feat in fc.get("features", []):
                     props = feat.get("properties") or {}
                     rate = props.get("rate")
                     if rate is not None:
-                        props["rate"] = float(rate) * 1e6
+                        props["rate"] = float(rate) * rate_factor
                 norm_evidence = dict(norm_evidence)
-                norm_evidence["rate_unit"] = "per_km2"
+                norm_evidence["rate_unit"] = rate_unit_target
                 norm_evidence["rate_unit_conversion"] = (
-                    "per_m²→per_km²(factor=1e6) —— 库层 m² 分母率值升格为"
-                    "每平方公里口径")
+                    f"per-person/per-m²(库层)→{rate_unit_target}"
+                    f"(factor={rate_factor:g}) —— 率值换算到图例口径")
+            # 分子显示：要素计数 → "个"；字段求和（如产值）→ 不虚构计数单位。
+            numerator_display = "" if numerator_field else "个"
+            density_unit_out = ""
+            if denominator_kind == "area" and rate_unit_target == "per_km2":
+                density_unit_out = compose_density_unit(
+                    numerator_display or "Σ", "km2")
+            elif rate_unit_target == "per_10k_persons":
+                density_unit_out = compose_density_unit(
+                    numerator_display or "Σ", "population")
             descriptor = get_algorithm_registry().get("spatial.aggregate.rates")
             evidence = build_evidence(
                 descriptor, tool="spatial_aggregate",
@@ -2505,11 +2529,9 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                     "scientific_evidence": evidence,
                 },
                 pf,
-                # S6：库层 rate_unit=per_m²（m² 分母），升格显式口径与图例串。
-                density_unit=(compose_density_unit("个", "km2")
-                              if denominator_kind == "area" else
-                              (compose_density_unit("个", "population")
-                               if denominator_kind == "field" else "")),
+                # S6/R1-P0：口径串与换算后的数值量级一致；field 分母未请求
+                # per_万人 时不合成口径（rate_unit 透传库层真值，不伪造）。
+                density_unit=density_unit_out,
                 area_unit=("km2" if denominator_kind == "area" else ""),
             )
         res = SpatialAnalyzer.aggregate(

@@ -63,17 +63,12 @@ def _bbox_center_and_span(
         return None
     if not all(math.isfinite(v) for v in (minx, miny, maxx, maxy)):
         return None
-    # 经度跨度按环绕归一：raw 跨度 >180° 时，数据更可能是贴 ±180 的环绕
-    # 簇（真实跨度 = 360 − raw），而非横跨 200°+ 的大洲（两者在 >6° 判定
-    # 下同归测地/多带，中心只影响带号 —— ≤6° 跨度永不歧义）。
-    raw_span = maxx - minx
-    lon_span = raw_span % 360.0
-    if lon_span > 180.0:
-        lon_span = 360.0 - lon_span
-        clon = (maxx + lon_span / 2.0 + 180.0) % 360.0 - 180.0
-    else:
-        clon = minx + lon_span / 2.0
-    return (clon, (miny + maxy) / 2.0, lon_span, abs(maxy - miny))
+    # R1 P1：返回**原始**跨度（不做环绕归一）—— 环绕解释由地理分支按
+    # 采样占据弧 / AM 证据三级链裁决（此前无条件归一把近全球 bbox 判成
+    # ≤6° 单带）。中心用 min/max 中点（仅无更强证据时的兜底）。
+    raw_span = (maxx - minx) % 360.0
+    clon = minx + raw_span / 2.0
+    return (clon, (miny + maxy) / 2.0, raw_span, abs(maxy - miny))
 
 
 def resolve_calculation_space(
@@ -153,10 +148,28 @@ def resolve_calculation_space(
             return _result(
                 "unknown", "",
                 "地理 CRS 但无 bbox —— 无法推荐计算投影（不猜）")
-        clon, clat, lon_span, _latspan = geo
+        _raw_clon, clat, raw_span, _latspan = geo
         # 跨 AM 环绕证据：#1737 bbox 判定 ∪ 契约侧采样跳变证据（inspect 已判）。
         antimeridian = _lon_crosses(bbox) or any(
             rc.code == "SSC_ANTIMERIDIAN_CROSSED" for rc in contract.reason_codes)
+        # R1 P1：raw_span>180 时 bbox min/max 无法区分「环绕簇」与「真大洲」
+        # （近全球 [-180,180] 会被算成 span=0）。跨度/中心按三级证据链取值：
+        # ① 采样占据弧（≤200 采样的最大空隙法，最可信）；
+        # ② 无采样但 AM 证据成立 → 环绕解释（span=360−raw，中心取对侧弧）；
+        # ③ 其余 → 原始跨度（保守走测地分支）。
+        if contract.lon_span_occupied is not None:
+            lon_span = float(contract.lon_span_occupied)
+            clon = (float(contract.lon_center_hint) if
+                    contract.lon_center_hint is not None else _raw_clon)
+            span_basis = f"采样占据弧 {lon_span:.1f}°"
+        elif raw_span > 180.0 and antimeridian:
+            lon_span = 360.0 - raw_span
+            clon = (float(bbox[2]) + lon_span / 2.0 + 180.0) % 360.0 - 180.0
+            span_basis = f"AM 证据门控环绕解释 span={lon_span:.1f}°"
+        else:
+            lon_span = raw_span
+            clon = _raw_clon
+            span_basis = f"bbox 原始跨度 {lon_span:.1f}°"
         if clat > _POLAR_LAT:
             return _result(
                 "projected_polar", "EPSG:3413",
@@ -198,7 +211,7 @@ def resolve_calculation_space(
         return _result(
             "projected_local", rec,
             f"地理数据自动投影 {rec}（中心 {clon:.1f}°E/{clat:.1f}° 单带，"
-            "recommend_metric_crs 纯计算）",
+            f"{span_basis}，recommend_metric_crs 纯计算）",
             antimeridian=antimeridian)
 
     # — unknown —

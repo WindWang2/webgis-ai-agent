@@ -436,7 +436,7 @@ ref 证据与 MapSpec 单位链路。
   assumed/rfc7946_default，复用 #1868 spatial_receipt 词表）+ unknown；
 - 统一 preflight：`build_spatial_preflight` = inspect（descriptor 级，采样
   ≤200）→ resolve（UTM 单带/极区/测地 + 3857 闭式反算失真估计 + 跨 AM
-  环绕选带）→ validate（五态判定 + SSC_* 理由码 + 修复建议分级）；
+  环绕选带）→ validate（五态判定 + SSC_* 理由码（20 个） + 修复建议分级）；
 - 判定词表：pass / pass_with_disclosure / degraded_with_disclosure /
   requires_clarification / blocked / not_evaluated；
 - 工具消费（M4）：buffer_analysis / spatial_join / spatial_aggregate /

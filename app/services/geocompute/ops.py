@@ -207,15 +207,14 @@ def _input_fc(payloads: dict[str, NodePayload], node: ExecutionNode) -> dict[str
     """
     feats = _features_from_input(payloads, node)
     fc: dict[str, Any] = {"type": "FeatureCollection", "features": feats}
-    crs = node.parameters.get("crs")
-    if not crs:
-        for src in node.inputs:
-            meta = payloads.get(src, {}).get("metadata")
-            if isinstance(meta, dict) and meta.get("crs"):
-                crs = meta["crs"]
-                break
-    if crs:
-        fc["crs"] = crs
+    # 只信 inputs 载荷的 metadata.crs（数据带来的声明）。不读
+    # node.parameters["crs"]（R1 P2：parameters 是工作流作者自由 dict，
+    # "crs" 不是已接线 op 的标准参数 —— 从那里取会发明数据没有的声明）。
+    for src in node.inputs:
+        meta = payloads.get(src, {}).get("metadata")
+        if isinstance(meta, dict) and meta.get("crs"):
+            fc["crs"] = meta["crs"]
+            break
     return fc
 
 

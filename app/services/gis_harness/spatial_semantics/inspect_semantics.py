@@ -61,6 +61,7 @@ class DatasetSpatialEvidence(BaseModel):
     coord_samples: List[Tuple[float, float]] = Field(default_factory=list)
     bbox: Optional[List[float]] = None                   # 数据 bbox（原始坐标）
     longitude_convention: str = ""                       # pm180/e360/ambiguous/""
+    scan_truncated: bool = False                         # 扫描触上限（bbox 是部分口径）
 
 
 def _iter_coords(geom: Any) -> List[Tuple[float, float]]:
@@ -93,19 +94,12 @@ def evidence_from_feature_collection(
     """
     if not isinstance(fc, dict) or fc.get("type") != "FeatureCollection":
         return DatasetSpatialEvidence(ref=ref, fingerprint=fingerprint)
-    declared = fc.get("crs")
-    crs = ""
-    if isinstance(declared, str):
-        crs = declared.strip()[:64]
-    elif isinstance(declared, dict):
-        # OGC CRS URN 形态 {"name": "urn:ogc:def:crs:EPSG::4326"} / {"properties":{"name":...}}
-        name = declared.get("name")
-        if isinstance(name, str):
-            crs = name.strip()[:64]
-        elif isinstance(declared.get("properties"), dict):
-            pName = declared["properties"].get("name")
-            if isinstance(pName, str):
-                crs = pName.strip()[:64]
+    # R1 P1：crs member 解析复用 geo_processor.extract_declared_crs（单一
+    # 真相 —— 此前本地重实现漏掉 {"properties":{"code":N}} 形态，合法声明
+    # 数据被误判 blocked）。
+    from app.lib.geo_processor.core import extract_declared_crs
+
+    crs = (extract_declared_crs(fc) or "")[:64]
 
     features = fc.get("features")
     if not isinstance(features, list):
@@ -115,8 +109,12 @@ def evidence_from_feature_collection(
     samples: List[Tuple[float, float]] = []
     bbox: Optional[List[float]] = None
     scanned = 0
+    scan_truncated = False
     for feat in features:
         if scanned >= _MAX_FEATURES_SCAN or len(samples) >= _MAX_SAMPLES:
+            # R1 P2：bbox/结构是前缀口径 —— 消费方不得据此判 disjoint
+            scan_truncated = scanned >= _MAX_FEATURES_SCAN or (
+                len(samples) >= _MAX_SAMPLES and scanned < len(features))
             break
         scanned += 1
         if not isinstance(feat, dict):
@@ -149,6 +147,7 @@ def evidence_from_feature_collection(
         geometry_kinds=dict(sorted(kinds.items())),
         coord_samples=[(round(x, 7), round(y, 7)) for x, y in samples[:_MAX_SAMPLES]],
         bbox=bbox,
+        scan_truncated=scan_truncated or scanned < len(features),
     )
 
 
@@ -184,7 +183,11 @@ def _coordinate_structure(
     if not samples:
         return {"out_of_envelope": False, "degree_like": False,
                 "integer_grid": False, "has_fractional": False}
-    out = any(abs(x) > _LON_ABS_MAX or abs(y) > _LAT_ABS_MAX for x, y in samples)
+    # R1 P2：NaN/Inf 坐标（nan 比较恒 False 会逃过包络检查）先显式标记。
+    nonfinite = any(
+        not (math.isfinite(x) and math.isfinite(y)) for x, y in samples)
+    out = nonfinite or any(
+        abs(x) > _LON_ABS_MAX or abs(y) > _LAT_ABS_MAX for x, y in samples)
     has_frac = any(
         not float(x).is_integer() or not float(y).is_integer()
         for x, y in samples
@@ -194,7 +197,34 @@ def _coordinate_structure(
         "degree_like": (not out) and has_frac,
         "integer_grid": (not out) and not has_frac,
         "has_fractional": has_frac,
+        "nonfinite": nonfinite,
     }
+
+
+def _occupied_lon_span_center(
+    samples: Sequence[Tuple[float, float]],
+) -> Tuple[Optional[float], Optional[float]]:
+    """采样经度的占据跨度与弧心（R1 P1：global/近全球数据修复）。
+
+    bbox min/max 反推在 raw_span>180 时无法区分「环绕簇」与「真大洲」——
+    用采样经度在单位圆上的**最大空隙**求占据弧：占据弧 = 360° − 最大空隙，
+    弧心取空隙后沿。全球散布数据最大空隙小 → 跨度大（→测地）；跨 AM 簇
+    最大空隙 ~360°-簇宽 → 跨度 = 簇宽（→单带）。采样 <2 → (None, None)。
+    """
+    lons = sorted(
+        float(x) % 360.0 for x, _ in samples
+        if math.isfinite(x))
+    if len(lons) < 2:
+        return None, None
+    gaps = [(lons[i + 1] - lons[i], i) for i in range(len(lons) - 1)]
+    gaps.append((lons[0] + 360.0 - lons[-1], len(lons) - 1))  # 环绕空隙
+    max_gap, gap_idx = max(gaps)
+    occupied = 360.0 - max_gap
+    if occupied <= 0.0:
+        return 0.0, lons[0]
+    arc_start = lons[(gap_idx + 1) % len(lons)]
+    center = (arc_start + occupied / 2.0 + 180.0) % 360.0 - 180.0
+    return occupied, center
 
 
 def _axis_order_guess(
@@ -332,9 +362,14 @@ def inspect_spatial_contract(
             detail=f"声明偏移帧 {chinese_frame} —— 分析前归一到 WGS84",
             field="datum_normalization"))
 
-    # — CRS 分类（crs_safety 权威）—
-    classified = classify_crs(declared if crs_source == "declared" else
-                              ("EPSG:4326" if crs_source == "rfc7946_default" else ""))
+    # — CRS 分类（crs_safety 权威；GCJ-02/BD-09 是偏移**地理帧**，归
+    # geographic —— 执行层归一 WGS84 后即标准地理数据，不是 unknown）—
+    if crs_source == "declared" and chinese_frame in ("gcj02", "bd09"):
+        classified = "geographic"
+    else:
+        classified = classify_crs(
+            declared if crs_source == "declared" else
+            ("EPSG:4326" if crs_source == "rfc7946_default" else ""))
     if (crs_source == "declared" and classified == "geographic"
             and structure["out_of_envelope"]):
         reasons.append(ContractReasonCode(
@@ -373,6 +408,9 @@ def inspect_spatial_contract(
                 field="data_bbox"))
     longitude_convention = str(lon_sem.get("convention") or "unknown")
 
+    # — 采样占据跨度（R1 P1：resolve 消费，防近全球 bbox 被误判单带）—
+    span_occupied, center_hint = _occupied_lon_span_center(samples)
+
     # — 精度 / 尺度 —
     decimals = _decimal_places(samples) if samples else 0
     precision = _precision_from_decimals(decimals) if (
@@ -383,7 +421,8 @@ def inspect_spatial_contract(
     # — AOI × 数据重叠（同帧才可比；跨帧判 unknown，帧矛盾由 validate 另判）—
     scope_out = scope or ScopeEvidence()
     overlap = _scope_overlap_comparable(
-        scope_out, declared, crs_source, evidence.bbox)
+        scope_out, declared, crs_source, evidence.bbox,
+        getattr(evidence, "scan_truncated", False))
 
     return SpatialSemanticContract(
         dataset_ref=evidence.ref,
@@ -397,6 +436,8 @@ def inspect_spatial_contract(
         feature_count=evidence.feature_count,
         data_bbox=evidence.bbox,
         longitude_convention=longitude_convention,
+        lon_span_occupied=span_occupied,
+        lon_center_hint=center_hint,
         requested_scope=ScopeEvidence(
             name=scope_out.name, level=scope_out.level, bbox=scope_out.bbox,
             bbox_crs=scope_out.bbox_crs, source=scope_out.source,
@@ -412,7 +453,7 @@ def inspect_spatial_contract(
 
 def _scope_overlap_comparable(
     scope: ScopeEvidence, data_crs: str, crs_source: str,
-    data_bbox: Optional[List[float]],
+    data_bbox: Optional[List[float]], scan_truncated: bool = False,
 ) -> str:
     """AOI × 数据重叠 —— 仅在同帧（或等价地理帧）下判定。
 
@@ -429,7 +470,12 @@ def _scope_overlap_comparable(
         or (scope_frame in geo_equivalence and crs_source == "rfc7946_default"))
     if not comparable:
         return "unknown"
-    return _scope_overlap(scope, data_bbox)
+    overlap = _scope_overlap(scope, data_bbox)
+    if overlap == "disjoint" and scan_truncated:
+        # R1 P2：bbox 是前缀采样口径 —— 未扫到的尾部要素可能落在 AOI 内，
+        # disjoint（blocking）不可凭部分证据下结论。
+        return "unknown"
+    return overlap
 
 
 def _scope_overlap(

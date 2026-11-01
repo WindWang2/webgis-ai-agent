@@ -19,8 +19,8 @@ requires_clarification / blocked。理由码词表见 vocabulary.py（SSC_*）�
 | S11 | AOI 声明 4326 但数据声明 3857（范围矛盾） | scope CRS ≠ data CRS | 无对账（AOI 无 CRS 载体） | requires_clarification：SCOPE_DATA_CRS_MISMATCH + 修复建议（声明其一或 transform） |
 | S12 | zonal_stats：AOI 空 bbox / min>max / 乱序 | 无效范围 | 部分下游才炸 | blocked：INVALID_SCOPE（前置、确定性） |
 | S13 | 高纬 >84°N（斯瓦尔巴）度量请求 | 极区 | recommend_metric_crs 已给 3413 | pass：working_crs=EPSG:3413、geodesic_or_projected=projected_polar 披露 |
-| S14 | KDE density（bandwidth_m=1000） | 隐式 per_m² 分母 | 无单位标注（G6） | pass_with_disclosure：DENSITY_UNIT_IMPLICIT + 输出 density_unit=per_km²（换算链）进契约 |
-| S15 | voronoi/convex_hull 面积输出（非米投影输入） | 输入已投影英尺系 | area/1e6 硬编码（错 10.76×） | 修复：输出单位按 crs_unit_factor 换算 + AREA_UNIT_CONVERSION 披露（G3） |
+| S14 | KDE density（bandwidth_m=1000） | 隐式 per_m² 分母 | 无单位标注（G6） | 本 PR 未接入（KDE 非四条适配路径之一；诚实 not_evaluated——G6 留待后续，不虚报 pass） |
+| S15 | voronoi/convex_hull 面积输出（非米投影输入） | 输入已投影英尺系 | area/1e6 硬编码（错 10.76×） | 已修复：面积按 _crs_unit_factor² 换算（测试锁定换算值）；无独立披露码（经 spatial_semantics 证据块统一披露口径，死码已删） |
 | S16 | 50k feature 输入 preflight 开销 | 大数据 | 无 preflight | 契约只评估 descriptor 级（crs/bbox/有界坐标采样 ≤200），无全量几何进 prompt；性能预算对照（M7） |
 
 8 类典型错误映射（验收 Oracle #3）：4326vs投影=S3/S4；mvs度=S3/S5/S12；

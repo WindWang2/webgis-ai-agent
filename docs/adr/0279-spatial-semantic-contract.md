@@ -35,7 +35,7 @@ blocked + declare_crs 修复建议，**绝不默认 4326**。CRS/单位/分母�
 ### D3 判定与修复分离
 validate 产五态判定（pass / pass_with_disclosure / degraded_with_
 disclosure / requires_clarification / blocked / not_evaluated）+ SSC_*
-封闭理由码（28 个，severity 四级）。修复建议分两级授权：
+封闭理由码（20 个，severity 四级）。修复建议分两级授权：
 `explicit_required`（默认，须用户/上层授权）与 `deterministic_safe`
 （双方显式声明的 EPSG↔EPSG 可逆变换）。**preflight 只判定不执行变换** ——
 确定性安全变换的执行仍走既有执行层（transform_geojson 等），由调用方

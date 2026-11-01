@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.services.gis_harness.spatial_semantics.vocabulary import (
+    AREA_UNIT_VOCABULARY,
     AXIS_ORDER_VOCABULARY,
     CALCULATION_MODE_VOCABULARY,
     CRS_SOURCE_VOCABULARY,
@@ -96,6 +97,11 @@ class SpatialSemanticContract(BaseModel):
     feature_count: int = 0
     data_bbox: Optional[List[float]] = None                # 原始坐标 bbox（未判 CRS）
     longitude_convention: str = "unknown"                  # pm180/e360/ambiguous/unknown
+    # 采样占据跨度证据（R1 P1）：bbox min/max 在 raw_span>180 时无法区分
+    # 环绕簇与真大洲 —— inspect 从 ≤200 采样经度算最大空隙得占据弧。
+    # additive optional 字段（v1 兼容：缺省 None，旧序列化 round-trip 不变）。
+    lon_span_occupied: Optional[float] = None              # 采样占据经度跨度（度）
+    lon_center_hint: Optional[float] = None                # 占据弧心经度（度）
 
     # — 范围侧 —
     requested_scope: ScopeEvidence = Field(default_factory=ScopeEvidence)
@@ -155,6 +161,13 @@ class SpatialSemanticContract(BaseModel):
             raise ValueError(f"distance_unit 越词表: {v!r}")
         return v
 
+    @field_validator("area_unit")
+    @classmethod
+    def _v_area_unit(cls, v: str) -> str:
+        if v != "unknown" and v not in AREA_UNIT_VOCABULARY:
+            raise ValueError(f"area_unit 越词表: {v!r}")
+        return v
+
     @field_validator("scale_level")
     @classmethod
     def _v_scale_level(cls, v: str) -> str:
@@ -192,6 +205,12 @@ class SpatialSemanticContract(BaseModel):
                 if self.data_bbox and len(self.data_bbox) == 4 else None
             ),
             "longitude_convention": self.longitude_convention,
+            "lon_span_occupied": (
+                round(self.lon_span_occupied, 4)
+                if self.lon_span_occupied is not None else None),
+            "lon_center_hint": (
+                round(self.lon_center_hint, 4)
+                if self.lon_center_hint is not None else None),
             "requested_scope": self.requested_scope.model_dump(),
             "calculation_mode": self.calculation_mode,
             "working_crs": self.working_crs,
@@ -254,6 +273,14 @@ class SpatialSemanticContract(BaseModel):
             data_bbox=data.get("data_bbox") if isinstance(
                 data.get("data_bbox"), list) else None,
             longitude_convention=str(data.get("longitude_convention") or "unknown"),
+            lon_span_occupied=(
+                float(data["lon_span_occupied"])
+                if isinstance(data.get("lon_span_occupied"), (int, float))
+                and not isinstance(data.get("lon_span_occupied"), bool) else None),
+            lon_center_hint=(
+                float(data["lon_center_hint"])
+                if isinstance(data.get("lon_center_hint"), (int, float))
+                and not isinstance(data.get("lon_center_hint"), bool) else None),
             requested_scope=scope,
             calculation_mode=str(data.get("calculation_mode") or "unknown"),
             working_crs=str(data.get("working_crs") or "")[:_MAX_FIELD_LEN],

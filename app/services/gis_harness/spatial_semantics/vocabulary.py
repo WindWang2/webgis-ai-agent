@@ -110,9 +110,6 @@ class ReasonCode:
 SSC_REASON_CODES: Dict[str, ReasonCode] = {rc.code: rc for rc in (
     # — CRS 声明 —
     ReasonCode(
-        "SSC_CRS_DECLARED", "disclosure",
-        "数据 CRS 显式声明（{crs}）"),
-    ReasonCode(
         "SSC_CRS_RFC7946_DEFAULT", "disclosure",
         "未声明 CRS 但坐标呈度样 —— 按 RFC 7946 规范缺省 WGS84 处理（非猜测，附披露）"),
     ReasonCode(
@@ -169,32 +166,17 @@ SSC_REASON_CODES: Dict[str, ReasonCode] = {rc.code: rc for rc in (
         "SSC_DEGREE_DISTANCE_REQUEST", "blocking",
         "距离参数呈度级量值（≤360 且带小数）且单位未声明 —— 不得当米用，须显式单位"),
     ReasonCode(
-        "SSC_AREA_UNIT_CONVERSION", "disclosure",
-        "面积输出单位换算：{chain}"),
-    ReasonCode(
         "SSC_DENOMINATOR_KIND_MISMATCH", "requires_clarification",
         "分母类型（{actual}）与请求口径（{requested}）不一致 —— 二选一：换分母或改口径"),
-    ReasonCode(
-        "SSC_DENOMINATOR_ZERO_ZONES", "disclosure",
-        "{count} 个聚合单元分母为零/负 —— 比率置 None（绝不造 0/∞）"),
-    ReasonCode(
-        "SSC_DENSITY_UNIT_IMPLICIT", "warning",
-        "密度值隐含分母（{implicit}）—— 已显式升格为 {explicit}"),
     # — 栅格 —
     ReasonCode(
         "SSC_RASTER_CELL_UNIT_MISMATCH", "degraded",
         "栅格分辨率单位（{raster_unit}）与请求距离单位（{request_unit}）不同 —— 换算因子 {factor} 附披露"),
     # — 几何 —
     ReasonCode(
-        "SSC_GEOMETRY_INVALID", "blocking",
-        "输入含无效几何（{reason}）—— 拒绝执行而非静默修复"),
-    ReasonCode(
         "SSC_COORD_OUT_OF_ENVELOPE", "blocking",
         "声明地理 CRS 但坐标越 WGS84 包络（|x|>{x} 或 |y|>{y}）—— CRS 声明与数据矛盾"),
     # — 精度 —
-    ReasonCode(
-        "SSC_SPATIAL_PRECISION_LOW", "warning",
-        "坐标精度粗糙（~{precision}）—— 与 {request} 量级请求不匹配"),
 )}
 
 
