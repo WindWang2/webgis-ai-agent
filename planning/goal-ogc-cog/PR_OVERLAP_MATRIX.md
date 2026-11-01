@@ -21,3 +21,10 @@
 
 ## 刷新记录
 - 2026-11-01 初次建立（基线核查时无 open PR；#1868-#1875 全 merged）。
+
+## PR 前终刷（2026-11-01，提交 PR 前）
+- origin/master 仍为 `6c5e71c2c`（无前进，无需 rebase）。
+- 新发现 open PR：
+  - **#1877（GOAL 03 temporal / MapSpec v1.8）**：改 mapspec_schema.py(+249)/tools/__init__.py(+3)/categories.py(+1)。与本分支交集 = tools/__init__.py + categories.py，**双方均为纯追加不同条目**（不同模块注册行/分类键），无语义冲突；本分支**未触碰 mapspec_schema.py**（MapSpec 桥走既有 v1.0 vector 源 + data_fabric url，不新增版本）。合并顺序无关。
+  - **#1876（GOAL 01 spatial semantics）**：交集同上两文件，同款纯追加。
+- 处置：交集登记、无代码调整必要；merge 时若 git 无法自动合并（相邻行），按"各自追加自己的模块行"语义手工并集即可。
