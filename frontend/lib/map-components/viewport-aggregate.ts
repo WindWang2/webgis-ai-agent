@@ -22,6 +22,9 @@ import {
   type AggregateRow,
 } from '@/lib/data-plane/paged-features';
 import { getSessionIdentity } from '@/lib/store/session-identity';
+import { temporalWindowForRef, whereParam } from '@/lib/temporal-map/linkage';
+import { subscribeLiveTemporal } from '@/lib/temporal-map/live-frame';
+import { useSyncExternalStore } from 'react';
 import type { Layer } from '@/lib/types/layer';
 
 export interface ViewportAggregateMeta {
@@ -75,6 +78,18 @@ export function useViewportAggregate({
   const refId = layer?._refId ?? '';
   const revision = layer?._descriptor?.content_revision ?? null;
   const bboxKey = useMemo(() => (bbox ? bbox.join(',') : ''), [bbox]);
+  // GOAL 03 M4：时序同窗 —— temporal 绑定该 ref 时，视口统计 where 附加
+  // 当前帧窗口（与地图 layer.filter 同编译器/同指纹；key 变化才重取）。
+  const temporalKey = useSyncExternalStore(
+    subscribeLiveTemporal,
+    () => temporalWindowForRef(refId).key,
+    () => '',
+  );
+  const temporalWhere = useMemo(
+    () => whereParam(temporalWindowForRef(refId).where),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- temporalKey 是窗口身份
+    [temporalKey, refId],
+  );
 
   useEffect(() => {
     if (!enabled || !refId || !groupBy || !bbox) {
@@ -99,6 +114,7 @@ export function useViewportAggregate({
           refId,
           groupBy,
           bbox: bbox!.slice() as [number, number, number, number],
+          where: temporalWhere,
           revision: anchorRevision ?? undefined,
           maxGroups: 64,
           ownerToken: getSessionIdentity().ownerToken ?? null,
@@ -148,7 +164,7 @@ export function useViewportAggregate({
     };
     // bbox 以值键参与（视口坐标连续变化，值不变不重查）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, refId, groupBy, revision, bboxKey, generation, reloadNonce]);
+  }, [enabled, refId, groupBy, revision, bboxKey, generation, reloadNonce, temporalWhere]);
 
   return state;
 }

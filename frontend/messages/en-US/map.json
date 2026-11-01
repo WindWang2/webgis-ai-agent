@@ -428,5 +428,20 @@
     "acking": "Confirming…",
     "later": "Later",
     "notConfirmed": "Confirmation not accepted (generation may have moved); retry."
+  },
+  "temporal": {
+    "aria": "Map timeline",
+    "play": "Play",
+    "pause": "Pause",
+    "stepPrev": "Previous frame",
+    "stepNext": "Next frame",
+    "seek": "Timeline position",
+    "rate": "Playback speed",
+    "unpin": "Unpin",
+    "pinnedHint": "Cursor pinned by user; agent cannot override. Click to unpin",
+    "compare": "vs",
+    "compareHint": "Two-period compare (shared classification)",
+    "missing": "gaps",
+    "missingHint": "Missing periods present: no fabricated frames"
   }
 }

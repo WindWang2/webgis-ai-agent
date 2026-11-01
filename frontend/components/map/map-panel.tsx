@@ -158,6 +158,16 @@ import {
 } from "@/lib/interaction/bus"
 import type { Scene3dPickHit } from "@/lib/map-kit/scene3d"
 import { ComparisonView } from "@/components/map/comparison"
+import { TemporalTimeController } from "@/components/map/temporal-time-controller"
+import { applyTemporalToSpec } from "@/lib/temporal-map/filter"
+import type { MapSpecTemporalConfig } from "@/lib/mapspec-compiler/types"
+import {
+  getLiveTemporalFrame,
+  getLiveTemporalGeneration,
+  getLiveTemporalRequest,
+  markLiveApplied,
+  subscribeLiveTemporal,
+} from "@/lib/temporal-map/live-frame"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
@@ -736,6 +746,14 @@ export function MapPanel({
     getRefSourcesGeneration,
   )
 
+  // GOAL 03：时序播放 live 帧信号（播放/拖动中帧切换驱动 reconcile；
+  // 静止时无 live 帧 —— spec cursor 即真相，不触发本信号）。
+  const temporalLiveGeneration = useSyncExternalStore(
+    subscribeLiveTemporal,
+    getLiveTemporalGeneration,
+    getLiveTemporalGeneration,
+  )
+
   // ADR-0199 3D Terrain spec 驱动重放：只依赖 is3D / scene.mode / 显式
   // scene.camera（#1385 F01）。liveGeneration 会在图层开关等 pending 写
   // 时跳动，2D 路径的 easeTo({pitch:0,bearing:0}) 会把用户旋转拽回北朝上。
@@ -808,6 +826,12 @@ export function MapPanel({
       getPendingPresentation(),
       getPendingRemoved(),
     )
+    // GOAL 03 M4：时序帧过滤注入（live 帧 > spec cursor；绑定层 layer.filter
+    // 与 runtime V4 setFilter 快路径 —— 帧切换零结构 churn、零数据重拉）。
+    const temporalCfg = (getCommittedMapSpec() as { temporal?: MapSpecTemporalConfig } | null)?.temporal;
+    const specWithTemporal = temporalCfg?.enabled
+      ? applyTemporalToSpec(spec0, temporalCfg, getLiveTemporalFrame())
+      : spec0;
     // HUD 已挂靠的 ref 由 live-spec 的 ref_id 合并解析；解析器只兜底
     // 无 HUD 挂靠的（避免对同一份 ref 双下载）。
     const hudOwnedRefs = new Set(
@@ -822,9 +846,13 @@ export function MapPanel({
     )
     // FE-3: recompute interactive ids once this patch has actually applied
     // (reconcileAsync resolves when its last op ran → appliedSpec advanced).
-    void runtimeRef.current.reconcileAsync(spec)
+    void runtimeRef.current.reconcileAsync(specWithTemporal)
       .then(() => {
         syncInteractiveIds()
+        // GOAL 03 M4：displayed_at 门控 —— reconcile 落定（applied spec
+        // 已前进）后才回执 live 帧；stale/乱序由控制器拒绝。
+        const liveReq = getLiveTemporalRequest();
+        if (liveReq) markLiveApplied(liveReq.seq, liveReq.frame);
         const map = mapRef.current?.getMap()
         // #461 (sibling of #401): the imperative `custom-*` overlays
         // (add_layer / heatmap / thematic-map commands) are buried by every
@@ -885,7 +913,7 @@ export function MapPanel({
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation, buildSceneTerrainOptions])
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, temporalLiveGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation, buildSceneTerrainOptions])
 
   // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
   // 单遍计数（≤20k 要素；MVT/超限层如实 unknown），latest-wins 记录进
@@ -1788,6 +1816,10 @@ export function MapPanel({
       {/* Wave 8 对比工作区覆盖层（before/after swipe + side-by-side）：盖在主
           地图之上、弹层之下（z-40 < z-50）。第二张 MaplibreMap 挂在覆盖层里
           镜像 committed MapSpec 的副图层族 —— 主地图本体零改动。 */}
+      {/* GOAL 03 M4：时序时间轴（committed temporal 启用时渲染；组件内部
+          自行判断 disabled → null，不伪造时间轴）。 */}
+      <TemporalTimeController />
+
       <ComparisonView
         primaryMapRef={mapRef}
         mapStyle={currentMapStyle}

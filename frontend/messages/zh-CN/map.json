@@ -428,5 +428,20 @@
     "acking": "确认中…",
     "later": "稍后再说",
     "notConfirmed": "确认未生效（代次可能已变化），请重试。"
+  },
+  "temporal": {
+    "aria": "地图时间轴",
+    "play": "播放",
+    "pause": "暂停",
+    "stepPrev": "上一帧",
+    "stepNext": "下一帧",
+    "seek": "时间轴位置",
+    "rate": "播放速度",
+    "unpin": "解除固定",
+    "pinnedHint": "用户已固定时间游标，Agent 不可覆盖；点击解除",
+    "compare": "对照",
+    "compareHint": "两期对照（固定分级）",
+    "missing": "含缺期",
+    "missingHint": "数据存在缺期：缺失年份不会内插帧"
   }
 }
