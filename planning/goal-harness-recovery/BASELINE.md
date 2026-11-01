@@ -56,7 +56,8 @@ fallback 路径：ChatEngine `_stream_tool_wave`（execution_engine.py:2604）�
 - 幂等/CAS：dedup executed_tools+_completed_keys（失败释放槽位）、SessionPlan revision CAS、MapSpec mutation expected_revision+CAS、observation fingerprint+generation+sequence 三尺。
 - 鉴权：不在 TDS 内；路由层 require_owned_session / Pi 三重门（secret+turn token+live turn）。
 - no-progress：Pi dispatch 级 streak 硬停（agent_pi_bridge.py:987-1001）；legacy 轮级 streak 诚实收尾（execution_engine.py:2548）。
-- **缺口 C**：`harness_failure` 无程序化消费；Pi 与 legacy 恢复语义靠 LLM 文案而非统一裁决；GisTraceChain 18 阶段仅 5 个有生产发射（chain_emitters.py:2-5 自认，MAP_OBSERVATION=14/VERIFICATION=15/REPAIR=16 缺发射）。
+- **缺口 C**：`harness_failure` 无程序化消费；Pi 与 legacy 恢复语义靠 LLM 文案而非统一裁决；legacy step_error 用第三套 planning FailureClass（turn_recovery.py:43）。
+  - 勘察修正（主 agent 核实）：chain_emitters.py:2-5 "仅 5/18 阶段有生产发射" 的注释**过时** —— 阶段 14（chat.py:1951）/15（pipeline.py:57）/16（pipeline.py:64 finalizer 侧）/17（pipeline.py:70）/18（settle.py:465）均已存在发射点；runtime_repair 长期**没有**链发射（本任务补：runtime_repair.py:_trace_repair 增 Stage.REPAIR，与 finalizer 侧互补记录不同时刻的修复事件）。
 
 ### 1.9 可靠性回放（reliability_corpus.py + evaluation/replay.py）
 - 三种 replay：replay_tools（allow-list）/ simulate_agent_loop（脚本化走真实 dispatch 校验不变量）/ check_trace_invariants；AB 比较。

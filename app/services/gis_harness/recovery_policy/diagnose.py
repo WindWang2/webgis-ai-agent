@@ -104,8 +104,13 @@ def diagnose_tool_failure(
     """TDS 统一错误分支的单点细化：既有粗类 + 消息/码信号 → reason。
 
     检测优先级（固定，先匹配先赢）：
-    cancelled/budget（来自粗类）→ 跨会话 ref → 权限 → 429 → 5xx →
-    CRS 歧义 → CRS → 输出过期 → 粗类默认映射。
+    cancelled（粗类）→ 跨会话 ref → 权限 → 429 → 5xx →
+    budget（粗类，未被上面细化的真预算耗尽）→ CRS 歧义 → CRS →
+    输出过期 → 粗类默认映射。
+
+    注：HTTP 429 会被既有 planning 委托折叠成粗类 ``budget_exhausted``
+    （resource_limit 族）—— 本层在尊重该粗类之前先做 429/5xx/权限
+    细化，外部限流是可退避重试、不是内部预算耗尽（terminal）。
     """
     attr = attribution or DiagnosticAttribution(
         session_id=session_id[:64], tool_name=tool_name[:64])
@@ -118,11 +123,9 @@ def diagnose_tool_failure(
         return _build(reason, detail=det or detail, attribution=attr,
                       harness_failure=hf, evidence_refs=evidence_refs)
 
-    # 粗类已裁决的不可恢复族（budget 预算语义优先于消息信号）
+    # 粗类已裁决的取消（真取消不可细化覆盖）
     if coarse == "cancelled":
         return build(GISRecoveryReason.CANCELLED)
-    if coarse == "budget_exhausted":
-        return build(GISRecoveryReason.BUDGET_EXHAUSTED)
 
     # 跨会话 ref：调用方已解析 ref 归属（本层不猜）→ fail-closed
     if ref_origin_session and ref_origin_session != (session_id or ""):
@@ -134,11 +137,16 @@ def diagnose_tool_failure(
     if _has_any(_PERMISSION_MARKERS, text):
         return build(GISRecoveryReason.PERMISSION_DENIED)
 
-    # 限流 / 上游 5xx：瞬态但必须退避（retryable + backoff hint）
+    # 限流 / 上游 5xx：瞬态但必须退避（retryable + backoff hint）——
+    # 先于粗类 budget_exhausted（429 会被 planning 委托误折叠）。
     if _has_any(_RATE_LIMIT_MARKERS, text):
         return build(GISRecoveryReason.RATE_LIMITED)
     if _has_any(_SERVER_ERROR_MARKERS, text):
         return build(GISRecoveryReason.UPSTREAM_SERVER_ERROR)
+
+    # 真预算耗尽（未被上面细化的粗类裁决）
+    if coarse == "budget_exhausted":
+        return build(GISRecoveryReason.BUDGET_EXHAUSTED)
 
     # CRS 族：歧义 → 问用户；否则可替换投影路径
     if coarse == "crs_error" or _has_any(

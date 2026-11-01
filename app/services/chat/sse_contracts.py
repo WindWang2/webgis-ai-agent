@@ -217,6 +217,7 @@ class TurnEventEmitter:
         failure_class: Optional[str] = None,
         recovery_action: Optional[str] = None,
         error_class: Optional[str] = None,
+        recovery: Optional[dict] = None,
     ) -> str:
         payload = self._payload(task_id=task_id, step_id=step_id, tool=tool, error=error)
         if failure_class:
@@ -225,6 +226,10 @@ class TurnEventEmitter:
             payload["recovery_action"] = recovery_action
         if error_class:
             payload["error_class"] = error_class
+        if recovery:
+            # GOAL 05：统一恢复裁决随事件（bounded diagnostic+decision，
+            # 来自 TDS 单 seam —— 与 Pi 路径同源）。
+            payload["recovery"] = recovery
         return sse_event("step_error", payload)
 
     def step_cancelled(self, task_id: str, step_id: str, tool: str) -> str:

@@ -1037,6 +1037,10 @@ class ToolDispatchService:
             correction_hint = result.get("correction_hint")
             # V5：typed diagnose —— 泛化错误码之上的统一失败分类 +
             # 有界 remediation 裁决（ADR-0248 D2）。记录面绝不阻断。
+            # GOAL 05（ADR-0279）：诊断 + 恢复裁决 —— M1/M2 纯函数，
+            # additive ``recovery`` 键 + LLM 单行提示；零执行零 IO，
+            # 与 harness_failure 同一 best_effort 纪律。
+            _recovery_note = ""
             with best_effort(
                 "failure-taxonomy-classify",
                 "tool-dispatch-taxonomy-best-effort",
@@ -1054,6 +1058,27 @@ class ToolDispatchService:
                     tool_name=tool_name,
                     session_id=session_id or "",
                 )
+                try:
+                    from app.services.gis_harness.recovery_policy.wiring import (
+                        build_recovery_payload,
+                    )
+
+                    _rec = build_recovery_payload(
+                        status=result.get("status"),
+                        code=result.get("code"),
+                        error_type=result.get("error_type"),
+                        message=error_msg,
+                        tool_name=tool_name,
+                        harness_failure=result.get("harness_failure"),
+                        session_id=session_id or "",
+                    )
+                    result["recovery"] = {
+                        "diagnostic": _rec.get("diagnostic"),
+                        "decision": _rec.get("decision"),
+                    }
+                    _recovery_note = str(_rec.get("llm_note") or "")
+                except Exception:  # noqa: BLE001 — 增值诊断绝不阻断
+                    _recovery_note = ""
                 # 方向 9（ADR-0255）：provider_failure 记忆候选入 pending
                 # 缓冲（org 由 turn 端 harvest 烙印；TTL 7d 默认；零 IO、
                 # 绝不阻断——durable authority 仍是 RecoveryLedger）。
@@ -1080,7 +1105,9 @@ class ToolDispatchService:
                             scope=SCOPE_SESSION, scope_id=session_id,
                             subject=str(tool_name)[:200],
                             value={
-                                "failure_class": str(_hf.get("failure_class") or "unknown"),
+                                # payload 键是 "class"（RemediationDecision
+                                # .to_payload）—— 旧读 failure_class 恒空。
+                                "failure_class": str(_hf.get("class") or "unknown"),
                                 "tool": str(tool_name)[:120],
                             },
                             evidence=MemoryEvidence(
@@ -1089,6 +1116,10 @@ class ToolDispatchService:
                             confidence=0.85, org_id="",
                         ))
             llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
+            if _recovery_note and _recovery_note not in llm_payload:
+                # 两引擎共用同一恢复文案源（Pi HTTP 回包 / legacy
+                # tool_result 消息）—— 单行、有界、无用户原文。
+                llm_payload = f"{llm_payload}\n{_recovery_note}"
             await self._session_data.append_event(
                 session_id,
                 "tool_failed",
@@ -1103,11 +1134,17 @@ class ToolDispatchService:
                 from app.lib.runtime.chain_emitters import emit_chain_once
                 from app.lib.runtime.gis_trace import Stage
 
+                # GOAL 05：诊断随链（扁平有界键；不抛、不改变既有
+                # emit-once 语义）。
+                _rec_d = (result.get("recovery") or {}).get("diagnostic") or {}
                 emit_chain_once(
                     Stage.TOOL_RESULTS,
                     tool=tool_name,
                     status="error",
                     code=str(result.get("code") or "")[:48] or None,
+                    recovery_reason=str(_rec_d.get("reason") or "")[:48] or None,
+                    recovery_disposition=str(
+                        _rec_d.get("disposition") or "")[:32] or None,
                 )
             return ToolDispatchResult(
                 status="error",
