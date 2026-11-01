@@ -27,7 +27,6 @@ from app.services.gis_harness.recovery_policy.continuation import (
 )
 from app.services.gis_harness.recovery_policy.wiring import (
     build_recovery_payload,
-    recovery_llm_note,
 )
 
 _REPEATS = 200
