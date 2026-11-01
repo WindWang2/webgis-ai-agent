@@ -1061,11 +1061,23 @@ async def _apply_tool_result_unlocked(
         # 额外落盘一次）。
         _rec = raw.get("recovery") if isinstance(raw, dict) else None
         _rec_changed = False
-        if isinstance(_rec, dict) and isinstance(
-                _rec.get("diagnostic"), dict):
+        # 形状门（fail-closed）：diagnostic.reason 必须命中封闭词表，
+        # 否则视为伪造/损坏 payload 丢弃 —— 计划存储不接受任意结构。
+        try:
+            from app.services.gis_harness.recovery_policy.contracts import (
+                REASON_REGISTRY as _REASON_REGISTRY,
+            )
+
+            _diag = _rec.get("diagnostic") if isinstance(_rec, dict) else None
+            _reason_ok = isinstance(_diag, dict) and str(
+                _diag.get("reason") or "") in _REASON_REGISTRY
+        except Exception:  # noqa: BLE001 — 校验失败按丢弃
+            _reason_ok = False
+        if _reason_ok:
             _rec_bounded = {
-                "diagnostic": _rec.get("diagnostic"),
-                "decision": _rec.get("decision"),
+                "diagnostic": _rec["diagnostic"],
+                "decision": _rec.get("decision")
+                if isinstance(_rec.get("decision"), dict) else None,
                 "tool": str(tool_name)[:64],
             }
             if plan.last_recovery != _rec_bounded:
