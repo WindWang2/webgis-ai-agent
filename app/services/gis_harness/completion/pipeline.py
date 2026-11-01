@@ -1305,6 +1305,12 @@ async def maybe_finalize_map_product(
                     "goal_satisfaction")
                 result.goal_satisfaction = (
                     goal_block if isinstance(goal_block, dict) else None)
+                # GOAL 05（ADR-0279 M4）：对账快照同点透传（SSE 真源 =
+                # 已持久化块；未落账不披露 —— 与 P2-9 同纪律）。
+                gv_block = fresh.gis_chapter["map_product"].get(
+                    "goal_verification")
+                result.goal_verification = (
+                    gv_block if isinstance(gv_block, dict) else None)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试
         logger.warning(
             "[MapFinalizer] chapter persist failed session=%s (will retry on next trigger)",
@@ -1647,6 +1653,31 @@ def finalization_sse_payload(
             gs_payload = bounded_payload(result.goal_satisfaction)
             if gs_payload is not None:
                 payload["goal_satisfaction"] = gs_payload
+        except Exception:  # noqa: BLE001 — 投影失败只少一键
+            pass
+    # GOAL 05（ADR-0279 M4+M6）：对账 + 四段解释随 map_finalization SSE
+    # 下行（additive bounded；只读 result.goal_verification 快照；非 clean
+    # 处境才携带 —— 全绿零新键）。
+    if getattr(result, "goal_verification", None):
+        try:
+            gv = result.goal_verification
+            if isinstance(gv, dict) and gv.get("overall"):
+                payload["goal_verification"] = {
+                    "overall": str(gv.get("overall"))[:16],
+                    "goal_verdict": str(gv.get("goal_verdict"))[:24],
+                    "contradictions": [str(c)[:160]
+                                       for c in (gv.get("contradictions")
+                                                 or [])[:4]],
+                }
+                from app.services.gis_harness.recovery_policy.explain import (
+                    build_recovery_explanation,
+                )
+
+                exp = build_recovery_explanation(
+                    diagnostic=None, decision=None,
+                    goal_verification=gv)
+                if exp.situation != "clean":
+                    payload["recovery_explanation"] = exp.to_bounded_dict()
         except Exception:  # noqa: BLE001 — 投影失败只少一键
             pass
     return payload
