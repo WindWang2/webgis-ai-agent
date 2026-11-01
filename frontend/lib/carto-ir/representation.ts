@@ -52,6 +52,14 @@ export interface NormalizedRepresentationWindow {
   maxZoom: number;
   mode: RepresentationMode;
   reasonCodes: string[];
+  /**
+   * v1.8 additive（GOAL 04）：窗口级源覆盖。artifact 窗
+   * （generalized/aggregate_grid）携带时，该窗的渲染副本/导出裁决从
+   * 此 source id 取数据（spec.sources 内派生工件源）；raw 窗恒无此键
+   * （主层 source 语义）。读取语义与后端
+   * multiscale/export_adjudication.export_source_override 孪生。
+   */
+  source?: string;
 }
 
 export interface RepresentationPlan {
@@ -69,6 +77,7 @@ interface RawWindow {
   max: number;
   mode: string;
   reasonCodes: string[];
+  source?: string;
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -97,6 +106,14 @@ export function resolveRepresentationPlan(
     const reasonCodes = Array.isArray(rawCodes)
       ? rawCodes.filter((c): c is string => typeof c === "string").slice(0, 8)
       : [];
+    // v1.8：窗口源覆盖（仅 artifact 窗携带；非字符串忽略 —— 后端
+    // export_source_override 同语义 fail-safe）。
+    const rawSource = (w as { source?: unknown }).source;
+    const source =
+      (w as { mode?: unknown }).mode === "generalized" ||
+      (w as { mode?: unknown }).mode === "aggregate_grid"
+        ? (typeof rawSource === "string" && rawSource ? rawSource : undefined)
+        : undefined;
     // #1668（后端 #1625 同款 parity）：钳制到 [0,24] 后复核 min<max（文档契约
     // 「钳制后 min<max」）—— 整体越界窗（两端都 <0 或都 >24，如 [-10,-5] /
     // [25,30]）钳制后退化为零宽 [0,0]/[24,24]，与 [8,8] 同为空窗，必须拒；
@@ -110,6 +127,7 @@ export function resolveRepresentationPlan(
       max,
       mode,
       reasonCodes,
+      source,
     });
   }
   rows.sort((a, b) => a.min - b.min);
@@ -122,7 +140,7 @@ export function resolveRepresentationPlan(
     if (Math.abs(w.min - cursor) > CONTIGUITY_EPSILON) return null; // 缺口
     cursor = w.max;
     const prev = merged[merged.length - 1];
-    if (prev && prev.mode === w.mode) {
+    if (prev && prev.mode === w.mode && prev.source === w.source) {
       prev.max = w.max;
       for (const c of w.reasonCodes) {
         if (!prev.reasonCodes.includes(c) && prev.reasonCodes.length < 8) {
@@ -140,6 +158,7 @@ export function resolveRepresentationPlan(
     maxZoom: w.max,
     mode: w.mode as RepresentationMode,
     reasonCodes: w.reasonCodes,
+    ...(w.source ? { source: w.source } : {}),
   }));
   return {
     windows,
@@ -157,11 +176,24 @@ export function representationModeAtZoom(
   plan: RepresentationPlan,
   zoom: number,
 ): RepresentationMode {
+  return representationWindowAtZoom(plan, zoom).mode;
+}
+
+/**
+ * 计划 + zoom → 活跃窗对象（半开区间；越界钳到首/末窗）。携带 v1.8
+ * source 覆盖键 —— artifact 窗源覆盖的唯一前端读取面（与后端
+ * multiscale/export_adjudication.active_representation_window 孪生；
+ * 导出/compiler 消费，不重复解读原始 spec）。
+ */
+export function representationWindowAtZoom(
+  plan: RepresentationPlan,
+  zoom: number,
+): NormalizedRepresentationWindow {
   const z = Math.min(MAPLIBRE_ZOOM_MAX - CONTIGUITY_EPSILON, Math.max(MAPLIBRE_ZOOM_MIN, zoom));
   for (const w of plan.windows) {
-    if (w.minZoom <= z && z < w.maxZoom) return w.mode;
+    if (w.minZoom <= z && z < w.maxZoom) return w;
   }
-  return plan.windows[plan.windows.length - 1].mode;
+  return plan.windows[plan.windows.length - 1];
 }
 
 /**

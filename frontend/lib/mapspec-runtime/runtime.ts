@@ -1384,11 +1384,14 @@ export class MapSpecRuntime {
               reason: "non_point_layer_type", layerType: layer.type,
             }, layer.id);
           }
+          // GOAL 04（v1.8）：artifact 窗携带源覆盖时换用工件源（与
+          // compiler/导出孪生同语义 —— multiscale window.source 读取链）。
           this.map.addLayer({
             ...baseDef,
             id: subId,
             minzoom: wMin,
             maxzoom: wMax,
+            ...(w.source ? { source: w.source } : {}),
             ...(visibilityNone
               ? { layout: { ...(baseDef.layout as object), visibility: "none" } }
               : {}),
@@ -1403,8 +1406,14 @@ export class MapSpecRuntime {
       }
     }
 
+    for (const w of expansionWindowsOf(plan)) {
+      if (w.source && subIds.includes(representationSublayerId(layer.id, w.index))) {
+        // v1.8 artifact 子层挂在工件源上（索引随实际挂载源走）。
+        this.layerSourceIndex.set(representationSublayerId(layer.id, w.index), w.source);
+      }
+    }
     for (const id of subIds) {
-      this.layerSourceIndex.set(id, layer.source);
+      if (!this.layerSourceIndex.has(id)) this.layerSourceIndex.set(id, layer.source);
       renderer.noteStyleLayerAdded(this.map, id);
     }
     // 幂等重挂：先清残留（recompile 路径上方已 remove，防御式兜底）。

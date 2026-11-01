@@ -1144,12 +1144,15 @@ export function compileMapSpec(
         }
         // raw / artifact / 降级窗：克隆主层定义（paint/layout/filter 全量）
         // + 窗门（cluster 源上的 raw 窗继承 !point_count filter —— 未聚
-        // 类点语义正确）。
+        // 类点语义正确）。artifact 窗（v1.8）携带源覆盖时换用工件源
+        // （GOAL 04：generalized/aggregate_grid 的派生数据面；runtime/导出
+        // 孪生同语义 —— multiscale window.source 唯一读取链）。
         const repSub: CompiledLayer & { layout: MapLibrePaint } = {
           ...maplibreLayer,
           id: representationSublayerId(layer.id, w.index),
           minzoom: wMin,
           maxzoom: wMax,
+          ...(w.source ? { source: w.source } : {}),
         };
         if (subNoneLayout) repSub.layout = { ...maplibreLayer.layout, visibility: "none" };
         compiledLayers.push(repSub);
