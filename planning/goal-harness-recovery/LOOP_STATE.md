@@ -25,4 +25,3 @@
 | 8 | M7 | recovery_corpus.py（29 案例） | 语料门全绿；overall 折叠修正（N/A 不拖低） | 语料绿 | M8 |
 | 9 | M8 | perf/security 回归 + last_recovery 形状门 | 双跑 10 passed×2 | 门可复跑 | M9 |
 | 10 | M9a | E2E 5 场景 | 首跑暴露 3 真实缺陷（429/5xx 错预算、记忆候选错键、泄漏 ID）→ 修复 → 185 全绿 | E2E 绿 | review |
-
