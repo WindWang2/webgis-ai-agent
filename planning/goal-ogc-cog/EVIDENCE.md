@@ -36,3 +36,7 @@
 ## Round 10（R2 复审 + 终态）
 - R2 抽验命令与结果（Reviewer 实跑）：clearance+coverage+proxy+discovery 47 passed；E2E 4 passed；补跑 coverages/tools/route/mapspec 33 passed；cog 10 passed（94s）；adapter contract 13 passed。
 - 终态（清偿后）：`pytest -q <goal 10 文件> --no-cov` → **98 passed in 128.05s**；回归 10 文件 → **130 passed, 1 skipped**；前端 vitest → **38 passed**；ruff app/+新测试 → 全清。
+
+## Round 11（终态双跑，R2 清偿后最终代码）
+- FINAL RUN 1 → `98 passed in 128.12s`；FINAL RUN 2 → `98 passed in 127.84s`（两次一致）。
+- `git diff --check origin/master...HEAD` → clean。
