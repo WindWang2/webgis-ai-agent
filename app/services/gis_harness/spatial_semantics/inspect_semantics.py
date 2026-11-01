@@ -221,7 +221,10 @@ def _occupied_lon_span_center(
     max_gap, gap_idx = max(gaps)
     occupied = 360.0 - max_gap
     if occupied <= 0.0:
-        return 0.0, lons[0]
+        # 全采样同经度：弧心 = 该经度 —— lons 在 [0,360) 帧内，负经度
+        # （%360 后 >180）必须归一回 [-180,180)（R2 P1：-160.5 曾被当
+        # 200.5 → 选到 60 带而非 4 带）。
+        return 0.0, (lons[0] + 180.0) % 360.0 - 180.0
     arc_start = lons[(gap_idx + 1) % len(lons)]
     center = (arc_start + occupied / 2.0 + 180.0) % 360.0 - 180.0
     return occupied, center

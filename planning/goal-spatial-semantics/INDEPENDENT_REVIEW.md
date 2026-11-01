@@ -33,6 +33,25 @@ geographic（归一 WGS84 后即标准地理数据）。
 83 passed（buffer/crs_1110/passthrough/audit/cartography×2/geocompute/
 geometry_ops）；evidence 脚本三场景 EXIT=0；ruff 全绿。
 
-## R2（复审，待记）
+## R2（2026-11-01，另一独立 Reviewer agent，复审）
 
-R1 清偿后由独立 Reviewer 复审：重点核验 P0/P1 修复的正确性与回归面。
+方式：核验 R1 逐条清偿（全部通过：根因修复/职责分层/数学主体正确）+ 全量
+diff 复读 + 真实基线 worktree 对比。**新发现 R2-1（P0）+ R2-2（P1）+
+R2-3/R2-4/R2-5（P2）**，并纠正了主 Agent 的一处验证方法错误：
+
+| # | 级别 | finding | 清偿 |
+|---|---|---|---|
+| R2-1 | P0 | capability "spatial_semantics" 未注册 → runtime_manifest fatal（strict 启动即挂）：api_contract 13 ERROR + gis_harness 2 个新失败；且主 Agent 此前用 `git stash` 做"干净基线"验证在已提交状态下无效 → PR body 红灯归因虚假 | data_access.py 按 layer_browse 先例注册 capability（含描述/purpose_template/version）；复验 api_contract 57 passed 0 ERROR、gis_harness 失败集与**真实基线 worktree**（/tmp 临时建、用后即删）完全一致（4 个既有红灯）；PR body 归因改写 |
+| R2-2 | P1 | _occupied_lon_span_center 退化形态（全采样同经度×西经）弧心未归一：-160.5 → 200.5 → 选 60 带而非 4 带（P1-2 修复引入的新回归） | `(lons[0]+180)%360-180` 归一 + test_p2_degenerate_same_lon_west_normalized（断言 EPSG:32604） |
+| R2-3 | P2 | near_global 测试用 raw_span=350 形态，旧算法也能通过（未锁定真缺陷 bbox 触 ±180 → span→0/1 单带） | 补 test_p1_true_antimeridian_edge_bbox_goes_geodesic（[-180..179] 71 点 → geodesic） |
+| R2-4 | P2 | per_10k_persons ×1e4 换算不看分母字段语义：households 分母被标"个/万人"；链文案硬编码 per-person | 链改用库层真实 rate_unit（numerator_per_<field>）；口径串分母显示按字段语义（人口字段→"人"，其余按字段名如实呈现） |
+| R2-5 | P2 | R1 P2-3 承诺的 Redis 缓存窗口 PR body 披露缺失 | PR body 风险节补齐（≤24h 窗口/自愈/无 Redis 环境无窗口） |
+
+方法教训（记入账本）：**已提交状态下的"干净基线"验证必须用临时 worktree，
+`git stash` 只回退未提交改动** —— 此前 M5/M8 两轮"基线复现"结论部分无效，
+已全部用真实 worktree 重核（gis_harness 4 失败集一致；前端 typecheck 2 错误
+文件为 #1875 遗留且非本 PR 改动面，结论仍成立）。
+
+R2 后终态：91 项 spatial_semantics 测试绿；api_contract 57 passed 0 ERROR
+（1 失败=基线既有）；gis_harness 2822 passed + 4 失败（=基线同集）；
+evidence EXIT=0；ruff 全绿。

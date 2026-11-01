@@ -2479,8 +2479,9 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             # · field + 请求 per_10k_persons：×1e4（per-person → 每万人）；
             # · 其余：不合成口径串（density_unit=""，rate_unit 透传库层真值）。
             rate_factor = 1.0
-            rate_unit_target = str(norm_evidence.get("rate_unit") or "")
-            if denominator_kind == "area" and rate_unit_target == "per_m2":
+            lib_rate_unit = str(norm_evidence.get("rate_unit") or "")
+            rate_unit_target = lib_rate_unit
+            if denominator_kind == "area" and lib_rate_unit == "per_m2":
                 rate_factor = 1e6
                 rate_unit_target = "per_km2"
             elif (denominator_kind == "field"
@@ -2496,7 +2497,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                 norm_evidence = dict(norm_evidence)
                 norm_evidence["rate_unit"] = rate_unit_target
                 norm_evidence["rate_unit_conversion"] = (
-                    f"per-person/per-m²(库层)→{rate_unit_target}"
+                    f"{lib_rate_unit}(库层)→{rate_unit_target}"
                     f"(factor={rate_factor:g}) —— 率值换算到图例口径")
             # 分子显示：要素计数 → "个"；字段求和（如产值）→ 不虚构计数单位。
             numerator_display = "" if numerator_field else "个"
@@ -2505,8 +2506,13 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                 density_unit_out = compose_density_unit(
                     numerator_display or "Σ", "km2")
             elif rate_unit_target == "per_10k_persons":
-                density_unit_out = compose_density_unit(
-                    numerator_display or "Σ", "population")
+                # R2 P2：分母显示按字段语义 —— 人口字段 → "人"；其余
+                # （如 households）按字段名如实呈现，不冒称人口。
+                _den = str(denominator or "")
+                _den_disp = ("人" if any(
+                    k in _den.lower() for k in ("population", "人口", "居民", "pop"))
+                    else _den[:12] or "?")
+                density_unit_out = f"{numerator_display or 'Σ'}/万{_den_disp}"
             descriptor = get_algorithm_registry().get("spatial.aggregate.rates")
             evidence = build_evidence(
                 descriptor, tool="spatial_aggregate",

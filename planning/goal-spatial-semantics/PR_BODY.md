@@ -47,16 +47,20 @@ M4 四工具 + Pi 发现面（inspect_spatial_semantics，tier 1）→ M5 MapSpe
 
 ## 测试输出（本地真实运行）
 
-- 新增 74 项：`tests/unit/gis_harness/spatial_semantics/`（契约 10 + 矩阵
-  34 + 工具 15 + 链路 3 + fixture/性能 14）全绿（pytest -q --no-cov）
+- 新增 91 项：`tests/unit/gis_harness/spatial_semantics/`（契约 10 + 矩阵
+  34 + 工具 15 + 链路 3 + fixture/性能 14 + R1 修复锁定 15）全绿
+  （pytest -q --no-cov）
 - 前端：`pnpm exec vitest run components/map/legends/graduated-legend.test.tsx`
   → 4 passed（含 2 项新增）
 - 回归：buffer/crs_1110/passthrough/audit_764_765 → 38 passed；
   geocompute_1718/boundary → 222 passed；geometry_ops/spatial_analyzer →
-  19 passed；cartography tools → 31 passed；tests/unit/gis_harness/ →
-  2803 passed（另 5 失败 + 1 deselect **均为 master 既有红灯**，干净基线
-  同命令复现：test_component_composition×2 / semantic_v2 registry 交叉验证 /
-  workflow_guards×3 —— #1868-#1875 时代注册表校验遗留，非本 PR 引入）
+  19 passed；cartography tools → 31 passed；api_contract → 57 passed
+  （1 失败为基线既有）；tests/unit/gis_harness/ → 2822 passed + 4 失败
+  —— **4 失败经独立基线 worktree（6c5e71c2c）同命令核验为 master 既有
+  红灯**（test_component_composition×2 / test_semantic_v2_families
+  registry 交叉验证 / test_workflow_guards profile_validation），与本 PR
+  完全同集，非本 PR 引入（R2 评审曾发现本分支引入 2 个 manifest 失败 +
+  api_contract 13 ERROR —— capability 注册遗漏所致，已修复并复验为 0）
 - 端到端：`python scripts/spatial_semantics_e2e_evidence.py` → EXIT=0
   三场景 PASS（500m 测地基准 500.1m / per_km² 率值 1.177 换算链在案 /
   错误 CRS 全部阻断或降级披露）
@@ -78,11 +82,16 @@ M4 四工具 + Pi 发现面（inspect_spatial_semantics，tier 1）→ M5 MapSpe
 - 跨 AM 簇选带 EPSG:32760（非格林尼治带，#709 同源修复）
 - 披露投影零坐标转储（repr 检查测试锁定）—— 大数据经 ref: 纪律不变
 
-## review-fix-review
+## review-fix-review（两轮终态）
 
-R1 独立评审（未参与实现的 agent）findings 与清偿映射见
-`planning/goal-spatial-semantics/INDEPENDENT_REVIEW.md`；P0/P1 全部清偿后
-R2 复审通过。（本节在两轮评审完成后即为终态）
+- R1（独立 agent，全量 adversarial）：P0×1 + P1×6 + P2×8 → 全部清偿
+  （P2-3 缓存窗口按披露接受），新增 15 项锁定测试；
+- R2（另一独立 agent，复审）：核验 R1 清偿全部通过；新发现 R2-1（P0
+  capability 未注册 → manifest fatal，含本分支引入的 2 个测试失败与
+  api_contract 13 ERROR）/ R2-2（P1 占据弧退化形态选带回归）/ R2-3、
+  R2-4、R2-5（P2）→ 全部修复并复验（api_contract 57 passed 0 ERROR；
+  gis_harness 失败集与真实基线 worktree 完全一致；91 项测试绿）。
+  详细映射见 `planning/goal-spatial-semantics/INDEPENDENT_REVIEW.md`。
 
 ## issue 重叠排除
 
@@ -96,7 +105,13 @@ R2 复审通过。（本节在两轮评审完成后即为终态）
 
 - 行为收紧：未声明 CRS 的投影样数据从"warn 后静默按 4326"变为 typed
   拒绝（这是修复；受影响生产面已排查——geocompute 管线修复后传递声明
-  CRS，其余调用面走度样/声明路径）
+  CRS，其余调用面走度样/声明路径）；空 FC × 度量操作从"空结果"变为
+  requires_clarification（CRS 无证据不执行，预期收紧）
+- **Redis 缓存过渡窗口（≤24h）**：buffer_analysis 带 `@cached_tool(ttl=
+  86400)`，缓存键=(tool_name, args) 无版本盐可 bump —— 部署后 24h 内，
+  此前已缓存的输入继续返回旧结果（无 spatial_semantics 证据块/旧判定）。
+  自愈型（TTL 过期后新语义生效）；本地/无 Redis 环境无此窗口（评审 R1
+  P2-3 / R2 R2-5 披露）
 - 前端 unit chip 为纯增显示，无既有渲染路径变化
 
 ## 手工验证

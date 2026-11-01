@@ -134,6 +134,30 @@ def test_p1_near_global_bbox_goes_geodesic() -> None:
     assert "SSC_MULTIZONE_SPAN" in [rc.code for rc in r.verdict.reason_codes]
 
 
+def test_p1_true_antimeridian_edge_bbox_goes_geodesic() -> None:
+    """R2-3：真缺陷形态 —— bbox 触 ±180（raw_span→360）。
+
+    旧算法（无条件环绕归一）把该形态算成 span≤1° 单带；新三级链下采样
+    占据弧给出全球散布 → 测地。71 点均布 [-180,179]。
+    """
+    lons = [-180.0 + 5.0833 * i for i in range(71)]  # -180..179 全球
+    fc = _pts([(lon, 10.0 + (i % 30)) for i, lon in enumerate(lons)],
+              "EPSG:4326")
+    r = preflight_for_feature_collection(
+        fc, spec=SpatialOperationSpec(**BUFFER_SPEC))
+    assert r.calculation.mode == "geodesic", (
+        f"触 ±180 全球数据被误判 {r.calculation.mode} {r.calculation.working_crs}")
+
+
+def test_p2_degenerate_same_lon_west_normalized() -> None:
+    """R2-2：全采样同经度 × 西经 —— 弧心归一到 [-180,180)（-160.5 → 4 带）。"""
+    fc = _pts([(-160.5, 10.2), (-160.5, 20.8)], "EPSG:4326")
+    r = preflight_for_feature_collection(
+        fc, spec=SpatialOperationSpec(**BUFFER_SPEC))
+    assert r.calculation.working_crs == "EPSG:32604", (
+        f"同经度西经断面选带错误：{r.calculation.working_crs}")
+
+
 def test_p1_fiji_cluster_still_single_zone() -> None:
     """回归保护：真环绕簇（斐济）仍选 UTM 60S 单带。"""
     fc = _pts([(179.72, -17.9), (-179.98, -16.8)], "EPSG:4326")
