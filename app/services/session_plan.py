@@ -390,6 +390,35 @@ def format_session_plan_projection(
                         else ""),
                 )
             )
+            # M5：多轮重试指令（只重试失败子图、保持已验证产物；有失败
+            # 行才追加 —— 全绿计划零新行）。纯函数、只读计划事实。
+            _failed_rows = [
+                {"capability": str(r.capability)[:64],
+                 "status": str(getattr(r, "status", "") or "")[:16],
+                 "bound_ref": str(getattr(r, "bound_ref", "") or "")[:64]}
+                for r in (plan.progress or [])
+                if str(getattr(r, "status", "") or "") in
+                ("failed", "unavailable")
+            ]
+            if _failed_rows:
+                from app.services.gis_harness.recovery_policy.continuation import (
+                    resolve_retry_directive,
+                )
+
+                _directive = resolve_retry_directive(
+                    progress_rows=_failed_rows + [
+                        {"capability": str(r.capability)[:64],
+                         "status": "complete",
+                         "bound_ref": str(getattr(r, "bound_ref", "") or "")[:64]}
+                        for r in (plan.progress or [])
+                        if str(getattr(r, "status", "") or "") == "complete"
+                    ][:16],
+                    last_recovery=_lr,
+                    chapter=plan.gis_chapter,
+                )
+                _line = _directive.directive_line
+                if _line and _line not in recovery_line:
+                    recovery_line += "\n" + _line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         recovery_line = ""
     # V4（ADR-0104 Wave 1）：WorkflowInstance 运行态行（additive、单行、
