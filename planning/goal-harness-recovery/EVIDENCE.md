@@ -17,6 +17,8 @@
 | 321325c06 | M8 性能/安全回归 + last_recovery 形状门 |
 | dd70dd657 | M9 E2E 5 场景 + 三处真实缺陷修复 |
 | 19c97a2e1 | chore: 未用 import |
+| 6dd206593 / 359363a61 | R1 审查清偿（P1×5+P2×6+P3×5）+ 账本 |
+| 0c026d0b7 | R2 复审清偿（P1-1 SSE 处境 no-op 修复、P2-1 语境门排除泛化 status + http_status 单一事实源、P2-2 side_effect 字段名、P2-3 重建 helper、P2-4 401/403 双门） |
 
 ## 测试证据（命令与结果）
 
@@ -30,6 +32,7 @@
 | M8 双跑门（性能/安全） | **两次均 10 passed**（中位<2ms/p95<8ms/有界/零泄漏） |
 | 存量回归 tests/unit/gis_harness（全目录） | 2947 passed / 4 failed —— **4 失败为基线存量**（test_component_composition×2 + test_semantic_v2_families×1 + test_workflow_guards×1，git stash 复现核对） |
 | 存量回归 tests/cartography + goal_satisfaction 族 | 3076 passed / 1 failed（mutation_parity refresh_data_revision_stamp —— 基线存量，stash 复现核对） |
+| R2 后全影响面（gis_harness+lib+evaluation+cartography） | **7468 passed / 7 failed**（7 失败 = 基线存量：component_composition×2、semantic_v2、workflow_guards、terrain_v3、golden_corpus_hash、mutation_parity——全部 stash 复现核对） |
 | E2E 门 | 5/5（3 恢复成功 + 2 安全终止，真实 ToolDispatchService seam） |
 
 ## 顺带修复的既有缺陷（E2E 门暴露，均有失败测试先证）
