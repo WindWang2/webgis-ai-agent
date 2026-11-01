@@ -7,7 +7,7 @@
 | commit | 内容 |
 |---|---|
 | d304f9675 | M0 基线勘察（BASELINE/PR_OVERLAP/TASK_PLAN/DECISIONS） |
-| a3a4940c6 | M1 GISRecoveryDiagnostic.v1（28 reason 码 + 六处置 + 五族诊断构建器） |
+| a3a4940c6 | M1 GISRecoveryDiagnostic.v1（27 reason 码 + 六处置 + 五族诊断构建器） |
 | 0b5a8b014 | M2 RecoveryPolicy 纯决策（风险×处置×预算副作用守卫 + ToolRiskProfile 复用 SideEffectClass） |
 | 4f560d04e | M3 接线（TDS recovery 键 + LLM note 双引擎同源 + step_error SSE + last_recovery + [GIS Recovery] 投影 + REPAIR 阶段 + 存量键名 bug 修复） |
 | 4dc703055 | M4 GoalVerification 对账层（8 slot×4 态 + false-PASS 守门 + user-wins） |

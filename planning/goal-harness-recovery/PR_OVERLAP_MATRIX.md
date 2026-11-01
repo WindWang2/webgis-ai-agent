@@ -21,6 +21,9 @@
 |---|---|---|---|
 | #1876 | GOAL 01 spatial-semantics（open，无 review） | 无（其改 spatial_semantics/ + tools；本任务不触碰） | avoid |
 | #1877 | GOAL 03 temporal（open，无 review） | 潜在轻微：其改 mapspec_schema/mutation_handlers/intents；本任务只在 completion/pipeline 加 additive 块，不与时间轴耦合 | avoid（不改 temporal 契约） |
+| #1878 | GOAL 02 OGC/COG 数据底座（open；2026-11-02 复查新增） | 无（data_fabric/ogc 工具/sidebar 前端；本任务不触碰） | avoid |
+
+master 复查（2026-11-02）：origin/master 仍为 6c5e71c2c（PR #1875 合并后），无前进，无需 rebase。
 
 ## 本任务新增 vs 既有系统
 

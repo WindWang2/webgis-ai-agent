@@ -180,12 +180,16 @@ def decide_recovery(
         _deny("retry", "budget_exhausted", dec)
         return _finalize(dec)
 
-    # 3) 破坏性工具：无论处置如何，绝不自动重试
+    # 3) 破坏性工具：无论处置如何，绝不自动重试（R2-3：用户路径动作
+    # 不被风险门吞掉 —— ask_user_data/owner_confirmation 照常给出）
     if profile.destructive:
         dec["required_confirmation"] = "destructive"
         _deny("retry", "side_effect_not_retry_safe", dec)
         dec["allowed_actions"] = [
-            a for a in hints if a in _AUTO_SAFE_REPAIRS][:4]
+            a for a in hints if a in (
+                _AUTO_SAFE_REPAIRS | {"ask_user_data",
+                                      "owner_confirmation",
+                                      "abort_with_disclosure"})][:4]
         return _finalize(dec)
 
     # 4) 需要用户的处置：挂对应入口，不自动重试
@@ -249,7 +253,12 @@ def _slice_backoff(schedule: Tuple[int, ...],
             start = max(0, int(budget.attempts))
         except (TypeError, ValueError):
             start = 0
-    return tuple(schedule[start:start + 4])
+    sliced = tuple(schedule[start:start + 4])
+    if not sliced:
+        # attempts 越过表尾（自定义账本）：回落最后一级 —— 绝不出现
+        # "auto_retry=True 但零退避" 的立即重试（R3 备忘）。
+        sliced = (schedule[-1],)
+    return sliced
 
 
 __all__ = [

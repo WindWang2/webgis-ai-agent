@@ -135,8 +135,10 @@ def resolve_retry_directive(
         if fail_reasons:
             return RetryDirective(
                 verdict=_VERDICT_FAIL_CLOSED,
-                retry_capabilities=[], preserved_capabilities=preserved_caps,
-                preserved_refs=preserved_refs, suggested_tools=[],
+                retry_capabilities=[],
+                preserved_capabilities=preserved_caps[:_MAX_ITEMS],
+                preserved_refs=preserved_refs[:_MAX_ITEMS],
+                suggested_tools=[],
                 fail_closed_reasons=fail_reasons[:4])
 
         # 诊断门：terminal / 预算耗尽 → 不给重试目标
@@ -146,13 +148,13 @@ def resolve_retry_directive(
         if disposition == "terminal":
             return RetryDirective(
                 verdict=_VERDICT_NOT_RETRYABLE,
-                preserved_capabilities=preserved_caps,
-                preserved_refs=preserved_refs)
+                preserved_capabilities=preserved_caps[:_MAX_ITEMS],
+                preserved_refs=preserved_refs[:_MAX_ITEMS])
         if budget and budget.get("retry_allowed") is False:
             return RetryDirective(
                 verdict=_VERDICT_BUDGET,
-                preserved_capabilities=preserved_caps,
-                preserved_refs=preserved_refs)
+                preserved_capabilities=preserved_caps[:_MAX_ITEMS],
+                preserved_refs=preserved_refs[:_MAX_ITEMS])
 
         suggested: List[str] = []
         if isinstance(chap.get("workflow_contract"), dict) and \

@@ -195,7 +195,9 @@ def reconcile_goal_verification(
     science_reqs = _kinds(goal, "analysis", "comparison", "statistics")
     science_status = _verdict_status(science_reqs)
     science_detail = f"{len(science_reqs)} science requirements"
-    science_refs = [f"req:{r.get('id')}" for r in science_reqs[:4]]
+    science_refs = [
+        f"req:{r.get('requirement_id') or r.get('id')}"
+        for r in science_reqs[:4]]
     if quality_review_present is False:
         # L4（cartographic quality）/L5（visual judge）未评估 —— 证据
         # 缺席按 not_evaluated 报告，不得升级 pass。
@@ -208,15 +210,24 @@ def reconcile_goal_verification(
         science_detail += "; science evidence insufficient"
     report.slots.append(VerificationSlot(
         slot=SLOT_SCIENTIFIC_QUALITY, status=science_status,
-        evidence_refs=science_refs, detail=science_detail))
+        evidence_refs=science_refs, detail=science_detail,
+        # R1-D：纯地图目标（无科学需求族）不拖低 overall —— 与
+        # legend/export 同款 N/A 纪律；有科学需求或评审缺席才计数。
+        counts_toward_overall=bool(science_reqs)))
 
     # ── 4/5. layer_visibility 与 actual_rendering ────────────────────
     hidden = {str(h) for h in (user_hidden_layers or [])}
     aggregate = str(obs.get("aggregate") or "unknown")
     health = str(obs.get("health") or "")
-    layer_entries = obs.get("layers") if isinstance(obs.get("layers"), list) \
-        else []
-    layer_entries = [e for e in layer_entries if isinstance(e, dict)]
+    # R1-C：生产者 observation_states.build_observation_summary 的
+    # layers 是 {layer_id: state} 字典；旧/合成形状（list[dict]）兼容。
+    _raw_layers = obs.get("layers")
+    layer_entries: List[Dict[str, Any]] = []
+    if isinstance(_raw_layers, dict):
+        layer_entries = [
+            {"id": str(k), "state": v} for k, v in _raw_layers.items()]
+    elif isinstance(_raw_layers, list):
+        layer_entries = [e for e in _raw_layers if isinstance(e, dict)]
     has_map_req = bool(_kinds(goal, "map"))
 
     if not obs:
@@ -277,7 +288,9 @@ def reconcile_goal_verification(
     stat_status = _verdict_status(stat_reqs)
     report.slots.append(VerificationSlot(
         slot=SLOT_LEGEND_STATISTICS, status=stat_status,
-        evidence_refs=[f"req:{r.get('id')}" for r in stat_reqs[:4]],
+        evidence_refs=[
+            f"req:{r.get('requirement_id') or r.get('id')}"
+            for r in stat_reqs[:4]],
         detail=f"{len(stat_reqs)} chart/statistics requirements",
         counts_toward_overall=bool(stat_reqs)))
 
@@ -288,7 +301,9 @@ def reconcile_goal_verification(
         export_status = "fail"   # 用户显式要求导出：partial 即未兑现
     report.slots.append(VerificationSlot(
         slot=SLOT_EXPORT_DELIVERY, status=export_status,
-        evidence_refs=[f"req:{r.get('id')}" for r in export_reqs[:4]],
+        evidence_refs=[
+            f"req:{r.get('requirement_id') or r.get('id')}"
+            for r in export_reqs[:4]],
         detail=f"{len(export_reqs)} export requirements",
         counts_toward_overall=bool(export_reqs)))
 

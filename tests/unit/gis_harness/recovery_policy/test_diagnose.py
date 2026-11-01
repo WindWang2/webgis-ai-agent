@@ -66,8 +66,18 @@ class TestHttpSemantics:
         assert "retry" not in d.hints or d.retry is None or not d.retry.retry_allowed
 
     def test_numeric_status_in_error_type(self):
-        d2 = diagnose.diagnose_tool_failure(
+        # 纯数字无语境 → 不判 429（R2-1：坐标/计数防误报）
+        bare = diagnose.diagnose_tool_failure(
             status="429", message="", tool_name="t",
+            harness_failure={"class": "timeout",
+                             "remediation": "retry_with_backoff",
+                             "attempts": 0, "max_attempts": 2,
+                             "retry_allowed": True},
+            session_id="s")
+        assert bare.reason is not GISRecoveryReason.RATE_LIMITED
+        # 带请求语境 → 判 429
+        d2 = diagnose.diagnose_tool_failure(
+            status="HTTP 429", message="", tool_name="t",
             harness_failure={"class": "timeout", "remediation": "retry_with_backoff",
                              "attempts": 0, "max_attempts": 2, "retry_allowed": True},
             session_id="s",

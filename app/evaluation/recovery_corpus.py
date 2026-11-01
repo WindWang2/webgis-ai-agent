@@ -72,14 +72,17 @@ def _gv_input(**kw) -> Dict[str, Any]:
         "goal_report": {
             "verdict": "satisfied",
             "requirements": [
-                {"id": "r-map", "kind": "map", "verdict": "fulfilled"},
-                {"id": "r-sci", "kind": "analysis", "verdict": "fulfilled"},
-                {"id": "r-exp", "kind": "export", "verdict": "fulfilled"},
+                {"requirement_id": "r-map", "kind": "map",
+                 "verdict": "fulfilled"},
+                {"requirement_id": "r-sci", "kind": "analysis",
+                 "verdict": "fulfilled"},
+                {"requirement_id": "r-exp", "kind": "export",
+                 "verdict": "fulfilled"},
             ],
             "missing_summary": [],
         },
         "observation_health": {
-            "layers": [{"id": "l1", "state": "data_present"}],
+            "layers": {"l1": "data_present"},
             "aggregate": "data_present", "health": "ok",
             "observed_revision": 2,
         },
@@ -348,7 +351,7 @@ def build_recovery_corpus() -> List[RecoveryCase]:
         _gv_input(
             user_hidden_layers=["l1"],
             observation_health={
-                "layers": [{"id": "l1", "state": "unknown"}],
+                "layers": {"l1": "unknown"},
                 "aggregate": "unknown", "health": "degraded",
                 "observed_revision": 2}),
         expect_overall="warning", expect_contradiction=False))

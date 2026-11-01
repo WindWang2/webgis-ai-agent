@@ -20,7 +20,7 @@ needs_user_data/needs_user_approval 处置词表）。`harness_failure` payload 
 ## Decisions
 
 1. **D1 三层正交词表，全部封闭**：粗类（既有 `HarnessFailureClass` 11 值，
-   不动）→ 诊断 reason（`GISRecoveryReason` 28 码，新增细粒度：rate_limited/
+   不动）→ 诊断 reason（`GISRecoveryReason` 27 码，新增细粒度：rate_limited/
    upstream_server_error/permission_denied/cross_session_ref/crs_ambiguous/
    eligibility_*/goal_gap_* 等，逐一映射回粗类）→ 处置
    （`RecoveryDisposition` 6 值：retryable/repairable/needs_user_data/

@@ -822,6 +822,7 @@ def map_product_block(
     cartographic_review: Optional[Dict[str, Any]] = None,
     session_id: str = "",
     tenant_id: str = "",
+    user_hidden_layers: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -950,6 +951,7 @@ def map_product_block(
                 chapter=chapter,
                 task_complete=block.get("task_complete"),
                 quality_review_present=cartographic_review is not None,
+                user_hidden_layers=user_hidden_layers,
             )
             if verification is not None:
                 block["goal_verification"] = verification.to_bounded_dict()
@@ -1271,6 +1273,15 @@ async def maybe_finalize_map_product(
                 merged_repairs = list(
                     dict.fromkeys(prior_repairs_merged + list(result.repairs_applied))
                 )
+                # R1-E：user-wins 隐藏层（spec presentation_owner=user +
+                # 不可见）——对账层尊重依据的生产来源。
+                try:
+                    _spec_snap, _ = await current_mapspec_for_disclosure(
+                        session_id)
+                except Exception:  # noqa: BLE001 — 快照失败不授予豁免
+                    _spec_snap = None
+                _user_hidden = _user_hidden_layers_from_spec(
+                    _spec_snap, current_observation)
                 fresh.gis_chapter["map_product"] = map_product_block(
                     result,
                     revision_after_run,
@@ -1291,6 +1302,7 @@ async def maybe_finalize_map_product(
                     continuation=continuation_dict,
                     # ADR-0183（G7）：确定性制图评审 checks（map state 快照）
                     # 作为证据源直入评估 —— 只消费，不重算。
+                    user_hidden_layers=_user_hidden,
                     cartographic_review=(
                         (fresh_state or {}).get("_cartographic_review")
                         if isinstance(fresh_state, dict) else None
@@ -1583,6 +1595,49 @@ def _product_verdict_token(stored: Dict[str, Any]) -> str:
     return str(verdict or "")
 
 
+def _user_hidden_layers_from_spec(
+    mapspec: Optional[Dict[str, Any]],
+    observation: Optional[Dict[str, Any]],
+) -> List[str]:
+    """R1-E：user-wins 隐藏层的生产来源（纯函数）。
+
+    spec 层的 ``cartographic_intent.presentation_owner == "user"`` 且
+    layout 不可见（或观察确认不可见）→ 该层是用户主动隐藏 —— 对账层
+    按尊重处理（warning + 说明），不判 fail、不代用户显现。证据不可
+    证明（无 spec/无 owner 标记）→ 空列表（不授予豁免，fail-closed）。
+    """
+    if not isinstance(mapspec, dict):
+        return []
+    obs_layers: Dict[str, Dict[str, Any]] = {}
+    raw = (observation or {}).get("layers") \
+        if isinstance(observation, dict) else None
+    if isinstance(raw, list):
+        for e in raw:
+            if isinstance(e, dict) and e.get("id"):
+                obs_layers[str(e["id"])] = e
+    hidden: List[str] = []
+    for layer in (mapspec.get("layers") or []):
+        if not isinstance(layer, dict):
+            continue
+        lid = str(layer.get("id") or "")
+        if not lid:
+            continue
+        intent = layer.get("cartographic_intent")
+        owner = (intent or {}).get("presentation_owner") \
+            if isinstance(intent, dict) else None
+        if owner != "user":
+            continue
+        layout = layer.get("layout")
+        spec_hidden = isinstance(layout, dict) and str(
+            layout.get("visibility") or "").lower() == "none"
+        obs_entry = obs_layers.get(lid)
+        obs_hidden = bool(obs_entry is not None
+                          and obs_entry.get("visible") is False)
+        if spec_hidden or obs_hidden:
+            hidden.append(lid)
+    return hidden[:8]
+
+
 def _is_task_complete(stored: Dict[str, Any]) -> bool:
     """stored map_product 块 → 任务级完成布尔（纯函数，有界输入）。
 
@@ -1673,9 +1728,16 @@ def finalization_sse_payload(
                     build_recovery_explanation,
                 )
 
+                # R1-D：N/A slot（需求族不存在）不进处境推导 —— 纯地图
+                # 目标的科学槽缺席不误报 "显示未验证"。
+                _gv_counting = dict(
+                    gv,
+                    slots=[sl for sl in (gv.get("slots") or [])
+                           if isinstance(sl, dict)
+                           and sl.get("counts_toward_overall", True)])
                 exp = build_recovery_explanation(
                     diagnostic=None, decision=None,
-                    goal_verification=gv)
+                    goal_verification=_gv_counting)
                 if exp.situation != "clean":
                     payload["recovery_explanation"] = exp.to_bounded_dict()
         except Exception:  # noqa: BLE001 — 投影失败只少一键

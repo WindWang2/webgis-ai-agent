@@ -57,13 +57,36 @@ def test_deterministic_double_run():
 
 
 def test_forbidden_actions_never_allowed_invariants():
-    """绝对红线抽查：危险动作在任何 tool_failure 案例中不得出现在
-    allowed_actions（语料级冗余门）。"""
+    """绝对红线独立复核（R2-7：不依赖 evaluate_recovery_case 的通过）：
+    每条 tool_failure 案例重新驱动 wiring，逐条断言 forbidden 动作不在
+    decision.allowed_actions 且 auto_retry 与禁用语义一致。"""
+    from app.services.gis_harness.recovery_policy.wiring import (
+        build_recovery_payload,
+    )
+
     for c in build_recovery_corpus():
         if c.oracle != "tool_failure":
             continue
-        v = evaluate_recovery_case(c)
-        assert v.passed, c.case_id
+        payload = build_recovery_payload(
+            status=c.input_state.get("status"),
+            code=c.input_state.get("code"),
+            error_type=c.input_state.get("error_type"),
+            message=c.input_state.get("message"),
+            tool_name=str(c.input_state.get("tool") or ""),
+            harness_failure=c.input_state.get("harness_failure"),
+            session_id=str(c.input_state.get("session_id") or ""),
+            descriptor=c.input_state.get("risk") or None,
+            ref_origin_session=c.input_state.get("ref_origin_session"),
+            idempotency_key_present=bool(
+                c.input_state.get("idempotency_key_present")),
+        )
+        allowed = set((payload.get("decision") or {}).get(
+            "allowed_actions") or [])
+        for a in c.forbidden_actions:
+            assert a not in allowed, f"{c.case_id}: forbidden {a} allowed"
+        if any(a.startswith("retry") for a in c.forbidden_actions):
+            assert not (payload.get("decision") or {}).get("auto_retry"), \
+                c.case_id
 
 
 @pytest.mark.parametrize("case", build_recovery_corpus(),

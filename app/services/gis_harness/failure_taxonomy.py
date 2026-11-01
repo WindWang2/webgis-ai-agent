@@ -84,10 +84,29 @@ _TIMEOUT_MARKERS = (
     # "超时/瞬态网络/远端不可达"）。此前 5xx 落 unknown（预算 1）、429
     # 经 planning 委托折成 budget_exhausted（预算 0，首错即 abort）——
     # 与瞬态可退避语义相悖；E2E 门（test_e2e_recovery_gates）钉死。
-    "429", "rate limit", "ratelimit", "too many requests", "限流", "请求过于频繁",
-    "500", "502", "503", "504", "bad gateway", "service unavailable",
+    "rate limit", "ratelimit", "too many requests", "限流", "请求过于频繁",
+    "bad gateway", "service unavailable",
     "internal server error", "server error", "服务不可用", "上游错误",
 )
+#: HTTP 状态码词表单独走词边界 + 语境词双门（review R2-1：裸数字子串
+#: 撞坐标/计数，如 "buffered 1500 features" 不得判为瞬态）。
+_HTTP_STATUS_CODES = ("429", "500", "502", "503", "504")
+_HTTP_STATUS_WORD_RE: Any = None
+
+
+def _has_http_status_signal(text: str) -> bool:
+    """数字状态码命中且语境像请求失败（http/status/error/upstream…）。"""
+    global _HTTP_STATUS_WORD_RE
+    import re as _re
+
+    if _HTTP_STATUS_WORD_RE is None:
+        _HTTP_STATUS_WORD_RE = _re.compile(
+            r"(?<![0-9])(?:429|500|502|503|504)(?![0-9])")
+    if not _HTTP_STATUS_WORD_RE.search(text or ""):
+        return False
+    return any(w in (text or "") for w in (
+        "http", "status", "error", "fail", "upstream", "provider",
+        "response", "returned", "code", "错误", "失败", "上游", "服务"))
 _STALE_REF_MARKERS = (
     "stale", "expired", "已过期", "已失效", "失效", "ref 不存在",
 )
@@ -160,6 +179,7 @@ def classify_harness_failure(
         isinstance(exception, TimeoutError)
         or "timeout" in type_l
         or _has_any(_TIMEOUT_MARKERS, text_l)
+        or _has_http_status_signal(text_l)
     ):
         return HarnessFailureClass.TIMEOUT
     if _has_any(_STALE_REF_MARKERS, text_l):

@@ -1074,10 +1074,43 @@ async def _apply_tool_result_unlocked(
         except Exception:  # noqa: BLE001 — 校验失败按丢弃
             _reason_ok = False
         if _reason_ok:
+            # R2-4：按 bounded 键集重建（不做任意结构透传 —— 封闭词表
+            # 形状门的一部分；伪造面只剩白名单标量/短列表）。
+            _d = _rec["diagnostic"]
+            _attr = _d.get("attribution") \
+                if isinstance(_d.get("attribution"), dict) else {}
+            _rt = _d.get("retry") if isinstance(_d.get("retry"), dict) else None
+            _dec = _rec.get("decision") \
+                if isinstance(_rec.get("decision"), dict) else {}
             _rec_bounded = {
-                "diagnostic": _rec["diagnostic"],
-                "decision": _rec.get("decision")
-                if isinstance(_rec.get("decision"), dict) else None,
+                "diagnostic": {
+                    "reason": str(_d.get("reason"))[:48],
+                    "disposition": str(_d.get("disposition"))[:32],
+                    "failure_class": str(_d.get("failure_class"))[:32],
+                    "detail": str(_d.get("detail"))[:200],
+                    "attribution": {
+                        str(k)[:32]: str(v)[:64]
+                        for k, v in list(_attr.items())[:10]},
+                    "retry": (None if _rt is None else {
+                        "attempts": int(_rt.get("attempts", 0) or 0),
+                        "max_attempts": int(_rt.get("max_attempts", 0) or 0),
+                        "retry_allowed": bool(_rt.get("retry_allowed")),
+                    }),
+                    "evidence_refs": [str(e)[:64]
+                                      for e in (_d.get("evidence_refs")
+                                                or [])[:8]],
+                    "hints": [str(h)[:32]
+                              for h in (_d.get("hints") or [])[:4]],
+                },
+                "decision": {
+                    "auto_retry": bool(_dec.get("auto_retry")),
+                    "allowed_actions": [str(a)[:32]
+                                        for a in (_dec.get("allowed_actions")
+                                                  or [])[:6]],
+                    "required_confirmation": (
+                        str(_dec.get("required_confirmation"))[:24]
+                        if _dec.get("required_confirmation") else None),
+                } if _dec else None,
                 "tool": str(tool_name)[:64],
             }
             if plan.last_recovery != _rec_bounded:
@@ -1086,17 +1119,17 @@ async def _apply_tool_result_unlocked(
         else:
             _rec_bounded = None
         if tool_name.startswith("webgis_") or plan.gis_chapter is None:
-            if _rec_changed and lock is not None and not lock.lost:
+            if _rec_changed and (lock is None or not lock.lost):
                 await save_session_plan(plan, store=backend)
             return [], None
         hits = capabilities_hit_by_tool(plan, tool_name)
         if not hits:
-            if _rec_changed and lock is not None and not lock.lost:
+            if _rec_changed and (lock is None or not lock.lost):
                 await save_session_plan(plan, store=backend)
             return [], None
         changed = _mark_progress(plan, hits, status="failed")
         if not changed:
-            if _rec_changed and lock is not None and not lock.lost:
+            if _rec_changed and (lock is None or not lock.lost):
                 await save_session_plan(plan, store=backend)
             return [], None
         if lock is not None and lock.lost:

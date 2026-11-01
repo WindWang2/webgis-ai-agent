@@ -27,13 +27,31 @@ from app.services.gis_harness.recovery_policy.contracts import (
 # ── 消息标记词表（lowercase 子串匹配；顺序即优先级） ────────────────────
 
 _RATE_LIMIT_MARKERS = (
-    "429", "rate limit", "ratelimit", "too many requests", "限流", "请求过于频繁",
+    "rate limit", "ratelimit", "too many requests", "限流", "请求过于频繁",
     "throttl",
 )
 _SERVER_ERROR_MARKERS = (
-    "500", "502", "503", "504", "bad gateway", "service unavailable",
+    "bad gateway", "service unavailable",
     "internal server error", "server error", "上游错误", "服务不可用",
 )
+#: HTTP 状态码用词边界 + 语境词双门（R2-1：裸数字子串会撞坐标/计数，
+#: 如 "buffered 1500 features outside AOI" 不得判为 5xx/429）。
+_HTTP_STATUS_WORD_RE: Any = None
+
+
+def _http_status_context(text: str) -> bool:
+    """数字状态码命中后，要求请求/错误语境词在场才认定。"""
+    import re as _re
+
+    global _HTTP_STATUS_WORD_RE
+    if _HTTP_STATUS_WORD_RE is None:
+        _HTTP_STATUS_WORD_RE = _re.compile(
+            r"(?<![0-9])(?:429|500|502|503|504)(?![0-9])")
+    if not _HTTP_STATUS_WORD_RE.search(text or ""):
+        return False
+    return any(w in (text or "") for w in (
+        "http", "status", "error", "fail", "upstream", "provider",
+        "response", "returned", "code", "错误", "失败", "上游", "服务"))
 _PERMISSION_MARKERS = (
     "403", "401", "forbidden", "unauthorized", "permission denied",
     "permission", "access denied", "权限", "授权失败", "未授权", "凭证无效",
@@ -143,9 +161,13 @@ def diagnose_tool_failure(
 
     # 限流 / 上游 5xx：瞬态但必须退避（retryable + backoff hint）——
     # 先于粗类 budget_exhausted（429 会被 planning 委托误折叠）。
-    if _has_any(_RATE_LIMIT_MARKERS, text):
+    # 数字状态码走 _http_status_context 双门（词边界 + 语境词）。
+    if _has_any(_RATE_LIMIT_MARKERS, text) or (
+            "429" in text and _http_status_context(text)):
         return build(GISRecoveryReason.RATE_LIMITED)
-    if _has_any(_SERVER_ERROR_MARKERS, text):
+    if _has_any(_SERVER_ERROR_MARKERS, text) or (
+            any(c in text for c in ("500", "502", "503", "504"))
+            and _http_status_context(text)):
         return build(GISRecoveryReason.UPSTREAM_SERVER_ERROR)
 
     # 真预算耗尽（未被上面细化的粗类裁决）

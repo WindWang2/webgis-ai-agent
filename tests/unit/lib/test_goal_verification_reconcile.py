@@ -31,9 +31,11 @@ _GOAL_SATISFIED = {
     "uncertainties": [],
 }
 
+# 生产形状（observation_states.build_observation_summary：layers 为
+# {layer_id: state} 字典）
 _HEALTH_OK = {
-    "layers": [{"id": "l1", "state": "data_present"}],
-    "charts": [],
+    "layers": {"l1": "data_present"},
+    "charts": {},
     "aggregate": "data_present",
     "health": "ok",
     "observed_revision": 3,
@@ -92,7 +94,7 @@ class TestFalsePassGuards:
 
     def test_task_complete_with_failing_slot_is_contradiction(self):
         rep = _reconcile(observation_health={
-            "layers": [{"id": "l1", "state": "unknown"}],
+            "layers": {"l1": "unknown"},
             "aggregate": "unknown", "health": "blocked",
             "observed_revision": 0,
         })
@@ -148,13 +150,52 @@ class TestFalsePassGuards:
 
 # ── user-wins 尊重 ───────────────────────────────────────────────────────
 
+class TestMapOnlyGoal:
+    def test_map_only_all_green_passes(self):
+        """R1-D 回归：纯地图目标（无科学需求族）全绿 → overall=pass。"""
+        goal = {
+            "verdict": "satisfied",
+            "requirements": [
+                {"requirement_id": "r-map", "kind": "map",
+                 "verdict": "fulfilled"}],
+            "missing_summary": [],
+        }
+        rep = _reconcile(goal_report=goal)
+        by_slot = {s.slot: s.status for s in rep.slots}
+        assert by_slot["scientific_quality"] == "not_evaluated"
+        assert rep.overall == "pass"
+
+    def test_user_hidden_from_spec_helper(self):
+        """R1-E：生产 user-wins 来源（spec presentation_owner + 不可见）。"""
+        from app.services.gis_harness.completion.pipeline import (
+            _user_hidden_layers_from_spec,
+        )
+
+        spec = {"layers": [
+            {"id": "l-keep", "type": "circle",
+             "layout": {"visibility": "visible"}},
+            {"id": "l-user-hid", "type": "circle",
+             "layout": {"visibility": "none"},
+             "cartographic_intent": {"presentation_owner": "user"}},
+            {"id": "l-agent-hid", "type": "circle",
+             "layout": {"visibility": "none"},
+             "cartographic_intent": {"presentation_owner": "agent"}},
+        ]}
+        observation = {"layers": [
+            {"id": "l-keep", "visible": True},
+            {"id": "l-user-hid", "visible": False},
+        ]}
+        hidden = _user_hidden_layers_from_spec(spec, observation)
+        assert hidden == ["l-user-hid"]  # agent 隐藏不享豁免
+        assert _user_hidden_layers_from_spec(None, observation) == []
+
+
 class TestUserWins:
     def test_user_hidden_layer_is_warning_not_fail(self):
         rep = _reconcile(
             user_hidden_layers=["l1"],
             observation_health={
-                "layers": [{"id": "l1", "state": "unknown",
-                            "presentation_owner": "user"}],
+                "layers": {"l1": "unknown"},
                 "aggregate": "unknown", "health": "degraded",
                 "observed_revision": 3,
             })
@@ -170,7 +211,7 @@ class TestUserWins:
 class TestHonesty:
     def test_partial_aggregate_is_warning(self):
         rep = _reconcile(observation_health={
-            "layers": [{"id": "l1", "state": "rendered"}],
+            "layers": {"l1": "rendered"},
             "aggregate": "rendered", "health": "partial",
             "observed_revision": 3,
         })

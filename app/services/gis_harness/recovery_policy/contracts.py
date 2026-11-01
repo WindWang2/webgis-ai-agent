@@ -212,9 +212,6 @@ class GISRecoveryDiagnostic(BaseModel):
     """一次失败/差距的统一诊断（纯数据；零 IO 零时钟）。"""
     schema_version: str = DIAGNOSTIC_SCHEMA
     reason: GISRecoveryReason
-    # 处置以 REASON_REGISTRY 为权威（model_post_init 覆写）；
-    # 默认值只是 pydantic 必填豁免，不构成裁决来源。
-    disposition: RecoveryDisposition = RecoveryDisposition.REPAIRABLE
     failure_class: str = ""                 # 既有 HarnessFailureClass 值
     detail: str = ""
     attribution: DiagnosticAttribution = Field(
@@ -224,12 +221,16 @@ class GISRecoveryDiagnostic(BaseModel):
     hints: List[str] = Field(default_factory=list)
 
     # ── 构造纪律 ────────────────────────────────────────────────────
+    @property
+    def disposition(self) -> RecoveryDisposition:
+        """处置是 reason 的确定性函数（registry 唯一事实源 —— R2-2：
+        不存在可漂移的字段，构造方无法私自放宽/收紧）。"""
+        spec = REASON_REGISTRY.get(self.reason.value)
+        return spec.disposition if spec else RecoveryDisposition.REPAIRABLE
+
     def model_post_init(self, __context) -> None:
         spec = REASON_REGISTRY.get(self.reason.value)
         if spec is not None:
-            # 处置与 hint 以 registry 为权威：构造方不能私自放宽
-            # （ unsafe 细化由 diagnose 层做，不允许在数据面漂移）。
-            self.disposition = spec.disposition
             if not self.hints:
                 self.hints = list(spec.hints)
         if not self.failure_class:

@@ -1063,6 +1063,14 @@ class ToolDispatchService:
                         build_recovery_payload,
                     )
 
+                    # R1-B：风险裁决面需要真实描述符事实
+                    # （SideEffectClass/tier）—— 缺席按保守缺省
+                    # （unclassified 不放宽自动重试）。
+                    _tool_desc = None
+                    try:
+                        _tool_desc = self._registry.descriptor(tool_name)
+                    except Exception:  # noqa: BLE001 — KeyError 等 → 保守
+                        _tool_desc = None
                     _rec = build_recovery_payload(
                         status=result.get("status"),
                         code=result.get("code"),
@@ -1071,6 +1079,7 @@ class ToolDispatchService:
                         tool_name=tool_name,
                         harness_failure=result.get("harness_failure"),
                         session_id=session_id or "",
+                        descriptor=_tool_desc,
                     )
                     result["recovery"] = {
                         "diagnostic": _rec.get("diagnostic"),

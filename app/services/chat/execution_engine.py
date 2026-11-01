@@ -2748,7 +2748,6 @@ class ChatExecutionEngine:
                             failure_class=fc,
                             recovery_action=ra,
                             error_class=error_class_for_tool_failure(fc),
-                            recovery=_recovery_from_outcome(None),
                         )
                         continue
 

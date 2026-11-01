@@ -40,11 +40,9 @@ def classify_situation(
         return "computed_not_displayed"
     if science == "not_evaluated" and rendering == "pass":
         return "displayed_unverified"
-    if science == "fail" and rendering in ("fail", "not_evaluated"):
-        return "computed_incomplete"
     if science == "pass" and rendering == "pass":
         return "clean"
-    # 混合/未知：按最弱面诚实降级
+    # 混合/未知（warning、单侧缺席组合）：按最弱面诚实降级
     if rendering == "fail":
         return "computed_not_displayed"
     if science == "not_evaluated" or rendering == "not_evaluated":

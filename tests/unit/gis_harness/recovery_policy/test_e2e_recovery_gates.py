@@ -130,8 +130,7 @@ async def test_e2e3_goal_verification_flips_with_observation(monkeypatch,
         {"id": "r-sci", "kind": "analysis", "verdict": "fulfilled"}],
         "missing_summary": []}
     chapter = {"workflow_contract": {"roles": [
-        {"role": "schools", "required": True, "status": "bounded".replace(
-            "d", "d")}]}}  # bound
+        {"role": "schools", "required": True, "status": "bound"}]}}
 
     # 阶段 1：分析完成（goal satisfied）但渲染观察缺席 → 矛盾、不许完成
     rep1 = reconcile_goal_verification(
