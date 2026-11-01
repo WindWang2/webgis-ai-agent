@@ -253,7 +253,7 @@ class OgcServiceFakeServer(FakeSourceServer):
 
             self._record(request)
             path = urlsplit(request.url).path
-            if redirect_hops and path.startswith(prefix):
+            if redirect_hops and re.search(r"/tiles/[^/]+/\d+/\d+/\d+$", path):
                 return make_response(request.url, status=302, headers={"Location": redirect_hops[0]})
             for needle, status in overrides.items():
                 if needle in path:

@@ -32,6 +32,7 @@ from app.schemas.data_fabric_schema import (
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     DataFabricError,
+    InvalidQueryError,
     QueryUnsupportedError,
     SourceBadResponseError,
     SourceUnreachableError,
@@ -52,6 +53,9 @@ DESCRIPTOR_VERSION = "ogc-tiles-descriptor/1"
 
 #: tileset/TileMatrixSet 文档的读取上限（声明文档都很小；超限视为异常）。
 _META_MAX_BYTES = 2 * 1024 * 1024
+
+#: 单瓦片字节帽（与 DfTileCache 单条上限同量级；超限 typed 拒绝）。
+MAX_TILE_BYTES = 4 * 1024 * 1024
 
 _TILESET_LINK_RELS = {"tile"}
 _TILESET_LIST_REL = "http://www.opengis.net/def/rel/ogc/1.0/tilesets-vector"
@@ -81,6 +85,10 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
         if "headers" in self.options:
             self.session.headers.update(self.options["headers"])
         self._conformance_cache: Optional[Tuple[float, List[str]]] = None
+        # describe 结果的进程内短缓存（瓦片代理逐瓦片取 tileset 上下文用；
+        # 60s TTL 与 conformance 缓存同拍 —— 服务端 tileset 变更经 fingerprint
+        # 失效目录条目后自然重建）。
+        self._describe_cache: Dict[str, Tuple[float, DatasetDescriptor]] = {}
 
     # ── 只读发现原语 ──────────────────────────────────────────────────
 
@@ -217,6 +225,15 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
     # ── describe：三态资格 + 版本化 descriptor ───────────────────────
 
     def describe(self, dataset_id: str) -> DatasetDescriptor:
+        """带 60s 进程内缓存的 describe（瓦片代理热路径共用）。"""
+        cached = self._describe_cache.get(dataset_id)
+        if cached and (time.monotonic() - cached[0]) < 60:
+            return cached[1]
+        desc = self._describe_uncached(dataset_id)
+        self._describe_cache[dataset_id] = (time.monotonic(), desc)
+        return desc
+
+    def _describe_uncached(self, dataset_id: str) -> DatasetDescriptor:
         if not self.url:
             raise ValueError("OGC Tiles endpoint URL is missing in connection profile")
         cid, tms_id = split_tiles_dataset_id(dataset_id)
@@ -373,6 +390,113 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
             "features": [],
             "bbox": desc.bbox or [-180.0, -90.0, 180.0, 90.0],
         }
+
+    # ── 受控瓦片获取（M2 代理的远端半边） ─────────────────────────────
+
+    def fetch_tile(
+        self, dataset_id: str, z: int, x: int, y: int
+    ) -> Optional[Tuple[bytes, str]]:
+        """受控获取单个瓦片：返回 ``(body, content_type)``；远端无该瓦片 →
+        ``None``（route → 204）。
+
+        治理（全部 typed，agent 可解释 reason）：
+
+        - display 资格门：tileset 三态评估非 supported → ``QueryUnsupportedError``
+          （携带 reason codes —— 不伪造投影/媒体类型）；
+        - zoom 范围：z 超出服务声明的 [minzoom, maxzoom] → ``None``（诚实
+          空瓦片，MapLibre 自行父级缩放）；x/y 超出矩阵 → ``InvalidQueryError``；
+        - 字节帽：单瓦片 ≤ ``MAX_TILE_BYTES``（Content-Length 预检 + 流式
+          帽，压缩炸弹在此拦截）；
+        - 远端 404 → ``None``；401/403 → 认证拒绝；429/5xx → typed 失败。
+        """
+        from app.services.data_fabric.security import bounded_get
+
+        desc = self.describe(dataset_id)
+        meta = desc.metadata
+        if not meta.get("display_ready"):
+            cap = meta.get("capability") or {}
+            reasons = ",".join(r.get("code", "?") for r in cap.get("reasons", []))
+            raise QueryUnsupportedError(
+                "tileset is not display-ready "
+                f"(state={cap.get('state')}, reasons=[{reasons}]) — "
+                "refusing to fetch tiles for a tileset whose declared "
+                "TileMatrixSet/CRS/media-type is outside the supported subset",
+                details={"dataset_id": dataset_id, "capability": cap},
+            )
+        minzoom = meta.get("minzoom")
+        maxzoom = meta.get("maxzoom")
+        if isinstance(minzoom, int) and z < minzoom:
+            return None
+        if isinstance(maxzoom, int) and z > maxzoom:
+            return None
+        if x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+            raise InvalidQueryError(f"tile coordinates out of matrix range: {z}/{x}/{y}")
+
+        template = meta.get("tile_url_template_raw")
+        if not template:
+            raise QueryUnsupportedError(
+                "tileset declares no tile URL template; cannot fetch tiles",
+                details={"dataset_id": dataset_id},
+            )
+        # RFC 6570 封闭子集：仅替换 {tileMatrix}/{tileRow}/{tileCol}
+        # （WebMercatorQuad topLeft 行列语义 = XYZ x/y）。
+        for var in ("tileMatrix", "tileRow", "tileCol"):
+            if "{" + var + "}" not in template:
+                raise QueryUnsupportedError(
+                    f"tile URL template lacks {{{var}}} variable: "
+                    f"{DataFabricSecurity.redact_url(template)}",
+                    details={"dataset_id": dataset_id},
+                )
+        url = (
+            template.replace("{tileMatrix}", str(z))
+            .replace("{tileRow}", str(y))
+            .replace("{tileCol}", str(x))
+        )
+        # 模板可能被伪造（descriptor 注入面）—— 与注册源同源校验。
+        from app.services.data_fabric.security import ensure_same_origin_url
+
+        url = ensure_same_origin_url(url, self.url)
+
+        declared_types = set(meta.get("media_types_declared") or [])
+        try:
+            body = bounded_get(self.session, url, timeout=15, max_bytes=MAX_TILE_BYTES)
+        except DataFabricError:
+            raise
+        except Exception as e:  # noqa: BLE001 — requests/HTTPError 分类映射
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status == 404:
+                return None
+            if status in (401, 403):
+                from app.services.data_fabric.errors import SourceUnreachableError
+
+                raise SourceUnreachableError(
+                    f"tile service refused authentication (HTTP {status}) for "
+                    f"'{dataset_id}' — configure credentials for this source",
+                    details={"dataset_id": dataset_id, "status": status},
+                ) from e
+            if status == 429:
+                raise SourceBadResponseError(
+                    f"tile service rate limited (HTTP 429) for '{dataset_id}'",
+                    details={"dataset_id": dataset_id, "status": 429},
+                ) from e
+            raise SourceBadResponseError(
+                f"tile fetch failed for '{dataset_id}' {z}/{x}/{y}: {e}"
+            ) from e
+        content_type = self._validate_tile_content_type(body, declared_types)
+        return body, content_type
+
+    @staticmethod
+    def _validate_tile_content_type(body: bytes, declared: set) -> str:
+        """瓦片 content-type 判定：魔数嗅探为准（字节是真实事实），仅在
+        嗅探无法判定（octet-stream）且服务恰好声明唯一类型时回退声明。"""
+        from app.services.data_fabric.pmtiles_tile_service import sniff_content_type
+
+        sniffed = sniff_content_type(body)
+        if sniffed != "application/octet-stream":
+            return sniffed
+        if len(declared) == 1:
+            return next(iter(declared))
+        return sniffed
 
     def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
         raise QueryUnsupportedError(

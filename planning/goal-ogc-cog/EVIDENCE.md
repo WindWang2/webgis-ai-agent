@@ -12,3 +12,9 @@
 - 回归 `pytest -q tests/unit/test_data_fabric_adapters.py tests/unit/test_adapter_contract_v2.py tests/unit/test_ogc_adapters_753.py --no-cov` → `36 passed, 1 skipped`
 - `ruff check <新文件 6 个>` → `All checks passed!`
 - `compileall -q <4 文件>` → ok
+
+## Round 2（P2）
+- `pytest -q tests/unit/test_ogc_tiles_proxy_v1.py tests/unit/test_ogc_tiles_mapspec_v1.py tests/unit/test_ogc_tiles_route_v1.py --no-cov` → `31 passed`
+- `pnpm exec vitest run lib/mapspec-runtime/runtime.test.ts --maxWorkers=2` → `36 passed`
+- mapspec 回归（test_mapspec_source 等 4 文件）→ `57 passed`
+- `ruff check <P2 文件 8 个>` → 通过

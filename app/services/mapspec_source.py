@@ -45,6 +45,14 @@ def store_data(entry: Dict[str, Any], data: Any) -> None:
             entry["type"] = "model3d"
             for k, v in data.items():
                 entry[k] = v
+        elif data.get("type") == "vector" and isinstance(data.get("tiles"), list) and data["tiles"]:
+            # GOAL-02（M2）：MVT 瓦片源 dict 透传（VectorMapSpecSource 自
+            # schema v1.0 起存在；前端 applySource vector 分支已渲染）。
+            # 此前 dict 会跌落 geojson inline 分支，把瓦片模板静默降级为
+            # 内联载荷 —— 瓦片语义全失。tiles 必须是非空字符串数组。
+            entry["type"] = "vector"
+            for k, v in data.items():
+                entry[k] = v
         elif "catalog_item_id" in data or data.get("type") in DATAFABRIC_SOURCE_TYPES:
             # DataFabric protocol source (ADR-0050). MUST be checked before
             # the plain-ref branch: a lazy/materialized fabric payload can
