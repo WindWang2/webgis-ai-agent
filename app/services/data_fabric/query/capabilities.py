@@ -218,6 +218,15 @@ _DEFAULTS: Dict[str, AdapterCapabilitiesV2] = {
     "wms": _generic_defaults("wms"),
     "s3": _generic_defaults("s3"),
     "generic": _generic_defaults("generic"),
+    # GOAL-02：OGC Tiles/Coverages —— 瓦片服务无下推查询能力（显示路径，
+    # 字节经 ogc_tiles_proxy）；coverage 是数值栅格源（subset 读取在
+    # coverage_read 服务层，非 QuerySpec 通道）。
+    "ogc_api_tiles": _generic_defaults("ogc_api_tiles").model_copy(
+        update={"vector_tiles": True}
+    ),
+    "ogc_api_coverages": _generic_defaults("ogc_api_coverages").model_copy(
+        update={"spatial_predicates": ["bbox"], "range_requests": True}
+    ),
 }
 
 # registry 别名 → canonical
@@ -227,6 +236,9 @@ _ALIAS_MAP = {
     "mock": "generic",
     "sample": "generic",
     "demo": "generic",
+    # GOAL-02 registry 别名
+    "ogc_tiles": "ogc_api_tiles",
+    "ogc_coverages": "ogc_api_coverages",
 }
 
 

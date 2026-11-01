@@ -173,6 +173,8 @@ _CANONICAL_SOURCE_TYPES = {
     "wfs2": "wfs",
     "wmts": "wms",
     "wms_wmts": "wms",
+    "ogc_tiles": "ogc_api_tiles",
+    "ogc_coverages": "ogc_api_coverages",
     "arcgis_rest": "arcgis",
     "featureserver": "arcgis",
     "mapserver": "arcgis",

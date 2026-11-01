@@ -43,7 +43,9 @@ DEFAULT_SOURCES_DIR = Path("config") / "sources"
 
 #: Fabric-native protocols resolvable through the adapter registry.
 FABRIC_PROTOCOLS = frozenset(
-    {"postgis", "ogc_api", "wfs", "wms", "arcgis", "stac", "geoparquet", "flatgeobuf", "pmtiles", "s3"}
+    {"postgis", "ogc_api", "wfs", "wms", "arcgis", "stac", "geoparquet", "flatgeobuf", "pmtiles", "s3",
+     # GOAL-02：OGC 开放服务（Tiles 显示路径 / Coverages 数值读取路径）。
+     "ogc_api_tiles", "ogc_api_coverages"}
 )
 #: ads-v1 new protocols (adapters registered in data_fabric.registry).
 ADS_PROTOCOLS = frozenset({"local_file", "geopackage", "cog", "stats_api"})
