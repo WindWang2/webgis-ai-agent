@@ -162,6 +162,12 @@
     "titleLabel": "标题:",
     "geomTypeLabel": "几何类型:",
     "srsLabel": "SRS 坐标系:",
+    "capabilityLabel": "服务能力:",
+    "capability": {
+      "supported": "已声明且受支持",
+      "unsupported": "已声明但不支持（见原因）",
+      "unknown": "未声明（不猜测）"
+    },
     "fieldSchema": "字段 Schema ({count})",
     "type": {
       "postgis": "PostGIS 数据库"

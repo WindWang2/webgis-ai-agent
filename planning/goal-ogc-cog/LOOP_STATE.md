@@ -36,3 +36,7 @@ P0 完成（基线勘察+规划），进入 P1（M1 能力发现 + M7 fixture）
 ### Round 5（2026-11-01）—— P5/M5 完成
 - 结果：ogc_service_tools.py 四工具（inspect_data_service/read_coverage_subset/materialize_remote_raster_asset/add_tile_service_layer）全量注册无重名 + service_qualification.py G01 双轨（tile→display_only 不可数值；coverage-ready/COG ref→numeric_raster）+ probe 语义收紧（conformance/端点可辨识，不再 collections-200 冒充 tiles）+ #1868 契约验证（raster ref → 类型化 InspectError，不伪造收据）。
 - 测试：11 passed（注册纪律/全量装载查重/tiles 与 coverages 自动识别三态/资格双轨/#1868）；discovery 回归 16 passed 不受 probe 收紧影响。
+
+### Round 6（2026-11-01）—— P6/M6 完成
+- 结果：前端最小改动 —— SOURCE_TYPES +ogc_api_tiles/+ogc_api_coverages；descriptor 弹窗三态能力展示（capability in metadata 时渲染 supported/unsupported/unknown + reasons，色彩语义区分）；zh/en i18n。#1747 既有测试计数断言 7→9（意图"无空白 option"不变）。
+- 证据：vitest 38 passed（add-source-form + runtime）；typecheck 全仓仅 3 个 master 既有红灯（map-components/*.test.tsx，均不在本分支变更集 —— 与 carto-b PR 的红灯隔离同款披露）；本分支前端文件零错误。
