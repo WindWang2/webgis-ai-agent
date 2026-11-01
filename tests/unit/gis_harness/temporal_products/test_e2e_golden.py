@@ -238,7 +238,7 @@ async def _run_e2e2() -> Dict[str, Any]:
     # 颜色范围变化 ≠ 真实变化：seek 前后 paint 逐位不变（分级不随帧漂移）。
     await tp.control_temporal_view(sid, "seek", frame_id="f-2026")
     spec_after = await _spec(sid)
-    paint_after = next(l for l in spec_after["layers"] if l["id"] == "districts")["paint"]
+    paint_after = next(lyr for lyr in spec_after["layers"] if lyr["id"] == "districts")["paint"]
     assert paint_after == paint_before
 
     # atlas time driver：两页（每期一页）、跨页 classification shared 可比。
