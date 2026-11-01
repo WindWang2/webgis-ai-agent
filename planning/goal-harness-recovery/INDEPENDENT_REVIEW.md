@@ -40,4 +40,4 @@
 ## 终验
 
 - 两轮独立 review 全部 P0/P1 清偿；最终全量双跑见 EVIDENCE.md。
-- PR：（创建后回填）
+- PR：https://github.com/WindWang2/webgis-ai-agent/pull/1879（未合并）
