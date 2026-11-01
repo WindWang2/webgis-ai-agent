@@ -81,6 +81,7 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
             [service_type] if service_type else ["ogc_api_tiles", "ogc_api_coverages"]
         )
         attempts: List[Dict[str, Any]] = []
+        successes: List[Dict[str, Any]] = []
         for st in candidates:
             profile = ConnectionProfile(
                 id=f"inspect-{st}", source_type=st,
@@ -108,8 +109,9 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
                         })
                     except DataFabricError as e:
                         descriptors.append({"id": d.get("id"), "describe_error": str(e)[:200]})
-                return {
-                    "status": "success",
+                # R1 P2：双协议平台（Tiles+Coverages 同源）不短路 —— 两个
+                # 都探测并报告，主结果取首个，其余在 also_available 披露。
+                successes.append({
                     "service_type": st,
                     "capability": {
                         "declares_conformance": (
@@ -119,15 +121,25 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
                         ),
                     },
                     "datasets": descriptors,
-                    "probes": attempts + [{"service_type": st, "probe": True}],
-                    "url_redacted": _redact(url),
-                }
+                })
+                continue
             except DataFabricError as e:
                 attempts.append({"service_type": st, "error": str(e)[:200]})
                 continue
             except Exception as e:  # noqa: BLE001
                 attempts.append({"service_type": st, "error": str(e)[:200]})
                 continue
+        if successes:
+            primary = successes[0]
+            return {
+                "status": "success",
+                "service_type": primary["service_type"],
+                "capability": primary["capability"],
+                "datasets": primary["datasets"],
+                "also_available": [s["service_type"] for s in successes[1:]],
+                "probes": attempts + [{"service_type": s["service_type"], "probe": True} for s in successes],
+                "url_redacted": _redact(url),
+            }
         return {
             "status": "unreachable_or_unsupported",
             "url_redacted": _redact(url),
@@ -345,7 +357,13 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
                 "capability": metadata.get("capability"),
             }
         media_kind = metadata.get("media_kind")
-        lid = layer_id or f"ogc-tiles-{catalog_item_id.replace(':', '-').lower()}"
+
+        # layer id 白名单（ASCII 字母数字._-；正则行曾被不可见同形字符污染，改用显式过滤 —— R1 P2 附带发现）
+        safe_item = "".join(
+            ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "-"
+            for ch in catalog_item_id
+        )
+        lid = layer_id or f"ogc-tiles-{safe_item or 'tileset'}"
         ltype = layer_type or ("raster" if media_kind == "raster" else "line")
         layer: Dict[str, Any] = {"id": lid, "type": ltype, "source": lid}
         if ltype == "raster":

@@ -165,7 +165,10 @@ class OGCCoveragesAdapter(GeospatialDataSourceAdapter):
         ]
 
     def _collection_doc(self, dataset_id: str) -> Dict[str, Any]:
-        url = self.url.rstrip("/") + f"/collections/{dataset_id}"
+        from urllib.parse import quote
+
+        # R1 P1-6：dataset_id 来自远端响应 —— 段级编码封死注入。
+        url = self.url.rstrip("/") + f"/collections/{quote(dataset_id, safe='')}"
         return self._get_json(url)
 
     @staticmethod

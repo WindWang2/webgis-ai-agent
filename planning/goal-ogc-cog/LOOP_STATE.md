@@ -46,3 +46,9 @@ P0 完成（基线勘察+规划），进入 P1（M1 能力发现 + M7 fixture）
 - M8 断言：预算账本（requests≥1/bytes>0/window cells≪full）、X-Tile-Cache hit、ref offload（回执无磁盘 path，消费经 artifact_registry.fabric_cog_path 解析）。
 - 全套件：本方向 81 passed（116s）；相邻回归 99 passed/1 skipped；ruff 全清。
 - 缺陷修复：ogc_service_tools 的 spatial_catalog 导入路径（app.services.data_fabric.spatial_catalog）。
+
+### Round 9（2026-11-01）—— R1 独立评审 + 全量清偿
+- R1（未参与实现的 agent，逐文件对抗审查 + 真实复现）：2 P0 + 10 P1 + 12 P2。
+- 全部 P0/P1 清偿 + P2 选择清偿 8 项/记录 4 项（决策见 INDEPENDENT_REVIEW.md）。
+- 附带发现：一行被不可见同形字符污染的正则（运行时 sre PatternError，repr 不可见）—— 改显式白名单过滤修复。
+- 清偿验证：goal 套件 94 passed（新增 test_review_clearance_r1_v1 13 项逐 finding 断言）；回归 118 passed/1 skipped；契约门（api_compatibility + contract_drift）通过（快照已在契约轮再生；本轮改动无路由/schema 变更）。

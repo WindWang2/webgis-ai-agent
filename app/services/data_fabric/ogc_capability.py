@@ -24,7 +24,6 @@ CAP_UNSUPPORTED = "unsupported"
 CAP_UNKNOWN = "unknown"
 
 # ── reason codes（封闭枚举；新增必须同步 TEST_MATRIX 与文档） ────────────
-RC_TILESET_UNREACHABLE = "tileset_unreachable"
 RC_NO_TILE_LINKS = "no_tile_links"
 RC_MEDIA_TYPE_UNSUPPORTED = "media_type_unsupported"
 RC_TMS_UNRECOGNIZED = "tms_unrecognized"
@@ -32,7 +31,6 @@ RC_TMS_NOT_DISPLAYABLE = "tms_not_displayable"
 RC_CRS_NOT_DECLARED = "crs_not_declared"
 RC_CRS_NOT_WEBMERCATOR = "crs_not_webmercator"
 RC_ZOOM_RANGE_UNKNOWN = "zoom_range_unknown"
-RC_NO_TILES_CONFORMANCE = "no_tiles_conformance"
 
 RC_NO_COVERAGE_ENDPOINT = "no_coverage_endpoint"
 RC_DOMAINSET_MISSING = "domainset_missing"
@@ -217,7 +215,8 @@ def assess_coverage(
             a.state = CAP_UNKNOWN
         a.add(RC_GRID_AXES_INSUFFICIENT, f"网格轴不足 2 维: {axes}")
     formats = [str(f) for f in (declared_formats or []) if f]
-    supported = [f for f in formats if f in SUPPORTED_COVERAGE_FORMATS]
+    supported_set = {normalize_coverage_format(f) for f in SUPPORTED_COVERAGE_FORMATS}
+    supported = [f for f in formats if normalize_coverage_format(f) in supported_set]
     if formats and not supported:
         a.state = CAP_UNSUPPORTED
         a.add(RC_COVERAGE_FORMAT_UNSUPPORTED, f"声明的 coverage 格式均不支持: {sorted(formats)}")
@@ -238,5 +237,14 @@ SUPPORTED_COVERAGE_FORMATS = frozenset({
 
 
 def normalize_coverage_format(fmt: str) -> str:
-    """格式串规范化（大小写/参数顺序无关的判定键）。"""
-    return str(fmt or "").strip().lower()
+    """格式串规范化（大小写无关 + media type 参数序无关的判定键）。
+
+    ``image/tiff; application=geotiff; profile=cloud-optimized`` 与参数换序
+    变体归一到同一键（R1 P2：仅小写化曾把换序声明误判不支持）。
+    """
+    raw = str(fmt or "").strip().lower()
+    if ";" not in raw:
+        return raw
+    head, _, tail = raw.partition(";")
+    params = sorted(p.strip() for p in tail.split(";") if p.strip())
+    return ";".join([head.strip()] + params)

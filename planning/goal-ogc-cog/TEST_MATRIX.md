@@ -21,10 +21,12 @@
 | T4.4 | P4 | 同上 | 签名 URL 脱敏（descriptor/回执不含 token 参数）；provenance/fingerprint 字段在场 | 字符串断言 |
 | T5.1 | P5 | tests/unit/test_ogc_service_tools_v1.py | inspect_data_service/read_coverage_subset/materialize_remote_raster_asset 注册、descriptor 纪律、tier/side_effect 正确 | registry |
 | T5.2 | P5 | 同上 | G01 双轨资格映射：tile-only→display_only；COG ref→numeric_raster | 映射断言 |
-| T5.3 | P5 | tests/data/test_prepare_accepts_remote_refs_v1.py | #1868 inspect 接受本方向 ref（收据四态不回归） | prepare 面测试 |
+| T5.3 | P5 | tests/unit/test_ogc_service_tools_v1.py::TestPrep1868Compatibility | #1868 inspect 对 raster ref 类型化拒绝（InspectError 契约不回归） | typed error |
 | T6.1 | P6 | frontend 组件测试 | SOURCE_TYPES 新协议可见 + 提交 payload 字段 | vitest |
 | T7.1 | P7 | 并入 T4/T3 | 回执含 requests/bytes/cache_hit；采样对照 nodata/transform；ref 不灌 LLM（result_size_policy=ref_offload） | 断言 |
 | T8.1 | P8 | tests/e2e 或 tests/unit/test_goal_e2e_scenarios_v1.py | 场景①②③ 全链（dispatch→工具→ref/MapSpec→证据） | E2E |
 | T8.2 | P8 | 关键测试双跑 | 重复执行两次结果一致 | 两次全绿 |
 
 回归面：ruff check 新文件、python -m compileall、既有 adapter/registry/mapspec 相关测试抽跑（test_data_fabric_adapters.py、test_ogc_adapters_753.py、mapspec 契约）、前端 typecheck。
+
+| T-R1 | R1 清偿 | tests/unit/test_review_clearance_r1_v1.py | P0-1 CRS 无声明拒绝/投影轴不判经纬；P0-2 大小写+参数序；P1-1 5xx=unreachable/字节帽=oversize；P1-3 相对模板/相对 TMS 链接；P1-4 manager 失效 ogc-tiles: 前缀；P1-6 id 编码中和注入；P1-10 GeoTIFF 输出真值/读中预算=429→budget/资产变化新指纹；P1-9 typed 断言 | 逐 finding 断言 |

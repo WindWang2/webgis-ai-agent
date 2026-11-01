@@ -153,6 +153,9 @@ class TestScenario1TilesOverlay:
             "catalog_item_id": "province_admin:WebMercatorQuad",
             "session_id": "sess-e2e-s1",
         })
+        if "status" not in res:
+            import json as _j
+            raise AssertionError(f"raw: {_j.dumps(res, default=str)[:600]}")
         assert res["status"] == "success", res
         src = res["source"]
         assert src["type"] == "vector"

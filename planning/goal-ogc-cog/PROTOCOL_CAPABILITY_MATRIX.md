@@ -32,7 +32,7 @@
 | 能力 | 支持子集 | 依据 |
 |---|---|---|
 | 发现 | collections（itemType=coverage 识别）、coverage domainset/rangetype | Part 1 布局 |
-| 读取 | subset(bbox/时间/波段)、scale-factor/size 预算、声明格式（COVJSON/GeoTIFF 封闭子集） | 服务 rangetype/links 声明，未声明即 unknown→拒绝 |
+| 读取 | subset(**空间轴**/波段；bbox 仅映射可识别经纬轴)、响应字节帽+像元帽、声明格式（COVJSON/GeoTIFF 封闭子集，大小写/参数序无关） | 服务 rangetype/links 声明，未声明即 unknown→拒绝。**时间 subset 与 scale-size/scale-factor 不在本子集**（如需经此路径，先扩封闭枚举） |
 | 预算 | max cells / max bytes / 超预算 typed reason | 不下载国家尺度 |
 | 产出 | bounded raster → COG DataObject + session ref（fingerprint/provenance） | 复用 raster_object.publish |
 
@@ -50,3 +50,9 @@
 - 不做非 WebMercatorQuad TileMatrixSet 的显示重投影（显式拒绝 + reason）。
 - 不做 Coverage 的全部格式（如 GeoPackage coverage tiles）与 range 子集代数。
 - 不重写 #1868 准备/绑定工作台核心；不碰 03 时间轴/04 符号律/05 恢复内核。
+
+## R1 评审后的封闭面修正
+- Coverage CRS：只认 COVJSON domain.referencing 的地理 CRS 声明（CRS84/4326 封闭表）；无声明/投影 CRS → typed 拒绝（曾默认 CRS84 —— R1 P0-1 已修）。
+- 投影轴名（e/n 等 Easting/Northing）不判为经纬轴。
+- overview_level = 全分辨率窗口读后 nearest 抽样（不读服务端 overview 层；wire 成本按全窗估算）。
+- 已知限制：GDAL /vsicurl 进程级 URL 缓存内，同 URL 的远端内容变化可能命中旧缓存（跨进程/跨 URL 不受影响；披露于 INDEPENDENT_REVIEW）。

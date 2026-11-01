@@ -88,7 +88,9 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
         # describe 结果的进程内短缓存（瓦片代理逐瓦片取 tileset 上下文用；
         # 60s TTL 与 conformance 缓存同拍 —— 服务端 tileset 变更经 fingerprint
         # 失效目录条目后自然重建）。
+        # R1 P2：条数上限 —— 长寿命 adapter 不因枚举数据集而无界增长。
         self._describe_cache: Dict[str, Tuple[float, DatasetDescriptor]] = {}
+        self._describe_cache_max = 64
 
     # ── 只读发现原语 ──────────────────────────────────────────────────
 
@@ -154,8 +156,14 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
         try:
             if self._declares_tiles():
                 return True
-            top = self.url.rstrip("/") + "/tiles"
-            return self.session.get(top, timeout=5).status_code in (200, 206)
+            # R1 P2：探测 GET 一律 bounded（禁裸 session.get —— 全量 body 无帽）。
+            from app.services.data_fabric.security import bounded_get
+
+            bounded_get(
+                self.session, self.url.rstrip("/") + "/tiles",
+                timeout=5, max_bytes=256 * 1024,
+            )
+            return True
         except Exception as e:  # noqa: BLE001
             logger.debug("[ogc-tiles] probe failed for %s: %s", self.url, e)
             return False
@@ -230,6 +238,9 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
         if cached and (time.monotonic() - cached[0]) < 60:
             return cached[1]
         desc = self._describe_uncached(dataset_id)
+        if len(self._describe_cache) >= self._describe_cache_max:
+            oldest = next(iter(self._describe_cache))
+            self._describe_cache.pop(oldest, None)
         self._describe_cache[dataset_id] = (time.monotonic(), desc)
         return desc
 
@@ -237,11 +248,16 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
         if not self.url:
             raise ValueError("OGC Tiles endpoint URL is missing in connection profile")
         cid, tms_id = split_tiles_dataset_id(dataset_id)
+        from urllib.parse import quote
+
+        # R1 P1-6：cid/tms 来自远端 collections 响应（注册源被攻破即不可信）
+        # —— 段级 percent-encode 封死路径穿越/fragment 截断注入。
+        qcid, qtms = quote(cid, safe=""), quote(tms_id, safe="")
         base = self.url.rstrip("/")
         if cid != "_":
-            tileset_url = f"{base}/collections/{cid}/tiles/{tms_id}"
+            tileset_url = f"{base}/collections/{qcid}/tiles/{qtms}"
         else:
-            tileset_url = f"{base}/tiles/{tms_id}"
+            tileset_url = f"{base}/tiles/{qtms}"
         try:
             doc = self._get_json(tileset_url)
         except DataFabricError as e:
@@ -256,10 +272,15 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
             # TMS 声明（同源校验；读不到保持 unknown，不猜 zoom 范围）。
             tms_href = self._tiling_scheme_href(doc)
             if tms_href:
+                from urllib.parse import urljoin
+
                 from app.services.data_fabric.security import ensure_same_origin_url
 
                 try:
-                    safe_href = ensure_same_origin_url(tms_href, self.url)
+                    # R1 P1-3：RFC 8288 允许相对链接 —— 先按 tileset URL 解析
+                    # 为绝对，再过同源校验（裸相对 href 曾被误判为跨源）。
+                    absolute = urljoin(tileset_url, tms_href)
+                    safe_href = ensure_same_origin_url(absolute, self.url)
                     tms_doc = self._get_json(safe_href)
                 except DataFabricError as e:
                     logger.debug(
@@ -308,6 +329,7 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
                 "media_kind": media_kind or "unknown",
                 # 出目录的 URL 统一 redact（元数据真实性契约）。
                 "tileset_url": DataFabricSecurity.redact_url(tileset_url),
+                "tileset_url_raw": tileset_url,
                 "tile_url_template": self._tile_template(doc, redacted=True),
                 "tile_url_template_raw": self._tile_template(doc, redacted=False),
                 "capabilities_conformance_declared": self._declares_tiles(),
@@ -447,15 +469,19 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
                     f"{DataFabricSecurity.redact_url(template)}",
                     details={"dataset_id": dataset_id},
                 )
-        url = (
+        substituted = (
             template.replace("{tileMatrix}", str(z))
             .replace("{tileRow}", str(y))
             .replace("{tileCol}", str(x))
         )
-        # 模板可能被伪造（descriptor 注入面）—— 与注册源同源校验。
+        # 模板可能被伪造（descriptor 注入面）—— 相对模板按 tileset URL 解析
+        # 后与注册源同源校验（R1 P1-3：相对模板曾被判跨源拒绝）。
+        from urllib.parse import urljoin
+
         from app.services.data_fabric.security import ensure_same_origin_url
 
-        url = ensure_same_origin_url(url, self.url)
+        base_url = meta.get("tileset_url_raw") or self.url
+        url = ensure_same_origin_url(urljoin(base_url, substituted), self.url)
 
         declared_types = set(meta.get("media_types_declared") or [])
         try:
@@ -517,23 +543,21 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
                 details={"hint": "Specify valid HTTP/HTTPS URL in connection profile."},
             )
         try:
+            from app.services.data_fabric.security import safe_json_get
+
             target = self.url.rstrip("/") + "/conformance"
-            resp = self.session.get(target, timeout=5)
+            data = safe_json_get(
+                self.session, target, timeout=5, max_bytes=_META_MAX_BYTES,
+            )
             latency = round((_time.time() - started) * 1000, 2)
-            if resp.status_code == 200:
-                return DataFabricHealth(
-                    status="healthy",
-                    message="OGC API Tiles service online and responsive",
-                    details={
-                        "declares_tiles": self._declares_tiles(),
-                        "conformsTo": (resp.json().get("conformsTo", []) or [])[:5],
-                    },
-                    latency_ms=latency,
-                )
+            conforms = data.get("conformsTo", []) if isinstance(data, dict) else []
             return DataFabricHealth(
-                status="degraded",
-                message=f"OGC API Tiles service responded with HTTP {resp.status_code}",
-                details={"status_code": resp.status_code},
+                status="healthy",
+                message="OGC API Tiles service online and responsive",
+                details={
+                    "declares_tiles": self._declares_tiles(),
+                    "conformsTo": [str(c) for c in conforms][:5],
+                },
                 latency_ms=latency,
             )
         except Exception as e:  # noqa: BLE001

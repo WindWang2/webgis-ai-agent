@@ -254,9 +254,11 @@ async def materialize_remote_cog_asset(
     """远程 COG → 窗口读（预算/重试/取消）→ 本地 COG ref。
 
     ``bbox``：EPSG:4326（agent 面）；内部 transform_bounds 到栅格 CRS。
-    ``overview_level``：0=全分辨率；N=按 2^N 抽样（显式选择 overview，
-    服务端无 overview 时退化为 GDAL decimation 并如实标注）。
+    ``overview_level``：0=全分辨率；N=全分辨率窗口读后按 2^N nearest
+    抽样（**不**读取服务端 overview 层 —— wire 成本仍按全窗发生，预算门
+    同口径估算；标注 decimated=True）。
     """
+    from app.lib.geo_raster.remote import RemoteReadBudgetExceeded
     from rasterio.windows import from_bounds
 
     # 1) SSRF 门（与 preview 同一入口）
@@ -320,11 +322,17 @@ async def materialize_remote_cog_asset(
                 scale = 1 << max(0, int(overview_level))
                 out_w = max(1, w // scale)
                 out_h = max(1, h // scale)
+                import numpy as np
+
                 itemsize = max(
-                    __import__("numpy").dtype(t).itemsize
+                    np.dtype(t).itemsize
                     for t in (ds.dtypes[int(b) - 1] for b in band_idx)
                 )
-                est_bytes = out_w * out_h * len(band_idx) * itemsize
+                # R1 P1-8：预算按 **wire 读尺寸**（w×h 全分辨率窗口）估算 ——
+                # decimation 在读后发生，网络搬运的是全窗像元；输出尺寸仅作
+                # 事实披露。
+                est_bytes = w * h * len(band_idx) * itemsize
+                est_out_bytes = out_w * out_h * len(band_idx) * itemsize
                 if est_bytes > max_output_bytes:
                     raise CogMaterializationError(
                         f"window read would produce ~{est_bytes / 1e6:.0f} MB "
@@ -332,7 +340,8 @@ async def materialize_remote_cog_asset(
                         "bbox, select fewer bands, or raise the budget explicitly",
                         reason_code=RC_BUDGET_EXCEEDED,
                         details={
-                            "estimated_bytes": int(est_bytes),
+                            "estimated_wire_bytes": int(est_bytes),
+                            "estimated_output_bytes": int(est_out_bytes),
                             "max_output_bytes": int(max_output_bytes),
                             "window": [col, row, w, h],
                             "out_shape": [out_h, out_w],
@@ -360,9 +369,10 @@ async def materialize_remote_cog_asset(
                     arr = remote_read_window(
                         session, vsi, ds, band_idx, win, cancel_token=cancel_token,
                     )
-                    # 显式 decimation（Gaussian-free nearest 保持像元真值）。
+                    # 读后 nearest 抽样（remote_read_window 已按全窗记账，
+                    # 此处不再重复累加 —— R1 P1-8 双计清除）。注意：decimation
+                    # 发生在网络读之后，wire 成本按全分辨率窗口发生。
                     arr = arr[:, ::scale, ::scale][:, :out_h, :out_w]
-                    session.bytes_read += int(arr.nbytes)
 
                 transform = ds.window_transform(win)
                 # 抽样后像元分辨率同步放大（transform 缩放）。
@@ -414,6 +424,12 @@ async def materialize_remote_cog_asset(
             ledger = await asyncio.to_thread(_read_and_write, staging)
         except CogMaterializationError:
             raise
+        except RemoteReadBudgetExceeded as e:
+            # R1 P1-2：读中预算耗尽是预算事实，不是网络不可达。
+            raise CogMaterializationError(
+                f"remote read budget exceeded during window read: {e}",
+                reason_code=RC_BUDGET_EXCEEDED,
+            ) from e
         except Exception as e:  # noqa: BLE001
             text = str(e)
             if "cancelled" in text.lower():

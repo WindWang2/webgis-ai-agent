@@ -82,10 +82,19 @@ def tiles_tileset_doc(
     crs: Optional[str] = CRS_3857_URI,
     with_tile_links: bool = True,
     embed_tms: bool = False,
+    relative_hrefs: bool = False,
     prefix: str = "/ogc",
 ) -> Dict[str, Any]:
-    """tileset 元数据（OGC API - Tiles Part 1 tileset JSON 最小真形状）。"""
+    """tileset 元数据（OGC API - Tiles Part 1 tileset JSON 最小真形状）。
+
+    ``relative_hrefs=True`` 时链接用相对路径（RFC 8288 允许；相当比例的
+    真实实现如此返回 —— R1 P1-3 的覆盖面）。"""
     base = f"https://{FAKE_HOST}{prefix}/collections/{collection_id}/tiles/WebMercatorQuad"
+    tile_base = (
+        f"{prefix}/collections/{collection_id}/tiles/WebMercatorQuad"
+        if relative_hrefs
+        else base
+    )
     doc: Dict[str, Any] = {
         "title": f"{collection_id} tiles",
         "tileMatrixSetDefinition": tms_uri,
@@ -104,12 +113,16 @@ def tiles_tileset_doc(
             "rel": "tile",
             "type": media_type,
             "templated": True,
-            "href": f"{base}/{{tileMatrix}}/{{tileRow}}/{{tileCol}}",
+            "href": f"{tile_base}/{{tileMatrix}}/{{tileRow}}/{{tileCol}}",
         })
     doc["links"].append({
         "rel": "http://www.opengis.net/def/rel/ogc/1.0/tiling-scheme",
         "type": "application/json",
-        "href": f"https://{FAKE_HOST}{prefix}/tileMatrixSets/WebMercatorQuad",
+        "href": (
+            f"{prefix}/tileMatrixSets/WebMercatorQuad"
+            if relative_hrefs
+            else f"https://{FAKE_HOST}{prefix}/tileMatrixSets/WebMercatorQuad"
+        ),
     })
     return doc
 
@@ -173,9 +186,22 @@ def coverage_rangetype_doc() -> Dict[str, Any]:
     }
 
 
+#: COVJSON domain.referencing 的 CRS 声明（服务自己的地理 CRS 声明）。
+COVJSON_CRS84_REFERENCING = [
+    {
+        "coordinates": ["x", "y"],
+        "system": {
+            "type": "GeographicCRS",
+            "id": "http://www.opengis.net/def/crs/OGC/1.3/CRS84",
+        },
+    }
+]
+
+
 def coverage_covjson_doc(
     x_values: Sequence[float] = COVERAGE_AXIS_X_VALUES,
     y_values: Sequence[float] = COVERAGE_AXIS_Y_VALUES,
+    with_crs: bool = True,
 ) -> Dict[str, Any]:
     """subset 响应 = **全网格的真子集**（真实服务行为：subset 取原像元）。
 
@@ -186,16 +212,19 @@ def coverage_covjson_doc(
     y_idx = [COVERAGE_AXIS_Y_VALUES.index(v) for v in y_values]
     vals = [[full[r][c] for c in x_idx] for r in y_idx]
     flat = [v for row in vals for v in row]
+    domain: Dict[str, Any] = {
+        "type": "Domain",
+        "domainType": "Grid",
+        "axes": {
+            "x": {"values": list(x_values)},
+            "y": {"values": list(y_values)},
+        },
+    }
+    if with_crs:
+        domain["referencing"] = COVJSON_CRS84_REFERENCING
     return {
         "type": "Coverage",
-        "domain": {
-            "type": "Domain",
-            "domainType": "Grid",
-            "axes": {
-                "x": {"values": list(x_values)},
-                "y": {"values": list(y_values)},
-            },
-        },
+        "domain": domain,
         "parameters": {
             "elevation": {
                 "type": "Parameter",
@@ -212,6 +241,50 @@ def coverage_covjson_doc(
             }
         },
     }
+
+
+def coverage_geotiff_bytes(
+    x_values: Sequence[float] = COVERAGE_AXIS_X_VALUES,
+    y_values: Sequence[float] = COVERAGE_AXIS_Y_VALUES,
+    with_crs: bool = True,
+) -> bytes:
+    """真 GeoTIFF 字节（内存构建）：值与 coverage_values() 同源真值。
+
+    y 升序轴 → GeoTIFF north-up 需行翻转；CRS84 像元中心 → 角点 transform。
+    """
+    import io
+
+    import rasterio
+    from rasterio.transform import Affine
+
+    vals = coverage_values()
+    x_idx = [COVERAGE_AXIS_X_VALUES.index(v) for v in x_values]
+    y_idx = [COVERAGE_AXIS_Y_VALUES.index(v) for v in y_values]
+    grid = [[vals[r][c] for c in x_idx] for r in y_idx]
+    arr = np_flip(grid)  # north-up 行翻转
+    xres = (x_values[-1] - x_values[0]) / max(1, len(x_values) - 1)
+    yres = (y_values[-1] - y_values[0]) / max(1, len(y_values) - 1)
+    transform = Affine.translation(
+        x_values[0] - xres / 2, y_values[-1] + yres / 2
+    ) * Affine.scale(xres, -yres)
+    buf = io.BytesIO()
+    with rasterio.open(
+        buf, "w", driver="GTiff", width=len(x_values), height=len(y_values),
+        count=1, dtype="float32", nodata=COVERAGE_NODATA,
+        crs="OGC:CRS84" if with_crs else None, transform=transform,
+    ) as dst:
+        dst.write(arr.astype("float32"), 1)
+    return buf.getvalue()
+
+
+def _np_array(grid):
+    import numpy as np
+
+    return np.asarray(grid, dtype="float32")
+
+
+def np_flip(grid):
+    return _np_array(grid)[::-1, :]
 
 
 def coverage_conformance_doc() -> Dict[str, Any]:
@@ -246,6 +319,7 @@ class OgcServiceFakeServer(FakeSourceServer):
         embed_tms: bool = False,
         include_tiles_conformance: bool = True,
         serve_tiles: bool = True,
+        relative_hrefs: bool = False,
         status_overrides: Optional[Dict[str, int]] = None,
         redirect_hops: Optional[List[str]] = None,
         oversize_tile_bytes: bool = False,
@@ -290,7 +364,8 @@ class OgcServiceFakeServer(FakeSourceServer):
                     json_body=tiles_tileset_doc(
                         collection_id=cid, media_type=media_type, tms_uri=tms_uri,
                         crs=crs, with_tile_links=with_tile_links,
-                        embed_tms=embed_tms, prefix=prefix,
+                        embed_tms=embed_tms, relative_hrefs=relative_hrefs,
+                        prefix=prefix,
                     ),
                 )
             # tilesets list: /collections/{cid}/tiles
@@ -347,7 +422,9 @@ class OgcServiceFakeServer(FakeSourceServer):
         with_coverage_link: bool = True,
         with_domainset: bool = True,
         with_rangetype: bool = True,
+        with_crs: bool = True,
         declared_formats: Optional[Sequence[str]] = (COV_FORMAT_JSON,),
+        serve_format: str = COV_FORMAT_JSON,
         status_overrides: Optional[Dict[str, int]] = None,
         prefix: str = "/cov",
     ) -> str:
@@ -391,9 +468,15 @@ class OgcServiceFakeServer(FakeSourceServer):
                                 x_vals = kept
                             else:
                                 y_vals = kept
+                if serve_format == "image/tiff":
+                    return make_response(
+                        request.url,
+                        content=coverage_geotiff_bytes(x_vals, y_vals, with_crs=with_crs),
+                        headers={"Content-Type": "image/tiff; application=geotiff"},
+                    )
                 return make_response(
                     request.url,
-                    json_body=coverage_covjson_doc(x_vals, y_vals),
+                    json_body=coverage_covjson_doc(x_vals, y_vals, with_crs=with_crs),
                     headers={"Content-Type": COV_FORMAT_JSON},
                 )
             if path.endswith("/conformance"):

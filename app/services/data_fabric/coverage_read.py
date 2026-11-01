@@ -36,6 +36,7 @@ RC_CAPABILITY_NOT_DECLARED = "capability_not_declared"
 RC_BUDGET_EXCEEDED = "budget_exceeded"
 RC_AXIS_NOT_IDENTIFIABLE = "axis_not_identifiable"
 RC_OVERSIZE_RESPONSE = "oversize_response"
+RC_UNREACHABLE = "unreachable"
 
 #: 默认预算（M8 可收紧）：像元帽 = 全网格 nx*ny*bands 上限；字节帽 = 单响应。
 DEFAULT_MAX_CELLS = 4_000_000
@@ -49,8 +50,23 @@ _GEOTIFF_FORMATS = (
 )
 
 # 经纬轴识别的封闭名表（小写比较；轴名来自服务 domainset 声明）。
-_LON_AXIS_NAMES = {"x", "lon", "long", "longitude", "crs84-x", "e"}
-_LAT_AXIS_NAMES = {"y", "lat", "latitude", "crs84-y", "n"}
+# 刻意不含 "e"/"n"（UTM Easting/Northing 的常用轴名）—— 投影坐标轴与
+# 地理轴不可凭名混判（R1 P0-1：EPSG:326xx 网格曾会被贴上 CRS84 地理参考）。
+_LON_AXIS_NAMES = {"x", "lon", "long", "longitude", "crs84-x", "crs84-long"}
+_LAT_AXIS_NAMES = {"y", "lat", "latitude", "crs84-y", "crs84-lat"}
+
+#: 地理 CRS 的封闭识别表（COVJSON referencing system id / URI 归一后比对）。
+_GEOGRAPHIC_CRS_URIS = frozenset({
+    "http://www.opengis.net/def/crs/ogc/1.3/crs84",
+    "https://www.opengis.net/def/crs/ogc/1.3/crs84",
+    "http://www.opengis.net/def/crs/ogc/0/crs84",
+    "urn:ogc:def:crs:ogc:1.3:crs84",
+    "http://www.opengis.net/def/crs/epsg/0/4326",
+    "https://www.opengis.net/def/crs/epsg/0/4326",
+    "urn:ogc:def:crs:epsg::4326",
+    "epsg:4326",
+    "ogc:crs84",
+})
 
 
 class CoverageReadError(DataFabricError):
@@ -211,15 +227,35 @@ async def read_coverage_subset(
 
     def _fetch() -> bytes:
         # requests 的重复 query key 需逐一追加（params list-of-tuples）。
+        import requests as _requests
+
+        from app.services.data_fabric.errors import SourceBadResponseError
+
         try:
             return bounded_get(
                 adapter.session, coverage_url, params=params,
                 timeout=60, max_bytes=max_response_bytes,
             )
-        except DataFabricError as e:
+        except SourceBadResponseError as e:
+            # 分流（R1 P1-1）：字节帽族（details 携带 cap 事实）→ oversize；
+            # 其余（HTTP 状态/网络）→ unreachable —— reason 语义与事实一致。
+            details = getattr(e, "details", None) or {}
+            if "cap" in details or "content_length" in details:
+                raise CoverageReadError(
+                    f"coverage response exceeds byte cap: {e}",
+                    reason_code=RC_OVERSIZE_RESPONSE,
+                    details={"dataset_id": dataset_id, "cap": max_response_bytes},
+                ) from e
             raise CoverageReadError(
                 f"coverage fetch failed: {e}",
-                reason_code=RC_OVERSIZE_RESPONSE,
+                reason_code=RC_UNREACHABLE,
+                details={"dataset_id": dataset_id},
+            ) from e
+        except _requests.HTTPError as e:
+            # bounded_get 的 raise_for_status 路径（非 2xx 状态）。
+            raise CoverageReadError(
+                f"coverage fetch failed: {e}",
+                reason_code=RC_UNREACHABLE,
                 details={"dataset_id": dataset_id},
             ) from e
 
@@ -239,14 +275,22 @@ async def read_coverage_subset(
         "response_bytes": len(body),
     }
     if chosen_format == _COVJSON_FORMAT:
-        arr, transform, crs, nodata, band_names, axes_used = _parse_covjson(
-            body, bands=bands, bands_declared=bands_declared, extent_crs=_extent_crs(desc)
+        arr, transform, crs, nodata, band_names, axes_used, bands_missing = (
+            await asyncio.to_thread(
+                _parse_covjson,
+                body, bands=bands, bands_declared=bands_declared,
+            )
         )
     else:
-        arr, transform, crs, nodata, band_names, axes_used = _parse_geotiff(body, bands=bands)
+        arr, transform, crs, nodata, band_names, axes_used = await asyncio.to_thread(
+            _parse_geotiff, body, bands=bands,
+        )
+        bands_missing = []
 
     provenance.update({
         "band_names": band_names,
+        # R1 P2：请求了但服务未提供的波段如实披露（不静默丢弃）。
+        "bands_missing": bands_missing,
         "axes_used": axes_used,
         "grid_shape": list(arr.shape),
         "nodata": nodata,
@@ -265,7 +309,7 @@ async def read_coverage_subset(
     with tempfile.TemporaryDirectory(prefix="cov-read-") as td:
         staging = Path(td)
         raw_tif = staging / "coverage_raw.tif"
-        _write_gtiff(arr, transform, crs, nodata, raw_tif)
+        await asyncio.to_thread(_write_gtiff, arr, transform, crs, nodata, raw_tif)
         from app.lib.geo_raster.cog import write_cog
 
         cog_path = staging / "coverage.cog.tif"
@@ -300,14 +344,24 @@ def _redact(url: str) -> str:
     return DataFabricSecurity.redact_url(url)
 
 
-def _extent_crs(desc: Any) -> Optional[str]:
-    """collection extent.spatial.crs（OGC API 约定默认 CRS84，声明优先）。
+def _resolve_covjson_crs(doc: Dict[str, Any]) -> Optional[str]:
+    """COVJSON domain.referencing → 地理 CRS（封闭识别表；不可判 → None）。
 
-    OGC API - Coverages Part 1 §7.5：geographic grid 的 extent 默认 CRS84。
-    声明字段存在时由 adapter 在 descriptor.bbox/srs 中携带（此处恒返回
-    约定值；非地理 CRS 的 coverage 不在本封闭子集内 —— 轴识别已先拒）。
+    COVJSON 的 referencing 块声明轴与 CRS 的绑定；仅识别 CRS84/EPSG:4326
+    地理 CRS（本封闭子集），其余（投影 CRS/未知 URI）返回 None —— 调用方
+    typed 拒绝物化（R1 P0-1：绝不把不可判 CRS 伪造成 CRS84）。
     """
-    return "OGC:CRS84"
+    referencing = (doc.get("domain") or {}).get("referencing") or []
+    if not isinstance(referencing, list):
+        return None
+    for ref in referencing:
+        if not isinstance(ref, dict):
+            continue
+        system = ref.get("system") or {}
+        sid = str(system.get("id") or "").strip().lower()
+        if sid and sid in _GEOGRAPHIC_CRS_URIS:
+            return "OGC:CRS84"
+    return None
 
 
 def _parse_covjson(
@@ -315,8 +369,7 @@ def _parse_covjson(
     *,
     bands: Optional[List[str]],
     bands_declared: List[Dict[str, Any]],
-    extent_crs: Optional[str],
-) -> Tuple[np.ndarray, Any, Any, Optional[float], List[str], Dict[str, Any]]:
+) -> Tuple[np.ndarray, Any, Any, Optional[float], List[str], Dict[str, Any], List[str]]:
     """COVJSON 封闭子集解析：Grid domain（values 轴）+ NdArray ranges。"""
     import json as _json
 
@@ -359,7 +412,9 @@ def _parse_covjson(
 
     ranges = doc.get("ranges") or {}
     band_names = [b["name"] for b in bands_declared if b.get("name")] or list(ranges.keys())
+    requested = list(bands) if bands else None
     selected = [b for b in band_names if (not bands or b in bands) and b in ranges]
+    bands_missing = [b for b in (requested or []) if b not in selected]
     if not selected:
         raise CoverageReadError(
             f"no matching ranges (requested={bands}, available={list(ranges)})",
@@ -423,7 +478,12 @@ def _parse_covjson(
         "lon": {"count": int(lon_order.size), "first": float(lon_order[0]), "last": float(lon_order[-1])},
         "lat": {"count": int(lat_order.size), "first": float(lat_order[0]), "last": float(lat_order[-1])},
     }
-    return stacked.astype("float32"), transform, extent_crs, nodata, selected, axes_used
+    # CRS 来自响应自身的 referencing 声明（P0-1：不可判 → None，绝不默认）。
+    crs = _resolve_covjson_crs(doc)
+    return (
+        stacked.astype("float32"), transform, crs, nodata, selected, axes_used,
+        bands_missing,
+    )
 
 
 def _axis_kind_axis(key: str, axis_items: List[Tuple[str, Any]]) -> Optional[str]:

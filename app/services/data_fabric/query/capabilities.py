@@ -218,15 +218,12 @@ _DEFAULTS: Dict[str, AdapterCapabilitiesV2] = {
     "wms": _generic_defaults("wms"),
     "s3": _generic_defaults("s3"),
     "generic": _generic_defaults("generic"),
-    # GOAL-02：OGC Tiles/Coverages —— 瓦片服务无下推查询能力（显示路径，
-    # 字节经 ogc_tiles_proxy）；coverage 是数值栅格源（subset 读取在
-    # coverage_read 服务层，非 QuerySpec 通道）。
-    "ogc_api_tiles": _generic_defaults("ogc_api_tiles").model_copy(
-        update={"vector_tiles": True}
-    ),
-    "ogc_api_coverages": _generic_defaults("ogc_api_coverages").model_copy(
-        update={"spatial_predicates": ["bbox"], "range_requests": True}
-    ),
+    # GOAL-02：OGC Tiles/Coverages 的 QuerySpec 通道零下推能力（瓦片字节
+    # 经 ogc_tiles_proxy 显示；数值 subset 经 coverage_read —— 均非
+    # QuerySpec 通道）。R1 P1-5：vector_tiles/range_requests 加位曾与
+    # adapter 的 typed 拒绝矛盾（planner 会放行到运行时才炸）—— 全 False。
+    "ogc_api_tiles": _generic_defaults("ogc_api_tiles"),
+    "ogc_api_coverages": _generic_defaults("ogc_api_coverages"),
 }
 
 # registry 别名 → canonical

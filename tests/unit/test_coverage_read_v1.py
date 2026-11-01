@@ -167,7 +167,7 @@ class TestRefusalFaces:
             status_overrides={"/coverage": 503}, prefix="/cov-503"
         )
         adapter = _adapter(patched_safe_sessions, ogc_fake_server, url)
-        with pytest.raises(Exception) as ei:
+        with pytest.raises(CoverageReadError) as ei:
             await _read(adapter, subsets={"x": (100.0, 100.04)})
-        # bounded_get 的 raise_for_status → SourceBadResponseError 族（typed）
-        assert isinstance(ei.value, Exception)
+        # R1 P1-1/P1-9：5xx = unreachable（≠字节帽），typed reason code 可断言
+        assert ei.value.reason_code == "unreachable"

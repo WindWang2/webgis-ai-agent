@@ -87,13 +87,24 @@ def build_mapspec_source(
             f"(state={cap.get('state')}, reasons=[{reasons}])",
             details={"item_id": item_id, "capability": cap},
         )
-    tile_url = f"{api_prefix}/data-fabric/catalog/{item_id}/ogc-tiles/{{z}}/{{x}}/{{y}}?session_id={session_id}"
+    from urllib.parse import quote
+
+    # R1 P2：item_id/session_id 进 URL 模板一律段级编码（&/= 空格等不破坏
+    # 模板）；maxzoom clamp 到代理路由的服务上限 24（超出区间的请求会被
+    # route 400 —— MapLibre 声明面与实际服务面必须一致）。
+    _ROUTE_MAX_ZOOM = 24
+    tile_url = (
+        f"{api_prefix}/data-fabric/catalog/{quote(str(item_id), safe='')}"
+        f"/ogc-tiles/{{z}}/{{x}}/{{y}}?session_id={quote(str(session_id), safe='')}"
+    )
     minzoom = descriptor_metadata.get("minzoom")
     maxzoom = descriptor_metadata.get("maxzoom")
+    if isinstance(maxzoom, int):
+        maxzoom = min(maxzoom, _ROUTE_MAX_ZOOM)
     if descriptor_metadata.get("media_kind") == "vector":
         source: Dict[str, Any] = {"type": "vector", "tiles": [tile_url]}
         if isinstance(minzoom, int):
-            source["minzoom"] = minzoom
+            source["minzoom"] = max(0, minzoom)
         if isinstance(maxzoom, int):
             source["maxzoom"] = maxzoom
         return source

@@ -184,7 +184,8 @@ class TestBuildMapspecSource:
         tpl = src["tiles"][0]
         assert "{z}/{x}/{y}" in tpl
         assert "session_id=sess-12345678" in tpl
-        assert tpl.startswith("/api/v1/data-fabric/catalog/admin:WebMercatorQuad/ogc-tiles/")
+        # item_id 段级编码（: → %3A；FastAPI 路由自动解码，与 fixture 一致）
+        assert tpl.startswith("/api/v1/data-fabric/catalog/admin%3AWebMercatorQuad/ogc-tiles/")
 
     def test_raster_tileset_uses_fabric_url(self, patched_safe_sessions, ogc_fake_server):
         from tests.data.ogc_service_fixtures import MEDIA_PNG
