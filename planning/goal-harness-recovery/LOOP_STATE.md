@@ -15,3 +15,14 @@
 | # | 阶段 | 改动 | 验证 | 结论 | 下一步 |
 |---|------|------|------|------|--------|
 | 0 | A1 | worktree + 基线排查 + 3 个并行勘察 agent | `git worktree list` 隔离确认；216 recovery 相关存量测试 passed | 基线绿 | M0 报告落盘 |
+| 1 | M0 | BASELINE/PR_OVERLAP/TASK_PLAN/DECISIONS 落盘 | 勘察修正：阶段 14-18 已有发射（chain_emitters 注释过时） | 完成 | M1 |
+| 2 | M1 | contracts.py + diagnose.py（28 码/六处置/五族） | test_contracts+test_diagnose 56 passed | 词表封闭钉死 | M2 |
+| 3 | M2 | policy.py + risk.py（复用 SideEffectClass） | test_policy_guards 24 passed；风险 dict 兼容修正 | 守卫矩阵绿 | M3 |
+| 4 | M3 | TDS/step_error/last_recovery/投影/REPAIR 发射 | test_wiring 8 passed；gis_harness 全目录 2947 passed（4 存量红 stash 核对） | 双路径同源 | M4 |
+| 5 | M4 | goal_verification/reconcile + pipeline 块 | 19 passed；overall 改 reconcile 期计算；user-wins 封顶 warning | false-PASS 钉死 | M5 |
+| 6 | M5 | continuation.py + 投影指令行 | 13 passed；119 累计绿 | 选择性重试绿 | M6 |
+| 7 | M6 | explain.py + SSE recovery_explanation | 14 passed | 四段解释绿 | M7 |
+| 8 | M7 | recovery_corpus.py（29 案例） | 语料门全绿；overall 折叠修正（N/A 不拖低） | 语料绿 | M8 |
+| 9 | M8 | perf/security 回归 + last_recovery 形状门 | 双跑 10 passed×2 | 门可复跑 | M9 |
+| 10 | M9a | E2E 5 场景 | 首跑暴露 3 真实缺陷（429/5xx 错预算、记忆候选错键、泄漏 ID）→ 修复 → 185 全绿 | E2E 绿 | review |
+
