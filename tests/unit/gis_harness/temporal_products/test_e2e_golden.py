@@ -210,7 +210,7 @@ async def _run_e2e2() -> Dict[str, Any]:
     assert bind["layers"][0]["layer_id"] == "districts"
     spec_before = await _spec(sid)
     paint_before = copy.deepcopy(
-        next(l for l in spec_before["layers"] if l["id"] == "districts")["paint"])
+        next(lyr for lyr in spec_before["layers"] if lyr["id"] == "districts")["paint"])
 
     # compare：固定分级（union 窗 = primaries ∈ [10, 12]∪[13, 15]）。
     cmp_out = await tp.compare_temporal_view(

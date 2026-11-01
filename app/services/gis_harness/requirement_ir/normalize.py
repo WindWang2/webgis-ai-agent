@@ -164,7 +164,7 @@ def normalize_time(text: str) -> Tuple[str, str, TimeGranularity, bool]:
 
 # ── 时态控制（GOAL 03 M3）：对照/播放/保留图层 ──────────────────────────
 
-_COMPARE_MARKERS = ("对比", "比较", "对照", " versus ", " vs ", " vs.", "和…相比")
+_COMPARE_MARKERS = ("对比", "比较", "对照", "相比", " versus ", " vs ", " vs.")
 _PLAYBACK_MARKERS = ("播放", "回放", "动画", "逐帧", "animate", "playback")
 _HOLD_MARKERS = ("保留图层", "保持图层", "图层不变", "只换年份", "只改年份", "只变年份", "只换时间")
 

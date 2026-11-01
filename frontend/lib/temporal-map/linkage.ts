@@ -6,7 +6,11 @@
  * （filter.ts）与同一指纹：地图 2025 则图表/表格同 2025，静默错配在结构
  * 上不可达。ref 不匹配 temporal 绑定 → 不附加（非时序层不受影响）。
  */
-import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import {
+  getCommittedMapSpec,
+  subscribeMapSpecLive,
+} from '@/lib/mapspec/session-cursor';
+import { subscribeLiveTemporal } from './live-frame';
 import type { MapSpecTemporalConfig } from '@/lib/mapspec-compiler/types';
 import { getLiveTemporalFrame } from './live-frame';
 import { temporalFingerprint, temporalWhereAst, type WhereAst } from './filter';
@@ -56,4 +60,18 @@ export function mergeWhereAst(a: WhereAst | undefined, b: WhereAst | undefined):
 /** AST → 服务端 where 参数（JSON 串）。 */
 export function whereParam(ast: WhereAst | undefined): string | undefined {
   return ast ? JSON.stringify(ast) : undefined;
+}
+
+/**
+ * 时间窗身份的双源订阅（P1 修正）：live 帧（播放/拖动）与 committed spec
+ * （agent seek 经 MapSpec commit —— 不 bump live generation）任一变化都
+ * 通知 —— 图表/表格在 agent 光标路径上同样跟随换窗。
+ */
+export function subscribeTemporalWindow(listener: () => void): () => void {
+  const offSpec = subscribeMapSpecLive(listener);
+  const offLive = subscribeLiveTemporal(listener);
+  return () => {
+    offSpec();
+    offLive();
+  };
 }

@@ -30,32 +30,37 @@ def _parse_iso(instant: str) -> datetime:
 
 
 def normalize_boundary_value(
-    instant: str, representation: str, granularity: str
+    instant: str, representation: str, granularity: str, tz_name: str = "UTC"
 ) -> Union[int, str]:
-    """契约 instant → 数据表示空间的比较值。
+    """契约 instant → 数据表示空间的比较值（契约时区口径）。
 
-    - year_int：边界年份整数；
-    - epoch_s / epoch_ms：边界 epoch 整数（秒/毫秒）；
+    日历字段（年/月/日）一律先转到**契约时区**再提取（P0 修正：帧桶在
+    契约时区划分，归一若取 UTC 字段会把「2023」帧错配成 2022 数据 ——
+    时区是数据锚定的解释参数，两次转换不得丢它）。
+    - year_int：契约时区年份整数；
+    - epoch_s / epoch_ms：epoch 数值（时区无关，绝对时间）；
     - date_string：与数据同精度的定宽字符串（year→"YYYY"、month→
       "YYYY-MM"、其余→"YYYY-MM-DD"）。定宽 + 零填充 ⇒ 字典序 = 时间序；
-    - iso_string：与数据同构的 ISO 字符串（秒精度，Z 偏移 —— 探测已保证
-      数据列统一偏移；若数据偏移非 Z，bind 已在 format 层对齐，此处渲染
-      Z 与数据的**相对序**仍一致仅当数据同为 Z；混合偏移在探测期被拒）。
+    - iso_string：探测只接受统一 Z 偏移（frames._detect_representation），
+      故渲染 Z 与数据同构。
     """
+    from zoneinfo import ZoneInfo
+
     dt = _parse_iso(instant)
     if representation == "year_int":
-        return dt.year
+        return dt.astimezone(ZoneInfo(tz_name)).year
     if representation == "epoch_s":
         return int(dt.timestamp())
     if representation == "epoch_ms":
         return int(dt.timestamp() * 1000)
     if representation == "date_string":
+        local = dt.astimezone(ZoneInfo(tz_name))
         if granularity == "year":
-            return f"{dt.year:04d}"
+            return f"{local.year:04d}"
         if granularity == "month" or granularity == "quarter":
-            return f"{dt.year:04d}-{dt.month:02d}"
-        return f"{dt.year:04d}-{dt.month:02d}-{dt.day:02d}"
-    # iso_string：渲染与探测格式同构（秒级 ISO，UTC）。
+            return f"{local.year:04d}-{local.month:02d}"
+        return f"{local.year:04d}-{local.month:02d}-{local.day:02d}"
+    # iso_string：渲染与探测格式同构（秒级 ISO，UTC-Z）。
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -64,6 +69,7 @@ def compile_where_ast(
     time_field: str,
     representation: str,
     granularity: str,
+    tz_name: str = "UTC",
 ) -> WhereAst:
     """帧窗口 [start, end) → feature_pages where AST。
 
@@ -71,8 +77,8 @@ def compile_where_ast(
     ``terms`` —— 与 evaluate_where/parse_where_param 同语法）—— 复用既有
     服务端过滤通道，零端点协议改动（D2）。
     """
-    lo = normalize_boundary_value(frame["start"], representation, granularity)
-    hi = normalize_boundary_value(frame["end"], representation, granularity)
+    lo = normalize_boundary_value(frame["start"], representation, granularity, tz_name)
+    hi = normalize_boundary_value(frame["end"], representation, granularity, tz_name)
     return {
         "op": "and",
         "terms": [
@@ -87,14 +93,15 @@ def compile_maplibre_filter(
     time_field: str,
     representation: str,
     granularity: str,
+    tz_name: str = "UTC",
 ) -> List[Any]:
     """帧窗口 → MapLibre filter 表达式（["all", [">=",…], ["<",…]]）。
 
     与 selectionFilters 同语法（map-panel 既有应用面）；值与 where AST
     完全同源 —— 地图与统计同窗的结构性保证。
     """
-    lo = normalize_boundary_value(frame["start"], representation, granularity)
-    hi = normalize_boundary_value(frame["end"], representation, granularity)
+    lo = normalize_boundary_value(frame["start"], representation, granularity, tz_name)
+    hi = normalize_boundary_value(frame["end"], representation, granularity, tz_name)
     return [
         "all",
         [">=", ["get", time_field], lo],
@@ -137,10 +144,11 @@ def window_where_ast(
     time_field: str,
     representation: str,
     granularity: str,
+    tz_name: str = "UTC",
 ) -> WhereAst:
     """任意 [start,end) 窗口（非帧）→ where AST（union 窗等场景）。"""
     return compile_where_ast(
-        {"start": start, "end": end}, time_field, representation, granularity
+        {"start": start, "end": end}, time_field, representation, granularity, tz_name
     )
 
 
@@ -157,7 +165,11 @@ def equal_interval_breaks(
     if not math.isfinite(vmin) or not math.isfinite(vmax) or vmax <= vmin:
         return None
     step = (vmax - vmin) / k
-    return [round(vmin + i * step, 6) for i in range(k)] + [round(vmax, 6)]
+    breaks = [round(vmin + i * step, 6) for i in range(k)] + [round(vmax, 6)]
+    # 舍入可能把极小值域压成相等 breaks（schema 严格递增会拒）—— 视为退化。
+    if any(b <= a for a, b in zip(breaks, breaks[1:])):
+        return None
+    return breaks
 
 
 def parse_frame_labels(frames: List[Dict[str, Any]]) -> List[str]:
@@ -180,11 +192,12 @@ def apply_time_window_to_doc(
     representation = str(time_window.get("time_representation") or "")
     granularity = str(time_window.get("granularity") or "")
     layer_id = str(time_window.get("layer_id") or "")
+    tz_name = str(time_window.get("timezone") or "UTC")
     if not field or not representation:
         return doc
 
-    lo = normalize_boundary_value(time_window["start"], representation, granularity)
-    hi = normalize_boundary_value(time_window["end"], representation, granularity)
+    lo = normalize_boundary_value(time_window["start"], representation, granularity, tz_name)
+    hi = normalize_boundary_value(time_window["end"], representation, granularity, tz_name)
     numeric = isinstance(lo, (int, float)) and not isinstance(lo, bool)
 
     def _in_window(value: Any) -> bool:

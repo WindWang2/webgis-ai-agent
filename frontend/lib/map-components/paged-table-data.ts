@@ -18,8 +18,7 @@ import {
   buildSearchFilter,
   fetchFeaturePage,
 } from '@/lib/data-plane/paged-features';
-import { mergeWhereAst, temporalWindowForRef, whereParam } from '@/lib/temporal-map/linkage';
-import { subscribeLiveTemporal } from '@/lib/temporal-map/live-frame';
+import { mergeWhereAst, subscribeTemporalWindow, temporalWindowForRef, whereParam } from '@/lib/temporal-map/linkage';
 import { resolveRowId, MAX_TABLE_COLUMNS, type TableRow } from '@/lib/map-components/table-data';
 import { getSessionIdentity } from '@/lib/store/session-identity';
 import type { Layer } from '@/lib/types/layer';
@@ -137,7 +136,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
   // GOAL 03 M4：时序同窗 —— temporal 绑定该 ref 时，分页 where 与时间窗
   // and 合成（与地图/图表同编译器；key 变化重取，同帧零重取）。
   const temporalKey = useSyncExternalStore(
-    subscribeLiveTemporal,
+    subscribeTemporalWindow,
     () => temporalWindowForRef(refId).key,
     () => '',
   );

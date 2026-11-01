@@ -245,7 +245,7 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
             "__omitted_layers__": len(omitted_layers),
             "sha256": _omitted_digest(omitted_layers, _project_layer),
         })
-    return {
+    projection = {
         "version": mapspec.get("version"),
         "cartographic_profile": _bounded_metadata(
             mapspec.get("cartographic_profile"), budget=budget
@@ -253,14 +253,17 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
         "view": _bounded_metadata(mapspec.get("view") or {}, budget=budget),
         "layout": _bounded_metadata(mapspec.get("layout") or {}, budget=budget),
         "time": _bounded_metadata(mapspec.get("time") or {}, budget=budget),
-        # v1.8（GOAL 03）：时态控制层进指纹 —— 时间游标/播放/对照任何变化
-        # 都必须是可观察的 spec 变更（displayed_at 门控依赖此投影）。
-        "temporal": _bounded_metadata(mapspec.get("temporal") or {}, budget=budget),
         "sources": projected_sources,
         "layers": projected_layers,
         "source_count": len(sources),
         "layer_count": len(layers),
     }
+    # v1.8（GOAL 03）：时态控制层**在场才**进投影 —— 时间游标/播放/对照
+    # 变化必须是可观察 spec 变更（displayed_at 门控依赖）；同时存量无
+    # temporal 的 spec 指纹逐位不变（product manifest 跨版本不漂移）。
+    if mapspec.get("temporal"):
+        projection["temporal"] = _bounded_metadata(mapspec.get("temporal"), budget=budget)
+    return projection
 
 
 def cartographic_fingerprint(mapspec: Dict[str, Any]) -> str:

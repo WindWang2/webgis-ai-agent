@@ -572,6 +572,7 @@ def _time_pages(
                 "time_field": str(temporal.get("time_field") or ""),
                 "time_representation": str(temporal.get("time_representation") or ""),
                 "granularity": str(temporal.get("granularity") or ""),
+                "timezone": str(temporal.get("timezone") or "UTC"),
                 "layer_id": target_layer,
             },
         })

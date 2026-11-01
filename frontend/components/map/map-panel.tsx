@@ -829,6 +829,9 @@ export function MapPanel({
     // GOAL 03 M4：时序帧过滤注入（live 帧 > spec cursor；绑定层 layer.filter
     // 与 runtime V4 setFilter 快路径 —— 帧切换零结构 churn、零数据重拉）。
     const temporalCfg = (getCommittedMapSpec() as { temporal?: MapSpecTemporalConfig } | null)?.temporal;
+    // P2 修正：捕获**本次合成实际消费**的 live 请求（帧+seq）—— reconcile
+    // 期间到达的更新请求由其自己的 effect 回执，displayed 不领先画布。
+    const temporalAppliedReq = temporalCfg?.enabled ? getLiveTemporalRequest() : null;
     const specWithTemporal = temporalCfg?.enabled
       ? applyTemporalToSpec(spec0, temporalCfg, getLiveTemporalFrame())
       : spec0;
@@ -850,9 +853,8 @@ export function MapPanel({
       .then(() => {
         syncInteractiveIds()
         // GOAL 03 M4：displayed_at 门控 —— reconcile 落定（applied spec
-        // 已前进）后才回执 live 帧；stale/乱序由控制器拒绝。
-        const liveReq = getLiveTemporalRequest();
-        if (liveReq) markLiveApplied(liveReq.seq, liveReq.frame);
+        // 已前进）后才回执**本次应用**的 live 帧；stale/乱序由控制器拒绝。
+        if (temporalAppliedReq) markLiveApplied(temporalAppliedReq.seq, temporalAppliedReq.frame);
         const map = mapRef.current?.getMap()
         // #461 (sibling of #401): the imperative `custom-*` overlays
         // (add_layer / heatmap / thematic-map commands) are buried by every

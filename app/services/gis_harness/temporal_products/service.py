@@ -158,7 +158,9 @@ async def bind_temporal_view(
                     continue
                 sid = lyr.get("source")
                 src = sources.get(sid) if isinstance(sid, str) else None
-                src_ref = (src or {}).get("ref_id") or (src or {}).get("ref") if isinstance(src, dict) else None
+                src_ref = None
+                if isinstance(src, dict):
+                    src_ref = src.get("ref_id") or src.get("ref")
                 if src_ref == resolved or sid == resolved:
                     effective_layer_id = str(lyr.get("id") or "")
                     break
@@ -242,6 +244,13 @@ async def control_temporal_view(
     if not temporal.get("enabled"):
         return _refusal("disabled", "temporal 视图已停用")
 
+    if origin == "agent" and action == "unpin":
+        # P1 修正：解pin是用户的决定权 —— agent 不得代用户解除固定
+        # （否则 seek 守卫可被 agent unpin→seek 序列绕过）。
+        return _refusal(
+            "user_pinned",
+            "解除时间游标固定是用户操作（user-wins）；Agent 不可代为 unpin。",
+        )
     if origin == "agent" and temporal.get("user_pinned") and action in _CURSOR_ACTIONS and not unpin:
         return _refusal(
             "user_pinned",
@@ -337,6 +346,15 @@ async def compare_temporal_view(
     if temporal is None or not temporal.get("enabled"):
         return _refusal("not_bound", "会话未绑定启用的 temporal 视图")
 
+    # P1 修正：compare 移动 cursor（patch cursor_frame=fid_a）—— user_pinned
+    # 下 agent compare 同样被拒（user-wins 覆盖一切光标移动，无绕过面）。
+    if temporal.get("user_pinned"):
+        return _refusal(
+            "user_pinned",
+            "时间游标由用户手动设定（user_pinned），两期对照会移动游标，"
+            "Agent 不覆盖；请提示用户解除固定后再对照。",
+        )
+
     frames = temporal.get("frames", [])
     by_id = {f["id"]: f for f in frames}
     fid_a = frame_id_a or temporal.get("cursor_frame")
@@ -354,6 +372,7 @@ async def compare_temporal_view(
     tf = temporal["time_field"]
     rep = temporal["time_representation"]
     gran = temporal["granularity"]
+    tz_name = temporal.get("timezone") or "UTC"
 
     classification: Optional[Dict[str, Any]] = None
     classification_note = ""
@@ -361,7 +380,7 @@ async def compare_temporal_view(
         # union 窗聚合（服务端真值；复用 aggregate_features 通道语义）。
         vmin, vmax = await _aggregate_range(
             session_id, temporal["source_ref"], value_field,
-            union_window(frame_a, frame_b), tf, rep, gran,
+            union_window(frame_a, frame_b), tf, rep, gran, tz_name,
         )
         breaks = None if (vmin is None or vmax is None) else equal_interval_breaks(vmin, vmax, k)
         if breaks is None:
@@ -404,8 +423,8 @@ async def compare_temporal_view(
         "frame_a": frame_a,
         "frame_b": frame_b,
         "classification": classification,
-        "where_ast_a": compile_where_ast(frame_a, tf, rep, gran),
-        "where_ast_b": compile_where_ast(frame_b, tf, rep, gran),
+        "where_ast_a": compile_where_ast(frame_a, tf, rep, gran, tz_name),
+        "where_ast_b": compile_where_ast(frame_b, tf, rep, gran, tz_name),
         "fingerprint_a": time_filter_fingerprint(
             temporal["source_ref"], temporal.get("content_revision"), tf, fid_a, rep),
         "fingerprint_b": time_filter_fingerprint(
@@ -424,6 +443,7 @@ async def _aggregate_range(
     time_field: str,
     representation: str,
     granularity: str,
+    tz_name: str = "UTC",
 ) -> Tuple[Optional[float], Optional[float]]:
     """union 窗上 value_field 的 (min, max)（bind/compare 冷路径）。
 
@@ -438,8 +458,8 @@ async def _aggregate_range(
     _, _, fc = await _resolve_ref_fc(session_id, ref_id)
     if fc is None:
         return None, None
-    lo = normalize_boundary_value(window["start"], representation, granularity)
-    hi = normalize_boundary_value(window["end"], representation, granularity)
+    lo = normalize_boundary_value(window["start"], representation, granularity, tz_name)
+    hi = normalize_boundary_value(window["end"], representation, granularity, tz_name)
     if isinstance(lo, str) or isinstance(hi, str):
         lo_s, hi_s = str(lo), str(hi)
         in_window = lambda t: isinstance(t, str) and lo_s <= t < hi_s  # noqa: E731
@@ -493,11 +513,12 @@ async def get_temporal_view(session_id: str) -> Dict[str, Any]:
     tf = temporal.get("time_field", "")
     rep = temporal.get("time_representation", "")
     gran = temporal.get("granularity", "")
+    tz_name = temporal.get("timezone") or "UTC"
     cursor = temporal.get("cursor_frame")
     frame = _frame_by_id(temporal, cursor) if cursor else None
     out: Dict[str, Any] = {"status": "bound", "temporal": temporal}
     if frame is not None:
-        out["where_ast"] = compile_where_ast(frame, tf, rep, gran)
+        out["where_ast"] = compile_where_ast(frame, tf, rep, gran, tz_name)
         out["fingerprint"] = time_filter_fingerprint(
             temporal.get("source_ref", ""), temporal.get("content_revision"),
             tf, frame["id"], rep)
@@ -505,7 +526,7 @@ async def get_temporal_view(session_id: str) -> Dict[str, Any]:
     if compare and compare.get("enabled"):
         fb = _frame_by_id(temporal, compare.get("frame_id_b", ""))
         if fb is not None:
-            out["where_ast_compare"] = compile_where_ast(fb, tf, rep, gran)
+            out["where_ast_compare"] = compile_where_ast(fb, tf, rep, gran, tz_name)
             out["fingerprint_compare"] = time_filter_fingerprint(
                 temporal.get("source_ref", ""), temporal.get("content_revision"),
                 tf, fb["id"], rep)

@@ -191,10 +191,11 @@ def _detect_representation(
         y = [v for v in non_null if _YEAR_RE.match(v)]
         n = len(non_null)
         if len(iso_dt) == n:
-            # 同偏移检查：全列偏移后缀一致（同为 Z 或同一 ±HH:MM）——
-            # 混合偏移下字符串字典序 ≠ 时间序，必须拒绝。
+            # 偏移检查（字典序 = 时间序的科学前提）：仅接受全列统一 **Z**
+            # 偏移 —— 非 Z 的统一偏移（如 +08:00）下，边界渲染（Z）与数据
+            # 字面序不一致会错窗（P2 修正：拒绝并建议归一化，不静默错配）。
             offsets = {v[19:] if len(v) > 19 else "" for v in iso_dt}
-            if len(offsets) == 1:
+            if len(offsets) == 1 and ("Z" in offsets or "" in offsets):
                 return "iso_string", iso_dt[0], 0.9
             return "", "", 0.0
         if len(date_only) == n:

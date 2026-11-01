@@ -35,7 +35,7 @@ import {
   subscribeLiveTemporal,
 } from '@/lib/temporal-map/live-frame';
 
-const SPEEDS = [1, 2, 4, 8] as const;
+const SPEEDS = [0.25, 0.5, 1, 2, 4, 8] as const;
 
 function specTemporalIdentity(spec: unknown): string {
   const temporal = (spec as { temporal?: { cursor_frame?: string; user_pinned?: boolean;
@@ -77,11 +77,18 @@ export function TemporalTimeController() {
   }
   const [localPlaying, setLocalPlaying] = useState(false);
 
-  // 控制器生命周期：挂载注册 / 卸载 settle + 清理。
+  // 控制器生命周期：挂载注册 / 卸载 settle + 清理。会话切换时
+  // resetTemporalLiveState 会销毁 activeController（组件不重挂 —— MapPanel
+  // 不按 sessionId key），因此在 live generation 信号上自愈重注册（P1-3：
+  // 否则新会话播放/门控全部失联到整页刷新）。
   useEffect(() => {
-    const controller = controllerRef.current;
-    if (!controller) return;
-    setActiveController(controller);
+    const ensure = (): void => {
+      if (!controllerRef.current || activeController !== controllerRef.current) {
+        controllerRef.current = new TemporalPlaybackController();
+        setActiveController(controllerRef.current);
+      }
+    };
+    ensure();
     return () => {
       // settle：把 displayed/live 落定游标提交（用户面 CAS；失败静默 ——
       // 服务端真相为准，重载后以 committed cursor 恢复）。
@@ -92,6 +99,13 @@ export function TemporalTimeController() {
       resetTemporalLiveState();
     };
   }, []);
+  // 自愈：activeController 被会话切换清空 → 下一个 generation 信号重建。
+  useEffect(() => {
+    if (activeController === null && controllerRef.current) {
+      controllerRef.current = new TemporalPlaybackController();
+      setActiveController(controllerRef.current);
+    }
+  }, [liveGeneration]);
 
   // 播放启动/停止：spec.playback.playing（agent 或用户提交）为 desired；
   // reduced-motion 拒绝自动播放（诚实：只手动步进）。
@@ -146,6 +160,9 @@ export function TemporalTimeController() {
       if (v && settleFrame) {
         void commitUserTemporal({ cursor_frame: settleFrame.id, playback: { playing: false } });
       }
+    } else if (reducedMotion) {
+      // reduced-motion：诚实拒绝自动播放（不进假「播放中」UI）；提示手动步进。
+      return;
     } else {
       setLocalPlaying(true);
       void commitUserTemporal({ playback: { playing: true } });

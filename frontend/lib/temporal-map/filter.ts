@@ -17,31 +17,55 @@ function parseIso(instant: string): Date {
   return dt;
 }
 
-/** 契约 instant → 数据表示空间的比较值（镜像 normalize_boundary_value）。 */
+/**
+ * 契约 instant → 数据表示空间的比较值（语义镜像后端 normalize_boundary_value；
+ * 值域不同（两侧指纹算法不同，无交叉比较 —— P2 说明）。
+ * 日历字段先转到契约时区再提取（P0：帧桶在契约时区划分，取 UTC 字段会错期）。
+ */
 export function normalizeBoundaryValue(
   instant: string,
   representation: string,
   granularity: string,
+  tzName = 'UTC',
 ): number | string {
   const dt = parseIso(instant);
   switch (representation) {
     case 'year_int':
-      return dt.getUTCFullYear();
+      return calendarField(dt, tzName, 'year');
     case 'epoch_s':
       return Math.floor(dt.getTime() / 1000);
     case 'epoch_ms':
       return dt.getTime();
     case 'date_string':
-      if (granularity === 'year') return String(dt.getUTCFullYear());
+      if (granularity === 'year') return pad(calendarField(dt, tzName, 'year'), 4);
       if (granularity === 'month' || granularity === 'quarter') {
-        return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+        return `${pad(calendarField(dt, tzName, 'year'), 4)}-${pad(calendarField(dt, tzName, 'month'), 2)}`;
       }
-      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(
-        dt.getUTCDate(),
-      ).padStart(2, '0')}`;
+      return `${pad(calendarField(dt, tzName, 'year'), 4)}-${pad(calendarField(dt, tzName, 'month'), 2)}-${pad(
+        calendarField(dt, tzName, 'day'), 2,
+      )}`;
     default:
       return instant;
   }
+}
+
+/** Date 在 IANA 时区的日历字段（year/month/day；tz 缺省 UTC）。 */
+function calendarField(dt: Date, tzName: string, field: 'year' | 'month' | 'day'): number {
+  let y = dt.getUTCFullYear();
+  let m = dt.getUTCMonth() + 1;
+  let d = dt.getUTCDate();
+  if (tzName && tzName !== 'UTC') {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tzName, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(dt);
+    const get = (t: string): number => Number(parts.find((pp) => pp.type === t)?.value);
+    y = get('year'); m = get('month'); d = get('day');
+  }
+  return field === 'year' ? y : field === 'month' ? m : d;
+}
+
+function pad(n: number, width: number): string {
+  return String(n).padStart(width, '0');
 }
 
 /** 帧窗口 → MapLibre filter 表达式（与后端 compile_maplibre_filter 同值）。 */
@@ -49,8 +73,9 @@ export function temporalFilterExpression(
   config: MapSpecTemporalConfig,
   frame: TemporalFrame,
 ): unknown[] {
-  const lo = normalizeBoundaryValue(frame.start, config.time_representation, config.granularity);
-  const hi = normalizeBoundaryValue(frame.end, config.time_representation, config.granularity);
+  const tz = config.timezone || 'UTC';
+  const lo = normalizeBoundaryValue(frame.start, config.time_representation, config.granularity, tz);
+  const hi = normalizeBoundaryValue(frame.end, config.time_representation, config.granularity, tz);
   return ['all', ['>=', ['get', config.time_field], lo], ['<', ['get', config.time_field], hi]];
 }
 
@@ -59,8 +84,9 @@ export function temporalWhereAst(
   config: MapSpecTemporalConfig,
   frame: TemporalFrame,
 ): WhereAst {
-  const lo = normalizeBoundaryValue(frame.start, config.time_representation, config.granularity);
-  const hi = normalizeBoundaryValue(frame.end, config.time_representation, config.granularity);
+  const tz = config.timezone || 'UTC';
+  const lo = normalizeBoundaryValue(frame.start, config.time_representation, config.granularity, tz);
+  const hi = normalizeBoundaryValue(frame.end, config.time_representation, config.granularity, tz);
   return {
     op: 'and',
     terms: [
@@ -70,7 +96,7 @@ export function temporalWhereAst(
   };
 }
 
-/** 同窗指纹（地图/图表/表格/导出一致性锚点；镜像后端 time_filter_fingerprint）。 */
+/** 同窗指纹（前端一致性锚点；与后端 sha256 指纹算法不同、无交叉比较）。 */
 export function temporalFingerprint(
   config: MapSpecTemporalConfig,
   frameId: string,

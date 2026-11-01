@@ -72,11 +72,18 @@ class TestVersionBump:
         assert result.document["view"] == spec["view"]
 
     def test_legacy_spec_fingerprint_unchanged_by_temporal_absence(self):
-        # additive 纪律：无 temporal 的 spec，投影不引入 temporal 键值差异。
+        # additive 纪律：无 temporal 的 spec，投影**不含** temporal 键 ——
+        # 与 master 的 cartographic_projection 输出键集一致（指纹逐位不变；
+        # 对照组：加 temporal 后键集出现且指纹变化）。
+        from app.lib.cartography.quality_loop import cartographic_projection
+
         spec = {"version": "1.7", "layers": [{"id": "a", "type": "circle"}]}
-        before = cartographic_fingerprint(spec)
-        assert "temporal" not in spec
-        assert cartographic_fingerprint(spec) == before
+        projection = cartographic_projection(spec)
+        assert "temporal" not in projection  # 在场才投影（存量指纹稳定）
+        spec_with = dict(spec)
+        spec_with["temporal"] = {"enabled": True}
+        assert "temporal" in cartographic_projection(spec_with)
+        assert cartographic_fingerprint(spec) != cartographic_fingerprint(spec_with)
 
 
 class TestContractInvariants:

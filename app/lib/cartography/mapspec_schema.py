@@ -53,6 +53,7 @@ from pydantic import (
     StrictStr,
     model_validator,
 )
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 #: 数字脊柱原语：接受 int|float，拒绝 str/bool（不 coerce —— 保真披露）。
@@ -996,6 +997,15 @@ class MapSpecTemporalConfig(_SpecModel):
     #: 诚实披露（bounded；如 mvt_no_time_index_client_filter / cube_full_window）。
     disclosures: List[StrictStr] = Field(default_factory=list, max_length=8)
 
+    @staticmethod
+    def _parse_instant(raw: str, what: str) -> "datetime":
+        """ISO instant 解析（Z 兼容）；坏串直接 ValueError（schema 级拒绝）。"""
+        cleaned = raw.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(cleaned)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
     @model_validator(mode="after")
     def _validate_temporal_invariants(self) -> "MapSpecTemporalConfig":
         # 「无虚构期数」的 schema 级防御：启用时序必须有 ≥2 个真实帧 ——
@@ -1005,17 +1015,26 @@ class MapSpecTemporalConfig(_SpecModel):
                 "temporal.enabled=True requires >=2 observed frames "
                 "(single-period data must refuse bind, not fake animation)"
             )
-        # 帧序与区间不变量：[start,end) 不重叠。
+        # 帧序与区间不变量：真 ISO 解析比较（字符串比较在混合偏移下可绕过
+        # 真实重叠）；坏串在此拒绝（不留给消费方 internal_error）。
         prev: Optional[TemporalFrame] = None
+        prev_end: Optional[datetime] = None
         for fr in self.frames:
-            if fr.start >= fr.end:
+            try:
+                fr_start = self._parse_instant(fr.start, "start")
+                fr_end = self._parse_instant(fr.end, "end")
+            except ValueError as exc:
+                raise ValueError(
+                    f"temporal frame {fr.id!r}: start/end 不是合法 ISO instant"
+                ) from exc
+            if fr_start >= fr_end:
                 raise ValueError(f"temporal frame {fr.id!r}: start must be < end")
-            if prev is not None and fr.start < prev.end:
+            if prev is not None and fr_start < prev_end:
                 raise ValueError(
                     f"temporal frames {prev.id!r} and {fr.id!r} overlap "
                     "(interval semantics are [start, end))"
                 )
-            prev = fr
+            prev, prev_end = fr, fr_end
         # cursor 必须指向真实帧。
         if self.cursor_frame not in {f.id for f in self.frames}:
             raise ValueError(f"cursor_frame {self.cursor_frame!r} not in frames")
@@ -1028,8 +1047,11 @@ class MapSpecTemporalConfig(_SpecModel):
                 )
             if self.compare.frame_id_b == self.cursor_frame:
                 raise ValueError("compare.frame_id_b must differ from cursor_frame")
-        # extent 覆盖所有帧（观测范围不得窄于帧集合）。
-        if self.extent[0] > self.frames[0].start or self.extent[1] < self.frames[-1].end:
+        # extent 覆盖所有帧（观测范围不得窄于帧集合；真时间比较）。
+        ext_start = self._parse_instant(self.extent[0], "extent")
+        ext_end = self._parse_instant(self.extent[1], "extent")
+        if ext_start > self._parse_instant(self.frames[0].start, "extent") \
+                or ext_end < self._parse_instant(self.frames[-1].end, "extent"):
             raise ValueError("temporal.extent must cover all frames")
         # 分级 breaks 严格递升（固定分级的数学前提）。
         if self.compare is not None and self.compare.classification is not None:

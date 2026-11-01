@@ -22,8 +22,7 @@ import {
   type AggregateRow,
 } from '@/lib/data-plane/paged-features';
 import { getSessionIdentity } from '@/lib/store/session-identity';
-import { temporalWindowForRef, whereParam } from '@/lib/temporal-map/linkage';
-import { subscribeLiveTemporal } from '@/lib/temporal-map/live-frame';
+import { subscribeTemporalWindow, temporalWindowForRef, whereParam } from '@/lib/temporal-map/linkage';
 import { useSyncExternalStore } from 'react';
 import type { Layer } from '@/lib/types/layer';
 
@@ -81,7 +80,7 @@ export function useViewportAggregate({
   // GOAL 03 M4：时序同窗 —— temporal 绑定该 ref 时，视口统计 where 附加
   // 当前帧窗口（与地图 layer.filter 同编译器/同指纹；key 变化才重取）。
   const temporalKey = useSyncExternalStore(
-    subscribeLiveTemporal,
+    subscribeTemporalWindow,
     () => temporalWindowForRef(refId).key,
     () => '',
   );

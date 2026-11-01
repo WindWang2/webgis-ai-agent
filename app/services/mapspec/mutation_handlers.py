@@ -1168,6 +1168,15 @@ async def _handle_settemporalview(ctx: MutationContext) -> HandlerOut:
         if not isinstance(existing, dict) or not existing:
             return _temporal_terminal_error(ctx, "temporal 未绑定，无法增量控制")
         merged = {**existing}
+        # P0 修正（user-wins 生产路径）：REST 用户面（origin=user）的光标类
+        # patch（seek/step/play/pause/rate）在此统一置 user_pinned=True ——
+        # 用户手动操作即固定，后续 agent 光标控制被 service 守卫拒绝。
+        # 显式 user_pinned 键（如用户 unpin）不在此覆盖。
+        if ctx.origin == "user" and "user_pinned" not in intent.patch:
+            _moves_cursor = any(k in intent.patch for k in
+                                ("cursor_frame", "playback"))
+            if _moves_cursor:
+                merged["user_pinned"] = True
         playback_patch = intent.patch.get("playback")
         if isinstance(playback_patch, dict) and isinstance(merged.get("playback"), dict):
             merged["playback"] = {**merged["playback"], **playback_patch}
