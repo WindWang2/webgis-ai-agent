@@ -280,8 +280,16 @@ class ScaleRepresentationProfile(_ProfileModel):
 # ── 校验 / 查询 / 投影（纯函数）───────────────────────────────────────────
 
 
-def validate_profile(profile: ScaleRepresentationProfile) -> List[str]:
+def validate_profile(
+    profile: ScaleRepresentationProfile,
+    *,
+    require_artifact_refs: bool = True,
+) -> List[str]:
     """档案结构合法性 → 错误码列表（空 = 合法）。
+
+    ``require_artifact_refs=False`` 供两阶段构建的中间态：generalized 带
+    的工件 ref 在落库回填前允许缺席（最终落 MapSpec 的档案必须以缺省
+    严格模式复验）。
 
     规则（与 v1.6 normalize_windows 同族但独立执行 —— 档案是更丰富的
     声明，错误可诊断优先于整体拒绝）：
@@ -315,7 +323,8 @@ def validate_profile(profile: ScaleRepresentationProfile) -> List[str]:
         if b.selection.importance_evidence not in IMPORTANCE_EVIDENCE_KINDS:
             errors.append(
                 f"band_unknown_importance_evidence@{b.selection.importance_evidence}")
-        if b.representation_mode in ("generalized", "aggregate_grid"):
+        if b.representation_mode in ("generalized", "aggregate_grid") and (
+                require_artifact_refs):
             if not b.artifact_source_id or not b.artifact_ref:
                 errors.append(f"band_artifact_missing@{b.scale.tier}")
         st = b.stats
