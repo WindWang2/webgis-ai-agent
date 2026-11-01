@@ -26,3 +26,9 @@ P0 完成（基线勘察+规划），进入 P1（M1 能力发现 + M7 fixture）
 - 结果：coverage_read.py（三态资格门→轴协商（轴名服务声明/封闭经纬名表）→像元预算门（请求前按声明网格+subset 收缩比，不静默降采样）→bounded_get 字节帽→COVJSON/GeoTIFF 封闭解析→COG 落地）+ raster_materialization.py（ref:fabric-cog/ 工件纪律：原子 move/sha256/CAS DataObject/台账）+ artifact_registry.fabric_cog_path。
 - 真值对照：3×3 网格逐点断言（含 nodata 位、transform 半像元角点、north-up 翻转、subset 真子集语义）；ref 可被栅格统计消费（G01 numeric raster 实证）；9 测试绿 + artifact_registry 回归 12 passed。
 - 缺陷修复记录：①north-up yres 符号推导错（降序轴步长已为负，多余取负）——被逐点 transform 断言拦截；②fixture subset 真值语义错（按子网格尺寸重算 ≠ 真实服务的真子集行为）——改为全网格按索引选取。
+
+### Round 4（2026-11-01）—— P4/M4 完成
+- 结果：cog_materialization.py 落地 —— discover（STAC search→COG 候选 declared/inferred 标注）/preview（SSRF 门+头读+cog_structure_ok advisory）/materialize（bbox→transform_bounds→窗口读，RemoteReadSession 请求/字节预算+取消，预算前置门）/publish（ref:fabric-cog + sha256 + CAS + 台账 + 签名 URL query 整段脱敏）。
+- 测试：真实 loopback HTTP COG（自写 Range+HEAD 服务器）10 passed；幂等（同参同内容同 data_object_id + CAS deduped）；AOI 窗口语义（窗口 ≪ 整幅）+ 逐点真值；预算拒绝带窗口事实；默认 SSRF fail-closed（loopback 被拒的专门用例）；签名 URL query 脱敏断言；取消令牌。
+- 已知伪影（RISK R2）：GDAL /vsicurl 对 Python http.server 的 .msk/.MSK 首访探测在本机恒定 ~5s×2（curl CLI 亚毫秒、服务端即时响应，GDAL 内部行为）；已用 GDAL_PAM_ENABLED=NO（远程只读正当优化）消除 25s/次，残余 ~10s/open 如实记录。CI 成本 ≈94s/模块。
+- 缺陷修复记录：①ExitStack 改造时 rasterio.Env 用在 import 前；②rasterio read 的元组 window 是 (start,stop) 语义（测试写错为 (offset,size)）；③fixture 需自写 Range/HEAD handler（Python 3.13 http.server 仍不支持 Range）。
