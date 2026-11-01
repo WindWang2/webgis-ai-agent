@@ -327,6 +327,16 @@ def register_cartography_tools(registry: ToolRegistry):
                 for f in (data.get("features") or [])
                 if isinstance(f, dict)
             ]
+            # GOAL 01（M5/G12）：量纲判定的 CRS 事实取数据真实声明
+            # （geo_processor.extract_declared_crs 单一真相）；未声明按
+            # RFC 7946 §4 规范缺省 WGS84 —— 此前硬编码 4326 使投影数据的
+            # DEGREE_LIKE_METRIC 检查口径失真。
+            try:
+                from app.lib.geo_processor.core import extract_declared_crs
+
+                _data_crs = extract_declared_crs(data) or "EPSG:4326"
+            except Exception:  # noqa: BLE001 — CRS 提取失败按规范缺省
+                _data_crs = "EPSG:4326"
             try:
                 from app.lib.gis.measurement import (
                     CANONICAL_UNITS,
@@ -356,7 +366,7 @@ def register_cartography_tools(registry: ToolRegistry):
                     field, roles,
                     value_samples=raw_values,
                     has_temporal=has_temporal,
-                    crs="EPSG:4326",
+                    crs=_data_crs,
                     unit_override=(
                         unit if unit and str(unit) in CANONICAL_UNITS else ""
                     ),
