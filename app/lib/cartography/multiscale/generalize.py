@@ -30,7 +30,7 @@ from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 from pydantic import BaseModel, ConfigDict
 import numpy as np
 from shapely import transform as shapely_transform
-from shapely.geometry import LineString, shape
+from shapely.geometry import LineString, mapping as _mapping, shape
 
 from app.lib.cartography.multiscale.profile import (
     FeatureSelectionPolicy,
@@ -149,6 +149,18 @@ def _metric_transforms(lon0: float, lat0: float):
         return shapely_transform(geom, _arr_to_ll)
 
     return to_m, to_ll
+
+
+def _geojson_geometry(geom: Any) -> Dict[str, Any]:
+    """shapely 几何 → GeoJSON dict（坐标是 JSON 数组而非 tuple）。
+
+    ``shapely.geometry.mapping`` 产出 tuple 嵌套；GeoJSON 契约是数组。
+    内存 ref 不经 JSON 序列化直连消费方（渲染器/聚合），tuple 会让
+    逐环 isinstance(list) 检查静默跳过 —— 在生产端一次规范化。
+    """
+    import json as _json
+
+    return _json.loads(_json.dumps(_mapping(geom)))
 
 
 def _feature_value(feature: Dict[str, Any], field: Optional[str]) -> Any:
@@ -418,8 +430,7 @@ def generalize_features(
                                       obs.get("length_loss", 0.0))
                 if "simplified" in codes:
                     geometry_simplified += 1
-                    from shapely.geometry import mapping as _mapping
-                    new_geom_dict = _mapping(result_ll)
+                    new_geom_dict = _geojson_geometry(result_ll)
                 elif any(c.endswith(("_failed", "_emptied", "_changed",
                                      "_result", "_lost", "_exceeded"))
                          for c in codes):
@@ -693,7 +704,7 @@ def generalize_features_multiband(
                                       obs.get("length_loss", 0.0))
                 if "simplified" in codes:
                     geometry_simplified += 1
-                    new_geom_dict = _mapping(result_ll)
+                    new_geom_dict = _geojson_geometry(result_ll)
                 elif any(c.endswith(("_failed", "_emptied", "_changed",
                                      "_result", "_lost", "_exceeded"))
                          for c in codes):
@@ -741,5 +752,3 @@ def generalize_features_multiband(
         )
     return results
 
-
-from shapely.geometry import mapping as _mapping  # noqa: E402 — 局部使用
