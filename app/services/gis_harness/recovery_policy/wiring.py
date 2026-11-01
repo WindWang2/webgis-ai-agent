@@ -66,6 +66,7 @@ def build_recovery_payload(
     turn_id: str = "",
     tool_call_id: str = "",
     capability: str = "",
+    idempotency_key_present: bool = False,
 ) -> Dict[str, Any]:
     """诊断 + 裁决 + LLM note（单入口；异常 → 空 payload，绝不阻断）。"""
     try:
@@ -78,7 +79,9 @@ def build_recovery_payload(
             message=message, tool_name=tool_name,
             harness_failure=harness_failure, session_id=session_id,
             attribution=attribution, ref_origin_session=ref_origin_session)
-        decision = decide_recovery(diag, descriptor=descriptor)
+        decision = decide_recovery(
+            diag, descriptor=descriptor,
+            idempotency_key_present=idempotency_key_present)
         diag_payload = diag.to_bounded_dict()
         dec_payload = decision.to_bounded_dict()
         return {

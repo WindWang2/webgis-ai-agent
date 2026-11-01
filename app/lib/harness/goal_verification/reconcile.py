@@ -53,6 +53,9 @@ class VerificationSlot(BaseModel):
     status: str = "not_evaluated"          # pass/fail/warning/not_evaluated
     evidence_refs: List[str] = Field(default_factory=list)
     detail: str = ""
+    #: 不适用（该需求族不存在/无角色）→ 不参与 overall 折叠（诚实缺席
+    #: ≠ 拖低裁决）；状态仍如实报告 not_evaluated。
+    counts_toward_overall: bool = True
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
@@ -61,6 +64,7 @@ class VerificationSlot(BaseModel):
             "evidence_refs": [str(e)[:64]
                               for e in self.evidence_refs[:6]],
             "detail": str(self.detail)[:160],
+            "counts_toward_overall": bool(self.counts_toward_overall),
         }
 
 
@@ -184,7 +188,8 @@ def reconcile_goal_verification(
     report.slots.append(VerificationSlot(
         slot=SLOT_DATA_COVERAGE, status=coverage_status,
         evidence_refs=[f"role:{r.get('role')}" for r in roles[:4]],
-        detail=detail))
+        detail=detail,
+        counts_toward_overall=bool(roles)))
 
     # ── 3. scientific_quality：科学需求 + L4/L5 评审在场 ────────────
     science_reqs = _kinds(goal, "analysis", "comparison", "statistics")
@@ -258,12 +263,14 @@ def reconcile_goal_verification(
         slot=SLOT_LAYER_VISIBILITY, status=layer_status,
         evidence_refs=[f"obs_layer:{e.get('id')}"
                        for e in layer_entries[:4]],
-        detail=f"aggregate={aggregate} health={health or 'absent'}"))
+        detail=f"aggregate={aggregate} health={health or 'absent'}",
+        counts_toward_overall=has_map_req))
     report.slots.append(VerificationSlot(
         slot=SLOT_ACTUAL_RENDERING, status=render_status,
         evidence_refs=[f"obs_rev:{obs.get('observed_revision')}"]
         if obs.get("observed_revision") is not None else [],
-        detail=render_detail))
+        detail=render_detail,
+        counts_toward_overall=has_map_req))
 
     # ── 6. legend_statistics ─────────────────────────────────────────
     stat_reqs = _kinds(goal, "chart", "statistics")
@@ -271,7 +278,8 @@ def reconcile_goal_verification(
     report.slots.append(VerificationSlot(
         slot=SLOT_LEGEND_STATISTICS, status=stat_status,
         evidence_refs=[f"req:{r.get('id')}" for r in stat_reqs[:4]],
-        detail=f"{len(stat_reqs)} chart/statistics requirements"))
+        detail=f"{len(stat_reqs)} chart/statistics requirements",
+        counts_toward_overall=bool(stat_reqs)))
 
     # ── 7. export_delivery：显式导出需求不兑现即 fail ───────────────
     export_reqs = _kinds(goal, "export")
@@ -281,7 +289,8 @@ def reconcile_goal_verification(
     report.slots.append(VerificationSlot(
         slot=SLOT_EXPORT_DELIVERY, status=export_status,
         evidence_refs=[f"req:{r.get('id')}" for r in export_reqs[:4]],
-        detail=f"{len(export_reqs)} export requirements"))
+        detail=f"{len(export_reqs)} export requirements",
+        counts_toward_overall=bool(export_reqs)))
 
     # ── 8. unfinished_work ───────────────────────────────────────────
     missing = [str(m) for m in (goal.get("missing_summary") or [])
@@ -310,7 +319,8 @@ def reconcile_goal_verification(
             "goal satisfied without verified rendering evidence")
     report.contradictions = contradictions[:4]
     report.user_wins_notes = user_wins[:4]
-    severities = [_SEVERITY_ORDER.get(s.status, 2) for s in report.slots]
+    severities = [_SEVERITY_ORDER.get(s.status, 2)
+                  for s in report.slots if s.counts_toward_overall]
     worst = max(severities) if severities else 2
     report.overall = next(
         k for k, v in _SEVERITY_ORDER.items() if v == worst)

@@ -186,10 +186,17 @@ class TestHonesty:
         assert by_slot["unfinished_work"] == "warning"
 
     def test_not_evaluated_not_upgraded(self):
+        # 无声明角色 → data_coverage 诚实缺席且不参与折叠（N/A ≠ 拖低）
         rep = _reconcile(chapter=None)
-        by_slot = {s.slot: s.status for s in rep.slots}
-        assert by_slot["data_coverage"] == "not_evaluated"
-        assert rep.overall != "pass"
+        slot = next(s for s in rep.slots if s.slot == "data_coverage")
+        assert slot.status == "not_evaluated"
+        assert slot.counts_toward_overall is False
+        # 有声明角色但观察/科学证据缺席 → 不许 pass
+        rep2 = _reconcile(
+            chapter={"workflow_contract": {"roles": [
+                {"role": "x", "required": True, "status": "bound"}]}},
+            quality_review_present=False)
+        assert rep2.overall != "pass"
 
     def test_slots_have_evidence_refs(self):
         rep = _reconcile()
@@ -210,6 +217,8 @@ class TestDeterminism:
         assert set(payload) == {
             "schema_version", "goal_verdict", "overall", "slots",
             "contradictions", "user_wins_notes"}
+        assert all("counts_toward_overall" in s
+                   for s in payload["slots"])
 
     def test_slot_vocabulary_closed(self):
         rep = _reconcile()
