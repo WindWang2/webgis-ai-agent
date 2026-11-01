@@ -162,3 +162,79 @@ def equal_interval_breaks(
 def parse_frame_labels(frames: List[Dict[str, Any]]) -> List[str]:
     """帧 label 列表（前端时间轴顺序展示用；契约已保证升序）。"""
     return [f["label"] for f in frames]
+
+
+def apply_time_window_to_doc(
+    doc: Dict[str, Any], time_window: Dict[str, Any]
+) -> Dict[str, Any]:
+    """atlas time 页有效文档：绑定层内联要素按 [start,end) 过滤 + 页帧 cursor 盖章。
+
+    纯函数（触达路径浅拷，与 _page_filtered_doc 同纪律）：
+    - 过滤值经 normalize_boundary_value 归一到数据表示空间（与服务端
+      where AST 同语义）；
+    - ``temporal.cursor_frame`` 盖为本页帧 → SVG 时间注记显示本页期间；
+    - 无匹配要素 → 空集（诚实空页，不借用相邻帧）。
+    """
+    field = str(time_window.get("time_field") or "")
+    representation = str(time_window.get("time_representation") or "")
+    granularity = str(time_window.get("granularity") or "")
+    layer_id = str(time_window.get("layer_id") or "")
+    if not field or not representation:
+        return doc
+
+    lo = normalize_boundary_value(time_window["start"], representation, granularity)
+    hi = normalize_boundary_value(time_window["end"], representation, granularity)
+    numeric = isinstance(lo, (int, float)) and not isinstance(lo, bool)
+
+    def _in_window(value: Any) -> bool:
+        if numeric:
+            return (
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                and float(lo) <= float(value) < float(hi)
+            )
+        return isinstance(value, str) and str(lo) <= value < str(hi)
+
+    layers = doc.get("layers")
+    sources = doc.get("sources") if isinstance(doc.get("sources"), dict) else None
+    if not isinstance(layers, list) or sources is None:
+        return doc
+
+    # 解析绑定层 → source（无层 id 时取 temporal.layers[0]）。
+    target_sid = None
+    for layer in layers:
+        if isinstance(layer, dict):
+            lid = str(layer.get("id") or "")
+            if lid and (not layer_id or lid == layer_id):
+                target_sid = layer.get("source")
+                break
+    if not isinstance(target_sid, str) or target_sid not in sources:
+        return doc
+    src = sources[target_sid]
+    if not isinstance(src, dict):
+        return doc
+    payload = src.get("inlineData") or src.get("data")
+    if not isinstance(payload, dict) or not isinstance(payload.get("features"), list):
+        return doc
+
+    kept = [
+        f for f in payload["features"]
+        if isinstance(f, dict)
+        and _in_window((f.get("properties") or {}).get(field))
+    ]
+
+    new_payload = {**payload, "features": kept}
+    new_src = {**src}
+    if "inlineData" in new_src:
+        new_src["inlineData"] = new_payload
+    else:
+        new_src["data"] = new_payload
+    new_sources = {**sources, target_sid: new_src}
+
+    # temporal cursor 盖章（本页帧）—— SVG 时间注记/导出证据随页正确。
+    temporal = doc.get("temporal")
+    new_temporal = dict(temporal) if isinstance(temporal, dict) else {}
+    new_temporal["cursor_frame"] = time_window.get("frame_id")
+    if new_temporal.get("enabled"):
+        new_temporal["enabled"] = True
+
+    return {**doc, "sources": new_sources, "temporal": new_temporal}

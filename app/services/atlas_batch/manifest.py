@@ -78,6 +78,8 @@ def build_atlas_manifest(
                 "feature_offset": binding.feature_offset,
                 "feature_limit": binding.feature_limit,
                 "feature_count": binding.feature_count,
+                # GOAL 03：time 驱动页的时间窗证据（帧身份/窗口/表示）。
+                "time_window": dict(binding.time_window) if binding.time_window else None,
             },
             "classification": classification,
             "legend_digest": binding.legend_digest,
@@ -101,6 +103,20 @@ def build_atlas_manifest(
             "classification_scope": scope.value,
             # 科学语义：local 分级每页阈值不同，跨页直接比较是错误结论
             "cross_page_comparability": scope == ClassificationScope.shared,
+            # GOAL 03：time 驱动的时间证据（来源指纹/时间字段/真实帧数/
+            # 固定分级规则 —— manifest 消费方可复核每页窗口）。
+            "temporal": (
+                {
+                    "source_ref": _bounded_str(job_meta.get("temporal_source_ref"), 128),
+                    "content_revision": job_meta.get("temporal_content_revision"),
+                    "time_field": _bounded_str(job_meta.get("temporal_time_field"), 64),
+                    "time_representation": _bounded_str(job_meta.get("temporal_time_representation"), 32),
+                    "granularity": _bounded_str(job_meta.get("temporal_granularity"), 16),
+                    "frame_count": job_meta.get("temporal_frame_count"),
+                    "classification": job_meta.get("temporal_classification"),
+                }
+                if job_meta.get("temporal_time_field") else None
+            ),
         },
         "inputs": {
             "session_id": _bounded_str(spec.session_id, 255),

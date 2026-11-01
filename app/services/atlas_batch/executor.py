@@ -480,6 +480,9 @@ def execute_atlas_job(
         notes.extend(
             f"degradations: {d.get('code')}" for d in plan.ir.degradations[:4])
         notes.extend(qa_notes)
+        # GOAL 03：time 驱动的时间证据来源 = 水合后文档的 temporal 契约
+        # （单一真相；非 time 驱动或缺席 → None，manifest 不伪造时间块）。
+        _temporal = document.get("temporal") if isinstance(document.get("temporal"), dict) else None
         manifest = build_atlas_manifest(
             spec=spec, plan=plan, page_records=manifest_records, qa_report=qa_report,
             job_meta={
@@ -487,6 +490,16 @@ def execute_atlas_job(
                 "job_id": int(job_id), "attempt": attempt,
                 "mapspec_revision": mapspec_revision,
                 "spec_fingerprint": _structural_fingerprint(document),
+                "temporal_source_ref": _temporal.get("source_ref") if _temporal else None,
+                "temporal_content_revision": _temporal.get("content_revision") if _temporal else None,
+                "temporal_time_field": _temporal.get("time_field") if _temporal else None,
+                "temporal_time_representation": _temporal.get("time_representation") if _temporal else None,
+                "temporal_granularity": _temporal.get("granularity") if _temporal else None,
+                "temporal_frame_count": len(_temporal.get("frames") or []) if _temporal else None,
+                "temporal_classification": (
+                    _temporal.get("compare", {}).get("classification")
+                    if _temporal and isinstance(_temporal.get("compare"), dict) else None
+                ),
                 "notes": notes,
             },
             artifacts={"pdf": pdf_filename, "manifest": manifest_filename},
