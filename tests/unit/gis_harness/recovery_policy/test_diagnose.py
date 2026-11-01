@@ -66,8 +66,6 @@ class TestHttpSemantics:
         assert "retry" not in d.hints or d.retry is None or not d.retry.retry_allowed
 
     def test_numeric_status_in_error_type(self):
-        d = _tool_failure(error_type="HTTPError", code="PROVIDER_ERROR",
-                          message="provider call failed")
         d2 = diagnose.diagnose_tool_failure(
             status="429", message="", tool_name="t",
             harness_failure={"class": "timeout", "remediation": "retry_with_backoff",
