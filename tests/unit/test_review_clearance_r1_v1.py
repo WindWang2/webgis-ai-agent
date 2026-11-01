@@ -348,3 +348,167 @@ class TestP1_10CogFaces:
             assert r1["ref"] != r2["ref"]  # 旧 ref 不被复用（作废语义）
         finally:
             server.shutdown()
+
+
+# ── R2 残留清偿（N1 注入中和 / N2 格式归一 / P1-5 专项 / also_available） ──
+
+
+class TestR2_N1CoverageIdEncoding:
+    async def test_coverage_dataset_id_injection_neutralized(
+        self, patched_safe_sessions, ogc_fake_server
+    ):
+        """N1：coverages 读取链（domainset/rangetype/coverage URL）的 id 段
+        编码 —— ../ 不逃出 /collections/ 子树。"""
+        from app.schemas.data_fabric_schema import ConnectionProfile
+        from app.services.data_fabric.adapters.ogc_coverages_adapter import (
+            OGCCoveragesAdapter,
+        )
+
+        url = ogc_fake_server.add_ogc_coverages(prefix="/cov-inj")
+        patched_safe_sessions(ogc_fake_server)
+        adapter = OGCCoveragesAdapter(ConnectionProfile(
+            id="ci", source_type="ogc_api_coverages", endpoint_url=url, name="ci",
+        ))
+        ogc_fake_server.requested_urls.clear()
+        # describe 走 domainset/rangetype；即使 fixture 对未知 id 宽松返回，
+        # 发出的 URL 形态必须已段级编码（无裸 ../）
+        try:
+            adapter.describe("dem/../../admin/secret")
+        except Exception:  # noqa: BLE001 — 宽松 fixture 可能 200/404，均可
+            pass
+        for u in ogc_fake_server.requested_urls:
+            assert "/../" not in u, u
+            assert "#" not in u, u
+
+
+class TestR2_N2FormatSelectionNormalized:
+    async def test_case_variant_format_still_selects_covjson(
+        self, patched_safe_sessions, ogc_fake_server
+    ):
+        """N2：大小写变体声明（HTTP media type 大小写不敏感）下，
+        subset_read_ready=True 的服务读取不再自相矛盾拒绝。"""
+        from app.schemas.data_fabric_schema import ConnectionProfile
+        from app.services.data_fabric.adapters.ogc_coverages_adapter import (
+            OGCCoveragesAdapter,
+        )
+
+        url = ogc_fake_server.add_ogc_coverages(
+            declared_formats=("Application/PRS.Coverage+JSON",), prefix="/cov-case",
+        )
+        patched_safe_sessions(ogc_fake_server)
+        adapter = OGCCoveragesAdapter(ConnectionProfile(
+            id="cc", source_type="ogc_api_coverages", endpoint_url=url, name="cc",
+        ))
+        desc = adapter.describe("dem")
+        assert desc.metadata["subset_read_ready"] is True
+        result = await read_coverage_subset(
+            adapter, "dem", session_id=_SESSION,
+            subsets={"x": (100.0, 100.04), "y": (20.0, 20.04)},
+        )
+        assert result["status"] == "success", result
+
+
+class TestR2_P1_5CapabilityDefaults:
+    def test_queryspec_channel_declares_zero_pushdown(self):
+        """P1-5 专项：两协议的 QuerySpec 通道能力全 False（与 adapter 的
+        typed 拒绝一致 —— planner 不放行到运行时）。"""
+        from app.services.data_fabric.query.capabilities import get_capabilities
+
+        for st in ("ogc_api_tiles", "ogc_api_coverages", "ogc_tiles", "ogc_coverages"):
+            caps = get_capabilities(st)
+            true_bits = [
+                k for k, v in caps.model_dump().items() if v is True
+            ]
+            assert true_bits == [], (st, true_bits)
+
+
+class TestR2_N4DualProtocolDisclosure:
+    async def test_dual_protocol_service_reports_also_available(
+        self, patched_safe_sessions, ogc_fake_server
+    ):
+        """同一 fake server 挂 Tiles + Coverages 双协议 → also_available 披露
+        第二协议（不静默丢弃）。"""
+        from app.tools.ogc_service_tools import register_ogc_service_tools
+        from app.tools.registry import ToolRegistry
+
+        # fake server 按前缀首匹配路由 —— 双协议同根需要一个合并 handler
+        #（/collections 同时含 tilesets 链接集合与 coverage 集合；conformance
+        # 同时声明两族），等价真实双协议平台。
+        from tests.data.ogc_service_fixtures import (
+            FAKE_HOST,
+            coverage_domainset_doc,
+            coverage_rangetype_doc,
+            coverage_covjson_doc,
+            tiles_conformance_doc,
+            tiles_tileset_doc,
+            webmercator_tms_doc,
+        )
+        from tests.fixtures.data_fabric.fake_server import make_response
+        import re as _re
+
+        def _dual_handler(request):
+            from urllib.parse import urlsplit
+
+            ogc_fake_server._record(request)
+            path = urlsplit(request.url).path
+            if path.endswith("/conformance"):
+                doc = tiles_conformance_doc()
+                doc["conformsTo"].append(
+                    "http://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/core"
+                )
+                return make_response(request.url, json_body=doc)
+            if path.endswith("/domainset"):
+                return make_response(request.url, json_body=coverage_domainset_doc())
+            if path.endswith("/rangetype"):
+                return make_response(request.url, json_body=coverage_rangetype_doc())
+            if path.endswith("/coverage"):
+                xv, yv = [100.0, 100.02, 100.04], [20.0, 20.02, 20.04]
+                return make_response(
+                    request.url, json_body=coverage_covjson_doc(xv, yv),
+                    headers={"Content-Type": "application/prs.coverage+json"},
+                )
+            if path.endswith("/tileMatrixSets/WebMercatorQuad"):
+                return make_response(request.url, json_body=webmercator_tms_doc())
+            if _re.search(r"/tiles/[^/]+/\d+/\d+/\d+$", path):
+                from tests.data.ogc_service_fixtures import TILE_MVT_BYTES
+
+                return make_response(
+                    request.url, content=TILE_MVT_BYTES,
+                    headers={"Content-Type": "application/vnd.mapbox-vector-tile"},
+                )
+            if _re.search(r"/tiles/[^/]+$", path):
+                return make_response(request.url, json_body=tiles_tileset_doc(
+                    collection_id="admin",
+                ))
+            if _re.search(r"/collections/[^/]+$", path):
+                cid = path.rstrip("/").rsplit("/", 1)[-1]
+                return make_response(request.url, json_body={
+                    "id": cid, "title": cid, "itemType": "coverage",
+                    "extent": {"spatial": {"bbox": [[100.0, 20.0, 100.04, 20.04]]}},
+                    "links": [
+                        {"rel": "self", "href": f"https://{FAKE_HOST}/dual/collections/{cid}"},
+                        {"rel": "http://www.opengis.net/def/rel/ogc/1.0/coverage",
+                         "type": "application/prs.coverage+json",
+                         "href": f"https://{FAKE_HOST}/dual/collections/{cid}/coverage"},
+                        {"rel": "http://www.opengis.net/def/rel/ogc/1.0/tilesets-vector",
+                         "href": f"https://{FAKE_HOST}/dual/collections/{cid}/tiles"},
+                    ],
+                })
+            if path.endswith("/collections"):
+                return make_response(request.url, json_body={"collections": [
+                    {"id": "admin", "title": "admin",
+                     "links": [{"rel": "http://www.opengis.net/def/rel/ogc/1.0/tilesets-vector",
+                                "href": f"https://{FAKE_HOST}/dual/collections/admin/tiles"}]},
+                    {"id": "dem", "title": "dem", "itemType": "coverage"},
+                ]})
+            return make_response(request.url, status=404, text="no dual route")
+
+        ogc_fake_server._add("/dual", _dual_handler)
+        patched_safe_sessions(ogc_fake_server)
+        reg = ToolRegistry()
+        register_ogc_service_tools(reg)
+        result = await reg.dispatch("inspect_data_service", {
+            "url": ogc_fake_server.base_url + "/dual",
+        })
+        assert result["status"] == "success"
+        assert result["also_available"] == ["ogc_api_coverages"]

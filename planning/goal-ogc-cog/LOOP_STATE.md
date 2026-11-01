@@ -52,3 +52,8 @@ P0 完成（基线勘察+规划），进入 P1（M1 能力发现 + M7 fixture）
 - 全部 P0/P1 清偿 + P2 选择清偿 8 项/记录 4 项（决策见 INDEPENDENT_REVIEW.md）。
 - 附带发现：一行被不可见同形字符污染的正则（运行时 sre PatternError，repr 不可见）—— 改显式白名单过滤修复。
 - 清偿验证：goal 套件 94 passed（新增 test_review_clearance_r1_v1 13 项逐 finding 断言）；回归 118 passed/1 skipped；契约门（api_compatibility + contract_drift）通过（快照已在契约轮再生；本轮改动无路由/schema 变更）。
+
+### Round 10（2026-11-01）—— R2 复审 + N1–N6 清偿（终态）
+- R2（新 Reviewer，4 组可执行复现 + 全量运行 107 passed/0 failed）：R1 清偿复核 P0-1 及 7 条 P1 确认；2 条清偿不足（N1 coverages/tilesets 链 id 编码残留 + 实证 ../ 逃逸；N2 格式选择未走归一化）+ 新发现 N3-N6。
+- N1–N6 全部清偿：N1 补 4 处 quote + coverages 注入断言；N2 归一化选择 + 大小写变体 E2E；N3 网络层/SSRF 异常分流 unreachable（requests.RequestException/ValueError 捕获）；N4 inspect 构造入 try + 单条 describe 失败不丢协议结果；N5 畸形数值 typed；N6 文档叙事修正（中间态正则从未进提交）+ also_available 双协议测试 + P1-5 专项断言。
+- 终验：goal 套件 98 passed；后端回归 130 passed/1 skipped；前端 38 passed；ruff 全清。

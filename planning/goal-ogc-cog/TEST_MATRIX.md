@@ -29,4 +29,4 @@
 
 回归面：ruff check 新文件、python -m compileall、既有 adapter/registry/mapspec 相关测试抽跑（test_data_fabric_adapters.py、test_ogc_adapters_753.py、mapspec 契约）、前端 typecheck。
 
-| T-R1 | R1 清偿 | tests/unit/test_review_clearance_r1_v1.py | P0-1 CRS 无声明拒绝/投影轴不判经纬；P0-2 大小写+参数序；P1-1 5xx=unreachable/字节帽=oversize；P1-3 相对模板/相对 TMS 链接；P1-4 manager 失效 ogc-tiles: 前缀；P1-6 id 编码中和注入；P1-10 GeoTIFF 输出真值/读中预算=429→budget/资产变化新指纹；P1-9 typed 断言 | 逐 finding 断言 |
+| T-R1 | R1 清偿 | tests/unit/test_review_clearance_r1_v1.py | P0-1 CRS 无声明拒绝/投影轴不判经纬；P0-2 大小写+参数序；P1-1 5xx=unreachable/字节帽=oversize；P1-3 相对模板/相对 TMS 链接；P1-4 manager 失效 ogc-tiles: 前缀；P1-6 id 编码中和注入；P1-10 GeoTIFF 输出真值/读中预算（max_requests=0 → budget_exceeded）/资产变化新指纹；P1-9 typed 断言 | 逐 finding 断言 |

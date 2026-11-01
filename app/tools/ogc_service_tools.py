@@ -83,14 +83,16 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
         attempts: List[Dict[str, Any]] = []
         successes: List[Dict[str, Any]] = []
         for st in candidates:
-            profile = ConnectionProfile(
-                id=f"inspect-{st}", source_type=st,
-                endpoint_url=url, name=f"inspect {st}",
-            )
-            adapter = (
-                OGCTilesAdapter(profile) if st == "ogc_api_tiles" else OGCCoveragesAdapter(profile)
-            )
             try:
+                profile = ConnectionProfile(
+                    id=f"inspect-{st}", source_type=st,
+                    endpoint_url=url, name=f"inspect {st}",
+                )
+                # R2 N4a：构造（含 SSRF validate_url）也在 try 内 —— typed
+                # 错误走统一 envelope，不裸穿。
+                adapter = (
+                    OGCTilesAdapter(profile) if st == "ogc_api_tiles" else OGCCoveragesAdapter(profile)
+                )
                 if not adapter.probe():
                     attempts.append({"service_type": st, "probe": False})
                     continue
@@ -107,7 +109,9 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
                             "metadata": _bounded_metadata(desc.metadata),
                             "qualification": qualification_for_descriptor(desc),
                         })
-                    except DataFabricError as e:
+                    except Exception as e:  # noqa: BLE001
+                        # R2 N4b：单条 describe 失败不丢整协议结果（其余条目
+                        # 继续披露，错误逐条标注）。
                         descriptors.append({"id": d.get("id"), "describe_error": str(e)[:200]})
                 # R1 P2：双协议平台（Tiles+Coverages 同源）不短路 —— 两个
                 # 都探测并报告，主结果取首个，其余在 also_available 披露。

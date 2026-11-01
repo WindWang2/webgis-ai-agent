@@ -131,9 +131,12 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
 
     def _tilesets_of_collection(self, cid: str) -> List[Dict[str, Any]]:
         """集合的 tileset 摘要列表（rel=tilesets-* 链接或直接探测 /tiles）。"""
+        from urllib.parse import quote
+
         base = self.url.rstrip("/")
         if cid != "_":
-            url = f"{base}/collections/{cid}/tiles"
+            # R2 N1：cid 段级编码（远端响应不可信）。
+            url = f"{base}/collections/{quote(cid, safe='')}/tiles"
         else:
             url = f"{base}/tiles"
         try:

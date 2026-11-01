@@ -202,10 +202,28 @@ async def read_coverage_subset(
             )
 
     # ── 输出格式（服务声明；COVJSON 优先——结构化可校验） ─────────
-    if _COVJSON_FORMAT in formats_supported:
+    # R2 N2：格式选择与 descriptor 同一归一口径（大小写/参数序无关），
+    # 消除 subset_read_ready=True 却读取拒绝的自矛盾。
+    from app.services.data_fabric.ogc_capability import normalize_coverage_format
+
+    _supported_norm = {
+        normalize_coverage_format(f)
+        for f in [*formats_supported, *_GEOTIFF_FORMATS, _COVJSON_FORMAT]
+    }
+    if any(
+        normalize_coverage_format(f) == normalize_coverage_format(_COVJSON_FORMAT)
+        for f in formats_supported
+    ):
         chosen_format = _COVJSON_FORMAT
     else:
-        tiff = next((f for f in formats_supported if f in _GEOTIFF_FORMATS), None)
+        tiff = next(
+            (
+                f for f in formats_supported
+                if normalize_coverage_format(f)
+                in {normalize_coverage_format(g) for g in _GEOTIFF_FORMATS}
+            ),
+            None,
+        )
         if tiff is None:
             raise CoverageReadError(
                 "no supported output format declared by the service",
@@ -255,6 +273,15 @@ async def read_coverage_subset(
             # bounded_get 的 raise_for_status 路径（非 2xx 状态）。
             raise CoverageReadError(
                 f"coverage fetch failed: {e}",
+                reason_code=RC_UNREACHABLE,
+                details={"dataset_id": dataset_id},
+            ) from e
+        except (_requests.RequestException, ValueError) as e:
+            # R2 N3：网络层（ConnectionError/Timeout —— 非 HTTPError 子类）
+            # 与 SSRF/egress 拒绝（DataFabricSecurityError 是 ValueError 子类）
+            # 同归 unreachable（typed），不裸穿。
+            raise CoverageReadError(
+                f"coverage fetch unreachable: {e}",
                 reason_code=RC_UNREACHABLE,
                 details={"dataset_id": dataset_id},
             ) from e
@@ -402,8 +429,15 @@ def _parse_covjson(
             reason_code=RC_AXIS_NOT_IDENTIFIABLE,
             details={"axes": list(axes_doc)},
         )
-    lon_vals = np.asarray([float(v) for v in axis_items[lon_axis][1].get("values", [])], dtype="float64")
-    lat_vals = np.asarray([float(v) for v in axis_items[lat_axis][1].get("values", [])], dtype="float64")
+    try:
+        lon_vals = np.asarray([float(v) for v in axis_items[lon_axis][1].get("values", [])], dtype="float64")
+        lat_vals = np.asarray([float(v) for v in axis_items[lat_axis][1].get("values", [])], dtype="float64")
+    except (TypeError, ValueError) as e:
+        # R2 N5：畸形轴值（非数值）→ typed（不裸穿 ValueError）。
+        raise CoverageReadError(
+            f"COVJSON axis values are not numeric: {e}",
+            reason_code=RC_CAPABILITY_NOT_DECLARED,
+        ) from e
     if lon_vals.size < 2 or lat_vals.size < 2:
         raise CoverageReadError(
             "COVJSON axes need >= 2 values to derive a transform",
@@ -436,7 +470,13 @@ def _parse_covjson(
                 f"range '{name}' lacks NdArray values/shape (TiledNdArray unsupported)",
                 reason_code=RC_CAPABILITY_NOT_DECLARED,
             )
-        arr1 = np.asarray(values, dtype="float64")
+        try:
+            arr1 = np.asarray(values, dtype="float64")
+        except (TypeError, ValueError) as e:
+            raise CoverageReadError(
+                f"COVJSON range values are not numeric: {e}",
+                reason_code=RC_CAPABILITY_NOT_DECLARED,
+            ) from e
         # 轴序按 axisNames 归一化为 [lat, lon]（GDAL north-up 语义）。
         if axis_names:
             kind_map = [_axis_kind_axis(str(a), axis_items) for a in axis_names]

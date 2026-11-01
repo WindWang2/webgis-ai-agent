@@ -270,12 +270,16 @@ class OGCCoveragesAdapter(GeospatialDataSourceAdapter):
         domainset: Optional[Dict[str, Any]] = None
         rangetype: Optional[Dict[str, Any]] = None
         if has_endpoint:
+            from urllib.parse import quote
+
+            # R2 N1：id 段级编码（domainset/rangetype 读取链）。
+            qid = quote(dataset_id, safe="")
             try:
-                domainset = self._get_json(f"{base}/collections/{dataset_id}/domainset")
+                domainset = self._get_json(f"{base}/collections/{qid}/domainset")
             except DataFabricError as e:
                 logger.debug("[ogc-coverages] domainset unavailable for '%s': %s", dataset_id, e)
             try:
-                rangetype = self._get_json(f"{base}/collections/{dataset_id}/rangetype")
+                rangetype = self._get_json(f"{base}/collections/{qid}/rangetype")
             except DataFabricError as e:
                 logger.debug("[ogc-coverages] rangetype unavailable for '%s': %s", dataset_id, e)
 

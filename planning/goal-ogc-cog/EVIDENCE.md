@@ -32,3 +32,7 @@
 - 契约门对照：临时 origin/master 基线 worktree 跑同 6 个 quality 测试文件 → 失败集合与分支**完全一致**（10 个：contract_drift frontend_call_normalization 1 + findings_ratchet 1 + structural_perf 5 + manifest/ledger/cancellation 3）；分支零新增红灯。
 - `API_SNAPSHOT_UPDATE=1 pytest tests/quality/test_api_compatibility.py` → 快照再生成（+115 行 ogc-tiles 路由）；复跑 12 passed。
 - 关键测试双跑：RUN 1 `81 passed in 116.65s`；RUN 2 `81 passed in 116.52s`（两次结果一致）。
+
+## Round 10（R2 复审 + 终态）
+- R2 抽验命令与结果（Reviewer 实跑）：clearance+coverage+proxy+discovery 47 passed；E2E 4 passed；补跑 coverages/tools/route/mapspec 33 passed；cog 10 passed（94s）；adapter contract 13 passed。
+- 终态（清偿后）：`pytest -q <goal 10 文件> --no-cov` → **98 passed in 128.05s**；回归 10 文件 → **130 passed, 1 skipped**；前端 vitest → **38 passed**；ruff app/+新测试 → 全清。

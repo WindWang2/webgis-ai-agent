@@ -37,7 +37,7 @@
 | registry is_raster_tile 语义 vs display_only | 保留（registry 语义="非矢量查询源"，与 wms/pmtiles 同款先例；display_only 双轨由 service_qualification 承载）——记录 |
 | coverage 预算无 count 静默跳过/nodata 首波段/float32/缺波段静默 | 部分已修（bands_missing 进 provenance）；其余接受为封闭子集已知限制（矩阵披露） |
 | inspect 短路只报首个协议 | 已修（双协议全探测 + also_available 披露） |
-| lid 无校验/session_id 未 quote | 已修（ASCII 白名单 + URL 段级编码）；**附带发现并修复一行不可见同形字符污染的正则（运行时 sre 报 bad character range，repr 不可见 —— 改显式白名单过滤）** |
+| lid 无校验/session_id 未 quote | 已修（ASCII 白名单 + URL 段级编码）。注（R2 N6 修正）：清偿过程中的一个中间态正则曾在本地运行时报 sre bad character range（不可见字符），该状态从未进入任何 git 提交，最终实现为显式白名单过滤 —— 早期"修复历史正则"的叙事不准确，以此为准 |
 | mapspec vector tiles 元素不校验字符串 | 已修（all isinstance str） |
 
 ### 已知限制（披露，不掩盖）
@@ -45,5 +45,10 @@
 2. GDAL 对 Python http.server 的 .msk 首访探测 ~5s×2（loopback 测试环境伪影；GDAL_PAM_ENABLED=NO 已消除 PAM 族 -25s/open）。
 3. 空 body 瓦片返回声明类型、gzip-PNG 魔数嗅探歧义 —— 与既有 pmtiles 服务同源启发式。
 
-## R2（复审）
-（待 R2 执行后填写）
+## R2（2026-11-01，第二轮独立复审，新 Reviewer 未参与实现与 R1）
+
+- 方法：逐 finding 读代码 + 逐个读测试 + 4 组可执行复现 + 全量运行（107 passed/0 failed，与 LOOP_STATE 数字一致）。
+- R1 清偿复核：P0-1 及 7 条 P1 清偿确认；**2 条清偿不足**（P0-2 残留 N2：coverage_read 格式选择未走归一化；P1-6 残留 N1：coverages 读取链/tiles tilesets 列表的 id 段未编码，实证 ../ 逃逸）；P1-1 部分清偿（N3：网络层异常未分流）。
+- 新发现：N1/N2（P1，阻塞）、N3/N4/N5（P2）、N6（文档叙事不准确）。
+- **N1–N6 已全部清偿**（见 Round 10）：id 编码补 4 处 + coverages 注入断言；格式选择归一化 + 大小写变体 E2E 断言；网络层/SSRF 异常分流 unreachable；inspect 构造入 try + 单条 describe 失败不丢协议结果；畸形数值 typed；文档叙事修正 + also_available 双协议测试 + P1-5 专项断言。
+- Verdict（R2 原文）："需再修，修完可提 PR"——阻塞项 N1/N2 及 N3-N6 已全部修复并带回归断言（tests/unit/test_review_clearance_r1_v1.py 17 项）。
