@@ -10,7 +10,7 @@ requires_clarification / blocked。理由码词表见 vocabulary.py（SSC_*）�
 | S2 | 同上但无 crs member（度样坐标） | 无声明、坐标度样（含小数、|v|≤180/≤90） | 静默按 4326（仅越界才 warn） | pass_with_disclosure：crs_source=rfc7946_default + 理由码 CRS_RFC7946_DEFAULT（规范缺省，非猜测） |
 | S3 | 无 crs member 且坐标为投影米（成都 UTM x≈5e5,y≈3.6e6） | 无声明、非度样 | **warn 后静默当 4326**（G 通路） | **blocked**：CRS_UNDECLARED_NON_DEGREE + 修复建议 declare_crs（显式授权才继续）；工具返回 typed error 不改写成功 |
 | S4 | 声明 EPSG:3857（成都纬度）缓冲 500m | 已投影非局部度量 | 直接在 3857 米上缓冲（失真 ~1.57×） | degraded_with_disclosure：WEB_MERCATOR_SCALE_DISTORTION + 失真估计；确定性安全路径（3857→UTM，双方 EPSG）建议 transform，需显式授权执行 |
-| S5 | distance=0.5 + unit=km（=500m） | 单位归一 | 归一靠工具自身 | pass：换算链 distance=0.5km→500m 显式记入契约 |
+| S5 | distance=0.5 + unit=km（=500m） | 单位归一 | 归一靠工具自身 | pass_with_disclosure：换算链 distance=0.5km→500m 显式记入契约 |
 | S6 | 各区每 km² 小学密度 | polygon 分母 + count | rate_unit=per_m2（正确但口径未升格） | pass：stat_denominator=area、denominator_unit=km²、density_unit=所/km² 进 legend_spec.unit 与 MapSpec 证据；零面积区 rate=None 披露 |
 | S7 | 密度请求 per_km² 但分母绑人口字段 | 量纲错配 | 字段级闸有 UNIT_DIMENSION_MISMATCH（规划期） | 执行前统一判定：DE nominator_KIND_MISMATCH（denominator=population ≠ 请求 per_area）+ 修复建议二选一 |
 | S8 | BD-09 声明点位 × WGS84 边界 join | 双层异帧声明 | 归一正确但证据只进 log | pass_with_disclosure：契约记 datum_normalization=[bd09→gcj02→wgs84]，join 结果 evidence 带归一事实 |
