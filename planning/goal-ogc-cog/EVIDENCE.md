@@ -27,3 +27,8 @@
   - ①inspect(supported/display_only) → sync(1) → add_tile_service_layer(vector tiles 模板) → parse_mapspec valid → 路由 200 TILE_MVT_BYTES → 缓存 hit
   - ②STAC asset(data) → materialize(ref:fabric-cog, requests≥1, 窗口 150×150≪600×600) → 3 采样点真值 approx → PNG imageRef → MapSpec raster 源 valid
   - ③no_coverage_endpoint → read_coverage_subset error_type=capability_not_declared, ref=None；对照面 3×3 真值逐点
+
+## Round 8（契约门 + 双跑）
+- 契约门对照：临时 origin/master 基线 worktree 跑同 6 个 quality 测试文件 → 失败集合与分支**完全一致**（10 个：contract_drift frontend_call_normalization 1 + findings_ratchet 1 + structural_perf 5 + manifest/ledger/cancellation 3）；分支零新增红灯。
+- `API_SNAPSHOT_UPDATE=1 pytest tests/quality/test_api_compatibility.py` → 快照再生成（+115 行 ogc-tiles 路由）；复跑 12 passed。
+- 关键测试双跑：RUN 1 `81 passed in 116.65s`；RUN 2 `81 passed in 116.52s`（两次结果一致）。
