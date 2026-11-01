@@ -933,6 +933,29 @@ def map_product_block(
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
                          exc_info=True)
+    # GOAL 05（ADR-0279 M4）：goal verification 对账随块持久化 ——
+    # 「完成回执 ↔ 渲染观察 ↔ 数据资格 ↔ 科学评审」一致性面（false-PASS
+    # 守门：观察缺失/科学证据不足不能随 task_complete 混过）。additive
+    # 键；只读 goal_satisfaction/observation_health/chapter 既有事实，
+    # 不重算 ADR-0183 判定；失败绝不阻断终验。
+    if chapter:
+        try:
+            from app.lib.harness.goal_verification import (
+                reconcile_goal_verification,
+            )
+
+            verification = reconcile_goal_verification(
+                goal_report=block.get("goal_satisfaction"),
+                observation_health=block.get("observation_health"),
+                chapter=chapter,
+                task_complete=block.get("task_complete"),
+                quality_review_present=cartographic_review is not None,
+            )
+            if verification is not None:
+                block["goal_verification"] = verification.to_bounded_dict()
+        except Exception:  # noqa: BLE001 — 增值对账，绝不阻断终验
+            logger.debug("[MapFinalizer] goal verification failed",
+                         exc_info=True)
     # ADR-0220：procedure 覆盖随块持久化（「方法步骤是否按技能完成」的
     # 确定性对账面；additive 键，旧读者忽略；skill coverage 不替代
     # science/cartography/final_map 事实；无绑定块零漂移）。
@@ -1519,6 +1542,25 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
         gs_payload = bounded_payload(stored.get("goal_satisfaction"))
         if gs_payload is not None:
             payload["goal_satisfaction"] = gs_payload
+    except Exception:  # noqa: BLE001 — 投影失败只少一键
+        pass
+    # GOAL 05（ADR-0279 M4）：goal verification 对账投影随 task_complete
+    # 面下行（additive bounded —— overall/矛盾/未完成面；块缺席键省略）。
+    try:
+        gv = stored.get("goal_verification")
+        if isinstance(gv, dict) and gv.get("overall"):
+            payload["goal_verification"] = {
+                "overall": str(gv.get("overall"))[:16],
+                "goal_verdict": str(gv.get("goal_verdict"))[:24],
+                "contradictions": [str(c)[:160]
+                                   for c in (gv.get("contradictions")
+                                             or [])[:4]],
+                "failed_slots": [
+                    str(s.get("slot"))[:32]
+                    for s in (gv.get("slots") or [])
+                    if isinstance(s, dict)
+                    and s.get("status") == "fail"][:6],
+            }
     except Exception:  # noqa: BLE001 — 投影失败只少一键
         pass
     return payload
