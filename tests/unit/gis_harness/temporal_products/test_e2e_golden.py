@@ -324,4 +324,3 @@ async def test_date_boundary_half_open(monkeypatch):
     counts = {f["id"]: f["feature_count"] for f in bind["frames"]}
     # 2023 帧含 12-31T23:59（<2024 边界）；2024 帧含 01-01T00:00（≥2024）。
     assert counts == {"f-2023": 1, "f-2024": 2}
-
