@@ -40,3 +40,9 @@ P0 完成（基线勘察+规划），进入 P1（M1 能力发现 + M7 fixture）
 ### Round 6（2026-11-01）—— P6/M6 完成
 - 结果：前端最小改动 —— SOURCE_TYPES +ogc_api_tiles/+ogc_api_coverages；descriptor 弹窗三态能力展示（capability in metadata 时渲染 supported/unsupported/unknown + reasons，色彩语义区分）；zh/en i18n。#1747 既有测试计数断言 7→9（意图"无空白 option"不变）。
 - 证据：vitest 38 passed（add-source-form + runtime）；typecheck 全仓仅 3 个 master 既有红灯（map-components/*.test.tsx，均不在本分支变更集 —— 与 carto-b PR 的红灯隔离同款披露）；本分支前端文件零错误。
+
+### Round 7（2026-11-01）—— P7+P8（M8 断言内嵌 + M9 三场景 E2E）完成
+- 结果：test_goal_e2e_scenarios_v1.py 四测试全绿 —— ①Tiles 发现→资格→目录→add_tile_service_layer→MapSpec(vector 源/parse_mapspec 校验)→代理路由真实字节(200/缓存 hit) ②STAC 发现→受控物化(ref:fabric-cog + 账本 requests/bytes/窗口≪整幅 + 回执无 path)→区域统计真值采样→PNG imageRef 入 MapSpec ③无能力声明→unsupported(no_coverage_endpoint)→read typed 拒绝 + 对照面（有声明即真值交付）。
+- M8 断言：预算账本（requests≥1/bytes>0/window cells≪full）、X-Tile-Cache hit、ref offload（回执无磁盘 path，消费经 artifact_registry.fabric_cog_path 解析）。
+- 全套件：本方向 81 passed（116s）；相邻回归 99 passed/1 skipped；ruff 全清。
+- 缺陷修复：ogc_service_tools 的 spatial_catalog 导入路径（app.services.data_fabric.spatial_catalog）。

@@ -18,3 +18,12 @@
 - `pnpm exec vitest run lib/mapspec-runtime/runtime.test.ts --maxWorkers=2` → `36 passed`
 - mapspec 回归（test_mapspec_source 等 4 文件）→ `57 passed`
 - `ruff check <P2 文件 8 个>` → 通过
+
+## Round 7（P7+P8）
+- `pytest -q <本方向 9 个测试文件> --no-cov` → `81 passed in 116.61s`
+- 回归 `pytest -q tests/unit/test_data_fabric_adapters.py test_adapter_contract_v2.py test_ogc_adapters_753.py test_mapspec_source.py test_mapspec_commit_surface_687.py test_artifact_registry.py test_pmtiles_tile_route.py test_data_fabric_routes.py --no-cov` → `99 passed, 1 skipped`
+- `ruff check app/ + 新测试` → 全清
+- E2E 场景明细：
+  - ①inspect(supported/display_only) → sync(1) → add_tile_service_layer(vector tiles 模板) → parse_mapspec valid → 路由 200 TILE_MVT_BYTES → 缓存 hit
+  - ②STAC asset(data) → materialize(ref:fabric-cog, requests≥1, 窗口 150×150≪600×600) → 3 采样点真值 approx → PNG imageRef → MapSpec raster 源 valid
+  - ③no_coverage_endpoint → read_coverage_subset error_type=capability_not_declared, ref=None；对照面 3×3 真值逐点

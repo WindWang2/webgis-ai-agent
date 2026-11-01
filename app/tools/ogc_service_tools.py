@@ -323,7 +323,7 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
         from app.services.data_fabric.errors import DataFabricError, UnsupportedSourceError
         from app.services.data_fabric.ogc_tiles_proxy import build_mapspec_source
         from app.services.mapspec_store import mapspec_store
-        from app.services.spatial_catalog import spatial_catalog_service
+        from app.services.data_fabric.spatial_catalog import spatial_catalog_service
 
         descriptor = spatial_catalog_service.get_dataset(catalog_item_id, owner=session_id)
         if descriptor is None:
