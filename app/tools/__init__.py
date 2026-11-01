@@ -82,6 +82,9 @@ _TOOL_MODULES = [
     ("app.tools.geocompute_tools", "register_geocompute_tools"),
     # science-v5 W8：物候/时空立方体/时间异常工具面（独立模块防并发冲突）
     ("app.tools.science_temporal_tools", "register_science_temporal_tools"),
+    # GOAL 03：时态视图控制工具面（bind/control/compare/unbind/status；
+    # 写 MapSpec temporal 分支，独立模块防并发冲突）
+    ("app.tools.temporal_view_tools", "register_temporal_view_tools"),
     ("app.tools.modelops_tools", "register_modelops_tools"),
     # Platform 11 / ADR-0198：GeoAI prompt artifact/候选/精化/语义工具面
     ("app.tools.geoai_tools", "register_geoai_tools"),

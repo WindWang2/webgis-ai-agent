@@ -156,6 +156,20 @@ class SetTimeBody(ClientMutationIdMixin):
     speed: Optional[float] = None
 
 
+class SetTemporalViewBody(ClientMutationIdMixin):
+    """时态控制层用户面写入（GOAL 03；temporal_view.v1 契约体）。
+
+    config/patch/remove 语义与 SetTemporalViewIntent 一一对应；用户
+    时间轴交互（seek/pause/速度）走 patch + expected_revision CAS。
+    """
+
+    intent: Literal["set_temporal_view"]
+    expected_revision: int = Field(ge=0)
+    config: Optional[dict[str, Any]] = None
+    patch: Optional[dict[str, Any]] = None
+    remove: bool = False
+
+
 class InitProjectBody(ClientMutationIdMixin):
     intent: Literal["init_project"]
     expected_revision: int = Field(ge=0)
@@ -203,6 +217,7 @@ UserMapSpecMutationRequest = Annotated[
         ReorderLayersBody,
         SetLayoutBody,
         SetTimeBody,
+        SetTemporalViewBody,
         InitProjectBody,
         SetWorkbenchStateBody,
         PatchWorkbenchDeltaBody,

@@ -1118,6 +1118,79 @@ async def _handle_settime(ctx: MutationContext) -> HandlerOut:
     return MutationPlan(mapspec=mapspec)
 
 
+def _temporal_terminal_error(ctx: MutationContext, msg: str, hint: str = "") -> MapSpecResult:
+    return MapSpecResult(
+        is_error=True,
+        origin=ctx.origin,
+        error_msg=msg,
+        correction_hint=hint or "temporal 视图变更被拒绝；请先 temporal_view_bind 建立契约。",
+    )
+
+
+async def _handle_settemporalview(ctx: MutationContext) -> HandlerOut:
+    """SetTemporalViewIntent 分支体（GOAL 03 时态控制层）。
+
+    写入面 mapspec["temporal"]（v1.8 TemporalViewContract.v1）；与幽灵
+    ``time`` 分支互不触碰（temporal 是唯一被消费的时态真相）。COW：顶层
+    浅拷 + temporal 分支整体新建（不与 loaded 共享子结构）。config/patch
+    均经 MapSpecTemporalConfig 复验 —— 坏契约终局拒绝（is_error），绝不
+    落盘半合法文档。
+    """
+    from pydantic import ValidationError
+
+    from app.lib.cartography.mapspec_schema import MapSpecTemporalConfig
+
+    loaded = ctx.loaded
+    intent = ctx.intent
+    mapspec = {**loaded} if loaded else {}
+
+    if intent.remove:
+        if "temporal" not in mapspec:
+            return MapSpecResult(
+                is_error=False, origin=ctx.origin,
+                warnings=["temporal 未绑定，remove 为 no-op"],
+            )
+        mapspec.pop("temporal", None)
+        return MutationPlan(mapspec=mapspec)
+
+    if intent.config is not None:
+        try:
+            cfg = MapSpecTemporalConfig.model_validate(intent.config)
+        except ValidationError as exc:
+            return _temporal_terminal_error(
+                ctx, f"temporal 契约不合法：{exc.errors()[0].get('msg', 'invalid')}"
+            )
+        mapspec["temporal"] = cfg.model_dump(mode="json")
+        return MutationPlan(mapspec=mapspec)
+
+    if intent.patch is not None:
+        existing = mapspec.get("temporal")
+        if not isinstance(existing, dict) or not existing:
+            return _temporal_terminal_error(ctx, "temporal 未绑定，无法增量控制")
+        merged = {**existing}
+        playback_patch = intent.patch.get("playback")
+        if isinstance(playback_patch, dict) and isinstance(merged.get("playback"), dict):
+            merged["playback"] = {**merged["playback"], **playback_patch}
+        elif playback_patch is not None:
+            merged["playback"] = playback_patch
+        for key, value in intent.patch.items():
+            if key == "playback":
+                continue
+            merged[key] = value
+        try:
+            cfg = MapSpecTemporalConfig.model_validate(merged)
+        except ValidationError as exc:
+            return _temporal_terminal_error(
+                ctx, f"temporal 增量控制后契约不合法：{exc.errors()[0].get('msg', 'invalid')}"
+            )
+        mapspec["temporal"] = cfg.model_dump(mode="json")
+        return MutationPlan(mapspec=mapspec)
+
+    return _temporal_terminal_error(
+        ctx, "SetTemporalViewIntent 需要 config/patch/remove 之一"
+    )
+
+
 async def _handle_refreshdatarevision(ctx: MutationContext) -> HandlerOut:
     """RefreshDataRevisionIntent 分支体（/goal 03 要素编辑盖章）。
 

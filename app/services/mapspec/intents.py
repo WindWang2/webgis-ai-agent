@@ -344,6 +344,23 @@ class SetTimeIntent:
 
 
 @dataclass
+class SetTemporalViewIntent:
+    """时态控制层写入（GOAL 03，TemporalViewContract.v1 → mapspec["temporal"]）。
+
+    三种互斥用法（service 层保证恰一）：
+    - config：完整契约替换（bind —— config 已在 service 层经
+      MapSpecTemporalConfig 校验；handler 复验，坏文档终局拒绝）；
+    - patch：增量控制（cursor_frame / playback / compare / user_pinned /
+      missing_policy —— 键级合并进既有 temporal 后整体复验）；
+    - remove：解绑（删除 temporal 分支；未绑定时为 no-op 终局回执）。
+    """
+
+    config: Optional[Dict[str, Any]] = None
+    patch: Optional[Dict[str, Any]] = None
+    remove: bool = False
+
+
+@dataclass
 class RefreshDataRevisionIntent:
     """要素编辑后的数据新鲜度盖章（/goal 03）。
 
@@ -422,6 +439,7 @@ MutationIntent = Union[
     RestoreStyleIntent,
     SetBasemapIntent,
     SetTimeIntent,
+    SetTemporalViewIntent,
     PatchLayerStyleIntent,
     SetWorkbenchStateIntent,
     SetScenarioModeIntent,
