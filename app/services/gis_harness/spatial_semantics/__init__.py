@@ -55,6 +55,11 @@ from app.services.gis_harness.spatial_semantics.validate import (
     SpatialOperationVerdict,
     validate_spatial_operation,
 )
+from app.services.gis_harness.spatial_semantics.tool_gate import (
+    SpatialSemanticBlocked,
+    attach_semantics_evidence,
+    preflight_tool_input,
+)
 from app.services.gis_harness.spatial_semantics.vocabulary import (
     SSC_REASON_CODES,
     reason_code_metadata,
@@ -90,4 +95,7 @@ __all__ = [
     "AREA_UNIT_DISPLAY",
     "SSC_REASON_CODES",
     "reason_code_metadata",
+    "SpatialSemanticBlocked",
+    "preflight_tool_input",
+    "attach_semantics_evidence",
 ]

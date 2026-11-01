@@ -347,6 +347,21 @@ def register_spatial_tools(registry: ToolRegistry):
             # Unparseable input must surface as a standard tool error, not a
             # silent empty-FC success (decorator would normalize None → []).
             raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        # GOAL 01（空间语义契约 M4）：执行前统一 preflight —— 未声明 CRS 的
+        # 投影样数据 blocked（不再 warn 后静默按 4326）、3857 失真降级披露、
+        # 单位换算链记账；pass/degraded 语义证据并入响应。
+        from app.services.gis_harness.spatial_semantics import (
+            SpatialSemanticBlocked,
+            attach_semantics_evidence,
+            normalize_distance_params,
+            preflight_tool_input,
+        )
+        try:
+            distance_m, _chain = normalize_distance_params(distance, unit)
+            pf = preflight_tool_input(
+                data, operation="buffer", distance=distance, distance_unit=unit)
+        except SpatialSemanticBlocked as exc:
+            raise ValueError(str(exc)) from None
         # ARCH-01 (deep-audit round 3): SpatialAnalysisEngine (a name-dispatch
         # seam ADR-0013 deleted) was removed; call SpatialAnalyzer directly like
         # every other spatial tool.
@@ -359,7 +374,8 @@ def register_spatial_tools(registry: ToolRegistry):
         evidence = _buffer_scientific_evidence(distance, unit, res)
         if evidence is not None:
             resp["scientific_evidence"] = evidence
-        return resp
+        return attach_semantics_evidence(
+            resp, pf, distance_m=distance_m, distance_unit=unit)
 
     @tool(registry, name="spatial_stats",
            description=(

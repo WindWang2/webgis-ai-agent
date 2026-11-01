@@ -198,6 +198,27 @@ def _features_from_input(payloads: dict[str, NodePayload], node: ExecutionNode) 
     )
 
 
+def _input_fc(payloads: dict[str, NodePayload], node: ExecutionNode) -> dict[str, Any]:
+    """features → FC（GOAL 01 G2 修复：上游声明的 CRS 随载荷过管）。
+
+    旧实现重建 FC 时丢掉 crs member —— 已投影（3857/UTM）载荷进入
+    buffer_smart 后被当 EPSG:4326 度处理（度/米混淆现行通路）。CRS 事实
+    由 ``_payload_from_feature_collection`` 记入 metadata，在此重新挂回。
+    """
+    feats = _features_from_input(payloads, node)
+    fc: dict[str, Any] = {"type": "FeatureCollection", "features": feats}
+    crs = node.parameters.get("crs")
+    if not crs:
+        for src in node.inputs:
+            meta = payloads.get(src, {}).get("metadata")
+            if isinstance(meta, dict) and meta.get("crs"):
+                crs = meta["crs"]
+                break
+    if crs:
+        fc["crs"] = crs
+    return fc
+
+
 def _props_of(item: Any) -> dict:
     """feature / 裸属性行 → 谓词与聚合作用的属性行。
 
@@ -243,7 +264,11 @@ def _rows_from_input(payloads: dict[str, NodePayload], node: ExecutionNode) -> l
 
 def _payload_from_feature_collection(fc: dict[str, Any], **extra: Any) -> NodePayload:
     feats = fc.get("features", fc if isinstance(fc, list) else [])
-    return {"features": list(feats), "metadata": {"feature_count": len(feats), **extra}}
+    meta: dict[str, Any] = {"feature_count": len(feats), **extra}
+    # GOAL 01 G2：声明 CRS 随载荷传递（_input_fc 在下游重建 FC 时挂回）。
+    if isinstance(fc, dict) and fc.get("crs"):
+        meta["crs"] = fc["crs"]
+    return {"features": list(feats), "metadata": meta}
 
 
 def _check_row_budget(rows: list[Any], ctx: OperatorContext, node: ExecutionNode) -> None:
@@ -460,8 +485,7 @@ def _op_vector_operation(ctx: OperatorContext, node: "ExecutionNode", payloads: 
     from app.lib.geo_processor.overlay import overlay_smart
 
     op = node.operation or node.parameters.get("op")
-    feats = _features_from_input(payloads, node)
-    fc = {"type": "FeatureCollection", "features": feats}
+    fc = _input_fc(payloads, node)
     params = node.parameters
     if op == "buffer":
         result = buffer_smart(
@@ -494,10 +518,14 @@ def _op_vector_operation(ctx: OperatorContext, node: "ExecutionNode", payloads: 
 
 def _payloads_fc(payloads: dict[str, NodePayload], node: "ExecutionNode", idx: int) -> dict[str, Any]:
     src = node.inputs[idx] if idx < len(node.inputs) else None
+    meta = (payloads.get(src or "", {}) or {}).get("metadata")
     feats = (payloads.get(src or "", {}) or {}).get("features")
     if not feats:
         raise NodeExecutionError(f"node '{node.node_id}' missing secondary feature input", node_id=node.node_id)
-    return {"type": "FeatureCollection", "features": feats}
+    fc: dict[str, Any] = {"type": "FeatureCollection", "features": feats}
+    if isinstance(meta, dict) and meta.get("crs"):
+        fc["crs"] = meta["crs"]
+    return fc
 
 
 def _op_raster_window_operation(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[str, NodePayload]) -> NodePayload:
@@ -577,8 +605,7 @@ def _raster_from_inputs(payloads: dict[str, NodePayload], node: "ExecutionNode",
 def _op_interpolation(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[str, NodePayload]) -> NodePayload:
     """INTERPOLATION：IDW（H3 网格，资源守卫内置）或普通克里金（含不确定度）。"""
     method = str(node.operation or node.parameters.get("method", "idw")).lower()
-    feats = _features_from_input(payloads, node)
-    fc = {"type": "FeatureCollection", "features": feats}
+    fc = _input_fc(payloads, node)
     value_field = node.parameters.get("value_field")
     if not value_field:
         raise NodeExecutionError("INTERPOLATION requires parameters.value_field", node_id=node.node_id)

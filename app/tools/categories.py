@@ -68,6 +68,8 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.atlas_export_tools": "export",
     # Track B（M14）：图层浏览/聚合只读工具面 —— 数据获取/检视，非突变
     "app.tools.layer_browse_tools": "data_access",
+    # GOAL 01：空间语义契约检视（inspect_spatial_semantics）—— 只读检视面
+    "app.tools.spatial_semantics_tools": "inspection",
     "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
     "app.tools.local_admin": "data_access",
     "app.tools.local_osm": "data_access",
