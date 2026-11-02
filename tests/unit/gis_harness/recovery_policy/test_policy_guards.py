@@ -73,7 +73,6 @@ class TestRiskResolution:
     def test_real_descriptor_side_effect_field(self):
         """R2 复审 P2-2：真实 ToolDescriptor 字段名是 side_effect。"""
         from app.services.gis_harness.recovery_policy.risk import (
-            ToolRiskProfile,
             resolve_tool_risk,
         )
         from app.tools.descriptor import SideEffectClass, ToolDescriptor
