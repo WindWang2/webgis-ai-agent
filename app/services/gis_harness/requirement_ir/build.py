@@ -32,6 +32,7 @@ from app.services.gis_harness.requirement_ir.normalize import (
     normalize_normalization,
     normalize_statistic,
     normalize_time,
+    normalize_temporal_dynamics,
 )
 from app.services.gis_harness.requirement_ir import normalize as norm
 from app.services.gis_harness.requirement_ir.patch import replay
@@ -85,6 +86,9 @@ def derive_sections(
         range_start, range_end, granularity, series = normalize_time(query)
     if core.task == "temporal_trend":
         series = True
+    # GOAL 03 M3：时态控制显式表达（对照期对/播放/保留图层）。
+    cmp_start, cmp_end, playback_req, hold_layers = normalize_temporal_dynamics(
+        core.time or query)
     # 空间关系：由分析意图词表映射（kind 面即分析权威已判定的语义）
     sr_kind = "none"
     if "proximity_buffer" in core.analysis_intents:
@@ -131,6 +135,8 @@ def derive_sections(
     spec.time = spec.time.model_copy(update={
         "range_start": range_start, "range_end": range_end,
         "granularity": granularity, "series": series,
+        "compare_start": cmp_start, "compare_end": cmp_end,
+        "playback_requested": playback_req, "hold_layers": hold_layers,
         "provenance": Provenance(origin="rule"),
     })
     spec.spatial_relation = spec.spatial_relation.model_copy(update={

@@ -422,3 +422,38 @@ harness **每轮推送**的感知层，二者共享同一批权威 store。
   turn 端 `harvest_spatial_memory` 收割 + GC（sweep + 作用域预算）；
 - 评估：32 场景 × 7 类轨迹（`eval.run_corpus`），
   `score = 3×useful − 4×wrong − 4×stale`，wrong/stale 一票否决。
+
+## 空间语义与量纲可信契约（GOAL 01，ADR-0279）
+
+一次数据 × 范围 × 操作的**实例级**空间语义绑定 —— 回答"这次计算在哪个
+CRS 里做、参数单位是什么、分母口径是什么、依据是什么"，贯穿工具执行、
+ref 证据与 MapSpec 单位链路。
+
+- 包：`app/services/gis_harness/spatial_semantics/`（vocabulary / contract /
+  units / inspect_semantics / resolve / validate / preflight / tool_gate）；
+- 契约：`SpatialSemanticContract` v1（bounded + versioned + to_dict/from_dict
+  fail-closed；词表越界构造失败）—— crs_source 四态（declared/source/
+  assumed/rfc7946_default，复用 #1868 spatial_receipt 词表）+ unknown；
+- 统一 preflight：`build_spatial_preflight` = inspect（descriptor 级，采样
+  ≤200）→ resolve（UTM 单带/极区/测地 + 3857 闭式反算失真估计 + 跨 AM
+  环绕选带）→ validate（五态判定 + SSC_* 理由码（20 个） + 修复建议分级）；
+- 判定词表：pass / pass_with_disclosure / degraded_with_disclosure /
+  requires_clarification / blocked / not_evaluated；
+- 工具消费（M4）：buffer_analysis / spatial_join / spatial_aggregate /
+  zonal_stats 入口过 `preflight_tool_input` —— blocked/requires_clarification
+  → typed error（`spatial_semantics:` 前缀，绝不改写成成功）；pass/degraded
+  → `spatial_semantics` 证据块并入响应（含 working_crs/distance_m/
+  density_unit/reason_codes）；
+- 未知不猜（核心不变量）：未声明 CRS 且坐标非度样（投影样量级）→
+  blocked + declare_crs 建议，**绝不默认 4326**；未声明度样 → RFC 7946 §4
+  规范缺省 + 披露（这不是猜测，是规范）；GCJ-02/BD-09 未声明 → 中国
+  AOI 下非阻塞警示（未声明数据不自动归一）；
+- 单位科学：距离 m/km 词表 + 换算链记账；密度口径合成（个/km²）经
+  spatial_aggregate → create_thematic_map(unit) → legend_spec.unit → 前端
+  graduated 图例显示（与 floating-legend/colorbar 同口径）；
+- Agent 发现面：`inspect_spatial_semantics`（tier 1 只读）—— 执行度量
+  敏感工具前先检视 CRS/单位/口径。
+
+权威边界：CRS 分类在 crs_safety、字段量纲在 measurement、算法要求在
+MethodUseContract、偏移帧数学在 utils/coord_transform —— 本契约组合它们，
+不复制。

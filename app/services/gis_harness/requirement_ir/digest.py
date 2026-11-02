@@ -55,6 +55,13 @@ def canonical_core(doc: RequirementDocument) -> Dict[str, Any]:
             "range_end": intent.time.range_end,
             "granularity": intent.time.granularity,
             "series": intent.time.series,
+            # GOAL 03：时态控制显式表达才入语义核（缺省不影响存量 digest）。
+            **({"compare_start": intent.time.compare_start}
+               if intent.time.compare_start else {}),
+            **({"compare_end": intent.time.compare_end}
+               if intent.time.compare_end else {}),
+            **({"playback_requested": True} if intent.time.playback_requested else {}),
+            **({"hold_layers": True} if intent.time.hold_layers else {}),
         },
         "statistics": {
             "dimension": intent.statistics.dimension,

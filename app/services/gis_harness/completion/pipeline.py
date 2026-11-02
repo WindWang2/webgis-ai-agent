@@ -822,6 +822,7 @@ def map_product_block(
     cartographic_review: Optional[Dict[str, Any]] = None,
     session_id: str = "",
     tenant_id: str = "",
+    user_hidden_layers: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -932,6 +933,30 @@ def map_product_block(
                 block["goal_satisfaction"] = report.to_bounded_dict()
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
+                         exc_info=True)
+    # GOAL 05（ADR-0279 M4）：goal verification 对账随块持久化 ——
+    # 「完成回执 ↔ 渲染观察 ↔ 数据资格 ↔ 科学评审」一致性面（false-PASS
+    # 守门：观察缺失/科学证据不足不能随 task_complete 混过）。additive
+    # 键；只读 goal_satisfaction/observation_health/chapter 既有事实，
+    # 不重算 ADR-0183 判定；失败绝不阻断终验。
+    if chapter:
+        try:
+            from app.lib.harness.goal_verification import (
+                reconcile_goal_verification,
+            )
+
+            verification = reconcile_goal_verification(
+                goal_report=block.get("goal_satisfaction"),
+                observation_health=block.get("observation_health"),
+                chapter=chapter,
+                task_complete=block.get("task_complete"),
+                quality_review_present=cartographic_review is not None,
+                user_hidden_layers=user_hidden_layers,
+            )
+            if verification is not None:
+                block["goal_verification"] = verification.to_bounded_dict()
+        except Exception:  # noqa: BLE001 — 增值对账，绝不阻断终验
+            logger.debug("[MapFinalizer] goal verification failed",
                          exc_info=True)
     # ADR-0220：procedure 覆盖随块持久化（「方法步骤是否按技能完成」的
     # 确定性对账面；additive 键，旧读者忽略；skill coverage 不替代
@@ -1248,6 +1273,15 @@ async def maybe_finalize_map_product(
                 merged_repairs = list(
                     dict.fromkeys(prior_repairs_merged + list(result.repairs_applied))
                 )
+                # R1-E：user-wins 隐藏层（spec presentation_owner=user +
+                # 不可见）——对账层尊重依据的生产来源。
+                try:
+                    _spec_snap, _ = await current_mapspec_for_disclosure(
+                        session_id)
+                except Exception:  # noqa: BLE001 — 快照失败不授予豁免
+                    _spec_snap = None
+                _user_hidden = _user_hidden_layers_from_spec(
+                    _spec_snap, current_observation)
                 fresh.gis_chapter["map_product"] = map_product_block(
                     result,
                     revision_after_run,
@@ -1268,6 +1302,7 @@ async def maybe_finalize_map_product(
                     continuation=continuation_dict,
                     # ADR-0183（G7）：确定性制图评审 checks（map state 快照）
                     # 作为证据源直入评估 —— 只消费，不重算。
+                    user_hidden_layers=_user_hidden,
                     cartographic_review=(
                         (fresh_state or {}).get("_cartographic_review")
                         if isinstance(fresh_state, dict) else None
@@ -1282,6 +1317,12 @@ async def maybe_finalize_map_product(
                     "goal_satisfaction")
                 result.goal_satisfaction = (
                     goal_block if isinstance(goal_block, dict) else None)
+                # GOAL 05（ADR-0279 M4）：对账快照同点透传（SSE 真源 =
+                # 已持久化块；未落账不披露 —— 与 P2-9 同纪律）。
+                gv_block = fresh.gis_chapter["map_product"].get(
+                    "goal_verification")
+                result.goal_verification = (
+                    gv_block if isinstance(gv_block, dict) else None)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试
         logger.warning(
             "[MapFinalizer] chapter persist failed session=%s (will retry on next trigger)",
@@ -1521,6 +1562,25 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
             payload["goal_satisfaction"] = gs_payload
     except Exception:  # noqa: BLE001 — 投影失败只少一键
         pass
+    # GOAL 05（ADR-0279 M4）：goal verification 对账投影随 task_complete
+    # 面下行（additive bounded —— overall/矛盾/未完成面；块缺席键省略）。
+    try:
+        gv = stored.get("goal_verification")
+        if isinstance(gv, dict) and gv.get("overall"):
+            payload["goal_verification"] = {
+                "overall": str(gv.get("overall"))[:16],
+                "goal_verdict": str(gv.get("goal_verdict"))[:24],
+                "contradictions": [str(c)[:160]
+                                   for c in (gv.get("contradictions")
+                                             or [])[:4]],
+                "failed_slots": [
+                    str(s.get("slot"))[:32]
+                    for s in (gv.get("slots") or [])
+                    if isinstance(s, dict)
+                    and s.get("status") == "fail"][:6],
+            }
+    except Exception:  # noqa: BLE001 — 投影失败只少一键
+        pass
     return payload
 
 
@@ -1533,6 +1593,43 @@ def _product_verdict_token(stored: Dict[str, Any]) -> str:
     if isinstance(verdict, dict):
         return str(verdict.get("verdict") or "")
     return str(verdict or "")
+
+
+def _user_hidden_layers_from_spec(
+    mapspec: Optional[Dict[str, Any]],
+    observation: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """R1-E：user-wins 隐藏层的生产来源（纯函数；spec 单一来源）。
+
+    spec 层的 ``cartographic_intent.presentation_owner == "user"`` 且
+    layout visibility == "none" → 该层是用户主动隐藏 —— 对账层按尊重
+    处理（warning + 说明），不判 fail、不代用户显现。证据不可证明
+    （无 spec/无 owner 标记）→ 空列表（不授予豁免，fail-closed）。
+
+    R2 复审 P3-1：观察面层条目无 visible 键（那是 component 级），旧
+    观察臂为死代码已移除 —— agent 无法伪造该组合（变异层拒绝反转
+    用户显隐，见 gis_world_state.mutation）。
+    """
+    if not isinstance(mapspec, dict):
+        return []
+    hidden: List[str] = []
+    for layer in (mapspec.get("layers") or []):
+        if not isinstance(layer, dict):
+            continue
+        lid = str(layer.get("id") or "")
+        if not lid:
+            continue
+        intent = layer.get("cartographic_intent")
+        owner = (intent or {}).get("presentation_owner") \
+            if isinstance(intent, dict) else None
+        if owner != "user":
+            continue
+        layout = layer.get("layout")
+        spec_hidden = isinstance(layout, dict) and str(
+            layout.get("visibility") or "").lower() == "none"
+        if spec_hidden:
+            hidden.append(lid)
+    return hidden[:8]
 
 
 def _is_task_complete(stored: Dict[str, Any]) -> bool:
@@ -1605,6 +1702,38 @@ def finalization_sse_payload(
             gs_payload = bounded_payload(result.goal_satisfaction)
             if gs_payload is not None:
                 payload["goal_satisfaction"] = gs_payload
+        except Exception:  # noqa: BLE001 — 投影失败只少一键
+            pass
+    # GOAL 05（ADR-0279 M4+M6）：对账 + 四段解释随 map_finalization SSE
+    # 下行（additive bounded；只读 result.goal_verification 快照；非 clean
+    # 处境才携带 —— 全绿零新键）。
+    if getattr(result, "goal_verification", None):
+        try:
+            gv = result.goal_verification
+            if isinstance(gv, dict) and gv.get("overall"):
+                payload["goal_verification"] = {
+                    "overall": str(gv.get("overall"))[:16],
+                    "goal_verdict": str(gv.get("goal_verdict"))[:24],
+                    "contradictions": [str(c)[:160]
+                                       for c in (gv.get("contradictions")
+                                                 or [])[:4]],
+                }
+                from app.services.gis_harness.recovery_policy.explain import (
+                    build_recovery_explanation,
+                )
+
+                # R1-D：N/A slot（需求族不存在）不进处境推导 —— 纯地图
+                # 目标的科学槽缺席不误报 "显示未验证"。
+                _gv_counting = dict(
+                    gv,
+                    slots=[sl for sl in (gv.get("slots") or [])
+                           if isinstance(sl, dict)
+                           and sl.get("counts_toward_overall", True)])
+                exp = build_recovery_explanation(
+                    diagnostic=None, decision=None,
+                    goal_verification=_gv_counting)
+                if exp.situation != "clean":
+                    payload["recovery_explanation"] = exp.to_bounded_dict()
         except Exception:  # noqa: BLE001 — 投影失败只少一键
             pass
     return payload

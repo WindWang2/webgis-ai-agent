@@ -316,21 +316,36 @@ def _validate_leaf(node: Dict[str, Any], depth: int) -> Dict[str, Any]:
         out["values"] = [_check_scalar(v, op) for v in values]
     elif op == "between":
         bounds = []
+        kinds = set()
         for key in ("gte", "lte"):
             if key not in node:
                 raise FeaturePageError("between requires 'gte' and 'lte'")
             v = _check_scalar(node[key], op)
-            if not isinstance(v, (int, float)) or isinstance(v, bool):
-                raise FeaturePageError("between bounds must be numeric")
+            if isinstance(v, bool) or v is None:
+                raise FeaturePageError("between bounds must be numeric or string")
+            if isinstance(v, str):
+                if not v or len(v) > 64:
+                    raise FeaturePageError("between string bounds must be 1-64 chars")
+                kinds.add("str")
+            else:
+                kinds.add("num")
             bounds.append(v)
+        # GOAL 03：范围算子接受同型数值对或字符串对（定宽时间编码的
+        # 字典序窗口）；混合型拒绝（跨型无全序）。
+        if len(kinds) != 1:
+            raise FeaturePageError("between bounds must share one comparable type")
         if bounds[0] > bounds[1]:
             raise FeaturePageError("between requires gte <= lte")
         out["gte"], out["lte"] = bounds
     elif op in _RANGE_OPS:
-        # 数值范围单界算子：{"field":F,"op":gte|gt|lte|lt,"value":N}
+        # 范围单界算子：{"field":F,"op":gte|gt|lte|lt,"value":N|S}。
+        # GOAL 03：接受数值或非空字符串（≤64 —— 定宽时间编码字典序窗口，
+        # 如 "2023-01" <= t < "2024-01"）；比较与字段值同型才命中。
         v = _check_scalar(node.get("value"), op)
-        if not isinstance(v, (int, float)) or isinstance(v, bool):
-            raise FeaturePageError(f"{op} requires a numeric 'value'")
+        if isinstance(v, bool) or v is None:
+            raise FeaturePageError(f"{op} requires a numeric or string 'value'")
+        if isinstance(v, str) and (not v or len(v) > 64):
+            raise FeaturePageError(f"{op} string value must be 1-64 chars")
         out["value"] = v
     else:  # contains / startswith
         v = _check_scalar(node.get("value"), op)
@@ -423,18 +438,26 @@ def evaluate_where(where: Dict[str, Any], feature: Any) -> bool:
                 return True
         return False
     if op == "between":
+        if isinstance(where["gte"], str):
+            # 字符串界（定宽时间编码）：仅字符串字段值命中（同型比较）。
+            return isinstance(value, str) and where["gte"] <= value <= where["lte"]
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False
         if not math.isfinite(value):
             return False
         return where["gte"] <= value <= where["lte"]
     if op in _RANGE_OPS:
-        # 单界数值范围：非数值/缺失不命中（诚实：不猜类型）
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return False
-        if not math.isfinite(value):
-            return False
         bound = where["value"]
+        if isinstance(bound, str):
+            # 字符串界（定宽时间编码）：仅字符串字段值命中（同型比较）。
+            if not isinstance(value, str):
+                return False
+        else:
+            # 单界数值范围：非数值/缺失不命中（诚实：不猜类型）
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return False
+            if not math.isfinite(value):
+                return False
         if op == "gte":
             return value >= bound
         if op == "gt":

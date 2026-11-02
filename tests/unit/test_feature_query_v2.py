@@ -133,7 +133,8 @@ class TestWhereParam:
             '{"field":"t","op":"regex","value":"x"}',
             '{"field":"t","op":"eq"}',
             '{"field":"t","op":"between","gte":9,"lte":1}',
-            '{"field":"t","op":"between","gte":"a","lte":"b"}',
+            # GOAL 03 后字符串 between 合法（定宽时间编码）；混合型仍拒。
+            '{"field":"t","op":"between","gte":"a","lte":1}',
             '{"op":"and","terms":[]}',
             '{"op":"or","terms":[1,2]}',
             '{"op":"not"}',

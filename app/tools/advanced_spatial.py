@@ -113,12 +113,25 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            failure_modes=("invalid_args", "missing_data", "memory"))
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
         data = safe_parse_geojson(geojson)
+        # GOAL 01（M4）：zones 侧 preflight（S12 无效范围/投影样缺 CRS
+        # blocked）；栅格侧分辨率/CRS 元数据在分析器内部读取，此处按
+        # not_evaluated 披露（诚实缺省，不虚构栅格事实）。
+        from app.services.gis_harness.spatial_semantics import (
+            SpatialSemanticBlocked,
+            attach_semantics_evidence,
+            preflight_tool_input,
+        )
+        try:
+            pf = preflight_tool_input(data, operation="zonal_statistics")
+        except SpatialSemanticBlocked as exc:
+            raise ValueError(str(exc)) from None
         # GIS-682: forward the whole FeatureCollection so a declared `crs`
         # member survives the tool boundary — previously only the features
         # list was forwarded and the FC-level crs was silently dropped
         # (mirrors the pre-#599 clip/overlay half-stack).
         res = SpatialAnalyzer.zonal_stats(data, raster_path)
-        return res.to_llm_response()
+        return attach_semantics_evidence(
+            res.to_llm_response(), pf, raster_side="not_evaluated")
 
     @tool(registry, name="idw_interpolation",
            description="反距离加权插值(IDW)：将离散采样点转换为连续的 H3 六边形网格表面。适用于气象、污染等连续变量建模。默认附 LOOCV 交叉验证指标与残差分位数证据（无理论方差，不确定性全部为经验残差）。",
@@ -2310,6 +2323,20 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         data_left = safe_parse_geojson(left_layer)
         data_right = safe_parse_geojson(right_layer)
         from app.services.spatial_analyzer import SpatialAnalyzer
+        # GOAL 01（M4）：双层 preflight —— 未声明 CRS 的投影样数据 blocked、
+        # 声明偏移帧（gcj02/bd09）归一链与中国偏移风险进证据（S8/S9）。
+        from app.services.gis_harness.spatial_semantics import (
+            SpatialSemanticBlocked,
+            attach_semantics_evidence,
+            preflight_tool_input,
+        )
+        try:
+            pf_left = preflight_tool_input(
+                data_left, operation="spatial_join", purpose="topology")
+            preflight_tool_input(data_right, operation="spatial_join",
+                                 purpose="topology")
+        except SpatialSemanticBlocked as exc:
+            raise ValueError(str(exc)) from None
         # #765: forward the parsed FeatureCollections (not bare features
         # lists) so declared `crs` members reach gdf_from_features (#599).
         res = SpatialAnalyzer.spatial_join(
@@ -2318,7 +2345,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             join_type=join_type,
             predicate=predicate
         )
-        return res.to_llm_response()
+        resp = res.to_llm_response()
+        return attach_semantics_evidence(
+            resp, pf_left,
+            right_crs=(data_right.get("crs") if isinstance(data_right, dict)
+                       else None))
 
     @tool(registry, name="clip_layer",
            description="裁剪图层：仅保留位于指定遮罩图层（通常是行政边界）范围内的要素。适合解决『搜索结果超出了行政区范围』的问题，实现精准区域分析。",
@@ -2363,6 +2394,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "numerator_field": "可选：点要素数值字段（按区求和作为分子）；缺省=要素计数",
                "denominator": "denominator_kind=field 时的分母字段名（区面属性，如人口）",
                "denominator_kind": "分母类型：count(默认,纯计数)/field(区字段)/area(区面积密度)",
+               "requested_density_unit": "可选：用户请求的密度口径（per_km2=每平方公里/per_10k_persons=每万人）；传入时与 denominator_kind 做一致性对账，冲突则拒绝",
            },
            side_effect="deterministic_compute",
            network=False,
@@ -2384,9 +2416,32 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         numerator_field: Optional[str] = None,
         denominator: Optional[str] = None,
         denominator_kind: str = "count",
+        requested_density_unit: Optional[str] = None,
     ) -> dict:
         pts = safe_parse_geojson(points)
         polys = safe_parse_geojson(polygons)
+        # GOAL 01（M4）：执行前统一 preflight —— 分母口径对账（S7：
+        # denominator_kind=field(人口) 但用户请求 per_km2 → requires_
+        # clarification）、投影样缺 CRS 数据 blocked、密度单位合成进证据。
+        # requested_density_unit：用户原始口径（per_km2/per_10k_persons…），
+        # 由 planner/agent 显式传入 —— 工具不猜口径。
+        from app.services.gis_harness.spatial_semantics import (
+            SpatialSemanticBlocked,
+            attach_semantics_evidence,
+            compose_density_unit,
+            preflight_tool_input,
+        )
+        try:
+            # R1 P1：points 层同样过门（度量分子；此前只查 zones，未声明
+            # 投影样点层逃逸到执行层才报误导性错误）。
+            preflight_tool_input(pts, operation="spatial_aggregate",
+                                 purpose="distance")
+            pf = preflight_tool_input(
+                polys, operation="spatial_aggregate",
+                denominator_kind=denominator_kind,
+                requested_density_denominator=requested_density_unit)
+        except SpatialSemanticBlocked as exc:
+            raise ValueError(str(exc)) from None
         # #764: count_field names the OUTPUT count column, it is not a point
         # attribute selector — forwarding it as value_field was inert for
         # stats=['count'] (and would silently change the aggregated metric if
@@ -2417,6 +2472,47 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             )
             import json as _json
             fc = _json.loads(out_gdf.to_json())
+            # GOAL 01（M3 单位科学 + R1 P0）：库层 rate 的真实口径是
+            # per-person（field 分母）或 per m²（area 分母）—— 图例口径串
+            # 必须与数值量级一致，换算链入证据：
+            # · area + per_km²（默认图例口径）：×1e6；
+            # · field + 请求 per_10k_persons：×1e4（per-person → 每万人）；
+            # · 其余：不合成口径串（density_unit=""，rate_unit 透传库层真值）。
+            rate_factor = 1.0
+            lib_rate_unit = str(norm_evidence.get("rate_unit") or "")
+            rate_unit_target = lib_rate_unit
+            if denominator_kind == "area" and lib_rate_unit == "per_m2":
+                rate_factor = 1e6
+                rate_unit_target = "per_km2"
+            elif (denominator_kind == "field"
+                  and requested_density_unit == "per_10k_persons"):
+                rate_factor = 1e4
+                rate_unit_target = "per_10k_persons"
+            if rate_factor != 1.0:
+                for feat in fc.get("features", []):
+                    props = feat.get("properties") or {}
+                    rate = props.get("rate")
+                    if rate is not None:
+                        props["rate"] = float(rate) * rate_factor
+                norm_evidence = dict(norm_evidence)
+                norm_evidence["rate_unit"] = rate_unit_target
+                norm_evidence["rate_unit_conversion"] = (
+                    f"{lib_rate_unit}(库层)→{rate_unit_target}"
+                    f"(factor={rate_factor:g}) —— 率值换算到图例口径")
+            # 分子显示：要素计数 → "个"；字段求和（如产值）→ 不虚构计数单位。
+            numerator_display = "" if numerator_field else "个"
+            density_unit_out = ""
+            if denominator_kind == "area" and rate_unit_target == "per_km2":
+                density_unit_out = compose_density_unit(
+                    numerator_display or "Σ", "km2")
+            elif rate_unit_target == "per_10k_persons":
+                # R2 P2：分母显示按字段语义 —— 人口字段 → "人"；其余
+                # （如 households）按字段名如实呈现，不冒称人口。
+                _den = str(denominator or "")
+                _den_disp = ("人" if any(
+                    k in _den.lower() for k in ("population", "人口", "居民", "pop"))
+                    else _den[:12] or "?")
+                density_unit_out = f"{numerator_display or 'Σ'}/万{_den_disp}"
             descriptor = get_algorithm_registry().get("spatial.aggregate.rates")
             evidence = build_evidence(
                 descriptor, tool="spatial_aggregate",
@@ -2428,15 +2524,22 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                 diagnostics=[],
             ) if descriptor else {}
             evidence["normalization"] = norm_evidence
-            return {
-                "success": True,
-                "data": declare_crs(fc, "EPSG:4326"),
-                "summary": {
-                    "rate_kind": denominator_kind,
-                    "zones": int(len(out_gdf)),
+            return attach_semantics_evidence(
+                {
+                    "success": True,
+                    "data": declare_crs(fc, "EPSG:4326"),
+                    "summary": {
+                        "rate_kind": denominator_kind,
+                        "zones": int(len(out_gdf)),
+                    },
+                    "scientific_evidence": evidence,
                 },
-                "scientific_evidence": evidence,
-            }
+                pf,
+                # S6/R1-P0：口径串与换算后的数值量级一致；field 分母未请求
+                # per_万人 时不合成口径（rate_unit 透传库层真值，不伪造）。
+                density_unit=density_unit_out,
+                area_unit=("km2" if denominator_kind == "area" else ""),
+            )
         res = SpatialAnalyzer.aggregate(
             pts,
             polys,
@@ -2447,7 +2550,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                 props = feat.setdefault("properties", {})
                 if "count" in props:
                     props[count_field] = props.pop("count")
-        return res.to_llm_response()
+        return attach_semantics_evidence(res.to_llm_response(), pf)
 
     @tool(registry, name="isochrone_network",
            description="等时线分析（路网模式）：基于路网计算从设施点出发在指定时间内可达的范围。需要输入路网要素。",

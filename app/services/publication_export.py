@@ -155,6 +155,13 @@ def compile_publication_page(
     if page.frame_index is not None:
         frame = frames_lookup[page.frame_index] if page.frame_index < len(frames_lookup) else None
         frame_doc = _apply_frame_overrides(doc, frame)
+    elif getattr(page, "time_window", None):
+        # GOAL 03：time 页 —— 帧窗口过滤 + 页帧 cursor（时间注记随页）。
+        from app.services.gis_harness.temporal_products.time_filter import (
+            apply_time_window_to_doc,
+        )
+
+        frame_doc = apply_time_window_to_doc(doc, page.time_window)
     elif page.filter_layer_id:
         frame_doc = _page_filtered_doc(doc, page)
     else:

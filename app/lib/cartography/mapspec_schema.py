@@ -51,7 +51,10 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     StrictStr,
+    model_validator,
 )
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 #: 数字脊柱原语：接受 int|float，拒绝 str/bool（不 coerce —— 保真披露）。
 Number = Union[StrictInt, StrictFloat]
@@ -67,9 +70,12 @@ Number = Union[StrictInt, StrictFloat]
 #: 1.7 = 三维场景资产（G3D02 —— model3d 源 + scene.assets 引用：3D Tiles
 #: tileset / glTF/GLB 资产的地理锚定挂载；scene 只持 source 指针 + 放置
 #: 参数，数据面仍由 source 承载，与 scene.terrain 同「指针不是第二数据面」
-#: 纪律。纯 additive：缺失 = 无 3D 资产，存量 spec 行为不变）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7")
-LATEST_VERSION = "1.7"
+#: 纪律。纯 additive：缺失 = 无 3D 资产，存量 spec 行为不变）；
+#: 1.8 = 时态控制层（GOAL 03 —— 顶层 temporal：TemporalViewContract.v1；
+#: frames 仅真实观测桶、区间 [start,end)、时区/表示/语义固化。纯 additive：
+#: 缺失 = 非时序视图，存量 spec 行为与指纹不变）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8")
+LATEST_VERSION = "1.8"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -840,6 +846,231 @@ class MapSpecLayoutConfig(_SpecModel):
     composition: Optional[Dict[str, Any]] = None
 
 
+# ── v1.8 additive：时序视图协议（TemporalViewContract.v1）────────────────
+#
+# 语义纪律（GOAL 03 M1）：
+# - 本块是地图产品「时态控制层」的 desired state 声明：frames 一律来自
+#   真实数据 distinct 时间桶（bind 时由 temporal profiler 推导），
+#   **绝不内插虚构期数**；enabled=True 必须 ≥2 帧 —— 单期数据走 typed
+#   fallback（service 层拒绝写入），schema 层同样拒绝（防御纵深）。
+# - 时间解释唯一锚点 = (time_representation, timezone, granularity)：
+#   字符串年份不会被解释成毫秒；时区锚定数据而非用户本地墙钟
+#   （"不得以用户本地时区伪造数据 UTC 时间"）。
+# - 区间统一左闭右开 [start, end)（D9）；帧间不重叠、按 start 升序。
+# - 与幽灵 ``time`` 分支（SetTimeIntent → mapspec["time"]）的关系：本块
+#   是其**严格化继任**；time 分支保留不动（无消费者、向后兼容零风险），
+#   消费方一律只读 ``temporal``（D1）。
+
+#: temporal_view.v1 —— 本契约的独立版本面（与 MapSpec 文档版本解耦演进）。
+TEMPORAL_VIEW_SCHEMA_VERSION = "temporal_view.v1"
+
+#: 时间语义词表：event = 事件瞬时（点事件日志）；snapshot = 期次快照
+#: （某一时刻的状态，如年度统计面）；valid_time = 有效期区间
+#: （bitemporal 有效时维，end 视为有效期边界而非事件时刻）。
+TEMPORAL_SEMANTICS: Tuple[str, ...] = ("event", "snapshot", "valid_time")
+
+#: 时间值表示词表（bind 时探测并固化；编译器按此归一比较值，绝不混用）：
+#: iso_string = "YYYY-MM-DDTHH:MM:SS…" 同格式 ISO（字典序 = 时间序）；
+#: date_string = "YYYY-MM-DD" / "YYYY-MM"；epoch_s/epoch_ms = Unix 数值；
+#: year_int = 整数年份（数值比较）。
+TEMPORAL_REPRESENTATIONS: Tuple[str, ...] = (
+    "iso_string", "date_string", "epoch_s", "epoch_ms", "year_int",
+)
+
+#: 粒度词表（帧桶推导口径；quarter/month 的桶边界按契约 timezone 计算）。
+TEMPORAL_GRANULARITIES: Tuple[str, ...] = ("year", "quarter", "month", "week", "day", "hour")
+
+#: 缺帧策略词表：strict = 缺数据帧如实显示空态（不伪造图层）；nearest =
+#: 相邻帧沿用 + 披露；skip = 播放跳过该帧。仅影响展示提示，不改数据。
+TEMPORAL_MISSING_POLICIES: Tuple[str, ...] = ("strict", "nearest", "skip")
+
+#: 渲染路径词表：client_filter = MVT/inline 已流式数据上的客户端时间过滤
+#: （tiles 不重复下载，帧切换 = filter 表达式）；cube_window = lakehouse
+#: cube 全范围窗口单读 + 客户端切片（x0=y0=0，规避 #1837）；none = 未绑定
+#: 渲染面（仅统计）。
+TEMPORAL_RENDER_PATHS: Tuple[str, ...] = ("client_filter", "cube_window", "none")
+
+#: 时序绑定帧数上限（播放有界；真实桶超过上限 → service 层按粒度合并或拒绝）。
+MAX_TEMPORAL_FRAMES = 512
+
+#: 时序绑定图层数上限（一图多层数据面不同 ref 属稀有，8 远超需求）。
+MAX_TEMPORAL_LAYERS = 8
+
+
+class TemporalFrame(_SpecModel):
+    """一个时间帧 —— 只描述真实观测桶，不描述期望。
+
+    start/end 为 ISO-8601 带时区偏移的 instant（contract timezone 口径，
+    左闭右开）；label 是人读帧名（"2023" / "2023-Q2"）；feature_count 是
+    该帧真实要素数（探测时实测；None = 未知，绝不猜）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: StrictStr = Field(min_length=1, max_length=64)
+    label: StrictStr = Field(min_length=1, max_length=64)
+    start: StrictStr = Field(min_length=1, max_length=40)
+    end: StrictStr = Field(min_length=1, max_length=40)
+    feature_count: Optional[StrictInt] = Field(default=None, ge=0)
+
+
+class TemporalLayerBinding(_SpecModel):
+    """时序视图绑定的图层（layer_id 应存在于 spec.layers；一致性由
+    service 层 bind 时校验，schema 不阻塞坏文档的可诊断性）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    layer_id: StrictStr = Field(min_length=1, max_length=128)
+    source_ref: Optional[StrictStr] = Field(default=None, max_length=128)
+
+
+class TemporalClassification(_SpecModel):
+    """对照/播放的固定分级声明 —— 「固定颜色分级」的一等表达。
+
+    breaks 严格递增；scope=shared 表示跨帧共用（比较期差异只来自数据，
+    不来自分级范围漂移 —— M5「颜色范围变化 ≠ 真实变化」的 schema 保证）；
+    method 记录分级口径（如 quantile_k5_union_window）供图例/导出复述。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    breaks: List[Number] = Field(min_length=2, max_length=17)
+    scope: Literal[("shared", "local")] = "shared"  # type: ignore[valid-type]
+    method: StrictStr = Field(default="", max_length=64)
+
+
+class TemporalCompareConfig(_SpecModel):
+    """两期对照配置：cursor 帧为 A 期，frame_id_b 为 B 期。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: StrictBool
+    frame_id_b: StrictStr = Field(min_length=1, max_length=64)
+    classification: Optional[TemporalClassification] = None
+
+
+class TemporalPlaybackConfig(_SpecModel):
+    """播放态（desired；播放位置是 desired state 的一部分，随 spec 持久化）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    playing: StrictBool = False
+    rate: Number = Field(default=1.0, ge=0.25, le=8.0)
+
+
+class MapSpecTemporalConfig(_SpecModel):
+    """TemporalViewContract.v1 —— MapSpec 时态控制层（v1.8 additive）。
+
+    缺失/None = 非时序视图（存量 spec 行为与指纹逐位不变）。写入面 =
+    SetTemporalViewIntent（temporal_products service），消费面 = 前端
+    temporal controller / aggregate where 编译 / atlas time driver。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: Literal[TEMPORAL_VIEW_SCHEMA_VERSION] = TEMPORAL_VIEW_SCHEMA_VERSION  # type: ignore[valid-type]
+    enabled: StrictBool
+    layers: List[TemporalLayerBinding] = Field(min_length=1, max_length=MAX_TEMPORAL_LAYERS)
+    time_field: StrictStr = Field(min_length=1, max_length=64)
+    time_semantics: Literal[TEMPORAL_SEMANTICS]  # type: ignore[valid-type]
+    time_representation: Literal[TEMPORAL_REPRESENTATIONS]  # type: ignore[valid-type]
+    #: 数据字面形状样例（iso_string 的偏移族/小数秒宽度 —— 边界渲染与
+    #  数据同构，字典序 = 时间序；其他表示为空）。
+    time_format_hint: Optional[StrictStr] = Field(default=None, max_length=64)
+    #: IANA 时区名（数据锚定；naive 数据的归一口径），缺省 UTC。
+    timezone: StrictStr = Field(default="UTC", max_length=64)
+    granularity: Literal[TEMPORAL_GRANULARITIES]  # type: ignore[valid-type]
+    #: 观测 extent（ISO instant，[start, end)，来自真实数据，非用户声称）。
+    extent: Tuple[StrictStr, StrictStr]
+    frames: List[TemporalFrame] = Field(min_length=1, max_length=MAX_TEMPORAL_FRAMES)
+    cursor_frame: StrictStr = Field(min_length=1, max_length=64)
+    playback: TemporalPlaybackConfig = Field(default_factory=TemporalPlaybackConfig)
+    compare: Optional[TemporalCompareConfig] = None
+    missing_policy: Literal[TEMPORAL_MISSING_POLICIES] = "strict"  # type: ignore[valid-type]
+    #: 数据质量旗标（bounded）：single_period / irregular_spacing /
+    #: mixed_time_types / time_field_partial_null / unfenced_gap …
+    quality: List[StrictStr] = Field(default_factory=list, max_length=8)
+    #: 契约锚定的数据真相（fingerprint = ref + revision + 探测口径）。
+    source_ref: StrictStr = Field(min_length=1, max_length=128)
+    content_revision: Optional[StrictInt] = Field(default=None, ge=0)
+    #: user-wins：用户手动 seek/pause 后置 true；agent 控制流拒改 cursor
+    #: （D5），直到用户解除或显式 unpin。
+    user_pinned: StrictBool = False
+    render_path: Literal[TEMPORAL_RENDER_PATHS] = "client_filter"  # type: ignore[valid-type]
+    #: 诚实披露（bounded；如 mvt_no_time_index_client_filter / cube_full_window）。
+    disclosures: List[StrictStr] = Field(default_factory=list, max_length=8)
+
+    @staticmethod
+    def _parse_instant(raw: str, what: str) -> "datetime":
+        """ISO instant 解析（Z 兼容）；坏串直接 ValueError（schema 级拒绝）。"""
+        cleaned = raw.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(cleaned)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    @model_validator(mode="after")
+    def _validate_temporal_invariants(self) -> "MapSpecTemporalConfig":
+        # 「无虚构期数」的 schema 级防御：启用时序必须有 ≥2 个真实帧 ——
+        # 单期数据是对照/动画的科学不诚实路径（E2E-3 锚点）。
+        if self.enabled and len(self.frames) < 2:
+            raise ValueError(
+                "temporal.enabled=True requires >=2 observed frames "
+                "(single-period data must refuse bind, not fake animation)"
+            )
+        # 帧序与区间不变量：真 ISO 解析比较（字符串比较在混合偏移下可绕过
+        # 真实重叠）；坏串在此拒绝（不留给消费方 internal_error）。
+        prev: Optional[TemporalFrame] = None
+        prev_end: Optional[datetime] = None
+        for fr in self.frames:
+            try:
+                fr_start = self._parse_instant(fr.start, "start")
+                fr_end = self._parse_instant(fr.end, "end")
+            except ValueError as exc:
+                raise ValueError(
+                    f"temporal frame {fr.id!r}: start/end 不是合法 ISO instant"
+                ) from exc
+            if fr_start >= fr_end:
+                raise ValueError(f"temporal frame {fr.id!r}: start must be < end")
+            if prev is not None and fr_start < prev_end:
+                raise ValueError(
+                    f"temporal frames {prev.id!r} and {fr.id!r} overlap "
+                    "(interval semantics are [start, end))"
+                )
+            prev, prev_end = fr, fr_end
+        # cursor 必须指向真实帧。
+        if self.cursor_frame not in {f.id for f in self.frames}:
+            raise ValueError(f"cursor_frame {self.cursor_frame!r} not in frames")
+        # 对照帧必须是真实帧且不同于 cursor（同帧对照是空操作）。
+        if self.compare is not None and self.compare.enabled:
+            frame_ids = {f.id for f in self.frames}
+            if self.compare.frame_id_b not in frame_ids:
+                raise ValueError(
+                    f"compare.frame_id_b {self.compare.frame_id_b!r} not in frames"
+                )
+            if self.compare.frame_id_b == self.cursor_frame:
+                raise ValueError("compare.frame_id_b must differ from cursor_frame")
+        # extent 覆盖所有帧（观测范围不得窄于帧集合；真时间比较）。
+        ext_start = self._parse_instant(self.extent[0], "extent")
+        ext_end = self._parse_instant(self.extent[1], "extent")
+        if ext_start > self._parse_instant(self.frames[0].start, "extent") \
+                or ext_end < self._parse_instant(self.frames[-1].end, "extent"):
+            raise ValueError("temporal.extent must cover all frames")
+        # 分级 breaks 严格递升（固定分级的数学前提）。
+        if self.compare is not None and self.compare.classification is not None:
+            breaks = self.compare.classification.breaks
+            if any(b <= a for a, b in zip(breaks, breaks[1:])):
+                raise ValueError("classification.breaks must be strictly ascending")
+        # 时区必须是 IANA 可解析名（拒绝伪造时区）。
+        try:
+            ZoneInfo(self.timezone)
+        except Exception as exc:  # noqa: BLE001 — 统一转契约错误
+            raise ValueError(
+                f"temporal.timezone {self.timezone!r} is not a valid IANA zone"
+            ) from exc
+        return self
+
+
 class MapSpecDocument(_SpecModel):
     """authoritative 文档 spine。schema 权威 = 本模型族。"""
 
@@ -855,6 +1086,8 @@ class MapSpecDocument(_SpecModel):
     scenario_mode: Optional[Literal[SCENARIO_MODES]] = None  # type: ignore[valid-type]
     #: v1.4 additive（ADR-0199）：多尺度场景协议；缺失 = 既有 2d 语义。
     scene: Optional[MapSceneConfig] = None
+    #: v1.8 additive（GOAL 03）：时态控制层契约；缺失 = 非时序视图。
+    temporal: Optional[MapSpecTemporalConfig] = None
 
 
 #: TS 投影（W3 生成器）消费的导出面：核心文档类型 → 模型类。
@@ -896,6 +1129,13 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("SceneAssetPlacement", SceneAssetPlacement),
     ("SceneAssetVertical", SceneAssetVertical),
     ("SceneAssetLodPolicy", SceneAssetLodPolicy),
+    # v1.8（GOAL 03）：时态控制层契约类型。
+    ("MapSpecTemporalConfig", MapSpecTemporalConfig),
+    ("TemporalFrame", TemporalFrame),
+    ("TemporalLayerBinding", TemporalLayerBinding),
+    ("TemporalClassification", TemporalClassification),
+    ("TemporalCompareConfig", TemporalCompareConfig),
+    ("TemporalPlaybackConfig", TemporalPlaybackConfig),
 )
 
 
@@ -984,6 +1224,9 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # 1.7 相对 1.6 纯 additive（model3d 源类型 + scene.assets 可选；缺失 =
     # 无 3D 资产，存量 spec 语义不变。G3D02）。
     ("1.6", "1.7"): lambda doc: doc,
+    # 1.8 相对 1.7 纯 additive（顶层 temporal 可选；缺失 = 非时序视图，
+    # 存量 spec 语义不变。GOAL 03 TemporalViewContract.v1）。
+    ("1.7", "1.8"): lambda doc: doc,
 }
 
 
