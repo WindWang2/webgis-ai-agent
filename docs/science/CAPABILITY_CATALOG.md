@@ -14,10 +14,10 @@
 
 ## 总览
 
-- capability 词表：165 条（图内 165 节点）
-- 图节点 1032 / 边 3243 / graph fingerprint `6628886e8f4a28bf`
-- provider 面：algorithm 245，component 22，model 10，provider(adapters) 15，template 8，tool 369，workflow(recipes) 166
-- 域分布：`cartography` 3，`general` 71，`network` 14，`platform` 17，`raster` 57，`statistics` 1，`temporal` 2
+- capability 词表：170 条（图内 170 节点）
+- 图节点 1036 / 边 3242 / graph fingerprint `1769aedc9e47795c`
+- provider 面：algorithm 245，component 23，model 0，provider(adapters) 15，template 8，tool 386，workflow(recipes) 166
+- 域分布：`cartography` 6，`general` 73，`network` 14，`platform` 17，`raster` 57，`statistics` 1，`temporal` 2
 
 ## Capability 词表
 
@@ -33,6 +33,9 @@
 | `bivariate_local_moran` | general | statistics | native | — | yes | — | — |
 | `bivariate_morans_i` | general | statistics | native | — | yes | — | — |
 | `block_kriging` | general | analysis | native | — | yes | — | — |
+| `cartography_scale_apply` | cartography | presentation | native | — | no | — | — |
+| `cartography_scale_inspect` | cartography | presentation | native | — | yes | — | — |
+| `cartography_scale_preview` | cartography | presentation | native | — | yes | — | — |
 | `category_breakdown` | general | statistics | native | — | yes | — | — |
 | `change_detection` | general | analysis | native | — | yes | — | — |
 | `closest_facility` | network | network | native | — | yes | — | — |
@@ -43,6 +46,7 @@
 | `cross_k_function` | general | density | native | — | yes | — | — |
 | `cross_pair_correlation` | general | density | native | — | yes | — | — |
 | `crs_transformation` | platform | platform | planned | — | yes | — | — |
+| `data_preparation` | general | data_access | native | — | no | — | — |
 | `data_source_pipeline` | platform | platform | planned | — | yes | — | — |
 | `dataset_ingest` | general | data_access | native | — | yes | — | — |
 | `dataset_profiling_quality` | platform | platform | planned | — | yes | — | — |
@@ -77,6 +81,7 @@
 | `join_count_statistics` | general | statistics | native | — | yes | — | — |
 | `kde_density` | general | density | native | — | no | — | — |
 | `landscape_metrics` | raster | raster | native | — | yes | — | — |
+| `layer_browse` | general | data_access | native | — | yes | — | — |
 | `layer_display_control` | platform | platform | planned | — | yes | — | — |
 | `least_cost_path_analysis` | raster | raster | native | — | yes | — | — |
 | `local_data_query` | platform | platform | planned | — | yes | — | — |
@@ -193,9 +198,9 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 66 | 1 | 80 | 6 | 0 |
+| 75 | 1 | 97 | 6 | 0 |
 
-### orphan_capability（66）
+### orphan_capability（75）
 
 - capability accessibility has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability areal_interpolation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -228,6 +233,15 @@
 - capability local_join_count has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mantel_test has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mnf_transform has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_change_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_embedding has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_image_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_instance_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_object_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_promptable_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_super_resolution has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_temporal_classification has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_temporal_forecast has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability nearest_neighbor_functions has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability network_centrality has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability pair_correlation_function has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -266,7 +280,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（80）
+### unreachable_tool（97）
 
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
 - tool capability_runtime_status is not exposed by any algorithm and has no capability/deprecation link
@@ -276,6 +290,7 @@
 - tool compile_workflow_semantics is not exposed by any algorithm and has no capability/deprecation link
 - tool describe_artifact is not exposed by any algorithm and has no capability/deprecation link
 - tool detect_vegetation_change is not exposed by any algorithm and has no capability/deprecation link
+- tool export_atlas is not exposed by any algorithm and has no capability/deprecation link
 - tool fetch_sentinel is not exposed by any algorithm and has no capability/deprecation link
 - tool find_artifacts_by_role is not exposed by any algorithm and has no capability/deprecation link
 - tool geoai_embed is not exposed by any algorithm and has no capability/deprecation link
@@ -316,6 +331,7 @@
 - tool modelops_publish_layers is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_record_metrics is not exposed by any algorithm and has no capability/deprecation link
 - tool plan_map_scene is not exposed by any algorithm and has no capability/deprecation link
+- tool prepare_dataset is not exposed by any algorithm and has no capability/deprecation link
 - tool query_federated_data is not exposed by any algorithm and has no capability/deprecation link
 - tool query_osm_boundary is not exposed by any algorithm and has no capability/deprecation link
 - tool refresh_data_source is not exposed by any algorithm and has no capability/deprecation link
@@ -329,20 +345,35 @@
 - tool set_scene_assets is not exposed by any algorithm and has no capability/deprecation link
 - tool update_layer_appearance is not exposed by any algorithm and has no capability/deprecation link
 - tool validate_execution_plan is not exposed by any algorithm and has no capability/deprecation link
+- tool vector_feature_edit_commit is not exposed by any algorithm and has no capability/deprecation link
+- tool vector_feature_edit_history is not exposed by any algorithm and has no capability/deprecation link
+- tool vector_feature_edit_preview is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_action_plan is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_analysis_workflow_plan is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_analysis_workflow_recompute is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_analysis_workflow_run is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_analysis_workflow_status is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_apply_composition is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_apply_scale_representation is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_checkpoint is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_compile_map_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_component_catalog is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_discover_components is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_inspect_map_scale_profile is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_layer_aggregate is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_layer_feature_detail is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_layer_features_page is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_layer_remove is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_layer_upsert is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_layout_set is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_list_composition_template_assets is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_combine is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_map_design_select is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_intent is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_map_operation is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_product is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_plan_component_replace is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_preview_scale_representation is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_product_edit is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_rollback is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_save_composition_template is not exposed by any algorithm and has no capability/deprecation link
@@ -356,7 +387,8 @@
 - artifact type od_matrix is produced but never accepted/bound by any node
 - artifact type proximity_zone is produced but never accepted/bound by any node
 - artifact type service_area is produced but never accepted/bound by any node
-### 其他 warning（1）
+### 其他 warning（2）
 
 - **dangling_endpoint**: tool:materialize_dataset -produces-> artifact_type:data: endpoint artifact_type:data not a node
+- **dangling_endpoint**: tool:prepare_dataset -produces-> artifact_type:data: endpoint artifact_type:data not a node
 

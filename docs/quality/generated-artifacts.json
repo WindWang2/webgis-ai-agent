@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "ef1778424e153498b4501ee08156c2903d18034c9e74c6da4c06443824bfbc78",
+   "input_fingerprint": "c98d7f07c632628a7777730395d3a69efb40e58a70642026aac4d53fea72c5a7",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -42,10 +42,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "a5867a4cf892f92bedb8bb58d8025e1a3e09d7bb15cf29c730a230d23be112f7",
+   "content_fingerprint": "48784f42cbb3b8201ac15b35724846e43e489807700dca57fed6a5719e11a3a0",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "da9affa87d33c0afc437a852b133b801865b0ae8ae2d623480754779ca05aa0e",
+   "input_fingerprint": "ea83f7398b7f57834c82a60323f5314b7937fc1c796736c43b1f2cd3cbc0f649",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -57,10 +57,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_REPORT.md": {
-   "content_fingerprint": "289bd35115fdaca4f0953502d770a50533ae5afbd142c4dd6551b94db1e893a8",
+   "content_fingerprint": "c5b55a95f6fa6fe65d105a9c7dd59be2c36a450c7d04fe52450c351502834260",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "c56afaf141f264130ebfebd64a2004d78c4c2624ec43569ed001b7c10f251def",
+   "input_fingerprint": "fa0fd996d5526ffee880993256a09493c8d062c40e31af61c8d28ced523656b1",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -69,7 +69,7 @@
    "scope": "global"
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
-   "content_fingerprint": "a7bf741a613405060db53d13cfb6f349f24050f28344504fdce9ef286fb4f8aa",
+   "content_fingerprint": "46eefcb3f742d6312c42fe6c3432a1944baa9b5da7593052d53d6a0e1c8e6c9f",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
    "input_fingerprint": "2d916a0eaf60bf8a8bc0758c2919b86389b719024161c2605f696cd90006c96d",
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "ef1778424e153498b4501ee08156c2903d18034c9e74c6da4c06443824bfbc78",
+   "input_fingerprint": "c98d7f07c632628a7777730395d3a69efb40e58a70642026aac4d53fea72c5a7",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -132,10 +132,10 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "919e084d01ba8bbcf16dcb048ba54cd4394ed5dbdd5928df880b99fe187cb7b8",
+   "content_fingerprint": "b42c61c65b81031f9a636acaa210d4a268e304a534d81ebae1c2efddd5f454ae",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "da9affa87d33c0afc437a852b133b801865b0ae8ae2d623480754779ca05aa0e",
+   "input_fingerprint": "ea83f7398b7f57834c82a60323f5314b7937fc1c796736c43b1f2cd3cbc0f649",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -147,10 +147,10 @@
    "scope": "global"
   },
   "docs/quality/quality-report.json": {
-   "content_fingerprint": "9b6afd141d65640bf83a620842b736e7de18ab64fb22088878f1439c1e95ce0e",
+   "content_fingerprint": "43f3b5e7bca25a270ab523f174cf8238939c5fda1cfeab467ed30a7320e2aa43",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "c56afaf141f264130ebfebd64a2004d78c4c2624ec43569ed001b7c10f251def",
+   "input_fingerprint": "fa0fd996d5526ffee880993256a09493c8d062c40e31af61c8d28ced523656b1",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -170,10 +170,10 @@
    "scope": "global"
   },
   "docs/science/CAPABILITY_CATALOG.md": {
-   "content_fingerprint": "4c908099be63fb33139f7397f55ad2ebcc498471a454c5f8fdad17ccb09d99fc",
+   "content_fingerprint": "5d476a46415e59a7d1d5d41165a24f9bfa04c028350a4992343be5aa7e856be3",
    "generator": "scripts/gen_capability_catalog.py",
    "generator_version": 1,
-   "input_fingerprint": "201095628cd2c69ff6a13f647e4853ac949cd59def9e04fba5fecb28ee9e8734",
+   "input_fingerprint": "e35d94d7af415cdebdf98d7424014002a8e632ff27f84c7ac1f07ca2a6c6754a",
    "inputs": [
     "app/lib/gis/capability_registry.py",
     "app/lib/gis/capabilities",

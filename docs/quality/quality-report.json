@@ -21,19 +21,20 @@
    "counts": {
     "algorithms": 245,
     "artifact_types": 23,
-    "capabilities": 165,
-    "findings": 9,
+    "capabilities": 170,
+    "findings": 14,
     "recipes": 166,
-    "tools": 372
+    "tools": 386
    },
    "findings_by_code": {
     "ALGO_HEAVY_NO_VARIANTS": 1,
+    "CAPABILITY_NO_PRODUCER": 5,
     "TOOL_UNTESTED": 8
    },
-   "fingerprint": "d5a15af7847e992cfda5ba4bf3305d01492e63ff8a1c12fcc2254fa4573cb0f5",
+   "fingerprint": "81de77154102fff7b22de3a9639bb4e5d0e30644700a28205f32f4aeda3e061f",
    "gate": {
     "pass": true,
-    "total": 372
+    "total": 386
    }
   },
   "scenario_corpus": {
