@@ -1450,7 +1450,7 @@ export async function composeExportSpec(
   removed: string[] = [],
 ): Promise<unknown> {
   const { composeLiveMapSpec } = await import('@/lib/mapspec/live-spec');
-  return composeLiveMapSpec(
+  const composed = composeLiveMapSpec(
     committed as Parameters<typeof composeLiveMapSpec>[0],
     {
       layers: (hudState.layers ?? []) as Parameters<typeof composeLiveMapSpec>[1]['layers'],
@@ -1462,6 +1462,21 @@ export async function composeExportSpec(
     pending,
     removed,
   );
+  // GOAL 03 M6：导出同帧 —— 与 live 地图同一 temporal 注入（live 帧 >
+  // cursor）；导出图纸的时间窗与画布所见一致（停播导出 = 该帧状态）。
+  const temporalCfg = (committed as { temporal?: Parameters<
+    typeof import('@/lib/temporal-map/filter').applyTemporalToSpec
+  >[1] } | null)?.temporal;
+  if (temporalCfg?.enabled) {
+    const { applyTemporalToSpec } = await import('@/lib/temporal-map/filter');
+    const { getLiveTemporalFrame } = await import('@/lib/temporal-map/live-frame');
+    return applyTemporalToSpec(
+      composed as Parameters<typeof applyTemporalToSpec>[0],
+      temporalCfg,
+      getLiveTemporalFrame(),
+    );
+  }
+  return composed;
 }
 
 /**

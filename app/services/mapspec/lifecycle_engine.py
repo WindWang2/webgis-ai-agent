@@ -132,6 +132,7 @@ from app.services.mapspec.intents import (  # noqa: E402
     SetScenarioModeIntent,  # noqa: F401
     RefreshDataRevisionIntent,  # noqa: F401 — /goal 03 corpus/parity 引用面
     SetTimeIntent,  # noqa: F401
+    SetTemporalViewIntent,  # noqa: F401 — GOAL 03 时态控制层（corpus/_build_intent 消费）
     SetViewIntent,  # noqa: F401
     SetWorkbenchStateIntent,  # noqa: F401
     UpsertLayerIntent,  # noqa: F401

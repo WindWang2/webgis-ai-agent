@@ -919,9 +919,27 @@ def _render_chrome_groups(
     # 标题 / 副标题（top-center 居中；文本来自组件 options.text）
     title = _first_of_type("title")
     subtitle = _first_of_type("subtitle")
-    if title is not None or subtitle is not None:
+    # GOAL 03 M6：时序视图时间注记 —— temporal 启用时把当前帧标签并入
+    # 副标题（导出图纸自带时间证据；缺 subtitle 时独立成行同款排版）。
+    temporal_note = ""
+    temporal_cfg = mapspec.get("temporal") if isinstance(mapspec, dict) else None
+    if isinstance(temporal_cfg, dict) and temporal_cfg.get("enabled"):
+        frames = temporal_cfg.get("frames") or []
+        cursor = temporal_cfg.get("cursor_frame")
+        frame = next(
+            (f for f in frames if isinstance(f, dict) and f.get("id") == cursor), None
+        )
+        if frame is not None:
+            temporal_note = (
+                f"时间: {frame.get('label', cursor)}"
+                f"（粒度 {temporal_cfg.get('granularity') or ''}，"
+                f"窗口 [{frame.get('start')} ~ {frame.get('end')}）"
+            )
+    if title is not None or subtitle is not None or temporal_note:
         t_text = title.text if title else ""
         s_text = subtitle.text if subtitle else ""
+        if temporal_note:
+            s_text = f"{s_text} — {temporal_note}" if s_text else temporal_note
         tx = canvas_w / 2.0
         if t_text and s_text:
             parts.append(

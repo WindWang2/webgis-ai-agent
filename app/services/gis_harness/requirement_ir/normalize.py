@@ -162,6 +162,34 @@ def normalize_time(text: str) -> Tuple[str, str, TimeGranularity, bool]:
     return ("", "", "none", False)
 
 
+# ── 时态控制（GOAL 03 M3）：对照/播放/保留图层 ──────────────────────────
+
+_COMPARE_MARKERS = ("对比", "比较", "对照", "相比", " versus ", " vs ", " vs.")
+_PLAYBACK_MARKERS = ("播放", "回放", "动画", "逐帧", "animate", "playback")
+_HOLD_MARKERS = ("保留图层", "保持图层", "图层不变", "只换年份", "只改年份", "只变年份", "只换时间")
+
+
+def normalize_temporal_dynamics(text: str) -> Tuple[str, str, bool, bool]:
+    """时态控制显式表达 → (compare_start, compare_end, playback, hold_layers)。
+
+    只收**显式**表达（对照动词+两个年份才构成对照期对；播放/保留词面）。
+    未表达 → 全空/False（digest 稳定）。
+    """
+    value = normalize_text(text)
+    if not value:
+        return ("", "", False, False)
+
+    compare_start = compare_end = ""
+    years = [m.group(0) for m in _YEAR_RE.finditer(value)]
+    has_compare = any(m in value for m in _COMPARE_MARKERS)
+    if has_compare and len(years) >= 2:
+        compare_start, compare_end = years[0], years[-1]
+
+    playback = any(m in value for m in _PLAYBACK_MARKERS)
+    hold = any(m in value for m in _HOLD_MARKERS)
+    return (compare_start, compare_end, playback, hold)
+
+
 # ── 调色板 / 表达 ────────────────────────────────────────────────────
 
 _PALETTE_TABLE: Tuple[Tuple[Tuple[str, ...], str], ...] = (

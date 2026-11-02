@@ -233,6 +233,12 @@ class TimeSpec(_Section):
     range_end: str = Field("", max_length=16)
     granularity: TimeGranularity = "none"
     series: bool = False                            # 多期时序
+    # GOAL 03 M3 additive：时态控制显式表达（空/False = 未表达 ——
+    # digest 只收显式值，存量话语指纹不变）。
+    compare_start: str = Field("", max_length=16)   # 两期对照 A 期（用户显式）
+    compare_end: str = Field("", max_length=16)     # 两期对照 B 期
+    playback_requested: bool = False                # 显式播放/动画请求
+    hold_layers: bool = False                       # 「保留图层只换年份」类表达
 
 
 class StatisticsSpec(_Section):
