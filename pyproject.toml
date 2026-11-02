@@ -26,7 +26,7 @@ dependencies = [
     # （test_dependency_bounds，#1512 实测 2.1.1 击穿）拒绝 2.1.x 放行；greenlet
     # 自 2.1.x 起移出核心依赖，缺 [asyncio] 时 sqlalchemy.ext.asyncio 不可用
     # （#1592 干净环境 390 collection errors 的第一类根因）。
-    "sqlalchemy[asyncio]>=2.0.25,<2.1",
+    "sqlalchemy[asyncio]>=2.0.25,<2.2",
     "alembic>=1.13.0",
     "geopandas>=1.1.4",
     "shapely>=2.1.2",
