@@ -77,6 +77,7 @@ def _ensure_builtin_registrations() -> None:
         hard_negative_corpus,
         methodology_corpus,
         quality_corpus,
+        recovery_corpus,
         reliability_corpus,
         retrieval_eval_corpus,
         runtime_corpus,
@@ -139,6 +140,12 @@ def _ensure_builtin_registrations() -> None:
         name="reliability", prefix="RL-",
         builder=reliability_corpus.build_reliability_corpus,
         is_benchmark_case=False, group="reliability"))
+    # GOAL 05（ADR-0281 M7）：恢复裁决语料（输入状态 + 允许/禁止动作；
+    # oracle 族驱动 recovery_policy/goal_verification 生产纯函数）。
+    register(CorpusRegistration(
+        name="recovery", prefix="RC-",
+        builder=recovery_corpus.build_recovery_corpus,
+        is_benchmark_case=False, group="recovery"))
     register(CorpusRegistration(
         name="retrieval_eval", prefix="RT-",
         builder=retrieval_eval_corpus.build_retrieval_eval_corpus,

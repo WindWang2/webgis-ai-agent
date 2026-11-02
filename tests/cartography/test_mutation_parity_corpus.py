@@ -544,6 +544,102 @@ CASES = [
         ],
     },
     {
+        "name": "temporal_view_bind_config",
+        "actions": [
+            {
+                "class": "SetTemporalViewIntent",
+                "fields": {
+                    "config": {
+                        "schema_version": "temporal_view.v1",
+                        "enabled": True,
+                        "layers": [{"layer_id": "schools", "source_ref": "ref:schools"}],
+                        "time_field": "year",
+                        "time_semantics": "snapshot",
+                        "time_representation": "year_int",
+                        "timezone": "UTC",
+                        "granularity": "year",
+                        "extent": ["2021-01-01T00:00:00Z", "2023-01-01T00:00:00Z"],
+                        "frames": [
+                            {"id": "f-2021", "label": "2021",
+                             "start": "2021-01-01T00:00:00Z",
+                             "end": "2022-01-01T00:00:00Z", "feature_count": 2},
+                            {"id": "f-2022", "label": "2022",
+                             "start": "2022-01-01T00:00:00Z",
+                             "end": "2023-01-01T00:00:00Z", "feature_count": 3},
+                        ],
+                        "cursor_frame": "f-2022",
+                        "playback": {"playing": False, "rate": 1.0},
+                        "source_ref": "ref:schools",
+                        "content_revision": 3,
+                    }
+                },
+            }
+        ],
+    },
+    {
+        "name": "temporal_view_control_patch",
+        "seed": [
+            {
+                "class": "SetTemporalViewIntent",
+                "fields": {
+                    "config": {
+                        "enabled": True,
+                        "layers": [{"layer_id": "schools"}],
+                        "time_field": "year", "time_semantics": "snapshot",
+                        "time_representation": "year_int", "granularity": "year",
+                        "extent": ["2021-01-01T00:00:00Z", "2023-01-01T00:00:00Z"],
+                        "frames": [
+                            {"id": "f-2021", "label": "2021",
+                             "start": "2021-01-01T00:00:00Z",
+                             "end": "2022-01-01T00:00:00Z", "feature_count": 2},
+                            {"id": "f-2022", "label": "2022",
+                             "start": "2022-01-01T00:00:00Z",
+                             "end": "2023-01-01T00:00:00Z", "feature_count": 3},
+                        ],
+                        "cursor_frame": "f-2022",
+                        "source_ref": "ref:schools",
+                    }
+                },
+            }
+        ],
+        "actions": [
+            {"class": "SetTemporalViewIntent",
+             "fields": {"patch": {"cursor_frame": "f-2021",
+                                  "playback": {"playing": True}}}},
+            {"class": "SetTemporalViewIntent", "fields": {"remove": True}},
+        ],
+    },
+    {
+        "name": "temporal_view_single_frame_refused",
+        "actions": [
+            {
+                "class": "SetTemporalViewIntent",
+                "fields": {
+                    "config": {
+                        "enabled": True,
+                        "layers": [{"layer_id": "x"}],
+                        "time_field": "year", "time_semantics": "snapshot",
+                        "time_representation": "year_int", "granularity": "year",
+                        "extent": ["2023-01-01T00:00:00Z", "2024-01-01T00:00:00Z"],
+                        "frames": [
+                            {"id": "f-2023", "label": "2023",
+                             "start": "2023-01-01T00:00:00Z",
+                             "end": "2024-01-01T00:00:00Z", "feature_count": 1},
+                        ],
+                        "cursor_frame": "f-2023",
+                        "source_ref": "ref:x",
+                    }
+                },
+            }
+        ],
+    },
+    {
+        "name": "temporal_view_remove_noop",
+        "actions": [
+            {"class": "SetTemporalViewIntent", "fields": {"remove": True}},
+        ],
+    },
+    {
         "name": "set_scenario_mode_invalid",
         "actions": [
             {"class": "SetScenarioModeIntent", "fields": {"scenario_mode": "hologram"}}

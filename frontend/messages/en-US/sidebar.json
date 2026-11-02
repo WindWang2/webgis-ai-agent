@@ -162,6 +162,12 @@
     "titleLabel": "Title:",
     "geomTypeLabel": "Geometry type:",
     "srsLabel": "SRS:",
+    "capabilityLabel": "Service capability:",
+    "capability": {
+      "supported": "declared & supported",
+      "unsupported": "declared, unsupported (see reasons)",
+      "unknown": "not declared (no guessing)"
+    },
     "fieldSchema": "Field schema ({count})",
     "type": {
       "postgis": "PostGIS database"

@@ -17,6 +17,10 @@ export function DatasetDescriptorModal({ descriptor, onClose }: DatasetDescripto
 const t = useT();
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useDialogFocus({ open: true, containerRef: dialogRef, onEscape: onClose });
+  // GOAL-02：三态能力（supported/unsupported/unknown + reason codes）。
+  const capability = (descriptor as { metadata?: { capability?: { state?: string; reasons?: Array<{ message: string }> } } }).metadata?.capability;
+  const capState = capability?.state;
+  const capReasons = capability?.reasons ?? [];
 
   return (
     /* D: 去掉 backdrop-blur —— 弹窗盖在地图上，blur 是持续重绘画布上
@@ -51,6 +55,33 @@ const t = useT();
               <span className="font-semibold text-ink">Bounding Box:</span>{' '}
               {JSON.stringify(descriptor.bbox)}
             </div>
+            {/* GOAL-02：OGC 开放服务数据集的三态能力与数据资格（仅当
+                descriptor 携带 capability 时渲染 —— 既有数据源不受影响）。 */}
+            {capState && (
+              <div className="rounded-sm border border-edge-subtle bg-surface-sunken p-2">
+                <div>
+                  <span className="font-semibold text-ink">{t('sidebar.ds.capabilityLabel')}</span>{' '}
+                  <span
+                    className={
+                      capState === 'supported'
+                        ? 'text-agent-accent'
+                        : capState === 'unsupported'
+                          ? 'text-semantic-error'
+                          : 'text-ink-muted'
+                    }
+                  >
+                    {t(`sidebar.ds.capability.${capState}`)}
+                  </span>
+                </div>
+                {capReasons.length > 0 && (
+                  <ul className="mt-1 list-inside list-disc text-caption text-ink-muted">
+                    {capReasons.slice(0, 4).map((r, i) => (
+                      <li key={i}>{r.message}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             <div>
               <span className="font-semibold text-ink">
                 {t('sidebar.ds.fieldSchema', { count: descriptor.fields?.length || 0 })}

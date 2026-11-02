@@ -37,6 +37,9 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.dasymetric_tools": "analysis",       # 面插值重分配（量守恒分析）
     "app.tools.data_discovery": "inspection",           # 目录/画像/lineage 只读发现
     "app.tools.data_fabric_tools": "data_access",
+    # GOAL-02：服务发现只读面（inspect_data_service）+ 受控读取/物化（读 =
+    # data_access；瓦片上图名字覆盖 map_mutation 在模块内声明）。
+    "app.tools.ogc_service_tools": "data_access",
     "app.tools.ingest_tools": "data_access",            # 入库（detect→profile→register）
     "app.tools.data_preparation_tools": "data_access",  # 数据准备（inspect→propose→prepare→bind）
     "app.tools.raster_tools_cog": "transformation",     # COG 转换
@@ -68,6 +71,8 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.atlas_export_tools": "export",
     # Track B（M14）：图层浏览/聚合只读工具面 —— 数据获取/检视，非突变
     "app.tools.layer_browse_tools": "data_access",
+    # GOAL 01：空间语义契约检视（inspect_spatial_semantics）—— 只读检视面
+    "app.tools.spatial_semantics_tools": "inspection",
     "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
     "app.tools.local_admin": "data_access",
     "app.tools.local_osm": "data_access",
@@ -100,6 +105,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.templates": "rendering",                 # 模板/主题组合
     "app.tools.temporal_tools": "analysis",
     "app.tools.science_temporal_tools": "analysis",  # science-v5 物候/立方体/异常
+    "app.tools.temporal_view_tools": "rendering",  # GOAL 03：时态视图控制（MapSpec temporal 写面/时间轴驱动）
     "app.tools.terrain_analysis": "analysis",
     "app.tools.upload_tools": "inspection",
     "app.tools.workspace_tools": "data_access",         # workspace 持久化 save/restore

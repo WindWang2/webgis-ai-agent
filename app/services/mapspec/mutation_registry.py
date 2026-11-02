@@ -34,6 +34,7 @@ from app.schemas.mapspec_mutation_schema import (
     ReorderLayersBody,
     SetLayoutBody,
     SetTimeBody,
+    SetTemporalViewBody,
     SetSceneBody,
     SetViewBody,
     SetWorkbenchStateBody,
@@ -61,6 +62,7 @@ from app.services.mapspec.intents import (
     SetSceneIntent,
     SetSceneAssetsIntent,
     SetScenarioModeIntent,
+    SetTemporalViewIntent,
     SetTimeIntent,
     SetViewIntent,
     SetWorkbenchStateIntent,
@@ -340,6 +342,10 @@ def _codec_set_time(req: Any) -> MutationIntent:
     )
 
 
+def _codec_set_temporal_view(req: Any) -> MutationIntent:
+    return SetTemporalViewIntent(config=req.config, patch=req.patch, remove=req.remove)
+
+
 def _codec_init_project(req: Any) -> MutationIntent:
     return InitProjectIntent(view=req.view)
 
@@ -592,6 +598,12 @@ def _build_default_registry() -> MutationRegistry:
         handler=_h._handle_settime,
         op_label="调整时间维度", provenance_detail=_pd_none,
     ), body_cls=SetTimeBody, body_codec=_codec_set_time)
+    reg.register(IntentDescriptor(
+        intent_cls=SetTemporalViewIntent,
+        handler=_h._handle_settemporalview,
+        # 时态控制层：spec-only 分支写入（temporal），不触碰 layers/显隐。
+        op_label="调整时态视图", provenance_detail=_pd_none,
+    ), body_cls=SetTemporalViewBody, body_codec=_codec_set_temporal_view)
     reg.register(IntentDescriptor(
         intent_cls=SetViewIntent,
         handler=_h._handle_setview,

@@ -327,6 +327,23 @@ def register_cartography_tools(registry: ToolRegistry):
                 for f in (data.get("features") or [])
                 if isinstance(f, dict)
             ]
+            # GOAL 01（M5/G12）：量纲判定的 CRS 事实取数据真实声明
+            # （geo_processor.extract_declared_crs 单一真相）；未声明按
+            # RFC 7946 §4 规范缺省 WGS84 —— 此前硬编码 4326 使投影数据的
+            # DEGREE_LIKE_METRIC 检查口径失真。
+            try:
+                from app.lib.geo_processor.core import extract_declared_crs
+                from app.lib.gis.crs_safety import classify_crs
+
+                _declared = extract_declared_crs(data) or ""
+                # measurement 的 DEGREE_LIKE_METRIC 白名单是精确串匹配
+                # （EPSG:4326/CRS84/…）—— URN 形态（urn:ogc:def:crs:EPSG::
+                # 4326）会静默跳过该检查。地理 CRS（classify_crs 权威判定）
+                # 一律用白名单代表值 4326 参检，投影 CRS 原样（不参检）。
+                _data_crs = ("EPSG:4326" if classify_crs(_declared) == "geographic"
+                             else (_declared or "EPSG:4326"))
+            except Exception:  # noqa: BLE001 — CRS 提取失败按规范缺省
+                _data_crs = "EPSG:4326"
             try:
                 from app.lib.gis.measurement import (
                     CANONICAL_UNITS,
@@ -356,7 +373,7 @@ def register_cartography_tools(registry: ToolRegistry):
                     field, roles,
                     value_samples=raw_values,
                     has_temporal=has_temporal,
-                    crs="EPSG:4326",
+                    crs=_data_crs,
                     unit_override=(
                         unit if unit and str(unit) in CANONICAL_UNITS else ""
                     ),

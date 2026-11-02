@@ -12,12 +12,13 @@
  * - 错误恢复：409 → conflict（带当前 revision，UI 提供重载）；429 → 单次
  *   退避重试；403/404/网络 → typed 错误态，不静默吞。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   PagedRevisionConflict,
   buildSearchFilter,
   fetchFeaturePage,
 } from '@/lib/data-plane/paged-features';
+import { mergeWhereAst, subscribeTemporalWindow, temporalWindowForRef, whereParam } from '@/lib/temporal-map/linkage';
 import { resolveRowId, MAX_TABLE_COLUMNS, type TableRow } from '@/lib/map-components/table-data';
 import { getSessionIdentity } from '@/lib/store/session-identity';
 import type { Layer } from '@/lib/types/layer';
@@ -132,6 +133,18 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
     () => (columnsState.length ? buildSearchFilter(debouncedSearch, columnsState) : undefined),
     [debouncedSearch, columnsState],
   );
+  // GOAL 03 M4：时序同窗 —— temporal 绑定该 ref 时，分页 where 与时间窗
+  // and 合成（与地图/图表同编译器；key 变化重取，同帧零重取）。
+  const temporalKey = useSyncExternalStore(
+    subscribeTemporalWindow,
+    () => temporalWindowForRef(refId).key,
+    () => '',
+  );
+  const effectiveWhere = useMemo(() => {
+    const searchAst = where ? (JSON.parse(where) as Parameters<typeof mergeWhereAst>[0]) : undefined;
+    return whereParam(mergeWhereAst(searchAst, temporalWindowForRef(refId).where));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 身份 = 搜索 where 串 + temporalKey
+  }, [where, temporalKey, refId]);
 
   const [state, setState] = useState<PagedTableState>({
     status: 'loading', rows: [], columns: [], nextCursor: null,
@@ -161,7 +174,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
       try {
         const page = await fetchFeaturePage({
           sessionId, refId, revision: anchorRevision ?? undefined,
-          limit: PAGE_LIMIT, order: orderParam, where, bbox: bbox ?? undefined,
+          limit: PAGE_LIMIT, order: orderParam, where: effectiveWhere, bbox: bbox ?? undefined,
           ownerToken, signal: controller.signal,
         });
         if (cancelled || controller.signal.aborted) return;
@@ -197,7 +210,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
     };
     // bbox 以值键参与身份（视口 bbox 每帧新数组身份，值不变不该重取）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refId, sessionId, descriptorRevision, orderParam, where, bbox?.join(','), reloadNonce]);
+  }, [refId, sessionId, descriptorRevision, orderParam, where, effectiveWhere, bbox?.join(','), reloadNonce]);
 
   // 续页（游标追加；不重置已累积行）。沿用首页请求的 controller ——
   // 查询身份变化/卸载时统一作废。
@@ -210,7 +223,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
         const page = await fetchFeaturePage({
           sessionId, refId, revision: state.revision ?? undefined,
           limit: PAGE_LIMIT, cursor: state.nextCursor,
-          order: orderParam, where, bbox: bbox ?? undefined,
+          order: orderParam, where: effectiveWhere, bbox: bbox ?? undefined,
           ownerToken, signal: controller?.signal,
         });
         if (controller?.signal?.aborted) return;
@@ -234,7 +247,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
         setState((s) => ({ ...s, status: 'error', loadingMore: false, error: e }));
       }
     })();
-  }, [state.status, state.nextCursor, state.loadingMore, state.revision, sessionId, refId, orderParam, where, bbox, ownerToken]);
+  }, [state.status, state.nextCursor, state.loadingMore, state.revision, sessionId, refId, orderParam, where, effectiveWhere, bbox, ownerToken]);
 
   const reload = useCallback(() => {
     setReloadNonce((n) => n + 1);

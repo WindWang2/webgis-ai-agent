@@ -1,4 +1,4 @@
-# ADR-0279：多尺度制图综合与尺度表达档案（GOAL 04）
+# ADR-0280：多尺度制图综合与尺度表达档案（GOAL 04）
 
 状态：Proposed（随 zcode/goal-multiscale-cartography-v1 PR）
 日期：2026-11-02 · 基线 master 6c5e71c2c

@@ -73,6 +73,8 @@ _TOOL_MODULES = [
     # ADR-0214：组合契约工具面（discover/apply_composition/plan_replace）
     ("app.tools.composition_tools", "register_composition_tools"),
     ("app.tools.data_fabric_tools", "register_data_fabric_tools"),
+    # GOAL-02：OGC 开放服务与远程资产工具面（发现/coverage 读/COG 物化/瓦片上图）
+    ("app.tools.ogc_service_tools", "register_ogc_service_tools"),
     ("app.tools.data_discovery", "register_data_discovery_tools"),
     ("app.tools.workspace_tools", "register_workspace_tools"),
     ("app.tools.ingest_tools", "register_ingest_tools"),
@@ -84,6 +86,9 @@ _TOOL_MODULES = [
     ("app.tools.geocompute_tools", "register_geocompute_tools"),
     # science-v5 W8：物候/时空立方体/时间异常工具面（独立模块防并发冲突）
     ("app.tools.science_temporal_tools", "register_science_temporal_tools"),
+    # GOAL 03：时态视图控制工具面（bind/control/compare/unbind/status；
+    # 写 MapSpec temporal 分支，独立模块防并发冲突）
+    ("app.tools.temporal_view_tools", "register_temporal_view_tools"),
     ("app.tools.modelops_tools", "register_modelops_tools"),
     # Platform 11 / ADR-0198：GeoAI prompt artifact/候选/精化/语义工具面
     ("app.tools.geoai_tools", "register_geoai_tools"),
@@ -104,6 +109,9 @@ _TOOL_MODULES = [
     ("app.tools.analysis_workflow_tools", "register_analysis_workflow_tools"),
     # Track B（M14）：图层浏览/聚合只读工具面（分页/typed 过滤/视口统计）
     ("app.tools.layer_browse_tools", "register_layer_browse_tools"),
+    # GOAL 01：空间语义与量纲可信契约只读工具面（inspect_spatial_semantics；
+    # 独立模块防并发冲突，preflight 真相在 gis_harness/spatial_semantics/）
+    ("app.tools.spatial_semantics_tools", "register_spatial_semantics_tools"),
 ]
 
 

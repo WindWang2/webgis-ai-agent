@@ -62,6 +62,8 @@ class AtlasPageBinding(BaseModel):
     legend_digest: Optional[str] = None
     #: 目标图层（过滤层或首个带 legend 的层）的分类摘要（manifest 投影用）。
     classification: Dict[str, Any] = Field(default_factory=dict)
+    #: time 驱动（GOAL 03）：本页时间窗（帧身份/窗口/表示/字段）。
+    time_window: Optional[Dict[str, Any]] = None
     fingerprint: str = Field(default="")
 
 
@@ -96,6 +98,14 @@ def _page_effective_doc(
         from app.services.publication_export import _apply_frame_overrides
 
         return _apply_frame_overrides(document, frame)
+    if getattr(page, "time_window", None):
+        # GOAL 03：time 页 —— temporal_products 的窗口过滤 + 页帧 cursor
+        # 盖章（与渲染面同一 apply_time_window_to_doc，单一事实源）。
+        from app.services.gis_harness.temporal_products.time_filter import (
+            apply_time_window_to_doc,
+        )
+
+        return apply_time_window_to_doc(document, page.time_window)
     if page.filter_layer_id:
         from app.services.publication_export import _page_filtered_doc
 
@@ -271,6 +281,7 @@ def plan_atlas_binding(spec: AtlasJobSpec, document: Dict[str, Any]) -> AtlasPla
             "feature_count": feature_count,
             "data_digest": data_digest,
             "legend_digest": legend_digest,
+            "time_window": page.time_window,
         }
         bindings.append(AtlasPageBinding(
             **binding_fields,

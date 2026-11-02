@@ -10,6 +10,7 @@ import { styleCommands } from './styleCommands';
 import { sceneCommands } from './sceneCommands';
 import { analysisWorkflowCommands } from './analysisWorkflowCommands';
 import { mapOperationsCommands } from './mapOperationsCommands';
+import { temporalCommands } from './temporalCommands';
 
 export type { MapCommandContext, CommandValidator, CommandEntry } from './types';
 
@@ -34,6 +35,7 @@ export const COMMAND_CATALOGUE = {
   ...sceneCommands,
   ...analysisWorkflowCommands,
   ...mapOperationsCommands,
+  ...temporalCommands,
 } as const;
 
 export type MapCommandName = keyof typeof COMMAND_CATALOGUE;

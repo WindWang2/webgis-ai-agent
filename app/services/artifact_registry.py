@@ -410,6 +410,39 @@ def fabric_parquet_ref_exists(session_id: str, ref: str) -> bool:
         return False
 
 
+# ── GOAL-02：COG 栅格工件 disk-cursor（fabric-cog）────────────────────────
+# ref:fabric-cog/<id> → DATA_DIR/<sid>/fabric-cog/<id>.tif。coverage 受控
+# 读取与远程 COG 物化共用（raster_materialization.publish_cog_artifact）。
+_FABRIC_COG_REF_PREFIX = "ref:fabric-cog/"
+
+
+def fabric_cog_path(session_id: str, ref: str) -> Optional["Path"]:
+    """ref:fabric-cog/<id> → 会话 fabric-cog 目录下的 COG 路径。
+
+    与 fabric_parquet_path 同款：session/ref id 双 charset 白名单（`..` 与
+    分隔符在边界即拒绝），DATA_DIR 调用时实时取值。
+    """
+    artifact_id = ref[len(_FABRIC_COG_REF_PREFIX):]
+    if not artifact_id or not _RASTER_ID_RE.match(artifact_id):
+        return None
+    if not _RASTER_ID_RE.match(session_id or ""):
+        return None
+    from app.core.config import settings
+
+    return Path(settings.DATA_DIR) / session_id / "fabric-cog" / f"{artifact_id}.tif"
+
+
+def fabric_cog_ref_exists(session_id: str, ref: str) -> bool:
+    """COG 工件活性（O(1) stat；路径非法 → False）。"""
+    path = fabric_cog_path(session_id, ref)
+    if path is None:
+        return False
+    try:
+        return path.is_file()
+    except OSError:  # noqa: BLE001
+        return False
+
+
 # ── Lakehouse Cube 磁盘工件 V6（ADR-0249 Wave 7）─────────────────────────
 # ref:cube/<id> → DATA_DIR/<sid>/lakehouse-cubes/<id>.zarr（**目录**形态
 # 的 disk-cursor —— zarr store 是目录树）。与 raster/fabric-parquet 完全

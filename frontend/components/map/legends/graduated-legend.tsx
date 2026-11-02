@@ -49,8 +49,20 @@ export function GraduatedLegend({ spec, onFilterChange }: Props) {
 
   return (
     <LegendCard field={field} kind={t('map.legends.graduated')}>
-      <div className="mb-1 flex justify-between text-micro tabular-nums text-map-chrome-ink-muted">
+      <div className="mb-1 flex items-baseline justify-between text-micro tabular-nums text-map-chrome-ink-muted">
         <span>{formatLegendValue(breaks[0])}</span>
+        {/* 科学口径（GOAL 01/M5）：legend_spec.unit 下发的计量单位
+            （如 个/km²）—— 与 floating-legend/colorbar 同一消费口径；
+            缺席时渲染不变。 */}
+        {spec.unit ? (
+          <span
+            className="mx-1 truncate normal-case text-map-chrome-ink"
+            title={spec.unit}
+            data-testid="legend-unit"
+          >
+            {spec.unit}
+          </span>
+        ) : null}
         <span>{formatLegendValue(breaks[breaks.length - 1])}</span>
       </div>
       <div className="space-y-0.5">

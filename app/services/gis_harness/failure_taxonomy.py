@@ -80,7 +80,23 @@ _CRS_MARKERS = (
 _TIMEOUT_MARKERS = (
     "timeout", "timed out", "connection", "network", "socket",
     "refused", "reset", "超时", "网络", "连接",
+    # GOAL 05（ADR-0279）：上游瞬态不可用并入 timeout 词汇（类文档语义
+    # "超时/瞬态网络/远端不可达"）。此前 5xx 落 unknown（预算 1）、429
+    # 经 planning 委托折成 budget_exhausted（预算 0，首错即 abort）——
+    # 与瞬态可退避语义相悖；E2E 门（test_e2e_recovery_gates）钉死。
+    "rate limit", "ratelimit", "too many requests", "限流", "请求过于频繁",
+    "bad gateway", "service unavailable",
+    "internal server error", "server error", "服务不可用", "上游错误",
 )
+def _has_http_status_signal(context_text: str) -> bool:
+    """数字状态码词边界 + 语境双门（app/lib/gis/http_status 单一事实源）。
+
+    语境文本**不含 status 字段**（生产 status 恒 error/failed —— R2 复审
+    P2-1：含 status 会让语境门恒真，"buffered 500 features" 误判瞬态）。
+    """
+    from app.lib.gis.http_status import any_http_status_signal
+
+    return any_http_status_signal(context_text=context_text)
 _STALE_REF_MARKERS = (
     "stale", "expired", "已过期", "已失效", "失效", "ref 不存在",
 )
@@ -149,10 +165,19 @@ def classify_harness_failure(
         return HarnessFailureClass.CANCELLED
     if _is_crs_exception(exception) or _has_any(_CRS_MARKERS, text_l):
         return HarnessFailureClass.CRS_ERROR
+    # 语境文本排除泛化 status（P2-1）："error"/"failed" 恒过语境门；
+    # 信息量 status（如 "HTTP 429"）保留。
+    _s_l = (status or "").strip().lower()
+    _s_informative = _s_l if _s_l not in ("", "error", "failed") else ""
+    _ctx_text_l = " ".join(
+        str(x).lower() for x in (_s_informative, code, error_type, message)
+        if x
+    )
     if (
         isinstance(exception, TimeoutError)
         or "timeout" in type_l
         or _has_any(_TIMEOUT_MARKERS, text_l)
+        or _has_http_status_signal(_ctx_text_l)
     ):
         return HarnessFailureClass.TIMEOUT
     if _has_any(_STALE_REF_MARKERS, text_l):

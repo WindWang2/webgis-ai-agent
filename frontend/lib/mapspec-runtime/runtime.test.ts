@@ -790,6 +790,44 @@ describe("MapSpecRuntime — Data Plane vector tile source", () => {
     ]);
     expect(map._calls.addLayer.map((call: any) => call.def.id)).toEqual(["V1__point"]);
   });
+
+  // GOAL-02（M2）：OGC API - Tiles 受控代理的两种 MapSpec 源形态。
+  it("applies a relative ogc-tiles proxy template as a vector source", () => {
+    const rt = new MapSpecRuntime(map);
+    const spec = vectorSpec();
+    (spec.sources.V1 as any).tiles = [
+      "/api/v1/data-fabric/catalog/admin:WebMercatorQuad/ogc-tiles/{z}/{x}/{y}?session_id=sess-1234",
+    ];
+    rt.reconcile(spec);
+
+    const srcCall = map._calls.addSource.find((c: any) => c.id === "V1");
+    expect(srcCall.def.type).toBe("vector");
+    expect(srcCall.def.tiles[0]).toContain("/ogc-tiles/{z}/{x}/{y}");
+    expect(srcCall.def.tiles[0]).toContain("session_id=sess-1234");
+  });
+
+  it("applies a fabric source with a raster tile url via addRasterTileSource", () => {
+    const rt = new MapSpecRuntime(map);
+    rt.reconcile({
+      version: "1.0",
+      sources: {
+        OGC_R: {
+          type: "data_fabric",
+          protocol: "ogc_api_tiles",
+          catalog_item_id: "admin:WebMercatorQuad",
+          url: "/api/v1/data-fabric/catalog/admin:WebMercatorQuad/ogc-tiles/{z}/{x}/{y}?session_id=sess-1234",
+        } as any,
+      },
+      layers: [
+        { id: "OGC_R__layer", source: "OGC_R", type: "raster", paint: {} },
+      ],
+    } as any);
+
+    const srcCall = map._calls.addSource.find((c: any) => c.id === "OGC_R");
+    expect(srcCall.def.type).toBe("raster");
+    expect(srcCall.def.tiles[0]).toContain("/ogc-tiles/{z}/{x}/{y}");
+    expect(srcCall.def.tileSize).toBe(256);
+  });
 });
 
 // ─── ref-only 源的静默跳过与数据到达后的补挂载（product 图层契约）───

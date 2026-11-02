@@ -32,6 +32,7 @@ def make_response(
     status: int = 200,
     json_body: Optional[object] = None,
     text: Optional[str] = None,
+    content: Optional[bytes] = None,
     headers: Optional[Dict[str, str]] = None,
 ) -> requests.Response:
     resp = requests.Response()
@@ -44,6 +45,9 @@ def make_response(
     elif text is not None:
         resp._content = text.encode()
         resp.headers["Content-Type"] = "text/plain"
+    elif content is not None:
+        # GOAL-02：瓦片/影像字节路由（Content-Type 由调用方在 headers 给出）。
+        resp._content = content
     else:
         resp._content = b""
     # Content is pre-materialized: mark consumed so Response.iter_content()

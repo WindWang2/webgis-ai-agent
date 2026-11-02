@@ -14,10 +14,10 @@
 
 ## 总览
 
-- capability 词表：170 条（图内 170 节点）
-- 图节点 1036 / 边 3242 / graph fingerprint `1769aedc9e47795c`
-- provider 面：algorithm 245，component 23，model 0，provider(adapters) 15，template 8，tool 386，workflow(recipes) 166
-- 域分布：`cartography` 6，`general` 73，`network` 14，`platform` 17，`raster` 57，`statistics` 1，`temporal` 2
+- capability 词表：174 条（图内 174 节点）
+- 图节点 1052 / 边 3254 / graph fingerprint `64299b606489be0f`
+- provider 面：algorithm 245，component 23，model 0，provider(adapters) 17，template 8，tool 396，workflow(recipes) 166
+- 域分布：`cartography` 6，`general` 77，`network` 14，`platform` 17，`raster` 57，`statistics` 1，`temporal` 2
 
 ## Capability 词表
 
@@ -153,6 +153,7 @@
 | `spatial_join` | general | analysis | native | — | yes | — | — |
 | `spatial_regression` | general | statistics | native | — | yes | — | — |
 | `spatial_sampling` | general | analysis | native | — | yes | — | — |
+| `spatial_semantics` | general | data_access | native | — | yes | — | — |
 | `spatial_weights_diagnostics` | general | statistics | native | — | yes | — | — |
 | `spatiotemporal_clustering` | general | statistics | native | — | yes | — | — |
 | `spatiotemporal_interpolation` | general | analysis | native | — | yes | — | — |
@@ -161,8 +162,11 @@
 | `spectral_unmixing` | raster | raster | native | — | yes | — | — |
 | `tasseled_cap_transformation` | raster | raster | native | — | yes | — | — |
 | `temporal_aggregate` | general | statistics | native | — | yes | — | — |
+| `temporal_bind` | general | platform | planned | — | yes | — | — |
 | `temporal_change_point` | general | analysis | native | — | yes | — | — |
+| `temporal_compare` | general | platform | planned | — | yes | — | — |
 | `temporal_composite` | raster | raster | native | — | yes | — | — |
+| `temporal_control` | general | platform | planned | — | yes | — | — |
 | `temporal_feature_extraction` | raster | raster | native | — | yes | — | — |
 | `temporal_filtering` | platform | platform | planned | — | yes | — | — |
 | `temporal_profile` | general | statistics | native | — | yes | — | — |
@@ -198,7 +202,7 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 75 | 1 | 97 | 6 | 0 |
+| 75 | 1 | 107 | 6 | 0 |
 
 ### orphan_capability（75）
 
@@ -280,8 +284,9 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（97）
+### unreachable_tool（107）
 
+- tool add_tile_service_layer is not exposed by any algorithm and has no capability/deprecation link
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
 - tool capability_runtime_status is not exposed by any algorithm and has no capability/deprecation link
 - tool catalog_conformance is not exposed by any algorithm and has no capability/deprecation link
@@ -314,11 +319,14 @@
 - tool gis_task_classify is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_template_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool input_tips is not exposed by any algorithm and has no capability/deprecation link
+- tool inspect_data_service is not exposed by any algorithm and has no capability/deprecation link
+- tool inspect_spatial_semantics is not exposed by any algorithm and has no capability/deprecation link
 - tool inventory_layers is not exposed by any algorithm and has no capability/deprecation link
 - tool list_analysis_assets is not exposed by any algorithm and has no capability/deprecation link
 - tool list_datasets is not exposed by any algorithm and has no capability/deprecation link
 - tool list_uploaded_data is not exposed by any algorithm and has no capability/deprecation link
 - tool materialize_dataset is not exposed by any algorithm and has no capability/deprecation link
+- tool materialize_remote_raster_asset is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_cancel_inference is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_check_compatibility is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_compare_results is not exposed by any algorithm and has no capability/deprecation link
@@ -334,6 +342,7 @@
 - tool prepare_dataset is not exposed by any algorithm and has no capability/deprecation link
 - tool query_federated_data is not exposed by any algorithm and has no capability/deprecation link
 - tool query_osm_boundary is not exposed by any algorithm and has no capability/deprecation link
+- tool read_coverage_subset is not exposed by any algorithm and has no capability/deprecation link
 - tool refresh_data_source is not exposed by any algorithm and has no capability/deprecation link
 - tool resolve_field_semantics is not exposed by any algorithm and has no capability/deprecation link
 - tool run_spatial_simulation is not exposed by any algorithm and has no capability/deprecation link
@@ -343,6 +352,11 @@
 - tool search_spatial_catalog is not exposed by any algorithm and has no capability/deprecation link
 - tool set_map_scene is not exposed by any algorithm and has no capability/deprecation link
 - tool set_scene_assets is not exposed by any algorithm and has no capability/deprecation link
+- tool temporal_view_bind is not exposed by any algorithm and has no capability/deprecation link
+- tool temporal_view_compare is not exposed by any algorithm and has no capability/deprecation link
+- tool temporal_view_control is not exposed by any algorithm and has no capability/deprecation link
+- tool temporal_view_status is not exposed by any algorithm and has no capability/deprecation link
+- tool temporal_view_unbind is not exposed by any algorithm and has no capability/deprecation link
 - tool update_layer_appearance is not exposed by any algorithm and has no capability/deprecation link
 - tool validate_execution_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool vector_feature_edit_commit is not exposed by any algorithm and has no capability/deprecation link
@@ -387,8 +401,10 @@
 - artifact type od_matrix is produced but never accepted/bound by any node
 - artifact type proximity_zone is produced but never accepted/bound by any node
 - artifact type service_area is produced but never accepted/bound by any node
-### 其他 warning（2）
+### 其他 warning（4）
 
 - **dangling_endpoint**: tool:materialize_dataset -produces-> artifact_type:data: endpoint artifact_type:data not a node
+- **dangling_endpoint**: tool:materialize_remote_raster_asset -produces-> artifact_type:data: endpoint artifact_type:data not a node
 - **dangling_endpoint**: tool:prepare_dataset -produces-> artifact_type:data: endpoint artifact_type:data not a node
+- **dangling_endpoint**: tool:read_coverage_subset -produces-> artifact_type:data: endpoint artifact_type:data not a node
 

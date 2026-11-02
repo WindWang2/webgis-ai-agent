@@ -28,6 +28,27 @@ from app.lib.cancellation import cancellable
 logger = logging.getLogger(__name__)
 
 
+def _crs_unit_factor(crs) -> float:
+    """投影 CRS 的线性轴因子（metres per CRS unit；非米轴才偏离 1.0）。
+
+    GOAL 01（G3 修复）：voronoi/convex_hull/multi_ring_buffer 共用 ——
+    to_utm_gdf 对已投影输入原样返回，若该 CRS 非米制（state-plane feet
+    等），面积必须 ×factor² 换算（旧代码硬编码 /1e6，英尺系 km² 错 10.76×）。
+    地理 CRS / 不可判定 → 1.0（诚实缺省，与 buffer_smart #524 同口径）。
+    """
+    try:
+        if crs is None or not crs.is_projected:
+            return 1.0
+        axis = crs.axis_info[0]
+        factor = float(getattr(axis, "unit_conversion_factor", 1.0) or 1.0)
+        if (axis.unit_name and "metre" not in axis.unit_name
+                and "meter" not in axis.unit_name and factor != 1.0):
+            return factor
+    except Exception:  # noqa: BLE001 — 不可判定 → 缺省
+        pass
+    return 1.0
+
+
 def voronoi_polygons(
     geojson: dict,
     clip_bounds: Optional[list] = None,
@@ -122,7 +143,9 @@ def voronoi_polygons(
             if poly.is_empty:
                 continue
             props = {k: v for k, v in gdf.iloc[i].items() if k != "geometry"}
-            props["area_km2"] = round(float(poly.area) / 1e6, 4)
+            _f = _crs_unit_factor(gdf.crs)
+            props["area_km2"] = round(
+                float(poly.area) * _f * _f / 1e6, 4)
             raw_polys.append((poly, props))
         except (ValueError, TypeError):
             continue
@@ -195,13 +218,14 @@ def convex_hull(
                     )
                     continue
                 hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+                _f = _crs_unit_factor(gdf.crs)
                 out_features.append({
                     "type": "Feature",
                     "geometry": mapping(hull_wgs84),
                     "properties": {
                         group_by: str(name),
                         "feature_count": len(group),
-                        "area_km2": round(float(hull.area) / 1e6, 4),
+                        "area_km2": round(float(hull.area) * _f * _f / 1e6, 4),
                     },
                 })
             except (ValueError, TypeError):
@@ -218,12 +242,13 @@ def convex_hull(
                 correction_hint="提供至少 3 个非共线的点要素。",
             )
         hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+        _f = _crs_unit_factor(gdf.crs)
         out_features.append({
             "type": "Feature",
             "geometry": mapping(hull_wgs84),
             "properties": {
                 "feature_count": len(gdf),
-                "area_km2": round(float(hull.area) / 1e6, 4),
+                "area_km2": round(float(hull.area) * _f * _f / 1e6, 4),
             },
         })
 
@@ -285,22 +310,9 @@ def multi_ring_buffer(
         )
 
     distances = sorted([float(d) for d in distances])
-    # GIS-P3-8 sibling (#588): to_utm_gdf returns an already-projected input
-    # UNCHANGED — in a non-metre CRS (state-plane feet etc.) the "meters"
-    # distances must be converted to the CRS's linear unit (see buffer_smart,
-    # #524) and areas converted back, or a 1000 m ring becomes 1000 ft
-    # (304.8 m) and area_km2 overreports the ft² figure as km² (10.76×).
-    # crs_unit_factor is "metres per CRS unit" (pyproj axis semantics).
-    crs_unit_factor = 1.0
-    if gdf.crs is not None and gdf.crs.is_projected:
-        try:
-            axis = gdf.crs.axis_info[0]
-            factor = float(getattr(axis, "unit_conversion_factor", 1.0) or 1.0)
-            if axis.unit_name and "metre" not in axis.unit_name and "meter" not in axis.unit_name and factor != 1.0:
-                crs_unit_factor = factor
-        except Exception:
-            pass
-
+    # GIS-P3-8 sibling (#588)：非米投影 CRS 的轴因子换算（metres per CRS
+    # unit，pyproj axis 语义）—— 共享助手，与 voronoi/convex_hull 同契约。
+    crs_unit_factor = _crs_unit_factor(gdf.crs)
     union_geom = gdf.geometry.union_all()
     out_features = []
 

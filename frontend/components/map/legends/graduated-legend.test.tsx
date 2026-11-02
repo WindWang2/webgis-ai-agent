@@ -29,4 +29,14 @@ describe('GraduatedLegend', () => {
     const ranges = onFilterChange.mock.calls.at(-1)?.[0];
     expect(ranges).toHaveLength(2);
   });
+
+  it('renders legend_spec.unit as the scientific denominator chip', () => {
+    render(<GraduatedLegend spec={{ ...spec, unit: '个/km²' }} />);
+    expect(screen.getByTestId('legend-unit')).toHaveTextContent('个/km²');
+  });
+
+  it('renders without a unit chip when unit is absent', () => {
+    render(<GraduatedLegend spec={spec} />);
+    expect(screen.queryByTestId('legend-unit')).toBeNull();
+  });
 });

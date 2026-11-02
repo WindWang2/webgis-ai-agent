@@ -148,6 +148,10 @@ class SessionPlan(BaseModel):
     #: (idempotency keys / replay order). Additive — old payloads default 0.
     event_seq: int = 0
     recovery: PlanRecoveryMetadata = Field(default_factory=PlanRecoveryMetadata)
+    #: GOAL 05（ADR-0281）：最近一次工具失败的统一恢复裁决（bounded
+    #: diagnostic+decision，TDS 单 seam 产出后随失败分支落账；additive
+    #: —— 旧 payload 缺省 None，投影/多轮重试指令只读此键，不重算）。
+    last_recovery: Optional[dict[str, Any]] = None
 
 
 class SessionPlanEvent(BaseModel):
@@ -362,6 +366,61 @@ def format_session_plan_projection(
                 procedure_line = "\n" + _line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         procedure_line = ""
+    # GOAL 05（ADR-0281）：恢复裁决单行（additive；只读 last_recovery
+    # 落账键 —— 最近失败的原因/处置/预算；块缺席零漂移，投影失败只
+    # 少一行）。多轮「重试失败步骤」的 agent 提示由此进入上下文。
+    recovery_line = ""
+    try:
+        _lr = getattr(plan, "last_recovery", None)
+        if isinstance(_lr, dict) and isinstance(
+                _lr.get("diagnostic"), dict):
+            _d = _lr["diagnostic"]
+            _budget = _d.get("retry") or {}
+            recovery_line = (
+                "\n[GIS Recovery] last_failure tool={tool} reason={reason} "
+                "disposition={disp} retry={att}/{mx}{note}".format(
+                    tool=str(_lr.get("tool") or "?")[:32],
+                    reason=str(_d.get("reason") or "?")[:40],
+                    disp=str(_d.get("disposition") or "?")[:24],
+                    att=_budget.get("attempts", "?"),
+                    mx=_budget.get("max_attempts", "?"),
+                    note=(
+                        " (budget exhausted)"
+                        if _budget and _budget.get("retry_allowed") is False
+                        else ""),
+                )
+            )
+            # M5：多轮重试指令（只重试失败子图、保持已验证产物；有失败
+            # 行才追加 —— 全绿计划零新行）。纯函数、只读计划事实。
+            _failed_rows = [
+                {"capability": str(r.capability)[:64],
+                 "status": str(getattr(r, "status", "") or "")[:16],
+                 "bound_ref": str(getattr(r, "bound_ref", "") or "")[:64]}
+                for r in (plan.progress or [])
+                if str(getattr(r, "status", "") or "") in
+                ("failed", "unavailable")
+            ]
+            if _failed_rows:
+                from app.services.gis_harness.recovery_policy.continuation import (
+                    resolve_retry_directive,
+                )
+
+                _directive = resolve_retry_directive(
+                    progress_rows=_failed_rows + [
+                        {"capability": str(r.capability)[:64],
+                         "status": "complete",
+                         "bound_ref": str(getattr(r, "bound_ref", "") or "")[:64]}
+                        for r in (plan.progress or [])
+                        if str(getattr(r, "status", "") or "") == "complete"
+                    ][:16],
+                    last_recovery=_lr,
+                    chapter=plan.gis_chapter,
+                )
+                _line = _directive.directive_line
+                if _line and _line not in recovery_line:
+                    recovery_line += "\n" + _line
+    except Exception:  # noqa: BLE001 — 投影失败只少一行
+        recovery_line = ""
     # V4（ADR-0104 Wave 1）：WorkflowInstance 运行态行（additive、单行、
     # 有界；从章节实例块只读投影——rev/维度/阻断/stale/ready。首行契约
     # 不变，无实例块的旧章节零漂移）。
@@ -439,7 +498,7 @@ def format_session_plan_projection(
     except Exception:  # noqa: BLE001 — kernel 投影是增值披露
         kernel_lines = ""
     if not plan.gis_chapter.get("data_requirements"):
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + product_line + goal_line + procedure_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + product_line + goal_line + recovery_line + procedure_line
     try:
         from app.services.gis_harness.plan_graph import (
             build_plan_graph,
@@ -448,9 +507,9 @@ def format_session_plan_projection(
         graph = build_plan_graph(plan.gis_chapter)
         block = project_graph_block(graph)
     except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + product_line + goal_line + procedure_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + product_line + goal_line + recovery_line + procedure_line
     if not block:
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + product_line + goal_line + procedure_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + product_line + goal_line + recovery_line + procedure_line
     # ADR-0085：目标→产品 facets 投影行（纯派生、单行有界；章节/MapSpec
     # 之外零新状态 —— 让 Pi 看见"产品 = facets 集合"而非单个 heatmap）。
     products_line = ""
@@ -486,8 +545,8 @@ def format_session_plan_projection(
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         next_action_line = ""
     if not products_line.strip():
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + "\n" + block + product_line + goal_line + procedure_line
-    return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + "\n" + block + products_line + next_action_line + product_line + goal_line + procedure_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + "\n" + block + product_line + goal_line + recovery_line + procedure_line
+    return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + "\n" + block + products_line + next_action_line + product_line + goal_line + recovery_line + procedure_line
 
 
 #: SessionPlan 域的 SSE 事件登记表（#1684 API-01 ④）。
@@ -962,6 +1021,60 @@ def _intent_facts(
     }
 
 
+def _bound_recovery_payload(
+    rec: Dict[str, Any], tool_name: str,
+) -> Optional[Dict[str, Any]]:
+    """``raw["recovery"]`` → 白名单 bounded 载荷（重建；异常 → None）。"""
+    try:
+        d = rec.get("diagnostic") if isinstance(rec, dict) else None
+        if not isinstance(d, dict):
+            return None
+        attr = d.get("attribution") \
+            if isinstance(d.get("attribution"), dict) else {}
+        rt = d.get("retry") if isinstance(d.get("retry"), dict) else None
+        dec = rec.get("decision") \
+            if isinstance(rec.get("decision"), dict) else {}
+
+        def _int(v: Any) -> int:
+            try:
+                return int(v or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        return {
+            "diagnostic": {
+                "reason": str(d.get("reason"))[:48],
+                "disposition": str(d.get("disposition"))[:32],
+                "failure_class": str(d.get("failure_class"))[:32],
+                "detail": str(d.get("detail"))[:200],
+                "attribution": {
+                    str(k)[:32]: str(v)[:64]
+                    for k, v in list(attr.items())[:10]},
+                "retry": (None if rt is None else {
+                    "attempts": _int(rt.get("attempts")),
+                    "max_attempts": _int(rt.get("max_attempts")),
+                    "retry_allowed": bool(rt.get("retry_allowed")),
+                }),
+                "evidence_refs": [str(e)[:64]
+                                  for e in (d.get("evidence_refs")
+                                            or [])[:8]],
+                "hints": [str(h)[:32] for h in (d.get("hints") or [])[:4]],
+            },
+            "decision": {
+                "auto_retry": bool(dec.get("auto_retry")),
+                "allowed_actions": [str(a)[:32]
+                                    for a in (dec.get("allowed_actions")
+                                              or [])[:6]],
+                "required_confirmation": (
+                    str(dec.get("required_confirmation"))[:24]
+                    if dec.get("required_confirmation") else None),
+            } if dec else None,
+            "tool": str(tool_name)[:64],
+        }
+    except Exception:  # noqa: BLE001 — 重建失败只丢 payload
+        return None
+
+
 async def _apply_tool_result_unlocked(
     session_id: str,
     tool_name: str,
@@ -997,13 +1110,47 @@ async def _apply_tool_result_unlocked(
         # 下次成功调用覆写为 complete；DAG 下游在重试前被阻塞）。规划入口
         # 工具（webgis_*）失败不映射：没有确定受害的能力行，章节保持原状
         # （意图/产品调用本身的失败由调用方 retry 语义处理）。
+        # GOAL 05：统一恢复裁决落账（additive 单键，TDS 单 seam 产出；
+        # 无裁决 payload 的旧失败形状零漂移；重复失败仅在裁决变化时
+        # 额外落盘一次）。
+        _rec = raw.get("recovery") if isinstance(raw, dict) else None
+        _rec_changed = False
+        # 形状门（fail-closed）：diagnostic.reason 必须命中封闭词表，
+        # 否则视为伪造/损坏 payload 丢弃 —— 计划存储不接受任意结构。
+        try:
+            from app.services.gis_harness.recovery_policy.contracts import (
+                REASON_REGISTRY as _REASON_REGISTRY,
+            )
+
+            _diag = _rec.get("diagnostic") if isinstance(_rec, dict) else None
+            _reason_ok = isinstance(_diag, dict) and str(
+                _diag.get("reason") or "") in _REASON_REGISTRY
+        except Exception:  # noqa: BLE001 — 校验失败按丢弃
+            _reason_ok = False
+        if _reason_ok:
+            # R2-4：白名单键集重建（封闭词表形状门的一部分）；重建中
+            # 任何类型异常 → 只丢弃本 payload（R2 复审 P2-3），绝不
+            # 影响能力行 failed 标记与主流程。
+            _rec_bounded = _bound_recovery_payload(_rec, tool_name)
+            if _rec_bounded is not None and \
+                    plan.last_recovery != _rec_bounded:
+                plan.last_recovery = _rec_bounded
+                _rec_changed = True
+        else:
+            _rec_bounded = None
         if tool_name.startswith("webgis_") or plan.gis_chapter is None:
+            if _rec_changed and (lock is None or not lock.lost):
+                await save_session_plan(plan, store=backend)
             return [], None
         hits = capabilities_hit_by_tool(plan, tool_name)
         if not hits:
+            if _rec_changed and (lock is None or not lock.lost):
+                await save_session_plan(plan, store=backend)
             return [], None
         changed = _mark_progress(plan, hits, status="failed")
         if not changed:
+            if _rec_changed and (lock is None or not lock.lost):
+                await save_session_plan(plan, store=backend)
             return [], None
         if lock is not None and lock.lost:
             return [], None

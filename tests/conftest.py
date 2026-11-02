@@ -495,3 +495,6 @@ def _ads_offline_socket_guard():
 # ── ads-v1 fixture 层（DS0 / ADR-0170）──────────────────────────────────────
 # fixture 放顶层 conftest：data lane 与 unit lane 的 planning/replay 测试都要用。
 from tests.data.fabric_fixtures import fake_source_server, patched_safe_sessions  # noqa: E402,F401
+
+# ── GOAL-02 OGC 开放服务 fixture 层（Tiles/Coverages/STAC-COG 模拟源）─────
+from tests.data.ogc_service_fixtures import ogc_fake_server  # noqa: E402,F401

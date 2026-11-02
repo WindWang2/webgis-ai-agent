@@ -31,7 +31,7 @@
 - 服务 `app/services/gis_harness/scale_profile/`（inspect/preview/apply：
   双载体解析、顺序 CAS 链、幂等回执环）+ 工具
   `app/tools/scale_profile_tools.py`（ToolRegistry 三工具）
-- ADR-0279
+- ADR-0280
 
 **受控扩展**（最小适配）：
 - MapSpec v1.9 additive：`MapSpecRepresentationWindow.source` +
@@ -101,7 +101,7 @@ TEST_MATRIX/RISK（f488fce）→ 版本协调 v1.9（07715c0）→ R1 评审清�
 
 ## 风险与已知边界
 
-- `aggregate_grid` 工件本期未实现（词表保留，seam 语义不变 —— ADR-0279）
+- `aggregate_grid` 工件本期未实现（词表保留，seam 语义不变 —— ADR-0280）
 - 共享边界保护是锚点级（顶点存活）非弧级拓扑重建（topology_risk 披露）
 - filter 缺陷族 #1809/#1810/#1811 open：本 PR 绕开（取舍在工件期物化），
   不认领修复

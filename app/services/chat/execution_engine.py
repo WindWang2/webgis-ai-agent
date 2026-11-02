@@ -60,6 +60,7 @@ from app.services.chat.turn_recovery import (  # noqa: F401
     NoProgressError,
     TurnTimeoutError,
     classify_failure as _classify_failure_impl,
+    recovery_from_outcome as _recovery_from_outcome,
 )
 
 # H03：跨 Pi/legacy 统一错误词表（error_class additive 单一映射表）
@@ -2821,6 +2822,7 @@ class ChatExecutionEngine:
                             failure_class=failure_class,
                             recovery_action=recovery_action,
                             error_class=error_class_for_tool_failure(failure_class),
+                            recovery=_recovery_from_outcome(outcome),
                         )
                         yield ctx.emitter.tool_result(tool_name, msg_result_str)
                     else:

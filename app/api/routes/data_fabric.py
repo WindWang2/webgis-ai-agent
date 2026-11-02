@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.auth import get_current_user, get_current_user_optional
+from app.services.auth_history_bridge import require_owned_session
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (  # noqa: F401 - 模块属性保持
     CatalogDescriptorResponse,
@@ -36,10 +37,13 @@ from app.schemas.data_fabric_schema import (  # noqa: F401 - 模块属性保持
 from app.services.data_fabric.manager import data_fabric_manager
 from app.services.data_fabric.tile_service import catalog_tile_service
 from app.services.data_fabric.pmtiles_tile_service import pmtiles_tile_service
+from app.services.data_fabric.ogc_tiles_proxy import ogc_tiles_proxy_service
 from app.services.data_fabric.errors import (
     DataFabricError,
     InvalidQueryError,
+    QueryUnsupportedError,
     ResultTooLargeError,
+    SourceUnreachableError,
     UnsupportedSourceError,
 )
 from app.services.data_fabric.security import DataFabricSecurity
@@ -993,6 +997,101 @@ async def get_catalog_pmtiles_tile(
             f"PMTiles tile read failed for '{item_id}' {z}/{x}/{y}: {e}", exc_info=True
         )
         raise HTTPException(status_code=502, detail="瓦片读取失败")
+
+    if result.body is None:
+        return Response(status_code=204)
+
+    headers = {
+        "Cache-Control": "private, max-age=60",
+        "ETag": result.etag,
+        "X-Content-Type-Options": "nosniff",
+        "X-Dataset-Fingerprint": result.fingerprint[:16],
+    }
+    if if_none_match:
+        candidate = if_none_match.strip()
+        if candidate == "*" or candidate.strip('"') == result.etag.strip('"'):
+            return Response(status_code=304, headers=headers)
+    resp = Response(content=result.body, media_type=result.content_type, headers=headers)
+    resp.headers["X-Tile-Cache"] = result.cache_state
+    return resp
+
+
+@router.get(
+    "/data-fabric/catalog/{item_id}/ogc-tiles/{z}/{x}/{y}",
+    tags=["Data Fabric / 数据织网"],
+)
+async def get_catalog_ogc_tile(
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv=Depends(require_owned_session),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+):
+    """目录 OGC API - Tiles tileset 的受控瓦片代理（GOAL-02 / M2）。
+
+    - 权限：会话归属（require_owned_session，与 /layers/data MVT 瓦片路由
+      同语义 —— 浏览器 MapLibre 经 ``?session_id=`` 携带）+ 目录条目租户
+      校验（_require_tenant_owned）；鉴权先于缓存查找（API-01）。
+    - 协议适配 only：缓存/ETag/single-flight 在
+      ``app.services.data_fabric.ogc_tiles_proxy``；远端获取走
+      ``OGCTilesAdapter.fetch_tile``（SSRF 同源模板、display 三态资格门、
+      zoom 矩阵校验、单瓦片字节帽、401/403/429 typed）。
+    - 空瓦片（远端 404 / zoom 超出服务声明范围）= 204；命中返回原始字节
+      （不重压缩）+ 内容寻址 ETag（If-None-Match 304）。
+    - MapSpec 消费：vector tileset → source.tiles 模板；raster tileset →
+      data_fabric source.url 模板（build_mapspec_source 统一构造）。
+    """
+    if not (0 <= z <= 24) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+        raise HTTPException(status_code=400, detail="非法瓦片坐标")
+
+    async def _serve_tile(session: Session):
+        # API-01：鉴权必须在缓存查找**之前**（同 MVT/PMTiles 路由）。
+        item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+        if not item:
+            raise ValueError(f"Catalog item '{item_id}' not found")
+        src = session.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
+        _require_tenant_owned(src, user)
+        # A5（#1771 D11 清偿同款）：同租户同源率限（鉴权后、缓存前）。
+        from app.services.data_fabric.tile_rate_limiter import (
+            data_fabric_tile_rpm,
+            enforce_tile_rate,
+        )
+
+        _tenant = (user or {}).get("org_id") or _real_user_id(user) or "anon"
+        enforce_tile_rate(
+            f"df:ogc-tiles:{_tenant}:{item_id}",
+            data_fabric_tile_rpm(),
+            scope="data_fabric_ogc_tile",
+        )
+        ds_model = item.data_source or src
+        return await ogc_tiles_proxy_service.serve_tile(item, ds_model, z, x, y)
+
+    try:
+        result = await _run_async_manager(_serve_tile)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except InvalidQueryError as e:
+        raise HTTPException(status_code=400, detail=str(e) or "瓦片请求参数非法")
+    except QueryUnsupportedError as e:
+        # tileset 三态资格未过门：诚实 422 + reason codes（agent 可解释）。
+        raise HTTPException(status_code=422, detail=str(e) or "tileset 不满足显示资格")
+    except UnsupportedSourceError as e:
+        raise HTTPException(status_code=422, detail=str(e) or "该数据集类型不支持 OGC Tiles 瓦片服务")
+    except SourceUnreachableError:
+        raise HTTPException(status_code=502, detail="瓦片服务认证/网络不可达")
+    except DataFabricError as exc:
+        # #766 同族：远端失败 ≠ 空瓦片 —— typed 502，全文仅在服务端日志。
+        logger.error(f"OGC tile fetch failed for '{item_id}' {z}/{x}/{y}: {exc}", exc_info=True)
+        raise HTTPException(status_code=502, detail="瓦片获取失败")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"OGC tile fetch failed for '{item_id}' {z}/{x}/{y}: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="瓦片获取失败")
 
     if result.body is None:
         return Response(status_code=204)

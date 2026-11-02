@@ -3,15 +3,15 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`81de77154102fff7…`
+- 内容指纹：`288a393d2d721dee…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 386 | 378 | 8 |
+| tools | 396 | 388 | 8 |
 | algorithms | 245 | 185 | 1 |
-| capabilities | 170 | 117 | 5 |
+| capabilities | 174 | 118 | 6 |
 | artifact_types | 23 | 23 | 0 |
 | recipes | 166 | 166（conformance 由 workflow 闸保护） | 0 |
 
@@ -25,13 +25,13 @@
 | memory_class | 100% | 95% | PASS（缺 0） |
 | capabilities | 100% | 95% | PASS（缺 0） |
 
-**gate: PASS**（`total=386`）
+**gate: PASS**（`total=396`）
 
 ## 行为化覆盖与 findings 棘轮（Quality V2）
 
-- 工具行为证据：dispatch **199** / mention 179 / none 8（dispatch 覆盖率 52%）
-- findings 棘轮：**FAIL**（dispatch 下限 163，当前 199；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
-  - 违规：`CAPABILITY_NO_PRODUCER` 当前 5 > 基线 0
+- 工具行为证据：dispatch **204** / mention 184 / none 8（dispatch 覆盖率 52%）
+- findings 棘轮：**FAIL**（dispatch 下限 163，当前 204；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
+  - 违规：`CAPABILITY_NO_PRODUCER` 当前 6 > 基线 0
 
 ## Findings（派生线索，非缺陷判定）
 
@@ -56,13 +56,14 @@
 
 （无）
 
-### CAPABILITY_NO_PRODUCER（5）
+### CAPABILITY_NO_PRODUCER（6）
 
 - `cartography_scale_apply`（high）— native capability without algorithm/tool producer
 - `cartography_scale_inspect`（high）— native capability without algorithm/tool producer
 - `cartography_scale_preview`（high）— native capability without algorithm/tool producer
 - `data_preparation`（high）— native capability without algorithm/tool producer
 - `layer_browse`（high）— native capability without algorithm/tool producer
+- `spatial_semantics`（high）— native capability without algorithm/tool producer
 
 ### CAPABILITY_NO_CONFORMANCE（0）
 

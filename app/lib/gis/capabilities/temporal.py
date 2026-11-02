@@ -11,6 +11,29 @@ from app.lib.gis.capability_registry import CapabilityDescriptor
 
 CAPABILITIES: List[CapabilityDescriptor] = [
 
+        # ── GOAL 03：时态视图控制面（planned —— 工具面真实存在，非分析
+        # producer；resolver 不派发为分析，仅作能力图节点/工具绑定契约）。
+        CapabilityDescriptor(
+            id="temporal_bind", name="时序视图绑定",
+            category="platform", status="planned",
+            description=(
+                "把会话图层绑定为时序视图：探测时间字段/表示/粒度，真实帧"
+                "写入 MapSpec temporal 契约（temporal_view_bind/unbind）。"),
+        ),
+        CapabilityDescriptor(
+            id="temporal_control", name="时序播放控制",
+            category="platform", status="planned",
+            description=(
+                "时序视图播放控制：seek/step/play/pause/rate/unpin"
+                "（temporal_view_control/status）。"),
+        ),
+        CapabilityDescriptor(
+            id="temporal_compare", name="时序两期对照",
+            category="platform", status="planned",
+            description=(
+                "两期对照与跨帧共享固定分级（temporal_view_compare）。"),
+        ),
+
         CapabilityDescriptor(
             id="temporal_profile", name="时间画像", category="statistics",
             description="时间字段/跨度/粒度画像（元数据，不产新数据）。",

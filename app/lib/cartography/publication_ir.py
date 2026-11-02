@@ -78,9 +78,11 @@ class AtlasPolicy(_Bounded):
     - ``category``：按 ``category_property`` 的去重值分页（每页一值，
       页范围 = 该值要素 bbox 拟合纸张纵横比；页文档 = 值过滤后的要素）。
     - ``feature``：按 ``features_per_page`` 分块分页（每页一块 bbox）。
+    - ``time``（GOAL 03）：按 ``temporal`` 契约的真实时间帧分页（每帧一
+      页；页文档 = 帧窗口过滤 + 页帧 cursor 盖章 —— SVG 时间注记随页）。
     """
 
-    driver: Literal["frames", "category", "feature"] = "frames"
+    driver: Literal["frames", "category", "feature", "time"] = "frames"
     layer_id: str = Field(default="", max_length=120)
     """类别/特征驱动的目标 layer id；空 = 自动定位首个内联 geojson 图层。"""
     category_property: str = Field(default="", max_length=120)
@@ -132,6 +134,9 @@ class PageLayoutIR(_Bounded):
     feature_limit: Optional[int] = Field(default=None, ge=1)
     """feature 驱动：本页要素切片 [offset, offset+limit)。"""
     cover: bool = False
+    #: time 驱动（GOAL 03）：本页时间窗（frame_id/label/start/end/
+    #: time_field/time_representation/granularity/layer_id）。
+    time_window: Optional[Dict[str, Any]] = None
     component_ir: Dict[str, Any] = Field(default_factory=dict)
     """C2 组件 IR v2（``build_layout_ir`` 产物；封面为文本页 IR）。
 
@@ -431,6 +436,8 @@ def plan_publication_pages(
     elif policy.driver == "category":
         page_specs, degradations = _category_pages(
             document, layers, policy, degradations)
+    elif policy.driver == "time":
+        page_specs, degradations = _time_pages(document, policy, degradations)
     else:
         page_specs, degradations = _feature_pages(
             document, layers, policy, degradations)
@@ -499,6 +506,7 @@ def plan_publication_pages(
             feature_offset=sp.get("feature_offset"),
             feature_limit=sp.get("feature_limit"),
             cover=bool(sp.get("cover")),
+            time_window=sp.get("time_window"),
             component_ir=sp.get("component_ir")
             or ir_by_page.get(str(sp["page_id"]), {}),
         ))
@@ -509,6 +517,67 @@ def plan_publication_pages(
         degradations=degradations,
         atlas=bool(atlas),
     )
+
+
+def _time_pages(
+    document: Dict[str, Any],
+    policy: AtlasPolicy,
+    degradations: List[Dict[str, str]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    """time 驱动（GOAL 03）：temporal 真实帧 → 逐页。
+
+    无 temporal / 未启用 / 帧数 < 2 → typed 拒绝（与 bind 同款诚实：单期
+    数据不做假图册）；帧数超 page_budget → 截断 + 降级披露（不静默丢页）。
+    """
+    temporal = document.get("temporal")
+    if not isinstance(temporal, dict) or not temporal.get("enabled"):
+        raise MapSpecSchemaError(
+            "atlas_time_no_temporal",
+            "time 驱动需要已启用的 temporal 契约（先 temporal_view_bind）")
+    frames = [f for f in (temporal.get("frames") or []) if isinstance(f, dict)]
+    if len(frames) < 2:
+        raise MapSpecSchemaError(
+            "atlas_time_no_temporal",
+            "temporal 帧数 < 2 —— 单期数据不做时序图册（诚实拒绝）")
+    bound_layer = ""
+    layer_bindings = temporal.get("layers") or []
+    if layer_bindings and isinstance(layer_bindings[0], dict):
+        bound_layer = str(layer_bindings[0].get("layer_id") or "")
+    if len(frames) > policy.page_budget:
+        degradations.append({
+            "code": "atlas_truncated",
+            "detail": f"时间帧 {len(frames)} 超页预算 {policy.page_budget}，已截断",
+        })
+        frames = frames[:policy.page_budget]
+    page_specs: List[Dict[str, Any]] = []
+    first_layer = None
+    layers_raw = document.get("layers")
+    if isinstance(layers_raw, list) and layers_raw:
+        first_layer = layers_raw[0].get("id") if isinstance(layers_raw[0], dict) else None
+    for frame in frames:
+        page_w, page_h, bounds = page_geometry(None)
+        target_layer = bound_layer or str(first_layer or "")
+        page_specs.append({
+            "page_id": f"t-{frame.get('id')}",
+            "title": str(frame.get("label") or frame.get("id") or "")[:200],
+            "frame_index": None,
+            "paper": _paper_of(page_w, page_h, None),
+            "bounds": bounds,
+            "filter_layer_id": target_layer,
+            "time_window": {
+                "frame_id": str(frame.get("id") or ""),
+                "label": str(frame.get("label") or ""),
+                "start": str(frame.get("start") or ""),
+                "end": str(frame.get("end") or ""),
+                "time_field": str(temporal.get("time_field") or ""),
+                "time_representation": str(temporal.get("time_representation") or ""),
+                "granularity": str(temporal.get("granularity") or ""),
+                "timezone": str(temporal.get("timezone") or "UTC"),
+                "time_format_hint": str(temporal.get("time_format_hint") or ""),
+                "layer_id": target_layer,
+            },
+        })
+    return page_specs, degradations
 
 
 def _category_pages(
