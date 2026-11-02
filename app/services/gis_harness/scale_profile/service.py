@@ -548,8 +548,16 @@ async def apply_scale_representation(
         _legend_breaks_fingerprint(ctx["layer"]))
     intents.append(UpsertLayerIntent(layer=new_layer))
 
-    chain_rev: Optional[int] = (
-        partial.get("chain_revision") if partial else None) or expected_revision
+    # CAS 基线（R2 新发现 1 修正）：显式 expected_revision 恒优先；断点
+    # 续链未给基线时**重读当前 revision**（断点前 slot 已持久，重读即下一
+    # intent 的正确 CAS 对照 —— 既不被存量 0 的 falsy 吞掉、也不被过期
+    # 存量值永久压制；外部写者若已推进，首个续链 intent 诚实 superseded）。
+    if expected_revision is not None:
+        chain_rev: Optional[int] = int(expected_revision)
+    elif partial is not None:
+        chain_rev = await _current_revision(session_id)
+    else:
+        chain_rev = None
     last_res = None
     for slot, intent in enumerate(
             intents[resume_slots:], start=resume_slots):
@@ -588,6 +596,16 @@ async def apply_scale_representation(
         # 链基线 = 前一步提交后的当前 revision（CAS 对照 current，非 +1）
         chain_rev = int(res.mutation_revision) if res.mutation_revision else None
         last_res = res
+    if last_res is None:
+        # 续链切片为空（重放参数与原计划不一致 —— intents 变少）：不是
+        # committed，诚实报错（R2 新发现 3）。
+        return {
+            "status": "error",
+            "error": "resume produced no runnable intents（重放参数与"
+                     "原计划不一致；partial 回执基于不同 profile）",
+            "operation_id": op_id,
+            "committed_slots": resume_slots,
+        }
     res = last_res
 
     receipt = {
@@ -611,6 +629,18 @@ async def apply_scale_representation(
 
 
 # ── 回执环（幂等重放面；与 map_operations 同纪律）────────────────────────
+
+
+async def _current_revision(session_id: str) -> Optional[int]:
+    """当前 mutation revision（engine 印章的只读回读；失败 None=无 CAS）。"""
+    from app.services.session_data import session_data_manager
+
+    try:
+        state = await session_data_manager.get_map_state(session_id) or {}
+        raw = state.get("_cartographic_mutation_revision")
+        return int(raw) if isinstance(raw, int) else None
+    except Exception:  # noqa: BLE001 — 读失败按无基线（engine CAS 仍权威）
+        return None
 
 
 async def _find_receipt(

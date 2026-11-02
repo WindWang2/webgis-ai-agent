@@ -222,3 +222,47 @@ async def test_artifact_content_fingerprint_stable(session):
         if sid.startswith("roads__gen@")}
     assert fps1 and fps1 == fps2, (fps1, fps2)
     assert all(fp and fp.startswith("gen-sha256:") for fp in fps1.values())
+
+
+async def test_resume_ignores_stale_stored_baseline(session):
+    """R2-新发现 1 回归锁：partial 存量 chain_revision 过期不得永久压制。"""
+    from app.services.gis_harness.scale_profile.service import _persist_receipt
+    from app.services.session_data import session_data_manager
+
+    # 手工塞入 chain_revision=999 的 partial（模拟远期存量）
+    await _persist_receipt(session, {
+        "status": "partial", "schema_version": "scale_profile.v1",
+        "operation_id": "op-msp-stale", "layer_id": "roads",
+        "committed_slots": 0, "chain_revision": 999,
+        "artifact_refs": {}, "artifact_source_ids": {},
+        "error": "synthetic", "at": 0.0,
+    })
+    # 修复前：读存量 999 → 永远 superseded；修复后：重读当前 → 续链提交
+    receipt = await apply_scale_representation(
+        session, "roads", mode="commit", operation_id="op-msp-stale")
+    assert receipt["status"] == "committed", receipt
+    state = await session_data_manager.get_map_state(session) or {}
+    rows = [r for r in (state.get("_scale_profile_receipts") or [])
+            if r.get("operation_id") == "op-msp-stale"]
+    assert len(rows) == 1 and rows[0]["status"] == "committed"
+
+
+async def test_resume_explicit_baseline_wins(session):
+    """R2-新发现 1 回归锁：显式 expected_revision 恒优先于 partial 存量。"""
+    from app.services.gis_harness.scale_profile.service import _persist_receipt
+
+    rev = (await session_data_manager.get_map_state(session) or {}).get(
+        "_cartographic_mutation_revision", 0)
+    await _persist_receipt(session, {
+        "status": "partial", "schema_version": "scale_profile.v1",
+        "operation_id": "op-msp-explicit", "layer_id": "roads",
+        "committed_slots": 0, "chain_revision": max(0, rev - 5),
+        "artifact_refs": {}, "artifact_source_ids": {},
+        "error": "synthetic", "at": 0.0,
+    })
+    # 带新鲜基线：直接以入参为 CAS 基线续链
+    receipt = await apply_scale_representation(
+        session, "roads", mode="commit", operation_id="op-msp-explicit",
+        expected_revision=rev)
+    assert receipt["status"] == "committed", receipt
+    assert receipt["mapspec_revision"] > rev

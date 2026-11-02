@@ -706,11 +706,14 @@ def generalize_features_multiband(
                                      "_fallback"))
                          for c in codes):
                     geometry_fallback += 1
-            elif geom_active and geom_ll is not None and geom_m is None:
-                # 投影失败（病态坐标）—— 与单带路径同码同计数（等价性）
+            elif geom_active and geom_ll is not None and geom_m is None \
+                    and not geom_ll.is_empty:
+                # 投影失败（病态坐标，非空几何）—— 与单带路径同码同计数。
+                # 空几何的 geom_m=None 是预解析正常态（R2 新发现 2）。
                 outcomes.append("project_failed")
                 geometry_fallback += 1
-            elif geom_ll is None and geom_dict is not None:
+            elif geom_active and geom_ll is None and geom_dict is not None:
+                # 不可解析几何 —— 单带仅在策略激活时报告（等价对齐）
                 outcomes.append("geometry_unparseable")
             if new_geom_dict is not geom_dict:
                 out_feature = dict(out_feature)

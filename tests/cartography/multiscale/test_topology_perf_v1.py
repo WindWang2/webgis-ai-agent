@@ -391,3 +391,56 @@ class TestReviewFixesR1:
         world = kept_values_for_band(model, "world", {"World": 1})
         assert len(world) == min(DEFAULT_KEEP_RANKS["world"],
                                  len(model.value_order))  # 3，非 5 全量
+
+
+class TestReviewFixesR2:
+    def test_r2_empty_geometry_no_false_project_failed(self):
+        # R2-新发现 2：空几何预解析 geom_m=None 是正常态 —— 不得误报
+        # project_failed（单/多带等价：均零几何码）
+        from app.lib.cartography.multiscale.generalize import (
+            BandSpec,
+            generalize_features,
+            generalize_features_multiband,
+        )
+
+        feats = [{"type": "Feature", "id": "e", "properties": {},
+                  "geometry": {"type": "LineString", "coordinates": []}}]
+        spec = BandSpec(
+            "world",
+            GeometryGeneralizationPolicy(
+                strategy="bounded_simplify", tolerance=100.0),
+            FeatureSelectionPolicy(importance_evidence="none"), 0.0)
+        multi = generalize_features_multiband(
+            feats, [spec], latitude_hint=CHENGDU_LAT)
+        single = generalize_features(
+            feats, geometry_policy=spec.geometry_policy,
+            selection_policy=spec.selection_policy,
+            latitude_hint=CHENGDU_LAT, band_zoom=0.0)
+        assert multi["world"].receipt == single.receipt
+        assert multi["world"].receipt["geometry_fallback"] == 0
+        assert "project_failed" not in multi["world"].receipt["reason_counts"]
+
+    def test_r2_inactive_strategy_unparseable_silent_both_paths(self):
+        # R2-新发现 4（既有对齐）：strategy=none 下不可解析几何 —— 单/多带
+        # 均零几何码（多带旧实现会多发 geometry_unparseable）
+        from app.lib.cartography.multiscale.generalize import (
+            BandSpec,
+            generalize_features,
+            generalize_features_multiband,
+        )
+
+        feats = [{"type": "Feature", "id": "b", "properties": {},
+                  "geometry": {"type": "Polygon", "coordinates": "not-a-ring"}}]
+        spec = BandSpec(
+            "world",
+            GeometryGeneralizationPolicy(strategy="none"),
+            FeatureSelectionPolicy(importance_evidence="none"), 0.0)
+        multi = generalize_features_multiband(
+            feats, [spec], latitude_hint=CHENGDU_LAT)
+        single = generalize_features(
+            feats, geometry_policy=spec.geometry_policy,
+            selection_policy=spec.selection_policy,
+            latitude_hint=CHENGDU_LAT, band_zoom=0.0)
+        assert multi["world"].receipt == single.receipt
+        assert "geometry_unparseable" not in multi["world"].receipt[
+            "reason_counts"]
