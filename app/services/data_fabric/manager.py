@@ -47,10 +47,13 @@ def _invalidate_catalog_tiles(item_id: str) -> None:
     ``_DF_TILE_CACHE``）；缓存失效失败绝不影响 catalog 同步。
     G3D01：PMTiles→XYZ 缓存键带 ``pmtiles:`` 前缀（与 MVT 表示隔离），
     在此一并失效 —— 同一 item 变更必须清掉它的全部表示缓存。
+    GOAL-02：OGC Tiles 代理缓存键带 ``ogc-tiles:`` 前缀（第三种表示），
+    同款一并失效（R1 P1-4）。
     """
     try:
         TILE_CACHE.invalidate_item(item_id)
         TILE_CACHE.invalidate_item(f"pmtiles:{item_id}")
+        TILE_CACHE.invalidate_item(f"ogc-tiles:{item_id}")
     except Exception:  # noqa: BLE001 — 缓存失效是尽力而为
         logger.debug("tile cache invalidation skipped for %s", item_id, exc_info=True)
 

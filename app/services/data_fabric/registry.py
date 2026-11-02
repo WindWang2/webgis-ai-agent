@@ -125,6 +125,8 @@ def _build_registry() -> AdapterRegistry:
         GeoParquetAdapter,
         LocalFileAdapter,
         OGCAPIAdapter,
+        OGCCoveragesAdapter,
+        OGCTilesAdapter,
         PMTilesAdapter,
         PostGISAdapter,
         S3StorageAdapter,
@@ -153,6 +155,16 @@ def _build_registry() -> AdapterRegistry:
                     aliases=("wmts", "wms_wmts"),
                     is_raster_tile=True,
                     notes="raster/tile service; no vector feature query"),
+        # GOAL-02：OGC 开放瓦片/覆盖服务。发现面 adapter：瓦片字节经
+        # ogc_tiles_proxy（显示）；数值读取经 coverage_read（预算受控）。
+        # 均非矢量查询源 —— supports_* 全 False 是能力事实而非缺失。
+        AdapterSpec("ogc_api_tiles", OGCTilesAdapter,
+                    aliases=("ogc_tiles",),
+                    is_raster_tile=True,
+                    notes="OGC API - Tiles tileset discovery; display via governed tile proxy; WebMercatorQuad only"),
+        AdapterSpec("ogc_api_coverages", OGCCoveragesAdapter,
+                    aliases=("ogc_coverages",),
+                    notes="OGC API - Coverages discovery; budgeted subset reads via coverage_read"),
         AdapterSpec("arcgis", ArcGISAdapter,
                     aliases=("arcgis_rest", "featureserver", "mapserver"),
                     supports_bbox=True, supports_filter=True,

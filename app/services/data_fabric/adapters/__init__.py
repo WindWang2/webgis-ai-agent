@@ -16,6 +16,10 @@ from app.services.data_fabric.adapters.geopackage_adapter import GeoPackageAdapt
 from app.services.data_fabric.adapters.local_file_adapter import LocalFileAdapter
 from app.services.data_fabric.adapters.cog_adapter import COGAdapter
 from app.services.data_fabric.adapters.stats_api_adapter import StatsApiAdapter
+# GOAL-02: OGC API - Tiles / Coverages（发现 adapter；瓦片代理/受控读取
+# 在 ogc_tiles_proxy / coverage_read 服务层）。
+from app.services.data_fabric.adapters.ogc_tiles_adapter import OGCTilesAdapter
+from app.services.data_fabric.adapters.ogc_coverages_adapter import OGCCoveragesAdapter
 
 # Convenient aliases
 OGCApiFeaturesAdapter = OGCAPIAdapter
@@ -49,4 +53,6 @@ __all__ = [
     "LocalFileAdapter",
     "COGAdapter",
     "StatsApiAdapter",
+    "OGCTilesAdapter",
+    "OGCCoveragesAdapter",
 ]

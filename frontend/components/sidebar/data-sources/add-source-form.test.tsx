@@ -45,7 +45,7 @@ describe('AddSourceForm 协议下拉（#1747）', () => {
     renderForm();
     const select = screen.getByLabelText('协议类型') as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll('option'));
-    expect(options.length).toBe(7);
+    expect(options.length).toBe(9);  // GOAL-02：+ogc_api_tiles/+ogc_api_coverages
     // 任何 option 都不得渲染成空白（键名错配的既有故障形态）
     for (const opt of options) {
       expect(opt.textContent?.trim() ?? '', `option value=${opt.value} 文案为空`).not.toBe('');
