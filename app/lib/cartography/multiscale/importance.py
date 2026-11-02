@@ -324,8 +324,10 @@ def kept_values_for_band(
     tiers = tuple(t.name for t in SCALE_TIERS)
     if tier not in tiers:
         raise ValueError(f"unknown scale tier: {tier!r}")
-    ranks = keep_ranks or DEFAULT_KEEP_RANKS
-    k = int(ranks.get(tier, DEFAULT_KEEP_RANKS["street"]))
+    # 部分覆盖合并缺省（未提及的带用缺省秩，而非静默 fail-open 到 street
+    # 全保留 —— 评审 R1-P2-7：键名笔误不得改变取舍语义）
+    ranks = {**DEFAULT_KEEP_RANKS, **(keep_ranks or {})}
+    k = int(ranks[tier])
     kept = list(model.value_order[:k])
     if mandatory_values:
         for v in mandatory_values:

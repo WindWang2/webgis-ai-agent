@@ -278,6 +278,13 @@ def _geometry_family_of(descriptor: Dict[str, Any], layer: Dict[str, Any]) -> st
             "fill": "polygon", "fill-extrusion": "polygon"}.get(layer_type, "unknown")
 
 
+def _fc_content_fingerprint(fc: Dict[str, Any]) -> str:
+    """工件内容指纹（规范化 JSON：sort_keys + 坐标浮点经序列化稳定化）。"""
+    blob = json.dumps(fc, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return "gen-sha256:" + hashlib.sha256(blob).hexdigest()[:16]
+
+
 def _legend_breaks_fingerprint(layer: Dict[str, Any]) -> Optional[str]:
     legend = layer.get("legend_spec")
     if not isinstance(legend, dict) or not legend:
@@ -475,6 +482,12 @@ async def apply_scale_representation(
     ctx, result = await _build_profile(
         session_id, layer_target, keep_ranks=keep_ranks,
         overrides=_parse_overrides(overrides))
+    # 断点续链（评审 R1-P2-3）：同 op_id 的 partial 回执携带已提交 slot
+    # 与已存工件 ref —— 重放复用（不重跑已提交 intent、不产孤儿 ref）。
+    partial = await _find_receipt(session_id, op_id, statuses=("partial",))
+    resume_slots = int(partial.get("committed_slots") or 0) if partial else 0
+    resume_refs = partial.get("artifact_refs") if partial else None
+    resume_source_ids = partial.get("artifact_source_ids") if partial else None
     profile = result.profile
     if not result.artifacts:
         # 平凡计划（无取舍无简化）：落声明但不产工件（诚实 no-op commit）
@@ -485,6 +498,11 @@ async def apply_scale_representation(
 
         ref_map = {}
         for tier, gen in result.artifacts.items():
+            if isinstance(resume_refs, dict) and tier in resume_refs and \
+                    isinstance(resume_source_ids, dict) and \
+                    tier in resume_source_ids:
+                ref_map[tier] = (resume_refs[tier], resume_source_ids[tier])
+                continue
             ref_id = await session_data_manager.store(
                 session_id, gen.feature_collection, prefix="gen")
             source_id = f"{profile.layer_id}__gen@{tier}"
@@ -507,16 +525,16 @@ async def apply_scale_representation(
 
     intents: List[Any] = []
     for tier, (ref_id, source_id) in ref_map.items():
+        gen_fc = result.artifacts[tier].feature_collection
         intents.append(UpsertSourceIntent(source_id=source_id, source={
             "type": "geojson",
             "ref": ref_id,
             "ref_id": ref_id,
-            "data_fingerprint": (
-                "gen-sha256:" + hashlib.sha256(
-                    json.dumps(ref_map, sort_keys=True).encode()).hexdigest()[:16]),
+            # 工件**内容**指纹（评审 R1-P2-2：不能哈希含服务端 ref_id 的
+            # ref_map —— 同内容重跑会假阳性「变更」）
+            "data_fingerprint": _fc_content_fingerprint(gen_fc),
             "profile": {
-                "featureCount": len(
-                    result.artifacts[tier].feature_collection.get("features") or []),
+                "featureCount": len(gen_fc.get("features") or []),
                 "generated_by": "scale_profile.v1",
                 "derived_from": profile.source.ref,
             },
@@ -530,9 +548,11 @@ async def apply_scale_representation(
         _legend_breaks_fingerprint(ctx["layer"]))
     intents.append(UpsertLayerIntent(layer=new_layer))
 
-    chain_rev: Optional[int] = expected_revision
+    chain_rev: Optional[int] = (
+        partial.get("chain_revision") if partial else None) or expected_revision
     last_res = None
-    for slot, intent in enumerate(intents):
+    for slot, intent in enumerate(
+            intents[resume_slots:], start=resume_slots):
         res = await apply_gis_mutation(
             session_id, intent,
             origin="agent", actor="webgis_apply_scale_representation",
@@ -544,13 +564,26 @@ async def apply_scale_representation(
         if res.is_error or res.superseded:
             # superseded 的 is_error=False（引擎语义：不是校验错也不是提交）
             # —— 链上外部写者推进了 revision，本操作显式停链不盲目重试。
-            return {
-                "status": "error" if res.is_error else "superseded",
+            # 已提交 slot 持久化部分回执（评审 R1-P2-3：重放复用已存工件
+            # ref、从断点续链 —— 不重跑已提交 intent、不产孤儿 ref）。
+            partial = {
+                "status": "partial",
+                "schema_version": SCHEMA_VERSION,
+                "operation_id": op_id,
+                "layer_id": profile.layer_id,
+                "profile_id": profile2.profile_id,
+                "committed_slots": slot,
+                "chain_revision": chain_rev,
+                "artifact_refs": {t: r[0] for t, r in ref_map.items()},
+                "artifact_source_ids": {t: r[1] for t, r in ref_map.items()},
                 "error": res.error_msg or (
                     "superseded: MapSpec revision moved during apply"),
-                "operation_id": op_id,
-                "chain_aborted_at": slot,
-                "hint": "工件 ref 已存（幂等重放将跳过已提交部分）",
+                "at": round(time.time(), 3),
+            }
+            await _persist_receipt(session_id, partial)
+            return {
+                **partial,
+                "hint": "部分 intent 已提交；同 operation_id 重放将从断点续链",
             }
         # 链基线 = 前一步提交后的当前 revision（CAS 对照 current，非 +1）
         chain_rev = int(res.mutation_revision) if res.mutation_revision else None
@@ -580,7 +613,10 @@ async def apply_scale_representation(
 # ── 回执环（幂等重放面；与 map_operations 同纪律）────────────────────────
 
 
-async def _find_receipt(session_id: str, operation_id: str) -> Optional[Dict[str, Any]]:
+async def _find_receipt(
+    session_id: str, operation_id: str,
+    *, statuses: Tuple[str, ...] = ("committed",),
+) -> Optional[Dict[str, Any]]:
     from app.services.session_data import session_data_manager
 
     try:
@@ -591,7 +627,7 @@ async def _find_receipt(session_id: str, operation_id: str) -> Optional[Dict[str
     if isinstance(ring, list):
         for row in ring:
             if isinstance(row, dict) and row.get("operation_id") == operation_id \
-                    and row.get("status") == "committed":
+                    and row.get("status") in statuses:
                 return dict(row)
     return None
 
@@ -603,6 +639,10 @@ async def _persist_receipt(session_id: str, receipt: Dict[str, Any]) -> None:
         state = await session_data_manager.get_map_state(session_id) or {}
         ring = [r for r in (state.get(RECEIPTS_KEY) or [])
                 if isinstance(r, dict)]
+        op_id = receipt.get("operation_id")
+        if isinstance(op_id, str):
+            # 同 op 替换（committed 覆盖 partial —— 回执环每 op 单条）
+            ring = [r for r in ring if r.get("operation_id") != op_id]
         ring.insert(0, dict(receipt))
         await session_data_manager.set_map_state(
             session_id, RECEIPTS_KEY, ring[:MAX_RECEIPT_RING])

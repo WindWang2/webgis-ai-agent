@@ -321,7 +321,7 @@ def build_scale_profile(
         disclosures=disclosures[:12],
         generated_by=generated_by,
     )
-    profile.profile_id = f"msp:{layer_id}:{profile_fingerprint(profile)[:16]}"
+    profile.profile_id = f"msp:{layer_id}:" + profile_fingerprint(profile).split(":", 1)[1]
 
     # 语义检查（结构规则以中间态口径复验 —— 工件 ref 落库回填前允许缺席；
     # 最终档案落 MapSpec 时由消费方以严格模式复验）
@@ -360,7 +360,7 @@ def profile_with_artifact_refs(
         entry = ref_map.get(band.scale.tier)
         if entry is not None and band.representation_mode == "generalized":
             band.artifact_ref, band.artifact_source_id = entry[0], entry[1]
-    out.profile_id = f"msp:{out.layer_id}:{profile_fingerprint(out)[:16]}"
+    out.profile_id = f"msp:{out.layer_id}:" + profile_fingerprint(out).split(":", 1)[1]
     return out
 
 

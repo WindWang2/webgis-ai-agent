@@ -27,24 +27,32 @@
 ### R6 / M5（commit f9d0753）
 - `test_semantic_checks_scale_profile.py`：5 passed；multiscale 全套 82 passed
 
-### R7 / M8（本 commit）
-- 拓扑不变量：`test_topology_perf_v1.py` 快速族 7 passed（无自交引入/洞保持/
+### R7 / M8
+- 拓扑不变量：`test_topology_perf_v1.py` 快速族（无自交引入/洞保持/
   面积误差界/共享边界覆盖面积界/主干留存/多带等价）
-- 性能基准（`MSP_PERF=1`，本机 4 核 CachyOS，OMP=2；453s 全程）：
-  - PERF_50K = `{"n": 50000, "elapsed_s": 13.43, "peak_mb": 92.6,
+- 性能基准 **R1 评审清偿后重跑**（快路径删除，`MSP_PERF=1`，本机 4 核
+  CachyOS，OMP=2；452s 全程 —— 权威数字）：
+  - PERF_50K = `{"n": 50000, "elapsed_s": 16.41, "peak_mb": 120.5,
     "bands": 4, "artifact_sizes": {"world": 30000, "province": 40000,
     "city": 50000}, "same_output": true}`
-  - PERF_200K = `{"n": 200000, "elapsed_s": 56.1, "bands": 4,
+  - PERF_200K = `{"n": 200000, "elapsed_s": 66.08, "bands": 4,
     "artifact_sizes": {"world": 120000, "province": 160000,
     "city": 200000}, "same_output": true}`
   - 口径：elapsed = 纯耗时（合成数据生成不计入）；peak_mb 在 50k 以
-    tracemalloc 测得（该跑耗时被采样放大 ~25×，不进对照）；取舍比例
+    tracemalloc 测得（该跑耗时被采样放大，不进对照）；取舍比例
     world=60%（5 类词表前 3）、province=80%、city=100% 与
     DEFAULT_KEEP_RANKS 一致。
-  - 优化前基线：10k 44.2s（shapely.ops.transform 逐坐标 Python 回调 +
-    每带重复解析）→ 优化后 10k 3.2s（numpy 向量化 shapely.transform +
-    单遍多带 + 线亚像素 DP 等价快路径），13.6×；复现脚本 = 本测试文件
-    `_run_benchmark`（MSP_PERF=1）。
+  - 优化史（诚实记录）：10k 基线 44.2s（逐坐标 transform + 每带重复解析）
+    → numpy 向量化 + 单遍多带后 3.2s（13.6×）→ 曾加「tol≥线全长直构
+    端点线」快路径（50k 13.4s / 200k 56.1s）→ **R1 评审 P1 判定其
+    破坏单/多带等价并虚报长度损失，已删除**；最终数字即上方重跑值
+    （等价性代价 ~18%）。复现脚本 = `_run_benchmark`（MSP_PERF=1）。
+
+### R8 / R1 评审清偿（本 commit）
+- 后端全量：tests/cartography + scale_profile = **3087 passed / 2 skipped
+  / 3 xfailed**（唯一红灯 master 既有）；multiscale+scale_profile 聚焦
+  100 passed（含 7 条新回归锁：快路径盲区等价/缺口回退/profile_id 熵/
+  dpi inf/keep_ranks 合并/断点续链/内容指纹）
 
 ## 非破坏性证据
 - `test_apply_commit_writes_profile_and_artifacts`：提交前后主源条目

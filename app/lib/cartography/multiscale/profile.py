@@ -101,7 +101,9 @@ def display_scale_denominator(
     非法 dpi（≤0/非数）fail-closed 到 :data:`DEFAULT_SCREEN_DPI`（与
     scale_rules.scale_denominator 同纪律）。结果取整 ≥1（分母惯例）。
     """
-    effective = dpi if (isinstance(dpi, (int, float)) and dpi > 0) else DEFAULT_SCREEN_DPI
+    effective = dpi if (
+        isinstance(dpi, (int, float)) and not isinstance(dpi, bool)
+        and math.isfinite(dpi) and dpi > 0) else DEFAULT_SCREEN_DPI
     m_per_display_px = display_meters_per_pixel(zoom, latitude)
     return max(1, int(m_per_display_px / (_INCH_IN_METERS / effective)))
 
@@ -306,7 +308,8 @@ def validate_profile(
     bands = sorted(profile.bands, key=lambda b: b.scale.min_zoom)
     if not bands:
         return errors + ["bands_empty"]
-    if bands[0].scale.min_zoom > ZOOM_DOMAIN_MIN:
+    if bands[0].scale.min_zoom != ZOOM_DOMAIN_MIN:
+        # 必须从 0 整起始（>0 是缺口；<0 越出 MapLibre zoom 域）
         errors.append("bands_do_not_cover_zoom_0")
     cursor = bands[0].scale.min_zoom
     for b in bands:

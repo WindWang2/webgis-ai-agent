@@ -30,7 +30,7 @@ from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 from pydantic import BaseModel, ConfigDict
 import numpy as np
 from shapely import transform as shapely_transform
-from shapely.geometry import LineString, mapping as _mapping, shape
+from shapely.geometry import mapping as _mapping, shape
 
 from app.lib.cartography.multiscale.profile import (
     FeatureSelectionPolicy,
@@ -213,20 +213,11 @@ def _simplify_one(
         geom_m, dropped = _drop_small_rings(geom_m, float(policy.min_ring_area_m2))
         observations["rings_dropped"] = dropped
 
-    # 线亚像素快路径（DP 等价）：容差 ≥ 线全长时，任一中间顶点到端点弦
-    # 的偏离 ≤ 全长/2 < 容差 —— DP 必然只留端点；直接构造端点线省去 GEOS
-    # 逐点处理（200k 世界带的主流形态，M8 性能证据）。锚点守卫路径不走
-    # 此捷径（锚点存活需真实简化复核）。
-    if (
-        geom_m_pre is not None
-        and geom_m.geom_type == "LineString"
-        and tol_m >= geom_m.length
-        and len(geom_m.coords) > 2
-    ):
-        cs = list(geom_m.coords)
-        fast = LineString([cs[0], cs[-1]])
-        observations["length_loss"] = 0.0
-        return to_ll(fast), ["simplified"], observations
+    # 注（评审 R1-P1 清偿）：此处曾有「tol ≥ 线全长 ⇒ 直构端点线」的
+    # 快路径。它对纯 DP 论证成立，但本引擎单带语义是 GEOS
+    # TopologyPreservingSimplifier（U 形线保拓扑留中间点），快路径与其
+    # 输出分叉且跳过长度损失不变量、回执虚报 0 损失 —— 已删除；近直线
+    # 输入 GEOS 同样收敛到端点（性能实测见 EVIDENCE.md 的重跑数字）。
 
     simplified = geom_m.simplify(tol_m, preserve_topology=True)
     if simplified.is_empty:
@@ -432,7 +423,8 @@ def generalize_features(
                     geometry_simplified += 1
                     new_geom_dict = _geojson_geometry(result_ll)
                 elif any(c.endswith(("_failed", "_emptied", "_changed",
-                                     "_result", "_lost", "_exceeded"))
+                                     "_result", "_lost", "_exceeded",
+                                     "_fallback"))
                          for c in codes):
                     geometry_fallback += 1
         if new_geom_dict is not geom_dict:
@@ -520,7 +512,12 @@ def _apply_with_anchor_guard(
 
 def _anchors_present(geom: Any, anchors: Sequence[Tuple[float, float]],
                      tol_m: float) -> bool:
-    """所有锚点是否在几何上存活（距几何 ≤ tol/2 的米空间折算）。"""
+    """所有锚点是否在几何上存活。
+
+    阈值 tol/2 以赤道米/度常数近似折算两轴（高纬度经向实际阈值比名义
+    严 cos(φ) 倍 —— 方向保守，只会更多重试/回退，不会放过锚点丢失；
+    评审 R1-P2-8 注记的文档精度修正）。
+    """
     try:
         pts = _all_coords(geom)
     except Exception:  # noqa: BLE001
@@ -686,13 +683,12 @@ def generalize_features_multiband(
             out_feature = copy.copy(feature)
             geom_dict = feature.get("geometry")
             new_geom_dict = geom_dict
-            if (
-                geom_ll is not None
-                and geom_m is not None
-                and policy.strategy in (
+            geom_active = (
+                policy.strategy in (
                     "bounded_simplify", "shared_boundary_protect")
                 and tol_m > 0
-            ):
+            )
+            if geom_ll is not None and geom_m is not None and geom_active:
                 result_ll, codes, obs = _apply_with_anchor_guard(
                     geom_ll, tol_m, to_m, to_ll, anchors, kx, lat0, lon0,
                     policy=policy, geom_m_pre=geom_m)
@@ -706,9 +702,14 @@ def generalize_features_multiband(
                     geometry_simplified += 1
                     new_geom_dict = _geojson_geometry(result_ll)
                 elif any(c.endswith(("_failed", "_emptied", "_changed",
-                                     "_result", "_lost", "_exceeded"))
+                                     "_result", "_lost", "_exceeded",
+                                     "_fallback"))
                          for c in codes):
                     geometry_fallback += 1
+            elif geom_active and geom_ll is not None and geom_m is None:
+                # 投影失败（病态坐标）—— 与单带路径同码同计数（等价性）
+                outcomes.append("project_failed")
+                geometry_fallback += 1
             elif geom_ll is None and geom_dict is not None:
                 outcomes.append("geometry_unparseable")
             if new_geom_dict is not geom_dict:

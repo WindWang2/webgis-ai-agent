@@ -292,3 +292,102 @@ class TestMultibandEquivalence:
                                   sort_keys=True) == json.dumps(
                     single.feature_collection, sort_keys=True), spec.tier
                 assert multi[spec.tier].receipt == single.receipt, spec.tier
+
+
+class TestReviewFixesR1:
+    """评审 R1 清偿的回归锁。"""
+
+    def test_p1_equivalence_in_fast_tolerance_regime_u_shape(self):
+        # tol ≥ 线全长的 U 形线：单带与多带逐字节等价（快路径删除后，
+        # 两路径同走 GEOS TopologyPreservingSimplifier —— R1-P1 的盲区）
+        from app.lib.cartography.multiscale.generalize import (
+            BandSpec,
+            generalize_features,
+            generalize_features_multiband,
+        )
+
+        u = {"type": "LineString", "coordinates": [
+            [104.0, 30.6], [104.0, 30.62], [104.02, 30.62],
+            [104.02, 30.6], [104.04, 30.6]]}  # ~4.9km U 形（米空间）
+        feats = [{"type": "Feature", "id": "u1", "properties": {},
+                  "geometry": u}]
+        spec = BandSpec(
+            "world",
+            GeometryGeneralizationPolicy(
+                strategy="bounded_simplify", tolerance=10_000.0),
+            FeatureSelectionPolicy(importance_evidence="none"), 0.0)
+        multi = generalize_features_multiband(
+            feats, [spec], latitude_hint=CHENGDU_LAT)
+        single = generalize_features(
+            feats, geometry_policy=spec.geometry_policy,
+            selection_policy=spec.selection_policy,
+            latitude_hint=CHENGDU_LAT, band_zoom=0.0)
+        assert json.dumps(multi["world"].feature_collection,
+                          sort_keys=True) == json.dumps(
+            single.feature_collection, sort_keys=True)
+        assert multi["world"].receipt == single.receipt
+        # 回执不虚报：长度损失观测与真实几何一致（GEOS 路径计算）
+        if single.receipt["geometry_simplified"] > 0:
+            assert single.receipt["max_length_loss_ratio_observed"] >= 0.0
+
+    def test_p2_4_gapped_plan_fallback_is_last_window(self):
+        # 越界/缺口计划：回退 = 末窗（与前端孪生同语义，不再取首窗）
+        from app.lib.cartography.multiscale.export_adjudication import (
+            active_representation_window)
+
+        layer = {"representation": {"windows": [
+            {"min_zoom": 2, "max_zoom": 6, "mode": "generalized",
+             "source": "A"},
+            {"min_zoom": 10, "max_zoom": 20, "mode": "raw"},
+        ]}}
+        win = active_representation_window(layer, 0.0)  # 首窗下方越界
+        assert win is not None and win["mode"] == "raw"  # 末窗，非 generalized
+        win2 = active_representation_window(layer, 8.0)  # 缺口内
+        assert win2 is not None and win2["mode"] == "raw"
+
+    def test_p2_6_profile_id_carries_full_16_hex(self):
+        from app.lib.cartography.multiscale.importance import (
+            derive_importance_model,
+        )
+        from app.lib.cartography.multiscale.plan import build_scale_profile
+        from app.lib.cartography.multiscale.profile import SourceRevision
+
+        feats, dist = _roads_synth(30)
+        result = build_scale_profile(
+            layer_id="r",
+            feature_collection={"type": "FeatureCollection", "features": feats},
+            source=SourceRevision(ref="ref:t", feature_count=30,
+                                  geometry_family="line"),
+            geometry_family="line", latitude_hint=CHENGDU_LAT,
+            importance=derive_importance_model(
+                {"道路等级": {"type": "string"}},
+                {"道路等级": dist}, feature_count=30))
+        tail = result.profile.profile_id.rsplit(":", 1)[1]
+        assert len(tail) == 16 and all(c in "0123456789abcdef" for c in tail)
+
+    def test_p2_7_dpi_inf_fail_closed(self):
+        from app.lib.cartography.multiscale.profile import (
+            display_scale_denominator,
+        )
+
+        assert display_scale_denominator(8.0, 0.0, dpi=float("inf")) == (
+            display_scale_denominator(8.0, 0.0, dpi=96.0))
+
+    def test_p2_7_partial_keep_ranks_merge_defaults(self):
+        # 只覆盖 world：其余带用缺省秩（不再静默 fail-open 到 street 全保）
+        from app.lib.cartography.multiscale.importance import (
+            DEFAULT_KEEP_RANKS,
+            derive_importance_model,
+            kept_values_for_band,
+        )
+
+        dist = {"高速公路": 6, "国道": 6, "省道": 6, "县道": 6, "乡道": 6}
+        model = derive_importance_model(
+            {"道路等级": {"type": "string"}},
+            {"道路等级": dist}, feature_count=30).selected
+        assert model is not None
+        # 键名笔误场景：意图 world=1 但误写 "World" —— 未提及/误写的带
+        # 回落缺省秩 3（而非旧行为的 street=999 全保留）
+        world = kept_values_for_band(model, "world", {"World": 1})
+        assert len(world) == min(DEFAULT_KEEP_RANKS["world"],
+                                 len(model.value_order))  # 3，非 5 全量

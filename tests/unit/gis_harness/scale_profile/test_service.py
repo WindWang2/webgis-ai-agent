@@ -168,3 +168,57 @@ async def test_apply_preview_mode_does_not_commit(session):
         session, "roads", mode="preview", operation_id="op-msp-pv")
     assert receipt["status"] == "preview"
     assert "commit_hint" in receipt
+
+
+async def test_partial_chain_resume_after_supersede(session):
+    """评审 R1-P2-3：链中断持久化 partial 回执；同 op 重放断点续链。"""
+    from app.services.session_data import session_data_manager
+
+    # 用陈旧 CAS 基线强制首笔 superseded → partial（committed_slots=0）
+    rev = (await session_data_manager.get_map_state(session) or {}).get(
+        "_cartographic_mutation_revision", 0)
+    r1 = await apply_scale_representation(
+        session, "roads", mode="commit", operation_id="op-msp-resume",
+        expected_revision=max(0, rev - 1))
+    assert r1["status"] == "partial", r1
+    assert r1["committed_slots"] == 0
+    state = await session_data_manager.get_map_state(session) or {}
+    ring = state.get("_scale_profile_receipts") or []
+    assert any(row.get("operation_id") == "op-msp-resume"
+               and row.get("status") == "partial" for row in ring)
+
+    # 同 op 重放（不带陈旧基线）→ 从断点续链直至 committed
+    r2 = await apply_scale_representation(
+        session, "roads", mode="commit", operation_id="op-msp-resume")
+    assert r2["status"] == "committed", r2
+    assert r2.get("replayed") is None  # 是真实续链提交，非 committed 回放
+
+    # 回执环：committed 覆盖同 op 的 partial（每 op 单条）
+    state2 = await session_data_manager.get_map_state(session) or {}
+    rows = [row for row in (state2.get("_scale_profile_receipts") or [])
+            if row.get("operation_id") == "op-msp-resume"]
+    assert len(rows) == 1 and rows[0]["status"] == "committed"
+
+
+async def test_artifact_content_fingerprint_stable(session):
+    """评审 R1-P2-2：工件 data_fingerprint 是内容指纹（同内容同指纹）。"""
+    r1 = await apply_scale_representation(
+        session, "roads", mode="commit", operation_id="op-msp-fp1")
+    assert r1["status"] == "committed"
+    spec1 = await mapspec_store_instance.get_mapspec(session)
+    fps1 = {
+        sid: entry.get("data_fingerprint")
+        for sid, entry in spec1["sources"].items()
+        if sid.startswith("roads__gen@")}
+
+    # 同参数第二个 op（不同 operation_id）：同内容 → 同指纹
+    r2 = await apply_scale_representation(
+        session, "roads", mode="commit", operation_id="op-msp-fp2")
+    assert r2["status"] == "committed"
+    spec2 = await mapspec_store_instance.get_mapspec(session)
+    fps2 = {
+        sid: entry.get("data_fingerprint")
+        for sid, entry in spec2["sources"].items()
+        if sid.startswith("roads__gen@")}
+    assert fps1 and fps1 == fps2, (fps1, fps2)
+    assert all(fp and fp.startswith("gen-sha256:") for fp in fps1.values())

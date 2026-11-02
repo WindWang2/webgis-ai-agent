@@ -56,7 +56,10 @@ def active_representation_window(
             continue
         if isinstance(mn, bool) or isinstance(mx, bool):
             continue
-        if fallback is None or float(mn) < float(fallback.get("min_zoom", 0)):
+        # 越界回退 = 末窗（max_zoom 最大者）—— 与前端孪生
+        # representationWindowAtZoom / representation_mode_at_zoom 同语义
+        # （评审 R1-P2-4：缺口计划不得让后端导出应用与前端不同的窗）。
+        if fallback is None or float(mx) > float(fallback.get("max_zoom", 0)):
             fallback = w
         if float(mn) <= z < float(mx):
             return w
