@@ -42,3 +42,16 @@
 
 ## 下一轮（R2）
 M2 importance RuleEngine + M3 generalize 引擎（测试先行）。
+
+---
+
+### R7/M8 → R10 时间线补记（评审循环）
+- 版本撞号发现：open PR #1877（GOAL 03）已占 1.8=时态层 → 本方向重编号
+  **v1.9**（1.8 登记为协调占位，commit 07715c0）。
+- R1 独立评审（1×P1 + 7×P2）→ 清偿 commit f5cfb8ce3（P1 删线快路径，
+  基准重跑 50k 16.4s/200k 66.1s；7×P2 + 7 回归锁）。
+- R2 复审（有条件不通过：CAS 基线双向缺陷 + 空几何分叉 + 空循环）→
+  清偿 commit fa83e2e1b（+4 回归锁）。
+- R3 终审（同评审员）：**通过**，无新问题；补空循环守卫锁后收尾。
+- 终态后端：cartography 全套 + scale_profile = 3091 passed / 2 skipped /
+  3 xfailed（唯一红灯 master 既有 mutation parity corpus）。

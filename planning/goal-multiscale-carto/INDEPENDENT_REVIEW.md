@@ -29,6 +29,25 @@ schema、8 个测试文件抽查；3 组只读复现脚本：快路径分歧 / �
 接入点不破坏既有分支、前端无 source 计划零变化、v1.9 纯 additive、测试无
 伪通过。
 
-## R2（复审，2026-11-02）
+## R2（复审，2026-11-02，同一评审员对清偿 diff 复核）
 
-（清偿后复审结论见下 —— 由独立评审员对修复 diff 复核）
+结论：**有条件不通过** —— P1/P2-2/4/5/6/7/8 清偿真实（逐项 PASS）；但
+P2-3 的 CAS 基线实现两个方向皆坏（`or` 吞掉存量 0 → 重放无 CAS 盲踩
+外部写者；存量 >0 过期 → 永久 superseded 卡死，旗舰测试因事故而非正确
+逻辑通过），且 P2-5 修复引入空几何误报 project_failed。三项新发现 +
+一项既有分叉（strategy=none 不可解析几何）附实证。
+
+## R3（终审，2026-11-02，commit fa83e2e1b 清偿后）
+
+清偿：CAS 基线改为「显式 expected_revision > `_current_revision` 重读
+（与 engine 印章同源）> None」；空几何 `not geom_ll.is_empty` 门控；
+空循环守卫（last_res None → status=error）；unparseable 对齐 geom_active
+门控。回归锁 ×4（过期存量不卡死/显式基线优先/空几何全等/strategy=none
+零码）+ 评审后补空循环守卫锁（`test_resume_shrunk_intents_reports_error`）。
+
+评审员实测（含手工竞态复现：重读后外部写者推进 → 首 intent 诚实
+superseded → 再重放 committed）：**R3 通过**，四项全部真实清偿，无新
+问题引入。指定套件 104 passed 1 skipped；全量 scale_profile+multiscale
+= 105 passed 1 skipped（加守卫锁后 18+87）。
+
+**两轮独立评审 + 终审全部关闭；无未清偿 P0/P1。**

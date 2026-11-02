@@ -266,3 +266,21 @@ async def test_resume_explicit_baseline_wins(session):
         expected_revision=rev)
     assert receipt["status"] == "committed", receipt
     assert receipt["mapspec_revision"] > rev
+
+
+async def test_resume_shrunk_intents_reports_error(session):
+    """R2-新发现 3 回归锁：重放参数使 intents 变少 → 诚实 error 非伪 committed。"""
+    from app.services.gis_harness.scale_profile.service import _persist_receipt
+
+    await _persist_receipt(session, {
+        "status": "partial", "schema_version": "scale_profile.v1",
+        "operation_id": "op-msp-shrunk", "layer_id": "roads",
+        "committed_slots": 99,  # 远超实际 intents 数 → 续链切片为空
+        "chain_revision": 0,
+        "artifact_refs": {}, "artifact_source_ids": {},
+        "error": "synthetic", "at": 0.0,
+    })
+    receipt = await apply_scale_representation(
+        session, "roads", mode="commit", operation_id="op-msp-shrunk")
+    assert receipt["status"] == "error", receipt
+    assert "no runnable intents" in receipt["error"]
