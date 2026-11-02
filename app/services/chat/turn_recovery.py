@@ -73,3 +73,26 @@ def classify_failure(
     except Exception as e:  # noqa: BLE001 分类失败不拖垮主流程
         logger.warning(f"[chat_execution_engine] failure 分类失败: {e}")
         return None, None
+
+
+def recovery_from_outcome(
+    outcome: Optional[ToolDispatchResult],
+) -> Optional[dict]:
+    """GOAL 05：从 dispatch 结果提取统一恢复裁决（TDS 单 seam 产出）。
+
+    ``raw_result["recovery"]`` 由 ``ToolDispatchService`` 错误分支附加
+    （diagnostic+decision bounded dict）；缺席（旧形状/成功/异常）→
+    None —— 绝不在此层重算诊断（防第二事实源）。
+    """
+    try:
+        raw = getattr(outcome, "raw_result", None)
+        if not isinstance(raw, dict):
+            return None
+        rec = raw.get("recovery")
+        if isinstance(rec, dict) and (
+                isinstance(rec.get("diagnostic"), dict)
+                or isinstance(rec.get("decision"), dict)):
+            return rec
+        return None
+    except Exception:  # noqa: BLE001 — 增值字段绝不阻断
+        return None

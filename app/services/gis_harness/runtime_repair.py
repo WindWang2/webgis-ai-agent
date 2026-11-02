@@ -356,6 +356,24 @@ def _trace_repair(session_id: str, outcome: RuntimeRepairOutcome) -> None:
             trace.bump(COUNTER_RUNTIME_REPAIR_EXECUTION_DEBTS, len(outcome.execution_debts))
     except Exception:  # noqa: BLE001 — trace 故障不影响业务
         pass
+    # GOAL 05（ADR-0279）：同一事件补进 GisTraceChain 阶段 16（REPAIR）
+    # —— 补齐 chain_emitters 自认的缺发射面（有界扁平键，绝不抛）。
+    try:
+        from app.lib.runtime.chain_emitters import emit_chain
+        from app.lib.runtime.gis_trace import Stage
+
+        emit_chain(
+            Stage.REPAIR,
+            session_id=str(session_id)[:64],
+            applied=len(outcome.applied),
+            exhausted=bool(outcome.exhausted),
+            passes_used=int(outcome.passes_used),
+            execution_debts=len(outcome.execution_debts),
+            user_owned=len(outcome.user_owned),
+            locked_refused=len(outcome.locked_refused),
+        )
+    except Exception:  # noqa: BLE001 — 链发射失败不影响业务
+        pass
 
 
 async def _attach_continuation(
