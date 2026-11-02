@@ -122,6 +122,9 @@ from app.lib.cartography.representation import (
     export_adjudicate_layer,
     export_zoom_of_mapspec,
 )
+from app.lib.cartography.multiscale.export_adjudication import (
+    export_source_override as _export_source_override,
+)
 from app.lib.cartography.render_diagnostics import (
     MAX_DIAGNOSTICS_PER_EXPORT as _MAX_DIAGNOSTICS_PER_EXPORT,
 )
@@ -1653,6 +1656,17 @@ def compile_mapspec_to_svg_detailed(
 
                 try:
                     src_id = layer.get("source")
+                    # GOAL 04（M6 同合同）：活跃 artifact 窗携带源覆盖时，
+                    # 导出从派生工件源取数（与前端孪生/livec compiler 同一
+                    # 裁决语义）；统计/图例口径仍为 original_source。
+                    _src_override = _export_source_override(layer, _export_zoom)
+                    if _src_override:
+                        src_id = _src_override
+                        _emit_diag(
+                            "layer_generalized_artifact",
+                            detail=str(src_id),
+                            layer_id=layer.get("id"),
+                        )
                     src = sources.get(src_id, {}) if isinstance(sources, dict) else {}
                     if not isinstance(src, dict) or not src:
                         continue

@@ -148,7 +148,7 @@ class SessionPlan(BaseModel):
     #: (idempotency keys / replay order). Additive — old payloads default 0.
     event_seq: int = 0
     recovery: PlanRecoveryMetadata = Field(default_factory=PlanRecoveryMetadata)
-    #: GOAL 05（ADR-0279）：最近一次工具失败的统一恢复裁决（bounded
+    #: GOAL 05（ADR-0281）：最近一次工具失败的统一恢复裁决（bounded
     #: diagnostic+decision，TDS 单 seam 产出后随失败分支落账；additive
     #: —— 旧 payload 缺省 None，投影/多轮重试指令只读此键，不重算）。
     last_recovery: Optional[dict[str, Any]] = None
@@ -366,7 +366,7 @@ def format_session_plan_projection(
                 procedure_line = "\n" + _line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         procedure_line = ""
-    # GOAL 05（ADR-0279）：恢复裁决单行（additive；只读 last_recovery
+    # GOAL 05（ADR-0281）：恢复裁决单行（additive；只读 last_recovery
     # 落账键 —— 最近失败的原因/处置/预算；块缺席零漂移，投影失败只
     # 少一行）。多轮「重试失败步骤」的 agent 提示由此进入上下文。
     recovery_line = ""

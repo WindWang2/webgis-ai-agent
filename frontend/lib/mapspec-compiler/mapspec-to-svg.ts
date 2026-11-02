@@ -10,7 +10,7 @@ import {
   resolveLayerVisibility,
 } from "../carto-ir/visibility";
 import {
-  representationModeAtZoom,
+  representationWindowAtZoom,
   resolveRepresentationPlan,
 } from "../carto-ir/representation";
 
@@ -592,8 +592,10 @@ function compileMapSpecToSvgBody(
       return;
     }
     const repPlan = resolveRepresentationPlan(layer as never);
+    let windowSourceOverride: string | undefined;
     if (repPlan?.nonTrivial) {
-      const mode = representationModeAtZoom(repPlan, exportZoom);
+      const activeWindow = representationWindowAtZoom(repPlan, exportZoom);
+      const mode = activeWindow.mode;
       if (mode === "hidden") {
         options.onDiagnostic?.(
           "layer_representation_hidden",
@@ -605,6 +607,16 @@ function compileMapSpecToSvgBody(
       // layer_approximated_heatmap 诊断）；其余模式导出按声明层型渲染。
       if (mode === "visual_heatmap" && layerType === "circle") {
         layerType = "heatmap";
+      }
+      // GOAL 04（M6 同合同）：artifact 窗源覆盖 —— 导出从派生工件源取数
+      // （与后端 multiscale/export_adjudication.export_source_override 孪生；
+      // 统计/图例口径仍为 original_source）。
+      if ((mode === "generalized" || mode === "aggregate_grid") && activeWindow.source) {
+        windowSourceOverride = activeWindow.source;
+        options.onDiagnostic?.(
+          "layer_generalized_artifact",
+          `layer=${layer.id} source=${windowSourceOverride} zoom=${exportZoom}`,
+        );
       }
     }
 
@@ -627,7 +639,7 @@ function compileMapSpecToSvgBody(
       return;
     }
 
-    const srcId = layer.source;
+    const srcId = windowSourceOverride ?? layer.source;
     if (!srcId) return;
     const src = sources[srcId] as {
       tiles?: string[];

@@ -2484,6 +2484,12 @@ def _check_layer_quantitative_rules(
     _check_label_collision(report, mapspec, layer, lid, sid, profile)
     _check_scale_svs(report, mapspec, layer, lid, sid, profile)
     _check_scale_representation(report, mapspec, layer, lid, sid)
+    # GOAL 04（M5）：多尺度表达档案声明一致性（无声明 → not/no-op，零行为变化）
+    from app.lib.cartography.multiscale.semantic_checks_scale_profile import (
+        check_scale_profile,
+    )
+
+    check_scale_profile(report, mapspec, layer, lid, sid)
     _check_3d_extrusion_rules(report, mapspec, layer, lid, sid, profile)
     _check_isoline_contour_rules(report, mapspec, layer, lid, sid)
 

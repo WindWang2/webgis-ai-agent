@@ -1,4 +1,4 @@
-"""GoalVerification 对账层（GOAL 05 / M4，ADR-0279）。
+"""GoalVerification 对账层（GOAL 05 / M4，ADR-0281）。
 
 定位（防重复施工红线）：本层**不是第二 oracle**——ADR-0183
 GoalSatisfactionReport 仍是任务语义裁决的单一评估点；本层只回答一个

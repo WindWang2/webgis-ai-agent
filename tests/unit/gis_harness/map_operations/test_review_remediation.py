@@ -119,9 +119,8 @@ async def test_b3_mid_chain_superseded_reports_partial_not_committed():
     from app.services.gis_world_state import apply_gis_mutation
     from app.services.session_data import session_data_manager
 
-    state = await session_data_manager.get_map_state(sid) or {}
-    rev = int(state.get("_cartographic_mutation_revision") or 0)
     # 外部写者预备：在第一个顺序效果（paint）CAS 时推进 revision
+    # （基线 revision 由 racer 在锁内现读 —— 顶层读取恒陈旧，故不预取）
 
     class _Racer:
         def __init__(self):

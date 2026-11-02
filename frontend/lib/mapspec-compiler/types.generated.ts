@@ -178,6 +178,7 @@ export interface MapSpecLayer {
   bivariate?: MapSpecLayerBivariate;
   data_binding?: MapSpecLayerDataBinding;
   representation?: MapSpecLayerRepresentation;
+  scale_profile?: Record<string, unknown>;
 }
 
 export interface MapSpecLayerExtrusion {
@@ -219,6 +220,7 @@ export interface MapSpecRepresentationWindow {
   max_zoom: number;
   mode: "raw" | "point_cluster" | "visual_heatmap" | "aggregate_grid" | "generalized" | "hidden";
   reason_codes?: string[];
+  source?: string;
 }
 
 export interface MapSpecLayerRepresentation {

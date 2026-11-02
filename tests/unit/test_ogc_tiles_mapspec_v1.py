@@ -4,7 +4,6 @@
 - vector/data_fabric(ogc url) 两种源经 parse_mapspec 权威 schema 往返；
 - 既有分类行为不回归（geojson inline / ref / model3d 次序不受影响）。
 """
-import pytest
 
 from app.lib.cartography.mapspec_schema import parse_mapspec
 from app.services.mapspec_source import store_data

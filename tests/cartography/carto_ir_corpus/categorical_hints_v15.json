@@ -73,7 +73,7 @@
   },
   "expect": {
     "valid": true,
-    "effective_version": "1.7",
+    "effective_version": "1.9",
     "layer_count": 1,
     "unknown_fields": 0,
     "frontend_compile": {
