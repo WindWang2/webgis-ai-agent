@@ -47,25 +47,30 @@
 symbol-law.ts（只读 import）、label 引擎零改动、MVT 零改动、
 #1870 candidates 零改动、#1874 事务面复用（apply_gis_mutation + 回执环模式）。
 
-## 里程碑
+## 里程碑（origin/master 6c5e71c2c → HEAD 1598834，14 commits）
 
-M0 基线（2728a2f）→ M1 契约+v1.9（c5f70c7）→ M2+M3 引擎（0e5c354）→
+M0 基线（2728a2f）→ M1 契约+schema（c5f70c7）→ M2+M3 引擎（0e5c354）→
 M4 构建器（364a791）→ M6 同合同（26ab4e8）→ M7 工具闭环（a4db0d6）→
 M5 QA（f9d0753）→ M8 基准（a5fb9277）→ M9 三场景+ADR（bb35b5c）→
-版本协调（07715c0）→ 评审清偿（见 INDEPENDENT_REVIEW.md）。
+TEST_MATRIX/RISK（f488fce）→ 版本协调 v1.9（07715c0）→ R1 评审清偿
+（f5cfb8ce）→ R2 清偿（fa83e2e）→ 评审终稿（1598834）。
 
 ## 测试输出与未跑项
 
-- 后端：cartography 全套 + scale_profile 服务/工具 **3080 passed / 2
-  skipped / 3 xfailed**；唯一红灯 `test_mutation_parity_corpus[
-  refresh_data_revision_stamp]` 为 **master 既有**（stash 对照证实）
+- 后端：cartography 全套 + scale_profile 服务/工具（终态，评审清偿后）
+  **3091 passed / 2 skipped / 3 xfailed**；唯一红灯
+  `test_mutation_parity_corpus[refresh_data_revision_stamp]` 为
+  **master 既有**（stash 对照证实）
 - 前端：vitest（carto-ir/mapspec-compiler/map-kit-multiscale/
   mapspec-runtime/symbol-law）**714+444 passed**；`tsc --noEmit` 0 错误
   （tsconfig.test.json 3 错误为 master 既有，vnext 同基线对照证实）
 - 性能（`MSP_PERF=1` 显式，同机 453s 全程）：
-  - 50k 线要素：13.43s（纯耗时口径）/ 峰值 92.6MB（tracemalloc 口径）
-  - 200k 线要素：56.1s；确定性复跑同输出；取舍比例与词表秩一致
-  - 优化前基线 10k=44.2s → 优化后 3.2s（13.6×，复现脚本=同测试）
+  - 50k 线要素：16.41s（纯耗时口径）/ 峰值 120.5MB（tracemalloc 口径）
+  - 200k 线要素：66.08s；确定性复跑同输出；取舍比例与词表秩一致
+    （world 60%/province 80%/city 100%）
+  - 优化史（诚实记录）：10k 基线 44.2s → numpy 向量化+单遍多带 3.2s
+    （13.6×）→ 曾加线快路径（50k 13.4s）被 R1 评审判定破坏等价性，
+    **删除并重跑得终值**（等价性代价 ~18%）
 - 未跑（not_evaluated 诚实披露）：Playwright 视觉回归（环境无浏览器
   依赖）；MapLibre live 真浏览器交互；跨 pod Redis 并发
 
@@ -82,9 +87,17 @@ M5 QA（f9d0753）→ M8 基准（a5fb9277）→ M9 三场景+ADR（bb35b5c）�
 
 ## Review-fix-review
 
-独立评审 R1（对抗性，含数学正确性/契约并发/测试真假）findings 与清偿
-映射见 `planning/goal-multiscale-carto/INDEPENDENT_REVIEW.md`；修复后
-R2 复审通过记录同文件。
+三轮独立评审闭环（评审员未参与实现，含数学正确性/契约并发/测试真假
+维度 + 评审员自跑命令与复现脚本）：
+
+- **R1**：1×P1（线快路径破坏单/多带等价 + 回执虚报长度损失）+ 7×P2
+  （工件内容指纹/断点续链/缺口回退语义/回退计数/profile_id 熵/dpi
+  inf/keep_ranks 合并）→ 全部清偿（commit f5cfb8ce，含性能基准重跑）
+- **R2**：复审发现 R1 修复自身的 CAS 基线双向缺陷（falsy-0 吞掉 → 重放
+  盲踩外部写者；过期存量 → 永久卡死）+ 空几何误报 + 空循环伪 committed
+  → 清偿（fa83e2e：显式入参 > 当前 revision 重读 > None）
+- **R3 终审：通过**（评审员含手工竞态复现）；全记录见
+  `planning/goal-multiscale-carto/INDEPENDENT_REVIEW.md`
 
 ## 风险与已知边界
 
