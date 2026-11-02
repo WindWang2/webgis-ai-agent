@@ -102,6 +102,9 @@ _TOOL_MODULES = [
     ("app.tools.analysis_workflow_tools", "register_analysis_workflow_tools"),
     # Track B（M14）：图层浏览/聚合只读工具面（分页/typed 过滤/视口统计）
     ("app.tools.layer_browse_tools", "register_layer_browse_tools"),
+    # GOAL 01：空间语义与量纲可信契约只读工具面（inspect_spatial_semantics；
+    # 独立模块防并发冲突，preflight 真相在 gis_harness/spatial_semantics/）
+    ("app.tools.spatial_semantics_tools", "register_spatial_semantics_tools"),
 ]
 
 

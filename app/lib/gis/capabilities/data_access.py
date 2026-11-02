@@ -105,4 +105,23 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             purpose_template="{subject} 图层浏览",
             version="1.0",
         ),
+
+        # ── GOAL 01：空间语义契约检视只读面 ────────────────────────────
+        # inspect_spatial_semantics 工具直连（tier 1）：数据 → typed
+        # SpatialSemanticContract 投影（CRS 来源四态/坐标结构/轴序嫌疑/
+        # 计算空间推荐/尺度精度/偏移帧风险）。检视类能力（与 layer_browse
+        # 同为只读取面），preflight 判定真相在
+        # app/services/gis_harness/spatial_semantics/。
+        CapabilityDescriptor(
+            id="spatial_semantics", name="空间语义契约检视",
+            category="data_access",
+            description="数据的空间语义只读检视：CRS 声明来源（declared/"
+                        "rfc7946_default/assumed/unknown）、坐标结构/轴序嫌疑/"
+                        "偏移帧归一链、计算空间推荐（UTM/极区/测地）与尺度精度"
+                        "—— 度量敏感工具执行前的 typed 判定（未知不猜）。",
+            preferred_execution="local_first",
+            deterministic=True,
+            purpose_template="{subject} 空间语义检视",
+            version="1.0",
+        ),
 ]
