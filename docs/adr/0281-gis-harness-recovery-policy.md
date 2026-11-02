@@ -1,4 +1,4 @@
-# 0279. GIS Harness 任务级诊断、受控恢复与目标验收对账
+# 0281. GIS Harness 任务级诊断、受控恢复与目标验收对账
 
 **Date:** 2026-11-02
 **Status:** Proposed

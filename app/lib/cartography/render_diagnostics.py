@@ -252,6 +252,12 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "图层引用的数据在矢量导出时不可用（未水合 inline 数据），"
             "该层未进入导出件（layer: {detail}）",
         ),
+        # —— GOAL 04（M6）多尺度同合同：artifact 窗源覆盖披露（双端发射）
+        RenderDiagnosticSpec(
+            "layer_generalized_artifact", "info",
+            "图层在导出 zoom 处使用预计算综合工件源（非原始数据面；"
+            "统计/图例口径仍为 original_source）（layer: {detail}）",
+        ),
         # —— H02（任务书 §C）版面文本确定性截断披露 ——
         RenderDiagnosticSpec(
             "title_truncated", "warning",
@@ -504,6 +510,11 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     ),
     # H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（双端孪生发射）
     "layer_ref_unavailable": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    # GOAL 04（M6）：artifact 窗源覆盖披露（双端孪生发射）
+    "layer_generalized_artifact": (
         "app.services.mapspec_to_svg",
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),

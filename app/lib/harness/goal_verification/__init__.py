@@ -1,4 +1,4 @@
-"""Harness 目标验收对账层（GOAL 05 / ADR-0279）。
+"""Harness 目标验收对账层（GOAL 05 / ADR-0281）。
 
 唯一入口 ``reconcile_goal_verification``：ADR-0183 goal 报告 ↔ 渲染观察
 ↔ 数据资格 ↔ 完成回执 的确定性对账（false-PASS 守门）。

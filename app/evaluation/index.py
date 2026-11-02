@@ -140,7 +140,7 @@ def _ensure_builtin_registrations() -> None:
         name="reliability", prefix="RL-",
         builder=reliability_corpus.build_reliability_corpus,
         is_benchmark_case=False, group="reliability"))
-    # GOAL 05（ADR-0279 M7）：恢复裁决语料（输入状态 + 允许/禁止动作；
+    # GOAL 05（ADR-0281 M7）：恢复裁决语料（输入状态 + 允许/禁止动作；
     # oracle 族驱动 recovery_policy/goal_verification 生产纯函数）。
     register(CorpusRegistration(
         name="recovery", prefix="RC-",

@@ -1,4 +1,4 @@
-"""HTTP 状态码信号检测（GOAL 05 / ADR-0279，review R2-1/R2-4 收敛点）。
+"""HTTP 状态码信号检测（GOAL 05 / ADR-0281，review R2-1/R2-4 收敛点）。
 
 词边界 + **语境词**双门：裸数字子串会撞坐标/计数（"buffered 1500
 features"不得判瞬态；"exported 403 records"不得判权限拒绝）。
