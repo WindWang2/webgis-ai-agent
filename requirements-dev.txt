@@ -8,7 +8,8 @@
 -r requirements.txt
 
 # Testing framework
-pytest>=9.1.1
+# 依赖并集：#1887（pytest>=9.2.0）+ #1886（pytest-asyncio>=1.4.1）
+pytest>=9.2.0
 pytest-asyncio>=1.4.1
 pytest-cov>=7.1.0
 pytest-timeout>=2.4.0
