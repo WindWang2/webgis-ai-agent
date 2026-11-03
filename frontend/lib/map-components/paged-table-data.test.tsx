@@ -102,9 +102,9 @@ describe('usePagedLayerTable', () => {
   });
 
   it('sort change aborts in-flight first page; stale response never lands', async () => {
-    let resolvePending: (v: unknown) => void = () => {};
+    let resolvePending: (v: Awaited<ReturnType<typeof fetchFeaturePage>>) => void = () => {};
     // 显式响应队列（先注册再 render —— mock 装配顺序即调用顺序）。
-    const responders: Array<() => Promise<unknown>> = [
+    const responders: Array<() => ReturnType<typeof fetchFeaturePage>> = [
       () => new Promise((res) => { resolvePending = res; }),
     ];
     mockFetch.mockImplementation(() => {
