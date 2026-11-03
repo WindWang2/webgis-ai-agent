@@ -7,18 +7,12 @@ G3D01 起，本模块**派生自** ``app/lib/cartography/basemap_profiles.py``
 前端 ``frontend/lib/providers.ts`` 仍是渲染端真相（env 门控逻辑在手写端），
 两侧一致性同样由契约测试保证。
 """
-from typing import TypedDict
-
 # ADR-0216 分层：画像 kernel 契约在 app/contracts（app.core 禁依赖 app.lib）。
 from app.contracts.basemap_profiles import (
     BASEMAP_PROVIDER_PROFILES,
+    BaseLayerInfo as BaseLayerInfo,
     iter_llm_catalog,
 )
-
-
-class BaseLayerInfo(TypedDict):
-    name: str
-    keywords: list[str]
 
 
 # 派生自 basemap_profiles.BASEMAP_PROVIDER_PROFILES（llm_visible 过滤）。

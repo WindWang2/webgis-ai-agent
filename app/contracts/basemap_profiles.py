@@ -8,7 +8,7 @@ import 面零破坏）。
 from __future__ import annotations
 
 import re
-from typing import Literal, Optional
+from typing import Literal, Optional, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -29,6 +29,13 @@ AVAILABILITY_REASONS = (
 )
 
 AvailabilityState = Literal["available", "unavailable"]
+
+
+class BaseLayerInfo(TypedDict):
+    """LLM 感知目录条目（派生端与消费端共享的 kernel 契约）。"""
+
+    name: str
+    keywords: list[str]
 
 
 class ProfileValidationError(ValueError):
@@ -460,7 +467,7 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
 )
 
 
-def iter_llm_catalog() -> list[dict[str, list[str]]]:
+def iter_llm_catalog() -> list[BaseLayerInfo]:
     """LLM 感知目录派生（base_layers.BASE_LAYER_CATALOG 的上游）。"""
     return [
         {"name": p.name, "keywords": list(p.keywords)}

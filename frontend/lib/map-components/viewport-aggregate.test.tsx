@@ -103,7 +103,7 @@ describe('useViewportAggregate', () => {
   });
 
   it('generation change cancels in-flight; stale response never lands', async () => {
-    const responders: Array<() => Promise<unknown>> = [
+    const responders: Array<() => ReturnType<typeof fetchLayerAggregate>> = [
       () => new Promise(() => { /* 永不 resolve：模拟慢请求 */ }),
       () => Promise.resolve(aggResult({ rows: [{ key: '新', count: 1 }], truncated: false, groupCount: 1 })),
     ];
@@ -143,7 +143,7 @@ describe('useViewportAggregate', () => {
   });
 
   it('R4: 409 conflict re-anchors once with server revision, then recovers', async () => {
-    const responders: Array<() => Promise<unknown>> = [
+    const responders: Array<() => ReturnType<typeof fetchLayerAggregate>> = [
       () => Promise.reject(new PagedRevisionConflict(7)),
       () => Promise.resolve(aggResult({ revision: 7 })),
     ];
