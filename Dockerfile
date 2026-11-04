@@ -2,23 +2,23 @@
 
 # audit ISSUE-036（#1377）：基础镜像 tag@sha256 双钉 —— tag 保持可读、
 # digest 保证同 tag 漂移时构建面不变。更新 digest：
-#   docker buildx imagetools inspect node:22-alpine | grep Digest
+#   docker buildx imagetools inspect node:26-alpine | grep Digest
 # 或 registry API（无 docker 环境时）。
 
 # Stage 1: Frontend Dependencies
 FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS frontend-deps
 WORKDIR /app/frontend
-# pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。corepack 随
-# node:22 内置；pin pnpm@10 与 CI workflow 的 pnpm/action-setup 版本一致。
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+# pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。Node 25+
+# 不再内置 Corepack；用 npm 显式安装固定 pnpm 版本（应用仍由 pnpm 安装）。
+RUN npm install --global pnpm@10.15.1
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-# node:22：jest-dom@7 / jsonlint-lines-primitives@2.0.3 等要求 node >=22（engine-strict）。
+# node:26：jest-dom@7 / jsonlint-lines-primitives@2.0.3 等要求 node >=22（engine-strict）。
 RUN pnpm install --frozen-lockfile
 
 # Stage 2: Frontend Builder
 FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS frontend-builder
 WORKDIR /app/frontend
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+RUN npm install --global pnpm@10.15.1
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
 COPY frontend/. .
 # transport goal E-F-2 (P0): inject the API base at build time (see Dockerfile.prod).
@@ -33,7 +33,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build
 
 # Stage 3: Backend Dependencies
-FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS backend-deps
+# 与 .python-version / requirements.lock 的 3.12 基线一致；运行时 GDAL 包名
+# 属于 bookworm，不能使用会漂移到 trixie 的通用 slim tag。
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS backend-deps
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
@@ -47,7 +49,7 @@ ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements.lock
 
 # Stage 4: Backend Builder (carries deps + app code)
-FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS backend-builder
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS backend-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
@@ -68,14 +70,14 @@ COPY vendor/ ./vendor/
 # PLT-03（#1750）：Debian bookworm 的 `nodejs` apt 包是 18.x，而 Next 16
 # standalone server 要求 >=20.9（frontend/package.json next 16.4.0；CVE
 # 修复也要求新版）—— runner 阶段 apt 装 nodejs 会让默认 CMD 里的 node
-# 进程起不来。从官方 node:26-bookworm-slim（与 python:3.12-slim 同 glibc
+# 进程起不来。从官方 node:26-bookworm-slim（与 python:3.12-slim-bookworm 同 glibc
 # 基线；alpine 的 musl 二进制不可用）只复制 node 单二进制 —— 运行时只需
 # `node server.js` 与 Pi RPC 的 `node rpc-entry.js`，npm/corepack 不入
 # 镜像以控制体积。digest 与 Dockerfile.prod 的 node-runtime 阶段一致。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
 
 # Stage 5: Runner
-FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS runner
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
