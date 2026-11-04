@@ -33,6 +33,12 @@ from app.services.data_fabric.errors import (
 )
 from app.services.data_fabric.query.execution import StreamingBudget
 from app.services.data_fabric.query.models import ExecutionBudget
+from app.services.data_fabric.query.federation_contracts import (
+    AggregateGroup, AggregateSpecRecord, EstimateBasisRecord,
+    FederatedPlanRecord, RejectedOrderRecord, SemiJoinReductionRecord,
+    SourceQueryOptions, SourceSideRecord, V6PlanRecord,
+    ReprojectSideRecord, JoinSideRecord, UnknownSideRecord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,24 +63,24 @@ class FederatedPlan:
     """两源联邦计划（可序列化描述）。"""
 
     kind: str  # attribute_join | spatial_join | aggregate_join
-    left: Dict[str, Any] = field(
+    left: SourceSideRecord = field(
         default_factory=dict
     )  # {source_id, dataset_id, spec extras}
-    right: Dict[str, Any] = field(default_factory=dict)
+    right: SourceSideRecord = field(default_factory=dict)
     join_field_left: Optional[str] = None
     join_field_right: Optional[str] = None
     spatial_op: Optional[str] = None  # within | intersects
     group_by_right: Optional[List[str]] = None
-    aggregates: Optional[List[Dict[str, Any]]] = None
+    aggregates: Optional[List[AggregateSpecRecord]] = None
     strategy: str = "local_hash_or_strtree"  # server_side | local_hash | local_strtree
     estimated_left_rows: Optional[int] = None
     estimated_right_rows: Optional[int] = None
     warnings: List[str] = field(default_factory=list)
     # ---- V4 additive（ADR-0101 D7）：被拒绝的替代序（EXPLAIN 诚实披露）----
-    rejected_orders: List[Dict[str, Any]] = field(default_factory=list)
+    rejected_orders: List[RejectedOrderRecord] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
-        out = {
+    def to_dict(self) -> FederatedPlanRecord:
+        out: FederatedPlanRecord = {
             "kind": self.kind,
             "left": self.left,
             "right": self.right,
@@ -108,7 +114,7 @@ class FederatedQueryRequest:
     spatial_op: Optional[str] = None  # within | intersects
     # aggregate+join
     group_by_right: Optional[List[str]] = None
-    aggregates: Optional[List[Dict[str, Any]]] = None  # [{func, field}]
+    aggregates: Optional[List[AggregateSpecRecord]] = None  # [{func, field}]
     # 共同谓词（分别应用到两侧源查询）
     left_where: Optional[Any] = None
     right_where: Optional[Any] = None
@@ -350,7 +356,7 @@ def _hashable_key(v: Any) -> Any:
 
 def aggregate_join_rows(
     joined_rows: Sequence[Dict[str, Any]],
-    aggregates: Sequence[Dict[str, Any]],
+    aggregates: Sequence[AggregateSpecRecord],
     group_by: Sequence[str],
 ):
     """join 行 → 分组聚合（复用 V2 本地聚合器语义）。"""
@@ -380,7 +386,7 @@ class _AggregateState:
     def __init__(self, aggs, group_by):
         self.aggs = list(aggs)
         self.group_by = list(group_by)
-        self.groups: Dict[Tuple, Dict[str, Any]] = {}
+        self.groups: Dict[Tuple, AggregateGroup] = {}
 
     def update(self, row: Dict[str, Any]) -> None:
         right = row.get("__right__") or {}
@@ -540,7 +546,7 @@ class FederatedExecutor:
         fields: Optional[List[str]],
         limit: int,
     ) -> List[Dict[str, Any]]:
-        extras: Dict[str, Any] = {}
+        extras: SourceQueryOptions = {}
         if fields:
             extras["fields"] = fields
         if side_where is not None:
@@ -594,7 +600,7 @@ class FederatedExecutor:
         # V5（Wave 9 审计步骤 5）：链式半连接约减回迁两源路径 —— 等值 join
         # 的右行只在键出现于本页左侧键集时才进哈希索引（内连接语义不变；
         # 键集超上限诚实放弃）。spatial join 无键可约减，不适用。
-        semi_join_stats: List[Dict[str, Any]] = []
+        semi_join_stats: List[SemiJoinReductionRecord] = []
         deadline = started + req.budget.deadline_s
         # R4-M4：右侧空间索引只构建一次（跨左页复用）
         spatial_index = None
@@ -711,7 +717,7 @@ class FederatedExecutor:
     def _source_query_page(
         self, adapter, dataset_id, req, side_where, *, fields, limit, offset
     ):
-        extras: Dict[str, Any] = {
+        extras: SourceQueryOptions = {
             "limit": limit,
             "offset": offset,
             "deadline_s": req.budget.deadline_s,
@@ -827,7 +833,7 @@ class ChainJoin:
     join_field_right: Optional[str] = None
     spatial_op: Optional[str] = None  # within | intersects
     group_by_right: Optional[List[str]] = None
-    aggregates: Optional[List[Dict[str, Any]]] = None
+    aggregates: Optional[List[AggregateSpecRecord]] = None
     left_source_id: Optional[str] = None
     right_source_id: Optional[str] = None
 
@@ -865,7 +871,7 @@ class FederatedChainRequest:
     # FabricRuntime 填充：rows_basis（request_hint | source_facts:<basis>
     # [×feedback:<factor>(samples=N)]）、caps_basis（probed|default）、
     # governed。EXPLAIN 如实渲染；None = 无富集（行为与 V7 逐位一致）。
-    estimate_basis: Optional[Dict[str, Dict[str, Any]]] = None
+    estimate_basis: Optional[Dict[str, EstimateBasisRecord]] = None
 
 
 def _chain_budget(req: FederatedChainRequest) -> ExecutionBudget:
@@ -1802,11 +1808,11 @@ def enrich_request_from_runtime(
 
     runtime = get_fabric_runtime()
     owner = getattr(req, "session_owner", None)
-    basis: Dict[str, Dict[str, Any]] = {}
+    basis: Dict[str, EstimateBasisRecord] = {}
     # review P2-10：浅拷贝 dict 仍共享 ChainSourceStats 实例 —— 注入 caps/
     # ndv 会改写调用方的共享对象。逐值拷贝（dataclass）后注入只影响本次
     # 请求。
-    hints: Dict[str, Any] = {
+    hints: Dict[str, ChainSourceStats] = {
         k: _copy.copy(v) for k, v in (req.stats_hints or {}).items()
     }
 
@@ -1814,7 +1820,7 @@ def enrich_request_from_runtime(
         rs = resolved_by_sid.get(src.source_id)
         if rs is None:
             continue
-        entry: Dict[str, Any] = {
+        entry: EstimateBasisRecord = {
             "governed": bool(getattr(rs, "governed", False)),
         }
         # 1) source_type（静态能力激活）。
@@ -2158,7 +2164,7 @@ def _execute_v6_with_governance(executor, req, engine_breaker, cache_ctx, cache)
     return _execute_and_build()
 
 
-def _v6_plan_dicts(plan) -> List[Dict[str, Any]]:
+def _v6_plan_dicts(plan) -> List[V6PlanRecord]:
     """把 V6 计划树投影为 V5 ``plans`` 形状的逐跳 dict（工具契约兼容）。"""
     from app.services.data_fabric.query.federated.logical import (
         LogicalJoin,
@@ -2166,9 +2172,9 @@ def _v6_plan_dicts(plan) -> List[Dict[str, Any]]:
         LogicalScan,
     )
 
-    out: List[Dict[str, Any]] = []
+    out: List[V6PlanRecord] = []
 
-    def side_dict(node) -> Dict[str, Any]:
+    def side_dict(node) -> SourceSideRecord | ReprojectSideRecord | JoinSideRecord | UnknownSideRecord:
         if isinstance(node, LogicalScan):
             return {
                 "source_id": node.source_id,

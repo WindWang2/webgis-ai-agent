@@ -15,6 +15,10 @@
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    WorkflowNode,
+)
+
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -90,7 +94,7 @@ class SubworkflowExecutor:
         self.org_id = org_id
 
     async def __call__(
-        self, node: Dict[str, Any], *, parent: Dict[str, Any],
+        self, node: WorkflowNode, *, parent: Dict[str, Any],
         parent_visited: List[str], session_id: str,
         input_refs: Optional[List[str]] = None,
     ) -> Dict[str, Any]:

@@ -11,10 +11,17 @@ owner scope 恰好一维（session_id/project_id），跨 owner 不可见。
 """
 from __future__ import annotations
 
+from app.contracts.geojson import GeoJSONFeatureCollection, GeoJSONFeature, PolygonGeometry
+from pydantic import JsonValue
+from app.contracts.modelops import (
+    DetectionRecord,
+    PublishedArtifact,
+)
+
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 
@@ -79,7 +86,7 @@ def write_raster_output(
     return path
 
 
-def write_geojson_output(path: Path, geojson: Dict[str, Any]) -> Path:
+def write_geojson_output(path: Path, geojson: Dict[str, Any] | GeoJSONFeatureCollection) -> Path:
     """GeoJSON 产物原子写盘（#1634：同目录 tmp + fsync + os.replace）。"""
     import contextlib
     import os
@@ -108,7 +115,7 @@ def publish_raster_artifact(
     owner_scope: Dict[str, str],
     source_refs: List[str],
     producer: Dict[str, Any],
-) -> Dict[str, Any]:
+) -> PublishedArtifact:
     """GeoTIFF → cog_raster DataObject（renderable + merkle 身份）。"""
     from app.services.lakehouse.raster_object import publish_cog_data_object
 
@@ -122,7 +129,7 @@ def publish_raster_artifact(
     if not result.get("published"):
         # 诚实降级：产物仍在磁盘（路径返回），但无 DataObject 身份。
         logger.warning("raster artifact publish skipped: %s", result.get("reason"))
-    return result
+    return cast(PublishedArtifact, result)
 
 
 def publish_json_artifact(
@@ -131,7 +138,7 @@ def publish_json_artifact(
     owner_scope: Dict[str, str],
     source_refs: List[str],
     producer: Dict[str, Any],
-) -> Dict[str, Any]:
+) -> PublishedArtifact:
     """JSON 产物 → modelops_artifact DataObject（检测/实例/评估/manifest）。"""
     from app.services.lakehouse.data_object import publish_data_object
 
@@ -153,19 +160,19 @@ def publish_json_artifact(
 
 
 def build_geojson_from_detections(
-    detections: List[Dict[str, Any]],
+    detections: list[DetectionRecord],
     *,
     crs: Optional[str],
     transform: Any,
     class_names: Optional[List[str]] = None,
     to_geographic: bool = True,
-) -> Dict[str, Any]:
+) -> GeoJSONFeatureCollection:
     """DetectionRecord 列表 → GeoJSON FeatureCollection（全局像素→地理）。"""
-    features: List[Dict[str, Any]] = []
+    features: list[GeoJSONFeature] = []
     for det in detections:
         x, y, w, h = det["box"]
         label = int(det["label"])
-        props: Dict[str, Any] = {
+        props: dict[str, JsonValue] = {
             "label": label,
             "label_name": class_names[label] if class_names and 0 <= label < len(class_names) else str(label),
             "score": det["score"],
@@ -187,14 +194,14 @@ def build_geojson_from_detections(
                 [min(xs), max(ys)],
                 [min(xs), min(ys)],
             ]
-            geometry = {"type": "Polygon", "coordinates": [ring]}
+            geometry: PolygonGeometry = {"type": "Polygon", "coordinates": [ring]}
         else:
             geometry = {
                 "type": "Polygon",
                 "coordinates": [[[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]]],
             }
         features.append({"type": "Feature", "properties": props, "geometry": geometry})
-    collection = {"type": "FeatureCollection", "features": features}
+    collection: GeoJSONFeatureCollection = {"type": "FeatureCollection", "features": features}
     if crs and not to_geographic:
         collection["crs"] = {"type": "name", "properties": {"name": crs}}
     return collection

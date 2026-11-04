@@ -10,7 +10,12 @@
 """
 from __future__ import annotations
 
+from app.contracts.geojson import GeoJSONFeatureCollection
+
+from app.services.feature_edit.wire_types import EditFinding, FieldProfileRecord, FieldChange, FeatureDelta
+
 from typing import Any, Dict, List, Optional
+from collections.abc import Collection
 
 from app.services.feature_edit.contracts import (
     MAX_RENAME_LENGTH,
@@ -68,14 +73,14 @@ class FieldProfile:
             return None
         return max(candidates.items(), key=lambda kv: kv[1])[0]
 
-    def to_dict(self) -> Dict[str, Any]:
-        out: Dict[str, Any] = {"name": self.name, "types": dict(self.types)}
+    def to_dict(self) -> FieldProfileRecord:
+        out: FieldProfileRecord = {"name": self.name, "types": dict(self.types)}
         if self.is_categorical:
             out["enum"] = sorted(self.distinct.keys())
         return out
 
 
-def profile_fields(fc: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def profile_fields(fc: GeoJSONFeatureCollection) -> Dict[str, FieldProfileRecord]:
     """数据集字段面（有界扫描；返回 {field: profile_dict}）。"""
     profiles: Dict[str, FieldProfile] = {}
     scanned = 0
@@ -99,10 +104,10 @@ def profile_fields(fc: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def validate_set_fields(
-    fields: Dict[str, Any], field_profiles: Dict[str, Dict[str, Any]]
-) -> List[Dict[str, Any]]:
+    fields: Dict[str, Any], field_profiles: Dict[str, FieldProfileRecord]
+) -> List[EditFinding]:
     """set_fields 的词表/类型/枚举校验（返回 findings；空 = 通过）。"""
-    findings: List[Dict[str, Any]] = []
+    findings: List[EditFinding] = []
     if not isinstance(fields, dict) or not fields:
         return [finding("invalid_op", "set_fields requires a non-empty fields map")]
     for name, value in fields.items():
@@ -161,10 +166,10 @@ def validate_set_fields(
 
 
 def validate_rename_field(
-    src: Any, dst: Any, field_profiles: Dict[str, Dict[str, Any]]
-) -> List[Dict[str, Any]]:
+    src: Any, dst: Any, field_profiles: Dict[str, FieldProfileRecord]
+) -> List[EditFinding]:
     """rename_field 校验（存在性/保留字/冲突）。"""
-    findings: List[Dict[str, Any]] = []
+    findings: List[EditFinding] = []
     if not isinstance(src, str) or not src:
         return [finding("invalid_field_name", "rename from must be a non-empty string")]
     if not isinstance(dst, str) or not dst:
@@ -188,12 +193,12 @@ def validate_rename_field(
 
 
 def build_attr_deltas(
-    fc: Dict[str, Any],
-    wfids: List[str],
+    fc: GeoJSONFeatureCollection,
+    wfids: Collection[str],
     fields: Dict[str, Any],
-) -> List[Dict[str, Any]]:
+) -> List[FeatureDelta]:
     """构造 per-feature set_fields deltas（before/after 全留痕）。"""
-    deltas: List[Dict[str, Any]] = []
+    deltas: List[FeatureDelta] = []
     for feature in fc.get("features") or []:
         if not isinstance(feature, dict):
             continue
@@ -201,10 +206,10 @@ def build_attr_deltas(
         wfid = props.get(WFID_PROP) if isinstance(props, dict) else None
         if not isinstance(wfid, str) or wfid not in wfids:
             continue
-        field_changes: Dict[str, Dict[str, Any]] = {}
+        field_changes: Dict[str, FieldChange] = {}
         for name, value in fields.items():
             present = isinstance(props, dict) and name in props
-            before = props.get(name) if present else None
+            before = props.get(name) if present and isinstance(props, dict) else None
             # presence 显式（R1 P1-2）：undo 需要区分“原本缺失”与“值为 null”
             field_changes[name] = {"before": before, "after": value, "before_absent": not present}
         deltas.append({"wfid": wfid, "fields": field_changes})

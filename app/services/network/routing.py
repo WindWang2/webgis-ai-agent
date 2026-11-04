@@ -16,6 +16,10 @@ from shapely.geometry import LineString, shape
 from shapely.prepared import prep
 from shapely.strtree import STRtree
 
+from app.services.network.contracts import (
+    RouteDirection,
+)
+
 from app.services.network.models import (
     NetworkDataset,
     TravelProfile,
@@ -685,7 +689,7 @@ class NetworkRoutingService:
             geometry={"type": "LineString", "coordinates": route_coords},
             path_node_ids=list(path_nodes),
             path_edge_ids=path_edges,
-            directions=directions,
+            directions=[dict(direction) for direction in directions],
         )
 
     def _resolve_node(
@@ -776,9 +780,9 @@ class NetworkRoutingService:
 
         return graph_copy
 
-    def _generate_directions(self, graph: nx.DiGraph, path_nodes: List[Any]) -> List[Dict[str, Any]]:
+    def _generate_directions(self, graph: nx.DiGraph, path_nodes: List[Any]) -> List[RouteDirection]:
         """Generates step-by-step turn directions for a node path sequence."""
-        directions: List[Dict[str, Any]] = []
+        directions: List[RouteDirection] = []
         if len(path_nodes) < 2:
             return directions
 

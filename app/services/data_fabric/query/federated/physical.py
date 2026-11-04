@@ -20,6 +20,7 @@ import time
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from app.services.data_fabric.errors import QueryBudgetExceededError
+from app.services.data_fabric.query.federation_contracts import SourceQueryOptions
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ def iter_scan_pages(
     while offset < fetch_limit:
         token.check()
         size = min(page_size, fetch_limit - offset)
-        extras: Dict[str, Any] = {
+        extras: SourceQueryOptions = {
             "limit": size,
             "offset": offset,
             "deadline_s": budget.deadline_s,

@@ -13,8 +13,14 @@
 """
 from __future__ import annotations
 
+from app.contracts.geojson import GeoJSONFeatureCollection, GeoJSONFeature
+
+from app.services.feature_edit.wire_types import EditJournal, JournalEntry, FeatureDelta, RenameField
+
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, cast
+
+from pydantic import JsonValue
 
 from app.services.feature_edit.contracts import (
     ENTRY_KINDS,
@@ -39,11 +45,11 @@ __all__ = [
 MAX_GEOMETRY_POSITIONS = 1024
 
 
-def new_journal() -> Dict[str, Any]:
+def new_journal() -> EditJournal:
     return {"entries": [], "head_seq": 0, "dropped": 0}
 
 
-def journal_bytes(journal: Dict[str, Any]) -> int:
+def journal_bytes(journal: EditJournal) -> int:
     """有界预算用字节估计（canonical JSON 长度；估算失败按 0 计）。"""
     import json
 
@@ -53,14 +59,14 @@ def journal_bytes(journal: Dict[str, Any]) -> int:
         return 0
 
 
-def append_entry(journal: Dict[str, Any], entry: Dict[str, Any]) -> Dict[str, Any]:
+def append_entry(journal: EditJournal, entry: JournalEntry) -> EditJournal:
     """纯函数 append：返回新 journal（FIFO + 字节预算，丢最旧并计 dropped）。
 
     kind 必须来自封闭集；seq 由本函数分配（= head_seq + 1），调用方不自带。
     """
     if entry.get("kind") not in ENTRY_KINDS:
         raise ValueError(f"invalid journal entry kind: {entry.get('kind')!r}")
-    out: Dict[str, Any] = {
+    out: EditJournal = {
         "entries": list(journal.get("entries") or []),
         "head_seq": int(journal.get("head_seq") or 0),
         "dropped": int(journal.get("dropped") or 0),
@@ -77,14 +83,14 @@ def append_entry(journal: Dict[str, Any], entry: Dict[str, Any]) -> Dict[str, An
     return out
 
 
-def head_entry(journal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def head_entry(journal: EditJournal) -> Optional[JournalEntry]:
     entries = journal.get("entries") or []
     return entries[-1] if entries else None
 
 
 def entry_for_idempotency_key(
-    journal: Dict[str, Any], idempotency_key: str
-) -> Optional[Dict[str, Any]]:
+    journal: EditJournal, idempotency_key: str
+) -> Optional[JournalEntry]:
     """幂等命中查找（最新优先）。"""
     for entry in reversed(journal.get("entries") or []):
         if entry.get("idempotency_key") == idempotency_key:
@@ -118,8 +124,8 @@ def count_positions(geometry: Any) -> int:
 
 
 def apply_deltas_to_features(
-    features: List[Dict[str, Any]], deltas: List[Dict[str, Any]]
-) -> Tuple[List[Dict[str, Any]], List[str]]:
+    features: List[GeoJSONFeature], deltas: List[FeatureDelta]
+) -> Tuple[List[GeoJSONFeature], List[str | None]]:
     """把 per-feature deltas 应用到 features（按 WFID_PROP 寻址）。
 
     返回 (new_features, applied_wfids)。未命中的 wfid 跳过（调用方在
@@ -127,12 +133,12 @@ def apply_deltas_to_features(
     copy-on-write：只有被命中的要素被复制。
     """
     by_wfid = {
-        f.get("properties", {}).get(WFID_PROP): (i, f)
+        cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP): (i, f)
         for i, f in enumerate(features)
         if isinstance(f, dict)
     }
     out = list(features)
-    applied: List[str] = []
+    applied: List[str | None] = []
     for delta in deltas:
         wfid = delta.get("wfid")
         hit = by_wfid.get(wfid)
@@ -167,8 +173,8 @@ def apply_deltas_to_features(
 
 
 def apply_schema_ops_to_features(
-    features: List[Dict[str, Any]], schema_ops: List[Dict[str, Any]]
-) -> Tuple[List[Dict[str, Any]], bool]:
+    features: List[GeoJSONFeature], schema_ops: List[RenameField]
+) -> Tuple[List[GeoJSONFeature], bool]:
     """数据集级 schema 变换（当前词表只有 rename_field 的 from→to）。
 
     返回 (new_features, changed)。inverse 由 invert_schema_ops 提供，
@@ -182,7 +188,7 @@ def apply_schema_ops_to_features(
         src, dst = op.get("from"), op.get("to")
         if not isinstance(src, str) or not isinstance(dst, str) or src == dst:
             continue
-        new_out: List[Dict[str, Any]] = []
+        new_out: List[GeoJSONFeature] = []
         for feature in out:
             props = feature.get("properties") if isinstance(feature, dict) else None
             if isinstance(props, dict) and src in props:
@@ -196,20 +202,20 @@ def apply_schema_ops_to_features(
     return out, changed
 
 
-def invert_schema_ops(schema_ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def invert_schema_ops(schema_ops: List[RenameField]) -> List[RenameField]:
     """schema_ops 的逆（rename 反向；顺序反转）。"""
-    out: List[Dict[str, Any]] = []
+    out: List[RenameField] = []
     for op in reversed(schema_ops or []):
         if op.get("op") == "rename_field":
             out.append({"op": "rename_field", "from": op.get("to"), "to": op.get("from")})
     return out
 
 
-def invert_deltas(deltas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def invert_deltas(deltas: List[FeatureDelta]) -> List[FeatureDelta]:
     """per-feature deltas 的逆：before/after 互换。"""
-    out: List[Dict[str, Any]] = []
+    out: List[FeatureDelta] = []
     for delta in deltas or []:
-        inv: Dict[str, Any] = {"wfid": delta.get("wfid")}
+        inv: FeatureDelta = {"wfid": delta.get("wfid")}
         fields = delta.get("fields")
         if isinstance(fields, dict):
             inv["fields"] = {
@@ -229,7 +235,7 @@ def invert_deltas(deltas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def invert_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+def invert_entry(entry: JournalEntry) -> JournalEntry:
     """entry 的逆（undo/redo 复用 apply 语义，不建第二路径）。
 
     - deltas：before/after 互换；
@@ -258,8 +264,8 @@ def invert_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def apply_entry_effects(
-    fc: Dict[str, Any], entry: Dict[str, Any]
-) -> Tuple[Dict[str, Any], List[str]]:
+    fc: GeoJSONFeatureCollection, entry: JournalEntry
+) -> Tuple[GeoJSONFeatureCollection, List[str | None]]:
     """把 entry 的全部效果应用到 FeatureCollection（正向语义）。
 
     返回 (new_fc, applied_wfids)。信封（外层 dict 的其他键）保留。
@@ -267,5 +273,5 @@ def apply_entry_effects(
     features = fc.get("features") or []
     features, applied = apply_deltas_to_features(features, entry.get("deltas") or [])
     features, _ = apply_schema_ops_to_features(features, entry.get("schema_ops") or [])
-    new_fc = {**fc, "features": features}
+    new_fc: GeoJSONFeatureCollection = {**fc, "features": features}
     return new_fc, applied

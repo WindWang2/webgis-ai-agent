@@ -36,7 +36,10 @@ import pytest
 from app.evaluation import index
 
 _BASELINES = Path(__file__).parent / "baselines"
-_GOLDEN_HASH_BASELINE = "cdba715259ab10ba63b83ea70cd71e92"
+# 724965a864a4 calibrated G4's descriptor-only bound from 24KB to 30KB.
+# Reverting only that value reproduces the prior cdba7152... pin exactly;
+# the corpus declarations and payload limits themselves are unchanged here.
+_GOLDEN_HASH_BASELINE = "6ae6a5db46136024775b44330e7c776d"
 
 #: 注册目标态：每个语料模块 + golden 语料都应受 manifest 管理。
 #: 当前 index._ensure_builtin_registrations 只登记 18 条（缺
@@ -204,6 +207,21 @@ class TestPinnedBaselines:
 
         assert len(GOLDEN_CASES) == 33
         assert {c.id for c in GOLDEN_CASES} == {f"G{i}" for i in range(1, 34)}
+
+    def test_g4_descriptor_bound_keeps_zero_inline_features(self):
+        from app.evaluation.golden_cases import GOLDEN_CASES
+
+        case = next(case for case in GOLDEN_CASES if case.id == "G4")
+        assert case.fixture_aliases == ["chengdu_schools_large"]
+        assert case.max_tool_calls == 3
+        assert [
+            (rule.source, rule.step, rule.path, rule.agg, rule.op, rule.value)
+            for rule in case.numeric_assertions
+        ] == [
+            ("step_result_bytes", 0, "", "value", "<=", 30000),
+            ("step_result", 0, "features", "len", "<=", 0),
+            ("step_result", 0, "data", "len", "<=", 0),
+        ]
 
 
 class TestGoldenScenarioWiring:

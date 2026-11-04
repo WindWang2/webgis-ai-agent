@@ -10,6 +10,10 @@ import networkx as nx
 from shapely.geometry import Point, MultiPoint, LineString, MultiLineString, shape, mapping
 from shapely.ops import unary_union, substring
 
+from app.services.network.contracts import (
+    FacilityInput,
+)
+
 from app.services.network.models import (
     NetworkDataset,
     TravelProfile,
@@ -86,7 +90,7 @@ class NetworkServiceAreaService:
 
     def network_service_area(
         self,
-        facilities: List[Union[Facility, Tuple[float, float], Dict[str, Any]]],
+        facilities: List[Union[Facility, Tuple[float, float], FacilityInput]],
         breaks: List[float],
         break_unit: str = "minutes",
         graph: Optional[nx.DiGraph] = None,
@@ -390,7 +394,7 @@ class NetworkServiceAreaService:
 
     def _normalize_facilities(
         self,
-        facilities: List[Union[Facility, Tuple[float, float], Dict[str, Any]]],
+        facilities: List[Union[Facility, Tuple[float, float], FacilityInput]],
     ) -> List[Facility]:
         res: List[Facility] = []
         for i, item in enumerate(facilities):
@@ -406,5 +410,5 @@ class NetworkServiceAreaService:
             elif isinstance(item, dict):
                 f_id = item.get("facility_id", item.get("id", f"f_{i}"))
                 geom = item.get("geometry", {"type": "Point", "coordinates": [0.0, 0.0]})
-                res.append(Facility(facility_id=str(f_id), geometry=geom))
+                res.append(Facility(facility_id=str(f_id), geometry=dict(geom)))
         return res

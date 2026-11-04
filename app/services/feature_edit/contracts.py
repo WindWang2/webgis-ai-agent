@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+from app.services.feature_edit.wire_types import EditFinding
+
+from typing import Any
 
 # ─── 持久键（map_state 有界键，随会话生命周期，写方必须持会话锁） ──────────
 JOURNALS_STATE_KEY = "_feature_edit_journals"   # {ref_id: journal_dict}
@@ -84,11 +86,11 @@ FINDING_CODES = frozenset({
 })
 
 
-def finding(code: str, message: str, **detail: Any) -> Dict[str, Any]:
+def finding(code: str, message: str, **detail: Any) -> EditFinding:
     """构造一个有界 finding（code 必须来自封闭集 —— fail-closed）。"""
     if code not in FINDING_CODES:
         raise ValueError(f"unknown finding code: {code}")
-    out: Dict[str, Any] = {"code": code, "message": message[:200]}
+    out: EditFinding = {"code": code, "message": message[:200]}
     if detail:
         out["detail"] = {k: v for k, v in list(detail.items())[:8]}
     return out

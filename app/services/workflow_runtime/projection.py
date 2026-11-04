@@ -6,20 +6,32 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from app.contracts.workflow import (
+    BlockedExplanation,
+    DecisionRecord,
+    Explanation,
+    InstanceProjection,
+    InstanceRecord,
+    NodeProjection,
+    NodeRecord,
+    PackageRecord,
+)
+
+
+from typing import Dict, List
 
 
 def instance_projection(
-    inst: Dict[str, Any],
-    nodes: List[Dict[str, Any]],
+    inst: InstanceRecord,
+    nodes: list[NodeRecord],
     *,
-    package: Optional[Dict[str, Any]] = None,
+    package: PackageRecord | None = None,
     node_count_cap: int = 64,
-) -> Dict[str, Any]:
+) -> InstanceProjection:
     """实例投影（API GET /instances/{id} 的响应体）。"""
-    node_proj = []
+    node_proj: list[NodeProjection] = []
     for n in sorted(nodes[:node_count_cap], key=lambda x: x["node_id"]):
-        proj = {
+        proj: NodeProjection = {
             "node_id": n["node_id"][:64],
             "state": n["state"],
             "attempts": n["attempts"],
@@ -34,7 +46,7 @@ def instance_projection(
             ][:8],
         }
         node_proj.append(proj)
-    out: Dict[str, Any] = {
+    out: InstanceProjection = {
         "instance_id": inst["instance_id"],
         "package_id": inst["package_id"][:64],
         "package_version": inst["package_version"][:16],
@@ -57,7 +69,7 @@ def instance_projection(
     return out
 
 
-def _counts(node_proj: List[Dict[str, Any]]) -> Dict[str, int]:
+def _counts(node_proj: list[NodeProjection]) -> Dict[str, int]:
     counts: Dict[str, int] = {}
     for n in node_proj:
         counts[n["state"]] = counts.get(n["state"], 0) + 1
@@ -65,11 +77,11 @@ def _counts(node_proj: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def explain(
-    nodes: List[Dict[str, Any]],
-    decisions: List[Dict[str, Any]],
+    nodes: list[NodeProjection],
+    decisions: list[DecisionRecord],
     *,
     node_id: str = "",
-) -> Dict[str, Any]:
+) -> Explanation:
     """「为什么重算 / 为什么没重算」的可读解释（投影面）。"""
     why_recomputed: List[str] = []
     why_reused: List[str] = []
@@ -103,8 +115,8 @@ def explain(
         "why_recomputed": why_recomputed[:8],
         "why_reused": why_reused[:8],
         "blocked": [
-            {"node": n["node_id"][:64],
-             "codes": n["binding_violations"] or [n["error_code"]]}
+            BlockedExplanation(node=n["node_id"][:64],
+                               codes=n["binding_violations"] or [n["error_code"]])
             for n in nodes if n["state"] == "BLOCKED"
         ][:8],
     }

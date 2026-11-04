@@ -38,7 +38,9 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Iterator, List, Optional, Tuple, cast
+
+from app.contracts.gis_trace import TraceChainRecord, TraceManifest, TraceSegment
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +108,7 @@ def _v6_dir(session_id: str) -> Optional[Path]:
     return v6
 
 
-def _is_protected_record(rec: Dict[str, Any]) -> bool:
+def _is_protected_record(rec: TraceChainRecord) -> bool:
     """FINAL_VERDICT 等关键证据永不 trim 丢弃。"""
     for stage in rec.get("stages") or []:
         if isinstance(stage, dict) and stage.get("stage") in _PROTECTED_STAGE_NAMES:
@@ -114,8 +116,8 @@ def _is_protected_record(rec: Dict[str, Any]) -> bool:
     return bool(rec.get("final"))
 
 
-def _parse_lines_text(text: str) -> List[Tuple[Optional[int], str, Dict[str, Any]]]:
-    out: List[Tuple[Optional[int], str, Dict[str, Any]]] = []
+def _parse_lines_text(text: str) -> List[Tuple[Optional[int], str, TraceChainRecord]]:
+    out: List[Tuple[Optional[int], str, TraceChainRecord]] = []
     for ln in text.splitlines():
         if not ln.strip():
             continue
@@ -129,7 +131,7 @@ def _parse_lines_text(text: str) -> List[Tuple[Optional[int], str, Dict[str, Any
     return out
 
 
-def _parse_lines(path: Path) -> List[Tuple[Optional[int], str, Dict[str, Any]]]:
+def _parse_lines(path: Path) -> List[Tuple[Optional[int], str, TraceChainRecord]]:
     """读文件 → [(seq, raw_line, parsed_dict)]；损坏行 seq=None 原样保留。"""
     try:
         raw = path.read_text(encoding="utf-8")
@@ -182,7 +184,7 @@ class _FileLock:
 # manifest（V6 段清单；flock 内原子替换）
 # ---------------------------------------------------------------------------
 
-def _empty_manifest() -> Dict[str, Any]:
+def _empty_manifest() -> TraceManifest:
     return {"version": 1, "last_seq": 0, "segments": []}
 
 
@@ -190,19 +192,21 @@ def _manifest_path(v6_dir: Path) -> Path:
     return v6_dir / _MANIFEST
 
 
-def _load_manifest(v6_dir: Path) -> Dict[str, Any]:
+def _load_manifest(v6_dir: Path) -> TraceManifest:
     try:
         data = json.loads(_manifest_path(v6_dir).read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("segments"), list):
             data.setdefault("last_seq", 0)
             data.setdefault("version", 1)
-            return data
+            # Decoded storage is the schema produced by _save_manifest.
+            # Preserve additive keys and legacy coercion at this IO boundary.
+            return cast(TraceManifest, data)
     except (OSError, json.JSONDecodeError):
         pass
     return _empty_manifest()
 
 
-def _save_manifest(v6_dir: Path, manifest: Dict[str, Any]) -> None:
+def _save_manifest(v6_dir: Path, manifest: TraceManifest) -> None:
     path = _manifest_path(v6_dir)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(
@@ -233,12 +237,12 @@ def _segment_display(v6_dir: Path, name: str) -> Optional[Path]:
 # 写路径
 # ---------------------------------------------------------------------------
 
-def _parse_segment_records(v6_dir: Path, seg: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _parse_segment_records(v6_dir: Path, seg: TraceSegment) -> List[TraceChainRecord]:
     """解析一个段（manifest 记录驱动）；损坏行跳过。"""
     path = _segment_display(v6_dir, str(seg.get("file") or ""))
     if path is None:
         return []
-    out: List[Dict[str, Any]] = []
+    out: List[TraceChainRecord] = []
     for _, _, rec in _parse_lines_text(_read_segment_text(path)):
         if rec:
             out.append(rec)
@@ -246,7 +250,7 @@ def _parse_segment_records(v6_dir: Path, seg: Dict[str, Any]) -> List[Dict[str, 
 
 
 def _rewrite_segment(
-    v6_dir: Path, seg: Dict[str, Any], kept: List[Tuple[Optional[int], str, Dict[str, Any]]],
+    v6_dir: Path, seg: TraceSegment, kept: List[Tuple[Optional[int], str, TraceChainRecord]],
 ) -> None:
     """边界段原子重写（含压缩态保持）+ manifest 计数刷新。"""
     target = v6_dir / str(seg.get("file") or "")
@@ -266,7 +270,7 @@ def _rewrite_segment(
 
 
 def _drop_oldest_records(
-    v6_dir: Path, seg: Dict[str, Any], drop: int, *, force: bool = False,
+    v6_dir: Path, seg: TraceSegment, drop: int, *, force: bool = False,
 ) -> int:
     """边界段记录级淘汰：丢最旧 ``drop`` 行（非保护 pass 只丢非保护行）。
 
@@ -278,7 +282,7 @@ def _drop_oldest_records(
         (s, ln, rec) for s, ln, rec in _parse_lines_text(_read_segment_text(path))
         if s is not None or ln
     ]
-    kept: List[Tuple[Optional[int], str, Dict[str, Any]]] = []
+    kept: List[Tuple[Optional[int], str, TraceChainRecord]] = []
     dropped = 0
     for s, ln, rec in parsed:
         if dropped < drop:
@@ -292,13 +296,13 @@ def _drop_oldest_records(
     return dropped
 
 
-def _trim_segments(v6_dir: Path, manifest: Dict[str, Any]) -> None:
+def _trim_segments(v6_dir: Path, manifest: TraceManifest) -> None:
     """精确窗口淘汰（V5 逐记录语义的分段化执行）。
 
     溢出时按 V5 pass 顺序：先非保护（最旧优先）、后保护；能整段删则
     整段删（manifest 驱动零解析），跨界段记录级重写（O(段) ≤16 行）。
     窗口**精确** ≤ MAX_RECORDS_PER_SESSION。"""
-    segs: List[Dict[str, Any]] = list(manifest.get("segments") or [])
+    segs: List[TraceSegment] = list(manifest.get("segments") or [])
     total = sum(int(s.get("count") or 0) for s in segs)
     overflow = total - MAX_RECORDS_PER_SESSION
     if overflow <= 0:
@@ -350,7 +354,7 @@ def _trim_segments(v6_dir: Path, manifest: Dict[str, Any]) -> None:
     ] + segs[-1:]
 
 
-def _roll_segment(v6_dir: Path, manifest: Dict[str, Any]) -> None:
+def _roll_segment(v6_dir: Path, manifest: TraceManifest) -> None:
     """当前段压缩归档 + 开新段（manifest 原子更新）。"""
     segs = list(manifest.get("segments") or [])
     if not segs:
@@ -385,8 +389,8 @@ def _roll_segment(v6_dir: Path, manifest: Dict[str, Any]) -> None:
     manifest["segments"] = segs
 
 
-def _heal_manifest(v6_dir: Path, manifest: Dict[str, Any],
-                   sid: str) -> Dict[str, Any]:
+def _heal_manifest(v6_dir: Path, manifest: TraceManifest,
+                   sid: str) -> TraceManifest:
     """manifest 丢失/半写自愈（审查 R1 M5）：段文件在而账目缺失时，扫描
     v6 段（数量有界）重建 entries 与 last_seq —— 防 seq 重复与窗口失真。"""
     segs = list(manifest.get("segments") or [])
@@ -415,10 +419,10 @@ def _heal_manifest(v6_dir: Path, manifest: Dict[str, Any],
     ) > 0:
         return manifest
     # 全量重扫（段数有界 ≤ 若干；每段 ≤ SEGMENT_SIZE 行）
-    rebuilt: List[Dict[str, Any]] = []
+    rebuilt: List[TraceSegment] = []
     max_seq = 0
     for name in disk_names:
-        seg = {"file": name, "count": 0, "min_seq": 0, "protected": 0,
+        seg: TraceSegment = {"file": name, "count": 0, "min_seq": 0, "protected": 0,
                "max_seq": 0}
         recs = _parse_segment_records(v6_dir, seg)
         seg["count"] = len(recs)
@@ -437,7 +441,7 @@ def _heal_manifest(v6_dir: Path, manifest: Dict[str, Any],
         for s, _, _ in _parse_lines(legacy_path):
             if s is not None and s > max_seq:
                 max_seq = s
-    healed = {"version": 1, "last_seq": max_seq, "segments": rebuilt}
+    healed: TraceManifest = {"version": 1, "last_seq": max_seq, "segments": rebuilt}
     try:
         _save_manifest(v6_dir, healed)
     except Exception:  # noqa: BLE001 — 自愈写失败按内存态继续
@@ -445,7 +449,7 @@ def _heal_manifest(v6_dir: Path, manifest: Dict[str, Any],
     return healed
 
 
-def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
+def persist_chain(chain_dict: TraceChainRecord, session_id: str = "") -> bool:
     """append 一条已序列化的链（``chain.as_dict()``）。
 
     V6：flock 内 manifest 驱动 —— 幂等去重（全段+legacy）、单调 seq
@@ -500,7 +504,7 @@ def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
                         last_seq_val = s
             except Exception:  # noqa: BLE001 — 兜底失败按 manifest 值
                 pass
-            chain_dict = dict(chain_dict)
+            chain_dict = cast(TraceChainRecord, dict(chain_dict))
             chain_dict["seq"] = last_seq_val + 1
 
             current = segs[-1]
@@ -545,7 +549,7 @@ def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
         return False
 
 
-def _dup_exists(v6_dir: Path, sid: str, manifest: Dict[str, Any],
+def _dup_exists(v6_dir: Path, sid: str, manifest: TraceManifest,
                 turn_id: str, total_records: Any) -> bool:
     for seg in manifest.get("segments") or []:
         for rec in _parse_segment_records(v6_dir, seg):
@@ -590,11 +594,11 @@ def persist_turn_chain(turn_id: str, session_id: str = "") -> bool:
 # 读路径（manifest 驱动；增量游标；legacy 容忍）
 # ---------------------------------------------------------------------------
 
-def read_chains(session_id: str) -> List[Dict[str, Any]]:
+def read_chains(session_id: str) -> List[TraceChainRecord]:
     """读取会话的全部持久化链（评测门离线消费；损坏行跳过）。
 
     V6：legacy（若在，时间在前）+ 各段按序；与 V5 单文件布局逐位兼容。"""
-    out: List[Dict[str, Any]] = []
+    out: List[TraceChainRecord] = []
     path = _chains_path(session_id)
     if path is not None and path.exists():
         out.extend(rec for _, _, rec in _parse_lines(path) if rec)
@@ -609,12 +613,12 @@ def read_chains(session_id: str) -> List[Dict[str, Any]]:
     return out
 
 
-def read_chains_since(session_id: str, after_seq: int) -> List[Dict[str, Any]]:
+def read_chains_since(session_id: str, after_seq: int) -> List[TraceChainRecord]:
     """增量读：仅返回 seq > ``after_seq`` 的记录（旧整段零解析跳过）。
 
     评测门/finalizer 的游标消费入口 —— 长程会话不必反复解析旧证据。
     legacy（V4 无 seq）仅在 ``after_seq < 1`` 时包含。"""
-    out: List[Dict[str, Any]] = []
+    out: List[TraceChainRecord] = []
     if after_seq < 1:
         path = _chains_path(session_id)
         if path is not None and path.exists():
@@ -636,7 +640,7 @@ def read_chains_since(session_id: str, after_seq: int) -> List[Dict[str, Any]]:
 
 def iter_session_chains(
     session_ids: List[str], *, after_seq: int = 0,
-) -> Iterator[Tuple[str, Dict[str, Any]]]:
+) -> Iterator[Tuple[str, TraceChainRecord]]:
     """跨进程汇聚接口（GeoCompute trace bridge / 离线评测消费）。
 
     有界迭代器：逐 session 产出 ``(session_id, record)``；只读证据面 ——
@@ -660,9 +664,9 @@ def last_seq(session_id: str) -> int:
     if path is None or not path.exists():
         return 0
     max_seq = 0
-    for seq, _, _ in _parse_lines(path):
-        if seq is not None and seq > max_seq:
-            max_seq = seq
+    for legacy_seq, _, _ in _parse_lines(path):
+        if legacy_seq is not None and legacy_seq > max_seq:
+            max_seq = legacy_seq
     return max_seq
 
 

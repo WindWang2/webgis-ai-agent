@@ -19,11 +19,20 @@
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    InstancePatch,
+    InstanceRecord,
+    NodeRecord,
+    BindingRecord,
+    ReuseRecord,
+    NodeSpec,
+)
+
 import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import sqlalchemy as sa
 from sqlalchemy.exc import OperationalError
@@ -86,7 +95,7 @@ class TransitionResult:
         return f"TransitionResult(ok={self.ok}, code={self.code!r})"
 
 
-def _row_to_node(row: Any) -> Dict[str, Any]:
+def _row_to_node(row: Any) -> NodeRecord:
     return {
         "instance_id": row.instance_id,
         "node_id": row.node_id,
@@ -98,8 +107,8 @@ def _row_to_node(row: Any) -> Dict[str, Any]:
         "bound_ref": row.bound_ref or "",
         "output_ref": row.output_ref or "",
         "output_fingerprint": row.output_fingerprint or "",
-        "binding": dict(row.binding or {}),
-        "reuse": dict(row.reuse or {}),
+        "binding": cast(BindingRecord, dict(row.binding or {})),
+        "reuse": cast(ReuseRecord, dict(row.reuse or {})),
         "attempts_log": list(row.attempts_log or [])[:C.MAX_NODE_ATTEMPTS],
         "transitions": list(row.transitions or [])[:C.MAX_NODE_TRANSITIONS],
         "lease_expires_at": row.lease_expires_at.isoformat()
@@ -112,7 +121,7 @@ def _row_to_node(row: Any) -> Dict[str, Any]:
     }
 
 
-def _row_to_instance(row: Any) -> Dict[str, Any]:
+def _row_to_instance(row: Any) -> InstanceRecord:
     return {
         "instance_id": row.instance_id,
         "package_id": row.package_id,
@@ -165,8 +174,8 @@ class InstanceStore:
         project_id: str = "",
         parent_instance_id: str = "",
         parent_node_id: str = "",
-        node_specs: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        node_specs: list[NodeSpec],
+    ) -> InstanceRecord:
         """创建实例 + 全节点 PENDING 行（原子单事务）。
 
         ``node_specs``: [{node_id, optional}]，≤ MAX_INSTANCE_NODES。
@@ -237,7 +246,7 @@ class InstanceStore:
     def get_instance(
         self, instance_id: str, owner_scope: Optional[str] = None,
         *, org_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> InstanceRecord | None:
         """读实例（owner 过滤：他人实例 → None，防存在性预言机）。
 
         ``org_id``（ADR-0139）：传入时叠加租户谓词（REST 路径必传；
@@ -269,13 +278,13 @@ class InstanceStore:
             ).filter(WorkflowInstanceNodeRow.instance_id == instance_id).all()
             return {r.node_id: r.state for r in rows}
 
-    def get_nodes(self, instance_id: str) -> List[Dict[str, Any]]:
+    def get_nodes(self, instance_id: str) -> list[NodeRecord]:
         with self._factory() as db:
             rows = db.query(WorkflowInstanceNodeRow).filter(
                 WorkflowInstanceNodeRow.instance_id == instance_id).all()
             return [_row_to_node(r) for r in rows]
 
-    def get_node(self, instance_id: str, node_id: str) -> Optional[Dict[str, Any]]:
+    def get_node(self, instance_id: str, node_id: str) -> NodeRecord | None:
         with self._factory() as db:
             row = db.query(WorkflowInstanceNodeRow).filter(
                 WorkflowInstanceNodeRow.instance_id == instance_id,
@@ -479,8 +488,8 @@ class InstanceStore:
         self, instance_id: str, *,
         owner_scope: Optional[str] = None,
         expected_revision: Optional[int] = None,
-        fields: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        fields: InstancePatch,
+    ) -> InstanceRecord | None:
         """实例级 CAS 更新（revision +1；0 行 = 冲突返回 None）。"""
         allowed = {
             "status", "cancel_requested", "pending_changes", "decisions",
@@ -815,7 +824,7 @@ class InstanceStore:
     def list_recoverable_instances(
         self, *, now: Optional[datetime] = None,
         ttl_s: float = DEFAULT_LEASE_TTL_S, limit: int = 16,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[InstanceRecord]:
         """RUNNING 且需要恢复的实例（租约过期 / 无主超时 / 挂了取消旗标）。
 
         - run 租约过期 → driver 死亡，节点按孤儿处理；
@@ -854,7 +863,7 @@ class InstanceStore:
         self, session_id: str, *, owner_scope: Optional[str] = None,
         org_id: Optional[str] = None,
         active_only: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[InstanceRecord]:
         """会话实例清单（supersede/attach 判定用；有界 ≤16）。
 
         ``org_id``（ADR-0139）：REST 路径必传（叠加租户谓词）；进程内
@@ -878,7 +887,7 @@ class InstanceStore:
         self, owner_scope: str, *, org_id: Optional[str] = None,
         limit: int = 32,
         statuses: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[InstanceRecord]:
         with self._factory() as db:
             q = db.query(WorkflowInstanceRow).filter(
                 WorkflowInstanceRow.owner_scope == owner_scope)

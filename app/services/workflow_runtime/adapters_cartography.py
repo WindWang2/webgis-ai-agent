@@ -14,6 +14,10 @@ Phase H「真实执行」的制图端：``cartography`` 节点调用**真实渲�
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    WorkflowNode,
+)
+
 import logging
 from typing import Any, Dict, List
 
@@ -163,7 +167,7 @@ def _render_rows_png(rows: List[Dict[str, Any]], *,
 
 
 async def execute_cartography_node(
-    node: Dict[str, Any], *, input_refs: List[str], params: Dict[str, Any],
+    node: WorkflowNode, *, input_refs: List[str], params: Dict[str, Any],
     session_id: str,
 ) -> CartographyOutcome:
     """真实渲染 cartography 节点（matplotlib → generate_map_pdf → blob）。"""

@@ -19,6 +19,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from app.contracts.gis_trace import TraceChainRecord
+from app.lib.harness.replay.recording_contracts import EnvironmentFingerprint
+
 from app.lib.harness.replay.schema import REPLAY_TRACE_SCHEMA_VERSION, build_trace
 
 logger = logging.getLogger(__name__)
@@ -98,7 +101,7 @@ def collect_turn(
     map_product: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """只读收集当轮事实 → trace dict（chain/evidence 缺席时诚实降级）。"""
-    chain_dict: Dict[str, Any] = {}
+    chain_dict: TraceChainRecord = {}
     turn_summary: Optional[Dict[str, Any]] = None
     try:
         from app.lib.runtime.evidence import TURN_EVIDENCE
@@ -121,7 +124,7 @@ def collect_turn(
     # ADR-0212：录制时 capability registry 指纹（重放期 drift 归因面）。
     # ADR-0262 D2：环境指纹 v2 —— 封闭白名单（行为开关/policy 版本/
     # source 指纹/manifest/预算摘要），缺席段诚实降级，绝不阻断录制。
-    env_payload: Dict[str, Any] = {}
+    env_payload: EnvironmentFingerprint = {}
     try:
         from app.lib.harness.replay.drift import collect_env_fingerprint
 

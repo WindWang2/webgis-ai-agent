@@ -26,12 +26,19 @@ import json
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, cast
 
-from shapely.geometry import shape
+from shapely.geometry import Point, shape
 from shapely.ops import transform as shp_transform, unary_union
 
 from app.services.spatial_decision.models import MetricDeltaV2
+from app.contracts.geojson import GeoJSONFeature, GeoJSONFeatureCollection
+from app.contracts.simulation import CoverageDiff, FeatureChange, GeometrySummary
+
+class PopulationCell(TypedDict):
+    centroid: Point
+    population: float
+
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +94,7 @@ def resolve_layer_role(layer_id: str, layer: Optional[Dict[str, Any]] = None) ->
 # ────────────────────────────── 投影与几何度量 ──────────────────────────────
 
 
-def _collect_latitudes(payloads: Dict[str, Dict[str, Any]]) -> List[float]:
+def _collect_latitudes(payloads: dict[str, GeoJSONFeatureCollection]) -> List[float]:
     lats: List[float] = []
     for fc in payloads.values():
         for feat in _features_of(fc):
@@ -123,7 +130,7 @@ def _make_projection(lat0_deg: float):
     return _project
 
 
-def _project_shapes(features: List[Dict[str, Any]], lat0_deg: float) -> List[Any]:
+def _project_shapes(features: list[GeoJSONFeature], lat0_deg: float) -> List[Any]:
     project = _make_projection(lat0_deg)
     shapes_out = []
     for feat in features:
@@ -153,17 +160,19 @@ def _count_points(shapes: List[Any]) -> float:
 # ────────────────────────────── 要素配对 ──────────────────────────────
 
 
-def _features_of(fc: Any) -> List[Dict[str, Any]]:
+def _features_of(fc: Any) -> list[GeoJSONFeature]:
     if not isinstance(fc, dict):
         return []
     feats = fc.get("features")
     if not isinstance(feats, list):
         return []
-    return [f for f in feats if isinstance(f, dict) and isinstance(f.get("geometry"), dict)]
+    return [cast(GeoJSONFeature, f) for f in feats
+            if isinstance(f, dict) and isinstance(f.get("geometry"), dict)]
 
 
-def _feature_key(feat: Dict[str, Any]) -> str:
-    props = feat.get("properties") if isinstance(feat.get("properties"), dict) else {}
+def _feature_key(feat: GeoJSONFeature) -> str:
+    raw_props = feat.get("properties")
+    props = raw_props if isinstance(raw_props, dict) else {}
     fid = props.get("id") or feat.get("id")
     if isinstance(fid, (str, int)) and str(fid):
         return f"id:{fid}"
@@ -172,10 +181,12 @@ def _feature_key(feat: Dict[str, Any]) -> str:
     except Exception:  # noqa: BLE001
         wkt = json.dumps(feat.get("geometry"), ensure_ascii=False, sort_keys=True)
     digest = hashlib.sha1(wkt.encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324 — 非安全用途
-    return f"geom:{feat.get('geometry', {}).get('type', '')}:{digest}"
+    geometry = feat.get("geometry")
+    geometry_type = geometry.get("type", "") if geometry is not None else ""
+    return f"geom:{geometry_type}:{digest}"
 
 
-def _same_geometry(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+def _same_geometry(a: GeoJSONFeature, b: GeoJSONFeature) -> bool:
     try:
         return (
             shape(a["geometry"]).equals(shape(b["geometry"]))
@@ -191,9 +202,9 @@ class GeometryDiff:
     """单图层几何差分（米制增量；投影口径见模块 docstring）。"""
 
     layer_id: str
-    added_features: List[Dict[str, Any]] = field(default_factory=list)
-    removed_features: List[Dict[str, Any]] = field(default_factory=list)
-    modified_features: List[Dict[str, Any]] = field(default_factory=list)
+    added_features: list[GeoJSONFeature] = field(default_factory=list)
+    removed_features: list[GeoJSONFeature] = field(default_factory=list)
+    modified_features: list[FeatureChange] = field(default_factory=list)
     unchanged_count: int = 0
     unchanged_area_m2: float = 0.0
     added_area_m2: float = 0.0
@@ -201,7 +212,7 @@ class GeometryDiff:
     added_length_m: float = 0.0
     removed_length_m: float = 0.0
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> GeometrySummary:
         return {
             "added": len(self.added_features),
             "removed": len(self.removed_features),
@@ -215,8 +226,8 @@ class GeometryDiff:
 
 
 def _shared_lat0(
-    baseline_payloads: Dict[str, Dict[str, Any]],
-    branch_payloads: Dict[str, Dict[str, Any]],
+    baseline_payloads: dict[str, GeoJSONFeatureCollection],
+    branch_payloads: dict[str, GeoJSONFeatureCollection],
 ) -> float:
     """两侧**联合**均值纬度（比率精确性的关键：两侧必须同一投影口径，
     否则同纬度长度/面积比率会随 lat0 漂移，delta_pct 失真）。"""
@@ -225,17 +236,17 @@ def _shared_lat0(
 
 
 def diff_layers(
-    baseline_payloads: Dict[str, Dict[str, Any]],
-    branch_payloads: Dict[str, Dict[str, Any]],
+    baseline_payloads: dict[str, GeoJSONFeatureCollection],
+    branch_payloads: dict[str, GeoJSONFeatureCollection],
     service_radius_m: float = DEFAULT_SERVICE_RADIUS_M,
-) -> Dict[str, Any]:
+) -> dict[str, GeometryDiff | CoverageDiff]:
     """逐图层几何差分 + 服务覆盖差分（确定性纯函数）。
 
     返回 ``{layer_id: GeometryDiff}``；当任一侧存在 facility 角色图层时追加
     保留键 ``COVERAGE_KEY``（dict：gained/lost 面积与人口），供对比图层与
     指标差分共用同一次配对结果。
     """
-    diffs: Dict[str, Any] = {}
+    diffs: dict[str, GeometryDiff | CoverageDiff] = {}
     layer_ids = sorted(set(baseline_payloads) | set(branch_payloads))
     has_facility = any(
         resolve_layer_role(lid) == "facility" for lid in layer_ids
@@ -304,18 +315,18 @@ def _safe_length(shp: Any) -> float:
 
 
 def _coverage_diff(
-    baseline_payloads: Dict[str, Dict[str, Any]],
-    branch_payloads: Dict[str, Dict[str, Any]],
+    baseline_payloads: dict[str, GeoJSONFeatureCollection],
+    branch_payloads: dict[str, GeoJSONFeatureCollection],
     service_radius_m: float,
     lat0: float,
-) -> Dict[str, Any]:
+) -> CoverageDiff:
     """服务覆盖差分（proxy:v1）：设施缓冲并集的 gained/lost 面积 + 覆盖人口。
 
     覆盖人口口径：人口图层（population 角色）中含数值 ``population`` 属性的
     格网要素，其**质心**落入设施缓冲并集即计入（不做部分面积积分）。
     两侧共用同一 ``lat0`` 投影（否则缓冲几何不可比）。
     """
-    out: Dict[str, Any] = {
+    out: CoverageDiff = {
         "gained_area_m2": 0.0,
         "lost_area_m2": 0.0,
         "baseline_coverage_population": None,
@@ -348,8 +359,10 @@ def _coverage_diff(
     if base_cells is not None and branch_cells is not None:
         base_cov = out["baseline_coverage_population"]
         branch_cov = out["branch_coverage_population"]
-        out["gained_population"] = max(0.0, branch_cov - base_cov)
-        out["lost_population"] = max(0.0, base_cov - branch_cov)
+        # Each side was populated above when its cells were present.
+        if base_cov is not None and branch_cov is not None:
+            out["gained_population"] = max(0.0, branch_cov - base_cov)
+            out["lost_population"] = max(0.0, base_cov - branch_cov)
     return out
 
 
@@ -360,7 +373,7 @@ def _empty_geom():
 
 
 def _facility_buffer_union(
-    payloads: Dict[str, Dict[str, Any]], radius_m: float, lat0: float
+    payloads: dict[str, GeoJSONFeatureCollection], radius_m: float, lat0: float
 ) -> Optional[Any]:
     buffers = []
     for layer_id, fc in payloads.items():
@@ -370,10 +383,11 @@ def _facility_buffer_union(
             geom = feat.get("geometry")
             if not isinstance(geom, dict) or geom.get("type") != "Point":
                 continue
-            props = feat.get("properties") if isinstance(feat.get("properties"), dict) else {}
+            raw_props = feat.get("properties")
+            props = raw_props if isinstance(raw_props, dict) else {}
             radius = props.get("service_radius_m", radius_m)
             try:
-                radius = float(radius)
+                radius = float(cast(float | str, radius))
             except (TypeError, ValueError):
                 radius = radius_m
             try:
@@ -387,17 +401,18 @@ def _facility_buffer_union(
 
 
 def _population_cells(
-    payloads: Dict[str, Dict[str, Any]], lat0: float
-) -> Optional[List[Dict[str, Any]]]:
+    payloads: dict[str, GeoJSONFeatureCollection], lat0: float
+) -> Optional[list[PopulationCell]]:
     """返回 (projected_centroid, population) 列表；无人口图层 → None。"""
-    cells: List[Dict[str, Any]] = []
+    cells: list[PopulationCell] = []
     found_population_layer = False
     for layer_id, fc in payloads.items():
         if resolve_layer_role(layer_id) != "population":
             continue
         found_population_layer = True
         for feat in _features_of(fc):
-            props = feat.get("properties") if isinstance(feat.get("properties"), dict) else {}
+            raw_props = feat.get("properties")
+            props = raw_props if isinstance(raw_props, dict) else {}
             pop = props.get("population")
             if not isinstance(pop, (int, float)) or isinstance(pop, bool):
                 continue
@@ -412,7 +427,7 @@ def _population_cells(
     return cells if found_population_layer else None
 
 
-def _covered_population(cells: List[Dict[str, Any]], coverage_geom: Any) -> float:
+def _covered_population(cells: list[PopulationCell], coverage_geom: Any) -> float:
     total = 0.0
     for cell in cells:
         try:
@@ -447,7 +462,7 @@ _METRIC_SPECS: Dict[str, Dict[str, str]] = {
 
 
 def evaluate_metrics(
-    payloads: Dict[str, Dict[str, Any]],
+    payloads: dict[str, GeoJSONFeatureCollection],
     service_radius_m: float = DEFAULT_SERVICE_RADIUS_M,
     lat0: Optional[float] = None,
 ) -> Dict[str, Optional[float]]:
@@ -514,8 +529,8 @@ def _gap_note(metric_key: str) -> str:
 
 
 def compute_metric_deltas(
-    baseline_payloads: Dict[str, Dict[str, Any]],
-    branch_payloads: Dict[str, Dict[str, Any]],
+    baseline_payloads: dict[str, GeoJSONFeatureCollection],
+    branch_payloads: dict[str, GeoJSONFeatureCollection],
     service_radius_m: float = DEFAULT_SERVICE_RADIUS_M,
 ) -> List[MetricDeltaV2]:
     """两侧指标评估 → MetricDeltaV2 列表（GIS-03：缺基线全 None + gap note）。
@@ -573,7 +588,7 @@ def _impact_sign_for_feature(diff_kind: str, role: str) -> str:
     return _IMPACT_NEUTRAL
 
 
-def _annotate(feat: Dict[str, Any], layer_id: str, diff_kind: str) -> Dict[str, Any]:
+def _annotate(feat: GeoJSONFeature, layer_id: str, diff_kind: str) -> GeoJSONFeature:
     role = resolve_layer_role(layer_id)
     sign = _impact_sign_for_feature(diff_kind, role)
     out = json.loads(json.dumps(feat, ensure_ascii=False))
@@ -586,7 +601,7 @@ def _annotate(feat: Dict[str, Any], layer_id: str, diff_kind: str) -> Dict[str, 
     return out
 
 
-def build_diff_overlay(source: Any) -> Dict[str, Any]:
+def build_diff_overlay(source: Any) -> GeoJSONFeatureCollection:
     """显式对比图层 FeatureCollection（红=负面恶化，绿=正面改善）。
 
     双形态入参：
@@ -595,7 +610,7 @@ def build_diff_overlay(source: Any) -> Dict[str, Any]:
     - ``list[BranchDiffResult]``（管理面分支差分）→ 合并各分支已标注的
       ``overlay_features``（多方案对比图层）。
     """
-    features: List[Dict[str, Any]] = []
+    features: list[GeoJSONFeature] = []
     if isinstance(source, dict):
         for layer_id, value in source.items():
             if not isinstance(value, GeometryDiff):
@@ -611,12 +626,12 @@ def build_diff_overlay(source: Any) -> Dict[str, Any]:
             overlay = getattr(item, "overlay_features", None)
             if isinstance(overlay, list):
                 features.extend(
-                    f for f in overlay if isinstance(f, dict)
+                    cast(GeoJSONFeature, f) for f in overlay if isinstance(f, dict)
                 )
     return {"type": "FeatureCollection", "features": features}
 
 
-def extract_layer_payloads(mapspec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def extract_layer_payloads(mapspec: Dict[str, Any]) -> dict[str, GeoJSONFeatureCollection]:
     """MapSpec → ``{layer_id: FeatureCollection}``（仅 inlineData 通道）。
 
     兼容两种入库形态：``entry.inlineData`` 直为 FeatureCollection，或引擎
@@ -624,10 +639,11 @@ def extract_layer_payloads(mapspec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]
     等外置载荷不在 spec 内（Zero Big Data in Context），按缺载荷图层跳过 ——
     调用方据此产出 evidence_gap_note。
     """
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, GeoJSONFeatureCollection] = {}
     if not isinstance(mapspec, dict):
         return out
-    sources = mapspec.get("sources") if isinstance(mapspec.get("sources"), dict) else {}
+    raw_sources = mapspec.get("sources")
+    sources = raw_sources if isinstance(raw_sources, dict) else {}
     for layer in mapspec.get("layers") or []:
         if not isinstance(layer, dict):
             continue
@@ -641,12 +657,12 @@ def extract_layer_payloads(mapspec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]
         inline = entry.get("inlineData")
         for candidate in (inline, inline.get("inlineData") if isinstance(inline, dict) else None):
             if isinstance(candidate, dict) and candidate.get("type") == "FeatureCollection":
-                out[layer_id] = candidate
+                out[layer_id] = cast(GeoJSONFeatureCollection, candidate)
                 break
     return out
 
 
-def cost_proxy_of(diffs: Dict[str, Any]) -> float:
+def cost_proxy_of(diffs: dict[str, GeometryDiff | CoverageDiff]) -> float:
     """投入代理（proxy:v1）：新增要素几何量之和（长度 m + √面积 m）。
 
     仅用于处方建议的 ROI 敏感度排序口径 —— 显式披露为代理量，不是造价估算。

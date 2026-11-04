@@ -112,7 +112,7 @@ def _check_numeric(
     step_results: List[Dict[str, Any]],
     mapspec: Optional[Dict[str, Any]],
     fixture_docs: Dict[str, Any],
-    quantities: Dict[str, Any],
+    quantities: Dict[str, float | None],
     step_blobs: Optional[List[str]] = None,
 ) -> bool:
     if assertion.source == "step_result_bytes":
@@ -459,7 +459,7 @@ class GISBenchmarkRunner:
 
     def _run_v3_contract_tier(
         self, case: GISBenchmarkCase, intent: Any, plan: Any
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None]]:
         """V3 语义契约层（全部 opt-in，零声明零开销）。
 
         - 本体匹配：intent 的本体 top-1 对齐 expected_ontology_task；
@@ -468,7 +468,7 @@ class GISBenchmarkRunner:
         - 规划确定性：双跑 plan tier 对齐（check_determinism）。
         """
         failures: List[str] = []
-        metrics: Dict[str, Any] = {
+        metrics: Dict[str, float | bool | None] = {
             "ontology_top1_correct": None,
             "qualification_states_correct": None,
             "fallback_tier_correct": None,
@@ -540,10 +540,10 @@ class GISBenchmarkRunner:
 
     def _run_policy_tier(
         self, case: GISBenchmarkCase
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None]]:
         """SkillPolicy 契约层：SelectionFacts → resolve → 决策子集断言。"""
         failures: List[str] = []
-        metrics: Dict[str, Any] = {
+        metrics: Dict[str, float | bool | None] = {
             "policy_mode_correct": None,
             "policy_deterministic": None,
         }
@@ -641,11 +641,11 @@ class GISBenchmarkRunner:
 
     def _run_evidence_tier(
         self, case: GISBenchmarkCase
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None]]:
         """证据契约层：对每个 ExpectedEvidence 构建确定性场景，断言生产
         verify_claim 的裁决与声明一致（EvidenceGrounding 指标）。"""
         failures: List[str] = []
-        metrics: Dict[str, Any] = {
+        metrics: Dict[str, float | bool | None] = {
             "evidence_grounding_correct": None,
             "evidence_positive_proof_ok": None,
         }
@@ -870,7 +870,7 @@ class GISBenchmarkRunner:
 
     def _run_security_tier(
         self, case: GISBenchmarkCase
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None]]:
         """注入 contained 契约层：payload 与 benign twin 的能力面对比。
 
         注入不得扩大能力面（算法集 ⊆ twin）、payload 任务解析不得逃逸
@@ -878,7 +878,7 @@ class GISBenchmarkRunner:
         forbid_network_tools 与本层描述符复查双保险。
         """
         failures: List[str] = []
-        metrics: Dict[str, Any] = {"injection_contained": None}
+        metrics: Dict[str, float | bool | None] = {"injection_contained": None}
         exp = case.security_expectation
         if exp is None:
             return failures, metrics
@@ -926,7 +926,7 @@ class GISBenchmarkRunner:
 
     def _run_turns(
         self, case: GISBenchmarkCase
-    ) -> Tuple[List[str], Dict[str, Any], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None], Dict[str, Any]]:
         """多轮执行（opt-in：case.turns 非空）。
 
         顶层 query 即轮 1；``case.turns[i]`` 依序为轮 i+2。轮间共享确定性
@@ -938,7 +938,7 @@ class GISBenchmarkRunner:
         返回 (failures, turn_metrics, evidence)。
         """
         failures: List[str] = []
-        turn_metrics: Dict[str, Any] = {
+        turn_metrics: Dict[str, float | bool | None] = {
             "turns_correct": None,
             "coreference_binding_ok": None,
         }
@@ -1250,9 +1250,9 @@ class GISBenchmarkRunner:
                 )
         return evidence
 
-    def _compute_quantities(self, case: GISBenchmarkCase) -> Dict[str, Any]:
+    def _compute_quantities(self, case: GISBenchmarkCase) -> Dict[str, float | None]:
         """Deterministic named quantities (offline raster goldens)."""
-        quantities: Dict[str, Any] = {}
+        quantities: Dict[str, float | None] = {}
         if any(a == "ndvi_pair" for a in case.fixture_aliases):
             import numpy as np
 
@@ -1378,7 +1378,7 @@ class GISBenchmarkRunner:
             result.plan_evidence = plan_evidence
             result.failures.extend(failures)
 
-            turn_metrics: Dict[str, Any] = {}
+            turn_metrics: Dict[str, float | bool | None] = {}
             if case.turns:
                 turn_failures, turn_metrics, turn_evidence = self._run_turns(case)
                 result.plan_evidence["turns"] = turn_evidence
@@ -1415,7 +1415,7 @@ class GISBenchmarkRunner:
                 result.failures.extend(exec_evidence.get("failures") or [])
 
             # Assemble B3 metrics.
-            metrics: Dict[str, Any] = dict(plan_evidence.get("metrics") or {})
+            metrics: Dict[str, float | bool | None] = dict(plan_evidence.get("metrics") or {})
             metrics.update(turn_metrics)
             metrics["numerical_correct"] = None
             metrics["artifact_contract_valid"] = None

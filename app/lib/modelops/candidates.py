@@ -12,8 +12,10 @@ K 个候选掩膜 + 质量分；引擎按显式策略选择（best | index），
 """
 from __future__ import annotations
 
+from app.contracts.modelops import CandidateRecord, CandidateSetRecord
+
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from app.lib.modelops.errors import PromptArtifactError
 
@@ -53,7 +55,7 @@ class MaskCandidate:
                 f"(got {self.source!r})"
             )
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> CandidateRecord:
         return {
             "index": int(self.index),
             "score": float(self.score),
@@ -115,7 +117,7 @@ class MaskCandidateSet:
                 best = cand
         return best.index
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> CandidateSetRecord:
         return {
             "candidates": [c.as_dict() for c in self.candidates],
             "selection": self.selection,

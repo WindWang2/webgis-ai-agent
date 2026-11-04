@@ -44,6 +44,69 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "cartography_scale_apply"
+   ],
+   "category": "presentation",
+   "conformance_tests": [
+    "tests/unit/gis/test_native_surface_bindings.py::test_native_surface_binding_contract",
+    "tests/unit/gis_harness/scale_profile/test_tool.py::TestDispatch::test_apply_commit_dispatch"
+   ],
+   "deterministic": false,
+   "id": "cartography.scale.apply",
+   "memory_cost": "medium",
+   "random_seed_policy": "none",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "cartography_scale_inspect"
+   ],
+   "category": "presentation",
+   "conformance_tests": [
+    "tests/unit/gis/test_native_surface_bindings.py::test_native_surface_binding_contract",
+    "tests/unit/gis_harness/scale_profile/test_tool.py::TestDispatch::test_inspect_dispatch_happy"
+   ],
+   "deterministic": true,
+   "id": "cartography.scale.inspect",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "cartography_scale_preview"
+   ],
+   "category": "presentation",
+   "conformance_tests": [
+    "tests/unit/gis/test_native_surface_bindings.py::test_native_surface_binding_contract",
+    "tests/unit/gis_harness/scale_profile/test_tool.py::TestDispatch::test_apply_preview_dispatch"
+   ],
+   "deterministic": true,
+   "id": "cartography.scale.preview",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "federated_dataset_query"
    ],
    "category": "",
@@ -80,6 +143,27 @@
    "scientific_status": "",
    "tests": [
     "tests/unit/gis/test_algo_conformance_v2.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "data_preparation"
+   ],
+   "category": "data_access",
+   "conformance_tests": [
+    "tests/unit/gis/test_native_surface_bindings.py::test_native_surface_binding_contract",
+    "tests/unit/test_data_preparation_tools_v1.py::TestDispatchRealChain::test_prepared_state_full_auto"
+   ],
+   "deterministic": false,
+   "id": "data.prepare",
+   "memory_cost": "medium",
+   "random_seed_policy": "none",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
    ],
    "uncertainty_outputs": []
   },
@@ -956,6 +1040,69 @@
    "scientific_status": "VALIDATED",
    "tests": [
     "tests/unit/lib/test_geostat_v3.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "layer_browse"
+   ],
+   "category": "data_access",
+   "conformance_tests": [
+    "tests/unit/gis/test_native_surface_bindings.py::test_native_surface_binding_contract",
+    "tests/unit/test_layer_browse_tools.py::test_aggregate_window_stats"
+   ],
+   "deterministic": true,
+   "id": "layer.aggregate",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "layer_browse"
+   ],
+   "category": "data_access",
+   "conformance_tests": [
+    "tests/unit/gis/test_native_surface_bindings.py::test_native_surface_binding_contract",
+    "tests/unit/test_layer_browse_tools.py::test_feature_detail_native_and_positional_namespaces"
+   ],
+   "deterministic": true,
+   "id": "layer.feature.detail",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "layer_browse"
+   ],
+   "category": "data_access",
+   "conformance_tests": [
+    "tests/unit/gis/test_native_surface_bindings.py::test_native_surface_binding_contract",
+    "tests/unit/test_layer_browse_tools.py::test_features_page_honest_metadata"
+   ],
+   "deterministic": true,
+   "id": "layer.features.page",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
    ],
    "uncertainty_outputs": []
   },
@@ -3727,6 +3874,27 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "spatial_semantics"
+   ],
+   "category": "data_access",
+   "conformance_tests": [
+    "tests/unit/gis/test_native_surface_bindings.py::test_native_surface_binding_contract",
+    "tests/unit/gis_harness/spatial_semantics/test_tool_adapters.py::test_inspect_spatial_semantics_tool_discoverable"
+   ],
+   "deterministic": true,
+   "id": "spatial.semantics.inspect",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "spatial_regression"
    ],
    "category": "spatial_regression",
@@ -5967,30 +6135,42 @@
    "deterministic": false,
    "domain": "cartography",
    "id": "cartography_scale_apply",
-   "producer_algorithms": [],
+   "producer_algorithms": [
+    "cartography.scale.apply"
+   ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ]
   },
   {
    "category": "presentation",
    "deterministic": true,
    "domain": "cartography",
    "id": "cartography_scale_inspect",
-   "producer_algorithms": [],
+   "producer_algorithms": [
+    "cartography.scale.inspect"
+   ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ]
   },
   {
    "category": "presentation",
    "deterministic": true,
    "domain": "cartography",
    "id": "cartography_scale_preview",
-   "producer_algorithms": [],
+   "producer_algorithms": [
+    "cartography.scale.preview"
+   ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ]
   },
   {
    "category": "statistics",
@@ -6168,7 +6348,9 @@
    "deterministic": false,
    "domain": "general",
    "id": "data_preparation",
-   "producer_algorithms": [],
+   "producer_algorithms": [
+    "data.prepare"
+   ],
    "status": "native",
    "supports_large_data": true,
    "tests": [
@@ -6178,6 +6360,7 @@
     "tests/data/test_preparation_plan_v1.py",
     "tests/data/test_spatial_receipt_v1.py",
     "tests/test_api_auth_required.py",
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/test_ogc_service_tools_v1.py"
    ]
   },
@@ -6760,10 +6943,16 @@
    "deterministic": true,
    "domain": "general",
    "id": "layer_browse",
-   "producer_algorithms": [],
+   "producer_algorithms": [
+    "layer.aggregate",
+    "layer.feature.detail",
+    "layer.features.page"
+   ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py"
+   ]
   },
   {
    "category": "platform",
@@ -8032,10 +8221,13 @@
    "deterministic": true,
    "domain": "general",
    "id": "spatial_semantics",
-   "producer_algorithms": [],
+   "producer_algorithms": [
+    "spatial.semantics.inspect"
+   ],
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/gis_harness/spatial_semantics/test_contract_v1.py",
     "tests/unit/gis_harness/spatial_semantics/test_fixtures_and_perf.py",
     "tests/unit/gis_harness/spatial_semantics/test_mapspec_unit_flow.py",
@@ -8665,10 +8857,10 @@
   }
  ],
  "counts": {
-  "algorithms": 245,
+  "algorithms": 253,
   "artifact_types": 23,
   "capabilities": 174,
-  "findings": 15,
+  "findings": 9,
   "recipes": 166,
   "tools": 396
  },
@@ -8680,54 +8872,6 @@
    "severity": "medium",
    "subject": "terrain.cost_distance",
    "surface": "algorithms"
-  },
-  {
-   "code": "CAPABILITY_NO_PRODUCER",
-   "detail": "native capability without algorithm/tool producer",
-   "domain": "cartography",
-   "severity": "high",
-   "subject": "cartography_scale_apply",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_PRODUCER",
-   "detail": "native capability without algorithm/tool producer",
-   "domain": "cartography",
-   "severity": "high",
-   "subject": "cartography_scale_inspect",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_PRODUCER",
-   "detail": "native capability without algorithm/tool producer",
-   "domain": "cartography",
-   "severity": "high",
-   "subject": "cartography_scale_preview",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_PRODUCER",
-   "detail": "native capability without algorithm/tool producer",
-   "domain": "general",
-   "severity": "high",
-   "subject": "data_preparation",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_PRODUCER",
-   "detail": "native capability without algorithm/tool producer",
-   "domain": "general",
-   "severity": "high",
-   "subject": "layer_browse",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_PRODUCER",
-   "detail": "native capability without algorithm/tool producer",
-   "domain": "general",
-   "severity": "high",
-   "subject": "spatial_semantics",
-   "surface": "capabilities"
   },
   {
    "code": "TOOL_UNTESTED",
@@ -8798,18 +8942,12 @@
   "behavioral_dispatch": 204,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
-  "pass": false,
-  "violations": [
-   {
-    "baseline": 0,
-    "code": "CAPABILITY_NO_PRODUCER",
-    "current": 6
-   }
-  ],
+  "pass": true,
+  "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "288a393d2d721dee6e8d6a6b355506a7e6f5648efb0ae782dfffe0b562ab12f3",
+ "fingerprint": "aaba2cd8b73e82003e3df3abb8b79aa656d065217ae694b7d6adf30347f717d8",
  "gate": {
   "fields": {
    "capabilities": {
@@ -12933,9 +13071,10 @@
     "crs"
    ],
    "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/gis_harness/spatial_semantics/test_tool_adapters.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "dispatch",
@@ -15079,6 +15218,7 @@
     "preparation"
    ],
    "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/test_data_preparation_tools_v1.py"
    ],
    "tier": 2
@@ -18528,7 +18668,7 @@
    "tests": [
     "tests/unit/gis_harness/temporal_products/test_ir_and_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -18554,7 +18694,7 @@
    "tests": [
     "tests/unit/gis_harness/temporal_products/test_ir_and_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -18580,7 +18720,7 @@
    "tests": [
     "tests/unit/gis_harness/temporal_products/test_ir_and_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -18604,7 +18744,7 @@
    "tests": [
     "tests/unit/gis_harness/temporal_products/test_ir_and_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -18628,7 +18768,7 @@
    "tests": [
     "tests/unit/gis_harness/temporal_products/test_ir_and_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -19213,7 +19353,7 @@
     "tests/unit/gis_harness/analysis_workflows/test_recompute.py",
     "tests/unit/gis_harness/analysis_workflows/test_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "dispatch",
@@ -19241,7 +19381,7 @@
     "tests/unit/gis_harness/analysis_workflows/test_tools.py",
     "tests/unit/gis_harness/recovery_policy/test_continuation.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "dispatch",
@@ -19270,7 +19410,7 @@
     "tests/unit/gis_harness/analysis_workflows/test_recompute.py",
     "tests/unit/gis_harness/analysis_workflows/test_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "dispatch",
@@ -19295,7 +19435,7 @@
    "tests": [
     "tests/unit/gis_harness/analysis_workflows/test_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "dispatch",
@@ -19348,6 +19488,7 @@
     "generalization"
    ],
    "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/gis_harness/scale_profile/test_tool.py"
    ],
    "tier": 2
@@ -19642,9 +19783,10 @@
     "scale profile"
    ],
    "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/gis_harness/scale_profile/test_tool.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -19669,9 +19811,10 @@
     "group_by"
    ],
    "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/test_layer_browse_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -19694,9 +19837,10 @@
     "detail"
    ],
    "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/test_layer_browse_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -19722,9 +19866,10 @@
     "table"
    ],
    "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/test_layer_browse_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "dispatch",
@@ -20136,9 +20281,10 @@
     "scale preview"
    ],
    "tests": [
+    "tests/unit/gis/test_native_surface_bindings.py",
     "tests/unit/gis_harness/scale_profile/test_tool.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",

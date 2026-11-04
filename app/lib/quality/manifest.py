@@ -27,10 +27,15 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.lib.quality.behavioral import behavior_level, discover_behavioral_dispatch
 from app.lib.quality.discovery import discover_test_references, repo_root
+from app.lib.quality.manifest_contracts import (
+    AlgorithmQualityRecord, ArtifactQualityRecord, CapabilityQualityRecord,
+    FindingViolationRecord, GateFieldRecord, GateReportRecord,
+    RatchetReportRecord, RecipeSummaryRecord, TestReferenceRecord, ToolQualityRecord,
+)
 
 MANIFEST_VERSION = 2
 
@@ -111,17 +116,17 @@ class QualityManifest:
     manifest_version: int = MANIFEST_VERSION
     fingerprint: str = ""
     counts: Dict[str, int] = field(default_factory=dict)
-    gate_report: Dict[str, Any] = field(default_factory=dict)
-    tools: List[Dict[str, Any]] = field(default_factory=list)
-    algorithms: List[Dict[str, Any]] = field(default_factory=list)
-    capabilities: List[Dict[str, Any]] = field(default_factory=list)
-    artifact_types: List[Dict[str, Any]] = field(default_factory=list)
-    recipes: Dict[str, Any] = field(default_factory=dict)
+    gate_report: GateReportRecord = field(default_factory=GateReportRecord)
+    tools: List[ToolQualityRecord] = field(default_factory=list)
+    algorithms: List[AlgorithmQualityRecord] = field(default_factory=list)
+    capabilities: List[CapabilityQualityRecord] = field(default_factory=list)
+    artifact_types: List[ArtifactQualityRecord] = field(default_factory=list)
+    recipes: RecipeSummaryRecord = field(default_factory=RecipeSummaryRecord)
     findings: List[Dict[str, str]] = field(default_factory=list)
     #: 行为化覆盖统计（V2）：{"dispatch": n, "mention": n, "none": n}
     behavioral: Dict[str, int] = field(default_factory=dict)
     #: findings 棘轮判定（不进指纹：waiver expiry 有日期语义）
-    ratchet_report: Dict[str, Any] = field(default_factory=dict)
+    ratchet_report: RatchetReportRecord = field(default_factory=RatchetReportRecord)
 
 
 def _canonical_json(payload: Any) -> str:
@@ -153,10 +158,10 @@ def _tool_rows(
     tool_registry: Any,
     test_refs: Dict[str, List[str]],
     behavioral: Dict[str, List[str]],
-) -> Tuple[List[Dict[str, Any]], List[QualityFinding]]:
+) -> Tuple[List[ToolQualityRecord], List[QualityFinding]]:
     from app.tools.descriptor import SideEffectClass, ToolStatus
 
-    rows: List[Dict[str, Any]] = []
+    rows: List[ToolQualityRecord] = []
     findings: List[QualityFinding] = []
     descriptors = tool_registry.descriptors()
     for name in sorted(descriptors):
@@ -166,7 +171,7 @@ def _tool_rows(
         status = getattr(getattr(d, "status", None), "value", str(getattr(d, "status", "")))
         requires_confirmation = bool(getattr(d, "requires_confirmation", False))
         capabilities = list(getattr(d, "capabilities", ()) or ())
-        row: Dict[str, Any] = {
+        row: ToolQualityRecord = {
             "name": name,
             "status": status,
             "tier": int(getattr(d, "tier", 1)),
@@ -236,11 +241,11 @@ def _tool_rows(
 
 def _algorithm_rows(
     test_refs: Dict[str, List[str]],
-) -> Tuple[List[Dict[str, Any]], List[QualityFinding]]:
+) -> Tuple[List[AlgorithmQualityRecord], List[QualityFinding]]:
     from app.lib.gis.algorithm_registry import get_algorithm_registry
 
     reg = get_algorithm_registry()
-    rows: List[Dict[str, Any]] = []
+    rows: List[AlgorithmQualityRecord] = []
     findings: List[QualityFinding] = []
     for aid in sorted(reg.all_ids):
         algo = reg.get(aid)
@@ -317,7 +322,7 @@ def _algorithm_rows(
 
 def _capability_rows(
     test_refs: Dict[str, List[str]],
-) -> Tuple[List[Dict[str, Any]], List[QualityFinding]]:
+) -> Tuple[List[CapabilityQualityRecord], List[QualityFinding]]:
     from app.lib.gis.capability_registry import get_capability_registry
     from app.lib.gis.algorithm_registry import get_algorithm_registry
 
@@ -332,7 +337,7 @@ def _capability_rows(
         for cap in algo.capabilities:
             tool_caps.setdefault(cap, []).append(aid)
 
-    rows: List[Dict[str, Any]] = []
+    rows: List[CapabilityQualityRecord] = []
     findings: List[QualityFinding] = []
     for cid in sorted(cap_reg.all_ids):
         cap = cap_reg.get(cid)
@@ -383,11 +388,11 @@ def _capability_rows(
 
 def _artifact_rows(
     test_refs: Dict[str, List[str]],
-) -> Tuple[List[Dict[str, Any]], List[QualityFinding]]:
+) -> Tuple[List[ArtifactQualityRecord], List[QualityFinding]]:
     from app.lib.gis.artifacts import get_artifact_type_registry
 
     reg = get_artifact_type_registry()
-    rows: List[Dict[str, Any]] = []
+    rows: List[ArtifactQualityRecord] = []
     findings: List[QualityFinding] = []
     for tid in sorted(reg.all_ids):
         tests = list(test_refs.get(tid, []))
@@ -406,10 +411,10 @@ def _artifact_rows(
     return rows, findings
 
 
-def _gate_report(tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _gate_report(tools: List[ToolQualityRecord]) -> GateReportRecord:
     """描述符富化覆盖率（ADR-0103 语义：闸只对非 PLANNED 可执行工具生效）。"""
     executable = [t for t in tools if t["status"] != "planned"]
-    fields: Dict[str, Any] = {}
+    fields: Dict[str, GateFieldRecord] = {}
     all_pass = True
     for f in GATE_FIELDS:
         covered = 0
@@ -440,13 +445,13 @@ def _gate_report(tools: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def collect() -> Dict[str, Any]:
+def collect() -> GateReportRecord:
     """ADR-0103 历史 CLI/测试入口：返回富化覆盖率报告（gate 消费的形态）。"""
     manifest = compile_quality_manifest()
     return manifest.gate_report
 
 
-def gate(report: Dict[str, Any]) -> int:
+def gate(report: GateReportRecord) -> int:
     """0 = 通过；1 = 存在未达阈值的富化字段（富化回退即红）。"""
     if not report.get("fields"):
         return 1
@@ -497,7 +502,7 @@ def evaluate_findings_ratchet(
     baseline: Optional[Dict[str, Any]] = None,
     waivers: Optional[List[Dict[str, str]]] = None,
     today: "Optional[Any]" = None,  # datetime.date | str（ISO）| None
-) -> Dict[str, Any]:
+) -> RatchetReportRecord:
     """棘轮判定（纯函数；today 便于测试注入，缺省 date.today）。"""
     import datetime
 
@@ -530,7 +535,7 @@ def evaluate_findings_ratchet(
             continue  # 豁免项不计入棘轮计数（但仍在 findings 全量清单中）
         current[code] = current.get(code, 0) + 1
 
-    violations: List[Dict[str, Any]] = []
+    violations: List[FindingViolationRecord] = []
     for code in sorted(set(current) | set(caps)):
         now = current.get(code, 0)
         cap = caps.get(code)
@@ -586,7 +591,7 @@ def compile_quality_manifest(
 
     recipe_reg = get_recipe_registry()
     domains = sorted(recipe_reg.domains())
-    recipes = {
+    recipes: RecipeSummaryRecord = {
         "count": int(recipe_reg.count),
         "domains": domains,
     }
@@ -745,8 +750,8 @@ def render_markdown(manifest: QualityManifest) -> str:
     )
     lines.append("")
     by_code: Dict[str, List[Dict[str, str]]] = {}
-    for f in manifest.findings:
-        by_code.setdefault(f["code"], []).append(f)
+    for finding in manifest.findings:
+        by_code.setdefault(finding["code"], []).append(finding)
     for code in FINDING_CODES:
         items = by_code.get(code, [])
         lines.append(f"### {code}（{len(items)}）")
@@ -771,7 +776,7 @@ def render_markdown(manifest: QualityManifest) -> str:
     return "\n".join(lines)
 
 
-def _tested_count(rows: List[Dict[str, Any]]) -> int:
+def _tested_count(rows: Sequence[TestReferenceRecord]) -> int:
     return sum(1 for r in rows if r.get("tests"))
 
 

@@ -14,13 +14,20 @@
 """
 from __future__ import annotations
 
+from app.contracts.modelops import (
+    DetectionRecord,
+    CandidateSetRecord,
+    InferenceProgress,
+    PublishedArtifact,
+)
+
 import logging
 import threading
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Unpack, Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -245,7 +252,7 @@ class InferenceResult:
     reused: bool
     task_type: str
     manifest: Dict[str, Any]
-    outputs: Dict[str, Dict[str, Any]]           # role → {path, data_object_id?, ...}
+    outputs: dict[str, PublishedArtifact]           # role → {path, data_object_id?, ...}
     perf: Dict[str, Any]
     reuse_key: Optional[str]
 
@@ -294,7 +301,7 @@ class InferenceEngine:
         request: InferenceRequest,
         *,
         cancel_token: Optional[CancellationToken] = None,
-        progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+        progress: Optional[Callable[[InferenceProgress], None]] = None,
     ) -> InferenceResult:
         if set(request.owner_scope) - {"session_id", "project_id"} or len(request.owner_scope) != 1:
             raise ModelOpsError("owner_scope must be exactly one of session_id/project_id")
@@ -334,7 +341,7 @@ class InferenceEngine:
         run_id: str,
         perf: PerfCounters,
         cancel_token: Optional[CancellationToken],
-        progress: Optional[Callable[[Dict[str, Any]], None]],
+        progress: Optional[Callable[[InferenceProgress], None]],
     ) -> InferenceResult:
         reproject_source: Optional[Path] = None  # R2 m-4：精确临时文件登记
         deadline = time.monotonic() + (
@@ -638,7 +645,7 @@ class InferenceEngine:
                 manifest = dict(entry["manifest"])
                 manifest["reused"] = True
                 manifest["reuse_run_id"] = run_id
-                outputs = {
+                outputs: dict[str, PublishedArtifact] = {
                     art["role"]: {
                         "path": str(Path(entry["entry_dir"]) / art["file"]),
                         "data_object_id": art.get("data_object_id"),
@@ -887,12 +894,12 @@ class InferenceEngine:
         output_dir: Path,
         perf: PerfCounters,
         checkpoint: Callable[[], None],
-        progress: Optional[Callable[[Dict[str, Any]], None]],
+        progress: Optional[Callable[[InferenceProgress], None]],
         *,
         source_path_b: Optional[Path] = None,
         roi_origin: Optional[Tuple[int, int]] = None,
         input_content_sha: Optional[str] = None,
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, PublishedArtifact]:
         num_classes = len(descriptor.class_schema.classes) if descriptor.class_schema else 2
         merge_policy = SegmentationMergePolicy(
             output_probabilities=request.output_probabilities
@@ -907,7 +914,7 @@ class InferenceEngine:
                 policy=merge_policy,
             )
             _RUN_LOCAL[ctx.run_id] = accumulator  # #1199：per-run 键控
-        detections_by_tile: Dict[int, List[Dict[str, Any]]] = {}
+        detections_by_tile: dict[int, list[DetectionRecord]] = {}
         instance_by_tile: List[np.ndarray] = []
         instance_classes_by_tile: List[Dict[int, int]] = []
         embeddings: List[np.ndarray] = []
@@ -1053,7 +1060,7 @@ class InferenceEngine:
                     reader_b.close()
             checkpoint()
 
-        outputs: Dict[str, Dict[str, Any]] = {}
+        outputs: dict[str, PublishedArtifact] = {}
         if accumulator is not None:
             classes, confidence, valid, probs = accumulator.finalize(
                 input_nodata=None,
@@ -1337,7 +1344,7 @@ class InferenceEngine:
         output_dir: Path,
         perf: PerfCounters,
         checkpoint: Callable[[], None],
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, PublishedArtifact]:
         from affine import Affine
         from rasterio import features as _features
         from shapely.geometry import mapping as _mapping
@@ -1355,7 +1362,7 @@ class InferenceEngine:
         if prompt is None:
             raise PreprocessError("promptable inference requires a prompt")
         checkpoint()
-        outputs: Dict[str, Dict[str, Any]] = {}
+        outputs: dict[str, PublishedArtifact] = {}
         with RasterReader.open(str(source_path)) as reader:
             meta = reader.metadata()
             base_transform = reader.dataset.transform
@@ -1372,7 +1379,7 @@ class InferenceEngine:
             plan = build_preprocess_plan(descriptor, source_band_count=meta.count)
             features_out: List[Dict[str, Any]] = []
             candidate_features_out: List[Dict[str, Any]] = []
-            candidates_summary: List[Dict[str, Any]] = []
+            candidates_summary: list[CandidateSetRecord] = []
             canvas: Optional[np.ndarray] = None
             # 掩膜画布（可负担时）：整幅发布；超大栅格只发 GeoJSON（诚实降级）。
             if meta.height * meta.width <= 256 * 1024 * 1024:
@@ -1516,14 +1523,14 @@ class InferenceEngine:
             cand_path = write_geojson_output(
                 output_dir / "prompt_candidates.geojson", cand_geojson
             )
-            outputs["prompt_candidates"] = publish_json_artifact(
+            candidate_artifact = publish_json_artifact(
                 cand_path, owner_scope=request.owner_scope, source_refs=[],
                 producer={"capability": "modelops.promptable_inference"},
-            ) | {
-                "selection": request.candidate_selection,
-                "selected_candidate": request.selected_candidate,
-                "windows": candidates_summary,
-            }
+            )
+            candidate_artifact["selection"] = request.candidate_selection
+            candidate_artifact["selected_candidate"] = request.selected_candidate
+            candidate_artifact["windows"] = candidates_summary
+            outputs["prompt_candidates"] = candidate_artifact
         return outputs
 
     # ── temporal 单窗口路径 ─────────────────────────────────────────
@@ -1538,7 +1545,7 @@ class InferenceEngine:
         output_dir: Path,
         perf: PerfCounters,
         checkpoint: Callable[[], None],
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, PublishedArtifact]:
         temporal = request.temporal
         if temporal is None:
             raise PlanningError("temporal inference requires a TemporalStackSpec")
@@ -1607,10 +1614,10 @@ class InferenceEngine:
         output_dir: Path,
         perf: PerfCounters,
         checkpoint: Callable[[], None],
-        progress: Optional[Callable[[Dict[str, Any]], None]],
+        progress: Optional[Callable[[InferenceProgress], None]],
         *,
         roi_origin: Optional[Tuple[int, int]] = None,
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, PublishedArtifact]:
         stride_y, stride_x = tile_plan.stride_y, tile_plan.stride_x
         if stride_y != tile_plan.chip_h or stride_x != tile_plan.chip_w:
             raise PlanningError(
@@ -1725,7 +1732,7 @@ class InferenceEngine:
         output_dir: Path,
         perf: PerfCounters,
         checkpoint: Callable[[], None],
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, PublishedArtifact]:
         temporal = request.temporal
         if temporal is None:
             raise PlanningError("temporal classification requires a TemporalStackSpec")
@@ -1985,7 +1992,7 @@ class InferenceEngine:
         *,
         roi_origin: Optional[Tuple[int, int]] = None,
         source_path: Optional[Path] = None,
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, PublishedArtifact]:
         """类别栅格 → GeoJSON 多边形（→ 可选 PostGIS 同步发布）。"""
         from affine import Affine
 
@@ -2029,7 +2036,7 @@ class InferenceEngine:
             source_refs=[request.input_data_object_id] if request.input_data_object_id else [],
             producer={"capability": "modelops.inference", "role": "class_polygons"},
         )
-        result: Dict[str, Dict[str, Any]] = {"class_polygons": published}
+        result: dict[str, PublishedArtifact] = {"class_polygons": published}
         if request.postgis_table:
             from app.services.modelops.geo_output import publish_geojson_to_postgis
 
@@ -2047,7 +2054,7 @@ class InferenceEngine:
         *,
         role: str,
         descriptor: GeoModelDescriptor,
-    ) -> Dict[str, Any]:
+    ) -> PublishedArtifact:
         result = publish_raster_artifact(
             path,
             owner_scope=request.owner_scope,
@@ -2179,8 +2186,8 @@ def _process_peak_rss_bytes() -> int:
 
 
 def _emit(
-    progress: Optional[Callable[[Dict[str, Any]], None]],
-    **payload: Any,
+    progress: Optional[Callable[[InferenceProgress], None]],
+    **payload: Unpack[InferenceProgress],
 ) -> None:
     if progress is None:
         return

@@ -16,7 +16,14 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
+
+from app.lib.harness.replay.recording_contracts import (
+    EnvironmentFingerprint, RecordedToolCall, RecordingMetadata, TokenUsage,
+    TurnTiming, TurnWarning, TurnWork,
+)
+
+from app.contracts.gis_trace import TraceChainRecord
 
 from app.lib.harness.replay.determinism import behavior_digest, canonical_json, sha256_of
 from app.lib.harness.replay.sanitize import (
@@ -60,24 +67,24 @@ class ReplayTrace:
     selected_workflow: str = ""          # 选定工作流名（providers 面入口）
     skill_id: Optional[str] = None       # 预留（#1278）
     governor: Optional[Dict[str, Any]] = None  # 预留（#1279）
-    chain: Dict[str, Any] = field(default_factory=dict)   # Stage 1-18 全量
+    chain: TraceChainRecord = field(default_factory=TraceChainRecord)   # Stage 1-18 全量
     decisions: List[Dict[str, Any]] = field(default_factory=list)  # ADR-0212
     #: ADR-0262 D3（additive）：dispatch bind 双面证据（allowed/refused，
     #: id/code 级）—— roundtrip 的 expect 回填面（无它则逐 call 的
     #: allowed 事实在 trace 里缺席）。
     dispatch_evidence: List[Dict[str, Any]] = field(default_factory=list)
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)  # 消毒后
+    tool_calls: List[RecordedToolCall] = field(default_factory=list)  # 消毒后
     mutations: Dict[str, Any] = field(default_factory=dict)
     artifacts: Dict[str, Any] = field(default_factory=dict)
     verdict: Dict[str, Any] = field(default_factory=dict)
     outcome: Dict[str, Any] = field(default_factory=dict)   # TurnEvidence.outcome
-    timing_ms: Dict[str, Any] = field(default_factory=dict)
-    work: Dict[str, Any] = field(default_factory=dict)
-    llm_usage: Dict[str, Any] = field(default_factory=dict)
-    warnings: List[Dict[str, Any]] = field(default_factory=list)
+    timing_ms: TurnTiming = field(default_factory=TurnTiming)
+    work: TurnWork = field(default_factory=TurnWork)
+    llm_usage: TokenUsage = field(default_factory=TokenUsage)
+    warnings: List[TurnWarning] = field(default_factory=list)
     final_text: str = ""                 # 有界 USER_OUTPUT（nondeterministic_text 类）
-    env: Dict[str, Any] = field(default_factory=dict)
-    recording: Dict[str, Any] = field(default_factory=dict)
+    env: EnvironmentFingerprint = field(default_factory=EnvironmentFingerprint)
+    recording: RecordingMetadata = field(default_factory=RecordingMetadata)
     truncated: bool = False
     behavior_digest: str = ""
 
@@ -121,14 +128,14 @@ class ReplayTrace:
 # ── 构建（recorder / replayer / tests 共用的唯一入口）────────────────────────
 
 
-def _stage_records(chain_dict: Dict[str, Any], stage_name: str) -> List[Dict[str, Any]]:
+def _stage_records(chain_dict: TraceChainRecord, stage_name: str) -> List[Dict[str, Any]]:
     return [
         rec for rec in (chain_dict.get("stages") or [])
         if isinstance(rec, dict) and rec.get("stage") == stage_name
     ]
 
 
-def _first_payload(chain_dict: Dict[str, Any], stage_name: str) -> Dict[str, Any]:
+def _first_payload(chain_dict: TraceChainRecord, stage_name: str) -> Dict[str, Any]:
     for rec in _stage_records(chain_dict, stage_name):
         payload = {k: v for k, v in rec.items()
                    if k not in ("stage", "stage_id", "ts")}
@@ -178,7 +185,7 @@ def _tool_name_of(rec: Dict[str, Any]) -> str:
     return ""
 
 
-def _tool_calls_from_chain(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _tool_calls_from_chain(chain_dict: TraceChainRecord) -> List[RecordedToolCall]:
     """链内 TOOL_CALLS/ARGUMENTS/TOOL_RESULTS → 消毒后的调用行为块。
 
     生产发射形态（bridge）：TOOL_CALLS 带 ``call_id``/``tool``；ARGUMENTS
@@ -186,7 +193,7 @@ def _tool_calls_from_chain(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
     TOOL_RESULTS 只有 ``tool``/``status``/``latency_ms``（无 id）——
     无 id 的结果按 (tool 名, 出现序) 回填最早未终态调用。
     """
-    calls: Dict[str, Dict[str, Any]] = {}
+    calls: Dict[str, RecordedToolCall] = {}
     order: List[str] = []
     arg_payloads: List[Tuple[str, Dict[str, Any]]] = []
     for rec in _stage_records(chain_dict, "TOOL_CALLS"):
@@ -293,20 +300,21 @@ def build_trace(
     *,
     session_id: str,
     turn_id: str,
-    chain_dict: Dict[str, Any],
+    chain_dict: TraceChainRecord,
     turn_summary: Optional[Dict[str, Any]] = None,
     map_product: Optional[Dict[str, Any]] = None,
     final_text: str = "",
-    recording: Optional[Dict[str, Any]] = None,
-    env: Optional[Dict[str, Any]] = None,
+    recording: Optional[RecordingMetadata] = None,
+    env: Optional[EnvironmentFingerprint] = None,
     situation_revision: Optional[Dict[str, Any]] = None,
     request_id: str = "",
     run_id: str = "",
 ) -> ReplayTrace:
     """从当轮生产事实构建 ReplayTrace（纯函数；输入必须是已消毒/有界面）。"""
     summary = turn_summary if isinstance(turn_summary, dict) else {}
-    correlation = summary.get("correlation") if isinstance(summary.get("correlation"), dict) else {}
-    chain_dict = dict(chain_dict) if isinstance(chain_dict, dict) else {}
+    correlation_raw = summary.get("correlation")
+    correlation = correlation_raw if isinstance(correlation_raw, dict) else {}
+    chain_dict = cast(TraceChainRecord, dict(chain_dict)) if isinstance(chain_dict, dict) else {}
     # 存入 trace 的链统一剥 ts（墙钟秒）：规范化时间戳纪律（D5）——相对
     # 计时在 timing_ms，digest 与存储都不要墙钟。
     chain_dict["stages"] = [
@@ -431,9 +439,9 @@ def build_trace(
         artifacts=artifacts,
         verdict=verdict,
         outcome=dict(summary.get("outcome") or {}),
-        timing_ms=dict(summary.get("timing_ms") or {}),
-        work=dict(summary.get("work") or {}),
-        llm_usage=dict(summary.get("llm_usage") or {}),
+        timing_ms=cast(TurnTiming, dict(summary.get("timing_ms") or {})),
+        work=cast(TurnWork, dict(summary.get("work") or {})),
+        llm_usage=cast(TokenUsage, dict(summary.get("llm_usage") or {})),
         warnings=list(summary.get("warnings") or [])[:32],
         final_text=bounded_str(final_text or "", _FINAL_TEXT_MAX),
         env=env or {},
@@ -504,7 +512,7 @@ def _sanitize_decision_value(value: Any, depth: int = 0) -> Any:
     return bounded_str(value, 192)
 
 
-def _collect_raw_chain_decisions(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _collect_raw_chain_decisions(chain_dict: TraceChainRecord) -> List[Dict[str, Any]]:
     """消毒**前**收集链上原始决策记录（index 走域感知消毒专用通道）。"""
     raw: List[Dict[str, Any]] = []
     for rec in chain_dict.get("stages") or []:
@@ -569,7 +577,7 @@ def _situation_revision_from_raw(raw_decisions: List[Dict[str, Any]]) -> Optiona
     return None
 
 
-def _user_input_from_chain(chain_dict: Dict[str, Any]) -> str:
+def _user_input_from_chain(chain_dict: TraceChainRecord) -> str:
     payload = _first_payload(chain_dict, "USER_INTENT")
     # "query" 是生产规划面（planner emit_chain）的键名。
     for key in ("prompt", "query", "text", "user_input", "message", "intent"):
@@ -579,7 +587,7 @@ def _user_input_from_chain(chain_dict: Dict[str, Any]) -> str:
     return ""
 
 
-def _goal_from(summary: Dict[str, Any], chain_dict: Dict[str, Any]) -> str:
+def _goal_from(summary: Dict[str, Any], chain_dict: TraceChainRecord) -> str:
     for payload in (_first_payload(chain_dict, "PARSED_INTENT"),
                     _first_payload(chain_dict, "TASK_ONTOLOGY")):
         # "task" 是生产规划面的键名（PARSED_INTENT/TASK_ONTOLOGY）。

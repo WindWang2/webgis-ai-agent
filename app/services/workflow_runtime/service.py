@@ -11,10 +11,26 @@
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    CancelNodesResult,
+    CancelResult,
+    ChangeResult,
+    CloneResult,
+    InstanceRecord,
+    NodeSpec,
+    RecomputePreview,
+    RetryNodeResult,
+    RetryResult,
+    RunResult,
+    WorkflowDAG,
+    WorkflowNode,
+)
+
+
 import asyncio
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from app.services.workflow_runtime import contracts as C
 from app.services.workflow_runtime import machine as M
@@ -134,7 +150,7 @@ class WorkflowRuntimeService:
         parent_instance_id: str = "", parent_node_id: str = "",
         visited_packages: Optional[List[str]] = None,
         org_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> InstanceRecord:
         """包 → 运行实例（全节点 PENDING；data 节点绑定由 attach/record 补齐）。
 
         ``org_id``（ADR-0139）：REST/子工作流/克隆路径必传（effective org
@@ -166,7 +182,7 @@ class WorkflowRuntimeService:
             raise WorkflowRuntimeError(
                 compat.reason_code, compat.migration_hint or compat.detail)
         dag = (pkg.compiled_form or {}).get("typed_dag") or {}
-        nodes = [
+        nodes: list[NodeSpec] = [
             {"node_id": str(n.get("node_id", "")),
              "optional": bool(n.get("optional", False))}
             for n in dag.get("nodes") or [] if n.get("node_id")
@@ -209,7 +225,7 @@ class WorkflowRuntimeService:
         node_params: Optional[Dict[str, Dict[str, Any]]] = None,
         node_timeout_s: Optional[float] = None,
         retry_policy: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+    ) -> RunResult:
         """显式执行入口（chat 路径绝不自动调用 —— AUTORUN 默认关）。
 
         V6：``node_timeout_s``（per-node 超时；None = 仅 run deadline 兜底）
@@ -276,7 +292,7 @@ class WorkflowRuntimeService:
 
     async def cancel_instance(
         self, instance_id: str, *, owner_scope: str,
-    ) -> Dict[str, Any]:
+    ) -> CancelResult:
         inst = await asyncio.to_thread(
             self.store.get_instance, instance_id, owner_scope)
         if inst is None:
@@ -297,7 +313,7 @@ class WorkflowRuntimeService:
         self, instance_id: str, node_ids: List[str], *,
         owner_scope: str, actor: str = "api",
         include_descendants: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> CancelNodesResult:
         """节点级取消（V6）：目标 + 后代闭包置持久取消旗标。
 
         - queued（PENDING/READY/STALE/BLOCKED）→ 旗标即取消事实（本进程
@@ -335,7 +351,7 @@ class WorkflowRuntimeService:
         session_id: Optional[str] = None,
         only_nodes: Optional[List[str]] = None,
         skip_nodes: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+    ) -> CloneResult:
         """克隆运行（V6 Phase E）：同包同版本新实例（全 PENDING 起步）。
 
         - **skip unchanged 是复用索引的自由结论**：同 session + 同包指纹 +
@@ -429,7 +445,7 @@ class WorkflowRuntimeService:
 
     async def retry_failed_nodes(
         self, instance_id: str, *, owner_scope: str,
-    ) -> Dict[str, Any]:
+    ) -> RetryResult:
         """失败节点重排（V6 Phase E）：FAILED→READY（预算内）。
 
         预算耗尽的节点诚实拒绝（FAILED 保终态语义）；全无重排对象 →
@@ -478,7 +494,7 @@ class WorkflowRuntimeService:
     async def retry_node(
         self, instance_id: str, node_id: str, *, owner_scope: str,
         force: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> RetryNodeResult:
         """单节点重试（Inspector action）：FAILED/STALE→READY。
 
         - 预算内（attempts < policy.max_attempts）→ 重排；
@@ -544,7 +560,7 @@ class WorkflowRuntimeService:
     async def apply_changes(
         self, instance_id: str, changes: List[C.PendingChange], *,
         owner_scope: str, source: str = "api",
-    ) -> Dict[str, Any]:
+    ) -> ChangeResult:
         inst = await asyncio.to_thread(
             self.store.get_instance, instance_id, owner_scope)
         if inst is None:
@@ -561,7 +577,7 @@ class WorkflowRuntimeService:
     async def recompute_plan(
         self, instance_id: str, changes: List[C.PendingChange], *,
         owner_scope: str,
-    ) -> Dict[str, Any]:
+    ) -> RecomputePreview:
         """dry-run：只算 RecomputePlan + 复用候选预览（不落任何状态）。"""
         inst = await asyncio.to_thread(
             self.store.get_instance, instance_id, owner_scope)
@@ -596,7 +612,7 @@ class WorkflowRuntimeService:
         self, session_id: str, *, owner_scope: str, query: str,
         recipe_id: str, profile: Optional[Dict[str, Any]] = None,
         org_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> InstanceRecord | None:
         """计划合成时：注册包 + 实例化 + 预绑数据角色（fail-open）。"""
         try:
             reg = await asyncio.to_thread(
@@ -649,7 +665,7 @@ class WorkflowRuntimeService:
 
     async def _chat_complete_node(
         self, instance_id: str, node_id: str, ref: str,
-        dag: Dict[str, Any],
+        dag: WorkflowDAG,
     ) -> Dict[str, Any]:
         """chat 通道完成：→READY→RUNNING(claim=chat)→SUCCEEDED。
 
@@ -721,7 +737,7 @@ class WorkflowRuntimeService:
 
     async def record_style_change(
         self, session_id: str, *, owner_scope: str, target: str = "",
-    ) -> Optional[Dict[str, Any]]:
+    ) -> ChangeResult | None:
         """样式突变 → style 维变更（fail-open；科学零触碰）。
 
         目标实例 = 该会话最近的非终态实例；无则在**最近 succeeded** 实例
@@ -807,9 +823,9 @@ class WorkflowRuntimeService:
                         source="intent_diff")
                     inst_summary["applied"] = bool(result.get("applied"))
                     inst_summary["deferred"] = bool(result.get("deferred"))
-                    decision = (result.get("decision") or {})
+                    decision = result.get("decision")
                     inst_summary["marked_stale"] = list(
-                        decision.get("marked_stale") or [])
+                        decision.get("marked_stale") or []) if decision else []
                     summary["stale"].extend(inst_summary["marked_stale"])
             if carried:
                 ordered = await self._topo_order_carried(session_id, carried)
@@ -876,7 +892,7 @@ class WorkflowRuntimeService:
 
     # ── 内部 ─────────────────────────────────────────────────────────
 
-    async def _instance_dag(self, inst: Dict[str, Any]) -> Dict[str, Any]:
+    async def _instance_dag(self, inst: InstanceRecord) -> WorkflowDAG:
         row = await asyncio.to_thread(
             self.registry.resolve, inst["package_id"],
             owner_scope=inst["owner_scope"],
@@ -885,10 +901,10 @@ class WorkflowRuntimeService:
             raise WorkflowRuntimeError(
                 "PACKAGE_MISSING",
                 f"{inst['package_id']}@{inst['package_version']}")
-        return ((row.get("compiled_form") or {}).get("typed_dag") or {})
+        return cast(WorkflowDAG, (row.get("compiled_form") or {}).get("typed_dag") or {})
 
     async def _prefill_role_bindings(
-        self, inst: Dict[str, Any], owner_scope: str,
+        self, inst: InstanceRecord, owner_scope: str,
     ) -> None:
         """实例化时从 SessionPlan 预绑数据角色（``_derive_bound_refs`` 同规则）。"""
         from app.services.gis_harness.workflow_instance import (
@@ -923,7 +939,7 @@ class WorkflowRuntimeService:
                 patch={"bound_ref": ref[:96]})
 
     async def _role_nodes_for_capability(
-        self, inst: Dict[str, Any], capability: str,
+        self, inst: InstanceRecord, capability: str,
     ) -> List[str]:
         """capability → 其供给的 data:role 节点（capability_hint 映射）。"""
         from app.services.gis_harness.recipes import get_recipe_registry
@@ -944,7 +960,7 @@ class WorkflowRuntimeService:
         ]
 
     async def _node_params(
-        self, inst: Dict[str, Any], dag: Dict[str, Any],
+        self, inst: InstanceRecord, dag: WorkflowDAG,
     ) -> Dict[str, Dict[str, Any]]:
         """包解析参数 → 节点参数注入（analysis 节点执行输入）。"""
         params = (await self._package_compiled(inst)).get("parameters") or []
@@ -957,26 +973,26 @@ class WorkflowRuntimeService:
                     out.setdefault(nid, {})[str(p["name"])] = p.get("value")
         return out
 
-    async def _package_compiled(self, inst: Dict[str, Any]) -> Dict[str, Any]:
+    async def _package_compiled(self, inst: InstanceRecord) -> Dict[str, Any]:
         row = await asyncio.to_thread(
             self.registry.resolve, inst["package_id"],
             owner_scope=inst["owner_scope"],
             version=inst["package_version"])
-        return dict((row or {}).get("compiled_form") or {})
+        return dict(row.get("compiled_form") or {}) if row is not None else {}
 
 
-def _dag_node(dag: Dict[str, Any], node_id: str) -> Optional[Dict[str, Any]]:
+def _dag_node(dag: WorkflowDAG, node_id: str) -> WorkflowNode | None:
     return next((n for n in dag.get("nodes") or []
                  if n.get("node_id") == node_id), None)
 
 
-def _capability_nodes(dag: Dict[str, Any], capability: str) -> List[str]:
+def _capability_nodes(dag: WorkflowDAG, capability: str) -> List[str]:
     return [str(n.get("node_id", "")) for n in dag.get("nodes") or []
             if n.get("kind") == "analysis"
             and n.get("capability") == capability]
 
 
-def _safe_instance(inst: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _safe_instance(inst: InstanceRecord | None) -> InstanceRecord:
     return inst or {}
 
 

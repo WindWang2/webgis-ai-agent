@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+from app.contracts.modelops import DetectionRecord as DetectionPayload
+
 import pathlib
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -128,13 +130,13 @@ class DetectionRecord:
     score: float
     box: Tuple[float, float, float, float]  # 全局像素坐标 (x, y, w, h)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> DetectionPayload:
         return {"label": self.label, "score": self.score, "box": list(self.box)}
 
 
 def merge_detections(
     plan: TilePlan,
-    outputs: Sequence[List[Dict[str, Any]]],  # 每 tile 的 tile-local 检测
+    outputs: Sequence[List[DetectionPayload]],  # 每 tile 的 tile-local 检测
     *,
     iou_threshold: float = NMS_IOU_THRESHOLD,
     score_threshold: float = 0.0,

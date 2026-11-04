@@ -5,7 +5,11 @@ driver 驱动推进。O(V+E)、确定性、零 I/O。
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from app.contracts.workflow import (
+    WorkflowDAG,
+)
+
+from typing import Dict, List, Optional, Set
 
 from app.services.workflow_runtime.contracts import (
     NodeState,
@@ -13,7 +17,7 @@ from app.services.workflow_runtime.contracts import (
 )
 
 
-def build_adjacency(dag: Dict[str, Any]) -> Dict[str, List[str]]:
+def build_adjacency(dag: WorkflowDAG) -> Dict[str, List[str]]:
     """compiled typed_dag dict → {node_id: [直接下游]}（数据流边 ∪ 结构依赖）。"""
     node_ids = {str(n.get("node_id", "")) for n in dag.get("nodes") or []}
     node_ids.discard("")
@@ -37,7 +41,7 @@ def build_adjacency(dag: Dict[str, Any]) -> Dict[str, List[str]]:
     return adjacency
 
 
-def upstream_of(dag: Dict[str, Any]) -> Dict[str, List[str]]:
+def upstream_of(dag: WorkflowDAG) -> Dict[str, List[str]]:
     """compiled typed_dag dict → {node_id: [直接上游]}。"""
     downstream = build_adjacency(dag)
     upstream: Dict[str, List[str]] = {}
@@ -47,7 +51,7 @@ def upstream_of(dag: Dict[str, Any]) -> Dict[str, List[str]]:
     return upstream
 
 
-def upstream_ports(dag: Dict[str, Any]) -> Dict[str, List]:
+def upstream_ports(dag: WorkflowDAG) -> dict[str, list[tuple[str, str]]]:
     """{node_id: [(src, to_port)]}（按边序；to_port 剥节点前缀）。
 
     bounded 边形态 ``"to": "node.port"`` → port 取 rsplit；与节点声明
@@ -69,7 +73,7 @@ def upstream_ports(dag: Dict[str, Any]) -> Dict[str, List]:
 
 
 def ready_set(
-    dag: Dict[str, Any],
+    dag: WorkflowDAG,
     node_states: Dict[str, str],
     *,
     skip_decided: Optional[Set[str]] = None,
@@ -102,7 +106,7 @@ def ready_set(
     return out
 
 
-def downstream_closure(dag: Dict[str, Any], seeds: Set[str]) -> Set[str]:
+def downstream_closure(dag: WorkflowDAG, seeds: Set[str]) -> Set[str]:
     """seeds 的全部（传递）下游（取消/失效传播用；环安全）。"""
     adjacency = build_adjacency(dag)
     out: Set[str] = set()
@@ -116,7 +120,7 @@ def downstream_closure(dag: Dict[str, Any], seeds: Set[str]) -> Set[str]:
     return out
 
 
-def upstream_closure(dag: Dict[str, Any], seeds: Set[str]) -> Set[str]:
+def upstream_closure(dag: WorkflowDAG, seeds: Set[str]) -> Set[str]:
     """seeds 的全部（传递）上游（分支工作流 keep-set 用；环安全）。"""
     upstream = upstream_of(dag)
     out: Set[str] = set()

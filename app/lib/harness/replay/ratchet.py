@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Iterable, List, Optional
 
+from app.lib.harness.result_contracts import MetricRow
+
 from app.lib.harness.replay.replayer import ScenarioResult
 
 logger = logging.getLogger(__name__)
@@ -23,15 +25,15 @@ REPLAY_LANE = "replay"
 REPLAY_SOURCE = "replay_bench"
 
 
-def rows_from_results(results: Iterable[ScenarioResult]) -> List[Dict[str, Any]]:
+def rows_from_results(results: Iterable[ScenarioResult]) -> List[MetricRow]:
     """重放结果 → ratchet 观测行（scene_id = scenario#tN）。"""
-    rows: List[Dict[str, Any]] = []
+    rows: List[MetricRow] = []
     for result in results:
         rows.extend(result.metrics_rows)
     return rows
 
 
-def baseline_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def baseline_rows(rows: Iterable[MetricRow]) -> List[MetricRow]:
     """quality_ratchet_gate.py ``baseline --from-json`` 直读形态。"""
     return [
         {"scene_id": str(r.get("scene_id")), "check_id": str(r.get("check_id")),
@@ -43,7 +45,7 @@ def baseline_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def evaluate_replay_observations(
-    rows: Iterable[Dict[str, Any]],
+    rows: Iterable[MetricRow],
     baselines: Iterable[Any],
     waivers: Iterable[Dict[str, Any]] = (),
     tolerance_pct: float = 5.0,
@@ -62,15 +64,15 @@ def evaluate_replay_observations(
                             tolerance_pct=tolerance_pct)
 
 
-def degrade_rows(rows: Iterable[Dict[str, Any]], *,
+def degrade_rows(rows: Iterable[MetricRow], *,
                  gate_factor: float = 0.5,
-                 replay_factor: float = 3.0) -> List[Dict[str, Any]]:
+                 replay_factor: float = 3.0) -> List[MetricRow]:
     """故意劣化（intentional degradation，证明 gate 会红）：
 
     - ``gate.*``（越高越好）→ 得分 × ``gate_factor``（默认腰斩）；
     - ``replay.*``（越高越糟）→ 值 × ``replay_factor``（默认 3 倍）。
     """
-    degraded: List[Dict[str, Any]] = []
+    degraded: List[MetricRow] = []
     for row in rows:
         value = float(row["value"])
         if row["check_id"].startswith("gate."):
@@ -82,7 +84,7 @@ def degrade_rows(rows: Iterable[Dict[str, Any]], *,
 
 
 async def record_replay_run(
-    rows: Iterable[Dict[str, Any]], *,
+    rows: Iterable[MetricRow], *,
     session_id: Optional[str] = None,
     scene_id: Optional[str] = None,
     passed: Optional[bool] = None,

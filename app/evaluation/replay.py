@@ -23,6 +23,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from app.evaluation.runtime_metrics import (
+    ChainComparisonRecord, ChainGateReport, SurfaceComparison, ToolReplayRecord,
+)
+
 from app.lib.runtime.result_contract import inspect_tool_result
 from app.lib.runtime.trace import (
     EVENT_DISPATCH_COMPLETED,
@@ -59,7 +63,7 @@ class ToolReplayOutcome:
     contract_match: Optional[bool] = None
     detail: str = ""
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> ToolReplayRecord:
         return {
             "tool": self.tool, "action": self.action,
             "contract_match": self.contract_match, "detail": self.detail,
@@ -290,7 +294,7 @@ class SurfaceABResult:
     retriever_a: str
     retriever_b: str
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> SurfaceComparison:
         return {
             "only_in_a": self.only_in_a,
             "only_in_b": self.only_in_b,
@@ -340,7 +344,7 @@ class ChainComparison:
     completeness_a: float
     completeness_b: float
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> ChainComparisonRecord:
         return {
             "missing_in_b": self.missing_in_b,
             "missing_in_a": self.missing_in_a,
@@ -378,7 +382,7 @@ def chain_completeness_report(
     min_completeness: float = 0.95,
     na_stages: Optional[Sequence[str]] = None,
     expected_stages: Optional[Sequence[str]] = None,
-) -> Dict[str, Any]:
+) -> ChainGateReport:
     """V4 Wave 8（ADR-0104 决策 9）：会话证据链完整性回归面。
 
     从会话 JSONL（trace_store 持久化）读链并跑 `chain_gate` 门 ——

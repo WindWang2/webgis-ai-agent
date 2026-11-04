@@ -16,7 +16,136 @@ golden case 的 expected_capabilities —— 不引入新的人工标注真相�
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, NotRequired, Optional, Sequence, TypedDict
+
+
+
+
+class RetrievalMetricRecord(TypedDict):
+    k: int
+    recall_at_k: float
+    precision_at_k: float
+    irrelevant_rate: float
+    cases: int
+    skipped: int
+
+
+class SurfaceRetrievalRecord(TypedDict):
+    cases: int
+    skipped: int
+    k_max: int
+    recall_at_k: dict[str, float]
+    precision_at_k_max: float
+    avg_active_tools: float
+    tier3_leak: int
+    avg_schema_bytes: float
+    max_schema_bytes: int
+    budget_violations: int
+
+
+class RoutingObservation(TypedDict, total=False):
+    reason_codes: list[str] | tuple[str, ...]
+    failed: bool
+    latency_s: float
+
+
+class RoutingMetricRecord(TypedDict):
+    calls: int
+    fallback_rate: float
+    failure_rate: float
+    avg_latency_s: float
+
+
+class ExecutionObservation(TypedDict, total=False):
+    completed: bool
+    timed_out: bool
+    no_progress: bool
+    repeated_calls: int
+    tool_calls: int
+
+
+class ExecutionMetricRecord(TypedDict):
+    turns: int
+    completion_rate: float
+    timeout_rate: float
+    no_progress_incidence: float
+    repeated_call_rate: float
+    avg_tool_count: float
+
+
+class GisCorrectnessObservation(TypedDict, total=False):
+    expected_capabilities: list[str] | tuple[str, ...]
+    used_tools: list[str]
+    data_qualified: bool
+    final_map_state_pass: bool
+
+
+class GisCorrectnessRecord(TypedDict):
+    cases: int
+    correct_algorithm_family_rate: float
+    correct_data_qualification_rate: float
+    final_map_state_pass_rate: float
+
+
+class ContextObservation(TypedDict, total=False):
+    by_category: dict[str, int]
+    total_est_tokens: int
+    over_budget: bool
+    violations: list[str]
+
+
+class ContextMetricRecord(TypedDict):
+    reports: int
+    overflow_rate: float
+    truncation_incidence: float
+    schema_token_ratio: float
+    result_token_ratio: float
+
+
+class ChainGateEntry(TypedDict):
+    turn_id: str
+    covered_stages: list[str]
+    covered_count: int
+    effective_total: int
+    completeness: float
+    missing_expected: NotRequired[list[str]]
+    passed: bool
+
+
+class ChainGateReport(TypedDict):
+    passed: bool
+    min_required: float
+    na_stages: list[str]
+    unknown_na_stages: list[str]
+    expected_stages: list[str]
+    chain_count: int
+    total: int
+    truncated: bool
+    per_chain: list[ChainGateEntry]
+
+
+class ToolReplayRecord(TypedDict):
+    tool: str
+    action: str
+    contract_match: bool | None
+    detail: str
+
+
+class SurfaceComparison(TypedDict):
+    only_in_a: list[str]
+    only_in_b: list[str]
+    shared: list[str]
+    retriever_a: str
+    retriever_b: str
+    delta: int
+
+
+class ChainComparisonRecord(TypedDict):
+    missing_in_b: list[str]
+    missing_in_a: list[str]
+    completeness_a: float
+    completeness_b: float
+
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +160,7 @@ def relevant_tools_for_case(registry: Any, expected_capabilities: Sequence[str])
         cap_tool_map = get_algorithm_registry().capability_tool_map()
     except Exception:  # noqa: BLE001
         return []
-    relevant: set = set()
+    relevant: set[str] = set()
     for cap in expected_capabilities:
         relevant.update(cap_tool_map.get(cap, ()))
     # 只保留活注册表内、模型可见的工具
@@ -55,7 +184,7 @@ class RetrievalMetrics:
     cases: int
     skipped: int = 0       # 无相关工具集的 case（不计入 recall 分母）
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> RetrievalMetricRecord:
         return {
             "k": self.k,
             "recall_at_k": round(self.recall_at_k, 4),
@@ -121,7 +250,7 @@ class SurfaceRetrievalReport:
     max_schema_bytes: int
     budget_violations: int          # project 字节预算违约次数（恒期望 0）
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> SurfaceRetrievalRecord:
         return {
             "cases": self.cases,
             "skipped": self.skipped,
@@ -232,7 +361,7 @@ class RoutingMetrics:
     failure_rate: float
     avg_latency_s: float
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> RoutingMetricRecord:
         return {
             "calls": self.calls,
             "fallback_rate": round(self.fallback_rate, 4),
@@ -246,7 +375,7 @@ _FALLBACK_HINTS = ("fallback", "health_skip", "health_deprioritize",
 
 
 def routing_metrics(
-    observations: Sequence[Dict[str, Any]],
+    observations: Sequence[RoutingObservation],
 ) -> RoutingMetrics:
     """observations: ``{"reason_codes": [...], "failed": bool, "latency_s": float}``。
 
@@ -288,7 +417,7 @@ class ExecutionMetrics:
     repeated_call_rate: float
     avg_tool_count: float
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> ExecutionMetricRecord:
         return {
             "turns": self.turns,
             "completion_rate": round(self.completion_rate, 4),
@@ -299,7 +428,7 @@ class ExecutionMetrics:
         }
 
 
-def execution_metrics(turn_reports: Sequence[Dict[str, Any]]) -> ExecutionMetrics:
+def execution_metrics(turn_reports: Sequence[ExecutionObservation]) -> ExecutionMetrics:
     """turn_reports: ``{"completed": bool, "timed_out": bool, "no_progress": bool,
     "repeated_calls": int, "tool_calls": int}``（trace/evidence 聚合产物）。"""
     n = len(turn_reports)
@@ -331,7 +460,7 @@ class GisCorrectnessMetrics:
     correct_data_qualification_rate: float
     final_map_state_pass_rate: float
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> GisCorrectnessRecord:
         return {
             "cases": self.cases,
             "correct_algorithm_family_rate": round(self.correct_algorithm_family_rate, 4),
@@ -340,7 +469,7 @@ class GisCorrectnessMetrics:
         }
 
 
-def gis_correctness_metrics(case_outcomes: Sequence[Dict[str, Any]]) -> GisCorrectnessMetrics:
+def gis_correctness_metrics(case_outcomes: Sequence[GisCorrectnessObservation]) -> GisCorrectnessMetrics:
     """case_outcomes: 评测 runner 产物，字段（均可缺省 —— 缺省不计入分母）：
 
     - expected_capabilities / used_tools（算法族正确 = used_tools 的派生
@@ -356,7 +485,7 @@ def gis_correctness_metrics(case_outcomes: Sequence[Dict[str, Any]]) -> GisCorre
         used = out.get("used_tools") or []
         if caps and used:
             n_family += 1
-            used_caps: set = set()
+            used_caps: set[str] = set()
             try:
                 from app.lib.gis.algorithm_registry import get_algorithm_registry
 
@@ -394,7 +523,7 @@ class ContextMetrics:
     schema_token_ratio: float
     result_token_ratio: float
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> ContextMetricRecord:
         return {
             "reports": self.reports,
             "overflow_rate": round(self.overflow_rate, 4),
@@ -404,7 +533,7 @@ class ContextMetrics:
         }
 
 
-def context_metrics(budget_reports: Sequence[Dict[str, Any]]) -> ContextMetrics:
+def context_metrics(budget_reports: Sequence[ContextObservation]) -> ContextMetrics:
     """budget_reports: context_assembler 的 ``budget_report`` dict 序列。"""
     n = len(budget_reports)
     if not n:

@@ -19,10 +19,12 @@ profile 词表 = geocompute EXECUTION_QUEUE_PROFILES —— 队列路由语义�
 """
 from __future__ import annotations
 
+from app.contracts.workflow import WorkerCapabilities, WorkerRecord
+
 import logging
 import uuid
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import sqlalchemy as sa
 
@@ -42,9 +44,9 @@ def new_worker_id(role: str = "worker") -> str:
     return f"{role}-{uuid.uuid4().hex[:12]}"
 
 
-def default_capabilities() -> Dict[str, Any]:
+def default_capabilities() -> WorkerCapabilities:
     """本进程能力自检（保守估计；不打爆机器的调度前提）。"""
-    caps: Dict[str, Any] = {"cpu": 1, "mem_mb": 1024, "gpu": 0,
+    caps: WorkerCapabilities = {"cpu": 1, "mem_mb": 1024, "gpu": 0,
                             "profiles": {}, "io_mbps": 0,
                             "backends": ["inprocess"]}
     try:
@@ -61,7 +63,7 @@ def default_capabilities() -> Dict[str, Any]:
     return caps
 
 
-def _cap(capabilities: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _cap(capabilities: Optional[Dict[str, Any]]) -> WorkerCapabilities:
     """能力投影（词表白名单 + 值钳制；防自授无界资源）。"""
     caps = dict(capabilities or {})
     profiles_raw = caps.get("profiles") or {}
@@ -78,7 +80,7 @@ def _cap(capabilities: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         queue_ok = DEFAULT_QUEUE
     except Exception:  # noqa: BLE001
         queue_ok = "celery"
-    out = {
+    out: WorkerCapabilities = {
         "cpu": max(0, min(int(caps.get("cpu", 1) or 0), 1024)),
         "mem_mb": max(0, min(int(caps.get("mem_mb", 1024) or 0), 2_097_152)),
         "gpu": max(0, min(int(caps.get("gpu", 0) or 0), 8)),
@@ -91,8 +93,8 @@ def _cap(capabilities: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
-def _load(load: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
+def _load(load: Optional[Dict[str, Any]]) -> dict[str, int]:
+    out: dict[str, int] = {}
     for k in _LOAD_KEYS:
         if load and k in load:
             try:
@@ -223,7 +225,7 @@ class WorkerRegistry:
     def list_active(
         self, *, profile: str = "", backend: str = "",
         limit: int = MAX_WORKERS_LISTED,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[WorkerRecord]:
         """活跃 worker（可按 profile 槽位 / 后端过滤；调度准入输入）。"""
         from app.models.db_model import WorkflowWorkerRow
 
@@ -232,7 +234,7 @@ class WorkerRegistry:
                 rows = db.query(WorkflowWorkerRow).filter(
                     WorkflowWorkerRow.status == "active",
                 ).limit(max(1, min(int(limit), MAX_WORKERS_LISTED))).all()
-                out: List[Dict[str, Any]] = []
+                out: list[WorkerRecord] = []
                 now = _utcnow()
                 for r in rows:
                     # #1400: ignore heartbeat-stale rows even before sweep_dead
@@ -261,7 +263,7 @@ class WorkerRegistry:
                         "worker_id": r.worker_id,
                         "role": r.role,
                         "runtime": r.runtime,
-                        "capabilities": caps,
+                        "capabilities": cast(WorkerCapabilities, caps),
                         "load": dict(r.load or {}),
                         "locality": dict(r.locality or {}),
                         "last_heartbeat_at":

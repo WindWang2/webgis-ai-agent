@@ -26,6 +26,8 @@ import itertools
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.lib.harness.result_contracts import ReceiptEntry, ReceiptProjection
+
 from app.lib.harness.replay.replayer import ScenarioOp, TurnSpec
 
 #: T4 沙箱强制关闭的横切闸（env → 关闸取值）。
@@ -380,13 +382,13 @@ class _RecordedProviderRegistry:
 class ReceiptReplayResult:
     """一个 turn 的 T4 结论（可被 expect.receipt / receipt_repeat 钉住）。"""
 
-    entries: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    entries: Dict[str, ReceiptEntry] = field(default_factory=dict)
     repeat: Dict[str, str] = field(default_factory=dict)
     skipped_reason: str = ""
 
-    def actual_projection(self) -> Dict[str, Any]:
+    def actual_projection(self) -> ReceiptProjection:
         """实测树（空 entries = T4 未实际运行 → 不进 actual，触发 not_run）。"""
-        out: Dict[str, Any] = {}
+        out: ReceiptProjection = {}
         if self.entries:
             out["receipt"] = dict(self.entries)
         if self.repeat:
