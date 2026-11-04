@@ -72,10 +72,22 @@ def abi_flags(monkeypatch):
     monkeypatch.delenv("PI_SURFACE_SCOPE_ENFORCE", raising=False)
 
 
-async def _register_turn(session_id: str, turn_id: str):
-    from app.agent_pi_bridge import register_active_pi_turn
+@pytest.fixture
+async def register_turn():
+    """Own manual route-test registrations through assertion failures too."""
+    registrations = []
 
-    await register_active_pi_turn(session_id, turn_id)
+    async def register(session_id: str, turn_id: str):
+        # Record before awaiting: registration can write local state before I/O.
+        registrations.append((session_id, turn_id))
+        await bridge_mod.register_active_pi_turn(session_id, turn_id)
+
+    try:
+        yield register
+    finally:
+        for session_id, turn_id in reversed(registrations):
+            # The real owner check must preserve a newer turn for this session.
+            await bridge_mod.unregister_active_pi_turn(session_id, turn_id)
 
 
 def _mint_receipt(registry, session_id: str, turn_id: str, tool: str = "pi_abi_echo"):
@@ -99,10 +111,10 @@ def _body(tool_call_id, name, arguments, token, **extra):
 
 
 @pytest.mark.asyncio
-async def test_valid_echo_dispatches_with_result_abi(test_registry, async_client):
+async def test_valid_echo_dispatches_with_result_abi(test_registry, async_client, register_turn):
     session_id, turn_id = "sess-abi-ok", "turn-abi-ok"
     token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
-    await _register_turn(session_id, turn_id)
+    await register_turn(session_id, turn_id)
     fp = _mint_receipt(test_registry, session_id, turn_id)
 
     resp = await async_client.post(
@@ -122,10 +134,10 @@ async def test_valid_echo_dispatches_with_result_abi(test_registry, async_client
 
 
 @pytest.mark.asyncio
-async def test_stale_tool_fingerprint_echo_is_typed_rejected(test_registry, async_client):
+async def test_stale_tool_fingerprint_echo_is_typed_rejected(test_registry, async_client, register_turn):
     session_id, turn_id = "sess-abi-stale", "turn-abi-stale"
     token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
-    await _register_turn(session_id, turn_id)
+    await register_turn(session_id, turn_id)
     _mint_receipt(test_registry, session_id, turn_id)  # 真相指纹在册
 
     resp = await async_client.post(
@@ -146,11 +158,11 @@ async def test_stale_tool_fingerprint_echo_is_typed_rejected(test_registry, asyn
 
 
 @pytest.mark.asyncio
-async def test_no_receipt_echo_is_ignored_for_compat(test_registry, async_client):
+async def test_no_receipt_echo_is_ignored_for_compat(test_registry, async_client, register_turn):
     """receipt 缺席（动态面关 / 旧 turn）：echo 不校验 —— master 行为。"""
     session_id, turn_id = "sess-abi-norec", "turn-abi-norec"
     token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
-    await _register_turn(session_id, turn_id)
+    await register_turn(session_id, turn_id)
 
     resp = await async_client.post(
         "/pi-tools/execute",
@@ -166,11 +178,11 @@ async def test_no_receipt_echo_is_ignored_for_compat(test_registry, async_client
 
 
 @pytest.mark.asyncio
-async def test_no_echo_dispatches_normally(test_registry, async_client):
+async def test_no_echo_dispatches_normally(test_registry, async_client, register_turn):
     """echo 缺席（旧扩展）→ 照常执行 —— echo 不是权限。"""
     session_id, turn_id = "sess-abi-noecho", "turn-abi-noecho"
     token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
-    await _register_turn(session_id, turn_id)
+    await register_turn(session_id, turn_id)
     _mint_receipt(test_registry, session_id, turn_id)
 
     resp = await async_client.post(
@@ -184,11 +196,11 @@ async def test_no_echo_dispatches_normally(test_registry, async_client):
 
 @pytest.mark.asyncio
 async def test_scope_enforcement_rejects_out_of_surface_bare_name(
-        test_registry, async_client, monkeypatch):
+        test_registry, async_client, monkeypatch, register_turn):
     monkeypatch.setenv("PI_SURFACE_SCOPE_ENFORCE", "1")
     session_id, turn_id = "sess-abi-scope", "turn-abi-scope"
     token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
-    await _register_turn(session_id, turn_id)
+    await register_turn(session_id, turn_id)
     # receipt 只含 pi_abi_echo —— 注册面上的其他名字裸调应被拒
     _mint_receipt(test_registry, session_id, turn_id)
     # 注册一个面外工具（在 registry 但不在 receipt.selected）
@@ -220,10 +232,10 @@ async def test_scope_enforcement_rejects_out_of_surface_bare_name(
 
 
 @pytest.mark.asyncio
-async def test_scope_enforcement_off_by_default(test_registry, async_client):
+async def test_scope_enforcement_off_by_default(test_registry, async_client, register_turn):
     session_id, turn_id = "sess-abi-scopeoff", "turn-abi-scopeoff"
     token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
-    await _register_turn(session_id, turn_id)
+    await register_turn(session_id, turn_id)
     _mint_receipt(test_registry, session_id, turn_id)
     test_registry.register(
         "pi_abi_other2", "other2", lambda: {"success": True},

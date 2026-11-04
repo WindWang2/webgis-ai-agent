@@ -1867,10 +1867,16 @@ class RecipeRegistry:
                 recipe.primary_cartography == "raster_surface"
                 or "raster_surface" in (recipe.intent_cartography or [])
             )
-            geometry_mismatch = 1 if (geometry == "raster" and not raster_family) else 0
             cart_set = set(recipe.intent_cartography or [])
-            explicit_hit = bool(explicit and explicit in cart_set)
             cart_hit = len(cartography & cart_set)
+            # Membership is independent of the ranking dimensions below. Do
+            # not score recipes that would be discarded after ranking anyway.
+            # Read live descriptors each time, so registration and edits remain
+            # visible without a second index or cache invalidation contract.
+            if not (task_hit or cart_hit or (geometry == "raster" and raster_family)):
+                continue
+            geometry_mismatch = 1 if (geometry == "raster" and not raster_family) else 0
+            explicit_hit = bool(explicit and explicit in cart_set)
             kw_hits = keyword_scores.get(recipe.id, 0)
             v2_generic_penalty = (
                 1 if (recipe.workflow is not None and kw_hits == 0) else 0
@@ -1917,8 +1923,7 @@ class RecipeRegistry:
                 optional_ineligible,
                 recipe.priority, recipe.id,
             )
-            if task_hit or cart_hit or (geometry == "raster" and raster_family):
-                scored.append((score, recipe))
+            scored.append((score, recipe))
         scored.sort(key=lambda pair: pair[0])
         return [recipe for _, recipe in scored[:limit]]
 

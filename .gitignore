@@ -13,6 +13,8 @@ scripts/
 # 该目录承载测试 import 的守卫脚本，必须入库。
 !/frontend/scripts/
 !/scripts/ci-local.sh
+# Required backend coverage aggregation must be present in clean CI checkouts.
+!/scripts/combine_backend_coverage.py
 # G05：任务级验收本地入口（run/compare/report/pin；planning/g05 契约）
 !/scripts/g05_task_acceptance.py
 # G05：本地运行产物（CLI 报告）与栅格 fixture 工作区（validate_data_path 允许区）

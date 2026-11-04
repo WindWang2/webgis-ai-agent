@@ -5791,6 +5791,7 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_fact_signals_v4.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
+    "tests/unit/gis_harness/test_planner_hotpath_work.py",
     "tests/unit/gis_harness/test_runtime_v4_scenarios.py",
     "tests/unit/gis_harness/test_workflow_schema.py",
     "tests/unit/lib/test_rs_pipeline_v1.py",
@@ -8944,7 +8945,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "d2f81d97b4789ea1081841b46b35d3d70b3d22e113299704b95c233e823f9d10",
+ "fingerprint": "1b806e7e3aad2541a022108268f88ead7c0f714ff26fcd771a713c74de04ca46",
  "gate": {
   "fields": {
    "capabilities": {

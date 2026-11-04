@@ -253,7 +253,7 @@ def test_backend_coverage_retention_is_an_artifact_input():
     jobs = yaml.safe_load((WORKFLOWS_DIR / "production.yml").read_text(encoding="utf-8"))["jobs"]
     upload = next(
         step for step in jobs["test-backend"]["steps"]
-        if step["name"] == "Upload Coverage XML"
+        if step["name"] == "Upload Coverage Data"
     )
     assert upload["with"]["retention-days"] == 7
     assert all(

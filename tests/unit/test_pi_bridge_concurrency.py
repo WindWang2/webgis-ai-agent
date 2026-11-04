@@ -8,6 +8,9 @@ Verifies:
 5. Completion and cleanup of one turn leaves other in-flight turns unaffected.
 """
 import asyncio
+from contextlib import asynccontextmanager, nullcontext
+from importlib import import_module
+
 import pytest
 from app.agent_pi_bridge import (
     PiBridge,
@@ -130,3 +133,54 @@ async def test_concurrent_pi_bridge_turns_isolation_and_no_crosstalk():
 
     assert bridge2._current_turn is None
     assert session_b not in _active_turns
+
+
+@pytest.mark.parametrize("fixture_module", [
+    "test_pi_tools_route_auth",
+    "test_pi_surface_abi_route",
+    "test_pi_h01_result_contract",
+])
+@pytest.mark.parametrize("body_fails", [False, True])
+@pytest.mark.asyncio
+async def test_route_turn_fixture_cleanup_preserves_other_owners(fixture_module, body_fails):
+    """Route setup must not leak turns into the concurrent-bridge contract."""
+    import app.agent_pi_bridge as bridge_mod
+    from app.services.chat.pi_turn_context import pi_turn_registry
+
+    # Exercise the actual fixture lifecycle, including an assertion failure.
+    fixture = import_module(f"tests.unit.{fixture_module}").register_turn
+    registration_scope = asynccontextmanager(fixture.__wrapped__)
+    own_session = f"fixture-owned-{fixture_module}"
+    foreign_session = f"fixture-foreign-{fixture_module}"
+    replaced_session = f"fixture-replaced-{fixture_module}"
+    await bridge_mod.register_active_pi_turn(foreign_session, "turn-foreign")
+    try:
+        expectation = (
+            pytest.raises(AssertionError, match="route assertion failed")
+            if body_fails else nullcontext()
+        )
+        with expectation:
+            async with registration_scope() as register_turn:
+                await register_turn(own_session, "turn-owned")
+                await register_turn(replaced_session, "turn-old")
+                # A later owner must survive cleanup of the fixture's old turn.
+                await bridge_mod.register_active_pi_turn(replaced_session, "turn-new")
+                assert get_active_turn_entry(own_session).turn_id == "turn-owned"
+                if body_fails:
+                    raise AssertionError("route assertion failed")
+
+        assert get_active_turn_entry(own_session) is None
+        assert own_session not in pi_turn_registry._local_context
+        assert get_active_turn_entry(foreign_session).turn_id == "turn-foreign"
+        assert pi_turn_registry._local_context[foreign_session] == "turn-foreign"
+        assert get_active_turn_entry(replaced_session).turn_id == "turn-new"
+        assert pi_turn_registry._local_context[replaced_session] == "turn-new"
+    finally:
+        # Keep this regression isolated even if an assertion above fails.
+        for session_id, turn_id in (
+            (own_session, "turn-owned"),
+            (foreign_session, "turn-foreign"),
+            (replaced_session, "turn-new"),
+            (replaced_session, "turn-old"),
+        ):
+            await bridge_mod.unregister_active_pi_turn(session_id, turn_id)

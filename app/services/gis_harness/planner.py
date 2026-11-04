@@ -876,69 +876,74 @@ class MapProductPlanner:
         with best_effort(
             "plan-evidence-chain-emit", "planner-evidence-chain-best-effort"
         ):
-            from app.lib.runtime.chain_emitters import emit_chain, emit_chain_once
-            from app.lib.runtime.decision_record import (
-                DECISION_KIND_PLAN_SELECTION,
-                alternative_entry,
-                decision_record,
-            )
-            from app.lib.runtime.gis_trace import Stage
-            from app.services.gis_harness.recipes import (
-                RECIPE_SELECTION_POLICY_VERSION,
-            )
+            from app.lib.runtime.chain_emitters import has_chain_context
 
-            emit_chain(Stage.USER_INTENT, query=str(intent.query or "")[:200])
-            emit_chain_once(
-                Stage.PARSED_INTENT,
-                task=str(getattr(intent, "task", "") or ""),
-                area=str(getattr(intent, "area", "") or "")[:64],
-            )
-            emit_chain_once(
-                Stage.TASK_ONTOLOGY,
-                task=str(getattr(intent, "task", "") or ""),
-                cartography=str(getattr(intent, "cartography", "") or ""),
-            )
-            # ADR-0212：plan_selection 决策溯源 —— 12 层排序的产出（候选
-            # 稳定序）+ 情境投影（situation 参与 decision_id）；排序层无
-            # 逐候选量化分，alternatives 只带 rank（诚实省略 score）。
-            _selection_inputs: Dict[str, Any] = {
-                "task": str(getattr(intent, "task", "") or ""),
-                "cartography_intents": [
-                    str(c)[:48]
-                    for c in (getattr(intent, "cartography_intents", None) or [])[:8]
-                ],
-            }
-            if situation is not None and hasattr(situation, "to_dict"):
-                # #1549：情境投影缺席按空，经 best_effort 可见化。
-                with best_effort(
-                    "situation-projection",
-                    "planner-situation-projection-best-effort",
-                ):
-                    _selection_inputs["situation"] = situation.to_dict()
-            _selected_recipe_id = str(getattr(recipe, "id", "") or "")
-            emit_chain_once(
-                Stage.CANDIDATE_WORKFLOWS,
-                candidates=[str(getattr(c, "id", "")) for c in (candidates or [])][:8],
-                selected=_selected_recipe_id,
-                decision=decision_record(
+            # The emitters are unconditional no-ops without a bound turn.
+            # Avoid hashing/serializing payloads which cannot be recorded.
+            if has_chain_context():
+                from app.lib.runtime.chain_emitters import emit_chain, emit_chain_once
+                from app.lib.runtime.decision_record import (
                     DECISION_KIND_PLAN_SELECTION,
+                    alternative_entry,
+                    decision_record,
+                )
+                from app.lib.runtime.gis_trace import Stage
+                from app.services.gis_harness.recipes import (
+                    RECIPE_SELECTION_POLICY_VERSION,
+                )
+
+                emit_chain(Stage.USER_INTENT, query=str(intent.query or "")[:200])
+                emit_chain_once(
+                    Stage.PARSED_INTENT,
+                    task=str(getattr(intent, "task", "") or ""),
+                    area=str(getattr(intent, "area", "") or "")[:64],
+                )
+                emit_chain_once(
+                    Stage.TASK_ONTOLOGY,
+                    task=str(getattr(intent, "task", "") or ""),
+                    cartography=str(getattr(intent, "cartography", "") or ""),
+                )
+                # ADR-0212：plan_selection 决策溯源 —— 12 层排序的产出（候选
+                # 稳定序）+ 情境投影（situation 参与 decision_id）；排序层无
+                # 逐候选量化分，alternatives 只带 rank（诚实省略 score）。
+                _selection_inputs: Dict[str, Any] = {
+                    "task": str(getattr(intent, "task", "") or ""),
+                    "cartography_intents": [
+                        str(c)[:48]
+                        for c in (getattr(intent, "cartography_intents", None) or [])[:8]
+                    ],
+                }
+                if situation is not None and hasattr(situation, "to_dict"):
+                    # #1549：情境投影缺席按空，经 best_effort 可见化。
+                    with best_effort(
+                        "situation-projection",
+                        "planner-situation-projection-best-effort",
+                    ):
+                        _selection_inputs["situation"] = situation.to_dict()
+                _selected_recipe_id = str(getattr(recipe, "id", "") or "")
+                emit_chain_once(
+                    Stage.CANDIDATE_WORKFLOWS,
+                    candidates=[str(getattr(c, "id", "")) for c in (candidates or [])][:8],
                     selected=_selected_recipe_id,
-                    alternatives=[
-                        alternative_entry(str(getattr(c, "id", "")), rank=i)
-                        for i, c in enumerate(candidates or [])
-                    ][:8],
-                    inputs=_selection_inputs,
-                    evidence_refs=(
-                        [f"recipe:{_selected_recipe_id}"]
-                        if _selected_recipe_id else []
+                    decision=decision_record(
+                        DECISION_KIND_PLAN_SELECTION,
+                        selected=_selected_recipe_id,
+                        alternatives=[
+                            alternative_entry(str(getattr(c, "id", "")), rank=i)
+                            for i, c in enumerate(candidates or [])
+                        ][:8],
+                        inputs=_selection_inputs,
+                        evidence_refs=(
+                            [f"recipe:{_selected_recipe_id}"]
+                            if _selected_recipe_id else []
+                        ),
+                        policy_version=RECIPE_SELECTION_POLICY_VERSION,
                     ),
-                    policy_version=RECIPE_SELECTION_POLICY_VERSION,
-                ),
-            )
-            emit_chain_once(
-                Stage.SELECTED_WORKFLOW,
-                recipe_id=str(getattr(recipe, "id", "") or ""),
-            )
+                )
+                emit_chain_once(
+                    Stage.SELECTED_WORKFLOW,
+                    recipe_id=str(getattr(recipe, "id", "") or ""),
+                )
 
         # 模板选择：TemplateSelector 确定性评分（subject/task/outputs/
         # priority）是证据基线；显式 template_id（plan 连续性回放）只在
@@ -1068,14 +1073,15 @@ class MapProductPlanner:
                     plan.capability_evidence = resolution.to_dict()
                     # ADR-0212：capability_resolution 决策溯源（SELECTED_
                     # WORKFLOW 附加记录；emit_chain 自吞异常）。
-                    from app.lib.runtime.chain_emitters import emit_chain
+                    from app.lib.runtime.chain_emitters import emit_chain, has_chain_context
                     from app.lib.runtime.gis_trace import Stage
 
-                    emit_chain(
-                        Stage.SELECTED_WORKFLOW,
-                        phase="capability_resolution",
-                        decisions=resolution.to_decision_records(),
-                    )
+                    if has_chain_context():
+                        emit_chain(
+                            Stage.SELECTED_WORKFLOW,
+                            phase="capability_resolution",
+                            decisions=resolution.to_decision_records(),
+                        )
 
         # 图层角色：来自产品模板或 recipe 声明（layer_type 由模型库推导）
         if template:
@@ -1334,14 +1340,15 @@ class MapProductPlanner:
                 resolution = resolve_capabilities(goal, sit)
                 finalized.capability_evidence = resolution.to_dict()
                 # ADR-0212：finalize 复检的决策溯源（phase 区分于计划面）。
-                from app.lib.runtime.chain_emitters import emit_chain
+                from app.lib.runtime.chain_emitters import emit_chain, has_chain_context
                 from app.lib.runtime.gis_trace import Stage
 
-                emit_chain(
-                    Stage.SELECTED_WORKFLOW,
-                    phase="capability_resolution_finalize",
-                    decisions=resolution.to_decision_records(),
-                )
+                if has_chain_context():
+                    emit_chain(
+                        Stage.SELECTED_WORKFLOW,
+                        phase="capability_resolution_finalize",
+                        decisions=resolution.to_decision_records(),
+                    )
                 existing_codes = {
                     str(w.get("code")) for w in finalized.methodology_warnings
                     if w.get("code")
