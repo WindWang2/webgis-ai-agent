@@ -5,6 +5,7 @@
 import type { Page } from 'playwright/test';
 import { expect } from 'playwright/test';
 import { installJourneyStubs, JourneyWorld, defaultWorld } from '../fixtures/api-stubs';
+import { API_ORIGIN } from './mode';
 
 export { JourneyWorld, defaultWorld };
 
@@ -22,7 +23,7 @@ export async function bootstrapMock(page: Page, world: JourneyWorld): Promise<vo
  * Real-mode auth: sign in through the real backend /auth/login with the
  * credentials the nightly lane provisions (manage.py create_admin) and write
  * the result through the same tokenStore channel the UI login uses.
- * Skips with an explicit reason when credentials are absent — never silently.
+ * Fails with an explicit reason when credentials are absent.
  */
 export async function loginViaApi(page: Page): Promise<void> {
   const user = process.env.E2E_USER;
@@ -32,7 +33,9 @@ export async function loginViaApi(page: Page): Promise<void> {
       'real-mode journeys require E2E_USER/E2E_PASS (nightly lane provisions them via manage.py create_admin)',
     );
   }
-  const res = await page.request.post('/api/v1/auth/login', {
+  // page.request inherits the frontend baseURL, which has no backend proxy
+  // in the nightly split-port stack. Use the same backend origin as the UI.
+  const res = await page.request.post(new URL('/api/v1/auth/login', API_ORIGIN).href, {
     data: { identifier: user, password },
   });
   if (!res.ok()) {

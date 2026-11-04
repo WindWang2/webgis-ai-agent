@@ -243,6 +243,10 @@ jobs:
       E2E_API_URL: http://localhost:8001
       E2E_USER: e2e-admin
       E2E_PASS: journey-admin-pass-2026
+      # Auth state stays in the runner-owned SQLite store. PostGIS below is
+      # only the fabric fixture, not the application's account database.
+      DATABASE_URL: sqlite:///./data/webgis.db
+      DATA_DIR: ./data
       # Deterministic LLM boundary: the backend talks OpenAI wire format to the
       # scripted stub; everything behind it is the real backend.
       LLM_BASE_URL: http://localhost:8767/v1
@@ -282,7 +286,10 @@ jobs:
           node e2e/tools/llm-stub.mjs > /tmp/llm-stub.log 2>&1 &
           curl --retry 5 --retry-connrefused --silent http://localhost:8767/healthz > /dev/null || true
       - name: Provision admin account
-        run: python manage.py create-admin "$E2E_USER" e2e@example.org "$E2E_PASS"
+        run: |
+          # The CLI runs before app.main creates DATA_DIR on server startup.
+          mkdir -p "$DATA_DIR"
+          python manage.py create-admin "$E2E_USER" e2e@example.org "$E2E_PASS"
       - name: Start backend (uvicorn, minimal config)
         run: |
           python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 > /tmp/backend.log 2>&1 &
