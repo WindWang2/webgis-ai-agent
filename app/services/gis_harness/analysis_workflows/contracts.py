@@ -162,7 +162,7 @@ class AnalysisArtifactEnvelope(BaseModel):
 class ContractValidationError(ValueError):
     """契约校验失败（fail-closed；错误信息机器可切分：[code] 前缀）。"""
 
-    def __init__(self, code: str, detail: str = ""):
+    def __init__(self, code: str, detail: str = "") -> None:
         self.code = code
         super().__init__(f"{detail} [{code}]")
 

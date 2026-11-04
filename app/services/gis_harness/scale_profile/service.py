@@ -265,7 +265,7 @@ def _latitude_hint(descriptor: Dict[str, Any]) -> float:
             lat = (float(bbox[1]) + float(bbox[3])) / 2.0
             return max(-85.0, min(85.0, lat))
         except (TypeError, ValueError):
-            pass
+            logger.debug("Invalid bbox latitude; using equatorial scale", exc_info=True)
     return 0.0
 
 

@@ -49,7 +49,7 @@ class WebgisMapOperationArgs(BaseModel):
     note: Optional[str] = Field(None, max_length=160, description="归因摘要（可选）")
 
 
-def register_map_operation_tools(registry: ToolRegistry):
+def register_map_operation_tools(registry: ToolRegistry) -> None:
     """注册地图操作事务工具。"""
 
     @tool(

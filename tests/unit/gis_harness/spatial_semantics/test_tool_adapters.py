@@ -221,7 +221,7 @@ async def test_spatial_join_undeclared_china_warns(registry) -> None:
 
 @pytest.mark.asyncio
 async def test_zonal_stats_invalid_input_blocked_before_raster(registry) -> None:
-    """S12：zones 无效（投影样缺 CRS）在触碰栅格路径前被拒。"""
+    """S12: invalid zones are rejected before reading an allowed raster path."""
     x, y = _TR_4326_UTM48.transform(104.06, 30.66)
     zones = {
         "type": "FeatureCollection",
@@ -234,7 +234,7 @@ async def test_zonal_stats_invalid_input_blocked_before_raster(registry) -> None
         }],
     }
     res = await registry.dispatch("zonal_stats", {
-        "geojson": zones, "raster_path": "/nonexistent/dem.tif"})
+        "geojson": zones, "raster_path": "nonexistent-dem.tif"})
     assert res.get("success") is not True
     assert "SSC_CRS_UNDECLARED_NON_DEGREE" in str(res)
 

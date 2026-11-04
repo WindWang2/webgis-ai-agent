@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -228,7 +228,7 @@ class GISRecoveryDiagnostic(BaseModel):
         spec = REASON_REGISTRY.get(self.reason.value)
         return spec.disposition if spec else RecoveryDisposition.REPAIRABLE
 
-    def model_post_init(self, __context) -> None:
+    def model_post_init(self, __context: Any) -> None:
         spec = REASON_REGISTRY.get(self.reason.value)
         if spec is not None:
             if not self.hints:

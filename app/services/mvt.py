@@ -1288,7 +1288,7 @@ class SpatialIndexEntry:
     )
 
     def __init__(self, key, features, geoms, geoms_lonlat, crosses_am, tree, bounds,
-                 estimated_bytes: int = 0):
+                 estimated_bytes: int = 0) -> None:
         self.key = key
         self.features = features
         self.geoms = geoms
@@ -1500,7 +1500,7 @@ class SpatialIndexCache:
     is enforced solely by the epoch guards, exactly as before.
     """
 
-    def __init__(self, max_refs: int = 256, max_bytes: int = 256 * 1024 * 1024):
+    def __init__(self, max_refs: int = 256, max_bytes: int = 256 * 1024 * 1024) -> None:
         self._max_refs = max_refs
         self._max_bytes = max_bytes
         self._entries: "OrderedDict[tuple, SpatialIndexEntry]" = OrderedDict()
@@ -1669,7 +1669,7 @@ class TileLRUCache:
         max_tiles: int = 4096,
         max_bytes: int = 256 * 1024 * 1024,
         max_entry_bytes: int = 4 * 1024 * 1024,
-    ):
+    ) -> None:
         self._max_tiles = max_tiles
         self._max_bytes = max_bytes
         self._max_entry_bytes = max_entry_bytes
@@ -1800,7 +1800,7 @@ class SingleFlightManager:
     等待者自身的取消原样传播（``return_fut`` 未完成即自身取消）。
     """
 
-    def __init__(self, max_inflight: int = 512, wait_timeout: float = 30.0):
+    def __init__(self, max_inflight: int = 512, wait_timeout: float = 30.0) -> None:
         self._max_inflight = max_inflight
         self._wait_timeout = max(0.0, float(wait_timeout))
         self._inflight: Dict[Any, "asyncio.Future"] = {}

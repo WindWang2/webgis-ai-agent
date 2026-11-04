@@ -10,6 +10,7 @@ plan store 持久在 map_state ``_feature_edit_plans``（多 worker 共享；
 """
 from __future__ import annotations
 
+from pydantic import JsonValue
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -311,7 +312,7 @@ def _bbox(geometry: Dict[str, Any]) -> Optional[List[float]]:
     xs: List[float] = []
     ys: List[float] = []
 
-    def walk(node):
+    def walk(node: JsonValue | tuple[float, ...]) -> None:
         if not isinstance(node, (list, tuple)):
             return
         if len(node) >= 2 and isinstance(node[0], (int, float)) and isinstance(node[1], (int, float)):

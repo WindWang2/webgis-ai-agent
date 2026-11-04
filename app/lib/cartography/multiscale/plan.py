@@ -26,6 +26,7 @@ representation.VISUAL_AGGREGATION_DISCLOSURE 固定文案）。
 """
 from __future__ import annotations
 
+from app.lib.cartography.scale_rules import ScaleTier
 import copy
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -124,7 +125,7 @@ def _tier_geometry_policy(
 
 
 def _tier_decluttering(
-    geometry_family: str, tier, feature_count: int
+    geometry_family: str, tier: ScaleTier, feature_count: int
 ) -> DeclutteringPolicy:
     """点族去密（SCALE_TIERS 候选序 + dense_threshold 同源权威）。"""
     if geometry_family != "point":

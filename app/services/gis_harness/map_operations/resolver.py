@@ -46,7 +46,7 @@ class ResolvedTarget:
         reason_code: str = "",
         candidates: Optional[List[Dict[str, Any]]] = None,
         note: str = "",
-    ):
+    ) -> None:
         self.targets = targets or []
         self.reason_code = reason_code
         self.candidates = candidates or []
@@ -137,7 +137,7 @@ async def _last_result_layer_id(session_id: str) -> Optional[str]:
                         if isinstance(first, str) and first:
                             return first
     except Exception:  # noqa: BLE001 — 只读情境面 fail-open
-        pass
+        logger.debug("[map_operations] receipt target unavailable", exc_info=True)
     try:
         from app.services.gis_world_state.provenance import get_provenance
 

@@ -27,7 +27,9 @@ async def test_buffer_analysis_second_call_cache_hit():
 
     storage = {}
     args = {
-        "geojson": {"type": "FeatureCollection", "features": [
+        "geojson": {"type": "FeatureCollection",
+                    "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+                    "features": [
             {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.0, 39.0]}, "properties": {}}
         ]},
         "distance": 100.0,
@@ -42,6 +44,7 @@ async def test_buffer_analysis_second_call_cache_hit():
         r1 = await reg.dispatch("buffer_analysis", args, session_id=None)
         r2 = await reg.dispatch("buffer_analysis", args, session_id=None)
 
+    assert r1.get("success") is not False, r1
     assert r1 == r2
     # The second dispatch must have set cache_hit=True in its metrics row.
     # Metrics writes are async (queued writer thread) — poll for the rows.

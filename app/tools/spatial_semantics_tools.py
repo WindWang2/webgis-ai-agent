@@ -1,7 +1,7 @@
 """空间语义只读工具面（GOAL 01 · M4 Pi 发现层）。
 
 ``inspect_spatial_semantics``：FC/ref → typed SpatialSemanticContract 投影
-（tier 1、确定性、只读）。Agent 在执行度量敏感工具前可先问"这份数据在
+（tier 2、确定性、只读）。Agent 在执行度量敏感工具前可先问"这份数据在
 哪个 CRS、什么单位、什么口径"—— 判定可解释、可验证、可回退。
 
 注册为独立模块（app/tools/__init__.py 单行追加），不触碰既有工具文件。
@@ -31,11 +31,11 @@ class InspectSpatialSemanticsArgs(BaseModel):
 
 
 def register_spatial_semantics_tools(registry: ToolRegistry) -> None:
-    """注册空间语义只读工具（tier 1：契约检视廉价且恒可用）。"""
+    """注册空间语义只读工具（tier 2：分析/数据语境按需载入）。"""
 
     @tool(
         registry,
-        tier=1, domains=["analysis"], name="inspect_spatial_semantics",
+        tier=2, domains=["analysis", "dataset"], name="inspect_spatial_semantics",
         capabilities=["spatial_semantics"],
         description=(
             "空间语义契约检视（只读、确定性）：输入数据 → typed 判定"

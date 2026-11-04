@@ -156,9 +156,9 @@ def test_terrain_profile_tool_seeds_profile_chart(tmp_path, monkeypatch):
     from rasterio.transform import Affine
 
     from app.tools.registry import ToolRegistry
-    from app.tools import terrain_analysis as ta
+    from app.tools import _terrain_support, terrain_analysis as ta
 
-    monkeypatch.setattr(ta, "validate_data_path", lambda p: str(p))
+    monkeypatch.setattr(_terrain_support, "validate_data_path", lambda p: str(p))
     n = 40
     r, c = np.mgrid[0:n, 0:n].astype(float)
     cone = np.clip(100.0 - 2.0 * np.hypot(r - 20, c - 20), 0.0, None)

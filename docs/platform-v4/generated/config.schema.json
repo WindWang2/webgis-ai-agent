@@ -585,6 +585,11 @@
       "title": "Map Quality Gate Mode",
       "type": "string"
     },
+    "METRICS_TOKEN": {
+      "default": "",
+      "title": "Metrics Token",
+      "type": "string"
+    },
     "NASA_EARTHDATA_PASSWORD": {
       "default": "",
       "title": "Nasa Earthdata Password",

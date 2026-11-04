@@ -189,7 +189,7 @@ class _CompiledEffect:
         "state", "reason_code", "note", "deferred",
     )
 
-    def __init__(self, index: int, effect: MapOperationEffect, resolution: ResolvedTarget):
+    def __init__(self, index: int, effect: MapOperationEffect, resolution: ResolvedTarget) -> None:
         self.index = index
         self.effect = effect
         self.resolution = resolution

@@ -78,7 +78,7 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         # ── 数据准备（sdo #1868）：inspect→propose→prepare→bind 工具面 ───
         # prepare_dataset 等工具声明 capabilities=["data_preparation"]，
         # 未注册即 manifest fatal（app 严格模式启动失败）。工具直连类
-        # （与 poi_query 同格），算法面无对应实现者。
+        # 与 poi_query 同格，算法绑定由 algorithms/data_access.py 登记。
         CapabilityDescriptor(
             id="data_preparation", name="数据集准备", category="data_access",
             description="多源空间数据自动准备：字段提案/计划执行/语义绑定"
@@ -93,8 +93,8 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         # 会话 ref 的有界分页浏览（order/where typed AST/bbox/fields）、
         # 分组聚合（count/sum/mean/min/max 全扫口径）与单要素详情 —— 工具
         # 直连（webgis_layer_features_page / webgis_layer_aggregate /
-        # webgis_layer_feature_detail），算法面无对应实现者（与 poi_query
-        # 同为数据获取类能力）。
+        # webgis_layer_feature_detail），每个操作在 algorithms/data_access.py 单独绑定
+        # （与 poi_query 同为数据获取类能力）。
         CapabilityDescriptor(
             id="layer_browse", name="图层要素浏览", category="data_access",
             description="会话图层要素的有界分页浏览与窗口聚合：排序/typed 谓词/"
@@ -107,7 +107,7 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         ),
 
         # ── GOAL 01：空间语义契约检视只读面 ────────────────────────────
-        # inspect_spatial_semantics 工具直连（tier 1）：数据 → typed
+        # inspect_spatial_semantics 工具直连（按分析/数据域载入）：数据 → typed
         # SpatialSemanticContract 投影（CRS 来源四态/坐标结构/轴序嫌疑/
         # 计算空间推荐/尺度精度/偏移帧风险）。检视类能力（与 layer_browse
         # 同为只读取面），preflight 判定真相在

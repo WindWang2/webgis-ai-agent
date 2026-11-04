@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -389,7 +390,9 @@ def _append_sync(path: Path, plan: PreparationPlan) -> int:
         try:
             os.unlink(tmp_name)
         except OSError:
-            pass
+            logging.getLogger(__name__).warning(
+                "Failed to remove temporary preparation file", exc_info=True
+            )
         raise
     return len(records)
 

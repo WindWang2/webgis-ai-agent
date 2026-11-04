@@ -3433,6 +3433,24 @@
     "title": "DeprecateRequest",
     "type": "object"
    },
+   "DiscardPlanResponse": {
+    "properties": {
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan_id",
+     "state"
+    ],
+    "title": "DiscardPlanResponse",
+    "type": "object"
+   },
    "DisplayAckRequest": {
     "additionalProperties": false,
     "description": "owner 显式确认当前地图显示（render_seq=所确认的观察代次）。",
@@ -9387,6 +9405,22 @@
     "title": "PlanExecuteResponse",
     "type": "object"
    },
+   "PlanListResponse": {
+    "properties": {
+     "plans": {
+      "items": {
+       "$ref": "#/components/schemas/PlanOut"
+      },
+      "title": "Plans",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plans"
+    ],
+    "title": "PlanListResponse",
+    "type": "object"
+   },
    "PlanOut": {
     "properties": {
      "input_fingerprint": {
@@ -13089,6 +13123,70 @@
      "expected_revision"
     ],
     "title": "SetSceneBody",
+    "type": "object"
+   },
+   "SetTemporalViewBody": {
+    "description": "时态控制层用户面写入（GOAL 03；temporal_view.v1 契约体）。\n\nconfig/patch/remove 语义与 SetTemporalViewIntent 一一对应；用户\n时间轴交互（seek/pause/速度）走 patch + expected_revision CAS。",
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "config": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Config"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "set_temporal_view",
+      "title": "Intent",
+      "type": "string"
+     },
+     "patch": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Patch"
+     },
+     "remove": {
+      "default": false,
+      "title": "Remove",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision"
+    ],
+    "title": "SetTemporalViewBody",
     "type": "object"
    },
    "SetTimeBody": {
@@ -19983,6 +20081,7 @@
           "reorder_layers": "#/components/schemas/ReorderLayersBody",
           "set_layout": "#/components/schemas/SetLayoutBody",
           "set_scene": "#/components/schemas/SetSceneBody",
+          "set_temporal_view": "#/components/schemas/SetTemporalViewBody",
           "set_time": "#/components/schemas/SetTimeBody",
           "set_view": "#/components/schemas/SetViewBody"
          },
@@ -20024,6 +20123,9 @@
          },
          {
           "$ref": "#/components/schemas/SetTimeBody"
+         },
+         {
+          "$ref": "#/components/schemas/SetTemporalViewBody"
          },
          {
           "$ref": "#/components/schemas/InitProjectBody"
@@ -25468,7 +25570,9 @@
      "200": {
       "content": {
        "application/json": {
-        "schema": {}
+        "schema": {
+         "$ref": "#/components/schemas/DiscardPlanResponse"
+        }
        }
       },
       "description": "Successful Response"
@@ -25696,7 +25800,9 @@
      "200": {
       "content": {
        "application/json": {
-        "schema": {}
+        "schema": {
+         "$ref": "#/components/schemas/ReceiptSummaryOut"
+        }
        }
       },
       "description": "Successful Response"
@@ -25758,7 +25864,9 @@
      "200": {
       "content": {
        "application/json": {
-        "schema": {}
+        "schema": {
+         "$ref": "#/components/schemas/PlanListResponse"
+        }
        }
       },
       "description": "Successful Response"
@@ -38835,7 +38943,9 @@
      "200": {
       "content": {
        "application/json": {
-        "schema": {}
+        "schema": {
+         "$ref": "#/components/schemas/StoryMapSpec"
+        }
        }
       },
       "description": "Successful Response"

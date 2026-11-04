@@ -87,3 +87,18 @@ def test_report_has_real_signal():
     frontend = _frontend_api_calls()
     assert len(backend) >= 50, f"backend 路由收集异常：{len(backend)}"
     assert len(frontend) >= 20, f"frontend 调用收集异常：{len(frontend)}"
+
+
+def test_frontend_template_with_nullish_expression_remains_a_parameter(tmp_path, monkeypatch):
+    from app.lib.quality import drift
+
+    source = tmp_path / "frontend" / "lib"
+    source.mkdir(parents=True)
+    (source / "downloads.ts").write_text(
+        "// /api/v1/export/download/comment-only\n"
+        "const url = `/api/v1/export/download/${encodeURIComponent(job.result_ref ?? '')}`;\n"
+        "const simple = `/api/v1/export/download/${filename}`;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(drift, "repo_root", lambda: tmp_path)
+    assert drift._frontend_api_calls() == {"/api/v1/export/download/*": 2}

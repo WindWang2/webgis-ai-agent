@@ -11,6 +11,7 @@ FeatureCollection.
 Extracted from ``app/tools/spatial_stats.py`` (architecture-review F2): these
 were orphan algorithms doing deep math in the tool adapter layer.
 """
+from pyproj import CRS
 import logging
 from typing import Optional
 
@@ -28,7 +29,7 @@ from app.lib.cancellation import cancellable
 logger = logging.getLogger(__name__)
 
 
-def _crs_unit_factor(crs) -> float:
+def _crs_unit_factor(crs: Optional[CRS]) -> float:
     """投影 CRS 的线性轴因子（metres per CRS unit；非米轴才偏离 1.0）。
 
     GOAL 01（G3 修复）：voronoi/convex_hull/multi_ring_buffer 共用 ——

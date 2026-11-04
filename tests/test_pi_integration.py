@@ -301,8 +301,7 @@ class TestPiBridgeSubprocessFlow:
         # Stall budget large enough for several heartbeats before agent_settled.
         monkeypatch.setattr("app.agent_pi_bridge.PI_EVENT_STREAM_TIMEOUT", 10.0)
 
-        async def feed_after_delay():
-            await asyncio.sleep(0.07)  # ~3 heartbeat intervals of silence
+        async def feed_after_heartbeat():
             await rpc.events.put({
                 "type": "message_update",
                 "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "ok"},
@@ -310,11 +309,16 @@ class TestPiBridgeSubprocessFlow:
             await rpc.events.put({"type": "agent_end", "willRetry": False})
             await rpc.events.put({"type": "agent_settled"})
 
-        asyncio.create_task(feed_after_delay())
-
         events = []
+        fed = False
         async for ev in bridge.stream_prompt("hi", session_id="s"):
             events.append(ev)
+            # Synchronize with the stream, not wall-clock startup work. On a
+            # loaded worker prompt preparation can exceed the former 70ms
+            # delay, putting every event in the queue before polling begins.
+            if ": keepalive" in ev and not fed:
+                fed = True
+                await feed_after_heartbeat()
 
         joined = "\n".join(events)
         assert ": keepalive" in joined, (

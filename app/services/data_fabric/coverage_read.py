@@ -72,7 +72,7 @@ _GEOGRAPHIC_CRS_URIS = frozenset({
 class CoverageReadError(DataFabricError):
     """受控读取失败（reason code 封闭；details 携带协商事实）。"""
 
-    def __init__(self, message: str, *, reason_code: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, *, reason_code: str, details: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(message)
         self.reason_code = reason_code
         self.details = details or {}

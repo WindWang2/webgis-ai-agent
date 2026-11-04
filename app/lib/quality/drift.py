@@ -382,7 +382,10 @@ def _frontend_api_calls() -> Dict[str, int]:
                     while raw.endswith(")") and raw.count(")") > raw.count("("):
                         raw = raw[:-1]
                     if "${" in raw:
-                        raw = raw.split("${", 1)[0].rstrip("/")
+                        # Whitespace/operators inside a template expression can
+                        # end the lexical match early. It is still a path
+                        # parameter, not a literal call to the parent endpoint.
+                        raw = raw.split("${", 1)[0] + "*"
                     # MapLibre tile URL 的字面量占位 {z}/{x}/{y} 在后端是
                     # 真 path 参数，统一折叠为 *（与 backend 侧口径一致）。
                     raw = _PARAM_RE.sub("*", raw)

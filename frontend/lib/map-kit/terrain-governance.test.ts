@@ -1,3 +1,4 @@
+import type { Map as MaplibreMap, RasterDEMSourceSpecification } from 'maplibre-gl';
 import { describe, expect, it, vi } from 'vitest';
 
 /**
@@ -32,13 +33,13 @@ async function loadWithEnv(env: Record<string, string | undefined>) {
 
 function mockMap() {
   return {
-    _added: [] as Array<{ id: string; def: any }>,
+    _added: [] as Array<{ id: string; def: RasterDEMSourceSpecification }>,
     getSource: () => undefined,
-    addSource(id: string, def: any) {
+    addSource(id: string, def: RasterDEMSourceSpecification) {
       this._added.push({ id, def });
     },
     setTerrain: vi.fn(),
-  } as any;
+  };
 }
 
 describe('applyTerrain3D 治理入口（R1 P1-1）', () => {
@@ -47,7 +48,7 @@ describe('applyTerrain3D 治理入口（R1 P1-1）', () => {
       NEXT_PUBLIC_DEPLOYMENT_PROFILE: 'air_gapped',
     });
     const map = mockMap();
-    governance.applyTerrain3D(map, {}); // 无 url = spec 未绑定会话 DEM
+    governance.applyTerrain3D(map as unknown as MaplibreMap, {}); // 无 url = spec 未绑定会话 DEM
     expect(map.setTerrain).toHaveBeenCalledWith(null);
     expect(map._added).toEqual([]); // 不得 addSource 外网 DEM
     expect(evidence()).toContain('scene_terrain_no_source_air_gapped');
@@ -58,7 +59,7 @@ describe('applyTerrain3D 治理入口（R1 P1-1）', () => {
       NEXT_PUBLIC_DEPLOYMENT_PROFILE: 'air_gapped',
     });
     const map = mockMap();
-    governance.applyTerrain3D(map, {
+    governance.applyTerrain3D(map as unknown as MaplibreMap, {
       url: '/api/v1/layers/data/ref-dem/terrain-tiles/{z}/{x}/{y}.png',
     });
     expect(map._added.length).toBe(1);
@@ -71,9 +72,9 @@ describe('applyTerrain3D 治理入口（R1 P1-1）', () => {
       NEXT_PUBLIC_DEPLOYMENT_PROFILE: undefined,
     });
     const map = mockMap();
-    governance.applyTerrain3D(map, {});
+    governance.applyTerrain3D(map as unknown as MaplibreMap, {});
     expect(map._added.length).toBe(1);
-    expect(map._added[0].def.tiles[0]).toContain('elevation-tiles-prod/terrarium/');
+    expect(map._added[0].def.tiles?.[0]).toContain('elevation-tiles-prod/terrarium/');
     expect(evidence()).toEqual([]);
   });
 });

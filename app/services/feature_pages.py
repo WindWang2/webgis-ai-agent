@@ -131,7 +131,7 @@ class FeaturePageError(ValueError):
 class FeatureRevisionConflict(Exception):
     """revision guard 命中：翻页起点所属版本已不是当前版本（→ 409）。"""
 
-    def __init__(self, current_revision: Optional[int]):
+    def __init__(self, current_revision: Optional[int]) -> None:
         self.current_revision = current_revision
         super().__init__(f"ref revision advanced (current={current_revision!r})")
 

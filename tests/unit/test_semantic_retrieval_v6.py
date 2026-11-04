@@ -164,3 +164,41 @@ def test_embedding_retriever_bounded_failure(registry, monkeypatch):
     assert len(hits) <= 5
     for h in hits:
         assert h.score > 0.0
+
+
+def test_single_character_evidence_cannot_accumulate_into_strong_match(monkeypatch):
+    """Long descriptions must not turn unrelated CJK characters into confidence."""
+    from app.services.chat.tool_retrieval import ToolRetrievalIndex
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    registry.register(
+        name="unrelated_operation", description="甲 乙 丙 丁 戊 己 庚 辛",
+        func=lambda: {}, tier=2, domains=["dataset"],
+    )
+    index = ToolRetrievalIndex()
+    monkeypatch.setenv("GIS_TOOL_RETRIEVAL_V6", "1")
+    weak = index.rank(registry, "甲乙丙丁戊己庚辛", min_score=0.1, enriched=False)
+    assert len(weak) == 1
+    assert weak[0].score == 2.0
+    # Single-character recall survives for callers asking for a low score floor.
+    single = index.rank(registry, "甲", min_score=0.1, enriched=False)
+    assert single[0].score == 0.5
+    # The legacy kill switch retains its exact, unbounded V5 arithmetic.
+    monkeypatch.setenv("GIS_TOOL_RETRIEVAL_V6", "0")
+    legacy = index.rank(registry, "甲乙丙丁戊己庚辛", min_score=0.1, enriched=False)
+    assert legacy[0].score == 16.0
+
+
+def test_complete_terms_still_outweigh_incidental_characters(monkeypatch):
+    from app.services.chat.tool_retrieval import ToolRetrievalIndex
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    registry.register(name="incidental", description="甲 乙 丙 丁 戊 己 庚 辛", func=lambda: {})
+    registry.register(name="phrase", description="甲乙", func=lambda: {})
+    monkeypatch.setenv("GIS_TOOL_RETRIEVAL_V6", "1")
+    hits = ToolRetrievalIndex().rank(
+        registry, "甲乙丙丁戊己庚辛", min_score=0.1, enriched=False)
+    assert [hit.name for hit in hits] == ["phrase", "incidental"]
+    assert hits[0].score == 3.0

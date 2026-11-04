@@ -1768,6 +1768,11 @@
       "message": "图层 zoom 门不含导出比例尺，未进入导出件（{detail}）"
     },
     {
+      "code": "layer_generalized_artifact",
+      "severity": "info",
+      "message": "图层在导出 zoom 处使用预计算综合工件源（非原始数据面；统计/图例口径仍为 original_source）（layer: {detail}）"
+    },
+    {
       "code": "layer_ref_unavailable",
       "severity": "warning",
       "message": "图层引用的数据在矢量导出时不可用（未水合 inline 数据），该层未进入导出件（layer: {detail}）"

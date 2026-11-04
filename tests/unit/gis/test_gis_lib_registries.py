@@ -141,10 +141,17 @@ class TestAlgorithmRegistry:
         from app.lib.gis.algorithm_registry import get_algorithm_registry
 
         reg = get_algorithm_registry()
-        # 每个种子 capability 至少一个 native 算法
+        # Native capabilities require executable algorithms; planned surfaces
+        # must stay unavailable to analysis dispatch even when tools exist.
         from app.lib.gis.capability_registry import get_capability_registry
-        for cap in get_capability_registry().all_ids:
-            assert reg.algorithms_for_capability(cap), f"{cap} has no algorithm"
+        from app.lib.gis.algorithm_resolver import get_algorithm_resolver
+        capabilities = get_capability_registry()
+        for cap in capabilities.all_ids:
+            if capabilities.get(cap).status != "native":
+                assert get_algorithm_resolver().resolve(cap).status == "unavailable"
+                continue
+            assert any(a.runtime_status == "native" for a in
+                       reg.algorithms_for_capability(cap)), f"{cap} has no native algorithm"
 
     def test_capability_ordering_stable(self):
         from app.lib.gis.algorithm_registry import get_algorithm_registry

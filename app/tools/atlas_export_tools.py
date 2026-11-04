@@ -12,7 +12,7 @@ from app.tools.registry import ToolRegistry, tool
 logger = logging.getLogger(__name__)
 
 
-def register_atlas_export_tools(registry: ToolRegistry):
+def register_atlas_export_tools(registry: ToolRegistry) -> None:
     """注册批量图册导出工具。"""
 
     @tool(

@@ -276,6 +276,8 @@ class TestAssetRoutes:
         body = got.json()
         assert body["asset_revision"] == 1
         assert body["camera_keyframes"][0]["scene"]["mode"] == "2.5d"
+        # The response model must preserve the stored asset's additive fields.
+        assert StoryMapSpec.model_validate(body).model_dump(mode="json") == body
 
     async def test_invalid_spec_422(self, client):
         c, session_id = client

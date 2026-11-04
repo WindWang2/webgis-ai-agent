@@ -60,7 +60,7 @@ _COVERAGE_RELS = {
 class OGCCoveragesAdapter(GeospatialDataSourceAdapter):
     """OGC API - Coverages 的 coverage 发现与三态资格判定。"""
 
-    def __init__(self, connection_profile: ConnectionProfile):
+    def __init__(self, connection_profile: ConnectionProfile) -> None:
         super().__init__(connection_profile)
         self.raw_url = self.profile.url or ""
         self.url = (

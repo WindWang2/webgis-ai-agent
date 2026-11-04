@@ -94,6 +94,7 @@ GET,/api/v1/data-fabric/catalog/{item_id}/descriptor,gis:read,N,Y
 POST,/api/v1/data-fabric/catalog/{item_id}/explain,gis:write,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/features,gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/features/stream,gis:read,N,Y
+GET,/api/v1/data-fabric/catalog/{item_id}/ogc-tiles/{z}/{x}/{y},gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/pmtiles-tiles/{z}/{x}/{y},gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/preview,gis:read,N,Y
 POST,/api/v1/data-fabric/catalog/{item_id}/query,gis:write,N,Y

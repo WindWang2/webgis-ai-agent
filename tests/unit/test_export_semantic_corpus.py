@@ -128,7 +128,7 @@ def test_non_publication_families_never_enter_expected() -> None:
     annotations = expected_semantics(
         _load_case(FIXTURE_DIR / "case_annotations.json")["mapspec"])
 
-    for family in ("basemap", "export_layout", "label_layer"):
+    for family in ("basemap", "export_layout", "label_layer", "design_candidates"):
         assert family not in panels["chrome_families"]
         assert family not in disclosures["chrome_families"]
         assert family not in colorbar["chrome_families"]
@@ -331,6 +331,13 @@ def _matrix_mapspec(component_type: str) -> Dict[str, Any]:
         options = {"warnings": ["矩阵语料警告"]}
     elif component_type == "uncertainty_panel":
         options = {"uncertainty": {"confidence": 0.95}}
+    elif component_type == "scene_disclosure":
+        options = {"extraNotes": ["矩阵场景披露"]}
+    elif component_type == "elevation_profile":
+        options = {"points": [
+            {"distance_m": 0.0, "elevation_m": 100.0},
+            {"distance_m": 100.0, "elevation_m": 150.0},
+        ], "unit": "m"}
     elif component_type == "decision_panel":
         options = {"rows": [{"rank": 1, "name": "方案A", "score": 0.9, "vetoed": False}]}
 
@@ -366,6 +373,7 @@ def _matrix_mapspec(component_type: str) -> Dict[str, Any]:
              "legend_spec": legend_spec},
         ],
         "layout": {"components": [component]},
+        **({"scene": {"mode": "2.5d"}} if component_type == "scene_disclosure" else {}),
     }
 
 
@@ -389,6 +397,8 @@ _MATRIX_CASES: List[Tuple[str, str, Optional[str]]] = [
     ("graticule", "graticule", None),
     ("map_border", "map_border", None),
     ("inset_map", "inset_map", None),
+    ("scene_disclosure", "scene_disclosure", "scene"),
+    ("elevation_profile", "elevation_profile", "profile"),
 ]
 
 #: 当前 publication 渲染分支**尚未落地**的族（marker class 缺席）：
@@ -416,9 +426,7 @@ def _matrix_params() -> List[Any]:
 def test_publication_matrix_marker_present(component_type: str) -> None:
     """逐类型最小 spec 编译后，产物必须出现该族 marker class。
 
-    已落地 9 族（title/subtitle/north_arrow/scale_bar/legend/
-    categorical_legend/attribution/graticule/inset_map）必须直接通过；
-    其余 9 族 xfail(strict)（WP2 落地后自动转正）。
+    所有已发布 chrome 族必须直接通过，包括场景披露与高程剖面。
     """
     family = next(f for t, f, _k in _MATRIX_CASES if t == component_type)
     kind = next(k for t, _f, k in _MATRIX_CASES if t == component_type)
@@ -446,13 +454,13 @@ def test_publication_matrix_marker_present(component_type: str) -> None:
 
 
 def test_matrix_covers_all_chrome_component_types() -> None:
-    """矩阵用例必须覆盖 schema 全部 chrome 族（21 型 − 3 非 chrome 型 = 18）。"""
+    """矩阵用例必须覆盖 schema 全部 chrome 族（含 scene/profile；交互决策面不属于出版 chrome）。"""
     from app.lib.cartography.mapspec_schema import COMPONENT_TYPES
 
-    non_chrome = {"basemap", "export_layout", "label_layer"}
+    non_chrome = {"basemap", "export_layout", "label_layer", "design_candidates"}
     covered = {t for t, _f, _k in _MATRIX_CASES}
     assert covered == set(COMPONENT_TYPES) - non_chrome
-    assert len(_MATRIX_CASES) == 18
+    assert len(_MATRIX_CASES) == 20
 
 
 # ── 4) boundedness / 确定性 ─────────────────────────────────────────────

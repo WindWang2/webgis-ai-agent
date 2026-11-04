@@ -93,7 +93,7 @@ describe('ensureLayerData seam (#667)', () => {
       } as any,
     });
 
-    const result: any = await ensureLayerData(layer.id, 'selection-detail');
+    const result = await ensureLayerData(layer.id, 'selection-detail');
 
     expect(apiFetchMock).not.toHaveBeenCalled();
     expect(result?.status).toBe('fallback');
@@ -134,7 +134,7 @@ describe('ensureLayerData seam (#667)', () => {
       geometry: { type: 'Point', coordinates: [0, 0] },
       properties: { id: 0 },
     });
-    const result: any = await ensureLayerData(layer.id, 'selection-detail');
+    const result = await ensureLayerData(layer.id, 'selection-detail');
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect((apiFetchMock.mock.calls[0][0] as string)).toContain('/feature/0');
     expect(result.status).toBe('single-feature');
@@ -143,7 +143,7 @@ describe('ensureLayerData seam (#667)', () => {
   it('full-hydration reasons share one in-flight key (no double fetch)', async () => {
     const layer = makeMVTLayer();
     useHudStore.getState().addLayer(layer as any);
-    let resolveFc!: (v: any) => void;
+    let resolveFc!: (v: unknown) => void;
     apiFetchMock.mockReturnValueOnce(new Promise((res) => { resolveFc = res; }));
     const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} }] };
     const p1 = ensureLayerData(layer.id, 'filter');
@@ -179,7 +179,7 @@ describe('ensureLayerData seam (#667)', () => {
       geometry: { type: 'Point', coordinates: [0, 0] },
       properties: { name: 'x' },
     });
-    const result: any = await ensureLayerData(layer.id, 'selection-detail');
+    const result = await ensureLayerData(layer.id, 'selection-detail');
     expect(apiFetchMock).toHaveBeenCalledTimes(2);
     const secondUrl = apiFetchMock.mock.calls[1][0] as string;
     expect(secondUrl).toContain('id_mode=positional');
@@ -196,7 +196,7 @@ describe('ensureLayerData seam (#667)', () => {
       } as any,
     });
     apiFetchMock.mockRejectedValue(Object.assign(new Error('nf'), { status: 404 }));
-    const result: any = await ensureLayerData(layer.id, 'selection-detail');
+    const result = await ensureLayerData(layer.id, 'selection-detail');
     expect(apiFetchMock).toHaveBeenCalledTimes(2);
     expect(result.status).toBe('fallback');
   });
@@ -211,7 +211,7 @@ describe('ensureLayerData seam (#667)', () => {
       } as any,
     });
     apiFetchMock.mockRejectedValueOnce(Object.assign(new Error('nf'), { status: 404 }));
-    const result: any = await ensureLayerData(layer.id, 'selection-detail');
+    const result = await ensureLayerData(layer.id, 'selection-detail');
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect(result.status).toBe('fallback');
   });
@@ -226,13 +226,13 @@ describe('ensureLayerData seam (#667)', () => {
       } as any,
     });
     setLayerDataSession('sid-aaa', null);  // 身份持有者优先于瓦片 URL 兜底
-    let resolveFetch!: (v: any) => void;
+    let resolveFetch!: (v: unknown) => void;
     apiFetchMock.mockReturnValueOnce(new Promise((res) => { resolveFetch = res; }));
     const promise = ensureLayerData(layer.id, 'selection-detail');
     // 请求在途时会话切换（身份持有者变化 —— resolveSessionId 解析值随之变化）
     setLayerDataSession('sid-bbb', null);
     resolveFetch({ type: 'Feature', id: 'feat-7', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} });
-    const result: any = await promise;
+    const result = await promise;
     expect(result.status).toBe('cancelled');
     setLayerDataSession(undefined, undefined);
   });

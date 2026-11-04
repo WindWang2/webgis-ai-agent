@@ -1,6 +1,6 @@
 """Analysis Workflow 工具面（goal-02 M4）—— Pi/Agent 可调用的生产入口。
 
-四个 tier-1 工具（先例：scene_orchestration_tools / plan_mode 工具族）：
+四个按 analysis 域载入的 tier-2 工具：
 
 - ``webgis_analysis_workflow_plan``    场景→契约+typed 裁决（零执行）
 - ``webgis_analysis_workflow_run``     执行 pending 步骤（真实 dispatch/幂等/可取消）
@@ -15,6 +15,13 @@
 """
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from app.services.gis_harness.analysis_workflows.state import WorkflowRunState
+from typing import TYPE_CHECKING
+from pydantic import JsonValue
+
+if TYPE_CHECKING:
+    from app.services.tool_dispatch_service import ToolDispatchResult
 import hashlib
 import json
 import logging
@@ -58,12 +65,12 @@ from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
 
-def register_analysis_workflow_tools(registry: ToolRegistry):
+def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
     """注册 4 个分析工作流工具（append-only；不改既有工具）。"""
 
     # ── 内部助手 ─────────────────────────────────────────────────────────
 
-    async def _load_state(session_id: str, workflow_id: str):
+    async def _load_state(session_id: str, workflow_id: str) -> Optional[WorkflowRunState]:
         alias = state_alias(workflow_id)
         try:
             ref = await session_data_manager.resolve_alias(session_id, alias)
@@ -76,7 +83,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
             payload = None
         return state_from_payload(payload if isinstance(payload, dict) else {})
 
-    async def _persist_state(session_id: str, state) -> None:
+    async def _persist_state(session_id: str, state: WorkflowRunState) -> None:
         ref = await session_data_manager.store(
             session_id, state_to_payload(state), prefix="awf-state")
         await session_data_manager.set_alias(
@@ -86,7 +93,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
         from app.agent_pi_bridge import try_get_tool_registry
         return try_get_tool_registry()
 
-    def _production_dispatch():
+    def _production_dispatch() -> Optional[Callable[[str, dict[str, JsonValue], str], Awaitable[ToolDispatchResult]]]:
         """步骤分发 = 共享 ToolDispatchService（capability 记账/guardrail/
         复用/ref 卸载/SessionPlan 行——内层步骤与 Pi 直调同一生产缝）。
 
@@ -100,8 +107,8 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
         if try_get_tool_registry() is None:
             return None
 
-        async def _dispatch(tool_name: str, args: Dict[str, Any],
-                            session_id: str):
+        async def _dispatch(tool_name: str, args: dict[str, JsonValue],
+                            session_id: str) -> ToolDispatchResult:
             service = _get_shared_dispatch_service()
             tc = {"id": f"awf-{_uuid.uuid4().hex[:8]}",
                   "function": {"name": tool_name, "arguments": args}}
@@ -136,7 +143,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
     @tool(
         registry, name="webgis_analysis_workflow_plan",
         capabilities=["plan_workflow_orchestration"],
-        tier=1,
+        tier=2, domains=["analysis"],
         description=(
             "多步 GIS 分析工作流规划：把用户场景装配成带数据角色合同/科学前置/"
             "单位契约的步骤 DAG，并给出 typed 裁决（缺数据→blocked+获取建议；"
@@ -276,7 +283,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
     @tool(
         registry, name="webgis_analysis_workflow_run",
         capabilities=["plan_workflow_orchestration"],
-        tier=1,
+        tier=2, domains=["analysis"],
         description=(
             "执行分析工作流的 pending 步骤：每步经真实工具分发（单一执行真相），"
             "产物铸 ref:geojson-*、每步留 MethodUseContract receipt；同输入幂等"
@@ -406,7 +413,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
     @tool(
         registry, name="webgis_analysis_workflow_status",
         capabilities=["plan_workflow_orchestration"],
-        tier=1,
+        tier=2, domains=["analysis"],
         description=(
             "查询分析工作流状态：步骤三态/产物 ref/输入指纹/失效视图/"
             "证据摘要。用于回看哪步失败、检查产物 lineage、判断是否需要重算。"
@@ -461,7 +468,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry):
     @tool(
         registry, name="webgis_analysis_workflow_recompute",
         capabilities=["plan_workflow_orchestration"],
-        tier=1,
+        tier=2, domains=["analysis"],
         description=(
             "选择性局部重算：输入数据或步骤参数变更后，只重跑受影响子图"
             "（指纹对账 → stale 步骤及其下游闭包）；未受影响步骤的产物直接"

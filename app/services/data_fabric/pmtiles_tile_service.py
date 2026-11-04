@@ -23,6 +23,8 @@
 """
 from __future__ import annotations
 
+from app.services.data_fabric.tile_cache import DfTileCache
+from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -87,7 +89,7 @@ class PmtilesServeResult:
 class PmtilesTileService:
     """PMTiles XYZ 瓦片服务的进程内单例事实源。"""
 
-    def __init__(self, cache=TILE_CACHE, coalescer: Optional[TileBuildCoalescer] = None):
+    def __init__(self, cache: DfTileCache=TILE_CACHE, coalescer: Optional[TileBuildCoalescer] = None) -> None:
         self._cache = cache
         self._coalescer = coalescer or TileBuildCoalescer()
         # content-type 旁路记录（与主缓存同键；条目上限对齐主缓存默认值，
@@ -160,7 +162,7 @@ class PmtilesTileService:
         s["inflight"] = self._coalescer.inflight_keys()
         return s
 
-    def _resolve_governed_adapter(self, ds_model: Any):
+    def _resolve_governed_adapter(self, ds_model: Any) -> GeospatialDataSourceAdapter:
         """治理解析（registry 优先）—— 与 manager.query 路径同一条门。"""
         from app.services.data_fabric.manager import DataFabricManager
 

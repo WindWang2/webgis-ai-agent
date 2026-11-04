@@ -72,7 +72,7 @@ def _emit_finalization_chain(result: MapCompletionResult, *, passes: int = 0) ->
             final_map_status=result.final_map_status,
         )
     except Exception:  # noqa: BLE001 — 记录面绝不阻断终验
-        pass
+        logger.debug("[MapFinalizer] final verdict trace unavailable", exc_info=True)
 
 
 logger = logging.getLogger(__name__)
@@ -987,7 +987,7 @@ def map_product_block(
                         {f.code for f in report.findings})[:8],
                 }
         except Exception:  # noqa: BLE001 — 增值摘要，绝不阻断终验
-            pass
+            logger.debug("[MapFinalizer] product completeness summary unavailable", exc_info=True)
     # D04: Evidence/Claim ingest on map settle (fail-closed; never invent SUPPORTED).
     try:
         from app.services.gis_harness.hotpath_convergence import (

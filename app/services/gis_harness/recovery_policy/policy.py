@@ -15,6 +15,7 @@ runtime_repair、finalizer、analysis workflow recompute、owner 确认端点）
 """
 from __future__ import annotations
 
+from app.services.gis_harness.recovery_policy.contracts import RetryBudgetSnapshot
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
@@ -249,7 +250,7 @@ def decide_recovery(
 
 
 def _slice_backoff(schedule: Tuple[int, ...],
-                   budget) -> Tuple[int, ...]:
+                   budget: Optional[RetryBudgetSnapshot]) -> Tuple[int, ...]:
     """从当前 attempts 起取剩余退避（纯切片；≤4 段）。"""
     if not schedule:
         return ()

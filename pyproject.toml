@@ -40,6 +40,7 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.0.0",
     "httpx>=0.26.0",
+    "brotli>=1.2.1",
     "requests>=2.31.0",
     "pyyaml>=6.0.3",
     # 直接 import 的库必须直接声明（#618-35；同类问题见 requirements.txt 的 rich 注释）

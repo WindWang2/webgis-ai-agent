@@ -200,7 +200,7 @@ async def _record_degrade_reason(
         return "error:exception"
 
 
-def register_scene_orchestration_tools(registry: ToolRegistry):
+def register_scene_orchestration_tools(registry: ToolRegistry) -> None:
     """注册 G3D04 场景编排工具面。"""
 
     @tool(registry, name="get_3d_capabilities",

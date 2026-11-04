@@ -400,7 +400,7 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
     initial requests AND every redirect hop are validated.
     """
 
-    def __init__(self, *args, allow_private: bool = False, **kwargs):
+    def __init__(self, *args, allow_private: bool = False, **kwargs) -> None:
         self._allow_private = allow_private
         super().__init__(*args, **kwargs)
 
@@ -653,7 +653,7 @@ def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
     return real
 
 
-def _local_file_roots_from_settings():
+def _local_file_roots_from_settings() -> list[str]:
     """Resolve the configured local-file roots list from settings (helper for adapters)."""
     from app.core.config import settings
 
@@ -661,7 +661,7 @@ def _local_file_roots_from_settings():
     return [r.strip() for r in raw.split(",") if r.strip()]
 
 
-def _local_file_max_bytes_from_settings():
+def _local_file_max_bytes_from_settings() -> int:
     from app.core.config import settings
 
     return int(getattr(settings, "DATA_FABRIC_LOCAL_FILE_MAX_BYTES", 1024 * 1024 * 1024))

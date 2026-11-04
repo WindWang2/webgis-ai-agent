@@ -46,6 +46,8 @@ def test_local_scope_with_frames_driver_ok():
         atlas=AtlasPolicy(driver="frames"),
     )
     spec.validate_semantics()
+    assert spec.job_params()["atlas"]["driver"] == "frames"
+    assert spec.classification_scope is ClassificationScope.local
 
 
 def test_blank_session_rejected():

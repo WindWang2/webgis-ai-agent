@@ -92,7 +92,7 @@ async def register_analysis_binding(
                     update={"observer_feature_id": sel_feature[:128]}
                 )
         except Exception:  # noqa: BLE001 — 上下文缺席按无选择处理
-            pass
+            logger.debug("Observer selection unavailable for analysis binding", exc_info=True)
     bindings = await load_analysis_bindings(session_id)
     kept = [
         b

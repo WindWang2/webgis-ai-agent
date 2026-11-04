@@ -38,8 +38,10 @@ beautifulsoup4==4.15.0
     # via libpysal
 billiard==4.3.1
     # via celery
-brotli==1.2.0
-    # via fonttools
+brotli==1.2.1
+    # via
+    #   -r requirements.txt
+    #   fonttools
 celery==5.6.3
     # via -r requirements.txt
 certifi==2026.10.19

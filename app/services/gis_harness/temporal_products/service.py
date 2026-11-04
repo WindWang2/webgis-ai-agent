@@ -9,6 +9,11 @@ cursor 类控制被拒绝（回执 correction_hint），直到用户 unpin 或�
 """
 from __future__ import annotations
 
+from pydantic import JsonValue
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.mapspec.lifecycle_engine import MapSpecResult, MutationIntent
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -68,7 +73,7 @@ def _frame_by_id(temporal: Dict[str, Any], frame_id: str) -> Optional[Dict[str, 
     return None
 
 
-def _refusal(code: str, message: str, **extra) -> Dict[str, Any]:
+def _refusal(code: str, message: str, **extra: JsonValue) -> Dict[str, Any]:
     """typed fallback —— 工具面统一拒绝结构（不写 MapSpec）。"""
     out = {"status": "refused", "code": code, "message": message}
     out.update(extra)
@@ -77,12 +82,12 @@ def _refusal(code: str, message: str, **extra) -> Dict[str, Any]:
 
 async def _apply(
     session_id: str,
-    intent,
+    intent: MutationIntent,
     *,
     actor: str = "temporal_products",
     expected_revision: Optional[int] = None,
     reason: Optional[str] = None,
-):
+) -> MapSpecResult:
     from app.services.gis_world_state import apply_gis_mutation
 
     return await apply_gis_mutation(

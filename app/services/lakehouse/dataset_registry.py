@@ -370,7 +370,7 @@ def _resolve_org_for_owner(db, owner_type: str, owner_id: str) -> str:
             ).where(Conversation.id == str(owner_id))
         ).scalar_one_or_none()
     return str(org) if org is not None \
-        else tenancy.get_or_create_default_org_id_sync(db)
+        else tenancy.get_or_create_default_org_id_sync(db, commit=False)
 
 
 def create_dataset(

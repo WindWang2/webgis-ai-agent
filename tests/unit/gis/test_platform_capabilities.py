@@ -197,14 +197,17 @@ def test_platform_capability_directional_distribution_analysis(live_registry):
 
 def test_platform_capability_scene_representation(live_registry):
     _assert_binding("scene_representation", live_registry)
+    assert PLATFORM_BINDINGS["scene_representation"], "Scene capabilities must expose tools"
 
 
 def test_platform_capability_terrain_scene_binding(live_registry):
     _assert_binding("terrain_scene_binding", live_registry)
+    assert PLATFORM_BINDINGS["terrain_scene_binding"], "Scene capabilities must expose tools"
 
 
 def test_platform_capability_scene_camera_action(live_registry):
     _assert_binding("scene_camera_action", live_registry)
+    assert PLATFORM_BINDINGS["scene_camera_action"], "Scene capabilities must expose tools"
 
 
 def test_platform_capability_gis_context_revalidation(live_registry):

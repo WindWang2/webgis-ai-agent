@@ -12,6 +12,7 @@ Harness/Pi：Agent 可以「分页浏览大图层属性、按字段排序/typed 
 """
 from __future__ import annotations
 
+from pydantic import JsonValue
 import logging
 from typing import Any, List, Optional
 
@@ -70,7 +71,7 @@ def _extract_fc(data: Any) -> Optional[dict]:
     return None
 
 
-async def _resolve_ref_fc(session_id: str, ref_id: str):
+async def _resolve_ref_fc(session_id: str, ref_id: str) -> tuple[str, Optional[dict[str, JsonValue]], dict[str, JsonValue]]:
     """ref → (resolved, descriptor, fc)；鉴权/缺失语义与 REST 路由一致。"""
     resolved = await session_data_manager.resolve_alias(session_id, ref_id)
     descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
@@ -84,15 +85,15 @@ async def _resolve_ref_fc(session_id: str, ref_id: str):
     return resolved, descriptor, fc
 
 
-def register_layer_browse_tools(registry: ToolRegistry):
-    """注册图层浏览/聚合工具（tier-1 always-on；只读、有界）。"""
+def register_layer_browse_tools(registry: ToolRegistry) -> None:
+    """注册图层浏览/聚合工具（tier-2 dataset/mapspec 域；只读、有界）。"""
 
     @tool(
         registry,
         name="webgis_layer_features_page",
         capabilities=["layer_browse"],
-        tier=1,
-        domains=["dataset"],
+        tier=2,
+        domains=["dataset", "mapspec"],
         description=(
             "分页浏览会话图层的要素属性（有界读面，绝不整包下载）。"
             "支持单字段排序（order）与 typed 谓词过滤（where JSON）、bbox 窗口。"
@@ -223,8 +224,8 @@ def register_layer_browse_tools(registry: ToolRegistry):
         registry,
         name="webgis_layer_aggregate",
         capabilities=["layer_browse"],
-        tier=1,
-        domains=["dataset", "statistics"],
+        tier=2,
+        domains=["dataset", "mapspec", "statistics"],
         description=(
             "会话图层的分组聚合（count/sum/mean/min/max，全扫口径）：视口/"
             "过滤窗口统计的服务端真值。null 键/非数值计数与组溢出（__other__）"
@@ -328,8 +329,8 @@ def register_layer_browse_tools(registry: ToolRegistry):
         registry,
         name="webgis_layer_feature_detail",
         capabilities=["layer_browse"],
-        tier=1,
-        domains=["dataset"],
+        tier=2,
+        domains=["dataset", "mapspec"],
         description=(
             "按 id 取单要素详情（几何+属性）。链内稳定 id 寻址（id/OBJECTID/"
             "fid/osm_id/@id/featureId/feature_id）；MVT 无稳定 id 数据集用 "

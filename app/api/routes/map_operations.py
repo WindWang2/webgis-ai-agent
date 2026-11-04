@@ -54,7 +54,7 @@ async def _raise_if_deleted(session_id: str) -> None:
 async def list_map_operations(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
-):
+) -> MapOperationListResponse:
     """回执环（最新在前，≤8 条；slim 形状无 mapspec 大对象）。"""
     await _raise_if_deleted(session_id)
     from app.services.gis_harness.map_operations import list_operation_receipts
@@ -71,7 +71,7 @@ async def get_map_operation(
     session_id: str,
     operation_id: str,
     _conv: Conversation = Depends(require_owned_session),
-):
+) -> MapOperationReceiptResponse:
     await _raise_if_deleted(session_id)
     from app.services.gis_harness.map_operations import get_operation_receipt
 
@@ -95,7 +95,7 @@ async def commit_pending_map_operation(
     req: MapOperationCommitRequest,
     request: Request,
     _conv: Conversation = Depends(require_owned_session),
-):
+) -> MapOperationReceiptResponse:
     """owner 批准 pending 敏感操作（confirmation_required → 提交）。
 
     批准语义：预览卡已向 owner 披露 before/after；本端点在 owner 身份
