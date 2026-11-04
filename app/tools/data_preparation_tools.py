@@ -68,6 +68,8 @@ def register_data_preparation_tools(registry: ToolRegistry) -> None:
         name="prepare_dataset",
         args_model=PrepareDatasetArgs,
         side_effect="artifact_creation",
+        network=False,  # Inspects/transforms session data, not remote sources.
+        deterministic=False,  # Execution creates a new UUID plan and output ref.
         produced_refs=["data"],
         output_semantic_type="ref",
         result_size_policy="ref_offload",

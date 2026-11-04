@@ -61,6 +61,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -245,13 +246,19 @@ def _mask_ts_noncode(text: str) -> str:
 
 def _iter_files(root: Path, subdir: str, suffixes: tuple[str, ...]) -> list[Path]:
     base = root / subdir
-    if not base.is_dir():
+    if not base.is_dir() or any(part in _FRONTEND_EXCLUDE for part in base.parts):
         return []
-    return sorted(
-        p for p in base.rglob("*")
-        if p.suffix in suffixes
-        and not any(part in _FRONTEND_EXCLUDE for part in p.parts)
-    )
+    paths: list[Path] = []
+    # Prune before descent: filtering rglob's results still traverses every
+    # installed dependency and generated artifact, especially costly under
+    # coverage. Keep the same exclusions and do not follow directory symlinks.
+    for directory, dirnames, filenames in os.walk(base):
+        dirnames[:] = [name for name in dirnames if name not in _FRONTEND_EXCLUDE]
+        for name in (*dirnames, *filenames):
+            path = Path(directory) / name
+            if path.suffix in suffixes and name not in _FRONTEND_EXCLUDE:
+                paths.append(path)
+    return sorted(paths)
 
 
 def _rel(root: Path, path: Path) -> str:

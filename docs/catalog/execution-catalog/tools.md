@@ -119,9 +119,9 @@
 | gis_method_qualify | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | gis_method_rank | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | gis_skill_detail | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
-| gis_skill_policy | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
+| gis_skill_policy | 1.0#cv1 | stable | state_mutation | fast | light | small | plan_workflow_orchestration |
 | gis_skill_replay_check | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
-| gis_skill_search | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
+| gis_skill_search | 1.0#cv1 | stable | state_mutation | fast | light | small | plan_workflow_orchestration |
 | gis_task_classify | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | gis_template_plan | 1.0#cv1 | stable | pure | fast | light | small | thematic_cartography |
 | gwr_regression | 1.0#cv1 | stable | deterministic_compute | slow | heavy | medium | gwr |
@@ -347,7 +347,7 @@
 | variogram_model_selection | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | variogram_analysis |
 | vector_feature_edit_commit | 1.0#cv1 | stable | state_mutation | medium | medium | unknown | dataset_ingest |
 | vector_feature_edit_history | 1.0#cv1 | stable | cacheable_read | fast | light | unknown | dataset_ingest |
-| vector_feature_edit_preview | 1.0#cv1 | stable | deterministic_compute | medium | medium | unknown | dataset_ingest |
+| vector_feature_edit_preview | 1.0#cv1 | stable | state_mutation | medium | medium | unknown | dataset_ingest |
 | viewshed_analysis | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | terrain_viewshed |
 | voronoi_polygons | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | voronoi_tessellation |
 | watershed_delineation | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_hydrology |

@@ -5,7 +5,7 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**26/78** 个重计算文件含取消检查点。
+- 覆盖：**26/80** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
@@ -30,6 +30,7 @@
 | app/lib/geo_analysis/kriging.py | 9 | 87 | certified |
 | app/lib/geo_analysis/kriging_simulation.py | 2 | 9 | certified |
 | app/lib/geo_analysis/kriging_st.py | 1 | 5 | certified |
+| app/lib/geo_analysis/measurement_types.py | 0 | 0 | no-checkpoints |
 | app/lib/geo_analysis/measurements.py | 3 | 11 | certified |
 | app/lib/geo_analysis/network.py | 3 | 30 | certified |
 | app/lib/geo_analysis/phenology.py | 0 | 0 | no-checkpoints |
@@ -65,7 +66,8 @@
 | app/lib/geo_analysis/statistics_v3_diag.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/tasseled_cap.py | 0 | 10 | no-checkpoints |
 | app/lib/geo_analysis/temporal_cube.py | 0 | 2 | no-checkpoints |
-| app/lib/geo_analysis/terrain.py | 12 | 102 | certified |
+| app/lib/geo_analysis/terrain.py | 12 | 101 | certified |
+| app/lib/geo_analysis/terrain_types.py | 0 | 0 | no-checkpoints |
 | app/lib/geo_analysis/tin_interpolation.py | 0 | 21 | no-checkpoints |
 | app/lib/geo_analysis/trend_surface.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_analysis/ts_smoothing.py | 0 | 0 | no-checkpoints |
@@ -86,7 +88,7 @@
 | app/services/data_ingest/pipeline.py | 0 | 1 | no-checkpoints |
 | app/services/data_ingest/repair_planning.py | 0 | 6 | no-checkpoints |
 | app/services/mapspec_layer_pipeline.py | 0 | 0 | no-checkpoints |
-| app/services/mapspec_to_svg.py | 0 | 74 | no-checkpoints |
+| app/services/mapspec_to_svg.py | 0 | 54 | no-checkpoints |
 
 > no-checkpoints 是如实披露的缺口（非失败）：该文件当前没有
 > 长循环或尚未接线；认证表随补齐更新。

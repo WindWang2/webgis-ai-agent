@@ -531,7 +531,7 @@
 
 ## plan_workflow_orchestration（计划与工作流编排）
 - status: planned；version: 1.0
-- algorithm `platform.plan_workflow_orchestration`（priority=50）→ tools: cancel_execution_run, execute_execution_plan, execute_plan, get_execution_run, get_plan_status, propose_plan, rerun_workflow, save_plan_as_workflow, validate_execution_plan, webgis_action_plan, catalog_discover, catalog_lookup, capability_runtime_status
+- algorithm `platform.plan_workflow_orchestration`（priority=50）→ tools: cancel_execution_run, execute_execution_plan, execute_plan, get_execution_run, get_plan_status, propose_plan, rerun_workflow, save_plan_as_workflow, validate_execution_plan, webgis_action_plan, catalog_discover, catalog_lookup, capability_runtime_status, catalog_conformance, gis_task_classify, gis_method_qualify, gis_method_rank, gis_method_explain, gis_skill_search, gis_skill_detail, gis_skill_replay_check, gis_skill_policy, webgis_analysis_workflow_plan, webgis_analysis_workflow_run, webgis_analysis_workflow_status, webgis_analysis_workflow_recompute
 
 ## poi_query（POI 要素获取）
 - status: native；version: 1.0
@@ -1027,7 +1027,7 @@
 
 ## thematic_cartography（专题制图与样式）
 - status: planned；version: 1.0
-- algorithm `platform.thematic_cartography`（priority=50）→ tools: apply_layer_style, apply_template, combine_map_theme, control_floating_chart, create_3d_extrusion_map, create_thematic_map, list_templates, webgis_component_update, webgis_layout_set, webgis_map_combine, webgis_layer_upsert, webgis_layer_remove, webgis_map_intent, webgis_map_product, webgis_apply_composition, webgis_discover_components, webgis_plan_component_replace, gis_template_plan, plan_map_scene, set_map_scene
+- algorithm `platform.thematic_cartography`（priority=50）→ tools: apply_layer_style, apply_template, combine_map_theme, control_floating_chart, create_3d_extrusion_map, create_thematic_map, list_templates, webgis_component_update, webgis_layout_set, webgis_map_combine, webgis_layer_upsert, webgis_layer_remove, webgis_map_intent, webgis_map_product, webgis_apply_composition, webgis_discover_components, webgis_plan_component_replace, gis_template_plan, plan_map_scene, set_map_scene, gis_component_query, add_tile_service_layer, set_scene_assets, webgis_compile_map_plan, webgis_map_design_select, webgis_product_edit, webgis_list_composition_template_assets, webgis_save_composition_template
 
 ## traffic_status（实时路况）
 - status: native；version: 1.0

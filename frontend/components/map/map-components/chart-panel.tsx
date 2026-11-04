@@ -326,7 +326,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     if (!data.length) return null;
     // 组溢出行（__other__）保留 —— truncated 证据行披露其语义。
     return { ...state.chart, data };
-  }, [mvtAggregateMode, state, viewportAgg]);
+  }, [mvtAggregateMode, state, viewportAgg, mc]);
 
   const displayChart = mvtAggregateChart ?? extentFilteredChart;
 
