@@ -36,6 +36,7 @@ PR_LANE_PERF_FILES = (
     "test_data_runtime_v2_perf.py",
     "test_geobench_v3.py",
     "test_quality_scenario_corpus_perf.py",
+    "test_network_closest_facility_perf.py",
 )
 
 # Perf-marked files that stay nightly-only. They are collected by
@@ -345,6 +346,128 @@ def test_quality_corpus_perf_missing_from_pr_lane_fails_closed(
     monkeypatch.setattr(sys.modules[__name__], "WORKFLOW", patched)
     with pytest.raises(AssertionError, match="test_quality_scenario_corpus_perf.py"):
         test_test_perf_pr_lane_runs_fast_subset_no_cov()
+
+
+def _closest_facility_sources() -> tuple[str, str]:
+    unit = REPO_ROOT / "tests/unit/test_network_issue600_need_paths_accumulation.py"
+    perf = PERF_DIR / "test_network_closest_facility_perf.py"
+    return unit.read_text(encoding="utf-8"), perf.read_text(encoding="utf-8")
+
+
+def _assert_closest_facility_budget_contract(unit_source: str, perf_source: str) -> None:
+    """Both lanes must run the same original cold workload, with a strict 2s gate."""
+    unit_tree, perf_tree = ast.parse(unit_source), ast.parse(perf_source)
+    unit_functions = {n.name: n for n in unit_tree.body if isinstance(n, ast.FunctionDef)}
+    helper = unit_functions["run_closest_facility_8k_chain"]
+    # Lock the original inputs, fresh service, single real invocation and timer
+    # scope. This rejects hidden warmups, smaller graphs and constant timings.
+    expected_workload = ast.parse("""
+g, ds = _chain(8000)
+svc = NetworkClosestFacilityService()
+demand = DemandPoint(demand_id="d0", weight=1.0,
+    geometry={"type": "Point", "coordinates": [116.0, 39.0]})
+facilities = [Facility(facility_id="f0",
+    geometry={"type": "Point", "coordinates": [116.7999, 39.0]})]
+t0 = time.perf_counter()
+res = svc.network_closest_facility(
+    demand_points=[demand], facilities=facilities, graph=g, network_dataset=ds,
+    target_facility_count=1)
+elapsed = time.perf_counter() - t0
+return res, elapsed
+""").body
+    body = helper.body[1:] if ast.get_docstring(helper) is not None else helper.body
+    assert [ast.dump(n) for n in body] == [ast.dump(n) for n in expected_workload], (
+        "preserve the original cold 8k workload and complete service timer"
+    )
+    assert not helper.decorator_list
+    assert not any(
+        isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in n.targets)
+        for n in unit_tree.body
+    ), "8k correctness must remain in covered unit tests"
+    assert any(
+        isinstance(n, ast.Assign) and ast.unparse(n) == "pytestmark = pytest.mark.perf"
+        for n in perf_tree.body
+    ), "the 2s gate must be explicitly perf-marked"
+    assert any(
+        isinstance(n, ast.ImportFrom)
+        and n.module == "tests.unit.test_network_issue600_need_paths_accumulation"
+        and any(a.name == "run_closest_facility_8k_chain" and a.asname is None for a in n.names)
+        for n in perf_tree.body
+    ), "perf must import the shared real workload"
+    correctness = unit_functions["test_closest_facility_8k_chain_routes_are_correct"]
+    perf = next(n for n in perf_tree.body if isinstance(n, ast.FunctionDef)
+                and n.name == "test_closest_facility_8k_chain_under_acceptance_bound")
+    correctness_assertions = [
+        "len(res.routes) == 1",
+        "res.routes[0].total_distance_m == pytest.approx(8000 * 8.3, rel=0.01)",
+    ]
+    for fn, assignment, assertions in (
+        (correctness, "res, _ = run_closest_facility_8k_chain()", correctness_assertions),
+        (perf, "res, elapsed = run_closest_facility_8k_chain()", correctness_assertions + ["elapsed < 2.0"]),
+    ):
+        assert not fn.decorator_list, "neither lane may skip or reclassify the original scenario"
+        assert len(fn.body) == 1 + len(assertions)
+        assert ast.unparse(fn.body[0]) == assignment, "both lanes must execute the shared workload"
+        assert all(isinstance(n, ast.Assert) for n in fn.body[1:])
+        assert [ast.unparse(n.test) for n in fn.body[1:]] == assertions, (
+            "keep both original correctness assertions and the strict 2.0s perf bound"
+        )
+
+
+def test_closest_facility_correctness_and_original_budget_are_required() -> None:
+    _assert_closest_facility_budget_contract(*_closest_facility_sources())
+    run = _job_run_text("test-perf")
+    assert "tests/benchmarks/test_network_closest_facility_perf.py" in run
+    assert "-m perf" in run and "--no-cov" in run
+    assert "tests/unit/test_*.py" in _job_run_text("test-backend")
+    assert "test-perf" in _workflow()["jobs"]["release-gate"]["needs"]
+
+
+@pytest.mark.parametrize("source,before,after", [
+    ("unit", "_chain(8000)", "_chain(4000)"),
+    ("unit", "svc = NetworkClosestFacilityService()", "svc = cached_service"),
+    ("unit", "elapsed = time.perf_counter() - t0", "elapsed = 0.0"),
+    ("unit", "return res, elapsed", "return res, 0.0"),
+    ("unit", "[116.7999, 39.0]", "[116.0001, 39.0]"),
+    ("unit", "target_facility_count=1,", "target_facility_count=0,"),
+    ("unit", "assert len(res.routes) == 1", "assert True"),
+    ("unit", "def test_closest_facility_8k_chain_routes_are_correct", "@pytest.mark.perf\ndef test_closest_facility_8k_chain_routes_are_correct"),
+    ("perf", "elapsed < 2.0", "elapsed < 4.0"),
+    ("perf", "elapsed < 2.0", "elapsed <= 2.0"),
+    ("perf", "pytest.approx(8000 * 8.3, rel=0.01)", "pytest.approx(4000 * 8.3, rel=0.01)"),
+    ("perf", "assert len(res.routes) == 1", "assert True"),
+    ("perf", "res, elapsed = run_closest_facility_8k_chain()", "res, elapsed = None, 0.0"),
+    ("perf", "pytestmark = pytest.mark.perf", "pytestmark = pytest.mark.asyncio"),
+])
+def test_closest_facility_budget_mutations_fail_closed(source: str, before: str, after: str) -> None:
+    unit, perf = _closest_facility_sources()
+    original = unit if source == "unit" else perf
+    assert before in original
+    changed = original.replace(before, after, 1)
+    with pytest.raises(AssertionError):
+        _assert_closest_facility_budget_contract(changed if source == "unit" else unit,
+                                               changed if source == "perf" else perf)
+
+
+@pytest.mark.parametrize("mutation", ["omit_file", "enable_coverage", "optional_gate"])
+def test_closest_facility_perf_lane_mutations_fail_closed(
+    mutation: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    workflow = _workflow()
+    filename = "tests/benchmarks/test_network_closest_facility_perf.py"
+    if mutation == "optional_gate":
+        workflow["jobs"]["release-gate"]["needs"].remove("test-perf")
+    else:
+        for step in workflow["jobs"]["test-perf"]["steps"]:
+            if filename in step.get("run", ""):
+                before = filename if mutation == "omit_file" else "--no-cov"
+                step["run"] = step["run"].replace(before, "", 1)
+    patched = tmp_path / "production.yml"
+    patched.write_text(yaml.safe_dump(workflow), encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "WORKFLOW", patched)
+    with pytest.raises(AssertionError):
+        test_closest_facility_correctness_and_original_budget_are_required()
 
 
 def test_nightly_only_perf_files_are_documented_and_excluded_from_pr():
