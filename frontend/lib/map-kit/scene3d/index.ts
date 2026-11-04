@@ -17,6 +17,7 @@ export {
   sceneAssetStatusSnapshot,
   sceneAssetLatestStatuses,
   recordSceneAssetStatus,
+  resetSceneAssetStatus,
   resetSceneAssetStatusForTests,
 } from './status';
 export type { SceneAssetStatusEvent, SceneAssetStatusCode } from './status';

@@ -70,6 +70,30 @@ def mgr():
     return SessionDataManager(capacity=8)
 
 
+class TestAntimeridianContinuousLongitude:
+    """A2（评审）：地理 CRS 连续经度越过 ±180 的归一化与披露。"""
+
+    @pytest.mark.asyncio
+    async def test_continuous_longitude_bbox_wrapped_and_disclosed(self, tmp_path, mgr):
+        # 经度 170→190（连续存储，>180）：receipt bbox 必须 wrap 进
+        # [-180,180]（170 → 西界 170/东界 -170，跨子午线表示），且
+        # ANTIMERIDIAN_CROSSING 披露负侧半幅暂不可见 —— 此前原样发布
+        # 东界 190，MapLibre wrap 后得到覆盖全球的错误区间且零披露。
+        p = _write_dem(
+            tmp_path / "dem_am.tif",
+            bbox=(170.0, 10.0, 190.0, 12.0),
+        )
+        result = await register_session_terrain_source(
+            "s-am", p, declared_vertical_datum="EGM96", manager=mgr,
+        )
+        receipt = result["receipt"]
+        assert receipt is not None
+        assert receipt.bbox_epsg4326[0] == pytest.approx(170.0)
+        assert receipt.bbox_epsg4326[2] == pytest.approx(-170.0)
+        codes = [r.code for r in receipt.reasons]
+        assert "ANTIMERIDIAN_CROSSING" in codes
+
+
 class TestValidDem:
     def test_valid_meter_dem_with_declared_datum_is_analysis_grade(self, tmp_path):
         p = _write_dem(tmp_path / "dem.tif")

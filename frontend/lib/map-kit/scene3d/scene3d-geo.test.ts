@@ -186,6 +186,18 @@ describe('matrix utilities', () => {
     expect(dOut).toBeLessThan(0);
   });
 
+  it('planeToLocalSpace keeps the world offset (Mᵀ covariance, not a plane through the anchor)', () => {
+    // 评审（视锥剔除修复）：世界平面 x = 1.0（merc，锚点 0.794 之外）——
+    // 正确协变（n_L = Aᵀn、d_L = t·n + d）下局部原点在平面外 ~7e6 米；
+    // 旧实现误用 M⁻¹，平移贡献丢失 → d ≈ 0（过锚点平面），剔除相对
+    // 锚点而非相机。
+    const local = buildPlacementMatrix({ anchor: [104, 30.5] }, { format: '3dtiles' });
+    const plane = { normal: { x: 1, y: 0, z: 0 }, d: -1.0 };
+    const lp = planeToLocalSpace(plane, local);
+    expect(lp.d).toBeLessThan(-1e6);
+    expect(lp.normal.x).toBeCloseTo(1, 6);
+  });
+
   it('planeToLocalSpace transforms a world plane into local coords', () => {
     const local = buildPlacementMatrix({ anchor: [104, 30.5] }, { format: '3dtiles' });
     const worldPlanes = frustumPlanesFromMat4(identityMat4());

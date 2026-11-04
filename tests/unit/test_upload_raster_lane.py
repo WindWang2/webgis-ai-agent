@@ -128,6 +128,39 @@ class TestRasterTerrainLane:
         # 上传本体元数据剖析（V4 回归）不受车道影响
         assert body["meta"] and body["meta"].get("band_count") == 1
 
+    async def test_dedup_hit_still_runs_raster_lane(self, client):
+        """A1（评审）：幂等命中不得静默跳过栅格车道。
+
+        场景：首传未开 register_ref → 同内容再传开 register_ref —— 此前
+        dedup 早返回使 terrain ref 永不注册（terrain=None 且无披露）。
+        """
+        # 首传：不开 register_ref（无车道）
+        r1 = await client.post(
+            "/api/v1/upload",
+            files={"files": ("dem.tif", _dem_bytes(), "image/tiff")},
+            data={"session_id": "sess-dedup-lane", "vertical_datum": "EGM96", "vertical_unit": "m"},
+        )
+        assert r1.status_code == 200, r1.text
+        assert r1.json().get("deduplicated") is not True
+
+        # 再传：同内容 + register_ref → dedup 命中，但车道必须补跑
+        r2 = await client.post(
+            "/api/v1/upload",
+            files={"files": ("dem.tif", _dem_bytes(), "image/tiff")},
+            data={
+                "session_id": "sess-dedup-lane",
+                "register_ref": "true",
+                "vertical_datum": "EGM96",
+                "vertical_unit": "m",
+            },
+        )
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["deduplicated"] is True
+        assert body["session_ref"] and body["session_ref"].startswith("ref:terrain-")
+        assert body["ref_registration_error"] is None
+        assert body["terrain"]["qualification"] == "analysis_grade"
+
     async def test_missing_datum_declaration_is_display_only(self, client, app_and_db):
         r = await client.post(
             "/api/v1/upload",

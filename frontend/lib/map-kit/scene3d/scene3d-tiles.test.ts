@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildTilesetFixture } from './__fixtures__/glb';
+import { resolveUri } from './resource';
 import { parseTileset, TilesetParseError, type TileNode } from './tiles3d/tileset';
 import { scheduleTiles, type SchedulerCamera } from './tiles3d/scheduler';
 
@@ -50,6 +51,36 @@ describe('parseTileset', () => {
     expect(() =>
       parseTileset(buildTilesetFixture(), { ...OPTS, resolveUri: () => null }),
     ).toThrowError(TilesetParseError);
+  });
+
+  it('rejects protocol-relative and backslash content URIs (whitelist bypass, review B3)', () => {
+    // 生产解析器是 resource.resolveUri（isAllowedUrl 前置：`//` 与反斜杠
+    // 形态一律拒绝）—— 曾经的本地副本只查协议，跨源任意 https 放行。
+    expect(resolveUri('https://assets.test/tileset.json', '//evil.test/x.glb')).toBeNull();
+    expect(resolveUri('https://assets.test/tileset.json', '\\evil.test/x.glb')).toBeNull();
+    expect(resolveUri('https://assets.test/tileset.json', 'child.glb')).toBe('https://assets.test/child.glb');
+    // 管理器注入的就是该白名单实现：tileset content uri 走同一防线。
+    const doc = buildTilesetFixture() as unknown as { root: { content: { uri: string } } };
+    doc.root.content.uri = '//evil.test/x.glb';
+    expect(() => parseTileset(doc, { ...OPTS, resolveUri })).toThrowError(/rejected by resource policy/);
+  });
+
+  it('rejects tile trees deeper than the depth cap before recursing (review B5)', () => {
+    // 深链先序抛错 —— 不再先递归到 V8 栈溢出才被计数门拦住。
+    const deep: Record<string, unknown> = {
+      asset: { version: '1.1' },
+      geometricError: 100,
+      root: { boundingVolume: { sphere: [0, 0, 0, 10] }, geometricError: 100, content: { uri: 'l.glb' } },
+    };
+    let node = deep.root as Record<string, unknown>;
+    for (let i = 0; i < 5000; i++) {
+      const child: Record<string, unknown> = {
+        boundingVolume: { sphere: [0, 0, 0, 10] }, geometricError: 100, content: { uri: 'l.glb' },
+      };
+      node.children = [child];
+      node = child;
+    }
+    expect(() => parseTileset(deep, OPTS)).toThrowError(/deeper than/);
   });
 
   it('rejects legacy b3dm content', () => {
@@ -142,6 +173,37 @@ describe('scheduleTiles', () => {
     expect(d1.render.has('0')).toBe(false);
     expect(d1.render.has('0/0')).toBe(true);
     expect(d1.unload).toContain('0');
+  });
+
+  it('REPLACE partial readiness: ready ancestor suppresses loaded sibling (no parent-child double render, review B2)', () => {
+    const root = fixtureNodes();
+    const near = cam({ eyeEnu: { x: 0, y: 0, z: 150 } });
+    // 根就绪、child-a 就绪、child-b 未就绪：根兜底上屏，已就绪的 child-a
+    // 必须退场（修复前父子同屏 z-fighting；child-b 404/预算退避时重叠
+    // 永久化）；child-b 保留在 load（撤下请求会让兜底永久化）。
+    const d = scheduleTiles(
+      root, near, { maxSse: 16, maxVisibleTiles: 16 },
+      new Set(['0', '0/0']), new Set(['0', '0/0']),
+    );
+    expect(d.render.has('0')).toBe(true);
+    expect(d.render.has('0/0')).toBe(false); // 就绪后代被祖先覆盖
+    expect(d.load).toContain('0/1'); // 未就绪兄弟继续加载
+    expect(d.unload).toContain('0/0'); // 管理器据此摘挂（缓存不销毁）
+  });
+
+  it('REPLACE partial readiness: not-ready ancestor keeps loaded partial cover (no hole)', () => {
+    const root = fixtureNodes();
+    const near = cam({ eyeEnu: { x: 0, y: 0, z: 150 } });
+    // 根未就绪、child-a 就绪：child-a 的部分覆盖保留（部分优于空洞），
+    // 根与 child-b 排队加载。
+    const d = scheduleTiles(
+      root, near, { maxSse: 16, maxVisibleTiles: 16 },
+      new Set(['0/0']), new Set(['0/0']),
+    );
+    expect(d.render.has('0/0')).toBe(true);
+    expect(d.render.has('0')).toBe(true);
+    expect(d.load).toContain('0');
+    expect(d.load).toContain('0/1');
   });
 
   it('frustum culling skips off-screen subtrees without loading', () => {

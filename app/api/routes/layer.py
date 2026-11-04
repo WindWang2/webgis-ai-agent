@@ -17,6 +17,7 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from urllib.parse import quote
 
 from app.schemas.layer_schema import (
     LayerDescriptorResponse,
@@ -836,7 +837,9 @@ async def get_terrain_tile(
 async def get_terrain_tilejson(
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
-    token: Optional[str] = Query(None, description="匿名会话 owner token（tiles URL 将原样携带）"),
+    # A8（评审）：与 terrain-tiles 瓦片路由的 token Query 边界对齐（超长串
+    # 不进常量时间比较）。
+    token: Optional[str] = Query(None, max_length=128, description="匿名会话 owner token（tiles URL 将原样携带）"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(_require_owned_session_qtoken),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
@@ -910,10 +913,10 @@ async def get_terrain_tilejson(
 
     tiles_url = (
         f"/api/v1/layers/data/{ref_id}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
-        f"?session_id={session_id}"
+        f"?session_id={quote(str(session_id), safe='')}"
     )
     if effective_token:
-        tiles_url += f"&token={effective_token}"
+        tiles_url += f"&token={quote(str(effective_token), safe='')}"
 
     synthetic = bool(receipt_data.get("synthetic")) if isinstance(receipt_data, dict) else False
     attribution = "User-provided elevation data (session-owned)"
@@ -1084,9 +1087,11 @@ async def list_terrain_sources(
                 content_sha256=str(payload.get("content_sha256") or ""),
             )
         # 发布 URL 内嵌会话鉴权参数（评审 P2：消费方照抄即用，不自拼）。
-        _auth_qs = f"?session_id={session_id}"
+        # A9（评审）：query 值做 URL 编码 —— session_id 客户端可控，含 &/#/
+        # 空格时原样插值会截断/破坏 URL。
+        _auth_qs = f"?session_id={quote(str(session_id), safe='')}"
         if effective_token:
-            _auth_qs += f"&token={effective_token}"
+            _auth_qs += f"&token={quote(str(effective_token), safe='')}"
         session_entries.append(SessionTerrainSourceEntry(
             ref_id=ref_id,
             name=str(payload.get("name") or ref_id),

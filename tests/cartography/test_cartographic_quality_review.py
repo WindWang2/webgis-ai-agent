@@ -411,6 +411,37 @@ def test_raster_requires_truthful_bounds_independent_of_profile_bbox():
     assert report["passed"] is False
 
 
+def test_cartographic_fingerprint_covers_scene_only_changes():
+    """D1（评审）：scene-only 变更（模式/资产增删/显隐）必须换指纹。
+
+    此前 scene 不进投影 —— 变更 revision 前进而指纹不变，观察接受门
+    （只比对指纹）把 settle 窗口内的旧观察误盖章到新 revision。
+    """
+    base = _plain_mapspec()
+    fingerprints = {cartographic_fingerprint(base)}
+    for mutation in ("mode", "asset_add", "asset_visibility", "terrain_exaggeration"):
+        candidate = copy.deepcopy(base)
+        if mutation == "mode":
+            candidate["scene"] = {"mode": "3d"}
+        elif mutation == "asset_add":
+            candidate["scene"] = {
+                "mode": "3d",
+                "assets": [{"id": "campus", "source": "model-a"}],
+            }
+        elif mutation == "asset_visibility":
+            candidate["scene"] = {
+                "mode": "3d",
+                "assets": [{"id": "campus", "source": "model-a", "visible": False}],
+            }
+        else:
+            candidate["scene"] = {
+                "mode": "3d",
+                "terrain": {"source": "dem", "exaggeration": 2.0},
+            }
+        fingerprints.add(cartographic_fingerprint(candidate))
+    assert len(fingerprints) == 5
+
+
 def test_cartographic_generation_fingerprint_covers_filter_time_and_source_identity():
     base = _plain_mapspec()
     fingerprints = {cartographic_fingerprint(base)}

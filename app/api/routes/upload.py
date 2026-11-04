@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import ijson
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile
+from urllib.parse import quote
 from sqlalchemy import select, func, update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -325,6 +326,9 @@ async def upload_files(
                             raise _UploadDeduplicated({
                                 "id": dup_record.id,
                                 "original_name": dup_record.original_name,
+                                # A1（评审）：既有记录的存储路径 —— dedup 命中
+                                # 分支补跑栅格车道时需要（新目录已被清理）。
+                                "filename": dup_record.filename,
                                 "file_type": dup_record.file_type,
                                 "format": dup_record.format,
                                 "crs": dup_record.crs,
@@ -367,6 +371,30 @@ async def upload_files(
             shutil.rmtree(upload_dir, ignore_errors=True)
             warnings.append("内容与既有上传完全相同（sha256 一致），已复用既有记录")
             dup = dup_exc.fields
+            # A1（评审）：dedup 命中曾静默跳过增值车道 —— 「首传未开
+            # register_ref → 同内容再传开 register_ref」时 terrain ref 永不
+            # 注册（terrain=None 且无任何披露）。车道按 sha256 幂等，对既有
+            # 记录的存储路径补跑会复用/补注册，best-effort 纪律不变。
+            dedup_terrain: Optional[Dict[str, Any]] = None
+            dedup_session_ref: Optional[str] = None
+            dedup_lane_error: Optional[str] = None
+            if (register_ref or x_session_id is not None) and dup.get("file_type") == "raster":
+                lane_out = await _run_raster_ingest_lane(
+                    session_id=session_id,
+                    meta={"file_type": "raster", "output_path": dup.get("filename")},
+                    filename=str(dup.get("original_name") or filename),
+                    declared_vertical_datum=vertical_datum,
+                    declared_vertical_unit=vertical_unit,
+                    content_sha256=content_sha256,
+                    owner_token=owner_token,
+                )
+                dedup_session_ref = lane_out["session_ref"]
+                dedup_terrain = lane_out["terrain"]
+                dedup_lane_error = lane_out["error"]
+                if lane_out.get("duplicate") and lane_out.get("session_ref"):
+                    warnings.append(
+                        f"会话中已存在相同内容的 DEM 引用，复用 {lane_out['session_ref']}"
+                    )
             return UploadResponse(
                 id=dup["id"],
                 original_name=dup["original_name"],
@@ -381,6 +409,9 @@ async def upload_files(
                 ignored_files=ignored_files,
                 warnings=warnings,
                 message="上传成功（幂等导入：复用既有上传）",
+                session_ref=dedup_session_ref,
+                ref_registration_error=dedup_lane_error,
+                terrain=dedup_terrain,
             )
         except (OSError, RuntimeError, SQLAlchemyError) as e:
             # #546：DBAPIError 是 SQLAlchemyError 子类而非 OSError/RuntimeError ——
@@ -574,9 +605,11 @@ async def _run_raster_ingest_lane(
     if receipt_dump is not None:
         # 发布 URL 内嵌会话鉴权参数（评审 P2：消费方照抄即用；匿名会话
         # 由 owner_token 头补 token query —— 与 /sessions/{sid}/raster 同语义）。
-        auth_qs = f"?session_id={session_id}"
+        # A9（评审）：query 值 URL 编码 —— session_id 客户端可控，原样插值
+        # 在含 &/#/空格时截断/破坏 URL。
+        auth_qs = f"?session_id={quote(str(session_id), safe='')}"
         if owner_token:
-            auth_qs += f"&token={owner_token}"
+            auth_qs += f"&token={quote(str(owner_token), safe='')}"
         out["terrain"] = {
             "qualification": receipt_dump.get("qualification"),
             "reasons": [

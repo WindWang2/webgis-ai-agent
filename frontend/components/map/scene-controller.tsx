@@ -102,34 +102,66 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
   const [lighting, setLighting] = useState<Scene3dLightingPreset>('neutral');
   const [viewpoints, setViewpoints] = useState<SavedViewpoint[]>([]);
   const [assetVisibility, setAssetVisibility] = useState<Record<string, boolean>>({});
+  // C4：透明度本地受控态（与显隐对称 —— 非受控 defaultValue 会在面板
+  // 关开/资产重挂后与实际渲染透明度双向漂移）。
+  const [assetOpacity, setAssetOpacityState] = useState<Record<string, number>>({});
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const nextViewpointId = useRef(1);
-  // Escape 关闭（focus 在对话框内时）；dialog 容器 tabIndex=-1 承接焦点。
+  // C5：Escape 关闭挂 window（触发按钮是对话框的兄弟节点 —— 鼠标打开时
+  // 焦点停在按钮上，dialog 子树内的监听永远收不到 Escape）；open 时把
+  // 焦点移入对话框（tabIndex=-1 承接），键盘用户与读屏立即获得上下文。
   useEffect(() => {
     if (!open) return;
     const node = dialogRef.current;
-    if (!node) return;
+    node?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
         setOpen(false);
       }
     };
-    node.addEventListener('keydown', onKey);
-    return () => node.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [open]);
   // liveGeneration 触发重渲染；场景读 committed（单一真相）。
-  useSyncExternalStore(
+  const liveGeneration = useSyncExternalStore(
     subscribeMapSpecLive,
     getMapSpecLiveGeneration,
     getMapSpecLiveGeneration,
   );
+  // C3：本地表象在资产重挂后回灌 —— 渲染器侧重挂（revision 换代/setStyle
+  // 清扫/context restored）会把 presentation 复位为 null，本地覆盖若不
+  // 重放会形成「死开关」（UI 说隐藏、渲染器实际可见）。user-wins：本地
+  // 覆盖在 spec 同步后仍生效。
+  useEffect(() => {
+    const map = getMap?.() as unknown as object | null;
+    if (!map) return;
+    for (const [id, visible] of Object.entries(assetVisibility)) {
+      renderer.scene3dSetAssetPresentation(map, id, { visible });
+    }
+    for (const [id, opacity] of Object.entries(assetOpacity)) {
+      renderer.scene3dSetAssetPresentation(map, id, { opacity });
+    }
+    // liveGeneration 变化 = spec 世代变化（重挂窗口）；getMap 稳定缝。
+  }, [liveGeneration, getMap, assetVisibility, assetOpacity]);
   const scene = readScene();
   // 每渲染直读（sources 扫描廉价；committed 变更由 liveGeneration 驱动重渲染）。
   const terrain = terrainEvidence();
   const mode: SceneMode =
     scene?.mode === '2.5d' || scene?.mode === '3d' ? scene.mode : '2d';
   const exaggeration = scene?.terrain?.exaggeration ?? 1;
+  // C7：拖拽 draft —— 提交在途回调（busy）时 onChange 每步提交会被静默
+  // 丢弃、落定重渲染把拇指拽回旧值。拖拽期间显示本地值，pointer/键盘
+  // 释放时一次性提交。
+  const [exaggerationDraft, setExaggerationDraft] = useState<number | null>(null);
+  const exaggerationShown = exaggerationDraft ?? exaggeration;
+  const setExaggerationRef = useRef<(v: number) => void>(() => {});
+  const commitExaggerationDraft = useCallback(() => {
+    if (exaggerationDraft === null) return;
+    const value = exaggerationDraft;
+    setExaggerationDraft(null);
+    if (value !== exaggeration) setExaggerationRef.current(value);
+  }, [exaggerationDraft, exaggeration]);
   const pitch = scene?.camera?.pitch ?? 0;
   const bearing = scene?.camera?.bearing ?? 0;
 
@@ -193,6 +225,7 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
     [apply, scene, terrain],
   );
 
+  setExaggerationRef.current = setExaggeration;
   const nudgeCamera = useCallback(
     (field: 'pitch' | 'bearing', delta: number) => {
       const nextPitch =
@@ -225,8 +258,10 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
     (assetId: string, visible: boolean) => {
       const map = getMap?.() as unknown as object | null;
       if (!map) return;
+      // C3：renderer 拒收（资产在途未挂载）时回滚本地态 —— 否则 UI 显示
+      // 已隐藏而加载完成后资产实际可见。
+      if (!renderer.scene3dSetAssetPresentation(map, assetId, { visible })) return;
       setAssetVisibility((prev) => ({ ...prev, [assetId]: visible }));
-      renderer.scene3dSetAssetPresentation(map, assetId, { visible });
     },
     [getMap],
   );
@@ -234,7 +269,8 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
     (assetId: string, opacity: number) => {
       const map = getMap?.() as unknown as object | null;
       if (!map) return;
-      renderer.scene3dSetAssetPresentation(map, assetId, { opacity });
+      if (!renderer.scene3dSetAssetPresentation(map, assetId, { opacity })) return;
+      setAssetOpacityState((prev) => ({ ...prev, [assetId]: opacity }));
     },
     [getMap],
   );
@@ -312,7 +348,7 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
                 aria-checked={m === mode}
                 disabled={busy}
                 onClick={() => setMode(m)}
-                className={`flex-1 rounded-sm border px-2 py-1 transition-colors ${
+                className={`flex-1 rounded-sm border px-2 py-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                   m === mode
                     ? 'border-status-accent bg-status-accent-soft font-bold text-status-accent'
                     : 'border-edge-subtle text-ink-secondary hover:bg-surface-hover'
@@ -326,7 +362,7 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
           {/* 夸张系数（无证据禁用） */}
           <label className="mb-1 block text-ink-secondary" htmlFor="scene-exaggeration">
             {t('sceneController.exaggeration')}
-            <span className="ml-1 font-mono text-ink">{exaggeration}×</span>
+            <span className="ml-1 font-mono text-ink">{exaggerationShown}×</span>
           </label>
           <input
             id="scene-exaggeration"
@@ -334,9 +370,12 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
             min={EXAGGERATION_MIN}
             max={EXAGGERATION_MAX}
             step={EXAGGERATION_STEP}
-            value={exaggeration}
-            disabled={!terrain.ready || busy}
-            onChange={(e) => setExaggeration(Number(e.target.value))}
+            value={exaggerationShown}
+            disabled={!terrain.ready}
+            onChange={(e) => setExaggerationDraft(Number(e.target.value))}
+            onPointerUp={commitExaggerationDraft}
+            onKeyUp={commitExaggerationDraft}
+            onBlur={commitExaggerationDraft}
             className="w-full accent-[color:var(--agent-accent)]"
             aria-describedby="scene-exaggeration-note"
           />
@@ -354,13 +393,13 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
                 <button
                   type="button" aria-label={t('sceneController.pitchDown')}
                   disabled={busy} onClick={() => nudgeCamera('pitch', -PITCH_STEP)}
-                  className="rounded-sm border border-edge-subtle px-1.5 hover:bg-surface-hover"
+                  className="rounded-sm border border-edge-subtle px-1.5 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
                 >−</button>
                 <span className="flex-1 text-center font-mono">{pitch}°</span>
                 <button
                   type="button" aria-label={t('sceneController.pitchUp')}
                   disabled={busy} onClick={() => nudgeCamera('pitch', PITCH_STEP)}
-                  className="rounded-sm border border-edge-subtle px-1.5 hover:bg-surface-hover"
+                  className="rounded-sm border border-edge-subtle px-1.5 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
                 >+</button>
               </div>
             </div>
@@ -370,13 +409,13 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
                 <button
                   type="button" aria-label={t('sceneController.bearingDown')}
                   disabled={busy} onClick={() => nudgeCamera('bearing', -BEARING_STEP)}
-                  className="rounded-sm border border-edge-subtle px-1.5 hover:bg-surface-hover"
+                  className="rounded-sm border border-edge-subtle px-1.5 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
                 >−</button>
                 <span className="flex-1 text-center font-mono">{bearing}°</span>
                 <button
                   type="button" aria-label={t('sceneController.bearingUp')}
                   disabled={busy} onClick={() => nudgeCamera('bearing', BEARING_STEP)}
-                  className="rounded-sm border border-edge-subtle px-1.5 hover:bg-surface-hover"
+                  className="rounded-sm border border-edge-subtle px-1.5 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
                 >+</button>
               </div>
             </div>
@@ -406,7 +445,7 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
                       min={0.05}
                       max={1}
                       step={0.05}
-                      defaultValue={1}
+                      value={assetOpacity[asset.id] ?? 1}
                       disabled={!mapForPresentation || !effectiveVisible}
                       onChange={(e) => setAssetOpacity(asset.id, Number(e.target.value))}
                       className="w-full accent-[color:var(--agent-accent)]"

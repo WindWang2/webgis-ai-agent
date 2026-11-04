@@ -6,9 +6,12 @@
  *   scene.mode === '2d' 时资产卸载（诚实降级；footprint 表达归矢量层）。
  * - glTF/GLB：解析 → build → 单层挂载；3D Tiles：tileset → SSE 调度
  *   （事件驱动：move/rotate/pitch + 加载完成再触发；无自建 rAF 循环）→
- *   tile 缓存 LRU（身份 = tile id + 资产 revision）+ 并发上限 + AbortController。
+ *   tile 缓存 LRU（身份 = tile id + 资产 revision；退出 render 集只摘挂
+ *   不销毁，跨 tick 回归零重取；容量/预算逐出负责释放）+ 并发上限 +
+ *   AbortController。
  * - dispose：geometry/material/texture 全释放；tileset abort；状态环留痕。
- * - pick：逆 MVP 造 ray（世界空间）→ 各资产局部（米）Raycaster → PickEvent。
+ * - pick：逆 MVP 造 ray（mercator 世界）→ 各资产局部（米）Raycaster →
+ *   PickEvent（世界域 = mainMatrix 输入域 mercator [0,1]³，与 lastMvp 同帧）。
  */
 
 import * as THREE from 'three';
@@ -16,6 +19,7 @@ import type { MapSpec, Model3dMapSpecSource, SceneAssetSpec } from '@/lib/mapspe
 
 import {
   buildPlacementMatrix,
+  circumferenceAtLatitude,
   frustumPlanesFromMat4,
   gltfToEnuFix,
   invertMat4,
@@ -36,7 +40,7 @@ import {
   type ResourceBudgetLimits,
   type SceneResourceUsage,
 } from './resource-budget';
-import { fetchBinary, fetchJson, Scene3dResourceFailure } from './resource';
+import { fetchBinary, fetchJson, resolveUri, Scene3dResourceFailure } from './resource';
 import { recordSceneAssetStatus } from './status';
 import { parseTileset, TilesetParseError, type ParsedTileset, type TileNode } from './tiles3d/tileset';
 import { scheduleTiles } from './tiles3d/scheduler';
@@ -63,6 +67,8 @@ export interface Scene3dSyncOptions {
 interface TileEntry {
   tile: TileNode;
   model: BuiltModel | null;
+  /** 模型是否挂载在渲染 group 上（false = 缓存态：保留模型不渲染）。 */
+  attached: boolean;
   loading: boolean;
   lastUsed: number;
   /** 失败退避：上次失败时间戳（review P1 —— 200ms tick 不重打同一 404）。 */
@@ -96,10 +102,8 @@ interface MountedAsset {
   controller: AbortController;
   tickTimer: ReturnType<typeof setTimeout> | null;
   lastTickAt: number;
-  /** 最近帧 MVP（拾取/眼位/视锥消费；像素世界域）。 */
+  /** 最近帧 MVP（拾取/眼位/视锥消费；mercator [0,1]³ 世界域）。 */
   lastMvp: Mat4 | null;
-  /** 最近帧 worldSize（placement×W 进像素域 —— 与 lastMvp 同帧配对）。 */
-  lastWorldScale: number;
   /** 挂载世代（sync 差分时旧代在途回调作废）。 */
   generation: number;
   /** 加载是否仍在途（终态 mounted/load_failed 落定前为 true —— 取消判定）。 */
@@ -269,10 +273,10 @@ export class Scene3DManager {
   pick(px: number, py: number, canvasWidth: number, canvasHeight: number): Scene3dPickHit | null {
     const ray = this.rayFromPixel(px, py, canvasWidth, canvasHeight);
     if (!ray) return null;
-    // 世界域射线（像素 mercator）—— Raycaster 按各 mesh 的 matrixWorld
-    // （含 group 的 placement×W，渲染期更新）自行换算；**不得**预变换到
-    // 局部（Mesh.raycast 会再乘 inverse(matrixWorld) —— 双重变换会让
-    // 包围球早退，永远 0 命中）。
+    // 世界域射线（mercator [0,1]³，与 mainMatrix 同域）—— Raycaster 按各
+    // mesh 的 matrixWorld（含 group 的 placement，渲染期更新）自行换算；
+    // **不得**预变换到局部（Mesh.raycast 会再乘 inverse(matrixWorld) ——
+    // 双重变换会让包围球早退，永远 0 命中）。
     const raycaster = new THREE.Raycaster();
     raycaster.ray.origin.set(ray.origin.x, ray.origin.y, ray.origin.z);
     raycaster.ray.direction.set(ray.direction.x, ray.direction.y, ray.direction.z);
@@ -287,8 +291,11 @@ export class Scene3DManager {
         asset.singleModel.root.traverse((o) => { if ((o as THREE.Mesh).isMesh) targets.push(o); });
       }
       if (asset.tiles) {
+        // 只检视挂载中的 tile（attached）：缓存态模型不在屏上，命中即幻影。
         for (const entry of asset.tiles.values()) {
-          if (entry.model) entry.model.root.traverse((o) => { if ((o as THREE.Mesh).isMesh) targets.push(o); });
+          if (entry.model && entry.attached) {
+            entry.model.root.traverse((o) => { if ((o as THREE.Mesh).isMesh) targets.push(o); });
+          }
         }
       }
       const hits = raycaster.intersectObjects(targets, false);
@@ -299,13 +306,13 @@ export class Scene3DManager {
     if (!best) return null;
     const mesh = best.hit.object as THREE.Mesh;
     const meta = (mesh.userData?.scene3d ?? {}) as { nodeName?: string | null; extras?: unknown };
-    // 命中点已在像素世界（matrixWorld 域）；除 W 回 [0,1] mercator 转地理。
-    const w = best.asset.lastWorldScale || 1;
-    const worldPoint = { x: best.hit.point.x / w, y: best.hit.point.y / w, z: best.hit.point.z / w };
+    // 命中点已在 mercator 世界（matrixWorld 域）—— 直解地理（z × 纬度周长
+    // = 米，worldToLngLatAlt 内完成）。
+    const worldPoint = { x: best.hit.point.x, y: best.hit.point.y, z: best.hit.point.z };
     const ll = worldToLngLatAlt(worldPoint);
-    // 像素距离 → 米：pixelPerMeter = W / circumferenceAtLatitude(anchor)。
+    // mercator 单位 → 米：局部各向同性，×锚点纬度周长。
     const anchor = this.anchorOf(best.asset);
-    const pixelPerMeter = (best.asset.lastWorldScale || 1) / (2 * Math.PI * 6371008.8 * Math.cos(anchor.lat * Math.PI / 180));
+    const metersPerMercUnit = circumferenceAtLatitude(anchor.lat);
     return {
       assetId: best.asset.assetId,
       sourceId: best.asset.sourceId,
@@ -313,7 +320,7 @@ export class Scene3DManager {
       nodeName: meta.nodeName ?? null,
       extras: best.hit.object.userData?.scene3dTileExtras ?? meta.extras ?? undefined,
       lngLat: ll,
-      distanceM: best.hit.distance / (pixelPerMeter || 1),
+      distanceM: best.hit.distance * metersPerMercUnit,
     };
   }
 
@@ -436,6 +443,7 @@ export class Scene3DManager {
         entry.model?.dispose();
         if (entry.model) this.ledger.release(tileOwnerKey(asset.assetId, entry.tile.id));
         entry.model = null;
+        entry.attached = false;
         entry.loading = false;
       }
       if (asset.singleModel) {
@@ -485,7 +493,6 @@ export class Scene3DManager {
       tickTimer: null,
       lastTickAt: 0,
       lastMvp: null,
-      lastWorldScale: 1,
       generation: 0,
       loadPending: true,
       presentation: { visible: null, opacity: null },
@@ -499,10 +506,9 @@ export class Scene3DManager {
       group: mounted.group,
       placement: () => mounted.placement,
       hooks: {
-        onFrame: (mvp, worldScale) => {
+        onFrame: (mvp) => {
           if (mounted.generation !== generation) return;
           mounted.lastMvp = Array.from(mvp as ArrayLike<number>) as Mat4;
-          mounted.lastWorldScale = worldScale;
         },
       },
       onRenderError: () => {
@@ -595,7 +601,9 @@ export class Scene3DManager {
     const parsed = parseTileset(doc, {
       tilesetUrl,
       anchor: { lng: anchor[0], lat: anchor[1] },
-      resolveUri: resolveUriSafe,
+      // B3（评审）：复用 resource.resolveUri 的 URL 白名单（协议相对 `//`、
+      // 反斜杠形态一律拒绝）—— 本地副本只查协议，绕过了 SSRF 纪律。
+      resolveUri,
     });
     mounted.tileset = parsed;
     mounted.tiles = new Map<string, TileEntry>();
@@ -674,12 +682,13 @@ export class Scene3DManager {
 
     const eye = this.eyeFromMvp(mounted.lastMvp);
     if (!eye) return; // 首帧未渲染：等 onFrame 提供矩阵
-    const placementPx = pixelPlacement(mounted);
-    const eyeEnu = worldToEnu(placementPx, eye);
+    // 世界域 = mercator [0,1]³（与 lastMvp/mainMatrix 同域）—— placement
+    // 直用，不再 ×worldScale 进像素域。
+    const eyeEnu = worldToEnu(mounted.placement, eye);
 
     const worldPlanes = mounted.lastMvp ? frustumPlanesFromMat4(mounted.lastMvp) : null;
     const enuPlanes = worldPlanes
-      ? worldPlanes.map((p) => planeToLocalSpace(p, placementPx))
+      ? worldPlanes.map((p) => planeToLocalSpace(p, mounted.placement))
       : null;
 
     const loadedSet = new Set<string>();
@@ -699,20 +708,30 @@ export class Scene3DManager {
     );
     mounted.prevRender = decision.render;
 
-    // 卸载 = 释放模型但**保留 entry**（review P0：删 entry 会让调度器后续
-    // 选中该 tile 时 tiles.get 为空而静默跳过 —— 相机拉回即永久破洞）。
+    // 卸载 = 摘挂但**保留模型**（tile 缓存 LRU 语义：相机在 SSE 阈值附近
+    // 抖动时零网络重取；释放交给 evictTileLru/evictForBudget）。entry 始终
+    // 保留（review P0：删 entry 会让调度器后续选中该 tile 时静默跳过）。
+    const now = Date.now();
     for (const id of decision.unload) {
       const entry = tiles.get(id);
-      if (!entry || !entry.model) continue;
+      if (!entry || !entry.model || !entry.attached) continue;
       mounted.group.remove(entry.model.root);
-      entry.model.dispose();
-      entry.model = null;
-      this.ledger.release(tileOwnerKey(mounted.assetId, id));
+      entry.attached = false;
+      entry.lastUsed = now;
+    }
+    // 回归重挂：render 集内已有缓存模型的 tile 直接复挂（缓存命中）。
+    for (const id of decision.render) {
+      const entry = tiles.get(id);
+      if (!entry || !entry.model) continue;
+      if (!entry.attached) {
+        entry.attached = true;
+        mounted.group.add(entry.model.root);
+      }
+      entry.lastUsed = now;
     }
     this.evictTileLru(mounted);
 
     const maxLoads = this.options.maxConcurrentTileLoads ?? 4;
-    const now = Date.now();
     for (const id of decision.load) {
       // 跨资产共享信号量：N 资产 × per-asset 上限的乘积放大在此收口。
       if (this.globalInFlight >= maxLoads) break;
@@ -771,6 +790,7 @@ export class Scene3DManager {
         throw err;
       }
       entry.model = built;
+      entry.attached = true;
       // OGC 3D Tiles 1.1：tile 的 glTF 内容依规范是 y-up —— 运行时施加
       // y-up→z-up（tile 帧是 z-up ENU；等价 CesiumJS Y_UP_TO_Z_UP）。
       built.root.matrix.fromArray(
@@ -804,15 +824,19 @@ export class Scene3DManager {
     const cap = this.options.tileCacheSize ?? 96;
     const tiles = mounted.tiles;
     if (!tiles) return;
-    const cached = [...tiles.values()].filter((t) => t.model).sort((a, b) => a.lastUsed - b.lastUsed);
+    // 缓存 = 全部已解析模型（挂载 + 摘挂）；挂载中（attached）受保护。
+    const cached = [...tiles.values()]
+      .filter((t) => t.model)
+      .sort((a, b) => a.lastUsed - b.lastUsed);
     let excess = cached.length - cap;
     for (const entry of cached) {
       if (excess <= 0) break;
-      if (mounted.prevRender.has(entry.tile.id)) continue;
+      if (entry.attached) continue;
       entry.model?.dispose();
       if (entry.model) mounted.group.remove(entry.model.root);
       // LRU 语义：驱逐模型、保留 entry —— tile 可按 SSE 重新加载。
       entry.model = null;
+      entry.attached = false;
       this.ledger.release(tileOwnerKey(mounted.assetId, entry.tile.id));
       excess -= 1;
     }
@@ -847,12 +871,12 @@ export class Scene3DManager {
     for (;;) {
       const overDim = this.ledger.wouldExceed(pending);
       if (!overDim) return;
-      // 候选：已缓存模型 + 不在本资产 render 集（可见内容受保护）。
+      // 候选：已缓存模型 + 未挂载（可见内容受保护；attached 即在屏）。
       const candidates: { asset: MountedAsset; entry: TileEntry }[] = [];
       for (const asset of this.mounted.values()) {
         if (!asset.tiles) continue;
         for (const entry of asset.tiles.values()) {
-          if (entry.model && !asset.prevRender.has(entry.tile.id)) {
+          if (entry.model && !entry.attached) {
             candidates.push({ asset, entry });
           }
         }
@@ -863,6 +887,7 @@ export class Scene3DManager {
       asset.group.remove(entry.model!.root);
       entry.model!.dispose();
       entry.model = null;
+      entry.attached = false;
       this.ledger.release(tileOwnerKey(asset.assetId, entry.tile.id));
     }
   }
@@ -984,7 +1009,7 @@ function worldToEnu(placement: Mat4, world: WorldCoord): WorldCoord {
 
 function collectTiles(tile: TileNode, into: Map<string, TileEntry>): void {
   if (tile.contentUri) {
-    into.set(tile.id, { tile, model: null, loading: false, lastUsed: 0, failedAt: null, budgetDeferredAt: null });
+    into.set(tile.id, { tile, model: null, attached: false, loading: false, lastUsed: 0, failedAt: null, budgetDeferredAt: null });
   }
   for (const c of tile.children) collectTiles(c, into);
 }
@@ -1013,31 +1038,7 @@ function applyOpacityToModel(model: BuiltModel | null, opacity: number): void {
   });
 }
 
-/** 像素世界 placement：S(W)·placement（与最近帧 mvp 同域）。 */
-function pixelPlacement(asset: MountedAsset): Mat4 {
-  const w = asset.lastWorldScale;
-  const m = asset.placement.slice() as Mat4;
-  // 均匀缩放预乘：T(a)·R·F·S(u) → S(W)·… = T(aW)·R·F·S(uW)
-  m[0] *= w; m[1] *= w; m[2] *= w;
-  m[4] *= w; m[5] *= w; m[6] *= w;
-  m[8] *= w; m[9] *= w; m[10] *= w;
-  m[12] *= w; m[13] *= w; m[14] *= w;
-  return m;
-}
-
 function matEquals(a: Mat4, b: Mat4): boolean {
   for (let i = 0; i < 16; i++) if (a[i] !== b[i]) return false;
   return true;
-}
-
-function resolveUriSafe(base: string, uri: string): string | null {
-  try {
-    const resolved = new URL(uri, base);
-    if (resolved.protocol !== 'https:' && resolved.origin !== (typeof location !== 'undefined' ? location.origin : '')) {
-      return null;
-    }
-    return resolved.toString();
-  } catch {
-    return null;
-  }
 }

@@ -283,6 +283,9 @@ export function MapPanel({
     zoom: DEFAULT_VIEW_STATE.zoom,
     centerLat: DEFAULT_VIEW_STATE.latitude,
     bearing: 0,
+    // 真实俯仰（move 结算时更新；HUD 俯仰指示消费 —— 此前硬编码 60/0 与
+    // spec 相机脱钩）。
+    pitch: 0,
     // P3：graticule 真实地理 bounds（move 结算时更新；缺席=渲染器自弃）。
     bounds: undefined as { west: number; south: number; east: number; north: number } | undefined,
   })
@@ -1008,7 +1011,23 @@ export function MapPanel({
   } | null>(null)
 
   // G3D02 v1.7（M5）：3D 拾取检视卡（asset/tile/node 元数据 + 命中坐标）。
-  const [scene3dPick, setScene3dPick] = useState<(Scene3dPickHit & { x: number; y: number }) | null>(null)
+  // ref 镜像：清卡路径（点空白/要素命中/地图移动）需读当前卡以补发配对的
+  // feature_deselected —— setState 函数式更新器里发事件会违反纯度约定。
+  const [scene3dPick, setScene3dPickState] = useState<(Scene3dPickHit & { x: number; y: number }) | null>(null)
+  const scene3dPickRef = useRef<(Scene3dPickHit & { x: number; y: number }) | null>(null)
+  const setScene3dPick = useCallback((p: (Scene3dPickHit & { x: number; y: number }) | null) => {
+    scene3dPickRef.current = p
+    setScene3dPickState(p)
+  }, [])
+  const clearScene3dPick = useCallback(() => {
+    const prev = scene3dPickRef.current
+    scene3dPickRef.current = null
+    setScene3dPickState(null)
+    // 评审 C11：纯 3D 选择发过 feature_selected，关闭必须配对 deselect
+    //（关闭按钮此前已单独发；点空白/要素命中原先漏发）。
+    if (prev) emitFeatureDeselected({ layerId: `scene3d:${prev.assetId}` })
+    // emitFeatureDeselected 是模块级导入（稳定标识），不进依赖数组。
+  }, [])
 
   // 交互测量工具状态（HUD 联动）。V7：模式真相迁 toolSlice（与框选/绘制
   // 互斥，会话切换自动复位）；在途测量点是瞬时草稿，保留本地 state。
@@ -1129,6 +1148,11 @@ export function MapPanel({
         center: map.getCenter?.(), zoom: map.getZoom?.(), pitch: map.getPitch?.(), bearing: map.getBearing?.(),
       })
       if (hit3d) {
+        // 评审 C10：与下方「二维未命中 → 3D」分支同载荷 —— extras（tile/node
+        // 自定义元数据）展开进 properties，两条路径的 IR 属性集一致。
+        const extrasProps = hit3d.extras && typeof hit3d.extras === 'object'
+          ? hit3d.extras as Record<string, unknown>
+          : {}
         setScene3dPick({ ...hit3d, x: evt.point.x, y: evt.point.y })
         emitFeatureSelected({
           layerId: `scene3d:${hit3d.assetId}`,
@@ -1142,13 +1166,14 @@ export function MapPanel({
             lng: Number(hit3d.lngLat.lng.toFixed(6)),
             lat: Number(hit3d.lngLat.lat.toFixed(6)),
             altitude_m: Math.round(hit3d.lngLat.altitudeM),
+            ...extrasProps,
           },
           datasetRef: hit3d.sourceId,
         })
         return
       }
       if (useHudStore.getState().selectedFeature) emitFeatureDeselected()
-      setScene3dPick(null)
+      clearScene3dPick()
       setSelectedFeature(null)
       setPoiPanel(null)
       return
@@ -1197,12 +1222,12 @@ export function MapPanel({
         return
       }
       if (useHudStore.getState().selectedFeature) emitFeatureDeselected()
-      setScene3dPick(null)
+      clearScene3dPick()
       setSelectedFeature(null)
       setPoiPanel(null)
       return
     }
-    setScene3dPick(null)
+    clearScene3dPick()
     const point: [number, number] = [evt.lngLat.lng, evt.lngLat.lat]
     // v2 重设计：单/多要素统一进纯 DOM 悬浮窗（候选列表内置），只写快照，
     // 不触发高亮图层、不触发自动聚焦。Runtime V4：shift 点选在同层追加
@@ -1215,7 +1240,7 @@ export function MapPanel({
       lngLat: point,
       features: features.slice(0, 5),
     })
-  }, [measureMode, setSelectedFeature, commitSelection])
+  }, [measureMode, setSelectedFeature, commitSelection, clearScene3dPick, setScene3dPick])
 
   // FRONT-04: 悬浮提示（rAF 节流 hover 查询 + mouseout/卸载清理）下沉至
   // <HoverTooltipOverlay /> 孤立渲染，防止 60fps 指针移动引发 MapPanel 全量重渲染。
@@ -1429,6 +1454,9 @@ export function MapPanel({
     viewStateRef.current = evt.viewState
     // 悬浮窗锚定在点击时的屏幕像素：地图一动位置就失真，直接关闭。
     setPoiPanel((p) => (p ? null : p))
+    // 评审 C1：3D 拾取卡同样按点击像素绝对定位 —— 平移/旋转/俯仰后与被拾
+    // 取资产脱钩，必须一并关闭（含配对 deselect）。
+    if (scene3dPickRef.current) clearScene3dPick()
     const map = mapRef.current?.getMap()
     const b = map?.getBounds()
     const bounds: [number, number, number, number] | undefined = b
@@ -1442,6 +1470,7 @@ export function MapPanel({
         zoom: evt.viewState.zoom,
         centerLat: evt.viewState.latitude,
         bearing: evt.viewState.bearing ?? 0,
+        pitch: evt.viewState.pitch ?? 0,
         // P3：graticule live 渲染的真实地理 bounds（同一 debounce 结算，
         // 不新增任何逐帧状态）。
         bounds: bounds
@@ -1491,7 +1520,7 @@ export function MapPanel({
       evt.viewState.bearing,
       evt.viewState.pitch,
     )
-  }, [setViewport, onViewportChange])
+  }, [setViewport, onViewportChange, clearScene3dPick])
 
   // Register snapshot function — reads directly from MapLibre instance (always fresh)
   useEffect(() => {
@@ -1558,6 +1587,7 @@ export function MapPanel({
     zoom: decorState.zoom,
     centerLat: decorState.centerLat,
     bearing: decorState.bearing,
+    pitch: decorState.pitch,
     bounds: decorState.bounds,
   }), [decorState])
 
@@ -1729,7 +1759,17 @@ export function MapPanel({
         {scene3dPick && (
           <div
             className="absolute z-30 w-64 rounded-lg border border-slate-200 bg-white/95 p-3 text-xs shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200"
-            style={{ left: Math.min(scene3dPick.x + 12, 9999), top: scene3dPick.y + 12 }}
+            style={(() => {
+              // 评审 C2：按画布尺寸双侧钳制（卡宽 w-64=256/高 ~170）—— 右/底
+              // 缘点击不再溢出画布（占位 Math.min(x, 9999) 从未生效）。
+              const el = mapRef.current?.getContainer?.()
+              const maxW = el?.clientWidth ?? (typeof window !== 'undefined' ? window.innerWidth : 1920)
+              const maxH = el?.clientHeight ?? (typeof window !== 'undefined' ? window.innerHeight : 1080)
+              return {
+                left: Math.max(8, Math.min(scene3dPick.x + 12, maxW - 264)),
+                top: Math.max(8, Math.min(scene3dPick.y + 12, maxH - 178)),
+              }
+            })()}
             role="status"
             aria-label={tMap('scene3dPick.title')}
           >
@@ -1739,10 +1779,7 @@ export function MapPanel({
                 type="button"
                 className="rounded px-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
                 aria-label={tMap('scene3dPick.close')}
-                onClick={() => {
-                  setScene3dPick(null)
-                  emitFeatureDeselected({ layerId: `scene3d:${scene3dPick.assetId}` })
-                }}
+                onClick={() => clearScene3dPick()}
               >
                 ×
               </button>
@@ -1835,7 +1872,7 @@ export function MapPanel({
       <MapToolbarHUD
         mapRef={mapRef}
         bearing={decorProps.bearing}
-        pitch={is3D ? 60 : 0}
+        pitch={decorProps.pitch}
         activeMeasureTool={measureMode}
         onMeasureToolChange={(mode) => useHudStore.getState().setActiveMapTool(
           mode === 'distance' ? 'measure_distance' : mode === 'area' ? 'measure_area' : null,

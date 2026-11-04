@@ -309,7 +309,9 @@ class CartographicRuntimeObservationRequest(BaseModel):
             "unavailable", "degraded", "cancelled", "context_lost",
         }
         out: list[dict[str, Any]] = []
-        for entry in value[:16]:
+        # D7（评审）：超 16 条时保留**最新** 16 条（[-16:]）—— 与前端环投影
+        # 的 slice(-16) 同向；曾用 [:16] 丢最新条目且无披露。
+        for entry in value[-16:]:
             if not isinstance(entry, dict):
                 continue
             asset_id = entry.get("asset_id")

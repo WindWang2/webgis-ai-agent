@@ -128,6 +128,8 @@ describe('SceneController', () => {
     openPanel();
     const slider = screen.getByLabelText(/sceneController.exaggeration/, { selector: 'input' });
     fireEvent.change(slider, { target: { value: '2.5' } });
+    // C7：拖拽走本地 draft，释放（pointerUp/blur）才一次性提交。
+    fireEvent.pointerUp(slider);
     await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalled());
     const payload = commitUserScene.mock.calls[0][0];
     expect(payload.terrain.exaggeration).toBe(2.5);
@@ -214,6 +216,68 @@ describe('SceneController', () => {
 });
 
 // ── R2-4：fallback source 解析（committed 无 terrain 块但有 dem 源）────
+describe('SceneController review fixes (C3/C5)', () => {
+  beforeEach(() => {
+    committed = null;
+    is3D = false;
+    commitUserScene.mockReset().mockResolvedValue({ outcome: 'committed' });
+    scene3dSetAssetPresentation.mockReset().mockReturnValue(true);
+  });
+  afterEach(() => cleanup());
+
+  it('Escape closes the panel even when opened by mouse (focus stays on trigger)', () => {
+    // 评审 C5：监听曾挂在 dialog 节点上 —— 鼠标打开（焦点留在兄弟触发
+    // 按钮上）时 Escape 永远到不了 dialog；现在挂 window + open 即 focus。
+    commitSpec({ scene: { mode: '3d' }, sources: {} });
+    render(<SceneController />);
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.title' }));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('asset visibility rollback: renderer rejects (asset not mounted) → local checkbox unchanged', () => {
+    // 评审 C3：setAssetPresentation 返回 false（在途未挂载）不得翻转本地
+    // 态 —— 否则 UI 说隐藏、加载完成后资产实际可见。
+    commitSpec({
+      scene: { mode: '3d', assets: [{ id: 'campus', source: 'm', visible: true }] },
+      sources: { m: { type: 'model3d' } },
+    });
+    render(<SceneController getMap={() => ({})} />);
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.title' }));
+    const cb = screen.getByLabelText('campus') as HTMLInputElement;
+    expect(cb.checked).toBe(true);
+    scene3dSetAssetPresentation.mockReturnValue(false);
+    fireEvent.click(cb);
+    expect(scene3dSetAssetPresentation).toHaveBeenCalled();
+    // 本地态回滚：重渲染后 checkbox 仍勾选（未与渲染器脱钩）。
+    expect((screen.getByLabelText('campus') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('local presentation re-applies after spec generation change (remount resync)', async () => {
+    // 评审 C3：渲染器重挂（revision 换代/context restore）复位 presentation ——
+    // 本地覆盖需在 liveGeneration 变化后重放，否则形成死开关。
+    commitSpec({
+      scene: { mode: '3d', assets: [{ id: 'campus', source: 'm', visible: true }] },
+      sources: { m: { type: 'model3d' } },
+    });
+    render(<SceneController getMap={() => ({})} />);
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.title' }));
+    scene3dSetAssetPresentation.mockClear();
+    fireEvent.click(screen.getByLabelText('campus')); // 本地隐藏
+    expect(scene3dSetAssetPresentation).toHaveBeenCalledWith(expect.anything(), 'campus', { visible: false });
+    // spec 世代变化（重挂窗口）→ 本地表象重放。
+    scene3dSetAssetPresentation.mockClear();
+    commitSpec({
+      scene: { mode: '3d', assets: [{ id: 'campus', source: 'm', visible: true }] },
+      sources: { m: { type: 'model3d' } },
+    });
+    // commitSpec 的订阅通知不在 act 内 —— 重渲染/effect 异步调度。
+    await vi.waitFor(() => expect(scene3dSetAssetPresentation).toHaveBeenCalledWith(
+      expect.anything(), 'campus', { visible: false }));
+  });
+});
+
 describe('SceneController fallback terrain source (R2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -232,6 +296,7 @@ describe('SceneController fallback terrain source (R2)', () => {
     const slider = screen.getByLabelText(/sceneController.exaggeration/, { selector: 'input' });
     expect((slider as HTMLInputElement).disabled).toBe(false);
     fireEvent.change(slider, { target: { value: '2' } });
+    fireEvent.pointerUp(slider);
     await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalled());
     const payload = commitUserScene.mock.calls[0][0];
     expect(payload.terrain).toMatchObject({ source: 'dem', exaggeration: 2 });
