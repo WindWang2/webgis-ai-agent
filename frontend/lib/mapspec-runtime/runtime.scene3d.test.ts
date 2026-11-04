@@ -5,6 +5,7 @@
  * model3d 源**不进** MapLibre style sources（scene3d 管理器全权），但
  * applied spec 携带完整源定义供 buildRenderApplyAck 的 per-source 对账。
  */
+import type { Map as MaplibreMap, SourceSpecification, LayerSpecification } from "maplibre-gl";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { MapSpecRuntime } from "./runtime";
 import type { MapSpec } from "@/lib/mapspec-compiler/types";
@@ -13,20 +14,20 @@ import { parseRenderWorkEnvelope } from "@/lib/render-protocol/render-work";
 import { resetSceneAssetStatusForTests, recordSceneAssetStatus } from "@/lib/map-kit/scene3d/status";
 
 function makeMockMap() {
-  const sources: Record<string, any> = {};
-  const layers: any[] = [];
+  const sources: Record<string, SourceSpecification & { setData: ReturnType<typeof vi.fn> }> = {};
+  const layers: LayerSpecification[] = [];
   const calls = {
-    addSource: [] as Array<{ id: string; def: any }>,
+    addSource: [] as Array<{ id: string; def: SourceSpecification }>,
     removeSource: [] as string[],
-    addLayer: [] as Array<{ def: any }>,
+    addLayer: [] as Array<{ def: LayerSpecification }>,
     removeLayer: [] as string[],
   };
-  const map: any = {
+  const map = {
     isStyleLoaded: () => true,
     getStyle: () => ({ sources, layers }),
     getSource: (id: string) => sources[id],
     getLayer: (id: string) => layers.find((l) => l.id === id),
-    addSource: (id: string, def: any) => {
+    addSource: (id: string, def: SourceSpecification) => {
       sources[id] = { ...def, setData: vi.fn() };
       calls.addSource.push({ id, def });
     },
@@ -34,7 +35,7 @@ function makeMockMap() {
       delete sources[id];
       calls.removeSource.push(id);
     },
-    addLayer: (def: any) => {
+    addLayer: (def: LayerSpecification) => {
       layers.push(def);
       calls.addLayer.push({ def });
     },
@@ -91,7 +92,7 @@ describe("runtime × model3d source", () => {
 
   it("reconcile skips MapLibre source mounting but records applied spec", async () => {
     const { map, calls } = makeMockMap();
-    const rt = new MapSpecRuntime(map);
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     await rt.reconcileAsync(specWithModel3d());
     // model3d 绝不进 MapLibre style sources
     expect(calls.addSource.map((c) => c.id)).not.toContain("model-a");
@@ -110,7 +111,7 @@ describe("runtime × model3d source", () => {
 
   it("reconcile is idempotent for model3d (no churn on repeat)", async () => {
     const { map, calls } = makeMockMap();
-    const rt = new MapSpecRuntime(map);
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     const spec = specWithModel3d();
     await rt.reconcileAsync(spec);
     const addsAfter1 = calls.addSource.length;
@@ -121,7 +122,7 @@ describe("runtime × model3d source", () => {
 
   it("per-source ACK reconciles model3d data dependencies (applied + stale)", async () => {
     const { map } = makeMockMap();
-    const rt = new MapSpecRuntime(map);
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     const spec = specWithModel3d();
     await rt.reconcileAsync(spec);
     const applied = rt.getAppliedSpec();
@@ -199,7 +200,7 @@ describe("runtime × model3d source", () => {
     const { collectRenderObservation } = await import("./render-observation");
     const { map } = makeMockMap();
     const obs = collectRenderObservation({
-      map,
+      map: map as unknown as MaplibreMap,
       spec: specWithModel3d(),
       layers: [],
       mapspecFingerprint: "carto-sha256:x",

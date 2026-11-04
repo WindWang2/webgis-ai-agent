@@ -62,7 +62,7 @@ class TemporalViewUnbindArgs(BaseModel):
     expected_revision: Optional[int] = Field(None, ge=0)
 
 
-def register_temporal_view_tools(registry: ToolRegistry):
+def register_temporal_view_tools(registry: ToolRegistry) -> None:
     """注册时态视图控制工具族（Pi 与 legacy 同面）。"""
 
     @tool(
@@ -74,7 +74,7 @@ def register_temporal_view_tools(registry: ToolRegistry):
             "帧序列（绝不虚构期数），写入 MapSpec temporal 契约并启用前端时间轴。"
             "单期数据会被诚实拒绝（single_period_unsupported）。"
         ),
-        tier=1,
+        tier=2,
         domains=["temporal", "map"],
         args_model=TemporalViewBindArgs,
         side_effect="state_mutation",
@@ -122,7 +122,7 @@ def register_temporal_view_tools(registry: ToolRegistry):
             "unpin。帧 id 必须来自真实帧序列；用户手动固定游标（user_pinned）后"
             "Agent 的光标操作被拒绝（user-wins）。"
         ),
-        tier=1,
+        tier=2,
         domains=["temporal", "map"],
         args_model=TemporalViewControlArgs,
         side_effect="state_mutation",
@@ -166,7 +166,7 @@ def register_temporal_view_tools(registry: ToolRegistry):
             "breaks，union 窗等距）—— 颜色范围不随帧漂移，差异只来自数据。"
             "取值域退化时诚实披露并不固定分级。"
         ),
-        tier=1,
+        tier=2,
         domains=["temporal", "map"],
         args_model=TemporalViewCompareArgs,
         side_effect="state_mutation",
@@ -206,7 +206,7 @@ def register_temporal_view_tools(registry: ToolRegistry):
         name="temporal_view_unbind",
         capabilities=["temporal_bind"],
         description="解绑时序视图（移除 MapSpec temporal 分支；时间轴与帧过滤随之消失）。",
-        tier=1,
+        tier=2,
         domains=["temporal", "map"],
         args_model=TemporalViewUnbindArgs,
         side_effect="state_mutation",
@@ -243,7 +243,7 @@ def register_temporal_view_tools(registry: ToolRegistry):
             "读取时序视图状态：契约（帧序列/游标/播放/对照/质量旗标）+ 当前帧"
             "where 过滤与指纹（地图/图表/表格同窗锚点）。只读。"
         ),
-        tier=1,
+        tier=2,
         domains=["temporal", "map"],
         side_effect="cacheable_read",
         deterministic=True,

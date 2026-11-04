@@ -72,7 +72,7 @@ def split_tiles_dataset_id(dataset_id: str) -> Tuple[str, str]:
 class OGCTilesAdapter(GeospatialDataSourceAdapter):
     """OGC API - Tiles 的 tileset 发现与三态资格判定。"""
 
-    def __init__(self, connection_profile: ConnectionProfile):
+    def __init__(self, connection_profile: ConnectionProfile) -> None:
         super().__init__(connection_profile)
         self.raw_url = self.profile.url or ""
         self.url = (

@@ -17,6 +17,10 @@
 """
 from __future__ import annotations
 
+from collections.abc import Coroutine
+from typing import TypeVar
+
+_AsyncResult = TypeVar("_AsyncResult")
 import json
 import logging
 import os
@@ -64,7 +68,7 @@ _PAGE_CACHE_MAX_BYTES = 512 * 1024 * 1024
 class AtlasJobError(Exception):
     """图册 job 的 typed 失败（code 进 error 单行；页级证据在 result_summary）。"""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str) -> None:
         self.code = code
         self.message = message
         super().__init__(f"{code}: {message}")
@@ -152,7 +156,7 @@ def _persist_result_summary(job_id: int, payload: Dict[str, Any]) -> None:
         logger.warning("[atlas] result_summary persist failed job=%s: %s", job_id, ex)
 
 
-def _run_async_blocking(coro):
+def _run_async_blocking(coro: Coroutine[None, None, _AsyncResult]) -> _AsyncResult | None:
     """loop 无关的阻塞执行（executor 里 async 边界的唯一桥）。
 
     - 无运行 loop（真实 Celery worker 线程）：``run_sync``（持久 loop 复用）。

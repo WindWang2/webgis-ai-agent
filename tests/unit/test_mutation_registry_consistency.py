@@ -106,9 +106,9 @@ def test_effect_class_matches_presentation_baseline():
 
 
 def test_op_labels_match_legacy_table():
-    """journal 标签 = 原 gis_world_state._OP_LABELS 的 20 条（行为零漂移锚）。
+    """journal 标签 = 既有标签及已发布 scene / temporal / data-revision 标签。
 
-    缺表意图（SetScene / ApplyVisualHealPatch / PatchWorkbenchDelta）保持
+    缺表意图（ApplyVisualHealPatch / PatchWorkbenchDelta）保持
     回退类名 —— 与重构前行为一致；补词属行为变更，另行评审。
     """
     legacy = {
@@ -135,6 +135,9 @@ def test_op_labels_match_legacy_table():
         # v1.7（G3D02）：新表意图的有意标签（journal 可读性 —— 行为变更
         # 经本表显式登记评审）。
         "SetSceneAssetsIntent": "写入三维场景资产",
+        "SetSceneIntent": "调整场景",
+        "RefreshDataRevisionIntent": "刷新数据版本戳",
+        "SetTemporalViewIntent": "调整时态视图",
     }
     for d in MUTATION_REGISTRY.all():
         if d.intent_cls.__name__ in legacy:
@@ -172,8 +175,8 @@ def test_http_body_codec_coverage_and_roundtrip():
     body_classes = [
         v for k, v in vars(ms).items() if isinstance(v, type) and k.endswith("Body")
     ]
-    assert len(body_classes) == 14
-    # discriminated union 的 14 成员与 codec 表完全重合（漏登记在 CI 拦截）
+    assert len(body_classes) == 16
+    # discriminated union 的 16 成员与 codec 表完全重合（漏登记在 CI 拦截）
     assert union_members == {c.__name__ for c in body_classes}, union_members ^ {
         c.__name__ for c in body_classes
     }
@@ -192,6 +195,22 @@ def test_intent_codec_and_registry_same_table():
     intent = body_to_intent(body)
     assert type(intent).__name__ == "SetTimeIntent"
     assert intent.step == 3.0
+
+
+@pytest.mark.parametrize("body_name, fields, intent_name", [
+    ("SetSceneBody", {"intent": "set_scene", "scene": {"mode": "2.5d"}}, "SetSceneIntent"),
+    ("SetTemporalViewBody", {"intent": "set_temporal_view", "patch": {"playing": False}}, "SetTemporalViewIntent"),
+])
+def test_scene_and_temporal_http_codecs_preserve_payload(body_name, fields, intent_name):
+    from app.schemas import mapspec_mutation_schema as ms
+    from app.services.mapspec.intent_codec import body_to_intent
+
+    body = getattr(ms, body_name)(expected_revision=0, **fields)
+    intent = body_to_intent(body)
+    assert type(intent).__name__ == intent_name
+    for key, value in fields.items():
+        if key != "intent":
+            assert getattr(intent, key) == value
 
 
 def test_blocking_codes_single_source_and_emitter_subset():

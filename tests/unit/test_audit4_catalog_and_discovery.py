@@ -229,3 +229,46 @@ def test_list_available_tools_unknown_domain_returns_vocab():
     assert res.get("count") == 0
     assert "mapspec" in (res.get("available_domains") or []), res
     assert res.get("message")
+
+
+def test_budget_keeps_explicit_crs_identifiers_ahead_of_generic_front_doors():
+    """A domain's growing webgis_* surface must not bury explicit CRS requests."""
+    from types import SimpleNamespace
+
+    names = ["webgis_generic", "reproject_coordinates"]
+    metadata = {name: {"tier": 2, "domains": ["dataset"]} for name in names}
+    registry = SimpleNamespace(all_metadata=lambda: metadata, schema_size=lambda name: 20000)
+    catalog = ToolCatalog(registry)
+    schemas = [
+        {"function": {"name": names[0], "description": "Generic dataset workflow"}},
+        {"function": {"name": names[1], "description": "CGCS2000 to WGS84 CRS conversion"}},
+    ]
+    selected = catalog._enforce_schema_budget(
+        schemas, "数据集 CGCS2000 转 WGS84", None, {"dataset"},
+        fresh_domains={"dataset"},
+    )
+    assert [schema["function"]["name"] for schema in selected] == [names[1]]
+
+
+def test_budget_skips_oversized_schema_without_hiding_smaller_tools():
+    from types import SimpleNamespace
+
+    metadata = {name: {"tier": 2, "domains": ["dataset"]}
+                for name in ("a_large", "b_small")}
+    sizes = {"a_large": 30000, "b_small": 1000}
+    registry = SimpleNamespace(all_metadata=lambda: metadata, schema_size=sizes.get)
+    catalog = ToolCatalog(registry)
+    schemas = [{"function": {"name": name}} for name in metadata]
+    selected = catalog._enforce_schema_budget(
+        schemas, "数据集", None, {"dataset"}, fresh_domains={"dataset"},
+    )
+    assert [schema["function"]["name"] for schema in selected] == ["b_small"]
+
+
+def test_specialized_tool_domains_remain_keyword_reachable():
+    for query, domain in (
+        ("预览多尺度制图", "cartography"),
+        ("规划空间分析工作流", "analysis"),
+        ("检视坐标系空间语义", "analysis"),
+    ):
+        assert domain in ToolCatalog.detect_domains(query)

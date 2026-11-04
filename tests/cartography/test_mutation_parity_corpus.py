@@ -15,6 +15,7 @@ lifecycle 解巨石重构（per-intent handler + registry dispatch）必须逐 c
 
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -953,6 +954,13 @@ def _projection(result):
     """结果信封的归一化投影（剔除易变面）。"""
     d = result.to_dict()
     d.pop("mapspec", None)
+    if isinstance(d.get("message"), str):
+        # Pydantic help URLs carry its release version, not mutation semantics.
+        d["message"] = re.sub(
+            r"https://errors\.pydantic\.dev/\d+\.\d+/v/",
+            "https://errors.pydantic.dev/<version>/v/",
+            d["message"],
+        )
     if d.get("checkpoint_id"):
         d["checkpoint_id"] = "<ckpt>"
     d["has_mapspec"] = result.mapspec is not None
@@ -962,6 +970,20 @@ def _projection(result):
         if isinstance(layer, dict)
     ]
     return d
+
+
+@pytest.mark.parametrize("version", ["2.13", "2.14"])
+def test_projection_normalizes_only_validation_help_version(version):
+    from types import SimpleNamespace
+
+    message = ("invalid scene: literal_error input_value='4d' "
+               f"https://errors.pydantic.dev/{version}/v/literal_error")
+    result = SimpleNamespace(mapspec=None, to_dict=lambda: {"message": message})
+    projected = _projection(result)
+    assert projected["message"] == (
+        "invalid scene: literal_error input_value='4d' "
+        "https://errors.pydantic.dev/<version>/v/literal_error"
+    )
 
 
 async def _state_projection(engine, session_id):

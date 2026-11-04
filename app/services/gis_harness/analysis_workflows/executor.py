@@ -94,7 +94,7 @@ class WorkflowExecutor:
         current_turn: int = 0,
         dispatch: Optional[Callable[[str, Dict[str, Any], str],
                                     Any]] = None,
-    ):
+    ) -> None:
         self._registry = registry
         self._sd = session_data
         self._max_features = max_features
@@ -268,7 +268,7 @@ class WorkflowExecutor:
                             "dispatch_feature_count",
                             int(desc.get("feature_count", 0) or 0))
                     except (TypeError, ValueError):
-                        pass
+                        logger.warning("Invalid dispatch feature count; omitting count", exc_info=True)
                 return out
             return outcome if isinstance(outcome, dict) else {
                 "success": False, "message": "dispatch 返回形状异常"}

@@ -103,6 +103,15 @@ class PlanOut(BaseModel):
     mutates_data: bool = False
 
 
+class PlanListResponse(BaseModel):
+    plans: List[PlanOut]
+
+
+class DiscardPlanResponse(BaseModel):
+    plan_id: str
+    state: str
+
+
 class PlanResponse(BaseModel):
     plan: PlanOut
     warnings: List[str] = Field(default_factory=list)

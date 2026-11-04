@@ -59,13 +59,13 @@ def _config(**overrides) -> dict:
 class TestVersionBump:
     def test_known_versions_include_18(self):
         assert "1.8" in KNOWN_VERSIONS
-        assert LATEST_VERSION == "1.8"
+        assert KNOWN_VERSIONS.index(LATEST_VERSION) >= KNOWN_VERSIONS.index("1.8")
 
     def test_upgrade_path_17_to_18_identity(self):
         from app.lib.cartography import mapspec_schema as ms
         assert ms._find_upgrade_path("1.7", "1.8") == [("1.7", "1.8")]
         spec = {"version": "1.7", "view": {"center": [104.0, 30.6], "zoom": 10}}
-        result = parse_mapspec(spec)
+        result = parse_mapspec(spec, target_version="1.8")
         assert result.migrated is True
         assert result.effective_version == "1.8"
         # identity 迁移不改写文档字节。

@@ -242,3 +242,25 @@ async def test_materialize_labels_demo_source_767(monkeypatch):
         session_id="s767",
     )
     assert res2["is_demo"] is False
+
+
+def test_catalog_keyword_index_tracks_replacement_and_eviction():
+    catalog = SpatialCatalogService(max_entries=1)
+    descriptor = DatasetDescriptor(id="one", title="Old title", source_type="geojson")
+    catalog.register_dataset(descriptor, tags=["FIRST"])
+    assert catalog.search(query="first")["total"] == 1
+    descriptor.title = "New title"
+    catalog.register_dataset(descriptor, tags=["SECOND"])
+    assert catalog.search(query="old title")["total"] == 0
+    assert catalog.search(query="first")["total"] == 0
+    assert catalog.search(query="new title")["total"] == 1
+    assert catalog.search(query="second")["total"] == 1
+    assert catalog.search(query="one\0")["total"] == 0
+    catalog.register_dataset(DatasetDescriptor(id="two", source_type="geojson"))
+    assert catalog.search(query="new title")["total"] == 0
+    assert set(catalog._search_text) == {"two"}
+    catalog.unregister_dataset("two")
+    assert catalog._search_text == {}
+    catalog.register_dataset(descriptor)
+    catalog.clear()
+    assert catalog._search_text == {}

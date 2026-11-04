@@ -23,6 +23,8 @@
 """
 from __future__ import annotations
 
+from typing import Callable
+from shapely.geometry.base import BaseGeometry
 import copy
 import math
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
@@ -117,7 +119,7 @@ def _dataset_origin(features: Sequence[Dict[str, Any]]) -> Tuple[float, float]:
     return 0.0, 0.0
 
 
-def _metric_transforms(lon0: float, lat0: float):
+def _metric_transforms(lon0: float, lat0: float) -> tuple[Callable[[BaseGeometry], BaseGeometry], Callable[[BaseGeometry], BaseGeometry]]:
     """lon/lat ↔ 局部米（equirectangular @ 原点 —— 近似披露于回执）。
 
     用 ``shapely.transform`` 的 numpy 数组路径（每几何部件一次数组运算），
@@ -180,8 +182,8 @@ def _stable_feature_id(feature: Dict[str, Any], index: int) -> str:
 def _simplify_one(
     geom_ll: Any,
     tol_m: float,
-    to_m,
-    to_ll,
+    to_m: Callable[[BaseGeometry], BaseGeometry],
+    to_ll: Callable[[BaseGeometry], BaseGeometry],
     *,
     policy: GeometryGeneralizationPolicy,
     geom_m_pre: Optional[Any] = None,
@@ -473,8 +475,8 @@ def generalize_features(
 def _apply_with_anchor_guard(
     geom_ll: Any,
     tol_m: float,
-    to_m,
-    to_ll,
+    to_m: Callable[[BaseGeometry], BaseGeometry],
+    to_ll: Callable[[BaseGeometry], BaseGeometry],
     anchors: Dict[Tuple[float, float], int],
     kx: float,
     lat0: float,
@@ -570,24 +572,24 @@ class BandSpec(Tuple):  # type: ignore[misc]
 
     __slots__ = ()
 
-    def __new__(cls, tier, geometry_policy, selection_policy, band_zoom=None):
+    def __new__(cls, tier: str, geometry_policy: GeometryGeneralizationPolicy, selection_policy: FeatureSelectionPolicy, band_zoom: Optional[float]=None) -> BandSpec:
         return super().__new__(cls, (tier, geometry_policy, selection_policy,
                                      band_zoom))
 
     @property
-    def tier(self):
+    def tier(self) -> str:
         return self[0]
 
     @property
-    def geometry_policy(self):
+    def geometry_policy(self) -> GeometryGeneralizationPolicy:
         return self[1]
 
     @property
-    def selection_policy(self):
+    def selection_policy(self) -> FeatureSelectionPolicy:
         return self[2]
 
     @property
-    def band_zoom(self):
+    def band_zoom(self) -> Optional[float]:
         return self[3]
 
 

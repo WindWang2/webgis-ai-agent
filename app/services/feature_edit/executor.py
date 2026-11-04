@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 import asyncio
 import contextlib
 import logging
@@ -68,7 +69,7 @@ def _turn_lock_held(session_id: str) -> bool:
 
 
 @contextlib.asynccontextmanager
-async def _edit_lock(session_id: str):
+async def _edit_lock(session_id: str) -> AsyncIterator[None]:
     """编辑互斥：turn 内透传（父锁已序列化），否则自取分布式会话锁。"""
     # 加锁顺序恒「分布式 → 进程」（R2 P2-2）：turn 路径本身是「全 turn
     # 分布式锁 → 工具内进程锁」，REST 先进程后分布式会与之 ABBA —— turn
@@ -89,7 +90,7 @@ async def _edit_lock(session_id: str):
 class FeatureEditConflict(Exception):
     """CAS 冲突（HTTP 409 面）——携带 head diff 供前端/模型收敛。"""
 
-    def __init__(self, code: str, detail: Dict[str, Any]):
+    def __init__(self, code: str, detail: Dict[str, Any]) -> None:
         super().__init__(code)
         self.code = code
         self.detail = detail
@@ -98,7 +99,7 @@ class FeatureEditConflict(Exception):
 class FeatureEditBlocked(Exception):
     """typed 阻断（finding code + 有界 detail）。"""
 
-    def __init__(self, code: str, message: str, detail: Optional[Dict[str, Any]] = None):
+    def __init__(self, code: str, message: str, detail: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(code)
         self.code = code
         self.message = message

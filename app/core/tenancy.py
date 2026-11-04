@@ -74,33 +74,47 @@ async def get_or_create_default_org_id(db: AsyncSession) -> str:
     return _default_org_id
 
 
-def get_or_create_default_org_id_sync(db) -> str:
-    """同步会话变体（geocompute 同步线程路由 / store 侧使用）。"""
+def get_or_create_default_org_id_sync(db, *, commit: bool = True) -> str:
+    """Resolve the default organization without committing a caller-owned unit.
+
+    DAO callers pass ``commit=False``. Their new organization remains in the
+    caller's transaction and must not enter the process cache before commit.
+    """
     global _default_org_id
-    if _default_org_id is not None:
+    if commit and _default_org_id is not None:
         return _default_org_id
-    from sqlalchemy import select as _select
+    from sqlalchemy.exc import IntegrityError
 
     from app.models.db_model import Organization
 
     org_id = db.execute(
-        _select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
+        select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
     ).scalar_one_or_none()
     if org_id is None:
-        org = Organization(name="Default Organization", slug=DEFAULT_ORG_SLUG,
-                           is_active=True)
-        db.add(org)
+        connection = db.connection()
+        if connection.dialect.name == "sqlite":
+            # sqlite3 legacy transaction mode does not BEGIN for SELECT. If
+            # this is the first write, releasing a bare SAVEPOINT would commit
+            # the new row despite commit=False and a later caller rollback.
+            driver = connection.connection.driver_connection
+            if not driver.in_transaction:
+                connection.exec_driver_sql("BEGIN")
         try:
-            db.commit()
-        except Exception:  # noqa: BLE001 - 并发创建时唯一约束兜底
-            db.rollback()
+            with db.begin_nested():
+                org = Organization(name="Default Organization", slug=DEFAULT_ORG_SLUG,
+                                   is_active=True)
+                db.add(org)
+                db.flush()
+                org_id = cast(int, org.id)
+        except IntegrityError:
             org_id = db.execute(
-                _select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
+                select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
             ).scalar_one()
-        else:
-            org_id = cast(int, org.id)
-    _default_org_id = str(org_id)
-    return _default_org_id
+        if commit:
+            db.commit()
+    if commit:
+        _default_org_id = str(org_id)
+    return str(org_id)
 
 
 def reset_default_org_cache() -> None:

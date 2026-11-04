@@ -18,6 +18,7 @@ profile_features 50k 行扫描预算），issue 按 code 计数差进 receipt �
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 import asyncio
 import copy
 import hashlib
@@ -109,7 +110,7 @@ class ExecError(Exception):
 
 # ── 纯变换（可单测；dry-run 与 execute 共用）───────────────────────────────
 
-def _iter_positions(coordinates: Any):
+def _iter_positions(coordinates: Any) -> Iterator[list[float] | tuple[float, ...]]:
     """递归展开 GeoJSON 坐标叶节点（[x, y(, z?)]）。"""
     if (isinstance(coordinates, (list, tuple)) and coordinates
             and isinstance(coordinates[0], (int, float))):
@@ -397,7 +398,9 @@ def _append_receipt_sync(path: Path, receipt: PreparationReceipt) -> None:
         try:
             os.unlink(tmp_name)
         except OSError:
-            pass
+            logging.getLogger(__name__).warning(
+                "Failed to remove temporary preparation file", exc_info=True
+            )
         raise
 
 

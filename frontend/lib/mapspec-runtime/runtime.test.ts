@@ -22,7 +22,7 @@ function makeMockMap() {
     addLayer: [] as Array<{ def: any }>,
     removeLayer: [] as string[],
     moveLayer: [] as string[],
-    setData: [] as Array<{ id: string; data: any }>,
+    setData: [] as Array<{ id: string; data: unknown }>,
   };
 
   const map: any = {
@@ -94,7 +94,7 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       const rt = new MapSpecRuntime(map);
       rt.reconcile(pointSpec());
 
-      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addSource.map((c: { id: string }) => c.id)).toEqual(["L1"]);
       expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
       expect(rt.getAppliedSpec()).toEqual(pointSpec());
     });
@@ -102,7 +102,7 @@ describe("MapSpecRuntime (ADR-0036)", () => {
     it("does not touch the view (Q3: view stays imperative)", () => {
       const rt = new MapSpecRuntime(map);
       const spec = pointSpec();
-      (spec as any).view = { center: [10, 20], zoom: 5 };
+      spec.view = { center: [10, 20], zoom: 5 };
       // Spy on view methods to assert they are never called.
       map.setCenter = vi.fn();
       map.setZoom = vi.fn();
@@ -219,7 +219,7 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       loaded = true;
       await vi.advanceTimersByTimeAsync(150);
 
-      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addSource.map((c: { id: string }) => c.id)).toEqual(["L1"]);
       vi.useRealTimers();
     });
 
@@ -402,7 +402,7 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       expect(rt.getAppliedSpec()).toBeNull();
 
       rt.reconcile(pointSpec());
-      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addSource.map((c: { id: string }) => c.id)).toEqual(["L1"]);
       expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
     });
   });
@@ -425,7 +425,7 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       rt.flush();
       await pending;
       expect(rt.getAppliedSpec()).toEqual(pointSpec());
-      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addSource.map((c: { id: string }) => c.id)).toEqual(["L1"]);
       expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
     });
 
@@ -460,7 +460,7 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       rt.flush(); // drive the debouncer so the z-order completion op runs
       await pending;
 
-      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addSource.map((c: { id: string }) => c.id)).toEqual(["L1"]);
       expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
       vi.useRealTimers();
     });
@@ -749,7 +749,7 @@ describe("MapSpecRuntime — Data Plane vector tile source", () => {
     const rt = new MapSpecRuntime(map);
     rt.reconcile(vectorSpec());
 
-    const srcCall = map._calls.addSource.find((c: any) => c.id === "V1");
+    const srcCall = map._calls.addSource.find((c: { id: string }) => c.id === "V1");
     expect(srcCall.def.type).toBe("vector");
     expect(srcCall.def.tiles[0]).toContain("{z}/{x}/{y}");
     // MapLibre requires source-layer for vector sources
@@ -765,7 +765,7 @@ describe("MapSpecRuntime — Data Plane vector tile source", () => {
     rt.reconcile(vectorSpec()); // big FC arrived → upgrade to vector tiles
 
     // addVectorTileSource removed the old geojson source then added vector
-    const srcCalls = map._calls.addSource.filter((c: any) => c.id === "V1");
+    const srcCalls = map._calls.addSource.filter((c: { id: string }) => c.id === "V1");
     expect(srcCalls.length).toBe(1);
     expect(srcCalls[0].def.type).toBe("vector");
   });
@@ -800,7 +800,7 @@ describe("MapSpecRuntime — Data Plane vector tile source", () => {
     ];
     rt.reconcile(spec);
 
-    const srcCall = map._calls.addSource.find((c: any) => c.id === "V1");
+    const srcCall = map._calls.addSource.find((c: { id: string }) => c.id === "V1");
     expect(srcCall.def.type).toBe("vector");
     expect(srcCall.def.tiles[0]).toContain("/ogc-tiles/{z}/{x}/{y}");
     expect(srcCall.def.tiles[0]).toContain("session_id=sess-1234");
@@ -823,7 +823,7 @@ describe("MapSpecRuntime — Data Plane vector tile source", () => {
       ],
     } as any);
 
-    const srcCall = map._calls.addSource.find((c: any) => c.id === "OGC_R");
+    const srcCall = map._calls.addSource.find((c: { id: string }) => c.id === "OGC_R");
     expect(srcCall.def.type).toBe("raster");
     expect(srcCall.def.tiles[0]).toContain("/ogc-tiles/{z}/{x}/{y}");
     expect(srcCall.def.tileSize).toBe(256);
@@ -851,7 +851,7 @@ describe("MapSpecRuntime — pending ref-only sources", () => {
     };
     await rt.reconcileAsync(spec);
     expect(map._calls.addLayer).toEqual([]);
-    expect(map._calls.addSource.map((c: any) => c.id)).toEqual([]);
+    expect(map._calls.addSource.map((c: { id: string }) => c.id)).toEqual([]);
     // 不污染 lastError（#459：lastError 阻断 appliedSpec 前进）
     expect(rt.getLastError()).toBeNull();
     expect(rt.getAppliedSpec()).toEqual(spec);
@@ -868,7 +868,7 @@ describe("MapSpecRuntime — pending ref-only sources", () => {
       },
     };
     await rt.reconcileAsync(resolved);
-    expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["webgis_map_product_layer_source"]);
+    expect(map._calls.addSource.map((c: { id: string }) => c.id)).toEqual(["webgis_map_product_layer_source"]);
     expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["product-a-heatmap"]);
   });
 });

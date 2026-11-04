@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import ijson
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy import select, func, update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -115,6 +115,7 @@ async def upload_files(
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id", description="存在即视为请求 register_ref（值不作为会话来源——归属一律以已校验的 session_id 表单为准）"),
     _user: dict = Depends(get_current_user_optional_with_version),
+    request: Request = None,
 ):
     """
     上传 GIS 数据文件
@@ -125,6 +126,11 @@ async def upload_files(
 
     限制: 矢量文件 50MB, 栅格文件 200MB
     """
+    # This API defaults to deduplication, unlike an unchecked HTML checkbox.
+    # Newer FastAPI versions coerce absent boolean form fields to False.
+    if request is not None and "dedup" not in await request.form():
+        dedup = True
+
     if not files:
         raise HTTPException(status_code=400, detail="请选择至少一个文件")
 

@@ -276,7 +276,7 @@ async def test_status_reports_mid_chain_failure(monkeypatch):
 
     # Non-eager so nothing executes at submit time; tasks sit on the in-memory
     # broker queue. We then drive the backend marks by hand.
-    monkeypatch.setattr(celery_app.conf, "task_always_eager", False)
+    monkeypatch.setitem(celery_app.conf, "task_always_eager", False)
 
     orch = ExplorerOrchestrator()
     final_id = await orch.start_exploration(
@@ -310,7 +310,7 @@ async def test_status_pending_while_later_stages_run(monkeypatch):
     stubs = _make_stub_chain_tasks()
     for attr, stub in zip(_STAGE_ATTRS, stubs):
         monkeypatch.setattr(task_chain, attr, stub)
-    monkeypatch.setattr(celery_app.conf, "task_always_eager", False)
+    monkeypatch.setitem(celery_app.conf, "task_always_eager", False)
 
     orch = ExplorerOrchestrator()
     final_id = await orch.start_exploration(
@@ -462,7 +462,7 @@ async def test_concurrent_explores_keep_independent_runs(monkeypatch):
     stubs = _make_stub_chain_tasks()
     for attr, stub in zip(_STAGE_ATTRS, stubs):
         monkeypatch.setattr(task_chain, attr, stub)
-    monkeypatch.setattr(celery_app.conf, "task_always_eager", False)
+    monkeypatch.setitem(celery_app.conf, "task_always_eager", False)
 
     orch = ExplorerOrchestrator()
     id_a = await orch.start_exploration(query="a", context=SearchContext(query="a"))

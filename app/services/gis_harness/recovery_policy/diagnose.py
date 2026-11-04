@@ -50,7 +50,7 @@ def _has_any(markers: Sequence[str], text: str) -> bool:
     return any(m in t for m in markers)
 
 
-def _ctx_full(status, code, error_type, message) -> str:
+def _ctx_full(status: str | int | None, code: str | int | None, error_type: str | int | None, message: str | int | None) -> str:
     """数字状态码的语境文本。
 
     泛化 status（"error"/"failed" —— 生产 TDS 错误结果恒为此形状）不计入

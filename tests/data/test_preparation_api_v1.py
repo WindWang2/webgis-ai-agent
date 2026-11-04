@@ -212,7 +212,7 @@ class TestPlanLifecycle:
             f"/api/v1/data-preparation/plan/{plan['plan_id']}/receipt",
             params={"session_id": sid, "session_hash": plan["plan_hash"]})
         assert resp.status_code == 200
-        assert resp.json()["output_ref"] == receipt["output_ref"]
+        assert resp.json() == receipt
         # 5) executed 不可 preview（状态回退缺口，R1 #5）也不可作废
         resp = await client.post(
             f"/api/v1/data-preparation/plan/{plan['plan_id']}/preview",
@@ -237,7 +237,7 @@ class TestPlanLifecycle:
             f"/api/v1/data-preparation/plan/{plan_id}",
             params={"session_id": sid})
         assert resp.status_code == 200
-        assert resp.json()["state"] == "discarded"
+        assert resp.json() == {"plan_id": plan_id, "state": "discarded"}
         # 作废后执行 → 409
         resp = await client.post(
             f"/api/v1/data-preparation/plan/{plan_id}/execute",
@@ -247,15 +247,16 @@ class TestPlanLifecycle:
     async def test_plans_listing(self, client):
         sid = "sess-plan-4"
         ref = await _seed_ref(sid)
-        await client.post(
+        created = await client.post(
             "/api/v1/data-preparation/plan",
             json={"session_id": sid, "source_ref": ref,
                   "steps": [{"type": "field_mapping", "role": "name",
                              "field": "学校名称", "source": "user"}]})
+        assert created.status_code == 200
         resp = await client.get("/api/v1/data-preparation/plans",
                                 params={"session_id": sid})
         assert resp.status_code == 200
-        assert len(resp.json()["plans"]) == 1
+        assert resp.json() == {"plans": [created.json()["plan"]]}
 
 
 # ── 字段绑定写回 ───────────────────────────────────────────────────────────
@@ -286,3 +287,31 @@ class TestFieldBindings:
                   "roles": {"学校名称": "bogus_role"}})
         assert resp.status_code == 200
         assert ["学校名称", "ROLE_UNKNOWN"] in resp.json()["skipped"]
+
+
+def test_plan_response_models_document_existing_wire_shapes(app):
+    """List, discard, and receipt declare the complete pre-existing wire bodies."""
+    expected = {
+        ("/api/v1/data-preparation/plans", "get"): "PlanListResponse",
+        ("/api/v1/data-preparation/plan/{plan_id}", "delete"): "DiscardPlanResponse",
+        ("/api/v1/data-preparation/plan/{plan_id}/receipt", "get"): "ReceiptSummaryOut",
+    }
+    schema = app.openapi()
+    for (path, operation), model in expected.items():
+        response = schema["paths"][path][operation]["responses"]["200"]
+        assert response["content"]["application/json"]["schema"] == {
+            "$ref": f"#/components/schemas/{model}"
+        }
+    models = schema["components"]["schemas"]
+    assert set(models["PlanListResponse"]["properties"]) == {"plans"}
+    assert models["PlanListResponse"]["required"] == ["plans"]
+    assert models["PlanListResponse"]["properties"]["plans"]["items"] == {
+        "$ref": "#/components/schemas/PlanOut"
+    }
+    assert set(models["DiscardPlanResponse"]["properties"]) == {"plan_id", "state"}
+    assert set(models["DiscardPlanResponse"]["required"]) == {"plan_id", "state"}
+    assert set(models["ReceiptSummaryOut"]["properties"]) == {
+        "plan_id", "plan_hash", "input_ref", "output_ref", "output_fingerprint",
+        "row_before", "row_after", "quality_before", "quality_after", "degraded",
+        "user_confirmations",
+    }

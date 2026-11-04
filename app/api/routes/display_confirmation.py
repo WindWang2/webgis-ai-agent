@@ -91,7 +91,7 @@ def _verdict_render_seq(stored: Optional[dict]) -> int:
 async def get_display_confirmation(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
-):
+) -> DisplayConfirmationStatusResponse:
     """确认状态（auto → confirmed/pending 恒为 True/False 的历史语义）。"""
     await _raise_if_deleted(session_id)
     from app.services.gis_harness.display_confirmation import (
@@ -124,7 +124,7 @@ async def post_display_ack(
     req: DisplayAckRequest,
     request: Request,
     _conv: Conversation = Depends(require_owned_session),
-):
+) -> DisplayAckResponse:
     """owner 显式确认当前地图显示（新鲜度门 fail-closed）。"""
     await _raise_if_deleted(session_id)
     from app.services.gis_harness.display_confirmation import (

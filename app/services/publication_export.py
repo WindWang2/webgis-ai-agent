@@ -20,6 +20,9 @@ MapSpec → 真矢量 PDF（可选文本、出版级整饰）的同步领域服�
 """
 from __future__ import annotations
 
+from typing import Callable, TypeVar, NoReturn
+
+_RenderResult = TypeVar("_RenderResult")
 import html as _html
 import io
 import logging
@@ -121,7 +124,7 @@ class PageCompileOutcome:
 class PageCompileFailure(Exception):
     """页编译失败（code/detail 与同步链诊断完全同形）。"""
 
-    def __init__(self, code: str, detail: str, exc: Optional[Exception] = None):
+    def __init__(self, code: str, detail: str, exc: Optional[Exception] = None) -> None:
         self.code = code
         self.detail = detail
         self.exc = exc
@@ -623,7 +626,7 @@ html, body {{ margin: 0; padding: 0; font-family: {font_stack}; }}
 <body>{body}</body></html>"""
 
 
-def render_pdf_exclusive(render_fn):
+def render_pdf_exclusive(render_fn: Callable[[], _RenderResult]) -> _RenderResult:
     """R1-M6：WeasyPrint write_pdf 进程级互斥的公共入口。
 
     官方不保证线程安全（fontconfig/pango 全局态）；本仓库**所有**
@@ -901,5 +904,5 @@ def render_publication_pdf(
     )
 
 
-def _deny_url_fetcher(url: str, *args: Any, **kwargs: Any):  # pragma: no cover - 防御断言
+def _deny_url_fetcher(url: str, *args: Any, **kwargs: Any) -> NoReturn:  # pragma: no cover - 防御断言
     raise ValueError(f"external resource fetch denied in publication pdf: {url!r}")

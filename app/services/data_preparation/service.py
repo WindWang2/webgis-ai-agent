@@ -68,7 +68,7 @@ def _first_position(geometry: Optional[Dict[str, Any]]) -> Optional[List[float]]
         return None
     coords: Any = geometry.get("coordinates")
 
-    def _walk(node: Any):
+    def _walk(node: Any) -> list[float] | tuple[float, ...] | None:
         if isinstance(node, (list, tuple)) and node and isinstance(node[0], (int, float)):
             return node
         for child in node or []:

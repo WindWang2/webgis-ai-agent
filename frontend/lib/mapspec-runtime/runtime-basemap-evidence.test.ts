@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import type { Map as MaplibreMap } from 'maplibre-gl';
 import { MapSpecRuntime } from './runtime';
 import {
   _resetSceneEvidenceForTests,
@@ -13,7 +14,7 @@ import {
  */
 function errorCapableMockMap() {
   const handlers = new Map<string, Set<(e?: unknown) => void>>();
-  const map: any = {
+  const map = {
     on(event: string, handler: (e?: unknown) => void) {
       const set = handlers.get(event) ?? new Set();
       set.add(handler);
@@ -40,7 +41,7 @@ describe('basemap 瓦片失败证据（G3D01 D8）', () => {
 
   it('raster-tiles-{index} 源错误 → scene_basemap_unavailable', () => {
     const map = errorCapableMockMap();
-    const rt = new MapSpecRuntime(map);
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     map._emitError({ sourceId: 'raster-tiles-0' });
     const codes = sceneEvidenceSnapshot().map((e) => e.code);
     expect(codes).toContain('scene_basemap_unavailable');
@@ -49,7 +50,7 @@ describe('basemap 瓦片失败证据（G3D01 D8）', () => {
 
   it('非底图源错误不误报', () => {
     const map = errorCapableMockMap();
-    const rt = new MapSpecRuntime(map);
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     map._emitError({ sourceId: 'some-user-layer' });
     expect(sceneEvidenceSnapshot()).toEqual([]);
     void rt;
@@ -57,12 +58,12 @@ describe('basemap 瓦片失败证据（G3D01 D8）', () => {
 
   it('地形源错误优先归 scene_terrain_unavailable（不串道）', () => {
     const map = errorCapableMockMap();
-    const rt = new MapSpecRuntime(map);
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     // appliedSpec 未设置时 terrain 分支不命中；直接模拟已绑定 terrain 的
     // 错误源 id 形态不能既是 raster-tiles-* 又是 terrain.source —— 若
     // appliedSpec 声明了 terrain.source = 'raster-tiles-0'（病态 spec），
     // terrain 分支必须先行短路。
-    (rt as any).appliedSpec = {
+    (rt as unknown as { appliedSpec: { scene: { terrain: { source: string } } } }).appliedSpec = {
       scene: { terrain: { source: 'raster-tiles-0' } },
     };
     map._emitError({ sourceId: 'raster-tiles-0' });
@@ -73,7 +74,7 @@ describe('basemap 瓦片失败证据（G3D01 D8）', () => {
 
   it('无 sourceId 的错误安全忽略', () => {
     const map = errorCapableMockMap();
-    const rt = new MapSpecRuntime(map);
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     map._emitError({ message: 'style load failed' });
     map._emitError(null);
     expect(sceneEvidenceSnapshot()).toEqual([]);

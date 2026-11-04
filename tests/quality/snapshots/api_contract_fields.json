@@ -9,7 +9,9 @@
   "success": "boolean|null"
  },
  "DELETE /api/v1/data-preparation/plan/{plan_id}": {
-  "__type__": "unknown"
+  "__model__": "DiscardPlanResponse",
+  "plan_id": "string",
+  "state": "string"
  },
  "DELETE /api/v1/knowledge/document/{document_id}": {
   "__model__": "ApiResponse",
@@ -248,6 +250,9 @@
  "GET /api/v1/data-fabric/catalog/{item_id}/features/stream": {
   "__type__": "unknown"
  },
+ "GET /api/v1/data-fabric/catalog/{item_id}/ogc-tiles/{z}/{x}/{y}": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/data-fabric/catalog/{item_id}/pmtiles-tiles/{z}/{x}/{y}": {
   "__type__": "unknown"
  },
@@ -285,10 +290,22 @@
   "total": "integer"
  },
  "GET /api/v1/data-preparation/plan/{plan_id}/receipt": {
-  "__type__": "unknown"
+  "__model__": "ReceiptSummaryOut",
+  "degraded": "array<string>",
+  "input_ref": "string",
+  "output_fingerprint": "string",
+  "output_ref": "string",
+  "plan_hash": "string",
+  "plan_id": "string",
+  "quality_after": "object",
+  "quality_before": "object",
+  "row_after": "integer",
+  "row_before": "integer",
+  "user_confirmations": "array<object>"
  },
  "GET /api/v1/data-preparation/plans": {
-  "__type__": "unknown"
+  "__model__": "PlanListResponse",
+  "plans": "array<PlanOut>"
  },
  "GET /api/v1/data-quality/reports": {
   "__model__": "Page_Dict_str__Any__",
@@ -729,7 +746,13 @@
   "stuck_jobs": "integer|null"
  },
  "GET /api/v1/storymap/sessions/{session_id}/spec": {
-  "__type__": "unknown"
+  "__model__": "StoryMapSpec",
+  "audio_narrative": "array<AudioNarrative>",
+  "camera_keyframes": "array<CameraKeyframe>",
+  "chapters": "array<StoryChapter>",
+  "linked_widgets": "array<LinkedWidget>",
+  "metadata": "StoryMapMetadata",
+  "schema_version": "string"
  },
  "GET /api/v1/tasks": {
   "__model__": "TaskListResponse",

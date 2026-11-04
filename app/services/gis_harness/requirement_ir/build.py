@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+from typing import Protocol
+from pydantic import JsonValue
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -399,7 +401,20 @@ _QUERY_TASK_SIGNAL_RE = re.compile(
     r"statistics|analysis|density|trend|compare|per ")
 
 
-def _emit_cue_patches(spec: GISIntentSpec, query: str, emit) -> set:
+class _PatchEmitter(Protocol):
+    """Patch callback with optional fields and named actor overrides."""
+
+    def __call__(
+        self,
+        op: str,
+        path: str = "",
+        value: JsonValue = None,
+        reason: str = "",
+        actor: str = "user",
+    ) -> None: ...
+
+
+def _emit_cue_patches(spec: GISIntentSpec, query: str, emit: _PatchEmitter) -> set:
     """隐藏/显示图层、换色、导出格式、出版、3D 表达 —— cue → user patches。
 
     只发射"值确有变化"的 patch（幂等：重复话语零 patch）；换色/隐藏/维度
@@ -463,7 +478,7 @@ def _emit_cue_patches(spec: GISIntentSpec, query: str, emit) -> set:
 
 
 def _emit_scene_cue_patches(
-    spec: GISIntentSpec, q: str, emit, existing_locks: set,
+    spec: GISIntentSpec, q: str, emit: _PatchEmitter, existing_locks: set,
 ) -> set:
     """3D cue → user patches（edit 轮；与 genesis 的 _apply_scene_cues_to_spec
     共用 cues.py 词面，投影语义一致）。

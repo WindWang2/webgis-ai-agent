@@ -662,7 +662,7 @@ async def run_runtime_repair(
                     if isinstance(fresh_state, dict):
                         state = fresh_state
                 except Exception:  # noqa: BLE001
-                    pass
+                    logger.debug("[RuntimeRepair] fresh map state unavailable", exc_info=True)
                 try:
                     outcome.mutation_revision = int(
                         state.get("_cartographic_mutation_revision") or 0

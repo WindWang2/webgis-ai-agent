@@ -27,6 +27,8 @@ MapSpec 桥（D1：不新增 schema 版本）：
 """
 from __future__ import annotations
 
+from app.services.data_fabric.tile_cache import DfTileCache
+from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -119,7 +121,7 @@ def build_mapspec_source(
 class OgcTilesProxyService:
     """OGC 瓦片代理的进程内单例事实源。"""
 
-    def __init__(self, cache=TILE_CACHE, coalescer: Optional[TileBuildCoalescer] = None):
+    def __init__(self, cache: DfTileCache=TILE_CACHE, coalescer: Optional[TileBuildCoalescer] = None) -> None:
         self._cache = cache
         self._coalescer = coalescer or TileBuildCoalescer()
         self._content_types: dict[tuple, str] = {}
@@ -198,7 +200,7 @@ class OgcTilesProxyService:
         s["inflight"] = self._coalescer.inflight_keys()
         return s
 
-    def _resolve_governed_adapter(self, ds_model: Any):
+    def _resolve_governed_adapter(self, ds_model: Any) -> GeospatialDataSourceAdapter:
         """治理解析（registry 优先）—— 与 manager.query 路径同一条门。"""
         from app.services.data_fabric.manager import DataFabricManager
 

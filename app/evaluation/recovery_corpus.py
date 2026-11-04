@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+from pydantic import JsonValue
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -67,7 +68,7 @@ def _tf_input(message: str = "", *, code: str = "", status: str = "",
     }
 
 
-def _gv_input(**kw) -> Dict[str, Any]:
+def _gv_input(**kw: JsonValue) -> Dict[str, Any]:
     base: Dict[str, Any] = {
         "goal_report": {
             "verdict": "satisfied",
@@ -95,7 +96,7 @@ def _gv_input(**kw) -> Dict[str, Any]:
     return base
 
 
-def _cont_input(**kw) -> Dict[str, Any]:
+def _cont_input(**kw: JsonValue) -> Dict[str, Any]:
     base: Dict[str, Any] = {
         "progress_rows": [
             {"capability": "ingest", "status": "complete",

@@ -9,6 +9,7 @@
 - 空间分析任务端点已移除 — Agent 通过 tool calling 驱动分析，不再走 REST CRUD。
 """
 
+from app.services.mvt import SpatialIndexEntry
 import asyncio
 import gzip
 import hashlib
@@ -50,7 +51,7 @@ router = APIRouter()
 
 async def _verify_session_owner(
     session_id: str,
-    user_id,
+    user_id: Optional[str],
     owner_token: Optional[str] = None,
 ) -> None:
     """Back-compat wrapper delegating to verify_session_owner."""
@@ -85,7 +86,7 @@ async def get_session_layer_data(
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(require_owned_session),
     request: Request = None,
-):
+) -> Response:
     """通过引用 ID 或别名获取会话缓存中的大数据对象（如分析产生的 GeoJSON）。"""
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
@@ -535,7 +536,7 @@ async def get_session_layer_feature(
     from app.services.mvt import spatial_index_cache
     index_entry = spatial_index_cache.get((session_id, ref_id))
     if index_entry is not None:
-        def _indexed_lookup(entry) -> Optional[dict]:
+        def _indexed_lookup(entry: SpatialIndexEntry) -> Optional[dict]:
             idx = entry.feature_id_index().get(str(feature_id))
             return entry.features[idx] if idx is not None else None
 
@@ -964,7 +965,7 @@ async def get_raster_tile(
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(require_owned_session),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
-):
+) -> Response:
     """以 Web Mercator XYZ PNG 瓦片形式返回栅格图层数据（Data Plane 路径）。
 
     P-5（#878）：与 MVT 路由同构的性能路径 —— PNG LRU 命中零 ref-store IO；
@@ -1038,7 +1039,7 @@ async def get_terrain_tile(
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(_require_owned_session_qtoken),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
-):
+) -> Response:
     """terrarium 编码的地形瓦片（ADR-0199：MapLibre raster-dem 数据面）。
 
     与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**

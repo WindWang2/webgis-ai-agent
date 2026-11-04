@@ -56,7 +56,7 @@ def register_scale_profile_tools(registry: ToolRegistry) -> None:
         name="webgis_inspect_map_scale_profile",
         capabilities=["cartography_scale_inspect"],
         domains=["mapspec", "cartography"],
-        tier=1,
+        tier=2,
         args_model=InspectArgs,
         description=(
             "只读检查一个地图图层的多尺度表达证据：源数据时点（ref/revision）、"
@@ -99,7 +99,7 @@ def register_scale_profile_tools(registry: ToolRegistry) -> None:
         name="webgis_preview_scale_representation",
         capabilities=["cartography_scale_preview"],
         domains=["mapspec", "cartography"],
-        tier=1,
+        tier=2,
         args_model=PreviewArgs,
         description=(
             "零突变预览一个图层的完整多尺度表达计划：四尺度带（world/province/"

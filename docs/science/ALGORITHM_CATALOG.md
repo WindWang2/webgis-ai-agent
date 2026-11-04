@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：165 能力 · 245 算法 · 127 参数契约。
+统计：174 能力 · 253 算法 · 127 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -96,6 +96,30 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
   - 取消：chunk_boundary
   - 数值容差：rtol=0.001，atol=1e-09
+
+## `cartography_scale_apply` — 多尺度表达受控落笔
+
+按可信字段语义取舍 + 拓扑安全几何综合产派生工件（新 ref，原始数据不动），MapSpec v1.9 窗口源覆盖经顺序 CAS 链落笔；统计/图例口径恒 original_source；幂等回执 + 断点续链。
+
+- **`cartography.scale.apply`** Multiscale apply（`native`·成熟度 —）
+  - 假设：Scale representation uses source evidence and preserves original-source statistical semantics
+  - 局限：Presentation operation, not an analysis artifact producer; apply requires session state and lifecycle CAS
+
+## `cartography_scale_inspect` — 多尺度表达证据检视
+
+只读检视图层的多尺度表达证据：源数据时点（ref/revision）、可信重要性字段（真实值分布 × 有序词表，fail-honest）、各尺度带取舍预览与既有 ScaleRepresentationProfile。
+
+- **`cartography.scale.inspect`** Multiscale inspect（`native`·成熟度 —）
+  - 假设：Scale representation uses source evidence and preserves original-source statistical semantics
+  - 局限：Presentation operation, not an analysis artifact producer; apply requires session state and lifecycle CAS
+
+## `cartography_scale_preview` — 多尺度表达计划预览
+
+零突变预览完整多尺度表达计划：四尺度带表达模式、每带显示/原始要素数、几何综合策略与容差、披露与语义检查（不存 ref、不改 MapSpec）。
+
+- **`cartography.scale.preview`** Multiscale preview（`native`·成熟度 —）
+  - 假设：Scale representation uses source evidence and preserves original-source statistical semantics
+  - 局限：Presentation operation, not an analysis artifact producer; apply requires session state and lifecycle CAS
 
 ## `category_breakdown` — 类别构成统计
 
@@ -192,6 +216,14 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 - **`platform.crs_transformation`** 坐标系转换（工具面绑定契约）（`native`·成熟度 —）
   - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
   - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
+## `data_preparation` — 数据集准备
+
+多源空间数据自动准备：字段提案/计划执行/语义绑定（inspect→propose→validate→prepare→bind，只读检视+受控写入）。
+
+- **`data.prepare`** 数据集准备（`native`·成熟度 —）
+  - 假设：输入为会话内 source_ref；准备计划保留原始数据并产新引用
+  - 局限：需确认的字段/坐标歧义以 requires_input 或 blocked 返回
 
 ## `data_source_pipeline` — 数据源管道
 
@@ -513,6 +545,20 @@ KDE 连续密度面/等值线（定量密度表达）。
   - 局限：连通性对栅格分辨率敏感（跨分辨率比较需同化像元尺寸）；逐类边缘密度按类面积归一（与景观级 ED 口径不同）
   - 资源包络：24B/像元，像元硬上限 50000000
   - 取消：chunk_boundary
+
+## `layer_browse` — 图层要素浏览
+
+会话图层要素的有界分页浏览与窗口聚合：排序/typed 谓词/bbox 窗口/字段投影、分组计数与单要素详情（只读，不整包拉取）。
+
+- **`layer.features.page`** 图层要素分页（`native`·成熟度 —）
+  - 假设：有界分页、字段投影和 typed 过滤，不下载整包
+  - 局限：返回 total_matching/is_complete/truncated，未知总数不得当全量
+- **`layer.aggregate`** 图层窗口聚合（`native`·成熟度 —）
+  - 假设：全扫过滤窗口的分组统计，原始数据只读
+  - 局限：分组溢出和非数值计数显式披露，不补造分母
+- **`layer.feature.detail`** 单要素详情（`native`·成熟度 —）
+  - 假设：按稳定 id 获取单要素，原始数据只读
+  - 局限：positional id 仅对当前数据版本稳定
 
 ## `layer_display_control` — 图层显示控制
 
@@ -1269,6 +1315,14 @@ OLS+空间诊断 / SLX / SAR-ML / SEM-ML（LM 决策树支撑）。
   - 资源包络：64B/要素，要素硬上限 4000000
   - 取消：none
 
+## `spatial_semantics` — 空间语义契约检视
+
+数据的空间语义只读检视：CRS 声明来源（declared/rfc7946_default/assumed/unknown）、坐标结构/轴序嫌疑/偏移帧归一链、计算空间推荐（UTM/极区/测地）与尺度精度—— 度量敏感工具执行前的 typed 判定（未知不猜）。
+
+- **`spatial.semantics.inspect`** 空间语义契约检视（`native`·成熟度 —）
+  - 假设：检视 CRS 来源、轴序与计算空间，不改写数据
+  - 局限：未知 CRS 如实报告 unknown，不猜测坐标系
+
 ## `spatial_weights_diagnostics` — 空间权重诊断
 
 权重结构体检：稀疏度/对称性/邻居分布/孤岛/连通分量。
@@ -1349,6 +1403,10 @@ FCLS 全约束最小二乘线性光谱解混（Heinz & Chang 2001；逐像元 mi
   - 假设：按时间粒度分组聚合（描述性）；NaT 剔除并披露；count=分组计数；sum/mean/min/max 作用于显式 metric_fields
   - 局限：分组键时区语义不归一（诚实披露）；空分组/全 NaT 不伪造统计（类型化空结果）
 
+## `temporal_bind` — 时序视图绑定
+
+把会话图层绑定为时序视图：探测时间字段/表示/粒度，真实帧写入 MapSpec temporal 契约（temporal_view_bind/unbind）。
+
 ## `temporal_change_point` — 时序均值变点
 
 CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在模型内）。
@@ -1357,6 +1415,10 @@ CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在
   - 假设：单均值漂移假设：变点 = argmax|Σ(x−x̄)|（k 取 1..n−1）；显著性 = 无变化零假设下固定种子 bootstrap 的 max-CUSUM 分布；p ≥ alpha 时不给 change_point_index（candidate 恒给）
   - 局限：多变点/方差变化不在模型内；n<10 变点定位不稳定（警告）；bootstrap p 分辨率 1/(draws+1)
 
+## `temporal_compare` — 时序两期对照
+
+两期对照与跨帧共享固定分级（temporal_view_compare）。
+
 ## `temporal_composite` — 多时相合成
 
 多时相波段栈合成（medoid 多维中位数——Flood 2013；选真实观测切片保持跨波段光谱一致性；NaN 切片整条剔除；generic 时序统计，光学/SAR 栈通用）。
@@ -1364,6 +1426,10 @@ CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在
 - **`remote.medoid_composite`** medoid 时序合成（多维中位数）（`native`·成熟度 已验证，出处: `flood2013`）
   - 假设：逐像元选 argmin_t Σ_s ‖x_t−x_s‖₂（波段欧氏）的**真实观测切片**——跨波段光谱一致性保持（区别于逐波段 median 的独立分位拼接）；任一波段无效（NaN/哨兵）的切片整条剔除（跨波段一致性优先，不做波段级稀释）；平局取最早时相（确定性）；实现为 generic 时序统计（与 sar.temporal_composite 同底座家族，光学/多时相栈通用）；云/影污染时相经距离和自动边缘化
   - 局限：输入须已配准对齐的多时相波段栈 (T,k,H,W)；不做云检测/掩膜；规模预算：2≤T≤24、H·W≤4096²、T·H·W≤32M（距离累加面，超限拒绝）；k=1 时退化为最接近全体一维观测的选择（奇数 T 下与 median 等价）
+
+## `temporal_control` — 时序播放控制
+
+时序视图播放控制：seek/step/play/pause/rate/unpin（temporal_view_control/status）。
 
 ## `temporal_feature_extraction` — 时序特征提取
 

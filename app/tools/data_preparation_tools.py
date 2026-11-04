@@ -18,6 +18,7 @@
 - 会话归属走 _resolve_session_id（LLM 提供的 session_id 不可信）；
 - 准备本体零新逻辑：inspect/plan/execute 全部委托 data_preparation 域。
 """
+from app.services.data_preparation.spatial_receipt import InspectionFinding
 import logging
 from typing import Any, Dict, Optional
 
@@ -45,7 +46,7 @@ _MAX_CLARIFICATIONS = 16
 _MAX_BLOCKED_FINDINGS = 8
 
 
-def _finding_out(f) -> Dict[str, Any]:
+def _finding_out(f: InspectionFinding) -> Dict[str, Any]:
     return {"code": f.code, "severity": f.severity.value,
             "message": f.message_zh, "suggestion": f.suggestion.value,
             "field": f.field}

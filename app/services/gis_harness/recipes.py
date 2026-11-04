@@ -1737,7 +1737,7 @@ class RecipeRegistry:
         hit_count: Dict[int, int] = {}
         hit_recipes: Dict[int, CartographyRecipe] = {}
         for kw, recipes in self._keyword_index.items():
-            if self._keyword_matches(kw, low):
+            if kw in low and self._keyword_matches(kw, low):
                 for recipe in recipes:
                     hit_count.setdefault(recipe.id, 0)
                     hit_count[recipe.id] += 1
@@ -1802,7 +1802,7 @@ class RecipeRegistry:
         if query:
             low = query.lower()
             for kw, recipes in self._keyword_index.items():
-                if self._keyword_matches(kw, low):
+                if kw in low and self._keyword_matches(kw, low):
                     for recipe in recipes:
                         keyword_scores[recipe.id] = keyword_scores.get(recipe.id, 0) + 1
         # V1 能力资格层（situation 提供时）：capability 级聚合资格一次

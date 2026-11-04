@@ -89,7 +89,7 @@ def redact_signed_url(url: str) -> str:
 class CogMaterializationError(Exception):
     """物化失败（reason code 封闭；details 携带预算/协商事实）。"""
 
-    def __init__(self, message: str, *, reason_code: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, *, reason_code: str, details: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(message)
         self.reason_code = reason_code
         self.details = details or {}

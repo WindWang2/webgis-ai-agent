@@ -25,6 +25,9 @@
   （`tests/unit/api_contract/_contract_util.py::EXCLUSIONS`，16 项，附理由，PR 附表镜像）；
   无返回体的端点用 204 状态码显式表达。
 - 最终态：204/220 挂模 + 16 豁免；67 个内联 BaseModel 归零（69 - PR#123 已迁 4，master 演进差值 2 个为 auth 计数口径）。
+- 2026-11-04 补齐后续新增面：PMTiles 与 OGC API Tiles 的原始瓦片字节端点进入
+  二进制豁免台账（保留内容类型、ETag、204/304）；数据准备列表/作废/收据与
+  StoryMap 已保存资产读取均使用真实响应模型，不能以 JSON 端点豁免替代。
 - 命名规范 `<Resource><Action>Request/Response`；pydantic v2 `ConfigDict`；关键模型补 `json_schema_extra` 示例。
 - 服务层返回动态投影的端点（workflow-runtime 投影、quality report、GC 计划等）采用
   「开放对象（extra=allow）+ 锚定键」模型：字段增删不裁剪、OpenAPI 有诚实 schema；

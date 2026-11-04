@@ -5,6 +5,9 @@
 """
 from __future__ import annotations
 
+from app.services.data_preparation.field_proposal import FieldProposal
+from app.services.data_preparation.spatial_receipt import SpatialInspectionReceipt
+from app.services.data_preparation.plan import PreparationPlan
 import logging
 from typing import List, Optional
 
@@ -17,12 +20,14 @@ from app.core.auth import (
 )
 from app.models.db_model import Conversation
 from app.schemas.data_preparation_schema import (
+    DiscardPlanResponse,
     ExecuteResponse,
     FieldBindingRequest,
     FieldBindingResponse,
     FieldProposalOut,
     InspectRequest,
     InspectResponse,
+    PlanListResponse,
     PlanOut,
     PlanRequest,
     PlanResponse,
@@ -87,7 +92,7 @@ async def _require_session(
     return session_id
 
 
-def _proposal_out(p) -> FieldProposalOut:
+def _proposal_out(p: FieldProposal) -> FieldProposalOut:
     return FieldProposalOut(
         field=p.field, dtype=p.dtype,
         candidates=[RoleCandidateOut(role=c.role, confidence=c.confidence,
@@ -97,7 +102,7 @@ def _proposal_out(p) -> FieldProposalOut:
         needs_clarification=p.needs_clarification)
 
 
-def _receipt_out(r) -> ReceiptOut:
+def _receipt_out(r: SpatialInspectionReceipt) -> ReceiptOut:
     return ReceiptOut(
         input_ref=r.input_ref, geometry_type=r.geometry_type, srs=r.srs,
         crs_source=r.crs_source, axis_order_guessed=r.axis_order_guessed,
@@ -117,7 +122,7 @@ async def inspect(
     req: InspectRequest,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
-):
+) -> InspectResponse:
     """检查数据源：空间收据 + 字段角色候选 + 有界样本（≤50 行）。"""
     await _require_session(req.session_id, _user, owner_token)
     try:
@@ -143,7 +148,7 @@ async def create_plan(
     req: PlanRequest,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
-):
+) -> PlanResponse:
     """构建准备计划（服务端校验步与收据事实匹配；不执行）。"""
     await _require_session(req.session_id, _user, owner_token)
     axis_evidence = None
@@ -215,7 +220,7 @@ async def create_plan(
         warnings=warnings)
 
 
-async def _load_owned_plan(plan_id: str, session_id: str):
+async def _load_owned_plan(plan_id: str, session_id: str) -> PreparationPlan:
     plan = await get_plan(session_id, plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail="plan not found")
@@ -228,7 +233,7 @@ async def preview_plan(
     session_id: str = Query(...),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
-):
+) -> PreviewResponse:
     """dry-run 预演（采样 ≤2000 行；不落任何 store）。"""
     await _require_session(session_id, _user, owner_token)
     from app.services.data_preparation.executor import _exec_lock
@@ -273,7 +278,7 @@ async def execute(
     session_id: str = Query(...),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
-):
+) -> ExecuteResponse:
     """幂等执行计划 → prepared ref + 收据（原件不可变）。"""
     await _require_session(session_id, _user, owner_token)
     plan = await _load_owned_plan(plan_id, session_id)
@@ -292,29 +297,29 @@ async def execute(
         user_confirmations=[dict(c) for c in receipt.user_confirmations]))
 
 
-@router.get("/data-preparation/plans")
+@router.get("/data-preparation/plans", response_model=PlanListResponse)
 async def plans(
     session_id: str = Query(...),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
-):
+) -> PlanListResponse:
     """列出会话内计划（有界 ≤64）。"""
     await _require_session(session_id, _user, owner_token)
     records = await list_plans(session_id)
-    return {"plans": [PlanOut(
+    return PlanListResponse(plans=[PlanOut(
         plan_id=p.plan_id, plan_hash=p.plan_hash, state=p.state,
         input_ref=p.input_ref, input_fingerprint=p.input_fingerprint,
         steps=[s.canonical() for s in p.steps],
-        mutates_data=p.mutates_data).model_dump() for p in records]}
+        mutates_data=p.mutates_data) for p in records])
 
 
-@router.delete("/data-preparation/plan/{plan_id}")
+@router.delete("/data-preparation/plan/{plan_id}", response_model=DiscardPlanResponse)
 async def discard(
     plan_id: str,
     session_id: str = Query(...),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
-):
+) -> DiscardPlanResponse:
     """作废未执行计划（executed/verified 不可作废 —— 走产物删除面）。"""
     await _require_session(session_id, _user, owner_token)
     try:
@@ -324,7 +329,7 @@ async def discard(
                             detail=f"{exc.reason_code}: {exc.detail}") from exc
     if plan is None:
         raise HTTPException(status_code=404, detail="plan not found")
-    return {"plan_id": plan.plan_id, "state": plan.state}
+    return DiscardPlanResponse(plan_id=plan.plan_id, state=plan.state)
 
 
 @router.post("/data-preparation/bindings/fields", response_model=FieldBindingResponse)
@@ -332,7 +337,7 @@ async def bind_fields(
     req: FieldBindingRequest,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
-):
+) -> FieldBindingResponse:
     """用户确认角色写回 descriptor（版本化；address 等无对应角色诚实跳过）。"""
     await _require_session(req.session_id, _user, owner_token)
     try:
@@ -345,14 +350,14 @@ async def bind_fields(
     return FieldBindingResponse(**result)
 
 
-@router.get("/data-preparation/plan/{plan_id}/receipt")
+@router.get("/data-preparation/plan/{plan_id}/receipt", response_model=ReceiptSummaryOut)
 async def plan_receipt(
     plan_id: str,
     session_hash: str = Query(..., description="plan_hash（收据幂等键）"),
     session_id: str = Query(...),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
-):
+) -> ReceiptSummaryOut:
     """查执行收据（幂等键查询；未执行 → 404 诚实披露）。"""
     await _require_session(session_id, _user, owner_token)
     plan = await _load_owned_plan(plan_id, session_id)
@@ -366,4 +371,4 @@ async def plan_receipt(
         row_before=receipt.row_before, row_after=receipt.row_after,
         quality_before=receipt.quality_before, quality_after=receipt.quality_after,
         degraded=list(receipt.degraded),
-        user_confirmations=[dict(c) for c in receipt.user_confirmations]).model_dump()
+        user_confirmations=[dict(c) for c in receipt.user_confirmations])

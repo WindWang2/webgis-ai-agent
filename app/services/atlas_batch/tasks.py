@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+from pydantic import JsonValue
 import logging
 
 from app.services.task_queue import celery_app
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="app.services.atlas_batch.tasks.run_atlas_export", bind=True)
-def run_atlas_export(self, job_id: int | None = None):  # noqa: ANN201
+def run_atlas_export(self, job_id: int | None = None) -> dict[str, JsonValue]:  # noqa: ANN201
     """批量图册导出（durable job；幂等/取消/重试由框架承载）。"""
     from app.services.atlas_batch.executor import execute_atlas_job
     from app.services.jobs.worker import AlreadyFinished, durable_job, finish_job

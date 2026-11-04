@@ -41,7 +41,7 @@ _OTHER_KEY = "__other__"
 class AggregateOverLimit(Exception):
     """feature_count > AGG_SCAN_LIMIT —— 有界拒绝，不是失败重试。"""
 
-    def __init__(self, feature_count: int):
+    def __init__(self, feature_count: int) -> None:
         self.feature_count = feature_count
         super().__init__(f"feature_count {feature_count} exceeds aggregate scan limit {AGG_SCAN_LIMIT}")
 

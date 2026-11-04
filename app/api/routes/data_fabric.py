@@ -1,6 +1,10 @@
 """
 Enterprise Geospatial Data Fabric REST Routes
 """
+from collections.abc import Callable, Coroutine
+from typing import TypeVar
+
+_ORMResult = TypeVar("_ORMResult")
 import asyncio
 import concurrent.futures
 import contextlib
@@ -123,7 +127,7 @@ def _tenant_filter(query, user: Optional[Dict[str, Any]]):
     )
 
 
-def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str, Any]]):
+def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str, Any]]) -> DataSourceModel:
     """Authorize a single DataSource belongs to the caller's tenant (or 404).
 
     Returns 404 (not 403) to avoid leaking the existence of cross-tenant rows.
@@ -170,7 +174,7 @@ def _require_source_manage(
     )
 
 
-def _authorize_catalog_item(db: Session, item_id: str, user: Optional[Dict[str, Any]]):
+def _authorize_catalog_item(db: Session, item_id: str, user: Optional[Dict[str, Any]]) -> CatalogItemModel:
     """Authorize catalog-item access for the caller's tenant (or 404).
 
     Cross-tenant access to preview/query/materialize previously had NO guard —
@@ -221,10 +225,10 @@ def _require_existing_session_owner(
 # are unchanged — only the execution thread moves.
 
 
-def _run_sync_orm(fn):
+def _run_sync_orm(fn: Callable[[Session], _ORMResult]) -> Coroutine[None, None, _ORMResult]:
     """Run ``fn(session)`` — a route's sync ORM work — in a worker thread
     with its own SessionLocal(). Returns the plain data the closure builds."""
-    def _worker():
+    def _worker() -> _ORMResult:
         with SessionLocal() as thread_db:
             return fn(thread_db)
 
@@ -249,7 +253,7 @@ def _run_sync_orm(fn):
 # 的客户端），故 per-request loop 可安全恢复。
 
 
-def _run_async_manager(fn):
+def _run_async_manager(fn: Callable[[Session], Coroutine[None, None, _ORMResult]]) -> Coroutine[None, None, _ORMResult]:
     """Run an async data_fabric manager call (``fn(session) -> coroutine``) in
     a worker thread's OWN event loop with a request-scoped SessionLocal().
 
@@ -259,7 +263,7 @@ def _run_async_manager(fn):
     Session 随请求创建/关闭：close 即归还连接，``loop.close()`` 同时关闭该
     loop 的默认执行器（无跨请求线程/执行器残留）。
     """
-    def _worker():
+    def _worker() -> _ORMResult:
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
@@ -272,7 +276,7 @@ def _run_async_manager(fn):
     return asyncio.to_thread(_worker)
 
 
-async def _run_async_manager_cancellable(fn):
+async def _run_async_manager_cancellable(fn: Callable[[Session], Coroutine[None, None, _ORMResult]]) -> _ORMResult:
     """``_run_async_manager`` 的真取消版（W12 断线取消；#1683 后 per-request loop）。
 
     每个调用一条自己的 worker loop（跑在 ``asyncio.to_thread`` 同款默认执行器
@@ -289,7 +293,7 @@ async def _run_async_manager_cancellable(fn):
     # worker → handler 的 task 句柄交接（concurrent.futures.Future 跨线程安全）
     task_box: "concurrent.futures.Future" = concurrent.futures.Future()
 
-    def _worker():
+    def _worker() -> _ORMResult:
         asyncio.set_event_loop(loop)
         try:
             with SessionLocal() as thread_db:

@@ -12,6 +12,12 @@
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pyproj import Geod
+
+from shapely.geometry.base import BaseGeometry
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -39,7 +45,7 @@ __all__ = [
 _GEOD = None
 
 
-def _geod():
+def _geod() -> Geod:
     global _GEOD
     if _GEOD is None:
         from pyproj import Geod
@@ -104,7 +110,7 @@ def _common_guards(
     return targets, findings
 
 
-def _validate_after(geom_after) -> Optional[Dict[str, Any]]:
+def _validate_after(geom_after: BaseGeometry | None) -> Optional[Dict[str, Any]]:
     if geom_after is None or geom_after.is_empty:
         return finding("geometry_invalid_after", "operation produced an empty geometry")
     if geom_after.geom_type in ("Polygon", "MultiPolygon") and not geom_after.is_valid:
@@ -122,7 +128,7 @@ def _jsonable(node: Any) -> Any:
     return node
 
 
-def _geometry_out(geom) -> Dict[str, Any]:
+def _geometry_out(geom: BaseGeometry) -> Dict[str, Any]:
     return _jsonable(mapping(geom))
 
 
@@ -183,7 +189,7 @@ def _close_if_ring(coords: List) -> List:
     return coords
 
 
-def _repair_structure(geom, dedupe: bool, close: bool):
+def _repair_structure(geom: BaseGeometry, dedupe: bool, close: bool) -> BaseGeometry:
     """LineString/Polygon(/Multi*) 的相邻去重与环闭合（递归构造新几何）。"""
     from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon
 
@@ -241,7 +247,7 @@ def move_by(
         return [], guard_findings
     deltas: List[Dict[str, Any]] = []
 
-    def shift(x, y):
+    def shift(x: float | tuple[float, ...], y: float | tuple[float, ...]) -> tuple[float | tuple[float, ...], float | tuple[float, ...]]:
         # shapely.ops.transform 的 (x, y) 坐标数组签名；Geod.fwd 原生支持
         # 数组/标量 —— 等方位/等距离的测地平移（形状保持）。
         lon2, lat2, _ = geod.fwd(x, y, azimuth, magnitude)
@@ -329,7 +335,7 @@ def snap_to_ref(
         if dist_move <= 0:
             continue  # 已在目标上，零位移不入 diff
 
-        def shift(x, y, _az=az, _dist=dist_move):
+        def shift(x: float | tuple[float, ...], y: float | tuple[float, ...], _az: float=az, _dist: float=dist_move) -> tuple[float | tuple[float, ...], float | tuple[float, ...]]:
             lon2, lat2, _ = geod.fwd(x, y, _az, _dist)
             return lon2, lat2
 

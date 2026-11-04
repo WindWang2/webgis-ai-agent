@@ -150,6 +150,9 @@ class TestCheckGate:
         assert debt_ratchet.check() == 2
 
     def test_zero_baseline_fails_on_any_debt(self, monkeypatch, tmp_path):
+        # Exercise the real scanner on a bounded fixture. Scanning the entire
+        # application again under coverage can exhaust the xdist worker budget.
+        _make_tree(tmp_path)
         bp = tmp_path / "baseline.json"
         bp.write_text(json.dumps({
             "frontend_explicit_any": 0,
@@ -159,14 +162,17 @@ class TestCheckGate:
             "unannotated_defs_pct": 0,
         }), encoding="utf-8")
         monkeypatch.setattr(debt_ratchet, "BASELINE_PATH", bp)
-        assert debt_ratchet.check() == 1
+        assert debt_ratchet.check(bp, tmp_path) == 1
 
     def test_checked_in_baseline_passes(self):
         """入库基线与当前代码一致时 check 必须绿。"""
         assert debt_ratchet.BASELINE_PATH.is_file()
         assert debt_ratchet.check() == 0
 
-    def test_new_god_module_fails(self, monkeypatch, tmp_path):
+    def test_new_god_module_fails(self, monkeypatch, tmp_path, capsys):
+        _make_tree(tmp_path)
+        (tmp_path / "app" / "oversized.py").write_text(
+            "pass\n" * (debt_ratchet.GOD_MODULE_LINES + 1), encoding="utf-8")
         bp = tmp_path / "baseline.json"
         bp.write_text(json.dumps({
             "frontend_explicit_any": 999999,
@@ -176,8 +182,8 @@ class TestCheckGate:
             "unannotated_defs_pct": 99.0,
         }), encoding="utf-8")
         monkeypatch.setattr(debt_ratchet, "BASELINE_PATH", bp)
-        # 基线没有 god_modules 条目 → 当前所有 >2000 行文件都算 NEW
-        assert debt_ratchet.check() == 1
+        assert debt_ratchet.check(bp, tmp_path) == 1
+        assert "god_modules: NEW" in capsys.readouterr().out
 
 
 # ------------------------------------------------------- v2 颗粒化（G14）

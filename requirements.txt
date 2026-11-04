@@ -57,6 +57,9 @@ pydantic>=2.13.4,<2.15
 pydantic-settings>=2.14.2
 python-dotenv>=1.0.0
 httpx>=0.26.0
+# CVE-2026-111497: HTTP/PDF consumers can decode untrusted Brotli streams.
+# Keep the patched decoder floor even when a transitive consumer changes.
+brotli>=1.2.1
 # requests: app/services/data_fabric/security.py、data_fabric/adapters/stac_adapter.py
 # 等直接 import（#618-35）。此前仅靠其他包传递依赖引入 —— 直接使用的库必须
 # 直接声明（同类问题见下方 #563 rich 注释）。

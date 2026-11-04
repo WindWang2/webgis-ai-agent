@@ -1671,7 +1671,7 @@
       "metadata_sources": 1,
       "repair_attempts": 0,
       "review_invocations": 1,
-      "rule_invocations": 8
+      "rule_invocations": 9
      },
      "final_fingerprint": "carto-sha256:47c35813b1ad7b9b9f476f3218a2fedb444cc4c5d5c02e7593bc4b5237ac0c5d",
      "grammar_audit": null,
@@ -1821,6 +1821,22 @@
         "rule": "VISUAL_OVERLAP",
         "severity": "info",
         "source_id": "ref-src",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VIEWPORT_COVERS_RESULTS",
+        "evaluated": false,
+        "evidence": {
+         "visible_layers_checked": 0
+        },
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "view center/zoom absent — viewport coverage not computable",
+        "repairability": "not_repairable",
+        "rule": "VIEWPORT_COVERS_RESULTS",
+        "severity": "info",
+        "source_id": null,
         "status": "not_evaluated",
         "suggested_fix": null
        }
@@ -3954,7 +3970,7 @@
     "correction_hint": "mode 仅接受 ['2d', '2.5d', '3d']；terrain.source 必须是非空字符串（raster-dem 源 id）。",
     "has_mapspec": false,
     "layer_ids": [],
-    "message": "非法 scene 配置：1 validation error for MapSceneConfig\nmode\n  Input should be '2d', '2.5d' or '3d' [type=literal_error, input_value='4d', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+    "message": "非法 scene 配置：1 validation error for MapSceneConfig\nmode\n  Input should be '2d', '2.5d' or '3d' [type=literal_error, input_value='4d', input_type=str]\n    For further information visit https://errors.pydantic.dev/<version>/v/literal_error",
     "origin": "agent",
     "success": false
    },

@@ -68,6 +68,10 @@ _ANTI_MATCH_CAP = 4  # 负证据匹配记录上限（可解释面有界）
 # V3/V4-off 与 V4-on 走同一打分循环 → 「V3 数学 == V4 关闭」契约不变。
 # ---------------------------------------------------------------------------
 _SINGLE_CHAR_SCALE = 0.25
+# A long description matching many unrelated characters must not manufacture
+# stronger evidence than a complete description term. Preserve single-character
+# recall, but bound its total contribution for each candidate.
+_SINGLE_CHAR_CAP = _W_DESC
 _CJK_STOPCHARS = frozenset(
     "的了在是和与或把给个这那有也就都被对为不没很之等每们吧呢啊嘛呀"
     "又再才只更最太非常想看下上中里外前后左右上下说请问帮我想需要"
@@ -280,6 +284,7 @@ class ToolRetrievalIndex:
         for lex in self._lexicons:
             score = 0.0
             anti_penalty = 0.0
+            single_char_score = 0.0
             matched: List[str] = []
             anti_matched: List[str] = []
             for t in terms:
@@ -315,7 +320,13 @@ class ToolRetrievalIndex:
                 if local > 0.0:
                     if matched.count(t) < _MATCH_CAP:
                         matched.append(t)
-                    score += local * w_scale
+                    contribution = local * w_scale
+                    if v6_scoring and len(t) == 1:
+                        contribution = min(
+                            contribution, max(0.0, _SINGLE_CHAR_CAP - single_char_score)
+                        )
+                        single_char_score += contribution
+                    score += contribution
                 if (v4 and (not v6_scoring or len(t) > 1)
                         and t in lex.anti_tokens and t not in anti_matched):
                     # V4 负证据：anti_example 命中有界扣减（永只降序，不剔除）
