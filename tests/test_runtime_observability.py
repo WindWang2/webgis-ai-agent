@@ -317,22 +317,43 @@ def test_workflow_engine_logs_arg_keys_not_values(caplog):
 # ──────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_budget_llm_http_clients_are_pooled():
+async def test_budget_llm_http_clients_are_pooled(monkeypatch):
     """Reusing the same base_url must create exactly ONE httpx client (regression
     guard against per-call client creation, the prior perf bug). A different
     base_url creates exactly one more — proving the assertion is meaningful."""
-    from app.services.chat.llm_client import LLMHttpClientRegistry
-    reg = LLMHttpClientRegistry()
+    from app.services.chat import llm_client
+
+    # Exercise real client creation and registry reuse without constructing
+    # network/proxy transports from the developer's environment (e.g. SOCKS
+    # proxies require an optional dependency unrelated to this work budget).
+    real_async_client = llm_client.httpx.AsyncClient
+    created_clients = []
+
+    def unexpected_request(request):
+        pytest.fail(f"The pooling budget must not send HTTP requests: {request.url}")
+
+    def make_client(**kwargs):
+        client = real_async_client(
+            transport=llm_client.httpx.MockTransport(unexpected_request), **kwargs
+        )
+        created_clients.append(client)
+        return client
+
+    monkeypatch.setattr(llm_client.httpx, "AsyncClient", make_client)
+    reg = llm_client.LLMHttpClientRegistry()
     try:
-        await reg.acquire("https://llm-a.example.com")
-        await reg.acquire("https://llm-a.example.com")
-        await reg.acquire("https://llm-a.example.com")
+        first = await reg.acquire("https://llm-a.example.com")
+        assert await reg.acquire("https://llm-a.example.com") is first
+        assert await reg.acquire("https://llm-a.example.com") is first
         assert reg.created_count == 1  # BUDGET: <= 1 client per base_url
+        assert len(created_clients) == 1
         # a distinct base_url allocates one more (the budget is per-host)
-        await reg.acquire("https://llm-b.example.com")
+        assert await reg.acquire("https://llm-b.example.com") is not first
         assert reg.created_count == 2
+        assert len(created_clients) == 2
     finally:
         await reg.aclose_all()
+    assert all(client.is_closed for client in created_clients)
 
 
 @pytest.mark.asyncio

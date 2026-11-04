@@ -13,7 +13,8 @@ quality-e2e.yml）断言四条治理不变量：
      各自显式声明，同 production.yml 的 ISSUE-035 姿态）—— 未声明的
      workflow 会继承仓库默认 token 权限（可能含写）。
 
-纯结构断言（yaml.safe_load），pattern 同 tests/test_ci_release_gate_contract.py。
+结构断言（yaml.safe_load）及 Backend 聚合闸 shell 执行回归，
+pattern 同 tests/test_ci_release_gate_contract.py。
 校验逻辑集中在 collect_violations()，可对任意 workflows 目录运行，便于
 演练（对删掉任一 timeout-minutes 的 fixture 目录运行必须报红）：
 
@@ -23,6 +24,8 @@ quality-e2e.yml）断言四条治理不变量：
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -200,6 +203,62 @@ def test_production_concurrency_group_isolates_event_name():
     assert "github.event_name" in group, (
         f"production.yml concurrency.group 未按事件类型隔离: {group!r} —— "
         "workflow_dispatch 的 rollback 会被 master push run 堵住/取消"
+    )
+
+
+def test_backend_matrix_and_required_gate_remain_blocking():
+    jobs = yaml.safe_load((WORKFLOWS_DIR / "production.yml").read_text(encoding="utf-8"))["jobs"]
+    backend = jobs["test-backend"]
+    assert backend["strategy"]["matrix"] == {"shard": [1, 2, 3, 4, 5, 6]}
+    assert backend["strategy"]["fail-fast"] is False
+    assert not backend.get("continue-on-error", False)
+    assert "if" not in backend
+    test_step = next(step for step in backend["steps"] if step["name"] == "Run Tests with Coverage")
+    assert not test_step.get("continue-on-error", False)
+    assert "if" not in test_step
+
+    gate = jobs["test-backend-gate"]
+    assert gate["name"] == "Backend Tests"
+    assert _needs_list(gate) == ["test-backend"]
+    assert gate["if"] == "always()"
+    assert not gate.get("continue-on-error", False)
+
+
+def test_backend_gate_accepts_only_successful_matrix_result():
+    """needs has one result per job ID, not one result per matrix shard."""
+    jobs = yaml.safe_load((WORKFLOWS_DIR / "production.yml").read_text(encoding="utf-8"))["jobs"]
+    step = next(
+        step for step in jobs["test-backend-gate"]["steps"]
+        if step["name"] == "Aggregate shard results"
+    )
+    assert step["env"]["BACKEND_RESULT"] == "${{ needs.test-backend.result }}"
+    assert not step.get("continue-on-error", False)
+    assert "if" not in step
+    assert "${{" not in step["run"], "Supply GitHub context through env before running the shell"
+    for result in ("success", "failure", "cancelled", "skipped", "", "unknown", "success,failure"):
+        completed = subprocess.run(
+            ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+            env={**os.environ, "BACKEND_RESULT": result},
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert (completed.returncode == 0) == (result == "success"), (
+            f"Backend matrix result {result!r}: {completed.stdout}\n{completed.stderr}"
+        )
+
+
+def test_backend_coverage_retention_is_an_artifact_input():
+    jobs = yaml.safe_load((WORKFLOWS_DIR / "production.yml").read_text(encoding="utf-8"))["jobs"]
+    upload = next(
+        step for step in jobs["test-backend"]["steps"]
+        if step["name"] == "Upload Coverage XML"
+    )
+    assert upload["with"]["retention-days"] == 7
+    assert all(
+        "retention-days:" not in step.get("run", "")
+        for step in jobs["test-backend-gate"]["steps"]
     )
 
 

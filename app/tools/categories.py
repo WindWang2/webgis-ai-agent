@@ -107,6 +107,8 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.science_temporal_tools": "analysis",  # science-v5 物候/立方体/异常
     "app.tools.temporal_view_tools": "rendering",  # GOAL 03：时态视图控制（MapSpec temporal 写面/时间轴驱动）
     "app.tools.terrain_analysis": "analysis",
+    "app.tools.terrain_hydrology": "analysis",
+    "app.tools.terrain_measurements": "analysis",
     "app.tools.upload_tools": "inspection",
     "app.tools.workspace_tools": "data_access",         # workspace 持久化 save/restore
     "app.tools.web_crawler": "data_access",       # 网络 POI 采集（数据获取通道）

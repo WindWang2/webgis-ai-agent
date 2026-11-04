@@ -1,7 +1,7 @@
 """Agent 要素编辑工具面（/goal 03）：preview / commit / history。
 
 信任边界：
-- preview 纯读（deterministic_compute），产出有界 plan 摘要并暂存 plan_id；
+- preview 不修改数据，但会暂存带 UUID/时钟的 plan（state_mutation）；
 - commit 是 state_mutation（session_state）——仅当 plan.safe 且会话策略
   allow_safe_attribute 才自动执行；几何变更/校验 findings/confirm_all 一律
   CONFIRMATION_REQUIRED（用户在提案卡上显式 approve 后经 REST 执行）；
@@ -26,13 +26,17 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="vector_feature_edit_preview",
-        side_effect="deterministic_compute",
+        # build_and_store_plan persists a fresh UUID/time-based plan, not a pure read.
+        side_effect="state_mutation",
+        data_mutations=["session_state"],
+        network=False,
+        deterministic=False,
         tags=["要素编辑", "feature edit", "编辑预览", "批量字段", "geometry fix"],
         capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="medium",
         description=(
-            "数据集要素编辑预览（纯读）：类型/枚举/单位校验 + before/after diff + "
+            "数据集要素编辑预览（不改原数据，暂存计划）：类型/枚举/单位校验 + before/after diff + "
             "plan_id（TTL 10min）。词表 set_fields/rename_field/repair_geometry/"
             "move_by(米制)/snap_to_ref。违规即拒。"
         ),
@@ -84,6 +88,7 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         domains=["dataset"],
         name="vector_feature_edit_commit",
         side_effect="state_mutation",
+        network=False,
         data_mutations=["session_state"],
         tags=["要素编辑", "feature edit", "提交", "数据修改"],
         capabilities=["dataset_ingest"],
@@ -137,6 +142,8 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         domains=["dataset"],
         name="vector_feature_edit_history",
         side_effect="cacheable_read",
+        network=False,
+        deterministic=False,  # Reads the current mutable journal, not a pinned revision.
         tags=["要素编辑", "edit history", "撤销", "审计"],
         capabilities=["dataset_ingest"],
         latency_class="fast",

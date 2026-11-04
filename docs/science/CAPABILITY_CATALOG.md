@@ -15,8 +15,8 @@
 ## 总览
 
 - capability 词表：174 条（图内 174 节点）
-- 图节点 1052 / 边 3254 / graph fingerprint `64299b606489be0f`
-- provider 面：algorithm 245，component 23，model 0，provider(adapters) 17，template 8，tool 396，workflow(recipes) 166
+- 图节点 1060 / 边 3270 / graph fingerprint `1c441cc84bf605e3`
+- provider 面：algorithm 253，component 23，model 0，provider(adapters) 17，template 8，tool 396，workflow(recipes) 166
 - 域分布：`cartography` 6，`general` 77，`network` 14，`platform` 17，`raster` 57，`statistics` 1，`temporal` 2
 
 ## Capability 词表
@@ -202,7 +202,7 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 75 | 1 | 107 | 6 | 0 |
+| 75 | 1 | 99 | 6 | 0 |
 
 ### orphan_capability（75）
 
@@ -284,7 +284,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（107）
+### unreachable_tool（99）
 
 - tool add_tile_service_layer is not exposed by any algorithm and has no capability/deprecation link
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
@@ -320,7 +320,6 @@
 - tool gis_template_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool input_tips is not exposed by any algorithm and has no capability/deprecation link
 - tool inspect_data_service is not exposed by any algorithm and has no capability/deprecation link
-- tool inspect_spatial_semantics is not exposed by any algorithm and has no capability/deprecation link
 - tool inventory_layers is not exposed by any algorithm and has no capability/deprecation link
 - tool list_analysis_assets is not exposed by any algorithm and has no capability/deprecation link
 - tool list_datasets is not exposed by any algorithm and has no capability/deprecation link
@@ -339,7 +338,6 @@
 - tool modelops_publish_layers is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_record_metrics is not exposed by any algorithm and has no capability/deprecation link
 - tool plan_map_scene is not exposed by any algorithm and has no capability/deprecation link
-- tool prepare_dataset is not exposed by any algorithm and has no capability/deprecation link
 - tool query_federated_data is not exposed by any algorithm and has no capability/deprecation link
 - tool query_osm_boundary is not exposed by any algorithm and has no capability/deprecation link
 - tool read_coverage_subset is not exposed by any algorithm and has no capability/deprecation link
@@ -368,15 +366,10 @@
 - tool webgis_analysis_workflow_run is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_analysis_workflow_status is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_apply_composition is not exposed by any algorithm and has no capability/deprecation link
-- tool webgis_apply_scale_representation is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_checkpoint is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_compile_map_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_component_catalog is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_discover_components is not exposed by any algorithm and has no capability/deprecation link
-- tool webgis_inspect_map_scale_profile is not exposed by any algorithm and has no capability/deprecation link
-- tool webgis_layer_aggregate is not exposed by any algorithm and has no capability/deprecation link
-- tool webgis_layer_feature_detail is not exposed by any algorithm and has no capability/deprecation link
-- tool webgis_layer_features_page is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_layer_remove is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_layer_upsert is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_layout_set is not exposed by any algorithm and has no capability/deprecation link
@@ -387,7 +380,6 @@
 - tool webgis_map_operation is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_product is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_plan_component_replace is not exposed by any algorithm and has no capability/deprecation link
-- tool webgis_preview_scale_representation is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_product_edit is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_rollback is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_save_composition_template is not exposed by any algorithm and has no capability/deprecation link

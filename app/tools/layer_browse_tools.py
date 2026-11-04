@@ -104,6 +104,7 @@ def register_layer_browse_tools(registry: ToolRegistry) -> None:
         ),
         args_model=LayerFeaturesPageArgs,
         side_effect="cacheable_read",
+        network=False,  # Reads existing session refs; no external provider fetch.
         deterministic=True,
         latency_class="medium",
         memory_class="light",
@@ -234,6 +235,7 @@ def register_layer_browse_tools(registry: ToolRegistry) -> None:
         ),
         args_model=LayerAggregateArgs,
         side_effect="cacheable_read",
+        network=False,  # Reads existing session refs; no external provider fetch.
         deterministic=True,
         latency_class="medium",
         memory_class="light",
@@ -338,6 +340,7 @@ def register_layer_browse_tools(registry: ToolRegistry) -> None:
         ),
         args_model=LayerFeatureDetailArgs,
         side_effect="cacheable_read",
+        network=False,  # Reads existing session refs; no external provider fetch.
         deterministic=True,
         latency_class="fast",
         memory_class="light",

@@ -29,7 +29,6 @@ import {
   getDisplayedTemporalFrame,
   getLiveTemporalFrame,
   getLiveTemporalGeneration,
-  markLiveApplied,
   requestLiveFrame,
   resetTemporalLiveState,
   setActiveController,
@@ -70,7 +69,11 @@ export function TemporalTimeController() {
     getLiveTemporalGeneration,
     getLiveTemporalGeneration,
   );
-  const view = useMemo(() => readTemporalView(getCommittedMapSpec()), [temporalKey]);
+  // 空身份表示未绑定；按 committed 身份缓存，live 帧刷新不应重启播放。
+  const view = useMemo(
+    () => temporalKey ? readTemporalView(getCommittedMapSpec()) : null,
+    [temporalKey],
+  );
   const displayed = getDisplayedTemporalFrame();
 
   const controllerRef = useRef<TemporalPlaybackController | null>(null);
@@ -169,7 +172,7 @@ export function TemporalTimeController() {
       setLocalPlaying(true);
       void commitUserTemporal({ playback: { playing: true } });
     }
-  }, [playing]);
+  }, [playing, reducedMotion]);
 
   const onRate = useCallback((rate: number) => {
     void commitUserTemporal({ playback: { rate } });

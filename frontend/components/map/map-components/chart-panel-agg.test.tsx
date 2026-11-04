@@ -27,10 +27,7 @@ vi.mock('recharts', async () => {
     Scatter: passthrough,
   };
 });
-import {
-  getSelection,
-  resetSelectionStore,
-} from '@/lib/selection/selection-store';
+import { resetSelectionStore } from '@/lib/selection/selection-store';
 import {
   publishViewportContext,
   resetViewportContext,

@@ -36,7 +36,11 @@ PLATFORM_BINDINGS = {
         "webgis_layer_remove", "webgis_map_intent", "webgis_map_product",
         "webgis_apply_composition", "webgis_discover_components",
         "webgis_plan_component_replace", "gis_template_plan",
-        "plan_map_scene", "set_map_scene"],
+        "plan_map_scene", "set_map_scene",
+        "gis_component_query", "add_tile_service_layer", "set_scene_assets",
+        "webgis_compile_map_plan", "webgis_map_design_select",
+        "webgis_product_edit", "webgis_list_composition_template_assets",
+        "webgis_save_composition_template"],
     "map_export_publishing": [
         "export_batch_maps", "export_thematic_map",
         "webgis_cartography_status", "webgis_compile_maplibre",
@@ -58,7 +62,12 @@ PLATFORM_BINDINGS = {
         "get_execution_run", "get_plan_status", "propose_plan",
         "rerun_workflow", "save_plan_as_workflow", "validate_execution_plan",
         "webgis_action_plan", "catalog_discover", "catalog_lookup",
-        "capability_runtime_status"],
+        "capability_runtime_status", "catalog_conformance", "gis_task_classify",
+        "gis_method_qualify", "gis_method_rank", "gis_method_explain",
+        "gis_skill_search", "gis_skill_detail", "gis_skill_replay_check",
+        "gis_skill_policy", "webgis_analysis_workflow_plan",
+        "webgis_analysis_workflow_run", "webgis_analysis_workflow_status",
+        "webgis_analysis_workflow_recompute"],
     "scenario_simulation": [
         "spatial_decision_v2", "spatial_reasoning", "what_if_simulate"],
     "meta_tool_surface": [
@@ -123,9 +132,14 @@ def _assert_binding(cap_id: str, live_registry) -> None:
     # 3) 每个候选工具显式声明该 capability（双向一致）
     undeclared = [
         t for t in algo.tool_candidates
-        if cap_id not in live_registry.descriptor(t).capabilities
+        if cap_id not in live_registry.metadata(t).get("capabilities", ())
     ]
     assert not undeclared, f"{algo_id} 候选未声明 capability {cap_id}: {undeclared}"
+
+    # 注册名须持有真实函数，不能仅有描述符/算法投影或占位名称。
+    assert all(callable(live_registry._tools[t]) for t in algo.tool_candidates)
+    assert all(live_registry._tools[t].__module__.startswith("app.")
+               for t in algo.tool_candidates)
 
     # 测试侧冗余清单与描述符一致（防两处漂移）
     assert sorted(algo.tool_candidates) == sorted(PLATFORM_BINDINGS[cap_id])
@@ -255,3 +269,41 @@ def test_platform_capabilities_never_native_and_resolver_refuses():
         assert resolution.status == "unavailable", (
             f"{cap_id} 被解析为 {resolution.status}（planned 不得派发）")
         assert resolution.reason == "capability_planned"
+
+
+@pytest.mark.parametrize("cap_id", [
+    "thematic_cartography", "plan_workflow_orchestration",
+])
+def test_extended_platform_bindings_preserve_surface_only_contract(cap_id, live_registry):
+    """补齐真实工具绑定，不新建算法、不伪装为可互换的科学分析入口。"""
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+    from app.lib.gis.algorithm_resolver import get_algorithm_resolver
+    from app.lib.gis.capability_registry import get_capability_registry
+
+    algorithms = get_algorithm_registry()
+    matching_ids = [
+        aid for aid in algorithms.all_ids
+        if cap_id in algorithms.get(aid).capabilities
+    ]
+    # 每族仍只有原有的一个绑定描述符，不能用新增占位算法消除 warning。
+    assert matching_ids == [f"platform.{cap_id}"]
+    algo = algorithms.get(matching_ids[0])
+    assert algo.algorithm_family == "platform_surface"
+    assert algo.parameter_contract_ref == ""
+    assert algo.input_artifact_types == []
+    assert algo.output_artifact_type == ""
+    assert algo.required_fields == []
+    assert algo.geometry_requirements == []
+    assert algo.scientific_preconditions == []
+    assert algo.scientific_status == ""
+
+    # 双向核对原始声明，避免 descriptor 的算法派生能力自证通过。
+    declared = {
+        name for name in live_registry.list_tools()
+        if cap_id in live_registry.metadata(name).get("capabilities", ())
+    }
+    assert set(algo.tool_candidates) == declared
+    assert get_capability_registry().get(cap_id).status == "planned"
+    resolution = get_algorithm_resolver().resolve(cap_id)
+    assert resolution.status == "unavailable"
+    assert resolution.reason == "capability_planned"

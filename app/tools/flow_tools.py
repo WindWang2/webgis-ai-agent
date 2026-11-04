@@ -152,6 +152,7 @@ def register_flow_tools(registry: ToolRegistry) -> None:
         tier=2, domains=["network"],
         tags=["od", "flow", "mobility"],
         side_effect="deterministic_compute",
+        network=False,  # Only resolves existing session data; no routing/provider API.
         deterministic=True,
     )
     async def od_flow_edges(

@@ -337,13 +337,14 @@ jobs:
         with:
           name: coverage-report-${{ matrix.shard }}
           path: coverage.xml
+          retention-days: 7
 
   # 2026-10-23 sharding 聚合闸：分支保护要求的 "Backend Tests" 上下文名由本
   # job 复现（matrix 产生的上下文名形如 "Backend Tests (1)"，与 protection
-  # 名单里的 "Backend Tests" 不匹配）。无 step，只做 needs 聚合 —— 任一 shard
-  # 失败/取消/跳过即整体失败，杜绝把分片失败或漏跑伪装成通过的缺口。
+  # 名单里的 "Backend Tests" 不匹配）。needs 按 job ID 提供 matrix 的整体结果，
+  # 不是六个独立结果；仅 success 放行，失败/取消/跳过及缺失结果均阻断。
   # if: always() 不可省：needs 的上游 job 失败时本 job 默认会被跳过，那样
-  # required check 会因"未上报"而永久 pending。
+  # required check 可能因 skipped 被视为通过，而没有实际验证 shard 结果。
   test-backend-gate:
     name: Backend Tests
     runs-on: ubuntu-latest
@@ -355,23 +356,15 @@ jobs:
     if: always()
     steps:
       - name: Aggregate shard results
+        env:
+          BACKEND_RESULT: ${{ needs.test-backend.result }}
         run: |
-          results="${{ join(needs.*.result, ',') }}"
-          echo "shard results: ${results}"
-          expected=6
-          actual=$(echo "${results}" | tr ',' '\n' | grep -c .)
-          if [ "${actual}" -ne "${expected}" ]; then
-            echo "shard 数量不符：期望 ${expected}，实得 ${actual}"
+          echo "Backend Tests matrix result: ${BACKEND_RESULT}"
+          if [ "${BACKEND_RESULT}" != "success" ]; then
+            echo "Backend Tests matrix 未全部通过"
             exit 1
           fi
-          case "${results}" in
-            *failure*|*cancelled*|*skipped*)
-              echo "至少一个 Backend Tests shard 未通过"
-              exit 1
-              ;;
-          esac
-          echo "全部 ${expected} 个 shard 通过"
-          retention-days: 7
+          echo "全部 Backend Tests shard 通过"
 
   # ============ Stage 2a: 迁移链对真实 PostGIS 的执行门 (#476) ============
   # 之前所有测试从全新 create_all 起步 —— 迁移链从未在真实 Postgres 上执行过

@@ -247,7 +247,7 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
         setState((s) => ({ ...s, status: 'error', loadingMore: false, error: e }));
       }
     })();
-  }, [state.status, state.nextCursor, state.loadingMore, state.revision, sessionId, refId, orderParam, where, effectiveWhere, bbox, ownerToken]);
+  }, [state.status, state.nextCursor, state.loadingMore, state.revision, sessionId, refId, orderParam, effectiveWhere, bbox, ownerToken]);
 
   const reload = useCallback(() => {
     setReloadNonce((n) => n + 1);

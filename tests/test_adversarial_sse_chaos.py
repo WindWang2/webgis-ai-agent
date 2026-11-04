@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import asyncio
 from typing import AsyncIterator, Optional
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 
+import app.services.session_data as session_data_mod
 from app.api.routes import chat as chat_route
 from app.services.chat.event_resume import TurnResumeRegistry
+from app.services.session_data import MemorySessionStore
 from app.utils.sse import sse_event, sse_event_id, sse_event_type
 
 
@@ -89,15 +91,15 @@ async def _open_resume(message: str, last_event_id: int, session_id: Optional[st
 
 
 @pytest.fixture(autouse=True)
-def _fresh_resume_registry(monkeypatch):
+def _fresh_stream_state(monkeypatch):
     monkeypatch.setattr(chat_route, "_turn_resume_registry", TurnResumeRegistry())
     monkeypatch.setattr(chat_route, "_RESUME_LIVE_HOLD_S", 0.05)
-    monkeypatch.setattr(
-        chat_route.AsyncHistoryService,
-        # #525: the body-session guard now uses the metadata-only variant.
-        "get_session_meta",
-        AsyncMock(return_value=MagicMock()),
-    )
+    # Deletion tests leave real tombstones on generic IDs such as "sess-1".
+    # Isolate the store as well as the replay registry; keep the real route
+    # guard and storage behavior instead of making every session look valid.
+    store = MemorySessionStore()
+    monkeypatch.setattr(session_data_mod, "session_data_manager", store)
+    monkeypatch.setattr(chat_route, "session_data_manager", store)
     yield
 
 
@@ -108,6 +110,28 @@ def _pi_path(monkeypatch):
         monkeypatch.setattr(chat_route, "pi_bridge", bridge)
 
     return _install
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("last_event_id", [None, 2], ids=["stream", "resume"])
+async def test_deleted_session_is_rejected_before_stream_or_resume(_pi_path, last_event_id):
+    """Test isolation must not bypass the production deletion guard."""
+    bridge = _AdversarialBridge()
+    _pi_path(bridge)
+    await chat_route.session_data_manager.set_map_state("sess-1", "_cartographic_deleted", True)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_route.chat_stream(
+            chat_route.ChatRequest(message="msg1", session_id="sess-1", map_state=None),
+            _user={},
+            owner_token=None,
+            db=None,
+            last_event_id_header=last_event_id,
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Session not found"
+    assert bridge.prompt_calls == 0
 
 
 # ─── Chaos 1: Rapid Disconnect-Resume-Cancel Race ──────────────────────────
