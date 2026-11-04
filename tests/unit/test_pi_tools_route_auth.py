@@ -49,16 +49,30 @@ async def async_client():
 
 @pytest.fixture(autouse=True)
 def clean_turn_registry():
-    """Active-turn 状态在 PiTurnRegistry 里（本地 + Redis），不再读模块全局。
-
-    每个测试前后清空本地登记，避免跨测试污染（上一个测试登记的 turn 让
-    409 用例意外变成 active）。
-    """
+    """Reset fallback registry state; register_turn owns bridge registrations."""
     from app.services.chat.pi_turn_context import pi_turn_registry
 
     pi_turn_registry._local_context = None
     yield
     pi_turn_registry._local_context = None
+
+
+@pytest.fixture
+async def register_turn():
+    """Own manual route-test registrations through assertion failures too."""
+    registrations = []
+
+    async def register(session_id: str, turn_id: str):
+        # Record before awaiting: registration can write local state before I/O.
+        registrations.append((session_id, turn_id))
+        await bridge_mod.register_active_pi_turn(session_id, turn_id)
+
+    try:
+        yield register
+    finally:
+        for session_id, turn_id in reversed(registrations):
+            # The real owner check must preserve a newer turn for this session.
+            await bridge_mod.unregister_active_pi_turn(session_id, turn_id)
 
 
 @pytest.mark.asyncio
@@ -154,15 +168,13 @@ async def test_route_expired_turn_token_returns_401(async_client):
 
 
 @pytest.mark.asyncio
-async def test_route_inactive_turn_returns_409(async_client):
+async def test_route_inactive_turn_returns_409(async_client, register_turn):
     """Validly signed token for a turn that has completed or is not active returns 409 Conflict."""
-    from app.agent_pi_bridge import register_active_pi_turn
-
     secret = get_bridge_secret()
     token = issue_turn_token(secret, "sess-inactive", "turn-old")
 
     # Register a different session/turn as the live one
-    await register_active_pi_turn("sess-active", "turn-new")
+    await register_turn("sess-active", "turn-new")
 
     resp = await async_client.post(
         "/pi-tools/execute",
@@ -181,17 +193,15 @@ async def test_route_inactive_turn_returns_409(async_client):
 
 
 @pytest.mark.asyncio
-async def test_route_valid_token_dispatches_and_overrides_caller_session_id(test_registry, async_client):
+async def test_route_valid_token_dispatches_and_overrides_caller_session_id(test_registry, async_client, register_turn):
     """A signed active token succeeds and overwrites any attacker-supplied sessionId with verified session_id."""
-    from app.agent_pi_bridge import register_active_pi_turn
-
     secret = get_bridge_secret()
     legit_session = "sess-legit-999"
     legit_turn = "turn-0042"
     token = issue_turn_token(secret, legit_session, legit_turn)
 
     # Register the turn so the live-turn check passes
-    await register_active_pi_turn(legit_session, legit_turn)
+    await register_turn(legit_session, legit_turn)
 
     resp = await async_client.post(
         "/pi-tools/execute",
@@ -217,16 +227,14 @@ async def test_route_valid_token_dispatches_and_overrides_caller_session_id(test
 
 
 @pytest.mark.asyncio
-async def test_route_unknown_tool_returns_200_with_is_error(test_registry, async_client):
+async def test_route_unknown_tool_returns_200_with_is_error(test_registry, async_client, register_turn):
     """When an unknown tool is dispatched via webgis_execute, endpoint returns 200 with isError=True."""
-    from app.agent_pi_bridge import register_active_pi_turn
-
     secret = get_bridge_secret()
     session_id = "sess-unknown-tool"
     turn_id = "turn-0001"
     token = issue_turn_token(secret, session_id, turn_id)
 
-    await register_active_pi_turn(session_id, turn_id)
+    await register_turn(session_id, turn_id)
 
     resp = await async_client.post(
         "/pi-tools/execute",

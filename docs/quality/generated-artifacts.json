@@ -42,7 +42,7 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "e9e098a9b6f1c762fda4aa762d8d106324e4b80cf0fb37d25e177b6ba2d3353a",
+   "content_fingerprint": "d48c438730b7b98b44ca11b84d3532e59e0fb1fa6d55d40e4225f0abf3eb73a6",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
    "input_fingerprint": "6d454fc9a324fab9a542cd6aa6f8262748c773fc28a82e905aa771a9843ce314",
@@ -60,7 +60,7 @@
    "content_fingerprint": "94cf52c4c58fc923125ebd2405b24fca9032ed0146e01287ca00ec8ae4784309",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "2011e6cb6ed0c923da58b25ffdab1d9b9e5b441851f94155c42f56d49941d466",
+   "input_fingerprint": "6cdbb87419e8969b619f4794961f42884865352084b12023b82880424dc7ec76",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -132,7 +132,7 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "ef2bed659017f97d619f51b5d03e5b78a81cde91a145e0310a51caffbcec852e",
+   "content_fingerprint": "06c583b06ec541fcefb4a3bb686f45421dc37235895ea4721be95004001de9a3",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
    "input_fingerprint": "6d454fc9a324fab9a542cd6aa6f8262748c773fc28a82e905aa771a9843ce314",
@@ -147,10 +147,10 @@
    "scope": "global"
   },
   "docs/quality/quality-report.json": {
-   "content_fingerprint": "92b64994a1c21bbc2e47a297ba263ddc85f5c6d80a7532cb98fccf6ee507a227",
+   "content_fingerprint": "877721986705d9653f9ea2abd5b7ffb6b1cb06c3c26d43659d529704a82da3ab",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "2011e6cb6ed0c923da58b25ffdab1d9b9e5b441851f94155c42f56d49941d466",
+   "input_fingerprint": "6cdbb87419e8969b619f4794961f42884865352084b12023b82880424dc7ec76",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -173,7 +173,7 @@
    "content_fingerprint": "b64ae7b57f4eab133a5597d1365278bad65be87acd1e50cd3939f5a0a8fecd0c",
    "generator": "scripts/gen_capability_catalog.py",
    "generator_version": 1,
-   "input_fingerprint": "fd2bba3f9f31de48e479306464ab11d8525d6eb738034495eb0fbfcfea60304c",
+   "input_fingerprint": "2710307ab1cd52a56d4a71e9301637ea5fbdaf791432e3ea62ba250ac0ea551f",
    "inputs": [
     "app/lib/gis/capability_registry.py",
     "app/lib/gis/capabilities",

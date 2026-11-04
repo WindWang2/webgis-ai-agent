@@ -35,6 +35,7 @@ PR_LANE_PERF_FILES = (
     "test_pi_perf.py",
     "test_data_runtime_v2_perf.py",
     "test_geobench_v3.py",
+    "test_quality_scenario_corpus_perf.py",
 )
 
 # Perf-marked files that stay nightly-only. They are collected by
@@ -233,6 +234,119 @@ def test_test_perf_pr_lane_runs_fast_subset_no_cov():
     assert "test_perf_harness_v2.py" not in run
 
 
+def _assert_quality_corpus_perf_contract(source: str) -> None:
+    """The required perf gate must execute all three real slices at 45s."""
+    tree = ast.parse(source)
+    assert any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets)
+        and ast.unparse(node.value) == "pytest.mark.perf"
+        for node in tree.body
+    ), "quality corpus timing must have the perf marker"
+    fn = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "test_quality_corpus_slice_budget"
+    )
+    assert any(
+        isinstance(d, ast.Call)
+        and ast.unparse(d.func) == "pytest.mark.parametrize"
+        and ast.literal_eval(d.args[0]) == "prefix"
+        and ast.literal_eval(d.args[1]) == ["basemap_", "science_", "data_"]
+        for d in fn.decorator_list
+    ), "all original timed corpus slices must remain selected"
+    assert not any("skip" in ast.unparse(d) for d in fn.decorator_list)
+    assignments = [node for node in fn.body if isinstance(node, ast.Assign)]
+    assert len(assignments) == 1
+    assignment = assignments[0]
+    assert ast.unparse(assignment) == "elapsed, failed = await replay_quality_slice(prefix)", (
+        "timing must consume the shared real full-corpus replay"
+    )
+    assert any(
+        isinstance(node, ast.Assert) and ast.unparse(node.test) == "failed == []"
+        for node in fn.body
+    ), "perf replay must retain every correctness failure"
+    assert any(
+        isinstance(node, ast.Assert)
+        and isinstance(node.test, ast.Compare)
+        and ast.unparse(node.test) == "elapsed < 45"
+        for node in fn.body
+    ), "original strict 45s budget must remain enforced"
+
+
+def test_quality_corpus_correctness_and_perf_are_both_required() -> None:
+    source = (PERF_DIR / "test_quality_scenario_corpus_perf.py").read_text(encoding="utf-8")
+    _assert_quality_corpus_perf_contract(source)
+    correctness = REPO_ROOT / "tests/quality/test_quality_scenario_corpus.py"
+    tree = ast.parse(correctness.read_text(encoding="utf-8"))
+    functions = {
+        node.name: node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef)
+    }
+    assert any(
+        isinstance(d, ast.Call)
+        and ast.unparse(d.func) == "pytest.mark.parametrize"
+        and ast.literal_eval(d.args[0]) == "prefix"
+        and ast.literal_eval(d.args[1]) == ["basemap_", "science_"]
+        for d in functions["test_slice_geometry_states_green"].decorator_list
+    ), "both geometry slices must remain in covered correctness"
+    for name, argument in (
+        ("test_slice_geometry_states_green", "prefix"),
+        ("test_slice_data_states_green", "'data_'"),
+    ):
+        fn = functions[name]
+        assert not any("perf" in ast.unparse(d) or "skip" in ast.unparse(d)
+                       for d in fn.decorator_list)
+        assert any(
+            isinstance(node, ast.Await)
+            and ast.unparse(node.value) == f"replay_quality_slice({argument})"
+            for node in ast.walk(fn)
+        ), "covered correctness must still execute every original slice"
+        assert any(
+            isinstance(node, ast.Assert) and ast.unparse(node.test) == "failed == []"
+            for node in fn.body
+        ), "covered replay must assert every real case failure"
+    assert not any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets)
+        for node in tree.body
+    ), "do not move the correctness module out of the coverage lane"
+    assert "tests/quality" in _job_run_text("test-backend")
+    assert "test-perf" in _workflow()["jobs"]["release-gate"]["needs"]
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ('["basemap_", "science_", "data_"]', '["basemap_", "science_"]'),
+        ("elapsed < 45", "elapsed < 90"),
+        ("failed == []", "True"),
+        ("await replay_quality_slice(prefix)", "0.0"),
+        ("pytestmark = pytest.mark.perf", "pytestmark = pytest.mark.asyncio"),
+    ],
+)
+def test_quality_corpus_perf_mutations_fail_closed(before: str, after: str) -> None:
+    source = (PERF_DIR / "test_quality_scenario_corpus_perf.py").read_text(encoding="utf-8")
+    assert before in source
+    with pytest.raises(AssertionError):
+        _assert_quality_corpus_perf_contract(source.replace(before, after, 1))
+
+
+def test_quality_corpus_perf_missing_from_pr_lane_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    workflow = _workflow()
+    filename = "tests/benchmarks/test_quality_scenario_corpus_perf.py"
+    for step in workflow["jobs"]["test-perf"]["steps"]:
+        if filename in step.get("run", ""):
+            step["run"] = step["run"].replace(filename, "", 1)
+    patched = tmp_path / "production.yml"
+    patched.write_text(yaml.safe_dump(workflow), encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "WORKFLOW", patched)
+    with pytest.raises(AssertionError, match="test_quality_scenario_corpus_perf.py"):
+        test_test_perf_pr_lane_runs_fast_subset_no_cov()
+
+
 def test_nightly_only_perf_files_are_documented_and_excluded_from_pr():
     """#618-29: remaining perf-marked files stay nightly because of timeouts.
 
@@ -281,12 +395,16 @@ def test_backend_coverage_gate_is_non_decorative():
     decorative floor of 10. Do not raise this number independently of
     the workflow — if CI moves the gate, move both together.
     """
-    run = _job_run_text("test-backend")
-    m = re.search(r"--cov-fail-under=(\d+)", run)
-    assert m, "test-backend 必须带 --cov-fail-under"
+    run = _job_run_text("test-backend-gate")
+    assert "combine_backend_coverage.py combine" in run
+    m = re.search(r"--fail-under[=\s]+(\d+)", run)
+    assert m, "required backend gate must enforce combined coverage"
     assert int(m.group(1)) >= 75, (
-        "test-backend --cov-fail-under must match production.yml "
-        f"(ratchet 75); got {m.group(1)}"
+        "combined backend coverage must retain the 75% ratchet; "
+        f"got {m.group(1)}"
+    )
+    assert "--cov-fail-under" not in _job_run_text("test-backend"), (
+        "A partial shard is not the full-application coverage gate"
     )
 
 

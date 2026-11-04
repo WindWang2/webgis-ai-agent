@@ -226,7 +226,9 @@ ruff check app/ tests/ main.py manage.py
 cd frontend && npx vitest run && npm run typecheck && npm run lint
 ```
 
-pytest markers：`heavy`（重依赖 geopandas/numpy/rasterio，含 Runtime 校验器 `runtime_validator`）、`perf`（性能回归基线）、`cartography`（制图闭环门禁）、`real_services`（需真实 Postgres/Redis/Celery，不可达自跳过）。本地跑单类：`pytest -m heavy` 等。perf 基线要求隔离运行：无 marker 过滤的全量跑会自动 skip perf 项（全量中段执行的时序抖动会超基线，#664），评测 perf 请用 `pytest -m perf --no-cov`。CI 后端覆盖率闸为 75%（`--cov-fail-under`，`pytest.ini` 默认开启 `--cov=app`）。
+pytest markers：`heavy`（重依赖 geopandas/numpy/rasterio，含 Runtime 校验器 `runtime_validator`）、`perf`（性能回归基线）、`cartography`（制图闭环门禁）、`real_services`（需真实 Postgres/Redis/Celery，不可达自跳过）。本地跑单类：`pytest -m heavy` 等。perf 基线要求隔离运行：无 marker 过滤的全量跑会自动 skip perf 项（全量中段执行的时序抖动会超基线，#664），评测 perf 请用 `pytest -m perf --no-cov`。
+
+CI 后端覆盖率闸为 75%：六个测试分片均成功，且同一运行、同一提交的原始覆盖率 artifact 齐全并通过校验后，`Backend Tests` 聚合闸合并执行数据，再对完整 `app/` 源码计算覆盖率（含未导入的命名空间文件，沿用 `.coveragerc` 的现有排除规则）。缺片、无效 artifact 或任一分片失败均阻断，单片覆盖率不能代替合并结果；是否达到 75% 以本次聚合结果为准。本地 `scripts/ci-local.sh` 仍对完整后端测试集使用 `--cov-fail-under=75`；`pytest.ini` 默认开启 `--cov=app`，直接运行 `pytest` 不会自动启用该阈值。
 
 > **Runtime Scenario 单跑与排障**：新增/调试渲染场景请见 [Runtime Scenario 作者指南](runtime-scenario-guide.md) §5（含 `pytest -m heavy -k <name>` 单跑与 `runtime_dir` 产物 `map.png` / `trace.zip` / `report.json` 排障路径）。
 

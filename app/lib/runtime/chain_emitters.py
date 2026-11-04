@@ -32,6 +32,16 @@ def _current_turn_id() -> str:
         return ""
 
 
+def has_chain_context() -> bool:
+    """Whether an implicit emitter can record a trace for this synchronous call.
+
+    Callers may avoid preparing trace-only payloads when no turn is bound.
+    This uses the emitter's own lookup; request/session context alone is not
+    enough, and lookup failures retain the existing honest no-op behavior.
+    """
+    return bool(_current_turn_id())
+
+
 def emit_chain(stage: Stage, **payload: Any) -> bool:
     """从当前 RuntimeContext 发射链记录（任何失败静默 False）。"""
     turn_id = _current_turn_id()
@@ -72,4 +82,4 @@ def emit_chain_for(turn_id: str, stage: Stage, **payload: Any) -> bool:
         return False
 
 
-__all__ = ["emit_chain", "emit_chain_once", "emit_chain_for", "Stage"]
+__all__ = ["emit_chain", "emit_chain_once", "emit_chain_for", "has_chain_context", "Stage"]
