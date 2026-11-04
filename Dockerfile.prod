@@ -7,17 +7,17 @@
 FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS frontend-deps
 WORKDIR /app/frontend
 
-# pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。corepack 随
-# node:26 内置；pin pnpm@10 与 CI workflow 的 pnpm/action-setup 版本一致。
+# pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。Node 25+
+# 不再内置 Corepack；用 npm 显式安装固定 pnpm 版本（应用仍由 pnpm 安装）。
 # node:26：jest-dom@7 / jsonlint-lines-primitives@2.0.3 等要求 node >=22（engine-strict）。
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+RUN npm install --global pnpm@10.15.1
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prefer-offline
 
 # Stage 2: Frontend Builder
 FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS frontend-builder
 WORKDIR /app/frontend
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+RUN npm install --global pnpm@10.15.1
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
 COPY frontend/ ./
 
@@ -43,13 +43,15 @@ RUN pnpm run build
 # Stage 2b: Node runtime for the runner stage
 # PLT-03：Debian bookworm 的 `nodejs` apt 包是 18.x，而 Next 16 要求
 # >=20.9（frontend/package.json engines；CVE 修复也要求新版）。从官方
-# node:25-bookworm-slim（与 runner 同 glibc 基线；alpine 的 musl 二进制
+# node:26-bookworm-slim（与 runner 同 glibc 基线；alpine 的 musl 二进制
 # 不可用）只复制 node 单二进制 —— 运行时只需 `node server.js` 与 Pi RPC
 # 的 `node rpc-entry.js`，npm/corepack 不入镜像以控制体积。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
 
 # Stage 3: Backend Python Dependencies
-FROM python:3.15-slim-bookworm@sha256:4e03260adeeebafccd084f3584e6b84823aba5651cfb53ef8a078ed441ddf9cd AS backend-deps
+# 与 .python-version / requirements.lock 及下方 site-packages COPY 保持 3.12；
+# bookworm 与 GDAL runtime 包名及 node-runtime 的 glibc 基线一致。
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS backend-deps
 WORKDIR /app/backend
 
 # Install GDAL/GEOS/PROJ system libraries required by rasterio, pyogrio, geopandas
@@ -65,7 +67,7 @@ RUN pip install --no-cache-dir --break-system-packages \
     && uv pip install --system --no-cache -r requirements.lock
 
 # Stage 4: Final Runner
-FROM python:3.15-slim-bookworm@sha256:4e03260adeeebafccd084f3584e6b84823aba5651cfb53ef8a078ed441ddf9cd AS runner
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runner
 WORKDIR /app/backend
 
 # #662：生产容器离线加载 RAG embedding 模型 —— 未缓存时首用秒级失败（有界），
@@ -73,14 +75,14 @@ WORKDIR /app/backend
 # docs/DEPLOYMENT.md（HF_HOME 卷预热或构建期下载）。
 ENV RAG_EMBEDDING_OFFLINE=true
 
-# Install tini and GDAL/GEOS/PROJ runtime libraries. Node 25 comes from the
+# Install tini and GDAL/GEOS/PROJ runtime libraries. Node 26 comes from the
 # node-runtime stage (NOT Debian's nodejs 18 package — PLT-03); libstdc++6 is
 # the shared lib the official Node binary links against.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini libgdal32 libgeos-c1v5 libproj25 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# PLT-03: official Node 25 binary (FROM node:25-bookworm-slim above).
+# PLT-03: official Node 26 binary (FROM node:26-bookworm-slim above).
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
 # Copy frontend standalone output.

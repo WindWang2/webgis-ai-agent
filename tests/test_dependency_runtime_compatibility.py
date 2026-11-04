@@ -17,6 +17,124 @@ from scripts import check_dependency_bounds as bounds
 REPO = Path(__file__).resolve().parents[1]
 
 
+def test_filelock_recursion_and_torch_thread_timeout(tmp_path):
+    """Torch's instrumented lock must honor another owner's recursive lifetime."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from filelock import FileLock, Timeout
+    from torch.utils._filelock import FileLock as TorchFileLock
+
+    lock_path = tmp_path / "model.lock"
+    owner = FileLock(lock_path)
+
+    def acquire_from_thread():
+        with TorchFileLock(lock_path, timeout=0.05) as contender:
+            return contender.is_locked
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with owner:
+            with owner:
+                assert owner.lock_counter == 2
+                with pytest.raises(Timeout):
+                    pool.submit(acquire_from_thread).result(timeout=10)
+            assert owner.is_locked
+            assert owner.lock_counter == 1
+            with pytest.raises(Timeout):
+                pool.submit(acquire_from_thread).result(timeout=10)
+        assert not owner.is_locked
+        assert pool.submit(acquire_from_thread).result(timeout=10)
+
+
+def test_huggingface_cache_lock_excludes_process_and_preserves_metadata(tmp_path):
+    """Exercise the Hub's real lock wrapper and cache read/write consumers."""
+    import subprocess
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from huggingface_hub._local_folder import (
+        get_local_download_paths,
+        read_download_metadata,
+        write_download_metadata,
+    )
+    from huggingface_hub.utils import WeakFileLock
+
+    filename = "model/config.json"
+    paths = get_local_download_paths(tmp_path, filename)
+    paths.file_path.write_text("{}", encoding="utf-8")
+    contender = """
+import sys
+from filelock import Timeout
+from huggingface_hub.utils import WeakFileLock
+try:
+    with WeakFileLock(sys.argv[1], timeout=0.05):
+        print("acquired")
+except Timeout:
+    print("timeout")
+"""
+
+    def acquire_from_process():
+        return subprocess.run(
+            [sys.executable, "-c", contender, str(paths.lock_path)],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout.strip()
+
+    with WeakFileLock(paths.lock_path):
+        assert acquire_from_process() == "timeout"
+    assert acquire_from_process() == "acquired"
+
+    start = Barrier(4)
+    valid = {(f"commit-{i}", f"etag-{i}") for i in range(4)}
+
+    def cache_round_trip(index):
+        start.wait(timeout=10)
+        for _ in range(10):
+            write_download_metadata(tmp_path, filename, f"commit-{index}", f"etag-{index}")
+            metadata = read_download_metadata(tmp_path, filename)
+            assert metadata is not None
+            assert (metadata.commit_hash, metadata.etag) in valid
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(cache_round_trip, range(4)))
+
+
+@pytest.mark.parametrize("xdg_override", [False, True])
+def test_libpysal_data_directory_honors_platformdirs(tmp_path, monkeypatch, xdg_override):
+    """The actual spatial-library consumer must keep isolated, writable data paths."""
+    import subprocess
+    import sys
+
+    if sys.platform != "linux":
+        pytest.skip("Linux XDG paths used by the deployment image")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    if xdg_override:
+        data_root = tmp_path / "xdg-data"
+        monkeypatch.setenv("XDG_DATA_HOME", str(data_root))
+    else:
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        data_root = tmp_path / "home" / ".local" / "share"
+
+    expected = data_root / "pysal"
+    # libpysal initializes example-manager paths during its first import. Keep
+    # those globals out of the pytest process, and inherit its dependency overlay.
+    probe = """
+import sys
+from pathlib import Path
+from libpysal.examples.base import get_data_home
+expected = Path(sys.argv[1])
+assert Path(get_data_home()) == expected
+assert expected.is_dir()
+(expected / "probe.txt").write_text("writable", encoding="utf-8")
+assert Path(get_data_home()) == expected
+assert (expected / "probe.txt").read_text(encoding="utf-8") == "writable"
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(expected)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_dateutil_bound_protects_the_supported_pandas_line():
     """pandas 2.3.3 cannot consume the tzfile rewrite in dateutil 3/4."""
     declarations = [
