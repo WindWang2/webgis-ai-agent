@@ -52,8 +52,9 @@ _PRESERVED_META_KEYS = (
 
 
 # ── #439: 最终体积闸（Zero-Big-Data-Context 的最后一道防线） ──────────────────
-# slim_tool_result 是工具结果进入 LLM 上下文前的唯一闸口
-# (tool_dispatch_service.llm_payload)。旧实现只对特定形状/键
+# slim_tool_result 是常规工具结果进入 LLM 上下文前的闸口
+# (tool_dispatch_service.llm_payload)；错误文案走 bound_llm_text。
+# 旧实现只对特定形状/键
 # (geojson/image/features) 做了削减：
 #   (a) 纯字符串结果超长时原样返回（return result_str 兜底）；
 #   (b) dict 分支里 data/rows/chart 等非 geojson 键全量保留
@@ -65,6 +66,19 @@ _SLIM_DICT_MAX_KEYS = 30          # dict 初始保留键数（与 _truncate_prop
 _SLIM_HARD_FLOOR = 40             # 折半下限；到顶仍超预算则硬切并打标
 _SLIM_TRUNCATION_SUFFIX = "…[已截断]"
 _SLIM_MAX_DEPTH = 8
+
+
+def bound_llm_text(text: str, *, max_chars: int = MSG_MAX_CHARS) -> str:
+    """Bound presentation text only, preserving small messages verbatim.
+
+    Callers may reserve space for a bounded suffix such as a recovery note.
+    This character budget does not apply to raw diagnostics or result data.
+    """
+    max_chars = max(0, max_chars)
+    if len(text) <= max_chars:
+        return text
+    marker = _SLIM_TRUNCATION_SUFFIX[:max_chars]
+    return text[:max_chars - len(marker)] + marker
 
 
 def _clamp_sized_value(v: Any, str_limit: int, list_limit: int, depth: int = 0) -> Any:

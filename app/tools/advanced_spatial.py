@@ -1094,6 +1094,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="directional_variogram_analysis",
     side_effect="deterministic_compute",
+    output_semantic_type="stats",
+    result_size_policy="bounded",  # <=64 numeric bins + bounded parameter evidence.
     tags=('变异函数', '各向异性', '地统计', '方向半方差'),
            description=(
                "方向变异函数：沿单一方位角轴向（双向）计算经验半方差曲线，"
@@ -1209,6 +1211,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="variogram_model_selection",
     side_effect="deterministic_compute",
+    output_semantic_type="stats",
+    result_size_policy="bounded",  # <=6 fixed-shape model rows + bounded evidence.
     tags=('变异函数', '模型选型', '地统计', 'aicc'),
            description=(
                "变异函数模型选择：spherical/exponential/gaussian/matern/wave/cubic 6 家族"

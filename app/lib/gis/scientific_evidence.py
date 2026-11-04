@@ -222,7 +222,15 @@ class ScientificEvidenceBuilder(BaseModel):
                 "version": self.parameter_contract_version,
             }
         if self.parameters_applied:
-            out["parameters_applied"] = dict(self.parameters_applied)
+            # build_evidence assigns after construction, and callers may mutate
+            # this dict in place. Pydantic field validators do not run on either
+            # path. Bound string summaries without changing existing structured
+            # values (e.g. quantiles and observer coordinates) or dropping keys.
+            # The original parameters used by the algorithm remain unchanged.
+            out["parameters_applied"] = {
+                key: value[:_MAX_VALUE_STR] if isinstance(value, str) else value
+                for key, value in self.parameters_applied.items()
+            }
         if self.validation is not None:
             out["validation"] = self.validation.to_evidence()
         if self.method_references:

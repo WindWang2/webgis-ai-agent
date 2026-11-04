@@ -12,7 +12,7 @@
 | finding code | count |
 |---|---|
 | ALGO_HEAVY_NO_VARIANTS | 1 |
-| TOOL_UNTESTED | 8 |
+| TOOL_UNTESTED | 7 |
 
 ## Contract Drift
 
