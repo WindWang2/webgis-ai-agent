@@ -5934,6 +5934,7 @@
     "tests/acceptance/gis_agent/corpus.py",
     "tests/cartography/test_h02_product_pipeline_gaps.py",
     "tests/fixtures/product_corpus/gen_product_corpus.py",
+    "tests/unit/capability_runtime/test_singleton_isolation.py",
     "tests/unit/evaluation/test_replay_and_metrics.py",
     "tests/unit/gis/test_data_contracts_v2.py",
     "tests/unit/gis/test_execution_catalog_discovery.py",
@@ -6912,6 +6913,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/capability_runtime/test_singleton_isolation.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_capability_benchmark.py",
     "tests/unit/gis_harness/test_capability_graph_v8.py",
@@ -7503,6 +7505,7 @@
     "tests/test_osm_tools.py",
     "tests/test_pi_session_plan_host.py",
     "tests/test_pi_status_fail_closed.py",
+    "tests/unit/capability_runtime/test_singleton_isolation.py",
     "tests/unit/gis/test_capability_binding_conformance.py",
     "tests/unit/gis/test_data_contracts_v2.py",
     "tests/unit/gis/test_gis_lib_registries.py",
@@ -8945,7 +8948,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "1b806e7e3aad2541a022108268f88ead7c0f714ff26fcd771a713c74de04ca46",
+ "fingerprint": "f146d0758a2b3b173a9807e25f9d02f7730b9d929f02f763b2286bdf7b98b733",
  "gate": {
   "fields": {
    "capabilities": {
