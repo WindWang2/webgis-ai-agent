@@ -14,6 +14,8 @@ GeoJSON 文件产物由 ``artifacts.write_geojson_output`` 负责（始终可用
 """
 from __future__ import annotations
 
+from app.contracts.modelops import PostgisPublication
+
 import logging
 import os
 import re
@@ -43,7 +45,7 @@ def publish_geojson_to_postgis(
     table: str,
     dsn: Optional[str] = None,
     if_exists: str = "fail",
-) -> Dict[str, Any]:
+) -> PostgisPublication:
     """GeoJSON FeatureCollection → PostGIS 表（前置缺失 = honest skip）。
 
     返回 ``{"published": bool, ...}``：失败/跳过**不抛异常**（产物已

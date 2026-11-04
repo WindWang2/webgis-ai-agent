@@ -8,6 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 
+from app.services.network.contracts import (
+    DemandInput, FacilityInput, ODPairInfo,
+)
+
 from app.services.network.models import (
     NetworkDataset,
     TravelProfile,
@@ -36,8 +40,8 @@ class NetworkClosestFacilityService:
 
     def network_closest_facility(
         self,
-        demand_points: List[Union[DemandPoint, Tuple[float, float], Dict[str, Any]]],
-        facilities: List[Union[Facility, Tuple[float, float], Dict[str, Any]]],
+        demand_points: List[Union[DemandPoint, Tuple[float, float], DemandInput]],
+        facilities: List[Union[Facility, Tuple[float, float], FacilityInput]],
         graph: nx.DiGraph,
         network_dataset: NetworkDataset,
         cutoff_cost: Optional[float] = None,
@@ -116,7 +120,7 @@ class NetworkClosestFacilityService:
 
         # candidate pairs, keyed by the per-demand grouping key, with their OD
         # costs — no Route objects are built here.
-        per_demand: Dict[str, List[Tuple[float, Any, Any, Facility, Dict[str, Any]]]] = {}
+        per_demand: Dict[str, List[Tuple[float, Any, Any, Facility, ODPairInfo]]] = {}
         for dem_idx, dem in enumerate(normalized_demands):
             for fac_idx, fac in enumerate(normalized_facilities):
                 if travel_direction == "facility_to_incident":
@@ -148,7 +152,7 @@ class NetworkClosestFacilityService:
         # Top-K selection per demand on costs only (stable sort: exact ties
         # keep demand×facility insertion order, same as sorting built Routes
         # by total_cost did).
-        selected: Dict[str, List[Tuple[Any, Any, Facility, Dict[str, Any]]]] = {}
+        selected: Dict[str, List[Tuple[Any, Any, Facility, ODPairInfo]]] = {}
         for key, candidates in per_demand.items():
             candidates.sort(key=lambda c: c[0])
             selected[key] = [(o, d, f, i) for _, o, d, f, i in candidates[:target_facility_count]]
@@ -199,7 +203,7 @@ class NetworkClosestFacilityService:
 
     def _normalize_demands(
         self,
-        demand_points: List[Union[DemandPoint, Tuple[float, float], Dict[str, Any]]],
+        demand_points: List[Union[DemandPoint, Tuple[float, float], DemandInput]],
     ) -> List[DemandPoint]:
         result: List[DemandPoint] = []
         for i, item in enumerate(demand_points):
@@ -217,12 +221,12 @@ class NetworkClosestFacilityService:
                 d_id = item.get("demand_id", item.get("id", f"d_{i}"))
                 weight = item.get("weight", 1.0)
                 geom = item.get("geometry", {"type": "Point", "coordinates": [0.0, 0.0]})
-                result.append(DemandPoint(demand_id=str(d_id), weight=float(weight), geometry=geom))
+                result.append(DemandPoint(demand_id=str(d_id), weight=float(weight), geometry=dict(geom)))
         return result
 
     def _normalize_facilities(
         self,
-        facilities: List[Union[Facility, Tuple[float, float], Dict[str, Any]]],
+        facilities: List[Union[Facility, Tuple[float, float], FacilityInput]],
     ) -> List[Facility]:
         result: List[Facility] = []
         for i, item in enumerate(facilities):
@@ -241,5 +245,5 @@ class NetworkClosestFacilityService:
                 name = item.get("name", f"Facility {i+1}")
                 geom = item.get("geometry", {"type": "Point", "coordinates": [0.0, 0.0]})
                 cap = item.get("capacity", 1.0)
-                result.append(Facility(facility_id=str(f_id), name=name, geometry=geom, capacity=float(cap)))
+                result.append(Facility(facility_id=str(f_id), name=name, geometry=dict(geom), capacity=float(cap)))
         return result

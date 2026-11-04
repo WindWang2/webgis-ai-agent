@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 
+from app.services.network.contracts import ODComputation, ODPairInfo, ODPaths
+
 from app.services.network.models import (
     NetworkDataset,
     TravelProfile,
@@ -158,7 +160,7 @@ class NetworkODMatrixService:
         impedance: Optional[Impedance] = None,
         barriers: Optional[List[Barrier]] = None,
         cutoff_s: Optional[float] = None,
-    ) -> Dict[str, Any]:
+    ) -> ODPaths:
         """Batch OD with full shortest-path trees, one Dijkstra per unique origin.
 
         Returns a dict with:
@@ -185,7 +187,7 @@ class NetworkODMatrixService:
             cutoff_s=cutoff_s, need_paths=True,
         )
 
-        pairs: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        pairs: Dict[Tuple[str, str], ODPairInfo] = {}
         for o_node, o_label in res["origin_nodes"]:
             origin_res = res["results"].get(o_node, {})
             costs = origin_res.get("dists", {})
@@ -229,7 +231,7 @@ class NetworkODMatrixService:
         barriers: Optional[List[Barrier]] = None,
         cutoff_s: Optional[float] = None,
         need_paths: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> ODComputation:
         """Shared multi-source Dijkstra core used by matrix and path variants.
 
         #449: ``need_paths=False`` (cost-only matrix) runs

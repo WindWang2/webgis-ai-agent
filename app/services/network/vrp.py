@@ -7,6 +7,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 
+from app.services.network.contracts import (
+    DemandInput, FacilityInput,
+)
+
 from app.services.network.models import (
     NetworkDataset,
     TravelProfile,
@@ -32,8 +36,8 @@ class NetworkRouteOptimizationService:
 
     def optimize_route(
         self,
-        stops: List[Union[Tuple[float, float], DemandPoint, Dict[str, Any]]],
-        depot: Optional[Union[Tuple[float, float], Facility, Dict[str, Any]]] = None,
+        stops: List[Union[Tuple[float, float], DemandPoint, DemandInput]],
+        depot: Optional[Union[Facility, Tuple[float, float], FacilityInput]] = None,
         end_at_depot: bool = True,
         graph: Optional[nx.DiGraph] = None,
         network_dataset: Optional[NetworkDataset] = None,

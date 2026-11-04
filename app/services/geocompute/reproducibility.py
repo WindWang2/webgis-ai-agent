@@ -10,8 +10,17 @@
 """
 from __future__ import annotations
 
+from app.contracts.execution import (
+    BundleNode,
+    CrsRecord,
+    ExecutionBundle,
+    LineageRecord,
+    PlanRecord,
+    ReproducibilityRecord,
+)
+
 import hashlib
-from typing import Any, Optional
+from typing import Optional, cast
 
 from app.services.geocompute.drift import check_plan_drift
 from app.services.geocompute.normalization import canonical_dumps
@@ -34,9 +43,9 @@ def build_execution_bundle(
     *,
     runtime_manifest_fingerprint: Optional[str] = None,
     backend_variant: Optional[str] = None,
-) -> dict[str, Any]:
+) -> ExecutionBundle:
     """执行结束后的可复现清单（有界、无载荷、自含诊断事实）。"""
-    stored_record = {
+    stored_record: PlanRecord = {
         "execution_plan_version": EXECUTION_PLAN_VERSION,
         "plan_id": plan.plan_id,
         "plan_fingerprint": plan.graph_fingerprint(),
@@ -51,7 +60,7 @@ def build_execution_bundle(
     )
 
     dataset_versions: dict[str, str] = {}
-    nodes: list[dict[str, Any]] = []
+    nodes: list[BundleNode] = []
     any_source_unavailable = False
     for node in plan.nodes[:_MAX_NODES_IN_BUNDLE]:
         ev = run.evidence.get(node.node_id)
@@ -66,7 +75,7 @@ def build_execution_bundle(
             "fingerprint": node.semantic_fingerprint(),
             "deterministic": node.deterministic,
             "policy": node.policy.value,
-            "crs": node.crs.model_dump() if node.crs else None,
+            "crs": cast(CrsRecord, node.crs.model_dump()) if node.crs else None,
             "dataset_fingerprints": dict(sorted(node.dataset_fingerprints.items())),
             "parameters_json": params_json,
             "status": ev.status if ev else "pending",
@@ -118,7 +127,7 @@ def build_execution_bundle(
     }
 
 
-def bundle_verdict_block(bundle: dict[str, Any]) -> dict[str, Any]:
+def bundle_verdict_block(bundle: ExecutionBundle) -> ReproducibilityRecord:
     """bundle → 有界判定块（Wave-11 接线，audit 08 §6.2.1）。
 
     完整 bundle 不落库 —— 判定块携带 bundle 文档的 sha256[:16] 内容摘要
@@ -144,7 +153,7 @@ def lineage_projection(
     run: ExecutionRun,
     *,
     node_id: Optional[str] = None,
-) -> list[dict[str, Any]]:
+) -> list[LineageRecord]:
     """执行级 lineage 投影（有界、无载荷）。
 
     源数据集/产物身份 → 查询/变换节点 → 物化结果 的链路视图；节点
@@ -152,12 +161,12 @@ def lineage_projection(
     ArtifactLineage / provenance 体系互连而非平行。输出不含几何/栅格
     载荷（LLM/调试安全）。
     """
-    out: list[dict[str, Any]] = []
+    out: list[LineageRecord] = []
     for node in plan.nodes[:_MAX_NODES_IN_BUNDLE]:
         if node_id is not None and node.node_id != node_id:
             continue
         ev = run.evidence.get(node.node_id)
-        entry: dict[str, Any] = {
+        entry: LineageRecord = {
             "node_id": node.node_id,
             "category": node.category.value,
             "fingerprint": node.semantic_fingerprint(),

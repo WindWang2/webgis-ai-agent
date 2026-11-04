@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from app.lib.harness.result_contracts import GoalSatisfaction, VisualCritiqueRecord, VisualJudgeSummary
+
 logger = logging.getLogger(__name__)
 
 #: 视觉裁判维度（P2 最低集）。评审判据输出之外的维度一律丢弃（严格白名单）。
@@ -102,7 +104,7 @@ class VisualCritique:
     confidence: Optional[float] = None
     evidence: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> VisualCritiqueRecord:
         return {
             "dimension": self.dimension,
             "severity": self.severity,
@@ -134,7 +136,7 @@ class VisualJudgeReport:
     def error_count(self) -> int:
         return sum(1 for c in self.critiques if c.severity == "error")
 
-    def to_summary(self) -> Dict[str, Any]:
+    def to_summary(self) -> VisualJudgeSummary:
         """有界摘要（进 ``CartographicReviewEvidence.visual_evidence``）。"""
         return {
             "evidence_class": "visual",
@@ -382,7 +384,8 @@ def _find_screenshot_path(
     if not fingerprint:
         return None
     for call in reversed(list(results_by_id.values())):
-        result = call.get("result") if isinstance(call.get("result"), dict) else {}
+        result_raw = call.get("result")
+        result = result_raw if isinstance(result_raw, dict) else {}
         if result.get("mapspec_fingerprint") != fingerprint:
             continue
         runtime_dir = str(result.get(_RUNTIME_DIR_KEY) or "")
@@ -628,7 +631,7 @@ def _apply_report(cartography, report: VisualJudgeReport) -> None:
 
 # ── L5 推导（P3） ────────────────────────────────────────────────────────
 
-def derive_goal_satisfaction(cartography) -> Dict[str, Any]:
+def derive_goal_satisfaction(cartography) -> GoalSatisfaction:
     """从可信制图证据推导 L5 ``goal_satisfaction``（fail-closed）。
 
     - 无已评估的视觉结论 ⇒ ``not_evaluated``（携带机器可读原因）；

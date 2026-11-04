@@ -10,10 +10,14 @@ plan store 持久在 map_state ``_feature_edit_plans``（多 worker 共享；
 """
 from __future__ import annotations
 
+from app.contracts.geojson import GeoJSONFeatureCollection, GeoJSONGeometry
+
+from app.services.feature_edit.wire_types import EditFinding, FeatureDelta, RenameField, OperationSummary, DeltaPreview, SelectionView, PlanSummary
+
 from pydantic import JsonValue
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from app.services.feature_edit.attr_ops import (
     build_attr_deltas,
@@ -49,12 +53,12 @@ __all__ = [
 ]
 
 
-def needs_materialization(fc: Dict[str, Any]) -> bool:
+def needs_materialization(fc: GeoJSONFeatureCollection) -> bool:
     return not has_wfids(fc)
 
 
 def plan_safe_classification(
-    ops: List[Dict[str, Any]], findings: List[Dict[str, Any]], n_targets: int
+    ops: List[Dict[str, Any]], findings: List[EditFinding], n_targets: int
 ) -> bool:
     """safe = 免确认可自动执行（policy 放行前提下）。
 
@@ -70,9 +74,9 @@ def plan_safe_classification(
     return all(op.get("op") == "set_fields" for op in ops)
 
 
-def _validate_op_shapes(ops: List[Any]) -> List[Dict[str, Any]]:
+def _validate_op_shapes(ops: List[Any]) -> List[EditFinding]:
     """词表/参数形状校验（缺数值单位即拒绝 —— fail-closed）。"""
-    findings: List[Dict[str, Any]] = []
+    findings: List[EditFinding] = []
     if not isinstance(ops, list) or not ops:
         return [finding("invalid_op", "plan requires at least one edit op")]
     if len(ops) > MAX_OPS_PER_PLAN:
@@ -115,21 +119,21 @@ def _validate_op_shapes(ops: List[Any]) -> List[Dict[str, Any]]:
 
 
 def derive_changes(
-    fc: Dict[str, Any],
+    fc: GeoJSONFeatureCollection,
     ops: List[Dict[str, Any]],
     target_wfids: List[str],
     target_payloads: Dict[str, Any],
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> Tuple[List[FeatureDelta], List[RenameField], List[EditFinding], List[OperationSummary]]:
     """对已物化 fc 顺序求 ops 的完整 diff（preview 与 commit 同一路径）。
 
     返回 (deltas, schema_ops, findings, op_summaries)。target_payloads 为
     snap 目标 ref 的预取载荷（{ref_id: payload}；缺失项出 dataset_not_found）。
     deltas 是绝对态（before=操作前值, after=操作后值），按序应用即顺序语义。
     """
-    findings: List[Dict[str, Any]] = []
-    deltas: List[Dict[str, Any]] = []
-    schema_ops: List[Dict[str, Any]] = []
-    op_summaries: List[Dict[str, Any]] = []
+    findings: List[EditFinding] = []
+    deltas: List[FeatureDelta] = []
+    schema_ops: List[RenameField] = []
+    op_summaries: List[OperationSummary] = []
     working = fc
     target_set = set(target_wfids)
     field_profiles = profile_fields(working)
@@ -174,9 +178,12 @@ def derive_changes(
                 )
                 findings.extend(geom_findings)
                 deltas.extend(geom_deltas)
-                op_summaries.append(
-                    {"op": kind, **{k: summary[k] for k in ("snapped", "tolerance_m") if k in summary}}
-                )
+                snap_summary: OperationSummary = {"op": kind}
+                if "snapped" in summary:
+                    snap_summary["snapped"] = summary["snapped"]
+                if "tolerance_m" in summary:
+                    snap_summary["tolerance_m"] = summary["tolerance_m"]
+                op_summaries.append(snap_summary)
         # 顺序语义：把已产生的 delta 应用到工作视图，后续 op 在最新态上求值。
         if deltas or schema_ops:
             feats, _ = apply_deltas_to_features(working.get("features") or [], deltas)
@@ -195,11 +202,11 @@ def build_plan(
     payload: Any,
     ops: List[Dict[str, Any]],
     requested_ids: Optional[List[str]],
-    selection: Optional[Dict[str, Any]],
+    selection: Optional[SelectionView],
     dataset_fingerprint: str,
     content_revision: int,
     target_payloads: Optional[Dict[str, Any]] = None,
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+) -> Tuple[Dict[str, Any], List[EditFinding]]:
     """构造 EditPlan（纯读路径）。
 
     payload：session ref 的原始载荷（信封或裸 FC，本函数内部归一）。
@@ -216,7 +223,7 @@ def build_plan(
             finding("dataset_too_large_to_edit", "dataset exceeds editable size", features=n_features)
         ]
 
-    findings: List[Dict[str, Any]] = list(_validate_op_shapes(ops))
+    findings: List[EditFinding] = list(_validate_op_shapes(ops))
 
     # ── 目标解析：显式 ids 优先，否则 selection（含 selected_ids 扩展） ──
     materialize = needs_materialization(fc)
@@ -286,29 +293,30 @@ def build_plan(
     return plan, findings
 
 
-def _bounded_preview(deltas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _bounded_preview(deltas: List[FeatureDelta]) -> List[DeltaPreview]:
     """diff 的有界投影（属性全量 before/after；几何只给摘要 + 顶点数，不搬全量）。"""
     from app.services.feature_edit.journal import count_positions
 
-    out: List[Dict[str, Any]] = []
+    out: List[DeltaPreview] = []
     for delta in deltas[:MAX_PLAN_TARGETS]:
-        item: Dict[str, Any] = {"wfid": delta.get("wfid")}
+        item: DeltaPreview = {"wfid": delta.get("wfid")}
         if delta.get("fields"):
             item["fields"] = {
                 k: {"before": v.get("before"), "after": v.get("after")}
                 for k, v in delta["fields"].items()
             }
-        if delta.get("geometry_after") is not None:
+        geometry_after = delta.get("geometry_after")
+        if geometry_after is not None:
             item["geometry"] = {
                 "positions_before": count_positions(delta.get("geometry_before")),
                 "positions_after": count_positions(delta.get("geometry_after")),
-                "bbox_after": _bbox(delta["geometry_after"]),
+                "bbox_after": _bbox(geometry_after),
             }
         out.append(item)
     return out
 
 
-def _bbox(geometry: Dict[str, Any]) -> Optional[List[float]]:
+def _bbox(geometry: GeoJSONGeometry) -> Optional[List[float]]:
     xs: List[float] = []
     ys: List[float] = []
 
@@ -328,7 +336,7 @@ def _bbox(geometry: Dict[str, Any]) -> Optional[List[float]]:
     return [min(xs), min(ys), max(xs), max(ys)]
 
 
-def summarize_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+def summarize_plan(plan: Dict[str, Any]) -> PlanSummary:
     """Agent 可见的有界摘要（不含未编辑字段的属性值）。"""
     return {
         "plan_id": plan.get("plan_id"),
@@ -347,18 +355,19 @@ def summarize_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _extract_fc(data: Any) -> Optional[Dict[str, Any]]:
+def _extract_fc(data: Any) -> Optional[GeoJSONFeatureCollection]:
     fc = data
     if isinstance(data, dict):
         nested = data.get("geojson")
         if isinstance(nested, dict):
             fc = nested
     if isinstance(fc, dict) and fc.get("type") == "FeatureCollection":
-        return fc
+        # Shape validation remains at ingestion; this adapter only unwraps.
+        return cast(GeoJSONFeatureCollection, fc)
     return None
 
 
-def extract_fc(data: Any) -> Optional[Dict[str, Any]]:
+def extract_fc(data: Any) -> Optional[GeoJSONFeatureCollection]:
     """公开信封归一（executor/routes 复用）。"""
     return _extract_fc(data)
 

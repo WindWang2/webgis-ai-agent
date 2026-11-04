@@ -12,6 +12,10 @@
 """
 from __future__ import annotations
 
+from app.contracts.geojson import GeoJSONFeatureCollection, GeoJSONFeature, GeoJSONGeometry
+
+from app.services.feature_edit.wire_types import EditFinding, FeatureDelta, SnapSummary
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -60,15 +64,15 @@ def geodesic_distance_m(lon1: float, lat1: float, lon2: float, lat2: float) -> f
     return float(dist)
 
 
-def _iter_target_features(fc: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _iter_target_features(fc: Optional[GeoJSONFeatureCollection]) -> List[GeoJSONFeature]:
     if not isinstance(fc, dict):
         return []
     return [f for f in (fc.get("features") or []) if isinstance(f, dict)]
 
 
-def _select_targets(fc: Dict[str, Any], wfids: set) -> List[Tuple[str, Dict[str, Any], int]]:
+def _select_targets(fc: GeoJSONFeatureCollection, wfids: set) -> List[Tuple[str, GeoJSONFeature, int]]:
     """(wfid, feature, positions) —— 目标要素 + 顶点规模门 + 存在性证据。"""
-    out: List[Tuple[str, Dict[str, Any], int]] = []
+    out: List[Tuple[str, GeoJSONFeature, int]] = []
     for feature in fc.get("features") or []:
         if not isinstance(feature, dict):
             continue
@@ -82,9 +86,9 @@ def _select_targets(fc: Dict[str, Any], wfids: set) -> List[Tuple[str, Dict[str,
 
 
 def _common_guards(
-    fc: Dict[str, Any], wfids: set
-) -> Tuple[List[Tuple[str, Dict[str, Any], int]], List[Dict[str, Any]]]:
-    findings: List[Dict[str, Any]] = []
+    fc: GeoJSONFeatureCollection, wfids: set
+) -> Tuple[List[Tuple[str, GeoJSONFeature, int]], List[EditFinding]]:
+    findings: List[EditFinding] = []
     crs = fc.get("crs")
     if crs is not None:
         # 摄入已归一 4326；载荷显式声明其它 CRS 属未预期形态，fail-closed。
@@ -110,7 +114,7 @@ def _common_guards(
     return targets, findings
 
 
-def _validate_after(geom_after: BaseGeometry | None) -> Optional[Dict[str, Any]]:
+def _validate_after(geom_after: BaseGeometry | None) -> Optional[EditFinding]:
     if geom_after is None or geom_after.is_empty:
         return finding("geometry_invalid_after", "operation produced an empty geometry")
     if geom_after.geom_type in ("Polygon", "MultiPolygon") and not geom_after.is_valid:
@@ -128,15 +132,15 @@ def _jsonable(node: Any) -> Any:
     return node
 
 
-def _geometry_out(geom: BaseGeometry) -> Dict[str, Any]:
+def _geometry_out(geom: BaseGeometry) -> GeoJSONGeometry:
     return _jsonable(mapping(geom))
 
 
 # ─── repair_geometry ───────────────────────────────────────────────────────
 
 def repair_geometry(
-    fc: Dict[str, Any], wfids: set, fixes: List[str]
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    fc: GeoJSONFeatureCollection, wfids: set, fixes: List[str]
+) -> Tuple[List[FeatureDelta], List[EditFinding]]:
     """确定性几何修复（make_valid / close_ring / dedupe_vertices）。
 
     复用 data_quality 的算子语义（per-feature 化）：闭环=外环首尾相接；
@@ -148,7 +152,7 @@ def repair_geometry(
     targets, findings = _common_guards(fc, wfids)
     if findings:
         return [], findings
-    deltas: List[Dict[str, Any]] = []
+    deltas: List[FeatureDelta] = []
     for wfid, feature, _positions in targets:
         geometry = feature.get("geometry")
         if not isinstance(geometry, dict):
@@ -226,10 +230,10 @@ def _repair_structure(geom: BaseGeometry, dedupe: bool, close: bool) -> BaseGeom
 # ─── move_by ───────────────────────────────────────────────────────────────
 
 def move_by(
-    fc: Dict[str, Any], wfids: set, dx_m: Any, dy_m: Any
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    fc: GeoJSONFeatureCollection, wfids: set, dx_m: Any, dy_m: Any
+) -> Tuple[List[FeatureDelta], List[EditFinding]]:
     """显式位移（米，dx=东正 / dy=北正）；逐顶点大地测量平移。"""
-    findings: List[Dict[str, Any]] = []
+    findings: List[EditFinding] = []
     if not isinstance(dx_m, (int, float)) or not isinstance(dy_m, (int, float)) or isinstance(dx_m, bool) or isinstance(dy_m, bool):
         return [], [finding("unit_required", "move_by requires numeric dx_m/dy_m in meters")]
     dx_m, dy_m = float(dx_m), float(dy_m)
@@ -245,7 +249,7 @@ def move_by(
     targets, guard_findings = _common_guards(fc, wfids)
     if guard_findings:
         return [], guard_findings
-    deltas: List[Dict[str, Any]] = []
+    deltas: List[FeatureDelta] = []
 
     def shift(x: float | tuple[float, ...], y: float | tuple[float, ...]) -> tuple[float | tuple[float, ...], float | tuple[float, ...]]:
         # shapely.ops.transform 的 (x, y) 坐标数组签名；Geod.fwd 原生支持
@@ -270,18 +274,18 @@ def move_by(
 # ─── snap_to_ref ───────────────────────────────────────────────────────────
 
 def snap_to_ref(
-    fc: Dict[str, Any],
+    fc: GeoJSONFeatureCollection,
     wfids: set,
-    target_fc: Optional[Dict[str, Any]],
+    target_fc: Optional[GeoJSONFeatureCollection],
     tolerance_m: Any,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+) -> Tuple[List[FeatureDelta], List[EditFinding], SnapSummary]:
     """吸附到目标线数据集（每要素：质心 → 最近目标线最近点，容差内）。
 
     返回 (deltas, findings, summary)。整体 fail-closed：任一要素无容差内
     候选 → no_snap_candidate finding（plan 不可提交）。
     平移向量按各要素质心的 Geod 逆解计算，逐顶点等量平移（形状不变）。
     """
-    findings: List[Dict[str, Any]] = []
+    findings: List[EditFinding] = []
     if not isinstance(tolerance_m, (int, float)) or isinstance(tolerance_m, bool):
         return [], [finding("unit_required", "snap requires numeric tolerance_m in meters")], {}
     tolerance_m = float(tolerance_m)
@@ -305,7 +309,7 @@ def snap_to_ref(
     targets, guard_findings = _common_guards(fc, wfids)
     if guard_findings:
         return [], guard_findings, {}
-    deltas: List[Dict[str, Any]] = []
+    deltas: List[FeatureDelta] = []
     snap_distances: Dict[str, float] = {}
     for wfid, feature, _positions in targets:
         geometry = feature.get("geometry")
@@ -346,7 +350,7 @@ def snap_to_ref(
             continue
         deltas.append({"wfid": wfid, "geometry_before": geometry, "geometry_after": _geometry_out(moved)})
         snap_distances[wfid] = round(dist, 2)
-    summary = {
+    summary: SnapSummary = {
         "snapped": len(deltas),
         "snap_distances_m": dict(sorted(snap_distances.items())[:50]),
         "tolerance_m": tolerance_m,

@@ -5,7 +5,9 @@ snap 目标预取、plan 构建与暂存、策略闸、提交。
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from app.services.feature_edit.wire_types import EditFinding, SelectionView, PlanSummary
+
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from app.services.data_ingest.pipeline import compute_payload_fingerprint
 from app.services.feature_edit import executor as fe_executor
@@ -15,7 +17,7 @@ from app.services.feature_edit.plan import build_plan, plan_expired, summarize_p
 from app.services.session_data import session_data_manager
 
 
-async def load_selection_view(session_id: str) -> Optional[Dict[str, Any]]:
+async def load_selection_view(session_id: str) -> Optional[SelectionView]:
     """IR 投影的当前 selection（无 ledger / 无选中 → None）。"""
     from app.services.gis_harness.interaction_ir.projection import interaction_snapshot_via_store
 
@@ -24,7 +26,8 @@ async def load_selection_view(session_id: str) -> Optional[Dict[str, Any]]:
     except Exception:  # noqa: BLE001 — 投影面失败按无选中处理（诚实降级）
         return None
     selection = (snapshot or {}).get("selection")
-    return selection if isinstance(selection, dict) else None
+    # Interaction IR owns this stored projection; retain its extensions.
+    return cast(SelectionView, selection) if isinstance(selection, dict) else None
 
 
 async def build_and_store_plan(
@@ -33,8 +36,8 @@ async def build_and_store_plan(
     ref_id: Optional[str],
     feature_ids: Optional[List[str]],
     ops: List[Dict[str, Any]],
-    selection_view: Optional[Dict[str, Any]] = None,
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    selection_view: Optional[SelectionView] = None,
+) -> Tuple[Dict[str, Any], List[EditFinding]]:
     """预览编排：解析 ref → 载荷/revision → snap 预取 → build_plan → 暂存。
 
     返回 (plan_summary, findings)；不可建 plan 时 plan={}。
@@ -81,8 +84,8 @@ async def build_and_store_plan(
     return plan, findings
 
 
-def summarize(plan: Dict[str, Any], findings: List[Dict[str, Any]]) -> Dict[str, Any]:
-    summary = summarize_plan(plan) if plan else {"committable": False, "safe": False, "validation": findings}
+def summarize(plan: Dict[str, Any], findings: List[EditFinding]) -> PlanSummary:
+    summary: PlanSummary = summarize_plan(plan) if plan else {"committable": False, "safe": False, "validation": findings}
     summary["preview"] = plan.get("preview") or []
     summary["validation"] = findings
     if plan.get("committable"):

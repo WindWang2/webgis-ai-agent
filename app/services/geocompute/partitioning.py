@@ -24,6 +24,9 @@ seam 语义（唯一真相，merge 与 plan 共同遵守）：
 """
 from __future__ import annotations
 
+from app.contracts.geojson import GeoJSONFeature
+from app.contracts.execution import VectorPartitionRecord, PartitionSummary, SkewReport
+
 import hashlib
 import json
 import math
@@ -102,7 +105,7 @@ class VectorPartition:
     #: halo bbox（分配 bbox 外扩；邻域复制的过滤域）
     halo_bbox: tuple[float, float, float, float]
 
-    def to_meta(self) -> dict[str, Any]:
+    def to_meta(self) -> VectorPartitionRecord:
         return {"index": self.index, "bbox": list(self.bbox),
                 "halo_bbox": list(self.halo_bbox)}
 
@@ -124,7 +127,7 @@ class PartitionPlan:
     def parts_by_index(self) -> dict[int, Any]:
         return {p.index: p for p in self.parts}
 
-    def summary(self) -> dict[str, Any]:
+    def summary(self) -> PartitionSummary:
         return {"scheme": self.scheme, "tiles": self.tiles,
                 "crs": self.crs, "adaptive_from": self.adaptive_from}
 
@@ -268,7 +271,7 @@ def plan_vector(
 # ═══════════════════════ 分配 / 切片（worker 侧执行输入）═══════════════════════
 
 
-def representative_point(feature: dict[str, Any]) -> Optional[tuple[float, float]]:
+def representative_point(feature: GeoJSONFeature) -> Optional[tuple[float, float]]:
     """要素代表点 = 几何 bbox 中心（确定性、廉价、与坐标序无关）。
 
     非 standard GeoJSON 几何 / 空坐标 → None（调用方决定丢弃或保留）。
@@ -307,14 +310,14 @@ def in_bbox(pt: tuple[float, float], bbox: tuple[float, float, float, float],
 
 
 def assign_features(
-    features: list[dict[str, Any]], partitions: list[VectorPartition]
-) -> dict[int, list[dict[str, Any]]]:
+    features: list[GeoJSONFeature], partitions: list[VectorPartition]
+) -> dict[int, list[GeoJSONFeature]]:
     """代表点分配（无 halo 时零复制零丢失；代表点无法计算的要素**保留在
     分区 0** —— fail-open 丢弃会造成静默数据丢失，绝不）。
 
     返回 {partition_index: [feature, ...]}（缺省格为空表）。
     """
-    out: dict[int, list[dict[str, Any]]] = {p.index: [] for p in partitions}
+    out: dict[int, list[GeoJSONFeature]] = {p.index: [] for p in partitions}
     if not partitions:
         return out
     for feature in features:
@@ -332,8 +335,8 @@ def assign_features(
 
 
 def slice_features_for_halo(
-    features: list[dict[str, Any]], partition: VectorPartition
-) -> list[dict[str, Any]]:
+    features: list[GeoJSONFeature], partition: VectorPartition
+) -> list[GeoJSONFeature]:
     """halo 过滤（worker 侧）：代表点 ∈ halo_bbox 的要素进入本分区 job。
 
     输入**已是**本分区分配结果（executor 先按 assign 切好）时，halo
@@ -344,7 +347,7 @@ def slice_features_for_halo(
             or in_bbox(pt, partition.halo_bbox)]
 
 
-def feature_identity(feature: dict[str, Any]) -> str:
+def feature_identity(feature: GeoJSONFeature) -> str:
     """要素内容指纹（合并去重的身份键；sha1 前 16 —— 有界、确定性）。"""
     payload = json.dumps(feature, sort_keys=True, ensure_ascii=False,
                          default=str)
@@ -391,7 +394,7 @@ def merge_vector_payloads(
 # ═════════════════════════════ 偏斜检测（证据）════════════════════════════
 
 
-def detect_skew(row_counts: list[int]) -> Optional[dict[str, Any]]:
+def detect_skew(row_counts: list[int]) -> SkewReport | None:
     """分区行数偏斜报告（max/mean > 阈值 → 报告；证据不处置）。
 
     全零/单分区/空 → None（无偏斜概念）。

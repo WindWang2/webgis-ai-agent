@@ -18,6 +18,8 @@ import hashlib
 import json
 from typing import Any, Dict, Tuple
 
+from app.lib.harness.replay.recording_contracts import PayloadDigest, ToolResultReference
+
 # ADR-0262 D1：秘密净化原语已下沉中立模块（app.lib.redaction）——本包
 # re-export 保持既有 import 面（schema/roundtrip/外部消费方）逐字兼容。
 from app.lib.redaction import (  # noqa: F401 — re-export 兼容面
@@ -55,7 +57,7 @@ def bounded_str(value: Any, limit: int = _STR_MAX_DEFAULT) -> str:
     return scrub_secret_strings(text)
 
 
-def digest_payload(value: Any) -> Dict[str, Any]:
+def digest_payload(value: Any) -> PayloadDigest:
     """任意载荷 → {digest, bytes}（体积归零、形状可追溯）。"""
     try:
         text = json.dumps(value, ensure_ascii=False, default=str)
@@ -120,7 +122,7 @@ def sanitize_arguments(arguments: Any, *, max_bytes: int = _ARGS_BYTES_MAX) -> T
     return {"_digest_only": digest_payload(arguments)}, size, True
 
 
-def sanitize_tool_result_ref(result: Any) -> Dict[str, Any]:
+def sanitize_tool_result_ref(result: Any) -> ToolResultReference:
     """工具结果 → ref 摘要块（B1：只留 receipts 引用，不留载荷）。"""
     if isinstance(result, dict):
         ref = result.get("geojson_ref") or result.get("ref")
@@ -130,6 +132,13 @@ def sanitize_tool_result_ref(result: Any) -> Dict[str, Any]:
             "mapspec_fingerprint": bounded_str(mapspec_fp, 128) if mapspec_fp else None,
             "status": bounded_str(result.get("status"), 32) if result.get("status") else None,
         }
-        return {**{k: v for k, v in summary.items() if v is not None},
-                "digest": digest_payload(result)}
+        out: ToolResultReference = {}
+        if summary["geojson_ref"] is not None:
+            out["geojson_ref"] = summary["geojson_ref"]
+        if summary["mapspec_fingerprint"] is not None:
+            out["mapspec_fingerprint"] = summary["mapspec_fingerprint"]
+        if summary["status"] is not None:
+            out["status"] = summary["status"]
+        out["digest"] = digest_payload(result)
+        return out
     return {"digest": digest_payload(result)}

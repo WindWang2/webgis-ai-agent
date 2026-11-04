@@ -17,12 +17,16 @@
 """
 from __future__ import annotations
 
+from app.contracts.modelops import (
+    LineageEvent,
+)
+
 import json
 import re
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.lib.modelops.errors import DescriptorError
 
@@ -86,7 +90,7 @@ class ModelLineageStore:
         event_type: str,
         payload: Optional[Dict[str, Any]] = None,
         actor: str = "",
-    ) -> Dict[str, Any]:
+    ) -> LineageEvent:
         """追加一个 lineage 事件（typed 校验；返回规范化事件）。"""
         if event_type not in EVENT_TYPES:
             raise DescriptorError(
@@ -115,7 +119,7 @@ class ModelLineageStore:
                             continue
                 self._seqs[key] = max_seq
             seq = self._seqs.get(key, 0) + 1
-            event = {
+            event: LineageEvent = {
                 "schema_version": LINEAGE_SCHEMA_VERSION,
                 "seq": seq,
                 "ts": time.time(),
@@ -131,12 +135,12 @@ class ModelLineageStore:
             self._seqs[key] = seq
             return event
 
-    def load(self, model_id: str, model_version: str) -> List[Dict[str, Any]]:
+    def load(self, model_id: str, model_version: str) -> list[LineageEvent]:
         """读取一个版本的全部事件（按 seq 升序；坏行跳过并计数上报）。"""
         path = self._file(model_id, model_version)
         if not path.exists():
             return []
-        events: List[Dict[str, Any]] = []
+        events: list[LineageEvent] = []
         bad = 0
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
@@ -161,11 +165,11 @@ class ModelLineageStore:
             )
         return events
 
-    def history(self, model_id: str, model_version: Optional[str] = None) -> List[Dict[str, Any]]:
+    def history(self, model_id: str, model_version: Optional[str] = None) -> list[LineageEvent]:
         """时间线（单版本或全部版本；全版本按文件名glob + seq 归并）。"""
         if model_version is not None:
             return self.load(model_id, model_version)
-        events: List[Dict[str, Any]] = []
+        events: list[LineageEvent] = []
         if self._root.exists():
             prefix = f"{_safe(model_id)}@"
             for path in sorted(self._root.glob(f"{prefix}*.jsonl")):

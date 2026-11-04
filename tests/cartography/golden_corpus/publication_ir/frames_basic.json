@@ -135,6 +135,7 @@
           "profile": "a4_landscape",
           "width_mm": 297.0
         },
+        "time_window": null,
         "title": "总览"
       },
       {
@@ -267,6 +268,7 @@
           "profile": "",
           "width_mm": 200.0
         },
+        "time_window": null,
         "title": "放大"
       }
     ]

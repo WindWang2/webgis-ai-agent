@@ -7,11 +7,24 @@ and VRP route optimization.
 from __future__ import annotations
 import asyncio
 import math
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import networkx as nx
 
+from app.contracts.geojson import GeoJSONGeometry, Position
+
 from app.lib.gis.scientific_errors import DisconnectedNetwork
+
+from app.services.network.contracts import (
+    AccessibilitySummary,
+    DemandInput,
+    FacilityInput,
+    NetworkInput,
+    ODSummary,
+    ServiceAreaSummary,
+    ShortestPathSummary,
+    SnapPointEvidence,
+)
 
 from app.services.network.models import (
     NetworkDataset,
@@ -77,7 +90,7 @@ class NetworkGraphEngine:
 
     def build_network(
         self,
-        data: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        data: NetworkInput,
         profile: Optional[TravelProfile] = None,
         snap_tolerance: float = 1e-5,
         split_intersections: bool = True,
@@ -157,8 +170,8 @@ class NetworkGraphEngine:
 
     def closest_facility(
         self,
-        demand_points: List[Union[DemandPoint, Tuple[float, float], Dict[str, Any]]],
-        facilities: List[Union[Facility, Tuple[float, float], Dict[str, Any]]],
+        demand_points: List[Union[DemandPoint, Tuple[float, float], DemandInput]],
+        facilities: List[Union[Facility, Tuple[float, float], FacilityInput]],
         network_dataset: NetworkDataset,
         graph: Optional[nx.DiGraph] = None,
         cutoff_cost: Optional[float] = None,
@@ -186,7 +199,7 @@ class NetworkGraphEngine:
 
     def service_area(
         self,
-        facilities: List[Union[Facility, Tuple[float, float], Dict[str, Any]]],
+        facilities: List[Union[Facility, Tuple[float, float], FacilityInput]],
         breaks: List[float],
         break_unit: str = "minutes",
         network_dataset: Optional[NetworkDataset] = None,
@@ -328,8 +341,8 @@ class NetworkGraphEngine:
 
     def optimize_route(
         self,
-        stops: List[Union[Tuple[float, float], DemandPoint, Dict[str, Any]]],
-        depot: Optional[Union[Tuple[float, float], Facility, Dict[str, Any]]] = None,
+        stops: List[Union[Tuple[float, float], DemandPoint, DemandInput]],
+        depot: Optional[Union[Facility, Tuple[float, float], FacilityInput]] = None,
         end_at_depot: bool = True,
         network_dataset: Optional[NetworkDataset] = None,
         graph: Optional[nx.DiGraph] = None,
@@ -473,7 +486,7 @@ class NetworkGraphEngine:
 
     def _ensure_graph(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         profile: Optional[TravelProfile] = None,
     ) -> Tuple[nx.DiGraph, NetworkDataset]:
         """Builds or fetches cached graph, ensuring a non-None graph is returned."""
@@ -483,7 +496,7 @@ class NetworkGraphEngine:
         self,
         labeled_points: List[Tuple[str, Tuple[float, float]]],
         network_dataset: NetworkDataset,
-    ) -> Tuple[Dict[str, Any], List[str]]:
+    ) -> Tuple[dict[str, SnapPointEvidence | bool | int], List[str]]:
         """Bounded per-endpoint snapping disclosure (VNext, scientific-honesty).
 
         Returns ``(evidence, warnings)``: ``evidence`` maps each labeled
@@ -494,7 +507,7 @@ class NetworkGraphEngine:
         tolerance additionally produce a warning string, so over-tolerance
         snapping is visible in the tool result instead of silent.
         """
-        evidence: Dict[str, Any] = {}
+        evidence: dict[str, SnapPointEvidence | bool | int] = {}
         warnings: List[str] = []
         total = len(labeled_points)
         for idx, (label, pt) in enumerate(labeled_points):
@@ -524,11 +537,11 @@ class NetworkGraphEngine:
 
     async def solve_shortest_path(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         origin: Any,
         destination: Any,
         profile: Optional[TravelProfile] = None,
-        barriers: Optional[List[Dict[str, Any]]] = None,
+        barriers: Optional[List[GeoJSONGeometry | Position]] = None,
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level shortest path solver working with raw GeoJSON/dict inputs."""
@@ -542,7 +555,7 @@ class NetworkGraphEngine:
             if barriers:
                 for idx, b in enumerate(barriers):
                     geom = b if isinstance(b, dict) and "type" in b else {"type": "Point", "coordinates": b}
-                    barrier_objs.append(Barrier(barrier_id=f"b_{idx}", geometry=geom))
+                    barrier_objs.append(Barrier(barrier_id=f"b_{idx}", geometry=dict(geom)))
 
             route = self.shortest_path(
                 origin=orig_pt,
@@ -558,7 +571,7 @@ class NetworkGraphEngine:
             snap_evidence, snap_warnings = self._snap_evidence(
                 [("origin", orig_pt), ("destination", dest_pt)], net_ds
             )
-            summary: Dict[str, Any] = {
+            summary: ShortestPathSummary = {
                 "snap_evidence": snap_evidence,
                 "reachable": math.isfinite(route.total_cost),
             }
@@ -566,7 +579,7 @@ class NetworkGraphEngine:
             return NetworkAnalysisResult(
                 analysis_type="shortest_path",
                 status="success",
-                summary=summary,
+                summary=dict(summary),
                 warnings=snap_warnings,
                 routes=[route],
                 result_geojson={
@@ -579,7 +592,7 @@ class NetworkGraphEngine:
 
     async def solve_od_matrix(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         origins: List[Any],
         destinations: List[Any],
         profile: Optional[TravelProfile] = None,
@@ -610,7 +623,7 @@ class NetworkGraphEngine:
                 + [(f"destination_{i}", pt) for i, pt in enumerate(dest_pts)],
                 net_ds,
             )
-            summary: Dict[str, Any] = {
+            summary: ODSummary = {
                 "pair_count": len(pairs),
                 "unreachable_pair_count": unreachable_count,
                 "unreachable_ratio": round(unreachable_count / len(pairs), 4) if pairs else 0.0,
@@ -629,7 +642,7 @@ class NetworkGraphEngine:
             return NetworkAnalysisResult(
                 analysis_type="od_matrix",
                 status="success",
-                summary=summary,
+                summary=dict(summary),
                 warnings=snap_warnings,
                 od_matrix=pairs,
             )
@@ -638,7 +651,7 @@ class NetworkGraphEngine:
 
     async def solve_closest_facility(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         incidents: List[Any],
         facilities: List[Any],
         profile: Optional[TravelProfile] = None,
@@ -683,7 +696,7 @@ class NetworkGraphEngine:
 
     async def solve_service_area(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         facilities: List[Any],
         breaks_minutes: Optional[List[float]] = None,
         profile: Optional[TravelProfile] = None,
@@ -727,7 +740,7 @@ class NetworkGraphEngine:
                  for i, f in enumerate(fac_objs)],
                 net_ds,
             )
-            summary: Dict[str, Any] = {
+            summary: ServiceAreaSummary = {
                 "facility_count": len(fac_objs),
                 "unreachable_facility_count": len(unreachable_facility_ids),
                 "unreachable_facility_ids": unreachable_facility_ids,
@@ -737,7 +750,7 @@ class NetworkGraphEngine:
             return NetworkAnalysisResult(
                 analysis_type="service_area",
                 status="success",
-                summary=summary,
+                summary=dict(summary),
                 warnings=snap_warnings,
                 service_area_breaks=breaks_list,
             )
@@ -746,7 +759,7 @@ class NetworkGraphEngine:
 
     async def solve_accessibility(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         demand_layer: Any,
         facilities: List[Any],
         cutoff_minutes: float = 15.0,
@@ -803,7 +816,7 @@ class NetworkGraphEngine:
                     supply_total += float(f.capacity)
                 except (TypeError, ValueError):
                     supply_total += 1.0
-            summary: Dict[str, Any] = {
+            summary: AccessibilitySummary = {
                 "method": method,
                 "decay_zones": int(decay_zones),
                 "catchment_radius_min": float(cutoff_minutes),
@@ -816,7 +829,7 @@ class NetworkGraphEngine:
             return NetworkAnalysisResult(
                 analysis_type="accessibility",
                 status="success",
-                summary=summary,
+                summary=dict(summary),
                 accessibility=acc_res,
             )
 
@@ -824,7 +837,7 @@ class NetworkGraphEngine:
 
     async def solve_location_allocation(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         candidate_facilities: List[Any],
         demand_points: List[Any],
         n_to_choose: int = 2,
@@ -868,7 +881,7 @@ class NetworkGraphEngine:
 
     async def solve_gravity_access(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         demand_points: List[Any],
         facilities: List[Any],
         mass_exponent: float = 1.0,
@@ -898,7 +911,7 @@ class NetworkGraphEngine:
 
     async def solve_huff_interaction(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         demand_points: List[Any],
         facilities: List[Any],
         distance_decay: float = 2.0,
@@ -926,7 +939,7 @@ class NetworkGraphEngine:
 
     async def solve_centrality(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         metrics: str = "all",
         weight: str = "travel_time",
         profile: Optional[TravelProfile] = None,
@@ -947,7 +960,7 @@ class NetworkGraphEngine:
 
     async def solve_optimize_route(
         self,
-        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        network: NetworkInput,
         depot: Any,
         stops: List[Any],
         profile: Optional[TravelProfile] = None,

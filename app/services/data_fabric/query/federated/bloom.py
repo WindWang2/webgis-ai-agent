@@ -18,6 +18,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.services.data_fabric.query.federation_contracts import BloomBuildRecord
+
 #: 位图上限（128Kb —— 结构性内存界；超出即饱和降级）。
 DEFAULT_MAX_BITS = 1 << 20
 DEFAULT_FP_RATE = 0.01
@@ -142,14 +144,14 @@ def build_bloom_from_rows(
     *,
     expected_keys: Optional[int] = None,
     max_bits: int = DEFAULT_MAX_BITS,
-) -> Tuple[Optional[BloomFilter], Dict[str, Any]]:
+) -> Tuple[Optional[BloomFilter], BloomBuildRecord]:
     """从累积左行构建键 Bloom。无任何有效键 → (None, stats)（诚实空）。"""
     keys = []
     for row in rows:
         k = _extract_join_key(row, field)
         if k is not None:
             keys.append(k)
-    stats = {"keys_added": len(keys), "saturated": False}
+    stats: BloomBuildRecord = {"keys_added": len(keys), "saturated": False}
     if not keys:
         return None, stats
     bloom = BloomFilter.with_capacity(

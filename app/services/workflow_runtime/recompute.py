@@ -16,8 +16,15 @@ target_kind="output"``（与 diff.py 同通道；RECOMPUTE_DIMENSIONS 词表零�
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    ChangeResult,
+    InstanceRecord,
+    WorkflowDAG,
+)
+
+
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+from typing import List, Sequence
 
 from app.services.gis_harness.workflow_v4.recompute import (
     RecomputePlan,
@@ -43,7 +50,7 @@ def pending_to_workflow_changes(
 
 
 def plan_for_changes(
-    dag: Dict[str, Any], changes: Sequence[C.PendingChange],
+    dag: WorkflowDAG, changes: Sequence[C.PendingChange],
 ) -> RecomputePlan:
     """完整 RecomputePlan 对象（绝不用 bounded dict [R1-MINOR-6]）。"""
     return compute_affected_subgraph(
@@ -62,9 +69,9 @@ class ChangeApplier:
         self.owner_scope = owner_scope
 
     async def apply(
-        self, instance_id: str, dag: Dict[str, Any],
+        self, instance_id: str, dag: WorkflowDAG,
         changes: Sequence[C.PendingChange], *, seq: int, source: str = "api",
-    ) -> Dict[str, Any]:
+    ) -> ChangeResult:
         """应用变更。返回 {applied, deferred, decision}。
 
         - RUNNING 在飞 → deferred（入 pending_changes，完成边界 drain）；
@@ -124,9 +131,9 @@ class ChangeApplier:
                          "reuse": plan.reuse}}
 
     async def _defer(
-        self, instance_id: str, inst: Dict[str, Any],
+        self, instance_id: str, inst: InstanceRecord,
         changes: Sequence[C.PendingChange], source: str,
-    ) -> Dict[str, Any]:
+    ) -> ChangeResult:
         # R2-M3：defer CAS 失败后重读重试（≤3）—— 租约续期等高频
         # revision 写手会把单次 CAS 打成必败，变更「既未应用也未排队」
         # 违背 quiescence 设计目标。
@@ -147,15 +154,16 @@ class ChangeApplier:
             if updated is not None:
                 return {"applied": False, "deferred": True,
                         "pending_count": len(pending)}
-            inst = await asyncio.to_thread(
+            fresh = await asyncio.to_thread(
                 self.store.get_instance, instance_id, self.owner_scope)
-            if inst is None:
+            if fresh is None:
                 return {"applied": False, "deferred": False,
                         "reason": "not_found"}
+            inst = fresh
         return {"applied": False, "deferred": False, "reason": "cas_conflict"}
 
     async def _append_decision(
-        self, instance_id: str, inst: Dict[str, Any],
+        self, instance_id: str, inst: InstanceRecord,
         decision: C.RecomputeDecision,
     ) -> None:
         """决策环追加（CAS：实例 revision 冲突即放弃本条 —— 有界观测
@@ -171,8 +179,8 @@ class ChangeApplier:
             fields={"decisions": decisions[-C.MAX_INSTANCE_DECISIONS:]})
 
     async def drain_pending(
-        self, instance_id: str, dag: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        self, instance_id: str, dag: WorkflowDAG,
+    ) -> ChangeResult | None:
         """完成边界 drain（quiescence 时应用挂起变更；[R1-C1]）。"""
         import asyncio
 

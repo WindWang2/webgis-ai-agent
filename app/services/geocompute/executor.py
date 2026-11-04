@@ -17,6 +17,10 @@ project workflow 路由同一模式），绝不阻塞事件循环。
 """
 from __future__ import annotations
 
+from app.contracts.execution import (
+    RunExtras,
+)
+
 import hashlib
 import logging
 import os
@@ -466,7 +470,7 @@ class GeoExecutionEngine:
         self._run_owners: dict[str, str] = {}
         # Wave-11（audit 08 §6.2.1）：run 终态附加证据（reproducibility 判定
         # + 无载荷 lineage 投影）。有界：随 run 注册表同一容量上界逐出。
-        self._run_extras: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._run_extras: OrderedDict[str, RunExtras] = OrderedDict()
         self._run_tokens: dict[str, CancellationToken] = {}
         self._run_lock = threading.Lock()
         self._run_cache_size = run_cache_size
@@ -652,7 +656,7 @@ class GeoExecutionEngine:
         # 注意：run_bundled 必须在 run_finished 之前发射 —— replay 校验器视
         # run_finished 为终态，其后任何 trace 事件都判违规
         # （test_replay_security_v4::test_happy_path_trace_is_valid）。
-        run_extras: dict[str, Any] = {}
+        run_extras: RunExtras = {}
         try:
             from app.lib.gis.runtime_manifest import get_runtime_manifest
             from app.services.geocompute import reproducibility as _rb
@@ -739,7 +743,7 @@ class GeoExecutionEngine:
 
     def get_run_extras(
         self, run_id: str, *, owner_scope: Optional[str] = None
-    ) -> dict[str, Any]:
+    ) -> RunExtras:
         """读取 run 的 Wave-11 附加证据（reproducibility 判定 + 无载荷
         lineage 投影）。
 

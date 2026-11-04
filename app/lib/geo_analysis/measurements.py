@@ -32,9 +32,15 @@ tests/science_oracles/data/terrain.json 的解析曲面 cases）；收敛指示
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
+
+from app.lib.geo_analysis.measurement_types import (
+    AreaStatistics, CurvatureEvidence, DistanceConvergence, DistanceStatistics,
+    IntervalStatistics, LineOfSight, MeasurementMetadata, PolylineSamples,
+    ProfilePoint, SightObstruction, SightStatistics, TerrainProfile, VerticalReference,
+)
 
 from app.lib.cancellation import checkpoint
 from app.lib.geo_analysis.terrain import (
@@ -106,7 +112,7 @@ def resolve_vertical_reference(
     vertical_datum: str = "unknown",
     z_units: str = "m",
     override_vertical_datum: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> VerticalReference:
     """解析垂直基准/单位声明 → 换算因子 + 披露事实。
 
     规则（ADR-0274 §2）：
@@ -201,7 +207,7 @@ def _sample_polyline(
     cy: float,
     cx: float,
     step_m: float,
-) -> Dict[str, Any]:
+) -> PolylineSamples:
     """沿折线按 ~step_m 重采样（每段 n=ceil(len/step) 等分子步）。
 
     保证：顶点恰好是采样点（段边界不重复计入）；水平累计距离在网格米制
@@ -271,7 +277,7 @@ def _sample_polyline(
 def _interval_stats(
     d: np.ndarray,
     z: np.ndarray,
-) -> Dict[str, float]:
+) -> IntervalStatistics:
     """相邻有效采样对上的地表距离/爬升/下降（跨无效点的区间剔除）。"""
     ok = np.isfinite(z)
     pair = ok[:-1] & ok[1:]
@@ -348,7 +354,7 @@ def terrain_profile(
     max_invalid_fraction: float = 0.5,
     z_units: str = "m",
     vertical_datum: str = "unknown",
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[TerrainProfile, MeasurementMetadata]:
     """沿折线地形剖面（bilinear 采样）。
 
     返回 (profile, meta)：
@@ -420,7 +426,7 @@ def terrain_profile(
     if downsampled:
         quality_flags.append(f"output_downsampled:stride={stride}")
 
-    def _pt(i: int) -> Dict[str, Any]:
+    def _pt(i: int) -> ProfilePoint:
         zi = float(zs_f[i])
         sl = float(slope[i]) if math.isfinite(slope[i]) else None
         return {
@@ -431,7 +437,7 @@ def terrain_profile(
             "slope": round(sl, 6) if sl is not None else None,
         }
 
-    stats = {
+    stats: DistanceStatistics = {
         "horizontal_m": round(s["horizontal_m"], 4),
         "surface_distance_m": round(iv["surface_distance_m"], 4),
         "ascent_m": round(iv["ascent_m"], 4),
@@ -442,7 +448,7 @@ def terrain_profile(
         "z_start_m": round(float(zs_f[0]), 4) if finite[0] else None,
         "z_end_m": round(float(zs_f[-1]), 4) if finite[-1] else None,
     }
-    meta = {
+    meta: MeasurementMetadata = {
         "sampling_step_requested_m": step,
         "sampling_step_effective_m": round(
             s["horizontal_m"] / max(s["n_samples"] - 1, 1), 6
@@ -460,7 +466,7 @@ def terrain_profile(
         "surface >= covered_horizontal holds unconditionally, "
         "surface >= horizontal only when no nodata intervals are dropped",
     }
-    profile = {
+    profile: TerrainProfile = {
         "statistics": stats,
         "points": [_pt(i) for i in range(0, s["n_samples"], stride)],
     }
@@ -489,7 +495,7 @@ def line_of_sight(
     nodata_policy: str = "error",
     z_units: str = "m",
     vertical_datum: str = "unknown",
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[LineOfSight, MeasurementMetadata]:
     """两点通视（LOS）：遮挡判定 + 首遮挡点 + 视线剖面。
 
     模型：
@@ -565,7 +571,7 @@ def line_of_sight(
     d = s["d"]
     sight = eye_a + (eye_b - eye_a) * (d / total_d)
     terrain = zs.copy()
-    curvature_meta: Dict[str, Any] = {
+    curvature_meta: CurvatureEvidence = {
         "model": "none",
         "refraction_coefficient": None,
         "effective_earth_radius_m": None,
@@ -588,7 +594,7 @@ def line_of_sight(
     # ≥ 0，实际不可能触发）。skip 政策下无效采样不参与判定。
     blocked_mask = finite & (clearance < -_LOS_CLEARANCE_TOL_M)
     visible = not bool(blocked_mask.any())
-    obstruction: Optional[Dict[str, Any]] = None
+    obstruction: Optional[SightObstruction] = None
     if not visible:
         i = int(np.flatnonzero(blocked_mask)[0])
         obstruction = {
@@ -608,7 +614,7 @@ def line_of_sight(
         min_clearance = float("nan")
         min_clearance_d = None
 
-    stats = {
+    stats: SightStatistics = {
         "visible": visible,
         "obstruction": obstruction,
         "min_clearance_m": round(min_clearance, 4)
@@ -628,8 +634,8 @@ def line_of_sight(
     if stride > 1:
         quality_flags.append(f"output_downsampled:stride={stride}")
 
-    def _p(i: int, zi: Optional[float]) -> Dict[str, Any]:
-        out = {
+    def _p(i: int, zi: Optional[float]) -> ProfilePoint:
+        out: ProfilePoint = {
             "x": round(float(s["xs"][i]), 6),
             "y": round(float(s["ys"][i]), 6),
             "distance_m": round(float(d[i]), 4),
@@ -639,7 +645,7 @@ def line_of_sight(
 
     terrain_curve = [_p(i, float(zs[i])) for i in range(0, zs.size, stride)]
     sight_curve = [_p(i, float(sight[i])) for i in range(0, zs.size, stride)]
-    meta = {
+    meta: MeasurementMetadata = {
         "sampling_step_requested_m": step,
         "sample_count": s["n_samples"],
         "nodata_policy": nodata_policy,
@@ -656,7 +662,7 @@ def line_of_sight(
         "method": "sampled sight-line vs bilinear terrain (~1 cell step); tangent "
         "counts as visible",
     }
-    los = {
+    los: LineOfSight = {
         "statistics": stats,
         "terrain_profile": terrain_curve,
         "sight_profile": sight_curve,
@@ -681,7 +687,7 @@ def surface_distance(
     z_units: str = "m",
     vertical_datum: str = "unknown",
     include_samples: bool = False,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[DistanceStatistics, MeasurementMetadata]:
     """折线的水平 / 三维直线斜距 / 地表（沿面采样）距离 + 高差 + 爬升。
 
     三种距离同一网格米制空间（cy/cx 已按 cos(lat) 政策换算，调用方
@@ -738,7 +744,7 @@ def surface_distance(
     z_start = float(zs[0]) if finite[0] else None
     z_end = float(zs[-1]) if finite[-1] else None
 
-    convergence: Optional[Dict[str, Any]] = None
+    convergence: Optional[DistanceConvergence] = None
     if s["n_samples"] * 2 <= MAX_CONVERGENCE_SAMPLES:
         s2 = _sample_polyline(
             z, valid, transform, cols, rows, cy=cy, cx=cx, step_m=step / 2.0
@@ -755,7 +761,7 @@ def surface_distance(
     else:
         quality_flags.append("convergence_check_skipped:sample_budget")
 
-    stats: Dict[str, Any] = {
+    stats: DistanceStatistics = {
         "horizontal_m": round(s["horizontal_m"], 4),
         "surface_distance_m": round(iv["surface_distance_m"], 4),
         "ascent_m": round(iv["ascent_m"], 4),
@@ -772,7 +778,7 @@ def surface_distance(
     else:
         stats["z_diff_m"] = None
         stats["slope_distance_m"] = None
-    meta = {
+    meta: MeasurementMetadata = {
         "sampling_step_requested_m": step,
         "sample_count": s["n_samples"],
         "nodata_policy": nodata_policy,
@@ -816,7 +822,7 @@ def surface_area(
     max_invalid_fraction: float = 0.5,
     z_units: str = "m",
     vertical_datum: str = "unknown",
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[AreaStatistics, MeasurementMetadata]:
     """真实地表面积（相邻像元中心间两三角面 3D 面积和）vs 投影面积。
 
     对偶网格 facet：每 4 个相邻像元中心构成一个 quad，拆 SW-SE-NE 与
@@ -877,7 +883,7 @@ def surface_area(
     t2 = 0.5 * np.sqrt((cy * (b - a)) ** 2 + (cx * b) ** 2 + (cx * cy) ** 2)
     surface = float((t1 + t2)[usable_quads].sum())
     planar = usable * cx * cy
-    stats = {
+    stats: AreaStatistics = {
         "planar_area_m2": round(planar, 4),
         "surface_area_m2": round(surface, 4),
         "roughness_ratio": round(surface / planar, 8),
@@ -887,7 +893,7 @@ def surface_area(
         if (h > 1 and w > 1)
         else 0,
     }
-    meta = {
+    meta: MeasurementMetadata = {
         "vertical_datum": vref["vertical_datum"],
         "z_units": vref["z_units"],
         "z_unit_transformations": vref["transformations"],

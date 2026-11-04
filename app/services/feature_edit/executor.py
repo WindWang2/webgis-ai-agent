@@ -12,12 +12,14 @@
 """
 from __future__ import annotations
 
+from app.services.feature_edit.wire_types import EditJournal, JournalEntry, EditReceipt, JournalHeadSummary
+
 from collections.abc import AsyncIterator
 import asyncio
 import contextlib
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 from app.services.data_ingest.pipeline import compute_payload_fingerprint
 from app.services.distributed_lock import session_lock_registry
@@ -99,7 +101,7 @@ class FeatureEditConflict(Exception):
 class FeatureEditBlocked(Exception):
     """typed 阻断（finding code + 有界 detail）。"""
 
-    def __init__(self, code: str, message: str, detail: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, code: str, message: str, detail: Optional[Dict[str, Any] | JournalHeadSummary] = None) -> None:
         super().__init__(code)
         self.code = code
         self.message = message
@@ -108,15 +110,15 @@ class FeatureEditBlocked(Exception):
 
 # ─── journal 读写（会话锁内） ───────────────────────────────────────────────
 
-async def _load_journals(session_id: str) -> Dict[str, Dict[str, Any]]:
+async def _load_journals(session_id: str) -> Dict[str, EditJournal]:
     journals = await session_data_manager.get_state_field(session_id, JOURNALS_STATE_KEY)
     return journals if isinstance(journals, dict) else {}
 
 
-async def _save_journal(session_id: str, journals: Dict[str, Dict[str, Any]], ref_id: str) -> bool:
+async def _save_journal(session_id: str, journals: Dict[str, EditJournal], ref_id: str) -> bool:
     """写回 + LRU 逐出（≤ MAX_JOURNALS_PER_SESSION 个活跃 journal）。"""
     if len(journals) > MAX_JOURNALS_PER_SESSION:
-        def _last_ts(j: Dict[str, Any]) -> float:
+        def _last_ts(j: EditJournal) -> float:
             head = head_entry(j) or {}
             return float(head.get("created_at") or 0)
 
@@ -127,7 +129,7 @@ async def _save_journal(session_id: str, journals: Dict[str, Dict[str, Any]], re
     return await session_data_manager.set_map_state_fields(session_id, {JOURNALS_STATE_KEY: journals})
 
 
-def _receipt(entry: Dict[str, Any], stamp_status: str = "pending", mapspec_revision: Optional[int] = None) -> Dict[str, Any]:
+def _receipt(entry: JournalEntry, stamp_status: str = "pending", mapspec_revision: Optional[int] = None) -> EditReceipt:
     return {
         "entry_seq": entry.get("seq"),
         "kind": entry.get("kind"),
@@ -145,7 +147,7 @@ def _receipt(entry: Dict[str, Any], stamp_status: str = "pending", mapspec_revis
     }
 
 
-def _head_summary(journal: Dict[str, Any]) -> Dict[str, Any]:
+def _head_summary(journal: EditJournal) -> JournalHeadSummary:
     head = head_entry(journal)
     if not head:
         return {"head_seq": journal.get("head_seq") or 0, "head": None}
@@ -187,7 +189,7 @@ async def commit_plan(
     actor: str,
     origin: str,
     idempotency_key: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> EditReceipt:
     """提交 pending plan：锁内 CAS → 重新求值（不信任预览缓存）→ overwrite →
     journal → 锁外 MapSpec 盖章 + 广播。返回 receipt。"""
     plan_id = plan.get("plan_id") or ""
@@ -302,7 +304,7 @@ async def commit_plan(
                 "stamp_status": "skipped_no_changes",
                 "mapspec_revision": None,
             }
-        entry = {
+        entry: JournalEntry = {
             "kind": "apply",
             "idempotency_key": key,
             "actor": actor,
@@ -369,7 +371,7 @@ async def commit_plan(
 
 async def apply_undo(
     session_id: str, ref_id: str, *, actor: str, origin: str
-) -> Dict[str, Any]:
+) -> EditReceipt:
     """撤销 head 条目：逆 delta 走同一 CAS 写路径（链完整性断言）。"""
     async with _edit_lock(session_id):
         payload, descriptor = await _load_ref(session_id, ref_id)
@@ -396,7 +398,7 @@ async def apply_undo(
             kind="undo", key=key, actor=actor, origin=origin,
             revision_before=current_revision, fp_before=fp_now,
         )
-    revision_after = entry["content_revision_after"]
+    revision_after = cast(int, entry["content_revision_after"])
     receipt = _receipt(entry)
     stamp_status, mapspec_revision = await stamp_data_revision(
         session_id, ref_id, revision_after, defer_if_turn_locked=True
@@ -409,7 +411,7 @@ async def apply_undo(
 
 async def apply_redo(
     session_id: str, ref_id: str, *, actor: str, origin: str
-) -> Dict[str, Any]:
+) -> EditReceipt:
     """重做：head 必须是 undo，且被撤销条目仍在 journal 内。"""
     async with _edit_lock(session_id):
         payload, descriptor = await _load_ref(session_id, ref_id)
@@ -438,7 +440,7 @@ async def apply_redo(
                 "stale_revision",
                 {"ref_id": ref_id, "current_content_revision": current_revision, "journal": _head_summary(journal)},
             )
-        redo_entry = {
+        redo_entry: JournalEntry = {
             "kind": "redo",
             "undo_of_seq": target_seq,
             "idempotency_key": key,
@@ -459,7 +461,7 @@ async def apply_redo(
             kind="redo", key=key, actor=actor, origin=origin,
             revision_before=current_revision, fp_before=fp_now,
         )
-    revision_after = entry["content_revision_after"]
+    revision_after = cast(int, entry["content_revision_after"])
     receipt = _receipt(entry)
     stamp_status, mapspec_revision = await stamp_data_revision(
         session_id, ref_id, revision_after, defer_if_turn_locked=True
@@ -474,17 +476,17 @@ async def _apply_inverse_locked(
     session_id: str,
     ref_id: str,
     payload: Any,
-    journal: Dict[str, Any],
-    journals: Dict[str, Any],
-    effect_entry: Dict[str, Any],
+    journal: EditJournal,
+    journals: Dict[str, EditJournal],
+    effect_entry: JournalEntry,
     *,
-    kind: str,
+    kind: Literal["apply", "undo", "redo"],
     key: str,
     actor: str,
     origin: str,
     revision_before: int,
     fp_before: str,
-) -> Dict[str, Any]:
+) -> JournalEntry:
     """undo/redo 共用：应用 deltas/schema_ops → 链断言 → overwrite → 入账。"""
     fc = extract_fc(payload)
     if fc is None:
@@ -504,7 +506,7 @@ async def _apply_inverse_locked(
             "fingerprint_mismatch",
             {"ref_id": ref_id, "journal": _head_summary(journal)},
         )
-    entry = dict(effect_entry)
+    entry = effect_entry.copy()
     entry.update(
         {
             "kind": kind,
@@ -660,7 +662,7 @@ async def _deferred_stamp(session_id: str, ref_id: str, content_revision: int) -
 
 
 def _broadcast_dataset_updated(
-    session_id: str, ref_id: str, content_revision: int, changed_wfids: List[str]
+    session_id: str, ref_id: str, content_revision: int, changed_wfids: List[str | None]
 ) -> None:
     """fire-and-forget WS 广播（消费面可选；主刷新通道是 mapspec 盖章→SSE 镜像）。"""
     try:

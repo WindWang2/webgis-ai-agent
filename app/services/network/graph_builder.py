@@ -8,13 +8,19 @@ from __future__ import annotations
 import math
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 from collections import OrderedDict
 
 import networkx as nx
 from shapely import STRtree
 from shapely.geometry import shape, LineString, MultiLineString, Point, MultiPoint, GeometryCollection, mapping
 from shapely.ops import unary_union, split
+
+from app.contracts.geojson import GeoJSONFeature, GeoJSONFeatureCollection
+
+from app.services.network.contracts import (
+    NetworkInput,
+)
 
 from app.services.network.models import (
     Node,
@@ -113,7 +119,7 @@ class NetworkGraphBuilder:
         """Returns cache capacity and current entry count."""
         return {"size": len(self._cache), "max_size": self.max_cache_size}
 
-    def _memoized_data_str(self, data: Dict[str, Any]) -> str:
+    def _memoized_data_str(self, data: GeoJSONFeature | GeoJSONFeatureCollection) -> str:
         """Serializes a GeoJSON dict once per object identity.
 
         ``json.dumps(sort_keys=True)`` of a 100k-line city network is the
@@ -134,7 +140,7 @@ class NetworkGraphBuilder:
 
     def compute_fingerprint(
         self,
-        data: Any,
+        data: NetworkInput,
         profile: Optional[TravelProfile],
         snap_tolerance: float,
         split_intersections: bool,
@@ -164,7 +170,7 @@ class NetworkGraphBuilder:
 
     def build_graph(
         self,
-        data: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        data: NetworkInput,
         profile: Optional[TravelProfile] = None,
         snap_tolerance: float = 1e-5,
         split_intersections: bool = True,

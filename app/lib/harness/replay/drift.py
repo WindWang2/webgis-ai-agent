@@ -28,7 +28,11 @@ from __future__ import annotations
 
 import threading
 import weakref
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
+
+from app.lib.harness.replay.recording_contracts import EnvironmentDrift, EnvironmentFingerprint
+
+from app.lib.harness.result_contracts import DecisionDiff, RegistryDrift
 
 from app.lib.harness.replay.determinism import canonical_json, sha256_of
 
@@ -50,7 +54,14 @@ _DIGEST_MEMO: "weakref.WeakKeyDictionary[Any, str]" = weakref.WeakKeyDictionary(
 #: graph 实例未变即注册表面未变，重复投影是纯浪费。
 _SOURCES_MEMO: "weakref.WeakKeyDictionary[Any, Dict[str, str]]" = \
     weakref.WeakKeyDictionary()
-_BUDGETS_MEMO: Dict[str, str] = {}
+
+
+class _BudgetMemo(TypedDict, total=False):
+    mtime: float
+    digest: str
+
+
+_BUDGETS_MEMO: _BudgetMemo = {}
 _DIGEST_MEMO_LOCK = threading.Lock()
 
 
@@ -155,7 +166,7 @@ def _compute_registry_digest(g: Any) -> str:
     return sha256_of({"nodes": projection, "edges": edges})
 
 
-def registry_drift(recorded_digest: str, current_digest: str) -> Optional[Dict[str, Any]]:
+def registry_drift(recorded_digest: str, current_digest: str) -> Optional[RegistryDrift]:
     """录制 vs 当前 registry 指纹比对（缺席侧不制造假漂移）。"""
     if not recorded_digest or not current_digest:
         return None
@@ -219,14 +230,14 @@ def _flag_value(name: str, default: bool, mode: str) -> bool:
     return default
 
 
-def collect_env_fingerprint() -> Dict[str, Any]:
+def collect_env_fingerprint() -> EnvironmentFingerprint:
     """环境指纹 v2（录制面）：封闭白名单投影，缺席段诚实 'absent'。
 
     全部段有界、确定性；失败段降级 'absent'，绝不抛（录制面纪律）。
     """
     import sys
 
-    env: Dict[str, Any] = {"env_schema_version": ENV_SCHEMA_VERSION}
+    env: EnvironmentFingerprint = {"env_schema_version": ENV_SCHEMA_VERSION}
     env["registry_digest"] = capability_registry_digest()
     env["python_version"] = ".".join(str(p) for p in sys.version_info[:3])
     env["platform"] = sys.platform
@@ -300,7 +311,8 @@ def _budgets_digest() -> str:
 
         path = Path("config/governor_budgets.json")
         if not path.is_file():
-            _BUDGETS_MEMO.clear()
+            _BUDGETS_MEMO.pop("mtime", None)
+            _BUDGETS_MEMO.pop("digest", None)
             return "absent"
         stat = path.stat()
         cached = _BUDGETS_MEMO.get("mtime")
@@ -317,7 +329,7 @@ def _budgets_digest() -> str:
         return "absent"
 
 
-def env_drift(recorded: Any, current: Any) -> List[Dict[str, Any]]:
+def env_drift(recorded: Any, current: Any) -> List[EnvironmentDrift]:
     """v2 环境指纹分类比对（「裸 hash 变了」→「哪类环境事实变了」）。
 
     输出条目：``{kind, behavioral, changed_keys}``（有界 ≤16）。任一侧
@@ -328,7 +340,7 @@ def env_drift(recorded: Any, current: Any) -> List[Dict[str, Any]]:
         return []
     if recorded.get("env_schema_version") != current.get("env_schema_version"):
         return []
-    drifts: List[Dict[str, Any]] = []
+    drifts: List[EnvironmentDrift] = []
 
     def _add(kind: str, changed: List[str]) -> None:
         if changed:
@@ -342,8 +354,10 @@ def env_drift(recorded: Any, current: Any) -> List[Dict[str, Any]]:
             != str(current.get("registry_digest") or ""):
         _add("registry_digest", ["registry_digest"])
     for section in ("policy_versions", "runtime_flags", "sources"):
-        base = recorded.get(section) if isinstance(recorded.get(section), dict) else {}
-        cur = current.get(section) if isinstance(current.get(section), dict) else {}
+        base_raw = recorded.get(section)
+        cur_raw = current.get(section)
+        base = base_raw if isinstance(base_raw, dict) else {}
+        cur = cur_raw if isinstance(cur_raw, dict) else {}
         changed = [
             k for k in sorted(set(base) | set(cur))
             if str(base.get(k)) != str(cur.get(k))
@@ -484,14 +498,14 @@ def decisions_digest(decisions: List[Dict[str, Any]]) -> str:
 
 
 def diff_decisions(baseline: List[Dict[str, Any]],
-                   current: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                   current: List[Dict[str, Any]]) -> List[DecisionDiff]:
     """两组决策记录的结构化差异（「哪里变了」的决策级归因）。
 
     对齐：先按 decision_id（同 id 但 selected/alternatives 变化 → 精确
     归因），再按 kind 序配对剩余条目（id 变化的重推导面）。输出有界
     （≤32 条 diff）。
     """
-    diffs: List[Dict[str, Any]] = []
+    diffs: List[DecisionDiff] = []
 
     def _alt_key(entry: Dict[str, Any]) -> str:
         return canonical_json({

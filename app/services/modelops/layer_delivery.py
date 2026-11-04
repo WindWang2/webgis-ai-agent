@@ -18,6 +18,8 @@ reuse_key 随每个图层包下发并写进 ref payload 的 ``_modelops`` 字段
 """
 from __future__ import annotations
 
+from app.contracts.modelops import PublishedArtifact
+
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -120,7 +122,7 @@ def _provenance(manifest: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def build_layer_packages(
-    outputs: Dict[str, Dict[str, Any]],
+    outputs: dict[str, PublishedArtifact],
     manifest: Optional[Dict[str, Any]] = None,
     *,
     class_names: Optional[List[str]] = None,
@@ -184,7 +186,7 @@ def _layer_name(role: str, task: Optional[str]) -> str:
 
 
 async def publish_layers(
-    outputs: Dict[str, Dict[str, Any]],
+    outputs: dict[str, PublishedArtifact],
     manifest: Optional[Dict[str, Any]],
     *,
     session_id: Optional[str] = None,

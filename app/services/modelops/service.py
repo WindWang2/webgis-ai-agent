@@ -6,6 +6,15 @@ capabilities 与结果，不触 provider internals（Epic §N）。异步工具�
 """
 from __future__ import annotations
 
+from app.contracts.modelops import (
+    InferenceProgress,
+    LineageEvent,
+    ModelHistory,
+    VersionHistory,
+    WarmPoolRecord,
+    WarmPoolStatus,
+)
+
 import asyncio
 import logging
 import threading
@@ -118,14 +127,14 @@ class ModelOpsService:
         for model_id in self._settings.warm_pool:
             self._warm_pool.pin(model_id.strip())
 
-    def warm_pool_status(self) -> Dict[str, Any]:
+    def warm_pool_status(self) -> WarmPoolStatus:
         """warm pool / GPU 账本状态（观测面）。"""
         return {
             "pinned": self._warm_pool.status(),
             "vram_ledger": self._ledger.snapshot(),
         }
 
-    def pin_warm_pool(self, model_id: str, *, device: str = "cpu") -> Dict[str, Any]:
+    def pin_warm_pool(self, model_id: str, *, device: str = "cpu") -> WarmPoolRecord:
         """运行期把一个模型钉进 warm pool（幂等；typed 结果不抛）。"""
         return self._warm_pool.pin(model_id, device=device)
 
@@ -137,7 +146,7 @@ class ModelOpsService:
         *,
         metrics: Dict[str, Any],
         actor: str = "",
-    ) -> Dict[str, Any]:
+    ) -> LineageEvent:
         """登记一个模型版本的训练指标（append-only lineage 事件）。"""
         return self._lineage.append(
             model_id, model_version,
@@ -153,7 +162,7 @@ class ModelOpsService:
         metrics_summary: Optional[Dict[str, Any]] = None,
         dataset_refs: Optional[List[str]] = None,
         actor: str = "",
-    ) -> Dict[str, Any]:
+    ) -> LineageEvent:
         """登记一次评估（data_object 引用 + 摘要 + 数据 lineage）。"""
         payload: Dict[str, Any] = {
             "evaluation_data_object_id": data_object_id,
@@ -173,7 +182,7 @@ class ModelOpsService:
         promote: bool,
         stage: str = "production",
         actor: str = "",
-    ) -> Dict[str, Any]:
+    ) -> LineageEvent:
         """晋升 / 退役一个模型版本（append-only；状态为推导值）。"""
         if promote:
             return self._lineage.append(
@@ -189,10 +198,10 @@ class ModelOpsService:
         model_id: str,
         *,
         model_version: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> ModelHistory:
         """模型 lineage 时间线 + 推导状态（工具面/前端消费）。"""
         events = self._lineage.history(model_id, model_version)
-        versions: Dict[str, Any] = {}
+        versions: dict[str, VersionHistory] = {}
         for event in events:
             version = str(event.get("model_version"))
             entry = versions.setdefault(version, {"events": [], "deployment_state": "registered"})
@@ -439,7 +448,7 @@ class ModelOpsService:
         self,
         request: InferenceRequest,
         *,
-        progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+        progress: Optional[Callable[[InferenceProgress], None]] = None,
         cancel_key: Optional[str] = None,
     ) -> InferenceResult:
         # R1-M5：取消键 = 本次 run 的唯一键（run_id），绝不默认 model_id
@@ -455,7 +464,7 @@ class ModelOpsService:
             self._unregister_cancel(key, token)
 
     async def run_inference_async(
-        self, request: InferenceRequest, *, progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+        self, request: InferenceRequest, *, progress: Optional[Callable[[InferenceProgress], None]] = None,
         cancel_key: Optional[str] = None,
         allowed_roots: Optional[List[Path]] = None,
     ) -> InferenceResult:

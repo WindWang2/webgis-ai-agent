@@ -18,6 +18,10 @@ typed DAG 上给出**精确**回答（正向闭包），替代「全量重跑」
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    WorkflowDAG,
+)
+
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 from pydantic import BaseModel, Field
@@ -109,7 +113,7 @@ def _node_id_of(endpoint: str, node_set: Set[str]) -> str:
 
 
 def compute_affected_subgraph(
-    dag: Dict[str, Any],
+    dag: WorkflowDAG,
     changes: Sequence[WorkflowChange],
 ) -> RecomputePlan:
     """bounded typed DAG（to_bounded_dict 形态）上的受影响子图计算。

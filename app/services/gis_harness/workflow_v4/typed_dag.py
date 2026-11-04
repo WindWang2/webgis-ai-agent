@@ -15,6 +15,13 @@
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    PortRecord,
+    WorkflowDAG,
+    WorkflowEdge,
+    WorkflowNode,
+)
+
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
@@ -70,7 +77,7 @@ class TypedPort(BaseModel):
     unit_requirement: str = ""         # 有界文本（来自 AlgorithmDescriptor.unit_requirements）
     required: bool = True
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> PortRecord:
         return {
             "name": self.name[:48],
             "artifact_type": self.artifact_type[:48],
@@ -100,7 +107,7 @@ class TypedWorkflowNode(BaseModel):
     parameters: Tuple[str, ...] = ()   # 该节点拥有的工作流参数名（recompute 消费）
     side_effect: str = ""              # ⊆ SIDE_EFFECT_CLASSES；空 = 按 kind 派生
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> WorkflowNode:
         return {
             "node_id": self.node_id[:64],
             "kind": self.kind,
@@ -133,7 +140,7 @@ class TypedWorkflowEdge(BaseModel):
     to_node: str
     to_port: str
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> WorkflowEdge:
         return {
             "from": f"{self.from_node[:48]}.{self.from_port[:32]}",
             "to": f"{self.to_node[:48]}.{self.to_port[:32]}",
@@ -154,7 +161,7 @@ class TypedWorkflowGraph(BaseModel):
         """直接下游（边视图）。"""
         return sorted({e.to_node for e in self.edges if e.from_node == node_id})
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> WorkflowDAG:
         return {
             "nodes": [n.to_bounded_dict() for n in self.nodes[:_MAX_GRAPH_NODES]],
             "edges": [e.to_bounded_dict() for e in self.edges[:_MAX_GRAPH_EDGES]],

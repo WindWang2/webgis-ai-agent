@@ -8,8 +8,10 @@
 """
 from __future__ import annotations
 
+from app.contracts.geojson import GeoJSONFeatureCollection, GeoJSONFeature
+
 import hashlib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 
 from app.services.feature_edit.contracts import FEATURE_ID_KEYS, WFID_PROP
 
@@ -28,14 +30,14 @@ def wfid_for_index(dataset_fingerprint: str, index: int) -> str:
 
 
 def materialize_wfids(
-    fc: Dict[str, Any], dataset_fingerprint: str
-) -> Tuple[Dict[str, Any], int]:
+    fc: GeoJSONFeatureCollection, dataset_fingerprint: str
+) -> Tuple[GeoJSONFeatureCollection, int]:
     """给 FeatureCollection 的每条要素物化 WFID_PROP（copy-on-write）。
 
     已带 WFID_PROP 的要素不动（幂等）。返回 (new_fc, assigned_count)。
     """
     features = fc.get("features") or []
-    out_features: List[Dict[str, Any]] = []
+    out_features: List[GeoJSONFeature] = []
     assigned = 0
     dirty = False
     for index, feature in enumerate(features):
@@ -43,7 +45,7 @@ def materialize_wfids(
         if isinstance(props, dict) and isinstance(props.get(WFID_PROP), str):
             out_features.append(feature)
             continue
-        new_feature = dict(feature) if isinstance(feature, dict) else {"type": "Feature"}
+        new_feature = cast(GeoJSONFeature, dict(feature) if isinstance(feature, dict) else {"type": "Feature"})
         new_props = dict(new_feature.get("properties") or {})
         new_props[WFID_PROP] = wfid_for_index(dataset_fingerprint, index)
         new_feature["properties"] = new_props
@@ -55,7 +57,7 @@ def materialize_wfids(
     return {**fc, "features": out_features}, assigned
 
 
-def has_wfids(fc: Dict[str, Any]) -> bool:
+def has_wfids(fc: GeoJSONFeatureCollection) -> bool:
     """数据集是否已完成 WFID 物化（全量校验 —— R1 P3-9：部分物化的数据集
     返回 False，materialize_wfids 会确定性补齐缺失（fingerprint:index 稳定）。"""
     features = fc.get("features") or []
@@ -68,17 +70,17 @@ def has_wfids(fc: Dict[str, Any]) -> bool:
     return True
 
 
-def index_by_wfid(fc: Dict[str, Any]) -> Dict[str, int]:
+def index_by_wfid(fc: GeoJSONFeatureCollection) -> Dict[str, int]:
     """WFID → features 数组下标（内存索引，调用方自建不持久）。"""
     out: Dict[str, int] = {}
     for index, feature in enumerate(fc.get("features") or []):
         props = feature.get("properties") if isinstance(feature, dict) else None
         if isinstance(props, dict) and isinstance(props.get(WFID_PROP), str):
-            out[props[WFID_PROP]] = index
+            out[str(props[WFID_PROP])] = index
     return out
 
 
-def resolve_feature_id(feature: Dict[str, Any]) -> Optional[str]:
+def resolve_feature_id(feature: GeoJSONFeature) -> Optional[str]:
     """单要素 → 既有稳定 id（FEATURE_ID_KEYS 链；顶层 feature.id 优先）。
 
     None = 无可用 id（物化前的裸数据集）。
@@ -97,7 +99,7 @@ def resolve_feature_id(feature: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def resolve_feature_ids(fc: Dict[str, Any], requested: List[str]) -> Dict[str, str]:
+def resolve_feature_ids(fc: GeoJSONFeatureCollection, requested: List[str]) -> Dict[str, str]:
     """requested（前端/模型给的既有 id 集）→ {requested_id: WFID}。
 
     仅对已物化数据集使用：WFID 索引 + 既有 id → WFID 的映射。未命中的
@@ -122,7 +124,7 @@ def resolve_feature_ids(fc: Dict[str, Any], requested: List[str]) -> Dict[str, s
                 id_to_index[wfid] = index
     out: Dict[str, str] = {}
     for rid in requested:
-        index = id_to_index.get(str(rid))
-        if index is not None and index in wfid_by_index:
-            out[str(rid)] = wfid_by_index[index]
+        found_index = id_to_index.get(str(rid))
+        if found_index is not None and found_index in wfid_by_index:
+            out[str(rid)] = wfid_by_index[found_index]
     return out

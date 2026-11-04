@@ -19,6 +19,12 @@
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    WorkflowDAG,
+    WorkflowNode,
+    WorkerRecord,
+)
+
 import asyncio
 import logging
 import os
@@ -81,7 +87,7 @@ class NoCapableWorker(Exception):
     """隔离要求下无合格 worker（typed；映射不可重试失败证据）。"""
 
 
-def node_profile(node: Dict[str, Any]) -> str:
+def node_profile(node: WorkflowNode) -> str:
     """workflow 节点 → 主 profile（确定性；durable 队列词表子集）。
 
     优先节点声明的 ``resources.profile``；缺省按 kind 推导（transform →
@@ -113,7 +119,7 @@ class WorkerCapacityExhausted(Exception):
             f"(in_flight={self.in_flight} >= slots={self.slots})")
 
 
-def profile_capacity(worker_rows: List[Dict[str, Any]], *,
+def profile_capacity(worker_rows: list[WorkerRecord], *,
                      profile: str) -> "tuple[int, int]":
     """worker 行 → (declared_slots, reported_in_flight)（有界求和）。
 
@@ -146,7 +152,7 @@ def profile_capacity(worker_rows: List[Dict[str, Any]], *,
 
 
 def choose_dispatch(
-    node: Dict[str, Any], *, input_rows: int,
+    node: WorkflowNode, *, input_rows: int,
     registry: Optional[WorkerRegistry] = None,
 ) -> str:
     """派发决策（纯读；local | durable）。
@@ -191,7 +197,7 @@ class LocalDispatcher:
         self.caller = caller
 
     async def execute(
-        self, *, node: Dict[str, Any], dag: Dict[str, Any],
+        self, *, node: WorkflowNode, dag: WorkflowDAG,
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
         run_id: str = "", node_attempt: Optional[int] = None,
@@ -256,7 +262,7 @@ class DurableDispatcher:
         self.registry = registry or WorkerRegistry()
 
     async def execute(
-        self, *, node: Dict[str, Any], dag: Dict[str, Any],
+        self, *, node: WorkflowNode, dag: WorkflowDAG,
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
         run_id: str = "", node_attempt: Optional[int] = None,
@@ -306,7 +312,7 @@ class DurableDispatcher:
                 _slots_in_use -= 1
 
     async def _await_job(
-        self, node: Dict[str, Any], plan: Any, op_node: Any,
+        self, node: WorkflowNode, plan: Any, op_node: Any,
         session_id: str, cancel_token: Any,
         *,
         input_refs: Optional[List[str]] = None,
@@ -386,7 +392,7 @@ class AutoDispatcher:
                                           registry=self.registry)
 
     async def execute(
-        self, *, node: Dict[str, Any], dag: Dict[str, Any],
+        self, *, node: WorkflowNode, dag: WorkflowDAG,
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
         run_id: str = "", node_attempt: Optional[int] = None,
@@ -443,7 +449,7 @@ def _dispatch_sync(
     *,
     input_refs: Optional[List[str]] = None,
     port_idents: Optional[Dict[str, Dict[str, str]]] = None,
-    node: Optional[Dict[str, Any]] = None,
+    node: WorkflowNode | None = None,
     run_id: Optional[str] = None,
     node_attempt: Optional[int] = None,
     resource_envelope: Optional[Dict[str, Any]] = None,
@@ -476,7 +482,7 @@ def _dispatch_sync(
 
     if resource_envelope is None:
         resources = (node or {}).get("resources") if isinstance(node, dict) else None
-        resource_envelope = resources if isinstance(resources, dict) else None
+        resource_envelope = dict(resources) if isinstance(resources, dict) else None
 
     if run_id is None:
         try:

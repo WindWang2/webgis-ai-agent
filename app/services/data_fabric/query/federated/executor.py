@@ -19,6 +19,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_fabric.errors import QueryBudgetExceededError
+from app.services.data_fabric.query.federation_contracts import (
+    BloomTraceRecord, CrsFallbackRecord, CrsTransformRecord,
+    HopTraceRecord, SemiJoinTraceRecord,
+)
 from app.services.data_fabric.query.federated.adaptive import (
     AdaptiveController,
     pick_tail_order,
@@ -70,7 +74,7 @@ class ExecutionTrace:
     # 双重变换缺陷。
     per_source_delivered_srid: Dict[str, int] = field(default_factory=dict)
     #: server placement 交付校验失败并已本地回退的披露。
-    crs_fallbacks: List[Dict[str, Any]] = field(default_factory=list)
+    crs_fallbacks: List[CrsFallbackRecord] = field(default_factory=list)
     #: V7 R1-C2：每源「无过滤且取回完整（未触及窗口）」事实 —— 仅这类源
     #: 允许 feedback 回写 SourceFacts 行数（observe_unfiltered_count 契约）。
     per_source_scan_complete_unfiltered: Dict[str, bool] = field(default_factory=dict)
@@ -78,10 +82,10 @@ class ExecutionTrace:
     server_placements: int = 0
     per_source_rows: Dict[str, int] = field(default_factory=dict)
     pages_fetched: int = 0
-    hop_stats: List[Dict[str, Any]] = field(default_factory=list)
+    hop_stats: List[HopTraceRecord] = field(default_factory=list)
     adaptive_notes: List[str] = field(default_factory=list)
-    bloom_stats: List[Dict[str, Any]] = field(default_factory=list)
-    crs_transforms_applied: List[Dict[str, Any]] = field(default_factory=list)
+    bloom_stats: List[BloomTraceRecord] = field(default_factory=list)
+    crs_transforms_applied: List[CrsTransformRecord] = field(default_factory=list)
     cancelled: bool = False
 
 
@@ -751,7 +755,7 @@ class PhysicalExecutor:
         accumulated: List[Dict[str, Any]],
         right_rows: List[Dict[str, Any]],
         node: LogicalJoin,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], SemiJoinTraceRecord]:
         """build 侧预滤：Bloom（盈利时）→ V5 键集 semi-join 兜底。
 
         两者都只是键过滤 —— 内连接语义不变（假阳性由精确 join 兜底）。
@@ -760,7 +764,7 @@ class PhysicalExecutor:
             _semi_join_reduce_right,
         )
 
-        semi_stats: Dict[str, Any] = {}
+        semi_stats: SemiJoinTraceRecord = {}
         ndv_left = self._ndv_hints.get("__left__", {}).get(node.join_field_left or "")
         ndv_right = self._ndv_hints.get("__right__", {}).get(
             node.join_field_right or ""

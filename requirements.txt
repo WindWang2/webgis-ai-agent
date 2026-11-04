@@ -24,7 +24,7 @@ python-multipart>=0.0.6
 #     _to_async_url() 显式改写为 postgresql+asyncpg://，已规避；同步引擎
 #     get_engine() 仍传裸 URL，生产 sync Postgres 连接应显式写 driver 后缀
 #     （如 postgresql+psycopg2://），避免依赖 2.1.x 的默认方言。
-# lock 现状：sqlalchemy==2.0.55 + greenlet==3.5.6（via sqlalchemy），与下方
+# lock 现状：sqlalchemy==2.0.57 + greenlet==3.5.6（via sqlalchemy），与下方
 # <2.1 上界一致。2.1.x（如 2.1.4）会被该上界拒绝，不写进 lock；解禁 2.1 前须
 # 先过 #1512 门禁并保留 #1592 的驱动健壮性加固。#1734：注释随 lock 重编译
 # 同步（原写 2.0.54），避免「注释宣称的现状」与 lock 实际钉版互相矛盾。
@@ -43,6 +43,12 @@ pyogrio>=0.13.0
 # DEGRADED 连锁。落实 #1512 的真实意图：上界收紧到 <3.0（lock pandas==2.3.3
 # 已全量验证）。
 pandas>=2.2.2,<3.0
+# pandas 2.x 的 tzfile 检测依赖 dateutil 2.x 的内部转换表。dateutil 3/4
+# 重写 tzfile 后，时区本地化会抛 AttributeError（pandas upstream #71459）。
+# 2026-11-04 实测 pandas 2.3.3 + dateutil 4.0.0 可复现；保持 <3，直到
+# pandas 兼容修复进入本项目支持窗口并通过真实 DST 回归测试后再放宽。
+# https://github.com/pandas-dev/pandas/issues/71459
+python-dateutil>=2.8.2,<3
 
 # Utilities
 # cryptography: 扩展平台 V3 非对称包签名（Ed25519，ADR-0119）。直接使用的库
@@ -50,9 +56,8 @@ pandas>=2.2.2,<3.0
 # audit ISSUE-063（#1349）：下界到 50.0.1 —— 44+ 无界范围容纳 3 个 2026
 # 公告受影响版本（45.0.0–46.0.6 / <46.0.6 / 42.0–48.x），50.0.1 已全数修补。
 cryptography>=50.0.1
-# pydantic 上界 <2.14（#1512 同型）：CI 不走 lock，>=2.13.4 敞开时解析到 2.14.x，
-# mutation parity 语料记录的 errors.pydantic.dev/2.13/v URL 漂移（2.14 才发布生态未验证）。
-# 与 requirements.lock（==2.13.5）对齐。
+# pydantic 2.14 已在项目支持窗口；上界 <2.15 保留下一 minor 的兼容评审。
+# CI 安装经 requirements.lock 约束，避免声明窗口内的解析漂移。
 pydantic>=2.13.4,<2.15
 pydantic-settings>=2.14.2
 python-dotenv>=1.0.0
@@ -125,8 +130,7 @@ psycopg2-binary>=2.9.12
 matplotlib>=3.8.0
 weasyprint>=70.0  # V6 ADR-0120: publication vector PDF（可选依赖，缺席时运行时诚实降级）
 # 与 requirements-dev.txt 和 requirements.lock 同步；lock 低于声明下限会使
-# `pip install -c requirements.lock -r requirements.txt` 无法解析。仅更新 pypdf
-# 到当前下限，保留其余钉版，避免触发 #1754 暂缓的全量依赖升级。
+# `pip install -c requirements.lock -r requirements.txt` 无法解析。
 pypdf>=6.21.4  # V6 ADR-0120: PDF 结构化读取（页数/文本提取验证）
 
 # RAG & Vector Search

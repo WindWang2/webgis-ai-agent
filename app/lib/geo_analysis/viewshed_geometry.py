@@ -22,9 +22,12 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
+
+from app.contracts.geojson import GeoJSONFeature, GeoJSONFeatureCollection
+from app.lib.geo_analysis.terrain_types import RasterMaskMetadata, VisibilityGeometryMetadata
 
 from app.lib.cancellation import checkpoint
 from app.lib.gis.scientific_errors import DegenerateData
@@ -80,7 +83,7 @@ def raster_mask_polygons(
     max_polygons: int = MAX_VISIBILITY_POLYGONS,
     max_total_vertices: int = MAX_VISIBILITY_VERTICES,
     kind: str = "raster_mask",
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[GeoJSONFeatureCollection, RasterMaskMetadata]:
     """bool 栅格掩膜 → GeoJSON FeatureCollection（有界、确定性）。
 
     - 掩膜为 True 的像元（``valid`` 给出时还须有效）归并为 cell-edge
@@ -107,8 +110,8 @@ def raster_mask_polygons(
         mask_b = mask_b & valid_b
     n_cells = int(np.count_nonzero(mask_b))
 
-    fc: Dict[str, Any] = {"type": "FeatureCollection", "features": []}
-    meta: Dict[str, Any] = {
+    fc: GeoJSONFeatureCollection = {"type": "FeatureCollection", "features": []}
+    meta: RasterMaskMetadata = {
         "kind": kind,
         "mask_cells": n_cells,
         "polygonization": "cell-edge aligned whole-cell merge (4-connectivity); "
@@ -199,7 +202,7 @@ def raster_mask_polygons(
     kept_ids = {id(p) for p in kept}
     dropped = [p for p in polys if id(p) not in kept_ids]
 
-    features: List[Dict[str, Any]] = []
+    features: List[GeoJSONFeature] = []
     for rings, _area_crs in kept:
         features.append(
             {
@@ -247,7 +250,7 @@ def visibility_geometry(
     cell_size_x: Optional[float] = None,
     max_polygons: int = MAX_VISIBILITY_POLYGONS,
     max_total_vertices: int = MAX_VISIBILITY_VERTICES,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[GeoJSONFeatureCollection, VisibilityGeometryMetadata]:
     """viewshed 布尔栅格 → 可视区 GeoJSON + 覆盖/误差/来源证据 meta。
 
     输入即 ``terrain.viewshed`` 的 ``result["visible"]`` 与 DEM 有效性掩膜
@@ -293,7 +296,7 @@ def visibility_geometry(
     attributed_cells = int(gmeta.get("attributed_cells", 0))
     unattributed_cells = int(gmeta.get("unattributed_cells", 0))
 
-    meta: Dict[str, Any] = {
+    meta: VisibilityGeometryMetadata = {
         "source": "terrain.viewshed boolean raster (kernel untouched)",
         "visible_cells": visible_cells,
         "valid_cells": valid_cells,

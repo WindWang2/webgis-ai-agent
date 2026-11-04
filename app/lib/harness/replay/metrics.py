@@ -13,6 +13,8 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
+from app.lib.harness.result_contracts import GateResult, GoalSatisfaction, MetricRow
+
 from app.lib.runtime.decision_record import (
     DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
 )
@@ -35,17 +37,17 @@ def project_metrics(
     trace: Dict[str, Any],
     *,
     scene_id: str,
-    gate_result: Optional[Dict[str, Any]] = None,
-    goal_satisfaction: Optional[Dict[str, Any]] = None,
+    gate_result: Optional[GateResult] = None,
+    goal_satisfaction: Optional[GoalSatisfaction] = None,
     plan_stable: Optional[bool] = None,
-) -> List[Dict[str, Any]]:
+) -> List[MetricRow]:
     """轨迹 → ``[{scene_id, check_id, value}]`` 观测行（ratchet 直读形态）。
 
     gate_result 是 HarnessEvaluator.evaluate_evidence 的结果（重放 T1 产出）；
     goal_satisfaction 是 derive_goal_satisfaction 的结果。二者缺席时对应
     维度诚实缺席（不伪造 0/1），与 not_evaluated≠pass 纪律一致。
     """
-    rows: List[Dict[str, Any]] = []
+    rows: List[MetricRow] = []
 
     def _add(check_id: str, value: Optional[float]) -> None:
         numeric = _finite(value)
@@ -53,13 +55,20 @@ def project_metrics(
             return
         rows.append({"scene_id": scene_id, "check_id": check_id, "value": numeric})
 
-    verdict = trace.get("verdict") if isinstance(trace.get("verdict"), dict) else {}
-    map_product = verdict.get("map_product") if isinstance(verdict.get("map_product"), dict) else {}
-    work = trace.get("work") if isinstance(trace.get("work"), dict) else {}
-    timing = trace.get("timing_ms") if isinstance(trace.get("timing_ms"), dict) else {}
-    usage = trace.get("llm_usage") if isinstance(trace.get("llm_usage"), dict) else {}
-    tool_calls = trace.get("tool_calls") if isinstance(trace.get("tool_calls"), list) else []
-    chain = trace.get("chain") if isinstance(trace.get("chain"), dict) else {}
+    verdict_raw = trace.get("verdict")
+    verdict = verdict_raw if isinstance(verdict_raw, dict) else {}
+    map_product_raw = verdict.get("map_product")
+    map_product = map_product_raw if isinstance(map_product_raw, dict) else {}
+    work_raw = trace.get("work")
+    work = work_raw if isinstance(work_raw, dict) else {}
+    timing_raw = trace.get("timing_ms")
+    timing = timing_raw if isinstance(timing_raw, dict) else {}
+    usage_raw = trace.get("llm_usage")
+    usage = usage_raw if isinstance(usage_raw, dict) else {}
+    tool_calls_raw = trace.get("tool_calls")
+    tool_calls = tool_calls_raw if isinstance(tool_calls_raw, list) else []
+    chain_raw = trace.get("chain")
+    chain = chain_raw if isinstance(chain_raw, dict) else {}
 
     # intent/goal fidelity & goal satisfaction（证据缺席则维度缺席）。
     if map_product:
@@ -78,7 +87,8 @@ def project_metrics(
         _add("gate.replay.chain_completeness", completeness * 100.0)
 
     # gate 维度得分（HarnessEvaluator 形态原样透传为 gate.<name> 行）。
-    checks = gate_result.get("checks") if isinstance(gate_result, dict) and isinstance(gate_result.get("checks"), dict) else {}
+    checks_raw = gate_result.get("checks") if isinstance(gate_result, dict) else None
+    checks = checks_raw if isinstance(checks_raw, dict) else {}
     for name, check in checks.items():
         if not isinstance(check, dict):
             continue
@@ -105,17 +115,21 @@ def project_metrics(
         _add("replay.arg_bytes_total", arg_bytes_total)
 
     # 修复/恢复压力。
-    repairs = map_product.get("repairs") if isinstance(map_product.get("repairs"), list) else []
+    repairs_raw = map_product.get("repairs")
+    repairs = repairs_raw if isinstance(repairs_raw, list) else []
     _add("replay.repair_count", float(len(repairs)))
-    issues = map_product.get("issues") if isinstance(map_product.get("issues"), list) else []
+    issues_raw = map_product.get("issues")
+    issues = issues_raw if isinstance(issues_raw, list) else []
     _add("replay.finding_count", float(len(issues)))
 
     # artifact bytes（artifacts 块内的 digest 尺寸计数代理）。
-    artifacts = trace.get("artifacts") if isinstance(trace.get("artifacts"), dict) else {}
+    artifacts_raw = trace.get("artifacts")
+    artifacts = artifacts_raw if isinstance(artifacts_raw, dict) else {}
     _add("replay.artifact_digest_count", _finite(artifacts.get("count")))
 
     # 决策溯源面（ADR-0212）：决策数量（成本代理）+ dispatch 拒绝计数。
-    decisions = trace.get("decisions") if isinstance(trace.get("decisions"), list) else []
+    decisions_raw = trace.get("decisions")
+    decisions = decisions_raw if isinstance(decisions_raw, list) else []
     if decisions:
         _add("replay.decision_count", float(len(decisions)))
         denials = sum(
@@ -128,11 +142,14 @@ def project_metrics(
 
     # 资源面（ADR-0264 D4）：plan cost delta 的 tolerant 观测行（数值
     # 绝不进 digest/exact，走 ratchet 行回归）。
-    governor = trace.get("governor") if isinstance(trace.get("governor"), dict) else {}
-    entries = governor.get("entries") if isinstance(governor.get("entries"), list) else []
+    governor_raw = trace.get("governor")
+    governor = governor_raw if isinstance(governor_raw, dict) else {}
+    entries_raw = governor.get("entries")
+    entries = entries_raw if isinstance(entries_raw, list) else []
     if entries:
         _add("replay.resource_entries", float(len(entries)))
-    delta = governor.get("plan_cost_delta") if isinstance(governor.get("plan_cost_delta"), dict) else {}
+    delta_raw = governor.get("plan_cost_delta")
+    delta = delta_raw if isinstance(delta_raw, dict) else {}
     ratio = delta.get("ratio")
     if isinstance(ratio, (int, float)):
         _add("replay.plan_cost_ratio", float(ratio))

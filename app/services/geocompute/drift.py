@@ -14,7 +14,12 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from app.contracts.execution import (
+    DriftRecord,
+    PlanRecord,
+)
+
+from typing import Any, Optional, cast
 
 from pydantic import BaseModel
 
@@ -33,8 +38,8 @@ class DriftVerdict(BaseModel):
     def reusable(self) -> bool:
         return self.state == "current"
 
-    def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump()
+    def to_dict(self) -> DriftRecord:
+        return cast(DriftRecord, self.model_dump())
 
 
 def _current_runtime_fingerprint() -> Optional[str]:
@@ -50,7 +55,7 @@ def build_plan_record(
     plan: ExecutionPlan,
     *,
     runtime_manifest_fingerprint: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> PlanRecord:
     """构造可持久化的计划记录（有界；供产物/审计行携带）。"""
     return {
         "execution_plan_version": EXECUTION_PLAN_VERSION,
@@ -66,7 +71,7 @@ def build_plan_record(
 
 
 def check_plan_drift(
-    stored: Optional[Dict[str, Any]],
+    stored: PlanRecord | None,
     *,
     plan: Optional[ExecutionPlan] = None,
     current_runtime_fingerprint: Optional[str] = None,
@@ -124,7 +129,7 @@ def check_plan_drift(
 
 
 def assert_reusable(
-    stored: Optional[Dict[str, Any]],
+    stored: PlanRecord | None,
     *,
     plan: Optional[ExecutionPlan] = None,
     current_runtime_fingerprint: Optional[str] = None,
@@ -138,7 +143,7 @@ def assert_reusable(
     if verdict.state in ("stale_runtime", "degraded_plan"):
         raise GeoComputeError(
             f"persisted plan is {verdict.state}: {verdict.reason}",
-            details=verdict.to_dict(),
+            details=dict(verdict.to_dict()),
         )
     return verdict
 

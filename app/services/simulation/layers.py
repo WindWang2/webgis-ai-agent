@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Protocol
 
+from app.contracts.simulation import (
+    TemporalSource, TemporalLayer, TemporalFrame, TemporalMapSpec,
+)
 from app.services.simulation.contracts import (
     MAX_TEMPORAL_FRAMES,
     SimulationConfigError,
@@ -156,7 +159,7 @@ class GeoParquetTemporalSink:
         )
 
 
-def build_mapspec_bundle(result: "SimulationResult") -> dict[str, Any]:
+def build_mapspec_bundle(result: "SimulationResult") -> TemporalMapSpec:
     """多时相产物 → MapSpec v1.2 文档骨架（layout.frames 时间轴）。
 
     帧语义：每帧只点亮当期切片图层（layerOverrides deep-merge，前端
@@ -170,9 +173,9 @@ def build_mapspec_bundle(result: "SimulationResult") -> dict[str, Any]:
             f"({_MAPSPEC_MAX_FRAMES})",
             context={"products": len(products)},
         )
-    sources: dict[str, Any] = {}
-    layers: list[dict[str, Any]] = []
-    frames: list[dict[str, Any]] = []
+    sources: dict[str, TemporalSource] = {}
+    layers: list[TemporalLayer] = []
+    frames: list[TemporalFrame] = []
     for p in products:
         src_id = f"src-{p.product_id}"
         layer_id = f"layer-{p.product_id}"
