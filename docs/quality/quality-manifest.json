@@ -613,7 +613,8 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
-    "tests/unit/lib/test_geostat_v3.py"
+    "tests/unit/lib/test_geostat_v3.py",
+    "tests/unit/tools/test_scientific_result_size_contracts.py"
    ],
    "uncertainty_outputs": []
   },
@@ -5877,8 +5878,8 @@
  ],
  "behavioral": {
   "dispatch": 204,
-  "mention": 184,
-  "none": 8
+  "mention": 185,
+  "none": 7
  },
  "capabilities": [
   {
@@ -8864,7 +8865,7 @@
   "algorithms": 253,
   "artifact_types": 23,
   "capabilities": 174,
-  "findings": 9,
+  "findings": 8,
   "recipes": 166,
   "tools": 396
  },
@@ -8891,14 +8892,6 @@
    "domain": "tools",
    "severity": "medium",
    "subject": "modelops_model_history",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "modelops_record_metrics",
    "surface": "tools"
   },
   {
@@ -8951,7 +8944,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "3bd386c790511baca50bc09c5f1ea92a337eb5caaeea9fa309dcf213c2fe1946",
+ "fingerprint": "d2f81d97b4789ea1081841b46b35d3d70b3d22e113299704b95c233e823f9d10",
  "gate": {
   "fields": {
    "capabilities": {
@@ -10746,7 +10739,8 @@
     "方向半方差"
    ],
    "tests": [
-    "tests/unit/lib/test_geostat_v3.py"
+    "tests/unit/lib/test_geostat_v3.py",
+    "tests/unit/tools/test_scientific_result_size_contracts.py"
    ],
    "tier": 2
   },
@@ -13490,7 +13484,8 @@
    "tests": [
     "tests/unit/test_measurement_mapspec_wiring.py",
     "tests/unit/test_terrain_measurement_tools.py",
-    "tests/unit/test_tool_registry_rationalization.py"
+    "tests/unit/test_tool_registry_rationalization.py",
+    "tests/unit/tools/test_scientific_result_size_contracts.py"
    ],
    "tier": 2
   },
@@ -14396,15 +14391,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "mention",
    "capabilities": [
     "image_segmentation"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "modelops_record_metrics",
@@ -14416,7 +14408,9 @@
     "modelops",
     "geoai"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/gis_tool_conformance/test_bounded_modelops_results.py"
+   ],
    "tier": 2
   },
   {
@@ -16441,7 +16435,8 @@
     "遥感"
    ],
    "tests": [
-    "tests/unit/lib/test_rs_v3.py"
+    "tests/unit/lib/test_rs_v3.py",
+    "tests/unit/tools/test_scientific_result_size_contracts.py"
    ],
    "tier": 2
   },
@@ -19111,7 +19106,8 @@
     "aicc"
    ],
    "tests": [
-    "tests/unit/lib/test_geostat_v3.py"
+    "tests/unit/lib/test_geostat_v3.py",
+    "tests/unit/tools/test_scientific_result_size_contracts.py"
    ],
    "tier": 2
   },

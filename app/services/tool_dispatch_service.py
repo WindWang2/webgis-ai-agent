@@ -89,6 +89,7 @@ from app.services.llm_result_formatter import (
     is_error_dict,
     is_error_like_result,
     is_tool_error_result,
+    bound_llm_text,
     wrap_error_dict_for_llm,
     slim_tool_result,
     slim_event_result,
@@ -1087,10 +1088,18 @@ class ToolDispatchService:
                             ),
                             confidence=0.85, org_id="",
                         ))
-            llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
+            # Classification/recovery above consume the full diagnostics. Only
+            # this LLM presentation is clipped, including HTML-escaped errors.
+            llm_payload = bound_llm_text(
+                correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
+            )
             if _recovery_note and _recovery_note not in llm_payload:
                 # 两引擎共用同一恢复文案源（Pi HTTP 回包 / legacy
-                # tool_result 消息）—— 单行、有界、无用户原文。
+                # tool_result 消息）—— 单行、有界（≤240）、无用户原文。
+                # Reserve the newline and note inside the existing budget.
+                llm_payload = bound_llm_text(
+                    llm_payload, max_chars=MSG_MAX_CHARS - len(_recovery_note) - 1
+                )
                 llm_payload = f"{llm_payload}\n{_recovery_note}"
             await self._session_data.append_event(
                 session_id,
