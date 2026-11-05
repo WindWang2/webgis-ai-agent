@@ -98,6 +98,30 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['mock'],
     owner: 'quality-e2e-v9',
   },
+  {
+    id: 'j10',
+    file: 'journeys/j10-situation-restore.journey.ts',
+    title: '情境状态面：服务端投影恢复（刷新/重连）',
+    smoke: true,
+    modes: ['mock'],
+    owner: 'situated-agent-workbench-vnext',
+  },
+  {
+    id: 'j11',
+    file: 'journeys/j11-situation-six-states.journey.ts',
+    title: '情境状态面六态（范围/选中/结果/执行/验证/可重试）',
+    smoke: true,
+    modes: ['mock'],
+    owner: 'situated-agent-workbench-vnext',
+  },
+  {
+    id: 'j12',
+    file: 'journeys/j12-situation-degradation.journey.ts',
+    title: '情境面诚实降级（不可用/中性不编造）',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'situated-agent-workbench-vnext',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);

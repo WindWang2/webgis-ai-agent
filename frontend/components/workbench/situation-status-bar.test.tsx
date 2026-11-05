@@ -26,6 +26,7 @@ vi.mock('@/lib/mapspec/session-cursor', () => ({
     sessionId: 'sess-sb-1',
     ownerToken: 'tok',
   })),
+  subscribeMapSpecLive: vi.fn(() => () => {}),
 }));
 
 const mockedFetch = vi.mocked(apiFetch);

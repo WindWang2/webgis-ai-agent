@@ -13,12 +13,13 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useT } from '@/lib/i18n/useT';
 import {
-  getSituationProjectionVersion,
   refreshSituationProjection,
-  subscribeSituationProjection,
   useSituationProjection,
 } from '@/lib/interaction/use-situation-projection';
-import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import {
+  getMapSpecSessionCursor,
+  subscribeMapSpecLive,
+} from '@/lib/mapspec/session-cursor';
 
 interface StatusChip {
   key: string;
@@ -33,12 +34,15 @@ function useRefreshOnSession(): void {
     const sync = () => {
       const cursor = getMapSpecSessionCursor();
       if (cursor.sessionId && versionRef.current === 0) {
+        // 只有真的发起过拉取才消耗首刷机会（会话未建立时保持待命）。
         versionRef.current += 1;
         void refreshSituationProjection(cursor.sessionId);
       }
     };
     sync();
-    const unsubscribe = subscribeSituationProjection(sync);
+    // 会话建立/切换由 session-cursor live 通道驱动（本组件自己的投影
+    // store 订阅不会在会话建立时发信号）。
+    const unsubscribe = subscribeMapSpecLive(sync);
     // 重连/可见性恢复：窗口重新可见时刷新一次（服务端事实源）。
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
@@ -188,4 +192,3 @@ export function SituationStatusBar(): React.ReactElement {
   );
 }
 
-export { getSituationProjectionVersion };

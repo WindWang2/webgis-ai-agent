@@ -41,19 +41,21 @@
     "reorder": "Reorder",
     "lock_conflict": "Lock conflict"
   },
-  "situationBar.title": "Situation",
-  "situationBar.ariaLabel": "Current map situation status",
-  "situationBar.loading": "Loading situation…",
-  "situationBar.unavailable": "Situation unavailable",
-  "situationBar.scopeNone": "No analysis scope",
-  "situationBar.scopeAoi": "Scope: drawn area",
-  "situationBar.scopeCount": "Scope: {count} selected",
-  "situationBar.selectionNone": "Nothing selected",
-  "situationBar.selectionIds": "{count} selected",
-  "situationBar.selectionOne": "1 selected",
-  "situationBar.selectionChart": "Chart: {count} categories",
-  "situationBar.resultsObserved": "{count} verified results",
-  "situationBar.running": "{count} running",
-  "situationBar.verifying": "Awaiting map verification",
-  "situationBar.retryable": "{count} pending/retryable"
+  "situationBar": {
+    "title": "Situation",
+    "ariaLabel": "Current map situation status",
+    "loading": "Loading situation…",
+    "unavailable": "Situation unavailable",
+    "scopeNone": "No analysis scope",
+    "scopeAoi": "Scope: drawn area",
+    "scopeCount": "Scope: {count} selected",
+    "selectionNone": "Nothing selected",
+    "selectionIds": "{count} selected",
+    "selectionOne": "1 selected",
+    "selectionChart": "Chart: {count} categories",
+    "resultsObserved": "{count} verified results",
+    "running": "{count} running",
+    "verifying": "Awaiting map verification",
+    "retryable": "{count} pending/retryable"
+  }
 }
