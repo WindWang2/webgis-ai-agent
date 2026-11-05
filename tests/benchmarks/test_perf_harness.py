@@ -572,6 +572,59 @@ def _closest_facility_routes_ms() -> float:
     return dt
 
 
+def _envelope_facts_bounded_50k_ms() -> float:
+    """ADR-0282 envelope v2：50k 特征 FC 的实测事实采集（几何类型/extent）
+    必须是有界扫描（≤2000 特征界）——envelope 开销与数据集规模无关
+    （descriptor 级契约，与 spatial_semantics preflight 同阶）。"""
+    from app.services.gis_harness.analysis_workflows.envelope_facts import (
+        collect_fc_facts,
+    )
+
+    fc = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"id": i},
+         "geometry": {"type": "Point",
+                      "coordinates": [104.0 + (i % 100) * 0.001,
+                                      30.6 + (i // 100) * 0.001]}}
+        for i in range(50_000)]}
+    t0 = time.perf_counter()
+    facts = collect_fc_facts(fc)
+    elapsed = (time.perf_counter() - t0) * 1000
+    assert facts.geometry_types == ("Point",)
+    assert facts.extent[2] < 104.2      # 扫描界生效（第 2001 个点不进 extent）
+    return elapsed
+
+
+def _awf_plan_typed_gates_ms() -> float:
+    """ADR-0282 plan 期 typed 门（几何画像/分母字段/role_kind）+ 契约装配
+    的纯函数开销——plan 是每次调用的热路径，必须保持毫秒级。"""
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        DataRoleBinding,
+    )
+    from app.services.gis_harness.analysis_workflows.orchestrator import (
+        plan_workflow,
+    )
+
+    bindings = {
+        "subject": DataRoleBinding(
+            role="subject", ref="ref:geojson-perf",
+            qualifier={"geometry_types": ["Point"], "feature_count": 1000}),
+        "boundary": DataRoleBinding(
+            role="boundary", ref="ref:geojson-perf2",
+            qualifier={"geometry_types": ["Polygon"]}),
+        "denominator": DataRoleBinding(
+            role="denominator", ref="ref:geojson-perf2",
+            qualifier={"field": "pop", "fields": ["pop"],
+                       "geometry_types": ["Polygon"]}),
+    }
+    t0 = time.perf_counter()
+    plan = plan_workflow(
+        "admin_facility_distribution", workflow_id="awf.perf.plan",
+        bindings=bindings)
+    elapsed = (time.perf_counter() - t0) * 1000
+    assert plan.runnable
+    return elapsed
+
+
 WORKLOADS = {
     "raster_guard_rejection": _raster_guard_rejection_ms,
     "ref_resolution_batch": _ref_resolution_batch_ms,
@@ -590,6 +643,9 @@ WORKLOADS = {
     "two_opt_ladder_160": _two_opt_ladder_ms,
     "barriers_indexed_50kE_x3": _barriers_indexed_ms,
     "closest_facility_30x40": _closest_facility_routes_ms,
+    # ADR-0282（B5）：分析工作流 v2 新增面
+    "envelope_facts_bounded_50k": _envelope_facts_bounded_50k_ms,
+    "awf_plan_typed_gates": _awf_plan_typed_gates_ms,
 }
 
 

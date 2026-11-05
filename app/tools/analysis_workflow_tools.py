@@ -185,6 +185,10 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
 
     # ── 工具 1：plan ─────────────────────────────────────────────────────
 
+    from app.services.gis_harness.analysis_workflows.discovery import (
+        next_step_for_blocked,
+    )
+
     @tool(
         registry, name="webgis_analysis_workflow_plan",
         capabilities=["plan_workflow_orchestration"],
@@ -337,6 +341,21 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "visualization_hints": list(result.visualization_hints),
             "risk_notes": list(result.contract.risk_notes),
             "budget_estimates": budget_estimates,
+            # ADR-0282 B4：blocked/skipped 裁决附结构化 next_step（封闭
+            # action 词表 + 可执行提示——LLM 不靠重复空调用碰运气）。
+            "blocked_next_steps": [
+                {"step_id": v.step_id, "reason_code": v.reason_code,
+                 "next_step": next_step_for_blocked(
+                     v.reason_code,
+                     role=next((
+                         s.removeprefix("role:")
+                         for s in next(
+                             (x.role_inputs.values()
+                              for x in result.contract.steps
+                              if x.step_id == v.step_id), ())
+                         if s.startswith("role:")), ""))}
+                for v in result.step_verdicts
+                if v.verdict in ("blocked", "skipped")][:8],
             "next_action": (
                 "webgis_analysis_workflow_run" if runnable
                 else ("输入行数超预算——先分块（bbox 裁剪/聚合粒度提升）或"

@@ -32,10 +32,11 @@ _SEMANTICS_BLOCK_KEYS = (
     "calculation_mode", "density_unit", "rate_unit", "stat_denominator",
 )
 
-#: 栅格事实白名单键（工具结果 stats / 根键里如实存在才收）。
+#: 栅格事实白名单键（工具结果 stats / 根键 / data 子键里如实存在才收）。
 _RASTER_FACT_KEYS = (
-    "nodata", "resolution", "band_count", "dtype", "valid_pixel_coverage",
-    "width", "height", "crs",
+    "nodata", "resolution", "target_resolution", "band_count", "dtype",
+    "valid_pixel_coverage", "width", "height", "crs", "new_shape",
+    "resampling",
 )
 
 #: 聚合基数静态映射（工具名 → 基数语义；参数级覆盖见 aggregation_basis_for）。
@@ -180,9 +181,10 @@ def collect_result_semantics(result: Dict[str, Any]) -> Dict[str, str]:
 
 
 def collect_raster_facts(result: Dict[str, Any]) -> Dict[str, Any]:
-    """结果 → 栅格事实（白名单键；stats 与根键均如实采集，缺者不进）。"""
+    """结果 → 栅格事实（白名单键；stats/根键/data 子键如实采集，缺者不进）。"""
     facts: Dict[str, Any] = {}
-    for source in (result.get("stats"), result):
+    sources = [result.get("stats"), result, result.get("data")]
+    for source in sources:
         if not isinstance(source, dict):
             continue
         for key in _RASTER_FACT_KEYS:
@@ -191,7 +193,7 @@ def collect_raster_facts(result: Dict[str, Any]) -> Dict[str, Any]:
             value = source.get(key)
             if value is None:
                 continue
-            if isinstance(value, (str, int, float, bool)):
+            if isinstance(value, (str, int, float, bool, list)):
                 facts[key] = value
     return dict(sorted(facts.items())[:MAX_SEMANTIC_KEYS])
 

@@ -219,6 +219,36 @@ def hazard_points() -> Dict[str, Any]:
     return _fc(feats, _WGS84)
 
 
+def hospital_points() -> Dict[str, Any]:
+    """ADR-0282 F29：模拟医院设施点（3 处，落在路网网格交点附近——
+    真实 Dijkstra 可解；坐标与 road_network 同源算术）。"""
+    x0, y0, x1, y1 = CHENGDU_BBOX
+    feats = []
+    for i, (dx, dy) in enumerate([(0.06, 0.05), (0.12, 0.09),
+                                  (0.03, 0.12)]):
+        feats.append(_pt(x0 + dx, y0 + dy, {
+            "name": f"模拟医院-{i + 1}",
+            "facility_type": "hospital",
+            "beds": 200 + i * 100,
+            "_simulated": True,
+        }))
+    return _fc(feats, _WGS84)
+
+
+def community_points() -> Dict[str, Any]:
+    """ADR-0282 F29：模拟居民点（demand/incident——最近设施网络距离的需求侧）。"""
+    x0, y0, x1, y1 = CHENGDU_BBOX
+    feats = []
+    for i, (dx, dy) in enumerate([(0.04, 0.04), (0.10, 0.06),
+                                  (0.07, 0.10), (0.13, 0.03)]):
+        feats.append(_pt(x0 + dx, y0 + dy, {
+            "name": f"模拟小区-{i + 1}",
+            "households": 300 + i * 50,
+            "_simulated": True,
+        }))
+    return _fc(feats, _WGS84)
+
+
 def road_network() -> Dict[str, Any]:
     """goal-02 F28：模拟路网（覆盖学区的纵横网格道路 LineString）。"""
     x0, y0, x1, y1 = CHENGDU_BBOX
@@ -247,6 +277,8 @@ def road_network() -> Dict[str, Any]:
 VECTOR_FACTORIES = {
     "school_points": school_points,
     "hazard_points": hazard_points,
+    "hospital_points": hospital_points,
+    "community_points": community_points,
     "road_network": road_network,
     "school_points_sparse": school_points_sparse,
     "school_points_dense": school_points_dense,

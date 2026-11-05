@@ -490,6 +490,22 @@ class WorkflowExecutor:
         # 未铸（registry 直调路径）才由本层 store（prefix=geojson 同族）。
         fc = _extract_fc(result)
         ref = _extract_ref(result) or str(result.get("dispatch_ref", "") or "")
+        # ADR-0282 D3：非 FC 的栅格工件（raster_resample 族——结果形状
+        # ``data.output_path`` 文件路径）→ 路径即产物引用（下游 raster
+        # 参数直通；envelope.raster 带 output_kind=raster_file 事实）。
+        # 相对路径规范化为绝对（工具相对 cwd 返回 ``data/artifacts/…``，
+        # 下游 validate_data_path 会把相对路径再拼到 data_dir 下——二次
+        # 前缀导致假「文件不存在」；工作流层记录规范工件身份）。
+        raster_output = False
+        if fc is None and not ref:
+            data_obj = result.get("data")
+            output_path = (data_obj.get("output_path")
+                           if isinstance(data_obj, dict) else None)
+            if isinstance(output_path, str) and output_path:
+                from pathlib import Path as _Path
+
+                ref = str(_Path(output_path).resolve())
+                raster_output = True
         if fc is not None and not ref:
             if self._sd is not None:
                 try:
@@ -518,6 +534,8 @@ class WorkflowExecutor:
         fc_facts = collect_fc_facts(fc) if fc is not None else None
         result_semantics = collect_result_semantics(result)
         raster_facts = collect_raster_facts(result)
+        if raster_output:
+            raster_facts.setdefault("output_kind", "raster_file")
         crs_value = str(result.get("crs", "") or "")
         if not crs_value and fc_facts is not None and fc_facts.crs:
             crs_value = fc_facts.crs
@@ -530,7 +548,8 @@ class WorkflowExecutor:
             units=dict(step.unit_contract),
             feature_count=feature_count,
             empty=((fc is not None and _feature_count(fc) == 0)
-                   or (fc is None and ref != "" and feature_count == 0)),
+                   or (fc is None and ref != "" and feature_count == 0
+                       and not raster_facts)),
             stats={k: stats[k] for k in sorted(stats)
                    [:MAX_ENVELOPE_STATS_KEYS]} if stats else {},
             warnings=tuple(result_warnings[:8]),
