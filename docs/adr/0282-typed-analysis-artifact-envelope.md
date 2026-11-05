@@ -105,7 +105,7 @@ raster 绑定在 executor **不水合为 dict**：ref/路径字符串直通参�
 `assess_ref_eligibility(states, ref)`：ref 源自某 workflow envelope 且该 run
 非 satisfied（或 science_validation=blocked）→ `{eligible: false, run_status,
 reason_code}`。`webgis_map_product` 挂载图层前调用（经注入 helper，默认启用；
-`GIS_AWF_PRODUCT_GATE=0` bit 级回退 master 行为）：不合格 ref → 该图层
+`GIS_AWF_PRODUCT_GATE=0` bit 级回退 master 行为——由结构契约测试锁定）：不合格 ref → 该图层
 降级披露（不挂载为成品层 + guidance），全部图层不合格才 success=False（既有
 语义保持）。改动是 gis_harness/tools.py 的最小 additive 钩子，单独 commit，
 契约测试锁定旧行为在开关关闭时逐字节不变。

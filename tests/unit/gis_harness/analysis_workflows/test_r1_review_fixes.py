@@ -119,17 +119,19 @@ def test_f1_trimmed_stub_geometry_not_collected_into_fc():
                           "note": "trimmed"}},
         ],
     }
-    fc = _extract_fc(result)
+    fc, trimmed = _extract_fc(result)
     assert fc is not None
     assert len(fc["features"]) == 1
     assert fc["features"][0]["properties"]["route_id"] == "r1"
+    assert trimmed == 1            # 桩丢弃计数显性化
 
 
 def test_f1_all_stub_routes_yield_no_fc():
     result = {"status": "success", "routes": [
         {"route_id": "r1", "geometry": {"type": "LineString",
                                         "coordinate_count": 99}}]}
-    assert _extract_fc(result) is None
+    fc, trimmed = _extract_fc(result)
+    assert fc is None and trimmed == 1
 
 
 # ── F-3：族默认 exclude_unreachable=True 钉扎 ────────────────────────────

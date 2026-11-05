@@ -462,7 +462,7 @@ MethodUseContract、偏移帧数学在 utils/coord_transform —— 本契约组
 
 > 代码：`app/services/gis_harness/analysis_workflows/`（envelope_facts /
 > semantic_gate / product_gate / discovery 新模块 + 既有七模块 additive 扩展）。
-> 测试：`tests/unit/gis_harness/analysis_workflows/`（132 例）+ G05 F29 场景族。
+> 测试：`tests/unit/gis_harness/analysis_workflows/`（141 例）+ G05 F29 场景族。
 
 在 goal-02 AnalysisWorkflowContract v1 之上的四个增量：
 

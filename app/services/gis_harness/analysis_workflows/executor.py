@@ -64,8 +64,12 @@ DEFAULT_MAX_FEATURES = 100_000
 MAX_ENVELOPE_STATS_KEYS = 12
 
 
-def _extract_fc(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """从工具结果提取主 FeatureCollection。
+def _extract_fc(
+    result: Dict[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], int]:
+    """从工具结果提取主 FeatureCollection（返回 (fc, trimmed_stub_count)——
+    trimmed_stub=被丢弃的无 coordinates 摘要桩路线数，调用方入 envelope
+    警告，桩丢弃永不静默）。
 
     适配两族工具响应形状（不改变任何工具的返回契约）：
     - GeoAnalysisResult 族：``data`` / ``geojson`` 键直挂 FC；
@@ -77,7 +81,7 @@ def _extract_fc(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         candidate = result.get(key)
         if (isinstance(candidate, dict)
                 and candidate.get("type") == "FeatureCollection"):
-            return candidate
+            return candidate, 0
     routes = result.get("routes")
     if isinstance(routes, list) and routes:
         features = []
@@ -106,12 +110,13 @@ def _extract_fc(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "geometry": route["geometry"],
             })
         if features:
-            return {"type": "FeatureCollection", "features": features}
+            return {"type": "FeatureCollection",
+                    "features": features}, trimmed_stub
         if trimmed_stub:
             # 全部是 trim 桩（超预算结果）——诚实返回 None（无 FC 产物），
-            # 不把摘要桩伪装成几何产物。
-            return None
-    return None
+            # 不把摘要桩伪装成几何产物（计数仍向上披露）。
+            return None, trimmed_stub
+    return None, 0
 
 
 def _extract_ref(result: Dict[str, Any]) -> str:
@@ -505,7 +510,7 @@ class WorkflowExecutor:
 
         # 产物：分发缝已铸 ref（dispatch_ref/结果内 ref:）直接沿用；
         # 未铸（registry 直调路径）才由本层 store（prefix=geojson 同族）。
-        fc = _extract_fc(result)
+        fc, trimmed_stub_routes = _extract_fc(result)
         ref = _extract_ref(result) or str(result.get("dispatch_ref", "") or "")
         # ADR-0282 D3：非 FC 的栅格工件（raster_resample 族——结果形状
         # ``data.output_path`` 文件路径）→ 路径即产物引用（下游 raster
@@ -545,6 +550,12 @@ class WorkflowExecutor:
             result.get("stats"), dict) else {}
         result_warnings = [str(w) for w in (
             result.get("warnings") or []) if w]
+        if trimmed_stub_routes:
+            # R2 复核 P3：摘要桩路线丢弃永不静默（envelope.feature_count
+            # 因此小于 routes 总数——差异显性化）。
+            result_warnings.append(
+                f"{trimmed_stub_routes} 条路线因结果超预算被 trim 为摘要桩"
+                "（无几何）——未进产物，计数在此披露")
         feature_count = _feature_count(fc) if fc else int(
             result.get("dispatch_feature_count", 0) or 0)
         # ADR-0282 D1：实测事实采集（有界；采集不到=缺省，绝不虚填）。
