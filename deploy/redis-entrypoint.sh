@@ -33,11 +33,20 @@ umask 077
 printf 'requirepass %s\n' "$requirepass" > "$rtconf"
 chmod 400 "$rtconf"
 
-# Mirror the stock redis image entrypoint: drop to the redis user when root.
-if [ "$(id -u)" = '0' ] && command -v gosu >/dev/null 2>&1; then
+# The pinned 7.4 Alpine image uses setpriv (not gosu). Keep gosu compatibility
+# for older images, but never silently start as root when neither is present.
+set -- redis-server /usr/local/etc/redis/redis.conf --include "$rtconf"
+if [ "$(id -u)" = '0' ]; then
 	find /data \! -user redis -exec chown redis '{}' +
 	chown redis:redis "$rtconf"
-	exec gosu redis redis-server /usr/local/etc/redis/redis.conf --include "$rtconf"
+	if command -v setpriv >/dev/null 2>&1; then
+		exec setpriv --reuid redis --regid redis --clear-groups "$@"
+	fi
+	if command -v gosu >/dev/null 2>&1; then
+		exec gosu redis "$@"
+	fi
+	echo 'ERROR: refusing to run Redis as root: setpriv or gosu is required' >&2
+	exit 1
 fi
 
-exec redis-server /usr/local/etc/redis/redis.conf --include "$rtconf"
+exec "$@"

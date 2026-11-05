@@ -14,9 +14,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("root_user", [False, True])
-def test_entrypoint_passes_runtime_config_as_explicit_include(tmp_path, root_user):
-    """Capture the actual exec argv and config mode, including the gosu path."""
+@pytest.mark.parametrize("helper", [None, "setpriv", "gosu", "missing"])
+def test_entrypoint_passes_runtime_config_as_explicit_include(tmp_path, helper):
+    """Run real shell control flow with each image's privilege-drop utility."""
     runtime = tmp_path / "redis-runtime.conf"
     entrypoint = tmp_path / "entrypoint.sh"
     entrypoint.write_text(
@@ -25,25 +25,47 @@ def test_entrypoint_passes_runtime_config_as_explicit_include(tmp_path, root_use
         )
     )
     commands = {
-        "id": f"#!/bin/sh\necho {'0' if root_user else '1000'}\n",
+        "id": f"#!/bin/sh\necho {'0' if helper else '1000'}\n",
         "find": "#!/bin/sh\nexit 0\n",
         "chown": "#!/bin/sh\nexit 0\n",
-        "gosu": '#!/bin/sh\nshift\nexec "$@"\n',
         "redis-server": (
             f"#!{sys.executable}\nimport json, sys\n"
             "print(json.dumps(sys.argv[1:]))\n"
         ),
     }
+    if helper in {"setpriv", "gosu"}:
+        expected = (
+            ["--reuid", "redis", "--regid", "redis", "--clear-groups"]
+            if helper == "setpriv" else ["redis"]
+        )
+        commands[helper] = (
+            f"#!{sys.executable}\nimport json, os, pathlib, sys\n"
+            f"expected = {expected!r}\n"
+            "assert sys.argv[1:1+len(expected)] == expected\n"
+            "pathlib.Path(os.environ['HELPER_TRACE']).write_text(json.dumps(expected))\n"
+            "argv = sys.argv[1+len(expected):]\n"
+            "os.execvp(argv[0], argv)\n"
+        )
     for name, script in commands.items():
         command = tmp_path / name
         command.write_text(script)
         command.chmod(0o700)
     password = "test-only-not-a-real-secret"
-    env = {**os.environ, "REDIS_PASSWORD": password}
-    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+    # Do not let the test host's setpriv/gosu leak into the image simulation.
+    (tmp_path / "chmod").symlink_to("/bin/chmod")
+    trace = tmp_path / "helper.json"
+    env = {**os.environ, "REDIS_PASSWORD": password, "HELPER_TRACE": str(trace)}
+    env["PATH"] = str(tmp_path)
     result = subprocess.run(
-        ["sh", str(entrypoint)], env=env, capture_output=True, text=True, check=True
+        ["/bin/sh", str(entrypoint)], env=env, capture_output=True, text=True
     )
+    if helper == "missing":
+        assert result.returncode != 0
+        assert "refusing to run Redis as root" in result.stderr
+        assert not result.stdout
+        return
+    assert result.returncode == 0, result.stderr
+    assert trace.exists() == (helper is not None)
     argv = json.loads(result.stdout)
     assert argv == ["/usr/local/etc/redis/redis.conf", "--include", str(runtime)]
     assert password not in result.stdout
