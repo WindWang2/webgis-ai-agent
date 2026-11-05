@@ -264,8 +264,9 @@ export function composeLayout(
     const mTopSub = scalePx(82);
     // ADR-0283 D2：折行标题的副标题让位 —— title lines>1 时按行距下移，
     // 避免第二行与副标题基线重叠（确定性偏移，单行形态不变）。
+    // R9 P3-4：行距取整与 drawChromeText 同口径（round(fontPx×1.3)）。
     const titleWrapDy = (chrome.title?.lines?.length ?? 1) > 1
-      ? scalePx(32 * 1.3) * ((chrome.title!.lines!.length ?? 1) - 1)
+      ? scalePx(Math.round(32 * 1.3)) * ((chrome.title!.lines!.length ?? 1) - 1)
       : 0;
     const mBottom = scalePx(52);
     const mCompass = scalePx(64);

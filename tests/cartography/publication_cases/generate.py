@@ -28,6 +28,7 @@ from tests.cartography.publication_cases.cases import (  # noqa: E402
     CASES,
     LOCALES,
     PAGE_PROFILES,
+    case_constraint_overrides,
     case_participants,
     case_texts,
 )
@@ -36,9 +37,14 @@ from tests.cartography.publication_cases.cases import (  # noqa: E402
 def _digest_entry(case: str, locale: str, page: dict) -> dict:
     parts = [LayoutParticipantV4(**p) for p in case_participants(case)]
     comp_shims = [
-        {"id": p.id, "type": p.type} for p in parts
+        {"id": p.id, "type": p.type, "optional": p.optional} for p in parts
     ]
     doc = derive_layout_constraints(comp_shims, page_profile="viewport")
+    # 旗舰用例的显式出版意图覆写（显式 > 缺省；R9 P1-1 语义）
+    for cid, override in case_constraint_overrides(case).items():
+        if cid in doc.components:
+            doc.components[cid] = doc.components[cid].model_copy(
+                update=override)
     sol = solve_layout_v5(parts, constraint_spec=doc, page_profile="viewport")
 
     texts = case_texts(case, locale)
@@ -112,14 +118,33 @@ def build_golden() -> dict:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """再生/校验入口（R9 P2-1：--check 模式只读对比、不写仓库文件）。
+
+    - 缺省：写盘再生 golden（受控再生，人工审 diff 后提交）；
+    - ``--check``：与已提交 golden 逐字段对比 —— 漂移即 exit 1（CI/测试
+      消费面；**绝不写盘**，避免测试运行洗净已提交基准）。
+    """
+    args = argv if argv is not None else sys.argv[1:]
     golden = build_golden()
     out = Path(__file__).parent / "goldens" / "publication_cases.v1.json"
+    payload = json.dumps(
+        golden, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
+    if "--check" in args:
+        if not out.exists():
+            print(f"golden missing: {out}")
+            return 1
+        committed = out.read_text(encoding="utf-8")
+        if committed != payload:
+            print(
+                "golden drift: regenerate with "
+                "`python tests/cartography/publication_cases/generate.py` "
+                "and review the diff")
+            return 1
+        print(f"golden up-to-date ({len(golden['entries'])} entries)")
+        return 0
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
-        json.dumps(golden, ensure_ascii=False, indent=2, sort_keys=False) + "\n",
-        encoding="utf-8",
-    )
+    out.write_text(payload, encoding="utf-8")
     print(f"wrote {out} ({len(golden['entries'])} entries)")
     return 0
 

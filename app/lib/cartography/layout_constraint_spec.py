@@ -41,7 +41,7 @@ OVERFLOW_POLICIES: tuple = ("keep", "collapse", "suppress")
 #: ADR-0283 D2 在 layout-description 孪生消费）。
 KEY_NOTE_TYPES: tuple = (
     "methodology_note", "attribution", "title", "subtitle",
-    "annotation", "uncertainty_note", "uncertainty_panel",
+    "annotation", "uncertainty_panel",
 )
 
 
@@ -78,6 +78,12 @@ class ComponentLayoutConstraint(BaseModel):
                 f"min_width_units ({self.min_width_units}) > "
                 f"max_width_units ({self.max_width_units}) for component "
                 f"{self.component_id!r}")
+        if self.must_fit and self.overflow_policy == "suppress":
+            # R9 P3-8：must_fit 会把 optional 翻转为 required，suppress
+            # 策略因此永不生效 —— 组合是语义矛盾，闭口拒绝（fail-closed）。
+            raise ValueError(
+                f"must_fit 与 overflow_policy='suppress' 互斥（component "
+                f"{self.component_id!r}）：must_fit 组件不适用移除策略")
         return self
 
 
@@ -117,13 +123,20 @@ def derive_layout_constraints(
 ) -> LayoutConstraintDocument:
     """从组件序列推导缺省约束文档（确定性、无 I/O）。
 
-    规则（缺省即 V4 语义的显式化）：
+    规则（**缺省 = V4 行为逐字段一致**，R9 评审 P1-1 清偿后锁定）：
     - enabled=False 的组件不进约束表（不参与布局）；
-    - SINGLETON_TYPES（title/north_arrow/scale_bar/attribution…）→
-      must_fit=True（V4 required_overflow_kept 语义的声明面）；
-    - KEY_NOTE_TYPES → no_truncate=True（wrap-not-clip 消费依据）；
-    - COLLAPSIBLE_TYPES → overflow_policy=collapse（V4 L3 准入声明）；
-    - 其余组件 → 全缺省（overflow_policy=collapse 与 V4 L3 兜底一致）。
+    - ``overflow_policy``：``COLLAPSIBLE_TYPES`` → collapse（V4 L3 本就
+      准入这些类型，声明是显式化）；**其余类型 → keep**（V4 溢出链不动，
+      绝不把非折叠族静默扩入折叠）；
+    - ``must_fit``：**仅当组件自身证据声明 required**（``optional=False``）
+      时置位 —— 该情形下 V5 的 required 化是 no-op；缺省不翻转调用方的
+      optional 语义。SINGLETON/KEY_NOTE 只进 ``key_component_ids``
+      （披露面：若它们最终落入 suppressed，V5 发
+      ``key_component_suppressed`` 发现 —— 诚实披露而非静默强制）；
+    - ``KEY_NOTE_TYPES`` → no_truncate=True（wrap-not-clip 消费依据）。
+
+    更强的保证（关键组件永不消失、非折叠族显式折叠）由调用方**显式**
+    声明 must_fit/collapse —— 显式 > 缺省。
     """
     doc_components: Dict[str, ComponentLayoutConstraint] = {}
     key_ids: List[str] = []
@@ -135,13 +148,14 @@ def derive_layout_constraints(
         enabled = _comp_field(comp, "enabled", True)
         if enabled is False:
             continue
-        must_fit = ctype in SINGLETON_TYPES or ctype in KEY_NOTE_TYPES
+        optional = _comp_field(comp, "optional", True)
+        must_fit = optional is False  # 仅证据驱动的 required（V5 no-op）
         no_truncate = ctype in KEY_NOTE_TYPES
-        if must_fit or no_truncate:
+        if ctype in SINGLETON_TYPES or no_truncate or must_fit:
             key_ids.append(cid)
         doc_components[cid] = ComponentLayoutConstraint(
             component_id=cid, must_fit=must_fit, no_truncate=no_truncate,
-            overflow_policy="collapse" if ctype in COLLAPSIBLE_TYPES else "collapse",
+            overflow_policy="collapse" if ctype in COLLAPSIBLE_TYPES else "keep",
         )
     return LayoutConstraintDocument(
         page_profile=page_profile, key_component_ids=key_ids,

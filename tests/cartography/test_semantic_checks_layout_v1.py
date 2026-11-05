@@ -64,6 +64,7 @@ def test_finding_codes_closed_vocab():
 
 
 def test_conflict_becomes_layout_collision_unresolved():
+    from app.lib.cartography.component_composer import REPAIR_ACTIONS
     sol = _solution(conflicts=[LayoutConflict(
         component_id="chart", conflict_type="zone_exhausted",
         detail_zh="x")])
@@ -75,7 +76,7 @@ def test_conflict_becomes_layout_collision_unresolved():
     assert f.evidence_class == "deterministic"
     assert f.repairability != "not_repairable"
     assert f.suggested_fix is not None
-    assert f.suggested_fix["action"] in actions_by_id()
+    assert f.suggested_fix["action"] in set(REPAIR_ACTIONS) | set(actions_by_id())
 
 
 def test_key_component_suppressed_is_error():
@@ -222,19 +223,33 @@ def test_end_to_end_from_solve_layout_v5():
     assert codes <= set(LAYOUT_FINDING_CODES)
 
 
-# ── 5. selfheal 注册面 ──────────────────────────────────────────────────
+# ── 5. 修复路由契约（R9 P2-2 清偿后）──────────────────────────────────
 
 
-def test_selfheal_registry_covers_layout_triggers():
+def test_fix_route_uses_existing_action_vocabularies():
+    """路由动作词必须落在既有执行器词表内，不新造动作 id：
+    - 版式类 → component_composer.REPAIR_ACTIONS（AC-07 修复链词汇）；
+    - 标注类 → selfheal_actions 已注册动作（adjust_labels）。
+    """
+    from app.lib.cartography.component_composer import REPAIR_ACTIONS
+    from app.lib.cartography.semantic_checks_layout import _FIX_ROUTE
+
     by_id = actions_by_id()
-    assert len(SELFHEAL_ACTIONS) >= 5  # 既有下限不回退
-    layout_triggers = {"LAYOUT_COLLISION_UNRESOLVED", "OVERFLOW_SUPPRESSED",
-                       "KEY_COMPONENT_SUPPRESSED", "LABEL_SUPPRESSED_RATIO"}
-    covering = [
-        a for a in SELFHEAL_ACTIONS
-        if a.triggers & layout_triggers
-    ]
-    assert covering, "版式发现词表须有至少一个已注册修复动作承接"
-    for a in covering:
-        assert a.action_id in by_id
-        assert a.risk in ("auto_safe", "semantic_risk", "explicit_only")
+    assert len(SELFHEAL_ACTIONS) >= 5  # 既有下限不回退（未撤销既有动作）
+    for code, action in _FIX_ROUTE.items():
+        assert code in LAYOUT_FINDING_CODES
+        assert action in REPAIR_ACTIONS or action in by_id, (
+            f"{code} 路由到未注册动作 {action!r}")
+    # 版式类路由具体映射（closed 契约锁定）
+    assert _FIX_ROUTE["LAYOUT_COLLISION_UNRESOLVED"] == "change_anchor"
+    assert _FIX_ROUTE["OVERFLOW_SUPPRESSED"] == "collapse_to_overflow"
+    assert _FIX_ROUTE["LABEL_SUPPRESSED_RATIO"] == "adjust_labels"
+    assert "adjust_labels" in by_id  # selfheal 既有注册，非本 PR 新造
+
+
+def test_no_dead_layout_action_ids_registered():
+    """R9 P2-2：relayout_* 死端动作 id 不再注册（无执行器分支的
+    AUTO_SAFE 标注具有误导性 —— 撤销注册面，路由直连既有词表）。"""
+    ids = {a.action_id for a in SELFHEAL_ACTIONS}
+    assert "relayout_change_anchor" not in ids
+    assert "relayout_collapse_overflow" not in ids

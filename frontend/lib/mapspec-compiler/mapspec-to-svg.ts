@@ -620,7 +620,10 @@ function compileMapSpecToSvgBody(
         | undefined;
       const srcData = srcEntry?.inlineData ?? srcEntry?.data;
       let fields: Set<string> | null = null;
-      if (srcData && typeof srcData === "object") {
+      // R9 P3-2：非对象/数组形态的 inlineData → null（诚实跳过，与 Python
+      // inline_source_field_set 的 dict 判定同语义）—— 此前数组落入
+      // [srcData] 单要素路径产出**空集**，畸形输入下误报 label_field_missing。
+      if (srcData && typeof srcData === "object" && !Array.isArray(srcData)) {
         const feats: unknown[] =
           srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
         fields = new Set<string>();

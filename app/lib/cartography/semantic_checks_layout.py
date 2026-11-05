@@ -7,9 +7,11 @@
 - **词表 closed**（:data:`LAYOUT_FINDING_CODES`）：
   ``LAYOUT_COLLISION_UNRESOLVED`` / ``KEY_COMPONENT_SUPPRESSED`` /
   ``OVERFLOW_SUPPRESSED`` / ``SAFE_AREA_VIOLATION`` / ``LABEL_SUPPRESSED_RATIO``；
-- **fix_hint 只路由到已注册动作**（selfheal_actions.SELFHEAL_ACTIONS，
-  presentation-only；无新执行器 —— 执行链仍是 component_composer
-  REPAIR_ACTIONS → 前端 composition-repair 的既有路径）；
+- **fix_hint 只路由既有执行器词表**（R9 P2-2：版式类 → component_composer
+  ``REPAIR_ACTIONS``（change_anchor/collapse_to_overflow/…，AC-07 修复链
+  词汇）；标注类 → selfheal_actions 已注册动作 adjust_labels。不新造
+  动作 id、不建第二执行器；presentation commit 构造的执行接线归
+  quality_loop 消费面（并行 PR 占用文件））；
 - **fail-closed**：标注统计缺席 → ``LABEL_SUPPRESSED_RATIO`` 记
   ``not_evaluated``；几何域进入（rects 在场）而版心缺席 →
   ``SAFE_AREA_VIOLATION`` 记 ``not_evaluated``；两输入都不在场 = 该域
@@ -39,11 +41,17 @@ LAYOUT_FINDING_CODES: frozenset = frozenset({
 LABEL_SUPPRESSED_WARN_RATIO = 0.10
 LABEL_SUPPRESSED_FAIL_RATIO = 0.25
 
-#: 修复动作路由（closed；action_id 必须已在 selfheal_actions 注册）。
+#: 修复动作路由（closed）。R9 P2-2 清偿：版式类动作词即
+#: component_composer ``REPAIR_ACTIONS`` 既有词表（change_anchor/shrink/
+#: collapse_to_overflow/hide_lowest_priority/keep_required —— AC-07 版面
+#: 修复链的执行器词汇），**不新造动作 id**。执行接线（presentation commit
+#: 构造）归 quality_loop 消费面（并行 PR 占用文件；本模块只产出建议，
+#: 不建第二执行器）。LABEL_SUPPRESSED_RATIO 路由到 selfheal_actions
+#: 既有注册动作 adjust_labels（呈现级标注策略调整）。
 _FIX_ROUTE = {
-    "LAYOUT_COLLISION_UNRESOLVED": "relayout_change_anchor",
-    "OVERFLOW_SUPPRESSED": "relayout_collapse_overflow",
-    "KEY_COMPONENT_SUPPRESSED": "relayout_collapse_overflow",
+    "LAYOUT_COLLISION_UNRESOLVED": "change_anchor",
+    "OVERFLOW_SUPPRESSED": "collapse_to_overflow",
+    "KEY_COMPONENT_SUPPRESSED": "collapse_to_overflow",
     "LABEL_SUPPRESSED_RATIO": "adjust_labels",
 }
 
@@ -163,7 +171,14 @@ def evaluate_layout_findings(
 
     # ── 4. safe area 像素几何（可选域）──
     if component_rects_px is not None:
-        if safe_area_px is None or canvas_px is None:
+        canvas_ok = (
+            canvas_px is not None
+            and float(canvas_px.get("width") or 0) > 0
+            and float(canvas_px.get("height") or 0) > 0
+        )
+        if safe_area_px is None or not canvas_ok:
+            # R9 P3-9：canvas_px 空/零维与缺席同判（否则 right/bottom 以
+            # 缺省 0 计算必误报）—— 证据不可得 = not_evaluated。
             findings.append(_finding(
                 "SAFE_AREA_VIOLATION", "warning",
                 "组件像素矩形在场但版心/画布声明缺席：safe area 未评估"

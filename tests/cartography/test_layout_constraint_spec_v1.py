@@ -84,29 +84,67 @@ def test_closed_vocab_and_bounds():
 class _Comp:
     """派生输入的最小鸭子型（MapSpecComponent/CartographyComponent 子集）。"""
 
-    def __init__(self, cid: str, ctype: str, *, enabled: bool = True):
+    def __init__(self, cid: str, ctype: str, *, enabled: bool = True,
+                 optional: bool = True):
         self.id = cid
         self.type = ctype
         self.enabled = enabled
+        self.optional = optional
 
 
-def test_derive_defaults_singletons_must_fit_and_collapsibles_collapse():
+def test_derive_defaults_v4_equivalent_semantics():
+    """R9 P1-1 锁定：缺省派生 = V4 行为的显式化（非折叠族 keep、
+    must_fit 仅证据驱动 required、单例/关键说明只进披露清单）。"""
     doc = derive_layout_constraints([
         _Comp("t", "title"),
         _Comp("attr", "attribution"),
         _Comp("method", "methodology_note"),
         _Comp("chart", "chart_panel"),
+        _Comp("legend", "legend"),
+        _Comp("scale_req", "scale_bar", optional=False),
         _Comp("hidden", "statistics_panel", enabled=False),
     ], page_profile="viewport")
     assert doc.spec_version == SPEC_VERSION
-    assert doc.components["t"].must_fit is True
-    assert doc.components["attr"].must_fit is True
-    assert doc.components["method"].must_fit is True
-    assert doc.components["method"].no_truncate is True
+    # must_fit 仅证据驱动（optional=False）；类型派生不翻转
+    assert doc.components["t"].must_fit is False
+    assert doc.components["attr"].must_fit is False
+    assert doc.components["scale_req"].must_fit is True
+    # 折叠准入只给 COLLAPSIBLE_TYPES；legend（非折叠族）= keep
     assert doc.components["chart"].overflow_policy == "collapse"
+    assert doc.components["legend"].overflow_policy == "keep"
+    assert doc.components["method"].no_truncate is True
     # disabled 组件不进约束表（不参与布局）
     assert "hidden" not in doc.components
-    assert set(doc.key_component_ids) >= {"t", "attr", "method"}
+    # 单例 + 关键说明 + required 证据都进披露清单（key_component_ids）
+    assert set(doc.key_component_ids) >= {"t", "attr", "method", "scale_req"}
+
+
+def test_derived_doc_reproduces_v4_on_overflow_scenario():
+    """R9 P1-1 回归锁定：derive→V5 在溢出场景与 V4 逐字段一致。
+
+    评审复现用例：12 个 width_units=4 的 legend + title，viewport 档
+    （此前缺省派生把非折叠族扩入折叠 → 行为分叉）。
+    """
+    parts = [LayoutParticipantV4(
+        id="t", type="title", requested_zone="top-center",
+        priority=1, optional=False,
+    )] + [
+        LayoutParticipantV4(
+            id=f"leg{i}", type="legend", requested_zone="bottom-left",
+            priority=10 + i, optional=True, width_units=4)
+        for i in range(12)
+    ]
+    doc = derive_layout_constraints(
+        [{"id": p.id, "type": p.type, "optional": p.optional} for p in parts],
+        page_profile="viewport")
+    v4 = solve_layout_v4(parts, page_profile="viewport")
+    v5 = solve_layout_v5(parts, constraint_spec=doc, page_profile="viewport")
+    assert v5.placements == v4.placements
+    assert v5.suppressed == v4.suppressed
+    assert v5.collapsed_ids == v4.collapsed_ids
+    assert v5.hidden_ids == v4.hidden_ids
+    # V4 确实发生抑制（用例有效性自证：若无溢出则等价断言无意义）
+    assert v4.suppressed, "场景须真实触发溢出路径"
 
 
 def test_derive_empty_is_empty_document():
@@ -151,20 +189,64 @@ def test_v5_without_constraints_equals_v4():
 # ── 4. must_fit / overflow 语义 ──────────────────────────────────────────
 
 
-def test_must_fit_key_component_never_suppressed():
-    """密集窄画幅下 methodology_note（must_fit+collapse）不消失。
+def test_explicit_must_fit_key_component_never_suppressed():
+    """**显式** must_fit 声明下关键组件不消失（密集窄画幅）。
 
     viewport profile 顶/底预算 3/3、bottom-right 容量 2 —— 11 个参与者
-    必然溢出；V5 下 key 组件要么落位要么折叠进溢出槽，绝不在 suppressed。
+    必然溢出；显式 must_fit → required 化 → required_overflow_kept 兜底。
     """
     parts = _dense_participants()
-    doc = derive_layout_constraints(
-        [_Comp(p.id, p.type) for p in parts], page_profile="viewport")
+    doc = LayoutConstraintDocument(
+        page_profile="viewport",
+        key_component_ids=["t", "attr", "method", "scale", "north"],
+        components={
+            "t": ComponentLayoutConstraint(component_id="t", must_fit=True),
+            "attr": ComponentLayoutConstraint(component_id="attr", must_fit=True),
+            "method": ComponentLayoutConstraint(
+                component_id="method", must_fit=True,
+                no_truncate=True, overflow_policy="collapse"),
+            "scale": ComponentLayoutConstraint(component_id="scale", must_fit=True),
+            "north": ComponentLayoutConstraint(component_id="north", must_fit=True),
+        },
+    )
     sol = solve_layout_v5(parts, constraint_spec=doc, page_profile="viewport")
     suppressed_ids = {s.id for s in sol.suppressed}
     for key_id in doc.key_component_ids:
         assert key_id not in suppressed_ids, (
             f"key component {key_id} suppressed: {sol.suppressed}")
+    # 无契约违例发现（must_fit 全部兑现）
+    assert not [f for f in sol.constraint_findings
+                if f.code == "key_component_suppressed"]
+
+
+def test_derived_doc_key_component_suppression_is_disclosed():
+    """R9 P1-1 语义：缺省派生**不强制** key 组件存活（= V4 行为），
+    但任何 key 组件落入 suppressed 必发 key_component_suppressed 发现
+    （诚实披露而非静默强制）。"""
+    parts = [
+        LayoutParticipantV4(
+            id="t", type="title", requested_zone="top-center",
+            priority=1, optional=False),
+    ] + [
+        LayoutParticipantV4(
+            id=f"leg{i}", type="legend", requested_zone="bottom-left",
+            priority=10 + i, optional=True, width_units=4)
+        for i in range(12)
+    ] + [
+        # 关键说明组件落在超载槽（bottom-left 已满）—— V4 语义下 optional
+        # 组件可被抑制；缺省派生只保证**披露**
+        LayoutParticipantV4(
+            id="attr", type="attribution", requested_zone="bottom-left",
+            priority=5, optional=True),
+    ]
+    doc = derive_layout_constraints(
+        [{"id": p.id, "type": p.type, "optional": p.optional} for p in parts],
+        page_profile="viewport")
+    sol = solve_layout_v5(parts, constraint_spec=doc, page_profile="viewport")
+    if "attr" in {s.id for s in sol.suppressed}:
+        assert any(
+            f.code == "key_component_suppressed" and f.component_id == "attr"
+            for f in sol.constraint_findings)
 
 
 def test_suppress_policy_discloses_every_removal():

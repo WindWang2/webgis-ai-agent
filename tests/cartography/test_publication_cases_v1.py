@@ -32,6 +32,7 @@ from tests.cartography.publication_cases.cases import (
     EXPECTED_KEYS,
     LOCALES,
     PAGE_PROFILES,
+    case_constraint_overrides,
     case_participants,
     case_texts,
 )
@@ -69,19 +70,30 @@ def test_golden_matches_current_implementation(golden: dict) -> None:
 
 
 @pytest.mark.parametrize("case", CASES)
-@pytest.mark.parametrize("locale", LOCALES)
-def test_key_components_never_suppressed(case: str, locale: str) -> None:
-    for page in PAGE_PROFILES:
-        parts = [LayoutParticipantV4(**p) for p in case_participants(case)]
-        doc = derive_layout_constraints(
-            [{"id": p.id, "type": p.type} for p in parts],
-            page_profile="viewport",
-        )
-        sol = solve_layout_v5(parts, constraint_spec=doc, page_profile="viewport")
-        suppressed = {s.id for s in sol.suppressed}
-        assert suppressed.isdisjoint(EXPECTED_KEYS[case]), (
-            f"{case}/{locale}/{page['key']}: key 组件被抑制 {suppressed}"
-        )
+@pytest.mark.parametrize("solver_profile", ["viewport", "a4_portrait", "a4_landscape", "presentation_16x9"])
+def test_key_components_never_suppressed(case: str, solver_profile: str) -> None:
+    """R9 P3-12 修正：solver page_profile 真实参与求解输入（此前循环无效）。
+    旗舰用例的显式覆写（case_constraint_overrides）与生成器同层应用。"""
+    parts = [LayoutParticipantV4(**p) for p in case_participants(case)]
+    doc = derive_layout_constraints(
+        [{"id": p.id, "type": p.type, "optional": p.optional} for p in parts],
+        page_profile=solver_profile,
+    )
+    for cid, override in case_constraint_overrides(case).items():
+        if cid in doc.components:
+            doc.components[cid] = doc.components[cid].model_copy(update=override)
+    sol = solve_layout_v5(
+        parts, constraint_spec=doc, page_profile=solver_profile)
+    suppressed = {s.id for s in sol.suppressed}
+    assert suppressed.isdisjoint(EXPECTED_KEYS[case]), (
+        f"{case}/{solver_profile}: key 组件被抑制 {suppressed}"
+    )
+    # key 抑制契约违例发现与抑制事实一致（防御披露路径自证）
+    finding_ids = {
+        f.component_id for f in sol.constraint_findings
+        if f.code == "key_component_suppressed"
+    }
+    assert finding_ids <= suppressed
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -131,14 +143,19 @@ def test_generator_deterministic_double_run() -> None:
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
-def test_generator_cli_writes_identical_golden() -> None:
-    """CLI 再生与提交的 golden 逐字段一致（受控再生验证）。"""
+def test_generator_check_mode_is_readonly_and_passes() -> None:
+    """R9 P2-1 清偿：--check 模式只读校验（不写仓库文件、漂移即非零退出）。
+
+    此前测试 subprocess 无条件再生 golden 后自比 —— 恒真且会洗净已提交
+    基准；现在：先快照文件内容 → 跑 --check → 断言退出 0 且文件逐字节
+    未被触碰。
+    """
     repo_root = GOLDEN.parents[4]
+    before = GOLDEN.read_bytes()
     result = subprocess.run(
-        [sys.executable, "tests/cartography/publication_cases/generate.py"],
+        [sys.executable, "tests/cartography/publication_cases/generate.py",
+         "--check"],
         capture_output=True, text=True, cwd=repo_root, timeout=120,
     )
-    assert result.returncode == 0, result.stderr
-    committed = json.loads(GOLDEN.read_text(encoding="utf-8"))
-    regenerated = json.loads(GOLDEN.read_text(encoding="utf-8"))
-    assert committed == regenerated
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert GOLDEN.read_bytes() == before  # 测试不得改写仓库 golden

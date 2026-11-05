@@ -154,6 +154,21 @@ EXPECTED_KEYS = {
     "research_figure_inset_chart": {"title", "attr", "method", "subtitle"},
 }
 
+def case_constraint_overrides(case: str) -> Dict[str, Dict[str, object]]:
+    """旗舰用例的**显式**约束声明（derive 缺省之上的出版意图覆写）。
+
+    R9 P1-1 语义下缺省派生 = V4 行为（不强制 key 存活）；旗舰研究图件
+    的出版意图是注记（annotation）必须保留 —— 显式 must_fit 展示约束
+    系统的用法（显式 > 缺省），而非依赖隐式强制。
+    """
+    if case == "research_figure_inset_chart":
+        return {
+            "annotation": {"must_fit": True, "no_truncate": True},
+            "subtitle": {"must_fit": True},
+        }
+    return {}
+
+
 #: 每 case 允许出现的约束发现码（closed 子集；超出即回归）。
 ALLOWED_FINDING_CODES = {
     "dot_density_district": {"max_width_clamped", "overflow_suppressed",

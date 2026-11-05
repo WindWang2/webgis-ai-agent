@@ -31,17 +31,20 @@
     `no_truncate`（关键文本 wrap 不 clip）、`min_width_units`/`max_width_units`
     （1–4，与 solver 列单位一致）、`overflow_policy ∈ keep|collapse|suppress`
     （closed vocab；keep 保留+披露、collapse 折叠进溢出面板、suppress 仅
-    optional 且必须带披露码）。
+    optional 且必须带披露码；`must_fit × suppress` 互斥闭口拒绝）。
   - `LayoutConstraintDocument`（`spec_version: "layout_constraint_spec.v1"`）：
-    page 级 `safe_area_mm`（上右下左，出版版心）、`key_component_ids`、
-    `profile_overrides`（按 page_profile 覆写容量倍数的有界表）。
-  - `derive_layout_constraints(components, page_profile)`：从组件描述符
-    （SINGLETON/COLLAPSIBLE 词表、descriptor 默认）推导缺省约束 —— 无
-    显式约束输入时行为与 V4 完全一致（回归锁定）。
-- 求解入口 `solve_layout_v5(participants, constraints=...)`：V4 之上消费
-  约束（per-participant min_width_units/overflow 准入），输出 V4 解 +
-  `constraint_findings`（closed vocab：`key_component_suppressed`/
-  `key_note_truncated_risk`/`safe_area_violation`/`overflow_suppressed`）。
+    page 级 `safe_area_mm`（上右下左，出版版心）、`key_component_ids`。
+  - `derive_layout_constraints(components, page_profile)`：从组件证据推导
+    缺省约束 —— **缺省 = V4 行为逐字段一致**（R9 P1-1 清偿语义）：
+    折叠准入只显式化 `COLLAPSIBLE_TYPES`（其余 keep）；`must_fit` 仅当
+    组件自身 `optional=False`（V5 required 化为 no-op）；单例/关键说明
+    只进 `key_component_ids` 披露面（落入 suppressed 时发
+    `key_component_suppressed` 发现 —— 诚实披露而非静默强制）。
+    更强的保证（关键组件永不消失）由调用方**显式**声明（显式 > 缺省）。
+- 求解入口 `solve_layout_v5(participants, constraint_spec=...)`：V4 之上
+  消费约束（宽度钳制/下限提升/折叠准入/required 化），输出 V4 解 +
+  `constraint_findings`（closed vocab：`max_width_clamped`/
+  `overflow_suppressed`/`key_component_suppressed`/`constraint_unmatched`）。
 - **不持久化求解结果**（ADR-0084 既定：布局是派生投影）；约束文档是
   **输入**的序列化，不是第二真相。MapSpec schema 接线（若后续需要
   `layout.constraints` 字段）留作独立 additive commit，本 ADR 不绑定。
@@ -69,14 +72,18 @@
 
 - 新模块 `app/lib/cartography/semantic_checks_layout.py`：
   `LAYOUT_COLLISION_UNRESOLVED` / `KEY_COMPONENT_SUPPRESSED` /
-  `SAFE_AREA_VIOLATION` / `LABEL_COLLISION_RATIO`（阈值梯复用
-  label-layout WARN/FAIL/SEVERE/EXTREME）/ `LABEL_FIELD_MISSING`。
+  `OVERFLOW_SUPPRESSED` / `SAFE_AREA_VIOLATION` /
+  `LABEL_SUPPRESSED_RATIO`（抑制比阈值梯 ≥0.10 warning / ≥0.25 error，
+  两档封闭；证据带比率与计数）。
   证据类 deterministic，修复性标注 presentation-only。
-- fix_hint 路由映射到 component_composer.REPAIR_ACTIONS 既有动作词表
-  （change_anchor/shrink/collapse_to_overflow/hide_lowest_priority），
-  经 selfheal_actions 注册 —— 不改 quality_loop.py（该文件为并行 PR 占用）。
-  上限/幂等/user-wins 复用既有闸（MAX_REPAIR_ITERATIONS=2、
-  LOCK_REASON_USER_WINS）。
+  `label_field_missing` 不在本词表 —— 它由 D3 编译器孪生
+  （label_field_guard.py + mapspec-to-svg 双端）在导出期发射。
+- fix_hint 路由到**既有执行器词表**：版式类 → component_composer
+  REPAIR_ACTIONS（change_anchor/collapse_to_overflow）；标注类 →
+  selfheal_actions 已注册动作 adjust_labels。不新造动作 id、不建第二
+  执行器；presentation commit 构造的执行接线归 quality_loop 消费面
+  （该文件为并行 PR 占用，本 PR 只产出建议）。上限/幂等/user-wins
+  复用既有闸（MAX_REPAIR_ITERATIONS=2、LOCK_REASON_USER_WINS）。
 
 ### D5 — 出版用例基线（六族 fixture + 结构 golden）
 

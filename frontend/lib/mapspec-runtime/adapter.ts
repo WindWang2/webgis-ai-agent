@@ -224,6 +224,10 @@ export function _resetSceneEvidenceForTests(): void {
 // 导出披露据此给 basemap_tiles_missing（count + 样本 z/x/y；detail ≤200）。
 // 有界三重：样本 ≤5/源、源 ≤8、无坐标的失败只计数不进样本。确定性：快照
 // 按 sourceId 字典序（无墙钟入序）。
+// 计数语义（R9 P3-3 诚实登记）：**会话累计**（provider 健康度信号 ——
+// 跨导出持续缺瓦片的源每次导出都如实披露累计值），非单次导出窗口值；
+// 生产 reset 钩子（按瓦片源重建清零）留待后续接线，_resetTileMissForTests
+// 仅供测试。
 export interface TileMissAccount {
   sourceId: string;
   count: number;

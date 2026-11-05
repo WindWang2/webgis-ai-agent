@@ -646,7 +646,7 @@
           },
           {
             "id": "legend_classes",
-            "zone": "top-left",
+            "zone": "bottom-left",
             "width_units": 2
           },
           {
@@ -671,7 +671,7 @@
           },
           {
             "id": "unc",
-            "zone": "bottom-center",
+            "zone": "top-left",
             "width_units": 1
           }
         ],
@@ -732,7 +732,7 @@
           },
           {
             "id": "legend_classes",
-            "zone": "top-left",
+            "zone": "bottom-left",
             "width_units": 2
           },
           {
@@ -757,7 +757,7 @@
           },
           {
             "id": "unc",
-            "zone": "bottom-center",
+            "zone": "top-left",
             "width_units": 1
           }
         ],
@@ -818,7 +818,7 @@
           },
           {
             "id": "legend_classes",
-            "zone": "top-left",
+            "zone": "bottom-left",
             "width_units": 2
           },
           {
@@ -843,7 +843,7 @@
           },
           {
             "id": "unc",
-            "zone": "bottom-center",
+            "zone": "top-left",
             "width_units": 1
           }
         ],
@@ -904,7 +904,7 @@
           },
           {
             "id": "legend_classes",
-            "zone": "top-left",
+            "zone": "bottom-left",
             "width_units": 2
           },
           {
@@ -929,7 +929,7 @@
           },
           {
             "id": "unc",
-            "zone": "bottom-center",
+            "zone": "top-left",
             "width_units": 1
           }
         ],
@@ -990,7 +990,7 @@
           },
           {
             "id": "legend_classes",
-            "zone": "top-left",
+            "zone": "bottom-left",
             "width_units": 2
           },
           {
@@ -1015,7 +1015,7 @@
           },
           {
             "id": "unc",
-            "zone": "bottom-center",
+            "zone": "top-left",
             "width_units": 1
           }
         ],
@@ -1076,7 +1076,7 @@
           },
           {
             "id": "legend_classes",
-            "zone": "top-left",
+            "zone": "bottom-left",
             "width_units": 2
           },
           {
@@ -1101,7 +1101,7 @@
           },
           {
             "id": "unc",
-            "zone": "bottom-center",
+            "zone": "top-left",
             "width_units": 1
           }
         ],
@@ -2648,7 +2648,7 @@
           },
           {
             "id": "inset",
-            "zone": "bottom-left",
+            "zone": "top-right",
             "width_units": 1
           },
           {
@@ -2663,7 +2663,7 @@
           },
           {
             "id": "north",
-            "zone": "top-right",
+            "zone": "bottom-left",
             "width_units": 1
           },
           {
@@ -2694,6 +2694,7 @@
         ],
         "hidden_ids": [],
         "repair_actions": [
+          "change_anchor",
           "change_anchor",
           "change_anchor",
           "collapse_to_overflow",
@@ -2761,7 +2762,7 @@
           },
           {
             "id": "inset",
-            "zone": "bottom-left",
+            "zone": "top-right",
             "width_units": 1
           },
           {
@@ -2776,7 +2777,7 @@
           },
           {
             "id": "north",
-            "zone": "top-right",
+            "zone": "bottom-left",
             "width_units": 1
           },
           {
@@ -2807,6 +2808,7 @@
         ],
         "hidden_ids": [],
         "repair_actions": [
+          "change_anchor",
           "change_anchor",
           "change_anchor",
           "collapse_to_overflow",
@@ -2874,7 +2876,7 @@
           },
           {
             "id": "inset",
-            "zone": "bottom-left",
+            "zone": "top-right",
             "width_units": 1
           },
           {
@@ -2889,7 +2891,7 @@
           },
           {
             "id": "north",
-            "zone": "top-right",
+            "zone": "bottom-left",
             "width_units": 1
           },
           {
@@ -2920,6 +2922,7 @@
         ],
         "hidden_ids": [],
         "repair_actions": [
+          "change_anchor",
           "change_anchor",
           "change_anchor",
           "collapse_to_overflow",
@@ -2987,7 +2990,7 @@
           },
           {
             "id": "inset",
-            "zone": "bottom-left",
+            "zone": "top-right",
             "width_units": 1
           },
           {
@@ -3002,7 +3005,7 @@
           },
           {
             "id": "north",
-            "zone": "top-right",
+            "zone": "bottom-left",
             "width_units": 1
           },
           {
@@ -3033,6 +3036,7 @@
         ],
         "hidden_ids": [],
         "repair_actions": [
+          "change_anchor",
           "change_anchor",
           "change_anchor",
           "collapse_to_overflow",
@@ -3100,7 +3104,7 @@
           },
           {
             "id": "inset",
-            "zone": "bottom-left",
+            "zone": "top-right",
             "width_units": 1
           },
           {
@@ -3115,7 +3119,7 @@
           },
           {
             "id": "north",
-            "zone": "top-right",
+            "zone": "bottom-left",
             "width_units": 1
           },
           {
@@ -3146,6 +3150,7 @@
         ],
         "hidden_ids": [],
         "repair_actions": [
+          "change_anchor",
           "change_anchor",
           "change_anchor",
           "collapse_to_overflow",
@@ -3213,7 +3218,7 @@
           },
           {
             "id": "inset",
-            "zone": "bottom-left",
+            "zone": "top-right",
             "width_units": 1
           },
           {
@@ -3228,7 +3233,7 @@
           },
           {
             "id": "north",
-            "zone": "top-right",
+            "zone": "bottom-left",
             "width_units": 1
           },
           {
@@ -3259,6 +3264,7 @@
         ],
         "hidden_ids": [],
         "repair_actions": [
+          "change_anchor",
           "change_anchor",
           "change_anchor",
           "collapse_to_overflow",
