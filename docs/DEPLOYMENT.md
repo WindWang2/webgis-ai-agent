@@ -204,7 +204,7 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
 
 | 文件 | 阶段 | 用途 |
 |------|-----|------|
-| `Dockerfile` | 6 阶段：frontend-deps → frontend-builder → backend-deps → backend-builder → node-runtime/pi-builder → runner | dev/CI；开发栈 api 服务用 `target: backend-builder` |
+| `Dockerfile` | 7 阶段：frontend-deps → frontend-builder → backend-deps → backend-builder → node-runtime → pi-builder → runner | dev/CI；开发栈 api 服务用 `target: backend-builder` |
 | `Dockerfile.prod` | 6 阶段：frontend-deps → frontend-builder → node-runtime → pi-builder → backend-deps → runner | 生产镜像（CI build job 构建，`target: runner`） |
 
 `pi-builder` 阶段（ADR-0282/#400 根因清偿）：在镜像内构建 vendored Pi 的自包含
