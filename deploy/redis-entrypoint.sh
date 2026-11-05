@@ -18,7 +18,8 @@
 #
 # 现在：把 `requirepass <value>` 写进**运行时生成的 0400 文件**（tmpfs
 # /dev/shm —— 不落盘、不进镜像层、容器停止即消失），再以 redis-server 的
-# 第二个配置文件参数传入（redis-server 接受多个配置文件，后者覆盖前者）。
+# `--include` 加载。Redis 只接受一个裸配置文件参数；第二个裸路径会被当作
+# 配置指令，导致 FATAL CONFIG FILE ERROR，而不是加载第二份配置。
 # 任何进程的命令行里都不出现口令；deploy/redis.conf 仍是唯一被跟踪的配置，
 # 凭据只存在于 tmpfs 与容器 env（env 是 compose `:?` fail-fast 与
 # healthcheck `$$REDIS_PASSWORD` 的共同前提，见服务定义注释）。
@@ -36,7 +37,7 @@ chmod 400 "$rtconf"
 if [ "$(id -u)" = '0' ] && command -v gosu >/dev/null 2>&1; then
 	find /data \! -user redis -exec chown redis '{}' +
 	chown redis:redis "$rtconf"
-	exec gosu redis redis-server /usr/local/etc/redis/redis.conf "$rtconf"
+	exec gosu redis redis-server /usr/local/etc/redis/redis.conf --include "$rtconf"
 fi
 
-exec redis-server /usr/local/etc/redis/redis.conf "$rtconf"
+exec redis-server /usr/local/etc/redis/redis.conf --include "$rtconf"

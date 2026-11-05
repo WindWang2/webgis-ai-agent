@@ -1010,6 +1010,10 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Validate Redis production entrypoint
+        # 真 Redis 解析 + 认证检查：文本断言曾把第二个裸 conf 参数误认成 include。
+        run: sh deploy/smoke-redis-entrypoint.sh 'redis:7-alpine@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7'
+
       - name: Validate nginx config syntax (nginx -t)
         # E-F-1/E-F-7：SSE location 正则、keepalive map、超时配置都必须语法合法。
         # nginx -t 在加载配置时会校验被引用的文件存在（ssl 证书/key）并解析 upstream
@@ -1428,13 +1432,13 @@ jobs:
         run: echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Download Image Artifact
+        # SSH 只转传 tar，registry-only 分支不消费 artifact。不要在 runner
+        # 再 docker load：展开大型 Python/CUDA 层会耗尽磁盘，且无人消费。
+        if: vars.SSH_HOST != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webgis-image
           path: .
-
-      - name: Load Docker Image
-        run: docker load < webgis-image.tar
 
       - name: Login to Container Registry
         # 审计 CICD-01：deploy-prod 需要 registry 读权限以校验镜像可达（manifest inspect）
