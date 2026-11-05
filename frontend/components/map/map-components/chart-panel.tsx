@@ -20,6 +20,7 @@ import {
   publishSelection,
   subscribeSelection,
 } from '@/lib/selection/selection-store';
+import { emitChartSelectionChanged } from '@/lib/interaction/bus';
 import {
   getViewportContext,
   getViewportGeneration,
@@ -258,6 +259,11 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
             && currentCategories[0] === name;
           if (toggleOff) {
             publishSelection('clear_selection', { source: 'chart', layer_id: boundLayerId });
+            emitChartSelectionChanged({
+              layerId: boundLayerId,
+              field: selectionField || undefined,
+              action: 'clear',
+            });
             return;
           }
           publishSelection('select', {
@@ -266,6 +272,12 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
             selected_categories: [name],
             filter_field: selectionField || undefined,
             artifact_ref: chartRef || undefined,
+          });
+          // ADR-0283 D2：图表类别选择上行 IR（Agent 可见「图表里选了哪类」）。
+          emitChartSelectionChanged({
+            layerId: boundLayerId,
+            field: selectionField || undefined,
+            categories: [name],
           });
         }
       : null;

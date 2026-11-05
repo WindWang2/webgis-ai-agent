@@ -41,6 +41,19 @@
       "sensitivity": "limited",
       "state_changing": false
     },
+    "chart_selection_changed": {
+      "allow_empty_payload": false,
+      "authority": "observation",
+      "coalesce": "none",
+      "payload_keys": [
+        "action",
+        "categories",
+        "field",
+        "layer_id"
+      ],
+      "sensitivity": "limited",
+      "state_changing": false
+    },
     "comparison_mode_changed": {
       "allow_empty_payload": false,
       "authority": "observation",
@@ -146,6 +159,34 @@
       "sensitivity": "internal",
       "state_changing": false
     },
+    "table_selection_changed": {
+      "allow_empty_payload": false,
+      "authority": "observation",
+      "coalesce": "none",
+      "payload_keys": [
+        "action",
+        "feature_id",
+        "layer_id",
+        "selected_ids"
+      ],
+      "sensitivity": "limited",
+      "state_changing": false
+    },
+    "temporal_window_settled": {
+      "allow_empty_payload": false,
+      "authority": "mapspec",
+      "coalesce": "replace_pending",
+      "payload_keys": [
+        "current",
+        "extent",
+        "field",
+        "mode",
+        "pinned",
+        "window"
+      ],
+      "sensitivity": "internal",
+      "state_changing": true
+    },
     "viewport_settled": {
       "allow_empty_payload": false,
       "authority": "observation",
@@ -165,6 +206,7 @@
     "aoi_deleted",
     "aoi_drawn",
     "aoi_edited",
+    "chart_selection_changed",
     "comparison_mode_changed",
     "feature_deselected",
     "feature_selected",
@@ -174,6 +216,8 @@
     "layer_style_changed",
     "layer_visibility_changed",
     "measurement_created",
+    "table_selection_changed",
+    "temporal_window_settled",
     "viewport_settled"
   ],
   "schema_version": "interaction_ir.v1"

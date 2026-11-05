@@ -27,6 +27,7 @@ import {
   publishSelection,
   subscribeSelection,
 } from '@/lib/selection/selection-store';
+import { emitTableSelectionChanged } from '@/lib/interaction/bus';
 import {
   getViewportContext,
   getViewportGeneration,
@@ -195,6 +196,7 @@ function PagedTableBody({
     const sel = getSelection();
     if (sel && sel.source === 'table' && sel.layer_id === layerId && sel.selected_ids.length === 1 && sel.selected_ids[0] === rowId) {
       publishSelection('clear_selection', { source: 'table', layer_id: layerId });
+      emitTableSelectionChanged({ layerId, action: 'clear' });
       return;
     }
     publishSelection('select', {
@@ -204,6 +206,8 @@ function PagedTableBody({
       id_field: idField ?? undefined,
       artifact_ref: tableRef || undefined,
     });
+    // ADR-0283 D2：表格行定位上行 IR（保留 table 来源身份，与 map 点选区分）。
+    emitTableSelectionChanged({ layerId, featureId: rowId });
   };
 
   const matchedText = table.totalMatching != null

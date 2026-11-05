@@ -63,6 +63,9 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
     viewport: Optional[Dict[str, Any]] = None
     selection: Optional[Dict[str, Any]] = None
     active_aoi: Optional[Dict[str, Any]] = None
+    # ADR-0283 D2：图表类别选择 / 时间窗 settle 的语义面（最新事实）。
+    chart_selection: Optional[Dict[str, Any]] = None
+    temporal_window: Optional[Dict[str, Any]] = None
     overrides: Dict[str, Dict[str, Any]] = {}
     override_order: List[str] = []
     attempted: List[Dict[str, Any]] = []
@@ -76,6 +79,16 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
             selection = _selection_view(record, payload)
         elif kind == "feature_deselected":
             selection = None
+        elif kind == "chart_selection_changed":
+            chart_selection = (
+                None if payload.get("action") == "clear"
+                else _chart_selection_view(record, payload)
+            )
+        elif kind == "table_selection_changed":
+            # 表格行选择即要素选择（来源身份保留在 kind）——更新 selection 面。
+            selection = _selection_view(record, payload)
+        elif kind == "temporal_window_settled":
+            temporal_window = _temporal_window_view(record, payload)
         elif kind == "aoi_drawn" or kind == "aoi_edited":
             active_aoi = _aoi_view(record, payload)
         elif kind == "aoi_deleted":
@@ -129,6 +142,8 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
         "viewport": viewport,
         "selection": selection,
         "active_aoi": active_aoi,
+        "chart_selection": chart_selection,
+        "temporal_window": temporal_window,
         "user_overrides": [overrides[layer] for layer in reversed(override_order)],
         "attempted_not_applied": attempted[-MAX_ATTEMPTED:],
         "recent_interactions": recent,
@@ -173,6 +188,31 @@ def _selection_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str
 def _aoi_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
     view = {key: payload[key] for key in ("geometry_type", "vertex_count", "geometry_digest")
             if key in payload}
+    view["source"] = {
+        "client_instance_id": record.get("client_instance_id"),
+        "client_seq": record.get("client_seq"),
+        "server_seq": record.get("server_seq"),
+    }
+    return view
+
+
+def _chart_selection_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+    """图表类别选择视图（clear 语义由调用方置 None）。"""
+    view = {key: payload[key] for key in ("layer_id", "field", "categories")
+            if key in payload}
+    view["source"] = {
+        "client_instance_id": record.get("client_instance_id"),
+        "client_seq": record.get("client_seq"),
+        "server_seq": record.get("server_seq"),
+    }
+    return view
+
+
+def _temporal_window_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+    view = {key: payload[key] for key in (
+        "mode", "field", "extent", "current", "window", "pinned",
+    ) if key in payload}
+    view["link"] = _mutation_link(record)
     view["source"] = {
         "client_instance_id": record.get("client_instance_id"),
         "client_seq": record.get("client_seq"),

@@ -202,31 +202,45 @@ def test_op7_selection_survives_across_server_seq():
     assert snap["selection"]["feature_id"] == "sch-1"
 
 
-# ── 操作 9：图表类别选择（现状：词表未收 → normalize 拒收）─────────────
+# ── 操作 9：图表类别选择（S2 已收词：normalize 接受 + 投影可见）────────
 
 
-def test_op9_chart_selection_kind_rejected_today():
-    """S2 缺口：图表类别选择无 IR kind——normalize 拒收（白名单纪律的
-    现状证据；S2 落地后本断言翻转）。"""
-    assert normalize_payload("chart_selection_changed", {
-        "layer_id": "districts", "field": "type", "categories": ["A"],
-    }) is None
+def test_op9_chart_selection_kind_accepted_and_projected():
+    """S2 翻转：chart_selection_changed 进词表（钩子 chart-panel onClick），
+    类别谓词进投影 chart_selection 面。"""
+    normalized = normalize_payload("chart_selection_changed", {
+        "layer_id": "districts", "field": "type", "categories": ["A", "B"],
+    })
+    assert normalized is not None
+    assert normalized.get("categories") == ["A", "B"]
+    state = _fold([
+        _ev(1, "chart_selection_changed", {
+            "layer_id": "districts", "field": "type",
+            "categories": ["A"], "action": "select",
+        }),
+    ])
+    snap = project_interaction_snapshot(state.events)
+    assert snap["chart_selection"]["categories"] == ["A"]
 
 
-# ── 操作 10：属性表定位（现状：词表未收）──────────────────────────────
+# ── 操作 10：属性表定位（S2 已收词）───────────────────────────────────
 
 
-def test_op10_table_selection_kind_rejected_today():
-    assert normalize_payload("table_selection_changed", {
+def test_op10_table_selection_kind_accepted():
+    normalized = normalize_payload("table_selection_changed", {
         "layer_id": "schools", "feature_id": "sch-2",
-    }) is None
+    })
+    assert normalized is not None
+    assert normalized.get("feature_id") == "sch-2"
 
 
-# ── 操作 11：时间窗（现状：词表未收；active_time_slice 恒 unknown）────
+# ── 操作 11：时间窗（S2 已收词：settle 终态 + replace_pending）─────────
 
 
-def test_op11_temporal_kind_rejected_and_time_slice_field_exists():
-    assert normalize_payload("temporal_window_settled", {"current": "2024-01"}) is None
+def test_op11_temporal_kind_accepted_and_coalesced():
+    assert normalize_payload("temporal_window_settled", {
+        "current": "2024-01", "pinned": True,
+    }) is not None
     # active_time_slice 是 TemporalContext 的 v1 unknown 事实（contract.py）。
     assert "active_time_slice" in TemporalContext.model_fields
 
