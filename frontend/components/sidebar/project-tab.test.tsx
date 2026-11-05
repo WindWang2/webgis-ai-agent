@@ -56,6 +56,9 @@ const assetsApi = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/api/project-assets', () => assetsApi);
 
+const uploadApi = vi.hoisted(() => ({ uploadFile: vi.fn() }));
+vi.mock('@/lib/api/upload', () => uploadApi);
+
 import { ProjectTab } from './project-tab';
 import { ApiError } from '@/lib/api/transport';
 import type { Project, WorkflowSummary } from '@/lib/api/project';
@@ -145,6 +148,34 @@ beforeEach(() => {
 });
 
 describe('ProjectTab — 加载 / 错误 / 空态', () => {
+  it('creates the first project before exposing the real dataset upload and attach flow', async () => {
+    api.createProject.mockResolvedValue(makeProject({ id: 'new-project', name: 'J1 上传分析项目' }));
+    uploadApi.uploadFile.mockResolvedValue({ id: 7, original_name: 'schools.geojson', session_ref: 'ref:upload-7' });
+    assetsApi.attachDataset.mockResolvedValue({
+      id: 'dataset-7', project_id: 'new-project', name: 'schools', source_type: 'upload',
+      source_ref: 'ref:upload-7', crs: null, quality_status: 'unchecked', created_at: '2026-01-01T00:00:00Z',
+    });
+    render(<ProjectTab />);
+    await screen.findByLabelText('当前项目');
+    expect(screen.queryByRole('button', { name: '挂载数据集' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
+    fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: 'J1 上传分析项目' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }));
+    fireEvent.click(await screen.findByRole('button', { name: '挂载数据集' }));
+    expect(api.createProject).toHaveBeenCalledWith('J1 上传分析项目');
+    expect(screen.getByLabelText('当前项目')).toHaveValue('new-project');
+    fireEvent.change(screen.getByLabelText('来源类型'), { target: { value: 'upload' } });
+    const file = new File(['{"type":"FeatureCollection","features":[]}'], 'schools.geojson', { type: 'application/geo+json' });
+    fireEvent.change(screen.getByLabelText('选择数据文件…'), { target: { files: [file] } });
+    await screen.findByTestId('dataset-upload-done');
+    fireEvent.click(screen.getByRole('button', { name: '确认挂载' }));
+    await waitFor(() => expect(assetsApi.attachDataset).toHaveBeenCalledWith('new-project', {
+      name: 'schools', source_type: 'upload', source_ref: 'ref:upload-7', crs: undefined,
+    }));
+    expect(uploadApi.uploadFile).toHaveBeenCalledWith(file, undefined, expect.any(Function));
+    await waitFor(() => expect(toastStore.addToast).toHaveBeenCalledWith('已挂载数据集 schools', 'success'));
+  });
+
   it('(a) 首屏加载渲染 LoadingState「加载项目…」', () => {
     api.fetchProjects.mockImplementation(() => new Promise<Project[]>(() => {}));
     render(<ProjectTab />);

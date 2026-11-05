@@ -16,7 +16,7 @@ mock 模式零后端：`e2e/fixtures/api-stubs.ts` 以 `page.route` 应答全部
 API（继承 `test/visual/capture.mjs` 的模式，做成有状态 + 旅程可编排），
 SSE 对话流按生产契约回放（`fixtures/sse.ts`）。
 
-real 模式契约（ADR-0146）：真实后端（uvicorn 最小配置）+ 真实前端 +
+real 模式契约（ADR-0146）：真实后端（uvicorn + SQLite + Redis/Celery worker）+ 真实前端 +
 **确定性 LLM 边界**（`tools/llm-stub.mjs`，OpenAI wire 格式脚本化应答；
 `STUB_FAIL_AT`/`STUB_DELAY_FIRST_TOKEN_MS` 供取消/重试旅程编排）。
 真实 LLM 冒烟不在此档（见 P6，env 门控）。
@@ -48,3 +48,36 @@ real 模式契约（ADR-0146）：真实后端（uvicorn 最小配置）+ 真实
   `components/upload/` 已从磁盘删除，J1 断言真实 UI 流程而非传输层 mock。
 - 「结果」工作台 rail tab 已不在当前壳上（capture.mjs 为旧版界面），
   结果到达信号改为地图上的分析结果卡。
+
+## J2 real：真实取消与重试
+
+J2 先用 nightly 账号认证并从 UI 创建会话，再通过任务中心取消等待确定性
+LLM 边界的真实 agent task。只有 UI「已取消」和后端 `cancelled` 终态同时成立
+才通过，取消请求已接受或「取消中」不能代替终态。该提示词的 LLM 等待
+由 `STUB_TASK_CANCEL_DELAY_MS` 控制，默认 90000ms，仅影响 J2 当前回合。
+
+重试使用 runner 本地 `python -m scripts.seed_journey_retry` fixture，要求
+`E2E_MODE=real`、认证开启、SQLite 位于 `DATA_DIR`，且用户和会话归属匹配。
+它经生产提交桥把缺失影像的 NDVI 任务发给真实 Celery worker，等首次执行
+确实失败后才恢复一个 16×16 两波段 GeoTIFF；不伪造任务状态，不新增 HTTP
+测试端点。UI 点击重试后必须到达 `completed`、`attempt=2`，并验证实际
+输出影像的 256 个像元均为 NDVI 0.5。每次 fixture 使用独立输入路径。
+
+本地运行须与后端/worker 共享仓库、数据库和 `DATA_DIR`；Python 环境可通过
+`E2E_PYTHON` 指定，默认 `python`。nightly 已启动 Redis 和 Celery，不能只起
+Redis 而没有 worker。离线回归 `tests/test_ci_journey_retry_fixture.py` 使用
+内存 broker + 真实 solo worker 线程，保留生产任务、认证、DB、重试路由与
+影像运算；它不声称覆盖 Redis 跨进程投递或浏览器 UI。
+
+## J6 real：私网注册边界与已配置源
+
+公开 REST 注册接口始终拒绝调用方赋予私网访问权限，前端的旧「允许内网」
+字段不能绕过这条 SSRF 边界。J6 真实腿因此明确检查登录用户提交 localhost
+源仍返回 400，且没有新源落库；不声称这覆盖了成功的公网 UI 注册。
+
+nightly 在启动后端前运行 `tools/seed-fabric-source.py`，使用既有可信 manager
+入口登记本次 runner 的 PostGIS fixture，绑定已预置账号的 owner/org。
+fixture 必须实际 probe healthy、发现 6000 行 poi_commercial、通过真实
+adapter 查询出 10 个正确点位，否则准备阶段失败。随后浏览器实际探查此源、
+实例化目录项并验证图层挂载，仍无 mock 产品 API。fixture 限开发 real lane、
+认证开启、DATA_DIR 内 SQLite 和固定 localhost:5432/gis 服务。

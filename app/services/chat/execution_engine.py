@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.services.tool_catalog import ToolCatalog
 
 from app.core.config import settings
+from app.lib.cancellation import OperationCancelled
 from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskStatus, TaskTracker
 from app.services.session_data import session_data_manager
@@ -2415,6 +2416,7 @@ class ChatExecutionEngine:
             async for event_type, event_data in _stream_with_token_keepalive(
                 self._call_llm_stream(messages_with_context, tools),
                 timeout_s=_LLM_TOKEN_KEEPALIVE_S,
+                cancel_token=task.cancel_token,
             ):
                 if event_type == "token":
                     if _ttft_ms is None:
@@ -2442,6 +2444,15 @@ class ChatExecutionEngine:
                     # — heartbeat the wire so idle proxies don't kill
                     # the stream (same event the tool-wave wait uses).
                     yield sse_event("keep_alive", event_data)
+            # Cleanup awaits in the helper can race with a final DELETE.
+            if task.cancel_token is not None:
+                task.cancel_token.raise_if_cancelled()
+        except OperationCancelled:
+            for chunk in token_batcher.flush():
+                yield chunk
+            for event in ctx.cancelled_events(_settle_cancel, include_done=True):
+                yield event
+            return
         except Exception:
             # #409: mid-stream failure — flush the batched tokens
             # BEFORE the exception reaches the route (which yields
@@ -2878,12 +2889,8 @@ class ChatExecutionEngine:
                         yield evt
                     # F9: 补齐孤儿 tool_call（已完成工具不在其列）
                     await self._repair_orphaned_tool_calls(session_id, ctx.messages)
-                    pf = ctx.plan_finalized_event()
-                    if pf:
-                        yield pf
-                    _settle_cancel()  # cooperative cancel ≠ success
-                    yield ctx.emitter.task_cancelled(task.id)
-                    ctx.turn_finished = True
+                    for event in ctx.cancelled_events(_settle_cancel):
+                        yield event
                     return
         finally:
             # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务。

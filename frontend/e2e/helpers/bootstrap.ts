@@ -25,7 +25,7 @@ export async function bootstrapMock(page: Page, world: JourneyWorld): Promise<vo
  * the result through the same tokenStore channel the UI login uses.
  * Fails with an explicit reason when credentials are absent.
  */
-export async function loginViaApi(page: Page): Promise<void> {
+export async function loginViaApi(page: Page): Promise<string> {
   const user = process.env.E2E_USER;
   const password = process.env.E2E_PASS;
   if (!user || !password) {
@@ -56,6 +56,8 @@ export async function loginViaApi(page: Page): Promise<void> {
     },
     { token: tokens.access_token, authUser: tokens.user },
   );
+  // API fixture setup needs the same authenticated owner as the browser.
+  return tokens.access_token;
 }
 
 /** Seed the auth token store key before any app script runs (pre-hydration).

@@ -264,6 +264,84 @@ def test_create_data_source_2xx_with_real_commit():
         ) >= 1, "auto catalog sync did not commit an item"
 
 
+@pytest.mark.parametrize("source_type, scheme", [("postgis", "postgresql"), ("ogc_api", "https")])
+def test_source_egress_redacts_dsn_without_changing_persisted_credentials(monkeypatch, source_type, scheme):
+    """Exercise real REST serialization/storage; only the remote adapter is fake.
+
+    The credential-checking adapter must still accept the stored profile on a
+    later probe, after create/list/detail have all sanitized their responses.
+    """
+    from app.models.data_fabric import DataSourceModel
+    from app.services.data_fabric.security import DataFabricSecurity
+
+    raw_url = f"{scheme}://reader:egress-dsn-pass@db.example:5432/gis"
+    safe_url = f"{scheme}://db.example:5432/gis"
+    mirror_url = "https://reader:egress-mirror-pass@mirror.example/wfs"
+    payload = {
+        "name": f"Credential egress {source_type}",
+        "source_type": source_type,
+        "endpoint_url": raw_url,
+        "options": {"mirrors": [{"endpoint_url": mirror_url}, [raw_url]]},
+    }
+    accepted_profiles = []
+
+    def authenticated_adapter(profile):
+        assert profile.url == raw_url
+        assert profile.endpoint == raw_url
+        assert profile.endpoint_url == raw_url
+        assert profile.options == payload["options"]
+        if source_type == "postgis":
+            assert profile.username == "reader"
+            assert profile.password == "egress-dsn-pass"
+        accepted_profiles.append(profile)
+        return _FakeSyncAdapter()
+
+    # Keep SSRF validation enabled and deterministic without external DNS.
+    monkeypatch.setattr(DataFabricSecurity, "_resolve_all", staticmethod(lambda host: ["8.8.8.8"]))
+    with patch(
+        "app.services.data_fabric.manager.DataFabricManager.get_adapter",
+        staticmethod(authenticated_adapter),
+    ), TestClient(app) as client:
+        headers = _df_auth_headers()
+        created = client.post("/api/v1/data-fabric/sources", json=payload, headers=headers)
+        assert created.status_code == 200, created.text
+        source_id = created.json()["data_source"]["id"]
+        detail = client.get(f"/api/v1/data-fabric/sources/{source_id}", headers=headers)
+        listed = client.get("/api/v1/data-fabric/sources", headers=headers)
+
+        for response in (created, detail, listed):
+            assert response.status_code == 200, response.text
+            assert "egress-dsn-pass" not in response.text
+            assert "egress-mirror-pass" not in response.text
+        sources = [
+            created.json()["data_source"], detail.json(),
+            next(s for s in listed.json()["sources"] if s["id"] == source_id),
+        ]
+        for source in sources:
+            assert source["endpoint_url"] == safe_url
+            profile = source["connection_profile"]
+            for alias in ("url", "endpoint", "endpoint_url"):
+                assert profile[alias] == safe_url
+            assert profile["options"]["mirrors"] == [
+                {"endpoint_url": "https://mirror.example/wfs"}, [safe_url],
+            ]
+
+        with SessionLocal() as db:
+            stored = db.get(DataSourceModel, source_id)
+            assert stored.endpoint_url == raw_url
+            for alias in ("url", "endpoint", "endpoint_url"):
+                assert stored.connection_profile[alias] == raw_url
+            assert stored.connection_profile["options"] == payload["options"]
+            if source_type == "postgis":
+                assert stored.connection_profile["password"] == "egress-dsn-pass"
+
+        accepted_before_probe = len(accepted_profiles)
+        probed = client.post(f"/api/v1/data-fabric/sources/{source_id}/probe", headers=headers)
+        assert probed.status_code == 200, probed.text
+        assert probed.json()["status"] == "healthy", probed.text
+        assert len(accepted_profiles) > accepted_before_probe
+
+
 def test_sync_data_source_catalog_2xx_with_existing_dataset():
     """sync_catalog commits before returning — the route must serialize the
     items inside the worker (post-close reads previously → 400 on success)."""

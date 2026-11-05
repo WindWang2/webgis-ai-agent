@@ -106,7 +106,9 @@ export async function expectExportLanded(page: Page): Promise<{ url: string; fil
         .map((b) => b.toString(16).padStart(2, '0'))
         .join(''),
     };
-  }, payload.url);
+  // Backend export URLs are relative. Resolve against the server that issued
+  // the export, not window.location (the nightly frontend has no API proxy).
+  }, new URL(payload.url, exportResponse.url()).href);
   expect(bytes.status).toBe(200);
   expect(bytes.magic).toBe('89504e470d0a1a0a');
   expect(bytes.size).toBeGreaterThan(0);

@@ -18,14 +18,64 @@
  * Usage: node e2e/tools/llm-stub.mjs   (port via STUB_PORT, default 8767)
  */
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
+
+const storySeed = JSON.parse(readFileSync(new URL('../fixtures/story-seed.json', import.meta.url), 'utf8'));
 
 const PORT = Number(process.env.STUB_PORT ?? 8767);
 const FAIL_AT = process.env.STUB_FAIL_AT ? Number(process.env.STUB_FAIL_AT) : -1;
 const DELAY_MS = process.env.STUB_DELAY_FIRST_TOKEN_MS
   ? Number(process.env.STUB_DELAY_FIRST_TOKEN_MS)
   : 0;
+const CANCEL_DELAY_MS = Number(process.env.STUB_TASK_CANCEL_DELAY_MS ?? 90_000);
+const CANCEL_INTENT = '启动可取消的任务旅程';
 
 let calls = 0;
+
+function currentTurn(body) {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const userIndex = messages.findLastIndex((message) => message.role === 'user');
+  const content = userIndex >= 0 ? messages[userIndex].content : '';
+  const text = typeof content === 'string'
+    ? content
+    : Array.isArray(content) ? content.filter((part) => part.type === 'text').map((part) => part.text).join('\n') : '';
+  return {
+    text,
+    // Previous turns' tool messages must not suppress the next turn's tool.
+    hasToolResult: messages.slice(userIndex + 1).some((message) => message.role === 'tool'),
+  };
+}
+
+function storyContent(text) {
+  return storySeed.find((turn) => turn.message === text)?.content ?? null;
+}
+
+function scriptedContent(text) {
+  if (text === CANCEL_INTENT) return '可取消任务已完成。';
+  if (text === '建立会话') return '会话已建立，可以开始数据查询。';
+  return storyContent(text);
+}
+
+function afterDelay(res, body, fallbackDelay, respond) {
+  const cancelIntent = currentTurn(body).text === CANCEL_INTENT;
+  const delay = cancelIntent ? CANCEL_DELAY_MS : fallbackDelay;
+  if (delay <= 0) return respond();
+  const callId = calls;
+  let pending = true;
+  const timer = setTimeout(() => {
+    pending = false;
+    if (!res.destroyed) respond();
+  }, delay);
+  // Cancelling the real chat closes its upstream LLM request. Do not keep a
+  // delayed response alive, or write into a closed socket after cancellation.
+  res.once('close', () => {
+    clearTimeout(timer);
+    if (cancelIntent && pending) {
+      // Only an opaque call counter is logged, never prompt/auth payloads.
+      console.log(`[llm-stub] call=chatcmpl-${callId} cancelclosed`);
+    }
+  });
+}
 
 const INLINE_FC = {
   type: 'FeatureCollection',
@@ -77,15 +127,13 @@ function streamResponse(res, body) {
     connection: 'keep-alive',
   });
   const id = `chatcmpl-${calls}`;
-  if (DELAY_MS > 0) {
-    setTimeout(() => writeStream(res, id, body), DELAY_MS);
-  } else {
-    writeStream(res, id, body);
-  }
+  afterDelay(res, body, DELAY_MS, () => writeStream(res, id, body));
 }
 
 function writeStream(res, id, body) {
-  const wantsTool = body.messages && !body.messages.some((m) => m.role === 'tool');
+  const turn = currentTurn(body);
+  const story = scriptedContent(turn.text);
+  const wantsTool = !story && body.messages && !turn.hasToolResult;
   if (wantsTool) {
     res.write(sseEvent({
       id,
@@ -110,7 +158,7 @@ function writeStream(res, id, body) {
       model: 'quality-e2e-stub',
       choices: [{
         index: 0,
-        delta: { role: 'assistant', content: '热点分析已完成：12 个点位参与计算，结果已挂载为图层。' },
+        delta: { role: 'assistant', content: story ?? '热点分析已完成：12 个点位参与计算，结果已挂载为图层。' },
         finish_reason: null,
       }],
     }));
@@ -127,7 +175,9 @@ function writeStream(res, id, body) {
 }
 
 function blockingResponse(res, body) {
-  const wantsTool = body.messages && !body.messages.some((m) => m.role === 'tool');
+  const turn = currentTurn(body);
+  const story = scriptedContent(turn.text);
+  const wantsTool = !story && body.messages && !turn.hasToolResult;
   const id = `chatcmpl-${calls}`;
   const payload = wantsTool
     ? {
@@ -159,7 +209,7 @@ function blockingResponse(res, body) {
         model: 'quality-e2e-stub',
         choices: [{
           index: 0,
-          message: { role: 'assistant', content: '热点分析已完成，结果已挂载为图层。' },
+          message: { role: 'assistant', content: story ?? '热点分析已完成，结果已挂载为图层。' },
           finish_reason: 'stop',
         }],
       };
@@ -182,7 +232,7 @@ const server = http.createServer((req, res) => {
     if (body.stream) {
       streamResponse(res, body);
     } else {
-      blockingResponse(res, body);
+      afterDelay(res, body, 0, () => blockingResponse(res, body));
     }
   });
 });

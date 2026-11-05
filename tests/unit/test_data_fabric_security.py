@@ -1,6 +1,8 @@
 """Data Fabric security tests: SSRF redirect re-validation, cross-tenant
 catalog guards, and credential/URL redaction on egress.
 """
+from copy import deepcopy
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -87,6 +89,76 @@ def test_redact_url_preserves_url_without_userinfo():
 def test_redact_url_handles_s3_and_none():
     assert DataFabricSecurity.redact_url("s3://bucket/key") == "s3://bucket/key"
     assert DataFabricSecurity.redact_url(None) is None
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("postgresql://reader:dsn-pass@DB.example:5432/gis?sslmode=require",
+         "postgresql://DB.example:5432/gis?sslmode=require"),
+        ("https://reader:http-pass@EXAMPLE.com:443/wfs?x=1#layer",
+         "https://EXAMPLE.com:443/wfs?x=1#layer"),
+        ("postgres://reader:dsn-pass@[2001:db8::1]:5432/gis",
+         "postgres://[2001:db8::1]:5432/gis"),
+        ("https://reader:p%40ss@example.com/wfs", "https://example.com/wfs"),
+        ("https://reader:p@ss@example.com/wfs", "https://example.com/wfs"),
+        ("https://token-only@example.com/wfs", "https://example.com/wfs"),
+        # Invalid legacy endpoints must neither leak nor make egress raise.
+        ("https://reader:http-pass@example.com:invalid/wfs",
+         "https://example.com:invalid/wfs"),
+        ("https://reader:http-pass@[invalid/wfs", "https://[invalid/wfs"),
+        ("https://reader:http-pass@[not-ip]/wfs", "https://[not-ip]/wfs"),
+        ("https://reader:http-pass@example.com:0/wfs", "https://example.com:0/wfs"),
+        (" \tHTTPS://reader:http-pass@example.com/wfs", " \tHTTPS://example.com/wfs"),
+        ("ht\ttps:\r/\n/reader:http-pass@example.com/wfs", "ht\ttps:\r/\n/example.com/wfs"),
+    ],
+)
+def test_redact_url_preserves_everything_except_userinfo(url, expected):
+    assert DataFabricSecurity.redact_url(url) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None, 42, False, "", "reader@example.com", "label:owner@example.com",
+        "https://EXAMPLE.com:443/wfs?contact=reader@example.com#layer",
+        "https://example.com/path@label", "s3://bucket/key", "/data/roads.csv",
+        "https://[invalid/wfs",
+    ],
+)
+def test_redact_url_preserves_values_without_authority_userinfo(value):
+    assert DataFabricSecurity.redact_url(value) == value
+
+
+def test_sanitize_profile_redacts_url_aliases_and_nested_strings_without_mutation():
+    from app.schemas.data_fabric_schema import ConnectionProfile
+
+    dsn = "postgresql://reader:dsn-pass@db.example:5432/gis"
+    http_url = "https://reader:http-pass@example.com/wfs"
+    profile = ConnectionProfile(
+        source_type="postgis", url=dsn,
+        options={
+            "mirrors": [{"endpoint": http_url}, [dsn, None, 3]],
+            "password": "option-pass", "label": "reader@example.com",
+            "public_url": "https://example.com/public?contact=reader@example.com",
+        },
+    ).model_dump()
+    before = deepcopy(profile)
+
+    sanitized = DataFabricSecurity.sanitize_profile_dict(profile)
+
+    for alias in ("url", "endpoint", "endpoint_url"):
+        assert sanitized[alias] == "postgresql://db.example:5432/gis"
+    assert sanitized["options"]["mirrors"] == [
+        {"endpoint": "https://example.com/wfs"},
+        ["postgresql://db.example:5432/gis", None, 3],
+    ]
+    assert sanitized["options"]["password"] == "********"
+    assert sanitized["options"]["label"] == before["options"]["label"]
+    assert sanitized["options"]["public_url"] == before["options"]["public_url"]
+    for password in ("dsn-pass", "http-pass", "option-pass"):
+        assert password not in json.dumps(sanitized)
+    assert profile == before
 
 
 # ── Cross-tenant catalog access guard ────────────────────────────────────────

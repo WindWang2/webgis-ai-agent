@@ -58,8 +58,9 @@ describe('journey authentication bootstrap', () => {
     vi.stubEnv('E2E_PASS', 'journey-admin-pass-2026');
     const { loginViaApi } = await import('./bootstrap');
     const addInitScript = vi.fn();
-    await loginViaApi({ request: await frontendRequest(frontend), addInitScript } as unknown as Page);
+    const accessToken = await loginViaApi({ request: await frontendRequest(frontend), addInitScript } as unknown as Page);
 
+    expect(accessToken).toBe('issued-by-backend');
     expect(frontendHits).toBe(0);
     expect(received).toHaveLength(1);
     expect(received[0].method).toBe('POST');

@@ -67,7 +67,7 @@ export const JOURNEYS: JourneyEntry[] = [
   {
     id: 'j6',
     file: 'journeys/j6-fabric-source-query.journey.ts',
-    title: '数据源注册→probe→查询→上图（MVT）',
+    title: '数据源准入→probe→查询→上图',
     smoke: false,
     modes: ['mock', 'real'],
     owner: 'quality-e2e-v9',
