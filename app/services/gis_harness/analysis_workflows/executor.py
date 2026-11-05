@@ -65,12 +65,39 @@ MAX_ENVELOPE_STATS_KEYS = 12
 
 
 def _extract_fc(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """从工具结果提取主 FeatureCollection（data/geojson 键；无则 None）。"""
-    for key in ("data", "geojson"):
+    """从工具结果提取主 FeatureCollection。
+
+    适配两族工具响应形状（不改变任何工具的返回契约）：
+    - GeoAnalysisResult 族：``data`` / ``geojson`` 键直挂 FC；
+    - NetworkAnalysisResult 族（network_tools 10 工具）：``status=success`` +
+      ``routes`` 列表（每 route 自带 geometry/properties）→ 就地组 FC
+      （路线即产物；数量已被输入预算门与 number_to_find 约束）。
+    """
+    for key in ("data", "geojson", "result_geojson"):
         candidate = result.get(key)
         if (isinstance(candidate, dict)
                 and candidate.get("type") == "FeatureCollection"):
             return candidate
+    routes = result.get("routes")
+    if isinstance(routes, list) and routes:
+        features = []
+        for route in routes:
+            if isinstance(route, dict) and isinstance(
+                    route.get("geometry"), dict):
+                props = {
+                    k: v for k, v in (route.get("properties")
+                                      or {}).items()}
+                for key in ("route_id", "origin_id", "destination_id",
+                            "total_cost", "total_distance_m", "total_time_s"):
+                    if key in route:
+                        props.setdefault(key, route[key])
+                features.append({
+                    "type": "Feature",
+                    "properties": props,
+                    "geometry": route["geometry"],
+                })
+        if features:
+            return {"type": "FeatureCollection", "features": features}
     return None
 
 
@@ -414,7 +441,9 @@ class WorkflowExecutor:
                       error=entry.reason_code)
             return
 
-        if not isinstance(result, dict) or not result.get("success"):
+        if not isinstance(result, dict) or not (
+                result.get("success") is True
+                or str(result.get("status", "")).lower() == "success"):
             inner = result if isinstance(result, dict) else {}
             reason_code = str(
                 inner.get("reason_code") or inner.get("code")

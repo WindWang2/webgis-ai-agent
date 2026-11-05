@@ -41,6 +41,7 @@ DATA_ROLES = (
     "hazard",           # 危险源/致灾因子
     "receptor",         # 承灾体/受体
     "population",       # 人口（区别于 denominator：可为主体也可为分母）
+    "facility",         # 服务设施点（最近设施/服务区分析——ADR-0282）
     "criteria",         # 决策准则因子
     "constraint",       # 约束/排斥因子
     "reference",        # 参考底图/辅助参照

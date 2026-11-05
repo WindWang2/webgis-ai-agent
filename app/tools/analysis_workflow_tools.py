@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 import hashlib
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.services.gis_harness.analysis_workflows.contracts import (
     AWF_UNKNOWN_FAMILY,
@@ -144,6 +144,45 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 raise ValueError(f"角色 {role} 的绑定形态非法")
         return bindings
 
+    async def _budget_estimates(session_id: str,
+                                contract: Any) -> List[Dict[str, Any]]:
+        """plan 期输入预算估计（ADR-0282 断点4）。
+
+        只对 vector 角色的 ``ref:`` 绑定读 descriptor 行数事实（raster/table
+        角色无行数语义——栅格工具走窗口读纪律）；descriptor 读不到=unknown
+        （不虚报也不拦截——run 期 executor 预算门兜底）。有界：角色数 ≤16。
+        """
+        from app.services.gis_harness.analysis_workflows.contracts import (
+            AWF_BUDGET_EXCEEDED,
+        )
+
+        estimates: List[Dict[str, Any]] = []
+        for role, binding in list(contract.data_contracts.items())[:16]:
+            if not isinstance(binding.ref, str) or not binding.ref.startswith(
+                    "ref:") or binding.role_kind != "vector":
+                continue
+            entry: Dict[str, Any] = {
+                "role": role, "ref": binding.ref,
+                "feature_count": None, "max_features": DEFAULT_MAX_FEATURES,
+                "over": False, "reason_code": "",
+            }
+            try:
+                descriptor = await session_data_manager.get_ref_descriptor(
+                    session_id, binding.ref)
+            except Exception:  # noqa: BLE001 — descriptor 是优化面
+                descriptor = None
+            if isinstance(descriptor, dict):
+                try:
+                    count = int(descriptor.get("feature_count", 0) or 0)
+                except (TypeError, ValueError):
+                    count = 0
+                entry["feature_count"] = count
+                if count > DEFAULT_MAX_FEATURES:
+                    entry["over"] = True
+                    entry["reason_code"] = AWF_BUDGET_EXCEEDED
+            estimates.append(entry)
+        return estimates
+
     # ── 工具 1：plan ─────────────────────────────────────────────────────
 
     @tool(
@@ -154,11 +193,13 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "多步 GIS 分析工作流规划：把用户场景装配成带数据角色合同/科学前置/"
             "单位契约的步骤 DAG，并给出 typed 裁决（缺数据→blocked+获取建议；"
             "无路网→不得给等时数值结论；缺分母→只给计数不伪装密度）。**不执行**。"
-            "\n六族：admin_facility_distribution（行政区设施分布）/ "
+            "\n七族：admin_facility_distribution（行政区设施分布）/ "
             "service_accessibility（路网可达性）/ hazard_exposure（风险暴露）/"
             " temporal_change（多期变化）/ statistical_zones（统计分区）/ "
             "raster_zonal_summary（栅格指数分区汇总——subject 角色需 "
-            "role_kind='raster' 的栅格 ref/路径）。"
+            "role_kind='raster' 的栅格 ref/路径）/ network_proximity"
+            "（最近设施网络距离→行政汇总——subject=需求点、facility=设施）。"
+            "plan 附输入行数预算估计（超限 typed 指引分块/降采样）。"
             "\n何时不用：单工具即可回答的问题（直接调该工具）；"
             "LLM 自由组合非常规步骤（用 propose_plan）。"
         ),
@@ -264,13 +305,26 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     state.log("plan_replanned",
                               reason="binding_or_contract_changed")
             await _persist_state(session_id, state)
+        # ADR-0282（断点4）：plan 期预算估计——ref descriptor 的行数事实
+        # （已知才报；descriptor 缺失=unknown 不虚报）。超限 → typed 不予
+        # runnable + 指引（分块/裁剪/换聚合粒度），run 期 executor 仍是硬门。
+        budget_estimates = await _budget_estimates(
+            session_id, result.contract)
+        runnable = result.runnable
+        blocked_reasons = list(result.blocked_reasons)
+        over_budget = [b for b in budget_estimates if b["over"]]
+        if over_budget and runnable:
+            runnable = False
+            for b in over_budget:
+                blocked_reasons.append(
+                    f"{b['role']}:{b['reason_code']}")
         return {
             "success": True,
             "command": command,
             "workflow_id": wf_id,
             "family": family,
             "family_label": family_label(family),
-            "runnable": result.runnable,
+            "runnable": runnable,
             "steps": [
                 {"step_id": v.step_id, "verdict": v.verdict,
                  "reason_code": v.reason_code, "tool": next(
@@ -278,13 +332,16 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                       if s.step_id == v.step_id), ""),
                  "message": v.message}
                 for v in result.step_verdicts],
-            "blocked_reasons": list(result.blocked_reasons),
+            "blocked_reasons": blocked_reasons,
             "alternatives": list(result.alternatives),
             "visualization_hints": list(result.visualization_hints),
             "risk_notes": list(result.contract.risk_notes),
+            "budget_estimates": budget_estimates,
             "next_action": (
-                "webgis_analysis_workflow_run" if result.runnable
-                else "先按 alternatives 补数据角色绑定，再重新 plan"),
+                "webgis_analysis_workflow_run" if runnable
+                else ("输入行数超预算——先分块（bbox 裁剪/聚合粒度提升）或"
+                      "降采样后重绑" if over_budget else
+                      "先按 alternatives 补数据角色绑定，再重新 plan")),
         }
 
     # ── 工具 2：run ──────────────────────────────────────────────────────

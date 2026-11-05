@@ -65,6 +65,10 @@ _ROLE_ALTERNATIVES: Dict[str, Tuple[str, ...]] = {
         "用本地建筑/POI 数据充当承灾体",
         "请用户上传资产/人口分布（user_upload）",
     ),
+    "facility": (
+        "用本地 POI 工具获取设施点（get_local_pois / local_osm 提取）",
+        "请用户上传设施点数据（user_upload）",
+    ),
     "baseline": ("请提供基期（较早一期）数据",),
     "target_time": ("请提供目标期（较近一期）数据",),
     "denominator": (
@@ -192,7 +196,7 @@ def plan_workflow(
         raise KeyError(
             f"未知工作流族 {family!r}（词表: admin_facility_distribution / "
             "service_accessibility / hazard_exposure / temporal_change / "
-            "statistical_zones / raster_zonal_summary）")
+            "statistical_zones / raster_zonal_summary / network_proximity）")
     contract = build_contract(
         family, workflow_id=workflow_id, bindings=bindings,
         recipe_refs=recipe_refs, params_overrides=params_overrides,
@@ -260,13 +264,15 @@ def plan_workflow(
                 and req_by_role[r].missing_policy == "block"
             ]
             if required_missing:
-                # 族特定码：可达性无路网 = 专属码 + 显式替代语义
-                if (family == "service_accessibility"
+                # 族特定码：可达性/邻近族无路网 = 专属码 + 显式替代语义
+                if (family in ("service_accessibility", "network_proximity")
                         and "network" in required_missing
-                        and step.step_id == "isochrone"):
+                        and any(v == "role:network"
+                                for v in step.role_inputs.values())):
                     code = AWF_NO_NETWORK_FOR_ACCESSIBILITY
-                    msg = ("无真实路网数据——不得给出『15 分钟可达』类数值结论；"
-                           "可用 buffer 替代但科学含义不同（欧氏距离≠通达时间）")
+                    msg = ("无真实路网数据——不得给出『15 分钟可达』/『最近设施"
+                           "网络距离』类数值结论；可用 buffer 替代但科学含义"
+                           "不同（欧氏距离≠通达时间）")
                     alts = _ROLE_ALTERNATIVES["network"]
                 else:
                     role = required_missing[0]

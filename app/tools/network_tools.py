@@ -6,7 +6,7 @@ location_allocation (p_median / max_coverage / p_center), optimize_route,
 network_gravity_access, network_huff_interaction, and network_centrality.
 """
 import logging
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
@@ -287,8 +287,10 @@ class NetworkODMatrixArgs(BaseModel):
 
 class NetworkClosestFacilityArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
-    incidents: List[Any] = Field(..., description="Incident / demand points needing service")
-    facilities: List[Any] = Field(..., description="Facility locations")
+    incidents: Union[List[Any], Dict[str, Any]] = Field(
+        ..., description="Incident / demand points needing service（FeatureCollection 或要素列表）")
+    facilities: Union[List[Any], Dict[str, Any]] = Field(
+        ..., description="Facility locations（FeatureCollection 或要素列表）")
     profile: TravelProfileName = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
     number_to_find: int = Field(1, description="Number of closest facilities to return per incident")
     cutoff_cost: Optional[float] = Field(
@@ -530,19 +532,28 @@ def register_network_tools(registry: ToolRegistry):
     )
     async def network_closest_facility(
         network: Any,
-        incidents: List[Any],
-        facilities: List[Any],
+        incidents: Union[List[Any], Dict[str, Any]],
+        facilities: Union[List[Any], Dict[str, Any]],
         profile: str = "driving",
         number_to_find: int = 1,
         cutoff_cost: Optional[float] = None,
         session_id: str = "",
     ) -> dict:
+        def _point_items(layer: Union[List[Any], Dict[str, Any], Any]) -> Any:
+            """FC dict → features 列表（ADR-0282：工作流 role 水合产 FC——
+            引擎 _parse_point/_to_facility 消费要素列表；空 FC=诚实空列表）。"""
+            if isinstance(layer, dict) and layer.get(
+                    "type") == "FeatureCollection":
+                feats = layer.get("features")
+                return list(feats) if isinstance(feats, list) else []
+            return layer
+
         try:
             travel_profile = TravelProfile(name=profile)
             res = await engine.solve_closest_facility(
                 network=network,
-                incidents=incidents,
-                facilities=facilities,
+                incidents=_point_items(incidents),
+                facilities=_point_items(facilities),
                 profile=travel_profile,
                 number_to_find=number_to_find,
                 cutoff_cost=cutoff_cost,

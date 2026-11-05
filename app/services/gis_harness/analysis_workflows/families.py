@@ -41,6 +41,7 @@ FAMILY_IDS = (
     "temporal_change",
     "statistical_zones",
     "raster_zonal_summary",
+    "network_proximity",
 )
 
 _FAMILY_LABELS: Dict[str, str] = {
@@ -50,6 +51,7 @@ _FAMILY_LABELS: Dict[str, str] = {
     "temporal_change": "多期区域变化分析",
     "statistical_zones": "自适应统计分区分析",
     "raster_zonal_summary": "栅格指数分区汇总分析",
+    "network_proximity": "最近设施网络距离分析",
 }
 
 
@@ -100,10 +102,15 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               outputs=("rate_zones",)),
     ),
     "service_accessibility": (
+        # ADR-0282（断点2）：族默认 exclude_unreachable=True——脱离路网的
+        # 设施 5m 占位面不进覆盖统计（计数进 stats，部分失败显性化）；
+        # 需要占位面原样输出的调用方以参数覆盖回 False（工具默认保持
+        # master 行为）。
         _step("isochrone", "isochrone_network",
               {"network_layer": "role:network", "facilities": "role:subject"},
               capability="service_area",
-              params={"travel_time": 15.0, "mode": "walking"},
+              params={"travel_time": 15.0, "mode": "walking",
+                      "exclude_unreachable": True},
               units={"travel_time": "min"},
               outputs=("service_area",)),
         _step("coverage_zones", "overlay_analysis",
@@ -118,6 +125,25 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               deps=("coverage_zones",),
               optional=True,
               outputs=("covered_population",)),
+    ),
+    # 链③（ADR-0282 D4）：最近设施网络距离 → 行政汇总。
+    # subject=需求点（incidents，如居民点/小区），facility=服务设施（医院/
+    # 消防站）；汇总 rate = Σtotal_cost / 路线数 = 区均网络成本（均值语义，
+    # aggregate_with_denominator 的 count 分母通道——不是伪装率）。
+    "network_proximity": (
+        _step("nearest_facility", "network_closest_facility",
+              {"network": "role:network", "incidents": "role:subject",
+               "facilities": "role:facility"},
+              capability="closest_facility",
+              params={"profile": "driving", "number_to_find": 1},
+              outputs=("nearest_routes",)),
+        _step("accessibility_summary", "spatial_aggregate",
+              {"points": "step:nearest_facility", "polygons": "role:boundary"},
+              capability="admin_aggregation",
+              params={"denominator_kind": "count",
+                      "numerator_field": "total_cost"},
+              deps=("nearest_facility",),
+              outputs=("district_accessibility",)),
     ),
     "hazard_exposure": (
         _step("hazard_buffer", "buffer_analysis",
@@ -162,13 +188,15 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               params={"resolution": 8, "stat_method": "count"},
               preconds=("point_support_required",),
               outputs=("grid_zones",)),
-        # 网格率：网格分母（同一网格的 population 聚合）必须网格身份一致
-        # （grid_identity_match 前置——G02 既有科学前置，防虚假归属）。
+        # 网格率（ADR-0282 断点1 修复）：真率语义走显式分母通道——
+        # 分母=网格内 subject 计数（grid_stats 输出的 count 字段，网格身份
+        # 一致由 grid_identity_match 前置保证），分子=网格内 population 计数
+        # → rate=人口/设施（人均服务负荷；设施/人口为其倒数，numerator/
+        # denominator 两列都在，消费方可显式取用）。不再是改名计数。
         _step("grid_rate", "spatial_aggregate",
               {"points": "role:population", "polygons": "step:grid_stats"},
               capability="admin_aggregation",
-              params={"denominator_kind": "count",
-                      "count_field": "population_count"},
+              params={"denominator_kind": "field", "denominator": "count"},
               deps=("grid_stats",),
               preconds=("grid_identity_match",),
               optional=True,
@@ -264,6 +292,21 @@ _ROLE_REQUIREMENTS: Dict[str, List[DataRoleRequirement]] = {
                             geometry_kinds=["polygon"], missing_policy="block",
                             note="统计分区（行政区/流域等面域）"),
     ],
+    "network_proximity": [
+        DataRoleRequirement(role="subject", required=True,
+                            geometry_kinds=["point"], missing_policy="block",
+                            note="需求点（incidents——居民点/小区/事故点）"),
+        DataRoleRequirement(role="facility", required=True,
+                            geometry_kinds=["point"], missing_policy="block",
+                            note="服务设施点（医院/消防站/学校）"),
+        DataRoleRequirement(role="network", required=True,
+                            geometry_kinds=["line", "network"],
+                            missing_policy="block",
+                            note="真实路网——缺失时不得给网络距离结论"),
+        DataRoleRequirement(role="boundary", required=True,
+                            geometry_kinds=["polygon"], missing_policy="block",
+                            note="汇总分区（行政区）"),
+    ],
 }
 
 #: 各族风险与披露（进入契约 risk_notes / 必披露面）。
@@ -296,6 +339,14 @@ _FAMILY_NOTES: Dict[str, Tuple[str, ...]] = {
         "分区均值不可与全有效分区同权解读",
         "栅格重采样会改变像元聚合尺度（bilinear 平滑/nearest 保序）——"
         "分辨率变化即统计口径变化，进入步骤指纹触发重算",
+    ),
+    "network_proximity": (
+        "最近设施距离=路网 Dijkstra 通行成本（默认 travel_time 权重）——"
+        "不是欧氏距离；速度表近似与端点吸附容差由算法层披露",
+        "跨区路线在 intersects 约定下会计入其经过的每个区（M:N 多方属）——"
+        "区均成本合计不可当全区独立均值直接平均",
+        "不可达需求点（脱离路网）由算法层保留 origin/destination 并标记"
+        "reachable=False（total_cost=inf 不以欧氏替代）——汇总时 inf 不进均值",
     ),
 }
 
@@ -461,5 +512,9 @@ def visualization_hints(family: str) -> Tuple[str, ...]:
         ),
         "raster_zonal_summary": (
             "zonal_zones → administrative_choropleth（指数均值/分区统计）",
+        ),
+        "network_proximity": (
+            "nearest_routes → flow_od_arc / line（需求点→设施路线）",
+            "district_accessibility → administrative_choropleth（区均网络成本）",
         ),
     }.get(family, ())
