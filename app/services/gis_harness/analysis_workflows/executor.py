@@ -629,6 +629,27 @@ class WorkflowExecutor:
                 break
         state.status = verdict_of(state)
         state.touch()
+        # ADR-0282 D5：全步骤终态后写科学终审投影（G02 run_science_final_gate
+        # 的结论进状态机——不再是只有返回体字段；fail-open：门内部错误=
+        # not_evaluated，绝不阻断状态落盘）。
+        if all(e.state not in ("pending", "running")
+               for e in state.steps.values()):
+            try:
+                from app.services.gis_harness.analysis_workflows.evidence import (
+                    run_final_gate,
+                )
+                gate = run_final_gate(state)
+                state.science_validation = {
+                    "final_gate": ("blocked" if gate.get("blocked")
+                                   else "pass"),
+                    "checked_in_turn": self._turn,
+                    "findings_n": len(gate.get("findings") or []),
+                }
+            except Exception:  # noqa: BLE001 — 终审失败=not_evaluated
+                state.science_validation = {
+                    "final_gate": "not_evaluated",
+                    "checked_in_turn": self._turn,
+                }
         state.log("workflow_end", status=state.status)
         if self._persist is not None:
             await self._persist(state)

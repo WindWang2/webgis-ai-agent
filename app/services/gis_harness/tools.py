@@ -762,6 +762,31 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
         layer_ids = list(layer_ids or [])
         overlay_refs = list(overlay_refs or [])
 
+        # ADR-0282 D6：partial ≠ final 产品门——ref 源自某工作流 envelope 且
+        # 该 run 非 satisfied（或科学终局 blocked）→ 不作为成品层（外科式
+        # 降级 + 警告，不中断组装）。GIS_AWF_PRODUCT_GATE=0 bit 级回退
+        # master 行为；非工作流来源的 ref 不归本门管辖。
+        gate_findings: List[Dict[str, Any]] = []
+        try:
+            from app.core.config import settings as _settings
+            if getattr(_settings, "GIS_AWF_PRODUCT_GATE", True):
+                from app.services.gis_harness.analysis_workflows.product_gate import (  # noqa: E501
+                    assess_refs_eligibility,
+                    load_workflow_states,
+                )
+                _wf_states = await load_workflow_states(session_id)
+                gate_findings = assess_refs_eligibility(
+                    _wf_states, [primary_ref, *(overlay_refs or [])])
+                _blocked_refs = {
+                    f["ref"] for f in gate_findings if not f["eligible"]}
+                if _blocked_refs:
+                    overlay_refs = [
+                        r for r in overlay_refs if r not in _blocked_refs]
+                    if primary_ref in _blocked_refs:
+                        primary_ref = None
+        except Exception:  # noqa: BLE001 — 门是披露面，失败不阻断产品组装
+            gate_findings = []
+
         # 计划连续性：意图阶段（webgis_map_intent）接受的 hint 与推荐 recipe
         # 在此重放——两个阶段绝不产出两份互相矛盾的计划。
         intent = resolve_map_request_intent(query)
@@ -902,6 +927,21 @@ def register_gis_harness_tools(registry: ToolRegistry) -> None:
         out: Dict[str, Any] = {"success": True, "plan_id": plan.plan_id}
         authoring_failures: List[str] = []  # #716: honest failure ledger
         committed_layer_ids: List[str] = [b["layer_id"] for b in bound_layers]
+
+        # ADR-0282 D6：产品门披露（不合格 ref 的降级事实进警告/失败账本——
+        # 用户可见，不静默丢层）。
+        if gate_findings:
+            out["workflow_ref_gate"] = [
+                f for f in gate_findings if not f["eligible"]][:5]
+            for f in gate_findings:
+                if not f["eligible"]:
+                    msg = (
+                        f"工作流 {f['workflow_id']} 的步骤 {f['step_id']} 产物"
+                        f"未达 final（run={f['run_status']}，"
+                        f"{f['reason_code']}）——ref {f['ref']}"
+                        "不作为成品图层（partial ≠ final）")
+                    out.setdefault("warnings", []).append(msg)
+                    authoring_failures.append(msg)
 
         primary_layer = next(
             (ly for ly in plan.map_layers if ly.role == "primary" and ly.enabled), None

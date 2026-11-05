@@ -650,9 +650,20 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     contract, state, current_identities=current_identities):
                 affected.add(drift["step_id"])
                 affected.update(drift.get("downstream") or [])
-            # B2：affected 中的 satisfied 步骤**不**强制 stale——执行器的指纹
-            # 精确裁决负责复用（同身份 → step_reused 零重跑；漂移 → 重跑），
-            # 与工具描述「指纹对账→只重跑受影响子图」一致。
+            # ADR-0282 D5（B2 语义演进）：**指纹实测漂移**的已 satisfied 步骤
+            # 显式落 state=stale——状态机 stale 态由此获得赋值路径（此前只在
+            # 词表）。只标漂移步骤本身（非闭包）：闭包步骤保持 satisfied 让
+            # 执行器按指纹精确裁决（上游未变 → step_reused 零重跑不变）；
+            # 显式变更的直接消费者参数/身份已变，指纹天然不匹配照常重跑。
+            # 若本轮执行中断，持久态如实显示 stale（待重算）而非服旧产物。
+            for drift in collect_stale_steps(
+                    contract, state, current_identities=current_identities):
+                entry = state.steps.get(drift["step_id"])
+                if entry is not None and entry.state == "satisfied":
+                    entry.state = "stale"
+                    entry.reason_code = "INPUT_IDENTITY_DRIFT"
+                    entry.touch()
+                    state.log("step_stale", step=drift["step_id"])
             # 复裁决：数据补齐解除阻断（fresh 非 blocked/skipped 且旧
             # blocked/skipped/failed → pending）；数据仍缺 → 保持 typed
             # blocked/skipped（P1-1）。

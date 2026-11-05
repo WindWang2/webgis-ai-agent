@@ -28,6 +28,13 @@ TOOL_ALGORITHM_IDS: Dict[str, Tuple[str, ...]] = {
     "buffer_analysis": ("geometry.buffer",),
     "h3_binning": ("spatial.grid.h3",),
     "hotspot_analysis": ("spatial.hotspot.local",),
+    # ADR-0282（断点 8 收尾）：spatial_join 此前无锚点——receipt 恒
+    # method_use_contract_available=False，证据链在该算子断档。
+    "spatial_join": ("geometry.spatial_join",),
+    # ADR-0282 链②③ 新族的算子锚点。
+    "zonal_stats": ("remote.zonal_stats",),
+    "raster_resample": ("raster.resample.grid",),
+    "network_closest_facility": ("network.closest_facility",),
 }
 
 #: receipt 有界预算（警告/证据键截断——大科学证据块走 ref 不进 receipt）。
