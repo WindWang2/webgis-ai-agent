@@ -32,6 +32,15 @@ import {
 } from '@/lib/map-components/geo-anchor';
 import { computeNiceScale, formatScaleLabel } from './scale-math';
 import { deriveLegendModel } from './legend-model';
+// ADR-0283 D2：关键文本 wrap-not-clip —— cap 常量与折行投影同源
+// （layout-description 单源；本模块 type-only 反向引用无运行时环）。
+import {
+  MAX_SUBTITLE_CODEPOINTS,
+  MAX_SUBTITLE_LINES,
+  MAX_TITLE_CODEPOINTS,
+  MAX_TITLE_LINES,
+  projectTitleLines,
+} from '../export/layout-description';
 
 export interface StatsPanelData {
   title?: string;
@@ -93,6 +102,9 @@ export interface ExportChromeElement {
   /** 槽内组件总数（≤1 时消费方无需偏移）。 */
   slotSize?: number;
   text?: string;
+  /** ADR-0283 D2：关键文本 wrap-not-clip 折行投影（>1 行时在场；
+   * drawChromeText/SVG 链按行绘制 —— 长标题不横向溢出画幅）。 */
+  lines?: string[];
   /** 组件 variant（map_border 等变体驱动型组件）。 */
   variant?: string;
   legendSpec?: LegendSpec;
@@ -146,6 +158,9 @@ export type ExportDegradationCode =
   | 'layer_ref_unavailable'
   /* H02（任务书 §C）：标题/副标题确定性截断披露（layout-description 发射）。 */
   | 'title_truncated'
+  /* ADR-0283 D2：关键文本 wrap-not-clip 折行披露（exporter/vector-svg-export
+   * 发射；wrapped 标记单源在 layout-description，词表权威 render_diagnostics.py）。 */
+  | 'key_text_wrapped'
   | 'pdf_text_rasterized_cjk'
   | 'comparison_second_view_not_exported'
   | 'comparison_export_composed'
@@ -648,23 +663,52 @@ export async function buildExportChrome(
       stackIndex: _stackOf(titleComp)?.index ?? 0,
       slotSize: _stackOf(titleComp)?.slotSize ?? 0,
       text: opts.requestTitle || titleComp.text,
+      lines: projectTitleLines(
+        opts.requestTitle || titleComp.text,
+        MAX_TITLE_CODEPOINTS,
+        MAX_TITLE_LINES,
+      ),
     };
   } else if (opts.requestTitle) {
-    model.title = { kind: 'title', anchor: 'top-center', text: opts.requestTitle };
+    model.title = {
+      kind: 'title',
+      anchor: 'top-center',
+      text: opts.requestTitle,
+      lines: projectTitleLines(
+        opts.requestTitle,
+        MAX_TITLE_CODEPOINTS,
+        MAX_TITLE_LINES,
+      ),
+    };
   }
 
   const subtitleComp = resolved.find((c) => c.type === 'subtitle' && c.enabled);
   if (subtitleComp) {
+    const subtitleText = opts.requestSubtitle || subtitleComp.text;
     model.subtitle = {
       kind: 'subtitle',
       anchor: _effectiveAnchor(subtitleComp),
       rect: _floatingRectOf(subtitleComp, opts.viewport, canvas),
       stackIndex: _stackOf(subtitleComp)?.index ?? 0,
       slotSize: _stackOf(subtitleComp)?.slotSize ?? 0,
-      text: opts.requestSubtitle || subtitleComp.text,
+      text: subtitleText,
+      lines: projectTitleLines(
+        subtitleText,
+        MAX_SUBTITLE_CODEPOINTS,
+        MAX_SUBTITLE_LINES,
+      ),
     };
   } else if (opts.requestSubtitle) {
-    model.subtitle = { kind: 'subtitle', anchor: 'top-center', text: opts.requestSubtitle };
+    model.subtitle = {
+      kind: 'subtitle',
+      anchor: 'top-center',
+      text: opts.requestSubtitle,
+      lines: projectTitleLines(
+        opts.requestSubtitle,
+        MAX_SUBTITLE_CODEPOINTS,
+        MAX_SUBTITLE_LINES,
+      ),
+    };
   }
 
   const northComp = resolved.find((c) => c.type === 'north_arrow');
@@ -1093,7 +1137,9 @@ function _text(d: DrawCtx, s: string, x: number, y: number, align: CanvasTextAli
   d.ctx.textAlign = 'left';
 }
 
-/** title/subtitle（anchor 对齐；vAlign=bottom 时 y 为基线底部）。 */
+/** title/subtitle（anchor 对齐；vAlign=bottom 时 y 为基线底部）。
+ * ADR-0283 D2：el.lines（>1 行）时按行绘制 —— 行距 fontPx×1.3，首行
+ * 基线与单行形态一致（未折行元素渲染逐像素不变）。 */
 export function drawChromeText(
   d: DrawCtx,
   el: ExportChromeElement,
@@ -1110,7 +1156,14 @@ export function drawChromeText(
   // margin 语义统一：origin.y 已是画布像素（调用方传入 scalePx 后的值）；
   // bottom 槽恰好一次 targetH - y 换算。
   const y = origin.vAlign === 'bottom' ? d.targetH - origin.y : origin.y + (opts.dy ?? 0);
-  _text(d, el.text, origin.x, y, origin.align);
+  const lines = el.lines && el.lines.length > 1 ? el.lines : [el.text];
+  const lineStep = d.scalePx(Math.round(fontPx * 1.3));
+  const firstY = origin.vAlign === 'bottom' && lines.length > 1
+    ? y - lineStep * (lines.length - 1)
+    : y;
+  lines.forEach((line, i) => {
+    _text(d, line, origin.x, firstY + lineStep * i, origin.align);
+  });
 }
 
 /** 罗盘 —— 与 live 同一旋转约定（-bearing 逆时针；此前导出符号相反）。 */

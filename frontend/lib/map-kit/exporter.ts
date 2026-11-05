@@ -262,6 +262,11 @@ export function composeLayout(
     // 收缩）；anchorOrigin 的 y 语义 = 距所属边的 margin 距离。
     const mTopTitle = scalePx(52);
     const mTopSub = scalePx(82);
+    // ADR-0283 D2：折行标题的副标题让位 —— title lines>1 时按行距下移，
+    // 避免第二行与副标题基线重叠（确定性偏移，单行形态不变）。
+    const titleWrapDy = (chrome.title?.lines?.length ?? 1) > 1
+      ? scalePx(32 * 1.3) * ((chrome.title!.lines!.length ?? 1) - 1)
+      : 0;
     const mBottom = scalePx(52);
     const mCompass = scalePx(64);
     const mLegend = scalePx(56);
@@ -298,7 +303,7 @@ export function composeLayout(
         drawChromeText(
           d, chrome.subtitle, 20,
           dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)",
-          { marginX, marginY: stackOffset(chrome.subtitle, mTopSub) },
+          { marginX, marginY: stackOffset(chrome.subtitle, mTopSub) + titleWrapDy },
         );
       }
     }
@@ -2291,6 +2296,17 @@ async function runExportInternal(
       chromeDegradations.push({
         code: 'title_truncated',
         detail: truncatedTextKinds.join(','),
+      });
+    }
+    // ADR-0283 D2：关键文本 wrap-not-clip 折行披露（非截断 —— 内容未
+    // 减少，版面以行数承载；消费方可据此复核行高预算）。
+    const wrappedTextKinds = publicationLayout.texts
+      .filter((t) => t.wrapped)
+      .map((t) => t.kind);
+    if (wrappedTextKinds.length > 0) {
+      chromeDegradations.push({
+        code: 'key_text_wrapped',
+        detail: wrappedTextKinds.join(','),
       });
     }
 

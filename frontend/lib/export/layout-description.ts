@@ -22,6 +22,7 @@
  *   选择标志），画布 skipTitle 决策与 PDF doc.text 内容同源。
  */
 import type { ExportChromeModel, ExportDegradation } from '../map-kit/export-chrome';
+import { wrapLabelMultilingual } from '../label-geometry';
 import {
   computeNiceScale,
   formatScaleLabel,
@@ -43,6 +44,8 @@ export interface PublicationPage {
   bleedMm: number;
   /** 裁切标记；仅出版档 true。 */
   cropMarks: boolean;
+  /** ADR-0283 D1：版心安全边距（毫米四边）；仅显式声明时在场。 */
+  safeAreaMm?: { top: number; right: number; bottom: number; left: number };
 }
 
 /** PDF/SVG 真实文本层条目（P3：单一事实源）。 */
@@ -53,16 +56,56 @@ export interface PublicationText {
   /** H02（任务书 §C）：确定性截断已发生（超长标题不得静默溢出画幅 —
    * 消费端据此发 title_truncated 披露）。 */
   truncated?: boolean;
+  /** ADR-0283 D2：关键文本 wrap-not-clip —— 折行替代减字。行数组是
+   * 绘制投影（text 保留完整原文语义）；仅折行发生时携带。 */
+  wrapped?: boolean;
+  lines?: string[];
 }
 
-/** 标题/副标题确定性截断上限（code points；与孪生标注 60 上限同约定，
- * 标题字号更大给更宽的 120/160）。 */
-const MAX_TITLE_CODEPOINTS = 120;
-const MAX_SUBTITLE_CODEPOINTS = 160;
+/** 标题/副标题每行上限（code points；与孪生标注 60 上限同约定，
+ * 标题字号更大给更宽的 120/160）。ADR-0283 D2：上限语义从「整体截断」
+ * 升级为「每行宽度」—— 折行预算 MAX_*_LINES 用尽才在末行可见截断。
+ * 导出供 export-chrome（canvas 链 title/subtitle 元素折行）同源消费。 */
+export const MAX_TITLE_CODEPOINTS = 120;
+export const MAX_SUBTITLE_CODEPOINTS = 160;
+export const MAX_TITLE_LINES = 2;
+export const MAX_SUBTITLE_LINES = 3;
 
-function clipText(text: string, cap: number): { text: string; truncated: boolean } {
-  if (text.length <= cap) return { text, truncated: false };
-  return { text: `${text.slice(0, cap - 1)}…`, truncated: true };
+/** 关键文本折行（ADR-0283 D2）：复用 parity 锁定的多语断行原语
+ * （label-geometry.wrapLabelMultilingual ↔ label_typography.wrap_label_multilingual，
+ * CJK 按字/拉丁按词/auto 占比；超预算末行可见截断）。
+ * 内容丢失检测：忽略空白拼接后与原文不等 = 末行截断发生。 */
+function wrapKeyText(
+  text: string,
+  capPerLine: number,
+  maxLines: number,
+): { text: string; wrapped: boolean; truncated: boolean; lines: string[] } {
+  const lines = wrapLabelMultilingual(text, capPerLine, maxLines);
+  const lost = lines.join('').replace(/\s/g, '') !== text.replace(/\s/g, '');
+  return { text, wrapped: lines.length > 1, truncated: lost, lines };
+}
+
+/** 关键文本（title/subtitle）条目装配：单行未截断 = 旧形态（逐字节兼容，
+ * golden 不漂移）；折行才携带 wrapped/lines 增量字段。 */
+function keyTextEntry(kind: 'title' | 'subtitle', text: string, cap: number, maxLines: number): PublicationText {
+  const w = wrapKeyText(text, cap, maxLines);
+  if (!w.wrapped && !w.truncated) return { kind, text };
+  const entry: PublicationText = { kind, text: w.text, wrapped: w.wrapped };
+  if (w.wrapped) entry.lines = w.lines;
+  if (w.truncated) entry.truncated = true;
+  return entry;
+}
+
+/** 关键文本折行投影（canvas chrome 链消费，ADR-0283 D2）：返回折行结果
+ * —— 单行时 undefined（旧元素形态逐字节不变），多行时行数组。 */
+export function projectTitleLines(
+  text: string | undefined,
+  cap: number,
+  maxLines: number,
+): string[] | undefined {
+  if (!text) return undefined;
+  const lines = wrapLabelMultilingual(text, cap, maxLines);
+  return lines.length > 1 ? lines : undefined;
 }
 
 /** 范围契约（P4 所见即所得）。 */
@@ -111,6 +154,10 @@ export interface BuildPublicationLayoutInput {
   colorMode?: ColorMode;
   /** 比例尺条目标称像素长（与画布 drawChromeScaleBar 口径一致）。 */
   scaleBarTargetPx?: number;
+  /** ADR-0283 D1：出版版心安全边距声明（毫米；仅显式提供时进入 page
+   * 投影 —— 缺席 = 旧形态逐字节一致，golden 不漂移）。几何消费（图框/
+   * chrome 落位对拍 safe_area_violation）由版心折算层承接。 */
+  safeAreaMm?: { top: number; right: number; bottom: number; left: number };
 }
 
 export const PUBLICATION_LAYOUT_VERSION = 1 as const;
@@ -135,6 +182,7 @@ export function buildPublicationLayout(
     colorMode,
     bleedMm,
     cropMarks: colorMode === 'cmyk',
+    ...(input.safeAreaMm ? { safeAreaMm: input.safeAreaMm } : {}),
   };
 
   // 标题回退链 —— 单处记录，canvas/SVG/PDF 三链共用（此前 SVG 链自定
@@ -143,17 +191,12 @@ export function buildPublicationLayout(
   const subtitle = input.requestSubtitle || input.specSubtitle || '';
   const texts: PublicationText[] = [];
   if (title) {
-    const clipped = clipText(title, MAX_TITLE_CODEPOINTS);
-    // 仅截断时携带标记（非截断形态与旧 IR 逐字段一致，golden 不漂移）。
-    texts.push(clipped.truncated
-      ? { kind: "title", ...clipped }
-      : { kind: "title", text: clipped.text });
+    // ADR-0283 D2：关键文本 wrap-not-clip（折行预算 2×120；仅折行发生时
+    // 携带增量字段，单行形态与旧 IR 逐字段一致 —— golden 不漂移）。
+    texts.push(keyTextEntry('title', title, MAX_TITLE_CODEPOINTS, MAX_TITLE_LINES));
   }
   if (subtitle) {
-    const clipped = clipText(subtitle, MAX_SUBTITLE_CODEPOINTS);
-    texts.push(clipped.truncated
-      ? { kind: "subtitle", ...clipped }
-      : { kind: "subtitle", text: clipped.text });
+    texts.push(keyTextEntry('subtitle', subtitle, MAX_SUBTITLE_CODEPOINTS, MAX_SUBTITLE_LINES));
   }
   if (input.author) texts.push({ kind: 'author', text: input.author });
   if (input.dataSource) texts.push({ kind: 'dataSource', text: input.dataSource });

@@ -263,6 +263,12 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "title_truncated", "warning",
             "标题/副标题超出确定性上限已截断（{detail}）",
         ),
+        # —— ADR-0283 D2 关键文本 wrap-not-clip 折行披露（内容未减少，
+        # 版面以行数承载；发射器 exporter.ts / vector-svg-export.ts）——
+        RenderDiagnosticSpec(
+            "key_text_wrapped", "info",
+            "关键文本超限折行（wrap-not-clip，内容完整）（{detail}）",
+        ),
         RenderDiagnosticSpec(
             "vector_pdf_unavailable", "warning",
             "服务端矢量 PDF 引擎不可用，已回退栅格导出",
@@ -521,6 +527,12 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     # H02（任务书 §C）：版面文本截断披露（exporter/vector-svg-export 发射；
     # layout-description 置 truncated 标记为单源决策点）
     "title_truncated": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/vector-svg-export.ts",
+    ),
+    # ADR-0283 D2：关键文本折行披露（exporter/vector-svg-export 发射；
+    # layout-description 置 wrapped 标记为单源决策点）
+    "key_text_wrapped": (
         "frontend/lib/map-kit/exporter.ts",
         "frontend/lib/map-kit/vector-svg-export.ts",
     ),

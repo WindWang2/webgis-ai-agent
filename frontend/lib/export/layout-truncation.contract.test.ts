@@ -22,13 +22,28 @@ function layoutWithTitle(title?: string) {
 }
 
 describe("H02 layout geometry contracts", () => {
-  it("long title is deterministically truncated and flagged", () => {
+  it("long title wraps (wrap-not-clip) and only clips when budget exhausted", () => {
+    // 300 code points > 2×120 折行预算 → wrap + 末行可见截断（ADR-0283 D2：
+    // 内容保留优先于减字；text 保留完整原文，lines 是绘制投影）。
     const long = "成都市小学分布情况".repeat(30); // 300 code points
     const layout = layoutWithTitle(long);
     const title = layout.texts.find((t) => t.kind === "title")!;
-    expect(title.text.length).toBe(120);
-    expect(title.text.endsWith("…")).toBe(true);
-    expect(title.truncated).toBe(true);
+    expect(title.wrapped).toBe(true);
+    expect(title.lines!.length).toBe(2);
+    expect(title.text).toBe(long); // 原文语义不减少
+    expect(title.truncated).toBe(true); // 预算耗尽的可见截断如实披露
+    expect(title.lines!.join("").length).toBeLessThan(long.length);
+  });
+
+  it("title within wrap budget is preserved without truncation", () => {
+    // 折行按 em 宽度计（CJK 每字 1.67 窄字符位）：cap 120/行的纯中文
+    // 行容量 72 字，2 行预算 144 字 —— 140 字标题两行完整承载，无截断。
+    const medium = "校".repeat(140);
+    const layout = layoutWithTitle(medium);
+    const title = layout.texts.find((t) => t.kind === "title")!;
+    expect(title.wrapped).toBe(true);
+    expect(title.truncated).toBeUndefined();
+    expect(title.lines!.join("")).toBe(medium);
   });
 
   it("short title passes through untruncated", () => {
@@ -36,9 +51,10 @@ describe("H02 layout geometry contracts", () => {
     const title = layout.texts.find((t) => t.kind === "title")!;
     expect(title.text).toBe("成都市小学分布");
     expect(title.truncated).toBeUndefined();
+    expect(title.wrapped).toBeUndefined();
   });
 
-  it("subtitle truncation cap is wider than title cap", () => {
+  it("subtitle per-line cap is wider than title cap and wraps by budget", () => {
     const layout = buildPublicationLayout({
       paperSize: "screen",
       orientation: "landscape",
@@ -48,8 +64,11 @@ describe("H02 layout geometry contracts", () => {
       requestSubtitle: "副".repeat(200),
     });
     const subtitle = layout.texts.find((t) => t.kind === "subtitle")!;
-    expect(subtitle.text.length).toBe(160);
-    expect(subtitle.truncated).toBe(true);
+    // 200 ≤ 3×160 预算 → 折行完整承载（旧契约的 160 整体截断已由
+    // wrap-not-clip 阶梯取代 —— 内容保留优先）
+    expect(subtitle.wrapped).toBe(true);
+    expect(subtitle.truncated).toBeUndefined();
+    expect(subtitle.lines!.join("")).toBe("副".repeat(200));
   });
 
   it("vector SVG export discloses truncated texts (title_truncated)", () => {
