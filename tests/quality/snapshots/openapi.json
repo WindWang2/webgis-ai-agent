@@ -4803,6 +4803,17 @@
       "title": "Agent Runtime",
       "type": "string"
      },
+     "pi_vendor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pi Vendor"
+     },
      "pi_workers_alive": {
       "anyOf": [
        {
