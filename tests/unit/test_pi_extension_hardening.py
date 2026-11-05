@@ -491,3 +491,31 @@ def test_before_agent_start_prefixes_unknown_opening(tmp_path: Path):
     text = res.stderr.strip()
     assert text.splitlines()[0].startswith("You are GeoAgent")
     assert unknown in text
+
+
+@requires_node
+def test_before_agent_start_malformed_marker_falls_back_to_default(tmp_path: Path):
+    """畸形 [WEBGIS_ACTIVE_TOOLS:...] marker（JSON 解析失败/非数组）必须回落
+    默认投影 —— 不得让全注册超集保持 active（review P3-7 回归锁）。"""
+    dump = tmp_path / "native-tools.json"
+    dump.write_text(json.dumps(_MINIMAL_DUMP), encoding="utf-8")
+    malformed = "[WEBGIS_ACTIVE_TOOLS:[not-json]]"
+    script = f"""
+      import webgisExt from {json.dumps(EXTENSION_PATH.as_uri())};
+      process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(str(dump))};
+      const active = [];
+      const pi = {{
+        registerTool: () => {{}},
+        setActiveTools: (names) => active.push(names),
+        on: (event, handler) => {{ pi._h = handler; }},
+      }};
+      webgisExt(pi);
+      await pi._h({{ systemPrompt: "s", prompt: {json.dumps(malformed)} }});
+      process.stderr.write(JSON.stringify(active));
+    """
+    res = _run_node_script(script)
+    data = json.loads(res.stderr.strip().splitlines()[-1])
+    assert len(data) == 1 and len(data[0]) == 8, (
+        "malformed marker must apply the default 8-tool projection, got "
+        f"{data}"
+    )

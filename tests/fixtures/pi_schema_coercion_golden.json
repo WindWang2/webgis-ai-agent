@@ -1,6 +1,6 @@
 {
   "$meta": {
-    "purpose": "Pi v1.5.0 pi-schema 工具参数校验/强制转换契约 golden（ADR-0285）。锁定 Pi 侧在扩展 execute() 之前对 plain JSON Schema 工具实行的行为矩阵：接受（含归一化后的实参）或拒绝（含错误文本片段）。任何上游漂移（新增/取消某类 coercion、边界不再强制）都会被 tests/integration/test_pi_schema_coercion_golden.py 的活体比对捕获。",
+    "purpose": "Pi v1.5.0 pi-schema 工具参数校验/强制转换契约 golden（ADR-0282）。锁定 Pi 侧在扩展 execute() 之前对 plain JSON Schema 工具实行的行为矩阵：接受（含归一化后的实参）或拒绝（含错误文本片段）。任何上游漂移（新增/取消某类 coercion、边界不再强制）都会被 tests/integration/test_pi_schema_coercion_golden.py 的活体比对捕获。",
     "vendor_verified": "v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)",
     "verified_at": "2026-11-06",
     "evidence": "真实 rpc-entry + 打点扩展实测（probe ext 记录 execute() 收到的实参；tool_execution_end 捕获校验拒绝文本）",

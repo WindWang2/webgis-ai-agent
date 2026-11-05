@@ -158,16 +158,7 @@ def check_extension() -> Report:
         return Report("extension", FAIL, f"{EXTENSION_PATH} missing", "restore the file")
     if shutil.which("node") is None:
         return Report("extension", SKIP, "node not on PATH", "install node to enable check")
-    rc, out = _run(["node", "--check", str(EXTENSION_PATH)])
-    # --check works for CommonJS; for ESM use dynamic import instead.
-    if rc != 0:
-        rc, out = _run([
-            "node", "--input-type=module", "--eval",
-            f"import({json.dumps(EXTENSION_PATH.as_uri())}).then(() => 0).catch((e) => "
-            "{ console.error(String(e)); process.exit(1); })",
-        ])
-        if rc != 0:
-            return Report("extension", FAIL, f"extension import failed: {out[:400]}", "")
+
     # Load-time contract: registering against a mock pi must not throw and must
     # NOT call setActiveTools during load (v1.5.0 two-phase loading).
     dump = {
@@ -179,20 +170,20 @@ def check_extension() -> Report:
         "default_active": ["webgis_map_intent"],
         "execute_proxy": "webgis_execute",
     }
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
-        json.dump(dump, fh)
-        dump_path = fh.name
-    # do NOT unlink before use；进程退出由 TemporaryDirectory 兜底
-    script = (
-        f"import webgisExt from {json.dumps(EXTENSION_PATH.as_uri())};\n"
-        f"process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(dump_path)};\n"
-        "let loadActiveCalls = 0; let registered = 0;\n"
-        "const pi = { registerTool: () => { registered += 1; },"
-        " setActiveTools: () => { loadActiveCalls += 1; }, on: () => {} };\n"
-        "webgisExt(pi);\n"
-        "process.stderr.write(JSON.stringify({ loadActiveCalls, registered }));\n"
-    )
-    rc, out = _run(["node", "--input-type=module", "--eval", script])
+    # dump 落在 TemporaryDirectory 内（复核修正：不再向 /tmp 泄漏）。
+    with tempfile.TemporaryDirectory(prefix="pi-doctor-ext-") as ext_tmp:
+        dump_path = str(Path(ext_tmp) / "native-tools.json")
+        Path(dump_path).write_text(json.dumps(dump), encoding="utf-8")
+        script = (
+            f"import webgisExt from {json.dumps(EXTENSION_PATH.as_uri())};\n"
+            f"process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(dump_path)};\n"
+            "let loadActiveCalls = 0; let registered = 0;\n"
+            "const pi = { registerTool: () => { registered += 1; },"
+            " setActiveTools: () => { loadActiveCalls += 1; }, on: () => {} };\n"
+            "webgisExt(pi);\n"
+            "process.stderr.write(JSON.stringify({ loadActiveCalls, registered }));\n"
+        )
+        rc, out = _run(["node", "--input-type=module", "--eval", script])
     if rc != 0:
         return Report("extension", FAIL, f"extension load failed: {out[:400]}", "")
     try:

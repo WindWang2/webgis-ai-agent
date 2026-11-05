@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the vendored Pi RPC runtime (goal-pi-native-host-vnext / ADR-0285).
+# Build the vendored Pi RPC runtime (goal-pi-native-host-vnext / ADR-0282).
 #
 # Produces the artifacts the backend Pi bridge spawns:
 #   vendor/pi/packages/coding-agent/dist/bundle/rpc-entry.js  (self-contained, primary)
