@@ -20,6 +20,7 @@ import {
   getMapSpecSessionCursor,
   subscribeMapSpecLive,
 } from '@/lib/mapspec/session-cursor';
+import { getSituationProjection } from '@/lib/interaction/use-situation-projection';
 
 interface StatusChip {
   key: string;
@@ -33,8 +34,11 @@ function useRefreshOnSession(): void {
   useEffect(() => {
     const sync = () => {
       const cursor = getMapSpecSessionCursor();
-      if (cursor.sessionId && versionRef.current === 0) {
-        // 只有真的发起过拉取才消耗首刷机会（会话未建立时保持待命）。
+      if (!cursor.sessionId) return;
+      // review P2-5：会话切换（投影 store 还停在旧会话）也必须刷新——
+      // 否则状态条永久显示上一会话的 scope/selection。
+      const staleSession = getSituationProjection().sessionId;
+      if (versionRef.current === 0 || staleSession !== cursor.sessionId) {
         versionRef.current += 1;
         void refreshSituationProjection(cursor.sessionId);
       }

@@ -176,7 +176,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     #    publishSelection(source:'table')——本质是要素定位，保留来源身份）──
     _k(
         "table_selection_changed",
-        ("layer_id", "feature_id", "selected_ids", "action"),
+        ("layer_id", "feature_id", "selected_ids", "dataset_ref", "action"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
     # ── mutation 链接型：时间窗 settle（ADR-0283 D2；钩子 temporal
@@ -188,6 +188,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
         state_changing=True,
         authority=AUTHORITY_MAPSPEC,
         coalesce=COALESCE_REPLACE_PENDING,
+        sensitivity=SENSITIVITY_LIMITED,
     ),
 ])
 

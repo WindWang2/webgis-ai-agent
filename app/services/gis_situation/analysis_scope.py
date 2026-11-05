@@ -220,6 +220,25 @@ async def validate_analysis_scope(
     # ── feature_ids / feature_single：五链验证 ──────────────────────────
     dataset_ref = claimed.get("dataset_ref")
     if not dataset_ref:
+        # review P2-4：选择事件可能不带 dataset_ref（如 table 定位）——从
+        # desired spec 的层 source（ref: URL）服务端解析，不信任前端补报。
+        spec_early = {}
+        try:
+            spec_early = await mapspec_store.get_mapspec(session_id)
+        except Exception:  # noqa: BLE001 — spec 读失败按空（下方层链再披露）
+            spec_early = {}
+        spec_early = spec_early if isinstance(spec_early, dict) else {}
+        layer_early = _spec_layer(spec_early, claimed.get("layer_id"))
+        source_key = layer_early.get("source") if isinstance(layer_early, dict) else None
+        sources = spec_early.get("sources")
+        source_entry = sources.get(source_key) if isinstance(sources, dict) and source_key else None
+        source_ref = (
+            source_entry.get("url") if isinstance(source_entry, dict)
+            and isinstance(source_entry.get("url"), str) else None
+        )
+        if source_ref and source_ref.startswith("ref:"):
+            dataset_ref = source_ref
+    if not dataset_ref:
         result["reason"] = SCOPE_REASON_NO_DATASET_REF
         return result
     result["dataset_ref"] = dataset_ref

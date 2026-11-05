@@ -165,6 +165,7 @@
       "coalesce": "none",
       "payload_keys": [
         "action",
+        "dataset_ref",
         "feature_id",
         "layer_id",
         "selected_ids"
@@ -184,7 +185,7 @@
         "pinned",
         "window"
       ],
-      "sensitivity": "internal",
+      "sensitivity": "limited",
       "state_changing": true
     },
     "viewport_settled": {

@@ -24,7 +24,7 @@ MAX_HISTORY_ENTRIES = 6
 MAX_HISTORY_IDS = 8
 
 _SELECTION_OPENERS = frozenset({"feature_selected", "table_selection_changed"})
-_SELECTION_CLOSERS = frozenset({"feature_deselected"})
+_SELECTION_CLOSERS = frozenset({"feature_deselected", "table_selection_changed"})
 
 
 def _ids_of(payload: Dict[str, Any]) -> List[str]:
@@ -59,6 +59,14 @@ def project_selection_history(
         seq = int(seq) if isinstance(seq, (int, float)) else len(epochs) + 1
         if kind in _SELECTION_OPENERS:
             ids = _ids_of(payload)
+            # review P2-2：table clear 事件无 id —— 按 closer 终结当前代
+            # （不跳过；否则 previous 句柄错代）。
+            if not ids and kind == "table_selection_changed":
+                current = next(
+                    (e for e in epochs if not e["superseded"] and not e["cleared"]), None)
+                if current is not None:
+                    current["cleared"] = True
+                continue
             if not ids:
                 continue
             for prev in epochs:

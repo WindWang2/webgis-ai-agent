@@ -156,7 +156,12 @@ def register_interaction_scope_tools(registry: ToolRegistry) -> None:
                 }
 
         if not perform_validation:
-            return {"success": claimed.get("kind") != "none", "claimed": claimed}
+            # review P3：声称面必须显式标注未验证（不冒充事实）。
+            return {
+                "success": claimed.get("kind") != "none",
+                "validated": False,
+                "claimed": claimed,
+            }
 
         try:
             validated = await validate_analysis_scope(session_id, claimed)

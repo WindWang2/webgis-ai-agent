@@ -136,7 +136,15 @@ export function resetSituationProjection(): void {
   emitChange();
 }
 
+/** boot 重放标记（有界：>32 会话时最旧的让位——防长生命周期无界）。 */
 let replayedSessions = new Set<string>();
+function markReplayed(sid: string): void {
+  if (replayedSessions.size >= 32) {
+    const oldest = replayedSessions.values().next().value;
+    if (oldest) replayedSessions.delete(oldest);
+  }
+  replayedSessions.add(sid);
+}
 
 /**
  * 拉取服务端 situation/turn-chain 投影（只读）。成功后若本会话尚未做过
@@ -179,7 +187,7 @@ export async function refreshSituationProjection(
     };
     emitChange();
     if (options.replaySelection !== false && !replayedSessions.has(sid)) {
-      replayedSessions.add(sid);
+      markReplayed(sid);
       replaySelectionFromScope(view);
     }
   } catch (err) {

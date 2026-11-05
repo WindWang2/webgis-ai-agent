@@ -341,3 +341,36 @@ async def test_compile_situation_scope_unknown_without_evidence():
     situation = await compile_situation(
         "s1", store=ScopeStore(), mapspec_store=FakeMapspecStore({}))
     assert situation.analysis.selection_scope.status == "unknown"
+
+
+def test_review_reason_vocabulary_closed():
+    """review P3：SCOPE_REASONS 封闭性 + 工具层补充 reason 显式登记。"""
+    from app.services.gis_situation import analysis_scope as mod
+    assert mod.SCOPE_REASONS == frozenset({
+        "ok", "no_selection", "no_dataset_ref", "ref_unresolvable",
+        "layer_removed", "revision_drifted", "features_missing",
+    })
+
+
+def test_review_dataset_ref_falls_back_to_layer_source():
+    """review P2-4：选择不带 dataset_ref 时从 desired spec 层 source 解析。"""
+    store = ScopeStore(
+        payloads={"ref:geojson-aaa": _geojson_ref_payload()},
+        descriptors={"ref:geojson-aaa": {"content_revision": 2, "feature_count": 3}},
+    )
+    spec = {
+        "revision": 3,
+        "sources": {"src-1": {"type": "geojson", "url": "ref:geojson-aaa"}},
+        "layers": [{"id": "schools", "type": "circle", "source": "src-1",
+                    "visible": True}],
+    }
+    claimed = {
+        "kind": "feature_single", "layer_id": "schools", "dataset_ref": None,
+        "feature_ids": ["sch-1"], "claimed_at_seq": 1, "sources": ["ir_ledger"],
+    }
+    result = run_validate("s1", claimed, store=store,
+                          mapspec_store=FakeMapspecStore(spec))
+    assert result["status"] == "usable"
+    assert result["dataset_ref"] == "ref:geojson-aaa"
+    assert result["feature_ids"] == ["sch-1"]
+

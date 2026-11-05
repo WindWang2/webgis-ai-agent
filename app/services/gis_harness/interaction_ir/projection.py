@@ -84,9 +84,20 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
                 None if payload.get("action") == "clear"
                 else _chart_selection_view(record, payload)
             )
+            # review P2-3：前端 selection-store 是单选模型——chart 类别选择
+            # 会替换当前要素选择。服务端投影镜像同一语义，避免 claimed_scope
+            # 残留旧要素集（过期选择）。
+            if payload.get("action") != "clear":
+                selection = None
         elif kind == "table_selection_changed":
-            # 表格行选择即要素选择（来源身份保留在 kind）——更新 selection 面。
-            selection = _selection_view(record, payload)
+            # 表格行选择即要素选择（来源身份保留在 kind）——更新 selection 面；
+            # clear（或无 id）不留幽灵 selection（review P2-1）。
+            if payload.get("action") == "clear" or not (
+                payload.get("selected_ids") or payload.get("feature_id")
+            ):
+                selection = None
+            else:
+                selection = _selection_view(record, payload)
         elif kind == "temporal_window_settled":
             temporal_window = _temporal_window_view(record, payload)
         elif kind == "aoi_drawn" or kind == "aoi_edited":

@@ -37,8 +37,8 @@
 
 `gis_situation/analysis_scope.py`：`ClaimedScope` 从 IR ledger 投影 + pre-turn 快照
 纯派生（编译期零 IO，进 `situation.analysis.selection_scope` fact，additive
-default unknown）；`validate_analysis_scope` 在 session store 只读验证五链
-（ref 所有权→content_revision 一致→要素存活→宿主层在架→跨代披露），全 reason
+default unknown）；`validate_analysis_scope` 在 session store 只读验证五链（实现序：ref 所有权→宿主层在架→content_revision
+一致→要素存活→有界披露），全 reason
 封闭词表，失败不猜默认。AOI 面消费 canvas affordance 环既有有界几何。新只读工具
 `webgis_selection_scope`（独立文件注册，不碰 #1972 占用的 tools.py）返回
 ValidatedScope，agent 显式传参给既有分析工具——**不向 ToolDispatchService 注入
@@ -89,9 +89,9 @@ receipt-bus 消费处 additive 录制反向命令（反向重放既有 CAS 通�
 
 ### D8 Journey 验收（j10–j17）
 
-8 组多轮旅程（多轮指代/框选约束分析/图表联动上报/user-wins/刷新恢复/迟到旧
-ACK/取消重试/权限与空结果诚实），mock 档为基线，@smoke 子集进 PR 门；real 档按
-环境尽力并如实标注。
+两层旅程：后端回放层 8 组（J1–J8：多轮指代/框选 AOI/图表上行/user-wins/换区筛除/
+刷新恢复/迟到旧观察/跨会话 fail-closed，真实 dispatch 链）；浏览器层 j10–j12
+（@smoke 恢复与六态、降级），mock 档为基线；real 档按环境尽力并如实标注。
 
 ## 不做（红线重申）
 

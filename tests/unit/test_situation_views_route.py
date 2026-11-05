@@ -117,20 +117,12 @@ async def test_get_turn_chain_happy_path_three_classes(client):
         "_cartographic_observation": {"mapspec_revision": 4},
     })
 
-    class _FakeLedger:
-        async def list_events(self, session_id, **kwargs):
-            return [
-                {"turn_id": "t1", "kind": "map_mutated", "mutation_revision": 4,
-                 "detail": {}},
-                {"turn_id": "t1", "kind": "turn_ended"},
-            ]
-
     with patch.object(_sv_mod, "session_data_manager", new=store), \
          patch("app.services.mapspec.store.mapspec_store_instance", new=MagicMock()), \
          patch("app.services.turn_journal.ledger.TurnEventLedger",
                side_effect=RuntimeError("use fake")):
-        # ledger 参数在 route 里不注入 → project_turn_chain 内部构造真实
-        # TurnJournalLedger；patch 掉后走 degraded 路径不影响三类断言。
+        # route 不注入 ledger → project_turn_chain 内部构造 TurnEventLedger；
+        # patch 构造器抛错 → degraded 路径（三类断言仍由回执/IR 构成）。
         resp = await client.get("/api/v1/chat/sessions/s2/turn-chain")
     assert resp.status_code == 200
     body = resp.json()

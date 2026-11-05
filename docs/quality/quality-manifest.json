@@ -5878,7 +5878,7 @@
   }
  ],
  "behavioral": {
-  "dispatch": 204,
+  "dispatch": 205,
   "mention": 185,
   "none": 7
  },
@@ -8872,7 +8872,7 @@
   "capabilities": 174,
   "findings": 8,
   "recipes": 166,
-  "tools": 396
+  "tools": 397
  },
  "findings": [
   {
@@ -8941,7 +8941,7 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 204,
+  "behavioral_dispatch": 205,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
   "pass": true,
@@ -8949,7 +8949,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "0187c91b25a22031eef467c7fe5cc8231aa5ee35695bc37731f33783a9f5572d",
+ "fingerprint": "bff200257bc385f24938592809345a3c590ea89bb184f62487e63bd7633b1647",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8989,7 +8989,7 @@
    }
   },
   "pass": true,
-  "total": 396
+  "total": 397
  },
  "manifest_version": 2,
  "recipes": {
@@ -20219,6 +20219,7 @@
     "map operation"
    ],
    "tests": [
+    "tests/test_gis_situation_turn_chain.py",
     "tests/unit/gis_harness/map_operations/test_review_remediation.py",
     "tests/unit/gis_harness/map_operations/test_tool.py"
    ],
@@ -20476,6 +20477,33 @@
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_composition_asset_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_selection_scope",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "选择",
+    "分析范围",
+    "情境",
+    "selection scope",
+    "interaction"
+   ],
+   "tests": [
+    "tests/acceptance/gis_agent/test_e5_multiturn_journeys.py",
+    "tests/unit/test_interaction_scope_tool.py"
    ],
    "tier": 2
   },

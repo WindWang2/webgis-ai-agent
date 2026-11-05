@@ -144,3 +144,46 @@ def test_token_estimate_present_and_bounded():
     assert snap["token_estimate"] > 0
     serialized = json.dumps(snap, ensure_ascii=False)
     assert len(serialized) < 32 * 1024  # 有界：投影远小于 ledger 本体
+
+
+# ── ADR-0283 review 清偿回归 ───────────────────────────────────────────
+
+
+def _ev_record(seq, kind, payload, **extra):
+    return {
+        "event_id": f"rv-{seq:08d}", "client_instance_id": "t-rv", "client_seq": seq,
+        "server_seq": seq, "kind": kind, "payload": payload, **extra,
+    }
+
+
+def test_review_table_clear_leaves_no_ghost_selection():
+    """P2-1：table clear 后 selection 面必须为 None（不残留无 id 幽灵）。"""
+    snap = project_interaction_snapshot([
+        _ev_record(1, "feature_selected",
+                   {"layer_id": "schools", "feature_id": "sch-1"}),
+        _ev_record(2, "table_selection_changed",
+                   {"layer_id": "schools", "action": "clear"}),
+    ])
+    assert snap["selection"] is None
+
+
+def test_review_chart_select_supersedes_feature_selection():
+    """P2-3：chart 类别选择替换要素选择（镜像前端单选模型），不留过期集。"""
+    snap = project_interaction_snapshot([
+        _ev_record(1, "feature_selected",
+                   {"layer_id": "schools", "feature_id": "sch-1"}),
+        _ev_record(2, "chart_selection_changed",
+                   {"layer_id": "districts", "field": "type",
+                    "categories": ["A"], "action": "select"}),
+    ])
+    assert snap["selection"] is None
+    assert snap["chart_selection"]["categories"] == ["A"]
+
+
+def test_review_chart_clear_keeps_chart_face_none_only():
+    snap = project_interaction_snapshot([
+        _ev_record(1, "chart_selection_changed",
+                   {"layer_id": "d", "categories": ["A"], "action": "select"}),
+        _ev_record(2, "chart_selection_changed", {"layer_id": "d", "action": "clear"}),
+    ])
+    assert snap["chart_selection"] is None

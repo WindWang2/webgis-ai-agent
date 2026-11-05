@@ -121,3 +121,23 @@ def test_history_truncated_disclosure():
     history = project_selection_history(events)
     assert history[0]["truncated"] is True  # IR payload ≤8 上行的截断披露
     assert len(history[0]["feature_ids"]) == 8
+
+
+def test_review_table_clear_closes_current_epoch():
+    """review P2-2：table clear 终结当前代——previous 不再错代。"""
+    events = [
+        _ev(1, "feature_selected", {
+            "layer_id": "schools", "dataset_ref": "ref:geojson-aaa",
+            "selected_ids": ["sch-1"]}),
+        _ev(2, "table_selection_changed", {
+            "layer_id": "schools", "feature_id": "sch-9", "action": "select"}),
+        _ev(3, "table_selection_changed", {
+            "layer_id": "schools", "action": "clear"}),
+    ]
+    history = project_selection_history(events)
+    cleared = [e for e in history if e["cleared"]]
+    assert cleared and cleared[0]["feature_ids"] == ["sch-9"]
+    # 「刚才」= 最近被清除的 sch-9（不再是 sch-1）。
+    claimed = resolve_selection_ref(events, "previous")
+    assert claimed is not None
+    assert claimed["feature_ids"] == ["sch-9"]

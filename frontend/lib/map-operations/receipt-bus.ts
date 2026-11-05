@@ -91,6 +91,10 @@ export function pushOperationReceipt(
   return true;
 }
 
+function _resetUndoDedupeForTests(): void {
+  undoRecordedOps.clear();
+}
+
 /**
  * ADR-0283 D6：agent 可逆回执 → undo 栈录制（反向重放既有 CAS 通道）。
  * 只录 presentation 族（后端 ``invertible`` 披露为 true）；用户可用
@@ -103,6 +107,10 @@ function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
     if (receipt.invertible !== true) return;
     if (String(receipt.origin ?? 'agent') !== 'agent') return;
     if (receipt.status !== 'committed' && receipt.status !== 'partial') return;
+    // 幂等去重（review P3）：同一 operation_id 只录一次。
+    const opKey = String(receipt.operation_id);
+    if (undoRecordedOps.has(opKey)) return;
+    undoRecordedOps.add(opKey);
     const applied = (receipt.effects ?? []).filter(
       (e) => e.state === 'applied' && (e.targets?.length ?? 0) > 0,
     );
@@ -135,16 +143,24 @@ function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
   }
 }
 
+/** 已录制 undo 的操作 id（幂等：SSE 重连/step 重放不双录）。 */
+const undoRecordedOps = new Set<string>();
+
 /** 按操作 id 更新状态（owner 批准提交后回填最终回执）。 */
 export function updateOperationReceipt(receipt: MapOperationReceiptView): boolean {
   if (!receipt?.operation_id) return false;
   const idx = receipts.findIndex((r) => r.operation_id === receipt.operation_id);
   if (idx < 0) return pushOperationReceipt(receipt);
+  const wasPending = receipts[idx].status !== 'committed'
+    && receipts[idx].status !== 'partial';
   receipts = [
     ...receipts.slice(0, idx),
     receipt,
     ...receipts.slice(idx + 1),
   ];
+  // review P2-6：owner 批准（pending → committed/partial）也是 agent 起源
+  // commit 的落定——同样录 undo（D6 承诺覆盖默认确认流）。
+  if (wasPending) recordAgentReceiptUndo(receipt);
   emit();
   return true;
 }

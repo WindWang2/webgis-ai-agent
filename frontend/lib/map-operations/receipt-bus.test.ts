@@ -147,3 +147,32 @@ describe('agent receipt undo recording (ADR-0283 D6)', () => {
     recordSpy.mockRestore();
   });
 });
+
+describe('owner confirm path undo recording (review P2-6)', () => {
+  beforeEach(() => {
+    setReceiptBusSession('sess-rb2');
+  });
+
+  it('records undo when pending receipt transitions to committed via updateOperationReceipt', async () => {
+    const undoMod = await import('@/lib/workbench/undo');
+    const recordSpy = vi.spyOn(undoMod, 'presentationCommand').mockImplementation(() => {});
+    const pending = {
+      operation_id: 'op-confirm-1', status: 'confirmation_required', origin: 'agent',
+      invertible: true, effects: [{
+        index: 0, kind: 'set_layer_visibility', targets: ['heatmap'],
+        state: 'applied', before: { visible: true }, after: { visible: false },
+      }],
+    };
+    pushOperationReceipt(pending, 'sess-rb2');
+    const committed = { ...pending, status: 'committed' };
+    updateOperationReceipt(committed);
+    await vi.waitFor(() => {
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+    });
+    // 同 op 重放（SSE 重连）不双录。
+    updateOperationReceipt(committed);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    recordSpy.mockRestore();
+  });
+});
