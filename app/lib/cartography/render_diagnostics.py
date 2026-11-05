@@ -269,6 +269,11 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "key_text_wrapped", "info",
             "关键文本超限折行（wrap-not-clip，内容完整）（{detail}）",
         ),
+        # —— ADR-0283 D3 缺瓦片有界披露（per-source 计数 + 首 5 样本）——
+        RenderDiagnosticSpec(
+            "basemap_tiles_missing", "warning",
+            "底图瓦片缺失（{detail}；计数+样本有界，非全量清单）",
+        ),
         RenderDiagnosticSpec(
             "vector_pdf_unavailable", "warning",
             "服务端矢量 PDF 引擎不可用，已回退栅格导出",
@@ -535,6 +540,11 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "key_text_wrapped": (
         "frontend/lib/map-kit/exporter.ts",
         "frontend/lib/map-kit/vector-svg-export.ts",
+    ),
+    # ADR-0283 D3：缺瓦片有界披露（runtime handler 记账 adapter → exporter）
+    "basemap_tiles_missing": (
+        "frontend/lib/mapspec-runtime/runtime.ts",
+        "frontend/lib/map-kit/exporter.ts",
     ),
 }
 

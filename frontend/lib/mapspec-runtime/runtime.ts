@@ -24,7 +24,7 @@ import {
   recordRecompileFallback,
 } from "@/lib/utils/perf-counters";
 import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
-import { recordSceneEvidence } from "@/lib/mapspec-runtime/adapter";
+import { recordSceneEvidence, recordTileMiss } from "@/lib/mapspec-runtime/adapter";
 import { checkMapSpecVersion } from "@/lib/carto-ir/version";
 import { resolveLayerVisibility } from "@/lib/carto-ir/visibility";
 import {
@@ -208,6 +208,14 @@ export class MapSpecRuntime {
       }
       if (/^raster-tiles-\d+$/.test(srcId)) {
         recordSceneEvidence("scene_basemap_unavailable", srcId);
+        // ADR-0283 D3：有界缺瓦片账目（count + 首样本 z/x/y）—— MapLibre
+        // 错误载荷的 tile.id 形如 "z/x/y"；缺席时只计数（不虚构坐标）。
+        const tileId = (e as { tile?: { id?: unknown } } | null)?.tile?.id;
+        if (typeof tileId === "string") {
+          recordTileMiss(srcId, tileId);
+        } else {
+          recordTileMiss(srcId, "");
+        }
       }
     };
     // 最小 map 桩（测试/半销毁 map）可能没有事件面 —— 防御性挂载。

@@ -31,7 +31,7 @@ import { devOnly } from '@/lib/utils/logger';
 import { hydrateMvtLayers } from '@/lib/store/layer-data';
 import { getComparisonExport } from '@/lib/map/comparison-export-registry';
 // ADR-0199：场景证据环（挤出证据门控的降级披露源）。
-import { sceneEvidenceSnapshot } from '@/lib/mapspec-runtime/adapter';
+import { sceneEvidenceSnapshot, tileMissDetail, tileMissSnapshot } from '@/lib/mapspec-runtime/adapter';
 import { metersPerPixelAt } from './meters-per-pixel';
 import type { ExportFrame, FrameLayout } from './frame-composer';
 import { specFramesToExportFrames } from './spec-frames';
@@ -1436,6 +1436,42 @@ export {
 export type { HighDpiRenderMode, HighDpiRenderResult } from '../export/highdpi';
 
 /**
+ * ADR-0283 D3（#1910 非重叠验收锚点）：PDF 文本层披露判定 —— 纯函数。
+ *
+ * 诚实语义（前端面）：`pdf_cjk_font_embedded` 仅在字体**确实已嵌入**
+ * （ensurePublicationFont 成功）且文本含非 WinAnsi 字符时发布；字体不可用
+ * → `pdf_text_rasterized_cjk`（栅格化兜底披露）；纯 WinAnsi 文本 → 无条目。
+ * 后端 WeasyPrint 回执的同码语义一致性核对见
+ * tests/cartography/test_pdf_receipt_parity_v1.py（blocked_on_#1910 部分以
+ * self-skip 披露，不冒充通过）。
+ */
+export function decidePdfTextLayerDisclosure(
+  pdfFontEmbedded: boolean,
+  pdfVectorText: boolean,
+  cjkInText: boolean,
+): ExportDegradation[] {
+  if (pdfFontEmbedded && cjkInText) {
+    return [
+      {
+        code: 'pdf_cjk_font_embedded',
+        detail: 'PDF 文本层嵌入 Noto Sans SC 子集字体，中文可选取/可检索',
+      },
+    ];
+  }
+  if (pdfVectorText) return [];
+  // 行为修正（ADR-0283 D3）：纯 WinAnsi 文本 + 文本层关闭时不再发布
+  // pdf_text_rasterized_cjk —— 该 detail 断言"含非 WinAnsi 字符"，对纯
+  // ASCII 标题是事实错误的归因（诚实披露纪律；此前此分支恒发）。
+  if (!cjkInText) return [];
+  return [
+    {
+      code: 'pdf_text_rasterized_cjk',
+      detail: '标题/副标题含非 WinAnsi 字符，已随画布栅格化（PDF 文本层跳过，避免乱码）',
+    },
+  ];
+}
+
+/**
  * W7（ADR-0118）：导出侧 spec 事实源 = live 同一合成器（composeLiveMapSpec）
  * —— committed MapSpec 叠加 pendingPresentation/pendingRemoved。乐观可见性
  * 翻转/图层移除期间，导出与 live 读同一时刻的可见状态（此前导出只读
@@ -2241,6 +2277,14 @@ async function runExportInternal(
         });
       }
     }
+    // ADR-0283 D3：缺瓦片有界披露 —— per-source 计数 + 首 5 样本（z/x/y），
+    // detail 有界（tileMissDetail 截 200）。无缺失 → 无条目（不虚构）。
+    for (const acc of tileMissSnapshot()) {
+      chromeDegradations.push({
+        code: 'basemap_tiles_missing',
+        detail: tileMissDetail(acc),
+      });
+    }
 
     // ADR-0157 P2：版面描述中间层（单一决策记录）—— canvas 消费
     // chromeModel 字段（既有绘制面不变），SVG/PDF 消费全量字段（texts/
@@ -2365,22 +2409,11 @@ async function runExportInternal(
       // ac-08（ADR-0157 P3）：文本层披露 —— 出版字体嵌入（含 CJK 可检索）
       // 为默认；字体不可用且含 CJK → 栅格化（最后兜底）。
       const cjkInText = hasNonWinAnsiChars(effTitle) || hasNonWinAnsiChars(effSubtitle);
-      const pdfDegradations: ExportDegradation[] =
-        pdfFontEmbedded && cjkInText
-          ? [
-              {
-                code: 'pdf_cjk_font_embedded',
-                detail: 'PDF 文本层嵌入 Noto Sans SC 子集字体，中文可选取/可检索',
-              },
-            ]
-          : pdfVectorText
-            ? []
-            : [
-                {
-                  code: 'pdf_text_rasterized_cjk',
-                  detail: '标题/副标题含非 WinAnsi 字符，已随画布栅格化（PDF 文本层跳过，避免乱码）',
-                },
-              ];
+      const pdfDegradations: ExportDegradation[] = decidePdfTextLayerDisclosure(
+        pdfFontEmbedded,
+        pdfVectorText,
+        cjkInText,
+      );
       // ADR-0081：PDF 文本层 subtitle 与 canvas 同一事实源链（请求参数 >
       // spec 组件 > 空串）—— 此前 PDF 只读请求参数，spec 副标题在 PDF
       // 文本层静默丢失。

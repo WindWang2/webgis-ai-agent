@@ -219,6 +219,54 @@ export function _resetSceneEvidenceForTests(): void {
   sceneEvidenceRing = [];
 }
 
+// ── ADR-0283 D3：缺瓦片有界账目（per-source 计数 + 首 N 样本）──────────
+// scene_basemap_unavailable 只证「有失效」；本账目回答「缺多少、缺哪些」——
+// 导出披露据此给 basemap_tiles_missing（count + 样本 z/x/y；detail ≤200）。
+// 有界三重：样本 ≤5/源、源 ≤8、无坐标的失败只计数不进样本。确定性：快照
+// 按 sourceId 字典序（无墙钟入序）。
+export interface TileMissAccount {
+  sourceId: string;
+  count: number;
+  samples: string[];
+}
+
+const TILE_MISS_SAMPLES_MAX = 5;
+const TILE_MISS_SOURCES_MAX = 8;
+const tileMissCounts = new Map<string, { count: number; samples: string[] }>();
+
+export function recordTileMiss(sourceId: string, tileCoord: string): void {
+  let acc = tileMissCounts.get(sourceId);
+  if (!acc) {
+    if (tileMissCounts.size >= TILE_MISS_SOURCES_MAX) {
+      // 容量界：超出源数丢弃（防御 —— 底图源数实际 ≤ 个位数），不挤占
+      // 既有源账目（确定性：保留先登记者）。
+      return;
+    }
+    acc = { count: 0, samples: [] };
+    tileMissCounts.set(sourceId, acc);
+  }
+  acc.count += 1;
+  if (tileCoord && acc.samples.length < TILE_MISS_SAMPLES_MAX) {
+    acc.samples.push(tileCoord);
+  }
+}
+
+export function tileMissSnapshot(): TileMissAccount[] {
+  return Array.from(tileMissCounts.entries())
+    .map(([sourceId, a]) => ({ sourceId, count: a.count, samples: [...a.samples] }))
+    .sort((a, b) => (a.sourceId < b.sourceId ? -1 : 1));
+}
+
+/** 导出披露 detail 构造（有界 ≤200；纯函数 —— exporter 消费）。 */
+export function tileMissDetail(acc: TileMissAccount): string {
+  const sample = acc.samples.join(";");
+  return `src=${acc.sourceId} count=${acc.count} sample=${sample}`.slice(0, 200);
+}
+
+export function _resetTileMissForTests(): void {
+  tileMissCounts.clear();
+}
+
 /** 挤出证据检查（ADR-0199 fail-closed）：显式契约 > 要素 height 数值字段。 */
 function extrusionEvidenceOf(layer: Layer, profile: GeometryProfile): {
   evidenced: boolean;

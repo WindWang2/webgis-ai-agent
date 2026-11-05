@@ -183,6 +183,10 @@ export type ExportDegradationCode =
    * air_gapped 守卫 → exporter 汇入；词表权威同上）。 */
   | 'scene_basemap_unavailable'
   | 'scene_terrain_no_source_air_gapped'
+  /* ADR-0283 D3：缺瓦片有界披露（per-source 计数 + 首 5 样本 z/x/y；
+   * 发射器 runtime.ts 错误 handler → adapter 账目 → exporter 汇入，
+   * 词表权威 app/lib/cartography/render_diagnostics.py）。 */
+  | 'basemap_tiles_missing'
   /* ADR-0157 P1：高 DPI 渲染策略（发射器 lib/export/highdpi.ts）。 */
   | 'highdpi_rerender_timeout_degraded'
   | 'raster_tile_detail_limited_highdpi'
