@@ -772,6 +772,133 @@ def solve_layout_v4(
     )
 
 
+# ═══ V5（ADR-0283 D1）：约束文档消费 + must-fit 语义 ═════════════════════
+#
+# 约束文档本体在 :mod:`app.lib.cartography.layout_constraint_spec`
+# （layout_constraint_spec.v1）。本模块只消费其鸭子型接口
+# （``components`` / ``key_component_ids`` / ``constraint_for``），
+# 不 import 该模块 —— spec 反向导入本模块的 SINGLETON_TYPES，
+# 模块级互指会成环。
+
+
+class ConstraintFinding(BaseModel):
+    """V5 约束求解发现（closed vocab；语义见 ADR-0283 D1）。
+
+    code ∈ max_width_clamped | overflow_suppressed | key_component_suppressed
+         | constraint_unmatched
+    """
+
+    code: str
+    component_id: str = ""
+    detail: str = ""
+
+
+class LayoutSolutionV5(LayoutSolutionV4):
+    """V5 解：V4 全字段 + 约束消费轨迹（发现可审计、可入质量回路）。"""
+
+    constraint_findings: List[ConstraintFinding] = Field(default_factory=list)
+
+
+def solve_layout_v5(
+    participants: Iterable[LayoutParticipantV4],
+    *,
+    page_profile: str = "viewport",
+    zone_capacity: Optional[Dict[str, int]] = None,
+    constraints: Optional[LayoutConstraints] = None,
+    constraint_spec: Optional[Any] = None,
+) -> LayoutSolutionV5:
+    """V5 = V4 + 可序列化约束文档消费（确定性；缺省输入 = V4 行为）。
+
+    约束应用（逐参与者，非破坏性 —— model_copy 更新，不改输入）：
+
+    - ``max_width_units`` < 当前 width_units → 钳制 + ``max_width_clamped``；
+    - ``min_width_units`` 提升参与者自愈下限（不超过生效宽度）；
+    - ``overflow_policy="collapse"`` → 准入 V4 L3 折叠（collapsible=True）；
+    - ``must_fit`` → optional 参与者按 required 求解（V3/V4 的
+      required_overflow_kept 语义兜底：**宁保位不消失**）。
+
+    发现（closed vocab，逐条带 component_id）：
+
+    - ``max_width_clamped``：宽度被约束钳制（info 级语义）；
+    - ``overflow_suppressed``：suppress 策略的 optional 参与者被移除
+      （逐个披露，无静默删除）；
+    - ``key_component_suppressed``：key 组件仍落入 suppressed（防御性
+      —— must_fit 路径下不应出现，出现即为契约违例信号）；
+    - ``constraint_unmatched``：约束表指向不存在的参与者（忽略求解、
+      info 披露，不崩溃）。
+    """
+    participants = list(participants)
+    findings: List[ConstraintFinding] = []
+
+    if constraint_spec is None or not getattr(constraint_spec, "components", None):
+        base = solve_layout_v4(
+            participants, page_profile=page_profile,
+            zone_capacity=zone_capacity, constraints=constraints,
+        )
+        return LayoutSolutionV5(
+            **base.model_dump(), constraint_findings=findings,
+        )
+
+    adjusted: List[LayoutParticipantV4] = []
+    participant_ids: set = set()
+    for p in participants:
+        participant_ids.add(p.id)
+        c = constraint_spec.constraint_for(p.id)
+        if c is None:
+            adjusted.append(p)
+            continue
+        updates: Dict[str, Any] = {}
+        eff_width = p.width_units
+        if p.width_units > c.max_width_units:
+            eff_width = c.max_width_units
+            updates["width_units"] = eff_width
+            findings.append(ConstraintFinding(
+                code="max_width_clamped", component_id=p.id,
+                detail=f"width_units {p.width_units}->{c.max_width_units}",
+            ))
+        eff_min = max(p.min_width_units, c.min_width_units)
+        eff_min = min(eff_min, eff_width)
+        if eff_min != p.min_width_units:
+            updates["min_width_units"] = eff_min
+        if c.overflow_policy == "collapse":
+            updates["collapsible"] = True
+        if c.must_fit and p.optional:
+            updates["optional"] = False
+        adjusted.append(
+            p.model_copy(update=updates) if updates else p,
+        )
+
+    for cid in sorted(constraint_spec.components):
+        if cid not in participant_ids:
+            findings.append(ConstraintFinding(
+                code="constraint_unmatched", component_id=cid,
+                detail="constraint target absent from participants",
+            ))
+
+    sol4 = solve_layout_v4(
+        adjusted, page_profile=page_profile,
+        zone_capacity=zone_capacity, constraints=constraints,
+    )
+    suppressed_ids = {s.id for s in sol4.suppressed}
+    for pid in sorted(suppressed_ids):
+        c = constraint_spec.constraint_for(pid)
+        if c is not None and c.overflow_policy == "suppress":
+            findings.append(ConstraintFinding(
+                code="overflow_suppressed", component_id=pid,
+                detail="optional removed under suppress policy",
+            ))
+    for key_id in constraint_spec.key_component_ids:
+        if key_id in suppressed_ids:
+            findings.append(ConstraintFinding(
+                code="key_component_suppressed", component_id=key_id,
+                detail="key component ended suppressed (must_fit violated)",
+            ))
+
+    return LayoutSolutionV5(
+        **sol4.model_dump(), constraint_findings=findings,
+    )
+
+
 __all__ = [
     "LayoutParticipant",
     "LayoutPlacement",
@@ -792,4 +919,8 @@ __all__ = [
     "RepairStep",
     "LayoutSolutionV4",
     "solve_layout_v4",
+    # V5（ADR-0283 D1）
+    "ConstraintFinding",
+    "LayoutSolutionV5",
+    "solve_layout_v5",
 ]
