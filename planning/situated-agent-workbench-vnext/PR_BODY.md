@@ -62,3 +62,19 @@ selection-store）**贯通**为多轮人机协同闭环，不建任何第二真�
 - 「上一张图」以 fingerprint 短码披露（不建 per-generation 实体）；
 - AOI 面经 canvas affordance 环消费（框选要素集优先，几何兜底 bbox）；
 - j9 预存环境失败未在本 PR 修复（属 e2e 基建维护线）。
+
+## 独立 review（gate：P0/P1=0 达成）
+
+未参与实现的独立审查者两轮全量审查（59+ 文件 diff）：
+
+| 轮 | P0 | P1 | P2 | P3 | 结论 |
+|---|---|---|---|---|---|
+| R8 初审 | 0 | 1 | 6 | 12 | 生成物漂移 + 选择语义/生命周期缺口 |
+| R9 复审 | 0 | 0 | 0 | +4 新 | **6/6 P2 关闭、P1 关闭**；新 P3 均非阻塞 |
+
+清偿 commit `85cb5f1d4`（P1+6×P2+P3 批量）与后续 P3 清偿 commit；已处理项：
+幽灵 selection/选择代 closer/chart 替换语义/dataset_ref 服务端解析/状态条会话切换/
+确认路径 undo+幂等去重/ADR 口径/validated 标记/两面同步/route 级 journal join 真实测试。
+**残留披露**（P3，不阻塞）：dataset_ref 回退分支 mapspec 双读（微性能）；
+AOI geometry 有界内联（≤256 顶点 ≈5-8KB）；panel-ir-emit 仅覆盖 chart 面（table 接线
+为对称 3 行，emitter 级已测）；`E2E_MODE=real` 档未运行（本地无真实后端栈）。
