@@ -70,6 +70,10 @@ const MapPanel = dynamic(
 const MemoTopBar = memo(TopBar);
 const MemoNavRail = memo(NavRail);
 const MemoMapPanel = memo(MapPanel);
+const SituationStatusBar = dynamic(
+  () => import('@/components/workbench/situation-status-bar').then((m) => ({ default: m.SituationStatusBar })),
+  { ssr: false },
+);
 const MemoEmbodiedHud = memo(EmbodiedHud);
 const MemoSpatialCrosshair = memo(SpatialCrosshair);
 const MemoFloatingLegend = memo(FloatingLegend);
@@ -432,6 +436,11 @@ export default function Home() {
             />
             <ExportMask />
             <MemoSpatialCrosshair />
+            {/* ADR-0283 D5：情境状态条（服务端 situation/turn-chain 投影，
+                刷新/重连即时恢复；不依赖 localStorage）。 */}
+            <div className='pointer-events-none absolute left-2 top-2 z-20'>
+              <SituationStatusBar />
+            </div>
             {/* Workspace V2：停靠面板宿主（右/下 dock；面板实例从 chrome
                 面移入停靠区渲染，dock 状态与语义组件状态分离）。 */}
             <PanelDockHost />

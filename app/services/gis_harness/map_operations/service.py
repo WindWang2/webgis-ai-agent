@@ -866,6 +866,17 @@ async def commit_map_operation(
                 receipt["viewport_command"] = {"fly_to": fly_params}
             break
 
+    # ADR-0283 D6：可逆性披露（additive）——presentation 族效果（显隐/
+    # 透明度）before/after 完整可反演；其余（符号/视图/组件/删除）不可逆
+    # （数据层撤销归 feature_edit /undo，恢复归 rollback 工具）。
+    receipt["invertible"] = (
+        bool(states) and states.count("applied") > 0
+        and all(
+            ce.effect.kind in (KIND_SET_LAYER_VISIBILITY, KIND_SET_LAYER_OPACITY)
+            and ce.state == "applied"
+            for ce in compiled
+        )
+    )
     receipt["message"] = _receipt_message(receipt)
     receipt["commands"] = _receipt_commands(receipt)
     await _persist_receipt(session_id, receipt)

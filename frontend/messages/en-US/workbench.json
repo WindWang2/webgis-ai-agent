@@ -40,5 +40,20 @@
     "group": "Group",
     "reorder": "Reorder",
     "lock_conflict": "Lock conflict"
-  }
+  },
+  "situationBar.title": "Situation",
+  "situationBar.ariaLabel": "Current map situation status",
+  "situationBar.loading": "Loading situation…",
+  "situationBar.unavailable": "Situation unavailable",
+  "situationBar.scopeNone": "No analysis scope",
+  "situationBar.scopeAoi": "Scope: drawn area",
+  "situationBar.scopeCount": "Scope: {count} selected",
+  "situationBar.selectionNone": "Nothing selected",
+  "situationBar.selectionIds": "{count} selected",
+  "situationBar.selectionOne": "1 selected",
+  "situationBar.selectionChart": "Chart: {count} categories",
+  "situationBar.resultsObserved": "{count} verified results",
+  "situationBar.running": "{count} running",
+  "situationBar.verifying": "Awaiting map verification",
+  "situationBar.retryable": "{count} pending/retryable"
 }

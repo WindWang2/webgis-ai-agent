@@ -86,8 +86,53 @@ export function pushOperationReceipt(
   const next = receipts.filter((r) => r.operation_id !== receipt.operation_id);
   next.unshift(receipt);
   receipts = next.slice(0, MAX_VISIBLE_RECEIPTS);
+  recordAgentReceiptUndo(receipt);
   emit();
   return true;
+}
+
+/**
+ * ADR-0283 D6：agent 可逆回执 → undo 栈录制（反向重放既有 CAS 通道）。
+ * 只录 presentation 族（后端 ``invertible`` 披露为 true）；用户可用
+ * Ctrl+Z 撤销 agent 的显隐/透明度操作。undo 语义 = 再提交一次反向
+ * mutation（ADR-0278「不虚构强原子」）；不可逆效果不录（数据层撤销归
+ * feature-edit /undo）。
+ */
+function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
+  try {
+    if (receipt.invertible !== true) return;
+    if (String(receipt.origin ?? 'agent') !== 'agent') return;
+    if (receipt.status !== 'committed' && receipt.status !== 'partial') return;
+    const applied = (receipt.effects ?? []).filter(
+      (e) => e.state === 'applied' && (e.targets?.length ?? 0) > 0,
+    );
+    if (!applied.length) return;
+    // 多效果回执逐层录制（每层独立可撤销；undo 栈有序）。
+    void import('@/lib/workbench/undo').then(({ presentationCommand }) => {
+      for (const effect of applied) {
+        const layerId = String(effect.targets?.[0] ?? '');
+        if (!layerId) continue;
+        const before = effect.before as
+          | { visible?: boolean; opacity?: number }
+          | undefined;
+        const after = effect.after as
+          | { visible?: boolean; opacity?: number }
+          | undefined;
+        if (!before || !after) continue;
+        presentationCommand(
+          `agent:${receipt.operation_id?.slice(0, 12) ?? 'op'}`,
+          layerId,
+          'agent',
+          before,
+          after,
+        );
+      }
+    }).catch(() => {
+      // undo 录制是增值面，绝不阻塞回执通道。
+    });
+  } catch {
+    // 同上：观察面绝不阻塞。
+  }
 }
 
 /** 按操作 id 更新状态（owner 批准提交后回填最终回执）。 */

@@ -40,5 +40,20 @@
     "group": "分组",
     "reorder": "重排",
     "lock_conflict": "锁冲突"
-  }
+  },
+  "situationBar.title": "情境",
+  "situationBar.ariaLabel": "当前地图情境状态",
+  "situationBar.loading": "情境载入中…",
+  "situationBar.unavailable": "情境不可用",
+  "situationBar.scopeNone": "无分析范围",
+  "situationBar.scopeAoi": "范围：绘制区域",
+  "situationBar.scopeCount": "范围：{count} 个选中对象",
+  "situationBar.selectionNone": "未选中",
+  "situationBar.selectionIds": "选中 {count} 个",
+  "situationBar.selectionOne": "选中 1 个",
+  "situationBar.selectionChart": "图表选中 {count} 类",
+  "situationBar.resultsObserved": "已验证结果 {count} 项",
+  "situationBar.running": "执行中 {count}",
+  "situationBar.verifying": "等待地图验证",
+  "situationBar.retryable": "{count} 项待处理/可重试"
 }

@@ -87,3 +87,63 @@ describe('receipt-bus', () => {
     unsubscribe();
   });
 });
+
+// ── ADR-0283 D6：agent 可逆回执 → undo 栈录制 ─────────────────────────
+
+describe('agent receipt undo recording (ADR-0283 D6)', () => {
+  beforeEach(() => {
+    setReceiptBusSession('sess-rb');
+  });
+
+  it('records presentationCommand per applied invertible effect', async () => {
+    const undoMod = await import('@/lib/workbench/undo');
+    const recordSpy = vi.spyOn(undoMod, 'presentationCommand').mockImplementation(() => {});
+    const ok = pushOperationReceipt({
+      operation_id: 'op-agent-1',
+      status: 'committed',
+      origin: 'agent',
+      invertible: true,
+      effects: [
+        {
+          index: 0, kind: 'set_layer_visibility', targets: ['heatmap'],
+          state: 'applied', before: { visible: true }, after: { visible: false },
+        },
+        {
+          index: 1, kind: 'set_layer_opacity', targets: ['schools'],
+          state: 'applied', before: { opacity: 1 }, after: { opacity: 0.5 },
+        },
+      ],
+    }, 'sess-rb');
+    expect(ok).toBe(true);
+    await vi.waitFor(() => {
+      expect(recordSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(recordSpy).toHaveBeenCalledWith(
+      expect.stringContaining('agent:'),
+      'heatmap', 'agent',
+      { visible: true }, { visible: false },
+    );
+    recordSpy.mockRestore();
+  });
+
+  it('skips non-invertible or user-origin receipts', async () => {
+    const undoMod = await import('@/lib/workbench/undo');
+    const recordSpy = vi.spyOn(undoMod, 'presentationCommand').mockImplementation(() => {});
+    pushOperationReceipt({
+      operation_id: 'op-agent-2', status: 'committed', origin: 'agent',
+      invertible: false,
+      effects: [{ index: 0, kind: 'remove_layer', targets: ['x'], state: 'applied' }],
+    }, 'sess-rb');
+    pushOperationReceipt({
+      operation_id: 'op-user-1', status: 'committed', origin: 'user',
+      invertible: true,
+      effects: [{
+        index: 0, kind: 'set_layer_visibility', targets: ['y'],
+        state: 'applied', before: { visible: true }, after: { visible: false },
+      }],
+    }, 'sess-rb');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recordSpy).not.toHaveBeenCalled();
+    recordSpy.mockRestore();
+  });
+});

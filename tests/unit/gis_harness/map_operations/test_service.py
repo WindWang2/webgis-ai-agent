@@ -410,3 +410,52 @@ async def test_symbol_layout_bucket_label_size():
     spec = await mapspec_store_instance.get_mapspec(sid)
     districts = _spec_layer(spec, "districts")
     assert districts.get("layout", {}).get("text-size") == 14
+
+
+# ── ADR-0283 D6：invertible 披露（presentation 族可反演，其余不可逆）───
+
+
+async def test_commit_presentation_only_receipt_is_invertible():
+    sid = f"mopt-{uuid.uuid4().hex[:10]}"
+    await _seed(sid)
+    receipt = await commit_map_operation(sid, MapOperationRequest(
+        operation_id=mint_operation_id(), mode="commit",
+        effects=[
+            {"kind": "set_layer_visibility", "target_kind": "layer_ref",
+             "target": "人口热力图", "visible": False},
+            {"kind": "set_layer_opacity", "target_kind": "layer_ref",
+             "target": "人口热力图", "opacity": 0.4},
+        ],
+    ))
+    assert receipt["status"] == "committed"
+    assert receipt["invertible"] is True
+
+
+async def test_commit_mixed_kinds_receipt_not_invertible():
+    sid = f"mopt-{uuid.uuid4().hex[:10]}"
+    await _seed(sid)
+    receipt = await commit_map_operation(sid, MapOperationRequest(
+        operation_id=mint_operation_id(), mode="commit",
+        effects=[
+            {"kind": "set_layer_visibility", "target_kind": "layer_ref",
+             "target": "人口热力图", "visible": False},
+            {"kind": "set_layer_symbol", "target_kind": "layer_ref",
+             "target": "成都小学", "symbol_property": "point_size",
+             "symbol_value": 8},
+        ],
+    ))
+    assert receipt["invertible"] is False  # symbol 族不在可逆白名单
+
+
+async def test_failed_receipt_not_invertible():
+    sid = f"mopt-{uuid.uuid4().hex[:10]}"
+    await _seed(sid)
+    receipt = await commit_map_operation(sid, MapOperationRequest(
+        operation_id=mint_operation_id(), mode="commit",
+        effects=[
+            {"kind": "set_layer_visibility", "target_kind": "layer_ref",
+             "target": "不存在的图层", "visible": False},
+        ],
+    ))
+    assert receipt["status"] in ("rejected", "failed")
+    assert receipt["invertible"] is False
