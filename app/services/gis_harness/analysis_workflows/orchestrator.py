@@ -40,6 +40,9 @@ from app.services.gis_harness.analysis_workflows.families import (
     role_requirements,
     visualization_hints,
 )
+from app.services.gis_harness.analysis_workflows.semantic_gate import (
+    check_role_qualifier,
+)
 
 #: 各角色的获取建议（alternatives 文案；通道语义对齐 ACQUISITION_CHANNELS）。
 _ROLE_ALTERNATIVES: Dict[str, Tuple[str, ...]] = {
@@ -264,6 +267,36 @@ def plan_workflow(
                 alternatives=_ROLE_ALTERNATIVES.get(role, ()))
             blocked_reasons.append(
                 f"{step.step_id}:{role_missing_code(role)}")
+            runnable = False
+            continue
+        # ADR-0282 D2：角色几何画像门——事实在且冲突 → typed blocked
+        # （画像来自上游数据事实，非猜测）；事实缺失 → 警告披露（不阻断，
+        # 执行期衔接门与工具级 preflight 兜底——不虚构事实也不假装校验过）。
+        semantic_block = None
+        for role in _roles_of_step(step):
+            req = req_by_role.get(role)
+            binding = contract.data_contracts.get(role)
+            if req is None or binding is None or _binding_missing(binding):
+                continue
+            finding = check_role_qualifier(
+                {"role": role, "geometry_kinds": req.geometry_kinds}, binding)
+            if finding is not None:
+                semantic_block = finding
+                break
+            if req.geometry_kinds and not (
+                    isinstance(binding.qualifier.get("geometry_types"),
+                               (list, tuple))
+                    and binding.qualifier.get("geometry_types")):
+                warnings.append(
+                    f"角色 {role} 几何画像缺失（qualifier.geometry_types）"
+                    "——plan 期未核验，执行期衔接门兜底")
+        if semantic_block is not None:
+            verdict_map[step.step_id] = StepPlanVerdict(
+                step_id=step.step_id, verdict="blocked",
+                reason_code=semantic_block.code,
+                message=semantic_block.message)
+            blocked_reasons.append(
+                f"{step.step_id}:{semantic_block.code}")
             runnable = False
             continue
         verdict_map[step.step_id] = StepPlanVerdict(

@@ -32,7 +32,9 @@ from app.services.gis_harness.analysis_workflows.state import WorkflowRunState
 import hashlib
 
 #: 指纹 schema（算法演进时 additive 升版——旧指纹自然全部失效触发重算）。
-FINGERPRINT_SCHEMA = 1
+#: v2（ADR-0282 D5）：语义相关事实（步骤 semantic_contract、envelope 实测
+#: 口径）进入指纹身份——升版使既有持久态一次性诚实失效重算。
+FINGERPRINT_SCHEMA = 2
 
 
 def _hash(payload: Dict[str, Any]) -> str:
@@ -53,12 +55,14 @@ def step_fingerprint(
     input_identities: Dict[str, str],
     science: ScienceContext,
 ) -> str:
-    """步骤内容指纹（确定性；单位/科学上下文进指纹——换单位=新计算）。"""
+    """步骤内容指纹（确定性；单位/科学上下文/语义合同进指纹——换单位
+    或收紧语义门=新计算）。"""
     return _hash({
         "schema": FINGERPRINT_SCHEMA,
         "tool": step.tool_name,
         "params": step.step_params,
         "units": step.unit_contract,
+        "semantics": dict(sorted(step.semantic_contract.items())),
         "science": science.model_dump(),
         "inputs": {k: input_identities[k]
                    for k in sorted(input_identities)},

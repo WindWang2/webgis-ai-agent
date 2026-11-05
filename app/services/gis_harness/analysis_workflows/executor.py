@@ -32,9 +32,19 @@ from app.services.gis_harness.analysis_workflows.contracts import (
     AnalysisWorkflowContract,
     AnalysisArtifactEnvelope,
 )
+from app.services.gis_harness.analysis_workflows.envelope_facts import (
+    aggregation_basis_for,
+    collect_fc_facts,
+    collect_raster_facts,
+    collect_result_semantics,
+)
 from app.services.gis_harness.analysis_workflows.evidence import (
     StepReceipt,
     build_step_receipt,
+)
+from app.services.gis_harness.analysis_workflows.semantic_gate import (
+    check_envelope_semantics,
+    check_payload_semantics,
 )
 from app.services.gis_harness.analysis_workflows.recompute import (
     ref_identity,
@@ -118,6 +128,21 @@ class WorkflowExecutor:
             return None
         return binding.ref
 
+    async def _role_revision(self, session_id: str,
+                             ref: str) -> Optional[str]:
+        """ref 的活体 content_revision（descriptor 可得时；失败=None）。"""
+        if self._sd is None:
+            return None
+        try:
+            descriptor = await self._sd.get_ref_descriptor(session_id, ref)
+        except Exception:  # noqa: BLE001 — descriptor 是优化面
+            return None
+        if isinstance(descriptor, dict):
+            rev = descriptor.get("content_revision")
+            if rev is not None:
+                return str(rev)
+        return None
+
     async def _hydrate(self, session_id: str, ref: str,
                        param: str, step_id: str) -> Tuple[
             Optional[Dict[str, Any]], str, List[str]]:
@@ -179,11 +204,21 @@ class WorkflowExecutor:
         for param, source in step.role_inputs.items():
             if source.startswith("role:"):
                 role = source.removeprefix("role:")
+                binding = contract.data_contracts.get(role)
                 ref = await self._role_ref(contract, role)
                 if ref is None:
                     warnings.append(
                         f"数据角色 {role} 未绑定 [AWF_DATA_ROLE_MISSING:{role.upper()}]")
                     return None, identities, warnings
+                # ADR-0282 D3：raster/table 角色 ref 直通（不水合为 dict——
+                # zonal_stats.raster_path 等原生接受 ref/路径；registry
+                # _resolve_references 既有语义不变）。行数预算门不适用。
+                if binding is not None and binding.role_kind in (
+                        "raster", "table"):
+                    rev = await self._role_revision(session_id, ref)
+                    args[param] = ref
+                    identities[param] = ref_identity(ref, rev)
+                    continue
                 cache_key = (role, ref)
                 if cache_key in self._role_cache:
                     payload, ident = self._role_cache[cache_key]
@@ -194,6 +229,12 @@ class WorkflowExecutor:
                     if payload is None and hydrate_warnings:
                         return None, identities, warnings
                     self._role_cache[cache_key] = (payload, ident)
+                # ADR-0282 D2：执行期衔接门（实测几何 vs 步骤语义合同）
+                gate = check_payload_semantics(
+                    param, payload, step.semantic_contract)
+                if gate is not None:
+                    warnings.append(f"{gate.message} [{gate.code}]")
+                    return None, identities, warnings
                 args[param] = payload
                 identities[param] = ident
             else:  # step:<upstream>
@@ -202,6 +243,21 @@ class WorkflowExecutor:
                 if entry is None or entry.state != "satisfied":
                     warnings.append(
                         f"上游步骤 {upstream} 未满足（{entry.state if entry else 'absent'}）")
+                    return None, identities, warnings
+                upstream_env = state.envelopes.get(upstream)
+                # ADR-0282 D3：上游产物是栅格 ref（无 FC）→ ref 直通下游
+                if upstream_env is not None and upstream_env.ref \
+                        and not self._step_payloads.get(upstream) \
+                        and (upstream_env.raster
+                             or upstream_env.ref.startswith("ref:raster")):
+                    args[param] = upstream_env.ref
+                    identities[param] = f"fp:{entry.fingerprint}"
+                    continue
+                # ADR-0282 D2：上游 envelope 实测几何 vs 本步骤语义合同
+                gate = check_envelope_semantics(
+                    param, upstream_env, step.semantic_contract)
+                if gate is not None:
+                    warnings.append(f"{gate.message} [{gate.code}]")
                     return None, identities, warnings
                 payload = self._step_payloads.get(upstream)
                 if payload is None:
@@ -360,10 +416,41 @@ class WorkflowExecutor:
 
         if not isinstance(result, dict) or not result.get("success"):
             inner = result if isinstance(result, dict) else {}
-            entry.state = "failed"
-            entry.reason_code = str(
+            reason_code = str(
                 inner.get("reason_code") or inner.get("code")
                 or inner.get("error_type") or "TOOL_FAILED")
+            # ADR-0282 D7：同 run 内 dispatch 去重（repeated）命中而本步骤
+            # 与某已 satisfied 步骤指纹相同 → 步骤级幂等复用其产物
+            # （同工具+同参+同输入身份=同一计算，不重复执行也绝不把空
+            # 载荷当新成功）；无孪生步骤时保持诚实 failed。
+            if reason_code == "TOOL_DISPATCH_REPEATED":
+                twin = next(
+                    (sid for sid, other in state.steps.items()
+                     if sid != step.step_id and other.state == "satisfied"
+                     and other.fingerprint == fp), None)
+                if twin is not None and twin in state.envelopes:
+                    twin_env = state.envelopes[twin]
+                    envelope_clone = twin_env.model_copy(deep=True)
+                    envelope_clone.step_id = step.step_id
+                    envelope_clone.fingerprint = fp
+                    state.envelopes[step.step_id] = envelope_clone
+                    twin_receipt = dict(state.receipts.get(twin) or {})
+                    twin_receipt["step_id"] = step.step_id
+                    twin_receipt["reused_from_step"] = twin
+                    state.receipts[step.step_id] = twin_receipt
+                    if envelope_clone.ref and self._sd is not None:
+                        self._step_payloads[step.step_id] = await self._sd.get(
+                            session_id, envelope_clone.ref)  # type: ignore[assignment]
+                    entry.state = "satisfied"
+                    entry.reason_code = ""
+                    entry.message = ""
+                    entry.envelope_ref_hint = envelope_clone.ref
+                    entry.touch()
+                    state.log("step_reused", step=step.step_id,
+                              reused_from=twin, cause="dispatch_repeated")
+                    return
+            entry.state = "failed"
+            entry.reason_code = reason_code
             entry.message = str(
                 inner.get("message") or inner.get("error") or "")[:300]
             entry.touch()
@@ -398,12 +485,19 @@ class WorkflowExecutor:
             result.get("warnings") or []) if w]
         feature_count = _feature_count(fc) if fc else int(
             result.get("dispatch_feature_count", 0) or 0)
+        # ADR-0282 D1：实测事实采集（有界；采集不到=缺省，绝不虚填）。
+        fc_facts = collect_fc_facts(fc) if fc is not None else None
+        result_semantics = collect_result_semantics(result)
+        raster_facts = collect_raster_facts(result)
+        crs_value = str(result.get("crs", "") or "")
+        if not crs_value and fc_facts is not None and fc_facts.crs:
+            crs_value = fc_facts.crs
         envelope = AnalysisArtifactEnvelope(
             step_id=step.step_id,
             workflow_id=contract.workflow_id,
             tool_name=step.tool_name,
             ref=ref,
-            crs=str(result.get("crs", "") or ""),
+            crs=crs_value,
             units=dict(step.unit_contract),
             feature_count=feature_count,
             empty=((fc is not None and _feature_count(fc) == 0)
@@ -418,6 +512,14 @@ class WorkflowExecutor:
                     if s.startswith("role:")] if v)[:16],
             fingerprint=fp,
             output_roles=step.output_roles,
+            # ── v2 实测（envelope_facts 有界采集）────────────────────
+            geometry_types=(fc_facts.geometry_types if fc_facts else ()),
+            extent=(fc_facts.extent if fc_facts else ()),
+            result_semantics=result_semantics,
+            raster=raster_facts,
+            aggregation_basis=aggregation_basis_for(
+                step.tool_name, step.step_params),
+            owner_session_id=session_id,
         )
         state.envelopes[step.step_id] = envelope
         receipt: StepReceipt = build_step_receipt(
