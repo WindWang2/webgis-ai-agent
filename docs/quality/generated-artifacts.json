@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "6fada22417b9da8e4a920beafeb3caf6b825d270866d1b8ace890b6bc7f286d0",
+   "input_fingerprint": "59e9371924210e3b5df2dc196349d14bff69a569ad14201e6e8f156fe252d27c",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -45,7 +45,7 @@
    "content_fingerprint": "76379326596f7aed98e4c72d2df6bf2649606a8838a11fe695ccaf50fb828e42",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "6d454fc9a324fab9a542cd6aa6f8262748c773fc28a82e905aa771a9843ce314",
+   "input_fingerprint": "bb3f4eaf7c3df68821855dc1248e37dfce2a0a1ed921a0eb91913218ca50bff0",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "6fada22417b9da8e4a920beafeb3caf6b825d270866d1b8ace890b6bc7f286d0",
+   "input_fingerprint": "59e9371924210e3b5df2dc196349d14bff69a569ad14201e6e8f156fe252d27c",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -135,7 +135,7 @@
    "content_fingerprint": "976cc4421279ee93de1470c2f305a362fb5a12f96098988d129d9c44a13d77e8",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "6d454fc9a324fab9a542cd6aa6f8262748c773fc28a82e905aa771a9843ce314",
+   "input_fingerprint": "bb3f4eaf7c3df68821855dc1248e37dfce2a0a1ed921a0eb91913218ca50bff0",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",

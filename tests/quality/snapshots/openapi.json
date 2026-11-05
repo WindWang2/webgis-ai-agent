@@ -21208,6 +21208,73 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/situation": {
+   "get": {
+    "description": "GISSituation JSON 投影（只读派生）+ 一致性检查 + 选择史 + scope。",
+    "operationId": "get_situation_view_api_v1_chat_sessions__session_id__situation_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Situation View Api V1 Chat Sessions  Session Id  Situation Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Situation View",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}": {
    "get": {
     "description": "table_panel 的 ref-backed 数据通道（Runtime V4 §10）。\n\n与 chart-artifacts 同款纪律：小载荷 JSON 直返（存储侧已有界）。载荷\n形态宽容（{table:{columns,rows}} / 记录数组），边界规整在前端\ntable-data 适配器完成 —— 服务端只做所有权与存在性。",
@@ -21279,6 +21346,73 @@
     "tags": [
      "AI对话",
      "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/turn-chain": {
+   "get": {
+    "description": "turn 链投影（只读；journal 不可达 fail-open 降级披露）。",
+    "operationId": "get_turn_chain_api_v1_chat_sessions__session_id__turn_chain_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Turn Chain Api V1 Chat Sessions  Session Id  Turn Chain Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Turn Chain",
+    "tags": [
+     "AI对话",
+     "AI对话"
     ]
    }
   },
