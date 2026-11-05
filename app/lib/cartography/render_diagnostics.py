@@ -553,9 +553,10 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "frontend/lib/map-kit/exporter.ts",
         "frontend/lib/map-kit/vector-svg-export.ts",
     ),
-    # ADR-0283 D3：缺瓦片有界披露（runtime handler 记账 adapter → exporter）
+    # ADR-0283 D3：缺瓦片有界披露（码发射方 = exporter 汇入；记账链
+    # runtime.ts handler → adapter 账目是数据源非码发射点 —— 死码门要求
+    # 发射点文件引用码串，故只登记 exporter）
     "basemap_tiles_missing": (
-        "frontend/lib/mapspec-runtime/runtime.ts",
         "frontend/lib/map-kit/exporter.ts",
     ),
 }
