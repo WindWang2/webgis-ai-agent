@@ -1,0 +1,125 @@
+{
+  "$meta": {
+    "purpose": "Pi v1.5.0 pi-schema 工具参数校验/强制转换契约 golden（ADR-0285）。锁定 Pi 侧在扩展 execute() 之前对 plain JSON Schema 工具实行的行为矩阵：接受（含归一化后的实参）或拒绝（含错误文本片段）。任何上游漂移（新增/取消某类 coercion、边界不再强制）都会被 tests/integration/test_pi_schema_coercion_golden.py 的活体比对捕获。",
+    "vendor_verified": "v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)",
+    "verified_at": "2026-11-06",
+    "evidence": "真实 rpc-entry + 打点扩展实测（probe ext 记录 execute() 收到的实参；tool_execution_end 捕获校验拒绝文本）",
+    "policy": "归一化类 coercion（数字串↔数字、标量→单元素数组、布尔/浮点字符串、数组元素类型）被接受为单一事实归一化层；服务端 pi_input_gate 严格校验保持为归一化后最终门。additionalProperties/minimum/maximum/required/enum 在 Pi 侧先行拒绝 —— GIS 安全边界不变。⚠️ 已披露的投机转换风险：整数字段收到浮点字符串会被**截断**（\"3.5\"→3，见 float-string-for-int-truncates）；union 按第一个无需转换即可满足的分支收下（\"7\" 对 anyOf[string,number] 保持字符串，无投机数值化）。GIS 侧对策：关键整数字段（半径/预算/层级）在服务端 schema 用 integer + 服务端复核，不依赖 Pi 截断语义。"
+  },
+  "tool_schema": {
+    "type": "object",
+    "properties": {
+      "count": { "type": "integer", "minimum": 1, "maximum": 10 },
+      "name": { "type": "string" },
+      "tags": { "type": "array", "items": { "type": "string" } },
+      "mode": { "type": "string", "enum": ["a", "b"] },
+      "ratio": { "type": "number" },
+      "flag": { "type": "boolean" },
+      "note": { "type": "string" },
+      "either": { "anyOf": [{ "type": "string" }, { "type": "number" }] },
+      "grid_bbox": {
+        "type": "array",
+        "items": { "type": "number" },
+        "minItems": 4,
+        "maxItems": 4
+      }
+    },
+    "required": ["count", "name"],
+    "additionalProperties": false
+  },
+  "cases": [
+    {
+      "id": "numeric-string-to-int",
+      "model_args": { "count": "5", "name": "x" },
+      "expect": { "outcome": "executed", "received": { "count": 5, "name": "x" } }
+    },
+    {
+      "id": "number-to-string",
+      "model_args": { "count": 5, "name": 123 },
+      "expect": { "outcome": "executed", "received": { "count": 5, "name": "123" } }
+    },
+    {
+      "id": "scalar-to-array",
+      "model_args": { "count": 5, "name": "x", "tags": "single" },
+      "expect": { "outcome": "executed", "received": { "count": 5, "name": "x", "tags": ["single"] } }
+    },
+    {
+      "id": "array-item-number-to-string",
+      "model_args": { "count": 5, "name": "x", "tags": [1, 2] },
+      "expect": { "outcome": "executed", "received": { "count": 5, "name": "x", "tags": ["1", "2"] } }
+    },
+    {
+      "id": "bool-string",
+      "model_args": { "count": 5, "name": "x", "flag": "true" },
+      "expect": { "outcome": "executed", "received": { "count": 5, "name": "x", "flag": true } }
+    },
+    {
+      "id": "float-string",
+      "model_args": { "count": 5, "name": "x", "ratio": "3.5" },
+      "expect": { "outcome": "executed", "received": { "count": 5, "name": "x", "ratio": 3.5 } }
+    },
+    {
+      "id": "bbox-numeric-strings",
+      "model_args": { "count": 5, "name": "x", "grid_bbox": ["104.0", "30.6", "104.1", "30.7"] },
+      "expect": {
+        "outcome": "executed",
+        "received": { "count": 5, "name": "x", "grid_bbox": [104.0, 30.6, 104.1, 30.7] }
+      }
+    },
+    {
+      "id": "unknown-field-rejected",
+      "model_args": { "count": 5, "name": "x", "extra": "rogue" },
+      "expect": { "outcome": "rejected", "error_contains": "extra" }
+    },
+    {
+      "id": "minimum-bound-rejected",
+      "model_args": { "count": 0, "name": "x" },
+      "expect": { "outcome": "rejected", "error_contains": "count" }
+    },
+    {
+      "id": "maximum-bound-rejected",
+      "model_args": { "count": 99, "name": "x" },
+      "expect": { "outcome": "rejected", "error_contains": "count" }
+    },
+    {
+      "id": "missing-required-rejected",
+      "model_args": { "name": "x" },
+      "expect": { "outcome": "rejected", "error_contains": "count" }
+    },
+    {
+      "id": "enum-violation-rejected",
+      "model_args": { "count": 5, "name": "x", "mode": "c" },
+      "expect": { "outcome": "rejected", "error_contains": "mode" }
+    },
+    {
+      "id": "float-string-for-int-truncates",
+      "model_args": { "count": "3.5", "name": "x" },
+      "expect": { "outcome": "executed", "received": { "count": 3, "name": "x" } }
+    },
+    {
+      "id": "array-length-violation-rejected",
+      "model_args": { "count": 5, "name": "x", "grid_bbox": [1, 2, 3] },
+      "expect": { "outcome": "rejected", "error_contains": "grid_bbox" }
+    },
+    {
+      "id": "union-numeric-string-first-branch",
+      "model_args": { "count": 5, "name": "x", "either": "7" },
+      "expect": { "outcome": "executed", "received_contains": { "either": "7" } }
+    },
+    {
+      "id": "union-number-stays-number",
+      "model_args": { "count": 5, "name": "x", "either": 7 },
+      "expect": { "outcome": "executed", "received_contains": { "either": 7 } }
+    },
+    {
+      "id": "non-numeric-string-for-int-rejected",
+      "model_args": { "count": "five", "name": "x" },
+      "expect": { "outcome": "rejected", "error_contains": "count" }
+    },
+    {
+      "id": "object-for-string-rejected",
+      "model_args": { "count": 5, "name": { "nested": true } },
+      "expect": { "outcome": "rejected", "error_contains": "name" }
+    }
+  ]
+}

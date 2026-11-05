@@ -740,3 +740,60 @@ async def test_stream_prompt_happy_path_unchanged_with_death_aware_rpc():
     assert "abort" not in _rpc_commands(rpc), _rpc_commands(rpc)
     assert bridge._lock.locked() is False
     assert rpc.events.empty()
+
+
+# ── ADR-0285: prompt disposition=handled 防挂 ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stream_prompt_handled_disposition_fails_fast():
+    """Pi ≥0.99：prompt 响应 disposition=handled 表示输入被扩展 input
+    handler 消费、无 agent run 启动 —— agent_settled 永不到达。流必须立即
+    以 task_error(pi_prompt_handled) + done 收敛，而不是挂满 stall/total
+    预算后误报超时。"""
+    rpc = MagicMock()
+    rpc.events = asyncio.Queue()
+    rpc.start = AsyncMock()
+    rpc.stop = AsyncMock()
+    rpc.process_died = False
+    rpc.process_died_event = asyncio.Event()
+
+    async def _request(cmd, data=None):
+        if cmd == "prompt":
+            return {"disposition": "handled"}
+        return {"ok": True}
+
+    rpc.request = AsyncMock(side_effect=_request)
+    bridge = PiBridge(rpc=rpc)
+
+    events = [ev async for ev in bridge.stream_prompt("hi", session_id="sess-handled")]
+    joined = "".join(events)
+    assert "task_error" in joined
+    assert '"error_class":"internal_error"' in joined.replace(" ", "")
+    assert joined.count("done") == 1  # terminal exactly-once
+    assert "task_complete" not in joined  # 不得伪装成功
+    # finally 的防御性 abort（与 send_failed 同路径）允许存在：无 agent run
+    # 时 abort 幂等无害 —— 不对其做硬断言。
+
+
+@pytest.mark.asyncio
+async def test_stream_prompt_started_disposition_keeps_normal_path():
+    """disposition=started（正常路径）行为不变：仍进入事件排水循环。"""
+    rpc = _make_rpc([make_token_event("hi")])
+    # 正常响应（旧 mock 形态 {"ok": True} 与新形态 {"disposition": "started"}
+    # 都必须走原路径 —— 用两种形态各跑一遍冒烟）。
+    async def _request(cmd, data=None):
+        if cmd == "prompt":
+            for ev in [make_token_event("hi")]:
+                await rpc.events.put(ev)
+            return {"disposition": "started"}
+        if cmd == "abort":
+            return {"ok": True}
+        return {}
+
+    rpc.request = AsyncMock(side_effect=_request)
+    bridge = PiBridge(rpc=rpc)
+    gen = bridge.stream_prompt("hi", session_id="sess-started")
+    first = await gen.__anext__()
+    assert "task_start" in first  # entered the normal streaming path
+    await gen.aclose()

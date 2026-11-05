@@ -99,6 +99,10 @@ _TURN_FAILURE_CLASS_MAP = {
     "pi_process_died": TurnErrorClass.transport_error,
     "process_died": TurnErrorClass.transport_error,
     "pi_send_error": TurnErrorClass.transport_error,
+    # ADR-0285：Pi ≥0.99 的 prompt 响应携带 disposition；handled = 输入被
+    # 扩展 input handler 消费、**无 agent run 启动**（agent_settled 永不到
+    # 达）。诚实结算为失败而非伪装完成/挂满总预算。
+    "pi_prompt_handled": TurnErrorClass.internal_error,
     "pi_unclassified_error": TurnErrorClass.internal_error,
     "pi_turn_error": TurnErrorClass.internal_error,
 }
