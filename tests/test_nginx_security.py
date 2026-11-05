@@ -64,10 +64,18 @@ class TestSecureComposeInlineNginxParity:
         )
         targets = {c["target"] for c in nginx["configs"]}
         assert "/etc/nginx/nginx.conf" in targets
-        # ISSUE-064：证书不再经 config 分发；服务必须在启动期生成 scaffold。
-        cmd = str(nginx.get("command", ""))
-        assert "openssl req -x509" in cmd, "启动期 scaffold 生成缺失"
-        assert "server.key" in cmd and "server.crt" in cmd
+        # ISSUE-064：证书不经 config 分发；离线初始化服务生成私有卷 scaffold。
+        init = compose["services"]["tls-init"]
+        assert init["entrypoint"] == ["python3", "/run/generate-tls-scaffold.py"]
+        assert init["network_mode"] == "none"
+        assert "nginx_tls_secure:/app/data" in init["volumes"]
+        tls_volume = next(v for v in nginx["volumes"] if isinstance(v, dict))
+        assert tls_volume == {
+            "type": "volume", "source": "nginx_tls_secure",
+            "target": "/etc/nginx/ssl", "read_only": True, "volume": {"nocopy": True},
+        }
+        assert nginx["depends_on"]["tls-init"]["condition"] == "service_completed_successfully"
+        assert nginx["command"] == ["nginx", "-g", "daemon off;"]
         # 不得再依赖未随 deploy-prod 分发的 bind-mount 源
         for v in nginx.get("volumes", []):
             assert "deploy/" not in str(v), (
