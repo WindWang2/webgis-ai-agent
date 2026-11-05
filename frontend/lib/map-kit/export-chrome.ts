@@ -148,6 +148,9 @@ export type ExportDegradationCode =
   | 'label_truncated'
   /* review-r1：label_suppressed_too_long 移除 —— 词表唯一无发射器死码，
    * 后端权威词表同步删除（待放置求解器接入导出链再回归）。 */
+  /* W2.2（ADR-0283 D3）：显式标注字段缺失守卫（孪生编译侧发射
+   * mapspec-to-svg.ts；词表权威 app/lib/cartography/render_diagnostics.py）。 */
+  | 'label_field_missing'
   | 'legend_entries_truncated'
   | 'features_truncated'
   | 'export_timeout_partial'

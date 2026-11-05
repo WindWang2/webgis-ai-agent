@@ -40,6 +40,12 @@ from app.lib.cartography.label_collision import (
 from app.lib.cartography.label_collision import (
     solve_export_labels as _solve_export_labels,
 )
+from app.lib.cartography.label_field_guard import (
+    check_label_fields as _check_label_fields,
+)
+from app.lib.cartography.label_field_guard import (
+    inline_source_field_set as _inline_source_field_set,
+)
 from app.lib.cartography.label_typography import (
     wrap_label_multilingual as _wrap_label_multilingual,
 )
@@ -1272,6 +1278,34 @@ def compile_mapspec_to_svg_detailed(
             return _fmt_num(px), _fmt_num(py)
 
         elements_svg = ""
+
+        # W2.2（ADR-0283 D3）：显式标注字段缺失守卫 —— 内联源字段集
+        # （前 1000 要素属性键并集，确定性）为证据；ref/瓦片源不可评估
+        # → 诚实跳过。渲染行为不变（既有 name/label 回退链保留），守卫
+        # 补的是"缺失必须披露"。
+        _guard_fields_cache: Dict[str, Any] = {}
+
+        def _source_fields_for_guard(source_id: str):
+            if source_id not in _guard_fields_cache:
+                _src_entry = (
+                    sources.get(source_id) if isinstance(sources, dict) else None
+                )
+                _guard_fields_cache[source_id] = (
+                    _inline_source_field_set(_source_geojson(_src_entry))
+                    if isinstance(_src_entry, dict) else None
+                )
+            return _guard_fields_cache[source_id]
+
+        for _guard_finding in _check_label_fields(mapspec, _source_fields_for_guard):
+            _emit_diag(
+                "label_field_missing",
+                detail=(
+                    f"layer={_guard_finding['layer_id']} "
+                    f"field={_guard_finding['field']}"
+                ),
+                layer_id=_guard_finding["layer_id"],
+            )
+
         layers = mapspec.get("layers", [])
         if isinstance(layers, list):
             for layer in layers:

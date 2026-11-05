@@ -123,6 +123,39 @@ function lineRepeatAnchors(
   return positions.map((s) => anchorAt(s));
 }
 
+/** W2.2（ADR-0283 D3）：层的显式标注字段引用 —— text-field 花括号
+ *  pattern（symbol/text 层；缺省 {name} 非显式、非花括号 = 字面文本）
+ *  + label.field 策略声明；保序去重。与 Python
+ *  label_field_guard._explicit_label_fields 逐分支孪生。 */
+function explicitLabelFields(layer: {
+  type?: string;
+  layout?: Record<string, unknown>;
+  paint?: Record<string, unknown>;
+  label?: Record<string, unknown>;
+}): string[] {
+  const candidates: string[] = [];
+  if (layer.type === "symbol" || layer.type === "text") {
+    for (const cfg of [layer.layout ?? {}, layer.paint ?? {}]) {
+      const tf = cfg["text-field"];
+      if (typeof tf === "string") {
+        const pattern = tf.trim();
+        if (pattern.startsWith("{") && pattern.endsWith("}") && pattern.length >= 2) {
+          const fname = pattern.slice(1, -1).trim();
+          if (fname) candidates.push(fname);
+        }
+      }
+    }
+  }
+  const labelCfg = layer.label;
+  if (
+    labelCfg && typeof labelCfg === "object" &&
+    typeof labelCfg.field === "string" && labelCfg.field.trim()
+  ) {
+    candidates.push(labelCfg.field.trim());
+  }
+  return [...new Set(candidates)];
+}
+
 /**
  * Escapes a string for safe interpolation into an SVG attribute value.
  * MapSpec paint values (colors, opacities) flow directly into attributes like
@@ -574,6 +607,55 @@ function compileMapSpecToSvgBody(
   // 2. Render Layers to SVG paths
   let elementsSvg = "";
   const layers = mapspec?.layers || [];
+
+  // W2.2（ADR-0283 D3）：显式标注字段缺失守卫（label_field_missing；与
+  // Python label_field_guard.check_label_fields 孪生）。内联源字段集 =
+  // 前 1000 要素属性键并集（确定性）；ref/瓦片源不可评估 → 诚实跳过。
+  // 渲染行为不变（既有 name/label 回退链保留），守卫补"缺失必须披露"。
+  const guardFieldCache = new Map<string, Set<string> | null>();
+  const sourceFieldsForGuard = (sourceId: string): Set<string> | null => {
+    if (!guardFieldCache.has(sourceId)) {
+      const srcEntry = sources[sourceId] as
+        | { inlineData?: { type?: string; features?: unknown[] }; data?: { type?: string; features?: unknown[] } }
+        | undefined;
+      const srcData = srcEntry?.inlineData ?? srcEntry?.data;
+      let fields: Set<string> | null = null;
+      if (srcData && typeof srcData === "object") {
+        const feats: unknown[] =
+          srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
+        fields = new Set<string>();
+        for (const f of feats.slice(0, 1000)) {
+          const p = (f as { properties?: Record<string, unknown> | null } | null)?.properties;
+          if (p && typeof p === "object") {
+            for (const k of Object.keys(p)) fields.add(k);
+          }
+        }
+      }
+      guardFieldCache.set(sourceId, fields);
+    }
+    return guardFieldCache.get(sourceId) ?? null;
+  };
+  for (const rawLayer of layers) {
+    const guardLayer = rawLayer as {
+      type?: string; source?: string; id?: string;
+      layout?: Record<string, unknown>; paint?: Record<string, unknown>;
+      label?: Record<string, unknown>;
+    };
+    const guardSrcId = guardLayer.source;
+    if (typeof guardSrcId !== "string" || !guardSrcId) continue;
+    const explicit = explicitLabelFields(guardLayer);
+    if (explicit.length === 0) continue;
+    const fields = sourceFieldsForGuard(guardSrcId);
+    if (!fields) continue;
+    for (const fname of explicit) {
+      if (!fields.has(fname)) {
+        options.onDiagnostic?.(
+          "label_field_missing",
+          `layer=${guardLayer.id} field=${fname}`,
+        );
+      }
+    }
+  }
 
   layers.forEach((rawLayer: unknown) => {
     const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string; visibility?: unknown; representation?: unknown };

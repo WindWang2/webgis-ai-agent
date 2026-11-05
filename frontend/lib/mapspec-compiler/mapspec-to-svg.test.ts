@@ -554,3 +554,78 @@ describe("fmtNum 非有限值守卫（#1747，Python 孪生 _fmt_num parity）",
     expect(svg).toContain('fill-opacity="0.6"');
   });
 });
+
+// ── W2.2（ADR-0283 D3）：label_field_missing 守卫（与 Python
+//    test_label_field_guard_v1 孪生）────────────────────────────────────────
+describe("MapSpec-to-SVG label_field_missing guard（W2.2）", () => {
+  function guardSpec(textField: string) {
+    return {
+      version: "1.1",
+      view: { center: [116, 39], zoom: 10 },
+      sources: {
+        pts: {
+          type: "geojson",
+          inlineData: {
+            type: "FeatureCollection",
+            features: [
+              { type: "Feature", geometry: { type: "Point", coordinates: [115.8, 38.8] }, properties: {} },
+              { type: "Feature", geometry: { type: "Point", coordinates: [116.8, 39.6] }, properties: { kind: "school" } },
+              { type: "Feature", geometry: { type: "Point", coordinates: [116.0, 39.0] }, properties: { name: "北京" } },
+            ],
+          },
+        },
+      },
+      layers: [
+        {
+          id: "pts_sym", source: "pts", type: "symbol",
+          layout: { "text-field": textField, "text-size": 12 },
+        },
+      ],
+    };
+  }
+
+  it("显式字段缺失 → 上报 label_field_missing（渲染回退链保留）", () => {
+    const diags: Array<[string, string]> = [];
+    const svg = compileMapSpecToSvg(guardSpec("{pop}"), {
+      targetDpi: 72, width: 400, height: 300, padding: 10,
+      onDiagnostic: (code, detail) => diags.push([code, detail]),
+    });
+    const hits = diags.filter(([c]) => c === "label_field_missing");
+    expect(hits.length).toBe(1);
+    expect(hits[0][1]).toContain("layer=pts_sym");
+    expect(hits[0][1]).toContain("field=pop");
+    // 现状核实（与 Python 孪生同口径）：字段缺失时按既有回退链渲染 name
+    // —— 渲染行为不变，守卫补"缺失必须披露"。
+    expect(svg).toContain("北京");
+  });
+
+  it("字段存在 → 无 label_field_missing", () => {
+    const diags: Array<[string, string]> = [];
+    const svg = compileMapSpecToSvg(guardSpec("{name}"), {
+      targetDpi: 72, width: 400, height: 300, padding: 10,
+      onDiagnostic: (code, detail) => diags.push([code, detail]),
+    });
+    expect(diags.some(([c]) => c === "label_field_missing")).toBe(false);
+    expect(svg).toContain("北京");
+  });
+
+  it("label.field 策略声明缺失同样上报", () => {
+    const spec = guardSpec("{name}") as Record<string, any>;
+    spec.layers[0].label = { field: "名称", mode: "all" };
+    const diags: Array<[string, string]> = [];
+    compileMapSpecToSvg(spec, {
+      targetDpi: 72,
+      onDiagnostic: (code, detail) => diags.push([code, detail]),
+    });
+    expect(diags.some(([c, d]) => c === "label_field_missing" && d.includes("field=名称"))).toBe(true);
+  });
+
+  it("非花括号 text-field = 字面文本，不触发守卫", () => {
+    const diags: Array<[string, string]> = [];
+    compileMapSpecToSvg(guardSpec("站点"), {
+      targetDpi: 72,
+      onDiagnostic: (code, detail) => diags.push([code, detail]),
+    });
+    expect(diags.some(([c]) => c === "label_field_missing")).toBe(false);
+  });
+});

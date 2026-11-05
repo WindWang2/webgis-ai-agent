@@ -207,6 +207,12 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "label_budget_exceeded", "warning",
             "标签数量超出导出预算（{detail}），超出部分未渲染",
         ),
+        # —— W2.2（ADR-0283 D3）显式标注字段缺失守卫（双端孪生发射）——
+        RenderDiagnosticSpec(
+            "label_field_missing", "warning",
+            "层声明的标注字段不在源字段集，标注按回退链渲染或缺失"
+            "（{detail}）",
+        ),
         # —— 高 DPI 渲染策略（ADR-0157 P1）——
         RenderDiagnosticSpec(
             "highdpi_rerender_timeout_degraded", "warning",
@@ -504,6 +510,12 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
     "label_budget_exceeded": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    # W2.2（ADR-0283 D3）：显式标注字段缺失守卫（双端孪生发射；
+    # 词表镜像 frontend/lib/map-kit/export-chrome.ts）。
+    "label_field_missing": (
         "app.services.mapspec_to_svg",
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
