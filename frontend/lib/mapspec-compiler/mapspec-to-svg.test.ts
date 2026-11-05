@@ -628,4 +628,19 @@ describe("MapSpec-to-SVG label_field_missing guard（W2.2）", () => {
     });
     expect(diags.some(([c]) => c === "label_field_missing")).toBe(false);
   });
+
+  it("畸形 inlineData（数组形态）→ 诚实跳过，不误报（R9 复审 N3）", () => {
+    // 与 Python inline_source_field_set 的 dict 判定同语义：非对象形态
+    // 无法枚举字段集 → null（跳过），绝不产出空集触发 label_field_missing。
+    const spec = guardSpec("{pop}") as Record<string, any>;
+    spec.sources.pts.inlineData = [
+      { type: "Feature", geometry: { type: "Point", coordinates: [116, 39] }, properties: { pop: 1 } },
+    ];
+    const diags: Array<[string, string]> = [];
+    compileMapSpecToSvg(spec, {
+      targetDpi: 72,
+      onDiagnostic: (code, detail) => diags.push([code, detail]),
+    });
+    expect(diags.some(([c]) => c === "label_field_missing")).toBe(false);
+  });
 });

@@ -1,11 +1,15 @@
 """LayoutConstraintSpec v1 + solve_layout_v5（ADR-0283 D1）—— 契约测试.
 
-锁定：
-- 序列化往返：spec_version 标签、closed vocab 校验、safe_area_mm 边界；
-- 缺省派生：从组件序列推导缺省约束（单例 must_fit、可折叠族 collapse）；
-- V4 等价：无约束文档输入 → V5 与 V4 输出逐字段一致（零回归面）；
-- must_fit 语义：key 组件在溢出画幅下不消失（折叠/保位 + finding 披露），
-  绝不出现在 suppressed；
+锁定（R9 P1-1 清偿后语义）：
+- 序列化往返：spec_version 标签、closed vocab 校验、safe_area_mm 边界、
+  must_fit × suppress 互斥闭口拒绝；
+- 缺省派生 = V4 行为逐字段一致（折叠准入只显式化 COLLAPSIBLE_TYPES、
+  must_fit 仅证据驱动 optional=False、单例/关键说明只进 key 披露面）——
+  含溢出场景回归（12-legend 复现用例）；
+- 无约束文档输入 → V5 与 V4 输出逐字段一致（零回归面）；
+- **显式** must_fit：key 组件在溢出画幅下不消失（required 化兜底）；
+  缺省派生下 key 组件可按 V4 语义被抑制，但必发 key_component_suppressed
+  披露（诚实披露而非静默强制）；
 - max_width_units 钳制 + min_width_units 提升（确定性、带 finding）；
 - overflow_policy=suppress 仅对 optional 生效且必须带 overflow_suppressed 披露；
 - 确定性：同输入双跑输出完全一致。
@@ -220,33 +224,42 @@ def test_explicit_must_fit_key_component_never_suppressed():
 
 
 def test_derived_doc_key_component_suppression_is_disclosed():
-    """R9 P1-1 语义：缺省派生**不强制** key 组件存活（= V4 行为），
-    但任何 key 组件落入 suppressed 必发 key_component_suppressed 发现
-    （诚实披露而非静默强制）。"""
+    """R9 P1-1 语义 + 复审 N1 清偿：缺省派生**不强制** key 组件存活
+    （= V4 行为），但 key 组件落入 suppressed 必发 key_component_suppressed
+    发现（诚实披露而非静默强制）。零容量覆盖构造确定性抑制场景（自愈
+    链四级用尽 → selfheal_exhausted）。"""
     parts = [
         LayoutParticipantV4(
             id="t", type="title", requested_zone="top-center",
             priority=1, optional=False),
-    ] + [
-        LayoutParticipantV4(
-            id=f"leg{i}", type="legend", requested_zone="bottom-left",
-            priority=10 + i, optional=True, width_units=4)
-        for i in range(12)
-    ] + [
-        # 关键说明组件落在超载槽（bottom-left 已满）—— V4 语义下 optional
-        # 组件可被抑制；缺省派生只保证**披露**
         LayoutParticipantV4(
             id="attr", type="attribution", requested_zone="bottom-left",
-            priority=5, optional=True),
+            priority=99, optional=True),
     ]
+    zero_cap = {z: 0 for z in (
+        "top-left", "top-center", "top-right",
+        "bottom-left", "bottom-center", "bottom-right", "none")}
     doc = derive_layout_constraints(
         [{"id": p.id, "type": p.type, "optional": p.optional} for p in parts],
         page_profile="viewport")
-    sol = solve_layout_v5(parts, constraint_spec=doc, page_profile="viewport")
-    if "attr" in {s.id for s in sol.suppressed}:
-        assert any(
-            f.code == "key_component_suppressed" and f.component_id == "attr"
-            for f in sol.constraint_findings)
+    sol = solve_layout_v5(
+        parts, constraint_spec=doc, page_profile="viewport",
+        zone_capacity=zero_cap)
+    # 场景自证：attr 真实落入 suppressed（此前版本的 if 分支空转）
+    assert "attr" in {s.id for s in sol.suppressed}
+    assert any(
+        f.code == "key_component_suppressed" and f.component_id == "attr"
+        for f in sol.constraint_findings)
+
+
+def test_must_fit_and_suppress_are_mutually_exclusive():
+    """R9 复审 N2：must_fit × suppress 组合闭口拒绝（fail-closed）。"""
+    with pytest.raises(ValidationError, match="互斥"):
+        ComponentLayoutConstraint(
+            component_id="x", must_fit=True, overflow_policy="suppress")
+    # 合法组合不受影响
+    ComponentLayoutConstraint(component_id="x", must_fit=True)
+    ComponentLayoutConstraint(component_id="x", overflow_policy="suppress")
 
 
 def test_suppress_policy_discloses_every_removal():
