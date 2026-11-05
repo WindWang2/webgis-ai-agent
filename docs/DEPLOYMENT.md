@@ -74,6 +74,12 @@ docker-compose logs -f celery-worker
 按计算隔离原则，后端分三个必须组件（默认 `.env.example` 的 Redis 指向 `redis://localhost:16379/0`，即开发栈暴露的端口）：
 
 ```bash
+# 0. 构建内嵌 Pi RPC runtime（ADR-0282；USE_NEW_AGENT=true 必需，幂等）
+#    产物：vendor/pi/packages/coding-agent/dist/bundle/rpc-entry.js（自包含）
+git submodule update --init vendor/pi
+bash scripts/build-vendor-pi.sh
+python scripts/pi_doctor.py   # 分域诊断：vendor/build/extension/surface/rpc/env
+
 # 1. 确保 Redis 可达（可复用开发栈的 redis 容器）
 
 # 2. 启动 Celery Worker（不启动则空间工单挂起，前端等不到回调）
@@ -198,8 +204,15 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
 
 | 文件 | 阶段 | 用途 |
 |------|-----|------|
-| `Dockerfile` | 5 阶段：frontend-deps → frontend-builder → backend-deps → backend-builder → runner | dev/CI；开发栈 api 服务用 `target: backend-builder` |
-| `Dockerfile.prod` | 4 阶段：frontend-deps → frontend-builder → backend-deps → runner | 生产镜像（CI build job 构建，`target: runner`） |
+| `Dockerfile` | 6 阶段：frontend-deps → frontend-builder → backend-deps → backend-builder → node-runtime/pi-builder → runner | dev/CI；开发栈 api 服务用 `target: backend-builder` |
+| `Dockerfile.prod` | 6 阶段：frontend-deps → frontend-builder → node-runtime → pi-builder → backend-deps → runner | 生产镜像（CI build job 构建，`target: runner`） |
+
+`pi-builder` 阶段（ADR-0282/#400 根因清偿）：在镜像内构建 vendored Pi 的自包含
+RPC bundle（`dist/bundle/rpc-entry.js`，≈9.2MiB，仅依赖 node 内建模块）并复制进
+runner —— 此前镜像只带 vendor 源码而从未构建，`USE_NEW_AGENT=true` 时 bridge 因
+找不到入口而**静默回退旧引擎**。`/health` 的 `pi_vendor` 字段为 None 即「未构建」
+的可对账信号；本地等价命令 `bash scripts/build-vendor-pi.sh` + `python
+scripts/pi_doctor.py`。
 
 `Dockerfile.prod` runner 关键行为：
 
