@@ -2091,9 +2091,13 @@ class PiBridge:
                             detail=str(send_exc)[:200],
                         )
                         raise
-                    # ADR-0285：disposition=handled —— prompt 被扩展 input
+                    # ADR-0282：disposition=handled —— prompt 被扩展 input
                     # handler 消费，无 agent run 启动，agent_settled 永不到达。
                     # 立即诚实结算为失败，不挂满 PI_EVENT_DRAIN/TOTAL 预算。
+                    # 观测面拆分（review P3，有意为之）：rt_ev 记
+                    # pi_prompt_handled；kernel settle seam 沿用 send_failed
+                    # 派生（cause=send_fail —— 共享信号面不改签名）；SSE 面
+                    # error_class=internal_error。三面均为 FAILED 真值。
                     if isinstance(prompt_resp, dict) and prompt_resp.get("disposition") == "handled":
                         send_failed = True
                         rt_ev.settle(
@@ -2602,9 +2606,9 @@ class PiBridge:
                         })
                         yield sse_event("done", {"session_id": turn_sid})
                         return
-                    # ADR-0285：disposition=handled —— 无 agent run，SSE 终态
+                    # ADR-0282：disposition=handled —— 无 agent run，SSE 终态
                     # exactly-once 在此路径收敛（error+done，不等待不可能到达
-                    # 的 agent_settled）。
+                    # 的 agent_settled）。观测面拆分说明见上方非流分支注释。
                     if isinstance(prompt_resp, dict) and prompt_resp.get("disposition") == "handled":
                         logger.error(
                             "[PiBridge] stream_prompt disposition=handled (input "

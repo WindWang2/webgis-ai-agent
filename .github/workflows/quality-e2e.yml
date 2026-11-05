@@ -356,6 +356,16 @@ jobs:
           echo '=== celery-worker ==='; tail -100 /tmp/celery-worker.log || true
           echo '=== frontend ==='; tail -60 /tmp/frontend.log || true
           echo '=== llm-stub ==='; cat /tmp/llm-stub.log || true
+      # ADR-0282：vendor 协议契约车道（真实 rpc-entry + stub LLM，免凭据）
+      # 与 pi-schema coercion golden 活体比对 —— 升级/漂移检测不再依赖
+      # 开发者本地记得构建 vendor（review P2）。未构建时车道显式 skip。
+      - name: Pi vendor contract + coercion golden (built vendor, no credentials)
+        run: |
+          git submodule update --init vendor/pi
+          bash scripts/build-vendor-pi.sh
+          pytest tests/integration/test_pi_vendor_contract.py \
+                  tests/integration/test_pi_schema_coercion_golden.py \
+                  -m heavy --no-cov -q
       - name: Pi bridge real-LLM E2E (manual, key-gated)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.pi-real-e2e }}
         env:

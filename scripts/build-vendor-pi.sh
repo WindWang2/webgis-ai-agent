@@ -48,8 +48,13 @@ if [[ "$REINSTALL" == "1" ]]; then
 fi
 
 if [[ ! -d node_modules ]]; then
-  echo "[build-vendor-pi] npm install (first run; cached afterwards)"
-  npm install --no-audit --no-fund
+  if [[ -f package-lock.json ]]; then
+    echo "[build-vendor-pi] npm ci (root lockfile present; reproducible)"
+    npm ci --no-audit --no-fund
+  else
+    echo "[build-vendor-pi] npm install (no root lockfile in this pin)"
+    npm install --no-audit --no-fund
+  fi
 else
   echo "[build-vendor-pi] node_modules present — skipping install (use --reinstall to force)"
 fi

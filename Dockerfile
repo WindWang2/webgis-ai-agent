@@ -61,10 +61,11 @@ COPY main.py ./
 COPY app/ ./app/
 # #618-37: Pi RPC entry is vendor/pi/packages/coding-agent/dist/ (pi_rpc_client
 # resolves bundle → dist). compose api uses this stage as target and
-# celery defaults to runner (COPY --from=backend-builder /app). The built
-# bundle comes from pi-builder so USE_NEW_AGENT actually finds a runnable
-# entry instead of silently falling back.
+# celery defaults to runner (COPY --from=backend-builder /app) — 本阶段从
+# pi-builder 复制 bundle（stage 定义在其后；Docker 允许前向引用），两个
+# 消费者都拿到可执行入口（review P2：compose api target 亦修复 #400）。
 COPY vendor/ ./vendor/
+COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
 
 # Stage 4b: Node runtime for the runner stage
 # PLT-03（#1750）：Debian bookworm 的 `nodejs` apt 包是 18.x，而 Next 16
@@ -76,12 +77,15 @@ COPY vendor/ ./vendor/
 # 镜像以控制体积。digest 与 Dockerfile.prod 的 node-runtime 阶段一致。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
 
-# Stage 4c: Pi RPC runtime builder（goal-pi-native-host-vnext；同 Dockerfile.prod
-# 的 pi-builder —— bundle 为自包含产物，runner 只复制该目录）。
+# Stage 4c: Pi RPC runtime builder（ADR-0282；同 Dockerfile.prod 的
+# pi-builder —— bundle 为自包含产物；backend-builder（compose api 目标）
+# 与 runner 两个消费者都复制该目录）。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS pi-builder
 WORKDIR /app
+COPY vendor/pi/package.json vendor/pi/package-lock.json ./vendor/pi/
+RUN cd vendor/pi && npm ci --no-audit --no-fund && rm -rf node_modules
 COPY vendor/pi/ ./vendor/pi/
-RUN cd vendor/pi && npm install --no-audit --no-fund && npm run build \
+RUN cd vendor/pi && npm ci --no-audit --no-fund && npm run build \
     && test -f packages/coding-agent/dist/bundle/rpc-entry.js
 
 # Stage 5: Runner

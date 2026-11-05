@@ -33,7 +33,7 @@ class HealthResponse(BaseModel):
     version: str
     agent_runtime: str
     pi_workers_alive: Optional[str] = None
-    # ADR-0285：实际运行的 Pi 版本/入口形态（如 "v1.5.0 (bundle)"）。None =
+    # ADR-0282：实际运行的 Pi 版本/入口形态（如 "v1.5.0 (bundle)"）。None =
     # 未构建或不可判读 —— agent_runtime=pi 而本字段为 None 即「徽章与事实
     # 不一致」的信号（与 pi_workers_alive 同为 V5-B 可对账披露）。
     pi_vendor: Optional[str] = None

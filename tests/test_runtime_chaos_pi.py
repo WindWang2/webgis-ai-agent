@@ -742,7 +742,7 @@ async def test_stream_prompt_happy_path_unchanged_with_death_aware_rpc():
     assert rpc.events.empty()
 
 
-# ── ADR-0285: prompt disposition=handled 防挂 ──────────────────────────
+# ── ADR-0282: prompt disposition=handled 防挂 ──────────────────────────
 
 
 @pytest.mark.asyncio
@@ -778,10 +778,17 @@ async def test_stream_prompt_handled_disposition_fails_fast():
 
 @pytest.mark.asyncio
 async def test_stream_prompt_started_disposition_keeps_normal_path():
-    """disposition=started（正常路径）行为不变：仍进入事件排水循环。"""
-    rpc = _make_rpc([make_token_event("hi")])
-    # 正常响应（旧 mock 形态 {"ok": True} 与新形态 {"disposition": "started"}
-    # 都必须走原路径 —— 用两种形态各跑一遍冒烟）。
+    """disposition=started（正常路径）行为不变：仍进入事件排水循环。
+
+    旧 mock 形态（无 disposition 键，如 {"ok": True}）的原路径保持由本套
+    既有 16 项用例隐式覆盖（它们的 _make_rpc 即该形态）。"""
+    rpc = MagicMock()
+    rpc.events = asyncio.Queue()
+    rpc.start = AsyncMock()
+    rpc.stop = AsyncMock()
+    rpc.process_died = False
+    rpc.process_died_event = asyncio.Event()
+
     async def _request(cmd, data=None):
         if cmd == "prompt":
             for ev in [make_token_event("hi")]:

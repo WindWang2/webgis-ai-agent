@@ -1,4 +1,4 @@
-"""pi-schema 参数校验/强制转换 golden 活体比对（ADR-0285）。
+"""pi-schema 参数校验/强制转换 golden 活体比对（ADR-0282）。
 
 对**真实 v1.5.0 rpc-entry** 逐例执行 golden corpus：stub LLM 按调用序号发
 出各 case 的工具实参；打点扩展记录 execute() 实际收到的（归一化后）实参；
@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -219,7 +220,7 @@ async def test_coercion_matrix_matches_golden(tmp_path: Path):
         ["node", str(driver), str(_vendor_entry()), str(ext), str(schema_path),
          str(cases_path), str(exec_file), str(stub_err), str(tool_ends_path)],
         capture_output=True, text=True, timeout=180,
-        env={**__import__("os").environ, "WEBGIS_API_BASE": "http://127.0.0.1:1"},
+        env={**os.environ, "WEBGIS_API_BASE": "http://127.0.0.1:1"},
     )
     assert "DONE" in res.stderr, f"driver failed: {res.stderr[:600]}"
 

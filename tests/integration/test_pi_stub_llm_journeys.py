@@ -1,4 +1,4 @@
-"""A5 场景验证车道：真实 Pi bridge + 脚本化 stub LLM（ADR-0285）。
+"""A5 场景验证车道：真实 Pi bridge + 脚本化 stub LLM（ADR-0282）。
 
 架构：pytest 用例本身只做门控与裁决 —— 五段旅程由独立驱动脚本（本文件
 内嵌的 ``_DRIVER_SOURCE``）以子进程执行：boot stub LLM（node）→ 以
@@ -13,8 +13,10 @@ ToolDispatchService 工具回调（HTTP → Python）、真实 SSE/取消 seam�
 证据用内联 FeatureCollection 驱动真实空间计算（与 journey 真车道同纪律：
 不调外部 POI、不伪造数据）。
 
-旅程（任务书 A5）：J1 成都小学分布（真实 GIS 工具 + geojson_ref）；
-J2 换色不重算；J3 北京跨会话不污染；J4 取消不复活；J5 纯文本不伪装地图成功。
+旅程（任务书 A5）：J1 成都小学分布（真实 GIS 工具 dispatch）；J2 换色
+不重算；J3 北京跨会话不污染；J5 纯文本不伪装地图成功。J4（取消）不由本
+车道驱动 —— 由 test_runtime_chaos_pi.py 与 vendor 契约车道的 abort 用例
+确定性覆盖（本 sandbox 跨线程取消窗口不稳，见 driver 内注释与 ledger）。
 
 门控：node + 已构建 vendor；缺失显式 skip（绝不静默绿）。
 """

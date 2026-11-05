@@ -389,20 +389,24 @@ export default function webgisToolsExtension(pi) {
       // (setActiveToolsByName semantics); the native front door stays active.
       const promptText = typeof event.prompt === "string" ? event.prompt : "";
       const matches = Array.from(promptText.matchAll(ACTIVE_TOOLS_RE));
+      let projected = false;
       if (matches.length) {
         try {
           const requested = JSON.parse(matches[matches.length - 1][1]);
           if (Array.isArray(requested)) {
             defaultProjectionApplied = true; // an explicit turn projection supersedes the default
             applyActiveTools(requested.filter((n) => typeof n === "string"), "turn");
+            projected = true;
           }
         } catch (err) {
           console.error("[webgis-tools] WEBGIS_ACTIVE_TOOLS marker parse failed:", err);
         }
-      } else {
-        // No per-turn marker: guarantee the default projection is live even if
-        // session_start never fired in this vendor mode (load-time projection
-        // is impossible on vendors with two-phase extension loading).
+      }
+      if (!projected) {
+        // No (or malformed) per-turn marker: guarantee the default projection
+        // is live even if session_start never fired in this vendor mode — a
+        // malformed marker must not leave the full registered superset active
+        // (review P3).
         applyDefaultActiveTools("default(before_agent_start)");
       }
 

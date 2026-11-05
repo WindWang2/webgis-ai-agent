@@ -1,4 +1,4 @@
-"""Pi vendor compatibility identity (goal-pi-native-host-vnext / ADR-0285).
+"""Pi vendor compatibility identity (goal-pi-native-host-vnext / ADR-0282).
 
 Answers one question honestly at runtime: **which Pi is this backend actually
 running, and can it run at all?** Before this module nothing compared the
@@ -17,7 +17,7 @@ Scope / discipline:
       existing fail-closed spawn behavior (FileNotFoundError → ChatEngine);
       this module only makes the state observable (logs, /health, pi_doctor).
 
-Compatibility floor (ADR-0285): the bridge protocol implementation in this
+Compatibility floor (ADR-0282): the bridge protocol implementation in this
 repo targets Pi >= v1.5.0 (pi-schema argument validation, delta-only
 ``message_update``, ``disposition`` on prompt responses, two-phase extension
 loading). ``PI_MIN_VENDOR_TAG`` is the floor this module reports against.
@@ -177,7 +177,7 @@ def pi_vendor_identity() -> PiVendorIdentity:
     )
 
 
-def log_pi_vendor_identity() -> PiVendorIdentity:
+def log_pi_vendor_identity() -> "PiVendorIdentity | None":
     """One startup log line + WARN when the state deserves operator eyes.
 
     WARN (fail-open observability — the spawn itself stays fail-closed in the
@@ -188,7 +188,7 @@ def log_pi_vendor_identity() -> PiVendorIdentity:
         ident = pi_vendor_identity()
     except Exception:  # noqa: BLE001 — observability must never break startup
         logger.warning("pi vendor identity probe failed", exc_info=True)
-        return None  # type: ignore[return-value]
+        return None
     line = ident.summary_line()
     if not ident.entry_built:
         logger.warning(

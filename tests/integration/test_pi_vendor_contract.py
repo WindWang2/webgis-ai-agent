@@ -1,4 +1,4 @@
-"""Pi vendor RPC 协议契约测试（ADR-0285 / goal-pi-native-host-vnext）。
+"""Pi vendor RPC 协议契约测试（ADR-0282 / goal-pi-native-host-vnext）。
 
 针对**真实 vendored rpc-entry**（非 mock）锁定上游 wire 契约：分帧、信封、
 事件词表、agent_settled 唯一终判、abort 信号、U+2028 分帧安全、内建编码
@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -221,7 +222,7 @@ class _VendorHarness:
         self.probe_js.write_text(PROBE_JS, encoding="utf-8")
         self.dump = tmp / "native-tools.json"
         self.dump.write_text(json.dumps(CONTRACT_DUMP), encoding="utf-8")
-        env = {**__import__("os").environ, "STUB_PORT": str(stub_port), "STUB_MODE": mode}
+        env = {**os.environ, "STUB_PORT": str(stub_port), "STUB_MODE": mode}
         if tool:
             env["STUB_TOOL"] = tool
         if tool_args:
@@ -276,14 +277,6 @@ class _VendorHarness:
                 break
         assert payload is not None, f"probe produced no RESULT: rc={res.returncode} err={res.stderr[:600]}"
         return payload
-
-
-_PORT_COUNTER = {"n": 18810}
-
-
-def _next_port() -> int:
-    _PORT_COUNTER["n"] += 1
-    return _PORT_COUNTER["n"]
 
 
 def _boot_stub(js_path: Path, env: dict, tmp: Path) -> int:

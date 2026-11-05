@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pi_doctor — vendored Pi runtime diagnostics (ADR-0285 / goal-pi-native-host-vnext).
+"""pi_doctor — vendored Pi runtime diagnostics (ADR-0282 / goal-pi-native-host-vnext).
 
 One command answers: *can this checkout actually run the bundled Pi bridge, and
 if not, why?* Reports, per domain, PASS / WARN / FAIL with concrete remediation.
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -181,6 +182,7 @@ def check_extension() -> Report:
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
         json.dump(dump, fh)
         dump_path = fh.name
+    # do NOT unlink before use；进程退出由 TemporaryDirectory 兜底
     script = (
         f"import webgisExt from {json.dumps(EXTENSION_PATH.as_uri())};\n"
         f"process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(dump_path)};\n"
@@ -252,7 +254,7 @@ def check_surface() -> Report:
 _STUB_LLM_JS = r"""
 // minimal OpenAI-compatible stub: tool call once, then final text
 import http from 'node:http';
-const port = Number(process.env.DOCTOR_STUB_PORT || 18790);
+const port = Number(process.env.DOCTOR_STUB_PORT || 0);
 const calls = { n: 0 };
 const srv = http.createServer((req, res) => {
   let body = ''; req.on('data', (c) => (body += c));
@@ -280,7 +282,7 @@ const srv = http.createServer((req, res) => {
     res.write('data: [DONE]\n\n'); res.end();
   });
 });
-srv.listen(port, '127.0.0.1', () => console.log('stub up'));
+srv.listen(port, '127.0.0.1', () => process.stderr.write('STUB_READY ' + srv.address().port + '\n'));
 """
 
 _PROBE_JS = r"""
@@ -377,16 +379,27 @@ def check_rpc() -> Report:
         probe_js = td_path / "probe.mjs"
         probe_js.write_text(_PROBE_JS, encoding="utf-8")
 
-        stub = subprocess.Popen(
-            ["node", str(stub_js)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env={**__import__("os").environ, "DOCTOR_STUB_PORT": "18790"},
-        )
+        stub_err_file = td_path / "doctor_stub_err.log"
+        with open(stub_err_file, "w") as fh:
+            stub = subprocess.Popen(
+                ["node", str(stub_js)],
+                stdout=subprocess.DEVNULL, stderr=fh,
+                env={**os.environ, "DOCTOR_STUB_PORT": "0"},
+            )
+        deadline = time.monotonic() + 10
+        stub_port = None
+        while time.monotonic() < deadline:
+            m = re.search(r"STUB_READY (\d+)", stub_err_file.read_text())
+            if m:
+                stub_port = m.group(1)
+                break
+            time.sleep(0.1)
+        assert stub_port, "doctor stub LLM failed to boot"
         try:
             time.sleep(0.6)
             rc, out = _run([
                 "node", str(probe_js), str(ident.entry_path), str(EXTENSION_PATH),
-                str(dump_path), "18790",
+                str(dump_path), stub_port,
             ], timeout=45.0)
         finally:
             stub.terminate()
