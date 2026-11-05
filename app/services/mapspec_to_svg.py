@@ -29,6 +29,9 @@ from app.lib.cartography.label_collision import (
     MAX_LABELS_PER_EXPORT as _MAX_LABELS_PER_EXPORT,
 )
 from app.lib.cartography.label_collision import (
+    MAX_OBSTACLES_PER_SOLVE as _MAX_OBSTACLES_PER_LAYER,
+)
+from app.lib.cartography.label_collision import (
     CollisionLabel as _CollisionLabel,
 )
 from app.lib.cartography.label_collision import (
@@ -1104,6 +1107,14 @@ def compile_mapspec_to_svg_detailed(
     _labels_cfg = _layout_cfg.get("labels") if isinstance(_layout_cfg, dict) else None
     collision_mode = isinstance(_labels_cfg, dict) and _labels_cfg.get("collision") == "deterministic"
     label_requests: List[Dict[str, Any]] = []
+    # W2.1（ADR-0283 D3）：点符号图元障碍盒（circle 层；AABB，中心即锚点，
+    # 边长 = 2×(radius + stroke/2)）。每层采样前 _MAX_OBSTACLES_PER_LAYER
+    # 个点（资源包络，与求解侧 MAX_OBSTACLES_PER_SOLVE 同值）；求解器侧
+    # 再做全局截断并在 stats 记 obstacles_truncated。line/polygon 图元障碍
+    # 为后续波次（接线面：line 需逐段 AABB 采样，先只接 circle）。
+    # 锚点豁免：标注来自 symbol 层、符号来自 circle 层（异层），标签自身
+    # 锚点图元天然不进障碍集；若未来同层组合，由这里构造时排除。
+    glyph_obstacles: List[Tuple[float, float, float, float]] = []
 
     def _emit_diag(code: str, detail: str = "", layer_id: Any = None,
                    component_id: Any = None) -> None:
@@ -1266,6 +1277,8 @@ def compile_mapspec_to_svg_detailed(
             for layer in layers:
                 if not isinstance(layer, dict):
                     continue
+                # W2.1：本层图元障碍采样计数（每层最多取前 200 个点符号）
+                _layer_glyph_obs_n = 0
 
                 # W4 可见性语义（与 MapLibre 一致）：layout.visibility=="none"
                 # 或顶层 visible:False 的图层不进导出产物。sources 不动
@@ -1481,6 +1494,25 @@ def compile_mapspec_to_svg_detailed(
                                 stroke_attr = f' stroke="{stroke_color}" stroke-width="{stroke_w}" stroke-opacity="{stroke_opacity}"'
 
                             elements_svg += f'<circle cx="{x}" cy="{y}" r="{r}" fill="{color}" fill-opacity="{opacity}"{stroke_attr} />\n'
+
+                            # W2.1（ADR-0283 D3）：circle 点符号 → 图元障碍盒
+                            # （外扩 = radius + stroke/2；project 返回 fmt_num
+                            # 字符串，数值用途转 float）。仅在 collision 模式
+                            # 收集（legacy 路径零开销、byte-stable 不受影响）。
+                            if (
+                                collision_mode
+                                and _layer_glyph_obs_n < _MAX_OBSTACLES_PER_LAYER
+                            ):
+                                _obs_ext = base_r * dpi_scale + (
+                                    base_stroke_w * dpi_scale / 2.0
+                                    if base_stroke_w > 0 else 0.0
+                                )
+                                _ogx, _ogy = float(x), float(y)
+                                glyph_obstacles.append((
+                                    _ogx - _obs_ext, _ogy - _obs_ext,
+                                    _ogx + _obs_ext, _ogy + _obs_ext,
+                                ))
+                                _layer_glyph_obs_n += 1
 
                         elif layer_type == "line" and geom.get("type") in ("LineString", "MultiLineString"):
                             layout = layer.get("layout", {}) if isinstance(layer.get("layout"), dict) else {}
@@ -1839,6 +1871,7 @@ def compile_mapspec_to_svg_detailed(
                 ],
                 [0.0, 0.0, float(scaled_width), float(scaled_height)],
                 max_labels=_labels_budget,
+                obstacles=glyph_obstacles or None,
             )
             by_id = {r["id"]: r for r in label_requests}
             parts: List[str] = []
@@ -1899,9 +1932,17 @@ def compile_mapspec_to_svg_detailed(
                 )
             _sup_n = solution.suppressed_count
             if _sup_n:
+                # W2.1：障碍在场时 detail 追加 obstacles 计数（复用既有码，
+                # 不新增降级码；legacy 无障碍路径 detail 保持 byte-stable）。
+                _obs_note = (
+                    f" obstacles={len(glyph_obstacles)}" if glyph_obstacles else ""
+                )
                 _emit_diag(
                     "label_collision_relaxed",
-                    detail=f"placed={solution.stats['placed']} suppressed={_sup_n}",
+                    detail=(
+                        f"placed={solution.stats['placed']} suppressed={_sup_n}"
+                        f"{_obs_note}"
+                    ),
                 )
             if solution.budget_exceeded:
                 _emit_diag("label_budget_exceeded", detail=str(_MAX_LABELS_PER_EXPORT))

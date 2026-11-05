@@ -31,10 +31,14 @@ def _round_placements(sol) -> list:
 @pytest.mark.parametrize("fixture_path", FIXTURES, ids=lambda p: p.stem)
 def test_solver_matches_golden(fixture_path):
     case = json.loads(fixture_path.read_text(encoding="utf-8"))
+    # W2.1（ADR-0283 D3）：fixture 可携带图元障碍盒（[x1,y1,x2,y2] 列表）；
+    # 无 obstacles 键 → 不传（兼容锁定既有 6 个 fixture 的旧形态）。
+    obstacles = [tuple(ob) for ob in case.get("obstacles", [])] or None
     sol = solve_export_labels(
         [CollisionLabel(**lb) for lb in case["labels"]],
         case["viewport"],
         max_labels=case.get("maxLabels", MAX_LABELS_PER_EXPORT),
+        obstacles=obstacles,
     )
     assert _round_placements(sol) == case["expected"]["placements"]
     assert sol.stats == case["expected"]["stats"]
