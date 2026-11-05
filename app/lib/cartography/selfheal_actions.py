@@ -137,6 +137,15 @@ SELFHEAL_ACTIONS: Tuple[SelfHealActionSpec, ...] = (
     _spec("resample", RISK_AUTO_SAFE, SURFACE_RUNTIME, 0.5,
           "重采样：密度超载层的视口抽稀参数调整（呈现级）",
           {"carto.load.ratio", "VISUAL_INFORMATION_DENSITY"}),
+    # ── ADR-0283 D4：版式/标签确定性发现 → 既有修复链路由（presentation-
+    #    only；执行器仍是 component_composer.REPAIR_ACTIONS → 前端
+    #    composition-repair 既有路径，本注册不建第二执行器）──
+    _spec("relayout_change_anchor", RISK_AUTO_SAFE, SURFACE_DESIRED_STATE, 0.5,
+          "改锚定：未解决槽位冲突按候选域换锚重排（呈现级）",
+          {"LAYOUT_COLLISION_UNRESOLVED"}),
+    _spec("relayout_collapse_overflow", RISK_AUTO_SAFE, SURFACE_DESIRED_STATE, 0.45,
+          "折叠进溢出面板：溢出组件收纳为折叠态（内容保留，呈现级）",
+          {"OVERFLOW_SUPPRESSED", "KEY_COMPONENT_SUPPRESSED"}),
 )
 
 
