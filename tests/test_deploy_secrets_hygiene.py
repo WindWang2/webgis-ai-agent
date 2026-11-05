@@ -115,7 +115,7 @@ def test_entrypoint_never_puts_password_in_argv():
     # 运行时 conf 注入三要素：写文件（tmpfs）+ 0400 + 作为配置文件传入
     assert "/dev/shm/redis-runtime.conf" in ep, "entrypoint 未写 tmpfs 运行时 conf"
     assert "chmod 400" in ep, "运行时 conf 未收紧到 0400"
-    assert 'redis-server /usr/local/etc/redis/redis.conf "$rtconf"' in ep, (
+    assert ep.count('redis-server /usr/local/etc/redis/redis.conf --include "$rtconf"') == 2, (
         "entrypoint 未以「配置文件 include」方式传入 requirepass"
     )
 
