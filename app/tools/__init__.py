@@ -20,6 +20,8 @@ _TOOL_MODULES = [
     ("app.tools.map_view", "register_map_view_tools"),
     # Track A（ADR-0278）：地图表现层操作事务 —— preview/commit/回执
     ("app.tools.map_operations_tools", "register_map_operation_tools"),
+    # ADR-0283：交互情境 scope —— 当前/历史选择 → 受验证分析输入（只读）
+    ("app.tools.interaction_scope_tools", "register_interaction_scope_tools"),
     # GOAL 04：多尺度表达档案 —— inspect/preview/apply（scale_profile.v1）
     ("app.tools.scale_profile_tools", "register_scale_profile_tools"),
     # F12（ADR-0260）：Map Plan Compiler —— MapPlanIR → 最小 MapSpec mutations
