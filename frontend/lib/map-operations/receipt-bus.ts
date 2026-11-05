@@ -91,9 +91,6 @@ export function pushOperationReceipt(
   return true;
 }
 
-function _resetUndoDedupeForTests(): void {
-  undoRecordedOps.clear();
-}
 
 /**
  * ADR-0283 D6：agent 可逆回执 → undo 栈录制（反向重放既有 CAS 通道）。

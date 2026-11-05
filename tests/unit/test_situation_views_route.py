@@ -136,3 +136,45 @@ async def test_get_turn_chain_happy_path_three_classes(client):
     counts = body["counts"]
     assert counts["executed_observed"] >= 1
     assert counts["agent_pending"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_get_turn_chain_journal_join_real_path(client):
+    """review P3（部分关闭项）：route 层 journal join（revision_span /
+    intent_digest）经真实 project 路径断言——TurnEventLedger 以可运行替身
+    注入（不 patch 构造器抛错）。"""
+    store = MemorySessionStore()
+    store._map_state.setdefault("s3", {}).update({
+        "_map_operation_receipts": [{
+            "schema_version": "map_operation.v1", "operation_id": "op-join",
+            "mode": "commit", "origin": "agent", "status": "committed",
+            "mutation_revisions": [7], "provenance": {"turn_id": "t9"},
+            "effects": [], "applied_count": 0,
+        }],
+        "_interaction_ir_ledger": [],
+        "_cartographic_observation": {"mapspec_revision": 7},
+    })
+
+    class _JoinLedger:
+        async def list_events(self, session_id, **kwargs):
+            assert session_id == "s3"
+            assert kwargs.get("latest_first") is True
+            return [
+                {"turn_id": "t9", "kind": "tool_started",
+                 "note": "webgis_map_operation", "detail": {}},
+                {"turn_id": "t9", "kind": "map_mutated",
+                 "mutation_revision": 7, "detail": {}},
+                {"turn_id": "t9", "kind": "turn_ended"},
+            ]
+
+    with patch.object(_sv_mod, "session_data_manager", new=store), \
+         patch("app.services.mapspec.store.mapspec_store_instance", new=MagicMock()), \
+         patch("app.services.turn_journal.ledger.TurnEventLedger", _JoinLedger):
+        resp = await client.get("/api/v1/chat/sessions/s3/turn-chain")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "degraded" not in body  # journal 可达 → 无降级披露
+    turn = next(t for t in body["turns"] if t["turn_id"] == "t9")
+    assert turn["revision_span"] == [7, 7]
+    assert turn["intent_digest"] == "webgis_map_operation"
+    assert turn["changes"][0]["class"] == "executed_observed"

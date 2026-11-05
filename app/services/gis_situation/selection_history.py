@@ -24,7 +24,8 @@ MAX_HISTORY_ENTRIES = 6
 MAX_HISTORY_IDS = 8
 
 _SELECTION_OPENERS = frozenset({"feature_selected", "table_selection_changed"})
-_SELECTION_CLOSERS = frozenset({"feature_deselected", "table_selection_changed"})
+# table clear 的终结在 opener 分支内联处理（无 id 事件），不在 closer 词表。
+_SELECTION_CLOSERS = frozenset({"feature_deselected"})
 
 
 def _ids_of(payload: Dict[str, Any]) -> List[str]:
@@ -57,6 +58,13 @@ def project_selection_history(
         payload = payload if isinstance(payload, dict) else {}
         seq = record.get("server_seq")
         seq = int(seq) if isinstance(seq, (int, float)) else len(epochs) + 1
+        # chart 类别选择替换要素选择（投影面已镜像单选模型）——历史当前代
+        # 同步终结，保持两面一致（review P3）。
+        if kind == "chart_selection_changed" and payload.get("action") != "clear":
+            current = next(
+                (e for e in epochs if not e["superseded"] and not e["cleared"]), None)
+            if current is not None:
+                current["superseded"] = True
         if kind in _SELECTION_OPENERS:
             ids = _ids_of(payload)
             # review P2-2：table clear 事件无 id —— 按 closer 终结当前代

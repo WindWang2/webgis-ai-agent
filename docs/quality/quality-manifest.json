@@ -8949,7 +8949,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "bff200257bc385f24938592809345a3c590ea89bb184f62487e63bd7633b1647",
+ "fingerprint": "d7a3ca345184358a3017fe889ae99cb81b697f4ee21af81a008a1f599b61d4c8",
  "gate": {
   "fields": {
    "capabilities": {
@@ -20221,7 +20221,8 @@
    "tests": [
     "tests/test_gis_situation_turn_chain.py",
     "tests/unit/gis_harness/map_operations/test_review_remediation.py",
-    "tests/unit/gis_harness/map_operations/test_tool.py"
+    "tests/unit/gis_harness/map_operations/test_tool.py",
+    "tests/unit/test_situation_views_route.py"
    ],
    "tier": 2
   },

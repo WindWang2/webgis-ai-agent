@@ -141,3 +141,17 @@ def test_review_table_clear_closes_current_epoch():
     claimed = resolve_selection_ref(events, "previous")
     assert claimed is not None
     assert claimed["feature_ids"] == ["sch-9"]
+
+
+def test_review_chart_select_ends_current_epoch():
+    """review P3：chart 类别选择后历史与投影两面一致（当前代终结）。"""
+    events = [
+        _ev(1, "feature_selected", {
+            "layer_id": "schools", "dataset_ref": "ref:geojson-aaa",
+            "selected_ids": ["sch-1"]}),
+        _ev(2, "chart_selection_changed", {
+            "layer_id": "districts", "field": "type",
+            "categories": ["A"], "action": "select"}),
+    ]
+    history = project_selection_history(events)
+    assert history[0]["superseded"] is True  # 要素选择代被 chart 选择替代
