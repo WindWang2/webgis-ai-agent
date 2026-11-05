@@ -384,6 +384,10 @@ async def lifespan(app: FastAPI):
     # 仓内 vendor/pi：API 启动即拉起 bundled RPC 子进程（不是用户全局 pi CLI）。
     from app.agent_pi_bridge import USE_NEW_AGENT, get_pi_bridge
     if USE_NEW_AGENT:
+        # ADR-0285：启动即披露实际运行的 Pi 身份（pin/describe/入口形态/node
+        # 版本/协议下限）。只观测不阻断 —— spawn 自身的 fail-closed 行为不变。
+        from app.services.chat.pi_compat import log_pi_vendor_identity
+        log_pi_vendor_identity()
         try:
             from app.agent_pi_bridge import get_pi_bridge
             # 审计 AGENT-03：指向 .mjs 文件（Pi extension loader 需要可执行 JS，

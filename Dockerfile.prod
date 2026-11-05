@@ -48,6 +48,18 @@ RUN pnpm run build
 # 的 `node rpc-entry.js`，npm/corepack 不入镜像以控制体积。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
 
+# Stage 2c: Pi RPC runtime builder（goal-pi-native-host-vnext / #400 根因清偿）
+# 此前镜像只 COPY vendor/ 源码而从未构建 dist —— USE_NEW_AGENT=true 时
+# bridge 找不到 rpc-entry.js 而静默回退旧引擎。Pi v1.5.0 起产出自包含
+# bundle（dist/bundle/rpc-entry.js，仅依赖 node 内建模块），构建一次、
+# 单独复制即可让镜像内 Pi 真正可用。本地等价命令：scripts/build-vendor-pi.sh。
+FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS pi-builder
+WORKDIR /app
+COPY vendor/pi/package.json vendor/pi/package-lock.json* ./vendor/pi/
+COPY vendor/pi/ ./vendor/pi/
+RUN cd vendor/pi && npm install --no-audit --no-fund && npm run build \
+    && test -f packages/coding-agent/dist/bundle/rpc-entry.js
+
 # Stage 3: Backend Python Dependencies
 # 与 .python-version / requirements.lock 及下方 site-packages COPY 保持 3.12；
 # bookworm 与 GDAL runtime 包名及 node-runtime 的 glibc 基线一致。
@@ -116,10 +128,11 @@ COPY migrations/ ./migrations/
 # celery-worker 服务用，避免与 api 并发 upgrade 竞争 alembic_version）。
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-# #400: pi RPC 入口是仓库相对路径 vendor/pi/packages/coding-agent/dist/rpc-entry.js
-# （pi_rpc_client.PI_RPC_ENTRY）。CI 以 submodules:recursive 检出，但产物从未
-# 进入镜像 —— USE_NEW_AGENT=true 时 bridge 初始化失败并静默回退旧引擎。
+# #400: pi RPC 入口是仓库相对路径 vendor/pi/packages/coding-agent/dist/（pi_rpc_client
+# 解析顺序 bundle → dist）。CI 以 submodules:recursive 检出；自 pi-builder 阶段起
+# 构建产物随镜像分发 —— USE_NEW_AGENT=true 不再静默回退旧引擎。
 COPY vendor/ ./vendor/
+COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
 
 # Create non root user
 RUN groupadd --system --gid 1001 appgroup && \

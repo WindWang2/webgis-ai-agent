@@ -118,6 +118,7 @@ def health_check() -> HealthResponse:
         # the badge still says "pi". Disclose the per-worker split so the
         # badge can be reconciled against reality.
         pi_workers_alive=_pi_workers_alive(),
+        pi_vendor=_pi_vendor_summary(),
     )
 
 
@@ -132,6 +133,22 @@ def _pi_workers_alive() -> Optional[str]:
             return None
         alive = sum(1 for b in pool.bridges if _bridge_alive(b))
         return f"{alive}/{pool.size}"
+    except Exception:
+        return None
+
+
+def _pi_vendor_summary() -> Optional[str]:
+    """ADR-0285: which vendored Pi the bridge would run, e.g. "v1.5.0 (bundle)".
+
+    None = no built entry (agent_runtime would honestly report chatengine via
+    the fail-closed badge anyway) or probe failure — never fabricate."""
+    try:
+        from app.services.chat.pi_compat import pi_vendor_identity
+
+        ident = pi_vendor_identity()
+        if not ident.entry_built:
+            return None
+        return f"{ident.describe or ident.head_commit or 'unknown'} ({ident.entry_kind})"
     except Exception:
         return None
 

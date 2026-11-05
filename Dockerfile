@@ -59,11 +59,11 @@ COPY --from=backend-deps /usr/local/bin /usr/local/bin
 COPY requirements.txt ./
 COPY main.py ./
 COPY app/ ./app/
-# #618-37: Pi RPC entry is vendor/pi/packages/coding-agent/dist/rpc-entry.js
-# (pi_rpc_client.PI_RPC_ENTRY). compose api uses this stage as target and
-# celery defaults to runner (COPY --from=backend-builder /app). Without this
-# COPY, USE_NEW_AGENT cannot find the entry and silently falls back.
-# Same path Dockerfile.prod copies; runtime needs vendor/ (submodule).
+# #618-37: Pi RPC entry is vendor/pi/packages/coding-agent/dist/ (pi_rpc_client
+# resolves bundle → dist). compose api uses this stage as target and
+# celery defaults to runner (COPY --from=backend-builder /app). The built
+# bundle comes from pi-builder so USE_NEW_AGENT actually finds a runnable
+# entry instead of silently falling back.
 COPY vendor/ ./vendor/
 
 # Stage 4b: Node runtime for the runner stage
@@ -75,6 +75,14 @@ COPY vendor/ ./vendor/
 # `node server.js` 与 Pi RPC 的 `node rpc-entry.js`，npm/corepack 不入
 # 镜像以控制体积。digest 与 Dockerfile.prod 的 node-runtime 阶段一致。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
+
+# Stage 4c: Pi RPC runtime builder（goal-pi-native-host-vnext；同 Dockerfile.prod
+# 的 pi-builder —— bundle 为自包含产物，runner 只复制该目录）。
+FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS pi-builder
+WORKDIR /app
+COPY vendor/pi/ ./vendor/pi/
+RUN cd vendor/pi && npm install --no-audit --no-fund && npm run build \
+    && test -f packages/coding-agent/dist/bundle/rpc-entry.js
 
 # Stage 5: Runner
 FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runner
@@ -116,6 +124,9 @@ COPY --from=backend-builder /app ./
 # Copy installed Python packages and binaries
 COPY --from=backend-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-builder /usr/local/bin /usr/local/bin
+# Pi v1.5.0 自包含 RPC bundle（pi-builder 构建产物）—— 覆盖 COPY vendor/
+# 源码中不存在的 dist 产物，保证 USE_NEW_AGENT=true 时入口可执行。
+COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
 
 # Create non-root user
 RUN addgroup --system --gid 1001 appgroup && adduser --system --uid 1001 appuser
