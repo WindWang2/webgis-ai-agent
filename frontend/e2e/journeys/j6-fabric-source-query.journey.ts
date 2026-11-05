@@ -1,7 +1,8 @@
 /**
- * Journey 6 — 数据源注册 → probe → 查询 → 上图（MVT 断言）.
+ * Journey 6 — 数据源准入 → probe → 查询 → 上图.
  *
- * Registers a data fabric source through the 数据 tab, probes it healthy,
+ * Mock covers public source registration. Real verifies private registration
+ * is denied, then consumes a runner-configured source. Both probe it healthy,
  * materializes a catalog item to a map layer (需要活动会话 — the journey sends
  * one chat turn first, exactly what the UI demands of a real user), and
  * asserts the layer mounts and the fabric data-plane hydration contract
@@ -9,11 +10,11 @@
  * chat-created big-ref layers carry the tile endpoint).
  */
 import { test, expect } from 'playwright/test';
-import { defaultWorld, sendChat, awaitShellReady } from '../helpers/bootstrap';
+import { defaultWorld, sendChat, awaitShellReady, loginViaApi } from '../helpers/bootstrap';
 import { installJourneyStubs } from '../fixtures/api-stubs';
 import { analysisTurn } from '../fixtures/sse';
 import { expectLayerListed, expectMapReady } from '../helpers/assertions';
-import { MODE, REAL_ONLY_REASON } from '../helpers/mode';
+import { API_ORIGIN, MODE, REAL_ONLY_REASON } from '../helpers/mode';
 
 test.describe('journey-6 数据源注册查询上图', () => {
   test('mock：注册源 → probe healthy → 实例化目录项 → 图层挂载 + MVT 请求', async ({ page }) => {
@@ -79,38 +80,59 @@ test.describe('journey-6 数据源注册查询上图', () => {
       .toBe(true);
   });
 
-  test('real：注册源 → probe → 实例化 → 图层挂载', async ({ page }) => {
+  test('real：拒绝私网注册 → 已配置源 probe → 实例化 → 图层挂载', async ({ page }) => {
     test.skip(MODE !== 'real', REAL_ONLY_REASON);
-    // Nightly stack: real backend with a seeded reachable fabric source
-    // (postgis service container). The same user path runs against it; the
-    // external-network skip guard is explicit below — no silent green.
+    // Public registration cannot grant private-network access. The runner
+    // configures its owned PostGIS fixture through the trusted manager path;
+    // this journey proves both the rejection and real data consumption.
+    const token = await loginViaApi(page);
     await page.goto('/');
     await awaitShellReady(page);
     await sendChat(page, '建立会话');
+    await expect(page.getByText('会话已建立，可以开始数据查询。', { exact: true })).toBeVisible();
     await expectMapReady(page);
     await page.locator('[role="tab"][aria-label*="数据"]').first().click();
     await page.locator('[role="tab"]').filter({ hasText: '数据源' }).first().click();
     await page.getByRole('button', { name: '添加数据源' }).click();
-    const nameInput = page.locator('input[placeholder="例如: 国家地理 WFS 服务"]');
-    const urlInput = page.locator('input[placeholder="https://..."]');
-    await expect(nameInput).toBeVisible({ timeout: 15_000 });
-    await nameInput.fill('nightly postgis');
-    await urlInput.fill('postgresql://localhost:5432/gis');
+    await page.getByLabel('数据源名称', { exact: true }).fill('blocked private source');
+    await page.getByLabel('协议类型', { exact: true }).selectOption('postgis');
+    await page.locator('input[placeholder="https://..."]').fill('postgresql://localhost:5432/gis');
+    // Even this legacy public checkbox cannot grant server-side privileges.
+    await page.getByLabel('允许内网 (SSRF)', { exact: true }).check();
+    const rejected = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/v1/data-fabric/sources'
+      && response.request().method() === 'POST');
     await page.getByRole('button', { name: '提交注册并同步' }).click();
-    const regToast = page.locator('[role="status"], [data-testid^="toast"]').filter({ hasText: '数据源注册成功' });
-    await expect(regToast.first()).toBeVisible({ timeout: 20_000 });
+    expect((await rejected).status()).toBe(400);
+    const sourcesResponse = await page.request.get(new URL('/api/v1/data-fabric/sources', API_ORIGIN).href, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(sourcesResponse.ok()).toBe(true);
+    const sources = (await sourcesResponse.json()).sources as Array<{ name: string }>;
+    expect(sources.some((source) => source.name === 'blocked private source')).toBe(false);
+    expect(sources.some((source) => source.name === 'nightly postgis fixture')).toBe(true);
+
+    const source = page.locator('div').filter({ hasText: 'nightly postgis fixture' })
+      .filter({ has: page.getByRole('button', { name: '探查', exact: true }) }).last();
+    await source.getByRole('button', { name: '探查', exact: true }).click();
+    await expect(page.locator('[role="status"], [data-testid^="toast"]')
+      .filter({ hasText: /连通测试结果.*healthy/ }).first()).toBeVisible({ timeout: 20_000 });
     await page.locator('[role="tab"]').filter({ hasText: '空间目录' }).first().click();
-    const item = page
-      .locator('div')
-      .filter({ has: page.getByRole('button', { name: '加载至地图' }) })
-      .filter({ hasText: /区级行政|poi|admin|商业/i })
-      .first();
+    await page.getByRole('searchbox', { name: '搜索空间数据集' }).fill('poi_commercial');
+    const item = page.locator('div').filter({ hasText: /poi_commercial/ })
+      .filter({ has: page.getByRole('button', { name: '加载至地图', exact: true }) }).last();
     await expect(item).toBeVisible({ timeout: 30_000 });
-    await item.getByRole('button', { name: '加载至地图' }).click();
-    const layerToast = page
-      .locator('[role="status"], [data-testid^="toast"]')
-      .filter({ hasText: /成功按需实例化/ });
-    await expect(layerToast.first()).toBeVisible({ timeout: 30_000 });
-    await expectLayerListed(page, /.+/);
+    const materialized = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/v1/data-fabric/materialize'
+      && response.request().method() === 'POST');
+    await item.getByRole('button', { name: '加载至地图', exact: true }).click();
+    const response = await materialized;
+    expect(response.ok()).toBe(true);
+    const result = await response.json();
+    expect(result.feature_count).toBeGreaterThan(0);
+    expect(result.ref_id).toBeTruthy();
+    await expect(page.locator('[role="status"], [data-testid^="toast"]')
+      .filter({ hasText: /成功按需实例化/ }).first()).toBeVisible({ timeout: 30_000 });
+    await expectLayerListed(page, /poi_commercial/);
   });
 });

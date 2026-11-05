@@ -126,6 +126,10 @@ export interface CatalogItemRecord {
  * real mode.
  */
 export class JourneyWorld {
+  projects = [{
+    id: 'p-j', name: '旅程项目', description: 'quality-e2e 旅程项目',
+    status: 'active', metadata_json: {}, created_at: NOW, updated_at: NOW,
+  }];
   jobs: JobRecord[] = [];
   templates: TemplateRecord[] = [];
   sources: FabricSourceRecord[] = [];
@@ -429,13 +433,14 @@ export async function installJourneyStubs(page: Page, world: JourneyWorld): Prom
   }));
 
   // ── projects / datasets (#1555: attach 有状态 —— UI 挂载腿的真实数据流) ──
-  await api(/\/api\/v1\/projects\/[^/]+\/datasets(\?|$)/, async (_url: URL, method: string, body: string) => {
+  await api(/\/api\/v1\/projects\/[^/]+\/datasets(\?|$)/, async (url: URL, method: string, body: string) => {
+    const projectId = url.pathname.split('/')[4];
     if (method === 'POST') {
       let parsed: { name?: string; source_type?: string; source_ref?: string; crs?: string } = {};
       try { parsed = JSON.parse(body); } catch { /* non-JSON body not exercised */ }
       const record = {
         id: `ds-${world.datasets.length + 1}`,
-        project_id: 'p-j',
+        project_id: projectId,
         name: parsed.name ?? 'e2e 数据集',
         source_type: parsed.source_type ?? 'layer',
         source_ref: parsed.source_ref ?? null,
@@ -447,16 +452,23 @@ export async function installJourneyStubs(page: Page, world: JourneyWorld): Prom
       world.datasets.push(record);
       return record;
     }
-    return { items: world.datasets, total: world.datasets.length, limit: 20, offset: 0 };
+    const datasets = world.datasets.filter((dataset) => dataset.project_id === projectId);
+    return { items: datasets, total: datasets.length, limit: 20, offset: 0 };
   });
   await api(/\/api\/v1\/projects\/[^/]+\/workflows(\?|$)/, () => []);
-  await api(/\/api\/v1\/projects(\?|$)/, () => ({
-    items: [{
-      id: 'p-j', name: '旅程项目', description: 'quality-e2e 旅程项目',
-      status: 'active', metadata_json: {}, created_at: NOW, updated_at: NOW,
-    }],
-    total: 1, limit: 20, offset: 0,
-  }));
+  await api(/\/api\/v1\/projects(\?|$)/, (_url: URL, method: string, body: string) => {
+    if (method === 'POST') {
+      const parsed = JSON.parse(body) as { name: string; description?: string };
+      const project = {
+        id: `p-j-${world.projects.length + 1}`, name: parsed.name,
+        description: parsed.description ?? '', status: 'active', metadata_json: {},
+        created_at: NOW, updated_at: NOW,
+      };
+      world.projects.push(project);
+      return project;
+    }
+    return { items: world.projects, total: world.projects.length, limit: 20, offset: 0 };
+  });
 
   // ── export ───────────────────────────────────────────────────────────────
   await api(/\/api\/v1\/export\/download\/.+(\?|$)/, () => ({

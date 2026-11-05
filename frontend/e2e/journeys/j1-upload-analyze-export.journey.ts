@@ -30,6 +30,15 @@ import { MODE, REAL_ONLY_REASON } from '../helpers/mode';
  */
 async function uploadViaProjectUi(page: Page): Promise<void> {
   await openRailTab(page, '项目');
+  // A fresh real database has no selected project. Create the workspace by
+  // the same UI path in both modes instead of relying on a mock-only seed.
+  await page.getByRole('button', { name: '新建项目', exact: true }).click();
+  await page.getByLabel('项目名称', { exact: true }).fill('J1 上传分析项目');
+  await page.getByRole('button', { name: '创建项目', exact: true }).click();
+  // On a repeated run an older project may already be selected. The form
+  // closes only after creation succeeds and the new project is selected.
+  await expect(page.getByLabel('项目名称', { exact: true })).toBeHidden();
+  await expect(page.getByLabel('当前项目')).not.toHaveValue('');
   await page.getByRole('button', { name: '挂载数据集' }).first().click();
   // 来源类型 → upload 档（真实 select 交互，不用 store 注入）。
   await page.getByLabel('来源类型').selectOption('upload');
@@ -39,7 +48,14 @@ async function uploadViaProjectUi(page: Page): Promise<void> {
     .setInputFiles({
       name: 'chengdu-schools.geojson',
       mimeType: 'application/geo+json',
-      buffer: Buffer.from('{"type":"FeatureCollection","features":[]}', 'utf8'),
+      buffer: Buffer.from(JSON.stringify({
+        type: 'FeatureCollection',
+        features: Array.from({ length: 12 }, (_, i) => ({
+          type: 'Feature',
+          properties: { name: `school-${i}`, value: (i * 7) % 23 },
+          geometry: { type: 'Point', coordinates: [104.04 + (i % 4) * 0.01, 30.65 + Math.floor(i / 4) * 0.01] },
+        })),
+      }), 'utf8'),
     });
   await expect(page.getByTestId('dataset-upload-done')).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: '确认挂载' }).click();
@@ -52,6 +68,7 @@ test.describe('journey-1 分析出图导出 @smoke', () => {
   test('mock：UI 上传 + 对话分析 → 图层挂载 → 制图发布 → PNG 导出落盘', async ({ page }) => {
     test.skip(MODE !== 'mock', 'mock-mode variant');
     const world = defaultWorld();
+    world.projects = [];
     world.pushChat(analysisTurn({ sessionId: 's-j1', taskId: 't-j1' }));
     await bootstrapMock(page, world);
     await page.goto('/');
@@ -59,6 +76,7 @@ test.describe('journey-1 分析出图导出 @smoke', () => {
 
     // ── 上传 leg：真实 UI（项目面板挂载表单）→ POST /upload + attach ────────
     await uploadViaProjectUi(page);
+    expect(world.requests.some((r) => r.path === '/api/v1/projects' && r.method === 'POST')).toBe(true);
     expect(world.requests.some((r) => r.path === '/api/v1/upload' && r.method === 'POST')).toBe(true);
     expect(
       world.requests.some(
@@ -89,9 +107,8 @@ test.describe('journey-1 分析出图导出 @smoke', () => {
     await page.locator('[role="tab"][aria-label*="制图"]').first().click();
     const exportButton = page.getByRole('button', { name: /发布并导出/ }).first();
     await expect(exportButton).toBeEnabled({ timeout: 15_000 });
-    await exportButton.click();
-
-    const payload = await expectExportLanded(page);
+    // Subscribe before the click: a fast export can finish during click().
+    const [payload] = await Promise.all([expectExportLanded(page), exportButton.click()]);
     expect(payload.filename).toMatch(/\.png$/);
   });
 
@@ -116,8 +133,7 @@ test.describe('journey-1 分析出图导出 @smoke', () => {
     await page.locator('[role="tab"][aria-label*="制图"]').first().click();
     const exportButton = page.getByRole('button', { name: /发布并导出/ }).first();
     await expect(exportButton).toBeEnabled({ timeout: 15_000 });
-    await exportButton.click();
-    const payload = await expectExportLanded(page);
+    const [payload] = await Promise.all([expectExportLanded(page), exportButton.click()]);
     expect(payload.filename).toMatch(/\.png$/);
   });
 });

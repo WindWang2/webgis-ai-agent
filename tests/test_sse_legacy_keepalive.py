@@ -271,3 +271,225 @@ async def test_route_token_stall_emits_keepalive(_legacy_path, engine, monkeypat
     types = [_event_type(b) for b in blocks]
     assert "keep_alive" in types, types
     assert types[-1] == "done"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('partial_token', [False, True])
+async def test_engine_cancel_interrupts_silent_provider_and_closes_stream(
+    engine, monkeypatch, partial_token,
+):
+    """Task cancellation must stop the HTTP read, not merely flip its badge."""
+    entered = asyncio.Event()
+    closed = asyncio.Event()
+
+    async def silent_stream(*args, **kwargs):
+        try:
+            if partial_token:
+                yield ('token', {'content': 'partial answer'})
+            entered.set()
+            await asyncio.Event().wait()
+            yield ('done', {'message': {'content': 'late answer'}})
+        finally:
+            closed.set()
+
+    monkeypatch.setattr(engine, '_call_llm_stream', silent_stream)
+    session_id = f's-cancel-silent-{partial_token}'
+    events = []
+
+    async def consume():
+        async for event in engine.chat_stream('测试', session_id=session_id):
+            events.extend(_block_events(event))
+
+    consumer = asyncio.create_task(consume())
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    task = engine.tracker.list_by_session(session_id)[0]
+    assert engine.tracker.cancel(task.id)
+    await asyncio.wait_for(consumer, timeout=1)
+    assert closed.is_set(), 'cancel must close the upstream generator before settling'
+    kinds = [_event_type(event) for event in events]
+    assert kinds[-2:] == ['task_cancelled', 'done'], kinds
+    assert 'task_complete' not in kinds and 'error' not in kinds, kinds
+    assert task.status.value == 'cancelled'
+    assert not any(call.args[1] == 'assistant' for call in engine._save_msg_async.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_engine_cancel_wins_over_queued_late_completion(engine, monkeypatch):
+    """A provider completion already queued at cancel cannot persist success."""
+    closed = asyncio.Event()
+    session_id = 's-cancel-late-completion'
+
+    async def late_stream(*args, **kwargs):
+        try:
+            task = engine.tracker.list_by_session(session_id)[0]
+            engine.tracker.cancel(task.id)
+            yield ('token', {'content': 'late answer'})
+            yield ('done', {'message': {'content': 'late answer'}})
+        finally:
+            closed.set()
+
+    monkeypatch.setattr(engine, '_call_llm_stream', late_stream)
+    events = []
+    async for event in engine.chat_stream('测试', session_id=session_id):
+        events.extend(_block_events(event))
+    kinds = [_event_type(event) for event in events]
+    assert kinds[-2:] == ['task_cancelled', 'done'], kinds
+    assert 'task_complete' not in kinds and 'token' not in kinds, kinds
+    assert closed.is_set()
+    assert not any(call.args[1] == 'assistant' for call in engine._save_msg_async.await_args_list)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('disconnect', [False, True])
+async def test_keepalive_cancel_and_disconnect_reap_provider_and_waiters(disconnect):
+    from app.lib.cancellation import CancellationToken, OperationCancelled
+
+    token = CancellationToken('keepalive-cleanup')
+    closed = asyncio.Event()
+    baseline = asyncio.all_tasks()
+
+    async def provider():
+        try:
+            yield ('token', {'content': 'partial'})
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    stream = ee_mod._stream_with_token_keepalive(provider(), timeout_s=10, cancel_token=token)
+    assert await anext(stream) == ('token', {'content': 'partial'})
+    if disconnect:
+        # Early consumer close must clean up without trying to yield terminals.
+        await stream.aclose()
+    else:
+        token.cancel()
+        with pytest.raises(OperationCancelled):
+            await anext(stream)
+    assert closed.is_set()
+    assert not (asyncio.all_tasks() - baseline), 'provider or queue/cancel waiter leaked'
+
+
+@pytest.mark.asyncio
+async def test_engine_cancel_continuous_tokens_releases_session_for_next_turn(engine, monkeypatch):
+    closed = asyncio.Event()
+    session_id = 's-cancel-continuous'
+
+    async def continuous(*args, **kwargs):
+        try:
+            while True:
+                yield ('token', {'content': 'x'})
+                await asyncio.sleep(0)  # network readers also yield to the event loop
+        finally:
+            closed.set()
+
+    monkeypatch.setattr(engine, '_call_llm_stream', continuous)
+    events = []
+    async for event in engine.chat_stream('测试', session_id=session_id):
+        events.extend(_block_events(event))
+        if 'token' in [_event_type(block) for block in _block_events(event)]:
+            task = engine.tracker.list_by_session(session_id)[0]
+            engine.tracker.cancel(task.id)
+    kinds = [_event_type(event) for event in events]
+    assert kinds.count('task_cancelled') == kinds.count('done') == 1, kinds
+    assert 'task_complete' not in kinds
+    assert closed.is_set()
+    assert not any(call.args[1] == 'assistant' for call in engine._save_msg_async.await_args_list)
+
+    async def completed(*args, **kwargs):
+        yield ('done', {'message': {'content': 'new answer'}})
+
+    monkeypatch.setattr(engine, '_call_llm_stream', completed)
+
+    async def next_turn():
+        return [event async for event in engine.chat_stream('继续', session_id=session_id)]
+
+    following = await asyncio.wait_for(next_turn(), timeout=2)
+    following_kinds = [_event_type(event) for event in following]
+    assert following_kinds[-2:] == ['task_complete', 'done'], following_kinds
+    assert engine.tracker.list_by_session(session_id)[-1].status.value == 'completed'
+    saved_answers = [call for call in engine._save_msg_async.await_args_list if call.args[1] == 'assistant']
+    assert len(saved_answers) == 1
+    assert saved_answers[0].args[2] == 'new answer'
+
+
+@pytest.mark.asyncio
+async def test_engine_cancel_during_provider_cleanup_cannot_persist_answer(engine, monkeypatch):
+    """Cancellation arriving in helper cleanup must win before persistence."""
+    session_id = 's-cancel-provider-cleanup'
+    cleanup_cancelled = asyncio.Event()
+    original_gather = asyncio.gather
+
+    async def cancel_during_cleanup(*tasks, **kwargs):
+        if (
+            len(tasks) == 3 and isinstance(tasks[0], asyncio.Task)
+            and tasks[0].get_coro().__name__ == '_pump'
+        ):
+            task = engine.tracker.list_by_session(session_id)[0]
+            engine.tracker.cancel(task.id)
+            cleanup_cancelled.set()
+        return await original_gather(*tasks, **kwargs)
+
+    async def completion(*args, **kwargs):
+        yield ('done', {'message': {'content': 'do not persist'}})
+
+    monkeypatch.setattr(asyncio, 'gather', cancel_during_cleanup)
+    monkeypatch.setattr(engine, '_call_llm_stream', completion)
+    events = []
+    async for event in engine.chat_stream('测试', session_id=session_id):
+        events.extend(_block_events(event))
+    assert cleanup_cancelled.is_set()
+    kinds = [_event_type(event) for event in events]
+    assert kinds[-2:] == ['task_cancelled', 'done'], kinds
+    assert 'task_complete' not in kinds
+    assert not any(call.args[1] == 'assistant' for call in engine._save_msg_async.await_args_list)
+
+
+@pytest.mark.parametrize('include_plan', [False, True])
+@pytest.mark.parametrize('include_done', [False, True])
+def test_cancelled_events_preserves_plan_settle_and_terminal_timing(include_plan, include_done):
+    """Shared cancellation tail preserves both legacy wire variants exactly."""
+    from app.services.chat.stream_turn_context import StreamTurnContext
+
+    ctx = StreamTurnContext(engine=MagicMock(), session_id='s-tail', message='测试')
+    ctx.task = MagicMock(id='task-tail')
+    ctx.emitter = MagicMock()
+    ctx.emitter.task_cancelled.return_value = 'cancelled'
+    ctx.emitter.done.return_value = 'done'
+    ctx.plan_finalized_event = MagicMock(return_value='plan' if include_plan else None)
+    settled = []
+    tail = ctx.cancelled_events(lambda: settled.append('cancelled'), include_done=include_done)
+    if include_plan:
+        assert next(tail) == 'plan'
+        assert settled == [] and ctx.turn_finished is False
+    assert next(tail) == 'cancelled'
+    assert settled == ['cancelled'] and ctx.turn_finished is False
+    if include_done:
+        assert next(tail) == 'done'
+        assert ctx.turn_finished is False
+    with pytest.raises(StopIteration):
+        next(tail)
+    assert ctx.turn_finished is True
+    ctx.plan_finalized_event.assert_called_once()
+    ctx.emitter.task_cancelled.assert_called_once_with('task-tail')
+    assert ctx.emitter.done.call_count == int(include_done)
+
+
+@pytest.mark.parametrize('stop_after', ['plan', 'cancelled', 'done'])
+def test_cancelled_events_close_preserves_unfinished_tail(stop_after):
+    """Disconnect at a yielded frame cannot advance settlement or completion."""
+    from app.services.chat.stream_turn_context import StreamTurnContext
+
+    ctx = StreamTurnContext(engine=MagicMock(), session_id='s-tail-close', message='测试')
+    ctx.task = MagicMock(id='task-tail')
+    ctx.emitter = MagicMock()
+    ctx.emitter.task_cancelled.return_value = 'cancelled'
+    ctx.emitter.done.return_value = 'done'
+    ctx.plan_finalized_event = MagicMock(return_value='plan')
+    settled = []
+    tail = ctx.cancelled_events(lambda: settled.append('cancelled'), include_done=True)
+    for event in tail:
+        if event == stop_after:
+            break
+    tail.close()
+    assert settled == ([] if stop_after == 'plan' else ['cancelled'])
+    assert ctx.turn_finished is False
+    assert ctx.emitter.done.call_count == int(stop_after == 'done')

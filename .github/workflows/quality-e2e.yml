@@ -241,12 +241,21 @@ jobs:
       REQUIRE_BROWSER: '1'
       E2E_MODE: real
       E2E_API_URL: http://localhost:8001
+      # The split-port browser must pass the real backend's CORS preflight.
+      # Keep the nonstandard test port local to this job, not app defaults.
+      CORS_ORIGINS: '["http://localhost:3310"]'
       E2E_USER: e2e-admin
       E2E_PASS: journey-admin-pass-2026
+      E2E_POSTGIS_DSN: postgresql://postgres:postgres@localhost:5432/gis
       # Auth state stays in the runner-owned SQLite store. PostGIS below is
       # only the fabric fixture, not the application's account database.
       DATABASE_URL: sqlite:///./data/webgis.db
       DATA_DIR: ./data
+      # Use the provisioned Redis service for sessions and real Celery retry.
+      USE_REDIS: 'true'
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
       # Deterministic LLM boundary: the backend talks OpenAI wire format to the
       # scripted stub; everything behind it is the real backend.
       LLM_BASE_URL: http://localhost:8767/v1
@@ -290,6 +299,8 @@ jobs:
           # The CLI runs before app.main creates DATA_DIR on server startup.
           mkdir -p "$DATA_DIR"
           python manage.py create-admin "$E2E_USER" e2e@example.org "$E2E_PASS"
+      - name: Verify owned PostGIS fabric fixture
+        run: python frontend/e2e/tools/seed-fabric-source.py
       - name: Start backend (uvicorn, minimal config)
         run: |
           python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 > /tmp/backend.log 2>&1 &
@@ -297,6 +308,27 @@ jobs:
             curl --silent http://localhost:8001/api/v1/health && break || sleep 2
           done
           curl --fail --silent http://localhost:8001/api/v1/health
+      - name: Start task worker (real Redis execution)
+        run: |
+          worker_name="journey@$(hostname)"
+          python -m celery -A app.services.task_queue:celery_app worker \
+            --pool=solo --concurrency=1 --loglevel=INFO --hostname="$worker_name" \
+            > /tmp/celery-worker.log 2>&1 &
+          worker_pid=$!
+          for i in $(seq 1 30); do
+            if ! kill -0 "$worker_pid" 2>/dev/null; then
+              cat /tmp/celery-worker.log
+              exit 1
+            fi
+            if python -m celery -A app.services.task_queue:celery_app inspect ping \
+              --destination="$worker_name" --timeout=2; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/celery-worker.log
+          echo 'Celery worker did not become ready' >&2
+          exit 1
       - name: Build frontend (API baked to :8001)
         working-directory: frontend
         env:
@@ -321,6 +353,7 @@ jobs:
         if: failure()
         run: |
           echo '=== backend ==='; tail -100 /tmp/backend.log || true
+          echo '=== celery-worker ==='; tail -100 /tmp/celery-worker.log || true
           echo '=== frontend ==='; tail -60 /tmp/frontend.log || true
           echo '=== llm-stub ==='; cat /tmp/llm-stub.log || true
       - name: Pi bridge real-LLM E2E (manual, key-gated)

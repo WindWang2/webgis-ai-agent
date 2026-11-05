@@ -310,3 +310,6 @@ frontend/package-lock.json
 .venv
 # 工具能力 8 面对账 CLI（G03）：测试/CI 引用的入库脚本
 !/scripts/check_tool_capability_conformance.py
+
+# Runner-local real task fixture used by J2 and its backend regression.
+!/scripts/seed_journey_retry.py

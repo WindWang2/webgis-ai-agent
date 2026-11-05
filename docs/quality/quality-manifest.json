@@ -7337,6 +7337,7 @@
     "tests/jobs/test_job_store.py",
     "tests/jobs/test_job_worker.py",
     "tests/test_audit_simple_fixes.py",
+    "tests/test_ci_journey_retry_fixture.py",
     "tests/test_critical_backend_correctness.py",
     "tests/test_medium_auth_tail.py",
     "tests/test_runtime_chaos_engine.py",
@@ -8948,7 +8949,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "0f7d08296c870375aec05a611aedf147125018d580ca6e5f0ce185c4d3b063f0",
+ "fingerprint": "0187c91b25a22031eef467c7fe5cc8231aa5ee35695bc37731f33783a9f5572d",
  "gate": {
   "fields": {
    "capabilities": {

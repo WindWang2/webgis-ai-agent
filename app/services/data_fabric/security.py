@@ -8,6 +8,7 @@ Enterprise Geospatial Data Fabric Security Module:
 """
 import ipaddress
 import logging
+import re
 import socket
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional
@@ -251,27 +252,30 @@ class DataFabricSecurity:
 
     @staticmethod
     def redact_url(url: Optional[str]) -> Optional[str]:
-        """Strip ``user:password@`` userinfo from a URL for safe egress.
+        """Strip authority userinfo from an absolute ``scheme://`` URL.
 
         ``postgres://user:pass@host/db`` connection strings and HTTP URLs with
         embedded tokens were returned verbatim in source egress responses
         (list/get/create). The userinfo never needs to reach the client.
-        Returns the input unchanged for non-URL / parseable-without-userinfo.
+        Preserve everything else, including IPv6 brackets and malformed legacy
+        host/port values: egress redaction must not validate or normalize URLs.
+        Non-URLs and URLs without authority userinfo are returned unchanged.
         """
         if not url or not isinstance(url, str):
             return url
-        try:
-            parsed = urlparse(url)
-        except Exception:
+        # Read the raw authority instead of hostname/port properties: urlparse
+        # can reject invalid brackets, .port can raise, and .hostname drops IPv6
+        # brackets. Recognize urlparse's ignored C0 prefix and tabs/CR/LF
+        # without normalizing the original text or skipping its credentials.
+        match = re.match(
+            r"^([\x00-\x20]*[a-zA-Z][a-zA-Z0-9+.\t\r\n-]*:"
+            r"[\t\r\n]*/[\t\r\n]*/)([^/?#]*)",
+            url,
+        )
+        if not match or "@" not in match.group(2):
             return url
-        if not parsed.scheme or "@" not in (parsed.netloc or ""):
-            return url
-        # Keep host:port; drop the userinfo segment.
-        hostport = parsed.hostname or ""
-        if parsed.port:
-            hostport = f"{hostport}:{parsed.port}"
-        rebuilt = parsed._replace(netloc=hostport)
-        return rebuilt.geturl()
+        hostport = match.group(2).rsplit("@", 1)[1]
+        return match.group(1) + hostport + url[match.end():]
 
     @staticmethod
     def sanitize_profile_dict(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -281,8 +285,10 @@ class DataFabricSecurity:
         password supplied via ``options={"password": ...}`` — the path used by
         ``create_data_source`` (its signature has no top-level password field) —
         is redacted too. The previous shallow redaction left ``options.password``
-        in plaintext on every egress response. Lists of dicts are recursed per
-        element; non-dict values are left untouched.
+        in plaintext on every egress response. Recurse through lists too and
+        strip URL userinfo from string values, including the ``url``,
+        ``endpoint`` and ``endpoint_url`` aliases emitted by ConnectionProfile.
+        Build a copy: stored credentials must remain usable by the adapters.
         """
         # 审计 F-2（ADR-0094 §10）：补齐常见凭证键（Authorization/x-api-key/
         # apikey/passwd/pwd/private_key/client_secret）；headers 子树整体视为
@@ -307,6 +313,8 @@ class DataFabricSecurity:
                 return out
             if isinstance(value, list):
                 return [_redact(v) for v in value]
+            if isinstance(value, str):
+                return DataFabricSecurity.redact_url(value)
             return value
 
         return _redact(profile_dict)
