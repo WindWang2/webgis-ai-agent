@@ -185,6 +185,9 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
 
     # ── 工具 1：plan ─────────────────────────────────────────────────────
 
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        ContractValidationError,
+    )
     from app.services.gis_harness.analysis_workflows.discovery import (
         next_step_for_blocked,
     )
@@ -208,7 +211,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "LLM 自由组合非常规步骤（用 propose_plan）。"
         ),
         param_descriptions={
-            "family": "工作流族 id（六族词表之一）",
+            "family": "工作流族 id（七族词表之一）",
             "role_refs": (
                 "数据角色绑定 JSON：{role: 'ref:geojson-…'} 或 "
                 "{role: {'ref': …, 'qualifier': {'year': 2018}}}；"
@@ -265,24 +268,38 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     "reason_code": AWF_UNKNOWN_FAMILY,
                     "message": f"未知族 {family}（词表: {FAMILY_IDS}）",
                     "alternatives": list(FAMILY_IDS)}
+        except ContractValidationError as exc:
+            # R1 评审（P3）：契约级违例（role_kind 越界/语义合同格式等）→
+            # typed declined（含结构化 next_step），不裸 ValueError 冒泡。
+            from app.services.gis_harness.analysis_workflows.discovery import (
+                next_step_for_blocked as _nsb,
+            )
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": exc.code, "message": str(exc),
+                    "next_step": _nsb(exc.code)}
         # P1-2/P3-3：单写者协议——plan 的 load/init/persist 全程持锁；
         # 同 id 同契约指纹的重复 plan 幂等保留既有运行态（envelopes/
         # receipts 不被空状态覆写），指纹变化 = 显式重规划才换新状态。
         from app.services.distributed_lock import session_lock_registry
 
         def _binding_refs(contracts: Any) -> Dict[str, str]:
-            """绑定身份 = ref + qualifier（R2b P3：qualifier 是 temporal 门
-            的唯一裁决输入，同 ref 换 qualifier = 不同绑定解释）。"""
+            """绑定身份 = ref + qualifier + role_kind（R2b P3 + R1 评审 P3：
+            qualifier 是 temporal 门的唯一裁决输入，role_kind 是载荷类型
+            事实——同 ref 换任一 = 不同绑定解释；dict 分支（快照侧）与
+            对象分支（活契约侧）必须同构，否则幂等谓词恒假）。"""
             refs: Dict[str, str] = {}
             for role, binding in (contracts or {}).items():
                 if isinstance(binding, dict):
                     ref = str(binding.get("ref", "") or "")
                     qualifier = binding.get("qualifier") or {}
+                    role_kind = str(binding.get("role_kind", "") or "")
                 else:
                     ref = str(getattr(binding, "ref", "") or "")
                     qualifier = getattr(binding, "qualifier", {}) or {}
+                    role_kind = str(getattr(binding, "role_kind", "") or "")
                 refs[role] = canonical_json(
-                    {"ref": ref, "qualifier": qualifier})
+                    {"ref": ref, "qualifier": qualifier,
+                     "role_kind": role_kind})
             return refs
 
         async with session_lock_registry.lock(
@@ -347,13 +364,11 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 {"step_id": v.step_id, "reason_code": v.reason_code,
                  "next_step": next_step_for_blocked(
                      v.reason_code,
-                     role=next((
-                         s.removeprefix("role:")
-                         for s in next(
-                             (x.role_inputs.values()
-                              for x in result.contract.steps
-                              if x.step_id == v.step_id), ())
-                         if s.startswith("role:")), ""))}
+                     role=(v.reason_code.split(":", 1)[1].lower()
+                           if v.reason_code.startswith((
+                               "AWF_DATA_ROLE_MISSING",
+                               "AWF_ROLE_KIND_MISMATCH"))
+                           else ""))}
                 for v in result.step_verdicts
                 if v.verdict in ("blocked", "skipped")][:8],
             "next_action": (
@@ -534,6 +549,9 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "command": command,
             "workflow_id": workflow_id,
             "status": state.status,
+            # ADR-0282 D5（R1 评审 F-6）：科学终审投影从状态机透出（run 返回
+            # 体的 science_gate 是现场重算；这里是最初 run 终态的持久投影）。
+            "science_validation": dict(state.science_validation),
             "steps": [
                 {"step_id": sid, "state": e.state,
                  "reason_code": e.reason_code, "attempts": e.attempts,

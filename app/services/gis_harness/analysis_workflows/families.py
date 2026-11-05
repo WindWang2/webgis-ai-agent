@@ -60,13 +60,16 @@ def _step(step_id: str, tool: str, inputs: Dict[str, str], *,
           units: Optional[Dict[str, str]] = None,
           deps: Tuple[str, ...] = (), preconds: Tuple[str, ...] = (),
           outputs: Tuple[str, ...] = (), fallback: str = "",
-          optional: bool = False) -> AnalysisStepSpec:
+          optional: bool = False,
+          semantic_contract: Optional[Dict[str, str]] = None,
+          ) -> AnalysisStepSpec:
     return AnalysisStepSpec(
         step_id=step_id, tool_name=tool, capability=capability,
         role_inputs=dict(inputs), step_params=dict(params or {}),
         unit_contract=dict(units or {}), depends_on=deps,
         preconditions=preconds, output_roles=outputs,
         fallback=fallback, optional=optional,
+        semantic_contract=dict(semantic_contract or {}),
     )
 
 
@@ -81,6 +84,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               {"points": "role:subject", "polygons": "role:boundary"},
               capability="admin_aggregation",
               params={"count_field": "facility_count"},
+              semantic_contract={"points": "geometry_kind:point"},
               outputs=("aggregate_zones",)),
         # 面积密度：几何自足分母（km²），无需外部数据，合法；
         # 单位合同钉死（denominator_kind=area 的输出单位约定）。
@@ -89,6 +93,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               capability="admin_aggregation",
               params={"denominator_kind": "area"},
               deps=("zones_count",),
+              semantic_contract={"points": "geometry_kind:point"},
               outputs=("density_zones",)),
         # 每万人密度：分母 = 带人口字段的区面层（role:denominator 绑定，
         # qualifier.field 指明字段名）。缺失 → typed skipped，
@@ -98,6 +103,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               capability="admin_aggregation",
               params={"denominator_kind": "field", "denominator": "population"},
               deps=("zones_count",),
+              semantic_contract={"points": "geometry_kind:point"},
               optional=True,
               outputs=("rate_zones",)),
     ),
@@ -112,6 +118,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               params={"travel_time": 15.0, "mode": "walking",
                       "exclude_unreachable": True},
               units={"travel_time": "min"},
+              semantic_contract={"facilities": "geometry_kind:point"},
               outputs=("service_area",)),
         _step("coverage_zones", "overlay_analysis",
               {"layer_a": "step:isochrone", "layer_b": "role:boundary"},
@@ -136,6 +143,8 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
                "facilities": "role:facility"},
               capability="closest_facility",
               params={"profile": "driving", "number_to_find": 1},
+              semantic_contract={"incidents": "geometry_kind:point",
+                                 "facilities": "geometry_kind:point"},
               outputs=("nearest_routes",)),
         _step("accessibility_summary", "spatial_aggregate",
               {"points": "step:nearest_facility", "polygons": "role:boundary"},
@@ -187,6 +196,9 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               capability="grid_binning",
               params={"resolution": 8, "stat_method": "count"},
               preconds=("point_support_required",),
+              # point_support_required 前置的执行期对偶（R1 评审 F-5：
+              # 声明接线——非点几何在执行期被 typed 拒而非静默质心化）
+              semantic_contract={"geojson": "geometry_kind:point"},
               outputs=("grid_zones",)),
         # 网格率（ADR-0282 断点1 修复）：真率语义走显式分母通道——
         # 分母=网格内 subject 计数（grid_stats 输出的 count 字段，网格身份
@@ -442,24 +454,22 @@ def build_contract(
             upstream = source.removeprefix("step:")
             if upstream not in present and upstream in pruned_role_fallbacks:
                 step.role_inputs[param] = pruned_role_fallbacks[upstream]
-    # ADR-0282 D4：denominator_kind=field 的步骤，分母字段名从对应角色绑定的
-    # qualifier.field 解析（数据画像事实——列名是事实不是猜测）；无画像时
-    # 保持模板默认（行为兼容 master）。fields 清单的 plan 期校验在
-    # orchestrator（typed skipped 而非运行期 MissingRequiredField）。
+    # ADR-0282 D4（R1 评审 F-2 修复）：denominator_kind=field 的步骤，分母
+    # 字段名**只**从 role:denominator 绑定的 qualifier.field 解析（该角色的
+    # 语义就是"带分母字段的图层"）——其它角色的 qualifier（subject 的
+    # field、population 的 fields）绝不可劫持分母列名（评审实测复现：
+    # population.fields 声明曾致 grid_rate 假 skip、subject.field 曾把
+    # per_capita 分母静默改列）。无画像时保持模板默认（行为兼容 master）。
+    # fields 清单的 plan 期校验在 orchestrator（同样只认 denominator 角色）。
     for step in steps:
         if step.step_params.get("denominator_kind") != "field":
             continue
-        for source in step.role_inputs.values():
-            if not source.startswith("role:"):
-                continue
-            role = source.removeprefix("role:")
-            binding = contracts.get(role)
-            if binding is None or not binding.ref:
-                continue
-            field = binding.qualifier.get("field")
-            if isinstance(field, str) and field:
-                step.step_params["denominator"] = field
-                break
+        binding = contracts.get("denominator")
+        if binding is None or not binding.ref:
+            continue
+        field = binding.qualifier.get("field")
+        if isinstance(field, str) and field:
+            step.step_params["denominator"] = field
     return AnalysisWorkflowContract(
         workflow_id=workflow_id,
         family=family,

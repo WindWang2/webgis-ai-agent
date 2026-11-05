@@ -81,23 +81,36 @@ def _extract_fc(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     routes = result.get("routes")
     if isinstance(routes, list) and routes:
         features = []
+        trimmed_stub = 0
         for route in routes:
-            if isinstance(route, dict) and isinstance(
-                    route.get("geometry"), dict):
-                props = {
-                    k: v for k, v in (route.get("properties")
-                                      or {}).items()}
-                for key in ("route_id", "origin_id", "destination_id",
-                            "total_cost", "total_distance_m", "total_time_s"):
-                    if key in route:
-                        props.setdefault(key, route[key])
-                features.append({
-                    "type": "Feature",
-                    "properties": props,
-                    "geometry": route["geometry"],
-                })
+            if not (isinstance(route, dict) and isinstance(
+                    route.get("geometry"), dict)):
+                continue
+            # R1 评审 F-1 修复：trim_network_result 在结果超预算时把
+            # route.geometry 替换为无 coordinates 的摘要桩——桩不是几何，
+            # 绝不进 FC（否则步骤 satisfied 而产物 ref 内是无效几何）。
+            coords = route["geometry"].get("coordinates")
+            if not (isinstance(coords, (list, tuple)) and coords):
+                trimmed_stub += 1
+                continue
+            props = {
+                k: v for k, v in (route.get("properties")
+                                  or {}).items()}
+            for key in ("route_id", "origin_id", "destination_id",
+                        "total_cost", "total_distance_m", "total_time_s"):
+                if key in route:
+                    props.setdefault(key, route[key])
+            features.append({
+                "type": "Feature",
+                "properties": props,
+                "geometry": route["geometry"],
+            })
         if features:
             return {"type": "FeatureCollection", "features": features}
+        if trimmed_stub:
+            # 全部是 trim 桩（超预算结果）——诚实返回 None（无 FC 产物），
+            # 不把摘要桩伪装成几何产物。
+            return None
     return None
 
 
@@ -441,9 +454,13 @@ class WorkflowExecutor:
                       error=entry.reason_code)
             return
 
+        # R1 评审（P3）收紧：success 键存在时以它为权威（{"success": 1} 类
+        # 真值不再翻转）；NetworkAnalysisResult 族（无 success 键）以
+        # status=="success" 判定。
         if not isinstance(result, dict) or not (
-                result.get("success") is True
-                or str(result.get("status", "")).lower() == "success"):
+                result.get("success")
+                if "success" in result
+                else str(result.get("status", "")).lower() == "success"):
             inner = result if isinstance(result, dict) else {}
             reason_code = str(
                 inner.get("reason_code") or inner.get("code")

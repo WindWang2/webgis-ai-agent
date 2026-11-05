@@ -32,8 +32,8 @@ from app.services.gis_harness.analysis_workflows.state import WorkflowRunState
 import hashlib
 
 #: 指纹 schema（算法演进时 additive 升版——旧指纹自然全部失效触发重算）。
-#: v2（ADR-0282 D5）：语义相关事实（步骤 semantic_contract、envelope 实测
-#: 口径）进入指纹身份——升版使既有持久态一次性诚实失效重算。
+#: v2（ADR-0282 D5）：步骤 semantic_contract 进入指纹身份（收紧语义门=
+#: 新计算）——升版使既有持久态一次性诚实失效重算。
 FINGERPRINT_SCHEMA = 2
 
 

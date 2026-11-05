@@ -251,7 +251,11 @@ def _windowed_zonal_stats(
                     )
                     row[key] = None
             if "count" not in stats and vals.size == 0:
+                repair_rec_kept = row.get("geometry_repair")
                 row = {k: None for k in stats}
+                if repair_rec_kept is not None:
+                    # 修复披露不可被重置丢弃（修复永不静默）
+                    row["geometry_repair"] = repair_rec_kept
             row["valid_pixel_coverage"] = coverage
             out.append(row)
         return out

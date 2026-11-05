@@ -65,15 +65,17 @@ role_kind: str = "vector"                # vector | raster | table
 envelope：zonal 步 aggregation_basis="zonal_mean"；raster 事实进 envelope.raster；
 visualization_hints: zonal_zones→administrative_choropleth。
 
-## 4. service_accessibility 增量步骤
+## 4. network_proximity 新族（链③；R1 评审后定稿——与早期草案的差异已对齐 ADR D4）
 
 | 步骤 | 工具 | 输入 | optional |
 |---|---|---|---|
-| nearest_facility | network_closest_facility | network=role:network, incidents=role:subject, facilities=role:facility | True |
-| accessibility_summary | spatial_aggregate | points=step:nearest_facility, polygons=role:boundary | True（依赖 nearest_facility） |
+| nearest_facility | network_closest_facility | network=role:network, incidents=role:subject, facilities=role:facility | False |
+| accessibility_summary | spatial_aggregate | points=step:nearest_facility, polygons=role:boundary | False |
 
-角色新增：facility(required=False, point, degrade)。coverage 步骤族参数
-`require_reachable=True`（默认）→ 覆盖统计携带 unreachable 披露。
+角色：subject(需求点, required, point, block)/facility(required, point,
+block)/network(required, block)/boundary(required, polygon, block)。
+service_accessibility 的强化是 isochrone 步族默认 exclude_unreachable=True
+（取代草案的 require_reachable 参数名）。
 
 ## 5. admin 族分母解析（行为兼容）
 

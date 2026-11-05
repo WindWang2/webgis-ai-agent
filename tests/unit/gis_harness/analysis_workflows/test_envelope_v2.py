@@ -161,13 +161,18 @@ def test_collect_raster_facts_conservative():
     result = {
         "success": True,
         "result_ref": "ref:raster-abc",
-        "stats": {"nodata": -9999.0, "resolution": 30.0,
+        "stats": {"nodata": -9999.0, "target_resolution": 30.0,
                   "band_count": 1, "dtype": "float32", "unrelated": "x"},
     }
     facts = envelope_facts.collect_raster_facts(result)
     assert facts["nodata"] == -9999.0
-    assert facts["resolution"] == 30.0
+    assert facts["target_resolution"] == 30.0
     assert "unrelated" not in facts
+    # R1 评审 P3：通用键（crs/width/height/resolution）不进栅格白名单——
+    # 矢量结果携带同键不污染 envelope.raster
+    polluted = envelope_facts.collect_raster_facts(
+        {"stats": {"crs": "EPSG:4326", "resolution": 10, "width": 3}})
+    assert polluted == {}
 
 
 def test_aggregation_basis_static_mapping():
@@ -179,11 +184,12 @@ def test_aggregation_basis_static_mapping():
         "zonal_stats", {}) == "zonal_mean"
     assert envelope_facts.aggregation_basis_for(
         "buffer_analysis", {}) == "one_to_one"
-    # overlay 是几何变换不是聚合——不声明（"" 比错误声明诚实）
+    # overlay 是几何变换不是聚合——不声明（"" 比错误声明诚实）；
+    # zonal_stats 工具签名无 stats 参数（R1 评审 P3 移除参数级死分支）
     assert envelope_facts.aggregation_basis_for(
         "overlay_analysis", {}) == ""
     assert envelope_facts.aggregation_basis_for(
-        "zonal_stats", {"stats": ["sum"]}) == "zonal_sum"
+        "zonal_stats", {"stats": ["sum"]}) == "zonal_mean"
 
 
 # ── 3. semantic_gate ─────────────────────────────────────────────────────

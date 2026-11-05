@@ -33,10 +33,17 @@ _SEMANTICS_BLOCK_KEYS = (
 )
 
 #: 栅格事实白名单键（工具结果 stats / 根键 / data 子键里如实存在才收）。
+#: 只收栅格特异键——通用键（crs/width/height/resolution）矢量结果也可能
+#: 携带，误进 envelope.raster 会把矢量 step: 输入误判为 raster 直通
+#: （R1 评审 P3）。
 _RASTER_FACT_KEYS = (
-    "nodata", "resolution", "target_resolution", "band_count", "dtype",
-    "valid_pixel_coverage", "width", "height", "crs", "new_shape",
-    "resampling",
+    "nodata", "target_resolution", "band_count", "dtype",
+    "valid_pixel_coverage", "new_shape", "resampling",
+)
+
+#: 优先保留键（8 键截断时按此序优先——覆盖率/分辨率是科学披露承重键）。
+_RASTER_FACT_PRIORITY = (
+    "valid_pixel_coverage", "nodata", "target_resolution", "band_count",
 )
 
 #: 聚合基数静态映射（工具名 → 基数语义；参数级覆盖见 aggregation_basis_for）。
@@ -195,14 +202,14 @@ def collect_raster_facts(result: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             if isinstance(value, (str, int, float, bool, list)):
                 facts[key] = value
-    return dict(sorted(facts.items())[:MAX_SEMANTIC_KEYS])
+    ordered = sorted(
+        facts.items(),
+        key=lambda kv: (_RASTER_FACT_PRIORITY.index(kv[0])
+                        if kv[0] in _RASTER_FACT_PRIORITY
+                        else len(_RASTER_FACT_PRIORITY), kv[0]))
+    return dict(ordered[:MAX_SEMANTIC_KEYS])
 
 
 def aggregation_basis_for(tool_name: str, params: Dict[str, Any]) -> str:
     """工具×参数 → 聚合基数声明（静态映射；参数级特例如实覆盖）。"""
-    basis = _AGG_BASIS_BY_TOOL.get(tool_name, "")
-    if tool_name == "zonal_stats" and isinstance(params, dict):
-        stats = params.get("stats") or params.get("stat_methods")
-        if isinstance(stats, (list, tuple)) and set(stats) == {"sum"}:
-            basis = "zonal_sum"
-    return basis
+    return _AGG_BASIS_BY_TOOL.get(tool_name, "")

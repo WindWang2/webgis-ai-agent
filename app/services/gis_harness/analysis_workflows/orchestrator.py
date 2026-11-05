@@ -159,25 +159,25 @@ def _denominator_field_gate(
     分母列不在其中 → typed skipped（AWF_DENOMINATOR_MISSING）——
     列清单是事实，缺列的分母请求在 plan 期就诚实拒绝，绝不运行期
     MissingRequiredField failed；fields 未声明=不拦截（权威在工具）。
+
+    R1 评审 F-2 修复：**只认 role:denominator 绑定**（分母字段的语义载体）
+    ——其它角色（subject/population）的 fields 清单描述的是各自图层列，
+    不是分母列清单（评审实测：population.fields 曾致 grid_rate 假 skip）。
     """
     if step.step_params.get("denominator_kind") != "field":
         return None
     target = str(step.step_params.get("denominator") or "")
-    for source in step.role_inputs.values():
-        if not source.startswith("role:"):
-            continue
-        role = source.removeprefix("role:")
-        binding = contract.data_contracts.get(role)
-        if binding is None or _binding_missing(binding):
-            continue
-        fields = binding.qualifier.get("fields")
-        if (isinstance(fields, (list, tuple)) and fields
-                and target not in fields):
-            return (
-                AWF_DENOMINATOR_MISSING,
-                f"分母角色 {role} 声明的字段清单 {sorted(map(str, fields))}"
-                f"不含目标列 {target!r}——分母不可用，typed skipped"
-                "（只给计数/面积密度，不伪装率）")
+    binding = contract.data_contracts.get("denominator")
+    if binding is None or _binding_missing(binding):
+        return None
+    fields = binding.qualifier.get("fields")
+    if (isinstance(fields, (list, tuple)) and fields
+            and target not in fields):
+        return (
+            AWF_DENOMINATOR_MISSING,
+            f"分母角色 denominator 声明的字段清单 "
+            f"{sorted(map(str, fields))}不含目标列 {target!r}"
+            "——分母不可用，typed skipped（只给计数/面积密度，不伪装率）")
     return None
 
 

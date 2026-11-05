@@ -62,23 +62,32 @@ raster 绑定在 executor **不水合为 dict**：ref/路径字符串直通参�
 产物无 FC（如 resample 输出 ref）时同样直通 ref。行数预算门不适用于 raster
 （栅格工具有自己的窗口读纪律）；envelope 记 raster 事实。
 
-### D4 新族 `raster_zonal_summary`（链②）与 service_accessibility 强化（链③）
+### D4 新族 `raster_zonal_summary`（链②）与 `network_proximity`（链③）
 
-- **raster_zonal_summary**：`resample`（raster_resample，optional——参数缺省=
-  恒等声明由调用方给 override 才执行）→ `zonal_stats`（zones=role:boundary，
-  raster=role:raster_index[raster kind]）→ 矢量结果 ref（MapSpec-ready，
-  hints: administrative_choropleth）。角色：raster_index(required, raster)/
-  boundary(required, polygon)。
-- **service_accessibility** 增 optional 步骤：`nearest_facility`
-  （network_closest_facility：origins=role:subject?——否，独立 incidents 语义由
-  role:subject 承担，facilities=role:facility）与 `accessibility_summary`
-  （spatial_aggregate 按 role:boundary 汇总网络距离）。reachable 门：
-  coverage 步骤参数 `require_reachable=true`（默认）——envelope 携带
-  unreachable_count 披露；不可达设施产出显式 stats（不静默进覆盖）。
-- **admin_facility_distribution**：per_capita_rate 分母字段名从
-  role:denominator 的 qualifier.field 解析（默认 "population" 兼容旧行为）；
-  qualifier 声明字段集且目标列不在其中 → plan 期 typed skipped
-  `AWF_DENOMINATOR_MISSING`（修复断点 6）。
+- **raster_zonal_summary**：`resample`（raster_resample，optional）→
+  `zonal_stats`（zones=role:boundary，raster=role:subject[raster kind]——
+  subject 词表注释本就含「栅格主题」）→ 矢量结果 ref（MapSpec-ready，
+  hints: administrative_choropleth）。optional resample 剔除时 zonal 确定性
+  回接 role:subject。角色：subject(required, raster)/boundary(required,
+  polygon)。
+- **network_proximity**（链③ 独立族——service_accessibility 的 subject 语义
+  是设施点，与最近设施的「需求点」语义冲突，并入会造成角色二义）：
+  `nearest_facility`（network_closest_facility：incidents=role:subject、
+  facilities=role:facility、network=role:network）→ `accessibility_summary`
+  （spatial_aggregate：numerator=Σtotal_cost / count 分母=区均网络成本——
+  均值语义，库层 rate_unit=count_ratio_not_rate 反伪装率标签钉住）。
+  角色新增 `facility`（DATA_ROLES additive）。
+- **service_accessibility 强化**：isochrone 步族默认
+  `exclude_unreachable=True`——脱离路网设施的 5m 占位面不进覆盖统计
+  （计数进 stats.excluded_unreachable；工具默认 False 保持 master 行为，
+  调用方可参数覆盖）。**R1 评审后注**：early 草案的 require_reachable
+  参数名被此实现取代；经 `layer_ids` 引入的已挂载图层不在产品门管辖内
+  （门覆盖显式 ref 参数面——见 D6 已知边界）。
+- **admin_facility_distribution**：per_capita_rate 分母字段名**只**从
+  role:denominator 的 qualifier.field 解析（默认 "population" 兼容旧行为；
+  R1 评审 F-2：其它角色的 qualifier 绝不可劫持分母列）；qualifier.fields
+  声明且目标列不在其中 → plan 期 typed skipped `AWF_DENOMINATOR_MISSING`
+  （修复断点 6）。
 
 ### D5 幂等指纹升版 + stale 赋值 + 科学终审态
 

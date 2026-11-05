@@ -159,14 +159,13 @@ def test_disconnected_network_closest_facility_honest_unmatched():
 
 def test_antimeridian_zone_aggregation_behavior_anchor():
     """跨 180° 的 zone（RFC 7946 §3.1.9 建议拆分）当前按线性坐标处理——
-    行为锚（与 edge_cases.recommend_metric_crs_8 同纪律）：西经点不落入
-    跨经线区（线性 bbox 不含 179.9→-179.9 的环绕带），断言当前行为并
-    披露该约定，不伪装环绕解。"""
+    行为锚（与 edge_cases.recommend_metric_crs_8 同纪律）：线性解释下该
+    「跨经线」多边形是**绕世界大反带**（179.99→-179.99 经 0° 的长路径），
+    ±179.995 两个点（真正的经线邻域）不落入 → 计数恒 0。这不是环绕解——
+    环绕语义需要 §3.1.9 的拆分约定（未来工作，锚定当前行为防漂移）。"""
     import geopandas as gpd
     from shapely.geometry import Point, Polygon
 
-    # 「跨经线」多边形（线性解释下是覆盖 179.99..180∪-180..-179.99 之外
-    # 的大反区——正是 §3.1.9 警告的形态）
     zone = Polygon([(179.99, 0.0), (-179.99, 0.0),
                     (-179.99, 1.0), (179.99, 1.0), (179.99, 0.0)])
     zones = gpd.GeoDataFrame({"zone": ["am"]}, geometry=[zone],
@@ -177,7 +176,6 @@ def test_antimeridian_zone_aggregation_behavior_anchor():
         crs="EPSG:4326")
     from app.lib.geo_analysis.aggregation import aggregate_with_denominator
     out, _ev = aggregate_with_denominator(pts, zones, denominator_kind="count")
-    # 行为锚：线性语义下两个点都「在」大反区内（数值比较 179.995 < 179.99
-    # 为 False…… 实际 shapely 谓词判定）——断言实测计数非环绕语义
-    count = int(out["numerator"].iloc[0])
-    assert count in (0, 2), "跨经线区聚合是线性行为锚（非环绕解）"
+    # 精确行为锚（实测钉扎）：线性语义 = 0——跨经线环绕带点不被计入
+    assert int(out["numerator"].iloc[0]) == 0
+    assert bool(out["has_support"].iloc[0]) is False

@@ -1,70 +1,78 @@
 {
   "artifact_cache_hit": {
     "iterations": 7,
-    "median_ms": 0.034
+    "median_ms": 0.066
   },
   "audit_topology_200rings": {
+    "floor_ms": 1021.0,
     "iterations": 7,
-    "median_ms": 308.623
+    "median_ms": 264.755
   },
   "awf_plan_typed_gates": {
     "iterations": 7,
     "median_ms": 0.145
   },
   "barriers_indexed_50kE_x3": {
+    "floor_ms": 1400.0,
     "iterations": 7,
-    "median_ms": 801.59
+    "median_ms": 594.686
   },
   "closest_facility_30x40": {
+    "floor_ms": 530.0,
     "iterations": 7,
-    "median_ms": 105.377
+    "median_ms": 128.481
   },
   "dispatch_overhead": {
     "iterations": 7,
-    "median_ms": 0.33
+    "median_ms": 0.897
   },
   "envelope_facts_bounded_50k": {
     "iterations": 7,
     "median_ms": 1.708
   },
   "geojson_bbox_large": {
+    "floor_ms": 47.7,
     "iterations": 7,
-    "median_ms": 12.093
+    "median_ms": 11.936
   },
   "h3_binning_10k": {
     "iterations": 7,
-    "median_ms": 12.06
+    "median_ms": 43.253
   },
   "metric_byte_estimate": {
+    "floor_ms": 143.0,
     "iterations": 7,
-    "median_ms": 9.881
+    "median_ms": 40.861
   },
   "metrics_enqueue": {
     "iterations": 7,
-    "median_ms": 0.013
+    "median_ms": 0.041
   },
   "network_snapping_cached": {
+    "floor_ms": 113.9,
     "iterations": 7,
-    "median_ms": 9.924
+    "median_ms": 32.552
   },
   "raster_guard_rejection": {
     "iterations": 7,
-    "median_ms": 4.711
+    "median_ms": 6.88
   },
   "raster_tile_streaming": {
+    "floor_ms": 15.0,
     "iterations": 7,
-    "median_ms": 1.291
+    "median_ms": 3.527
   },
   "reclassify_windowed": {
     "iterations": 7,
-    "median_ms": 93.815
+    "median_ms": 114.314
   },
   "ref_resolution_batch": {
     "iterations": 7,
-    "median_ms": 0.436
+    "median_ms": 1.501
   },
   "two_opt_ladder_160": {
+    "floor_ms": 3060.0,
     "iterations": 7,
-    "median_ms": 83.539
+    "median_ms": 66.317
   }
 }
