@@ -46,6 +46,7 @@ AWF_INVALID_CONTRACT = "AWF_INVALID_CONTRACT"
 # ADR-0282：typed 衔接门（事实在且冲突才发射——事实缺失走披露）
 AWF_INPUT_SEMANTIC_MISMATCH = "AWF_INPUT_SEMANTIC_MISMATCH"  # + ":<param>"
 AWF_ROLE_GEOMETRY_MISMATCH = "AWF_ROLE_GEOMETRY_MISMATCH"    # + ":<ROLE>"
+AWF_ROLE_KIND_MISMATCH = "AWF_ROLE_KIND_MISMATCH"            # + ":<ROLE>"
 
 #: 步骤参数单位合同的合法单位词表（长度/时间/无量纲；扩展走 additive）。
 UNIT_VOCABULARY = ("m", "km", "min", "h", "unitless")

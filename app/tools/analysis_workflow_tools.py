@@ -118,7 +118,12 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
 
     def _parse_bindings(raw: Optional[str]) -> Dict[str, DataRoleBinding]:
         """role_refs JSON → 绑定（支持 {"role": "ref:..."} 与
-        {"role": {"ref": ..., "qualifier": {...}}} 两种形态）。"""
+        {"role": {"ref": ..., "qualifier": {...}, "role_kind": ...}} 形态）。
+
+        role_kind（ADR-0282 D3）：raster/table 角色必须显式声明
+        （raster_zonal_summary 的 subject 是栅格 ref/路径——不声明会被
+        orchestrator 的 role_kind 门 typed 拒绝并给出指引）。
+        """
         if not raw:
             return {}
         data = json.loads(raw) if isinstance(raw, str) else raw
@@ -133,7 +138,8 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     role=role,
                     ref=str(value.get("ref", "") or ""),
                     qualifier=dict(value.get("qualifier") or {}),
-                    dataset_hint=str(value.get("dataset_hint", "") or ""))
+                    dataset_hint=str(value.get("dataset_hint", "") or ""),
+                    role_kind=str(value.get("role_kind", "vector") or "vector"))
             else:
                 raise ValueError(f"角色 {role} 的绑定形态非法")
         return bindings
@@ -148,18 +154,21 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "多步 GIS 分析工作流规划：把用户场景装配成带数据角色合同/科学前置/"
             "单位契约的步骤 DAG，并给出 typed 裁决（缺数据→blocked+获取建议；"
             "无路网→不得给等时数值结论；缺分母→只给计数不伪装密度）。**不执行**。"
-            "\n五族：admin_facility_distribution（行政区设施分布）/ "
+            "\n六族：admin_facility_distribution（行政区设施分布）/ "
             "service_accessibility（路网可达性）/ hazard_exposure（风险暴露）/"
-            " temporal_change（多期变化）/ statistical_zones（统计分区）。"
+            " temporal_change（多期变化）/ statistical_zones（统计分区）/ "
+            "raster_zonal_summary（栅格指数分区汇总——subject 角色需 "
+            "role_kind='raster' 的栅格 ref/路径）。"
             "\n何时不用：单工具即可回答的问题（直接调该工具）；"
             "LLM 自由组合非常规步骤（用 propose_plan）。"
         ),
         param_descriptions={
-            "family": "工作流族 id（五族词表之一）",
+            "family": "工作流族 id（六族词表之一）",
             "role_refs": (
                 "数据角色绑定 JSON：{role: 'ref:geojson-…'} 或 "
                 "{role: {'ref': …, 'qualifier': {'year': 2018}}}；"
-                "temporal 族必须带 qualifier.year"),
+                "temporal 族必须带 qualifier.year；栅格角色需 "
+                "{'ref': …, 'role_kind': 'raster'}"),
             "params": "步骤参数覆盖 JSON：{step_id: {参数名: 值}}",
             "workflow_id": "复用既有工作流 id（默认按族+内容派生）",
         },

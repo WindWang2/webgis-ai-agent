@@ -40,6 +40,7 @@ FAMILY_IDS = (
     "hazard_exposure",
     "temporal_change",
     "statistical_zones",
+    "raster_zonal_summary",
 )
 
 _FAMILY_LABELS: Dict[str, str] = {
@@ -48,6 +49,7 @@ _FAMILY_LABELS: Dict[str, str] = {
     "hazard_exposure": "风险暴露分析",
     "temporal_change": "多期区域变化分析",
     "statistical_zones": "自适应统计分区分析",
+    "raster_zonal_summary": "栅格指数分区汇总分析",
 }
 
 
@@ -179,6 +181,26 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               optional=True,
               outputs=("hotspot_zones",)),
     ),
+    # 链②（ADR-0282 D4）：栅格指数 → 行政分区统计 → 矢量结果。
+    # subject 是 raster 角色（role_kind="raster"——ref/路径直通，不水合）；
+    # 掩膜语义由 zonal 的窗口读隐式完成（逐 zone 只读自己的像素窗+多边形
+    # 掩膜），不引入独立 mask 工具；nodata 以 valid_pixel_coverage 逐 zone
+    # 披露（raster_ops 断点 9 修复）。
+    "raster_zonal_summary": (
+        _step("resample", "raster_resample",
+              {"raster_path": "role:subject"},
+              capability="raster_resample",
+              params={"target_resolution": 0.002},
+              units={"target_resolution": "unitless"},
+              optional=True,
+              outputs=("resampled_raster",)),
+        _step("zonal_stats", "zonal_stats",
+              {"geojson": "role:boundary",
+               "raster_path": "step:resample"},
+              capability="zonal_statistics",
+              deps=("resample",),
+              outputs=("zonal_zones",)),
+    ),
 }
 
 #: 各族数据角色需求（复用 DataRoleRequirement 词表模型；required+block
@@ -232,6 +254,16 @@ _ROLE_REQUIREMENTS: Dict[str, List[DataRoleRequirement]] = {
                             missing_policy="degrade",
                             note="网格分母——缺失时只给计数网格，不给率"),
     ],
+    # 链②：subject 为栅格主题（role_kind=raster——DataRoleBinding 的
+    # role_kind 由本族 build 时按 geometry_kinds=["raster"] 自动铺默认）。
+    "raster_zonal_summary": [
+        DataRoleRequirement(role="subject", required=True,
+                            geometry_kinds=["raster"], missing_policy="block",
+                            note="栅格指数图层（NDVI/DEM/降雨等——ref 或本地路径）"),
+        DataRoleRequirement(role="boundary", required=True,
+                            geometry_kinds=["polygon"], missing_policy="block",
+                            note="统计分区（行政区/流域等面域）"),
+    ],
 }
 
 #: 各族风险与披露（进入契约 risk_notes / 必披露面）。
@@ -257,6 +289,13 @@ _FAMILY_NOTES: Dict[str, Tuple[str, ...]] = {
     "statistical_zones": (
         "网格率要求分子分母同一网格身份（grid_identity_match）；"
         "热点检验受多重比较影响——小样本/低计数网格的显著性须按伪 p 披露",
+    ),
+    "raster_zonal_summary": (
+        "zonal 统计的掩膜语义=逐 zone 像素窗+多边形掩膜（隐式掩膜，非独立"
+        "mask 步骤）；nodata 以逐 zone valid_pixel_coverage 披露——覆盖率低的"
+        "分区均值不可与全有效分区同权解读",
+        "栅格重采样会改变像元聚合尺度（bilinear 平滑/nearest 保序）——"
+        "分辨率变化即统计口径变化，进入步骤指纹触发重算",
     ),
 }
 
@@ -298,10 +337,29 @@ def build_contract(
         for req in _ROLE_REQUIREMENTS.get(family, [])
     }
     contracts.update(dict(bindings or {}))
+    # ADR-0282 D3：角色需求的 geometry_kinds 表达 raster/table 载荷类型时，
+    # **模板占位绑定**（无 ref）铺默认 role_kind，让契约自带类型事实；
+    # 调用方显式绑定不覆写——role_kind 与需求不符由 orchestrator plan 门
+    # typed 裁决（调用方声明的事实优先，绝不静默改写）。
+    for req in _ROLE_REQUIREMENTS.get(family, []):
+        binding = contracts.get(req.role)
+        if binding is None or binding.ref or binding.role_kind != "vector":
+            continue
+        kinds = set(req.geometry_kinds or ())
+        if kinds and kinds <= {"raster", "table"}:
+            binding.role_kind = next(iter(kinds))
     steps: List[AnalysisStepSpec] = []
     overrides = params_overrides or {}
+    pruned_role_fallbacks: Dict[str, str] = {}
     for base in _STEPS[family]:
         if base.optional and not include_optional_steps:
+            # ADR-0282 D4：optional 步剔除 → 记录其 role: 输入的首个角色，
+            # 供下游 step: 引用回接（rewire——契约 DAG 保持闭合且语义等价：
+            # 下游直接消费原始角色而非被剔除的中间产物）。
+            for source in base.role_inputs.values():
+                if source.startswith("role:"):
+                    pruned_role_fallbacks[base.step_id] = source
+                    break
             continue
         step = base.model_copy(deep=True)
         step_over = overrides.get(step.step_id)
@@ -327,6 +385,30 @@ def build_contract(
     present = {s.step_id for s in steps}
     for step in steps:
         step.depends_on = tuple(d for d in step.depends_on if d in present)
+        for param, source in list(step.role_inputs.items()):
+            if not source.startswith("step:"):
+                continue
+            upstream = source.removeprefix("step:")
+            if upstream not in present and upstream in pruned_role_fallbacks:
+                step.role_inputs[param] = pruned_role_fallbacks[upstream]
+    # ADR-0282 D4：denominator_kind=field 的步骤，分母字段名从对应角色绑定的
+    # qualifier.field 解析（数据画像事实——列名是事实不是猜测）；无画像时
+    # 保持模板默认（行为兼容 master）。fields 清单的 plan 期校验在
+    # orchestrator（typed skipped 而非运行期 MissingRequiredField）。
+    for step in steps:
+        if step.step_params.get("denominator_kind") != "field":
+            continue
+        for source in step.role_inputs.values():
+            if not source.startswith("role:"):
+                continue
+            role = source.removeprefix("role:")
+            binding = contracts.get(role)
+            if binding is None or not binding.ref:
+                continue
+            field = binding.qualifier.get("field")
+            if isinstance(field, str) and field:
+                step.step_params["denominator"] = field
+                break
     return AnalysisWorkflowContract(
         workflow_id=workflow_id,
         family=family,
@@ -376,5 +458,8 @@ def visualization_hints(family: str) -> Tuple[str, ...]:
         "statistical_zones": (
             "grid_zones → h3_hexbin",
             "hotspot_zones → hotspot_significance",
+        ),
+        "raster_zonal_summary": (
+            "zonal_zones → administrative_choropleth（指数均值/分区统计）",
         ),
     }.get(family, ())
