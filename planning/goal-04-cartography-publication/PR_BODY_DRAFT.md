@@ -35,15 +35,29 @@
 - 避让开放 PR #1965 的 4 个直接交集文件（quality_loop.py 等，全程只读）与
   #1972 的 tests/acceptance 面（零交集）。
 
-## 实现与验证证据
+## 实现与验证证据（真实命令与结果；环境：主检出 .venv Python 3.13.17 / pnpm 10.34.9 / node 24.21.0 / 本机 -j2）
 
-（R10 时以真实命令输出填充：Python 定向/全 lane、前端定向/全量、tsc/eslint/ruff）
+- Python 制图全 lane（release-blocking）：`pytest -m cartography --no-cov --timeout=180 -q` → **2682 passed / 8 skipped / 3 xfailed / 0 failed**（R9 清偿后终验）
+- 前端全量：`pnpm exec vitest run` → **522 文件 / 4875 passed + 1 expected fail，exit 0**（清偿后一轮 + 清偿前连续两轮同绿）
+- 静态门：`pnpm exec tsc --noEmit` 0 错；`eslint <全部改动文件> --max-warnings 0` 0 错；`ruff check app/ tests/…` 0 错
+- 词表/死码门：`test_render_diagnostics_contract.py` + `test_diagnostics_dead_code_gate.py` 全绿（3 新码三方一致：RENDER_DIAGNOSTICS 注册 + EMITTER_REGISTRY 真实发射点 + export-chrome.ts 镜像）
+- 独立评审：R8 只读全 diff 对抗审查 → **FIX-FIRST（P1×1/P2×2/P3×12）→ 全部清偿（P3 修复 9 项/登记 5 项）→ R9 复审逐项 CLEARED（含行为级独立实证：12-legend 复现、--check 对抗漂移实验、六族 V4==V5(derived) 差分对拍）→ APPROVE**；复审新发现的 3 条 P3（N1-N3）已当场清偿
+- golden 纪律：既有 golden 零再生（全部为新增文件）；新 golden 受控再生（UPDATE_LAYOUT_GOLDEN=1 门 / generate.py --check 只读校验漂移即红）
 
-## 未运行（诚实披露）
+## 已知限制（诚实登记，非阻塞）
 
-- 全栈浏览器 E2E（未启动 Next+FastAPI 全栈；以结构 golden + jsdom harness 替代）
-- `pnpm build` 生产构建（typecheck 已覆盖类型面）
-- #1910 后端回执一致性核对（blocked on 他人修复）
+1. `solve_layout_v5` / `evaluate_layout_findings` / `safeAreaMm` 为声明性交付（ADR 分期）：生产调用方接线归后续（golden 锁定新 API 自身语义）
+2. PDF 矢量文本层长标题不折行（pre-existing；canvas/SVG 链已 wrap-not-clip，PDF doc.text 面留待后续）
+3. 障碍接线仅 circle 层（line/polygon 图元障碍预留）；多 circle 层时障碍集截断偏向先声明层（obstacles_truncated 披露在场）
+4. tile-miss 账目为会话累计语义（provider 健康度信号）；生产 reset 钩子留后续
+5. SVG 导出 key_text_wrapped 与 title_truncated 同型双记录（沿既有聚合模式）
+6. #1910 后端（WeasyPrint data: 字体拦截）修复归属他人；本 PR 只交付前端不变式（decidePdfTextLayerDisclosure + pdf-disclosure.test.ts）
+
+## 未运行（NOT_RUN + 阻碍）
+
+- 全栈浏览器 E2E（真实 Next+FastAPI 栈出图旅程）：未启动全栈（重型构建 + 多 agent 同机 -j2 资源约束）；以结构 golden + jsdom 渲染 harness（exporter.wysiwyg/freeze/upload 等 150+ 用例）替代。Playwright 1.64.1 + chromium 本机可用，后续可单独建线。
+- `pnpm build` 生产构建：非本任务验收门；类型面由 tsc 覆盖。
+- #1910 后端回执一致性核对：blocked on 他人修复合入。
 
 ## 技术债 / 后续
 
