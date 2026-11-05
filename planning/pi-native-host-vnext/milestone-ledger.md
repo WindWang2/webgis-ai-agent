@@ -12,3 +12,4 @@
 | M5 golden+防挂 | 同上 | coercion golden（18 例，2 例按实测修正：int 截断/union 首分支）；error_taxonomy+桥 disposition=handled | 活体 18/18 与 golden 一致；handled 流 task_error+done exactly-once | chaos 16/16；golden 2/2 | — | 上游行为变化必须先核实再改 golden | M6 |
 | M6 A5 旅程 | 同上 | tests/integration/test_pi_stub_llm_journeys.py（独立子进程驱动；J1/J2/J3/J5；PI_JOURNEY_E2E=1 门控） | J1 map_intent 真实 dispatch success；J2 恰 1 次 LLM 调用；J3 零跨会话；J5 无假 map_product | 3×连续通过；J4 取消由 chaos+契约车道确定性覆盖（驱动内跨线程取消窗口在本 sandbox 不稳，已注明） | — | 旅程车道 opt-in（环境方差），绝不静默绿 | M7 |
 | M7 文档 | 同上 | ADR-0282；ledger；部署文档（进行中） | — | — | — | — | R8 |
+| R10 验收 | b6ac970eb + 5 commits | ca180d2a3/a04837bd9/67a46ab28/ea54a3b9c/993ce379c | doctor 6/6 PASS（pin 提交后 vendor 域转绿）；Pi 回归 sweep 275 passed；chat/SSE 30/30；health/api 契约通过；ruff 全绿；lint 重命名引发的 3 处 JS 内嵌变量错误已修复并复跑车道 | NOT_RUN：Docker 构建（无 daemon）、远端 CI、PI_REAL_E2E（需凭据） | J4 驱动内取消窗口（sandbox 方差）→ 确定性车道覆盖 | R8 独立 review |
