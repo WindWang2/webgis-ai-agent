@@ -232,3 +232,89 @@ def test_unknown_component_ids_in_doc_are_ignored_but_flagged():
     assert any(
         f.code == "constraint_unmatched" and f.component_id == "ghost"
         for f in sol.constraint_findings)
+
+
+# ── 5. R5 边界与恢复 ────────────────────────────────────────────────────
+
+
+def test_empty_participants_solve_cleanly():
+    sol = solve_layout_v5([], page_profile="a4_portrait")
+    assert sol.placements == []
+    assert sol.suppressed == []
+    assert sol.constraint_findings == []
+    doc = derive_layout_constraints([], page_profile="a4_portrait")
+    sol2 = solve_layout_v5([], constraint_spec=doc, page_profile="a4_portrait")
+    assert sol2.constraint_findings == []
+
+
+def test_all_unknown_constraints_still_solves():
+    parts = [_p("t", "title", "top-center", priority=1, optional=False)]
+    doc = LayoutConstraintDocument(
+        page_profile="viewport",
+        components={
+            f"ghost-{i}": ComponentLayoutConstraint(component_id=f"ghost-{i}")
+            for i in range(5)
+        },
+    )
+    sol = solve_layout_v5(parts, constraint_spec=doc, page_profile="viewport")
+    assert {p.id for p in sol.placements} == {"t"}
+    unmatched = [f for f in sol.constraint_findings
+                 if f.code == "constraint_unmatched"]
+    assert len(unmatched) == 5  # 逐个披露，无静默忽略
+
+
+def test_must_fit_does_not_resurrect_illegal_duplicate_singleton():
+    """duplicate_singleton 抑制是合法性判定 —— must_fit 不得复活非法副本
+    （V4 既定语义：不参与自愈）。V5 诚实披露 key_component_suppressed。"""
+    parts = [
+        _p("t1", "title", "top-center", priority=1, optional=False),
+        _p("t2", "title", "top-center", priority=2, optional=True),
+    ]
+    doc = LayoutConstraintDocument(
+        page_profile="viewport",
+        key_component_ids=["t2"],
+        components={"t2": ComponentLayoutConstraint(
+            component_id="t2", must_fit=True)},
+    )
+    sol = solve_layout_v5(parts, constraint_spec=doc, page_profile="viewport")
+    suppressed = {s.id: s.reason for s in sol.suppressed}
+    assert suppressed.get("t2") == "duplicate_singleton"  # 非法保持抑制
+    assert any(
+        f.code == "key_component_suppressed" and f.component_id == "t2"
+        for f in sol.constraint_findings)  # 契约违例如实披露
+
+
+def test_none_zone_canvas_types_bypass_constraints_unaffected():
+    """全画布型（none 槽）不占容量：约束文档在场时行为不变。"""
+    parts = [
+        _p("border", "map_border", "none", priority=70),
+        _p("t", "title", "top-center", priority=1, optional=False),
+    ]
+    doc = derive_layout_constraints(
+        [{"id": p.id, "type": p.type} for p in parts], page_profile="viewport")
+    sol = solve_layout_v5(parts, constraint_spec=doc, page_profile="viewport")
+    border = next(p for p in sol.placements if p.id == "border")
+    assert border.zone == "none"
+
+
+# ── 6. R6 规模冒烟（有界时间内确定性完成）──────────────────────────────
+
+
+def test_large_participant_set_completes_deterministically():
+    """120 参与者（面板族宽度混合）在测试超时预算内确定性求解（求解 O(C²)、
+    C=chrome 组件量级远小于此 —— 本用例是防御性上界冒烟）。"""
+    parts = [
+        _p("t", "title", "top-center", priority=1, optional=False),
+    ] + [
+        _p(f"chart-{i}", "chart_panel", "top-left", priority=10 + i,
+           width_units=1 + (i % 4))
+        for i in range(119)
+    ]
+    doc = derive_layout_constraints(
+        [{"id": p.id, "type": p.type} for p in parts], page_profile="a4_landscape")
+    a = solve_layout_v5(parts, constraint_spec=doc, page_profile="a4_landscape")
+    b = solve_layout_v5(parts, constraint_spec=doc, page_profile="a4_landscape")
+    assert a.model_dump() == b.model_dump()
+    # 组件不凭空消失：每个参与者必在 placements 或 suppressed（V3 保证）
+    accounted = {p.id for p in a.placements} | {s.id for s in a.suppressed}
+    assert accounted == {p.id for p in parts}
