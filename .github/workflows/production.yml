@@ -445,6 +445,16 @@ jobs:
         # dev 依赖只需要 pytest（drift check 用）。
         run: pip install -c requirements.lock -r requirements.txt pytest pytest-cov
 
+      - name: Bootstrap fresh PostGIS through production entrypoint
+        # PostGIS 自带 extension 表：必须通过真实入口探测，再跑完整迁移链。
+        # 只运行 alembic 会漏掉将扩展表误判成 legacy 的启动拒绝。
+        env:
+          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_db
+          ADOPT_LEGACY_SCHEMA: 'false'
+          SKIP_DB_MIGRATIONS: 'false'
+          DB_MIGRATION_RETRIES: '1'
+        run: sh deploy/docker-entrypoint.sh true
+
       - name: Run Alembic Upgrade Head against PostGIS
         env:
           DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_db
@@ -1331,15 +1341,12 @@ jobs:
           # 从 REDIS_PASSWORD 环境变量注入——即上面写入 .env.Priv 的随机口令，
           # 经 --env-file 传给容器。无需在此 sed 修改任何文件。
 
-          # nginx.conf 监听 443 端口并需要 /etc/nginx/ssl/server.crt 和
-          # .key 文件。deploy/nginx/ssl 目录并未被追踪（证书不属于仓库内容），
-          # 因此 docker 会自动将其创建为一个空目录，导致 nginx 启动失败。
-          # 为预览环境（仅限 localhost）生成一个自签名证书。
-          mkdir -p deploy/nginx/ssl
-          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-            -keyout deploy/nginx/ssl/server.key \
-            -out deploy/nginx/ssl/server.crt \
-            -subj "/CN=localhost" >/dev/null 2>&1
+          # Alertmanager 不展开环境变量，原始 URL 占位符会在加载配置时失败。
+          # 预览强制使用 .invalid 目标，不继承任何真实通知 webhook。
+          ALERT_WEBHOOK_URL='' sh deploy/render-alertmanager-config.sh /tmp/preview-alertmanager.yml
+          cp /tmp/preview-alertmanager.yml deploy/alertmanager.yml
+
+          # TLS scaffold 由 tls-init 在私有命名卷内生成；nginx 只读消费。
 
           # #520：compose 的 image: ${WEBGIS_IMAGE:-webgis-ai-agent:local} 必须解析到
           # 本步骤开头 docker load 出的 ghcr.io/<repo>:<sha> 镜像 —— 上面 sed 已把
@@ -1360,11 +1367,12 @@ jobs:
           # 预览栈在一次性 runner 上启动，无公网地址（PR 读者浏览器里的
           # localhost 指向读者本机）。真实验证：在 runner 上经 nginx 发布
           # 的端口探测——80 强制 301 到 443（自签名证书，curl 用 -k）；
-          # /health 是 nginx 自身端点，/api/v1/health/live 经反代到 api。
+          # /health 经反代到 API readiness，另探进程 live 与 Alertmanager ready。
           ok=0
           for i in $(seq 1 30); do
             if curl -sfk https://localhost/health >/dev/null 2>&1 && \
-               curl -sfk https://localhost/api/v1/health/live >/dev/null 2>&1; then
+               curl -sfk https://localhost/api/v1/health/live >/dev/null 2>&1 && \
+               curl -sf http://localhost:9093/-/ready >/dev/null 2>&1; then
               ok=1
               break
             fi
@@ -1377,9 +1385,13 @@ jobs:
             docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 api
             echo "--- nginx logs ---"
             docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 nginx
+            echo "--- TLS init logs ---"
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 tls-init
+            echo "--- alertmanager logs ---"
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 alertmanager
             exit 1
           fi
-          echo "preview stack healthy (nginx + api via https://localhost)"
+          echo "preview stack healthy (nginx + api via https://localhost + alertmanager)"
 
       - name: Comment Preview URL
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -1486,7 +1498,9 @@ jobs:
           # redis 启动失败）。
           ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
-          scp deploy/redis.conf deploy/redis-entrypoint.sh ${{ vars.SSH_HOST }}:~/deploy/
+          scp deploy/redis.conf deploy/redis-entrypoint.sh deploy/generate_tls_scaffold.py ${{ vars.SSH_HOST }}:~/deploy/
+          # configs.file 是只读 bind；显式保证非 root appuser 可读公开脚本。
+          ssh ${{ vars.SSH_HOST }} 'chmod 644 ~/deploy/generate_tls_scaffold.py'
           # #530：prometheus 服务 bind-mount ./deploy/prometheus.yml 与
           # ./deploy/alerts-rules.json —— 不随部署送达主机时，Docker 把缺失的
           # 挂载源创建为空目录，prometheus 把目录当 config 加载即 crash-loop、
@@ -1689,9 +1703,12 @@ jobs:
           # 回退构建路径（Fallback - Checkout Previous Version）检出的是 PREV_SHA，
           # 可能早于 redis.conf / redis-entrypoint.sh 的存在（本分支新增），且该
           # 路径的旧 compose 也不挂载 redis 配置——文件缺失时跳过 scp。
-          for f in deploy/redis.conf deploy/redis-entrypoint.sh; do
+          for f in deploy/redis.conf deploy/redis-entrypoint.sh deploy/generate_tls_scaffold.py; do
             [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
           done
+          if [ -f deploy/generate_tls_scaffold.py ]; then
+            ssh ${{ vars.SSH_HOST }} 'chmod 644 ~/deploy/generate_tls_scaffold.py'
+          fi
           # #530：与 deploy-prod 一致，prometheus 配置必须随回滚送达主机（否则
           # 空目录 bind-mount 让 prometheus crash-loop）。回退构建路径检出的
           # PREV_SHA 可能早于这些文件，同样用存在性守卫跳过。

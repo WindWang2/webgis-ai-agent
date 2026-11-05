@@ -26,10 +26,10 @@
 | 开发栈 | `docker-compose.yml` | 4（db / redis / api / celery-worker） | `.env`（模板 `.env.example`） | 本地一键起全套；端口全部绑定 127.0.0.1 |
 | 本地手工 | 无（进程直跑） | 3（redis + uvicorn + celery） | `.env` | 后端热重载开发调试 |
 | 标准生产 | `docker-compose.prod.yml` | 10（+nginx / prometheus / 3×exporter / grafana） | `.env.prod`（模板 `.env.prod.example`） | 单机生产、需要 Grafana 面板 |
-| 加固生产 | `docker-compose.prod.secure.yml` | 9（无 grafana） | `.env.Priv`（模板 `.env.Priv.example`） | 公网服务器；**CI preview / deploy-prod / rollback 实际使用的栈** |
+| 加固生产 | `docker-compose.prod.secure.yml` | 10 个常驻服务 + 1 个 TLS 初始化服务（无 grafana） | `.env.Priv`（模板 `.env.Priv.example`） | 公网服务器；**CI preview / deploy-prod / rollback 实际使用的栈** |
 | Kubernetes | `deploy/k8s/`（kustomize） | —（api×2 + celery + ingress + HPA） | `webgis-secret` | 集群化、自动伸缩 |
 
-加固栈与标准栈的关键差异：db/redis **不暴露任何端口**（仅 `webgis-internal` 内网可达）；api 仅发布 `127.0.0.1:${API_PORT:-8000}`；nginx 80/443 是唯一公网入口，其配置与自签证书以 compose `configs:` **内联分发**（不依赖部署机上的文件，真实证书用 override 文件替换）；api/celery 优先使用 `image: ${WEBGIS_IMAGE}`（CI 写入 `ghcr.io/<repo>:<sha>`），无该变量时回落本地 `build:`。
+加固栈与标准栈的关键差异：db/redis **不暴露任何端口**（仅 `webgis-internal` 内网可达）；api 仅发布 `127.0.0.1:${API_PORT:-8000}`；nginx 80/443 是唯一公网入口，nginx 配置以 compose `configs:` **内联分发**，自签证书由 `tls-init` 在私有命名卷内生成（真实证书用 override 文件只读挂载）；api/celery 优先使用 `image: ${WEBGIS_IMAGE}`（CI 写入 `ghcr.io/<repo>:<sha>`），无该变量时回落本地 `build:`。
 
 ## 前置要求
 
@@ -123,6 +123,7 @@ CI 的 deploy-prod / rollback / preview 走此栈；也可手动：
 
 ```bash
 cp .env.Priv.example .env.Priv   # 填入 DB_PWD / REDIS_PASSWORD / JWT_SECRET_KEY / LLM_API_KEY / CORS_ORIGINS
+# Alertmanager 需先渲染并挂载，见下方要点；仓库模板不能原样用于启动。
 docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
 ```
 
@@ -131,8 +132,10 @@ docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
 - **`--env-file .env.Priv` 必须显式传**：db/redis 依赖 `${DB_PWD:?...}` 等插值，compose 默认只读 `.env`。
 - redis 经 `deploy/redis.conf` 启动（`maxmemory 256mb` + `noeviction`，理由见 [Redis 驱逐策略](#redis-驱逐策略)）；`requirepass` 不写配置文件，由 `deploy/redis-entrypoint.sh` 从 `REDIS_PASSWORD` 环境变量注入（三种部署路径行为一致）。**#1676（SEC-04）起注入方式是「`/dev/shm` tmpfs 0400 运行时 conf + config include」，口令不再进容器 argv** —— `docker inspect` 的 entrypoint、`docker top`、宿主机 `/proc/<pid>/cmdline` 均不可见（dev 栈 `docker-compose.yml` 与标准 prod 栈 `docker-compose.prod.yml` 同规则；k8s 可选 redis 用等价的 sh -c 写法）。redis-exporter 的抓取口令同样从 env 改为 `REDIS_PASSWORD_FILE`（config 文件挂载）。不变式由 `tests/test_deploy_secrets_hygiene.py` 钉住。这两个文件必须随 compose 一起 scp 到部署机（bind-mount）。
 - prometheus 挂载 `deploy/prometheus.yml` 与 `deploy/alerts-rules.json`（同为 scp 清单成员；缺失会被 Docker 创建为空目录导致 crash-loop）。
-- nginx 的 TLS 证书是内联自签 scaffold（仅保证能以 TLS 启动，浏览器会告警）。换真实证书：复制本文件为 override，把 `webgis_ssl_scaffold_cert/key` 两个 config 换成 `file: ./deploy/nginx/ssl/server.crt` 形式的源，再 `-f <override>` 启动。
-- 健康验证：`curl -k https://localhost/health`（nginx 自身）与 `curl -k https://localhost/api/v1/health/live`（经反代到 api）。
+- Alertmanager 不展开环境变量。手动部署先通过 `sh deploy/render-alertmanager-config.sh /tmp/alertmanager.yml` 渲染，再用 Compose override 将该结果只读挂到 alertmanager 的 `/etc/alertmanager/alertmanager.yml`；保留仓库模板占位符。通过环境变量 `ALERT_WEBHOOK_URL` 指定真实通知目标，未配置则使用 `.invalid`，不会收到通知。CI 部署会自动渲染及传输。
+- `tls-init` 复用应用镜像中的 Python / cryptography，离线生成自签 TLS scaffold 到私有 `nginx_tls_secure` 卷；nginx 只读消费，初始化成功才启动。`deploy/generate_tls_scaffold.py` 以只读 config 挂载，须随 Compose 一起传输且保持 0644，不能依赖旧回滚镜像包含新增文件。证书按卷复用（730 天有效，不自动续签），仅供启动验证，浏览器仍会告警。正式上线请用 override 为 nginx 的 `/etc/nginx/ssl` 只读绑定运维证书目录（包含 `server.crt` / `server.key`）；初始化服务不触碰这些外部证书。
+- PostGIS 自带的真实 extension-owned 表不视为业务 schema。无 `alembic_version` 的业务表仍默认拒绝自动收编；只有操作者确认 schema 与迁移 head 一致后，才可显式使用 `ADOPT_LEGACY_SCHEMA=true`。
+- 健康验证：`curl -fk https://localhost/health`（经 nginx 到 API readiness）、`curl -fk https://localhost/api/v1/health/live`（API 进程存活）以及 `curl -f http://localhost:9093/-/ready`（Alertmanager）。预览会先渲染 Alertmanager 配置，强制使用 `.invalid` 通知目标，不向真实 webhook 发测试告警。
 
 ### Redis 驱逐策略
 
@@ -357,4 +360,4 @@ python manage.py create-admin <username> <email> <password>
 - **前端白屏/图层不显示**：F12 查网络。若 `/api/v1/layers/data/{ref_id}?session_id=xxx` 报 404，大概率是 Redis 未启动、不可达，或该 ref 已被 LRU/TTL 逐出（重新执行分析生成新 ref）。
 - **对话框没反应**：查 `celery-worker` 是否在跑——大模型把计算扔给后台后一直 Pending，通常是 worker 未启动或 broker 连接失败（看 worker 日志与 `/api/v1/ready`）。
 - **secure 栈 prometheus crash-loop**：检查 `deploy/prometheus.yml` / `deploy/alerts-rules.json` 是否真的被 scp 到主机对应路径（缺失时 Docker 会把 bind-mount 源创建为空目录）。
-- **nginx 启动即 crash（找不到证书）**：标准 prod 栈需把 `server.crt` / `server.key` 放到 `./deploy/nginx/ssl/`；加固栈检查内联 configs 或 override 文件。
+- **nginx 启动失败（找不到证书）**：标准 prod 栈需把 `server.crt` / `server.key` 放到 `./deploy/nginx/ssl/`；加固栈先查 `docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs tls-init`，检查辅助脚本传输、私有 TLS 卷及真实证书 override。初始化遇到不完整、符号链接或不匹配的证书对会拒绝覆盖；先由操作者检查并修复既有材料，不要自动删卷或覆盖私钥。
