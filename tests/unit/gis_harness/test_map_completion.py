@@ -420,7 +420,7 @@ def test_derive_result_bbox_none_when_missing():
 
 
 def test_derive_result_bbox_skips_degenerate():
-    descriptors = {"ref:geojson-x": {"feature_count": 1, "bbox": [10.0, 10.0, 9.0, 11.0]}}
+    descriptors = {"ref:geojson-x": {"feature_count": 1, "bbox": [10.0, 11.0, 11.0, 10.0]}}
     assert derive_result_bbox(_chapter(), descriptors) is None
 
 
@@ -619,19 +619,19 @@ async def test_empty_result_disclosed_as_warning_not_failure(clean_session):
 
 
 async def _save_plan(sid: str, chapter: dict) -> SessionPlan:
-    from app.services.session_plan import _init_progress
+    from app.services.session_plan import _init_progress, load_session_plan
 
-    plan = SessionPlan(
-        envelope_id=f"env-{uuid.uuid4().hex[:8]}",
-        session_id=sid,
-        user_goal=chapter.get("query") or "q",
-        gis_chapter=chapter,
-        progress=_init_progress(chapter),
-    )
+    plan = await load_session_plan(sid)
+    if plan is None:
+        plan = SessionPlan(envelope_id=f"env-{uuid.uuid4().hex[:8]}", session_id=sid)
+    plan.user_goal = chapter.get("query") or "q"
+    plan.gis_chapter = chapter
+    plan.progress = _init_progress(chapter)
     for row in plan.progress:
         row.status = "complete"
-    await save_session_plan(plan)
+    assert await save_session_plan(plan)
     return plan
+
 
 
 @pytest.mark.asyncio

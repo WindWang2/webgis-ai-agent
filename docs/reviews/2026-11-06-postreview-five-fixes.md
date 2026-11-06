@@ -1,0 +1,36 @@
+# Independent review follow-up — 2026-11-06
+
+Root authorized these five corrections after completing the integrated baseline. Changes stayed in the assigned runtime/UI/workflow scope; no database, migration, deployment, data-GC, generated-artifact or debt-baseline edits, and no commits.
+
+| Review finding | Disposition | Concrete behavior and evidence |
+|---|---|---|
+| Ref revision tracking evicts the25th active source, drops in-flight identity and repeatedly downloads | fixed | `frontend/lib/mapspec/ref-source-resolver.ts` keeps up to64 active fallback refs pinned; only inactive completed values compete in the24-entry cold LRU. Revision metadata follows retained source lifecycle. Missing revision is not evidence of change; only unequal known revisions replace the identity. Completion checks both session and entry identity; retirement/reset/revision change aborts pending requests without writing false failure tombstones. Failure history remains independently bounded. Real24/25 pending-promise tests repeatedly reconcile, settle every source and reuse all completed values without another download. Further cases cover missing→known metadata, a genuinely edited revision superseding its old promise,24 cold retention,64/65 budget and promotion after a slot is freed. |
+| Ref resolution result never reaches the live runtime | fixed (same call chain) | MapPanel now feeds the temporal projection into the resolver and reconciles the resolver's result. Previously it reconciled the earlier projection and used resolved data only for later scene/observation bookkeeping. A test renders the actual MapPanel/runtime with its existing mock MapLibre surface and verifies the changed resolved FeatureCollection reaches the mounted source. |
+| Ref budget must be honest and bounded | fixed | Public budget projection reports64 active-ref limit and omitted count. MapPanel emits localized Chinese/English warning that those references are not loaded, with guidance to remove layers. Over-budget refs are never mislabeled expired. Warning is deduplicated for a stable session/count and discarded if stale before async delivery. |
+| Legacy WorkflowRun.session_id=NULL prevents explicitly authorized full rerun | fixed | `workflow_session_scope.require_legacy_rerun_owner` requires the actual live project owner; a different same-org actor gets404. `project._run_workflow_engine` keeps FALSE as409 and allows TRUE only for failed/cancelled legacy runs. It creates a new server-owned Conversation through normal history admission, then explicitly calls fresh execution; it never supplies old completed outputs/artifacts as seeds. Worker-side authority and legacy/status conditions are rechecked. Non-NULL runs keep their original private Conversation-owner gate. Real HTTP partial-failure case checks FALSE409, TRUE executes both steps, new session differs and cannot read the old physical ref, same-org other actor404. Completed runs reject both FALSE and TRUE with409. |
+| Dialog capture Escape prevents SearchField from clearing | fixed | `use-dialog-focus.ts` retains capture-phase Tab trapping, but handles Escape on document bubble after inner control handlers; defaultPrevented and stopped propagation are honored. Shared modal stack still selects only the latest open dialog. Integration tests use the real SearchField: first Escape clears人口 and leaves modal open; second closes once. Separate tests preserve Tab-from-body containment and top-modal-only close. Existing search/history drawer suites also pass. |
+| Location button has no pending/error/retry feedback; page drops error | fixed | `use-geolocation.ts` exposes loading and stable error codes, guards duplicate in-flight requests and ignores unmounted callbacks. Page passes state to TopBar. The localized control shows a busy spinner/disabled button and live status, explains denied/unavailable/timeout/unsupported errors in an accessible alert, and provides explicit retry. Mount never requests location. Tests verify no prompt on mount, one request while pending, denied→retry→success, unsupported state, busy semantics and visible permission explanation/retry. |
+| Account provisioning command and narrow logout readability | fixed | `account-section.tsx` uses the actual `manage.py create-admin` spelling (confirmed in manage.py parser), gives the identity column min-width0 with wrapping, and keeps logout shrink-0/nowrap. Existing sign-in/out error cleanup tests pass. Final390px screenshot verification belongs to root's rebuilt production UI; no pixel-layout claim is inferred from jsdom. |
+
+Additional assigned final backend failures:
+
+| Failed module/case | Verified cause / correction |
+|---|---|
+| `tests/perf/test_project_context_cache.py` six cases | Public legacy rows are correctly read-only, so the old actor-less service writes did nothing and did not invalidate. Seed a real live owner, assign actual project ownership, and pass that user to writes and context reads. Original query ceilings, cache-invalidated size, renamed/attached content and project-isolation assertions are unchanged. No production access control was weakened. |
+| `test_api_envelope_1741::test_resume_of_completed_run_is_conflict_409` | Status rejection now precedes missing-evidence rejection after owner validation, preserving the actual completed-run reason. Parameterized FALSE/TRUE both409. |
+| `test_event_loop_offload_386::test_run_workflow_engine_off_loop` | Old fake actor had no live user for new session admission. Inject that explicit admission seam for this isolated offload test; retain actual worker thread assertion, and add exact admitted user and engine-bound session assertions. |
+| `test_storymap_compiler_export_gaps` bbox case | Root intentionally corrected the camera's default16:9 geometry. Fixture now independently derives latitude half-span as longitude_span/(4*(16/9)); longitude and center checks remain exact. |
+
+Validation:
+
+- `/tmp/frontend-review-five-ui3.log`: **53 passed across8 files**, including actual map runtime, focused keyboard and location tests; no broad snapshots were refreshed.
+- `/tmp/frontend-review-five-i18n-page1.log`: **13 passed across3 files** (key completeness, no raw-CJK guard and page render isolation).
+- `/tmp/frontend-review-final-backend3.log`: **61 passed across5 complete files**, including all four assigned historical failure domains and real workflow HTTP regression.
+- `/tmp/frontend-review-five-types2.log`: complete frontend source and test TypeScript checks pass.
+- `/tmp/frontend-review-five-lint2.log`: targeted frontend ESLint passes with no warnings.
+- `/tmp/frontend-review-five-python-lint2.log`: all assigned changed Python source/tests pass Ruff.
+- `/tmp/frontend-review-five-python-types1.log`: workflow session authority helper passes targeted mypy.
+- Owned `git diff --check` passes.
+- At the first whole-repo debt check (`/tmp/frontend-review-five-debt1.log`), unrelated concurrently owned report-offload fixture lacked an assertion and global DictAny was2 over budget. Root was informed; no baseline was changed. Root owns the final whole-repo gate after all peers freeze.
+
+Source freeze: all assigned corrections and tests are complete. Root owns generated refresh, final full suites/build, production browser screenshots and landing.

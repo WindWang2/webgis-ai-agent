@@ -2,6 +2,7 @@
 PostgreSQL + PostGIS Domain Models for Enterprise Geospatial Data Fabric.
 """
 from datetime import datetime, timezone
+from typing import Any
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, ForeignKey, Index, JSON, UniqueConstraint
 )
@@ -192,3 +193,38 @@ __all__ = [
     "SourceFactsRecordModel",
     "FederatedFeedbackModel",
 ]
+
+
+def _revoke_source_runtime(_mapper: Any, connection: Any, source: DataSource) -> None:
+    """Authority changed/deleted: no historical in-process adapter may survive.
+
+    Mapper hooks run in the caller's transaction; durable fact invalidation uses
+    the same connection. A later rollback causes conservative cache misses.
+    """
+    from app.services.data_fabric.fabric.connection_registry import get_connection_registry
+    from app.services.data_fabric.connection_manager import connection_manager
+    from app.services.data_fabric.fabric.probing import get_capability_probe_service
+    from app.services.data_fabric.fabric.source_facts import get_source_facts_service
+    from app.services.data_fabric.metadata_cache import _describe_cache
+
+    get_connection_registry().revoke_profile(str(source.id))
+    connection_manager.revoke_profile(str(source.id))
+    get_capability_probe_service().invalidate(str(source.id))
+    get_source_facts_service().invalidate_profile(str(source.id), connection=connection)
+    _describe_cache.invalidate()
+
+
+from sqlalchemy import event as _sa_event
+
+def _revoke_updated_source(mapper: Any, connection: Any, source: DataSource) -> None:
+    from sqlalchemy import inspect
+
+    state = inspect(source)
+    if any(state.attrs[name].history.has_changes() for name in (
+        "org_id", "owner_id", "endpoint_url", "connection_profile", "source_type", "name",
+    )):
+        _revoke_source_runtime(mapper, connection, source)
+
+
+_sa_event.listen(DataSource, "after_update", _revoke_updated_source)
+_sa_event.listen(DataSource, "after_delete", _revoke_source_runtime)

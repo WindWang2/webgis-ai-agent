@@ -1,5 +1,6 @@
 """输入聚合（一次读齐，validators 全部纯函数）— ADR-0081 / ADR-0091。"""
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import asyncio
 import logging
@@ -149,7 +150,8 @@ async def gather_completion_inputs(
         # 探测都返回 None —— 确认驱逐，→ 过期 finding）/ unknown（持续
         # 异常 —— 存储抖动，**从 refs 移除**：validators 对未知跳过，绝不
         # 把瞬态错误判成过期并持久化假 failed）。
-        async def _fetch(ref: str) -> tuple[str, str, Optional[dict]]:
+        descriptor_limit = asyncio.Semaphore(8)
+        async def _fetch_unbounded(ref: str) -> tuple[str, str, Optional[dict]]:
             try:
                 desc = await session_data_manager.get_ref_descriptor(session_id, ref)
             except Exception:  # noqa: BLE001
@@ -176,6 +178,10 @@ async def gather_completion_inputs(
             except Exception:  # noqa: BLE001
                 return ref, "unknown", None
 
+        async def _fetch(ref: str) -> tuple[str, str, Any]:
+            async with descriptor_limit:
+                return await _fetch_unbounded(ref)
+
         fetched = await asyncio.gather(*(_fetch(r) for r in pending_refs))
         for ref, state, desc in fetched:
             if state == "ok":
@@ -191,12 +197,17 @@ async def gather_completion_inputs(
     if raster_refs:
         from app.services.artifact_registry import probe_ref
 
-        for ref in raster_refs:
-            try:
-                desc = await probe_ref(session_id, ref)
-            except Exception:  # noqa: BLE001
-                continue
-            refs[ref] = desc  # 存活 dict 或 None（缺失）
+        raster_limit = asyncio.Semaphore(8)
+        async def _raster_probe(ref: str) -> tuple[str, Any, bool]:
+            async with raster_limit:
+                try:
+                    return ref, await probe_ref(session_id, ref), True
+                except Exception:
+                    observe_optional_failure(__name__)
+                    return ref, None, False
+        for ref, descriptor, known in await asyncio.gather(*(_raster_probe(ref) for ref in raster_refs)):
+            if known:
+                refs[ref] = descriptor
 
     # facet contract（语义级 QA 输入）：派生只读，失败退化为 None。
     # V4（ADR-0104 Wave 7）：先于 required 槽面收敛 —— chart_required
@@ -243,6 +254,7 @@ async def gather_completion_inputs(
         "descriptors": refs,
         "required_slots": required_slots,
         "render_observation": render_observation,
+        "cartographic_review": map_state.get("_cartographic_review") if isinstance(map_state, dict) else None,
         "mapspec_revision": mapspec_revision,
         "facet_contract": facet_contract,
         "artifact_records": artifact_records,

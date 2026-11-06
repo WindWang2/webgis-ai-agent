@@ -108,7 +108,7 @@ def environment_fingerprint(
 def canonicalize_parameters(params: Any) -> Any:
     """参数 canonical 化（同语义同指纹）：
     - dict：键排序递归；
-    - 数值：int/float 统一为 float 再比较（1 与 1.0 同参）；
+    - 整数保持精度；可精确表示的整数 float 与 int 同参；
     - list：保序（参数序有语义）。
     """
     if isinstance(params, dict):
@@ -116,8 +116,10 @@ def canonicalize_parameters(params: Any) -> Any:
                 for k in sorted(params, key=str)}
     if isinstance(params, bool):
         return params
-    if isinstance(params, (int, float)):
-        return float(params)
+    if isinstance(params, int):
+        return params
+    if isinstance(params, float):
+        return int(params) if params.is_integer() and abs(params) <= 2 ** 53 else params
     if isinstance(params, (list, tuple)):
         return [canonicalize_parameters(x) for x in params]
     return str(params)

@@ -78,6 +78,10 @@ def _turn_env(monkeypatch):
     # 迁移（行为断言不变）：效果序打桩在 kernel settle 模块，kernel 台账
     # 打桩在 runtime 子模块（coordinator 经子模块解析 get_runtime）。
     import app.services.harness_kernel.settle as hks
+    from app.services.harness_kernel.settle_claim import SettlementClaim
+    monkeypatch.setattr("app.services.harness_kernel.settle_claim.acquire_settlement_claim",
+                        AsyncMock(return_value=SettlementClaim("claimed", "fixture-claim")))
+    monkeypatch.setattr("app.services.harness_kernel.settle_claim.complete_settlement", AsyncMock(return_value=True))
 
     async def _settle_effects(sid, turn_id, settle_class, *, reason="turn_settled",
                               state_trigger="execution_settled"):
@@ -104,7 +108,7 @@ def _turn_env(monkeypatch):
         async def begin_turn(self, turn_id, *, host, message, lock=None):
             pass
 
-        async def end_turn(self, turn_id, *, host, status, checkpoint=True, lock=None):
+        async def end_turn(self, turn_id, *, host, status, checkpoint=True, lock=None, settle_token=""):
             state.kernel_ends.append((turn_id, status))
             return []
 

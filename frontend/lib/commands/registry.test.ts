@@ -21,9 +21,11 @@ function cmd(overrides: Partial<CommandDef> & { id: string }): CommandDef {
 
 beforeEach(() => {
   resetRegistryForTests();
+  vi.stubEnv('NODE_ENV', 'development');
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 

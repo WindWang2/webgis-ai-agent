@@ -43,7 +43,7 @@ AWF_BUDGET_EXCEEDED = "AWF_BUDGET_EXCEEDED"
 AWF_CARDINALITY_UNBOUNDED = "AWF_CARDINALITY_UNBOUNDED"
 AWF_UNKNOWN_FAMILY = "AWF_UNKNOWN_FAMILY"
 AWF_INVALID_CONTRACT = "AWF_INVALID_CONTRACT"
-# ADR-0282：typed 衔接门（事实在且冲突才发射——事实缺失走披露）
+# ADR-0284：typed 衔接门（事实在且冲突才发射——事实缺失走披露）
 AWF_INPUT_SEMANTIC_MISMATCH = "AWF_INPUT_SEMANTIC_MISMATCH"  # + ":<param>"
 AWF_ROLE_GEOMETRY_MISMATCH = "AWF_ROLE_GEOMETRY_MISMATCH"    # + ":<ROLE>"
 AWF_ROLE_KIND_MISMATCH = "AWF_ROLE_KIND_MISMATCH"            # + ":<ROLE>"
@@ -51,13 +51,13 @@ AWF_ROLE_KIND_MISMATCH = "AWF_ROLE_KIND_MISMATCH"            # + ":<ROLE>"
 #: 步骤参数单位合同的合法单位词表（长度/时间/无量纲；扩展走 additive）。
 UNIT_VOCABULARY = ("m", "km", "min", "h", "unitless")
 
-#: 阶段产物聚合基数词表（ADR-0282 D1；"" = 未声明——比错误声明诚实）。
+#: 阶段产物聚合基数词表（ADR-0284 D1；"" = 未声明——比错误声明诚实）。
 AGGREGATION_BASIS_VOCABULARY = (
     "", "one_to_one", "many_to_one_sum", "m_n_join",
     "zonal_mean", "zonal_sum",
 )
 
-#: 数据角色绑定载荷类型（raster = ref/路径直通，不水合为 dict——ADR-0282 D3）。
+#: 数据角色绑定载荷类型（raster = ref/路径直通，不水合为 dict——ADR-0284 D3）。
 ROLE_KINDS = ("vector", "raster", "table")
 
 
@@ -87,7 +87,7 @@ class DataRoleBinding(BaseModel):
     ref 空 + missing=True = 显式缺失（typed blocked 裁决依据）；
     二者皆空 = 未决（调用方还没给——plan 期允许，run 期按缺失处理）。
 
-    role_kind（ADR-0282 D3）：vector（默认——水合为 FC dict）/ raster
+    role_kind（ADR-0284 D3）：vector（默认——水合为 FC dict）/ raster
     （ref/路径直通，executor 不水合——zonal_stats.raster_path 原生接受
     ref）/ table（直通，表格类载荷）。默认值保证旧绑定行为零漂移。
     """
@@ -120,7 +120,7 @@ class AnalysisStepSpec(BaseModel):
     fallback: str = ""                                   # 显式降级名（如 buffer_proxy_disclosed）
     optional: bool = False                               # True: 输入缺失时 typed skipped 而非 blocked
     semantic_contract: Dict[str, str] = Field(default_factory=dict)
-    # ^ ADR-0282 D2：param → "key:value"（key ∈ {geometry_kind, crs_class}；
+    # ^ ADR-0284 D2：param → "key:value"（key ∈ {geometry_kind, crs_class}；
     #   geometry_kind 由 executor 衔接门核验，crs_class 由工具级 preflight
     #   权威裁决——本合同是声明与纵深防御，不是第二语义源）。
 
@@ -164,7 +164,7 @@ class AnalysisArtifactEnvelope(BaseModel):
     supersede/LRU），本封套是工作流步骤视角的**结果证据**（stats/单位/
     receipt/警告），二者经 ``ref`` 关联，不复制 lineage 语义。
 
-    v2（ADR-0282 D1）：**实测**类型化事实（采集不到=缺省空值，绝不虚填；
+    v2（ADR-0284 D1）：**实测**类型化事实（采集不到=缺省空值，绝不虚填；
     ``units`` 保持=声明的参数单位，实测口径在 ``result_semantics``）。
     v1 旧载荷反序列化时新键取缺省（未知），消费方按「事实缺失=披露不
     阻断」处理——权威守门仍在工具级 SpatialSemanticContract preflight。

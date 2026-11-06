@@ -39,7 +39,18 @@ export function buildTileTransformRequest(
   return (url: string): RequestParameters => {
     if (!isFirstPartyUrl(url)) {
       // Third-party or unknown host: never forward session credentials.
-      return { url };
+      let basemapUrl = url;
+      const key = (process.env.NEXT_PUBLIC_CARTO_BASEMAP_KEY || '').trim();
+      if (key) {
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol === 'https:' && (parsed.hostname === 'basemaps.cartocdn.com' || parsed.hostname.endsWith('.basemaps.cartocdn.com'))) {
+            if (!parsed.searchParams.has('key')) parsed.searchParams.set('key', key);
+            basemapUrl = parsed.toString();
+          }
+        } catch { /* unknown/relative URLs remain unchanged */ }
+      }
+      return { url: basemapUrl };
     }
     const headers: Record<string, string> = {};
     const accessToken = getAccessToken();

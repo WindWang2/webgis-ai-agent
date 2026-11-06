@@ -27,6 +27,7 @@ ref + 有界元数据。
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -172,7 +173,7 @@ class IngestPipeline:
             or fc.get("crs")
             or (data.get("crs") if isinstance(data, dict) else "")
         )
-        vp, quality = profile_features(features, crs=declared_crs)
+        vp, quality = await asyncio.to_thread(profile_features, features, crs=declared_crs)
         profile = DatasetProfileV3(
             target_ref="pending",
             category="vector",
@@ -182,7 +183,7 @@ class IngestPipeline:
             profile_quality=quality,
             source_fingerprint=fingerprint,
         )
-        report = run_quality_checks(profile)
+        report = await asyncio.to_thread(run_quality_checks, profile)
         result.steps_completed.append("profile")
         result.steps_completed.append("quality")
 
@@ -311,10 +312,18 @@ class IngestPipeline:
             md = getattr(rec, "metadata", None) or {}
             if isinstance(md, dict) and md.get(_DEDUP_META_KEY) == fingerprint:
                 if rec.status == "valid":
-                    return rec.artifact_id
+                    from app.services.session_data import session_data_manager
+
+                    if await session_data_manager.get(session_id, rec.artifact_id) is not None:
+                        return rec.artifact_id
         return None
 
     async def _rollback_ref(self, session_id: str, ref_id: str) -> None:
+        from app.services.artifact_registry import mark_status
+
+        if not await mark_status(session_id, ref_id, "failed"):
+            logger.warning("[IngestPipeline] rollback registry status unavailable session=%s ref=%s",
+                           session_id, ref_id)
         try:
             from app.services.session_data import session_data_manager
 

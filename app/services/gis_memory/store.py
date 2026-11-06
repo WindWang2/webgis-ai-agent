@@ -176,7 +176,7 @@ def record_memory(
         if req.evidence.source == SOURCE_USER_CORRECTION:
             # 人的显式再确认升级证据（同一语义，来源更硬）
             row.evidence = req.evidence.to_dict()
-            row.sensitive = bool(req.sensitive)
+            row.sensitive = bool(row.sensitive) or bool(req.sensitive)
         if req.refs:
             merged = list(row.refs or [])
             for ref in refs:
@@ -246,7 +246,9 @@ def record_memory(
         )
         return None
     _apply_scope_budget(db, req.org_id, req.scope, scope_id)
-    return row
+    from sqlalchemy import inspect
+
+    return None if inspect(row).deleted else row
 
 
 def _route_to_carto_project_fact(

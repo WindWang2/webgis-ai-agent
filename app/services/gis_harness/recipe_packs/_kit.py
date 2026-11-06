@@ -195,12 +195,12 @@ def auto_fallback(
     ]
 
 
-def min_points_rule(element: str, min_points: Optional[int] = None, code: str = "INSUFFICIENT_POINTS") -> EligibilityRule:
+def min_points_rule(element: str, min_points: Optional[int] = None, code: str = "INSUFFICIENT_POINTS", *, min_samples: Optional[int] = None) -> EligibilityRule:
     return EligibilityRule(
-        element=element, check_points=True, min_points=min_points,
+        element=element, check_points=True, min_points=min_points, min_samples=min_samples,
         requires_geometry=["Point", "MultiPoint"], reason_code=code,
     )
 
 
 def point_fallback(*, when: str = "point_count < threshold", code: str = "INSUFFICIENT_POINTS") -> List[RecipeFallback]:
-    return [RecipeFallback(when=when, reason_code=code, use="point_distribution")]
+    return [RecipeFallback(when=when, reason_code=code, use="point_overlay")]

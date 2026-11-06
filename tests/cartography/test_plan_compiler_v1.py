@@ -41,7 +41,9 @@ def test_new_layer_upsert_only_for_missing_target():
     layer = m.payload["layer"]
     assert layer["id"] == "pl-new" and layer["source"] == "ds:pop"
     assert layer["type"] == "fill" and layer["visible"] is True
-    assert m.client_mutation_id == f"pmc.{ir.ir_id}.01.upsert_layer"
+    assert m.client_mutation_id.startswith("pmc.")
+    assert m.client_mutation_id.endswith(".01.upsert_layer")
+    assert m.client_mutation_id != compile_plan(ir, current, base_revision=3).mutations[0].client_mutation_id
     assert c.display_expectations.layers == {"pl-new": True}
 
 

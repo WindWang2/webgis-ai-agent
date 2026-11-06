@@ -283,7 +283,7 @@ def test_h9_evidence_candidates_share_selection_source():
     """evidence 候选序与真实选择同源（源码级回归锚点）：
     - plan_from_intent 收到注册表可见工具（available_tools=...）；
     - 候选选择与 evidence 记录共用同一份带 project_verified 的取数。"""
-    from app.services.gis_harness import tools as harness_tools
+    from app.services.gis_harness import tool_map_product as harness_tools
 
     src = open(harness_tools.__file__, encoding="utf-8").read()
     assert "available_tools=available or None" in src, (
@@ -305,7 +305,7 @@ def test_product_layers_carry_display_names():
     无名的 product-* 层在前端面板只能显示 id 后缀（product-930ab45f-
     points），用户认不出哪行是 POI 查询结果；且 spec 无 name 时前端镜像
     行的命名链退到算法名。源码级回归锚点（与 H-9 同模式）。"""
-    from app.services.gis_harness import tools as harness_tools
+    from app.services.gis_harness import tool_map_product as harness_tools
 
     src = open(harness_tools.__file__, encoding="utf-8").read()
     assert 'converted["name"] = f"{title}·密度热力图" if title else "密度热力图"' in src, (

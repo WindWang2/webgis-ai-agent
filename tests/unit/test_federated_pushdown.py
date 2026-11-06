@@ -61,7 +61,7 @@ def test_fetch_windows_v5_parity_identity():
     ctx = _ctx()
     budget = ExecutionBudget()
     windows = derive_fetch_windows(ctx, budget)
-    assert windows == {}
+    assert windows == {source.source_id: budget.max_rows for source in ctx.sources}
     assert MAX_JOIN_CANDIDATES > 0  # 硬界仍存在（executor 侧消费）
 
 
@@ -85,8 +85,8 @@ def test_apply_fetch_windows_rewrites_scans_only():
     out = apply_fetch_windows(tree, windows)
     new_a = out.input.left
     new_b = out.input.right
-    assert new_a.fetch_limit == 1000 and new_b.fetch_limit == 1000
-    assert out.plan_hash() == tree.plan_hash(), "恒等窗口不改计划"
+    assert new_a.fetch_limit == budget.max_rows and new_b.fetch_limit == budget.max_rows
+    assert out.limit == tree.limit, "output limit remains unchanged while source scan windows expand"
 
 
 # ── 聚合下推裁决 ───────────────────────────────────────────────────────────

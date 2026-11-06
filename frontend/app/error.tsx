@@ -1,4 +1,5 @@
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * audit ISSUE-031（#1348）：路由级错误兜底。
@@ -12,11 +13,12 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const t = useT();
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 p-8 text-center">
-      <div className="text-title font-medium text-ink">页面遇到错误</div>
+      <div className="text-title font-medium text-ink">{t('common.pageError')}</div>
       <div className="max-w-[360px] text-body text-ink-muted">
-        {error?.message ?? '渲染异常'}
+        {t('common.renderError')}
         {error?.digest ? ` (${error.digest})` : ''}
       </div>
       <button
@@ -24,7 +26,7 @@ export default function Error({
         onClick={reset}
         className="rounded-md border border-edge-subtle bg-surface-raised px-3 py-1.5 text-body font-medium text-ink-secondary transition-colors hover:bg-surface-hover"
       >
-        重试
+        {t('common.retry')}
       </button>
     </div>
   );

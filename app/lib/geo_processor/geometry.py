@@ -71,8 +71,8 @@ def buffer_smart(
                 factor = float(getattr(axis, "unit_conversion_factor", 1.0) or 1.0)
                 if axis.unit_name and "metre" not in axis.unit_name and "meter" not in axis.unit_name and factor != 1.0:
                     dist = dist / factor
-            except Exception:
-                pass
+            except Exception as exc:
+                raise ValueError("cannot determine projected CRS units for metric buffer") from exc
 
         buffered_gdf = gdf.copy()
         buffered_gdf['geometry'] = buffered_gdf.geometry.make_valid()

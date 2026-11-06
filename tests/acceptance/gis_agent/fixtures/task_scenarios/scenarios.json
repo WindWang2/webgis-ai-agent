@@ -8502,7 +8502,7 @@
     "analysis_workflow",
     "hazard",
     "exposure",
-    "adr-0282"
+    "adr-0284"
    ],
    "timeout_s": 60,
    "title": "高风险区域设施统计：缓冲→暴露清单（M:N 基数披露）",
@@ -8640,7 +8640,7 @@
     "analysis_workflow",
     "raster",
     "zonal",
-    "adr-0282"
+    "adr-0284"
    ],
    "timeout_s": 60,
    "title": "栅格指数分区汇总：zonal 统计 + nodata 覆盖率披露",
@@ -8790,7 +8790,7 @@
     "analysis_workflow",
     "network",
     "closest-facility",
-    "adr-0282"
+    "adr-0284"
    ],
    "timeout_s": 60,
    "title": "最近设施网络距离：Dijkstra 路线 → 行政汇总（均值语义）",

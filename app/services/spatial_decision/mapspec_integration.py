@@ -96,7 +96,7 @@ async def apply_decision_to_mapspec(
             "color": {
                 "method": "match",
                 "field": "zone_type",
-                "stops": [
+                "cases": [
                     ["direct", "#EF4444"],
                     ["indirect", "#F59E0B"],
                 ],
@@ -150,7 +150,7 @@ async def apply_comparison_to_mapspec(
             "color": {
                 "method": "match",
                 "field": "scenario_id",
-                "stops": color_stops,
+                "cases": color_stops,
                 "default": "#8B5CF6",
             },
             "opacity": 0.5,
@@ -305,11 +305,13 @@ async def apply_v3_decision_to_mapspec(
                     "result_ref": result_ref,
                 },
             }
-            await _upsert_decision_layer(
+            constraint_result = await _upsert_decision_layer(
                 session_id=session_id,
                 layer=constraint_layer_dict,
                 source_data={"type": "FeatureCollection", "features": constraint_features},
             )
+            if not constraint_result.get("success"):
+                return constraint_result
             source_data = {"type": "FeatureCollection", "features": alt_features}
 
         return await _upsert_decision_layer(

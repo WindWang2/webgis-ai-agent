@@ -41,6 +41,7 @@ from app.services.context_assembly.contract import (
     TurnContextRequest,
     bounded_item,
     domain_rank,
+    domain_pool,
 )
 from app.services.context_assembly.dedupe import dedupe_items
 from app.services.context_assembly.fence import apply_domain_fence, scrub_item
@@ -103,6 +104,7 @@ async def fetch_shared_facts(req: TurnContextRequest) -> SharedTurnFacts:
         except Exception as exc:  # noqa: BLE001
             facts.fetch_errors["plan"] = type(exc).__name__
         if facts.plan is not None:
+            facts.source_session_id = str(getattr(facts.plan, "session_id", "") or "")
             try:
                 from app.services.harness_kernel.context import build_turn_context
 
@@ -120,7 +122,7 @@ def _scope_gate(
     kept: List[ContextItem] = []
     denied: List[Tuple[ContextItem, str]] = []
     for item in items:
-        if item.domain in UNTOUCHABLE_DOMAINS or item.control_plane:
+        if item.domain == ContextDomain.USER_MESSAGE and item.provider_id == "assembly":
             kept.append(item)
             continue
         if item.evidence_ref.startswith("caller:") and item.provider_id == "caller":
@@ -277,6 +279,9 @@ async def assemble_turn_context(
         max_output_tokens=max_output_tokens or _max_output_tokens(),
         enforce=_enforce_budget(),
     )
+    from app.services.context_assembly.contract import ContextAssemblyRejected
+    if allocation.over_budget:
+        raise ContextAssemblyRejected("non-droppable user/control context exceeds the global hard cap")
     final_items = allocation.items
     if not any(i.item_id == marker_item.item_id for i in final_items):
         # control plane can never be dropped (defence in depth)
@@ -288,26 +293,22 @@ async def assemble_turn_context(
     # render in legacy attach order (inline cartography family keeps "" join)
     message = _render_parts(req, final_items)
 
-    # receipt + governor (planned vs actual, same estimator)
-    planned = allocation.planned_tokens
+    # Explicit governor denials are enforcement, not an observability miss.
+    planned = sum(item.est_tokens for item in final_items)
     governor_plan = None
     reconcile: Dict = {}
     try:
-        from app.services.context_assembly.governor_link import (
-            plan_turn_context,
-            settle_turn_context,
-        )
-
-        governor_plan = await plan_turn_context(
-            session_id=req.session_id, turn_id=req.turn_id,
-            planned_tokens=planned,
-        )
-        reconcile = await settle_turn_context(
-            governor_plan, session_id=req.session_id,
-            turn_id=req.turn_id, actual_prompt=message,
-        )
-    except Exception as exc:  # noqa: BLE001 — governor 缺席不阻断
+        from app.services.context_assembly.governor_link import plan_turn_context, settle_turn_context
+        governor_plan = await plan_turn_context(session_id=req.session_id, turn_id=req.turn_id, planned_tokens=planned)
+    except Exception as exc:  # noqa: BLE001 — unavailable optional governor
         reconcile = {"ledger_recorded": False, "settle_error": type(exc).__name__}
+    if governor_plan is not None and governor_plan.decision == "reject":
+        raise ContextAssemblyRejected("context governor rejected prompt admission")
+    if governor_plan is not None:
+        try:
+            reconcile = await settle_turn_context(governor_plan, session_id=req.session_id, turn_id=req.turn_id, actual_prompt=message)
+        except Exception as exc:  # noqa: BLE001 — reconciliation is observational
+            reconcile = {"ledger_recorded": False, "settle_error": type(exc).__name__}
 
     lines = build_item_lines(
         included=final_items,
@@ -321,7 +322,7 @@ async def assemble_turn_context(
         decision_lines=lines, skipped_providers=skipped,
         planned_tokens=planned,
         actual_tokens=estimate_message_tokens(message),
-        pool_usage=allocation.pool_usage,
+        pool_usage={pool: sum(item.est_tokens for item in final_items if domain_pool(item.domain).name == pool) for pool in allocation.pool_usage},
         usable_tokens=allocation.usable_tokens,
         window_known=allocation.window_known,
         over_budget=allocation.over_budget,

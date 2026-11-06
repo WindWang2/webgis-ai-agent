@@ -101,6 +101,7 @@ describe('audit #842: opacity commit via rollback wrapper', () => {
     render(<LayerStylePanel />);
     const sliders = screen.getAllByRole('slider');
     const opacitySlider = sliders[sliders.length - 1];
+    fireEvent.change(opacitySlider, { target: { value: '0.4' } });
     fireEvent.pointerUp(opacitySlider);
     expect(opacityCommit).toHaveBeenCalled();
   });

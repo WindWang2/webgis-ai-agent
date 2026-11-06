@@ -218,6 +218,7 @@ async def notify_job_finished(
     result_ref: Optional[str] = None,
 ) -> bool:
     """``finish_job`` / 标记失败/取消终态后调用。kind 按终态映射。"""
+    org_id = org_id or await resolve_org(session_id)
     env = _job_envelope(
         job_id, org_id=org_id, session_id=session_id, project_id=project_id,
         status=status, job_type=job_type, result_ref=result_ref,
@@ -325,9 +326,9 @@ def _mapproduct_envelope(
         subject_type=SubjectType.PRODUCT.value,
         subject_key=f"product:{product_id or project_id}"[:128],
         payload={
+            **summary,
             "version_no": int(version_no or 0),
             "data_changed": bool(data_changed),
-            **summary,
         },
         project_id=project_id,
         priority=EventPriority.NORMAL.value,

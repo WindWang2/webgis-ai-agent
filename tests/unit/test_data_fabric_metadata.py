@@ -15,7 +15,7 @@ from app.services.data_fabric.metadata import (
 
 def test_crs_passthrough_epsg():
     assert normalize_crs("EPSG:4326") == "EPSG:4326"
-    assert normalize_crs("epsg:3857") == "epsg:3857"
+    assert normalize_crs("epsg:3857") == "EPSG:3857"
 
 
 def test_crs_ogc_uri_to_epsg():

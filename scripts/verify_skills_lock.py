@@ -36,13 +36,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skills-dir", default="app/skills")
     parser.add_argument("--lock", default="skills-lock.json")
+    parser.add_argument("--agent-skills-dir", default=".agents/skills")
     args = parser.parse_args()
 
     skills_dir = Path(args.skills_dir)
     lock_path = Path(args.lock)
     if not lock_path.is_file():
-        print(f"[skills-lock] no lock file at {lock_path} — nothing to verify")
-        return 0
+        print(f"[skills-lock] FAIL: missing lock file at {lock_path}")
+        return 1
 
     try:
         data = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -50,17 +51,41 @@ def main() -> int:
         print(f"[skills-lock] FAIL: unreadable lock: {exc}")
         return 1
 
+    if not isinstance(data, dict):
+        print("[skills-lock] FAIL: lock must be an object")
+        return 1
     runtime = data.get("runtime_skills")
-    if runtime is None:
-        print("[skills-lock] no runtime_skills section — integrity checks "
-              "not enabled (legacy mode)")
-        return 0
     if not isinstance(runtime, dict):
         print("[skills-lock] FAIL: runtime_skills is not a dict")
         return 1
 
     rc = 0
+    # Installer provenance hashes also need a consumer: verify instructions
+    # checked into this repository, in addition to executable runtime skills.
+    agent_dir = Path(args.agent_skills_dir)
+    if agent_dir.is_dir():
+        entries = data.get("skills", {})
+        repository_entries = data.get("repository_skills", {})
+        if not isinstance(entries, dict) or not isinstance(repository_entries, dict):
+            print("[skills-lock] FAIL: invalid agent skill ledger")
+            return 1
+        expected_agent = {
+            name: entry.get("computedHash") if isinstance(entry, dict) else None
+            for name, entry in entries.items()
+        }
+        expected_agent.update(repository_entries)
+        local = {path.parent.name: path for path in agent_dir.glob("*/SKILL.md")}
+        for name in sorted(set(local) | set(expected_agent)):
+            path = local.get(name)
+            if path is None or expected_agent.get(name) != _sha256(path):
+                print(f"[skills-lock] FAIL: agent skill {name} missing, unlisted or modified")
+                rc = 1
+
     for filename, expected in sorted(runtime.items()):
+        if not isinstance(expected, str) or Path(filename).name != filename:
+            print(f"[skills-lock] FAIL: invalid runtime entry {filename}")
+            rc = 1
+            continue
         path = skills_dir / filename
         if not path.is_file():
             print(f"[skills-lock] FAIL: registered {filename} missing on disk")

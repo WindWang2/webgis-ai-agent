@@ -97,15 +97,15 @@ _SEED_CATEGORIES: List[ComponentCategory] = [
     # ── analysis sub ───────────────────────────────────────────────
     ComponentCategory(id="analysis.statistics_panel", name="analysis.statistics_panel", name_zh="统计面板", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
     ComponentCategory(id="analysis.chart_panel", name="analysis.chart_panel", name_zh="图表面板", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
-    ComponentCategory(id="analysis.table_panel", name="analysis.table_panel", name_zh="表格面板", parent="analysis", placement_domain="panel", output_targets=["interactive"]),
+    ComponentCategory(id="analysis.table_panel", name="analysis.table_panel", name_zh="表格面板", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf", "svg"]),
     ComponentCategory(id="analysis.summary", name="analysis.summary", name_zh="摘要", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
     ComponentCategory(id="analysis.indicator", name="analysis.indicator", name_zh="指标卡", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
     # ── inset sub ──────────────────────────────────────────────────
     # ── disclosure sub（VNext §5/§9/§13：方法论诚实的产品面）─────────
     ComponentCategory(id="disclosure", name="disclosure", name_zh="披露", parent=None, placement_domain="panel", output_targets=["interactive"]),
-    ComponentCategory(id="disclosure.methodology_note", name="disclosure.methodology_note", name_zh="方法论披露", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
-    ComponentCategory(id="disclosure.uncertainty_panel", name="disclosure.uncertainty_panel", name_zh="不确定性面板", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
-    ComponentCategory(id="disclosure.decision_panel", name="disclosure.decision_panel", name_zh="决策面板", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
+    ComponentCategory(id="disclosure.methodology_note", name="disclosure.methodology_note", name_zh="方法论披露", parent="disclosure", placement_domain="panel", output_targets=["interactive", "png", "pdf", "svg"]),
+    ComponentCategory(id="disclosure.uncertainty_panel", name="disclosure.uncertainty_panel", name_zh="不确定性面板", parent="disclosure", placement_domain="panel", output_targets=["interactive", "png", "pdf", "svg"]),
+    ComponentCategory(id="disclosure.decision_panel", name="disclosure.decision_panel", name_zh="决策面板", parent="disclosure", placement_domain="panel", output_targets=["interactive", "png", "pdf", "svg"]),
     ComponentCategory(id="disclosure.design_candidates", name="disclosure.design_candidates", name_zh="设计方案候选", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
     # ── G3D05（ADR-0275）：三维制图产品组件类目 ──────────────────────
     ComponentCategory(id="disclosure.scene_disclosure", name="disclosure.scene_disclosure", name_zh="场景披露", parent="disclosure", placement_domain="panel", output_targets=["interactive", "png", "pdf", "svg"]),

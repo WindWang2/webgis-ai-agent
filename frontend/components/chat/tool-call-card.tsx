@@ -219,9 +219,8 @@ export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded:
   // Prefer the per-call binding (step_result geojson_ref); fall back to legacy
   // guessing only for stale history entries that predate the binding.
   const fallbackCartoId = layers.find((l) => l.legend_spec)?.id ?? '';
-  const fallbackActiveId = layers[0]?.id ?? '';
   const cartoLayerId = ownLayerId || fallbackCartoId;
-  const activeLayerId = ownLayerId || fallbackActiveId;
+  const activeLayerId = ownLayerId;
   const hasOwnLayer = !!ownLayerId;
 
   const statusIcon =

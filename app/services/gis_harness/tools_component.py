@@ -134,6 +134,8 @@ async def _component_lifecycle_action(
                 continue
             ref = bindings[ref_key]
             alive = await _ref_probe(session_id, ref)
+            if alive is None:
+                return {"success": False, "message": "无法验证重绑定引用，请稍后重试", "error": "ref_verification_unavailable"}
             if alive is False:
                 return {
                     "success": False,

@@ -1,4 +1,4 @@
-"""状态闭环（ADR-0282 D5/D6）—— stale 赋值 + science_validation + 产品门。
+"""状态闭环（ADR-0284 D5/D6）—— stale 赋值 + science_validation + 产品门。
 
 - stale：recompute 后指纹漂移的 satisfied 步骤显式落 state=stale（词表
   从此有赋值路径）；闭包未漂移步骤保持 satisfied（指纹零重算不变）；

@@ -69,7 +69,9 @@ def require_fixture_job(db: Session, job_id: str, session_id: str, user_id: str)
 
 def prepare_retry_fixture(session_id: str, user_id: str, *, timeout: float = 30) -> dict:
     require_fixture_owner(session_id, user_id)
-    directory = Path(settings.DATA_DIR).resolve() / "e2e-journeys" / "j2" / uuid.uuid4().hex
+    from app.services.scoped_raster_paths import scoped_raster_roots
+
+    directory = scoped_raster_roots(session_id=session_id)[0] / "e2e-journeys" / "j2" / uuid.uuid4().hex
     directory.mkdir(parents=True, exist_ok=False)
     raster_path = directory / "recovered-input.tif"
     with use_origin(JobOrigin(session_id=session_id, owner_id=user_id)):

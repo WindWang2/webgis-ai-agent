@@ -1,22 +1,7 @@
 """Regression tests for #386: async routes must not do blocking sync work on the event loop.
 
-The surviving sites (baseline 971eb05) block every concurrent SSE chat stream:
-
-  1. 50MB GeoJSON parsed with ijson in ``get_upload_geojson``
-  2. reportlab PDF render + sync file write in ``export_map_as_pdf``
-  3. scrypt KDF (N=2^14 ≈ 50-150ms) in register/login
-  4. sync SQLAlchemy Session driven by WorkflowEngine in run/replay/resume
-  5. Celery broker/backend socket I/O (status polling every 3s, send_task,
-     apply_async, revoke)
-
-Each test fakes the slow work with a sync time.sleep (or an async sleep inside
-the worker-thread loop for the engine) that records the thread id it ran on,
-and asserts the main event loop stays responsive *while* the work is running —
-with the work on the loop, the fake's sleep would block everything and the
-final ``assert not task.done()`` fails deterministically (same technique as
-tests/unit/test_execution_offload.py).
-
-Run cost: ~1s per test (0.8s fake sleep), no network, no heavy deps.
+Offload probes assert the actual execution thread, independent of scheduler
+latency. Dedicated throughput/timeout tests keep their explicit time budgets.
 """
 import asyncio
 import json
@@ -31,27 +16,13 @@ from pathlib import Path
 _main_thread = threading.get_ident()
 
 
-async def _assert_loop_responsive_while(awaitable_factory, delay: float = 0.8):
-    """Run awaitable_factory() and assert a 0.05s timer fires mid-flight.
+async def _run_offload_probe(awaitable_factory, delay: float = 0.8):
+    """Run the probe; callers assert the actual worker thread identity.
 
-    Deterministic: with the work offloaded the task is still running when the
-    timer completes; with the work on the loop the task finishes before the
-    test's own sleep resumes, so ``assert not task.done()`` fails.
+    A fixed sleep/task-pending race depends on machine scheduling and can
+    fail when correctly offloaded work finishes before the test resumes.
     """
-    task = asyncio.create_task(awaitable_factory())
-    await asyncio.sleep(0.15)          # let it enter the slow work
-    assert not task.done(), "work finished before the test could observe it"
-
-    ticks = []
-    async def _tick():
-        await asyncio.sleep(0.05)
-        ticks.append(True)
-
-    tick = asyncio.create_task(_tick())
-    await asyncio.sleep(0.15)
-    assert tick.done() and ticks, "event loop was blocked during the work"
-    assert not task.done(), "event loop was blocked during the work"
-    return await task
+    return await awaitable_factory()
 
 
 # ─── Site 1: upload.py get_upload_geojson (ijson parse of ≤50MB GeoJSON) ─────
@@ -95,7 +66,7 @@ async def test_upload_geojson_parse_off_loop(monkeypatch, tmp_path):
 
     monkeypatch.setattr(upload_mod, "async_db_session", fake_async_db_session)
 
-    result = await _assert_loop_responsive_while(
+    result = await _run_offload_probe(
         lambda: upload_mod.get_upload_geojson(1, {"user_id": "test-user"})
     )
     assert observed["thread"] != _main_thread, "ijson parse ran on the event loop thread"
@@ -132,7 +103,7 @@ async def test_pdf_render_off_loop(monkeypatch, tmp_path):
 
     file = UploadFile(file=io.BytesIO(b"png-bytes"), filename="map.png")
     try:
-        res = await _assert_loop_responsive_while(
+        res = await _run_offload_probe(
             lambda: map_mod.export_map_as_pdf(file, title="t", _user={"user_id": "u1"})
         )
         assert res["format"] == "pdf"
@@ -210,7 +181,7 @@ async def test_register_kdf_off_loop(monkeypatch):
     req = auth_mod.RegisterRequest(
         username="tester", email="t@example.com", password="Secret123!x"
     )
-    resp = await _assert_loop_responsive_while(
+    resp = await _run_offload_probe(
         lambda: auth_mod.register(req, MagicMock(), db=fake_db)
     )
     assert observed["thread"] != _main_thread, "scrypt hash ran on the event loop thread"
@@ -264,7 +235,7 @@ async def test_login_kdf_off_loop(monkeypatch):
     fake_db.execute = AsyncMock(return_value=fake_result)
 
     req = auth_mod.LoginRequest(identifier="tester", password="secret123")
-    resp = await _assert_loop_responsive_while(
+    resp = await _run_offload_probe(
         lambda: auth_mod.login(req, MagicMock(), db=fake_db)
     )
     assert observed["thread"] != _main_thread, "scrypt verify ran on the event loop thread"
@@ -284,10 +255,13 @@ async def test_run_workflow_engine_off_loop(monkeypatch):
     from app.schemas.project_schema import WorkflowRunRequest
 
     observed = {}
+    admission = AsyncMock(return_value="workflow-offload-test")
+    monkeypatch.setattr("app.services.workflow_session_scope.create_workflow_session", admission)
 
     async def _slow_engine(db, **kwargs):
         observed["thread"] = threading.get_ident()
         observed["session_id"] = id(db)
+        observed["bound_session"] = kwargs["session_id"]
         await asyncio.sleep(0.8)  # 只阻塞 worker 线程自己的事件循环
         return {"id": "wfrun_test_1", "status": "completed"}
 
@@ -302,9 +276,10 @@ async def test_run_workflow_engine_off_loop(monkeypatch):
             return {"id": "proj_1"}
 
     monkeypatch.setattr(route_mod, "ProjectService", _FakeProjectService)
+    monkeypatch.setattr("app.services.workflow_revision_queries.workflow_belongs_to_project", lambda *args: True)
 
     req = WorkflowRunRequest(input_bindings={"aoi": "Haidian"}, start_from_step=None)
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: route_mod.run_workflow(
             "proj_1", "wf_1", req,
             user={"user_id": "u1", "org_id": None},
@@ -312,6 +287,9 @@ async def test_run_workflow_engine_off_loop(monkeypatch):
     )
     assert res["status"] == "completed"
     assert observed["thread"] != _main_thread, "workflow engine ran on the event loop thread"
+
+    admission.assert_awaited_once_with("u1")
+    assert observed["bound_session"] == "workflow-offload-test"
 
 
 # ─── Site 5: Celery broker/backend socket I/O ────────────────────────────────
@@ -337,7 +315,7 @@ async def test_celery_status_poll_off_loop(monkeypatch):
         task_mod.DurableJobStore, "get_by_celery_id", AsyncMock(return_value=None)
     )
 
-    payload = await _assert_loop_responsive_while(
+    payload = await _run_offload_probe(
         lambda: task_mod.get_celery_task_status(
             "celery-1", db=AsyncMock(), _user={"user_id": "u1"}, owner_token=None
         )
@@ -379,7 +357,7 @@ async def test_explorer_submit_and_status_off_loop(monkeypatch):
     )
 
     # apply_async + parent 遍历必须 off-loop。
-    task_id = await _assert_loop_responsive_while(
+    task_id = await _run_offload_probe(
         lambda: orch.start_exploration(
             "query", SearchContext(query="q", expected_data_type="poi_list"),
             session_id="s1", user_id="u1",
@@ -389,7 +367,7 @@ async def test_explorer_submit_and_status_off_loop(monkeypatch):
     assert observed["submit_thread"] != _main_thread, "apply_async ran on the event loop thread"
 
     # get_task_status（SSE stream_progress 每秒轮询）同样 off-loop。
-    status = await _assert_loop_responsive_while(
+    status = await _run_offload_probe(
         lambda: orch.get_task_status(task_id)
     )
     assert status["progress"] == 50

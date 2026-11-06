@@ -45,12 +45,10 @@ def test_parse_uppercase_and_whitespace():
     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7",  # 缺 flags
     "0-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",  # version 短
     "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",  # version ff
-    "00-ffffffffffffffffffffffffffffffff-00f067aa0ba902b7-01",  # trace 全 f
     "00-00000000000000000000000000000000-00f067aa0ba902b7-01",  # trace 全 0
     "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",  # span 全 0
     "00-4bf92f3577b34da6a3ce929d0e0e473g-00f067aa0ba902b7-01",  # 非 hex
     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-zz",  # flags 非法
-    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-ff",  # flags ff 保留
 ])
 def test_parse_invalid_explicit_reject(bad):
     assert parse_traceparent(bad) is None
@@ -198,3 +196,13 @@ def test_real_app_has_trace_middleware_mounted():
     ]
     assert any("Trace" in name for name in middleware_types), \
         f"trace 中间件未挂载: {middleware_types}"
+
+
+@pytest.mark.parametrize("value", [
+    "00-ffffffffffffffffffffffffffffffff-00f067aa0ba902b7-01",
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-ff",
+])
+def test_w3c_accepts_nonzero_all_f_id_and_ignores_reserved_flag_bits(value):
+    parsed = parse_traceparent(value)
+    assert parsed is not None
+    assert parsed.traceparent() == value

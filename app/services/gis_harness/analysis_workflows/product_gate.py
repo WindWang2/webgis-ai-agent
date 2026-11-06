@@ -1,4 +1,4 @@
-"""产品最终门（ADR-0282 D6）—— partial ≠ final 的 ref 资格裁决。
+"""产品最终门（ADR-0284 D6）—— partial ≠ final 的 ref 资格裁决。
 
 语义：
 - 只有 ref **命中某工作流 envelope** 且该 run 非 satisfied（或科学终局门

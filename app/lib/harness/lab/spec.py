@@ -141,7 +141,7 @@ class FaultStep:
 
     def as_replay_fault(self) -> Dict[str, Any]:
         """投影为 replay.faults 的平面 dict（场景变换故障共用词表）。"""
-        return {"type": self.type, "target_turn": self.target_turn}
+        return {"type": self.type, "target_turn": self.target_turn, "target_call": self.target_call, "params": dict(self.params)}
 
 
 @dataclass

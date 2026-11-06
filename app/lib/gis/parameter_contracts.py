@@ -144,8 +144,12 @@ class ParameterValidationResult(BaseModel):
 def _check_type(spec: ParameterSpec, value: Any) -> Tuple[Optional[Any], Optional[str]]:
     """类型检查/安全收敛；返回 (value, issue)。"""
     if spec.type == "number":
+        import math
+
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None, f"{spec.name}: expected number, got {type(value).__name__}"
+        if not math.isfinite(value):
+            return None, f"{spec.name}: expected finite number"
         return float(value), None
     if spec.type == "integer":
         if isinstance(value, bool) or not isinstance(value, int):
@@ -180,7 +184,7 @@ def validate_parameters(
     by_name = {p.name: p for p in contract.parameters}
 
     for name, spec in by_name.items():
-        if name not in normalized:
+        if name not in normalized or (normalized[name] is None and not spec.required):
             if spec.default is not None:
                 normalized[name] = spec.default
                 result.applied_defaults.append(name)

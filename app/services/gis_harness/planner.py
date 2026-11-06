@@ -18,6 +18,7 @@ MapModelRegistry、模板选择归 TemplateSelector —— 本文件不再持有
 知识的硬编码表。plan_id 由 (query, recipe_id) 决定性派生。
 """
 from __future__ import annotations
+from app.services.gis_harness.planner_text_signals import _interpolation_query_signals, _uncertainty_demand
 
 import hashlib
 import json
@@ -199,8 +200,9 @@ def _record_chain_exhausted_failure(recipe: Any) -> None:
         from app.services.cartography.intent_learning import (
             _get_session_local, record_recipe_outcome,
         )
-        with _get_session_local() as db:
+        with _get_session_local()() as db:
             record_recipe_outcome(db, recipe_id=recipe.id, success=False)
+            db.commit()
 
 def capability_tool_map() -> Dict[str, List[str]]:
     """capability → 有序工具候选。
@@ -234,25 +236,8 @@ def resolve_tool_for_capability(
 # raster_distribution 查询如「查看 DEM」不会过度计划插值），(b) 向
 # resolver 传 algorithm_hint —— 用户点名克里金时算法不被静默换成默认
 # IDW（hint 只在算法通过全部硬门后生效）。
-_INTERPOLATION_QUERY_RE = None  # lazily compiled below
 
 
-def _interpolation_query_signals(query: str) -> tuple[bool, str]:
-    """Return (plan_interpolation_capability, algorithm_hint) for a query."""
-    import re as _re
-
-    global _INTERPOLATION_QUERY_RE
-    if _INTERPOLATION_QUERY_RE is None:
-        _INTERPOLATION_QUERY_RE = _re.compile(
-            r"(克里金|kriging|插值|interpolat)", _re.I
-        )
-    q = query or ""
-    if not _INTERPOLATION_QUERY_RE.search(q):
-        return (False, "")
-    hint = "interpolation.kriging" if _re.search(
-        r"(克里金|kriging)", q, _re.I
-    ) else ""
-    return (True, hint)
 
 
 # 模块级兼容名（DEPRECATED：新代码用 capability_tool_map()）。
@@ -280,19 +265,8 @@ def __getattr__(name: str):
 #   b) 产出可选 capability 追加（regression_kriging / model_selection）
 #      —— 仅当 spatial_interpolation 已被计划（文本门不放大）且事实支持。
 # 证据缺席（profile None / 事实键不在）→ 空投影 = 旧行为逐位保留。
-_UNCERTAINTY_QUERY_RE = None  # lazily compiled below
 
 
-def _uncertainty_demand(query: str) -> bool:
-    """查询文本是否携带不确定性需求（方差/误差/置信…；纯词面、确定性）。"""
-    import re as _re
-
-    global _UNCERTAINTY_QUERY_RE
-    if _UNCERTAINTY_QUERY_RE is None:
-        _UNCERTAINTY_QUERY_RE = _re.compile(
-            r"(不确定|方差|误差|置信|uncertaint|variance|confidence|error)", _re.I
-        )
-    return bool(_UNCERTAINTY_QUERY_RE.search(query or ""))
 
 
 # ── V4（ADR-0151 #P5）：事实优先信号通用化 ────────────────────────────
@@ -1209,6 +1183,24 @@ class MapProductPlanner:
                         "overlay_from": overlay.id,
                     })
                     existing_codes.add(code)
+
+        # A terrain plan without a profile cannot yet prove metric coordinates.
+        # Carry that scientific precondition even when the winning recipe itself
+        # is not part of the keyword overlay.
+        chosen_recipe = self.recipes.get(plan.recipe_id)
+        if chosen_recipe is not None and chosen_recipe.workflow is not None:
+            disclosed = {w.get("code") for w in plan.methodology_warnings}
+            for obligation in chosen_recipe.workflow.obligations:
+                if obligation.precondition_id != "local_metric_crs_required":
+                    continue
+                code = obligation.warning_code
+                if code and code not in disclosed:
+                    plan.methodology_warnings.append({
+                        "pattern": "workflow_precondition", "code": code,
+                        "warning_codes": [code], "stage": "planning",
+                        "disclosures": [obligation.description],
+                    })
+                    disclosed.add(code)
 
         if memo_key is not None:
             # 存入即深拷贝：调用方持有返回对象并可变（plan1.data_requirements=[]

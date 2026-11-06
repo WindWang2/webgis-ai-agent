@@ -64,7 +64,7 @@ class RoleConfidence(str, Enum):
 
 _NAME_RULES: Dict[SemanticFieldRole, "re.Pattern"] = {
     SemanticFieldRole.ADMIN_DIMENSION: re.compile(
-        r"(省|市|区|县|旗|镇|乡|街道|村|adcode|admin|district|province|city|county|town)", re.I
+        r"^(省|市|区|县|旗|镇|乡|街道|村)(名|名称|代码)?$|(?:^|_)(adcode|admin|district|province|city|county|town)(?:$|_)", re.I
     ),
     SemanticFieldRole.TEMPORAL_DIMENSION: re.compile(
         r"(日期|时间|年份|月份|date|time|year|month|day|dt$)", re.I
@@ -205,7 +205,9 @@ def _dtype_allows(dtype: str, role: SemanticFieldRole) -> bool:
     if role in numeric_roles:
         return dtype in ("number", "integer", "float", "int", "double",
                          "float64", "float32", "int64", "int32", "int16", "int8")
-    if role in (SemanticFieldRole.ADMIN_DIMENSION, SemanticFieldRole.CATEGORY,
+    if role == SemanticFieldRole.ADMIN_DIMENSION:
+        return dtype in ("string", "integer", "int", "unknown", "")
+    if role in (SemanticFieldRole.CATEGORY,
                 SemanticFieldRole.LABEL, SemanticFieldRole.FEATURE_ID,
                 SemanticFieldRole.TEMPORAL_DIMENSION):
         return dtype in ("string", "boolean", "integer", "int", "number", "unknown", "")
@@ -266,7 +268,7 @@ def derive_semantic_profile(
                     evidence_notes.extend(s.value for s in sources)
                     _promote(RoleConfidence.METADATA_DERIVED)
         # 2) 值样本印证（rule 级 —— 需 dtype 协同，不只凭名字）。
-        if vals:
+        if vals and best_conf != RoleConfidence.USER_DECLARED:
             distinct_ratio = len(set(map(str, vals))) / max(1, len(vals))
             # category：字符串 + 低基数（样本印证）。
             if (
@@ -304,7 +306,7 @@ def derive_semantic_profile(
         #    角色，跟随其来源字段的证据等级）。
         if any(r in roles for r in (
             SemanticFieldRole.POPULATION_MEASURE, SemanticFieldRole.AREA_MEASURE,
-        )) and SemanticFieldRole.NORMALIZATION_DENOMINATOR not in roles:
+        )) and SemanticFieldRole.NORMALIZATION_DENOMINATOR not in roles and not re.search(r"密度|率|占比|比例|(?:^|_)per(?:$|_)|density", field, re.I):
             roles.append(SemanticFieldRole.NORMALIZATION_DENOMINATOR)
 
         if not roles or best_conf is RoleConfidence.UNKNOWN:

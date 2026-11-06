@@ -60,6 +60,14 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "component_skipped_invalid", "warning",
             "组件配置无效，已跳过渲染",
         ),
+        RenderDiagnosticSpec(
+            "label_expression_unsupported", "warning",
+            "标注表达式暂不支持，已跳过该文本，避免输出错误标注",
+        ),
+        RenderDiagnosticSpec(
+            "layer_coordinates_invalid", "warning",
+            "图层包含超出经纬度合法范围的坐标，已跳过无效几何",
+        ),
         # —— label engine V5（长文本不再静默溢出）——
         # review-r1：移除 label_suppressed_too_long —— 词表内唯一无发射器的
         # 死码（孪生编译器只截断不省略，fit_label_text 无"放不下"路径；
@@ -118,6 +126,10 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
         RenderDiagnosticSpec(
             "comparison_export_composed", "info",
             "对比模式导出为显式左右组合（分界位于 {detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "layer_filter_unsupported", "warning",
+            "图层过滤表达式不受矢量导出支持，已跳过该图层（{detail}）",
         ),
         # —— 多画幅运行时诚实降级 ——
         RenderDiagnosticSpec(
@@ -346,6 +358,8 @@ def catalog_section() -> List[Dict[str, str]]:
 #: 新增诊断码必须同时登记 ≥1 个真实发射点，否则契约测试红灯
 #: （ADR-0118 D1 死码禁止的自动化收口，取代仅注释级约束）。
 EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
+    "label_expression_unsupported": ("app.services.mapspec_to_svg",),
+    "layer_coordinates_invalid": ("app.services.mapspec_to_svg",),
     "chart_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
     "table_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
     "chart_kind_unsupported_export": ("frontend/lib/map-kit/export-chrome.ts",),
@@ -509,6 +523,10 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
     # H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（双端孪生发射）
+    "layer_filter_unsupported": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
     "layer_ref_unavailable": (
         "app.services.mapspec_to_svg",
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",

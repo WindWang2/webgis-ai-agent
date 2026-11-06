@@ -242,6 +242,10 @@ def _eval_row_requirement(
     """
     out = ReqVerdict(requirement_id=requirement.id, kind=requirement.kind)
 
+    if requirement.id == "requirements:truncated":
+        out.missing.append("requirements_truncated")
+        return out
+
     def _backing(ev_id: str) -> bool:
         return any(
             e.id == ev_id and e.status == EvidenceStatus.PRESENT

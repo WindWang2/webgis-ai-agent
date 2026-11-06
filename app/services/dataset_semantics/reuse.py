@@ -88,7 +88,7 @@ def evaluate_reuse(
         decision = _from_record(current)
         decision.recorded_fingerprint = str(recorded_fingerprint or "")[:96]
         return decision
-    current_fp = current.descriptor.descriptor_fingerprint if current else ""
+    current_fp = current.descriptor.descriptor_fingerprint if current and current.descriptor else ""
     recorded = str(recorded_fingerprint or "")
     if not current_fp:
         return ReuseDecision(verdict=VERDICT_UNKNOWN, reason_codes=[CODE_MISSING],

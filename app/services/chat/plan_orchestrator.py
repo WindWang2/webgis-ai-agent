@@ -509,7 +509,9 @@ class AgentPlanOrchestrator:
             await plan_store.supersede(session_id, canon)
         else:
             await plan_store.save(canon)
-        self.set_plan(session_id, plan)
+        self._plans[session_id] = plan
+        self._canonical[session_id] = canon
+        plan_store.cache_put(canon)
 
     def _minimal_chat_gate(
         self, message: str, followup_kind: Optional[FollowUpKind]
@@ -955,9 +957,7 @@ class AgentPlanOrchestrator:
                 # 工具的声明 domains 与 plan.domains 有交集（额外安全网）。
                 # core 步骤**永远不走**裸 domain 重叠分支——否则一个谎称
                 # core domain 的展示工具仍能误打勾。
-                if (registered and norm not in PRESENTATION_TOOLS) or (
-                    tool_domains & plan_domains
-                ):
+                if norm not in PRESENTATION_TOOLS and (registered or tool_domains & plan_domains):
                     step.done = True
                     if canon is not None and idx < len(canon.steps):
                         canon.steps[idx].status = StepStatus.completed

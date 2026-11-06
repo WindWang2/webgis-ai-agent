@@ -212,12 +212,16 @@ def diff_against_baseline(
     cur_entries = {
         e["case_id"]: e for e in (current.get("entries") or [])
     }
-    new_failures, fixed, metric_moved = [], [], []
+    new_failures, fixed, metric_moved, newly_skipped = [], [], [], []
     for cid, cur in cur_entries.items():
         base = base_entries.get(cid)
         if base is None:
             continue
-        if base.get("passed") and not cur.get("passed"):
+        cur_status = cur.get("status") or ("pass" if cur.get("passed") else "fail")
+        base_status = base.get("status") or ("pass" if base.get("passed") else "fail")
+        if cur_status == "skipped" and base_status != "skipped":
+            newly_skipped.append({"case_id": cid, "group": cur.get("group")})
+        elif cur_status == "fail" and base_status != "fail":
             new_failures.append({
                 "case_id": cid, "group": cur.get("group"),
                 "failures": (cur.get("failures") or [])[:6],
@@ -241,6 +245,7 @@ def diff_against_baseline(
         "baseline_cases": len(base_entries),
         "current_cases": len(cur_entries),
         "new_failures": new_failures,
+        "newly_skipped": newly_skipped,
         "fixed": fixed,
         "metric_moved": metric_moved,
         "new_cases": new_cases,

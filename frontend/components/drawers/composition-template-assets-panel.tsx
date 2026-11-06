@@ -78,14 +78,14 @@ export function CompositionTemplateAssetsPanel({
   const mine = useMemo(() => assets.filter((a) => !a.builtin), [assets]);
 
   const handleSave = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId || (visibility === 'project' && !projectId.trim())) return;
     setSaving(true);
     setNotice(null);
     try {
       const res = await compositionTemplateAssetsApi.create({
         session_id: sessionId,
         visibility,
-        project_id: visibility === 'project' ? projectId : undefined,
+        project_id: visibility === 'project' ? projectId.trim() : undefined,
       });
       if (res.validation && res.validation.length > 0) {
         setNotice({ tone: 'error', text: t('notice.publishGateFailed') });
@@ -226,7 +226,7 @@ export function CompositionTemplateAssetsPanel({
         <button
           type="button"
           onClick={() => void handleSave()}
-          disabled={!sessionId || saving}
+          disabled={!sessionId || saving || (visibility === 'project' && !projectId.trim())}
           data-testid="save-my-template"
           className="inline-flex items-center gap-1 rounded bg-[var(--theme-accent)] px-2 py-1 text-xs text-white disabled:opacity-40"
         >

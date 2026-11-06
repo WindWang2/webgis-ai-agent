@@ -683,6 +683,7 @@ def compile_prompt(
     artifact: GeoPromptArtifact,
     *,
     transform: Any,
+    raster_crs: Optional[str] = None,
     raster_height: int,
     raster_width: int,
     mask_loader: Optional[MaskLoader] = None,
@@ -707,6 +708,10 @@ def compile_prompt(
     worst_err = 0.0
     space = "pixel"
     if artifact.crs is not None:
+        from pyproj import CRS
+
+        if raster_crs is None or CRS.from_user_input(artifact.crs) != CRS.from_user_input(raster_crs):
+            raise PlanningError("prompt CRS must match the declared raster CRS; reproject the prompt before compilation")
         if transform is None:
             raise PlanningError(
                 "map-CRS prompt artifact requires a georeferenced raster "

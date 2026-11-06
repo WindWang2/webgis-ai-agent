@@ -66,9 +66,26 @@ def test_ws_required_fields_match_handler_guards(snapshot):
     inbound = snapshot["websocket"]["inbound_events"]
     assert inbound["layer_opacity_changed"]["required_fields"] == \
         ["layer_id", "opacity"]
-    assert inbound["layer_toggled"]["required_fields"] == ["layer_id"]
+    assert inbound["layer_toggled"]["required_fields"] == ["layer_id", "visible"]
     assert inbound["viewport_change"]["required_fields"] == []
     assert "state_snapshot" in inbound
+
+
+@pytest.mark.asyncio
+async def test_layer_toggled_requires_typed_visibility_before_writing(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services import ws_service
+
+    update = AsyncMock()
+    monkeypatch.setattr(ws_service.session_data_manager, "update_layer_in_state", update)
+    monkeypatch.setattr(ws_service.session_data_manager, "append_event", AsyncMock())
+    monkeypatch.setattr(ws_service, "_ws_legacy_provenance", AsyncMock())
+    for data in ({"layer_id": "l1"}, {"layer_id": "l1", "visible": "false"}, {"visible": True}):
+        await ws_service.handle_layer_toggled("realtime-contract", data)
+    update.assert_not_awaited()
+    await ws_service.handle_layer_toggled("realtime-contract", {"layer_id": "l1", "visible": False})
+    update.assert_awaited_once_with("realtime-contract", "l1", {"visible": False})
+    assert update.await_count == 1
 
 
 def test_sse_vocabulary_contains_core_events(snapshot):

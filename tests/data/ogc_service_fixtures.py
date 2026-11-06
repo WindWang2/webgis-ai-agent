@@ -164,6 +164,7 @@ def coverage_values(
 def coverage_domainset_doc() -> Dict[str, Any]:
     return {
         "type": "DomainSet",
+        "srsName": "OGC:CRS84",
         "gridType": "regular",
         "axes": {
             "x": {"values": list(COVERAGE_AXIS_X_VALUES)},

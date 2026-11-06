@@ -10,7 +10,7 @@
 #
 # ⚠️ 部署前必须创建 .env.Priv 文件（见 .env.Priv.example 模板）。
 #
-# #472 部署契约（deploy-prod 只 scp 本文件 + deploy/redis*.conf + 镜像 tar +
+# #472 部署契约（deploy-prod 传输本文件、deploy 配置/辅助脚本、镜像 tar 和
 # .env.Priv 到主机，主机上没有源码/构建上下文）：
 # - api / celery-worker 的镜像经 ${WEBGIS_IMAGE:-webgis-ai-agent:local} 引用：
 #   CI 侧 deploy/ci-generate-env-priv.sh 把 WEBGIS_IMAGE=ghcr.io/<repo>:<sha>
@@ -18,14 +18,19 @@
 #   本地检出则保留 build: 回退（打为 webgis-ai-agent:local）。
 # - nginx 的配置用内联 configs 分发（见文件尾 configs:），不依赖任何
 #   未随部署分发的 bind-mount 路径。TLS：服务启动时自动生成一份
-#   per-deploy 自签名 scaffold（私钥不出容器、不入库，audit ISSUE-064）。
+#   私有命名卷内自签名 scaffold（私钥不出部署栈、不入库，audit ISSUE-064）。
 #   真实证书：override 文件把 deploy/nginx/ssl/server.crt + server.key
-#   bind-mount 到 /etc/nginx/ssl/，nginx 服务检测到两者齐备即跳过生成，
+#   只读 bind-mount 到 nginx 的 /etc/nginx/ssl/；tls-init 不接触外部证书，
 #   `docker compose -f docker-compose.prod.secure.yml -f <override> up -d`。
 # ============================================================
 
 services:
   db:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: postgis/postgis:15-3.4@sha256:3f4a5d48e0be9580ed70ed618cd039ce57bbb2dd113053d3836e28513f1f87cd
     container_name: webgis-prod-db
     restart: unless-stopped
@@ -57,8 +62,23 @@ services:
           cpus: "1.0"
 
   redis:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: redis:7-alpine@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
     container_name: webgis-prod-redis
+    read_only: true
+    cap_drop:
+      - ALL
+    # Stock entrypoint chowns the data volume, then drops to the redis uid.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     # Load config from a mounted file rather than CLI args. On GitHub Actions
     # runners, docker compose's list-form `command:` was serialized into a
@@ -102,6 +122,11 @@ services:
           cpus: "0.25"
 
   api:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # #472: 镜像优先、build 兜底。deploy-prod 主机上没有构建上下文 —— 仅
     # build: 会让 `up` 构建失败（或静默复用过期本地镜像，CI 加载的 tar 从未被
     # 引用）。WEBGIS_IMAGE 由 deploy/ci-generate-env-priv.sh 在 CI 写入
@@ -111,6 +136,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_CARTO_BASEMAP_KEY: ${NEXT_PUBLIC_CARTO_BASEMAP_KEY:-}
     container_name: webgis-prod-api
     # security F-17：与 k8s securityContext 对齐的容器加固（丢弃全部
     # capability、禁止 setuid 提权）。
@@ -176,11 +203,18 @@ services:
           cpus: "0.5"
 
   celery-worker:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # #472: 与 api 相同的镜像引用契约（见 api 服务的注释）。
     image: ${WEBGIS_IMAGE:-webgis-ai-agent:local}
     build:
       context: .
       dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_CARTO_BASEMAP_KEY: ${NEXT_PUBLIC_CARTO_BASEMAP_KEY:-}
     container_name: webgis-prod-celery
     # security F-17：与 k8s securityContext 对齐的容器加固（丢弃全部
     # capability、禁止 setuid 提权）。
@@ -238,8 +272,42 @@ services:
       retries: 3
       start_period: 30s
 
+  # 一次性 TLS 初始化：复用应用镜像内已锁定的 cryptography，不依赖 nginx
+  # 镜像中不存在的 openssl，也不在容器启动时联网安装软件。
+  tls-init:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    image: ${WEBGIS_IMAGE:-webgis-ai-agent:local}
+    entrypoint: ["python3", "/run/generate-tls-scaffold.py"]
+    command: []
+    restart: "no"
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+    # 脚本随 compose 分发，而非依赖新镜像层；registry 回滚旧应用镜像时
+    # 仍能使用与当前 compose 匹配的初始化脚本。
+    configs:
+      - source: webgis_tls_generator
+        target: /run/generate-tls-scaffold.py
+    volumes:
+      # /app/data 在应用镜像中预建且属 appuser；空卷继承该属主，初始化
+      # 仍以镜像默认非 root 用户执行，不额外暴露任何应用/数据库数据。
+      - nginx_tls_secure:/app/data
+
   # Nginx 反向代理（HTTPS 终止）
   nginx:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     container_name: webgis-prod-nginx
     restart: unless-stopped
@@ -248,32 +316,34 @@ services:
       - "443:443"
     volumes:
       - nginx_logs_secure:/var/log/nginx
+      - type: volume
+        source: nginx_tls_secure
+        target: /etc/nginx/ssl
+        read_only: true
+        volume:
+          # Only tls-init copies its appuser-owned /app/data into an empty
+          # volume. Nginx must not seed it from its root-owned image path.
+          nocopy: true
     # #472: nginx 配置随本文件内联分发（见文件尾 configs:）。之前
     # bind-mount ./deploy/nginx/nginx.conf 与 ./deploy/nginx/ssl —— 两者都不在
     # deploy-prod 的 scp 清单里（ssl 甚至未被 git 追踪），Docker 会把缺失的
     # 挂载源创建为空目录，nginx 启动即死（"nginx.conf failed: Is a directory"）。
     # 内容与 deploy/nginx/nginx.conf 逐字节一致，由
     # tests/test_nginx_security.py 的 parity 测试强制防漂移。
-    # ISSUE-064：TLS scaffold 不再内联分发——启动期 command 生成（见下）。
+    # ISSUE-064：TLS scaffold 不内联分发；由 tls-init 在私有命名卷内生成。
     configs:
       - source: webgis_nginx_conf
         target: /etc/nginx/nginx.conf
     # audit ISSUE-064（#1349）：此前 scaffold TLS 私钥明文提交进版本库
     # ——私钥公开，以 scaffold 上线且忽略浏览器告警时可被 MITM。现改为
-    # 启动期生成：/etc/nginx/ssl/server.key 缺席时用容器内 openssl 现签
-    # 一份 per-deploy scaffold（私钥不出该容器）；运维以 override 挂载真实
-    # 证书（server.crt + server.key 同时存在即跳过生成）。
-    command: >
-      sh -c "if [ ! -s /etc/nginx/ssl/server.key ] || [ ! -s /etc/nginx/ssl/server.crt ]; then
-        mkdir -p /etc/nginx/ssl &&
-        openssl req -x509 -newkey rsa:2048 -nodes -days 730
-          -subj '/CN=webgis-deploy-scaffold'
-          -keyout /etc/nginx/ssl/server.key -out /etc/nginx/ssl/server.crt ||
-          { echo 'ERROR: scaffold TLS generation failed' >&2; exit 1; };
-      fi;
-      exec nginx -g 'daemon off;'"
+    # 初始化服务生成默认 scaffold；运维仍可用 override 为 nginx 只读挂载
+    # 真实 server.crt/server.key。初始化服务不接触这些外部证书。
+    command: ["nginx", "-g", "daemon off;"]
     depends_on:
-      - api
+      api:
+        condition: service_started
+      tls-init:
+        condition: service_completed_successfully
     networks:
       - webgis-internal
     deploy:
@@ -287,6 +357,11 @@ services:
 
   # Prometheus 监控（如需要）
   prometheus:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: prom/prometheus:v2.51.0@sha256:5ccad477d0057e62a7cd1981ffcc43785ac10c5a35522dc207466ff7e7ec845f
     container_name: webgis-prod-prometheus
     restart: unless-stopped
@@ -319,6 +394,11 @@ services:
   # PostgreSQL exporter（#473：pg_up 的数据源 —— Database_Connection_Failure
   # 告警之前引用 pg_up 但没有任何 exporter 被抓取，是永不触发的装饰性监控）
   postgres-exporter:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: docker.io/prometheuscommunity/postgres-exporter:v0.15.0@sha256:386b12d19eab2a37d7cd8ca8b4c7491cc7a830d9581f49af6c98a393da9605e6
     container_name: webgis-prod-postgres-exporter
     restart: unless-stopped
@@ -342,6 +422,11 @@ services:
   # Redis_Memory_High 与 Celery_Task_Backlog 告警）。check-keys=celery 导出
   # celery 默认队列（Redis list key "celery"）长度为 redis_key_size。
   redis-exporter:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: docker.io/oliver006/redis_exporter:v1.58.0@sha256:2e42c98f2c53aaf3ce205e746ff8bfa25d39e30d8b4f401ce0ad2740836bb817
     container_name: webgis-prod-redis-exporter
     restart: unless-stopped
@@ -377,6 +462,11 @@ services:
   # Node exporter（#473：node_filesystem_* 的数据源 —— Disk_Space_Low 告警）。
   # 只读挂载宿主 /proc /sys /，监控容器所在宿主机（Linux）的根文件系统。
   node-exporter:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: docker.io/prom/node-exporter:v1.7.0@sha256:4cb2b9019f1757be8482419002cb7afe028fdba35d47958829e4cfeaf6246d80
     container_name: webgis-prod-node-exporter
     restart: unless-stopped
@@ -409,6 +499,11 @@ services:
   # 随 scp 送达 —— bind 源传输契约见 tests/test_ci_prometheus_transport.py）。
   # 9093 仅绑宿主机 loopback：运维经 UI/API 验证投递，不对网络暴露。
   alertmanager:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: quay.io/prometheus/alertmanager:v0.28.0@sha256:d5155cfac40a6d9250ffc97c19db2c5e190c7bc57c6b67125c94903358f8c7d8
     container_name: webgis-prod-alertmanager
     restart: unless-stopped
@@ -435,6 +530,7 @@ volumes:
   pg_data_secure:
   redis_data_secure:
   nginx_logs_secure:
+  nginx_tls_secure:
   prometheus_data_secure:
   # #1687：alertmanager 的通知状态（silence / 去重 / nflog）持久化 ——
   # 无状态卷时每次部署重启都丢掉进行中的告警分组与静默规则。
@@ -457,6 +553,8 @@ networks:
 # 渲染时会把单 $ 视作插值变量并置空；parity 测试按 $$→$ 还原后比对。
 # ============================================================================
 configs:
+  webgis_tls_generator:
+    file: ./deploy/generate_tls_scaffold.py
   webgis_nginx_conf:
     # 与 deploy/nginx/nginx.conf 逐字节一致（$$ 按 compose 转义规则双写）；
     # parity 由 tests/test_nginx_security.py 强制（deploy-config CI 门的
@@ -522,13 +620,20 @@ configs:
                                  '$$status $$body_bytes_sent "$$http_referer" '
                                  '"$$http_user_agent" "$$http_x_forwarded_for"';
 
-          access_log /var/log/nginx/access.log main;
+          access_log /var/log/nginx/access.log ws_no_query;
 
           # 性能优化
           sendfile on;
           tcp_nopush on;
           tcp_nodelay on;
           keepalive_timeout 65;
+          client_header_timeout 15s;
+          client_body_timeout 30s;
+          send_timeout 30s;
+          limit_conn_zone $$binary_remote_addr zone=per_client:10m;
+          limit_req_zone $$binary_remote_addr zone=edge_requests:10m rate=60r/s;
+          limit_conn_status 429;
+          limit_req_status 429;
           types_hash_max_size 2048;
 
           # Gzip 压缩
@@ -561,6 +666,8 @@ configs:
           # ======== HTTPS 服务器 ========
           server {
               listen 443 ssl http2;
+              limit_conn per_client 100;
+              limit_req zone=edge_requests burst=240 nodelay;
               server_name _;
 
               # SSL 证书配置（使用自签名证书示例）

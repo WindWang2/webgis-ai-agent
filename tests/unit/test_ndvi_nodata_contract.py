@@ -65,7 +65,7 @@ def test_calculate_ndvi_stats_and_bytes_match_nan_truth(tmp_path, allow_tmp_path
 
     res = NatureResourceAnalyzer.calculate_ndvi(
         tif, red_band=1, nir_band=2, output_dir=str(tmp_path / "out"),
-    )
+     session_id="numerical-fixture")
     assert res["success"] is True, res.get("error")
 
     # Numeric truth over the 128 valid pixels: NDVI = (800-200)/(800+200) = 0.6.
@@ -89,7 +89,7 @@ def test_calculate_ndvi_zero_fill_no_longer_counts_as_valid(tmp_path, allow_tmp_
 
     res = NatureResourceAnalyzer.calculate_ndvi(
         tif, red_band=1, nir_band=2, output_dir=str(tmp_path / "out"),
-    )
+     session_id="numerical-fixture")
     assert res["success"] is True, res.get("error")
     assert res["stats"]["mean"] == pytest.approx(0.6, abs=1e-9)
 
@@ -112,7 +112,7 @@ def test_calculate_ndvi_rejects_positional_guess_by_default(
     """4 波段影像缺省只能靠 RGBN 位置猜测 —— strict 默认类型化拒绝。"""
     tif = _write_rgbn(str(tmp_path / "rgbn.tif"))
     res = NatureResourceAnalyzer.calculate_ndvi(
-        tif, output_dir=str(tmp_path / "out"))
+        tif, output_dir=str(tmp_path / "out"), session_id="numerical-fixture")
     assert res["success"] is False
     assert res["error_type"] == "band_semantics_guess_rejected"
     assert set(res["guessed_roles"]) == {"red", "nir"}
@@ -124,7 +124,7 @@ def test_calculate_ndvi_non_strict_discloses_guess(tmp_path, allow_tmp_paths):
     强制披露。"""
     tif = _write_rgbn(str(tmp_path / "rgbn2.tif"))
     res = NatureResourceAnalyzer.calculate_ndvi(
-        tif, output_dir=str(tmp_path / "out"), strict_band_semantics=False)
+        tif, output_dir=str(tmp_path / "out"), strict_band_semantics=False, session_id="numerical-fixture")
     assert res["success"] is True, res.get("error")
     assert res["band_semantics_warnings"]
     assert res["quality_evidence"]["warnings"] == res["band_semantics_warnings"]
@@ -134,6 +134,13 @@ def test_calculate_ndvi_explicit_bands_pass_strict(tmp_path, allow_tmp_paths):
     """显式传参（既有调用方契约）不受 strict 影响。"""
     tif = _write_rgbn(str(tmp_path / "rgbn3.tif"))
     res = NatureResourceAnalyzer.calculate_ndvi(
-        tif, red_band=1, nir_band=4, output_dir=str(tmp_path / "out"))
+        tif, red_band=1, nir_band=4, output_dir=str(tmp_path / "out"), session_id="numerical-fixture")
     assert res["success"] is True, res.get("error")
     assert "band_semantics_warnings" not in res
+
+
+@pytest.fixture(autouse=True)
+def _numerical_owner_roots(monkeypatch, tmp_path):
+    from pathlib import Path
+    monkeypatch.setattr("app.services.scoped_raster_paths.scoped_raster_roots",
+                        lambda **scope: [tmp_path, Path("data/tmp_v3_tests").resolve()])

@@ -103,10 +103,13 @@ async def _run(
         "runs": [r.model_dump(mode="json") for r in runs],
         "coverage": coverage_matrix(scenarios, runs),
     }
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=1, sort_keys=True),
-        encoding="utf-8")
+    def write_report() -> None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=1, sort_keys=True),
+            encoding="utf-8")
+
+    await asyncio.to_thread(write_report)
     print(render_text_report(runs))
     print(f"\nreport written: {out_path}")
     ok = all(r.ok for r in runs)

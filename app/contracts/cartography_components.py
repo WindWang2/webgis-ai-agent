@@ -249,7 +249,7 @@ def _valid_bbox4(raw: Any) -> bool:
         w, s, e, n = (float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
     except (TypeError, ValueError):
         return False
-    return -180 <= w <= 180 and -180 <= e <= 180 and -90 <= s <= 90 and -90 <= n <= 90 and w <= e and s <= n
+    return -180 <= w <= 180 and -180 <= e <= 180 and -90 <= s <= 90 and -90 <= n <= 90 and s <= n
 
 def validate_inset_payload(options: Any) -> "str | None":
     """校验 inset_map options（bbox / 边界折线 / 指示范围）。"""
@@ -259,10 +259,10 @@ def validate_inset_payload(options: Any) -> "str | None":
     if bbox is None:
         return "inset_map 需要 options.bbox=[w, s, e, n]（插图范围）"
     if not _valid_bbox4(bbox):
-        return "inset_map.bbox 必须是有序 [w, s, e, n]（经纬度合法范围）"
+        return "inset_map.bbox 必须是合法 [w, s, e, n]（西经大于东经表示跨日期线）"
     main_bbox = options.get("mainBbox")
     if main_bbox is not None and not _valid_bbox4(main_bbox):
-        return "inset_map.mainBbox 必须是有序 [w, s, e, n]（主图范围指示）"
+        return "inset_map.mainBbox 必须是合法 [w, s, e, n]（主图范围指示）"
     boundary = options.get("boundary")
     if boundary is not None:
         if not isinstance(boundary, list) or len(boundary) < 3:

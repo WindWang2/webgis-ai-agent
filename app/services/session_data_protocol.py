@@ -5,6 +5,7 @@ Defines the deep SessionStore seam interface and immutable SessionRefDataResult 
 """
 
 import hmac
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 
@@ -48,8 +49,8 @@ def _conversation_owner_kind(session_id: str) -> str:
         if getattr(conv, "owner_token", None):
             return "anonymous_token"
         return "none"
-    except Exception:  # noqa: BLE001 — store layer must not fail open on owned sessions only via this probe
-        return "none"
+    except Exception:  # noqa: BLE001 — unknown authority must never authorize a read
+        return "unknown"
 
 
 def _conversation_has_owner(session_id: str) -> bool:
@@ -120,7 +121,11 @@ class SessionStoreProtocol(Protocol):
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         ...
 
-    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
+    async def set_alias_if_absent(self, session_id: str, ref_id: str, alias: str) -> bool:
+        """Atomically publish an initial alias only while its ref remains live."""
+        ...
+
+    async def overwrite(self, session_id: str, ref_id: str, data: Any, *, expected_revision: Optional[int] = None) -> bool:
         """Write back to an existing ref_id. True if the ref existed (both
         backends return bool; callers like plan_mode branch on it)."""
         ...
@@ -195,6 +200,9 @@ class SessionStoreProtocol(Protocol):
         """#750: publish a short-lived cross-replica "clearing" marker so an
         in-flight turn on ANOTHER pod suppresses its DB writes for a session
         being evicted/deleted here (the in-process set is pod-local)."""
+
+    async def unset_session_clearing(self, session_id: str) -> None:
+        """Roll back suppression after an unsuccessful session deletion."""
 
     async def is_session_clearing(self, session_id: str) -> bool:
         """Whether a clearing marker is currently live for the session."""
@@ -377,22 +385,26 @@ class BaseSessionStore:
         so only a one-way form is persisted). A raw-token form is still
         honored for back-compat if a legacy writer ever supplied one.
 
+        Already-authorized server routes may pass the typed verifier loaded
+        by the ORM (for signed terrain capabilities). A transported string
+        is always hashed, so knowing the stored digest cannot grant access.
+
         Authenticated (``user_id``-bound) conversations skip the token check:
         ownership was verified at the route layer and no digest is minted for
         them (#1382 A8). Anonymous sessions with an ``owner_token`` fail
         closed when Redis has neither digest nor raw token; anonymous sessions
         that never had an owner_token stay open (route-level checks primary).
         """
-        import hashlib
-
         if session_authenticated:
             return None
         meta = meta or {}
         map_state = meta.get("map_state", {})
         expected_digest = meta.get("owner_token_digest") or map_state.get("owner_token_digest")
         if expected_digest:
+            from app.core.owner_tokens import owner_token_digest
+
             presented_digest = (
-                hashlib.sha256(str(owner_token).encode()).hexdigest()
+                owner_token_digest(owner_token)
                 if owner_token else None
             )
             if not presented_digest or not hmac.compare_digest(
@@ -437,7 +449,9 @@ class BaseSessionStore:
         # HGETALL + deepcopy/L1 重解析）——15 层恢复扇出实测 195 条 Redis
         # 命令 / 334ms（重会话 58ms/层）。定向读后 Redis 后端仅 2 次 HGET。
         meta = await self._owner_token_meta(session_id)
-        owner_kind = _conversation_owner_kind(session_id)
+        owner_kind = await asyncio.to_thread(_conversation_owner_kind, session_id)
+        if owner_kind == "unknown":
+            return SessionRefDataResult(success=False, error="Session authority unavailable", error_type="PermissionDenied")
         denied = self._validate_owner_token(
             meta, owner_token,
             session_has_owner=owner_kind == "anonymous_token",
@@ -482,7 +496,9 @@ class BaseSessionStore:
         import asyncio
 
         meta = await self._owner_token_meta(session_id)
-        owner_kind = _conversation_owner_kind(session_id)
+        owner_kind = await asyncio.to_thread(_conversation_owner_kind, session_id)
+        if owner_kind == "unknown":
+            return SessionRefDataResult(success=False, error="Session authority unavailable", error_type="PermissionDenied")
         denied = self._validate_owner_token(
             meta, owner_token,
             session_has_owner=owner_kind == "anonymous_token",
@@ -535,7 +551,9 @@ class BaseSessionStore:
         not get_session_metadata / HGETALL of the session bundle.
         """
         meta = await self._owner_token_meta(session_id)
-        owner_kind = _conversation_owner_kind(session_id)
+        owner_kind = await asyncio.to_thread(_conversation_owner_kind, session_id)
+        if owner_kind == "unknown":
+            return SessionRefDataResult(success=False, error="Session authority unavailable", error_type="PermissionDenied")
         denied = self._validate_owner_token(
             meta, owner_token,
             session_has_owner=owner_kind == "anonymous_token",

@@ -34,6 +34,7 @@ vi.mock('@/lib/mapspec/user-mutation', () => ({
 const authState = vi.hoisted(() => ({ token: null as string | null }));
 vi.mock('@/lib/auth/tokenStore', () => ({
   getAccessToken: () => authState.token,
+  getAuthUser: () => ({ id: 'user-1' }),
 }));
 
 // 全局 setup 把 localStorage mock 成空 vi.fn —— 这里接上内存 backing store。
@@ -67,6 +68,7 @@ describe('session anchor（W11）', () => {
     expect(anchor).toEqual({
       sessionId: 'sess-1',
       authed: true,
+      userId: 'user-1',
       savedAt: expect.any(Number),
     });
     // 损坏 payload → null（防御解析）

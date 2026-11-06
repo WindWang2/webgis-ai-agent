@@ -108,7 +108,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               outputs=("rate_zones",)),
     ),
     "service_accessibility": (
-        # ADR-0282（断点2）：族默认 exclude_unreachable=True——脱离路网的
+        # ADR-0284（断点2）：族默认 exclude_unreachable=True——脱离路网的
         # 设施 5m 占位面不进覆盖统计（计数进 stats，部分失败显性化）；
         # 需要占位面原样输出的调用方以参数覆盖回 False（工具默认保持
         # master 行为）。
@@ -133,7 +133,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               optional=True,
               outputs=("covered_population",)),
     ),
-    # 链③（ADR-0282 D4）：最近设施网络距离 → 行政汇总。
+    # 链③（ADR-0284 D4）：最近设施网络距离 → 行政汇总。
     # subject=需求点（incidents，如居民点/小区），facility=服务设施（医院/
     # 消防站）；汇总 rate = Σtotal_cost / 路线数 = 区均网络成本（均值语义，
     # aggregate_with_denominator 的 count 分母通道——不是伪装率）。
@@ -200,7 +200,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               # 声明接线——非点几何在执行期被 typed 拒而非静默质心化）
               semantic_contract={"geojson": "geometry_kind:point"},
               outputs=("grid_zones",)),
-        # 网格率（ADR-0282 断点1 修复）：真率语义走显式分母通道——
+        # 网格率（ADR-0284 断点1 修复）：真率语义走显式分母通道——
         # 分母=网格内 subject 计数（grid_stats 输出的 count 字段，网格身份
         # 一致由 grid_identity_match 前置保证），分子=网格内 population 计数
         # → rate=人口/设施（人均服务负荷；设施/人口为其倒数，numerator/
@@ -221,7 +221,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               optional=True,
               outputs=("hotspot_zones",)),
     ),
-    # 链②（ADR-0282 D4）：栅格指数 → 行政分区统计 → 矢量结果。
+    # 链②（ADR-0284 D4）：栅格指数 → 行政分区统计 → 矢量结果。
     # subject 是 raster 角色（role_kind="raster"——ref/路径直通，不水合）；
     # 掩膜语义由 zonal 的窗口读隐式完成（逐 zone 只读自己的像素窗+多边形
     # 掩膜），不引入独立 mask 工具；nodata 以 valid_pixel_coverage 逐 zone
@@ -401,7 +401,7 @@ def build_contract(
         for req in _ROLE_REQUIREMENTS.get(family, [])
     }
     contracts.update(dict(bindings or {}))
-    # ADR-0282 D3：角色需求的 geometry_kinds 表达 raster/table 载荷类型时，
+    # ADR-0284 D3：角色需求的 geometry_kinds 表达 raster/table 载荷类型时，
     # **模板占位绑定**（无 ref）铺默认 role_kind，让契约自带类型事实；
     # 调用方显式绑定不覆写——role_kind 与需求不符由 orchestrator plan 门
     # typed 裁决（调用方声明的事实优先，绝不静默改写）。
@@ -418,7 +418,7 @@ def build_contract(
     for base in _STEPS[family]:
         explicit_resample = (base.step_id == "resample" and "target_resolution" in overrides.get(base.step_id, {}))
         if (base.optional and not include_optional_steps) or (base.step_id == "resample" and not explicit_resample):
-            # ADR-0282 D4：optional 步剔除 → 记录其 role: 输入的首个角色，
+            # ADR-0284 D4：optional 步剔除 → 记录其 role: 输入的首个角色，
             # 供下游 step: 引用回接（rewire——契约 DAG 保持闭合且语义等价：
             # 下游直接消费原始角色而非被剔除的中间产物）。
             for source in base.role_inputs.values():
@@ -464,7 +464,7 @@ def build_contract(
             upstream = source.removeprefix("step:")
             if upstream not in present and upstream in pruned_role_fallbacks:
                 step.role_inputs[param] = pruned_role_fallbacks[upstream]
-    # ADR-0282 D4（R1 评审 F-2 修复）：denominator_kind=field 的步骤，分母
+    # ADR-0284 D4（R1 评审 F-2 修复）：denominator_kind=field 的步骤，分母
     # 字段名**只**从 role:denominator 绑定的 qualifier.field 解析（该角色的
     # 语义就是"带分母字段的图层"）——其它角色的 qualifier（subject 的
     # field、population 的 fields）绝不可劫持分母列名（评审实测复现：

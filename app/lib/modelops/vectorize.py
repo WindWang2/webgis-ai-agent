@@ -9,6 +9,7 @@ GeoJSON FeatureCollection。
 ring) 稳定排序）。``confidence`` 可选——按多边形内部均值附加属性。
 """
 from __future__ import annotations
+import logging
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -109,7 +110,7 @@ def _build_feature(
 
             geom = set_precision(geom, grid_size=float(params.grid_snap_px))
         except Exception:  # noqa: BLE001 — set_precision 不可用时跳过 snap
-            pass
+            logging.getLogger(__name__).warning('Precision snap unavailable; retaining the unsnapped geometry', exc_info=True)
     topology_repaired = False
     if not geom.is_valid:
         geom = make_valid(geom)
@@ -165,6 +166,7 @@ def _transform_geom(geom: Any, transform: Any, transform_xy: Any) -> Any:
                         transform,
                         cy,
                         cx,
+                        offset="ul",
                     )
                 )
                 for cx, cy in coords

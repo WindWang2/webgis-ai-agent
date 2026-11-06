@@ -124,7 +124,8 @@ class PmtilesTileService:
         cache_key = tile_cache_key(f"{_KEY_PREFIX}{item.id}", tenant_scope, fingerprint, z, x, y)
 
         cached = self._cache.get(cache_key)
-        if cached is not None:
+        cached_type = self._content_types.get(cache_key) if cached is not None else None
+        if cached is not None and (cached_type is not None or sniff_content_type(cached.gz) != "application/octet-stream"):
             return PmtilesServeResult(
                 body=cached.gz,
                 content_type=self._content_types.get(cache_key)

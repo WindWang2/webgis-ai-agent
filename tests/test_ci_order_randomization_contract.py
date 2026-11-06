@@ -9,7 +9,7 @@ profile 设置它 —— CI 从未启用，顺序污染在门禁里不可见。
   * 仅 nightly / 手动触发（不进 PR 阻塞路径）；
   * 至少 2 个固定 seed（失败可用同 seed 精确重放）；
   * 显式导出 QUALITY_ORDER_SEED=<matrix seed>；
-  * 跑 tests/unit（无 coverage）并与主 lane 同款 marker 排除。
+  * 跑完整 tests（无 coverage）并与主 lane 同款 marker 排除。
 """
 from pathlib import Path
 
@@ -44,10 +44,10 @@ def test_order_randomization_uses_fixed_seed_matrix():
     assert "matrix.seed" in env_text, "QUALITY_ORDER_SEED 必须来自 matrix seed"
 
 
-def test_order_randomization_runs_unit_suite_without_coverage():
+def test_order_randomization_runs_backend_suite_without_coverage():
     job = _workflow()["jobs"]["order-randomization"]
     run_text = "\n".join(str(s.get("run", "")) for s in job["steps"])
-    assert "tests/unit" in run_text, "seeded lane 跑单元套件（成本选择，见 job 注释）"
+    assert 'pytest tests -m' in run_text, "seeded lane 必须覆盖完整后端套件"
     assert "--no-cov" in run_text, "shuffle lane 不需要 coverage（与 perf/cartography 隔离哲学一致）"
     assert "not perf" in run_text and "not cartography" in run_text and "not real_services" in run_text, (
         "seeded lane 必须与 test-backend 同款 marker 排除（perf/cartography/real_services 各有专属 lane）"

@@ -92,7 +92,7 @@ describe('graticule label format tiers', () => {
     expect(formatGraticuleLabel(116.4, 'dm', false)).toBe('116°24′E');
     expect(formatGraticuleLabel(-39.9, 'dms', true)).toBe('39°54′00″S');
     expect(formatGraticuleLabel(8.15, 'dms', false)).toBe('008°09′00″E');
-    expect(formatGraticuleLabel(-39.9, 'deg', true)).toBe('39°S');
+    expect(formatGraticuleLabel(-39.9, 'deg', true)).toBe('40°S');
   });
 
   it('frameAnnotations：四角坐标齐备', () => {

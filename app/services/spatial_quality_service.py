@@ -10,6 +10,7 @@ Emits structured SpatialQualityReport with explicit severity levels (info, warni
 """
 
 import math
+import json
 import logging
 from typing import List, Dict, Any, Optional, Set, Tuple
 from pydantic import BaseModel, Field
@@ -145,13 +146,15 @@ class SpatialQualityEngine:
     # are NEVER silently dropped.
     MAX_CANDIDATES_PER_FEATURE = 300   # candidate pairs (j>i) examined per feature
     MAX_TOPOLOGY_ISSUES = 5000         # global topology-dimension issue budget
+    MAX_ISSUES_PER_CODE = 200
+    MAX_TOTAL_ISSUES = 2000
     MAX_DANGLING_CANDIDATES = 200      # endpoints scanned per dangling check
 
     @classmethod
     def audit_dataset(
         cls,
         geojson_data: Dict[str, Any],
-        crs: str | None = "EPSG:4326",
+        crs: str | None = None,
         dataset_id: Optional[str] = None,
     ) -> SpatialQualityReport:
         """
@@ -160,12 +163,31 @@ class SpatialQualityEngine:
         if dataset_id is None:
             dataset_id = geojson_data.get("name") or geojson_data.get("id") or "dataset"
 
-        features = geojson_data.get("features", [])
-        if not isinstance(features, list) and geojson_data.get("type") == "Feature":
+        features = geojson_data.get("features")
+        if geojson_data.get("type") == "Feature":
             features = [geojson_data]
+        elif not isinstance(features, list):
+            features = []
 
         total_features = len(features)
         issues: List[QualityIssue] = []
+        counts_by_code: Dict[str, int] = {}
+        counts_by_level: Dict[str, int] = {}
+        omitted_issues: Dict[str, int] = {}
+        omitted_levels: Dict[str, str] = {}
+
+        def emit_issue(**values: Any) -> None:
+            code = str(values.get("code", "unknown"))
+            level = str(values.get("level", "info"))
+            counts_by_code[code] = counts_by_code.get(code, 0) + 1
+            counts_by_level[level] = counts_by_level.get(level, 0) + 1
+            if counts_by_code[code] > cls.MAX_ISSUES_PER_CODE or len(issues) >= cls.MAX_TOTAL_ISSUES:
+                omitted_issues[code] = omitted_issues.get(code, 0) + 1
+                severity = {"info": 0, "warning": 1, "error": 2, "blocking": 3}
+                if severity.get(level, 0) >= severity.get(omitted_levels.get(code, "info"), 0):
+                    omitted_levels[code] = level
+                return
+            issues.append(QualityIssue(**values))
 
         # ----------------------------------------------------
         # Dimension 3: CRS Checks
@@ -177,30 +199,33 @@ class SpatialQualityEngine:
         if not crs:
             if isinstance(geojson_crs, dict):
                 props = geojson_crs.get("properties") or {}
-                crs = props.get("name") or props.get("code") or "EPSG:4326"
-            else:
-                crs = "EPSG:4326"
+                crs = props.get("name") or props.get("code")
+            if not crs:
+                from app.services.spatial_quality_gate import infer_crs
+                inference = infer_crs(geojson_data)
+                inferred = inference.get("crs") if inference.get("confidence") in {"high", "medium"} else None
+                crs = inferred or "EPSG:4326"
+                if features and (inferred != "EPSG:4326" or inference.get("confidence") != "high"):
+                    emit_issue(dimension="crs", code="MISSING_CRS", level="warning",
+                               message="Dataset CRS is undeclared; confirm the inferred CRS before publishing.",
+                               details={"inferred_crs": inferred, "confidence": inference.get("confidence")})
         if not geojson_crs and crs.upper() in ["UNKNOWN", "MISSING"]:
-            issues.append(
-                QualityIssue(
+            emit_issue(
                     dimension="crs",
                     code="MISSING_CRS",
                     level="info",
                     message="Dataset is missing explicit CRS definition. Defaulting to EPSG:4326.",
                 )
-            )
             crs = "EPSG:4326"
 
         is_geographic = _crs_is_geographic(crs)
         if is_geographic:
-            issues.append(
-                QualityIssue(
+            emit_issue(
                     dimension="crs",
                     code="GEO_VS_PROJECTED_MEASUREMENT_WARNING",
                     level="info",
                     message="Geographic CRS (EPSG:4326) detected. Spatial area/distance operations will produce degree-based values rather than metric measurements.",
                 )
-            )
 
         # ----------------------------------------------------
         # Dimension 5: Spatial Sanity - Header BBOX Check
@@ -208,27 +233,23 @@ class SpatialQualityEngine:
         declared_bbox = geojson_data.get("bbox")
         if declared_bbox:
             if not isinstance(declared_bbox, (list, tuple)) or len(declared_bbox) < 4:
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="spatial_sanity",
                         code="INVALID_BBOX",
                         level="warning",
                         message="Top-level GeoJSON bbox format is invalid.",
                         details={"bbox": declared_bbox},
                     )
-                )
             else:
                 minx, miny, maxx, maxy = declared_bbox[:4]
                 if minx > maxx or miny > maxy:
-                    issues.append(
-                        QualityIssue(
+                    emit_issue(
                             dimension="spatial_sanity",
                             code="INVALID_BBOX",
                             level="warning",
                             message=f"Top-level GeoJSON bbox bounds are inverted: [{minx}, {miny}, {maxx}, {maxy}].",
                             details={"bbox": declared_bbox},
                         )
-                    )
 
         parsed_geometries: List[Tuple[int, Any, Dict[str, Any]]] = []
 
@@ -237,56 +258,58 @@ class SpatialQualityEngine:
         # ----------------------------------------------------
         for idx, feat in enumerate(features):
             if not isinstance(feat, dict):
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="geometry",
                         code="INVALID_FEATURE_FORMAT",
                         level="blocking",
                         message=f"Feature {idx} is not a valid JSON dictionary.",
                         feature_index=idx,
                     )
-                )
                 continue
 
             geom_raw = feat.get("geometry")
 
             # Geometry: Empty / Null Check
             if geom_raw is None:
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="geometry",
                         code="EMPTY_GEOMETRY",
                         level="blocking",
                         message=f"Feature {idx} has null or missing geometry.",
                         feature_index=idx,
                     )
-                )
                 continue
 
+            # Validate serialized rings before Shapely silently closes them.
+            if isinstance(geom_raw, dict) and geom_raw.get("type") in ("Polygon", "MultiPolygon"):
+                polygons = [geom_raw.get("coordinates", [])] if geom_raw.get("type") == "Polygon" else geom_raw.get("coordinates", [])
+                if isinstance(polygons, list):
+                    for polygon in polygons:
+                        if not isinstance(polygon, list):
+                            continue
+                        for ring in polygon:
+                            if isinstance(ring, list) and ring and (len(ring) < 4 or ring[0] != ring[-1]):
+                                emit_issue(dimension="geometry", code="RING_CHECK_FAILED", level="error", message=f"Feature {idx} serialized polygon ring is short or unclosed.", feature_index=idx)
             try:
                 geom = shape(geom_raw)
             except Exception as e:
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="geometry",
                         code="INVALID_GEOMETRY_SYNTAX",
                         level="blocking",
                         message=f"Feature {idx} geometry cannot be parsed: {e}",
                         feature_index=idx,
                     )
-                )
                 continue
 
             if geom.is_empty:
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="geometry",
                         code="EMPTY_GEOMETRY",
                         level="error",
                         message=f"Feature {idx} has an empty geometry.",
                         feature_index=idx,
                     )
-                )
                 continue
 
             props = feat.get("properties") or {}
@@ -296,8 +319,7 @@ class SpatialQualityEngine:
             if not geom.is_valid:
                 reason = explain_validity(geom)
                 is_self_intersect = "Self-intersection" in reason or "self-intersection" in reason
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="geometry",
                         code="SELF_INTERSECTION" if is_self_intersect else "INVALID_GEOMETRY",
                         level="blocking" if is_self_intersect or "Nested shells" in reason else "error",
@@ -305,78 +327,25 @@ class SpatialQualityEngine:
                         feature_index=idx,
                         details={"reason": reason},
                     )
-                )
             elif isinstance(geom, (LineString, MultiLineString)) and not geom.is_simple:
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="geometry",
                         code="SELF_INTERSECTION",
                         level="error",
                         message=f"Feature {idx} LineString contains self-intersections.",
                         feature_index=idx,
                     )
-                )
-
-            # 1b. Ring check for Polygons
-            if isinstance(geom, Polygon):
-                rings = [geom.exterior] + list(geom.interiors)
-                for ring in rings:
-                    coords = list(ring.coords)
-                    if len(coords) < 4:
-                        issues.append(
-                            QualityIssue(
-                                dimension="geometry",
-                                code="RING_CHECK_FAILED",
-                                level="error",
-                                message=f"Feature {idx} polygon ring has fewer than 4 coordinates ({len(coords)}).",
-                                feature_index=idx,
-                            )
-                        )
-                    elif coords[0] != coords[-1]:
-                        issues.append(
-                            QualityIssue(
-                                dimension="geometry",
-                                code="RING_CHECK_FAILED",
-                                level="error",
-                                message=f"Feature {idx} polygon ring is not closed (start != end).",
-                                feature_index=idx,
-                            )
-                        )
-            elif isinstance(geom, MultiPolygon):
-                for p_sub in geom.geoms:
-                    rings = [p_sub.exterior] + list(p_sub.interiors)
-                    for ring in rings:
-                        coords = list(ring.coords)
-                        if len(coords) < 4:
-                            issues.append(
-                                QualityIssue(
-                                    dimension="geometry",
-                                    code="RING_CHECK_FAILED",
-                                    level="error",
-                                    message=f"Feature {idx} multi-polygon ring has fewer than 4 coordinates.",
-                                    feature_index=idx,
-                                )
-                            )
-                        elif coords[0] != coords[-1]:
-                            issues.append(
-                                QualityIssue(
-                                    dimension="geometry",
-                                    code="RING_CHECK_FAILED",
-                                    level="error",
-                                    message=f"Feature {idx} multi-polygon ring is not closed.",
-                                    feature_index=idx,
-                                )
-                            )
 
             # 1c. Sliver Check
             if isinstance(geom, (Polygon, MultiPolygon)):
-                area = geom.area
-                perimeter = geom.length
+                components = list(geom.geoms) if isinstance(geom, MultiPolygon) else [geom]
+                sliver_part = max(components, key=lambda part: part.length ** 2 / max(part.area, 1e-300))
+                area = sliver_part.area
+                perimeter = sliver_part.length
                 if area > 0 and perimeter > 0:
                     iso_ratio = (perimeter ** 2) / area
                     if iso_ratio > 1000.0:
-                        issues.append(
-                            QualityIssue(
+                        emit_issue(
                                 dimension="geometry",
                                 code="SLIVER_POLYGON",
                                 level="warning",
@@ -384,15 +353,13 @@ class SpatialQualityEngine:
                                 feature_index=idx,
                                 details={"area": area, "perimeter": perimeter, "isoperimetric_ratio": iso_ratio},
                             )
-                        )
 
             # 5a. Extreme coordinates / Impossible Lat/Lon / Null Island
             bounds = geom.bounds  # (minx, miny, maxx, maxy)
             minx, miny, maxx, maxy = bounds
 
             if any(math.isnan(c) or math.isinf(c) for c in bounds) or max(abs(minx), abs(miny), abs(maxx), abs(maxy)) > 1e10:
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="spatial_sanity",
                         code="EXTREME_COORDINATES",
                         level="blocking",
@@ -400,12 +367,10 @@ class SpatialQualityEngine:
                         feature_index=idx,
                         details={"bounds": bounds},
                     )
-                )
 
             if is_geographic:
                 if abs(minx) > 180 or abs(maxx) > 180 or abs(miny) > 90 or abs(maxy) > 90:
-                    issues.append(
-                        QualityIssue(
+                    emit_issue(
                             dimension="spatial_sanity",
                             code="IMPOSSIBLE_LAT_LON",
                             level="blocking",
@@ -413,9 +378,7 @@ class SpatialQualityEngine:
                             feature_index=idx,
                             details={"bounds": bounds},
                         )
-                    )
-                    issues.append(
-                        QualityIssue(
+                    emit_issue(
                             dimension="crs",
                             code="SUSPICIOUS_CRS",
                             level="warning",
@@ -423,13 +386,11 @@ class SpatialQualityEngine:
                             feature_index=idx,
                             details={"bounds": bounds},
                         )
-                    )
 
             # Null Island check (0,0)
             centroid = geom.centroid
-            if abs(centroid.x) < 1e-7 and abs(centroid.y) < 1e-7:
-                issues.append(
-                    QualityIssue(
+            if max(abs(value) for value in geom.bounds) < 1e-7:
+                emit_issue(
                         dimension="spatial_sanity",
                         code="NULL_ISLAND",
                         level="warning",
@@ -437,7 +398,6 @@ class SpatialQualityEngine:
                         feature_index=idx,
                         details={"centroid": (centroid.x, centroid.y)},
                     )
-                )
 
         # Check declared bbox vs calculated bounds
         if declared_bbox and len(declared_bbox) >= 4 and parsed_geometries:
@@ -448,8 +408,7 @@ class SpatialQualityEngine:
             c_maxy = max(g.bounds[3] for _, g, _ in parsed_geometries)
 
             if abs(d_minx - c_minx) > 1e-4 or abs(d_miny - c_miny) > 1e-4 or abs(d_maxx - c_maxx) > 1e-4 or abs(d_maxy - c_maxy) > 1e-4:
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="spatial_sanity",
                         code="INVALID_BBOX",
                         level="warning",
@@ -459,7 +418,6 @@ class SpatialQualityEngine:
                             "calculated_bbox": [c_minx, c_miny, c_maxx, c_maxy],
                         },
                     )
-                )
 
         # ----------------------------------------------------
         # Dimension 1 (cont): Duplicate Geometries
@@ -469,8 +427,7 @@ class SpatialQualityEngine:
             wkb = geom.wkb
             if wkb in seen_wkb:
                 orig_idx = seen_wkb[wkb]
-                issues.append(
-                    QualityIssue(
+                emit_issue(
                         dimension="geometry",
                         code="DUPLICATE_GEOMETRY",
                         level="warning",
@@ -478,7 +435,6 @@ class SpatialQualityEngine:
                         feature_index=idx,
                         details={"duplicate_of": orig_idx},
                     )
-                )
             else:
                 seen_wkb[wkb] = idx
 
@@ -524,8 +480,8 @@ class SpatialQualityEngine:
             # approximation the gap thresholds use).
             overlap_area_threshold = 1.0 / (111320.0 ** 2) if is_geographic else 1.0
 
-            issue_cap_hit = False
-            for i, (f_idx_i, geom_i, props_i) in enumerate(parsed_geometries):
+            # Endpoint inventory must be complete even when pairwise diagnostics hit a cap.
+            for f_idx_i, geom_i, _props_i in parsed_geometries:
                 # Collect line endpoints for dangling endpoint checks
                 if isinstance(geom_i, LineString):
                     coords = list(geom_i.coords)
@@ -539,6 +495,8 @@ class SpatialQualityEngine:
                             line_endpoints.append((Point(coords[0]), f_idx_i))
                             line_endpoints.append((Point(coords[-1]), f_idx_i))
 
+            issue_cap_hit = False
+            for i, (f_idx_i, geom_i, props_i) in enumerate(parsed_geometries):
                 # Issue #597: query with the geometry buffered by the gap
                 # threshold, not the bare geometry. STRtree.query() is a
                 # bbox-only filter (it compares bounding boxes), so "parallel
@@ -571,8 +529,7 @@ class SpatialQualityEngine:
                     # Topology: Duplicate Feature
                     if geom_i.equals(geom_j):
                         if props_i == props_j:
-                            issues.append(
-                                QualityIssue(
+                            emit_issue(
                                     dimension="topology",
                                     code="DUPLICATE_FEATURE",
                                     level="warning",
@@ -580,7 +537,6 @@ class SpatialQualityEngine:
                                     feature_index=f_idx_j,
                                     details={"duplicate_of": f_idx_i},
                                 )
-                            )
                             topology_issues_reported += 1
                             if topology_issues_reported >= cls.MAX_TOPOLOGY_ISSUES:
                                 issue_cap_hit = True
@@ -589,8 +545,7 @@ class SpatialQualityEngine:
                     # Topology: Overlap check for Polygons
                     if isinstance(geom_i, (Polygon, MultiPolygon)) and isinstance(geom_j, (Polygon, MultiPolygon)):
                         if geom_i.overlaps(geom_j) or (geom_i.intersects(geom_j) and geom_i.intersection(geom_j).area > overlap_area_threshold):
-                            issues.append(
-                                QualityIssue(
+                            emit_issue(
                                     dimension="topology",
                                     code="TOPOLOGY_OVERLAP",
                                     level="error",
@@ -598,7 +553,6 @@ class SpatialQualityEngine:
                                     feature_index=f_idx_i,
                                     details={"overlaps_with": f_idx_j},
                                 )
-                            )
                             topology_issues_reported += 1
                             if topology_issues_reported >= cls.MAX_TOPOLOGY_ISSUES:
                                 issue_cap_hit = True
@@ -608,8 +562,7 @@ class SpatialQualityEngine:
                     # GIS-16: thresholds are precomputed per CRS (see above).
                     dist = geom_i.distance(geom_j)
                     if 0 < dist < gap_threshold:
-                        issues.append(
-                            QualityIssue(
+                        emit_issue(
                                 dimension="topology",
                                 code="TOPOLOGY_GAP",
                                 level="warning",
@@ -617,7 +570,6 @@ class SpatialQualityEngine:
                                 feature_index=f_idx_i,
                                 details={"gap_distance": dist, "adjacent_feature": f_idx_j},
                             )
-                        )
                         topology_issues_reported += 1
                         if topology_issues_reported >= cls.MAX_TOPOLOGY_ISSUES:
                             issue_cap_hit = True
@@ -627,8 +579,7 @@ class SpatialQualityEngine:
                     # Already reported as TOPOLOGY_GAP for this pair; skip duplicate.
                     gap_reported = 0 < dist < gap_threshold
                     if 0 < dist < dup_threshold and not gap_reported:
-                        issues.append(
-                            QualityIssue(
+                        emit_issue(
                                 dimension="topology",
                                 code="NEAR_DUPLICATE_VERTICES",
                                 level="warning",
@@ -636,7 +587,6 @@ class SpatialQualityEngine:
                                 feature_index=f_idx_i,
                                 details={"distance": dist, "other_feature": f_idx_j},
                             )
-                        )
                         topology_issues_reported += 1
                         if topology_issues_reported >= cls.MAX_TOPOLOGY_ISSUES:
                             issue_cap_hit = True
@@ -685,8 +635,7 @@ class SpatialQualityEngine:
                             connected = True
                             break
                     if not connected and inspected < cls.MAX_DANGLING_CANDIDATES:
-                        issues.append(
-                            QualityIssue(
+                        emit_issue(
                                 dimension="topology",
                                 code="DANGLING_ENDPOINT",
                                 level="warning",
@@ -694,7 +643,6 @@ class SpatialQualityEngine:
                                 feature_index=f_idx,
                                 details={"endpoint": (pt.x, pt.y)},
                             )
-                        )
                 if dangling_undetermined > 0:
                     truncation_reasons.append("dangling_budget")
 
@@ -712,15 +660,13 @@ class SpatialQualityEngine:
                 common_keys = set.intersection(*feature_prop_keys) if feature_prop_keys else set()
 
                 if len(common_keys) < len(all_keys):
-                    issues.append(
-                        QualityIssue(
+                    emit_issue(
                             dimension="attributes",
                             code="INCONSISTENT_SCHEMA",
                             level="info",
                             message="Dataset features have inconsistent property schemas across records.",
                             details={"all_keys": list(all_keys), "missing_keys": list(all_keys - common_keys)},
                         )
-                    )
 
                 null_counts = {k: 0 for k in all_keys}
                 type_map: Dict[str, Set[type]] = {k: set() for k in all_keys}
@@ -752,24 +698,22 @@ class SpatialQualityEngine:
                 for k, count in null_counts.items():
                     null_ratio = count / total_features
                     if null_ratio > 0.5:
-                        issues.append(
-                            QualityIssue(
+                        emit_issue(
                                 dimension="attributes",
                                 code="HIGH_NULL_RATIO",
                                 level="warning",
                                 message=f"Attribute '{k}' has a high null ratio ({null_ratio:.1%}).",
                                 details={"attribute": k, "null_ratio": null_ratio, "null_count": count},
                             )
-                        )
 
                 # Duplicated primary IDs
                 for id_field, val_list in id_values.items():
                     seen_ids: Dict[Any, int] = {}
                     for idx, val in val_list:
-                        if val in seen_ids:
-                            orig_idx = seen_ids[val]
-                            issues.append(
-                                QualityIssue(
+                        key = json.dumps(val, sort_keys=True, ensure_ascii=False, default=str)
+                        if key in seen_ids:
+                            orig_idx = seen_ids[key]
+                            emit_issue(
                                     dimension="attributes",
                                     code="DUPLICATE_PRIMARY_KEY",
                                     level="error",
@@ -777,24 +721,21 @@ class SpatialQualityEngine:
                                     feature_index=idx,
                                     details={"field": id_field, "duplicate_value": val, "original_index": orig_idx},
                                 )
-                            )
                         else:
-                            seen_ids[val] = idx
+                            seen_ids[key] = idx
 
                 # Type inconsistencies
                 for k, types in type_map.items():
                     non_numeric_types = {t for t in types if t not in (int, float)}
                     if len(types) > 1 and (len(non_numeric_types) > 1 or (non_numeric_types and (int in types or float in types))):
                         type_names = [t.__name__ for t in types]
-                        issues.append(
-                            QualityIssue(
+                        emit_issue(
                                 dimension="attributes",
                                 code="TYPE_INCONSISTENCY",
                                 level="warning",
                                 message=f"Attribute '{k}' has inconsistent data types across features: {type_names}.",
                                 details={"attribute": k, "types": type_names},
                             )
-                        )
 
                 # Numeric outliers (> 3 std dev)
                 for k, vals in numeric_values.items():
@@ -806,8 +747,7 @@ class SpatialQualityEngine:
                             for idx, val in vals:
                                 z_score = abs(val - mean) / std
                                 if z_score > 3.0:
-                                    issues.append(
-                                        QualityIssue(
+                                    emit_issue(
                                             dimension="attributes",
                                             code="NUMERIC_OUTLIER",
                                             level="warning",
@@ -815,15 +755,13 @@ class SpatialQualityEngine:
                                             feature_index=idx,
                                             details={"attribute": k, "value": val, "z_score": z_score, "mean": mean, "std": std},
                                         )
-                                    )
 
         # ----------------------------------------------------
         # Summary & Status
         # ----------------------------------------------------
-        summary = {"info": 0, "warning": 0, "error": 0, "blocking": 0}
-        for issue in issues:
-            summary[issue.level] = summary.get(issue.level, 0) + 1
-
+        summary = {"blocking": 0, "error": 0, "warning": 0, "info": 0, **counts_by_level}
+        if omitted_issues:
+            truncation_reasons.append("issue_budget")
         if summary["blocking"] > 0 or summary["error"] > 0:
             overall_status = "blocking"
         elif summary["warning"] > 0:
@@ -836,8 +774,11 @@ class SpatialQualityEngine:
         if truncated:
             truncation_details = {
                 "reasons": truncation_reasons,
+                "issues_omitted_by_code": omitted_issues,
+                "omitted_issue_levels": omitted_levels,
                 "topology_pairs_examined": topology_pairs_examined,
                 "topology_issues_reported": topology_issues_reported,
+                "topology_issues_emitted": sum(issue.dimension == "topology" for issue in issues),
                 "candidates_skipped_by_budget": candidates_skipped,
                 "dangling_endpoints_undetermined": dangling_undetermined,
             }
@@ -860,6 +801,6 @@ class SpatialQualityEngine:
             issue_summary=summary,
             issues=issues,
             truncated=truncated,
-            truncated_count=candidates_skipped + dangling_undetermined,
+            truncated_count=candidates_skipped + dangling_undetermined + sum(omitted_issues.values()),
             truncation_details=truncation_details,
         )

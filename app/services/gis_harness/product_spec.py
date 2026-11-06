@@ -24,6 +24,7 @@
 （未知 kind / 悬空关系端点 / 重复 id / 环 → errors 非空即拒）。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import hashlib
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -320,7 +321,7 @@ def validate_product_spec(spec: MapProductSpec) -> List[str]:
                     errors.append(
                         f"view {v.view_id}: unknown chart_kind {v.chart_kind!r}")
             except Exception:  # noqa: BLE001 — 增值校验不阻断
-                pass
+                observe_optional_failure(__name__)
     seen_edges: set = set()
     for r in spec.relations:
         for endpoint in (r.src, r.dst):

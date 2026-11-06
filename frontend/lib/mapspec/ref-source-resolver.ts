@@ -27,12 +27,11 @@ const FAILED = Symbol('ref-source-fetch-failed');
 /** 拉取上限：超大 ref 不整包下发（HUD 大层走 MVT；这里保守放弃并告警）。 */
 const FETCH_FEATURE_CAP = 20000;
 
-/**
- * 会话内缓存上限（F2）：条目值为整包 FeatureCollection（每条至多
- * FETCH_FEATURE_CAP 要素）—— 无界缓存随长会话线性吃内存（数百 MB 量
- * 级）。LRU 淘汰最旧条目；in-flight 去重保证并发期不重复拉取，淘汰后
- * 的再访问走一次普通重拉（成本 = 一次网络往返，而非内存膨胀）。
+/** Keep active sources pinned; only inactive values compete in the cold LRU.
+ * This explicit budget bounds whole FeatureCollections while allowing a map
+ * with more than24 active refs to settle instead of continually redownloading.
  */
+export const MAX_ACTIVE_REF_SOURCES = 64;
 const MAX_CACHE_ENTRIES = 24;
 const MAX_TOMBSTONES = 32;
 /** 失败墓碑 TTL（与 chart-artifact 的失败 TTL 同纪律）：确认失败在窗口
@@ -41,11 +40,15 @@ const MAX_TOMBSTONES = 32;
 const FAILED_TTL_MS = 30_000;
 
 const cache = new Map<string, unknown>();
+interface RevisionEntry { revision: number | undefined }
+const sourceRevisions = new Map<string, RevisionEntry>();
+let activeRefs = new Set<string>();
+let budgetOmitted = 0;
 // 失败墓碑单独有界存放（≤ MAX_TOMBSTONES）：墓碑若混进 LRU，多层会话里
 // 连续失败会驱逐存活数据 → 活跃层状态在 expired/loading 间抖动并触发
 // 重拉风暴。墓碑只表达「确认失败」，不占数据缓存名额。
 const tombstones = new Map<string, number>();
-const inFlight = new Map<string, Promise<void>>();
+const inFlight = new Map<string, { task: Promise<void>; controller: AbortController }>();
 const warned = new Set<string>();
 let generation = 0;
 const listeners = new Set<() => void>();
@@ -54,10 +57,9 @@ function cacheSet(key: string, value: unknown): void {
   if (value === FAILED) {
     cache.delete(key);
     tombstones.set(key, Date.now());
-    while (tombstones.size > MAX_TOMBSTONES) {
-      const oldest = tombstones.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      tombstones.delete(oldest);
+    const coldFailures = [...tombstones.keys()].filter((ref) => !activeRefs.has(ref));
+    for (const ref of coldFailures.slice(0, Math.max(0, coldFailures.length - MAX_TOMBSTONES))) {
+      tombstones.delete(ref);
     }
     return;
   }
@@ -65,11 +67,24 @@ function cacheSet(key: string, value: unknown): void {
   // Map 迭代序即插入序：refresh 命中先删再插 → 真 LRU。
   cache.delete(key);
   cache.set(key, value);
-  while (cache.size > MAX_CACHE_ENTRIES) {
-    const oldest = cache.keys().next().value as string | undefined;
-    if (oldest === undefined) break;
-    cache.delete(oldest);
+  trimInactive();
+}
+
+function trimInactive(): void {
+  const cold = [...cache.keys()].filter((ref) => !activeRefs.has(ref));
+  for (const ref of cold.slice(0, Math.max(0, cold.length - MAX_CACHE_ENTRIES))) cache.delete(ref);
+  const coldFailures = [...tombstones.keys()].filter((ref) => !activeRefs.has(ref));
+  for (const ref of coldFailures.slice(0, Math.max(0, coldFailures.length - MAX_TOMBSTONES))) tombstones.delete(ref);
+  for (const ref of sourceRevisions.keys()) {
+    if (!activeRefs.has(ref) && !cache.has(ref) && !tombstones.has(ref) && !inFlight.has(ref)) {
+      sourceRevisions.delete(ref);
+    }
   }
+  for (const ref of warned) if (!activeRefs.has(ref)) warned.delete(ref);
+}
+
+export function getRefSourceBudget(): { limit: number; omitted: number } {
+  return { limit: MAX_ACTIVE_REF_SOURCES, omitted: budgetOmitted };
 }
 
 function emit(): void {
@@ -90,8 +105,12 @@ export function getRefSourcesGeneration(): number {
 
 export function resetRefSourceCache(): void {
   cache.clear();
+  sourceRevisions.clear();
   tombstones.clear();
+  for (const { controller } of inFlight.values()) controller.abort();
   inFlight.clear();
+  activeRefs.clear();
+  budgetOmitted = 0;
   warned.clear();
 }
 
@@ -166,6 +185,21 @@ export function injectResolvedRefSources(
   hudOwnedRefs?: Set<string>,
 ): MapSpec {
   const layerSources = new Set((spec.layers || []).map((l) => String(l.source || '')));
+  const requested = new Set<string>();
+  for (const [sid, source] of Object.entries(spec.sources || {})) {
+    if (!layerSources.has(sid) || !isRefOnlySource(source)) continue;
+    const ref = refOf(source as unknown as Record<string, unknown>);
+    if (ref) requested.add(ref);
+  }
+  activeRefs = new Set([...requested].slice(0, MAX_ACTIVE_REF_SOURCES));
+  budgetOmitted = Math.max(0, requested.size - activeRefs.size);
+  for (const [ref, pending] of inFlight) {
+    if (!activeRefs.has(ref)) {
+      inFlight.delete(ref);
+      pending.controller.abort();
+    }
+  }
+  trimInactive();
   if (layerSources.size === 0) return spec;
 
   const owned = hudOwnedRefs ?? new Set<string>();
@@ -178,6 +212,23 @@ export function injectResolvedRefSources(
     const refId = refOf(s);
     if (!refId) continue;
 
+    if (!activeRefs.has(refId)) continue;
+    const revision = typeof s.content_revision === 'number' && Number.isFinite(s.content_revision)
+      ? s.content_revision : undefined;
+    const existing = sourceRevisions.get(refId);
+    // Absence of revision evidence (including first observation) is not proof
+    // of a data change. Replace the identity only on two known, unequal values.
+    if (existing && existing.revision !== undefined && revision !== undefined && existing.revision !== revision) {
+      cache.delete(refId);
+      tombstones.delete(refId);
+      inFlight.get(refId)?.controller.abort();
+      inFlight.delete(refId);
+      sourceRevisions.set(refId, { revision });
+    } else if (!existing) {
+      sourceRevisions.set(refId, { revision });
+    } else if (revision !== undefined) {
+      existing.revision = revision;
+    }
     const hit = cache.get(refId);
     if (hit && hit !== FAILED) {
       cacheSet(refId, hit); // LRU refresh：活跃 ref 不被淘汰
@@ -186,7 +237,9 @@ export function injectResolvedRefSources(
       continue;
     }
     if (tombstoneActive(refId) || owned.has(refId)) continue;
-    const featureCount = (s.profile as any)?.featureCount;
+    const profile = s.profile;
+    const featureCount = profile && typeof profile === "object"
+      ? (profile as Record<string, unknown>).featureCount : undefined;
     if (typeof featureCount === 'number' && featureCount > FETCH_FEATURE_CAP) {
       if (!warned.has(refId)) {
         warned.add(refId);
@@ -208,6 +261,10 @@ function scheduleFetch(refId: string, fetchContext: RefFetchContext | null | und
   // in-flight promise 完成时不回填新会话的缓存（外会话条目永久滞留 +
   // 一次无谓的 reconcile emit）。
   const fetchSessionId = fetchContext.sessionId;
+  const fetchEntry = sourceRevisions.get(refId);
+  const controller = new AbortController();
+  const isCurrent = () => !controller.signal.aborted &&
+    getMapSpecSessionCursor().sessionId === fetchSessionId && sourceRevisions.get(refId) === fetchEntry;
   const task = (async () => {
     try {
       const geojson = await apiFetch<{
@@ -217,24 +274,25 @@ function scheduleFetch(refId: string, fetchContext: RefFetchContext | null | und
         `/api/v1/layers/data/${encodeURIComponent(refId)}?session_id=${encodeURIComponent(fetchContext.sessionId)}`,
         {
           ownerToken: fetchContext.ownerToken,
+          signal: controller.signal,
           timeoutMs: 120_000,
           label: 'Ref source resolve error',
         },
       );
-      if (getMapSpecSessionCursor().sessionId !== fetchSessionId) return;
+      if (!isCurrent()) return;
       if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
         cacheSet(refId, geojson);
       } else {
         cacheSet(refId, FAILED);
       }
     } catch {
-      if (getMapSpecSessionCursor().sessionId === fetchSessionId) {
+      if (isCurrent()) {
         cacheSet(refId, FAILED);
       }
-    } finally {
-      inFlight.delete(refId);
-      emit();
     }
-  })();
-  inFlight.set(refId, task);
+  })().finally(() => {
+    if (inFlight.get(refId)?.task === task) inFlight.delete(refId);
+    if (isCurrent()) emit();
+  });
+  inFlight.set(refId, { task, controller });
 }

@@ -137,6 +137,9 @@ class SwarmAggregator:
                 if receipt.status == SwarmReceiptStatus.DEGRADED:
                     # 降级产物券仍入清单（附 degraded 标记由 summary 披露）
                     for ref in receipt.produced_refs:
+                        if len(entries) >= MAX_MANIFEST_ENTRIES:
+                            dropped.append(ref)
+                            continue
                         entries.append(
                             SwarmAssetEntry(
                                 ref_id=ref,

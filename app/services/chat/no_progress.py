@@ -11,8 +11,7 @@
 本模块提供确定性模式判定（纯函数 + 有界 tracker）：
 
 - ``canonical_call_signature(name, args)``：canonical 工具名（别名折叠）+
-  canonical JSON 参数（ref 游标保序抽取，大数据载荷以 (type, len) 摘要
-  替代）—— 同一语义调用必得同一签名，且与 replay/trace 词汇一致；
+  canonical JSON 参数（完整内容增量哈希，不保留大载荷副本）—— 同一语义调用必得同一签名，且与 replay/trace 词汇一致；
 - ``CallPatternTracker.record(...)``：返回 reason codes
  （exact_repeat_failure / alias_oscillation / repeated_read / repeated_mutation），
   上游真实状态变化时防误报（状态代数由调用方传入 ``state_epoch``）。
@@ -92,30 +91,11 @@ def clear_session_progress_tracker(session_id: str) -> None:
     _session_progress_trackers.pop(session_id, None)
 
 
-def _summarize_value(val: Any, depth: int = 0) -> Any:
-    """大载荷的确定性摘要：list/dict 取 (type, len) + 前几项，深度受限。"""
-    if depth > 3:
-        return "…"
-    if isinstance(val, dict):
-        if len(val) > 8:
-            return {"__dict__": len(val)}
-        return {k: _summarize_value(v, depth + 1) for k, v in sorted(val.items())}
-    if isinstance(val, (list, tuple)):
-        if len(val) > 4:
-            return {"__list__": len(val), "head": [_summarize_value(v, depth + 1) for v in val[:2]]}
-        return [_summarize_value(v, depth + 1) for v in val]
-    if isinstance(val, str) and len(val) > 120:
-        return {"__str__": len(val), "head": val[:32]}
-    if isinstance(val, float):
-        return round(val, 6)
-    return val
-
-
 def canonical_call_signature(tool_name: str, arguments: Any) -> str:
     """稳定调用签名：canonical 名 + canonical 化参数（§29）。
 
     - 工具名经别名折叠（registry._TOOL_NAME_ALIASES 同源）；
-    - 参数键排序、大载荷摘要化 —— 100k 要素 GeoJSON 与其 ref 游标版本
+    - 参数键排序、完整载荷增量哈希 —— 100k 要素 GeoJSON 与其 ref 游标版本
       若 ref 相同则签名一致（同一份输入数据）；
     - 输出为 16-hex 摘要 + 可读前缀，跨进程确定。
     """
@@ -126,15 +106,17 @@ def canonical_call_signature(tool_name: str, arguments: Any) -> str:
         try:
             arguments = json.loads(arguments)
         except (json.JSONDecodeError, ValueError):
-            arguments = {"__raw__": arguments[:120]}
+            arguments = {"__raw__": arguments}
     if not isinstance(arguments, dict):
-        arguments = {"__value__": _summarize_value(arguments)}
-    summarized = {k: _summarize_value(v) for k, v in sorted(arguments.items())}
-    blob = json.dumps(summarized, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True, default=str)
+        arguments = {"__value__": arguments}
     import hashlib
 
-    return f"{canonical}:{hashlib.sha256(blob.encode('utf-8')).hexdigest()[:16]}"
+    digest = hashlib.sha256()
+    encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)
+    for chunk in encoder.iterencode(arguments):
+        digest.update(chunk.encode("utf-8"))
+    return f"{canonical}:{digest.hexdigest()[:16]}"
+
 
 
 @dataclass

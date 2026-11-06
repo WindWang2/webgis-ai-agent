@@ -74,6 +74,7 @@ class MeasurementKind(str, Enum):
 
 
 class UnitDimension(str, Enum):
+    ANGLE = "angle"
     """量纲（兼容性判断的判定键；unit 名只是显示层）。"""
 
     COUNT = "count"
@@ -105,8 +106,10 @@ CANONICAL_UNITS: Dict[str, UnitEntry] = {
     "square_meters": UnitEntry(dimension=UnitDimension.AREA, display="m²", scale_to_reference=1.0),
     "square_kilometers": UnitEntry(dimension=UnitDimension.AREA, display="km²", scale_to_reference=1e6),
     "hectares": UnitEntry(dimension=UnitDimension.AREA, display="公顷", scale_to_reference=1e4),
-    "degrees": UnitEntry(dimension=UnitDimension.LENGTH, display="°", scale_to_reference=1.0),
+    "degrees": UnitEntry(dimension=UnitDimension.ANGLE, display="°", scale_to_reference=1.0),
     "cny": UnitEntry(dimension=UnitDimension.CURRENCY, display="元"),
+    "cny_10k": UnitEntry(dimension=UnitDimension.CURRENCY, display="万元", scale_to_reference=1e4),
+    "cny_100m": UnitEntry(dimension=UnitDimension.CURRENCY, display="亿元", scale_to_reference=1e8),
     "usd": UnitEntry(dimension=UnitDimension.CURRENCY, display="USD"),
     "percent": UnitEntry(dimension=UnitDimension.RATIO, display="%", scale_to_reference=100.0),
     "fraction": UnitEntry(dimension=UnitDimension.RATIO, display="比例", scale_to_reference=1.0),
@@ -136,10 +139,12 @@ _ROLE_EXPECTED_DIMENSION: Dict[str, Tuple[UnitDimension, ...]] = {
 _UNIT_NAME_RULES: Tuple[Tuple["re.Pattern[str]", str], ...] = (
     (re.compile(r"(平方公里|sq_?km|km2|km²)", re.I), "square_kilometers"),
     (re.compile(r"(公顷|hectare)", re.I), "hectares"),
-    (re.compile(r"(平方米|m2|m²|sq_?m$)", re.I), "square_meters"),
+    (re.compile(r"(平方米|(?:^|_)m2(?:$|_)|m²|sq_?m$)", re.I), "square_meters"),
     (re.compile(r"(千米|公里|km$)", re.I), "kilometers"),
     (re.compile(r"(米$|^m$|_m$|meter)", re.I), "meters"),
-    (re.compile(r"(万元|亿元|元$|cny|rmb)", re.I), "cny"),
+    (re.compile(r"万元", re.I), "cny_10k"),
+    (re.compile(r"亿元", re.I), "cny_100m"),
+    (re.compile(r"(元$|cny|rmb)", re.I), "cny"),
     (re.compile(r"(usd|美元)", re.I), "usd"),
     (re.compile(r"(占比|比例|percent|pct|share|fraction)", re.I), "fraction"),
 )

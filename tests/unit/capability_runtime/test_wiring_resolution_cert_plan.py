@@ -178,13 +178,17 @@ class TestCertificationSeed:
 
         hook("acme.pack", "deactivate")
 
-    def test_registry_refresh_function_smoke(self):
+    def test_registry_refresh_function_smoke(self, monkeypatch):
         from app.lib.gis.execution_catalog import (
             get_execution_catalog,
             refresh_execution_catalog,
         )
 
+        import app.lib.gis.execution_catalog as catalog_module
+        from types import SimpleNamespace
+        monkeypatch.setattr(catalog_module, "_lazy_tool_registry", lambda: SimpleNamespace(descriptors=lambda: {}))
         cat = refresh_execution_catalog()
+        assert not cat.degraded_sources
         assert get_execution_catalog() is cat
 
 

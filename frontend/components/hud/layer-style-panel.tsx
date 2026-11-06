@@ -73,6 +73,16 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
     return out;
   };
 
+  const pendingStyleRef = useRef<Record<string, unknown>>({});
+  const styleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const styleEpochRef = useRef(0);
+  useEffect(() => () => { if (styleTimerRef.current) clearTimeout(styleTimerRef.current); }, []);
+  useEffect(() => {
+    if (styleTimerRef.current) clearTimeout(styleTimerRef.current);
+    pendingStyleRef.current = {};
+    styleEpochRef.current += 1;
+  }, [editingLayerId]);
+
   const updateStyle = (patch: Partial<LayerStyle>) => {
     if (!layer) return;
     if (specBacked) {
@@ -81,18 +91,32 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
       // 乐观本地行样式 + durable 提交：成功后 committed spec 驱动 reconcile
       // （spec 为源），失败/被取代由 commit 通道收敛并提示。
       updateLayer(layer.id, { style: { ...layer.style, ...patch } });
-      void commitLayerStyleAndCommit(specLayerKey!, paintPatch).catch((err: unknown) => {
-        // 非 superseded 失败：本地乐观回滚（与 U-3 语义一致）
-        updateLayer(layer.id, { style: { ...layer.style } });
-        import('@/lib/api/transport').then(({ describeApiError }) => {
-          useToastStore.getState().addToast(
-            tNow('hud.style.commitFailed', {
+      pendingStyleRef.current = { ...pendingStyleRef.current, ...paintPatch };
+      if (styleTimerRef.current) clearTimeout(styleTimerRef.current);
+      const epoch = ++styleEpochRef.current;
+      styleTimerRef.current = setTimeout(() => {
+        const pending = pendingStyleRef.current;
+        pendingStyleRef.current = {};
+        styleTimerRef.current = null;
+        void commitLayerStyleAndCommit(specLayerKey!, pending).catch((err: unknown) => {
+          if (epoch !== styleEpochRef.current) return;
+          const committed = getCommittedMapSpec()?.layers.find((candidate) => candidate.id === specLayerKey);
+          const paint = committed?.paint ?? {};
+          const rollback = { ...layer.style };
+          const color = paint.color ?? paint['fill-color'] ?? paint['line-color'] ?? paint['circle-color'];
+          const width = paint.width ?? paint['line-width'];
+          const radius = paint.radius ?? paint['circle-radius'];
+          if (typeof color === 'string') rollback.color = color;
+          if (typeof width === 'number') rollback.strokeWidth = width;
+          if (typeof radius === 'number') rollback.pointSize = radius;
+          updateLayer(layer.id, { style: rollback });
+          import('@/lib/api/transport').then(({ describeApiError }) => {
+            useToastStore.getState().addToast(tNow('hud.style.commitFailed', {
               reason: describeApiError(err, tNow('hud.style.networkError')),
-            }),
-            'error',
-          );
-        }).catch(() => { /* noop */ });
-      });
+            }), 'error');
+          }).catch(() => { /* noop */ });
+        });
+      }, 180);
       return;
     }
     updateLayer(layer.id, { style: { ...layer.style, ...patch } });
@@ -135,6 +159,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const effectiveOpacity = draftOpacity ?? layer.opacity;
 
   const commitOpacity = (val: number) => {
+    if (draftOpacity === null || val === layer.opacity) return;
     setDraftOpacity(null);
     // audit #842: 经带回滚的 wrapper 提交 —— 裸 void commitLayerPresentation
     // 失败时 unhandled rejection 且本地透明度不回滚（与服务端分叉）。

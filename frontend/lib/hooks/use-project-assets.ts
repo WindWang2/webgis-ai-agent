@@ -1,3 +1,4 @@
+'use client';
 /**
  * Project workspace assets hooks (ADR-0143) — datasets / artifacts /
  * snapshots / quality / data-gc.
@@ -11,7 +12,6 @@
  *   - unmount aborts everything.
  */
 
-'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -115,6 +115,9 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
   const reload = useCallback(
     async (opts?: FetchOpts) => {
       if (!projectId) {
+        abort.current?.abort();
+        gen.current += 1;
+        setLoading(false);
         setDatasets([]);
         setTotal(0);
         setHasMore(false);
@@ -241,6 +244,7 @@ const PAGE_SIZE = 50;
 
 export interface UseProjectArtifactsResult {
   artifacts: ArtifactSummary[];
+  artifactTypes?: string[];
   total: number;
   hasMore: boolean;
   loading: boolean;
@@ -441,6 +445,7 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
 
   return {
     artifacts: visible,
+    artifactTypes: Array.from(new Set(artifacts.map((artifact) => artifact.artifact_type))).sort(),
     total,
     hasMore,
     loading,
@@ -774,6 +779,8 @@ export function useProjectQuality(projectId: string): UseProjectQualityResult {
   const [repairResult, setRepairResult] = useState<RepairResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sourceGeojson, setSourceGeojson] = useState<Record<string, unknown> | null>(null);
+  const projectRef = useRef(projectId);
+  projectRef.current = projectId;
   const abort = useRef<AbortController | null>(null);
   const repairLock = useRef(false);
   const mounted = useRef(true);
@@ -790,7 +797,7 @@ export function useProjectQuality(projectId: string): UseProjectQualityResult {
       setPhase('auditing');
       try {
         const result = await auditSpatialQuality(projectId, geojson, { crs: opts?.crs, signal: ac.signal });
-        if (!mounted.current) return null;
+        if (!mounted.current || ac.signal.aborted || projectRef.current !== projectId) return null;
         const scoped = opts?.datasetId ? { ...result, dataset_id: opts.datasetId } : result;
         setReport(scoped);
         setSourceGeojson(geojson);
@@ -812,7 +819,7 @@ export function useProjectQuality(projectId: string): UseProjectQualityResult {
   const runRepair = useCallback(
     async (req: Omit<RepairRequest, 'geojson'>) => {
       // 破坏性动作：hook 级锁，UI 禁用之外的第二道防双提交。
-      if (!projectId || !sourceGeojson || repairLock.current) return null;
+      if (!projectId || !sourceGeojson || repairLock.current || report?.dataset_id !== req.dataset_id) return null;
       repairLock.current = true;
       abort.current?.abort();
       const ac = new AbortController();
@@ -821,7 +828,7 @@ export function useProjectQuality(projectId: string): UseProjectQualityResult {
       setPhase('repairing');
       try {
         const result = await repairQuality(projectId, { ...req, geojson: sourceGeojson }, { signal: ac.signal });
-        if (!mounted.current) return null;
+        if (!mounted.current || ac.signal.aborted || projectRef.current !== projectId) return null;
         setRepairResult(result);
         setPhase('repaired');
         return result;
@@ -836,16 +843,19 @@ export function useProjectQuality(projectId: string): UseProjectQualityResult {
         if (mounted.current) repairLock.current = false;
       }
     },
-    [projectId, sourceGeojson],
+    [projectId, sourceGeojson, report],
   );
 
   const reset = useCallback(() => {
+    abort.current?.abort();
     setPhase('idle');
     setReport(null);
     setRepairResult(null);
     setError(null);
     setSourceGeojson(null);
   }, []);
+
+  useEffect(() => { reset(); }, [projectId, reset]);
 
   useEffect(
     () => () => {
@@ -894,6 +904,7 @@ export function useDataGc(projectId: string): UseDataGcResult {
   const [error, setError] = useState<string | null>(null);
 
   const gen = useRef(0);
+  const executeAbort = useRef<AbortController | null>(null);
   const abort = useRef<AbortController | null>(null);
   const executeLock = useRef(false);
   const mounted = useRef(true);
@@ -944,27 +955,40 @@ export function useDataGc(projectId: string): UseDataGcResult {
 
   const execute = useCallback(async () => {
     // 危险操作：hook 级锁 + 可中止（卸载/换项目时 abort 在飞的 300s 请求）。
-    if (!projectId || executing || executeLock.current) return null;
+    if (!projectId || executing || executeLock.current || !plan?.plan_fingerprint || plan.project_id !== projectId) return null;
     executeLock.current = true;
     const ac = new AbortController();
-    abort.current = ac;
+    executeAbort.current = ac;
     setExecuting(true);
     setError(null);
     try {
-      const result = await executeDataGc(projectId, { signal: ac.signal });
+      const result = await executeDataGc(projectId, { signal: ac.signal, expectedPlanFingerprint: plan.plan_fingerprint });
       if (!mounted.current) return null;
       setExecuted(result);
       void loadUsage({ forceRefresh: true });
       return result;
     } catch (err: unknown) {
       if (ac.signal.aborted || isAbortError(err)) return null;
-      if (mounted.current) setError(parseApiErrorDetail(err, '执行数据回收失败'));
+      if (mounted.current) {
+        setPlan(null);
+        setError(parseApiErrorDetail(err, '执行数据回收失败'));
+      }
       return null;
     } finally {
       executeLock.current = false;
       if (mounted.current) setExecuting(false);
     }
-  }, [projectId, executing, loadUsage]);
+  }, [projectId, executing, loadUsage, plan]);
+
+  useEffect(() => {
+    gen.current += 1;
+    abort.current?.abort();
+    executeAbort.current?.abort();
+    setPlan(null);
+    setUsage(null);
+    setExecuted(null);
+    setError(null);
+  }, [projectId]);
 
   const resetExecution = useCallback(() => setExecuted(null), []);
 
@@ -972,6 +996,7 @@ export function useDataGc(projectId: string): UseDataGcResult {
     () => () => {
       mounted.current = false;
       abort.current?.abort();
+      executeAbort.current?.abort();
     },
     [],
   );

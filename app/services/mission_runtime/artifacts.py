@@ -46,7 +46,7 @@ class MissionArtifactOwnership:
                 break
         data[bucket] = cur
         return self.store.patch_mission(
-            mission_id, lease_epoch=lease_epoch, owner=owner, refs=data)
+            mission_id, lease_epoch=lease_epoch, owner=owner, refs=data, expected_revision=rec.revision)
 
     def inventory(self, mission_id: str) -> dict:
         rec = self.store.get_mission(mission_id)

@@ -102,6 +102,85 @@ async def _save_plan(sid: str) -> None:
 # ── role fail-closed ─────────────────────────────────────────────────────
 
 
+async def test_default_production_harness_records_actual_dispatch_capabilities_in_durable_ledger(clean_session, monkeypatch):
+    from app.services.gis_harness import delegation
+    from app.services import subagent
+    from app.tools.registry import ToolRegistry, tool
+    from app.services.agent_swarm.delegation import DelegationGateway, FairSlotScheduler
+    from app.services.session_plan import load_session_plan
+    await _save_plan(clean_session)
+    registry = ToolRegistry()
+    for name, cap in (("review_one", "cartography.review"), ("review_two", "cartography.statistics")):
+        async def execute():
+            return {"success": True}
+        tool(registry, name=name, description=name, side_effect="pure", capabilities=[cap])(execute)
+    seen = []
+    class Gateway(DelegationGateway):
+        async def execute(self, request, runner):
+            seen.append(request.allowed_capabilities)
+            return await super().execute(request, runner)
+    class Dispatcher:
+        def __init__(self, registry, session_id):
+            self.registry = registry
+        async def run(self, **kwargs):
+            await self.registry.dispatch("review_one", {})
+            result = _ok()
+            result.lineage = {"capabilities_used": ["forged.child.claim"]}
+            return result
+    monkeypatch.setattr(delegation, "_registry_for", lambda: registry)
+    monkeypatch.setattr(subagent, "SubagentDispatcher", Dispatcher)
+    gateway = Gateway(scheduler=FairSlotScheduler())
+    monkeypatch.setattr("app.services.agent_swarm.delegation_adapters.get_shared_gateway", lambda: gateway)
+    result = await delegate(clean_session, _spec())
+    assert result.status == STATUS_COMPLETED
+    assert seen == [["cartography.review", "cartography.statistics"]]
+    assert result.lineage["capabilities_used"] == ["cartography.review"]
+    plan = await load_session_plan(clean_session)
+    persisted = plan.gis_chapter[DELEGATIONS_KEY]["records"][-1]["lineage"]
+    assert persisted["capabilities_used"] == ["cartography.review"]
+    assert persisted["capability_evidence"]["source"] == "parent_registry_dispatch"
+
+
+async def test_injected_harness_cannot_upgrade_child_self_claim_to_observed_capability(clean_session):
+    await _save_plan(clean_session)
+    child = _ok()
+    child.lineage = {"capabilities_used": ["forged.child.claim"]}
+    result = await delegate(clean_session, _spec(), dispatcher=_FakeDispatcher([child]))
+    assert result.status == STATUS_COMPLETED
+    assert result.lineage["capabilities_used"] == []
+    assert result.lineage["capability_evidence"]["status"] == "unobserved"
+
+
+def test_durable_lineage_preserves_complete_wide_production_capability_set():
+    from app.services.gis_harness.delegation_lineage import bounded_lineage
+    from app.services.agent_swarm.delegation import MAX_CAPABILITIES_PER_REQUEST
+    capabilities = [f"cap.{i}" for i in range(MAX_CAPABILITIES_PER_REQUEST)]
+    assert bounded_lineage({"capabilities_used": capabilities})["capabilities_used"] == capabilities
+
+
+async def test_harness_oversized_parent_grant_fails_before_child_and_persists_terminal_record(clean_session, monkeypatch):
+    from app.services.gis_harness import delegation
+    from app.services import subagent
+    from app.tools.registry import ToolRegistry, tool
+    from unittest.mock import Mock
+    from app.services.session_plan import load_session_plan
+    await _save_plan(clean_session)
+    registry = ToolRegistry()
+    async def execute():
+        return {"success": True}
+    from app.services.agent_swarm.delegation import MAX_CAPABILITIES_PER_REQUEST
+    tool(registry, name="too_wide", description="wide", side_effect="pure",
+         capabilities=[f"cap.{i}" for i in range(MAX_CAPABILITIES_PER_REQUEST + 1)])(execute)
+    dispatcher = Mock()
+    monkeypatch.setattr(delegation, "_registry_for", lambda: registry)
+    monkeypatch.setattr(subagent, "SubagentDispatcher", dispatcher)
+    result = await delegate(clean_session, _spec())
+    assert result.status == STATUS_FAILED and "capability" in result.error
+    dispatcher.assert_not_called()
+    plan = await load_session_plan(clean_session)
+    assert plan.gis_chapter[DELEGATIONS_KEY]["records"][-1]["status"] == STATUS_FAILED
+
+
 async def test_unknown_role_rejected(clean_session):
     await _save_plan(clean_session)
     rec = await delegate(clean_session, _spec(role="no_such_role"),
@@ -131,7 +210,7 @@ async def test_success_record_persisted_with_lineage(clean_session):
     assert records[0]["status"] == STATUS_COMPLETED
     # 台账满 8 条后最老被裁剪
     for i in range(10):
-        await delegate(clean_session, _spec(task=f"t{i}"),
+        await delegate(clean_session, _spec(task=f"t{i}", plan_step=f"qa:history:{i}"),
                        dispatcher=_FakeDispatcher([_ok(summary=f"s{i}")]))
     plan = await load_session_plan(clean_session)
     records = (plan.gis_chapter.get(DELEGATIONS_KEY) or {}).get("records") or []

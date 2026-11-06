@@ -113,7 +113,7 @@ async def test_subagent_usage_rollup_and_lineage(registry):
     assert llm["reports"] == 2
     assert result.lineage["parent_turn_id"] == "turn-parent"
     assert result.lineage["parent_session_id"] == "s-parent"
-    assert result.lineage["depth"] == 0
+    assert result.lineage["depth"] == 1
     # 父 evidence roll-up：一次、幂等
     assert parent_ev.total_tokens == 30
     assert parent_ev.prompt_tokens == 20

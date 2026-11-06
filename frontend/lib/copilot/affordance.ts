@@ -1,3 +1,4 @@
+import { devOnly } from '@/lib/utils/logger';
 /**
  * Canvas affordance 协议（ADR-0194，与 docs/dev/mixed-initiative-copilot-spec.md
  * 同步；后端权威实现 app/services/gis_situation/canvas_affordance.py）。
@@ -154,7 +155,7 @@ export function extractMountedWidget(data: unknown): WidgetSpec | null {
   if (record.action !== 'mount_widget') return null;
   const raw = record.widget;
   if (typeof raw !== 'object' || raw === null || !isWidgetSpecSafe(raw)) {
-    console.warn('[copilot] unsafe or malformed widget dropped');
+    devOnly.warn('[copilot] unsafe or malformed widget dropped');
     return null;
   }
   const spec = raw as Record<string, unknown>;
@@ -166,7 +167,7 @@ export function extractMountedWidget(data: unknown): WidgetSpec | null {
     typeof spec.payload !== 'object' ||
     spec.payload === null
   ) {
-    console.warn('[copilot] widget spec failed shape check, dropped');
+    devOnly.warn('[copilot] widget spec failed shape check, dropped');
     return null;
   }
   return {
@@ -226,8 +227,9 @@ export function reportAffordance(
     // fire-and-forget：交互上报绝不阻塞手势线程；失败静默（下一轮 turn
     // 捎带的同一信封经服务端内容寻重补齐，不丢语义）。
     void window
-      .fetch(url, { method: 'POST', headers, body: JSON.stringify(envelope) })
-      .catch(() => undefined);
+      .fetch(url, { method: 'POST', headers, body: JSON.stringify(envelope), signal: AbortSignal.timeout(10_000) })
+      .then((response) => { if (!response.ok) devOnly.warn('[copilot] canvas action rejected:', response.status); })
+      .catch((error) => devOnly.warn('[copilot] canvas action failed:', error));
     dispatched = true;
   }
   const ended = typeof performance !== 'undefined' ? performance.now() : Date.now();

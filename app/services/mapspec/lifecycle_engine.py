@@ -13,6 +13,7 @@
 """
 import copy
 import logging
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
@@ -217,7 +218,7 @@ class MapSpecLifecycleEngine:
         # ADR-0186 D4：视觉自愈收敛账本（键=缺陷集指纹，有界 FIFO 128）。
         # 进程内状态（多 pod 独立计数，诚实边界已在 ADR 披露）；仅在提交
         # 成功后推进，失败回滚不留账面。
-        self._visual_heal_ledger: Dict[str, Dict[str, Any]] = {}
+        self._visual_heal_ledger: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
     @staticmethod
     def _blocking_error_codes(validation: Dict[str, Any]) -> set:
@@ -296,7 +297,7 @@ class MapSpecLifecycleEngine:
         # ADR-0195 空间反幻觉守护网关（锁前管道）：对携带空间几何的意图
         # （SetView/UpsertLayer/InitProject）做 L1-L4 校验。BLOCK → 拒绝
         # 提交（不占锁、不推进 revision）；AUTO_FLIP → 以纠偏后的 intent
-        # 进入事务。SPATIAL_GUARDRAILS=0 一键关闭；网关内部 fail-open。
+        # 进入事务。SPATIAL_GUARDRAILS=0 一键关闭；网关故障拒绝本次提交。
         if _spatial_guardrails_enabled():
             try:
                 intent, _guard_verdict = _get_spatial_guardrails().check_intent(
@@ -320,8 +321,11 @@ class MapSpecLifecycleEngine:
                         "spatial guardrail auto_flip applied: session=%s intent=%s",
                         session_id, type(intent).__name__,
                     )
-            except Exception:  # noqa: BLE001 — 守护网关绝不阻断突变面
-                pass
+            except Exception as exc:  # noqa: BLE001 — unavailable guard must not approve
+                logger.warning("Spatial guard unavailable: %s", type(exc).__name__)
+                return MapSpecResult(is_error=True, origin=origin,
+                                     error_code="spatial_guard_unavailable",
+                                     error_msg="空间校验暂不可用，请稍后重试。")
         _lock = session_lock_registry.lock(
             session_id, fail_on_degraded=True, fail_on_lost=True,
         )
@@ -876,7 +880,12 @@ class MapSpecLifecycleEngine:
         else:
             items = tuple(defects)
         fingerprint = heal_defect_fingerprint(items)
-        entry = self._visual_heal_ledger.get(fingerprint) or {
+        ledger_key = (session_id, fingerprint)
+        now = time.monotonic()
+        for key, item in list(self._visual_heal_ledger.items()):
+            if item.get("expires_at", now + 3600.0) <= now:
+                self._visual_heal_ledger.pop(key, None)
+        entry = self._visual_heal_ledger.get(ledger_key) or {
             "attempts": 0,
             "last_score": None,
             "no_improvement": 0,
@@ -945,7 +954,8 @@ class MapSpecLifecycleEngine:
             tried = set(entry["tried_signatures"])
             if plan.ops:
                 tried.add(plan.ops_signature)
-            self._visual_heal_ledger[fingerprint] = {
+            self._visual_heal_ledger[ledger_key] = {
+                "expires_at": time.monotonic() + 3600.0,
                 "attempts": entry["attempts"] + 1,
                 "last_score": (
                     quality_score if quality_score is not None else entry["last_score"]
@@ -1187,11 +1197,8 @@ class MapSpecLifecycleEngine:
                         error_msg="Session lock ownership lost before commit; batch aborted.",
                         correction_hint="锁所有权在提交前丢失（TTL 过期）。请重读 MapSpec 后重试。",
                     )
-                session_dir = self.store.get_session_dir(session_id)
-                ckpt_res = await create_checkpoint(
-                    mapspec, session_dir, session_data_manager,
-                )
-                checkpoint_id_created = ckpt_res.get("checkpoint_id")
+                # Presentation-only batches need no data/source recovery checkpoint.
+                checkpoint_id_created = None
                 mutation_revision = prior_mutation_revision + 1
                 await self.store.save_mapspec(
                     session_id, mapspec, mutation_revision=mutation_revision,

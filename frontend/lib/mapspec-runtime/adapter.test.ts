@@ -283,8 +283,8 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       // The two line-type sublayers filter to different geometry types.
       const outline = spec.layers.find((l) => l.id === `L1${SUBLAYER_SEP}outline`)!;
       const line = spec.layers.find((l) => l.id === `L1${SUBLAYER_SEP}line`)!;
-      expect(outline.filter).toEqual(["==", "$type", "Polygon"]);
-      expect(line.filter).toEqual(["==", "$type", "LineString"]);
+      expect(outline.filter).toEqual(["==", ["geometry-type"], "Polygon"]);
+      expect(line.filter).toEqual(["==", ["geometry-type"], "LineString"]);
     });
   });
 
@@ -396,7 +396,7 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       const fill = spec.layers.find((l) => l.type === "fill")!;
       expect(fill.filter).toEqual([
         "all",
-        ["==", "$type", "Polygon"],
+        ["==", ["geometry-type"], "Polygon"],
         ["any",
           ["all", [">=", ["get", "score"], 0], ["<", ["get", "score"], 25]],
           ["all", [">=", ["get", "score"], 50], ["<", ["get", "score"], 100]],
@@ -408,7 +408,7 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       const layer = baseLayer({ source: fc(polygonFeature()) });
       const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
       const fill = spec.layers.find((l) => l.type === "fill")!;
-      expect(fill.filter).toEqual(["==", "$type", "Polygon"]);
+      expect(fill.filter).toEqual(["==", ["geometry-type"], "Polygon"]);
     });
   });
 
@@ -423,9 +423,9 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       const fill = spec.layers.find((l) => l.id === `L1${SUBLAYER_SEP}fill`)!;
       const line = spec.layers.find((l) => l.id === `L1${SUBLAYER_SEP}line`)!;
       const point = spec.layers.find((l) => l.id === `L1${SUBLAYER_SEP}point`)!;
-      expect(fill.filter).toEqual(["all", ["==", "$type", "Polygon"], [">", ["get", "pop"], 1000]]);
-      expect(line.filter).toEqual(["all", ["==", "$type", "LineString"], [">", ["get", "pop"], 1000]]);
-      expect(point.filter).toEqual(["all", ["==", "$type", "Point"], [">", ["get", "pop"], 1000]]);
+      expect(fill.filter).toEqual(["all", ["==", ["geometry-type"], "Polygon"], [">", ["get", "pop"], 1000]]);
+      expect(line.filter).toEqual(["all", ["==", ["geometry-type"], "LineString"], [">", ["get", "pop"], 1000]]);
+      expect(point.filter).toEqual(["all", ["==", ["geometry-type"], "Point"], [">", ["get", "pop"], 1000]]);
     });
 
     it("combines the imperative filter with activeFilters range filters", () => {
@@ -444,7 +444,7 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       const fill = spec.layers.find((l) => l.type === "fill")!;
       expect(fill.filter).toEqual([
         "all",
-        ["==", "$type", "Polygon"],
+        ["==", ["geometry-type"], "Polygon"],
         ["==", ["get", "name"], "mall"],
         ["any", ["all", [">=", ["get", "score"], 0], ["<", ["get", "score"], 25]]],
       ]);
@@ -454,7 +454,7 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       const layer = baseLayer({ source: fc(polygonFeature()), filter: null });
       const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
       const fill = spec.layers.find((l) => l.type === "fill")!;
-      expect(fill.filter).toEqual(["==", "$type", "Polygon"]);
+      expect(fill.filter).toEqual(["==", ["geometry-type"], "Polygon"]);
     });
   });
 

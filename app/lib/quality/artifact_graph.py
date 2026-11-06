@@ -50,7 +50,7 @@ def _expand(entry: str) -> List[Tuple[str, Path]]:
     """单条输入声明 → [(rel_path, path)]；目录递归展开（有界）。"""
     path = REPO_ROOT / entry
     if path.is_dir():
-        files = sorted(p for p in path.rglob("*.py") if p.is_file())
+        files = sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in {".py", ".ts", ".tsx", ".js", ".mjs", ".json", ".yaml", ".yml", ".toml"})
         if len(files) > _MAX_DIR_FILES:
             # R2 review：静默截断 = 新增文件不计入指纹（staleness 盲区）
             # —— 超限必须显式失败，逼迫把目录拆细或上调上限（需 ADR）。

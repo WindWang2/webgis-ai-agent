@@ -1,4 +1,4 @@
-"""链② 栅格→zonal→矢量（ADR-0282 D3/D4；断点 raster 链不入编排 + 覆盖率）。
+"""链② 栅格→zonal→矢量（ADR-0284 D3/D4；断点 raster 链不入编排 + 覆盖率）。
 
 - raster_zonal_summary 新族：subject(raster) ref 直通（不水合为 dict）+
   boundary 面域 → zonal_stats → 带 per-zone 统计的矢量 ref（MapSpec-ready）；

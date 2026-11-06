@@ -68,7 +68,7 @@ async def test_plan_run_status_recompute_full_chain(registry):
     plan_res = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "admin_facility_distribution",
         "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert plan_res["success"], plan_res
     wf_id = plan_res["workflow_id"]
     assert plan_res["runnable"] is True
@@ -78,7 +78,7 @@ async def test_plan_run_status_recompute_full_chain(registry):
 
     # 2) run：真实执行主链
     run_res = await registry.dispatch("webgis_analysis_workflow_run", {
-        "workflow_id": wf_id, "session_id": SESSION})
+        "workflow_id": wf_id, "session_id": SESSION}, session_id=SESSION)
     assert run_res["status"] == "satisfied", run_res
     layers = {item["step_id"]: item for item in run_res["layers"]}
     assert layers["zones_count"]["ref"].startswith("ref:geojson")
@@ -89,14 +89,14 @@ async def test_plan_run_status_recompute_full_chain(registry):
 
     # 3) status：只读投影一致
     status_res = await registry.dispatch("webgis_analysis_workflow_status", {
-        "workflow_id": wf_id, "session_id": SESSION})
+        "workflow_id": wf_id, "session_id": SESSION}, session_id=SESSION)
     assert status_res["success"]
     assert status_res["status"] == "satisfied"
     assert {"zones_count", "area_density"} <= set(status_res["receipts"])
 
     # 4) 幂等重跑：ref 不变
     rerun = await registry.dispatch("webgis_analysis_workflow_run", {
-        "workflow_id": wf_id, "session_id": SESSION})
+        "workflow_id": wf_id, "session_id": SESSION}, session_id=SESSION)
     assert {item["step_id"]: item["ref"] for item in rerun["layers"]}["zones_count"] \
         == first_ref
 
@@ -113,7 +113,7 @@ async def test_plan_run_status_recompute_full_chain(registry):
     rec_res = await registry.dispatch("webgis_analysis_workflow_recompute", {
         "workflow_id": wf_id,
         "role_refs": json.dumps({"subject": poi_ref2}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert rec_res["success"], rec_res
     assert "zones_count" in rec_res["recomputed_steps"]
     assert rec_res["layers"]["zones_count"]["ref"] if isinstance(
@@ -132,7 +132,7 @@ async def test_plan_missing_boundary_typed_blocked(registry):
     plan_res = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "admin_facility_distribution",
         "role_refs": json.dumps({"subject": poi_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert plan_res["success"] is True                 # plan 本身成功
     assert plan_res["runnable"] is False               # 但不可执行
     codes = {s["reason_code"] for s in plan_res["steps"]}
@@ -140,7 +140,7 @@ async def test_plan_missing_boundary_typed_blocked(registry):
     assert plan_res["alternatives"]
 
     run_res = await registry.dispatch("webgis_analysis_workflow_run", {
-        "workflow_id": plan_res["workflow_id"], "session_id": SESSION})
+        "workflow_id": plan_res["workflow_id"], "session_id": SESSION}, session_id=SESSION)
     assert run_res["status"] in ("blocked", "failed")
     assert run_res["status"] != "satisfied"            # 工具失败不得 pass
 
@@ -150,7 +150,7 @@ async def test_plan_no_network_declines_with_alternatives(registry):
     plan_res = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "service_accessibility",
         "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert plan_res["runnable"] is False
     iso = next(s for s in plan_res["steps"] if s["step_id"] == "isochrone")
     assert iso["reason_code"] == "AWF_NO_NETWORK_FOR_ACCESSIBILITY"
@@ -160,20 +160,20 @@ async def test_plan_no_network_declines_with_alternatives(registry):
 
 async def test_plan_unknown_family_and_bad_json(registry):
     res = await registry.dispatch("webgis_analysis_workflow_plan", {
-        "family": "no_such_family", "session_id": SESSION})
+        "family": "no_such_family", "session_id": SESSION}, session_id=SESSION)
     assert res["success"] is False
     assert res["reason_code"] == "AWF_UNKNOWN_FAMILY"
 
     res2 = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "hazard_exposure", "role_refs": "{not-json",
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert res2["success"] is False
     assert res2["reason_code"] == "AWF_BAD_JSON"
 
 
 async def test_run_unknown_workflow_declined(registry):
     res = await registry.dispatch("webgis_analysis_workflow_run", {
-        "workflow_id": "awf.ghost.000", "session_id": SESSION})
+        "workflow_id": "awf.ghost.000", "session_id": SESSION}, session_id=SESSION)
     assert res["success"] is False
     assert res["reason_code"] == "AWF_WORKFLOW_NOT_FOUND"
 
@@ -185,11 +185,11 @@ async def test_recompute_unblocks_with_new_data_and_reports_honestly(registry):
     plan1 = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "service_accessibility",
         "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     wf = plan1["workflow_id"]
     assert plan1["runnable"] is False                 # 无路网 blocked
     run1 = await registry.dispatch("webgis_analysis_workflow_run", {
-        "workflow_id": wf, "session_id": SESSION})
+        "workflow_id": wf, "session_id": SESSION}, session_id=SESSION)
     assert run1["status"] == "blocked"
     assert run1["layers"] == []                       # 零执行零产物
 
@@ -208,7 +208,7 @@ async def test_recompute_unblocks_with_new_data_and_reports_honestly(registry):
     rec = await registry.dispatch("webgis_analysis_workflow_recompute", {
         "workflow_id": wf,
         "role_refs": json.dumps({"network": road_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert rec["success"], rec
     assert rec["status"] == "satisfied"
     # 诚实报告：列出的步骤全部真实重新执行过（有产物/ref）
@@ -224,10 +224,10 @@ async def test_plan_idempotent_preserves_run_state(registry):
     plan1 = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "admin_facility_distribution",
         "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     wf = plan1["workflow_id"]
     run = await registry.dispatch("webgis_analysis_workflow_run", {
-        "workflow_id": wf, "session_id": SESSION})
+        "workflow_id": wf, "session_id": SESSION}, session_id=SESSION)
     assert run["status"] == "satisfied"
     first_layers = {item["step_id"]: item["ref"]
                     for item in run["layers"]}
@@ -235,10 +235,10 @@ async def test_plan_idempotent_preserves_run_state(registry):
     plan2 = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "admin_facility_distribution",
         "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert plan2["workflow_id"] == wf
     status = await registry.dispatch("webgis_analysis_workflow_status", {
-        "workflow_id": wf, "session_id": SESSION})
+        "workflow_id": wf, "session_id": SESSION}, session_id=SESSION)
     assert status["status"] == "satisfied"             # 不是被重置的 pending
     assert set(status["receipts"]) == {"zones_count", "area_density"}
     assert {item["step_id"]: item["ref"]
@@ -259,12 +259,12 @@ async def test_run_max_features_clamped_server_side(registry):
     plan = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "admin_facility_distribution",
         "role_refs": json.dumps({"subject": big_ref, "boundary": dist_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     # 尝试用超大 max_features 解锁 → 服务端钳制回默认上限 → 仍 typed blocked
     run = await registry.dispatch("webgis_analysis_workflow_run", {
         "workflow_id": plan["workflow_id"],
         "max_features": 10**12,
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert run["status"] == "blocked"
     steps = {s["step_id"]: s for s in run["steps"]}
     assert steps["zones_count"]["reason_code"] == "AWF_BUDGET_EXCEEDED"
@@ -277,16 +277,16 @@ async def test_recompute_noop_reuses_by_fingerprint(registry):
     plan = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "admin_facility_distribution",
         "role_refs": _json.dumps({"subject": poi_ref, "boundary": dist_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     wf = plan["workflow_id"]
     run = await registry.dispatch("webgis_analysis_workflow_run", {
-        "workflow_id": wf, "session_id": SESSION})
+        "workflow_id": wf, "session_id": SESSION}, session_id=SESSION)
     assert run["status"] == "satisfied"
     first = {item["step_id"]: item["ref"] for item in run["layers"]}
     rec = await registry.dispatch("webgis_analysis_workflow_recompute", {
         "workflow_id": wf,
         "role_refs": _json.dumps({"subject": poi_ref, "boundary": dist_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert rec["success"], rec
     assert rec["recomputed_steps"] == []          # 同身份 → 零重新 dispatch
     assert {item["step_id"]: item["ref"]
@@ -309,17 +309,17 @@ async def test_plan_qualifier_change_is_replan(registry):
         "role_refs": _json.dumps({
             "baseline": {"ref": ref, "qualifier": {"year": 2023}},
             "target_time": {"ref": ref, "qualifier": {"year": 2023}}}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert p1["runnable"] is False                   # 同年 → MISMATCH
     p2 = await registry.dispatch("webgis_analysis_workflow_plan", {
         "family": "temporal_change", "workflow_id": "awf.qual.t",
         "role_refs": _json.dumps({
             "baseline": {"ref": ref, "qualifier": {"year": 2018}},
             "target_time": {"ref": ref, "qualifier": {"year": 2023}}}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert p2["runnable"] is True                    # 年份对齐 → ready
     st = await registry.dispatch("webgis_analysis_workflow_status", {
-        "workflow_id": "awf.qual.t", "session_id": SESSION})
+        "workflow_id": "awf.qual.t", "session_id": SESSION}, session_id=SESSION)
     steps = {s["step_id"]: s for s in st["steps"]}
     assert steps["change_diff"]["state"] == "pending"   # 新裁决持久化
     assert steps["change_diff"]["reason_code"] == ""    # 不再持旧 MISMATCH

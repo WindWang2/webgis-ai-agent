@@ -71,6 +71,7 @@ _GEOGRAPHIC_CRS_URIS = frozenset({
 
 class CoverageReadError(DataFabricError):
     """受控读取失败（reason code 封闭；details 携带协商事实）。"""
+    code = "SOURCE_BAD_RESPONSE"
 
     def __init__(self, message: str, *, reason_code: str, details: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(message)
@@ -150,6 +151,9 @@ async def read_coverage_subset(
                 )
             subset_params[axis_name] = (float(window[0]), float(window[1]))
     if bbox is not None:
+        grid_crs = meta.get("grid_crs")
+        if not grid_crs:
+            raise CoverageReadError("bbox requires a declared domain CRS; use explicit subsets", reason_code=RC_AXIS_NOT_IDENTIFIABLE)
         spatial = _identify_spatial_axes(axes)
         if spatial is None:
             raise CoverageReadError(
@@ -160,6 +164,12 @@ async def read_coverage_subset(
                 details={"declared_axes": sorted(axes)},
             )
         lon_axis, lat_axis = spatial
+        from pyproj import Transformer
+
+        try:
+            bbox = list(Transformer.from_crs("EPSG:4326", grid_crs, always_xy=True).transform_bounds(*bbox))
+        except ValueError as e:
+            raise CoverageReadError("domain CRS cannot be transformed", reason_code=RC_AXIS_NOT_IDENTIFIABLE) from e
         subset_params[lon_axis] = (float(bbox[0]), float(bbox[2]))
         subset_params[lat_axis] = (float(bbox[1]), float(bbox[3]))
 
@@ -234,7 +244,9 @@ async def read_coverage_subset(
 
     # ── 请求（bounded_get：Content-Length 预检 + 流式帽） ──────────
     base = adapter.url.rstrip("/")
-    coverage_url = f"{base}/collections/{dataset_id}/coverage"
+    from urllib.parse import quote
+
+    coverage_url = f"{base}/collections/{quote(dataset_id, safe='')}/coverage"
     params: List[Tuple[str, str]] = []
     if chosen_format == _COVJSON_FORMAT:
         params.append(("f", "json"))
@@ -305,12 +317,12 @@ async def read_coverage_subset(
         arr, transform, crs, nodata, band_names, axes_used, bands_missing = (
             await asyncio.to_thread(
                 _parse_covjson,
-                body, bands=bands, bands_declared=bands_declared,
+                body, bands=bands, bands_declared=bands_declared, max_cells=max_cells,
             )
         )
     else:
         arr, transform, crs, nodata, band_names, axes_used = await asyncio.to_thread(
-            _parse_geotiff, body, bands=bands,
+            _parse_geotiff, body, bands=bands, max_cells=max_cells,
         )
         bands_missing = []
 
@@ -396,6 +408,7 @@ def _parse_covjson(
     *,
     bands: Optional[List[str]],
     bands_declared: List[Dict[str, Any]],
+    max_cells: int = DEFAULT_MAX_CELLS,
 ) -> Tuple[np.ndarray, Any, Any, Optional[float], List[str], Dict[str, Any], List[str]]:
     """COVJSON 封闭子集解析：Grid domain（values 轴）+ NdArray ranges。"""
     import json as _json
@@ -454,11 +467,12 @@ def _parse_covjson(
             f"no matching ranges (requested={bands}, available={list(ranges)})",
             reason_code=RC_CAPABILITY_NOT_DECLARED,
         )
-    nodata = None
-    for b in bands_declared:
-        if b.get("name") in selected and b.get("nodata") is not None:
-            nodata = float(b["nodata"])
-            break
+    if lon_vals.size * lat_vals.size * len(selected) > max_cells:
+        raise CoverageReadError("COVJSON response grid exceeds pixel budget", reason_code=RC_BUDGET_EXCEEDED)
+    nodata_by_band = {band.get("name"): float(band["nodata"]) for band in bands_declared if band.get("nodata") is not None}
+    values_declared = {nodata_by_band.get(name) for name in selected}
+    mixed_nodata = len(values_declared) > 1
+    nodata = float("nan") if mixed_nodata else next(iter(values_declared), None)
     layers = []
     for name in selected:
         rng = ranges[name]
@@ -470,8 +484,12 @@ def _parse_covjson(
                 f"range '{name}' lacks NdArray values/shape (TiledNdArray unsupported)",
                 reason_code=RC_CAPABILITY_NOT_DECLARED,
             )
+        if len(values) > max_cells or not all(isinstance(v, (int, float, type(None))) for v in values):
+            raise CoverageReadError("COVJSON range exceeds scalar cell budget", reason_code=RC_BUDGET_EXCEEDED)
         try:
             arr1 = np.asarray(values, dtype="float64")
+            if mixed_nodata and name in nodata_by_band:
+                arr1[arr1 == nodata_by_band[name]] = np.nan
         except (TypeError, ValueError) as e:
             raise CoverageReadError(
                 f"COVJSON range values are not numeric: {e}",
@@ -521,7 +539,7 @@ def _parse_covjson(
     # CRS 来自响应自身的 referencing 声明（P0-1：不可判 → None，绝不默认）。
     crs = _resolve_covjson_crs(doc)
     return (
-        stacked.astype("float32"), transform, crs, nodata, selected, axes_used,
+        stacked, transform, crs, nodata, selected, axes_used,
         bands_missing,
     )
 
@@ -531,7 +549,7 @@ def _axis_kind_axis(key: str, axis_items: List[Tuple[str, Any]]) -> Optional[str
 
 
 def _parse_geotiff(
-    body: bytes, *, bands: Optional[List[str]]
+    body: bytes, *, bands: Optional[List[str]], max_cells: int = DEFAULT_MAX_CELLS,
 ) -> Tuple[np.ndarray, Any, Any, Optional[float], List[str], Dict[str, Any]]:
     """GeoTIFF 输出：字节 → rasterio 内存读（transform/CRS/nodata 全来自文件）。"""
     from rasterio.io import MemoryFile
@@ -539,12 +557,20 @@ def _parse_geotiff(
     with MemoryFile(body) as mem:
         with mem.open() as ds:
             indexes = list(range(1, ds.count + 1))
+            names = [ds.descriptions[i - 1] or f"band{i}" for i in indexes]
+            if bands:
+                missing = set(bands) - set(names)
+                if missing:
+                    raise CoverageReadError(f"GeoTIFF missing requested bands: {sorted(missing)}", reason_code=RC_CAPABILITY_NOT_DECLARED)
+                indexes = [index for index, name in zip(indexes, names) if name in bands]
+            if ds.height * ds.width * len(indexes) > max_cells:
+                raise CoverageReadError("GeoTIFF response grid exceeds pixel budget", reason_code=RC_BUDGET_EXCEEDED)
             arr = ds.read(indexes)
             transform = ds.transform
             crs = ds.crs.to_string() if ds.crs else None
             nodata = ds.nodata
             band_names = [ds.descriptions[i - 1] or f"band{i}" for i in indexes]
-            shape = {"bands": ds.count, "height": ds.height, "width": ds.width}
+            shape = {"bands": len(indexes), "height": ds.height, "width": ds.width}
     return arr, transform, crs, nodata, band_names, shape
 
 
@@ -559,7 +585,7 @@ def _write_gtiff(
         "width": width,
         "height": height,
         "count": count,
-        "dtype": "float32",
+        "dtype": str(arr.dtype),
         "transform": transform,
         "crs": crs,
         "nodata": nodata,
@@ -568,7 +594,7 @@ def _write_gtiff(
         "blockysize": min(512, max(16, height)),
     }
     with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr.astype("float32"))
+        dst.write(arr)
 
 
 __all__ = [

@@ -87,10 +87,29 @@ class DecisionEngine:
                 existing_ids.add(ar.id)
 
         from app.services.spatial_decision.rule_pack import build_evidence_chain
+        # Resolve RAG access from the authoritative session context, never LLM args.
+        from app.lib.runtime.context import current_runtime_context
+        from app.services.rag.engine import TenantContext
+        tenant = None
+        runtime = current_runtime_context()
+        if session_id and runtime.session_id == session_id:
+            try:
+                from sqlalchemy import select
+                from app.models.db_model import Conversation, User
+                from app.tools._utils import async_db_session
+                async with async_db_session() as db:
+                    owner = (await db.execute(
+                        select(User.id, User.org_id).join(Conversation, Conversation.user_id == User.id).where(Conversation.id == session_id)
+                    )).first()
+                if owner:
+                    tenant = TenantContext(user_id=str(owner[0]), org_id=str(owner[1]) if owner[1] is not None else None)
+            except Exception as exc:
+                logger.warning("Decision RAG tenant resolution failed; public-only fallback: %s", type(exc).__name__)
         evidence_chain = await build_evidence_chain(
             query=scenario_text,
             scenario_type=scenario_type,
             context_params=parameters,
+            tenant=tenant,
         )
 
         scenario_name = self._get_scenario_name(scenario_type, rules)

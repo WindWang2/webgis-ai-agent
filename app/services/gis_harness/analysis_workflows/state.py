@@ -66,7 +66,7 @@ class WorkflowRunState(BaseModel):
     status: str = "pending"          # pending|running|satisfied|partial|blocked|failed|cancelled
     updated_at: float = 0.0
     contract_snapshot: Dict[str, Any] = Field(default_factory=dict)
-    # ADR-0282 D5：科学终审投影（run 结束时全步骤终态后由 executor 写入；
+    # ADR-0284 D5：科学终审投影（run 结束时全步骤终态后由 executor 写入；
     # {final_gate: pass|blocked|not_evaluated, checked_in_turn, findings_n}）。
     science_validation: Dict[str, Any] = Field(default_factory=dict)
 

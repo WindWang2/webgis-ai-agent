@@ -41,6 +41,7 @@ data_object_id）全部进入 ``lakehouse_gc._protected_references``
 LineageService 同纪律）。
 """
 from __future__ import annotations
+from app.services.org_quota_admission import admit_persistent_write, lock_org_transaction, quota_byte_size
 
 import logging
 import re
@@ -812,11 +813,17 @@ def commit_version(
         action=action,
         provenance=provenance,
     )
-    published = publish_commit_record(record)
-    version_id = published.version_id
-    _hook("after_manifest_publish")
-
+    version_id = _canonical_sha(record)
     existing = get_version_row(db, dataset_row.id, version_id)
+    if existing is None:
+        lock_org_transaction(db, str(dataset_row.org_id))
+        # A concurrent identical commit may have completed while waiting.
+        existing = get_version_row(db, dataset_row.id, version_id)
+    if existing is None:
+        incoming_bytes = quota_byte_size(manifest.get("byte_size"))
+        admit_persistent_write(db, str(dataset_row.org_id), storage_delta=incoming_bytes)
+    published = publish_commit_record(record)
+    _hook("after_manifest_publish")
     if existing is None:
         row = LakehouseDatasetVersion(
             dataset_row_id=dataset_row.id,
@@ -825,7 +832,7 @@ def commit_version(
             parent_version_id=parent,
             data_object_id=data_object_id,
             content_sha256=str(manifest.get("content_sha256") or ""),
-            byte_size=int(manifest.get("byte_size") or 0),
+            byte_size=incoming_bytes,
             branch=branch,
             action=action,
             provenance_json=record["provenance"],

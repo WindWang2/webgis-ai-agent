@@ -63,12 +63,12 @@ export function anchorFractionInBounds(
   const lat = Array.isArray(anchor) ? anchor[1] : anchor.lat;
   if (!validBounds(bounds)) return null;
   return {
-    fx: (lng - bounds.west) / (bounds.east - bounds.west),
-    fy: (lat - bounds.south) / (bounds.north - bounds.south),
+    fx: (unwrapLongitude(lng, bounds) - bounds.west) / (bounds.east - bounds.west),
+    fy: (mercY(lat) - mercY(bounds.south)) / (mercY(bounds.north) - mercY(bounds.south)),
   };
 }
 
-import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
+import { mercY } from '@/lib/map-kit/oversample';
 
 /** 导出侧同源常数：meters per degree（_drawGraticules 的近似换算）。 */
 export const METERS_PER_DEGREE = 111319.9;
@@ -87,21 +87,21 @@ export function boundsFromCenterZoom(
 ): GeoBounds | null {
   if (
     !Number.isFinite(center.lng) || !Number.isFinite(center.lat) ||
-    !Number.isFinite(zoom) || widthLogicalPx <= 0 || heightLogicalPx <= 0
+    !Number.isFinite(zoom) || !Number.isFinite(widthLogicalPx) || !Number.isFinite(heightLogicalPx) ||
+    Math.abs(center.lat) > 85.05112878 || widthLogicalPx <= 0 || heightLogicalPx <= 0
   ) {
     return null;
   }
-  const metersPerPixel = metersPerPixelAt(zoom, center.lat);
-  const halfWidthMeters = (widthLogicalPx / 2) * metersPerPixel;
-  const halfHeightMeters = (heightLogicalPx / 2) * metersPerPixel;
-  const halfWidthDeg = halfWidthMeters / METERS_PER_DEGREE;
-  const halfHeightDeg =
-    halfHeightMeters / (METERS_PER_DEGREE * Math.cos((center.lat * Math.PI) / 180));
+  const worldPixels = 512 * 2 ** zoom;
+  const halfWidthDeg = (widthLogicalPx / worldPixels) * 180;
+  const halfHeightMerc = (heightLogicalPx / worldPixels) * Math.PI;
+  const centerMerc = mercY(center.lat);
+  const latitude = (y: number) => (Math.atan(Math.sinh(y)) * 180) / Math.PI;
   return {
     west: center.lng - halfWidthDeg,
     east: center.lng + halfWidthDeg,
-    south: center.lat - halfHeightDeg,
-    north: center.lat + halfHeightDeg,
+    south: latitude(centerMerc - halfHeightMerc),
+    north: latitude(centerMerc + halfHeightMerc),
   };
 }
 
@@ -112,6 +112,18 @@ export function bboxToBounds(raw: unknown): GeoBounds | null {
   const s = Number(raw[1]);
   const e = Number(raw[2]);
   const n = Number(raw[3]);
-  const bounds = { west: w, south: s, east: e, north: n };
+  const bounds = { west: w, south: s, east: e < w ? e + 360 : e, north: n };
   return validBounds(bounds) ? bounds : null;
+}
+
+
+export function unwrapLongitude(lng: number, bounds: GeoBounds): number {
+  const center = (bounds.west + bounds.east) / 2;
+  return lng + 360 * Math.round((center - lng) / 360);
+}
+
+export function alignWrappedBounds(bounds: GeoBounds, reference: GeoBounds): GeoBounds {
+  const east = bounds.east < bounds.west ? bounds.east + 360 : bounds.east;
+  const shift = 360 * Math.round(((reference.west + reference.east) - (bounds.west + east)) / 720);
+  return { ...bounds, west: bounds.west + shift, east: east + shift };
 }

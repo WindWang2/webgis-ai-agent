@@ -400,12 +400,16 @@ def _read(app_relative: str) -> str:
 
 
 def _names_outside_calls(test: ast.AST) -> set:
-    """if 测试中未被 Call 包裹的 Name 集合（守卫操作数判定）。"""
+    """Guard operands, including direct type/finite validators."""
     names: set = set()
 
     def _walk(node: ast.AST, inside_call: bool) -> None:
         if isinstance(node, ast.Name) and not inside_call:
             names.add(node.id)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in {"isinstance", "_finite_number"}
+                and node.args and isinstance(node.args[0], ast.Name)):
+            names.add(node.args[0].id)
         for child in ast.iter_child_nodes(node):
             _walk(child, inside_call or isinstance(child, ast.Call))
 
@@ -440,12 +444,13 @@ def _ws_inbound_handlers() -> Dict[str, List[str]]:
                 and sub.args
                 and isinstance(sub.args[0], ast.Constant)
                 and isinstance(sub.args[0].value, str)
+                and (len(sub.args) == 1 or isinstance(sub.args[1], ast.Constant) and sub.args[1].value is None)
             ):
                 gets.add(sub.args[0].value)
             elif isinstance(sub, ast.If) and sub.test is not None:
-                # 守卫判定：名称必须是 if 测试的直接操作数（裸名 / is None /
-                # not x）；嵌套在 isinstance(...) 等 Call 内的引用不算必需
-                # 守卫（如 viewport_change 对 center 的后验类型检查）。
+                # Direct truth/type/finite checks are guards. Fields with a
+                # non-None data.get default remain optional, so viewport
+                # validation does not invent required input fields.
                 ifs |= _names_outside_calls(sub.test)
         get_names[node.name] = gets
         if_names[node.name] = ifs
@@ -566,12 +571,49 @@ def _scan_ws_outbound_events() -> List[str]:
 def _ws_auth_anchors() -> Dict[str, bool]:
     """WS 认证语义锚（存在性布尔，源自 ws.py 源码静态检查）。"""
     src = _read("app/api/routes/ws.py")
+    ws_tree = ast.parse(src)
+    helper = next((node for node in ast.parse(_read("app/core/auth.py")).body
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and node.name == "authenticate_ws_token"), None)
+
+    def calls(tree: ast.AST | None, name: str) -> bool:
+        return tree is not None and any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name
+            for node in ast.walk(tree)
+        )
+
+    def attribute_calls(name: str) -> list[ast.Call]:
+        return [node for node in ast.walk(ws_tree) if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute) and node.func.attr == name]
+
+    rate_calls = attribute_calls("is_allowed")
+    rate_guard = calls(ws_tree, "get_rate_limiter") and any(
+        isinstance(node.args[0], ast.JoinedStr)
+        and any(isinstance(part, ast.Constant) and str(part.value).startswith("ws_connect:")
+                for part in node.args[0].values)
+        for node in rate_calls if node.args
+    )
+    ownership_calls = attribute_calls("get_session_meta")
+    ownership_guard = bool(ownership_calls) and any(
+        isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name) and node.test.left.id == "conv"
+        and any(isinstance(value, ast.Constant) and value.value is None for value in node.test.comparators)
+        and any(isinstance(child, ast.Return) for statement in node.body for child in ast.walk(statement))
+        and any(isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)
+                and child.func.attr == "close"
+                and any(keyword.arg == "code" and isinstance(keyword.value, ast.Constant)
+                        and keyword.value.value == 4003 for keyword in child.keywords)
+                for statement in node.body for child in ast.walk(statement))
+        for node in ast.walk(ws_tree)
+    )
     return {
         "subprotocol_preferred": "Sec-WebSocket-Protocol" in src,
-        "token_verified": "verify_token(" in src,
+        "token_verified": bool(calls(ws_tree, "verify_token") or (
+            calls(ws_tree, "authenticate_ws_token") and calls(helper, "verify_token")
+        )),
         "token_version_checked": "token_version" in src,
-        "session_ownership_fail_closed": "ownership check" in src,
-        "per_ip_rate_limited": "rate" in src.lower(),
+        "session_ownership_fail_closed": ownership_guard,
+        "per_ip_rate_limited": rate_guard,
     }
 
 

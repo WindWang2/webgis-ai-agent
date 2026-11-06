@@ -101,7 +101,11 @@ class TestStalenessReliability:
         change = await svc.detect_source_change(sid, ref)
         report = await svc.propagate_staleness(sid, ref, change=change)
         assert report.verdict == "recompute"
-        assert "ref:geojson-derived" in report.marked
+        # The overwrite lifecycle observer can already have marked the child.
+        # Repeating propagation must report that truth rather than inflate new
+        # transitions in marked_count.
+        assert "ref:geojson-derived" in report.marked + report.already_stale
+        assert (await get_artifact(sid, "ref:geojson-derived")).status == "stale"
 
     async def test_deleted_source_propagates_invalid(self):
         """§34 deleted source：上游载荷消失 → 下游判 invalid（而非照旧）。"""

@@ -1,6 +1,7 @@
 """Issue #693 item 10: NEAR_DUPLICATE vs TOPOLOGY_GAP dedup; plus allocation/graph/centroid checks."""
 
 from app.services.spatial_quality_service import SpatialQualityEngine
+import pytest
 
 
 def test_gap_and_near_duplicate_not_duplicated():
@@ -69,7 +70,11 @@ def test_graph_builder_uses_dict_not_scan():
 
 
 def test_change_centroid_doc_mentions_holes():
-    import inspect
     from app.services.temporal.change import compute_centroid
-    src = inspect.getsource(compute_centroid)
-    assert "hole" in src.lower() or "holes" in src.lower()
+    # A displaced hole subtracts its area from the polygon centroid rather
+    # than counting its vertices as another filled ring.
+    geometry = {"type": "Polygon", "coordinates": [
+        [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]],
+        [[6, 2], [8, 2], [8, 4], [6, 4], [6, 2]],
+    ]}
+    assert compute_centroid(geometry) == pytest.approx((59 / 12, 61 / 12))

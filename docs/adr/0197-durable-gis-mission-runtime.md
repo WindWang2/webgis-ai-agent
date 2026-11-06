@@ -51,6 +51,13 @@ incomplete work; completed specialists are not repeated; destructive/unknown out
 Extend governor accounting conceptually with a durable `mission` cumulative ledger on the Mission
 row (reservation/release/retry cost), without replacing SessionBudgetLedger or creating billing.
 
+HTTP mission creation derives finite server ceilings: 200,000 tokens, 500 tool calls,
+600,000 compute/CPU ms, 3,600,000 wall ms, 2,048 memory MB, 100 MiB bytes/storage,
+and 8 concurrent tasks. Current organization storage, concurrency and rate limits
+further tighten the corresponding dimensions. Callers may only tighten these values;
+zero denies consumption and unknown dimensions are rejected. Internal benchmark/service
+construction remains explicit and is separate from this HTTP admission policy.
+
 ## Consequences
 
 - Long-running GIS goals gain crash/distributed recovery without duplicating Workflow/Swarm engines.

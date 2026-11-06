@@ -1,4 +1,4 @@
-"""链③ 网络→最近设施→行政汇总（ADR-0282 D4；断点 2/4 修复）。
+"""链③ 网络→最近设施→行政汇总（ADR-0284 D4；断点 2/4 修复）。
 
 - network_proximity 新族：真实 Dijkstra 最近设施路线 → 区均网络成本
   （numerator=Σtotal_cost / count 分母——均值语义非伪装率）；

@@ -53,11 +53,29 @@ if not url:
     print("error")
     sys.exit(0)
 try:
-    from sqlalchemy import create_engine, inspect
+    from sqlalchemy import create_engine, inspect, text
 
     engine = create_engine(url)
     try:
-        names = set(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            names = set(inspect(connection).get_table_names())
+            if engine.dialect.name == "postgresql" and "alembic_version" not in names:
+                # PostGIS images install extension tables before our migrations
+                # (spatial_ref_sys, plus tiger/topology tables on search_path).
+                # Exclude only extension members visible on this connection:
+                # a user table with the same name must still require adoption.
+                extension_tables = connection.execute(text("""
+                    SELECT c.relname
+                    FROM pg_catalog.pg_class c
+                    JOIN pg_catalog.pg_depend d
+                      ON d.classid = 'pg_catalog.pg_class'::regclass
+                     AND d.objid = c.oid
+                     AND d.objsubid = 0
+                     AND d.refclassid = 'pg_catalog.pg_extension'::regclass
+                     AND d.deptype = 'e'
+                    WHERE pg_catalog.pg_table_is_visible(c.oid)
+                """)).scalars()
+                names.difference_update(extension_tables)
     finally:
         engine.dispose()
 except Exception:

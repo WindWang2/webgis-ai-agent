@@ -319,7 +319,7 @@ def compile_map(
         evidence.omitted.append(f"map.layers(+{omitted_layers})")
     layers_fact = (
         known(layers_value, source="mapspec.layers", revision=revision)
-        if layers_value else unknown(source="mapspec.layers")
+        if isinstance(mapspec.get("layers"), list) else unknown(source="mapspec.layers")
     )
     layer_count_fact = known(
         len(raw_layers), source="mapspec.layers", revision=revision,
@@ -368,6 +368,11 @@ def compile_map(
     return MapContext(
         desired_revision=rev_fact, fingerprint=fingerprint,
         layers=layers_fact, layer_count=layer_count_fact,
+        layer_ids=(known([str(row["id"]) for row in raw_layers
+                          if isinstance(row, dict) and row.get("id")],
+                         source="mapspec.layers", revision=revision)
+                   if isinstance(mapspec.get("layers"), list)
+                   else unknown(source="mapspec.layers")),
         sources=sources_fact, basemap=basemap, observed=observed,
     )
 
@@ -460,16 +465,27 @@ def compile_interaction(
     # durable user 隐藏决策：与 gis_world_state.state 同裁决（全环派生）。
     provenance = map_state.get(_PROVENANCE_KEY)
     provenance = list(provenance) if isinstance(provenance, list) else []
-    user_hidden = [
-        str(entry.get("target")) for entry in provenance
-        if entry.get("origin") == "user"
-        and entry.get("kind") == _USER_HIDDEN_KIND
-        and entry.get("detail", {}).get("visible") is False
-        and entry.get("target")
-    ]
+    from app.services.gis_world_state.provenance import last_presentation_owner
+
+    targets = {str(entry.get("target")) for entry in provenance
+               if isinstance(entry, dict) and entry.get("target")}
+    for entry in provenance:
+        if not isinstance(entry, dict) or not isinstance(entry.get("detail"), dict):
+            continue
+        for key in ("shown", "hidden"):
+            values = entry["detail"].get(key)
+            if isinstance(values, list):
+                targets.update(str(target) for target in values if isinstance(target, str))
+    user_hidden = []
+    for target in targets:
+        owner = last_presentation_owner(provenance, target)
+        if (owner and owner.get("origin") == "user"
+                and isinstance(owner.get("detail"), dict)
+                and owner["detail"].get("visible") is False):
+            user_hidden.append(target)
     user_hidden_fact = (
         known(sorted(set(user_hidden)), source="map_state._gis_provenance")
-        if user_hidden else unknown(source="map_state._gis_provenance")
+        if isinstance(map_state.get(_PROVENANCE_KEY), list) else unknown(source="map_state._gis_provenance")
     )
 
     pending = []

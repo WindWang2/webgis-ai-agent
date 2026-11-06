@@ -94,6 +94,7 @@ export function MapProductVersionsPanel({
   const [openVersion, setOpenVersion] = useState<number | null>(null);
   const [openDetail, setOpenDetail] = useState<MapProductVersionOpen | null>(null);
   const [lifecycleBusy, setLifecycleBusy] = useState<string | null>(null);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
   const openVersionRef = useRef<number | null>(null);
 
@@ -107,10 +108,10 @@ export function MapProductVersionsPanel({
         const rows = page.items;
         setVersions(rows);
         if (rows.length >= 2) {
-          setFromNo(rows[1].version_no);
-          setToNo(rows[0].version_no);
+          setFromNo((current) => rows.some((row) => row.version_no === current) ? current : rows[1].version_no);
+          setToNo((current) => rows.some((row) => row.version_no === current) ? current : rows[0].version_no);
         } else if (rows.length === 1) {
-          setToNo(rows[0].version_no);
+          setToNo((current) => rows.some((row) => row.version_no === current) ? current : rows[0].version_no);
         }
       })
       .catch((e) => {
@@ -209,7 +210,7 @@ export function MapProductVersionsPanel({
       if (versionNo !== openVersionRef.current) return;
       setOpenDetail(detail);
     } catch (e) {
-      setLifecycleNotice(e instanceof Error ? e.message : t('sidebar.versions.openFailed'));
+      setLifecycleError(e instanceof Error ? e.message : t('sidebar.versions.openFailed'));
       setOpenVersion(null);
     }
   };
@@ -217,6 +218,7 @@ export function MapProductVersionsPanel({
   const handleFork = async (versionNo: number) => {
     setLifecycleBusy(`fork-${versionNo}`);
     setLifecycleNotice(null);
+    setLifecycleError(null);
     try {
       await forkMapProductVersion(projectId, versionNo);
       setLifecycleNotice(
@@ -224,7 +226,7 @@ export function MapProductVersionsPanel({
       );
       reload();
     } catch (e) {
-      setLifecycleNotice(e instanceof Error ? e.message : t('sidebar.versions.forkFailed'));
+      setLifecycleError(e instanceof Error ? e.message : t('sidebar.versions.forkFailed'));
     } finally {
       setLifecycleBusy(null);
     }
@@ -234,6 +236,7 @@ export function MapProductVersionsPanel({
     if (!sessionId) return;
     setLifecycleBusy(`restore-${versionNo}`);
     setLifecycleNotice(null);
+    setLifecycleError(null);
     try {
       const result = await restoreMapProductVersion(projectId, versionNo, sessionId, 'style_only');
       const proof = result.style_only_proof;
@@ -245,7 +248,7 @@ export function MapProductVersionsPanel({
       );
       reload();
     } catch (e) {
-      setLifecycleNotice(e instanceof Error ? e.message : t('sidebar.versions.restoreFailed'));
+      setLifecycleError(e instanceof Error ? e.message : t('sidebar.versions.restoreFailed'));
     } finally {
       setLifecycleBusy(null);
     }
@@ -255,6 +258,7 @@ export function MapProductVersionsPanel({
     if (fromNo == null || toNo == null) return;
     setLifecycleBusy('merge');
     setLifecycleNotice(null);
+    setLifecycleError(null);
     try {
       const merged = await mergeMapProductVersions(projectId, fromNo, toNo);
       setLifecycleNotice(
@@ -262,7 +266,7 @@ export function MapProductVersionsPanel({
       );
       reload();
     } catch (e) {
-      setLifecycleNotice(e instanceof Error ? e.message : t('sidebar.versions.mergeRejected'));
+      setLifecycleError(e instanceof Error ? e.message : t('sidebar.versions.mergeRejected'));
     } finally {
       setLifecycleBusy(null);
     }
@@ -285,6 +289,7 @@ export function MapProductVersionsPanel({
       >
         {t('sidebar.versions.title')}
       </h3>
+      {lifecycleError && <InlineNotice variant="error">{lifecycleError}</InlineNotice>}
       {lifecycleNotice ? (
         <InlineNotice variant="info" data-testid="mp-lifecycle-notice">
           {lifecycleNotice}

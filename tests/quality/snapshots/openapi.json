@@ -588,7 +588,7 @@
    "AssessRequest": {
     "properties": {
      "persist": {
-      "default": true,
+      "default": false,
       "title": "Persist",
       "type": "boolean"
      }
@@ -1030,6 +1030,17 @@
       ],
       "title": "Scale Text"
      },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
      "subtitle": {
       "anyOf": [
        {
@@ -1283,7 +1294,7 @@
      "zoom": {
       "default": 4.0,
       "maximum": 18.0,
-      "minimum": 3.0,
+      "minimum": 0.0,
       "title": "Zoom",
       "type": "number"
      }
@@ -2492,6 +2503,8 @@
      },
      "priority": {
       "default": 5,
+      "maximum": 10.0,
+      "minimum": 0.0,
       "title": "Priority",
       "type": "integer"
      },
@@ -2708,7 +2721,12 @@
      },
      "quota": {
       "additionalProperties": {
+       "minimum": 0.0,
        "type": "number"
+      },
+      "maxProperties": 16,
+      "propertyNames": {
+       "maxLength": 64
       },
       "title": "Quota",
       "type": "object"
@@ -2788,6 +2806,7 @@
      "thumbnail_url": {
       "anyOf": [
        {
+        "maxLength": 2048,
         "type": "string"
        },
        {
@@ -3015,6 +3034,19 @@
       "default": false,
       "title": "Confirm",
       "type": "boolean"
+     },
+     "expected_plan_fingerprint": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "minLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Plan Fingerprint"
      }
     },
     "title": "DataGcExecuteRequest",
@@ -3113,6 +3145,7 @@
      "source_ref": {
       "anyOf": [
        {
+        "maxLength": 255,
         "type": "string"
        },
        {
@@ -4263,6 +4296,7 @@
       "items": {
        "$ref": "#/components/schemas/ExecutionNodeIn"
       },
+      "maxItems": 256,
       "title": "Nodes",
       "type": "array"
      },
@@ -7344,8 +7378,10 @@
     "properties": {
      "artifact_ids": {
       "items": {
+       "maxLength": 128,
        "type": "string"
       },
+      "maxItems": 64,
       "title": "Artifact Ids",
       "type": "array"
      },
@@ -7353,6 +7389,7 @@
       "additionalProperties": {
        "type": "string"
       },
+      "maxProperties": 256,
       "title": "Input Dataset Fingerprints",
       "type": "object"
      },
@@ -9391,6 +9428,34 @@
     "title": "PlanDecisionRequest",
     "type": "object"
    },
+   "PlanDriftCheckRequest": {
+    "properties": {
+     "plan": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ExecutionPlanIn"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "stored": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Stored"
+     }
+    },
+    "title": "PlanDriftCheckRequest",
+    "type": "object"
+   },
    "PlanDriftCheckResponse": {
     "additionalProperties": true,
     "description": "POST /geocompute/plans/drift-check 响应。",
@@ -9725,6 +9790,7 @@
      "description": {
       "anyOf": [
        {
+        "maxLength": 16000,
         "type": "string"
        },
        {
@@ -10029,6 +10095,7 @@
      "description": {
       "anyOf": [
        {
+        "maxLength": 16000,
         "type": "string"
        },
        {
@@ -10064,6 +10131,7 @@
      "status": {
       "anyOf": [
        {
+        "pattern": "^(active|archived)$",
         "type": "string"
        },
        {
@@ -10348,6 +10416,20 @@
      "detail"
     ],
     "title": "QualificationReason",
+    "type": "object"
+   },
+   "QualityAuditRequest": {
+    "properties": {
+     "geojson": {
+      "additionalProperties": true,
+      "title": "Geojson",
+      "type": "object"
+     }
+    },
+    "required": [
+     "geojson"
+    ],
+    "title": "QualityAuditRequest",
     "type": "object"
    },
    "QualityAuditResponse": {
@@ -15966,15 +16048,12 @@
    "WorkerRequest": {
     "properties": {
      "worker_id": {
+      "default": "",
       "maxLength": 128,
-      "minLength": 1,
       "title": "Worker Id",
       "type": "string"
      }
     },
-    "required": [
-     "worker_id"
-    ],
     "title": "WorkerRequest",
     "type": "object"
    },
@@ -15994,6 +16073,7 @@
      "description": {
       "anyOf": [
        {
+        "maxLength": 16000,
         "type": "string"
        },
        {
@@ -16048,6 +16128,7 @@
       "items": {
        "$ref": "#/components/schemas/WorkflowStepSpec"
       },
+      "maxItems": 200,
       "title": "Steps",
       "type": "array"
      }
@@ -17215,7 +17296,7 @@
  "paths": {
   "/api/v1/admin/audit": {
    "get": {
-    "description": "跨组织审计查询（全 admin 面；org_id 可选过滤）。",
+    "description": "当前组织审计查询；默认范围来自实时管理员身份。",
     "operationId": "query_global_audit_api_v1_admin_audit_get",
     "parameters": [
      {
@@ -21546,6 +21627,7 @@
       "required": false,
       "schema": {
        "default": 0,
+       "maximum": 8192,
        "minimum": 0,
        "title": "Width",
        "type": "integer"
@@ -21557,6 +21639,7 @@
       "required": false,
       "schema": {
        "default": 0,
+       "maximum": 8192,
        "minimum": 0,
        "title": "Height",
        "type": "integer"
@@ -21985,6 +22068,24 @@
    "post": {
     "description": "直接执行单个工具（非流式通过 chat）\n\n审计 S30：原本任何登录用户都能 dispatch 任意工具，包括 tier-3 的\n`create_new_skill`（写盘 + importlib.exec_module 等同 RCE）和\n`what_if_simulate`。改为 admin-only + tier-3 必须显式 confirm_destructive。",
     "operationId": "execute_tool_direct_api_v1_chat_tools_execute_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -23142,7 +23243,6 @@
   },
   "/api/v1/config/skills/refresh": {
    "post": {
-    "description": "手动触发技能刷新（admin only）",
     "operationId": "refresh_skills_api_v1_config_skills_refresh_post",
     "responses": {
      "200": {
@@ -23222,20 +23322,21 @@
     "operationId": "list_spatial_catalog_api_v1_data_fabric_catalog_get",
     "parameters": [
      {
-      "description": "Search keyword query",
+      "description": "Literal keyword query",
       "in": "query",
       "name": "q",
       "required": false,
       "schema": {
        "anyOf": [
         {
+         "maxLength": 128,
          "type": "string"
         },
         {
          "type": "null"
         }
        ],
-       "description": "Search keyword query",
+       "description": "Literal keyword query",
        "title": "Q"
       }
      },
@@ -23258,20 +23359,32 @@
       }
      },
      {
-      "description": "Filter by geometry type",
+      "description": "Exact geometry type",
       "in": "query",
       "name": "geometry_type",
       "required": false,
       "schema": {
        "anyOf": [
         {
+         "enum": [
+          "Point",
+          "MultiPoint",
+          "LineString",
+          "MultiLineString",
+          "Polygon",
+          "MultiPolygon",
+          "GeometryCollection",
+          "Raster",
+          "Table",
+          "Unknown"
+         ],
          "type": "string"
         },
         {
          "type": "null"
         }
        ],
-       "description": "Filter by geometry type",
+       "description": "Exact geometry type",
        "title": "Geometry Type"
       }
      },
@@ -23714,14 +23827,14 @@
       }
      },
      {
-      "description": "NDJSON 总行数帽（有界响应）",
+      "description": "NDJSON 总行数帽；更大结果请分区查询",
       "in": "query",
       "name": "limit",
       "required": false,
       "schema": {
-       "default": 50000,
-       "description": "NDJSON 总行数帽（有界响应）",
-       "maximum": 200000,
+       "default": 5000,
+       "description": "NDJSON 总行数帽；更大结果请分区查询",
+       "maximum": 50000,
        "minimum": 1,
        "title": "Limit",
        "type": "integer"
@@ -26698,6 +26811,38 @@
        "title": "Filename",
        "type": "string"
       }
+     },
+     {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
+      }
      }
     ],
     "responses": {
@@ -26784,6 +26929,24 @@
    "post": {
     "description": "将前端合成的地图图片嵌入标准 A4 横向专题底图 PDF。\n\nPDF 布局包含：\n- 标题 / 副标题区\n- 地图影像主体（保留原 Canvas 分辨率）\n- 页脚（时间戳、制图者、比例说明）",
     "operationId": "export_map_as_pdf_api_v1_export_pdf_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "multipart/form-data": {
@@ -27916,9 +28079,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "additionalProperties": true,
-        "title": "Body",
-        "type": "object"
+        "$ref": "#/components/schemas/PlanDriftCheckRequest"
        }
       }
      },
@@ -32152,6 +32313,39 @@
       }
      },
      {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
+      }
+     },
+     {
       "in": "header",
       "name": "X-Session-Token",
       "required": false,
@@ -32285,6 +32479,39 @@
        ],
        "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
        "title": "Token"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
       }
      },
      {
@@ -32574,6 +32801,39 @@
        ],
        "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
        "title": "Token"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
       }
      },
      {
@@ -35450,9 +35710,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "additionalProperties": true,
-        "title": "Payload",
-        "type": "object"
+        "$ref": "#/components/schemas/QualityAuditRequest"
        }
       }
      },
@@ -37293,7 +37551,7 @@
   },
   "/api/v1/ready": {
    "get": {
-    "description": "就绪检查：数据库 + LLM + Redis + Celery 连通性。\n\n任一依赖不可达时返回 HTTP 503，让 k8s readinessProbe 暂停把流量打过来；\n全部就绪时返回 HTTP 200。\n\nSEC-11：响应体只返回极简状态（不附带 DB/Redis/Celery 的具体连通细节），\n因为 /ready 是无鉴权端点——之前的 body 会把内部依赖拓扑（哪个挂了、\n哪个连着）泄露给任意调用方，便于攻击者做侦察。详细连通信息只在服务端\n日志里保留，运维仍可定位故障点。",
+    "description": "就绪检查：本进程硬依赖数据库与 Redis；LLM/Celery 属于降级信号。\n\n任一依赖不可达时返回 HTTP 503，让 k8s readinessProbe 暂停把流量打过来；\n全部就绪时返回 HTTP 200。\n\nSEC-11：响应体只返回极简状态（不附带 DB/Redis/Celery 的具体连通细节），\n因为 /ready 是无鉴权端点——之前的 body 会把内部依赖拓扑（哪个挂了、\n哪个连着）泄露给任意调用方，便于攻击者做侦察。详细连通信息只在服务端\n日志里保留，运维仍可定位故障点。",
     "operationId": "readiness_check_api_v1_ready_get",
     "responses": {
      "200": {
@@ -37666,6 +37924,69 @@
    }
   },
   "/api/v1/reports/{report_id}/share": {
+   "delete": {
+    "description": "Revoke both public metadata and download access using normal ownership.",
+    "operationId": "revoke_share_link_api_v1_reports__report_id__share_delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "report_id",
+      "required": true,
+      "schema": {
+       "title": "Report Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ApiResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Revoke Share Link",
+    "tags": [
+     "报告生成",
+     "报告生成"
+    ]
+   },
    "post": {
     "description": "生成分享链接",
     "operationId": "create_share_link_api_v1_reports__report_id__share_post",
@@ -38722,7 +39043,7 @@
   },
   "/api/v1/status/detailed": {
    "get": {
-    "description": "鉴权 SRE 组件健康分类学（Epic 10 W11）。\n\n安全模型见文件头注释：不在限流豁免前缀内 + JWT 鉴权 + 组件拓扑\n细节只在鉴权面暴露（B-1）。TTL 10s 缓存，快照原子换入；k8s probe\n不得指向本端点（/health/live、/ready 语义不变）。整体 down → 503\n（与 /ready 的探测语义对齐，M-3），degraded 保持 200。",
+    "description": "鉴权 SRE 组件健康分类学（Epic 10 W11）。\n\n安全模型见文件头注释：不在限流豁免前缀内 + 实时管理员角色鉴权；组件拓扑\n细节仅向管理员暴露（B-1）。TTL 10s 缓存，快照原子换入；k8s probe\n不得指向本端点（/health/live、/ready 语义不变）。整体 down → 503\n（与 /ready 的探测语义对齐，M-3），degraded 保持 200。",
     "operationId": "sre_status_detailed_api_v1_status_detailed_get",
     "responses": {
      "200": {
@@ -41689,9 +42010,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "additionalProperties": true,
-        "title": "Body",
-        "type": "object"
+        "$ref": "#/components/schemas/PlanDriftCheckRequest"
        }
       }
      },

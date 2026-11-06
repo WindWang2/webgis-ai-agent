@@ -55,7 +55,7 @@ def normalize_meta(meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     normalized = {
         "crs": meta.get("crs") or meta.get("srs"),
         "bbox": meta.get("bbox"),
-        "rows": meta.get("rows") or meta.get("total_rows") or meta.get("feature_count"),
+        "rows": next((meta[key] for key in ("rows", "total_rows", "feature_count") if meta.get(key) is not None), None),
         "temporal_start": meta.get("temporal_start") or meta.get("year_start"),
         "temporal_end": meta.get("temporal_end") or meta.get("year_end"),
         "fields": meta.get("fields") or [],
@@ -180,9 +180,9 @@ def _scan_poi(root: Optional[Path]) -> List[LocalAsset]:
         from app.services.local_poi import gd_poi_available, gd_poi_gpkg_path, _meta_path
 
         if root is not None:
-            gpkg_path = Path(root) / "gd_pois.gpkg"
+            gpkg_path = Path(root) / "gd_pois" / "gd_pois.gpkg"
             available = gpkg_path.exists()
-            meta_path = Path(root) / "meta.json"
+            meta_path = Path(root) / "gd_pois" / "meta.json"
         else:
             available = gd_poi_available()
             gpkg_path = gd_poi_gpkg_path()
@@ -322,7 +322,7 @@ def assets_to_cards(assets: List[LocalAsset]) -> List[Any]:
             keywords=["本地", "离线", a.library],
             fields=[f["name"] for f in a.meta.get("fields", []) if isinstance(f, dict)],
             data_type=a.data_type,
-            license="internal" if a.library != "local_osm" else "odBl-1.0",
+            license="internal" if a.library != "local_osm" else "ODbL-1.0",
             update_frequency="manual_ingest",
             verified=True,
             local=True,

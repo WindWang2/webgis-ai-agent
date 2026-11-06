@@ -29,12 +29,16 @@
   capability requirements + provider choice 纯数据，不含调度语义。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import os
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 from app.services.gis_harness.capability_graph import (
     KIND_CAPABILITY,
@@ -352,8 +356,20 @@ def _apply_profile(ctx: QualificationContext, profile: Dict[str, Any]) -> None:
     bands = _get("bands", "raster_bands", "bandCount")
     if isinstance(bands, (int, float)):
         ctx.raster_bands = int(bands)
-    res = _get("resolution_m_per_px", "resolution")
-    if isinstance(res, (int, float)) and res >= 0:
+    res = _get("resolution_m_per_px")
+    if res is None and isinstance(crs, str):
+        try:
+            from pyproj import CRS
+
+            parsed = CRS.from_user_input(crs)
+            ctx.crs_is_geographic = parsed.is_geographic
+            if parsed.is_projected and parsed.axis_info and all(
+                axis.unit_conversion_factor == 1.0 for axis in parsed.axis_info[:2]
+            ):
+                res = _get("resolution")
+        except (ValueError, TypeError):
+            logger.debug("CRS profile cannot establish metre resolution: %r", crs)
+    if isinstance(res, (int, float)) and not isinstance(res, bool) and res >= 0:
         ctx.resolution_m_per_px = float(res)
     data_bytes = _get("data_bytes", "bytes", "size_bytes")
     if isinstance(data_bytes, (int, float)) and data_bytes > 0:
@@ -767,7 +783,7 @@ def capability_abi_profile(
         declared_map = m.declared_capability_bindings
         tool_projection = m.tools
     except Exception:  # noqa: BLE001 — manifest 缺席时溯源/契约面诚实降级
-        pass
+        observe_optional_failure(__name__)
 
     tools_out: List[Dict[str, Any]] = []
     det_flags: List[bool] = []

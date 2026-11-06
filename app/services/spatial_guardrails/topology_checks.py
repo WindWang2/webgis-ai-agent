@@ -34,23 +34,27 @@ def _issue(message: str, location: str, evidence: dict) -> TopologyImplausibilit
 
 def validate_linestring(
     coords: list, *, teleport_km: float = 300.0, location: str = "$"
-) -> None:
-    """线要素相邻顶点跳变校验；coords 为 [[lng, lat], ...]。"""
+) -> list[GuardrailIssue]:
+    """Long segments are advisory: OD lines and simplified geometry are valid."""
     pts: list[tuple[float, float]] = []
     for c in coords:
         if isinstance(c, (list, tuple)) and len(c) >= 2:
             pts.append((float(c[0]), float(c[1])))
+    warnings = []
     if len(pts) < 2:
-        return
+        return warnings
     for i in range(1, len(pts)):
         d = approx_distance_km(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1])
         if d > teleport_km:
-            raise _issue(
+            issue = _issue(
                 f"线要素第 {i - 1}→{i} 顶点跳变 {d:.0f}km（>{teleport_km:.0f}km），"
                 "疑似幻觉拼线",
                 location,
                 {"from": list(pts[i - 1]), "to": list(pts[i]), "jump_km": round(d, 1)},
             )
+            issue.issue.mode = DefenseMode.WARN_DEGRADE
+            warnings.append(issue.issue)
+    return warnings
 
 
 def _ring_unique_ratio(ring: list) -> float:

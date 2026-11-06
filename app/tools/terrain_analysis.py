@@ -429,7 +429,7 @@ def register_terrain_tools(registry: ToolRegistry):
         if product == "flow_direction":
             codes = d8["direction"][d8["valid"]]
             unique, counts = np.unique(codes, return_counts=True)
-            direction_counts = {str(int(c)): int(n) for c, n in zip(unique, counts)}
+            direction_counts = {str(int(c)): int(n) for c, n in zip(unique, counts, strict=True)}
             statistics: Dict[str, Any] = {
                 "direction_counts": direction_counts,
                 "sink_or_outlet_cells": direction_counts.get("0", 0),
@@ -536,7 +536,7 @@ def register_terrain_tools(registry: ToolRegistry):
         a, b, c, d, e, f = transform
         xs = a * centers_col + b * centers_row + c
         ys = d * centers_col + e * centers_row + f
-        pts = [[round(float(x), 6), round(float(y), 6)] for x, y in zip(xs, ys)]
+        pts = [[round(float(x), 6), round(float(y), 6)] for x, y in zip(xs, ys, strict=True)]
         if len(pts) > 256:
             idx = np.linspace(0, len(pts) - 1, 256).astype(int)
             pts = [pts[int(i)] for i in idx]

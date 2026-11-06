@@ -573,7 +573,7 @@ def _closest_facility_routes_ms() -> float:
 
 
 def _envelope_facts_bounded_50k_ms() -> float:
-    """ADR-0282 envelope v2：50k 特征 FC 的实测事实采集（几何类型/extent）
+    """ADR-0284 envelope v2：50k 特征 FC 的实测事实采集（几何类型/extent）
     必须是有界扫描（≤2000 特征界）——envelope 开销与数据集规模无关
     （descriptor 级契约，与 spatial_semantics preflight 同阶）。"""
     from app.services.gis_harness.analysis_workflows.envelope_facts import (
@@ -595,7 +595,7 @@ def _envelope_facts_bounded_50k_ms() -> float:
 
 
 def _awf_plan_typed_gates_ms() -> float:
-    """ADR-0282 plan 期 typed 门（几何画像/分母字段/role_kind）+ 契约装配
+    """ADR-0284 plan 期 typed 门（几何画像/分母字段/role_kind）+ 契约装配
     的纯函数开销——plan 是每次调用的热路径，必须保持毫秒级。"""
     from app.services.gis_harness.analysis_workflows.contracts import (
         DataRoleBinding,
@@ -643,7 +643,7 @@ WORKLOADS = {
     "two_opt_ladder_160": _two_opt_ladder_ms,
     "barriers_indexed_50kE_x3": _barriers_indexed_ms,
     "closest_facility_30x40": _closest_facility_routes_ms,
-    # ADR-0282（B5）：分析工作流 v2 新增面
+    # ADR-0284（B5）：分析工作流 v2 新增面
     "envelope_facts_bounded_50k": _envelope_facts_bounded_50k_ms,
     "awf_plan_typed_gates": _awf_plan_typed_gates_ms,
 }

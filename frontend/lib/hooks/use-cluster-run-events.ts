@@ -1,3 +1,4 @@
+'use client';
 /**
  * run 事件游标轮询（ADR-0142 D3）—— geocompute 观测事件是 after_id 游标的
  * 轮询 JSON（非 SSE），本 hook 是游标通道专用变体，纪律与 use-cluster-poll
@@ -11,7 +12,6 @@
  *   对齐 geocompute.ts 的 RunEventsUnavailableError 契约）；
  * - 连错 ≥3 / tab 隐藏暂停 / runId 切换 abort+重置。
  */
-'use client';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -139,6 +139,7 @@ export function useClusterRunEvents(
               : merged;
           });
           if (page.events.some((e) => TERMINAL_EVENTS.has(e.event))) {
+            stopped = true;
             setChannel('terminal');
             return; // 终态即停：不排下一次
           }
@@ -150,6 +151,7 @@ export function useClusterRunEvents(
         if (controller.signal.aborted) return;
         if (err instanceof RunEventsUnavailableError) {
           // retention 清理（not_found）=「事件不可用」诚实态，不是静默空表
+          stopped = true;
           setChannel(err.reason === 'not_found' ? 'notfound' : 'error');
           setError(err.reason === 'not_found' ? '事件已随 run 行清理，不可用' : '集群暂不可用');
           return;
@@ -164,7 +166,7 @@ export function useClusterRunEvents(
 
     const onVisibility = () => {
       hiddenRef.current = document.hidden;
-      if (!document.hidden) {
+      if (!document.hidden && !stopped) {
         // 恢复可见：清零错误计数并立即补一页（纪律②）
         errorCountRef.current = 0;
         if (timerRef.current !== null) {

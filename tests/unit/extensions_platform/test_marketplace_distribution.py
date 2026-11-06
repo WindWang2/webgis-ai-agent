@@ -625,7 +625,7 @@ def test_recover_pending_swaps_completes_interrupted_install(tmp_path):
     staging = staging_root / "acme.demo-1.0.0-abc123"
     safe_extract_package(blob, staging)
     # 恢复例程在清扫之前执行。
-    assert recover_pending_swaps(tmp_path / "install") == [staging.name]
+    assert recover_pending_swaps(tmp_path / "install", trust_store=_make_trust_store(tmp_path)) == [staging.name]
     active = tmp_path / "install" / "extensions" / "acme.demo" / "manifest.json"
     assert json.loads(active.read_text())["version"] == "1.0.0"
     # 过期 staging 被清扫（此例 staging 已搬走，目录为空）。

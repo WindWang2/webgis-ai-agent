@@ -2,13 +2,18 @@
 FAISS Vector Store implementation of VectorStoreProtocol.
 """
 import contextlib
+import copy
 import json
 import logging
 import os
 import tempfile
 import threading
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 import numpy as np
+from app.services.rag.pair_transaction import pair_transaction, recover_pending_pair
+
+if TYPE_CHECKING:
+    import faiss
 
 try:  # POSIX：跨进程 flock 可用
     import fcntl  # type: ignore
@@ -151,7 +156,7 @@ class FaissVectorStore:
 
     def __init__(self, index_dir: str = INDEX_DIR):
         self.index_dir = index_dir
-        self._index = None
+        self._index: Optional["faiss.Index"] = None
         self._model = None
         # (mtime_ns, parsed_dict) cache for load_metadata. None until first
         # load. See load_metadata docstring for invalidation semantics.
@@ -219,6 +224,19 @@ class FaissVectorStore:
             return
         self._index_sig = st.st_mtime_ns
 
+    def _recover_pending_pair(self) -> None:
+        try:
+            if not recover_pending_pair(self.index_dir):
+                return
+        except Exception as exc:
+            self._index = None
+            self._index_sig = None
+            self._metadata_cache = None
+            raise RagPersistenceError("RAG pair recovery failed; refusing uncertain generation") from exc
+        self._index = None
+        self._index_sig = None
+        self._metadata_cache = None
+
     def _get_index(self, dim: int = 384):
         """Get or initialize FAISS index.
 
@@ -230,37 +248,39 @@ class FaissVectorStore:
         metadata, and search would return wrong-document content or surface
         deleted content. The mtime check is a single stat() syscall on the
         hot path; the re-read happens only when the file actually changed.
-        Writers are serialized by ``_write_lock``, so a lock-free stat+swap
-        is safe (no read flock needed).
+        Reads share the sidecar lock with writes. Pending pair transactions
+        are rolled back before either generation's index or metadata is read.
         """
-        index_file = os.path.join(self.index_dir, "index.faiss")
-        try:
-            file_sig = os.stat(index_file).st_mtime_ns
-        except FileNotFoundError:
-            file_sig = None
-
-        if self._index is None or self._index_sig != file_sig:
+        with _write_lock(self.index_dir):
+            self._recover_pending_pair()
+            index_file = os.path.join(self.index_dir, "index.faiss")
             try:
-                import faiss
-                meta_file = os.path.join(self.index_dir, "metadata.json")
-                if file_sig is not None and os.path.exists(meta_file):
-                    self._index = faiss.read_index(index_file)
-                    logger.info("[RAG] Loaded existing FAISS index")
-                    # REVIEW-P0-PROMOTED, faiss_store startup recovery:
-                    # if a crash left index.faiss newer than metadata.json
-                    # (or vice versa) the on-disk state is inconsistent.
-                    # Trust the index, drop metadata entries that have no
-                    # matching vector. Survives the partial-write case
-                    # that used to silently corrupt results. Runs on every
-                    # mtime-triggered reload too (#544).
-                    self._recover_index_metadata_consistency()
-                else:
-                    self._index = faiss.IndexFlatIP(dim)
-                self._index_sig = file_sig
-            except Exception as e:
-                logger.error(f"[RAG] Failed to init FAISS: {e}")
-                raise
-        return self._index
+                file_sig = os.stat(index_file).st_mtime_ns
+            except FileNotFoundError:
+                file_sig = None
+
+            if self._index is None or self._index_sig != file_sig:
+                try:
+                    import faiss
+                    meta_file = os.path.join(self.index_dir, "metadata.json")
+                    if file_sig is not None and os.path.exists(meta_file):
+                        self._index = faiss.read_index(index_file)
+                        logger.info("[RAG] Loaded existing FAISS index")
+                        # REVIEW-P0-PROMOTED, faiss_store startup recovery:
+                        # if a crash left index.faiss newer than metadata.json
+                        # (or vice versa) the on-disk state is inconsistent.
+                        # Trust the index, drop metadata entries that have no
+                        # matching vector. Survives the partial-write case
+                        # that used to silently corrupt results. Runs on every
+                        # mtime-triggered reload too (#544).
+                        self._recover_index_metadata_consistency()
+                    else:
+                        self._index = faiss.IndexFlatIP(dim)
+                    self._index_sig = file_sig
+                except Exception as e:
+                    logger.error(f"[RAG] Failed to init FAISS: {e}")
+                    raise
+            return self._index
 
     def _recover_index_metadata_consistency(self) -> None:
         """If on-disk index and metadata have diverged, REPAIR it on disk.
@@ -369,16 +389,18 @@ class FaissVectorStore:
         critical-section wrapper is now add_vectors / compact, which is
         where production callers should go. Raises RagPersistenceError on
         write failure so callers don't silently lose the index."""
-        if self._index is not None:
-            try:
-                _atomic_write_faiss(
-                    os.path.join(self.index_dir, "index.faiss"), self._index
-                )
-                self._stamp_index_sig()
-                logger.info("[RAG] Saved FAISS index to disk")
-            except Exception as e:
-                logger.warning(f"[RAG] Failed to save index: {e}")
-                raise RagPersistenceError(f"save_index failed: {e}") from e
+        with _write_lock(self.index_dir):
+            self._recover_pending_pair()
+            if self._index is not None:
+                try:
+                    _atomic_write_faiss(
+                        os.path.join(self.index_dir, "index.faiss"), self._index
+                    )
+                    self._stamp_index_sig()
+                    logger.info("[RAG] Saved FAISS index to disk")
+                except Exception as e:
+                    logger.warning(f"[RAG] Failed to save index: {e}")
+                    raise RagPersistenceError(f"save_index failed: {e}") from e
 
     def load_metadata(self) -> Dict[str, Any]:
         """Load metadata. Uses a shared read lock so writers don't tear
@@ -393,28 +415,30 @@ class FaissVectorStore:
         (this process, another uvicorn worker, a Celery compact task)
         changes the mtime on save, so the next reader re-parses.
         """
-        meta_file = os.path.join(self.index_dir, "metadata.json")
-        try:
-            stat = os.stat(meta_file)
-        except FileNotFoundError:
-            # Cache the empty-dict result too, so a missing-file case
-            # also avoids the os.path.exists check on every call.
-            self._metadata_cache = (None, {"chunks": []})
-            return {"chunks": []}
-        except OSError:
-            # stat failed for some other reason — fall through to the
-            # uncached read path, which has its own error handling.
-            return self._load_metadata_uncached(meta_file)
+        with _write_lock(self.index_dir):
+            self._recover_pending_pair()
+            meta_file = os.path.join(self.index_dir, "metadata.json")
+            try:
+                stat = os.stat(meta_file)
+            except FileNotFoundError:
+                # Cache the empty-dict result too, so a missing-file case
+                # also avoids the os.path.exists check on every call.
+                self._metadata_cache = (None, {"chunks": []})
+                return {"chunks": []}
+            except OSError:
+                # stat failed for some other reason — fall through to the
+                # uncached read path, which has its own error handling.
+                return self._load_metadata_uncached(meta_file)
 
-        cached = getattr(self, "_metadata_cache", None)
-        if cached is not None:
-            cached_mtime, cached_meta = cached
-            if cached_mtime == stat.st_mtime_ns:
-                return cached_meta
+            cached = getattr(self, "_metadata_cache", None)
+            if cached is not None:
+                cached_mtime, cached_meta = cached
+                if cached_mtime == stat.st_mtime_ns:
+                    return cached_meta
 
-        meta = self._load_metadata_uncached(meta_file)
-        self._metadata_cache = (stat.st_mtime_ns, meta)
-        return meta
+            meta = self._load_metadata_uncached(meta_file)
+            self._metadata_cache = (stat.st_mtime_ns, meta)
+            return meta
 
     def _load_metadata_uncached(self, meta_file: str) -> Dict[str, Any]:
         """Read+parse metadata.json from disk, no cache."""
@@ -438,6 +462,7 @@ class FaissVectorStore:
         compact wrap this in _write_lock for cross-file atomicity."""
         try:
             with _write_lock(self.index_dir):
+                self._recover_pending_pair()
                 _atomic_write_json(
                     os.path.join(self.index_dir, "metadata.json"), meta
                 )
@@ -495,7 +520,7 @@ class FaissVectorStore:
             # index before numbering the new chunks — see the docstring.
             # Idempotent: a no-op when the two files already agree.
             self._recover_index_metadata_consistency()
-            meta = self.load_metadata()
+            meta = copy.deepcopy(self.load_metadata())
             base_idx = len(meta.get("chunks", []))
             if base_idx != idx.ntotal:
                 # Recovery could not bring the two files into agreement
@@ -508,21 +533,29 @@ class FaissVectorStore:
                     f"add_vectors refused: index ntotal={idx.ntotal} != "
                     f"metadata chunks={base_idx} after recovery"
                 )
-            for i, ch_meta in enumerate(chunks_metadata):
+            for i, ch_meta in enumerate(copy.deepcopy(chunks_metadata)):
                 ch_meta["index"] = base_idx + i
                 meta.setdefault("chunks", []).append(ch_meta)
-            idx.add(vectors)
+            # Never mutate the live cached index before BOTH writes commit.
+            # A metadata failure may leave disk-only orphan vector slots; a
+            # fresh load marks those unavailable instead of reviving this batch.
+            import faiss
+            staged_index = faiss.clone_index(idx)
+            staged_index.add(vectors)
             try:
                 # Index first: a crash here leaves the new metadata behind,
                 # which the next load truncates (safe direction).
-                _atomic_write_faiss(index_path, idx)
+                _atomic_write_faiss(index_path, staged_index)
                 _atomic_write_json(meta_path, meta)
-            except RagPersistenceError:
-                raise
-            except OSError as e:
+            except Exception as e:
+                self._index = None
+                self._index_sig = None
+                self._metadata_cache = None
                 raise RagPersistenceError(
                     f"add_vectors persistence failed: {e}"
                 ) from e
+            self._index = staged_index
+            self._metadata_cache = None
             # In-memory index now matches disk — refresh the signature so
             # the next _get_index is a cache hit, not a wasteful re-read.
             self._stamp_index_sig()
@@ -536,62 +569,62 @@ class FaissVectorStore:
         is_admin: bool = False,
     ) -> List[Dict[str, Any]]:
         """Search top-k most similar vectors with optional tenant filtering."""
-        idx = self._get_index()
-        # #1219（B-18）：渐进扩取 —— 固定 4× 超取在多租户索引（近邻大量
-        # 属他人）下耗尽即止，即便更深处仍有本租户块。不足 top_k 时加倍
-        # 直至 idx.ntotal（有界：至多 log2(ntotal) 次额外 search）。
-        fetch_count = min(top_k * 4, idx.ntotal) if idx.ntotal > 0 else top_k
-        meta = self.load_metadata()
-        results: List[Dict[str, Any]] = []
-        while True:
-            # Review F3: each widened pass re-scans from rank 0, so results
-            # must be rebuilt per pass — accumulating across passes appended
-            # the same top hits again (duplicates) and starved deeper matches.
-            results = []
-            scores, indices = idx.search(query_vector, fetch_count)
-            for score, i in zip(scores[0], indices[0]):
-                if i < 0 or i >= len(meta.get("chunks", [])):
-                    continue
-                chunk_meta = dict(meta["chunks"][int(i)])
+        with _write_lock(self.index_dir):
+            idx = self._get_index()
+            # #1219（B-18）：渐进扩取 —— 固定 4× 超取在多租户索引（近邻大量
+            # 属他人）下耗尽即止，即便更深处仍有本租户块。不足 top_k 时加倍
+            # 直至 idx.ntotal（有界：至多 log2(ntotal) 次额外 search）。
+            fetch_count = min(top_k * 4, idx.ntotal) if idx.ntotal > 0 else top_k
+            meta = self.load_metadata()
+            results: List[Dict[str, Any]] = []
+            while True:
+                # Review F3: each widened pass re-scans from rank 0, so results
+                # must be rebuilt per pass — accumulating across passes appended
+                # the same top hits again (duplicates) and starved deeper matches.
+                results = []
+                scores, indices = idx.search(query_vector, fetch_count)
+                for score, i in zip(scores[0], indices[0]):
+                    if i < 0 or i >= len(meta.get("chunks", [])):
+                        continue
+                    chunk_meta = dict(meta["chunks"][int(i)])
 
-                if chunk_meta.get("deleted", False):
-                    continue
+                    if chunk_meta.get("deleted", False):
+                        continue
 
-                # #1704: recovery pads orphan vector slots (index ahead of
-                # metadata) with explicit unavailable placeholders so list
-                # position stays == vector slot. A placeholder carries no
-                # text and no tenant, so it must never be surfaced — and it
-                # must not count toward top_k either, or one orphan would
-                # starve a real hit.
-                if chunk_meta.get("unavailable", False):
-                    continue
+                    # #1704: recovery pads orphan vector slots (index ahead of
+                    # metadata) with explicit unavailable placeholders so list
+                    # position stays == vector slot. A placeholder carries no
+                    # text and no tenant, so it must never be surfaced — and it
+                    # must not count toward top_k either, or one orphan would
+                    # starve a real hit.
+                    if chunk_meta.get("unavailable", False):
+                        continue
 
-                # Tenant filtering check (fail-closed, SEC-02)
-                if not is_admin:
-                    c_user = chunk_meta.get("user_id") or None
-                    c_org = chunk_meta.get("org_id") or None
-                    u_id = user_id or None
-                    o_id = org_id or None
+                    # Tenant filtering check (fail-closed, SEC-02)
+                    if not is_admin:
+                        c_user = chunk_meta.get("user_id") or None
+                        c_org = chunk_meta.get("org_id") or None
+                        u_id = user_id or None
+                        o_id = org_id or None
 
-                    if not u_id and not o_id:
-                        if c_user is not None or c_org is not None:
+                        if (not u_id and not o_id) or (c_user is None and c_org is None):
                             continue
-                    else:
-                        if c_user is not None and c_user != u_id:
-                            continue
-                        if c_org is not None and c_org != o_id:
-                            continue
+                        else:
+                            if c_user is not None and c_user != u_id:
+                                continue
+                            if c_org is not None and c_org != o_id:
+                                continue
 
-                chunk_meta["score"] = float(score)
-                results.append(chunk_meta)
-                if len(results) >= top_k:
+                    chunk_meta["score"] = float(score)
+                    results.append(chunk_meta)
+                    if len(results) >= top_k:
+                        break
+                if len(results) >= top_k or fetch_count >= idx.ntotal or fetch_count == 0:
                     break
-            if len(results) >= top_k or fetch_count >= idx.ntotal or fetch_count == 0:
-                break
-            fetch_count = min(fetch_count * 2, idx.ntotal)
-        return results
+                fetch_count = min(fetch_count * 2, idx.ntotal)
+            return results
 
-    def mark_deleted(self, document_id: str) -> None:
+    def mark_deleted(self, document_id: str, *, user_id: Optional[str] = None, org_id: Optional[str] = None, is_admin: bool = False, enforce_tenant: bool = False) -> bool:
         """Mark chunks of document as deleted in metadata.
 
         Issue #601: the load+modify+save RMW must happen entirely under
@@ -606,11 +639,26 @@ class FaissVectorStore:
         (thread-local) lock, so nesting is safe.
         """
         with _write_lock(self.index_dir):
-            meta = self.load_metadata()
-            for ch in meta.get("chunks", []):
-                if ch.get("document_id") == document_id:
-                    ch["deleted"] = True
-            self.save_metadata(meta)
+            meta = copy.deepcopy(self.load_metadata())
+            targets = [chunk for chunk in meta.get("chunks", []) if chunk.get("document_id") == document_id and not chunk.get("deleted")]
+            if not targets:
+                return False
+            if enforce_tenant and not is_admin:
+                if not (user_id or org_id):
+                    return False
+                for chunk in targets:
+                    owner, organization = chunk.get("user_id"), chunk.get("org_id")
+                    if (not owner and not organization) or (owner and owner != user_id) or (organization and organization != org_id):
+                        return False
+            for chunk in targets:
+                chunk["deleted"] = True
+            try:
+                self.save_metadata(meta)
+            finally:
+                # Failed persistence must not hide live chunks in this process.
+                self._metadata_cache = None
+            return True
+
 
     def compact(self, batch_size: int = 64) -> Dict[str, Any]:
         """Compact index by purging deleted chunks and rebuilding FAISS index.
@@ -625,76 +673,63 @@ class FaissVectorStore:
         chunks from the rebuilt index but keeping them in renumbered
         metadata, permanently breaking alignment.
 
-        The fix: build the new index FIRST in memory, atomic-write it,
-        then atomic-write the metadata. If the embed/rebuild raises,
-        the metadata on disk is unchanged (the lock prevents any
-        concurrent reader from seeing partial state).
+        Build a new index and metadata without mutating cached rows. A durable
+        rollback marker protects the old pair until BOTH replacements commit;
+        failed or interrupted compaction restores that pair before any reader
+        proceeds. Row-count reconciliation cannot repair reordered vectors.
         """
         import faiss
 
         with _write_lock(self.index_dir):
-            meta = self.load_metadata()
+            meta = copy.deepcopy(self.load_metadata())
             chunks = meta.get("chunks", [])
-            active_chunks = [ch for ch in chunks if not ch.get("deleted", False)]
+            active_chunks = [ch for ch in chunks if not ch.get("deleted", False)
+                             and not ch.get("unavailable", False)
+                             and bool(ch.get("content") or ch.get("text"))]
             purged_count = len(chunks) - len(active_chunks)
 
             if purged_count == 0:
                 return {"purged": 0, "total": len(active_chunks)}
 
-            # Build the new index FIRST. A failure here means nothing
-            # has been written yet — the next load sees the old state.
+            # Preserve the exact embedding model output and original slot
+            # mapping. Compaction must never initialize or rerun an encoder.
+            old_index = self._get_index()
             new_index = None
-            rebuildable = [
-                ch for ch in active_chunks if ch.get("content") or ch.get("text")
-            ]
-            if rebuildable:
-                texts = [ch.get("content", ch.get("text", "")) for ch in rebuildable]
-                # SEC-04: Batch re-embedding to prevent unbounded memory allocation and OOM
-                effective_batch_size = max(1, batch_size)
-                batch_vectors = []
-                for start_idx in range(0, len(texts), effective_batch_size):
-                    batch = texts[start_idx : start_idx + effective_batch_size]
-                    batch_vec = self.embed_texts(batch)
-                    batch_vectors.append(batch_vec)
-                vectors = np.asarray(np.vstack(batch_vectors), dtype=np.float32)
-                new_index = faiss.IndexFlatIP(vectors.shape[1])
-                new_index.add(vectors)
-
-            # Renumber only the chunks that will actually be in the new
-            # index, in the same order as the rebuildable list. Chunks
-            # that lack content/text are dropped — they were never
-            # addressable by the index anyway, but they must also be
-            # removed from the metadata so positions match.
-            if new_index is not None:
-                kept_chunks = rebuildable
-                for new_idx, ch in enumerate(kept_chunks):
-                    ch["index"] = new_idx
-                meta["chunks"] = kept_chunks
-            else:
-                # No active chunks had any text — drop them all.
-                meta["chunks"] = []
+            if active_chunks:
+                new_index = faiss.IndexFlatIP(old_index.d)
+                size = max(1, min(int(batch_size), 1024))
+                for start in range(0, len(active_chunks), size):
+                    batch = active_chunks[start:start + size]
+                    positions = [int(chunk["index"]) for chunk in batch]
+                    if any(position < 0 or position >= old_index.ntotal for position in positions):
+                        raise RagPersistenceError("compact metadata/vector position mismatch")
+                    vectors = np.asarray([old_index.reconstruct(position) for position in positions], dtype=np.float32)
+                    new_index.add(vectors)
+                for position, chunk in enumerate(active_chunks):
+                    chunk["index"] = position
+            meta["chunks"] = active_chunks
 
             index_path = os.path.join(self.index_dir, "index.faiss")
             meta_path = os.path.join(self.index_dir, "metadata.json")
 
-            # Index first (atomic), then metadata. If metadata write
-            # fails after the index succeeds, _recover_index_metadata_consistency
-            # will repair on the next load.
+            # Reordering cannot be repaired by row-count reconciliation.
+            # Preserve a durable old pair until BOTH replacements commit.
             try:
-                if new_index is not None:
-                    _atomic_write_faiss(index_path, new_index)
-                else:
-                    # No rebuildable chunks: drop the index file so a
-                    # subsequent search creates a fresh empty one.
-                    if os.path.exists(index_path):
+                with pair_transaction(self.index_dir):
+                    if new_index is not None:
+                        _atomic_write_faiss(index_path, new_index)
+                    elif os.path.exists(index_path):
                         os.unlink(index_path)
-
-                _atomic_write_json(meta_path, meta)
-            except (OSError, RagPersistenceError) as e:
+                    _atomic_write_json(meta_path, meta)
+            except Exception as e:
+                self._index = None
+                self._index_sig = None
+                self._metadata_cache = None
                 raise RagPersistenceError(f"compact persistence failed: {e}") from e
 
             # Update in-memory state to match.
             self._index = new_index
+            self._metadata_cache = None
             self._stamp_index_sig()
 
         logger.info(
@@ -705,14 +740,15 @@ class FaissVectorStore:
 
     def get_stats(self) -> Dict[str, Any]:
         """Return index statistics (total_vectors, index_dim, deleted_count)."""
-        idx = self._get_index()
-        meta = self.load_metadata()
-        chunks = meta.get("chunks", [])
-        deleted_count = sum(1 for ch in chunks if ch.get("deleted", False))
+        with _write_lock(self.index_dir):
+            idx = self._get_index()
+            meta = self.load_metadata()
+            chunks = meta.get("chunks", [])
+            deleted_count = sum(1 for ch in chunks if ch.get("deleted", False))
 
-        return {
-            "total_vectors": idx.ntotal,
-            "dimension": idx.d,
-            "total_chunks": len(chunks),
-            "deleted_count": deleted_count,
-        }
+            return {
+                "total_vectors": idx.ntotal,
+                "dimension": idx.d,
+                "total_chunks": len(chunks),
+                "deleted_count": deleted_count,
+            }

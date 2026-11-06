@@ -1,4 +1,4 @@
-# ADR-0282：类型化分析产物封套 v2 与混合方法链（Typed Analysis Artifact Envelope）
+# ADR-0284：类型化分析产物封套 v2 与混合方法链（Typed Analysis Artifact Envelope）
 
 **Date:** 2026-11-06
 **Status:** Proposed

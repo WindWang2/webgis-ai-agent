@@ -18,6 +18,34 @@ from app.services.temporal.profiler import parse_value_to_instant
 
 logger = logging.getLogger(__name__)
 
+_MAX_INLINE_CELLS = 1_000_000
+
+
+def _bounded_inline_array(data: Any) -> np.ndarray:
+    """Bound inline values before NumPy may allocate a second large array."""
+    if isinstance(data, np.ndarray):
+        if data.size > _MAX_INLINE_CELLS:
+            raise ValueError("inline temporal raster exceeds cell budget")
+    else:
+        stack = [(iter([data]), 0)]
+        cells = 0
+        while stack:
+            iterator, depth = stack[-1]
+            try:
+                value = next(iterator)
+            except StopIteration:
+                stack.pop()
+                continue
+            if isinstance(value, (list, tuple)):
+                if depth >= 32 or len(value) > _MAX_INLINE_CELLS:
+                    raise ValueError("inline temporal raster exceeds cell/depth budget")
+                stack.append((iter(value), depth + 1))
+            else:
+                cells += 1
+                if cells > _MAX_INLINE_CELLS:
+                    raise ValueError("inline temporal raster exceeds cell budget")
+    return np.asarray(data, dtype=float)
+
 
 def _nodata_valid_mask(arr: np.ndarray, nodata) -> np.ndarray:
     """Boolean mask of *valid* (non-nodata) pixels.
@@ -80,12 +108,14 @@ class TemporalRasterEngine:
         for item in raster_series:
             t_val = item.get(time_field) or item.get("time") or item.get("datetime") or item.get("date")
             if t_val is None:
-                selected.append(item)
+                if start_epoch is None and end_epoch is None:
+                    selected.append(item)
                 continue
 
             inst = parse_value_to_instant(t_val, field_name_hint=time_field)
             if inst is None:
-                selected.append(item)
+                if start_epoch is None and end_epoch is None:
+                    selected.append(item)
                 continue
 
             t_epoch = inst[0].epoch_seconds
@@ -99,7 +129,11 @@ class TemporalRasterEngine:
             if match:
                 selected.append(item)
 
-        return selected
+        def epoch(item: Dict[str, Any]) -> float:
+            value = next((item.get(key) for key in (time_field, "time", "datetime", "date") if item.get(key) is not None), None)
+            parsed = parse_value_to_instant(value)
+            return parsed[0].epoch_seconds if parsed else float("inf")
+        return sorted(selected, key=epoch)
 
     def temporal_raster_statistics(
         self,
@@ -151,7 +185,7 @@ class TemporalRasterEngine:
             # array leaves stats_res empty (same shape as a failed file-path slice,
             # which the trend step skips).
             if not stats_res and "data" in item:
-                arr = np.array(item["data"], dtype=float)
+                arr = _bounded_inline_array(item["data"])
                 if arr.size > 0:
                     valid = arr[_nodata_valid_mask(arr, item.get("nodata"))]
                     if valid.size > 0:
@@ -257,8 +291,8 @@ class TemporalRasterEngine:
         d2 = raster_t2.get("data") if isinstance(raster_t2, dict) else None
 
         if d1 is not None and d2 is not None:
-            arr1 = np.array(d1, dtype=float)
-            arr2 = np.array(d2, dtype=float)
+            arr1 = _bounded_inline_array(d1)
+            arr2 = _bounded_inline_array(d2)
             # Issue #523: the in-memory contract optionally carries declared
             # nodata per side ("nodata" key); mask those sentinels so a nodata
             # pixel cannot masquerade as diff=0 or pollute min/max with
@@ -416,11 +450,13 @@ class TemporalRasterEngine:
     @staticmethod
     def _empty_difference() -> Dict[str, Any]:
         return {
-            "mean_difference": 0.0,
-            "min_difference": 0.0,
-            "max_difference": 0.0,
-            "std_difference": 0.0,
+            "mean_difference": None,
+            "min_difference": None,
+            "max_difference": None,
+            "std_difference": None,
             "pixel_count": 0,
+            "status": "unavailable",
+            "reason": "source_unreadable_or_no_overlap",
         }
 
     @staticmethod
@@ -705,7 +741,8 @@ class TemporalRasterEngine:
             raster_difference=diff,
             raster_trend=trend,
             metadata={
-                "time_order": "input_order_preserved",
+                "time_order": "timestamp_ascending_unknown_last",
+                "excluded_slice_count": len(raster_series) - len(selected_slices),
                 "slice_count": len(selected_slices),
                 "first_slice_ts": _ts(selected_slices[0]) if selected_slices else None,
                 "last_slice_ts": _ts(selected_slices[-1]) if selected_slices else None,

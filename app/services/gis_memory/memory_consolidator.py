@@ -149,6 +149,8 @@ def consolidate_session_sync(
                 out["pinned"] += 1
 
         # 2) 晋升：白名单证据 + 足量命中 + 目标作用域身份可用。
+        if (record.value or {}).get("consolidated_target"):
+            continue
         if source not in PROMOTABLE_EVIDENCE:
             continue
         if _hit_count(retriever, org_id, record) < MIN_HITS:
@@ -182,6 +184,9 @@ def consolidate_session_sync(
             refs=tuple(record.refs or ()),
         ))
         if promoted is not None:
+            source_row = db.get(_memory_model(), record.id)
+            if source_row is not None:
+                source_row.value = {**(source_row.value or {}), "consolidated_target": promoted.id}
             out["promoted"] += 1
     db.commit()
     return out

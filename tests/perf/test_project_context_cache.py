@@ -42,7 +42,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.db_model import Organization
+from app.models.db_model import Organization, User
 from app.models.project import Project, ProjectDataset, Workflow
 from app.schemas.project_schema import ProjectUpdate, DatasetAttach, WorkflowCreate
 from app.services.project_service import ProjectService
@@ -76,6 +76,8 @@ def db_session():
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     session = Session()
+    session.add(User(id="cache-owner", username="cache-owner", email="cache@example.test", role="editor", is_active=True))
+    session.commit()
     # Route the project-context block through this in-memory engine
     # so we never touch the production ``data/webgis.db``.
     set_session_local_factory(Session)
@@ -91,7 +93,7 @@ def project(db_session):
     org = Organization(id=1, name="org", slug="org")
     db.add(org)
     db.commit()
-    proj = Project(id="proj_cache_1", name="Cache Project", org_id=None, status="active")  # legacy public row (security F-11)
+    proj = Project(id="proj_cache_1", name="Cache Project", org_id=None, status="active", owner_id="cache-owner")  # live owner-scoped fixture
     db.add(proj)
     db.commit()
     return proj
@@ -173,7 +175,7 @@ def test_cache_first_round_full_summary_then_one_query_per_round(db_session, pro
     event.listen(engine, "before_execute", before_execute)
     try:
         for _round in range(5):
-            _build_project_context_block(project_id)
+            _build_project_context_block(project_id, user_id="cache-owner")
     finally:
         event.remove(engine, "before_execute", before_execute)
     # 1st round: 10 (3 fingerprint + 7 summary).
@@ -207,7 +209,7 @@ def test_cache_query_count_strict_drop_from_baseline(db_session, project_with_da
     event.listen(engine, "before_execute", before_execute)
     try:
         for _round in range(10):
-            _build_project_context_block(project_id)
+            _build_project_context_block(project_id, user_id="cache-owner")
     finally:
         event.remove(engine, "before_execute", before_execute)
     # Measured on this fixture: 35 queries (10 first round + 3×9 hits).
@@ -231,7 +233,7 @@ def test_update_project_invalidates_cache(db_session, project_with_data):
     project_id = proj.id
 
     # Warm the cache.
-    rendered_a = _build_project_context_block(project_id)
+    rendered_a = _build_project_context_block(project_id, user_id="cache-owner")
     assert "<active_project_workspace>" in rendered_a
     assert "Cache Project" in rendered_a
     cache_size_after_warm = project_context_cache.stats()["size"]
@@ -239,13 +241,14 @@ def test_update_project_invalidates_cache(db_session, project_with_data):
 
     # Mutate the project.
     ProjectService.update_project(
-        db, project_id, ProjectUpdate(name="Renamed Project")
+        db, project_id, ProjectUpdate(name="Renamed Project"),
+        user_id="cache-owner",
     )
     # Explicit invalidation should have fired.
     assert project_context_cache.stats()["size"] == 0
 
     # Next call rebuilds with the new name.
-    rendered_b = _build_project_context_block(project_id)
+    rendered_b = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Renamed Project" in rendered_b
     assert "Cache Project" not in rendered_b
     assert project_context_cache.stats()["size"] == 1
@@ -256,7 +259,7 @@ def test_attach_dataset_invalidates_cache(db_session, project_with_data):
     proj = project_with_data
     project_id = proj.id
 
-    rendered_a = _build_project_context_block(project_id)
+    rendered_a = _build_project_context_block(project_id, user_id="cache-owner")
     # Initial dataset count: 8.
     assert "Datasets attached (8):" in rendered_a
 
@@ -266,10 +269,11 @@ def test_attach_dataset_invalidates_cache(db_session, project_with_data):
             source_type="vector",
             source_ref="ref:new",
             crs="EPSG:4326",
-        )
+        ),
+        user_id="cache-owner",
     )
     assert project_context_cache.stats()["size"] == 0
-    rendered_b = _build_project_context_block(project_id)
+    rendered_b = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Datasets attached (9):" in rendered_b
     assert "New Dataset" in rendered_b
 
@@ -280,13 +284,13 @@ def test_detach_dataset_invalidates_cache(db_session, project_with_data):
     project_id = proj.id
     first_ds_id = "ds_0"
 
-    rendered_a = _build_project_context_block(project_id)
+    rendered_a = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Datasets attached (8):" in rendered_a
     assert "Dataset 0" in rendered_a
 
-    ProjectService.detach_dataset(db, project_id, first_ds_id)
+    ProjectService.detach_dataset(db, project_id, first_ds_id, user_id="cache-owner")
     assert project_context_cache.stats()["size"] == 0
-    rendered_b = _build_project_context_block(project_id)
+    rendered_b = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Datasets attached (7):" in rendered_b
     # The detached dataset is no longer in the top-5.
     # (Order is by created_at DESC; ds_0 was the most recent before,
@@ -299,7 +303,7 @@ def test_save_workflow_invalidates_cache(db_session, project_with_data):
     proj = project_with_data
     project_id = proj.id
 
-    rendered_a = _build_project_context_block(project_id)
+    rendered_a = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Workflows (4):" in rendered_a
 
     ProjectService.save_workflow(
@@ -307,10 +311,11 @@ def test_save_workflow_invalidates_cache(db_session, project_with_data):
             name="New Workflow",
             description="d",
             graph_spec={"steps": []},
-        )
+        ),
+        user_id="cache-owner",
     )
     assert project_context_cache.stats()["size"] == 0
-    rendered_b = _build_project_context_block(project_id)
+    rendered_b = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Workflows (5):" in rendered_b
     assert "New Workflow" in rendered_b
 
@@ -322,10 +327,10 @@ def test_update_workflow_invalidates_cache(db_session, project_with_data):
     wf_id = "wf_0"
 
     # Warm the cache to prove the invalidation actually fires.
-    _build_project_context_block(project_id)
-    ProjectService.update_workflow(db, project_id, wf_id, name="Renamed Workflow")
+    _build_project_context_block(project_id, user_id="cache-owner")
+    ProjectService.update_workflow(db, project_id, wf_id, name="Renamed Workflow", user_id="cache-owner")
     assert project_context_cache.stats()["size"] == 0
-    rendered_b = _build_project_context_block(project_id)
+    rendered_b = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Renamed Workflow" in rendered_b
 
 
@@ -337,7 +342,7 @@ def test_project_a_and_project_b_isolated(db_session, project_with_data):
     db = db_session
     proj_a = project_with_data
     # Create a second project.
-    proj_b = Project(id="proj_b", name="Project B", org_id=None, status="active")  # legacy public row (security F-11)
+    proj_b = Project(id="proj_b", name="Project B", org_id=None, status="active", owner_id="cache-owner")  # live owner-scoped fixture
     db.add(proj_b)
     db.commit()
     for i in range(3):
@@ -352,10 +357,10 @@ def test_project_a_and_project_b_isolated(db_session, project_with_data):
     db.commit()
 
     # Warm A's cache.
-    rendered_a = _build_project_context_block(proj_a.id)
+    rendered_a = _build_project_context_block(proj_a.id, user_id="cache-owner")
     assert "Cache Project" in rendered_a
     # Read B's block separately.
-    rendered_b = _build_project_context_block(proj_b.id)
+    rendered_b = _build_project_context_block(proj_b.id, user_id="cache-owner")
     # A's project name does not appear in B's block and vice versa.
     assert "Cache Project" not in rendered_b
     assert "Project B" not in rendered_a
@@ -369,27 +374,28 @@ def test_project_a_and_project_b_isolated(db_session, project_with_data):
 def test_cache_does_not_cross_contaminate_after_invalidating_one(db_session, project_with_data):
     db = db_session
     proj_a = project_with_data
-    proj_b = Project(id="proj_b2", name="Project B2", org_id=None, status="active")  # legacy public row (security F-11)
+    proj_b = Project(id="proj_b2", name="Project B2", org_id=None, status="active", owner_id="cache-owner")  # live owner-scoped fixture
     db.add(proj_b)
     db.commit()
     ProjectService.attach_dataset(
         db, proj_b.id, DatasetAttach(
             name="B2 Dataset", source_type="vector", source_ref="bref:0"
-        )
+        ),
+        user_id="cache-owner",
     )
 
-    _build_project_context_block(proj_a.id)
-    _build_project_context_block(proj_b.id)
+    _build_project_context_block(proj_a.id, user_id="cache-owner")
+    _build_project_context_block(proj_b.id, user_id="cache-owner")
     assert project_context_cache.stats()["size"] == 2
 
     # Invalidate only A.
     project_context_cache.invalidate(proj_a.id)
     assert project_context_cache.stats()["size"] == 1
     # B is still warm.
-    rendered_b = _build_project_context_block(proj_b.id)
+    rendered_b = _build_project_context_block(proj_b.id, user_id="cache-owner")
     assert "B2 Dataset" in rendered_b
     # A re-warms.
-    rendered_a = _build_project_context_block(proj_a.id)
+    rendered_a = _build_project_context_block(proj_a.id, user_id="cache-owner")
     assert "Cache Project" in rendered_a
 
 
@@ -429,7 +435,7 @@ async def test_assemble_without_project_id_no_db_queries(monkeypatch):
 
 
 def test_missing_project_returns_empty_and_does_not_cache(db_session):
-    rendered = _build_project_context_block("proj_does_not_exist")
+    rendered = _build_project_context_block("proj_does_not_exist", user_id="cache-owner")
     assert rendered is None
     assert project_context_cache.stats()["size"] == 0
 
@@ -446,7 +452,7 @@ def test_recreated_project_is_observed_immediately(db_session, project_with_data
     project_id = proj.id
 
     # Warm the cache.
-    _build_project_context_block(project_id)
+    _build_project_context_block(project_id, user_id="cache-owner")
     assert project_context_cache.stats()["size"] == 1
 
     # Delete the project (and cascade datasets/workflows).
@@ -458,15 +464,15 @@ def test_recreated_project_is_observed_immediately(db_session, project_with_data
     # fingerprint path is the source of truth: a deleted project
     # always returns None on the next call, regardless of what the
     # cache holds. This is the fail-closed contract.
-    rendered_gone = _build_project_context_block(project_id)
+    rendered_gone = _build_project_context_block(project_id, user_id="cache-owner")
     assert rendered_gone is None
 
     # Recreate with the same id and a different name.
-    new_proj = Project(id=project_id, name="Re-Created", org_id=None, status="active")  # legacy public row (security F-11)
+    new_proj = Project(id=project_id, name="Re-Created", org_id=None, status="active", owner_id="cache-owner")  # live owner-scoped fixture
     db.add(new_proj)
     db.commit()
 
-    rendered_new = _build_project_context_block(project_id)
+    rendered_new = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Re-Created" in rendered_new
     # The new entry is stored; an old orphan may also be present but
     # is harmlessly served only if its fingerprint happens to match
@@ -482,7 +488,7 @@ def test_rendered_text_contract_is_stable(db_session, project_with_data):
     byte-identical to the previous format. The LLM sees this text.
     """
     proj = project_with_data
-    rendered = _build_project_context_block(proj.id)
+    rendered = _build_project_context_block(proj.id, user_id="cache-owner")
 
     # Anchor on substrings to keep the test informative.
     assert rendered.startswith("\n<active_project_workspace>")
@@ -503,7 +509,7 @@ def test_rendered_text_for_empty_project(db_session, project):
     """A project with no datasets / no workflows must still render
     without raising.
     """
-    rendered = _build_project_context_block(project.id)
+    rendered = _build_project_context_block(project.id, user_id="cache-owner")
     assert "Datasets attached (0):" in rendered
     assert "Workflows (0):" in rendered
 
@@ -523,7 +529,7 @@ def test_concurrent_threads_same_project_share_warm_cache(db_session, project_wi
     project_id = proj.id
 
     # Run many sequential calls.
-    results = [_build_project_context_block(project_id) for _ in range(20)]
+    results = [_build_project_context_block(project_id, user_id="cache-owner") for _ in range(20)]
     assert len(set(results)) == 1
     # Cache has exactly one entry.
     assert project_context_cache.stats()["size"] == 1
@@ -536,13 +542,14 @@ def test_concurrent_threads_same_project_share_warm_cache(db_session, project_wi
 def test_concurrent_sessions_different_projects_isolated(db_session, project_with_data):
     db = db_session
     proj_a = project_with_data
-    proj_b = Project(id="proj_b3", name="Project B3", org_id=None, status="active")  # legacy public row (security F-11)
+    proj_b = Project(id="proj_b3", name="Project B3", org_id=None, status="active", owner_id="cache-owner")  # live owner-scoped fixture
     db.add(proj_b)
     db.commit()
     ProjectService.attach_dataset(
         db, proj_b.id, DatasetAttach(
             name="B3 Dataset", source_type="vector", source_ref="bref:0"
-        )
+        ),
+        user_id="cache-owner",
     )
 
     # Sequential interleaving: the cache must serve A from its own
@@ -550,8 +557,8 @@ def test_concurrent_sessions_different_projects_isolated(db_session, project_wit
     a_results = []
     b_results = []
     for _ in range(5):
-        a_results.append(_build_project_context_block(proj_a.id))
-        b_results.append(_build_project_context_block(proj_b.id))
+        a_results.append(_build_project_context_block(proj_a.id, user_id="cache-owner"))
+        b_results.append(_build_project_context_block(proj_b.id, user_id="cache-owner"))
     for r in a_results:
         assert "Project B3" not in r
         assert "Cache Project" in r
@@ -582,7 +589,7 @@ def test_fingerprint_path_detects_direct_db_mutation(db_session, project_with_da
     )
 
     # Warm the cache.
-    rendered_a = _build_project_context_block(project_id)
+    rendered_a = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Datasets attached (8):" in rendered_a
     assert project_context_cache.stats()["size"] == 1
 
@@ -604,7 +611,7 @@ def test_fingerprint_path_detects_direct_db_mutation(db_session, project_with_da
     # the old entry under the previous fingerprint. But the new
     # fingerprint (dataset count 9) is different, so the lookup
     # misses and a fresh summary is built.
-    rendered_b = _build_project_context_block(project_id)
+    rendered_b = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Datasets attached (9):" in rendered_b, (
         "Fingerprint-based invalidation failed: a direct DB "
         "mutation was not picked up by the next assemble() call."
@@ -629,7 +636,7 @@ def test_fingerprint_path_detects_workflow_updated_at_bump(
         lambda *a, **kw: None,
     )
 
-    rendered_a = _build_project_context_block(project_id)
+    rendered_a = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Workflows (4):" in rendered_a
 
     # Bump the workflow updated_at directly.
@@ -638,7 +645,7 @@ def test_fingerprint_path_detects_workflow_updated_at_bump(
     wf.updated_at = datetime.now(timezone.utc) + timedelta(hours=1)
     db.commit()
 
-    rendered_b = _build_project_context_block(project_id)
+    rendered_b = _build_project_context_block(project_id, user_id="cache-owner")
     assert "Workflows (4):" in rendered_b
     # Fingerprint must have changed even though no invalidation fired.
     assert project_context_cache.stats()["size"] == 2, (

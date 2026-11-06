@@ -113,7 +113,7 @@ _SENSITIVE_KEY_MATCHERS = (
 )
 
 
-def extract_profile_secrets(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
+def extract_profile_secrets(profile_dict: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """profile dict → (剩余明文无妨的 dict，被摘除的 secret 子 dict)。"""
     rest = dict(profile_dict)
     secret: Dict[str, Any] = {}
@@ -250,6 +250,7 @@ class InMemorySecretStore:
                 del self._entries[ref]
                 self._by_content.pop(self._content_key(secret), None)
                 return None
+            self._entries[ref] = (now, secret)
             self._entries.move_to_end(ref)
             return dict(secret)
 
@@ -412,6 +413,7 @@ class ConnectionRegistry:
                     if old_adapter is None and prebuilt_adapter is not None:
                         # V8：幂等命中但 adapter 已被驱逐 → 回填调用方实例。
                         old_adapter = prebuilt_adapter
+                        old_adapter._data_fabric_health_key = f"{old_record.scope_key}|{old_record.profile_id}|{old_record.revision}"
                         self._entries[key] = (old_record, old_adapter)
                     return old_record, old_adapter
                 # revision 变化：原子替换 + 旧 secret 逐出（仅当无其他
@@ -458,6 +460,7 @@ class ConnectionRegistry:
             with self._lock:
                 current = self._entries.get(key)
                 if current is not None and current[0].revision == rev:
+                    adapter._data_fabric_health_key = f"{record.scope_key}|{record.profile_id}|{rev}"
                     self._entries[key] = (current[0], adapter)
                 self._enforce_capacity_locked()
         if manager is not None:
@@ -496,6 +499,9 @@ class ConnectionRegistry:
             )
         if record.secret_ref:
             secret = self._secret_store.get(record.secret_ref)
+            if not secret:
+                record.health = HEALTH_EXPIRED
+                raise ValueError("connection credentials expired; reconnect the source")
             if secret:
                 opts_secret = secret.pop("options", None)
                 url_fields = secret.pop("url_fields", None)
@@ -542,6 +548,7 @@ class ConnectionRegistry:
 
             profile = ConnectionProfile(**self.rehydrate_profile(record))
             adapter = build_adapter(profile)
+            adapter._data_fabric_health_key = f"{record.scope_key}|{record.profile_id}|{record.revision}"
         except Exception as exc:  # noqa: BLE001 - 重建失败不升级为查询错误
             logger.warning(
                 "[ConnectionRegistry] adapter rebuild failed for %s: %s",
@@ -646,6 +653,12 @@ class ConnectionRegistry:
     def revoke(self, profile_id: str, scope: TenantScope) -> bool:
         with self._lock:
             return self._evict_locked((scope.scope_key(), str(profile_id)))
+
+    def revoke_profile(self, profile_id: str) -> int:
+        """Evict all historical owner/org namespaces and their credential refs."""
+        with self._lock:
+            keys = [key for key in self._entries if key[1] == str(profile_id)]
+            return sum(self._evict_locked(key) for key in keys)
 
     def sweep(self, *, now: Optional[float] = None) -> int:
         """显式清扫：过期 + idle 超限条目（驱逐 adapter 引用 + secret）。"""

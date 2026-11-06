@@ -1,4 +1,4 @@
-"""Envelope v2 实测类型化产物 + typed 衔接门（ADR-0282 M3）。
+"""Envelope v2 实测类型化产物 + typed 衔接门（ADR-0284 M3）。
 
 锁定：
 - envelope v2 additive 字段默认=未知（绝不虚填），v1 旧载荷 round-trip 兼容；

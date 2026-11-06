@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import math
+from itertools import islice
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from app.lib.gis.dataset_descriptor import (
@@ -59,24 +60,27 @@ def bounded_value_samples(
     - 字符串字段只对前 ``field_cap`` 个字段采样（供 category/temporal 印证）；
     - None/NaN 不占预算（与 measurement._finite_samples 同纪律）。
     """
-    if not features:
+    if features is None:
         return {}
-    sampled_fields: List[str] = []
-    if numeric_fields:
-        sampled_fields = [str(f) for f in numeric_fields][:field_cap]
-    else:
-        first = next(iter(features), None)
-        props = getattr(first, "properties", None) or (
-            first.get("properties") if isinstance(first, dict) else None
+    window = list(islice(features, max(0, feature_cap)))
+    numeric = list(dict.fromkeys(str(f) for f in (numeric_fields or [])))[:field_cap]
+    strings: List[str] = []
+    inferred: List[str] = []
+    for feat in window:
+        props = getattr(feat, "properties", None) or (
+            feat.get("properties") if isinstance(feat, dict) else None
         )
-        if isinstance(props, dict):
-            sampled_fields = [str(k) for k in list(props.keys())[:field_cap]]
+        if not isinstance(props, dict):
+            continue
+        for key, value in props.items():
+            name = str(key)
+            if isinstance(value, str) and name not in strings and len(strings) < field_cap:
+                strings.append(name)
+            elif numeric_fields is None and name not in inferred and len(inferred) < field_cap:
+                inferred.append(name)
+    sampled_fields = list(dict.fromkeys(numeric + inferred + strings))
     out: Dict[str, List[Any]] = {f: [] for f in sampled_fields}
-    seen = 0
-    for feat in features:
-        if seen >= feature_cap:
-            break
-        seen += 1
+    for feat in window:
         props = getattr(feat, "properties", None) or (
             feat.get("properties") if isinstance(feat, dict) else None
         )
@@ -87,9 +91,7 @@ def bounded_value_samples(
             if len(bucket) >= per_field_cap:
                 continue
             v = props.get(name)
-            if v is None:
-                continue
-            if isinstance(v, float) and not math.isfinite(v):
+            if v is None or (isinstance(v, float) and not math.isfinite(v)):
                 continue
             bucket.append(v)
     return {k: v for k, v in out.items() if v}
@@ -307,7 +309,7 @@ def derive_descriptor(
                                len(profile.fields) >= MAX_PROFILE_FIELDS),
             fields_explicit=(profile.fields_status == "explicit"),
             samples_per_field=MAX_VALUE_SAMPLES,
-            notes=[f"numeric_fields_sampled<={len(samples)}",
+            notes=[f"fields_sampled<={len(samples)}",
                    f"max_values_per_field<={sampled_values}"],
         )
     elif value_samples:

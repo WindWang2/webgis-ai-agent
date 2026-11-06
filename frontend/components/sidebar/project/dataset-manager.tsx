@@ -339,7 +339,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
         </div>
       )}
 
-      {visible.length > 5 && (
+      {(ds.datasets.length > 5 || filter) && (
         <SearchField
           value={filter}
           onChange={setFilter}

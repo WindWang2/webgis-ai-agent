@@ -29,6 +29,7 @@ legacy 路径在 03 票据迁移、Pi 路径在 02 票据迁移，最后 04 票�
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import base64
 import hashlib
 import json
@@ -96,7 +97,11 @@ from app.services.llm_result_formatter import (
 )
 
 
+from app.services.analysis_reuse_snapshot import snapshot_scoped_raster_inputs as _snapshot_scoped_raster_inputs
+
 DispatchStatus = Literal["ok", "repeated", "error"]
+
+
 
 
 @dataclass
@@ -266,7 +271,7 @@ class ToolDispatchService:
         # 重复命中时若 key ∈ _completed_keys → post-success 语义（原文案）；
         # 否则视为"并发在飞"→ 不谎报成功的软化文案。有界：超限整体清空只会
         # 把个别后序重复从"成功文案"降级为"在飞文案"，去重本身不受影响。
-        self._completed_keys: set[tuple[str, str]] = set()
+        self._completed_keys: OrderedDict[tuple[str, tuple[str, str]], None] = OrderedDict()
         self._COMPLETED_KEYS_MAX = 4096
 
     async def dispatch(
@@ -614,8 +619,15 @@ class ToolDispatchService:
                     except (json.JSONDecodeError, TypeError):
                         _guard_args = None
                     if isinstance(_guard_args, dict):
+                        _descriptor_fn = getattr(self._registry, "descriptor", None)
+                        _network_fetch = False
+                        if callable(_descriptor_fn):
+                            try:
+                                _network_fetch = bool(getattr(_descriptor_fn(tool_name), "network", False))
+                            except (KeyError, ValueError):
+                                pass
                         _guard_verdict = get_guardrails().check_tool_args(
-                            tool_name, _guard_args
+                            tool_name, _guard_args, network_fetch=_network_fetch,
                         )
                         if not _guard_verdict.passed:
                             _first = _guard_verdict.blocking()[0]
@@ -696,7 +708,7 @@ class ToolDispatchService:
                             analysis_key = compute_analysis_key(tool_name, _parsed)
                             if analysis_key is not None:
                                 input_shapes = await snapshot_input_shapes(session_id, _parsed)
-                                raster_fps = None
+                                raster_fps = {"__snapshot_error__": "unverifiable"}
                                 # #1549：指纹是增值记录，绝不阻塞执行；失败经
                                 # best_effort 可见降级（None = 不参与复用匹配）。
                                 with best_effort(
@@ -704,11 +716,7 @@ class ToolDispatchService:
                                     "tool-dispatch-reuse-raster-fp-best-effort",
                                     ctx={"tool": tool_name},
                                 ):
-                                    from app.lib.gis.analysis_reuse import (
-                                        snapshot_raster_fingerprints,
-                                    )
-
-                                    raster_fps = snapshot_raster_fingerprints(_parsed) or None
+                                    raster_fps = await _snapshot_scoped_raster_inputs(session_id, _parsed)
                                 reuse = await find_reusable_artifact(
                                     session_id,
                                     analysis_key=analysis_key,
@@ -1014,7 +1022,7 @@ class ToolDispatchService:
                     classify_and_remediate,
                 )
 
-                result["harness_failure"] = classify_and_remediate(
+                result["harness_failure"] = await asyncio.to_thread(classify_and_remediate,
                     status=result.get("status"),
                     code=result.get("code"),
                     error_type=result.get("error_type"),
@@ -1254,9 +1262,7 @@ class ToolDispatchService:
                         "tool-dispatch-register-raster-fp-best-effort",
                         ctx={"tool": tool_name},
                     ):
-                        from app.lib.gis.analysis_reuse import snapshot_raster_fingerprints
-
-                        raster_fps = snapshot_raster_fingerprints(_parsed) or None
+                        raster_fps = await _snapshot_scoped_raster_inputs(session_id, _parsed)
                 # V3 data foundation：输入 ref revision 快照（保形状覆写的
                 # 复用盲区守卫；增值记录，失败不阻塞）。
                 ref_revs = None
@@ -1852,24 +1858,13 @@ class ToolDispatchService:
             # 没有 image → 前端 add_heatmap_raster 校验器拒绝（invalid_params）
             # 且 auto-mount gate 不满足，图层永不挂载。复用 webgis_layer_upsert
             # 的同一 seam：ref:raster/<id> → /api/v1/sessions/{sid}/raster/<id>.png
-            # （匿名会话的 owner_token 以查询参数附加 —— MapLibre 图片请求带不了
-            # 请求头，路由要求所有权校验）。
+            # （匿名会话使用路径绑定的短时签名，图片请求无需长期凭据）。
             image_url = None
             if isinstance(image_ref, str) and image_ref.startswith("ref:raster/"):
                 raster_id = image_ref[len("ref:raster/"):]
                 image_url = f"/api/v1/sessions/{session_id}/raster/{raster_id}.png"
-                # #1549：owner_token 缺席 → 匿名 URL（前端挂载会 401）；经
-                # best_effort 可见降级，不静默产出打不开的图层 URL。
-                session_token = None
-                with best_effort(
-                    "session-owner-token-lookup",
-                    "tool-dispatch-session-token-best-effort",
-                    ctx={"session": session_id},
-                ):
-                    from app.services.session_ownership import lookup_session_owner_token
-                    session_token = await lookup_session_owner_token(session_id)
-                if session_token:
-                    image_url = f"{image_url}?token={session_token}"
+                from app.core.signing import signed_raster_query
+                image_url = f"{image_url}?{signed_raster_query(image_url, ttl_seconds=600)}"
             layer = {
                 "id": layer_id,
                 "source": source_id,
@@ -2012,13 +2007,18 @@ class ToolDispatchService:
         操作（GIL），无需持锁；check-and-add 的原子性由 _dedup_lock 保证。
         """
         executed_tools.discard(tool_key)
-        self._completed_keys.discard((session_id or "", tool_key))
+        self._completed_keys.pop((session_id or "", tool_key), None)
 
     def _mark_completed(self, tool_key: tuple[str, str], session_id: str = "") -> None:
         """成功完成的调用标记为 completed（post-success dedup 语义；会话维键）。"""
-        self._completed_keys.add((session_id or "", tool_key))
-        if len(self._completed_keys) > self._COMPLETED_KEYS_MAX:
-            self._completed_keys.clear()
+        key = (session_id or "", tool_key)
+        self._completed_keys[key] = None
+        self._completed_keys.move_to_end(key)
+        session_keys = [entry for entry in self._completed_keys if entry[0] == key[0]]
+        for old in session_keys[:-128]:
+            self._completed_keys.pop(old, None)
+        while len(self._completed_keys) > self._COMPLETED_KEYS_MAX:
+            self._completed_keys.popitem(last=False)
 
     # ── V3: 地图动作 action_id 铸造 ──────────────────────────────────────
 

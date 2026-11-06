@@ -1,3 +1,4 @@
+import { devOnly } from '@/lib/utils/logger';
 import type { GeoJSONSource, ImageSource, Map } from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
 import { filterFeaturesByBounds, thinFeaturesForViewport } from '@/lib/utils/geo';
@@ -167,7 +168,7 @@ export function addImageSource(map: Map, id: string, url: string, coordinates: [
     if (source.updateImage) {
       // 审计 F28：同 url 加 cache-buster，防 MapLibre 内部缓存命中显示旧图
       const lastUrl = _lastImageUrl.get(source);
-      const effectiveUrl = lastUrl === url
+      const effectiveUrl = lastUrl === url && !/^(?:data|blob):/i.test(url)
         ? `${url}${url.includes('?') ? '&' : '?'}_=${Date.now()}`
         : url;
       _lastImageUrl.set(source, url);  // 记录原始 url（不含 cache-buster）
@@ -326,13 +327,13 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
             viewport,
             VIEWPORT_RENDER_BUDGET,
           ).then((trimmed) => {
-            if (generation !== _viewportRefreshGeneration) return; // 迟到应用取消
+            if (generation !== _viewportRefreshGeneration || map.getSource(id) !== source) return; // stale source or viewport
             const effective = trimmed ?? _filterForViewport(source, raw, viewport); // 同步兜底
             if (_lastGeoJsonData.get(source) !== effective) {
               _lastGeoJsonData.set(source, effective);
               source.setData(effective as GeoJsonSourceData);
             }
-          });
+          }).catch((error) => devOnly.warn('[viewport-filter] failed', error));
           return;
         }
         const effective = _filterForViewport(source, raw, viewport);
@@ -342,7 +343,7 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
         }
       });
     } catch (err) {
-      console.warn('[renderer] viewport refresh apply failed (map disposed?):', err);
+      devOnly.warn('[renderer] viewport refresh apply failed (map disposed?):', err);
     }
   };
   // idle 回调（不可用环境回退 16ms timeout）：重计算不阻塞交互帧。
@@ -543,32 +544,20 @@ export function addThematicLayer(
     } else {
       colorExpression = colors[0] || '#ccc';
     }
-  } else if (styleDef.type === 'lisa') {
-    const categories = styleDef.categories || {};
-    const match: unknown[] = ['match', ['get', styleDef.field]];
-
-    for (const [key, color] of Object.entries(categories)) {
-      match.push(key);
-      match.push(color);
+  } else if (styleDef.type === 'lisa' || styleDef.type === 'categorical') {
+    const raw = styleDef.categories || [];
+    const entries = Array.isArray(raw)
+      ? raw.map((category: { key: string | number; color: string }) => [String(category.key), category.color])
+      : Object.entries(raw);
+    const colorsByKey = new globalThis.Map(entries.map(([key, color]) => [key, color]));
+    if (colorsByKey.size === 0) {
+      colorExpression = '#cccccc';
+    } else {
+      const match: unknown[] = ['match', ['to-string', ['get', styleDef.field]]];
+      for (const [key, color] of colorsByKey) match.push(key, color);
+      match.push('#cccccc');
+      colorExpression = match;
     }
-
-    // Add default color for unmatched values
-    match.push('#cccccc');
-    colorExpression = match;
-  } else if (styleDef.type === 'categorical') {
-    // #557 断点 3：categorical style_def 的 categories 是 [{key,color,label}]
-    // 列表（后端保留数值键类型，数值类别在此原样进入 match 表达式才能命中）。
-    const categories = (styleDef.categories || []) as Array<{ key: string | number; color: string }>;
-    const match: unknown[] = ['match', ['get', styleDef.field]];
-
-    for (const c of categories) {
-      match.push(c.key);
-      match.push(c.color);
-    }
-
-    // Add default color for unmatched values
-    match.push('#cccccc');
-    colorExpression = match;
   } else {
     colorExpression = '#cccccc';
   }
@@ -650,7 +639,8 @@ const HEATMAP_PALETTES = {
 /** 命名调色板 → interpolate 停靠点序列 [pos, color, pos, color, ...]；未知键回落 classic。 */
 function heatmapPaletteStops(palette: string | string[] | undefined): (number | string)[] {
   if (Array.isArray(palette)) {
-    return palette.flatMap((color, i, arr) => [
+    const colors = palette.length >= 2 ? palette : palette.length === 1 ? [palette[0], palette[0]] : HEATMAP_PALETTES.classic;
+    return colors.flatMap((color, i, arr) => [
       arr.length > 1 ? i / (arr.length - 1) : 0,
       color,
     ]);
@@ -731,7 +721,7 @@ export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
       baseRadiusPx: radiusPx,
       featureCount: options.featureCount,
     }),
-    'heatmap-opacity': options.opacity || 1
+    'heatmap-opacity': options.opacity ?? 1
   };
   recordSymbolLawEvidence('law-applied', { keys: ['heatmap-radius'], featureCount: options.featureCount }, options.id);
 
@@ -770,13 +760,13 @@ export function removeLayerStack(map: Map, id: string, prefix: boolean = false):
 
   if (prefix) {
     style?.layers?.forEach((l) => {
-      if (l.id === id || l.id.startsWith(id + '-') || l.id.startsWith(id + '_')) {
+      if (l.id === id || l.id.startsWith(id + '__') || ('source' in l && typeof l.source === 'string' && l.source === id)) {
         targetLayerIds.add(l.id);
       }
     });
     if (style?.sources) {
       Object.keys(style.sources).forEach((sid) => {
-        if (sid === id || sid.startsWith(id + '-') || sid.startsWith(id + '_')) {
+        if (sid === id || sid.startsWith(id + '__')) {
           targetSourceIds.add(sid);
         }
       });
@@ -1060,7 +1050,8 @@ export function addProcessLayerStack(
     type: 'fill',
     source: sourceId,
     paint: {
-      'fill-color': `rgba(22, 163, 74, ${fillOpacity})`,
+      'fill-color': color,
+      'fill-opacity': fillOpacity,
       'fill-outline-color': 'rgba(22, 163, 74, 0.3)',
     },
   });
@@ -1103,7 +1094,7 @@ export function removeOrphanCustomLayers(
   map: Map,
   knownIds: Set<string>,
   prefix: string,
-  extractBaseId: (idAfterPrefix: string) => string = (id) => id.replace(/[-_][^-_]*$/, ''),
+  extractBaseId: (idAfterPrefix: string) => string = (id) => id.includes('__') ? id.split('__')[0] : id.replace(/-(?:fill|line|point|label|clusters|cluster-count)$/, ''),
 ) {
   const style = map.getStyle();
   if (!style) return;

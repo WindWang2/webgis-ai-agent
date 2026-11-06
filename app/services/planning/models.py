@@ -203,7 +203,17 @@ class CanonicalPlan(BaseModel):
         """
         if not self.steps:
             return self.status
-        statuses = [s.status for s in self.steps]
+        blocked = {step.id for step in self.steps if step.status in
+                   (StepStatus.failed, StepStatus.skipped, StepStatus.cancelled)}
+        while True:
+            expanded = blocked | {step.id for step in self.steps
+                                  if step.status == StepStatus.pending
+                                  and any(dep in blocked for dep in step.depends_on)}
+            if expanded == blocked:
+                break
+            blocked = expanded
+        statuses = [StepStatus.skipped if step.status == StepStatus.pending and step.id in blocked
+                    else step.status for step in self.steps]
         if all(s == StepStatus.completed for s in statuses):
             return PlanStatus.completed
         has_pending_or_running = any(
@@ -213,11 +223,15 @@ class CanonicalPlan(BaseModel):
             return PlanStatus.running
         has_completed = any(s == StepStatus.completed for s in statuses)
         has_failed_or_skipped = any(
-            s in (StepStatus.failed, StepStatus.skipped) for s in statuses
+            s in (StepStatus.failed, StepStatus.skipped, StepStatus.cancelled) for s in statuses
         )
         if has_completed and has_failed_or_skipped and not has_pending_or_running:
             return PlanStatus.partially_completed
-        if any(s == StepStatus.failed for s in statuses) and not has_pending_or_running:
+        if not has_pending_or_running and has_failed_or_skipped:
+            if any(s == StepStatus.failed for s in statuses):
+                return PlanStatus.failed
+            if any(s == StepStatus.cancelled for s in statuses):
+                return PlanStatus.cancelled
             return PlanStatus.failed
         return self.status
 

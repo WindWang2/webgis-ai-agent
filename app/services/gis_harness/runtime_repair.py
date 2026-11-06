@@ -36,6 +36,7 @@ GIS 分析的前提下，用既有突变通道把 runtime 拉回 desired state �
     变化（用户/agent 编辑）即重置预算，同一发散不重复对抗。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import hashlib
 import json
@@ -355,7 +356,7 @@ def _trace_repair(session_id: str, outcome: RuntimeRepairOutcome) -> None:
         if outcome.execution_debts:
             trace.bump(COUNTER_RUNTIME_REPAIR_EXECUTION_DEBTS, len(outcome.execution_debts))
     except Exception:  # noqa: BLE001 — trace 故障不影响业务
-        pass
+        observe_optional_failure(__name__)
     # GOAL 05（ADR-0279）：同一事件补进 GisTraceChain 阶段 16（REPAIR）
     # —— 补齐 chain_emitters 自认的缺发射面（有界扁平键，绝不抛）。
     try:
@@ -373,7 +374,7 @@ def _trace_repair(session_id: str, outcome: RuntimeRepairOutcome) -> None:
             locked_refused=len(outcome.locked_refused),
         )
     except Exception:  # noqa: BLE001 — 链发射失败不影响业务
-        pass
+        observe_optional_failure(__name__)
 
 
 async def _attach_continuation(
@@ -413,7 +414,11 @@ async def _attach_continuation(
             failure={"class": "renderer_failure"} if exhausted else None,
         )
         outcome.continuation = decision.to_payload()
-    except Exception:  # noqa: BLE001 — 裁决面绝不阻断
+    except Exception as exc:  # noqa: BLE001 — honest unavailable budget
+        from app.services.gis_harness.durable_context import RecoveryStoreUnavailable
+        if isinstance(exc, RecoveryStoreUnavailable):
+            outcome.exhausted = True
+            outcome.continuation = {"action": "abort_with_disclosure", "reason": "recovery_store_unavailable"}
         logger.debug("[RuntimeRepair] continuation attach failed",
                      exc_info=True)
 
@@ -485,7 +490,7 @@ async def run_runtime_repair(
                     session_id, REPAIR_STATE_KEY, {}
                 )
             except Exception:  # noqa: BLE001 — 清账失败不影响收敛披露
-                pass
+                observe_optional_failure(__name__)
         return outcome
 
     obs_fingerprint = str(observation.get("mapspec_fingerprint") or "") if observation else ""
@@ -493,8 +498,9 @@ async def run_runtime_repair(
         map_state.get(REPAIR_STATE_KEY)
         if isinstance(map_state, dict) else None
     )
-    if not isinstance(ledger, dict) or ledger.get("fingerprint") != obs_fingerprint:
-        ledger = {"fingerprint": obs_fingerprint, "passes": []}
+    if not isinstance(ledger, dict):
+        ledger = {"passes": []}
+    ledger["fingerprint"] = obs_fingerprint
     passes = [
         p for p in (ledger.get("passes") or [])[:_MAX_LEDGER_PASSES] if isinstance(p, dict)
     ]
@@ -670,7 +676,7 @@ async def run_runtime_repair(
                 except (TypeError, ValueError):
                     outcome.mutation_revision = None
         except Exception:  # noqa: BLE001 — 快照失败只影响响应附带 spec
-            pass
+            observe_optional_failure(__name__)
     elif len(passes) >= MAX_RUNTIME_REPAIR_PASSES:
         outcome.exhausted = True
         await _attach_continuation(outcome, session_id, exhausted=True)

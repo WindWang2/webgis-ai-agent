@@ -4,6 +4,7 @@ Supports standardized GeoAnalysisResult payloads across all spatial operations.
 """
 import json
 import logging
+import ast
 import re
 from typing import Dict, List, Any, Optional, Callable
 
@@ -121,10 +122,22 @@ class SpatialAnalyzer:
             return f"Unsafe query: disallowed characters in '{query}'"
         if "__" in query:
             return f"Unsafe query: double-underscore attribute access forbidden in '{query}'"
-        lowered = query.lower()
-        for kw in cls._BLOCKED_KEYWORDS:
-            if kw in lowered:
-                return f"Unsafe query: disallowed keyword '{kw}'"
+        if len(query) > 4096:
+            return "Unsafe query: expression is too long"
+        try:
+            tree = ast.parse(query, mode="eval")
+        except (SyntaxError, RecursionError):
+            return "Unsafe query: invalid filter expression"
+        allowed = (
+            ast.Expression, ast.Compare, ast.BoolOp, ast.UnaryOp, ast.BinOp,
+            ast.Name, ast.Constant, ast.List, ast.Tuple, ast.Load,
+            ast.And, ast.Or, ast.Not, ast.USub, ast.UAdd, ast.Invert,
+            ast.BitAnd, ast.BitOr, ast.Eq, ast.NotEq, ast.Lt, ast.LtE,
+            ast.Gt, ast.GtE, ast.In, ast.NotIn,
+        )
+        nodes = list(ast.walk(tree))
+        if len(nodes) > 256 or any(not isinstance(node, allowed) for node in nodes):
+            return "Unsafe query: only column comparisons and boolean filters are allowed"
         return None
 
     @classmethod
@@ -441,6 +454,10 @@ class SpatialAnalyzer:
         predicate: str = "intersects",
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
+        if join_type not in {"inner", "left", "right"}:
+            return GeoAnalysisResult(False, None, "join_type must be inner, left or right")
+        if predicate not in {"intersects", "within", "contains", "overlaps", "crosses", "touches", "covers", "covered_by", "contains_properly"}:
+            return GeoAnalysisResult(False, None, "Unsupported spatial join predicate")
         feats_left = left_features.get("features", [])
         feats_right = right_features.get("features", [])
 

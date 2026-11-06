@@ -221,7 +221,7 @@ def _windowed_zonal_stats(
             else:
                 vals = vals_all
             vals = vals[np.isfinite(vals)]
-            # ADR-0282（断点 9 修复）：逐 zone 有效像元覆盖率披露——
+            # ADR-0284（断点 9 修复）：逐 zone 有效像元覆盖率披露——
             # 90% nodata 的 zone 均值与全有效 zone 在产物上不再不可区分。
             total_masked = int(vals_all.size)
             coverage = (float(vals.size) / total_masked

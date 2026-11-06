@@ -98,9 +98,8 @@ class TestGeocomputePlanSemanticCap:
         budget_desc = ExecutionPlanIn.model_fields["budget"].description or ""
         assert "256KB" in budget_desc and "MAX_PLAN_SNAPSHOT_BYTES" in budget_desc
 
-    def test_large_inline_parameters_still_validate_at_schema_layer(self):
-        """大 parameters（>256KB）在 schema 层放行 —— 服务层 typed 413
-        （PLAN_SNAPSHOT_TOO_LARGE）保持既有权威，不被提前成 422。"""
+    def test_large_inline_parameters_rejected_at_schema_layer(self):
+        """Serialized plan size is rejected before any execution can start."""
         node = ExecutionNodeIn(
             node_id="scan", category="source_scan",
             parameters={"features": [
@@ -108,8 +107,8 @@ class TestGeocomputePlanSemanticCap:
                 for _ in range(200)
             ]},
         )
-        plan = ExecutionPlanIn(plan_id="p", nodes=[node])
-        assert plan.nodes[0].parameters["features"]
+        with pytest.raises(ValidationError, match="256KB"):
+            ExecutionPlanIn(plan_id="p", nodes=[node])
 
 
 # ── project ─────────────────────────────────────────────────────────
@@ -247,6 +246,12 @@ class TestDataSourceRouteSchemaRejection:
     @pytest.fixture
     def auth_headers(self):
         from app.core.auth import create_access_token
+        from app.core.database import Base, Engine, SessionLocal
+        from app.models.db_model import User
+        Base.metadata.create_all(Engine)
+        with SessionLocal() as db:
+            db.merge(User(id="sb-1648-user", username="sb-1648-user", email="sb-1648-user@example.com", role="editor", is_active=True))
+            db.commit()
         token = create_access_token({"sub": "sb-1648-user", "role": "editor"})
         return {"Authorization": f"Bearer {token}"}
 

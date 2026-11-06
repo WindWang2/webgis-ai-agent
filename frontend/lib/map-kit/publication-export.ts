@@ -1,3 +1,4 @@
+import { exportNotificationTitle } from './export-notification';
 /**
  * C14：publication vector PDF 导出运行面（前端入口 —— 路由文档化的
  * 「backend-only 待接线」交付）。
@@ -157,7 +158,7 @@ export async function runVectorPdfExport(
       : '';
     const degradationNote = formatVectorDiagnostics(result);
     getHudState().setPendingSystemMessage(
-      `[系统通知] 矢量 PDF \`${req.title || '未命名'}\` 已成功生成` +
+      `[系统通知] 矢量 PDF \`${exportNotificationTitle(req.title)}\` 已成功生成` +
         `（${pages} 页，文本可选中检索，PublicationIR ${result.layout_version ?? ''}）` +
         `${atlasNote}，文件已落盘：[下载PDF](${API_BASE}${result.url})。` +
         degradationNote +

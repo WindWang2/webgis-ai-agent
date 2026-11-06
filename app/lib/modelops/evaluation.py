@@ -188,7 +188,7 @@ def _ap_11point(tp_flags: List[bool], n_preds: int, n_refs: int) -> float:
         precisions.append(tp_so_far / i)
     ap = 0.0
     for t in [i / 10 for i in range(11)]:
-        eligible = [p for r, p in zip(recalls, precisions) if r >= t]
+        eligible = [p for r, p in zip(recalls, precisions, strict=True) if r >= t]
         ap += max(eligible) if eligible else 0.0
     return ap / 11.0
 

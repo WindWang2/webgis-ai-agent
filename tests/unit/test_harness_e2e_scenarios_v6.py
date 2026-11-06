@@ -459,7 +459,7 @@ async def test_scenario9_interrupt_resume_continue_full_green() -> None:
         resume_from_anchor,
         save_anchor,
     )
-    from app.services.gis_harness.resume_verify import VERDICT_LIVE
+    from app.services.gis_harness.resume_verify import VERDICT_STALE
     from app.services.session_data import session_data_manager
     from app.services.session_plan import (
         SessionPlan,
@@ -516,7 +516,9 @@ async def test_scenario9_interrupt_resume_continue_full_green() -> None:
     assert [s["capability"]
             for s in restored.gis_chapter["workflow_instance"]["stages"]] == caps
     assert result["missing_refs"] and not result["restored_refs"]
-    assert result["workflow_verify"]["verdict"] == VERDICT_LIVE
+    # Resume rewrites missing product bindings and marks their rows stale;
+    # this is fingerprint drift until the fake executor actually recomputes.
+    assert result["workflow_verify"]["verdict"] == VERDICT_STALE
     by_cap = {s["capability"]: s
               for s in restored.gis_chapter["workflow_instance"]["stages"]}
     assert by_cap["load_data"]["state"] == "stale"

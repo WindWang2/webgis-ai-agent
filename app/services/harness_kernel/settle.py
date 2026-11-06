@@ -39,6 +39,22 @@ from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+_background_cleanup_tasks: set[asyncio.Future] = set()
+
+
+def _retain_cleanup(coro: Any) -> asyncio.Future[Any]:
+    task = asyncio.ensure_future(coro)
+    _background_cleanup_tasks.add(task)
+    def done(future: asyncio.Future[Any]) -> None:
+        _background_cleanup_tasks.discard(future)
+        if not future.cancelled():
+            try:
+                future.result()
+            except Exception:
+                logger.debug("Background harness cleanup failed", exc_info=True)
+    task.add_done_callback(done)
+    return task
+
 
 # ── Closed vocabularies（fail-closed：词表外的值一律按失败族收口）─────────
 
@@ -115,7 +131,7 @@ DISCLOSURE_EFFECTS: Tuple[str, ...] = (
 )
 
 _RECEIPT_OK = ("applied", "skipped", "failed", "already")
-_DISPOSITIONS = ("settled", "duplicate", "stale", "unknown_turn")
+_DISPOSITIONS = ("settled", "duplicate", "stale", "unknown_turn", "in_progress")
 
 #: kill switch（ADR-0223 D6；stable，默认 ON）。OFF 只摘除披露效果序，
 #: kernel end_turn（authority 腿）不受开关影响。
@@ -470,7 +486,7 @@ async def run_settle_effects(
                 else False
             ) is True,
         )
-        persist_turn_chain(turn_id, session_id=session_id)
+        await asyncio.to_thread(persist_turn_chain, turn_id, session_id=session_id)
         receipts.append(SettleEffectReceipt(EFFECT_EVIDENCE_CHAIN, "applied"))
     except Exception as exc:  # noqa: BLE001 — 记录面绝不阻断 settle
         receipts.append(SettleEffectReceipt(EFFECT_EVIDENCE_CHAIN, "failed", str(exc)))
@@ -482,7 +498,7 @@ async def run_settle_effects(
 
 
 async def _end_turn_leg(
-    inp: HarnessSettleInput, status: str, *, was_running: bool
+    inp: HarnessSettleInput, status: str, *, was_running: bool, claim_token: str = ""
 ) -> SettleEffectReceipt:
     """kernel end_turn（shield + 预算 + 吞异常——结算必须在清理路径中存活）。
 
@@ -496,9 +512,10 @@ async def _end_turn_leg(
         from app.services.harness_kernel.runtime import get_runtime
 
         await asyncio.wait_for(
-            asyncio.shield(asyncio.ensure_future(
+            asyncio.shield(_retain_cleanup(
                 get_runtime(inp.session_id).end_turn(
                     inp.turn_id, host=inp.host, status=status,  # type: ignore[arg-type]
+                    settle_token=claim_token,
                 )
             )),
             timeout=_END_TURN_BUDGET_S,
@@ -655,10 +672,52 @@ async def settle_turn(inp: HarnessSettleInput) -> HarnessSettleOutcome:
                 )
                 _cache_receipt(key, outcome)
             else:
-                outcome = await _settle_running(inp, computed, was_running=(recorded == "running"))
-                _cache_receipt(key, outcome)
+                from app.services.harness_kernel.settle_claim import acquire_settlement_claim
+                try:
+                    claim = await acquire_settlement_claim(inp.session_id, inp.turn_id, expected_status=recorded)
+                except Exception:
+                    logger.warning("Settlement claim unavailable", exc_info=True)
+                    claim = None
+                if claim is None or claim.state != "claimed":
+                    state = claim.state if claim else "unavailable"
+                    return HarnessSettleOutcome(
+                        kernel_status=computed, settle_class=settle_class_for_status(computed),
+                        disposition=state if state in ("duplicate", "stale", "in_progress") else "unknown_turn",
+                        receipts=(SettleEffectReceipt("settle_claim", "already" if state == "duplicate" else "failed", state),))
+                outcome = await _settle_owned(inp, computed, recorded, claim.token)
+                if outcome.disposition == "settled":
+                    _cache_receipt(key, outcome)
         _observe(inp, outcome, started)
         return outcome
+
+
+async def _settle_owned(inp: HarnessSettleInput, computed: str, recorded: str, token: str) -> HarnessSettleOutcome:
+    from app.services.harness_kernel.settle_claim import SETTLE_EFFECT_BUDGET_S, complete_settlement
+
+    try:
+        async with asyncio.timeout(SETTLE_EFFECT_BUDGET_S):
+            outcome = await _settle_running(inp, computed, was_running=(recorded == "running"), claim_token=token)
+        if await complete_settlement(inp.session_id, inp.turn_id, token):
+            return outcome
+        return replace(outcome, disposition="unknown_turn", receipts=outcome.receipts + (
+            SettleEffectReceipt("settle_claim", "failed", "claim lost or terminal write unavailable"),))
+    except (asyncio.CancelledError, Exception) as exc:
+        # Cancelled effects have stopped before ownership can be reused. Shield
+        # the bounded authority cleanup so cancellation never strands running.
+        async def interrupted() -> bool:
+            await _end_turn_leg(inp, "interrupted", was_running=(recorded == "running"), claim_token=token)
+            return await complete_settlement(inp.session_id, inp.turn_id, token)
+        cleanup = _retain_cleanup(interrupted())
+        try:
+            await asyncio.wait_for(asyncio.shield(cleanup), timeout=_END_TURN_BUDGET_S + 1)
+        except (TimeoutError, asyncio.CancelledError):
+            logger.warning("Interrupted settlement cleanup pending session=%s", inp.session_id)
+        except Exception:
+            logger.warning("Interrupted settlement cleanup unavailable session=%s", inp.session_id, exc_info=True)
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        return HarnessSettleOutcome(kernel_status="interrupted", settle_class="failed", disposition="unknown_turn",
+            receipts=(SettleEffectReceipt("settle_claim", "failed", "settlement interrupted before completion"),))
 
 
 async def _successor_turn_running(session_id: str, turn_id: str) -> bool:
@@ -692,7 +751,7 @@ async def _successor_turn_running(session_id: str, turn_id: str) -> bool:
 
 
 async def _settle_running(
-    inp: HarnessSettleInput, computed: str, *, was_running: bool
+    inp: HarnessSettleInput, computed: str, *, was_running: bool, claim_token: str = ""
 ) -> HarnessSettleOutcome:
     """台账仍 running（或 legacy 预终态化后的正规首次调用）的完整结算。"""
     status = computed
@@ -731,7 +790,7 @@ async def _settle_running(
             reason=inp.reason, state_trigger=inp.state_trigger,
         )
         receipts.extend(effect_receipts)
-    receipts.append(await _end_turn_leg(inp, status, was_running=was_running))
+    receipts.append(await _end_turn_leg(inp, status, was_running=was_running, claim_token=claim_token))
     receipts.append(await _parity_leg(inp.session_id, inp.turn_id))
     if refusal:
         logger.info(

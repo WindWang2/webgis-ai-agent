@@ -18,6 +18,7 @@ project_id），而 authority_id 是 uuid4 主键 —— 跨租户 id 碰撞不�
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import select
@@ -34,6 +35,13 @@ from app.services.project_knowledge.contract import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _expired(value: Optional[datetime]) -> bool:
+    if value is None:
+        return False
+    normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return normalized <= datetime.now(timezone.utc)
 
 
 def _mp_key(authority_id: str) -> Optional[tuple[str, int]]:
@@ -104,10 +112,10 @@ def live_version_token(
                 MapProductVersion.project_id == project_id,
                 MapProductVersion.version_no == key[1],
             )
-        ).scalar_one_or_none()
+        ).first()
         if row is None:
             return None
-        return str(row or "")
+        return str(row[0] or "")
 
     if authority_store == AS_WORKFLOW:
         wf = db.execute(
@@ -155,13 +163,10 @@ def live_version_token(
                 GISSpatialMemory.scope_id == project_id,
             )
         ).scalar_one_or_none()
-        if row is None or row.status != "active":
+        if row is None or row.status != "active" or row.sensitive:
             return None
-        if row.expires_at is not None:
-            from app.services.gis_memory.store import _now_naive
-
-            if row.expires_at <= _now_naive():
-                return None
+        if _expired(row.expires_at):
+            return None
         return str(row.fingerprint or "")
 
     if authority_store == AS_CARTO_FACT:
@@ -171,7 +176,7 @@ def live_version_token(
                 CartoProjectFact.project_id == project_id,
             )
         ).scalar_one_or_none()
-        if row is None or row.status not in ("active", "conflicted"):
+        if row is None or row.status != "active" or _expired(row.expires_at):
             return None
         return str(row.fingerprint or "")
 
@@ -279,7 +284,7 @@ def live_version_tokens(
             }
             for no, aids in wanted.items():
                 fp = fp_by_no.get(no)
-                token = None if fp is None else str(fp or "")
+                token = None if no not in fp_by_no else str(fp or "")
                 for aid in aids:
                     out[(AS_MAP_PRODUCT, aid)] = token
 
@@ -319,9 +324,6 @@ def live_version_tokens(
             out[(AS_MISSION, row.mission_id)] = str(row.revision or 1)
 
     if AS_GIS_MEMORY in by_store:
-        from app.services.gis_memory.store import _now_naive
-
-        now = _now_naive()
         # 与逐条版同一作用域口径（无 project_id 列 → scope='project' ∧
         # scope_id=project_id；见上方 AS_GIS_MEMORY 分支注释）：批量查询
         # 一次 IN 取回本项目的 project 作用域记忆，其余行按 fail-closed 留
@@ -334,9 +336,9 @@ def live_version_tokens(
             )
         ).scalars().all()
         for row in rows:
-            if row.status != "active":
+            if row.status != "active" or row.sensitive:
                 continue
-            if row.expires_at is not None and row.expires_at <= now:
+            if _expired(row.expires_at):
                 continue
             out[(AS_GIS_MEMORY, row.id)] = str(row.fingerprint or "")
 
@@ -348,7 +350,7 @@ def live_version_tokens(
             )
         ).scalars().all()
         for row in rows:
-            if row.status not in ("active", "conflicted"):
+            if row.status != "active" or _expired(row.expires_at):
                 continue
             out[(AS_CARTO_FACT, row.id)] = str(row.fingerprint or "")
 

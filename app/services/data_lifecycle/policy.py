@@ -1,7 +1,10 @@
 """Data Lifecycle V9 —— 统一生命周期策略引擎（P3，ADR-0140 核心）。
 
 五类对象 → 统一登记 → 分级（hot/warm/cold）→ 到期判定 → GC 计划（dry-run/
-审批/执行/回滚，P5）→ 复活（引用即预热）。
+审批/执行/回滚，P5）。
+
+last_used 以适配器观测和登记表较新值为准。revive_object 是显式服务接口；
+并非所有读取机制自动调用它，不承诺全库“引用即预热”。缓存命中更新时间由适配器采集。
 
 **安全不动点（行为保持）**：默认策略对五类对象全部 ``observe`` —— 引擎
 只登记与分级，不改变任何既有机制的行为（lakehouse retention、spill TTL、
@@ -164,7 +167,16 @@ def assess(
         objects = report.objects
         if scope_filter is not None:
             objects = [o for o in objects if o.owner_scope in scope_filter]
+        from app.models.data_lifecycle import LifecycleObject
         for obj in objects[:MAX_UPSERTS_PER_ASSESS]:
+            previous = db.query(LifecycleObject).filter_by(kind=obj.kind, object_id=obj.object_id).one_or_none()
+            if previous is not None and previous.last_used_at is not None:
+                old = previous.last_used_at
+                old = old.replace(tzinfo=timezone.utc) if old.tzinfo is None else old
+                observed = obj.last_used_at
+                observed = observed.replace(tzinfo=timezone.utc) if observed is not None and observed.tzinfo is None else observed
+                if observed is None or old > observed:
+                    obj.last_used_at = old
             tier = classify_tier(obj.last_used_at, thresholds, now=now)
             tiers[tier] = tiers.get(tier, 0) + 1
             total_bytes += int(obj.byte_size or 0)
@@ -182,6 +194,7 @@ def assess(
                     "byte_size": int(obj.byte_size or 0),
                     "tier": tier,
                     "reason": reason,
+                    "lane": obj.info.get("lane"),
                     "last_used_at": obj.last_used_at.isoformat() if obj.last_used_at else None,
                 })
             if persist and upserted < MAX_UPSERTS_PER_ASSESS:
@@ -238,7 +251,11 @@ def _upsert_object(db: Any, obj: Any, tier: str, now: datetime) -> None:
         return
     row.tier = tier
     row.byte_size = int(obj.byte_size or 0)
-    row.last_used_at = obj.last_used_at or row.last_used_at
+    if obj.last_used_at is not None:
+        previous = row.last_used_at
+        observed = obj.last_used_at
+        if previous is None or observed.replace(tzinfo=None) > previous.replace(tzinfo=None):
+            row.last_used_at = observed
     row.info = obj.bounded_info()
     row.updated_at = now
 
@@ -247,9 +264,10 @@ def _upsert_object(db: Any, obj: Any, tier: str, now: datetime) -> None:
 
 
 def revive_object(db: Any, kind: str, object_id: str) -> bool:
-    """对象被引用（命中）→ last_used 刷新 + tier 回 hot（引用即预热）。
+    """显式刷新 last_used 并将 tier 回 hot；调用方必须主动调用。
 
-    各机制在命中路径调用（当前接线：assess 的 next touch）；返回是否命中。
+    显式引用信号的更新原语；artifact cache 命中通过 meta mtime 更新。
+    assess 保留登记表中更新的时间，不把枚举本身当作使用。
     """
     from app.models.data_lifecycle import LifecycleObject
 

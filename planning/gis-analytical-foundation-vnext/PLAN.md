@@ -22,7 +22,7 @@
 
 - **M0 ✅** R0 事实检查 + worktree + 基线（analysis_workflows 83P/1S）
 - **M1** B0 能力盘点定稿：SOURCE_INVENTORY.md（capability→tool→types→守门→证据矩阵 + 5-8 断点）
-- **M2** ADR-0282 + 契约冻结：typed AnalysisArtifactEnvelope v2（additive 字段 + versioned schema gate + 三链 role/类型合同）——接口先冻结后实现（先例 INTERFACE_CONTRACTS.md）
+- **M2** ADR-0284 + 契约冻结：typed AnalysisArtifactEnvelope v2（additive 字段 + versioned schema gate + 三链 role/类型合同）——接口先冻结后实现（先例 INTERFACE_CONTRACTS.md）
 - **M3** 纵切 1：链① 点位→行政 join→计数/密度（真实分母）→分级→MapSpec-ready（typed 门 + fixture + 局部重算）
 - **M4** 纵切 2：链② 栅格重采样/掩膜→zonal→矢量→图（nodata/extent/vertical datum 合同）
 - **M5** 纵切 3：链③ 网络→可达性/覆盖→行政汇总（无路网 typed blocked；汇总尾部 role 衔接）

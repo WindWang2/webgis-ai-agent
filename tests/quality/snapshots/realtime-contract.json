@@ -57,7 +57,7 @@
    "per_ip_rate_limited": true,
    "session_ownership_fail_closed": true,
    "subprotocol_preferred": true,
-   "token_verified": false,
+   "token_verified": true,
    "token_version_checked": true
   },
   "endpoint": "/api/v1/ws/{session_id}",
@@ -88,7 +88,8 @@
    "layer_toggled": {
     "handler": "app.services.ws_service.handle_layer_toggled",
     "required_fields": [
-     "layer_id"
+     "layer_id",
+     "visible"
     ]
    },
    "layers_changed": {

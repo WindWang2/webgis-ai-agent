@@ -197,7 +197,7 @@ def _resolve_projected_zone(
         return None, "gk_zone_prefixed_indeterminate", \
             "zone-prefixed GK eastings but no China lon hint; zone indeterminate"
     if in_china:
-        epsg = _cgcs2000_zone_epsg(lon_hint or 0.0)
+        epsg = _cgcs2000_zone_epsg(lon_hint or 0.0, prefixed=False)
         if epsg:
             return epsg, "gk_shape_cgcs2000_zone", \
                 "GK-shaped coords + China lon hint -> CGCS2000 3-degree zone (UTM candidate disclosed)"
@@ -210,7 +210,7 @@ def _resolve_projected_zone(
         "UTM/GK-shaped coords but no geographic anchor (lon_hint); zone indeterminate"
 
 
-def _cgcs2000_zone_epsg(lon_hint: float) -> Optional[str]:
+def _cgcs2000_zone_epsg(lon_hint: float, *, prefixed: bool = True) -> Optional[str]:
     """lon_hint → CGCS2000 3° 带的 EPSG 代码。
 
     3° 带号 n（中央经线 = 3n）覆盖中国 25..45 → EPSG 4513..4533（带号前推
@@ -220,7 +220,7 @@ def _cgcs2000_zone_epsg(lon_hint: float) -> Optional[str]:
     n = int(round(lon_hint / 3.0))
     if not (25 <= n <= 45):
         return None
-    return f"EPSG:{4513 + (n - 25)}"
+    return f"EPSG:{(4513 if prefixed else 4534) + (n - 25)}"
 
 
 def _utm_zone_epsg(lon_hint: float, lat_hint: Optional[float] = None) -> Optional[str]:
@@ -733,6 +733,9 @@ def evaluate_quality_gate(
             seen_blocking.add(issue.code)
         elif issue.level == "error":
             seen_error.add(issue.code)
+    omitted_levels = (report.truncation_details or {}).get("omitted_issue_levels", {})
+    seen_blocking.update(code for code, level in omitted_levels.items() if level == "blocking")
+    seen_error.update(code for code, level in omitted_levels.items() if level == "error")
     result["blocking_codes"] = sorted(seen_blocking)
     result["error_codes"] = sorted(seen_error)
 

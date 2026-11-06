@@ -157,9 +157,9 @@ def invalidate_ref_caches(
                     {"refId": rid, "reason": rsn, "status": "invalidated"},
                 )
 
-            _artifact_event_tasks.add(
-                loop.create_task(_publish_artifact_event())
-            )
+            task = loop.create_task(_publish_artifact_event())
+            _artifact_event_tasks.add(task)
+            task.add_done_callback(_artifact_event_tasks.discard)
             # 有界自清：完成的任务移出集合（防集合无界增长）。
             if len(_artifact_event_tasks) > 64:
                 for _t in list(_artifact_event_tasks):

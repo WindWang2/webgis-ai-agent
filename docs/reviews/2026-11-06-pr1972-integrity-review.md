@@ -22,7 +22,7 @@ Status: **SOURCE_FROZEN**. Source owner finished; no further source edits planne
 | pr1972-extra-2 | P2 | Fixed during repair audit. Public recompute originally compared descriptor-only identities against new local-raster fingerprints and unnecessarily recomputed unchanged files; it now uses the same live-file helper. |
 | pr1972-extra-3 | P2 | Fixed during repair audit. Replanning a public workflow created with `include_optional_steps=False` could reintroduce absent steps and reference missing state entries; recompute retains the declared optional-step selection. |
 
-No unresolved finding remains within the reviewed repair scope. Existing ADR0282 and family risk notes now describe the actual raster opt-in and unmatched-population behavior.
+No unresolved finding remains within the reviewed repair scope. Existing ADR0284 and family risk notes now describe the actual raster opt-in and unmatched-population behavior.
 
 ## Coverage
 

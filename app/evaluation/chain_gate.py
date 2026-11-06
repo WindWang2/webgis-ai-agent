@@ -50,6 +50,10 @@ def evaluate_chain_gate(
     仅在修复发生时发射）不应列入 expected。给 expected 时按集合覆盖
     裁决；否则退回比率门。
     """
+    known_stages = {Stage(int(i)).name for i in STAGE_IDS}
+    unknown_expected = set(expected_stages or ()) - known_stages
+    if unknown_expected:
+        raise ValueError(f"unknown expected trace stages: {sorted(unknown_expected)}")
     na = {str(s) for s in (na_stages or set())}
     unknown_na = na - {Stage(int(i)).name for i in STAGE_IDS}
     per_chain: List[ChainGateEntry] = []

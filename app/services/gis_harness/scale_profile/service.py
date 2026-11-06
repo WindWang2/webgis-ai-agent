@@ -20,6 +20,7 @@
   工件生成失败 → 结构化 error，绝不半提交。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import hashlib
 import json
@@ -245,6 +246,7 @@ def _candidate_value_counts(
             agg = aggregate_features(
                 fc, group_by=name, agg="count", max_groups=_AGG_MAX_GROUPS)
         except Exception:  # noqa: BLE001 — 单字段聚合失败不阻断证据收集
+            observe_optional_failure(__name__)
             continue
         if agg.get("truncated"):
             continue  # 组溢出 = 自由文本宽表，不是等级词表

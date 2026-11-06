@@ -15,8 +15,8 @@
 ## 总览
 
 - capability 词表：174 条（图内 174 节点）
-- 图节点 1060 / 边 3270 / graph fingerprint `1c441cc84bf605e3`
-- provider 面：algorithm 253，component 23，model 0，provider(adapters) 17，template 8，tool 396，workflow(recipes) 166
+- 图节点 1079 / 边 3290 / graph fingerprint `7e532fbe6c6d6638`
+- provider 面：algorithm 253，component 23，model 10，provider(adapters) 17，template 8，tool 396，workflow(recipes) 166
 - 域分布：`cartography` 6，`general` 77，`network` 14，`platform` 17，`raster` 57，`statistics` 1，`temporal` 2
 
 ## Capability 词表
@@ -202,9 +202,9 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 75 | 1 | 99 | 6 | 0 |
+| 66 | 1 | 99 | 6 | 0 |
 
-### orphan_capability（75）
+### orphan_capability（66）
 
 - capability accessibility has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability areal_interpolation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -237,15 +237,6 @@
 - capability local_join_count has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mantel_test has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mnf_transform has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_change_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_embedding has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_image_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_instance_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_object_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_promptable_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_super_resolution has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_temporal_classification has no algorithm/tool provider and is not referenced by any workflow/template/fallback
-- capability model_temporal_forecast has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability nearest_neighbor_functions has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability network_centrality has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability pair_correlation_function has no algorithm/tool provider and is not referenced by any workflow/template/fallback

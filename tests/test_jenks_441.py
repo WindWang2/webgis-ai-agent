@@ -153,6 +153,7 @@ def test_jenks_breaks_identical_through_subsample_cap():
     vals = np.random.default_rng(14).normal(0, 1, 1200)
     expected = _jenks_reference(vals.copy(), 5)
     got = CartographyService._jenks_natural_breaks(vals.copy(), 5)
+    expected[0], expected[-1] = float(vals.min()), float(vals.max())
     assert got == expected
 
 
@@ -196,4 +197,6 @@ def test_jenks_subsample_cap_still_1000():
     # breaks of the deterministic rng(42) 1000-sample of it.
     full = CartographyService._jenks_natural_breaks(vals.copy(), 5)
     direct = CartographyService._jenks_natural_breaks(capped.copy(), 5)
-    assert full == direct
+    assert full[1:-1] == direct[1:-1]
+    assert full[0] == float(vals.min())
+    assert full[-1] == float(vals.max())

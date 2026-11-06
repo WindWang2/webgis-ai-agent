@@ -41,6 +41,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
+from sqlalchemy.orm import Session
+
 from app.models.project import Artifact, WorkflowRun
 from app.services.provenance.fingerprint import canonical_dumps
 
@@ -352,8 +354,8 @@ async def _promote_raster_artifact(
         meta["content_fingerprint"] = art.content_fingerprint  # secondary index
     from app.services.artifact_revisions import record_revision
 
-    _rev_row, _rev_created = record_revision(
-        db,
+    _rev_row, _rev_created = await asyncio.to_thread(
+        record_revision, db,
         artifact_id=art.id,
         content_sha256=digest,
         content_location=location,
@@ -374,30 +376,9 @@ async def _promote_raster_artifact(
     entry["content_location"] = location
 
 
-async def promote_run_artifacts(
-    db,
-    run: WorkflowRun,
-    *,
-    session_id: Optional[str],
-    project_id: str,
-) -> List[Dict[str, Any]]:
-    """Promote every artifact of a completed run into durable project artifacts.
-
-    Updates the existing ``artifacts`` rows in place (created by the engine
-    during execution) — promotion does NOT mint a parallel artifact identity.
-    Every materialized artifact also gets an append-only ``artifact_revisions``
-    row (the content-history + GC refcount truth); the row's
-    ``metadata_json.content_status/content_location/content_payload_sha256``
-    stays the backward-compatible head pointer.
-    Returns a bounded report list, one entry per artifact.
-    """
+def _promotion_rows(db: Session, run: WorkflowRun, project_id: str) -> list[Artifact]:
+    """Resolve all ORM queries (including lazy run fields) in the DB worker."""
     from sqlalchemy import select
-
-    from app.services.artifact_registry import is_raster_ref
-    from app.services.artifact_revisions import record_revision
-    from app.services.data_lifecycle.quota import check_quota
-    from app.services.durable_blob_store import get_filesystem_blob_store
-    from app.services.session_data import session_data_manager
 
     # Authoritative binding: this run's manifest artifact ids (O(1) lookups).
     manifest = run.run_manifest or {}
@@ -435,6 +416,42 @@ async def promote_run_artifacts(
                 Artifact.id.in_(lineage_ids),
             )
         ).scalars().all()
+    return list(rows)
+
+
+def _promotion_org_id(db: Session, project_id: str) -> str:
+    from sqlalchemy import select
+    from app.models.project import Project
+
+    org = db.execute(select(Project.org_id).where(Project.id == project_id)).scalar_one_or_none()
+    return str(org) if org is not None else ""
+
+
+async def promote_run_artifacts(
+    db,
+    run: WorkflowRun,
+    *,
+    session_id: Optional[str],
+    project_id: str,
+) -> List[Dict[str, Any]]:
+    """Promote every artifact of a completed run into durable project artifacts.
+
+    Updates the existing ``artifacts`` rows in place (created by the engine
+    during execution) — promotion does NOT mint a parallel artifact identity.
+    Every materialized artifact also gets an append-only ``artifact_revisions``
+    row (the content-history + GC refcount truth); the row's
+    ``metadata_json.content_status/content_location/content_payload_sha256``
+    stays the backward-compatible head pointer.
+    Returns a bounded report list, one entry per artifact.
+    """
+    from app.services.artifact_registry import is_raster_ref
+    from app.services.artifact_revisions import record_revision
+    from app.services.data_lifecycle.quota import check_quota
+    from app.services.durable_blob_store import get_filesystem_blob_store
+    from app.services.session_data import session_data_manager
+
+    rows = await asyncio.to_thread(_promotion_rows, db, run, project_id)
+    run_id = run.id
     report: List[Dict[str, Any]] = []
     for art in rows:
         meta = dict(art.metadata_json or {})
@@ -480,7 +497,7 @@ async def promote_run_artifacts(
         # write, and later read-back verification. Hash + file IO run off the
         # event loop (this coroutine is awaited from the async engine path).
         try:
-            blob = canonical_dumps(payload)
+            blob = await asyncio.to_thread(canonical_dumps, payload)
         except Exception as e:  # noqa: BLE001 — unserializable → disclosed
             logger.warning(
                 "[artifact_promotion] payload serialization failed for %s: %s",
@@ -541,8 +558,8 @@ async def promote_run_artifacts(
             # Append-only revision row: content history + GC refcount truth.
             # Idempotent per (artifact_id, content_sha256) — re-materializing
             # identical content reuses the row.
-            _rev_row, _rev_created = record_revision(
-                db,
+            _rev_row, _rev_created = await asyncio.to_thread(
+                record_revision, db,
                 artifact_id=art.id,
                 content_sha256=payload_digest,
                 content_location=location,
@@ -570,7 +587,7 @@ async def promote_run_artifacts(
         entry["status"] = meta["content_status"]
         entry["content_location"] = location
         report.append(entry)
-    db.commit()
+    await asyncio.to_thread(db.commit)
     # Spatial Event Control Plane（E2）：commit 之后才发 revision 事件
     # （flush 前发会因回滚产生幻影事件）。fail-open；org 缺失 = 不入账。
     try:
@@ -580,17 +597,11 @@ async def promote_run_artifacts(
             if isinstance(e.get("_revision_event"), dict)
         ]
         if revision_events:
-            from sqlalchemy import select as _select
-
-            from app.models.project import Project
             from app.services.spatial_events.adapters import (
                 notify_artifact_revision,
             )
 
-            _org = db.execute(
-                _select(Project.org_id).where(Project.id == str(project_id or ""))
-            ).scalar_one_or_none()
-            _org_id = str(_org) if _org is not None else ""
+            _org_id = await asyncio.to_thread(_promotion_org_id, db, project_id)
             if _org_id:
                 for _evt in revision_events:
                     await notify_artifact_revision(
@@ -600,7 +611,7 @@ async def promote_run_artifacts(
                         revision_no=int(_evt.get("revision_no") or 0),
                         content_sha256=str(_evt.get("content_sha256") or ""),
                         created=True,
-                        workflow_run_id=str(run.id or ""),
+                        workflow_run_id=str(run_id or ""),
                     )
     except Exception:  # noqa: BLE001 — 事件面绝不影响晋升结果
         pass

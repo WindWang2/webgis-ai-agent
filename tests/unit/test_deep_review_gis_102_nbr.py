@@ -93,7 +93,7 @@ def test_calculate_index_b11_is_not_accepted_as_nbr():
         rejected = NatureResourceAnalyzer.calculate_index(
             f"tmp_v3_tests/{fname}", "nbr",
             nir_band=8, swir_band=11, output_dir=out_dir,
-        )
+         session_id="numerical-fixture")
         assert rejected["success"] is False
         assert rejected["error_type"] == "band_semantics_guess_rejected"
         assert "swir12" in rejected["guessed_roles"]
@@ -102,7 +102,7 @@ def test_calculate_index_b11_is_not_accepted_as_nbr():
         ok = NatureResourceAnalyzer.calculate_index(
             f"tmp_v3_tests/{fname}", "nbr",
             nir_band=8, swir2_band=12, output_dir=out_dir,
-        )
+         session_id="numerical-fixture")
         assert ok["success"] is True
         assert ok["band_map"] == {"nir": 8, "swir12": 12}
     finally:
@@ -110,3 +110,10 @@ def test_calculate_index_b11_is_not_accepted_as_nbr():
         if os.path.exists(os.path.join("data", out_dir)):
             for f in os.listdir(os.path.join("data", out_dir)):
                 os.remove(os.path.join("data", out_dir, f))
+
+
+@pytest.fixture(autouse=True)
+def _numerical_owner_roots(monkeypatch, tmp_path):
+    from pathlib import Path
+    monkeypatch.setattr("app.services.scoped_raster_paths.scoped_raster_roots",
+                        lambda **scope: [tmp_path, Path("data/tmp_v3_tests").resolve()])

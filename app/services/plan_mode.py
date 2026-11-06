@@ -364,6 +364,14 @@ def _new_confirmation_challenge() -> str:
     return f"cfm-{secrets.token_urlsafe(24)}"
 
 
+def _confirmation_fingerprint(plan_data: dict, steps: list[str]) -> str:
+    import hashlib
+
+    selected = [{"id": step.get("id"), "tool": step.get("tool"), "args": step.get("args", {})}
+                for step in plan_data.get("steps", []) if isinstance(step, dict) and step.get("id") in steps]
+    return hashlib.sha256(json.dumps(selected, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+
+
 def _confirmation_covers(plan_data: dict, plan_id: str, tier3_steps: list[str]) -> bool:
     """计划 payload 里的确认 artifact 是否覆盖当前全部 tier-3 步骤。
 
@@ -375,10 +383,18 @@ def _confirmation_covers(plan_data: dict, plan_id: str, tier3_steps: list[str]) 
         return False
     if approval.get("approved") is not True:
         return False
+    try:
+        approved_at = float(approval.get("approved_at") or 0)
+    except (ValueError, TypeError):
+        return False
+    age = time.time() - approved_at
+    if not 0 <= age <= _CONFIRMATION_TTL_S:
+        return False
     if str(approval.get("plan_id") or "") != str(plan_id):
         return False
     approved = {str(s) for s in (approval.get("steps") or [])}
-    return bool(tier3_steps) and set(tier3_steps) <= approved
+    return (bool(tier3_steps) and set(tier3_steps) <= approved
+            and hmac.compare_digest(str(approval.get("args_fingerprint") or ""), _confirmation_fingerprint(plan_data, tier3_steps)))
 
 
 async def approve_destructive_confirmation(
@@ -430,11 +446,20 @@ async def approve_destructive_confirmation(
                 "code": "CONFIRMATION_EXPIRED",
                 "message": "确认已过期，请重新执行计划以获取新挑战",
             }
+        steps = list(pending.get("steps") or [])
+        fingerprint = _confirmation_fingerprint(plan_data, steps)
+        if not hmac.compare_digest(str(pending.get("args_fingerprint") or ""), fingerprint):
+            return {
+                "success": False,
+                "code": "CONFIRMATION_MISMATCH",
+                "message": "计划参数已变化，请重新执行计划以获取新挑战",
+            }
         approved = {
             "approved": True,
             "challenge_id": pending["challenge_id"],
             "plan_id": plan_id,
-            "steps": list(pending.get("steps") or []),
+            "steps": steps,
+            "args_fingerprint": fingerprint,
             "approved_at": time.time(),
         }
         await _update_plan_status_locked(
@@ -688,7 +713,7 @@ async def _slim_one_result_for_llm(
             ref_id = new_ref
     except Exception as e:  # noqa: BLE001 存储故障不拖垮返回
         logger.warning(f"[PlanMode] 返回载荷瘦身存储失败 sid={sid}: {e}")
-        ref_id = alias
+        ref_id = None
     slim: dict[str, Any] = {"__slim__": True, "ref": ref_id}
     slim.update(_slim_step_metadata(value))
     if isinstance(value, dict):
@@ -740,17 +765,14 @@ async def _slim_returned_results(
 
 
 async def _slim_last_result_for_llm(session_id: str, value: Any) -> Any:
-    """失败步骤的 last_result 同样瘦身（一次性存储，无别名复用）。"""
+    """Bound the failure payload, reusing a content-derived result alias."""
     if _estimate_json_chars(value) <= _RETURN_SLIM_STEP_CHARS:
         return value
-    slim: dict[str, Any] = {"__slim__": True, "ref": None}
-    try:
-        ref_id = await session_data_manager.store(session_id, value, prefix="planresult")
-        slim["ref"] = ref_id
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"[PlanMode] last_result 瘦身存储失败: {e}")
-    slim.update(_slim_step_metadata(value))
-    return slim
+    import hashlib
+
+    digest = hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:24]
+    return await _slim_one_result_for_llm(session_id, "failed-result", digest, value)
+
 
 
 # ─────────────────────────────── 执行引擎 ───────────────────────────────
@@ -868,6 +890,17 @@ async def _execute_plan_locked(
     tier3_steps = [
         s.id for s in plan.steps if meta_all.get(s.tool, {}).get("tier", 1) == 3
     ]
+    dynamic_destructive = [s.id for s in plan.steps if s.id in tier3_steps and _extract_refs(s.args)]
+    if dynamic_destructive:
+        return {
+            "success": False,
+            "code": "DESTRUCTIVE_ARGUMENTS_REQUIRE_LITERAL_VALUES",
+            "plan_id": plan_id,
+            "destructive_steps": dynamic_destructive,
+            "error": "先执行读取步骤，再用其具体结果创建固定参数的破坏性计划，交由用户确认。动态引用不能作为已批准的目标。",
+            "executed": [],
+            "results": {},
+        }
     plan_approved = _confirmation_covers(plan_data, plan_id, tier3_steps)
     if tier3_steps and not plan_approved:
         challenge_id = _new_confirmation_challenge()
@@ -877,6 +910,7 @@ async def _execute_plan_locked(
                 "challenge_id": challenge_id,
                 "plan_id": plan_id,
                 "steps": tier3_steps,
+                "args_fingerprint": _confirmation_fingerprint(plan_data, tier3_steps),
                 "issued_at": time.time(),
             },
         )
@@ -917,6 +951,7 @@ async def _execute_plan_locked(
                 f"[PlanMode] plan {plan_id} 已处于 {cur}，跳过终态覆盖 {updates.get('__status__')}"
             )
             return
+        updates[_CONFIRMATION_FIELD] = None
         await update_plan_status(session_id, plan_id, **updates)
 
     order = _topological_order(plan)
@@ -1027,7 +1062,9 @@ async def _execute_plan_locked(
             ret["last_result"] = await _slim_last_result_for_llm(session_id, last_result)
         return ret
 
-    await update_plan_status(session_id, plan_id, __status__="running")
+    # Spend approval before any destructive effect; failed/recovered attempts
+    # must obtain a new user decision rather than replaying a stale grant.
+    await update_plan_status(session_id, plan_id, __status__="running", **{_CONFIRMATION_FIELD: None})
 
     # RESUME：已有结果的步骤跳过（上次运行存下的结果继续供 ${} 引用），
     # 只对剩余步骤构建波次 DAG；已完成依赖不阻塞剩余步骤。
@@ -1045,6 +1082,19 @@ async def _execute_plan_locked(
 
     ready: list[str] = [sid for sid, d in in_degree.items() if d == 0]
     wave_tasks: set[asyncio.Task] = set()
+    task_to_sid: dict[asyncio.Task, str] = {}
+
+    def collect_completed_wave() -> None:
+        for completed in wave_tasks:
+            if completed.cancelled() or not completed.done():
+                continue
+            try:
+                value = completed.result()
+            except Exception:
+                logger.debug("[PlanMode] cancelled wave sibling failed", exc_info=True)
+                continue
+            if isinstance(value, dict) and value.get("success") is not False and not value.get("error"):
+                step_results[task_to_sid[completed]] = value
 
     try:
         while ready:
@@ -1141,12 +1191,14 @@ async def _execute_plan_locked(
                     try:
                         result = t.result()
                     except asyncio.CancelledError:
-                        continue  # 外部取消（如引擎关闭），忽略该任务
+                        raise  # 外部取消必须走终态 cancelled，不能放行其后继
                     except OperationCancelled as e:
                         # P1-C：用户取消不是工具故障 —— 写终态 cancelled（terminal），
                         # 用 logger.info 记录（不是 exception）。走 _write_terminal：
                         # 若计划已在途中被 superseded，保留 superseded 不被覆盖。
                         logger.info(f"[PlanMode] plan {plan_id} 执行被取消: {e}")
+                        await _cancel_wave_tasks(set(pending))
+                        collect_completed_wave()
                         await _write_terminal(
                             __status__="cancelled",
                             __error__=str(e) or "用户取消",
@@ -1212,7 +1264,7 @@ async def _execute_plan_locked(
                         r_sib = t.result()
                     except Exception:
                         continue  # 兄弟也失败；已记录首个 failure，忽略
-                    if isinstance(r_sib, dict) and r_sib.get("success") is not False:
+                    if isinstance(r_sib, dict) and r_sib.get("success") is not False and not r_sib.get("error"):
                         wave_successes[sid_sib] = r_sib
 
             # 按拓扑序提交成功结果（确定性）
@@ -1257,6 +1309,7 @@ async def _execute_plan_locked(
         # 外层被取消（客户端断连等）：取消并回收本波次 pending 任务，
         # 状态收敛到 cancelled 后原样上抛（不吞取消）。
         await _cancel_wave_tasks(wave_tasks)
+        collect_completed_wave()
         try:
             await _write_terminal(
                 __status__="cancelled",

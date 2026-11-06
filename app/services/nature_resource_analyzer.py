@@ -101,6 +101,8 @@ class NatureResourceAnalyzer:
         swir2_band: Optional[int] = None,
         output_dir: Optional[str] = None,
         strict_band_semantics: bool = True,
+        session_id: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> Dict:
         """窗口化计算本地 GeoTIFF 的光谱指数（NDVI/NDWI/NBR/EVI）并落盘。
 
@@ -132,15 +134,24 @@ class NatureResourceAnalyzer:
             }
 
         try:
-            from app.utils.path import validate_data_path
-
-            resolved_tif_path = validate_data_path(tif_path)
-            if output_dir:
-                output_dir = validate_data_path(output_dir)
-            else:
-                from app.core.config import settings
-
-                output_dir = os.path.join(settings.DATA_DIR, "analysis_results")
+            from app.core.config import settings
+            from pathlib import Path
+            from app.services.scoped_raster_paths import scoped_raster_roots, resolve_scoped_raster_path
+            roots = scoped_raster_roots(session_id=session_id, project_id=project_id)
+            data_root = Path(settings.DATA_DIR).resolve()
+            source_path = Path(tif_path)
+            if not source_path.is_absolute():
+                source_path = data_root / source_path
+            resolved_tif_path = resolve_scoped_raster_path(str(source_path), roots=roots)
+            output = Path(output_dir) if output_dir else roots[0].resolve() / "analysis_results"
+            if not output.is_absolute():
+                output = data_root / output
+            output = output.resolve()
+            # Upload roots grant reads; writes belong only to the owner workspace.
+            workspace_roots = roots[:2] if session_id else roots[:1]
+            if not any(output.is_relative_to(root.resolve()) for root in workspace_roots):
+                raise ValueError("analysis output directory is outside the owner workspace")
+            output_dir = str(output)
         except ValueError as ve:
             return {"success": False, "error": f"路径安全错误: {ve}"}
 
@@ -184,6 +195,9 @@ class NatureResourceAnalyzer:
                 "swir12": swir2_band or detected.get("swir12"),
             }
             missing = [r for r in INDEX_BAND_ROLES[idx] if not band_map.get(r)]
+            invalid = [role for role in INDEX_BAND_ROLES[idx] if band_map.get(role) is not None and not (1 <= int(band_map[role]) <= src.count)]
+            if invalid:
+                return {"success": False, "error_type": "invalid_band_index", "error": f"band roles {invalid} are outside1..{src.count}"}
             if missing:
                 return {
                     "success": False,
@@ -216,8 +230,6 @@ class NatureResourceAnalyzer:
                     "input_crs": crs,
                 }
 
-            finite = [v for v in (stats.get("min"), stats.get("max"), stats.get("mean"))
-                      if v is not None]
             quality_evidence = {
                 "algorithm": res["algorithm"],
                 "parameters": {"band_map": res["band_map"]},
@@ -235,7 +247,7 @@ class NatureResourceAnalyzer:
                 "result_path": res["output_path"],
                 "filename": filename,
                 "stats": {
-                    "min": finite[0] if finite else None,
+                    "min": stats.get("min"),
                     "max": stats.get("max"),
                     "mean": stats.get("mean"),
                 },
@@ -261,7 +273,7 @@ class NatureResourceAnalyzer:
             return payload
         except Exception as e:
             logger.error(f"{index_type.upper()} calculation failed: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "raster analysis failed", "error_type": type(e).__name__}
 
     @classmethod
     def calculate_ndvi(
@@ -271,6 +283,8 @@ class NatureResourceAnalyzer:
         nir_band: Optional[int] = None,
         output_dir: Optional[str] = None,
         strict_band_semantics: bool = True,
+        session_id: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> Dict:
         """计算归一化植被指数 (NDVI)：(NIR - Red) / (NIR + Red)。
 
@@ -282,4 +296,5 @@ class NatureResourceAnalyzer:
             tif_path, "ndvi",
             red_band=red_band, nir_band=nir_band, output_dir=output_dir,
             strict_band_semantics=strict_band_semantics,
+            session_id=session_id, project_id=project_id,
         )

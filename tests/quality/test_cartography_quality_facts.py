@@ -30,11 +30,11 @@ def _check(rule: str, status: str, evidence: dict) -> dict:
 
 
 @pytest.fixture()
-def fresh_retention_throttle(monkeypatch):
-    """复位保留策略的节流状态（模块级、跨测试共享；#1745 2）。"""
-    monkeypatch.setattr(store, "_retention_running", False, raising=False)
-    monkeypatch.setattr(store, "_retention_last_run", 0.0, raising=False)
-    monkeypatch.setattr(store, "_retention_last_result", None, raising=False)
+async def fresh_retention_throttle(monkeypatch):
+    """复位当前事件循环的保留节流状态（#1745 2）。"""
+    state = store._retention_state()
+    monkeypatch.setattr(state, "last_run", 0.0)
+    monkeypatch.setattr(state, "last_result", None)
 
 
 @pytest.mark.anyio

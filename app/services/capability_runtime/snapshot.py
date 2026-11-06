@@ -140,12 +140,17 @@ class CapabilityRuntimeSnapshot:
     capabilities: Tuple[CapabilityRuntimeFact, ...] = ()
     status_summary: Tuple[Tuple[str, int], ...] = ()
     credential_presence_fingerprint: str = ""
+    total_capabilities: int = 0
+    omitted_capabilities: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "capabilities": [c.to_dict() for c in self.capabilities[:MAX_SNAPSHOT_CAPABILITIES]],
             "status_summary": dict(self.status_summary[:8]),
             "credential_presence_fingerprint": self.credential_presence_fingerprint,
+            "total_capabilities": self.total_capabilities,
+            "omitted_capabilities": self.omitted_capabilities,
+            "truncated": self.omitted_capabilities > 0,
         }
 
 
@@ -322,7 +327,9 @@ def build_capability_runtime_snapshot(
         pass
 
     ids: List[str] = []
+    total_capabilities = 0
     if capability_ids:
+        total_capabilities = len(set(str(c or "").strip()[:128] for c in capability_ids) - {""})
         for c in capability_ids[:MAX_SNAPSHOT_CAPABILITIES]:
             s = str(c or "").strip()[:128]
             if s and s not in ids:
@@ -331,7 +338,9 @@ def build_capability_runtime_snapshot(
         try:
             from app.lib.gis.capability_registry import get_capability_registry
 
-            ids = sorted(get_capability_registry().all_ids)[:MAX_SNAPSHOT_CAPABILITIES]
+            available = sorted(get_capability_registry().all_ids)
+            total_capabilities = len(available)
+            ids = available[:MAX_SNAPSHOT_CAPABILITIES]
         except Exception as exc:  # noqa: BLE001 — 词表缺席 = 空快照(诚实)
             logger.debug("[capability-runtime-snapshot] registry unavailable: %s", exc)
             ids = []
@@ -401,6 +410,8 @@ def build_capability_runtime_snapshot(
         capabilities=tuple(facts),
         status_summary=tuple(sorted(summary.items())),
         credential_presence_fingerprint=presence_fingerprint(present),
+        total_capabilities=total_capabilities,
+        omitted_capabilities=max(0, total_capabilities - len(facts)),
     )
 
 

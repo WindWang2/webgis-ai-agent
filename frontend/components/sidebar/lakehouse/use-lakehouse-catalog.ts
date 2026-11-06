@@ -83,6 +83,8 @@ export function useLakehouseCatalog(options: {
   const fetchPage = useCallback(async () => {
     // project 域还没有 owner id（或 session 域缺 sessionId）时不出请求。
     if (!ownerId || (ownerType === 'session' && !sessionId)) {
+      reqRef.current.seq += 1;
+      reqRef.current.controller?.abort();
       setState((s) => ({ ...s, items: [], total: '0', count: 0, nextOffset: null, loading: false, error: null }));
       return;
     }

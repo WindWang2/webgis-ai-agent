@@ -153,7 +153,7 @@ def _denominator_field_gate(
     step: AnalysisStepSpec,
     contract: AnalysisWorkflowContract,
 ) -> Optional[Tuple[str, str]]:
-    """分母字段 plan 期校验（ADR-0282 D4；断点 6 修复）。
+    """分母字段 plan 期校验（ADR-0284 D4；断点 6 修复）。
 
     qualifier.fields（可用列清单，上游数据画像写入）声明而步骤将使用的
     分母列不在其中 → typed skipped（AWF_DENOMINATOR_MISSING）——
@@ -310,7 +310,7 @@ def plan_workflow(
                 f"{step.step_id}:{role_missing_code(role)}")
             runnable = False
             continue
-        # ADR-0282 D4：分母字段 plan 期校验（列清单是画像事实）——
+        # ADR-0284 D4：分母字段 plan 期校验（列清单是画像事实）——
         # 目标列不在清单 → typed skipped（不运行期 failed、不伪装率）。
         denom_fail = _denominator_field_gate(step, contract)
         if denom_fail is not None:
@@ -319,7 +319,7 @@ def plan_workflow(
                 step_id=step.step_id, verdict="skipped",
                 reason_code=code, message=msg)
             continue
-        # ADR-0282 D3：role_kind 门——角色需求声明 raster/table 载荷类型
+        # ADR-0284 D3：role_kind 门——角色需求声明 raster/table 载荷类型
         # 而绑定携带其它类型（或反之）→ typed blocked（栅格 ref 不能被
         # 当 vector 水合、vector FC 不能直通 raster_path 参数）。
         kind_block: Optional[Tuple[str, str]] = None
@@ -346,7 +346,7 @@ def plan_workflow(
             blocked_reasons.append(f"{step.step_id}:{code}")
             runnable = False
             continue
-        # ADR-0282 D2：角色几何画像门——事实在且冲突 → typed blocked
+        # ADR-0284 D2：角色几何画像门——事实在且冲突 → typed blocked
         # （画像来自上游数据事实，非猜测）；事实缺失 → 警告披露（不阻断，
         # 执行期衔接门与工具级 preflight 兜底——不虚构事实也不假装校验过）。
         semantic_block = None

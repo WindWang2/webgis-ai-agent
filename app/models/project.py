@@ -157,6 +157,9 @@ class WorkflowRun(Base):
     # Denormalized tenant column: lets compare/list filter by project without a
     # join and closes the _WR.project_id AttributeError latent bug (F10).
     project_id = Column(String(255), nullable=True)
+    # Server-bound evidence scope. Old runs remain NULL and cannot claim that
+    # expired/ref-only results are reconstructable.
+    session_id = Column(String(255), nullable=True)
     # Exact immutable revision that executed (INV-SNAP1). The run is
     # self-describing via graph_snapshot even if this revision is later removed.
     workflow_revision_id = Column(String(255), nullable=True)

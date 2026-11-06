@@ -547,7 +547,7 @@ class LabelCollisionResolver:
             )
             patch: Dict[str, Any] = {
                 "text-allow-overlap": False,
-                "text-ignore-placement": True,
+                "text-ignore-placement": False,
                 "text-padding": min(base_padding * 2, _LABEL_PADDING_CAP),
             }
             rationale = f"enforce non-overlap + padding {base_padding}->{patch['text-padding']}"

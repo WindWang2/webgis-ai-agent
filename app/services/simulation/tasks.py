@@ -70,6 +70,10 @@ def run_simulation_forecast(
 
     params_model = parse_params(params)
     config_model = SimulationRunConfig.model_validate(config)
+    config_model.max_wall_seconds = min(config_model.max_wall_seconds or 120.0, 120.0)
+    from app.services.simulation.layers import DurableGeoJSONTemporalSink
+
+    sink = DurableGeoJSONTemporalSink(session_id or "")
 
     if job_id is None:
         # 直调（无 durable 语义）只允许 eager 测试路径存在；生产派发必经
@@ -78,7 +82,7 @@ def run_simulation_forecast(
             "[simulation] run_simulation_forecast called without job_id "
             "(eager/test path)"
         )
-        result = run_simulation(params_model, config_model)
+        result = run_simulation(params_model, config_model, sink=sink)
         return _bounded_summary(result)
 
     from app.services.jobs.worker import durable_job, finish_job
@@ -92,18 +96,19 @@ def run_simulation_forecast(
             # 取消令牌在每个检查点生效：被取消的推演立即中断（10 万步
             # 上限的循环不允许跑完才响应取消）。OperationCancelled 穿透
             # runtime（转 cancelled 终态）并由 durable_job 收敛为 cancelled。
-            job.ensure_not_cancelled()
+            job.checkpoint()
             # 进度按 output_stride 节流上报（spec §6 口径；平台侧另有落库节流）
             if tick % stride == 0 or tick == total:
+                job.ensure_not_cancelled()
                 pct = 5 + int(90.0 * tick / max(total, 1))
                 job.progress(pct, f"tick {tick}/{total}", phase=phase)
 
         result = run_simulation(params_model, config_model,
-                                progress_callback=_progress)
+                                progress_callback=_progress, sink=sink)
         job.ensure_not_cancelled()  # 落终态前的强制检查
-        result_ref = result.products[-1].ref if result.products else None
+        result_ref = (result.products[-1].ref or result.products[-1].uri) if result.products else None
         summary = _bounded_summary(result)
-        finish_job(job_id, result=summary, result_ref=result_ref)
+        finish_job(job_id, result=summary, result_ref=result_ref, worker_id=job.worker_id, attempt=job.attempt)
         return summary
 
 

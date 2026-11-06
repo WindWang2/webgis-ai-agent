@@ -180,7 +180,8 @@
     "loadToMap": "Load to map",
     "addSource": "Add data source",
     "listFailed": "Failed to load the data source list",
-    "catalogLoadFailed": "Failed to load the spatial catalog"
+    "catalogLoadFailed": "Failed to load the spatial catalog",
+    "loadMoreCatalog": "Load more catalog items"
   },
   "comp": {
     "emptyNoSpecTitle": "No map components yet",
@@ -328,7 +329,9 @@
     "atlasBatchNoSession": "No active session; cannot submit an atlas batch job",
     "atlasBatchSubmitted": "Atlas batch job submitted (job {jobId}, {count} pages planned) — track it in the task center",
     "atlasBatchReused": "An identical atlas batch job is already running (job {jobId}); reused the same job",
-    "atlasBatchFailed": "Atlas batch job submission failed: {reason}"
+    "atlasBatchFailed": "Atlas batch job submission failed: {reason}",
+    "removeFromList": "Remove from list",
+    "confirmRemoveFromList": "Confirm removal"
   },
   "inspector": {
     "emptyTitle": "No dataset selected",
@@ -384,7 +387,8 @@
     "aggFieldAria": "Aggregate field",
     "groupByAria": "Group-by field",
     "noGroup": "No grouping",
-    "statsModeHint": "result_mode will switch to statistics (aggregate results only, no geometry transferred)"
+    "statsModeHint": "result_mode will switch to statistics (aggregate results only, no geometry transferred)",
+    "aggFieldRequired": "Choose an aggregate field before running or explaining the query."
   },
   "explain": {
     "queryFingerprint": "Query fingerprint",
@@ -717,7 +721,8 @@
     "overflowTitle": "{count} other participants (max {max})",
     "otherFallback": "Other",
     "groupKind": "group",
-    "layerKind": "layer"
+    "layerKind": "layer",
+    "leasesUncertain": "Lease status temporarily unverified"
   },
   "wf": {
     "compare": "Compare",

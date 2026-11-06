@@ -258,19 +258,7 @@ export function SettingsPanel() {
                 </div>
                 <div className="text-meta leading-tight text-ink-muted">Agent Command Center</div>
               </div>
-              <span
-                className="ml-2 inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-meta font-medium"
-                style={{
-                  backgroundColor: 'color-mix(in srgb, var(--agent-accent, #16a34a) 10%, transparent)',
-                  color: 'var(--agent-accent)',
-                }}
-              >
-                <span
-                  className="inline-block h-1.5 w-1.5 rounded-full"
-                  style={{ backgroundColor: 'var(--agent-accent, #16a34a)' }}
-                />
-                {t('settings.panel.online')}
-              </span>
+
             </div>
 
             <button

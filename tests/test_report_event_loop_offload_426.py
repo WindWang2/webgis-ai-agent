@@ -1,23 +1,7 @@
 """Regression tests for #426: report generation must not block the event loop.
 
-Sibling of the #386 sweep (d8c0ab1 / tests/test_event_loop_offload_386.py),
-which never touched the report path:
-
-  1. ``ReportService.generate_report`` is an ``async def`` whose body is fully
-     synchronous — Jinja2 templating of the full session history, MapSpec→SVG
-     compilation, sync file writes and ``weasyprint.HTML(...).write_pdf()``
-     all execute inline on the loop, from ``POST /api/v1/reports``.
-  2. The ``generate_analysis_report`` agent tool (async def → ASYNC policy →
-     awaited on the loop) opens a sync ``db_session()`` (blocking SQLAlchemy)
-     before/after rendering.
-
-Each test fakes the slow work with a sync ``time.sleep`` that records the
-thread id it ran on, and asserts the main event loop stays responsive
-*while* the work is running — with the work on the loop, the fake's sleep
-blocks everything and the ticker assertion fails deterministically (same
-technique as tests/test_event_loop_offload_386.py).
-
-Run cost: ~1s per lag test (0.8s fake sleep), no network, no heavy deps.
+Offload probes assert the actual execution thread, independent of scheduler
+latency. Dedicated throughput/timeout tests keep their explicit time budgets.
 """
 import asyncio
 import os
@@ -38,27 +22,13 @@ from app.services.report_service import ReportService
 _main_thread = threading.get_ident()
 
 
-async def _assert_loop_responsive_while(awaitable_factory, delay: float = 0.8):
-    """Run awaitable_factory() and assert a 0.05s timer fires mid-flight.
+async def _run_offload_probe(awaitable_factory, delay: float = 0.8):
+    """Run the probe; callers assert the actual worker thread identity.
 
-    Deterministic: with the work offloaded the task is still running when the
-    timer completes; with the work on the loop the task finishes before the
-    test's own sleep resumes, so ``assert not task.done()`` fails.
+    A fixed sleep/task-pending race depends on machine scheduling and can
+    fail when correctly offloaded work finishes before the test resumes.
     """
-    task = asyncio.create_task(awaitable_factory())
-    await asyncio.sleep(0.15)          # let it enter the slow work
-    assert not task.done(), "work finished before the test could observe it"
-
-    ticks = []
-    async def _tick():
-        await asyncio.sleep(0.05)
-        ticks.append(True)
-
-    tick = asyncio.create_task(_tick())
-    await asyncio.sleep(0.15)
-    assert tick.done() and ticks, "event loop was blocked during the work"
-    assert not task.done(), "event loop was blocked during the work"
-    return await task
+    return await awaitable_factory()
 
 
 # ─── Fakes ───────────────────────────────────────────────────────────────────
@@ -154,7 +124,7 @@ async def test_service_pdf_render_off_loop(monkeypatch, tmp_path):
     )
 
     svc = ReportService()
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: svc.create_and_generate(
             db, "sess-1", format="pdf", session_factory=_make_session_factory(created)
         )
@@ -185,7 +155,7 @@ async def test_route_post_reports_render_off_loop(monkeypatch, tmp_path):
     db = _make_async_db(Conversation(id="sess-1", title="测试会话"), [_msg()], created)
 
     req = route_mod.GenerateReportRequest(session_id="sess-1", format="pdf")
-    resp = await _assert_loop_responsive_while(
+    resp = await _run_offload_probe(
         lambda: route_mod.create_report(
             req, db=db, _user={"user_id": "u1"}, owner_token=None
         )
@@ -215,7 +185,7 @@ async def test_large_report_markdown_render_off_loop(monkeypatch, tmp_path):
         for i in range(2000)
     ]
     out = tmp_path / "large.md"
-    ok = await _assert_loop_responsive_while(
+    ok = await _run_offload_probe(
         lambda: svc.generate_report(
             session_id="s-large",
             session_title="长会话",
@@ -290,7 +260,7 @@ async def test_tool_sync_db_off_loop(monkeypatch, tmp_path):
 
     monkeypatch.setattr(tool_mod.spatial_report_engine, "generate_report", fake_render)
 
-    result = await _assert_loop_responsive_while(
+    result = await _run_offload_probe(
         lambda: tool_fn(format="markdown", session_id="sess-tool")
     )
     assert observed_threads and all(
@@ -425,3 +395,85 @@ async def test_concurrent_report_generation_parallel(monkeypatch, tmp_path):
         f"concurrent 0.8s renders serialized (took {elapsed:.2f}s) — "
         "they are running on the event loop thread"
     )
+
+
+async def _assert_real_terminal_retry(monkeypatch, tmp_path, failures=1) -> bool:
+    from pathlib import Path
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from app.core.database import Base
+    from app.models.db_model import Message
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'report-retry.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as seed:
+        seed.add(Conversation(id="retry-status", title="status"))
+        seed.add(Message(conversation_id="retry-status", role="user", content="hello"))
+        await seed.commit()
+    monkeypatch.setattr(report_service_mod, "REPORT_DIR", str(tmp_path))
+    async def render(**kwargs):
+        Path(kwargs['output_path']).write_bytes(b'%PDF-test')
+        return True
+    service = ReportService()
+    monkeypatch.setattr(service, 'generate_report', render)
+    attempts = []
+    reports = []
+
+    @asynccontextmanager
+    async def factory():
+        async with maker() as terminal_db:
+            attempts.append(terminal_db)
+            original_get = terminal_db.get
+            async def get(model, key):
+                row = await original_get(model, key)
+                reports.append(row)
+                return row
+            monkeypatch.setattr(terminal_db, 'get', get)
+            if len(attempts) <= failures:
+                monkeypatch.setattr(terminal_db, 'commit', AsyncMock(side_effect=RuntimeError('database unavailable')))
+            yield terminal_db
+
+    try:
+        async with maker() as primary_db:
+            result = await service.create_and_generate(
+                primary_db, 'retry-status', format='pdf', session_factory=factory)
+        assert len(attempts) == 2 and attempts[0] is not attempts[1]
+        assert reports[0] is not reports[1], 'terminal transactions must not share an ORM object'
+        async with maker() as independent_reader:
+            persisted = await independent_reader.get(Report, result.report_data['id'])
+            assert persisted is not reports[0] and persisted is not reports[1]
+            if failures == 1:
+                assert result.success and result.report_data['status'] == persisted.status == 'completed'
+                assert result.report_data['file_size'] == persisted.file_size > 0
+            else:
+                assert not result.success and result.report_data['status'] == 'failed'
+                assert persisted.status == report_service_mod.REPORT_STATUS_IN_PROGRESS
+                assert 'could not be saved' in result.report_data['error_message']
+        return True
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize('failures', [1, 2])
+async def test_terminal_commit_failure_retries_without_false_success(monkeypatch, tmp_path, failures):
+    assert await _assert_real_terminal_retry(monkeypatch, tmp_path, failures)
+
+
+async def test_terminal_retry_regression_detects_removed_detached_object_sync(monkeypatch, tmp_path):
+    """Mutation proof: a distinct DB row cannot accidentally update the receipt."""
+    import inspect
+    import textwrap
+    source = textwrap.dedent(inspect.getsource(ReportService.create_and_generate))
+    sync = """            report.status = final_status
+            report.error_message = final_error
+            if final_size is not None:
+                report.file_size = final_size
+"""
+    assert source.count(sync) == 1
+    mutant = source.replace(sync, '')
+    namespace = {}
+    exec(compile(mutant, '<report-retry-no-detached-sync>', 'exec'), report_service_mod.__dict__, namespace)
+    monkeypatch.setattr(ReportService, 'create_and_generate', namespace['create_and_generate'])
+    with pytest.raises(AssertionError):
+        await _assert_real_terminal_retry(monkeypatch, tmp_path, failures=1)

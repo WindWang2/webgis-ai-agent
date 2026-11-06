@@ -59,6 +59,11 @@ def get_group_key(dt: datetime, unit: TemporalUnit) -> tuple[str, datetime, date
         else:
             end = start.replace(month=start.month + 1)
         key = start.strftime("%Y-%m")
+    elif unit == TemporalUnit.QUARTER:
+        month = 3 * ((dt.month - 1) // 3) + 1
+        start = dt.replace(month=month, day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = start.replace(year=start.year + 1, month=1) if month == 10 else start.replace(month=month + 3)
+        key = f"{start.year}-Q{(month-1)//3+1}"
     elif unit == TemporalUnit.YEAR:
         start = dt.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
         end = start.replace(year=start.year + 1)
@@ -101,14 +106,18 @@ class TemporalAggregationEngine:
             metrics = metrics or agg_spec.metrics
             target_fields = target_fields or agg_spec.target_fields
 
-        if isinstance(group_by_unit, str):
+        from app.lib.gis.scientific_errors import UnsupportedMethod
+        try:
             group_by_unit = TemporalUnit(group_by_unit)
+        except ValueError as exc:
+            raise UnsupportedMethod(f"unsupported temporal unit: {group_by_unit}") from exc
 
         if not metrics:
             metrics = [TemporalMetric.COUNT, TemporalMetric.MEAN]
-        metrics_clean: List[TemporalMetric] = [
-            TemporalMetric(m) if isinstance(m, str) else m for m in metrics
-        ]
+        try:
+            metrics_clean: List[TemporalMetric] = [TemporalMetric({"std": "stddev", "avg": "mean"}.get(m, m)) for m in metrics]
+        except ValueError as exc:
+            raise UnsupportedMethod(f"unsupported temporal metric: {metrics}") from exc
 
         if not time_field:
             profile = profile_temporal_dataset(records)
@@ -141,7 +150,7 @@ class TemporalAggregationEngine:
                     "end_time": period_end.isoformat(),
                     "records": [],
                 }
-            groups[group_key]["records"].append(props)
+            groups[group_key]["records"].append((inst.epoch_seconds, props))
 
         # Sort group keys chronologically
         sorted_keys = sorted(groups.keys())
@@ -149,7 +158,7 @@ class TemporalAggregationEngine:
 
         for key in sorted_keys:
             grp = groups[key]
-            items = grp["records"]
+            items = [record for _, record in sorted(grp["records"], key=lambda entry: entry[0])]
             record_count = len(items)
 
             bucket: Dict[str, Any] = {
@@ -164,7 +173,7 @@ class TemporalAggregationEngine:
                 num_vals = []
                 for it in items:
                     v = it.get(t_field)
-                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
                         num_vals.append(float(v))
 
                 field_metrics: Dict[str, Any] = {"count": len(num_vals)}

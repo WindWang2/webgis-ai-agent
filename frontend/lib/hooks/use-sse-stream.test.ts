@@ -174,7 +174,7 @@ describe('buildSelectedFeatureSnapshot (FE-4 design §7)', () => {
       { ...base, properties: { OBJECTID: 'y'.repeat(200), name: 'n' } },
       [],
     );
-    expect(byProp.feature_id).toBe('y'.repeat(64));
+    expect(byProp.feature_id).toBe('y'.repeat(59) + '…');
 
     // Short ids and numbers pass through untouched.
     expect(buildSelectedFeatureSnapshot({ ...base, featureId: 'abc' }, []).feature_id).toBe('abc');
@@ -1261,5 +1261,26 @@ describe('useSSEStream session_plan_* live deltas (#1048)', () => {
     });
     expect(onSessionPlanEvent).toHaveBeenCalledTimes(1);
     expect(onSessionPlanEvent).toHaveBeenCalledWith('session_plan_progress', PROGRESS);
+  });
+});
+
+describe('terminal events release the send guard (#1694 API-03)', () => {
+  it('allows the next turn while the completed HTTP body is still open', async () => {
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    bridgeMock.send.mockReset();
+    bridgeMock.send.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseFirst = resolve; }));
+    bridgeMock.send.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSecond = resolve; }));
+    const { result } = renderStream();
+    let first!: Promise<boolean>;
+    act(() => { first = result.current.handleSend('first'); });
+    act(() => { bridgeMock.onEventCallback?.({ event: 'done', data: {} }); });
+    let second!: Promise<boolean>;
+    act(() => { second = result.current.handleSend('second'); });
+    expect(bridgeMock.send).toHaveBeenCalledTimes(2);
+    await act(async () => { releaseFirst(); await first; });
+    await act(async () => { expect(await result.current.handleSend('third')).toBe(false); });
+    await act(async () => { releaseSecond(); await second; });
+    bridgeMock.send.mockResolvedValue(undefined);
   });
 });

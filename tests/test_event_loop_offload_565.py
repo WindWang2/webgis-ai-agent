@@ -1,21 +1,13 @@
 """#565 regression: async data_fabric / project routes must not run sync
 SQLAlchemy ORM on the event loop.
 
-Before the fix, 12 async data_fabric routes and 3 async project routes ran
-sync Session queries/commits directly on the loop — under DB latency or pool
-contention a sync pool acquire stalls the loop up to pool_timeout=30s,
-freezing every concurrent SSE/WS stream (the same failure mode #386/#421/#425
-eliminated for the workflow engine body and remote fetches).
-
-Two guards:
-  1. static AST contract — no async route body calls sync `db.<orm>` directly;
-  2. dynamic loop-responsiveness — the DB reads/commits run in a worker
-     thread while a ticker proves the main event loop keeps ticking
-     (technique mirrors tests/test_event_loop_offload_427.py).
+Offload probes assert the actual execution thread, independent of scheduler
+latency. Dedicated throughput/timeout tests keep their explicit time budgets.
 """
-import asyncio
+import ast
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -27,58 +19,114 @@ from app.schemas.project_schema import WorkflowRunRequest
 _main_thread = threading.get_ident()
 
 
-async def _assert_loop_responsive_while(awaitable_factory, delay: float = 2.0):
-    """Run awaitable_factory() and assert a timer fires mid-flight.
+async def _run_offload_probe(awaitable_factory, delay: float = 2.0):
+    """Run the probe; callers assert the actual worker thread identity.
 
-    Deterministic: with the work offloaded to a thread the task is still
-    running when the test's timer completes; with the work on the loop the
-    task finishes before the timer resumes (or the timer never fires).
+    A fixed sleep/task-pending race depends on machine scheduling and can
+    fail when correctly offloaded work finishes before the test resumes.
     """
-    task = asyncio.create_task(awaitable_factory())
-    await asyncio.sleep(0.15)  # let it enter the slow work
-    assert not task.done(), "work finished before the test could observe it"
-
-    ticks = []
-
-    async def _tick():
-        await asyncio.sleep(0.05)
-        ticks.append(True)
-
-    tick = asyncio.create_task(_tick())
-    await asyncio.sleep(0.15)
-    assert tick.done() and ticks, "event loop was blocked during the work"
-    assert not task.done(), "event loop was blocked during the work"
-    return await task
+    return await awaitable_factory()
 
 
 # ─── Static contract: no direct sync ORM in async route bodies ────────────
+
+
+def _direct_sync_db_calls(source: str, path: str = "<probe>") -> list[str]:
+    """Inspect async lexical bodies, not deferred nested synchronous bodies.
+
+    Function defaults/decorators still execute in the enclosing scope, while
+    a nested async body gets its own contract even inside a synchronous helper.
+    Runtime offload probes separately verify where production helpers execute.
+    """
+    offenders: list[str] = []
+
+    class Visitor(ast.NodeVisitor):
+        async_function: str | None = None
+
+        def _header(self, node):
+            for expression in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
+                if expression is not None:
+                    self.visit(expression)
+
+        def visit_FunctionDef(self, node):
+            self._header(node)
+            enclosing = self.async_function
+            self.async_function = None
+            for statement in node.body:
+                self.visit(statement)
+            self.async_function = enclosing
+
+        def visit_AsyncFunctionDef(self, node):
+            self._header(node)
+            enclosing = self.async_function
+            self.async_function = node.name
+            for statement in node.body:
+                self.visit(statement)
+            self.async_function = enclosing
+
+        def visit_Lambda(self, node):
+            for expression in (*node.args.defaults, *node.args.kw_defaults):
+                if expression is not None:
+                    self.visit(expression)
+
+        def visit_Call(self, node):
+            if (
+                self.async_function is not None
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "db"
+                and node.func.attr in {
+                    "query", "execute", "add", "delete", "commit",
+                    "rollback", "flush", "scalars", "scalar_one_or_none",
+                    "refresh", "get",
+                }
+            ):
+                offenders.append(f"{path}:{node.lineno} {self.async_function} → db.{node.func.attr}")
+            self.generic_visit(node)
+
+    Visitor().visit(ast.parse(source))
+    return offenders
+
+
+@pytest.mark.parametrize("method", ["get", "execute", "commit", "query"])
+def test_sync_db_guard_rejects_direct_async_orm_calls(method):
+    offenders = _direct_sync_db_calls(f"async def route():\n    db.{method}()\n")
+    assert len(offenders) == 1
+    assert f"route → db.{method}" in offenders[0]
+
+
+def test_sync_db_guard_accepts_deferred_sync_worker_body():
+    assert not _direct_sync_db_calls("""
+async def route():
+    def worker():
+        return db.get(Project, project_id)
+    return await asyncio.to_thread(worker)
+""")
+
+
+def test_sync_db_guard_still_checks_nested_async_and_eager_defaults():
+    offenders = _direct_sync_db_calls("""
+async def route():
+    def worker(value=db.get(Project, project_id)):
+        async def nested():
+            db.commit()
+        return value
+    return await asyncio.to_thread(worker)
+""")
+    assert len(offenders) == 2
+    assert "route → db.get" in offenders[0]
+    assert "nested → db.commit" in offenders[1]
 
 
 def test_async_routes_have_no_direct_sync_db_calls():
     """Every async route must route its sync SQLAlchemy work through
     asyncio.to_thread / thread-local sessions (offload helpers), never call
     db.query/execute/commit directly."""
-    import ast
     from pathlib import Path
 
     offenders = []
     for rel in ("app/api/routes/data_fabric.py", "app/api/routes/project.py"):
-        tree = ast.parse(Path(rel).read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.AsyncFunctionDef):
-                continue
-            for sub in ast.walk(node):
-                if (
-                    isinstance(sub, ast.Attribute)
-                    and isinstance(sub.value, ast.Name)
-                    and sub.value.id == "db"
-                    and sub.attr in {
-                        "query", "execute", "add", "delete", "commit",
-                        "rollback", "flush", "scalars", "scalar_one_or_none",
-                        "refresh", "get",
-                    }
-                ):
-                    offenders.append(f"{rel}:{node.lineno} {node.name} → db.{sub.attr}")
+        offenders.extend(_direct_sync_db_calls(Path(rel).read_text(encoding="utf-8"), rel))
     assert not offenders, (
         "async routes still call sync SQLAlchemy directly on the event loop "
         "(pool_timeout=30 worst-case loop freeze):\n" + "\n".join(offenders)
@@ -240,7 +288,7 @@ async def test_list_data_sources_db_read_off_loop(monkeypatch):
     observed: dict = {}
     monkeypatch.setattr(df, "SessionLocal", lambda: _SlowSession([], observed))
 
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: df.list_data_sources(source_type=None, user=None)
     )
     assert observed.get("thread") != _main_thread, (
@@ -254,8 +302,8 @@ async def test_list_spatial_catalog_db_read_off_loop(monkeypatch):
     observed: dict = {}
     monkeypatch.setattr(df, "SessionLocal", lambda: _SlowSession([], observed))
 
-    res = await _assert_loop_responsive_while(
-        lambda: df.list_spatial_catalog(user=None)
+    res = await _run_offload_probe(
+        lambda: df.list_spatial_catalog(user=None, q=None, source_id=None, geometry_type=None, feature_type=None, availability=None, limit=50, offset=0, summary=True)
     )
     assert observed.get("thread") != _main_thread
     assert res["total"] == 0 and res["items"] == []
@@ -274,7 +322,7 @@ async def test_probe_data_source_read_and_commit_off_loop(monkeypatch):
         DataFabricManager, "probe_profile", staticmethod(lambda profile: _FakeHealth())
     )
 
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: df.probe_data_source("src-1", user={"user_id": "u-admin", "role": "admin"})
     )
     assert observed.get("thread") != _main_thread, (
@@ -293,7 +341,7 @@ async def test_run_workflow_auth_lookup_off_loop(monkeypatch):
 
     req = WorkflowRunRequest()
     with pytest.raises(HTTPException) as exc_info:
-        await _assert_loop_responsive_while(
+        await _run_offload_probe(
             lambda: project_mod.run_workflow(
                 "proj-1", "wf-1", req=req, user={"user_id": "u1"}
             )
@@ -302,3 +350,86 @@ async def test_run_workflow_auth_lookup_off_loop(monkeypatch):
     assert observed.get("thread") != _main_thread, (
         "run_workflow's project auth lookup ran on the event loop thread"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy,user_id", [(True, "owner"), (False, "owner"), (True, "other")])
+async def test_workflow_continuation_preflight_and_owner_reads_stay_off_loop(monkeypatch, legacy, user_id):
+    """Exercise the actual owner helper and offload seam, including rejection.
+
+    Each context-managed Session is used sequentially by its owning worker;
+    neither the preflight nor the engine worker may read ORM state on the loop.
+    """
+    from app.models.db_model import Conversation, User
+    from app.models.project import Project, WorkflowRun
+    from app.services import workflow_session_scope
+
+    loop_thread = threading.get_ident()
+    reads: list[tuple[type, int]] = []
+    sessions = []
+    created_sessions: list[str] = []
+    engine_calls: list[tuple[str, str]] = []
+    prior = SimpleNamespace(
+        id="prior", project_id="project", workflow_id="workflow",
+        session_id=None if legacy else "evidence", status="failed", input_bindings={},
+    )
+    rows = {
+        WorkflowRun: prior,
+        Project: SimpleNamespace(id="project", owner_id="owner", status="active"),
+        User: SimpleNamespace(id=user_id, is_active=True),
+        Conversation: SimpleNamespace(user_id="owner"),
+    }
+
+    class WorkerSession:
+        def __enter__(self):
+            self.thread = threading.get_ident()
+            assert self.thread != loop_thread
+            sessions.append(self)
+            return self
+
+        def __exit__(self, *args):
+            assert threading.get_ident() == self.thread
+
+        def get(self, model, key):
+            assert threading.get_ident() == self.thread
+            assert self.thread != loop_thread
+            reads.append((model, self.thread))
+            return rows.get(model)
+
+    async def create_session(owner):
+        created_sessions.append(owner)
+        return "fresh-evidence"
+
+    async def resume(session, **kwargs):
+        assert threading.get_ident() == session.thread != loop_thread
+        engine_calls.append(("resume", kwargs["session_id"]))
+        return WorkflowRun(id="resumed")
+
+    async def execute(session, **kwargs):
+        assert threading.get_ident() == session.thread != loop_thread
+        engine_calls.append(("execute", kwargs["session_id"]))
+        assert kwargs["input_bindings"] == prior.input_bindings
+        return WorkflowRun(id="rerun")
+
+    monkeypatch.setattr(project_mod, "SessionLocal", WorkerSession)
+    monkeypatch.setattr(workflow_session_scope, "create_workflow_session", create_session)
+    monkeypatch.setattr(project_mod.WorkflowEngine, "resume_run", staticmethod(resume))
+    monkeypatch.setattr(project_mod.WorkflowEngine, "execute_workflow_run", staticmethod(execute))
+    kwargs = dict(prior_run_id="prior", expected_project_id="project", user_id=user_id,
+                  allow_rerun=legacy, tool_registry=object())
+    if user_id == "other":
+        with pytest.raises(HTTPException) as error:
+            await project_mod._run_workflow_engine(project_mod.WorkflowEngine.resume_run, **kwargs)
+        assert error.value.status_code == 404
+        assert not created_sessions and not engine_calls
+        assert len(sessions) == 1
+    else:
+        result = await project_mod._run_workflow_engine(project_mod.WorkflowEngine.resume_run, **kwargs)
+        assert result.id == ("rerun" if legacy else "resumed")
+        assert len(sessions) == 2
+        assert created_sessions == (["owner"] if legacy else [])
+        assert engine_calls == ([("execute", "fresh-evidence")] if legacy else [("resume", "evidence")])
+    assert {model for model, _ in reads} == (
+        {WorkflowRun, Project, User} if legacy else {WorkflowRun, Conversation, User}
+    )
+    assert all(thread != loop_thread for _, thread in reads)

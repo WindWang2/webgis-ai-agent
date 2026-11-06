@@ -204,9 +204,10 @@ class MetricEvaluator:
         lines.append("\n**Evaluated Metric Ranges (Uncertainty Propagation):**")
         for m in metric_deltas.values():
             if m.range:
+                delta_text = f"{m.delta_pct:+.1f}%" if m.delta_pct is not None else "undefined at zero baseline"
                 lines.append(
                     f"- {m.metric_name} ({m.unit}): Baseline = {m.baseline}, Expected = {m.simulated} "
-                    f"[Min: {m.range.min_val}, Max: {m.range.max_val}] (Δ: {m.delta_pct:+.1f}%)"
+                    f"[Min: {m.range.min_val}, Max: {m.range.max_val}] (Δ: {delta_text})"
                 )
             else:
                 lines.append(f"- {m.metric_name} ({m.unit}): Baseline = {m.baseline}, Simulated = {m.simulated}")
@@ -356,7 +357,7 @@ class MetricEvaluator:
                 baseline=base_val,
                 unit=base_unit,
                 rule=rule_for_m,
-                custom_pct=pct_range,
+                custom_pct=None if rule_for_m is not None else pct_range,
                 missing_baseline=is_missing,
                 evidence_gap_note=gap_note,
             )

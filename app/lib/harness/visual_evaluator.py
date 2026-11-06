@@ -295,12 +295,9 @@ _JUDGE_SYSTEM_PROMPT = (
 
 def _resolve_vlm_config() -> Tuple[str, str, str]:
     """(base_url, api_key, model)。键缺失返回占位符空串由调用方 fail-closed。"""
-    from app.core.config import settings
-
-    base_url = _env("CARTO_VISUAL_JUDGE_BASE_URL") or settings.LLM_BASE_URL
-    api_key = _env("CARTO_VISUAL_JUDGE_API_KEY") or settings.LLM_API_KEY
-    model = _env("CARTO_VISUAL_JUDGE_MODEL") or settings.LLM_MODEL
-    return base_url, api_key, model
+    from app.lib.harness.visual_judge.vlm_provider import resolve_provider_config
+    config = resolve_provider_config()
+    return config["base_url"], config["api_key"], config["model"]
 
 
 def _is_placeholder_key(api_key: str) -> bool:
@@ -391,7 +388,10 @@ def _find_screenshot_path(
         runtime_dir = str(result.get(_RUNTIME_DIR_KEY) or "")
         if not runtime_dir:
             continue
-        candidate = Path(runtime_dir) / _SCREENSHOT_NAME
+        from app.services.mapspec.store import BASE_STORAGE_DIR
+        candidate = (Path(runtime_dir) / _SCREENSHOT_NAME).resolve()
+        if not candidate.is_relative_to(BASE_STORAGE_DIR.resolve()):
+            continue
         if candidate.is_file():
             return candidate
     return None
@@ -562,7 +562,7 @@ async def attach_visual_judgement(
         report.reason = "provider_error"
     finally:
         report.duration_ms = int((time.monotonic() - start) * 1000)
-    if digest:
+    if digest and report.status == "evaluated":
         _memo_put(memo_key, report)
     _apply_report(cartography, report)
 

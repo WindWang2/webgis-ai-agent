@@ -1075,7 +1075,8 @@ class MapSpecTemporalConfig(_SpecModel):
         # 分级 breaks 严格递升（固定分级的数学前提）。
         if self.compare is not None and self.compare.classification is not None:
             breaks = self.compare.classification.breaks
-            if any(b <= a for a, b in zip(breaks, breaks[1:])):
+            # Adjacent pairs intentionally omit the unpaired final element.
+            if any(b <= a for a, b in zip(breaks, breaks[1:], strict=False)):
                 raise ValueError("classification.breaks must be strictly ascending")
         # 时区必须是 IANA 可解析名（拒绝伪造时区）。
         try:

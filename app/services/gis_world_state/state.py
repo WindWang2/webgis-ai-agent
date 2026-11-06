@@ -142,14 +142,22 @@ async def build_world_state(session_id: str) -> Dict[str, Any]:
     # user_hidden 以全环为依据（ADR-0072 修复 P2-1：finalize 一次写 30+ 条
     # agent provenance 会把用户决策挤出尾部 16 条，快照必须从全环派生，否则
     # 守卫(全环64条)与感知(尾16)互相矛盾——agent 被守卫拦但快照说"没有用户决策"）。
-    user_hidden_source = all_provenance
-    user_hidden = [
-        entry.get("target")
-        for entry in reversed(user_hidden_source)
-        if entry.get("origin") == "user"
-        and entry.get("kind") == "PatchLayerPresentationIntent"
-        and entry.get("detail", {}).get("visible") is False
-    ]
+    targets = {entry.get("target") for entry in all_provenance
+               if isinstance(entry, dict) and isinstance(entry.get("target"), str)}
+    hidden = set()
+    for target in targets:
+        latest = _provenance.last_presentation_owner(all_provenance, target)
+        detail = latest.get("detail") if latest else None
+        if latest and latest.get("origin") == "user" and isinstance(detail, dict) and detail.get("visible") is False:
+            hidden.add(target)
+    for layer in mapspec.get("layers") or []:
+        if not isinstance(layer, dict):
+            continue
+        intent = layer.get("cartographic_intent")
+        if isinstance(intent, dict) and intent.get("presentation_owner") == "user" and intent.get("expected_visible") is False:
+            if isinstance(layer.get("id"), str):
+                hidden.add(layer["id"])
+    user_hidden = sorted(hidden)
 
     observation = map_state.get("_cartographic_observation")
     if isinstance(observation, str):

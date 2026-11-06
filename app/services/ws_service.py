@@ -18,7 +18,9 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, session_id: str, subprotocol: Optional[str] = None):
         # #757: 若客户端以 subprotocol 传 token，accept 必须回显选中的
         # subprotocol，否则浏览器会按约定直接断开连接。
-        await websocket.accept(subprotocol) if subprotocol else await websocket.accept()
+        from starlette.websockets import WebSocketState
+        if websocket.application_state is not WebSocketState.CONNECTED:
+            await websocket.accept(subprotocol) if subprotocol else await websocket.accept()
         if session_id not in self.active_connections:
             self.active_connections[session_id] = []
         self.active_connections[session_id].append(websocket)
@@ -123,7 +125,7 @@ async def handle_viewport_change(session_id: str, data: dict):
         try:
             limiter = await get_rate_limiter()
             if await limiter.is_allowed(f"ws_viewport_populate:{session_id}", max_requests=1, window_seconds=5):
-                schedule_populate(float(center[0]), float(center[1]))
+                schedule_populate(float(center[0]), float(center[1]), session_id=session_id)
         except (ValueError, TypeError):
             pass
 
@@ -167,7 +169,7 @@ async def _ws_legacy_provenance(session_id: str, kind: str, target: str, detail:
 async def handle_layer_toggled(session_id: str, data: dict):
     layer_id = data.get("layer_id")
     visible = data.get("visible")
-    if layer_id is not None:
+    if isinstance(layer_id, str) and len(layer_id) <= 200 and isinstance(visible, bool):
         await session_data_manager.update_layer_in_state(session_id, layer_id, {"visible": visible})
         await session_data_manager.append_event(session_id, "layer_toggled", data)
         await _ws_legacy_provenance(
@@ -179,7 +181,7 @@ async def handle_layer_toggled(session_id: str, data: dict):
 async def handle_layer_opacity(session_id: str, data: dict):
     layer_id = data.get("layer_id")
     opacity = data.get("opacity")
-    if layer_id is not None and opacity is not None:
+    if isinstance(layer_id, str) and len(layer_id) <= 200 and _finite_number(opacity) and 0 <= opacity <= 1:
         await session_data_manager.update_layer_in_state(session_id, layer_id, {"opacity": opacity})
         await _ws_legacy_provenance(
             session_id, "LegacySocketPresentation", layer_id,
@@ -200,14 +202,14 @@ async def handle_layer_removed(session_id: str, data: dict):
 
 async def handle_base_layer_changed(session_id: str, data: dict):
     name = data.get("name")
-    if name:
+    if isinstance(name, str) and 0 < len(name) <= 200:
         await session_data_manager.set_map_state(session_id, "base_layer", name)
         await session_data_manager.append_event(session_id, "base_layer_changed", data)
 
 
 async def handle_mode_changed(session_id: str, data: dict):
     is_3d = data.get("is_3d")
-    if is_3d is not None:
+    if isinstance(is_3d, bool):
         await session_data_manager.set_map_state(session_id, "is_3d", is_3d)
         await session_data_manager.append_event(session_id, "mode_changed", data)
 
@@ -230,7 +232,15 @@ async def handle_state_snapshot(session_id: str, data: dict):
             # #811: 内部键（_cartographic_deleted/_cartographic_review 等）与
             # 任意未知键一律丢弃 —— WS 感知通道不是 desired-MapSpec 的写入口。
             continue
-        await session_data_manager.set_map_state(session_id, k, v)
+        if k == "viewport":
+            if isinstance(v, dict):
+                await handle_viewport_change(session_id, v)
+        elif k == "base_layer" and isinstance(v, str) and len(v) <= 200:
+            await session_data_manager.set_map_state(session_id, k, v)
+        elif k == "is_3d" and isinstance(v, bool):
+            await session_data_manager.set_map_state(session_id, k, v)
+        elif k in {"bearing", "pitch"} and _finite_number(v):
+            await session_data_manager.set_map_state(session_id, k, v)
 
 
 async def handle_layers_changed(session_id: str, data: dict):

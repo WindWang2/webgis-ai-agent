@@ -166,6 +166,7 @@ export function SpatialSketchTool({
       e.stopPropagation();
       e.preventDefault();
       const pt = pointerToLocal(e.clientX, e.clientY, rect);
+      if (pointersRef.current.some((prev, i, pts) => i === pts.length - 1 && Math.hypot(prev[0] - pt[0], prev[1] - pt[1]) < 4)) return;
       pointersRef.current = [...pointersRef.current, pt];
       setDraft([...pointersRef.current]);
       return;
@@ -189,6 +190,7 @@ export function SpatialSketchTool({
     if (copilotTool === 'box_select') {
       setDraft(boxRing(dragStartRef.current, pt));
     } else {
+      if (pointersRef.current.some((prev, i, pts) => i === pts.length - 1 && Math.hypot(prev[0] - pt[0], prev[1] - pt[1]) < 4)) return;
       pointersRef.current = [...pointersRef.current, pt];
       setDraft(freehandRing(pointersRef.current) ?? pointersRef.current);
     }
@@ -228,6 +230,7 @@ export function SpatialSketchTool({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={reset}
       onDoubleClick={handleDoubleClick}
     >
       <svg width="100%" height="100%" className="pointer-events-none absolute inset-0">
@@ -264,6 +267,7 @@ export function SpatialSketchTool({
         <button
           type="button"
           data-testid="copilot-finish-lasso"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             finishGesture(polygonLassoRing(pointersRef.current));

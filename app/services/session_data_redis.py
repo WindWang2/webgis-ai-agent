@@ -3,6 +3,8 @@ import asyncio
 import hashlib
 import json
 import logging
+from app.lib.runtime.ref_cursors import CONTEXT_OFFLOAD_REF_PREFIX
+import random
 import threading
 import time
 import uuid
@@ -12,12 +14,12 @@ from typing import Any, Optional
 import redis.asyncio as aioredis
 from app.services.session_data_protocol import (
     BaseSessionStore,
-    IDLE_SESSION_TTL,
+    IDLE_SESSION_TTL as IDLE_SESSION_TTL,
     UNAVAILABLE_REF_PREFIX,
     _layer_matches_removal_family,
-    session_activity_is_idle,
 )
 from app.lib.numpy_json import numpy_json_default as _numpy_json_default
+from app.services.session_redis_maintenance import decode_json_objects as _decode_json_objects
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,7 @@ async def ref_fetch_shared(store: "RedisSessionStore", session_id: str,
         return await store._fetch_shared_payload(session_id, ref_id, data_key)
 
 
+
 class RedisSessionStore(BaseSessionStore):
 
     """Session-level data store backed by Redis with cursor support (LRU)."""
@@ -123,6 +126,7 @@ class RedisSessionStore(BaseSessionStore):
         # L1 in-process cache: { (session_id, kind): (value, expires_at_monotonic) }
         # kind ∈ {"map_state", "metadata"}. Read-through, write-invalidate.
         # Per-process (not coordinated across workers) — kept fresh-ish via short TTL.
+        self._l1_lock = threading.RLock()
         self._l1: dict[tuple[str, str], tuple[Any, float]] = {}
         self._l1_order: list[tuple[str, str]] = []  # LRU order (MRU at end)
 
@@ -224,6 +228,10 @@ class RedisSessionStore(BaseSessionStore):
         """
         client = await self._ensure_connected()
         await client.ping()
+        if not self._injected_redis:
+            topology = await client.info("cluster")
+            if int(topology.get("cluster_enabled", 0)):
+                raise RuntimeError("Session storage requires standalone Redis; Redis Cluster is unsupported")
 
     # ─── L1 (in-process) cache helpers ────────────────────────────────────
     # Read-through: get_* checks L1 first, falls back to Redis, populates L1.
@@ -234,47 +242,50 @@ class RedisSessionStore(BaseSessionStore):
     # ──────────────────────────────────────────────────────────────────────
 
     def _l1_get(self, session_id: str, kind: str) -> Optional[Any]:
-        key = (session_id, kind)
-        entry = self._l1.get(key)
-        if entry is None:
-            return None
-        value, expires_at = entry
-        if time.monotonic() >= expires_at:
-            # expired — drop it
-            self._l1.pop(key, None)
+        with self._l1_lock:
+            key = (session_id, kind)
+            entry = self._l1.get(key)
+            if entry is None:
+                return None
+            value, expires_at = entry
+            if time.monotonic() >= expires_at:
+                # expired — drop it
+                self._l1.pop(key, None)
+                try:
+                    self._l1_order.remove(key)
+                except ValueError:
+                    pass
+                return None
+            # MRU bump
             try:
                 self._l1_order.remove(key)
+                self._l1_order.append(key)
             except ValueError:
                 pass
-            return None
-        # MRU bump
-        try:
-            self._l1_order.remove(key)
-            self._l1_order.append(key)
-        except ValueError:
-            pass
-        return value
+            return value
 
     def _l1_put(self, session_id: str, kind: str, value: Any) -> None:
-        key = (session_id, kind)
-        if key in self._l1:
-            self._l1_order.remove(key)
-        self._l1[key] = (value, time.monotonic() + L1_TTL_SECONDS)
-        self._l1_order.append(key)
-        # evict oldest beyond capacity
-        while len(self._l1_order) > L1_MAX_SESSIONS:
-            old = self._l1_order.pop(0)
-            self._l1.pop(old, None)
+        with self._l1_lock:
+            key = (session_id, kind)
+            if key in self._l1:
+                self._l1_order.remove(key)
+            self._l1[key] = (value, time.monotonic() + L1_TTL_SECONDS)
+            self._l1_order.append(key)
+            # evict oldest beyond capacity
+            while len(self._l1_order) > L1_MAX_SESSIONS:
+                old = self._l1_order.pop(0)
+                self._l1.pop(old, None)
 
     def _l1_invalidate_session(self, session_id: str) -> None:
         """Drop all L1 entries for a session (call on every write to that session)."""
-        stale = [k for k in self._l1 if k[0] == session_id]
-        for k in stale:
-            self._l1.pop(k, None)
-            try:
-                self._l1_order.remove(k)
-            except ValueError:
-                pass
+        with self._l1_lock:
+            stale = [k for k in self._l1 if k[0] == session_id]
+            for k in stale:
+                self._l1.pop(k, None)
+                try:
+                    self._l1_order.remove(k)
+                except ValueError:
+                    pass
 
     def invalidate_local_cache(self, session_id: str) -> None:
         """Public critical-read hook used after acquiring a distributed lock."""
@@ -282,8 +293,9 @@ class RedisSessionStore(BaseSessionStore):
 
     def clear_l1_cache(self) -> None:
         """Drop all L1 entries (test escape hatch / memory pressure)."""
-        self._l1.clear()
-        self._l1_order.clear()
+        with self._l1_lock:
+            self._l1.clear()
+            self._l1_order.clear()
 
     @staticmethod
     def _data_key(session_id: str, ref_id: str) -> str:
@@ -384,11 +396,18 @@ class RedisSessionStore(BaseSessionStore):
             json.dumps, data, ensure_ascii=False, default=_numpy_json_default
         )
 
+        victims: list[str] = []
         try:
             # Insert first. Evicting before the write used to delete live refs
             # and then return an unavailable sentinel if the insert pipeline
             # hit RedisError — silent data loss at capacity.
             async with self._r.pipeline() as pipe:
+                from app.services.session_control_refs import is_control_ref
+                if is_control_ref(ref_id):
+                    from app.services.session_control_budget import prepare_redis_write, queue_redis_evictions
+                    victims, aliases = await prepare_redis_write(pipe, self, session_id, ref_id, data, payload_json)
+                    pipe.multi()
+                    queue_redis_evictions(pipe, self, session_id, victims, aliases)
                 pipe.hsetnx(
                     self._state_key(session_id),
                     "_started_at",
@@ -420,13 +439,21 @@ class RedisSessionStore(BaseSessionStore):
         # caches list_refs + event_log (2s TTL); drop it so we don't serve the
         # stale bundle. (set_map_state/update_layer/remove_layer already do this.)
         self._l1_invalidate_session(session_id)
+        if victims:
+            self._invalidate_derived_caches(session_id, *victims, reason="EVICT")
+        from app.lib.runtime.ref_capture import note_created_ref
+        note_created_ref(ref_id)
         try:
-            current_count = await self._r.zcard(order_key)
-            if current_count > self.capacity:
-                overflow = current_count - self.capacity
-                oldest = await self._r.zrange(
-                    order_key, 0, overflow - 1, withscores=True
-                )
+            from app.services.session_control_refs import is_control_ref
+
+            if is_control_ref(ref_id):
+                return ref_id
+            ordered = await self._r.zrange(order_key, 0, -1, withscores=True)
+            eligible = [(member, score) for member, score in ordered
+                        if not is_control_ref(member.decode() if isinstance(member, bytes) else member)]
+            if len(eligible) > self.capacity:
+                overflow = len(eligible) - self.capacity
+                oldest = eligible[:overflow]
                 old_refs = []
                 snapshot_scores: dict[str, float] = {}
                 for member, score in oldest:
@@ -465,7 +492,7 @@ class RedisSessionStore(BaseSessionStore):
             )
         return ref_id
 
-    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
+    async def overwrite(self, session_id: str, ref_id: str, data: Any, *, expected_revision: Optional[int] = None) -> bool:
         """Overwrite the data stored at an existing ``ref_id`` (same key).
 
         ``store`` always mints a new ref_id, which breaks callers like plan_mode's
@@ -493,19 +520,30 @@ class RedisSessionStore(BaseSessionStore):
             lambda: hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         )
         try:
-            previous_digest = await self._r.hget(
-                self._ref_digests_key(session_id), ref_id
-            )
-        except aioredis.RedisError:
-            previous_digest = None
-        # 客户端以 decode_responses=False 构造，hget 返回 bytes（或 None）——
-        # 不归一化类型时 b"..." != "..." 恒真，同内容覆写也会误判 changed
-        # 而 bump revision（analysis_reuse 的 revision 复核随之整段 miss）。
-        if isinstance(previous_digest, bytes):
-            previous_digest = previous_digest.decode()
-        content_changed = previous_digest != payload_digest
-        try:
             async with self._r.pipeline() as pipe:
+                await pipe.watch(data_key, self._ref_digests_key(session_id))
+                if not await pipe.exists(data_key):
+                    await pipe.unwatch()
+                    return False
+                if expected_revision is not None:
+                    raw = await pipe.get(data_key)
+                    current = await asyncio.to_thread(json.loads, raw) if raw is not None else None
+                    if not isinstance(current, dict) or current.get("revision", 0) != expected_revision:
+                        await pipe.unwatch()
+                        return False
+                previous_digest = await pipe.hget(self._ref_digests_key(session_id), ref_id)
+                if isinstance(previous_digest, bytes):
+                    previous_digest = previous_digest.decode()
+                content_changed = previous_digest != payload_digest
+                from app.services.session_control_refs import is_control_ref
+                victims, aliases = [], {}
+                if is_control_ref(ref_id):
+                    from app.services.session_control_budget import prepare_redis_write
+                    victims, aliases = await prepare_redis_write(pipe, self, session_id, ref_id, data, payload_json)
+                pipe.multi()
+                if victims:
+                    from app.services.session_control_budget import queue_redis_evictions
+                    queue_redis_evictions(pipe, self, session_id, victims, aliases)
                 pipe.set(data_key, payload_json, ex=DATA_TTL)
                 # V5-E: same ref identity, new content — bump the revision
                 # atomically with the payload write (S7 rollback semantics).
@@ -531,26 +569,18 @@ class RedisSessionStore(BaseSessionStore):
                 session_id, ref_id, e,
             )
             return False
-        self._invalidate_derived_caches(session_id, ref_id, reason='OVERWRITE')
+        self._invalidate_derived_caches(session_id, ref_id, *victims, reason='OVERWRITE')
         return True
 
     async def delete_ref(self, session_id: str, ref_id: str) -> bool:
-        """Drop one stored ref (data + descriptor + index). Returns False on Redis error."""
-        await self._ensure_connected()
-        try:
-            exists = await self._r.exists(self._data_key(session_id, ref_id))
-            async with self._r.pipeline() as pipe:
-                self._evict_ref(pipe, session_id, ref_id, None)
-                await pipe.execute()
-            self._l1_invalidate_session(session_id)
-        except aioredis.RedisError as e:
-            logger.error(
-                "Redis delete_ref failed for session %s ref %s: %s",
-                session_id, ref_id, e,
-            )
-            return False
-        self._invalidate_derived_caches(session_id, ref_id, reason='DELETE')
-        return bool(exists)
+        from app.services.session_redis_aliases import delete_ref
+
+        return await delete_ref(self, session_id, ref_id)
+
+    async def set_alias_if_absent(self, session_id: str, ref_id: str, alias: str) -> bool:
+        from app.services.session_redis_aliases import set_alias_if_absent
+
+        return await set_alias_if_absent(self, session_id, ref_id, alias)
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         """写路径 best-effort：Redis 不可达时 log warning 并丢弃，不抛。
@@ -571,20 +601,9 @@ class RedisSessionStore(BaseSessionStore):
             )
 
     async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
-        """读路径 cache-miss 语义：Redis 不可达时原样返回输入（与 memory 后端
-        未命中别名一致），不抛（F22）。"""
-        await self._ensure_connected()
-        try:
-            ref_id = await self._r.hget(self._aliases_key(session_id), ref_or_alias)
-        except aioredis.RedisError as e:
-            logger.warning(
-                "Redis resolve_alias failed for session %s: %s — returning input unchanged",
-                session_id, e,
-            )
-            return ref_or_alias
-        if ref_id is None:
-            return ref_or_alias
-        return ref_id.decode() if isinstance(ref_id, bytes) else ref_id
+        from app.services.session_redis_aliases import resolve_alias
+
+        return await resolve_alias(self, session_id, ref_or_alias)
 
     async def resolve_aliases(self, session_id: str, strings: list[str]) -> dict[str, str]:
         """Batch alias resolution via a single HMGET round-trip.
@@ -803,7 +822,8 @@ class RedisSessionStore(BaseSessionStore):
                 (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
                 for k, v in raw_refs.items()
             }
-            return {rid: ref_to_alias.get(rid, "") for rid in ref_ids}
+            return {rid: ref_to_alias.get(rid, "") for rid in ref_ids
+                    if not rid.startswith(CONTEXT_OFFLOAD_REF_PREFIX)}
         except aioredis.RedisError as e:
             logger.warning(
                 "Redis list_refs failed for session %s: %s — returning empty",
@@ -907,7 +927,7 @@ class RedisSessionStore(BaseSessionStore):
         for _attempt in range(3):
             if _attempt:
                 # 小退避 + 抖动：削平 WS 写风暴下的连续碰撞。
-                await asyncio.sleep(0.01 * _attempt + (id(_attempt) % 100) / 10000)
+                await asyncio.sleep(0.01 * _attempt + (random.randrange(100)) / 10000)
             try:
                 async with self._r.pipeline(transaction=True) as pipe:
                     await pipe.watch(state_key)
@@ -1116,7 +1136,10 @@ class RedisSessionStore(BaseSessionStore):
                 # way. Use the tolerant decoder to also handle legacy values.
                 out[key] = RedisSessionStore._decode_started_at(v)
             else:
-                out[key] = json.loads(v)
+                try:
+                    out[key] = json.loads(v)
+                except (ValueError, TypeError):
+                    logger.warning("Ignoring corrupt session state field %s", key)
         return out
 
 
@@ -1172,9 +1195,11 @@ class RedisSessionStore(BaseSessionStore):
         """#687：定向写 mapspec 指纹字段（小字符串，序列化成本可忽略）。"""
         try:
             await self._ensure_connected()
-            await self._r.hset(
-                self._state_key(session_id), "_mapspec_fp", json.dumps(fingerprint)
-            )
+            async with self._r.pipeline() as pipe:
+                pipe.hset(self._state_key(session_id), "_mapspec_fp", json.dumps(fingerprint))
+                self._refresh_session_ttl(pipe, session_id)
+                await pipe.execute()
+            self._l1_invalidate_session(session_id)
         except aioredis.RedisError as e:
             logger.warning(
                 "Redis set_map_spec_fingerprint failed for %s: %s — no-op fast "
@@ -1343,10 +1368,7 @@ class RedisSessionStore(BaseSessionStore):
                 session_id, e,
             )
             return []
-        return [
-            json.loads(item.decode() if isinstance(item, bytes) else item)
-            for item in raw_list
-        ]
+        return _decode_json_objects(raw_list, source="event log")
 
     async def append_map_action_event(self, session_id: str, event: dict) -> bool:
         """追加地图动作终态 ACK（V3 闭环），按 action_id 幂等 —— 与 memory 后端语义一致。
@@ -1532,12 +1554,7 @@ return results
                 return []
             action_ids = [r.decode() if isinstance(r, bytes) else r for r in raw_ids]
             values = await self._r.hmget(self._map_actions_key(session_id), action_ids)
-            events = []
-            for v in values:
-                if v is None:
-                    continue  # 字段已被淘汰/清理
-                events.append(json.loads(v.decode() if isinstance(v, bytes) else v))
-            return events
+            return _decode_json_objects(values, source="map action events")
         except aioredis.RedisError as e:
             logger.warning(
                 "Redis get_map_action_events failed for session %s: %s — returning empty",
@@ -1611,7 +1628,8 @@ return results
             (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
             for k, v in (raw_refs or {}).items()
         }
-        list_refs = {rid: ref_to_alias.get(rid, "") for rid in ref_ids}
+        list_refs = {rid: ref_to_alias.get(rid, "") for rid in ref_ids
+                     if not rid.startswith(CONTEXT_OFFLOAD_REF_PREFIX)}
 
         event_log = []
         for item in (events_raw or []):
@@ -1643,6 +1661,14 @@ return results
                 session_id, e,
             )
 
+    async def unset_session_clearing(self, session_id: str) -> None:
+        """Remove suppression when session deletion failed and can be retried."""
+        try:
+            client = await self._ensure_connected()
+            await client.delete(self._clearing_key(session_id))
+        except aioredis.RedisError as exc:
+            logger.warning("unset_session_clearing failed for %s: %s", session_id, exc)
+
     async def is_session_clearing(self, session_id: str) -> bool:
         try:
             await self._ensure_connected()
@@ -1673,6 +1699,7 @@ return results
                     self._map_actions_key(session_id),
                     self._map_actions_order_key(session_id),
                     self._ref_revisions_key(session_id),
+                    self._ref_digests_key(session_id),
                 )
                 pipe.srem(self._active_key(), session_id)
                 pipe.zrem(self._activity_key(), session_id)
@@ -1714,57 +1741,11 @@ return results
             return True
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
-        await self._ensure_connected()
-        active = await self._r.smembers(self._active_key())
-        if not active or len(active) <= max_sessions:
-            return
-        scored = []
-        # #618-7: 单次 ZRANGE withscores 取回 activity 全集分数，替代逐会话
-        # 串行 ZSCORE（每 600s 清扫 100+ 会话时省去等量 RTT）。
-        activity_scores = await self._r.zrange(self._activity_key(), 0, -1, withscores=True)
-        if isinstance(activity_scores, dict):
-            score_map = {
-                (k.decode() if isinstance(k, bytes) else k): float(v)
-                for k, v in activity_scores.items()
-            }
-        else:
-            score_map = {}
-            for member, ts in activity_scores or []:
-                m = member.decode() if isinstance(member, bytes) else member
-                score_map[m] = float(ts)
-        for sid_bytes in active:
-            sid = sid_bytes.decode() if isinstance(sid_bytes, bytes) else sid_bytes
-            # activity 集缺条目（如旧会话从未写 activity）时退回 refs_order 首条时间
-            raw_score = score_map.get(sid)
-            if raw_score is None:
-                earliest = await self._r.zrange(self._refs_order_key(sid), 0, 0, withscores=True)
-                raw_score = earliest[0][1] if earliest else None
-            if raw_score is None:
-                scored.append((sid, None))
-            else:
-                scored.append((sid, float(raw_score)))
-        now = time.time()
-        # Oldest idle first. score==0 / missing = brand-new — never treated as
-        # epoch-idle (#1386 R02). Overflow of *live* sessions is kept.
-        idle = [
-            (sid, score) for sid, score in scored
-            if session_activity_is_idle(score, now, ttl=IDLE_SESSION_TTL)
-        ]
-        idle.sort(key=lambda x: x[1])
-        to_remove = max(0, len(scored) - max_sessions)
-        cleaned = 0
-        for sid, _ in idle[:to_remove]:
-            # #752: per-session isolation — one failing eviction must not
-            # abort the rest of the list until the next 10-min tick
-            # (clear_session itself degrades on RedisError, but the disk
-            # purge / other exceptions stay contained here too).
-            try:
-                await self.clear_session(sid)
-                cleaned += 1
-            except Exception as e:  # noqa: BLE001 - eviction is per-session best-effort
-                logger.warning("Idle cleanup failed for session %s: %s", sid, e)
-        if cleaned:
-            logger.info("Cleaned up %d idle sessions", cleaned)
+        try:
+            from app.services.session_redis_maintenance import cleanup_idle_sessions
+            await cleanup_idle_sessions(self, max_sessions)
+        except aioredis.RedisError:
+            logger.warning("Redis idle cleanup unavailable; retry next sweep", exc_info=True)
 
     def _evict_ref(self, pipe, session_id: str, ref_id: str, alias: Optional[str] = None) -> None:
         """Add eviction commands to an open pipeline.
@@ -1911,9 +1892,12 @@ return results
         await self._ensure_connected()
         data_key = self._data_key(session_id, ref_id)
         try:
-            if not await self._r.exists(data_key):
-                return False
             async with self._r.pipeline() as pipe:
+                await pipe.watch(data_key)
+                if not await pipe.exists(data_key):
+                    await pipe.unwatch()
+                    return False
+                pipe.multi()
                 pipe.expire(data_key, DATA_TTL)
                 pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
                 pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
@@ -1954,6 +1938,8 @@ return results
             self._events_key(session_id),
             self._map_actions_key(session_id),
             self._map_actions_order_key(session_id),
+            self._ref_revisions_key(session_id),
+            self._ref_digests_key(session_id),
         ]:
             pipe.expire(key, SESSION_TTL)
         pipe.zadd(self._activity_key(), {session_id: time.time()})

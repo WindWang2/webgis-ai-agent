@@ -87,6 +87,7 @@ def derive_event_id(
     subject_key: str,
     occurred_at: datetime,
     payload: Dict[str, Any],
+    org_id: str = "",
 ) -> str:
     """确定性 event_id：同 (source,kind,subject,occurred_at,payload) ⇒ 同 id。
 
@@ -94,6 +95,7 @@ def derive_event_id(
     """
     basis = "|".join(
         (
+            org_id,
             source[:MAX_SOURCE],
             kind,
             subject_key[:MAX_SUBJECT_KEY],
@@ -115,7 +117,7 @@ class SpatialEventEnvelope(BaseModel):
     source: str = Field(default="internal", max_length=MAX_SOURCE)
     subject_type: SubjectType
     subject_key: str = Field(min_length=1, max_length=MAX_SUBJECT_KEY)
-    session_id: Optional[str] = Field(default=None, max_length=64)
+    session_id: Optional[str] = Field(default=None, max_length=128)
     project_id: Optional[str] = Field(default=None, max_length=64)
     occurred_at: datetime
     dedupe_key: Optional[str] = Field(default=None, max_length=128)
@@ -162,7 +164,7 @@ class SpatialEventEnvelope(BaseModel):
 
     @classmethod
     def webhook(
-        cls, *, trusted: bool = True, **kwargs: Any
+        cls, *, trusted: bool, **kwargs: Any
     ) -> "SpatialEventEnvelope":
         """webhook seam 专用构造：允许 source='webhook'（先 HMAC 验签）。"""
         kwargs["source"] = "webhook"
@@ -195,6 +197,7 @@ def derive_id_for(env: "SpatialEventEnvelope") -> str:
         subject_key=env.subject_key,
         occurred_at=env.occurred_at,
         payload=env.payload,
+        org_id=env.org_id,
     )
 
 
@@ -289,7 +292,7 @@ class SpatialWatch(BaseModel):
     enabled: bool = True
     kinds: List[str] = Field(min_length=1)
     subject_key_prefix: Optional[str] = Field(default=None, max_length=MAX_SUBJECT_KEY)
-    session_id: Optional[str] = Field(default=None, max_length=64)
+    session_id: Optional[str] = Field(default=None, max_length=128)
     project_id: Optional[str] = Field(default=None, max_length=64)
     condition: WatchCondition = Field(default_factory=WatchCondition)
     actions: List[str] = Field(min_length=1)

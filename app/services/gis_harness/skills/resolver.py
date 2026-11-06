@@ -207,7 +207,7 @@ class SkillResolver:
         elif result.clarification is None:
             # 零候选：与其静默无果，不如显式请求澄清（S4 clarification 语义）
             result.clarification = SkillClarification(
-                reason_code="NO_MATCH",
+                reason_code="ALL_INELIGIBLE" if result.rejected else "NO_MATCH",
                 detail="没有命中任何技能：目标可能超出当前技能库或表述不足",
                 question_hints=[
                     "想分析什么对象或现象？",

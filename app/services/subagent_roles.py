@@ -454,14 +454,15 @@ class SubagentBudget:
                 f"wall_time > {self.max_wall_time_s}s"
             )
 
-    def check_tokens(self) -> None:
+    def check_tokens(self, *, in_flight_tokens: int = 0) -> None:
         """V6：token 预算闸（class 上限；usage 缺席 → 不误伤，诚实为 0）。
         在 add_llm_usage 后由调用方检查（与 check_wall_time 同节奏）。"""
         if self.max_total_tokens <= 0:
             return
-        if self._total_tokens > self.max_total_tokens:
+        total = self._total_tokens + max(0, int(in_flight_tokens))
+        if total > self.max_total_tokens:
             raise BudgetExceeded(
-                f"total_tokens {self._total_tokens} > {self.max_total_tokens}"
+                f"total_tokens {total} > {self.max_total_tokens}"
             )
 
     def remaining_wall_time_s(self) -> float:
@@ -493,7 +494,9 @@ def wrap_dispatch_with_budget(dispatch_fn, budget: SubagentBudget, registry):
 
     async def _budgeted(tc, session_id, executed_tools=None):
         budget.check_wall_time()
-        budget.check_tokens()  # V6 D8：token 上限闸（usage 由引擎通道累计）
+        from app.lib.runtime.evidence import current_turn_evidence
+        evidence = current_turn_evidence()
+        budget.check_tokens(in_flight_tokens=int(getattr(evidence, "total_tokens", 0) or 0))
         func_info = tc.get("function", {}) if isinstance(tc, dict) else {}
         name = func_info.get("name") or ""
         try:

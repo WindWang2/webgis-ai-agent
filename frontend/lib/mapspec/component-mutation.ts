@@ -87,7 +87,7 @@ export async function commitComponentPatch(
     if (!sessionId || sessionId !== enqueuedSessionId) return;
     try {
       const data = await apiFetch<MutationResponse>(
-        `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+        `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/mapspec/mutations`,
         {
           method: 'POST',
           body: {
@@ -190,7 +190,7 @@ export async function commitComponentLifecycle(
     }
     try {
       const data = await apiFetch<MutationResponse>(
-        `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+        `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/mapspec/mutations`,
         {
           method: 'POST',
           body,

@@ -6,7 +6,7 @@
 
 - ``RLIMIT_AS``  = max_memory_mb（虚拟内存上界；malloc 失败 → MemoryError
   → 崩溃 → typed WORKER_CRASHED）；
-- ``RLIMIT_CPU`` = max_cpu_seconds（软=硬；超时 SIGXCPU/SIGKILL）；
+- ``RLIMIT_CPU`` = 每次调用的 CPU 软预算（保留系统硬上限；超时 SIGXCPU）；
 - 输出上限不依赖 OS：server 在序列化应答时按 manifest
   ``execution.max_output_bytes`` 强制（OUTPUT_LIMIT_EXCEEDED）；
 - 平台不支持（非 POSIX / setrlimit 失败）→ **typed 降级告警**（不虚假
@@ -20,6 +20,7 @@ from typing import Optional
 # 未声明时的缺省（与 manifest.ExecutionDeclaration 缺省一致）。
 DEFAULT_MAX_MEMORY_MB = 512
 DEFAULT_MAX_CPU_SECONDS = 60
+_cpu_budget_seconds: Optional[int] = None
 
 
 def apply_resource_limits(
@@ -28,6 +29,8 @@ def apply_resource_limits(
 ) -> tuple[list[str], list[str]]:
     """施加 POSIX rlimits。返回 (applied, warnings)——警告是 typed 降级
     的证据（宿主将其转为 RESOURCE_LIMIT_UNAVAILABLE warning 诊断）。"""
+    global _cpu_budget_seconds
+    _cpu_budget_seconds = None
     applied: list[str] = []
     warnings: list[str] = []
     try:
@@ -44,8 +47,27 @@ def apply_resource_limits(
     if max_cpu_seconds:
         limit = int(max_cpu_seconds)
         try:
-            resource.setrlimit(resource.RLIMIT_CPU, (limit, limit))
-            applied.append(f"RLIMIT_CPU={limit}")
+            _set_cpu_deadline(limit)
+            _cpu_budget_seconds = limit
+            applied.append(f"RLIMIT_CPU={limit}s per call")
         except (OSError, ValueError) as exc:
             warnings.append(f"RLIMIT_CPU unavailable: {exc}")
     return applied, warnings
+
+
+def _set_cpu_deadline(seconds: int) -> None:
+    import math
+    import resource
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    consumed = usage.ru_utime + usage.ru_stime
+    _soft, hard = resource.getrlimit(resource.RLIMIT_CPU)
+    deadline = math.ceil(consumed + seconds)
+    if hard != resource.RLIM_INFINITY:
+        deadline = min(deadline, hard)
+    resource.setrlimit(resource.RLIMIT_CPU, (deadline, hard))
+
+
+def renew_call_cpu_budget() -> None:
+    """Refresh once per request, including all events of a streaming request."""
+    if _cpu_budget_seconds is not None:
+        _set_cpu_deadline(_cpu_budget_seconds)

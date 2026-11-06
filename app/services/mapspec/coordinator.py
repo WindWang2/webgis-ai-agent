@@ -8,6 +8,7 @@ import asyncio
 import os
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -23,19 +24,9 @@ _CLI_COMPILE_TIMEOUT_SEC = 45
 
 async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str, Any]:
     """通过 TS CLI 编译 MapSpec 文件为 MapLibre style.json + index.html"""
-    target_out_dir.mkdir(parents=True, exist_ok=True)
-    if os.name == "nt":
-        cmd_shim = _CLI_LOCAL_BIN.with_suffix(".cmd")
-        if cmd_shim.exists():
-            cmd = [str(cmd_shim)]
-        elif _CLI_LOCAL_BIN.exists():
-            cmd = [str(_CLI_LOCAL_BIN)]
-        else:
-            cmd = ["npx", "jiti"]
-    elif _CLI_LOCAL_BIN.exists():
-        cmd = [str(_CLI_LOCAL_BIN)]
-    else:
-        cmd = ["npx", "jiti"]
+    await asyncio.to_thread(target_out_dir.mkdir, parents=True, exist_ok=True)
+    executable = _CLI_LOCAL_BIN.with_suffix(".cmd") if os.name == "nt" else _CLI_LOCAL_BIN
+    cmd = [str(executable)]  # Missing pinned dependency fails closed; never download at runtime.
     cmd += [
         str(_CLI_PATH),
         "--input",
@@ -71,7 +62,7 @@ async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str,
         stderr_text = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
 
         report_file = target_out_dir / "compile-report.json"
-        if report_file.exists():
+        if await asyncio.to_thread(report_file.exists):
             report = await asyncio.to_thread(
                 lambda: json.loads(report_file.read_text(encoding="utf-8"))
             )
@@ -98,7 +89,7 @@ async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str,
 
     style: Dict[str, Any] = {}
     style_file = target_out_dir / "style.json"
-    if style_file.exists():
+    if await asyncio.to_thread(style_file.exists):
         try:
             style = await asyncio.to_thread(
                 lambda: json.loads(style_file.read_text(encoding="utf-8"))
@@ -115,9 +106,20 @@ async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str,
 
 
 def validate(mapspec: Dict[str, Any]) -> Dict[str, Any]:
+    """Malformed caller structures produce validation errors, never TypeError."""
+    try:
+        return _validate_structure(mapspec)
+    except (TypeError, ValueError, IndexError, KeyError, AttributeError, OverflowError) as exc:
+        logger.debug("MapSpec structure invalid: %s", type(exc).__name__)
+        return {"success": False, "errors": [{"code": "INVALID_MAPSPEC_SHAPE", "message": "Invalid MapSpec structure"}], "warnings": []}
+
+
+def _validate_structure(mapspec: Dict[str, Any]) -> dict[str, object]:
     """MapSpec 结构 Pre-compile 校验纯函数"""
     errors: List[Dict[str, Any]] = []
     warnings: List[str] = []
+    if not isinstance(mapspec, dict) or not isinstance(mapspec.get("sources", {}), dict) or not isinstance(mapspec.get("layers", []), list):
+        return {"success": False, "errors": [{"code": "INVALID_MAPSPEC_SHAPE", "message": "sources must be an object and layers an array"}], "warnings": []}
 
     sources = mapspec.get("sources", {})
     layers = mapspec.get("layers", [])
@@ -127,11 +129,17 @@ def validate(mapspec: Dict[str, Any]) -> Dict[str, Any]:
 
     source_keys = set(sources.keys())
     for layer in layers:
+        if not isinstance(layer, dict):
+            errors.append({"code": "INVALID_LAYER_SHAPE", "message": "layer must be an object"})
+            continue
         l_source = layer.get("source")
         if l_source not in source_keys:
             errors.append({"code": "INVALID_SOURCE_REF", "message": f"Layer '{layer.get('id')}' references missing source '{l_source}'"})
 
         paint = layer.get("paint", {})
+        if not isinstance(paint, dict):
+            errors.append({"code": "INVALID_PAINT_SHAPE", "message": "paint must be an object"})
+            continue
         for prop, method in paint.items():
             if isinstance(method, dict):
                 m_type = method.get("method")
@@ -141,12 +149,26 @@ def validate(mapspec: Dict[str, Any]) -> Dict[str, Any]:
                     # a MapLibre `step` with a single threshold + default is valid,
                     # so step needs >=1. Requiring >=2 for step was a false positive
                     # that rejected legitimate graduated classifications.
+                    if not isinstance(stops, list) or any(not isinstance(stop, (list, tuple)) or len(stop) < 2 for stop in stops):
+                        errors.append({"code": "INVALID_STOPS_SHAPE", "message": "stops require [number, value] pairs"})
+                        continue
+                    if any(isinstance(stop[0], bool) or not isinstance(stop[0], (int, float))
+                           or not math.isfinite(stop[0]) for stop in stops):
+                        errors.append({"code": "INVALID_STOP_VALUE", "message": "stop thresholds must be finite numbers"})
+                        continue
                     min_stops = 2 if m_type == "interpolate" else 1
                     if len(stops) < min_stops:
                         errors.append({"code": "INVALID_STOPS_COUNT", "message": f"Property '{prop}' in layer '{layer.get('id')}' requires at least {min_stops} stops for {m_type}"})
                     else:
                         for i in range(len(stops) - 1):
-                            if stops[i][0] >= stops[i + 1][0]:
+                            left, right = stops[i][0], stops[i + 1][0]
+                            if (isinstance(left, bool) or isinstance(right, bool)
+                                    or not isinstance(left, (int, float))
+                                    or not isinstance(right, (int, float))
+                                    or not math.isfinite(left) or not math.isfinite(right)):
+                                errors.append({"code": "INVALID_STOP_VALUE", "message": f"Property {prop!r} requires numeric stops"})
+                                break
+                            if left >= right:
                                 errors.append({"code": "NON_INCREASING_STOPS", "message": f"Property '{prop}' stops must be strictly increasing: {stops[i][0]} >= {stops[i+1][0]}"})
                                 break
 

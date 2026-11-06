@@ -148,7 +148,7 @@ def liveness_check() -> LivenessResponse:
 
 @router.get("/ready", response_model=ReadyResponse)
 def readiness_check() -> JSONResponse:
-    """就绪检查：数据库 + LLM + Redis + Celery 连通性。
+    """就绪检查：本进程硬依赖数据库与 Redis；LLM/Celery 属于降级信号。
 
     任一依赖不可达时返回 HTTP 503，让 k8s readinessProbe 暂停把流量打过来；
     全部就绪时返回 HTTP 200。
@@ -159,17 +159,9 @@ def readiness_check() -> JSONResponse:
     日志里保留，运维仍可定位故障点。
     """
     db_ready = _check_db()
-    llm_ready = _check_llm()
     redis_ready = _check_redis()
-    celery_ready = _check_celery()
-
-    all_ready = db_ready and llm_ready and redis_ready and celery_ready
-
-    # 详细连通信息写日志，不进响应体
-    logger.info(
-        "readiness: ready=%s db=%s llm=%s redis=%s celery=%s",
-        all_ready, db_ready, llm_ready, redis_ready, celery_ready,
-    )
+    all_ready = db_ready and redis_ready
+    logger.info("readiness: ready=%s db=%s redis=%s", all_ready, db_ready, redis_ready)
 
     # k8s readinessProbe 只看 HTTP 状态码；body 仅返回极简状态，避免信息泄露。
     return JSONResponse(
@@ -195,7 +187,7 @@ import weakref as _weakref
 
 from fastapi import Depends as _Depends
 
-from app.core.auth import get_current_user as _get_current_user
+from app.core.auth import require_admin as _require_admin
 from app.schemas.health_schema import SreComponentStatus
 
 
@@ -379,22 +371,13 @@ async def _count_stuck_jobs() -> Optional[int]:
         return None
 
 
-@router.get("/status/detailed", response_model=SreStatusReport)
-async def sre_status_detailed(
-    _current_user: dict = _Depends(_get_current_user),
-) -> JSONResponse:
-    """鉴权 SRE 组件健康分类学（Epic 10 W11）。
-
-    安全模型见文件头注释：不在限流豁免前缀内 + JWT 鉴权 + 组件拓扑
-    细节只在鉴权面暴露（B-1）。TTL 10s 缓存，快照原子换入；k8s probe
-    不得指向本端点（/health/live、/ready 语义不变）。整体 down → 503
-    （与 /ready 的探测语义对齐，M-3），degraded 保持 200。
-    """
+async def refresh_sre_snapshot(*, force: bool = False) -> None:
+    """Refresh metric gauges/cache without requiring an HTTP diagnostic request."""
     global _cache_snapshot, _cache_written_at
     now = _time.monotonic()
-    if _cache_snapshot is None or now - _cache_written_at >= _CACHE_TTL_S:
+    if force or _cache_snapshot is None or now - _cache_written_at >= _CACHE_TTL_S:
         async with _refresh_guard():
-            if _cache_snapshot is None or \
+            if force or _cache_snapshot is None or \
                     _time.monotonic() - _cache_written_at >= _CACHE_TTL_S:
                 fresh = await _asyncio.to_thread(_collect_sre_snapshot)
                 stuck = await _count_stuck_jobs()
@@ -408,6 +391,20 @@ async def sre_status_detailed(
                 with _cache_lock:
                     _cache_snapshot = fresh
                     _cache_written_at = _time.monotonic()
+
+
+@router.get("/status/detailed", response_model=SreStatusReport)
+async def sre_status_detailed(
+    _current_user: dict = _Depends(_require_admin),
+) -> JSONResponse:
+    """鉴权 SRE 组件健康分类学（Epic 10 W11）。
+
+    安全模型见文件头注释：不在限流豁免前缀内 + 实时管理员角色鉴权；组件拓扑
+    细节仅向管理员暴露（B-1）。TTL 10s 缓存，快照原子换入；k8s probe
+    不得指向本端点（/health/live、/ready 语义不变）。整体 down → 503
+    （与 /ready 的探测语义对齐，M-3），degraded 保持 200。
+    """
+    await refresh_sre_snapshot()
     with _cache_lock:
         snap = _cache_snapshot
         written = _cache_written_at

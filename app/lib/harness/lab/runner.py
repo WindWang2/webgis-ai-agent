@@ -100,7 +100,7 @@ class LabRunner:
 
     @staticmethod
     def _last_goal_status(contributions: List[DimensionVerdict]) -> Optional[str]:
-        for c in contributions:
+        for c in reversed(contributions):
             if c.dimension == "goal_completion" and c.value:
                 return str(c.value)
         return None
@@ -109,7 +109,7 @@ class LabRunner:
     def _evidence_count(contributions: List[DimensionVerdict]) -> Optional[int]:
         total = 0
         seen = False
-        for c in contributions:
+        for c in reversed(contributions):
             if c.dimension == "evidence_completeness" \
                     and isinstance(c.value, int):
                 total += c.value

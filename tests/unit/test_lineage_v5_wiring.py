@@ -189,6 +189,36 @@ class TestExecutionBundleWiring:
 class TestRunEndpointExposure:
     client = TestClient(__import__("app.main", fromlist=["app"]).app)
 
+    @pytest.fixture(autouse=True)
+    def _live_actor(self, tmp_path, monkeypatch):
+        from contextlib import asynccontextmanager
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        from sqlalchemy.pool import NullPool
+        from app.core import auth, database
+        from app.models.db_model import User, Organization
+        path = tmp_path / "lineage-http.db"
+        sync = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(sync)
+        factory = sessionmaker(sync, expire_on_commit=False)
+        with factory() as db:
+            db.add(Organization(id=1, name="lineage", slug="lineage"))
+            db.add(User(id="wave11-rest", username="wave11-rest", email="lineage@example.test", org_id=1, role="editor", is_active=True))
+            db.commit()
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool)
+        async_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+        @asynccontextmanager
+        async def sessions():
+            async with async_factory() as db:
+                yield db
+        monkeypatch.setattr(database, "SessionLocal", factory)
+        monkeypatch.setattr(database, "AsyncSessionLocal", async_factory)
+        monkeypatch.setattr(database, "async_db_session", sessions)
+        auth.invalidate_live_user_state()
+        yield
+        auth.invalidate_live_user_state()
+        asyncio.run(async_engine.dispose())
+        sync.dispose()
+
     @staticmethod
     def _auth(user_id: str = "wave11-rest") -> dict[str, str]:
         from app.core.auth import create_access_token
@@ -314,12 +344,15 @@ def db_session():
 
 
 def _seed(db, name="p", org_id=1):
-    from app.models.db_model import Organization
+    from app.models.db_model import Organization, User
 
     db.add(Organization(id=org_id, name=f"o{org_id}", slug=f"o{org_id}"))
     db.commit()
+    actor = f"lineage-owner-{org_id}"
+    db.add(User(id=actor, username=actor, email=f"{actor}@example.test", org_id=org_id, role="editor", is_active=True))
+    db.commit()
     proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name=name,
-                   org_id=org_id, status="active")
+                   org_id=org_id, owner_id=actor, status="active")
     db.add(proj)
     db.commit()
     return proj
@@ -334,8 +367,9 @@ class _Reg:
         return self.version
 
     async def dispatch(self, name, args, session_id=None):
-        return {"success": True, "ref_id": f"ref:{name}",
-                "feature_count": 3, "bbox": [0, 0, 1, 1]}
+        from app.services.session_data import session_data_manager
+        ref = await session_data_manager.store(session_id, {"type": "FeatureCollection", "features": _fc()}, prefix="data")
+        return {"success": True, "ref_id": ref, "feature_count": 4, "bbox": [0, 0, 1, 1]}
 
 
 def _wf(db, proj_id, steps, name="wf"):
@@ -348,15 +382,16 @@ def _wf(db, proj_id, steps, name="wf"):
         db, proj_id,
         WorkflowCreate(name=name, graph_spec=WorkflowGraphSpec(
             steps=[WorkflowStepSpec(**s) for s in steps])),
-        org_id=1)  # security F-11: ownerless org project is org-only
+        user_id=db.get(Project, proj_id).owner_id, org_id=1)
 
 
 def _run_wf(db, wf, proj, **kw):
     from app.services.workflow_engine import WorkflowEngine
 
+    kw.setdefault("session_id", "lineage-session")
     return asyncio.run(WorkflowEngine.execute_workflow_run(
         db=db, workflow_id=wf.id, tool_registry=_Reg(),
-        expected_project_id=proj.id, **kw))
+        expected_project_id=proj.id, user_id=proj.owner_id, org_id=proj.org_id, **kw))
 
 
 class TestWorkflowManifestEndToEnd:
@@ -378,7 +413,7 @@ class TestWorkflowManifestEndToEnd:
 
         replay = asyncio.run(WorkflowEngine.replay_run(
             db=db, prior_run_id=run.id, tool_registry=_Reg(), mode="exact",
-            expected_project_id=proj.id, session_id="sess"))
+            expected_project_id=proj.id, user_id=proj.owner_id, org_id=proj.org_id, session_id="sess"))
         assert replay.run_manifest["reproducibility"] == verdict
         assert run.run_fingerprint == replay.run_fingerprint, (
             "verdict must not churn the run fingerprint across replays"

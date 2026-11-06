@@ -4,7 +4,7 @@
 - 键 = sha256(scope_key + canonical(request) + Σ per-source fingerprint +
   engine)；**全局域连接禁止入缓存**（owner=None → 跨会话串结果风险归零）；
 - 命中条件：TTL 内 ∧ 每源 fingerprint 与 catalog 当前一致（本地 catalog
-  读，无网络）；fingerprint 失效的残余陈旧以 ``basis="ttl+fingerprint"``
+  读，无网络）；fingerprint 失效的残余陈旧以 ``basis="ttl+descriptor_fingerprint"``
   显式披露（Epic 红线：无 stale silent success —— 命中必披露）；
 - 负缓存：仅 SourceUnreachable/SourceAuthFailed，TTL 30s、容量 64；
   预算超限/取消**绝不缓存**；
@@ -36,6 +36,8 @@ def canonical_request_payload(
     limit: Any,
     order_strategy: Any,
     derive_projection: Any,
+    budget: Any = None,
+    stats_hints: Any = None,
 ) -> Dict[str, Any]:
     """请求的确定性规范化（sort_keys 全程；engine 由调用方附入键）。"""
     def _src(s: Any) -> Any:
@@ -77,12 +79,15 @@ def canonical_request_payload(
         }
 
     return {
-        "sources": sorted((_src(s) for s in sources), key=lambda d: json.dumps(d, sort_keys=True, default=str)),
+        "sources": ([_src(s) for s in sources] if order_strategy == "given"
+                    else sorted((_src(s) for s in sources), key=lambda d: json.dumps(d, sort_keys=True, default=str))),
         "joins": [_join(j) for j in joins],
         "bbox": list(bbox) if bbox else None,
         "limit": limit,
         "order_strategy": order_strategy,
         "derive_projection": bool(derive_projection),
+        "budget": budget.model_dump() if hasattr(budget, "model_dump") else budget,
+        "stats_hints": stats_hints.model_dump() if hasattr(stats_hints, "model_dump") else stats_hints,
     }
 
 
@@ -166,32 +171,28 @@ class FederatedResultCache:
         """返回命中载荷（含 ``result_cache`` 披露段）或 None。"""
         with self._lock:
             entry = self._entries.get(key)
+            if entry is not None and entry.is_expired():
+                self._drop_locked(key)
+                entry = None
             if entry is None:
                 self.misses += 1
-                remote = self._backend_get(key)
-                if remote is not None:
-                    self.hits += 1
-                    return remote
-                return None
-            if entry.is_expired():
-                self._drop_locked(key)
-                self.misses += 1
-                remote = self._backend_get(key)
-                if remote is not None:
-                    self.hits += 1
-                    return remote
-                return None
-            if current_fingerprints is not None and any(
+            elif current_fingerprints is not None and any(
                 entry.fingerprints.get(sid) != fp
                 for sid, fp in current_fingerprints.items()
             ):
-                # 数据修订变化 → 不可信（异步失效后当 miss）
                 self._drop_locked(key)
                 self.misses += 1
                 return None
-            self._entries.move_to_end(key)
-            self.hits += 1
-            age = round(time.time() - entry.created_at, 3)
+            else:
+                self._entries.move_to_end(key)
+                self.hits += 1
+                age = round(time.time() - entry.created_at, 3)
+        if entry is None:
+            remote = self._backend_get(key)
+            if remote is not None:
+                with self._lock:
+                    self.hits += 1
+            return remote
         payload = entry.payload
         if isinstance(payload, dict):
             disclosed = dict(payload)
@@ -199,7 +200,8 @@ class FederatedResultCache:
                 "hit": True,
                 "age_s": age,
                 "ttl_s": entry.ttl_s,
-                "basis": "ttl+fingerprint",
+                "basis": "ttl+descriptor_fingerprint",
+                "remote_content_revalidated": False,
                 "key": key[:16],
             }
             return disclosed
@@ -313,7 +315,8 @@ class FederatedResultCache:
                 "hit": True,
                 "age_s": None,  # 分布式 TTL 不回传创建时刻 —— 诚实未知
                 "ttl_s": self._ttl_s,
-                "basis": "ttl+fingerprint+distributed",
+                "basis": "ttl+descriptor_fingerprint+distributed",
+                "remote_content_revalidated": False,
                 "key": key[:16],
             }
         return payload

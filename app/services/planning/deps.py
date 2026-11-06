@@ -130,9 +130,13 @@ def _resolve_path_ref(
     if step_id not in completed_results:
         raise MissingRefError(step_id, path, list(completed_results))
     cur = completed_results[step_id]
+    if isinstance(cur, dict) and cur.get("__slim__") is True:
+        raise MissingRefError(step_id, path, list(completed_results))
     if not path:
         return cur
     for part in path.split("."):
+        if isinstance(cur, dict) and cur.get("__slim__") is True:
+            raise MissingRefError(step_id, path, list(completed_results))
         if isinstance(cur, dict):
             if part not in cur:
                 raise MissingRefError(step_id, path, list(completed_results))

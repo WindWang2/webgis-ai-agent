@@ -2,7 +2,7 @@
 投影读面 / 删除会话 tombstone。模式同 test_map_action_acks.py。"""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -171,18 +171,20 @@ async def test_projection_endpoint_readonly(client, store):
 
 
 @pytest.mark.asyncio
-async def test_endpoint_persist_degraded_disclosed(client, store):
+async def test_endpoint_persist_degraded_disclosed(client, store, monkeypatch):
     """存储降级：分类照给 + persist_degraded 披露（不 500）；重试由水印收敛。"""
 
     class DegradedStore(MemorySessionStore):
         async def set_map_state(self, session_id, key, value):
             return False
 
+    monkeypatch.setattr("app.services.session_state_atomic.atomic_update_state", AsyncMock(return_value=None))
     with _patch_store(DegradedStore()):
         resp = await client.post(_url("sess-ir8"), json={"events": [_event(1)]})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["accepted"] == 1
+    assert body["accepted"] == 0
+    assert body["acks"] == []
     assert body["persist_degraded"] is True
 
 

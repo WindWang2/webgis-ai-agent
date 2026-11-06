@@ -44,6 +44,8 @@ class KnowledgeEngine:
         tenant: Optional[TenantContext] = None,
     ) -> Dict[str, Any]:
         """Process, chunk, embed, and index a document into the vector store."""
+        if not tenant or (not tenant.is_admin and not (tenant.user_id or tenant.org_id)):
+            return {"error": "An authenticated document owner is required"}
         if not content.strip():
             return {"error": "Document content is empty"}
 
@@ -153,9 +155,8 @@ class KnowledgeEngine:
                 u_id = user_id or None
                 o_id = org_id or None
 
-                if not u_id and not o_id:
-                    if c_user is not None or c_org is not None:
-                        continue
+                if (not u_id and not o_id) or (c_user is None and c_org is None):
+                    continue
                 else:
                     if c_user is not None and c_user != u_id:
                         continue
@@ -171,30 +172,23 @@ class KnowledgeEngine:
     async def delete_document(
         self, doc_id: str, tenant: Optional[TenantContext] = None
     ) -> bool:
-        """Mark document as deleted and trigger compaction if threshold exceeded."""
+        """Mark the owned document deleted; physical compaction is maintenance."""
         # #1113 P3-1: mark_deleted rewrites full metadata.json + fsync — off-loop.
-        await asyncio.to_thread(self._store.mark_deleted, doc_id)
+        if tenant is None or (not tenant.is_admin and not (tenant.user_id or tenant.org_id)):
+            return False
+        deleted = await asyncio.to_thread(self._store.mark_deleted, doc_id, user_id=tenant.user_id,
+                                          org_id=tenant.org_id, is_admin=tenant.is_admin, enforce_tenant=True)
+        if not deleted:
+            return False
         logger.info(f"KnowledgeEngine: soft-deleted doc_id={doc_id}")
 
-        stats = self._store.get_stats()
-        deleted_count = stats.get("deleted_count", 0)
-        total_vectors = stats.get("total_vectors", 0)
-
-        if total_vectors > 0 and (deleted_count / total_vectors) >= 0.20:
-            logger.info("KnowledgeEngine: deleted ratio exceeds 20%, executing compact()")
-            await self.compact_index()
-
+        # Soft deletion immediately hides the document. Compaction is an
+        # explicit maintenance operation, never latency or shared-index-lock
+        # work in a caller's deletion request.
         return True
 
     async def compact_index(self) -> Dict[str, Any]:
-        """Compact underlying vector index.
-
-        Offloaded to a worker thread: compact() re-embeds the entire active
-        corpus via SentenceTransformer (seconds for any non-trivial KB),
-        which would otherwise stall the uvicorn event loop on a single
-        DELETE /knowledge/document request. Mirrors the asyncio.to_thread
-        treatment PR #289 applied to index_document/search.
-        """
+        """Explicitly compact existing vectors off the event loop."""
         if hasattr(self._store, "compact"):
             return await asyncio.to_thread(self._store.compact)
         return {}

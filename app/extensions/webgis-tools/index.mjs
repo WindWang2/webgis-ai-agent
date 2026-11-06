@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 
 const WEBGIS_API_BASE = process.env.WEBGIS_API_BASE ?? "http://localhost:8000";
 const BRIDGE_SECRET = process.env.WEBGIS_BRIDGE_SECRET ?? "";
-const TURN_CONTEXT_RE = /WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
+const TURN_CONTEXT_SUFFIX_RE = /(?:^|\n\n)\[WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\]\n\n\(Internal routing context; do not quote or modify this marker\.\)\s*$/;
 
 const FALLBACK_NATIVE = [
   "webgis_map_intent",
@@ -34,8 +34,8 @@ const FALLBACK_NATIVE = [
 const EXECUTE_PROXY_NAME = "webgis_execute";
 
 // ADR-0103: per-turn dynamic tool surface. Python attaches the projection to
-// the turn prompt; the last marker wins (same discipline as TURN_CONTEXT).
-const ACTIVE_TOOLS_RE = /\[WEBGIS_ACTIVE_TOOLS:(\[[\s\S]*?\])\]/g;
+// the turn prompt. Only its final control paragraph is authoritative.
+const ACTIVE_TOOLS_SUFFIX_RE = /(?:^|\n\n)\[WEBGIS_ACTIVE_TOOLS:(\[[^\r\n]*?\])\](?:\[工具面(?:提示|资格)\][^\r\n]*)*$/;
 
 const GIS_IDENTITY =
   "You are GeoAgent, a WebGIS spatial analysis agent. You perceive the map, run GIS tools, and produce cartographic insight. Geographic questions use native GIS tools (webgis_map_intent, query_local_poi, get_local_admin_boundary) or webgis_execute for the long tail — never bash, never reading or writing files.";
@@ -79,29 +79,33 @@ export function loadNativeTools() {
   }
 }
 
-let _pinnedTurnToken = "";
+// Kept as a compatibility export; tokens are never retained across contexts.
+export function _resetPinnedTurnToken() {}
 
-export function _resetPinnedTurnToken() {
-  _pinnedTurnToken = "";
+function routingSuffix(prompt) {
+  const match = prompt.match(TURN_CONTEXT_SUFFIX_RE);
+  return match ? { token: match[1], body: prompt.slice(0, match.index) } : null;
+}
+
+function userEntryText(entry) {
+  if (typeof entry === "string") return entry;
+  const message = entry?.message ?? entry;
+  if (message?.role !== "user") return null;
+  if (typeof message.content === "string") return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content.filter((part) => part?.type === "text" && typeof part.text === "string")
+      .map((part) => part.text).join("\n");
+  }
+  return "";
 }
 
 export function currentTurnToken(ctx) {
   const entries = ctx?.sessionManager?.getEntries?.() ?? [];
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    let serialized = "";
-    try {
-      serialized = JSON.stringify(entries[index]);
-    } catch {
-      continue;
-    }
-    const matches = Array.from(serialized.matchAll(TURN_CONTEXT_RE));
-    if (matches.length) {
-      const token = matches[matches.length - 1][1];
-      _pinnedTurnToken = token;
-      return token;
-    }
+    const text = userEntryText(entries[index]);
+    if (text !== null) return routingSuffix(text)?.token ?? "";
   }
-  return _pinnedTurnToken;
+  return "";
 }
 
 export async function postToBridge(toolCallId, name, args, turnToken, options = {}) {
@@ -150,9 +154,6 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
       body: JSON.stringify(body),
       signal: controller.signal,
     });
-    clearTimeout(timeoutId);
-    cleanupSignal?.();
-
     if (!response.ok) {
       let detailText = "";
       try {
@@ -164,7 +165,8 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
         } else if (errJson && typeof errJson.error === "string") {
           detailText = errJson.error;
         }
-      } catch {
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
         // non-JSON response
       }
 
@@ -198,8 +200,6 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
       isError: result.isError,
     };
   } catch (error) {
-    clearTimeout(timeoutId);
-    cleanupSignal?.();
     if (error?.name === "AbortError" || controller.signal.aborted) {
       const wasExternal = options?.signal?.aborted;
       const timeoutSec = Math.round(timeoutMs / 1000);
@@ -218,6 +218,9 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
       details: { error: message, toolName: name },
       isError: true,
     };
+  } finally {
+    clearTimeout(timeoutId);
+    cleanupSignal?.();
   }
 }
 
@@ -360,10 +363,12 @@ export default function webgisToolsExtension(pi) {
       // agent loop starts. Names outside the registered superset are ignored
       // (setActiveToolsByName semantics); the native front door stays active.
       const promptText = typeof event.prompt === "string" ? event.prompt : "";
-      const matches = Array.from(promptText.matchAll(ACTIVE_TOOLS_RE));
-      if (matches.length) {
+      applyActiveTools(surface.defaultActive, "turn-default");
+      const suffix = routingSuffix(promptText);
+      const match = suffix?.body.match(ACTIVE_TOOLS_SUFFIX_RE);
+      if (match) {
         try {
-          const requested = JSON.parse(matches[matches.length - 1][1]);
+          const requested = JSON.parse(match[1]);
           if (Array.isArray(requested)) {
             applyActiveTools(requested.filter((n) => typeof n === "string"), "turn");
           }

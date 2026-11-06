@@ -138,7 +138,7 @@ def test_env_registers_every_model_table():
     probe = (
         "import os\n"
         "from types import SimpleNamespace as _NS\n"
-        "config = _NS(set_main_option=lambda *a, **k: None)\n"
+        "config = _NS(set_main_option=lambda *a, **k: None, attributes={})\n"
         + registration
         + "\nimport json\nprint('TABLES=' + json.dumps(sorted(Base.metadata.tables)))\n"
     )

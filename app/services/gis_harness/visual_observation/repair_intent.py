@@ -11,6 +11,7 @@ plan / apply / 决策账本 / 复验之间的**持久化与传输**面 ——
 clip），ids/labels 各 ≤12/≤8 条。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import hashlib
 import json
@@ -56,6 +57,7 @@ def _norm_defects(defects: Iterable[Any]) -> Tuple[Dict[str, Any], ...]:
         try:
             payload = dataclass_dict(d) if not isinstance(d, dict) else d
         except Exception:  # noqa: BLE001 — 形状漂移条目诚实跳过
+            observe_optional_failure(__name__)
             continue
         if isinstance(payload, dict) and "category" in payload:
             out.append({

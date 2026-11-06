@@ -1,16 +1,13 @@
 """陆地掩膜校验：三区制海陆判定 + 设施类型地表常识（ADR-0195 D5）。
 
 三区制消除假阳性：只有 OCEAN_CONFIDENT（距最近陆地 > ocean_confirm_km，
-默认 150km）上的已知陆上设施才触发 GeographicImpossibilityError 硬阻断；
+默认 150km）也仅作为警示，粗粒度掩膜并不完整覆盖有人岛屿；
 COASTAL_BAND / WATER_BODY 一律降级警示 —— 宁可 WARN 放行，绝不冤杀。
 """
 from __future__ import annotations
 
 from enum import Enum
 
-from app.services.spatial_guardrails.errors import (
-    GeographicImpossibilityError,
-)
 from app.services.spatial_guardrails.geo_index import (
     point_in_ring,
     ring_min_distance_km,
@@ -64,7 +61,7 @@ def classify_point(
         (ring_min_distance_km(lng, lat, ring) for ring in candidates),
         default=float("inf"),
     )
-    if nearest > ocean_confirm_km:
+    if candidates and nearest > ocean_confirm_km:
         return SurfaceZone.OCEAN_CONFIDENT
     return SurfaceZone.COASTAL_BAND
 
@@ -87,7 +84,7 @@ def validate_facility_point(
 ) -> list[GuardrailIssue]:
     """设施点物理常识校验。
 
-    - OCEAN_CONFIDENT + 已知陆上设施 → raise GeographicImpossibilityError；
+    - OCEAN_CONFIDENT + 已知陆上设施 → 警示（掩膜可能漏掉岛屿）；
     - OCEAN_CONFIDENT + 未知类型 → SUSPICIOUS_OCEAN_POINT 警示；
     - WATER_BODY / COASTAL_BAND → 警示（放行）；
     - 返回警示 issue 列表（无警示返回空表）。
@@ -100,17 +97,17 @@ def validate_facility_point(
         if kind in WATER_FACILITY_KINDS:
             return []
         if kind in LAND_FACILITY_KINDS:
-            raise GeographicImpossibilityError(
+            return [
                 _issue(
                     GuardLevel.L2_GEOGRAPHIC_BOUNDS,
-                    DefenseMode.BLOCK,
+                    DefenseMode.WARN_DEGRADE,
                     CODE_OCEAN_POINT_ON_LAND_FACILITY,
                     f"陆上设施（{kind}）落在距最近陆地超过 {ocean_confirm_km:.0f}km 的"
-                    f"开阔水域 ({lng}, {lat})，物理上不可能 —— 疑似坐标幻觉或经纬度倒置",
+                    f"开阔水域 ({lng}, {lat})，请核实坐标（粗掩膜可能遗漏岛屿）",
                     location,
                     evidence,
                 )
-            )
+            ]
         return [
             _issue(
                 GuardLevel.L2_GEOGRAPHIC_BOUNDS,

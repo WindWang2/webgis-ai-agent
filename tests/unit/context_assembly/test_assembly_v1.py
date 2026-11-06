@@ -193,7 +193,7 @@ async def test_harness_state_block_rendered_when_turn_found(monkeypatch):
     from types import SimpleNamespace
 
     harness = SimpleNamespace(
-        context_schema="hk.ctx.v1", turn_found=True, phase="executing",
+        session_id="s1", context_schema="hk.ctx.v1", turn_found=True, phase="executing",
         turn_status="running", completion="", steps_total=3, steps_open=1,
         steps_succeeded=2, steps_failed=0, tool_calls=4,
         open_capabilities=["map_product"], evidence_refs=["art_1"],
@@ -215,7 +215,7 @@ async def test_harness_state_block_killed_by_flag(monkeypatch):
     from types import SimpleNamespace
 
     harness = SimpleNamespace(
-        context_schema="hk.ctx.v1", turn_found=True, phase="executing",
+        session_id="s1", context_schema="hk.ctx.v1", turn_found=True, phase="executing",
         turn_status="running", completion="", steps_total=1, steps_open=0,
         steps_succeeded=1, steps_failed=0, tool_calls=0,
         open_capabilities=[], evidence_refs=[], mission_ref="",

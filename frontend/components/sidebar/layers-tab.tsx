@@ -175,7 +175,8 @@ const LayerRowMemo = React.memo(
     && prev.status === next.status
     && prev.filterBadge === next.filterBadge
     && prev.stale === next.stale
-    && prev.styleClipboard === next.styleClipboard,
+    && prev.styleClipboard === next.styleClipboard
+    && prev.floatingMore === next.floatingMore,
 );
 
 /* ─────────────────────────── 分组抬头 ─────────────────────────── */
@@ -417,6 +418,7 @@ function LayerRow({
   onMove,
   styleClipboard,
   setStyleClipboard,
+  floatingMore = false,
 }: {
   row: WorkspaceRow;
   globalIdx: number;
@@ -435,6 +437,7 @@ function LayerRow({
   onMove: (id: string, delta: -1 | 1) => void;
   styleClipboard: LayerStyle | null;
   setStyleClipboard: (style: LayerStyle | null) => void;
+  floatingMore?: boolean;
 }) {
   const t = useT();
   const layer = row.layer;
@@ -465,7 +468,7 @@ function LayerRow({
   }, [layer.id, layer.opacity]);
 
   return (
-    <>
+    <div className="relative">
       <div
         draggable={!locked}
         onDragStart={() => onDragStart(layer.id)}
@@ -606,6 +609,7 @@ function LayerRow({
           min={0}
           max={100}
           aria-label={t('sidebar.layers.layerOpacityAria', { name: layer.name })}
+          disabled={locked}
           value={draft ?? sliderPercent}
           onChange={(e) => setDraft(parseInt(e.target.value, 10))}
           onPointerUp={() => draft != null && commitOpacity(draft)}
@@ -674,7 +678,7 @@ function LayerRow({
       {showMore && (
         <div
           data-testid={`layer-more-${layer.id}`}
-          className="flex flex-wrap items-center gap-1 border-b border-edge-subtle bg-surface-subtle px-panel py-1"
+          className={clsx("flex flex-wrap items-center gap-1 border-b border-edge-subtle bg-surface-subtle px-panel py-1", floatingMore && "absolute inset-x-0 top-full z-40 shadow-lg")}
         >
           <IconButton
             size="sm"
@@ -734,14 +738,14 @@ function LayerRow({
             <button
               type="button"
               className="rounded-xs px-1 py-0.5 text-micro text-ink-secondary hover:bg-surface-hover hover:text-ink"
-              onClick={() => useHudStore.getState().assignLayersToGroup([layer.id], null)}
+              onClick={() => withDocUndo(t('sidebar.layers.moveOutOfGroup', { name: sectionNameOf(row.groupId ?? '') }), 'user', () => useHudStore.getState().assignLayersToGroup([layer.id], null))}
             >
               {t('sidebar.layers.moveOutOfGroup', { name: sectionNameOf(row.groupId) })}
             </button>
           )}
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -1091,12 +1095,12 @@ export function LayersTab() {
       const targetGroup = layerGroupMembership[targetId] ?? null;
       const draggedGroup = layerGroupMembership[dragId] ?? null;
       if (targetGroup !== draggedGroup) {
-        useHudStore.getState().assignLayersToGroup([dragId], targetGroup);
+        withDocUndo(t('sidebar.layers.moveOutOfGroup', { name: targetGroup ?? '' }), 'user', () => useHudStore.getState().assignLayersToGroup([dragId], targetGroup));
       }
       void reorderLayersAndCommit(current);
       setDragId(null);
     },
-    [dragId, layers, layerGroupMembership],
+    [dragId, layers, layerGroupMembership, t],
   );
 
   const handleDropOnGroup = useCallback(
@@ -1202,6 +1206,7 @@ export function LayersTab() {
     if (tr.kind === 'layer') {
       return (
         <LayerRowMemo
+          floatingMore={flatRows.length > VIRTUAL_THRESHOLD}
           row={tr.row}
           globalIdx={indexById.get(tr.row.layer.id) ?? 0}
           totalCount={layers.length}
@@ -1226,7 +1231,7 @@ export function LayersTab() {
         {tr.emptyBySearch ? t('sidebar.layers.noMatchLayers') : t('sidebar.layers.emptyGroupHint')}
       </div>
     );
-  }, [overGroupId, dragId, dragGroupId, handleDropOnGroup, handleDragOverGroup, handleGroupDragStart, handleGroupDrop, handleGroupIndent, indexById, layers.length, overId, isolatedLayerId, statusMap, filterBadgeMap, staleMap, handleDragStart, handleDragOverRow, handleDropOnRow, handleDragEnd, moveLayer, styleClipboard, t]);
+  }, [overGroupId, dragId, dragGroupId, handleDropOnGroup, handleDragOverGroup, handleGroupDragStart, handleGroupDrop, handleGroupIndent, indexById, layers.length, overId, isolatedLayerId, statusMap, filterBadgeMap, staleMap, handleDragStart, handleDragOverRow, handleDropOnRow, handleDragEnd, moveLayer, styleClipboard, t, flatRows.length]);
 
   return (
     <div className="flex flex-col h-full">
@@ -1322,7 +1327,7 @@ export function LayersTab() {
             <div style={{ height: virtual.totalHeight, position: 'relative' }}>
               <div style={{ transform: `translateY(${virtual.offsetY}px)` }}>
                 {flatRows.slice(virtual.start, virtual.end).map((tr) => (
-                  <div key={tr.key} style={{ height: TREE_ROW_HEIGHT }} className="overflow-hidden">
+                  <div key={tr.key} style={{ height: TREE_ROW_HEIGHT }} className="relative">
                     {renderTreeRow(tr)}
                   </div>
                 ))}

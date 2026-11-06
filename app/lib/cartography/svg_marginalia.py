@@ -281,9 +281,18 @@ def render_inset_locator(x: float, y: float, size: Tuple[float, float],
     except Exception:
         return ""
     w, h = size
+    if not all(math.isfinite(value) for value in (cw, cs, ce, cn, mw, ms, me, mn, w, h)):
+        return ""
+    if ce < cw:
+        ce += 360
+    if me < mw:
+        me += 360
+    # Match the main map to the same longitude world copy as the inset.
+    shift = 360 * round(((cw + ce) - (mw + me)) / 720)
+    mw, me = mw + shift, me + shift
     lng_span = ce - cw
     lat_span = cn - cs
-    if lng_span <= 0 or lat_span <= 0:
+    if lng_span <= 0 or lat_span <= 0 or w <= 0 or h <= 0:
         return ""
     def to_px(lng: float, lat: float) -> Tuple[float, float]:
         return (

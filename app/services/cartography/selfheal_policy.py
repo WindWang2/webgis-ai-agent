@@ -1,4 +1,6 @@
-"""Self-Heal Policy — 自愈策略库与修复效果归因（V11 W7.2/7.3，ADR-0167）。
+"""Experimental Self-Heal Policy — 离线修复效果归因（ADR-0167）。
+
+当前没有生产自动记账/排序调用方；这些显式实验接缝不构成自动降权能力。
 
 任务书：
 - W7.2「自愈策略学习：``selfheal_actions``（现接线仅 1 处）扩为策略库：
@@ -22,7 +24,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, TypedDict, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,6 +33,14 @@ from app.models.intent_learning import CartoFeedbackSignal
 
 #: 归因判定线：actual ≥ expected × 0.5 视为有效（保守半量线，首轮 provisional）。
 EFFECTIVE_RATIO = 0.5
+
+
+class SignalPayload(TypedDict, total=False):
+    context: str
+    expected_effect: float
+    actual_delta: float
+    surface: str
+    risk: str
 
 
 def record_repair_outcome(
@@ -44,11 +54,13 @@ def record_repair_outcome(
     surface: str = "",
     risk: str = "",
     decay_days: float = 30.0,
+    session_id: Optional[str] = None, project_id: Optional[str] = None,
 ) -> Optional[int]:
     """记一条修复成效（成功/失败 + 归因对；fail-safe）。"""
     try:
         row = CartoFeedbackSignal(
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            session_id=session_id, project_id=project_id,
             signal_type="repair_success" if success else "repair_failure",
             weight=1.0,
             decay_days=decay_days,
@@ -73,22 +85,23 @@ def record_repair_outcome(
 
 
 def attribution_rows(
-    db: Session, *, limit: int = 100,
+    db: Session, *, limit: int = 100, session_id: Optional[str] = None, project_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """归因表：逐条 (context, action, expected, actual, verdict)。
 
     ``verdict = effective``（actual ≥ expected×0.5）/ ``ineffective``（否则）
-    —— ineffective 是 W7.3「自动降权」的信号源。
+    —— ineffective 是实验归因结果；本函数不写入降权信号。
     """
     rows = db.execute(
         select(CartoFeedbackSignal)
-        .where(CartoFeedbackSignal.target.like("selfheal:%"))
+        .where(CartoFeedbackSignal.target.like("selfheal:%"),
+               CartoFeedbackSignal.session_id == session_id, CartoFeedbackSignal.project_id == project_id)
         .order_by(CartoFeedbackSignal.created_at.desc())
         .limit(max(1, min(limit, 500)))
     ).scalars()
     out: List[Dict[str, Any]] = []
     for r in rows:
-        payload = r.payload or {}
+        payload = cast(SignalPayload, r.payload or {})
         expected = float(payload.get("expected_effect") or 0.0)
         actual = float(payload.get("actual_delta") or 0.0)
         effective = actual >= expected * EFFECTIVE_RATIO
@@ -104,35 +117,42 @@ def attribution_rows(
     return out
 
 
-def action_success_table(db: Session) -> List[Dict[str, Any]]:
+def action_success_table(db: Session, *, session_id: Optional[str] = None, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """按动作的成功率表（计数 + 衰减有效权重；确定性排序）。
 
     排序：成功率降序 → 样本数降序 → action_id 字典序。
     """
     from app.services.cartography.intent_learning import (
-        effective_signal_weight,
+        FEEDBACK_SIGNAL_POLARITY, QUERY_LIMIT_MAX, signal_decay_factor, _as_aware,
     )
 
     rows = list(db.execute(
         select(CartoFeedbackSignal)
-        .where(CartoFeedbackSignal.target.like("selfheal:%"))
-        .limit(1000)
+        .where(CartoFeedbackSignal.target.like("selfheal:%"),
+               CartoFeedbackSignal.session_id == session_id, CartoFeedbackSignal.project_id == project_id)
+        .order_by(CartoFeedbackSignal.created_at.desc(), CartoFeedbackSignal.id.desc()).limit(1000)
     ).scalars())
     now = datetime.now(timezone.utc)
     by_action: Dict[str, Dict[str, Any]] = {}
     for r in rows:
-        action = r.target.split(":", 1)[1] if ":" in r.target else r.target
+        target = str(r.target)
+        action = target.split(":", 1)[1] if ":" in target else target
         entry = by_action.setdefault(action, {
             "actionId": action, "success": 0, "failure": 0,
             "expectedSum": 0.0, "actualSum": 0.0,
+            "effectiveWeight": 0.0,
         })
         if r.signal_type == "repair_success":
             entry["success"] += 1
         else:
             entry["failure"] += 1
-        payload = r.payload or {}
+        payload = cast(SignalPayload, r.payload or {})
         entry["expectedSum"] += float(payload.get("expected_effect") or 0.0)
         entry["actualSum"] += float(payload.get("actual_delta") or 0.0)
+        if entry["success"] + entry["failure"] <= QUERY_LIMIT_MAX and r.created_at is not None:
+            age_days = max(0.0, (now - _as_aware(cast(datetime, r.created_at))).total_seconds() / 86400)
+            weighted = cast(float, r.weight) * signal_decay_factor(age_days, cast(float, r.decay_days))
+            entry["effectiveWeight"] += weighted if FEEDBACK_SIGNAL_POLARITY.get(str(r.signal_type)) == "positive" else -weighted
     table: List[Dict[str, Any]] = []
     for action, entry in by_action.items():
         samples = entry["success"] + entry["failure"]
@@ -140,8 +160,7 @@ def action_success_table(db: Session) -> List[Dict[str, Any]]:
         entry["successRate"] = round(entry["success"] / samples, 4) if samples else 0.0
         entry["meanExpected"] = round(entry["expectedSum"] / samples, 4) if samples else 0.0
         entry["meanActual"] = round(entry["actualSum"] / samples, 4) if samples else 0.0
-        eff = effective_signal_weight(db, target=f"selfheal:{action}", now=now)
-        entry["effectiveWeight"] = round(eff["positive"] - eff["negative"], 4)
+        entry["effectiveWeight"] = round(entry["effectiveWeight"], 4)
         del entry["expectedSum"], entry["actualSum"]
         table.append(entry)
     table.sort(key=lambda e: (-e["successRate"], -e["samples"], e["actionId"]))
@@ -149,16 +168,16 @@ def action_success_table(db: Session) -> List[Dict[str, Any]]:
 
 
 def rank_actions_by_history(
-    db: Session, candidates: Sequence[str],
+    db: Session, candidates: Sequence[str], *, session_id: Optional[str] = None, project_id: Optional[str] = None,
 ) -> List[str]:
     """按历史成功率重排候选动作（先验只重排，不增删候选 —— 与 W1 同纪律）。
 
-    无历史（冷启动）保持原序；成功率并列按 action_id 稳定序。
+    无历史动作使用中性0.5先验；成功率并列保持候选原序。
     """
-    table = {e["actionId"]: e for e in action_success_table(db)}
+    table = {e["actionId"]: e for e in action_success_table(db, session_id=session_id, project_id=project_id)}
     indexed = list(enumerate(candidates))
     indexed.sort(key=lambda t: (
-        -table.get(t[1], {}).get("successRate", -1.0),
+        -table.get(t[1], {}).get("successRate", 0.5),
         t[0],
     ))
     return [c for _, c in indexed]

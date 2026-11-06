@@ -14,8 +14,8 @@ store 协议（可注入；单测用内存实现）::
 **绝不阻塞** intent 主链路（fail-open，与 clarification 同纪律）。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
-import asyncio
 import contextlib
 import logging
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -55,36 +55,18 @@ REQUIREMENT_STATE_KEY = "requirement_ir_document"
 STATE_SCHEMA = "requirement_ir_state.v1"
 MAX_SUMMARY_CLARIFICATIONS = 2
 MAX_FOLDED_OP_IDS = 128
-# 并发假设（诚实披露，review §4）：service 的读-改-写是**单写者**模型——
-# 生产路径由 Pi turn lease 串行化（agent_pi_bridge._acquire_turn_lease），
-# 同 session 不会有并发写。set_map_state 的 seq 参数传 doc.revision 作为
-# best-effort fencing；跨进程双写不被本模块防御（IR 是 fail-open 旁路，
-# 最坏丢失一次增量，由下一轮 ensure 重建收敛）。
-# 方向 3：answer 端点在 turn 之外执行——与 Pi turn 内的 ensure_document
-# 存在进程内并发窗口。per-session asyncio 锁关闭该窗口（同进程内
-# answer/ensure/patch 全部串行；跨进程仍为上述 best-effort 模型）。
-
-
-_SESSION_WRITER_LOCKS: Dict[str, asyncio.Lock] = {}
-_MAX_WRITER_LOCKS = 512
+# All requirement writers share a namespaced distributed session lease.
+# A degraded lock rejects the write instead of allowing stale read/modify/write.
 
 
 @contextlib.asynccontextmanager
 async def session_writer_lock(session_id: str) -> AsyncIterator[None]:
-    """进程内 per-session 写锁（bounded；answer 端点与 Pi turn 共用）。
+    """Serialize answer, ensure and patch writers across workers."""
+    from app.services.distributed_lock import session_lock_registry
 
-    锁的创建在单事件循环内 get→set 无 await，天然原子；极端会话数下
-    整体重置（有界），被锁保护的是"同会话读-改-写不交错"，锁对象重建
-    至多放行一次并发（与 fail-open 模型一致）。
-    """
-    lock = _SESSION_WRITER_LOCKS.get(session_id)
-    if lock is None:
-        if len(_SESSION_WRITER_LOCKS) >= _MAX_WRITER_LOCKS:
-            _SESSION_WRITER_LOCKS.clear()   # 有界：极端会话数下整体重置
-        lock = asyncio.Lock()
-        _SESSION_WRITER_LOCKS[session_id] = lock
-    async with lock:
+    async with session_lock_registry.lock(f"requirement-ir:{session_id}", fail_on_degraded=True):
         yield
+
 
 
 class SessionState(BaseModel):
@@ -204,7 +186,25 @@ def _resolve_core(
 
 
 def _doc_from(dump: Dict[str, Any]) -> RequirementDocument:
-    return RequirementDocument.model_validate(dump)
+    from copy import deepcopy
+
+    from pydantic import ValidationError
+
+    try:
+        return RequirementDocument.model_validate(dump)
+    except ValidationError as exc:
+        errors = exc.errors()
+        if not errors or any(error["type"] != "string_too_long" for error in errors):
+            raise
+        repaired = deepcopy(dump)
+        for error in errors:
+            target = repaired
+            *parents, key = error["loc"]
+            for parent in parents:
+                target = target[parent]
+            target[key] = target[key][:error["ctx"]["max_length"]]
+        logger.warning("requirement_document_recovered: bounded %d legacy fields", len(errors))
+        return RequirementDocument.model_validate(repaired)
 
 
 def summarize(doc: RequirementDocument) -> Dict[str, Any]:
@@ -320,6 +320,9 @@ async def _ensure_document_unlocked(
         state, doc = _fold_if_needed(state, doc)
         new_dump = doc.model_dump()
         if new_dump != state.document:
+            if doc.revision <= int(state.document.get("revision") or 0):
+                doc.revision = int(state.document.get("revision") or 0) + 1
+                new_dump = doc.model_dump()
             # review N2：无变化的重复 edit 不写——同 seq 重写必被 store 栅栏
             # 拒绝，曾误报 requirement_persist_fenced（无并发、无丢失）。
             state.document = new_dump
@@ -407,6 +410,7 @@ def _restore_user_fields(
         try:
             setter(spec, value)
         except Exception:  # noqa: BLE001 — 携带失败不阻塞重建
+            observe_optional_failure(__name__)
             continue
         spec.field_provenance[path] = prov
     return doc.model_copy(update={"intent": spec})
@@ -454,6 +458,8 @@ async def _apply_user_patches_unlocked(
             errors.append(getattr(exc, "code", "patch_rejected"))
             if getattr(exc, "code", "") == "patch_stale_revision":
                 break
+    if errors:
+        return {"applied": 0, "errors": errors, "summary": summarize(_doc_from(state.document))}
     if applied == 0 and not errors:
         # 幂等重放：全部 patch 命中已知 op_id（journal 折叠/重复提交），
         # 文档零变更——不写 store（同 revision 重写必被单调 seq 栅栏拒绝，

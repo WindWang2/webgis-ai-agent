@@ -36,7 +36,7 @@ def descriptor_to_dataset_profile(descriptor: GISDatasetDescriptor) -> DatasetPr
     """
     fields: Dict[str, str] = {}
     null_ratios: Dict[str, float] = {}
-    time_field = ""
+    time_field = str(descriptor.temporal.time_field or "")
     for entry in descriptor.fields:
         name = entry.name
         fields[name] = _entry_dtype(entry)

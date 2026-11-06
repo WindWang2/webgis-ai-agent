@@ -16,11 +16,14 @@ import { consumePendingLocate, setPendingLocate } from './locate';
 const storage = new Map<string, string>();
 beforeEach(() => {
   storage.clear();
-  vi.mocked(localStorage.getItem).mockImplementation((k: string) => storage.get(k) ?? null);
-  vi.mocked(localStorage.setItem).mockImplementation((k: string, v: string) => {
+  Object.defineProperty(window, 'sessionStorage', { configurable: true, value: {
+    getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn(),
+  } });
+  vi.mocked(sessionStorage.getItem).mockImplementation((k: string) => storage.get(k) ?? null);
+  vi.mocked(sessionStorage.setItem).mockImplementation((k: string, v: string) => {
     storage.set(k, v);
   });
-  vi.mocked(localStorage.removeItem).mockImplementation((k: string) => {
+  vi.mocked(sessionStorage.removeItem).mockImplementation((k: string) => {
     storage.delete(k);
   });
   clearSearchIndex();
@@ -65,7 +68,7 @@ describe('本地索引：构建 / LRU / 体积预算', () => {
     expect(loadPersistedSessions().map((s) => s.id)).toContain('s0');
   });
 
-  it('体积预算：超限整会话淘汰（不写穿 localStorage）', () => {
+  it('体积预算：超限整会话淘汰（不写穿 sessionStorage）', () => {
     const big = Array.from({ length: 10 }, (_, i) =>
       makeSession(`big${i}`, 1000 + i, 200),
     );
@@ -296,7 +299,7 @@ describe('#1745 索引统计 memo（每敲一字不再重解析）', () => {
     clearSearchIndex();
     expect(searchIndexStats()).toMatchObject({ sessions: 0, messages: 0 });
     // 外部（其他标签页）直接写同一 key：原文变化 → 重算，不返回过期值。
-    storage.set('geoagent-cross-session-index-v1', JSON.stringify([makeSession('c', 3, 2)]));
+    storage.set('geoagent-cross-session-index-v1:anonymous', JSON.stringify([makeSession('c', 3, 2)]));
     expect(searchIndexStats()).toMatchObject({ sessions: 1, messages: 2 });
   });
 });

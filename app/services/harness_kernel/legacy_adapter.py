@@ -21,7 +21,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar, Token
-from typing import Any, List, Optional
+from typing import AsyncIterator, Any, List, Optional
 
 from app.services.distributed_lock import session_lock_registry
 from app.services.harness_kernel import metrics as hk_metrics
@@ -45,6 +45,22 @@ from app.services.session_plan import (
 )
 
 logger = logging.getLogger(__name__)
+_background_cleanup_tasks: set[asyncio.Future] = set()
+
+
+def _retain_cleanup(coro: Any) -> asyncio.Future[Any]:
+    task = asyncio.ensure_future(coro)
+    _background_cleanup_tasks.add(task)
+    def done(future: asyncio.Future[Any]) -> None:
+        _background_cleanup_tasks.discard(future)
+        if not future.cancelled():
+            try:
+                future.result()
+            except Exception:
+                logger.debug("Background harness cleanup failed", exc_info=True)
+    task.add_done_callback(done)
+    return task
+
 
 LEGACY_STEP_ID_FMT = "l{}"
 
@@ -138,7 +154,7 @@ async def project_orchestrator_plan(
     lock = _resolve_lock(session_id, lock)
 
     @asynccontextmanager
-    async def _scope():
+    async def _scope() -> AsyncIterator[Any]:
         if lock is not None:
             yield lock
             return
@@ -162,7 +178,7 @@ async def project_orchestrator_plan(
             envelope.user_goal = str(getattr(plan, "intent", "") or "")
             _journal(envelope, "legacy_projected", note="plan projected (new)")
         existing = {s.id: s for s in envelope.steps}
-        steps: List[PlanStep] = []
+        steps: List[PlanStep] = [step for step in envelope.steps if not step.id.startswith("l")]
         for s in getattr(plan, "steps", None) or []:
             sid = LEGACY_STEP_ID_FMT.format(int(getattr(s, "n", 0) or 0))
             prev = existing.get(sid)
@@ -200,7 +216,10 @@ async def project_orchestrator_plan(
         hk_metrics.record("host_parity", host="chatengine")
         if lock is not None and lock.lost:
             return []
-        await save_session_plan(envelope)
+        from app.services.harness_kernel.runtime import _save_if_fresh
+        from app.services.session_data import session_data_manager
+        if not await _save_if_fresh(envelope, store=session_data_manager, host="chatengine"):
+            return []
         return events
 
 
@@ -218,7 +237,7 @@ async def project_canonical_flush(
     lock = _resolve_lock(session_id, lock)
 
     @asynccontextmanager
-    async def _scope():
+    async def _scope() -> AsyncIterator[Any]:
         if lock is not None:
             yield lock
             return
@@ -329,7 +348,7 @@ async def safe_end_turn(session_id: str, turn_id: str, *, status: str) -> None:
 
         await asyncio.wait_for(
             asyncio.shield(
-                asyncio.ensure_future(
+                _retain_cleanup(
                     get_runtime(session_id).end_turn(
                         turn_id,
                         host="chatengine",
@@ -379,7 +398,7 @@ async def settle_after_lock(session_id: str, turn_id: str, *, rt_ev: Any) -> Non
                 session_id, exc,
             )
         await asyncio.wait_for(
-            asyncio.shield(asyncio.ensure_future(hk_settle.settle_turn(
+            asyncio.shield(_retain_cleanup(hk_settle.settle_turn(
                 hk_settle.HarnessSettleInput(
                     session_id=session_id,
                     turn_id=turn_id,

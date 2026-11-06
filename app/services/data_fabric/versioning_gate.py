@@ -27,6 +27,8 @@ import difflib
 import hashlib
 import json
 import os
+import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -200,16 +202,35 @@ class InMemorySnapshotStore:
     """
 
     def __init__(self) -> None:
-        self._snapshots: Dict[Tuple[str, str], SnapshotRecord] = {}
+        self._snapshots: OrderedDict[Tuple[str, str], SnapshotRecord] = OrderedDict()
+        self._sizes: Dict[Tuple[str, str], int] = {}
+        self._lock = threading.RLock()
 
     def put(self, record: SnapshotRecord) -> None:
-        self._snapshots[(record.dataset_key, record.pin)] = record
+        size = len(record.model_dump_json().encode())
+        if size > 16 * 1024 * 1024:
+            raise ValueError("version snapshot exceeds16MiB memory budget")
+        key = (record.dataset_key, record.pin)
+        with self._lock:
+            self._snapshots[key] = record.model_copy(deep=True)
+            self._snapshots.move_to_end(key)
+            self._sizes[key] = size
+            while len(self._snapshots) > 128 or sum(self._sizes.values()) > 32 * 1024 * 1024:
+                victim, _ = self._snapshots.popitem(last=False)
+                self._sizes.pop(victim, None)
 
     def get(self, dataset_key: str, pin: str) -> Optional[SnapshotRecord]:
-        return self._snapshots.get((dataset_key, pin))
+        with self._lock:
+            key = (dataset_key, pin)
+            record = self._snapshots.get(key)
+            if record is not None:
+                self._snapshots.move_to_end(key)
+            return record.model_copy(deep=True) if record is not None else None
 
     def clear(self) -> None:
-        self._snapshots.clear()
+        with self._lock:
+            self._snapshots.clear()
+            self._sizes.clear()
 
 
 
@@ -316,7 +337,8 @@ def pin_or_fetch(
 
 def _latest_snapshot_for(dataset_key: str, store: InMemorySnapshotStore) -> Optional[SnapshotRecord]:
     """Most recent pinned snapshot for the dataset (drift evidence source)."""
-    candidates = [r for (k, _p), r in store._snapshots.items() if k == dataset_key]  # noqa: SLF001
+    with store._lock:
+        candidates = [r.model_copy(deep=True) for (k, _p), r in store._snapshots.items() if k == dataset_key]  # noqa: SLF001
     if not candidates:
         return None
     candidates.sort(key=lambda r: r.created_at, reverse=True)

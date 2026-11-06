@@ -40,9 +40,10 @@ class _RecordingVectorStore:
         self.search_thread = threading.current_thread()
         return []
 
-    def mark_deleted(self, doc_id: str) -> None:
+    def mark_deleted(self, doc_id: str, **kwargs) -> bool:
         self.mark_deleted_thread = threading.current_thread()
 
+        return True
     def compact(self) -> Dict[str, Any]:
         return {}
 

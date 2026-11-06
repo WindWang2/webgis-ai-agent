@@ -76,7 +76,7 @@ successor's entry.
 
 ### Bridge pool (V5-B-2)
 
-`PI_BRIDGE_POOL_SIZE` (default **1**) workers, each a full `PiBridge` owning its
+`PI_BRIDGE_POOL_SIZE` (default **1**, bounded **1–64**; malformed or empty input uses1) workers, each a full `PiBridge` owning its
 own Pi subprocess and event queue. Sessions get **stable affinity**
 (`hashlib.md5(session_id) % N` — deterministic across restarts, unlike `hash()`).
 

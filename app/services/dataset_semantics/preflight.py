@@ -310,8 +310,9 @@ def preflight_multi_dataset(
         for j in range(i + 1, len(items)):
             k1, d1 = items[i]
             k2, d2 = items[j]
-            ov = _bbox_overlap(
-                getattr(d1, "bbox", None), getattr(d2, "bbox", None))
+            crs1, crs2 = _crs_class(getattr(d1, "crs", "")), _crs_class(getattr(d2, "crs", ""))
+            ov = (_bbox_overlap(getattr(d1, "bbox", None), getattr(d2, "bbox", None))
+                  if crs1 and crs1 == crs2 else None)
             if ov is None:
                 spatial_unknown += 1
             elif ov is False:

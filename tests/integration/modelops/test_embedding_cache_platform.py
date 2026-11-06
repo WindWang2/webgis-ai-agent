@@ -107,6 +107,6 @@ def test_cache_disabled_when_entries_zero(synthetic_raster, tmp_path, monkeypatc
     assert settings.embed_cache_max_entries == 0
     svc = ModelOpsService(settings)
     assert svc.embedding_cache_stats() == {"enabled": False}
-    result = svc.run_inference(_embed_request(synthetic_raster, session="disabled-it"))
+    result = svc.run_inference(_embed_request(synthetic_raster, session="disabled-it"), allowed_roots=[synthetic_raster.parent])
     perf = result.manifest["performance"]
     assert perf["embed_cache_hits"] == 0 and perf["embed_cache_misses"] == 0

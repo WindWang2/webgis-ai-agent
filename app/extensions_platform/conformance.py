@@ -1154,18 +1154,19 @@ def execute_case(
         host.unload(extension_id)
         activation = host.reload(extension_id)
 
+    record = host.get_record(extension_id)
     all_diags = list(discovery_diags) + list(activation)
     if case.expectation.startswith("fail:"):
         want = case.expectation.split(":", 1)[1]
-        hit = any(d.code.value == want for d in activation)
+        hit = any(d.code.value == want for d in all_diags)
         return CaseOutcome(case.case_id, hit, f"want {want} in {[d.code.value for d in activation]}")
     if case.expectation.startswith("state:"):
         want_state = case.expectation.split(":", 1)[1]
         clean = not any(d.severity.value == "error" for d in activation)
-        ok = record.state.value == want_state and (clean or want_state == ExtensionState.FAILED.value)
+        ok = record is not None and record.state.value == want_state and (clean or want_state == ExtensionState.FAILED.value)
         return CaseOutcome(
             case.case_id, ok,
-            f"state={record.state.value}, diags={[d.code.value for d in activation]}",
+            f"state={record.state.value if record else 'missing'}, diags={[d.code.value for d in activation]}",
         )
     if case.expectation.startswith("diagnostic:"):
         want = case.expectation.split(":", 1)[1]

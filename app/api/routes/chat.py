@@ -50,6 +50,7 @@ from app.services.auth_history_bridge import require_owned_session
 from app.services.gis_harness.requirement_ir.envelope import ClarificationEnvelope
 from app.core.database import get_async_db
 from app.core.rate_limiter import get_rate_limiter
+from app.core.owner_tokens import owner_token_digest, transport_owner_token
 from app.models.db_model import Conversation, Message
 from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.chat_engine import ChatEngine
@@ -111,7 +112,6 @@ _turn_resume_registry = TurnResumeRegistry()
 # key skips ownership checks, so holding would let anyone who knows the
 # victim's message + Last-Event-ID tail a stranger's live turn — anonymous
 # resumes of live turns get the truthful pending error immediately instead.
-_RESUME_LIVE_HOLD_S = 30.0
 
 # SSE 流式响应头（Pi 和 legacy 路径共用）
 SSE_HEADERS = {
@@ -776,20 +776,6 @@ async def _recorded(stream, buffer: TurnEventBuffer):
         yield chunk
 
 
-def _synthesize_terminal_event(session_key: str, terminal_event: str) -> str:
-    """Synthesize truthful terminal event matching the original terminal type (INV-4)."""
-    term_type = sse_event_type(terminal_event)
-    if term_type == "task_cancelled":
-        return sse_event("task_cancelled", {"session_id": session_key, "resumed": True})
-    if term_type in ("task_error", "error", "step_error"):
-        return sse_event(term_type, {
-            "session_id": session_key,
-            "error": "本轮执行失败；请重试。",
-            "resumed": True,
-        })
-    return sse_event("done", {"session_id": session_key, "resumed": True})
-
-
 # E-8（#899）：DUP-1 续传实现拆分至 chat_resume.py（自包含块原样搬移）。
 # 惰性导入 + 绑定：模块级导入会经 routes 包 __init__ 形成 chat↔chat_resume 环。
 from app.api.routes import chat_resume as _chat_resume_module  # noqa: E402
@@ -855,6 +841,22 @@ async def _guard_body_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
 
+async def _guard_body_project(db: AsyncSession, project_id: Optional[str], user: dict) -> None:
+    if not project_id:
+        return
+    from app.services.project_service import ProjectService
+    from app.core.auth import actor_ids
+
+    user_id, org_id = actor_ids(user)
+    project = await db.run_sync(
+        lambda session: ProjectService.get_project_with_auth(
+            session, project_id, user_id=user_id, org_id=org_id,
+        )
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+
 def _pi_stream_capability(
     conversation,
     created: bool,
@@ -870,7 +872,10 @@ def _pi_stream_capability(
     did not already present.
     """
     if created:
-        return getattr(conversation, "owner_token", None)
+        return transport_owner_token(
+            getattr(conversation, "_issued_owner_token", None)
+            or getattr(conversation, "owner_token", None)
+        )
     if not authorize_session_write(conversation, user_id, owner_token):
         raise HTTPException(status_code=404, detail="Session not found")
     return None
@@ -887,6 +892,7 @@ async def chat_completions(
     """非流式对话接口"""
     user_id = _user.get("user_id")
     await _guard_body_session(db, req.session_id, user_id, owner_token)
+    await _guard_body_project(db, req.project_id, _user)
 
     # #691：复用 middleware 已绑的 request_id（若无则生成），与日志关联一致。
     _mid_req = (rt_ctx.current_runtime_context().request_id
@@ -917,12 +923,10 @@ async def chat_completions(
                 _conv_token = getattr(conversation, "owner_token", None)
                 if _conv_token:
                     try:
-                        import hashlib as _hashlib
-
                         await session_data_manager.set_map_state(
                             _affinity_sid,
                             "owner_token_digest",
-                            _hashlib.sha256(str(_conv_token).encode()).hexdigest(),
+                            owner_token_digest(_conv_token),
                         )
                     except Exception:  # noqa: BLE001 — guard wiring is additive
                         pass
@@ -1162,6 +1166,7 @@ async def chat_stream(
     pi_owner_token: Optional[str] = None
     try:
         await _guard_body_session(db, req.session_id, user_id, owner_token)
+        await _guard_body_project(db, req.project_id, _user)
         if use_pi and last_event_id is None:
             pi_session_id = _affinity_sid
             # Direct route tests use a minimal close-only DB stand-in. Real
@@ -1184,12 +1189,10 @@ async def chat_stream(
                 _conv_token = getattr(conversation, "owner_token", None)
                 if _conv_token:
                     try:
-                        import hashlib as _hashlib
-
                         await session_data_manager.set_map_state(
                             pi_session_id,
                             "owner_token_digest",
-                            _hashlib.sha256(str(_conv_token).encode()).hexdigest(),
+                            owner_token_digest(_conv_token),
                         )
                     except Exception:  # noqa: BLE001 — guard wiring is additive
                         pass
@@ -1504,16 +1507,16 @@ async def list_sessions(
     """
     user_id = _user.get("user_id")
     async with async_db_session() as db:
-        sessions = await AsyncHistoryService(db).list_sessions(limit=limit, offset=offset, user_id=user_id)
-        # P4（ADR-0138）：additive 补齐分页元数据（total 已有，has_more 新增）。
-        # has_more 语义：本页满页即视为可能还有更多（list_sessions 无 total
-        # count，避免为列表页做全表计数 —— 与 #618-9 的 DB 分页纪律一致）。
-        total_sessions = len(sessions)
+        history = AsyncHistoryService(db)
+        sessions = await history.list_sessions(limit=limit + 1, offset=offset, user_id=user_id)
+        has_more = len(sessions) > limit
+        sessions = sessions[:limit]
+        total_sessions = await history.count_sessions(user_id=user_id)
         return SessionListResponse(
             total=total_sessions,
             limit=limit,
             offset=offset,
-            has_more=total_sessions == limit,
+            has_more=has_more,
             sessions=[
                 {
                     "id": s.id,
@@ -2137,7 +2140,8 @@ async def _persist_map_action_acks_locked(
     statuses = await ack_store.append_map_action_event_batch(
         session_id, [ack.model_dump(exclude_none=True) for ack in req.acks]
     )
-    for ack, status in zip(req.acks, statuses):
+    for index, ack in enumerate(req.acks):
+        status = statuses[index] if index < len(statuses) else "invalid"
         if status == "stored":
             accepted += 1
             _ack_turn_id = (ack.correlation or {}).get("turn_id")
@@ -2266,6 +2270,7 @@ async def rotate_session_owner_token(
     session_id: str,
     conv: Conversation = Depends(require_owned_session),
     db: AsyncSession = Depends(get_async_db),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """audit ISSUE-006（#1346）：匿名会话 owner_token 轮换/撤销。
 
@@ -2279,13 +2284,9 @@ async def rotate_session_owner_token(
             status_code=409,
             detail="authenticated sessions do not use owner_token",
         )
-    import secrets as _secrets
-    from datetime import datetime, timezone
+    from app.api.owner_token_rotation import rotate_anonymous_credential
 
-    conv.owner_token = _secrets.token_urlsafe(32)
-    conv.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    return {"owner_token": conv.owner_token}
+    return await rotate_anonymous_credential(session_id, db, owner_token=owner_token)
 
 
 @router.delete("/sessions/{session_id}", response_model=ClearSessionResponse)
@@ -2297,23 +2298,6 @@ async def clear_session(
 ):
     """清除会话（内存 + DB）— 受所有权检查保护（A2 + SEC-08）。"""
     user_id = _user.get("user_id")
-
-    # BUG-18：Pi 路径下 clear_session 之前是个 dead TODO —— 只删了 DB 行，
-    # 但 Pi agent 子进程里该 session 的在途 prompt 不会被中断，会继续消耗
-    # token / 写文件。现在先对 Pi bridge 发 abort（fire-and-forget RPC，
-    # 失败仅记日志，不影响后续 DB 清理），再走 legacy 清理。
-    # F5: abort 携带被删会话的 id —— session-blind 的 abort 会把*别的*会话的
-    # 在途 turn 一起杀掉；bridge 据此在其它会话的 turn 在途时跳过并记日志。
-    if _use_pi_bridge():
-        # ADR-0100: abort 走统一取消 seam（owner-worker 解析 + CONC-F7 预算
-        # + session 守卫都在一处实现；此处不再手写编排）。
-        from app.services.chat.session_cancellation import abort_active_pi_turn
-
-        # F03：会话删除是 system 发起的中止 —— 结算 seam 据此把 turn 记为
-        # aborted（用户取消走任务/会话取消路径，保持 cancelled 语义）。
-        await abort_active_pi_turn(
-            session_id, reason="session deleted", source="system"
-        )
 
     from app.agent_pi_bridge import (
         clear_cartographic_session_state,
@@ -2331,6 +2315,12 @@ async def clear_session(
             if getattr(_del_lock, "lost", False):
                 raise LockLostError(
                     f"session lock ownership lost before session delete for {session_id}"
+                )
+            if _use_pi_bridge():
+                from app.services.chat.session_cancellation import abort_active_pi_turn
+
+                await abort_active_pi_turn(
+                    session_id, reason="session deleted", source="system"
                 )
             # Tombstone first: an evaluation already in flight must not recreate
             # review/repair state after the authoritative session is removed.
@@ -2413,7 +2403,12 @@ async def list_tools(_user: dict = Depends(get_current_user)):
 
 
 @router.post("/tools/execute", response_model=ToolExecuteResponse)
-async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(require_admin)):
+async def execute_tool_direct(
+    req: ToolExecuteRequest,
+    _user: dict = Depends(require_admin),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+):
     """直接执行单个工具（非流式通过 chat）
 
     审计 S30：原本任何登录用户都能 dispatch 任意工具，包括 tier-3 的
@@ -2433,6 +2428,13 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(req
             status_code=403,
             detail=f"Tier-{tier} 工具 {tool_name} 需要显式 confirm_destructive=true",
         )
+
+    from app.api.chat_tool_access import authorize_and_audit_tool_execution
+
+    await authorize_and_audit_tool_execution(
+        db, session_id=req.session_id, user=_user, owner_token=owner_token,
+        tool_name=tool_name, tier=tier,
+    )
 
     try:
         # SEC-F1: grant the chokepoint tier-3 rights only for the confirmed

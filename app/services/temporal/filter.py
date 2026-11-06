@@ -104,6 +104,8 @@ class TemporalFilterEngine:
         """
         Main filtering seam. Returns a filtered dataset matching the structure of input.
         """
+        if not any(value is not None for value in (instant, start, end, relative_window, filter_spec)):
+            raise ValueError("temporal filter requires an instant, bound, relative window, or filter spec")
         is_geojson = isinstance(features_or_records, dict) and "features" in features_or_records
         records = features_or_records["features"] if is_geojson else (features_or_records if isinstance(features_or_records, list) else [])
 
@@ -141,8 +143,19 @@ class TemporalFilterEngine:
             operator = TemporalOperator.BETWEEN
             start_inst = self._coerce_instant(start)
             end_inst = self._coerce_instant(end)
+            exclusive_end = False
+            if isinstance(end, str) and re.fullmatch(r"\d{4}(?:-\d{2}(?:-\d{2})?)?", end.strip()) and end_inst:
+                dt = end_inst.to_datetime()
+                if len(end.strip()) == 4:
+                    dt = dt.replace(year=dt.year + 1)
+                elif len(end.strip()) == 7:
+                    dt = dt.replace(year=dt.year + 1, month=1) if dt.month == 12 else dt.replace(month=dt.month + 1)
+                else:
+                    dt += timedelta(days=1)
+                end_inst = TimeInstant.from_datetime(dt)
+                exclusive_end = True
             if start_inst and end_inst:
-                target_interval = TimeInterval(start=start_inst, end=end_inst)
+                target_interval = TimeInterval(start=start_inst, end=end_inst, end_inclusive=not exclusive_end)
             elif start_inst:
                 target_interval = TimeInterval(
                     start=start_inst,
@@ -151,7 +164,7 @@ class TemporalFilterEngine:
             elif end_inst:
                 target_interval = TimeInterval(
                     start=TimeInstant.from_datetime(datetime.min.replace(tzinfo=timezone.utc)),
-                    end=end_inst,
+                    end=end_inst, end_inclusive=not exclusive_end,
                 )
         elif filter_spec:
             operator = filter_spec.operator

@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 pytestmark = pytest.mark.cartography
 
 from app.core.database import Base
-from app.services.gis_memory.eval import run_corpus
+from scripts.gis_memory_eval import run_corpus
 
 
 @pytest.fixture(scope="module")
@@ -76,7 +76,7 @@ def test_retrieval_precision(report):
 def test_weighted_score_positive(report):
     assert report["score"] > 0
     # 权重红线：wrong/stale 的扣分严格大于 useful 的加分（任务书要求）
-    from app.services.gis_memory.eval import W_STALE, W_USEFUL, W_WRONG
+    from scripts.gis_memory_eval import W_STALE, W_USEFUL, W_WRONG
 
     assert abs(W_WRONG) > W_USEFUL and abs(W_STALE) > W_USEFUL
 

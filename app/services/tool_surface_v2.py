@@ -179,6 +179,8 @@ class ToolSurfaceProjector:
                     if self.registry.schema_size(s["function"]["name"]) is not None
                     else schema_bytes(s)
                     for s in kept
+                    if "tier1" not in reasons.get(s["function"]["name"], [])
+                    and "surface_preferred" not in reasons.get(s["function"]["name"], [])
                 )
                 hits = rank_tools(
                     self.registry,

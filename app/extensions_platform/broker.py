@@ -9,7 +9,7 @@
 - **审计不落敏感值**：secrets 只记 ref，headers/body 不进审计。
 
 操作面（v1）：
-- ``network_request``  —— network 授权 + allowlist + SSRF gate + httpx
+- ``network_request``  —— network 授权 + allowlist + connection-pinned HTTP
 - ``artifact_read``    —— project_artifact_read 授权 + artifact 根内路径
 - ``artifact_write``   —— project_artifact_write 授权 + artifact 根内路径
 - ``secret_get``       —— 供给即授权（按扩展 id 供给的 ref）
@@ -30,6 +30,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
+import requests
 
 from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
 from .permissions import Permission, PermissionGrantSet
@@ -108,7 +109,7 @@ class CapabilityBroker:
         self._artifact_namespace = bool(artifact_namespace) and bool(extension_id)
         self._limits = limits or BrokerLimits()
         self._audit = audit or BrokerAuditLog()
-        self._http_transport = http_transport  # 测试注入；None = 真实 httpx
+        self._http_transport = http_transport  # 显式测试注入；None = connection-pinned requests
 
     # ── 分派 ─────────────────────────────────────────────────────────
     def handle(self, op: str, payload: dict[str, Any]) -> tuple[bool, Any]:
@@ -132,6 +133,9 @@ class CapabilityBroker:
                     extension_id=self._extension_id,
                 )
             value = handler(payload)
+            if op == "network_request" and (value.get("status", 0) == 0 or value.get("status", 0) >= 400):
+                self._audit.record(self._extension_id, op, False, f"HTTP status {value.get('status', 0)}")
+                return False, {**value, "code": DiagnosticCode.BROKER_DENIED.value, "message": "Upstream HTTP request failed"}
             self._audit.record(self._extension_id, op, True, "ok")
             return True, value
         except ExtensionPlatformDenied as exc:
@@ -140,7 +144,7 @@ class CapabilityBroker:
                 op,
                 False,
                 exc.diagnostic.message,
-                **({"ref": payload.get("ref")} if op == "secret_get" else {}),
+                **({"ref": payload.get("ref")} if op == "secret_get" and isinstance(payload, dict) else {}),
             )
             return False, {
                 "code": exc.diagnostic.code.value,
@@ -166,7 +170,10 @@ class CapabilityBroker:
         decision = evaluate_capability_policy(CapabilityPolicyFact(
             required_permission=permission,
             granted_permissions=(permission,) if allowed else (),
-            fail_closed=True,
+            # This fact answers only the permission question. Certification
+            # is checked by the host before activation; no certification evidence
+            # is consulted or synthesized inside the capability broker.
+            fail_closed=False,
         ))
         if not decision.allowed:
             raise _deny(
@@ -266,18 +273,19 @@ class CapabilityBroker:
                 }
             # Round-2 M-2：流式下载并在 cap 处中止——httpx 默认整响应缓冲，
             # 敌意/超大响应体会把宿主打到 OOM。
-            from app.core.egress import guarded_client
+            from app.core.egress import assert_egress_allowed
+            from app.services.data_fabric.security import make_safe_session
 
-            with guarded_client(
-                dependency_id="extension_network",
-                follow_redirects=False, timeout=timeout_s,
-            ) as client:
-                with client.stream(method, url, headers=headers, content=body) as response:
+            assert_egress_allowed(url, dependency_id="extension_network")
+            with make_safe_session() as client:
+                client.trust_env = False  # no proxy-side DNS or ambient netrc credentials
+                with client.request(method, url, headers=headers, data=body,
+                                    allow_redirects=False, stream=True, timeout=timeout_s) as response:
                     status = response.status_code
                     content_type = response.headers.get("content-type", "")
                     buf = bytearray()
                     truncated = False
-                    for chunk in response.iter_raw():
+                    for chunk in response.iter_content(chunk_size=65536):
                         buf.extend(chunk)
                         if len(buf) > cap:
                             truncated = True
@@ -288,14 +296,16 @@ class CapabilityBroker:
                 "body_b64": base64.b64encode(bytes(buf[:cap])).decode("ascii"),
                 "truncated": truncated,
             }
-        except httpx.HTTPError as exc:
-            return {"status": 0, "error": f"{type(exc).__name__}", "content_type": "", "body_b64": "", "truncated": False}
+        except (httpx.HTTPError, requests.RequestException) as exc:
+            raise _deny(DiagnosticCode.BROKER_DENIED, f"network request failed: {type(exc).__name__}", extension_id=self._extension_id) from exc
 
     # ── artifact read/write ───────────────────────────────────────────
     def _confine(self, raw_path: Any) -> Path:
         if not isinstance(raw_path, str) or not raw_path.strip():
             raise _deny(DiagnosticCode.BROKER_DENIED, "artifact op requires 'path'",
                         extension_id=self._extension_id)
+        if len(raw_path) > 4096 or len(Path(raw_path).parts) > 64:
+            raise _deny(DiagnosticCode.BROKER_DENIED, "artifact path exceeds its length/depth budget", extension_id=self._extension_id)
         candidate = Path(raw_path)
         if self._artifact_namespace:
             # CP-03（ADR-0120 M-8）：命名空间模式下只接受相对、无 ``..`` 段的
@@ -310,6 +320,8 @@ class CapabilityBroker:
                 )
             for root in self._artifact_roots:
                 ns_root = (root / self._extension_id).resolve()
+                if ns_root != root / self._extension_id:
+                    continue
                 target = (ns_root / candidate).resolve()
                 if target.is_relative_to(ns_root) and target != ns_root:
                     return target
@@ -342,15 +354,22 @@ class CapabilityBroker:
     def _artifact_read(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require(Permission.PROJECT_ARTIFACT_READ)
         target = self._confine(payload.get("path"))
-        if not target.is_file():
-            raise _deny(DiagnosticCode.BROKER_DENIED, f"artifact {str(target)!r} not found",
-                        extension_id=self._extension_id)
-        # Round-2 M-1：先 stat 再有界读取——此前 read_bytes() 整文件进内存，
-        # GB 级 artifact 会把宿主打到 OOM（worker 有 rlimit，宿主没有）。
+        base = self._confinement_root(target)
+        if base is None:
+            raise _deny(DiagnosticCode.BROKER_DENIED, "artifact root unavailable", extension_id=self._extension_id)
+        from .artifact_io import open_confined_fd
         cap = self._limits.max_artifact_bytes
-        size = target.stat().st_size
-        with target.open("rb") as fh:
-            data = fh.read(cap + 1)
+        try:
+            fd = open_confined_fd(base, target, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+            with os.fdopen(fd, "rb") as fh:
+                import stat
+                metadata = os.fstat(fh.fileno())
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise OSError("artifact is not a regular file")
+                size = metadata.st_size
+                data = fh.read(cap + 1)
+        except OSError as exc:
+            raise _deny(DiagnosticCode.BROKER_DENIED, f"artifact read refused: {type(exc).__name__}", extension_id=self._extension_id) from exc
         return {
             "path": str(target),
             "size": size,
@@ -377,20 +396,16 @@ class CapabilityBroker:
             )
         target = self._confine(payload.get("path"))
         base = self._confinement_root(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # CP-03：mkdir 后复核父目录真实路径（防并发植入的目录 symlink），
-        # 并以 O_NOFOLLOW 打开——不跟随预植的叶子 symlink 写到边界外。
-        if base is None or not target.parent.resolve().is_relative_to(base):
-            raise _deny(DiagnosticCode.BROKER_DENIED,
-                        f"artifact {str(target)!r} escapes its root after mkdir",
-                        extension_id=self._extension_id)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        if base is None:
+            raise _deny(DiagnosticCode.BROKER_DENIED, "artifact root unavailable", extension_id=self._extension_id)
+        from .artifact_io import open_confined_fd
+        # Root/namespace creation occurs beneath configured trusted storage;
+        # all user-relative parents and the leaf are opened through dirfds.
+        base.mkdir(parents=True, exist_ok=True)
         try:
-            fd = os.open(target, flags, 0o644)
+            fd = open_confined_fd(base, target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, create_parents=True)
         except OSError as exc:
-            raise _deny(DiagnosticCode.BROKER_DENIED,
-                        f"artifact {str(target)!r} not writable: {type(exc).__name__}",
-                        extension_id=self._extension_id)
+            raise _deny(DiagnosticCode.BROKER_DENIED, f"artifact write refused: {type(exc).__name__}", extension_id=self._extension_id) from exc
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         return {"path": str(target), "bytes_written": len(data)}
@@ -413,7 +428,7 @@ class CapabilityBroker:
         decision = evaluate_capability_policy(CapabilityPolicyFact(
             required_credentials=(ref,),
             credentials_present=(ref,) if ref in self._secrets else (),
-            fail_closed=True,
+            fail_closed=False,
         ))
         if not decision.allowed:
             raise _deny(

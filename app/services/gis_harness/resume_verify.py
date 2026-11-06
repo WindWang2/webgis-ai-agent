@@ -447,11 +447,34 @@ async def verify_resume(
         if r not in ref_map
     ][:_MAX_VERDICTS]
 
-    workflow = verify_workflow_fingerprint(
-        anchor.get("workflow_fingerprint") if isinstance(anchor, dict) else None,
-        (restored_chapter.get("workflow_instance")
-         if isinstance(restored_chapter, dict) else None),
-    )
+    # Recompute both sides from row facts after reference translation. Stored
+    # workflow_instance.rows_fingerprint is a cache and cannot establish liveness.
+    from app.services.gis_harness.workflow_instance import rows_fingerprint
+    def translate(node: Any) -> Any:
+        if isinstance(node, str):
+            return ref_map.get(node, node)
+        if isinstance(node, list):
+            return [translate(value) for value in node]
+        if isinstance(node, dict):
+            return {key: translate(value) for key, value in node.items()}
+        return node
+    def current_rows(chapter: Any) -> str:
+        rows = rows_fingerprint(chapter)
+        if rows:
+            return rows
+        # Older anchors may retain only stage facts; recompute those too.
+        import hashlib
+        import json
+        def canonical_fingerprint(value: Any) -> str:
+            return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+        stages = (chapter.get("workflow_instance") or {}).get("stages")
+        return canonical_fingerprint(stages) if isinstance(stages, list) and stages else ""
+    expected = dict(anchor.get("workflow_fingerprint") or {})
+    source_chapter = anchor.get("gis_chapter")
+    expected["rows_fingerprint"] = current_rows(translate(source_chapter)) if expected and isinstance(source_chapter, dict) else ""
+    actual = dict(restored_chapter.get("workflow_instance") or {})
+    actual["rows_fingerprint"] = current_rows(restored_chapter)
+    workflow = verify_workflow_fingerprint(expected, actual)
     mapspec_like = _extract_mapspec_like(restored_chapter)
     mapspec = verify_mapspec_dependencies(mapspec_like, ref_map, ref_verdicts)
 

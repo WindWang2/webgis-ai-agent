@@ -57,11 +57,12 @@ def wf_env():
     registry = PackageRegistry(factory=factory)
     svc = WorkflowRuntimeService(store=store, registry=registry)
     # 直接落包行（typed_dag 与生产一致的最小形态）
-    from app.models.db_model import WorkflowPackageRow
+    from app.models.db_model import Organization, WorkflowPackageRow
     from datetime import datetime as _dt
     from datetime import timezone as _tz
 
     with factory() as db:
+        db.add(Organization(id=1, name="events", slug="events"))
         db.add(WorkflowPackageRow(
             package_id="pkg-ev",
             version="1.0.0",
@@ -75,13 +76,13 @@ def wf_env():
             fingerprint="f" * 32,
             status="published",
             owner_scope="u:a",
-            org_id="org-a",
+            org_id="1",
             created_at=_dt.now(_tz.utc).replace(tzinfo=None),
         ))
         db.commit()
     inst = store.create_instance(
         package_id="pkg-ev", package_version="1.0.0",
-        package_fingerprint="f" * 32, owner_scope="u:a", org_id="org-a",
+        package_fingerprint="f" * 32, owner_scope="u:a", org_id="1",
         session_id="s1", project_id="proj-1",
         node_specs=[{"node_id": n["node_id"], "optional": False}
                     for n in _DAG["nodes"]],
@@ -110,7 +111,7 @@ def wf_env():
 def _event(ref="ref:dataset-1"):
     return {
         "kind": "dataset.version_changed",
-        "org_id": "org-a",
+        "org_id": "1",
         "subject_type": "dataset",
         "subject_key": "dataset:one",
         "project_id": "proj-1",
@@ -175,7 +176,7 @@ class TestInvalidationEndToEnd:
                 workflow_service=svc, factory=factory),
         )
         env = C.SpatialEventEnvelope(
-            kind="dataset.version_changed", org_id="org-a",
+            kind="dataset.version_changed", org_id="1",
             subject_type="dataset", subject_key="dataset:one",
             occurred_at=datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc),
             payload={"revision": "v2", "ref": "ref:dataset-1"},

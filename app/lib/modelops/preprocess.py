@@ -109,6 +109,8 @@ def preprocess_window(
         chips[:, nodata_mask] = fill
 
     chips = _normalize(chips, plan.normalization)
+    if nodata_mask is not None and nodata_mask.any() and plan.nodata_fill == "zero":
+        chips[:, nodata_mask] = 0.0
 
     valid = np.ones(chips.shape[1:], dtype=bool) if nodata_mask is None else ~nodata_mask
 

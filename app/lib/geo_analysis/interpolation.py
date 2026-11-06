@@ -72,7 +72,7 @@ logger = logging.getLogger(__name__)
 # Resource ceiling for an H3 interpolation surface. Each cell yields a small
 # result record plus (n_cells, k) float64 matrices in the query; 1.5M cells
 # keeps peak memory well under 1 GiB while still allowing large surfaces.
-_MAX_H3_CELLS = 1_500_000
+_MAX_H3_CELLS = 200_000
 _H3_MIN_RES = 0
 _H3_MAX_RES = 15
 # Small lon/lat buffer (~1 km) around the sample extent to avoid hard edges.
@@ -136,7 +136,7 @@ def _validate_resolution(resolution: Any) -> None:
 def _pick_metric_crs(lonlat: np.ndarray) -> str:
     """Choose a metric CRS for the sample extent (UTM, or polar stereographic)."""
     lats = lonlat[:, 1]
-    if max(abs(float(lats.min())), abs(float(lats.max()))) > 84.0:
+    if float(lats.max()) > 84.0 or float(lats.min()) < -80.0:
         return "EPSG:3413" if float(lats.mean()) >= 0 else "EPSG:3031"
     try:
         crs = gpd.GeoDataFrame(
@@ -145,7 +145,7 @@ def _pick_metric_crs(lonlat: np.ndarray) -> str:
         if crs is not None:
             return str(crs)
     except Exception:
-        pass
+        logging.getLogger(__name__).warning('UTM estimation failed; using the bounded longitude-zone fallback', exc_info=True)
     lon = (float(lonlat[:, 0].mean()) + 180.0) % 360.0 - 180.0
     zone = max(1, min(60, int((lon + 180) / 6) + 1))
     hemi = 32600 if float(lats.mean()) >= 0 else 32700
@@ -193,6 +193,23 @@ def _parse_point_values(
     if parsed is None:
         raise ValueError("无法解析输入点要素 GeoJSON")
     features = to_feature_collection(parsed).get("features", [])
+    from app.lib.geo_processor.core import extract_declared_crs
+    from app.utils.coord_transform import normalize_chinese_crs, gcj02_to_wgs84, bd09_to_wgs84
+
+    declared = extract_declared_crs(parsed)
+    convert = None
+    if declared:
+        frame = normalize_chinese_crs(declared)
+        if frame in ("gcj02", "bd09"):
+            convert = gcj02_to_wgs84 if frame == "gcj02" else bd09_to_wgs84
+        elif frame != "wgs84":
+            from pyproj import Transformer
+            from app.lib.gis.scientific_errors import InvalidCRS
+
+            try:
+                convert = Transformer.from_crs(declared, "EPSG:4326", always_xy=True).transform
+            except Exception as exc:
+                raise InvalidCRS(f"unparseable interpolation CRS {declared!r}") from exc
 
     lons: list[float] = []
     lats: list[float] = []
@@ -213,8 +230,11 @@ def _parse_point_values(
         coords = geom.get("coordinates") or []
         if len(coords) < 2:
             continue
-        lons.append(float(coords[0]))
-        lats.append(float(coords[1]))
+        longitude, latitude = float(coords[0]), float(coords[1])
+        if convert is not None:
+            longitude, latitude = convert(longitude, latitude)
+        lons.append(longitude)
+        lats.append(latitude)
         raw_vals.append(props[value_field])
 
     if skipped_non_point:
@@ -241,8 +261,8 @@ def _parse_point_values(
     n_bad = int((~finite).sum())
     if n_bad:
         logger.warning("%s: dropping %d non-finite (NaN/inf) sample value(s)", log_prefix, n_bad)
-        lons = [x for x, keep in zip(lons, finite) if keep]
-        lats = [x for x, keep in zip(lats, finite) if keep]
+        lons = [x for x, keep in zip(lons, finite, strict=True) if keep]
+        lats = [x for x, keep in zip(lats, finite, strict=True) if keep]
         vals = vals[finite]
     if not lons:
         raise ValueError(f"字段 '{value_field}' 没有有限的数值可用于{purpose}")
@@ -268,15 +288,17 @@ def _target_cells_for_samples(
     estimate or the polyfill result exceeds the cell ceiling (carries
     suggested lower resolutions).
     """
-    raw_min_lon = float(lonlat[:, 0].min())
-    raw_max_lon = float(lonlat[:, 0].max())
-    crosses_am = (raw_max_lon - raw_min_lon) > 180.0
-    if crosses_am:
-        # Unwrap negatives (+360) to measure the narrow band across the date line
-        wrapped_width = 360.0 - (raw_max_lon - raw_min_lon)
-    else:
-        wrapped_width = None  # type: ignore[assignment]
+    from app.lib.gis.longitude import minimal_longitude_interval
 
+    west, east = minimal_longitude_interval(lonlat[:, 0])
+    crosses_am = east > 180.0
+    wrapped_width = east - west if crosses_am else None
+    # A broad global envelope cannot be faithfully expressed as one H3 polygon:
+    # spherical polygon edges would select its complement. Require a scoped AOI.
+    if east - west > 180.0:
+        raise UnsupportedMethod("Interpolation samples span more than a hemisphere; split into regional AOIs")
+    raw_min_lon = east - 360.0 if crosses_am else west
+    raw_max_lon = west if crosses_am else east
     min_lon = max(raw_min_lon - _BBOX_BUF_DEG, -180.0)
     max_lon = min(raw_max_lon + _BBOX_BUF_DEG, 180.0)
     min_lat = max(float(lonlat[:, 1].min()) - _BBOX_BUF_DEG, -90.0)
@@ -560,7 +582,7 @@ def idw_surface(
         w = 1.0 / (dist[non_exact] ** power)
         out[non_exact] = (w * neighbor_vals[non_exact]).sum(axis=1) / w.sum(axis=1)
 
-    records = [{"h3_index": cell, "value": float(v)} for cell, v in zip(target_cells, out)]
+    records = [{"h3_index": cell, "value": float(v)} for cell, v in zip(target_cells, out, strict=True)]
     return {"records": records, "metadata": metadata}
 
 
@@ -758,7 +780,7 @@ def nearest_neighbor_surface(
     })
     records = [
         {"h3_index": cell, "value": float(v)}
-        for cell, v in zip(target_cells, out)
+        for cell, v in zip(target_cells, out, strict=True)
     ]
     return {"records": records, "metadata": metadata}
 

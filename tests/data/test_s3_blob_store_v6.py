@@ -62,8 +62,8 @@ class FakeS3:
         body = self.objects[Key]
 
         class _B:
-            def read(self_inner):
-                return body
+            def read(self_inner, n=-1):
+                return body if n < 0 else body[:n]
 
         return {"Body": _B()}
 

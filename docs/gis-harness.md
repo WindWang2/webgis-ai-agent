@@ -458,7 +458,7 @@ ref 证据与 MapSpec 单位链路。
 MethodUseContract、偏移帧数学在 utils/coord_transform —— 本契约组合它们，
 不复制。
 
-## Typed Analysis Artifact Envelope v2 与混合方法链（ADR-0282，2026-11-06）
+## Typed Analysis Artifact Envelope v2 与混合方法链（ADR-0284，2026-11-06）
 
 > 代码：`app/services/gis_harness/analysis_workflows/`（envelope_facts /
 > semantic_gate / product_gate / discovery 新模块 + 既有七模块 additive 扩展）。

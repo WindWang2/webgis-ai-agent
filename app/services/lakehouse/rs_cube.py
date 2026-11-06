@@ -252,6 +252,8 @@ async def build_rs_cube(
             finally:
                 reader.close()
 
+        if height * width > RS_MAX_CELLS:
+            raise RSCubeError("source grid exceeds bounded cell budget before read")
         data = await asyncio.to_thread(_read)
         if data.shape != (height, width):
             raise RSCubeError(

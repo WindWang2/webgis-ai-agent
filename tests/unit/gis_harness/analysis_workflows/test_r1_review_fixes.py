@@ -164,7 +164,7 @@ def test_f4_product_gate_kill_switch_contract(monkeypatch):
     assert getattr(settings, "GIS_AWF_PRODUCT_GATE", True) is False
 
     source = Path(
-        "app/services/gis_harness/tools.py").read_text(encoding="utf-8")
+        "app/services/gis_harness/tool_map_product.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     map_product = next(
         fn for fn in ast.walk(tree)

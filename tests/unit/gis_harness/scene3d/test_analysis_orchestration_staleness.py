@@ -115,7 +115,7 @@ class TestRun3DAnalysisAllFamilies:
     async def test_skyline_still_typed_decline(self, registry, session_id):
         await _seed(session_id)
         res = await registry.dispatch("run_3d_analysis", {
-            "session_id": session_id, "analysis": "skyline"})
+            "session_id": session_id, "analysis": "skyline"}, session_id=session_id)
         assert res["success"] is False and res["declined"] is True
         assert res["reason_code"] == "SCENE_CAP_ALGORITHM_PENDING_G3D03"
 
@@ -124,7 +124,7 @@ class TestRun3DAnalysisAllFamilies:
         await _seed(session_id)
         res = await registry.dispatch("run_3d_analysis", {
             "session_id": session_id, "analysis": "line_of_sight",
-            "raster_path": "dem.tif", "observer_x": 1.0, "observer_y": 1.0})
+            "raster_path": "dem.tif", "observer_x": 1.0, "observer_y": 1.0}, session_id=session_id)
         assert res["declined"] is True
         assert res["reason_code"] == "SCENE_ANALYSIS_MISSING_PARAMS"
 
@@ -135,7 +135,7 @@ class TestRun3DAnalysisAllFamilies:
             "session_id": session_id, "analysis": "line_of_sight",
             "raster_path": dem_path,
             "observer_x": 500100.0, "observer_y": 3_999_900.0,
-            "target_x": 500500.0, "target_y": 3_999_500.0})
+            "target_x": 500500.0, "target_y": 3_999_500.0}, session_id=session_id)
         assert res["success"] is True, res
         assert res["analysis"] == "line_of_sight"
         assert res["result"]["success"] is True
@@ -153,7 +153,7 @@ class TestRun3DAnalysisAllFamilies:
         res = await registry.dispatch("run_3d_analysis", {
             "session_id": session_id, "analysis": "terrain_profile",
             "raster_path": dem_path,
-            "vertices": [[500050.0, 3999950.0], [500450.0, 3999950.0]]})
+            "vertices": [[500050.0, 3999950.0], [500450.0, 3999950.0]]}, session_id=session_id)
         assert res["success"] is True, res
         # 编排层直接调 registry（不经 dispatch service 的 ref 缝）——
         # 绑定与契约摘要仍在；profile_ref 只经 ToolDispatchService 缝
@@ -171,7 +171,7 @@ class TestRun3DAnalysisAllFamilies:
             "raster_path": dem_path,
             "polygon": [[500050.0, 3999950.0], [500450.0, 3999950.0],
                         [500450.0, 3999550.0], [500050.0, 3999550.0],
-                        [500050.0, 3999950.0]]})
+                        [500050.0, 3999950.0]]}, session_id=session_id)
         assert res["success"] is True, res
         assert res["result"]["surface_area_m2"] >= res["result"]["planar_area_m2"]
 
@@ -184,7 +184,7 @@ class TestRun3DAnalysisAllFamilies:
             "polygon": [[500100.0, 3999900.0], [500400.0, 3999900.0],
                         [500400.0, 3999600.0], [500100.0, 3999600.0],
                         [500100.0, 3999900.0]],
-            "reference": "mean"})
+            "reference": "mean"}, session_id=session_id)
         assert res["success"] is True, res
         assert res["result"]["net_volume_m3"] == pytest.approx(0.0, abs=1e-3)
         assert res["method_use_contract"]["algorithm_id"] == "terrain.cut_fill_volume"
@@ -196,7 +196,7 @@ class TestRun3DAnalysisAllFamilies:
             "session_id": session_id, "analysis": "viewshed",
             "raster_path": dem_path,
             "observer_x": 500100.0, "observer_y": 3_999_900.0,
-            "options": '{"max_distance": 300.0, "observer_height": 5}'})
+            "options": '{"max_distance": 300.0, "observer_height": 5}'}, session_id=session_id)
         assert res["success"] is True, res
         assert res["result"]["meta"]["observer_height"] == 5.0
         assert res["result"]["meta"]["max_distance_m"] == 300.0
@@ -208,7 +208,7 @@ class TestRun3DAnalysisAllFamilies:
             "session_id": session_id, "analysis": "viewshed",
             "raster_path": dem_path,
             "observer_x": 500100.0, "observer_y": 3_999_900.0,
-            "options": '{"include_geometry": false}'})
+            "options": '{"include_geometry": false}'}, session_id=session_id)
         assert res2["success"] is True
         assert "geojson" not in res2 and "geojson" not in res2["result"]
 
@@ -229,7 +229,7 @@ class TestStalenessProductionWiring:
             "raster_path": dem_path,
             "observer_x": 500100.0, "observer_y": 3_999_900.0,
             "observer_feature_id": "obs-1", "dem_source_id": "dem",
-            "options": '{"max_distance": 300}'})
+            "options": '{"max_distance": 300}'}, session_id=session_id)
         assert res["success"] is True
         # 用户点选另一个要素（Interaction IR feature_selected）
         await _ledger_write(session_id, [{
@@ -238,7 +238,7 @@ class TestStalenessProductionWiring:
             "server_seq": 1,
         }])
         scene = await registry.dispatch("apply_scene_representation", {
-            "session_id": session_id, "user_dimension": "3d"})
+            "session_id": session_id, "user_dimension": "3d"}, session_id=session_id)
         stale = scene.get("stale_analyses") or []
         assert any(
             e["verdict"]["reason_code"] == "SCENE_STALE_OBSERVER_MOVED"
@@ -259,10 +259,10 @@ class TestStalenessProductionWiring:
             "raster_path": dem_path,
             "observer_x": 500100.0, "observer_y": 3_999_900.0,
             "observer_feature_id": "obs-1", "dem_source_id": "dem",
-            "options": '{"max_distance": 300}'})
+            "options": '{"max_distance": 300}'}, session_id=session_id)
         assert res["success"] is True
         cam = await registry.dispatch("fly_camera", {
-            "session_id": session_id, "pitch": 65, "bearing": 120})
+            "session_id": session_id, "pitch": 65, "bearing": 120}, session_id=session_id)
         assert cam.get("success") is True, cam
         await _ledger_write(session_id, [{
             "kind": "viewport_settled",
@@ -271,7 +271,7 @@ class TestStalenessProductionWiring:
             "server_seq": 1,
         }])
         scene = await registry.dispatch("apply_scene_representation", {
-            "session_id": session_id})
+            "session_id": session_id}, session_id=session_id)
         # 相机/viewport 不进入失效判定：无 stale 上行
         assert scene.get("stale_analyses") == []
         from app.services.gis_harness.scene3d.analysis_binding_store import (
@@ -298,7 +298,7 @@ class TestStalenessProductionWiring:
             "raster_path": dem_path,
             "observer_x": 500100.0, "observer_y": 3_999_900.0,
             "dem_source_id": "dem",
-            "options": '{"max_distance": 300}'})
+            "options": '{"max_distance": 300}'}, session_id=session_id)
         assert res["success"] is True
         from app.services.gis_harness.scene3d.analysis_binding_store import (
             evaluate_session_staleness,
@@ -323,7 +323,7 @@ class TestStalenessProductionWiring:
             "raster_path": dem_path,
             "observer_x": 500100.0, "observer_y": 3_999_900.0,
             "observer_feature_id": "obs-1", "dem_source_id": "dem",
-            "options": '{"max_distance": 300}'})
+            "options": '{"max_distance": 300}'}, session_id=session_id)
         assert first["success"] is True
         assert first["prior_stale_analyses"] == []
         await _ledger_write(session_id, [{
@@ -336,7 +336,7 @@ class TestStalenessProductionWiring:
             "raster_path": dem_path,
             "observer_x": 500150.0, "observer_y": 3_999_950.0,
             "observer_feature_id": "obs-2", "dem_source_id": "dem",
-            "options": '{"max_distance": 300}'})
+            "options": '{"max_distance": 300}'}, session_id=session_id)
         assert second["success"] is True
         assert any(
             e["verdict"]["reason_code"] == "SCENE_STALE_OBSERVER_MOVED"
@@ -414,7 +414,7 @@ class TestStalenessSemanticsReviewFixes:
             "polygon": [[500100.0, 3999900.0], [500400.0, 3999900.0],
                         [500400.0, 3999600.0], [500100.0, 3999600.0],
                         [500100.0, 3999900.0]],
-            "reference": "mean"})
+            "reference": "mean"}, session_id=session_id)
         assert res["success"] is True
         assert res["staleness_binding"]["observer_feature_id"] == ""
         await _ledger_write(session_id, [{
@@ -448,7 +448,7 @@ class TestStalenessSemanticsReviewFixes:
             "session_id": session_id, "analysis": "line_of_sight",
             "raster_path": dem_path,
             "observer_x": 500100.0, "observer_y": 3_999_900.0,
-            "target_x": 500500.0, "target_y": 3_999_500.0})
+            "target_x": 500500.0, "target_y": 3_999_500.0}, session_id=session_id)
         assert res["success"] is True
         assert res["staleness_binding"]["observer_feature_id"] == "peak-a"
         from app.services.gis_harness.scene3d.analysis_binding_store import (
@@ -484,7 +484,7 @@ class TestStalenessSemanticsReviewFixes:
                         [500100.0, 3999900.0]],
             "reference": "mean",
             "observer_x": 999.0,  # 跨族污染参数
-            "options": '{"typo_key": 1}'})
+            "options": '{"typo_key": 1}'}, session_id=session_id)
         assert res["success"] is True
         assert res["ignored_top_level_params"] == ["observer_x"]
         assert res["ignored_options_keys"] == ["typo_key"]

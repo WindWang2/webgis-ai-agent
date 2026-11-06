@@ -136,12 +136,11 @@ def test_unknown_srid_table_skips_pushdown_and_reports_honestly():
     executed: list = []
     adapter = _adapter_with_srid("0", executed, rows=[("r", None)])
 
-    res = adapter.query("public.roads_unknown", QuerySpec(bbox=[116.0, 39.0, 117.0, 40.0]))
+    from app.services.data_fabric.errors import InvalidQueryError
 
-    assert not [sql for sql, _ in executed if "ST_MakeEnvelope" in sql], (
-        "unknown SRID must not emit an envelope predicate"
-    )
-    assert res.metadata["pushdown_bbox"] is False
+    with pytest.raises(InvalidQueryError, match="known source SRID"):
+        adapter.query("public.roads_unknown", QuerySpec(bbox=[116.0, 39.0, 117.0, 40.0]))
+    assert not [sql for sql, _ in executed if "ST_MakeEnvelope" in sql]
 
 
 def test_projected_table_pushdown_still_transforms_envelope():

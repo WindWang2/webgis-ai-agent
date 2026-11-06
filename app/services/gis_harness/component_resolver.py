@@ -11,6 +11,7 @@
   并存时保留 priority 小（语义优先）者，另一方以 conflict_with 记录剔除。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 from typing import Any, Dict, List, Optional
 
@@ -264,7 +265,7 @@ class ComponentResolver:
                     if cand in (model.recommended_components or []):
                         return cand
         except Exception:  # noqa: BLE001 - 模型库不可用时回退第一候选
-            pass
+            observe_optional_failure(__name__)
         return slot.allowed_component_types[0]
 
     def _enforce_conflicts(self, sel: ComponentSelection, comp_reg) -> None:

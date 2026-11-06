@@ -115,7 +115,7 @@ class TestNewRecipeSelectionAndEligibility:
         fb = next(
             f for f in bad.fallbacks if f.reason_code == "INSUFFICIENT_POINTS"
         )
-        assert fb.to_element == "point_distribution"
+        assert fb.to_element == "point_overlay"
 
 
 class TestPlannerWiringForNewModels:

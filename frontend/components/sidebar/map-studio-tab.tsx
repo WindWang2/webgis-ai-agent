@@ -122,7 +122,7 @@ export function MapStudioTab() {
 
   // Helper to update specific fields
   const handleChange = (key: keyof typeof exportSettings, value: string | number | boolean) => {
-    if (key === 'paperSize' && value === 'A4' && exportSettings.dpi === 300) {
+    if (key === 'paperSize' && (value === 'A4' || value === 'A3') && exportSettings.dpi === 300) {
       updateExportSettings({ [key]: value, dpi: 150 });
     } else {
       updateExportSettings({ [key]: value });
@@ -626,7 +626,7 @@ export function MapStudioTab() {
 
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <IconButton label={t('sidebar.studio.download')} icon={Download} iconSize={13} onClick={() => handleDownload(item)} />
-                      <ConfirmAction label={t('sidebar.studio.delete')} confirmLabel={t('sidebar.studio.confirmDelete')} onConfirm={() => handleDelete(item.id)} />
+                      <ConfirmAction label={t('sidebar.studio.removeFromList')} confirmLabel={t('sidebar.studio.confirmRemoveFromList')} onConfirm={() => handleDelete(item.id)} />
                     </div>
                   </div>
                 ))}

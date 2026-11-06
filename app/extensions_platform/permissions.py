@@ -50,8 +50,8 @@ ALL_PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
-# local_untrusted 信任级别下默认拒绝、即使被授权也要求显式二次确认的
-# 高危权限（host 激活期检查：声明了但信任级别不足 → typed diagnostic）。
+# local_untrusted 高危声明在激活期产生 warning；运行期仍逐项要求宿主显式 grant。
+# grant 是操作员授权，不额外要求第二次交互确认。
 HIGH_RISK_PERMISSIONS: frozenset[str] = frozenset(
     {
         Permission.FILESYSTEM_WRITE,

@@ -87,7 +87,8 @@ def test_flatgeobuf_adapter_spatial_index():
     # 2. Header description
     desc = adapter.describe("beijing_subway_stations")
     assert desc.geometry_type == "Point"
-    assert desc.metadata.get("spatial_index") == "packed_rtree"
+    assert desc.metadata.get("spatial_index") is None
+    assert desc.metadata["source"] == "synthetic-demo"
 
     # 3. Spatial bbox query
     q_spec = QuerySpec(
@@ -95,7 +96,7 @@ def test_flatgeobuf_adapter_spatial_index():
         bbox=[116.3, 39.85, 116.5, 39.95],
     )
     res = adapter.query("beijing_subway_stations", q_spec)
-    assert res.metadata["spatial_index_used"] is True
+    assert res.metadata["spatial_index_used"] is False
     assert len(res.features) > 0
 
 

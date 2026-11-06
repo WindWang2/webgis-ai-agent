@@ -1,11 +1,17 @@
 {
  "category": "land_use_change",
+ "decisions": [],
  "description": "land_use_change 参数变体 1",
  "dispatch_backed": false,
+ "expect_calibration": [],
+ "expect_source": "",
  "faults": [],
+ "receipt_backed": false,
+ "registry_digest": "",
  "scenario_id": "core-land_use_change-01",
  "schema_version": 1,
  "tags": [],
+ "tool_registry": {},
  "turns": [
   {
    "cartography": {
@@ -30,7 +36,7 @@
         118.0,
         24.4
        ],
-       "zoom": 9
+       "zoom": 7.25
       }
      }
     },
@@ -39,7 +45,8 @@
       {
        "id": "landuse-1",
        "paint": {
-        "fill-color": "#3182bd"
+        "fill-color": "#3182bd",
+        "fill-opacity": 0.35
        },
        "source": "src-landuse-1",
        "type": "fill"
@@ -72,7 +79,7 @@
        118.0,
        24.4
       ],
-      "zoom": 9
+      "zoom": 7.25
      }
     },
     "visual_judge": true
@@ -111,6 +118,7 @@
      },
      "call_id": "call-upsert-landuse-1",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -126,6 +134,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {

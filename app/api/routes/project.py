@@ -24,7 +24,7 @@ from app.schemas.project_schema import (
     WorkflowRunSummary, ArtifactSummary,
     DatasetAttach, ProjectDatasetResponse,
     WorkflowCreate, WorkflowResponse,
-    WorkflowRunRequest, WorkflowRunResponse,
+    WorkflowRunRequest, WorkflowRunResponse, QualityAuditRequest,
     RunComparisonResponse,
     WorkflowRevisionResponse, WorkflowRevisionSummary,
     RunReplayRequest, RunResumeRequest,
@@ -62,8 +62,50 @@ async def _run_workflow_engine(engine_method, **kwargs) -> WorkflowRun:
     并发安全：sync Session 非线程安全，绝不跨线程共享 —— 在 worker 线程内
     新建 Session、同一线程内使用并关闭。
     """
+    from app.services.workflow_session_scope import (
+        create_workflow_session, continuation_session, require_legacy_rerun_owner,
+    )
+    continuing = engine_method in (WorkflowEngine.resume_run, WorkflowEngine.rerun_from_step)
+    legacy_rerun = False
+    if continuing:
+        def _preflight() -> Optional[str]:
+            nonlocal legacy_rerun
+            with SessionLocal() as db:
+                prior = db.get(WorkflowRun, kwargs.get("prior_run_id"))
+                if prior is not None and not prior.session_id:
+                    require_legacy_rerun_owner(db, prior, project_id=kwargs.get("expected_project_id"), user_id=kwargs.get("user_id"))
+                if engine_method is WorkflowEngine.resume_run and prior is not None and prior.status not in ("failed", "cancelled"):
+                    raise ValueError(f"cannot resume run {prior.id} with status '{prior.status}'")
+                if (prior is not None and not prior.session_id and engine_method is WorkflowEngine.resume_run
+                        and kwargs.get("allow_rerun") is True):
+                    legacy_rerun = True
+                    return None
+                return continuation_session(db, prior, user_id=kwargs.get("user_id"))
+
+        kwargs["session_id"] = await asyncio.to_thread(_preflight)
+    if not continuing or legacy_rerun:
+        kwargs["session_id"] = await create_workflow_session(kwargs.get("user_id"))
+
     def _worker() -> WorkflowRun:
         with SessionLocal() as thread_db:
+            if legacy_rerun:
+                prior = thread_db.get(WorkflowRun, kwargs.get("prior_run_id"))
+                require_legacy_rerun_owner(thread_db, prior, project_id=kwargs.get("expected_project_id"), user_id=kwargs.get("user_id"))
+                if prior is None:
+                    raise HTTPException(status_code=404, detail="Run not found")
+                if prior.status not in ("failed", "cancelled") or prior.session_id:
+                    raise ValueError("prior run changed while preparing a full rerun")
+                # Explicit full rerun uses a fresh owner session. No completed
+                # outputs, graph seed, artifacts or result references are reused.
+                return run_sync(WorkflowEngine.execute_workflow_run(
+                    thread_db, workflow_id=prior.workflow_id, tool_registry=kwargs["tool_registry"],
+                    input_bindings=prior.input_bindings, user_id=kwargs.get("user_id"),
+                    org_id=kwargs.get("org_id"), expected_project_id=kwargs.get("expected_project_id"),
+                    session_id=kwargs["session_id"],
+                ))
+            if continuing:
+                prior = thread_db.get(WorkflowRun, kwargs.get("prior_run_id"))
+                kwargs["session_id"] = continuation_session(thread_db, prior, user_id=kwargs.get("user_id"))
             return run_sync(engine_method(thread_db, **kwargs))
 
     return await asyncio.to_thread(_worker)
@@ -357,6 +399,9 @@ async def run_workflow(
     # Use the shared, fully-initialized registry rather than a fresh empty one
     # (a fresh ToolRegistry() registers no tools, so dispatch would always 404).
     tool_registry = get_tool_registry()
+    from app.services.workflow_revision_queries import workflow_belongs_to_project
+    if not await asyncio.to_thread(workflow_belongs_to_project, project_id, workflow_id):
+        raise HTTPException(status_code=404, detail="Workflow not found")
 
     try:
         run = await _run_workflow_engine(
@@ -371,7 +416,7 @@ async def run_workflow(
         )
         return run
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise _engine_conflict(e) from e
     except Exception as e:
         logger.exception("Workflow execution failed: %s", e)
         raise HTTPException(status_code=500, detail="Workflow execution failed")
@@ -443,13 +488,13 @@ def list_workflow_revisions(
     """List immutable workflow revisions (tenant-scoped)."""
     user_id, org_id = actor_ids(user)
     limit, offset = clamp_pagination(limit, offset)
-    revisions = ProjectService.list_workflow_revisions(
-        db=db, project_id=project_id, workflow_id=workflow_id, user_id=user_id, org_id=org_id
+    revisions = ProjectService.page_workflow_revisions(
+        db=db, project_id=project_id, workflow_id=workflow_id, user_id=user_id, org_id=org_id,
+        limit=limit, offset=offset,
     )
     if revisions is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    total = len(revisions)
-    page = revisions[offset:offset + limit]
+    page, total = revisions
     items = [WorkflowRevisionSummary.model_validate(r) for r in page]
     return Page(items=items, total=total, limit=limit, offset=offset,
                 has_more=(offset + limit) < total)
@@ -467,15 +512,13 @@ def get_workflow_revision(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     user_id, org_id = actor_ids(user)
-    revisions = ProjectService.list_workflow_revisions(
-        db=db, project_id=project_id, workflow_id=workflow_id, user_id=user_id, org_id=org_id
+    revision = ProjectService.get_workflow_revision(
+        db=db, project_id=project_id, workflow_id=workflow_id, revision_id=revision_id,
+        user_id=user_id, org_id=org_id,
     )
-    if revisions is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-    for r in revisions:
-        if r.id == revision_id:
-            return r
-    raise HTTPException(status_code=404, detail="Revision not found")
+    if revision is None:
+        raise HTTPException(status_code=404, detail="Revision not found")
+    return revision
 
 
 @router.get("/{project_id}/runs/{run_id}", response_model=WorkflowRunResponse)
@@ -695,19 +738,12 @@ async def _verify_session_access(
     user: Dict[str, Any],
     owner_token: Optional[str],
 ) -> None:
-    """SEC-08 session ownership guard for lifecycle routes (review C1).
-
-    本协程只被 sync 路由经 run_sync 桥接（threadpool 线程持久 loop），
-    匿名凭 owner_token 匹配，登录用户凭 user_id 匹配；失败一律 404（不
-    泄露存在性）。#1437：绝不使用全局 AsyncSessionLocal——它的 QueuePool
-    会把主 loop 创建的 asyncpg 连交给线程 loop（跨 loop 检出）；改用
-    每线程 NullPool 引擎，连接生命周期完全落在本线程 loop 内。
-    """
-    from app.core.async_runner import thread_async_session
+    """Session ownership guard; reuse the main pool or the sync bridge engine."""
+    from app.core.async_runner import current_loop_async_session
     from app.services.auth_history_bridge import verify_session_owner
 
     user_id = user.get("user_id") if isinstance(user, dict) else None
-    async with thread_async_session() as adb:
+    async with current_loop_async_session() as adb:
         await verify_session_owner(
             adb, session_id, user_id=user_id, owner_token=owner_token
         )
@@ -946,14 +982,23 @@ async def restore_map_product_version(
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=409, detail=f"full restore rerun failed: {e}")
+        logger.exception("Full restore rerun failed")
+        raise HTTPException(status_code=409, detail="Full restore rerun failed") from e
     # review M-A2：引擎已对完成的 run 幂等自动记录 —— 这里只在其缺席时
     # 补一条谱系行（同 run+指纹去重），绝不双记。
     # #1215：record/maybe_auto_record_version 同步 DB 写经 to_thread。
+    if str(run.status) != "completed":
+        raise HTTPException(status_code=409, detail="Workflow replay did not complete; no restored version recorded")
+    if str(run.status) != "completed":
+        raise HTTPException(status_code=409, detail="Workflow replay did not complete; no new version recorded")
     new_row = await asyncio.to_thread(
         MapProductService.maybe_auto_record_version,
         db, run, label=f"restore-full from V{version_no}")
-    if new_row is None or new_row.lineage_kind != "restore":
+    if new_row is not None:
+        new_row.lineage_kind = "restore"
+        new_row.parent_version_no = version_no
+        await asyncio.to_thread(db.commit)
+    else:
         new_row = await asyncio.to_thread(
             MapProductService.record_version,
             db, project_id,
@@ -1102,9 +1147,12 @@ async def rerun_map_product_version(
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=409, detail=f"rerun failed: {e}")
+        logger.exception("Map product rerun failed")
+        raise HTTPException(status_code=409, detail="Workflow rerun failed") from e
     # review M-C3：auto-record 幂等；缺席时补谱系行（IntegrityError 由
     # record_version 的重试路径消化 —— 并发完成同 run 不双记）。
+    if str(run.status) != "completed":
+        raise HTTPException(status_code=409, detail="Workflow replay did not complete; no new version recorded")
     new_row = await asyncio.to_thread(
         MapProductService.maybe_auto_record_version,
         db, run, label=f"rerun of V{version_no}")
@@ -1122,21 +1170,17 @@ async def rerun_map_product_version(
 @router.post("/{project_id}/quality-audit", response_model=QualityAuditResponse)
 def audit_spatial_quality(
     project_id: str,
-    payload: Dict[str, Any],
+    payload: QualityAuditRequest,
     crs: str = "EPSG:4326",
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    geojson_data = payload.get("geojson")
-    if not geojson_data:
-        raise HTTPException(status_code=400, detail="Missing 'geojson' in payload")
-
-    report = SpatialQualityEngine.audit_dataset(geojson_data=geojson_data, dataset_id=project_id, crs=crs)
+    report = SpatialQualityEngine.audit_dataset(geojson_data=payload.geojson, dataset_id=project_id, crs=crs)
     return report.to_dict()
 
 
@@ -1491,7 +1535,7 @@ def plan_project_data_gc(
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    from app.services.data_lifecycle.quota import plan_retention_cleanup
+    from app.services.data_lifecycle.quota import plan_retention_cleanup, retention_plan_fingerprint
 
     retention_plan = plan_retention_cleanup(db, project_id)
     scoped_deletable = [
@@ -1520,6 +1564,7 @@ def plan_project_data_gc(
     return {
         "project_id": project_id,
         "scoped_to_project": True,
+        "plan_fingerprint": retention_plan_fingerprint(retention_plan),
         "retention": {
             "policy": retention_plan.get("policy"),
             "disabled": bool(retention_plan.get("disabled")),
@@ -1578,17 +1623,22 @@ def execute_project_data_gc(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     from app.services.data_lifecycle.quota import (
-        execute_orphan_revision_cleanup,
         execute_retention_cleanup,
-        plan_orphan_revision_cleanup,
         plan_retention_cleanup,
+        retention_plan_fingerprint,
     )
 
+    db.refresh(project, with_for_update=True)
     retention_plan = plan_retention_cleanup(db, project_id)
+    if data.expected_plan_fingerprint != retention_plan_fingerprint(retention_plan):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "GC_PLAN_STALE", "message": "清理计划已变化，请重新预览并确认。"},
+        )
     retention = execute_retention_cleanup(retention_plan, db=db)
-    orphans = execute_orphan_revision_cleanup(
-        plan_orphan_revision_cleanup(db), db=db
-    )
+    # Orphan revisions have no trustworthy project lineage; the global
+    # sweep owns their cleanup and must never be triggered by a project user.
+    orphans = {"deleted_count": 0, "deleted_revision_ids": []}
     skipped = _bounded_items(
         [
             {"key": str(s.get("key") or s.get("revision_id") or ""),

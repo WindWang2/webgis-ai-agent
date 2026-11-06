@@ -155,14 +155,16 @@ class DeterministicClock:
 
     def __init__(self, epoch: float = 0.0) -> None:
         self.epoch = epoch
-        self._mono_origin: float | None = None
+        self._elapsed_ms = 0.0
 
     def now_ms(self) -> float:
-        import time as _time
+        return self._elapsed_ms
 
-        if self._mono_origin is None:
-            self._mono_origin = _time.monotonic()
-        return (_time.monotonic() - self._mono_origin) * 1000.0
+    def advance(self, milliseconds: float) -> float:
+        if milliseconds < 0:
+            raise ValueError("virtual clock cannot move backwards")
+        self._elapsed_ms += milliseconds
+        return self._elapsed_ms
 
 
 def seeded_id(prefix: str, seed: int, *parts: Any) -> str:

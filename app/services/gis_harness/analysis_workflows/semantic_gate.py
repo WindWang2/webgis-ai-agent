@@ -1,4 +1,4 @@
-"""Typed 衔接门（ADR-0282 D2）—— 工作流缝的几何/CRS 纵深防御。
+"""Typed 衔接门（ADR-0284 D2）—— 工作流缝的几何/CRS 纵深防御。
 
 与既有守门的分工（不复制语义）：
 - 权威仍是工具级 SpatialSemanticContract preflight（ADR-0279）与

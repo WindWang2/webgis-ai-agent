@@ -22,6 +22,7 @@ import tempfile
 from contextlib import asynccontextmanager
 
 import pytest
+from app.core.owner_tokens import owner_token_digest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -248,7 +249,7 @@ def test_session_mode_owner_token_survives_periodic_reauth(monkeypatch):
     conn.execute(
         "INSERT INTO conversations (id, user_id, title, owner_token)"
         " VALUES (?, NULL, 't', ?)",
-        (_SESSION_ID, _OWNER_TOKEN),
+        (_SESSION_ID, owner_token_digest(_OWNER_TOKEN)),
     )
     conn.commit()
     conn.close()
@@ -288,3 +289,35 @@ def test_session_mode_owner_token_survives_periodic_reauth(monkeypatch):
             while got.get("event") != "pong":
                 got = json.loads(ws.receive_text())
             assert "revision" in got["data"]
+
+
+@pytest.mark.timeout(5)
+def test_read_only_collab_connection_revoked_without_sending_frame(monkeypatch):
+    app, db_path = _make_collab_app()
+    monkeypatch.setattr(collab_module, "_REAUTH_INTERVAL_S", 0.01)
+    token = create_access_token({"sub": _USER_ID, "role": "viewer"})
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as disconnected:
+            with client.websocket_connect(f"/api/v1/ws/collab/{_SESSION_ID}", subprotocols=["bearer", token]) as ws:
+                assert _receive_hello(ws)["data"]["clientId"]
+                _bump_token_version(db_path, 1)
+                while True:
+                    ws.receive_text()
+        assert disconnected.value.code == 4401
+
+
+@pytest.mark.timeout(5)
+def test_anonymous_collab_receipt_rotation_revokes_idle_connection(monkeypatch):
+    app, db_path = _make_collab_app()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE conversations SET user_id=NULL, owner_token=? WHERE id=?", (owner_token_digest(_OWNER_TOKEN), _SESSION_ID))
+    monkeypatch.setattr(collab_module, "_REAUTH_INTERVAL_S", 0.01)
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as disconnected:
+            with client.websocket_connect(f"/api/v1/ws/collab/{_SESSION_ID}", subprotocols=["session", _OWNER_TOKEN]) as ws:
+                assert _receive_hello(ws)["data"]["clientId"]
+                with sqlite3.connect(db_path) as connection:
+                    connection.execute("UPDATE conversations SET owner_token=? WHERE id=?", (owner_token_digest("rotated"), _SESSION_ID))
+                while True:
+                    ws.receive_text()
+        assert disconnected.value.code == 4401

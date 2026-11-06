@@ -50,13 +50,17 @@ _QUANTITY_HINT_RE = re.compile(
     r"distance|weight)",
     re.I,
 )
-_EXPLICIT_UNIT_RE = re.compile(
-    r"(km2|km²|平方公里|平方千米|公顷|hectare|m2|平方米|亩|万元|亿元|"
-    r"百万元|元|美元|吨|千克|公斤|kg|t/|km|米|cm|mm|升|毫升|度|千瓦时|"
-    r"kwh|人|户|件|percent|%|pct)",
-    re.I,
+_UNIT_MARKER = (
+    r"km2|km²|平方公里|平方千米|公顷|hectare|m2|平方米|亩|万元|亿元|"
+    r"百万元|元|美元|吨|千克|公斤|kg|km|米|cm|mm|升|毫升|度|千瓦时|"
+    r"kwh|人|户|件|percent|%|pct"
 )
-_RATIO_HINT_RE = re.compile(r"(率|比例|占比|比重|percent|pct|ratio|share|fraction)", re.I)
+_EXPLICIT_UNIT_RE = re.compile(
+    rf"(?:[（(](?:{_UNIT_MARKER})[）)]|_(?:{_UNIT_MARKER}))$", re.I,
+)
+_RATIO_HINT_RE = re.compile(
+    r"(?<!功)(?<!频)(?<!汇)率|比例|占比|比重|percent|pct|ratio|share|fraction", re.I,
+)
 _TIME_COMPONENT_RE = re.compile(r"[T ]\d{1,2}:\d{2}")
 _TZ_OFFSET_RE = re.compile(r"(?:Z|z|[+-]\d{2}:?\d{2})$")
 

@@ -220,7 +220,7 @@ def hazard_points() -> Dict[str, Any]:
 
 
 def hospital_points() -> Dict[str, Any]:
-    """ADR-0282 F29：模拟医院设施点（3 处，落在路网网格交点附近——
+    """ADR-0284 F29：模拟医院设施点（3 处，落在路网网格交点附近——
     真实 Dijkstra 可解；坐标与 road_network 同源算术）。"""
     x0, y0, x1, y1 = CHENGDU_BBOX
     feats = []
@@ -236,7 +236,7 @@ def hospital_points() -> Dict[str, Any]:
 
 
 def community_points() -> Dict[str, Any]:
-    """ADR-0282 F29：模拟居民点（demand/incident——最近设施网络距离的需求侧）。"""
+    """ADR-0284 F29：模拟居民点（demand/incident——最近设施网络距离的需求侧）。"""
     x0, y0, x1, y1 = CHENGDU_BBOX
     feats = []
     for i, (dx, dy) in enumerate([(0.04, 0.04), (0.10, 0.06),

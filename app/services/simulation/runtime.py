@@ -245,7 +245,8 @@ class SimulationRuntime:
         )
         self._state = new_state
         self._tick = tick
-        self._steps.append(sim_step)
+        if tick % self.config.output_stride == 0 or tick == self.config.n_steps:
+            self._steps.append(sim_step)
         return sim_step
 
     def to_checkpoint(self) -> dict[str, Any]:
@@ -279,6 +280,9 @@ class SimulationRuntime:
         cls, checkpoint: dict[str, Any], config: SimulationRunConfig,
     ) -> "SimulationRuntime":
         """从检查点恢复运行时（config 可换目标步数以续跑）。"""
+        saved_dt = checkpoint.get("config", {}).get("dt_seconds")
+        if saved_dt is None or float(saved_dt) != config.dt_seconds:
+            raise SimulationStateError("checkpoint dt_seconds must match resume config")
         params = parse_params(checkpoint["params"])
         law = build_law(params)
         # 可续跑 = PENDING/RUNNING/COMPLETED（completed 是"到达配置视界"的

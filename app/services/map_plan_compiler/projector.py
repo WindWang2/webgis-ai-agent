@@ -150,6 +150,8 @@ def project_plan_ir(
     # ── component intents：plan.components + grammar 义务（去重合并）────
     component_intents: List[ComponentIntent] = []
     seen_types: set[str] = set()
+    required_types = {_GRAMMAR_COMPONENT_ALIASES.get(str(ctype), str(ctype))
+                      for ctype in (grammar.component_obligations or [])} if grammar is not None else set()
     for idx, comp in enumerate(plan.components or [], start=1):
         ctype = str(getattr(comp, "type", "") or "")
         cid = str(getattr(comp, "id", "") or f"comp-{ctype}-{idx:02d}")[:128]
@@ -159,7 +161,7 @@ def project_plan_ir(
             component_type=ctype,
             component_id=cid,
             action="ensure",
-            required=False,
+            required=ctype in required_types and ctype in _REQUIRED_GRAMMAR_COMPONENTS,
             title=str(options.get("title", "") or "")[:256],
             options=options,
             bound_layer_id="",

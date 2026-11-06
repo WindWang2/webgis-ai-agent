@@ -33,8 +33,8 @@ def test_vectorize_produces_georeferenced_polygons():
     ring = water["geometry"]["coordinates"][0]
     xs = [pt[0] for pt in ring]
     ys = [pt[1] for pt in ring]
-    assert min(xs) == pytest.approx(500045.0, abs=1e-6)
-    assert max(ys) == pytest.approx(3999955.0, abs=1e-6)
+    assert min(xs) == pytest.approx(500040.0, abs=1e-6)
+    assert max(ys) == pytest.approx(3999960.0, abs=1e-6)
     assert water["properties"]["class_name"] == "water"
     assert (max(xs) - min(xs)) * (max(ys) - min(ys)) == pytest.approx(200 * 200)
 
@@ -76,8 +76,8 @@ def test_vectorize_confidence_attribute():
 def test_vectorize_pixel_to_geographic_semantics():
     """像素 (col,row) → 地理 (x,y) 的轴序验收（转置错误会在这里暴露）。
 
-    rasterio ``xy`` 的中心偏移约定：像素 (c,r) 中心 =
-    (c + 0.5) * xsize + x0 —— 与 artifacts.py 检测框同一口径。"""
+    多边形顶点是像素角点：像素 (c,r) 左上角 =
+    c * xsize + x0；不能再施加半像元偏移。"""
     transform = from_origin(100.0, 200.0, 2.0, 3.0)  # 像元 2m x 3m
     classes = np.full((8, 8), 255, dtype=np.uint8)
     classes[0, 0] = 1  # 第 0 行、第 0 列
@@ -88,10 +88,10 @@ def test_vectorize_pixel_to_geographic_semantics():
     ring = fc["features"][0]["geometry"]["coordinates"][0]
     xs = [p[0] for p in ring]
     ys = [p[1] for p in ring]
-    assert min(xs) == pytest.approx(101.0)   # 100 + 2/2
-    assert max(xs) == pytest.approx(103.0)   # 100 + 2*1.5
-    assert max(ys) == pytest.approx(198.5)   # 200 - 3/2
-    assert min(ys) == pytest.approx(195.5)   # 200 - 3*1.5
+    assert min(xs) == pytest.approx(100.0)   # 100 + 2/2
+    assert max(xs) == pytest.approx(102.0)   # 100 + 2*1.5
+    assert max(ys) == pytest.approx(200.0)   # 200 - 3/2
+    assert min(ys) == pytest.approx(197.0)   # 200 - 3*1.5
 
 
 def test_vectorize_rotation_transform_supported():

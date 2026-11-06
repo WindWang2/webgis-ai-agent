@@ -99,21 +99,29 @@ def _turn_env(monkeypatch):
 
     import app.services.harness_kernel as hk
     import app.services.harness_kernel.runtime as hk_runtime
+    real_runtime = hk_runtime.get_runtime
     class FakeKernelRuntime:
+        def __init__(self, sid):
+            self.real = real_runtime(sid)
+            self._store = self.real._store
+
         async def begin_turn(self, turn_id, *, host, message, lock=None):
             state.kernel_turns.append(("begin", turn_id))
+            # Settlement now claims the actual durable running turn. Keep
+            # the host-spy behavior while seeding that real authority.
+            return await self.real.begin_turn(turn_id, host=host, message=message, lock=lock)
 
-        async def end_turn(self, turn_id, *, host, status, checkpoint=True, lock=None):
+        async def end_turn(self, turn_id, *, host, status, checkpoint=True, lock=None, settle_token=""):
             state.kernel_turns.append(("end", turn_id, status))
-            return []
+            return await self.real.end_turn(turn_id, host=host, status=status, checkpoint=checkpoint, lock=lock, settle_token=settle_token)
 
         async def lifecycle_parity_snapshot(self, turn_id):
             return {"turn_id": turn_id, "phase": "verifying", "status": "running"}
 
         async def turn_refusal_candidate(self, turn_id):
             return None
-    monkeypatch.setattr(hk, "get_runtime", lambda sid: FakeKernelRuntime())
-    monkeypatch.setattr(hk_runtime, "get_runtime", lambda sid: FakeKernelRuntime())
+    monkeypatch.setitem(hk.__dict__, "get_runtime", lambda sid: FakeKernelRuntime(sid))
+    monkeypatch.setattr(hk_runtime, "get_runtime", lambda sid: FakeKernelRuntime(sid))
 
     # 流式路径 map_event_to_sse 的真实实现会查 cache/caches —— 提供 no-op 依赖
     monkeypatch.setattr(bridge_mod, "_clear_dispatch_cache", lambda sid=None: None)

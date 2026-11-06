@@ -418,8 +418,6 @@ async def apply_gis_mutation(
         guard_error = await _check_user_presentation_guard_ring(session_id, intent, origin)
     else:
         guard_error = None
-    if guard_error is None:
-        guard_error = _check_user_presentation_guard(session_id, intent, origin)
     if guard_error is not None:
         logger.info(
             "[gis_world_state] user-presentation guard refused agent mutation: %s", guard_error
@@ -630,15 +628,7 @@ async def apply_gis_mutation_batch(
                         )
         if error is None:
             return None
-        return MapSpecResult(
-            is_error=True,
-            origin=locked_origin,
-            error_msg=(
-                f"图层 {error.layer_id} 的显示状态由用户手动设定"
-                f"（visible={error.user_value}），Agent 不覆盖用户显式操作。"
-            ),
-            correction_hint=_USER_WINS_CORRECTION_HINT,
-        )
+        return _user_wins_result(locked_origin, error)
 
     result = await active_engine.apply_presentation_batch(
         session_id, intents, origin=origin,
@@ -646,7 +636,7 @@ async def apply_gis_mutation_batch(
         pre_commit_check=_locked_batch_guard,
         mutation_id=envelope.mutation_id,
     )
-    result.producer_class = envelope.producer_class
+    result.producer_class = result.producer_class or envelope.producer_class
     if not result.mutation_id:
         result.mutation_id = envelope.mutation_id
     if result.committed:

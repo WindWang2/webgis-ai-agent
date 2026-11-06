@@ -29,6 +29,8 @@ def certify_extension(host: ExtensionHost, extension_id: str) -> dict[str, Any]:
         return {
             "extension_id": extension_id,
             "certified": False,
+            "trust": "unknown",
+            "execution_mode": "unknown",
             "checks": [
                 {
                     "check": "discovered",
@@ -84,7 +86,7 @@ def certify_extension(host: ExtensionHost, extension_id: str) -> dict[str, Any]:
     )
     add(
         "signature",
-        signature.status not in ("invalid", "tampered", "revoked"),
+        signature.status == "signed_verified",
         f"{signature.status}"
         + (f" (publisher={signature.publisher})" if signature.publisher else "")
         + (f": {signature.detail}" if signature.detail else ""),

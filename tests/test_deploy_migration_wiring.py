@@ -15,8 +15,7 @@ Postgres 不加列/索引 —— 存量生产库 schema 停留在首次创建状
      ENTRYPOINT，entrypoint 方案在 k8s 不生效，必须显式 initContainer）；
   5. 迁移链产出与模型元数据一致（drift check；CI 的 db-migrations lane
      会把它指到真实 PostGIS）；
-  6. 本地 dev（docker-compose.yml / 直接 uvicorn）不受影响 —— dev 镜像
-     （Dockerfile）不装 entrypoint。
+  6. Dev 容器同样迁移并以非 root runner 运行；直接 uvicorn 开发仍走原生命周期。
 """
 from pathlib import Path
 
@@ -242,8 +241,8 @@ def test_dockerfile_prod_installs_and_uses_entrypoint():
     assert "docker-entrypoint.sh" in df.split("ENTRYPOINT")[1], (
         "ENTRYPOINT 必须经由 docker-entrypoint.sh（tini 之下）再启动 CMD"
     )
-    # 审计 I9 的 trap-kill-wait CMD 语义不能被破坏 —— CMD 保持原样
-    assert "trap 'kill 0' TERM INT" in df
+    # Both services are supervised; any child exit terminates the container.
+    assert 'CMD ["python", "-m", "app.lib.runtime.service_supervisor"]' in df
 
 
 # ── 3. 生产 compose：单一迁移所有者 ─────────────────────────────────────
@@ -625,10 +624,15 @@ def test_ci_db_migration_gate_is_release_blocking():
 # ── 7. 本地 dev 不受影响 ─────────────────────────────────────────────────
 
 
-def test_dev_dockerfile_untouched_by_entrypoint():
-    """dev 镜像不装 entrypoint —— 本地 pytest 仍走 SQLite + create_all。"""
+def test_dev_container_uses_migrations_and_nonroot_runner():
+    """Container API owns migrations; worker waits and never migrates twice."""
     df = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert "docker-entrypoint.sh" not in df
+    assert "docker-entrypoint.sh" in df
+    assert "USER appuser" in df
+    services = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())["services"]
+    assert services["api"]["build"]["target"] == "runner"
+    assert "SKIP_DB_MIGRATIONS=true" in services["celery-worker"]["environment"]
+    assert services["celery-worker"]["depends_on"]["api"]["condition"] == "service_healthy"
 
 
 def test_dev_dockerfile_copies_vendor_for_pi_bridge():

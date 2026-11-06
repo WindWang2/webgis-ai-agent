@@ -173,3 +173,23 @@ def test_clone_instance_rejects_foreign_session(client, monkeypatch):
     }, headers=_AUTH)
     assert r.status_code == 404, r.text
     assert "Session not found" in r.text
+
+
+@pytest.mark.parametrize("route,payload", [
+    ("packages/register", {"query": "污染源缓冲区分析", "project_id": "victim-project"}),
+    ("instances", {"package_id": "victim-package", "session_id": "", "project_id": "victim-project"}),
+])
+def test_project_write_authority_checked_before_workflow_side_effects(client, monkeypatch, route, payload):
+    from contextlib import nullcontext
+    from app.core import database
+    from app.services.project_service import ProjectService
+
+    calls = []
+    monkeypatch.setattr(database, "SessionLocal", lambda: nullcontext(None))
+    def deny(db, project_id, *, user_id, org_id):
+        calls.append((project_id, user_id))
+        return None
+    monkeypatch.setattr(ProjectService, "get_project_for_write", deny)
+    response = client.post(f"/api/v1/workflow-runtime/{route}", json=payload, headers=_AUTH)
+    assert response.status_code == 404, response.text
+    assert calls == [("victim-project", "alice")]

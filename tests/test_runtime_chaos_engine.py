@@ -807,19 +807,29 @@ class TestF17CancelCascadeRegistration:
 
 
 class TestF18Eviction:
-    def test_evicted_running_task_is_cancelled_not_orphaned(self):
-        """Evicting a RUNNING task without lighting its cancel token leaves an
-        invisible, uncancellable execution running in the background."""
+    def test_global_capacity_preserves_live_tasks_and_reclaims_terminal(self):
+        """Global admission cannot evict another session's live execution."""
+        from app.core.errors import ErrorCategory, PlatformError
         tracker = TaskTracker()
+        tracker.MAX_TOTAL_TASKS = 4
         victim = tracker.create("s-victim", "r")
-        for i in range(TaskTracker.MAX_TOTAL_TASKS + 60):
-            tracker.create(f"s-{i}", f"r-{i}")
-
-        assert victim.id not in tracker._tasks, "precondition: victim was evicted"
-        assert victim.cancel_token is not None and victim.cancel_token.cancelled, (
-            "running task evicted while still executing — its in-flight tools "
-            "never observe cancellation (F18)"
-        )
+        others = [tracker.create(f"s-{i}", f"r-{i}")
+                  for i in range(tracker.MAX_TOTAL_TASKS - 1)]
+        with pytest.raises(PlatformError) as admission:
+            tracker.create("s-excess", "new request")
+        assert admission.value.category == ErrorCategory.QUOTA
+        assert tracker._tasks[victim.id] is victim
+        assert victim.cancel_token is not None and not victim.cancel_token.cancelled
+        assert len(tracker._tasks) == tracker.MAX_TOTAL_TASKS
+        # Once a task is terminal, its slot can be reused without touching the
+        # still-running victim or leaving stale per-session bookkeeping.
+        tracker.complete_task(others[0].id)
+        admitted = tracker.create("s-new", "admitted after completion")
+        assert admitted.id in tracker._tasks and others[0].id not in tracker._tasks
+        assert "s-0" not in tracker._session_tasks
+        assert tracker._tasks[victim.id] is victim and not victim.cancel_token.cancelled
+        for tid in list(tracker._tasks):
+            tracker._drop_task(tid)
 
     def test_per_session_eviction_cancels_running_task(self):
         tracker = TaskTracker()

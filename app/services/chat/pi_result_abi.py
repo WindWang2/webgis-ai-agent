@@ -56,7 +56,11 @@ def _bounded_ids(values: Optional[List[Any]]) -> List[str]:
 
 
 def _bounded_summary(text: str) -> str:
-    return str(text or "").strip()[:_SUMMARY_MAX_CHARS]
+    from app.utils.security import redact_paths, sanitize_error_msg
+
+    if not isinstance(text, str):
+        return ""
+    return redact_paths(sanitize_error_msg(text.strip()))[:_SUMMARY_MAX_CHARS]
 
 
 def build_result_envelope(
@@ -83,7 +87,7 @@ def build_result_envelope(
     raw = getattr(result, "raw_result", None)
     if isinstance(raw, dict):
         summary = _bounded_summary(
-            str(raw.get("summary") or raw.get("message") or "") or summary
+            (raw.get("summary") or raw.get("message") or "") or summary
         ) or summary
     envelope["summary"] = summary
 

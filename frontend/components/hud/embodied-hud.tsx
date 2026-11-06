@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import { 
   Cpu, Activity, Compass, Layers, Sun, Moon, 
   ChevronUp, ChevronDown, CheckCircle2
@@ -87,40 +87,30 @@ export function EmbodiedHud() {
     setTheme(isDark ? 'light' : 'dark');
   };
 
-  // Waveform phase animation
-  const [phase, setPhase] = useState(0);
+  const wavePath = useRef<SVGPathElement>(null);
   const reducedMotion = usePrefersReducedMotion();
+  const renderWaveform = (phase = 0) => {
+    const points: string[] = [];
+    for (let x = 0; x <= 105; x += 4) {
+      const y = 17.5 + Math.sin(x * (isThinking ? 0.08 : 0.04) + phase) * (isThinking ? 12 : 3);
+      points.push(`${x},${y}`);
+    }
+    return `M ${points.join(' L ')}`;
+  };
   useEffect(() => {
-    // #1001：空闲态不再跑 JS rAF——HUD 展开期间循环曾无条件运行（空闲步进
-    // 0.08），每帧 setPhase 重渲染整个 HUD 子树直到手动收起。波形是纯装饰，
-    // 空闲时相位冻结为静态曲线；仅 isThinking 保留 JS 相位驱动（活跃波形的
-    // 波幅/频率逐帧变化需要它）。
-    // 审计 findings.md Perf Medium：HUD 关闭时（仅显示 24px 条）同样不动画。
-    // UI V3：prefers-reduced-motion 时同样不启动。
     if (!hudOpen || !isThinking || reducedMotion) return;
     let frame: number;
+    let phase = 0;
     const tick = () => {
-      setPhase((p) => (p + 0.25) % (Math.PI * 2));
+      phase = (phase + 0.25) % (Math.PI * 2);
+      const points: string[] = [];
+      for (let x = 0; x <= 105; x += 4) points.push(`${x},${17.5 + Math.sin(x * 0.08 + phase) * 12}`);
+      wavePath.current?.setAttribute('d', `M ${points.join(' L ')}`);
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [isThinking, hudOpen, reducedMotion]);
-
-  // Render CPU Cognitive Waveform
-  const renderWaveform = () => {
-    const width = 105;
-    const height = 35;
-    const points: string[] = [];
-    const amplitude = isThinking ? 12 : 3;
-    const frequency = isThinking ? 0.08 : 0.04;
-
-    for (let x = 0; x <= width; x += 4) {
-      const y = height / 2 + Math.sin(x * frequency + phase) * amplitude;
-      points.push(`${x},${y}`);
-    }
-    return `M ${points.join(' L ')}`;
-  };
 
   return (
     /* V4（B）：整条状态栏改不透明 surface-panel —— 它压在持续重绘的地图画布上，
@@ -165,7 +155,7 @@ export function EmbodiedHud() {
         {/* Telemetry Stats */}
         <div className="flex items-center gap-4">
           {[
-            { label: 'CRS', value: 'EPSG:4326' },
+            { label: t('telemetry.coordinates'), value: 'WGS84' },
             { label: 'LNG', value: lng.toFixed(5) },
             { label: 'LAT', value: lat.toFixed(5) },
             { label: 'ZOOM', value: zoom.toFixed(1) },
@@ -191,11 +181,11 @@ export function EmbodiedHud() {
               style={{ color: isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)' }}
             />
             <span className="font-mono text-caption text-ink-muted" style={{ letterSpacing: '0.04em' }}>
-              {isThinking ? 'AGENT NEURAL SIGNAL ACTIVE' : 'COGNITIVE CORE IDLE'}
+              {isThinking ? t('signal.active') : t('signal.idle')}
             </span>
             <svg width="60" height="12" className="ml-1 opacity-40">
               <path
-                d={`M 0,6 Q 15,${6 + Math.sin(phase) * (isThinking ? 5 : 1.5)} 30,6 T 60,6`}
+                d={`M 0,6 Q 15,${6 + 0} 30,6 T 60,6`}
                 fill="none"
                 stroke={isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'}
                 strokeWidth="1"
@@ -358,7 +348,7 @@ export function EmbodiedHud() {
               {/* Dynamic Waveform Graph & Memory count */}
               <div className="flex flex-1 items-center gap-3">
                 <svg width="105" height="35" className="shrink-0 overflow-visible" style={{ filter: isThinking ? 'drop-shadow(0 0 2px color-mix(in srgb, var(--agent-accent) 53%, transparent))' : 'none' }}>
-                  <path d={renderWaveform()} fill="none" stroke={isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'} strokeWidth="1.5" />
+                  <path ref={wavePath} d={renderWaveform()} fill="none" stroke={isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'} strokeWidth="1.5" />
                 </svg>
 
                 <div className="flex flex-col gap-3 font-mono text-caption">

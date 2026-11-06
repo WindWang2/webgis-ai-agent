@@ -51,7 +51,7 @@ def test_report_compile_uses_publication_layout_aspect(paper, orientation, expec
     svc = ReportService.__new__(ReportService)  # 只测编译接线，不触 DB 面
     captured: dict[str, Any] = {}
 
-    def _fake_compile(mapspec, dpi, *, width, height, include_chrome):
+    def _fake_compile(mapspec, dpi, *, width, height, include_chrome, max_features, timeout_ms):
         captured["width"] = width
         captured["height"] = height
         captured["include_chrome"] = include_chrome

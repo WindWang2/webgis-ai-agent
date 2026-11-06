@@ -151,7 +151,7 @@ def test_cache_hit_discloses_and_expires():
     hit = cache.get(key, current_fingerprints={"s1": "fp1"})
     assert hit is not None and hit["rows"] == [1]
     assert hit["result_cache"]["hit"] is True
-    assert hit["result_cache"]["basis"] == "ttl+fingerprint"
+    assert hit["result_cache"]["basis"] == "ttl+descriptor_fingerprint"
     # 指纹变化 → miss
     assert cache.get(key, current_fingerprints={"s1": "fp2"}) is None
 

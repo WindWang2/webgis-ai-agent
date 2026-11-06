@@ -92,11 +92,12 @@ async def test_optional_revoked_becomes_anonymous(live_db):
 
 
 @pytest.mark.asyncio
-async def test_missing_row_keeps_claims(live_db):
+async def test_missing_row_rejects_claims(live_db):
     from app.core.auth import get_current_user
 
-    user = await get_current_user(_creds("u-nodb", role="editor"))
-    assert user["user_id"] == "u-nodb"
+    with pytest.raises(HTTPException) as caught:
+        await get_current_user(_creds("u-nodb", role="editor"))
+    assert caught.value.status_code == 401
 
 
 @pytest.mark.asyncio

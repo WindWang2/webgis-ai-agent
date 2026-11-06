@@ -184,8 +184,14 @@ class SnapshotExtractor:
         try:
             with Image.open(io.BytesIO(data)) as probe:
                 width, height = probe.size
+                if max(width, height) > self.max_edge or width * height > self.max_edge ** 2:
+                    raise SnapshotError("image_oversized", f"{width}x{height} exceeds image budget")
+                if min(width, height) < self.min_edge:
+                    raise SnapshotError("image_too_small", f"{width}x{height} below min edge")
                 probe.verify()  # 结构校验（截断/损坏在此暴露）
             img = Image.open(io.BytesIO(data))
+        except Image.DecompressionBombError as exc:
+            raise SnapshotError("image_oversized", "decompression pixel budget exceeded") from exc
         except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
             # Pillow 对截断/损坏图抛 OSError 或 SyntaxError（含 UnidentifiedImageError）。
             raise SnapshotError("image_corrupt", f"unverifiable image: {exc}") from exc

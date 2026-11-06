@@ -246,13 +246,14 @@ def submit_quality_report(
         task_type="data_quality_evaluate",
         display_name="数据质量评估",
         params={"session_id": body.session_id, "ref": body.ref,
-                "project_id": body.project_id},
+                "project_id": body.project_id, "rule_defs": rule_defs},
         task_kwargs={
             "session_id": body.session_id,
             "ref": body.ref,
             "project_id": body.project_id,
             "rule_defs": rule_defs,
             "created_by": created_by,
+            "org_id": user.get("org_id") if isinstance(user, dict) else None,
         },
     )
     return {"success": True, **result}
@@ -385,6 +386,7 @@ def autofix_dry_run(
         raise HTTPException(status_code=400, detail=str(exc))
 
     payload = _evaluate_request_payload(body)
+    _enforce_inline_caps(payload)
     try:
         report = evaluate_payload(payload, rule_defs)
     except ValueError as exc:

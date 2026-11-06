@@ -1,3 +1,4 @@
+import { boundsFromCenterZoom } from '@/lib/map-components/geo-anchor';
 /**
  * Session map-state restore — 会话恢复 / 分享页（/story）共用的图层还原逻辑。
  *
@@ -448,13 +449,10 @@ export async function restoreSessionMapLayers(
   // 视为视口内（planner 语义），恢复顺序永远覆盖全部候选。
   const vp = state.viewport;
   const zoom = typeof vp?.zoom === 'number' && vp.zoom >= 0 ? vp.zoom : 12;
-  // 恢复时只有 center/zoom，视口 bounds 用 zoom 启发的名义跨度近似
-  // （仅影响恢复优先级排序，不影响任何数据事实）。
-  const halfLon = 90 / Math.pow(2, Math.max(0, zoom - 1));
-  const halfLat = 45 / Math.pow(2, Math.max(0, zoom - 1));
-  const bounds: [number, number, number, number] | undefined = vp?.center
-    ? [vp.center[0] - halfLon, vp.center[1] - halfLat, vp.center[0] + halfLon, vp.center[1] + halfLat]
-    : undefined;
+  const viewportBounds = vp?.center ? boundsFromCenterZoom({ lng: vp.center[0], lat: vp.center[1] }, zoom,
+    typeof window === 'undefined' ? 1200 : window.innerWidth, typeof window === 'undefined' ? 800 : window.innerHeight) : null;
+  const bounds: [number, number, number, number] | undefined = viewportBounds
+    ? [viewportBounds.west, viewportBounds.south, viewportBounds.east, viewportBounds.north] : undefined;
 
   const hydrateCandidates = keepers.filter((layer) =>
     layer._refId

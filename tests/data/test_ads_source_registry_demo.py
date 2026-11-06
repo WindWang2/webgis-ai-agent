@@ -27,7 +27,10 @@ def _isolate_spatial_catalog():
     spatial_catalog_service.clear()
 
 
-def test_new_source_via_yaml_only(tmp_path: Path, monkeypatch):
+def test_new_source_via_yaml_only(tmp_path: Path, monkeypatch, patched_safe_sessions):
+    import socket
+    original_dns = socket.getaddrinfo
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, *args, **kwargs: original_dns("93.184.216.34" if host == "ads-fixture.invalid" else host, port, *args, **kwargs))
     # 1. a brand-new source declaration (the "user" action)
     (tmp_path / "demo_source.yaml").write_text(yaml.safe_dump({
         "source_id": "demo_new_ogc",

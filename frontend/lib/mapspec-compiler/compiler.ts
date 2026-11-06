@@ -151,7 +151,7 @@ export function compileStyleMethod(
       ]);
       // H02 §B：nodata guard —— 与 live withNoDataGuard 同形状
       // （["case", ["==", ["get", field], null], nodata, thematic]）。
-      if (typeof m.nodata === "string" && m.nodata) {
+      if (m.field !== "zoom" && typeof m.nodata === "string" && m.nodata) {
         return asExpression([
           "case", ["==", ["get", m.field], null], m.nodata, interpExpr,
         ]);
@@ -174,7 +174,7 @@ export function compileStyleMethod(
       const stepExpr = asExpression([
         "step", fieldExpr, initialValue, ...flattenedStops,
       ]);
-      if (typeof m.nodata === "string" && m.nodata) {
+      if (m.field !== "zoom" && typeof m.nodata === "string" && m.nodata) {
         return asExpression([
           "case", ["==", ["get", m.field], null], m.nodata, stepExpr,
         ]);
@@ -274,7 +274,7 @@ export function validateMapSpec(
         const m = styleMethod;
 
         if (m.method === "interpolate" || m.method === "step") {
-          if (!Array.isArray(m.stops) || m.stops.length < 2) {
+          if (!Array.isArray(m.stops) || m.stops.length < (m.method === "step" && m.default !== undefined ? 1 : 2)) {
             errors.push({
               code: "INVALID_STOPS_COUNT",
               message: `Layer "${layer.id}" property "${propName}" (${m.method}) must have at least 2 stops.`,
@@ -283,7 +283,7 @@ export function validateMapSpec(
             });
           } else {
             for (let i = 0; i < m.stops.length - 1; i++) {
-              if (m.stops[i][0] >= m.stops[i + 1][0]) {
+              if (Number(m.stops[i][0]) >= Number(m.stops[i + 1][0])) {
                 errors.push({
                   code: "NON_INCREASING_STOPS",
                   message: `Layer "${layer.id}" property "${propName}" (${m.method}) stops must be strictly increasing. Found ${m.stops[i][0]} >= ${m.stops[i + 1][0]}.`,
@@ -503,6 +503,7 @@ export function compileMapSpec(
   }
 
   const sources: Record<string, SourceSpecification> = {};
+  const authoredClusters = new Map((spec.layers || []).filter((layer) => layer.cluster).map((layer) => [layer.source, layer.cluster!]));
   for (const [key, source] of Object.entries(spec.sources || {})) {
     if (!KNOWN_SOURCE_TYPES.has(source.type)) {
       // AC-06：未知类型不再静默产出空 FeatureCollection 占位 —— 错误已在
@@ -526,17 +527,18 @@ export function compileMapSpec(
       // 聚合配置（显式 cluster 配置优先，符号律只兜缺省）。
       // v1.6（方向 5）：表达计划的簇窗终点作为 clusterMaxZoom 缺省
       // （源在窗终点完全解聚 —— raw 窗接管；显式 cluster 配置仍恒优先）。
-      const autoCluster = autoClusterSourceIds.has(key) && !source.cluster;
+      const authoredCluster = source.cluster ?? authoredClusters.get(key);
+      const autoCluster = autoClusterSourceIds.has(key) && !authoredCluster;
       const repClusterMax = repClusterSources.get(key);
       sources[key] = {
         type: "geojson",
         data: source.inlineData,
-        ...(source.cluster || autoCluster || repClusterMax !== undefined
+        ...(authoredCluster || autoCluster || repClusterMax !== undefined
           ? {
               cluster: true,
-              clusterRadius: source.cluster?.radius ?? 60,
+              clusterRadius: authoredCluster?.radius ?? 60,
               clusterMaxZoom:
-                source.cluster?.maxzoom ?? repClusterMax ?? 14,
+                authoredCluster?.maxzoom ?? repClusterMax ?? 14,
             }
           : {}),
       };
@@ -545,7 +547,7 @@ export function compileMapSpec(
       sources[key] = {
         type: "geojson",
         data: dataRef,
-        ...(source.cluster ? { cluster: true, clusterRadius: source.cluster.radius ?? 60, clusterMaxZoom: source.cluster.maxzoom ?? 14 } : {}),
+        ...((source.cluster ?? authoredClusters.get(key)) ? { cluster: true, clusterRadius: (source.cluster ?? authoredClusters.get(key))?.radius ?? 60, clusterMaxZoom: (source.cluster ?? authoredClusters.get(key))?.maxzoom ?? 14 } : {}),
       };
     } else if (source.type === "vector") {
       sources[key] = {
@@ -621,6 +623,7 @@ export function compileMapSpec(
         ? { layout: { visibility: vis.visibility } }
         : { layout: {} }),
       paint: {},
+      ...(layer.filter ? { filter: layer.filter } : {}),
     };
     // Vector source layers require `source-layer` in MapLibre. MapSpecLayer
     // carries an optional `sourceLayer` passthrough; default to "data" (the
@@ -658,8 +661,9 @@ export function compileMapSpec(
     // 仅在源级聚合真实注入时（repClusterSources 命中）—— 共享源降级计划
     // 的源不带 cluster，filter 无谓且语义误导。
     if (planEffective && repPlan!.hasCluster && layer.type === "circle"
-        && repClusterSources.has(layer.source) && !maplibreLayer.filter) {
-      maplibreLayer.filter = ["!", ["has", "point_count"]];
+        && repClusterSources.has(layer.source)) {
+      const unclustered = ["!", ["has", "point_count"]];
+      maplibreLayer.filter = layer.filter ? ["all", layer.filter, unclustered] : unclustered;
     }
 
     // ADR-0199：3D 场景下 symbol 层默认面向视口（icon-pitch-alignment:
@@ -984,14 +988,8 @@ export function compileMapSpec(
       && repClusterSources.has(layer.source)
       ? repPlan!.windows.find((w) => w.mode === "point_cluster")
       : undefined;
-    const clusterCfg =
-      layer.cluster ?? ((layer.paint as Record<string, unknown> | undefined)?.cluster as
-        | Record<string, unknown>
-        | undefined)
-      ?? (presentation?.mode === "cluster" ? {} : undefined)
-      ?? (repClusterWindow ? {} : undefined);
     let labelLayerCountDelta = 0;
-    if (clusterCfg && layer.type === "circle") {
+    if ((sources[layer.source] as { cluster?: boolean })?.cluster === true && layer.type === "circle") {
       // review P2：authored filter 恒优先（与 runtime `!def.filter` 同款）
       // —— 未聚类点层语义 = authored ∧ ¬cluster；无 authored filter 时才
       // 落纯 ¬cluster（live/导出双路径不漂移）。
@@ -1183,6 +1181,7 @@ export function compileMapSpec(
       labelLayerCount++;
       const labelLayer: CompiledLayer = {
         id: `${layer.id}-label`,
+        ...(maplibreLayer.filter ? { filter: maplibreLayer.filter } : {}),
         type: "symbol",
         source: layer.source,
         // C11 v1.5：标注子层继承主层 zoom 门（显隐经 layout.visibility）。

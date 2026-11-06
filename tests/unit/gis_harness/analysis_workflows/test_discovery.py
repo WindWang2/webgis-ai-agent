@@ -1,4 +1,4 @@
-"""Discovery 投影（ADR-0282 B4）—— 机读能力目录 + 结构化 next_step。"""
+"""Discovery 投影（ADR-0284 B4）—— 机读能力目录 + 结构化 next_step。"""
 from __future__ import annotations
 
 from app.services.gis_harness.analysis_workflows.discovery import (

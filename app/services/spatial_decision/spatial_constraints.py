@@ -153,6 +153,12 @@ def evaluate_spatial_constraint(
                 ref_geom = shape(ref_geom_dict)
         except Exception as e:
             logger.warning(f"Failed to parse reference geometry for constraint '{constraint.id}': {e}")
+            return ConstraintEvaluation(
+                constraint_id=constraint.id, alternative_id=alt_id, passed=False,
+                observed_value="invalid_reference_geometry", threshold=predicate.value,
+                margin=None, penalty=constraint.penalty_weight if constraint.constraint_type == ConstraintType.SOFT else 0.0,
+                evidence_statement="Reference geometry could not be parsed; constraint failed closed.",
+            )
 
     # 1. OUTSIDE Predicate (e.g. Protected Area Exclusion)
     if predicate == SpatialPredicate.OUTSIDE:

@@ -27,8 +27,9 @@ export const MAX_LABELS_PER_EXPORT = 400;
 export function fitLabel(text: string, maxChars = 60, ellipsis = '…'): [string, boolean] {
   const s = String(text);
   const cap = maxChars < 1 ? 1 : maxChars;
-  if (s.length <= cap) return [s, false];
-  return [s.slice(0, cap - 1) + ellipsis, true];
+  const points = Array.from(s);
+  if (points.length <= cap) return [s, false];
+  return [points.slice(0, cap - 1).join('') + ellipsis, true];
 }
 export interface CollisionLabel {
   id: string;

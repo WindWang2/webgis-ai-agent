@@ -151,7 +151,7 @@ def _fit_kde(kde_data, bandwidth, weights=None):
                     bw = cap
                     clamped = True
         except Exception:  # noqa: BLE001 钳制失败回退 Scott 原值
-            pass
+            logging.getLogger(__name__).warning('Bandwidth clamp failed; retaining the Scott estimate', exc_info=True)
     else:
         bw = float(bandwidth)
     kde.cho_cov = np.eye(kde_data.shape[0], dtype=float) * bw
@@ -409,7 +409,7 @@ def kde_surface(
         half = cell_size / 2
         cell_geoms = sbox(grid_x[xs] - half, grid_y[ys] - half,
                           grid_x[xs] + half, grid_y[ys] + half)
-        cell_data = list(zip(ys.tolist(), xs.tolist(), density[ys, xs].tolist()))
+        cell_data = list(zip(ys.tolist(), xs.tolist(), density[ys, xs].tolist(), strict=True))
     else:
         cell_geoms = []
         cell_data = []
@@ -422,7 +422,7 @@ def kde_surface(
                 "geometry": mapping(geom),
                 "properties": {"density": round(d_val, 8)},
             }
-            for geom, (_, _, d_val) in zip(cells_gdf.geometry, cell_data)
+            for geom, (_, _, d_val) in zip(cells_gdf.geometry, cell_data, strict=True)
         ]
     else:
         out_features = []
@@ -569,7 +569,7 @@ def kde_contours(
                     raw_lines.append((ls, val, i, is_index))
         if raw_lines:
             gs = gpd.GeoSeries([line for line, _, _, _ in raw_lines], crs=utm_crs).to_crs("EPSG:4326")
-            for (line, val, level_idx, is_idx), line_wgs84 in zip(raw_lines, gs):
+            for (_line, val, level_idx, is_idx), line_wgs84 in zip(raw_lines, gs, strict=True):
                 label_str = f"{val:g} {unit}".strip()
                 out_features.append({
                     "type": "Feature",
@@ -625,7 +625,7 @@ def kde_contours(
 
         if raw_polys:
             gs = gpd.GeoSeries([p for p, _, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
-            for (poly, val, level_idx), poly_wgs84 in zip(raw_polys, gs):
+            for (_poly, val, level_idx), poly_wgs84 in zip(raw_polys, gs, strict=True):
                 label_str = f"{val:g} {unit}".strip()
                 out_features.append({
                     "type": "Feature",

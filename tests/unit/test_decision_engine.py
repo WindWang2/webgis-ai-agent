@@ -151,7 +151,13 @@ async def test_decision_engine_all_six_scenarios(engine):
         assert res.scenario.scenario_type == expected_type
         assert res.confidence > 0.0
         assert len(res.metrics) > 0
-        assert len(res.rules_applied) > 0
+        if expected_type == "population_growth":
+            # No shipped rule declares this scenario. A growth parameter must
+            # not self-prove applicability of an unrelated domain rule.
+            assert res.rules_applied == []
+            assert res.provenance["rules_count"] == 0
+        else:
+            assert len(res.rules_applied) > 0
 
 
 @pytest.mark.asyncio

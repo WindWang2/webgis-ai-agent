@@ -656,10 +656,10 @@ class GisExtensionManifest(BaseModel):
 
     def namespaced_model_provider_tool(self, provider_id: str) -> str:
         """model provider 的工具投影名（<ns>_<pid>_invoke）。"""
-        return f"{self.namespace}_{provider_id}_invoke"
+        return f"{self.namespace.replace('_', '__')}_{provider_id}_invoke"
 
     def namespaced_tool_name(self, tool_name: str) -> str:
-        return f"{self.namespace}_{tool_name}"
+        return f"{self.namespace.replace('_', '__')}_{tool_name}"
 
     def namespaced_algorithm_id(self, algorithm_id: str) -> str:
         return f"{self.namespace}.{algorithm_id}"
@@ -668,7 +668,7 @@ class GisExtensionManifest(BaseModel):
         return f"{self.namespace}.{skill_id}"
 
     def namespaced_source_type(self, source_type: str) -> str:
-        return f"{self.namespace}_{source_type}"
+        return f"{self.namespace.replace('_', '__')}_{source_type}"
 
 
 def manifest_from_dict(data: Any) -> tuple[Optional[GisExtensionManifest], Optional[str]]:

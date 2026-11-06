@@ -1,11 +1,12 @@
 """Provider 级别的速率限制 + 电路保险丝，防止频繁失败时仍然持续调用已宕机的 provider。"""
 from __future__ import annotations
 
-import asyncio
+import threading
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +55,14 @@ class ProviderHealthTracker:
         calls_per_minute: int = DEFAULT_RATE_LIMIT,
         error_threshold: int = DEFAULT_ERROR_THRESHOLD,
         recovery_seconds: int = DEFAULT_RECOVERY_SECONDS,
+        shared_rate_limit: bool = False,
     ) -> None:
         self._calls_per_minute = calls_per_minute
         self._error_threshold = error_threshold
         self._recovery_seconds = recovery_seconds
         self._state: dict[str, _State] = {}
-        self._lock = asyncio.Lock()
+        self._lock = threading.RLock()
+        self._shared_rate_limit = shared_rate_limit
 
     # ── Internal helpers（调用方必须已持有 self._lock）───────────────────────
 
@@ -83,7 +86,7 @@ class ProviderHealthTracker:
 
     async def can_call(self, provider: str) -> bool:
         """如果被速率限制或熔断（仍在冷静期内）则返回 False。"""
-        async with self._lock:
+        with self._lock:
             s = self._state.get(provider)
             if s is None:
                 return True
@@ -100,8 +103,23 @@ class ProviderHealthTracker:
         无限向后推、且窗口随失败路径无界增长（issue #433）。窗口在每次
         检查前按 60s 剪枝，长度恒 ≤ calls_per_minute。
         """
+        if not await self.can_call(provider):
+            return False
+        if self._shared_rate_limit:
+            from app.core.rate_limiter import get_rate_limiter, RedisRateLimiter
+            from app.core.config import settings
+            limiter = await get_rate_limiter()
+            key = f"provider_http:{provider}"
+            if isinstance(limiter, RedisRateLimiter):
+                if not await limiter.is_allowed_shared(key, self._calls_per_minute, self._WINDOW_SECONDS):
+                    return False
+            elif settings.is_production():
+                logger.warning("Shared provider rate ledger unavailable; provider %s denied", provider)
+                return False
+            elif not await limiter.is_allowed(key, self._calls_per_minute, self._WINDOW_SECONDS):
+                return False
         ts = time.time()
-        async with self._lock:
+        with self._lock:
             s = self._state.setdefault(provider, _State())
             if not self._circuit_gates(s, ts):
                 return False
@@ -113,7 +131,7 @@ class ProviderHealthTracker:
 
     async def record_success(self, provider: str) -> None:
         """请求成功：重置错误计数器，清除熔断标记，并剪枝窗口。"""
-        async with self._lock:
+        with self._lock:
             s = self._state.setdefault(provider, _State())
             s.consecutive_errors = 0
             s.circuit_open = False
@@ -121,7 +139,7 @@ class ProviderHealthTracker:
 
     async def record_error(self, provider: str, exc: Exception | None = None) -> None:
         """请求出错：累加连续错误计数，达到阈值后打开熔断。"""
-        async with self._lock:
+        with self._lock:
             s = self._state.setdefault(provider, _State())
             s.consecutive_errors += 1
             s.last_failure_ts = time.time()
@@ -147,7 +165,7 @@ class ProviderHealthTracker:
         ads-v1 DS4：合并 fabric bridge 的同步记账状态（``fabric:*`` 键）。
         """
         now = time.time()
-        async with self._lock:
+        with self._lock:
             out: dict[str, dict] = {}
             for p, s in self._state.items():
                 self._prune_window(s, now)
@@ -156,6 +174,8 @@ class ProviderHealthTracker:
                     "last_failure_ts": s.last_failure_ts,
                     "circuit_open": s.circuit_open,
                     "calls_last_minute": len(s.call_timestamps),
+                    "calls_last_minute_scope": "process",
+                    "shared_rate_admission": self._shared_rate_limit,
                 }
         out.update(FabricHealthBridge_states())
         return out
@@ -164,7 +184,7 @@ class ProviderHealthTracker:
 from typing import Callable, Any
 
 # 全局单例，chinese_maps.py 直接 import 使用
-health_tracker = ProviderHealthTracker()
+health_tracker = ProviderHealthTracker(shared_rate_limit=True)
 
 
 # ─── Fabric source health bridge（ads-v1 DS4 / ADR-0174）────────────────────
@@ -184,6 +204,7 @@ class FabricHealthBridge:
         self._recovery_seconds = recovery_seconds
         self._lock = threading.Lock()
         self._state: dict[str, dict] = {}
+        self._attempt_windows: dict[str, list[float]] = {}
 
     def _entry(self, provider: str) -> dict:
         return self._state.setdefault(
@@ -201,7 +222,11 @@ class FabricHealthBridge:
                     return False
                 s["circuit_open"] = False
                 s["consecutive_errors"] = 0
-            s["calls_last_minute"] += 1
+            now = _time.monotonic()
+            window = [stamp for stamp in self._attempt_windows.get(provider, []) if stamp > now - 60]
+            window.append(now)
+            self._attempt_windows[provider] = window
+            s["calls_last_minute"] = len(window)
             return True
 
     def record_success(self, provider: str) -> None:
@@ -225,7 +250,14 @@ class FabricHealthBridge:
                 )
 
     def states(self) -> dict[str, dict]:
+        import time as _time
+
         with self._lock:
+            now = _time.monotonic()
+            for provider, state in self._state.items():
+                window = [stamp for stamp in self._attempt_windows.get(provider, []) if stamp > now - 60]
+                self._attempt_windows[provider] = window
+                state["calls_last_minute"] = len(window)
             return {p: dict(s) for p, s in self._state.items()}
 
 
@@ -286,6 +318,33 @@ def check_nominatim_status(data: Any) -> tuple[bool, str]:
     return False, "Nominatim 响应格式异常"
 
 
+class BusinessFailureKind(Enum):
+    REQUEST = "request"
+    PROVIDER = "provider"
+
+
+def _business_failure_kind(
+    checker: Callable[[dict], tuple[bool, str]], payload: Any,
+) -> BusinessFailureKind:
+    """Only known request-local failures bypass the provider circuit.
+
+    Keep the public two-value checker contract. Unknown codes, malformed
+    payloads, credentials, quotas and service errors remain provider failures;
+    arbitrary error-message text must not disable the circuit.
+    """
+    if not isinstance(payload, dict):
+        return BusinessFailureKind.PROVIDER
+    if checker is check_amap_status and str(payload.get("infocode")) in {"20000", "20001", "20002"}:
+        return BusinessFailureKind.REQUEST
+    if checker is check_baidu_status and str(payload.get("status")) == "2":
+        return BusinessFailureKind.REQUEST
+    if checker is check_tianditu_status and "error" not in payload and str(payload.get("status")) == "101":
+        return BusinessFailureKind.REQUEST
+    if checker is check_nominatim_status and payload.get("error") == "Unable to geocode":
+        return BusinessFailureKind.REQUEST
+    return BusinessFailureKind.PROVIDER
+
+
 async def tracked_provider_get(
     provider: str,
     url: str,
@@ -310,6 +369,7 @@ async def tracked_provider_get(
 
     from app.core.network import get_shared_client, get_ssl_context
     from app.core.config import settings
+    from aiohttp import ClientTimeout
 
     actual_ssl = ssl_context or get_ssl_context()
     actual_proxy = proxy if proxy is not None else (settings.HTTPS_PROXY or settings.HTTP_PROXY)
@@ -323,11 +383,14 @@ async def tracked_provider_get(
             url,
             ssl=actual_ssl,
             proxy=actual_proxy,
-            timeout=timeout,
+            timeout=ClientTimeout(total=timeout),
             **kwargs,
         ) as resp:
             if resp.status != 200:
-                await ht.record_error(provider)
+                if resp.status in {400, 422}:
+                    await ht.record_success(provider)
+                else:
+                    await ht.record_error(provider)
                 return {"error": f"{provider.capitalize()} API HTTP {resp.status}"}
 
             import json
@@ -340,14 +403,19 @@ async def tracked_provider_get(
             if business_checker is not None:
                 ok, err_msg = business_checker(data)
                 if not ok:
-                    await ht.record_error(provider)
+                    if _business_failure_kind(business_checker, data) is BusinessFailureKind.REQUEST:
+                        # A healthy response rejected this query. It also breaks
+                        # a run of consecutive provider failures.
+                        await ht.record_success(provider)
+                    else:
+                        await ht.record_error(provider)
                     return {"error": err_msg}
 
             await ht.record_success(provider)
             return data
     except Exception as e:
         await ht.record_error(provider, e)
-        raise
+        return {"error": f"{provider.capitalize()} request failed", "error_type": type(e).__name__}
 
 #: fabric 源健康记账单例（data_fabric.fallback 镜像写入；snapshot 合并输出）
 fabric_health_bridge = FabricHealthBridge()

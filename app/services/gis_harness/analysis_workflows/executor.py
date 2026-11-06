@@ -259,7 +259,7 @@ class WorkflowExecutor:
                     warnings.append(
                         f"数据角色 {role} 未绑定 [AWF_DATA_ROLE_MISSING:{role.upper()}]")
                     return None, identities, warnings
-                # ADR-0282 D3：raster/table 角色 ref 直通（不水合为 dict——
+                # ADR-0284 D3：raster/table 角色 ref 直通（不水合为 dict——
                 # zonal_stats.raster_path 等原生接受 ref/路径；registry
                 # _resolve_references 既有语义不变）。行数预算门不适用。
                 if binding is not None and binding.role_kind in (
@@ -280,7 +280,7 @@ class WorkflowExecutor:
                     if payload is None and hydrate_warnings:
                         return None, identities, warnings
                     self._role_cache[cache_key] = (payload, ident)
-                # ADR-0282 D2：执行期衔接门（实测几何 vs 步骤语义合同）
+                # ADR-0284 D2：执行期衔接门（实测几何 vs 步骤语义合同）
                 gate = check_payload_semantics(
                     param, payload, step.semantic_contract)
                 if gate is not None:
@@ -296,7 +296,7 @@ class WorkflowExecutor:
                         f"上游步骤 {upstream} 未满足（{entry.state if entry else 'absent'}）")
                     return None, identities, warnings
                 upstream_env = state.envelopes.get(upstream)
-                # ADR-0282 D3：上游产物是栅格 ref（无 FC）→ ref 直通下游
+                # ADR-0284 D3：上游产物是栅格 ref（无 FC）→ ref 直通下游
                 if upstream_env is not None and upstream_env.ref \
                         and not self._step_payloads.get(upstream) \
                         and (upstream_env.raster
@@ -304,7 +304,7 @@ class WorkflowExecutor:
                     args[param] = upstream_env.ref
                     identities[param] = f"fp:{entry.fingerprint}"
                     continue
-                # ADR-0282 D2：上游 envelope 实测几何 vs 本步骤语义合同
+                # ADR-0284 D2：上游 envelope 实测几何 vs 本步骤语义合同
                 gate = check_envelope_semantics(
                     param, upstream_env, step.semantic_contract)
                 if gate is not None:
@@ -476,7 +476,7 @@ class WorkflowExecutor:
             reason_code = str(
                 inner.get("reason_code") or inner.get("code")
                 or inner.get("error_type") or "TOOL_FAILED")
-            # ADR-0282 D7：同 run 内 dispatch 去重（repeated）命中而本步骤
+            # ADR-0284 D7：同 run 内 dispatch 去重（repeated）命中而本步骤
             # 与某已 satisfied 步骤指纹相同 → 步骤级幂等复用其产物
             # （同工具+同参+同输入身份=同一计算，不重复执行也绝不把空
             # 载荷当新成功）；无孪生步骤时保持诚实 failed。
@@ -526,7 +526,7 @@ class WorkflowExecutor:
         # 未铸（registry 直调路径）才由本层 store（prefix=geojson 同族）。
         fc, trimmed_stub_routes = _extract_fc(result)
         ref = _extract_ref(result) or str(result.get("dispatch_ref", "") or "")
-        # ADR-0282 D3：非 FC 的栅格工件（raster_resample 族——结果形状
+        # ADR-0284 D3：非 FC 的栅格工件（raster_resample 族——结果形状
         # ``data.output_path`` 文件路径）→ 路径即产物引用（下游 raster
         # 参数直通；envelope.raster 带 output_kind=raster_file 事实）。
         # 相对路径规范化为绝对（工具相对 cwd 返回 ``data/artifacts/…``，
@@ -572,7 +572,7 @@ class WorkflowExecutor:
                 "（无几何）——未进产物，计数在此披露")
         feature_count = _feature_count(fc) if fc else int(
             result.get("dispatch_feature_count", 0) or 0)
-        # ADR-0282 D1：实测事实采集（有界；采集不到=缺省，绝不虚填）。
+        # ADR-0284 D1：实测事实采集（有界；采集不到=缺省，绝不虚填）。
         fc_facts = collect_fc_facts(fc) if fc is not None else None
         result_semantics = collect_result_semantics(result)
         raster_facts = collect_raster_facts(result)
@@ -695,7 +695,7 @@ class WorkflowExecutor:
                 break
         state.status = verdict_of(state)
         state.touch()
-        # ADR-0282 D5：全步骤终态后写科学终审投影（G02 run_science_final_gate
+        # ADR-0284 D5：全步骤终态后写科学终审投影（G02 run_science_final_gate
         # 的结论进状态机——不再是只有返回体字段；fail-open：门内部错误=
         # not_evaluated，绝不阻断状态落盘）。
         if all(e.state not in ("pending", "running")

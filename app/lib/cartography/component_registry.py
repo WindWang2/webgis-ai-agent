@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
@@ -686,7 +687,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         default_variant="default", variants=["default", "compact"],
         default_position="bottom-left",
         allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
-        cardinality="multiple", requires_layer_binding=True,
+        cardinality="multiple", requires_layer_binding=False,
         priority=44, runtime_status="native",
         required_context=["elevation_series"],
         tags=["analysis", "terrain", "profile", "剖面"],
@@ -800,7 +801,7 @@ class ComponentRegistry:
         if include_descendants:
             # match prefix
             result: List[MapComponentDescriptor] = []
-            for cid, desc in self._by_id.items():
+            for _cid, desc in self._by_id.items():
                 if desc.category == category or desc.category.startswith(category + "."):
                     result.append(desc)
             return sorted(result, key=lambda d: d.id)
@@ -894,10 +895,10 @@ class ComponentRegistry:
                 for cand in pool:
                     if not cand:
                         continue
-                    if q == cand or q in cand or cand in q:
+                    if q == cand or (len(q) >= 2 and q in cand) or (len(cand) >= 2 and cand in q):
                         return weight
                     for token in tokens:
-                        if token and (token in cand or cand in token):
+                        if token and (token == cand or (len(token) >= 2 and token in cand) or (len(cand) >= 2 and cand in token)):
                             best = max(best, max(weight // 2, 1))
                 return best
 
@@ -1118,8 +1119,8 @@ class ComponentRegistry:
                                 issues.append(
                                     f"descriptor {desc.id}: compatible_map_model "
                                     f"'{mid}' 未注册")
-                    except Exception:  # pragma: no cover - 防御性
-                        pass
+                    except Exception as _exc:  # pragma: no cover - 防御性
+                        logging.getLogger(__name__).debug("component_registry: optional operation unavailable (%s)", type(_exc).__name__)
                 # V7：弃用指针与预览元数据契约
                 if desc.deprecated and not desc.deprecated_by:
                     issues.append(

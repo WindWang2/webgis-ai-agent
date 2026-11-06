@@ -124,7 +124,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         """role_refs JSON → 绑定（支持 {"role": "ref:..."} 与
         {"role": {"ref": ..., "qualifier": {...}, "role_kind": ...}} 形态）。
 
-        role_kind（ADR-0282 D3）：raster/table 角色必须显式声明
+        role_kind（ADR-0284 D3）：raster/table 角色必须显式声明
         （raster_zonal_summary 的 subject 是栅格 ref/路径——不声明会被
         orchestrator 的 role_kind 门 typed 拒绝并给出指引）。
         """
@@ -150,7 +150,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
 
     async def _budget_estimates(session_id: str,
                                 contract: Any) -> List[Dict[str, Any]]:
-        """plan 期输入预算估计（ADR-0282 断点4）。
+        """plan 期输入预算估计（ADR-0284 断点4）。
 
         只对 vector 角色的 ``ref:`` 绑定读 descriptor 行数事实（raster/table
         角色无行数语义——栅格工具走窗口读纪律）；descriptor 读不到=unknown
@@ -332,7 +332,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     state.log("plan_replanned",
                               reason="binding_or_contract_changed")
             await _persist_state(session_id, state)
-        # ADR-0282（断点4）：plan 期预算估计——ref descriptor 的行数事实
+        # ADR-0284（断点4）：plan 期预算估计——ref descriptor 的行数事实
         # （已知才报；descriptor 缺失=unknown 不虚报）。超限 → typed 不予
         # runnable + 指引（分块/裁剪/换聚合粒度），run 期 executor 仍是硬门。
         budget_estimates = await _budget_estimates(
@@ -364,7 +364,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "visualization_hints": list(result.visualization_hints),
             "risk_notes": list(result.contract.risk_notes),
             "budget_estimates": budget_estimates,
-            # ADR-0282 B4：blocked/skipped 裁决附结构化 next_step（封闭
+            # ADR-0284 B4：blocked/skipped 裁决附结构化 next_step（封闭
             # action 词表 + 可执行提示——LLM 不靠重复空调用碰运气）。
             "blocked_next_steps": [
                 {"step_id": v.step_id, "reason_code": v.reason_code,
@@ -556,7 +556,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "command": command,
             "workflow_id": workflow_id,
             "status": state.status,
-            # ADR-0282 D5（R1 评审 F-6）：科学终审投影从状态机透出（run 返回
+            # ADR-0284 D5（R1 评审 F-6）：科学终审投影从状态机透出（run 返回
             # 体的 science_gate 是现场重算；这里是最初 run 终态的持久投影）。
             "science_validation": dict(state.science_validation),
             "steps": [
@@ -699,7 +699,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     contract, state, current_identities=current_identities):
                 affected.add(drift["step_id"])
                 affected.update(drift.get("downstream") or [])
-            # ADR-0282 D5（B2 语义演进）：**指纹实测漂移**的已 satisfied 步骤
+            # ADR-0284 D5（B2 语义演进）：**指纹实测漂移**的已 satisfied 步骤
             # 显式落 state=stale——状态机 stale 态由此获得赋值路径（此前只在
             # 词表）。只标漂移步骤本身（非闭包）：闭包步骤保持 satisfied 让
             # 执行器按指纹精确裁决（上游未变 → step_reused 零重跑不变）；

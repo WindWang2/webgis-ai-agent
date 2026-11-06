@@ -2882,7 +2882,7 @@ def fd3_design_select_pin_honored() -> ScenarioContract:
     )
 
 
-# ── F29：混合分析方法链（ADR-0282 —— 高风险区设施统计/栅格分区汇总/最近设施网络距离）──
+# ── F29：混合分析方法链（ADR-0284 —— 高风险区设施统计/栅格分区汇总/最近设施网络距离）──
 
 _F29_NOT_EVALUATED = _F28_NOT_EVALUATED + [
     "raster_mask_step: zonal 掩膜=逐 zone 像素窗+多边形掩膜（隐式——"
@@ -2938,7 +2938,7 @@ def f29_01_hazard_zone_facility_stats() -> ScenarioContract:
                  note="暴露清单 ref 可被 map_product 消费"),
         ],
         not_evaluated=_F29_NOT_EVALUATED,
-        tags=["analysis_workflow", "hazard", "exposure", "adr-0282"],
+        tags=["analysis_workflow", "hazard", "exposure", "adr-0284"],
     )
 
 
@@ -2988,7 +2988,7 @@ def f29_02_raster_index_by_district() -> ScenarioContract:
                  note="逐区均值矢量结果 ref（含 valid_pixel_coverage）"),
         ],
         not_evaluated=_F29_NOT_EVALUATED,
-        tags=["analysis_workflow", "raster", "zonal", "adr-0282"],
+        tags=["analysis_workflow", "raster", "zonal", "adr-0284"],
     )
 
 
@@ -3049,5 +3049,5 @@ def f29_03_nearest_hospital_network_distance() -> ScenarioContract:
                  note="区均网络成本（numerator=Σtotal_cost/count——均值非伪装率）"),
         ],
         not_evaluated=_F29_NOT_EVALUATED,
-        tags=["analysis_workflow", "network", "closest-facility", "adr-0282"],
+        tags=["analysis_workflow", "network", "closest-facility", "adr-0284"],
     )

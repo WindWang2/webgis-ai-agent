@@ -261,7 +261,7 @@ export async function getSessionList() {
  * SEC-08：匿名会话需提供 ownerToken 匹配 X-Session-Token 头。
  */
 export async function getSessionDetail(sessionId: string, ownerToken?: string | null) {
-  return apiFetch(`/api/v1/chat/sessions/${sessionId}`, { ownerToken, label: "API Error" });
+  return apiFetch(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`, { ownerToken, label: "API Error" });
 }
 
 /**
@@ -277,7 +277,7 @@ export async function getSessionPlan(
   ownerToken?: string | null
 ): Promise<import('@/lib/types/session-plan').SessionPlanProjection | undefined> {
   return apiFetch<import('@/lib/types/session-plan').SessionPlanProjection | undefined>(
-    `/api/v1/chat/sessions/${sessionId}/plan`,
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/plan`,
     { ownerToken, label: "API Error" }
   );
 }
@@ -291,7 +291,7 @@ export async function getPendingClarification(
   ownerToken?: string | null
 ): Promise<ClarificationEnvelope | undefined> {
   return apiFetch<ClarificationEnvelope | undefined>(
-    `/api/v1/chat/sessions/${sessionId}/clarifications/pending`,
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/clarifications/pending`,
     { ownerToken, label: "API Error" }
   );
 }
@@ -312,7 +312,7 @@ export async function submitClarificationAnswer(
   ownerToken?: string | null
 ): Promise<ClarificationAnswerResult> {
   return apiFetch<ClarificationAnswerResult>(
-    `/api/v1/chat/sessions/${sessionId}/clarifications/answer`,
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/clarifications/answer`,
     {
       method: "POST",
       body: {
@@ -334,7 +334,7 @@ export async function submitClarificationAnswer(
  * DELETE 为幂等方法，但 transport 默认不重试；204 无响应体，parseJson: false。
  */
 export async function deleteSession(sessionId: string, ownerToken?: string | null): Promise<void> {
-  await apiFetch<void>(`/api/v1/chat/sessions/${sessionId}`, {
+  await apiFetch<void>(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
     ownerToken,
     label: "API Error",

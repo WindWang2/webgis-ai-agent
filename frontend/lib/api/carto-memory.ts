@@ -43,7 +43,7 @@ export async function getCartoMemory(
   projectId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<CartoMemoryOverview> {
-  const result = await fastGet<CartoMemoryOverview>(`/api/v1/projects/${projectId}/carto-memory`, {
+  const result = await fastGet<CartoMemoryOverview>(`/api/v1/projects/${encodeURIComponent(projectId)}/carto-memory`, {
     signal: opts?.signal,
     label: LABEL,
   });
@@ -53,19 +53,19 @@ export async function getCartoMemory(
 /** DELETE …/carto-memory/{factId} — 撤销（软删 retired）。 */
 export async function retireCartoFact(projectId: string, factId: string): Promise<CartoFact> {
   const { fact } = await apiFetch<{ fact: CartoFact }>(
-    `/api/v1/projects/${projectId}/carto-memory/${factId}`,
+    `/api/v1/projects/${encodeURIComponent(projectId)}/carto-memory/${encodeURIComponent(factId)}`,
     { method: 'DELETE', label: LABEL },
   );
-  invalidateCache(`/api/v1/projects/${projectId}/carto-memory`);
+  invalidateCache(`/api/v1/projects/${encodeURIComponent(projectId)}/carto-memory`);
   return fact;
 }
 
 /** POST …/carto-memory/{factId}/activate — 显式（重）激活（人工裁决）。 */
 export async function activateCartoFact(projectId: string, factId: string): Promise<CartoFact> {
   const { fact } = await apiFetch<{ fact: CartoFact }>(
-    `/api/v1/projects/${projectId}/carto-memory/${factId}/activate`,
+    `/api/v1/projects/${encodeURIComponent(projectId)}/carto-memory/${encodeURIComponent(factId)}/activate`,
     { method: 'POST', label: LABEL },
   );
-  invalidateCache(`/api/v1/projects/${projectId}/carto-memory`);
+  invalidateCache(`/api/v1/projects/${encodeURIComponent(projectId)}/carto-memory`);
   return fact;
 }

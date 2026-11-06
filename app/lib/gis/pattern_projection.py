@@ -165,7 +165,7 @@ def project_patterns(
             scored.append((score, p, via))
     scored.sort(key=lambda t: (-t[0], t[1].id))
 
-    for score, p, via in scored[:6]:
+    for _score, p, via in scored[:6]:
         satisfied: List[str] = []
         missing: List[str] = []
         role_disclosures: List[str] = []

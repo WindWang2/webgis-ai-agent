@@ -259,8 +259,8 @@ const t = useT();
         {result.warnings.length > 0 ? (
           <Section title={t('sidebar.results.warningsTitle')}>
             <div className="flex flex-col gap-1.5">
-              {result.warnings.map((w) => (
-                <WarningItem key={w.code} warning={w} />
+              {result.warnings.map((w, index) => (
+                <WarningItem key={`${w.code}-${index}`} warning={w} />
               ))}
             </div>
           </Section>

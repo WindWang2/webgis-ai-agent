@@ -178,7 +178,7 @@ def render_comparison_markdown(report: Dict[str, Any]) -> str:
                 f"| {row.get('branch_id', '')} | {row.get('metric_key', '')} "
                 f"| {_fmt_delta(row.get('delta_pct'))} "
                 f"| {row.get('cost_proxy', 0.0):.1f} "
-                f"| {row.get('roi_index', 0.0):+.4f} |"
+                f"| {_fmt_value(row.get('roi_index'))} |"
             )
         lines.append("")
 

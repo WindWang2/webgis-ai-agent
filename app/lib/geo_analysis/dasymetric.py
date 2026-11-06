@@ -222,7 +222,7 @@ def dasymetric_reallocation(
             cand = sorted(int(i) for i in
                           sindex.query(geom, predicate="intersects"))
             pieces: List[Tuple[float, float, Any, int]] = []  # (weight, area, geom, anc_pos)
-            for pos_i, i in enumerate(cand):
+            for _pos_i, i in enumerate(cand):
                 inter = geom.intersection(anc_geoms[i])
                 if inter.is_empty:
                     continue
@@ -329,7 +329,7 @@ def dasymetric_reallocation(
                 "type": "FeatureCollection",
                 "features": [
                     {**f, "geometry": g.__geo_interface__}
-                    for f, g in zip(fragments, gdf_out.geometry)
+                    for f, g in zip(fragments, gdf_out.geometry, strict=True)
                 ],
                 "metadata": fc["metadata"],
             }

@@ -81,7 +81,7 @@ describe('SkillsHub (#551)', () => {
       id: 'poi',
       name: 'poi',
       desc: '通过 Overpass 查询兴趣点',
-      category: '工作流',
+      category: 'Other',
     });
 
     rerender(<SkillsHub />);

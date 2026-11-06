@@ -52,6 +52,8 @@ class RefPayloadCache:
         # 捕获 epoch，完成后仅当 epoch 未变才入缓存 —— 关闭
         # "invalidate-during-build → 旧 payload 复活 5s" 的窗口。
         self._epochs: "OrderedDict[Tuple[str, str], int]" = OrderedDict()
+        self._epoch_serial = 0
+        self._epoch_floor = 0
         self._lock = threading.Lock()
 
     @property
@@ -82,7 +84,7 @@ class RefPayloadCache:
         """当前 (session, ref) 的失效 epoch（构建方在读取源数据前捕获）。"""
         key = (session_id, ref_id)
         with self._lock:
-            return self._epochs.get(key, 0)
+            return self._epochs.get(key, self._epoch_floor)
 
     def put_if_current(self, session_id: str, ref_id: str, obj: Any, approx_bytes: int, epoch: int) -> bool:
         """仅当 epoch 未被 invalidate 递增时入缓存（防复活语义）。
@@ -94,7 +96,7 @@ class RefPayloadCache:
         key = (session_id, ref_id)
         size = max(0, int(approx_bytes))
         with self._lock:
-            if self._epochs.get(key, 0) != epoch:
+            if self._epochs.get(key, self._epoch_floor) != epoch:
                 return False
             self._insert_locked(key, obj, size)
         return True
@@ -132,10 +134,14 @@ class RefPayloadCache:
         """
         key = (session_id, ref_id)
         with self._lock:
-            self._epochs[key] = self._epochs.get(key, 0) + 1
+            self._epoch_serial += 1
+            self._epochs[key] = self._epoch_serial
             self._epochs.move_to_end(key)
-            while len(self._epochs) > 4 * self._max_entries:
-                self._epochs.popitem(last=False)
+            if len(self._epochs) > 4 * self._max_entries:
+                self._epoch_serial += 1
+                self._epoch_floor = self._epoch_serial
+                while len(self._epochs) > 4 * self._max_entries:
+                    self._epochs.popitem(last=False)
             entry = self._entries.pop(key, None)
             if entry is not None:
                 self._total_bytes -= entry[2]
@@ -154,17 +160,23 @@ class RefPayloadCache:
         钉住 MRU 端可把窗口压到最小）。
         """
         with self._lock:
+            self._epoch_serial += 1
+            self._epoch_floor = self._epoch_serial
             session_keys = {
                 k for k in self._epochs if k[0] == session_id
             } | {k for k in self._entries if k[0] == session_id}
             for key in session_keys:
-                self._epochs[key] = self._epochs.get(key, 0) + 1
+                self._epoch_serial += 1
+                self._epochs[key] = self._epoch_serial
                 self._epochs.move_to_end(key)
                 entry = self._entries.pop(key, None)
                 if entry is not None:
                     self._total_bytes -= entry[2]
-            while len(self._epochs) > 4 * self._max_entries:
-                self._epochs.popitem(last=False)
+            if len(self._epochs) > 4 * self._max_entries:
+                self._epoch_serial += 1
+                self._epoch_floor = self._epoch_serial
+                while len(self._epochs) > 4 * self._max_entries:
+                    self._epochs.popitem(last=False)
 
 
 #: 进程级单例（与 spatial_index_cache 同生命周期）。

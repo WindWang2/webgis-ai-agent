@@ -161,8 +161,9 @@ class TestSubmit:
         ]
         resp = client.post("/api/v1/geocompute/plans/runs", json=body,
                            headers=_AUTH)
-        assert resp.status_code == 413
-        assert resp.json()["data"]["code"] == "PLAN_SNAPSHOT_TOO_LARGE"
+        # The request schema now enforces the same byte budget before routing.
+        assert resp.status_code == 422
+        assert "features" not in resp.text
 
     def test_submit_backpressure_429(self, v6_env):
         from app.services.geocompute.cluster.store import ClusterRunStore

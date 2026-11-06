@@ -212,9 +212,12 @@ def _is_regression(
     if tolerance_pct < 0:
         tolerance_pct = 0.0
     factor = tolerance_pct / 100.0
+    tolerance = abs(baseline_value) * factor
+    if baseline_value == 0:
+        tolerance = 1e-9  # explicit absolute floor for floating-point noise
     if direction == "low_bad":
-        return observed < baseline_value * (1.0 - factor)
-    return observed > baseline_value * (1.0 + factor)
+        return observed < baseline_value - tolerance
+    return observed > baseline_value + tolerance
 
 
 def _delta_pct(direction: str, baseline_value: float, observed: float) -> float:
@@ -333,7 +336,7 @@ async def write_baselines(
                 row.quantile = entry.quantile
                 row.direction = entry.direction
                 row.tolerance_pct = entry.tolerance_pct
-                row.status = status or entry.status
+                row.status = status if status is not None else (row.status if existing is not None and row.status == "active" else entry.status)
                 row.source = source
                 row.sample_n = entry.sample_n
                 db.add(row)
@@ -414,7 +417,7 @@ async def add_waiver(
             check_id=check_id,
             reason=str(reason)[:500],
             created_by=str(created_by)[:128],
-            expires_at=datetime.now(timezone.utc) + timedelta(days=max(1, days)),
+            expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=max(1, days)),
         ))
         await db.commit()
     return True
@@ -429,7 +432,7 @@ async def load_active_waivers() -> List[Dict[str, Any]]:
 
     if AsyncSessionLocal is None:
         return []
-    cutoff = datetime.now(timezone.utc)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None)
     async with AsyncSessionLocal() as db:
         rows = (
             await db.execute(

@@ -153,66 +153,45 @@ def _render_bars(x: float, y: float, title: str, rows: List[List[Tuple[str, floa
     """柱族：rows = 类目 → [(序列名, 值)]。stacked 堆叠，否则并排/单序列。"""
     if not rows:
         return ""
-    n_cat = min(len(rows), MAX_BARS)
+    selected = rows[:MAX_BARS]
     plot_w = w - 40.0
-    max_val = max(
-        (sum(v for _n, v in row) if stacked else max(v for _n, v in row))
-        for row in rows[:n_cat]
-    )
-    if max_val <= 0:
-        max_val = 1.0
-    parts: List[str] = []
+    low = min([0.0] + [sum(min(v, 0) for _, v in row) if stacked else min(v for _, v in row) for row in selected])
+    high = max([0.0] + [sum(max(v, 0) for _, v in row) if stacked else max(v for _, v in row) for row in selected])
+    if high == low:
+        high = low + 1.0
+    span = high - low
+    head = 16.0
+    parts = [_text(x, y + 10, title or "", size=11.0, weight="bold")]
     if horizontal:
-        band = h / max(n_cat, 1)
-        for i, row in enumerate(rows[:n_cat]):
-            yy = y + i * band
-            if stacked:
-                off = 0.0
-                for si, (_n, v) in enumerate(row):
-                    seg = v / max_val * plot_w
-                    parts.append(
-                        f'<rect x="{_fmt(x + 34 + off)}" y="{_fmt(yy + band * 0.2)}" '
-                        f'width="{_fmt(max(seg, 0.5))}" height="{_fmt(band * 0.6)}" '
-                        f'fill="{CHART_PALETTE[si % len(CHART_PALETTE)]}" />')
-                    off += seg
+        zero = x + 34 + (-low) / span * plot_w
+        parts.append(f'<line x1="{_fmt(zero)}" y1="{_fmt(y + head)}" x2="{_fmt(zero)}" y2="{_fmt(y + head + h)}" stroke="#94a3b8" stroke-width="0.6" />')
+    else:
+        zero = y + head + high / span * h
+        parts.append(f'<line x1="{_fmt(x + 6)}" y1="{_fmt(zero)}" x2="{_fmt(x + 6 + plot_w)}" y2="{_fmt(zero)}" stroke="#94a3b8" stroke-width="0.6" />')
+    band = (h if horizontal else plot_w) / len(selected)
+    for i, row in enumerate(selected):
+        positive = negative = 0.0
+        for si, (_name, value) in enumerate(row):
+            start = (positive if value >= 0 else negative) if stacked else 0.0
+            end = start + value
+            if value >= 0:
+                positive = end
             else:
-                v = row[0][1]
-                parts.append(
-                    f'<rect x="{_fmt(x + 34)}" y="{_fmt(yy + band * 0.2)}" '
-                    f'width="{_fmt(max(v / max_val * plot_w, 0.5))}" height="{_fmt(band * 0.6)}" '
-                    f'fill="{CHART_PALETTE[0]}" />')
-            parts.append(_text(x + 30, yy + band * 0.5 + 3.0, row[0][0][:10],
-                               anchor="end", size=8.0))
-        return "".join(parts)
-    band = plot_w / max(n_cat, 1)
-    for i, row in enumerate(rows[:n_cat]):
-        xx = x + 6 + i * band
-        parts.append(_text(xx + band / 2.0, y + h + 10.0, row[0][0][:6],
-                           anchor="middle", size=8.0))
-        if stacked:
-            off = 0.0
-            for si, (_n, v) in enumerate(row):
-                seg_h = v / max_val * h
-                parts.append(
-                    f'<rect x="{_fmt(xx + band * 0.15)}" y="{_fmt(y + h - off - seg_h)}" '
-                    f'width="{_fmt(band * 0.7)}" height="{_fmt(max(seg_h, 0.5))}" '
-                    f'fill="{CHART_PALETTE[si % len(CHART_PALETTE)]}" />')
-                off += seg_h
-        else:
-            if len(row) == 1:
-                bar_h = row[0][1] / max_val * h
-                parts.append(
-                    f'<rect x="{_fmt(xx + band * 0.15)}" y="{_fmt(y + h - bar_h)}" '
-                    f'width="{_fmt(band * 0.7)}" height="{_fmt(max(bar_h, 0.5))}" '
-                    f'fill="{CHART_PALETTE[0]}" />')
+                negative = end
+            if horizontal:
+                left = x + 34 + (min(start, end) - low) / span * plot_w
+                sub = band if stacked else band / max(len(row), 1)
+                top = y + head + i * band + (0 if stacked else si * sub) + sub * .15
+                width, height = abs(value) / span * plot_w, sub * .7
             else:
-                sub = band / max(len(row), 1)
-                for si, (_n, v) in enumerate(row):
-                    bar_h = v / max_val * h
-                    parts.append(
-                        f'<rect x="{_fmt(xx + si * sub + sub * 0.1)}" y="{_fmt(y + h - bar_h)}" '
-                        f'width="{_fmt(sub * 0.8)}" height="{_fmt(max(bar_h, 0.5))}" '
-                        f'fill="{CHART_PALETTE[si % len(CHART_PALETTE)]}" />')
+                sub = band if stacked else band / max(len(row), 1)
+                left = x + 6 + i * band + (0 if stacked else si * sub) + sub * .15
+                top = y + head + (high - max(start, end)) / span * h
+                width, height = sub * .7, abs(value) / span * h
+            parts.append(f'<rect x="{_fmt(left)}" y="{_fmt(top)}" width="{_fmt(width)}" height="{_fmt(height)}" fill="{CHART_PALETTE[si % len(CHART_PALETTE)]}" />')
+        parts.append(_text(x + 30 if horizontal else x + 6 + (i + .5) * band,
+                           y + head + (i + .5) * band if horizontal else y + head + h + 10,
+                           row[0][0][:10], anchor="end" if horizontal else "middle", size=8.0))
     return "".join(parts)
 
 
@@ -222,7 +201,7 @@ def _render_line_family(x: float, y: float, title: str,
                         h: float = 100.0) -> str:
     plot_w = w - 24.0
     series_values: List[List[float]] = []
-    for si, row in enumerate(rows[:MAX_SERIES]):
+    for _si, row in enumerate(rows[:MAX_SERIES]):
         vals = [v for _n, v in row]
         if cumulative:
             acc: List[float] = []
@@ -233,8 +212,11 @@ def _render_line_family(x: float, y: float, title: str,
             vals = acc
         series_values.append(vals)
     max_val = max((max(vs) for vs in series_values if vs), default=1.0)
-    if max_val <= 0:
-        max_val = 1.0
+    min_val = min(0.0, min((min(vs) for vs in series_values if vs), default=0.0))
+    max_val = max(0.0, max_val)
+    if max_val == min_val:
+        max_val = min_val + 1.0
+    span = max_val - min_val
     head = 16.0
     parts = [_text(x, y + 10.0, title or "", size=11.0, weight="bold")]
     names = rows[0] if rows else []
@@ -243,7 +225,7 @@ def _render_line_family(x: float, y: float, title: str,
     # （compile catch-all → 全空白 + 零诊断）。<2 点的序列画孤立 marker。
     short = [vs for vs in series_values if 0 < len(vs) < 2]
     for vs in short:
-        px, py = x + 12 + plot_w / 2.0, y + head + h - vs[0] / max_val * h
+        px, py = x + 12 + plot_w / 2.0, y + head + (max_val - vs[0]) / span * h
         parts.append(f'<circle cx="{_fmt(px)}" cy="{_fmt(py)}" r="2.4" '
                      f'fill="{CHART_PALETTE[series_values.index(vs) % len(CHART_PALETTE)]}" '
                      f'fill-opacity="0.75" />')
@@ -255,14 +237,14 @@ def _render_line_family(x: float, y: float, title: str,
             path: List[str] = []
             for i, v in enumerate(vs[:MAX_POINTS]):
                 px = x + 12 + i / (len(vs) - 1) * plot_w
-                py = y + head + h - v / max_val * h
+                py = y + head + (max_val - v) / span * h
                 pts.append(f"{_fmt(px)},{_fmt(py)}")
                 path.append(f"{'M' if not path else 'L'}{_fmt(px)} {_fmt(py)}")
             color = CHART_PALETTE[si % len(CHART_PALETTE)]
             if area:
                 parts.append(
                     f'<polygon points="{pts[0]} {" ".join(pts[1:])} '
-                    f'{_fmt(x + 12 + plot_w)},{_fmt(y + head + h)} {_fmt(x + 12)},{_fmt(y + head + h)}" '
+                    f'{_fmt(x + 12 + plot_w)},{_fmt(y + head + max_val / span * h)} {_fmt(x + 12)},{_fmt(y + head + max_val / span * h)}" '
                     f'fill="{color}" fill-opacity="0.18" />')
             parts.append(
                 f'<polyline points="{" ".join(pts)}" fill="none" stroke="{color}" stroke-width="1.5" />')
@@ -433,7 +415,7 @@ def _render_special(x: float, y: float, title: str, kind: str,
                     parts.append(
                         f'<rect x="{_fmt(x + 24 + ci * cell_w)}" y="{_fmt(y + 20 + ri * cell_h)}" '
                         f'width="{_fmt(cell_w - 1)}" height="{_fmt(cell_h - 1)}" '
-                        f'fill="{color}" fill-opacity="{_fmt(0.25 + 0.65 * t):.2f}" />')
+                        f'fill="{color}" fill-opacity="{_fmt(0.25 + 0.65 * t)}" />')
         return "".join(parts)
     # radar（近似：≤8 轴的多边形网 + 序列折线）
     axes = [(_point_name(p), _point_value(p) or 0.0)
@@ -540,7 +522,7 @@ def render_chart_panel(
         body = _render_scatter(x, y, title, points)
     elif kind == "horizontal_bar":
         body = _render_bars(x, y, title, category_rows, horizontal=True,
-                            stacked=False)
+                            stacked=False, h=16.0 * min(len(category_rows), MAX_BARS))
     elif kind in ("bar", "histogram", "grouped_bar", "stacked_bar"):
         body = _render_bars(x, y, title, category_rows, horizontal=False,
                             stacked=kind == "stacked_bar" or stacked)

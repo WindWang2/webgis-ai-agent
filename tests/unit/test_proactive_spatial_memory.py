@@ -790,3 +790,31 @@ def test_awake_result_bounded(factory):
     assert len(result.cards) <= 6
     assert result.latency_ms >= 0.0
     assert isinstance(result.trace, dict)
+
+
+def test_proactive_same_org_never_recalls_another_user_scope(factory):
+    with factory() as db:
+        _seed(db, _place(scope=SCOPE_SESSION, scope_id="sess-a", subject="保密地块"))
+    retriever = pr.ProactiveRetriever(db_factory=factory)
+    retriever.sync_org("org-a", session_id="sess-a", user_id="user-a")
+    other = retriever.awake("地块", org_id="org-a", session_id="sess-b", user_id="user-b")
+    assert other.cards == []
+    assert other.resolved_place is None
+    assert ("org-a", "sess-b", None, "user-b") in retriever._last_sync
+    own = retriever.awake("地块", org_id="org-a", session_id="sess-a", user_id="user-a")
+    assert own.cards
+
+
+def test_hot_recall_rechecks_durable_retirement_before_next_sync(factory):
+    with factory() as db:
+        _seed(db, _place('本轮撤销园区'))
+    retriever = pr.ProactiveRetriever(db_factory=factory, staleness_s=3600)
+    first = retriever.awake('园区', org_id='org-a', session_id='sess-1')
+    assert first.cards
+    with factory() as db:
+        assert s.retire_memory(db, org_id='org-a', memory_id=first.cards[0].card_id)
+        db.commit()
+    second = retriever.awake('园区', org_id='org-a', session_id='sess-1')
+    assert second.cards == []
+    assert second.resolved_place is None
+    assert second.trace['invalidated_candidates'] >= 1

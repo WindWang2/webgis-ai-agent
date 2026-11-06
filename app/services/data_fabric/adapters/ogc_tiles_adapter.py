@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import logging
 import time
+import threading
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.schemas.data_fabric_schema import (
@@ -89,7 +91,8 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
         # 60s TTL 与 conformance 缓存同拍 —— 服务端 tileset 变更经 fingerprint
         # 失效目录条目后自然重建）。
         # R1 P2：条数上限 —— 长寿命 adapter 不因枚举数据集而无界增长。
-        self._describe_cache: Dict[str, Tuple[float, DatasetDescriptor]] = {}
+        self._describe_cache: OrderedDict[str, Tuple[float, DatasetDescriptor]] = OrderedDict()
+        self._describe_cache_lock = threading.Lock()
         self._describe_cache_max = 64
 
     # ── 只读发现原语 ──────────────────────────────────────────────────
@@ -237,14 +240,17 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
 
     def describe(self, dataset_id: str) -> DatasetDescriptor:
         """带 60s 进程内缓存的 describe（瓦片代理热路径共用）。"""
-        cached = self._describe_cache.get(dataset_id)
-        if cached and (time.monotonic() - cached[0]) < 60:
-            return cached[1]
+        with self._describe_cache_lock:
+            cached = self._describe_cache.get(dataset_id)
+            if cached and (time.monotonic() - cached[0]) < 60:
+                self._describe_cache.move_to_end(dataset_id)
+                return cached[1]
         desc = self._describe_uncached(dataset_id)
-        if len(self._describe_cache) >= self._describe_cache_max:
-            oldest = next(iter(self._describe_cache))
-            self._describe_cache.pop(oldest, None)
-        self._describe_cache[dataset_id] = (time.monotonic(), desc)
+        with self._describe_cache_lock:
+            self._describe_cache[dataset_id] = (time.monotonic(), desc)
+            self._describe_cache.move_to_end(dataset_id)
+            while len(self._describe_cache) > self._describe_cache_max:
+                self._describe_cache.popitem(last=False)
         return desc
 
     def _describe_uncached(self, dataset_id: str) -> DatasetDescriptor:
@@ -390,7 +396,7 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
     def _media_kind(media_types: List[str]) -> Optional[str]:
         if any(t == "application/vnd.mapbox-vector-tile" for t in media_types):
             return "vector"
-        if any(t in ("image/png", "image/jpeg") for t in media_types):
+        if any(t in ("image/png", "image/jpeg", "image/webp") for t in media_types):
             return "raster"
         if not media_types:
             return None

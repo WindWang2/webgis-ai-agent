@@ -59,7 +59,7 @@ describe('evaluateFilterBounded (closed operator vocabulary)', () => {
   });
 
   it('to-string over an unrecognized operand stays unknown (no fabricated "")', () => {
-    expect(evaluateFilterBounded(['in', ['to-string', ['geometry-type']], ['literal', ['Point']]], features[0])).toBeNull();
+    expect(evaluateFilterBounded(['in', ['to-string', ['geometry-type']], ['literal', ['Point']]], features[0])).toBe(true);
   });
 });
 

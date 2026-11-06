@@ -18,6 +18,7 @@
 type GestureListener = () => void;
 
 let gesturing = false;
+let gestureDeadline: ReturnType<typeof setTimeout> | undefined;
 let activeGestures = 0;
 const gestureStartListeners = new Set<GestureListener>();
 const gestureEndListeners = new Set<GestureListener>();
@@ -25,6 +26,8 @@ const gestureEndListeners = new Set<GestureListener>();
 /** User gesture started (map-panel gesture handler, originalEvent present). */
 export function notifyUserGestureStart(): void {
   activeGestures += 1;
+  if (gestureDeadline) clearTimeout(gestureDeadline);
+  gestureDeadline = setTimeout(() => { activeGestures = 1; notifyUserGestureEnd(); }, 30_000);
   const wasGesturing = gesturing;
   gesturing = true;
   if (!wasGesturing) {
@@ -37,6 +40,7 @@ export function notifyUserGestureEnd(): void {
   activeGestures = Math.max(0, activeGestures - 1);
   if (activeGestures === 0 && gesturing) {
     gesturing = false;
+    if (gestureDeadline) clearTimeout(gestureDeadline);
     for (const cb of Array.from(gestureEndListeners)) cb();
   }
 }

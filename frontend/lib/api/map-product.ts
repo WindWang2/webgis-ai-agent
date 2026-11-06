@@ -9,7 +9,7 @@
  */
 
 import { apiFetch } from './transport';
-import { fastGet } from './get-fast-path';
+import { invalidateCache, fastGet } from './get-fast-path';
 import type { Page } from './project';
 
 const API = '/api/v1/projects';
@@ -99,7 +99,7 @@ export async function listMapProductVersions(
   opts: { limit?: number; offset?: number; signal?: AbortSignal } = {},
 ): Promise<Page<MapProductVersionSummary>> {
   const result = await fastGet<Page<MapProductVersionSummary> | MapProductVersionSummary[]>(
-    `${API}/${projectId}/map-products`,
+    `${API}/${encodeURIComponent(projectId)}/map-products`,
     {
       params: { limit: opts.limit ?? 50, offset: opts.offset ?? 0 },
       signal: opts.signal,
@@ -115,7 +115,7 @@ export async function getMapProductVersion(
   opts: { signal?: AbortSignal } = {},
 ): Promise<MapProductVersionDetail> {
   const result = await fastGet<MapProductVersionDetail>(
-    `${API}/${projectId}/map-products/${versionNo}`,
+    `${API}/${encodeURIComponent(projectId)}/map-products/${versionNo}`,
     { signal: opts.signal, label: 'Map product version error' },
   );
   return result.data;
@@ -128,7 +128,7 @@ export async function diffMapProductVersions(
   opts: { signal?: AbortSignal } = {},
 ): Promise<MapProductVersionDiff> {
   const result = await fastGet<MapProductVersionDiff>(
-    `${API}/${projectId}/map-products/${fromVersionNo}/diff/${toVersionNo}`,
+    `${API}/${encodeURIComponent(projectId)}/map-products/${fromVersionNo}/diff/${toVersionNo}`,
     { signal: opts.signal, label: 'Map product diff error' },
   );
   return result.data;
@@ -141,7 +141,7 @@ export async function rerunWorkflowRunFromStep(
   fromStep: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<unknown> {
-  return apiFetch(`${API}/${projectId}/runs/${runId}/rerun`, {
+  return apiFetch(`${API}/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/rerun`, {
     method: 'POST',
     body: { from_step: fromStep },
     timeoutMs: opts.timeoutMs ?? 120_000,
@@ -195,7 +195,7 @@ export async function openMapProductVersion(
   versionNo: number,
 ): Promise<MapProductVersionOpen> {
   return apiFetch<MapProductVersionOpen>(
-    `${API}/${projectId}/map-products/${versionNo}/open`,
+    `${API}/${encodeURIComponent(projectId)}/map-products/${versionNo}/open`,
     { label: 'Map product open error' },
   );
 }
@@ -222,14 +222,14 @@ export async function restoreMapProductVersion(
   mode: 'style_only' | 'full' = 'style_only',
 ): Promise<MapProductRestoreResult> {
   return apiFetch<MapProductRestoreResult>(
-    `${API}/${projectId}/map-products/${versionNo}/restore`,
+    `${API}/${encodeURIComponent(projectId)}/map-products/${versionNo}/restore`,
     {
       method: 'POST',
       body: { mode, session_id: sessionId },
       timeoutMs: 60_000,
       label: 'Map product restore error',
     },
-  );
+  ).then((result) => { invalidateCache(`${API}/${encodeURIComponent(projectId)}/map-products`); return result; });
 }
 
 /** POST /{v}/fork — new lineage branch from a historical version. */
@@ -239,9 +239,9 @@ export async function forkMapProductVersion(
   label?: string,
 ): Promise<MapProductVersionDetail> {
   return apiFetch<MapProductVersionDetail>(
-    `${API}/${projectId}/map-products/${versionNo}/fork`,
+    `${API}/${encodeURIComponent(projectId)}/map-products/${versionNo}/fork`,
     { method: 'POST', body: label ? { label } : {}, label: 'Map product fork error' },
-  );
+  ).then((result) => { invalidateCache(`${API}/${encodeURIComponent(projectId)}/map-products`); return result; });
 }
 
 /** POST /merge — constrained dimension merge (style-only × analysis-only). */
@@ -252,13 +252,13 @@ export async function mergeMapProductVersions(
   label?: string,
 ): Promise<MapProductVersionDetail> {
   return apiFetch<MapProductVersionDetail>(
-    `${API}/${projectId}/map-products/merge`,
+    `${API}/${encodeURIComponent(projectId)}/map-products/merge`,
     {
       method: 'POST',
       body: { from_version_no: fromVersionNo, to_version_no: toVersionNo, ...(label ? { label } : {}) },
       label: 'Map product merge error',
     },
-  );
+  ).then((result) => { invalidateCache(`${API}/${encodeURIComponent(projectId)}/map-products`); return result; });
 }
 
 /** POST /{v}/rerun — version-bound incremental rerun. */
@@ -266,8 +266,8 @@ export async function rerunMapProductVersion(
   projectId: string,
   versionNo: number,
 ): Promise<{ run_id: string; recorded_version_no: number; from_step: string | null }> {
-  return apiFetch(
-    `${API}/${projectId}/map-products/${versionNo}/rerun`,
+  return apiFetch<{ run_id: string; recorded_version_no: number; from_step: string | null }>(
+    `${API}/${encodeURIComponent(projectId)}/map-products/${versionNo}/rerun`,
     { method: 'POST', body: {}, timeoutMs: 120_000, label: 'Map product version rerun error' },
-  );
+  ).then((result) => { invalidateCache(`${API}/${encodeURIComponent(projectId)}/map-products`); return result; });
 }

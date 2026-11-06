@@ -177,17 +177,17 @@ describe('TemplateGalleryV2 apply (#465)', () => {
     const onApply = vi.fn();
     render(<TemplateGalleryV2 open={true} onClose={() => {}} onApply={onApply} />);
     await waitFor(() => expect(screen.getByText('深色底图卡')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: /应用$/ }));
     await waitFor(() => expect(mockTemplates.get).toHaveBeenCalledWith('tmpl_bm_dark'));
   });
 
   it('dispatches a real basemap switch through the map action queue on success', async () => {
     mockTemplates.list.mockResolvedValue(page([BASEMAP_CARD]));
-    mockTemplates.get.mockResolvedValue({ ...BASEMAP_CARD, payload: { providerId: 'carto-dark' } });
+    mockTemplates.get.mockResolvedValue({ ...BASEMAP_CARD, payload: { providerId: 'osm' } });
     const onApply = vi.fn();
     render(<TemplateGalleryV2 open={true} onClose={() => {}} onApply={onApply} />);
     await waitFor(() => expect(screen.getByText('深色底图卡')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: /应用$/ }));
     await waitFor(() =>
       expect(mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'BASE_LAYER_CHANGE' })
@@ -195,9 +195,9 @@ describe('TemplateGalleryV2 apply (#465)', () => {
     );
     const dispatched = mockDispatch.mock.calls[0][0];
     // Canonical provider name → the queue's base_layer_change exact-matches it.
-    expect(dispatched.params.name).toBe('Carto 深色');
+    expect(dispatched.params.name).toBe('OSM 地图');
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
-    expect(onApply.mock.calls[0][0].payload).toEqual({ providerId: 'carto-dark' });
+    expect(onApply.mock.calls[0][0].payload).toEqual({ providerId: 'osm' });
   });
 
   it('never fires the success callback when the detail has no payload', async () => {
@@ -206,7 +206,7 @@ describe('TemplateGalleryV2 apply (#465)', () => {
     const onApply = vi.fn();
     render(<TemplateGalleryV2 open={true} onClose={() => {}} onApply={onApply} />);
     await waitFor(() => expect(screen.getByText('深色底图卡')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: /应用$/ }));
     await waitFor(() => expect(mockTemplates.get).toHaveBeenCalled());
     // Give the async handler a tick to settle before asserting no success.
     await act(async () => {});
@@ -221,7 +221,7 @@ describe('TemplateGalleryV2 apply (#465)', () => {
     const onApply = vi.fn();
     render(<TemplateGalleryV2 open={true} onClose={() => {}} onApply={onApply} />);
     await waitFor(() => expect(screen.getByText('深色底图卡')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: /应用$/ }));
     await waitFor(() => expect(mockAddToast).toHaveBeenCalledWith(expect.stringContaining('network down'), 'error'));
     expect(onApply).not.toHaveBeenCalled();
   });
@@ -236,7 +236,7 @@ describe('TemplateGalleryV2 apply (#465)', () => {
     const onApply = vi.fn();
     render(<TemplateGalleryV2 open={true} onClose={() => {}} onApply={onApply} />);
     await waitFor(() => expect(screen.getByText('符号卡')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: /应用$/ }));
     await waitFor(() => expect(mockAddToast).toHaveBeenCalledWith(expect.stringContaining('图层'), 'error'));
     expect(onApply).not.toHaveBeenCalled();
     expect(mockDispatch).not.toHaveBeenCalled();
@@ -254,7 +254,7 @@ describe('TemplateGalleryV2 apply (#465)', () => {
     const onApply = vi.fn();
     render(<TemplateGalleryV2 open={true} onClose={() => {}} onApply={onApply} />);
     await waitFor(() => expect(screen.getByText('符号卡')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: /应用$/ }));
     await waitFor(() => expect(mockDispatch).toHaveBeenCalledTimes(1));
     const dispatched = mockDispatch.mock.calls[0][0];
     expect(dispatched.command).toBe('LAYER_STYLE_UPDATE');
@@ -276,7 +276,7 @@ describe('TemplateGalleryV2 apply (#465)', () => {
     const onApply = vi.fn();
     render(<TemplateGalleryV2 open={true} onClose={() => {}} onApply={onApply} />);
     await waitFor(() => expect(screen.getByText('A4 横版卡')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: /应用$/ }));
     await waitFor(() => expect(mockHudState.updateExportSettings).toHaveBeenCalledTimes(1));
     expect(mockHudState.updateExportSettings).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -297,7 +297,7 @@ describe('TemplateGalleryV2 apply (#465)', () => {
     const onApply = vi.fn();
     render(<TemplateGalleryV2 open={true} onClose={() => {}} onApply={onApply} />);
     await waitFor(() => expect(screen.getByText('专题卡')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: /应用$/ }));
     await waitFor(() => expect(mockAddToast).toHaveBeenCalledWith(expect.stringContaining('Agent'), 'error'));
     expect(onApply).not.toHaveBeenCalled();
   });

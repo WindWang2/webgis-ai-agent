@@ -11,6 +11,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy import text
 
 from alembic import context
 
@@ -34,7 +35,7 @@ if config.config_file_name is not None:
 from app.core.database import Base, _to_sync_url  # noqa: E402
 
 db_url = os.getenv("DATABASE_URL")
-if db_url:
+if db_url and config.attributes.get("connection") is None:
     # #1592：2.1.x 裸 postgres URL 默认方言改走 psycopg v3（lock 只有 psycopg2-binary），
     # 与 get_engine() 同源同纪律，显式钉 psycopg2 驱动。
     db_url = _to_sync_url(db_url)
@@ -106,6 +107,16 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    supplied = config.attributes.get("connection")
+    if supplied is not None:
+        context.configure(
+            connection=supplied,
+            target_metadata=target_metadata,
+            render_as_batch=supplied.dialect.name == "sqlite",
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+        return
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -114,14 +125,29 @@ def run_migrations_online() -> None:
 
     url = config.get_main_option("sqlalchemy.url") or ""
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=url.startswith("sqlite"),  # SQLite ALTER 兼容
-        )
+        postgres = connection.dialect.name == "postgresql"
+        # Multiple API initContainers may start together. A session-level
+        # advisory lock spans the complete migration run, including revisions
+        # that enter an autocommit block. No application transaction owns it.
+        migration_lock = 0x574542474953
+        if postgres:
+            connection.execute(text("SELECT set_config('lock_timeout', '300s', false)"))
+            connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": migration_lock})
+            connection.commit()
+        try:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                render_as_batch=url.startswith("sqlite"),  # SQLite ALTER 兼容
+            )
 
-        with context.begin_transaction():
-            context.run_migrations()
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            if postgres:
+                connection.rollback()
+                connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": migration_lock})
+                connection.commit()
 
 
 if context.is_offline_mode():

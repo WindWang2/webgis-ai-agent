@@ -34,6 +34,7 @@ def test_list_sessions_returns_json(client):
         mock_svc = MagicMock()
         MockHS.return_value = mock_svc
         mock_svc.list_sessions = AsyncMock(return_value=[conv])
+        mock_svc.count_sessions = AsyncMock(return_value=1)
         resp = client.get(f"{BASE}/sessions")
     assert resp.status_code == 200
     data = resp.json()

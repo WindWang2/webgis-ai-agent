@@ -105,8 +105,9 @@ def test_update_recovery_state_raises_on_write_failure(monkeypatch):
 
     monkeypatch.setattr(
         sd.session_data_manager, "get_map_state", _ok_get, raising=True)
+    # Recovery writes use the backend's atomic RMW seam, not set_map_state.
     monkeypatch.setattr(
-        sd.session_data_manager, "set_map_state", _boom_set, raising=True)
+        "app.services.session_state_atomic.atomic_update_state", _boom_set)
 
     async def _run():
         with pytest.raises(RecoveryStoreUnavailable):

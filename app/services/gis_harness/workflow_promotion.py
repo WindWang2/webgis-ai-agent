@@ -16,6 +16,7 @@ This module is a projection, not a second planner: it reads an already-final
 MapProductPlan dump and never re-decides cartography.
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -73,7 +74,7 @@ def _capability_io(capability: str) -> Tuple[List[str], List[str]]:
                 [str(t) for t in (desc.output_artifact_types or [])],
             )
     except Exception:  # noqa: BLE001 — registry unavailable → honest empty roles
-        pass
+        observe_optional_failure(__name__)
     return [], []
 
 

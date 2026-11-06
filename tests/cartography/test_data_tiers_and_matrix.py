@@ -118,6 +118,25 @@ def test_repair_matrix_mapped_effective_sample(golden_matrix) -> None:
         assert by_pair[pair]["verdict"] == "mapped_effective", pair
 
 
+@pytest.mark.parametrize("code", ["MISSING_CRS", "SUSPICIOUS_CRS"])
+def test_crs_matrix_fixture_really_transforms_projected_coordinates(code):
+    import math
+    from app.services.spatial_repair_matrix import REPAIR_FIXTURES, SpatialRepairPipeline
+
+    fixture = REPAIR_FIXTURES[code]
+    assert fixture["source_crs"] == "EPSG:3857"
+    source = fixture["fc"]["features"][0]["geometry"]["coordinates"]
+    repaired, _, evidence = SpatialRepairPipeline.repair_dataset_detailed(
+        fixture["fc"], ops=["crs_transform"], source_crs=fixture["source_crs"],
+    )
+    lon, lat = repaired["features"][0]["geometry"]["coordinates"]
+    # Independent inverse spherical Mercator identity, not just a new label.
+    assert lon == pytest.approx(math.degrees(source[0] / 6378137))
+    assert lat == pytest.approx(math.degrees(math.atan(math.sinh(source[1] / 6378137))))
+    assert -180 <= lon <= 180 and -90 <= lat <= 90
+    assert any(e.get("op") == "crs_transform" and e.get("features_affected") == 2 for e in evidence)
+
+
 def test_repair_matrix_no_effect_cells_are_findings(golden_matrix) -> None:
     """mapped_no_effect 是如实登记的复核线索（不是隐藏失败）：
     NULL_ISLAND 需破坏性 drop_zero_coordinates；dedup 键 = geom+attrs 的

@@ -39,7 +39,7 @@ def test_all_families_selfcheck_against_real_registry():
 
 
 def test_family_ids_stable_vocabulary():
-    # ADR-0282：raster_zonal_summary（链② 栅格→zonal→矢量）与
+    # ADR-0284：raster_zonal_summary（链② 栅格→zonal→矢量）与
     # network_proximity（链③ 最近设施→行政汇总）加入词表；
     # 词表增长必须显式更新本钉扎——防止隐性漂移。
     assert families.FAMILY_IDS == (

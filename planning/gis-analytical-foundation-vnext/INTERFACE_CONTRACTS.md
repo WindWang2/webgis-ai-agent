@@ -1,4 +1,4 @@
-# INTERFACE_CONTRACTS — vNext 接口冻结（实现前定稿，ADR-0282）
+# INTERFACE_CONTRACTS — vNext 接口冻结（实现前定稿，ADR-0284）
 
 > 红线继承 goal-02：薄包装、registry.dispatch 单一执行真相、词表不复制。
 > 全部 additive；既有键语义零漂移。

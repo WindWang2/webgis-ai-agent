@@ -7,6 +7,7 @@ import { MapPanel } from './map-panel';
 import type { Layer } from '@/lib/types/layer';
 import { makeMockMaplibreMap } from '../../test/__mocks__/maplibre-map';
 import * as renderer from '@/lib/map-kit/renderer';
+import * as refResolver from '@/lib/mapspec/ref-source-resolver';
 
 /**
  * Combined MapLibre lifecycle scenario for issues #459 / #460 / #461:
@@ -204,6 +205,23 @@ describe('MapPanel — basemap switch during in-flight reconcile (#459/#460/#461
     rmg.queryResults = [];
     rmg.interactiveLayerIds = [];
     rmg.loaded = false;
+  });
+
+  it('sends the resolved-source projection to the actual runtime reconciler', async () => {
+    const replacement = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [104, 30] }, properties: { resolved: true } }] };
+    let injectedSource = '';
+    const spy = vi.spyOn(refResolver, 'injectResolvedRefSources').mockImplementation((spec) => {
+      injectedSource = Object.keys(spec.sources)[0] ?? '';
+      if (!injectedSource) return spec;
+      return { ...spec, sources: { ...spec.sources, [injectedSource]: { ...spec.sources[injectedSource], inlineData: replacement } } };
+    });
+    try {
+      await renderPanel([pointLayer('poi', 'POI'), pointLayer('schools', 'Schools')]);
+      expect(injectedSource).not.toBe('');
+      expect(rmg.map.getSource(injectedSource)?.data).toEqual(replacement);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('recovers to map state == MapSpec state with all imperative stacks intact', async () => {

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import copy
 import math
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 _MAX_CELLS = 512
 _MAX_FIELDS = 48
@@ -45,14 +45,22 @@ def _field_slot(state: Dict[str, Any], name: str) -> Dict[str, Any]:
     fields = state["fields"]
     if name not in fields and len(fields) < _MAX_FIELDS:
         fields[name] = {
-            "n": 0, "nulls": 0, "sum": 0.0, "sumsq": 0.0,
+            "n": 0, "num_n": 0, "numeric_mean": 0.0, "m2": 0.0, "nulls": 0, "sum": 0.0, "sumsq": 0.0,
             "min": None, "max": None, "types": {},
         }
     return fields.get(name, {})
 
 
-def _h3_bucket(features: List[Dict[str, Any]], resolution: int) -> Dict[str, int]:
+def _h3_bucket(features: List[Dict[str, Any]], resolution: int, crs: Optional[str] = None) -> Dict[str, int]:
     from app.services.data_profile.distribution import _representative_point
+    if crs:
+        from pyproj import CRS
+
+        try:
+            if not CRS.from_user_input(crs).is_geographic:
+                return {}
+        except ValueError:
+            return {}
 
     try:
         import h3
@@ -84,6 +92,7 @@ def update_state(
     features: List[Dict[str, Any]],
     *,
     max_scan: int = 50000,
+    crs: Optional[str] = None,
 ) -> Dict[str, Any]:
     """增量合并一批要素（只扫本批；返回新状态）。"""
     new = copy.deepcopy(state)
@@ -116,6 +125,13 @@ def update_state(
             if isinstance(v, (int, float)) and not isinstance(v, bool) \
                     and math.isfinite(float(v)):
                 fv = float(v)
+                count = int(slot.get("num_n", slot.get("types", {}).get("number", 0)))
+                mean = slot.get("numeric_mean", slot["sum"] / count if count else 0.0)
+                m2 = slot.get("m2", max(0.0, slot["sumsq"] - count * mean * mean))
+                delta = fv - mean
+                slot["numeric_mean"] = mean + delta / (count + 1)
+                slot["m2"] = m2 + delta * (fv - slot["numeric_mean"])
+                slot["num_n"] = count + 1
                 slot["sum"] += fv
                 slot["sumsq"] += fv * fv
                 slot["min"] = fv if slot["min"] is None else min(slot["min"], fv)
@@ -124,7 +140,7 @@ def update_state(
             slot["types"][tname] = slot["types"].get(tname, 0) + 1
 
     resolution = int(new.get("resolution") or _DEFAULT_RESOLUTION)
-    for cell, cnt in _h3_bucket(batch, resolution).items():
+    for cell, cnt in _h3_bucket(batch, resolution, crs).items():
         new["h3"][cell] = new["h3"].get(cell, 0) + cnt
     capped, truncated = _cap_cells(new["h3"])
     new["h3"] = capped
@@ -153,6 +169,16 @@ def merge_states(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
                 out["fields"][name] = copy.deepcopy(slot_b)
             continue
         slot_a["n"] += slot_b.get("n", 0)
+        na = int(slot_a.get("num_n", slot_a.get("types", {}).get("number", 0)))
+        nb = int(slot_b.get("num_n", slot_b.get("types", {}).get("number", 0)))
+        ma = slot_a.get("numeric_mean", slot_a["sum"] / na if na else 0.0)
+        mb = slot_b.get("numeric_mean", slot_b.get("sum", 0.0) / nb if nb else 0.0)
+        m2a = slot_a.get("m2", max(0.0, slot_a["sumsq"] - na * ma * ma))
+        m2b = slot_b.get("m2", max(0.0, slot_b.get("sumsq", 0.0) - nb * mb * mb))
+        total_n = na + nb
+        slot_a["num_n"] = total_n
+        slot_a["numeric_mean"] = (ma + (mb - ma) * nb / total_n) if total_n else 0.0
+        slot_a["m2"] = m2a + m2b + ((mb - ma) ** 2 * na * nb / total_n if total_n else 0.0)
         slot_a["nulls"] += slot_b.get("nulls", 0)
         slot_a["sum"] += slot_b.get("sum", 0.0)
         slot_a["sumsq"] += slot_b.get("sumsq", 0.0)
@@ -166,8 +192,15 @@ def merge_states(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
             slot_a["types"][t] = slot_a["types"].get(t, 0) + c
     for t, c in (b.get("geom_types") or {}).items():
         out["geom_types"][t] = out["geom_types"].get(t, 0) + c
-    for cell, cnt in (b.get("h3") or {}).items():
-        out["h3"][cell] = out["h3"].get(cell, 0) + cnt
+    import h3
+
+    merged_cells: Dict[str, int] = {}
+    resolution = int(out["resolution"])
+    for state in (a, b):
+        for cell, cnt in (state.get("h3") or {}).items():
+            parent = h3.cell_to_parent(cell, resolution) if h3.get_resolution(cell) > resolution else cell
+            merged_cells[parent] = merged_cells.get(parent, 0) + cnt
+    out["h3"] = merged_cells
     capped, truncated = _cap_cells(out["h3"])
     out["h3"] = capped
     out["h3_truncated"] = bool(a.get("h3_truncated")) or bool(b.get("h3_truncated")) or truncated
@@ -184,9 +217,10 @@ def state_summary(state: Dict[str, Any]) -> Dict[str, Any]:
             "null_rate": round(slot.get("nulls", 0) / n, 4) if n else None,
             "types": dict(list((slot.get("types") or {}).items())[:4]),
         }
-        if n and slot.get("sumsq"):
-            mean = slot["sum"] / n
-            var = max(0.0, slot["sumsq"] / n - mean * mean)
+        numeric_n = int(slot.get("num_n", slot.get("types", {}).get("number", 0)))
+        if numeric_n:
+            mean = slot.get("numeric_mean", slot["sum"] / numeric_n)
+            var = max(0.0, slot["m2"] / numeric_n) if "m2" in slot else max(0.0, slot["sumsq"] / numeric_n - mean * mean)
             entry["mean"] = round(mean, 6)
             entry["std"] = round(math.sqrt(var), 6)
         if slot.get("min") is not None:

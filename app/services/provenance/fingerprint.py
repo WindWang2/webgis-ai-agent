@@ -10,8 +10,7 @@ Choice of evidence (per the V2 spec §8): we cannot rely on filename / created_a
 / a random UUID. We hash the *identity* of the data:
   * dataset   → source_type + source_ref + crs + canonical(schema_profile)
   * graph     → canonical(graph_spec)
-  * tool out  → canonical(result descriptor: ref_id + feature_count + bbox, or a
-                stable hash of the result envelope when those keys are absent)
+  * tool out  → canonical(actual inline payload); descriptor-only content is unknown
 
 When ``source_ref`` already points at content-addressed storage (a ``ref:`` id or
 a layer id) the dataset fingerprint transitively content-addresses the bytes —
@@ -143,38 +142,15 @@ def extract_artifact_metadata(tool_name: str, tool_result: Any) -> Dict[str, Opt
 
 
 def compute_content_fingerprint(tool_name: str, tool_result: Any) -> Optional[str]:
-    """Best-effort deterministic fingerprint of a tool *output*.
+    """Hash an actually supplied payload, never a count/bbox-only descriptor.
 
-    Derived from content-derived evidence only — ``tool`` + ``feature_count`` +
-    ``bbox`` (+ a stable hash of the trimmed result envelope when those are
-    absent). The per-run random ``ref_id`` is deliberately **excluded** so that
-    the same logical output yields the same fingerprint across runs (cheap
-    duplicate detection along lineage edges); two outputs that differ only in
-    their random storage ref do not collide-differ. Returns ``None`` only when
-    the result carries nothing hashable.
+    Ref resolution and raster bytes are outside this pure helper. When the
+    tool supplies only a descriptor the content identity is unknown (None).
     """
-    res = tool_result if isinstance(tool_result, dict) else None
-    if res is None:
+    if not isinstance(tool_result, dict):
         return None
-
-    feature_count = res.get("feature_count")
-    bbox = res.get("bbox")
-    geometry_type = res.get("geometry_type")
-
-    if feature_count is not None or bbox is not None or geometry_type is not None:
-        descriptor = {
-            "tool": tool_name or "",
-            "feature_count": feature_count if isinstance(feature_count, int) else "",
-            "bbox": bbox if bbox is not None else "",
-            "geometry_type": geometry_type or "",
-        }
-        return _sha256(canonical_dumps(descriptor))
-
-    # Strip volatile/large fields before hashing the whole envelope.
-    trimmed = {
-        k: v
-        for k, v in res.items()
-        if k not in {"data", "features", "raster_source", "summary", "ref_id", "layer_id"}
-    }
-    envelope = {"tool": tool_name or "", "result": trimmed}
-    return _sha256(canonical_dumps(envelope))
+    payload = {key: tool_result[key] for key in ("data", "geojson", "features")
+               if key in tool_result and tool_result[key] is not None}
+    if not payload:
+        return None
+    return _sha256(canonical_dumps({"tool": tool_name or "", "payload": payload}))

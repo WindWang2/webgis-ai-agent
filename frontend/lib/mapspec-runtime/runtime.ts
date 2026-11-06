@@ -632,6 +632,7 @@ export class MapSpecRuntime {
       devOnly.warn(`[MapSpecRuntime] paint patch failed for ${id}, falling back to recompile:`, err);
       this.removeLayerSafe(id);
       this.addLayerSafe(next);
+      this.zSyncForcedByFallback = true;
       recordRecompileFallback();
       recordSymbolLawEvidence("incremental-fallback", {
         channel: "paint",
@@ -682,6 +683,7 @@ export class MapSpecRuntime {
       devOnly.warn(`[MapSpecRuntime] layout patch failed for ${id}, falling back to recompile:`, err);
       this.removeLayerSafe(id);
       this.addLayerSafe(next);
+      this.zSyncForcedByFallback = true;
       recordRecompileFallback();
       recordSymbolLawEvidence("incremental-fallback", {
         channel: "layout",
@@ -719,7 +721,7 @@ export class MapSpecRuntime {
     if (
       patch.sources.length === 0 &&
       patch.layers.length === 0 &&
-      consumeDiffLastFailed()
+      consumeDiffLastFailed(patch)
     ) {
       return Promise.resolve();
     }
@@ -1182,6 +1184,7 @@ export class MapSpecRuntime {
       paint: basePaint,
       layout: { ...(layer.layout || {}), visibility: vis.visibility },
     };
+    for (const key of Object.keys(def.layout)) if (key.startsWith("label")) delete def.layout[key];
     const planGate = (() => {
       if (!planEffective) return {} as { minzoom?: number; maxzoom?: number };
       const raws = rawWindowsOf(repPlan!);
@@ -1557,7 +1560,7 @@ export class MapSpecRuntime {
     }
     this.layerSourceIndex.set(layer.id, layer.source);
     const labelSpec = this.labelSpecOf(layer);
-    if (labelSpec && layer.type !== "raster" && layer.type !== "heatmap") {
+    if (labelSpec && !["raster", "heatmap", "background", "hillshade"].includes(layer.type)) {
       this.addLabelSublayerSafe(layer, labelSpec, spec);
       this.pushLabelEvent({
         layerId: layer.id, kind: "refield",
@@ -1602,6 +1605,10 @@ export class MapSpecRuntime {
     } catch { /* mock without getZoom → 0 */ }
 
     if (strategy.mode === "hover_only") {
+      if (this.map.getLayer(labelId)) {
+        try { this.map.removeLayer(labelId); } catch { /* already gone */ }
+        renderer.noteStyleLayerRemoved(this.map, labelId);
+      }
       this.labelRegistrations.delete(labelId);
       this.pushLabelEvent({
         layerId: layer.id, kind: "disabled",
@@ -1623,7 +1630,11 @@ export class MapSpecRuntime {
         });
       }
       if (degrade.disable) {
-        this.labelRegistrations.delete(labelId);
+        if (this.map.getLayer(labelId)) {
+        try { this.map.removeLayer(labelId); } catch { /* already gone */ }
+        renderer.noteStyleLayerRemoved(this.map, labelId);
+      }
+      this.labelRegistrations.delete(labelId);
         this.pushLabelEvent({
           layerId: layer.id, kind: "disabled",
           detail: { reason: "ink_ratio_extreme", inkRatio: Number(ink.toFixed(4)) },

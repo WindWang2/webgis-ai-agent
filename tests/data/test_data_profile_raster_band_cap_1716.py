@@ -21,7 +21,7 @@ def _write_multiband(path: str, *, count: int, h: int = 64, w: int = 64) -> None
     from rasterio.transform import Affine
 
     data = np.arange(count * h * w, dtype="float32").reshape(count, h, w)
-    transform = Affine.translation(0, 10) @ Affine.scale(10.0 / w, -10.0 / h)
+    transform = Affine.translation(0, 10) * Affine.scale(10.0 / w, -10.0 / h)
     with rasterio.open(
         path, "w", driver="GTiff", height=h, width=w, count=count,
         dtype="float32", crs="EPSG:4326", transform=transform,

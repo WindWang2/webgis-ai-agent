@@ -23,6 +23,10 @@ ref 铸造）被完整执行，全部外部副作用被替身化：
 from __future__ import annotations
 
 import itertools
+import asyncio
+import threading
+
+_RECEIPT_SANDBOX_LOCK = threading.Lock()
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -167,7 +171,7 @@ class _MemorySessionStore:
 
     async def store(self, session_id: str, data: Any,
                     prefix: str = "data") -> str:
-        ref_id = f"ref:{prefix}:t4-{next(self._seq):06d}"
+        ref_id = f"ref:{prefix}-t4-{next(self._seq):06d}"
         self._data[(session_id, ref_id)] = data
         if len(self._data) > self._MAX_REFS:
             for stale in list(self._data)[: len(self._data) - self._MAX_REFS]:
@@ -218,6 +222,18 @@ class _MemorySessionStore:
         if len(state) >= self._MAX_MAP_STATE_KEYS and key not in state:
             return False
         state[str(key)[:64]] = value
+        return True
+
+    async def update_layer_in_state(self, session_id: str, layer_id: str, layer: Any) -> bool:
+        state = self._session_state(session_id)
+        layers = [item for item in state.get("layers", []) if item.get("id") != layer_id]
+        layers.append(dict(layer))
+        state["layers"] = layers[-128:]
+        return True
+
+    async def remove_layer_from_state(self, session_id: str, layer_id: str) -> bool:
+        state = self._session_state(session_id)
+        state["layers"] = [item for item in state.get("layers", []) if item.get("id") != layer_id]
         return True
 
     async def get_map_state(self, session_id: str) -> Dict[str, Any]:
@@ -333,13 +349,11 @@ class _RecordedProviderRegistry:
             if op is not None and op.call_id not in self._consumed:
                 self._consumed.add(op.call_id)
                 return op
-        offset = self._cursor.get(tool_name, 0)
         candidates = [op for op in self._receipts if op.tool == tool_name
                       and op.call_id not in self._consumed]
-        if offset >= len(candidates):
+        if not candidates:
             return None
-        chosen = candidates[offset]
-        self._cursor[tool_name] = offset + 1
+        chosen = candidates[0]
         self._consumed.add(chosen.call_id)
         return chosen
 
@@ -404,7 +418,7 @@ def _error_code_of(error_msg: Optional[str], raw: Any) -> Optional[str]:
     return None
 
 
-async def replay_receipt_level(
+async def _replay_receipt_level_unlocked(
     turn: TurnSpec,
     *,
     session_id: str,
@@ -476,3 +490,13 @@ __all__ = [
     "replay_receipt_level",
     "_dispatch_sandbox",
 ]
+
+
+async def replay_receipt_level(turn: TurnSpec, *, session_id: str, tool_registry: Dict[str, List[str]]) -> ReceiptReplayResult:
+    """Serialize env/singleton swapping across tasks and worker threads."""
+    while not _RECEIPT_SANDBOX_LOCK.acquire(blocking=False):
+        await asyncio.sleep(.005)
+    try:
+        return await _replay_receipt_level_unlocked(turn, session_id=session_id, tool_registry=tool_registry)
+    finally:
+        _RECEIPT_SANDBOX_LOCK.release()

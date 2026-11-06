@@ -1,4 +1,4 @@
-"""链① 行政统计分母字段语义（ADR-0282 D4；断点 6 修复）。
+"""链① 行政统计分母字段语义（ADR-0284 D4；断点 6 修复）。
 
 - per_capita_rate 分母字段名来自 role:denominator 的 qualifier.field
   （默认 "population" 行为兼容）；

@@ -98,7 +98,7 @@ def test_profile_geojson_json_string(tmp_path: Path):
   file_path = tmp_path / "test.geojson"
   file_path.write_text(file_path.read_text if False else str(data).replace("'", '"'))
 
-  profile = profile_geojson_source(file_path)
+  profile = profile_geojson_source(file_path.read_text())
 
   assert profile["featureCount"] == 1
   assert profile["geometryTypes"] == ["Polygon"]

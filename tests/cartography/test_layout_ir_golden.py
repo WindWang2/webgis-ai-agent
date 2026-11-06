@@ -35,6 +35,14 @@ def test_fixture_versioned(fixture) -> None:
     assert fixture["expected"]["version"] == LAYOUT_IR_VERSION
 
 
+def test_atlas_content_matches_shared_golden_and_is_deep_copied() -> None:
+    fixture = json.loads(FIXTURE.with_name("content.json").read_text(encoding="utf-8"))
+    ir = build_layout_ir(**fixture["input"])
+    assert ir == fixture["expected"]
+    fixture["input"]["components"][0]["content"]["metadata"]["page"] = 99
+    assert ir["components"][0]["content"]["metadata"]["page"] == 2
+
+
 def test_ir_matches_fixture(fixture) -> None:
     """同输入 → 同 IR（逐字段；TS 镜像消费同一 expected）。"""
     ir = build_layout_ir(

@@ -270,7 +270,7 @@ def test_tile_url_builder_appends_revision_when_present():
     behavior; this pins the source-level contract for the review gate)."""
     src = open("frontend/lib/map-kit/tile-url.ts").read()
     assert "v=${contentRevision}" in src
-    assert "session_id=${sessionId}" in src
+    assert "session_id=${encodeURIComponent(sessionId)}" in src
     # Revision only appended when present/positive (pre-V5 URLs stay stable).
     assert "contentRevision <= 0" in src
 

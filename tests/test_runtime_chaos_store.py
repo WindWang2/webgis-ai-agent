@@ -83,6 +83,9 @@ class _FaultyPipeline:
     async def execute(self):
         raise aioredis.RedisError("pipeline execute timed out")
 
+    async def watch(self, *args):
+        raise aioredis.RedisError("watch timed out")
+
 
 class _FaultyRedis:
     """Every read raises RedisError — simulates a mid-turn Redis outage."""

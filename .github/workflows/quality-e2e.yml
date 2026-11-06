@@ -298,7 +298,7 @@ jobs:
         run: |
           # The CLI runs before app.main creates DATA_DIR on server startup.
           mkdir -p "$DATA_DIR"
-          python manage.py create-admin "$E2E_USER" e2e@example.org "$E2E_PASS"
+          printf '%s\n' "$E2E_PASS" | python manage.py create-admin "$E2E_USER" e2e@example.org --password-stdin
       - name: Verify owned PostGIS fabric fixture
         run: python frontend/e2e/tools/seed-fabric-source.py
       - name: Start backend (uvicorn, minimal config)
