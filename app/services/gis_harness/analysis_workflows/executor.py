@@ -399,6 +399,7 @@ class WorkflowExecutor:
     async def _run_step(
         self, session_id: str, contract: AnalysisWorkflowContract,
         step: AnalysisStepSpec, state: WorkflowRunState,
+        *, deferred_repeats: Optional[List[Tuple[AnalysisStepSpec, str]]] = None,
     ) -> None:
         entry = state.steps[step.step_id]
         if entry.state in ("blocked", "skipped"):
@@ -481,31 +482,14 @@ class WorkflowExecutor:
             # （同工具+同参+同输入身份=同一计算，不重复执行也绝不把空
             # 载荷当新成功）；无孪生步骤时保持诚实 failed。
             if reason_code == "TOOL_DISPATCH_REPEATED":
-                twin = next(
-                    (sid for sid, other in state.steps.items()
-                     if sid != step.step_id and other.state == "satisfied"
-                     and other.fingerprint == fp), None)
-                if twin is not None and twin in state.envelopes:
-                    twin_env = state.envelopes[twin]
-                    envelope_clone = twin_env.model_copy(deep=True)
-                    envelope_clone.step_id = step.step_id
-                    envelope_clone.fingerprint = fp
-                    state.envelopes[step.step_id] = envelope_clone
-                    twin_receipt = dict(state.receipts.get(twin) or {})
-                    twin_receipt["step_id"] = step.step_id
-                    twin_receipt["reused_from_step"] = twin
-                    state.receipts[step.step_id] = twin_receipt
-                    if envelope_clone.ref and self._sd is not None:
-                        self._step_payloads[step.step_id] = await self._sd.get(
-                            session_id, envelope_clone.ref)  # type: ignore[assignment]
-                    entry.state = "satisfied"
-                    entry.reason_code = ""
-                    entry.message = ""
-                    entry.envelope_ref_hint = envelope_clone.ref
-                    entry.touch()
-                    state.log("step_reused", step=step.step_id,
-                              reused_from=twin, cause="dispatch_repeated")
-                    return
+                message = str(inner.get("message") or inner.get("error") or "")[:300]
+                if deferred_repeats is not None:
+                    # 同波 producer 可能仍在 await store / 发布 envelope。
+                    # 在波末收敛，不能提前 failed，也不能让 repeated 互等。
+                    deferred_repeats.append((step, message))
+                else:
+                    await self._settle_repeated_step(session_id, step, state, message)
+                return
             entry.state = "failed"
             entry.reason_code = reason_code
             entry.message = str(
@@ -635,6 +619,43 @@ class WorkflowExecutor:
         state.log("step_satisfied", step=step.step_id, ref=ref,
                   features=envelope.feature_count)
 
+    async def _settle_repeated_step(
+        self, session_id: str, step: AnalysisStepSpec,
+        state: WorkflowRunState, message: str,
+    ) -> None:
+        """Reuse only a published successful twin, after same-wave work settles."""
+        entry = state.steps[step.step_id]
+        twin = next(
+            (sid for sid, other in state.steps.items()
+             if sid != step.step_id and other.state == "satisfied"
+             and other.fingerprint == entry.fingerprint
+             and sid in state.envelopes), None)
+        if twin is not None:
+            envelope_clone = state.envelopes[twin].model_copy(deep=True)
+            envelope_clone.step_id = step.step_id
+            envelope_clone.fingerprint = entry.fingerprint
+            state.envelopes[step.step_id] = envelope_clone
+            twin_receipt = dict(state.receipts.get(twin) or {})
+            twin_receipt["step_id"] = step.step_id
+            twin_receipt["reused_from_step"] = twin
+            state.receipts[step.step_id] = twin_receipt
+            if envelope_clone.ref and self._sd is not None:
+                self._step_payloads[step.step_id] = await self._sd.get(
+                    session_id, envelope_clone.ref)  # type: ignore[assignment]
+            entry.state = "satisfied"
+            entry.reason_code = ""
+            entry.message = ""
+            entry.envelope_ref_hint = envelope_clone.ref
+            entry.touch()
+            state.log("step_reused", step=step.step_id,
+                      reused_from=twin, cause="dispatch_repeated")
+            return
+        entry.state = "failed"
+        entry.reason_code = "TOOL_DISPATCH_REPEATED"
+        entry.message = message
+        entry.touch()
+        state.log("step_failed", step=step.step_id, code=entry.reason_code)
+
     async def execute(
         self,
         session_id: str,
@@ -677,9 +698,14 @@ class WorkflowExecutor:
                              not in ("blocked", "skipped")]
             if not wave_runnable:
                 break
+            deferred_repeats: List[Tuple[AnalysisStepSpec, str]] = []
             await asyncio.gather(*[
-                self._run_step(session_id, contract, step, state)
+                self._run_step(session_id, contract, step, state,
+                               deferred_repeats=deferred_repeats)
                 for step in wave_runnable])
+            # siblings-finish：所有 producer 已发布终态，再复用或诚实失败。
+            for step, message in deferred_repeats:
+                await self._settle_repeated_step(session_id, step, state, message)
             executed_any = executed_any or any(
                 state.steps[s.step_id].state in ("satisfied", "failed",
                                                  "cancelled", "blocked")
