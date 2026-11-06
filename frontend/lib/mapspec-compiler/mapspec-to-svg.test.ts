@@ -644,3 +644,20 @@ describe("MapSpec-to-SVG label_field_missing guard（W2.2）", () => {
     expect(diags.some(([c]) => c === "label_field_missing")).toBe(false);
   });
 });
+
+
+describe('sampled label-field evidence is not authoritative absence', () => {
+  it('a real field on feature 1001 renders without a false missing-field warning', () => {
+    const features = Array.from({ length: 1001 }, (_, i) => ({
+      type: 'Feature', geometry: { type: 'Point', coordinates: [116 + i / 10000, 39] },
+      properties: i === 1000 ? { late_name: 'late real label' } : {},
+    }));
+    const codes: string[] = [];
+    const svg = compileMapSpecToSvg({ version: '1.1',
+      sources: { pts: { type: 'geojson', inlineData: { type: 'FeatureCollection', features } } },
+      layers: [{ id: 'labels', source: 'pts', type: 'symbol', layout: { 'text-field': '{late_name}' } }],
+    }, { width: 600, height: 400, onDiagnostic: (code) => codes.push(code) });
+    expect(codes).not.toContain('label_field_missing');
+    expect(svg).toContain('late real label');
+  });
+});

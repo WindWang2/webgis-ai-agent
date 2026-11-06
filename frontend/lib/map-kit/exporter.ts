@@ -50,6 +50,9 @@ import {
   buildPublicationLayout,
   frameAspectWH,
   type PublicationLayout,
+  type PublicationText,
+  MAX_TITLE_CODEPOINTS, MAX_TITLE_LINES, MAX_SUBTITLE_CODEPOINTS, MAX_SUBTITLE_LINES,
+  projectTitleLines,
 } from '../export/layout-description';
 import {
   ensurePublicationFont,
@@ -265,9 +268,7 @@ export function composeLayout(
     // ADR-0283 D2：折行标题的副标题让位 —— title lines>1 时按行距下移，
     // 避免第二行与副标题基线重叠（确定性偏移，单行形态不变）。
     // R9 P3-4：行距取整与 drawChromeText 同口径（round(fontPx×1.3)）。
-    const titleWrapDy = (chrome.title?.lines?.length ?? 1) > 1
-      ? scalePx(Math.round(32 * 1.3)) * ((chrome.title!.lines!.length ?? 1) - 1)
-      : 0;
+    let titleWrapDy = 0;
     const mBottom = scalePx(52);
     const mCompass = scalePx(64);
     const mLegend = scalePx(56);
@@ -298,7 +299,8 @@ export function composeLayout(
 
       // 2. Title / subtitle（anchor 对齐 —— top-center 居中，与 live 一致）
       if (chrome.title?.text) {
-        drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: stackOffset(chrome.title, mTopTitle) });
+        const drawnTitleLines = drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: stackOffset(chrome.title, mTopTitle) });
+        titleWrapDy = scalePx(Math.round(32 * 1.3)) * Math.max(0, drawnTitleLines - 1);
       }
       if (chrome.subtitle?.text) {
         drawChromeText(
@@ -970,6 +972,8 @@ export async function exportToPDF(
     dataSource?: string;
     /** W6：'vector'（缺省）画 title/subtitle；'skip' 跳过（画布已栅格化）。 */
     textLayer?: 'vector' | 'skip';
+    /** Frozen publication text projection shared with the canvas/SVG paths. */
+    publicationTexts?: readonly PublicationText[];
     /** W9：多帧图集页（canvas + 每帧标题）。 */
     pages?: Array<{ canvas: HTMLCanvasElement; title?: string }>;
     /** W9：PDF 内部诊断回传（页标题栅格化）。 */
@@ -1017,7 +1021,29 @@ export async function exportToPDF(
   // Map image area（出版档：内容整体外推 bleed —— 版式数学相对 trim 不变）
   const ox = bleed;
   const oy = bleed;
-  const mapTop = 25;
+  const textVector = (options.textLayer ?? 'vector') === 'vector';
+  const textLines = (kind: 'title' | 'subtitle', raw: string, fontSize: number): string[] => {
+    const entry = options.publicationTexts?.find((text) => text.kind === kind);
+    const text = entry?.text ?? raw;
+    if (!text) return [];
+    const projected = entry?.lines ?? projectTitleLines(text,
+      kind === 'title' ? MAX_TITLE_CODEPOINTS : MAX_SUBTITLE_CODEPOINTS,
+      kind === 'title' ? MAX_TITLE_LINES : MAX_SUBTITLE_LINES) ?? [text];
+    doc.setFontSize(fontSize);
+    // Physical paper width can be narrower than the canvas's line projection.
+    // Reflow complete projected lines with the actual PDF font metrics.
+    return projected.flatMap((line) => typeof doc.splitTextToSize === 'function'
+      ? doc.splitTextToSize(line, pageW - margin * 2) as string[] : [line]);
+  };
+  const titleLines = textVector ? textLines('title', title || 'WebGIS AI Agent', 16) : [];
+  const subtitleLines = textVector ? textLines('subtitle', subtitle ?? '', 10) : [];
+  const titleStep = 16 * 25.4 / 72 * 1.3;
+  const subtitleStep = 10 * 25.4 / 72 * 1.3;
+  const titleBottom = 15 + Math.max(0, titleLines.length - 1) * titleStep;
+  const subtitleTop = Math.max(21, titleBottom + 6);
+  const headerBottom = subtitleLines.length
+    ? subtitleTop + (subtitleLines.length - 1) * subtitleStep : titleBottom;
+  const mapTop = textVector ? Math.max(25, headerBottom + 4) : 25;
   const mapBottom = 15;
   const mapW = pageW - margin * 2;
   const mapH = pageH - mapTop - mapBottom;
@@ -1062,17 +1088,20 @@ export async function exportToPDF(
   doc.rect(placedX, placedY, placedW, placedH);
 
   // Title（W6：textLayer='skip' 时已随画布栅格化 —— 文本层不重复书写）
-  const textVector = (options.textLayer ?? 'vector') === 'vector';
   if (textVector) {
     doc.setFontSize(16);
     doc.setTextColor(30, 41, 59);
-    doc.text(title || 'WebGIS AI Agent', pageW / 2 + ox, 15 + oy, { align: 'center' });
+    titleLines.forEach((line, index) => {
+      doc.text(line, pageW / 2 + ox, 15 + oy + index * titleStep, { align: 'center' });
+    });
 
     // Subtitle
-    if (subtitle) {
+    if (subtitleLines.length) {
       doc.setFontSize(10);
       doc.setTextColor(100, 116, 139);
-      doc.text(subtitle, pageW / 2 + ox, 21 + oy, { align: 'center' });
+      subtitleLines.forEach((line, index) => {
+        doc.text(line, pageW / 2 + ox, subtitleTop + oy + index * subtitleStep, { align: 'center' });
+      });
     }
   }
 
@@ -2280,7 +2309,7 @@ async function runExportInternal(
     }
     // ADR-0283 D3：缺瓦片有界披露 —— per-source 计数 + 首 5 样本（z/x/y），
     // detail 有界（tileMissDetail 截 200）。无缺失 → 无条目（不虚构）。
-    for (const acc of tileMissSnapshot()) {
+    for (const acc of tileMissSnapshot(map, (id) => map.getSource?.(id))) {
       chromeDegradations.push({
         code: 'basemap_tiles_missing',
         detail: tileMissDetail(acc),
@@ -2429,6 +2458,7 @@ async function runExportInternal(
           dataSource,
           textLayer: pdfVectorText ? 'vector' : 'skip',
           fontB64: publicationFontB64,
+          publicationTexts: publicationLayout.texts,
           colorMode,
         },
       );

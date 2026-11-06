@@ -144,3 +144,32 @@ def test_code_registered_in_render_diagnostics_vocabulary(code):
 
     assert code in RENDER_DIAGNOSTICS
     assert RENDER_DIAGNOSTICS[code].severity == "warning"
+
+
+def test_incomplete_field_sample_cannot_prove_a_late_field_missing():
+    features = [
+        {"type": "Feature", "properties": {"name": "point"},
+         "geometry": {"type": "Point", "coordinates": [i / 10000, 0]}}
+        for i in range(1001)
+    ]
+    features[-1]["properties"]["late_name"] = "present after sampling cap"
+    source = {"type": "FeatureCollection", "features": features}
+    assert inline_source_field_set(source) is None
+    findings = check_label_fields({"layers": [{"id": "labels", "type": "symbol", "source": "data",
+        "layout": {"text-field": "{late_name}"}}]}, lambda sid: inline_source_field_set(source))
+    assert findings == []
+    complete = inline_source_field_set(source, max_features=1001)
+    assert "late_name" in complete
+
+
+def test_compiler_late_field_does_not_emit_sampled_absence():
+    from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
+    features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [116 + i / 10000, 39]},
+                 "properties": {"late_name": "late real label"} if i == 1000 else {}}
+                for i in range(1001)]
+    result = compile_mapspec_to_svg_detailed({"version": "1.1", "view": {"center": [116, 39], "zoom": 10},
+        "sources": {"pts": {"type": "geojson", "inlineData": {"type": "FeatureCollection", "features": features}}},
+        "layers": [{"id": "labels", "source": "pts", "type": "symbol", "layout": {"text-field": "{late_name}"}}]},
+        target_dpi=72, width=600, height=400)
+    assert not any(row["code"] == LABEL_FIELD_MISSING for row in result.diagnostics)
+    assert "late real label" in result.svg

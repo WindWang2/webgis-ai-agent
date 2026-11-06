@@ -55,7 +55,9 @@ describe('vector-svg-export wrap-not-clip（ADR-0283 D2）', () => {
         /<text [^>]*y="(\d+)"[^>]*font-size="22"[^>]*>([^<]*)<\/text>/g,
       ),
     ];
-    expect(titleTexts.length).toBe(2);
+    expect(titleTexts.length).toBeGreaterThan(2);
+    // Reflow is constrained by actual frame width, beyond the semantic IR cap.
+    expect(titleTexts.every(match => Array.from(match[2]).length * 22 < 1200)).toBe(true);
     expect(Number(titleTexts[1][1]) - Number(titleTexts[0][1])).toBe(29);
     // 内容完整：两行拼接 = 原标题（无字符丢失）
     const joined = titleTexts.map((m) => m[2]).join('');

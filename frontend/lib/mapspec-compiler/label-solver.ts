@@ -75,8 +75,8 @@ export interface CollisionSolution {
  * 候选盒与任一障碍严格重叠（贴边不算）→ 候选位不可用；全占 → 抑制
  * （reason="obstacle"）。障碍超 MAX_OBSTACLES_PER_SOLVE 保留前 N，
  * 截断数记 stats.obstacles_truncated。obstacles 缺省/空 → 输出与无障碍
- * 形态完全一致（兼容锁定）。锚点豁免由调用方负责（标注/符号异层时天然
- * 无需豁免；同层组合由调用方构造 obstacles 时排除自身锚点）。
+ * 形态完全一致（兼容锁定）。障碍盒不带身份；跨层同源的点符号也参与
+ * 避让，全候选被图元遮挡时按同一规则抑制并披露。
  */
 export function solveExportLabels(
   features: CollisionLabel[],

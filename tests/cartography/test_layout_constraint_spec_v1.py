@@ -413,3 +413,13 @@ def test_large_participant_set_completes_deterministically():
     # 组件不凭空消失：每个参与者必在 placements 或 suppressed（V3 保证）
     accounted = {p.id for p in a.placements} | {s.id for s in a.suppressed}
     assert accounted == {p.id for p in parts}
+
+
+def test_explicit_minimum_widens_an_initially_narrow_participant():
+    participant = _p('narrow', 'chart', 'top-left', width_units=1)
+    constraints = LayoutConstraintDocument(components={
+        'narrow': ComponentLayoutConstraint(component_id='narrow', min_width_units=3, max_width_units=4),
+    })
+    result = solve_layout_v5([participant], constraint_spec=constraints,
+                            zone_capacity={'top-left': 4, 'bottom-right': 4})
+    assert result.placements and result.placements[0].width_units >= 3

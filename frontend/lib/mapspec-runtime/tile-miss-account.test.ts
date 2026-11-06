@@ -40,7 +40,7 @@ describe('tile miss account（ADR-0283 D3）', () => {
     expect(snap[0].samples).toEqual(['4/2/2']);
   });
 
-  it('源数封顶 8（防御性；超出丢弃不挤占既有源）', () => {
+  it('源数封顶 8（防御性；新源轮转最早登记的源）', () => {
     for (let i = 0; i < 12; i++) recordTileMiss(`raster-tiles-${i}`, '1/0/0');
     expect(tileMissSnapshot().length).toBe(8);
   });
@@ -68,6 +68,7 @@ describe('tile miss account（ADR-0283 D3）', () => {
 
 function errorCapableMockMap() {
   const handlers = new Map<string, Set<(e?: unknown) => void>>();
+  const sources = new Map(Array.from({ length: 12 }, (_, i) => [`raster-tiles-${i}`, {}]));
   const map = {
     on(event: string, handler: (e?: unknown) => void) {
       const set = handlers.get(event) ?? new Set();
@@ -79,7 +80,9 @@ function errorCapableMockMap() {
     },
     isStyleLoaded: () => true,
     getStyle: () => ({ sources: {}, layers: [] }),
-    getSource: () => undefined,
+    getSource: (id: string) => sources.get(id),
+    _removeSource: (id: string) => sources.delete(id),
+    _replaceSource: (id: string) => sources.set(id, {}),
     getLayer: () => undefined,
     _emitError(e: unknown) {
       for (const handler of Array.from(handlers.get('error') ?? [])) handler(e);
@@ -98,7 +101,7 @@ describe('runtime handler 记账接线（ADR-0283 D3）', () => {
     const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     map._emitError({ sourceId: 'raster-tiles-0', tile: { id: '6/33/21' } });
     map._emitError({ sourceId: 'raster-tiles-0', tile: { id: '6/33/22' } });
-    const snap = tileMissSnapshot();
+    const snap = tileMissSnapshot(map);
     expect(snap.length).toBe(1);
     expect(snap[0].count).toBe(2);
     expect(snap[0].samples).toEqual(['6/33/21', '6/33/22']);
@@ -109,17 +112,82 @@ describe('runtime handler 记账接线（ADR-0283 D3）', () => {
     const map = errorCapableMockMap();
     const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     map._emitError({ sourceId: 'raster-tiles-0' });
-    const snap = tileMissSnapshot();
+    const snap = tileMissSnapshot(map);
     expect(snap[0].count).toBe(1);
     expect(snap[0].samples).toEqual([]);
     void rt;
+  });
+
+  it('real MapLibre canonical tile coordinates reach the bounded sample', () => {
+    const map = errorCapableMockMap();
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
+    // TileManager._loadTile emits { tile }, whose Tile has tileID.canonical.
+    map._emitError({ sourceId: 'raster-tiles-0', tile: { tileID: { canonical: { z: 6, x: 33, y: 21 } } } });
+    map._emitError({ sourceId: 'raster-tiles-0', tile: { tileID: { canonical: { z: 0, x: 0, y: 0 } } } });
+    map._emitError({ sourceId: 'raster-tiles-0', tile: { tileID: { canonical: { z: 6, x: NaN, y: 21 } } } });
+    expect(tileMissSnapshot(map)[0]).toEqual({
+      sourceId: 'raster-tiles-0', count: 3, samples: ['6/33/21', '0/0/0'],
+    });
+    rt.dispose();
   });
 
   it('非底图源不记账', () => {
     const map = errorCapableMockMap();
     const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
     map._emitError({ sourceId: 'user-layer-1', tile: { id: '6/1/1' } });
-    expect(tileMissSnapshot()).toEqual([]);
+    expect(tileMissSnapshot(map)).toEqual([]);
     void rt;
+  });
+});
+
+
+describe('map/session/source lifetime isolation', () => {
+  beforeEach(_resetTileMissForTests);
+  it('same source id on a second map never inherits another map failures', () => {
+    const a = errorCapableMockMap(), b = errorCapableMockMap();
+    const ra = new MapSpecRuntime(a as unknown as MaplibreMap);
+    const rb = new MapSpecRuntime(b as unknown as MaplibreMap);
+    a._emitError({ sourceId: 'raster-tiles-0' });
+    expect(tileMissSnapshot(a)[0].count).toBe(1);
+    expect(tileMissSnapshot(b)).toEqual([]);
+    ra.dispose(); rb.dispose();
+  });
+  it('session switch, style recreation and dispose each retire accumulated failures', () => {
+    const map = errorCapableMockMap();
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
+    rt.setSessionScope('a');
+    map._emitError({ sourceId: 'raster-tiles-0' });
+    rt.setSessionScope('a');
+    expect(tileMissSnapshot(map)[0].count).toBe(1);
+    rt.setSessionScope('b');
+    expect(tileMissSnapshot(map)).toEqual([]);
+    map._emitError({ sourceId: 'raster-tiles-0' });
+    rt.invalidateStyle();
+    expect(tileMissSnapshot(map)).toEqual([]);
+    map._emitError({ sourceId: 'raster-tiles-0' });
+    rt.dispose();
+    map._emitError({ sourceId: 'raster-tiles-0' });
+    expect(tileMissSnapshot(map)).toEqual([]);
+  });
+  it('export filters retired/replaced sources and future failures use their new generation', () => {
+    const map = errorCapableMockMap();
+    const rt = new MapSpecRuntime(map as unknown as MaplibreMap);
+    map._emitError({ sourceId: 'raster-tiles-0' });
+    map._replaceSource('raster-tiles-0');
+    expect(tileMissSnapshot(map, map.getSource)).toEqual([]);
+    map._emitError({ sourceId: 'raster-tiles-0' });
+    expect(tileMissSnapshot(map, map.getSource)[0].count).toBe(1);
+    map._removeSource('raster-tiles-0');
+    expect(tileMissSnapshot(map, map.getSource)).toEqual([]);
+    map._emitError({ sourceId: 'raster-tiles-0' });
+    expect(tileMissSnapshot(map)).toEqual([]);
+    rt.dispose();
+  });
+  it('a full bounded account still records later source generations', () => {
+    for (let i = 0; i < 12; i++) recordTileMiss(`raster-tiles-${i}`, '1/0/0');
+    const snapshot = tileMissSnapshot();
+    expect(snapshot).toHaveLength(8);
+    expect(snapshot.some(row => row.sourceId === 'raster-tiles-11')).toBe(true);
+    expect(snapshot.some(row => row.sourceId === 'raster-tiles-0')).toBe(false);
   });
 });

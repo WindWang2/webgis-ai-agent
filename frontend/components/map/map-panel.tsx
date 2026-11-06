@@ -696,6 +696,10 @@ export function MapPanel({
     }
   }, [mapReady, syncInteractiveIds, handleRuntimeStyleRecovery])
 
+  useEffect(() => {
+    runtimeRef.current?.setSessionScope?.(sessionId ?? null)
+  }, [sessionId, mapReady])
+
   // FE-AUDIT-01: Invalidate runtime style cache when basemap style changes so custom layers re-apply
   useEffect(() => {
     runtimeRef.current?.invalidateStyle()

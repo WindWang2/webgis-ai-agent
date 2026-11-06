@@ -519,8 +519,8 @@ function compileMapSpecToSvgBody(
   // W2.1（ADR-0283 D3）：点符号图元障碍盒（circle 层；AABB，中心即锚点，
   // 边长 = 2×(radius + stroke/2)）。每层采样前 200 个点（与求解侧
   // MAX_OBSTACLES_PER_SOLVE 同值；line/polygon 图元障碍为后续波次）。
-  // 锚点豁免：标注（symbol 层）与符号（circle 层）异层 —— 标签自身锚点
-  // 图元天然不进障碍集；若未来同层组合，由这里构造时排除。
+  // Cross-layer circle symbols include the label's own point: every candidate
+  // must avoid their visible ink. Exhaustion suppresses with collision disclosure.
   const glyphObstacles: Box[] = [];
 
   const scaledWidth = width * dpiScale;
@@ -626,6 +626,10 @@ function compileMapSpecToSvgBody(
       if (srcData && typeof srcData === "object" && !Array.isArray(srcData)) {
         const feats: unknown[] =
           srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
+        if (feats.length > 1000) {
+          guardFieldCache.set(sourceId, null); // Partial samples cannot prove field absence.
+          return null;
+        }
         fields = new Set<string>();
         for (const f of feats.slice(0, 1000)) {
           const p = (f as { properties?: Record<string, unknown> | null } | null)?.properties;

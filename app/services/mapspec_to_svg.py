@@ -1118,8 +1118,8 @@ def compile_mapspec_to_svg_detailed(
     # 个点（资源包络，与求解侧 MAX_OBSTACLES_PER_SOLVE 同值）；求解器侧
     # 再做全局截断并在 stats 记 obstacles_truncated。line/polygon 图元障碍
     # 为后续波次（接线面：line 需逐段 AABB 采样，先只接 circle）。
-    # 锚点豁免：标注来自 symbol 层、符号来自 circle 层（异层），标签自身
-    # 锚点图元天然不进障碍集；若未来同层组合，由这里构造时排除。
+    # Circle obstacles include the label's own point across layers. All
+    # candidates must avoid visible ink; exhaustion is disclosed suppression.
     glyph_obstacles: List[Tuple[float, float, float, float]] = []
 
     def _emit_diag(code: str, detail: str = "", layer_id: Any = None,

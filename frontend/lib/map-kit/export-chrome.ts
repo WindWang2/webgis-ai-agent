@@ -30,6 +30,7 @@ import {
   anchorFractionInBounds,
   boundsFromCenterZoom,
 } from '@/lib/map-components/geo-anchor';
+import { reflowLines } from '../export/reflow-lines';
 import { computeNiceScale, formatScaleLabel } from './scale-math';
 import { deriveLegendModel } from './legend-model';
 // ADR-0283 D2：关键文本 wrap-not-clip —— cap 常量与折行投影同源
@@ -1154,7 +1155,7 @@ export function drawChromeText(
   color: string,
   opts: { marginX: number; marginY?: number; dy?: number },
 ) {
-  if (!el.text) return;
+  if (!el.text) return 0;
   const origin = el.rect
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
     : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 52 });
@@ -1163,7 +1164,9 @@ export function drawChromeText(
   // margin 语义统一：origin.y 已是画布像素（调用方传入 scalePx 后的值）；
   // bottom 槽恰好一次 targetH - y 换算。
   const y = origin.vAlign === 'bottom' ? d.targetH - origin.y : origin.y + (opts.dy ?? 0);
-  const lines = el.lines && el.lines.length > 1 ? el.lines : [el.text];
+  const projected = el.lines && el.lines.length > 1 ? el.lines : [el.text];
+  const maxWidth = el.rect?.width ?? d.targetW - opts.marginX * 2;
+  const lines = reflowLines(projected, maxWidth, (text) => d.ctx.measureText(text)?.width ?? 0);
   const lineStep = d.scalePx(Math.round(fontPx * 1.3));
   const firstY = origin.vAlign === 'bottom' && lines.length > 1
     ? y - lineStep * (lines.length - 1)
@@ -1171,6 +1174,7 @@ export function drawChromeText(
   lines.forEach((line, i) => {
     _text(d, line, origin.x, firstY + lineStep * i, origin.align);
   });
+  return lines.length;
 }
 
 /** 罗盘 —— 与 live 同一旋转约定（-bearing 逆时针；此前导出符号相反）。 */

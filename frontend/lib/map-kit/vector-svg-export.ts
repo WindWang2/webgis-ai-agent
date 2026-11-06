@@ -1,3 +1,4 @@
+import { reflowLines } from '../export/reflow-lines';
 /**
  * V5（ADR-0118 W5）真矢量 SVG 导出；ac-08（ADR-0157 P2）升为版面描述
  * 中间层（layout-description.ts）的一等消费方。
@@ -212,10 +213,11 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     const titleEntry = layout.texts.find((t) => t.kind === 'title');
     const subtitleEntry = layout.texts.find((t) => t.kind === 'subtitle');
     if (title) {
-      const titleLines =
-        titleEntry?.lines && titleEntry.lines.length > 1
-          ? titleEntry.lines
-          : [title];
+      const titleLines = reflowLines(
+        titleEntry?.lines?.length ? titleEntry.lines : [title],
+        width - (margin + 12) * 2,
+        (text) => Array.from(text).length * 22,
+      );
       const titleStep = 29; // 22px 字号 × 1.3 行距（确定性）
       titleLines.forEach((line, i) => {
         parts.push(
@@ -225,10 +227,11 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
       cursorY += 22 + titleStep * (titleLines.length - 1);
     }
     if (subtitle) {
-      const subtitleLines =
-        subtitleEntry?.lines && subtitleEntry.lines.length > 1
-          ? subtitleEntry.lines
-          : [subtitle];
+      const subtitleLines = reflowLines(
+        subtitleEntry?.lines?.length ? subtitleEntry.lines : [subtitle],
+        width - (margin + 12) * 2,
+        (text) => Array.from(text).length * 12,
+      );
       const subtitleStep = 16; // 12px 字号 × 1.3 行距
       subtitleLines.forEach((line, i) => {
         parts.push(

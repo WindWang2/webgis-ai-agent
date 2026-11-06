@@ -848,14 +848,15 @@ def solve_layout_v5(
             adjusted.append(p)
             continue
         updates: Dict[str, Any] = {}
-        eff_width = p.width_units
+        eff_width = max(p.width_units, c.min_width_units)
         if p.width_units > c.max_width_units:
             eff_width = c.max_width_units
-            updates["width_units"] = eff_width
             findings.append(ConstraintFinding(
                 code="max_width_clamped", component_id=p.id,
                 detail=f"width_units {p.width_units}->{c.max_width_units}",
             ))
+        if eff_width != p.width_units:
+            updates["width_units"] = eff_width
         eff_min = max(p.min_width_units, c.min_width_units)
         eff_min = min(eff_min, eff_width)
         if eff_min != p.min_width_units:

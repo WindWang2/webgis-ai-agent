@@ -226,50 +226,10 @@ export function _resetSceneEvidenceForTests(): void {
 // 按 sourceId 字典序（无墙钟入序）。
 // 计数语义（R9 P3-3 诚实登记）：**会话累计**（provider 健康度信号 ——
 // 跨导出持续缺瓦片的源每次导出都如实披露累计值），非单次导出窗口值；
-// 生产 reset 钩子（按瓦片源重建清零）留待后续接线，_resetTileMissForTests
-// 仅供测试。
-export interface TileMissAccount {
-  sourceId: string;
-  count: number;
-  samples: string[];
-}
-
-const TILE_MISS_SAMPLES_MAX = 5;
-const TILE_MISS_SOURCES_MAX = 8;
-const tileMissCounts = new Map<string, { count: number; samples: string[] }>();
-
-export function recordTileMiss(sourceId: string, tileCoord: string): void {
-  let acc = tileMissCounts.get(sourceId);
-  if (!acc) {
-    if (tileMissCounts.size >= TILE_MISS_SOURCES_MAX) {
-      // 容量界：超出源数丢弃（防御 —— 底图源数实际 ≤ 个位数），不挤占
-      // 既有源账目（确定性：保留先登记者）。
-      return;
-    }
-    acc = { count: 0, samples: [] };
-    tileMissCounts.set(sourceId, acc);
-  }
-  acc.count += 1;
-  if (tileCoord && acc.samples.length < TILE_MISS_SAMPLES_MAX) {
-    acc.samples.push(tileCoord);
-  }
-}
-
-export function tileMissSnapshot(): TileMissAccount[] {
-  return Array.from(tileMissCounts.entries())
-    .map(([sourceId, a]) => ({ sourceId, count: a.count, samples: [...a.samples] }))
-    .sort((a, b) => (a.sourceId < b.sourceId ? -1 : 1));
-}
-
-/** 导出披露 detail 构造（有界 ≤200；纯函数 —— exporter 消费）。 */
-export function tileMissDetail(acc: TileMissAccount): string {
-  const sample = acc.samples.join(";");
-  return `src=${acc.sourceId} count=${acc.count} sample=${sample}`.slice(0, 200);
-}
-
-export function _resetTileMissForTests(): void {
-  tileMissCounts.clear();
-}
+// 账目按 map/session/source generation 隔离；源重建、样式重置与销毁均清理。
+// _resetTileMissForTests 仅供测试。
+export { recordTileMiss, tileMissSnapshot, tileMissDetail, resetTileMiss, _resetTileMissForTests } from './tile-miss-account';
+export type { TileMissAccount } from './tile-miss-account';
 
 /** 挤出证据检查（ADR-0199 fail-closed）：显式契约 > 要素 height 数值字段。 */
 function extrusionEvidenceOf(layer: Layer, profile: GeometryProfile): {

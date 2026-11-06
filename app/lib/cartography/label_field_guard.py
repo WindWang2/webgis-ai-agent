@@ -124,6 +124,10 @@ def inline_source_field_set(
     )
     if not isinstance(features, list):
         features = [geojson_data]
+    # A sampled union cannot prove absence in the rest of the source. The
+    # negative-only guard must be unevaluated when its scan is incomplete.
+    if len(features) > max_features:
+        return None
     fields: Set[str] = set()
     for feat in features[:max_features]:
         if not isinstance(feat, dict):

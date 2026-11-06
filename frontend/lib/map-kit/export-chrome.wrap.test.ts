@@ -9,7 +9,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { drawChromeText } from './export-chrome';
-import type { DrawCtx } from './export-chrome';
+
+type DrawCtx = Parameters<typeof drawChromeText>[0];
 
 function mockCtx() {
   const calls: Array<{ op: string; args: unknown[] }> = [];
@@ -50,7 +51,7 @@ describe('drawChromeText wrap-not-clip（ADR-0283 D2）', () => {
     expect(texts.length).toBe(2);
     expect(texts[0].args[0]).toBe('第一行');
     expect(texts[1].args[0]).toBe('第二行');
-    expect(texts[1].args[2] - texts[0].args[2]).toBe(Math.round(32 * 1.3));
+    expect(Number(texts[1].args[2]) - Number(texts[0].args[2])).toBe(Math.round(32 * 1.3));
   });
 
   it('单行元素渲染不变（一次 fillText，无行偏移）', () => {
@@ -84,4 +85,20 @@ describe('drawChromeText wrap-not-clip（ADR-0283 D2）', () => {
     // 第三行（末行）基线 = targetH - marginY（块底贴锚线语义）
     expect(y2).toBe(DRAW_BASE.targetH - 30);
   });
+});
+
+
+it('reflows real measured glyph widths inside a narrow canvas without dropping text', () => {
+  const { ctx, calls } = mockCtx();
+  const measured = { fillText: ctx.fillText,
+    measureText: (text: string) => ({ width: Array.from(text).length * 32 }) as TextMetrics,
+  } as unknown as CanvasRenderingContext2D;
+  const text = '中文标题'.repeat(12);
+  drawChromeText({ ...DRAW_BASE, targetW: 400, ctx: measured },
+    { kind: 'title', anchor: 'top-center', text, lines: [text] },
+    32, '#000', { marginX: 40, marginY: 52 });
+  const drawn = calls.filter(row => row.op === 'fillText').map(row => String(row.args[0]));
+  expect(drawn.length).toBeGreaterThan(1);
+  expect(drawn.join('')).toBe(text);
+  expect(drawn.every(line => Array.from(line).length * 32 <= 320)).toBe(true);
 });
