@@ -17,8 +17,6 @@ from .contracts import (
     F_NO_RESULT_LAYER,
     F_SOURCE_MISSING,
     F_VIEWPORT_NO_BBOX,
-    FINAL_MAP_DEGRADED,
-    FINAL_MAP_VERIFIED,
     LOOP_STOP_NONE,
     LOOP_STOP_NO_PROGRESS,
     MAX_DISCLOSED_REPAIRS,
@@ -1643,12 +1641,31 @@ def _user_hidden_layers_from_spec(
     return hidden[:8]
 
 
+_RENDER_PASS = frozenset({"verified", "not_applicable"})
+
+
+def render_allows_task_complete(stored: Dict[str, Any]) -> bool:
+    """A map task is complete only after a real render observation.
+
+    ``verified`` / ``not_applicable`` pass. A legacy block that already folded
+    ``final_map_status=verified`` (that token is only minted when render was
+    verified) still passes when ``render_status`` was not stored. Unknown,
+    stale, or a degraded status with no verified observation does not.
+    """
+    render = str(stored.get("render_status") or "")
+    if render in _RENDER_PASS:
+        return True
+    final_status = str(stored.get("final_map_status") or "")
+    return not render and final_status == "verified"
+
+
 def _is_task_complete(stored: Dict[str, Any]) -> bool:
     """stored map_product 块 → 任务级完成布尔（纯函数，有界输入）。
 
     完成 = 产品裁决 ∈ {READY, READY_WITH_WARNINGS} 且最终地图状态 ∈
-    {verified, verified_with_degradation}。needs_repair / pending /
-    BLOCKED_BY_* / failed / unknown 一律不算完成。
+    {verified, verified_with_degradation} 且渲染观察已验证。
+    needs_repair / pending / BLOCKED_BY_* / failed / unknown 一律不算完成。
+    没有渲染观察的 ``verified_with_degradation`` 只是披露，不是完成。
     """
     from .contracts import (
         FINAL_MAP_DEGRADED,
@@ -1662,6 +1679,7 @@ def _is_task_complete(stored: Dict[str, Any]) -> bool:
     return (
         verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS)
         and final_status in (FINAL_MAP_VERIFIED, FINAL_MAP_DEGRADED)
+        and render_allows_task_complete(stored)
     )
 
 
@@ -1692,10 +1710,11 @@ def finalization_sse_payload(
     # （与 read_stored_map_product 的 task_complete 同一折叠；verdict 来自
     # finalize 管线的推导快照，载荷侧零重复推导；字面量复用 contracts 权威
     # token，见 test_product_verdict.py 互锁）。
-    payload["task_complete"] = (
-        str(result.product_verdict) in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS)
-        and result.final_map_status in (FINAL_MAP_VERIFIED, FINAL_MAP_DEGRADED)
-    )
+    payload["task_complete"] = _is_task_complete({
+        "product_verdict": result.product_verdict,
+        "final_map_status": result.final_map_status,
+        "render_status": result.render_status,
+    })
     if session_id:
         payload["session_id"] = session_id
     if mapspec is not None and result.repairs_applied:

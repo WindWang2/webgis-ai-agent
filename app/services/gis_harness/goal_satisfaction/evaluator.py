@@ -208,6 +208,15 @@ def _eval_map_requirement(
             out.failed_rule = R_MAP_STALE_RENDER
             out.next_action = "reobserve"
             return out
+        # unknown / failed / empty-on-degraded is not a seen map. Do not
+        # fulfill a map requirement from a tool receipt alone.
+        if render_status not in ("verified", "not_applicable"):
+            if render_status or final_status != "verified":
+                out.verdict = ReqState.NOT_EVALUATED
+                out.failed_rule = R_FINAL_MAP_UNVERIFIED
+                out.missing.append(f"render:{render_status or 'absent'}")
+                out.next_action = "reobserve"
+                return out
         out.verdict = ReqState.FULFILLED
         return out
     if verdict_token == VERDICT_NEEDS_REPAIR:
