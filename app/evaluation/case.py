@@ -27,7 +27,9 @@ class ScriptStep(BaseModel):
 class NumericAssertion(BaseModel):
     """Deterministic numeric/aggregate assertion against a named source."""
 
-    source: Literal["step_result", "step_result_bytes", "mapspec", "fixture", "quantity"]
+    # step_result_bytes: canonical compact JSON of the raw result, UTF-8 bytes.
+    # llm_payload_bytes: the exact ToolDispatchService.llm_payload, UTF-8 bytes.
+    source: Literal["step_result", "step_result_bytes", "llm_payload_bytes", "mapspec", "fixture", "quantity"]
     # for source == "step_result": index into the script's executed steps
     # (0-based; None = last executed step)
     step: Optional[int] = None

@@ -437,6 +437,10 @@ def _slim_pi_details_payload(result: Any) -> Any:
             if len(encoded.encode("utf-8")) > 65536:
                 # Keep only essential keys
                 keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id", "design_candidates")}
+                # Scope uncertainty must survive the details overflow path,
+                # just as it survives the model content formatter.
+                from app.services.llm_result_formatter import scope_disclosure_metadata
+                keep.update(scope_disclosure_metadata(details_payload))
                 if keep:
                     details_payload = keep
                 else:

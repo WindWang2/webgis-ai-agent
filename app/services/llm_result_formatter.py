@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 # ─── 结果脱敏与元数据提取常量 ─────────────────────────
 
 MSG_MAX_CHARS = 2500
+# Successful model payloads have a UTF-8 byte budget. Keep the separate
+# character constant for legacy presentation/error-text callers.
+MSG_MAX_BYTES = 2500
 VALUE_MAX_CHARS = 80
 SAMPLE_FEATURES = 5
 PROPERTY_KEYS_MAX = 15
@@ -115,8 +118,40 @@ def _clamp_sized_value(v: Any, str_limit: int, list_limit: int, depth: int = 0) 
     return v
 
 
-def _serialize_under_budget(value: Any) -> str:
-    """序列化并强制 ≤ MSG_MAX_CHARS（#439 总量闸）。
+def _bound_utf8_text(text: str) -> str:
+    """Truncate without splitting a code point or exceeding the byte cap."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= MSG_MAX_BYTES:
+        return text
+    suffix = _SLIM_TRUNCATION_SUFFIX
+    prefix = encoded[:MSG_MAX_BYTES - len(suffix.encode("utf-8"))]
+    return prefix.decode("utf-8", errors="ignore") + suffix
+
+
+def scope_disclosure_metadata(result: Any) -> dict:
+    """Small mandatory scope evidence, independent of truncatable summaries."""
+    scope = result.get("scope_geography") if isinstance(result, dict) else None
+    if not isinstance(scope, dict) or scope.get("verdict") not in (
+        "matched", "mismatched", "unverified",
+    ):
+        return {}
+    projected = {"verdict": scope["verdict"]}
+    for key, limit in (("reason", 120), ("evidence", 20)):
+        if isinstance(scope.get(key), str):
+            projected[key] = scope[key][:limit]
+    required = {"scope_geography": projected}
+    if scope["verdict"] == "unverified":
+        # Fixed wording cannot be displaced by long diagnostics or a scope
+        # name. The full localized disclosure remains in raw/SSE evidence.
+        required["warnings"] = [
+            "scope_unverified: Data location is not verified against the requested scope. "
+            "Do not claim the scope has been checked."
+        ]
+    return required
+
+
+def _serialize_under_budget(value: Any, *, required: Optional[dict] = None) -> str:
+    """序列化并强制 ≤ MSG_MAX_BYTES（UTF-8）；required 证据不参与裁剪。
 
     策略：先用宽松钳制（600 字符/20 条/30 键）序列化——常规结果完全不受
     影响；仍超预算则对字符串/列表限额逐轮折半（JSON 始终保持合法），
@@ -127,16 +162,29 @@ def _serialize_under_budget(value: Any) -> str:
     list_limit = _SLIM_LIST_MAX_ITEMS
     while True:
         try:
-            payload = json.dumps(
-                _clamp_sized_value(value, str_limit, list_limit),
-                ensure_ascii=False,
-            )
+            projected = _clamp_sized_value(value, str_limit, list_limit)
+            if required:
+                warnings = projected.get("warnings") if isinstance(projected, dict) else None
+                projected = {**projected, **required}
+                if isinstance(warnings, list) and required.get("warnings"):
+                    # Reserve the scope warning without erasing other safety
+                    # findings. Only optional diagnostic detail is clamped.
+                    projected["warnings"] = required["warnings"] + [
+                        warning for warning in warnings if warning not in required["warnings"]
+                    ]
+            payload = json.dumps(projected, ensure_ascii=False)
         except (TypeError, ValueError):
-            return str(value)[: MSG_MAX_CHARS - len(_SLIM_TRUNCATION_SUFFIX)] + _SLIM_TRUNCATION_SUFFIX
-        if len(payload) <= MSG_MAX_CHARS:
+            if required:
+                return json.dumps({**required, "truncated": True}, ensure_ascii=False)
+            return _bound_utf8_text(str(value))
+        if len(payload.encode("utf-8")) <= MSG_MAX_BYTES:
             return payload
         if str_limit <= _SLIM_HARD_FLOOR and list_limit <= 1:
-            return payload[: MSG_MAX_CHARS - len(_SLIM_TRUNCATION_SUFFIX)] + _SLIM_TRUNCATION_SUFFIX
+            if required:
+                # A pathological wide object must not chop off mandatory
+                # scope evidence, or turn its JSON into an incomplete string.
+                return json.dumps({**required, "truncated": True}, ensure_ascii=False)
+            return _bound_utf8_text(payload)
         str_limit = max(_SLIM_HARD_FLOOR, str_limit // 2)
         list_limit = max(1, list_limit // 2)
 
@@ -230,8 +278,11 @@ def wrap_error_dict_for_llm(tool_name: str, result: dict) -> str:
 
 
 def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional[str]) -> str:
+    required = scope_disclosure_metadata(result)
     if isinstance(result, dict) and "summary" in result:
         slim = {"summary": result["summary"]}
+        if required and isinstance(result.get("warnings"), list):
+            slim["warnings"] = result["warnings"]
         if session_geojson_ref:
             slim["ref_id"] = session_geojson_ref
         for k in _PRESERVED_META_KEYS:
@@ -247,9 +298,9 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
             slim["cartographic_review"] = review
         # #439：summary 分支同样过总量闸 —— 病态超长的 summary/保留键也不能
         # 突破上下文预算。
-        return _serialize_under_budget(slim)
+        return _serialize_under_budget(slim, required=required)
 
-    if len(result_str) <= MSG_MAX_CHARS:
+    if not required and len(result_str.encode("utf-8")) <= MSG_MAX_BYTES:
         return result_str
 
     if isinstance(result, dict):
@@ -290,11 +341,11 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
 
         # #439：非 geojson 键（data/rows/chart/untrusted blocks…）不再全量放行，
         # 统一过总量闸；geojson 摘要路径行为不变（正常大小不触发钳制）。
-        return _serialize_under_budget(slim)
+        return _serialize_under_budget(slim, required=required)
 
     # #439 (a)：纯字符串/裸列表兜底 —— 超长时也必须截断到预算内。
     if isinstance(result, str):
-        return result[: MSG_MAX_CHARS - len(_SLIM_TRUNCATION_SUFFIX)] + _SLIM_TRUNCATION_SUFFIX
+        return _bound_utf8_text(result)
     return _serialize_under_budget(result)
 
 
