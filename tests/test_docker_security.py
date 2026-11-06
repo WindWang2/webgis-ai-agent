@@ -208,13 +208,11 @@ class TestComposeDataDirVolumeParity:
                 )
 
     def test_dev_celery_uploads_mount_present_textually(self):
-        """docker-compose.yml 的 volumes 块含 `${WEBGIS_DEV_MOUNT:+...}` 可选
-        展开行（审计 INF-003），yaml.safe_load 把整块折叠成 plain scalar 而非
-        数组 —— 该文件按折叠后的文本断言（与 api 服务相同的既有结构）。"""
+        """API and worker share the same structured YAML uploads mount."""
         compose = _load_compose("docker-compose.yml")
         for svc in ("api", "celery-worker"):
             volumes = compose["services"][svc]["volumes"]
-            assert isinstance(volumes, str) and "- uploads:/app/data" in volumes, (
+            assert isinstance(volumes, list) and "uploads:/app/data" in volumes, (
                 f"docker-compose.yml {svc}: volumes={volumes!r} 缺少 "
                 "`- uploads:/app/data` —— celery 必须与 api 共享 uploads 卷"
             )

@@ -1,5 +1,5 @@
 /**
- * ADR-0283 D2 面板接线测试：chart 类别点击 / table 行点击 → IR 上行。
+ * ADR-0285 D2 面板接线测试：chart 类别点击 / table 行点击 → IR 上行。
  * ChartCore/表格以 spy 替身捕获 onSelectCategory/handleRowClick 接缝，
  * 断言 publishSelection 与 emit* 同刻发生（联动 + 上行不互相破坏）。
  */
@@ -94,7 +94,7 @@ describe('chart-panel category click → IR emit', () => {
     });
     // 联动照常（selection-store 收到 chart 选择）
     expect(getSelection()?.source).toBe('chart');
-    // ADR-0283 D2：同刻上行 IR
+    // ADR-0285 D2：同刻上行 IR
     expect(emitChart).toHaveBeenCalledWith(
       expect.objectContaining({
         layerId: 'districts',

@@ -101,42 +101,19 @@ class NetworkGraphBuilder:
         # cached graph (review N-F05-regression).
         self._cache: OrderedDict[str, Tuple[nx.DiGraph, NetworkDataset, Any]] = OrderedDict()
         self._cache_lock = threading.Lock()
-        # Fingerprint memo: id(data) -> (serialized data string, strong ref).
-        # Rebuilding a graph from the same GeoJSON dict used to re-run
-        # json.dumps over the whole network on EVERY build_graph call (cache
-        # hit included). The strong ref prevents CPython from reusing the id()
-        # of a freed object for a different dataset (same pinning argument as
-        # the graph cache entries). Bounded by max_cache_size (LRU).
-        self._fp_memo: OrderedDict[int, Tuple[str, Any]] = OrderedDict()
 
     def clear_cache(self) -> None:
         """Clears the LRU graph cache."""
         with self._cache_lock:
             self._cache.clear()
-            self._fp_memo.clear()
 
     def get_cache_info(self) -> Dict[str, int]:
         """Returns cache capacity and current entry count."""
         return {"size": len(self._cache), "max_size": self.max_cache_size}
 
     def _memoized_data_str(self, data: GeoJSONFeature | GeoJSONFeatureCollection) -> str:
-        """Serializes a GeoJSON dict once per object identity.
-
-        ``json.dumps(sort_keys=True)`` of a 100k-line city network is the
-        dominant cost of every ``build_graph`` call (cache hit or not); the
-        memo makes repeated builds of the SAME dict object a dict lookup.
-        """
-        key = id(data)
-        with self._cache_lock:
-            entry = self._fp_memo.get(key)
-            if entry is not None and entry[1] is data:
-                self._fp_memo.move_to_end(key)
-                return entry[0]
-            data_str = json.dumps(data, sort_keys=True)
-            self._fp_memo[key] = (data_str, data)
-            while len(self._fp_memo) > self.max_cache_size:
-                self._fp_memo.popitem(last=False)
-            return data_str
+        """Content fingerprint: mutable GeoJSON must be serialized on each lookup."""
+        return json.dumps(data, sort_keys=True)
 
     def compute_fingerprint(
         self,
@@ -189,6 +166,8 @@ class NetworkGraphBuilder:
         Returns:
             Tuple of (nx.DiGraph, NetworkDataset)
         """
+        if not math.isfinite(snap_tolerance) or snap_tolerance <= 0:
+            raise ValueError("snap_tolerance must be finite and positive")
         fp = self.compute_fingerprint(data, profile, snap_tolerance, split_intersections) if use_cache else ""
         if use_cache:
             with self._cache_lock:
@@ -199,6 +178,8 @@ class NetworkGraphBuilder:
 
         # Extract features and raw line geometries
         line_items = self._extract_line_items(data)
+        if len(line_items) > 100_000 or sum(len(line.coords) for line, _ in line_items) > 1_000_000:
+            raise ValueError("network exceeds bounded100k edges/1M vertices; reduce input extent")
         if not line_items:
             g = nx.DiGraph()
             ds = NetworkDataset(
@@ -237,6 +218,7 @@ class NetworkGraphBuilder:
             return node_map[snapped_clean]
 
         edge_counter = 0
+        edge_positions: Dict[str, int] = {}
         default_speed = profile.speed_kmh if profile else 40.0
         one_way_strict = profile.one_way_strict if profile else True
 
@@ -273,96 +255,48 @@ class NetworkGraphBuilder:
             length_m = linestring_length_m(coords)
 
             speed = props.get("speed_kmh")
-            if speed is None or speed <= 0:
+            try:
+                speed = float(speed)
+            except (ValueError, TypeError):
+                speed = default_speed
+            if not math.isfinite(speed) or speed <= 0:
                 speed = default_speed
 
             travel_time_s = length_m / ((speed * 1000.0) / 3600.0) if speed > 0 else length_m / 10.0
             hw_type = props.get("highway_type", props.get("highway", "unclassified"))
 
-            # Add u -> v edge.
-            #
-            # #457: the DiGraph holds exactly ONE edge per directed (u, v)
-            # pair — a second add with the same pair used to silently REPLACE
-            # the first in the graph while the dataset kept both ids,
-            # desyncing dataset edge ids from the graph (the snapper returns
-            # dataset edge ids that routing then looks up in the graph).
-            # Duplicate/parallel linework between the same node pair is now
-            # deduplicated in BOTH structures, keeping them 1:1 (the first
-            # geometry wins). The check is per DIRECTED pair so a two-way
-            # duplicate still contributes the v->u direction when the first
-            # line was one-way.
-            if not graph.has_edge(u_id, v_id):
-                edge_id_uv = f"e{edge_counter}"
-                edge_counter += 1
-                geom_dict_uv = mapping(line_geom)
-
-                graph.add_edge(
-                    u_id,
-                    v_id,
-                    id=edge_id_uv,
-                    u=u_id,
-                    v=v_id,
-                    length_m=length_m,
-                    speed_kmh=speed,
-                    travel_time_s=travel_time_s,
-                    highway_type=hw_type,
-                    geometry=geom_dict_uv,
-                    one_way=is_one_way,
-                    properties=props,
-                )
-
-                edge_obj_uv = Edge(
-                    id=edge_id_uv,
-                    u=u_id,
-                    v=v_id,
-                    length_m=length_m,
-                    speed_kmh=speed,
-                    travel_time_s=travel_time_s,
-                    highway_type=hw_type,
-                    geometry=geom_dict_uv,
-                    one_way=is_one_way,
-                    properties=props,
-                )
-                edges_list.append(edge_obj_uv)
-
-            # Add reverse v -> u edge if not one-way
-            if not is_one_way and not graph.has_edge(v_id, u_id):
-                edge_id_vu = f"e{edge_counter}"
-                edge_counter += 1
-                rev_line = LineString(list(reversed(coords)))
-                geom_dict_vu = mapping(rev_line)
-
-                graph.add_edge(
-                    v_id,
-                    u_id,
-                    id=edge_id_vu,
-                    u=v_id,
-                    v=u_id,
-                    length_m=length_m,
-                    speed_kmh=speed,
-                    travel_time_s=travel_time_s,
-                    highway_type=hw_type,
-                    geometry=geom_dict_vu,
-                    one_way=False,
-                    properties=props,
-                )
-
-                edge_obj_vu = Edge(
-                    id=edge_id_vu,
-                    u=v_id,
-                    v=u_id,
-                    length_m=length_m,
-                    speed_kmh=speed,
-                    travel_time_s=travel_time_s,
-                    highway_type=hw_type,
-                    geometry=geom_dict_vu,
-                    one_way=False,
-                    properties=props,
-                )
-                edges_list.append(edge_obj_vu)
+            # DiGraph preserves the cheapest parallel edge for the active impedance.
+            # The same edge objects feed graph and dataset, so snapping cannot
+            # select a discarded parallel geometry.
+            directions = [(u_id, v_id, line_geom)]
+            if not is_one_way:
+                directions.append((v_id, u_id, LineString(list(reversed(coords)))))
+            for source, target, directed_geom in directions:
+                attrs = dict(u=source, v=target, length_m=length_m, speed_kmh=speed,
+                             travel_time_s=travel_time_s, highway_type=hw_type,
+                             geometry=mapping(directed_geom), one_way=is_one_way,
+                             properties=props)
+                cost_field = profile.impedance_field if profile else "travel_time_s"
+                cost_field = cost_field if cost_field in attrs else "travel_time_s"
+                if graph.has_edge(source, target):
+                    existing = graph[source][target]
+                    if attrs[cost_field] >= existing[cost_field]:
+                        continue
+                    edge_id = existing["id"]
+                    index = edge_positions[edge_id]
+                    attrs["id"] = edge_id
+                    graph[source][target].update(attrs)
+                    edges_list[index] = Edge(**attrs)
+                else:
+                    edge_id = f"e{edge_counter}"
+                    edge_counter += 1
+                    attrs["id"] = edge_id
+                    edge_positions[edge_id] = len(edges_list)
+                    graph.add_edge(source, target, **attrs)
+                    edges_list.append(Edge(**attrs))
 
         bbox = [min_x, min_y, max_x, max_y] if min_x != float("inf") else [0.0, 0.0, 0.0, 0.0]
-        dataset_id = f"net_{hashlib.sha256(str(len(edges_list)).encode()).hexdigest()[:8]}"
+        dataset_id = f"net_{(fp or self.compute_fingerprint(data, profile, snap_tolerance, split_intersections))[:16]}"
 
         dataset = NetworkDataset(
             dataset_id=dataset_id,
@@ -382,6 +316,11 @@ class NetworkGraphBuilder:
                 self._cache[fp] = (graph, dataset, pin)
                 if len(self._cache) > self.max_cache_size:
                     self._cache.popitem(last=False)
+                while self._cache and sum(
+                    len(cached_graph) * 512 + cached_graph.number_of_edges() * 1024
+                    for cached_graph, _dataset, _pin in self._cache.values()
+                ) > 128 * 1024 * 1024:
+                    self._cache.popitem(last=False)
 
         return graph, dataset
 
@@ -395,13 +334,13 @@ class NetworkGraphBuilder:
                 if edge.geometry:
                     geom = shape(edge.geometry)
                     if isinstance(geom, LineString):
-                        items.append((geom, edge.properties))
+                        items.append((geom, {**edge.properties, "oneway": "yes", "speed_kmh": edge.speed_kmh}))
                 else:
                     u_node = node_by_id.get(edge.u)
                     v_node = node_by_id.get(edge.v)
                     if u_node and v_node:
                         geom = LineString([(u_node.x, u_node.y), (v_node.x, v_node.y)])
-                        items.append((geom, edge.properties))
+                        items.append((geom, {**edge.properties, "oneway": "yes", "speed_kmh": edge.speed_kmh}))
             return items
 
         if isinstance(data, dict):
@@ -449,6 +388,12 @@ class NetworkGraphBuilder:
         """
         if not split_intersections or len(line_items) <= 1:
             return line_items
+        levels: Dict[Tuple[str, str, str], List[Tuple[LineString, Dict[str, Any]]]] = {}
+        for line, props in line_items:
+            level = tuple(str(props.get(key, "0" if key == "layer" else "no")).lower() for key in ("layer", "bridge", "tunnel"))
+            levels.setdefault(level, []).append((line, props))
+        if len(levels) > 1:
+            return [item for group in levels.values() for item in self._process_intersections(group, split_intersections=True)]
 
         lines = [item[0] for item in line_items]
 
@@ -493,12 +438,22 @@ class NetworkGraphBuilder:
         if not intersection_points:
             return line_items
 
-        split_cutter = unary_union(intersection_points)
+        point_tree = STRtree(intersection_points)
         result_items: List[Tuple[LineString, Dict[str, Any]]] = []
 
         for line, props in line_items:
             try:
-                split_res = split(line, split_cutter)
+                from shapely import snap
+
+                # Intersection arithmetic leaves sub-ulp offsets from slanted
+                # segments; snap each line to those exact shared junctions.
+                tolerance = max(1.0, line.length) * 1e-12
+                local_points = [intersection_points[int(index)] for index in point_tree.query(line.buffer(tolerance))]
+                if not local_points:
+                    result_items.append((line, props))
+                    continue
+                split_cutter = unary_union(local_points)
+                split_res = split(snap(line, split_cutter, tolerance), split_cutter)
                 for sub_geom in split_res.geoms:
                     if isinstance(sub_geom, LineString) and sub_geom.length > 1e-9:
                         # Ensure directional orientation matches original line

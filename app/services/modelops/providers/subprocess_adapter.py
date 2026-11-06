@@ -18,6 +18,7 @@ torch/onnx 的部署也能经此通道消费算子侧 runtime），协议 = stdi
 """
 from __future__ import annotations
 
+import os
 import base64
 import json
 import logging
@@ -232,6 +233,7 @@ class SubprocessWorkerProvider:
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    env={key: value for key, value in os.environ.items() if key in {"PATH", "SYSTEMROOT", "LANG", "LC_ALL", "TMPDIR", "TEMP", "PYTHONIOENCODING", "OMP_NUM_THREADS", "CUDA_VISIBLE_DEVICES"}},
                 )
             except OSError as exc:
                 raise ProviderError(f"subprocess spawn failed: {exc}") from exc

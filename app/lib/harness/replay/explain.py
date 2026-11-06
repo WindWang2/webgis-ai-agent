@@ -78,7 +78,7 @@ def explain_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
 def explain_replay(scenario, result) -> Dict[str, Any]:
     """离线重放结果 → 因果链 bundle。"""
     turns = []
-    for turn_spec, turn_result in zip(scenario.turns, result.turns):
+    for turn_spec, turn_result in zip(scenario.turns, result.turns, strict=True):
         gate = turn_result.gate_result or {}
         checks = gate.get("checks") or {}
         missing = [

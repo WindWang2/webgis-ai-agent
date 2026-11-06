@@ -61,16 +61,10 @@ class PayloadCache:
 
     @staticmethod
     def _measure(payload: dict[str, Any]) -> int:
-        """采样近似字节量（与 executor.NodeResultStore 同口径）。"""
-        total = 0
-        for key in ("features", "rows"):
-            items = payload.get(key) or []
-            if not items:
-                continue
-            sample = items[:64]
-            avg = sum(len(str(f)) for f in sample) / len(sample)
-            total += int(avg * len(items))
-        return total
+        """Exact serialized bytes without a full intermediate JSON buffer."""
+        import json
+
+        return sum(len(chunk.encode("utf-8")) for chunk in json.JSONEncoder(default=str).iterencode(payload))
 
     def get(
         self, session_id: str, ref_id: str, owner_scope: str, *,

@@ -3,9 +3,9 @@
 以**真实** ``MissionRuntimeService``（#1320）执行 mission_corpus 场景：
 
 - sqlite 内存引擎（``StaticPool``）+ 可注入 factory —— 官方 hermetic 缝；
-- 冻结时钟：monkeypatch ``store._utcnow`` 为滞后可控假钟（lease TTL、
-  owner-dead 判定全确定；``finally`` 恢复）；
-- 热路径 bind 走 ``mission_bind`` 生产缝（受控 env 窗口）；
+- 冻结时钟：通过 MissionStore 实例注入滞后可控假钟（lease TTL、
+  owner-dead 判定全确定；不改变全局时钟）；
+- 热路径 bind 走 ``mission_bind`` 生产缝（显式 enabled 参数）；
 - 故障为签名式注入（无 sleep）；frontier/预算经生产 CAS 缝推进。
 
 红线：不重建任务宿主；不改 mission_runtime/*（#1335 拥有）；任何未预期
@@ -13,7 +13,6 @@
 """
 from __future__ import annotations
 
-import os
 import time as _time
 from contextlib import contextmanager
 from typing import Any, Dict, List
@@ -66,7 +65,6 @@ def hermetic_mission_runtime():
     """hermetic MissionRuntimeService（sqlite 内存 + 冻结 ``_utcnow``）。"""
     import app.models.mission  # noqa: F401 — 注册 mission 表
     from app.core.database import Base
-    from app.services.mission_runtime import store as store_mod
     from app.services.mission_runtime.service import MissionRuntimeService
     from app.services.mission_runtime.store import MissionStore
 
@@ -81,16 +79,13 @@ def hermetic_mission_runtime():
     )
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
-    store = MissionStore(factory=factory)
+    clock = _FakeClock(start_ts=_time.time() - _CLOCK_LAG_S)
+    store = MissionStore(factory=factory, clock=clock.now)
     runtime = MissionRuntimeService(store=store)
 
-    clock = _FakeClock(start_ts=_time.time() - _CLOCK_LAG_S)
-    saved_utcnow = store_mod._utcnow
-    store_mod._utcnow = clock.now  # type: ignore[assignment]
     try:
         yield runtime, clock
     finally:
-        store_mod._utcnow = saved_utcnow  # type: ignore[assignment]
         engine.dispose()
 
 
@@ -150,8 +145,8 @@ def _execute_scenario(
     )
     from app.services.gis_harness.intent import resolve_map_request_intent
     from app.services.mission_runtime import contracts as C
+    from app.services.mission_runtime.store import FencingError, TransitionRejected
 
-    mission_hotpath_env = "GIS_MISSION_HOTPATH"
     session_id = f"bench-mission-{scenario.scenario_id.lower()}"
     org_id = "bench-org"
     worker = _WORKER_A
@@ -162,19 +157,11 @@ def _execute_scenario(
         for idx, step in enumerate(scenario.steps):
             step_note: Dict[str, Any] = {"i": idx, "kind": step.kind}
             if isinstance(step, BindStep):
-                saved = os.environ.get(mission_hotpath_env)
-                try:
-                    os.environ[mission_hotpath_env] = "1"
-                    bound = maybe_bind_mission_for_turn(
-                        session_id=session_id, org_id=org_id,
-                        user_id="bench-user", root_goal=scenario.root_goal,
-                        runtime=runtime,
-                    )
-                finally:
-                    if saved is None:
-                        os.environ.pop(mission_hotpath_env, None)
-                    else:
-                        os.environ[mission_hotpath_env] = saved
+                bound = maybe_bind_mission_for_turn(
+                    session_id=session_id, org_id=org_id,
+                    user_id="bench-user", root_goal=scenario.root_goal,
+                    runtime=runtime, enabled=True,
+                )
                 if not bound.mission_id:
                     failures.append(
                         f"step {idx} bind: no mission id "
@@ -186,7 +173,7 @@ def _execute_scenario(
                 runtime.start(mission_id, worker_id=worker, org_id=org_id)
                 if scenario.quota:
                     # mission_bind 不透传 quota —— 场景配额经生产 CAS 缝补写
-                    epoch = runtime._require_lease(mission_id, worker, org_id=org_id)
+                    epoch = runtime.acquire_lease(mission_id, worker, org_id=org_id)
                     rec = runtime.store.get_mission(mission_id, org_id=org_id)
                     assert rec is not None
                     budget = rec.resource_budget.model_dump()
@@ -203,7 +190,7 @@ def _execute_scenario(
                         f"step {idx} turn {step.task_id}: expected task "
                         f"{step.expected_task}, got {intent.task}"
                     )
-                epoch = runtime._require_lease(
+                epoch = runtime.acquire_lease(
                     mission_id, worker, org_id=org_id)
                 rec = runtime.store.get_mission(mission_id, org_id=org_id)
                 assert rec is not None
@@ -213,7 +200,7 @@ def _execute_scenario(
                         frontier["completed"] + [step.task_id])
                 # 完成即离开 pending/running/failed/blocked（frontier 单一事实）
                 for bucket in ("pending", "running", "failed", "blocked"):
-                    if step.task_id in frontier.get(bucket) or []:
+                    if step.task_id in (frontier.get(bucket) or []):
                         frontier[bucket] = [
                             t for t in frontier.get(bucket) or []
                             if t != step.task_id
@@ -346,8 +333,8 @@ def _execute_scenario(
                     runtime.complete(mission_id, worker_id=worker, org_id=org_id)
                     ok = False
                     failures.append("cancel terminal: post-terminal complete accepted")
-                except Exception:  # noqa: BLE001 — 拒绝 = 预期（fail-closed）
-                    ok = ok and True
+                except (FencingError, TransitionRejected):
+                    evidence["terminal_probe_rejected"] = True
             metrics["mission_cancel_terminal_ok"] = ok
             if rec.lease_owner:
                 failures.append(
@@ -399,7 +386,7 @@ def _execute_fault(
             failures.append(f"step {idx} fault timeout: classifier gave {result!r}")
         return
     if step.fault == "stale_writer":
-        epoch = runtime._require_lease(mission_id, worker, org_id=org_id)
+        epoch = runtime.acquire_lease(mission_id, worker, org_id=org_id)
         ghost_epoch = max(0, epoch - 1)
         try:
             runtime.store.patch_mission(
@@ -413,7 +400,7 @@ def _execute_fault(
             return  # 预期：陈旧写者 fail-closed
         return
     if step.fault == "budget_exhaustion":
-        epoch = runtime._require_lease(mission_id, worker, org_id=org_id)
+        epoch = runtime.acquire_lease(mission_id, worker, org_id=org_id)
         rec = runtime.store.get_mission(mission_id, org_id=org_id)
         assert rec is not None
         rec.resource_budget.charge(step.dim, step.amount)

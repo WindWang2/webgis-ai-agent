@@ -200,6 +200,9 @@
         "layer_count": {
           "$ref": "#/$defs/SitFact"
         },
+        "layer_ids": {
+          "$ref": "#/$defs/SitFact"
+        },
         "sources": {
           "$ref": "#/$defs/SitFact"
         },

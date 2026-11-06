@@ -27,6 +27,10 @@ import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from starlette.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
+from app.api.cube_response import CubeResponseTooLarge, cube_json_response
 
 from app.core.auth import (
     get_async_db,
@@ -85,6 +89,26 @@ def _require_session_id(session_id: Optional[str]) -> str:
     return session_id
 
 
+
+async def _require_project_access(db: AsyncSession, project_id: str, user: Dict[str, Any]) -> None:
+    """Use the same live organization boundary as project reads; never anonymous."""
+    actor = user.get("user_id")
+    if not actor or actor == "anonymous":
+        raise HTTPException(404, "project not found")
+
+    def _allowed(sync_db: Session) -> bool:
+        from sqlalchemy import select
+        from app.models.db_model import User
+        from app.services.project_service import ProjectService
+        identity = sync_db.execute(select(User.org_id, User.is_active).where(User.id == str(actor))).first()
+        return bool(identity is not None and identity[1] and ProjectService.get_project_with_auth(
+            sync_db, project_id, user_id=str(actor), org_id=identity[0],
+        ) is not None)
+
+    if not await db.run_sync(_allowed):
+        raise HTTPException(404, "project not found")
+
+
 def _reject_project_scope(project_id: Optional[str]) -> None:
     if project_id:
         raise HTTPException(
@@ -108,7 +132,7 @@ async def get_lakehouse_object(
         db, _require_session_id(session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     from app.services.lakehouse.data_object import (
         owner_scope_allows,
         resolve_data_object,
@@ -132,7 +156,7 @@ async def scan_lakehouse_vector(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     from app.services.lakehouse.vector_scan import LakehouseScanError, scan_fabric_parquet_ref
 
     try:
@@ -157,7 +181,7 @@ async def build_lakehouse_cube(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     from app.services.lakehouse.cube_service import (
         CubeServiceError,
         build_session_cube,
@@ -174,19 +198,19 @@ async def build_lakehouse_cube(
         raise _http_from(e, not_found_codes=("CUBE_SOURCE_MISSING", "CUBE_REF_MISSING"))
 
 
-@router.post("/lakehouse/cubes/window")
+@router.post("/lakehouse/cubes/window", response_model=Dict[str, Any])
 async def read_lakehouse_cube_window(
     req: CubeWindowRequest,
     _user: dict = Depends(get_current_user_optional),
     owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
-) -> Dict[str, Any]:
+) -> JSONResponse:
     """cube 窗口读（zarr chunk 粒度；至少一个有限切片，防全 cube 读取）。"""
     conv = await verify_session_owner(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     if req.time is None and req.y is None and req.x is None:
         raise HTTPException(
             status_code=422,
@@ -212,12 +236,11 @@ async def read_lakehouse_cube_window(
         )
     except CubeServiceError as e:
         raise _http_from(e, not_found_codes=("CUBE_REF_MISSING",))
-    # ndarray → 嵌套 list（JSON 安全；读量由切片预算约束）。
-    result["bands"] = {
-        band: (data.tolist() if hasattr(data, "tolist") else data)
-        for band, data in result["bands"].items()
-    }
-    return result
+    try:
+        return await asyncio.to_thread(cube_json_response, result, "bands")
+    except CubeResponseTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+
 
 
 @router.post("/lakehouse/cubes/revise")
@@ -232,7 +255,7 @@ async def revise_lakehouse_cube(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     from app.services.lakehouse.cube_service import (
         CubeServiceError,
         revise_session_cube,
@@ -262,7 +285,7 @@ async def verify_lakehouse_object(
         db, _require_session_id(req.session_id or ""),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     from app.services.lakehouse.data_object import (
         owner_scope_allows,
         resolve_data_object,
@@ -301,7 +324,7 @@ async def build_rs_lakehouse_cube(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     from app.services.lakehouse.rs_cube import RSCubeError, build_rs_cube
 
     try:
@@ -315,19 +338,19 @@ async def build_rs_lakehouse_cube(
         raise _http_from(e, not_found_codes=("CUBE_SOURCE_MISSING",))
 
 
-@router.post("/lakehouse/cubes/labeled/window")
+@router.post("/lakehouse/cubes/labeled/window", response_model=Dict[str, Any])
 async def read_lakehouse_labeled_window(
     req: LabeledWindowRequest,
     _user: dict = Depends(get_current_user_optional),
     owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
-) -> Dict[str, Any]:
+) -> JSONResponse:
     """labeled cube 标签级窗口读（计划触达块证据随响应披露）。"""
     conv = await verify_session_owner(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     selection: Dict[str, Any] = {}
     for dim in ("time", "band", "polarization", "vertical", "model", "scenario"):
         value = getattr(req, dim)
@@ -356,11 +379,11 @@ async def read_lakehouse_labeled_window(
         )
     except CubeServiceError as e:
         raise _http_from(e, not_found_codes=("CUBE_REF_MISSING",))
-    result["variables"] = {
-        name: (data.tolist() if hasattr(data, "tolist") else data)
-        for name, data in result.get("variables", {}).items()
-    }
-    return result
+    try:
+        return await asyncio.to_thread(cube_json_response, result, "variables")
+    except CubeResponseTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+
 
 
 @router.post("/lakehouse/publish")
@@ -383,7 +406,7 @@ async def publish_lakehouse_objects(
     try:
         result = await publish_to_project(
             db,
-            session_id=str(conv.session_id),
+            session_id=str(conv.id),
             project_id=req.project_id,
             object_ids=list(req.object_ids),
             actor_id=_user.get("user_id"),
@@ -444,7 +467,6 @@ async def search_lakehouse_catalog(
     project 域走 publish 同族 owner 校验；均 fail-closed 404）。"""
     import asyncio
 
-    from app.models.project import Project
     from app.services.lakehouse.catalog_service import CatalogError
 
     if owner_type == "session":
@@ -454,18 +476,7 @@ async def search_lakehouse_catalog(
         )
         effective_owner = _require_session_id(session_id or owner_id)
     elif owner_type == "project":
-        from sqlalchemy import select
-
-        project = (
-            await db.execute(
-                select(Project).where(Project.id == owner_id)
-            )
-        ).scalar_one_or_none()
-        actor = _user.get("user_id")
-        if project is None or (
-            actor is not None and str(project.owner_id) != str(actor)
-        ):
-            raise HTTPException(status_code=404, detail="project not found")
+        await _require_project_access(db, owner_id, _user)
         effective_owner = owner_id
     else:
         raise HTTPException(status_code=400, detail="owner_type must be session|project")
@@ -508,7 +519,6 @@ async def lakehouse_catalog_stac(
     """STAC 1.0.0 投影（只读；分页 links 有界）。"""
     import asyncio
 
-    from app.models.project import Project
 
     if owner_type == "session":
         _ = await verify_session_owner(
@@ -517,16 +527,7 @@ async def lakehouse_catalog_stac(
         )
         effective_owner = _require_session_id(session_id or owner_id)
     elif owner_type == "project":
-        from sqlalchemy import select
-
-        project = (
-            await db.execute(select(Project).where(Project.id == owner_id))
-        ).scalar_one_or_none()
-        actor = _user.get("user_id")
-        if project is None or (
-            actor is not None and str(project.owner_id) != str(actor)
-        ):
-            raise HTTPException(status_code=404, detail="project not found")
+        await _require_project_access(db, owner_id, _user)
         effective_owner = owner_id
     else:
         raise HTTPException(status_code=400, detail="owner_type must be session|project")
@@ -574,7 +575,7 @@ async def scrub_lakehouse_object(
         db, _require_session_id(req.session_id or ""),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     import asyncio
 
     from app.services.lakehouse.data_object import (
@@ -676,7 +677,7 @@ async def get_lakehouse_object_lineage(
         db, _require_session_id(session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     import asyncio
 
     from app.services.lakehouse.data_object import (
@@ -690,7 +691,7 @@ async def get_lakehouse_object_lineage(
         manifest, session_id=session_id
     ):
         raise HTTPException(status_code=404, detail="data object not found")
-    view = await asyncio.to_thread(object_lineage, data_object_id)
+    view = await asyncio.to_thread(object_lineage, data_object_id, session_id=session_id)
     view["success"] = True
     return view
 
@@ -705,18 +706,7 @@ async def get_project_lakehouse_object(
     """项目域 DataObject 解析（R1-8/R0-9）：catalog ``status=active`` 行
     授权读取 session 出身的 manifest；无授权行 → 404（不泄漏存在性）。
     project owner 校验与 publish 同族。"""
-    from sqlalchemy import select
-
-    from app.models.project import Project
-
-    actor = _user.get("user_id")
-    project = (
-        await db.execute(select(Project).where(Project.id == project_id))
-    ).scalar_one_or_none()
-    if project is None or (
-        actor is not None and str(project.owner_id) != str(actor)
-    ):
-        raise HTTPException(status_code=404, detail="project not found")
+    await _require_project_access(db, project_id, _user)
     from app.services.lakehouse.project_publish import resolve_project_object
 
     resolved = await resolve_project_object(

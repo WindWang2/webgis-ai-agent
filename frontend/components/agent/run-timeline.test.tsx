@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { RunTimeline } from './run-timeline';
 import { RunEventsUnavailableError, type RunEventsPage } from '@/lib/api/geocompute';
 
@@ -86,5 +86,27 @@ describe('RunTimeline（V7 Phase G）', () => {
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: '继续读取更多事件' })).toBeNull(),
     );
+  });
+});
+
+
+describe('RunTimeline async boundaries', () => {
+  it('ignores an older run response after switching to a new run', async () => {
+    let resolveOld!: (value: RunEventsPage) => void;
+    vi.mocked(getRunEvents).mockReset().mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+      .mockResolvedValueOnce(page({ events: [{ id: 9, run_id: 'new', event: 'run_completed', created_at: '2026-11-05T01:00:00Z' }], count: 1, after_id: 9 }));
+    const { rerender } = render(<RunTimeline runId="old" />);
+    rerender(<RunTimeline runId="new" />);
+    await screen.findByText('run_completed');
+    await act(async () => { resolveOld(page()); });
+    expect(screen.queryByText('run_started')).not.toBeInTheDocument();
+    expect(screen.getByText('run_completed')).toBeInTheDocument();
+  });
+  it('retains loaded events when the next page fails', async () => {
+    vi.mocked(getRunEvents).mockReset().mockResolvedValueOnce(page()).mockRejectedValueOnce(new Error('offline'));
+    render(<RunTimeline runId="run-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: '继续读取更多事件' }));
+    await screen.findByText(/加载.*失败/);
+    expect(screen.getByText('run_started')).toBeInTheDocument();
   });
 });

@@ -704,7 +704,8 @@ class ClusterCoordinator:
             victim = next(
                 (
                     r for r in running
-                    if int(r.get("priority") or 0) < int(waiter.get("priority") or 0)
+                    if r.get("tenant_key") == waiter.get("tenant_key")
+                    and int(r.get("priority") or 0) < int(waiter.get("priority") or 0)
                     and int(r.get("preempts") or 0) < self._max_preempts
                 ),
                 None,

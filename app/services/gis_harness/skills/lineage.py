@@ -107,43 +107,28 @@ class SkillLineageStore:
                 break
         if target is None:
             return None
-        seen_target = False
         for node in series:
-            if node.version == to_version:
-                node.active = True
+            node.active = node is target
+            if node is target:
                 node.superseded_by = ""
-                seen_target = True
-            elif seen_target:
-                node.active = False
-            else:
-                # 更早版本保持 inactive 历史
-                node.active = False
-        # 修正：仅 to_version active
-        for node in series:
-            node.active = node.version == to_version
-            if node.version != to_version and not node.superseded_by:
-                # 保持既有 superseded 链；若目标回滚则后继指向目标
-                if _version_after(node.version, to_version, series):
-                    node.superseded_by = node.superseded_by or to_version
-        target.active = True
-        target.superseded_by = ""
         return target
 
     def _evict_if_needed(self) -> None:
         if self._total <= self._capacity:
             return
-        # 淘汰最旧 skill 的最旧非 active 节点
-        for skill_id in sorted(self._nodes):
+        for skill_id in list(self._nodes):
             series = self._nodes[skill_id]
-            for i, node in enumerate(series):
-                if not node.active:
-                    del series[i]
-                    self._total -= 1
-                    if not series:
-                        del self._nodes[skill_id]
-                    if self._total <= self._capacity:
-                        return
+            while self._total > self._capacity:
+                victim = next((index for index, node in enumerate(series) if not node.active), None)
+                if victim is None:
                     break
+                del series[victim]
+                self._total -= 1
+            if not series:
+                del self._nodes[skill_id]
+        while self._total > self._capacity and self._nodes:
+            oldest = next(iter(self._nodes))
+            self._total -= len(self._nodes.pop(oldest))
 
     def clear(self) -> None:
         self._nodes.clear()
@@ -158,19 +143,15 @@ def _version_after(version: str, pivot: str, series: List[SkillLineageNode]) -> 
         return False
 
 
-_lineage: Optional[SkillLineageStore] = None
+from app.services.gis_harness.skills.instances import skill_instance, reset_skill_instance
 
 
 def get_skill_lineage_store() -> SkillLineageStore:
-    global _lineage
-    if _lineage is None:
-        _lineage = SkillLineageStore()
-    return _lineage
+    return skill_instance('lineage', SkillLineageStore)
 
 
 def reset_skill_lineage_store() -> None:
-    global _lineage
-    _lineage = None
+    reset_skill_instance('lineage')
 
 
 __all__ = [

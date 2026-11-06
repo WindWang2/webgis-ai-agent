@@ -9,10 +9,31 @@ export default defineConfig({
     globals: true,
     testTimeout: 15000,
     setupFiles: ['./test/setup.ts'],
-    include: ['**/*.{test,spec}.{ts,tsx}'],
     // Playwright 旅程用例由 playwright runner 执行（e2e/journeys/*.journey.ts），
     // 命名互斥使 vitest 默认 include 永不收集它们
     exclude: ['**/node_modules/**', '**/.next/**'],
+    // Absolute timing budgets need an exclusive worker after the functional
+    // suite. Keep coverage and every existing threshold enabled in both groups.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'functional',
+          include: ['**/*.{test,spec}.{ts,tsx}'],
+          exclude: ['**/*.perf.test.{ts,tsx}'],
+          sequence: { groupOrder: 0 },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'performance',
+          include: ['**/*.perf.test.{ts,tsx}'],
+          fileParallelism: false,
+          sequence: { groupOrder: 1 },
+        },
+      },
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

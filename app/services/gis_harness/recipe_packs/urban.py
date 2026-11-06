@@ -15,7 +15,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     wf,
     auto_fallback,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _RECIPES: List[CartographyRecipe] = [
     CartographyRecipe(
@@ -29,8 +29,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="administrative_choropleth",
         secondary_cartography=["categorical_thematic"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="admin units unavailable", reason_code="NEEDS_ADMIN_UNITS",
-                                  use="categorical_raster")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=46,
         schema_version=2,
@@ -83,8 +82,7 @@ _RECIPES: List[CartographyRecipe] = [
                             "admin_aggregation", "rate_aggregation"],
         primary_cartography="administrative_choropleth",
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="admin units unavailable", reason_code="NEEDS_ADMIN_UNITS",
-                                  use="ndvi_raster")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=47,
         schema_version=2,

@@ -1,11 +1,17 @@
 {
  "category": "user_followup",
+ "decisions": [],
  "description": "多轮 follow-up（4 轮）",
  "dispatch_backed": false,
+ "expect_calibration": [],
+ "expect_source": "",
  "faults": [],
+ "receipt_backed": false,
+ "registry_digest": "",
  "scenario_id": "mt-user_followup-06",
  "schema_version": 1,
  "tags": [],
+ "tool_registry": {},
  "turns": [
   {
    "cartography": {
@@ -112,6 +118,7 @@
      },
      "call_id": "call-upsert-mt-user_followup-06-base",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -127,6 +134,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -250,6 +258,7 @@
      },
      "call_id": "call-upsert-mt-user_followup-06-extra",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -265,6 +274,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -388,6 +398,7 @@
      },
      "call_id": "call-upsert-mt-user_followup-06-extra",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -403,6 +414,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -526,6 +538,7 @@
      },
      "call_id": "call-upsert-mt-user_followup-06-base",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -541,6 +554,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {

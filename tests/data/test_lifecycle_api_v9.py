@@ -82,11 +82,11 @@ def test_objects_filtered_by_owner_scope():
     with SessionLocal() as db:
         db.add(LifecycleObject(
             kind="cog_output", object_id="mine.tif",
-            owner_scope="lc-user", byte_size=1, tier="hot",
+            owner_scope="user:lc-user", byte_size=1, tier="hot",
         ))
         db.add(LifecycleObject(
             kind="cog_output", object_id="theirs.tif",
-            owner_scope="other-user", byte_size=1, tier="hot",
+            owner_scope="user:other-user", byte_size=1, tier="hot",
         ))
         db.commit()
     listed = client.get("/api/v1/data-lifecycle/objects", headers=_token())
@@ -97,7 +97,7 @@ def test_objects_filtered_by_owner_scope():
     admin = client.get(
         "/api/v1/data-lifecycle/objects", headers=_token("admin", "lc-admin"))
     admin_ids = {i["object_id"] for i in admin.json()["items"]}
-    assert {"mine.tif", "theirs.tif"} <= admin_ids
+    assert admin_ids == set(), "admin without tenant cannot enumerate other owners"
 
 
 def test_assess_requires_auth():
@@ -105,8 +105,11 @@ def test_assess_requires_auth():
     assert res.status_code in (401, 403)
     res2 = client.post("/api/v1/data-lifecycle/assess", json={"persist": False},
                        headers=_token())
-    assert res2.status_code == 200
-    assert set(res2.json()["summary"]["kinds"].keys()) >= {"cog_output"}
+    assert res2.status_code == 403
+    allowed = client.post("/api/v1/data-lifecycle/assess", json={"persist": False},
+                          headers=_token("admin", "lc-admin"))
+    assert allowed.status_code == 200
+    assert set(allowed.json()["summary"]["kinds"].keys()) >= {"cog_output"}
 
 
 def test_policy_upsert_requires_admin():
@@ -121,7 +124,11 @@ def test_policy_upsert_requires_admin():
 
 def test_gc_loop_via_api(roots):
     _enable_cog_policy_admin()
-    target = roots["cog"] / "sess" / "old.tif"
+    from app.models.db_model import Conversation
+    with SessionLocal() as db:
+        db.merge(Conversation(id="lc-owned", user_id="lc-admin"))
+        db.commit()
+    target = roots["cog"] / "lc-owned" / "old.tif"
     target.parent.mkdir(parents=True)
     target.write_bytes(b"q" * 8)
     old = time.time() - 10 * 86400

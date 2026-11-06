@@ -68,6 +68,10 @@ export function deriveSpans(events: GeoComputeRunEvent[]): {
           state: 'running' as const,
           attempts: 0,
         };
+        if (ev.attempt != null && ev.attempt > span.attempts) {
+          span.state = 'running';
+          span.endMs = null;
+        }
         span.startMs = Math.min(span.startMs, ts);
         if (ev.attempt != null) span.attempts = Math.max(span.attempts, ev.attempt);
         byNode.set(ev.node_id, span);

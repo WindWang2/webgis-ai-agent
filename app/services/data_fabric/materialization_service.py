@@ -152,11 +152,9 @@ def _breaker_source_key(adapter: GeospatialDataSourceAdapter) -> str:
     于是查询/describe 与物化路径共享同一道门。profile 缺失（mock seam）
     时回退类名限定键，绝不静默并入全局键。
     """
-    profile = getattr(adapter, "profile", None)
-    profile_id = getattr(profile, "id", None)
-    if profile_id:
-        return str(profile_id)
-    return f"adapter:{adapter.__class__.__name__}"
+    from app.services.data_fabric.health import adapter_health_key
+
+    return adapter_health_key(adapter)
 
 
 class MaterializationService:
@@ -267,6 +265,7 @@ class MaterializationService:
         # 的输入侧，不建第二 store）
         if evidence:
             geojson_payload["properties"]["query_evidence"] = evidence
+        enforce_result_bounds(query_result.features)
         fingerprint = await asyncio.to_thread(
             dataset_fingerprint_service.calculate_data_fingerprint,
             query_result.features,
@@ -534,7 +533,6 @@ class MaterializationService:
             "ref": written["ref"],
             "ref_id": None,  # session-store ref 不产生（磁盘工件 lane）
             "artifact_ref": written["ref"],
-            "path": written["path"],
             "format": "geoparquet",
             "result_mode": mode,
             "dataset_id": dataset_id,
@@ -584,10 +582,12 @@ class MaterializationService:
         adapter: GeospatialDataSourceAdapter,
         dataset_id: str,
         query_spec: Optional[QuerySpec] = None,
-        session_id: str = "default",
+        session_id: str = "",
         layer_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """查询 + 物化统一管线（阻塞远端经 to_thread 下放事件循环外）。"""
+        if not session_id:
+            raise ValueError("materialization requires an explicit session_id")
         spec = query_spec or QuerySpec(limit=_DEFAULT_MATERIALIZE_LIMIT)
         layer_title = layer_name or f"Materialized Layer {dataset_id}"
         try:

@@ -119,13 +119,11 @@ class ScriptedToolProvider:
             if op is not None and op.call_id not in self._consumed:
                 self._consumed.add(op.call_id)
                 return op
-        offset = self._cursor.get(tool, 0)
         candidates = [op for op in self._ops
                       if op.tool == tool and op.call_id not in self._consumed]
-        if offset >= len(candidates):
+        if not candidates:
             return None
-        chosen = candidates[offset]
-        self._cursor[tool] = offset + 1
+        chosen = candidates[0]
         self._consumed.add(chosen.call_id)
         return chosen
 

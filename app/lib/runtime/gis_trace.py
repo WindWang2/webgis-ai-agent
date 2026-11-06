@@ -142,55 +142,68 @@ class GisTraceChain:
         default_factory=OrderedDict
     )
     _total: int = 0
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def record(self, stage: Stage, **payload: Any) -> ChainRecord:
         """记录一条证据（超限阶段静默丢弃最新 —— 记录绝不阻断执行）。"""
-        items = {k: v for k, v in payload.items() if v is not None}
-        structured: Dict[str, Any] = {}
-        for key in _STRUCTURED_PAYLOAD_KEYS:
-            if key in items:
-                structured[key] = _bound_structured(items.pop(key))
-        rec = ChainRecord(
-            stage=stage,
-            ts=time.time(),
-            payload={**bound_meta(items), **structured},
-        )
-        bucket = self._records.get(int(stage))
-        if bucket is None:
-            bucket = []
-            self._records[int(stage)] = bucket
-        if len(bucket) >= self.max_per_stage:
-            bucket.pop(0)  # 保留最近
-        bucket.append(rec)
-        self._total += 1
-        return rec
+        with self._lock:
+            items = {k: v for k, v in payload.items() if v is not None}
+            structured: Dict[str, Any] = {}
+            for key in _STRUCTURED_PAYLOAD_KEYS:
+                if key in items:
+                    structured[key] = _bound_structured(items.pop(key))
+            rec = ChainRecord(
+                stage=stage,
+                ts=time.time(),
+                payload={**bound_meta(items), **structured},
+            )
+            bucket = self._records.get(int(stage))
+            if bucket is None:
+                bucket = []
+                self._records[int(stage)] = bucket
+            if len(bucket) >= self.max_per_stage:
+                bucket.pop(0)  # 保留最近
+            bucket.append(rec)
+            self._total += 1
+            return rec
+
+    def record_once(self, stage: Stage, **payload: Any) -> Optional[ChainRecord]:
+        """Insert a stage's first record atomically across dispatch threads."""
+        with self._lock:
+            if self._records.get(int(stage)):
+                return None
+            return self.record(stage, **payload)
 
     def stage_records(self, stage: Stage) -> List[ChainRecord]:
-        return list(self._records.get(int(stage), ()))
+        with self._lock:
+            return list(self._records.get(int(stage), ()))
 
     def first(self, stage: Stage) -> Optional[ChainRecord]:
-        bucket = self._records.get(int(stage))
-        return bucket[0] if bucket else None
+        with self._lock:
+            bucket = self._records.get(int(stage))
+            return bucket[0] if bucket else None
 
     def covered_stages(self) -> List[str]:
-        return [Stage(int(k)).name for k in sorted(self._records)]
+        with self._lock:
+            return [Stage(int(k)).name for k in sorted(self._records)]
 
     def completeness(self) -> float:
         """证据链覆盖度（覆盖阶段数 / 18）——评测指标。"""
-        return len(self._records) / len(ALL_STAGES)
+        with self._lock:
+            return len(self._records) / len(ALL_STAGES)
 
     def as_dict(self) -> Dict[str, Any]:
-        return {
-            # ADR-0212：链记录本体版本（此前版本只存在于 trace_v6 manifest
-            # 层；additive 字段，读取侧零行为变化）。
-            "schema_version": GIS_TRACE_CHAIN_SCHEMA_VERSION,
-            "turn_id": self.turn_id,
-            "session_id": self.session_id,
-            "total_records": self._total,
-            "completeness": round(self.completeness(), 4),
-            "stages": [rec.as_dict() for k in sorted(self._records) for rec in self._records[k]],
-        }
-
+        with self._lock:
+            return {
+                # ADR-0212：链记录本体版本（此前版本只存在于 trace_v6 manifest
+                # 层；additive 字段，读取侧零行为变化）。
+                "schema_version": GIS_TRACE_CHAIN_SCHEMA_VERSION,
+                "turn_id": self.turn_id,
+                "session_id": self.session_id,
+                "total_records": self._total,
+                "completeness": round(self.completeness(), 4),
+                "stages": [rec.as_dict() for k in sorted(self._records) for rec in self._records[k]],
+            }
 
 class GisTraceRegistry:
     """turn → chain 的 LRU 注册表（进程内；有界）。

@@ -42,7 +42,7 @@ ARC_TITLES_ZH = {
 # 相机硬边界：pitch 封顶 60°（任务规格；MapView 词表允许 85 但叙事镜头不用）
 PITCH_MIN, PITCH_MAX = 0.0, 60.0
 BEARING_MIN, BEARING_MAX = -180.0, 180.0
-ZOOM_MIN, ZOOM_MAX = 3.0, 18.0
+ZOOM_MIN, ZOOM_MAX = 0.0, 18.0
 
 _MD_STRIP_RULES = (
     (re.compile(r"```[a-z]*\n?"), ""),

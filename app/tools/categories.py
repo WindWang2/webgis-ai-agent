@@ -127,6 +127,8 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # gis_harness.tools：计划 2 + 组件突变 1 + 检视 2
     "webgis_map_intent": "planning",
     "webgis_map_product": "planning",
+    "webgis_product_edit": "planning",
+    "webgis_map_design_select": "planning",
     "webgis_component_update": "map_mutation",
     "webgis_component_catalog": "inspection",
     "webgis_world_state": "inspection",

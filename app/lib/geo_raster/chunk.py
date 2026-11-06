@@ -262,36 +262,38 @@ def build_chunk_descriptor(
 
 
 def fn_fingerprint(fn: Any) -> str:
-    """Bounded, process-stable function identity (round-1 review MINOR).
+    """Hash executable code and bound state; opaque state disables cache reuse."""
+    import functools
+    import marshal
+    import pickle
+    import uuid
 
-    ``sha256(qualname + code object bytes)[:16]`` — same algorithm on the
-    same source → same digest in every process (no memory addresses, no
-    pickled closures). Callables without a ``__code__`` (functools.partial,
-    C builtins) degrade to their qualname digest. This feeds the chunk
-    CACHE operation namespace (``ChunkCacheBackend.operation``) so editing
-    a window fn invalidates cached chunks — it is NOT part of
-    :class:`RasterChunkDescriptor` (descriptor identity stays
-    data-defined).
-
-    round-2 review MINOR: ``inspect.unwrap`` first — ``functools.wraps``
-    decorators otherwise poison the digest with the WRAPPER's bytecode
-    while keeping the wrapped fn's qualname (same algorithm, different
-    digest per decorating module ⇒ cache keys that never reproduce across
-    call sites). Residual blindness (documented, accepted): the digest
-    still cannot see closure cell contents or mutated defaults — editing
-    only those does not invalidate cached chunks.
-    """
     fn = inspect.unwrap(fn)
-    qualname = str(
-        getattr(fn, "__qualname__", None) or getattr(fn, "__name__", "") or ""
-    )
     h = hashlib.sha256()
-    h.update(qualname.encode("utf-8", "replace"))
-    code = getattr(fn, "__code__", None)
-    if code is not None:
-        h.update(bytes(getattr(code, "co_code", b"") or b""))
+    if isinstance(fn, functools.partial):
+        h.update(fn_fingerprint(fn.func).encode("ascii"))
+        state = (fn.args, fn.keywords)
+    else:
+        h.update(str(getattr(fn, "__module__", "")).encode("utf-8"))
+        h.update(str(getattr(fn, "__qualname__", type(fn).__qualname__)).encode("utf-8"))
+        code = getattr(fn, "__code__", None)
+        if code is not None:
+            h.update(marshal.dumps(code))
+        try:
+            state = (
+                getattr(fn, "__defaults__", None),
+                getattr(fn, "__kwdefaults__", None),
+                tuple(c.cell_contents for c in (getattr(fn, "__closure__", None) or ())),
+                getattr(fn, "__self__", None),
+                fn if code is None else None,
+            )
+        except ValueError:
+            return uuid.uuid4().hex[:_CHUNK_ID_HEX]
+    try:
+        h.update(pickle.dumps(state, protocol=5))
+    except (TypeError, ValueError, AttributeError, pickle.PickleError):
+        h.update(uuid.uuid4().bytes)
     return h.hexdigest()[:_CHUNK_ID_HEX]
-
 
 def iter_chunk_descriptors(
     reader: Any,
@@ -395,6 +397,10 @@ class ChunkCacheBackend:
     ) -> Optional[np.ndarray]:
         """Cached array for ``key`` (None = honest miss on ANY failure)."""
         from app.lib.artifact_cache import get_chunk
+        from pathlib import Path
+
+        if not Path(self.source_path).is_file():
+            return None
 
         path = get_chunk(key)
         if path is None:

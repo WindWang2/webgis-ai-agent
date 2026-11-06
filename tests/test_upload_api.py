@@ -5,13 +5,21 @@ from unittest.mock import patch, MagicMock
 from fastapi import FastAPI
 
 from app.api.routes import upload as _mod
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user_optional_with_version
 
 _mock_user = {"user_id": "test-user"}
 
 
 @pytest.fixture
 def app():
+    from app.core.database import Base, Engine, SessionLocal
+    from app.models.db_model import User, Conversation
+    Base.metadata.create_all(bind=Engine)
+    with SessionLocal() as db:
+        db.merge(User(id="test-user", username="test-user", email="test-user@example.com", password_hash="x", is_active=True, role="viewer"))
+        for sid in ("sess-upload-fmt-test", "sess-upload-size-test"):
+            db.merge(Conversation(id=sid, user_id="test-user"))
+        db.commit()
     app = FastAPI()
     # 镜像 app/main.py 的统一错误信封接线（ADR-0138）：裸 app 不挂 handler
     # 会让 HTTPException 走默认 {"detail"} 体，与生产行为不符。
@@ -24,7 +32,7 @@ def app():
 
     app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
     app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
-    app.dependency_overrides[get_current_user] = lambda: _mock_user
+    app.dependency_overrides[get_current_user_optional_with_version] = lambda: _mock_user
     app.include_router(_mod.router, prefix="/api/v1")
     return app
 

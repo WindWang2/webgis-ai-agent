@@ -12,6 +12,7 @@ import {
   activeJobsFixture,
 } from '@/test/fixtures/health-fixtures';
 import { clusterMetricsFixture } from '@/test/fixtures/geocompute-fixtures';
+import { version as packageVersion } from '../../package.json';
 
 describe('SystemSettings（P5 tab 入口）', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -19,6 +20,7 @@ describe('SystemSettings（P5 tab 入口）', () => {
   it('默认「常规」tab：既有内容不回归', () => {
     render(<SystemSettings />);
     expect(screen.getByText('Backend API URL')).toBeInTheDocument();
+    expect(screen.getByText(`v${process.env.NEXT_PUBLIC_APP_VERSION || packageVersion}`)).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '常规' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: '集群健康' })).toHaveAttribute('aria-selected', 'false');
   });

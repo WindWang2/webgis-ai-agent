@@ -192,36 +192,35 @@ def read_arrow_batches(
             # lazy 读纪律一致：块边界只影响 IO，不影响返回值形状）。
             # max_rows 预算无条件生效（row_offset-only 的读也截到预算
             # —— 结构性资源边界绝不因参数组合而旁路）。
-            row_start = int(row_offset or 0)
-            row_stop = total_rows
-            if row_offset or row_limit is not None:
-                if row_offset < 0 or (row_limit is not None and row_limit < 0):
-                    raise ArrowAdapterError("row window must be non-negative")
-                want = total_rows - row_start
-                if row_limit is not None:
-                    want = min(int(row_limit), max_rows)
-                else:
-                    want = min(want, max_rows)
-                row_stop = min(total_rows, row_start + want)
-                if row_start >= row_stop:
-                    raise ArrowAdapterError(
-                        f"row window [{row_start}, {row_stop}) is empty — "
-                        f"object has {total_rows} rows"
-                    )
-                acc = 0
-                for i, n in enumerate(batch_rows):
-                    if acc + n > row_start:
-                        start = max(start, i)
-                        break
-                    acc += n
-                acc_end = 0
-                for i, n in enumerate(batch_rows):
-                    acc_end += n
-                    if acc_end >= row_stop:
-                        stop = min(stop, i + 1)
-                        break
-                else:
-                    stop = min(stop, total_batches)
+            row_start = int(row_offset or 0) if row_offset or row_limit is not None else sum(batch_rows[:start])
+            row_stop = min(total_rows, row_start + max_rows)
+            if row_offset < 0 or (row_limit is not None and row_limit < 0):
+                raise ArrowAdapterError("row window must be non-negative")
+            want = total_rows - row_start
+            if row_limit is not None:
+                want = min(int(row_limit), max_rows)
+            else:
+                want = min(want, max_rows)
+            row_stop = min(total_rows, row_start + want)
+            if row_start >= row_stop:
+                raise ArrowAdapterError(
+                    f"row window [{row_start}, {row_stop}) is empty — "
+                    f"object has {total_rows} rows"
+                )
+            acc = 0
+            for i, n in enumerate(batch_rows):
+                if acc + n > row_start:
+                    start = max(start, i)
+                    break
+                acc += n
+            acc_end = 0
+            for i, n in enumerate(batch_rows):
+                acc_end += n
+                if acc_end >= row_stop:
+                    stop = min(stop, i + 1)
+                    break
+            else:
+                stop = min(stop, total_batches)
             rows_before = sum(batch_rows[:start])
             tables: List[Any] = []
             rows_read = 0
@@ -233,7 +232,7 @@ def read_arrow_batches(
                 pa_mod.concat_tables(tables) if tables
                 else pa_mod.Table.from_arrays([], names=[])
             )
-            if row_limit is not None or row_offset:
+            if row_limit is not None or row_offset or len(table) > max_rows:
                 lo = row_start - rows_before
                 table = table.slice(max(0, lo), row_stop - row_start)
             if columns:

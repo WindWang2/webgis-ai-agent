@@ -1,13 +1,13 @@
-# ADR 0283 — 情境化人机协同交互闭环（Situated Agent Workbench vNext）
+# ADR 0285 — 情境化人机协同交互闭环（Situated Agent Workbench vNext）
 
 - 状态：Proposed（随 zcode/goal-situated-agent-workbench-vnext-20261105 PR）
 - 日期：2026-11-06 · 基线 master 40cda057a
 - 关联：ADR-0227（Interaction IR V1）· ADR-0252（GIS Situation）· ADR-0278（map
   operation 事务）· ADR-0277（feature editing）· ADR-0268（turn journal）·
   ADR-0281（recovery）· ADR-0059（Selection 不是 MapSpec）
-- 编号说明：分配器给出 0282，但 open PR #1972 分支已携带
-  `docs/adr/0282-typed-analysis-artifact-envelope.md`（可预期撞号）——手动跳到
-  0283 并把 watermark 推进至 283（沿 0225→0227 手动重编先例）。
+- 编号说明：本地最终整合为避免与其他 open PR（含 #1975）的 ADR 撞号，
+  将本 workbench ADR 从 0283 调整为 0285；adr watermark 推进至 285，
+  保留主修复 migration watermark 103。
 
 ## 背景
 

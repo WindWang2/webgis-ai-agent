@@ -46,7 +46,7 @@ def scene_for_arc(arc_role: ArcRole | str) -> Dict[str, object] | None:
     """弧角色 → 场景默认档（无该角色映射 → None = 不改变场景）。"""
     return ARC_SCENE_DEFAULTS.get(str(arc_role))
 
-ZOOM_MIN, ZOOM_MAX = 3.0, 18.0
+ZOOM_MIN, ZOOM_MAX = 0.0, 18.0
 PITCH_MAX = 60.0
 # 跨度收缩阈值（°）：极小 bbox 追加俯仰强调微观；超大 bbox 压平为平面叙事。
 _PITCH_MICRO_SPAN = 0.05
@@ -84,7 +84,7 @@ def plan_camera_for_bbox(
 ) -> Dict[str, object]:
     """图层要素包围盒 → 该章最佳观察位姿。
 
-    zoom 取经纬张角口径（log2(360/lon_span)+1）——故事镜头以经纬张角为准，
+    zoom 同时约束经纬张角和画布宽高比，南北狭长区域不会被横轴裁切。
     不做 cos 修正（极区同跨度不虚高 zoom）；pitch 由弧角色基准 + 跨度收缩
     微调（微观 +10°、超大跨度压平至 ≤5°），封顶 60°。跨 ±180° 经线的
     bbox（e < w）按展开域求中心，中心经度归一回 [−180, 180)。输入含
@@ -93,6 +93,8 @@ def plan_camera_for_bbox(
     w, s, e, n = (float(v) for v in bbox)
     if not all(math.isfinite(v) for v in (w, s, e, n)):
         raise ValueError(f"bbox contains non-finite values: {bbox!r}")
+    if not math.isfinite(aspect) or aspect <= 0:
+        raise ValueError("aspect must be finite and positive")
     if e < w:  # 跨 ±180°：展开到 [w, e+360)
         e += 360.0
     lon_span = max(abs(e - w), 1e-6)
@@ -101,7 +103,10 @@ def plan_camera_for_bbox(
     cx = _normalize_lng((w + e) / 2.0)
     cy = _clamp((s + n) / 2.0, -90.0, 90.0)
 
-    zoom = _clamp(math.log2(360.0 / lon_span) + 1.0, ZOOM_MIN, ZOOM_MAX)
+    zoom = _clamp(min(
+        math.log2(360.0 / lon_span),
+        math.log2(180.0 / (lat_span * aspect)),
+    ) + 1.0, ZOOM_MIN, ZOOM_MAX)
     base = ARC_PITCH_BASE.get(str(arc_role), 20.0)
     pitch = base
     if span < _PITCH_MICRO_SPAN:
@@ -270,7 +275,7 @@ def validate_track(
             violations.append(
                 f"sample[{i}] center jump {center_jump:.3f}° > {max_center_jump_deg}°"
             )
-        for dim, val, limit, label in (
+        for _dim, val, limit, label in (
             ("zoom", abs(cur.zoom - prev.zoom), max_zoom_jump, "zoom"),
             ("pitch", abs(cur.pitch - prev.pitch), max_pitch_jump, "pitch"),
             ("bearing", abs(_shortest_bearing_delta(prev.bearing, cur.bearing)),

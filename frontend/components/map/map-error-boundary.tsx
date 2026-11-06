@@ -1,5 +1,6 @@
 'use client';
 
+import { t } from '@/lib/i18n/t';
 import React, { Component, type ReactNode } from 'react';
 
 interface MapErrorBoundaryState {
@@ -49,21 +50,21 @@ export class MapErrorBoundary extends Component<{ children: ReactNode }, MapErro
       <div className='absolute inset-0 flex items-center justify-center bg-surface-canvas'>
         <div className='max-w-sm space-y-3 px-6 text-center'>
           <div className='font-mono text-xs uppercase tracking-widest text-ink-muted'>
-            Map Unavailable
+            {t('map.recovery.unavailable')}
           </div>
           <p className='text-body text-ink-secondary'>
             {isStyleLoadError
-              ? 'The basemap tiles could not be loaded. Check your network connection or tile provider.'
-              : message}
+              ? t('map.recovery.network')
+              : t('map.recovery.failed')}
           </p>
           <p className='text-meta text-ink-muted'>
-            Chat and analysis still work. Layers will render once the map recovers.
+            {t('map.recovery.chatAvailable')}
           </p>
           <button
             onClick={this.handleRetry}
             className='rounded-md border border-edge px-4 py-2 text-body text-ink-secondary transition-colors hover:bg-surface-hover'
           >
-            Retry Map
+            {t('map.recovery.retry')}
           </button>
         </div>
       </div>

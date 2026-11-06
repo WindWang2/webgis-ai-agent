@@ -17,12 +17,12 @@ async def compile_for_session(db: AsyncSession, conv: Conversation) -> object:
         select(Message)
         .where(Message.conversation_id == conv.id,
                Message.role.in_(("user", "assistant")))
-        .order_by(Message.created_at.asc(), Message.id.asc())
+        .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(_SESSION_MESSAGE_LIMIT)
     )
     messages = [
         {"role": m.role, "content": m.content or ""}
-        for m in result.scalars().all()
+        for m in reversed(result.scalars().all())
     ]
     # G3D05 v1.1：会话 mapspec 有 raster-dem 源才投影叙事场景档
     #（fail-closed —— 无高程证据不虚构立体叙事）。

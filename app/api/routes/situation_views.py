@@ -1,4 +1,4 @@
-"""Situation 只读视图端点（ADR-0283 D4/D5）。
+"""Situation 只读视图端点（ADR-0285 D4/D5）。
 
 - ``GET /chat/sessions/{sid}/situation`` —— GISSituation JSON 投影 +
   一致性检查 + 选择史 + claimed scope（刷新/重连的状态面恢复数据源；

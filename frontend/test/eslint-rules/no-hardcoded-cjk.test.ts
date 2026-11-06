@@ -219,11 +219,11 @@ describe('no-hardcoded-cjk 配额语义（与 vitest 守卫衔接）', () => {
   it('真实白名单加载路径：存量配额文件单条不报错（同时守护白名单文件在位）', () => {
     // 不注入 options → 规则实读 test/i18n/no-raw-cjk.whitelist.json；
     // 2026-09 重基线后 market-tab 等域文件已清零出册，改用仍在册的
-    // app/error.tsx（配额 2）。若白名单文件丢失或移位（规则回退到零
+    // app/global-error.tsx（配额 2）。若白名单文件丢失或移位（规则回退到零
     // 容忍），本用例即红。
     const reports = cjkReports(
       "export default () => <span>白名单加载路径覆盖</span>;\n",
-      'app/error.tsx',
+      'app/global-error.tsx',
     );
     expect(reports).toHaveLength(0);
   });

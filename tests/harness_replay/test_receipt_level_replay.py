@@ -88,7 +88,7 @@ class TestReceiptLevelReplay:
         with _dispatch_sandbox() as sandbox:
             store = sandbox.memory_store
             ref = await store.store("s", {"a": 1}, prefix="geojson")
-            assert ref.startswith("ref:geojson:t4-")
+            assert ref.startswith("ref:geojson-t4-")
             assert await store.get("s", ref) == {"a": 1}
             assert await store.get_ref_descriptor("s", ref) is not None
             await store.append_event("s", "tool_executed", {"x": 1})

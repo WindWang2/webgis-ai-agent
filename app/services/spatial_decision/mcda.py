@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from app.services.spatial_decision.models_v3 import (
     Criterion,
     CriterionDirection,
+    MissingPolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,7 +131,8 @@ class MultiCriteriaDecisionEngine:
                         norm_v = dev_v / denom
                     weighted_v = norm_v * w
                     v_matrix[cid][alt_id] = weighted_v
-                    if feasible_mask.get(alt_id, True):
+                    raw = alt_vals.get(alt_id)
+                    if feasible_mask.get(alt_id, True) and raw is not None and math.isfinite(raw):
                         col_weighted.append(weighted_v)
 
                 if not col_weighted:
@@ -171,7 +173,8 @@ class MultiCriteriaDecisionEngine:
                         norm_v = dev_v / denom
                     weighted_v = norm_v * w
                     v_matrix[cid][alt_id] = weighted_v
-                    if feasible_mask.get(alt_id, True):
+                    raw = alt_vals.get(alt_id)
+                    if feasible_mask.get(alt_id, True) and raw is not None and math.isfinite(raw):
                         col_weighted.append(weighted_v)
 
                 if not col_weighted:
@@ -194,7 +197,8 @@ class MultiCriteriaDecisionEngine:
                         norm_v = raw_v / denom
                     weighted_v = norm_v * w
                     v_matrix[cid][alt_id] = weighted_v
-                    if feasible_mask.get(alt_id, True):
+                    raw = alt_vals.get(alt_id)
+                    if feasible_mask.get(alt_id, True) and raw is not None and math.isfinite(raw):
                         col_weighted.append(weighted_v)
 
                 if not col_weighted:
@@ -216,7 +220,8 @@ class MultiCriteriaDecisionEngine:
                         norm_v = raw_v / denom
                     weighted_v = norm_v * w
                     v_matrix[cid][alt_id] = weighted_v
-                    if feasible_mask.get(alt_id, True):
+                    raw = alt_vals.get(alt_id)
+                    if feasible_mask.get(alt_id, True) and raw is not None and math.isfinite(raw):
                         col_weighted.append(weighted_v)
 
                 if not col_weighted:
@@ -235,12 +240,27 @@ class MultiCriteriaDecisionEngine:
             d_plus_sq = 0.0
             d_minus_sq = 0.0
 
+            used_criteria = 0
+            missing_fail_closed = False
             for crit in criteria:
                 cid = crit.id
-                v_ij = v_matrix[cid].get(alt_id, 0.0)
+                raw = raw_matrix.get(cid, {}).get(alt_id)
+                if raw is None or not math.isfinite(raw):
+                    if crit.missing_policy == MissingPolicy.FAIL_CLOSED:
+                        missing_fail_closed = True
+                        break
+                    if crit.missing_policy == MissingPolicy.IGNORE:
+                        continue
+                    v_ij = v_minus[cid]
+                else:
+                    v_ij = v_matrix[cid].get(alt_id, 0.0)
+                used_criteria += 1
                 d_plus_sq += (v_ij - v_plus[cid]) ** 2
                 d_minus_sq += (v_ij - v_minus[cid]) ** 2
 
+            if missing_fail_closed or used_criteria == 0:
+                scores[alt_id] = 0.0
+                continue
             d_plus = math.sqrt(d_plus_sq)
             d_minus = math.sqrt(d_minus_sq)
 

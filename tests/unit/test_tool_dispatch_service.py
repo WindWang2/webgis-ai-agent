@@ -425,7 +425,8 @@ async def test_heatmap_raster_enters_mapspec_review(service, fake_registry, clea
     params = commands[0]["params"]
     image_url = result.raw_result["image"]
     assert image_url.startswith(f"/api/v1/sessions/{clean_session}/raster/")
-    assert image_url.endswith("/raster/raster-heat_1-source.png")
+    assert image_url.split("?", 1)[0].endswith("/raster/raster-heat_1-source.png")
+    assert "sig=" in image_url and "token=" not in image_url
     assert params["image"] == image_url
     assert params["bbox"] == [116.0, 39.0, 117.0, 40.0]
     # 命令必须被铸成 SSE map action（前端经此消费执行）。

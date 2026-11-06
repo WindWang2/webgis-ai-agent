@@ -109,22 +109,25 @@ class ToolExecutionPipeline:
         Returns:
             ToolExecutionResult with raw_result (for frontend/events) and llm_payload (for LLM history)
         """
-        start_time = time.time()
+        start_time = time.monotonic()
         tool_call_id = tc.get("id") or ""
         func_info = tc.get("function", {})
         tool_name = func_info.get("name") or "unknown_tool"
         raw_args = func_info.get("arguments", {})
 
-        # 1. Parse arguments dictionary
-        args_dict: dict = {}
-        if isinstance(raw_args, dict):
-            args_dict = raw_args
-        elif isinstance(raw_args, str):
-            try:
-                args_dict = json.loads(raw_args) if raw_args.strip() else {}
-            except Exception as e:
-                logger.warning(f"[ToolPipeline] JSON parse failed for {tool_name}: {e}")
-                args_dict = {}
+        # Reject malformed arguments before tracing or dispatch; never execute
+        # an empty substitute for a malformed JSON/list payload.
+        try:
+            args_dict = json.loads(raw_args) if isinstance(raw_args, str) and raw_args.strip() else raw_args
+            if not isinstance(args_dict, dict):
+                raise ValueError("arguments must be a JSON object")
+        except (TypeError, ValueError):
+            return ToolExecutionResult(
+                tool_name=tool_name, tool_call_id=tool_call_id,
+                raw_result={"error": "invalid_arguments", "code": "INVALID_TOOL_ARGUMENTS"},
+                llm_payload="Tool arguments must be a valid JSON object. No tool was executed.",
+                is_error=True,
+            )
 
         # 2. Sentinel check / fallback
         sentinels = executed_tools if executed_tools is not None else set()
@@ -179,7 +182,7 @@ class ToolExecutionPipeline:
                 _trace_turn, "dispatch_completed", tool=tool_name,
                 tool_call_id=tool_call_id,
                 status=_outcome.status,
-                duration_ms=round(elapsed_ms, 1) if (elapsed_ms := time.time() - start_time) else 0,
+                duration_ms=round((time.monotonic() - start_time) * 1000, 1),
             )
             # 归一化修复证据（registry 经 ContextVar 暴露）→ trace
             try:
@@ -281,7 +284,7 @@ class ToolExecutionPipeline:
                         step.error = str(outcome.raw_result)
                     step.background_job_ids = list(origin.created_job_ids)
 
-        elapsed_ms = (time.time() - start_time) * 1000
+        elapsed_ms = (time.monotonic() - start_time) * 1000
         if outcome.status == "ok" and isinstance(outcome.raw_result, dict):
             # Both the legacy and Pi agents converge into the same existing
             # harness. Dynamic import avoids coupling the generic pipeline at

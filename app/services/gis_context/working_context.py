@@ -367,8 +367,10 @@ class GISWorkingContext(BaseModel):
         return self.model_copy(update={"revision": int(self.revision) + 1})
 
     def mark_stale(self, field: str, reason: str) -> None:
-        if len(self.stale) < MAX_STALE_FIELDS:
-            self.stale[str(field)[:64]] = str(reason)[:96]
+        key = str(field)[:64]
+        if key not in self.stale and len(self.stale) >= MAX_STALE_FIELDS:
+            self.stale.pop(next(iter(self.stale)))
+        self.stale[key] = str(reason)[:96]
 
     def clear_stale(self, field: str) -> None:
         self.stale.pop(field, None)

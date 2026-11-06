@@ -1,5 +1,5 @@
 /**
- * SituationStatusBar —— 情境状态条（ADR-0283 D5 / 任务书 E4）。
+ * SituationStatusBar —— 情境状态条（ADR-0285 D5 / 任务书 E4）。
  *
  * 一行六个诚实状态位：当前分析范围 / 选中对象（含来源）/ 结果来源 /
  * 操作执行中 / 等待地图验证 / 失败可重试。数据全部来自服务端 situation/

@@ -1,67 +1,21 @@
-"""DUP-1: process-local SSE turn-resume buffer and registry.
+"""Process-local, bounded SSE resume buffers for canonical session identities.
 
-A chat SSE stream is a *read* of one turn: every event carries a per-turn
-monotonic ``id:`` (see ``app.utils.sse.sse_event_id_scope``), and the route
-records each emitted event into a per-session ring buffer so a client whose
-connection dropped can resume with ``Last-Event-ID`` instead of losing the
-turn (there was no ``id:``/resume anywhere before DUP-1 — finding B-2.8).
+Every event has a per-turn monotonic cursor. A resume is read-only: replay the
+missed tail, optionally hold a live turn for its actual terminal, and never
+start another model/tool execution. A miss, ambiguity or live-hold deadline is
+reported honestly rather than fabricating a completed turn.
 
-Why a buffer, not a live splice: when a client disconnects, Starlette cancels
-the StreamingResponse body generator, so the server-side turn (Pi prompt /
-legacy engine) is aborted within milliseconds — there is no live stream left
-to splice into. The buffer is therefore the source of truth for what the
-client missed. A resume replays the buffered events after ``Last-Event-ID``
-and then terminates; it NEVER starts a new turn (no prompt RPC, no tool
-dispatch), which is the DUP-1 no-duplicate-execution guarantee.
+A message and Last-Event-ID establish ordering, not ownership. Empty legacy
+session keys are never registered or returned, even for an otherwise valid
+cursor. The route assigns a canonical UUID before starting an anonymous turn
+and enforces its normal live-user/anonymous-owner capability before replay.
+Direct registry consumers must apply that same ownership guard for nonempty
+keys; this module is an internal buffer, not an authentication boundary.
 
-Semantics (documented contract, see ``app.api.routes.chat._resume_generator``):
-
-  - a POST /chat/stream carrying ``Last-Event-ID`` / ``last_event_id`` is a
-    RESUME (read-only), never a new execution;
-  - buffer hit + UNAMBIGUOUS message match: replay every buffered event with
-    ``id > Last-Event-ID`` in order; if the turn is still live (or queued, not
-    yet started), the resume HOLDS — replaying new events as they are recorded
-    — until the real terminal arrives or the hold cap expires. It terminates
-    with the buffered terminal event, a synthesized ``done {resumed: true}``
-    if the terminal was already consumed, a synthesized ``error`` if the turn
-    was interrupted (aborted on disconnect — no terminal was ever produced),
-    or a truthful ``error {resumed: true, pending: true}`` if the live turn
-    outlived the hold cap. A live/never-started turn NEVER yields a fabricated
-    ``done`` (F20). Anonymous (``""``-key) sessions NEVER hold (P1): the
-    shared anonymous key skips ownership checks, so holding would let anyone
-    who knows the victim's message + Last-Event-ID tail a stranger's live turn
-    — an anonymous resume of a live turn replays the already-buffered tail and
-    immediately ends with that truthful pending error instead;
-  - ambiguous match (multiple concurrent turns on the same session key match
-    the message + Last-Event-ID — e.g. two anonymous ``""``-key turns with the
-    same message, F2): emit ``error {resumed: false}`` and close. Failing safe
-    is the whole point: replaying the WRONG turn would leak one user's events
-    into another's stream;
-  - buffer miss (process restart, LRU eviction, message mismatch): emit
-    ``error {resumed: false}`` and close — the client stops auto-retrying and
-    surfaces the error instead of silently re-executing the message.
-  - P2 (round-2 review): anonymous (``""``-key) resumes require
-    ``Last-Event-ID > 0`` — id 0 (no proof of prior contact with that turn) is
-    refused with a terminal ``error {resumed: false}``, no replay and no
-    fabricated done. RESIDUAL (documented, by design): anonymous + no-auth
-    still share the ``""`` namespace, so a nonzero id is only weak ownership —
-    this guard removes the whole-turn replay, not the namespace sharing.
-
-Bounds: ``RESUME_MAX_EVENTS`` per turn (ring buffer — only the tail survives,
-which is exactly what a dropped connection missed). Entries are the route's
-COALESCED wire chunks (each holding up to ~32 token events — the route
-records merged batches whole and re-splits only at replay time, #398), so the
-256-slot ring comfortably covers multi-thousand-token turns; when the ring
-still evicts events a client has not seen, a replay STARTS with an explicit
-``resume_gap`` marker event instead of a silently truncated turn (#398).
-``RESUME_MAX_BUFFERS_PER_SESSION`` recent turn buffers per session key (F4: a
-queued second POST registers its buffer WITHOUT clobbering the live turn's),
-and ``RESUME_MAX_SESSIONS`` process-wide (oldest buffered session evicted
-first). Cross-restart resume is explicitly out of scope (non-goal): the buffer
-lives in this process only.
-
-The registry is asyncio-single-threaded (plain dicts/deques): every access
-happens inside a request/stream task, so no locking is needed.
+Buffers and session keys are bounded independently. Registering a new turn
+preserves previous queued/live buffers, evicts ended turns first, and fails
+safe when a same-session message/cursor ambiguously matches multiple turns.
+Deleting a session removes its replay buffers.
 """
 from __future__ import annotations
 
@@ -282,8 +236,8 @@ class TurnResumeRegistry:
     """Session-keyed registry of the most recent turn buffers per session.
 
     Keeps a small bounded list of recent buffers per session key
-    (``session_id or ""`` — the Pi path runs first anonymous turns under the
-    empty key, shared by ALL anonymous sessions). F4: registering a new turn
+    (only nonempty canonical identities; empty legacy keys are refused).
+    F4: registering a new turn
     APPENDS — a queued second POST can no longer clobber the live turn's
     buffer. Resumes locate their turn via :meth:`find` (message +
     Last-Event-ID match) and fail safe on ambiguity. The registry is
@@ -305,6 +259,10 @@ class TurnResumeRegistry:
         self._order: deque[str] = deque()
 
     def register(self, session_id: str, buffer: TurnEventBuffer) -> None:
+        # Ordering cursors and message equality confer no ownership. Empty
+        # legacy sessions remain streamable but must never enter shared replay.
+        if not session_id:
+            return
         if session_id not in self._buffers:
             self._order.append(session_id)
             self._buffers[session_id] = deque()
@@ -319,8 +277,8 @@ class TurnResumeRegistry:
         while len(buffers) > self._max_buffers_per_session:
             # P2 (review): over cap — evict an ENDED buffer first (its turn is
             # complete; a resume of it already has the terminal), so N
-            # concurrent registrations on one key (e.g. five anonymous POSTs
-            # sharing the '' key) can't evict a still-LIVE turn's buffer before
+            # concurrent registrations on one key (e.g. five queued turns
+            # in one session) can't evict a still-LIVE turn's buffer before
             # its turn runs — that would make a resume fail, the client resend,
             # and the tool side effects re-execute. A live buffer is only
             # evicted when every buffer in the deque is live (oldest first).
@@ -337,7 +295,7 @@ class TurnResumeRegistry:
 
     def get(self, session_id: str) -> Optional[TurnEventBuffer]:
         """Most recently registered buffer for the key (introspection/tests)."""
-        buffers = self._buffers.get(session_id)
+        buffers = self._buffers.get(session_id) if session_id else None
         return buffers[-1] if buffers else None
 
     def find(
@@ -360,11 +318,13 @@ class TurnResumeRegistry:
             an earlier one).
 
         Returns ``(buffer, False)`` on a unique match, ``(None, True)`` when
-        MULTIPLE buffers match (ambiguous — e.g. two concurrent anonymous
-        same-message turns sharing the ``""`` key, F2): the caller must fail
+        MULTIPLE buffers match (ambiguous — e.g. two concurrent
+        same-message turns in the same session, F2): the caller must fail
         safe rather than replay the wrong turn's events (cross-turn leak).
         ``(None, False)`` = plain miss.
         """
+        if not session_id:
+            return None, False
         matches: list[TurnEventBuffer] = []
         for b in self._buffers.get(session_id, ()):
             if b.message != message:
@@ -394,8 +354,7 @@ class TurnResumeRegistry:
         replay its events until LRU eviction). The key is removed from both
         ``_buffers`` and ``_order`` so a re-registration starts a fresh LRU
         slot instead of appending a duplicate order entry. Unknown keys are a
-        no-op; other sessions' buffers are untouched (the shared ``""`` key is
-        never purged here — it is shared by ALL anonymous sessions).
+        no-op; other sessions' buffers are untouched.
         """
         if session_id in self._buffers:
             del self._buffers[session_id]

@@ -158,7 +158,7 @@ def test_new_instance_high_first_seq_no_fake_gap():
 
 
 @pytest.mark.asyncio
-async def test_degraded_response_omits_watermarks():
+async def test_degraded_response_omits_watermarks(monkeypatch):
     from app.services.gis_harness.interaction_ir.ingest import (
         ingest_interaction_batch,
     )
@@ -169,12 +169,14 @@ async def test_degraded_response_omits_watermarks():
             return False
 
     store = DegradedStore()
+    monkeypatch.setattr("app.services.session_state_atomic.atomic_update_state", AsyncMock(return_value=None))
     resp = await ingest_interaction_batch(store, "sess-degraded", [{
         "event_id": "d-00000001", "client_instance_id": "tab-aaaa0001",
         "client_seq": 1, "kind": "viewport_settled",
         "payload": {"center": [1, 2], "zoom": 3},
     }])
-    assert resp["accepted"] == 1
+    assert resp["accepted"] == 0
+    assert resp["acks"] == []
     assert resp["persist_degraded"] is True
     # 降级时水印来自内存态 —— 不得让客户端误信"已记账"。
     assert "watermarks" not in resp

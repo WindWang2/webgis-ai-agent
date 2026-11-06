@@ -102,3 +102,19 @@ def test_report_light_mode_skips_tree(ledger) -> None:
     report = session_journal_report_sync(ledger, "s-fix", with_tree=False)
     assert report["causal_tree"] is None
     assert report["unsettled_turns"], "恢复面照常工作"
+
+
+def test_retention_preserves_whole_turn_with_any_recent_event(ledger):
+    old, now = utc_now() - timedelta(days=60), utc_now()
+    for event_id, turn, kind, stamp in (
+        ("mixed:start", "mixed", "phase_changed", old),
+        ("mixed:end", "mixed", "turn_ended", now),
+        ("old:start", "old", "phase_changed", old),
+        ("old:end", "old", "turn_ended", old),
+    ):
+        asyncio.run(ledger.append(TurnEventRecord(session_id="retention", turn_id=turn,
+            event_id=event_id, kind=kind, occurred_at=stamp)))
+    deleted = ledger._sweep_retention_sync(older_than=now - timedelta(days=30), limit=1)
+    assert deleted == 2
+    remaining = asyncio.run(ledger.list_events("retention"))
+    assert {event["event_id"] for event in remaining} == {"mixed:start", "mixed:end"}

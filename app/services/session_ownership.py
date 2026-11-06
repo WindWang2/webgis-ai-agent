@@ -15,11 +15,10 @@ from app.tools._utils import async_db_session
 
 
 async def lookup_session_owner_token(session_id: str) -> Optional[str]:
-  """The session's anonymous owner_token, if any (for URL minting in tools).
+  """Load the anonymous verifier for server-side owner_token_matches checks.
 
-  Authenticated sessions have no owner_token (cookie/bearer auth covers them);
-  token-less legacy anonymous sessions need none. Only token-bearing anonymous
-  sessions require the query-parameter form on the URLs they hand to MapLibre.
+  The historical function name remains compatible. A loaded verifier is not
+  a transport credential and must never be placed in a public URL.
   """
   async with async_db_session() as db:
     row = (

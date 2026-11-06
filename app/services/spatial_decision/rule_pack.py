@@ -402,7 +402,7 @@ class DomainRulePackRegistry:
                     ctx_val = context[alt_keys[0]]
 
             if ctx_val is None:
-                continue  # If condition key absent from context, do not disqualify unless mandatory
+                return False
 
             # Compare cond_val vs ctx_val
             if not self._check_condition_match(cond_val, ctx_val):
@@ -523,6 +523,7 @@ async def build_evidence_chain(
     assumptions: Optional[List[EvidenceItem]] = None,
     knowledge_engine: Optional[KnowledgeEngine] = None,
     top_k: int = 3,
+    tenant: Optional[TenantContext] = None,
 ) -> List[EvidenceItem]:
     """
     Compose a structured, auditable evidence chain combining:
@@ -578,6 +579,7 @@ async def build_evidence_chain(
     rag_evidence = await retrieve_evidence_from_rag(
         query=query,
         domain=domain,
+        tenant=tenant,
         knowledge_engine=knowledge_engine,
         top_k=top_k,
     )

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 #: manifest schema 版本（升级时新版本号 + fail-closed 读路径，见 store/validation）。
 RUNTIME_SNAPSHOT_SCHEMA_VERSION = 1
@@ -104,6 +104,7 @@ class SourceBinding(BaseModel):
     ref: str = ""                    # 冻结时的会话 ref（可空 = inline/外部）
     promotion_class: str = NON_PROMOTABLE
     durable_pointer: Optional[DurablePointerRef] = None
+    live_payload_sha256: str = ""
     skip_reason: str = ""            # budget | quota | dead | sensitive | ...
 
     @field_validator("source_id")
@@ -195,6 +196,20 @@ class ProjectRuntimeSnapshotV1(BaseModel):
     plan: PlanProjectionRef = Field(default_factory=PlanProjectionRef)
     policy: RecoveryPolicy = Field(default_factory=RecoveryPolicy)
     disclosure: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _disclose_projection_limits(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        disclosure = dict(value.get("disclosure") or {})
+        for field, limit in (("source_bindings", SOURCE_BINDING_LIMIT), ("datasets", DATASET_DESCRIPTOR_LIMIT)):
+            entries = value.get(field)
+            if isinstance(entries, list) and len(entries) > limit:
+                disclosure[field + "_truncated"] = len(entries) - limit
+        value["disclosure"] = disclosure
+        return value
 
     @field_validator("source_bindings")
     @classmethod
@@ -296,6 +311,8 @@ class ValidationReport(BaseModel):
             and any(f.subject == "mapspec_doc" for f in self.findings)
         ):
             return RESUME_MISSING_ARTIFACT
+        if RESUME_PERMISSION_CHANGED in states:
+            return RESUME_PERMISSION_CHANGED
         if not self._has_restorable_source and self.findings:
             # 无任何可恢复源：按语义严重度定性终态。
             for state in severity_order:

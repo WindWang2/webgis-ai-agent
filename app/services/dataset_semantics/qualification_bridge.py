@@ -116,13 +116,19 @@ async def session_role_binding(
     if not session_id or not list(role_reqs or []):
         return RoleBindingReport(session_id=str(session_id or "")[:64])
     try:
-        records = await collect_session_evidence(session_id, max_refs=max_refs)
+        records = await collect_session_evidence(session_id, max_refs=max_refs,
+            preferred_refs=list((bound_refs or {}).values()))
         expected = await recorded_fingerprints(session_id)
     except Exception:  # noqa: BLE001 — 证据面失败 = 无证据（不阻断主链）
         logger.warning(
             "[QualificationBridge] session_role_binding evidence unavailable "
             "sid=%s（绑定诚实降级为空）", session_id, exc_info=True)
-        return RoleBindingReport(session_id=str(session_id)[:64])
+        from app.services.dataset_semantics.role_binding import RoleBinding
+        return RoleBindingReport(session_id=str(session_id)[:64], bindings=[
+            RoleBinding(role=str(getattr(req, "role", "") or "")[:32], status="partial",
+                        reason_code="EVIDENCE_UNAVAILABLE", detail="当前会话证据存储不可用，资格尚不可判定")
+            for req in role_reqs
+        ])
     return bind_session_roles(
         role_reqs, records,
         session_id=session_id,

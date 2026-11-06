@@ -228,6 +228,8 @@ def _encode_value(v: Any) -> Optional[bytes]:
     if isinstance(v, bool):
         return _field(_VAL_BOOL, _VARINT) + _varint(1 if v else 0)
     if isinstance(v, int) and not isinstance(v, bool):
+        if v < -(1 << 63) or v >= (1 << 63):
+            return _encode_value(str(v))  # preserve identifier precision safely
         # GIS-P3-1: int_value is sint64 — emit the FULL 64-bit value. The old
         # 32-bit wrap silently corrupted real-world IDs > 2^31 (OSM ids,
         # int64 keys): 2**31 → -2**31, 2**32+5 → 5. Negatives go through the
@@ -604,16 +606,11 @@ def _normalize_ring(coords) -> Optional[List[Tuple[float, float]]]:
 
 
 def _orient_ring(ring: List[Tuple[float, float]], exterior: bool) -> List[Tuple[float, float]]:
-    """Force ring winding: exterior CCW / holes CW in geographic (lon/lat) terms.
-
-    World/tile y points down, so geographic CCW ⇔ shoelace < 0 in y-down
-    coordinates. This matches RFC 7946 GeoJSON winding and, after the y flip,
-    the MVT 2.1 spec orientation.
-    """
+    """MVT tile coordinates: exterior signed area positive, holes negative."""
     s = _shoelace(ring)
-    if exterior and s > 0:
+    if exterior and s < 0:
         return list(reversed(ring))
-    if not exterior and s < 0:
+    if not exterior and s > 0:
         return list(reversed(ring))
     return ring
 
@@ -891,17 +888,12 @@ def _simplify_and_project(gtype: str, geom_lonlat, geom_z0, z: int):
         if geom_z0 is not None:
             return geom_z0
         return shapely.transform(geom_lonlat, _transform_z0)
-    # z < threshold: simplify in lon/lat space, then project the result.
-    # half a pixel at zoom z; in degree terms: 360 / (256 * 2^z) / 2,
-    # converted to z0 world px (world = 256): 2 ** -(z + 1)
-    simplified = geom_lonlat.simplify(2.0 ** -(z + 1), preserve_topology=True)
+    projected = geom_z0 if geom_z0 is not None else shapely.transform(geom_lonlat, _transform_z0)
+    # Half a display pixel in the z0 world plane, independent of latitude.
+    simplified = projected.simplify(2.0 ** -(z + 1), preserve_topology=True)
     if simplified.is_empty:
         return None
-    if not is_poly or simplified.is_valid:
-        geom_lonlat = simplified
-    # else: simplification produced self-intersection → keep the original
-    # (which passed the is_valid gate above)
-    return shapely.transform(geom_lonlat, _transform_z0)
+    return simplified if not is_poly or simplified.is_valid else projected
 
 
 def _clip_and_encode(geom, is_poly: bool, z: int, x: int, y: int) -> Optional[bytes]:
@@ -1014,6 +1006,13 @@ def _encode_geometry_pieces(gtype: str, coords, z: int, x: int, y: int) -> List[
     return []
 
 
+MAX_TILE_FEATURES = 50_000
+
+
+class TileFeatureBudgetExceeded(ValueError):
+    """A tile needs subdivision before it can be encoded within its budget."""
+
+
 # ─── public encode API ──────────────────────────────────────────────────────
 
 
@@ -1040,7 +1039,10 @@ def extract_features(data) -> List[dict]:
 def _to_feature_dicts(features_data) -> List[dict]:
     """Normalize encode_tile input into a list of GeoJSON feature dicts."""
     if isinstance(features_data, dict):
-        return extract_features(features_data)
+        fc = features_data.get("geojson", features_data)
+        if isinstance(fc, dict) and fc.get("type") == "FeatureCollection":
+            return [item if isinstance(item, dict) else {} for item in fc.get("features", [])]
+        return []
     if isinstance(features_data, (list, tuple)):
         out = []
         for item in features_data:
@@ -1085,6 +1087,8 @@ def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
     first-seen order, exactly as the wire format requires. Returns b"" when no
     feature produced geometry (a valid empty tile message with no layer).
     """
+    if len(records) > MAX_TILE_FEATURES:
+        raise TileFeatureBudgetExceeded("tile feature budget exceeded; zoom in")
     keys: List[str] = []
     key_idx: Dict[str, int] = {}
     values: List[bytes] = []
@@ -1154,6 +1158,8 @@ def encode_tile(features_data, z: int, x: int, y: int, natural_indices=None) -> 
     indices = natural_indices if natural_indices is not None else range(len(features))
     records: List[Tuple[int, bytes, Dict[str, Any], Optional[int]]] = []
     for natural_index, f in zip(indices, features):
+        if len(records) >= MAX_TILE_FEATURES:
+            raise TileFeatureBudgetExceeded("tile feature budget exceeded; zoom in")
         geometry = f.get("geometry")
         if not isinstance(geometry, dict):
             continue
@@ -1208,10 +1214,13 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
     if not _SHAPELY or entry.geoms is None:
         indices = entry._candidate_indices(z, x, y)
         return encode_tile(
-            [entry.features[i] for i in indices], z, x, y, natural_indices=indices
+            [entry.features[i] for i in indices], z, x, y, natural_indices=[entry.natural_indices[i] for i in indices]
         )
     records: List[Tuple[int, bytes, Dict[str, Any], Optional[int]]] = []
-    for natural_index, (feature, geom_lonlat, geom_z0, crosses_am) in entry.query_candidates_indexed(z, x, y):
+    candidates = entry.query_candidates_indexed(z, x, y)
+    if len(candidates) > MAX_TILE_FEATURES:
+        raise TileFeatureBudgetExceeded("tile feature budget exceeded; zoom in")
+    for natural_index, (feature, geom_lonlat, geom_z0, crosses_am) in candidates:
         geometry = feature.get("geometry")
         gtype = geometry.get("type") if isinstance(geometry, dict) else None
         # GeometryCollections and unsupported types are excluded at index-build
@@ -1284,11 +1293,13 @@ class SpatialIndexEntry:
 
     __slots__ = (
         "key", "features", "geoms", "geoms_lonlat", "crosses_am",
-        "tree", "bounds", "estimated_bytes", "id_index",
+        "tree", "bounds", "estimated_bytes", "id_index", "natural_indices", "source_features",
     )
 
     def __init__(self, key, features, geoms, geoms_lonlat, crosses_am, tree, bounds,
-                 estimated_bytes: int = 0) -> None:
+                 estimated_bytes: int = 0, natural_indices=None, source_features=None) -> None:
+        self.natural_indices = list(range(len(features))) if natural_indices is None else natural_indices
+        self.source_features = features if source_features is None else source_features
         self.key = key
         self.features = features
         self.geoms = geoms
@@ -1340,7 +1351,7 @@ class SpatialIndexEntry:
         """同 ``query_candidates``，但携带 (natural_index, tuple) —— 瓦片编码
         需要自然索引推导位置 id（MVT field 1，仅无链内 id 的要素）。"""
         return [
-            (i, (self.features[i], self.geoms_lonlat[i], self.geoms[i], self.crosses_am[i]))
+            (self.natural_indices[i], (self.features[i], self.geoms_lonlat[i], self.geoms[i], self.crosses_am[i]))
             for i in self._candidate_indices(z, x, y)
         ]
 
@@ -1396,13 +1407,17 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
     """
     if data is None:
         raise RefDataUnavailableError(f"ref data unavailable for index build: {key}")
-    features = extract_features(data)
+    fc = data.get("geojson", data) if isinstance(data, dict) else {}
+    features = fc.get("features", []) if isinstance(fc, dict) and fc.get("type") == "FeatureCollection" else []
+    natural_indices = []
     geoms: List[Any] = []
     geoms_lonlat: List[Any] = []
     crosses_am: List[bool] = []
     bounds: List[Tuple[float, float, float, float]] = []
     kept: List[dict] = []
-    for f in features:
+    for natural_index, f in enumerate(features):
+        if not isinstance(f, dict):
+            continue
         g = f.get("geometry")
         gtype = g.get("type") if isinstance(g, dict) else None
         coords = g.get("coordinates") if isinstance(g, dict) else None
@@ -1421,18 +1436,23 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
                 continue
             geoms_lonlat.append(geom)
             geoms.append(geom_z0)
-            bounds.append(tuple(b))
-            crosses_am.append(bool(_crosses_antimeridian(gtype, coords)))
+            crosses = bool(_crosses_antimeridian(gtype, coords))
+            bounds.append((0.0, b[1], 256.0, b[3]) if crosses else tuple(b))
+            crosses_am.append(crosses)
         else:  # pragma: no cover - no-shapely environments
             b = _pure_bounds(gtype, coords)
             if b is None:
                 continue
             bounds.append(b)
         kept.append(f)
+        natural_indices.append(natural_index)
     tree = None
     if _SHAPELY and geoms:
         try:
-            tree = shapely.STRtree(geoms)
+            tree = shapely.STRtree([
+                shapely.geometry.box(*bounds[i]) if crosses_am[i] else geom
+                for i, geom in enumerate(geoms)
+            ])
         except Exception:  # pragma: no cover - defensive
             tree = None
 
@@ -1455,7 +1475,7 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
         except Exception:  # pragma: no cover - defensive
             vertex_count = 0
     est_bytes = (
-        _estimate_json_bytes(kept)
+        _estimate_json_bytes(features)
         + vertex_count * _COORD_OBJ_BYTES
         + len(kept) * _FEATURE_OBJ_BYTES
         + len(geoms) * _GEOM_OBJ_BYTES
@@ -1472,7 +1492,7 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
         crosses_am if _SHAPELY else None,
         tree,
         bounds,
-        estimated_bytes=est_bytes,
+        estimated_bytes=est_bytes, natural_indices=natural_indices, source_features=features,
     )
 
 
@@ -1500,9 +1520,10 @@ class SpatialIndexCache:
     is enforced solely by the epoch guards, exactly as before.
     """
 
-    def __init__(self, max_refs: int = 256, max_bytes: int = 256 * 1024 * 1024) -> None:
+    def __init__(self, max_refs: int = 256, max_bytes: int = 256 * 1024 * 1024, max_entry_bytes: int = 64 * 1024 * 1024) -> None:
         self._max_refs = max_refs
         self._max_bytes = max_bytes
+        self._max_entry_bytes = min(max_entry_bytes, max_bytes)
         self._entries: "OrderedDict[tuple, SpatialIndexEntry]" = OrderedDict()
         self._total_bytes = 0
         self._lock = threading.Lock()
@@ -1518,6 +1539,7 @@ class SpatialIndexCache:
         # keys the per-key table has never seen (in-flight builds for
         # brand-new keys). Captures are (global, per_key) composites.
         self._global_gen = 0
+        self._building: Dict[tuple, int] = {}
         # R4a: per-instance build dedup (thread context — get_or_build runs on
         # asyncio.to_thread workers). Instance-scoped so independent caches
         # (tests, alternate budgets) never share flight state. Overload above
@@ -1558,14 +1580,25 @@ class SpatialIndexCache:
                 self._entries.move_to_end(key)
                 return entry
             build_epoch = (self._global_gen, self._epochs.get(key, (0, 0.0))[0])
+            self._building[key] = self._building.get(key, 0) + 1
         # R4a: heavy work outside the lock AND deduplicated per key — concurrent
         # tile misses share one build_fn execution. Epoch guards below are
         # unchanged and per-caller: each waiter re-validates its own captured
         # epoch at insert time, so an invalidation during the shared build
         # still refuses the stale result for every participant.
-        entry = self._build_flight.run(("spatial_index", *key), build_fn)
+        try:
+            entry = self._build_flight.run(("spatial_index", *key), build_fn)
+        except BaseException:
+            with self._lock:
+                self._building[key] -= 1
+                if not self._building[key]:
+                    del self._building[key]
+            raise
         entry_bytes = getattr(entry, "estimated_bytes", 0)
         with self._lock:
+            self._building[key] -= 1
+            if not self._building[key]:
+                del self._building[key]
             # P1-1: the authoritative payload was invalidated while this build
             # ran — inserting would resurrect ghost geometry derived from the
             # superseded payload. Raise so the caller refetches fresh data and
@@ -1578,6 +1611,8 @@ class SpatialIndexCache:
             existing = self._entries.get(key)
             if existing is not None:
                 return existing
+            if entry_bytes > self._max_entry_bytes:
+                return entry  # serve without flushing other tenants' hot refs
             self._entries[key] = entry
             self._prune_epochs_locked()
             self._entries.move_to_end(key)
@@ -1627,7 +1662,7 @@ class SpatialIndexCache:
         now = time.monotonic()
         for k in [
             k for k, v in self._epochs.items()
-            if k not in self._entries and (now - v[1]) >= _EPOCH_PRUNE_GRACE_S
+            if k not in self._entries and k not in self._building and (now - v[1]) >= _EPOCH_PRUNE_GRACE_S
         ]:
             del self._epochs[k]
 
@@ -1635,9 +1670,12 @@ class SpatialIndexCache:
         """Invalidate all spatial index entries for session_id."""
         with self._lock:
             to_remove = [k for k in self._entries if k[0] == session_id]
-            # Global bump covers every key of this session — including
-            # in-flight builds for keys the per-key table has never seen.
-            self._global_gen += 1
+            # In-flight keys are registered before leaving the lock. Invalidate
+            # only this session, keeping other sessions' builds usable.
+            affected = {key for key in (*self._epochs, *self._entries, *self._building) if key[0] == session_id}
+            for key in affected:
+                previous = self._epochs.get(key, (0, 0.0))[0]
+                self._epochs[key] = (previous + 1, time.monotonic())
             removed = 0
             for k in to_remove:
                 entry = self._entries.pop(k, None)

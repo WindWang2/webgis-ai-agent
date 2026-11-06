@@ -429,7 +429,7 @@ class NetworkGraphEngine:
             return Facility(
                 facility_id=str(raw.get("id") or props.get("id") or f"fac_{idx}"),
                 geometry={"type": "Point", "coordinates": [float(coords[0]), float(coords[1])]},
-                capacity=float(props.get("capacity", 1.0) or 1.0),
+                capacity=float(props.get("capacity", 1.0)),
                 name=str(props.get("name", "") or ""),
             )
         if isinstance(raw, (list, tuple)) and len(raw) >= 2:
@@ -554,7 +554,9 @@ class NetworkGraphEngine:
             barrier_objs = []
             if barriers:
                 for idx, b in enumerate(barriers):
-                    geom = b if isinstance(b, dict) and "type" in b else {"type": "Point", "coordinates": b}
+                    geom = b if isinstance(b, dict) and "type" in b else {
+                        "type": "LineString" if b and isinstance(b[0], (list, tuple)) else "Point", "coordinates": b,
+                    }
                     barrier_objs.append(Barrier(barrier_id=f"b_{idx}", geometry=dict(geom)))
 
             route = self.shortest_path(
@@ -664,7 +666,7 @@ class NetworkGraphEngine:
             prof = profile or TravelProfile()
             graph, net_ds = self._ensure_graph(network, prof)
             inc_pts = [self._parse_point(p, f"incident[{i}]") for i, p in enumerate(incidents)]
-            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._layer_items(facilities) or [])]
 
             fac_res = self.closest_facility(
                 demand_points=inc_pts,
@@ -707,7 +709,7 @@ class NetworkGraphEngine:
             prof = profile or TravelProfile()
             b_minutes = breaks_minutes or [5.0, 10.0, 15.0]
             graph, net_ds = self._ensure_graph(network, prof)
-            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._layer_items(facilities) or [])]
 
             sa_breaks = self.service_area(
                 facilities=fac_objs,
@@ -863,8 +865,8 @@ class NetworkGraphEngine:
             prof = profile or TravelProfile()
             graph, net_ds = self._ensure_graph(network, prof)
 
-            cand_objs = [self._to_facility(c, i) for i, c in enumerate(candidate_facilities)]
-            demands = [self._to_demand(d, i) for i, d in enumerate(demand_points)]
+            cand_objs = [self._to_facility(c, i) for i, c in enumerate(self._layer_items(candidate_facilities) or [])]
+            demands = [self._to_demand(d, i) for i, d in enumerate(self._layer_items(demand_points) or [])]
 
             return self.location_allocation(
                 candidate_facilities=cand_objs,
@@ -894,8 +896,8 @@ class NetworkGraphEngine:
         def _sync_solve():
             prof = profile or TravelProfile()
             graph, net_ds = self._ensure_graph(network, prof)
-            demands = [self._to_demand(d, i) for i, d in enumerate(demand_points)]
-            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            demands = [self._to_demand(d, i) for i, d in enumerate(self._layer_items(demand_points) or [])]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._layer_items(facilities) or [])]
             return self.gravity_access(
                 demand_points=demands,
                 facilities=fac_objs,
@@ -923,8 +925,8 @@ class NetworkGraphEngine:
         def _sync_solve():
             prof = profile or TravelProfile()
             graph, net_ds = self._ensure_graph(network, prof)
-            demands = [self._to_demand(d, i) for i, d in enumerate(demand_points)]
-            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            demands = [self._to_demand(d, i) for i, d in enumerate(self._layer_items(demand_points) or [])]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._layer_items(facilities) or [])]
             return self.huff_interaction(
                 demand_points=demands,
                 facilities=fac_objs,

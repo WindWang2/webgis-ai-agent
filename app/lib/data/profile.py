@@ -504,7 +504,7 @@ _GEOGRAPHIC_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _PROJECTED_TOKEN_RE = re.compile(
-    r"utm|mercator|lambert|albers|epsg:?(3857|326\d\d|327\d\d|454\d|452\d)(?!\d)",
+    r"projcs|projcrs|gauss.kruger|utm|mercator|lambert|albers|epsg:?(3857|326\d\d|327\d\d|454\d|452\d)(?!\d)",
     re.IGNORECASE,
 )
 
@@ -619,19 +619,16 @@ def profile_features(
                 empty_geometry += 1
         props = feature.get("properties")
         if isinstance(props, dict):
-            if len(props) > _MAX_PROFILE_FIELDS and len(accs) >= _MAX_PROFILE_FIELDS:
-                fields_truncated = True
-            else:
-                for k, v in props.items():
-                    if not isinstance(k, str) or not k:
+            for k, v in props.items():
+                if not isinstance(k, str) or not k:
+                    continue
+                acc = accs.get(k)
+                if acc is None:
+                    if len(accs) >= _MAX_PROFILE_FIELDS:
+                        fields_truncated = True
                         continue
-                    acc = accs.get(k)
-                    if acc is None:
-                        if len(accs) >= _MAX_PROFILE_FIELDS:
-                            fields_truncated = True
-                            break
-                        acc = accs[k] = _FieldAccumulator()
-                    acc.observe(v)
+                    acc = accs[k] = _FieldAccumulator()
+                acc.observe(v)
 
     bbox: Optional[List[float]] = None
     if scanned and minx != math.inf:
@@ -687,7 +684,6 @@ def profile_rows(
             continue
         if len(row) > _MAX_PROFILE_FIELDS and len(accs) >= _MAX_PROFILE_FIELDS:
             columns_truncated = True
-            continue
         for k, v in row.items():
             if not isinstance(k, str) or not k:
                 continue
@@ -695,7 +691,7 @@ def profile_rows(
             if acc is None:
                 if len(accs) >= _MAX_PROFILE_FIELDS:
                     columns_truncated = True
-                    break
+                    continue
                 acc = accs[k] = _FieldAccumulator()
             acc.observe(v)
 

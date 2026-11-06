@@ -191,7 +191,7 @@ class WorkflowRuntimeService:
             raise WorkflowRuntimeError("EMPTY_DAG", package_id)
         # 同 plan 活实例 → superseded（防幽灵 RUNNING [R1-M6]；CAS：
         # revision 冲突 = 他写手已动，留待其终态语义，不覆盖）
-        if session_id:
+        if session_id and not parent_instance_id:
             for old in self.store.list_session_instances(
                     session_id, owner_scope=owner_scope, active_only=True):
                 if old["package_id"] == package_id:
@@ -238,8 +238,9 @@ class WorkflowRuntimeService:
         if inst["status"] in (C.InstanceStatus.CANCELLED,
                               C.InstanceStatus.SUPERSEDED):
             raise InstanceBusy(instance_id, f"status={inst['status']}")
-        if inst["status"] in (C.InstanceStatus.SUCCEEDED,
-                              C.InstanceStatus.FAILED):
+        if inst["status"] == C.InstanceStatus.FAILED:
+            raise WorkflowRuntimeError("RETRY_REQUIRED", "Call retry_failed_nodes before rerunning a failed instance")
+        if inst["status"] == C.InstanceStatus.SUCCEEDED:
             # 终态实例重驱（增量重算）：复位 running（CAS；竞争失败 = 他
             # driver 先行 → busy）
             reset = await asyncio.to_thread(
@@ -293,21 +294,24 @@ class WorkflowRuntimeService:
     async def cancel_instance(
         self, instance_id: str, *, owner_scope: str,
     ) -> CancelResult:
-        inst = await asyncio.to_thread(
-            self.store.get_instance, instance_id, owner_scope)
-        if inst is None:
-            raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
-        if inst["status"] in C.INSTANCE_TERMINAL_STATUSES:
-            return {"cancelled": False, "status": inst["status"]}
-        updated = await asyncio.to_thread(
-            self.store.update_instance, instance_id, owner_scope=owner_scope,
-            fields={"cancel_requested": True})
-        await asyncio.to_thread(
-            self.store.append_event, instance_id,
-            kind=C.EventKind.INSTANCE_CANCEL_REQUESTED,
-            reason="INSTANCE_CANCEL", actor="api")
-        return {"cancelled": updated is not None,
-                "status": (updated or inst)["status"]}
+        for _ in range(3):
+            inst = await asyncio.to_thread(
+                self.store.get_instance, instance_id, owner_scope)
+            if inst is None:
+                raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+            if inst["status"] in C.INSTANCE_TERMINAL_STATUSES:
+                return {"cancelled": False, "status": inst["status"]}
+            updated = await asyncio.to_thread(
+                self.store.update_instance, instance_id, owner_scope=owner_scope,
+                expected_revision=inst["revision"], fields={"cancel_requested": True})
+            if updated is None:
+                continue
+            await asyncio.to_thread(
+                self.store.append_event, instance_id,
+                kind=C.EventKind.INSTANCE_CANCEL_REQUESTED,
+                reason="INSTANCE_CANCEL", actor="api")
+            return {"cancelled": True, "status": updated["status"]}
+        raise InstanceBusy(instance_id, "concurrent cancellation; retry")
 
     async def cancel_nodes(
         self, instance_id: str, node_ids: List[str], *,
@@ -455,6 +459,17 @@ class WorkflowRuntimeService:
             self.store.get_instance, instance_id, owner_scope)
         if inst is None:
             raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+        if inst.get("cancel_requested") or inst["status"] in (
+                C.InstanceStatus.CANCELLED, C.InstanceStatus.SUPERSEDED):
+            raise InstanceBusy(instance_id, "cancelled or superseded; clone to retry")
+        from datetime import datetime, timezone
+
+        lease = inst.get("run_lease_expires_at")
+        if lease:
+            expiry = datetime.fromisoformat(lease)
+            expiry = expiry.replace(tzinfo=expiry.tzinfo or timezone.utc)
+            if expiry > datetime.now(timezone.utc):
+                raise InstanceBusy(instance_id, "driver lease still active")
         from app.services.workflow_runtime.retry import default_policy
 
         policy = default_policy()
@@ -483,12 +498,25 @@ class WorkflowRuntimeService:
             payload={"requeued": requeued[:32],
                      "exhausted": exhausted[:32]})
         if requeued:
-            await asyncio.to_thread(
-                self.store.update_instance, instance_id,
-                owner_scope=owner_scope,
-                fields={"status": C.InstanceStatus.RUNNING,
-                        "error_code": "", "error_detail": "",
-                        "cancel_requested": False, "terminal_at": None})
+            for _ in range(3):
+                fresh = await asyncio.to_thread(self.store.get_instance, instance_id, owner_scope)
+                if fresh is None:
+                    raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+                if fresh.get("cancel_requested") or fresh["status"] == C.InstanceStatus.CANCELLED:
+                    raise InstanceBusy(instance_id, "cancellation won; clone to retry")
+                # A concurrent driver may have finalized a newer run. Only reopen
+                # the failed run we inspected, or preserve an existing RUNNING run.
+                if fresh["status"] not in (C.InstanceStatus.FAILED, C.InstanceStatus.RUNNING):
+                    raise InstanceBusy(instance_id, "instance finalized concurrently")
+                updated = await asyncio.to_thread(
+                    self.store.update_instance, instance_id, owner_scope=owner_scope,
+                    expected_revision=fresh["revision"],
+                    fields={"status": C.InstanceStatus.RUNNING,
+                            "error_code": "", "error_detail": "", "terminal_at": None})
+                if updated is not None:
+                    break
+            else:
+                raise InstanceBusy(instance_id, "concurrent retry; retry again")
         return {"requeued": requeued, "exhausted": exhausted}
 
     async def retry_node(

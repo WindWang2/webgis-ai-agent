@@ -11,7 +11,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/api/project-assets', () => api);
 
-import { DatasetPreview, FootprintMap } from '@/components/sidebar/project/dataset-preview';
+import { DatasetPreview, FootprintMap, extractFootprint } from '@/components/sidebar/project/dataset-preview';
 
 const previewPayload = {
   dataset_id: 'cat-100',
@@ -69,5 +69,28 @@ describe('FootprintMap', () => {
   it('无几何时诚实提示', () => {
     render(<FootprintMap geometry={{ points: [], rings: [] }} />);
     expect(screen.getByText(/不含几何坐标/)).toBeInTheDocument();
+  });
+});
+
+
+describe('footprint geometry integrity', () => {
+  it('preserves holes and disconnected polygon rings without joining components', () => {
+    const footprint = extractFootprint([{ geometry: { type: 'MultiPolygon', coordinates: [
+      [[[0, 0], [4, 0], [4, 2], [0, 0]], [[1, 0.5], [2, 0.5], [1, 0.5]]],
+      [[[10, 0], [11, 0], [10, 0]]],
+    ] } }]);
+    expect(footprint.rings).toHaveLength(3);
+    expect(footprint.rings[2][0]).toEqual([10, 0]);
+    const { container } = render(<FootprintMap geometry={footprint} />);
+    const rings = container.querySelectorAll('polyline');
+    expect(rings).toHaveLength(3);
+    const first = rings[0].getAttribute('points')!.split(' ').map((point) => point.split(',').map(Number));
+    // A 4 x 2 rectangle keeps its 2:1 aspect ratio in the SVG.
+    expect(Math.abs(first[1][0] - first[0][0])).toBeCloseTo(2 * Math.abs(first[2][1] - first[1][1]), 1);
+  });
+  it('keeps an open line open and discards nonfinite coordinates', () => {
+    expect(extractFootprint([{ geometry: { type: 'LineString', coordinates: [[0, 1], [2, 3], [NaN, 4]] } }])).toEqual({
+      points: [], rings: [], lines: [[[0, 1], [2, 3]]],
+    });
   });
 });

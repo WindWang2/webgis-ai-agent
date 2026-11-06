@@ -261,15 +261,16 @@ class TestSemiJoinReduction:
 
 
 class TestServerSideFirstHop:
-    def test_same_source_spatial_hop_runs_server_side(self):
+    def test_same_source_plain_spatial_hop_preserves_rows_locally(self):
         class ServerAdapter(_RecordingAdapter):
             def server_spatial_join(self, left_ds, right_ds, *, join_op,
                                     group_by_polygon_field, limit):
-                return [{"properties": {"grp": "g", "n": 1}}]
+                raise AssertionError("count-only seam cannot preserve a chain hop")
 
-        adapter = ServerAdapter({"d-x": _rows("x", [1]),
-                                 "d-y": [{"type": "Feature", "geometry": None,
-                                          "properties": {"grp": "g", "other": 1}}]})
+        adapter = ServerAdapter({
+            "d-x": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0.75, 0.25]}, "properties": {"x": 1}}],
+            "d-x-poly": [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}, "properties": {"grp": "g"}}],
+        })
         req = FederatedChainRequest(
             sources=[ChainSource("sx", "d-x", estimated_rows=10),
                      ChainSource("sx", "d-x-poly", estimated_rows=5),
@@ -284,9 +285,9 @@ class TestServerSideFirstHop:
             "sy": _RecordingAdapter({"d-y": [{"type": "Feature", "geometry": None,
                                               "properties": {"grp": "g", "other": 1}}]}),
         }).execute_chain(req)
-        assert result["strategy"] == "server_side_first_hop"
+        assert result["strategy"] == "left_deep_chain"
         assert result["row_count"] == 1
-        assert result["rows"][0]["grp"] == "g"
+        assert result["rows"][0]["__right__"]["grp"] == "g"
 
     def test_server_failure_falls_back_to_local(self):
         class BrokenServerAdapter(_RecordingAdapter):
@@ -294,7 +295,7 @@ class TestServerSideFirstHop:
                 raise RuntimeError("boom")
 
         adapter = BrokenServerAdapter({
-            "d-x": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "d-x": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0.75, 0.25]},
                      "properties": {"key": 1}}],
             "d-x-poly": [{"type": "Feature",
                           "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]},
@@ -308,7 +309,7 @@ class TestServerSideFirstHop:
         result = _executor({"sx": adapter}).execute_chain(req)
         assert result["strategy"] == "left_deep_chain"
         assert result["row_count"] == 1
-        assert any("server-side first hop failed" in w for w in result["warnings"])
+        assert not any("server-side first hop failed" in w for w in result["warnings"])
 
 
 # ------------------------------------------------------------- 最小投影派生

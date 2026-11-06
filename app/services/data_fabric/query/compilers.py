@@ -248,6 +248,8 @@ def compile_spatial_sql(
         # 投影列把查询几何变换到列 SRID 后做平面 ST_DWithin（CRS 单位）；
         # 未知 SRID 拒绝（禁止静默错距）。
         if col_srid == 4326:
+            if bbox_crs_srid != 4326:
+                geom_expr = f"ST_Transform({geom_expr}, 4326)"
             return (
                 f"ST_DWithin({gcol}::geography, {geom_expr}::geography, %s)",
                 geom_params + [node.distance],
@@ -327,11 +329,12 @@ def compile_predicate_cql2(node: Any) -> str:
     raise PredicateError(f"cannot compile op {op!r} to CQL2")
 
 
-def compile_bbox_cql2(bbox: Sequence[float]) -> str:
+def compile_bbox_cql2(bbox: Sequence[float], *, geometry_property: str = "geometry") -> str:
     minx, miny, maxx, maxy = bbox
+    property_name = '"' + geometry_property.replace('"', '""') + '"'
     return (
-        f"INTERSECTS(BBOX(), {_cql2_number(minx)}, {_cql2_number(miny)}, "
-        f"{_cql2_number(maxx)}, {_cql2_number(maxy)})"
+        f'S_INTERSECTS({property_name}, BBOX({_cql2_number(minx)}, {_cql2_number(miny)}, '
+        f"{_cql2_number(maxx)}, {_cql2_number(maxy)}))"
     )
 
 
@@ -464,7 +467,6 @@ def compile_bbox_fes(bbox: Sequence[float], *, srs_name: str = "urn:ogc:def:crs:
     minx, miny, maxx, maxy = bbox
     return (
         '<ogc:BBOX xmlns:ogc="http://www.opengis.net/ogc">'
-        '<ogc:PropertyName></ogc:PropertyName>'
         f'<gml:Envelope xmlns:gml="http://www.opengis.net/gml" srsName="{_xml_escape(srs_name)}">'
         f"<gml:lowerCorner>{minx} {miny}</gml:lowerCorner>"
         f"<gml:upperCorner>{maxx} {maxy}</gml:upperCorner>"

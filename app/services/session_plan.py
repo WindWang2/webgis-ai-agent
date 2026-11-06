@@ -611,7 +611,8 @@ async def save_session_plan(
     plan: SessionPlan,
     *,
     store: Any = None,
-) -> None:
+    expected_revision: Optional[int] = None,
+) -> bool:
     backend = store if store is not None else session_data_manager
     now = time.time()
     if not plan.created_at:
@@ -620,15 +621,30 @@ async def save_session_plan(
     # ADR-0180：revision 是信封的 CAS 依据（每次持久化自增）。会话锁
     # （fail_on_degraded=True）保证同 session 写路径串行，revision 因此
     # 单调；跨进程陈旧写在锁降级时已被 fail-closed 拒绝。
-    plan.revision = int(plan.revision or 0) + 1
+    old_revision = int(plan.revision or 0)
+    plan.revision = old_revision + 1
     plan.schema_version = SCHEMA_VERSION
     payload = plan.model_dump()
     ref_id = await backend.resolve_alias(plan.session_id, CURRENT_ALIAS)
     if ref_id != CURRENT_ALIAS:
-        if await backend.overwrite(plan.session_id, ref_id, payload):
-            return
+        expected = old_revision if expected_revision is None else expected_revision
+        if await backend.overwrite(plan.session_id, ref_id, payload, expected_revision=expected):
+            return True
+        plan.revision = old_revision
+        return False
+    elif expected_revision not in (None, 0):
+        plan.revision = old_revision
+        return False
     new_ref = await backend.store(plan.session_id, payload, prefix=STORE_PREFIX)
-    await backend.set_alias(plan.session_id, new_ref, CURRENT_ALIAS)
+    from app.services.session_data_protocol import is_unavailable_ref
+    if is_unavailable_ref(new_ref):
+        raise RuntimeError("session plan store is unavailable")
+    published = await backend.set_alias_if_absent(plan.session_id, new_ref, CURRENT_ALIAS)
+    if not published:
+        await backend.delete_ref(plan.session_id, new_ref)
+        plan.revision = old_revision
+        return False
+    return True
 
 
 async def ensure_session_plan_slot(
@@ -660,7 +676,11 @@ async def _ensure_slot_unlocked(session_id: str, *, store: Any) -> SessionPlan:
         session_id=session_id,
         updated_at=time.time(),
     )
-    await save_session_plan(plan, store=store)
+    if not await save_session_plan(plan, store=store):
+        winner = await load_session_plan(session_id, store=store)
+        if winner is None:
+            raise RuntimeError("session plan initial reservation unavailable")
+        return winner
     return plan
 
 
@@ -672,8 +692,17 @@ async def _archive_envelope(plan: SessionPlan, *, store: Any) -> None:
     if ref_id != alias:
         if await backend.overwrite(plan.session_id, ref_id, payload):
             return
+        raise RuntimeError("session plan archive update unavailable")
     new_ref = await backend.store(plan.session_id, payload, prefix=STORE_PREFIX)
-    await backend.set_alias(plan.session_id, new_ref, alias)
+    from app.services.session_data_protocol import is_unavailable_ref
+    if is_unavailable_ref(new_ref):
+        raise RuntimeError("session plan store is unavailable")
+    if not await backend.set_alias_if_absent(plan.session_id, new_ref, alias):
+        await backend.delete_ref(plan.session_id, new_ref)
+        raise RuntimeError("session plan archive publication unavailable")
+    from app.services.session_control_refs import trim_plan_history
+
+    await trim_plan_history(backend, plan.session_id)
 
 
 def _updated_event(plan: SessionPlan) -> SessionPlanEvent:
@@ -763,6 +792,8 @@ def _mark_progress(
         if cap not in pending:
             plan.progress.append(CapabilityProgress(capability=cap, status="pending"))
             pending.add(cap)
+    preserved = {row.capability for row in plan.progress if row.status == "complete" and status == "failed"}
+    capabilities = [cap for cap in capabilities if cap not in preserved]
     for row in plan.progress:
         if row.capability in capabilities and row.status != status:
             row.status = status
@@ -963,6 +994,9 @@ def merge_product_edit_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> N
         _cur_digest = (
             str(_cur.get("digest")) if isinstance(_cur, dict) else "")
         _base_digest = str(raw.get("base_spec_digest") or "")
+        incoming = raw.get("product_spec")
+        if isinstance(incoming, dict) and _cur_digest == incoming.get("digest"):
+            return  # The tool already committed this exact semantic edit by CAS.
         if not _cur_digest or not _base_digest or _cur_digest == _base_digest:
             chapter["product_spec"] = raw.get("product_spec")
         else:
@@ -1192,6 +1226,7 @@ async def _apply_tool_result_unlocked(
                     else _init_progress(gis)
                 ),
                 previous_goal=old.user_goal,
+                revision=old.revision,
                 # ADR-0180（review S2）：在飞 turn 台账/决策/恢复事实必须跨
                 # supersede 存续 —— 否则本 turn 永不结算（end_turn 找不到
                 # 记录）、进程死亡后中断对账失效。
@@ -1270,6 +1305,11 @@ async def _apply_tool_result_unlocked(
     hits = capabilities_hit_by_tool(plan, tool_name)
     if not hits:
         return [], None
+    from app.services.session_data_protocol import is_unavailable_ref
+    if is_unavailable_ref(geojson_ref):
+        changed = _mark_progress(plan, hits, status="failed")
+        await save_session_plan(plan, store=backend)
+        return [_progress_event(plan, row) for row in changed], None
     changed = _mark_progress(
         plan, hits, status="complete", bound_ref=geojson_ref or ""
     )
@@ -1283,7 +1323,7 @@ async def _apply_tool_result_unlocked(
     # 直通（lock 透传跳过重取，避免非重入自锁）；失败降级为日志。
     if geojson_ref and str(geojson_ref).startswith("ref:"):
         await _register_plan_artifacts(
-            session_id, plan, hits, tool_name, geojson_ref, lock=lock
+            session_id, plan, hits, tool_name, geojson_ref, lock=lock, store=backend
         )
     return [_progress_event(plan, row) for row in changed], None
 
@@ -1296,6 +1336,7 @@ async def _register_plan_artifacts(
     geojson_ref: str,
     *,
     lock: Any = None,
+    store: Any = None,
 ) -> None:
     """plan-apply seam 的产物注册（ADR-0082）：capability 上下文 + 实例级血缘。
 
@@ -1348,7 +1389,7 @@ async def _register_plan_artifacts(
     except Exception:  # noqa: BLE001
         outputs = []
     try:
-        descriptor = await session_data_manager.get_ref_descriptor(
+        descriptor = await (store if store is not None else session_data_manager).get_ref_descriptor(
             session_id, geojson_ref
         )
     except Exception:  # noqa: BLE001
@@ -1388,5 +1429,5 @@ async def _register_plan_artifacts(
         inputs=inputs,
         descriptor=descriptor,
         metadata=plan_meta,
-        lock=lock,
+        lock=lock, store=store,
     )

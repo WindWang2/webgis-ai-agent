@@ -29,8 +29,14 @@ _BUILD: dict = {}
 def _catalog():
     if "catalog" not in _BUILD:
         from app.lib.gis.execution_catalog import compile_execution_catalog
+        from app.tools import init_tools
+        from app.tools.registry import ToolRegistry
 
-        _BUILD["catalog"] = compile_execution_catalog()
+        # Offline generation owns an explicit registry; runtime discovery must
+        # keep requiring lifespan injection instead of inventing a fallback.
+        registry = ToolRegistry()
+        init_tools(registry)
+        _BUILD["catalog"] = compile_execution_catalog(tool_registry=registry)
     return _BUILD["catalog"]
 
 

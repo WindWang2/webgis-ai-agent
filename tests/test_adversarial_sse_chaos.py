@@ -93,7 +93,7 @@ async def _open_resume(message: str, last_event_id: int, session_id: Optional[st
 @pytest.fixture(autouse=True)
 def _fresh_stream_state(monkeypatch):
     monkeypatch.setattr(chat_route, "_turn_resume_registry", TurnResumeRegistry())
-    monkeypatch.setattr(chat_route, "_RESUME_LIVE_HOLD_S", 0.05)
+    monkeypatch.setattr("app.api.routes.chat_resume._RESUME_LIVE_HOLD_S", 0.05)
     # Deletion tests leave real tombstones on generic IDs such as "sess-1".
     # Isolate the store as well as the replay registry; keep the real route
     # guard and storage behavior instead of making every session look valid.

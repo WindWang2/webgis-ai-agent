@@ -45,6 +45,8 @@ def db_session():
 
 def _seed_org_project(db, name="p", org_id=1):
     db.add(Organization(id=org_id, name=f"org{org_id}", slug=f"org{org_id}"))
+    from app.models.db_model import User
+    db.merge(User(id="workflow-fixture", username="workflow-fixture", email="workflow-fixture@example.test", password_hash="fixture", org_id=org_id, role="editor", is_active=True))
     db.commit()
     proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name=name, org_id=org_id, status="active")
     db.add(proj)
@@ -91,7 +93,7 @@ def _make_workflow(db, project_id, steps, name="wf"):
         graph_spec=WorkflowGraphSpec(steps=[WorkflowStepSpec(**s) for s in steps]),
     )
     # security F-11: ownerless org project is org-only
-    return ProjectService.save_workflow(db, project_id, wf_data, org_id=1)
+    return ProjectService.save_workflow(db, project_id, wf_data, org_id=1, user_id="workflow-fixture")
 
 
 # ── §8/§9 dataset fingerprint ───────────────────────────────────────────────
@@ -100,11 +102,11 @@ def test_dataset_fingerprint_deterministic_and_content_sensitive(db_session):
     db = db_session
     proj = _seed_org_project(db)
     d1 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
-        name="a", source_type="upload", source_ref="up_1", crs="EPSG:4326"), org_id=1)
+        name="a", source_type="upload", source_ref="up_1", crs="EPSG:4326"), org_id=1, user_id="workflow-fixture")
     d2 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
-        name="a-copy", source_type="upload", source_ref="up_1", crs="EPSG:4326"), org_id=1)
+        name="a-copy", source_type="upload", source_ref="up_1", crs="EPSG:4326"), org_id=1, user_id="workflow-fixture")
     d3 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
-        name="b", source_type="upload", source_ref="up_2", crs="EPSG:4326"), org_id=1)
+        name="b", source_type="upload", source_ref="up_2", crs="EPSG:4326"), org_id=1, user_id="workflow-fixture")
     assert d1.version_fingerprint == d2.version_fingerprint, "same evidence ⇒ same fp"
     assert d1.version_fingerprint != d3.version_fingerprint, "different ref ⇒ different fp"
     assert ":" not in (d1.version_fingerprint or "") and len(d1.version_fingerprint) == 64
@@ -115,10 +117,10 @@ def test_dataset_fingerprint_schema_order_invariant(db_session):
     proj = _seed_org_project(db)
     d1 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
         name="a", source_type="upload", source_ref="up", crs="EPSG:4326",
-        schema_profile={"b": 1, "a": 2}), org_id=1)
+        schema_profile={"b": 1, "a": 2}), org_id=1, user_id="workflow-fixture")
     d2 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
         name="a2", source_type="upload", source_ref="up", crs="EPSG:4326",
-        schema_profile={"a": 2, "b": 1}), org_id=1)
+        schema_profile={"a": 2, "b": 1}), org_id=1, user_id="workflow-fixture")
     assert d1.version_fingerprint == d2.version_fingerprint
 
 
@@ -147,7 +149,7 @@ def test_revision_immutable_and_exact_replay_after_graph_edit(db_session):
             {"step_id": "s2", "tool_name": "t_b", "dependencies": ["s1"]},
         ]},
         org_id=1,
-    )
+     user_id="workflow-fixture")
     v2_fp = compute_graph_fingerprint(db.get(Workflow, wf.id).graph_spec)
     assert v2_fp != v1_fp
     assert len(ProjectService.list_workflow_revisions(db, proj.id, wf.id, org_id=1)) == 2
@@ -176,7 +178,7 @@ def test_replay_latest_uses_current_graph(db_session):
             {"step_id": "s2", "tool_name": "t_b", "dependencies": ["s1"]},
         ]},
         org_id=1,
-    )
+     user_id="workflow-fixture")
     replayed = _run(WorkflowEngine.replay_run(
         db=db, prior_run_id=run1.id, tool_registry=FakeRegistry(),
         mode="latest", expected_project_id=proj.id, session_id="sess"))

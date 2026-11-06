@@ -33,9 +33,10 @@ class FakeVectorStore:
     def search(self, query_vector, top_k=5, user_id=None, org_id=None, is_admin=False):
         return []
 
-    def mark_deleted(self, doc_id):
+    def mark_deleted(self, doc_id, **kwargs):
         self.deleted.append(doc_id)
 
+        return True
     def compact(self):
         return {}
 
@@ -90,6 +91,28 @@ async def initialized_db(rag_env):
 
 
 # ── add -> list 往返 ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_uses_same_creator_and_org_boundary_as_search(initialized_db):
+    from app.models.knowledge_base import Document
+    from app.services import rag_service
+    sessions, _ = initialized_db
+    async with sessions() as db:
+        db.add_all([
+            Document(id="own-org", title="own", creator_id="alice", org_id=1),
+            Document(id="peer-org", title="peer", creator_id="bob", org_id=1),
+            Document(id="other-org", title="other", creator_id="alice", org_id=2),
+            Document(id="own-private", title="private", creator_id="alice", org_id=None),
+        ])
+        await db.commit()
+    listing = await rag_service.list_documents(user_id="alice", org_id=1)
+    assert listing["total"] == 1
+    assert [item["id"] for item in listing["items"]] == ["own-org"]
+    private = await rag_service.list_documents(user_id="alice")
+    assert [item["id"] for item in private["items"]] == ["own-private"]
+    assert await rag_service.list_documents(org_id=1) == {"total": 0, "items": []}
+    assert await rag_service.list_documents() == {"total": 0, "items": []}
 
 @pytest.mark.asyncio
 async def test_add_document_then_list_returns_it(initialized_db):

@@ -8,11 +8,14 @@ FlatGeobuf Data Source Adapter — V2 (ADR-0094 Wave F)
 - bbox + 投影下推：pyogrio 可用时走 ``read_dataframe(bbox=..., columns=[...],
   max_features=window)``（packed RTree + 列裁剪）；否则 gpd.read_file(bbox=...)。
 - 诚实 metadata：``spatial_index_used`` 真实路径为 None（文件是否含 RTree
-  不可知，不再硬编码 True）；demo fixture 声明 packed_rtree 时才为 True。
+  不可知）；demo 在内存扫描，明确为 False。
 - V2：normalize → plan → 执行；QueryResult 附 plan/evidence；SAMPLE +
   STATISTICS（本地有界聚合）模式。
 """
 import json
+from contextlib import contextmanager
+from tempfile import TemporaryDirectory
+from typing import Iterator
 import logging
 import os
 import time
@@ -25,6 +28,7 @@ from app.services.data_fabric.adapters.postgis_adapter import (
 from app.services.data_fabric.errors import (
     DataFabricError,
     InvalidQueryError,
+    QueryBudgetExceededError,
     SecurityBlockedError,
     SourceBadResponseError,
     SourceUnreachableError,
@@ -156,6 +160,31 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
             )
         return str(resolved)
 
+    @contextmanager
+    def _readable_source(self) -> Iterator[str]:
+        path = self._readable_path()
+        if not path.startswith(("http://", "https://")):
+            yield path
+            return
+        # GDAL has its own redirect and DNS behavior. Only hand it a bounded
+        # local copy obtained through the guarded requests transport.
+        cap = min(_local_file_max_bytes_from_settings(), 64 * 1024 * 1024)
+        with TemporaryDirectory(prefix="webgis-fgb-") as directory:
+            local = os.path.join(directory, "source.fgb")
+            response = self.session.get(path, stream=True, timeout=(5, 30))
+            try:
+                response.raise_for_status()
+                count = 0
+                with open(local, "wb") as target:
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        count += len(chunk)
+                        if count > cap:
+                            raise QueryBudgetExceededError("remote FlatGeobuf exceeds download byte budget")
+                        target.write(chunk)
+            finally:
+                response.close()
+            yield local
+
     def probe(self) -> bool:
         """Probe FlatGeobuf file accessibility and magic signature.
 
@@ -165,15 +194,10 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         if not self.endpoint:
             return True  # explicit demo mode
         try:
-            if self.endpoint.startswith(("http://", "https://")):
-                safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
-                resp = self.session.get(safe_url, headers={"Range": "bytes=0-7"}, timeout=5)
-                return resp.status_code in (200, 206) and resp.content.startswith(b"fgb")
-            elif os.path.isfile(self.endpoint):
-                with open(self.endpoint, "rb") as f:
+            with self._readable_source() as path:
+                with open(path, "rb") as f:
                     header = f.read(8)
                     return header.startswith(b"fgb")
-            return False
         except Exception as e:
             logger.debug(f"FlatGeobuf probe failed for {self.endpoint}: {e}")
             return False
@@ -223,7 +247,7 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                 fields=fields,
                 schema_fields=fixture["columns"],
                 metadata={
-                    "spatial_index": "packed_rtree",
+                    "spatial_index": None,
                     "is_demo": True,
                     "source": "synthetic-demo",
                 },
@@ -233,76 +257,76 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         error_message: Optional[str] = None
         file_size: Optional[int] = None
         try:
-            path = self._readable_path()
-            # 本地文件：魔数校验（fgb magic）
-            if not path.startswith(("http://", "https://", "s3://", "minio://", "gs://")):
-                with open(path, "rb") as f:
-                    magic = f.read(8)
-                    if not magic.startswith(b"fgb"):
-                        raise SourceBadResponseError(
-                            f"Invalid FlatGeobuf magic header: {magic!r}"
-                        )
-                file_size = os.path.getsize(path)
+            with self._readable_source() as path:
+                # 本地文件：魔数校验（fgb magic）
+                if not path.startswith(("http://", "https://", "s3://", "minio://", "gs://")):
+                    with open(path, "rb") as f:
+                        magic = f.read(8)
+                        if not magic.startswith(b"fgb"):
+                            raise SourceBadResponseError(
+                                f"Invalid FlatGeobuf magic header: {magic!r}"
+                            )
+                    file_size = os.path.getsize(path)
 
-            # Fast pyogrio metadata inspect if available
-            try:
-                import pyogrio
+                # Fast pyogrio metadata inspect if available
+                try:
+                    import pyogrio
 
-                info = pyogrio.read_info(path)
-                fields = [{"name": name, "type": str(dtype)} for name, dtype in zip(info["fields"], info["dtypes"])]
-                schema_fields = {name: str(dtype) for name, dtype in zip(info["fields"], info["dtypes"])}
-                bbox = list(info["total_bounds"]) if info.get("total_bounds") is not None else None
-                crs = info.get("crs")
-                srs = str(crs) if crs is not None else None
+                    info = pyogrio.read_info(path)
+                    fields = [{"name": name, "type": str(dtype)} for name, dtype in zip(info["fields"], info["dtypes"])]
+                    schema_fields = {name: str(dtype) for name, dtype in zip(info["fields"], info["dtypes"])}
+                    bbox = list(info["total_bounds"]) if info.get("total_bounds") is not None else None
+                    crs = info.get("crs")
+                    srs = str(crs) if crs is not None else None
+
+                    return DatasetDescriptor(
+                        id=dataset_id,
+                        title=os.path.basename(self.endpoint),
+                        description=f"FlatGeobuf dataset ({info.get('features', 0)} records)",
+                        source_type="flatgeobuf",
+                        geometry_type=info.get("geometry_type") or None,
+                        srs=srs,
+                        bbox=bbox,
+                        feature_count=info.get("features"),
+                        fields=fields,
+                        schema_fields=schema_fields,
+                        metadata={
+                            "file_size": file_size,
+                            "spatial_index": None,
+                            "is_demo": False,
+                        },
+                    )
+                except DataFabricError:
+                    raise
+                except Exception as pie:
+                    logger.debug(f"Fast pyogrio read_info failed for '{dataset_id}': {pie}, fallback to geopandas")
+
+                # geopandas fallback（无 pyogrio 时）
+                import geopandas as gpd
+
+                gdf = gpd.read_file(path)
+                bbox = list(gdf.total_bounds) if not gdf.empty else None
+                schema_fields = {col: str(dtype) for col, dtype in gdf.dtypes.items()}
+                fields = [{"name": k, "type": str(v)} for k, v in schema_fields.items()]
+                geom_type = gdf.geometry.type.iloc[0] if not gdf.empty else None
 
                 return DatasetDescriptor(
                     id=dataset_id,
                     title=os.path.basename(self.endpoint),
-                    description=f"FlatGeobuf dataset ({info.get('features_count', 0)} records)",
+                    description=f"FlatGeobuf dataset ({file_size or '?'} bytes)",
                     source_type="flatgeobuf",
-                    geometry_type=info.get("geometry_type") or None,
-                    srs=srs,
+                    geometry_type=geom_type,
+                    srs=str(gdf.crs) if gdf.crs else None,
                     bbox=bbox,
-                    feature_count=info.get("features_count"),
+                    feature_count=len(gdf),
                     fields=fields,
                     schema_fields=schema_fields,
                     metadata={
                         "file_size": file_size,
-                        "spatial_index": "packed_rtree",
+                        "spatial_index": None,
                         "is_demo": False,
                     },
                 )
-            except DataFabricError:
-                raise
-            except Exception as pie:
-                logger.debug(f"Fast pyogrio read_info failed for '{dataset_id}': {pie}, fallback to geopandas")
-
-            # geopandas fallback（无 pyogrio 时）
-            import geopandas as gpd
-
-            gdf = gpd.read_file(path)
-            bbox = list(gdf.total_bounds) if not gdf.empty else None
-            schema_fields = {col: str(dtype) for col, dtype in gdf.dtypes.items()}
-            fields = [{"name": k, "type": str(v)} for k, v in schema_fields.items()]
-            geom_type = gdf.geometry.type.iloc[0] if not gdf.empty else None
-
-            return DatasetDescriptor(
-                id=dataset_id,
-                title=os.path.basename(self.endpoint),
-                description=f"FlatGeobuf dataset ({file_size or '?'} bytes)",
-                source_type="flatgeobuf",
-                geometry_type=geom_type,
-                srs=str(gdf.crs) if gdf.crs else None,
-                bbox=bbox,
-                feature_count=len(gdf),
-                fields=fields,
-                schema_fields=schema_fields,
-                metadata={
-                    "file_size": file_size,
-                    "spatial_index": "packed_rtree",
-                    "is_demo": False,
-                },
-            )
         except DataFabricError as e:
             error_type, error_message = e.code, str(e)
             logger.warning(f"FlatGeobuf describe error for '{dataset_id}': {e}")
@@ -366,7 +390,7 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
             )
 
         try:
-            path = self._readable_path()
+            self._readable_path()
         except DataFabricError:
             raise
 
@@ -390,7 +414,8 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
             )
 
         try:
-            return self._execute_real(dataset_id, v2, plan, started, fp, descriptor, path)
+            with self._readable_source() as safe_path:
+                return self._execute_real(dataset_id, v2, plan, started, fp, descriptor, safe_path)
         except DataFabricError:
             raise
         except Exception as e:
@@ -432,6 +457,10 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
             window = page.limit
         # 读窗口 = offset + limit（+1 哨兵判定 has_more）；STATISTICS 全量有界扫描
         max_features = offset + window + 1 if mode != ResultMode.STATISTICS else v2.execution.max_rows
+        if v2.filter is not None or v2.temporal is not None:
+            # The paging window counts matches, not source rows. Scan a bounded
+            # source prefix and reject incomplete scans instead of claiming EOF.
+            max_features = v2.execution.max_rows + 1
 
         if mode == ResultMode.STATISTICS:
             return self._statistics_real(
@@ -464,7 +493,9 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                 kwargs.pop("rows", None)
                 gdf = gpd.read_file(path, **kwargs).iloc[:max_features]
 
-        features, prop_rows = self._gdf_to_features(gdf, select)
+        if (v2.filter is not None or v2.temporal is not None) and len(gdf) > v2.execution.max_rows:
+            raise QueryBudgetExceededError("FlatGeobuf local predicate scan exceeds max_rows; narrow bbox")
+        features, prop_rows = self._gdf_to_features(gdf, None)
         if v2.filter is not None:
             features = [f for f in features if evaluate_predicate(v2.filter, f["properties"])]
         if v2.temporal is not None:
@@ -472,6 +503,9 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         # 精确 bbox 兜底（引擎 bbox 过滤即包围盒级；无几何读取时跳过）
         if query_bbox is not None and read_geometry:
             features = _filter_features_by_bbox(features, query_bbox)
+        if select is not None:
+            for feature in features:
+                feature["properties"] = {key: value for key, value in feature["properties"].items() if key in select}
 
         budget = StreamingBudget(
             max_rows=v2.execution.max_rows,
@@ -488,11 +522,11 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
             out = features[offset: offset + page.limit]
             truncated = len(features) > offset + page.limit
 
-        total_matching: Optional[int] = None if truncated else offset + len(out)
+        total_matching: Optional[int] = None if truncated else len(features)
         evidence = build_evidence(
             plan, started_at=started, result_count=len(out),
             total_matching=total_matching, truncated=truncated,
-            rows_fetched=len(features), rows_returned=len(out),
+            rows_fetched=len(gdf), rows_returned=len(out),
         )
         return QueryResult(
             dataset_id=dataset_id,
@@ -533,7 +567,7 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         """STATISTICS：本地有界聚合（零 geometry 读取）。"""
         query_bbox = v2.spatial.bbox if v2.spatial is not None else None
 
-        # 无过滤纯 count → read_info features_count（零特征读取）
+        # 无过滤纯 count → read_info features（零特征读取）
         pure_count = (
             v2.filter is None and v2.spatial is None and v2.temporal is None
             and not v2.group_by
@@ -541,7 +575,7 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         )
         if pure_count and pyogrio is not None:
             info = pyogrio.read_info(path)
-            rows = [{"count": int(info.get("features_count") or 0)}]
+            rows = [{"count": int(info.get("features") or 0)}]
             rows_scanned = 0
         else:
             if pyogrio is not None:
@@ -701,8 +735,8 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                 metadata=self._metadata(plan, evidence, started, extra={
                     "is_demo": True,
                     "source": "synthetic-demo",
-                    # fixture 自身声明 packed_rtree（对 synthetic 数据为真）
-                    "spatial_index_used": True,
+                    # Synthetic rows use a memory scan, not a packed RTree.
+                    "spatial_index_used": False,
                 }),
             )
 
@@ -760,7 +794,7 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
             metadata=self._metadata(plan, evidence, started, extra={
                 "is_demo": True,
                 "source": "synthetic-demo",
-                "spatial_index_used": True,  # fixture 声明 packed_rtree
+                "spatial_index_used": False,  # synthetic memory scan
                 "column_projection": bool(select),
             }),
         )

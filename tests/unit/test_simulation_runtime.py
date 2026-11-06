@@ -472,9 +472,9 @@ class TestRuntime:
             _hydro_params(rain=1e-5), _hydro_cfg(n=12, stride=6))
         res = rt.run()
         assert rt.status.value == "completed"
-        assert len(res.steps) == 12
+        assert [step.tick for step in res.steps] == [6, 12]
         t0 = res.steps[0].diagnostics
-        assert t0.tick == 1 and t0.sim_seconds == pytest.approx(5.0)
+        assert t0.tick == 6 and t0.sim_seconds == pytest.approx(30.0)
         assert t0.mass_error_relative <= 1e-9
         assert t0.finite is True
         assert res.steps[-1].diagnostics.sim_seconds == pytest.approx(60.0)
@@ -549,7 +549,7 @@ class TestRuntime:
         ck = part.to_checkpoint()
         resumed = SimulationRuntime.from_checkpoint(ck, _hydro_cfg(n=10))
         res = resumed.run()
-        assert len(res.steps) == 10
+        assert [step.tick for step in res.steps] == [4, 10]
         assert res.conservation_report.final_total == pytest.approx(
             full.conservation_report.final_total, rel=1e-12)
         assert np.allclose(
@@ -687,12 +687,15 @@ class TestTemporalProducts:
         assert all(f["geometry"]["type"] == "Polygon" for f in feats)
         assert res.products[-1].layer_kind == "raster_grid"
 
-    def test_mapspec_bundle_validates_against_mapspec_document(self):
+    def test_mapspec_bundle_validates_against_mapspec_document(self, tmp_path, monkeypatch):
         """兼容性以真实 MapSpec v1.2 schema 校验为准（frames ≤50）。"""
         from app.lib.cartography.mapspec_schema import MapSpecDocument
 
+        from app.services.simulation.layers import DurableGeoJSONTemporalSink
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
         res = run_simulation(
-            _line_traffic(), _traffic_cfg(n=20, stride=10))
+            _line_traffic(), _traffic_cfg(n=20, stride=10), sink=DurableGeoJSONTemporalSink("sim-fixture"))
         bundle = build_mapspec_bundle(res)
         doc = MapSpecDocument.model_validate(bundle)
         assert doc.version == "1.2"
@@ -708,10 +711,13 @@ class TestTemporalProducts:
         # source 数 = 产物数
         assert len(doc.sources) == len(res.products)
 
-    def test_mapspec_bundle_raster_variant(self):
+    def test_mapspec_bundle_raster_variant(self, tmp_path, monkeypatch):
         from app.lib.cartography.mapspec_schema import MapSpecDocument
 
-        res = run_simulation(_hydro_params(rain=1e-5), _hydro_cfg(n=5, stride=5))
+        from app.services.simulation.layers import DurableGeoJSONTemporalSink
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
+        res = run_simulation(_hydro_params(rain=1e-5), _hydro_cfg(n=5, stride=5), sink=DurableGeoJSONTemporalSink("sim-fixture"))
         doc = MapSpecDocument.model_validate(build_mapspec_bundle(res))
         layer = doc.layers[0]
         assert layer.type == "fill"
@@ -763,6 +769,7 @@ class TestCeleryTask:
         out = run_simulation_forecast(
             _hydro_params(rain=1e-5).model_dump(mode="json"),
             _hydro_cfg(n=8, stride=4).model_dump(mode="json"),
+            session_id="sim-fixture",
         )
         assert out["status"] == "completed"
         assert out["n_steps"] == 8
@@ -818,7 +825,7 @@ class TestSimulationTool:
         params = _hydro_params(rain=1e-5).model_dump(mode="json")
         out = run_spatial_simulation_impl(
             model_kind="hydro_diffusion", params=params,
-            dt_seconds=5.0, n_steps=4, output_stride=2, run_async=False,
+            dt_seconds=5.0, n_steps=4, output_stride=2, run_async=False, session_id="sim-fixture",
         )
         assert out["success"] is True
         data = out["data"]
@@ -866,13 +873,13 @@ class TestSimulationTool:
                 "run_async": False}
         # 未经 tier-3 确认 → 平台策略拦截（typed 响应，不抛栈）
         blocked = asyncio.run(reg.dispatch(
-            "run_spatial_simulation", dict(args)))
+            "run_spatial_simulation", dict(args), "sim-fixture"))
         assert blocked["success"] is False
         assert blocked["code"] == "TIER3_CONFIRMATION_REQUIRED"
         # 确认后 inline 跑通，守恒通过
         with confirm_tier3():
             out = asyncio.run(reg.dispatch(
-                "run_spatial_simulation", dict(args)))
+                "run_spatial_simulation", dict(args), "sim-fixture"))
         assert out["success"] is True
         assert out["data"]["status"] == "completed"
         assert out["data"]["conservation"]["passed"] is True
@@ -903,3 +910,61 @@ class TestApiEntrypoint:
         )
         with pytest.raises(SimulationError):
             run_simulation(_hydro_params(rain=1e-5), cfg)
+
+
+def test_traffic_single_step_is_invariant_under_edge_permutation():
+    from app.services.simulation.models.traffic_propagation import TrafficPropagationModel
+
+    params = _line_traffic(n_edges=3, length=1000, cap=3600, demand=3600, bottleneck=False)
+    params.edges[0].free_flow_speed_kmh = 60
+    law = TrafficPropagationModel(params)
+    state, accounting = law.advance(law.build_initial_state(), 10, 0)
+    permuted = params.model_copy(update={"edges": list(reversed(params.edges))})
+    other_law = TrafficPropagationModel(permuted)
+    other_state, other_accounting = other_law.advance(other_law.build_initial_state(), 10, 0)
+    queues = dict(zip(state.topology.edge_ids, state.variables["queue_veh"], strict=True))
+    other_queues = dict(zip(other_state.topology.edge_ids, other_state.variables["queue_veh"], strict=True))
+    assert queues == other_queues
+    assert queues["e3"] == 0
+    assert queues["e2"] == pytest.approx(10)
+    assert accounting.sinks["egress_exit"] == other_accounting.sinks["egress_exit"] == 0
+
+
+def test_durable_tick_progress_uses_cheap_checkpoints_between_strides(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    import app.services.simulation.tasks as tasks
+    import app.services.jobs.worker as worker
+
+    counts = {"forced": 0, "cheap": 0}
+
+    def forced():
+        counts["forced"] += 1
+
+    def cheap():
+        counts["cheap"] += 1
+
+    job = SimpleNamespace(ensure_not_cancelled=forced, checkpoint=cheap, progress=lambda *a, **kw: None,
+                          worker_id="worker", attempt=1)
+    monkeypatch.setattr(worker, "durable_job", lambda *a, **kw: nullcontext(job))
+    monkeypatch.setattr(worker, "finish_job", lambda *a, **kw: None)
+
+    def simulate(*args, progress_callback, **kwargs):
+        for tick in range(1, 101):
+            progress_callback(tick, 100, "forecast")
+        return SimpleNamespace(products=[])
+
+    monkeypatch.setattr("app.services.simulation.api.run_simulation", simulate)
+    monkeypatch.setattr(tasks, "_bounded_summary", lambda result: {"finished": True})
+    result = tasks.run_simulation_forecast(_hydro_params().model_dump(mode="json"),
+                                          _hydro_cfg(n=100, stride=10).model_dump(mode="json"), job_id=1, session_id="simulation-owner")
+    assert result == {"finished": True}
+    assert counts == {"forced": 12, "cheap": 100}
+
+
+def test_resume_rejects_changed_time_step():
+    rt = SimulationRuntime(_hydro_params(), _hydro_cfg(n=4))
+    rt.run()
+    config = _hydro_cfg(n=10).model_copy(update={"dt_seconds": 10.0})
+    with pytest.raises(SimulationStateError, match="dt_seconds"):
+        SimulationRuntime.from_checkpoint(rt.to_checkpoint(), config)

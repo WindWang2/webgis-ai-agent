@@ -91,7 +91,6 @@ class ProviderFailureClass(str, Enum):
 _BREAKER_CLASSES = frozenset({
     ProviderFailureClass.TIMEOUT,
     ProviderFailureClass.TRANSIENT,
-    ProviderFailureClass.UNKNOWN,
 })
 
 #: 已知错误码 → 分类(dispatch / registry 闸 / governor 的对外词表)。
@@ -139,7 +138,19 @@ def classify_failure(
         code = str(getattr(exc, "code", "") or "")
         if code in _CODE_CLASSIFICATION:
             return _CODE_CLASSIFICATION[code]
-        return ProviderFailureClass.TRANSIENT
+        if isinstance(exc, (ValueError, TypeError, KeyError)):
+            return ProviderFailureClass.PERMANENT
+        if isinstance(exc, (ConnectionError, OSError)):
+            return ProviderFailureClass.TRANSIENT
+        # Provider transport exceptions do not all inherit OSError.
+        import httpx
+        if isinstance(exc, httpx.TransportError):
+            return ProviderFailureClass.TRANSIENT
+        if isinstance(exc, httpx.HTTPStatusError):
+            if exc.response.status_code >= 500:
+                return ProviderFailureClass.TRANSIENT
+            return ProviderFailureClass.PERMANENT
+        return ProviderFailureClass.UNKNOWN
     code = str(error_code or "").strip()
     if code in _CODE_CLASSIFICATION:
         return _CODE_CLASSIFICATION[code]
@@ -281,6 +292,7 @@ class ProviderHealthRegistry:
             if entry.state is not ProviderHealthState.CLOSED:
                 entry.state = ProviderHealthState.CLOSED
                 entry.open_cycles = 0
+                entry.cool_down_s = self._cool_down
                 entry.last_transition_at = now
             entry.half_open_trial_inflight = False
             entry.success_count += 1

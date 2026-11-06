@@ -177,7 +177,7 @@ export function gridToDataUrl(
   grid: number[][],
   opts: RenderGridOptions & { maxSide?: number } = {},
 ): string | null {
-  if (typeof document === 'undefined') return null;
+  if (typeof document === 'undefined' || grid.length === 0 || grid[0].length === 0) return null;
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;

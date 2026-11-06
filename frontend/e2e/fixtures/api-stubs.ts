@@ -155,7 +155,7 @@ export class JourneyWorld {
   /** Request log for contract assertions (method+path), most recent last. */
   requests: Array<{ method: string; path: string }> = [];
   /**
-   * ADR-0283：IR 事件上行记录（POST /interaction-events 的 body 事件，
+   * ADR-0285：IR 事件上行记录（POST /interaction-events 的 body 事件，
    * journeys 断言 kind/payload 契约）；situation/turn-chain 投影面由各
    * journey 可配置（默认空 scope）。
    */
@@ -297,7 +297,7 @@ export async function installJourneyStubs(page: Page, world: JourneyWorld): Prom
 
   // ── sessions / map state ────────────────────────────────────────────────
   await api(/\/api\/v1\/chat\/sessions\/[^/]+\/map-state(\?|$)/, async () => world.mapState);
-  // ── ADR-0283：交互闭环端点（IR 摄入/投影 + situation/turn-chain 只读面）──
+  // ── ADR-0285：交互闭环端点（IR 摄入/投影 + situation/turn-chain 只读面）──
   await api(/\/api\/v1\/chat\/sessions\/[^/]+\/interaction-events(\?|$)/, async (_url: URL, method: string, body: string) => {
     if (method !== 'POST') {
       return {

@@ -149,16 +149,12 @@ def get_retrieval_corpus() -> List[ToolRetrievalCase]:
 
 
 def get_retrieval_sample(sample_n: int = 800) -> List[ToolRetrievalCase]:
-    """确定性 stride 子样（门测试跑 select 指标用；覆盖全部三层来源）。
-
-    stride = ceil(total / n)，从 0 起等步长取点 —— 无随机、跨进程一致。
-    """
+    """Return exactly min(total, n) evenly distributed deterministic examples."""
     corpus = get_retrieval_corpus()
     total = len(corpus)
-    if total <= sample_n:
-        return list(corpus)
-    stride = -(-total // max(1, sample_n))  # ceil division
-    return corpus[::stride][:sample_n]
+    n = max(0, min(total, sample_n))
+    return [corpus[index * total // n] for index in range(n)]
+
 
 
 def corpus_source_counts(corpus: List[ToolRetrievalCase]) -> dict:

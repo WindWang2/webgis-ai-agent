@@ -236,7 +236,7 @@ def register_geocompute_tools(registry: ToolRegistry):
         run = engine.get_run(run_id, owner_scope=owner_scope_for(caller))
         if run is None:
             return {"status": "not_found", "run_id": run_id, "cancelled": False}
-        cancelled = engine.cancel_run(run_id, reason="cancelled via agent tool")
+        cancelled = engine.cancel_run(run_id, reason="cancelled via agent tool", owner_scope=owner_scope_for(caller))
         return {
             "status": "cancel_requested" if cancelled else run.status.value,
             "run_id": run_id,

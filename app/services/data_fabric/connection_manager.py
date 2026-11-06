@@ -243,6 +243,13 @@ def _ssrf_validate_profile(profile: ConnectionProfile) -> None:
     ``profile.url`` was empty (#1107). Construct a synthetic postgresql:// URL
     so the same private/loopback/metadata IP checks apply.
     """
+    if (str(profile.source_type or "").lower() == "pmtiles" and profile.url
+            and not profile.url.lower().startswith(("http://", "https://"))):
+        # Local PMTiles is an explicit adapter capability. Reuse its exact
+        # root/size/symlink gate; never broaden the remote URL scheme policy.
+        from app.services.data_fabric.adapters.pmtiles_adapter import PMTilesAdapter
+        PMTilesAdapter(profile)._resolve_local()
+        return
     if profile.url:
         DataFabricSecurity.validate_url(profile.url, allow_private=profile.allow_private)
         return
@@ -444,7 +451,7 @@ class DataFabricConnectionManager:
         with self._lock:
             return [
                 p for (o, _pid), p in self._profiles.items()
-                if owner is None or o is None or o == owner
+                if o is None or o == owner
             ]
 
     def get_all_adapters(self) -> Dict[str, GeospatialDataSourceAdapter]:
@@ -466,6 +473,12 @@ class DataFabricConnectionManager:
         else:
             spatial_catalog_service.unregister_by_profile(profile_id)
         return True
+
+    def revoke_profile(self, profile_id: str) -> int:
+        """Remove every cached legacy namespace for a persisted source."""
+        with self._lock:
+            owners = [owner for owner, pid in self._profiles if pid == str(profile_id)]
+        return sum(self.disconnect(profile_id, owner=owner) for owner in owners)
 
     def clear(self):
         with self._lock:

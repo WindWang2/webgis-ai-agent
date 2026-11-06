@@ -72,6 +72,12 @@
       "0097",
       "0098",
       "0099"
+    ],
+    "codex/all-issues-deep-review": [
+      "0100",
+      "0101",
+      "0102",
+      "0103"
     ]
   },
   "legacy_merged": {
@@ -133,6 +139,30 @@
       "branch": "master",
       "revision": "0097_gc_node_result_owner_fp_unique",
       "down_revision": "0096_harness_turn_journal"
+    },
+    "0100": {
+      "branch": "codex/all-issues-deep-review",
+      "revision": "0100_spatial_watch_consistency",
+      "down_revision": "0099_story_map_assets",
+      "file": "0100_spatial_watch_action_revision.py"
+    },
+    "0101": {
+      "branch": "codex/all-issues-deep-review",
+      "revision": "0101_cluster_reservation_bigint",
+      "down_revision": "0100_spatial_watch_consistency",
+      "file": "0101_cluster_reservation_bigint.py"
+    },
+    "0102": {
+      "branch": "codex/all-issues-deep-review",
+      "revision": "0102_owner_token_hashes",
+      "down_revision": "0101_cluster_reservation_bigint",
+      "file": "0102_owner_token_hashes.py"
+    },
+    "0103": {
+      "branch": "codex/all-issues-deep-review",
+      "revision": "0103_workflow_run_session",
+      "down_revision": "0102_owner_token_hashes",
+      "file": "0103_workflow_run_session.py"
     }
   }
 }

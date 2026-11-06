@@ -135,7 +135,10 @@ def scan_parquet_window(
         except Exception as e:  # noqa: BLE001 — 组读失败 = typed 失败
             raise LakehouseScanError(f"row group {rg_index} read failed: {e}") from e
         read_groups += 1
-        batch_features = arrow_to_features(table)
+        from shapely.geometry import shape, box
+        region = box(*window)
+        batch_features = [feature for feature in arrow_to_features(table)
+                          if feature.get("geometry") and shape(feature["geometry"]).intersects(region)]
         remaining = max_rows - len(features)
         if len(batch_features) > remaining:
             features.extend(batch_features[:remaining])

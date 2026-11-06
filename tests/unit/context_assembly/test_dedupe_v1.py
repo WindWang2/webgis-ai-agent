@@ -40,8 +40,8 @@ def test_exact_duplicate_tiebreak_by_scope_then_id():
 
 
 def test_authority_stale_rendering_is_dropped_not_merged():
-    newer = _verdict_item("new", "verdict v2", freshness="fp2", ref="fingerprint")
-    older = _verdict_item("old", "verdict v1", freshness="fp1", ref="fingerprint")
+    newer = _verdict_item("new", "verdict v2", freshness="fp2", ref="fingerprint").model_copy(update={"revision": "2"})
+    older = _verdict_item("old", "verdict v1", freshness="fp1", ref="fingerprint").model_copy(update={"revision": "1"})
     result = dedupe_items([newer, older])
     kept_ids = {i.item_id for i in result.kept}
     assert len(kept_ids) == 1
@@ -90,3 +90,21 @@ def test_dedupe_never_edits_content():
     b = _verdict_item("b", "text A")
     result = dedupe_items([a, b])
     assert all(i.content == "text A" for i in result.kept + [x for x, _ in result.dropped])
+
+
+def test_authority_revision_beats_priority_scope_and_item_name():
+    older = _verdict_item("a-old", "old fact", priority=1, freshness="hash-a", ref="authority").model_copy(update={"revision": "9"})
+    newer = _verdict_item("z-new", "new fact", priority=100, freshness="hash-z", ref="authority").model_copy(update={"revision": "10"})
+    for items in ([older, newer], [newer, older]):
+        result = dedupe_items(items)
+        assert [item.item_id for item in result.kept] == ["z-new"]
+        assert result.dropped == [(older, REASON_STALE_AUTHORITY)]
+
+
+def test_opaque_fingerprints_do_not_claim_an_arbitrary_rendering_is_fresh():
+    from app.services.context_assembly.dedupe import REASON_AUTHORITY_CONFLICT
+    first = _verdict_item("a", "old", freshness="ffff", ref="authority")
+    second = _verdict_item("b", "new", freshness="0000", ref="authority")
+    result = dedupe_items([first, second])
+    assert not result.kept
+    assert {reason for _, reason in result.dropped} == {REASON_AUTHORITY_CONFLICT}

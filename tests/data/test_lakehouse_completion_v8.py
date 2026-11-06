@@ -209,15 +209,15 @@ def test_v8_end_to_end_versioned_lakehouse(v8_env, tmp_path):
     with SessionLocal() as db:
         row = reg.get_dataset(db, ds_row_id)
         plan = ret.plan_retention(
-            db, row, max_versions=2, min_age_hours=24 * 365)
+            db, row, session_id=str(row.owner_id), max_versions=2, min_age_hours=24 * 365)
         # 全部版本新鲜（刚提交）→ min_age 保护 → 无候选。
         assert plan["candidate_count"] == 0
-        result = ret.execute_retention(db, plan)
+        result = ret.execute_retention(db, plan, session_id=str(row.owner_id))
         db.commit()
         assert result["pruned_count"] == 0
         # min_age=0 时 v2（超窗且无指针）成为候选 —— 指针保护
         # （tag=stable 指向 v1、两个分支 head）仍然生效。
-        plan2 = ret.plan_retention(db, row, max_versions=2, min_age_hours=0.0)
+        plan2 = ret.plan_retention(db, row, session_id=str(row.owner_id), max_versions=2, min_age_hours=0.0)
         assert plan2["candidates"] == [v2.version_id]
 
     # 8. Data Fabric 描述符适配（诚实默认：缺 CRS/bbox = None）。

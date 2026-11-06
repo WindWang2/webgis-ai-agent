@@ -32,7 +32,6 @@ function providerDesc(provider: (typeof TILE_PROVIDERS)[number], t: TranslateFn)
  */
 export function MapConfig() {
   const t = useT();
-  const baseLayer = useHudStore((s) => s.baseLayer);
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
   const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction();
 
@@ -48,7 +47,7 @@ export function MapConfig() {
         </div>
         <div className="grid grid-cols-3 gap-2">
           {TILE_PROVIDERS.map((provider, idx) => {
-            const isActive = selectedBaseLayer === idx || baseLayer === provider.name;
+            const isActive = selectedBaseLayer === idx;
             return (
               <button
                 key={provider.id}

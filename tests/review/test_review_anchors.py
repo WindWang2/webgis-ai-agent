@@ -62,6 +62,18 @@ class TestComponentAnchor:
 
 
 class TestFeatureAnchor:
+    async def test_feature_without_layer_is_unknown(self):
+        # Legacy persisted anchors predate the ingress layer-id validator.
+        anchor = Anchor.model_construct(kind=AnchorKind.FEATURE, id="f-1")
+        assert await evaluate_anchor("s1", anchor, _spec()) is AnchorState.UNVERIFIED
+
+    async def test_inline_data_feature_can_be_verified(self):
+        source = _geojson_source(["f-1"])
+        source["inlineData"] = source.pop("data")
+        spec = _spec(layers=[{"id": "L1", "source": "s1"}], sources={"s1": source})
+        anchor = Anchor(kind=AnchorKind.FEATURE, id="f-1", layer_id="L1")
+        assert await evaluate_anchor("s1", anchor, spec) is AnchorState.OK
+
     async def test_feature_present(self):
         spec = _spec(
             layers=[{"id": "L1", "source": "s1"}],

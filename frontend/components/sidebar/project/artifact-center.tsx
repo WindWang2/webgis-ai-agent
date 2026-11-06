@@ -71,6 +71,16 @@ export function ArtifactCenter({
   const [copiedId, setCopiedId] = useState('');
   const [sortNewest, setSortNewest] = useState(true);
   const lastFocused = useRef('');
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyGeneration = useRef(0);
+  useEffect(() => {
+    copyGeneration.current += 1;
+    setCopiedId('');
+    return () => {
+      copyGeneration.current += 1;
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    };
+  }, [projectId]);
 
   // 交叉导航：聚焦指定产物（展开 + 拉血缘）。lastFocused 防重复聚焦；
   // loadLineage 经 ref 快照调用，避免 effect 跟随血缘缓存刷新重跑。
@@ -83,7 +93,7 @@ export function ArtifactCenter({
     void loadLineageRef.current(focusArtifactId);
   }, [focusArtifactId]);
 
-  const types = Array.from(new Set(ac.artifacts.map((a) => a.artifact_type))).sort();
+  const types = ac.artifactTypes ?? Array.from(new Set(ac.artifacts.map((a) => a.artifact_type))).sort();
   const sorted = [...ac.artifacts].sort((a, b) => {
     const da = new Date(a.created_at).getTime() || 0;
     const db = new Date(b.created_at).getTime() || 0;
@@ -106,9 +116,11 @@ export function ArtifactCenter({
   const handleCopyRef = async (a: ArtifactSummary) => {
     const sha = ac.pinReceipts[a.id]?.content_sha256;
     const text = sha ? `artifact:${a.id}\nsha256:${sha}` : `artifact:${a.id}`;
-    if (await copyText(text)) {
+    const generation = copyGeneration.current;
+    if (await copyText(text) && generation === copyGeneration.current) {
       setCopiedId(a.id);
-      setTimeout(() => setCopiedId(''), 2000);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopiedId(''), 2000);
       addToast(t('artifact.refCopied'), 'success');
     }
   };
@@ -175,6 +187,8 @@ export function ArtifactCenter({
           </>
         )}
       </InlineNotice>
+
+      <p className="text-micro text-ink-muted">{t('artifact.loadedFilters')}</p>
 
       {ac.error && <InlineNotice variant="error">{ac.error}</InlineNotice>}
 

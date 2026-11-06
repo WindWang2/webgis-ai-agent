@@ -299,7 +299,7 @@ export function emitComparisonModeChanged(enabled: boolean, mode?: string): void
   });
 }
 
-// ── ADR-0283 D2 三连收 emitter（钩子：chart-panel onClick / table-panel
+// ── ADR-0285 D2 三连收 emitter（钩子：chart-panel onClick / table-panel
 //    行点选 / temporal controller settle→commitUserTemporal）────────────
 
 /** 图表类别选择（类别谓词，非要素 id 集；categories ≤8×32 字符）。 */

@@ -18,6 +18,7 @@ CATEGORIES = (
     "cartography_visual_regression",
     "data_fixture_drift",
     "generated_artifact_drift",
+    "not_run",
     "platform_limitation",
     "nondeterministic_text_only",
 )
@@ -54,7 +55,7 @@ def classify(
             return {"category": "generated_artifact_drift", "evidence":
                     {**evidence, "baseline": baseline_digest[:16],
                      "current": result.replay_digest[:16]}}
-        return {"category": "generated_artifact_drift" if result.not_run
+        return {"category": "not_run" if result.not_run
                 else "semantic_regression",
                 "evidence": {**evidence,
                              "note": "green but flagged by caller"}}

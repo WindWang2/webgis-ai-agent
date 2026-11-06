@@ -69,7 +69,10 @@ async def serve_static(
     """带访问控制 + 越界防护的静态文件下发。"""
     target = _resolve_under_data_dir(file_path)
 
-    is_public = file_path.startswith(_PUBLIC_PREFIXES)
+    base = Path(settings.DATA_DIR).resolve()
+    is_public = any(
+        target.is_relative_to(base / prefix.rstrip("/")) for prefix in _PUBLIC_PREFIXES
+    )
     # SEC-F3: a Bearer token alone must NOT grant reads of arbitrary private
     # files under DATA_DIR (other tenants' uploads/exports/reports and
     # .webgis-agent session data) — that made every per-resource ownership

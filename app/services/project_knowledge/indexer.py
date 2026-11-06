@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from sqlalchemy.orm import Session
 
 from app.models.project import (
@@ -31,7 +31,7 @@ from app.models.project import (
 from app.models.mission import GISMissionRow
 from app.models.spatial_memory import GISSpatialMemory
 from app.services.project_knowledge import store as ks
-from app.services.project_knowledge.liveness import live_version_token
+from app.services.project_knowledge.liveness import live_version_token, live_version_tokens
 from app.services.project_knowledge.contract import (
     AS_ARTIFACT,
     AS_CARTO_FACT,
@@ -50,6 +50,8 @@ from app.services.project_knowledge.contract import (
     EK_WORKFLOW,
     REBUILD_MAP_PRODUCT_MAX,
     REBUILD_MISSION_MAX,
+    REBUILD_DATASET_MAX, REBUILD_ARTIFACT_MAX, REBUILD_WORKFLOW_MAX,
+    REBUILD_PLACE_MAX, REBUILD_PREFERENCE_MAX,
     RefTag,
     KnowledgeUpsert,
     validate_bbox,
@@ -72,9 +74,11 @@ class RebuildReport:
     rejected: int = 0
     errors: int = 0
     failed_sources: List[str] = field(default_factory=list)
+    entry_ids: set[str] = field(default_factory=set, repr=False)
 
-    def bump(self, kind: str) -> None:
+    def bump(self, kind: str, entry_id: str) -> None:
         self.upserted[kind] = self.upserted.get(kind, 0) + 1
+        self.entry_ids.add(entry_id)
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
@@ -106,7 +110,7 @@ def index_datasets(
             ProjectDataset.detached_at.is_(None),
         )
         .order_by(ProjectDataset.created_at.desc())
-        .limit(200)
+        .limit(REBUILD_DATASET_MAX)
     ).scalars().all())
     for row in rows:
         entry = ks.upsert_entry(db, KnowledgeUpsert(
@@ -118,24 +122,29 @@ def index_datasets(
             subject=str(row.name or "")[:255],
             version_token=str(row.version_fingerprint or ""),
             summary=_dataset_summary(row),
-        ))
+        ), apply_budget=False)
         if entry is None:
             report.rejected += 1
         else:
-            report.bump(EK_DATASET_VERSION)
+            report.bump(EK_DATASET_VERSION, str(entry.id))
 
 
 def _lineage_refs(
-    db: Session, *, artifact_id: str
+    db: Session, *, artifact_id: str, project_id: str,
+    lineage_rows: Optional[List[Any]] = None,
+    tokens: Optional[Dict[Any, Any]] = None,
 ) -> tuple[List[RefTag], Optional[str], Optional[Any]]:
     """artifact 的血缘投影：derived_from 数据集/父产物 + 方法键。"""
-    rows = list(db.execute(
+    rows = lineage_rows if lineage_rows is not None else list(db.execute(
         select(ArtifactLineage)
         .where(ArtifactLineage.artifact_id == artifact_id)
         .order_by(ArtifactLineage.created_at.desc())
         .limit(8)
     ).scalars().all())
     refs: List[RefTag] = []
+    parent_tokens = tokens if tokens is not None else live_version_tokens(db, project_id=project_id, probes=[
+        (AS_ARTIFACT, str(edge.parent_artifact_id)) for edge in rows if edge.parent_artifact_id
+    ])
     method_key: Optional[str] = None
     bbox: Optional[Any] = None
     for edge in rows:
@@ -151,7 +160,7 @@ def _lineage_refs(
                 relation="derived_from",
                 authority=AS_ARTIFACT,
                 id=str(edge.parent_artifact_id)[:128],
-                token=str(edge.content_fingerprint or "")[:128],
+                token=str(parent_tokens.get((AS_ARTIFACT, str(edge.parent_artifact_id))) or "")[:128],
             ))
         if method_key is None and (edge.producing_capability or edge.producing_algorithm):
             cap = str(edge.producing_capability or "").strip()
@@ -169,18 +178,32 @@ def index_artifacts(
         select(Artifact)
         .where(Artifact.project_id == project_id)
         .order_by(Artifact.created_at.desc())
-        .limit(200)
+        .limit(REBUILD_ARTIFACT_MAX)
     ).scalars().all())
+    artifact_ids = [str(row.id) for row in rows]
+    ranked = select(
+        ArtifactLineage.id.label("lineage_id"),
+        func.row_number().over(partition_by=ArtifactLineage.artifact_id,
+                               order_by=ArtifactLineage.created_at.desc()).label("rank"),
+    ).where(ArtifactLineage.artifact_id.in_(artifact_ids)).subquery()
+    lineage_by_artifact: Dict[str, List[Any]] = {}
+    for edge in db.execute(select(ArtifactLineage).join(
+        ranked, ranked.c.lineage_id == ArtifactLineage.id,
+    ).where(ranked.c.rank <= 8).order_by(ArtifactLineage.created_at.desc())).scalars():
+        lineage_by_artifact.setdefault(str(edge.artifact_id), []).append(edge)
+    probes = [(AS_ARTIFACT, aid) for aid in artifact_ids]
+    probes.extend((AS_ARTIFACT, str(edge.parent_artifact_id))
+                  for edges in lineage_by_artifact.values() for edge in edges
+                  if edge.parent_artifact_id)
+    tokens = live_version_tokens(db, project_id=project_id, probes=probes)
     for row in rows:
         meta = row.metadata_json if isinstance(row.metadata_json, dict) else {}
         lineage_refs, method_key, lineage_bbox = _lineage_refs(
-            db, artifact_id=str(row.id)
+            db, artifact_id=str(row.id), project_id=project_id,
+            lineage_rows=lineage_by_artifact.get(str(row.id), []), tokens=tokens,
         )
         bbox = validate_bbox(meta.get("bbox")) or validate_bbox(lineage_bbox)
-        token = live_version_token(
-            db, project_id=project_id,
-            authority_store=AS_ARTIFACT, authority_id=str(row.id),
-        )
+        token = tokens.get((AS_ARTIFACT, str(row.id)))
         entry = ks.upsert_entry(db, KnowledgeUpsert(
             org_id=org_id,
             project_id=project_id,
@@ -197,11 +220,11 @@ def index_artifacts(
             ),
             method_key=method_key,
             refs=lineage_refs,
-        ))
+        ), apply_budget=False)
         if entry is None:
             report.rejected += 1
         else:
-            report.bump(EK_ARTIFACT)
+            report.bump(EK_ARTIFACT, str(entry.id))
 
 
 def index_map_products(
@@ -235,11 +258,11 @@ def index_map_products(
             summary=f"地图成品版本 {int(row.version_no)}"
             + (f"，谱系 {row.lineage_kind}" if row.lineage_kind else ""),
             refs=artifact_refs,
-        ))
+        ), apply_budget=False)
         if entry is None:
             report.rejected += 1
         else:
-            report.bump(EK_MAP_PRODUCT)
+            report.bump(EK_MAP_PRODUCT, str(entry.id))
 
 
 def index_workflows(
@@ -249,7 +272,7 @@ def index_workflows(
         select(Workflow)
         .where(Workflow.project_id == project_id)
         .order_by(Workflow.updated_at.desc())
-        .limit(64)
+        .limit(REBUILD_WORKFLOW_MAX)
     ).scalars().all())
     for row in rows:
         token = live_version_token(
@@ -265,11 +288,11 @@ def index_workflows(
             subject=str(row.name or "")[:255],
             version_token=str(token or ""),
             summary=f"工作流 v{int(row.version or 1)}",
-        ))
+        ), apply_budget=False)
         if entry is None:
             report.rejected += 1
         else:
-            report.bump(EK_WORKFLOW)
+            report.bump(EK_WORKFLOW, str(entry.id))
 
 
 def index_missions(
@@ -309,11 +332,11 @@ def index_missions(
             version_token=str(row.revision or 1),
             summary=f"Mission {row.state}",
             refs=ref_tags,
-        ))
+        ), apply_budget=False)
         if entry is None:
             report.rejected += 1
         else:
-            report.bump(EK_MISSION)
+            report.bump(EK_MISSION, str(entry.id))
 
         if row.state == _MISSION_TERMINAL_FAILED:
             failure = row.failure_state if isinstance(row.failure_state, dict) else {}
@@ -331,11 +354,11 @@ def index_missions(
                     relation="failed_with", authority=AS_MISSION,
                     id=str(row.mission_id)[:128],
                 )],
-            ))
+            ), apply_budget=False)
             if fp_entry is None:
                 report.rejected += 1
             else:
-                report.bump(EK_FAILURE_PATTERN)
+                report.bump(EK_FAILURE_PATTERN, str(fp_entry.id))
 
 
 def index_places(
@@ -351,9 +374,10 @@ def index_places(
             GISSpatialMemory.kind == _MEM_PLACE_KIND,
             GISSpatialMemory.status == "active",
             GISSpatialMemory.sensitive.is_(False),
+            or_(GISSpatialMemory.expires_at.is_(None), GISSpatialMemory.expires_at > ks._now_naive()),
         )
         .order_by(GISSpatialMemory.last_validated_at.desc())
-        .limit(32)
+        .limit(REBUILD_PLACE_MAX)
     ).scalars().all())
     for row in rows:
         value = row.value if isinstance(row.value, dict) else {}
@@ -368,11 +392,11 @@ def index_places(
             version_token=str(row.fingerprint or ""),
             summary=str(row.subject or "")[:300],
             bbox=list(bbox) if bbox else None,
-        ))
+        ), apply_budget=False)
         if entry is None:
             report.rejected += 1
         else:
-            report.bump(EK_PLACE)
+            report.bump(EK_PLACE, str(entry.id))
 
 
 def index_preferences(
@@ -385,9 +409,10 @@ def index_preferences(
             CartoProjectFact.project_id == project_id,
             CartoProjectFact.kind == _CARTO_PREFERENCE_KIND,
             CartoProjectFact.status == "active",
+            or_(CartoProjectFact.expires_at.is_(None), CartoProjectFact.expires_at > ks._now_naive()),
         )
         .order_by(CartoProjectFact.last_verified_at.desc())
-        .limit(32)
+        .limit(REBUILD_PREFERENCE_MAX)
     ).scalars().all())
     for row in rows:
         entry = ks.upsert_entry(db, KnowledgeUpsert(
@@ -399,11 +424,11 @@ def index_preferences(
             subject=str(row.subject or "")[:255],
             version_token=str(row.fingerprint or ""),
             summary=str(row.subject or "")[:300],
-        ))
+        ), apply_budget=False)
         if entry is None:
             report.rejected += 1
         else:
-            report.bump(EK_PREFERENCE)
+            report.bump(EK_PREFERENCE, str(entry.id))
 
 
 def rebuild_project_knowledge(
@@ -413,22 +438,32 @@ def rebuild_project_knowledge(
 
     org_id 是**调用方经项目 auth 门确认过的 effective org 字符串**；
     本函数只读权威表 + 写投影表。单源失败只豁免该源（per-source
-    try/except，review P2-3），其余源照常完成 —— rebuild 充分性。
+    savepoint，review S4g-003），其余源照常完成。
     """
-    report = RebuildReport(org_id=org_id, project_id=project.id)
     project_id = str(project.id)
+    report = RebuildReport(org_id=org_id, project_id=project_id)
     sources = (
-        ("datasets", index_datasets),
-        ("artifacts", index_artifacts),
-        ("map_products", index_map_products),
-        ("workflows", index_workflows),
-        ("missions", index_missions),
-        ("places", index_places),
-        ("preferences", index_preferences),
+        ("datasets", index_datasets, (EK_DATASET_VERSION,)),
+        ("artifacts", index_artifacts, (EK_ARTIFACT,)),
+        ("map_products", index_map_products, (EK_MAP_PRODUCT,)),
+        ("workflows", index_workflows, (EK_WORKFLOW,)),
+        ("missions", index_missions, (EK_MISSION, EK_FAILURE_PATTERN)),
+        ("places", index_places, (EK_PLACE,)),
+        ("preferences", index_preferences, (EK_PREFERENCE,)),
     )
-    for name, fn in sources:
+    for name, fn, kinds in sources:
+        source_report = RebuildReport(org_id=org_id, project_id=project_id)
         try:
-            fn(db, project_id=project_id, org_id=org_id, report=report)
+            with db.begin_nested():
+                fn(db, project_id=project_id, org_id=org_id, report=source_report)
+                ks.invalidate_rebuild_window(
+                    db, org_id=org_id, project_id=project_id, kinds=kinds,
+                    keep_ids=list(source_report.entry_ids),
+                )
+            for kind, count in source_report.upserted.items():
+                report.upserted[kind] = report.upserted.get(kind, 0) + count
+            report.rejected += source_report.rejected
+            report.entry_ids.update(source_report.entry_ids)
         except Exception:  # noqa: BLE001 — 单源失败不中断其余源
             report.errors += 1
             report.failed_sources.append(name)
@@ -436,6 +471,9 @@ def rebuild_project_knowledge(
                 "[ProjectKnowledge] rebuild source=%s failed project=%s",
                 name, project_id,
             )
+    # Apply the global cap once after coherent source windows have replaced
+    # their old rows; never evict a row just refreshed by this rebuild.
+    ks._apply_budget(db, org_id, project_id, protected_ids=list(report.entry_ids))
     return report
 
 

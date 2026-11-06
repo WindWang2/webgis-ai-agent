@@ -1,5 +1,5 @@
 /**
- * ADR-0283 D2 三连收 emitter 单测：载荷形状/有界裁剪/mutation 链接引用。
+ * ADR-0285 D2 三连收 emitter 单测：载荷形状/有界裁剪/mutation 链接引用。
  * 与 outbox 解耦（bus emit 的入队由 contract/outbox 测试覆盖）——这里
  * 断言铸造出的 event 形状（借 outbox 队列窥视缝）。
  */

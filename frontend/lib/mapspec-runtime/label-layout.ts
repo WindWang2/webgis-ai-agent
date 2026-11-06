@@ -188,16 +188,19 @@ export function buildTextSizeExpr(
   base: number,
   bands: LabelZoomBandSpec[],
 ): number | unknown[] {
-  const withRatio = bands.filter((b) => b.sizeRatio !== null && b.sizeRatio !== 1.0);
-  if (withRatio.length === 0) return base;
-  // step 语义：zoom < b1.minZoom → 首档系数；此后逐档切换；越过末档
-  // maxZoom → 回到 base（末档之后的 zoom 属于未声明区间，按全量字号）。
-  const flat: unknown[] = [base * withRatio[0].sizeRatio!];
-  for (let i = 1; i < withRatio.length; i++) {
-    flat.push(withRatio[i].minZoom, base * withRatio[i].sizeRatio!);
+  if (!bands.some((band) => band.sizeRatio != null && band.sizeRatio !== 1)) return base;
+  const boundaries = [...new Set(bands.flatMap((band) => [band.minZoom, band.maxZoom]))].sort((a, b) => a - b);
+  const flat: unknown[] = [base];
+  let previous = base;
+  for (const boundary of boundaries) {
+    const band = bands.find((candidate) => boundary >= candidate.minZoom && boundary < candidate.maxZoom);
+    const size = base * (band?.sizeRatio ?? 1);
+    if (size !== previous) {
+      flat.push(boundary, size);
+      previous = size;
+    }
   }
-  flat.push(withRatio[withRatio.length - 1].maxZoom, base);
-  return ["step", ["zoom"], ...flat];
+  return flat.length > 1 ? ["step", ["zoom"], ...flat] : base;
 }
 
 // ── 优先级 ─────────────────────────────────────────────────────────────
@@ -458,13 +461,19 @@ export function resolveLabelStyle(
 // ── label-only 变更检测（换字段不重建图层的快路径判据）─────────────────
 const LABEL_OWN_KEYS = new Set(["label", "labelField", "labelSize", "labelColor"]);
 
+function canonicalNested(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalNested);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonicalNested(child)]));
+}
+
 function stripLabelKeys(value: unknown): string {
   if (!value || typeof value !== "object") return JSON.stringify(value ?? null);
   const obj = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(obj).sort()) {
     if (LABEL_OWN_KEYS.has(k)) continue;
-    out[k] = obj[k];
+    out[k] = canonicalNested(obj[k]);
   }
   return JSON.stringify(out);
 }

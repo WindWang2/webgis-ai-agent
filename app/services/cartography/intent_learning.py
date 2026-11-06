@@ -104,6 +104,7 @@ def capture_intent_adjudication(
     从 intent 契约抽取：task / fallback_decision / slots / confidence /
     clarification / degraded_reason / lang。DB 不可用时静默降级（日志）。
     """
+    matched_rules, fallback, candidates = [], False, []
     try:
         fallback_decision = getattr(intent, "fallback_decision", None) or {}
         if isinstance(fallback_decision, dict):
@@ -262,7 +263,7 @@ def replay_intent_adjudication(
         replayed = {
             "task": getattr(replayed_intent, "task", None),
             "fallback": bool(fallback_now.get("fallback", False)),
-            "matched_rules": list(getattr(replayed_intent, "matched_rules", []) or []),
+            "matched_rules": list(fallback_now.get("matched_rules", []) or []),
             "confidence": float(getattr(replayed_intent, "confidence", 0.0) or 0.0),
         }
     except Exception as exc:  # noqa: BLE001 —— 回放失败如实记录
@@ -332,15 +333,17 @@ def effective_signal_weight(
     target: str,
     now: Optional[datetime] = None,
     signal_types: Optional[Sequence[str]] = None,
+    session_id: Optional[str] = None, project_id: Optional[str] = None,
 ) -> Dict[str, float]:
     """目标的衰减后信号强度：正/负信号分开聚合（读取侧衰减）。"""
     now = now or datetime.now(timezone.utc)
-    stmt = select(CartoFeedbackSignal).where(CartoFeedbackSignal.target == target)
+    stmt = select(CartoFeedbackSignal).where(CartoFeedbackSignal.target == target,
+        CartoFeedbackSignal.session_id == session_id, CartoFeedbackSignal.project_id == project_id)
     if signal_types:
         stmt = stmt.where(CartoFeedbackSignal.signal_type.in_(list(signal_types)))
     positive = 0.0
     negative = 0.0
-    for row in db.execute(stmt.limit(QUERY_LIMIT_MAX)).scalars():
+    for row in db.execute(stmt.order_by(CartoFeedbackSignal.created_at.desc(), CartoFeedbackSignal.id.desc()).limit(QUERY_LIMIT_MAX)).scalars():
         age_days = max(0.0, (now - _as_aware(row.created_at)).total_seconds() / 86400.0)
         factor = signal_decay_factor(age_days, row.decay_days)
         weighted = row.weight * factor
@@ -363,14 +366,24 @@ def recipe_affinity_weight(weight_tuple: tuple[int, int]) -> float:
 def record_recipe_outcome(
     db: Session, *, recipe_id: str, success: bool
 ) -> Dict[str, Any]:
-    """配方成效记账（upsert 计数 + 重算权重；确定性公式）。"""
-    row = db.get(CartoRecipeAffinity, recipe_id)
+    """配方成效记账；只 flush，事务由 harvest/planner 调用方提交。"""
+    from sqlalchemy.exc import IntegrityError
+
+    row = db.execute(select(CartoRecipeAffinity).where(
+        CartoRecipeAffinity.recipe_id == recipe_id
+    ).with_for_update()).scalar_one_or_none()
     if row is None:
-        # 显式初始化（flush 前读不到列默认值；权重公式要求 int 而非 None）
-        row = CartoRecipeAffinity(
-            recipe_id=recipe_id, success_count=0, failure_count=0, weight=0.0,
-        )
-        db.add(row)
+        try:
+            with db.begin_nested():
+                db.add(CartoRecipeAffinity(
+                    recipe_id=recipe_id, success_count=0, failure_count=0, weight=0.0,
+                ))
+                db.flush()
+        except IntegrityError:
+            logger.debug("Concurrent first outcome inserted recipe %s", recipe_id)
+        row = db.execute(select(CartoRecipeAffinity).where(
+            CartoRecipeAffinity.recipe_id == recipe_id
+        ).with_for_update().execution_options(populate_existing=True)).scalar_one()
     if success:
         row.success_count = int(row.success_count or 0) + 1
     else:
@@ -378,7 +391,7 @@ def record_recipe_outcome(
     row.weight = recipe_affinity_weight((row.success_count, row.failure_count))
     row.last_outcome = "success" if success else "failure"
     row.last_updated = datetime.now(timezone.utc)
-    db.commit()
+    db.flush()
     return {
         "recipe_id": recipe_id,
         "success_count": row.success_count,

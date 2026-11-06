@@ -134,7 +134,26 @@ class PatchBlocked(PatchError):
 def _v_str(path: str, value: Any) -> str:
     if not isinstance(value, str):
         raise PatchValueInvalid(path, "expect str")
-    return value[:MAX_TEXT]
+    parts = path.split(".")
+    model = GISIntentSpec
+    field = None
+    for index, part in enumerate(parts):
+        if part == "measures" and len(parts) == 3:
+            model = MeasureSpec
+            field = model.model_fields.get(parts[-1])
+            break
+        field = model.model_fields.get(part)
+        if field is None:
+            break
+        if index < len(parts) - 1:
+            model = field.annotation
+            if not hasattr(model, "model_fields"):
+                break
+    limits = [getattr(meta, "max_length", MAX_TEXT) for meta in field.metadata] if field else []
+    limit = min([MAX_TEXT, *limits])
+    if len(value) > limit:
+        raise PatchValueInvalid(path, f"expect str <= {limit} characters")
+    return value
 
 
 def _v_bool(path: str, value: Any) -> bool:
@@ -546,7 +565,19 @@ def apply_patch(
         # 先验证后落账（fail-closed，无部分状态）。
         handler = _resolve_setter(target.path) if target.path else None
         written = False
-        if handler is not None and patch.actor in ("user", "agent"):
+        if target.code == "time_range_missing_for_series":
+            from app.services.gis_harness.requirement_ir.normalize import normalize_time
+
+            start, end, granularity, series = normalize_time(str(fields["answer"]))
+            if not start or not end or start > end:
+                raise PatchValueInvalid("time.range_start", "provide an ordered time range such as 2019-2024")
+            spec.time.range_start, spec.time.range_end = start, end
+            spec.time.granularity, spec.time.series = granularity, series
+            for field_path in ("time.range_start", "time.range_end", "time.granularity", "time.series"):
+                _touch_provenance(spec, field_path, provenance_for(patch))
+            _sync_core(spec, "time.range_start")
+            written = True
+        elif handler is not None and patch.actor in ("user", "agent"):
             setter, validator = handler
             value = validator(target.path, fields["answer"])
             owner = _current_owner(spec, target.path)

@@ -1,4 +1,4 @@
-"""TurnChain —— turn → intent → map op → observed 可重建链投影（ADR-0283 D4）。
+"""TurnChain —— turn → intent → map op → observed 可重建链投影（ADR-0285 D4）。
 
 把四份既有账本/环**只读 join** 成 per-turn 变更链，并对每个变更做三类
 可解释分类（纯规则，不写任何权威状态、不建第二真相）：

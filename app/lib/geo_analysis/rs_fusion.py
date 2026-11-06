@@ -72,10 +72,10 @@ def build_joint_feature_stack(
             named[f"{prefix}::{name}"] = a
 
     opt_any = np.zeros(shape, dtype=bool)
-    for name, arr in (optical_features or {}).items():
+    for _name, arr in (optical_features or {}).items():
         opt_any |= np.isfinite(np.asarray(arr, dtype=float))
     sar_any = np.zeros(shape, dtype=bool)
-    for name, arr in (sar_features or {}).items():
+    for _name, arr in (sar_features or {}).items():
         sar_any |= np.isfinite(np.asarray(arr, dtype=float))
     coverage = np.full(shape, COVERAGE_NONE, dtype=np.uint8)
     coverage[opt_any & ~sar_any] = COVERAGE_OPTICAL_ONLY

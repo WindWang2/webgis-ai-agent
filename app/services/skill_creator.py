@@ -20,7 +20,7 @@ class SkillCreator:
         target_dir: 覆盖写入目录（默认 self.skills_dir；quarantine 流程传入
             <skills_dir>/quarantine —— 未审批技能不进可加载面）
         """
-        skills_dir = target_dir or self.skills_dir
+        skills_dir = target_dir or os.path.join(self.skills_dir, "quarantine")
         # 安全：name 来自 LLM（含 prompt injection 风险），必须是合法 Python 标识符。
         # 否则攻击者可写 name='../core/auth' 覆盖核心模块（审计 B7）。
         import os.path as _p
@@ -41,9 +41,11 @@ class SkillCreator:
         if not resolved.startswith(skills_root + os.sep) and resolved != skills_root:
             raise ValueError(f"路径越界：{file_path}")
 
-        # Code audit: basic path-traversal guard above.
-        # Future: integrate AST-based static analysis to reject dangerous
-        # patterns (subprocess, eval, exec, network calls) before write.
+        # Use the same static policy as the runtime upload approval boundary.
+        from app.tools.skills import _validate_skill_code
+        violations = _validate_skill_code(code)
+        if violations:
+            raise ValueError("skill code rejected: " + "; ".join(violations))
 
         # 确保目录存在
         os.makedirs(os.path.dirname(file_path), exist_ok=True)

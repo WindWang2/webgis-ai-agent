@@ -22,6 +22,7 @@ class TestReplay:
     def test_full_coverage_complete(self, library):
         skill = self._skill(library)
         report = replay_procedure(skill, {
+            "step_ids": ["decide_statistic"],
             "capabilities": ["spatial_join", "admin_aggregation",
                              "admin_boundary_query", "thematic_cartography"],
             "evidence_kinds": [

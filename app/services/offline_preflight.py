@@ -16,6 +16,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -105,9 +107,12 @@ def check_rag_embeddings() -> Dict[str, Any]:
 
     offline = bool(settings.RAG_EMBEDDING_OFFLINE)
     if offline:
-        return _check("rag_embeddings", _OK,
-                      "RAG_EMBEDDING_OFFLINE=true（模型缓存须预置，见 "
-                      "docs/DEPLOYMENT-offline.md §嵌入模型）")
+        from app.services.offline_inventory import rag_model_cache_present
+
+        present = rag_model_cache_present()
+        return _check("rag_embeddings", _OK if present else _DOWN,
+                      "离线嵌入模型缓存已就绪" if present else "离线嵌入模型缓存缺失或不完整；请先预热缓存",
+                      required=True)
     profile = settings.DEPLOYMENT_PROFILE
     if profile == "air_gapped":
         return _check(
@@ -208,11 +213,17 @@ def check_network_dependencies() -> Dict[str, Any]:
 
 def check_database(timeout_s: float = 3.0) -> Dict[str, Any]:
     try:
-        from sqlalchemy import text
-
+        from sqlalchemy import text, create_engine
+        from sqlalchemy.pool import NullPool
         from app.core.database import Engine
-        with Engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+        connect_args = ({"timeout": max(0.1, timeout_s)} if Engine.dialect.name == "sqlite"
+                        else {"connect_timeout": max(1, int(timeout_s))})
+        probe_engine = create_engine(Engine.url, connect_args=connect_args, poolclass=NullPool)
+        try:
+            with probe_engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+        finally:
+            probe_engine.dispose()
         return _check("database", _OK, "SQLAlchemy 连接 OK", required=True)
     except Exception as exc:  # noqa: BLE001
         return _check("database", _DOWN, str(exc), required=True)
@@ -290,7 +301,7 @@ def check_llm_endpoint(timeout_s: float = 5.0) -> Dict[str, Any]:
         assert_egress_allowed(base_url, dependency_id="llm_chat")
         with httpx.Client(timeout=timeout_s) as client:
             resp = client.get(base_url.rstrip("/") + "/models")
-        if resp.status_code < 500:
+        if 200 <= resp.status_code < 300:
             return _check("llm_endpoint", _OK,
                           f"{base_url} 可达（{policy_part}）", required=True)
         return _check("llm_endpoint", _DOWN,
@@ -336,7 +347,7 @@ async def run_preflight(only: Optional[List[str]] = None) -> Dict[str, Any]:
     checks: List[Dict[str, Any]] = []
     for name, fn, required in selected:
         try:
-            result = fn()
+            result = await asyncio.wait_for(asyncio.to_thread(fn), timeout=15.0)
         except Exception as exc:  # noqa: BLE001 — 探测自身故障按 down 诚实上报
             result = _check(name, _DOWN, f"probe error: {type(exc).__name__}",
                             required=required)

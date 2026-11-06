@@ -42,6 +42,12 @@ def env(tmp_path, monkeypatch):
 
     Base.metadata.create_all(eng)
     factory = sessionmaker(bind=eng, expire_on_commit=False)
+    from app.models.db_model import Organization, OrgQuota
+    with factory() as db:
+        db.add(Organization(id=1, name="perf", slug="default"))
+        db.add(OrgQuota(org_id="1", max_concurrent_tasks=10000))
+        db.commit()
+
     from app.services.geocompute import reuse_index, run_evidence
     from app.services.geocompute.cluster import store as csm
 

@@ -49,7 +49,8 @@ def iter_scan_pages_arrow(
     """
     from app.schemas.data_fabric_schema import QuerySpec
     from app.services.data_fabric import vector_carrier
-    from app.services.data_fabric.query.predicates import evaluate_predicate
+    from app.services.data_fabric.query.predicates import evaluate_predicate, iter_fields
+    from app.services.data_fabric.errors import QueryBudgetExceededError
 
     extras: Dict[str, Any] = {
         "limit": int(fetch_limit),
@@ -57,16 +58,20 @@ def iter_scan_pages_arrow(
         "max_rows": budget.max_rows,
     }
     if fields:
-        extras["fields"] = list(fields)
+        extras["fields"] = sorted(set(fields) | set(iter_fields(where)))
     if bbox:
         extras["bbox"] = list(bbox)
 
     emitted = 0
+    scanned = 0
     page: List[Dict[str, Any]] = []
     for batch in adapter.iter_query_arrow_batches(dataset_id, QuerySpec(**extras)):
         token.check()
         table = _to_table(batch)
         rows = vector_carrier.arrow_to_features(table)
+        scanned += len(rows)
+        if scanned > budget.max_rows:
+            raise QueryBudgetExceededError("Arrow scan exceeded input row budget")
         if on_page is not None:
             try:
                 on_page(len(rows))
@@ -81,11 +86,18 @@ def iter_scan_pages_arrow(
                 where, feat.get("properties") or {}
             ):
                 continue
+            if fields:
+                feat = {**feat, "properties": {
+                    key: value for key, value in (feat.get("properties") or {}).items()
+                    if key in fields
+                }}
             page.append(feat)
-            if len(page) >= page_size:
+            if len(page) >= page_size or emitted + len(page) >= fetch_limit:
                 yield page
                 emitted += len(page)
                 page = []
+                if emitted >= fetch_limit:
+                    return
         if emitted >= fetch_limit:
             return
     if page:

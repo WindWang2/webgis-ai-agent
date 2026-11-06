@@ -21,7 +21,7 @@ import threading
 from datetime import timedelta
 from typing import Any, Callable, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -135,12 +135,11 @@ class RunEventStore:
                     # 依赖词表封闭 —— like "node\_%" 的 _ 是通配符，词表
                     # 外不存在 node 前缀事件。
                     used = db.execute(
-                        select(func.count())
-                        .select_from(_Event)
-                        .where(_Event.run_id == run_id,
-                               _Event.event.like("node_%"))
-                    ).scalar_one()
-                    if int(used) >= MAX_NODE_EVENTS_PER_RUN:
+                        select(_Event.id)
+                        .where(_Event.run_id == run_id, _Event.event.in_(EVENT_VOCABULARY - _BUDGET_EXEMPT))
+                        .order_by(_Event.id).offset(MAX_NODE_EVENTS_PER_RUN - 1).limit(1)
+                    ).scalar_one_or_none()
+                    if used is not None:
                         _bump("event_budget_exhausted_total")
                         return False
                 db.add(_Event(

@@ -1,4 +1,4 @@
-"""S3 — Selection History：多轮指代的选择史投影（ADR-0283 D3）。
+"""S3 — Selection History：多轮指代的选择史投影（ADR-0285 D3）。
 
 「刚才那组学校」＝previous 句柄；史由 ledger 环纯函数重建（零 IO、序号
 驱动）；不可解析句柄 → None（绝不随机挑数据）。

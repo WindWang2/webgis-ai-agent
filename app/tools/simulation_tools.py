@@ -97,7 +97,12 @@ def run_spatial_simulation_impl(
             n_steps=n_steps,
             output_stride=output_stride,
             start_time=start_time,
+            max_wall_seconds=120.0,
         )
+        work_units = (params_model.grid.width * params_model.grid.height if model_kind == "hydro_diffusion"
+                      else len(params_model.edges)) * n_steps
+        if work_units > 2_000_000:
+            run_async = True
         if run_async:
             envelope = enqueue_simulation(
                 params_model, config_model, session_id=session_id or None,
@@ -106,7 +111,9 @@ def run_spatial_simulation_impl(
 
         from app.services.simulation.api import build_tool_result, run_simulation
 
-        result = run_simulation(params_model, config_model)
+        from app.services.simulation.layers import DurableGeoJSONTemporalSink
+
+        result = run_simulation(params_model, config_model, sink=DurableGeoJSONTemporalSink(session_id))
         return build_tool_result(result)
     except SimulationStabilityError as exc:
         return std_error_response(

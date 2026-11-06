@@ -13,6 +13,8 @@ Only reads the requested spatial window from disk.
 raster id 按工具调用唯一（tool_dispatch_service），save_png 同路径重写是
 已知残余窗口。
 """
+
+from app.lib.geo_raster.env import open_raster
 import io
 import collections
 import os
@@ -321,6 +323,8 @@ def render_raster_tile(
     - ``bands``：1-based 波段组合（≤3）；缺省前 min(3, count)。
     - 样式（cmap/bands）进缓存键：换样式 = 新缓存条目，绝不重算遥感产物。
     """
+    if bands is not None and len(bands) not in (1, 3):
+        raise ValueError("Raster rendering supports one band or three RGB bands")
     if z < 0 or z > 22 or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         return _transparent_tile_png(tile_size)
 
@@ -338,7 +342,7 @@ def render_raster_tile(
         # Env is a runtime property (geo_raster.env), held per tile for the
         # open+read+reproject lifetime — previously this open path ran in the
         # default GDAL env (audit bypass #3).
-        with rasterio_env(), rasterio.open(raster_path) as src:
+        with rasterio_env(), open_raster(raster_path) as src:
             # A GeoTIFF does NOT guarantee a CRS (unlike GeoJSON RFC 7946).
             # Previously a missing CRS was silently treated as EPSG:4326, which
             # produced wildly wrong tile windows for projected (UTM/3857)
@@ -366,7 +370,12 @@ def render_raster_tile(
             # Read windowed slice from source
             win_raw = from_bounds(*src_bounds, transform=src.transform)
             win = win_raw.round_offsets().round_shape()
-            win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
+            try:
+                win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
+            except rasterio.errors.WindowError:
+                res = _transparent_tile_png(tile_size)
+                _set_cached_tile(key, res)
+                return res
 
             if win.width <= 0 or win.height <= 0:
                 res = _transparent_tile_png(tile_size)
@@ -390,7 +399,7 @@ def render_raster_tile(
             if bands:
                 indexes = tuple(b for b in bands if 1 <= b <= src.count)[:3]
             else:
-                indexes = tuple(range(1, min(src.count, 3) + 1))
+                indexes = (1,) if src.count < 3 else (1, 2, 3)
             if not indexes:
                 res = _transparent_tile_png(tile_size)
                 _set_cached_tile(key, res)
@@ -588,7 +597,7 @@ def render_terrarium_tile(
     from app.lib.geo_raster.env import rasterio_env
 
     try:
-        with rasterio_env(), rasterio.open(raster_path) as src:
+        with rasterio_env(), open_raster(raster_path) as src:
             if src.count != 1:
                 raise TerrainTileError(
                     "TERRAIN_REQUIRES_SINGLE_BAND",

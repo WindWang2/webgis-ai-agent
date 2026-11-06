@@ -31,7 +31,7 @@ import time
 import uuid
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Optional
 
 from pydantic import BaseModel
 
@@ -50,6 +50,8 @@ from app.services.chat.pi_bridge_surface_gate import (
     stale_surface_gate,
 )
 from app.services.chat.pi_result_abi import abi_tool_response
+from app.services.chat.pi_bridge_tasks import bridge_pool_size, schedule_abort
+from app.services.chat.pi_writer_gate import WriterLease, acquire_writer
 from app.services.jobs.cancellation import CancellationToken, OperationCancelled, use_token
 # 再导出（有意为之，勿被 F401 清理移除）：pi_post_dispatch 的降级锁兜底
 # except 子句经 ``bridge.LockDegradedError/LockLostError`` 引用本模块属性
@@ -68,6 +70,11 @@ from app.lib.runtime.evidence import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.tools.registry import ToolRegistry
+    from app.services.tool_dispatch_service import ToolDispatchResult
+    from app.services.chat.pi_rpc_client import PiRpcClient
 
 # Feature flag
 # 默认 True = 仓内 vendor/pi；False = ChatEngine 回退（测试 conftest 钉 false）。
@@ -291,12 +298,12 @@ def _cache_session_is_active(sid: object) -> bool:
 
 
 def _pop_session_entries(cache: dict, session_id: str) -> None:
-    """Pop all entries matching session_id (or empty session) from a cache."""
+    """Pop only entries owned by the requested session, including an explicit empty one."""
     for key in list(cache.keys()):
         if isinstance(key, tuple):
-            if key[0] == session_id or key[0] == "":
+            if key and key[0] == session_id:
                 cache.pop(key, None)
-        elif key == session_id or key == "":
+        elif key == session_id:
             cache.pop(key, None)
 
 
@@ -376,7 +383,7 @@ def get_cached_dispatch_result(
 
 def _clear_dispatch_cache(session_id: Optional[str] = None) -> None:
     """清空指定 session 或所有的 dispatch 缓存（新 turn 开始时按 session 清空）。"""
-    if session_id:
+    if session_id is not None:
         _pop_session_entries(_dispatch_result_cache, session_id)
         _pop_session_entries(_session_plan_sse_cache, session_id)
     else:
@@ -394,7 +401,6 @@ def _cleanup_turn_state(turn_sid: str) -> None:
     （见 pi_bridge_surface_gate.evict_turn_receipts）。
     """
     _session_executed_sets.pop(turn_sid, None)
-    _session_executed_sets.pop("", None)
     _pop_session_entries(_dispatch_result_cache, turn_sid)
     _pop_session_entries(_session_plan_sse_cache, turn_sid)
     evict_turn_receipts(turn_sid)
@@ -538,7 +544,8 @@ async def _dispatch_tool_bound(
     except Exception:  # noqa: BLE001 — 分类退化为冻结面行为
         _registered = None
     resolved = resolve_pi_tool_call(
-        tool_name, arguments, allow_passthrough=False, registered_surface=_registered
+        tool_name, arguments, allow_passthrough=False,
+        registered_surface=sorted(_registered) if _registered is not None else None,
     )
     if resolved.kind == "reject":
         # ADR-0253 D5：面外裸名 / wrap-reject 计数（invalid tool-name rate）。
@@ -573,24 +580,6 @@ async def _dispatch_tool_bound(
             await ensure_session_plan_slot(session_id)
         except Exception:
             logger.exception("[PiBridge] SessionPlan slot open failed session=%s", session_id)
-        # ADR-0180：dispatch 前把将服务的能力步标 running（只对命中计划能力
-        # 的工具产生写；崩溃后留下诚实的 in-flight 标记供 K7 恢复判定）。
-        try:
-            from app.services.harness_kernel import get_runtime
-
-            _cb_turn_id, _cb_run_id, _ = active_turn_correlation(session_id)
-            await get_runtime(session_id).begin_step(
-                tool_name=tool_name,
-                tool_call_id=request.toolCallId,
-                turn_id=_cb_turn_id or "",
-                host="pi",
-            )
-        except Exception:
-            logger.debug(
-                "[PiBridge] kernel begin_step failed session=%s tool=%s",
-                session_id, tool_name, exc_info=True,
-            )
-
     # Validate tool exists
     available = set(registry.list_tools())
     if tool_name not in available:
@@ -715,6 +704,25 @@ async def _dispatch_tool_bound(
     except Exception:  # noqa: BLE001 — 闸装配故障绝不阻断 dispatch
         logger.debug("[PiBridge] input gate unavailable tool=%s", tool_name, exc_info=True)
 
+    if session_id:
+        # ADR-0180：dispatch 前把将服务的能力步标 running（只对命中计划能力
+        # 的工具产生写；崩溃后留下诚实的 in-flight 标记供 K7 恢复判定）。
+        try:
+            from app.services.harness_kernel import get_runtime
+
+            _cb_turn_id, _cb_run_id, _ = active_turn_correlation(session_id)
+            await get_runtime(session_id).begin_step(
+                tool_name=tool_name,
+                tool_call_id=request.toolCallId,
+                turn_id=_cb_turn_id or "",
+                host="pi",
+            )
+        except Exception:
+            logger.debug(
+                "[PiBridge] kernel begin_step failed session=%s tool=%s",
+                session_id, tool_name, exc_info=True,
+            )
+
     # ADR-0253 D5：proxy 长尾 vs 注册面直调分类计数（proxy fallback rate）——
     # 已通过存在性/tier/闸，进入真实 dispatch 的调用才计数。
     try:
@@ -758,8 +766,6 @@ async def _dispatch_tool_bound(
             _entry = get_active_turn_entry(session_id) if session_id else None
             if _entry is not None:
                 dispatch_token = _entry.token
-            elif not session_id and len(_active_turns) == 1:
-                dispatch_token = next(iter(_active_turns.values())).token
             else:
                 dispatch_token = None
             # Pi 兼容（ADR-0052 parity）：legacy tool_pipeline 在 dispatch 外
@@ -870,13 +876,13 @@ async def _dispatch_tool_bound(
                     try:
                         step.background_job_ids = list(getattr(result, "background_job_ids", []) or [])
                     except Exception:  # noqa: BLE001
-                        pass
+                        logger.warning("Pi task background-job attribution failed", exc_info=True)
                     if result.status == "ok":
                         engine.tracker.complete_step(latest_task.id, step.id, result.raw_result)
                     else:
                         engine.tracker.fail_step(latest_task.id, step.id, result.llm_payload[:200])
     except Exception:
-        pass
+        logger.warning("Pi task step accounting unavailable session=%s tool=%s", session_id, tool_name, exc_info=True)
 
     # 缓存供 SSE 适配器按已验证 turn session 读取。
     cache_dispatch_result(request.toolCallId, result, session_id)
@@ -938,9 +944,7 @@ async def _dispatch_tool_bound(
         duration_ms=duration_ms,
     )
     _outcome = await apply_post_dispatch_disclosure(_disclosure)
-    if _outcome.cache_plan_sse_unconditionally:
-        cache_session_plan_sse(request.toolCallId, _outcome.plan_sse, session_id)
-    elif _outcome.plan_sse:
+    if _outcome.plan_sse:
         cache_session_plan_sse(request.toolCallId, _outcome.plan_sse, session_id)
     if _outcome.finalization_payload is not None:
         # pending 不披露（DAG 未终态是 turn 中段常态，[GIS Plan] 行投影
@@ -970,10 +974,11 @@ async def _dispatch_tool_bound(
     # 而不是只把诊断塞进 details 让 tool→LLM 自旋烧满 PI_TURN_TOTAL_TIMEOUT。
     _hints: list[str] = []
     try:
-        _hints = await _record_gis_progress(
-            session_id, tool_name, arguments,
-            outcome=("ok" if result.status == "ok" else "error"),
-        )
+        if not _late_for_plan:
+            _hints = await _record_gis_progress(
+                session_id, tool_name, arguments,
+                outcome=("ok" if result.status == "ok" else "error"),
+            )
         if _hints:
             details_payload = dict(details_payload or {})
             details_payload["no_progress_hints"] = _hints
@@ -984,7 +989,7 @@ async def _dispatch_tool_bound(
         pi_no_progress_should_stop,
         pi_no_progress_streak,
     )
-    if pi_no_progress_should_stop(session_id, _hints):
+    if not _late_for_plan and pi_no_progress_should_stop(session_id, _hints):
         details_payload = dict(details_payload or {})
         details_payload["failure_class"] = "no_progress"
         details_payload.setdefault("no_progress_hints", _hints)
@@ -1112,8 +1117,7 @@ def _hard_stop_pi_turn_for_no_progress(session_id: str) -> None:
     if bridge is None:
         return
     try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(bridge.abort(session_id=session_id, source="policy"))
+        schedule_abort(bridge.abort(session_id=session_id, source="policy"))
     except Exception:  # noqa: BLE001
         logger.debug("[PiBridge] no-progress abort schedule failed", exc_info=True)
 
@@ -1178,7 +1182,7 @@ async def register_active_pi_turn(
     await pi_turn_registry.register_turn(session_id, turn_id)
 
 
-async def unregister_active_pi_turn(session_id: str, turn_id: str) -> None:
+async def unregister_active_pi_turn(session_id: str, turn_id: str) -> bool:
     """Unregister active turn in local memory and Redis (if owned)."""
     entry = _active_turns.get(session_id)
     if entry is not None and entry.turn_id == turn_id:
@@ -1186,7 +1190,7 @@ async def unregister_active_pi_turn(session_id: str, turn_id: str) -> None:
         if entry.bridge is not None and entry.bridge._current_turn is entry:
             entry.bridge._current_turn = None
     from app.services.chat.pi_turn_context import pi_turn_registry
-    await pi_turn_registry.unregister_turn(session_id, turn_id)
+    return await pi_turn_registry.unregister_turn(session_id, turn_id)
 
 
 def get_active_turn_entry(session_id: str) -> Optional[_ActiveTurnEntry]:
@@ -1388,13 +1392,15 @@ class _TurnLease:
              BEFORE the post-lock unregister await).
     """
 
-    __slots__ = ("turn_id", "session_id", "acquired_at", "released")
+    __slots__ = ("turn_id", "session_id", "acquired_at", "released", "writer", "unregistered")
 
     def __init__(self, turn_id: str, session_id: Optional[str]) -> None:
         self.turn_id = turn_id
         self.session_id = session_id
         self.acquired_at = time.monotonic()
         self.released = False
+        self.writer: Optional[WriterLease] = None
+        self.unregistered = False
 
 
 class PiBridge:
@@ -1453,7 +1459,7 @@ class PiBridge:
         self._respawn_backoff_s: float = 1.0
         self._consecutive_respawn_failures: int = 0
 
-    async def _acquire_turn_lease(self, turn_id: str, session_id: Optional[str]) -> "_TurnLease":
+    async def _acquire_turn_lease(self, turn_id: str, session_id: Optional[str], *, owner: Optional[asyncio.Task] = None) -> "_TurnLease":
         """Acquire the turn lock and bind it to an explicit ownership lease.
 
         The lease is the ONLY sanctioned way to release the lock afterwards
@@ -1462,6 +1468,12 @@ class PiBridge:
         """
         await self._lock.acquire()
         lease = _TurnLease(turn_id=turn_id, session_id=session_id)
+        try:
+            lease.writer = await acquire_writer(session_id or "", timeout_s=PI_TURN_TOTAL_TIMEOUT, owner=owner,
+                                                on_lost=lambda: record_turn_abort_source(turn_id, "policy"))
+        except BaseException:
+            self._lock.release()
+            raise
         self._lock_lease = lease
         return lease
 
@@ -1484,10 +1496,12 @@ class PiBridge:
             )
             return
         lease.released = True
+        if lease.writer is not None:
+            lease.writer.release()
         self._lock_lease = None
         self._lock.release()
 
-    async def _safe_unregister_active_pi_turn(self, session_id: str, turn_id: str) -> None:
+    async def _safe_unregister_active_pi_turn(self, session_id: str, turn_id: str, *, lease: Optional[_TurnLease] = None) -> None:
         """Best-effort active-turn unregister, hardened against cancellation.
 
         #1108 INV-P4: callers invoke this AFTER releasing the turn lease, and
@@ -1497,11 +1511,15 @@ class PiBridge:
         + swallow, so a re-delivered cancellation during teardown can never
         skip subsequent cleanup.
         """
+        if lease is not None and lease.unregistered:
+            return
         try:
-            await asyncio.wait_for(
+            completed = await asyncio.wait_for(
                 asyncio.shield(unregister_active_pi_turn(session_id, turn_id)),
                 timeout=5.0,
             )
+            if lease is not None and completed is not False:
+                lease.unregistered = True
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         except Exception as e:  # noqa: BLE001
@@ -1613,7 +1631,7 @@ class PiBridge:
                     raise RuntimeError("ChatEngine not initialized")
                 if status == "cancelled":
                     engine.tracker.cancel(tracker_task_id)
-                elif status in ("failed", "aborted"):
+                elif status in ("failed", "aborted", "interrupted"):
                     engine.tracker.fail_task(
                         tracker_task_id,
                         (
@@ -1771,7 +1789,7 @@ class PiBridge:
         # DIFFERENT worker than ``self`` — route the abort there.
         _entry = get_active_turn_entry(session_id) if session_id else None
         if _entry is not None and _entry.bridge is not None and _entry.bridge is not self:
-            return await _entry.bridge.abort(session_id)
+            return await _entry.bridge.abort(session_id, source=source)
         active = self._active_turn_sid
         if session_id is not None and active is not None and session_id != active:
             logger.warning(
@@ -1974,8 +1992,9 @@ class PiBridge:
         # handle (the prior "run_id == session_id" reuse is retired here).
         # Do NOT remint: the signed turn token above is bound to turn_id.
         run_id = rt_ctx.new_run_id()
+        parent_context = rt_ctx.current_runtime_context()
         rt_ev = TurnEvidence(
-            request_id=rt_ctx.current_runtime_context().request_id if rt_ctx.current_runtime_context() else None,
+            request_id=parent_context.request_id if parent_context else None,
             session_id=turn_sid or None,
             turn_id=turn_id,
             run_id=run_id,
@@ -1988,7 +2007,7 @@ class PiBridge:
         # #1108: acquire returns an explicit ownership lease; the outer finally
         # below is the absolute backstop that releases it (idempotent +
         # owner-checked), so no cancellation re-delivery can strand the lock.
-        lease = await self._acquire_turn_lease(turn_id, turn_sid)
+        lease = await self._acquire_turn_lease(turn_id, turn_sid, owner=asyncio.current_task())
         try:
             # Clear caches only after the lock so a concurrent stream_prompt
             # cannot wipe another in-flight turn's dispatch results / dedup set.
@@ -2212,13 +2231,8 @@ class PiBridge:
                             f"{PI_TURN_TOTAL_TIMEOUT}s; event-drain timeout); "
                             "the turn has been aborted."
                         )
-                    # Only a clean agent_settled reaches this point — a timeout
-                    # already raised above, so PARTIAL is no longer reachable.
-                    # F03：若本 turn 已被 abort（user/system/policy），SUCCEEDED
-                    # 不在此预结算 —— 单结算 seam 按 abort 来源落诚实终态
-                    # （first-wins，这里抢结算会掩盖 cancel/abort）。
-                    if not _TURN_ABORT_SOURCES.get(turn_id):
-                        rt_ev.settle(Outcome.SUCCEEDED)
+                    # Record diagnostic success only after the coordinator in
+                    # finally: its own timeout can still interrupt settlement.
                     # 方向 09（parity D2/D3/D4）：非流式清洁收口与流式
                     # agent_settled 共用同一 turn 结算披露管线（完成度终验
                     # final gate → WorkflowInstance → RuntimeState(turn_settled)
@@ -2308,8 +2322,10 @@ class PiBridge:
                     # 已结算者为 no-op）。
                     if _hk_status == "cancelled":
                         rt_ev.settle(Outcome.CANCELLED)
-                    elif _hk_status in ("failed", "aborted"):
-                        if unclassified_error:
+                    elif _hk_status in ("failed", "aborted", "interrupted"):
+                        if _hk_status == "interrupted":
+                            _failure_class = "pi_settle_interrupted"
+                        elif unclassified_error:
                             _failure_class = "pi_unclassified_error"
                         elif _hk_status == "aborted":
                             _failure_class = "pi_aborted"
@@ -2320,6 +2336,8 @@ class PiBridge:
                             failure_class=_failure_class,
                             detail=_error_detail[:200],
                         )
+                    else:
+                        rt_ev.settle(Outcome.SUCCEEDED)
                     if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                         self._current_turn = None
                     # #1108 INV-P4: release the lease BEFORE the unregister await —
@@ -2328,7 +2346,7 @@ class PiBridge:
                     # CancelledError during Redis I/O can no longer skip the
                     # release. The outer finally's backstop release is a no-op then.
                     self._release_turn_lease(lease)
-                    await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+                    await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                     rt_ev.mark_ended()
                     emit_turn_summary(rt_ev)
                     # R10（ADR-0256）：env-gated 轨迹录制（默认关闸 no-op；
@@ -2354,11 +2372,12 @@ class PiBridge:
             # #1108 INV-P1: backstop — whatever happened above (including a
             # cancellation delivered inside the inner finally before its own
             # release), the lease is released here exactly once.
-            self._active_turn_sid = None
+            if self._current_turn is None or self._current_turn.turn_id == turn_id:
+                self._active_turn_sid = None
             if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                 self._current_turn = None
             self._release_turn_lease(lease)
-            await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+            await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
             TURN_EVIDENCE.remove(turn_id)
             _cleanup_turn_state(turn_sid)
 
@@ -2402,6 +2421,10 @@ class PiBridge:
         # owns this turn — not bridge instance state a prior turn could have
         # overwritten.
         turn_sid = session_id or ""
+
+        def lookup_result(tool_call_id: str, _sid: str = turn_sid) -> Optional[ToolDispatchResult]:
+            return get_cached_dispatch_result(tool_call_id, _sid)
+
         # #1678：与 app/services/chat/pi_rpc_client.py 对齐，从 core 取共享密钥
         # （原从 api/routes/pi_tools 反向 import，违反 ADR-0216 §6.5）。
         from app.core.bridge_secret import get_bridge_secret
@@ -2451,7 +2474,7 @@ class PiBridge:
             while True:
                 try:
                     lease = await asyncio.wait_for(
-                        self._acquire_turn_lease(turn_id, turn_sid),
+                        self._acquire_turn_lease(turn_id, turn_sid, owner=asyncio.current_task()),
                         timeout=PI_HEARTBEAT_INTERVAL,
                     )
                     break
@@ -2478,6 +2501,12 @@ class PiBridge:
                     emit_turn_summary(rt_ev)
                     TURN_EVIDENCE.remove(turn_id)
                     raise
+                except LockDegradedError as exc:
+                    rt_ev.settle(Outcome.FAILED, failure_class="session_writer_unavailable")
+                    rt_ev.mark_ended()
+                    emit_turn_summary(rt_ev)
+                    TURN_EVIDENCE.remove(turn_id)
+                    raise PiRpcError("Session writer admission unavailable; please retry") from exc
             try:
                 _session_executed_sets.pop(turn_sid, None)
                 _clear_dispatch_cache(turn_sid)
@@ -2706,9 +2735,7 @@ class PiBridge:
                                 sse = map_event_to_sse(
                                     event,
                                     turn_sid,
-                                    cache_lookup=lambda tool_call_id, _sid=turn_sid: get_cached_dispatch_result(
-                                        tool_call_id, _sid
-                                    ),
+                                    cache_lookup=lookup_result,
                                     turn_stats=lambda: {
                                         "tool_step_count": _turn_tool_steps,
                                         "final_text": _turn_final_text,
@@ -2803,7 +2830,7 @@ class PiBridge:
                         # failure_class 词表经 error_taxonomy 统一映射）。
                         if timeout_reason == "total":
                             yield sse_event("error", {
-                                "session_id": turn_sid,
+                                "session_id": turn_sid, "turn_id": turn_id, "run_id": run_id,
                                 "error": (
                                     f"Pi agent turn exceeded the total budget of "
                                     f"{int(PI_TURN_TOTAL_TIMEOUT)}s — events were still "
@@ -2814,13 +2841,13 @@ class PiBridge:
                             })
                         else:
                             yield sse_event("error", {
-                                "session_id": turn_sid,
+                                "session_id": turn_sid, "turn_id": turn_id, "run_id": run_id,
                                 "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
                                 "error_class": error_class_for_turn_failure("pi_stall"),
                             })
                     if process_died:
                         yield sse_event("error", {
-                            "session_id": turn_sid,
+                            "session_id": turn_sid, "turn_id": turn_id, "run_id": run_id,
                             "error": "Pi agent process exited unexpectedly mid-stream. The agent's tools may have run partially; please retry.",
                             "error_class": error_class_for_turn_failure("pi_process_died"),
                         })
@@ -2920,7 +2947,7 @@ class PiBridge:
                     # CancelledError during Redis I/O can no longer skip the
                     # release and hang every session on the singleton bridge.
                     self._release_turn_lease(lease)
-                    await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+                    await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                     # Runtime observability: settle turn outcome from the SAME
                     # status the seam recorded（F03：诊断面与权威终态不再各有
                     # 各的判断 —— abort/未分类异常此前在此显示 SUCCEEDED）。
@@ -2929,8 +2956,10 @@ class PiBridge:
                     # ``pi_abort_<source>`` —— 单一定义点在 _ABORT_SOURCE_STATUS）。
                     if _hk_status == "cancelled":
                         rt_ev.settle(Outcome.CANCELLED)
-                    elif _hk_status in ("failed", "aborted"):
-                        if timed_out:
+                    elif _hk_status in ("failed", "aborted", "interrupted"):
+                        if _hk_status == "interrupted":
+                            failure_class = "pi_settle_interrupted"
+                        elif timed_out:
                             # #982: distinguish whole-turn budget exhaustion from a
                             # heartbeat stall in the failure classification.
                             failure_class = (
@@ -2972,7 +3001,7 @@ class PiBridge:
                         pass
                     TURN_EVIDENCE.remove(turn_id)
                     # F03：tracker 结算已收敛进单结算 seam（kernel end_turn
-                    # 同一实现；cancelled→cancel、failed/aborted→fail、其余
+                    # 同一实现；cancelled→cancel、failed/aborted/interrupted→fail、其余
                     # →complete），此处不再重复第二份 finally 记账。
                     # audit #818: surface the turn's final transcript state to the
                     # route (persistence parity with the legacy path). Best-effort —
@@ -2998,7 +3027,8 @@ class PiBridge:
                 # finally before its own release), the lease is released
                 # here exactly once. Owner-checked, so a stale lease from a
                 # long-gone turn can never release the CURRENT turn's lock.
-                self._active_turn_sid = None
+                if self._current_turn is None or self._current_turn.turn_id == turn_id:
+                    self._active_turn_sid = None
                 if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                     self._current_turn = None
                 self._release_turn_lease(lease)
@@ -3011,7 +3041,7 @@ class PiBridge:
                 # is turn-id-checked (no-op for a successor's entry) and
                 # idempotent on the normal path where the inner finally
                 # already unregistered.
-                await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+                await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                 TURN_EVIDENCE.remove(turn_id)
                 _cleanup_turn_state(turn_sid)
 
@@ -3096,12 +3126,10 @@ async def _ensure_bridge_pool(extension_paths: Optional[list[str]] = None) -> Pi
     global _bridge_pool, _pi_bridge
     if _bridge_pool is not None:
         return _bridge_pool
-    import os as _os
-
     async with _bridge_pool_init_lock:
         if _bridge_pool is not None:  # double-check under the init lock
             return _bridge_pool
-        size = max(1, int(_os.getenv("PI_BRIDGE_POOL_SIZE", "1")))
+        size = bridge_pool_size()
         bridges: list[PiBridge] = []
         try:
             for _ in range(size):
@@ -3136,201 +3164,10 @@ async def shutdown_pi_bridge() -> None:
         _pi_bridge = None
 
 
-# ─────────────────────────── Swarm 受保护网关（ADR-0187 D7） ───────────────────────────
-
-#: Swarm 集群委派特性开关（默认关 —— 关闭路径零行为漂移、零 agent_swarm 加载）。
-_SWARM_ORCHESTRATOR_ENV = "GIS_SWARM_ORCHESTRATOR"
-_SWARM_OFF_VALUES = {"0", "false", "no", "off"}
-
-
-class SwarmBridge:
-    """Master(Pi) → Specialist 集群的受保护委派网关（ADR-0187 §D7）。
-
-    守卫序（任一不满足 → ``{"delegated": False, "reason": ...}`` 诚实拒绝）：
-    1. 特性开关（``GIS_SWARM_ORCHESTRATOR``，默认关）；
-    2. goal 有界（空 / 超 2000 字符拒绝）；
-    3. 主 turn 互斥（该 session 存在在飞 Pi turn 时拒绝，防并发写会话态）。
-
-    通过守卫后：惰性构建 ``WorldStateProjection`` 切片（fail-open 最小面）→
-    ``SwarmOrchestrator.run_swarm`` → 返回有界摘要（仅 run_id/终态/计数/
-    ref 提货券清单，零 payload）。agent_swarm 全部惰性 import —— 开关关闭
-    时不加载任何集群模块。
-    """
-
-    def __init__(
-        self,
-        session_id: str,
-        *,
-        orchestrator_factory: Optional[Callable[[str], Any]] = None,
-        projection_builder: Optional[Callable[..., Any]] = None,
-    ) -> None:
-        self._session_id = session_id
-        self._orchestrator_factory = orchestrator_factory
-        self._projection_builder = projection_builder
-
-    @classmethod
-    def enabled(cls) -> bool:
-        return (
-            os.getenv(_SWARM_ORCHESTRATOR_ENV, "0").strip().lower()
-            not in _SWARM_OFF_VALUES
-        )
-
-    async def delegate_compound_task(
-        self,
-        root_goal: str,
-        *,
-        cartography_context: Optional[dict] = None,
-        mission_id: str = "",
-        org_id: str = "",
-    ) -> dict:
-        if not self.enabled():
-            return {"delegated": False, "reason": "swarm_disabled"}
-        goal = (root_goal or "").strip()
-        if not goal or len(goal) > 2000:
-            return {"delegated": False, "reason": "invalid_goal"}
-        if get_active_turn_entry(self._session_id) is not None:
-            return {"delegated": False, "reason": "master_turn_active"}
-        from app.services.agent_swarm.delegation_contracts import (
-            MAX_GOAL_CHARS,
-            WorldStateProjection,
-        )
-        from app.services.agent_swarm.dispatcher import SpecialistDispatcher
-        from app.services.agent_swarm.orchestrator import SwarmOrchestrator
-
-        if self._projection_builder is not None:
-            projection = self._projection_builder(goal, cartography_context)
-        else:
-            projection = WorldStateProjection(
-                session_id=self._session_id, goal_summary=goal[:MAX_GOAL_CHARS]
-            )
-        if self._orchestrator_factory is not None:
-            orchestrator = self._orchestrator_factory(self._session_id)
-        else:
-            orchestrator = SwarmOrchestrator(
-                self._session_id, dispatcher=SpecialistDispatcher()
-            )
-        try:
-            status = await orchestrator.run_swarm(goal, projection=projection)
-        except Exception as exc:  # noqa: BLE001 — 网关诚实折算，绝不击穿主通道
-            logger.exception(
-                "[SwarmBridge] swarm run failed session=%s", self._session_id
-            )
-            return {"delegated": False, "reason": f"swarm_error: {exc}"[:200]}
-        manifest = status.manifest
-        refs = [entry.ref_id for entry in manifest.entries] if manifest else []
-        out = {
-            "delegated": True,
-            "run_id": status.run_id,
-            "state": status.state,
-            "counts": dict(status.counts),
-            "refs": refs[:24],
-            "manifest_ref": status.manifest_ref,
-        }
-        # D04: optional Mission create/reuse when GIS_MISSION_HOTPATH=1 (default off).
-        try:
-            from app.services.gis_harness.hotpath_convergence import (
-                maybe_bind_mission_for_turn,
-                set_mission_id,
-            )
-            _bind = maybe_bind_mission_for_turn(
-                session_id=self._session_id,
-                org_id=str(org_id or ""),
-                root_goal=goal,
-                mission_id=mission_id,
-            )
-            if _bind.mission_id:
-                mission_id = _bind.mission_id
-                set_mission_id(self._session_id, mission_id)
-                out["mission_bind"] = _bind.to_bounded_dict()
-        except Exception:  # noqa: BLE001 — mission bind must not break swarm
-            pass
-        # ADR-0197 D4: optional durable swarm mirror under a Mission (fail-open).
-        if mission_id:
-            try:
-                from app.services.mission_runtime.service import mission_runtime_enabled
-                from app.services.mission_runtime.swarm_bridge import DurableSwarmBridge
-                if mission_runtime_enabled():
-                    bridge = DurableSwarmBridge()
-                    descriptors = []
-                    task_map = getattr(status, "tasks", None) or {}
-                    if isinstance(task_map, dict) and task_map:
-                        for tid, tstate in task_map.items():
-                            if isinstance(tstate, dict):
-                                side = tstate.get("side_effect", "pure")
-                            else:
-                                side = getattr(tstate, "side_effect", "pure")
-                            descriptors.append({
-                                "task_id": str(tid),
-                                "side_effect": side,
-                            })
-                    else:
-                        descriptors = [{"task_id": f"swarm:{status.run_id}", "side_effect": "pure"}]
-                    run = bridge.begin_run(
-                        mission_id,
-                        org_id=str(org_id or "0"),
-                        goal_slice=goal[:2000],
-                        task_descriptors=descriptors,
-                    )
-                    # Aggregate fallback only when fine-grained map unavailable.
-                    # partial/degraded must settle as failed — never SKIPPED→COMPLETED (#1323).
-                    agg_status = "succeeded"
-                    state_val = getattr(status.state, "value", status.state)
-                    state_l = str(state_val).lower()
-                    if state_l in ("failed", "failure", "cancelled", "canceled"):
-                        agg_status = state_l
-                    elif state_l in ("partial", "degraded"):
-                        agg_status = "failed"
-                    for d in descriptors:
-                        tid = d["task_id"]
-                        tstate = task_map.get(tid) if isinstance(task_map, dict) else None
-                        if isinstance(tstate, dict):
-                            task_status = str(tstate.get("status") or agg_status)
-                            produced = list(tstate.get("produced_refs") or [])[:12] or refs[:12]
-                            assignment_id = str(tstate.get("assignment_id") or status.run_id)
-                            error_code = str(tstate.get("error_code") or "")
-                            summary = str(tstate.get("summary") or "")
-                            attempt = int(tstate.get("attempt") or 0)
-                            side = tstate.get("side_effect", d.get("side_effect", "pure"))
-                        elif tstate is not None:
-                            task_status = str(
-                                getattr(tstate, "status", None)
-                                or getattr(getattr(tstate, "status", None), "value", None)
-                                or agg_status
-                            )
-                            produced = list(getattr(tstate, "produced_refs", None) or [])[:12] or refs[:12]
-                            assignment_id = str(getattr(tstate, "assignment_id", "") or status.run_id)
-                            error_code = str(getattr(tstate, "error_code", "") or "")
-                            summary = str(getattr(tstate, "summary", "") or "")
-                            attempt = int(getattr(tstate, "attempt", 0) or 0)
-                            side = getattr(tstate, "side_effect", d.get("side_effect", "pure"))
-                        else:
-                            task_status = agg_status
-                            produced = refs[:12]
-                            assignment_id = str(status.run_id)
-                            error_code = ""
-                            summary = ""
-                            attempt = 0
-                            side = d.get("side_effect", "pure")
-                        bridge.settle(
-                            run.swarm_run_id,
-                            task_id=tid,
-                            status=task_status,
-                            produced_refs=produced,
-                            assignment_id=assignment_id,
-                            side_effect=side,
-                            error_code=error_code,
-                            summary=summary,
-                            attempt=attempt,
-                        )
-                    out["mission_swarm_run_id"] = run.swarm_run_id
-            except Exception:  # noqa: BLE001 — durability mirror must not break swarm path
-                logger.warning(
-                    "[SwarmBridge] mission durable mirror failed session=%s mission=%s",
-                    self._session_id, mission_id, exc_info=True,
-                )
-        return out
+# Keep the historical public bridge import stable after extracting the gateway.
+from app.services.chat.pi_swarm_bridge import SwarmBridge  # noqa: E402,F401
 
 
 def get_swarm_bridge(session_id: str) -> SwarmBridge:
-    """Swarm 网关工厂（每会话一实例；无全局态）。"""
+    """Build the session-scoped protected Swarm gateway."""
     return SwarmBridge(session_id)

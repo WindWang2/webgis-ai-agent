@@ -49,11 +49,11 @@ async def _verify_session_access(
     owner_token: Optional[str],
 ) -> None:
     """SEC-08 session 所有权守卫（project.py 同款；404 不泄露存在性）。"""
-    from app.core.async_runner import thread_async_session
+    from app.core.async_runner import current_loop_async_session
     from app.services.auth_history_bridge import verify_session_owner
 
     user_id = user.get("user_id") if isinstance(user, dict) else None
-    async with thread_async_session() as adb:
+    async with current_loop_async_session() as adb:
         await verify_session_owner(
             adb, session_id, user_id=user_id, owner_token=owner_token
         )
@@ -272,12 +272,13 @@ async def delete_runtime_snapshot(
     owner_token: Optional[str] = Depends(get_owner_token),
 ) -> RuntimeSnapshotDeleteResponse:
     """定点删除 manifest（blob 归 artifact lifecycle GC 引用计数，绝不私删）。"""
-    await _auth_project(db, project_id, user)
+    project = await _auth_project(db, project_id, user)
     from app.services.project_runtime.store import get_project_runtime_store
 
     user_id, _org_id = actor_ids(user)
     result = await get_project_runtime_store().delete(
-        project_id, snapshot_id, owner_id=str(user_id or "")
+        project_id, snapshot_id, owner_id=str(user_id or ""),
+        allow_legacy_owner=bool(user_id and (project.owner_id == user_id or user.get("role") == "admin"))
     )
     if result is None:
         raise HTTPException(

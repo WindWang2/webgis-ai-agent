@@ -206,7 +206,7 @@ function PagedTableBody({
       id_field: idField ?? undefined,
       artifact_ref: tableRef || undefined,
     });
-    // ADR-0283 D2：表格行定位上行 IR（保留 table 来源身份，与 map 点选区分）。
+    // ADR-0285 D2：表格行定位上行 IR（保留 table 来源身份，与 map 点选区分）。
     emitTableSelectionChanged({ layerId, featureId: rowId });
   };
 

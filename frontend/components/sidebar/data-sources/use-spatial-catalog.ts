@@ -29,6 +29,8 @@ export const CATALOG_SEARCH_DEBOUNCE_MS = 300;
 export function useSpatialCatalog() {
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [catalogTotal, setCatalogTotal] = useState(0);
+  const itemsRef = useRef<CatalogItem[]>([]);
+  const offsetRef = useRef(0);
   const [searchQuery, setSearchQuery] = useState('');
   // A-F-08: the value actually sent to the catalog endpoint; follows searchQuery
   // after a quiet period (debounce), so typing never fires a fetch per keystroke.
@@ -47,7 +49,7 @@ export function useSpatialCatalog() {
     seq: 0,
   });
 
-  const fetchCatalog = useCallback(async () => {
+  const fetchCatalog = useCallback(async (append = false) => {
     const seq = ++catalogReqRef.current.seq;
     catalogReqRef.current.controller?.abort();
     const controller = new AbortController();
@@ -61,13 +63,18 @@ export function useSpatialCatalog() {
         // 当前页；服务端参数才能检索跨页的 stale 条目）。
         availability: availabilityFilter || undefined,
         limit: 50,
+        offset: append ? offsetRef.current : 0,
         signal: controller.signal,
       });
       if (seq !== catalogReqRef.current.seq) return; // superseded by a newer query
-      setCatalogItems(res.items || []);
+      const page = res.items || [];
+      const combined = append ? [...itemsRef.current, ...page] : page;
+      itemsRef.current = Array.from(new Map(combined.map((item) => [item.id, item])).values());
+      offsetRef.current = (append ? offsetRef.current : 0) + page.length;
+      setCatalogItems(itemsRef.current);
       setCatalogTotal(res.total || 0);
     } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') return; // superseded / unmount
+      if (controller.signal.aborted || seq !== catalogReqRef.current.seq) return; // superseded / unmount
       addToast(e instanceof Error ? e.message : tNow('sidebar.ds.catalogLoadFailed'), 'error');
     } finally {
       if (seq === catalogReqRef.current.seq) setLoadingCatalog(false);
@@ -84,12 +91,19 @@ export function useSpatialCatalog() {
   // mutable data ref (not a rendered node), so reading .current in cleanup is
   // intentional — it must abort the *latest* controller, not the mount-time one.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    return () => catalogReqRef.current.controller?.abort();
+    const request = catalogReqRef.current;
+    return () => {
+      request.seq += 1;
+      request.controller?.abort();
+    };
   }, []);
 
   useEffect(() => {
-    fetchCatalog();
+    itemsRef.current = [];
+    offsetRef.current = 0;
+    setCatalogItems([]);
+    setCatalogTotal(0);
+    void fetchCatalog();
   }, [fetchCatalog]);
 
   // V2：可用状态客户端过滤（缺省 availability 视为可用）。
@@ -104,6 +118,8 @@ export function useSpatialCatalog() {
   return {
     catalogItems: visibleCatalogItems,
     catalogTotal,
+    hasMoreCatalog: offsetRef.current < catalogTotal,
+    loadMoreCatalog: () => fetchCatalog(true),
     loadingCatalog,
     searchQuery,
     setSearchQuery,

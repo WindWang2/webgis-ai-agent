@@ -13,8 +13,7 @@ import pytest
 from app.services.data_fabric.security import (
     DataFabricSecurity,
     DataFabricSecurityError,
-    SSRFSafeHTTPAdapter,
-    _pinned_dns,
+    _safe_pool_classes,
 )
 
 
@@ -47,47 +46,31 @@ class TestS3BareHostGate:
 
 
 class TestSendTimeDnsPinning:
-    """ISSUE-001/003：_pinned_dns 钉定 + send 时再校验。"""
+    """Connection-local validated addresses preserve global DNS and TLS hostname."""
 
-    def test_pinned_dns_replays_validated_infos(self):
-        host = "example.test"
-        infos = socket.getaddrinfo("localhost", None)  # 借用合法元组结构
-        with _pinned_dns(host, infos):
-            got = socket.getaddrinfo(host, None)
-            assert got == infos
-            # 其他主机名透传真实解析
-            real = socket.getaddrinfo("localhost", None)
-            assert real == socket.getaddrinfo("localhost", None)
-        # 退出后恢复：真实解析行为（example.test 是虚构主机 —— gaierror
-        # 恰恰证明不再是钉定缓存；原写法 `... is not None or True` 在
-        # gaierror 抛出时直接失败，环境相关地挂掉）
-        try:
-            socket.getaddrinfo(host, 80)
-        except socket.gaierror:
-            pass
+    def test_pinning_preserves_global_resolver(self, monkeypatch):
+        import urllib3.connection
 
-    def test_send_blocks_when_resolution_flips_private(self, monkeypatch):
-        """validate 通过后 send 时解析到私网 → 拒绝（rebinding 窗口闭合）。"""
-        adapter = SSRFSafeHTTPAdapter(allow_private=False)
+        def resolve(host, port, *args):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port))]
+        monkeypatch.setattr(socket, "getaddrinfo", resolve)
+        seen = []
+        sock = object()
+        monkeypatch.setattr(urllib3.connection.connection, "create_connection",
+                            lambda address, *args, **kwargs: seen.append(address) or sock)
+        conn = _safe_pool_classes()["http"].ConnectionCls("example.test", port=8080)
+        assert conn._new_conn() is sock
+        assert seen == [("8.8.8.8", 8080)]
+        assert socket.getaddrinfo is resolve
+        assert conn._dns_host == "example.test"
 
-        class _Req:
-            url = "http://flipping.example/"
-
-        # validate_url 放行（第一次解析为公网）
-        monkeypatch.setattr(
-            DataFabricSecurity, "validate_url",
-            staticmethod(lambda url, allow_private=False: url),
-        )
-        # send 时的 getaddrinfo 返回私网
-        monkeypatch.setattr(
-            socket, "getaddrinfo",
-            lambda host, port, *a, **k: [
-                (socket.AF_INET, socket.SOCK_STREAM, 6, "",
-                 ("10.1.2.3", 0)),
-            ],
-        )
+    def test_connect_blocks_when_resolution_flips_private(self, monkeypatch):
+        monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, *args: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", port)),
+        ])
+        conn = _safe_pool_classes()["http"].ConnectionCls("flipping.example", port=80)
         with pytest.raises(DataFabricSecurityError):
-            adapter.send(_Req())
+            conn._new_conn()
 
 
 class TestWritePathAuth:

@@ -4,7 +4,7 @@ Stage payloads deliberately remain open: record_stage accepts stage-specific
 keyword evidence from independent producers. The envelope and storage manifest
 are closed records and are not arbitrary metadata bags.
 """
-from typing import Any, TypedDict
+from typing import Any, TypedDict, NotRequired
 
 
 class TraceChainRecord(TypedDict, total=False):
@@ -25,9 +25,11 @@ class TraceSegment(TypedDict):
     min_seq: int
     max_seq: int
     protected: int
+    dedup_keys: NotRequired[list[str]]
 
 
 class TraceManifest(TypedDict):
     version: int
     last_seq: int
     segments: list[TraceSegment]
+    legacy_dedup_keys: NotRequired[list[str]]

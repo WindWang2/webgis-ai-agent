@@ -121,7 +121,7 @@ def resolve_entry_path(pack_dir: Path, entry_point: str) -> Optional[Path]:
 
 def module_name_for(namespace: str, name: str, fingerprint: Optional[str]) -> str:
     fingerprint = fingerprint or "unknown"
-    return f"{MODULE_PREFIX}{namespace}_{name}_{fingerprint[:12]}"
+    return f"{MODULE_PREFIX}{namespace.replace('_', '__')}_{name}_{fingerprint[:12]}"
 
 
 def load_entry_module(
@@ -172,7 +172,7 @@ def load_entry_module(
 
 def purge_modules(namespace: str, name: str, *fingerprints: Optional[str]) -> None:
     """按指纹化前缀清理模块（Round-1 审计 M4：只清本记录实际加载过的代次）。"""
-    base = f"{MODULE_PREFIX}{namespace}_{name}"
+    base = f"{MODULE_PREFIX}{namespace.replace('_', '__')}_{name}"
     prefixes = {f"{base}_{fp[:12]}" for fp in fingerprints if fp}
     prefixes.add(f"{base}.")
     for prefix in prefixes:

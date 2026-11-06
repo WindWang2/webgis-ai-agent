@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.db_model import Organization
+from app.models.db_model import Organization, User
 from app.models.project import Project, Artifact, ArtifactLineage
 from app.schemas.project_schema import WorkflowCreate, WorkflowGraphSpec, WorkflowStepSpec
 from app.services.project_service import ProjectService
@@ -45,14 +45,16 @@ class _Reg:
 def _setup(db):
     db.add(Organization(id=1, name="o", slug="o"))
     db.commit()
-    proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name="p", org_id=1, status="active")
+    db.add(User(id="concurrency-owner", username="concurrency-owner", email="concurrency-owner@example.test", org_id=1, role="editor", is_active=True))
+    db.commit()
+    proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name="p", org_id=1, owner_id="concurrency-owner", status="active")
     db.add(proj)
     db.commit()
     wf = ProjectService.save_workflow(db, proj.id, WorkflowCreate(
         name="wf", graph_spec=WorkflowGraphSpec(steps=[
             WorkflowStepSpec(step_id="s1", tool_name="t_a"),
             WorkflowStepSpec(step_id="s2", tool_name="t_b", dependencies=["s1"]),
-        ])), org_id=1)  # security F-11: ownerless org project is org-only
+        ])), org_id=1, user_id="concurrency-owner")
     return proj, wf
 
 
@@ -61,14 +63,14 @@ def test_concurrent_replays_yield_same_fingerprint(db_session):
     proj, wf = _setup(db)
     run1 = asyncio.run(WorkflowEngine.execute_workflow_run(
         db=db, workflow_id=wf.id, tool_registry=_Reg(),
-        expected_project_id=proj.id, session_id="sess"))
+        expected_project_id=proj.id, user_id="concurrency-owner", org_id=1, session_id="sess"))
 
     # Two replays on separate sessions sharing the same DB. Fingerprints are
     # deterministic across replays of identical reproducible inputs.
     async def do_replay(sid):
         return await WorkflowEngine.replay_run(
             db=db, prior_run_id=run1.id, tool_registry=_Reg(),
-            mode="exact", expected_project_id=proj.id, session_id=sid)
+            mode="exact", expected_project_id=proj.id, user_id="concurrency-owner", org_id=1, session_id=sid)
 
     # Serialize DB access (SQLite) but the fingerprint logic is the point.
     r1 = asyncio.run(do_replay("sess_a"))
@@ -90,7 +92,7 @@ def test_resume_does_not_duplicate_artifacts_or_lineage(db_session):
 
     partial = asyncio.run(WorkflowEngine.execute_workflow_run(
         db=db, workflow_id=wf.id, tool_registry=_FailReg(),
-        expected_project_id=proj.id, session_id="sess"))
+        expected_project_id=proj.id, user_id="concurrency-owner", org_id=1, session_id="sess"))
     assert partial.completed_steps == ["s1"]
     s1_arts_before = db.execute(select(Artifact).where(
         Artifact.metadata_json["step_id"].as_string() == "s1")).scalars().all()
@@ -99,7 +101,7 @@ def test_resume_does_not_duplicate_artifacts_or_lineage(db_session):
 
     resumed = asyncio.run(WorkflowEngine.resume_run(
         db=db, prior_run_id=partial.id, tool_registry=_Reg(),
-        expected_project_id=proj.id, session_id="sess"))
+        expected_project_id=proj.id, user_id="concurrency-owner", org_id=1, session_id="sess"))
     assert resumed.status == "completed"
 
     # s1 must not have produced a second artifact.

@@ -362,7 +362,7 @@ def rbf_interpolation(
         kernel=kernel, smoothing=smoothing, neighbors=neighbors, degree=degree,
     )
 
-    records = [{"h3_index": cell, "value": float(v)} for cell, v in zip(target_cells, out)]
+    records = [{"h3_index": cell, "value": float(v)} for cell, v in zip(target_cells, out, strict=True)]
     metadata["value_range"] = [
         round(float(out.min()), 4),
         round(float(out.max()), 4),

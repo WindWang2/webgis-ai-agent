@@ -145,6 +145,13 @@ async def upload_files(
                    "session (ownership, dedup and listing all key on it)",
         )
 
+    # Check authority before reading, hashing, writing or parsing any upload.
+    async with async_db_session() as db:
+        await verify_session_owner(db, session_id, user_id=_user.get("user_id"), owner_token=owner_token)
+
+    from app.api.upload_budget import enforce_upload_budget
+    await enforce_upload_budget(session_id, request)
+
     # 只处理第一个文件（多文件上传可扩展）。V4：丢弃的文件必须如实披露，
     # 不再静默吞掉（审计 R8 —— 数据丢失形状的事实必须可见）。
     file = files[0]
@@ -307,9 +314,9 @@ async def upload_files(
                             select(Conversation).where(Conversation.id == session_id)
                         )
                     ).scalar_one_or_none()
-                    # Same rules as get_session / materialize: missing row is a
-                    # first-turn write; an existing row needs user_id or SEC-08 token.
-                    if not authorize_session_write(
+                    # Recheck under the write boundary: a deleted conversation
+                    # must not become a new unowned namespace mid-upload.
+                    if conv is None or not authorize_session_write(
                         conv, _user.get("user_id"), owner_token
                     ):
                         raise HTTPException(status_code=404, detail="Session not found")
@@ -322,6 +329,7 @@ async def upload_files(
                             .where(
                                 UploadRecord.session_id == session_id,
                                 UploadRecord.content_sha256 == content_sha256,
+                                UploadRecord.crs == meta.get("crs"),
                             )
                             .order_by(UploadRecord.upload_time.desc())
                             .limit(1)
@@ -444,6 +452,14 @@ async def upload_files(
             ref_registration_error = lane_out["error"]
             if lane_out.get("duplicate") and session_ref:
                 warnings.append(f"会话中已存在相同内容的数据引用，复用 {session_ref}")
+
+    if session_ref:
+        from app.services.upload_refs import persist_upload_ref_binding
+        try:
+            await persist_upload_ref_binding(Path(record.filename), meta, session_id, session_ref)
+        except (OSError, ValueError):
+            logger.error("upload ref binding persistence failed", exc_info=True)
+            raise HTTPException(status_code=503, detail="上传引用登记未完成，请重试")
 
     return UploadResponse(
         id=record.id,
@@ -580,9 +596,8 @@ async def _run_raster_ingest_lane(
     if receipt_dump is not None:
         # 发布 URL 内嵌会话鉴权参数（评审 P2：消费方照抄即用；匿名会话
         # 由 owner_token 头补 token query —— 与 /sessions/{sid}/raster 同语义）。
-        auth_qs = f"?session_id={session_id}"
-        if owner_token:
-            auth_qs += f"&token={owner_token}"
+        from app.core.signing import signed_terrain_query
+        auth_qs = signed_terrain_query(session_id, str(result.get("ref_id") or ""))
         out["terrain"] = {
             "qualification": receipt_dump.get("qualification"),
             "reasons": [
@@ -766,6 +781,12 @@ async def delete_upload(
         )
 
         file_path = Path(record.filename)
+        from app.services.upload_refs import clear_upload_refs
+        try:
+            await clear_upload_refs(record.session_id, file_path, record.file_type)
+        except Exception as exc:
+            logger.warning("upload ref cleanup failed", exc_info=True)
+            raise HTTPException(status_code=503, detail="上传引用清理失败，请重试") from exc
         await db.delete(record)
 
     # File cleanup AFTER DB commit succeeds

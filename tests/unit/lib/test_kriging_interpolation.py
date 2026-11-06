@@ -198,7 +198,7 @@ def test_degree_crs_route_to_projected(declared):
     assert len(out["records"]) > 0
 
 
-def test_metric_crs_pass_through_3857():
+def test_web_mercator_reprojects_to_local_metric_crs():
     import geopandas as gpd
 
     fc = _points_fc(n=150, seed=3)
@@ -226,7 +226,7 @@ def test_metric_crs_pass_through_3857():
         fc_3857, "pm25", resolution=6, declared_crs="EPSG:3857", cross_validate=False
     )
     m = out["metadata"]
-    assert m["working_crs"] == "EPSG:3857"
+    assert m["working_crs"].startswith("EPSG:326")
     # bbox must be the real lon/lat extent of the fixture (Chengdu)
     assert 103.0 < m["bbox"][0] < 105.0
     assert 30.0 < m["bbox"][1] < 31.0

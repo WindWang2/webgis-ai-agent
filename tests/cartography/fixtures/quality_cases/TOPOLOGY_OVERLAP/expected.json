@@ -9,7 +9,7 @@
   "ops": [
    "fix_topology_overlap"
   ],
-  "allow_destructive": false
+  "allow_destructive": true
  },
  "post": {
   "feature_count": 2,

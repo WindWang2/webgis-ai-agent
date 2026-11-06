@@ -602,10 +602,6 @@ def _audit_science(
                 if diverges:
                     issues.append(f"{cid}.{pname}: schema {contract_key} {s_val} {bound} {c_val}")
                     break
-            if len(issues) >= MAX_SCIENCE_ISSUES:
-                break
-        if len(issues) >= MAX_SCIENCE_ISSUES:
-            break
     if issues:
         more = f" (+{len(issues) - MAX_SCIENCE_ISSUES} more)" if len(issues) > MAX_SCIENCE_ISSUES else ""
         return _verdict(
@@ -761,6 +757,8 @@ def collect_live_facts(
             from app.agent_pi_bridge import try_get_tool_registry
 
             registry = try_get_tool_registry()
+    if registry is None:
+        raise ValueError("live conformance requires an injected registry or bootstrap=True")
     from app.lib.gis.algorithm_registry import get_algorithm_registry
     from app.lib.gis.capability_registry import get_capability_registry
     from app.lib.gis.parameter_contracts import get_parameter_contract_registry

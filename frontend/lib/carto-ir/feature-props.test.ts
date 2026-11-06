@@ -18,7 +18,7 @@ import {
 
 describe("FEATURE_ID_FIELDS 词表", () => {
   it("裁决顺序锁定（词表顺序即优先级）", () => {
-    expect(FEATURE_ID_FIELDS).toEqual(["id", "OBJECTID", "fid", "FID"]);
+    expect(FEATURE_ID_FIELDS).toEqual(["id", "OBJECTID", "fid", "FID", "osm_id", "@id", "featureId", "feature_id"]);
   });
 });
 

@@ -6,6 +6,7 @@ into unified TargetAreaSpec value objects without hardcoded default coordinate f
 import json
 import re
 import logging
+import math
 from typing import Any, Dict, List, Optional, Tuple
 import geopandas as gpd
 from shapely.geometry import shape, mapping
@@ -110,7 +111,7 @@ class TargetAreaResolver:
 
             # 2c. Check if session ref ID or layer ID
             if session_id:
-                session_res = await self._try_resolve_session_ref(target_str, session_id)
+                session_res = await self._try_resolve_session_ref(target_str, session_id, owner_token=owner_token)
                 if session_res:
                     return session_res
 
@@ -141,8 +142,14 @@ class TargetAreaResolver:
             return None
 
         w, s, e, n = [float(g) for g in match.groups()]
-        if w > e or s > n:
+        if not all(math.isfinite(value) for value in (w, s, e, n)) or s > n or not (-180 <= w <= 180 and -180 <= e <= 180 and -90 <= s <= n <= 90):
             return None
+        if w > e:
+            polygon_geom = {"type": "MultiPolygon", "coordinates": [
+                [[ [w, s], [180, s], [180, n], [w, n], [w, s] ]],
+                [[ [-180, s], [e, s], [e, n], [-180, n], [-180, s] ]],
+            ]}
+            return TargetAreaSpec(query=text, geometry_type="BBOX", center=((w + (e + 360 - w) / 2 + 180) % 360 - 180, (s + n) / 2), geometry=polygon_geom, bbox=[w, s, e, n], resolved_name="跨日期变更线范围", source="bbox", confidence=1.0)
 
         polygon_geom = {
             "type": "Polygon",
@@ -231,7 +238,7 @@ class TargetAreaResolver:
             resolved_name = name or data.get("name") or "GeoJSON Target Area"
             return TargetAreaSpec(
                 query=query_str,
-                geometry_type=geom_type if geom_type in ("Point", "Polygon", "MultiPolygon") else "Polygon",
+                geometry_type=geom_type if geom_type in ("Point", "Polygon", "MultiPolygon") else "Unknown",
                 center=center,
                 geometry=geom_dict,
                 bbox=bbox,
@@ -244,7 +251,17 @@ class TargetAreaResolver:
             logger.warning(f"Failed to process GeoJSON geometry: {e}")
             return None
 
-    async def _try_resolve_session_ref(self, ref_id: str, session_id: str) -> Optional[TargetAreaSpec]:
+    async def _try_resolve_session_ref(self, ref_id: str, session_id: str, *, owner_token: Optional[str] = None) -> Optional[TargetAreaSpec]:
+        from app.core.runtime_context import current_runtime_context
+        verified_session = getattr(current_runtime_context(), "session_id", None)
+        authorized = verified_session == session_id
+        if not authorized and owner_token and verified_session is None:
+            from app.core.auth import owner_token_matches
+            from app.services.session_ownership import lookup_session_owner_token
+            expected = await lookup_session_owner_token(session_id)
+            authorized = owner_token_matches(expected, owner_token)
+        if not authorized:
+            return None
         try:
             store = self._get_session_store()
             data = await store.get(session_id, ref_id)
@@ -278,7 +295,7 @@ class TargetAreaResolver:
                             geom_dict, geom_type, center, bbox = _process_shapely_geometry(geom)
                             return TargetAreaSpec(
                                 query=address_query,
-                                geometry_type=geom_type if geom_type in ("Point", "Polygon", "MultiPolygon") else "Polygon",
+                                geometry_type=geom_type if geom_type in ("Point", "Polygon", "MultiPolygon") else "Unknown",
                                 center=center,
                                 geometry=geom_dict,
                                 bbox=bbox,
@@ -315,6 +332,8 @@ class TargetAreaResolver:
                 except Exception as e:
                     logger.debug(f"Geocode call failed for '{address_query}': {e}")
 
+            return None
+
         # 3. Fallback: Check offline dictionary for standard cities & districts (for test/offline performance)
         OFFLINE_DISTRICTS = {
             "海淀": ([116.31, 39.98], "北京市海淀区"),
@@ -338,7 +357,7 @@ class TargetAreaResolver:
         }
 
         for kw, (center_coords, full_name) in OFFLINE_DISTRICTS.items():
-            if kw in address_query:
+            if address_query.strip() in (kw, full_name):
                 lng, lat = center_coords
                 delta = 0.05
                 w, s, e, n = lng - delta, lat - delta, lng + delta, lat + delta
@@ -354,8 +373,8 @@ class TargetAreaResolver:
                     bbox=[w, s, e, n],
                     resolved_name=address_query if len(address_query) > len(full_name) else full_name,
                     source="offline_geocode",
-                    confidence=0.85,
-                    correction_hint=None,
+                    confidence=0.5,
+                    correction_hint="离线近似位置，需确认目标范围后再分析",
                 )
 
         return None

@@ -89,9 +89,9 @@ describe('receipt-bus', () => {
   });
 });
 
-// ── ADR-0283 D6：agent 可逆回执 → undo 栈录制 ─────────────────────────
+// ── ADR-0285 D6：agent 可逆回执 → undo 栈录制 ─────────────────────────
 
-describe('agent receipt undo recording (ADR-0283 D6)', () => {
+describe('agent receipt undo recording (ADR-0285 D6)', () => {
   beforeEach(() => {
     setMapSpecSessionCursor('sess-rb');
     setReceiptBusSession(null);

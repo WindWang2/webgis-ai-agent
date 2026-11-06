@@ -61,6 +61,7 @@ function getValue(expr: unknown, f: FeatureLike): unknown {
   const op = expr[0];
   if (op === 'get') return (f.properties ?? {})[String(expr[1])];
   if (op === 'id') return f.id;
+  if (op === 'geometry-type') return f.geometry?.type?.replace(/^Multi/, '');
   if (op === 'literal') return expr[1];
   // #1726：selection-store 编译的类别/ID 过滤把字段侧包一层 to-string 归一
   // （['in', ['to-string', ['get', f]], ['literal', [...]]] ——
@@ -82,9 +83,20 @@ function getValue(expr: unknown, f: FeatureLike): unknown {
  * 不跨型强等，按 === 近似；adapter 发射的字面量类型与属性一致）。
  */
 export function evaluateFilterBounded(expr: unknown, f: FeatureLike): boolean | null {
+  if (typeof expr === 'boolean') return expr;
   if (!Array.isArray(expr) || expr.length === 0) return null;
   const op = expr[0];
   switch (op) {
+    case 'has': return Object.hasOwn(f.properties ?? {}, String(expr[1]));
+    case 'match': {
+      if (_isUnresolvedOperand(expr[1])) return null;
+      const value = getValue(expr[1], f);
+      for (let i = 2; i + 1 < expr.length - 1; i += 2) {
+        const labels = Array.isArray(expr[i]) ? expr[i] : [expr[i]];
+        if (labels.some((label: unknown) => label === value)) return evaluateFilterBounded(expr[i + 1], f);
+      }
+      return evaluateFilterBounded(expr[expr.length - 1], f);
+    }
     case 'all': {
       let anyUnknown = false;
       for (let i = 1; i < expr.length; i++) {
@@ -202,7 +214,7 @@ function _isUnresolvedOperand(operand: unknown): boolean {
   if (operand === '$id' || operand === '$type') return true;
   if (Array.isArray(operand)) {
     const head = operand[0];
-    if (head !== 'get' && head !== 'id' && head !== 'literal' && head !== 'to-string') {
+    if (head !== 'get' && head !== 'id' && head !== 'literal' && head !== 'to-string' && head !== 'geometry-type') {
       return true;
     }
     // to-string 只是归一包装（#1726：selection-store 的类别/ID 过滤形状）——
@@ -366,3 +378,25 @@ export const FILTER_EVIDENCE_LABELS: Record<FilterEvidenceStatus, string> = {
   stale: '过滤证据过期',
   unknown: '',
 };
+
+/** Closed export vocabulary: unknown branches fail closed before short-circuit evaluation. */
+export function isSupportedFilter(expr: unknown, depth = 0): boolean {
+  if (depth > 32) return false;
+  if (typeof expr === 'boolean') return true;
+  if (!Array.isArray(expr) || !expr.length) return false;
+  const operand = (v: unknown, level = depth): boolean => level <= 32 && (!Array.isArray(v)
+    || (v[0] === 'get' && v.length === 2 && typeof v[1] === 'string')
+    || (['id', 'geometry-type'].includes(v[0]) && v.length === 1)
+    || (v[0] === 'literal' && v.length === 2)
+    || (v[0] === 'to-string' && v.length === 2 && operand(v[1], level + 1)));
+  const op = expr[0];
+  if (op === 'all' || op === 'any') return expr.slice(1).every((v) => isSupportedFilter(v, depth + 1));
+  if (op === '!') return expr.length === 2 && isSupportedFilter(expr[1], depth + 1);
+  if (['==', '!=', '>', '>=', '<', '<=', 'in'].includes(op)) return expr.length === 3 && operand(expr[1]) && operand(expr[2]);
+  if (op === 'has') return expr.length === 2 && typeof expr[1] === 'string';
+  if (op === 'match' && expr.length >= 5 && expr.length % 2 === 1 && operand(expr[1])) {
+    for (let i = 3; i < expr.length; i += 2) if (!isSupportedFilter(expr[i], depth + 1)) return false;
+    return isSupportedFilter(expr[expr.length - 1], depth + 1);
+  }
+  return false;
+}

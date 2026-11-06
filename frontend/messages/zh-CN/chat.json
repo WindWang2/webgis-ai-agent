@@ -67,6 +67,9 @@
     "highlightLayer": "高亮图层",
     "titleWithTime": "等时圈网络分析 ({minutes} 分钟)",
     "modeDriving": "驾车",
+    "modeCycling": "骑行",
+    "modeTransit": "公共交通",
+    "modeUnknown": "未知",
     "modeWalking": "步行",
     "facilityCount": "{count} 个设施",
     "facilityUnknown": "设施数未知",
@@ -273,7 +276,8 @@
   "chart": {
     "boxPlotAria": "箱线图 {title}",
     "heatMatrixAria": "热矩阵 {title}",
-    "unsupportedType": "无法渲染图表：未支持的类型 \"{type}\""
+    "unsupportedType": "无法渲染图表：未支持的类型 \"{type}\"",
+    "noData": "无数据"
   },
   "code": {
     "copy": "复制",

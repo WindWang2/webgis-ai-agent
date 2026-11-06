@@ -1,5 +1,5 @@
 /**
- * SituationStatusBar / use-situation-projection 测试（ADR-0283 D5）。
+ * SituationStatusBar / use-situation-projection 测试（ADR-0285 D5）。
  *
  * - 投影 store：成功拉取 → ready + boot 选择重放（仅本地无选择时一次）；
  *   失败 → error（不伪造空态）；

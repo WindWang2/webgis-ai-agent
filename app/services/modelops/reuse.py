@@ -18,7 +18,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Tuple, Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -185,10 +185,12 @@ class ReuseStore:
                 (entry_path.stat().st_mtime, int(entry.get("total_bytes", 0)), entry_path.parent)
             )
         candidates.sort(reverse=True)  # 新的在前
-        kept = 0
-        kept_bytes = 0
+        owner_totals: Dict[str, Tuple[int, int]] = {}
         for _mtime, size, entry_dir in candidates:
-            kept += 1
-            kept_bytes += size
-            if kept > self._max_entries or kept_bytes > self._max_bytes:
+            owner = str(entry_dir.parent.parent)
+            count, total_bytes = owner_totals.get(owner, (0, 0))
+            count += 1
+            total_bytes += size
+            owner_totals[owner] = (count, total_bytes)
+            if count > self._max_entries or total_bytes > self._max_bytes:
                 shutil.rmtree(entry_dir, ignore_errors=True)

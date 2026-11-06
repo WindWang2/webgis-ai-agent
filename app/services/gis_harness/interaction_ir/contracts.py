@@ -165,7 +165,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     ),
     # ── 观察型：比较模式开关 ────────────────────────────────────────────
     _k("comparison_mode_changed", ("enabled", "mode")),
-    # ── 观察型：图表类别选择（ADR-0283 D2；钩子 chart-panel onClick
+    # ── 观察型：图表类别选择（ADR-0285 D2；钩子 chart-panel onClick
     #    publishSelection(source:'chart')——类别谓词，非要素 id 集）────
     _k(
         "chart_selection_changed",
@@ -179,7 +179,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
         ("layer_id", "feature_id", "selected_ids", "dataset_ref", "action", "id_field"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
-    # ── mutation 链接型：时间窗 settle（ADR-0283 D2；钩子 temporal
+    # ── mutation 链接型：时间窗 settle（ADR-0285 D2；钩子 temporal
     #    controller settle→commitUserTemporal POST set_temporal_view——
     #    #1877 后时间轴 UI 真实存在，收词有据；高频 scrub 只报 settle 终态）──
     _k(

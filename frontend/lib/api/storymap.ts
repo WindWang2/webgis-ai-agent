@@ -88,6 +88,7 @@ export function exportStoryBundle(
     body: {
       spec: spec as unknown as Record<string, unknown>,
       layers: options?.layers ?? [],
+      ...(options?.mapspec ? { mapspec: options.mapspec } : {}),
       format: 'html',
     },
     label: 'StoryMap 导出失败',

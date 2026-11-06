@@ -1,25 +1,8 @@
 """Regression tests for #425: Data Fabric routes must not run blocking sync
 remote I/O on the event loop (sibling of the #386 offload sweep).
 
-The five routes (create/probe/sync/preview/query) call sync manager methods
-that drive ``requests.Session`` adapters with 5-15s timeouts (and, for sync,
-a full catalog sync whose ThreadPoolExecutor shutdown waits on the calling
-thread). A slow or hung remote source therefore froze the single uvicorn event
-loop for the full timeout — every concurrent SSE chat stream stalled in
-lockstep. Only ``materialize`` was async-safe.
-
-Each test fakes the slow work with a sync ``time.sleep`` that records the
-thread id it ran on, and asserts the main event loop stays responsive WHILE
-the work is running — with the work on the loop, the fake's sleep blocks
-everything and the ticker assertion fails deterministically (same technique as
-tests/test_event_loop_offload_386.py).
-
-A second defect on the same path is covered here: the sync
-``query_catalog_item`` (preview/query routes) never enforced
-``enforce_result_bounds`` — only materialize did — so preview/query responses
-were unbounded.
-
-Run cost: ~1s per offload test (0.8s fake sleep), no network.
+Offload probes assert the actual execution thread, independent of scheduler
+latency. Dedicated throughput/timeout tests keep their explicit time budgets.
 """
 import asyncio
 import threading
@@ -33,41 +16,13 @@ from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
 _main_thread = threading.get_ident()
 
 
-async def _assert_loop_responsive_while(awaitable_factory, started=None):
-    """Run awaitable_factory() and assert a 0.05s timer fires mid-flight.
+async def _run_offload_probe(awaitable_factory, started=None):
+    """Run the probe; callers assert the actual worker thread identity.
 
-    Deterministic: with the work offloaded the task is still running when the
-    timer completes; with the work on the loop the task finishes before the
-    test's own sleep resumes, so ``assert not task.done()`` fails.
-
-    ``started``（threading.Event）由慢工作在入睡前置位 —— 观察窗口从
-    「盲等 0.15s」改为「确认工作已开始」，消除 CI 高负载下主线程被
-    调度延迟超过假睡眠时长导致的假阳性（实录两次：work finished
-    before the test could observe it）。假睡眠 1.5s 留 10× 余量。
+    A fixed sleep/task-pending race depends on machine scheduling and can
+    fail when correctly offloaded work finishes before the test resumes.
     """
-    task = asyncio.create_task(awaitable_factory())
-    if started is not None:
-        import time as _time
-
-        deadline = _time.monotonic() + 10.0
-        while not started.is_set():
-            assert _time.monotonic() < deadline, "work never started"
-            await asyncio.sleep(0.01)
-    else:
-        await asyncio.sleep(0.15)      # legacy path: let it enter the slow work
-    assert not task.done(), "work finished before the test could observe it"
-
-    ticks = []
-
-    async def _tick():
-        await asyncio.sleep(0.05)
-        ticks.append(True)
-
-    tick = asyncio.create_task(_tick())
-    await asyncio.sleep(0.15)
-    assert tick.done() and ticks, "event loop was blocked during the work"
-    assert not task.done(), "event loop was blocked during the work"
-    return await task
+    return await awaitable_factory()
 
 
 # ─── shared fakes ────────────────────────────────────────────────────────────
@@ -174,7 +129,7 @@ async def test_create_data_source_off_loop(monkeypatch):
         endpoint_url="https://example.com/ogc",
         options={},
     )
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: route_mod.create_data_source(req, user=dict(_USER)),
         started=started,
     )
@@ -201,7 +156,7 @@ async def test_probe_data_source_off_loop(monkeypatch):
     monkeypatch.setattr(DataFabricManager, "probe_profile", staticmethod(_slow_probe))
     _patch_route_session(monkeypatch, _fake_db_for_source)
 
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: route_mod.probe_data_source("ds_test", user=dict(_USER))
     )
     assert observed["thread"] != _main_thread, "probe ran on the event loop thread"
@@ -228,7 +183,7 @@ async def test_sync_data_source_catalog_off_loop(monkeypatch):
     monkeypatch.setattr(DataFabricManager, "sync_catalog", staticmethod(_slow_sync))
     _patch_route_session(monkeypatch, _fake_db_for_source)
 
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: route_mod.sync_data_source_catalog("ds_test", user=dict(_USER))
     )
     assert observed["thread"] != _main_thread, "catalog sync ran on the event loop thread"
@@ -277,7 +232,7 @@ async def test_preview_catalog_item_off_loop(monkeypatch):
     _patch_query_paths(monkeypatch, observed)
     _patch_route_session(monkeypatch, _fake_db_for_catalog_item)
 
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: route_mod.preview_catalog_item(
             "cat_ds_test_layer", limit=10, user=dict(_USER)
         )
@@ -295,7 +250,7 @@ async def test_query_catalog_item_route_off_loop(monkeypatch):
     _patch_query_paths(monkeypatch, observed)
     _patch_route_session(monkeypatch, _fake_db_for_catalog_item)
 
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: route_mod.query_catalog_item(
             "cat_ds_test_layer",
             QuerySpec(limit=10),

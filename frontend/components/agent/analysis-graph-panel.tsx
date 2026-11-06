@@ -266,6 +266,12 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
   }, [sessionId, ownerToken]);
 
   useEffect(() => {
+    setGraph(null);
+    setRefreshFailed(false);
+    requestSeq.current += 1;
+  }, [sessionId]);
+
+  useEffect(() => {
     void refresh();
   }, [refresh, refreshKey]);
 

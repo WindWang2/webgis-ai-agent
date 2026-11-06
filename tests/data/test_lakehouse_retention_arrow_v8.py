@@ -130,15 +130,15 @@ def test_retention_plan_and_execute_prune(v8_env):
     _age_versions(vids)
     with SessionLocal() as db:
         row = reg.get_dataset(db, row_id)
-        plan = ret.plan_retention(db, row, max_versions=3, min_age_hours=0.0)
+        plan = ret.plan_retention(db, row, session_id=str(row.owner_id), max_versions=3, min_age_hours=0.0)
         # 最新 3 个受窗口保护，最老 3 个为候选。
         assert sorted(plan["candidates"]) == sorted(vids[:3])
         assert plan["protected_by_window"] == 3
         assert plan["token"]
         # 确定性：同状态重规划同 token。
-        again = ret.plan_retention(db, row, max_versions=3, min_age_hours=0.0)
+        again = ret.plan_retention(db, row, session_id=str(row.owner_id), max_versions=3, min_age_hours=0.0)
         assert again["token"] == plan["token"]
-        result = ret.execute_retention(db, plan)
+        result = ret.execute_retention(db, plan, session_id=str(row.owner_id))
         db.commit()
         assert result["pruned_count"] == 3
         assert sorted(result["pruned"]) == sorted(vids[:3])
@@ -153,7 +153,7 @@ def test_retention_min_age_and_ref_protection(v8_env):
     # 未拨老 → min_age 保护一切（尽管超出 max_versions 窗口）。
     with SessionLocal() as db:
         row = reg.get_dataset(db, row_id)
-        plan = ret.plan_retention(db, row, max_versions=2, min_age_hours=72.0)
+        plan = ret.plan_retention(db, row, session_id=str(row.owner_id), max_versions=2, min_age_hours=72.0)
         assert plan["candidate_count"] == 0
     # tag 指针保护：即使最老且超窗，被 tag 指向的版本绝不 prune。
     _age_versions(vids)
@@ -161,7 +161,7 @@ def test_retention_min_age_and_ref_protection(v8_env):
         row = reg.get_dataset(db, row_id)
         reg.create_tag(db, row, name="keep-me", version_id=vids[0])
         db.commit()
-        plan = ret.plan_retention(db, row, max_versions=2, min_age_hours=0.0)
+        plan = ret.plan_retention(db, row, session_id=str(row.owner_id), max_versions=2, min_age_hours=0.0)
         assert vids[0] not in plan["candidates"]
         # tag(vids[0]) + branch head(vids[-1]) → 两个指针保护版本。
         assert plan["protected_by_refs"] == 2
@@ -175,7 +175,7 @@ def test_retention_stale_plan_rejected(v8_env):
     _age_versions(vids)
     with SessionLocal() as db:
         row = reg.get_dataset(db, row_id)
-        plan = ret.plan_retention(db, row, max_versions=2, min_age_hours=0.0)
+        plan = ret.plan_retention(db, row, session_id=str(row.owner_id), max_versions=2, min_age_hours=0.0)
     # plan 之后状态漂移（新提交）→ token 失配 → typed STALE。
     with SessionLocal() as db:
         row = reg.get_dataset(db, row_id)
@@ -187,7 +187,7 @@ def test_retention_stale_plan_rejected(v8_env):
         )
 
         with pytest.raises(RetentionStalePlan):
-            ret.execute_retention(db, plan)
+            ret.execute_retention(db, plan, session_id=str(row.owner_id))
 
 
 def test_retention_prune_exposes_content_to_gc(v8_env):
@@ -203,7 +203,7 @@ def test_retention_prune_exposes_content_to_gc(v8_env):
     _age_versions(vids)
     with SessionLocal() as db:
         row = reg.get_dataset(db, row_id)
-        plan = ret.plan_retention(db, row, max_versions=1, min_age_hours=0.0)
+        plan = ret.plan_retention(db, row, session_id=str(row.owner_id), max_versions=1, min_age_hours=0.0)
         assert plan["candidate_count"] == 1
         # 不执行 retention，仅验证 GC 此时仍保护两者 —— 直接裁剪行模拟
         # execute（execute 自身在上一用例已验）。
@@ -226,11 +226,11 @@ def test_retention_scan_beyond_display_limit(v8_env):
     with SessionLocal() as db:
         row = reg.get_dataset(db, row_id)
         plan = ret.plan_retention(
-            db, row, max_versions=10, min_age_hours=0.0)
+            db, row, session_id=str(row.owner_id), max_versions=10, min_age_hours=0.0)
         # 扫描覆盖全部 205 行；候选 = 超窗且无指针的最老 195 个。
         assert plan["scanned_versions"] == 205
         assert len(plan["candidates"]) == 195
-        result = ret.execute_retention(db, plan)
+        result = ret.execute_retention(db, plan, session_id=str(row.owner_id))
         db.commit()
         assert result["pruned_count"] == 195
         assert len(reg.list_versions(db, row_id)) == 10

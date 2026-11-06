@@ -9,6 +9,7 @@
  * 依赖：svg2pdf.js（MIT，与 jsPDF 官方配对的 SVG→PDF 路径转换器）；
  * 需要 DOM（浏览器/jsdom）解析 SVG —— 动态 import 保持导出器轻载。
  */
+import { devOnly } from '@/lib/utils/logger';
 import type { jsPDF } from 'jspdf';
 
 export type PdfBodyMode = 'vector' | 'raster';
@@ -45,7 +46,8 @@ export async function addVectorSvgBody(
     await (svgToPdf as (el: Element, d: jsPDF, o: object) => Promise<void>)(
       root, doc, { x, y, width, height });
     return true;
-  } catch {
+  } catch (error) {
+    devOnly.warn('[pdf-vector] raster fallback', error);
     return false;
   }
 }

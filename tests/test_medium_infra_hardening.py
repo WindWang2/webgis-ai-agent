@@ -20,7 +20,7 @@ REPO = Path(__file__).parent.parent
 
 def test_i17_dev_compose_mount_is_configurable():
     """I17：bind-mount 应通过 WEBGIS_DEV_MOUNT 环境变量可关闭。"""
-    compose = (REPO / "docker-compose.yml").read_text(encoding="utf-8")
+    compose = (REPO / "docker-compose.dev.yml").read_text(encoding="utf-8")
     assert "WEBGIS_DEV_MOUNT" in compose, "dev compose 应让 bind-mount 可配置"
 
 

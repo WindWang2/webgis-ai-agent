@@ -4,6 +4,7 @@ Evaluates Hard and Soft constraints across numeric, spatial, categorical, and lo
 Enforces the inviolable principle: Infeasible alternatives CANNOT be recommended.
 """
 import logging
+import math
 from typing import Dict, List, Optional, Tuple
 
 from app.services.spatial_decision.models_v3 import (
@@ -24,7 +25,7 @@ def evaluate_numeric_constraint(
     constraint: Constraint,
 ) -> ConstraintEvaluation:
     """Evaluates a numeric constraint against an observed or derived metric."""
-    if val is None:
+    if val is None or not math.isfinite(val):
         return ConstraintEvaluation(
             constraint_id=constraint.id,
             alternative_id=alt_id,
@@ -55,7 +56,7 @@ def evaluate_numeric_constraint(
         margin = val - thresh
     elif op == "==":
         passed = abs(val - thresh) < 1e-6
-        margin = -abs(val - thresh)
+        margin = 1e-6 - abs(val - thresh)
     elif op == "!=":
         passed = abs(val - thresh) >= 1e-6
         margin = abs(val - thresh)
@@ -76,7 +77,7 @@ def evaluate_numeric_constraint(
         passed=passed,
         observed_value=round(val, 4),
         threshold=thresh,
-        margin=round(margin, 4),
+        margin=round(margin, 8),
         penalty=penalty,
         evidence_statement=stmt,
     )
@@ -117,16 +118,22 @@ def evaluate_alternative_constraints(
                 val = alternative.attributes[c.metric_key]
             elif c.metric_key in metric_values:
                 val = metric_values[c.metric_key]
+            try:
+                numeric_value = float(val) if val is not None and not isinstance(val, bool) else None
+                if numeric_value is not None and not math.isfinite(numeric_value):
+                    numeric_value = None
+            except (ValueError, TypeError, OverflowError):
+                numeric_value = None
             evaluation = evaluate_numeric_constraint(
                 alt_id=alternative.id,
-                val=float(val) if val is not None else None,
+                val=numeric_value,
                 constraint=c,
             )
         elif c.category == ConstraintCategory.CATEGORICAL:
             val = alternative.attributes.get(c.metric_key)
             thresh = c.threshold
             op = c.operator or "in"
-            passed = (val in thresh) if op == "in" else (val not in thresh)
+            passed = False if val is None else ((val in thresh) if op == "in" else (val not in thresh))
             penalty = 0.0 if passed else (c.penalty_weight if c.constraint_type == ConstraintType.SOFT else 0.0)
             evaluation = ConstraintEvaluation(
                 constraint_id=c.id,

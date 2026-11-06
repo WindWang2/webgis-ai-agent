@@ -252,7 +252,7 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **mutation_verified** | The read-only cross-check of a mutation-linked event against `map_state["_mutation_dedup"]` (the engine's `c:<id>` idempotence index): hit → true + authoritative `verified_revision`; miss (64-entry index eviction / superseded not indexed) → false, presented as claimed. | verified flag, receipt check |
 | **attempted_not_applied** | The set of attempts whose `mutation_outcome ∈ {superseded, failed}`: honest disclosure that a user intent did not land — never projected as a successful override. | failed actions, rejected intents |
 
-## Situated Interaction Closure (ADR-0283)
+## Situated Interaction Closure (ADR-0285)
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
@@ -261,6 +261,6 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Selection epoch** | One generation of the user's selection in the ledger-derived selection history (opened by a selection event, superseded by the next, cleared by deselect). Addressable as `current` / `previous` / `<epoch_seq>` — 「刚才那组学校」has a handle; unresolvable returns None, never a random pick. | selection history entry (weaker) |
 | **TurnChain** | The read-only per-turn join of turn journal × map_operation receipts × IR mutation-linked events × provenance × observation revision. Never written, never a scheduler. | turn log, conversation state |
 | **Change classes** | The closed three-way diff vocabulary on TurnChain: `user_explicit` (user-committed map params, user-wins), `agent_proposed_pending` (receipt preview/confirmation_required/clarification_needed), `executed_observed` (committed AND covered by a strictly-not-older trusted observation — a late old observation stays `pending_execution`). | diff types, change kinds (vague) |
-| **IR kinds (ADR-0283 additions)** | `chart_selection_changed` / `table_selection_changed` (observation; category predicate & row locate keep their source identity) / `temporal_window_settled` (mutation-linked, replace_pending, carries `pinned` user-lock). Admitted only because real frontend hooks exist (ADR-0227 discipline). | UI events, telemetry (vague) |
+| **IR kinds (ADR-0285 additions)** | `chart_selection_changed` / `table_selection_changed` (observation; category predicate & row locate keep their source identity) / `temporal_window_settled` (mutation-linked, replace_pending, carries `pinned` user-lock). Admitted only because real frontend hooks exist (ADR-0227 discipline). | UI events, telemetry (vague) |
 | **Situation view** | The read-only JSON face (`GET /chat/sessions/{sid}/situation`, `.../turn-chain`): situation + inconsistencies + selection history + claimed scope. The refresh/reconnect recovery source for the status bar — server truth, localStorage is never authoritative. | context API (loose) |
 | **invertible receipt** | The additive map_operation receipt flag: true only when every applied effect is presentation-family (visibility/opacity). Drives frontend undo recording (reverse-replay through the same CAS channel per ADR-0278); never a new undo primitive. | undoable (overpromising) |

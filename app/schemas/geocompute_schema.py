@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from app.schemas.payload_bounds import BoundedJson
 
 
 class ExecutionNodeIn(BaseModel):
@@ -49,7 +50,7 @@ class ExecutionNodeIn(BaseModel):
 
 class ExecutionPlanIn(BaseModel):
     plan_id: str
-    nodes: list[ExecutionNodeIn] = Field(default_factory=list)
+    nodes: list[ExecutionNodeIn] = Field(default_factory=list, max_length=256)
     # #1648：语义帽同 parameters —— 整个 plan 序列化 ≤256KB
     # （MAX_PLAN_SNAPSHOT_BYTES）；submit 路径 typed 413 是运行时权威。
     budget: Dict[str, Any] = Field(
@@ -60,9 +61,21 @@ class ExecutionPlanIn(BaseModel):
     description: Optional[str] = None
 
 
+    @model_validator(mode="after")
+    def _bounded_graph_payload(self) -> "ExecutionPlanIn":
+        if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
+            raise ValueError("execution plan exceeds 256KB")
+        return self
+
+
 class ExecutePlanRequest(BaseModel):
     plan: ExecutionPlanIn
     session_id: Optional[str] = None
+
+
+class PlanDriftCheckRequest(BaseModel):
+    stored: Optional[BoundedJson] = None
+    plan: Optional[ExecutionPlanIn] = None
 
 
 class ClusterSubmitRequest(ExecutePlanRequest):
@@ -70,7 +83,7 @@ class ClusterSubmitRequest(ExecutePlanRequest):
     共享模型会让同步端点静默接受并忽略 submit 语义的字段）。"""
 
     # V6（cluster submit）：优先级（0/5/10）与项目归属（公平/账本键）
-    priority: int = 5
+    priority: int = Field(default=5, ge=0, le=10)
     project_id: Optional[str] = None
     # V7：run 级资源 envelope（placement 准入；可选 —— 缺省 = V6 行为）
     resource: Optional[Dict[str, Any]] = None

@@ -100,7 +100,7 @@ export function commitUserTemporal(patch: TemporalPatch): Promise<TemporalCommit
 }
 
 /**
- * temporal settle 的 IR 上行（ADR-0283 D2）：只报已知事实——游标帧/播放/
+ * temporal settle 的 IR 上行（ADR-0285 D2）：只报已知事实——游标帧/播放/
  * 锁定；不虚构 mode/field/extent（spec time 面的字段不在 patch 上下文里）。
  * 观察层事件绝不阻塞提交链路（emit 内部已 try/catch 静默）。
  */

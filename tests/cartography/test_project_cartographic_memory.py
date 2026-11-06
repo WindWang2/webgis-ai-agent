@@ -266,3 +266,19 @@ def test_harvest_conflict_does_not_clobber_the_project_scheme(db):
     held = db.query(CartoProjectFact).one()
     assert held.status == "conflicted"
     assert held.payload["breaks"] == [0, 100, 500, 1000]
+
+
+def test_retired_fact_cannot_be_reactivated_by_ordinary_harvest(db):
+    fact = record_fact(db, "p1", "shared_classification", "population", _CLS_V1,
+                       fingerprint=_fp(_CLS_V1))
+    fact.status = "retired"
+    fact.payload = {**fact.payload, "retirement": "operator decision"}
+    db.flush()
+    repeated = record_fact(db, "p1", "shared_classification", "population", _CLS_V2,
+                            fingerprint=_fp(_CLS_V2))
+    assert repeated.status == "retired"
+    assert repeated.payload["retirement"] == "operator decision"
+    assert repeated.fingerprint == _fp(_CLS_V1)
+    approved = record_fact(db, "p1", "shared_classification", "population", _CLS_V2,
+                           fingerprint=_fp(_CLS_V2), supersede=True)
+    assert approved.status == "active" and approved.fingerprint == _fp(_CLS_V2)

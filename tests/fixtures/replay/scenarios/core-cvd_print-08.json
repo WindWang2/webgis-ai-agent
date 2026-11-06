@@ -1,11 +1,17 @@
 {
  "category": "cvd_print",
+ "decisions": [],
  "description": "cvd_print 参数变体 8",
  "dispatch_backed": false,
+ "expect_calibration": [],
+ "expect_source": "",
  "faults": [],
+ "receipt_backed": false,
+ "registry_digest": "",
  "scenario_id": "core-cvd_print-08",
  "schema_version": 1,
  "tags": [],
+ "tool_registry": {},
  "turns": [
   {
    "cartography": {
@@ -30,7 +36,7 @@
         116.4,
         39.9
        ],
-       "zoom": 10
+       "zoom": 9.0
       }
      }
     },
@@ -40,7 +46,7 @@
        "id": "cvd-8",
        "paint": {
         "circle-color": "#3182bd",
-        "circle-radius": 5
+        "circle-radius": 11.0
        },
        "source": "src-cvd-8",
        "type": "circle"
@@ -73,7 +79,7 @@
        116.4,
        39.9
       ],
-      "zoom": 10
+      "zoom": 9.0
      }
     },
     "visual_judge": true
@@ -112,6 +118,7 @@
      },
      "call_id": "call-upsert-cvd-8",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -127,6 +134,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {

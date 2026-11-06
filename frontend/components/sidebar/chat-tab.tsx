@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
+import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
 import { Send, Sparkles, CheckCircle2, Square, RotateCcw } from 'lucide-react';
 import type { AiStatus } from '@/lib/store/hud-types';
@@ -23,6 +23,7 @@ import {
   parseAgentRuntime,
   type AgentRuntime,
 } from '@/lib/agent-runtime';
+import { CitationSourcesProvider, CitationSourceList, splitCitationBlocks, type CitationSource } from '@/components/chat/citation';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { adaptChartData } from "@/lib/chart-adapter";
 import { useLocale, useT } from '@/lib/i18n/useT';
@@ -232,7 +233,8 @@ const t = useT();
             backgroundColor: 'var(--agent-accent)'
           }}
         >
-          <div className="whitespace-pre-wrap">{msg.content}</div>
+          <div className="whitespace-pre-wrap">{splitCitationBlocks(msg.content).body}</div>
+          <CitationSourceList sources={splitCitationBlocks(msg.content).sources} />
         </div>
       </div>
     </div>
@@ -295,7 +297,7 @@ const t = useT();
             {msg.think && (
               <CollapsibleThink
                 content={msg.think}
-                isStreaming={!msg.content && !!msg.think}
+                isStreaming={!!msg.isThinking}
               />
             )}
             {msg.agentPlan && (
@@ -436,6 +438,14 @@ const t = useT();
     };
   }, [sessionId, messages.length]);
 
+  const citationSourcesByMessage = useMemo(() => {
+    let latest: CitationSource[] = [];
+    return messages.map((message) => {
+      if (message.role === 'user') latest = splitCitationBlocks(message.content).sources;
+      return latest;
+    });
+  }, [messages]);
+
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -529,6 +539,7 @@ const t = useT();
               data-chat-locate-hit={locateIndex === idx ? 'true' : undefined}
               className={locateIndex === idx ? 'rounded-md ring-2 ring-status-accent' : undefined}
             >
+              <CitationSourcesProvider sources={citationSourcesByMessage[idx]}>
               <ChatMessageItem
                 message={msg}
                 mounted={mounted}
@@ -538,6 +549,7 @@ const t = useT();
       onFeatureEditDecision={onFeatureEditDecision}
                 onClarificationRefresh={onClarificationRefresh}
               />
+              </CitationSourcesProvider>
             </div>
           ))}
 

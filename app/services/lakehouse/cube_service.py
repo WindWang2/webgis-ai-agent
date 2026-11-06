@@ -79,18 +79,14 @@ def _resolve_time_source(session_id: str, source: str) -> Path:
 
 
 def _raster_fingerprint(path: Path) -> str:
-    """有界栅格内容指纹（V5 corners 机制，零全量读）。"""
-    try:
-        from app.lib.geo_raster.fingerprint import raster_content_fingerprint_v5
+    """Full-file content digest, streamed in bounded 1MiB chunks."""
+    import hashlib
 
-        return str(raster_content_fingerprint_v5(str(path)))
-    except Exception:  # noqa: BLE001 — 指纹失败退化为文件 stat 投影（诚实弱证据）
-        import hashlib
-
-        st = path.stat()
-        return hashlib.sha256(
-            f"{path.name}:{st.st_size}:{st.st_mtime_ns}".encode()
-        ).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 async def build_session_cube(

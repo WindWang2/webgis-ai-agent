@@ -11,7 +11,7 @@
  * "下一张图从什么起点出发"，不提供任何影响 gate 判定的入口。
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Brain, ChevronDown, ChevronRight, Map as MapIcon, RotateCcw, Trash2 } from 'lucide-react';
 import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
@@ -87,30 +87,39 @@ const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   // 撤销/激活是项目写路径，后端要求认证（与 #528 同款门控）。
   const authUser = useAuthUser();
+  const activeProject = useRef(projectId);
+  activeProject.current = projectId;
+  const refreshGeneration = useRef(0);
 
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       if (!projectId) return;
+      const generation = ++refreshGeneration.current;
       setLoading(true);
       setError(null);
       try {
         const overview = await getCartoMemory(projectId, { signal });
-        setFacts(overview.facts);
+        if (!signal?.aborted && activeProject.current === projectId && generation === refreshGeneration.current) setFacts(overview.facts);
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return;
-        setError(e instanceof Error ? e.message : tNow('sidebar.memory.loadFailed'));
+        if (activeProject.current === projectId && generation === refreshGeneration.current) setError(e instanceof Error ? e.message : tNow('sidebar.memory.loadFailed'));
       } finally {
-        setLoading(false);
+        if (activeProject.current === projectId && generation === refreshGeneration.current) setLoading(false);
       }
     },
     [projectId],
   );
 
   useEffect(() => {
+    refreshGeneration.current += 1;
+    setMutating(null);
+    setFacts([]);
+    setError(null);
+    setLoading(false);
     if (!open || !projectId) return;
     const controller = new AbortController();
     void refresh(controller.signal);
-    return () => controller.abort();
+    return () => { refreshGeneration.current += 1; controller.abort(); };
   }, [open, projectId, refresh]);
 
   const handleRetire = async (fact: CartoFact) => {
@@ -122,11 +131,11 @@ const t = useT();
         tNow('sidebar.memory.retiredToast', { label: `${kindLabel(fact.kind)} · ${fact.subject}` }),
         'success',
       );
-      await refresh();
+      if (activeProject.current === projectId) await refresh();
     } catch (e) {
       addToast(e instanceof Error ? e.message : tNow('sidebar.memory.retireFailed'), 'error');
     } finally {
-      setMutating(null);
+      if (activeProject.current === projectId) setMutating(null);
     }
   };
 
@@ -139,18 +148,18 @@ const t = useT();
         tNow('sidebar.memory.activatedToast', { label: `${kindLabel(fact.kind)} · ${fact.subject}` }),
         'success',
       );
-      await refresh();
+      if (activeProject.current === projectId) await refresh();
     } catch (e) {
       addToast(e instanceof Error ? e.message : tNow('sidebar.memory.activateFailed'), 'error');
     } finally {
-      setMutating(null);
+      if (activeProject.current === projectId) setMutating(null);
     }
   };
 
   if (!projectId) return null;
 
   const visible = facts.filter((f) => f.kind !== 'data_profile');
-  const counts = facts.reduce<Record<string, number>>((acc, f) => {
+  const counts = visible.reduce<Record<string, number>>((acc, f) => {
     acc[f.status] = (acc[f.status] ?? 0) + 1;
     return acc;
   }, {});

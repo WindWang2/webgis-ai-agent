@@ -291,3 +291,35 @@ def test_recover_empty_swarm_stays_running_preserves_frontier(runtime):
     after = runtime.store.get_mission(m.mission_id)
     assert after.frontier.pending == ["session_step_1"]
     assert after.state == MissionState.RUNNING
+
+
+def test_recovery_releases_lease_if_patch_fails_after_nonempty_skip(runtime, monkeypatch):
+    import pytest
+    mission = runtime.create(org_id="org-recovery", user_id="owner", root_goal="goal")
+    runtime.start(mission.mission_id, worker_id="old-worker")
+    bridge = DurableSwarmBridge(runtime.store)
+    epoch = runtime.store.get_mission(mission.mission_id).lease_epoch
+    run = bridge.begin_run(mission.mission_id, org_id="org-recovery",
+        task_descriptors=[{"task_id": "done", "side_effect": "pure"}],
+        lease_epoch=epoch, owner="old-worker")
+    bridge.settle(run.swarm_run_id, task_id="done", status="succeeded", assignment_id="done")
+    _expire(runtime.store, mission.mission_id)
+    original = runtime.store.patch_mission
+    def fail_frontier(*args, **kwargs):
+        if "frontier" in kwargs:
+            raise RuntimeError("frontier commit failed")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(runtime.store, "patch_mission", fail_frontier)
+    with pytest.raises(RuntimeError, match="frontier commit failed"):
+        runtime.resume(mission.mission_id, worker_id="recovery", org_id="org-recovery")
+    assert not runtime.store.get_mission(mission.mission_id).lease_owner
+
+
+def test_attach_session_rejects_foreign_organization(runtime):
+    import pytest
+    from app.services.mission_runtime.store import FencingError
+    mission = runtime.create(org_id="owner-org", user_id="owner", root_goal="goal")
+    runtime.start(mission.mission_id, worker_id="worker", org_id="owner-org")
+    with pytest.raises(FencingError):
+        runtime.attach_session(mission.mission_id, worker_id="worker", session_id="foreign", org_id="other-org")
+    assert not runtime.store.get_mission(mission.mission_id).refs.active_session_ids

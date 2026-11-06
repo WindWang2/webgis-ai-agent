@@ -17,6 +17,7 @@
 """
 
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 from typing import Any, Dict, List, Optional
 
@@ -268,7 +269,7 @@ class ClarificationPolicy:
                 try:
                     intent_like.task = value
                 except Exception:  # noqa: BLE001 — 越词表值由 validate_assignment 拒绝
-                    pass
+                    observe_optional_failure(__name__)
         return effective
 
 
@@ -288,7 +289,7 @@ async def load_asked_slots(session_store: Any, session_id: str) -> set:
         if isinstance(payload, dict):
             return set(payload.get("asked_slots") or [])
     except Exception:  # noqa: BLE001
-        pass
+        observe_optional_failure(__name__)
     return set()
 
 
@@ -299,7 +300,7 @@ async def save_asked_slots(session_store: Any, session_id: str,
             session_id, CLARIFICATION_STATE_KEY,
             {"asked_slots": sorted(slots)})
     except Exception:  # noqa: BLE001 — 会话面故障不阻塞主链路
-        pass
+        observe_optional_failure(__name__)
 
 
 def make_fallback_decision(

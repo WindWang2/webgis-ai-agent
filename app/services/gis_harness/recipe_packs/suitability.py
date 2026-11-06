@@ -13,7 +13,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     subject_role,
     wf,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _SUIT_OBLIGATIONS = [
     obl("suitability_factors_declared", "disclosure",
@@ -46,8 +46,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="raster_surface",
         secondary_cartography=["administrative_aggregation"],
         default_components=MAP_COMPONENTS_CONTINUOUS,
-        fallbacks=[RecipeFallback(when="factors undeclared", reason_code="SUITABILITY_FACTORS_UNDECLARED",
-                                  use="constraint_screening")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=44,
         schema_version=2,
@@ -76,8 +75,7 @@ _RECIPES: List[CartographyRecipe] = [
                             "geometry_overlay", "mcda_evaluation", "zonal_statistics"],
         primary_cartography="raster_surface",
         default_components=MAP_COMPONENTS_CONTINUOUS,
-        fallbacks=[RecipeFallback(when="factors undeclared", reason_code="SUITABILITY_FACTORS_UNDECLARED",
-                                  use="constraint_screening")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"]},
         priority=46,
         schema_version=2,
@@ -105,8 +103,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="raster_surface",
         secondary_cartography=["administrative_choropleth"],
         default_components=MAP_COMPONENTS_CONTINUOUS,
-        fallbacks=[RecipeFallback(when="factors undeclared", reason_code="SUITABILITY_FACTORS_UNDECLARED",
-                                  use="constraint_screening")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"]},
         priority=46,
         schema_version=2,
@@ -135,8 +132,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="raster_surface",
         secondary_cartography=["administrative_choropleth"],
         default_components=MAP_COMPONENTS_CONTINUOUS,
-        fallbacks=[RecipeFallback(when="factors undeclared", reason_code="SUITABILITY_FACTORS_UNDECLARED",
-                                  use="constraint_screening")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"]},
         priority=47,
         schema_version=2,
@@ -165,8 +161,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="raster_surface",
         secondary_cartography=["proximity_overlay"],
         default_components=MAP_COMPONENTS_CONTINUOUS,
-        fallbacks=[RecipeFallback(when="factors undeclared", reason_code="SUITABILITY_FACTORS_UNDECLARED",
-                                  use="constraint_screening")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"]},
         priority=48,
         schema_version=2,

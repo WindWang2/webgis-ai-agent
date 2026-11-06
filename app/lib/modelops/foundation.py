@@ -145,7 +145,7 @@ def prompt_windows(
     """
     margin_y, margin_x = chip_hw
     x0, y0, x1, y1 = prompt_span(prompt)
-    if not (x1 > x0 or y1 > y0):
+    if not (x1 > x0 or y1 > y0) and not prompt.points:
         # mask-only/空几何：全幅 cap 窗口。
         w = min(max_window_px, raster_width)
         h = min(max_window_px, raster_height)

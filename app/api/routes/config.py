@@ -7,6 +7,7 @@
 （写盘 + importlib.exec_module 等同 RCE）。
 """
 import logging
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -74,12 +75,14 @@ async def update_llm_config(
     _user: dict = Depends(require_admin),
 ):
     """更新 LLM 配置（admin only）"""
+    if settings.is_production():
+        raise HTTPException(status_code=403, detail="生产配置请通过部署环境统一更新，避免多实例配置不一致")
     # SEC-04: 启动时的 _validate_no_ssrf 只在进程启动跑一次；运行时改 base_url
     # 时必须重新校验，否则 admin (或被接管账号) 可把 LLM 流量重定向到内网 /
     # 云元数据端点 (SSRF)。复用 config.py 的同一份校验逻辑。
     if req.base_url:
         try:
-            settings._validate_no_ssrf(req.base_url, field="base_url")
+            await asyncio.to_thread(settings._validate_no_ssrf, req.base_url, field="base_url")
         except ValueError as e:
             logger.warning(f"base_url SSRF validation failed: {e}")
             raise HTTPException(status_code=400, detail="base_url 校验失败: 不允许使用该 URL")
@@ -93,21 +96,11 @@ async def update_llm_config(
 
 
 def _provider_error_detail(err: httpx.HTTPError) -> str:
-    """从上游 HTTP/传输错误里提取对用户可读的错误详情。
-
-    HTTPStatusError 优先取响应体的 ``error.message``（OpenAI 兼容错误
-    形状），取不到再退回状态文本；ConnectError 等传输错误直接转 str。
-    """
+    """Return stable actionable status without upstream response bodies or URLs."""
     if isinstance(err, httpx.HTTPStatusError):
-        try:
-            body = err.response.json()
-            message = body.get("error", {}).get("message")
-            if isinstance(message, str) and message:
-                return message
-        except Exception:
-            pass
-        return f"上游返回 HTTP {err.response.status_code}"
-    return str(err) or "未知网络错误"
+        return f"上游返回 HTTP {err.response.status_code}，请检查模型与凭证配置"
+    return "网络连接失败，请检查服务地址与网络"
+
 
 
 @router.post("/llm/test", response_model=LLMTestResponse)
@@ -127,6 +120,20 @@ async def test_llm_config(
     engine = get_engine()
     base_url = (req.base_url or engine.base_url or "").rstrip("/")
     model = req.model or engine.model
+    from urllib.parse import urlsplit
+
+    if req.base_url and req.api_key is None:
+        def origin(value: str) -> tuple[str, str | None, int]:
+            parsed = urlsplit(value)
+            return (parsed.scheme.lower(), parsed.hostname, parsed.port or
+                    (443 if parsed.scheme.lower() == "https" else 80))
+
+        try:
+            changed_origin = origin(base_url) != origin(engine.base_url or "")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="无效的服务端点 URL") from exc
+        if changed_origin:
+            raise HTTPException(status_code=400, detail="测试不同服务端点时必须显式提供 API Key")
     api_key = req.api_key if req.api_key is not None else engine.api_key
 
     if not base_url or not model:
@@ -134,7 +141,7 @@ async def test_llm_config(
     if not api_key:
         raise HTTPException(status_code=400, detail="API Key 未配置，无法测试连通性")
     try:
-        settings._validate_no_ssrf(base_url, field="base_url")
+        await asyncio.to_thread(settings._validate_no_ssrf, base_url, field="base_url")
     except ValueError as e:
         logger.warning(f"base_url SSRF validation failed: {e}")
         raise HTTPException(status_code=400, detail="base_url 校验失败: 不允许使用该 URL")
@@ -157,9 +164,9 @@ async def test_llm_config(
     except httpx.HTTPError as e:
         logger.warning(f"LLM connectivity test failed: {e}")
         raise HTTPException(status_code=502, detail=f"连接失败: {_provider_error_detail(e)}")
-    except Exception as e:
+    except Exception:
         logger.exception("LLM connectivity test failed unexpectedly")
-        raise HTTPException(status_code=502, detail=f"连接测试失败: {e}")
+        raise HTTPException(status_code=502, detail="连接测试失败，请检查服务配置或稍后重试")
 
     return LLMTestResponse(status="ok", detail=f"连接成功: {model}")
 
@@ -172,12 +179,15 @@ async def _check_rag_store() -> str:
     from app.services import rag_service
     from app.services.rag.faiss_store import INDEX_DIR
 
-    os.makedirs(INDEX_DIR, exist_ok=True)
-    if not os.access(INDEX_DIR, os.W_OK):
-        raise RuntimeError(f"向量库目录不可写: {INDEX_DIR}")
-    metadata = rag_service._default_store.load_metadata()
-    chunks = len(metadata.get("chunks", [])) if isinstance(metadata, dict) else 0
-    return f"内置本地向量库（FAISS）就绪，已索引 {chunks} 个分块"
+    def probe() -> str:
+        os.makedirs(INDEX_DIR, exist_ok=True)
+        if not os.access(INDEX_DIR, os.W_OK):
+            raise RuntimeError(f"向量库目录不可写: {INDEX_DIR}")
+        metadata = rag_service._default_store.load_metadata()
+        chunks = len(metadata.get("chunks", [])) if isinstance(metadata, dict) else 0
+        return f"内置本地向量库（FAISS）就绪，已索引 {chunks} 个分块"
+
+    return await asyncio.to_thread(probe)
 
 
 @router.post("/rag/test", response_model=RagTestResponse)
@@ -235,6 +245,8 @@ async def upload_skill(
     SECURITY: 写入 .py 后会被 importlib.exec_module 执行 → 等同于 RCE。
     严格鉴权 + 文件名清洗 + 扩展名白名单 + AST 校验。
     """
+    if settings.is_production() or not settings.ALLOW_RUNTIME_SKILL_UPLOAD:
+        raise HTTPException(status_code=403, detail="运行时技能上传已关闭；请通过审核后的镜像发布技能")
     skills_dir = "app/skills"
     if not os.path.exists(skills_dir):
         os.makedirs(skills_dir)
@@ -292,13 +304,13 @@ async def upload_skill(
     skills_root = Path(skills_dir).resolve()
     if skills_root not in resolved.parents and resolved != skills_root:
         raise HTTPException(status_code=400, detail="路径越界")
+    if resolved.exists():
+        raise HTTPException(status_code=409, detail="禁止覆盖已安装的技能")
 
     if ext == ".md":
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(code_to_write)
+        await asyncio.to_thread(Path(file_path).write_text, code_to_write, encoding="utf-8")
     else:
-        with open(file_path, "wb") as f:
-            f.write(content)
+        await asyncio.to_thread(Path(file_path).write_bytes, content)
 
     # audit ISSUE-011（#1337）：admin 上传即「批准」—— 把 .py 的 sha256 登记
     # 进 skills-lock.json runtime_skills，之后 load_skills 才放行该文件。
@@ -306,10 +318,12 @@ async def upload_skill(
     if file_path.endswith(".py"):
         from app.tools.skills import approve_runtime_skill
 
-        approve_runtime_skill(os.path.basename(file_path), file_path, skills_dir)
+        if not await asyncio.to_thread(approve_runtime_skill, os.path.basename(file_path), file_path, skills_dir):
+            await asyncio.to_thread(Path(file_path).unlink, missing_ok=True)
+            raise HTTPException(status_code=503, detail="技能完整性锁不可写，技能未获批准")
 
     # 重新加载
-    load_skills(get_registry(), skills_dir)
+    await asyncio.to_thread(load_skills, get_registry(), skills_dir)
     # Issue #399: 显式 RCE 警示 —— 该文件将在主进程内被 importlib.exec_module
     # 执行（等同 RCE）。AST deny-list 只是防御纵深，不是安全边界；记录上传者
     # 便于审计追溯。
@@ -333,6 +347,8 @@ async def upload_skill(
 
 @router.post("/skills/refresh", response_model=RefreshSkillsResponse)
 async def refresh_skills(_user: dict = Depends(require_admin)) -> RefreshSkillsResponse:
+    if settings.is_production():
+        raise HTTPException(status_code=403, detail="生产技能请通过审核后的镜像统一发布")
     """手动触发技能刷新（admin only）"""
-    load_skills(get_registry())
+    await asyncio.to_thread(load_skills, get_registry())
     return RefreshSkillsResponse(status="ok")

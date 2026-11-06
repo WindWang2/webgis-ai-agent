@@ -274,7 +274,8 @@ class DatasetProfiler:
             )
         else:
             profile = self._shallow_profile_ref(ref, descriptor)
-        self._cache_put(key, profile)
+        if profile is not None and profile.profile_quality != ProfileQuality.FAILED:
+            self._cache_put(key, profile)
         return profile
 
     async def deepen_profile(
@@ -305,9 +306,10 @@ class DatasetProfiler:
 
         deep = await self.profile_session_ref(
             session_id, ref, deep=True, max_scan_rows=max_scan_rows)
-        if deep is None:
+        if deep is None or deep.profile_quality == ProfileQuality.FAILED:
             return self._cache_get(shallow_key)
-        if had_shallow:
+        deep = deep.model_copy(deep=True)
+        if had_shallow and "progressive_deepened" not in deep.diagnostics:
             deep.diagnostics = list(deep.diagnostics) + ["progressive_deepened"]
         # 注解后回写 deep 缓存槽（profile_session_ref 已缓存的是无注解版）。
         self._cache_put(

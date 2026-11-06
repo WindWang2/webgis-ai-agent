@@ -25,6 +25,7 @@ decision records ``comparable=False`` and the result payload is flagged
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -75,14 +76,14 @@ def classify_failure(exc: Optional[BaseException], *, empty_result: bool = False
         # adapters wrap raw HTTP errors here — scan the embedded status first
         # ("503 Server Error: …"), else the body/shape was wrong
         for token, trigger in (("429", "429"), ("503", "5xx"), ("502", "5xx"), ("500", "5xx"), ("timed out", "timeout")):
-            if token in msg:
+            if (token in msg if not token.isdigit() else re.search(rf"\b{token}\b", msg)):
                 return trigger
         return "schema_mismatch"
     if isinstance(exc, SourceUnreachableError):
         return "timeout"
     msg = str(exc).lower()
     for token, trigger in (("429", "429"), ("503", "5xx"), ("502", "5xx"), ("500", "5xx"), ("timed out", "timeout")):
-        if token in msg:
+        if (token in msg if not token.isdigit() else re.search(rf"\b{token}\b", msg)):
             return trigger
     return "other"
 
@@ -196,6 +197,7 @@ def execute_fallback_chain(
     wave: str = "",
     max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
     max_hops: int = 5,
+    breaker: Optional[CircuitBreakerRegistry] = None,
 ) -> ChainResult:
     """Run ``runner(source_id) -> (features, meta)`` along the declared chain.
 
@@ -207,6 +209,7 @@ def execute_fallback_chain(
     if chain is None:
         chain = resolve_chain(primary_source_id, max_hops=max_hops)
     facts_by_source = facts_by_source or {}
+    active_breaker = breaker if breaker is not None else breaker_registry
 
     started = time.perf_counter()
     decisions: List[FallbackDecision] = []
@@ -221,17 +224,17 @@ def execute_fallback_chain(
     current = primary_source_id
     while current is not None:
         # breaker gate (authoritative sync breaker, keyed by source_id)
-        if breaker_registry.state(current) == CircuitState.OPEN:
+        if active_breaker.state(current) == CircuitState.OPEN:
+            nxt = _match_hop(chain, "circuit_open")
             decisions.append(FallbackDecision(
                 trigger="circuit_open",
                 from_source=current,
-                to_source=chain[0][0] if chain else "",
+                to_source=nxt[0] if nxt else "",
                 reason=f"熔断打开，跳过 {current}",
                 comparable=False,
                 decided_at=_now_iso(),
             ))
             last_error = last_error or RuntimeError(f"circuit open for {current}")
-            nxt = _match_hop(chain, "circuit_open")
             if nxt is None:
                 break
             current, chain = _consume(nxt, chain)
@@ -247,13 +250,12 @@ def execute_fallback_chain(
         try:
             features, meta = retry_call(
                 _hop,
-                policy=RetryPolicy(max_attempts=max_attempts, base_sleep=0.0),
-                sleep=lambda _s: None,
+                policy=RetryPolicy(max_attempts=max_attempts, base_sleep=0.05),
                 idempotent=True,
             )
             retries_total += max(0, attempts - 1)
             fabric_health_bridge.record_success(f"fabric:{current}")
-            breaker_registry.record_success(current)
+            active_breaker.record_success(current)
             source_used = current
             last_error = None
 
@@ -279,7 +281,7 @@ def execute_fallback_chain(
             retries_total += max(0, attempts - 1)
             last_error = exc
             fabric_health_bridge.record_error(f"fabric:{current}", exc)
-            breaker_registry.record_failure(current, exc)
+            active_breaker.record_failure(current, exc)
             trigger = classify_failure(exc)
             nxt = _match_hop(chain, trigger)
             if nxt is None:
@@ -298,6 +300,10 @@ def execute_fallback_chain(
             current, chain = _consume(nxt, chain)
 
     latency_ms = round((time.perf_counter() - started) * 1000.0, 1)
+    if last_error is not None and source_used is not None:
+        # A successful empty answer is still valid if every declared fallback failed.
+        last_error = None
+        outcome = "success"
     fact = AcquisitionFact(
         request_id=request_id or f"req-{int(time.time() * 1000)}",
         dataset_key=dataset_key or (source_used or primary_source_id),

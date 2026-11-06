@@ -166,7 +166,7 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
     ComponentTemplate(
         id="graticule/light", component_type="graticule", category="navigation.graticule",
         name="Light Graticule", variant="light",
-        default_options={"style": "light", "opacity": "0.3"}, priority=10,
+        default_options={"style": "light", "opacity": 0.3}, priority=10,
     ),
     ComponentTemplate(
         id="graticule/geographic", component_type="graticule", category="navigation.graticule",
@@ -679,8 +679,8 @@ class ComponentTemplateRegistry:
                     issues.append(
                         f"template {tpl.id}: default_options.variant '{opt_variant}' "
                         f"!= template variant '{tpl.variant}'")
-        except Exception:
-            pass
+        except Exception as exc:
+            issues.append(f"template validation error: {type(exc).__name__}")
         return issues
 
     @property

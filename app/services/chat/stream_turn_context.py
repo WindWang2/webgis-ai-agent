@@ -216,18 +216,18 @@ async def _stream_with_token_keepalive(
     cancellation interrupts the provider immediately, including before its
     first token, and takes precedence over an already-queued late completion.
     """
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=64)
 
     async def _pump() -> None:
         try:
             async for item in stream:
-                queue.put_nowait(item)
+                await queue.put(item)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
-            queue.put_nowait(exc)
+            await queue.put(exc)
         else:
-            queue.put_nowait(_QUEUE_END)
+            await queue.put(_QUEUE_END)
 
     if cancel_token is not None:
         cancel_token.raise_if_cancelled()

@@ -27,6 +27,9 @@ from app.lib.harness.replay.schema import REPLAY_TRACE_SCHEMA_VERSION, build_tra
 logger = logging.getLogger(__name__)
 
 MAX_TRACES_PER_SESSION = 64
+MAX_RECORDING_SESSIONS = 256
+MAX_RECORDING_BYTES = 128 * 1024 * 1024
+RECORDING_TTL_S = 7 * 86400
 
 _ENV_RECORD = "HARNESS_REPLAY_RECORD"
 _ENV_DIR = "HARNESS_REPLAY_DIR"
@@ -69,6 +72,31 @@ def _prune_session_dir(session_dir: Path) -> None:
         pass
 
 
+def _prune_recordings(root: Path) -> None:
+    """Global age, count and byte quotas complement each session's ring."""
+    import time
+    import shutil
+    sessions = []
+    total = 0
+    for directory in root.iterdir():
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        files = [p for p in directory.glob("*.json") if p.is_file()]
+        for path in files:
+            if time.time() - path.stat().st_mtime > RECORDING_TTL_S:
+                path.unlink(missing_ok=True)
+        files = [p for p in files if p.exists()]
+        size = sum(p.stat().st_size for p in files)
+        newest = max((p.stat().st_mtime for p in files), default=0)
+        total += size
+        sessions.append((newest, directory, size))
+    sessions.sort()
+    while sessions and (len(sessions) > MAX_RECORDING_SESSIONS or total > MAX_RECORDING_BYTES or sessions[0][0] == 0):
+        _, directory, size = sessions.pop(0)
+        shutil.rmtree(directory)
+        total -= size
+
+
 def write_trace(trace_dict: Dict[str, Any], *, session_id: str,
                 turn_id: str, root: Path) -> Optional[Path]:
     """原子落盘（tmp + os.replace）；返回写入路径，失败 None。"""
@@ -80,13 +108,18 @@ def write_trace(trace_dict: Dict[str, Any], *, session_id: str,
         session_dir.mkdir(parents=True, exist_ok=True)
         target = session_dir / f"{turn_id}.json"
         tmp = target.with_suffix(".json.tmp")
+        from app.lib.harness.replay.sanitize import sanitize_value
+        trace_dict = dict(trace_dict)
+        for field in ("user_input", "final_text"):
+            trace_dict[field] = sanitize_value(trace_dict.get(field, ""))
         tmp.write_text(
             json.dumps(trace_dict, ensure_ascii=False, sort_keys=False, default=str),
             encoding="utf-8",
         )
         os.replace(tmp, target)
         _prune_session_dir(session_dir)
-        return target
+        _prune_recordings(root)
+        return target if target.exists() else None
     except OSError:
         logger.debug("[ReplayRecorder] write failed session=%s", session_id,
                      exc_info=True)
@@ -138,8 +171,8 @@ def collect_turn(
             digest = capability_registry_digest()
             if digest:
                 env_payload["registry_digest"] = digest
-    except Exception:  # noqa: BLE001 — 指纹缺席按无录制，不阻断
-        pass
+    except Exception as _exc:  # noqa: BLE001 — 指纹缺席按无录制，不阻断
+        logging.getLogger(__name__).debug("recorder: optional operation unavailable (%s)", type(_exc).__name__)
     trace = build_trace(
         session_id=session_id,
         turn_id=turn_id,

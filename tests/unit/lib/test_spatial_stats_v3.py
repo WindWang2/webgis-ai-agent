@@ -250,18 +250,17 @@ def test_geodetector_ecological_hand_fixture():
     assert out["ssw2"] == pytest.approx(20.0, abs=1e-12)
     assert out["rate1"] == pytest.approx(0.7, abs=1e-12)
     assert out["rate2"] == pytest.approx(2.5, abs=1e-12)
-    t_hand = (0.7 - 2.5) / np.sqrt(0.7 ** 2 / 7 + 2.5 ** 2 / 7)
-    assert out["t_statistic"] == pytest.approx(t_hand, abs=1e-10)
-    assert out["df"] == 8
-    assert out["p_value"] == pytest.approx(
-        float(2.0 * sps.t.sf(abs(t_hand), 8)), abs=1e-10)
+    assert out["t_statistic"] is None
+    assert out["f_statistic"] == pytest.approx(5.6 / 20)
+    assert out["df1"] == out["df2"] == 9
+    assert out["p_value"] == pytest.approx(2 * sps.f.cdf(5.6 / 20, 9, 9))
     assert out["decision"] == "no_significant_difference"
 
     # 完美分层：SSW1=0 → t=−sqrt(7)，p≈0.0294<0.05 → Y1 显著解释占优
     y2 = np.array([1.] * 5 + [10.] * 5)
     out2 = geodetector_ecological(y2, s1, s2)
     assert out2["ssw1"] == pytest.approx(0.0, abs=1e-12)
-    assert out2["t_statistic"] == pytest.approx(-np.sqrt(7), rel=1e-10)
+    assert out2["f_statistic"] == 0
     assert out2["decision"] == "Y1_significantly_dominant"
 
     # narrated 包装：载荷携带 df 选择披露 + 显著性块；叙事含因果免责
@@ -273,9 +272,9 @@ def test_geodetector_ecological_hand_fixture():
     res = geodetector_ecological_narrated(
         {"type": "FeatureCollection", "features": feats}, "y", "s1", "s2")
     assert res.success, res.summary
-    assert res.data["t_statistic"] == pytest.approx(round(t_hand, 6), abs=1e-9)
-    assert res.data["df"] == 8
-    assert "n−2" in res.data["df_disclosure"] or "n-2" in res.data["df_disclosure"]
+    assert res.data["f_statistic"] == pytest.approx(0.28)
+    assert res.data["df1"] == res.data["df2"] == 9
+    assert "n-1" in res.data["df_disclosure"].lower()
     assert res.data["uncertainty"]["uncertainty_type"] == "statistical_significance"
     assert "因果" in res.summary
 

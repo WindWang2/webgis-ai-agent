@@ -154,7 +154,7 @@ function RenderBarChart({ chart, height, highlightedCategories, onSelectCategory
       <BarChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
         <XAxis dataKey="name" tick={tickStyle(theme)} />
-        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle(theme) } : undefined} />
         <Tooltip {...tooltipStyle(theme)} />
         <Bar
           dataKey="value"
@@ -212,7 +212,7 @@ function RenderMultiBarChart({ chart, height, onSelectCategory }: RenderProps) {
       <BarChart data={rows} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
         <XAxis dataKey="name" tick={tickStyle(theme)} />
-        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle(theme) } : undefined} />
         <Tooltip {...tooltipStyle(theme)} />
         <Legend wrapperStyle={{ fontSize: "13px" }} />
         {names.map((n, i) => (
@@ -239,7 +239,7 @@ function RenderLineChart({ chart, height }: RenderProps) {
       <LineChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
         <XAxis dataKey="name" tick={tickStyle(theme)} />
-        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle(theme) } : undefined} />
         <Tooltip {...tooltipStyle(theme)} />
         <Line type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={2} dot={{ fill: "#06b6d4", r: 3 }} />
       </LineChart>
@@ -255,7 +255,7 @@ function RenderAreaChart({ chart, height }: RenderProps) {
       <AreaChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
         <XAxis dataKey="name" tick={tickStyle(theme)} />
-        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle(theme) } : undefined} />
         <Tooltip {...tooltipStyle(theme)} />
         <Area type="monotone" dataKey="value" stroke="#06b6d4" fill="rgba(6,182,212,0.25)" strokeWidth={2} />
       </AreaChart>
@@ -332,7 +332,7 @@ function RenderScatterChart({ chart, height }: RenderProps) {
       <ScatterChart margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
         <XAxis dataKey="x" type="number" tick={tickStyle(theme)} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "var(--text-muted)", fontSize: 13 } : undefined} />
-        <YAxis dataKey="y" type="number" tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <YAxis dataKey="y" type="number" tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle(theme) } : undefined} />
         <Tooltip {...tooltipStyle(theme)} />
         <Scatter data={chart.data} fill="#06b6d4" />
       </ScatterChart>
@@ -406,7 +406,7 @@ function RenderBoxPlot({ chart, height }: RenderProps) {
   const span = hi - lo || 1;
   const y = (v: number) => padT + (1 - (v - lo) / span) * (H - padT - padB);
   const slot = (W - padL - padR) / Math.max(1, chart.data.length);
-  const bw = Math.min(48, slot * 0.55);
+  const bw = Math.max(0, Math.min(48, slot * 0.55));
   const fmt = (v: number) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(1));
   return (
     <svg role="img" aria-label={t('chart.boxPlotAria', { title: chart.title })} width="100%" viewBox={`0 0 ${W} ${H}`} data-testid="chart-box-plot">
@@ -450,7 +450,7 @@ function RenderHeatMatrix({ chart, height }: RenderProps) {
   const hi = values.length ? Math.max(...values) : 1;
   const span = hi - lo || 1;
   const cellW = (W - padL - 8) / Math.max(1, rows[0]?.data.length ?? 1);
-  const rowH = Math.min(30, (H - padB - 8) / Math.max(1, rows.length));
+  const rowH = Math.max(0, Math.min(30, (H - padB - 8) / Math.max(1, rows.length)));
   const colorFor = (v: number) => {
     const t = Math.min(1, Math.max(0, (v - lo) / span));
     return HEAT_RAMP[Math.min(HEAT_RAMP.length - 1, Math.floor(t * HEAT_RAMP.length))];
@@ -467,11 +467,11 @@ function RenderHeatMatrix({ chart, height }: RenderProps) {
               <rect
                 x={padL + ci * cellW} y={8 + ri * rowH}
                 width={Math.max(2, cellW - 1)} height={Math.max(2, rowH - 1)}
-                fill={colorFor(p.value ?? 0)}
+                fill={p.value == null ? '#9ca3af' : colorFor(p.value)}
               />
               {cellW > 34 && (
                 <text x={padL + ci * cellW + cellW / 2} y={8 + ri * rowH + rowH / 2 + 3} textAnchor="middle" fontSize={9} fill="#1c2733">
-                  {p.value ?? ""}
+                  {p.value ?? t('chart.noData')}
                 </text>
               )}
             </g>

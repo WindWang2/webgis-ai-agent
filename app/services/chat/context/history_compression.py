@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import threading
+from collections import OrderedDict
 import logging
 
 logger = logging.getLogger(__name__)
@@ -11,8 +14,9 @@ HISTORY_TOKEN_BUDGET = 6000
 HISTORY_MIN_TURNS = 2  # 至少保留最近 N 轮 user/assistant，绝不为节省 token 砍掉刚刚的对话
 
 
-_TOKEN_ESTIMATE_MEMO: dict[int, int] = {}
+_TOKEN_ESTIMATE_MEMO: OrderedDict[bytes, int] = OrderedDict()
 _TOKEN_MEMO_MAX = 8192
+_TOKEN_MEMO_GUARD = threading.RLock()
 
 
 def _estimate_tokens(content: object) -> int:
@@ -32,17 +36,21 @@ def _estimate_tokens(content: object) -> int:
         content = str(content)
     if not content:
         return 0
-    memo_key = hash(content)
-    hit = _TOKEN_ESTIMATE_MEMO.get(memo_key)
-    if hit is not None:
-        return hit
+    memo_key = hashlib.sha256(content.encode("utf-8", errors="surrogatepass")).digest()
+    with _TOKEN_MEMO_GUARD:
+        hit = _TOKEN_ESTIMATE_MEMO.get(memo_key)
+        if hit is not None:
+            _TOKEN_ESTIMATE_MEMO.move_to_end(memo_key)
+            return hit
     total = len(content)
     ascii_len = len(content.encode("ascii", "ignore"))
     cjk_approx = total - ascii_len  # 非 ASCII ≈ CJK（旧口径的扩展近似）
     other = ascii_len
     est = int(cjk_approx * 1.5 + other / 4) + 1
-    if len(_TOKEN_ESTIMATE_MEMO) < _TOKEN_MEMO_MAX:
+    with _TOKEN_MEMO_GUARD:
         _TOKEN_ESTIMATE_MEMO[memo_key] = est
+        while len(_TOKEN_ESTIMATE_MEMO) > _TOKEN_MEMO_MAX:
+            _TOKEN_ESTIMATE_MEMO.popitem(last=False)
     return est
 
 
@@ -153,6 +161,8 @@ def find_safety_pinned_indexes(messages: list[dict]) -> set[int]:
         return set()
     pinned: set[int] = set()
     for i, msg in enumerate(messages):
+        if msg.get("role") not in {"assistant", "system", "tool"}:
+            continue
         content = msg.get("content")
         text = content if isinstance(content, str) else ""
         if not text:

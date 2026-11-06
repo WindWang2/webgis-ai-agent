@@ -96,15 +96,18 @@ def test_serializer_never_raises_on_hostile_payloads():
     ]
     for payload in hostile:
         frame = sse_event("token", payload)
-        assert frame.startswith("event: token\ndata: ")
+        event_type = sse_event_type(frame)
+        assert event_type in {"token", "error"}
         assert frame.endswith("\n\n")
         # 防御解析不抛
-        assert sse_event_type(frame) == "token"
         data_line = next(ln for ln in frame.split("\n") if ln.startswith("data: "))
         payload_json = data_line[len("data: "):]
         # #1685: strict — 帧必须能被浏览器 JSON.parse 接受
         assert "NaN" not in payload_json and "Infinity" not in payload_json
-        json.loads(payload_json, parse_constant=_reject_constant)
+        decoded = json.loads(payload_json, parse_constant=_reject_constant)
+        if event_type == "error":
+            assert decoded["code"] == "SSE_SERIALIZATION_ERROR"
+            assert decoded["original_event"] == "token"
 
 
 def test_pydantic_like_objects_serialize_via_model_dump():

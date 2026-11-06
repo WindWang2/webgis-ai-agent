@@ -1,5 +1,5 @@
 """S4 — TurnChain 投影：turn → intent → map op → observed 可重建链
-（ADR-0283 D4）。
+（ADR-0285 D4）。
 
 三类变更分类（纯规则）：
 - user_explicit —— 用户显式地图参数变化（IR mutation-linked committed /

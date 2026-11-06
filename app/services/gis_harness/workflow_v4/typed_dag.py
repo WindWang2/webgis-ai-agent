@@ -257,6 +257,9 @@ def validate_typed_dag(graph: TypedWorkflowGraph) -> List[str]:
     adj: Dict[str, List[str]] = {}
     for e in graph.edges:
         adj.setdefault(e.from_node, []).append(e.to_node)
+    for node in graph.nodes:
+        for dependency in node.depends_on:
+            adj.setdefault(dependency, []).append(node.node_id)
 
     def _visit(nid: str) -> None:
         color[nid] = GRAY

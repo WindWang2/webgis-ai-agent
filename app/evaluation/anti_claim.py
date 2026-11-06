@@ -151,7 +151,7 @@ def build_workflow_contract_cases() -> List[WorkflowContractCase]:
         ),
         WorkflowContractCase(
             "WC-kriging-angle-crs", "kriging_interpolation_workflow",
-            "用克里金插值生成浓度表面", profile=_PROFILE_NUMERIC_FEW,
+            "用克里金插值生成浓度表面", profile={**_PROFILE_NUMERIC_FEW, "featureCount": 30, "numericSampleCount": 30},
             # R1-A9：block_method 义务遇到 REQUIRES_TRANSFORM（角度坐标需先
             # 投影）升级为 blocked —— 变换前方法不成立，声明的阻断可达。
             expect_obligation_status={"kriging_projected_crs": "blocked"},

@@ -51,13 +51,22 @@ async def app_and_db(tmp_path, monkeypatch):
 
     # 模型必须先于 create_all 导入（同一 declarative Base 的共享 metadata；
     # upload 路由/模型注册 uploads 表）。
-    from app.core.auth import get_current_user
+    from app.core.auth import get_current_user_optional_with_version
     from app.api.routes import upload as upload_routes
     from app.models.db_model import Base  # noqa: F401
     import app.models.upload  # noqa: F401
 
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    import re
+    from app.models.db_model import User, Conversation
+    session_ids = set(re.findall(r'["\'](sess-[A-Za-z0-9_-]+)["\']', Path(__file__).read_text()))
+    async with test_session() as db:
+        db.add(User(id="v4-upload-user", username="v4-upload-user", email="v4-upload@example.com", password_hash="x", is_active=True, role="viewer"))
+        for sid in session_ids:
+            db.add(Conversation(id=sid, user_id="v4-upload-user"))
+        await db.commit()
 
     from contextlib import asynccontextmanager
 
@@ -90,7 +99,7 @@ async def app_and_db(tmp_path, monkeypatch):
     app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
     app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     app.include_router(upload_routes.router, prefix="/api/v1")
-    app.dependency_overrides[get_current_user] = lambda: _MOCK_USER
+    app.dependency_overrides[get_current_user_optional_with_version] = lambda: _MOCK_USER
     try:
         yield app, test_session, tmp_path, upload_routes
     finally:

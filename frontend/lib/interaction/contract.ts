@@ -70,7 +70,7 @@ export type InteractionEventKind =
   | 'layer_order_changed'
   | 'layer_removed'
   | 'comparison_mode_changed'
-  // ADR-0283 D2：三连收（钩子真实存在——chart onClick / table 行点选 /
+  // ADR-0285 D2：三连收（钩子真实存在——chart onClick / table 行点选 /
   // temporal settle→commit；详见 bus.ts emitter 注释）。
   | 'chart_selection_changed'
   | 'table_selection_changed'

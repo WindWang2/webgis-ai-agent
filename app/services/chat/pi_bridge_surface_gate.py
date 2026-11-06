@@ -110,6 +110,12 @@ def stale_surface_gate(
             },
             isError=True,
         )
-    except Exception:  # noqa: BLE001 — 校验面故障绝不阻断 dispatch
-        logger.debug("[PiBridge] surface receipt check failed", exc_info=True)
-        return None
+    except Exception:  # noqa: BLE001 — a failed scope check cannot authorize dispatch
+        logger.warning("[PiBridge] surface receipt check failed; callback rejected", exc_info=True)
+        from app.services.chat.pi_surface_metrics import record_invalid_tool_name
+        from app.agent_pi_bridge import PiToolResponse
+
+        record_invalid_tool_name(tool_name, reason="surface_check_unavailable")
+        return PiToolResponse(toolCallId=request.toolCallId,
+            content=[{"type": "text", "text": "Tool surface verification is unavailable. Retry discovery before execution."}],
+            details={"error": "surface_check_unavailable", "retryable": True}, isError=True)

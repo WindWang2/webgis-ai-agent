@@ -100,6 +100,7 @@ def constraint_diagnostics_for(
 def resolve_activation_plan(
     records: dict[str, RecordView],
     eligible: set[str],
+    *, feature_flags: Optional[dict[str, dict[str, bool]]] = None,
 ) -> ResolutionResult:
     """eligible（compatible）集合内的确定性拓扑序。
 
@@ -111,9 +112,26 @@ def resolve_activation_plan(
     for eid in eligible:
         record = records[eid]
         for dep in record.deps:
-            if not dep.required:
+            if not dep.required or (dep.feature_flag and not (feature_flags or {}).get(eid, {}).get(dep.feature_flag, False)):
                 continue
             if dep.id in indegree:
+                indegree[eid] += 1
+                dependents[dep.id].append(eid)
+    # Optional dependencies order activation without introducing blocking cycles.
+    for eid in sorted(eligible):
+        for dep in records[eid].deps:
+            if dep.required or dep.id not in eligible:
+                continue
+            if dep.feature_flag and not (feature_flags or {}).get(eid, {}).get(dep.feature_flag, False):
+                continue
+            pending, seen = [eid], set()
+            while pending:
+                node = pending.pop()
+                if node in seen:
+                    continue
+                seen.add(node)
+                pending.extend(dependents[node])
+            if dep.id not in seen:
                 indegree[eid] += 1
                 dependents[dep.id].append(eid)
     ready = sorted(eid for eid, degree in indegree.items() if degree == 0)

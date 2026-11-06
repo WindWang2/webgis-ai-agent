@@ -106,7 +106,7 @@ def _cartography_review_evidence(
         if c.get("rule") and c.get("status") == "fail"
     })
     return [GoalEvidence(
-        id="cartography_review", kind=EvidenceKind.CARTOGRAPHY,
+        id="cartographic_review:checks", kind=EvidenceKind.CARTOGRAPHY,
         evidence_class=EvidenceClass.DETERMINISTIC,
         status=EvidenceStatus.FAILED if blocking else EvidenceStatus.PRESENT,
         source="map_state:_cartographic_review:checks",
@@ -156,6 +156,7 @@ def _map_product_evidence(
             evidence_class=EvidenceClass.DETERMINISTIC,
             status=(
                 EvidenceStatus.PRESENT if render_status == "verified"
+                else EvidenceStatus.FAILED if render_status == "failed"
                 else EvidenceStatus.STALE if render_status == "stale"
                 else EvidenceStatus.ABSENT
             ),
@@ -170,10 +171,10 @@ def _map_product_evidence(
                         or "status" in cartography):
         blocking = [str(r) for r in (cartography.get("blocking_rules") or [])]
         out.append(GoalEvidence(
-            id="cartography_review", kind=EvidenceKind.CARTOGRAPHY,
+            id="map_product:cartography_review", kind=EvidenceKind.CARTOGRAPHY,
             evidence_class=EvidenceClass.DETERMINISTIC,
             status=(
-                EvidenceStatus.FAILED if blocking else EvidenceStatus.PRESENT
+                EvidenceStatus.FAILED if blocking or cartography.get("status") == "failed" else EvidenceStatus.PRESENT
             ),
             source="map_product:cartography", revision=revision,
             detail=",".join(blocking[:4])[:160],
@@ -266,7 +267,13 @@ def build_evidence_registry(
         _rows(chapter.get("data_requirements")),
         source="chapter:data_requirements", prefix="data",
     ))
-    return evidence[:MAX_EVIDENCE]
+    priority = {EvidenceStatus.PRESENT: 0, EvidenceStatus.ABSENT: 1, EvidenceStatus.STALE: 2, EvidenceStatus.FAILED: 3}
+    grouped = {}
+    for item in evidence:
+        previous = grouped.get(item.id)
+        if previous is None or priority[item.status] > priority[previous.status]:
+            grouped[item.id] = item
+    return list(grouped.values())[:MAX_EVIDENCE]
 
 
 def data_family_blockers(

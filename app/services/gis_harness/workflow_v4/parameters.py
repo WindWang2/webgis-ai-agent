@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel
@@ -110,6 +111,8 @@ def extract_workflow_parameters(
 def _value_valid(param: WorkflowParameter, value: Any) -> bool:
     if value is None:
         return False
+    if param.value_type in ("number", "integer") and isinstance(value, (int, float)) and not math.isfinite(value):
+        return False
     if param.enum_values:
         return str(value) in param.enum_values
     if param.value_type == "integer":
@@ -120,6 +123,8 @@ def _value_valid(param: WorkflowParameter, value: Any) -> bool:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False
     if param.value_type in ("number", "integer"):
+        if not math.isfinite(value):
+            return False
         if param.minimum is not None and value < param.minimum:
             return False
         if param.maximum is not None and value > param.maximum:

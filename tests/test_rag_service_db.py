@@ -230,12 +230,12 @@ async def test_list_documents_total_is_org_scoped(rag_db, tmp_path):
         expire_on_commit=False,
     )
     for _ in range(2):
-        await _seed_document(session, org_id=1)
+        await _seed_document(session, org_id=1, creator_id="alice")
     for _ in range(3):
-        await _seed_document(session, org_id=2)
+        await _seed_document(session, org_id=2, creator_id="bob")
 
-    result_a = await rag_service.list_documents(org_id=1)
-    result_b = await rag_service.list_documents(org_id=2)
+    result_a = await rag_service.list_documents(org_id=1, user_id="alice")
+    result_b = await rag_service.list_documents(org_id=2, user_id="bob")
 
     assert result_a["total"] == 2, "org A must see exactly its own document count"
     assert result_b["total"] == 3, "org B must see exactly its own document count"
@@ -271,12 +271,12 @@ async def test_list_documents_pagination_math(rag_db, tmp_path):
         expire_on_commit=False,
     )
     for _ in range(3):
-        await _seed_document(session, org_id=7)
+        await _seed_document(session, org_id=7, creator_id="alice")
     for _ in range(4):
-        await _seed_document(session, org_id=8)  # other tenant noise
+        await _seed_document(session, org_id=8, creator_id="alice")  # other tenant noise
 
-    page1 = await rag_service.list_documents(limit=2, offset=0, org_id=7)
-    page2 = await rag_service.list_documents(limit=2, offset=2, org_id=7)
+    page1 = await rag_service.list_documents(limit=2, offset=0, org_id=7, user_id="alice")
+    page2 = await rag_service.list_documents(limit=2, offset=2, org_id=7, user_id="alice")
 
     assert page1["total"] == 3
     assert len(page1["items"]) == 2
@@ -368,23 +368,24 @@ async def test_add_document_db_failure_leaves_no_searchable_orphan(rag_db, tmp_p
 
     with patch.object(engine_mod, "get_knowledge_engine", return_value=real_engine):
         # 第一次 add：向量已提交，DB 失败 → 补偿软删
-        result = await rag_service.add_document(title="t1", content="orphan content")
+        result = await rag_service.add_document(title="t1", content="orphan content", user_id="alice")
         assert "error" in result
 
         # 孤儿不得再可检索
-        found = await rag_service.semantic_search(query="orphan content", top_k=5)
+        found = await rag_service.semantic_search(query="orphan content", top_k=5, user_id="alice")
         assert found == [], f"孤儿向量仍可检索: {found}"
 
         # 第二次 add：DB 恢复 → 成功；向量库 chunk 数与 DB 上报一致（无双重拷贝）
-        ok = await rag_service.add_document(title="t2", content="real content")
+        ok = await rag_service.add_document(title="t2", content="real content", user_id="alice")
         assert "error" not in ok
 
         meta = store.load_metadata()
-        assert len(meta["chunks"]) == ok["chunk_count"], (
+        active_chunks = [c for c in meta["chunks"] if not c.get("deleted", False)]
+        assert len(active_chunks) == ok["chunk_count"], (
             f"重试后向量库 chunk 数（{len(meta['chunks'])}）与 DB 上报（{ok['chunk_count']}）"
             "不一致 —— 孤儿残留或双重拷贝"
         )
-        assert all(c["document_id"] == ok["document_id"] for c in meta["chunks"]), (
+        assert all(c["document_id"] == ok["document_id"] for c in active_chunks), (
             f"向量库出现非本次文档的 chunk（孤儿未清干净）: "
             f"{[c['content'] for c in meta['chunks']]}"
         )

@@ -53,10 +53,14 @@ def db_session():
 
 
 def _make_project(db) -> Project:
+    from app.models.db_model import User
+    if db.get(User, "repair-reviewer") is None:
+        db.add(User(id="repair-reviewer", username="repair-reviewer", email="repair-reviewer@example.com", role="viewer", is_active=True))
+        db.flush()
     proj = Project(
         id=f"proj_{uuid.uuid4().hex[:16]}",
         name="p",
-        owner_id=None,
+        owner_id="repair-reviewer",
         status="active",
     )
     db.add(proj)
@@ -389,7 +393,7 @@ class TestQualityStatusWriteBack:
 
         report = _quality_report([("crs_missing", "warning", True, "")])
         written = ProjectService.record_dataset_quality(
-            db, proj.id, ds.id, report
+            db, proj.id, ds.id, report, user_id="repair-reviewer",
         )
         assert written == "repairable"
         db.expire_all()
@@ -405,7 +409,7 @@ class TestQualityStatusWriteBack:
         proj = _make_project(db)
         ds = _make_dataset(db, proj.id)
         report = _quality_report([])
-        assert ProjectService.record_dataset_quality(db, proj.id, ds.id, report) == "valid"
+        assert ProjectService.record_dataset_quality(db, proj.id, ds.id, report, user_id="repair-reviewer") == "valid"
 
     def test_missing_dataset_row_skips_honestly(self, db_session):
         from app.services.project_service import ProjectService
@@ -414,7 +418,7 @@ class TestQualityStatusWriteBack:
         proj = _make_project(db)
         report = _quality_report([("crs_missing", "warning", True, "")])
         assert ProjectService.record_dataset_quality(
-            db, proj.id, "ds_does_not_exist", report
+            db, proj.id, "ds_does_not_exist", report, user_id="repair-reviewer",
         ) is None
 
     def test_tenant_check_rejects_cross_project(self, db_session):
@@ -427,7 +431,7 @@ class TestQualityStatusWriteBack:
         report = _quality_report([("crs_missing", "warning", True, "")])
         # 跨项目（未授权）→ None 且行不变
         assert ProjectService.record_dataset_quality(
-            db, proj_b.id, ds.id, report
+            db, proj_b.id, ds.id, report, user_id="repair-reviewer",
         ) is None
         db.expire_all()
         row = db.execute(

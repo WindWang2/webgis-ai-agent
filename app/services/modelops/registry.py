@@ -111,34 +111,27 @@ class _cross_process_lock:
         self._timeout_s = timeout_s
 
     def __enter__(self) -> "_cross_process_lock":
+        import fcntl
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        deadline = time.time() + self._timeout_s
+        self._fd = os.open(self._path, os.O_CREAT | os.O_RDWR, 0o600)
+        deadline = time.monotonic() + self._timeout_s
         while True:
             try:
-                self._fd = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(self._fd, str(os.getpid()).encode())
+                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return self
-            except FileExistsError:
-                try:
-                    age = time.time() - self._path.stat().st_mtime
-                    if age > 30.0:  # stale：接管
-                        self._path.unlink(missing_ok=True)
-                        continue
-                except OSError:
-                    pass
-                if time.time() > deadline:
-                    logger.warning("register lock wait timeout at %s; proceeding", self._path)
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    os.close(self._fd)
                     self._fd = None
-                    return self
+                    raise DescriptorError("model registry lock acquisition timed out")
                 time.sleep(0.05)
 
     def __exit__(self, *exc: Any) -> None:
-        if getattr(self, "_fd", None) is not None:
+        if self._fd is not None:
+            import fcntl
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
             os.close(self._fd)
-            try:
-                self._path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            self._fd = None
 
 
 def _validate_owner_scope(owner_scope: Dict[str, str]) -> None:

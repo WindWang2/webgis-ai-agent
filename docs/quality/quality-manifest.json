@@ -16095,6 +16095,7 @@
     "tests/unit/gis/test_action_golden.py",
     "tests/unit/gis/test_action_ir.py",
     "tests/unit/gis/test_action_legacy_adapter.py",
+    "tests/unit/gis/test_action_plan_diff.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/gis_harness/map_operations/test_contracts.py",
     "tests/unit/gis_harness/map_operations/test_review_remediation.py",
@@ -19712,6 +19713,7 @@
    ],
    "tests": [
     "tests/acceptance/gis_agent/runner.py",
+    "tests/unit/gis/test_action_executor.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/gis_harness/test_component_tools_v2.py",
     "tests/unit/gis_harness/test_golden_cases_v2.py",
@@ -19945,6 +19947,7 @@
    "tests": [
     "tests/unit/gis/test_action_adversarial.py",
     "tests/unit/gis/test_action_executor.py",
+    "tests/unit/gis/test_action_golden.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_cartography_tools_evidence.py",
     "tests/unit/test_specialist_data_compute.py",
@@ -20277,7 +20280,6 @@
     "tests/unit/test_map_product_design_trace_v1.py",
     "tests/unit/test_map_product_evidence.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
-    "tests/unit/test_model_library_audit832_835.py",
     "tests/unit/test_pi_bridge_compat.py",
     "tests/unit/test_registry_list_coercion.py",
     "tests/unit/test_session_plan.py",

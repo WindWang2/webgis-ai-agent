@@ -313,3 +313,7 @@ frontend/package-lock.json
 
 # Runner-local real task fixture used by J2 and its backend regression.
 !/scripts/seed_journey_retry.py
+
+# Local agent workspaces
+/.workbuddy/
+/.zwork/

@@ -265,7 +265,7 @@ def explain_staleness(
     if health is not None:
         # 不可判读 ≠ 不新鲜（review P1-2：判 stale=True 与自身纪律矛盾）。
         return {
-            "stale": False,
+            "stale": None,
             "reasons": [health],
             "diff": diff_payload,
             "affected_consumers": affected,

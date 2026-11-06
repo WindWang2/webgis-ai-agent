@@ -41,7 +41,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from app.services.collab.bus import bus
-from app.services.collab.leases import lease_registry
+from app.services.collab.leases import lease_registry, LeaseBackendUnavailable
 from app.services.collab.presence import presence_registry
 
 logger = logging.getLogger(__name__)
@@ -90,25 +90,47 @@ async def _fresh_revision(session_id: str) -> int:
         return 0
 
 
-async def _read_authoritative_doc(session_id: str) -> tuple[int, dict | None]:
-    """权威 workbench doc 读（引擎 store，含磁盘复活路径）+ 新鲜 revision。"""
+async def _read_authoritative_doc(session_id: str, *, known_revision: int | None = None) -> tuple[int, dict | None]:
+    """Fresh targeted reads; unchanged syncs never materialize the document."""
     from app.api.routes.mapspec_mutations import _engine
     from app.services.session_data import session_data_manager
 
-    invalidate = getattr(session_data_manager, "invalidate_local_cache", None)
-    if callable(invalidate):
-        invalidate(session_id)
-    pre_state = await session_data_manager.get_map_state(session_id)
-    try:
-        revision = int(pre_state.get("_cartographic_mutation_revision", 0))
-    except (TypeError, ValueError):
-        revision = 0
-    try:
-        loaded = await _engine.store.get_mapspec(session_id, state_hint=pre_state)
-    except Exception:  # noqa: BLE001 — spec 不可读时仍给 revision
-        loaded = None
-    doc = loaded.get("workbench") if isinstance(loaded, dict) else None
-    return revision, (doc if isinstance(doc, dict) else None)
+    get_field = session_data_manager.get_state_field
+    revision = 0
+    for _ in range(2):
+        raw_revision = await get_field(session_id, "_cartographic_mutation_revision")
+        try:
+            revision = int(raw_revision or 0)
+        except (TypeError, ValueError):
+            revision = 0
+        if raw_revision is not None and known_revision is not None and revision == known_revision:
+            return revision, None
+        if await get_field(session_id, "_cartographic_deleted") is True:
+            return revision, None
+        loaded = await get_field(session_id, "mapspec")
+        if not isinstance(loaded, dict):
+            try:
+                # Empty hint preserves disk resurrection without reading/evicting
+                # the rest of the session's hot state.
+                loaded = await _engine.store.get_mapspec(session_id, state_hint={})
+            except Exception:
+                logger.debug("Collaboration document unavailable", exc_info=True)
+                loaded = None
+        current = await _fresh_revision(session_id)
+        if current == revision:
+            doc = loaded.get("workbench") if isinstance(loaded, dict) else None
+            return revision, doc if isinstance(doc, dict) else None
+        known_revision = None
+        revision = current
+    # Continuous mutation: expose the fresh revision and let the next sync retry.
+    return revision, None
+
+
+def _hello_document(doc: dict | None) -> dict | None:
+    """Inline only small UTF-8 documents; clients refetch larger revisions."""
+    if doc is None:
+        return None
+    return doc if len(json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")) < 64 * 1024 else None
 
 
 async def _reconciliation_anomalies(session_id: str) -> dict:
@@ -257,6 +279,14 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
         await websocket.close(code=4029, reason="Rate limit exceeded")
         return
 
+    from app.core.ws_handshake import AUTH_FRAME_PROTOCOL, receive_auth_frame
+    frame_authenticated = AUTH_FRAME_PROTOCOL in websocket.scope.get("subprotocols", [])
+    if frame_authenticated:
+        credentials = await receive_auth_frame(websocket)
+        if credentials is None:
+            return
+        mode, token = credentials
+
     if not token:
         await websocket.close(code=4001, reason="Access token required")
         return
@@ -330,7 +360,8 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     # accept 先于任何 send_text（presence_full/hello 均经队列由 send_loop 发）。
     # RFC 6455：必须从客户端提供的列表中回显选中的 subprotocol，否则浏览器
     # 直接握手失败（ws.py 同款语义）。
-    await websocket.accept(subprotocol=mode)
+    if not frame_authenticated:
+        await websocket.accept(subprotocol=mode)
 
     # 时序纪律（R1-M2）：先订阅本地扇出，再读权威状态，再发 hello。
     remove_listener = await bus.add_local_listener(session_id, _make_listener(connection))
@@ -341,11 +372,16 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     participants = await presence_registry.join(
         session_id, client_id, {"label": label, "kind": "user"}
     )
+    presence_joined = participants is not None
     if participants is None:
         # 参与者满员：仍允许收事件（只读观战），但不进 presence。
         connection.enqueue({"event": "presence_full", "data": {"max": 32}})
         participants = []
-    leases = await lease_registry.snapshot(session_id)
+    leases_status = "available"
+    try:
+        leases = await lease_registry.snapshot(session_id)
+    except LeaseBackendUnavailable:
+        leases, leases_status = [], "unavailable"
     connection.enqueue({
         "event": "hello",
         "data": {
@@ -354,14 +390,35 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
             "degraded": degraded,
             "participants": participants,
             "leases": leases,
+            "leasesStatus": leases_status,
             # hello 顺带 authoritative doc：晚到/重连客户端免一次 sync 往返
             # （小于 64KB 时；大 doc 由客户端按需 refetch）。
-            "doc": doc,
+            "doc": _hello_document(doc),
         },
     })
-    await bus.publish(session_id, "presence", {
-        "action": "join", "client": {"clientId": client_id, "label": label},
-    })
+    if presence_joined:
+        await bus.publish(session_id, "presence", {
+            "action": "join", "client": {"clientId": client_id, "label": label},
+        })
+
+    from app.core.ws_revalidation import watch_authorization, stop_watchdog
+
+    async def _connection_still_owned() -> bool:
+        if mode == "bearer":
+            from app.core.auth import authenticate_ws_token
+            await authenticate_ws_token(token)
+        async with async_db_session() as db:
+            current = (await db.execute(select(Conversation).where(Conversation.id == session_id))).scalar_one_or_none()
+        if current is None:
+            return False
+        if mode == "bearer":
+            return current.user_id is not None and str(current.user_id) == str(user_id)
+        return current.user_id is None and owner_token_matches(current.owner_token, token)
+
+    watchdog_closing = asyncio.Event()
+    watchdog_stopped = asyncio.Event()
+    watchdog = asyncio.create_task(watch_authorization(websocket, _connection_still_owned,
+        interval=_REAUTH_INTERVAL_S, closing=watchdog_closing, stopped=watchdog_stopped, on_invalid=lambda: setattr(connection, "closed", True)))
 
     budget = _MSG_BUDGET_CAPACITY
     last_budget_refill = time.monotonic()
@@ -434,6 +491,8 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
             event = message.get("event")
             data = message.get("data") if isinstance(message.get("data"), dict) else {}
 
+            if not presence_joined and event not in ("ping", "sync"):
+                continue  # Full rooms admit read-only spectators, never presence or lease writers.
             if event == "ping":
                 connection.enqueue({"event": "pong", "data": {"revision": await _fresh_revision(session_id)}})
             elif event == "sync":
@@ -448,7 +507,7 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
                     known_int = int(known) if known is not None else None
                 except (TypeError, ValueError):
                     known_int = None
-                current, doc_now = await _read_authoritative_doc(session_id)
+                current, doc_now = await _read_authoritative_doc(session_id, known_revision=known_int)
                 if known_int is None or known_int != current:
                     connection.enqueue({
                         "event": "doc",
@@ -505,10 +564,14 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
                 }})
             elif event == "lease_renew":
                 lock_key = str(data.get("lockKey") or "")
-                granted = await lease_registry.renew(session_id, lock_key, client_id)
+                reason = None
+                try:
+                    granted = await lease_registry.renew(session_id, lock_key, client_id)
+                except LeaseBackendUnavailable:
+                    granted, reason = False, "redis_unavailable"
                 connection.enqueue({"event": "lease_result", "data": {
                     "lockKey": lock_key, "requestId": data.get("requestId"),
-                    "granted": granted, "action": "renew",
+                    "granted": granted, "action": "renew", "reason": reason,
                 }})
                 if granted:
                     await bus.publish(session_id, "lock", {
@@ -516,14 +579,18 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
                     })
             elif event == "lease_release":
                 lock_key = str(data.get("lockKey") or "")
-                released = await lease_registry.release(session_id, lock_key, client_id)
+                reason = None
+                try:
+                    released = await lease_registry.release(session_id, lock_key, client_id)
+                except LeaseBackendUnavailable:
+                    released, reason = False, "redis_unavailable"
                 if released:
                     await bus.publish(session_id, "lock", {
                         "action": "release", "lockKey": lock_key, "clientId": client_id,
                     })
                 connection.enqueue({"event": "lease_result", "data": {
                     "lockKey": lock_key, "requestId": data.get("requestId"),
-                    "granted": False, "released": released, "action": "release",
+                    "granted": False, "released": released, "action": "release", "reason": reason,
                 }})
             # 其他事件：白名单外静默丢弃（预算已扣 —— 洪水会被断开）。
     except WebSocketDisconnect:
@@ -531,6 +598,7 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.error(f"[ws-collab] error for {session_id}: {exc}")
     finally:
+        await stop_watchdog(watchdog, closing=watchdog_closing, stopped=watchdog_stopped)
         # R2-m-1：先取消挂起的 presence flush（防其在 leave 后重建 presence
         # 记录 → ≤30s 幽灵参与者 + 为已离开者广播）。
         if presence_flush_task is not None:
@@ -541,10 +609,14 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
         connection.enqueue(None)  # 哨兵：结束 send_loop
         remove_listener()
         await presence_registry.leave(session_id, client_id)
-        await lease_registry.release_all(session_id, client_id)
-        await bus.publish(session_id, "presence", {
-            "action": "leave", "client": {"clientId": client_id},
-        })
+        try:
+            await lease_registry.release_all(session_id, client_id)
+        except LeaseBackendUnavailable:
+            logger.warning("Collaboration lease cleanup deferred to TTL: Redis unavailable")
+        if presence_joined:
+            await bus.publish(session_id, "presence", {
+                "action": "leave", "client": {"clientId": client_id},
+            })
         task = connection.send_task
         if task is not None:
             task.cancel()

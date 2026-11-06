@@ -64,12 +64,14 @@ export function applyRasterStretch(payload: RasterStretchPayload): RasterStretch
     throw new Error(`不支持的拉伸 payload 版本: ${payload.version}`);
   }
   const { width, height } = payload;
+  if (payload.paletteHex.length === 0) throw new Error('Raster palette is empty');
   const stops = payload.paletteHex.map(hexToRgb);
   const quant = base64ToBytes(payload.values);
   if (quant.length !== width * height) {
     throw new Error(`量化网格尺寸不符: ${quant.length} != ${width * height}`);
   }
   const maskBits = base64ToBytes(payload.nodataMask);
+  if (maskBits.length < Math.ceil(width * height / 8)) throw new Error('Raster nodata mask is truncated');
   // clipLo/clipHi 服务端已用于量化归一（payload.stretch 供绝对值域重建与
   // 图例标注；客户端着色只需量化档 → stops 插值）。
 

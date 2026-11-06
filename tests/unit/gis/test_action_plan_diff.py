@@ -1,6 +1,7 @@
 """H10：Plan diff / replan / legacy adapter / 遥测测试。"""
 from __future__ import annotations
 
+import pytest
 
 from app.lib.gis.action_ir import GISAction, GISActionPlan
 from app.services.gis_action.diff import diff_plans, plans_equal
@@ -15,6 +16,24 @@ _A = dict(action_id="act-a", kind="cartograph", tool="t1", params={"k": 5, "pale
 
 
 class TestPlanDiff:
+    @pytest.mark.parametrize("field,value", [
+        ("depends_on", ["act-b"]),
+        ("failure", "best_effort"),
+        ("preconditions", [{"kind": "layer_present", "target": "layer-1"}]),
+        ("compensation", {"kind": "remove_layer", "target": "layer-1"}),
+        ("inputs", [{"name": "source", "ref": "ref:data"}]),
+        ("outputs", [{"name": "result", "ref": "ref:result"}]),
+        ("resource_class", {"cpu": "high"}),
+    ])
+    def test_nonparameter_execution_changes_are_not_empty(self, field, value):
+        before = _plan("gap-before", GISAction(**_A))
+        after = _plan("gap-after", GISAction(**dict(_A, **{field: value})))
+        diff = diff_plans(before, after)
+        assert not diff.empty
+        assert not plans_equal(before, after)
+        assert diff.semantic_changed == {"act-a": [field]}
+        assert "执行语义变化" in diff.describe()
+
     def test_identical_plans_empty_diff(self):
         p1 = _plan("gap-1", GISAction(**_A))
         p2 = _plan("gap-2", GISAction(**_A))

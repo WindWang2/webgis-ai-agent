@@ -25,7 +25,9 @@ def client(data_dir, monkeypatch):
     """Minimal geoai router with stubbed ownership + empty model list."""
     from app.api.routes import geoai as geoai_mod
     from app.core.auth import create_access_token
+    from unittest.mock import AsyncMock
 
+    monkeypatch.setattr("app.core.auth._load_live_user_state", AsyncMock(return_value=("ok", (0, True, "viewer", None))))
     owned = {"sess-mine"}
 
     async def fake_bind(
@@ -118,7 +120,7 @@ def test_artifact_geojson_rejects_other_session_file(client, data_dir, monkeypat
     victim.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
 
     # Real roots helper (session-scoped) — only sess-mine dir is allowed.
-    async def real_roots(db, scope):
+    async def real_roots(db, scope, **kwargs):
         root = Path(data_dir)
         sid = scope.get("session_id")
         return [root / sid] if sid else [root]
@@ -139,7 +141,7 @@ def test_artifact_geojson_allows_own_session_file(client, data_dir, monkeypatch)
     own.parent.mkdir(parents=True)
     own.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
 
-    async def real_roots(db, scope):
+    async def real_roots(db, scope, **kwargs):
         root = Path(data_dir)
         sid = scope.get("session_id")
         return [root / sid] if sid else [root]

@@ -138,7 +138,7 @@ def _assert_binding(cap_id: str, live_registry) -> None:
 
     # 注册名须持有真实函数，不能仅有描述符/算法投影或占位名称。
     assert all(callable(live_registry._tools[t]) for t in algo.tool_candidates)
-    assert all(live_registry._tools[t].__module__.startswith("app.")
+    assert all(getattr(live_registry._tools[t], "func", live_registry._tools[t]).__module__.startswith("app.")
                for t in algo.tool_candidates)
 
     # 测试侧冗余清单与描述符一致（防两处漂移）

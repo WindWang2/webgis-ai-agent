@@ -189,8 +189,8 @@ def create_hospital_site_selection_problem() -> DecisionProblem:
         criteria=criteria,
         constraints=constraints,
         baseline_context=BaselineEvidenceContext(
-            status=BaselineTruthState.OBSERVED,
-            source_refs=["ref:haidian_pop_2026", "ref:haidian_eco_redline"],
+            status=BaselineTruthState.ASSUMED,
+            source_refs=[],
         ),
         mcda_method="wsm",
         random_seed=42,

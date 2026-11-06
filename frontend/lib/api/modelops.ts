@@ -110,14 +110,16 @@ export async function listModelopsModels(): Promise<ModelOpsListResult> {
   return (await executeToolDirect('modelops_list_models', {})) as unknown as ModelOpsListResult;
 }
 
-export async function inspectModelopsModel(modelId: string): Promise<ModelOpsInspectResult> {
+export async function inspectModelopsModel(modelId: string, modelVersion?: string): Promise<ModelOpsInspectResult> {
   return (await executeToolDirect('modelops_inspect_model', {
     model_id: modelId,
+    ...(modelVersion ? { model_version: modelVersion } : {}),
   })) as unknown as ModelOpsInspectResult;
 }
 
-export async function fetchModelopsHistory(modelId: string): Promise<ModelOpsHistoryResult> {
+export async function fetchModelopsHistory(modelId: string, modelVersion?: string): Promise<ModelOpsHistoryResult> {
   return (await executeToolDirect('modelops_model_history', {
     model_id: modelId,
+    ...(modelVersion ? { model_version: modelVersion } : {}),
   })) as unknown as ModelOpsHistoryResult;
 }

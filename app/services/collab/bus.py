@@ -85,7 +85,7 @@ def bound_payload(envelope: Dict[str, Any]) -> Dict[str, Any]:
     kind = envelope.get("kind")
     limit = MAX_DOC_EVENT_BYTES if kind in ("doc", "delta") else MAX_EVENT_BYTES
     try:
-        encoded = json.dumps(envelope, ensure_ascii=False, default=str)
+        encoded = json.dumps(envelope, ensure_ascii=False, default=str, allow_nan=False)
     except (TypeError, ValueError):
         return {**envelope, "data": {}, "truncated": True}
     if len(encoded.encode("utf-8")) <= limit:
@@ -109,8 +109,10 @@ class CollabBus:
         self._lock = asyncio.Lock()
         self._listener_task: Optional[asyncio.Task] = None
         self._client: Optional[Any] = None
+        self._subscriber_client: Optional[Any] = None
         self._client_failed_at: Optional[float] = -_CLIENT_RETRY_S  # 首探立即放行
         self._stopping = False
+        self._callback_tasks: set[asyncio.Task] = set()
 
     # ── 本地扇出注册 ────────────────────────────────────────────────────
     async def add_local_listener(self, session_id: str, fn: LocalListener) -> "Callable[[], None]":
@@ -149,12 +151,21 @@ class CollabBus:
                 if asyncio.iscoroutine(result):
                     # listener 约定为同步快速入队；防御性兜底：协程则后台化
                     # 并记日志（生产 listener 不应返回协程）。
-                    asyncio.get_running_loop().create_task(result)
+                    task = asyncio.get_running_loop().create_task(result)
+                    self._callback_tasks.add(task)
+                    task.add_done_callback(self._callback_done)
             except Exception:  # noqa: BLE001 — 单个消费者故障不放大
                 logger.debug("[collab-bus] local listener raised", exc_info=True)
             else:
                 delivered += 1
         return delivered
+
+    def _callback_done(self, task: asyncio.Task) -> None:
+        self._callback_tasks.discard(task)
+        if not task.cancelled():
+            error = task.exception()
+            if error is not None:
+                logger.warning("[collab-bus] async listener failed", exc_info=(type(error), error, error.__traceback__))
 
     # ── 发布 ────────────────────────────────────────────────────────────
     async def publish(
@@ -177,7 +188,7 @@ class CollabBus:
             try:
                 await client.publish(
                     channel_name(session_id),
-                    json.dumps(envelope, ensure_ascii=False, default=str),
+                    json.dumps(envelope, ensure_ascii=False, default=str, allow_nan=False),
                 )
                 return True
             except Exception as exc:  # noqa: BLE001 — 降级到本地直发
@@ -224,6 +235,26 @@ class CollabBus:
         self._client = None
         self._client_failed_at = time.monotonic()
 
+    def _redis_subscriber(self) -> Optional[Any]:
+        if self._stopping:
+            return None
+        if self._subscriber_client is not None:
+            return self._subscriber_client
+        from app.core.config import settings
+
+        if not getattr(settings, "USE_REDIS", False):
+            return None
+        import redis.asyncio as aioredis
+
+        self._subscriber_client = aioredis.from_url(
+            getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
+            socket_connect_timeout=1,
+            socket_timeout=None,
+            health_check_interval=30,
+            decode_responses=True,
+        )
+        return self._subscriber_client
+
     # ── listener task（lifespan 启停）──────────────────────────────────
     def start(self) -> bool:
         """启动 psubscribe listener（幂等）；无 Redis 返回 False（降级）。"""
@@ -254,11 +285,17 @@ class CollabBus:
             except Exception:  # noqa: BLE001
                 pass
             self._client = None
+        if self._subscriber_client is not None:
+            try:
+                await self._subscriber_client.aclose()
+            except Exception:  # noqa: BLE001
+                logger.debug("collab subscriber close failed", exc_info=True)
+            self._subscriber_client = None
 
     async def _listen_loop(self) -> None:
         """psubscribe ``webgis:collab:*`` 单连接纪元；异常 → 退避重订。"""
         while not self._stopping:
-            client = self._redis_client()
+            client = self._redis_subscriber()
             if client is None:
                 await asyncio.sleep(_LISTENER_RECONNECT_S)
                 continue
@@ -280,13 +317,21 @@ class CollabBus:
                 return
             except Exception as exc:  # noqa: BLE001 — 断连重试
                 logger.debug("[collab-bus] listener reconnect: %s", exc)
-                self._drop_client()
+                if self._subscriber_client is not None:
+                    try:
+                        await self._subscriber_client.aclose()
+                    except Exception:  # noqa: BLE001
+                        logger.debug("collab subscriber reconnect cleanup failed", exc_info=True)
+                    self._subscriber_client = None
                 if not self._stopping:
                     await asyncio.sleep(_LISTENER_RECONNECT_S)
 
     def _apply_raw(self, raw: str) -> None:
         try:
-            envelope = json.loads(raw)
+            def reject_constant(value: str) -> None:
+                raise ValueError(f"nonfinite JSON constant: {value}")
+
+            envelope = json.loads(raw, parse_constant=reject_constant)
         except (ValueError, TypeError):
             return
         if not isinstance(envelope, dict) or envelope.get("v") != 1:

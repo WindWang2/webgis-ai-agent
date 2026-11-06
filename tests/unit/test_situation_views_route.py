@@ -1,4 +1,4 @@
-"""Situation 视图端点测试（ADR-0283 D4/D5）：只读派生 / 鉴权直通 /
+"""Situation 视图端点测试（ADR-0285 D4/D5）：只读派生 / 鉴权直通 /
 journal 降级披露 / 选择史与 claimed scope 面在场。模式同
 interaction_ir test_route.py。"""
 from __future__ import annotations

@@ -73,8 +73,11 @@ def encode_cursor(order_keys: Sequence[Any]) -> str:
 def decode_cursor(cursor: str) -> List[Any]:
     try:
         payload = base64.urlsafe_b64decode(cursor.encode("ascii"))
-        return json.loads(payload)
-    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as e:
+        decoded = json.loads(payload)
+        if not isinstance(decoded, list):
+            raise InvalidQueryError("cursor must encode a list of order keys")
+        return decoded
+    except (binascii.Error, UnicodeError, json.JSONDecodeError) as e:
         raise InvalidQueryError(f"malformed cursor: {e}") from e
 
 

@@ -510,17 +510,14 @@ def test_no_axis_order_note_for_wms_111_even_with_4326():
     assert desc.srs == "EPSG:4326"
 
 
-def test_describe_case_sensitive_dedup_is_current_behavior():
-    """特性化测试（G10 登记，不改动）：normalize_crs 对 `EPSG:` 前缀是
-    原样透传（test_data_fabric_metadata.py 显式断言 `epsg:3857` 透传），
-    因此大小写变体在去重后各占一位——这是既定行为，若维护者决定大小写
-    归一需同步修改本测试与 normalize_crs。"""
+def test_describe_case_insensitive_crs_dedup():
+    """Authority capitalization does not create duplicate CRS entries."""
     adapter = make_adapter(
         b"""<Root><Layer><Name>roads</Name>
           <CRS>EPSG:4326</CRS><CRS>epsg:4326</CRS></Layer></Root>"""
     )
     desc = adapter.describe("roads")
-    assert desc.metadata["normalized_crs"] == ["EPSG:4326", "epsg:4326"]
+    assert desc.metadata["normalized_crs"] == ["EPSG:4326"]
     assert desc.srs == "EPSG:4326"
 
 
@@ -540,8 +537,9 @@ def test_query_emits_crs_and_bbox_for_geographic_crs():
     adapter = make_adapter(WMS_130_NESTED)
     res = adapter.query("roads", _qs(bbox=[116.0, 39.0, 117.0, 40.0]))
     assert "CRS=EPSG:4326" in res.metadata["getmap_url"]
-    # BBOX 用 describe 时 capabilities 声明的 WGS84 extent（不是查询 bbox）
-    assert "BBOX=-180.0,-90.0,180.0,90.0" in res.metadata["getmap_url"]
+    assert "VERSION=1.3.0" in res.metadata["getmap_url"]
+    # WMS1.3 EPSG:4326 requires latitude,longitude; requested bbox is honored.
+    assert "BBOX=39.0,116.0,40.0,117.0" in res.metadata["getmap_url"]
     assert res.metadata["axis_order_note"]
 
 

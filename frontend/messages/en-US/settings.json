@@ -52,6 +52,7 @@
     "serverManaged": "LLM settings are managed centrally on the server; saving here has no effect. Ask an administrator to change them server-side, then click \"Refresh\" to update.",
     "loading": "Loading…",
     "refresh": "Refresh",
+    "signInRequired": "Sign in to view the server model configuration.",
     "viewForbidden": "Administrator permission is required to view the server LLM configuration",
     "loadFailed": "Failed to read the server LLM configuration",
     "testForbidden": "Administrator permission is required to test the connection",
@@ -59,7 +60,10 @@
     "failedWithDetail": "Connection failed: {detail}",
     "notConfigured": "(not configured)",
     "enabled": "Enabled",
-    "disabled": "Disabled"
+    "disabled": "Disabled",
+    "testing": "Testing…",
+    "testConnection": "Connectivity test",
+    "connected": "Connection OK"
   },
   "map": {
     "title": "Map configuration",
@@ -89,7 +93,15 @@
     "scoreDistNote": "Bar length is proportional to L2 distance (linear relative to the worst hit). A smaller L2 distance means more relevant — not a similarity percentage.",
     "embeddingNote": "The embedding model is fixed by the backend (a code constant with no read/write config endpoint); this only probes retrieval quality.",
     "openPanel": "Open knowledge base panel",
-    "panelHint": "Upload / delete documents and chat injection are done in the panel"
+    "panelHint": "Upload / delete documents and chat injection are done in the panel",
+    "serverManaged": "Vector retrieval storage is configured on the server. This checks the active service.",
+    "indexedDocuments": "Indexed documents",
+    "loading": "Loading…",
+    "connection": "Vector retrieval connection",
+    "testing": "Testing…",
+    "testConnection": "Test connection",
+    "connected": "Connected",
+    "failed": "Failed"
   },
   "skills": {
     "uploaded": "Uploaded and hot-loaded: {name}",

@@ -32,7 +32,7 @@ def approx_distance_km(
     lng1: float, lat1: float, lng2: float, lat2: float
 ) -> float:
     """等距圆柱近似两点距离（km）。粗粒度掩膜场景足够，O(1)。"""
-    dlng = (lng2 - lng1) * EARTH_DEG_KM_LNG * math.cos(math.radians((lat1 + lat2) / 2.0))
+    dlng = ((lng2 - lng1 + 180.0) % 360.0 - 180.0) * EARTH_DEG_KM_LNG * math.cos(math.radians((lat1 + lat2) / 2.0))
     dlat = (lat2 - lat1) * EARTH_DEG_KM_LAT
     return math.hypot(dlng, dlat)
 

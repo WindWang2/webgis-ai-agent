@@ -1,5 +1,5 @@
 /**
- * Journey 10 — 情境状态面：服务端投影恢复（ADR-0283 D5）@smoke.
+ * Journey 10 — 情境状态面：服务端投影恢复（ADR-0285 D5）@smoke.
  *
  * 刷新/重连后状态条从服务端 situation 投影恢复「当前分析范围/选中对象」
  * （localStorage 非权威）；claimed scope 有据时选择 filter 被重放（本地空白，

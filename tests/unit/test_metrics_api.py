@@ -45,6 +45,8 @@ def test_metrics_digest_endpoint():
     data = response.json()
 
     assert data["success"] is True
+    assert data["tool_metrics_scope"]["scope"] == "process"
+    assert isinstance(data["tool_metrics_scope"]["process_id"], int)
     assert "tool_metrics" in data
     assert "webgis_layer_upsert" in data["tool_metrics"]
     assert data["tool_metrics"]["webgis_layer_upsert"]["count"] == 1

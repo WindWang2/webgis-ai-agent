@@ -292,13 +292,14 @@ def build_mission_corpus() -> List[MissionScenario]:
     scenarios.sort(key=lambda s: s.scenario_id)
     # 构建期守卫：id 唯一 / 必有 bind 起步 / 步骤词表闭合
     ids = [s.scenario_id for s in scenarios]
-    assert len(ids) == len(set(ids)), f"duplicate mission scenario ids: {ids}"
+    if not (len(ids) == len(set(ids))):
+        raise ValueError(f"duplicate mission scenario ids: {ids}")
     _KNOWN = {"bind", "turn", "fault", "suspend", "resume", "cancel",
               "revise_goal", "advance_clock", "swarm", "complete"}
     for s in scenarios:
-        assert s.steps and s.steps[0].kind == "bind", (
-            f"{s.scenario_id} must start with bind"
-        )
+        if not (s.steps and s.steps[0].kind == "bind"):
+            raise ValueError(f"{s.scenario_id} must start with bind")
         for step in s.steps:
-            assert step.kind in _KNOWN, f"{s.scenario_id}: unknown step {step.kind}"
+            if step.kind not in _KNOWN:
+                raise ValueError(f"{s.scenario_id}: unknown step {step.kind}")
     return scenarios

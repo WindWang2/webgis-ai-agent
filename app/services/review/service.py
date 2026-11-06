@@ -227,8 +227,9 @@ class ReviewService:
             if p.merge_in_progress:
                 raise InvalidTransition("merge in progress; try again shortly")
             self._require_author(p, actor)
+            if int(base_revision) != p.base_revision:
+                raise InvalidTransition("base revision changed; rebase and validate targets before submitting")
             _transition(p, ProposalStatus.SUBMITTED)
-            p.base_revision = int(base_revision)
             p.updated_at = _now()
             return p
 
@@ -471,10 +472,14 @@ class ReviewService:
         old_base = p.base_revision
 
         def _mutate(cur: ReviewProposal) -> ReviewProposal:
+            self._require_author(cur, actor)
+            if (cur.merge_in_progress or cur.base_revision != old_base
+                    or cur.status not in (ProposalStatus.SUBMITTED, ProposalStatus.APPROVED)):
+                raise InvalidTransition("proposal changed while rebase was being prepared")
+            _transition(cur, ProposalStatus.SUBMITTED)
             cur.base_revision = new_base
             # 回到 submitted：rebase 后必须重新会签（旧 approve 因 base 不匹配
             # 自然过期 —— 见 policy.evaluate_approval）。
-            cur.status = ProposalStatus.SUBMITTED
             cur.updated_at = _now()
             return cur
 

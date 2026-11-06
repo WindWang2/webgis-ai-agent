@@ -9,6 +9,7 @@
 import { fastGet } from './get-fast-path';
 
 export interface Skill {
+  category?: string;
   name: string;
   description: string;
 }

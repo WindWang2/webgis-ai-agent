@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.main import app
-from app.models.db_model import Base, CartographyTemplate
+from app.models.db_model import Base, CartographyTemplate, User
 from app.core.database import get_async_db
 from app.core.auth import create_access_token
 
@@ -58,7 +58,7 @@ async def _purge_non_builtin_templates(session):
 
 
 @pytest.fixture(autouse=True)
-async def setup_db(tmp_path):
+async def setup_db(tmp_path, monkeypatch):
     """Create a file-based sqlite engine + tables, clear overrides/templates."""
     global _test_engine, _TestSession
     _test_engine = create_async_engine(
@@ -66,15 +66,22 @@ async def setup_db(tmp_path):
         connect_args={"check_same_thread": False},
     )
     _TestSession = async_sessionmaker(bind=_test_engine, expire_on_commit=False)
+    monkeypatch.setattr("app.core.database.async_db_session", _TestSession)
+    from app.core.auth import invalidate_live_user_state
+    invalidate_live_user_state()
     app.dependency_overrides.clear()
     app.dependency_overrides[get_async_db] = _override_get_async_db
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with _TestSession() as s:
+        for uid in ("user_123", "user_456"):
+            s.add(User(id=uid, username=uid, email=f"{uid}@test.example",
+                       password_hash="unused", role="viewer", is_active=True, token_version=0))
         await _purge_non_builtin_templates(s)
     yield
     app.dependency_overrides.clear()
     await _test_engine.dispose()
+    invalidate_live_user_state()
 
 
 @pytest.fixture
@@ -128,6 +135,7 @@ async def test_create_user_template_success(client):
     assert data["is_builtin"] is False
     assert data["creator_id"] == "user_123"
     assert data["id"].startswith("tmpl_user_")
+    assert len(data["id"].removeprefix("tmpl_user_")) == 32
 
 
 @pytest.mark.asyncio
@@ -203,8 +211,7 @@ async def test_delete_user_template_forbidden_for_other_user(client):
     tmpl_id = post_res.json()["id"]
 
     del_res = await client.delete(f"/api/v1/templates/{tmpl_id}", headers=other_user_headers)
-    assert del_res.status_code == 403
-    assert "authorized" in del_res.json()["message"].lower()
+    assert del_res.status_code == 404
 
 
 @pytest.mark.asyncio

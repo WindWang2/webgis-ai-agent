@@ -58,7 +58,7 @@ class TestGoldenPlan:
         fallbacks = [f.model_dump() if hasattr(f, "model_dump") else f for f in fin.fallbacks]
         fb = fallbacks[0]
         assert fb["from_element"] == "visual_heatmap"
-        assert fb["to_element"] == "point_distribution"
+        assert fb["to_element"] == "point_overlay"
         assert fb["reason_code"] == "INSUFFICIENT_POINTS"
         assert fb["evidence"] == {"point_count": 7, "min_points": 10}
 

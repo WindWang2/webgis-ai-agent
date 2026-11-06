@@ -180,7 +180,8 @@
     "loadToMap": "加载至地图",
     "addSource": "添加数据源",
     "listFailed": "获取数据源列表失败",
-    "catalogLoadFailed": "获取空间目录失败"
+    "catalogLoadFailed": "获取空间目录失败",
+    "loadMoreCatalog": "加载更多目录条目"
   },
   "comp": {
     "emptyNoSpecTitle": "暂无地图组件",
@@ -328,7 +329,9 @@
     "atlasBatchNoSession": "当前无活动会话，无法提交批量图册任务",
     "atlasBatchSubmitted": "批量图册任务已提交（job {jobId}，规划 {count} 页），可在任务中心查看进度",
     "atlasBatchReused": "相同的批量图册任务已在执行（job {jobId}），已复用同一任务",
-    "atlasBatchFailed": "批量图册任务提交失败：{reason}"
+    "atlasBatchFailed": "批量图册任务提交失败：{reason}",
+    "removeFromList": "从列表移除",
+    "confirmRemoveFromList": "确认移除"
   },
   "inspector": {
     "emptyTitle": "尚未选择数据集",
@@ -384,7 +387,8 @@
     "aggFieldAria": "聚合字段",
     "groupByAria": "分组字段（group by）",
     "noGroup": "不分组",
-    "statsModeHint": "result_mode 将切换为 statistics（仅返回聚合结果，不传输 geometry）"
+    "statsModeHint": "result_mode 将切换为 statistics（仅返回聚合结果，不传输 geometry）",
+    "aggFieldRequired": "请选择聚合字段后再运行或解释查询。"
   },
   "explain": {
     "queryFingerprint": "查询指纹",
@@ -717,7 +721,8 @@
     "overflowTitle": "其他参与者 {count} 人（上限 {max}）",
     "otherFallback": "他人",
     "groupKind": "分组",
-    "layerKind": "图层"
+    "layerKind": "图层",
+    "leasesUncertain": "租约状态暂时无法核实"
   },
   "wf": {
     "compare": "对比",

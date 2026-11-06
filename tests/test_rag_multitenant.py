@@ -3,7 +3,7 @@ Unit and regression tests for SEC-02: Fail-closed multi-tenant scoping in FAISS 
 
 Verifies:
 1. Anonymous/unauthenticated queries (user_id=None, org_id=None) fail closed:
-   only public chunks (c_user=None, c_org=None) can be returned.
+   no chunks can be returned; unowned legacy chunks are not public.
 2. Tenant A cannot see Tenant B's chunks or documents.
 3. Users without organization context cannot access organization-scoped documents.
 4. Admin queries can see all chunks across tenants.
@@ -60,12 +60,12 @@ def test_faiss_store_tenant_scoping_fail_closed(tmp_path, patch_embed):
     # 1. Anonymous search (user_id=None, org_id=None) -> only public chunks
     anon_results = store.search(query_vec, top_k=10, user_id=None, org_id=None, is_admin=False)
     anon_ids = {r["id"] for r in anon_results}
-    assert anon_ids == {"chk_pub"}, f"Anonymous query leaked private chunks: {anon_ids}"
+    assert anon_ids == set(), f"Anonymous query leaked private chunks: {anon_ids}"
 
     # 2. Alice searching (user_id='alice', org_id=None) -> sees public and Alice's own doc
     alice_results = store.search(query_vec, top_k=10, user_id="alice", org_id=None, is_admin=False)
     alice_ids = {r["id"] for r in alice_results}
-    assert "chk_pub" in alice_ids
+    assert "chk_pub" not in alice_ids
     assert "chk_alice" in alice_ids
     assert "chk_orgx" not in alice_ids, "Alice without org_id must not see OrgX documents"
     assert "chk_bob" not in alice_ids, "Alice must not see Bob's documents"
@@ -74,7 +74,7 @@ def test_faiss_store_tenant_scoping_fail_closed(tmp_path, patch_embed):
     # 3. Bob searching in OrgX (user_id='bob', org_id='org_x') -> sees public, OrgX shared, and Bob in OrgX
     bob_results = store.search(query_vec, top_k=10, user_id="bob", org_id="org_x", is_admin=False)
     bob_ids = {r["id"] for r in bob_results}
-    assert "chk_pub" in bob_ids
+    assert "chk_pub" not in bob_ids
     assert "chk_orgx" in bob_ids
     assert "chk_bob" in bob_ids
     assert "chk_alice" not in bob_ids, "Tenant Bob in OrgX must not see Alice's chunks"
@@ -83,7 +83,7 @@ def test_faiss_store_tenant_scoping_fail_closed(tmp_path, patch_embed):
     # 4. Charlie searching in OrgY (user_id='charlie', org_id='org_y') -> sees public and Charlie's doc
     charlie_results = store.search(query_vec, top_k=10, user_id="charlie", org_id="org_y", is_admin=False)
     charlie_ids = {r["id"] for r in charlie_results}
-    assert "chk_pub" in charlie_ids
+    assert "chk_pub" not in charlie_ids
     assert "chk_charlie" in charlie_ids
     assert "chk_alice" not in charlie_ids
     assert "chk_orgx" not in charlie_ids
@@ -92,7 +92,7 @@ def test_faiss_store_tenant_scoping_fail_closed(tmp_path, patch_embed):
     # 5. Org-level query for OrgX (user_id=None, org_id='org_x')
     orgx_results = store.search(query_vec, top_k=10, user_id=None, org_id="org_x", is_admin=False)
     orgx_ids = {r["id"] for r in orgx_results}
-    assert "chk_pub" in orgx_ids
+    assert "chk_pub" not in orgx_ids
     assert "chk_orgx" in orgx_ids
     assert "chk_alice" not in orgx_ids
     assert "chk_bob" not in orgx_ids
@@ -114,7 +114,7 @@ async def test_knowledge_engine_search_tenant_scoping_fail_closed(tmp_path, patc
     await engine.index_document(
         title="Public Doc",
         content="public documentation content",
-        tenant=None,  # anonymous / public
+        tenant=TenantContext(is_admin=True),  # legacy unowned admin-managed document
     )
     await engine.index_document(
         title="Alice Doc",
@@ -135,17 +135,17 @@ async def test_knowledge_engine_search_tenant_scoping_fail_closed(tmp_path, patc
     # 1. Anonymous search with tenant=None
     anon_res = await engine.search("data", top_k=10, tenant=None)
     anon_titles = {r["title"] for r in anon_res}
-    assert anon_titles == {"Public Doc"}, f"Anonymous caller leaked: {anon_titles}"
+    assert anon_titles == set(), f"Anonymous caller leaked: {anon_titles}"
 
     # 2. Anonymous search with TenantContext(user_id=None, org_id=None)
     anon_res_ctx = await engine.search("data", top_k=10, tenant=TenantContext(user_id=None, org_id=None))
     anon_titles_ctx = {r["title"] for r in anon_res_ctx}
-    assert anon_titles_ctx == {"Public Doc"}
+    assert anon_titles_ctx == set()
 
     # 3. Alice search
     alice_res = await engine.search("data", top_k=10, tenant=TenantContext(user_id="alice"))
     alice_titles = {r["title"] for r in alice_res}
-    assert "Public Doc" in alice_titles
+    assert "Public Doc" not in alice_titles
     assert "Alice Doc" in alice_titles
     assert "Bob OrgX Doc" not in alice_titles
     assert "Charlie OrgY Doc" not in alice_titles
@@ -153,7 +153,7 @@ async def test_knowledge_engine_search_tenant_scoping_fail_closed(tmp_path, patc
     # 4. Bob search in OrgX
     bob_res = await engine.search("data", top_k=10, tenant=TenantContext(user_id="bob", org_id="org_x"))
     bob_titles = {r["title"] for r in bob_res}
-    assert "Public Doc" in bob_titles
+    assert "Public Doc" not in bob_titles
     assert "Bob OrgX Doc" in bob_titles
     assert "Alice Doc" not in bob_titles
     assert "Charlie OrgY Doc" not in bob_titles
@@ -161,7 +161,7 @@ async def test_knowledge_engine_search_tenant_scoping_fail_closed(tmp_path, patc
     # 5. Charlie search in OrgY
     charlie_res = await engine.search("data", top_k=10, tenant=TenantContext(user_id="charlie", org_id="org_y"))
     charlie_titles = {r["title"] for r in charlie_res}
-    assert "Public Doc" in charlie_titles
+    assert "Public Doc" not in charlie_titles
     assert "Charlie OrgY Doc" in charlie_titles
     assert "Alice Doc" not in charlie_titles
     assert "Bob OrgX Doc" not in charlie_titles

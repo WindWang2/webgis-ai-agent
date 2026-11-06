@@ -84,18 +84,7 @@ const t = useT();
   if (!fetcher) {
     return <InlineNotice variant="info">{t('sidebar.wf.waitingBackend')}</InlineNotice>;
   }
-  if (!state) {
-    return (
-      <button
-        type="button"
-        onClick={() => setState('loading')}
-        className="rounded px-2 py-1 text-[11px] font-medium text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)]"
-      >
-        {t('sidebar.wf.loadRuntime')}
-      </button>
-    );
-  }
-  if (state === 'loading') return <LoadingState label={t('sidebar.wf.loadingRuntime')} />;
+  if (!state || state === 'loading') return <LoadingState label={t('sidebar.wf.loadingRuntime')} />;
   if (state === 'error') return <InlineNotice variant="error">{t('sidebar.wf.runtimeFailed')}</InlineNotice>;
 
   const inst = state as RuntimeInstance;
@@ -145,6 +134,11 @@ const t = useT();
           ))}
         </div>
       )}
+      {inst.explain?.blocked.map((item, index) => (
+        <p key={`${item.node}-${index}`} className="text-[10px] text-status-warn">
+          {item.node}: {item.codes.join(', ')}
+        </p>
+      ))}
       {inst.nodes.length > 16 && (
         <p className="text-[10px] text-[var(--theme-text-muted)]">
           {t('sidebar.wf.nodeLimited', { count: inst.nodes.length })}

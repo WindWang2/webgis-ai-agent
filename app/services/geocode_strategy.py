@@ -55,7 +55,7 @@ def extract_lat_lon(item: dict) -> tuple[Optional[float], Optional[float]]:
     (a [lon, lat] pair); fall back to top-level lat/lon, lat/lng or location dict.
     """
     results_list = item.get("results")
-    if results_list and isinstance(results_list, list) and len(results_list) > 0:
+    if isinstance(results_list, list) and results_list and isinstance(results_list[0], dict):
         loc = results_list[0].get("location")
         if loc and isinstance(loc, list) and len(loc) == 2:
             try:
@@ -127,12 +127,14 @@ class GeocodeProviderStrategy:
 
                 success_by_idx: dict[int, dict] = {}
                 for r in result.get("results", []):
-                    batch_idx = pending[r["index"]]
-                    success_by_idx[batch_idx] = r
+                    index = r.get("index") if isinstance(r, dict) else None
+                    if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(pending):
+                        success_by_idx[pending[index]] = r
                 error_by_idx: dict[int, dict] = {}
                 for e in result.get("errors", []):
-                    batch_idx = pending[e["index"]]
-                    error_by_idx[batch_idx] = e
+                    index = e.get("index") if isinstance(e, dict) else None
+                    if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(pending):
+                        error_by_idx[pending[index]] = e
 
                 failed_this_attempt: list[int] = []
                 for p_idx in pending:

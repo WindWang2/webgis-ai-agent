@@ -1,4 +1,6 @@
 'use client';
+import { resolveFeatureId, resolveFeatureIdField } from '@/lib/layers/feature-id';
+
 import { useCallback, useEffect, useRef } from 'react';
 import type { MapGeoJSONFeature } from 'maplibre-gl';
 import { resolveParentLayerId } from '@/lib/map-kit/interactive-ids';
@@ -12,12 +14,9 @@ import { publishSelection, getSelection } from '@/lib/selection/selection-store'
 import { emitFeatureSelected } from '@/lib/interaction/bus';
 // C11（issue #1556）：要素属性 typed 访问面 —— id/OBJECTID 魔法字段
 // 的读取收口到 propOf（替代 as any 链；字段改名编译期暴露）。
-import { propOf, type FeatureLike, type FeaturePropertyValue } from '@/lib/carto-ir/feature-props';
 
 /** 要素 id 值域收窄（string|number 之外 —— boolean/null 等 —— 不作 id）。 */
-function idValue(v: FeaturePropertyValue): string | number | undefined {
-  return typeof v === 'string' || typeof v === 'number' ? v : undefined;
-}
+
 
 interface UseFeatureSelectionOptions {
   /** 图层 id 集合 ref（sublayer → 父层解析用）。 */
@@ -62,11 +61,9 @@ export function useFeatureSelection({
     const sublayerId = feature.layer?.id
     const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
     const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
-    const props = (feature.properties ?? {}) as FeatureLike
     // id 裁决既有语义（保持行为逐位一致）：feature.id → props.id → OBJECTID。
-    const rawFeatureId = (feature.id as string | number | undefined)
-      ?? idValue(propOf(props, 'id'))
-      ?? idValue(propOf(props, 'OBJECTID'))
+    const props = feature.properties ?? {}
+    const rawFeatureId = resolveFeatureId(feature.properties, feature.id) ?? undefined
     const targetId = parentId ?? sublayerId
     const layer = targetId ? layersMapRef.current[targetId] : undefined
     const isMvt = !!(layer && isMvtLayer(layer))
@@ -108,18 +105,12 @@ export function useFeatureSelection({
     // additive（shift 点选）只在**同层且同一 id 字段**上追加去重（跨 id 空间
     // 合并会产生永远匹配不到的混合过滤），否则替换。
     const prev = opts?.additive ? getSelection() : null
-    const propIdField = propOf(props, 'id') != null
-      ? 'id'
-      : propOf(props, 'OBJECTID') != null ? 'OBJECTID' : ''
+    const idField = resolveFeatureIdField(feature.properties, feature.id) ?? undefined
     const sameLayer = prev != null && prev.layer_id === layerKey
-      && prev.source === 'map'
-      && (prev.id_field ?? '') === (feature.id != null ? '$id' : propIdField)
-    const idField = feature.id != null
-      ? '$id'
-      : (propIdField || undefined)
+      && prev.source === 'map' && (prev.id_field ?? '') === (idField ?? '')
     const mergedIds = sameLayer && rawFeatureId != null
       ? Array.from(new Set([...prev!.selected_ids, String(rawFeatureId)]))
-      : (rawFeatureId != null ? [String(rawFeatureId)] : [])
+      : (rawFeatureId != null ? [String(rawFeatureId)] : (sameLayer ? prev!.selected_ids : []))
     publishSelection('select', {
       source: 'map',
       layer_id: layerKey,
@@ -177,9 +168,7 @@ export function useFeatureSelection({
                 authBbox = [af.bbox[0] as number, af.bbox[1] as number, af.bbox[2] as number, af.bbox[3] as number]
               }
             } catch { /* ignore */ }
-            const authId = af.id
-              ?? idValue(propOf(authProps, 'id'))
-              ?? cur.featureId
+            const authId = resolveFeatureId(authProps, af.id) ?? cur.featureId
             useHudStore.getState().setSelectedFeature({
               ...cur,
               properties: authProps,

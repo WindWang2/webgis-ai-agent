@@ -1,4 +1,4 @@
-"""webgis_selection_scope 工具测试（ADR-0283 D1/D3）。
+"""webgis_selection_scope 工具测试（ADR-0285 D1/D3）。
 
 真实 registry dispatch + 真实 in-memory session store：注册面、当前选择
 验证 happy path、previous 多轮指代、无选择/禁用 typed 错误。

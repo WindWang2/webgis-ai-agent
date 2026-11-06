@@ -109,13 +109,13 @@ def test_corrupt_and_unknown_snapshots_not_judged_stale():
     cat = _catalog(*_healthy_chain())
     corrupt = explain_staleness(
         {"schema_version": 1, "generation_fingerprint": "short"}, cat)
-    assert corrupt["stale"] is False
+    assert corrupt["stale"] is None
     assert corrupt["reasons"] == [REASON_SNAPSHOT_CORRUPT]
     assert corrupt["diff"] == {}
     assert "not judged stale" in corrupt["summary"]["note"]
     unknown = explain_staleness(
         {"schema_version": 99, "generation_fingerprint": "a" * 32}, cat)
-    assert unknown["stale"] is False
+    assert unknown["stale"] is None
     assert unknown["reasons"] == [REASON_SNAPSHOT_SCHEMA_UNKNOWN]
     assert unknown["summary"]["note"]
 
@@ -142,7 +142,7 @@ def test_corrupt_catalog_version_is_disclosed_not_raised_1740():
         snap = dict(healthy, catalog_version=bad)
         assert validate_snapshot_ref(snap) == REASON_SNAPSHOT_CORRUPT
         res = explain_staleness(snap, cat)
-        assert res["stale"] is False
+        assert res["stale"] is None
         assert res["reasons"] == [REASON_SNAPSHOT_CORRUPT]
         assert res["summary"]["catalog_version_changed"] is False
     # 真整数版本号照常归因（前进的版本号 = 世代变化证据）。

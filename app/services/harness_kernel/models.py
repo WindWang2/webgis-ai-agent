@@ -258,6 +258,9 @@ class PlanTurnRecord(BaseModel):
     host: PlanHost = "unknown"
     started_at: float = 0.0
     ended_at: float = 0.0
+    settle_token: str = Field(default="", max_length=64)
+    settle_started_at: float = 0.0
+    settle_finished_at: float = 0.0
     status: TurnStatus = "running"
     tool_calls: int = 0
     phase: TurnPhase = "created"
@@ -356,6 +359,7 @@ class PlanRecoveryMetadata(BaseModel):
     resumed_from_turn_id: str = ""
     checkpoint_id: str = ""
     checkpoint_at: float = 0.0
+    checkpoint_sequence: int = Field(default=0, ge=0)
     resume_count: int = 0
 
 

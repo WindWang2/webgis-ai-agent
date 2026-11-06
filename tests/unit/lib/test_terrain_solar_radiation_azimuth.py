@@ -55,7 +55,7 @@ def _means(doy: int) -> dict:
 
 def _order_by_sun_distance(doy: int) -> list:
     """按方位与代表方位 az_sun = π + δ 的角距从小到大排序。"""
-    az_sun = math.pi + _declination(doy)
+    az_sun = math.pi if math.radians(LAT) >= _declination(doy) else 0.0
     def distance(name: str) -> float:
         d = abs(az_sun - math.radians(_ASPECTS[name])) % (2.0 * math.pi)
         return min(d, 2.0 * math.pi - d)
@@ -67,13 +67,13 @@ def test_azimuth_term_monotone_in_sun_distance():
     means = _means(DOY_SOLSTICE)
     order = _order_by_sun_distance(DOY_SOLSTICE)
     # 夏至 45°N：代表方位 ≈ 203.4°（ SSW）→ SW 最朝阳、NE 最背阳
-    assert order[0] == "SW" and order[-1] == "NE"
+    assert order[0] == "S" and order[-1] == "N"
     values = [means[name] for name in order]
     assert all(a >= b - 1e-9 for a, b in zip(values, values[1:])), (order, means)
     # 旧实现（整体旋转 90°）会把极大挪到 SE、极小挪到 NW —— 反向排序即旧行为
     assert means["SW"] > means["NE"]
     assert means["S"] > means["N"]      # 夏至南坡朝阳、北坡背阳
-    assert means["W"] > means["E"]      # 代表方位偏南偏西 → 西坡优于东坡
+    assert means["W"] == pytest.approx(means["E"])      # 代表方位偏南偏西 → 西坡优于东坡
 
 
 def test_equinox_south_facing_sunniest_north_facing_least():

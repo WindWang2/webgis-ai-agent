@@ -227,5 +227,5 @@ class TestPublishedUrlsCarryAuth:
         r = await client.get(f"/api/v1/layers/terrain-sources?session_id={sid}&token=tok-url-1")
         assert r.status_code == 200
         src = r.json()["session_terrain_sources"][0]
-        assert "&token=tok-url-1" in src["tiles_url_template"]
-        assert "&token=tok-url-1" in src["tilejson_url"]
+        assert "&sig=" in src["tiles_url_template"]
+        assert "&sig=" in src["tilejson_url"]

@@ -19,6 +19,7 @@ Provenance contract (see .scratch/workflow-lineage-v2/invariants.md):
 import uuid
 import json
 import logging
+import asyncio
 import os
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
@@ -66,6 +67,7 @@ async def _dispatch_step_via_service(
     session_id: Optional[str],
     service,
     executed_tools: set,
+    tool_call_id: str = "wf-step",
 ) -> Dict[str, Any]:
     """#694：workflow 步骤经 ToolDispatchService 执行（不再直调 registry）。
 
@@ -78,7 +80,7 @@ async def _dispatch_step_via_service(
     if service is None:
         service = ToolDispatchService(registry=tool_registry)
     _tc = {
-        "id": "wf-step",
+        "id": tool_call_id,
         "function": {
             "name": tool_name,
             "arguments": json.dumps(tool_args, ensure_ascii=False, default=str),
@@ -86,7 +88,7 @@ async def _dispatch_step_via_service(
     }
     _res = await service.dispatch(_tc, session_id=session_id, executed_tools=executed_tools)
     _status = getattr(_res.status, "value", _res.status)
-    if _status == "error":
+    if _status in {"error", "repeated"}:
         raise RuntimeError(f"tool '{tool_name}' failed: {_res.error_msg}")
     out = _res.raw_result
     return out if isinstance(out, dict) else {"success": True, "data": out}
@@ -351,7 +353,9 @@ class WorkflowEngine:
         project (cross-project / IDOR) — enforced identically for run, replay,
         and resume so none of them can bypass the access check.
         """
-        if expected_project_id and workflow.project_id and workflow.project_id != expected_project_id:
+        if not expected_project_id:
+            raise ValueError("workflow execution requires an explicit project scope")
+        if workflow.project_id != expected_project_id:
             logger.warning(
                 "[WorkflowEngine] IDOR attempt: workflow %s (project %s) invoked "
                 "under project %s by user %s",
@@ -516,6 +520,7 @@ class WorkflowEngine:
             workflow_id=workflow.id,
             workflow_version=workflow.version,
             project_id=workflow.project_id,
+            session_id=session_id,
             workflow_revision_id=revision.id,
             graph_snapshot=revision.graph_spec,
             input_bindings=bound_inputs,
@@ -572,8 +577,8 @@ class WorkflowEngine:
         execution_trace: List[Dict[str, Any]] = list(seed_trace or [])
         artifact_records: List[Dict[str, Any]] = list(seed_artifact_records or [])
 
-        step_dispatch_service = None  # #694: lazily built ToolDispatchService
-        step_executed_tools: set = set()
+        from app.services.tool_dispatch_service import ToolDispatchService
+        step_dispatch_service = ToolDispatchService(registry=tool_registry)
         # Wave-4 (audit 08 §6.2.4): the mapspec_fingerprint lineage column has
         # existed since migration 0022 but was never populated by the engine.
         # Resolve it ONCE per run when a session map context exists (same
@@ -641,7 +646,7 @@ class WorkflowEngine:
                 # 不再被绕过）；helper 可独立测试。
                 tool_result = await _dispatch_step_via_service(
                     tool_registry, tool_name, tool_args, session_id,
-                    step_dispatch_service, step_executed_tools,
+                    step_dispatch_service, set(), tool_call_id=f"wf-{run_id}-{step_id}",
                 )
 
                 step_duration = (datetime.now(timezone.utc) - step_start).total_seconds()
@@ -686,6 +691,13 @@ class WorkflowEngine:
                     "step_id": step_id,
                     "tool_name": tool_name,
                 }
+                if session_id:
+                    from app.services.session_data import session_data_manager
+                    from app.services.session_data_protocol import is_unavailable_ref
+                    logical_ref = await session_data_manager.store(session_id, tool_result, prefix="workflow-output")
+                    if is_unavailable_ref(logical_ref):
+                        raise RuntimeError("workflow result persistence unavailable")
+                    artifact_meta["logical_result_ref"] = logical_ref
                 if step_capability:
                     artifact_meta["capability"] = step_capability
                 if step_algorithm:
@@ -769,7 +781,7 @@ class WorkflowEngine:
             if rerun_disclosures:
                 run.cost_perf_summary["rerun_disclosures"] = rerun_disclosures
 
-        except Exception as e:
+        except BaseException as e:
             logger.error("[WorkflowEngine] step failed: %s", e, exc_info=True)
             # Roll back only the failing step's uncommitted artifact/lineage;
             # prior steps are already durable via the per-step commits above.
@@ -778,7 +790,7 @@ class WorkflowEngine:
             except Exception:
                 logger.warning("[WorkflowEngine] rollback after step failure failed", exc_info=True)
             run = db.merge(run)
-            run.status = "failed"
+            run.status = "cancelled" if isinstance(e, asyncio.CancelledError) else "failed"
             run.error_message = str(e)
             run.completed_at = datetime.now(timezone.utc)
             run.execution_trace = list(execution_trace)
@@ -795,6 +807,9 @@ class WorkflowEngine:
                     "[WorkflowEngine] failed-status commit failed for run %s",
                     run_id, exc_info=True,
                 )
+
+        if run.status == "cancelled":
+            raise asyncio.CancelledError("workflow execution cancelled")
 
         # Build the reproducibility manifest + fingerprint from whatever
         # completed (full or partial). Both fresh and resumed runs get a manifest
@@ -1485,7 +1500,7 @@ class WorkflowEngine:
                 "(%s) — invalidation set honored, fingerprints refreshed",
                 prior.id, drifted,
             )
-            drift_disclosure["input_drift"] = drifted
+            raise ValueError("workflow input fingerprints changed; start a fresh run before reusing outputs")
 
         # Registry view built once for every resolution below (stale-seed check
         # + the re-executed steps in _execute).
@@ -1569,6 +1584,8 @@ class WorkflowEngine:
     def _load_and_authorize_run(
         db: Session, run_id: str, expected_project_id: Optional[str], user_id: Optional[str], org_id: Optional[int]
     ) -> WorkflowRun:
+        if not expected_project_id:
+            raise ValueError("workflow replay/resume requires an explicit project scope")
         prior = db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id)).scalar_one_or_none()
         if not prior:
             raise ValueError(f"WorkflowRun {run_id} not found")
@@ -1576,7 +1593,7 @@ class WorkflowEngine:
         # cannot bypass the project ownership check. Fail CLOSED — if the caller
         # names a project, the run must belong to exactly that project (a NULL
         # project_id on a legacy/corrupt row must NOT bypass the check).
-        if expected_project_id and prior.project_id != expected_project_id:
+        if prior.project_id != expected_project_id:
             logger.warning(
                 "[WorkflowEngine] IDOR attempt: run %s (project %s) invoked under "
                 "project %s by user %s", run_id, prior.project_id, expected_project_id, user_id,
@@ -1598,24 +1615,27 @@ class WorkflowEngine:
         # Prior revision missing (deleted): build a throwaway snapshot revision so
         # the run still records a concrete, immutable graph identity.
         graph_fp = compute_graph_fingerprint(graph_spec)
-        latest_no = db.execute(
-            select(WorkflowRevision.revision_no)
-            .where(WorkflowRevision.workflow_id == workflow.id)
-            .order_by(WorkflowRevision.revision_no.desc())
-        ).scalars().first() or 0
-        revision = WorkflowRevision(
-            id=f"wfrev_{uuid.uuid4().hex[:16]}",
-            workflow_id=workflow.id,
-            revision_no=latest_no + 1,
-            graph_spec=graph_spec,
-            inputs_schema=workflow.inputs_schema,
-            graph_fingerprint=graph_fp,
-            created_by=user_id,
-            created_at=datetime.now(timezone.utc),
-        )
-        db.add(revision)
-        db.flush()
-        return revision
+        for attempt in range(3):
+            latest_no = db.execute(
+                select(WorkflowRevision.revision_no)
+                .where(WorkflowRevision.workflow_id == workflow.id)
+                .order_by(WorkflowRevision.revision_no.desc())
+            ).scalars().first() or 0
+            revision = WorkflowRevision(
+                id=f"wfrev_{uuid.uuid4().hex[:16]}", workflow_id=workflow.id,
+                revision_no=latest_no + 1, graph_spec=graph_spec,
+                inputs_schema=workflow.inputs_schema, graph_fingerprint=graph_fp,
+                created_by=user_id, created_at=datetime.now(timezone.utc),
+            )
+            try:
+                with db.begin_nested():
+                    db.add(revision)
+                    db.flush()
+                return revision
+            except IntegrityError:
+                if attempt == 2:
+                    raise
+        raise RuntimeError("workflow revision retry exhausted")
 
     @staticmethod
     async def _reconstruct_prior(
@@ -1656,35 +1676,30 @@ class WorkflowEngine:
 
         from app.services.session_data import session_data_manager
 
+        if completed and not session_id:
+            return None, [], [], {}
         seed_outputs: Dict[str, Dict[str, Any]] = {}
         step_artifact_map: Dict[str, str] = {}
         seed_artifacts: List[Dict[str, Any]] = []
-        verified = False
         for sid in completed:
             art = step_to_artifact.get(sid)
             if art is None:
                 return None, [], [], {}
             ref = art.storage_ref
-            if session_id:
-                # Probe the session store to verify the prior output is still
-                # retrievable. Gone (or store error) → cannot faithfully resume.
-                if not ref:
+            logical_ref = (art.metadata_json or {}).get("logical_result_ref")
+            if not session_id or not isinstance(logical_ref, str) or not logical_ref.startswith("ref:"):
+                return None, [], [], {}
+            try:
+                logical_result = await session_data_manager.get(session_id, logical_ref)
+            except Exception:
+                logger.warning("workflow logical result unavailable for resume", exc_info=True)
+                return None, [], [], {}
+            if logical_result is None:
+                return None, [], [], {}
+            if ref:
+                if await session_data_manager.get(session_id, ref) is None:
                     return None, [], [], {}
-                try:
-                    payload = await session_data_manager.get(session_id, ref)
-                except Exception as e:
-                    logger.warning(
-                        "[WorkflowEngine] session store error reconstructing '%s' "
-                        "for run %s: %s", ref, prior.id, e,
-                    )
-                    return None, [], [], {}
-                if payload is None:
-                    return None, [], [], {}
-                verified = True
-            # Reconstruct the SAME descriptor shape a fresh run produces
-            # ({"result": {"ref_id": ...}}) so downstream tools get the structure
-            # they expect, not the raw parked payload.
-            seed_outputs[sid] = {"result": {"ref_id": ref}}
+            seed_outputs[sid] = {"result": logical_result}
             step_artifact_map[sid] = art.id
             seed_artifacts.append({
                 "id": art.id,
@@ -1695,15 +1710,6 @@ class WorkflowEngine:
                 "content_fingerprint": art.content_fingerprint,
                 "storage_ref": ref,
             })
-
-        if session_id is None:
-            # API path has no session to probe against: reconstruct best-effort
-            # and flag that retrievability was NOT verified (INV-RESUME1 caveat).
-            logger.info(
-                "[WorkflowEngine] resume of run %s reconstructed prior outputs "
-                "without a session probe (best-effort)", prior.id,
-            )
-        _ = verified
 
         # Carry the prior trace entries for completed steps into the new manifest.
         seed_trace: List[Dict[str, Any]] = []

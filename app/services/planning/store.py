@@ -23,8 +23,8 @@ Concurrency (P1-B / planning-reviewer P2-4 / adversarial P2-8):
 - ``save`` carries a revision guard: when the *persisted* current plan has a
   different ``plan_id`` and a newer-or-equal ``revision`` than the plan being
   saved, the write is refused (log warning) and the store's plan is re-read
-  into the process cache instead of clobbering. Last-writer-wins still holds
-  for same-``plan_id`` revisions. ``supersede`` promotes a brand-new plan by
+  into the process cache instead of clobbering. Same-plan revisions cannot move backward; changing plan identity
+  requires explicit supersede. ``supersede`` promotes a brand-new plan by
   design, so it bypasses the guard (``_promote=True``).
 
 Restart-continuity bound (persistence P3): plans persist only for the
@@ -34,12 +34,14 @@ restart within that window resumes the current plan; beyond it the plan is gone
 same DATA_TTL *and* to per-session LRU eviction like any other session ref:
 long-retired plans may be evicted and ``get_by_id`` then returns None.
 """
+import copy
 import logging
 import time
 from collections import OrderedDict
 from typing import Any, Optional
 
 from app.services.session_data import session_data_manager
+from app.services.distributed_lock import session_lock_registry
 
 from .models import CanonicalPlan, PlanStatus
 
@@ -81,12 +83,12 @@ class _PlanLRU:
             self._data.pop(key, None)
             return None
         self._data.move_to_end(key)
-        return value
+        return copy.deepcopy(value)
 
     def put(self, key: str, value: Any) -> None:
         if key in self._data:
             self._data.move_to_end(key)
-        self._data[key] = (value, time.monotonic() + L1_TTL_SECONDS)
+        self._data[key] = (copy.deepcopy(value), time.monotonic() + L1_TTL_SECONDS)
         while len(self._data) > self.capacity:
             self._data.popitem(last=False)
 
@@ -168,24 +170,32 @@ class PlanStore:
         ``plan``, this save refuses to clobber it — a stale worker must not
         revert a newer plan. It logs a warning and re-reads the store's plan
         into the process cache (converging the worker instead of fighting it).
-        Same-``plan_id`` saves stay last-writer-wins regardless of revision.
+        Same-plan revisions must not move backward; only supersede promotes a different plan identity.
 
         ``_promote`` (internal, used by ``supersede``) bypasses the guard: the
         caller deliberately replaced the current plan with a brand-new one.
         """
+        async with session_lock_registry.lock(f"plan-store:{plan.session_id}", fail_on_degraded=True, fail_on_lost=True):
+            await self._save_locked(plan, _promote=_promote)
+
+    async def _save_locked(self, plan: CanonicalPlan, *, _promote: bool = False) -> None:
+        invalidate = getattr(self._session_store, "invalidate_local_cache", None)
+        if callable(invalidate):
+            invalidate(plan.session_id)
         plan.updated_at = time.time()
-        self._cache.put(plan.session_id, plan)
+        # Never expose a proposal before its revision guard and durable write.
+        self._cache.pop(plan.session_id)
         payload = plan.model_dump()
 
         ref_id = await self._session_store.resolve_alias(plan.session_id, CURRENT_PLAN_ALIAS)
         if ref_id != CURRENT_PLAN_ALIAS:
+            persisted_for_cas = await self._safe_get(plan.session_id, ref_id)
             if not _promote:
-                persisted = await self._safe_get(plan.session_id, ref_id)
-                current = self._safe_validate(persisted) if persisted is not None else None
+                current = self._safe_validate(persisted_for_cas) if persisted_for_cas is not None else None
                 if (
                     current is not None
-                    and current.plan_id != plan.plan_id
-                    and current.revision >= plan.revision
+                    and (current.revision > plan.revision
+                         or current.plan_id != plan.plan_id)
                 ):
                     logger.warning(
                         "PlanStore.save refused to clobber newer plan: session=%s "
@@ -196,11 +206,22 @@ class PlanStore:
                     )
                     self._cache.put(plan.session_id, current)
                     return
-            if await self._session_store.overwrite(plan.session_id, ref_id, payload):
+            if not isinstance(persisted_for_cas, dict):
+                raise RuntimeError("current plan ref unavailable; refusing to republish")
+            if (persisted_for_cas.get("_cleared") and not _promote
+                    and persisted_for_cas.get("cleared_plan_id") == plan.plan_id):
+                raise RuntimeError("cleared plan cannot be republished; create a new plan")
+            if await self._session_store.overwrite(
+                plan.session_id, ref_id, payload, expected_revision=persisted_for_cas.get("revision", 0),
+            ):
+                self._cache.put(plan.session_id, plan)
                 return
-            # overwrite failed (ref evicted / backend degraded) → re-mint below
+            raise RuntimeError("current plan changed or unavailable; reload before saving")
         new_ref = await self._session_store.store(plan.session_id, payload, prefix="plan")
-        await self._session_store.set_alias(plan.session_id, new_ref, CURRENT_PLAN_ALIAS)
+        if not await self._session_store.set_alias_if_absent(plan.session_id, new_ref, CURRENT_PLAN_ALIAS):
+            await self._session_store.delete_ref(plan.session_id, new_ref)
+            raise RuntimeError("current plan publication unavailable")
+        self._cache.put(plan.session_id, plan)
 
     async def supersede(self, session_id: str, new_plan: CanonicalPlan) -> Optional[CanonicalPlan]:
         """Mark the current plan superseded and promote ``new_plan``.
@@ -211,15 +232,20 @@ class PlanStore:
         session's current plan. Returns the superseded plan, or None when there
         was no current plan.
         """
-        current = await self.load_current(session_id)
-        if current is not None:
-            current.status = PlanStatus.superseded
-            current.updated_at = time.time()
-            await self._save_history(session_id, current)
-        # _promote=True: 新计划取代旧计划是 supersede 的显式意图，不走
-        # save() 的跨 plan_id revision guard（否则会误拒绝自己的提升）。
-        await self.save(new_plan, _promote=True)
-        return current
+        if new_plan.session_id != session_id:
+            raise ValueError("new plan belongs to another session")
+        async with session_lock_registry.lock(f"plan-store:{session_id}", fail_on_degraded=True, fail_on_lost=True):
+            self._cache.pop(session_id)
+            invalidate = getattr(self._session_store, "invalidate_local_cache", None)
+            if callable(invalidate):
+                invalidate(session_id)
+            current = await self.load_current(session_id)
+            if current is not None:
+                current.status = PlanStatus.superseded
+                current.updated_at = time.time()
+                await self._save_history(session_id, current)
+            await self._save_locked(new_plan, _promote=True)
+            return current
 
     async def get_by_id(self, session_id: str, plan_id: str) -> Optional[CanonicalPlan]:
         """Load a plan by id: the current plan, or a superseded history plan."""
@@ -243,15 +269,32 @@ class PlanStore:
     async def clear(self, session_id: str) -> None:
         """Drop the current plan for the session (cache + store).
 
-        ``session_data_manager`` has no single-key delete, so the current ref is
-        tombstoned with None — a later ``load_current`` returns None, and a
+        The current ref is
+        tombstoned with a revision-bearing clear marker — a later ``load_current`` returns None, and a
         later ``save`` overwrites the tombstone in place. Superseded history
         plans remain addressable via ``get_by_id``.
         """
-        self._cache.pop(session_id)
-        ref_id = await self._session_store.resolve_alias(session_id, CURRENT_PLAN_ALIAS)
-        if ref_id != CURRENT_PLAN_ALIAS:
-            await self._session_store.overwrite(session_id, ref_id, None)
+        async with session_lock_registry.lock(f"plan-store:{session_id}", fail_on_degraded=True, fail_on_lost=True):
+            self._cache.pop(session_id)
+            ref_id = await self._session_store.resolve_alias(session_id, CURRENT_PLAN_ALIAS)
+            if ref_id == CURRENT_PLAN_ALIAS:
+                return
+            current = await self._safe_get(session_id, ref_id)
+            if current is None:
+                # Explicit clear can retire a pre-upgrade null tombstone; save
+                # itself still never remints an unavailable current reference.
+                if not await self._session_store.delete_ref(session_id, ref_id):
+                    raise RuntimeError("current plan unavailable during clear")
+                return
+            if not isinstance(current, dict):
+                raise RuntimeError("current plan unavailable during clear")
+            revision = int(current.get("revision", 0))
+            tombstone = {"_cleared": True, "revision": revision + 1,
+                         "cleared_plan_id": current.get("plan_id", current.get("cleared_plan_id"))}
+            if not await self._session_store.overwrite(
+                session_id, ref_id, tombstone, expected_revision=revision,
+            ):
+                raise RuntimeError("current plan changed during clear")
 
     # ── internals ──────────────────────────────────────────────────────────
 

@@ -227,3 +227,28 @@ def test_refresh_signal_changed_detection(tmp_path):
     time.sleep(0.01)
     write_refresh_signal(root, "install y")
     assert host.refresh_signal_changed(root) is True
+
+
+def test_refresh_revocations_removes_inprocess_projection(tmp_path):
+    from app.extensions_platform.trust_store import TrustStore
+
+    pack = _worker_pack(tmp_path)
+    manifest_file = pack / "manifest.json"
+    manifest = json.loads(manifest_file.read_text())
+    manifest["execution"]["mode"] = "in_process"
+    manifest_file.write_text(json.dumps(manifest))
+    trust_file = _trust_store_file(tmp_path, [])
+    registry = ToolRegistry()
+    host = ExtensionHost(tool_registry=registry, policy=_policy(tmp_path, trust_store=TrustStore.load(trust_file)))
+    try:
+        host.discover()
+        assert not has_errors(host.activate("lc3.pack"))
+        assert registry.has("lc3_slow")
+        _trust_store_file(tmp_path, [{"id": "lc3.pack", "version": "1.0.0"}])
+        host._revocation_mtime = None
+        assert host.refresh_revocations() == ["lc3.pack"]
+        assert not registry.has("lc3_slow")
+        assert host.get_record("lc3.pack").ledger is None
+        assert host.get_record("lc3.pack").state is ExtensionState.QUARANTINED
+    finally:
+        host.reset()

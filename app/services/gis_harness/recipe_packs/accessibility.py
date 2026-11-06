@@ -16,7 +16,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     wf,
     auto_fallback,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _FACILITY_ROLE = subject_role()
 _DEMAND_ROLE = role(
@@ -38,8 +38,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="proximity_overlay",
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_BASE,
-        fallbacks=[RecipeFallback(when="network unavailable", reason_code="NETWORK_DISCONNECTED",
-                                  use="euclidean_buffer")],
+        fallbacks=[],
         export_profile={"formats": ["png"]},
         priority=43,
         schema_version=2,
@@ -99,8 +98,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="administrative_choropleth",
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="admin units unavailable", reason_code="NEEDS_ADMIN_UNITS",
-                                  use="point_overlay")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=44,
         schema_version=2,

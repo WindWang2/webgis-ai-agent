@@ -17,7 +17,7 @@ PKG_DIR = Path(__file__).resolve().parents[3] / "app" / "evaluation"
 
 def test_all_evaluation_modules_importable():
     files = sorted(PKG_DIR.glob("*.py"))
-    assert len(files) == 33, f"app/evaluation 模块数漂移: {len(files)}"
+    assert len(files) == 34, f"app/evaluation 模块数漂移: {len(files)}"
     for f in files:
         assert importlib.import_module(f"app.evaluation.{f.stem}") is not None
 

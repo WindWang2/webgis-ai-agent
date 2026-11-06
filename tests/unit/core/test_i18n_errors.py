@@ -136,9 +136,8 @@ def test_middleware_localizes_error_envelope(monkeypatch):
     monkeypatch.setattr(type(app_settings), "is_production", lambda self: True)
     client = TestClient(_make_app(), raise_server_exceptions=False)
     resp = client.get("/boom", headers={"Accept-Language": "en-US"})
-    # 既有 handler 语义：PlatformError 不带 status_code → 信封状态 500
-    # （http_status_for 的映射属恢复面，不在信封路径）；此处只断言信封字段。
-    assert resp.status_code == 500
+    # 错误信封使用类别的 HTTP 映射：超时为 504。
+    assert resp.status_code == 504
     data = resp.json()
     assert data["success"] is False
     assert data["category"] == "timeout"  # 结构化字段原样

@@ -74,7 +74,7 @@ class TestGet3DCapabilities:
         await _seed(session_id)
         # dem 源在 → terrain available；无挤出层时 extrusion unavailable
         res = await registry.dispatch("get_3d_capabilities", {
-            "session_id": session_id})
+            "session_id": session_id}, session_id=session_id)
         assert res["success"] is True
         entries = {e["key"]: e for e in res["capabilities"]}
         assert entries["terrain"]["status"] == "available"
@@ -93,7 +93,7 @@ class TestApplySceneRepresentation:
         before = await mapspec_store.get_mapspec(session_id)
         res = await registry.dispatch("apply_scene_representation", {
             "session_id": session_id, "user_dimension": "3d",
-            "terrain_requested": True, "dry_run": True})
+            "terrain_requested": True, "dry_run": True}, session_id=session_id)
         assert res["success"] is True
         assert res["decision"]["mode"] == "3d"
         assert res["suggested_scene"]["terrain"]["source"] == "dem"
@@ -107,7 +107,7 @@ class TestApplySceneRepresentation:
         await _seed(session_id)
         res = await registry.dispatch("apply_scene_representation", {
             "session_id": session_id, "user_dimension": "3d",
-            "terrain_requested": True})
+            "terrain_requested": True}, session_id=session_id)
         assert res["success"] is True, res
         assert res["applied"] is True
         assert res["scene_applied"]["mode"] == "3d"
@@ -132,7 +132,7 @@ class TestApplySceneRepresentation:
         await mapspec_store.init_project(session_id)
         res = await registry.dispatch("apply_scene_representation", {
             "session_id": session_id, "user_dimension": "3d",
-            "terrain_requested": True})
+            "terrain_requested": True}, session_id=session_id)
         assert res["success"] is True
         assert res["decision"]["mode"] != "3d"
         codes = {d["code"] for d in res["decision"]["degradations"]}
@@ -155,7 +155,7 @@ class TestFlyCamera:
     async def test_applies_view_transactionally(self, registry, session_id):
         await _seed(session_id)
         res = await registry.dispatch("fly_camera", {
-            "session_id": session_id, "pitch": 45.0, "bearing": -15.0})
+            "session_id": session_id, "pitch": 45.0, "bearing": -15.0}, session_id=session_id)
         assert res["success"] is True, res
         assert res["status"] == "apply" and res["applied"] is True
         from app.services.mapspec_store import mapspec_store
@@ -185,7 +185,7 @@ class TestFlyCamera:
                         "bearing": 88.0, "pitch": 65.0},
         }])
         res = await registry.dispatch("fly_camera", {
-            "session_id": session_id, "pitch": 30.0})
+            "session_id": session_id, "pitch": 30.0}, session_id=session_id)
         assert res["success"] is True
         assert res["status"] == "user_wins_suppressed"
         assert res["applied"] is False
@@ -205,7 +205,7 @@ class TestRun3DAnalysis:
         await mapspec_store.init_project(session_id)
         res = await registry.dispatch("run_3d_analysis", {
             "session_id": session_id, "analysis": "viewshed",
-            "raster_path": "dem.tif", "observer_x": 1.0, "observer_y": 1.0})
+            "raster_path": "dem.tif", "observer_x": 1.0, "observer_y": 1.0}, session_id=session_id)
         assert res["success"] is False
         assert res["declined"] is True
         assert res["reason_code"] == "SCENE_CAP_VIEWSHED_NO_DEM"
@@ -215,7 +215,7 @@ class TestRun3DAnalysis:
     async def test_declines_pending_analysis_kinds(self, registry, session_id):
         await _seed(session_id)
         res = await registry.dispatch("run_3d_analysis", {
-            "session_id": session_id, "analysis": "skyline"})
+            "session_id": session_id, "analysis": "skyline"}, session_id=session_id)
         assert res["success"] is False and res["declined"] is True
         assert res["reason_code"] == "SCENE_CAP_ALGORITHM_PENDING_G3D03"
 
@@ -247,7 +247,7 @@ class TestRun3DAnalysis:
                 "session_id": session_id, "analysis": "viewshed",
                 "raster_path": path,
                 "observer_x": 500100.0, "observer_y": 3_999_900.0,
-                "max_distance": 400.0})
+                "max_distance": 400.0}, session_id=session_id)
             assert res["success"] is True, res
             assert res["result"]["success"] is True
             assert 0.0 <= res["result"]["visible_fraction"] <= 1.0
@@ -266,7 +266,7 @@ class TestRun3DAnalysis:
         await _seed(session_id)
         res = await registry.dispatch("run_3d_analysis", {
             "session_id": session_id, "analysis": "viewshed",
-            "observer_x": 0, "observer_y": 0})
+            "observer_x": 0, "observer_y": 0}, session_id=session_id)
         assert res["declined"] is True
         assert res["reason_code"] == "SCENE_ANALYSIS_MISSING_RASTER_PATH"
 
@@ -307,7 +307,7 @@ class TestReview2Anchors:
         ])
         # agent 请求偏离用户偏好的 pitch → 必须被抑制
         res = await registry.dispatch("fly_camera", {
-            "session_id": session_id, "pitch": 65.0})
+            "session_id": session_id, "pitch": 65.0}, session_id=session_id)
         assert res["success"] is True
         assert res["status"] == "user_wins_suppressed", res
         assert "pitch" in res.get("suppressed_axes", [])

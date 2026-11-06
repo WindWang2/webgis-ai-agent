@@ -246,12 +246,12 @@ def project_detail(
             if pid is not None
             else ev_scope.where(SpatialEventRow.project_id.is_(None))
         )
-        ev_scope = ev_scope.limit(200)
+        ev_scope = ev_scope.where(SpatialEventRow.event_id == SpatialWatchFireRow.event_id)
         f_q = (
             select(SpatialWatchFireRow)
             .where(
                 SpatialWatchFireRow.org_id == org_id,
-                SpatialWatchFireRow.event_id.in_(ev_scope),
+                ev_scope.exists(),
             )
             .order_by(SpatialWatchFireRow.id.desc())
             .limit(MAX_EVENTS_PER_PROJECT)

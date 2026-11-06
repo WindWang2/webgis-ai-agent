@@ -57,31 +57,22 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         # dominated the call on 20k+ feature networks (only .geometry is used).
         G = nx.MultiGraph()
 
+        # Unary union nodes both crossings and shared interior vertices.
+        lines = []
         for geom in gdf_network.geometry:
-            # GIS-P3-4: MultiLineString roads must contribute every part —
-            # skipping them silently understated isochrone coverage.
             if isinstance(geom, MultiLineString):
-                line_parts = list(geom.geoms)
+                lines.extend(geom.geoms)
             elif isinstance(geom, LineString):
-                line_parts = [geom]
-            else:
-                continue
-            for part in line_parts:
-                coords = list(part.coords)
-                start_node = coords[0]
-                end_node = coords[-1]
+                lines.append(geom)
+        noded = unary_union(lines)
+        parts = [noded] if isinstance(noded, LineString) else getattr(noded, "geoms", [])
+        for part in parts:
+            coords = list(part.coords)
+            # Adjacent pairs intentionally omit the unmatched final endpoint.
+            for start_node, end_node in zip(coords, coords[1:], strict=False):
+                segment = LineString([start_node, end_node])
+                G.add_edge(start_node, end_node, weight=float(segment.length), geometry=segment)
 
-                # Weight by edge length in METERS. The GeoDataFrame has already
-                # been reprojected to a metric UTM CRS (to_utm_gdf above), so
-                # the geometry length is always in meters. The previous code trusted
-                # a source ``length`` attribute verbatim — but the attribute is
-                # NOT reprojected, so a geographic (EPSG:4326) source carried
-                # degree-valued lengths (~0.01). With max_dist in meters that
-                # made every connected edge "reachable" and the isochrone
-                # swallowed the whole network. Derive from geometry instead.
-                weight = float(part.length) if part.length else 0.0
-                G.add_edge(start_node, end_node, weight=weight, geometry=part)
-        
         isochrone_features = []
         max_dist = float(travel_time_min) * _speed_m_per_min(mode)
         total_clip_failures = 0
@@ -174,7 +165,7 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
                 if d_cur > max_dist:
                     continue
                 for v_nbr, keys in G[u_cur].items():
-                    for ek, edata in keys.items():
+                    for _ek, edata in keys.items():
                         wgt = edata.get("weight")
                         if wgt is None or wgt <= 0:
                             try:
@@ -331,7 +322,7 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
                 "type": "Feature",
                 "geometry": mapping(poly_wgs84),
                 "properties": {
-                    "facility_id": facility.get("id", idx),
+                    "facility_id": (facility.get("id", idx).item() if isinstance(facility.get("id", idx), np.generic) else facility.get("id", idx)),
                     "travel_time": travel_time_min,
                     "max_dist_m": max_dist,
                     "mode": mode,
@@ -429,7 +420,8 @@ def nearest_neighbor_features(source_points: dict | str, target_points: dict | s
         # Reproject back to WGS84 — gdf_src is still in UTM after the KDTree.
         # Isochrones in this file already do this; leaving metres here made
         # the result FeatureCollection plot as easting/northing-as-lon/lat.
-        props = gdf_src.drop(columns='geometry').to_dict('records')
+        from app.lib.geo_analysis.statistics import _feature_props
+        props = [_feature_props(row) for _, row in gdf_src.iterrows()]
         geom_maps = [mapping(g) for g in gdf_src.to_crs("EPSG:4326").geometry]
 
         # #1002: the target RangeIndex row number is not a feature identity —

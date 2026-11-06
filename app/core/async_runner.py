@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import threading
 from contextlib import asynccontextmanager
-from typing import Any, Coroutine
+from typing import Any, Coroutine, AsyncIterator
+from sqlalchemy.ext.asyncio import AsyncSession
 
 _local = threading.local()
 
@@ -84,3 +85,17 @@ async def thread_async_session():
         yield session
     finally:
         await session.close()
+
+
+@asynccontextmanager
+async def current_loop_async_session() -> AsyncIterator[AsyncSession]:
+    """Reuse the application pool; keep sync-bridge loops on their own engine."""
+    if asyncio.get_running_loop() is getattr(_local, "loop", None):
+        async with thread_async_session() as session:
+            yield session
+    else:
+        from app.core.database import AsyncSessionLocal
+        if AsyncSessionLocal is None:
+            raise RuntimeError("async database unavailable")
+        async with AsyncSessionLocal() as session:
+            yield session

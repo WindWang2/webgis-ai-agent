@@ -165,6 +165,9 @@ class TaskTracker:
         """创建新任务"""
         # Evict old tasks if limits exceeded
         self._evict_if_needed()
+        if len(self._tasks) >= self.MAX_TOTAL_TASKS:
+            from app.core.errors import PlatformError, ErrorCategory
+            raise PlatformError("task tracker capacity exhausted", category=ErrorCategory.QUOTA)
 
         task_id = self._generate_task_id()
         task = TaskInfo(
@@ -197,28 +200,11 @@ class TaskTracker:
         return list(self._tasks.values())
 
     def _evict_if_needed(self):
-        """Evict oldest tasks if total exceeds limit.
-
-        Finished tasks are evicted first (existing behavior); if the cap is
-        still exceeded — e.g. many running tasks abandoned by streams whose
-        client disconnected mid-turn — the oldest remaining tasks are evicted
-        regardless of status, so the tracker stays bounded. A running task is
-        NEVER silently dropped (F18): _drop_task lights its cancel token
-        first, so the in-flight execution actually stops instead of becoming
-        an invisible, uncancellable orphan.
-        """
-        if len(self._tasks) <= self.MAX_TOTAL_TASKS:
-            return
-        finished_ids = [
-            tid for tid, t in self._tasks.items()
-            if t.status in (TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled)
-        ]
-        for tid in finished_ids[:len(self._tasks) - self.MAX_TOTAL_TASKS + 50]:
-            self._drop_task(tid)
-
-        # Still over the cap: evict the oldest tasks (dict insertion order)
-        # regardless of status — _drop_task cancels running ones first.
-        for tid in list(self._tasks)[:max(0, len(self._tasks) - self.MAX_TOTAL_TASKS)]:
+        """Reclaim terminal tasks without cancelling another user's live turn."""
+        finished_ids = [tid for tid, task in self._tasks.items()
+                        if task.status in (TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled)]
+        needed = max(0, len(self._tasks) - self.MAX_TOTAL_TASKS + 1)
+        for tid in finished_ids[:needed]:
             self._drop_task(tid)
 
     def _drop_task(self, tid: str) -> None:
@@ -234,11 +220,12 @@ class TaskTracker:
         self._step_counters.pop(tid, None)
         # ADR-0052: token 随 task 一起回收，避免 registry 随进程寿命单调增长
         cancellation_registry.discard(tid)
-        for sid, ids in list(self._session_tasks.items()):
+        if task is not None:
+            ids = self._session_tasks.get(task.session_id, [])
             if tid in ids:
                 ids.remove(tid)
-                if not ids:
-                    self._session_tasks.pop(sid, None)
+            if not ids:
+                self._session_tasks.pop(task.session_id, None)
 
     def start_step(self, task_id: str, tool: str, params: dict) -> TaskStep:
         """启动步骤"""

@@ -64,7 +64,7 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
     selection: Optional[Dict[str, Any]] = None
     active_aoi: Optional[Dict[str, Any]] = None
     last_aoi_kind: Optional[str] = None
-    # ADR-0283 D2：图表类别选择 / 时间窗 settle 的语义面（最新事实）。
+    # ADR-0285 D2：图表类别选择 / 时间窗 settle 的语义面（最新事实）。
     chart_selection: Optional[Dict[str, Any]] = None
     temporal_window: Optional[Dict[str, Any]] = None
     overrides: Dict[str, Dict[str, Any]] = {}
@@ -113,7 +113,7 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
         elif kind in _OVERRIDE_FIELDS:
             layer_id = str(payload.get("layer_id") or "")[:200]
             outcome = record.get("mutation_outcome")
-            if layer_id and outcome == "committed":
+            if layer_id and outcome == "committed" and record.get("mutation_verified") is True:
                 entry = overrides.get(layer_id, {"layer_id": layer_id})
                 for field_name in _OVERRIDE_FIELDS[kind]:
                     if field_name in payload:
@@ -124,7 +124,7 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
                     override_order.remove(layer_id)
                 override_order.append(layer_id)
                 overrides[layer_id] = entry
-            elif layer_id and outcome in ("superseded", "failed"):
+            elif layer_id and outcome in ("committed", "superseded", "failed"):
                 attempted.append({
                     "kind": kind,
                     "layer_id": layer_id,
@@ -133,11 +133,11 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
                 })
         elif kind == "layer_removed":
             layer_id = str(payload.get("layer_id") or "")[:200]
-            if record.get("mutation_outcome") == "committed":
+            if record.get("mutation_outcome") == "committed" and record.get("mutation_verified") is True:
                 overrides.pop(layer_id, None)
                 if layer_id in override_order:
                     override_order.remove(layer_id)
-            elif layer_id and record.get("mutation_outcome") in ("superseded", "failed"):
+            elif layer_id and record.get("mutation_outcome") in ("committed", "superseded", "failed"):
                 attempted.append({
                     "kind": kind,
                     "layer_id": layer_id,

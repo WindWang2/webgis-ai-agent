@@ -22,10 +22,13 @@ for the design rationale.
 from dataclasses import dataclass
 import asyncio
 import logging
-from typing import Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
 from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import SessionStoreProtocol
+
+if TYPE_CHECKING:
+    from app.services.chat.v6_context_blocks import V6BlockResult
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +112,9 @@ def _build_project_context_block(
         return summary.render()
 
 
-def _build_project_memory_block(project_id: str) -> str:
+def _build_project_memory_block(
+    project_id: str, *, user_id: Optional[str] = None, org_id: Optional[str] = None,
+) -> str:
     """Sync DB read of the project's cartographic memory (runs OFF the event loop).
 
     ADR-0069：注入的是**先验而非证据**——只影响下一张图的起点（共享分类
@@ -117,8 +122,8 @@ def _build_project_memory_block(project_id: str) -> str:
     （``stale``/``conflicted`` 一律不注入：注入一个自己都不确定的先验比
     不注入更坏）。账本不可用时返回空串，行为退化为无记忆。
 
-    spec P3：待告知的环境变化（分布漂移致先验过期）前置于记忆块——先说
-    "世界变了"，再给剩下仍然可信的先验。事件读取即消费，不会每个 turn 重复。
+    Pending drift warnings remain visible until an explicit consumer acknowledges
+    them or the source is reclassified. Prompt reads never commit or consume facts.
     """
     from app.services.cartography.distribution_drift import render_env_change_block
     from app.services.cartography.project_memory import (
@@ -129,12 +134,19 @@ def _build_project_memory_block(project_id: str) -> str:
 
     SessionLocal = _get_session_local()
     try:
+        from app.services.project_service import ProjectService
+
         with SessionLocal() as db:
-            events = get_pending_env_changes(db, project_id)
-            if events:
-                db.commit()
+            project = ProjectService.get_project_with_auth(db, project_id, user_id=user_id, org_id=int(org_id) if org_id else None)
+            if project is None:
+                return ""
+            events = get_pending_env_changes(db, project_id, consume=False)
             facts = get_active_facts(db, project_id)
-            return render_env_change_block(events) + render_memory_block(facts)
+            from app.lib.runtime.scoped_text import ScopedText
+            return ScopedText(render_env_change_block(events) + render_memory_block(facts), source_scope={
+                "scope": "project", "scope_id": str(project.id), "project_id": str(project.id),
+                "org_id": str(project.org_id) if project.org_id is not None else "", "sensitivity": "project_scoped",
+            })
     except Exception as ex:  # noqa: BLE001 — 记忆是增值上下文，失败不阻断对话
         logger.warning(
             "Cartographic project memory unavailable for %s: %s", project_id, ex
@@ -164,8 +176,7 @@ def _build_project_knowledge_block(
 
     try:
         from app.services.project_service import ProjectService
-        from app.services.project_knowledge import store as ks
-        from app.services.project_knowledge.card import render_project_knowledge_card
+        from app.services.project_knowledge.card import load_project_knowledge_card
 
         SessionLocal = _get_session_local()
         org_int = None
@@ -184,20 +195,17 @@ def _build_project_knowledge_block(
             )
             if project is None:
                 return ""
-            entries = ks.get_active_entries(
-                db,
-                org_id=effective_org,
-                project_id=str(project.id),
-                limit=200,
-            )
-            if not entries:
-                return ""
-            card = render_project_knowledge_card(
-                entries,
+            card = load_project_knowledge_card(
+                db, org_id=effective_org,
                 project_id=str(project.id),
                 project_name=str(getattr(project, "name", "") or ""),
             )
-            return card.text or ""
+            db.commit()  # Persist authority-backed projection demotions only.
+            from app.lib.runtime.scoped_text import ScopedText
+            return ScopedText(card.text or "", source_scope={
+                "scope": "project", "scope_id": str(project.id), "project_id": str(project.id),
+                "org_id": str(project.org_id) if project.org_id is not None else "", "sensitivity": "project_scoped",
+            })
     except Exception as ex:  # noqa: BLE001 — additive context
         logger.warning("Failed to assemble project knowledge block: %s", ex)
         return ""
@@ -269,7 +277,7 @@ class ChatContextAssembler:
     @staticmethod
     async def _build_v6_context_blocks(
         session_id: str, map_state: dict,
-    ) -> list:
+    ) -> tuple[list["V6BlockResult"], dict[str, object]]:
         """V6 Wave 13 三层上下文块（只读投影；失败即缺席，绝不阻断组装）。
 
         取数口全是既有唯一事实源：SessionPlan store（``load_session_plan``）、
@@ -290,7 +298,7 @@ class ChatContextAssembler:
             if plan is None or getattr(plan, "gis_chapter", None) is None:
                 chapter: dict = {}
             else:
-                chapter = plan.gis_chapter
+                chapter = plan.gis_chapter or {}
             # PERF-08 纪律：mapspec 拉取内部会读 map_state —— 无 review 时
             # verdict 注定 none、revision 主取数口（map_state）已在手，不多
             # 花一次 store IO（与 verdict 块“无 review 不取数”同纪律）。
@@ -391,7 +399,7 @@ class ChatContextAssembler:
             _build_truncation_notice,
         )
         from app.services.chat.context.session_overview import build_session_overview
-        from app.services.chat.context.history_compression import _estimate_tokens
+        from app.services.chat.context.history_compression import _estimate_tokens, _message_tokens
 
         # Extract session metadata & map state
         store = self.store
@@ -517,7 +525,8 @@ class ChatContextAssembler:
             if effective_project_id:
                 try:
                     memory_block = await asyncio.to_thread(
-                        _build_project_memory_block, effective_project_id
+                        _build_project_memory_block, effective_project_id, user_id=user_id,
+                        org_id=str(org_id) if org_id is not None else None,
                     )
                     if memory_block:
                         head.append({"role": "system", "content": memory_block})
@@ -557,7 +566,7 @@ class ChatContextAssembler:
             # 变化），truncated 非空说明模型看到的是有界投影，下游排障可据
             # 此判断"缺块是预算所致而非上游缺席"。
             _v6_truncated = v6_metric.get("truncated") or []
-            if _v6_truncated:
+            if isinstance(_v6_truncated, list) and _v6_truncated:
                 logger.warning(
                     "[V6-CONTEXT-BLOCKS] session=%s blocks truncated: %s",
                     session_id, sorted(_v6_truncated),
@@ -648,20 +657,6 @@ class ChatContextAssembler:
 
         layers = map_state.get("layers", {}) if isinstance(map_state, dict) else {}
         layer_count = len(layers) if isinstance(layers, dict) else 0
-
-        # Calculate estimated total tokens across assembled messages
-        total_tokens = sum(
-            _estimate_tokens(str(m.get("content", ""))) for m in head
-        )
-        if tools_payload:
-            # P3 #3：CJK-aware —— 与历史压缩同一权重（CJK 1 char ≈ 1.5 tokens、
-            # ASCII 4 char ≈ 1 token）。软计入，只影响估算与可观测性，不改变
-            # 任何截断行为。工具 schema 里中文描述（描述/参数说明）越多，估算
-            # 越接近真实 token 数。
-            total_tokens += _estimate_tokens(tools_payload)
-        elif tools_payload_chars and tools_payload_chars > 0:
-            # 兼容旧调用（测试/benchmark 只传字符数）：ASCII-heavy 近似。
-            total_tokens += int(tools_payload_chars / 4) + 1
 
         # ADR-0237 Wave 5：模型感知预算度量（加观测不加行为 —— 截断权仍在
         # 既有组件；超预算以 violations 留痕，供 trace/debug bundle 消费）。
@@ -789,6 +784,20 @@ class ChatContextAssembler:
                 pass
         except Exception:  # noqa: BLE001 — 预算度量绝不阻断组装
             budget_report = None
+
+        # Estimate the final view after condense/offload, including multimodal content.
+        total_tokens = sum(
+            _message_tokens(m) for m in head
+        )
+        if tools_payload:
+            # P3 #3：CJK-aware —— 与历史压缩同一权重（CJK 1 char ≈ 1.5 tokens、
+            # ASCII 4 char ≈ 1 token）。软计入，只影响估算与可观测性，不改变
+            # 任何截断行为。工具 schema 里中文描述（描述/参数说明）越多，估算
+            # 越接近真实 token 数。
+            total_tokens += _estimate_tokens(tools_payload)
+        elif tools_payload_chars and tools_payload_chars > 0:
+            # 兼容旧调用（测试/benchmark 只传字符数）：ASCII-heavy 近似。
+            total_tokens += int(tools_payload_chars / 4) + 1
 
         return ContextAssemblyResult(
             messages=head,

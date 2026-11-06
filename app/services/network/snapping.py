@@ -8,11 +8,22 @@ from __future__ import annotations
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from shapely.geometry import Point, LineString, shape
+from shapely.geometry import Point, LineString, MultiLineString, shape
 from shapely.strtree import STRtree
 
 from app.services.network.models import NetworkDataset, Node, PointSnappingResult, Edge
 from app.services.network.graph_builder import haversine_distance
+
+
+def _edge_line(geometry: Dict[str, Any]) -> LineString:
+    geom = shape(geometry)
+    if isinstance(geom, MultiLineString):
+        from shapely.ops import linemerge
+        geom = linemerge(geom)
+    if not isinstance(geom, LineString):
+        from app.lib.gis.scientific_errors import UnsupportedMethod
+        raise UnsupportedMethod("snapping requires a continuous LineString per edge; split disconnected multipart roads")
+    return geom
 
 
 def _utm_crs_for_bbox(bbox: Optional[List[float]]) -> Optional[str]:
@@ -160,7 +171,7 @@ class PointSnappingService:
         edge_refs: List[Edge] = []
         for edge in network_dataset.edges:
             if edge.geometry:
-                g = shape(edge.geometry)
+                g = _edge_line(edge.geometry)
                 if isinstance(g, LineString):
                     coords = list(g.coords)
                     if to_utm is not None:
@@ -236,8 +247,8 @@ class PointSnappingService:
                 nearest_edge_id=None,
                 fraction_along_edge=0.0,
                 distance_to_network_m=0.0,
-                confidence=1.0,
-                correction_hint=None,
+                confidence=0.0,
+                correction_hint="network contains no snappable edge or node",
             )
 
         _, tree, edge_refs, node_by_id, to_utm, to_wgs, utm_crs = index
@@ -259,17 +270,15 @@ class PointSnappingService:
                 nearest_edge_id=None,
                 fraction_along_edge=0.0,
                 distance_to_network_m=0.0,
-                confidence=1.0,
-                correction_hint=None,
+                confidence=0.0,
+                correction_hint="network contains no snappable edge or node",
             )
 
         nearest_edge = edge_refs[nearest_idx]
         # Re-derive the nearest LineString from the edge. We need the geometry
         # in the SAME space as the tree: UTM when projected, else WGS84.
         if nearest_edge.geometry:
-            nearest_line = shape(nearest_edge.geometry)
-            if not isinstance(nearest_line, LineString):
-                nearest_line = nearest_line.geoms[0] if hasattr(nearest_line, "geoms") else LineString()
+            nearest_line = _edge_line(nearest_edge.geometry)
         else:
             u_node = node_by_id.get(nearest_edge.u)
             v_node = node_by_id.get(nearest_edge.v)

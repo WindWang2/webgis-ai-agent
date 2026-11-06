@@ -8,12 +8,17 @@ too, since they're never removed). RED on the current code; green after the
 oldest-task eviction + empty-session-key cleanup fix.
 """
 from app.services.task_tracker import TaskTracker
+from app.core.errors import PlatformError
+import pytest
 
 
 def _accumulate_abandoned_sessions(tracker, n: int) -> None:
     """Simulate n sessions whose stream died mid-turn, leaving one running task each."""
     for i in range(n):
-        tracker.create(f"session-{i}", f"request {i}")
+        try:
+            tracker.create(f"session-{i}", f"request {i}")
+        except PlatformError as exc:
+            assert exc.http_status == 429
 
 
 def test_running_tasks_are_bounded_after_disconnect_accumulation():
@@ -52,3 +57,12 @@ def test_finished_tasks_still_evicted_first():
     # The running tasks (last 10 created) must survive; only finished evicted.
     running = [t for t in tracker._tasks.values() if t.status == TaskStatus.running]
     assert len(running) == 10
+
+
+def test_full_tracker_refuses_new_turn_without_cancelling_running_owner():
+    tracker = TaskTracker()
+    tasks = [tracker.create(f"live-{i}", "work") for i in range(tracker.MAX_TOTAL_TASKS)]
+    with pytest.raises(PlatformError) as caught:
+        tracker.create("attacker", "extra")
+    assert caught.value.http_status == 429
+    assert all(not task.cancel_token.cancelled for task in tasks)

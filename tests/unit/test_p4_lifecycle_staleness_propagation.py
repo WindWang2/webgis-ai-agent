@@ -10,6 +10,8 @@ class _Rec:
     def __init__(self, artifact_id: str, status: str = "valid"):
         self.artifact_id = artifact_id
         self.status = status
+        self.metadata = {}
+        self.updated_at = 0
 
 
 class _Graph:
@@ -36,12 +38,18 @@ def _registry(monkeypatch):
                                 "metadata": metadata})
         return True
 
-    monkeypatch.setattr("app.services.artifact_registry.list_artifacts",
-                        list_artifacts)
-    monkeypatch.setattr("app.services.artifact_registry.build_artifact_graph",
-                        build_graph)
-    monkeypatch.setattr("app.services.artifact_registry.update_record_metadata",
-                        update_meta)
+    async def load_records(session_id, store):
+        return state["records"]
+
+    async def save_records(session_id, records, store):
+        for record in records.values():
+            if record.metadata:
+                state["writes"].append({"id": record.artifact_id,
+                    "status": record.status, "metadata": record.metadata})
+
+    monkeypatch.setattr("app.services.artifact_registry._load_records", load_records)
+    monkeypatch.setattr("app.services.artifact_registry._save_records", save_records)
+    monkeypatch.setattr("app.services.artifact_registry.build_artifact_graph", build_graph)
     return state
 
 

@@ -1,4 +1,4 @@
-# feat(interaction): 情境化人机协同交互闭环 —— 选择成为受控 Agent 输入 / 多轮指代 / turn 链 / 状态面（ADR-0283）
+# feat(interaction): 情境化人机协同交互闭环 —— 选择成为受控 Agent 输入 / 多轮指代 / turn 链 / 状态面（ADR-0285）
 
 ## 范围
 
@@ -54,7 +54,7 @@ selection-store）**贯通**为多轮人机协同闭环，不建任何第二真�
 - 全部 additive：situation fact 默认 unknown（旧构造方零改动）；manifest/schema
   dump 再生；`GIS_SELECTION_SCOPE=0` 关停工具（typed disabled）；状态条数据面
   失败诚实 error 不阻断壳；map_operations 回执新键旧读者忽略。
-- ADR-0283（预判 #1972 撞号跳过 0282，watermark→283）+ UL 词条 + planning 全套。
+- ADR-0285（预判 #1972 撞号跳过 0282，watermark→285）+ UL 词条 + planning 全套。
 
 ## 技术债 / 诚实披露
 

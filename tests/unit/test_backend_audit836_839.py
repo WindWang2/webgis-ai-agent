@@ -221,3 +221,31 @@ class TestAudit839CreateAllGate:
         monkeypatch.setattr(db_mod, "_apply_runtime_migrations", lambda: None)
         db_mod.init_db()
         assert calls["create_all"] == 1
+
+
+def test_persisted_identity_cache_releases_evicted_and_expired_objects(monkeypatch):
+    import gc
+    import types
+    import weakref
+    from app.services.mapspec import store as module
+
+    class Marker:
+        pass
+
+    now = [0.0]
+    monkeypatch.setattr(module, "time", types.SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(module, "_PERSISTED_CACHE_LIMIT", 2)
+    store = module.MapSpecStore()
+    marker = Marker()
+    reference = weakref.ref(marker)
+    store._remember_persisted("cold", "fp1", {"marker": marker})
+    del marker
+    store._remember_persisted("hot", "fp2", {})
+    store._cached_persisted("hot")
+    store._remember_persisted("new", "fp3", {})
+    gc.collect()
+    assert reference() is None
+    assert set(store._persisted_fp) == {"hot", "new"}
+    now[0] = module._PERSISTED_CACHE_TTL + 1
+    assert store._cached_persisted("hot") == (None, None)
+    assert not store._persisted_obj and not store._persisted_fp

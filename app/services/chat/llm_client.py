@@ -374,25 +374,15 @@ async def close_llm_http_clients() -> None:
 
 
 # ── audit4 #986: 连接相位重试 ────────────────────────────────────────────────
-# 上面池化契约的注释明确了唯一安全的重试边界：连接/池相位（请求尚未被 provider
-# 处理）+ 流式建立时的非 2xx（未 yield 任何 token）。本层只重试这两类：
-#   * httpx.ConnectError / ConnectTimeout / PoolTimeout —— TCP/TLS/池获取失败；
-#   * HTTP 429/500/502/503/504 且**流未建立/未产出内容** —— 幂等安全。
-# 任何已产出 token 的中途失败绝不重试（会重复内容/双执行 tool 调用）。
+# Only connect/pool-phase failures are retried: the provider has not accepted
+# the POST. HTTP failures and any partial response are never replayed.
 _RETRY_TRANSPORT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
-_RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 _RETRY_ATTEMPTS = 3
 _RETRY_BACKOFF_S = 0.5
 
 
 async def _connect_backoff(attempt: int) -> None:
     await asyncio.sleep(_RETRY_BACKOFF_S * (2 ** attempt))
-
-
-def _is_retryable_failure(exc: BaseException) -> bool:
-    if isinstance(exc, _RETRY_TRANSPORT):
-        return True
-    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _RETRY_STATUS
 
 
 # ── ADR-0104 决策 #6(g)：确定性溢出恢复（context_too_large → 一次重裁 + 重试）──
@@ -496,9 +486,12 @@ async def _call_llm_attempt(
                 timeout=cfg.timeout_s,
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            if any(choice.get("finish_reason") == "length" for choice in data.get("choices", [])):
+                raise ProviderStreamTruncated("provider output exceeded its token budget; response is incomplete")
+            return data
         except Exception as exc:  # noqa: BLE001 — 分型后重抛
-            if attempt + 1 >= _RETRY_ATTEMPTS or not _is_retryable_failure(exc):
+            if attempt + 1 >= _RETRY_ATTEMPTS or not isinstance(exc, _RETRY_TRANSPORT):
                 raise
             last_exc = exc
             logger.warning(
@@ -583,7 +576,10 @@ async def call_llm_stream(
             )
             gen = _call_llm_stream_attempt(cfg, trimmed, tools)
             # 第二次尝试的首个事件；再失败则原样上抛（诚实失败）。
-            first = await gen.__anext__()
+            try:
+                first = await gen.__anext__()
+            except StopAsyncIteration:
+                return
         yield first
         async for event in gen:
             yield event
@@ -645,7 +641,7 @@ async def _call_llm_stream_attempt(
             if response is not None:
                 await response.aclose()
                 response = None
-            if attempt + 1 >= _RETRY_ATTEMPTS or not _is_retryable_failure(exc):
+            if attempt + 1 >= _RETRY_ATTEMPTS or not isinstance(exc, _RETRY_TRANSPORT):
                 raise
             logger.warning(
                 "call_llm_stream connect-phase retry %d/%d for %s: %s",
@@ -781,6 +777,9 @@ async def _call_llm_stream_attempt(
             yield ("token", {"content": think_tag_carry})
         think_tag_carry = ""
 
+    if finish_reason == "length":
+        raise ProviderStreamTruncated("provider output exceeded its token budget; response is incomplete")
+
     # Assemble final message
     assembled_content = "".join(content_parts)
     assembled_reasoning = "".join(reasoning_parts)
@@ -793,7 +792,7 @@ async def _call_llm_stream_attempt(
         for idx in sorted(tool_calls_accum.keys()):
             tc = tool_calls_accum[idx]
             assembled_tool_calls.append({
-                "id": tc["id"],
+                "id": tc["id"] or f"call_{uuid.uuid4().hex}",
                 "type": tc.get("type", "function"),
                 "function": {
                     "name": tc["function"]["name"],

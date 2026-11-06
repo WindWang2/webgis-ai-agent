@@ -134,7 +134,7 @@ class TestScenario1TilesOverlay:
         # 1) agent 用自然语言引导下的发现工具：三态 + 资格
         reg = _tools()
         report = await reg.dispatch(
-            "inspect_data_service", {"url": url, "session_id": "sess-e2e-s1"}
+            "inspect_data_service", {"url": url, "session_id": "sess-e2e-s1"}, "sess-e2e-s1",
         )
         assert report["status"] == "success"
         assert report["datasets"][0]["metadata"]["capability"]["state"] == "supported"
@@ -152,7 +152,7 @@ class TestScenario1TilesOverlay:
         res = await reg.dispatch("add_tile_service_layer", {
             "catalog_item_id": "province_admin:WebMercatorQuad",
             "session_id": "sess-e2e-s1",
-        })
+        }, "sess-e2e-s1")
         if "status" not in res:
             import json as _j
             raise AssertionError(f"raw: {_j.dumps(res, default=str)[:600]}")
@@ -244,7 +244,7 @@ class TestScenario2StacCogComputeAndMap:
             id="e2e-stac", source_type="stac", endpoint_url=stac_url, name="e2e-stac",
         ))
         found = await discover_stac_cog_assets(
-            stac, bbox=[100.0, 20.0, 105.0, 25.0], limit=5
+            stac, collection_id="ads-fixture-cog", bbox=[100.0, 20.0, 105.0, 25.0], limit=5
         )
         assert found["total_items"] == 1
         asset = found["items"][0]["assets"][0]
@@ -257,7 +257,7 @@ class TestScenario2StacCogComputeAndMap:
             "session_id": "sess-e2e-s2",
             "bbox": [100.5, 20.5, 101.5, 21.5],
             "bands": [1],
-        })
+        }, "sess-e2e-s2")
         assert mat["status"] == "success", mat
         assert mat["ref"].startswith("ref:fabric-cog/")
         # M8 预算账本：请求/字节在场；窗口 ≪ 整幅；回执不携带磁盘 path（ref offload）
@@ -342,7 +342,7 @@ class TestScenario3CoverageHonestRefusal:
             "url": url, "dataset_id": "dem",
             "subsets": {"x": [100.0, 100.04]},
             "session_id": "sess-e2e-s3",
-        })
+        }, "sess-e2e-s3")
         assert res["status"] == "error"
         assert res["error_type"] == "capability_not_declared"
         assert res["ref"] is None
@@ -357,7 +357,7 @@ class TestScenario3CoverageHonestRefusal:
             "url": url, "dataset_id": "dem",
             "subsets": {"x": [100.0, 100.04], "y": [20.0, 20.04]},
             "session_id": "sess-e2e-s3b",
-        })
+        }, "sess-e2e-s3b")
         assert res["status"] == "success", res
         assert res["ref"].startswith("ref:fabric-cog/")
         assert res["nodata"] == COVERAGE_NODATA

@@ -60,7 +60,7 @@ class SpatiotemporalClusterEngine:
 
         for f in features:
             cid = f.get("properties", {}).get("cluster_id", -1)
-            if cid >= 0:
+            if isinstance(cid, int) and not isinstance(cid, bool) and cid >= 0:
                 if cid not in cluster_groups:
                     cluster_groups[cid] = []
                 cluster_groups[cid].append(f)

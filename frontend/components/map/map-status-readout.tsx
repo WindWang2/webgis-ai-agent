@@ -1,5 +1,6 @@
 'use client';
 
+import { TILE_PROVIDERS } from '@/lib/providers';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useT } from '@/lib/i18n/useT';
 
@@ -19,6 +20,8 @@ import { useT } from '@/lib/i18n/useT';
  */
 export function MapStatusReadout() {
 const t = useT();
+  const baseLayer = useHudStore((s) => s.baseLayer);
+  const attribution = TILE_PROVIDERS.find((provider) => provider.name === baseLayer || provider.id === baseLayer)?.attribution?.replace(/<[^>]*>/g, '').replace(/&copy;/g, '©').replace(/&amp;/g, '&') ?? '';
   const viewport = useHudStore((s) => s.viewport);
 
   const [lng, lat] = viewport?.center ?? [0, 0];
@@ -39,7 +42,7 @@ const t = useT();
       <span aria-hidden className='text-map-chrome-border'>│</span>
       <span className='text-map-chrome-ink-muted'>EPSG:4326</span>
       <span aria-hidden className='text-map-chrome-border'>│</span>
-      <span className='text-map-chrome-ink-muted'>© OpenStreetMap</span>
+      <span className='text-map-chrome-ink-muted'>{attribution}</span>
     </div>
   );
 }

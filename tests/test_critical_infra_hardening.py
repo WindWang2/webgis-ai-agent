@@ -213,15 +213,11 @@ def test_i7_dockerignore_excludes_screenshots_and_planning():
 # ── I9: trap-kill-wait ──────────────────────────────────────────────────
 
 
-def test_i9_dockerfile_uses_trap_kill_wait():
-    """两 Dockerfile 的 CMD 必须用 trap-kill-wait 模式正确传播信号。"""
+def test_i9_dockerfile_uses_shared_process_group_supervisor():
+    """Both images use the supervisor exercised by real child-process tests."""
     for dockerfile in ["Dockerfile", "Dockerfile.prod"]:
         text = (REPO_ROOT / dockerfile).read_text(encoding="utf-8")
-        # 必须含 trap 'kill 0' 和 wait
-        assert "trap 'kill 0'" in text or 'trap "kill 0"' in text, (
-            f"{dockerfile} CMD 未用 trap-kill-wait 模式"
-        )
-        assert "& wait" in text or '"wait"' in text, f"{dockerfile} CMD 缺 wait"
+        assert 'CMD ["python", "-m", "app.lib.runtime.service_supervisor"]' in text
 
 
 # ── I11: Prometheus endpoint ─────────────────────────────────────────────

@@ -1,4 +1,4 @@
-"""AnalysisScope —— selection → 受控分析输入（ADR-0283 D1）。
+"""AnalysisScope —— selection → 受控分析输入（ADR-0285 D1）。
 
 任务书 E1「地图情境作为受控 Agent 输入」的执行面：把用户当前的地图选择
 （IR ledger 投影 + pre-turn 快照 + canvas affordance 环）转成**经验证的**
@@ -32,7 +32,7 @@ __all__ = [
     "SCOPE_REASONS",
 ]
 
-# ── 封闭 reason 词表（服务端验证结论；新增须同步 ADR-0283）──────────────
+# ── 封闭 reason 词表（服务端验证结论；新增须同步 ADR-0285）──────────────
 
 SCOPE_REASON_OK = "ok"
 SCOPE_REASON_NO_SELECTION = "no_selection"

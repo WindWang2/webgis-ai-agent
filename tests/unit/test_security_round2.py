@@ -73,7 +73,7 @@ async def test_gov_adapter_fetch_allows_public_url(monkeypatch):
 
     monkeypatch.setattr(aiohttp.ClientSession, "get", fake_get)
     source = DataSource(
-        id="x", name="n", url="https://data.example.gov/file.csv", format="csv",
+        id="x", name="n", url="https://data.example.com/file.csv", format="csv",
         description="", source_type="gov",
     )
     raw = await adapter.fetch(source)

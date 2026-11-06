@@ -535,6 +535,7 @@ class ExecutionCatalog:
     compiled_at: str = ""
     entries: Dict[CatalogKey, CatalogEntry] = field(default_factory=dict)
     generation_fingerprint: str = ""
+    degraded_sources: List[str] = field(default_factory=list)
     #: H05（additive）：本次编译注入的扩展认证证据指纹（sha256[:16]；
     #: 空 = 无扩展证据，core 投影）。只作 lifecycle 披露（认证状态翻转
     #: 可观测），不改变条目/世代指纹的既有口径。
@@ -623,17 +624,7 @@ def _lazy_tool_registry() -> Optional[Any]:
     except Exception:  # noqa: BLE001
         logger.debug("[execution-catalog] injected registry lookup failed",
                      exc_info=True)
-    try:
-        from app.tools import init_tools
-        from app.tools.registry import ToolRegistry
-
-        reg = ToolRegistry()
-        init_tools(reg)
-        return reg
-    except Exception:  # noqa: BLE001
-        logger.debug("[execution-catalog] tool registry init failed",
-                     exc_info=True)
-        return None
+    return None
 
 
 def compile_execution_catalog(
@@ -666,6 +657,7 @@ def compile_execution_catalog(
                     cap, index, evidence_available=evidence_available)
                 entries[e.key] = e
     except Exception as exc:  # noqa: BLE001 —— 单源失败不拖垮整体投影
+        catalog.degraded_sources.append("capabilities")
         logger.error("[execution-catalog] capability registry unavailable: %s", exc)
     try:
         from app.lib.gis.algorithm_registry import get_algorithm_registry
@@ -679,8 +671,11 @@ def compile_execution_catalog(
                 entries[e.key] = e
     except Exception as exc:  # noqa: BLE001
         logger.error("[execution-catalog] algorithm registry unavailable: %s", exc)
+        catalog.degraded_sources.append("algorithms")
     try:
         reg = tool_registry if tool_registry is not None else _lazy_tool_registry()
+        if reg is None:
+            catalog.degraded_sources.append("tools")
         descriptors = reg.descriptors() if reg is not None else {}
         for name in sorted(descriptors):
             e = _tool_entry(descriptors[name], index,
@@ -688,6 +683,7 @@ def compile_execution_catalog(
             entries[e.key] = e
     except Exception as exc:  # noqa: BLE001
         logger.error("[execution-catalog] tool registry unavailable: %s", exc)
+        catalog.degraded_sources.append("tools")
     try:
         from app.services.gis_harness.recipes import get_recipe_registry
 
@@ -700,10 +696,12 @@ def compile_execution_catalog(
                 entries[e.key] = e
     except Exception as exc:  # noqa: BLE001
         logger.error("[execution-catalog] recipe registry unavailable: %s", exc)
+        catalog.degraded_sources.append("recipes")
 
     fingerprint_payload = {
         "catalog_version": EXECUTION_CATALOG_VERSION,
         "entries": catalog.entry_fingerprints(),
+        "degraded_sources": sorted(set(catalog.degraded_sources)),
     }
     catalog.generation_fingerprint = _digest(
         canonical_payload_json(fingerprint_payload))
@@ -734,7 +732,10 @@ def get_execution_catalog(
     global _cached_catalog
     with _lock:
         if _cached_catalog is None or refresh:
-            _cached_catalog = compile_execution_catalog()
+            compiled = compile_execution_catalog()
+            if compiled.degraded_sources:
+                return compiled
+            _cached_catalog = compiled
         return _cached_catalog
 
 

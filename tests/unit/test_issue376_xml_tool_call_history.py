@@ -192,7 +192,7 @@ async def test_load_context_strips_orphaned_xml_tool_calls():
         Message(id=2, role="assistant", content="开始分析", tool_calls=legacy_tc),
     ]
     svc = AsyncHistoryService(db=_FakeDb(_conv_with_messages(msgs)))
-    ctx = await svc.load_context("sess-376-repair")
+    ctx = await svc.load_context("sess-376-repair", user_id="u-376")
 
     assistant = [m for m in ctx.llm_messages if m["role"] == "assistant"][0]
     assert "tool_calls" not in assistant  # 孤儿 tool_calls 被剥除
@@ -216,7 +216,7 @@ async def test_load_context_keeps_paired_tool_calls_and_normalizes_arguments():
         Message(id=3, role="tool", content='{"lat": 39.9042}', tool_call_id="call_xml_1"),
     ]
     svc = AsyncHistoryService(db=_FakeDb(_conv_with_messages(msgs)))
-    ctx = await svc.load_context("sess-376-paired")
+    ctx = await svc.load_context("sess-376-paired", user_id="u-376")
 
     assistant = [m for m in ctx.llm_messages if m["role"] == "assistant"][0]
     kept = assistant["tool_calls"]
@@ -244,7 +244,7 @@ async def test_load_context_keeps_only_answered_tool_calls():
         Message(id=3, role="tool", content="ok", tool_call_id="call_2"),
     ]
     svc = AsyncHistoryService(db=_FakeDb(_conv_with_messages(msgs)))
-    ctx = await svc.load_context("sess-376-partial")
+    ctx = await svc.load_context("sess-376-partial", user_id="u-376")
 
     assistant = [m for m in ctx.llm_messages if m["role"] == "assistant"][0]
     assert [t["id"] for t in assistant["tool_calls"]] == ["call_2"]
@@ -263,7 +263,7 @@ async def test_load_context_keeps_standard_fc_sequence_untouched():
         Message(id=3, role="tool", content='{"lat": 39.9042}', tool_call_id="call_1"),
     ]
     svc = AsyncHistoryService(db=_FakeDb(_conv_with_messages(msgs)))
-    ctx = await svc.load_context("sess-376-standard")
+    ctx = await svc.load_context("sess-376-standard", user_id="u-376")
 
     assistant = [m for m in ctx.llm_messages if m["role"] == "assistant"][0]
     assert assistant["tool_calls"] == tc  # 原样保留

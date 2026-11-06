@@ -89,7 +89,7 @@ def _features_of(payload: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
 
 def _iter_fixable_rings(
     geometry: Dict[str, Any],
-) -> List[Tuple[Tuple[int, ...], List[Tuple[float, float]]]]:
+) -> List[Tuple[Tuple[int, ...], List[Tuple[float, ...]]]]:
     """收集环，并带回每个环在 coordinates 树里的**路径**（原地写回的锚点）。
 
     返回 ``[(path, ring), ...]``：``path`` 是该环的索引序列 —— Polygon 为
@@ -97,14 +97,14 @@ def _iter_fixable_rings(
     同样带路径，只是 ring_idx 不同）。修复必须沿同一路径写回，否则
     MultiPolygon 的部件分组与孔洞嵌套会被摊平成独立实心多边形。
     """
-    rings: List[Tuple[Tuple[int, ...], List[Tuple[float, float]]]] = []
+    rings: List[Tuple[Tuple[int, ...], List[Tuple[float, ...]]]] = []
 
     def walk(node: Any, path: Tuple[int, ...]) -> None:
         if not isinstance(node, list) or not node:
             return
         head = node[0]
         if isinstance(head, list) and head and isinstance(head[0], (int, float)):
-            ring = [(float(c[0]), float(c[1])) for c in node
+            ring = [tuple(c) for c in node
                     if isinstance(c, list) and len(c) >= 2
                     and isinstance(c[0], (int, float)) and isinstance(c[1], (int, float))]
             rings.append((path, ring))
@@ -112,14 +112,14 @@ def _iter_fixable_rings(
         for i, child in enumerate(node):
             walk(child, path + (i,))
 
-    if isinstance(geometry, dict):
+    if isinstance(geometry, dict) and geometry.get("type") in {"Polygon", "MultiPolygon"}:
         walk(geometry.get("coordinates"), ())
     return rings
 
 
 def _replace_rings(
     geometry: Dict[str, Any],
-    fixed_rings: List[Tuple[Tuple[int, ...], List[Tuple[float, float]]]],
+    fixed_rings: List[Tuple[Tuple[int, ...], List[Tuple[float, ...]]]],
 ) -> None:
     """按环的原路径**原地**替换坐标（部件分组与孔洞嵌套原样保持）。
 
@@ -135,7 +135,7 @@ def _replace_rings(
     for path, ring in fixed_rings:
         if not path:
             # 畸形扁平坐标（coordinates 自身即一个环）：包回一层环列表
-            geometry["coordinates"] = [[[x, y] for (x, y) in ring]]
+            geometry["coordinates"] = [[list(point) for point in ring]]
             coords = geometry["coordinates"]
             continue
         node: Any = coords
@@ -149,7 +149,7 @@ def _replace_rings(
         last = path[-1]
         if reachable and isinstance(node, list) and isinstance(last, int) \
                 and 0 <= last < len(node):
-            node[last] = [[x, y] for (x, y) in ring]
+            node[last] = [list(point) for point in ring]
 
 
 # ── dry-run ──────────────────────────────────────────────────────────
@@ -280,7 +280,7 @@ def apply_autofix(
                     dropped += 1
                     continue
                 rings = _iter_fixable_rings(geometry)
-                fixed_rings: List[Tuple[Tuple[int, ...], List[Tuple[float, float]]]] = []
+                fixed_rings: List[Tuple[Tuple[int, ...], List[Tuple[float, ...]]]] = []
                 ring_ok = True
                 for path, ring in rings:
                     if len(ring) >= 3 and not _ring_is_closed(ring):
@@ -293,10 +293,20 @@ def apply_autofix(
                 gtype = str(geometry.get("type") or "")
                 if gtype in ("Polygon", "MultiPolygon"):
                     from app.services.data_quality.rule_functions import _ring_area
-                    areas = [_ring_area(ring) for _path, ring in fixed_rings[:1]]
-                    if areas and areas[0] == 0.0:
-                        dropped += 1
+                    exterior_areas = {
+                        path[0]: _ring_area([(point[0], point[1]) for point in ring])
+                        for path, ring in fixed_rings
+                        if path and (gtype == "Polygon" and len(path) == 1 and path[0] == 0
+                                     or gtype == "MultiPolygon" and len(path) == 2 and path[1] == 0)
+                    }
+                    if gtype == "MultiPolygon" and exterior_areas:
+                        geometry["coordinates"] = [part for index, part in enumerate(geometry["coordinates"])
+                                                   if exterior_areas.get(index, 0.0) > 0.0]
+                        ring_ok = bool(geometry["coordinates"])
+                    elif exterior_areas and not any(exterior_areas.values()):
                         ring_ok = False
+                    if not ring_ok:
+                        dropped += 1
                 if ring_ok:
                     kept.append(f)
             # 保持未扫描尾部（超出 max_scan 的部分不动，证据诚实标注）
@@ -331,9 +341,14 @@ def apply_autofix(
                               "reprojected": reprojected,
                               "features_transformed":
                                   len(features) if reprojected else 0,
-                              "note": "" if reprojected else "pyproj unavailable; crs label updated only"})
-                new_payload["crs"] = target
-                evidence["changed"] = True
+                              "note": "" if reprojected else "coordinate transformation unavailable; source CRS retained"})
+                if reprojected:
+                    new_payload["crs"] = target
+                    if isinstance(geojson, dict):
+                        geojson["crs"] = {"type": "name", "properties": {"name": target}}
+                    evidence["changed"] = True
+                else:
+                    entry["applied"] = False
             else:
                 entry.update({"note": "crs already target", "applied": False})
         elif op == "normalize":

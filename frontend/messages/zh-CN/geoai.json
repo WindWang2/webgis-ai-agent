@@ -23,6 +23,7 @@
     "submitPrecondition": "需要预览、模型与至少一个提示",
     "submitFailed": "提交失败: {err}",
     "refinePrecondition": "没有可精化的候选（先提交）",
-    "refineFailed": "精化失败: {err}"
+    "refineFailed": "精化失败: {err}",
+    "requestFailed": "请求失败"
   }
 }

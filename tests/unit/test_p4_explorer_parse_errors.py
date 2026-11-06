@@ -41,7 +41,7 @@ async def test_parse_extracts_rows_and_stores(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_parse_tolerates_unreadable_source(monkeypatch) -> None:
-    async def broken_load(ref):
+    def broken_load(ref):
         return None
 
     result = await run_parse_stage(
@@ -49,3 +49,16 @@ async def test_parse_tolerates_unreadable_source(monkeypatch) -> None:
         load_ref=broken_load)
     # 单源损坏：阶段失败并带可读消息（不静默成功）。
     assert result.success is False or result.data.get("errors")
+
+
+@pytest.mark.asyncio
+async def test_parse_decode_failure_is_not_reported_as_store_handoff_failure() -> None:
+    result = await run_parse_stage(
+        "parse-review", [{"source_id": "broken", "ref_id": "present"}],
+        load_ref=lambda ref: {"data": "not-hex", "content_type": "text/csv", "encoding": "utf-8"},
+    )
+    assert result.success is False
+    assert result.data["missing_refs"] == []
+    assert len(result.data["errors"]) == 1
+    assert "decoding or parsing" in result.message
+    assert "handoff" not in result.message

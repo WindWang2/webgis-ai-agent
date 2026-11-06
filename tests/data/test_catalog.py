@@ -62,7 +62,8 @@ class TestSessionScope:
         hit = await get_data_catalog().search(
             session_id="cat-bbox", filter_=CatalogFilter(bbox=[116.5, 39.5, 118.0, 41.0])
         )
-        assert hit.total_matched == 2
+        # KDE has no declared CRS; its numeric bounds cannot establish a match.
+        assert [entry.entry_id for entry in hit.entries] == ["ref:poi"]
         # 不相交 → 空
         miss = await get_data_catalog().search(
             session_id="cat-bbox", filter_=CatalogFilter(bbox=[0.0, 0.0, 1.0, 1.0])

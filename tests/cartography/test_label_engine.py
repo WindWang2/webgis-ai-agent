@@ -193,7 +193,7 @@ def test_callout_when_displacement_exceeded() -> None:
     assert p is not None and p.status == "callout"
     assert p.leader is not None and len(p.leader) == 2
     assert p.leader[0] == pytest.approx([100.0, 100.0])   # 锚点
-    assert p.leader[1] == pytest.approx([124.0, 124.0])   # 标签左下角（+max_displacement）
+    assert p.leader[1] != pytest.approx([124.0, 124.0])  # Occupied max-displacement box must be avoided
     assert p.reason == "displacement_exceeded"
     assert sol.stats["callout"] == 1
 

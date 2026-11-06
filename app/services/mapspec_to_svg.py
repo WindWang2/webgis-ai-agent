@@ -12,6 +12,9 @@ and cooperative timeout instead of decorative fields), label text fitting
 diagnostics on the authoritative render-diagnostics vocabulary.
 """
 
+from app.services.mapspec_svg_bounds import bounded_source_bounds
+from app.services.mapspec_svg_labels import _svg_label_text, _svg_layers, valid_geographic_coordinates
+from app.services.mapspec_filter import evaluate_filter, supported_filter
 from app.lib.cartography.render_scene import ResolvedComponent
 import logging
 import math as _math
@@ -204,7 +207,7 @@ def _resolve_export_thresholds(
             return False
         try:
             f = float(val)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return False
         if not _math.isfinite(f):
             return False
@@ -223,7 +226,7 @@ def _resolve_export_thresholds(
         t_ms = float(thresholds["timeoutMs"])
     else:
         t_ms = DEFAULT_EXPORT_TIMEOUT_MS
-    return cap, t_ms
+    return min(cap, TIER_EXPORT_FEATURES), min(t_ms, DEFAULT_EXPORT_TIMEOUT_MS)
 
 
 def resolve_spec_timeout_ms(mapspec: Any) -> float:
@@ -323,7 +326,7 @@ def _merc_y(lat: float) -> float:
         lat_val = float(lat)
         if not _math.isfinite(lat_val):
             lat_val = 0.0
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         lat_val = 0.0
     clamped_lat = max(-85.05112878, min(85.05112878, lat_val))
     return _math.log(_math.tan(_math.pi / 4.0 + (clamped_lat * _math.pi) / 360.0))
@@ -681,9 +684,14 @@ def _render_chrome_groups(
             lng_pad = max((e0 - w0) * 1.5, 0.5)
             lat_pad = max((n0 - s0) * 1.5, 0.5)
             context = [w0 - lng_pad, s0 - lat_pad, e0 + lng_pad, n0 + lat_pad]
-            parts.append(_render_inset_locator(canvas_w - m - 150.0, m + 60.0, (150.0, 110.0), context, geo_bounds))
-            _mark_rendered("inset_map")
-        except (ValueError, TypeError):
+            authored = (inset.options or {}).get("bbox")
+            if isinstance(authored, (list, tuple)) and len(authored) == 4:
+                context = list(authored)
+            fragment = _render_inset_locator(canvas_w - m - 150.0, m + 60.0, (150.0, 110.0), context, geo_bounds)
+            if fragment:
+                parts.append(fragment)
+                _mark_rendered("inset_map")
+        except (ValueError, TypeError, OverflowError):
             pass
 
     # 署名（左下）
@@ -1073,7 +1081,7 @@ def compile_mapspec_to_svg_detailed(
     # 均被 MAX_LABELS_PER_EXPORT 封顶（防 spec 放大预算）。
     try:
         _labels_budget = int(max_labels)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         _labels_budget = 0
     _layout_for_labels = mapspec.get("layout") if isinstance(mapspec, dict) else None
     if _labels_budget <= 0 and isinstance(_layout_for_labels, dict):
@@ -1081,7 +1089,7 @@ def compile_mapspec_to_svg_detailed(
         if isinstance(_lc, dict):
             try:
                 _labels_budget = int(_lc.get("maxLabels"))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 _labels_budget = 0
     _labels_budget = min(_labels_budget if _labels_budget > 0 else _MAX_LABELS_PER_EXPORT, _MAX_LABELS_PER_EXPORT)
     timeout_s = timeout_ms_val / 1000.0
@@ -1134,77 +1142,47 @@ def compile_mapspec_to_svg_detailed(
             target_dpi_val = float(target_dpi)
             if not _math.isfinite(target_dpi_val) or target_dpi_val <= 0:
                 target_dpi_val = 300.0
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             target_dpi_val = 300.0
+        target_dpi_val = min(target_dpi_val, 600.0)
         dpi_scale = target_dpi_val / 72.0
 
         try:
             width_val = int(width) if _math.isfinite(float(width)) and width > 0 else 1200
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             width_val = 1200
 
         try:
             height_val = int(height) if _math.isfinite(float(height)) and height > 0 else 800
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             height_val = 800
 
         try:
             padding_val = int(padding) if _math.isfinite(float(padding)) and padding >= 0 else 40
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             padding_val = 40
 
+        width_val, height_val = min(width_val, 16384), min(height_val, 16384)
+        padding_val = min(padding_val, width_val // 2, height_val // 2)
         scaled_width = width_val * dpi_scale
         scaled_height = height_val * dpi_scale
         scaled_padding = padding_val * dpi_scale
 
-        min_x, max_x = float("inf"), float("-inf")
-        min_y, max_y = float("inf"), float("-inf")
-
         sources = mapspec.get("sources", {})
-        if isinstance(sources, dict):
-            for src in sources.values():
-                if not isinstance(src, dict):
-                    continue
-                geojson = _source_geojson(src)
-                if not isinstance(geojson, dict):
-                    continue
-                features = (
-                    geojson.get("features", [geojson])
-                    if geojson.get("type") == "FeatureCollection"
-                    else [geojson]
-                )
-                if not isinstance(features, list):
-                    features = [geojson]
-
-                for feat in features:
-                    if not isinstance(feat, dict):
-                        continue
-                    geom = feat.get("geometry")
-                    if not isinstance(geom, dict):
-                        continue
-
-                    def extract_coords(c: Any) -> None:
-                        nonlocal min_x, max_x, min_y, max_y
-                        if (
-                            isinstance(c, (list, tuple))
-                            and len(c) >= 2
-                            and isinstance(c[0], (int, float))
-                            and isinstance(c[1], (int, float))
-                        ):
-                            try:
-                                x_val, y_val = float(c[0]), float(c[1])
-                                if _math.isfinite(x_val) and _math.isfinite(y_val):
-                                    min_x = min(min_x, x_val)
-                                    max_x = max(max_x, x_val)
-                                    min_y = min(min_y, y_val)
-                                    max_y = max(max_y, y_val)
-                            except (ValueError, TypeError):
-                                pass
-                        elif isinstance(c, list):
-                            for sub in c:
-                                extract_coords(sub)
-
-                    extract_coords(geom.get("coordinates", []))
+        rendered_source_ids = list(dict.fromkeys(
+            layer.get("source") for layer in _svg_layers(mapspec.get("layers", []))
+            if isinstance(layer, dict) and layer.get("visible") is not False
+            and (layer.get("layout") if isinstance(layer.get("layout"), dict) else {}).get("visibility") != "none"
+            and export_adjudicate_layer(layer, _export_zoom) in ("render", "render_heatmap")
+        ))
+        (min_x, min_y, max_x, max_y), bounds_truncated, bounds_timeout = bounded_source_bounds(
+            sources, rendered_source_ids, _source_geojson, valid_geographic_coordinates,
+            max_features=cap, deadline=start_mono + timeout_s)
+        if bounds_truncated:
+            truncated_features = True
+        if bounds_timeout:
+            timed_out = True
+            _emit_diag("export_timeout_partial", detail="extent discovery deadline")
 
         if (
             not _math.isfinite(min_x)
@@ -1224,7 +1202,7 @@ def compile_mapspec_to_svg_detailed(
                 _b = [float(v) for v in bounds]
                 if all(_math.isfinite(v) for v in _b) and _b[2] > _b[0] and _b[3] > _b[1]:
                     min_x, min_y, max_x, max_y = _b[0], _b[1], _b[2], _b[3]
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 pass
 
         geo_bounds = [min_x, min_y, max_x, max_y]
@@ -1243,7 +1221,7 @@ def compile_mapspec_to_svg_detailed(
                 else:
                     lon = float(coord[0]) if _math.isfinite(float(coord[0])) else 0.0
                     lat = float(coord[1]) if _math.isfinite(float(coord[1])) else 0.0
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 lon, lat = 0.0, 0.0
 
             w_span = scaled_width - scaled_padding * 2
@@ -1263,7 +1241,7 @@ def compile_mapspec_to_svg_detailed(
         elements_svg = ""
         layers = mapspec.get("layers", [])
         if isinstance(layers, list):
-            for layer in layers:
+            for layer in _svg_layers(layers):
                 if not isinstance(layer, dict):
                     continue
 
@@ -1437,13 +1415,32 @@ def compile_mapspec_to_svg_detailed(
                     if not isinstance(features, list):
                         features = [data]
 
+                    layer_filter = layer.get("filter")
+                    if layer_filter is not None:
+                        if not supported_filter(layer_filter):
+                            _emit_diag("layer_filter_unsupported", layer_id=_lid)
+                            continue
+                        selected = []
+                        for feat in features:
+                            if _time.monotonic() >= start_mono + timeout_s:
+                                timed_out = True
+                                _emit_diag("export_timeout_partial", detail="filter deadline", layer_id=_lid)
+                                break
+                            if isinstance(feat, dict) and evaluate_filter(layer_filter, feat):
+                                selected.append(feat)
+                                if len(selected) > max(0, cap - feature_count):
+                                    break
+                        features = selected
+
                     # W4 阈值执行：每图层特征数超限 → 确定性截断（保持原
                     # 顺序取前 N）+ features_truncated 诊断。
-                    if len(features) > cap:
-                        features = features[:cap]
+                    remaining = max(0, cap - feature_count)
+                    if len(features) > remaining:
+                        features = features[:remaining]
                         truncated_features = True
                         _emit_diag("features_truncated", detail=str(cap), layer_id=_lid)
 
+                    invalid_coordinates_diagnosed = False
                     for feat in features:
                         if not isinstance(feat, dict):
                             continue
@@ -1459,6 +1456,11 @@ def compile_mapspec_to_svg_detailed(
                         n_svg_before = len(elements_svg)
                         geom = feat.get("geometry")
                         if not isinstance(geom, dict):
+                            continue
+                        if not valid_geographic_coordinates(geom.get("coordinates")):
+                            if not invalid_coordinates_diagnosed:
+                                _emit_diag("layer_coordinates_invalid", layer_id=_lid)
+                                invalid_coordinates_diagnosed = True
                             continue
                         props = feat.get("properties") if isinstance(feat.get("properties"), dict) else {}
 
@@ -1522,7 +1524,7 @@ def compile_mapspec_to_svg_detailed(
                             for line_coords in lines:
                                 if not isinstance(line_coords, list) or not line_coords:
                                     continue
-                                path_str = " L ".join(f"{project(c)[0]},{project(c)[1]}" for c in line_coords)
+                                path_str = " L ".join(",".join(project(c)) for c in line_coords)
                                 elements_svg += f'<path d="M {path_str}" stroke="{color}" stroke-width="{line_w}" stroke-opacity="{opacity}" fill="none"{extra_attrs} />\n'
 
                         elif layer_type in ("fill", "fill-extrusion") and geom.get("type") in ("Polygon", "MultiPolygon"):
@@ -1551,7 +1553,7 @@ def compile_mapspec_to_svg_detailed(
                                 for ring in poly_rings:
                                     if not isinstance(ring, list) or not ring:
                                         continue
-                                    pts = " L ".join(f"{project(c)[0]},{project(c)[1]}" for c in ring)
+                                    pts = " L ".join(",".join(project(c)) for c in ring)
                                     ring_paths.append(f"M {pts} Z")
                                 if not ring_paths:
                                     continue
@@ -1584,9 +1586,10 @@ def compile_mapspec_to_svg_detailed(
                             layout = layer.get("layout", {})
                             if not isinstance(layout, dict):
                                 layout = {}
-                            text_field_pattern = str(layout.get("text-field") or paint.get("text-field") or "{name}")
-                            field_name = text_field_pattern.strip("{}")
-                            raw_text = props.get(field_name) or props.get("name") or props.get("label") or ("" if text_field_pattern.startswith("{") else text_field_pattern)
+                            text_field_pattern = layout.get("text-field", paint.get("text-field", "{name}"))
+                            raw_text = _svg_label_text(text_field_pattern, props)
+                            if raw_text is None:
+                                _emit_diag("label_expression_unsupported", str(layer.get("id", "")))
                             if not raw_text:
                                 continue
 
@@ -1629,7 +1632,7 @@ def compile_mapspec_to_svg_detailed(
                                                 p_max_x = max(p_max_x, xv)
                                                 p_min_y = min(p_min_y, yv)
                                                 p_max_y = max(p_max_y, yv)
-                                        except (ValueError, TypeError):
+                                        except (ValueError, TypeError, OverflowError):
                                             pass
                                     elif isinstance(c, list):
                                         for sub in c:
@@ -1904,7 +1907,7 @@ def compile_mapspec_to_svg_detailed(
                     detail=f"placed={solution.stats['placed']} suppressed={_sup_n}",
                 )
             if solution.budget_exceeded:
-                _emit_diag("label_budget_exceeded", detail=str(_MAX_LABELS_PER_EXPORT))
+                _emit_diag("label_budget_exceeded", detail=str(_labels_budget))
             if parts:
                 labels_group = (
                     '  <g class="mapspec-labels">\n    '
@@ -1935,6 +1938,8 @@ def compile_mapspec_to_svg_detailed(
                 f"<title>{_t}</title><desc>WebGIS AI Agent 专题地图导出（矢量）</desc>"
             )
 
+        if bounds_truncated and not any(item.get("code") == "features_truncated" for item in diagnostics):
+            _emit_diag("features_truncated", detail=str(cap))
         return SvgCompilation(
             svg=f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}
   <rect width="100%" height="100%" fill="#ffffff" />
@@ -1951,8 +1956,8 @@ def compile_mapspec_to_svg_detailed(
         )
 
     except Exception:
-        w_fallback = width if isinstance(width, (int, float)) and width > 0 else 1200
-        h_fallback = height if isinstance(height, (int, float)) and height > 0 else 800
+        w_fallback = min(width, 16384) if isinstance(width, (int, float)) and width > 0 else 1200
+        h_fallback = min(height, 16384) if isinstance(height, (int, float)) and height > 0 else 800
         return SvgCompilation(
             svg=f"""<svg width="{int(w_fallback)}" height="{int(h_fallback)}" viewBox="0 0 {int(w_fallback)} {int(h_fallback)}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />

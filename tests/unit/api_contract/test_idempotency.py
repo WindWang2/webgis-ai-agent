@@ -20,6 +20,18 @@ from fastapi.testclient import TestClient
 from app.core.idempotency import MAX_BUFFER_BYTES, IdempotencyMiddleware, _LazyRedis
 
 
+import pytest
+
+@pytest.fixture(autouse=True)
+def _cache_tests_use_explicit_trusted_identity(monkeypatch):
+    # This file tests the cache protocol with synthetic credential strings.
+    # Live identity/revocation behavior is tested separately against real users.
+    from app.core.idempotency import caller_principal_digest
+    async def identity(request, body):
+        return caller_principal_digest(request)
+    monkeypatch.setattr("app.core.idempotency_identity.replay_authority", identity)
+
+
 class FakeRedis:
     """异步 Redis 最小子集（get/set-nx/delete），键带过期时间戳。"""
 
@@ -31,6 +43,8 @@ class FakeRedis:
         # （非原子的 check-then-set 会让两个线程同时拿到单飞锁，单飞断言失去
         # 确定性）。临界区内无 await，不阻塞 event loop。
         self._lock = threading.Lock()
+        import fakeredis
+        self._lua = fakeredis.FakeRedis(decode_responses=True)
 
     async def _check(self):
         if self.broken:
@@ -62,9 +76,16 @@ class FakeRedis:
         await self._check()
         self.store.pop(key, None)
 
-    async def eval(self, _script: str, _numkeys: int, key: str, token: str):
-        """_RELEASE_LOCK_LUA 的比较删除语义。"""
+    async def eval(self, _script: str, _numkeys: int, *args):
+        """Run budget Lua with a real fake server; retain controllable replay TTL fixture."""
         await self._check()
+        if _numkeys != 1:
+            with self._lock:
+                result = self._lua.eval(_script, _numkeys, *args)
+                if result and _numkeys == 6:
+                    self.store[args[5]] = (args[9], time.monotonic() + int(args[8]))
+                return result
+        key, token = args
         item = self.store.get(key)
         if item is not None and item[0] == token:
             self.store.pop(key, None)

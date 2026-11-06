@@ -100,29 +100,42 @@ class GovDataAdapter(BaseDataAdapter):
                         continue
                     if resp.status != 200:
                         return []
-                    data = await resp.json()
+                    data = await resp.json(content_type=None)
                     break
             else:
                 return []
 
         # 解析结果（不同平台格式不同，这里做通用解析）
-        items = data.get("data", {}).get("items", []) if isinstance(data, dict) else []
+        payload = data.get("data") if isinstance(data, dict) else None
+        items = payload.get("items", []) if isinstance(payload, dict) else []
         if not items:
             items = data.get("results", []) if isinstance(data, dict) else []
 
         sources = []
-        for item in items[:5]:  # 最多取 top-5
-            source = DataSource(
-                id=f"gov_{platform_id}_{item.get('id', 'unknown')}",
-                name=item.get("title", "未知数据集"),
-                description=item.get("description", ""),
-                url=item.get("link", ""),
-                format=self._guess_format(item.get("link", "")),
-                published_at=self._parse_date(item.get("publish_time", "")),
-                estimated_rows=item.get("row_count", 0),
-                metadata={"platform": platform_id, "source_url": item.get("link", "")},
-            )
+        for item in items if isinstance(items, list) else []:
+            try:
+                if not isinstance(item, dict):
+                    raise ValueError("result item is not an object")
+                try:
+                    estimated_rows = max(0, int(item.get("row_count") or 0))
+                except (ValueError, TypeError, OverflowError):
+                    estimated_rows = 0
+                source = DataSource(
+                    id=f"gov_{platform_id}_{item.get('id', 'unknown')}",
+                    name=item.get("title") or "未知数据集",
+                    description=item.get("description") or "",
+                    url=item.get("link") or "",
+                    format=self._guess_format(item.get("link") or ""),
+                    published_at=self._parse_date(item.get("publish_time") or ""),
+                    estimated_rows=estimated_rows,
+                    metadata={"platform": platform_id, "source_url": item.get("link", "")},
+                )
+            except (ValueError, TypeError, AttributeError):
+                logger.warning("[GovDataAdapter] skipped malformed result from %s", platform_id)
+                continue
             sources.append(source)
+            if len(sources) == 5:
+                break
 
         return sources
 
@@ -222,7 +235,9 @@ class GovDataAdapter(BaseDataAdapter):
         """
         if raw.content_type == "text/csv":
             return await asyncio.to_thread(self._parse_csv, raw)
-        elif raw.content_type in ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"):
+        elif raw.content_type == "application/vnd.ms-excel":
+            raise ValueError("Legacy .xls is unsupported; convert the file to .xlsx or CSV")
+        elif raw.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
             return await asyncio.to_thread(self._parse_excel, raw)
         else:
             raise ValueError(f"Unsupported format: {raw.content_type}")
@@ -253,13 +268,16 @@ class GovDataAdapter(BaseDataAdapter):
         except ImportError:
             raise RuntimeError("openpyxl not installed, cannot parse Excel files")
 
-        wb = openpyxl.load_workbook(io.BytesIO(raw.data))
-        ws = wb.active
-
-        headers = [cell.value for cell in ws[1]]
-        rows = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            rows.append(dict(zip(headers, row)))
+        wb = openpyxl.load_workbook(io.BytesIO(raw.data), read_only=True, data_only=True)
+        try:
+            ws = wb.active
+            if ws is None:
+                raise ValueError("Excel workbook has no active sheet")
+            values = ws.iter_rows(values_only=True)
+            headers = list(next(values, ()))
+            rows = [dict(zip(headers, row, strict=True)) for row in values]
+        finally:
+            wb.close()
 
         fields = []
         if rows:

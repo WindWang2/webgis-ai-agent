@@ -220,7 +220,9 @@ class NetworkClosestFacilityService:
             elif isinstance(item, dict):
                 d_id = item.get("demand_id", item.get("id", f"d_{i}"))
                 weight = item.get("weight", 1.0)
-                geom = item.get("geometry", {"type": "Point", "coordinates": [0.0, 0.0]})
+                geom = item.get("geometry")
+                if not isinstance(geom, dict) or not geom.get("coordinates"):
+                    raise ValueError(f"demand {d_id} requires a declared geometry")
                 result.append(DemandPoint(demand_id=str(d_id), weight=float(weight), geometry=dict(geom)))
         return result
 
@@ -243,7 +245,9 @@ class NetworkClosestFacilityService:
             elif isinstance(item, dict):
                 f_id = item.get("facility_id", item.get("id", f"f_{i}"))
                 name = item.get("name", f"Facility {i+1}")
-                geom = item.get("geometry", {"type": "Point", "coordinates": [0.0, 0.0]})
+                geom = item.get("geometry")
+                if not isinstance(geom, dict) or not geom.get("coordinates"):
+                    raise ValueError(f"facility {f_id} requires a declared geometry")
                 cap = item.get("capacity", 1.0)
                 result.append(Facility(facility_id=str(f_id), name=name, geometry=dict(geom), capacity=float(cap)))
         return result

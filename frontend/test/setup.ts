@@ -62,6 +62,9 @@ if (typeof HTMLCanvasElement !== 'undefined') {
       shadowBlur: 0,
     } as any;
   };
+  HTMLCanvasElement.prototype.toBlob = function (callback, mimeType) {
+    queueMicrotask(() => callback(new Blob(['canvas-test-pixels'], { type: mimeType ?? 'image/png' })));
+  };
   HTMLCanvasElement.prototype.toDataURL = function () {
     return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4XmNgQAcAABIAAQu7JJwAAAAASUVORK5CYII=';
   };

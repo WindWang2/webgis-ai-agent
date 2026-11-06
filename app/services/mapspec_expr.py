@@ -30,6 +30,7 @@ MAPLIBRE_EXPR_OPS = frozenset({
     "step",
     "match",
     "literal",
+    "case",
 })
 
 #: 导出 zoom 缺省值（spec.view.zoom 缺席时）—— 与前端孪生
@@ -49,6 +50,8 @@ def parse_color(c: Any) -> Optional[Tuple[int, int, int]]:
     s = c.strip().lower()
     if s.startswith("#"):
         hex_str = s[1:]
+        if any(char not in "0123456789abcdef" for char in hex_str):
+            return None
         if len(hex_str) == 3:
             return (int(hex_str[0] * 2, 16), int(hex_str[1] * 2, 16), int(hex_str[2] * 2, 16))
         elif len(hex_str) in (6, 8):
@@ -135,9 +138,18 @@ def js_strict_eq(a: Any, b: Any) -> bool:
     return False
 
 
-def expression_input(value: Any, props: Any, zoom: float) -> Any:
+def expression_input(value: Any, props: Any, zoom: float, depth: int = 0) -> Any:
     """表达式输入项求值（``zoom`` / ``get`` / 字面量）—— TS 孪生
     ``expressionInput`` 镜像。不可解析 → None（≈ JS ``undefined``）。"""
+    if depth > 16:
+        return None
+    if isinstance(value, (list, tuple)) and value and value[0] in ("to-number", "to-string", "coalesce"):
+        values = [expression_input(item, props, zoom, depth + 1) for item in value[1:]]
+        if value[0] == "to-string":
+            return str(values[0]) if values and values[0] is not None else None
+        if value[0] == "to-number":
+            return next((number for item in values if math.isfinite(number := js_number(item))), None)
+        return next((item for item in values if item is not None), None)
     if value == "zoom" or (
         isinstance(value, (list, tuple)) and value and value[0] == "zoom"
     ):
@@ -171,6 +183,13 @@ def evaluate_map_libre_expression(
     if not isinstance(expr, (list, tuple)) or not expr:
         return fallback
     op = expr[0]
+
+    if op == "case":
+        from app.services.mapspec_filter import evaluate_filter
+        for index in range(1, len(expr) - 1, 2):
+            if evaluate_filter(expr[index], {"properties": props or {}}) is True:
+                return expr[index + 1]
+        return expr[-1] if len(expr) > 1 else fallback
 
     if op == "literal":
         # TS: ``val[1] !== undefined ? val[1] : fallback`` —— 长度≥2 即取
@@ -233,9 +252,7 @@ def evaluate_map_libre_expression(
             # None 侧不走串比（Python ``str(None)`` = "None" ≠ JS
             # ``String(undefined)`` = "undefined"），None 输入在真实 spec 中
             # 不构成命中。
-            if js_strict_eq(input_val, label) or (
-                input_val is not None and str(input_val) == str(label)
-            ):
+            if any(js_strict_eq(input_val, item) for item in (label if isinstance(label, list) else [label])):
                 return expr[i + 1]
             i += 2
         return expr[-1] if len(expr) >= 3 else fallback

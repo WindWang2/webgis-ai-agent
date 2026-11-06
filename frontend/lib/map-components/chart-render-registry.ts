@@ -39,7 +39,7 @@ export function registerChartRenderState(
 }
 
 export function unregisterChartRenderState(componentId: string): void {
-  states.delete(String(componentId || ''));
+  states.delete(String(componentId || '').slice(0, 64));
 }
 
 /** 观测采集用快照（rendered/data_points 两个小字段；有界）。 */

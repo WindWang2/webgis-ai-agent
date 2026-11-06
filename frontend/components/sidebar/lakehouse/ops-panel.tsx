@@ -55,16 +55,8 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
   // 卸载中止在途检视（ref 是稳定可变数据引用，读 .current 是刻意的）。
   useEffect(() => () => reqRef.current?.controller?.abort(), []);
 
-  // 目录动线带进来的对象：自动加载血缘。
-  useEffect(() => {
-    if (lineageTarget) {
-      setObjectId(lineageTarget);
-      onTargetConsumed();
-    }
-  }, [lineageTarget, onTargetConsumed]);
-
-  const inspect = useCallback(async () => {
-    if (!objectId.trim() || !sessionId) return;
+  const inspect = useCallback(async (target = objectId) => {
+    if (!target.trim() || !sessionId) return;
     const seq = ++reqRef.current.seq;
     reqRef.current.controller?.abort();
     const controller = new AbortController();
@@ -74,13 +66,15 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
     setLineage(null);
     setScrub(null);
     try {
-      const [lv, sr] = await Promise.all([
-        lakehouseApi.getObjectLineage(objectId.trim(), sessionId, { ownerToken, signal: controller.signal }),
-        lakehouseApi.scrubObject(objectId.trim(), { session_id: sessionId, mode: 'sample' }, { ownerToken, signal: controller.signal }),
+      const [lv, sr] = await Promise.allSettled([
+        lakehouseApi.getObjectLineage(target.trim(), sessionId, { ownerToken, signal: controller.signal }),
+        lakehouseApi.scrubObject(target.trim(), { session_id: sessionId, mode: 'sample' }, { ownerToken, signal: controller.signal }),
       ]);
       if (seq !== reqRef.current.seq) return;
-      setLineage(lv);
-      setScrub(sr);
+      if (lv.status === 'fulfilled') setLineage(lv.value);
+      if (sr.status === 'fulfilled') setScrub(sr.value);
+      const failures = [lv, sr].filter((part) => part.status === 'rejected');
+      if (failures.length) setError(failures.map((part) => String((part as PromiseRejectedResult).reason)).join('; '));
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return;
       if (seq !== reqRef.current.seq) return;
@@ -89,6 +83,13 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
       if (seq === reqRef.current.seq) setBusy(false);
     }
   }, [objectId, sessionId, ownerToken, t]);
+
+  useEffect(() => {
+    if (!lineageTarget) return;
+    setObjectId(lineageTarget);
+    void inspect(lineageTarget);
+    onTargetConsumed();
+  }, [lineageTarget, inspect, onTargetConsumed]);
 
   const loadGcPlan = useCallback(async () => {
     setGcLoading(true);

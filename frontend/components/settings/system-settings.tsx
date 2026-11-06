@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { STitle } from '@/components/shared/section-title';
 import { API_BASE } from '@/lib/api/config';
 import { useOnboardingStore } from '@/lib/onboarding/use-onboarding';
 import { SystemHealthPanel } from '@/components/sidebar/ops/system-health-panel';
 import { LOCALE_LABELS, SUPPORTED_LOCALES, type AppLocale } from '@/lib/i18n/config';
 import { useLocale, useSetLocale, useT } from '@/lib/i18n/useT';
+import packageInfo from '../../package.json';
 
 type SystemSettingsTab = 'general' | 'cluster-health';
 
@@ -32,16 +33,28 @@ export function SystemSettings() {
   const locale = useLocale();
   const setLocale = useSetLocale();
   const [tab, setTab] = useState<SystemSettingsTab>('general');
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const onTabKeyDown = (event: React.KeyboardEvent) => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next: SystemSettingsTab = event.key === 'Home' ? 'general'
+      : event.key === 'End' ? 'cluster-health' : tab === 'general' ? 'cluster-health' : 'general';
+    setTab(next);
+    tabsRef.current?.querySelector<HTMLButtonElement>(`#system-tab-${next}`)?.focus();
+  };
 
   return (
     <div className="flex flex-col gap-5">
       <STitle title={t('system.title')} sub={t('system.subtitle')} />
 
       {/* ADR-0142 唯一 append：二段 tab（常规 / 集群健康） */}
-      <div role="tablist" aria-label={t('system.tabs.tablistAria')} className="flex items-center gap-1 border-b border-edge-subtle pb-1">
+      <div ref={tabsRef} onKeyDown={onTabKeyDown} role="tablist" aria-label={t('system.tabs.tablistAria')} className="flex items-center gap-1 border-b border-edge-subtle pb-1">
         <button
           type="button"
           role="tab"
+          id="system-tab-general"
+          aria-controls="system-panel-general"
+          tabIndex={tab === 'general' ? 0 : -1}
           aria-selected={tab === 'general'}
           onClick={() => setTab('general')}
           className={`rounded-sm px-2 py-1 text-meta font-medium transition-colors ${
@@ -53,6 +66,9 @@ export function SystemSettings() {
         <button
           type="button"
           role="tab"
+          id="system-tab-cluster-health"
+          aria-controls="system-panel-cluster-health"
+          tabIndex={tab === 'cluster-health' ? 0 : -1}
           aria-selected={tab === 'cluster-health'}
           data-testid="settings-tab-cluster-health"
           onClick={() => setTab('cluster-health')}
@@ -64,10 +80,10 @@ export function SystemSettings() {
         </button>
       </div>
 
-      {tab === 'cluster-health' && <SystemHealthPanel />}
+      {tab === 'cluster-health' && <div role="tabpanel" id="system-panel-cluster-health" aria-labelledby="system-tab-cluster-health"><SystemHealthPanel /></div>}
 
       {tab === 'general' && (
-      <>
+      <div role="tabpanel" id="system-panel-general" aria-labelledby="system-tab-general" className="flex flex-col gap-5">
       {/* Backend API URL — read-only, determined at build time */}
       <div>
         <div className="text-title uppercase tracking-wide text-ink-muted font-medium mb-2">
@@ -151,7 +167,7 @@ export function SystemSettings() {
               GeoAgent
             </div>
             <div className="text-body font-mono text-ink-muted">
-              v{process.env.NEXT_PUBLIC_APP_VERSION || '0.1.2'}
+            v{process.env.NEXT_PUBLIC_APP_VERSION || packageInfo.version}
             </div>
           </div>
         </div>
@@ -191,7 +207,7 @@ export function SystemSettings() {
           {t('system.onboarding.hint')}
         </div>
       </div>
-      </>
+      </div>
       )}
     </div>
   );

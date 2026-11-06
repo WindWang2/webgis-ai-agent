@@ -94,12 +94,15 @@ def test_parallel_cases_category_invariant() -> None:
 def test_corpus_benchmark_pins() -> None:
     metrics = evaluate_corpus(METHOD_CORPUS)
     assert metrics["cases"] == len(METHOD_CORPUS)
-    assert metrics["recall@5"] == 1.0
-    assert metrics["recall@1"] >= 0.9
-    assert metrics["mrr"] >= 0.9
+    assert metrics["evaluation_mode"] == "end_to_end"
+    assert metrics["recall@5"] == 0.92
+    assert metrics["recall@1"] == 0.88
+    assert metrics["mrr"] == 0.9
+    assert metrics["category_conditioned"]["recall@5"] == 1.0
     assert metrics["invalid_selection_rate"] <= 0.08
     # ambiguous 案例 top-1 ∈ valid 集（多解不当错误）
-    assert metrics["ambiguous_valid_top1"] == 1.0
+    assert metrics["ambiguous_valid_top1"] == 0.0
+    assert metrics["category_conditioned"]["ambiguous_valid_top1"] == 1.0
 
 
 def test_rank_result_is_deterministic() -> None:

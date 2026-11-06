@@ -24,6 +24,7 @@ import {
 } from './geo-prompt-math';
 import { I18nProvider } from '@/lib/i18n/i18n-provider';
 import { GeoAiPanel } from './geoai-panel';
+import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 const META: PreviewMeta = {
   preview_width: 200,
@@ -147,6 +148,7 @@ async function bootPanel() {
 
 describe('GeoAiPanel', () => {
   beforeEach(() => {
+    setMapSpecSessionCursor('real-session', 0, 'real-owner-token');
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
     fetchMock.mockImplementation((url: string) => {
@@ -238,6 +240,8 @@ describe('GeoAiPanel', () => {
       );
       expect(refineCall).toBeTruthy();
       const refineBody = JSON.parse(String(refineCall?.[1]?.body));
+      expect(refineBody.session_id).toBe('real-session');
+      expect(new Headers(refineCall?.[1]?.headers).get('X-Session-Token')).toBe('real-owner-token');
       expect(refineBody.candidate).toBe(0);
       expect(refineBody.candidates_path).toContain('run-1');
     });

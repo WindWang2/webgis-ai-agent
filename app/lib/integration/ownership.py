@@ -142,7 +142,7 @@ def validate_document(doc: OwnershipDocument,
     # 两两不相交：对仓库真实文件采样判定（glob 交集判定无精确闭式解；
     # 真实文件采样对 manifest/merge-sim 的归属语义恰好是充分条件）
     files = _walk_repo_bounded(root)
-    for i, path in enumerate(files):
+    for _i, path in enumerate(files):
         hits = [p for p in seen_patterns if fnmatch.fnmatchcase(path, p)]
         if len(hits) > 1:
             errors.append(f"文件 {path} 同时命中 {len(hits)} 条 pattern: {hits}")

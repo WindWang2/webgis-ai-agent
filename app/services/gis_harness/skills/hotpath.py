@@ -4,6 +4,7 @@
 禁止在代码库各处散落 SkillResolver 生产裁决。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 from typing import Any, Dict, Optional
 
@@ -133,7 +134,7 @@ def _record(
                 notes=f"overlap_cap={shadow.capability_overlap};div={','.join(shadow.divergences[:3])}",
             )
     except Exception:  # noqa: BLE001 - 证据失败不得阻断热路径
-        pass
+        observe_optional_failure(__name__)
 
 
 def attach_skill_guidance_to_plan_inputs(

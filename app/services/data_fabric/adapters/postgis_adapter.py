@@ -97,7 +97,7 @@ def _geom_bounds(geom: Optional[Dict[str, Any]]) -> Optional[List[float]]:
                 _walk(item)
 
     _walk(coords)
-    if minx is float("inf"):
+    if minx == float("inf"):
         return None
     return [minx, miny, maxx, maxy]
 
@@ -305,9 +305,10 @@ class _TableMeta:
 
     __slots__ = ("schema", "table", "fields", "field_names", "geom_col", "srid",
                  "geom_type", "pk_col", "has_geometry_index", "has_geography_index",
-                 "feature_count", "bbox", "column_statistics")
+                 "feature_count", "feature_count_basis", "bbox", "column_statistics", "lightweight")
 
     def __init__(self):
+        self.lightweight: bool = False
         self.schema = "public"
         self.table = ""
         self.fields: List[Dict[str, Any]] = []
@@ -321,6 +322,7 @@ class _TableMeta:
         # 它能服务）；None = 探测失败/未探测（不臆造缺失）。
         self.has_geography_index: Optional[bool] = None
         self.feature_count: Optional[int] = None
+        self.feature_count_basis = "unknown"
         self.bbox: Optional[List[float]] = None
         self.column_statistics: Optional[Dict[str, Any]] = None  # V3: pg_stats 尽力探针
 
@@ -380,7 +382,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 setattr(conn, "_is_pooled", True)
                 return conn
             except Exception as pe:
-                logger.debug("Pool getconn failed: %s, fallback to direct connection", pe)
+                from app.services.data_fabric.errors import SourceUnreachableError
+
+                raise SourceUnreachableError("PostGIS connection pool unavailable") from pe
         try:
             import psycopg2
 
@@ -571,10 +575,11 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         )
         shared_key = (pool_key, dataset_id)
         cached = _meta_cache_get(shared_key)
-        if cached is not None:
+        if cached is not None and (lightweight or not getattr(cached, "lightweight", False)):
             return cached
         schema_name, table_name = self._sanitize_identifier(dataset_id)
         meta = _TableMeta()
+        meta.lightweight = lightweight
         meta.schema, meta.table = schema_name, table_name
         cur = conn.cursor()
 
@@ -657,12 +662,14 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 row = cur.fetchone()
                 if row and row[0] is not None and int(row[0]) >= 0:
                     meta.feature_count = int(row[0])
+                    meta.feature_count_basis = "pg_class.reltuples_estimate"
                 else:
                     cur.execute(
                         f"SELECT COUNT(*) FROM {quote_ident(schema_name)}.{quote_ident(table_name)};"  # nosec B608 — identifiers via quote_ident only
                     )
                     cnt_row = cur.fetchone()
                     meta.feature_count = int(cnt_row[0]) if cnt_row and cnt_row[0] is not None else 0
+                    meta.feature_count_basis = "exact_count"
             except Exception:
                 conn.rollback()
                 cur = conn.cursor()
@@ -670,8 +677,8 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             try:
                 cur.execute(
                     'SELECT ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e) FROM '
-                    '(SELECT ST_Transform(ST_EstimatedExtent(%s, %s, %s), 4326) AS e) s;',
-                    (schema_name, table_name, meta.geom_col),
+                    '(SELECT ST_Transform(ST_SetSRID(ST_EstimatedExtent(%s, %s, %s)::geometry, %s), 4326) AS e) s;',
+                    (schema_name, table_name, meta.geom_col, meta.srid),
                 )
                 row = cur.fetchone()
                 if row and all(v is not None for v in row):
@@ -709,6 +716,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     "schema": schema_name,
                     "table": table_name,
                     "primary_key": meta.pk_col,
+                "feature_count_basis": meta.feature_count_basis,
                     "has_geometry_index": meta.has_geometry_index,
                     # #1682：披露 geography 表达式索引状态（普通 GiST 服务不了
                     # dwithin 的 geom::geography cast）。
@@ -817,6 +825,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         with self._connection_context() as conn:
             self._apply_statement_timeout(conn, timeout_s)
             meta = self._load_table_meta(dataset_id, conn)
+            self._apply_statement_timeout(conn, timeout_s)
+            if meta.geom_col and not meta.srid and v2.spatial is not None:
+                raise InvalidQueryError("spatial predicate requires a known source SRID")
             if not meta.field_names:
                 raise InvalidQueryError(
                     f"dataset '{dataset_id}' not found or has no readable columns"
@@ -995,6 +1006,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             if mode == ResultMode.SAMPLE and v2.sample:
                 limit = v2.sample.size
                 sample_sql = self._sample_sql(meta, v2.sample, fp)
+                plan = plan.model_copy(update={"warnings": list(plan.warnings) + ["SYSTEM page sampling followed by ordering/LIMIT is deterministic but not a uniform row sample"]})
             else:
                 limit = page.limit
                 sample_sql = ""
@@ -1068,7 +1080,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             first_page = (isinstance(page, OffsetPage) and page.offset == 0) or (
                 isinstance(page, CursorPage) and not page.cursor
             )
-            if first_page and local_filter is None:
+            if first_page and local_filter is None and local_bbox is None:
                 count_sql = (
                     # B608 的豁免理由：schema/table 经 _sanitize_identifier
                     # 白名单校验（^[A-Za-z0-9_]+$）；where_sql 由
@@ -1129,7 +1141,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     # V7（ADR-0119 W8）：交付几何 CRS 事实（SQL 内省 ——
                     # _geojson_expr 的确定性输出；联邦 server placement 的
                     # delivered==declared 不变量与回退判定都消费它）。
-                    "delivered_crs": f"EPSG:{_parse_epsg_crs(v2.output.crs) or 4326}",
+                    "delivered_crs": f"EPSG:{_parse_epsg_crs(v2.output.crs) or 4326}" if meta.srid else None,
                     "pushdown_bbox": plan.pushed_spatial,
                     "pushdown_filter": bool(plan.pushed_filters),
                     "pushdown_projection": plan.pushed_projection,
@@ -1153,6 +1165,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             fields=meta.fields,
             metadata={
                 "primary_key": meta.pk_col,
+                "feature_count_basis": meta.feature_count_basis,
                 "has_geometry_index": meta.has_geometry_index,
                 # #1682：查询路径同样披露 geography 表达式索引状态（planner 据此
                 # 对 dwithin 的 geom::geography cast 发 full-scan 警告）。
@@ -1258,8 +1271,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             if o.field not in meta.field_names:
                 raise InvalidQueryError(f"order_by field '{o.field}' not in table schema")
             cols.append((f'{quote_ident(o.field)} {o.direction.upper()}', o.field))
-        if not cols and meta.pk_col:
-            cols.append((quote_ident(meta.pk_col), meta.pk_col))
+        if meta.pk_col and meta.pk_col not in {field for _, field in cols}:
+            direction = v2.order_by[-1].direction.upper() if v2.order_by else ""
+            cols.append(((quote_ident(meta.pk_col) + " " + direction).strip(), meta.pk_col))
         return cols
 
     def _sample_sql(self, meta: _TableMeta, sample, dataset_fp: Optional[str]) -> str:
@@ -1386,6 +1400,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         with self._connection_context() as conn:
             self._apply_statement_timeout(conn, timeout_s)
             meta = self._load_table_meta(dataset_id, conn, lightweight=True)
+            self._apply_statement_timeout(conn, timeout_s)
             if not meta.geom_col:
                 raise InvalidQueryError("dataset has no geometry column; tiles unsupported")
             gcol = quote_ident(meta.geom_col)
@@ -1405,7 +1420,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             prop_select = (", " + ", ".join(props)) if props else ""
 
             # zoom 感泛化：低 zoom 提高容差（Web Mercator 米）
-            tolerance = max(0.0, 40_075_016.6 / (2 ** z) / 256.0 * 4.0) if z < 13 else 0.0
+            tolerance = max(0.0, 40_075_016.6 / (2 ** z) / 256.0) if z < 13 else 0.0
 
             # F6（round2）：本路径**无计划解析**（不经过 plan_query /
             # filter_split），传入属性过滤时其可推性未经理划声明 —— 若在此
@@ -1471,8 +1486,11 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             self._apply_statement_timeout(conn, 60.0)
             pm = self._load_table_meta(dataset_points, conn)
             gm = self._load_table_meta(dataset_polygons, conn)
+            self._apply_statement_timeout(conn, 60.0)
             if not pm.geom_col or not gm.geom_col:
                 raise InvalidQueryError("both datasets need geometry columns for spatial join")
+            if not pm.srid or not gm.srid:
+                raise InvalidQueryError("server spatial join requires known CRS on both datasets")
             p_gcol, g_gcol = quote_ident(pm.geom_col), quote_ident(gm.geom_col)
             op_sql = {"within": "ST_Within", "intersects": "ST_Intersects"}[join_op]
             g_srid = gm.srid or 4326

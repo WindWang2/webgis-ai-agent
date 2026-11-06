@@ -41,10 +41,7 @@ _STEP_STATUS_MAX = 64
 _ERR_MAX = 200
 
 #: 补偿 kind → registry 工具（确定性映射；不在表内 = 不可自动补偿）。
-_COMPENSATION_TOOL: Dict[str, str] = {
-    "remove_layer": "webgis_layer_remove",
-    "remove_component": "webgis_remove_component",
-}
+from app.services.gis_action.compiler import COMPENSATION_TOOLS as _COMPENSATION_TOOL
 
 
 class StepReceipt(BaseModel):
@@ -96,6 +93,8 @@ def _default_args_provider(step: ResolvedAction) -> Dict[str, Any]:
 
 
 def _default_compensation_args(step: ResolvedAction, compensation: Any) -> Dict[str, Any]:
+    if compensation.kind == "remove_component":
+        return {"component_id": compensation.target, "action": "remove"}
     return {"layer_id": compensation.target} if compensation.target else {}
 
 
@@ -275,6 +274,7 @@ class ActionPlanExecutor:
         executed: List[StepReceipt] = []
         aborted = False
         need_compensation = False
+        succeeded: set[str] = set()
         for step in compilation.steps:
             if aborted:
                 receipts.append(StepReceipt(
@@ -282,9 +282,15 @@ class ActionPlanExecutor:
                     client_action_id=step.client_action_id, tool=step.tool,
                     status="skipped", code="ABORTED_UPSTREAM"))
                 continue
+            if any(dependency not in succeeded for dependency in step.depends_on):
+                receipts.append(StepReceipt(step=step.step, action_id=step.action_id,
+                    client_action_id=step.client_action_id, tool=step.tool,
+                    status="skipped", code="DEPENDENCY_FAILED"))
+                continue
             receipt = await self._dispatch_step(step, dry_run=dry_run)
             receipts.append(receipt)
             if receipt.status in ("applied", "would_run"):
+                succeeded.add(step.action_id)
                 if receipt.status == "applied":
                     executed.append(receipt)
                 continue

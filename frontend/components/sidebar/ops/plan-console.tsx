@@ -12,6 +12,7 @@
  */
 import { useMemo, useState } from 'react';
 import { ShieldCheck, Play, Upload, Ban } from 'lucide-react';
+import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import {
   validatePlan,
@@ -61,6 +62,8 @@ export function PlanConsole({
   const [phase, setPhase] = useState<SubmitPhase>({ kind: 'idle' });
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cancelRunId, setCancelRunId] = useState<string | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   const parsed = useMemo<{ plan: ExecutionPlan | null }>(() => {
     if (!text.trim()) return { plan: null };
@@ -270,9 +273,8 @@ export function PlanConsole({
             <button
               type="button"
               data-testid="plan-cancel-run"
-              onClick={() => {
-                void cancelClusterRun(phase.run.run_id, { ownerToken }).catch(() => undefined);
-              }}
+              disabled={cancelBusy}
+              onClick={() => setCancelRunId(phase.run.run_id)}
               className="flex items-center gap-1 rounded-sm border border-status-critical-border bg-status-critical-soft px-1.5 py-0.5 text-micro font-medium text-status-critical"
             >
               <Ban size={11} aria-hidden />
@@ -289,6 +291,16 @@ export function PlanConsole({
         </OpsCard>
       )}
 
+      <ConfirmDialog open={cancelRunId !== null} title={t('cancelRunTitle')} description={t('cancelRunDescription')}
+        onCancel={() => setCancelRunId(null)} onConfirm={() => {
+          const runId = cancelRunId;
+          setCancelRunId(null);
+          if (!runId || cancelBusy) return;
+          setCancelBusy(true);
+          setSubmitError(null);
+          void cancelClusterRun(runId, { ownerToken }).catch(() => setSubmitError(t('cancelRunFailed')))
+            .finally(() => setCancelBusy(false));
+        }} />
       {submitError && <InlineNotice variant="error">{submitError}</InlineNotice>}
     </div>
   );

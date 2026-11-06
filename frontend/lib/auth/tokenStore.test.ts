@@ -39,7 +39,7 @@ describe('tokenStore', () => {
     expect(getAuthUser()).toBeNull();
   });
 
-  it('setAuth persists tokens + user and round-trips through localStorage', () => {
+  it('setAuth keeps credentials in memory and persists only a non-secret identity signal', () => {
     setAuth(
       { accessToken: 'acc-1', refreshToken: 'ref-1' },
       { id: 'u1', username: 'ops', role: 'admin' },
@@ -48,9 +48,8 @@ describe('tokenStore', () => {
     expect(getRefreshToken()).toBe('ref-1');
     expect(getAuthUser()).toEqual({ id: 'u1', username: 'ops', role: 'admin' });
     const stored = JSON.parse(window.localStorage.getItem(KEY) ?? '{}');
-    expect(stored).toMatchObject({
-      accessToken: 'acc-1',
-    });
+    expect(stored).toEqual({ userId: 'u1' });
+    expect(stored.accessToken).toBeUndefined();
     // FRONT-03: refreshToken must NOT be stored in plaintext localStorage
     expect(stored.refreshToken).toBeUndefined();
   });
@@ -65,7 +64,7 @@ describe('tokenStore', () => {
       }),
     );
     window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
-    expect(getAccessToken()).toBe('legacy-acc');
+    expect(getAccessToken()).toBeNull();
     const stored = JSON.parse(window.localStorage.getItem(KEY) ?? '{}');
     expect(stored.refreshToken).toBeUndefined();
     expect(getRefreshToken()).toBeNull();
@@ -257,12 +256,14 @@ describe('F-06: memory-only refresh token cannot leave a zombie session', () => 
     expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
-  it('after a reload, a still-valid access token is kept', async () => {
+  it('after a reload, even a still-valid legacy access token is purged', async () => {
     const valid = jwt({ sub: 'u1', exp: Math.floor(Date.now() / 1000) + 600 });
     window.localStorage.setItem(KEY, JSON.stringify({ accessToken: valid, user: { id: 'u1', username: 'ops' } }));
     vi.resetModules();
     const store = await import('./tokenStore');
-    expect(store.getAccessToken()).toBe(valid);
+    expect(store.getAccessToken()).toBeNull();
+    expect(store.getAuthUser()).toBeNull();
+    expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
   it('isAccessTokenExpired only trusts decodable JWT exp', async () => {
@@ -284,17 +285,17 @@ describe('F-14: cross-tab storage sync never mixes identities', () => {
     const other = JSON.stringify({ accessToken: 'acc-X', user: { id: 'X', username: 'x' } });
     window.localStorage.setItem(KEY, other);
     storageEvent(other);
-    expect(getAccessToken()).toBe('acc-X');
-    expect(getAuthUser()?.id).toBe('X');
+    expect(getAccessToken()).toBeNull();
+    expect(getAuthUser()).toBeNull();
     expect(getRefreshToken()).toBeNull();
   });
 
   it('same-account rotation in another tab keeps this tab\'s refresh token', () => {
     setAuth({ accessToken: 'acc-1', refreshToken: 'ref-1' }, { id: 'Y', username: 'y' });
-    const other = JSON.stringify({ accessToken: 'acc-2', user: { id: 'Y', username: 'y' } });
+    const other = JSON.stringify({ userId: 'Y' });
     window.localStorage.setItem(KEY, other);
     storageEvent(other);
-    expect(getAccessToken()).toBe('acc-2');
+    expect(getAccessToken()).toBe('acc-1');
     expect(getRefreshToken()).toBe('ref-1');
   });
 

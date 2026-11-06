@@ -211,7 +211,8 @@ export function mergePendingPresentation(
   emit();
 }
 
-export function clearPendingPresentation(layerId?: string): void {
+export function clearPendingPresentation(layerId?: string, expectedMutationId?: string): void {
+  if (layerId && expectedMutationId && pendingMeta[layerId]?.mutationId !== expectedMutationId) return;
   if (!layerId) {
     if (Object.keys(pending).length === 0) return;
     pending = {};

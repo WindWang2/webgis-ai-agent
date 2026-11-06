@@ -95,7 +95,8 @@ def reset_shared_gateway_for_tests() -> None:
 
 
 def outcome_from_subagent_result(
-    lease: DelegationLease, result: Any, started: float
+    lease: DelegationLease, result: Any, started: float, *, capabilities_used: Optional[list[str]] = None,
+    capability_evidence: Optional[dict] = None,
 ) -> DelegationOutcome:
     """legacy ``SubagentResult`` → ``DelegationOutcome``（词表对齐映射）。
 
@@ -121,13 +122,21 @@ def outcome_from_subagent_result(
     else:
         status = DelegationStatus.FAILED
         reason = DelegationFailureReason.CHILD_CRASH
+    denials = list((capability_evidence or {}).get("denials") or [])
+    if denials:
+        status = DelegationStatus.FAILED
+        reason = DelegationFailureReason.RECEIPT_INVALID
+        error = "parent capability policy rejected: " + "; ".join(denials)
     return DelegationOutcome(
         delegation_id=lease.delegation_id,
         generation=lease.generation,
         lease_id=lease.lease_id,
         status=status,
         failure_reason=reason,
+        verdict="rejected" if denials else "ok",
+        verdict_reasons=[str(reason)[:240] for reason in denials[:8]],
         produced_refs=refs,
+        capabilities_used=list(capabilities_used or []),
         summary=str(getattr(result, "summary", "") or "")[:MAX_SUMMARY_CHARS],
         error=error[:MAX_ERROR_CHARS],
         attempts=1,
@@ -138,6 +147,7 @@ def outcome_from_subagent_result(
             "reasoning": str(getattr(result, "reasoning", "") or ""),
             "budget_usage": dict(getattr(result, "budget_usage", None) or {}),
             "lineage": dict(getattr(result, "lineage", None) or {}),
+            "capability_evidence": dict(capability_evidence or {"source": "unobserved", "status": "unobserved"}),
         },
     )
 
@@ -159,6 +169,7 @@ class SubagentDispatcherRunner:
         domains: Optional[list[str]] = None,
         extra_tools: Optional[list[str]] = None,
         max_rounds: int = 10,
+        allowed_capabilities: Optional[list[str]] = None,
     ) -> None:
         self._registry = registry
         self._session_id = session_id
@@ -167,17 +178,35 @@ class SubagentDispatcherRunner:
         self._domains = domains
         self._extra_tools = extra_tools
         self._max_rounds = max_rounds
+        self._allowed_capabilities = allowed_capabilities
+        self._observed_registry: Any = None
+        self._policy_error: Optional[Exception] = None
         #: runner 崩溃时为 None。工具 dict 兼容出口优先用 raw SubagentResult
         #: （budget_usage/lineage 值型保真）；DelegationOutcome 只承载
         #: 台账/验证/因果面。
         self.last_raw_result: Any = None
+
+    def prepare_policy(self) -> list[str]:
+        if self._policy_error is not None:
+            raise self._policy_error
+        if self._observed_registry is None:
+            from app.services.agent_swarm.capability_observation import resolve_subagent_surface, CapabilityRecordingRegistry
+            try:
+                surface = resolve_subagent_surface(self._registry, domains=self._domains, extra_tools=self._extra_tools,
+                                                   max_rounds=self._max_rounds, role=self._role)
+                self._observed_registry = CapabilityRecordingRegistry(self._registry, surface, allowed_capabilities=self._allowed_capabilities)
+            except Exception as exc:
+                self._policy_error = exc
+                raise
+        return sorted(self._observed_registry.granted)
 
     async def run(self, lease: DelegationLease) -> DelegationOutcome:
         started = time.time()
         try:
             from app.services.subagent import SubagentDispatcher
 
-            dispatcher = SubagentDispatcher(self._registry, self._session_id)
+            self.prepare_policy()
+            dispatcher = SubagentDispatcher(self._observed_registry, self._session_id)
             result = await dispatcher.run(
                 task=self._task,
                 domains=self._domains,
@@ -199,11 +228,15 @@ class SubagentDispatcherRunner:
                 failure_reason=DelegationFailureReason.CHILD_CRASH,
                 error=f"subagent runtime error: {exc}"[:MAX_ERROR_CHARS],
                 session_id=lease.session_id,
+                capabilities_used=self._observed_registry.capabilities_used() if self._observed_registry is not None else [],
+                runner_extras={"capability_evidence": self._observed_registry.evidence()} if self._observed_registry is not None else {},
                 wall_time_s=time.time() - started,
                 finished_at=time.time(),
             )
         self.last_raw_result = result
-        return outcome_from_subagent_result(lease, result, started)
+        return outcome_from_subagent_result(lease, result, started,
+            capabilities_used=self._observed_registry.capabilities_used(),
+            capability_evidence=self._observed_registry.evidence())
 
 
 def _result_from_outcome(outcome: DelegationOutcome) -> Any:
@@ -211,6 +244,8 @@ def _result_from_outcome(outcome: DelegationOutcome) -> Any:
     from app.services.subagent import SubagentResult
 
     lineage = dict(outcome.runner_extras.get("lineage") or {})
+    lineage["capabilities_used"] = list(outcome.capabilities_used)
+    lineage["capability_evidence"] = dict(outcome.runner_extras.get("capability_evidence") or {})
     lineage.setdefault("delegation_id", outcome.delegation_id)
     lineage.setdefault("delegation_generation", outcome.generation)
     lineage.setdefault("delegation_status", outcome.status)
@@ -239,6 +274,8 @@ def _enrich_lineage(result: Any, outcome: DelegationOutcome) -> Any:
     纪律仅对 lineage 成立。
     """
     lineage = dict(getattr(result, "lineage", None) or {})
+    lineage["capabilities_used"] = list(outcome.capabilities_used)
+    lineage["capability_evidence"] = dict(outcome.runner_extras.get("capability_evidence") or {})
     lineage.setdefault("delegation_id", outcome.delegation_id)
     lineage.setdefault("delegation_generation", outcome.generation)
     lineage["delegation_status"] = outcome.status
@@ -262,6 +299,7 @@ async def run_single_delegation(
     extra_tools: Optional[list[str]] = None,
     max_rounds: int = 10,
     expected_outputs: Optional[list[str]] = None,
+    allowed_capabilities: Optional[list[str]] = None,
     scheduler: Optional[FairSlotScheduler] = None,
     gateway: Optional[DelegationGateway] = None,
 ) -> tuple[Any, dict]:
@@ -275,24 +313,21 @@ async def run_single_delegation(
     合成诚实失败 result。墙钟预算仍由 legacy dispatcher 内部执行
     （deadline_s 不双写）。
     """
-    request = DelegationRequest(
-        delegation_id=f"dg-{uuid.uuid4().hex[:12]}",
-        goal=task,
-        role=role or "",
-        parent=DelegationParent(session_id=session_id),
-        expected_outputs=list(expected_outputs or [])[:12],
-        # deadline None：legacy 预算通道（角色墙钟/轮次）已强制，不重复计时
-        deadline_s=None,
-        budget=DelegationBudget(),
-    )
     runner = SubagentDispatcherRunner(
-        registry,
-        session_id,
-        task=task,
-        role=role,
-        domains=domains,
-        extra_tools=extra_tools,
-        max_rounds=max_rounds,
+        registry, session_id, task=task, role=role, domains=domains,
+        extra_tools=extra_tools, max_rounds=max_rounds, allowed_capabilities=allowed_capabilities,
+    )
+    try:
+        grant = runner.prepare_policy()
+    except Exception as exc:  # runner folds invalid policy into an audited failed outcome
+        logger.warning("[Delegation] parent capability policy unavailable: %s", type(exc).__name__)
+        grant = []
+    request = DelegationRequest(
+        delegation_id=f"dg-{uuid.uuid4().hex[:12]}", goal=task, role=role or "",
+        parent=DelegationParent(session_id=session_id),
+        allowed_capabilities=grant,
+        expected_outputs=list(expected_outputs or [])[:12],
+        deadline_s=None, budget=DelegationBudget(),
     )
     gw = gateway or (
         DelegationGateway(scheduler=scheduler)

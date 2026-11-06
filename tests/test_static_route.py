@@ -54,6 +54,12 @@ async def app_and_dir(tmp_path, monkeypatch):
             await db.commit()
 
     await _seed_admin()
+    async def _live_state(user_id):
+        from sqlalchemy import select
+        async with Session() as db:
+            row = (await db.execute(select(User.token_version, User.is_active, User.role, User.org_id).where(User.id == user_id))).first()
+            return ("ok", tuple(row)) if row is not None else ("missing", None)
+    monkeypatch.setattr("app.core.auth._load_live_user_state", _live_state)
 
     async def _override_db():
         async with Session() as db:

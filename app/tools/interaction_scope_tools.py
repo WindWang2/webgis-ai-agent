@@ -1,4 +1,4 @@
-"""交互情境 scope 工具（ADR-0283 D1）。
+"""交互情境 scope 工具（ADR-0285 D1）。
 
 ``webgis_selection_scope``：把用户当前地图选择（点选/框选/表格定位/图表
 类别选择/AOI 绘制）验证为**可执行的分析 scope**——ref 所有权、数据版本、
@@ -6,7 +6,7 @@
 
 只读工具：不解析大 payload 进 LLM（ids/摘要有界）、不向
 ToolDispatchService 注入隐式 scope、不写任何权威状态。多轮指代
-（「刚才那组学校」）经 ``selection_ref`` 解析选择史（ADR-0283 D3）。
+（「刚才那组学校」）经 ``selection_ref`` 解析选择史（ADR-0285 D3）。
 """
 from __future__ import annotations
 

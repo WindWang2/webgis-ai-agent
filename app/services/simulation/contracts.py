@@ -91,6 +91,13 @@ class RasterFieldSpec(_ContractModel):
     value: float = 0.0
     values: Optional[list[list[float]]] = None
 
+    @field_validator("values", mode="before")
+    @classmethod
+    def _bound_input_array(cls, value: Any) -> Any:
+        if isinstance(value, list) and (len(value) > 262144 or sum(len(row) if isinstance(row, list) else 0 for row in value) > 262144):
+            raise ValueError("array field exceeds 262144 elements")
+        return value
+
     @model_validator(mode="after")
     def _check_array(self):
         if self.kind == "array":
@@ -357,7 +364,7 @@ class TemporalLayerProduct(_ContractModel):
     tick: int
     sim_seconds: float
     timestamp: Optional[str] = None
-    format: Literal["memory", "geoparquet"] = "memory"
+    format: Literal["memory", "geoparquet", "geojson"] = "memory"
     ref: Optional[str] = None
     uri: Optional[str] = None
     feature_count: int = 0

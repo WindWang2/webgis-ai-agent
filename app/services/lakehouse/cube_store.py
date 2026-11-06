@@ -255,6 +255,13 @@ def read_cube_window(
     wanted = _require_v1_cube(root, what="read_cube_window")
     if not wanted:
         raise CubeError("cube declares no bands")
+    if bands is not None:
+        if not bands:
+            raise CubeError("at least one band is required")
+        unknown = set(bands) - set(wanted)
+        if unknown:
+            raise CubeError(f"bands not in cube: {sorted(unknown)}")
+        wanted = list(bands)
     out: Dict[str, Any] = {}
     meta: Dict[str, Any] = {}
     axis_times: List[str] = []
@@ -270,6 +277,14 @@ def read_cube_window(
                 "transform": arr.attrs.get("transform"),
                 "nodata": arr.attrs.get("nodata"),
             }
+    if meta.get("transform") is not None:
+        from affine import Affine
+
+        transform = Affine(*meta["transform"][:6])
+        y_start, _, y_step = (y or slice(None)).indices(arr.shape[1])
+        x_start, _, x_step = (x or slice(None)).indices(arr.shape[2])
+        transform = transform * Affine.translation(x_start, y_start) * Affine.scale(x_step, y_step)
+        meta["transform"] = list(transform)[:6]
     # 时间标签跟随切片（窗口真相，而非整轴标签）。
     t_sel = time or slice(None)
     meta["times"] = axis_times[t_sel] if isinstance(t_sel, slice) else axis_times

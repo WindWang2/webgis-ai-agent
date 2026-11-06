@@ -412,7 +412,7 @@ async def test_symbol_layout_bucket_label_size():
     assert districts.get("layout", {}).get("text-size") == 14
 
 
-# ── ADR-0283 D6：invertible 披露（presentation 族可反演，其余不可逆）───
+# ── ADR-0285 D6：invertible 披露（presentation 族可反演，其余不可逆）───
 
 
 async def test_commit_presentation_only_receipt_is_invertible():

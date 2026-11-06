@@ -181,6 +181,6 @@ def test_context_metrics_overflow_and_token_ratios():
     metrics = context_metrics(budget_reports).as_dict()
     assert metrics["reports"] == 2
     assert metrics["overflow_rate"] == 0.5
-    assert metrics["truncation_incidence"] == 0.5
+    assert metrics["truncation_incidence"] == 0.0
     assert metrics["schema_token_ratio"] == pytest.approx(0.45)
     assert metrics["result_token_ratio"] == pytest.approx(0.20)

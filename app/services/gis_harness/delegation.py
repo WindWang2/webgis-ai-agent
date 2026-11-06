@@ -26,6 +26,7 @@ V7 契约（**机制复用，不重建 agent 框架**）：
   预算仍由角色档 + SubagentDispatcher 既有通道承担。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import logging
 import os
@@ -50,6 +51,8 @@ STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
 #: 默认轮数上界（角色 max_rounds 取更严者 —— dispatcher 语义）。
 DEFAULT_MAX_ROUNDS = 4
+DELEGATION_DEADLINE_S = 120.0
+DELEGATION_LEASE_S = 260.0
 
 
 def delegation_enabled() -> bool:
@@ -90,8 +93,10 @@ class DelegationRecord(BaseModel):
     error: str = ""
     lineage: Dict[str, Any] = Field(default_factory=dict)
     attempts: int = 0
+    started_at: float = 0
 
     def to_bounded_dict(self) -> Dict[str, Any]:
+        from app.services.gis_harness.delegation_lineage import bounded_lineage
         return {
             "delegation_id": self.delegation_id[:40],
             "spec": self.spec.to_bounded_dict(),
@@ -99,9 +104,9 @@ class DelegationRecord(BaseModel):
             "result_summary": self.result_summary[:400],
             "refs": [r[:64] for r in self.refs[:8]],
             "error": self.error[:200],
-            "lineage": {k: str(v)[:48]
-                        for k, v in list(self.lineage.items())[:6]},
+            "lineage": bounded_lineage(self.lineage),
             "attempts": int(self.attempts),
+            "started_at": self.started_at,
         }
 
 
@@ -116,15 +121,16 @@ def _parse_records(stored: Any) -> List[DelegationRecord]:
         if not isinstance(raw, dict) or not isinstance(raw.get("spec"), dict):
             continue
         try:
-            spec = DelegationSpec(**{
-                "role": str(raw["spec"].get("role") or "")[:40],
-                "task": str(raw["spec"].get("task") or "")[:400],
-                "plan_step": str(raw["spec"].get("plan_step") or "")[:64],
-                "required_outputs": [str(o)[:80] for o in
-                                     (raw["spec"].get("required_outputs") or [])[:4]],
-                "max_rounds": int(raw["spec"].get("max_rounds") or DEFAULT_MAX_ROUNDS),
-            })
+            spec = DelegationSpec(
+                role=str(raw["spec"].get("role") or "")[:40],
+                task=str(raw["spec"].get("task") or "")[:400],
+                plan_step=str(raw["spec"].get("plan_step") or "")[:64],
+                required_outputs=[str(o)[:80] for o in
+                                  (raw["spec"].get("required_outputs") or [])[:4]],
+                max_rounds=int(raw["spec"].get("max_rounds") or DEFAULT_MAX_ROUNDS),
+            )
         except Exception:  # noqa: BLE001 — 坏条目跳过（诚实降级）
+            observe_optional_failure(__name__)
             continue
         out.append(DelegationRecord(
             delegation_id=str(raw.get("delegation_id") or "")[:40],
@@ -133,9 +139,10 @@ def _parse_records(stored: Any) -> List[DelegationRecord]:
             result_summary=str(raw.get("result_summary") or "")[:400],
             refs=[str(r)[:64] for r in (raw.get("refs") or [])[:8]],
             error=str(raw.get("error") or "")[:200],
-            lineage=raw.get("lineage") if isinstance(
+            lineage=dict(raw["lineage"]) if isinstance(
                 raw.get("lineage"), dict) else {},
             attempts=int(raw.get("attempts") or 0),
+            started_at=float(raw.get("started_at") or 0),
         ))
     return out
 
@@ -177,13 +184,14 @@ async def _persist_records(
                     merged[r.delegation_id] = r
                 fresh_records = list(merged.values())
             fresh_records = fresh_records[-MAX_DELEGATIONS:]
+            rows = [r.to_bounded_dict() for r in fresh_records]
             block = {
                 "schema": "delegations.v1",
-                "records": [r.to_bounded_dict() for r in fresh_records],
+                "records": rows,
             }
             fresh.gis_chapter[DELEGATIONS_KEY] = block
             await save_session_plan(fresh)
-            return block["records"]
+            return rows
     except Exception:  # noqa: BLE001 — 台账失败不阻断委派本身
         logger.warning("[Delegation] persist failed session=%s", session_id,
                        exc_info=True)
@@ -238,6 +246,38 @@ class _InjectedDispatcherRunner:
         return outcome_from_subagent_result(lease, result, started)
 
 
+async def _reserve_delegation(session_id: str, record: DelegationRecord, validated_goal: str) -> DelegationRecord:
+    """Atomically persist the running lease before any child starts."""
+    from app.services.distributed_lock import session_lock_registry
+    from app.services.session_plan import goal_key, load_session_plan, save_session_plan
+    async with session_lock_registry.lock(session_id, fail_on_degraded=True) as lock:
+        fresh = await load_session_plan(session_id)
+        if fresh is None or not isinstance(fresh.gis_chapter, dict) or lock.lost:
+            raise RuntimeError("delegation reservation unavailable")
+        if goal_key(fresh.gis_chapter, fresh.user_goal) != validated_goal:
+            raise RuntimeError("delegation goal superseded")
+        records = _parse_records(fresh.gis_chapter.get(DELEGATIONS_KEY))
+        for prior in records:
+            if not record.spec.plan_step or prior.spec.plan_step != record.spec.plan_step:
+                continue
+            if prior.status == STATUS_COMPLETED or (
+                prior.status == STATUS_RUNNING and prior.started_at > time.time() - DELEGATION_LEASE_S
+            ):
+                return prior
+            if prior.status == STATUS_RUNNING:
+                prior.status = STATUS_FAILED
+                prior.error = "delegation running lease expired"
+        records.append(record)
+        fresh.gis_chapter[DELEGATIONS_KEY] = {
+            "schema": "delegations.v1",
+            "records": [r.to_bounded_dict() for r in records[-MAX_DELEGATIONS:]],
+        }
+        await save_session_plan(fresh)
+        if lock.lost:
+            raise RuntimeError("delegation reservation lease lost")
+    return record
+
+
 async def delegate(
     session_id: str,
     spec: DelegationSpec,
@@ -286,23 +326,47 @@ async def delegate(
 
     record = DelegationRecord(
         delegation_id=f"dg-{uuid.uuid4().hex[:8]}",
-        spec=spec, status=STATUS_RUNNING,
+        spec=spec, status=STATUS_RUNNING, started_at=time.time(),
     )
+    try:
+        reserved = await _reserve_delegation(session_id, record, validated_goal)
+    except Exception as exc:
+        record.status = STATUS_FAILED
+        record.error = f"reservation failed: {exc}"[:200]
+        return record
+    if reserved.delegation_id != record.delegation_id:
+        return reserved
 
-    if dispatcher is None:
-        from app.services.subagent import SubagentDispatcher
-
-        dispatcher = SubagentDispatcher(_registry_for(), session_id)
+    production_runner = dispatcher is None
 
     from app.services.agent_swarm.delegation import (
         DelegationParent,
         DelegationRequest,
+        SubagentRunner,
     )
-    from app.services.agent_swarm.delegation_adapters import get_shared_gateway
+    from app.services.agent_swarm.delegation_adapters import get_shared_gateway, SubagentDispatcherRunner
 
     gateway = get_shared_gateway()
     for attempt in (1, 2):
         record.attempts = attempt
+        runner: SubagentRunner
+        if production_runner:
+            try:
+                adapter = SubagentDispatcherRunner(
+                    _registry_for(), session_id, task=spec.task, role=spec.role,
+                    max_rounds=spec.max_rounds,
+                )
+                allowed_capabilities = adapter.prepare_policy()
+            except Exception as exc:
+                record.status = STATUS_FAILED
+                record.error = f"parent capability policy unavailable: {exc}"[:200]
+                break
+            runner = adapter
+        else:
+            runner = _InjectedDispatcherRunner(
+                dispatcher, task=spec.task, role=spec.role, max_rounds=spec.max_rounds,
+            )
+            allowed_capabilities = []
         request = DelegationRequest(
             delegation_id=f"{record.delegation_id}-a{attempt}",
             goal=spec.task,
@@ -311,21 +375,17 @@ async def delegate(
                 session_id=session_id, run_id=record.delegation_id
             ),
             expected_outputs=[str(o)[:80] for o in (spec.required_outputs or [])[:4]],
-            # deadline None：墙钟预算仍由角色档 + SubagentDispatcher 内部执行
-            deadline_s=None,
+            allowed_capabilities=allowed_capabilities,
+            deadline_s=DELEGATION_DEADLINE_S,
         )
-        outcome = await gateway.execute(
-            request,
-            _InjectedDispatcherRunner(
-                dispatcher, task=spec.task, role=spec.role,
-                max_rounds=spec.max_rounds,
-            ),
-        )
+        outcome = await gateway.execute(request, runner)
+        record.lineage = dict(outcome.runner_extras.get("lineage") or {})
+        record.lineage["capabilities_used"] = list(outcome.capabilities_used)
+        record.lineage["capability_evidence"] = dict(outcome.runner_extras.get("capability_evidence") or {})
         if outcome.status == "succeeded":
             record.status = STATUS_COMPLETED
             record.result_summary = outcome.summary[:400]
             record.refs = list(outcome.produced_refs)[:8]
-            record.lineage = dict(outcome.runner_extras.get("lineage") or {})
             record.lineage.setdefault("delegation_id", outcome.delegation_id)
             record.lineage.setdefault("delegation_status", outcome.status)
             if outcome.verdict_reasons:
@@ -346,6 +406,7 @@ async def delegate(
             from app.services.gis_harness.durable_context import (
                 LOOP_BUDGETS,
                 load_recovery_state,
+                update_recovery_state,
             )
 
             recovery = await load_recovery_state(session_id)
@@ -356,6 +417,12 @@ async def delegate(
             if remaining <= 0:
                 # 预算尽 → 不重试（诚实放弃）
                 record.status = STATUS_FAILED
+                break
+            try:
+                await update_recovery_state(session_id, loop="repair", detail="delegation retry")
+            except Exception as exc:
+                record.status = STATUS_FAILED
+                record.error = f"repair budget unavailable: {exc}"[:200]
                 break
             record.status = STATUS_RUNNING  # 将重试
         else:
@@ -369,9 +436,9 @@ async def delegate(
 
 
 def _registry_for():
-    from app.tools.registry import ToolRegistry
+    from app.agent_pi_bridge import get_tool_registry
 
-    return ToolRegistry()
+    return get_tool_registry()
 
 
 # ── 实验性接入点（未接入 finalizer）─────────────────────────────────────
@@ -386,7 +453,7 @@ async def delegate_cartography_qa(
     """显式调用的 QA 复核 helper；finalizer 尚未接入。
 
     env GIS_HARNESS_DELEGATION=1 解除调用门控。台账检查已运行/完成的
-    revision；当前检查不包含并发占位，接入生产前需补齐。关闭 → None。"""
+    revision；delegate 在启动前原子预占有期限的 RUNNING 租约。关闭 → None。"""
     if not delegation_enabled() or not session_id:
         return None
     from app.services.session_plan import load_session_plan

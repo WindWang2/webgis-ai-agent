@@ -5,6 +5,7 @@
 - M6: report.py generate_report 期间不持有 DB session
 - M8: _save_msg_async 截断 tool_result 到 100000 字符
 """
+import threading
 import inspect
 import os
 import pytest
@@ -37,6 +38,7 @@ def _make_manager_with_watch_failures(fail_first_n: int):
     # L1 缓存字段（Phase 7）：write 路径会调 _l1_invalidate_session，需初始化。
     manager._l1 = {}
     manager._l1_order = []
+    manager._l1_lock = threading.RLock()
     try:
         manager._bound_loop = asyncio.get_running_loop()
     except RuntimeError:

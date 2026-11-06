@@ -88,10 +88,8 @@ def _quota_remaining_bytes(db: Any, project_id: str) -> Optional[int]:
     policy + 同一 usage 投影），这里只取余量作为物化预算的上界。
     """
     try:
-        from app.services.data_lifecycle.quota import (
-            ProjectQuotaPolicy,
-            project_quota_usage,
-        )
+        from app.services.artifact_revisions import project_quota_usage
+        from app.services.data_lifecycle.quota import ProjectQuotaPolicy
 
         policy = ProjectQuotaPolicy.from_env()
         if not policy.max_bytes:
@@ -100,8 +98,8 @@ def _quota_remaining_bytes(db: Any, project_id: str) -> Optional[int]:
         used = int(usage.get("bytes", 0) or 0)
         return max(0, int(policy.max_bytes) - used)
     except Exception as e:  # noqa: BLE001 — quota 不可判定 = 不施加 quota 上界
-        logger.info("[RuntimePromotion] quota lookup skipped: %s", e)
-        return None
+        logger.warning("[RuntimePromotion] quota lookup failed; blocking promotion: %s", e)
+        return 0
 
 
 async def _existing_durable_pointer(
@@ -145,7 +143,7 @@ async def plan_and_promote(
 
     receipt = PromotionReceipt()
     quota_remaining = (
-        _quota_remaining_bytes(db, project_id) if db is not None else None
+        await asyncio.to_thread(_quota_remaining_bytes, db, project_id) if db is not None else None
     )
     remaining_budget = int(budget_bytes)
 

@@ -99,7 +99,7 @@ export function pushOperationReceipt(
 
 
 /**
- * ADR-0283 D6：agent 可逆回执 → undo 栈录制（反向重放既有 CAS 通道）。
+ * ADR-0285 D6：agent 可逆回执 → undo 栈录制（反向重放既有 CAS 通道）。
  * 只录 presentation 族（后端 ``invertible`` 披露为 true）；用户可用
  * Ctrl+Z 撤销 agent 的显隐/透明度操作。undo 语义 = 再提交一次反向
  * mutation（ADR-0278「不虚构强原子」）；不可逆效果不录（数据层撤销归

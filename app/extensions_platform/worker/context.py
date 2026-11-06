@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -43,7 +44,8 @@ def _profile_cache_key(source_type: str, profile: Any) -> str:
             if callable(dump)
             else repr(profile)
         )
-    return f"{source_type}::{pid or canonical[:64]}::{hash(canonical) & 0xFFFF}"
+    import hashlib
+    return f"{source_type}::{pid}::{hashlib.sha256(canonical.encode()).hexdigest()}"
 
 
 @dataclass(frozen=True)
@@ -456,6 +458,15 @@ class WorkerContext:
                         extension_id=self.extension_id,
                     )
                 )
+            if len(self._provider_instances) >= 128:
+                oldest = next(iter(self._provider_instances))
+                retired = self._provider_instances.pop(oldest)
+                close = getattr(retired, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        logging.getLogger(__name__).debug("Retired provider close failed", exc_info=True)
             self._provider_instances[cache_key] = (
                 factory(self, profile) if profile is not None else factory(self)
             )
@@ -600,7 +611,11 @@ class WorkerContext:
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         sys.modules[qualname] = module
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(qualname, None)
+            raise
         return module
 
     # ── broker（W4 接入；此处提供 typed 传输边界）─────────────────────

@@ -26,8 +26,10 @@ from app.contracts.workflow import (
 )
 
 import asyncio
+import weakref
 import logging
 import os
+from app.services.workflow_runtime.metrics import DISPATCH_ACTIVE, DISPATCH_CAPACITY
 from typing import Any, Dict, List, Optional
 
 from app.services.workflow_runtime.adapters_geocompute import (
@@ -66,21 +68,27 @@ def isolation_enabled() -> bool:
 
 #: 进程级派发信号量（per-event-loop 字典 —— Semaphore 绑定首个 await 它
 #: 的 loop，跨 loop 复用会 RuntimeError；每 loop 各一份，容量同源）。
-_slots_sems: Dict[int, asyncio.Semaphore] = {}
+_slots_sems: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, weakref.ReferenceType[asyncio.Semaphore]] = weakref.WeakKeyDictionary()
 _slots_in_use = 0
 
 
 def get_slots_semaphore() -> asyncio.Semaphore:
-    loop_id = id(asyncio.get_running_loop())
-    sem = _slots_sems.get(loop_id)
+    loop_id = asyncio.get_running_loop()
+    reference = _slots_sems.get(loop_id)
+    sem = reference() if reference is not None else None
     if sem is None:
         sem = asyncio.Semaphore(dispatch_slots())
-        _slots_sems[loop_id] = sem
+        _slots_sems[loop_id] = weakref.ref(sem)
     return sem
 
 
 def slots_in_use() -> int:
     return _slots_in_use
+
+
+# Callback registration remains safe when dispatch configuration is reloaded.
+DISPATCH_ACTIVE.set_function(slots_in_use)
+DISPATCH_CAPACITY.set_function(dispatch_slots)
 
 
 class NoCapableWorker(Exception):
@@ -172,10 +180,8 @@ def choose_dispatch(
         registry = registry or WorkerRegistry()
         capable = registry.list_active(profile=profile, backend="durable")
         if not capable:
-            if mode == "durable" or isolate:
-                raise NoCapableWorker(
-                    f"no active durable worker covers profile={profile!r}")
-            return "durable"
+            raise NoCapableWorker(
+                f"no active durable worker covers profile={profile!r}")
         slots, in_flight = profile_capacity(capable, profile=profile)
         if slots > 0 and in_flight >= slots:
             raise WorkerCapacityExhausted(profile, in_flight, slots)

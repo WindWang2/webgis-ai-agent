@@ -325,7 +325,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     const filterField = thematicField(layer.legend_spec) ?? srcMetaField;
     const filterRanges = activeFilters[layer.id];
     const buildLayerFilter = (baseType: string): unknown[] => {
-      const base: unknown[] = ["==", "$type", baseType];
+      const base: unknown[] = ["==", ["geometry-type"], baseType];
       const parts: unknown[] = [base];
       // Issue #393: imperative filters (APPLY_LAYER_FILTER) are persisted on the
       // store layer — without this merge the reconcile would emit only the $type
@@ -610,7 +610,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
       id: `${sourceId}${SUBLAYER_SEP}point`,
       source: sourceId,
       type: "circle",
-      filter: ["==", "$type", "Point"],
+      filter: ["==", ["geometry-type"], "Point"],
       paint: {
         "circle-radius": 4,
         "circle-color": "rgba(22, 163, 74, 0.3)",

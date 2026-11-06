@@ -1,5 +1,5 @@
 /**
- * Situation 投影前端消费面（ADR-0283 D5）—— 刷新/重连的状态面恢复数据源。
+ * Situation 投影前端消费面（ADR-0285 D5）—— 刷新/重连的状态面恢复数据源。
  *
  * - 模块单例 store（useSyncExternalStore 订阅，不进 zustand —— 与
  *   selection-store/undo 同款纪律）；

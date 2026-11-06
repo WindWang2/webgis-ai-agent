@@ -5,7 +5,10 @@ Implements optimize_route using 2-opt local search heuristic and multi-stop rout
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import math
+
 import networkx as nx
+from app.lib.gis.scientific_errors import DisconnectedNetwork
 
 from app.services.network.contracts import (
     DemandInput, FacilityInput,
@@ -116,20 +119,29 @@ class NetworkRouteOptimizationService:
                     # time_s made the tour time-optimal under any impedance.
                     cost_mat[i][j] = info["cost"]
                 else:
-                    cost_mat[i][j] = 1e9
+                    cost_mat[i][j] = float("inf")
 
-        # Nearest Neighbor initial tour
-        unvisited = set(range(1, n))
-        tour = [0]
-        curr = 0
-        while unvisited:
-            nxt = min(unvisited, key=lambda node: cost_mat[curr][node])
-            tour.append(nxt)
-            unvisited.remove(nxt)
-            curr = nxt
+        # Without a depot the first supplied stop has no special origin role.
+        # Evaluate each possible greedy start, then refine the cheapest tour.
+        candidate_tours = []
+        for start in (range(n) if depot is None else (0,)):
+            unvisited = set(range(n)) - {start}
+            candidate = [start]
+            current = start
+            while unvisited:
+                nxt = min(unvisited, key=lambda node: (cost_mat[current][node], node))
+                candidate.append(nxt)
+                unvisited.remove(nxt)
+                current = nxt
+            cost = sum(cost_mat[a][b] for a, b in zip(candidate, candidate[1:]))
+            candidate_tours.append((cost, candidate))
+        _, tour = min(candidate_tours, key=lambda item: (item[0], item[1]))
 
         if depot is not None and end_at_depot:
             tour.append(0)
+
+        if any(not math.isfinite(cost_mat[a][b]) for a, b in zip(tour, tour[1:])):
+            raise DisconnectedNetwork("VRP includes an unreachable stop; split the route into connected groups")
 
         # 2-Opt local search improvement
         tour = self._two_opt(tour, cost_mat, is_roundtrip=(depot is not None and end_at_depot))
@@ -183,8 +195,8 @@ class NetworkRouteOptimizationService:
             path_edges.extend(sub_route.path_edge_ids)
             combined_directions.extend(sub_route.directions)
 
-        origin_label = f"stop_{tour[0]}"
-        dest_label = f"stop_{tour[-1]}"
+        origin_label = "depot" if depot is not None and tour[0] == 0 else f"stop_{tour[0] - (1 if depot is not None else 0)}"
+        dest_label = "depot" if depot is not None and tour[-1] == 0 else f"stop_{tour[-1] - (1 if depot is not None else 0)}"
 
         return Route(
             route_id=f"vrp_opt_{len(tour)}_stops",
@@ -271,6 +283,8 @@ class NetworkRouteOptimizationService:
                 res.append((float(c[0]), float(c[1])))
             elif isinstance(item, dict):
                 g = item.get("geometry", {})
-                c = g.get("coordinates", [0.0, 0.0])
+                c = g.get("coordinates")
+                if not isinstance(c, (list, tuple)) or len(c) < 2:
+                    raise ValueError("VRP stop/depot requires a declared point geometry")
                 res.append((float(c[0]), float(c[1])))
         return res

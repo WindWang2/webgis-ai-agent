@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -169,6 +169,7 @@ class HostPolicy:
     isolation_backend: str = "process"
     # CP-02：none | untrusted | all（见 activation_guards）；settings 桥缺省 untrusted。
     require_worker_for: str = "none"
+    require_namespace_for_untrusted: bool = False
     # V3 流式初始 credit 窗口（宿主内存上界 ≈ window × max_output_bytes）。
     stream_window: int = 16
     # V3 单次流事件数上界。
@@ -311,6 +312,9 @@ class ExtensionHost:
                     )
                 )
                 record.baseline_diagnostics = tuple(record.diagnostics)
+            if record.state is ExtensionState.QUARANTINED:
+                reason = "revocation" if any(d.code is DiagnosticCode.PACKAGE_REVOKED for d in record.diagnostics) else "trust_policy"
+                _metrics_safely(lambda metrics: metrics.record_quarantine(reason))
             self._records[record.extension_id] = record
         for record in self._records.values():
             self.validate_extension(record.extension_id)
@@ -627,7 +631,18 @@ class ExtensionHost:
         record.module = None
 
     # ── activate ─────────────────────────────────────────────────────
-    def activate(
+    def activate(self, extension_id: str, *, override_gate: bool = False) -> list[ExtensionDiagnostic]:
+        try:
+            return self._activate_impl(extension_id, override_gate=override_gate)
+        finally:
+            record = self.get_record(extension_id)
+            state = record.state if record is not None else ExtensionState.FAILED
+            result = "activated" if state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED) else (
+                "disabled" if state is ExtensionState.DISABLED else (
+                    "quarantined" if state is ExtensionState.QUARANTINED else "failed"))
+            _metrics_safely(lambda metrics: metrics.record_activation(result))
+
+    def _activate_impl(
         self, extension_id: str, *, override_gate: bool = False
     ) -> list[ExtensionDiagnostic]:
         record = self._records.get(extension_id)
@@ -643,6 +658,7 @@ class ExtensionHost:
             record.trust is TrustLevel.LOCAL_UNTRUSTED
             and not self._policy.allow_local_untrusted_activation
         ):
+            record.diagnostics = [d for d in record.diagnostics if d.code is not DiagnosticCode.TRUST_BLOCKED]
             record.diagnostics.append(
                 ExtensionDiagnostic.error(
                     DiagnosticCode.TRUST_BLOCKED,
@@ -777,12 +793,25 @@ class ExtensionHost:
         policy_error = isolation_policy_error(
             self._policy.require_worker_for, record.trust,
             record.manifest.is_worker_mode, extension_id,
+            require_namespace_for_untrusted=self._policy.require_namespace_for_untrusted,
+            backend=self._policy.isolation_backend,
         )
         if policy_error is not None:
             record.state = ExtensionState.FAILED
             record.diagnostics = list(warnings) + [policy_error]
             return list(record.diagnostics)
 
+        # CP-10：内容复核在 exec_module 之前（所有信任级别）。
+        pre_fp, pre_error, pre_warning = content_recheck(
+            record.path, record.fingerprint, record.trust, extension_id
+        )
+        if pre_error is not None:
+            record.state = ExtensionState.FAILED
+            record.diagnostics = list(warnings) + [pre_error]
+            return list(record.diagnostics)
+        if pre_warning is not None:
+            warnings.append(pre_warning)
+            record.fingerprint = pre_fp
         record.state = ExtensionState.LOADING
         if record.manifest.is_worker_mode:
             try:
@@ -799,17 +828,6 @@ class ExtensionHost:
                         extension_id=extension_id,
                     ),
                 )
-        # CP-10：内容复核在 exec_module 之前（所有信任级别）。
-        pre_fp, pre_error, pre_warning = content_recheck(
-            record.path, record.fingerprint, record.trust, extension_id
-        )
-        if pre_error is not None:
-            record.state = ExtensionState.FAILED
-            record.diagnostics = list(warnings) + [pre_error]
-            return list(record.diagnostics)
-        if pre_warning is not None:
-            warnings.append(pre_warning)
-            record.fingerprint = pre_fp
         ledger = ProjectionLedger(extension_id=extension_id)
         grants = grants_for(extension_id, self._policy.grants)
         context = ExtensionContext(
@@ -930,7 +948,6 @@ class ExtensionHost:
             else ExtensionState.ACTIVE
         )
         logger.info("extension %s activated (state=%s)", extension_id, record.state.value)
-        _metrics_safely(lambda m: m.record_activation("activated"))
         self._notify_projection_change(extension_id, "activate")
         return list(record.diagnostics)
 
@@ -1013,7 +1030,6 @@ class ExtensionHost:
             [e.message for e in errors],
         )
         self._notify_projection_change(record.extension_id, "rollback")
-        _metrics_safely(lambda m: m.record_activation("failed"))
         return list(record.diagnostics)
 
     # ── V2：worker 隔离执行（ADR-0105）────────────────────────────────
@@ -1128,8 +1144,21 @@ class ExtensionHost:
         # proxy 投影（经台账，保证失败逆序回滚）。
         for tool in worker.tools:
             projected = str(tool.get("name"))
-            kwargs = dict(tool.get("kwargs") or {})
-            description = str(tool.get("description") or "")
+            # Security-relevant descriptors are authoritative manifest declarations.
+            declaration = next((t for t in manifest.tools if manifest.namespaced_tool_name(t.name) == projected), None)
+            offered_kwargs = dict(tool.get("kwargs") or {})
+            kwargs = {k: v for k, v in offered_kwargs.items()
+                      if k in {"parameters", "param_descriptions", "field_extras", "version", "contract_version"}}
+            if declaration is not None:
+                kwargs.update(tier=declaration.tier, domains=list(declaration.domains),
+                              side_effect=declaration.side_effect, summary=declaration.summary)
+                description = declaration.description
+            else:
+                provider = next(p for p in manifest.model_providers
+                                if manifest.namespaced_model_provider_tool(p.id) == projected)
+                kwargs.update(tier=1, domains=[], side_effect="unclassified",
+                              required_permission="model_provider")
+                description = provider.description
             proxy = self._make_worker_proxy(record, worker, projected, execution.call_timeout_s)
             try:
                 self._tool_registry.register(projected, description, proxy, **kwargs)
@@ -1245,7 +1274,6 @@ class ExtensionHost:
             "extension %s activated in worker mode (state=%s, pid=%s)",
             record.extension_id, record.state.value, worker.pid,
         )
-        _metrics_safely(lambda m: m.record_activation("activated"))
         self._notify_projection_change(record.extension_id, "activate")
         return list(record.diagnostics)
 
@@ -1493,7 +1521,7 @@ class ExtensionHost:
             self._policy.max_worker_crashes,
         )
         if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
-            self.deactivate(record.extension_id)
+            self._deactivate_for_revocation(record.extension_id)
         if record.worker_crash_count >= self._policy.max_worker_crashes:
             record.state = ExtensionState.QUARANTINED
             _metrics_safely(lambda m: m.record_quarantine("worker_crash"))
@@ -1897,6 +1925,27 @@ class ExtensionHost:
             )
         return None
 
+    def _deactivate_for_revocation(self, extension_id: str, seen: Optional[set[str]] = None) -> None:
+        """Revoke projections even when dependents or in-flight calls exist."""
+        seen = seen if seen is not None else set()
+        if extension_id in seen:
+            return
+        seen.add(extension_id)
+        for dependent_id, dependent in sorted(self._records.items()):
+            if (dependent.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED)
+                    and extension_id in dependent.satisfied_dependencies):
+                self._deactivate_for_revocation(dependent_id, seen)
+        record = self._records[extension_id]
+        if record.worker is not None:
+            record.worker.shutdown()
+            record.worker = None
+        if record.ledger is not None:
+            record.diagnostics.extend(record.ledger.rollback())
+            record.ledger = None
+        record.context = None
+        record.state = ExtensionState.COMPATIBLE
+        self._notify_projection_change(extension_id, "deactivate")
+
     def refresh_revocations(self) -> list[str]:
         """惰性吊销复查：trust store 内已吊销的**激活**扩展 → 停用+隔离。
 
@@ -1926,6 +1975,7 @@ class ExtensionHost:
             except ExtensionPlatformError:
                 return []  # 信任根暂不可读：保留现有状态，下次复查重试
             self._revocation_mtime = mtime
+            self._policy = replace(self._policy, trust_store=trust)
         # Round-1 MAJ-5：key 集变化（密钥吊销/rotation 的主要响应手段）
         # → 对全部激活扩展重验签，命中 revoked/invalid/tampered 即隔离。
         if (
@@ -1942,12 +1992,9 @@ class ExtensionHost:
             if not revoked and record.fingerprint is not None:
                 revoked = trust.is_fingerprint_revoked(record.fingerprint)
             if revoked:
-                if record.worker is not None:
-                    record.worker.shutdown()
-                    record.worker = None
-                    if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
-                        self.deactivate(extension_id)
+                self._deactivate_for_revocation(extension_id)
                 record.state = ExtensionState.QUARANTINED
+                _metrics_safely(lambda m: m.record_quarantine("revocation"))
                 record.diagnostics.append(
                     ExtensionDiagnostic.error(
                         DiagnosticCode.PACKAGE_REVOKED,
@@ -1979,11 +2026,9 @@ class ExtensionHost:
                 version=record.manifest.version,
             )
             if status.status in (STATUS_REVOKED, STATUS_INVALID, STATUS_TAMPERED):
-                if record.worker is not None:
-                    record.worker.shutdown()
-                    record.worker = None
-                    self.deactivate(extension_id)
+                self._deactivate_for_revocation(extension_id)
                 record.state = ExtensionState.QUARANTINED
+                _metrics_safely(lambda m: m.record_quarantine("revocation"))
                 record.diagnostics.append(
                     ExtensionDiagnostic.error(
                         DiagnosticCode.PACKAGE_REVOKED,
@@ -2018,7 +2063,8 @@ class ExtensionHost:
         eligible = {
             eid for eid, r in self._records.items() if r.state is ExtensionState.COMPATIBLE
         }
-        plan = resolver.resolve_activation_plan(views, eligible)
+        plan = resolver.resolve_activation_plan(views, eligible,
+            feature_flags={eid: self._effective_flags(record.manifest) for eid, record in self._records.items()})
         # 环内/无序成员不在 ordered 中（validate 阶段已诊断），跳过即可。
         for eid in plan.ordered:
             results[eid] = self.activate(eid)

@@ -18,6 +18,7 @@ Kill-switch：``GIS_SITUATION_SUPPLY``（默认 ON）。构造任何异常 → `
 （bare-context 语义兜底），本模块绝不成为第二 dispatch 故障面。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import logging
 import os
@@ -294,7 +295,7 @@ def situation_facts_digest(facts: Any) -> str:
                 if not facts["runtime_availability"]:
                     facts.pop("runtime_availability")
         except Exception:  # noqa: BLE001 — 投影失败按原值序列化
-            pass
+            observe_optional_failure(__name__)
     if isinstance(facts, dict):
         # H01（K5）：granted_permissions* 是 credentials_present 的纯派生键
         # —— 剔除后再散列，保持 planner/dispatch 四面等价契约（派生键只
@@ -325,7 +326,7 @@ def _collect_identity(session_id: str, tenant_id: str) -> Dict[str, str]:
                 getattr(ctx, "session_id", "") or identity["session_id"]
             )[:_STR_MAX]
     except Exception:  # noqa: BLE001 — 身份面缺席不阻断
-        pass
+        observe_optional_failure(__name__)
     try:
         from app.services.gis_harness.hotpath_convergence.session_ctx import (
             get_turn_context,
@@ -334,7 +335,7 @@ def _collect_identity(session_id: str, tenant_id: str) -> Dict[str, str]:
         hot = get_turn_context(session_id, tenant_id=tenant_id)
         identity["mission_id"] = str(getattr(hot, "mission_id", "") or "")[:_STR_MAX]
     except Exception:  # noqa: BLE001
-        pass
+        observe_optional_failure(__name__)
     return identity
 
 
@@ -358,7 +359,7 @@ def _collect_security_facts() -> tuple:
 
         granted |= {str(p) for p in granted_permissions() if p}
     except Exception:  # noqa: BLE001
-        pass
+        observe_optional_failure(__name__)
     granted_sorted = sorted(granted)
     for perm in granted_sorted[:_MAX_CRED_KEYS]:
         cred_map[f"perm:{perm}"] = True

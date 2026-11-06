@@ -1,4 +1,4 @@
-"""Selection History —— 多轮指代的选择史投影（ADR-0283 D3）。
+"""Selection History —— 多轮指代的选择史投影（ADR-0285 D3）。
 
 IR 投影只保留**当前唯一** selection（deselect 即清空）——「刚才那组学校」
 这类历史指代没有句柄。本模块从 ledger 环**纯函数**重建最近 ≤N 个「选择代」

@@ -8,6 +8,8 @@ asset → ``SourceUnreachableError``.
 """
 from __future__ import annotations
 
+from app.lib.geo_raster.env import open_raster
+
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -71,7 +73,6 @@ class COGAdapter(GeospatialDataSourceAdapter):
         return self._path
 
     def _open_info(self) -> Dict[str, Any]:
-        import rasterio
 
         path = self._raster()
         if not path.startswith(("http", "/vsi")) and not Path(path).exists():
@@ -80,7 +81,7 @@ class COGAdapter(GeospatialDataSourceAdapter):
                 details={"hint": "declare a real local COG or reachable URL"},
             )
         try:
-            with rasterio.open(path) as src:
+            with open_raster(path) as src:
                 return {
                     "bounds": list(src.bounds),
                     "crs": str(src.crs) if src.crs else None,
@@ -142,11 +143,10 @@ class COGAdapter(GeospatialDataSourceAdapter):
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
         """Decimated header-level preview (≤16x16 decimation, real pixels)."""
-        import rasterio
 
         path = self._raster()
         try:
-            with rasterio.open(path) as src:
+            with open_raster(path) as src:
                 window_shape = (min(16, src.height), min(16, src.width))
                 data = src.read(1, out_shape=window_shape)
                 return {

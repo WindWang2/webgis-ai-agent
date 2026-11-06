@@ -9,7 +9,7 @@ import { test, expect } from 'playwright/test';
 import { defaultWorld } from '../helpers/bootstrap';
 import { installJourneyStubs, makeJob } from '../fixtures/api-stubs';
 import { analysisTurn } from '../fixtures/sse';
-import { awaitShellReady, loginViaApi, sendChat } from '../helpers/bootstrap';
+import { awaitShellReady, getJourneyAuth, loginViaApi, sendChat } from '../helpers/bootstrap';
 import { expectJobState, waitForChatStreamResponse } from '../helpers/assertions';
 import { API_ORIGIN, MODE, REAL_ONLY_REASON } from '../helpers/mode';
 import { runRetryFixture } from '../helpers/real-jobs';
@@ -72,9 +72,7 @@ test.describe('journey-2 任务取消与重试', () => {
     await expectJobState(page, 'AI 任务', '运行中');
     const agentCard = page.locator('[data-testid^="job-card-task-"]').first();
     const agentId = (await agentCard.getAttribute('data-testid'))!.replace('job-card-', '');
-    const auth = await page.evaluate(() => JSON.parse(localStorage.getItem('webgis_auth') ?? '{}')) as {
-      accessToken: string; user: { id: string };
-    };
+    const auth = getJourneyAuth(page)!;
     expect(auth.accessToken).toBeTruthy();
     const headers = { Authorization: `Bearer ${auth.accessToken}` };
     const jobUrl = (id: string) => new URL(`/api/v1/tasks/jobs/${id}`, API_ORIGIN).href;

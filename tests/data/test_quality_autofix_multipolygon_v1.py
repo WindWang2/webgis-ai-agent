@@ -102,3 +102,23 @@ def test_rule_chain_autofix_preserves_multipolygon_structure():
     assert [len(part) for part in geom["coordinates"]] == [2, 1]
     assert geom["coordinates"][0][1][:-1] == \
         [[2.0, 2.0], [2.0, 4.0], [4.0, 4.0], [4.0, 2.0]]
+
+
+def test_degenerate_first_part_does_not_drop_later_valid_part():
+    geometry = {"type": "MultiPolygon", "coordinates": [
+        [[[0, 0], [1, 0], [2, 0], [0, 0]]],
+        [[[10, 10], [12, 10], [12, 12], [10, 10]]],
+    ]}
+    fixed, evidence = apply_autofix(_fc(geometry), [_REPAIR])
+    assert len(fixed["geojson"]["features"]) == 1
+    assert len(fixed["geojson"]["features"][0]["geometry"]["coordinates"]) == 1
+    assert evidence["operations"][0]["dropped_features"] == 0
+
+
+def test_repair_preserves_z_and_m_ordinates():
+    geometry = {"type": "Polygon", "coordinates": [
+        [[0, 0, 7, 9], [1, 0, 8, 10], [1, 1, 9, 11]],
+    ]}
+    fixed, _ = apply_autofix(_fc(geometry), [_REPAIR])
+    coords = fixed["geojson"]["features"][0]["geometry"]["coordinates"][0]
+    assert coords == geometry["coordinates"][0] + [geometry["coordinates"][0][0]]

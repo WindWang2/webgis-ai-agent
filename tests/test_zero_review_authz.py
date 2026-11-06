@@ -72,7 +72,9 @@ def test_require_existing_session_owner_blocks_foreign_conversation(db):
     conv = Conversation(id="sess-alice", title="t", user_id="alice")
     db.add(conv)
     db.commit()
-    _require_existing_session_owner(db, "no-such-session", {"user_id": "bob"}, None)
+    with pytest.raises(HTTPException) as missing:
+        _require_existing_session_owner(db, "no-such-session", {"user_id": "bob"}, None)
+    assert missing.value.status_code == 404
     with pytest.raises(HTTPException) as ei:
         _require_existing_session_owner(db, "sess-alice", {"user_id": "bob"}, None)
     assert ei.value.status_code == 404

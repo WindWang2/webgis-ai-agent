@@ -175,8 +175,8 @@ def _parse_multifield_samples(
             "rk: dropping %d row(s) with NaN/inf value(s)", int((~finite).sum())
         )
         arr = arr[finite]
-        lons = [x for x, keep in zip(lons, finite) if keep]
-        lats = [x for x, keep in zip(lats, finite) if keep]
+        lons = [x for x, keep in zip(lons, finite, strict=True) if keep]
+        lats = [x for x, keep in zip(lats, finite, strict=True) if keep]
     if not lons:
         raise ValueError("没有有限的数值行可用于回归克里金")
 
@@ -538,7 +538,7 @@ def regression_kriging_surface(
             "rk_variance": float(v),
             "rk_stddev": float(np.sqrt(max(v, 0.0))),
         }
-        for cell, p, v in zip(target_cells, out["predictions"], out["variances"])
+        for cell, p, v in zip(target_cells, out["predictions"], out["variances"], strict=True)
     ]
     metadata["value_range"] = [
         round(float(np.min(out["predictions"])), 4),

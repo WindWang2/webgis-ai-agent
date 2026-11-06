@@ -1,3 +1,4 @@
+import { t as tNow } from '@/lib/i18n/t';
 import { ApiError, apiFetch } from '@/lib/api/transport';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { presentationFromMapSpec } from '@/lib/session/map-state-restore';
@@ -8,6 +9,7 @@ import {
   getCommittedMapSpec,
   getMapSpecSessionCursor,
   getPendingPresentation,
+  getPendingMutationMeta,
   markPendingRemoved,
   mergePendingPresentation,
   setMapSpecRevision,
@@ -216,7 +218,7 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
 
     try {
       const data = await apiFetch<MutationResponse>(
-        `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+        `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/mapspec/mutations`,
         {
           method: 'POST',
           body: {
@@ -247,8 +249,8 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       // 跳过其它仍有 pending 的层（它们的旧真相不得覆盖在途乐观态）。
       // 文档提交失败（缺席/畸形）时 applyCommittedMapSpec 内部会把 HUD
       // 强制对齐 committed presentation，杜绝「面板新值/地图旧值」分叉。
-      clearPendingPresentation(specLayerId);
-      clearPendingPresentation(patch.layerId);
+      clearPendingPresentation(specLayerId, mutationId);
+      clearPendingPresentation(patch.layerId, mutationId);
       applyCommittedMapSpec(data.mapspec, data.mutation_revision);
     } catch (err) {
       const superseded = supersededFromError(err);
@@ -257,8 +259,8 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
         // committed 真相（清 pending），调用方回滚 HUD 行，两处一致。
         if (patch.visible !== undefined) emitPresentationEvent('visible', 'failed');
         if (patch.opacity !== undefined) emitPresentationEvent('opacity', 'failed');
-        clearPendingPresentation(specLayerId);
-        clearPendingPresentation(patch.layerId);
+        clearPendingPresentation(specLayerId, mutationId);
+        clearPendingPresentation(patch.layerId, mutationId);
         throw err;
       }
       if (patch.visible !== undefined) emitPresentationEvent('visible', 'superseded', superseded.mutation_revision);
@@ -270,8 +272,8 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       // superseded：服务端真相对目标层有裁决权（#692 回滚语义）——
       // 目标 pending 先清再回灌（与成功路径同序）；文档缺席时 apply 内部
       // 把 HUD 对齐 committed，调用方随后回滚 HUD，两处一致。
-      clearPendingPresentation(specLayerId);
-      clearPendingPresentation(patch.layerId);
+      clearPendingPresentation(specLayerId, mutationId);
+      clearPendingPresentation(patch.layerId, mutationId);
       if (superseded.mapspec) {
         applyCommittedMapSpec(superseded.mapspec, superseded.mutation_revision);
       }
@@ -332,7 +334,7 @@ export async function commitLayerStyleAndCommit(
     if (sessionId !== enqueuedSessionId) return;
     try {
       const data = await apiFetch<MutationResponse>(
-        `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+        `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/mapspec/mutations`,
         {
           method: 'POST',
           body: {
@@ -389,6 +391,7 @@ function toastRollback(actionLabel: string, err: unknown): void {
 }
 
 export async function toggleLayerAndCommit(layerId: string): Promise<void> {
+  if (useHudStore.getState().lockedLayerIds.includes(layerId)) return;
   const layer = useHudStore.getState().layers.find((item) => item.id === layerId);
   // B10（workbench-v4）：不存在的行此前仍会以缺省 previous=true 提交
   // visible:false mutation —— 对服务端未知层发写、且乐观翻转无目标。
@@ -416,6 +419,7 @@ export async function toggleLayerAndCommit(layerId: string): Promise<void> {
   try {
     await commitLayerPresentation({ layerId, visible: !previous });
   } catch (err) {
+    if (getPendingMutationMeta(layerId)) return;
     useHudStore.getState().updateLayer(layerId, { visible: previous });
     toastRollback('显隐切换', err);
   }
@@ -434,7 +438,7 @@ export async function commitExplicitView(view: {
     if (!sessionId || sessionId !== enqueuedSessionId) return;
     try {
       const data = await apiFetch<MutationResponse>(
-        `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+        `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/mapspec/mutations`,
         {
           method: 'POST',
           body: {
@@ -486,7 +490,7 @@ export async function commitMapSpecMutation(
     if (!sessionId || sessionId !== enqueuedSessionId) return;
     try {
       const data = await apiFetch<MutationResponse>(
-        `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+        `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/mapspec/mutations`,
         {
           method: 'POST',
           body: {
@@ -554,7 +558,7 @@ async function removeLayerFromSpecOnce(
   // 两条 await 后复核统一对 bound —— 防御路径不再旁路会话守卫。
   const bound = enqueuedSessionId ?? sessionId;
   if (enqueuedSessionId === undefined) {
-    console.warn('[removeLayerFromSpec] no enqueuedSessionId supplied; using current session');
+    devOnly.warn('[removeLayerFromSpec] no enqueuedSessionId supplied; using current session');
   } else if (sessionId !== bound) {
     return { outcome: 'reflected', mutationId: newMutationId() };
   }
@@ -563,7 +567,7 @@ async function removeLayerFromSpecOnce(
   const attemptMutationId = newMutationId();
   try {
     const data = await apiFetch<MutationResponse>(
-      `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+      `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/mapspec/mutations`,
       {
         method: 'POST',
         body: {
@@ -654,7 +658,7 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
   if (removedRow && !removedRow._mapspecLayerId) {
     journalOnly({
       type: 'remove',
-      label: `删除图层 ${layerId}`,
+      label: tNow('map.export.removeLayer', { id: layerId }),
       actor: 'user',
     });
     useHudStore.getState().removeLayer(layerId);
@@ -666,7 +670,7 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
   // —— 仅入 journal，不进 undo 栈（诚实可逆性元数据）。
   journalOnly({
     type: 'remove',
-    label: `删除图层 ${layerId}`,
+    label: tNow('map.export.removeLayer', { id: layerId }),
     actor: 'user',
   });
   markPendingRemoved(specLayerId);
@@ -819,6 +823,7 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
 }
 
 export async function setLayerOpacityAndCommit(layerId: string, opacity: number): Promise<void> {
+  if (useHudStore.getState().lockedLayerIds.includes(layerId)) return;
   const layer = useHudStore.getState().layers.find((item) => item.id === layerId);
   const previous = layer?.opacity ?? 1;
   if (previous === opacity) return;
@@ -834,6 +839,7 @@ export async function setLayerOpacityAndCommit(layerId: string, opacity: number)
   try {
     await commitLayerPresentation({ layerId, opacity });
   } catch (err) {
+    if (getPendingMutationMeta(layerId)) return;
     useHudStore.getState().updateLayer(layerId, { opacity: previous });
     toastRollback('不透明度调整', err);
   }

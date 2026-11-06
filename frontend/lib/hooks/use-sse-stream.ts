@@ -1,4 +1,5 @@
 'use client';
+import { resolveFeatureId as resolveCanonicalFeatureId } from '@/lib/layers/feature-id';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { StepResultPayload } from '@/lib/api/chat';
@@ -93,7 +94,6 @@ const SUBLAYER_SEP = '__';
 const FEATURE_LABEL_KEYS = ['name', 'title', 'label', 'id', 'OBJECTID'];
 
 // Id-like property keys used as feature identity before falling back to a hash.
-const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id'];
 
 const MAX_SNAPSHOT_PROPS = 5;
 const MAX_PROP_VALUE_LEN = 60;
@@ -188,11 +188,8 @@ function resolveFeatureId(
 ): string | number {
   if (typeof sel.featureId === 'string' && sel.featureId) return truncateFeatureId(sel.featureId);
   if (typeof sel.featureId === 'number') return sel.featureId;
-  for (const k of FEATURE_ID_KEYS) {
-    const v = sel.properties?.[k];
-    if (typeof v === 'string' && v) return truncateFeatureId(v);
-    if (typeof v === 'number') return v;
-  }
+  const resolved = resolveCanonicalFeatureId(props);
+  if (resolved !== null) return resolved;
   return shortContentHash(JSON.stringify({ p: props, pt: sel.point }));
 }
 
@@ -575,6 +572,10 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     }
   }, [sessionTokenRef]);
 
+  const sendingRef = useRef(false);
+  const sendGenerationRef = useRef(0);
+  const loadingGuardRef = useRef(false);
+
   const onEvent = useCallback(
     (event: SSEEvent) => {
       const data = event.data as any;
@@ -584,6 +585,11 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       if (eventSid && sessionIdRef.current && eventSid !== sessionIdRef.current) {
         devOnly.warn('[useSSEStream] ignored cross-session SSE event:', eventSid);
         return;
+      }
+
+      if (['done', 'task_complete', 'task_cancelled', 'error', 'task_error'].includes(event.event)) {
+        sendingRef.current = false;
+        loadingGuardRef.current = false;
       }
 
       // Session ID assignment (first response binds the initially undefined session)
@@ -1032,6 +1038,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     if (!sid) return false;
     try {
       const env = await getPendingClarification(sid, sessionTokenRef.current || undefined);
+      if (sessionIdRef.current !== sid) return false;
       setMessages((prev) => replaceClarificationEnvelope(prev, { envelope: env }));
       return true;
     } catch {
@@ -1060,6 +1067,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         sessionTokenRef.current || undefined,
       )
         .then(async (result) => {
+          if (sessionIdRef.current !== sid) return;
           if (!result.resolved_all) {
             // 部分作答（review P1-2）：仍有 blocking 未决——不锁定卡片、
             // 不自动续行；以服务端 pending 真相换入下一问（后端已解除
@@ -1067,6 +1075,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             // 转 error（可重试；重提交旧答案得 duplicate → resolved_all，
             // 不死锁在 submitting，review N3）。
             const refreshed = await refreshPendingClarification();
+            if (sessionIdRef.current !== sid) return;
             if (!refreshed) {
               setMessages((prev) =>
                 setClarificationStatus(prev, {
@@ -1092,10 +1101,11 @@ export function useSSEStream(options: UseSSEStreamOptions) {
           // 续行：与 plan 审批同模式（#468 同款失败不回滚——答案已在服务端
           // 落地，续行失败只是没继续跑，用户重发即可，卡片不应退回 open）。
           setTimeout(() => {
-            void handleSendRef.current?.(t('chat.clarify.continue'));
+            if (sessionIdRef.current === sid) void handleSendRef.current?.(t('chat.clarify.continue'));
           }, 0);
         })
         .catch((err: unknown) => {
+          if (sessionIdRef.current !== sid) return;
           if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
             void refreshPendingClarification();
             return;
@@ -1111,17 +1121,14 @@ export function useSSEStream(options: UseSSEStreamOptions) {
   // #468: the ref carries handleSend's success signal (true = the turn
   // completed; false/rejection = failed) so plan approval can roll back.
   const handleSendRef = useRef<((text: string) => Promise<boolean>) | null>(null);
-  const isLoadingRef = useRef(isLoading);
-  isLoadingRef.current = isLoading;
+  loadingGuardRef.current = isLoading;
   // F-5: synchronous in-flight guard. ``isLoadingRef`` is only refreshed during
   // render, so two sends in the same tick (before re-render) both passed the
   // guard and produced duplicate user/thinking messages plus a phantom "完成。"
   // bubble. This ref is set synchronously at entry and cleared in finally.
-  const sendingRef = useRef(false);
-
   const handleSend = useCallback(
     async (userMsg: string): Promise<boolean> => {
-      if (!userMsg || isLoadingRef.current || sendingRef.current) return false;
+      if (!userMsg || loadingGuardRef.current || sendingRef.current) return false;
 
       // 「地图随对话」：新对话轮次。本轮 agent 展示图层时，旧轮的可见
       // 分析图层让位（lib/chat/turn-focus）。
@@ -1197,6 +1204,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         isThinking: true,
       }));
 
+      const sendGeneration = ++sendGenerationRef.current;
       try {
         // F-5: set inside the try so a synchronous throw in the setup above
         // (which runs before this point, no awaits) cannot leave the guard
@@ -1216,9 +1224,8 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         // is the truthful signal.
         return useHudStore.getState().aiStatus !== 'error';
       } finally {
-        // F-5: release the synchronous in-flight guard only after the send has
-        // committed (success or error); by then isLoading governs re-entry.
-        sendingRef.current = false;
+        // A superseded stream must not unlock the next send.
+        if (sendGeneration === sendGenerationRef.current) sendingRef.current = false;
       }
     },
     [bridge, getMapSnapshot, userLocation, setMessages]

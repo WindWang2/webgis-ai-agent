@@ -34,6 +34,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
   const uid = useId();
   const [newProjName, setNewProjName] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
   const addToast = useToastStore((s) => s.addToast);
   const ws = useWorkflowWorkspace();
   const setActiveProjectId = useHudStore((s) => s.setActiveProjectId);
@@ -65,14 +66,15 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
   }, [ws.selectedProjectId, setActiveProjectId]);
 
   const handleCreateProject = async () => {
-    if (!newProjName.trim()) return;
+    if (!newProjName.trim() || creating) return;
+    setCreating(true);
     try {
       await ws.createProject(newProjName.trim());
       setNewProjName('');
       setShowCreate(false);
     } catch (e) {
       addToast(e instanceof Error ? e.message : t('project.create.failed'), 'error');
-    }
+    } finally { setCreating(false); }
   };
 
   const handleRerunWorkflow = async (wfId: string) => {
@@ -110,7 +112,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
             icon={Plus}
             iconSize={15}
             active={showCreate}
-            disabled={!authUser}
+            disabled={!authUser || creating}
             onClick={() => setShowCreate(!showCreate)}
           />
         )}
@@ -150,7 +152,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                     <button
                       type="button"
                       onClick={handleCreateProject}
-                      disabled={!authUser}
+                      disabled={!authUser || creating || !newProjName.trim()}
                       className="w-full rounded-sm bg-status-accent py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {t('sidebar.project.create')}
@@ -182,23 +184,23 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                 {/* ADR-0143：项目资产区（数据集 CRUD/双模式预览、产物中心/血缘图/
                     快照时间线/质量审计修复/数据回收）。取代原只读数据集列表 ——
                     完整管理面见 frontend/docs/workspace-ui-recon.md §3.2。 */}
-                <ProjectAssetsSection
+                {ws.selectedProjectId && <ProjectAssetsSection
                   projectId={ws.selectedProjectId}
                   sessionId={sessionId}
                   authed={Boolean(authUser)}
                   tab={assetsTab}
                   onTabChange={setAssetsTab}
                   onViewVersionLedger={viewVersionLedger}
-                />
+                />}
 
                 {/* ADR-0069 / spec 开放问题 2：项目制图记忆治理面板。
                     放在数据集之下——记忆与数据集同属"项目的长期状态"。 */}
-                <CartoMemoryPanel projectId={ws.selectedProjectId} />
+                {ws.selectedProjectId && <CartoMemoryPanel projectId={ws.selectedProjectId} />}
 
                 {/* ADR-0092 A6：Map Product 版本台账 + 五维差异（版本工作区）。
                     只读真相 + 复用 rerun_from_step；仅样式变更不触发分析重算。
                     id 供产物中心「查看版本台账」交叉导航滚动定位。 */}
-                <div id="map-product-versions">
+                {ws.selectedProjectId && <div id="map-product-versions">
                   <MapProductVersionsPanel
                     projectId={ws.selectedProjectId}
                     sessionId={sessionId}
@@ -212,7 +214,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                     }}
                     onRerunError={(message) => addToast(message, 'error')}
                   />
-                </div>
+                </div>}
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">

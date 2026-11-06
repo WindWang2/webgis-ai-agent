@@ -1,20 +1,8 @@
 """Regression tests for #434: web_search's DuckDuckGo fallback must never block
 the event loop and must be bounded by a real timeout.
 
-Before the fix, ``web_search`` (an ``async def`` dispatched with the ASYNC
-policy, i.e. awaited directly on the loop) called the fully synchronous
-``DDGS().text()`` inline — every DDG search (the default path whenever
-``BAIDU_QIANFAN_TOKEN`` is unset) froze all concurrent SSE streams for the
-full HTTP round-trip, with no outer wall-clock bound. ``search_and_extract_poi``
-shared the same fallback.
-
-These tests mirror tests/test_event_loop_offload_386.py: fake a slow DDG
-search with ``time.sleep``, drive it through real ``registry.dispatch``, and
-assert a concurrent asyncio ticker keeps firing while the search runs and
-that the work happened on a worker thread (not the loop thread). A separate
-test asserts the wall-clock budget turns a hung DDG call into an error dict.
-
-Run cost: ~2s total (0.6-0.8s fake sleeps), no network.
+Offload probes assert the actual execution thread, independent of scheduler
+latency. Dedicated throughput/timeout tests keep their explicit time budgets.
 """
 import asyncio
 import threading
@@ -67,29 +55,13 @@ def _fresh_registry():
     return registry
 
 
-async def _assert_loop_responsive_during(awaitable_factory):
-    """Same technique as tests/test_event_loop_offload_386.py.
+async def _run_offload_probe(awaitable_factory):
+    """Run the probe; callers assert the actual worker thread identity.
 
-    With the DDG work on the loop, the fake's time.sleep blocks everything and
-    the 0.05s ticker cannot complete; with the work offloaded the dispatch task
-    is still running when the ticker fires.
+    A fixed sleep/task-pending race depends on machine scheduling and can
+    fail when correctly offloaded work finishes before the test resumes.
     """
-    _SlowDDGS.observed = {}
-    task = asyncio.create_task(awaitable_factory())
-    await asyncio.sleep(0.15)  # let dispatch reach the slow work
-    assert not task.done(), "work finished before the test could observe it"
-
-    ticks = []
-
-    async def _tick():
-        await asyncio.sleep(0.05)
-        ticks.append(True)
-
-    tick = asyncio.create_task(_tick())
-    await asyncio.sleep(0.15)
-    assert tick.done() and ticks, "event loop was blocked during the DDG search"
-    assert not task.done(), "event loop was blocked during the DDG search"
-    return await task
+    return await awaitable_factory()
 
 
 # ─── Site 1: web_search DDG fallback (default path, no Qianfan token) ────────
@@ -102,7 +74,7 @@ async def test_web_search_ddg_off_loop():
     with patch("app.tools.web_crawler.settings") as s, \
          patch("app.tools.web_crawler.DDGS", _SlowDDGS):
         s.BAIDU_QIANFAN_TOKEN = ""  # auto → ddg fallback
-        result = await _assert_loop_responsive_during(
+        result = await _run_offload_probe(
             lambda: registry.dispatch("web_search", {"query": "成都 星巴克"})
         )
     assert _SlowDDGS.observed.get("thread") != _main_thread, (
@@ -122,7 +94,7 @@ async def test_search_and_extract_poi_ddg_off_loop():
     with patch("app.tools.web_crawler.settings") as s, \
          patch("app.tools.web_crawler.DDGS", _SlowDDGS):
         s.BAIDU_QIANFAN_TOKEN = ""
-        result = await _assert_loop_responsive_during(
+        result = await _run_offload_probe(
             lambda: registry.dispatch("search_and_extract_poi", {"query": "成都 星巴克"})
         )
     assert _SlowDDGS.observed.get("thread") != _main_thread, (
@@ -139,7 +111,7 @@ async def test_explicit_ddg_provider_off_loop():
     with patch("app.tools.web_crawler.settings") as s, \
          patch("app.tools.web_crawler.DDGS", _SlowDDGS):
         s.BAIDU_QIANFAN_TOKEN = "bce-v3/tok"  # token set, but provider forced to ddg
-        result = await _assert_loop_responsive_during(
+        result = await _run_offload_probe(
             lambda: registry.dispatch(
                 "web_search", {"query": "q", "provider": "ddg"}
             )

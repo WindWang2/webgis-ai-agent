@@ -97,7 +97,10 @@ class TestGetCurrentUser:
         assert exc.value.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_valid_token_returns_user(self):
+    async def test_valid_token_returns_user(self, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setattr("app.core.auth._load_live_user_state", AsyncMock(return_value=("ok", (0, True, "viewer", None))))
         from fastapi.security import HTTPAuthorizationCredentials
         token = create_access_token({"sub": "user456"})
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
@@ -211,7 +214,10 @@ class TestGetCurrentUserOptional:
         assert user["user_id"] == "anonymous"
 
     @pytest.mark.asyncio
-    async def test_valid_token_returns_user(self):
+    async def test_valid_token_returns_user(self, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setattr("app.core.auth._load_live_user_state", AsyncMock(return_value=("ok", (0, True, "viewer", None))))
         from fastapi.security import HTTPAuthorizationCredentials
         token = create_access_token({"sub": "user789"})
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)

@@ -46,6 +46,7 @@ GRAPH_SCHEMA_VERSION = 1
 EDGE_RELATIONS = (
     "requires_data_role",
     "serves_category",
+    "serves_family",
     "supports_method",
     "alternative_method",
     "produces_artifact",
@@ -246,15 +247,14 @@ def build_graph(sources: GraphSources) -> MethodologyGraph:
                 if task is None:
                     raise GraphBuildError(f"family[{fid}]: task {tid} 悬空")
                 task_key = _node("task", tid)
-                _edge(task_key, fam_key, "serves_category")
+                _edge(task_key, fam_key, "serves_family")
                 for role in task.required_data_roles:
                     _edge(task_key, _node("data_role", role),
                           "requires_data_role")
-                for mid in cat.invalid_method_ids:
-                    if methods_reg.method(mid) is None:
-                        raise GraphBuildError(
-                            f"taxonomy[{cid}]: invalid method {mid} 悬空")
-                    _edge(cat_key, _node("method", mid), "forbids_method")
+        for mid in cat.invalid_method_ids:
+            if methods_reg.method(mid) is None:
+                raise GraphBuildError(f"taxonomy[{cid}]: invalid method {mid} 悬空")
+            _edge(cat_key, _node("method", mid), "forbids_method")
         for tid in cat.ontology_task_ids:
             task = ontology.get(tid)
             if task is None:
@@ -393,8 +393,15 @@ _cache: Optional[Tuple[str, MethodologyGraph]] = None
 
 def _fp(obj: Any) -> str:
     """registry 指纹统一读取（property 与 method 两种既有形态并存）。"""
-    fp = getattr(obj, "fingerprint")
-    return fp() if callable(fp) else str(fp)
+    fp = getattr(obj, "fingerprint", None)
+    if fp is not None:
+        return fp() if callable(fp) else str(fp)
+    from dataclasses import asdict, is_dataclass
+    payload = {}
+    for key in sorted(obj.all_ids):
+        descriptor = obj.get(key)
+        payload[key] = descriptor.model_dump(mode="json") if hasattr(descriptor, "model_dump") else (asdict(descriptor) if is_dataclass(descriptor) else vars(descriptor))
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def get_knowledge_graph(
@@ -412,10 +419,10 @@ def get_knowledge_graph(
         "methodology": _fp(sources.methodology),
         # 边还派生自这五个 registry（Round1 #10：缓存键完整化）——
         # 无内容指纹的 registry 用 (count, version) 失效键
-        "capabilities": sources.capabilities.count,
-        "algorithms": sources.algorithms.count,
-        "artifacts": sources.artifacts.count,
-        "map_models": sources.map_models.count,
+        "capabilities": _fp(sources.capabilities) or sources.capabilities.count,
+        "algorithms": _fp(sources.algorithms) or sources.algorithms.count,
+        "artifacts": _fp(sources.artifacts) or sources.artifacts.count,
+        "map_models": _fp(sources.map_models) or sources.map_models.count,
         "components": sources.components.registry_version(),
     }, sort_keys=True)
     if not refresh and _cache is not None and _cache[0] == key:

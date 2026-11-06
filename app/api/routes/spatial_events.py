@@ -34,7 +34,9 @@ from app.utils.sse import sse_event
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/spatial-events", tags=["Spatial Events"])
+from app.api.bounded_webhook import BoundedWebhookRoute
+
+router = APIRouter(prefix="/spatial-events", tags=["Spatial Events"], route_class=BoundedWebhookRoute)
 
 
 def _org(user: Dict[str, Any]) -> str:
@@ -169,6 +171,11 @@ def upsert_watch(
     )
 
     org = _org(user)
+    from app.api.routes.mission_runtime import _assert_create_bindings
+
+    _assert_create_bindings(user, session_id=body.session_id or "", project_id=body.project_id)
+    if body.mission_project_id:
+        _assert_create_bindings(user, session_id="", project_id=body.mission_project_id)
     try:
         watch = SpatialWatch(
             watch_id=body.watch_id,
@@ -261,6 +268,11 @@ async def ingest_event(
     if not flags.runtime_enabled():
         raise HTTPException(status_code=503, detail="spatial_event_runtime_disabled")
     org = _org(user)
+    from app.api.routes.mission_runtime import _assert_create_bindings
+
+    await asyncio.to_thread(
+        _assert_create_bindings, user, session_id=body.session_id or "", project_id=body.project_id,
+    )
     from app.services.spatial_events.adapters import make_envelope
 
     try:
@@ -333,10 +345,10 @@ def _rl_lock() -> asyncio.Lock:
 
 async def _rate_limit(org_id: str) -> bool:
     async with _rl_lock():
-        if len(_rl_buckets) > 256:
-            # 有界性：驱逐最早写入的桶（不清空全部——不重置他人窗口）
-            for k in sorted(_rl_buckets.keys())[: len(_rl_buckets) - 255]:
-                _rl_buckets.pop(k, None)
+        if org_id not in _rl_buckets and len(_rl_buckets) >= 256:
+            # Dict insertion order is the admission order; tenant names must
+            # never influence which old bucket is evicted.
+            _rl_buckets.pop(next(iter(_rl_buckets)), None)
         now = time.monotonic()
         q = _rl_buckets[org_id]
         while q and now - q[0] > _WEBHOOK_WINDOW_S:
@@ -396,6 +408,7 @@ async def webhook(
     )
     try:
         env = SpatialEventEnvelope.webhook(
+            trusted=True,  # HMAC/org checks above are the sole reserved-source seam.
             kind=body.kind,
             org_id=body.org_id,
             subject_type=body.subject_type,
@@ -481,7 +494,7 @@ async def stream(
 
 
 async def _event_tail(ledger, org_id: str, after_id: int):
-    """有界 tail 生成器：backlog ≤128 + 心跳；总量 ≤1000 条 / 空闲 ≤600 tick。
+    """有界 tail 生成器：backlog ≤128 + 心跳；总量 ≤1000 条 / 空闲 ≤240 tick（15s/tick，最多一小时）。
 
     不依赖 ``request.is_disconnected``（TestClient 的 receive 通道在 body
     耗尽后挂起）；真服务器上客户端断开时 StreamingResponse 取消生成器。

@@ -172,7 +172,7 @@ def _axis_from_gis_semantics(cartography: Any) -> FeedbackAxis:
             if len(findings) >= _MAX_AXIS_FINDINGS:
                 break
 
-    if desired_status in ("pass", "passed", "passed_with_warnings"):
+    if desired_status in ("pass", "passed", "passed_with_warnings", "warning"):
         return FeedbackAxis(
             name="gis_semantics",
             status=_STATUS_PASS,
@@ -346,7 +346,7 @@ def extract_is_compiled_from_results(
         entry = results_by_id.get(source_tool_call_id) or {}
     else:
         # Fall back to any result that carries is_compiled.
-        for candidate in results_by_id.values():
+        for candidate in reversed(list(results_by_id.values())):
             if isinstance(candidate, dict) and isinstance(candidate.get("result"), dict):
                 if "is_compiled" in candidate["result"]:
                     entry = candidate
@@ -390,7 +390,7 @@ def extract_composition_template_id_from_results(
             value = recipe.get("composition_template_id")
             if isinstance(value, str) and value.strip():
                 return value.strip()
-        completeness = evidence.get("completeness")
+        completeness = evidence.get("map_product_completeness")
         if isinstance(completeness, dict):
             value = completeness.get("composition_template_id")
             if isinstance(value, str) and value.strip():

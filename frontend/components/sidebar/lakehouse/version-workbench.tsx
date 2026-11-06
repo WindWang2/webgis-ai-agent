@@ -55,6 +55,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
 
   const doPublish = useCallback(async () => {
     if (!projectId) {
+      setConfirmAction(null);
       addToast(t('workbench.publish.needProjectId'), 'error');
       return;
     }
@@ -85,6 +86,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
 
   const doRevoke = useCallback(async () => {
     if (!projectId) {
+      setConfirmAction(null);
       addToast(t('workbench.revoke.needProjectId'), 'error');
       return;
     }
@@ -153,7 +155,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
         <div className="mt-2 flex gap-2">
           <button
             type="button"
-            disabled={publishing || objectIds.length === 0}
+            disabled={publishing || !projectId || objectIds.length === 0}
             onClick={() => setConfirmAction('publish')}
             data-testid="lakehouse-publish"
             className="flex flex-1 items-center justify-center gap-1.5 rounded-sm bg-status-accent px-2.5 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-40"
@@ -162,7 +164,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
             {t('ko0x939', { p0: objectIds.length })}</button>
           <button
             type="button"
-            disabled={publishing || objectIds.length === 0}
+            disabled={publishing || !projectId || objectIds.length === 0}
             onClick={() => setConfirmAction('revoke')}
             data-testid="lakehouse-revoke"
             className="flex flex-1 items-center justify-center gap-1.5 rounded-sm bg-surface-sunken px-2.5 py-1.5 text-caption text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-40"

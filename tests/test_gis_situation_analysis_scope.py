@@ -1,4 +1,4 @@
-"""S1 — AnalysisScope：selection → 受控分析输入（ADR-0283 D1）。
+"""S1 — AnalysisScope：selection → 受控分析输入（ADR-0285 D1）。
 
 声称（ClaimedScope，纯函数）与验证（ValidatedScope，IO 壳）分离：
 - 声称从 IR 投影 + pre-turn 快照纯派生，编译期零 IO；
@@ -307,7 +307,7 @@ def validate_analysis_scope_sync_wrapper(session_id, claimed):
     return asyncio.run(validate_analysis_scope(session_id, claimed))
 
 
-# ── situation fact 接线 + 投影行（ADR-0283 D1）─────────────────────────
+# ── situation fact 接线 + 投影行（ADR-0285 D1）─────────────────────────
 
 
 @pytest.mark.asyncio

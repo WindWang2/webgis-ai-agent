@@ -254,6 +254,7 @@ async def chat_app_and_db(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_utils, "async_db_session", override_async_db_session)
     monkeypatch.setattr("app.api.routes.chat.async_db_session", override_async_db_session)
+    monkeypatch.setattr("app.core.database.async_db_session", override_async_db_session)
 
     from fastapi import FastAPI
 

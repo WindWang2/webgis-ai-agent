@@ -68,7 +68,7 @@ def _gate_source_uri(
             status_code=400,
             detail="source_uri must resolve inside the platform data directory",
         ) from None
-    roots = allowed_roots or [Path(settings.DATA_DIR).resolve()]
+    roots = allowed_roots if allowed_roots is not None else [Path(settings.DATA_DIR).resolve()]
     for root in roots:
         try:
             resolved.relative_to(root.resolve())
@@ -137,7 +137,7 @@ async def _bind_owner_scope(
 
 
 async def _roots_for_scope(
-    db: AsyncSession, scope: Dict[str, str]
+    db: AsyncSession, scope: Dict[str, str], *, source_uris: tuple[str, ...] = (),
 ) -> List[Path]:
     """会话 scope：收缩到会话目录 + 该会话 uploads + modelops registry。
 
@@ -153,6 +153,28 @@ async def _roots_for_scope(
 
     data_root = Path(settings.DATA_DIR).resolve()
     registry_root = Path(get_modelops_service()._settings.registry_dir).resolve()
+    from app.services.modelops.registry import scope_key
+
+    scoped_registry_roots = [registry_root / "registry" / scope_key(scope),
+                             registry_root / "outputs" / scope_key(scope)] if scope else []
+    # Authorize only the requested run, using its server-written owner manifest;
+    # never scan or expose the global outputs/reprojection/cache directories.
+    for uri in source_uris:
+        try:
+            relative = Path(uri).resolve().relative_to(registry_root / "outputs")
+            if len(relative.parts) < 2:
+                continue
+            run_root = registry_root / "outputs" / relative.parts[0]
+            manifest_path = run_root / "inference_manifest.json"
+            if manifest_path.stat().st_size > 512 * 1024:
+                continue
+            import json
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if scope and manifest.get("owner_scope") == scope:
+                scoped_registry_roots.append(run_root)
+        except (OSError, ValueError, TypeError):
+            continue
 
     def _upload_root(upload_pk: Any, filename: Any) -> Path:
         parts = str(filename or "").replace("\\", "/").split("/")
@@ -162,7 +184,17 @@ async def _roots_for_scope(
     session_id = scope.get("session_id")
     project_id = scope.get("project_id")
     if session_id:
-        roots: List[Path] = [data_root / session_id, registry_root]
+        import re
+
+        reserved = {"uploads", "projects", "modelops", "content", "blobs", "cache", "exports", "tmp"}
+        session_root = (data_root / session_id).resolve()
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id)
+            or session_id.lower() in reserved
+            or session_root.parent != data_root
+        ):
+            raise HTTPException(status_code=400, detail="invalid session scope")
+        roots: List[Path] = [session_root, *scoped_registry_roots]
         result = await db.execute(
             select(UploadRecord.id, UploadRecord.filename).where(
                 UploadRecord.session_id == session_id
@@ -175,7 +207,7 @@ async def _roots_for_scope(
     if project_id:
         from app.models.project import ProjectDataset
 
-        roots = [data_root / "projects" / project_id, registry_root]
+        roots = [data_root / "projects" / project_id, *scoped_registry_roots]
         ds = await db.execute(
             select(ProjectDataset.source_ref).where(
                 ProjectDataset.project_id == project_id,
@@ -199,7 +231,7 @@ async def _roots_for_scope(
                 roots.append(_upload_root(upload_pk, filename))
         return roots
 
-    return [registry_root]
+    return scoped_registry_roots
 
 
 class PromptSegmentBody(BaseModel):
@@ -290,7 +322,7 @@ async def prompt_segment(
         owner_token=owner_token,
         require=True,
     )
-    roots = await _roots_for_scope(db, scope)
+    roots = await _roots_for_scope(db, scope, source_uris=(body.source_uri,))
     uri = _gate_source_uri(body.source_uri, allowed_roots=roots)
     service = get_modelops_service()
     artifact_id = None
@@ -332,7 +364,7 @@ async def prompt_segment(
         selected_candidate=body.selected_candidate,
     )
     try:
-        result = await service.run_inference_async(request)
+        result = await service.run_inference_async(request, allowed_roots=roots)
     except ModelOpsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
@@ -365,7 +397,7 @@ async def embed(
         owner_token=owner_token,
         require=True,
     )
-    roots = await _roots_for_scope(db, scope)
+    roots = await _roots_for_scope(db, scope, source_uris=(body.source_uri,))
     uri = _gate_source_uri(body.source_uri, allowed_roots=roots)
     service = get_modelops_service()
     try:
@@ -374,7 +406,7 @@ async def embed(
             source_uri=uri,
             owner_scope=scope,
             task_type="embedding",
-        ))
+        ), allowed_roots=roots)
     except ModelOpsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
@@ -419,7 +451,7 @@ async def prompt_refine(
         owner_token=owner_token,
         require=True,
     )
-    roots = await _roots_for_scope(db, scope)
+    roots = await _roots_for_scope(db, scope, source_uris=(body.source_uri, body.candidates_path))
     uri = _gate_source_uri(body.source_uri, allowed_roots=roots)
     candidates = _gate_source_uri(body.candidates_path, allowed_roots=roots)
     service = get_modelops_service()
@@ -430,6 +462,7 @@ async def prompt_refine(
             uri,
             candidates,
             body.candidate,
+            allowed_roots=roots,
             session_id=scope.get("session_id"),
             project_id=scope.get("project_id"),
         )
@@ -528,7 +561,7 @@ async def geoai_preview(
         owner_token=owner_token,
         require=True,
     )
-    roots = await _roots_for_scope(db, scope)
+    roots = await _roots_for_scope(db, scope, source_uris=(source_uri,))
     uri = _gate_source_uri(source_uri, allowed_roots=roots)
     dim = max(64, min(int(max_dim), _PREVIEW_MAX_DIM))
     try:
@@ -565,7 +598,7 @@ async def artifact_geojson(
         owner_token=owner_token,
         require=True,
     )
-    roots = await _roots_for_scope(db, scope)
+    roots = await _roots_for_scope(db, scope, source_uris=(path,))
     gated = _gate_source_uri(path, allowed_roots=roots)
     p = Path(gated)
     if not p.is_file():

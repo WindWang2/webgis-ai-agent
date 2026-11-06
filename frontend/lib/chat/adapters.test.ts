@@ -204,7 +204,7 @@ describe('stepResultDecision', () => {
       _mapspecLayerId: 'l1',
       _mapspecFingerprint: 'mf',
     });
-    expect((mount.addLayerArg as Record<string, unknown>)._tileUrl).toContain('ref:poi');
+    expect((mount.addLayerArg as Record<string, unknown>)._tileUrl).toContain('ref%3Apoi');
     expect(mount.updateLayerArg).toMatchObject({ id: 'ref:poi' });
     expect(mount.agentDisplayed).toBe(true);
     expect(mount.cartographyTitle).toBe('POI 学校');

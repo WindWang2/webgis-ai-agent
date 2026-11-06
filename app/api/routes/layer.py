@@ -34,6 +34,7 @@ from app.lib.geojson_serializer import serialize_geojson
 from app.models.db_model import Conversation
 from app.services.mvt import (
     RefDataUnavailableError,
+    TileFeatureBudgetExceeded,
     build_spatial_index_entry,
     encode_tile_from_index,
     single_flight,
@@ -463,6 +464,9 @@ async def get_session_layer_feature(
     if id_mode is not None and id_mode != "positional":
         raise HTTPException(status_code=400, detail="id_mode 仅支持 'positional'")
     await _layer_data_budget(session_id)
+    resolved_ref = await session_data_manager.resolve_alias(session_id, ref_id)
+    if resolved_ref:
+        ref_id = resolved_ref
 
     if id_mode == "positional":
         from app.services.feature_pages import resolve_feature_stable_id
@@ -502,7 +506,7 @@ async def get_session_layer_feature(
 
         index_entry = spatial_index_cache.get((session_id, ref_id))
         if index_entry is not None:
-            feature = await asyncio.to_thread(_positional_lookup, index_entry.features)
+            feature = await asyncio.to_thread(_positional_lookup, index_entry.source_features)
         else:
             res = await session_data_manager.get_ref_data(
                 session_id, ref_id, owner_token=owner_token
@@ -753,7 +757,10 @@ async def get_mvt_tile(
             data = await _fetch_ref_data(session_id, ref_id, owner_token)
             return await asyncio.to_thread(_encode_tile_cached, session_id, ref_id, z, x, y, data)
 
-    body = await single_flight.run(cache_key, _compute)
+    try:
+        body = await single_flight.run(cache_key, _compute)
+    except TileFeatureBudgetExceeded as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     return _tile_response(body, if_none_match)
 
 
@@ -888,6 +895,7 @@ async def get_layer_descriptor(
     ref creation), eliminating 100k-feature scans on every descriptor request.
     Falls back to on-the-fly compute for refs stored before V3.
     """
+    await _layer_data_budget(session_id)
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
 
@@ -972,6 +980,7 @@ async def get_raster_tile(
     single-flight 去重并发同瓦片；(session, ref) → safe_path 短 TTL 缓存
     免去每瓦片的 Redis 拉取 + 路径校验；响应带 ETag 支持 304。
     """
+    await _layer_data_budget(session_id)
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
     if not (0 <= z <= 20) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
@@ -983,10 +992,10 @@ async def get_raster_tile(
     band_tuple = None
     if bands:
         try:
-            band_tuple = tuple(int(b) for b in bands.split(",") if b.strip())[:3]
+            band_tuple = tuple(int(b) for b in bands.split(",") if b.strip())
         except ValueError:
             raise HTTPException(status_code=400, detail="bands 必须是 1-based 波段 CSV，如 '1' 或 '3,2,1'")
-        if not band_tuple or any(b < 1 for b in band_tuple):
+        if len(band_tuple) not in (1, 3) or any(b < 1 for b in band_tuple):
             raise HTTPException(status_code=400, detail="bands 必须是 1-based 波段 CSV，如 '1' 或 '3,2,1'")
 
     cache_key = (session_id, ref_id, z, x, y, cmap or "", band_tuple or ())
@@ -1009,9 +1018,12 @@ async def get_raster_tile(
 
 
 async def _require_owned_session_qtoken(
+    request: Request,
     session_id: str = Query(..., min_length=8, max_length=128),
     token: Optional[str] = Query(None, max_length=128, description="匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）"),
     owner_token: Optional[str] = Depends(get_owner_token),
+    exp: Optional[int] = Query(None),
+    sig: Optional[str] = Query(None, max_length=128),
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user_optional),
 ) -> Conversation:
@@ -1022,6 +1034,18 @@ async def _require_owned_session_qtoken(
     （/sessions/{sid}/raster/{id}.png?token=，tool_dispatch_service）一致：
     头优先，query 兜底；ref_id+session_id+token 共同构成能力令牌。
     """
+    if exp is not None and sig:
+        from sqlalchemy import select
+        from app.core.signing import terrain_capability_path, verify_signature
+        ref = str(request.path_params.get("ref_id") or "")
+        if ref and verify_signature(terrain_capability_path(session_id, ref), exp, sig):
+            result = await db.execute(select(Conversation).where(Conversation.id == session_id))
+            conv = result.scalar_one_or_none()
+            if conv is not None:
+                return conv
+        # A persistent MapLibre source can outlive its short signed URL. An
+        # expired capability grants nothing, but does not invalidate a caller's
+        # independently supplied live user/session credential.
     user_id = _user.get("user_id") if isinstance(_user, dict) else None
     return await verify_session_owner(
         db, session_id=session_id, user_id=user_id, owner_token=owner_token or token
@@ -1053,6 +1077,7 @@ async def get_terrain_tile(
     缓存：走 raster_tile_service 内部 LRU（8 元组键空间与 color 隔离）+
     single-flight 去重；错误响应不缓存。
     """
+    await _layer_data_budget(session_id)
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
     if not (0 <= z <= 20) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
@@ -1073,12 +1098,17 @@ async def get_terrain_tile(
 
     from app.services.raster_tile_service import TerrainTileError, render_terrarium_tile
 
-    safe_path = await _resolve_raster_tile_path(session_id, ref_id, owner_token or token)
+    cache_key = (session_id, ref_id, "terrain", z, x, y)
+    cached = tile_lru_cache.get(cache_key)
+    if cached is not None:
+        return _png_tile_response(cached, if_none_match)
+    epoch = tile_lru_cache.get_epoch(session_id, ref_id)
+    safe_path = await _resolve_raster_tile_path(session_id, ref_id, _conv.owner_token)
 
     async def _compute() -> bytes:
-        return await asyncio.to_thread(render_terrarium_tile, safe_path, z, x, y, 256)
-
-    cache_key = ("terrain", session_id, ref_id, z, x, y)
+        image = await asyncio.to_thread(render_terrarium_tile, safe_path, z, x, y, 256)
+        tile_lru_cache.put_if_current(cache_key, image, epoch)
+        return image
     try:
         png_bytes = await single_flight.run(cache_key, _compute)
     except TerrainTileError as e:
@@ -1113,10 +1143,11 @@ async def get_terrain_tilejson(
       是可渲染源；receipt 的 display_only 因素原样透传（消费者自行拒绝
       科学用途）。
     """
+    await _layer_data_budget(session_id)
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
 
-    effective_token = owner_token or token
+    effective_token = _conv.owner_token
     res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=effective_token)
     if not res.success or not res.data:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
@@ -1126,11 +1157,10 @@ async def get_terrain_tilejson(
     if not isinstance(raster_path, str) or not raster_path:
         raise HTTPException(status_code=400, detail="栅格数据缺少有效路径")
 
-    from app.utils.path import validate_data_path
-    from app.core.config import settings
+    from app.services.scoped_raster_paths import resolve_scoped_raster_path
 
     try:
-        safe_path = validate_data_path(raster_path, settings.DATA_DIR)
+        safe_path = await asyncio.to_thread(resolve_scoped_raster_path, raster_path, session_id=session_id)
     except ValueError as e:
         logger.warning(f"[layer] terrain tilejson path rejected: {e}")
         raise HTTPException(status_code=400, detail="非法栅格路径")
@@ -1166,12 +1196,9 @@ async def get_terrain_tilejson(
 
         maxzoom = native_zoom_for_gsd(gsd_m, tuple(bounds))
 
-    tiles_url = (
-        f"/api/v1/layers/data/{ref_id}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
-        f"?session_id={session_id}"
-    )
-    if effective_token:
-        tiles_url += f"&token={effective_token}"
+    from app.core.signing import signed_terrain_query
+    tiles_url = (f"/api/v1/layers/data/{ref_id}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
+                 + signed_terrain_query(session_id, ref_id))
 
     synthetic = bool(receipt_data.get("synthetic")) if isinstance(receipt_data, dict) else False
     attribution = "User-provided elevation data (session-owned)"
@@ -1290,8 +1317,6 @@ async def list_terrain_sources(
 
     deployment = "air_gapped" if _settings.DEPLOYMENT_PROFILE == "air_gapped" else "cloud"
     env_map = _os.environ
-    effective_token = owner_token or token
-
     profile_entries: list[ElevationProfileAvailability] = []
     fallback_available = False
     fallback_id: Optional[str] = None
@@ -1342,9 +1367,8 @@ async def list_terrain_sources(
                 content_sha256=str(payload.get("content_sha256") or ""),
             )
         # 发布 URL 内嵌会话鉴权参数（评审 P2：消费方照抄即用，不自拼）。
-        _auth_qs = f"?session_id={session_id}"
-        if effective_token:
-            _auth_qs += f"&token={effective_token}"
+        from app.core.signing import signed_terrain_query
+        _auth_qs = signed_terrain_query(session_id, ref_id)
         session_entries.append(SessionTerrainSourceEntry(
             ref_id=ref_id,
             name=str(payload.get("name") or ref_id),
@@ -1429,11 +1453,10 @@ async def _resolve_raster_tile_path(session_id: str, ref_id: str, owner_token: O
     # resolves inside the allowed data roots before rasterio.open — previously a
     # ref could point at any GeoTIFF the process can read (another session's
     # upload, cached artifacts), crossing the per-session isolation boundary.
-    from app.utils.path import validate_data_path
-    from app.core.config import settings
+    from app.services.scoped_raster_paths import resolve_scoped_raster_path
 
     try:
-        safe_path = validate_data_path(raster_path, settings.DATA_DIR)
+        safe_path = await asyncio.to_thread(resolve_scoped_raster_path, raster_path, session_id=session_id)
     except ValueError as e:
         logger.warning(f"[layer] raster tile path rejected: {e}")
         raise HTTPException(status_code=400, detail="非法栅格路径")

@@ -1,3 +1,4 @@
+import { layerStyleToPaint } from '@/lib/styles/style-paint';
 /**
  * Layer Workspace 命令层（Workbench V4 / Wave 2）—— 用户批量/复合操作的
  * 唯一收口。每个命令复用既有 mutation 通道（user-mutation CAS 串行链），
@@ -42,7 +43,7 @@ export async function isolateLayerAndCommit(layerId: string): Promise<void> {
   beginIsolate(layerId, snapshot);
   tagUserDisplayed(layerId, true);
   for (const id of Object.keys(snapshot)) {
-    if (isLocked(id)) continue;
+    if (isLocked(id) || !useHudStore.getState().layers.find((layer) => layer.id === id)?.visible) continue;
     try {
       await toggleLayerAndCommit(id);
     } catch (err) {
@@ -160,15 +161,7 @@ export async function pasteStyle(
 }
 
 /** LayerStyle → MapSpec paint 最小投影（与 layer-style-panel 同款字段族）。 */
-function layerStyleToPaint(style: Record<string, unknown>): Record<string, unknown> {
-  const paint: Record<string, unknown> = {};
-  if (typeof style.color === 'string') paint.color = style.color;
-  if (typeof style.strokeColor === 'string') paint.strokeColor = style.strokeColor;
-  if (typeof style.strokeWidth === 'number') paint.strokeWidth = style.strokeWidth;
-  if (typeof style.opacity === 'number') paint.opacity = style.opacity;
-  if (typeof style.pointSize === 'number') paint.radius = style.pointSize;
-  return paint;
-}
+
 
 /**
  * 单层重试：ref 承载层清除失败墓碑并重跑数据回填（此前重试只隐含在

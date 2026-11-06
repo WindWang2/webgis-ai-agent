@@ -198,6 +198,7 @@
     "ariaLabel": "区位插图：{label}"
   },
   "baselayer": {
+    "unavailable": "无可用底图",
     "fallbackLight": "Carto 浅色"
   },
   "action": {
@@ -443,5 +444,45 @@
     "compareHint": "两期对照（固定分级）",
     "missing": "含缺期",
     "missingHint": "数据存在缺期：缺失年份不会内插帧"
-  }
+  },
+  "recovery": {
+    "unavailable": "地图暂不可用",
+    "network": "底图无法加载，请检查网络或瓦片供应商。",
+    "failed": "地图暂时无法显示。",
+    "chatAvailable": "聊天和分析仍可使用，地图恢复后会显示图层。",
+    "retry": "重试地图"
+  },
+  "export": {
+    "generatedBy": "由 WebGIS AI Agent 生成",
+    "methodology": "方法论披露",
+    "uncertainty": "不确定性",
+    "decision": "决策",
+    "location": "区位",
+    "attributes": "属性表",
+    "table": "数据表",
+    "noData": "暂无数据",
+    "radarNeedsAxes": "暂无数据（雷达图至少需要 3 个轴）",
+    "unknownField": "未知字段",
+    "unbound": "未绑定",
+    "overview": "概览",
+    "disabled": "用户显式关闭",
+    "vetoes": "硬约束否决：",
+    "statistics": "统计",
+    "unsupportedChart": "该图表类型暂不支持导出",
+    "ready": "[系统通知] {format} 地图“{title}”已就绪。[下载文件]({url})。",
+    "generating": "正在生成 {format} 导出文件…",
+    "signInRequired": "导出需要登录，请前往设置中的账户页面登录后重试。",
+    "failed": "地图导出失败，请重试或检查导出设置。",
+    "removeLayer": "删除图层 {id}",
+    "unnamed": "未命名",
+    "pdfTextVector": "地图为位图画布，标题为矢量文本。",
+    "pdfTextRaster": "地图和标题均为位图。",
+    "redrawIncomplete": "地图未完成重绘，已恢复原始分辨率，请重试导出。",
+    "frames": "成功 {successful}/{total} 帧（已跳过 {skipped} 帧）。",
+    "atlasPdf": "图集 PDF",
+    "gridPng": "PNG grid 拼板",
+    "gridSvg": "SVG grid 拼板",
+    "decisionMethod": "决策（{method}）"
+  },
+  "refSourceBudget": "地图已达到 {limit} 个活跃数据引用的加载上限，另有 {omitted} 个引用暂未加载。请移除部分图层后重试。"
 }

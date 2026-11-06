@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import math
+
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -127,6 +129,8 @@ def build_histogram_from_cells(
 ) -> SpatialGridHistogram:
     """实测逐格计数直方图（长度必须成平方数；由 grid_size 推导）。"""
     n = len(counts)
+    if not all(math.isfinite(float(count)) and float(count) >= 0 for count in counts):
+        raise ValueError("histogram counts must be finite and nonnegative")
     grid = 1
     while grid * grid < n:
         grid += 1

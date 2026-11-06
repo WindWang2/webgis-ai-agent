@@ -202,7 +202,7 @@ def api_client(service, monkeypatch, tmp_path):
             return normalize_scope(project_id=pid)
         return {}
 
-    async def _wide_roots(db, scope):
+    async def _wide_roots(db, scope, **kwargs):
         from pathlib import Path as _P
         from app.core.config import settings as _settings
         from app.services.modelops.service import get_modelops_service as _gms
@@ -218,6 +218,12 @@ def api_client(service, monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
     from app.core.auth import create_access_token
+    from app.core.database import Base, Engine, SessionLocal
+    from app.models.db_model import User
+    Base.metadata.create_all(bind=Engine)
+    with SessionLocal() as db:
+        db.merge(User(id="geoai-tester", username="geoai-tester", email="geoai-tester@example.com", password_hash="x", role="editor", is_active=True))
+        db.commit()
     from app.main import app
 
     with TestClient(app) as client:

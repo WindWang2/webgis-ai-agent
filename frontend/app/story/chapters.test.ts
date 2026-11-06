@@ -58,9 +58,9 @@ describe('章节派生与编排（ADR-0147）', () => {
       },
     };
     const next = applyOrchestration(derived, orch);
-    expect(next.map((c) => c.id)).toEqual(['ch-2', 'ch-1', 'ch-0']);
-    expect(next[2].visible).toBe(false);
-    expect(next[2].title).toBe('开场');
+    expect(next.map((c) => c.id)).toEqual(['ch-2', 'ch-0', 'ch-1']);
+    expect(next[1].visible).toBe(false);
+    expect(next[1].title).toBe('开场');
   });
 
   it('非法/过期编排安全兜底（版本不符 / id 缺失）', () => {

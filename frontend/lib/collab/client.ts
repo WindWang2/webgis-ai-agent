@@ -2,7 +2,7 @@
  * Collab WS client（Workbench V6）—— 服务端事件通道生命周期。
  *
  * 语义（ADR-0119）：
- * - 认证：认证会话 subprotocol ["bearer", <jwt>]；匿名会话 ["session",
+ * - 认证：首帧 auth-frame-v1 认证；令牌只出现在首个应用帧中。旧契约 ["session",
  *   <owner_token>]（token 不落 URL/日志，与 ws.py 同法）。
  * - 重连：指数退避 0.5s→8s cap + jitter；重连成功即发 sync{knownRevision}
  *   对账（R1-M1/M2：漏事件/重启窗口由权威 refetch 闭合，正确性不依赖通道）。
@@ -18,6 +18,7 @@ import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { devOnly } from '@/lib/utils/logger';
 import {
   collabSetLeases,
+  collabSetLeaseUncertainty,
   collabSetParticipants,
   collabSetSessionIdentity,
   collabSetStatus,
@@ -129,12 +130,11 @@ function clearTimers(): void {
   }
 }
 
-function buildSubprotocols(): string[] {
+function buildAuthFrame(): { type: 'auth'; mode: 'session' | 'bearer'; token: string } | null {
   const ownerToken = getMapSpecSessionCursor().ownerToken;
-  if (ownerToken) return ['session', ownerToken];
+  if (ownerToken) return { type: 'auth', mode: 'session', token: ownerToken };
   const token = getAccessToken();
-  if (token) return ['bearer', token];
-  return [];
+  return token ? { type: 'auth', mode: 'bearer', token } : null;
 }
 
 function startHeartbeat(socket: WebSocket): void {
@@ -170,7 +170,8 @@ function connect(): void {
     visibilityBound = true;
   }
   if (stopped || boundSessionId == null) return;
-  const protocols = buildSubprotocols();
+  const authFrame = buildAuthFrame();
+  const protocols = authFrame ? ['auth-frame-v1'] : [];
   collabSetStatus(protocols.length > 0 ? 'connecting' : 'offline');
   if (protocols.length === 0) {
     // 无凭据：不发匿名连接（服务端必拒），诚实离线且不重连空转
@@ -189,6 +190,7 @@ function connect(): void {
 
   socket.onopen = () => {
     if (ws !== socket) return; // 旧 socket 迟到回调：忽略（R2-M-4）
+    try { socket.send(JSON.stringify(authFrame)); } catch { socket.close(); return; }
     reconnectAttempt = 0;
     collabSetStatus('online');
     startHeartbeat(socket);
@@ -262,7 +264,8 @@ function handleInbound(event: string, data: Record<string, unknown>): void {
           .filter((p): p is CollabParticipant => p != null);
         collabSetParticipants(participants);
       }
-      if (Array.isArray(data.leases)) {
+      if (data.leasesStatus === 'unavailable') collabSetLeaseUncertainty(true);
+      else if (Array.isArray(data.leases)) {
         const leases: CollabLeaseInfo[] = data.leases
           .map(parseLeaseInfo)
           .filter((l): l is CollabLeaseInfo => l != null);
@@ -287,6 +290,10 @@ function handleInbound(event: string, data: Record<string, unknown>): void {
       if (typeof data.revision === 'number') lastKnownRevision = Math.max(lastKnownRevision, data.revision);
       break;
     }
+    case 'lease_result':
+      if (data.reason === 'redis_unavailable') collabSetLeaseUncertainty(true);
+      handler?.(event, data);
+      break;
     case 'bus':
       handler?.('bus', data);
       break;

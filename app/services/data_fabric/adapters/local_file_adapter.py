@@ -14,10 +14,11 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
+from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult, QuerySpec
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     InvalidQueryError,
@@ -133,7 +134,7 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
         kind = self._kind(path)
         if kind == "geojson":
             return [{"id": path.stem, "name": path.stem, "data_type": "vector", "path": str(path)}]
-        with self._sqlite_connect() as conn:
+        with closing(self._sqlite_connect()) as conn:
             tables = [
                 r[0]
                 for r in conn.execute(
@@ -168,7 +169,7 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
                 metadata={"path": str(path), "adapter": "ads.local_file"},
             )
         table = self._sqlite_table(dataset_id, path)
-        with self._sqlite_connect() as conn:
+        with closing(self._sqlite_connect()) as conn:
             cols = conn.execute(
                 "PRAGMA table_info(" + _quote_ident(table) + ")"  # nosec B608 — identifier quoted & from discovered list
             ).fetchall()
@@ -190,7 +191,7 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
         )
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
-        result = self.query(dataset_id, _BoundedSpec(limit=limit))
+        result = self.query(dataset_id, QuerySpec(limit=limit))
         return {
             "dataset_id": dataset_id,
             "columns": [f["name"] for f in (result.metadata or {}).get("fields", [])],
@@ -199,6 +200,8 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
         }
 
     def query(self, dataset_id: str, query_spec) -> QueryResult:
+        if any(getattr(query_spec, key, None) for key in ("where", "filter_expr", "datetime_range")):
+            raise InvalidQueryError("local_file adapter does not support attribute/time predicates")
         path = self._require_existing()
         kind = self._kind(path)
         limit = max(0, min(int(query_spec.limit or 0), _MAX_QUERY_FEATURES))
@@ -211,6 +214,9 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
                 features = [f for f in features if _feature_in_bbox(f, bbox)]
             total = len(features)
             features = features[offset: offset + limit]
+            selected = query_spec.fields if query_spec.fields is not None else query_spec.columns
+            if selected is not None:
+                features = [{**feature, "properties": {key: value for key, value in (feature.get("properties") or {}).items() if key in selected}} for feature in features]
             return QueryResult(
                 dataset_id=dataset_id,
                 query_spec=query_spec,
@@ -218,10 +224,12 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
                 metadata={"adapter": "ads.local_file", "source": "local_file",
                           "is_demo": False, "count": len(features), "total_matched": total},
             )
+        if query_spec.bbox:
+            raise InvalidQueryError("local sqlite tables do not support bbox predicates")
         table = self._sqlite_table(dataset_id, path)
-        columns = list(query_spec.columns or [])
+        columns = list(query_spec.fields or query_spec.columns or [])
         col_sql = ", ".join(_quote_ident(c) for c in columns) if columns else "*"
-        with self._sqlite_connect() as conn:
+        with closing(self._sqlite_connect()) as conn:
             rows = conn.execute(
                 "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT ? OFFSET ?",  # nosec B608 — identifiers quoted & from discovered list; values bound
                 (limit, offset),
@@ -229,10 +237,11 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
             cols = [d[0] for d in conn.execute(
                 "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT 0"  # nosec B608 — ditto
             ).description]
-        features = [dict(zip(cols, row)) for row in rows]
+        features = [{"type": "Feature", "geometry": None, "properties": dict(zip(cols, row))} for row in rows]
         return QueryResult(
             dataset_id=dataset_id,
             query_spec=query_spec,
+            total_count=len(features), returned_count=len(features),
             features=features,
             metadata={"adapter": "ads.local_file", "source": "local_sqlite",
                       "is_demo": False, "count": len(features), "fields": [{"name": c, "type": "text"} for c in cols]},
@@ -242,9 +251,10 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
         reachable = self.probe()
         return DataFabricHealth(
             source_type="local_file",
+            status="healthy" if reachable else "unreachable",
             reachable=reachable,
             latency_ms=0.0,
-            details={"path": str(self._path) if self._path else None},
+            details={"filename": self._path.name if self._path else None},
         )
 
     # -- helpers -------------------------------------------------------------------
@@ -262,16 +272,6 @@ def _quote_ident(name: str) -> str:
     """SQLite 标识符引用：双写内嵌引号（表/列名来自自省，非用户自由文本；
     值一律走绑定参数 —— security net 禁止 f-string 直接进 execute()）。"""
     return '"' + name.replace('"', '""') + '"'
-
-
-class _BoundedSpec:
-    """Minimal QuerySpec stand-in for preview()."""
-
-    def __init__(self, limit: int = 10):
-        self.limit = limit
-        self.offset = 0
-        self.bbox = None
-        self.columns = None
 
 
 def _feature_in_bbox(

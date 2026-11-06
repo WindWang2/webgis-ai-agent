@@ -244,17 +244,18 @@ def test_invalidate_session_epoch_survives_epoch_table_pressure():
 
     cache.invalidate("sess-e", "ref:a")     # 目标 epoch（队首）
     cache.invalidate("other", "ref:x0")    # 更旧外国条目（吸收裁剪）
-    assert cache.current_epoch("sess-e", "ref:a") == 1
+    previous = cache.current_epoch("sess-e", "ref:a")
 
     cache.invalidate_session("sess-e")     # 递增 + move_to_end
-    assert cache.current_epoch("sess-e", "ref:a") == 2
+    updated = cache.current_epoch("sess-e", "ref:a")
+    assert updated > previous
 
     have = len(cache._epochs)
     for i in range(cap + 1 - have):
         cache.invalidate("other", f"ref:churn-{i}")
 
     assert len(cache._epochs) == cap, "epoch table must converge at 4×max_entries"
-    assert cache.current_epoch("sess-e", "ref:a") == 2, (
+    assert cache.current_epoch("sess-e", "ref:a") == updated, (
         "freshly incremented epoch must not be trimmed off the front "
         "(invalidate_session must move_to_end)"
     )

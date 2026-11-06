@@ -146,7 +146,7 @@ def test_token_estimate_present_and_bounded():
     assert len(serialized) < 32 * 1024  # 有界：投影远小于 ledger 本体
 
 
-# ── ADR-0283 review 清偿回归 ───────────────────────────────────────────
+# ── ADR-0285 review 清偿回归 ───────────────────────────────────────────
 
 
 def _ev_record(seq, kind, payload, **extra):

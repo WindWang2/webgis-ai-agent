@@ -35,6 +35,7 @@ def _jenks_natural_breaks(values: np.ndarray, k: int) -> List[float]:
         return [float(u) for u in uniq]
 
     arr = np.sort(values)
+    full_min, full_max = float(arr[0]), float(arr[-1])
     n = len(arr)
     # Cap sample size for performance (Jenks is O(n²k))
     if n > 1000:
@@ -92,6 +93,7 @@ def _jenks_natural_breaks(values: np.ndarray, k: int) -> List[float]:
         j = split_idx - 1
     breaks.append(float(arr[0]))
     breaks.sort()
+    breaks[0], breaks[-1] = full_min, full_max
     return list(dict.fromkeys(breaks))  # deduplicate while preserving order
 
 # Jiang (2013)：头必须是少数（< 40%）才继续递归。
@@ -153,6 +155,9 @@ def classify_values(values: List[float], method: str = DEFAULT_CLASSIFICATION_ME
     if not values:
         return []
     arr = np.array(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return []
     if method == "quantiles":
         return np.unique(np.quantile(arr, np.linspace(0, 1, k + 1))).tolist()
     elif method == "equal_interval":

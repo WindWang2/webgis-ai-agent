@@ -1,4 +1,4 @@
-"""E5 — 八组可自动回放的多轮交互旅程（ADR-0283 S7 / 任务书 E5）。
+"""E5 — 八组可自动回放的多轮交互旅程（ADR-0285 S7 / 任务书 E5）。
 
 每组旅程：**输入事件序列 → 真实 ingest/registry dispatch → IR 投影 /
 AnalysisScope / TurnChain 断言 → 用户可见状态（回执/投影）**。全链走生产
@@ -51,10 +51,11 @@ def _schools_fc() -> dict:
 
 
 async def _seed_session(sid: str, events: list, *, payload: dict | None = None,
-                        extra_state: dict | None = None) -> str:
+                        extra_state: dict | None = None,
+                        mutation_dedup: dict | None = None) -> str:
     state = LedgerState()
     for e in events:
-        apply_event(state, e)
+        apply_event(state, e, mutation_dedup=mutation_dedup)
     host = next((event.get("payload", {}) for event in reversed(events) if event.get("payload", {}).get("dataset_ref")), None)
     if host:
         from app.services.mapspec.store import mapspec_store_instance
@@ -187,12 +188,13 @@ async def test_j4_layer_visibility_user_wins():
     await _seed_session(sid, [
         _ev(1, "layer_visibility_changed", {"layer_id": "heatmap", "visible": False},
             client_mutation_id="mut-j4", mutation_outcome="committed"),
-    ])
+    ], mutation_dedup={"c:mut-j4": {"revision": 2}})
     map_state = await session_data_manager.get_map_state(sid)
     snapshot = interaction_snapshot_from_map_state(map_state)
     override = next(o for o in snapshot["user_overrides"] if o["layer_id"] == "heatmap")
     assert override["visible"] is False  # 用户显隐决策进 overrides（user 面）
     assert override["link"]["outcome"] == "committed"
+    assert override["link"]["mutation_verified"] is True
 
     # TurnChain：agent 随后 commit 触碰同层 → 冲突披露（不吞并用户决策）。
     chain = build_turn_chain(
