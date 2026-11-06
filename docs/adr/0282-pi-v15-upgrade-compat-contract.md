@@ -38,7 +38,7 @@ stable tag，2304 commits）引入两处影响本仓的 breaking change：工具
    构建后同时复制 bundle 和该包，Compose backend-builder 目标也携带 Node。
 5. **身份门与诊断**：`pi_compat.pi_vendor_identity()` 在启动时披露实际 pin/
    describe/入口形态/node 版本/协议下限（WARN 不阻断，spawn 的 fail-closed 不变）；
-   `/health` 新增 `pi_vendor`（None=未构建 —— 与 agent_runtime 徽章可对账）；
+   `/api/v1/health` 新增 `pi_vendor`（None=未构建或身份探测失败，与 agent_runtime 徽章可对账）；
    `scripts/pi_doctor.py` 分域诊断（vendor/build/extension/surface/rpc/env），
    安全相关 FAIL、观测相关 WARN，退出码可编排。
 6. **disposition 防挂**：Pi ≥0.99 的 `prompt` 响应携带 `disposition`；`handled`

@@ -422,6 +422,11 @@
       "title": "Extension Version Pin",
       "type": "string"
     },
+    "GIS_AWF_PRODUCT_GATE": {
+      "default": true,
+      "title": "Gis Awf Product Gate",
+      "type": "boolean"
+    },
     "HEATMAP_MIN_POINTS": {
       "default": 10,
       "title": "Heatmap Min Points",

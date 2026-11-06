@@ -61,5 +61,5 @@ Pi / Agent Host
    `pi_compat.PI_MIN_VENDOR_TAG` 是唯一声明点；pi-schema 类型归一化是单一事实
    归一化层，`pi_input_gate` 严格校验是归一化后最终门；
    `additionalProperties`/边界/`required`/`enum` 在 Pi 侧先行拒绝。
-10. （ADR-0282）运行身份可对账：`/health.pi_vendor` 为 None 而 `agent_runtime`
+10. （ADR-0282）运行身份可对账：`/api/v1/health` 的 `pi_vendor` 为 None 而 `agent_runtime`
     徽章为 pi 即状态不一致信号；`scripts/pi_doctor.py` 分域诊断，升级/回退必跑。

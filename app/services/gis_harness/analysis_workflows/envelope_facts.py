@@ -14,7 +14,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Tuple
+from collections.abc import Iterator, Mapping
+import math
+from typing import Dict, Tuple
 
 #: 几何类型/extent 扫描的特征数上界（与 spatial_semantics preflight 的
 #: feature 扫描界同阶——descriptor 级开销契约）。
@@ -65,42 +67,71 @@ class FcFacts:
     """FC 实测事实（未知=空）。"""
 
     geometry_types: Tuple[str, ...] = ()
-    extent: Tuple[float, float, float, float] = ()
+    extent: tuple[float, float, float, float] | tuple[()] = ()
     crs: str = ""
     feature_count_scanned: int = 0
-    facts: Dict[str, Any] = field(default_factory=dict)
+    facts: Dict[str, object] = field(default_factory=dict)
 
 
-def _iter_coords(geometry: Any, budget: Dict[str, int]):
+def _coordinate_pair(raw: object) -> tuple[float, float] | None:
+    if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+        return None
+    x, y = raw[0], raw[1]
+    try:
+        # Normalized GeoJSON already has Python numbers. Only tool-native
+        # scalar types (e.g. NumPy) need conversion; do not copy valid pairs.
+        if not isinstance(x, (int, float)):
+            x = float(x)
+        if not isinstance(y, (int, float)):
+            y = float(y)
+        if not math.isfinite(x) or not math.isfinite(y):
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return x, y
+
+
+def _iter_coords(geometry: object, budget: Dict[str, int]) -> Iterator[tuple[float, float]]:
     """有界坐标迭代（Point/LineString/Polygon/Multi*/GeometryCollection）。"""
     if not isinstance(geometry, dict):
         return
     gtype = geometry.get("type")
+    coordinates = geometry.get("coordinates")
     if gtype == "Point":
-        coords = geometry.get("coordinates")
-        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+        pair = _coordinate_pair(coordinates)
+        if pair is not None:
             budget["n"] += 1
-            yield coords[0], coords[1]
+            yield pair
         return
     if gtype in ("MultiPoint", "LineString"):
-        for c in geometry.get("coordinates") or []:
+        if not isinstance(coordinates, (list, tuple)):
+            return
+        for c in coordinates:
             if budget["n"] >= MAX_COORD_SCAN:
                 return
-            if isinstance(c, (list, tuple)) and len(c) >= 2:
+            pair = _coordinate_pair(c)
+            if pair is not None:
                 budget["n"] += 1
-                yield c[0], c[1]
+                yield pair
         return
     if gtype in ("MultiLineString", "Polygon"):
-        for ring in geometry.get("coordinates") or []:
-            for c in ring or []:
+        if not isinstance(coordinates, (list, tuple)):
+            return
+        for ring in coordinates:
+            if not isinstance(ring, (list, tuple)):
+                continue
+            for c in ring:
                 if budget["n"] >= MAX_COORD_SCAN:
                     return
-                if isinstance(c, (list, tuple)) and len(c) >= 2:
+                pair = _coordinate_pair(c)
+                if pair is not None:
                     budget["n"] += 1
-                    yield c[0], c[1]
+                    yield pair
         return
     if gtype in ("MultiPolygon", "GeometryCollection"):
         items = geometry.get("coordinates") or geometry.get("geometries") or []
+        if not isinstance(items, (list, tuple)):
+            return
         for item in items:
             if budget["n"] >= MAX_COORD_SCAN:
                 return
@@ -109,18 +140,19 @@ def _iter_coords(geometry: Any, budget: Dict[str, int]):
             yield from _iter_coords(sub, budget)
 
 
-def _parse_crs_member(raw: Any) -> str:
+def _parse_crs_member(raw: object) -> str:
     """GeoJSON crs member（RFC 7946 前遗留 + 本仓 GIS-682 纪律）→ 规范名。"""
     if isinstance(raw, str) and raw:
         return raw
-    if isinstance(raw, dict):
-        name = (raw.get("properties") or {}).get("name")
+    if isinstance(raw, Mapping):
+        properties = raw.get("properties")
+        name = properties.get("name") if isinstance(properties, Mapping) else None
         if isinstance(name, str) and name:
             return name
     return ""
 
 
-def collect_fc_facts(fc: Dict[str, Any]) -> FcFacts:
+def collect_fc_facts(fc: object) -> FcFacts:
     """FC → 实测几何事实（有界扫描；非 FC 输入返回空事实）。"""
     if not isinstance(fc, dict) or fc.get("type") != "FeatureCollection":
         return FcFacts()
@@ -153,7 +185,7 @@ def collect_fc_facts(fc: Dict[str, Any]) -> FcFacts:
                 maxy = y
         if budget["n"] >= MAX_COORD_SCAN:
             break
-    extent: Tuple[float, float, float, float] = ()
+    extent: tuple[float, float, float, float] | tuple[()] = ()
     if minx != float("inf") and budget["n"]:
         extent = (minx, miny, maxx, maxy)
     return FcFacts(
@@ -164,7 +196,7 @@ def collect_fc_facts(fc: Dict[str, Any]) -> FcFacts:
     )
 
 
-def collect_result_semantics(result: Dict[str, Any]) -> Dict[str, str]:
+def collect_result_semantics(result: Mapping[str, object]) -> Dict[str, str]:
     """结果 → 实测口径事实（spatial_semantics 证据块 + stats 的 *_unit 键）。"""
     semantics: Dict[str, str] = {}
     block = result.get("spatial_semantics")
@@ -176,7 +208,7 @@ def collect_result_semantics(result: Dict[str, Any]) -> Dict[str, str]:
     stats = result.get("stats")
     if isinstance(stats, dict):
         for key, value in stats.items():
-            if (key in _SEMANTICS_BLOCK_KEYS or key.endswith("_unit")) \
+            if isinstance(key, str) and (key in _SEMANTICS_BLOCK_KEYS or key.endswith("_unit")) \
                     and isinstance(value, str) and value:
                 semantics.setdefault(key, value)
     # 根键直挂的单位口径（个别工具把 density_unit 放根键）
@@ -187,12 +219,12 @@ def collect_result_semantics(result: Dict[str, Any]) -> Dict[str, str]:
     return dict(sorted(semantics.items())[:MAX_SEMANTIC_KEYS])
 
 
-def collect_raster_facts(result: Dict[str, Any]) -> Dict[str, Any]:
+def collect_raster_facts(result: Mapping[str, object]) -> Dict[str, object]:
     """结果 → 栅格事实（白名单键；stats/根键/data 子键如实采集，缺者不进）。"""
-    facts: Dict[str, Any] = {}
+    facts: Dict[str, object] = {}
     sources = [result.get("stats"), result, result.get("data")]
     for source in sources:
-        if not isinstance(source, dict):
+        if not isinstance(source, Mapping):
             continue
         for key in _RASTER_FACT_KEYS:
             if key in facts:
@@ -210,6 +242,6 @@ def collect_raster_facts(result: Dict[str, Any]) -> Dict[str, Any]:
     return dict(ordered[:MAX_SEMANTIC_KEYS])
 
 
-def aggregation_basis_for(tool_name: str, params: Dict[str, Any]) -> str:
+def aggregation_basis_for(tool_name: str, params: Mapping[str, object]) -> str:
     """工具×参数 → 聚合基数声明（静态映射；参数级特例如实覆盖）。"""
     return _AGG_BASIS_BY_TOOL.get(tool_name, "")

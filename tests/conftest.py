@@ -52,6 +52,7 @@ _ENV_BASELINE = {
     # 安全/工作流开关（与 Settings 默认等价；#1346 后新增键的钉扎补登）。
     "JWT_REJECT_LEGACY_TOKENS": "false",
     "REVIEW_WORKFLOW_ENABLED": "true",
+    "GIS_AWF_PRODUCT_GATE": "true",
     "LOCAL_GEODATA_DIR": "",
     "LOCAL_QUERY_FIRST": "true",
     "RAG_EMBEDDING_OFFLINE": "false",

@@ -491,14 +491,17 @@ describe('responsive behaviour at the 1024 floor', () => {
     // "technically visible" and practically covered. Both drawers now share one
     // token, and the assertion is the outcome (map strip), not the expression.
     const css = read('app/globals.css');
-    const rule = css.match(/--drawer-w:\s*min\((\d+)px,\s*max\((\d+)px,\s*(\d+)vw\)\);/);
-    expect(rule, '--drawer-w should be a min(cap, max(floor, Nvw)) rule').not.toBeNull();
+    const rule = css.match(/--drawer-w:\s*min\(100vw,\s*(\d+)px,\s*max\((\d+)px,\s*(\d+)vw\)\);/);
+    expect(rule, '--drawer-w should cap its preferred width at the viewport').not.toBeNull();
     const [cap, floor, vw] = rule!.slice(1).map(Number);
 
+    const drawerWidth = (viewport: number) =>
+      Math.min(viewport, cap, Math.max(floor, (vw / 100) * viewport));
     const mapStrip = (viewport: number) => {
-      const drawer = Math.min(cap, Math.max(floor, (vw / 100) * viewport));
-      return viewport - drawer - 378; // 378 = rail 48 + context panel 330
+      return viewport - drawerWidth(viewport) - 378; // 378 = rail 48 + context panel 330
     };
+    // The preferred 400px floor must not clip account controls on narrow screens.
+    expect(drawerWidth(390)).toBeLessThanOrEqual(390);
     // At the minimum target the map must keep a usable strip, not a sliver.
     expect(mapStrip(1024)).toBeGreaterThan(120);
     // And the drawer must not keep growing past its cap on wide screens.

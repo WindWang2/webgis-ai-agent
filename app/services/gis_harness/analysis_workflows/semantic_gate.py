@@ -15,11 +15,13 @@
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Dict, Optional, Tuple
 
 from app.services.gis_harness.analysis_workflows.contracts import (
     AWF_INPUT_SEMANTIC_MISMATCH,
     AWF_ROLE_GEOMETRY_MISMATCH,
+    DataRoleBinding,
 )
 
 #: GeoJSON 几何类型 → 归一几何类。
@@ -63,9 +65,11 @@ def geometry_types_to_kinds(geometry_types: Tuple[str, ...]
     return tuple(kinds)
 
 
-def _kinds_of_requirement(geometry_kinds) -> Tuple[str, ...]:
+def _kinds_of_requirement(geometry_kinds: object) -> Tuple[str, ...]:
     out = []
-    for kind in geometry_kinds or ():
+    if not isinstance(geometry_kinds, (list, tuple)):
+        return ()
+    for kind in geometry_kinds:
         norm = normalize_geometry_kind(str(kind))
         if norm and norm not in out:
             out.append(norm)
@@ -73,20 +77,24 @@ def _kinds_of_requirement(geometry_kinds) -> Tuple[str, ...]:
 
 
 def check_role_qualifier(
-    requirement: Dict[str, Any],
-    binding: Any,
+    requirement: Mapping[str, object],
+    binding: DataRoleBinding,
 ) -> Optional[SemanticFinding]:
     """plan 期：角色几何画像 vs 需求（事实缺失=无发现——由调用方披露）。"""
     req_kinds = _kinds_of_requirement(requirement.get("geometry_kinds"))
     if not req_kinds:
         return None
-    qualifier: Dict[str, Any] = getattr(binding, "qualifier", None) or {}
+    qualifier = binding.qualifier
+    if not isinstance(qualifier, Mapping):
+        return None
     measured: Tuple[str, ...] = ()
     raw_types = qualifier.get("geometry_types")
     if isinstance(raw_types, (list, tuple)) and raw_types:
         measured = geometry_types_to_kinds(tuple(map(str, raw_types)))
-    elif isinstance(qualifier.get("geometry_kind"), str):
-        measured = (normalize_geometry_kind(qualifier["geometry_kind"]),)
+    else:
+        raw_kind = qualifier.get("geometry_kind")
+        if isinstance(raw_kind, str):
+            measured = (normalize_geometry_kind(raw_kind),)
     if not measured:
         return None
     mismatched = [k for k in measured if k not in req_kinds]

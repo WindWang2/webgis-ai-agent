@@ -10,7 +10,9 @@
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Literal, Optional, TypedDict
+
+from pydantic import JsonValue
 
 from app.services.gis_harness.analysis_workflows.families import (
     FAMILY_IDS,
@@ -32,6 +34,39 @@ NEXT_STEP_ACTIONS = (
 _RUN_HINT = "webgis_analysis_workflow_run"
 
 
+class RoleCatalogEntry(TypedDict):
+    role: str
+    required: bool
+    geometry_kinds: list[str]
+    missing_policy: str
+    note: str
+
+
+class StepCatalogEntry(TypedDict):
+    step_id: str
+    tool: str
+    capability: str
+    preconditions: list[str]
+    params: dict[str, JsonValue]
+    unit_contract: dict[str, str]
+    optional: bool
+    mappable_output: bool
+    resource: dict[str, str]
+
+
+class FamilyCatalogEntry(TypedDict):
+    family: str
+    label_zh: str
+    roles: list[RoleCatalogEntry]
+    steps: list[StepCatalogEntry]
+    visualization_hints: list[str]
+
+
+class WorkflowFamilyCatalog(TypedDict):
+    schema: Literal["awf.discovery.v1"]
+    families: list[FamilyCatalogEntry]
+
+
 def _tool_meta_of(tool_meta: Optional[Callable[[str], Dict[str, str]]],
                   tool: str) -> Dict[str, str]:
     if tool_meta is None:
@@ -48,15 +83,15 @@ def family_catalog(
     family: Optional[str] = None,
     *,
     tool_meta: Optional[Callable[[str], Dict[str, str]]] = None,
-) -> Dict[str, Any]:
+) -> WorkflowFamilyCatalog:
     """族 → 机读能力目录（步骤/前置/资源画像/可制图性/角色需求）。"""
     families = [family] if family else list(FAMILY_IDS)
-    out: List[Dict[str, Any]] = []
+    out: List[FamilyCatalogEntry] = []
     hints_all = {f: visualization_hints(f) for f in FAMILY_IDS}
     for fam in families:
         if fam not in FAMILY_IDS:
             continue
-        steps = []
+        steps: list[StepCatalogEntry] = []
         for step in _STEPS[fam]:
             steps.append({
                 "step_id": step.step_id,

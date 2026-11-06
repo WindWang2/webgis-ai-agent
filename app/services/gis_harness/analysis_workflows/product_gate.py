@@ -13,9 +13,11 @@ session store alias 枚举读 ``analysis_workflow.v1:*`` 状态块，有界 ≤3
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+from collections.abc import Iterable, Mapping
+from typing import Dict, List, TypedDict
 
 from app.services.gis_harness.analysis_workflows.state import (
+    WorkflowRunState,
     state_from_payload,
 )
 
@@ -29,14 +31,23 @@ REASON_SCIENCE_BLOCKED = "G-SCIENCE-BLOCKED"
 _ALIAS_PREFIX = "analysis_workflow.v1:"
 
 
-async def load_workflow_states(session_id: str) -> Dict[str, Any]:
+class RefEligibility(TypedDict):
+    ref: str
+    eligible: bool
+    run_status: str
+    reason_code: str
+    workflow_id: str
+    step_id: str
+
+
+async def load_workflow_states(session_id: str) -> Dict[str, WorkflowRunState]:
     """读会话内全部工作流运行态（alias 前缀过滤；有界）。
 
     IO 失败=返回空 dict（门退化为不裁决——诚实披露优于假门）。
     """
     from app.services.session_data import session_data_manager
 
-    states: Dict[str, Any] = {}
+    states: Dict[str, WorkflowRunState] = {}
     try:
         refs = await session_data_manager.list_refs(session_id)
     except Exception:  # noqa: BLE001 — 枚举失败=门不可用
@@ -56,16 +67,16 @@ async def load_workflow_states(session_id: str) -> Dict[str, Any]:
 
 
 def assess_refs_eligibility(
-    states: Dict[str, Any], refs: Iterable[str],
-) -> List[Dict[str, Any]]:
+    states: Mapping[str, WorkflowRunState], refs: Iterable[object],
+) -> List[RefEligibility]:
     """逐 ref 裁决成品资格（纯函数；找不到源工作流的 ref = 合格）。"""
     seen: List[str] = []
-    findings: List[Dict[str, Any]] = []
+    findings: List[RefEligibility] = []
     for ref in refs:
         if not isinstance(ref, str) or not ref or ref in seen:
             continue
         seen.append(ref)
-        finding: Dict[str, Any] = {
+        finding: RefEligibility = {
             "ref": ref, "eligible": True, "run_status": "",
             "reason_code": "", "workflow_id": "", "step_id": "",
         }

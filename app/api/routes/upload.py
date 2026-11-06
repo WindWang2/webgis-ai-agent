@@ -388,7 +388,7 @@ async def upload_files(
             # register_ref → 同内容再传开 register_ref」时 terrain ref 永不
             # 注册（terrain=None 且无任何披露）。车道按 sha256 幂等，对既有
             # 记录的存储路径补跑会复用/补注册，best-effort 纪律不变。
-            dedup_terrain: Optional[Dict[str, Any]] = None
+            dedup_terrain: Optional[Dict[str, object]] = None
             dedup_session_ref: Optional[str] = None
             dedup_lane_error: Optional[str] = None
             if (register_ref or x_session_id is not None) and dup.get("file_type") == "raster":

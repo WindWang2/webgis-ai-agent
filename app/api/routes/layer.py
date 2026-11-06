@@ -1126,7 +1126,7 @@ async def get_terrain_tilejson(
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
     # A8（评审）：与 terrain-tiles 瓦片路由的 token Query 边界对齐（超长串
     # 不进常量时间比较）。
-    token: Optional[str] = Query(None, max_length=128, description="匿名会话 owner token（tiles URL 将原样携带）"),
+    token: Optional[str] = Query(None, max_length=128, description="匿名会话 owner token（仅用于本次校验；返回瓦片 URL 使用短时签名）"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(_require_owned_session_qtoken),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),

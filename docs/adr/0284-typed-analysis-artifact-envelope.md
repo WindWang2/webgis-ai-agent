@@ -47,7 +47,7 @@ m_n_join / zonal_mean / zonal_sum——声明聚合基数语义）；`provenance
 `AnalysisStepSpec` 新增可选 `semantic_contract: Dict[str, str]`（键词表封闭：
 `crs_class`（crs_safety 词表）/`geometry_kind`），族模板逐步声明。executor 在
 水合后核验：FC 几何类型集合 vs 声明；`step:` 上游时对照上游 envelope 的
-geometry_types/result_semantics。违例 → typed blocked
+geometry_types；当前衔接门核验 geometry_kind，crs_class 由工具级 preflight 裁决。违例 → typed blocked
 `AWF_INPUT_SEMANTIC_MISMATCH:<param>`（新码）。plan 期同时用
 `binding.qualifier`（geometry_types/feature_count 画像事实）做前置披露：
 事实在且冲突 → typed blocked `AWF_ROLE_GEOMETRY_MISMATCH:<ROLE>`（新码）；
@@ -105,13 +105,13 @@ raster 绑定在 executor **不水合为 dict**：ref/路径字符串直通参�
 
 ### D6 产品最终门（partial ≠ final，kill switch）
 
-新模块 `analysis_workflows/product_gate.py` 纯函数
-`assess_ref_eligibility(states, ref)`：ref 源自某 workflow envelope 且该 run
+新模块 `app/services/gis_harness/analysis_workflows/product_gate.py` 纯函数
+`assess_refs_eligibility(states, refs)`：ref 源自某 workflow envelope 且该 run
 非 satisfied（或 science_validation=blocked）→ `{eligible: false, run_status,
 reason_code}`。`webgis_map_product` 挂载图层前调用（经注入 helper，默认启用；
 `GIS_AWF_PRODUCT_GATE=0` bit 级回退 master 行为——由结构契约测试锁定）：不合格 ref → 该图层
 降级披露（不挂载为成品层 + guidance），全部图层不合格才 success=False（既有
-语义保持）。改动是 gis_harness/tools.py 的最小 additive 钩子，单独 commit，
+语义保持）。钩子位于 `app/services/gis_harness/tool_map_product.py`，
 契约测试锁定旧行为在开关关闭时逐字节不变。
 
 ### D7 dispatch repeated 复用（断点 7 修复）

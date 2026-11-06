@@ -68,7 +68,7 @@ class WorkflowRunState(BaseModel):
     contract_snapshot: Dict[str, Any] = Field(default_factory=dict)
     # ADR-0284 D5：科学终审投影（run 结束时全步骤终态后由 executor 写入；
     # {final_gate: pass|blocked|not_evaluated, checked_in_turn, findings_n}）。
-    science_validation: Dict[str, Any] = Field(default_factory=dict)
+    science_validation: Dict[str, object] = Field(default_factory=dict)
 
     def log(self, event: str, **facts: Any) -> None:
         """有界运行日志（环形；确定性字段，不含绝对时间戳）。"""

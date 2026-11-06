@@ -26,10 +26,11 @@ import hashlib
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
 from app.services.gis_harness.analysis_workflows.contracts import (
     AWF_UNKNOWN_FAMILY,
+    AnalysisWorkflowContract,
     DataRoleBinding,
     canonical_json,
 )
@@ -68,6 +69,16 @@ from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
+
+
+class BudgetEstimate(TypedDict):
+    role: str
+    ref: str
+    feature_count: int | None
+    max_features: int
+    over: bool
+    reason_code: str
+
 
 def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
     """注册 4 个分析工作流工具（append-only；不改既有工具）。"""
@@ -149,7 +160,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         return bindings
 
     async def _budget_estimates(session_id: str,
-                                contract: Any) -> List[Dict[str, Any]]:
+                                contract: AnalysisWorkflowContract) -> List[BudgetEstimate]:
         """plan 期输入预算估计（ADR-0284 断点4）。
 
         只对 vector 角色的 ``ref:`` 绑定读 descriptor 行数事实（raster/table
@@ -160,12 +171,12 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             AWF_BUDGET_EXCEEDED,
         )
 
-        estimates: List[Dict[str, Any]] = []
+        estimates: List[BudgetEstimate] = []
         for role, binding in list(contract.data_contracts.items())[:16]:
             if not isinstance(binding.ref, str) or not binding.ref.startswith(
                     "ref:") or binding.role_kind != "vector":
                 continue
-            entry: Dict[str, Any] = {
+            entry: BudgetEstimate = {
                 "role": role, "ref": binding.ref,
                 "feature_count": None, "max_features": DEFAULT_MAX_FEATURES,
                 "over": False, "reason_code": "",

@@ -1335,6 +1335,7 @@
    "tests": [
     "tests/benchmarks/test_backend_scale_decisions.py",
     "tests/science_oracles/test_network_oracles.py",
+    "tests/unit/test_data_medium_regressions_20261106.py",
     "tests/unit/test_network_centrality.py",
     "tests/unit/test_network_v3.py"
    ],
@@ -4600,7 +4601,8 @@
    "scientific_status": "VALIDATED",
    "tests": [
     "tests/test_temporal_profiler.py",
-    "tests/unit/gis/test_algorithm_registry_phase2.py"
+    "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/test_data_medium_regressions_20261106.py"
    ],
    "uncertainty_outputs": []
   },
@@ -4691,6 +4693,7 @@
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/gis/test_g02_science_oracles.py",
     "tests/unit/lib/test_completeness_v3.py",
+    "tests/unit/test_data_medium_regressions_20261106.py",
     "tests/unit/test_gis_algorithm_audit_fixes.py",
     "tests/unit/test_network_algo_hotspots.py",
     "tests/unit/test_temporal_gis_runtime.py",
@@ -5792,6 +5795,7 @@
     "tests/unit/gis_harness/test_fact_signals_v4.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
     "tests/unit/gis_harness/test_planner_hotpath_work.py",
+    "tests/unit/gis_harness/test_review_harness_medium.py",
     "tests/unit/gis_harness/test_runtime_v4_scenarios.py",
     "tests/unit/gis_harness/test_workflow_schema.py",
     "tests/unit/lib/test_rs_pipeline_v1.py",
@@ -5858,6 +5862,7 @@
     "tests/unit/gis/test_data_contracts_v2.py",
     "tests/unit/gis_harness/test_evidence_claim_graph_v1.py",
     "tests/unit/gis_harness/test_hotpath_convergence_v1.py",
+    "tests/unit/gis_harness/test_review_harness_medium.py",
     "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_rs_pipeline_v1.py",
     "tests/unit/lib/test_rs_v3.py"
@@ -5878,8 +5883,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 205,
-  "mention": 185,
+  "dispatch": 206,
+  "mention": 184,
   "none": 7
  },
  "capabilities": [
@@ -6235,6 +6240,7 @@
     "tests/benchmarks/bench_gis_perf_539_540.py",
     "tests/benchmarks/test_perf_harness.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis_harness/analysis_workflows/test_pr1972_integrity.py",
     "tests/unit/test_network_algo_hotspots.py",
     "tests/unit/test_network_analyst.py",
     "tests/unit/test_network_issue453_od_snapping_consistency.py",
@@ -7374,6 +7380,7 @@
     "tests/unit/test_platform_trace_propagation.py",
     "tests/unit/test_raster_cartography_converter.py",
     "tests/unit/test_raster_large_windowed.py",
+    "tests/unit/test_raster_low_1862_regressions.py",
     "tests/unit/test_raster_runtime_v3.py",
     "tests/unit/test_rs_legend_spec_closure.py",
     "tests/unit/test_rs_service_module.py",
@@ -7591,6 +7598,7 @@
    "tests": [
     "tests/acceptance/gis_agent/corpus.py",
     "tests/cartography/test_cartographic_phase4_rules.py",
+    "tests/unit/gis/test_algorithm_resolver_registry_lifecycle.py",
     "tests/unit/gis/test_backend_sdk_v3.py",
     "tests/unit/gis/test_cost_model.py",
     "tests/unit/gis/test_gis_lib_registries.py",
@@ -8076,6 +8084,7 @@
    "tests": [
     "tests/perf/test_runtime_v2_perf_contracts.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/test_data_medium_regressions_20261106.py",
     "tests/unit/test_network_analyst.py",
     "tests/unit/test_network_issue582_trim_cap.py",
     "tests/unit/test_network_science_vnext.py",
@@ -8162,6 +8171,7 @@
     "tests/unit/gis/test_algo_conformance_v2.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/gis/test_golden_gis_numerics.py",
+    "tests/unit/gis_harness/analysis_workflows/test_envelope_v2.py",
     "tests/unit/gis_harness/analysis_workflows/test_recompute.py",
     "tests/unit/gis_harness/spatial_semantics/test_fixtures_and_perf.py",
     "tests/unit/gis_harness/spatial_semantics/test_preflight_matrix.py",
@@ -8183,6 +8193,7 @@
     "tests/unit/test_federated_physical_executor.py",
     "tests/unit/test_federated_v6_differential.py",
     "tests/unit/test_geocompute_execution.py",
+    "tests/unit/test_review_core_low_boundaries.py",
     "tests/unit/test_spatial_analyzer_deepening.py"
    ]
   },
@@ -8236,7 +8247,9 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/benchmarks/test_perf_harness.py",
     "tests/unit/gis/test_native_surface_bindings.py",
+    "tests/unit/gis_harness/analysis_workflows/test_envelope_v2.py",
     "tests/unit/gis_harness/spatial_semantics/test_contract_v1.py",
     "tests/unit/gis_harness/spatial_semantics/test_fixtures_and_perf.py",
     "tests/unit/gis_harness/spatial_semantics/test_mapspec_unit_flow.py",
@@ -8855,6 +8868,9 @@
    "tests": [
     "tests/test_spatial_tasks.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis_harness/analysis_workflows/test_chain2_raster.py",
+    "tests/unit/gis_harness/analysis_workflows/test_discovery.py",
+    "tests/unit/gis_harness/analysis_workflows/test_known_answer_oracles.py",
     "tests/unit/lib/test_geo_analysis_pro.py",
     "tests/unit/lib/test_geo_raster_v4.py",
     "tests/unit/lib/test_geometry_repair_v4.py",
@@ -8941,7 +8957,7 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 205,
+  "behavioral_dispatch": 206,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
   "pass": true,
@@ -8949,7 +8965,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "d7a3ca345184358a3017fe889ae99cb81b697f4ee21af81a008a1f599b61d4c8",
+ "fingerprint": "46958214300615db3d393014ff7cb8e173728a8d8c8f42ea9d977a48860217b2",
  "gate": {
   "fields": {
    "capabilities": {
@@ -9549,6 +9565,7 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/analysis_workflows/test_contracts.py",
+    "tests/unit/gis_harness/analysis_workflows/test_envelope_v2.py",
     "tests/unit/gis_harness/analysis_workflows/test_recompute.py",
     "tests/unit/gis_harness/analysis_workflows/test_state.py",
     "tests/unit/gis_harness/recovery_policy/test_continuation.py",
@@ -10321,6 +10338,7 @@
     "tests/cartography/test_carto_ir_corpus_v1.py",
     "tests/cartography/test_grammar_entry_wiring_v1.py",
     "tests/cartography/test_grammar_production_wiring_v1.py",
+    "tests/cartography/test_presentation_consistency_entries.py",
     "tests/test_cartography_tools.py",
     "tests/test_tool_argument_aliases.py",
     "tests/unit/agent_swarm/test_data_scout.py",
@@ -10889,6 +10907,7 @@
    "tests": [
     "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_geocompute_sync_reservation.py",
     "tests/unit/test_specialist_data_compute.py",
     "tests/unit/tools/test_behavioral_execution.py"
    ],
@@ -10931,6 +10950,7 @@
     "tests/unit/test_audit3_batch4_fixes.py",
     "tests/unit/test_cache_lineage_v4.py",
     "tests/unit/test_deep_review_security_sec03.py",
+    "tests/unit/test_gc_process_recovery_review.py",
     "tests/unit/test_geocompute_1718_fixes.py",
     "tests/unit/test_geocompute_authz.py",
     "tests/unit/test_geocompute_chaos.py",
@@ -10946,6 +10966,8 @@
     "tests/unit/test_plan_mode.py",
     "tests/unit/test_planning_v3_scenarios.py",
     "tests/unit/test_replay_security_v4.py",
+    "tests/unit/test_review_api_low.py",
+    "tests/unit/test_review_core_continuation_regressions.py",
     "tests/unit/test_subagent.py",
     "tests/unit/test_tool_registry_rationalization.py",
     "tests/unit/workflow_runtime/test_v6_cluster_dispatch.py"
@@ -11713,6 +11735,7 @@
     "tests/unit/test_p4_explorer_pipeline_seams.py",
     "tests/unit/test_p4_explorer_stream_bounded.py",
     "tests/unit/test_protocol_parity.py",
+    "tests/unit/test_provider_business_health_review.py",
     "tests/unit/test_provider_health_tracked_get.py",
     "tests/unit/test_target_baseline_resolvers.py",
     "tests/unit/test_tool_error_standardization.py",
@@ -13211,6 +13234,7 @@
     "frontend/test/results/normalize.test.ts",
     "frontend/test/results/results-ui.test.tsx",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis_harness/analysis_workflows/test_chain3_network.py",
     "tests/unit/test_advanced_spatial_audit_764_765.py",
     "tests/unit/test_geo_analysis_isochrone_443.py",
     "tests/unit/test_network_science_vnext.py"
@@ -14611,7 +14635,11 @@
     "距离"
    ],
    "tests": [
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis_harness/analysis_workflows/test_chain3_network.py",
+    "tests/unit/gis_harness/analysis_workflows/test_pr1972_integrity.py",
+    "tests/unit/test_map_product_authoring_failure.py",
     "tests/unit/test_new_geo_tools.py",
     "tests/unit/test_subagent_team_v4.py"
    ],
@@ -14744,7 +14772,7 @@
    "tier": 2
   },
   {
-   "behavior": "mention",
+   "behavior": "dispatch",
    "capabilities": [
     "closest_facility"
    ],
@@ -14770,7 +14798,9 @@
     "tests/test_ci_perf_coverage_contract.py",
     "tests/test_tool_registry_async_policy.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis_harness/analysis_workflows/test_pr1972_integrity.py",
     "tests/unit/test_audit4_tools_meta.py",
+    "tests/unit/test_map_product_authoring_failure.py",
     "tests/unit/test_network_algo_hotspots.py",
     "tests/unit/test_network_analyst.py",
     "tests/unit/test_network_issue453_od_snapping_consistency.py",
@@ -15076,6 +15106,7 @@
     "tests/data/test_dispatch_lineage_inputs.py",
     "tests/smoke_deep_enhancement.py",
     "tests/unit/agent_swarm/test_geocompute.py",
+    "tests/unit/gis_harness/analysis_workflows/test_envelope_v2.py",
     "tests/unit/test_advanced_spatial_audit_764_765.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_artifact_registry.py"
@@ -15522,6 +15553,7 @@
     "tests/benchmarks/test_gis_registry_perf.py",
     "tests/data/test_project_runtime_v1.py",
     "tests/governor/test_dispatch_actual_backfill.py",
+    "tests/integration/test_pi_stub_llm_journeys.py",
     "tests/test_chat_session_plan_route.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
     "tests/test_intent_replan_envelope.py",
@@ -15789,6 +15821,7 @@
     "tests/unit/gis_tool_conformance/test_e2e_raster_ndvi_scenario.py",
     "tests/unit/lib/test_geo_raster_v5.py",
     "tests/unit/test_domain_c_raster.py",
+    "tests/unit/test_final_data_high_evidence.py",
     "tests/unit/test_geocompute_v8_fabric.py",
     "tests/unit/test_geocompute_v8_partition.py",
     "tests/unit/test_raster_calculator_windowed.py",
@@ -17752,7 +17785,9 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis/test_golden_gis_numerics.py",
     "tests/unit/gis_harness/analysis_workflows/test_contracts.py",
+    "tests/unit/gis_harness/analysis_workflows/test_envelope_v2.py",
     "tests/unit/gis_harness/analysis_workflows/test_executor_e2e.py",
+    "tests/unit/gis_harness/analysis_workflows/test_state_closure.py",
     "tests/unit/gis_harness/spatial_semantics/test_mapspec_unit_flow.py",
     "tests/unit/gis_harness/spatial_semantics/test_preflight_matrix.py",
     "tests/unit/gis_harness/spatial_semantics/test_r1_fixes.py",
@@ -17889,6 +17924,7 @@
     "tests/unit/gis/test_algo_conformance_v2.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/gis/test_golden_gis_numerics.py",
+    "tests/unit/gis_harness/analysis_workflows/test_envelope_v2.py",
     "tests/unit/gis_harness/analysis_workflows/test_recompute.py",
     "tests/unit/gis_harness/spatial_semantics/test_fixtures_and_perf.py",
     "tests/unit/gis_harness/spatial_semantics/test_preflight_matrix.py",
@@ -17910,6 +17946,7 @@
     "tests/unit/test_federated_physical_executor.py",
     "tests/unit/test_federated_v6_differential.py",
     "tests/unit/test_geocompute_execution.py",
+    "tests/unit/test_review_core_low_boundaries.py",
     "tests/unit/test_spatial_analyzer_deepening.py"
    ],
    "tier": 1
@@ -17975,6 +18012,7 @@
     "tests/test_mutable_default_arg.py",
     "tests/test_spatial_engine_bugs.py",
     "tests/test_tool_argument_aliases.py",
+    "tests/unit/gis/test_algorithm_resolver_registry_lifecycle.py",
     "tests/unit/gis/test_backend_sdk_v3.py",
     "tests/unit/gis/test_cost_model.py",
     "tests/unit/gis/test_gis_lib_registries.py",
@@ -18447,6 +18485,7 @@
     "tests/acceptance/gis_agent/corpus.py",
     "tests/test_tool_registry_async_policy.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis_harness/analysis_workflows/test_discovery.py",
     "tests/unit/gis_harness/analysis_workflows/test_families.py",
     "tests/unit/gis_harness/analysis_workflows/test_families_e2e.py",
     "tests/unit/gis_harness/analysis_workflows/test_orchestrator.py",
@@ -19393,7 +19432,10 @@
    "tests": [
     "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/analysis_workflows/test_chain3_network.py",
     "tests/unit/gis_harness/analysis_workflows/test_perf_budget.py",
+    "tests/unit/gis_harness/analysis_workflows/test_pr1972_integrity.py",
+    "tests/unit/gis_harness/analysis_workflows/test_r1_review_fixes.py",
     "tests/unit/gis_harness/analysis_workflows/test_recompute.py",
     "tests/unit/gis_harness/analysis_workflows/test_tools.py"
    ],
@@ -19423,6 +19465,8 @@
    "tests": [
     "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/analysis_workflows/test_pr1972_integrity.py",
+    "tests/unit/gis_harness/analysis_workflows/test_r1_review_fixes.py",
     "tests/unit/gis_harness/analysis_workflows/test_tools.py",
     "tests/unit/gis_harness/recovery_policy/test_continuation.py"
    ],
@@ -19453,6 +19497,8 @@
     "tests/acceptance/gis_agent/corpus.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/gis_harness/analysis_workflows/test_perf_budget.py",
+    "tests/unit/gis_harness/analysis_workflows/test_pr1972_integrity.py",
+    "tests/unit/gis_harness/analysis_workflows/test_r1_review_fixes.py",
     "tests/unit/gis_harness/analysis_workflows/test_recompute.py",
     "tests/unit/gis_harness/analysis_workflows/test_tools.py"
    ],
@@ -19564,6 +19610,7 @@
    ],
    "tests": [
     "tests/acceptance/gis_agent/contracts.py",
+    "tests/integration/test_pi_vendor_contract.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
     "tests/test_pi_session_plan_host.py",
     "tests/test_tool_meta_contract.py",
@@ -20154,6 +20201,8 @@
     "tests/acceptance/gis_agent/contracts.py",
     "tests/acceptance/gis_agent/runner.py",
     "tests/benchmarks/test_planner_runtime_perf.py",
+    "tests/integration/test_pi_stub_llm_journeys.py",
+    "tests/integration/test_pi_vendor_contract.py",
     "tests/test_gis_memory_wiring.py",
     "tests/test_gis_situation_compile_diff.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
@@ -20172,6 +20221,8 @@
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_planner_runtime.py",
     "tests/unit/gis_harness/test_procedure_seam_v1.py",
+    "tests/unit/gis_harness/test_review_harness_medium.py",
+    "tests/unit/gis_harness/test_review_low_1861.py",
     "tests/unit/test_audit4_harness_semantics.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_execution_stability_v3.py",
@@ -20264,6 +20315,7 @@
     "tests/test_pi_session_plan_host.py",
     "tests/test_tool_argument_aliases.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/analysis_workflows/test_r1_review_fixes.py",
     "tests/unit/gis_harness/test_chain_completeness_v4.py",
     "tests/unit/gis_harness/test_golden_cases_v2.py",
     "tests/unit/gis_harness/test_harness_tools.py",
@@ -20479,7 +20531,8 @@
    ],
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
-    "tests/unit/test_composition_asset_tools.py"
+    "tests/unit/test_composition_asset_tools.py",
+    "tests/unit/test_review_final_dispatch_authority.py"
    ],
    "tier": 2
   },
@@ -20506,7 +20559,8 @@
    ],
    "tests": [
     "tests/acceptance/gis_agent/test_e5_multiturn_journeys.py",
-    "tests/unit/test_interaction_scope_tool.py"
+    "tests/unit/test_interaction_scope_tool.py",
+    "tests/unit/test_tool_registry_rationalization.py"
    ],
    "tier": 2
   },
@@ -20769,13 +20823,20 @@
    "tests": [
     "frontend/test/project/fixtures.ts",
     "frontend/test/results/normalize.test.ts",
+    "tests/acceptance/gis_agent/corpus.py",
     "tests/data/test_lineage_query.py",
     "tests/test_critical_backend_correctness.py",
     "tests/test_medium_backend_arch.py",
     "tests/test_v2_integration_sanity.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis_harness/analysis_workflows/test_chain2_raster.py",
+    "tests/unit/gis_harness/analysis_workflows/test_discovery.py",
+    "tests/unit/gis_harness/analysis_workflows/test_envelope_v2.py",
+    "tests/unit/gis_harness/analysis_workflows/test_pr1972_integrity.py",
+    "tests/unit/gis_harness/analysis_workflows/test_r1_review_fixes.py",
     "tests/unit/gis_harness/spatial_semantics/test_tool_adapters.py",
     "tests/unit/test_be_audit_fixes.py",
+    "tests/unit/test_data_issue_regressions_20261105.py",
     "tests/unit/test_raster_runtime_v3.py",
     "tests/unit/test_resume_verify_v6.py",
     "tests/unit/test_semantic_retrieval_v6.py",

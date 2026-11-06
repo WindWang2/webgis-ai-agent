@@ -1,20 +1,20 @@
 {
  "artifacts": {
   "docs/integration/RELEASE_READINESS.json": {
-   "content_fingerprint": "709498576919e9fbffcf19baae9b4f6fe39de2f2c2382b7efa435d9ee3669748",
+   "content_fingerprint": "fd5b3c6db6449ef484e95653c60bde0d8f90a56139138fa5bafa741beb124771",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
-   "input_fingerprint": "943de3d62fa16b4dc25d014d5597a25bbaa4e44ab1718d36fedd67275eb29697",
+   "input_fingerprint": "f321e7debc94234d4a8819fefbd256cbf7d46a8377d5b99c7f9a9478bb7c5880",
    "inputs": [
     "scripts/gen_release_readiness.py"
    ],
    "scope": "global"
   },
   "docs/integration/RELEASE_READINESS.md": {
-   "content_fingerprint": "1b995c102f7aef623df5672742a2d9b634ad7bcd9a826d2142eb0a4911fe9dce",
+   "content_fingerprint": "b7b59c1c139fd8a613d5f2516b658aa1884d8e522a4b843e7f59471362a3acaf",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
-   "input_fingerprint": "943de3d62fa16b4dc25d014d5597a25bbaa4e44ab1718d36fedd67275eb29697",
+   "input_fingerprint": "f321e7debc94234d4a8819fefbd256cbf7d46a8377d5b99c7f9a9478bb7c5880",
    "inputs": [
     "scripts/gen_release_readiness.py"
    ],
@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "59e9371924210e3b5df2dc196349d14bff69a569ad14201e6e8f156fe252d27c",
+   "input_fingerprint": "467a22278a2ca71fbf1289b5deda5328493294e6bf86f7306110a1a98bf34b10",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -42,10 +42,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "7ee2a98f321063ae3feb93836be959fda82b039cf0f73af781b082f91ce4325e",
+   "content_fingerprint": "de21e0950c6e40ec907917bc74e5f877372d8424f825c56094a0575c2240c050",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "bb3f4eaf7c3df68821855dc1248e37dfce2a0a1ed921a0eb91913218ca50bff0",
+   "input_fingerprint": "1d23b7af774f8fb0f6b42281a27a111fdc7694dcbc31ccbb426529c36f449188",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -57,10 +57,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_REPORT.md": {
-   "content_fingerprint": "94cf52c4c58fc923125ebd2405b24fca9032ed0146e01287ca00ec8ae4784309",
+   "content_fingerprint": "fe131d8081d834433d65c3f38e925983d603b3a5691d5caf136f96a78826e570",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "e11744c1372a388c363da742a80b25031ce4032c72cc05d5f6bf478a95e1dd00",
+   "input_fingerprint": "40d095341b190a01c8a44ba8d1f22f0c211fc3165d90c6f1b8f986a87b4ab3f4",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -69,10 +69,10 @@
    "scope": "global"
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
-   "content_fingerprint": "824eaa369555b6433514622782151feeb9793b932d4048a9e630d49f9d13a375",
+   "content_fingerprint": "87773cd612f65e01ac172a8ee8970c03f93563d2a31a6d5fbe978c17ac352850",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "c214d40e5d08aa8d9f6bc20d72b3ad7684d331a1ad411e9a9bfaecd178810d37",
+   "input_fingerprint": "23d75fc7da259d048c5746cca2bfecfbce742bed854055e27b5a7f301acce460",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -103,7 +103,7 @@
    "content_fingerprint": "3abc72a35d3091b77529cbd9d9a745b7143b7d6fdbbfac5267ea86c93be1ab78",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "c214d40e5d08aa8d9f6bc20d72b3ad7684d331a1ad411e9a9bfaecd178810d37",
+   "input_fingerprint": "23d75fc7da259d048c5746cca2bfecfbce742bed854055e27b5a7f301acce460",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "59e9371924210e3b5df2dc196349d14bff69a569ad14201e6e8f156fe252d27c",
+   "input_fingerprint": "467a22278a2ca71fbf1289b5deda5328493294e6bf86f7306110a1a98bf34b10",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -132,10 +132,10 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "b2b16672546d719b706f8bd0e1b911be13947140008faa73a34bd18386472b23",
+   "content_fingerprint": "ecc8d86caa66f51778de27b427242ed9076f8c9de4b8c9d5a31946ada41c0a48",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "bb3f4eaf7c3df68821855dc1248e37dfce2a0a1ed921a0eb91913218ca50bff0",
+   "input_fingerprint": "1d23b7af774f8fb0f6b42281a27a111fdc7694dcbc31ccbb426529c36f449188",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -147,10 +147,10 @@
    "scope": "global"
   },
   "docs/quality/quality-report.json": {
-   "content_fingerprint": "35e1253fbf2e410502c87a576fa1063aec2317da2cf59ea720c6a1aaf1a45b15",
+   "content_fingerprint": "e3a3ce9d5f1e7d41899484710c6f3dc27230bf76672a160ff35a30726fb47d82",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "e11744c1372a388c363da742a80b25031ce4032c72cc05d5f6bf478a95e1dd00",
+   "input_fingerprint": "40d095341b190a01c8a44ba8d1f22f0c211fc3165d90c6f1b8f986a87b4ab3f4",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -170,7 +170,7 @@
    "scope": "global"
   },
   "docs/science/CAPABILITY_CATALOG.md": {
-   "content_fingerprint": "b6ff541bdc31b092b48188ebd06f53e688e1550eb136e5c20123d5028c4ca1cc",
+   "content_fingerprint": "0a43098c6e033a2deefa0b31fd81adc948a98f4bf5ef31b99db013023d281391",
    "generator": "scripts/gen_capability_catalog.py",
    "generator_version": 1,
    "input_fingerprint": "0dbffa95b013b5e5d7206160d7b5f966631eeb892f5ab98553944d9caba24b48",

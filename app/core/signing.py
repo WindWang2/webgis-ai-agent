@@ -75,7 +75,12 @@ def terrain_capability_path(session_id: str, ref_id: str) -> str:
 
 
 def signed_terrain_query(session_id: str, ref_id: str) -> str:
-    """Ten-minute read capability for one terrain ref; never a session secret."""
+    """Read capability for one ref, valid for nine to ten minutes.
+
+    Minute issuance windows keep TileJSON bytes/ETags stable across adjacent
+    requests without extending the ten-minute authority lifetime.
+    """
     from urllib.parse import urlencode
-    exp, sig = sign_path(terrain_capability_path(session_id, ref_id), ttl_seconds=600)
+    exp = (int(time.time()) // 60) * 60 + 600
+    sig = make_signature(terrain_capability_path(session_id, ref_id), exp)
     return "?" + urlencode({"session_id": session_id, "exp": exp, "sig": sig})

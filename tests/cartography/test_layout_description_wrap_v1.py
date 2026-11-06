@@ -71,6 +71,7 @@ def _assert_deep(actual, expected, path: str = "") -> None:
 
 def test_mirror_reproduces_expected(fixture_data: dict) -> None:
     actual = _build(fixture_data)
+    assert actual["version"] == ld.PUBLICATION_LAYOUT_VERSION
     _assert_deep(actual, fixture_data["expected"])
 
 

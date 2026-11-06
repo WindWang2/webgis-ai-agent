@@ -287,9 +287,9 @@ class NetworkODMatrixArgs(BaseModel):
 
 class NetworkClosestFacilityArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
-    incidents: Union[List[Any], Dict[str, Any]] = Field(
+    incidents: Union[List[Any], Dict[str, object]] = Field(
         ..., description="Incident / demand points needing service（FeatureCollection 或要素列表）")
-    facilities: Union[List[Any], Dict[str, Any]] = Field(
+    facilities: Union[List[Any], Dict[str, object]] = Field(
         ..., description="Facility locations（FeatureCollection 或要素列表）")
     profile: TravelProfileName = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
     number_to_find: int = Field(1, description="Number of closest facilities to return per incident")
@@ -563,8 +563,8 @@ def register_network_tools(registry: ToolRegistry):
     )
     async def network_closest_facility(
         network: Any,
-        incidents: Union[List[Any], Dict[str, Any]],
-        facilities: Union[List[Any], Dict[str, Any]],
+        incidents: Union[List[Any], Dict[str, object]],
+        facilities: Union[List[Any], Dict[str, object]],
         profile: str = "driving",
         number_to_find: int = 1,
         cutoff_cost: Optional[float] = None,

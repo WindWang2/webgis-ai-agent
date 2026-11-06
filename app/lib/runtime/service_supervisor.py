@@ -57,7 +57,8 @@ def supervise(commands: Sequence[Sequence[str]], *, grace_seconds: float = 10.0)
 
 def main() -> int:
     return supervise((
-        ("uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "16384"),
+        # Container networking requires a non-loopback listener; deployment controls published ports.
+        ("uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "16384"),  # nosec B104
         ("node", "frontend/.next/standalone/server.js", "-p", "3000"),
     ))
 

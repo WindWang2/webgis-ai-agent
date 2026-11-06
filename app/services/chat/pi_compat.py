@@ -143,8 +143,8 @@ def _node_version() -> str | None:
         )
         if res.returncode == 0:
             return res.stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("Pi Node version probe unavailable (%s)", type(exc).__name__[:64])
     return None
 
 

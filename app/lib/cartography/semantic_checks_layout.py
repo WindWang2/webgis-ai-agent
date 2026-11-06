@@ -23,7 +23,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from app.lib.cartography.layout_solver import LayoutSolutionV5
 from app.lib.cartography.semantic_checks import CartographyFinding
@@ -56,7 +56,7 @@ _FIX_ROUTE = {
 }
 
 
-def _suggested_fix(code: str) -> Optional[Dict[str, Any]]:
+def _suggested_fix(code: str) -> Optional[Dict[str, str]]:
     action = _FIX_ROUTE.get(code)
     if action is None:
         return None
@@ -68,7 +68,7 @@ def _finding(
     severity: str,
     message: str,
     *,
-    evidence: Optional[Dict[str, Any]] = None,
+    evidence: Optional[Dict[str, object]] = None,
     evaluated: bool = True,
     repairability: str = "presentation_only",
 ) -> CartographyFinding:
@@ -176,7 +176,7 @@ def evaluate_layout_findings(
             and float(canvas_px.get("width") or 0) > 0
             and float(canvas_px.get("height") or 0) > 0
         )
-        if safe_area_px is None or not canvas_ok:
+        if safe_area_px is None or canvas_px is None or not canvas_ok:
             # R9 P3-9：canvas_px 空/零维与缺席同判（否则 right/bottom 以
             # 缺省 0 计算必误报）—— 证据不可得 = not_evaluated。
             findings.append(_finding(

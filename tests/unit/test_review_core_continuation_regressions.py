@@ -148,18 +148,20 @@ def test_spill_and_artifact_sidecar_roundtrip_use_recorded_lane(gc_db, tmp_path)
 
 
 def test_terrain_capability_is_short_lived_and_ref_session_bound(monkeypatch):
+    from types import SimpleNamespace
     from urllib.parse import parse_qs
     from app.core import signing
 
-    monkeypatch.setattr(signing.time, "time", lambda: 1000)
+    clock = SimpleNamespace(time=lambda: 1000)
+    monkeypatch.setattr(signing, "time", clock)
     query = parse_qs(signing.signed_terrain_query("session-a", "ref:terrain-a")[1:])
     assert "token" not in query
     exp, sig = query["exp"][0], query["sig"][0]
-    assert int(exp) == 1600
+    assert 540 <= int(exp) - clock.time() <= 600
     assert signing.verify_signature(signing.terrain_capability_path("session-a", "ref:terrain-a"), exp, sig)
     assert not signing.verify_signature(signing.terrain_capability_path("session-b", "ref:terrain-a"), exp, sig)
     assert not signing.verify_signature(signing.terrain_capability_path("session-a", "ref:terrain-b"), exp, sig)
-    monkeypatch.setattr(signing.time, "time", lambda: 1601)
+    clock.time = lambda: int(exp) + 1
     assert not signing.verify_signature(signing.terrain_capability_path("session-a", "ref:terrain-a"), exp, sig)
 
 

@@ -40,7 +40,7 @@ from app.services.gis_situation.contract import (
     TemporalContext,
     UserGoalContext,
 )
-from app.services.gis_situation.analysis_scope import derive_claimed_scope
+from app.services.gis_situation.analysis_scope import ClaimedScope, derive_claimed_scope
 from app.services.gis_situation.facts import (
     SitFact,
     known,
@@ -571,7 +571,7 @@ def compile_interaction(
 
 def compile_analysis(
     chapter: Dict[str, Any], plan: Any,
-    claimed_scope: Optional[Dict[str, Any]] = None,
+    claimed_scope: Optional[ClaimedScope] = None,
 ) -> AnalysisContext:
     progress = unknown(source="plan_graph")
     stale_nodes: SitFact = unknown(source="workflow_runtime.stale")

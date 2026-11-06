@@ -696,7 +696,7 @@ function compileMapSpecToSvgBody(
     }
     return guardFieldCache.get(sourceId) ?? null;
   };
-  for (const rawLayer of layers) {
+  for (const rawLayer of mapspec?.layers || []) {
     const guardLayer = rawLayer as {
       type?: string; source?: string; id?: string;
       layout?: Record<string, unknown>; paint?: Record<string, unknown>;

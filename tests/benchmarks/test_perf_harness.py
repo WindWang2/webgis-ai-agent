@@ -425,8 +425,13 @@ def _quality_audit_topology_ms() -> float:
     dt = (time.perf_counter() - t0) * 1000
     assert report.total_features == 200
     topo = [i for i in report.issues if i.dimension == "topology"]
-    assert len(topo) == SpatialQualityEngine.MAX_TOPOLOGY_ISSUES, "audit must stop at the issue budget"
     assert report.truncated is True
+    details = report.truncation_details
+    assert details is not None
+    assert details["topology_issues_reported"] == SpatialQualityEngine.MAX_TOPOLOGY_ISSUES, "audit must stop at the detection budget"
+    assert len(topo) == SpatialQualityEngine.MAX_ISSUES_PER_CODE
+    assert details["topology_issues_emitted"] == len(topo)
+    assert details["issues_omitted_by_code"]["TOPOLOGY_OVERLAP"] == SpatialQualityEngine.MAX_TOPOLOGY_ISSUES - len(topo)
     return dt
 
 

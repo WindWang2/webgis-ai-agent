@@ -1,5 +1,6 @@
 """Bounded SVG label expression evaluation and authored label expansion."""
-from typing import Any
+import math as _math
+from typing import Any, Callable, List, Tuple
 
 def _svg_label_text(value: Any, props: dict, depth: int = 0) -> str | None:
     if depth > 16:
@@ -71,3 +72,85 @@ def valid_geographic_coordinates(value: Any) -> bool:
                 return False
             stack.append((iter(item), depth + 1))
     return True
+
+
+#: 线标注 repeat 锚点上限（对齐 MapLibre symbol-spacing 多贴的有界子集）。
+_LINE_REPEAT_MAX_ANCHORS = 4
+#: repeat 锚点计算的参与坐标帽（R2 评审：单条百万坐标线的 project 逐点
+#: 循环不可中断 —— 确定性跨步采样到帽内再算锚点，语义是等距近似的
+#: 有界化，不改变正常线的输出）。
+_LINE_REPEAT_MAX_POINTS = 20_000
+
+
+def _line_repeat_anchors(
+    coords: Any, project: Callable[[Any], Tuple[str, str]], _dpi_spacing: float
+) -> List[Tuple[float, float, float]]:
+    """symbol-placement=line 的等距 repeat 锚点（≤4，TS 孪生同构）。
+
+    语义（对齐 live MapLibre 沿线多贴的确定性子集）：首个锚点在线弧长
+    中点，随后向两侧按 ``spacing``（= MapLibre symbol-spacing 缺省 250px ×
+    dpi_scale）扩展，超出线长即停；每个锚点带所在段的方位角（keep-upright
+    由求解器负责）。总弧长 < 2×spacing 时只有中点单锚（与旧行为一致）。
+    project() 返回 fmt_num 字符串 —— 全程 float() 还原。
+    坐标帽采样：首点恒保留；尾点在一般 N 下落在两个采样格之间而被略去
+    （弧长轻微低估，确定性且双孪生同式 —— R3 评审措辞修正）。
+    """
+    if not isinstance(coords, list) or len(coords) < 2 or _dpi_spacing <= 0:
+        return []
+    # 坐标帽：超长线确定性跨步采样（首/尾点恒保留），project 调用数有界。
+    coords_list: List[Any] = coords
+    if len(coords_list) > _LINE_REPEAT_MAX_POINTS:
+        step = len(coords_list) / _LINE_REPEAT_MAX_POINTS
+        coords_list = [coords_list[min(len(coords_list) - 1, int(k * step))]
+                       for k in range(_LINE_REPEAT_MAX_POINTS)]
+    pts: List[Tuple[float, float]] = []
+    for c in coords_list:
+        if isinstance(c, (list, tuple)) and len(c) >= 2:
+            try:
+                px, py = project(c)
+                pts.append((float(px), float(py)))
+            except Exception:
+                return []
+    if len(pts) < 2:
+        return []
+    seg_lens: List[float] = []
+    total = 0.0
+    for i in range(len(pts) - 1):
+        dx = pts[i + 1][0] - pts[i][0]
+        dy = pts[i + 1][1] - pts[i][1]
+        seg_len = _math.hypot(dx, dy)
+        seg_lens.append(seg_len)
+        total += seg_len
+    if total <= 0 or total < 2 * _dpi_spacing:
+        return []
+
+    def _anchor_at(s: float) -> Tuple[float, float, float]:
+        acc = 0.0
+        for i, seg_len in enumerate(seg_lens):
+            if acc + seg_len >= s or i == len(seg_lens) - 1:
+                t = 0.0 if seg_len <= 0 else (s - acc) / seg_len
+                t = min(1.0, max(0.0, t))
+                x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t
+                y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t
+                ang = _math.degrees(_math.atan2(
+                    pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0]))
+                return (x, y, ang)
+            acc += seg_len
+        return pts[-1][0], pts[-1][1], 0.0  # pragma: no cover - 数值边界
+
+    mid = total / 2.0
+    positions = [mid]
+    k = 1
+    while len(positions) < _LINE_REPEAT_MAX_ANCHORS:
+        added = False
+        if mid + k * _dpi_spacing <= total:
+            positions.append(mid + k * _dpi_spacing)
+            added = True
+        if len(positions) < _LINE_REPEAT_MAX_ANCHORS and mid - k * _dpi_spacing >= 0:
+            positions.append(mid - k * _dpi_spacing)
+            added = True
+        if not added:
+            break
+        k += 1
+    positions.sort()
+    return [_anchor_at(s) for s in positions]

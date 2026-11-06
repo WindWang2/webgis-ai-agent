@@ -4,7 +4,7 @@
  * 断言 publishSelection 与 emit* 同刻发生（联动 + 上行不互相破坏）。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { resetSelectionStore, getSelection } from '@/lib/selection/selection-store';

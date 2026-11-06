@@ -135,9 +135,11 @@ def _windowed_zonal_stats(
     whole-band reads for every zone. Each zone reads only its own pixel
     window (bbox → window, clamped to the raster), masks by the polygon,
     and computes the requested statistics in numpy. Semantics preserved
-    from the rasterstats contract: stats keys exactly as requested
+    from the rasterstats contract: statistic keys exactly as requested
     (min/max/mean/sum/count), nodata excluded, ``all_touched=False``-style
-    cell-center membership.
+    cell-center membership. Every row also carries valid_pixel_coverage
+    (None when no zone pixels can be measured); repaired zones additionally
+    carry geometry_repair. These disclosure fields are not extra statistics.
     """
     from rasterio.features import geometry_mask
     from rasterio.windows import from_bounds
@@ -173,13 +175,13 @@ def _windowed_zonal_stats(
         for f in feat_list:
             geom = (f or {}).get("geometry")
             if not geom:
-                out.append({k: None for k in stats})
+                out.append({**{k: None for k in stats}, "valid_pixel_coverage": None})
                 continue
             try:
                 poly = shape(geom)
             except Exception as e:  # noqa: BLE001 — per-zone honest skip
                 logger.warning("zonal: unparseable zone geometry skipped: %s", e)
-                out.append({k: None for k in stats})
+                out.append({**{k: None for k in stats}, "valid_pixel_coverage": None})
                 continue
             # science-v4 W3：无效几何门（strict 拒绝 / 修复+披露，永不静默）。
             from app.lib.geo_analysis.geometry_repair import ensure_valid_geometry
@@ -201,7 +203,7 @@ def _windowed_zonal_stats(
             win = win.round_offsets().round_shape()
             full = _rio.windows.Window(0, 0, meta.width, meta.height)
             if not _rio.windows.intersect([win, full]):
-                out.append({k: None for k in stats})
+                out.append({**{k: None for k in stats}, "valid_pixel_coverage": None})
                 continue
             win = win.intersection(full)
             arr = reader.read_window(

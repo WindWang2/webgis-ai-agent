@@ -9,7 +9,22 @@ IR 投影只保留**当前唯一** selection（deselect 即清空）——「刚
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Iterable, List, Mapping, Optional
+from typing_extensions import TypedDict
+
+from app.services.gis_situation.analysis_scope import ClaimedScope, record_fields
+
+
+class SelectionEpoch(TypedDict):
+    epoch_seq: int
+    kinds: list[str]
+    layer_id: str | None
+    dataset_ref: str | None
+    feature_ids: list[str]
+    id_count: int
+    truncated: bool
+    superseded: bool
+    cleared: bool
 
 __all__ = [
     "project_selection_history",
@@ -28,7 +43,7 @@ _SELECTION_OPENERS = frozenset({"feature_selected", "table_selection_changed"})
 _SELECTION_CLOSERS = frozenset({"feature_deselected"})
 
 
-def _ids_of(payload: Dict[str, Any]) -> List[str]:
+def _ids_of(payload: Mapping[str, object]) -> List[str]:
     multi = payload.get("selected_ids")
     if isinstance(multi, list) and multi:
         return [str(v)[:128] for v in multi[:MAX_HISTORY_IDS]
@@ -40,10 +55,10 @@ def _ids_of(payload: Dict[str, Any]) -> List[str]:
 
 
 def project_selection_history(
-    ledger_events: Iterable[Dict[str, Any]],
+    ledger_events: Iterable[Mapping[str, object]],
     *,
     max_entries: int = MAX_HISTORY_ENTRIES,
-) -> List[Dict[str, Any]]:
+) -> List[SelectionEpoch]:
     """ledger 环 → 选择代列表（新 → 旧输出；纯函数）。
 
     每代：{epoch_seq, kinds, layer_id, dataset_ref, feature_ids, id_count,
@@ -52,11 +67,11 @@ def project_selection_history(
     """
     max_entries = max(1, min(int(max_entries), MAX_HISTORY_ENTRIES))
     events = [rec for rec in ledger_events if isinstance(rec, dict)]
-    epochs: List[Dict[str, Any]] = []
+    epochs: List[SelectionEpoch] = []
     for record in events:
         kind = str(record.get("kind") or "")
         payload = record.get("payload")
-        payload = payload if isinstance(payload, dict) else {}
+        payload = record_fields(payload)
         seq = record.get("server_seq")
         seq = int(seq) if isinstance(seq, (int, float)) else len(epochs) + 1
         # chart 类别选择替换要素选择（投影面已镜像单选模型）——历史当前代
@@ -117,9 +132,9 @@ def project_selection_history(
 
 
 def resolve_selection_ref(
-    ledger_events: Iterable[Dict[str, Any]],
+    ledger_events: Iterable[Mapping[str, object]],
     selection_ref: str,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[ClaimedScope]:
     """句柄 → ClaimedScope（与 analysis_scope.derive_claimed_scope 同形状）。
 
     句柄词表：``previous``（上一个非当前代）/ ``<epoch_seq>``（指定代）。
@@ -127,7 +142,7 @@ def resolve_selection_ref(
     """
     history = project_selection_history(ledger_events)
     ref = str(selection_ref or "").strip()
-    entry: Optional[Dict[str, Any]] = None
+    entry: Optional[SelectionEpoch] = None
     if ref == "previous":
         # 「刚才那组」= 最近一次**非当前活跃**的选择代：有活跃当前代时取
         # 其后最近代；无活跃代（已 deselect/清除）时最近代即是「刚才」。

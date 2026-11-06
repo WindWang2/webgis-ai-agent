@@ -189,8 +189,8 @@ class AnalysisArtifactEnvelope(BaseModel):
     geometry_types: Tuple[str, ...] = ()                  # 实测（≤4，有界扫描）
     extent: Tuple[float, ...] = ()                        # ()=未知，否则 4 元组
     result_semantics: Dict[str, str] = Field(default_factory=dict)   # 实测口径 ≤8
-    temporal: Dict[str, Any] = Field(default_factory=dict)
-    raster: Dict[str, Any] = Field(default_factory=dict)  # 栅格事实 ≤8
+    temporal: Dict[str, object] = Field(default_factory=dict)
+    raster: Dict[str, object] = Field(default_factory=dict)  # 栅格事实 ≤8
     aggregation_basis: str = ""                           # AGGREGATION_BASIS_VOCABULARY
     provenance: Dict[str, str] = Field(default_factory=dict)         # ≤6 摘要引用
     network: dict[str, object] = Field(default_factory=dict)  # bounded measured population facts

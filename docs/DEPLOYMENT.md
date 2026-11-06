@@ -2,7 +2,7 @@
 
 从本地开发到 Kubernetes 的部署形态选型、各形态步骤、CI/CD 流水线、监控与运维手册；事实以仓库内 compose 清单、`Dockerfile*`、`deploy/` 与 `.github/workflows/production.yml` 为准。
 
-> **版本**: v0.1.3 · **状态**: 活文档 · **最后更新**: 2026-08-17
+> **版本**: v0.1.4 · **状态**: 活文档 · **最后更新**: 2026-11-06
 
 ### 0102 凭据迁移：必须维护切换
 
@@ -63,7 +63,7 @@ Kubernetes 跨越 0102 时，先保存并停用 API HPA（包括可能的 KEDA/�
 |------|---------|-------|---------|---------|
 | 开发栈 | `docker-compose.yml` | 4（db / redis / api / celery-worker） | `.env`（模板 `.env.example`） | 本地一键起全套；端口全部绑定 127.0.0.1 |
 | 本地手工 | 无（进程直跑） | 3（redis + uvicorn + celery） | `.env` | 后端热重载开发调试 |
-| 标准生产 | `docker-compose.prod.yml` | 10（+nginx / prometheus / 3×exporter / grafana） | `.env.prod`（模板 `.env.prod.example`） | 单机生产、需要 Grafana 面板 |
+| 标准生产 | `docker-compose.prod.yml` | 11（+nginx / prometheus / 3×exporter / alertmanager / grafana） | `.env.prod`（模板 `.env.prod.example`） | 单机生产、需要 Grafana 面板 |
 | 加固生产 | `docker-compose.prod.secure.yml` | 10 个常驻服务 + 1 个 TLS 初始化服务（无 grafana） | `.env.Priv`（模板 `.env.Priv.example`） | 公网服务器；**CI preview / deploy-prod / rollback 实际使用的栈** |
 | Kubernetes | `deploy/k8s/`（kustomize） | —（api×2 + celery + ingress + HPA） | `webgis-secret` | 集群化、自动伸缩 |
 
@@ -73,7 +73,7 @@ Kubernetes 跨越 0102 时，先保存并停用 API HPA（包括可能的 KEDA/�
 
 - Docker 与 Docker Compose（生产首选路径）。
 - Python **3.12+**（`pyproject.toml` 锁定 `requires-python >= 3.12`；CI 与镜像均用 3.12）。
-- Node.js 18+（CI/镜像固定 22）。
+- Node.js ≥22.19.0（vendored Pi 的最低版本；CI 使用 22，镜像使用 26）。
 - PostgreSQL 14+ 需带 PostGIS 3+（镜像 `postgis/postgis:15-3.4`）。
 - Redis 6+（镜像 `redis:7-alpine`）。
 
@@ -113,7 +113,7 @@ docker-compose logs -f celery-worker
 
 ```bash
 # 0. 构建内嵌 Pi RPC runtime（ADR-0282；USE_NEW_AGENT=true 必需，幂等）
-#    产物：vendor/pi/packages/coding-agent/dist/bundle/rpc-entry.js（自包含）
+#    产物：vendor/pi/packages/coding-agent/dist/bundle/rpc-entry.js（另需锁定的 jiti）
 git submodule update --init vendor/pi
 bash scripts/build-vendor-pi.sh
 python scripts/pi_doctor.py   # 分域诊断：vendor/build/extension/surface/rpc/env
@@ -131,8 +131,8 @@ python -m uvicorn app.main:app --env-file .env --reload --host 0.0.0.0 --port 80
 
 # 4. 启动前端
 cd frontend
-npm install
-npm run dev
+pnpm install --frozen-lockfile
+pnpm run dev
 # 浏览器打开 http://localhost:3000
 ```
 
@@ -143,7 +143,7 @@ cp .env.prod.example .env.prod   # 填入真实凭证（gitignored）
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 ```
 
-10 个服务：db（127.0.0.1:15432）、redis（127.0.0.1:16379，**noeviction**）、api（127.0.0.1:18000→8000 + 127.0.0.1:13000→3000）、celery-worker、nginx（`${NGINX_PORT:-80}` / `${HTTPS_PORT:-443}`，bind-mount `deploy/nginx/nginx.conf` 与 `deploy/nginx/ssl/`——证书目录不入库，缺失 nginx 启动即 crash）、prometheus（127.0.0.1:19090）、postgres-exporter、redis-exporter、node-exporter、grafana（127.0.0.1:13001，admin 密码取 `GRAFANA_PWD`，provisioning 挂载 `deploy/grafana/provisioning`）。
+11 个服务：db（127.0.0.1:15432）、redis（127.0.0.1:16379，**noeviction**）、api（127.0.0.1:18000→8000 + 127.0.0.1:13000→3000）、celery-worker、nginx（`${NGINX_PORT:-80}` / `${HTTPS_PORT:-443}`，bind-mount `deploy/nginx/nginx.conf` 与 `deploy/nginx/ssl/`——证书目录不入库，缺失 nginx 启动即 crash）、prometheus（127.0.0.1:19090）、postgres-exporter、redis-exporter、node-exporter、alertmanager（127.0.0.1:9093）、grafana（127.0.0.1:13001，admin 密码取 `GRAFANA_PWD`，provisioning 挂载 `deploy/grafana/provisioning`）。
 
 api 与 worker 挂共享命名卷 `webgis_data:/app/data`；api 的 compose healthcheck 与镜像 HEALTHCHECK 一致为双探测（uvicorn `/api/v1/health/live` + 前端 :3000）。
 
@@ -205,7 +205,7 @@ kubectl apply -k .
 默认清单使用不可解析的全零摘要；未配置镜像的 raw apply 不会运行浮动版本。`pin-image.sh` 只接受非零 SHA-256 manifest digest，拒绝 master、latest 和其他可变标签。清单内建行为：
 
 - api `replicas: 2` + `sessionAffinity: ClientIP` + ingress nginx cookie（SSE turn-resume 缓冲是进程内的，重连需落回同一 pod）。
-- initContainer 在 Pod Ready 前执行镜像内的 `docker-entrypoint.sh true`（k8s `command:` 覆盖镜像 ENTRYPOINT，所以必须显式调用同一脚本：对无 `alembic_version` 的存量 create_all 库先 `alembic stamp head`，再 `upgrade head`；幂等）。迁移、种子、API、worker 统一由镜像转换器钉到 CI 发布摘要。
+- initContainer 在 Pod Ready 前执行镜像内的 `docker-entrypoint.sh true`（k8s `command:` 覆盖镜像 ENTRYPOINT，所以必须显式调用同一脚本）。已有版本库执行 `alembic upgrade head`；无 `alembic_version` 的存量业务库默认拒绝，只有操作者验证 schema 与 head 等价并显式设置 `ADOPT_LEGACY_SCHEMA=true` 后才执行 stamp。跨越 0102 必须先按上文维护切换执行一次性迁移 Job。迁移、种子、API、worker 统一由镜像转换器钉到 CI 发布摘要。
 - API 与前端仍共用容器；Python supervisor 监督两个独立进程组，任一退出都会停止另一服务并以失败状态退出，收到 SIGTERM 时转发并在 10 秒后强制结束未退出的子进程。
 - api pod 注解 `prometheus.io/scrape: "true"`、`prometheus.io/path: "/metrics"`、`prometheus.io/port: "8000"`。
 - 非 root（runAsUser 1001）、readOnlyRootFilesystem（可写面仅为挂载点）、专用 ServiceAccount、topologySpread 跨节点分散。
@@ -248,18 +248,18 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
 | `Dockerfile.prod` | 6 阶段：frontend-deps → frontend-builder → node-runtime → pi-builder → backend-deps → runner | 生产镜像（CI build job 构建，`target: runner`） |
 
 `pi-builder` 阶段（ADR-0282/#400 根因清偿）：在镜像内构建 vendored Pi 的自包含
-RPC bundle（`dist/bundle/rpc-entry.js`，≈9.2MiB，仅依赖 node 内建模块）并复制进
+RPC bundle（`dist/bundle/rpc-entry.js`，≈9.2MiB）及锁定的 `jiti@2.7.0` 扩展加载器并复制进
 runner —— 此前镜像只带 vendor 源码而从未构建，`USE_NEW_AGENT=true` 时 bridge 因
-找不到入口而**静默回退旧引擎**。`/health` 的 `pi_vendor` 字段为 None 即「未构建」
-的可对账信号；本地等价命令 `bash scripts/build-vendor-pi.sh` + `python
+找不到入口而**静默回退旧引擎**。`/api/v1/health` 的 `pi_vendor` 字段为 None 表示未构建或身份探测失败；
+本地等价命令 `bash scripts/build-vendor-pi.sh` + `python
 scripts/pi_doctor.py`。
 
 `Dockerfile.prod` runner 关键行为：
 
 - `tini --` 作 PID 1（信号收割），`ENTRYPOINT` 先执行 `deploy/docker-entrypoint.sh` 再 exec CMD。
-- entrypoint 启动前跑 `alembic upgrade head`（幂等；对 create_all 引导的存量库先 `alembic stamp head` 收编；`SKIP_DB_MIGRATIONS=true` 跳过——celery-worker 用，避免与 api 并发竞争 `alembic_version`；`DB_MIGRATION_RETRIES` 默认 5 次、间隔 3s）。迁移失败则容器退出，拒绝带旧 schema 起服务。
+- entrypoint 启动前跑 `alembic upgrade head`（幂等）；无版本号的存量业务库默认拒绝自动收编，验证 schema 与 head 等价后才能显式设置 `ADOPT_LEGACY_SCHEMA=true` 执行 stamp。`SKIP_DB_MIGRATIONS=true` 供 celery-worker 等非迁移所有者跳过迁移；`DB_MIGRATION_RETRIES` 默认 5 次、间隔 3s。迁移失败则容器退出；跨越 0102 使用上文维护切换流程。
 - `HEALTHCHECK` 双探测：`/api/v1/health/live`（uvicorn:8000）+ `/`（node:3000）。
-- 双进程 CMD：`uvicorn app.main:app --port 8000` + `node frontend/.next/standalone/server.js -p 3000`；非 root 用户 `appuser`；`EXPOSE 3000 8000`。
+- CMD：`python -m app.lib.runtime.service_supervisor`，监督 uvicorn 与 Next.js 两个进程组；非 root 用户 `appuser`；`EXPOSE 3000 8000`。
 
 ## 环境变量与凭证管理
 
@@ -300,12 +300,13 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 
 ### PR 门禁 → release-gate → build → deploy
 
-11 项 release-blocking 检查聚合于 `release-gate` job（needs 全绿才进 build）：
+12 项 release-blocking 检查聚合于 `release-gate` job（needs 全绿才进 build）：
 
 | Job | 内容 |
 |-----|------|
-| `lint` | ruff（app/ tests/ main.py manage.py）+ ESLint 9（`--max-warnings 0`） |
-| `test-backend` | PostGIS + Redis service 容器上跑 pytest，`--cov-fail-under=75` |
+| `lint` | ruff（app/ tests/ scripts/ main.py manage.py）、mypy 白名单、债务/依赖边界/import 边界、skills lock、source registry + ESLint 9（`--max-warnings 0`） |
+| `compose-config` | 渲染开发 Compose 配置及可选源码挂载配置 |
+| `test-backend-gate` | SQLite / fakeredis / eager-Celery 上分片跑 pytest，合并覆盖率后执行 75% 阈值；真实服务由专属门禁验证 |
 | `test-frontend` | Vitest + `tsc --noEmit` + `next build` |
 | `security` | bandit `-r app/ -ll -ii`（MEDIUM+ 阻断） |
 | `test-perf` | 性能回归 harness（无 coverage 干扰，warn 区间即失败） |
@@ -333,7 +334,7 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 
 ### deploy-prod（master push）
 
-前置：repo 配置 `SSH_HOST` var 与 `SSH_PRIVATE_KEY` / `DB_PWD` / `REDIS_PASSWORD` / `JWT_SECRET_KEY` / `LLM_API_KEY` / `CORS_ORIGINS` / `METRICS_TOKEN` secrets（告警投递另见 `ALERT_WEBHOOK_URL`，可选）。流程：`deploy/ci-generate-env-priv.sh` 生成 `.env.Priv` → scp compose 文件、`deploy/redis.conf`、`deploy/redis-entrypoint.sh`、`deploy/prometheus.yml`、`deploy/alerts-rules.json`、渲染后的 `deploy/alertmanager.yml`、`.env.Priv`、镜像 tar 到主机 → SSH `docker load` + `compose up -d` → `curl http://localhost:8000/api/v1/ready` 验证（503-aware，依赖未就绪即失败）→ Feishu webhook 通知（`FEISHU_WEBHOOK_URL` var 配置时）。未配置 `SSH_HOST` 时仅校验镜像在 registry 可达（`docker manifest inspect`），供手动 pull。
+前置：repo 配置 `SSH_HOST` var 与 `SSH_PRIVATE_KEY` / `DB_PWD` / `REDIS_PASSWORD` / `JWT_SECRET_KEY` / `LLM_API_KEY` / `CORS_ORIGINS` / `METRICS_TOKEN` secrets（告警投递另见 `ALERT_WEBHOOK_URL`，可选）。流程：`deploy/ci-generate-env-priv.sh` 生成 `.env.Priv` → scp compose 文件、维护脚本、`deploy/redis.conf`、`deploy/redis-entrypoint.sh`、`deploy/prometheus.yml`、`deploy/alerts-rules.json`、渲染后的 `deploy/alertmanager.yml`、`.env.Priv`、镜像 tar 到主机 → SSH `docker load` + `sh deploy/maintenance-upgrade.sh .env.Priv docker-compose.prod.secure.yml`（停止写入者、备份、一次性迁移、启动）→ `curl http://localhost:8000/api/v1/ready` 验证（503-aware，依赖未就绪即失败）→ Feishu webhook 通知（`FEISHU_WEBHOOK_URL` var 配置时）。未配置 `SSH_HOST` 时仅校验镜像在 registry 可达（`docker manifest inspect`），供手动 pull。
 
 ### rollback（手动 workflow_dispatch）
 
@@ -357,7 +358,7 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 |------|------|
 | `GET /api/v1/health` | 基本信息（含版本号） |
 | `GET /api/v1/health/live` | liveness：进程可响应即 200；Docker HEALTHCHECK / k8s livenessProbe 用 |
-| `GET /api/v1/ready` | readiness：DB + LLM + Redis + Celery 全通 200 `{"ready": true}`，任一挂 503 `{"ready": false}`（细节只在服务端日志） |
+| `GET /api/v1/ready` | readiness：DB + Redis 就绪时 200 `{"ready": true}`，任一不可用时 503 `{"ready": false}`；LLM/Celery 不在该端点的阻断条件内（细节只在服务端日志） |
 
 ### 数据库迁移（Alembic）
 
@@ -369,7 +370,7 @@ alembic upgrade head
 
 # 已存在 init_db()/create_all 建过 schema 的存量库（无 alembic_version）：
 # 容器 entrypoint 默认**拒绝**自动收编（PLT-04：stamp head 会静默跳过全部
-# 63 个 revision，落后的库从此升级全是 no-op）。确认库 schema 与该 head
+# 全部 revision，落后的库从此升级全是 no-op）。确认库 schema 与该 head
 # 等价后，显式 opt-in：设置环境变量 ADOPT_LEGACY_SCHEMA=true（deploy 的
 # compose/k8s env 或手动 export），entrypoint 才会 `alembic stamp head` 再
 # upgrade。手动等价操作：

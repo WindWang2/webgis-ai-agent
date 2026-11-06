@@ -2,19 +2,19 @@
 
 面向贡献者的 WebGIS AI Agent 本地环境搭建与启动指南，覆盖配置、三种启动路径、命令参考与常见问题排查。
 
-> **版本**: v0.1.3 · **状态**: 活文档 · **最后更新**: 2026-08-17
+> **版本**: v0.1.4 · **状态**: 活文档 · **最后更新**: 2026-11-06
 
 ## 1. 前置要求
 
 | 依赖 | 版本要求 | 说明 |
 |------|----------|------|
 | Python | >= 3.12 | 见 `pyproject.toml` 的 `requires-python` |
-| Node.js | 22 | 与 CI/Dockerfile 一致（`node:22-alpine`，ESLint 9 等依赖要求 node >= 22） |
+| Node.js | ≥22.19.0 | vendored Pi 的最低版本；CI 使用 22，Dockerfile 使用 26 |
 | Redis | 任意稳定版（容器用 redis:7-alpine） | Celery broker 与会话数据存储的硬依赖，`manage.py dev` 启动前强制检查 |
 | Git | 任意 | 拉取代码 |
 | Docker + Compose | 可选 | 仅在使用容器路径（路径 B/C）时需要 |
 
-依赖管理：后端用 pip + `requirements.txt`（开发另有 `requirements-dev.txt`），前端用 npm（`frontend/package.json`）。
+依赖管理：后端用 pip + `requirements.txt`（开发另有 `requirements-dev.txt`，用 `-c requirements.lock` 约束），前端用 pnpm（`frontend/pnpm-lock.yaml`）。
 
 ## 2. 获取代码与安装依赖
 
@@ -29,7 +29,7 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt   # 测试/开发工具，可选
 
 # 前端依赖
-cd frontend && npm install && cd ..
+cd frontend && pnpm install --frozen-lockfile && cd ..
 ```
 
 ## 3. 配置 .env
@@ -161,7 +161,7 @@ cd frontend && npm run dev
 ## 7. 数据库与迁移
 
 - 本机 pytest / `manage.py` 默认 SQLite（`sqlite:///./data/webgis.db`），零配置兜底。dev compose 的 api/celery 钉到 PostGIS `db` 服务（不读 `.env` 里的 sqlite URL）。生产必须 PostgreSQL/PostGIS（`ENV=production` 时启动校验强制 `postgresql://` 前缀）。
-- 迁移用 alembic，单一迁移链 `migrations/versions/`（67 个 revision）：
+- 迁移用 alembic，单一迁移链 `migrations/versions/`（revision 以目录内容为准）：
 
 ```bash
 alembic upgrade head
@@ -183,7 +183,7 @@ DATABASE_URL=postgresql://postgres:<DB_PASSWORD>@localhost:15432/webgis
 |------|------|
 | `GET /api/v1/health` | 基础信息（含版本号） |
 | `GET /api/v1/health/live` | liveness：仅确认进程可响应，不查依赖 |
-| `GET /api/v1/ready` | readiness：DB + LLM + Redis + Celery 四项连通性，任一不可达返回 503 |
+| `GET /api/v1/ready` | readiness：DB + Redis 连通性，任一不可达返回 503；LLM/Celery 不在该端点的阻断条件内 |
 
 ```bash
 curl http://localhost:18000/api/v1/health
@@ -207,7 +207,7 @@ curl -i http://localhost:18000/api/v1/ready
 
 ```bash
 scripts/ci-local.sh          # 全量
-scripts/ci-local.sh --fast   # 只跑 ruff + eslint + typecheck + vitest
+scripts/ci-local.sh --fast   # ruff + eslint + typecheck + vitest + 后端契约快速集
 ```
 
 脚本与 `.github/workflows/production.yml` 逐字对齐，漂移由 `tests/test_ci_local_gate_contract.py` 断言守住。日常手动回路：

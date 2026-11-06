@@ -396,7 +396,10 @@ async def test_catalog_search_2500_entries_bounded_scan(monkeypatch):
                 **({"field_schema": {"temp": {"type": "double"}, "id": {"type": "int64"}}}
                    if i % 2 == 0 else {}),
             },
-            bbox=[float(i), float(i), float(i) + 1.0, float(i) + 1.0],
+            # Explicit geographic authority; binary-exact grid steps keep all
+            # 2500 extents inside valid longitude/latitude ranges.
+            crs="EPSG:4326",
+            bbox=[i / 64, i / 64, (i + 1) / 64, (i + 1) / 64],
             feature_count=i,
             created_at=1_000_000.0 + i,
             updated_at=1_000_000.0 + i,
@@ -435,7 +438,9 @@ async def test_catalog_search_2500_entries_bounded_scan(monkeypatch):
     # bbox: boundary-touching extents match (i=1997..1999, all within the
     # capped scan); the i=2000 toucher sits exactly past the scan cap and
     # cannot match — the bounded scan (not overlap math) decides the result
-    bbx, _ = await search(CatalogFilter(scope="session", bbox=[1998.0, 1998.0, 2000.0, 2000.0]))
+    bbx, _ = await search(CatalogFilter(
+        scope="session", bbox=[1998 / 64, 1998 / 64, 2000 / 64, 2000 / 64],
+    ))
     assert bbx.total_matched == 3
 
     # newest-first ordering is deterministic over the capped scan

@@ -92,3 +92,6 @@ def test_known_flag_semantics_snapshot():
     assert by_env["GIS_CLAIM_INGEST"].default_on is True
     assert by_env["GIS_SWARM_ORCHESTRATOR"].default_on is False
     assert by_env["GIS_VISUAL_EVALUATOR"].kind == "mode"
+    assert by_env["GIS_AWF_PRODUCT_GATE"].kind == "stable"
+    assert by_env["GIS_AWF_PRODUCT_GATE"].default_on is True
+    assert by_env["GIS_AWF_PRODUCT_GATE"].owner == "services/gis_harness/tool_map_product.py"

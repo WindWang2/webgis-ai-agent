@@ -18,12 +18,12 @@ EXISTS）；``label_plan.choose_label_field`` 的 ``no_label_field`` 是**规划
 字段集由调用方提供（``source_fields_provider: source_id -> 字段集或
 None``）；``None`` = 不可评估（瓦片/ref 源）→ 诚实跳过，不误报。
 
-纯函数、确定性；渲染行为不变（孪生编译器对缺失字段既有 name/label 回退
-链保留 —— 守卫补的是"缺失必须披露"，不是改渲染）。
+纯函数、确定性；守卫披露缺失，不替代编译器的文本求值。显式字段缺失时
+编译器不以另一个字段伪造标签。
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, List, Mapping, Optional, Set, TypedDict
 
 #: closed vocab 诊断码（render_diagnostics 权威词表注册，warning）。
 LABEL_FIELD_MISSING = "label_field_missing"
@@ -34,7 +34,22 @@ _MAX_FIELDS_IN_EVIDENCE = 12
 SourceFieldsProvider = Callable[[str], Optional[Set[str]]]
 
 
-def _explicit_label_fields(layer: Dict[str, Any]) -> List[str]:
+class LabelFieldEvidence(TypedDict):
+    field: str
+    source_field_count: int
+    source_fields_sample: List[str]
+
+
+class LabelFieldFinding(TypedDict):
+    code: str
+    severity: str
+    layer_id: object
+    field: str
+    source_id: str
+    evidence: LabelFieldEvidence
+
+
+def _explicit_label_fields(layer: Mapping[str, object]) -> List[str]:
     """层的显式标注字段引用（text-field 花括号 pattern + label.field）。"""
     candidates: List[str] = []
     if layer.get("type") in ("symbol", "text"):
@@ -56,13 +71,18 @@ def _explicit_label_fields(layer: Dict[str, Any]) -> List[str]:
             candidates.append(lf.strip())
     # 保序去重（text-field 与 label.field 同名只报一次）
     seen: Set[str] = set()
-    return [f for f in candidates if not (f in seen or seen.add(f))]
+    result: List[str] = []
+    for name in candidates:
+        if name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
 
 
 def check_label_fields(
     spec_like: Any,
     source_fields_provider: SourceFieldsProvider,
-) -> List[Dict[str, Any]]:
+) -> List[LabelFieldFinding]:
     """检查显式标注字段是否在源字段集内，返回 finding dict 列表。
 
     每条 finding：``{code, severity, layer_id, field, source_id, evidence}``，
@@ -70,7 +90,7 @@ def check_label_fields(
     ``_MAX_FIELDS_IN_EVIDENCE`` 个）。非 dict spec / 无 layers / 无 source
     引用 / provider 不可评估（None）→ 不产出（诚实跳过）。
     """
-    findings: List[Dict[str, Any]] = []
+    findings: List[LabelFieldFinding] = []
     if not isinstance(spec_like, dict):
         return findings
     layers = spec_like.get("layers")

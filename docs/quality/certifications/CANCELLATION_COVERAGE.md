@@ -38,7 +38,7 @@
 | app/lib/geo_analysis/raster_change.py | 1 | 4 | certified |
 | app/lib/geo_analysis/raster_grid.py | 0 | 7 | no-checkpoints |
 | app/lib/geo_analysis/raster_guard.py | 0 | 2 | no-checkpoints |
-| app/lib/geo_analysis/raster_math.py | 2 | 21 | certified |
+| app/lib/geo_analysis/raster_math.py | 2 | 19 | certified |
 | app/lib/geo_analysis/raster_mosaic.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_analysis/raster_ops.py | 0 | 14 | no-checkpoints |
 | app/lib/geo_analysis/raster_pca.py | 0 | 3 | no-checkpoints |
@@ -88,7 +88,7 @@
 | app/services/data_ingest/pipeline.py | 0 | 1 | no-checkpoints |
 | app/services/data_ingest/repair_planning.py | 0 | 5 | no-checkpoints |
 | app/services/mapspec_layer_pipeline.py | 0 | 0 | no-checkpoints |
-| app/services/mapspec_to_svg.py | 0 | 54 | no-checkpoints |
+| app/services/mapspec_to_svg.py | 0 | 50 | no-checkpoints |
 
 > no-checkpoints 是如实披露的缺口（非失败）：该文件当前没有
 > 长循环或尚未接线；认证表随补齐更新。

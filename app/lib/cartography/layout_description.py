@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NotRequired, Optional, Sequence, Tuple, TypeGuard, TypedDict
 
 from app.lib.cartography.label_typography import wrap_label_multilingual
 
@@ -36,6 +36,48 @@ PUBLICATION_BLEED_MM = 3
 _PAPER_RATIO = 1.414
 
 BoundsWSEN = Tuple[float, float, float, float]
+
+
+class PublicationText(TypedDict):
+    kind: str
+    text: str
+    wrapped: NotRequired[bool]
+    lines: NotRequired[List[str]]
+    truncated: NotRequired[bool]
+
+
+class PublicationPage(TypedDict):
+    paperSize: str
+    orientation: str
+    dpi: float
+    widthPx: int
+    heightPx: int
+    colorMode: str
+    bleedMm: int
+    cropMarks: bool
+    safeAreaMm: NotRequired[Dict[str, float]]
+
+
+class PublicationScaleBar(TypedDict):
+    metersPerPixel: float
+    nice: Dict[str, float]
+    label: str
+
+
+class PublicationExtent(TypedDict):
+    mask: Optional[List[float]]
+    export: Optional[List[float]]
+    dataOverflow: bool
+
+
+class PublicationLayout(TypedDict):
+    version: int
+    page: PublicationPage
+    mapFrame: Dict[str, int]
+    texts: List[PublicationText]
+    scaleBar: Optional[PublicationScaleBar]
+    extent: PublicationExtent
+    degradations: List[Dict[str, str]]
 
 
 # ══ C2 共享版面描述 IR（LAYOUT_IR_VERSION = 2；W0 定稿，契约冻结）════════
@@ -183,7 +225,7 @@ def _lat_of_norm(y: float) -> float:
     return math.degrees(2 * math.atan(math.exp(merc_n)) - math.pi / 2)
 
 
-def _is_finite_bounds(b: Optional[Sequence[float]]) -> bool:
+def _is_finite_bounds(b: Optional[Sequence[float]]) -> TypeGuard[Sequence[float]]:
     return (
         b is not None
         and len(b) == 4
@@ -311,7 +353,7 @@ def _strip_ws(s: str) -> str:
 
 def _key_text_entry(
     kind: str, text: str, cap: int, max_lines: int
-) -> Dict[str, Any]:
+) -> PublicationText:
     """关键文本条目装配（wrap-not-clip，ADR-0283 D2）。
 
     复用 parity 锁定的多语断行原语
@@ -325,7 +367,7 @@ def _key_text_entry(
     lost = _strip_ws("".join(lines)) != _strip_ws(text)
     if not wrapped and not lost:
         return {"kind": kind, "text": text}
-    entry: Dict[str, Any] = {"kind": kind, "text": text, "wrapped": wrapped}
+    entry: PublicationText = {"kind": kind, "text": text, "wrapped": wrapped}
     if wrapped:
         entry["lines"] = lines
     if lost:
@@ -333,11 +375,11 @@ def _key_text_entry(
     return entry
 
 
-def build_publication_layout(inp: LayoutInput) -> Dict[str, Any]:
+def build_publication_layout(inp: LayoutInput) -> PublicationLayout:
     """装配出版版面描述（确定性、JSON 可序列化 —— golden 对拍面）。"""
     color_mode = inp.color_mode if inp.color_mode in ("srgb", "cmyk") else "srgb"
     bleed_mm = PUBLICATION_BLEED_MM if color_mode == "cmyk" else 0
-    page: Dict[str, Any] = {
+    page: PublicationPage = {
         "paperSize": inp.paper_size,
         "orientation": inp.orientation,
         "dpi": inp.dpi,
@@ -352,7 +394,7 @@ def build_publication_layout(inp: LayoutInput) -> Dict[str, Any]:
 
     title = inp.request_title or inp.spec_title or ""
     subtitle = inp.request_subtitle or inp.spec_subtitle or ""
-    texts: List[Dict[str, Any]] = []
+    texts: List[PublicationText] = []
     if title:
         texts.append(
             _key_text_entry("title", title, MAX_TITLE_CODEPOINTS, MAX_TITLE_LINES)
@@ -370,7 +412,7 @@ def build_publication_layout(inp: LayoutInput) -> Dict[str, Any]:
     if inp.attribution_text:
         texts.append({"kind": "attribution", "text": inp.attribution_text})
 
-    scale_bar: Optional[Dict[str, Any]] = None
+    scale_bar: Optional[PublicationScaleBar] = None
     mpp = inp.meters_per_pixel
     if mpp is not None and mpp > 0:
         nice = compute_nice_scale(mpp, inp.scale_bar_target_px)

@@ -20,7 +20,42 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Mapping, Optional
+from typing_extensions import TypedDict
+
+
+class ClaimedScope(TypedDict, total=False):
+    kind: str
+    layer_id: str | None
+    dataset_ref: str | None
+    feature_ids: list[str] | None
+    claimed_at_seq: int | None
+    sources: list[str]
+    id_field: str
+    bbox: list[float]
+    geometry: Mapping[str, object]
+
+
+class ValidatedScope(TypedDict, total=False):
+    kind: str
+    status: str
+    reason: str
+    dataset_ref: str | None
+    layer_id: str | None
+    feature_ids: list[str] | None
+    missing_ids: list[str]
+    content_revision: int | None
+    crs: str | None
+    bbox: list[float] | None
+    geometry: Mapping[str, object]
+    checks: dict[str, str]
+
+
+def record_fields(value: object) -> Mapping[str, object]:
+    """Read an untrusted record only after checking its string-key boundary."""
+    if isinstance(value, Mapping) and all(isinstance(key, str) for key in value):
+        return value
+    return {}
 
 logger = logging.getLogger(__name__)
 
@@ -79,21 +114,21 @@ def _bbox4(value: object) -> Optional[List[float]]:
 
 
 def derive_claimed_scope(
-    interaction_snapshot: Optional[Dict[str, Any]],
-    pre_turn_selected: Optional[Dict[str, Any]],
+    interaction_snapshot: Optional[Mapping[str, object]],
+    pre_turn_selected: Optional[Mapping[str, object]],
     *,
     affordance_ring: Optional[List[Any]] = None,
-) -> Dict[str, Any]:
+) -> ClaimedScope:
     """声称面（纯函数，零 IO）：合并三源 → ClaimedScope dict。
 
     优先级：IR ledger 投影 selection（server_seq 驱动、有 dataset_ref 语义）
     > pre-turn 前端快照（`_cartographic_context_observation.selected_feature`）
     > canvas affordance 环最新几何动作（AOI 面）。无任何证据 → kind="none"。
     """
-    snapshot = interaction_snapshot if isinstance(interaction_snapshot, dict) else {}
+    snapshot = record_fields(interaction_snapshot)
     selection = snapshot.get("selection")
     selection = selection if isinstance(selection, dict) else None
-    pre_turn = pre_turn_selected if isinstance(pre_turn_selected, dict) else None
+    pre_turn = pre_turn_selected if isinstance(pre_turn_selected, Mapping) else None
 
     # An empty ledger has never established a current selection. Legacy
     # pre-turn selection is still a fallback there; a populated projection
@@ -113,14 +148,15 @@ def derive_claimed_scope(
             src = selection.get("source")
             if isinstance(src, dict) and isinstance(src.get("server_seq"), int):
                 claimed_seq = src["server_seq"]
-        claimed: Dict[str, Any] = {
+        id_field = source.get("id_field")
+        claimed: ClaimedScope = {
             "kind": "feature_ids" if multi else ("feature_single" if single else "none"),
             "layer_id": (str(source.get("layer_id") or "")[:200] or None),
             "dataset_ref": (str(source.get("dataset_ref") or "")[:200] or None),
             "feature_ids": feature_ids or None,
             "claimed_at_seq": claimed_seq,
             "sources": sources,
-            **({"id_field": source["id_field"][:64]} if isinstance(source.get("id_field"), str) else {}),
+            **({"id_field": id_field[:64]} if isinstance(id_field, str) else {}),
         }
         if claimed["kind"] != "none":
             return claimed
@@ -161,10 +197,13 @@ def derive_claimed_scope(
     }
 
 
-def _spec_layer(spec: Dict[str, Any], layer_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def _spec_layer(spec: Mapping[str, object], layer_id: Optional[str]) -> Optional[Mapping[str, object]]:
     if not layer_id or not isinstance(spec.get("layers"), list):
         return None
-    for layer in spec["layers"]:
+    layers = spec.get("layers")
+    if not isinstance(layers, list):
+        return None
+    for layer in layers:
         if isinstance(layer, dict) and str(layer.get("id")) == layer_id:
             return layer
     return None
@@ -195,11 +234,11 @@ def _feature_ids_in_payload(payload: Any, requested: List[str]) -> List[str]:
 
 async def validate_analysis_scope(
     session_id: str,
-    claimed: Dict[str, Any],
+    claimed: ClaimedScope,
     *,
     store: Any = None,
     mapspec_store: Any = None,
-) -> Dict[str, Any]:
+) -> ValidatedScope:
     """验证面（IO 壳，只读）：ClaimedScope → ValidatedScope。
 
     reason 封闭词表；``status``: usable / stale / unusable。stale 语义＝可
@@ -212,7 +251,7 @@ async def validate_analysis_scope(
         from app.services.mapspec.store import mapspec_store_instance as mapspec_store
 
     kind = str(claimed.get("kind") or "none")
-    result: Dict[str, Any] = {
+    result: ValidatedScope = {
         "kind": kind,
         "status": _STATUS_UNUSABLE,
         "reason": SCOPE_REASON_NO_SELECTION,
@@ -308,7 +347,7 @@ async def validate_analysis_scope(
         return result
     result["checks"]["ownership"] = "ok"
 
-    descriptor: Dict[str, Any] = {}
+    descriptor: Mapping[str, object] = {}
     desc_getter = getattr(store, "get_ref_descriptor", None)
     if callable(desc_getter):
         try:
@@ -321,7 +360,8 @@ async def validate_analysis_scope(
     result["content_revision"] = (
         int(content_revision) if isinstance(content_revision, (int, float)) and not isinstance(content_revision, bool) and math.isfinite(content_revision) else None
     )
-    result["crs"] = descriptor.get("crs") if isinstance(descriptor.get("crs"), str) else None
+    crs = descriptor.get("crs")
+    result["crs"] = crs if isinstance(crs, str) else None
     result["bbox"] = (
         _bbox4(descriptor.get("bbox"))
     )

@@ -12,11 +12,22 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Optional
+
+from app.services.gis_situation.analysis_scope import ClaimedScope, ValidatedScope
 
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+
+
+class ScopeToolResult(ValidatedScope, total=False):
+    success: bool
+    error: str
+    validated: bool
+    claimed: ClaimedScope
+    correction_hint: str
+    selection_ref: str
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +95,7 @@ def register_interaction_scope_tools(registry: ToolRegistry) -> None:
         selection_ref: str = "current",
         perform_validation: bool = True,
         session_id: str = "",
-    ) -> dict:
+    ) -> ScopeToolResult:
         """当前/历史选择 → 经验证的分析 scope（只读）。"""
         if not session_id:
             return {"error": "Missing session_id context"}
@@ -112,7 +123,7 @@ def register_interaction_scope_tools(registry: ToolRegistry) -> None:
             logger.warning("[webgis_selection_scope] snapshot read failed", exc_info=True)
             snapshot = {}
 
-        claimed: Optional[Dict[str, Any]] = None
+        claimed: Optional[ClaimedScope] = None
         if selection_ref in ("current", ""):
             pre_turn = {}
             try:
@@ -173,7 +184,7 @@ def register_interaction_scope_tools(registry: ToolRegistry) -> None:
                 "correction_hint": f"scope 验证失败：{str(exc)[:120]}",
                 "claimed": claimed,
             }
-        result: Dict[str, Any] = dict(validated)
+        result: ScopeToolResult = {**validated}
         result["success"] = validated.get("status") == "usable"
         result["selection_ref"] = selection_ref
         if validated.get("status") == "unusable":

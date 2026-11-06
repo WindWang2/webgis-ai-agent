@@ -9,6 +9,8 @@ invariants（跨孪生一致由 compiler_parity 双侧锁定）。
 """
 from __future__ import annotations
 
+import pytest
+
 from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 
 
@@ -177,8 +179,8 @@ class TestLineRepeat:
 
 
 class TestLineRepeatBounding:
-    def test_100k_coordinate_line_bounded(self):
-        """R2-P1-2：超长线锚点计算有界（坐标帽 20k 采样）。"""
+    @staticmethod
+    def _run_100k_coordinate_line():
         import time as _time
 
         coords = [[104.0 + i * 0.00002, 30.6] for i in range(100_000)]
@@ -195,6 +197,16 @@ class TestLineRepeatBounding:
         t0 = _time.perf_counter()
         anchors = _line_repeat_anchors(coords, project, 0.0005)
         dt = (_time.perf_counter() - t0) * 1000
+        return project_calls, anchors, dt
+
+    def test_100k_coordinate_line_bounded(self):
+        """R2-P1-2：超长线锚点计算有界（坐标帽 20k 采样）。"""
+        project_calls, anchors, _dt = self._run_100k_coordinate_line()
         assert project_calls["n"] <= 20_001  # 坐标帽内
         assert 2 <= len(anchors) <= 4
+
+    @pytest.mark.cartography
+    def test_100k_coordinate_line_under_300ms(self):
+        """Keep the wall-clock budget in the mandatory cartography --no-cov lane."""
+        _project_calls, _anchors, dt = self._run_100k_coordinate_line()
         assert dt < 300, f"100k 坐标线锚点计算 {dt:.0f}ms 超界"

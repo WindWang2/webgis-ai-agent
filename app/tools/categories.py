@@ -50,6 +50,8 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.geoai_tools": "analysis",
     # ADR-0217：GISAction dry-run 编译校验（零执行零状态变更）
     "app.tools.gis_action_tools": "inspection",
+    # ADR-0285：选择 scope 只读验证，不隐式执行分析或变更地图。
+    "app.tools.interaction_scope_tools": "inspection",
     # ADR-0214 D6：组件发现/替换规划只读（apply 落盘名字覆盖 map_mutation）
     "app.tools.composition_tools": "inspection",
     # ADR-0215：证据复核/重验证回执（bind_mission 恢复上下文，名字覆盖）

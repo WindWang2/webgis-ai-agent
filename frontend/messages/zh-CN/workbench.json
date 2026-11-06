@@ -44,6 +44,7 @@
   "situationBar": {
     "title": "情境",
     "ariaLabel": "当前地图情境状态",
+    "idle": "尚无地图情境",
     "loading": "情境载入中…",
     "unavailable": "情境不可用",
     "scopeNone": "无分析范围",

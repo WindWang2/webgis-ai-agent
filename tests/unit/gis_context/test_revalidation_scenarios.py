@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from app.services.gis_context import hotpath as hp
 from app.services.gis_context.working_context import (
     DecisionRecord,
@@ -52,6 +54,23 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture
+def session_mapspec_store(tmp_path, monkeypatch):
+    """Own both live authorities, including MapSpec's imported store alias."""
+    from app.services import mapspec_store as adapter_module
+    from app.services import session_data
+    from app.services.mapspec import store as raw_module
+
+    manager = session_data.MemorySessionStore()
+    monkeypatch.setattr(session_data, "session_data_manager", manager)
+    monkeypatch.setattr(raw_module, "session_data_manager", manager)
+    monkeypatch.setattr(raw_module, "BASE_STORAGE_DIR", tmp_path)
+    adapter = adapter_module.MapSpecStore()
+    adapter.raw_store = raw_module.MapSpecStore()
+    monkeypatch.setattr(adapter_module, "mapspec_store", adapter)
+    return adapter
+
+
 def _supported_claim(store: ClaimStore, claim_id: str = "claim-1") -> None:
     store.upsert_evidence(EvidenceNode(
         evidence_id="ev-1", kind=EvidenceKind.STATISTIC, ref="ref:schools",
@@ -78,7 +97,7 @@ def _wc_with_finding() -> GISWorkingContext:
     )
 
 
-def test_closed_loop_through_hotpath(wc_store, monkeypatch):
+def test_closed_loop_through_hotpath(wc_store, monkeypatch, session_mapspec_store):
     """Turn 1 establishes the basis; turn 2's AOI drift stales the finding
     (card filters it); the revalidation tool restores it on the current
     basis; turn 3 renders it again."""
@@ -128,14 +147,16 @@ def test_closed_loop_through_hotpath(wc_store, monkeypatch):
     assert persisted.findings[0].status == "supported"
     assert persisted.findings[0].basis_revision == persisted.revision
 
-    from app.services.mapspec_store import mapspec_store
-    _run(mapspec_store.save_mapspec("sess-1", _mapspec(aoi_shift=0.35)))
+    _run(session_mapspec_store.save_mapspec("sess-1", _mapspec(aoi_shift=0.35)))
+    assert _run(session_mapspec_store.get_mapspec("sess-1")) == _mapspec(aoi_shift=0.35)
 
     # Turn 3 — same (drifted) world: the reaffirmed + re-verified context
     # reconfirms its basis marker passively; the restored finding renders.
-    _run(hp.request_revalidation(
+    reaffirmed = _run(hp.request_revalidation(
         "sess-1", reaffirm_texts=["分布集中于主城区"],
         org_id="org-1", project_id="prj-1", turn_id="t-reaffirm"))
+    assert reaffirmed["ok"] is True
+    assert reaffirmed["restored"] == 1
     text3, rc3 = _run(hp.assemble_gis_context_card(
         "sess-1", org_id="org-1", project_id="prj-1",
         state=state, mapspec=_mapspec(aoi_shift=0.35)))

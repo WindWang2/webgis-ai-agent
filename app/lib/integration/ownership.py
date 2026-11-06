@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional, Tuple
@@ -194,20 +195,44 @@ def _walk_repo_bounded(root: Path) -> List[str]:
     """有界遍历仓库文件（排除 VCS/依赖/构建产物），返回 repo 相对 posix 路径。"""
     exclude_parts = {".git", "node_modules", ".next", "__pycache__",
                      ".pytest_cache", "coverage", ".venv", "venv",
-                     ".agent-work", ".zcode", ".agents"}
+                     ".agent-work", ".zcode", ".agents", ".claude", ".planning", ".gstack"}
+    # Ownership applies to source, including selected new files. Do not walk
+    # ignored runtime datasets or dependency trees which can disappear during
+    # concurrent tests and make a static preflight fail nondeterministically.
+    if (root / '.git').exists():
+        try:
+            result = subprocess.run(
+                ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+                cwd=root, capture_output=True, check=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            source_files = None
+        else:
+            source_files = sorted({
+                name for name in result.stdout.decode('utf-8', errors='surrogateescape').split('\0')
+                if name and not (set(Path(name).parts) & exclude_parts)
+            })
+        if source_files is not None:
+            if len(source_files) > _MAX_WALK_FILES:
+                raise ValueError('ownership source inventory exceeds its file budget')
+            return source_files
     out: List[str] = []
     stack = [root]
-    while stack and len(out) < _MAX_WALK_FILES:
+    while stack:
         current = stack.pop()
-        for child in sorted(current.iterdir()):
-            if len(out) >= _MAX_WALK_FILES:
-                break
-            if child.is_dir():
+        try:
+            children = sorted(current.iterdir())
+        except FileNotFoundError:
+            continue  # A non-git fixture/runtime directory was removed concurrently.
+        for child in children:
+            if child.is_dir() and not child.is_symlink():
                 if child.name in exclude_parts or child.name.startswith(".git"):
                     continue
                 stack.append(child)
             else:
                 out.append(child.relative_to(root).as_posix())
+                if len(out) > _MAX_WALK_FILES:
+                    raise ValueError('ownership source inventory exceeds its file budget')
     return out
 
 

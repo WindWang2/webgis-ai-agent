@@ -1799,4 +1799,4 @@
 
 ## 发布边界
 
-本审计不宣称已在真实Docker daemon/Kubernetes集群完成部署，也不把访客UI截图说成已登录管理员/导出交互的浏览器验证。UI生产构建、自动化权限测试与实际截图的范围分别保存在UI-postbuild-audit及各专项台账。最终合并还需根代理核验最新主分支冲突、源码冻结后的派生产物、全量测试与CI，之后才能按本表逐issue写入关闭说明。
+本审计不宣称已在真实Docker daemon/Kubernetes集群完成部署，也不把访客UI截图说成已登录管理员/导出交互的浏览器验证。UI生产构建、自动化权限测试与实际截图的范围分别保存在UI-postbuild-audit及各专项台账；当前合成fixture下的已登录浏览器范围见[最终combined UI review](2026-11-06-final-combined-ui-review.md)。最终合并还需根代理核验最新主分支冲突、源码冻结后的派生产物、已执行的本地门禁与远端状态；遵循`CLAUDE.md`，不等待CI或设置CI watcher。完成这些核验后，才能按本表逐issue写入关闭说明。

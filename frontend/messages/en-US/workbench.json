@@ -44,6 +44,7 @@
   "situationBar": {
     "title": "Situation",
     "ariaLabel": "Current map situation status",
+    "idle": "No map context yet",
     "loading": "Loading situation…",
     "unavailable": "Situation unavailable",
     "scopeNone": "No analysis scope",

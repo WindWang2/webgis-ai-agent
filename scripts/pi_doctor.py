@@ -42,6 +42,10 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.tools.registry import ToolRegistry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -70,7 +74,7 @@ def _run(cmd: list[str], cwd: Path | None = None, timeout: float = 20.0) -> tupl
         return 127, str(exc)
 
 
-def _live_registry():
+def _live_registry() -> ToolRegistry | None:
     """A real ToolRegistry when importable in this checkout (None otherwise)."""
     try:
         from app.tools import init_tools

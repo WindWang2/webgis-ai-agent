@@ -86,6 +86,7 @@ def test_classify_tool_deterministic_rules():
     assert classify_tool("whatever", "app.tools.unknown_module") == "uncategorized"
     # 同名不同模块：名字覆盖优先于模块默认
     assert classify_tool("measure_distance", "app.tools.annotation") == "inspection"
+    assert classify_tool("webgis_selection_scope", "app.tools.interaction_scope_tools") == "inspection"
 
 
 def test_extracted_terrain_tools_keep_analysis_category():

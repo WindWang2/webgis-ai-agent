@@ -5,7 +5,7 @@
 > reject at the HTTP boundary). Live-LLM E2E of the Chengdu chain is the merge gate.
 > Parent map: GitHub issue “Pi as the agent host”.
 > Glossary: Session, SessionPlan, GIS Harness, MapProductPlan, CartographyRecipe, Tool dispatch, Cartography Verdict, Observed Map, Pi Native Surface.
-> ADRs this spec adds: 0076 (SessionPlan is Pi-path plan truth), 0077 (wrap vendored Pi).
+> ADRs this spec adds: 0076 (SessionPlan is Pi-path plan truth), 0231 (wrap vendored Pi).
 > Does not reopen ADR-0055, 0006, 0071. (ADR-0071 “shared cartography session
 > runtime” currently lives only on the unmerged next-generation-harness line,
 > commit `7955cba`; the shared evaluation seam it records — both hosts
@@ -125,7 +125,7 @@ SessionPlan wire is **stream-only by contract**: `session_plan_updated` / `sessi
 
 ## Further Notes
 
-Parent wayfinder map: GitHub “Pi as the agent host”. Research notes: vendored Pi as non-coding host; Pi vs ChatEngine host seams. Throwaway surface walk lives on git branch `prototype/pi-native-surface`. Next implementation should add ADR-0076 and ADR-0231 as accepted records beside this spec. `/to-spec` does not implement.
+Parent wayfinder map: GitHub “Pi as the agent host”. Research notes: vendored Pi as non-coding host; Pi vs ChatEngine host seams. Throwaway surface walk lives on git branch `prototype/pi-native-surface`. Implementation records: ADR-0076 and ADR-0231. `/to-spec` does not implement.
 
 ## Vendor Version Policy（ADR-0282 增补，2026-11-06）
 

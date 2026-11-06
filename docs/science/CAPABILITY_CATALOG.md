@@ -15,8 +15,8 @@
 ## 总览
 
 - capability 词表：174 条（图内 174 节点）
-- 图节点 1079 / 边 3290 / graph fingerprint `7e532fbe6c6d6638`
-- provider 面：algorithm 253，component 23，model 10，provider(adapters) 17，template 8，tool 396，workflow(recipes) 166
+- 图节点 1080 / 边 3291 / graph fingerprint `7db03756d1256905`
+- provider 面：algorithm 253，component 23，model 10，provider(adapters) 17，template 8，tool 397，workflow(recipes) 166
 - 域分布：`cartography` 6，`general` 77，`network` 14，`platform` 17，`raster` 57，`statistics` 1，`temporal` 2
 
 ## Capability 词表
@@ -202,7 +202,7 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 66 | 1 | 99 | 6 | 0 |
+| 66 | 1 | 100 | 6 | 0 |
 
 ### orphan_capability（66）
 
@@ -275,7 +275,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（99）
+### unreachable_tool（100）
 
 - tool add_tile_service_layer is not exposed by any algorithm and has no capability/deprecation link
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
@@ -374,6 +374,7 @@
 - tool webgis_product_edit is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_rollback is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_save_composition_template is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_selection_scope is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_state_get is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_world_state is not exposed by any algorithm and has no capability/deprecation link
 ### artifact_no_consumer（6）

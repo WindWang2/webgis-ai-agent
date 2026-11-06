@@ -168,17 +168,18 @@ run 豁免（not_applicable_exempt），绝不为 PASS**（`require_map_product=
 | 热力概览 | `visual_heatmap` | `heatmap`（radius 屏幕像素） | deck.gl Heatmap / kepler heatmap / QGIS heatmap | 感知均匀 `classic/magma/viridis` | `heatmap_data` |
 | 行政分级 | `administrative_choropleth` | `fill` + 渐变填充 | kepler geojson / QGIS graduated / GeoDa choropleth | sequential `YlOrRd/Blues/Greens` | `spatial_aggregate` + `admin_boundary` |
 | 格网聚合 | `aggregate_grid` **(新增)** | `fill` | deck.gl HexagonLayer/GridLayer / kepler hexbin | sequential `YlOrRd` | `grid_binning→h3_binning/fishnet_grid` |
-| 比例符号 | `proportional_symbol` **(新增)** | `circle`（面积∝√value） | deck.gl Scatterplot / kepler point size | sequential `Blues` | `poi_query` |
+| 比例符号 | `proportional_symbol` **(新增)** | `circle`（面积∝value，半径∝√value） | deck.gl Scatterplot / kepler point size | sequential `Blues` | `poi_query` |
 | 分类专题 | `categorical_thematic` | `fill` | QGIS categorized / GeoDa Unique Value | qualitative `Set1/Set2/Dark2/Pastel1` | `spatial_stats` 类别分解 |
 | 热点显著性 | `hotspot_overlay` | `fill` + rule-based | GeoDa LISA | diverging `RdBu` | `hotspot_analysis` |
 | 栅格面 | `raster_surface` | `raster` | QGIS paletted | `Viridis/Inferno/Plasma` | `local_raster` |
 
 数值分级：`quantiles` / `equal_interval` / `natural_breaks`（Jenks DP）+
 `std_dev` **(新增，QGIS 均值±0.5 SD)** + `head_tail` **(新增，Jiang 2013 重尾)**，
-统一由 `CartographyService.classify` 计算；调色板扩充 9 个（`Oranges/Purples/RdYlGn/RdBu/Set1/Set2/Dark2/Pastel1/Inferno/Plasma`，ColorBrewer 官方 hex），`validate_model_library()` 断言跨引用完整性。
+统一由 `CartographyService.classify` 计算；调色板扩充含 `Oranges/Purples/RdYlGn/RdBu/Set1/Set2/Dark2/Pastel1/Inferno/Plasma`（ColorBrewer 与感知均匀色系），`validate_model_library()` 断言跨引用完整性。
 
-目录完整但运行时待接线（诚实标记 `planned`，`MapModelRegistry.planned_ids()`）：
-`flow_od_arc`（deck.gl ArcLayer）、`extrusion_3d`（MapLibre fill-extrusion / GeoDa 2.5D）、`isoline_contour`（deck.gl ContourLayer）。
+`flow_od_arc`（MapLibre line）、`extrusion_3d`（MapLibre fill-extrusion）与
+`isoline_contour`（MapLibre line/fill）在当前模型目录中均标记为 `native`；
+deck.gl / GeoDa 类型是框架对照，运行态以 `model_library.py` 的声明为准。
 
 ## 11. 性能
 
@@ -202,21 +203,22 @@ run 豁免（not_applicable_exempt），绝不为 PASS**（`require_map_product=
 
 `USE_NEW_AGENT=1` 时（`app/api/routes/chat.py` 的 `pi_event_generator`），回合
 **不经过** legacy 规划链（classify_followup → should_plan → make_plan →
-CanonicalPlan → ToolCatalog schema 子集）。Pi Agent Runtime 以单一
-`webgis_execute` 代理工具 + 各工具的 promptSnippet 自主选择并串行执行工具；
-`webgis_map_intent` / `webgis_map_product`（statistics/report 激活域）承担
-GIS 侧的产品规划职责。
+CanonicalPlan → ToolCatalog schema 子集）。Pi Agent Runtime 使用七个固定
+native 前门、每轮动态激活的注册工具与 `webgis_execute` 长尾代理（ADR-0103）；
+schema 来自 live registry，扩展在 `session_start` / `before_agent_start`
+投影激活面（ADR-0282）。`webgis_map_intent` / `webgis_map_product`
+（statistics/report/network/temporal 域）承担 GIS 侧的产品规划职责。
 
 由此产生的架构事实：
 
 - **CanonicalPlan / decision_log 仅是 legacy 路径的计划真相源**；Pi 会话没有
-  CanonicalPlan，也不产生 plan evidence。规划/工具选择质量指标只在 legacy
-  路径上定义。
+  CanonicalPlan；Pi 路径使用 SessionPlan 的 GIS 章节与能力进度，发射
+  `session_plan_*` 事件（ADR-0076），不发射 legacy `plan_*` 事件。
 - **制图质量闭环两条路径共享**：desired MapSpec 生命周期、runtime 观察、
   ACK、verdict 注入（`cartography_context` / `webgis_cartography_status`）在
   Pi 会话上同样成立——差异只在『回合级任务规划』这一层。
-- 把 legacy 规划链移植进 Pi 回车 preamble 是独立的 roadmap 项，需要 Pi 侧
-  多工具 schema 支持，不在本 seam 隐式实现。
+- SessionPlan 的有界上下文投影由 `chat/pi_turn_context.py` 装配；它与
+  CanonicalPlan 分别服务各自的 host 路径。
 
 ## 资格→完成判据收敛（H01，2026-10-20）
 
@@ -462,7 +464,7 @@ MethodUseContract、偏移帧数学在 utils/coord_transform —— 本契约组
 
 > 代码：`app/services/gis_harness/analysis_workflows/`（envelope_facts /
 > semantic_gate / product_gate / discovery 新模块 + 既有七模块 additive 扩展）。
-> 测试：`tests/unit/gis_harness/analysis_workflows/`（141 例）+ G05 F29 场景族。
+> 测试：`tests/unit/gis_harness/analysis_workflows/` 契约与回归用例 + G05 F29 场景族。
 
 在 goal-02 AnalysisWorkflowContract v1 之上的四个增量：
 
@@ -473,7 +475,7 @@ MethodUseContract、偏移帧数学在 utils/coord_transform —— 本契约组
    owner_session_id。缺省=未知，绝不虚填；`units` 仍是声明参数单位（实测
    口径在 result_semantics，不混淆）。
 2. **typed 衔接门**：`semantic_contract`（param→geometry_kind/crs_class）
-   在执行期核验水合载荷与上游 envelope（Multi* 折叠/network→line 归一）；
+   当前在执行期核验水合载荷与上游 envelope 的 geometry_kind（Multi* 折叠/network→line 归一；crs_class 由工具级 preflight 裁决）；
    plan 期用 binding.qualifier 画像事实前置裁决（事实在且冲突 → typed
    blocked；缺失 → 披露不阻断——权威仍在工具级 preflight，本门是纵深防御）。
 3. **三条混合方法链**：`raster_zonal_summary`（链②：raster 角色 ref 直通
@@ -486,7 +488,8 @@ MethodUseContract、偏移帧数学在 utils/coord_transform —— 本契约组
 4. **状态闭环与产品最终门**：stale 态获得赋值路径（指纹实测漂移的
    satisfied 步骤）；science_validation（G02 终局门投影）进运行态状态机；
    `product_gate` 使 webgis_map_product 拒绝把非 satisfied run / 科学
-   blocked 的工作流产物 ref 当成品层（`GIS_AWF_PRODUCT_GATE=0` bit 级
+   blocked 的工作流产物 ref 当成品层（检查显式 `primary_ref` / `overlay_refs`；
+   `layer_ids` 引入的既有图层不在此门管辖内，`GIS_AWF_PRODUCT_GATE=0` bit 级
    回退）；plan 附预算估计（descriptor 行数画像超限 → typed 指引分块/
    降采样）与 blocked_next_steps 结构化下一步（封闭 action 词表）。
 

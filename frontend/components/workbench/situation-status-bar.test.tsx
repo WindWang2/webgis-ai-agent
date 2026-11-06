@@ -7,7 +7,7 @@
  * - 用户现场优先：本地已有选择时不覆盖。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import {
   refreshSituationProjection,
@@ -123,6 +123,61 @@ describe('use-situation-projection store', () => {
 });
 
 describe('SituationStatusBar', () => {
+  it.each([null, 'token-after-login'])('keeps session absence idle instead of loading (owner token: %s)', async (ownerToken) => {
+    const projection = await import('@/lib/interaction/use-situation-projection');
+    vi.mocked(getMapSpecSessionCursor).mockReturnValue({
+      sessionId: undefined, ownerToken, revision: 0, mapspecFingerprint: undefined,
+    });
+    render(<SituationStatusBar />);
+    expect(projection.getSituationProjection().status).toBe('idle');
+    const idleText = screen.getByTestId('situation-chip-scope').textContent ?? '';
+    expect(idleText).toMatch(/situationBar.idle|尚无地图情境|No map context yet/);
+    expect(screen.getByRole('status').textContent?.split(idleText)).toHaveLength(2);
+    await refreshSituationProjection();
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
+  it('returns to idle when the session disappears during a request', async () => {
+    const cursor = await import('@/lib/mapspec/session-cursor');
+    let onLiveChange!: () => void;
+    vi.mocked(cursor.subscribeMapSpecLive).mockImplementationOnce((listener) => {
+      onLiveChange = listener;
+      return () => {};
+    });
+    let finish!: (value: ReturnType<typeof _situationView>) => void;
+    mockedFetch.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(<SituationStatusBar />);
+    expect(screen.getByTestId('situation-status-bar').getAttribute('data-situation-status')).toBe('loading');
+    vi.mocked(getMapSpecSessionCursor).mockReturnValue({
+      sessionId: undefined, ownerToken: null, revision: 0, mapspecFingerprint: undefined,
+    });
+    await act(async () => {
+      onLiveChange();
+      finish(_situationView());
+    });
+    expect(screen.getByTestId('situation-status-bar').getAttribute('data-situation-status')).toBe('idle');
+    expect(screen.getByTestId('situation-chip-scope').textContent).toMatch(/situationBar.idle|尚无地图情境|No map context yet/);
+  });
+
+  it('loads an anonymous conversation when its session exists', async () => {
+    vi.mocked(getMapSpecSessionCursor).mockReturnValue({
+      sessionId: 'sess-sb-1', ownerToken: null, revision: 0, mapspecFingerprint: undefined,
+    });
+    mockedFetch.mockImplementation(async (path) => String(path).endsWith('/situation') ? _situationView() : _turnChain());
+    render(<SituationStatusBar />);
+    await waitFor(() => expect(screen.getByTestId('situation-status-bar').getAttribute('data-situation-status')).toBe('ready'));
+    expect(mockedFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the unavailable message visible without repeating it in the summary', async () => {
+    mockedFetch.mockRejectedValue(new Error('network down'));
+    render(<SituationStatusBar />);
+    await waitFor(() => expect(screen.getByRole('status').getAttribute('data-situation-status')).toBe('error'));
+    const errorText = screen.getByTestId('situation-chip-scope').textContent ?? '';
+    expect(errorText).toMatch(/unavailable|不可用|Situation unavailable/);
+    expect(screen.getByRole('status').textContent?.split(errorText)).toHaveLength(2);
+  });
+
   it('renders six-state chips from server projection', async () => {
     mockedFetch.mockImplementation(async (path: string) =>
       path.endsWith('/situation') ? _situationView() : _turnChain());
@@ -141,6 +196,11 @@ describe('SituationStatusBar', () => {
     const bar = screen.getByTestId('situation-status-bar');
     expect(bar.getAttribute('role')).toBe('status');
     expect(bar.getAttribute('aria-live')).toBe('polite');
+    for (const key of ['running', 'verifying', 'retryable']) {
+      const detail = screen.getByTestId(`situation-chip-${key}`);
+      expect(detail).toBeVisible();
+      expect(bar.textContent?.split(detail.textContent ?? '')).toHaveLength(2);
+    }
   });
 
   it('renders neutral scope chip when nothing selected', async () => {

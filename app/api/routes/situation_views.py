@@ -13,13 +13,28 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Mapping
+from typing_extensions import TypedDict
+
+from app.services.gis_situation.analysis_scope import ClaimedScope
+from app.services.gis_situation.selection_history import SelectionEpoch
+from app.services.gis_situation.turn_chain import TurnChainView
 
 from fastapi import APIRouter, Depends
 
 from app.models.db_model import Conversation
 from app.services.auth_history_bridge import require_owned_session
 from app.services.session_data import session_data_manager
+
+
+class SituationViewResponse(TypedDict):
+    schema_version: str
+    session_id: str
+    situation: Mapping[str, object]
+    inconsistencies: list[Mapping[str, object]]
+    interaction_snapshot: Mapping[str, object]
+    selection_history: list[SelectionEpoch]
+    claimed_scope: ClaimedScope
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +44,11 @@ router = APIRouter(prefix="/chat", tags=["AI对话"])
 _TURN_CHAIN_LIMIT = 4
 
 
-@router.get("/sessions/{session_id}/situation")
+@router.get("/sessions/{session_id}/situation", response_model=dict[str, object])
 async def get_situation_view(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
-) -> dict[str, Any]:
+) -> SituationViewResponse:
     """GISSituation JSON 投影（只读派生）+ 一致性检查 + 选择史 + scope。"""
     from app.services.gis_harness.interaction_ir.projection import (
         interaction_snapshot_via_store,
@@ -87,11 +102,11 @@ async def get_situation_view(
     }
 
 
-@router.get("/sessions/{session_id}/turn-chain")
+@router.get("/sessions/{session_id}/turn-chain", response_model=dict[str, object])
 async def get_turn_chain(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
-) -> dict[str, Any]:
+) -> TurnChainView:
     """turn 链投影（只读；journal 不可达 fail-open 降级披露）。"""
     from app.services.gis_situation.turn_chain import project_turn_chain
     from app.services.mapspec.store import mapspec_store_instance

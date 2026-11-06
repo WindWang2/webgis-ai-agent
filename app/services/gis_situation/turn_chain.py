@@ -23,7 +23,52 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing_extensions import TypedDict
+
+
+class ChangeLink(TypedDict, total=False):
+    client_mutation_id: str | None
+    mutation_verified: bool
+
+
+class EffectView(TypedDict):
+    kind: str
+    targets: list[str]
+    state: str
+
+
+TurnChange = TypedDict("TurnChange", {
+    "source": str, "kind": str, "layer_id": str | None,
+    "class": str, "wins": bool, "link": ChangeLink,
+    "operation_id": str, "turn_id": str | None, "origin": str,
+    "status": str, "mutation_revision": int | None,
+    "effects": list[EffectView], "user_wins_conflict_layers": list[str],
+}, total=False)
+
+
+class TurnView(TypedDict):
+    turn_id: str
+    intent_digest: str | None
+    revision_span: list[int] | None
+    changes: list[TurnChange]
+
+
+class TurnChainCounts(TypedDict):
+    user_explicit: int
+    agent_receipts: int
+    agent_pending: int
+    executed_observed: int
+
+
+class TurnChainView(TypedDict, total=False):
+    schema_version: str
+    turns: list[TurnView]
+    observed_revision: int | None
+    user_wins_layers: list[str]
+    counts: TurnChainCounts
+    degraded: list[str]
+    session_id: str
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +134,7 @@ def _as_int(value: Any) -> Optional[int]:
     return int(value)
 
 
-def _receipt_revision(receipt: Dict[str, Any]) -> Optional[int]:
+def _receipt_revision(receipt: Mapping[str, object]) -> Optional[int]:
     revisions = receipt.get("mutation_revisions")
     if isinstance(revisions, list) and revisions:
         tail = _as_int(revisions[-1])
@@ -98,7 +143,7 @@ def _receipt_revision(receipt: Dict[str, Any]) -> Optional[int]:
     return _as_int(receipt.get("final_revision")) or _as_int(receipt.get("mutation_revision"))
 
 
-def _effect_targets(effect: Dict[str, Any]) -> List[str]:
+def _effect_targets(effect: Mapping[str, object]) -> List[str]:
     targets = effect.get("targets")
     if isinstance(targets, list):
         return [str(t)[:64] for t in targets[:4] if isinstance(t, (str, int))]
@@ -106,18 +151,18 @@ def _effect_targets(effect: Dict[str, Any]) -> List[str]:
 
 
 def build_turn_chain(
-    journal_events: Iterable[Dict[str, Any]],
-    receipts: Iterable[Dict[str, Any]],
-    ir_events: Iterable[Dict[str, Any]],
-    provenance: Iterable[Dict[str, Any]],
+    journal_events: Iterable[Mapping[str, object]],
+    receipts: Iterable[Mapping[str, object]],
+    ir_events: Iterable[Mapping[str, object]],
+    provenance: Iterable[Mapping[str, object]],
     *,
     observed_revision: Optional[int],
     max_turns: int = MAX_CHAIN_TURNS,
-) -> Dict[str, Any]:
+) -> TurnChainView:
     """纯装配：四源 → per-turn 变更链（新 → 旧 turn 输出）。"""
     max_turns = max(1, min(int(max_turns), MAX_CHAIN_TURNS))
     # ── 收集用户显式变更（IR mutation-linked committed + provenance user）──
-    user_changes: List[Dict[str, Any]] = []
+    user_changes: List[TurnChange] = []
     user_layer_touch: Dict[str, int] = {}  # layer → 变更序（user-wins 判据）
     order = 0
     for record in ir_events:
@@ -134,6 +179,7 @@ def build_turn_chain(
         order += 1
         # IR payloads remain client claims even when a mutation id exists.
         # Only authoritative user provenance establishes a user-wins layer.
+        mutation_id = record.get("client_mutation_id")
         user_changes.append({
             "source": "interaction_ir",
             "kind": kind,
@@ -141,7 +187,7 @@ def build_turn_chain(
             "class": "user_claimed",
             "wins": False,
             "link": {
-                "client_mutation_id": record.get("client_mutation_id"),
+                "client_mutation_id": mutation_id if isinstance(mutation_id, str) else None,
                 "mutation_verified": bool(record.get("mutation_verified")),
             },
         })
@@ -161,7 +207,7 @@ def build_turn_chain(
         })
 
     # ── 回执 → agent 变更（带 turn 归属）────────────────────────────────
-    receipt_changes: List[Dict[str, Any]] = []
+    receipt_changes: List[TurnChange] = []
     for receipt in receipts:
         if not isinstance(receipt, dict):
             continue
@@ -174,13 +220,13 @@ def build_turn_chain(
             turn_id = str(prov["turn_id"])[:64]
         effects = receipt.get("effects")
         effects = effects if isinstance(effects, list) else []
-        effect_views = [
+        effect_views: list[EffectView] = [
             {
                 "kind": str(e.get("kind") or "")[:48],
                 "targets": _effect_targets(e) if isinstance(e, dict) else [],
                 "state": str(e.get("state") or "")[:24] if isinstance(e, dict) else "",
             }
-            for e in effects[:8]
+            for e in effects[:8] if isinstance(e, dict)
         ]
         change_class = classify_change(
             origin=origin, receipt_status=status,
@@ -238,15 +284,15 @@ def build_turn_chain(
         turn_order.append("unattributed")
         turn_mutations["unattributed"] = []
 
-    turns: List[Dict[str, Any]] = []
+    turns: List[TurnView] = []
     for turn_id in reversed(turn_order[-max_turns:]):
         mutations = sorted(set(turn_mutations.get(turn_id) or []))
-        changes: List[Dict[str, Any]] = [
+        changes: List[TurnChange] = [
             c for c in receipt_changes if (c.get("turn_id") or None) == turn_id
         ]
         if turn_id == "unattributed":
             changes = [c for c in receipt_changes if not c.get("turn_id")]
-        turn_view: Dict[str, Any] = {
+        turn_view: TurnView = {
             "turn_id": turn_id,
             "intent_digest": turn_intent.get(turn_id),
             "revision_span": [mutations[0], mutations[-1]] if mutations else None,
@@ -255,10 +301,13 @@ def build_turn_chain(
         # 用户显式变更（IR/provenance 无 turn 归属）→ 挂在最新 turn 的
         # changes（class=user_explicit，wins=true）；无 turn 时进 unattributed。
         if turn_order and turn_id == turn_order[-1]:
-            turn_view["changes"] = (
-                [{**c, "class": c.get("class", "user_explicit"), "turn_id": turn_id}
-                 for c in user_changes[-16:]] + turn_view["changes"]
-            )
+            linked_changes: list[TurnChange] = []
+            for user_change in user_changes[-16:]:
+                linked = user_change.copy()
+                linked["class"] = user_change.get("class", "user_explicit")
+                linked["turn_id"] = turn_id
+                linked_changes.append(linked)
+            turn_view["changes"] = linked_changes + turn_view["changes"]
         turns.append(turn_view)
 
     return {
@@ -288,14 +337,14 @@ async def project_turn_chain(
     mapspec_store: Any = None,
     ledger: Any = None,
     max_turns: int = MAX_CHAIN_TURNS,
-) -> Dict[str, Any]:
+) -> TurnChainView:
     """IO 壳：权威 store 定向读 → build_turn_chain。journal 不可达 →
     fail-open 降级（``degraded`` 披露），绝不阻断。"""
     if store is None:
         from app.services.session_data import session_data_manager as store
 
     degraded: List[str] = []
-    journal_events: List[Dict[str, Any]] = []
+    journal_events: List[Mapping[str, object]] = []
     if ledger is None:
         try:
             from app.services.turn_journal.ledger import TurnEventLedger
@@ -312,7 +361,7 @@ async def project_turn_chain(
             degraded.append("turn_journal")
             journal_events = []
 
-    map_state: Dict[str, Any] = {}
+    map_state: Mapping[str, object] = {}
     try:
         state = await store.get_map_state(session_id)
         map_state = state if isinstance(state, dict) else {}

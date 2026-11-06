@@ -31,11 +31,11 @@ from app.services.gis_situation.compiler import compile_interaction
 from app.services.gis_situation.contract import TemporalContext
 
 
-def _fold(events):
+def _fold(events, *, mutation_dedup=None):
     """按生产 ingest 同路径折叠事件（replay 与 ingest 共用 apply_event）。"""
     state = LedgerState()
     for e in events:
-        apply_event(state, e)
+        apply_event(state, e, mutation_dedup=mutation_dedup)
     return state
 
 
@@ -125,17 +125,24 @@ def test_op2_aoi_digest_only():
 def test_op3_layer_visibility_user_override_and_dedup_crosscheck():
     """显隐 mutation 事件带结局进 overrides；mutation_verified 由服务端
     对 _mutation_dedup 只读交叉校验（committed 但未命中索引 → claimed）。"""
-    state = _fold([
+    events = [
         _ev(1, "layer_visibility_changed", {"layer_id": "schools", "visible": False},
             client_mutation_id="mut-1", mutation_outcome="committed"),
-    ])
+    ]
+    state = _fold(events)
     # _mutation_dedup 无该 id → verified=False（claimed 口径）
     snap = interaction_snapshot_from_map_state({
         LEDGER_KEY: state.events,
     })
-    entry = next(o for o in snap["user_overrides"] if o["layer_id"] == "schools")
+    assert snap["user_overrides"] == []
+    assert snap["attempted_not_applied"][0]["link"]["mutation_verified"] is False
+    # The same claimed event becomes an override only with engine dedup proof.
+    verified = _fold(events, mutation_dedup={"c:mut-1": {"revision": 7}})
+    verified_snapshot = interaction_snapshot_from_map_state({LEDGER_KEY: verified.events})
+    entry = next(o for o in verified_snapshot["user_overrides"] if o["layer_id"] == "schools")
     assert entry["visible"] is False
-    assert entry["link"]["mutation_verified"] is False
+    assert entry["link"]["mutation_verified"] is True
+    assert entry["link"]["verified_revision"] == 7
 
 
 # ── 操作 4：修改样式（透明度）──────────────────────────────────────────
@@ -145,10 +152,12 @@ def test_op4_opacity_override_persists_in_projection():
     state = _fold([
         _ev(1, "layer_opacity_changed", {"layer_id": "schools", "opacity": 0.4},
             client_mutation_id="mut-2", mutation_outcome="committed"),
-    ])
+    ], mutation_dedup={"c:mut-2": {"revision": 8}})
     snap = project_interaction_snapshot(state.events)
     entry = next(o for o in snap["user_overrides"] if o["layer_id"] == "schools")
     assert entry["opacity"] == 0.4
+    assert entry["link"]["mutation_verified"] is True
+    assert entry["link"]["verified_revision"] == 8
 
 
 def test_op4_failed_mutation_lands_in_attempted_not_applied():

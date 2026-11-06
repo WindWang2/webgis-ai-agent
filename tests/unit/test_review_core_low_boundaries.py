@@ -654,7 +654,10 @@ def test_zonal_null_geometry_keeps_output_position(tmp_path):
         {"type": "Feature", "geometry": None, "properties": {}},
         {"type": "Feature", "properties": {}, "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]}},
     ]}, str(path), stats=["mean"])
-    assert rows == [{"mean": None}, {"mean": 7.0}]
+    assert rows == [
+        {"mean": None, "valid_pixel_coverage": None},
+        {"mean": 7.0, "valid_pixel_coverage": 1.0},
+    ]
 
 
 def test_history_memo_eviction_and_user_text_cannot_pin(monkeypatch):

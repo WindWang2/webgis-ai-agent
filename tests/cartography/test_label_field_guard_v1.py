@@ -127,9 +127,9 @@ def test_compile_missing_field_emits_diagnostic():
     assert hits, result.diagnostics
     assert hits[0]["layer_id"] == "pts_sym"
     assert "pop" in hits[0]["detail"]
-    # 现状核实：字段缺失时编译器按既有回退链渲染 name —— 渲染行为不变，
-    # 守卫只补"显式字段缺失"的确定性披露（不静默）。
-    assert "北京" in result.svg
+    # A name cannot stand in for the requested population field.
+    assert "北京" not in result.svg
+    assert "<text " not in result.svg
 
 
 def test_compile_present_field_no_diagnostic():

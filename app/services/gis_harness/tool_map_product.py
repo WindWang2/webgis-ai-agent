@@ -6,6 +6,7 @@ from app.services.session_data import session_data_manager
 from app.tools.registry import tool
 from functools import partial
 from app.services.gis_harness.failure_observation import observe_optional_failure
+from app.services.gis_harness.analysis_workflows.product_gate import RefEligibility
 
 from app.services.gis_harness.tools import (
     ToolRegistry,
@@ -56,7 +57,7 @@ async def webgis_map_product(
     # 该 run 非 satisfied（或科学终局 blocked）→ 不作为成品层（外科式
     # 降级 + 警告，不中断组装）。GIS_AWF_PRODUCT_GATE=0 bit 级回退
     # master 行为；非工作流来源的 ref 不归本门管辖。
-    gate_findings: List[Dict[str, Any]] = []
+    gate_findings: List[RefEligibility] = []
     try:
         from app.core.config import settings as _settings
         if getattr(_settings, "GIS_AWF_PRODUCT_GATE", True):

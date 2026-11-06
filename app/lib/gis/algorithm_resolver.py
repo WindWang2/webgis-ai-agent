@@ -500,9 +500,17 @@ _resolver: Optional[AlgorithmResolver] = None
 
 
 def get_algorithm_resolver() -> AlgorithmResolver:
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+    from app.lib.gis.capability_registry import get_capability_registry
+
     global _resolver
-    if _resolver is None:
-        _resolver = AlgorithmResolver()
+    capabilities = get_capability_registry()
+    algorithms = get_algorithm_registry()
+    if (_resolver is None or _resolver.capabilities is not capabilities
+            or _resolver.algorithms is not algorithms):
+        # Registry replacement invalidates the authority captured by the
+        # shared resolver, including temporary extension/test providers.
+        _resolver = AlgorithmResolver(capabilities=capabilities, algorithms=algorithms)
     return _resolver
 
 

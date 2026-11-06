@@ -184,15 +184,32 @@ class TestTileJsonContract:
         assert rt.status_code == 200, rt.text
         assert rt.headers["content-type"] == "image/png"
 
-    async def test_etag_304(self, client, env):
+    async def test_etag_304(self, client, env, monkeypatch):
+        from types import SimpleNamespace
+        from app.core import signing
+        from urllib.parse import parse_qs, urlsplit
+
+        clock = [120010]
+        monkeypatch.setattr(signing, 'time', SimpleNamespace(time=lambda: clock[0]))
         await _seed_conversation(env["db"], SESSION + "b", user_id=_MOCK_USER["user_id"])
         ref_id = await _register_dem(env, SESSION + "b")
         url = f"/api/v1/layers/data/{ref_id}/terrain-tiles.json?session_id={SESSION}b"
         r1 = await client.get(url)
         assert r1.status_code == 200
         etag = r1.headers["ETag"]
+        clock[0] += 1
         r2 = await client.get(url, headers={"If-None-Match": etag})
         assert r2.status_code == 304
+        clock[0] = 120061
+        r3 = await client.get(url, headers={"If-None-Match": etag})
+        assert r3.status_code == 200
+        assert r3.headers['ETag'] != etag
+        old = parse_qs(urlsplit(r1.json()['tiles'][0]).query)
+        assert signing.verify_signature(signing.terrain_capability_path(SESSION + 'b', ref_id),
+                                        old['exp'][0], old['sig'][0])
+        clock[0] = int(old['exp'][0]) + 1
+        assert not signing.verify_signature(signing.terrain_capability_path(SESSION + 'b', ref_id),
+                                            old['exp'][0], old['sig'][0])
 
     async def test_cross_session_404(self, client, env):
         await _seed_conversation(env["db"], SESSION + "c", user_id=_MOCK_USER["user_id"])

@@ -98,7 +98,7 @@ receipt-bus 消费处 additive 录制反向命令（反向重放既有 CAS 通�
 - 不建第二 selection/scope/chain 真相——全部投影只读派生自权威 store；
 - 不自动向工具注入 scope（agent 显式传参，执行权仍归 ToolDispatchService）；
 - 不改 map_operations/feature_edit 的事务与确认语义（只加 additive 披露/录制）；
-- 不碰 #1972（analysis_workflows/tools.py）与 #1965（map-panel 内部/observation/
+- 不碰 #1972（`app/tools/analysis_workflow_tools.py`）与 #1965（map-panel 内部/observation/
   viewCommands）占用面；map-panel 若接入只走其既有 props/事件面之外的最小 diff；
 - 不虚构表现层强原子 undo；GIS job 撤销/重试遵循 ADR-0281 处置词表。
 

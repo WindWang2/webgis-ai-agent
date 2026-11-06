@@ -2,6 +2,8 @@
 
 Run from the reviewed worktree using its approved environment and independent installed frontend dependencies, after all source changes and upstream integration. Do not source the original checkout's environment. Regenerate owning artifacts first; update the dependency ledger only last. These are the actual owning entry points used during this task; no manual generated-payload edits or debt-baseline updates.
 
+Quality discovery indexes Git-tracked files. Stage new source and test files before this refresh, then keep the tracked file set stable through verification. Staging newly added tests afterward changes the quality manifest's reference index even when their working-tree bytes are unchanged.
+
 ```bash
 .venv/bin/python scripts/gen_config_schema.py
 .venv/bin/python scripts/gen_app_inventory.py
@@ -9,6 +11,7 @@ Run from the reviewed worktree using its approved environment and independent in
 .venv/bin/python scripts/generate_endpoint_scope_matrix.py
 .venv/bin/python scripts/situation_inspect.py --dump-schema
 .venv/bin/python -m app.lib.cartography.ts_projection
+.venv/bin/python -m app.lib.cartography.export_component_catalog
 .venv/bin/python -m app.lib.cartography.basemap_profile_projection
 .venv/bin/python -m app.lib.cartography.catalog_docs
 .venv/bin/python -m app.lib.gis.execution_catalog_docs

@@ -13,14 +13,16 @@ diagnostics on the authoritative render-diagnostics vocabulary.
 """
 
 from app.services.mapspec_svg_bounds import bounded_source_bounds
-from app.services.mapspec_svg_labels import _svg_label_text, _svg_layers, valid_geographic_coordinates
+from app.services.mapspec_svg_labels import (
+    _line_repeat_anchors, _svg_label_text, _svg_layers, valid_geographic_coordinates,
+)
 from app.services.mapspec_filter import evaluate_filter, supported_filter
 from app.lib.cartography.render_scene import ResolvedComponent
 import logging
 import math as _math
 import time as _time
 from dataclasses import dataclass, field as dataclass_field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.lib.cartography.label_engine import (
     MAX_SVG_LABEL_CHARS as _MAX_SVG_LABEL_CHARS,
@@ -243,87 +245,6 @@ def resolve_spec_timeout_ms(mapspec: Any) -> float:
     ``asyncio.wait_for`` 时共用此值，避免两处口径漂移。"""
     return _resolve_export_thresholds(mapspec, None, None)[1]
 
-
-#: 线标注 repeat 锚点上限（对齐 MapLibre symbol-spacing 多贴的有界子集）。
-_LINE_REPEAT_MAX_ANCHORS = 4
-#: repeat 锚点计算的参与坐标帽（R2 评审：单条百万坐标线的 project 逐点
-#: 循环不可中断 —— 确定性跨步采样到帽内再算锚点，语义是等距近似的
-#: 有界化，不改变正常线的输出）。
-_LINE_REPEAT_MAX_POINTS = 20_000
-
-
-def _line_repeat_anchors(
-    coords: Any, project, _dpi_spacing: float
-) -> List[Tuple[float, float, float]]:
-    """symbol-placement=line 的等距 repeat 锚点（≤4，TS 孪生同构）。
-
-    语义（对齐 live MapLibre 沿线多贴的确定性子集）：首个锚点在线弧长
-    中点，随后向两侧按 ``spacing``（= MapLibre symbol-spacing 缺省 250px ×
-    dpi_scale）扩展，超出线长即停；每个锚点带所在段的方位角（keep-upright
-    由求解器负责）。总弧长 < 2×spacing 时只有中点单锚（与旧行为一致）。
-    project() 返回 fmt_num 字符串 —— 全程 float() 还原。
-    坐标帽采样：首点恒保留；尾点在一般 N 下落在两个采样格之间而被略去
-    （弧长轻微低估，确定性且双孪生同式 —— R3 评审措辞修正）。
-    """
-    if not isinstance(coords, list) or len(coords) < 2 or _dpi_spacing <= 0:
-        return []
-    # 坐标帽：超长线确定性跨步采样（首/尾点恒保留），project 调用数有界。
-    coords_list: List[Any] = coords
-    if len(coords_list) > _LINE_REPEAT_MAX_POINTS:
-        step = len(coords_list) / _LINE_REPEAT_MAX_POINTS
-        coords_list = [coords_list[min(len(coords_list) - 1, int(k * step))]
-                       for k in range(_LINE_REPEAT_MAX_POINTS)]
-    pts: List[Tuple[float, float]] = []
-    for c in coords_list:
-        if isinstance(c, (list, tuple)) and len(c) >= 2:
-            try:
-                px, py = project(c)
-                pts.append((float(px), float(py)))
-            except Exception:
-                return []
-    if len(pts) < 2:
-        return []
-    seg_lens: List[float] = []
-    total = 0.0
-    for i in range(len(pts) - 1):
-        dx = pts[i + 1][0] - pts[i][0]
-        dy = pts[i + 1][1] - pts[i][1]
-        seg_len = _math.hypot(dx, dy)
-        seg_lens.append(seg_len)
-        total += seg_len
-    if total <= 0 or total < 2 * _dpi_spacing:
-        return []
-
-    def _anchor_at(s: float) -> Tuple[float, float, float]:
-        acc = 0.0
-        for i, seg_len in enumerate(seg_lens):
-            if acc + seg_len >= s or i == len(seg_lens) - 1:
-                t = 0.0 if seg_len <= 0 else (s - acc) / seg_len
-                t = min(1.0, max(0.0, t))
-                x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t
-                y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t
-                ang = _math.degrees(_math.atan2(
-                    pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0]))
-                return (x, y, ang)
-            acc += seg_len
-        return pts[-1][0], pts[-1][1], 0.0  # pragma: no cover - 数值边界
-
-    mid = total / 2.0
-    positions = [mid]
-    k = 1
-    while len(positions) < _LINE_REPEAT_MAX_ANCHORS:
-        added = False
-        if mid + k * _dpi_spacing <= total:
-            positions.append(mid + k * _dpi_spacing)
-            added = True
-        if len(positions) < _LINE_REPEAT_MAX_ANCHORS and mid - k * _dpi_spacing >= 0:
-            positions.append(mid - k * _dpi_spacing)
-            added = True
-        if not added:
-            break
-        k += 1
-    positions.sort()
-    return [_anchor_at(s) for s in positions]
 
 
 def _merc_y(lat: float) -> float:
@@ -1259,11 +1180,11 @@ def compile_mapspec_to_svg_detailed(
 
         # W2.2（ADR-0283 D3）：显式标注字段缺失守卫 —— 内联源字段集
         # （前 1000 要素属性键并集，确定性）为证据；ref/瓦片源不可评估
-        # → 诚实跳过。渲染行为不变（既有 name/label 回退链保留），守卫
+        # → 诚实跳过。显式字段缺失时不以其他字段替代，守卫
         # 补的是"缺失必须披露"。
-        _guard_fields_cache: Dict[str, Any] = {}
+        _guard_fields_cache: Dict[str, Optional[Set[str]]] = {}
 
-        def _source_fields_for_guard(source_id: str):
+        def _source_fields_for_guard(source_id: str) -> Optional[Set[str]]:
             if source_id not in _guard_fields_cache:
                 _src_entry = (
                     sources.get(source_id) if isinstance(sources, dict) else None

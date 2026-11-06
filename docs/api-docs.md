@@ -2,7 +2,7 @@
 
 后端 FastAPI 服务的 HTTP/SSE/WebSocket 接口参考，按资源分组；端点与字段均对齐 `app/api/routes/` 下的实现。
 
-> **版本**: v0.1.3 · **状态**: 活文档 · **最后更新**: 2026-08-17
+> **版本**: v0.1.4 · **状态**: 活文档 · **最后更新**: 2026-11-06
 
 ## 目录
 
@@ -32,15 +32,15 @@
 
 ## 概述与通用约定
 
-- **前缀**：除 Prometheus `/metrics` 与 Pi 工具回调 `/pi-tools` 外，所有 API 挂载在 `/api/v1` 下（见 `app/main.py`）。
+- **前缀**：主要业务 API 挂载在 `/api/v1` 下；另有 `/api/v2` 接口、根级 `/healthz` / `/health`、Prometheus `/metrics` 与 Pi 工具回调 `/pi-tools`（见 `app/main.py`）。
 - **服务端口**：uvicorn 默认 `8000`；生产镜像内同容器还运行 Next.js standalone（端口 `3000`），由 nginx 分流 `/api/` 与 `/`。
 - **交互式文档**：非生产环境（`ENV != production`）启动后，Swagger UI 在 `/docs`、ReDoc 在 `/redoc`。生产环境关闭这两个端点。字段级 schema 以 OpenAPI 为准，本文只覆盖关键语义。
 - **认证**（两级）：
   - **JWT**：`Authorization: Bearer <access_token>`。access token 30 分钟、refresh token 7 天；payload 携带 `ver` claim 与 `User.token_version` 绑定，logout 后旧 token 立即失效。
-  - **匿名会话**：新建匿名会话时后端铸造 `owner_token`，客户端通过 `X-Session-Token` 请求头回传。匿名数据（会话、ref 数据、上传）按 owner_token 分桶隔离，归属校验失败一律 404（不泄露存在性）。
-- **错误格式**（两套并存，消费方需兼容）：
-  1. 路由内 `HTTPException`（最常见）→ FastAPI 原生体 `{"detail": "..."}`，状态码即 HTTP 码。
-  2. 未捕获异常 → 全局处理器（`app/core/exception.py`）返回 `{"code", "success": false, "message", "data": null}`；生产环境 message 固定为通用文案，非生产环境附带 `error_type / traceback` 等调试字段。部分资源（knowledge、reports 等）正常响应也使用 `ApiResponse` 信封 `{code, success, message, data}`。
+  - **匿名会话**：新建匿名会话时后端铸造 `owner_token`，客户端通过 `X-Session-Token` 请求头回传。匿名数据（会话、ref 数据、上传）按 owner_token 分桶隔离；归属失败的状态码以各资源契约为准（会话归属校验为 404，ref 提取的 `PermissionDenied` 为 403）。
+- **错误格式**（`app/core/exception.py`，ADR-0138）：
+  1. `HTTPException` 与请求校验错误默认返回统一信封 `{code, success: false, message, data}`；HTTP 异常的结构化 detail 放入 `data`，校验错误使用 422。v1 可经 `LEGACY_DETAIL_ENVELOPE=true` 或请求头 `X-Error-Envelope: detail` 回退 `{"detail": ...}`；v2 不支持此回退。
+  2. 未捕获异常也使用统一信封，并附 `category / retryable` 等分类字段；仅 `settings.DEBUG` 开启时附带 `error_type / traceback` 等诊断，不能仅凭非生产环境推断。部分资源（knowledge、reports 等）正常响应也使用 `ApiResponse` 信封 `{code, success, message, data}`。
 - **限流**（Redis 后端、内存兜底）：
   - 全局：每客户端 IP 240 次 / 60 秒（`app/main.py` `RateLimitMiddleware(max_requests=240, window_seconds=60)`；`/docs`、`/redoc`、`/openapi.json` 豁免），超限 429。V9 前文档误载 60 次。
   - 登录失败：每 IP 5 次 / 5 分钟；注册：每 IP 5 次 / 小时；refresh：每用户 30 次 / 5 分钟；WebSocket 连接：每 IP 5 次 / 60 秒。
@@ -133,7 +133,7 @@ data: {"content": "正在", "is_reasoning": false, "session_id": "my-session"}
 
 event: tool_call
 id: 2
-data: {"name": "analyze_population", "arguments": {"city": "上海"}, "session_id": "my-session"}
+data: {"name": "webgis_map_intent", "arguments": {"query": "上海人口热力图"}, "session_id": "my-session"}
 
 event: done
 id: 7
@@ -368,12 +368,12 @@ MapLibre `image` source 无法携带请求头，因此除 `X-Session-Token` 外�
 
 | 方法 | 路径 | 认证 | 说明 |
 |------|-----|------|-----|
-| GET / POST | `/api/v1/config/llm` | admin | 读取 / 更新 LLM 配置（运行时改 `base_url` 会重跑 SSRF 校验） |
+| GET / POST | `/api/v1/config/llm` | admin | 读取 / 更新 LLM 配置；生产环境拒绝更新（403），非生产改 `base_url` 会重跑 SSRF 校验 |
 | POST | `/api/v1/config/llm/test` | admin | LLM 连通性测试 |
 | POST | `/api/v1/config/rag/test` | admin | 知识库连通性测试 |
 | GET | `/api/v1/config/skills` | admin | 列出已加载技能 |
-| POST | `/api/v1/config/skills/upload` | admin | 上传技能脚本（AST 校验） |
-| POST | `/api/v1/config/skills/refresh` | admin | 热重载技能 |
+| POST | `/api/v1/config/skills/upload` | admin | 生产环境或未启用 `ALLOW_RUNTIME_SKILL_UPLOAD` 时返回 403；允许上传时还需新技能文件名、可写完整性锁与 AST 校验 |
+| POST | `/api/v1/config/skills/refresh` | admin | 热重载技能；生产环境返回 403 |
 
 ## 静态文件 /static
 
@@ -387,10 +387,10 @@ MapLibre `image` source 无法携带请求头，因此除 `X-Session-Token` 外�
 
 | 方法 | 路径 | 认证 | 说明 |
 |------|-----|------|-----|
-| GET | `/metrics`（**无 /api/v1 前缀**） | 无（需网络层隔离） | Prometheus 抓取端点（`http_requests_total`、`http_request_duration_seconds` 等；不进 OpenAPI schema） |
+| GET | `/metrics`（**无 /api/v1 前缀**） | 默认需 `Authorization: Bearer <METRICS_TOKEN>` | Prometheus 抓取端点（`http_requests_total`、`http_request_duration_seconds` 等；不进 OpenAPI schema） |
 | GET | `/api/v1/metrics/digest` | admin | 工具调用指标、空间分析缓存、Pi harness 遥测摘要 |
 
-`/metrics` 暴露内部流量与延迟分布，部署时必须至少满足其一：NetworkPolicy 限制到监控 namespace、反代 IP 白名单/mTLS、或与 Prometheus 同 namespace 走 ClusterIP。
+`/metrics` 默认启用应用层鉴权：服务端未配置 `METRICS_TOKEN`，或请求缺少/携带错误的 Bearer token，均返回 401。代码仅在显式设置 `METRICS_AUTH_DISABLED=true`（也接受 `1` / `yes`）时跳过该鉴权。网络层隔离是额外的部署防护，不能代替默认 token 要求。
 
 ## Pi 工具回调 /pi-tools
 
@@ -484,9 +484,9 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 
 | 方法 | 路径 | 说明 |
 |------|-----|-----|
-| GET | `/api/v1/health` | 基本信息：`{status, timestamp, service, version, agent_runtime}`；`agent_runtime` 为 `"pi"`/`"chatengine"`，fail-closed：bridge 探测失败或进程已死时如实报 `chatengine`，绝不按 flag 推报 `pi`（#1032） |
+| GET | `/api/v1/health` | 基本信息：`{status, timestamp, service, version, agent_runtime, pi_workers_alive, pi_vendor}`；`agent_runtime` 为 `"pi"`/`"chatengine"`，bridge 探测失败或无存活 worker 时如实报 `chatengine`；多 worker 的存活比例由 `pi_workers_alive` 披露，`pi_vendor` 披露已构建的 vendor 身份摘要（ADR-0282） |
 | GET | `/api/v1/health/live` | liveness：仅确认进程可响应 `{status: "alive"}`；k8s livenessProbe / Docker HEALTHCHECK 使用，不检查依赖 |
-| GET | `/api/v1/ready` | readiness：检查 **DB + LLM + Redis + Celery** 四项连通；全通 200，任一失败 503，body 仅 `{"ready": bool}`（不泄露内部依赖拓扑，SEC-11） |
+| GET | `/api/v1/ready` | readiness：检查 **DB + Redis** 连通性；两项就绪时 200，任一不可用时 503；LLM/Celery 不在该端点的阻断条件内，body 仅 `{"ready": bool}`（不泄露内部依赖拓扑，SEC-11） |
 
 部署矩阵对这三个端点的引用：Dockerfile.prod HEALTHCHECK 与 compose healthcheck 探 `/api/v1/health/live`（外加前端 :3000）；k8s 探针与 CI 部署后验证同样使用 live 端点。Prometheus 抓 `/metrics`（无前缀，见[性能遥测](#性能遥测-metrics)）。
 

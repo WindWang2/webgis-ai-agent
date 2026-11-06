@@ -847,7 +847,7 @@ def solve_layout_v5(
         if c is None:
             adjusted.append(p)
             continue
-        updates: Dict[str, Any] = {}
+        updates: Dict[str, float | bool] = {}
         eff_width = max(p.width_units, c.min_width_units)
         if p.width_units > c.max_width_units:
             eff_width = c.max_width_units

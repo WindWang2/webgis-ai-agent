@@ -91,9 +91,11 @@ export function SituationStatusBar(): React.ReactElement {
     if (projection.status === 'error' || !view) {
       out.push({
         key: 'scope', tone: 'neutral',
-        label: projection.status === 'error'
-          ? t('situationBar.unavailable')
-          : t('situationBar.loading'),
+        label: projection.status === 'idle'
+          ? t('situationBar.idle')
+          : projection.status === 'error'
+            ? t('situationBar.unavailable')
+            : t('situationBar.loading'),
       });
       return out;
     }
@@ -186,8 +188,6 @@ export function SituationStatusBar(): React.ReactElement {
         ? 'bg-status-accent-soft text-status-accent border-status-accent-border'
         : 'bg-surface-sunken text-ink-muted border-edge';
 
-  const summary = chips.map((c) => c.label).join(' · ');
-
   return (
     <div
       role="status"
@@ -209,7 +209,6 @@ export function SituationStatusBar(): React.ReactElement {
           {chip.label}
         </span>
       ))}
-      <span className="sr-only">{summary}</span>
     </div>
   );
 }

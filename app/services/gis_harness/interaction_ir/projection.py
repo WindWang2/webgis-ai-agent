@@ -13,12 +13,31 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing_extensions import TypedDict
 
 from app.services.gis_harness.interaction_ir.contracts import (
     MUTATION_LINKED_KINDS,
     SCHEMA_VERSION,
 )
+
+
+class ChartSelectionView(TypedDict, total=False):
+    layer_id: str
+    field: str
+    categories: list[str | int | float | bool | None]
+    source: Mapping[str, object]
+
+
+class TemporalWindowView(TypedDict, total=False):
+    mode: str
+    field: str
+    extent: list[str | int | float | bool | None]
+    current: str | int | float | bool | None
+    window: list[str | int | float | bool | None]
+    pinned: bool
+    link: Mapping[str, object]
+    source: Mapping[str, object]
 
 MAX_RECENT_INTERACTIONS = 12
 MAX_OVERRIDES = 16
@@ -65,8 +84,8 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
     active_aoi: Optional[Dict[str, Any]] = None
     last_aoi_kind: Optional[str] = None
     # ADR-0285 D2：图表类别选择 / 时间窗 settle 的语义面（最新事实）。
-    chart_selection: Optional[Dict[str, Any]] = None
-    temporal_window: Optional[Dict[str, Any]] = None
+    chart_selection: Optional[ChartSelectionView] = None
+    temporal_window: Optional[TemporalWindowView] = None
     overrides: Dict[str, Dict[str, Any]] = {}
     override_order: List[str] = []
     attempted: List[Dict[str, Any]] = []
@@ -179,7 +198,7 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
 
 
 def _viewport_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
-    view = {key: payload[key] for key in ("center", "zoom", "bearing", "pitch", "bounds")
+    view: dict[str, object] = {key: payload[key] for key in ("center", "zoom", "bearing", "pitch", "bounds")
             if key in payload}
     view["source"] = {
         "client_instance_id": record.get("client_instance_id"),
@@ -192,7 +211,7 @@ def _viewport_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str,
 
 
 def _selection_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
-    view = {key: payload[key] for key in (
+    view: dict[str, object] = {key: payload[key] for key in (
         "layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field",
     ) if key in payload}
     view["source"] = {
@@ -204,7 +223,7 @@ def _selection_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str
 
 
 def _aoi_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
-    view = {key: payload[key] for key in ("geometry_type", "vertex_count", "geometry_digest")
+    view: dict[str, object] = {key: payload[key] for key in ("geometry_type", "vertex_count", "geometry_digest")
             if key in payload}
     view["source"] = {
         "client_instance_id": record.get("client_instance_id"),
@@ -214,10 +233,16 @@ def _aoi_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]
     return view
 
 
-def _chart_selection_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
-    """图表类别选择视图（clear 语义由调用方置 None）。"""
-    view = {key: payload[key] for key in ("layer_id", "field", "categories")
-            if key in payload}
+def _chart_selection_view(record: Mapping[str, object], payload: Mapping[str, object]) -> ChartSelectionView:
+    """Bounded chart fields, narrowed at the persisted-record read boundary."""
+    view: ChartSelectionView = {}
+    layer_id, field, categories = (payload.get(key) for key in ("layer_id", "field", "categories"))
+    if isinstance(layer_id, str):
+        view["layer_id"] = layer_id
+    if isinstance(field, str):
+        view["field"] = field
+    if isinstance(categories, list):
+        view["categories"] = [value for value in categories if value is None or isinstance(value, (str, int, float, bool))]
     view["source"] = {
         "client_instance_id": record.get("client_instance_id"),
         "client_seq": record.get("client_seq"),
@@ -226,11 +251,24 @@ def _chart_selection_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Di
     return view
 
 
-def _temporal_window_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
-    view = {key: payload[key] for key in (
-        "mode", "field", "extent", "current", "window", "pinned",
-    ) if key in payload}
-    view["link"] = _mutation_link(record)
+def _temporal_window_view(record: Mapping[str, object], payload: Mapping[str, object]) -> TemporalWindowView:
+    view: TemporalWindowView = {}
+    mode, field = payload.get("mode"), payload.get("field")
+    if isinstance(mode, str):
+        view["mode"] = mode
+    if isinstance(field, str):
+        view["field"] = field
+    extent, window = payload.get("extent"), payload.get("window")
+    if isinstance(extent, list):
+        view["extent"] = [value for value in extent if value is None or isinstance(value, (str, int, float, bool))]
+    if isinstance(window, list):
+        view["window"] = [value for value in window if value is None or isinstance(value, (str, int, float, bool))]
+    current, pinned = payload.get("current"), payload.get("pinned")
+    if "current" in payload and (current is None or isinstance(current, (str, int, float, bool))):
+        view["current"] = current
+    if isinstance(pinned, bool):
+        view["pinned"] = pinned
+    view["link"] = _mutation_link(dict(record))
     view["source"] = {
         "client_instance_id": record.get("client_instance_id"),
         "client_seq": record.get("client_seq"),

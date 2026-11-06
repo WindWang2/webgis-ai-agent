@@ -620,6 +620,19 @@ describe("MapSpec-to-SVG label_field_missing guard（W2.2）", () => {
     expect(diags.some(([c, d]) => c === "label_field_missing" && d.includes("field=名称"))).toBe(true);
   });
 
+  it("自动生成的 label 图层不会重复报告同一个字段缺失", () => {
+    const spec = guardSpec("{name}");
+    const layer = { ...spec.layers[0], type: 'circle', label: { field: 'population' } };
+    const diags: Array<[string, string]> = [];
+    compileMapSpecToSvg({ ...spec, layers: [layer] }, {
+      targetDpi: 72,
+      onDiagnostic: (code, detail) => diags.push([code, detail]),
+    });
+    const missing = diags.filter(([code]) => code === 'label_field_missing');
+    expect(missing).toHaveLength(1);
+    expect(missing[0][1]).toContain('layer=pts_sym field=population');
+  });
+
   it("非花括号 text-field = 字面文本，不触发守卫", () => {
     const diags: Array<[string, string]> = [];
     compileMapSpecToSvg(guardSpec("站点"), {

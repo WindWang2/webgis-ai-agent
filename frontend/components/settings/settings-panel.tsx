@@ -239,12 +239,12 @@ export function SettingsPanel() {
         </nav>
 
         {/* Right content area */}
-        <div className="flex flex-1 flex-col bg-surface-panel shadow-drawer">
+        <div className="flex min-w-0 flex-1 flex-col bg-surface-panel shadow-drawer">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-edge-subtle px-6 py-4">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-3 border-b border-edge-subtle px-3 py-4 sm:px-6">
+            <div className="flex min-w-0 items-center gap-3">
               <div
-                className="flex h-9 w-9 items-center justify-center rounded-md"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md"
                 style={{
                   background:
                     'linear-gradient(135deg, var(--agent-accent, #16a34a) 0%, color-mix(in srgb, var(--agent-accent, #16a34a) 72%, #ffffff) 100%)',
@@ -252,11 +252,11 @@ export function SettingsPanel() {
               >
                 <Settings size={18} className="text-ink-on-accent" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <div id="settings-panel-title" className="text-title font-bold leading-tight text-ink">
                   {t('settings.panel.title')}
                 </div>
-                <div className="text-meta leading-tight text-ink-muted">Agent Command Center</div>
+                <div className="truncate text-meta leading-tight text-ink-muted">Agent Command Center</div>
               </div>
 
             </div>
@@ -264,7 +264,7 @@ export function SettingsPanel() {
             <button
               onClick={() => setSettingsOpen(false)}
               aria-label={t('settings.panel.close')}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover"
             >
               <X size={18} />
             </button>
@@ -275,7 +275,7 @@ export function SettingsPanel() {
             role="tabpanel"
             id="settings-tabpanel"
             aria-labelledby={`settings-tab-${activeTab}`}
-            className="flex-1 overflow-y-auto px-6 py-5"
+            className="min-w-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6"
           >
             <TabContent tab={activeTab} />
           </div>
