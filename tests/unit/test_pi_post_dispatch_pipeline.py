@@ -351,11 +351,23 @@ async def test_settle_runs_full_pipeline_and_returns_payload(_env):
 
 @pytest.mark.asyncio
 async def test_settle_idempotent_gate_discloses_stored_product(_env):
-    # 幂等门跳过（finalize 返回 None）→ 披露已存储完成态
+    # 幂等门跳过 → 旧证据仍披露，但不得冒充本轮完成，也不改写旧成品。
     _env.finalize_result = None
-    _env.stored_product = {"task_complete": True}
+    stored = {
+        "status": "complete", "task_complete": True,
+        "summary": "previous map", "render_status": "verified",
+        "goal_satisfaction": {"verdict": "satisfied"},
+    }
+    _env.stored_product = dict(stored)
     payload = await settle_turn_projections("sess-s", "turn-1")
-    assert payload == {"task_complete": True}
+    assert payload == {
+        "summary": "previous map", "render_status": "verified",
+        "reused_prior_completion": True,
+        "cartography_this_turn": "not_evaluated",
+    }
+    assert _env.stored_product == stored
+    assert _env.chain_emits[0][1]["task_complete"] is False
+    assert _env.persists == [("turn-1", "sess-s")]
 
 
 @pytest.mark.asyncio

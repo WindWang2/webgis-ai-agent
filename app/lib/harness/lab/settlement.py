@@ -14,6 +14,7 @@ duplicate / policy deny / resource reject / disconnect 收编为**场景可声�
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -213,7 +214,7 @@ async def _check_cancel_reduced_settle(
 
 async def _check_settle_idempotent(
         spec: LabScenario, sb: SettlementSandbox) -> SettlementCheckResult:
-    """二次结算：幂等门跳过 → 披露已存储完成态；缺席时不得伪造完成。"""
+    """二次结算只披露复用证据，不把旧成品奖励为本轮完成。"""
     from types import SimpleNamespace
 
     from app.services.chat.pi_post_dispatch import settle_turn_projections
@@ -222,15 +223,38 @@ async def _check_settle_idempotent(
         status="completed", repairs_applied=False)
     first = await settle_turn_projections("lab-idem", "turn-idem")
     sb.finalize_result = None
-    sb.stored_product = {"task_complete": True, "sid": "lab-idem"}
+    stored = {
+        "status": "complete", "task_complete": True, "sid": "lab-idem",
+        "summary": "previous verified map", "render_status": "verified",
+        "final_map_status": "verified",
+        "goal_satisfaction": {"verdict": "satisfied"},
+    }
+    sb.stored_product = deepcopy(stored)
+    emit_count = len(sb.chain.emits)
+    persist_count = len(sb.chain.persists)
     second = await settle_turn_projections("lab-idem", "turn-idem")
+    expected = {
+        "sid": "lab-idem", "summary": "previous verified map",
+        "render_status": "verified", "final_map_status": "verified",
+        "reused_prior_completion": True,
+        "cartography_this_turn": "not_evaluated",
+    }
     problems: List[str] = []
     if not isinstance(first, dict) or first.get("task_complete") is not True:
         problems.append(f"clean settle payload unexpected: {first!r}")
-    if second != sb.stored_product:
+    if second != expected:
         problems.append(
             f"idempotent re-settle disclosed {second!r}, "
-            f"want stored product {sb.stored_product!r}")
+            f"want prior evidence without current completion {expected!r}")
+    if sb.stored_product != stored:
+        problems.append("idempotent disclosure mutated the stored product")
+    user_output = [e for e in sb.chain.emits[emit_count:]
+                   if "USER_OUTPUT" in e["stage"]]
+    if not user_output or any(e.get("task_complete") is not False
+                              for e in user_output):
+        problems.append("idempotent re-settle must emit non-complete USER_OUTPUT")
+    if sb.chain.persists[persist_count:] != ["turn-idem"]:
+        problems.append("idempotent re-settle did not persist replay evidence")
     if problems:
         return SettlementCheckResult("settle_idempotent", "fail",
                                      "; ".join(problems))

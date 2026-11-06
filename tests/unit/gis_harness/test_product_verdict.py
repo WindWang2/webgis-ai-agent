@@ -164,17 +164,44 @@ class TestPipelineReusesAuthoritativeVerdictTokens:
             _is_task_complete,
             finalization_sse_payload,
         )
-        for verdict, final_status, expected in [
+        for verdict, final_status, ready in [
             (VERDICT_READY, FINAL_MAP_VERIFIED, True),
             (VERDICT_READY_WITH_WARNINGS, FINAL_MAP_DEGRADED, True),
             ("NEEDS_REPAIR", FINAL_MAP_VERIFIED, False),
             (VERDICT_READY, "unknown", False),
         ]:
-            result = MapCompletionResult(status="complete")
-            result.product_verdict = verdict
-            result.final_map_status = final_status
-            assert finalization_sse_payload(result)["task_complete"] is expected
-            assert _is_task_complete({
-                "product_verdict": verdict,
+            for render_status in (
+                "verified", "not_applicable", "unknown", "stale", "failed",
+            ):
+                result = MapCompletionResult(
+                    status="complete", product_verdict=verdict,
+                    final_map_status=final_status, render_status=render_status,
+                )
+                expected = ready and render_status in ("verified", "not_applicable")
+                assert finalization_sse_payload(result)["task_complete"] is expected
+                assert _is_task_complete({
+                    "product_verdict": verdict,
+                    "final_map_status": final_status,
+                    "render_status": render_status,
+                }) is expected
+
+    def test_legacy_stored_block_requires_verified_final_status(self):
+        from app.services.gis_harness.completion.contracts import (
+            FINAL_MAP_DEGRADED,
+            FINAL_MAP_VERIFIED,
+            VERDICT_READY,
+        )
+        from app.services.gis_harness.completion.pipeline import _is_task_complete
+
+        # Only legacy verified blocks may omit the observation field. An explicit
+        # unknown observation is not legacy and must never regain completion.
+        for final_status, expected in [
+            (FINAL_MAP_VERIFIED, True), (FINAL_MAP_DEGRADED, False),
+        ]:
+            stored = {
+                "product_verdict": VERDICT_READY,
                 "final_map_status": final_status,
-            }) is expected
+            }
+            assert _is_task_complete(stored) is expected
+            stored["render_status"] = "unknown"
+            assert _is_task_complete(stored) is False
