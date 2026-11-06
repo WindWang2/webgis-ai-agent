@@ -602,6 +602,8 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/interaction-events` | Push Interaction Events | InteractionIngestResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/interaction-events/projection` | Get Interaction Projection | InteractionProjectionResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/situation` | Get Situation View | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/turn-chain` | Get Turn Chain | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/preview` | Preview Feature Edit | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}` | Get Feature Edit Plan | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}/decision` | Decide Feature Edit Plan | object |
@@ -1168,6 +1170,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：431（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：433（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

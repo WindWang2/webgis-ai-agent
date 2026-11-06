@@ -38,6 +38,7 @@ from app.api.routes import atlas_jobs as atlas_jobs_routes  # noqa: E402  # 批�
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
 from app.api.routes import map_operations as map_operations_routes  # noqa: E402  # ADR-0278
 from app.api.routes import display_confirmation as display_confirmation_routes  # noqa: E402  # ADR-0278
+from app.api.routes import situation_views as situation_views_routes  # noqa: E402  # ADR-0285
 from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0226
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
@@ -1107,6 +1108,7 @@ app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
+app.include_router(situation_views_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0285 situation/turn-chain 只读视图
 app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对话"])  # /goal 03 feature editing
 # ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
 app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])

@@ -11,6 +11,9 @@
         },
         "artifacts": {
           "$ref": "#/$defs/SitFact"
+        },
+        "selection_scope": {
+          "$ref": "#/$defs/SitFact"
         }
       },
       "required": [

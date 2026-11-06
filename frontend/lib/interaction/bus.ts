@@ -11,7 +11,9 @@
  * 几何摘要 geometryDigest 是**非密码学**噪声容忍摘要（坐标四舍五入到
  * ~1e-6 度后 FNV 组合哈希）：用于去重/关联，不用于完整性校验。
  */
+import { notifySituationInvalidated } from './projection-invalidations';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { getSelection } from '@/lib/selection/selection-store';
 import {
   INTERACTION_SCHEMA_VERSION,
   type InteractionEventKind,
@@ -32,6 +34,7 @@ let unregisterPageHide: (() => void) | null = null;
 function ensureOutbox(): InteractionOutbox {
   if (outbox) return outbox;
   outbox = createInteractionOutbox({
+    onAcknowledged: notifySituationInvalidated,
     getSessionId: () => {
       try {
         return getMapSpecSessionCursor().sessionId ?? undefined;
@@ -202,6 +205,7 @@ export function emitFeatureSelected(info: {
   // 调用方不再白传全量几何）。
   const names = fieldNamesOf(info.properties);
   const digest = bboxDigest(info.bbox);
+  const idField = selectionIdField(info.layerId, info.selectedIds ?? [info.featureId]);
   const selectedIds = (info.selectedIds ?? [])
     .map((id) => String(id).slice(0, 32))
     .filter(Boolean)
@@ -212,6 +216,7 @@ export function emitFeatureSelected(info: {
     ...(names ? { field_names: names } : {}),
     ...(digest ? { geometry_digest: digest } : {}),
     ...(info.datasetRef ? { dataset_ref: info.datasetRef } : {}),
+    ...(idField ? { id_field: idField } : {}),
     ...(selectedIds.length > 1 ? { selected_ids: selectedIds } : {}),
   });
 }
@@ -269,6 +274,7 @@ export function emitMutationLinked(
     | 'layer_style_changed'
     | 'layer_order_changed'
     | 'layer_removed'
+    | 'temporal_window_settled'
   >,
   payload: Record<string, unknown>,
   refs: {
@@ -291,4 +297,87 @@ export function emitComparisonModeChanged(enabled: boolean, mode?: string): void
     enabled,
     ...(mode ? { mode } : {}),
   });
+}
+
+// ── ADR-0285 D2 三连收 emitter（钩子：chart-panel onClick / table-panel
+//    行点选 / temporal controller settle→commitUserTemporal）────────────
+
+/** 图表类别选择（类别谓词，非要素 id 集；categories ≤8×32 字符）。 */
+export function emitChartSelectionChanged(info: {
+  layerId: string;
+  field?: string;
+  categories?: ReadonlyArray<string | number>;
+  action?: 'select' | 'clear';
+}): void {
+  const categories = (info.categories ?? [])
+    .map((c) => String(c).slice(0, 32))
+    .filter(Boolean)
+    .slice(0, 8);
+  emitInteraction('chart_selection_changed', {
+    layer_id: info.layerId,
+    ...(info.field ? { field: info.field.slice(0, 64) } : {}),
+    ...(categories.length > 0 ? { categories } : {}),
+    action: info.action ?? 'select',
+  });
+}
+
+/** 表格行选择/定位（本质是要素定位；保留来源身份与 map 点选区分）。 */
+export function emitTableSelectionChanged(info: {
+  layerId: string;
+  featureId?: string | number;
+  selectedIds?: ReadonlyArray<string | number>;
+  action?: 'select' | 'clear';
+}): void {
+  const idField = selectionIdField(info.layerId, info.selectedIds ?? [info.featureId]);
+  const selectedIds = (info.selectedIds ?? [])
+    .map((id) => String(id).slice(0, 32))
+    .filter(Boolean)
+    .slice(0, 8);
+  emitInteraction('table_selection_changed', {
+    layer_id: info.layerId,
+    ...(info.featureId !== undefined ? { feature_id: String(info.featureId).slice(0, 128) } : {}),
+    ...(selectedIds.length > 0 ? { selected_ids: selectedIds } : {}),
+    ...(idField && info.action !== 'clear' ? { id_field: idField } : {}),
+    action: info.action ?? 'select',
+  });
+}
+
+/** The UI already resolved feature identity; preserve it without guessing. */
+function selectionIdField(layerId: string, ids: ReadonlyArray<string | number | undefined>): string | undefined {
+  const selection = getSelection();
+  const requested = ids.filter((id) => id !== undefined).map(String);
+  return selection?.layer_id === layerId && selection.id_field && requested.length > 0
+    && requested.every((id) => selection.selected_ids.includes(id))
+    ? selection.id_field.slice(0, 64) : undefined;
+}
+
+/**
+ * 时间窗 settle（mutation 链接型：set_temporal_view 意图落定后发射，带结局）。
+ * 时间值字符串化（ISO 段）并各自裁剪到 40 字符内保 512B 预算。
+ */
+export function emitTemporalWindowSettled(
+  payload: {
+    mode?: string;
+    field?: string;
+    extent?: [string | number, string | number];
+    current?: string | number;
+    window?: [string | number, string | number];
+    pinned?: boolean;
+  },
+  refs: {
+    clientMutationId: string;
+    expectedRevision?: number;
+    outcome: 'committed' | 'superseded' | 'failed';
+    mutationRevision?: number;
+  },
+): void {
+  const clipTime = (v: string | number): string => String(v).slice(0, 40);
+  emitMutationLinked('temporal_window_settled', {
+    ...(payload.mode ? { mode: payload.mode.slice(0, 24) } : {}),
+    ...(payload.field ? { field: payload.field.slice(0, 64) } : {}),
+    ...(payload.extent ? { extent: payload.extent.map(clipTime) } : {}),
+    ...(payload.current !== undefined ? { current: clipTime(payload.current) } : {}),
+    ...(payload.window ? { window: payload.window.map(clipTime) } : {}),
+    ...(payload.pinned !== undefined ? { pinned: payload.pinned } : {}),
+  }, refs);
 }

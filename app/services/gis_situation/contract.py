@@ -132,6 +132,13 @@ class AnalysisContext(BaseModel):
     plan_progress: SitFact  # {total,ready,running,complete,failed}
     stale_nodes: SitFact
     artifacts: SitFact      # 进度行 bound_ref 去重有界
+    # ADR-0285 D1：当前选择的**声称面**（ClaimedScope 纯派生，零 IO——
+    # kind/layer_id/dataset_ref/feature_ids ≤50/claimed_at_seq）。验证面
+    # （ref 所有权/revision/存活）在 analysis_scope.validate_analysis_scope
+    # 按需执行（工具拉取），编译期不解析大 payload。
+    selection_scope: SitFact = Field(
+        default_factory=lambda: unknown(source="map_state._interaction_ir_ledger")
+    )
 
 
 class CartographicContext(BaseModel):

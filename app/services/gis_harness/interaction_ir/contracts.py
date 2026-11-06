@@ -109,7 +109,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     # ≤8 标量元素）—— 框选/多选对 Agent 可见；单选时缺席（向后兼容）。
     _k(
         "feature_selected",
-        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids"),
+        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
     _k(
@@ -165,6 +165,31 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     ),
     # ── 观察型：比较模式开关 ────────────────────────────────────────────
     _k("comparison_mode_changed", ("enabled", "mode")),
+    # ── 观察型：图表类别选择（ADR-0285 D2；钩子 chart-panel onClick
+    #    publishSelection(source:'chart')——类别谓词，非要素 id 集）────
+    _k(
+        "chart_selection_changed",
+        ("layer_id", "field", "categories", "action"),
+        sensitivity=SENSITIVITY_LIMITED,
+    ),
+    # ── 观察型：表格行选择/定位（钩子 table-panel 行点选
+    #    publishSelection(source:'table')——本质是要素定位，保留来源身份）──
+    _k(
+        "table_selection_changed",
+        ("layer_id", "feature_id", "selected_ids", "dataset_ref", "action", "id_field"),
+        sensitivity=SENSITIVITY_LIMITED,
+    ),
+    # ── mutation 链接型：时间窗 settle（ADR-0285 D2；钩子 temporal
+    #    controller settle→commitUserTemporal POST set_temporal_view——
+    #    #1877 后时间轴 UI 真实存在，收词有据；高频 scrub 只报 settle 终态）──
+    _k(
+        "temporal_window_settled",
+        ("mode", "field", "extent", "current", "window", "pinned"),
+        state_changing=True,
+        authority=AUTHORITY_MAPSPEC,
+        coalesce=COALESCE_REPLACE_PENDING,
+        sensitivity=SENSITIVITY_LIMITED,
+    ),
 ])
 
 ALLOWED_KINDS = frozenset(INTERACTION_KINDS)

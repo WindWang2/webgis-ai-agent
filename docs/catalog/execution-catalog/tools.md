@@ -389,6 +389,7 @@
 | webgis_rollback | 1.0#cv1 | stable | state_mutation | medium | medium | medium | workspace_snapshot |
 | webgis_runtime_validate | 1.0#cv1 | stable | artifact_creation | slow | medium | medium | map_export_publishing |
 | webgis_save_composition_template | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
+| webgis_selection_scope | 1.0#cv1 | stable | pure | fast | light | small | workspace_state_inspection |
 | webgis_source_profile | 1.0#cv1 | stable | state_mutation | medium | medium | medium | point_profile |
 | webgis_state_get | 1.0#cv1 | stable | pure | fast | light | small | workspace_state_inspection |
 | webgis_validate | 1.0#cv1 | stable | pure | fast | light | small | map_export_publishing |

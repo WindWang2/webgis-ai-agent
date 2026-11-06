@@ -69,7 +69,12 @@ export type InteractionEventKind =
   | 'layer_style_changed'
   | 'layer_order_changed'
   | 'layer_removed'
-  | 'comparison_mode_changed';
+  | 'comparison_mode_changed'
+  // ADR-0285 D2：三连收（钩子真实存在——chart onClick / table 行点选 /
+  // temporal settle→commit；详见 bus.ts emitter 注释）。
+  | 'chart_selection_changed'
+  | 'table_selection_changed'
+  | 'temporal_window_settled';
 
 /** kind → 合并策略（= 后端 INTERACTION_KINDS[].coalesce 的镜像）。 */
 export const KIND_COALESCE_POLICY: Record<InteractionEventKind, CoalescePolicy> = {
@@ -86,6 +91,9 @@ export const KIND_COALESCE_POLICY: Record<InteractionEventKind, CoalescePolicy> 
   layer_order_changed: 'none',
   layer_removed: 'none',
   comparison_mode_changed: 'none',
+  chart_selection_changed: 'none',
+  table_selection_changed: 'none',
+  temporal_window_settled: 'replace_pending',
 };
 
 /** 单批事件上限（= 后端 MAX_EVENTS_PER_BATCH）。 */
