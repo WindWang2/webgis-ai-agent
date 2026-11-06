@@ -8,8 +8,6 @@ asset → ``SourceUnreachableError``.
 """
 from __future__ import annotations
 
-from app.lib.geo_raster.env import open_raster
-
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -81,6 +79,10 @@ class COGAdapter(GeospatialDataSourceAdapter):
                 details={"hint": "declare a real local COG or reachable URL"},
             )
         try:
+            # Registry lint loads adapter classes without the raster runtime.
+            # Keep the guarded opener, but import it only when reading an asset.
+            from app.lib.geo_raster.env import open_raster
+
             with open_raster(path) as src:
                 return {
                     "bounds": list(src.bounds),
@@ -146,6 +148,8 @@ class COGAdapter(GeospatialDataSourceAdapter):
 
         path = self._raster()
         try:
+            from app.lib.geo_raster.env import open_raster
+
             with open_raster(path) as src:
                 window_shape = (min(16, src.height), min(16, src.width))
                 data = src.read(1, out_shape=window_shape)

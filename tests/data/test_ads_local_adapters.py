@@ -210,3 +210,64 @@ def test_cog_describe_and_query_unsupported(cog_path):
 
     with pytest.raises(QueryUnsupportedError):
         adapter.query("dem", QuerySpec(limit=1))
+
+
+@pytest.mark.parametrize("operation", ["describe", "preview"])
+def test_cog_reads_use_guarded_opener(cog_path, monkeypatch, operation):
+    from contextlib import contextmanager
+    from app.lib.geo_raster import env
+
+    original = env.open_raster
+    opened = []
+
+    @contextmanager
+    def guarded_open(path, *args, **kwargs):
+        opened.append(path)
+        with original(path, *args, **kwargs) as dataset:
+            yield dataset
+
+    monkeypatch.setattr(env, "open_raster", guarded_open)
+    adapter = COGAdapter(_profile("cog", options={"base_dir": str(cog_path)}))
+    result = getattr(adapter, operation)("dem")
+    assert opened == [str(cog_path)]
+    if operation == "describe":
+        assert result.data_type == "raster"
+        assert result.bbox == pytest.approx([100.0, 49.68, 100.32, 50.0])
+    else:
+        assert result["shape"] == [16, 16]
+        assert result["dtype"] == "float32"
+        assert result["crs"] == "EPSG:4326"
+        assert result["is_demo"] is False
+
+
+@pytest.mark.parametrize("operation", ["describe", "preview"])
+def test_cog_read_errors_remain_typed(tmp_path, operation):
+    from app.services.data_fabric.errors import SourceBadResponseError
+
+    path = tmp_path / "invalid.tif"
+    path.write_bytes(b"not a raster")
+    adapter = COGAdapter(_profile("cog", options={"base_dir": str(path)}))
+    with pytest.raises(SourceBadResponseError, match="rasterio"):
+        getattr(adapter, operation)("invalid")
+
+
+@pytest.mark.parametrize("operation", ["describe", "preview"])
+def test_cog_private_remote_address_rejected_before_open(monkeypatch, operation):
+    from app.lib.geo_raster import env
+    from app.services.data_fabric.errors import SecurityBlockedError
+
+    def unexpected_open(*args, **kwargs):
+        pytest.fail("Private remote target reached the raster opener")
+
+    monkeypatch.setattr(env, "open_raster", unexpected_open)
+    adapter = COGAdapter(_profile("cog", endpoint="http://127.0.0.1/private.tif"))
+    with pytest.raises(SecurityBlockedError):
+        getattr(adapter, operation)("private")
+
+
+def test_cog_missing_asset_is_typed(tmp_path):
+    from app.services.data_fabric.errors import SourceUnreachableError
+
+    adapter = COGAdapter(_profile("cog", options={"base_dir": str(tmp_path / "missing.tif")}))
+    with pytest.raises(SourceUnreachableError, match="COG asset missing"):
+        adapter.describe("missing")
