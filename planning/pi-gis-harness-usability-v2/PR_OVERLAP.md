@@ -11,3 +11,5 @@ Checked 2026-11-06 against `origin/master` `99f6d1e89`.
 | Publication solver | none open | existing `solve_layout_v5` called only for an explicit solver profile |
 
 No open issue overlaps this change. Master stays read-only.
+
+After the branch was cut, master gained #1991 (browser smoke pin) and #1992 (spatial selection helper extract). Neither touches the scope guard or the publication solver. They were merged into this branch with no conflicts.

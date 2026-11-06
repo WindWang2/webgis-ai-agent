@@ -1,8 +1,9 @@
 # Final report — Pi × GIS Harness usability V2
 
 Branch: `zcode/pi-gis-harness-usability-v2`
-Base: `99f6d1e89` (merge of #1989)
-PR: not merged.
+Base at start: `99f6d1e89` (merge of #1989)
+Later master `95737eadf` (#1991, #1992) merged cleanly. Those commits do not touch this change.
+PR: https://github.com/WindWang2/webgis-ai-agent/pull/1993 — not merged.
 
 ## What changed
 
