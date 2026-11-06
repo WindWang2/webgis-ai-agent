@@ -469,7 +469,11 @@ async def test_commit_context_idempotent_and_gated(clean_session):
     assert await commit_runtime_context(clean_session) is None
 
 
-def test_committed_reachable_via_real_map_product_block():
+@pytest.mark.parametrize("render_status, complete", [
+    ("verified", True), ("not_applicable", True), ("unknown", False),
+    ("stale", False), ("failed", False),
+])
+def test_committed_reachable_via_real_map_product_block(render_status, complete):
     """F1 回归锁：真实 map_product_block 输出（生产写者形状）→ task_complete
     持久化 → COMMITTED 判定可达（此前生产块无 task_complete 键，全链死代码）。"""
     from app.services.gis_harness.completion.contracts import (
@@ -483,18 +487,19 @@ def test_committed_reachable_via_real_map_product_block():
     result.status = "complete"
     result.product_verdict = VERDICT_READY
     result.final_map_status = FINAL_MAP_VERIFIED
+    result.render_status = render_status
     result.summary = "map product validated"
     ch = _chapter()
     block = map_product_block(
         result, checked_revision=3,
         chapter=ch, observation={"layers": {}})
-    assert block.get("task_complete") is True
+    assert block.get("task_complete") is complete
     ch["map_product"] = block
     ch[RUNTIME_STATE_KEY] = {
         "schema": "runtime_state.v1",
         "context_commit": {"product_checked_revision": 3},
     }
-    assert derive_runtime_phase(ch) == RuntimePhase.COMMITTED.value
+    assert (derive_runtime_phase(ch) == RuntimePhase.COMMITTED.value) is complete
 
 
 def test_abort_gate_excludes_replan_budget():

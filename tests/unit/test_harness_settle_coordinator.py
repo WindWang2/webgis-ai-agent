@@ -300,12 +300,16 @@ async def test_pending_completion_discloses_nothing(_isolated_effects):
 
 
 async def test_gate_skip_falls_back_to_stored_product(_isolated_effects):
-    """幂等门跳过（completion None）→ 披露已存储完成态（MapSpec revision
-    前进后重验属 pipeline 域；coordinator 契约 = 跳过时兜底披露）。"""
+    """幂等门跳过（completion None）→ 披露旧证据，不授予本轮完成。
+    MapSpec revision 前进后重验属 pipeline 域。"""
     sid, turn = _sid(), "t-idem-1"
     await _begin(sid, turn)
     out = await settle_turn(HarnessSettleInput(session_id=sid, turn_id=turn, cause="success"))
-    assert out.map_product == {"task_complete": True, "source": "stored"}
+    assert out.map_product == {
+        "source": "stored", "reused_prior_completion": True,
+        "cartography_this_turn": "not_evaluated",
+    }
+    assert "payload" not in _isolated_effects.calls
 
 
 # ── 幂等 / 并发 / stale ──────────────────────────────────────────────────

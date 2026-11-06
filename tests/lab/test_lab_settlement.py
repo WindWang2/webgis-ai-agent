@@ -63,6 +63,63 @@ class TestFaultMatrixSettlement:
 
 
 class TestNoFakeSuccessDefenses:
+    @pytest.mark.parametrize("mutation", [
+        "legacy_passthrough", "missing_reuse_marker", "current_status",
+        "current_task_complete", "current_goal", "wrong_turn_status",
+        "lost_prior_evidence", "mutated_stored_product", "fake_chain_success",
+        "missing_chain", "missing_persist",
+    ])
+    def test_idempotent_disclosure_regressions_are_red(self, j7_spec, mutation):
+        """真实结算后注入回归，证明复用披露/证据链防线不会自行报绿。"""
+        async def _mutated_run():
+            import app.services.chat.pi_post_dispatch as dispatch
+            from app.lib.harness.lab.settlement import _check_settle_idempotent
+
+            sb = SettlementSandbox()
+            with sb:
+                saved = dispatch.settle_turn_projections
+                calls = 0
+
+                async def _mutate(*args, **kwargs):
+                    nonlocal calls
+                    payload = await saved(*args, **kwargs)
+                    calls += 1
+                    if calls == 1:
+                        return payload
+                    if mutation == "legacy_passthrough":
+                        return dict(sb.stored_product)
+                    if mutation == "missing_reuse_marker":
+                        payload.pop("reused_prior_completion")
+                    elif mutation == "current_status":
+                        payload["status"] = "complete"
+                    elif mutation == "current_task_complete":
+                        payload["task_complete"] = True
+                    elif mutation == "current_goal":
+                        payload["goal_satisfaction"] = {"verdict": "satisfied"}
+                    elif mutation == "wrong_turn_status":
+                        payload["cartography_this_turn"] = "verified"
+                    elif mutation == "lost_prior_evidence":
+                        payload.pop("render_status")
+                    elif mutation == "mutated_stored_product":
+                        sb.stored_product["goal_satisfaction"]["verdict"] = "unknown"
+                    elif mutation == "fake_chain_success":
+                        sb.chain.emits[-1]["task_complete"] = True
+                    elif mutation == "missing_chain":
+                        sb.chain.emits.pop()
+                    elif mutation == "missing_persist":
+                        sb.chain.persists.pop()
+                    return payload
+
+                dispatch.settle_turn_projections = _mutate
+                try:
+                    return await _check_settle_idempotent(j7_spec, sb)
+                finally:
+                    dispatch.settle_turn_projections = saved
+
+        result = _run(_mutated_run())
+        assert result.status == "fail", mutation
+        assert result.detail
+
     def test_fabricated_completion_without_finalize_is_red(self, j7_spec):
         """真变异：finalize 缺席而管线泄漏出已存完成态 → 检查必须红
         （防 green-by-construction：本测试先证明该检查能失败）。"""
