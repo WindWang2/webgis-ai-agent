@@ -50,6 +50,10 @@ def test_postgis_adapter_interface():
     assert isinstance(adapter.capabilities(), list)
     desc = adapter.describe("public.cities")
     assert desc.id == "public.cities"
+    # More checkouts than maxconn=10: real psycopg2 connections reject custom
+    # attributes, and every checkout must be returned rather than leaking slots.
+    for _ in range(12):
+        assert adapter.probe() is True
 
 
 def test_ogc_api_adapter_interface():
@@ -166,6 +170,8 @@ def test_postgis_release_closes_conn_when_putconn_fails(caplog):
     from app.services.data_fabric.adapters import postgis_adapter as pga_mod
 
     class _FakeConn:
+        __slots__ = ("closed", "close_calls")
+
         def __init__(self):
             self.closed = False
             self.close_calls = 0
@@ -205,7 +211,7 @@ def test_postgis_release_closes_conn_when_putconn_fails(caplog):
     try:
         acquired = adapter._get_connection()
         assert acquired is fake_conn
-        assert getattr(acquired, "_is_pooled", False) is True  # set by _get_connection
+        assert not hasattr(acquired, "_is_pooled")
 
         import logging
         with caplog.at_level(logging.WARNING, logger=pga_mod.logger.name):
@@ -229,6 +235,8 @@ def test_postgis_release_puts_back_on_success():
     from app.services.data_fabric.adapters import postgis_adapter as pga_mod
 
     class _FakeConn:
+        __slots__ = ("close_calls",)
+
         def __init__(self):
             self.close_calls = 0
 
