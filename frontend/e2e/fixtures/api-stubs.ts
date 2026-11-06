@@ -14,6 +14,7 @@
  *    (cancel click → DELETE handler flips the job), never on a clock.
  */
 import type { Page } from 'playwright/test';
+import { TILE_PROVIDERS } from '../../lib/providers';
 import { analysisTurn, completingTurn, failingTurn, hangingTurn } from './sse';
 import { EMPTY_MVT_HEADERS, SAMPLE_GEOJSON, TINY_PNG } from './files';
 
@@ -252,8 +253,32 @@ export function raw(status: number, contentType: string, body: string | Buffer, 
  * routes only affect requests issued after installation.
  */
 export async function installJourneyStubs(page: Page, world: JourneyWorld): Promise<void> {
-  // NOTE on ordering: specific patterns first — Playwright routes are
-  // last-registered-first-matched, so register the generic catch-all LAST.
+  // Playwright uses last-registered-first-matched precedence. Keep the broad
+  // external fallback first so typed fixtures and product APIs win over it.
+  await page.route(/^https?:\/\/(?!localhost|127\.0\.0\.1)/, (route) =>
+    route.fulfill({ status: 200, contentType: 'text/plain', body: '' }));
+  await page.route(/\.(png|jpe?g|webp)(\?|$)/i, (route) =>
+    route.fulfill({ status: 200, contentType: 'image/png', body: TINY_PNG }));
+  await page.route(/\.pbf(\?|$)/i, (route) => route.fulfill({ status: 204, body: '' }));
+
+  // A visible canvas is not a loaded map. Style URLs (including extensionless
+  // OpenFreeMap URLs) need valid style JSON, otherwise onLoad never fires and
+  // neither the MVT runtime nor scene3d assets can mount. Only the basemap is
+  // synthetic: application layers, WebGL rendering and GLB loading stay real.
+  for (const provider of TILE_PROVIDERS.filter((p) => p.type === 'vector')) {
+    await page.route(provider.url, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        version: 8,
+        sources: {},
+        layers: [{
+          id: 'journey-background', type: 'background',
+          paint: { 'background-color': '#e8eef4' },
+        }],
+      }),
+    }));
+  }
   const api = (
     re: RegExp,
     handler: (url: URL, method: string, body: string, origin?: string) => unknown | Promise<unknown>,
@@ -563,13 +588,6 @@ export async function installJourneyStubs(page: Page, world: JourneyWorld): Prom
     world.exports.push(record);
     return record;
   });
-
-  // ── generic basemap tile / CDN blanking (after all API routes) ───────────
-  await page.route(/\.(png|jpe?g|webp)(\?|$)/i, (route) =>
-    route.fulfill({ status: 200, contentType: 'image/png', body: TINY_PNG }));
-  await page.route(/\.pbf(\?|$)/i, (route) => route.fulfill({ status: 204, body: '' }));
-  await page.route(/^https?:\/\/(?!localhost|127\.0\.0\.1)/, (route) =>
-    route.fulfill({ status: 200, contentType: 'text/plain', body: '' }));
 }
 
 export { completingTurn, failingTurn, hangingTurn };

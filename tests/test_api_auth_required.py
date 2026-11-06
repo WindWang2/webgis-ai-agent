@@ -11,7 +11,6 @@ mutates data. Intentionally public mutating endpoints live in
 from __future__ import annotations
 
 import ast
-import hashlib
 from pathlib import Path
 
 import pytest
@@ -63,9 +62,23 @@ BODY_OWNERSHIP_CHECKS = frozenset(
 )
 
 # The shared export gate accepts a live user or verifies anonymous ownership.
-# Pin its actual AST body: merely calling a similarly named helper grants no
-# exemption. Existing route-level negative tests exercise the runtime guard.
-_EXPORT_GATE_AST_SHA256 = "efd923925deee9ea7f0d9996c486d7a07f852be1380509465b03eb8e10263791"
+# Pin its complete reviewed AST: merely calling a similarly named helper grants
+# no exemption. Parse both sides with the running interpreter because ast.dump
+# omits empty fields on Python 3.13 but includes them on 3.12. A hash recorded on
+# 3.13 rejected the identical, safe helper on our production/CI Python 3.12.
+# Keep this reference independent of the route source and review security changes
+# explicitly. tests/test_pdf_export_auth.py exercises the actual ownership gate.
+_EXPORT_GATE_SOURCE = '''\
+async def _export_principal(user: dict, session_id: Optional[str], token: Optional[str], db: AsyncSession) -> str:
+    uid = user.get("user_id") if isinstance(user, dict) else None
+    if uid and uid != "anonymous":
+        return str(uid)
+    if not isinstance(session_id, str) or not session_id:
+        raise HTTPException(status_code=401, detail="An owned session is required for anonymous export")
+    from app.services.auth_history_bridge import verify_session_owner
+    await verify_session_owner(db, session_id, user_id=None, owner_token=token)
+    return f"session:{session_id}"
+'''
 
 
 def _has_verified_export_gate(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -76,7 +89,10 @@ def _has_verified_export_gate(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> boo
     if not source:
         return False
     helper = _get_function(source, "_export_principal")
-    return helper is not None and hashlib.sha256(ast.dump(helper, include_attributes=False).encode()).hexdigest() == _EXPORT_GATE_AST_SHA256
+    expected = _get_function(_EXPORT_GATE_SOURCE, "_export_principal")
+    return helper is not None and ast.dump(
+        helper, include_attributes=False
+    ) == ast.dump(expected, include_attributes=False)
 
 MUTATING_HTTP = frozenset({"post", "put", "delete", "patch"})
 
@@ -418,8 +434,51 @@ def test_export_helper_name_alone_cannot_authorize_a_route():
     assert not _has_auth(source, "export")
 
 
-def test_export_helper_security_body_is_pinned():
+@pytest.mark.parametrize("route", ["export_map_as_pdf", "export_map_as_vector_pdf"])
+def test_export_helper_security_body_is_pinned(route):
     source = (ROUTES_DIR / "map.py").read_text()
-    assert _has_auth(source, "export_map_as_pdf")
-    tampered = source.replace("await verify_session_owner(db, session_id, user_id=None, owner_token=token)", "await ignored_probe(db)")
-    assert not _has_auth(tampered, "export_map_as_pdf")
+    assert _has_auth(source, route)
+
+
+@pytest.mark.parametrize("route", ["export_map_as_pdf", "export_map_as_vector_pdf"])
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ('if uid and uid != "anonymous":', 'if uid:'),
+        ('if uid and uid != "anonymous":', 'if True:'),
+        ('if not isinstance(session_id, str) or not session_id:', 'if False:'),
+        (
+            'await verify_session_owner(db, session_id, user_id=None, owner_token=token)',
+            'await ignored_probe(db)',
+        ),
+        (
+            'await verify_session_owner(db, session_id, user_id=None, owner_token=token)',
+            'verify_session_owner(db, session_id, user_id=None, owner_token=token)',
+        ),
+        ('user_id=None, owner_token=token)', 'user_id="other-user", owner_token=token)'),
+        ('user_id=None, owner_token=token)', 'user_id=None, owner_token=None)'),
+        (
+            'from app.services.auth_history_bridge import verify_session_owner',
+            'return "unchecked"\n    from app.services.auth_history_bridge import verify_session_owner',
+        ),
+    ],
+    ids=[
+        "anonymous-is-not-a-user", "unconditional-user", "missing-session",
+        "missing-check", "unawaited-check", "wrong-user", "missing-token", "early-return",
+    ],
+)
+def test_export_helper_security_mutations_fail_closed(route, before, after):
+    source = (ROUTES_DIR / "map.py").read_text()
+    assert before in source, "mutation must change the production helper"
+    tampered = source.replace(before, after, 1)
+    assert not _has_auth(tampered, route)
+
+
+def test_export_helper_pin_ignores_formatting_only():
+    source = (ROUTES_DIR / "map.py").read_text()
+    formatted = source.replace(
+        '    uid = user.get("user_id")',
+        '    # Formatting is not an auth change.\n    uid = user.get( "user_id" )', 1,
+    )
+    assert formatted != source
+    assert _has_auth(formatted, "export_map_as_pdf")

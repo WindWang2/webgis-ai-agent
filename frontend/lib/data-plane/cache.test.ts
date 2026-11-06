@@ -38,6 +38,37 @@ describe('estimateFeatureCollectionBytes', () => {
     expect(estimateFeatureCollectionBytes({ type: 'FeatureCollection' } as never)).toBe(0);
   });
 
+  it('counts cross-feature shared objects once per estimate without mutating the input', () => {
+    const shared = Object.freeze({ payload: 'ab' });
+    const first = Object.freeze({ properties: shared });
+    const second = Object.freeze({ properties: shared });
+    const collection = { type: 'FeatureCollection' as const, features: [first, second] };
+    // 512 base + 24 array + 2 × (32 feature + 20 property key)
+    // + one shared object (32 object + 14 key + 4 string).
+    expect(estimateFeatureCollectionBytes(collection)).toBe(690);
+    expect(estimateFeatureCollectionBytes(collection)).toBe(690);
+    expect(estimateFeatureCollectionBytes({ ...collection, features: [first, first] })).toBe(638);
+    expect(Object.keys(shared)).toEqual(['payload']);
+  });
+
+  it('does not mark depth-truncated objects seen before a later shallow occurrence', () => {
+    const shared = { n: 1 };
+    const nest = (links: number): Record<string, unknown> => {
+      let value: Record<string, unknown> = shared;
+      for (let i = 0; i < links; i += 1) value = { next: value };
+      return value;
+    };
+    for (const [links, expectedBefore, extraBytes] of [[30, 1830, 52], [31, 1828, 94]]) {
+      // features depth 0, feature 1, properties 2: shared is at 32 or 33.
+      const features = [{ properties: nest(links) }];
+      const before = estimateFeatureCollectionBytes({ type: 'FeatureCollection', features });
+      expect(before).toBe(expectedBefore);
+      features.push({ properties: shared });
+      expect(estimateFeatureCollectionBytes({ type: 'FeatureCollection', features }))
+        .toBe(before + extraBytes);
+    }
+  });
+
   it('recounts in-place property growth without counting inherited or cyclic payload twice', () => {
     const collection = fc(1);
     const properties: Record<string, unknown> = collection.features[0].properties;
