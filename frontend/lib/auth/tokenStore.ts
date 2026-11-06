@@ -9,17 +9,17 @@
  * the Data Sources tab that drives them — unusable for every real user.
  * This store plus the transport wiring below closes that gap.
  *
- * Storage: accessToken and user profile in localStorage under one JSON key.
- * FRONT-03 hardening: refreshToken is kept in memory only (not persisted in
- * plaintext localStorage) to prevent long-lived credential harvesting via XSS.
- * The access token is short-lived (30 min) and transport attaches it explicitly.
+ * Both tokens and the user profile are memory-only. Reloading requires sign-in
+ * until the backend supports HttpOnly refresh cookies. localStorage holds only
+ * a non-secret account id for cross-tab logout/identity-change notifications;
+ * legacy persisted credentials are purged, never restored.
  */
 
 const STORAGE_KEY = 'webgis_auth';
 
 // 测试阶段免登录（与后端 AUTH_DISABLED 配对）：开启时未登录也视为
 // test-admin(admin)，登录态门控的 UI（#469 导出、#528 项目 tab 等）全部
-// 放行。真实登录（localStorage 有凭证）始终优先于合成身份。
+// 放行。真实登录（内存有凭证）始终优先于合成身份。
 // audit ISSUE-023（#1348）：NEXT_PUBLIC_* 变量在构建期被内联进客户端
 // bundle——一行误配的 env 就会把合成管理员身份带进生产。NODE_ENV 守卫
 // 让生产构建彻底不编译这个分支（值内联为字面 false，死代码消除）。
@@ -52,11 +52,6 @@ interface StoredAuth extends AuthTokens {
 }
 
 let cached: StoredAuth | null = null;
-let inMemoryRefreshToken: string | null = null;
-// F-14: which user the in-memory refresh token belongs to. A cross-tab
-// storage update that switches identity must not be paired with this tab's
-// refresh token (mixed-identity refresh would flip the other tab back).
-let inMemoryRefreshOwner: string | null = null;
 let loaded = false;
 
 /**
@@ -96,17 +91,15 @@ if (isBrowser()) {
       // tab's in-memory refresh token belongs to the old identity; drop it.
       let nextUserId: string | null = null;
       try {
-        const parsed = event.newValue ? (JSON.parse(event.newValue) as { user?: AuthUser | null }) : null;
-        nextUserId = parsed?.user?.id ?? null;
+        const parsed = event.newValue ? JSON.parse(event.newValue) as { userId?: string } : null;
+        nextUserId = parsed?.userId ?? null;
       } catch {
         nextUserId = null;
       }
-      if (!event.newValue || nextUserId !== inMemoryRefreshOwner) {
-        inMemoryRefreshToken = null;
-        inMemoryRefreshOwner = null;
+      if (!event.newValue || nextUserId !== cached?.user?.id) {
+        cached = null;
       }
-      loaded = false; // force a re-read on next access
-      cached = null;
+      loaded = false;
       listeners.forEach((fn) => {
         try {
           fn();
@@ -119,7 +112,7 @@ if (isBrowser()) {
 }
 
 function isBrowser(): boolean {
-  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+  return typeof window !== 'undefined';
 }
 
 function load(): StoredAuth | null {
@@ -128,64 +121,36 @@ function load(): StoredAuth | null {
   loaded = true;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as {
-      accessToken?: string;
-      refreshToken?: unknown;
-      user?: AuthUser | null;
-    };
-    if (parsed && 'refreshToken' in parsed) {
-      // FRONT-03: purge legacy plaintext refreshToken from localStorage
-      delete parsed.refreshToken;
-      try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
-      } catch {
-        /* ignore */
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if ('accessToken' in parsed || 'refreshToken' in parsed || 'user' in parsed) {
+        window.localStorage.removeItem(STORAGE_KEY);
       }
-    }
-    if (typeof parsed?.accessToken === 'string' && parsed.accessToken) {
-      // F-06: after a reload the refresh token (memory-only, FRONT-03) is
-      // gone. An expired persisted access token can then never recover —
-      // drop it instead of showing a "signed in" zombie session.
-      if (!inMemoryRefreshToken && isAccessTokenExpired(parsed.accessToken)) {
-        try {
-          window.localStorage.removeItem(STORAGE_KEY);
-        } catch {
-          /* ignore */
-        }
-        return null;
-      }
-      cached = {
-        accessToken: parsed.accessToken,
-        refreshToken: inMemoryRefreshToken,
-        user: parsed.user ?? null,
-      };
     }
   } catch {
-    // Corrupt entry — treat as signed out.
-    try {
-      window.localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      /* storage unavailable (private mode quota) — ignore */
-    }
+    try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* storage unavailable */ }
   }
   return cached;
 }
 
 function persist(next: StoredAuth | null): void {
+  if (isBrowser() && (!next || cached?.user?.id !== next.user?.id)) {
+    try {
+      window.localStorage.removeItem('geoagent-cross-session-index-v1');
+      for (const prefix of ['geoagent-lakehouse-history', 'geoagent-lakehouse-favorites']) {
+        window.localStorage.removeItem(prefix);
+        window.sessionStorage.removeItem(`${prefix}:${cached?.user?.id ?? 'anonymous'}`);
+      }
+      window.localStorage.removeItem('wb5:session-anchor');
+      window.sessionStorage.removeItem(`geoagent-cross-session-index-v1:${cached?.user?.id ?? 'anonymous'}`);
+    } catch { /* storage unavailable */ }
+  }
   cached = next;
-  inMemoryRefreshToken = next?.refreshToken ?? null;
-  inMemoryRefreshOwner = inMemoryRefreshToken ? (next?.user?.id ?? null) : null;
   loaded = true;
   if (isBrowser()) {
     try {
       if (next) {
-        // FRONT-03: Do not persist refreshToken in localStorage to prevent XSS harvesting
-        const safeStorage = {
-          accessToken: next.accessToken,
-          user: next.user ?? null,
-        };
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safeStorage));
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: next.user?.id ?? null }));
       } else {
         window.localStorage.removeItem(STORAGE_KEY);
       }
@@ -259,6 +224,7 @@ export function refreshAuthToken(): Promise<boolean> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: startedWith }),
+        signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         // 401/403 = the token is definitively revoked/expired — drop the

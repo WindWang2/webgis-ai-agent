@@ -347,7 +347,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, value_field)
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["kriging_variance"] = round(rec["kriging_variance"], 6)
             feat["properties"]["kriging_stddev"] = round(rec["kriging_stddev"], 6)
 
@@ -776,7 +776,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         geojson_result = h3_to_geojson(pred_records, value_field)
-        for feat, rec in zip(geojson_result["features"], driver["records"]):
+        for feat, rec in zip(geojson_result["features"], driver["records"], strict=True):
             if rec.get("extrapolated"):
                 feat["properties"]["extrapolated"] = True
         geojson_result["summary"] = (
@@ -916,7 +916,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["rk_variance"] = round(rec["rk_variance"], 6)
             feat["properties"]["rk_stddev"] = round(rec["rk_stddev"], 6)
         uncertainty_records = [
@@ -1408,7 +1408,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             params["value_field"],
         )
         thr_sorted = meta["thresholds"]
-        for feat, rec in zip(pred_fc["features"], driver["records"]):
+        for feat, rec in zip(pred_fc["features"], driver["records"], strict=True):
             props = feat["properties"]
             props["p50_threshold"] = rec["p50_threshold"]
             for j, p in (rec.get("probabilities") or {}).items():
@@ -1551,7 +1551,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["ck_variance"] = round(rec["ck_variance"], 6)
             feat["properties"]["ck_stddev"] = round(rec["ck_stddev"], 6)
         uncertainty_records = [
@@ -1800,7 +1800,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["block_variance"] = round(rec["block_variance"], 6)
             feat["properties"]["block_stddev"] = round(rec["block_stddev"], 6)
         uncertainty_records = [
@@ -1920,7 +1920,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["sgs_std"] = round(rec["sgs_std"], 6)
             feat["properties"]["p10"] = round(rec["p10"], 6)
             feat["properties"]["p90"] = round(rec["p90"], 6)
@@ -2052,7 +2052,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["primary_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["ck_variance"] = round(rec["ck_variance"], 6)
             feat["properties"]["ck_stddev"] = round(rec["ck_stddev"], 6)
         prediction_fc.update({
@@ -2182,7 +2182,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["st_variance"] = round(rec["st_variance"], 6)
             feat["properties"]["st_stddev"] = round(rec["st_stddev"], 6)
         prediction_fc.update({

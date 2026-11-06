@@ -5,6 +5,8 @@
 - 线: adaptive-cartography/v11-master（W4）
 - 关联: ADR-0160（label_typography 单点）、ADR-0126/0154（标注避让分档/label_plan）、audit F31（setData 跳过）
 
+2026-11-06 状态核对：下文保留 W4 的设计与当时验收记录。网格碰撞求解器现位于 `frontend/lib/experimental/label-grid.ts`，未接入生产交互渲染；生产侧仍由 MapLibre 负责避让，不能将原型单测视为生产接线证据。
+
 ## 1. 背景与靶心
 
 缺口 G4/G5：标注双实现（W0 已收敛原语）与**交互侧无网格碰撞**（仅导出孪生
@@ -25,7 +27,7 @@ W4 把碰撞能力上提到交互侧，并补齐专业排版与字段兜底。
 
 ## 3. 决策二：交互侧网格碰撞（W4.2，验收硬指标）
 
-- `frontend/lib/mapspec-runtime/label-grid.ts`：`solveGridCollision` ——
+- `frontend/lib/experimental/label-grid.ts`：`solveGridCollision` ——
   盒估算（与 `label_typography.estimate_label_box` 逐常量一致）、8 方位退让
   （DECLUTTER 同表）、AABB 格网索引（LabelGrid 同构）、priority+id 稳定全序。
 - **MapLibre 内置避让保留为兜底**：网格求解先行抽稀/退让/抑制，残余重叠由

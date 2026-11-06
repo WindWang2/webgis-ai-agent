@@ -227,6 +227,9 @@ async def app_and_db(db_factory, monkeypatch):
                 raise
 
     monkeypatch.setattr(_utils, "async_db_session", override_async_db_session)
+    monkeypatch.setattr("app.core.database.async_db_session", override_async_db_session)
+    from app.core.auth import invalidate_live_user_state
+    invalidate_live_user_state("user-1")
     monkeypatch.setattr("app.api.routes.chat.async_db_session", override_async_db_session)
 
     from fastapi import FastAPI
@@ -235,6 +238,7 @@ async def app_and_db(db_factory, monkeypatch):
     app.include_router(chat_routes.router, prefix="/api/v1")
     app.dependency_overrides[get_async_db] = override_get_async_db
     yield app, session_factory
+    invalidate_live_user_state("user-1")
 
 
 @pytest.mark.asyncio

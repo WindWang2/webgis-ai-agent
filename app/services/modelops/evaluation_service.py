@@ -138,9 +138,10 @@ class EvaluationService:
             assign = {(br_, bc_): fold for br_, bc_, fold in split.assignment}
             br_idx = (np.arange(refs.shape[0]) // split.block_size_px)[:, None]
             bc_idx = (np.arange(refs.shape[1]) // split.block_size_px)[None, :]
-            fold_grid = np.vectorize(
-                lambda a, b: assign.get((int(a), int(b)), -1), otypes=[np.int64]
-            )(br_idx, bc_idx)
+            block_folds = np.full((int(br_idx.max()) + 1, int(bc_idx.max()) + 1), -1, dtype=np.int64)
+            for (block_row, block_col), fold in assign.items():
+                block_folds[block_row, block_col] = fold
+            fold_grid = block_folds[br_idx, bc_idx]
             folds: Dict[str, Any] = {}
             for fold in range(request.num_folds):
                 mask = (fold_grid == fold) & (refs != request.ignore_index)
@@ -195,7 +196,7 @@ class EvaluationService:
         # 评估 manifest artifact（modelops_artifact）。
         import json
 
-        output_dir = Path(request.output_dir or Path("data/modelops/evaluations") / run_id)
+        output_dir = Path(request.output_dir or Path("data/modelops/evaluations") / "_".join(f"{key}-{value}" for key, value in sorted(request.owner_scope.items())) / run_id).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / "evaluation_report.json"
         path.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -260,7 +261,7 @@ class EvaluationService:
         report["duration_s"] = round(time.time() - started, 6)
         import json
 
-        output_dir = Path(request.output_dir or Path("data/modelops/evaluations") / run_id)
+        output_dir = Path(request.output_dir or Path("data/modelops/evaluations") / "_".join(f"{key}-{value}" for key, value in sorted(request.owner_scope.items())) / run_id).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / "drift_report.json"
         path.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -278,6 +279,9 @@ class EvaluationService:
     def _read_single(path: Path) -> np.ndarray:
         """读单波段栅格（regions/confidence；返回 2D）。"""
         with RasterReader.open(str(path)) as reader:
+            meta = reader.metadata()
+            if meta.width * meta.height * meta.count > 16_000_000:
+                raise ModelOpsError("evaluation raster exceeds 16M-cell materialization budget; use tiled evaluation")
             data = reader.read_full()
         if data.ndim == 3:
             data = data[0]
@@ -288,9 +292,15 @@ class EvaluationService:
         """读预测/参考栅格（有界：geoid 校验 + 预算护栏由 RasterReader 兜底）。"""
         # R2-M5：不绕过 reader 预算（budget_ok=True 是审计眼里的后门）。
         with RasterReader.open(str(pred_path)) as pr:
+            meta = pr.metadata()
+            if meta.width * meta.height * meta.count > 8_000_000:
+                raise ModelOpsError("paired evaluation exceeds 16M-cell materialization budget; use tiled evaluation")
             pred = pr.read_full()
             pred_meta = pr.metadata()
         with RasterReader.open(str(ref_path)) as rr:
+            meta = rr.metadata()
+            if meta.width * meta.height * meta.count > 8_000_000:
+                raise ModelOpsError("paired evaluation exceeds 16M-cell materialization budget; use tiled evaluation")
             refs = rr.read_full()
             ref_meta = rr.metadata()
         if pred_meta.width != ref_meta.width or pred_meta.height != ref_meta.height:

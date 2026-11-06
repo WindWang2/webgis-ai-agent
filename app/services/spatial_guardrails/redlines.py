@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import logging
 from dataclasses import dataclass, field
 
 from shapely.geometry import Polygon, box
@@ -51,17 +52,26 @@ class RedlineRegistry:
     def from_json(cls, path: str) -> "RedlineRegistry":
         """加载运维注入的围栏清单：
         {"zones": [{"name", "ring": [[lng,lat]...], "policy"}]}"""
-        with open(path, encoding="utf-8") as fh:
-            payload = json.load(fh)
-        zones = [
-            RedlineZone(
-                name=str(z.get("name", "unnamed")),
-                ring=[(float(p[0]), float(p[1])) for p in z.get("ring", [])],
-                policy=str(z.get("policy", "no_fetch")),
-            )
-            for z in payload.get("zones", [])
-        ]
-        return cls(zones=[z for z in zones if len(z.ring) >= 3])
+        try:
+            if path.lstrip().startswith("{"):
+                payload = json.loads(path)
+            else:
+                with open(path, encoding="utf-8") as fh:
+                    payload = json.load(fh)
+            zones = [
+                RedlineZone(
+                    name=str(z.get("name", "unnamed")),
+                    ring=[(float(p[0]), float(p[1])) for p in z.get("ring", [])],
+                    policy=str(z.get("policy", "no_fetch")),
+                )
+                for z in payload.get("zones", [])
+            ]
+            if any(not math.isfinite(v) for z in zones for p in z.ring for v in p):
+                raise ValueError("nonfinite redline coordinate")
+            return cls(zones=[z for z in zones if len(z.ring) >= 3])
+        except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+            logging.getLogger(__name__).exception("Invalid spatial redline configuration; using empty registry")
+            return cls()
 
     def _hit(self, bbox: tuple[float, float, float, float]) -> RedlineZone | None:
         """bbox 与围栏环的完整相交判定（GIS-104）。

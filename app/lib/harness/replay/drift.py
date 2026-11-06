@@ -502,7 +502,7 @@ def diff_decisions(baseline: List[Dict[str, Any]],
     """两组决策记录的结构化差异（「哪里变了」的决策级归因）。
 
     对齐：先按 decision_id（同 id 但 selected/alternatives 变化 → 精确
-    归因），再按 kind 序配对剩余条目（id 变化的重推导面）。输出有界
+    归因），不同 id 的条目明确列为新增/移除（不猜测语义身份）。输出有界
     （≤32 条 diff）。
     """
     diffs: List[DecisionDiff] = []

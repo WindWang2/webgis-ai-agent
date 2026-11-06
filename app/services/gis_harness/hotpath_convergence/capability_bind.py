@@ -11,6 +11,7 @@ missing caps / empty graph / unexpected errors so the chokepoint never
 becomes a second planner outage.
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import os
 from dataclasses import dataclass, field
@@ -181,7 +182,7 @@ def _provider_unavailable_decision(
         verdict = get_provider_health_registry().verdict(
             provider_key_for_tool(tool_name)).to_dict()
     except Exception:  # noqa: BLE001 — 投影缺席不阻断拒绝
-        pass
+        observe_optional_failure(__name__)
 
     alts = [
         {
@@ -310,6 +311,7 @@ def bind_tool_capability(
         try:
             plan = plan_candidates_v8(cap, ctx, session_id=sid)
         except Exception:  # noqa: BLE001 — per-cap fail-open
+            observe_optional_failure(__name__)
             continue
 
         excluded_hit = None

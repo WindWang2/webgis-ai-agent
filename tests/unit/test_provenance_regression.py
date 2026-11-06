@@ -18,7 +18,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.db_model import Organization
+from app.models.db_model import Organization, User
 from app.models.project import (
     Project, Artifact, ArtifactLineage,
 )
@@ -47,8 +47,11 @@ def db_session():
 
 def _seed(db, name="p", org_id=1):
     db.add(Organization(id=org_id, name=f"o{org_id}", slug=f"o{org_id}"))
-    db.commit()
-    proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name=name, org_id=org_id, status="active")
+    actor = f"provenance-owner-{org_id}"
+    if db.get(User, actor) is None:
+        db.add(User(id=actor, username=actor, email=f"{actor}@example.test", org_id=org_id, role="editor", is_active=True))
+        db.commit()
+    proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name=name, org_id=org_id, owner_id=actor, status="active")
     db.add(proj)
     db.commit()
     return proj
@@ -77,7 +80,7 @@ class _Reg:
 def _wf(db, proj_id, steps, name="wf"):
     return ProjectService.save_workflow(db, proj_id, WorkflowCreate(
         name=name, graph_spec=WorkflowGraphSpec(steps=[WorkflowStepSpec(**s) for s in steps])),
-        org_id=1)  # security F-11: ownerless org project is org-only
+        org_id=1, user_id="provenance-owner-1")  # security F-11: ownerless org project is org-only
 
 
 def _run(coro):
@@ -99,11 +102,11 @@ def test_run_fingerprint_stable_with_inter_step_bindings(db_session):
     ])
     run1 = _run(WorkflowEngine.execute_workflow_run(
         db=db, workflow_id=wf.id, tool_registry=_Reg(),
-        expected_project_id=proj.id, session_id="sess"))
+        expected_project_id=proj.id, session_id="sess", user_id="provenance-owner-1"))
     assert run1.status == "completed"
     replay = _run(WorkflowEngine.replay_run(
         db=db, prior_run_id=run1.id, tool_registry=_Reg(), mode="exact",
-        expected_project_id=proj.id, session_id="sess"))
+        expected_project_id=proj.id, session_id="sess", user_id="provenance-owner-1"))
     assert run1.run_fingerprint is not None
     assert run1.run_fingerprint == replay.run_fingerprint, (
         "run fingerprint must be stable across replays even when random ref_ids "
@@ -186,7 +189,7 @@ def test_soft_detach_excludes_and_drifts_resume(db_session):
     db = db_session
     proj = _seed(db)
     ds = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
-        name="d", source_type="upload", source_ref="up_1", crs="EPSG:4326"), org_id=1)
+        name="d", source_type="upload", source_ref="up_1", crs="EPSG:4326"), org_id=1, user_id="provenance-owner-1")
     assert ds.version_fingerprint
 
     wf = _wf(db, proj.id, [
@@ -195,13 +198,13 @@ def test_soft_detach_excludes_and_drifts_resume(db_session):
     ])
     run1 = _run(WorkflowEngine.execute_workflow_run(
         db=db, workflow_id=wf.id, tool_registry=_Reg(fail_on="t_b"),
-        expected_project_id=proj.id, session_id="sess"))
+        expected_project_id=proj.id, session_id="sess", user_id="provenance-owner-1"))
     assert run1.completed_steps == ["s1"]
     assert ds.id in (run1.input_dataset_fingerprints or {})
 
     # Detach → active list excludes it (soft tombstone, INV-DEL1).
-    assert ProjectService.detach_dataset(db, proj.id, ds.id, org_id=1) is True
-    listed = ProjectService.list_project_datasets(db, proj.id, org_id=1)[0]
+    assert ProjectService.detach_dataset(db, proj.id, ds.id, org_id=1, user_id="provenance-owner-1") is True
+    listed = ProjectService.list_project_datasets(db, proj.id, org_id=1, user_id="provenance-owner-1")[0]
     assert all(row.id != ds.id for row in listed)
 
     # The detached dataset is no longer in the active set → current fingerprints
@@ -209,7 +212,7 @@ def test_soft_detach_excludes_and_drifts_resume(db_session):
     with pytest.raises(ValueError, match="fingerprints changed"):
         _run(WorkflowEngine.resume_run(
             db=db, prior_run_id=run1.id, tool_registry=_Reg(),
-            expected_project_id=proj.id, session_id="sess"))
+            expected_project_id=proj.id, session_id="sess", user_id="provenance-owner-1"))
 
 
 # ── resume uses the FROZEN snapshot, not a live edit ─────────────────────────
@@ -223,7 +226,7 @@ def test_resume_after_workflow_edit_uses_frozen_snapshot(db_session):
     ])
     run1 = _run(WorkflowEngine.execute_workflow_run(
         db=db, workflow_id=wf.id, tool_registry=_Reg(fail_on="t_b"),
-        expected_project_id=proj.id, session_id="sess"))
+        expected_project_id=proj.id, session_id="sess", user_id="provenance-owner-1"))
     assert run1.completed_steps == ["s1"]
     frozen_fp = run1.run_manifest["graph_fingerprint"]
 
@@ -232,11 +235,11 @@ def test_resume_after_workflow_edit_uses_frozen_snapshot(db_session):
         {"step_id": "s1", "tool_name": "t_a", "dependencies": []},
         {"step_id": "s2", "tool_name": "t_b", "dependencies": ["s1"]},
         {"step_id": "s3", "tool_name": "t_c", "dependencies": ["s2"]},
-    ]}, org_id=1)
+    ]}, org_id=1, user_id="provenance-owner-1")
 
     resumed = _run(WorkflowEngine.resume_run(
         db=db, prior_run_id=run1.id, tool_registry=_Reg(),
-        expected_project_id=proj.id, session_id="sess"))
+        expected_project_id=proj.id, session_id="sess", user_id="provenance-owner-1"))
     assert resumed.status == "completed"
     # Resume executed only s2 (from the frozen v1 graph), NOT the new s3.
     assert {s["step_id"] for s in resumed.run_manifest["steps"]} == {"s1", "s2"}

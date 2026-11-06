@@ -1,4 +1,5 @@
 'use client';
+import { describeApiError } from '@/lib/api/transport';
 import { useT } from '@/lib/i18n/useT';
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -16,7 +17,7 @@ import { useAuthUser } from '@/lib/auth/use-auth-user';
  * 都会 401。此面板补上客户端认证：
  * - 登录后将 access/refresh token 存入 tokenStore，transport 自动附带
  *   Authorization 头（401 时单次 refresh 重试）。
- * - 账号由运维通过 `manage.py create_admin` 创建（公开注册默认关闭）。
+ * - 账号由运维通过 `manage.py create-admin` 创建（公开注册默认关闭）。
  * - 匿名用户不受影响：所有原有匿名功能照旧，只是数据源管理等写操作
  *   需要登录。
  */
@@ -54,10 +55,7 @@ export function AccountSection() {
         setPassword('');
         setIdentifier('');
       } catch (err) {
-        const detail =
-          (err as { body?: { detail?: string } })?.body?.detail ??
-          (err instanceof Error ? err.message : t('settings.account.loginFailed'));
-        setError(String(detail));
+        setError(describeApiError(err, t('settings.account.loginFailed')));
       } finally {
         setBusy(false);
       }
@@ -86,9 +84,9 @@ export function AccountSection() {
       {user ? (
         <div className="rounded-md border border-edge-subtle bg-surface-raised px-4 py-3">
           <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-title font-semibold text-ink">{user.username}</div>
-              <div className="text-body text-ink-muted">
+            <div className="min-w-0">
+              <div className="break-words text-title font-semibold text-ink">{user.username}</div>
+              <div className="break-words text-body text-ink-muted">
                 {user.email ?? ''}
                 {user.role ? ` · ${user.role}` : ''}
               </div>
@@ -96,7 +94,7 @@ export function AccountSection() {
             <button
               onClick={handleLogout}
               disabled={busy}
-              className="rounded-md border border-edge-subtle bg-surface-raised px-3 py-1.5 text-body font-medium text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
+              className="shrink-0 whitespace-nowrap rounded-md border border-edge-subtle bg-surface-raised px-3 py-1.5 text-body font-medium text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
             >
               {t('settings.account.logout')}
             </button>
@@ -152,7 +150,7 @@ export function AccountSection() {
             {busy ? t('settings.account.loggingIn') : t('settings.account.login')}
           </button>
           <div className="text-body text-ink-muted">
-            {t('settings.account.provisioned', { what: 'manage.py create_admin' })}
+            {t('settings.account.provisioned', { what: 'manage.py create-admin' })}
           </div>
         </form>
       )}

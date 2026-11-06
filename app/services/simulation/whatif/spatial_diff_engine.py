@@ -136,25 +136,31 @@ def _project_shapes(features: list[GeoJSONFeature], lat0_deg: float) -> List[Any
     for feat in features:
         geom = feat.get("geometry")
         if not isinstance(geom, dict) or not geom.get("coordinates"):
+            shapes_out.append(None)
             continue
         try:
             shp = shape(geom)
         except Exception:  # noqa: BLE001 — 坏几何跳过（诚实缺计，不中断差分）
+            shapes_out.append(None)
             continue
-        shapes_out.append(shp_transform(project, shp))
+        try:
+            shapes_out.append(shp_transform(project, shp))
+        except Exception:
+            logger.debug("[whatif] invalid projected geometry", exc_info=True)
+            shapes_out.append(None)
     return shapes_out
 
 
 def _total_area(shapes: List[Any]) -> float:
-    return float(sum(s.area for s in shapes if s.geom_type in ("Polygon", "MultiPolygon")))
+    return float(sum(s.area for s in shapes if s is not None and s.geom_type in ("Polygon", "MultiPolygon")))
 
 
 def _total_length(shapes: List[Any]) -> float:
-    return float(sum(s.length for s in shapes if s.geom_type in ("LineString", "MultiLineString")))
+    return float(sum(s.length for s in shapes if s is not None and s.geom_type in ("LineString", "MultiLineString")))
 
 
 def _count_points(shapes: List[Any]) -> float:
-    return float(sum(1 for s in shapes if s.geom_type == "Point"))
+    return float(sum(1 for s in shapes if s is not None and s.geom_type == "Point"))
 
 
 # ────────────────────────────── 要素配对 ──────────────────────────────
@@ -298,7 +304,7 @@ def diff_layers(
 
 def _safe_area(shp: Any) -> float:
     try:
-        return float(shp.area) if shp.geom_type in ("Polygon", "MultiPolygon") else 0.0
+        return float(shp.area) if shp is not None and shp.geom_type in ("Polygon", "MultiPolygon") else 0.0
     except Exception:  # noqa: BLE001
         return 0.0
 
@@ -307,7 +313,7 @@ def _safe_length(shp: Any) -> float:
     try:
         return (
             float(shp.length)
-            if shp.geom_type in ("LineString", "MultiLineString")
+            if shp is not None and shp.geom_type in ("LineString", "MultiLineString")
             else 0.0
         )
     except Exception:  # noqa: BLE001
@@ -394,7 +400,8 @@ def _facility_buffer_union(
                 pt = _project_shapes([feat], lat0)[0]
             except Exception:  # noqa: BLE001 — 坏几何设施点跳过
                 continue
-            buffers.append(pt.buffer(radius))
+            if pt is not None:
+                buffers.append(pt.buffer(radius))
     if not buffers:
         return None
     return unary_union(buffers)
@@ -423,19 +430,23 @@ def _population_cells(
                 shp = _project_shapes([feat], lat0)[0]
             except Exception:  # noqa: BLE001
                 continue
-            cells.append({"centroid": shp.centroid, "population": float(pop)})
+            if shp is not None:
+                cells.append({"centroid": shp.centroid, "population": float(pop)})
     return cells if found_population_layer else None
 
 
 def _covered_population(cells: list[PopulationCell], coverage_geom: Any) -> float:
+    from shapely.prepared import prep
+
+    if coverage_geom.is_empty:
+        return 0.0
+    prepared = prep(coverage_geom)
     total = 0.0
     for cell in cells:
         try:
             if coverage_geom.is_empty:
                 continue
-            if coverage_geom.contains(cell["centroid"]) or coverage_geom.touches(
-                cell["centroid"]
-            ):
+            if prepared.covers(cell["centroid"]):
                 total += cell["population"]
         except Exception:  # noqa: BLE001
             continue
@@ -532,12 +543,13 @@ def compute_metric_deltas(
     baseline_payloads: dict[str, GeoJSONFeatureCollection],
     branch_payloads: dict[str, GeoJSONFeatureCollection],
     service_radius_m: float = DEFAULT_SERVICE_RADIUS_M,
+    *, lat0: Optional[float] = None,
 ) -> List[MetricDeltaV2]:
     """两侧指标评估 → MetricDeltaV2 列表（GIS-03：缺基线全 None + gap note）。
 
     两侧共享同一投影 lat0（联合均值）—— delta 比率与投影无关的前提。
     """
-    shared_lat0 = _shared_lat0(baseline_payloads, branch_payloads)
+    shared_lat0 = lat0 if lat0 is not None else _shared_lat0(baseline_payloads, branch_payloads)
     base_values = evaluate_metrics(baseline_payloads, service_radius_m, lat0=shared_lat0)
     branch_values = evaluate_metrics(branch_payloads, service_radius_m, lat0=shared_lat0)
     deltas: List[MetricDeltaV2] = []
@@ -671,5 +683,7 @@ def cost_proxy_of(diffs: dict[str, GeometryDiff | CoverageDiff]) -> float:
     for value in diffs.values():
         if not isinstance(value, GeometryDiff):
             continue
-        total += value.added_length_m + math.sqrt(max(value.added_area_m2, 0.0))
+        total += (value.added_length_m + value.removed_length_m
+                  + math.sqrt(max(value.added_area_m2 + value.removed_area_m2, 0.0))
+                  + len(value.modified_features))
     return round(total, 3)

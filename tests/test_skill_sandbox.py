@@ -300,6 +300,15 @@ class TestIssue1113P3LoadResilience:
         class _Reg:
             marker = "MISSING"
 
+        import hashlib
+        import json
+
+        (tmp_path / "skills-lock.json").write_text(json.dumps({
+            "runtime_skills": {
+                path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in tmp_path.glob("*.py")
+            },
+        }))
         reg = _Reg()
         skills_mod.load_skills(reg, skills_dir=str(tmp_path))
         assert reg.marker is False, (

@@ -130,6 +130,12 @@ def owner_token_matches(expected: Optional[str], presented: Optional[str]) -> bo
     if not expected or not presented:
         return False
     try:
+        from app.core.owner_tokens import OwnerTokenDigest, owner_token_digest
+
+        if isinstance(presented, OwnerTokenDigest):
+            return False
+        if isinstance(expected, OwnerTokenDigest):
+            return hmac.compare_digest(str(expected), owner_token_digest(str(presented)))
         return hmac.compare_digest(
             str(expected).encode("utf-8"), str(presented).encode("utf-8")
         )
@@ -233,7 +239,8 @@ def verify_password(plain: str, stored: str) -> bool:
         salt = bytes.fromhex(salt_hex)
         expected = bytes.fromhex(key_hex)
         # 限制参数避免 DoS：超过预期 N 的存量直接拒绝
-        if n > _SCRYPT_N * 4 or r > 32 or p > 4:
+        if (n < 2 or r < 1 or p < 1 or n > _SCRYPT_N * 4 or r > 32 or p > 4
+                or 128 * n * r > 64 * 1024 * 1024 or len(expected) != _SCRYPT_KEY_LEN):
             return False
         derived = hashlib.scrypt(
             plain.encode("utf-8"),
@@ -437,7 +444,7 @@ async def _load_live_user_state(user_id: str) -> tuple[str, Optional[tuple]]:
         import logging
 
         logging.getLogger(__name__).warning(
-            "[auth] live token-state check unavailable (%s); using JWT claims",
+            "[auth] live token-state check unavailable (%s); failing authentication closed",
             type(exc).__name__,
         )
         return ("error", None)
@@ -452,13 +459,15 @@ async def _load_live_user_state(user_id: str) -> tuple[str, Optional[tuple]]:
 
 
 async def _live_identity(user_id: str, payload: dict) -> Optional[dict]:
-    """复核实时状态；返回 role/org 覆盖值（None = 沿用 claim）。
+    """复核实时状态；返回 DB role/org，缺席或查询失败时拒绝认证。
 
     ver 不符 / 停用抛 HTTPException（调用方 optional 变体自行降级匿名）。
     """
     kind, state = await _load_live_user_state(str(user_id))
+    if kind == "error":
+        raise HTTPException(status_code=503, detail="Authentication state unavailable")
     if kind != "ok" or state is None:
-        return None
+        raise HTTPException(status_code=401, detail="User no longer exists")
     ver, is_active, role, org_id = state
     if int(payload.get("ver", 0)) != ver:
         raise HTTPException(
@@ -475,13 +484,13 @@ async def _live_identity(user_id: str, payload: dict) -> Optional[dict]:
 
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
-    """获取当前用户 - 需要 Bearer token (无 ver 校验)。
+    """获取当前用户：验证 Bearer token 与短 TTL 缓存的 DB 实时身份。
 
-    返回 dict 含 user_id 和（如 JWT 中有）role。下游如需 admin 校验，
+    返回 dict 含 user_id 及数据库中的 role/org_id。下游如需 admin 校验，
     使用 `require_admin` 依赖；不要直接在本函数返回值上做 role 判断。
 
     security F-07：签名 + exp 之外复核 DB 实时 token_version / is_active /
-    role（短 TTL 缓存；DB 不可用时降级为 claim，见 ``_live_identity``）。
+    role（短 TTL 缓存；DB 不可用时拒绝认证，见 ``_live_identity``）。
     需要强一致（DB 不可用即拒绝）的路径用 `get_current_user_with_version`。
 
     back-compat: 无 `type` claim 的旧 token 视为 access token (ver=0)。
@@ -527,11 +536,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
     live = await _live_identity(user_id, payload)
     role = (live or {}).get("role") or payload.get("role") or "viewer"
-    # role 以 DB 实时值为准（F-06/F-07）；无 DB 行时沿用 claim，旧 token 视为 viewer
+    # _live_identity rejects missing users; database role/org are authoritative.
     return {
         "user_id": user_id,
         "role": role,
-        "org_id": payload.get("org_id"),
+        "org_id": live["org_id"] if live is not None else payload.get("org_id"),
         # ADR-0139 P3：有效 scope 集（claim 缺席/旧 token → 角色默认集）
         "scopes": scopes_from_payload(payload, role_override=role),
     }
@@ -541,7 +550,7 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
     """获取当前用户 - 可选认证 (用于公开接口)。
 
     security F-07：带 token 时复核 DB 实时状态（被撤销/停用 → 匿名）；
-    DB 不可用时沿用 claim。强一致路径用 `get_current_user_optional_with_version`。
+    DB 不可用时降级为匿名。强一致路径用 `get_current_user_optional_with_version`。
     """
     if auth_bypass_enabled():
         # bypass 身份而非匿名哨兵：会话归属/所有权守卫与受保护端点一致，
@@ -583,7 +592,7 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
     return {
         "user_id": user_id,
         "role": role,
-        "org_id": payload.get("org_id"),
+        "org_id": live["org_id"] if live is not None else payload.get("org_id"),
         # #1221（D-9）：透传 ver claim —— 不查 DB 的轻量调用方（如 static
         # admin 通道）可自行做版本复核；缺省 0 与 with_version 依赖的
         # back-compat 语义一致。
@@ -760,8 +769,8 @@ async def authenticate_ws_token(token: str) -> dict:
     4. DB ``token_version`` + ``is_active``
 
     Returns ``{"user_id": str, "payload": dict}``. Raises :class:`WsAuthError`
-    on failure. Missing users are *not* rejected here — ownership checks keep
-    their existing 4003 fail-closed semantics; inactive users close with 4001.
+    on failure. Missing or inactive users close with 4001 before any
+    subscription or ownership check.
     """
     payload = verify_token(token)
     if payload is None:
@@ -794,6 +803,8 @@ async def authenticate_ws_token(token: str) -> dict:
     except Exception as exc:  # noqa: BLE001 — fail-closed
         raise WsAuthError(1011, "Auth unavailable") from exc
 
+    if row is None:
+        raise WsAuthError(4001, "User no longer exists")
     if row is not None:
         token_ver, is_active = int(row[0] or 0), row[1]
         if int(payload.get("ver", 0)) != token_ver:

@@ -67,13 +67,13 @@ def test_lifecycle_objects_total_respects_kind_and_owner_filters(monkeypatch):
     with SessionLocal() as db:
         db.add_all([
             LifecycleObject(kind="cog_output", object_id="pg-a.tif",
-                            owner_scope="pg-user", byte_size=1, tier="hot"),
+                            owner_scope="user:pg-user", byte_size=1, tier="hot"),
             LifecycleObject(kind="cog_output", object_id="pg-b.tif",
-                            owner_scope="pg-user", byte_size=1, tier="hot"),
+                            owner_scope="user:pg-user", byte_size=1, tier="hot"),
             LifecycleObject(kind="artifact_cache", object_id="pg-c.tif",
-                            owner_scope="pg-user", byte_size=1, tier="hot"),
+                            owner_scope="user:pg-user", byte_size=1, tier="hot"),
             LifecycleObject(kind="cog_output", object_id="pg-theirs.tif",
-                            owner_scope="other-user", byte_size=1, tier="hot"),
+                            owner_scope="user:other-user", byte_size=1, tier="hot"),
         ])
         db.commit()
 
@@ -81,7 +81,7 @@ def test_lifecycle_objects_total_respects_kind_and_owner_filters(monkeypatch):
     r = client.get("/api/v1/data-lifecycle/objects")
     body = r.json()
     assert body["total"] == 3, "非 admin 仅见本 owner scope"
-    assert all(i["owner_scope"] == "pg-user" for i in body["items"])
+    assert all(i["owner_scope"] == "user:pg-user" for i in body["items"])
     assert "pg-theirs.tif" not in {i["object_id"] for i in body["items"]}
 
     r = client.get("/api/v1/data-lifecycle/objects?kind=artifact_cache")

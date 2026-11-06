@@ -173,6 +173,7 @@ def test_mission_hotpath_on_creates_and_reuses(monkeypatch):
     reused = maybe_bind_mission_for_turn(
         session_id="sess-1",
         org_id="org-a",
+        user_id="u1",
         root_goal="分析成都市小学分布",
         mission_id=mid,
         runtime=runtime,

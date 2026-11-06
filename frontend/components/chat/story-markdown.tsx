@@ -3,7 +3,7 @@
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { safeUrlTransform } from "./mini-md"
-import { CitationAnchor, CitationArea, isCitationHref } from "./citation"
+import { CitationAnchor, CitationArea, isCitationHref, citationRemark } from "./citation"
 
 // Lazy-loadable markdown renderer for the story page (bundle-slimming):
 // keeps react-markdown + remark-gfm out of the /story route's first load.
@@ -15,9 +15,9 @@ export default function StoryMarkdown({ text }: { text: string }) {
   return (
     <CitationArea
       text={text}
-      renderMarkdown={(body) => (
+      renderMarkdown={(body, sources) => (
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={[remarkGfm, citationRemark(sources)]}
           urlTransform={safeUrlTransform}
           components={{
               a: ({ href, children }) => {

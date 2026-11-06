@@ -70,6 +70,9 @@ class LineageService:
 
         Raises ``LineageCycleError`` for self- or multi-hop cycle attempts.
         """
+        child = db.execute(select(Artifact).where(Artifact.id == artifact_id)).scalar_one_or_none()
+        if child is None or not child.project_id:
+            raise ValueError("lineage requires an existing project-owned artifact")
         # Track the caller's original request so a fully filtered-out list is NOT
         # silently rewritten into a root edge (None means "genuine root").
         requested_parents = list(parent_artifact_ids) if parent_artifact_ids else None
@@ -85,10 +88,7 @@ class LineageService:
             # belongs to the same project as the child (DATA-07). Arbitrary
             # parent ids previously enabled cross-project DAG links that traversal
             # then leaked across tenants.
-            child = db.execute(
-                select(Artifact).where(Artifact.id == artifact_id)
-            ).scalar_one_or_none()
-            child_project_id = child.project_id if child else None
+            child_project_id = child.project_id
             if child_project_id is not None:
                 valid_parents = set(db.execute(
                     select(Artifact.id).where(
@@ -227,6 +227,9 @@ class LineageService:
         query per node) and uses a deque, avoiding the prior O(n) ``list.pop(0)``
         and N+1 query pattern.
         """
+        if not project_id or db.execute(select(Artifact.id).where(
+            Artifact.id == artifact_id, Artifact.project_id == project_id)).scalar_one_or_none() is None:
+            return {"artifact_id": artifact_id, "parents": [], "consumers": []}
         parents: List[Dict[str, Any]] = []
         consumers: List[Dict[str, Any]] = []
 

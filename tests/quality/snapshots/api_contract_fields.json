@@ -52,6 +52,13 @@
   "snapshot_id": "string",
   "status": "string"
  },
+ "DELETE /api/v1/reports/{report_id}/share": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
  "DELETE /api/v1/tasks/jobs/{job_id}": {
   "__model__": "JobCancelResponse",
   "cancel_requested": "boolean",

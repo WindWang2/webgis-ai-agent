@@ -4,7 +4,7 @@ Performs criterion weight perturbation, calculates rank stability, detects criti
 and identifies the specific criteria trade-offs that drive decision flips.
 """
 import logging
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 from app.services.spatial_decision.models_v3 import SensitivityResult
@@ -19,6 +19,7 @@ def analyze_weight_sensitivity(
     n_perturbations: int = 500,
     perturbation_scale: float = 0.25,
     random_seed: int = 42,
+    score_fn: Optional[Callable[[Dict[str, float]], Dict[str, float]]] = None,
 ) -> SensitivityResult:
     """
     Evaluates sensitivity of decision rankings to criterion weights.
@@ -58,13 +59,19 @@ def analyze_weight_sensitivity(
 
     top_count = {alt_id: 0 for alt_id in feasible_alts}
 
+    def _scores(weights: np.ndarray) -> np.ndarray:
+        if score_fn is None:
+            return matrix_arr @ weights
+        scores = score_fn(dict(zip(cids, (float(value) for value in weights))))
+        return np.asarray([scores.get(aid, -float("inf")) for aid in feasible_alts])
+
     for _ in range(n_perturbations):
         # Generate random multiplicative factors in [1 - scale, 1 + scale]
         factors = rng.uniform(1.0 - perturbation_scale, 1.0 + perturbation_scale, size=len(cids))
         w_pert = np.maximum(0.001, base_w_arr * factors)
         w_pert /= np.sum(w_pert)  # Re-normalize to 1.0
 
-        scores = matrix_arr @ w_pert
+        scores = _scores(w_pert)
         best_idx = int(np.argmax(scores))
         winner_id = feasible_alts[best_idx]
         top_count[winner_id] += 1
@@ -83,13 +90,15 @@ def analyze_weight_sensitivity(
     tradeoff_drivers: List[str] = []
 
     # Find baseline winner
-    base_scores = matrix_arr @ base_w_arr
+    base_scores = _scores(base_w_arr)
     base_winner_id = feasible_alts[int(np.argmax(base_scores))]
 
     for i, target_cid in enumerate(cids):
         # Sweep target weight from 0.05 to 0.95
         sweep_weights = np.linspace(0.05, 0.95, 19)
         other_indices = [j for j in range(len(cids)) if j != i]
+        if not other_indices:
+            continue
         other_base_sum = np.sum(base_w_arr[other_indices])
 
         switch_found = False
@@ -105,7 +114,7 @@ def analyze_weight_sensitivity(
             else:
                 w_sweep[other_indices] = remaining / len(other_indices)
 
-            sweep_scores = matrix_arr @ w_sweep
+            sweep_scores = _scores(w_sweep)
             cur_winner = feasible_alts[int(np.argmax(sweep_scores))]
             if cur_winner != base_winner_id and not switch_found:
                 switch_found = True

@@ -10,7 +10,7 @@
 红线：
 
 - **状态机确定性**：非法迁移 raise（绝不静默换态）；``session_id`` 由
-  (plan_id, source_digest) sha256 派生，墙钟不参与（幂等复用键）；
+  (plan, source, operations, CRS, tolerance, owner) sha256 派生，墙钟不参与（幂等复用键）；
 - **失败零残留**：所有执行件都非破坏（deepcopy + 新 ref），apply 异常 →
   state=failed，源 payload 逐字节不变是结构性保证而非补偿动作；
 - **rollback = append-only**：登记回指 source 的证据/新 ref（best-effort，
@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -77,6 +78,7 @@ class RepairSession:
     session_id: str
     plan_id: str
     source_digest: str
+    owner_session_id: Optional[str] = None
     state: str = STATE_PROPOSED
     history: List[Dict[str, Any]] = field(default_factory=list)
     preview: Optional[Dict[str, Any]] = None
@@ -106,6 +108,11 @@ class RepairSession:
 def open_repair_session(
     *, plan: RepairPlan, source_payload: Any,
     source_digest: Optional[str] = None,
+    operations: Optional[Sequence[str]] = None,
+    source_crs: str = "EPSG:4326",
+    target_crs: str = "EPSG:4326",
+    tolerance: float = 1e-5,
+    owner_session_id: Optional[str] = None,
 ) -> RepairSession:
     """plan + 源载荷 → 确定性会话（proposed）。同输入同 session_id。
 
@@ -113,13 +120,17 @@ def open_repair_session(
     阻塞）；缺省时同步计算（同步调用方）。
     """
     digest = str(source_digest) if source_digest else _digest(source_payload)
-    session_id = "rsession_" + hashlib.sha256(
-        f"{plan.plan_id}:{digest}".encode("utf-8")
-    ).hexdigest()[:24]
+    session_id = "rsession_" + _digest({
+        "plan_id": plan.plan_id, "plan_ops": [step.to_bounded_dict() for step in plan.operations], "source_digest": digest,
+        "operations": list(operations) if operations is not None else None,
+        "source_crs": source_crs, "target_crs": target_crs,
+        "tolerance": tolerance, "owner_session_id": owner_session_id,
+    })[:24]
     return RepairSession(
         session_id=session_id,
         plan_id=plan.plan_id,
         source_digest=digest,
+        owner_session_id=owner_session_id,
         history=[{"action": "open", "state": STATE_PROPOSED}],
     )
 
@@ -236,16 +247,6 @@ def _session_lock(session_id: str) -> asyncio.Lock:
     return lock
 
 
-def _session_from_bounded(bounded: Dict[str, Any]) -> RepairSession:
-    return RepairSession(
-        session_id=str(bounded.get("session_id", "")),
-        plan_id=str(bounded.get("plan_id", "")),
-        source_digest=str(bounded.get("source_digest", "")),
-        state=str(bounded.get("state", STATE_PROPOSED)),
-        history=[{"action": "restore", "state": str(bounded.get("state", ""))}],
-    )
-
-
 # ── 事务编排 ─────────────────────────────────────────────────────────
 
 
@@ -298,7 +299,9 @@ async def run_repair_transaction(
     # P1-2：全载荷 canonical sha256 在线程内计算（repo async 红线）。
     source_digest = await asyncio.to_thread(_digest, geojson)
     session = open_repair_session(
-        plan=plan, source_payload=geojson, source_digest=source_digest)
+        plan=plan, source_payload=geojson, source_digest=source_digest,
+        operations=pipeline_ops, source_crs=source_crs, target_crs=target_crs,
+        tolerance=tolerance, owner_session_id=session_id)
 
     if mode == "dry_run":
         preview = await _preview(
@@ -311,6 +314,10 @@ async def run_repair_transaction(
     # ── apply：per-session 锁内 检查→执行→落缓存（check-then-act 原子化）──
     async with _session_lock(session.session_id):
         cached = _SESSION_CACHE.get(session.session_id)
+        if cached is not None and cached.state == STATE_ROLLED_BACK:
+            # Rollback ends that execution, not the right to repair again.
+            _SESSION_CACHE.pop(session.session_id, None)
+            cached = None
         if cached is not None and cached.state in _TERMINAL_STATES:
             return {
                 "session": cached.to_bounded_dict(),
@@ -454,44 +461,38 @@ async def _rollback(
     session_id: Optional[str],
 ) -> Dict[str, Any]:
     """回退：append-only 语义 —— 记回指 source 的证据；绝不物理改写。"""
-    cached: Optional[RepairSession] = None
     sid = str((prior or {}).get("session", {}).get("session_id", ""))
-    if sid:
+    if not sid:
+        raise ValueError("rollback requires an existing server repair session")
+    async with _session_lock(sid):
         cached = _SESSION_CACHE.get(sid)
-    if cached is None and prior:
-        cached = _session_from_bounded(prior.get("session") or {})
-    if cached is None:
-        raise ValueError("rollback 需要 prior 会话或已缓存的会话（无事务可回退）")
+        if cached is None:
+            raise ValueError("rollback repair session is unavailable; client receipts are not authority")
+        if cached.plan_id != plan.plan_id or cached.owner_session_id != session_id:
+            raise ValueError("rollback repair session does not match this owner or plan")
+        if cached.source_digest != await asyncio.to_thread(_digest, geojson):
+            raise ValueError("rollback source digest mismatch")
+        if cached.state == STATE_ROLLED_BACK:
+            return {"session": cached.to_bounded_dict(), "rollback": cached.rollback_result}
+        # Transition a copy only after validating the cached server evidence.
+        session = copy.deepcopy(cached)
+        repaired_ref = str((session.apply_result or {}).get("repaired_ref", "") or "")
+        evidence = {
+            "plan_id": plan.plan_id, "session_id": session.session_id,
+            "source_digest": session.source_digest, "rollback_of": repaired_ref[:80],
+            "note": "rollback is append-only source restoration evidence",
+        }
+        if session_id:
+            try:
+                from app.services.session_data import session_data_manager
 
-    repaired_ref = ""
-    apply_result = cached.apply_result or {}
-    if isinstance(apply_result, dict):
-        repaired_ref = str(apply_result.get("repaired_ref", "") or "")
-    evidence = {
-        "plan_id": plan.plan_id,
-        "session_id": cached.session_id,
-        "source_digest": cached.source_digest,
-        "rollback_of": repaired_ref[:80],
-        "note": "source payload re-registration is caller-driven; "
-                "rollback is append-only evidence + state transition",
-    }
-
-    # best-effort：把源载荷重登记为新 ref（恢复语义）；失败如实披露。
-    registration_error = None
-    if session_id:
-        try:
-            from app.services.session_data import session_data_manager
-
-            restore_ref = await session_data_manager.store(
-                session_id, geojson, prefix="restored")
-            evidence["restore_ref"] = str(restore_ref)[:80]
-        except Exception as exc:  # noqa: BLE001 — 登记失败不影响回退状态
-            registration_error = str(exc)[:200]
-            evidence["registration_error"] = registration_error
-
-    session = mark_rolled_back(cached, rollback_evidence=evidence)
-    _cache_put(session)
-    return {"session": session.to_bounded_dict(), "rollback": evidence}
+                restore_ref = await session_data_manager.store(session_id, geojson, prefix="restored")
+                evidence["restore_ref"] = str(restore_ref)[:80]
+            except Exception as exc:  # noqa: BLE001 — restoration failure is disclosed
+                evidence["registration_error"] = type(exc).__name__
+        session = mark_rolled_back(session, rollback_evidence=evidence)
+        _SESSION_CACHE[sid] = session
+        return {"session": session.to_bounded_dict(), "rollback": evidence}
 
 
 __all__ = [

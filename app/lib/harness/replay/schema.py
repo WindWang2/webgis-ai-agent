@@ -28,6 +28,7 @@ from app.contracts.gis_trace import TraceChainRecord
 from app.lib.harness.replay.determinism import behavior_digest, canonical_json, sha256_of
 from app.lib.harness.replay.sanitize import (
     REDACTED,
+    FORBIDDEN_VALUE_KEYS,
     _is_secret_key,
     bounded_str,
     digest_payload,
@@ -438,11 +439,11 @@ def build_trace(
         mutations=mutations,
         artifacts=artifacts,
         verdict=verdict,
-        outcome=dict(summary.get("outcome") or {}),
+        outcome=sanitize_value(dict(summary.get("outcome") or {})),
         timing_ms=cast(TurnTiming, dict(summary.get("timing_ms") or {})),
         work=cast(TurnWork, dict(summary.get("work") or {})),
         llm_usage=cast(TokenUsage, dict(summary.get("llm_usage") or {})),
-        warnings=list(summary.get("warnings") or [])[:32],
+        warnings=sanitize_value(list(summary.get("warnings") or [])[:32]),
         final_text=bounded_str(final_text or "", _FINAL_TEXT_MAX),
         env=env or {},
         recording=recording or {"source": "settle", "schema": REPLAY_TRACE_SCHEMA_VERSION},
@@ -492,6 +493,8 @@ def _sanitize_decision_value(value: Any, depth: int = 0) -> Any:
         out: Dict[str, Any] = {}
         for key, item in list(value.items())[:32]:
             key_str = str(key)[:48]
+            if key_str.lower() in FORBIDDEN_VALUE_KEYS:
+                continue
             if key_str in _DECISION_DOMAIN_MAP_KEYS and isinstance(item, dict):
                 # 域映射：键名/布尔值保真（名称是资格事实，非秘密值）。
                 out[key_str] = {
@@ -557,7 +560,7 @@ def _decisions_index_from_raw(raw: List[Dict[str, Any]]) -> List[Dict[str, Any]]
                 if isinstance(a, dict)
             ],
             "reason_codes": [
-                r for r in (d.get("reason_codes") or [])[:6]
+                sanitize_value(r) for r in (d.get("reason_codes") or [])[:6]
                 if isinstance(r, dict)
             ],
         })

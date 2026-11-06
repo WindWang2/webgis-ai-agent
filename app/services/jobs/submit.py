@@ -77,6 +77,13 @@ def submit_durable_job(
         build_execution_key(task_type, effective_session, params) if idempotent else None
     )
 
+    if task_type == "geocompute_node":
+        from app.services.geocompute.task_identity import project_task_caller
+        task_kwargs = dict(task_kwargs or {})
+        task_kwargs.pop("caller_identity", None)
+        if task_kwargs.get("caller") is not None:
+            task_kwargs["caller"] = project_task_caller(task_kwargs["caller"])
+
     dispatch_spec = {
         "task": celery_task.name,
         "args": list(task_args),
@@ -135,6 +142,9 @@ def submit_durable_job(
         }
 
     kwargs = dict(task_kwargs or {})
+    if task_type == "geocompute_node" and kwargs.get("caller") is not None:
+        from app.services.geocompute.task_identity import sign_task_identity
+        kwargs["caller_identity"] = sign_task_identity(kwargs)
     kwargs["job_id"] = job_id
 
     # 先**原子认领**（pending → queued），只有认领成功的调用方才真正入队。

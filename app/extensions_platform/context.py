@@ -506,7 +506,7 @@ class ExtensionContext:
                         extension_id=self.extension_id,
                     )
                 )
-            if registry.get(recipe_id) is not None:
+            if recipe_id in projected_ids or registry.get(recipe_id) is not None:
                 raise ExtensionPlatformError(
                     ExtensionDiagnostic.error(
                         DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
@@ -516,7 +516,14 @@ class ExtensionContext:
                 )
             projected_ids.append(recipe_id)
         for recipe in spec.recipes:
-            registry.register(recipe)
+            try:
+                registry.register(recipe)
+            except Exception as exc:
+                raise ExtensionPlatformError(ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_FAILED,
+                    f"recipe {recipe.id!r} registration failed: {exc}",
+                    extension_id=self.extension_id,
+                )) from exc
             recipe_id = recipe.id
             self._record("workflow_recipe", recipe_id, lambda rid=recipe_id: registry.unregister(rid))
         pack_projected = f"{self.manifest.namespace}_{spec.pack_id}"
@@ -706,5 +713,9 @@ class ExtensionContext:
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         _sys.modules[qualname] = module
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            _sys.modules.pop(qualname, None)
+            raise
         return module

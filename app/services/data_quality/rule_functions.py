@@ -116,7 +116,7 @@ def _iter_rings(geometry: Dict[str, Any]) -> List[List[Tuple[float, float]]]:
             if isinstance(head, list) and head and _num(head[0]) and len(head) >= 2 and _num(head[1]):
                 rings.append([(float(c[0]), float(c[1])) for c in coords
                               if isinstance(c, list) and len(c) >= 2
-                              and _num(c[0]) and _num(c[1])][: (_MAX_RING_VERTS + 1)])
+                              and _num(c[0]) and _num(c[1])])
                 return
             for sub in coords:
                 ring_of(sub)
@@ -195,16 +195,19 @@ def _geom_family(gtype: str) -> str:
 
 
 def rule_null_rate(ctx: RuleEvalContext) -> RuleOutcome:
-    null_counts: Dict[str, int] = {}
-    total = 0
-    for f in ctx.features[: ctx.max_scan]:
-        total += 1
-        props = f.get("properties") if isinstance(f, dict) else None
-        if not isinstance(props, dict):
-            continue
-        for k, v in props.items():
-            if v is None or (isinstance(v, str) and v == ""):
-                null_counts[k] = null_counts.get(k, 0) + 1
+    sampled = ctx.features[: ctx.max_scan]
+    fields = {key for feature in sampled if isinstance(feature, dict)
+              and isinstance(feature.get("properties"), dict)
+              for key in feature["properties"]}
+    null_counts: Dict[str, int] = {key: 0 for key in fields}
+    total = len(sampled)
+    for feature in sampled:
+        props = feature.get("properties") if isinstance(feature, dict) else None
+        props = props if isinstance(props, dict) else {}
+        for key in fields:
+            value = props.get(key)
+            if value is None or (isinstance(value, str) and value == ""):
+                null_counts[key] += 1
     if total == 0:
         return RuleOutcome(status="skipped", message="no_features")
     fail_at = float(ctx.params.get("fail_null_rate", 0.8))
@@ -374,8 +377,12 @@ def rule_envelope_sanity(ctx: RuleEvalContext) -> RuleOutcome:
         if any(math.isnan(x) or math.isnan(y) for x, y in positions):
             non_finite += 1
             continue
-        crs_u = str(ctx.crs or "").upper()
-        geographic = (not crs_u) or "4326" in crs_u or "CRS84" in crs_u
+        from pyproj import CRS
+
+        try:
+            geographic = not ctx.crs or CRS.from_user_input(ctx.crs).is_geographic
+        except (ValueError, TypeError):
+            geographic = False  # invalid CRS is reported by the separate CRS rule
         if geographic:
             lon_lo, lon_hi = (float(v) for v in ctx.params.get("lon_range", (-180.5, 180.5)))
             lat_lo, lat_hi = (float(v) for v in ctx.params.get("lat_range", (-90.5, 90.5)))
@@ -531,7 +538,7 @@ def rule_duplicate_features(ctx: RuleEvalContext) -> RuleOutcome:
               "sample_keys": [k[:64] for k in sorted(dup_groups)[:8]]}
     if dup_rows:
         return RuleOutcome("warn", f"重复要素 {dup_rows} 行（{len(dup_groups)} 组）",
-                           dup_rows, metric, True, ("repair_geometry",))
+                           dup_rows, metric, False, ())
     return RuleOutcome("pass", "no duplicates", 0, metric)
 
 
@@ -798,7 +805,7 @@ def rule_nodata_ratio(ctx: RuleEvalContext) -> RuleOutcome:
     bands = _bands_of(ctx)
     ratios: List[float] = []
     if _num(top):
-        ratios.append(1.0 - float(top) if 0 <= float(top) <= 1 else float(top))
+        ratios.append(float(top))
     for b in bands:
         vpr = b.get("valid_pixel_ratio")
         if _num(vpr):
@@ -849,7 +856,16 @@ def rule_raster_stats_outlier(ctx: RuleEvalContext) -> RuleOutcome:
     median = values[len(values) // 2]
     # MAD 稳健 z 分数（band 数少时 mean/std 会被离群 band 自己拉偏）
     abs_dev = sorted(abs(v - median) for v in values)
-    mad = abs_dev[len(abs_dev) // 2] or 1e-12
+    mad = abs_dev[len(abs_dev) // 2]
+    if mad == 0:
+        # A flat majority gives no robust scale. Ignore numerical noise; for
+        # meaningful variation use the ordinary population standard deviation.
+        mean = sum(values) / len(values)
+        scale = math.sqrt(sum((v - mean) ** 2 for v in values) / len(values))
+        if scale <= max(1.0, abs(mean)) * 1e-9:
+            return RuleOutcome("pass", "band stats consistent", 0,
+                               {"bands": len(means), "scale_basis": "relative_tolerance"})
+        median, mad = mean, scale * 0.6745
     z_threshold = float(ctx.params.get("z_threshold", 3.0))
     outliers: List[str] = []
     for i, b in enumerate(bands):

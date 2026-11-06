@@ -55,7 +55,7 @@ class CollapseOutcome(BaseModel):
     def collapse_key_for(self, value: Any) -> str:
         """原始类别值 → 收纳后键（保留类=原值字符串；其余=other）。"""
         for kept in self.kept_values:
-            if value == kept:
+            if type(value) is type(kept) and value == kept:
                 return str(kept)
         return self.meta.other_key
 
@@ -75,7 +75,7 @@ def apply_collapse(
     """
     kept = list(categorical_values[:max(0, int(keep_classes))])
     entries: List[Dict[str, Any]] = [
-        {"key": v, "color": colors[i % len(colors)], "label": str(v)}
+        {"key": str(v), "color": colors[i % len(colors)] if colors else "#cccccc", "label": str(v)}
         for i, v in enumerate(kept)
     ]
     other_color = colors[keep_classes % len(colors)] if colors else "#cccccc"

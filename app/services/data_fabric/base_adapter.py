@@ -73,7 +73,7 @@ class GeospatialDataSourceAdapter(ABC):
             if did:
                 try:
                     desc = self.describe(did)
-                    if desc:
+                    if desc and not (desc.metadata or {}).get("error_type"):
                         spatial_catalog_service.register_dataset(
                             desc, profile_id=self.profile.id, owner=owner
                         )

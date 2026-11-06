@@ -51,6 +51,22 @@ def test_empty_graph_projects_nothing():
     assert project_memory(None).lines == []
 
 
+def test_facts_without_findings_remain_visible():
+    wc = _wc_with_graph()
+    wc.derived_findings.clear()
+    result = project_memory(wc)
+    assert result.items and all(item.kind == "fact" for item in result.items)
+
+
+def test_unfittable_finding_does_not_reserve_anchors_ahead_of_other_findings():
+    wc = _wc_with_graph()
+    wc.derived_findings[0].label = "x" * 400
+    wc.derived_findings[1].depends_on = []
+    result = project_memory(wc, token_budget=20)
+    assert any(item.kind == "finding" and "项目复用判定" in item.text for item in result.items)
+    assert wc.derived_findings[0].finding_id in result.closure_drops
+
+
 def test_golden_projection_is_byte_stable():
     wc = _wc_with_graph()
     golden = project_memory(wc, token_budget=DEFAULT_TOKEN_BUDGET).lines

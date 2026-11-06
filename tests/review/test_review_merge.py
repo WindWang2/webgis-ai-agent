@@ -224,3 +224,25 @@ async def test_merge_empty_intents_rejected():
             proposal_id="rp_e", session_id=sid, title="t",
             author=_actor(), base_revision=0, mutation_intents=[],
         )
+
+
+async def test_concurrent_mutation_between_base_read_and_checkpoint_is_refused(monkeypatch):
+    import app.services.review.merge as module
+    from app.services.gis_world_state.mutation import apply_gis_mutation as real_apply
+    from app.services.mapspec.lifecycle_engine import CheckpointIntent, SetViewIntent
+    sid = _sid()
+    engine, base, _ = await _seed_two_layers(sid)
+    proposal = _proposal(sid, base, [SetViewBody(intent="set_view", expected_revision=base, zoom=11)])
+    advanced = False
+
+    async def race(session, intent, **kwargs):
+        nonlocal advanced
+        if isinstance(intent, CheckpointIntent) and not advanced:
+            advanced = True
+            await real_apply(session, SetViewIntent(zoom=7), origin="agent", actor="other")
+        return await real_apply(session, intent, **kwargs)
+
+    monkeypatch.setattr(module, "apply_gis_mutation", race)
+    outcome = await merge_proposal_intents(sid, proposal, _actor("u2"))
+    assert not outcome.ok and outcome.conflict and outcome.failure == "base_revision_drift"
+    assert (await engine.store.get_mapspec(sid))["view"]["zoom"] == 7

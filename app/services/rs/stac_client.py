@@ -6,8 +6,13 @@
 import asyncio
 import logging
 import os
+import time
+import weakref
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    from pystac_client import Client
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -222,18 +227,44 @@ def _read_sentinel_masked_decimated(
         return sums / counts
 
 
+
+
+@lru_cache(maxsize=1)
+def _catalog_for_url(url: str, ttl_bucket: int) -> "Client":
+    """URL-keyed one-minute cache; never retains a primitive instance."""
+    import pystac_client
+    from pystac_client.stac_api_io import StacApiIO
+
+    from app.services.data_fabric.security import make_safe_session
+
+    # Catalog discovery, search links, pagination and redirects all reuse
+    # this IO session, so each actual destination passes the same egress,
+    # SSRF and connection-local DNS policy as other data sources.
+    stac_io = StacApiIO(timeout=_STAC_HTTP_TIMEOUT_S, max_retries=None)
+    stac_io.session.close()
+    stac_io.session = make_safe_session()
+    # review #1744-6：timeout 覆盖 open 本身与该 client 的所有后续
+    # 请求（search / items 走同一 StacApiIO 会话；pystac-client ≥0.8
+    # 支持该形参，见 requirements 下限）。挂死从此有界。
+    try:
+        catalog = pystac_client.Client.open(
+            url, timeout=_STAC_HTTP_TIMEOUT_S, stac_io=stac_io,
+        )
+        weakref.finalize(catalog, stac_io.session.close)
+        return catalog
+    except BaseException:
+        stac_io.session.close()
+        raise
+
+
+
 class StacClientPrimitive:
     """STAC 检索与波段读取服务"""
 
-    @lru_cache(maxsize=1)
-    def _get_catalog(self):
-        import pystac_client
-        # review #1744-6：timeout 覆盖 open 本身与该 client 的所有后续
-        # 请求（search / items 走同一 StacApiIO 会话；pystac-client ≥0.8
-        # 支持该形参，见 requirements 下限）。挂死从此有界。
-        return pystac_client.Client.open(_catalog_url(), timeout=_STAC_HTTP_TIMEOUT_S)
+    def _get_catalog(self) -> "Client":
+        return _catalog_for_url(_catalog_url(), int(time.monotonic() // 60))
 
-    async def open_catalog(self):
+    async def open_catalog(self) -> "Client":
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._get_catalog)
 
@@ -373,6 +404,7 @@ class StacClientPrimitive:
                         # 以最高分辨率波段为参考网格;第二遍所有波段读取时统一
                         # 重采样到该网格。
                         opened: List[Tuple[str, Any]] = []
+                        opened_readers: List[Any] = []
                         try:
                             band_windows: Dict[str, Any] = {}
                             band_scale_offset: Dict[str, Tuple[float, float]] = {}
@@ -395,7 +427,16 @@ class StacClientPrimitive:
                                 # of a bare RasterioError.
                                 from app.lib.geo_raster.reader import RasterReader
 
-                                ds = RasterReader.open(href)._ds()
+                                reader = RasterReader.open(href)
+                                opened_readers.append(reader)
+                                ds = reader.dataset
+                                # Image overlays use an axis-aligned WGS84 rectangle.
+                                # Reproject the pixels themselves, not just the bounds.
+                                if ds.crs is not None and not ds.crs.is_geographic:
+                                    from rasterio.vrt import WarpedVRT
+
+                                    ds = WarpedVRT(ds, crs="EPSG:4326", resampling=Resampling.bilinear)
+                                    opened_readers.append(ds)
                                 opened.append((name, ds))
                                 if ds.crs is not None:
                                     crs_s = ds.crs.to_string()
@@ -504,8 +545,8 @@ class StacClientPrimitive:
                                                 cell_size_x_m = float(px_x)
                                             cell_size_m = float(px_y)
                         finally:
-                            for _, ds in opened:
-                                ds.close()
+                            for reader in reversed(opened_readers):
+                                reader.close()
                     return bands_dict, cell_size_m, cell_size_x_m, data_bounds
 
                 bands_dict, cell_size_m, cell_size_x_m, data_bounds = await asyncio.to_thread(_read_bands)

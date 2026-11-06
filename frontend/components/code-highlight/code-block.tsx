@@ -171,7 +171,7 @@ export function parseMessageContent(content: string): React.ReactNode[] {
     }
 
     const language = match[1] || '';
-    const code = match[2].trim();
+    const code = match[2].replace(/^\n+|\s+$/g, '');
 
     elements.push(
       <CodeBlock key={`code-${match.index}`} language={language} code={code} />,

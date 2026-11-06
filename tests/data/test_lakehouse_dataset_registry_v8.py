@@ -517,15 +517,14 @@ def test_provenance_redacted_and_bounded(v8_env):
         )
 
 
-def test_migration_single_head_and_reentrant():
+def test_migration_single_head_and_reentrant(tmp_path):
     """0035 保持单 head（subprocess alembic；0034 守卫同款）。"""
     import os
     import subprocess
     import sys
 
-    Path("./data").mkdir(parents=True, exist_ok=True)
     repo_root = Path(__file__).resolve().parents[2]
-    url = f"sqlite:///{Path('./data/mig_v8_check.db').resolve()}"
+    url = f"sqlite:///{tmp_path / 'mig_v8_check.db'}"
     env = {**os.environ, "DATABASE_URL": url, "WEBGIS_MIGRATION_DB": url}
     def _alembic(*args):
         return subprocess.run(

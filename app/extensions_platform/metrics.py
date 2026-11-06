@@ -8,7 +8,7 @@ Prometheus（随既有 instrumentator /metrics 暴露）。
 
 - ``extension_activation_total{result}``：result ∈
   activated|failed|quarantined|disabled（host 状态机已闭合这四个出口）；
-- ``extension_quarantine_total{reason}``：reason ∈ worker_crash|revocation；
+- ``extension_quarantine_total{reason}``：reason ∈ worker_crash|revocation|trust_policy；
 - **没有 extension_id 标签**——per-extension 诊断走 host.status_report()
   （结构化、按需），杜绝注册表扩张带来的高基数标签风险。
 
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 ACTIVATION_RESULTS = ("activated", "failed", "quarantined", "disabled")
 
 #: 隔离原因词表（封闭）
-QUARANTINE_REASONS = ("worker_crash", "revocation")
+QUARANTINE_REASONS = ("worker_crash", "revocation", "trust_policy")
 
 _ACTIVATION_TOTAL = Counter(
     "extension_activation_total",

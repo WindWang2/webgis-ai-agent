@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
 from app.api.routes import map as _mod
-from app.core.auth import get_current_user_with_version
+from app.core.auth import get_current_user_with_version, get_current_user_optional_with_version
 from pathlib import Path
 
 _TEST_EXPORT_DIR = "/var/tmp/test_exports_diagnostics_sidecar"
@@ -47,10 +47,15 @@ def _clean():
 
 def _auth(client, user):
     client._transport.app.dependency_overrides[get_current_user_with_version] = lambda: user
+    client._transport.app.dependency_overrides[get_current_user_optional_with_version] = lambda: user
 
 
 async def _upload(client, diagnostics: str | None):
-    files = {"file": ("map.png", b"png-bytes", "image/png")}
+    from io import BytesIO
+    from PIL import Image
+    png = BytesIO()
+    Image.new("RGB", (1, 1)).save(png, format="PNG")
+    files = {"file": ("map.png", png.getvalue(), "image/png")}
     data = {"render_diagnostics": diagnostics} if diagnostics is not None else {}
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))

@@ -244,7 +244,7 @@ def default_capabilities(source_type: str) -> AdapterCapabilitiesV2:
     caps = _DEFAULTS.get(canonical)
     if caps is None:
         return _generic_defaults(source_type)
-    return caps.model_copy()
+    return caps.model_copy(deep=True)
 
 
 def get_capabilities(source_type: str, overrides: Optional[dict] = None) -> AdapterCapabilitiesV2:

@@ -854,7 +854,7 @@ _FAULT_LIST = [
         description="锁获取相位 Redis SET NX 抛连接错误",
         attack="ChaosLockClient.acquire_error（确定性假 Redis 接缝）",
         expected="fail_on_degraded=False 时透明降级 in-process（mode=degraded 可观测）；=True 时抛 LockDegradedError",
-        injection_point="app/services/distributed_lock.py:185-197 __aenter__（审计 05 #5）",
+        injection_point="app/services/distributed_lock.py:234 _ResilientSessionLock.__aenter__ RedisError fallback（审计 05 #5）",
         factory=_lock_acquire_degrade,
     ),
     FaultSpec(

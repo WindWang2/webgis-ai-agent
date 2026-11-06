@@ -81,15 +81,13 @@ async def test_save_workspace_snapshot_behavioral(registry, data_dir, session_ba
     assert bad.get("code") == "NO_SESSION"
 
     # validation：非法 materialize 枚举 → INVALID_MATERIALIZE
-    invalid = await registry.dispatch("save_workspace_snapshot", {
-        "session_id": sid, "label": "x", "materialize": "everything"})
+    invalid = await registry.dispatch('save_workspace_snapshot', {'label': 'x', 'materialize': 'everything'}, session_id=sid)
     assert isinstance(invalid, dict) and invalid.get("success") is False
     assert invalid.get("code") == "INVALID_MATERIALIZE"
 
     # happy path：materialize=claimed → 快照 id + 账本产物计数 + 持久指针
     ref = await _seed(sid)
-    out = await registry.dispatch("save_workspace_snapshot", {
-        "session_id": sid, "label": "before-merge", "materialize": "claimed"})
+    out = await registry.dispatch('save_workspace_snapshot', {'label': 'before-merge', 'materialize': 'claimed'}, session_id=sid)
     assert out.get("success") is True, out
     assert isinstance(out.get("snapshot_id"), str) and out["snapshot_id"]
     assert out.get("label") == "before-merge"
@@ -98,8 +96,7 @@ async def test_save_workspace_snapshot_behavioral(registry, data_dir, session_ba
     assert ref not in (out.get("materialize_skipped") or [])
 
     # 落盘真实发生：list 能看到该快照
-    listed = await registry.dispatch(
-        "list_workspace_snapshots", {"session_id": sid})
+    listed = await registry.dispatch('list_workspace_snapshots', {}, session_id=sid)
     assert listed.get("success") is True
     ids = [s.get("snapshot_id") for s in listed.get("snapshots") or []]
     assert out["snapshot_id"] in ids
@@ -115,7 +112,7 @@ async def test_list_workspace_snapshots_behavioral(registry, data_dir, session_b
 
     sid = "bdws-list"
     # error path（空会话语义）：无快照会话 → count 0
-    none = await registry.dispatch("list_workspace_snapshots", {"session_id": sid})
+    none = await registry.dispatch('list_workspace_snapshots', {}, session_id=sid)
     assert none.get("success") is True and none.get("count") == 0
 
     # happy path：保存两次（不同标签）→ 两条有界摘要
@@ -124,7 +121,7 @@ async def test_list_workspace_snapshots_behavioral(registry, data_dir, session_b
     first = await svc.save_snapshot(sid, label="snap-a", materialize="none")
     second = await svc.save_snapshot(sid, label="snap-b", materialize="none")
     assert first is not None and second is not None
-    out = await registry.dispatch("list_workspace_snapshots", {"session_id": sid})
+    out = await registry.dispatch('list_workspace_snapshots', {}, session_id=sid)
     assert out.get("success") is True
     assert out.get("count") == 2
     labels = {s.get("label") for s in out.get("snapshots") or []}
@@ -135,21 +132,19 @@ async def test_list_workspace_snapshots_behavioral(registry, data_dir, session_b
 async def test_restore_workspace_snapshot_behavioral(registry, data_dir, session_base):
     sid = "bdws-restore"
     # validation：缺 snapshot_id → 校验错误
-    bad = await registry.dispatch("restore_workspace_snapshot", {"session_id": sid})
+    bad = await registry.dispatch('restore_workspace_snapshot', {}, session_id=sid)
     assert isinstance(bad, dict) and bad.get("success") is False, bad
     assert bad.get("code") == "VALIDATION_ERROR"
 
     # validation：非法 mode → INVALID_MODE
-    invalid = await registry.dispatch("restore_workspace_snapshot", {
-        "session_id": sid, "snapshot_id": "snap-x", "mode": "hard_reset"})
+    invalid = await registry.dispatch('restore_workspace_snapshot', {'snapshot_id': 'snap-x', 'mode': 'hard_reset'}, session_id=sid)
     assert isinstance(invalid, dict) and invalid.get("success") is False
     assert invalid.get("code") == "INVALID_MODE"
 
     # error path：不存在的快照 id + verify 模式 → 不报错，但核查报告诚实
     # 披露 exists=False / restorable=False（verify 的契约是"只出报告"）。
     # （语义备注：success=True + exists=False 组合略显宽松，但信息不撒谎。）
-    missing = await registry.dispatch("restore_workspace_snapshot", {
-        "session_id": sid, "snapshot_id": "snap-ghost", "mode": "verify"})
+    missing = await registry.dispatch('restore_workspace_snapshot', {'snapshot_id': 'snap-ghost', 'mode': 'verify'}, session_id=sid)
     assert isinstance(missing, dict) and missing.get("success") is True
     verification = missing.get("verification") or {}
     assert verification.get("exists") is False
@@ -160,8 +155,7 @@ async def test_restore_workspace_snapshot_behavioral(registry, data_dir, session
     saved = await get_workspace_snapshot_service().save_snapshot(
         sid, label="check-me", materialize="claimed")
     assert saved is not None
-    out = await registry.dispatch("restore_workspace_snapshot", {
-        "session_id": sid, "snapshot_id": saved.snapshot_id, "mode": "verify"})
+    out = await registry.dispatch('restore_workspace_snapshot', {'snapshot_id': saved.snapshot_id, 'mode': 'verify'}, session_id=sid)
     assert out.get("success") is True, out
     verification = out.get("verification") or {}
     assert verification.get("snapshot_id") == saved.snapshot_id

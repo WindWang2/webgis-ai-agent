@@ -114,7 +114,7 @@ async def create_lakehouse_dataset(
     except org_quota.QuotaExceededError:
         raise
     except Exception:  # noqa: BLE001
-        pass
+        raise
 
     def _fn(sync_db):
         row, created = reg.create_dataset(
@@ -123,7 +123,7 @@ async def create_lakehouse_dataset(
             description=req.description,
             default_branch=req.default_branch,
             cube_contract=req.cube_contract,
-            session_id=str(conv.session_id),
+            session_id=str(conv.id),
         )
         sync_db.commit()
         return row.to_dict(), created
@@ -152,7 +152,7 @@ async def list_lakehouse_datasets(
 
     def _fn(sync_db):
         rows = reg.list_datasets(
-            sync_db, session_id=str(conv.session_id), limit=limit,
+            sync_db, session_id=str(conv.id), limit=limit,
         )
         return {"datasets": [r.to_dict() for r in rows], "count": len(rows)}
 
@@ -176,7 +176,7 @@ async def get_lakehouse_dataset(
     from app.services.lakehouse import dataset_registry as reg
 
     def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
+        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
         head = reg.branch_head(sync_db, row.id, row.default_branch)
         return {
             "dataset": row.to_dict(),
@@ -208,7 +208,7 @@ async def list_lakehouse_dataset_versions(
     from app.services.lakehouse.dataset_registry import DatasetRegistryError
 
     def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
+        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
         versions = reg.list_versions(
             sync_db, row.id, branch=branch or None, limit=limit,
         )
@@ -238,10 +238,10 @@ async def resolve_lakehouse_dataset_version(
     from app.services.lakehouse import dataset_registry as reg
 
     def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
+        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
         resolved = reg.resolve_version(
             sync_db, row, version_id=version_id,
-            session_id=str(conv.session_id),
+            session_id=str(conv.id),
         )
         if resolved is None:
             raise HTTPException(
@@ -262,32 +262,40 @@ async def commit_lakehouse_dataset_version(
     db=Depends(get_async_db),
 ) -> Dict[str, Any]:
     """提交新版本（原子协议：CAS manifest → 台账行 → 指针 CAS）。"""
-    conv = await verify_session_owner(
-        db, _require_session_id(req.session_id),
-        user_id=_user.get("user_id"), owner_token=owner_token,
-    )
-    from app.services.lakehouse import dataset_registry as reg
-    from app.services.lakehouse.dataset_registry import DatasetRegistryError
-
-    def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
-        result = reg.commit_version(
-            sync_db, row,
-            branch=req.branch,
-            data_object_id=req.data_object_id,
-            action=req.action,
-            provenance=req.provenance,
-            parent_version_id=req.parent_version_id,
-            workflow_run_id=req.workflow_run_id,
+    from app.services import org_quota
+    async with org_quota.serialized_admission(_user):
+        conv = await verify_session_owner(
+            db, _require_session_id(req.session_id),
+            user_id=_user.get("user_id"), owner_token=owner_token,
         )
-        sync_db.commit()
-        return result
+        from app.services.lakehouse import dataset_registry as reg
+        from app.services.lakehouse.dataset_registry import DatasetRegistryError
+        from app.services.lakehouse.data_object import resolve_data_object
+        manifest = await asyncio.to_thread(resolve_data_object, req.data_object_id)
+        if manifest is None:
+            raise HTTPException(status_code=404, detail="data object not found")
+        await org_quota.enforce_for_principal(_user, include_concurrency=False,
+            include_storage=True, storage_incoming=int(manifest.get("byte_size") or 0))
 
-    try:
-        result = await _call_in_thread(_fn)
-    except DatasetRegistryError as e:
-        raise _dataset_http_from(e)
-    return {"success": True, **result._asdict()}
+        def _fn(sync_db):
+            row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
+            result = reg.commit_version(
+                sync_db, row,
+                branch=req.branch,
+                data_object_id=req.data_object_id,
+                action=req.action,
+                provenance=req.provenance,
+                parent_version_id=req.parent_version_id,
+                workflow_run_id=req.workflow_run_id,
+            )
+            sync_db.commit()
+            return result
+
+        try:
+            result = await _call_in_thread(_fn)
+        except DatasetRegistryError as e:
+            raise _dataset_http_from(e)
+        return {"success": True, **result._asdict()}
 
 
 @router.post("/lakehouse/datasets/{dataset_id}/branches")
@@ -307,7 +315,7 @@ async def create_lakehouse_dataset_branch(
     from app.services.lakehouse.dataset_registry import DatasetRegistryError
 
     def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
+        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
         ref, created = reg.create_branch(
             sync_db, row, name=req.name,
             from_version_id=req.from_version_id,
@@ -339,7 +347,7 @@ async def create_lakehouse_dataset_tag(
     from app.services.lakehouse.dataset_registry import DatasetRegistryError
 
     def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
+        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
         ref, created = reg.create_tag(
             sync_db, row, name=req.name, version_id=req.version_id,
         )
@@ -370,7 +378,7 @@ async def rollback_lakehouse_dataset(
     from app.services.lakehouse.dataset_registry import DatasetRegistryError
 
     def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
+        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
         result = reg.rollback_branch(
             sync_db, row, branch=req.branch,
             to_version_id=req.to_version_id,
@@ -403,7 +411,7 @@ async def get_lakehouse_dataset_lineage(
     from app.services.lakehouse import dataset_registry as reg
 
     def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
+        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
         return reg.version_lineage(
             sync_db, row.id, version_id, max_depth=max_depth,
         )
@@ -429,11 +437,11 @@ async def plan_lakehouse_dataset_retention(
     from app.services.lakehouse.dataset_retention import RetentionError
 
     def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
+        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
         return ret.plan_retention(
             sync_db, row,
             max_versions=req.max_versions,
-            min_age_hours=req.min_age_hours,
+            min_age_hours=req.min_age_hours, session_id=str(conv.id),
         )
 
     try:
@@ -463,11 +471,11 @@ async def execute_lakehouse_dataset_retention(
     )
 
     def _fn(sync_db):
-        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.session_id))
+        row = _owned_dataset_or_404(sync_db, dataset_id, str(conv.id))
         plan = dict(req.plan)
         if str(plan.get("dataset_row_id") or "") != str(row.id):
             raise ret.RetentionError("plan belongs to a different dataset")
-        result = ret.execute_retention(sync_db, plan)
+        result = ret.execute_retention(sync_db, plan, session_id=str(conv.id))
         sync_db.commit()
         return result
 

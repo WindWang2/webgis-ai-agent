@@ -164,7 +164,7 @@ def _case_label_overlap_true():
     layout = _layer(out, "poi-labels")["layout"]
     assert layout["text-allow-overlap"] is False
     assert layout["text-padding"] == 4
-    assert layout["text-ignore-placement"] is True
+    assert layout["text-ignore-placement"] is False
     assert layout["text-size"] == 14  # attempt 0 不动字号
     # 靶外图层零触碰
     assert _layer(out, "basemap-bg") == _bg()
@@ -202,7 +202,7 @@ def _case_label_missing_layout_keys():
     layout = _layer(out, "metro-labels")["layout"]
     assert layout["text-allow-overlap"] is False
     assert layout["text-padding"] == 4
-    assert layout["text-ignore-placement"] is True
+    assert layout["text-ignore-placement"] is False
     assert "text-size" not in layout  # attempt 0 不新增字号
 
 
@@ -646,7 +646,7 @@ async def test_engine_heal_repeated_patch_guard() -> None:
     plan = VisualHealStrategyPlanner().plan(spec, [copy.deepcopy(defect)])
     assert plan.ops
     # 白盒注入：该指纹已被记录为"补丁已试"（模拟他 pod 已提交同一补丁）
-    engine._visual_heal_ledger[key] = {
+    engine._visual_heal_ledger[(sid, key)] = {
         "attempts": 0,
         "last_score": None,
         "no_improvement": 0,
@@ -758,3 +758,28 @@ async def test_healed_mapspec_backward_compat_mixed_sequence() -> None:
     assert fill["paint"]["fill-opacity"] >= 0.45
     chosen = fill["paint"]["fill-color"]["stops"][0][1]
     assert contrast_ratio(chosen, "#ffffff") >= 3.0
+
+
+async def test_visual_repair_budget_is_scoped_to_session_and_expires(monkeypatch):
+    import types
+    from app.services.mapspec import MapSpecLifecycleEngine
+    import app.services.mapspec.lifecycle_engine as module
+
+    engine = MapSpecLifecycleEngine()
+    first, second = _sid("tenant-a"), _sid("tenant-b")
+    await _seed_layers(engine, first, [_bg(), _symbol()])
+    await _seed_layers(engine, second, [_bg(), _symbol()])
+    defect = VisualCritiqueItem(category="label_collision", severity="warning", layer_ids=("poi-labels",))
+    key = defect_fingerprint([defect])
+    engine._visual_heal_ledger[(first, key)] = {
+        "attempts": MAX_VISUAL_HEAL_ITERATIONS, "last_score": None,
+        "no_improvement": 0, "tried_signatures": set(), "expires_at": 100.0,
+    }
+    monkeypatch.setattr(module, "time", types.SimpleNamespace(monotonic=lambda: 50.0))
+    denied = await engine.apply_visual_heal_patch(first, [defect], on_exhausted="degrade")
+    assert denied.error_code == "HEAL_CONVERGENCE_EXHAUSTED"
+    other = await engine.apply_visual_heal_patch(second, [defect])
+    assert not other.is_error
+    monkeypatch.setattr(module, "time", types.SimpleNamespace(monotonic=lambda: 101.0))
+    renewed = await engine.apply_visual_heal_patch(first, [defect])
+    assert not renewed.is_error

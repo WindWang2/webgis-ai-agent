@@ -1,4 +1,5 @@
 'use client';
+import { ProjectionStatus } from './cockpit-shared';
 
 /**
  * 执行 / 资源视图：Swarm durable ledger 投影 + mission 资源预算投影。
@@ -30,6 +31,8 @@ export function SwarmView({ enabled, missionId, ownerToken }: SwarmViewProps) {
     (signal) => getCockpitSwarm(missionId as string, { signal, ownerToken }),
     { enabled: enabled && missionId !== null, resetKey: missionId ?? 'none' },
   );
+
+  if (swarm.error || swarm.loading) return <ProjectionStatus projection={swarm} />;
 
   if (!missionId) {
     return <EmptyState testId="cockpit-swarm-no-mission">{t('empty.noMission')}</EmptyState>;
@@ -124,6 +127,8 @@ export function ResourcesView({ enabled, missionId, ownerToken }: ResourcesViewP
       revisionOf: (d: CockpitMissionDetail) => d.mission?.revision ?? 0,
     },
   );
+
+  if (detail.error || detail.loading) return <ProjectionStatus projection={detail} />;
 
   if (!missionId) {
     return <EmptyState testId="cockpit-resources-no-mission">{t('empty.noMission')}</EmptyState>;

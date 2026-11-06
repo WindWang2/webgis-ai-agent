@@ -26,6 +26,7 @@ CAP_UNKNOWN = "unknown"
 # ── reason codes（封闭枚举；新增必须同步 TEST_MATRIX 与文档） ────────────
 RC_NO_TILE_LINKS = "no_tile_links"
 RC_MEDIA_TYPE_UNSUPPORTED = "media_type_unsupported"
+RC_MEDIA_TYPE_NOT_DECLARED = "media_type_not_declared"
 RC_TMS_UNRECOGNIZED = "tms_unrecognized"
 RC_TMS_NOT_DISPLAYABLE = "tms_not_displayable"
 RC_CRS_NOT_DECLARED = "crs_not_declared"
@@ -160,13 +161,13 @@ def assess_tileset(
         return a
     if not declared:
         a.state = CAP_UNKNOWN
-        a.add(RC_NO_TILE_LINKS, "瓦片链接未声明媒体类型")
+        a.add(RC_MEDIA_TYPE_NOT_DECLARED, "瓦片链接未声明媒体类型")
 
     tms_state = tms_display_state(tms_uri) if tms_uri else tms_display_state(tms_id)
     if tms_state == CAP_UNSUPPORTED:
         a.state = CAP_UNSUPPORTED
         a.add(RC_TMS_NOT_DISPLAYABLE, f"TileMatrixSet 不在显示路径（仅 WebMercatorQuad 族）: {tms_uri or tms_id}")
-    elif tms_state == CAP_UNKNOWN:
+    elif tms_state == CAP_UNKNOWN and (tms_uri or tms_id):
         a.state = CAP_UNKNOWN
         a.add(RC_TMS_UNRECOGNIZED, f"无法识别的 TileMatrixSet 标识: {tms_uri or tms_id}")
     if not tms_uri and not tms_id:

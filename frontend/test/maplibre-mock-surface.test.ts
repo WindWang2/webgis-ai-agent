@@ -33,7 +33,7 @@ const SCAN_DIRS = ['lib', 'components'];
 // these are real API members and must also exist on the mock.
 const HANDLER_MEMBERS = new Set([
   'dragPan', 'boxZoom', 'touchZoomRotate', 'touchPitch',
-  'scrollZoom', 'dragRotate', 'tapZoom', 'keyboard',
+  'scrollZoom', 'dragRotate', 'tapZoom', 'keyboard', 'style',
 ]);
 
 interface AccessSite {

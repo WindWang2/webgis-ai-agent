@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Name matching hints for temporal fields
 TEMPORAL_NAME_REGEX = re.compile(
-    r"(timestamp|datetime|date|time|acquired|created|updated|recorded|year|month|t1|t2)",
+    r"(^t$|timestamp|datetime|date|time|acquired|created|updated|recorded|year|month|t1|t2)",
     re.IGNORECASE,
 )
 
@@ -168,8 +168,8 @@ def profile_field(field_name: str, values: List[Any], max_samples: int = 100) ->
     confidence = min(1.0, max(0.0, confidence))
 
     # Penalty for ambiguous low integer years if field name doesn't hint at time
-    if dominant_type == TemporalFieldType.YEAR and not TEMPORAL_NAME_REGEX.search(field_name):
-        confidence = min(0.6, confidence)
+    if dominant_type in (TemporalFieldType.YEAR, TemporalFieldType.EPOCH_SEC, TemporalFieldType.EPOCH_MS) and not TEMPORAL_NAME_REGEX.search(field_name):
+        confidence = min(0.39, confidence)
 
     return TimeField(
         field_name=field_name,

@@ -35,6 +35,8 @@ def _normalize_crs_for_wgs84(crs: str) -> str:
         return normalized
     # OGC 形式：urn:ogc:def:crs:EPSG::4326 / .../crs/EPSG/0/4326
     tail = normalized.rsplit(":", 1)[-1].rsplit("/", 1)[-1]
+    if tail == "CRS84":
+        return "CRS84"
     if tail.isdigit() and int(tail) in (4326, 4490):
         return f"EPSG:{int(tail)}"
     return ""

@@ -88,6 +88,9 @@ _ASSERT_CALLS = {
     "assertIn", "assertIs", "assertRaises", "assertAlmostEqual",
     "assertDictEqual", "assertListEqual", "assertIsNone", "assertIsNotNone",
     "assertGreater", "assertLess", "assertRegex", "fail",
+    "assert_allclose", "assert_array_equal", "assert_array_almost_equal",
+    "assert_equal", "assert_almost_equal", "assert_approx_equal",
+    "assert_array_less", "assert_string_equal",
 }
 
 # 计数型规则的稳定输出顺序（check / locate / baseline 摘要共用）
@@ -377,6 +380,15 @@ def collect_assertless_tests(root: Path) -> list[DebtItem]:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
                     and node.name.startswith("test_") \
+                    and not any(
+                        isinstance(decorator, ast.Name) and decorator.id == "fixture"
+                        or isinstance(decorator, ast.Attribute) and decorator.attr == "fixture"
+                        or isinstance(decorator, ast.Call) and (
+                            isinstance(decorator.func, ast.Name) and decorator.func.id == "fixture"
+                            or isinstance(decorator.func, ast.Attribute) and decorator.func.attr == "fixture"
+                        )
+                        for decorator in node.decorator_list
+                    ) \
                     and not _has_assertion(node):
                 items.append(DebtItem("assertless_tests", rel, node.lineno,
                                       node.name))

@@ -89,6 +89,9 @@ class PackageRegistry:
         """
         from app.models.db_model import WorkflowPackageRow
 
+        if len(owner_scope) > 40:
+            raise ValueError("owner_scope exceeds40 characters")
+
         with self._factory() as db:
             if not org_id:
                 from app.core import tenancy
@@ -152,6 +155,9 @@ class PackageRegistry:
         """draft → published（幂等；已 published 原样返回）。"""
         from app.models.db_model import WorkflowPackageRow
 
+        if len(owner_scope) > 40:
+            raise ValueError("owner_scope exceeds40 characters")
+
         try:
             with self._factory() as db:
                 updated = db.execute(
@@ -170,6 +176,7 @@ class PackageRegistry:
                 row = db.query(WorkflowPackageRow).filter(
                     WorkflowPackageRow.package_id == package_id,
                     WorkflowPackageRow.version == version,
+                    WorkflowPackageRow.owner_scope == owner_scope,
                 ).first()
                 return _row_to_dict(row) if row is not None else None
         except OperationalError:

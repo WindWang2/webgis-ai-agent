@@ -107,7 +107,9 @@ async def client(env):
 async def _register_dem(env, session_id: str, *, datum="EGM96") -> str:
     from app.services.terrain_ingest import register_session_terrain_source
 
-    dem = _write_dem(env["tmp"] / f"dem-{session_id}.tif")
+    directory = env["tmp"] / session_id
+    directory.mkdir(parents=True, exist_ok=True)
+    dem = _write_dem(directory / "dem.tif")
     out = await register_session_terrain_source(
         session_id, dem,
         declared_vertical_datum=datum, declared_vertical_unit="m",
@@ -198,7 +200,7 @@ class TestTileJsonContract:
         # 对 token → 200 且 tiles URL 携带 token（MapLibre 可直接消费）
         r2 = await client.get(f"{base}?session_id={sid}&token=tok-anon-123")
         assert r2.status_code == 200, r2.text
-        assert "&token=tok-anon-123" in r2.json()["tiles"][0]
+        assert "&sig=" in r2.json()["tiles"][0]
 
     async def test_retired_ref_404(self, client, env):
         sid = "sess-tilejson-retire-01"
@@ -214,7 +216,8 @@ class TestTileJsonContract:
         sid = "sess-tilejson-nocrs-01"
         await _seed_conversation(env["db"], sid, user_id=_MOCK_USER["user_id"])
         # 无 CRS 的裸 GeoTIFF ref（模拟工具产物/旧路径注册），TileJSON fail-closed
-        p = env["tmp"] / "bare.tif"
+        p = env["tmp"] / sid / "bare.tif"
+        p.parent.mkdir(parents=True, exist_ok=True)
         with rasterio.open(
             p, "w", driver="GTiff", width=64, height=64, count=1, dtype="float32",
             transform=from_bounds(0, 0, 1, 1, width=64, height=64),
@@ -255,7 +258,8 @@ class TestNonIngestedRefErrorCodes:
         ) as dst:
             for b in range(1, 4):
                 dst.write(np.zeros((32, 32), dtype="float32"), b)
-        p = env["tmp"] / "rgb.tif"
+        p = env["tmp"] / sid / "rgb.tif"
+        p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(buf.getvalue())
         ref_id = await env["manager"].store(sid, {"file_path": str(p)}, prefix="raster")
         r = await client.get(
@@ -270,7 +274,8 @@ class TestNonIngestedRefErrorCodes:
         from rasterio.transform import Affine
 
         rot = Affine.translation(0, 1) * Affine.rotation(30.0) * Affine.scale(0.01, -0.01)
-        p = env["tmp"] / "rot.tif"
+        p = env["tmp"] / sid / "rot.tif"
+        p.parent.mkdir(parents=True, exist_ok=True)
         with rasterio.open(
             p, "w", driver="GTiff", width=64, height=64, count=1, dtype="float32",
             crs="EPSG:4326", transform=rot,

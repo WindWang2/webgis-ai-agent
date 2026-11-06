@@ -243,6 +243,8 @@ def classify_exception(exc: BaseException) -> ErrorClassification:
                 isinstance(status, int) and status >= 500
             ):
                 return _from_category(ErrorCategory.DEPENDENCY_FAILURE)
+            if isinstance(status, int) and status in (401, 403):
+                return _from_category(ErrorCategory.DEPENDENCY_FAILURE)
             if isinstance(status, int) and status == 404:
                 return _from_category(ErrorCategory.DATA_UNAVAILABLE)
             if isinstance(status, int) and status >= 400:

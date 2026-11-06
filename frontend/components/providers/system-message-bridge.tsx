@@ -19,10 +19,9 @@ export function SystemMessageBridge() {
 
   useEffect(() => {
     if (pendingMsg) {
-      // 判断消息类型：关键词分级（中英双语覆盖；i18n 后消息语言随 locale，
-      // 关键词表同时保留两语言词根，避免英文切换后 error 被降级为 info）
-      const isError = /失败|错误|error|fail/i.test(pendingMsg)
-      addToast(pendingMsg, isError ? "error" : "info")
+      const text = typeof pendingMsg === "string" ? pendingMsg : pendingMsg.text
+      const level = typeof pendingMsg === "string" ? "info" : pendingMsg.level
+      addToast(text, level)
 
       // 500ms 后推进队列（给 toast 渲染时间）
       if (timerRef.current) clearTimeout(timerRef.current)

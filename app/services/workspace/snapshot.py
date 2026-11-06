@@ -102,6 +102,7 @@ class WorkspaceSnapshot(BaseModel):
     artifact_contracts: List[ArtifactContract] = Field(default_factory=list)
     layers: List[SnapshotLayerRef] = Field(default_factory=list)
     durable_pointers: Dict[str, SnapshotDurablePointer] = Field(default_factory=dict)
+    newly_materialized_bytes: int = 0
     mapspec_fingerprint: str = ""
     mapspec_mutation_revision: int = 0
     active_view: Dict[str, Any] = Field(default_factory=dict)
@@ -550,6 +551,7 @@ class WorkspaceSnapshotService:
             else {}
         )
         pointers: Dict[str, SnapshotDurablePointer] = {}
+        new_bytes = 0
         skipped: List[str] = []
         # None = 无界（既有语义）；显式 0 = 零预算（review NEW-1：quota 余量
         # 恰好为 0 是持久稳态不是竞态窗口 —— falsy 判断会把 0 变 256MB 默认，
@@ -589,8 +591,11 @@ class WorkspaceSnapshotService:
             if ptr is None:
                 continue  # 载荷不存活/写盘失败 —— 如实缺指针
             pointers[ref] = SnapshotDurablePointer(**ptr)
-            remaining -= int(ptr.get("byte_size") or 0)
+            written = int(ptr.get("new_bytes", ptr.get("byte_size", 0)) or 0)
+            remaining -= written
+            new_bytes += written
         snapshot.durable_pointers = pointers
+        snapshot.newly_materialized_bytes = new_bytes
         snapshot.materialize_skipped = skipped
         # GC interlock：被快照声明的 ref 一律盖 workspace 章（含"已有持久
         # 指针"与"载荷仍活但本轮未物化"的 —— 防的是 GC 提前删，TTL 老化
@@ -674,7 +679,7 @@ class WorkspaceSnapshotService:
     async def list_snapshots(
         self, session_id: str, *, project_id: str = ""
     ) -> List[Dict[str, Any]]:
-        """快照清单（项目域 + 会话域合并；最旧 → 最新；≤50 条）。
+        """快照清单（项目域 + 会话域合并；最新 → 最旧；≤50 条）。
 
         每条带诚实 ``home`` 字段（``"project" | "session"``）—— 会话域
         快照仍随会话清扫（向后兼容可读，不承诺长寿）。
@@ -710,7 +715,7 @@ class WorkspaceSnapshotService:
                         if item is not None:
                             item["home"] = "session"
                             out.append(item)
-            out.sort(key=lambda x: (x.get("created_at") or 0.0))
+            out.sort(key=lambda x: (x.get("created_at") or 0.0), reverse=True)
             return out[:_MAX_SNAPSHOT_LIST]
 
         try:
@@ -743,8 +748,14 @@ class WorkspaceSnapshotService:
         self, session_id: str, snapshot_id: str, *, project_id: str = ""
     ) -> SnapshotVerification:
         """§十六目标的前置证据：这份快照还能恢复多少？"""
+        snapshot = await asyncio.to_thread(self._load_snapshot, session_id, snapshot_id, project_id=project_id)
+        return await self._verify_loaded_snapshot(session_id, snapshot_id, snapshot)
+
+    async def _verify_loaded_snapshot(
+        self, session_id: str, snapshot_id: str, snapshot: Optional[WorkspaceSnapshot]
+    ) -> SnapshotVerification:
+        """Verify the same manifest instance that a restore will consume."""
         report = SnapshotVerification(snapshot_id=snapshot_id)
-        snapshot = self._load_snapshot(session_id, snapshot_id, project_id=project_id)
         if snapshot is None:
             return report
         # integrity_ok 语义 = 「可解析为合法模型」+「已记录指针的摘要与
@@ -810,9 +821,10 @@ class WorkspaceSnapshotService:
           写回失败保持诚实 ``expired`` 并进 ``degraded`` 披露，绝不把
           死 ref 标成 valid。Map/样式回放仍归 checkpoint 体系。
         """
-        verification = await self.verify_snapshot(
-            session_id, snapshot_id, project_id=project_id
+        snapshot = await asyncio.to_thread(
+            self._load_snapshot, session_id, snapshot_id, project_id=project_id
         )
+        verification = await self._verify_loaded_snapshot(session_id, snapshot_id, snapshot)
         result: Dict[str, Any] = {
             "mode": mode,
             "verification": verification.to_dict(),
@@ -822,7 +834,6 @@ class WorkspaceSnapshotService:
         if mode != "register":
             result["error"] = f"unknown mode: {mode!r} (verify|register)"
             return result
-        snapshot = self._load_snapshot(session_id, snapshot_id, project_id=project_id)
         if snapshot is None:
             result["error"] = "snapshot not found or unreadable"
             return result
@@ -934,8 +945,8 @@ class WorkspaceSnapshotService:
     ) -> Optional[Dict[str, Any]]:
         """跨会话克隆快照文件（ref 的会话绑定语义由 verify 如实披露）。
 
-        项目域快照克隆回项目域（``project_id`` 给出时）；所有权：源快照
-        记录了 ``created_by`` 且调用方身份不符 → 拒绝（None）。
+        项目域快照克隆回项目域（``project_id`` 给出时）；源快照必须记录
+        非空 ``created_by``，且与显式调用方身份一致，否则拒绝（None）。
         """
         if not _validate_session_id(target_session_id):
             return None
@@ -946,7 +957,7 @@ class WorkspaceSnapshotService:
         if not isinstance(data, dict):
             return None
         created_by = str(data.get("created_by") or "")
-        if created_by and owner_id and created_by != str(owner_id):
+        if not created_by or not owner_id or created_by != str(owner_id):
             return None  # 非本人创建的项目域快照：服务侧拒绝（路由侧已鉴权）
         try:
             src = WorkspaceSnapshot.model_validate(data)
@@ -987,8 +998,10 @@ class WorkspaceSnapshotService:
             return None
         path, home = resolved
         data = _read_json(path)
-        created_by = str((data or {}).get("created_by") or "")
-        if created_by and owner_id and created_by != str(owner_id):
+        if not isinstance(data, dict):
+            return None
+        created_by = str(data.get("created_by") or "")
+        if not created_by or not owner_id or created_by != str(owner_id):
             return None  # 非本人创建：拒绝（不删别人的项目资产）
         try:
             await asyncio.to_thread(path.unlink)
@@ -1037,7 +1050,7 @@ class WorkspaceSnapshotService:
             found: set[str] = set()
             pdir = _project_snapshots_dir(project_id) if project_id else None
             if pdir is not None and pdir.is_dir():
-                for f in sorted(pdir.glob("*.json"))[:_MAX_SNAPSHOT_LIST]:
+                for f in sorted(pdir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)[:_MAX_SNAPSHOT_LIST]:
                     data = _read_json(f)
                     pointers = data.get("durable_pointers") if isinstance(data, dict) else None
                     if isinstance(pointers, dict):

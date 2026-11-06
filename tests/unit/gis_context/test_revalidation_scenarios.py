@@ -128,6 +128,9 @@ def test_closed_loop_through_hotpath(wc_store, monkeypatch):
     assert persisted.findings[0].status == "supported"
     assert persisted.findings[0].basis_revision == persisted.revision
 
+    from app.services.mapspec_store import mapspec_store
+    _run(mapspec_store.save_mapspec("sess-1", _mapspec(aoi_shift=0.35)))
+
     # Turn 3 — same (drifted) world: the reaffirmed + re-verified context
     # reconfirms its basis marker passively; the restored finding renders.
     _run(hp.request_revalidation(

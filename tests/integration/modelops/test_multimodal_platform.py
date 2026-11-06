@@ -74,7 +74,7 @@ def test_zero_shot_with_real_embedding_run(service_stub, synthetic_raster):
     result = service_stub.run_inference(InferenceRequest(
         model_id="tiny-chip-embedder", source_uri=str(synthetic_raster),
         owner_scope={"session_id": "sem-e2e"}, task_type="embedding",
-    ))
+    ), allowed_roots=[synthetic_raster.parent])
     assert result.status == "completed"
     smap = SemanticClassMap(StubTextEncoder(dimension=6))
     smap.register(["water", "forest"], replace=True)

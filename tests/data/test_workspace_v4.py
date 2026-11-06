@@ -415,9 +415,9 @@ class TestInventoryAndRetention:
     async def test_delete_removes_only_target_file(self, data_dir, session_base):
         sid = "wsv4-delete"
         svc = get_workspace_snapshot_service()
-        s1 = await svc.save_snapshot(sid, project_id="proj-del", label="one")
+        s1 = await svc.save_snapshot(sid, project_id="proj-del", label="one", owner_id="owner")
         s2 = await svc.save_snapshot(sid, project_id="proj-del", label="two")
-        result = await svc.delete_snapshot(sid, s1.snapshot_id, project_id="proj-del")
+        result = await svc.delete_snapshot(sid, s1.snapshot_id, project_id="proj-del", owner_id="owner")
         assert result == {"snapshot_id": s1.snapshot_id, "home": "project", "deleted": True}
         assert _resolve_snapshot_file(sid, s1.snapshot_id, "proj-del") is None
         assert _resolve_snapshot_file(sid, s2.snapshot_id, "proj-del") is not None

@@ -8,7 +8,7 @@
 - GuardrailVerdict / GuardrailIssue / GuardLevel / DefenseMode —— 裁决契约；
 - GeographicImpossibilityError 等错误族。
 
-离线纪律：仅标准库；无网络 IO；重依赖（numpy/geopandas）零接触。
+离线纪律：无网络 IO；围栏几何依赖 shapely，不引入 numpy/geopandas。
 """
 from app.services.spatial_guardrails.admin_division_verifier import (
     AdminCheckReport,

@@ -111,6 +111,13 @@ CARD_SUMMARY_MAX = 80                 # card 内摘要截断（对齐 proactive_
 PROJECT_ROW_BUDGET = 400              # 每 (org, project) 行数预算（= SCOPE_BUDGET[project]）
 REBUILD_MISSION_MAX = 32              # rebuild 每项目采样的 mission 上限
 REBUILD_MAP_PRODUCT_MAX = 8           # rebuild 采样的 map product 版本上限
+# Full rebuild <=392 rows, including two rows per failed mission; the remaining
+# eight slots leave room for history/other projection kinds inside the hard cap.
+REBUILD_DATASET_MAX = 128
+REBUILD_ARTIFACT_MAX = 128
+REBUILD_WORKFLOW_MAX = 32
+REBUILD_PLACE_MAX = 16
+REBUILD_PREFERENCE_MAX = 16
 
 
 class KnowledgePolicyError(ValueError):
@@ -154,6 +161,8 @@ class RefTag:
     id: str
     token: str = ""   # 索引时观察到的权威指纹（上游 liveness 复核用）
 
+    session_id: str = ""  # Required for precise session-ref lifecycle invalidation.
+
     def validate(self) -> None:
         if self.relation not in RELATION_TAGS:
             raise KnowledgePolicyError(f"未知 relation {self.relation!r}")
@@ -168,6 +177,7 @@ class RefTag:
             "authority": self.authority,
             "id": str(self.id)[:REF_TOKEN_MAX],
             "token": str(self.token or "")[:REF_TOKEN_MAX],
+            **({"session_id": self.session_id} if self.session_id else {}),
         }
 
 
@@ -183,6 +193,7 @@ def ref_tags_from(value: Any) -> List[RefTag]:
                 authority=str(item.get("authority") or ""),
                 id=str(item.get("id") or ""),
                 token=str(item.get("token") or ""),
+                session_id=str(item.get("session_id") or ""),
             )
             tag.validate()
         except KnowledgePolicyError:
@@ -213,6 +224,7 @@ class KnowledgeUpsert:
     method_key: Optional[str] = None
     refs: Sequence[RefTag] = ()
     invalidation_rule: str = RULE_NONE
+    session_id: str = ""
 
     def validate(self) -> None:
         if not self.org_id:
@@ -328,6 +340,8 @@ __all__ = [
     "CARD_CHAR_BUDGET", "CARD_MAX_ITEMS", "CARD_FAILURE_WARNING_MAX",
     "CARD_SUMMARY_MAX", "PROJECT_ROW_BUDGET",
     "REBUILD_MISSION_MAX", "REBUILD_MAP_PRODUCT_MAX",
+    "REBUILD_DATASET_MAX", "REBUILD_ARTIFACT_MAX", "REBUILD_WORKFLOW_MAX",
+    "REBUILD_PLACE_MAX", "REBUILD_PREFERENCE_MAX",
     "KnowledgePolicyError", "RefTag", "ref_tags_from", "KnowledgeUpsert",
     "KnowledgeEntry", "ReuseQuery", "ReuseCandidate",
     "validate_bbox", "bbox_contains",

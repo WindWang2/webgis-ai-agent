@@ -3,7 +3,7 @@
 唯一提交通道 = ``MapSpecLifecycleEngine.apply_mutation``（不绕开
 ADR-0068 dispatch 拥有者，不造第二写路径）：
 
-- 逐步 CAS：step i 期望 ``base_revision + i - 1``；任何 superseded ⇒
+- 逐步 CAS：每步期望上一步实际返回 revision（duplicate 不虚增）；任何 superseded ⇒
   中止剩余步骤（fail-closed：陈旧计划绝不静默续跑）；
 - 幂等：mutation_id = ``c:<client_mutation_id>`` —— 同编译重放命中
   引擎去重，回执记 duplicate 而非二次执行；
@@ -112,7 +112,7 @@ async def apply_plan(
     last_mapspec: Optional[Dict[str, Any]] = None
 
     for m in compilation.mutations:
-        expected = compilation.base_revision + m.step - 1
+        expected = final_revision
         try:
             intent = mutation_to_engine_intent(m)
         except ValueError as exc:
@@ -216,9 +216,13 @@ async def _store_receipt(session_id: str, receipt: CompileReceipt) -> None:
     try:
         from app.services.session_data import session_data_manager
 
-        state = await session_data_manager.get_map_state(session_id) or {}
-        ring = bound_receipt_ring(state.get(PLAN_RECEIPTS_KEY), receipt)
-        await session_data_manager.set_map_state(session_id, PLAN_RECEIPTS_KEY, ring)
+        from app.services.session_state_atomic import atomic_update_state
+
+        def append(snapshot: dict[str, object]) -> dict[str, object]:
+            return {PLAN_RECEIPTS_KEY: bound_receipt_ring(snapshot.get(PLAN_RECEIPTS_KEY), receipt)}
+
+        if await atomic_update_state(session_data_manager, session_id, [PLAN_RECEIPTS_KEY], append) is None:
+            raise RuntimeError("plan receipt atomic update unavailable")
     except Exception:  # noqa: BLE001 — 回执存储失败不影响已提交 mutations
         logger.warning("plan receipt store failed session=%s receipt=%s",
                        session_id, receipt.receipt_id, exc_info=True)

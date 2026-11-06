@@ -2,8 +2,9 @@
 import asyncio
 import logging
 import time
+import threading
 import uuid
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from typing import Protocol
 
 from app.core.config import settings
@@ -81,7 +82,7 @@ class RedisRateLimiter:
         self._bound_loop = loop
         return self._redis
 
-    async def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> bool:
+    async def is_allowed(self, key: str, max_requests: int, window_seconds: int, *, fail_closed: bool = False) -> bool:
         client = await self._ensure_client()
         now = time.time()
         window_start = now - window_seconds
@@ -91,12 +92,18 @@ class RedisRateLimiter:
         # concurrent same-tick requests and zadd overwrites, undercounting by
         # N-1 (the effective limit silently exceeds the configured one under
         # bursts).
-        pipe.zadd(key, {f"{now:.6f}:{uuid.uuid4().hex[:6]}": now})
+        member = f"{now:.6f}:{uuid.uuid4().hex}"
+        pipe.zadd(key, {member: now})
         pipe.zcard(key)
         pipe.expire(key, window_seconds + 1)
         try:
             _, _, count, _ = await pipe.execute()
+            if count > max_requests:
+                await client.zrem(key, member)
         except Exception as exc:
+            if fail_closed:
+                logger.warning("Shared rate quota operation failed; denying request: %s", exc)
+                return False
             # C-F10: rate limiting is best-effort. A Redis blip must NEVER block
             # or fail every request (the middleware runs this per-request on the
             # hot path). Degrade to the in-process bucket instead of pure
@@ -110,6 +117,14 @@ class RedisRateLimiter:
             )
         return count <= max_requests
 
+
+    async def is_allowed_shared(self, key: str, max_requests: int, window_seconds: int) -> bool:
+        """Provider-wide hard quota: a lost shared ledger never grants locally."""
+        try:
+            return await self.is_allowed(key, max_requests, window_seconds, fail_closed=True)
+        except Exception:
+            logger.warning("Shared rate quota unavailable; denying provider request", exc_info=True)
+            return False
 
     async def count(self, key: str, window_seconds: int) -> int:
         try:
@@ -153,50 +168,72 @@ class MemoryRateLimiter:
     _MAX_KEYS = 10000       # hard cap to prevent memory growth
 
     def __init__(self):
-        self._requests: dict[str, deque[float]] = defaultdict(deque)
+        self._requests: OrderedDict[str, deque[float]] = OrderedDict()
+        self._lock = threading.RLock()
         self._last_evict: float = 0.0
+        self._expires: dict[str, float] = {}
+        self._last_capacity_sweep = float("-inf")
 
     async def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> bool:
-        self._maybe_evict()
-        now = time.time()
-        timestamps = self._requests[key]
-        while timestamps and now - timestamps[0] >= window_seconds:
-            timestamps.popleft()
-        if len(timestamps) >= max_requests:
-            return False
-        timestamps.append(now)
-        return True
+        with self._lock:
+            self._maybe_evict()
+            now = time.time()
+            timestamps = self._window(key, window_seconds)
+            if timestamps is None:
+                return False
+            while timestamps and now - timestamps[0] >= window_seconds:
+                timestamps.popleft()
+            if len(timestamps) >= max_requests:
+                return False
+            timestamps.append(now)
+            return True
 
     async def count(self, key: str, window_seconds: int) -> int:
-        now = time.time()
-        timestamps = self._requests.get(key)
-        if not timestamps:
-            return 0
-        return sum(1 for ts in timestamps if now - ts < window_seconds)
+        with self._lock:
+            now = time.time()
+            timestamps = self._requests.get(key)
+            if not timestamps:
+                # A saturated fallback cannot forget existing lockouts to admit
+                # arbitrary fresh identities. Unknown counters fail closed.
+                self._maybe_evict()
+                return 2**31 - 1 if len(self._requests) >= self._MAX_KEYS else 0
+            return sum(1 for ts in timestamps if now - ts < window_seconds)
 
     async def record(self, key: str, window_seconds: int) -> None:
-        self._maybe_evict()
-        now = time.time()
-        timestamps = self._requests[key]
-        while timestamps and now - timestamps[0] >= window_seconds:
-            timestamps.popleft()
-        timestamps.append(now)
+        with self._lock:
+            self._maybe_evict()
+            now = time.time()
+            timestamps = self._window(key, window_seconds)
+            if timestamps is None:
+                return
+            while timestamps and now - timestamps[0] >= window_seconds:
+                timestamps.popleft()
+            timestamps.append(now)
 
-    def _maybe_evict(self) -> None:
-        """Periodically remove empty keys and enforce a hard key cap."""
-        now = time.time()
-        if now - self._last_evict < self._EVICT_INTERVAL and len(self._requests) < self._MAX_KEYS:
-            return
-        self._last_evict = now
-        empty = [k for k, v in self._requests.items() if not v]
-        for k in empty:
-            del self._requests[k]
-        # If still over cap, drop oldest keys entirely
-        if len(self._requests) > self._MAX_KEYS:
-            excess = len(self._requests) - self._MAX_KEYS
-            oldest = sorted(self._requests.keys(), key=lambda k: self._requests[k][0] if self._requests[k] else 0)
-            for k in oldest[:excess]:
-                del self._requests[k]
+    def _window(self, key: str, window_seconds: int) -> deque[float] | None:
+        if key not in self._requests and len(self._requests) >= self._MAX_KEYS:
+            self._maybe_evict(force=True)
+            if len(self._requests) >= self._MAX_KEYS:
+                return None
+        timestamps = self._requests.setdefault(key, deque())
+        self._requests.move_to_end(key)
+        self._expires[key] = max(self._expires.get(key, 0), time.time() + window_seconds)
+        return timestamps
+
+    def _maybe_evict(self, *, force: bool = False) -> None:
+        """Expire only completed windows; never evict a live lockout for a new key."""
+        with self._lock:
+            now = time.time()
+            if force and now - self._last_capacity_sweep < 1:
+                return
+            if force or now - self._last_evict >= self._EVICT_INTERVAL:
+                self._last_evict = now
+                self._last_capacity_sweep = now
+                stale = [key for key, values in self._requests.items()
+                         if not values or self._expires.get(key, float("inf")) <= now]
+                for key in stale:
+                    self._requests.pop(key, None)
+                    self._expires.pop(key, None)
 
 
 _rate_limiter: RateLimiter | None = None
@@ -254,7 +291,8 @@ async def get_rate_limiter() -> RateLimiter:
             logger.info("[RateLimiter] Using Redis backend")
         except Exception as exc:
             logger.warning(f"[RateLimiter] Redis unavailable ({exc}), falling back to in-memory")
-            _rate_limiter = MemoryRateLimiter()
+            if not isinstance(_rate_limiter, MemoryRateLimiter):
+                _rate_limiter = MemoryRateLimiter()
             _rate_limiter_fallback_at = time.monotonic()
 
         return _rate_limiter

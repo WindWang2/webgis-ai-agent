@@ -36,6 +36,18 @@ from app.services.geocompute import graph
 
 client = TestClient(app)
 
+@pytest.fixture(autouse=True)
+def _live_route_identities():
+    from app.core.database import Base, Engine, SessionLocal
+    from app.models.db_model import User
+    Base.metadata.create_all(bind=Engine)
+    with SessionLocal() as db:
+        for uid in ['gc-sec-user', 'gc-runner', 'gc-owner', 'gc-other', 'gc-session-user']:
+            db.merge(User(id=uid, username=uid, email=f"{uid}@example.com",
+                          password_hash="unused", role="editor", is_active=True, token_version=0))
+        db.commit()
+
+
 
 # --------------------------------------------------------------- stub infra
 
@@ -376,12 +388,12 @@ class TestRoutesAuthz:
             finally:
                 db.close()
 
-    def test_unknown_session_allowed_first_write(self):
+    def test_unknown_session_rejected_before_first_write(self):
         body = _plan_body()
         body["session_id"] = "gc-authz-unknown-sess"
         resp = client.post("/api/v1/geocompute/plans/execute", json=body,
                            headers=_auth("gc-session-user"))
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 404, resp.text
 
 
 # ----------------------------------------------------- 5. error scrub (MINOR)

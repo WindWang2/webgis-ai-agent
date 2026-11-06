@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.db_model import Organization
+from app.models.db_model import Organization, User
 from app.models.project import Project, Workflow, Artifact
 from app.services.workflow_engine import WorkflowEngine
 
@@ -41,7 +41,9 @@ def _seed_workflow(db, name="wf", steps_data=None):
     org = Organization(id=1, name="org", slug="org")
     db.add(org)
     db.commit()
-    proj = Project(id="proj_1", name="p", org_id=1, status="active")
+    db.add(User(id="tx-owner", username="tx-owner", email="tx-owner@example.test", org_id=1, role="editor", is_active=True))
+    db.commit()
+    proj = Project(id="proj_1", name="p", org_id=1, owner_id="tx-owner", status="active")
     db.add(proj)
     db.commit()
     wf = Workflow(
@@ -90,7 +92,7 @@ def test_workflow_commits_each_step_and_produces_artifacts(db_session):
     import asyncio
 
     run = asyncio.run(WorkflowEngine.execute_workflow_run(
-        db=db, workflow_id=wf.id, tool_registry=registry,
+        db=db, workflow_id=wf.id, tool_registry=registry, expected_project_id="proj_1", user_id="tx-owner", org_id=1, session_id="tx-session",
     ))
     assert run.status == "completed"
     assert len(registry.calls) == 2
@@ -112,7 +114,7 @@ def test_failed_step_rolls_back_only_current_step(db_session):
     import asyncio
 
     run = asyncio.run(WorkflowEngine.execute_workflow_run(
-        db=db, workflow_id=wf.id, tool_registry=registry,
+        db=db, workflow_id=wf.id, tool_registry=registry, expected_project_id="proj_1", user_id="tx-owner", org_id=1, session_id="tx-session",
     ))
     assert run.status == "failed"
     assert "exploded" in (run.error_message or "")
@@ -148,7 +150,7 @@ def test_failed_status_is_durable_when_manifest_build_raises(db_session, monkeyp
 
     with pytest.raises(RuntimeError, match="manifest build exploded"):
         asyncio.run(WorkflowEngine.execute_workflow_run(
-            db=db, workflow_id=wf.id, tool_registry=registry,
+            db=db, workflow_id=wf.id, tool_registry=registry, expected_project_id="proj_1", user_id="tx-owner", org_id=1, session_id="tx-session",
         ))
 
     # 新查询绕过会话身份映射：读到的必须是已提交的 DB 行状态。
@@ -160,3 +162,21 @@ def test_failed_status_is_durable_when_manifest_build_raises(db_session, monkeyp
         f"build raises; got {rows[0].status!r}"
     )
     assert "exploded" in (rows[0].error_message or "")
+
+
+def test_cancelled_workflow_is_persisted_before_cancellation_propagates(db_session, monkeypatch):
+    import asyncio
+    from app.models.project import WorkflowRun
+    import app.services.workflow_engine as module
+
+    wf = _seed_workflow(db_session, steps_data=[
+        {"step_id": "s1", "tool_name": "buffer_analysis", "args_template": {}, "input_bindings": {}, "dependencies": []},
+    ])
+    async def cancel_dispatch(*args, **kwargs):
+        raise asyncio.CancelledError("client disconnected")
+    monkeypatch.setattr(module, "_dispatch_step_via_service", cancel_dispatch)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(WorkflowEngine.execute_workflow_run(db=db_session, workflow_id=wf.id, tool_registry=_FakeRegistry(), expected_project_id="proj_1", user_id="tx-owner", org_id=1, session_id="tx-session"))
+    db_session.expire_all()
+    run = db_session.execute(select(WorkflowRun)).scalar_one()
+    assert run.status == "cancelled"

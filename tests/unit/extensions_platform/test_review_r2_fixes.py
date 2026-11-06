@@ -113,7 +113,7 @@ class TestBoundedArtifactRead:
 
 
 class TestNetworkStreamTruncation:
-    def test_oversize_real_httpx_stream_is_truncated(self, tmp_path):
+    def test_oversize_connection_pinned_stream_is_truncated(self, tmp_path):
         """M-2：真实 httpx 路径（无注入 transport）经流式下载在 cap 处中止。
 
         本地启动一个一次性 TCP 服务吐 8 MiB；allowlist 走 SSRF 不可行
@@ -132,7 +132,7 @@ class TestNetworkStreamTruncation:
             def __exit__(self, *exc):
                 return False
 
-            def iter_raw(self):
+            def iter_content(self, chunk_size):
                 yield from self._chunks
 
         class FakeStreamClient:
@@ -145,17 +145,17 @@ class TestNetworkStreamTruncation:
             def __exit__(self, *exc):
                 return False
 
-            def stream(self, method, url, headers=None, content=None):
+            def request(self, method, url, **kwargs):
                 return FakeStreamResponse(self._chunks)
 
         import base64
 
-        import app.extensions_platform.broker as broker_mod
+        import app.services.data_fabric.security as security
 
         chunks = [b"y" * (1024 * 1024) for _ in range(8)]
         monkey = FakeStreamClient(chunks)
-        original_client = broker_mod.httpx.Client
-        broker_mod.httpx.Client = lambda **kw: monkey
+        original_client = security.make_safe_session
+        security.make_safe_session = lambda **kw: monkey
         try:
             broker = CapabilityBroker(
                 extension_id="acme.pack",
@@ -167,7 +167,7 @@ class TestNetworkStreamTruncation:
                 "network_request", {"url": "https://api.example.com/blob"}
             )
         finally:
-            broker_mod.httpx.Client = original_client
+            security.make_safe_session = original_client
         assert ok
         assert value["truncated"] is True
         assert len(base64.b64decode(value["body_b64"])) == 1024 * 1024

@@ -317,3 +317,51 @@ class TestReviewHardening:
         # 解析执行。skip 事实必须进证据，绝不静默。
         assert "normalize" in preview.get("skipped_declaration_gated", [])
         assert any("make_valid" in str(ops) for ops in [preview["pipeline_ops"]])
+
+
+@pytest.mark.asyncio
+async def test_transaction_identity_binds_execution_and_owner():
+    payload = _dirty_geojson()
+    plan, ops = _plan_for(payload)
+    base = dict(plan=plan, source_payload=payload, operations=ops)
+    first = open_repair_session(**base, owner_session_id="owner-a")
+    variants = [dict(operations=[*ops, "make_valid"]), dict(target_crs="EPSG:3857"),
+                dict(source_crs="EPSG:3857"), dict(tolerance=.01), dict(owner_session_id="owner-b")]
+    for variant in variants:
+        kwargs = dict(base, owner_session_id="owner-a")
+        kwargs.update(variant)
+        assert open_repair_session(**kwargs).session_id != first.session_id
+    assert open_repair_session(**base, owner_session_id="owner-a").session_id == first.session_id
+
+
+@pytest.mark.asyncio
+async def test_rollback_rejects_forged_receipt_and_wrong_source():
+    payload = _dirty_geojson()
+    plan, ops = _plan_for(payload)
+    applied = await run_repair_transaction(geojson=payload, plan=plan, operations=ops)
+    changed = {"type": "FeatureCollection", "features": []}
+    with pytest.raises(ValueError, match="digest mismatch"):
+        await run_repair_transaction(geojson=changed, plan=plan, mode="rollback", prior=applied)
+    forged = copy.deepcopy(applied)
+    forged["session"]["session_id"] = "rsession_attacker"
+    with pytest.raises(ValueError, match="unavailable"):
+        await run_repair_transaction(geojson=payload, plan=plan, mode="rollback", prior=forged)
+    with pytest.raises(ValueError, match="owner or plan"):
+        await run_repair_transaction(geojson=payload, plan=plan, mode="rollback", prior=applied, session_id="foreign")
+    correct = await run_repair_transaction(geojson=payload, plan=plan, mode="rollback", prior=applied)
+    assert correct["session"]["state"] == STATE_ROLLED_BACK
+    replay = await run_repair_transaction(geojson=payload, plan=plan, mode="rollback", prior=applied)
+    assert replay == correct
+
+
+@pytest.mark.asyncio
+async def test_rolled_back_execution_does_not_prevent_a_new_repair():
+    payload = _dirty_geojson()
+    plan, ops = _plan_for(payload)
+    first = await run_repair_transaction(geojson=payload, plan=plan, operations=ops)
+    assert first["session"]["state"] in {STATE_APPLIED, STATE_VERIFIED}
+    rolled = await run_repair_transaction(geojson=payload, plan=plan, mode="rollback", prior=first)
+    assert rolled["session"]["state"] == STATE_ROLLED_BACK
+    fresh = await run_repair_transaction(geojson=payload, plan=plan, operations=ops)
+    assert fresh["session"]["state"] == first["session"]["state"]
+    assert not fresh.get("idempotent_reuse", False)

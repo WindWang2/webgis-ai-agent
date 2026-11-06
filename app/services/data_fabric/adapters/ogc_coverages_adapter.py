@@ -197,6 +197,22 @@ class OGCCoveragesAdapter(GeospatialDataSourceAdapter):
         if not domainset:
             return {}
         axes = domainset.get("axes") or {}
+        if not axes:
+            import math
+
+            axes = {}
+            for axis in (domainset.get("generalGrid") or {}).get("axis", []):
+                if not isinstance(axis, dict) or not axis.get("axisLabel"):
+                    continue
+                try:
+                    lo, hi, step = float(axis["lowerBound"]), float(axis["upperBound"]), float(axis["resolution"])
+                    if not all(math.isfinite(v) for v in (lo, hi, step)) or step == 0:
+                        continue
+                    axes[str(axis["axisLabel"])] = {
+                        "start": lo, "stop": hi, "num": max(1, round(abs((hi - lo) / step)) + 1),
+                    }
+                except (KeyError, TypeError, ValueError):
+                    continue
         out: Dict[str, Dict[str, Any]] = {}
         if not isinstance(axes, dict):
             return out
@@ -326,10 +342,15 @@ class OGCCoveragesAdapter(GeospatialDataSourceAdapter):
                 "protocol": "ogc_api_coverages",
                 "has_coverage_endpoint": has_endpoint,
                 "coverage_url": (
-                    DataFabricSecurity.redact_url(f"{base}/collections/{dataset_id}/coverage")
+                    DataFabricSecurity.redact_url(f"{base}/collections/{qid}/coverage")
                     if has_endpoint else None
                 ),
                 "axes": axes,
+                "grid_crs": (domainset or {}).get("srsName") or next((
+                    (reference.get("system") or {}).get("id")
+                    for reference in (domainset or {}).get("referencing", [])
+                    if (reference.get("system") or {}).get("id")
+                ), None),
                 "bands": bands,
                 "formats_declared": declared_formats,
                 "formats_supported": supported_formats,

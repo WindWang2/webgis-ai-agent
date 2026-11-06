@@ -1,3 +1,4 @@
+import { devOnly } from '../utils/logger';
 /**
  * Renderer ABI —— MapSpec → MapLibre 的**单一类型转换边界**（C11）。
  *
@@ -60,7 +61,7 @@ export function asExpression(value: unknown): ExpressionSpecification {
       typeof value[0] !== "string")
   ) {
     // 保守告警：标量/非表达式形状通常意味着调用侧绕过了 MapLibrePaintValue。
-    console.warn(
+    devOnly.warn(
       "[carto-ir] asExpression: non-expression payload",
       typeof value,
       Array.isArray(value) ? (value as unknown[])[0] : value,

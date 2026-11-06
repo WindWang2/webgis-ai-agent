@@ -41,9 +41,8 @@ import hashlib
 import json
 import logging
 import os
-import re
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.chat.context.history_compression import (
     HISTORY_MIN_TURNS,
@@ -62,6 +61,10 @@ from app.services.chat.context_projections import (
     content_fingerprint,
 )
 from app.services.llm_result_formatter import MSG_MAX_CHARS, slim_tool_result
+from app.lib.runtime.ref_cursors import REF_CURSOR_RE
+
+if TYPE_CHECKING:
+    from app.services.session_data import RefSpillStore
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +86,6 @@ _POLICY_FALSE_VALUES = {"0", "false", "no", "off"}
 def policy_enabled() -> bool:
     """Kill switch：GIS_CONTEXT_POLICY=0 → advice-only（默认开）。"""
     return os.getenv("GIS_CONTEXT_POLICY", "1").strip().lower() not in _POLICY_FALSE_VALUES
-
-
-# 与评测 harness（pi_agent_harness.REF_CURSOR_PATTERN）同一份 ref 词表；
-# 不直接 import 评测模块（运行时不应依赖评测面）。
-REF_CURSOR_RE = re.compile(r"ref:(?:geojson|raster|table|data|heatmap)-[a-zA-Z0-9_-]+")
 
 
 def _ordered_unique_refs(text: str, cap: int = 32) -> List[str]:
@@ -266,21 +264,22 @@ def run_history_ops(
 def condense_text_to_budget(text: str, cap_tokens: int) -> Tuple[str, bool]:
     """把文本压缩到 est_tokens ≤ cap（确定性收敛；无法收敛时压到最小档并如实返回）。
 
-    est 上界：CJK 1 字 ≈ 1.5 token → 起始按 ``cap*2`` 字符试探，逐轮折半，
-    至多 6 轮（有界、同输入必同输出）。``cap_tokens <= 0`` 视为无建议，原样返回。
+    Binary search uses the shared CJK/ASCII estimator and closes safety fences.
+    ``cap_tokens <= 0`` means no recommendation and preserves the input.
     """
     if cap_tokens <= 0 or _estimate_tokens(text) <= cap_tokens:
         return text, False
-    max_chars = max(64, int(cap_tokens * 2))
-    candidate = text
-    for _ in range(6):
-        candidate = bound_text(text, max_chars)
+    low, high = 0, min(len(text) - 1, cap_tokens * 4)
+    result = ""
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = bound_text(text, mid)
         if _estimate_tokens(candidate) <= cap_tokens:
-            return candidate, True
-        if max_chars <= 64:
-            return candidate, True
-        max_chars //= 2
-    return candidate, True
+            result = candidate
+            low = mid + 1
+        else:
+            high = mid - 1
+    return result, True
 
 
 def apply_condense_actions(
@@ -336,12 +335,6 @@ OFFLOAD_MIN_TOOL_TOKENS = 256
 #: 单次组装最多卸载条数（有界）。
 OFFLOAD_MAX_ITEMS = 8
 
-#: review R3 MAJOR（perf）：卸载内容去重缓存（session × content-hash → ref）。
-#: 有界；进程内 —— 跨进程重复铸造只是冗余不是错误（ref 面本身会话作用域）。
-_OFFLOAD_DEDUPE_CACHE: Dict[Tuple[str, str], str] = {}
-_OFFLOAD_DEDUPE_CACHE_MAX = 256
-
-
 def _offloaded_view(content: str, new_ref: Optional[str], refs: Sequence[str]) -> str:
     """卸载后的消息视图：卸载披露 + 摘要 + 既有 ref 游标（可解析性不减）。"""
     parts: List[str] = []
@@ -379,10 +372,6 @@ async def offload_pass(
     decisions: List[Dict[str, Any]] = []
     if over_tokens <= 0:
         return decisions
-    # review R3 MAJOR（perf）：同一内容在每次超预算装配都会重卸载 —— store
-    # 每次铸造新 ref（无去重），长会话上 ref/磁盘无界膨胀。按内容哈希做
-    # 进程内复用（有界 LRU）：同内容复用已铸 ref，只替换视图不新铸。
-    global _OFFLOAD_DEDUPE_CACHE
     candidates: List[Tuple[int, dict]] = []
     for i in range(history_start, len(head)):
         msg = head[i]
@@ -397,29 +386,17 @@ async def offload_pass(
         content = msg["content"]
         refs = _ordered_unique_refs(content)
         new_ref: Optional[str] = None
-        content_hash = hashlib.sha256(content.encode("utf-8", "ignore")).hexdigest()
-        cached = _OFFLOAD_DEDUPE_CACHE.get((session_id, content_hash))
-        if cached is not None:
-            new_ref = cached
-        else:
-            try:
-                parsed = json.loads(content)
-                if isinstance(parsed, (dict, list)) and store is not None:
-                    store_fn = getattr(store, "store", None)
-                    if store_fn is not None:
-                        new_ref = await store_fn(session_id, parsed, prefix="data")
-                        if new_ref:
-                            _OFFLOAD_DEDUPE_CACHE[(session_id, content_hash)] = new_ref
-                            if len(_OFFLOAD_DEDUPE_CACHE) > _OFFLOAD_DEDUPE_CACHE_MAX:
-                                for k in list(_OFFLOAD_DEDUPE_CACHE.keys())[
-                                    : -_OFFLOAD_DEDUPE_CACHE_MAX
-                                ]:
-                                    _OFFLOAD_DEDUPE_CACHE.pop(k, None)
-            except (ValueError, TypeError):
-                new_ref = None
-            except Exception as e:  # noqa: BLE001 — 卸载失败保留原文（诚实不破坏）
-                logger.debug("offload store failed for %s: %s", session_id, e)
-                new_ref = None
+        content_hash = hashlib.sha256(content.encode("utf-8", "surrogatepass")).hexdigest()
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, (dict, list)) and store is not None:
+                from app.services.session_context_refs import store_context_payload
+                new_ref = await store_context_payload(store, session_id, parsed, content_hash)
+        except (ValueError, TypeError):
+            new_ref = None
+        except Exception as e:  # noqa: BLE001 — failed offload never claims a live ref
+            logger.debug("offload store failed for %s: %s", session_id, e)
+            new_ref = None
         if new_ref is None and len(content) <= MSG_MAX_CHARS:
             continue  # 无处可卸且不超上限 → 不动
         new_content = _offloaded_view(content, new_ref, refs)
@@ -475,6 +452,7 @@ async def build_evicted_refs_tombstone(session_id: str, head: List[dict], store:
     if not scanned:
         return ""
     lines: List[str] = []
+    ref_spill_store: Optional[RefSpillStore]
     try:
         from app.services.session_data import ref_spill_store
     except Exception:  # noqa: BLE001 — 持久半边不可用时全部按"已失效"如实报告
@@ -614,7 +592,7 @@ def build_policy_items(
             category_name = (meta or {}).get("category")
             name = (meta or {}).get("name") or f"system[{i}]"
             if category_name == "MAP_STATE" and (meta or {}).get("base_chars"):
-                base = int(meta["base_chars"])
+                base = int((meta or {})["base_chars"])
                 core, tail = text[:base], text[base:]
                 items.append(BudgetItem(
                     category=Category.SYSTEM_INSTRUCTIONS, name="system_core", text=core,
@@ -678,7 +656,8 @@ def retrim_messages_for_retry(messages: Sequence[dict]) -> Optional[List[dict]]:
         return None
     est = sum(_estimate_tokens(m.get("content")) for m in rest)
     target = max(_RETRIM_MIN_BUDGET_TOKENS, est // 2)
-    folded = fold_intra_turn_tool_results(rest, keep_recent=_RETRIM_FOLD_KEEP_RECENT)
+    folded = fold_intra_turn_tool_results(rest, keep_recent=_RETRIM_FOLD_KEEP_RECENT,
+                                        pinned=find_safety_pinned_indexes(rest) or None)
     # review R2 MAJOR-9：重裁是**最极端的压力路径** —— KEEP pin 必须同样
     # 生效（Tier-3 确认回执/自愈指引不随重试预算消失）。pin 下标在 fold
     # 之后求值（truncate 的输入坐标系）。
@@ -686,9 +665,7 @@ def retrim_messages_for_retry(messages: Sequence[dict]) -> Optional[List[dict]]:
     pinned = find_safety_pinned_indexes(folded_list)
     trimmed, dropped = truncate_history_by_budget(
         folded_list, budget=target, pinned=pinned or None)
-    if dropped <= 0 and folded is rest:
-        return None
-    if len(trimmed) >= len(rest) and dropped <= 0:
+    if dropped <= 0 and trimmed == rest:
         return None
     return head + trimmed
 

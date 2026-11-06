@@ -64,11 +64,11 @@ def test_degrade_retry_mutual_exclusion(fresh_governor):
     assert why == "deny_degrade_taken"
 
 
-def test_governor_unavailable_fails_open(monkeypatch):
+def test_governor_unavailable_reserves_bounded_local_attempt(monkeypatch):
     monkeypatch.setattr(loop_budget, "_retry_budget", lambda: None)
     allowed, why = loop_retry_admissible("sess-f", "replan")
     assert allowed is True
-    assert why == "governor_unavailable"
+    assert why == "governor_unavailable_local_reserved"
     assert loop_charge("sess-f", "replan") is False
 
 

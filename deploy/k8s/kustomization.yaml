@@ -19,6 +19,7 @@ resources:
 - 06-hpa-pdb-rbac.yaml
 # 审计 K8S-06: HPA 从 04-ingress.yaml 拆出，独立成文件便于单独调参。
 - 07-hpa.yaml
+- 08-network-policy.yaml
 
 # #1688: Ingress 对外域名的单一事实来源 = 01-configmap.yaml 的 INGRESS_HOST。
 # build 时注入 04-ingress.yaml 的 spec.tls[0].hosts[0] 与 spec.rules[0].host
@@ -48,17 +49,10 @@ configMapGenerator:
   - ENV=production
   - DEBUG=false
 
-# 替换镜像名称
-# #559: images 转换器的 name 必须与 Deployment 镜像的「仓库部分」（不含 tag）
-# 精确匹配。之前写成 webgis-prod:latest（name 里带 tag）永远匹配不上
-# webgis-prod:v0.1.2（新版本 kustomize 还直接拒绝 name 带 tag），且 newName
-# 是占位符 your-registry.com —— 没有任何 pipeline 推送过该坐标。
-# 现在 Deployment 直接用 CI 推送的仓库坐标 ghcr.io/windwang2/webgis-ai-agent
-# （production.yml build job：env.REGISTRY=ghcr.io + IMAGE_NAME 小写化），
-# images 转换器保持匹配（name == 仓库部分）并作为部署时钉 tag 的锚点。
-# 部署时把 tag 钉到 CI 实际推送的 sha（与 docker-compose.prod.secure.yml 的
-# WEBGIS_IMAGE 契约同理）：
-#   kustomize edit set image ghcr.io/windwang2/webgis-ai-agent=ghcr.io/windwang2/webgis-ai-agent:<CI sha>
+# App manifests intentionally carry an unresolvable all-zero digest. Raw apply
+# cannot accidentally run a floating branch image. Pin the published CI digest:
+#   ./pin-image.sh sha256:<manifest-digest>
+# The transformer updates API, worker, migration and skill-seeding containers.
 images:
 - name: ghcr.io/windwang2/webgis-ai-agent
   newName: ghcr.io/windwang2/webgis-ai-agent

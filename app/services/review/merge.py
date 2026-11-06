@@ -136,7 +136,10 @@ async def merge_proposal_intents(
         CheckpointIntent(checkpoint_id=ckpt_id),
         origin="system",
         actor=merge_actor_str,
+        expected_revision=current,
     )
+    if ckpt_res.superseded:
+        return MergeOutcome(ok=False, conflict=True, failure="base_revision_drift")
     if ckpt_res.is_error:
         return MergeOutcome(
             ok=False,

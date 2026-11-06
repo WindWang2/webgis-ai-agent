@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Mapping
 
 from app.services.session_data import session_data_manager
 
@@ -71,19 +71,15 @@ async def get_provenance(session_id: str) -> List[Dict[str, Any]]:
 async def append_provenance(session_id: str, entry: ProvenanceEntry) -> None:
     """追加一条记录并维持环形上限。best-effort。"""
     try:
-        get_field = getattr(session_data_manager, "get_state_field", None)
-        if callable(get_field):
-            entries = await get_field(session_id, _PROVENANCE_KEY)
-        else:
-            state = await session_data_manager.get_map_state(session_id) or {}
-            entries = state.get(_PROVENANCE_KEY)
-        entries = list(entries) if isinstance(entries, list) else []
-        entries.append(entry.to_dict())
-        if len(entries) > PROVENANCE_LIMIT:
-            entries = entries[-PROVENANCE_LIMIT:]
-        await session_data_manager.set_map_state(
-            session_id, _PROVENANCE_KEY, entries
-        )
+        from app.services.session_state_atomic import atomic_update_state
+
+        def append(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
+            current = snapshot.get(_PROVENANCE_KEY)
+            entries = list(current) if isinstance(current, list) else []
+            return {_PROVENANCE_KEY: (entries + [entry.to_dict()])[-PROVENANCE_LIMIT:]}
+
+        if await atomic_update_state(session_data_manager, session_id, [_PROVENANCE_KEY], append) is None:
+            raise RuntimeError("provenance storage unavailable")
     except Exception as e:  # noqa: BLE001
         logger.warning("[gis_world_state] provenance append failed: %s", e)
 
@@ -99,23 +95,32 @@ def last_presentation_owner(
     的"最新版本"，tail 被 newer revision 覆盖的旧决策不再被误当最后一条。
     """
     best: Optional[Dict[str, Any]] = None
-    best_seq = -1
+    best_revision = -1
     for entry in entries:
-        if (
-            entry.get("kind") == "PatchLayerPresentationIntent"
-            and entry.get("target") == layer_id
-        ):
-            seq = entry.get("seq", 0)
-            if isinstance(seq, str):
-                try:
-                    seq = int(seq)
-                except (TypeError, ValueError):
-                    seq = 0
-            if not isinstance(seq, int):
-                seq = entry.get("revision", 0) if isinstance(entry.get("revision"), int) else 0
-            if seq > best_seq or best is None:
-                best = entry
-                best_seq = seq
+        if not isinstance(entry, dict):
+            continue
+        candidate = entry
+        detail = entry.get("detail")
+        if entry.get("kind") == "GISMutationBatch" and isinstance(detail, dict):
+            shown = detail.get("shown")
+            hidden = detail.get("hidden")
+            is_shown = isinstance(shown, list) and layer_id in shown
+            is_hidden = isinstance(hidden, list) and layer_id in hidden
+            if is_shown == is_hidden:  # Missing or contradictory evidence.
+                continue
+            candidate = {**entry, "target": layer_id,
+                         "detail": {**detail, "visible": is_shown}}
+        elif entry.get("kind") != "PatchLayerPresentationIntent" or entry.get("target") != layer_id:
+            continue
+        raw_revision = entry.get("revision", entry.get("seq", 0))
+        if raw_revision is None:
+            continue
+        try:
+            revision = int(raw_revision)
+        except (ValueError, TypeError, OverflowError):
+            continue
+        if revision >= best_revision:
+            best, best_revision = candidate, revision
     return best
 
 
@@ -125,9 +130,12 @@ def durable_presentation_owner(
     *,
     revision_threshold: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
-    """durable owner：只在环形日志里找——若最近的可见决策超过 revision 阈值
-    前（由 finalize 等大批量 agent 写入把 user 决策挤出尾部），回退从全
-    环找（64 条全量）——state 的尾部 16 条不能作为守卫依据。"""
+    """Scan the supplied full bounded ring, retaining old user decisions.
+
+    revision_threshold remains an advisory compatibility argument. It never
+    discards ownership evidence merely because later agent work advanced the
+    revision; callers must pass the full ring, not a display-tail projection.
+    """
 
     owner = last_presentation_owner(entries, layer_id)
     return owner

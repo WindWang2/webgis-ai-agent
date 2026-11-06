@@ -6,7 +6,6 @@ import os
 import threading
 import time
 import base64
-import asyncio
 from typing import Any, List, Dict, Optional
 
 import numpy as np
@@ -111,29 +110,8 @@ def run_ndvi_analysis(
         with durable_job(job_id, celery_task=self) as job:
             job.progress(10, "校验路径并读取影像元信息", phase="read")
             job.checkpoint()
-            # e2e harness mocks calculate_ndvi; prod routes through calculate_index.
-            # Honor a mocked calculate_ndvi so the harness stays green without
-            # changing its contract (calculate_ndvi delegates to calculate_index).
-            # e2e harness patches calculate_ndvi with a lambda whose
-            # co_filename points at the test file — detect that so the harness
-            # stays green while prod keeps routing through calculate_index.
-            _ndvi_fn = getattr(NatureResourceAnalyzer, "calculate_ndvi", None)
-            _ndvi_is_mock = False
-            try:
-                _code = getattr(getattr(_ndvi_fn, "__func__", _ndvi_fn), "__code__", None)
-                _ndvi_is_mock = bool(
-                    _code is not None and "test_job_celery_e2e" in str(getattr(_code, "co_filename", ""))
-                )
-            except Exception:
-                _ndvi_is_mock = False
-            if _ndvi_is_mock:
-                result = NatureResourceAnalyzer.calculate_ndvi(
-                    tif_path=raster_path,
-                    red_band=red_band,
-                    nir_band=nir_band,
-                )
-            else:
-                result = NatureResourceAnalyzer.calculate_index(
+            result = NatureResourceAnalyzer.calculate_index(
+                session_id=session_id,
                 tif_path=raster_path,
                 index_type=index_type,
                 red_band=red_band,
@@ -163,7 +141,7 @@ def run_ndvi_analysis(
                 "bbox": result.get("bbox"),
             }
 
-        status = finish_job(job_id, result=payload, result_ref=result["result_path"])
+        status = finish_job(job_id, result=payload, result_ref=result["result_path"], worker_id=job.worker_id, attempt=job.attempt)
         return {
             "success": status.value == "completed",
             "job_id": str(job_id),
@@ -245,35 +223,17 @@ def _run_ndvi_legacy(
             task_id=_task_id, state='PROGRESS',
             meta={'progress': 10, 'message': '校验路径并读取影像元信息'},
         )
-        # e2e harness patches calculate_ndvi with a test-local lambda
-        # whose co_filename points at the test file — honor it so the
-        # legacy harness stays green without changing its contract.
-        _ndvi_fn = getattr(NatureResourceAnalyzer, "calculate_ndvi", None)
-        _use_ndvi_mock = False
-        try:
-            _code = getattr(getattr(_ndvi_fn, "__func__", _ndvi_fn), "__code__", None)
-            _use_ndvi_mock = bool(
-                _code is not None and "test_job_celery_e2e" in str(getattr(_code, "co_filename", ""))
-            )
-        except Exception:
-            _use_ndvi_mock = False
-        if _use_ndvi_mock:
-            result = NatureResourceAnalyzer.calculate_ndvi(
-                tif_path=raster_path,
-                red_band=red_band,
-                nir_band=nir_band,
-            )
-        else:
-            result = NatureResourceAnalyzer.calculate_index(
-                tif_path=raster_path,
-                index_type=index_type,
-                red_band=red_band,
-                nir_band=nir_band,
-                green_band=green_band,
-                blue_band=blue_band,
-                swir_band=swir_band,
-                swir2_band=swir2_band,
-            )
+        result = NatureResourceAnalyzer.calculate_index(
+            session_id=session_id,
+            tif_path=raster_path,
+            index_type=index_type,
+            red_band=red_band,
+            nir_band=nir_band,
+            green_band=green_band,
+            blue_band=blue_band,
+            swir_band=swir_band,
+            swir2_band=swir2_band,
+        )
 
         if not result.get("success"):
             return {"success": False, "error": result.get("error", "NDVI calculation failed")}
@@ -516,7 +476,7 @@ class _ChangeDetectionError(RuntimeError):
 def _compute_change_indices(
     bbox: List[float], t1_from: str, t1_to: str, t2_from: str, t2_to: str, index_type: str
 ):
-    """顺序执行两次 async 指数计算（新建事件循环，兼容 prefork / gevent 池）。"""
+    """顺序执行两次 async 指数计算，复用 worker 的有界循环桥。"""
     svc = SpectralRasterEngine()
 
     async def compute_both():
@@ -524,13 +484,9 @@ def _compute_change_indices(
         t2 = await svc.compute_vegetation_index(bbox, t2_from, t2_to, index_type=index_type)
         return t1, t2
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(compute_both())
-    finally:
-        loop.close()
-        asyncio.set_event_loop(None)
+    from app.services.geocompute._async_bridge import run_coro_sync
+
+    return run_coro_sync(compute_both(), timeout_s=180.0)
 
 
 def _build_change_data(
@@ -735,7 +691,7 @@ def run_change_detection(
             }
             result_data = {**data, "asset_id": asset_id, "result_path": final_path}
 
-        status = finish_job(job_id, result=payload, result_ref=final_path)
+        status = finish_job(job_id, result=payload, result_ref=final_path, worker_id=job.worker_id, attempt=job.attempt)
         return {
             "success": status.value == "completed",
             "job_id": str(job_id),
@@ -856,11 +812,9 @@ def _claim_tool_delivery(task_id: str) -> bool:
     if not task_id:
         return True
     try:
-        import redis
+        from app.services.jobs.celery_origin import delivery_client
 
-        client = redis.from_url(
-            settings.REDIS_URL, socket_connect_timeout=2, socket_timeout=1,
-        )
+        client = delivery_client(os.getpid(), settings.REDIS_URL)
         claimed = client.set(
             f"celery_tool_dedup:{task_id}", "1", nx=True, ex=_TOOL_DEDUP_TTL_S,
         )
@@ -883,9 +837,11 @@ def run_sync_tool_isolated(self, tool_name: str, arguments: dict):
             "[celery_tool_dedup] duplicate delivery suppressed for task %s (tool %s)",
             self.request.id, tool_name,
         )
-        raise RuntimeError(
-            f"duplicate delivery suppressed for task {self.request.id} "
-            f"(tool {tool_name}); original delivery already started"
-        )
-    func = _worker_sync_tool(tool_name)
-    return func(**(arguments or {}))
+        return {"success": False, "skipped": True, "code": "DUPLICATE_DELIVERY",
+                "task_id": str(self.request.id or "")}
+    from app.services.jobs.celery_origin import restore_origin
+    from app.services.jobs.context import use_origin
+
+    with use_origin(restore_origin(getattr(self.request, "headers", None))):
+        func = _worker_sync_tool(tool_name)
+        return func(**(arguments or {}))

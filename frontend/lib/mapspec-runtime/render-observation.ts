@@ -128,12 +128,13 @@ const CHROME_RENDERABLE_TYPES: ReadonlySet<string> = new Set([
  */
 function observeRuntimeError(err: unknown): ObservedRuntimeError {
   const record = (typeof err === 'object' && err !== null ? err : {}) as {
+    error?: unknown;
     message?: unknown;
     layerId?: unknown;
     sourceId?: unknown;
     status?: unknown;
   };
-  const inner = record.message;
+  const inner = record.error instanceof Error ? record.error.message : record.message;
   const message = String(
     typeof inner === 'string' && inner
       ? inner

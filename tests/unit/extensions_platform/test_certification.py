@@ -18,9 +18,13 @@ PACK_SOURCE = Path(__file__).resolve().parents[3] / "examples" / "extensions" / 
 def _host_with_pack(tmp_path: Path) -> ExtensionHost:
     target = tmp_path / "extdemo-pack"
     shutil.copytree(PACK_SOURCE, target)
+    from app.extensions_platform.signing import sign_pack
+    key = tmp_path / "signing.key"
+    key.write_text("test-certification-signing-key", encoding="utf-8")
+    sign_pack(target, "fixture-signing", key)
     host = ExtensionHost(
         tool_registry=ToolRegistry(),
-        policy=HostPolicy(roots=(tmp_path,), builtin_ids=frozenset({EXTENSION_ID})),
+        policy=HostPolicy(roots=(tmp_path,), builtin_ids=frozenset({EXTENSION_ID}), trusted_publishers={"fixture-signing": key}),
     )
     host.discover()
     return host
@@ -96,7 +100,7 @@ class TestCertifyExtension:
 
 
 class TestCliCertify:
-    def test_cli_json_report_green(self, tmp_path, capsys, monkeypatch):
+    def test_cli_unsigned_json_report_is_not_certified(self, tmp_path, capsys, monkeypatch):
         target = tmp_path / "extdemo-pack"
         shutil.copytree(PACK_SOURCE, target)
         # CLI 经 settings 构造 host：点名信任以通过激活门。
@@ -105,9 +109,9 @@ class TestCliCertify:
         )
         argv = ["certify", "--root", str(tmp_path), "--json", EXTENSION_ID]
         code = cli_main(argv)
-        assert code == 0
+        assert code == 1
         payload = json.loads(capsys.readouterr().out)
-        assert payload["certified"] is True
+        assert payload["certified"] is False
         assert payload["extension_id"] == EXTENSION_ID
 
     def test_cli_exit_code_reflects_failure(self, tmp_path, capsys):
@@ -131,8 +135,8 @@ class TestCliCertify:
             "app.core.config.settings.EXTENSIONS_BUILTIN_IDS", EXTENSION_ID, raising=False
         )
         code = cli_main(["certify", "--root", str(tmp_path), EXTENSION_ID])
-        assert code == 0
+        assert code == 1
         out = capsys.readouterr().out
-        assert "certified: True" in out
+        assert "certified: False" in out
         assert "lifecycle_smoke" in out
 

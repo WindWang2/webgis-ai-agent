@@ -1,4 +1,5 @@
 'use client';
+import { registerEscapeHandler } from '@/lib/utils/escape-stack';
 
 /**
  * ComparisonView — Workbench V4 Wave 8 对比工作区 → V5/W6 真双面板 + parity。
@@ -208,7 +209,7 @@ export function ComparisonView({
     const resolved = injectResolvedRefSources(
       spec0,
       sessionId
-        ? { sessionId, ownerToken: sessionTokenRef?.current ?? ownerToken ?? null }
+        ? { sessionId, ownerToken: ownerToken ?? sessionTokenRef?.current ?? null }
         : null,
       hudOwnedRefs,
     );
@@ -317,10 +318,12 @@ export function ComparisonView({
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') exitComparison?.();
+      if (e.key === 'Escape') { e.preventDefault(); exitComparison?.(); }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    const unregisterEscape = registerEscapeHandler(10, (event) => { if (!(true)) return false; onKeyDown(event); return event.defaultPrevented; });
+    const nonEscape = (event: KeyboardEvent) => { if (event.key !== 'Escape') onKeyDown(event); };
+    window.addEventListener('keydown', nonEscape);
+    return () => { unregisterEscape(); window.removeEventListener('keydown', nonEscape); };
   }, [active, exitComparison]);
 
   // 副图就绪即对齐主图当前相机（进入对比 / 切层重挂不跳回默认视野）。

@@ -37,11 +37,21 @@ class DecisionEngineV3:
     def __init__(self, mcda_engine: Optional[MultiCriteriaDecisionEngine] = None):
         self.mcda_engine = mcda_engine or MultiCriteriaDecisionEngine()
 
-    async def solve_problem(
-        self,
-        problem: DecisionProblem,
-        session_id: str = "",
-    ) -> SpatialDecisionResultV3:
+    async def solve_problem(self, problem: DecisionProblem, session_id: str = "") -> SpatialDecisionResultV3:
+        import asyncio
+
+        result = await asyncio.to_thread(self._solve_problem_math, problem)
+        if session_id:
+            try:
+                stored_ref = await get_session_store().store(session_id, result.comparison_geojson, prefix="dec_v3")
+                if stored_ref:
+                    result.comparison_ref_id = stored_ref
+                    result.provenance["comparison_ref_id"] = stored_ref
+            except Exception as exc:
+                logger.warning("Failed to store V3 GeoJSON: %s", exc)
+        return result
+
+    def _solve_problem_math(self, problem: DecisionProblem) -> SpatialDecisionResultV3:
         """
         Solves a DecisionProblem end-to-end with mathematical rigor and evidence grounding.
         """
@@ -60,7 +70,7 @@ class DecisionEngineV3:
                 if val is None and crit.id in problem.baseline_context.metrics:
                     bm = problem.baseline_context.metrics[crit.id]
                     if not bm.missing_baseline:
-                        val = bm.simulated or bm.baseline
+                        val = bm.simulated if bm.simulated is not None else bm.baseline
 
                 if val is None:
                     raw_matrix[crit.id][alt.id] = None
@@ -93,14 +103,14 @@ class DecisionEngineV3:
 
         # 4. Normalize Criteria Matrix into [0.0, 1.0]
         normalized_matrix: Dict[str, Dict[str, float]] = {}
-        try:
-            for crit in problem.criteria:
+        for crit in problem.criteria:
+            try:
                 normalized_matrix[crit.id] = normalize_criterion_values(
                     raw_values=raw_matrix[crit.id],
                     criterion=crit,
                 )
-        except NormalizationError as ne:
-            evidence_gaps.append(str(ne))
+            except NormalizationError as ne:
+                evidence_gaps.append(str(ne))
 
         # 5. Evaluate MCDA Scores
         if problem.mcda_method.lower() == "topsis":
@@ -157,6 +167,8 @@ class DecisionEngineV3:
                 for u in problem.uncertain_parameters
             )
 
+            param_means = {key: float(np.mean(draws)) for key, draws in param_draws.items()}
+            param_stds = {key: max(float(np.std(draws)), 1.0) for key, draws in param_draws.items()}
             for s in range(n_samples):
                 # Construct perturbed raw matrix for sample s
                 sample_raw_matrix: Dict[str, Dict[str, Optional[float]]] = {}
@@ -171,7 +183,7 @@ class DecisionEngineV3:
                             val_s = None
                         elif u_draw is not None:
                             p_val = float(u_draw[s])
-                            mean_p = float(np.mean(u_draw))
+                            mean_p = param_means[crit.id]
                             if abs(mean_p) < 1.0:
                                 val_s = float(base_val) + p_val
                             else:
@@ -189,7 +201,7 @@ class DecisionEngineV3:
                             base_val = alt.attributes.get(param_id)
                             if base_val is not None and isinstance(base_val, (int, float)):
                                 p_val = float(draws[s])
-                                mean_p = float(np.mean(draws))
+                                mean_p = param_means[param_id]
                                 if abs(mean_p) < 1.0:
                                     sample_alt_metrics[alt.id][param_id] = float(base_val) + p_val
                                 else:
@@ -243,8 +255,8 @@ class DecisionEngineV3:
                 if not has_matched_param:
                     # Modulate score with normalized parameter draws
                     agg_delta = sum(
-                        (param_draws[u.param_id][s] - np.mean(param_draws[u.param_id]))
-                        / max(float(np.std(param_draws[u.param_id])), 1.0)
+                        (param_draws[u.param_id][s] - param_means[u.param_id])
+                        / param_stds[u.param_id]
                         * 0.05
                         for u in problem.uncertain_parameters
                     )
@@ -271,6 +283,17 @@ class DecisionEngineV3:
             n_perturbations=500,
             perturbation_scale=0.25,
             random_seed=problem.random_seed,
+            score_fn=lambda perturbed_weights: (
+                self.mcda_engine.evaluate_topsis(
+                    raw_matrix=raw_matrix, criteria=problem.criteria,
+                    weights=perturbed_weights, feasible_mask=feasible_mask,
+                    soft_penalties=soft_penalties_map,
+                ) if problem.mcda_method.lower() == "topsis" else
+                self.mcda_engine.evaluate_wsm(
+                    normalized_matrix=normalized_matrix, weights=perturbed_weights,
+                    feasible_mask=feasible_mask, soft_penalties=soft_penalties_map,
+                )
+            ),
         )
 
         # 9. Robustness & Minimax Regret
@@ -349,15 +372,6 @@ class DecisionEngineV3:
 
         # 13. SessionStore Registration
         ref_id = f"ref:cmp-{problem.problem_id}"
-        if session_id:
-            try:
-                store = get_session_store()
-                stored_ref = await store.store(session_id, comparison_geojson, prefix="dec_v3")
-                if stored_ref:
-                    ref_id = stored_ref
-            except Exception as e:
-                logger.warning(f"Failed to store V3 GeoJSON to SessionStore: {e}")
-
         # 14. Decision Report Generation
         report_md = self._generate_v3_decision_report(
             problem=problem,
@@ -445,16 +459,14 @@ class DecisionEngineV3:
                 ref_g = c.reference_geometry
                 if ref_g.get("type") == "FeatureCollection":
                     for f in ref_g.get("features", []):
-                        f_copy = dict(f)
-                        f_copy.setdefault("properties", {})
+                        f_copy = {**f, "properties": dict(f.get("properties") or {})}
                         f_copy["properties"]["layer_type"] = "constraint_exclusion_zone"
                         f_copy["properties"]["constraint_name"] = c.name
                         f_copy["properties"]["fill_color"] = "#EF4444"
                         f_copy["properties"]["fill_opacity"] = 0.25
                         features.append(f_copy)
                 elif ref_g.get("type") == "Feature":
-                    f_copy = dict(ref_g)
-                    f_copy.setdefault("properties", {})
+                    f_copy = {**ref_g, "properties": dict(ref_g.get("properties") or {})}
                     f_copy["properties"]["layer_type"] = "constraint_exclusion_zone"
                     f_copy["properties"]["constraint_name"] = c.name
                     f_copy["properties"]["fill_color"] = "#EF4444"

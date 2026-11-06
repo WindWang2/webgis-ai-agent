@@ -123,6 +123,9 @@ export function AttributeTablePanel() {
     const decorated = filtered.map((r) => ({ r, key: cellText(r.raw[sort.key]) }));
     const dir = sort.dir === 'asc' ? 1 : -1;
     decorated.sort((a, b) => {
+      if (a.key === '' && b.key === '') return 0;
+      if (a.key === '') return 1;
+      if (b.key === '') return -1;
       const an = Number(a.key);
       const bn = Number(b.key);
       if (Number.isFinite(an) && Number.isFinite(bn)) return (an - bn) * dir;
@@ -252,7 +255,7 @@ export function AttributeTablePanel() {
               const highlighted = row.fid != null && selectedIds.has(row.fid);
               return (
                 <div
-                  key={row.fid ?? `row-${rowIndex}`}
+                  key={`${row.fid ?? 'row'}-${rowIndex}`}
                   role="row"
                   tabIndex={0}
                   aria-selected={highlighted || undefined}

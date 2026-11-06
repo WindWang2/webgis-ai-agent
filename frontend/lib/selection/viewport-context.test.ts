@@ -64,10 +64,10 @@ describe('viewport context', () => {
     expect(publishViewportContext([104, 30, 104.1, 30.1], Number.NaN, 0)).toBe(false);
   });
 
-  it('flush cancels without publishing', () => {
+  it('flush immediately publishes pending viewport', () => {
     publishViewportContext([104, 30, 104.1, 30.1], 10);
     flushViewportContext();
     vi.advanceTimersByTime(1000);
-    expect(getViewportContext()).toBeNull();
+    expect(getViewportContext()?.bbox).toEqual([104, 30, 104.1, 30.1]);
   });
 });

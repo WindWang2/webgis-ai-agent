@@ -261,19 +261,32 @@ function asPage<T>(data: Page<T> | T[] | undefined): Page<T> {
   };
 }
 
+type ListOptions = { forceRefresh?: boolean; signal?: AbortSignal; limit?: number; offset?: number };
+
+async function fetchList<T>(path: string, label: string, opts?: ListOptions): Promise<T[]> {
+  const items: T[] = [];
+  let offset = opts?.offset ?? 0;
+  for (let pageIndex = 0; pageIndex < 200; pageIndex += 1) {
+    const result = await fastGet<Page<T> | T[]>(path, {
+      forceRefresh: opts?.forceRefresh, signal: opts?.signal,
+      params: { limit: opts?.limit, offset }, label,
+    });
+    const page = asPage(result.data);
+    items.push(...page.items);
+    if (!page.has_more || opts?.limit !== undefined || opts?.offset !== undefined) return items;
+    if (page.items.length === 0) throw new Error(`${label}: pagination made no progress`);
+    offset += page.items.length;
+  }
+  throw new Error(`${label}: too many pages`);
+}
+
 export async function fetchProjects(opts?: {
   forceRefresh?: boolean;
   signal?: AbortSignal;
   limit?: number;
   offset?: number;
 }): Promise<Project[]> {
-  const result = await fastGet<Page<Project> | Project[]>(API, {
-    forceRefresh: opts?.forceRefresh,
-    signal: opts?.signal,
-    params: { limit: opts?.limit, offset: opts?.offset },
-    label: 'Project list error',
-  });
-  return asPage(result.data).items;
+  return fetchList<Project>(API, 'Project list error', opts);
 }
 
 export async function createProject(name: string, description?: string): Promise<Project> {
@@ -290,28 +303,16 @@ export async function fetchProjectDatasets(
   projectId: string,
   opts?: { forceRefresh?: boolean; signal?: AbortSignal; limit?: number; offset?: number },
 ): Promise<ProjectDataset[]> {
-  const path = `${API}/${projectId}/datasets`;
-  const result = await fastGet<Page<ProjectDataset> | ProjectDataset[]>(path, {
-    forceRefresh: opts?.forceRefresh,
-    signal: opts?.signal,
-    params: { limit: opts?.limit, offset: opts?.offset },
-    label: 'Project datasets error',
-  });
-  return asPage(result.data).items;
+  const path = `${API}/${encodeURIComponent(projectId)}/datasets`;
+  return fetchList<ProjectDataset>(path, 'Project datasets error', opts);
 }
 
 export async function fetchProjectWorkflows(
   projectId: string,
   opts?: { forceRefresh?: boolean; signal?: AbortSignal; limit?: number; offset?: number },
 ): Promise<WorkflowSummary[]> {
-  const path = `${API}/${projectId}/workflows`;
-  const result = await fastGet<Page<WorkflowSummary> | WorkflowSummary[]>(path, {
-    forceRefresh: opts?.forceRefresh,
-    signal: opts?.signal,
-    params: { limit: opts?.limit, offset: opts?.offset },
-    label: 'Project workflows error',
-  });
-  return asPage(result.data).items;
+  const path = `${API}/${encodeURIComponent(projectId)}/workflows`;
+  return fetchList<WorkflowSummary>(path, 'Project workflows error', opts);
 }
 
 export async function fetchWorkflowRuns(
@@ -324,7 +325,7 @@ export async function fetchWorkflowRuns(
     offset?: number;
   },
 ): Promise<Page<WorkflowRunSummary>> {
-  const path = `${API}/${projectId}/runs`;
+  const path = `${API}/${encodeURIComponent(projectId)}/runs`;
   const result = await fastGet<Page<WorkflowRunSummary> | WorkflowRunSummary[]>(path, {
     forceRefresh: opts?.forceRefresh,
     signal: opts?.signal,
@@ -343,7 +344,7 @@ export async function fetchWorkflowRun(
   runId: string,
   opts?: { forceRefresh?: boolean; signal?: AbortSignal },
 ): Promise<WorkflowRunDetail> {
-  const path = `${API}/${projectId}/runs/${runId}`;
+  const path = `${API}/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}`;
   const result = await fastGet<WorkflowRunDetail>(path, {
     forceRefresh: opts?.forceRefresh,
     signal: opts?.signal,
@@ -358,7 +359,7 @@ export async function fetchWorkflowRevisions(
   workflowId: string,
   opts?: { forceRefresh?: boolean; signal?: AbortSignal; limit?: number; offset?: number },
 ): Promise<Page<WorkflowRevisionSummary>> {
-  const path = `${API}/${projectId}/workflows/${workflowId}/revisions`;
+  const path = `${API}/${encodeURIComponent(projectId)}/workflows/${encodeURIComponent(workflowId)}/revisions`;
   const result = await fastGet<Page<WorkflowRevisionSummary> | WorkflowRevisionSummary[]>(path, {
     forceRefresh: opts?.forceRefresh,
     signal: opts?.signal,
@@ -374,7 +375,7 @@ export async function runWorkflow(
   inputBindings: Record<string, unknown> = {},
 ): Promise<WorkflowRunDetail> {
   const run = await apiFetch<WorkflowRunDetail>(
-    `${API}/${projectId}/workflows/${workflowId}/run`,
+    `${API}/${encodeURIComponent(projectId)}/workflows/${encodeURIComponent(workflowId)}/run`,
     {
       method: 'POST',
       body: { input_bindings: inputBindings },
@@ -391,7 +392,7 @@ export async function replayWorkflowRun(
   runId: string,
   mode: ReplayMode,
 ): Promise<WorkflowRunDetail> {
-  const run = await apiFetch<WorkflowRunDetail>(`${API}/${projectId}/runs/${runId}/replay`, {
+  const run = await apiFetch<WorkflowRunDetail>(`${API}/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/replay`, {
     method: 'POST',
     body: { mode },
     timeoutMs: 120_000,
@@ -405,7 +406,7 @@ export async function resumeWorkflowRun(
   projectId: string,
   runId: string,
 ): Promise<WorkflowRunDetail> {
-  const run = await apiFetch<WorkflowRunDetail>(`${API}/${projectId}/runs/${runId}/resume`, {
+  const run = await apiFetch<WorkflowRunDetail>(`${API}/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/resume`, {
     method: 'POST',
     body: { allow_rerun: false },
     timeoutMs: 120_000,
@@ -423,7 +424,7 @@ export async function fetchRunComparison(
   opts?: { signal?: AbortSignal },
 ): Promise<RunComparison> {
   const qs = new URLSearchParams({ run_a_id: runAId, run_b_id: runBId });
-  return apiFetch<RunComparison>(`${API}/${projectId}/runs/compare?${qs.toString()}`, {
+  return apiFetch<RunComparison>(`${API}/${encodeURIComponent(projectId)}/runs/compare?${qs.toString()}`, {
     method: 'POST',
     signal: opts?.signal,
     label: 'Workflow compare error',
@@ -434,7 +435,7 @@ export async function fetchArtifactLineage(
   artifactId: string,
   opts?: { signal?: AbortSignal; forceRefresh?: boolean },
 ): Promise<LineageGraph> {
-  const path = `${API}/artifacts/${artifactId}/lineage`;
+  const path = `${API}/artifacts/${encodeURIComponent(artifactId)}/lineage`;
   const result = await fastGet<LineageGraph>(path, {
     forceRefresh: opts?.forceRefresh,
     signal: opts?.signal,
@@ -448,7 +449,7 @@ export async function auditQuality(
   projectId: string,
   geojson: Record<string, unknown>,
 ): Promise<QualityReport> {
-  return apiFetch<QualityReport>(`${API}/${projectId}/quality-audit`, {
+  return apiFetch<QualityReport>(`${API}/${encodeURIComponent(projectId)}/quality-audit`, {
     method: 'POST',
     body: { geojson },
     timeoutMs: 60_000,
@@ -457,8 +458,8 @@ export async function auditQuality(
 }
 
 export function invalidateProjectRunCaches(projectId: string): void {
-  invalidateCache(`${API}/${projectId}/workflows`);
-  invalidateCache(`${API}/${projectId}/runs`);
+  invalidateCache(`${API}/${encodeURIComponent(projectId)}/workflows`);
+  invalidateCache(`${API}/${encodeURIComponent(projectId)}/runs`);
 }
 
 function invalidateWorkflowCaches(projectId: string): void {

@@ -70,12 +70,12 @@ export async function attachDataset(
   projectId: string,
   req: DatasetAttachRequest,
 ): Promise<DatasetAttached> {
-  const attached = await apiFetch<DatasetAttached>(`${API}/${projectId}/datasets`, {
+  const attached = await apiFetch<DatasetAttached>(`${API}/${encodeURIComponent(projectId)}/datasets`, {
     method: 'POST',
     body: req,
     label: 'Dataset attach error',
   });
-  invalidateCache(`${API}/${projectId}/datasets`);
+  invalidateCache(`${API}/${encodeURIComponent(projectId)}/datasets`);
   return attached;
 }
 
@@ -85,10 +85,10 @@ export async function attachDataset(
  */
 export async function detachDataset(projectId: string, datasetId: string): Promise<DatasetDetachResponse> {
   const result = await apiFetch<DatasetDetachResponse>(
-    `${API}/${projectId}/datasets/${datasetId}`,
+    `${API}/${encodeURIComponent(projectId)}/datasets/${datasetId}`,
     { method: 'DELETE', label: 'Dataset detach error' },
   );
-  invalidateCache(`${API}/${projectId}/datasets`);
+  invalidateCache(`${API}/${encodeURIComponent(projectId)}/datasets`);
   return result;
 }
 
@@ -100,7 +100,7 @@ export async function fetchProjectDatasetPage(
   projectId: string,
   opts?: { forceRefresh?: boolean; signal?: AbortSignal; limit?: number; offset?: number },
 ): Promise<Page<ProjectDataset>> {
-  const path = `${API}/${projectId}/datasets`;
+  const path = `${API}/${encodeURIComponent(projectId)}/datasets`;
   const result = await fastGet<Page<ProjectDataset> | ProjectDataset[]>(path, {
     forceRefresh: opts?.forceRefresh,
     signal: opts?.signal,
@@ -146,7 +146,7 @@ export async function fetchProjectArtifacts(
   projectId: string,
   opts?: { forceRefresh?: boolean; signal?: AbortSignal; limit?: number; offset?: number },
 ): Promise<Page<ArtifactSummary>> {
-  const path = `${API}/${projectId}/artifacts`;
+  const path = `${API}/${encodeURIComponent(projectId)}/artifacts`;
   const result = await fastGet<Page<ArtifactSummary> | ArtifactSummary[]>(path, {
     forceRefresh: opts?.forceRefresh,
     signal: opts?.signal,
@@ -158,7 +158,7 @@ export async function fetchProjectArtifacts(
 
 /** Pin/clone/lineage live OUTSIDE the project segment (auth inside service). */
 export async function pinArtifact(artifactId: string, pinned = true): Promise<ArtifactPinResponse> {
-  return apiFetch<ArtifactPinResponse>(`${API}/artifacts/${artifactId}/pin`, {
+  return apiFetch<ArtifactPinResponse>(`${API}/artifacts/${encodeURIComponent(artifactId)}/pin`, {
     method: 'POST',
     body: { pinned },
     label: 'Artifact pin error',
@@ -166,14 +166,14 @@ export async function pinArtifact(artifactId: string, pinned = true): Promise<Ar
 }
 
 export async function unpinArtifact(artifactId: string): Promise<ArtifactPinResponse> {
-  return apiFetch<ArtifactPinResponse>(`${API}/artifacts/${artifactId}/pin`, {
+  return apiFetch<ArtifactPinResponse>(`${API}/artifacts/${encodeURIComponent(artifactId)}/pin`, {
     method: 'DELETE',
     label: 'Artifact unpin error',
   });
 }
 
 export async function cloneArtifact(artifactId: string): Promise<ArtifactCloneResponse> {
-  return apiFetch<ArtifactCloneResponse>(`${API}/artifacts/${artifactId}/clone`, {
+  return apiFetch<ArtifactCloneResponse>(`${API}/artifacts/${encodeURIComponent(artifactId)}/clone`, {
     method: 'POST',
     label: 'Artifact clone error',
   });
@@ -249,7 +249,7 @@ export async function listWorkspaceSnapshots(
   opts?: { forceRefresh?: boolean; signal?: AbortSignal; sessionId?: string },
 ): Promise<WorkspaceSnapshotListResponse> {
   const result = await fastGet<WorkspaceSnapshotListResponse>(
-    `${API}/${projectId}/workspace/snapshots`,
+    `${API}/${encodeURIComponent(projectId)}/workspace/snapshots`,
     {
       forceRefresh: opts?.forceRefresh,
       signal: opts?.signal,
@@ -265,7 +265,7 @@ export async function saveWorkspaceSnapshot(
   req: SnapshotSaveRequest,
 ): Promise<WorkspaceSnapshotSaveResponse> {
   const saved = await apiFetch<WorkspaceSnapshotSaveResponse>(
-    `${API}/${projectId}/workspace/snapshots`,
+    `${API}/${encodeURIComponent(projectId)}/workspace/snapshots`,
     {
       method: 'POST',
       body: req,
@@ -274,7 +274,7 @@ export async function saveWorkspaceSnapshot(
       label: 'Snapshot save error',
     },
   );
-  invalidateCache(`${API}/${projectId}/workspace/snapshots`);
+  invalidateCache(`${API}/${encodeURIComponent(projectId)}/workspace/snapshots`);
   return saved;
 }
 
@@ -285,7 +285,7 @@ export async function inspectWorkspaceSnapshot(
   opts?: { signal?: AbortSignal; forceRefresh?: boolean },
 ): Promise<SnapshotVerification> {
   const result = await fastGet<SnapshotVerification>(
-    `${API}/${projectId}/workspace/snapshots/${snapshotId}`,
+    `${API}/${encodeURIComponent(projectId)}/workspace/snapshots/${encodeURIComponent(snapshotId)}`,
     {
       forceRefresh: opts?.forceRefresh,
       signal: opts?.signal,
@@ -303,7 +303,7 @@ export async function restoreWorkspaceSnapshot(
   req: { session_id: string; mode: 'verify' | 'register' },
 ): Promise<SnapshotRestoreResponse> {
   const restored = await apiFetch<SnapshotRestoreResponse>(
-    `${API}/${projectId}/workspace/snapshots/${snapshotId}/restore`,
+    `${API}/${encodeURIComponent(projectId)}/workspace/snapshots/${encodeURIComponent(snapshotId)}/restore`,
     {
       method: 'POST',
       body: req,
@@ -311,7 +311,7 @@ export async function restoreWorkspaceSnapshot(
       label: 'Snapshot restore error',
     },
   );
-  invalidateCache(`${API}/${projectId}/workspace/snapshots`);
+  invalidateCache(`${API}/${encodeURIComponent(projectId)}/workspace/snapshots`);
   return restored;
 }
 
@@ -321,14 +321,14 @@ export async function cloneWorkspaceSnapshot(
   req: { source_session_id: string; target_session_id: string },
 ): Promise<Record<string, unknown>> {
   return apiFetch<Record<string, unknown>>(
-    `${API}/${projectId}/workspace/snapshots/${snapshotId}/clone`,
+    `${API}/${encodeURIComponent(projectId)}/workspace/snapshots/${encodeURIComponent(snapshotId)}/clone`,
     {
       method: 'POST',
       body: req,
       timeoutMs: 120_000,
       label: 'Snapshot clone error',
     },
-  );
+  ).then((result) => { invalidateCache(`${API}/${encodeURIComponent(projectId)}/workspace/snapshots`); return result; });
 }
 
 export async function deleteWorkspaceSnapshot(
@@ -338,13 +338,13 @@ export async function deleteWorkspaceSnapshot(
 ): Promise<{ status: string; snapshot_id: string; home: string }> {
   const qs = new URLSearchParams({ session_id: sessionId });
   const deleted = await apiFetch<{ status: string; snapshot_id: string; home: string }>(
-    `${API}/${projectId}/workspace/snapshots/${snapshotId}?${qs.toString()}`,
+    `${API}/${encodeURIComponent(projectId)}/workspace/snapshots/${encodeURIComponent(snapshotId)}?${qs.toString()}`,
     {
       method: 'DELETE',
       label: 'Snapshot delete error',
     },
   );
-  invalidateCache(`${API}/${projectId}/workspace/snapshots`);
+  invalidateCache(`${API}/${encodeURIComponent(projectId)}/workspace/snapshots`);
   return deleted;
 }
 
@@ -411,7 +411,7 @@ export async function auditSpatialQuality(
   const qs = new URLSearchParams();
   if (opts?.crs) qs.set('crs', opts.crs);
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
-  return apiFetch<SpatialQualityReport>(`${API}/${projectId}/quality-audit${suffix}`, {
+  return apiFetch<SpatialQualityReport>(`${API}/${encodeURIComponent(projectId)}/quality-audit${suffix}`, {
     method: 'POST',
     body: { geojson },
     timeoutMs: 60_000,
@@ -425,7 +425,7 @@ export async function repairQuality(
   req: RepairRequest,
   opts?: { signal?: AbortSignal },
 ): Promise<RepairResponse> {
-  return apiFetch<RepairResponse>(`${API}/${projectId}/repair`, {
+  return apiFetch<RepairResponse>(`${API}/${encodeURIComponent(projectId)}/repair`, {
     method: 'POST',
     body: req,
     timeoutMs: 120_000,
@@ -453,6 +453,7 @@ export interface DataUsageResponse {
 }
 
 export interface GcPlanResponse {
+  plan_fingerprint?: string;
   project_id: string;
   scoped_to_project: boolean;
   retention: {
@@ -499,7 +500,7 @@ export async function fetchDataUsage(
   projectId: string,
   opts?: { forceRefresh?: boolean; signal?: AbortSignal },
 ): Promise<DataUsageResponse> {
-  const result = await fastGet<DataUsageResponse>(`${API}/${projectId}/data-usage`, {
+  const result = await fastGet<DataUsageResponse>(`${API}/${encodeURIComponent(projectId)}/data-usage`, {
     forceRefresh: opts?.forceRefresh,
     signal: opts?.signal,
     label: 'Data usage error',
@@ -511,7 +512,7 @@ export async function planDataGc(
   projectId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<GcPlanResponse> {
-  return apiFetch<GcPlanResponse>(`${API}/${projectId}/data-gc/plan`, {
+  return apiFetch<GcPlanResponse>(`${API}/${encodeURIComponent(projectId)}/data-gc/plan`, {
     method: 'POST',
     timeoutMs: 120_000,
     signal: opts?.signal,
@@ -522,16 +523,16 @@ export async function planDataGc(
 /** Backend rejects confirm≠true with 400 — the dialog must hard-code true. */
 export async function executeDataGc(
   projectId: string,
-  opts?: { signal?: AbortSignal },
+  opts?: { signal?: AbortSignal; expectedPlanFingerprint?: string },
 ): Promise<GcExecuteResponse> {
-  const result = await apiFetch<GcExecuteResponse>(`${API}/${projectId}/data-gc/execute`, {
+  const result = await apiFetch<GcExecuteResponse>(`${API}/${encodeURIComponent(projectId)}/data-gc/execute`, {
     method: 'POST',
-    body: { confirm: true },
+    body: { confirm: true, expected_plan_fingerprint: opts?.expectedPlanFingerprint },
     timeoutMs: 300_000,
     signal: opts?.signal,
     label: 'Data gc execute error',
   });
-  invalidateCache(`${API}/${projectId}/data-usage`);
+  invalidateCache(`${API}/${encodeURIComponent(projectId)}/data-usage`);
   return result;
 }
 

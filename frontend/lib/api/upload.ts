@@ -93,6 +93,13 @@ export async function uploadFile(
     }
     xhr.timeout = timeoutMs;
 
+    const onAbort = () => xhr.abort();
+    const cleanup = () => externalSignal?.removeEventListener('abort', onAbort);
+    xhr.onabort = () => {
+      cleanup();
+      reject(new DOMException('The operation was aborted.', 'AbortError'));
+    };
+
     // Wire caller abort → xhr.abort (so the body actually stops streaming).
     if (externalSignal) {
       if (externalSignal.aborted) {
@@ -100,7 +107,7 @@ export async function uploadFile(
         reject(new DOMException('The operation was aborted.', 'AbortError'));
         return;
       }
-      externalSignal.addEventListener('abort', () => xhr.abort(), { once: true });
+      externalSignal.addEventListener('abort', onAbort, { once: true });
     }
 
     xhr.upload.onprogress = (e) => {
@@ -110,6 +117,7 @@ export async function uploadFile(
     };
 
     xhr.onload = () => {
+      cleanup();
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const parsed = JSON.parse(xhr.responseText);
@@ -129,13 +137,14 @@ export async function uploadFile(
     };
 
     xhr.onerror = () => {
+      cleanup();
       if (externalSignal?.aborted) {
         reject(new DOMException('The operation was aborted.', 'AbortError'));
         return;
       }
       reject(new Error("网络错误"));
     };
-    xhr.ontimeout = () => reject(new Error(`上传超时 (${timeoutMs}ms)`));
+    xhr.ontimeout = () => { cleanup(); reject(new Error(`上传超时 (${timeoutMs}ms)`)); };
     xhr.send(formData);
   });
 }

@@ -59,6 +59,7 @@
     },
     "removed": [],
     "reordered": false,
+    "semantic_changed": {},
     "side_effect_changed": {},
     "tool_changed": {}
   },

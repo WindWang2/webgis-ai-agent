@@ -181,6 +181,7 @@ async def collect_session_evidence(
     session_id: str,
     *,
     max_refs: int = MAX_ROLE_BINDING_REFS,
+    preferred_refs: Optional[List[str]] = None,
 ) -> List[RefSemanticRecord]:
     """session refs → 逐 ref 语义记录（按 ref_id 排序，确定性）。
 
@@ -203,11 +204,13 @@ async def collect_session_evidence(
         logger.warning(
             "[RoleBinding] list_refs unavailable sid=%s（证据面降级为空）",
             session_id, exc_info=True)
-        return []
+        raise RuntimeError("session semantic evidence unavailable")
     if not isinstance(aliases, dict):
         return []
     # 确定性：排序后取前 N（list_refs 的 dict 迭代序跨后端不保证稳定）。
-    ref_ids = sorted(str(r) for r in aliases.keys())[:max(0, int(max_refs))]
+    available = {str(r) for r in aliases}
+    preferred = [str(ref) for ref in (preferred_refs or []) if str(ref) in available]
+    ref_ids = list(dict.fromkeys(preferred + sorted(available)))[:max(0, int(max_refs))]
 
     store = get_dataset_semantic_store()
     records: List[RefSemanticRecord] = []

@@ -119,7 +119,7 @@ def _dataset_lines(value: Any) -> List[str]:
     for row in rows[:_MAX_LIST_ITEMS]:
         if not isinstance(row, dict):
             continue
-        parts = [str(row.get("ref_id") or "")]
+        parts = [_xml_fence("ref", _clip(row.get("ref_id") or "", 128))]
         alias = row.get("alias")
         if alias:
             # alias 是用户上传命名（任意文本）→ 转义 fence。
@@ -128,7 +128,7 @@ def _dataset_lines(value: Any) -> List[str]:
         if row.get("feature_count") is not None:
             extras.append(f"要素{_fmt_num(row['feature_count'])}")
         if row.get("crs"):
-            extras.append(f"CRS={_clip(row['crs'], 24)}")
+            extras.append(f"CRS={_xml_fence('crs', _clip(row['crs'], 24))}")
         if row.get("bbox") and isinstance(row["bbox"], list):
             bbox = row["bbox"]
             if len(bbox) == 4:
@@ -195,7 +195,10 @@ class _Renderer:
         """known → 渲染一行；unknown → 按策略显式/缺席。返回是否成行。"""
         marker = "*" if (ctx, name) in self.changed else ""
         if fact.status == STATUS_KNOWN:
-            body = render(fact.value)
+            try:
+                body = render(fact.value)
+            except (TypeError, ValueError, OverflowError, IndexError, KeyError):
+                body = _compact(fact.value)
             if body is None:
                 return False
             if untrusted and fence_tag:
@@ -313,7 +316,8 @@ def render_situation_for_context(
                     f" (±{v.get('accuracy', '?')}m)"
                     if isinstance(v, dict) else _clip(_compact(v))
                 ), fence_tag="user_action", untrusted=True)
-    r.fact_line("geographic", "crs", geo.crs, "数据 CRS", lambda v: str(v))
+    r.fact_line("geographic", "crs", geo.crs, "数据 CRS", lambda v: str(v),
+                fence_tag="crs", untrusted=True)
     r.fact_line("geographic", "framed_view", geo.framed_view, "agent 取景",
                 lambda v: _compact(v))
 
@@ -328,7 +332,8 @@ def render_situation_for_context(
         r.fact_line("data", "active_roles", data.active_roles, "角色数据",
                     lambda v: ",".join(
                         f"{k}={v}" for k, v in sorted(v.items())[:_MAX_LIST_ITEMS]
-                    ) if isinstance(v, dict) else None)
+                    ) if isinstance(v, dict) else None,
+                    fence_tag="roles", untrusted=True)
         r.fact_line("data", "freshness", data.freshness, "数据版本",
                     lambda v: f"content_revision={v}")
 

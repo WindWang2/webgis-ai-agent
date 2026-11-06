@@ -29,6 +29,9 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 # cross-origin backend.
 ARG NEXT_PUBLIC_WS_URL=""
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+# Optional public browser key; enables the credential-gated CARTO profiles.
+ARG NEXT_PUBLIC_CARTO_BASEMAP_KEY=""
+ENV NEXT_PUBLIC_CARTO_BASEMAP_KEY=$NEXT_PUBLIC_CARTO_BASEMAP_KEY
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build
 
@@ -59,12 +62,14 @@ COPY --from=backend-deps /usr/local/bin /usr/local/bin
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY requirements.txt ./
 COPY main.py ./
+COPY manage.py alembic.ini ./
+COPY migrations/ ./migrations/
 COPY app/ ./app/
-# #618-37: Pi RPC entry is vendor/pi/packages/coding-agent/dist/ (pi_rpc_client
-# resolves bundle → dist). compose api uses this stage as target and
-# celery defaults to runner (COPY --from=backend-builder /app) — 本阶段从
-# pi-builder 复制 bundle（stage 定义在其后；Docker 允许前向引用），两个
-# 消费者都拿到可执行入口（review P2：compose api target 亦修复 #400）。
+COPY skills-lock.json ./
+COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Pi RPC's bundle and locked external extension loader serve both compose api
+# (backend-builder) and runner; migration and entrypoint assets remain present.
 COPY vendor/ ./vendor/
 COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
 COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules/jiti
@@ -136,13 +141,19 @@ COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor
 COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules/jiti
 
 # Create non-root user
-RUN addgroup --system --gid 1001 appgroup && adduser --system --uid 1001 appuser
+RUN addgroup --system --gid 1001 appgroup && adduser --system --uid 1001 --ingroup appgroup appuser \
+    && mkdir -p /app/data /app/.cache /app/.pi \
+    && chown -R appuser:appgroup /app/data /app/.cache /app/.pi
+
+ENV HOME=/app
 
 USER appuser
 
 EXPOSE 3000 8000
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
 # #1694 SEC-13：--ws-max-size 与 app/api/routes/ws.py:29 / ws_collab.py:51 的
 # _MAX_INBOUND_BYTES=16*1024 对齐（应用层长度检查在整帧 receive_text() 缓冲之后，
 # 协议层先限 size 才不会把超大帧整体读进内存）。与 Dockerfile.prod 的 CMD 一致。
-CMD ["sh", "-c", "trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws-max-size 16384 & node frontend/.next/standalone/server.js -p 3000 & wait"]
+CMD ["python", "-m", "app.lib.runtime.service_supervisor"]

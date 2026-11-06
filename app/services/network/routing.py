@@ -12,10 +12,11 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
-from shapely.geometry import LineString, shape
+from shapely.geometry import LineString, Point, shape
 from shapely.prepared import prep
 from shapely.strtree import STRtree
 
+from app.services.network.routing_overlay import RoutingGraphOverlay
 from app.services.network.contracts import (
     RouteDirection,
 )
@@ -154,27 +155,19 @@ class NetworkRoutingService:
                     geom = shape(geom_dict)
                     if isinstance(geom, LineString):
                         coords = list(geom.coords)
-                        split_pt = geom.interpolate(frac, normalized=True)
+                        split_pt = Point(snapped_coord)
                         # Split the coordinate sequence at the projected split
                         # point: vertices before it go to sub1, the split point
                         # joins them, and the remainder goes to sub2.
-                        sub1 = [coords[0]]
-                        inserted = False
-                        for i in range(1, len(coords)):
-                            if not inserted:
-                                seg = LineString([coords[i - 1], coords[i]])
-                                if split_pt.distance(seg) < 1e-9:
-                                    sub1.append((split_pt.x, split_pt.y))
-                                    inserted = True
-                                    break
-                                sub1.append(coords[i])
-                            else:
-                                break
-                        if len(sub1) >= 2:
-                            geom1 = LineString(sub1)
-                        sub2 = [sub1[-1]] + list(coords[len(sub1) - 1:]) if len(sub1) >= 1 else list(coords)
-                        if len(sub2) >= 2:
-                            geom2 = LineString(sub2)
+                        segment_index = min(
+                            range(1, len(coords)),
+                            key=lambda i: split_pt.distance(LineString([coords[i - 1], coords[i]])),
+                        )
+                        split_coord = (split_pt.x, split_pt.y)
+                        sub1 = list(coords[:segment_index]) + [split_coord]
+                        sub2 = [split_coord] + list(coords[segment_index:])
+                        geom1 = LineString(sub1)
+                        geom2 = LineString(sub2)
                 except Exception:
                     geom1 = None
                     geom2 = None
@@ -374,7 +367,7 @@ class NetworkRoutingService:
             destination, (tuple, list, PointSnappingResult)
         )
         if needs_snap:
-            graph_work = graph.copy()
+            graph_work = RoutingGraphOverlay(graph)
         else:
             graph_work = graph
 
@@ -724,7 +717,7 @@ class NetworkRoutingService:
         # the original graph directly when there is nothing to apply.
         if not barriers:
             return graph
-        graph_copy = graph.copy() if copy_graph else graph
+        graph_copy = RoutingGraphOverlay(graph) if copy_graph else graph
 
         # PERF (#540): the previous implementation scanned EVERY edge per
         # barrier and rebuilt each edge geometry with ``shape()`` (B×E GEOS
@@ -776,7 +769,7 @@ class NetworkRoutingService:
             else:
                 for u, v in edges_to_penalize:
                     curr_factor = graph_copy[u][v].get("_barrier_factor", 1.0)
-                    graph_copy[u][v]["_barrier_factor"] = curr_factor * factor
+                    graph_copy.add_edge(u, v, **{**graph_copy[u][v], "_barrier_factor": curr_factor * factor})
 
         return graph_copy
 
@@ -825,7 +818,7 @@ class NetworkRoutingService:
         # bearing_change is absolute; recover the signed direction for the
         # left/right classification from the raw bearings.
         v1, v2 = self._bearing_vectors(graph, node_a, node_b, node_c)
-        signed = math.degrees(math.atan2(v2[1], v2[0]) - math.atan2(v1[1], v1[0]))
+        signed = -math.degrees(math.atan2(v2[1], v2[0]) - math.atan2(v1[1], v1[0]))
         while signed > 180:
             signed -= 360
         while signed <= -180:

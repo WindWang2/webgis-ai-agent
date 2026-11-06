@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Mapping
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -77,7 +77,7 @@ def _to_entry(row: ProjectKnowledgeEntry) -> KnowledgeEntry:
 
 
 def upsert_entry(
-    db: Session, req: KnowledgeUpsert, *, _retry_left: int = 1
+    db: Session, req: KnowledgeUpsert, *, _retry_left: int = 1, apply_budget: bool = True,
 ) -> Optional[ProjectKnowledgeEntry]:
     """受控投影写入（消毒 → 门 → 同 key 再验证/取代 → 预算）。
 
@@ -118,6 +118,7 @@ def upsert_entry(
         row.temporal_label = req.temporal_label
         row.method_key = req.method_key
         row.refs = refs
+        row.evidence = {**(row.evidence or {}), "session_id": req.session_id}
         row.last_validated_at = now
         row.version = int(row.version or 1) + 1
         db.flush()
@@ -136,7 +137,7 @@ def upsert_entry(
         temporal_label=req.temporal_label,
         method_key=req.method_key,
         refs=refs,
-        evidence={"seam": "indexer", "observed_at": now.isoformat()},
+        evidence={"seam": "indexer", "observed_at": now.isoformat(), "session_id": req.session_id},
         status=ST_ACTIVE,
         invalidation_rule=RULE_NONE,
         created_at=now,
@@ -163,14 +164,15 @@ def upsert_entry(
                 req.entity_kind, req.authority_store, req.authority_id,
                 req.org_id, req.project_id,
             )
-            return upsert_entry(db, req, _retry_left=_retry_left - 1)
+            return upsert_entry(db, req, _retry_left=_retry_left - 1, apply_budget=apply_budget)
         logger.warning(
             "[ProjectKnowledge] supersede race unresolved after retry "
             "kind=%s authority=%s/%s",
             req.entity_kind, req.authority_store, req.authority_id,
         )
         return None
-    _apply_budget(db, req.org_id, req.project_id)
+    if apply_budget:
+        _apply_budget(db, req.org_id, req.project_id)
     return row
 
 
@@ -181,6 +183,7 @@ def get_active_entries(
     project_id: str,
     kinds: Optional[Sequence[str]] = None,
     limit: int = 200,
+    query: str = "",
 ) -> List[KnowledgeEntry]:
     """某项目的 active 知识条目（跨 org/跨项目读空集 —— 恒等值过滤）。"""
     if not org_id or not project_id:
@@ -192,6 +195,14 @@ def get_active_entries(
     )
     if kinds:
         stmt = stmt.where(ProjectKnowledgeEntry.entity_kind.in_(list(kinds)))
+    needle = str(query or "").strip()[:200]
+    if needle:
+        escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        stmt = stmt.where(or_(
+            ProjectKnowledgeEntry.subject.ilike(pattern, escape="\\"),
+            ProjectKnowledgeEntry.summary.ilike(pattern, escape="\\"),
+        ))
     stmt = stmt.order_by(
         ProjectKnowledgeEntry.weight.desc(),
         ProjectKnowledgeEntry.last_validated_at.desc(),
@@ -277,6 +288,35 @@ def demote_stale_by_token(
     return demote_entries(db, victims, status=ST_STALE, rule="version_bump")
 
 
+def demote_changed_entries(
+    db: Session, *, org_id: str, project_id: str,
+    tokens: Mapping[tuple[str, str], Optional[str]],
+) -> int:
+    """Persist batched authority liveness results without per-entry SQL."""
+    if not tokens:
+        return 0
+    rows = list(db.execute(select(ProjectKnowledgeEntry).where(
+        ProjectKnowledgeEntry.org_id == org_id,
+        ProjectKnowledgeEntry.project_id == project_id,
+        ProjectKnowledgeEntry.status == ST_ACTIVE,
+        ProjectKnowledgeEntry.authority_id.in_([key[1] for key in tokens]),
+    )).scalars().all())
+    gone, advanced = [], []
+    for row in rows:
+        key = (str(row.authority_store), str(row.authority_id))
+        if key not in tokens:
+            continue
+        live = tokens[key]
+        if live is None:
+            gone.append(row)
+        elif (row.version_token or "") != str(live)[:REF_TOKEN_MAX]:
+            advanced.append(row)
+    return (
+        demote_entries(db, gone, status=ST_INVALIDATED, rule=RULE_SCOPE_GONE)
+        + demote_entries(db, advanced, status=ST_STALE, rule="version_bump")
+    )
+
+
 def invalidate_for_authority(
     db: Session,
     *,
@@ -325,7 +365,9 @@ def retire_entry(db: Session, *, org_id: str, entry_id: str) -> bool:
     return True
 
 
-def _apply_budget(db: Session, org_id: str, project_id: str) -> int:
+def _apply_budget(
+    db: Session, org_id: str, project_id: str, *, protected_ids: Sequence[str] = (),
+) -> int:
     """把 (org, project) 行数压回预算内（无界增长即漏洞）。
 
     淘汰序：非 active（invalidated/superseded/stale，最旧优先）→ active 按
@@ -355,6 +397,8 @@ def _apply_budget(db: Session, org_id: str, project_id: str) -> int:
             stmt = stmt.where(ProjectKnowledgeEntry.status != ST_ACTIVE)
         else:
             stmt = stmt.where(ProjectKnowledgeEntry.status == ST_ACTIVE)
+            if protected_ids:
+                stmt = stmt.where(ProjectKnowledgeEntry.id.not_in(list(protected_ids)))
         victims = list(db.execute(
             stmt.order_by(
                 ProjectKnowledgeEntry.weight.asc(),
@@ -368,6 +412,26 @@ def _apply_budget(db: Session, org_id: str, project_id: str) -> int:
     if removed:
         db.flush()
     return removed
+
+
+def invalidate_rebuild_window(
+    db: Session, *, org_id: str, project_id: str, kinds: Sequence[str], keep_ids: Sequence[str],
+) -> int:
+    """Retire rows outside a successfully rebuilt source's bounded window.
+
+    Only the source whose savepoint succeeds may retire its old projection;
+    failed sources retain their preceding state for later liveness checks.
+    """
+    statement = select(ProjectKnowledgeEntry).where(
+        ProjectKnowledgeEntry.org_id == org_id,
+        ProjectKnowledgeEntry.project_id == project_id,
+        ProjectKnowledgeEntry.entity_kind.in_(list(kinds)),
+        ProjectKnowledgeEntry.status == ST_ACTIVE,
+    )
+    if keep_ids:
+        statement = statement.where(ProjectKnowledgeEntry.id.not_in(list(keep_ids)))
+    rows = list(db.execute(statement).scalars().all())
+    return demote_entries(db, rows, status=ST_INVALIDATED, rule=RULE_SCOPE_GONE)
 
 
 def project_knowledge_stats(db: Session, *, org_id: str) -> Dict[str, Any]:

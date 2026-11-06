@@ -354,11 +354,16 @@ class PiToolSpecV1:
         return out
 
 
+class ToolSpecOverBudget(ValueError):
+    """An intact schema cannot fit the per-tool native surface budget."""
+
+
 def compile_tool_spec(
     registry: Any,
     name: str,
     *,
     registry_generation: str = "",
+    strict_budget: bool = False,
 ) -> Optional[PiToolSpecV1]:
     """从活 registry 编译单个工具的 PiToolSpecV1（fail-fast 于注册缺席）。
 
@@ -381,6 +386,8 @@ def compile_tool_spec(
             "excluded from native surface (proxy path unchanged)",
             name, schema_bytes, budget,
         )
+        if strict_budget:
+            raise ToolSpecOverBudget(name)
         return None
     description = str(fn.get("description") or descriptor.description or name)
     if len(description) > _DESCRIPTION_MAX_CHARS:

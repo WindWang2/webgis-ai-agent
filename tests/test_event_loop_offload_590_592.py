@@ -1,24 +1,11 @@
 """Regression tests for #590 / #592: data-plane serialization and file IO off
 the event loop.
 
-#590 (sibling of #427/#499): ``GET /layers/data/{ref_id}`` returned multi-MB
-GeoJSON dicts to FastAPI's default ``JSONResponse`` — the encode ran inline on
-the event loop (third missed site of the offload discipline; the descriptor
-fallback's ``json.loads`` + full-feature scan were equally on-loop).
-
-#592: three sync file-IO sites were inline in async routes — the upload temp
-write (≤200 MB), the map-export temp write + atomic replace (≤50 MB), and the
-shared-report HTML view's ``open().read()`` (multi-MB HTML). The report view
-now returns ``FileResponse`` (worker-thread streaming) instead.
-
-Technique mirrors tests/test_event_loop_offload_427.py / _386.py: the slow work
-is faked with a sync ``time.sleep`` that records its thread id, and the test
-asserts the main event loop stays responsive *while* the work is running — with
-the work on the loop, the fake's sleep blocks everything and the ticker
-assertion fails deterministically.
+Offload probes assert the actual execution thread, independent of scheduler
+latency. Dedicated throughput/timeout tests keep their explicit time budgets.
 """
-import asyncio
 import io
+from types import SimpleNamespace
 import threading
 import time
 from unittest.mock import MagicMock
@@ -39,28 +26,13 @@ _main_thread = threading.get_ident()
 _VALID_SID = "session-aaaaaaaaaaaaaaaa"
 
 
-async def _assert_loop_responsive_while(awaitable_factory, delay: float = 0.8):
-    """Run awaitable_factory() and assert a 0.05s timer fires mid-flight.
+async def _run_offload_probe(awaitable_factory, delay: float = 0.8):
+    """Run the probe; callers assert the actual worker thread identity.
 
-    Deterministic: with the work offloaded the task is still running when the
-    timer completes; with the work on the loop the task finishes before the
-    test's own sleep resumes, so ``assert not task.done()`` fails.
+    A fixed sleep/task-pending race depends on machine scheduling and can
+    fail when correctly offloaded work finishes before the test resumes.
     """
-    task = asyncio.create_task(awaitable_factory())
-    await asyncio.sleep(0.15)          # let it enter the slow work
-    assert not task.done(), "work finished before the test could observe it"
-
-    ticks = []
-
-    async def _tick():
-        await asyncio.sleep(0.05)
-        ticks.append(True)
-
-    tick = asyncio.create_task(_tick())
-    await asyncio.sleep(0.15)
-    assert tick.done() and ticks, "event loop was blocked during the work"
-    assert not task.done(), "event loop was blocked during the work"
-    return await task
+    return await awaitable_factory()
 
 
 def _big_fc(n: int = 2500) -> dict:
@@ -110,7 +82,7 @@ async def test_layer_data_serialization_batched_off_loop(monkeypatch):
 
     monkeypatch.setattr(layer_mod, "session_data_manager", _FakeSDM())
 
-    resp = await _assert_loop_responsive_while(
+    resp = await _run_offload_probe(
         lambda: layer_mod.get_session_layer_data(
             ref_id="ref-big", session_id=_VALID_SID, owner_token=None,
             _conv=MagicMock(),
@@ -151,7 +123,7 @@ async def test_layer_descriptor_fallback_scan_off_loop(monkeypatch):
 
     monkeypatch.setattr(layer_mod, "session_data_manager", _FakeSDM())
 
-    resp = await _assert_loop_responsive_while(
+    resp = await _run_offload_probe(
         lambda: layer_mod.get_layer_descriptor(
             ref_id="ref-old", session_id=_VALID_SID, owner_token=None,
             _conv=MagicMock(),
@@ -206,7 +178,7 @@ async def test_redis_descriptor_fallback_loads_off_loop(monkeypatch):
 
     store = sdr.RedisSessionStore(redis_url="redis://unused", redis=_FakeRedis())
 
-    result = await _assert_loop_responsive_while(
+    result = await _run_offload_probe(
         lambda: store.get_ref_descriptor(_VALID_SID, "ref-big")
     )
     assert observed["thread"] != _main_thread, "json.loads ran on the event loop thread"
@@ -249,9 +221,10 @@ class _FakeUploadDB:
         return False
 
     async def execute(self, *_a, **_k):
+        conversation_query = bool(_a and "FROM conversations" in str(_a[0]))
         class _Result:
             def scalar_one_or_none(self):
-                return None
+                return SimpleNamespace(user_id="u1", owner_token=None) if conversation_query else None
 
         return _Result()
 
@@ -289,10 +262,12 @@ async def test_upload_temp_write_off_loop(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(upload_mod, "save_meta", lambda *a, **k: None)
     monkeypatch.setattr(upload_mod, "async_db_session", _FakeUploadDB)
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(upload_mod, "verify_session_owner", AsyncMock(return_value=SimpleNamespace(user_id="u1", owner_token=None)))
 
     file = UploadFile(file=io.BytesIO(b'{"type":"Point"}'), filename="test.geojson")
     try:
-        res = await _assert_loop_responsive_while(
+        res = await _run_offload_probe(
             lambda: upload_mod.upload_files(
                 # 直接函数调用不经过 FastAPI 依赖注入：Form 默认值是 truthy 的
                 # Form 对象 —— V4 新增参数必须显式传（crs/dedup/register_ref）。
@@ -325,11 +300,13 @@ async def test_map_export_upload_persist_off_loop(monkeypatch, tmp_path):
 
     monkeypatch.setattr(map_mod, "_persist_export_file", _slow_persist)
     monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
-    monkeypatch.setattr(map_mod, "_set_export_owner", lambda *a, **k: None)
 
-    file = UploadFile(file=io.BytesIO(b"pngbytes"), filename="map.png")
+    from PIL import Image
+    png = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(png, format="PNG")
+    file = UploadFile(file=io.BytesIO(png.getvalue()), filename="map.png")
     try:
-        res = await _assert_loop_responsive_while(
+        res = await _run_offload_probe(
             # 直调不经 FastAPI 依赖注入：Form 默认值是 truthy 的 Form 对象，
             # V5 新增参数必须显式传（否则 json.loads(Form) → 400 抢先返回，
             # offload 观测窗口直接失效，见 test_upload_temp_write_off_loop 同款注释）。

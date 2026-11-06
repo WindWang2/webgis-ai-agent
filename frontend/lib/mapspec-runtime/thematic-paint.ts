@@ -218,11 +218,19 @@ function categoricalToMatch(spec: any): unknown | null {
   if (!field || categories.length < 1) return null;
 
   const cases: unknown[] = [];
+  const seen = new Set<string>();
+  const mixed = new Set(categories.map((cat) => typeof (Array.isArray(cat) ? cat[0] : cat?.key))).size > 1;
   for (const cat of categories) {
     if (cat && typeof cat === "object" && cat.key != null && cat.color) {
-      cases.push(cat.key, cat.color);
+      const key = mixed ? String(cat.key) : cat.key;
+      if (seen.has(String(key))) continue;
+      seen.add(String(key));
+      cases.push(key, cat.color);
     } else if (Array.isArray(cat) && cat.length >= 2) {
-      cases.push(cat[0], cat[1]);
+      const key = mixed ? String(cat[0]) : cat[0];
+      if (seen.has(String(key))) continue;
+      seen.add(String(key));
+      cases.push(key, cat[1]);
     }
   }
   if (cases.length === 0) return null;
@@ -238,7 +246,7 @@ function categoricalToMatch(spec: any): unknown | null {
       reason: "out_of_range applies to numeric encodings; categorical default arm already absorbs out-of-domain values",
     });
   }
-  return ["match", ["get", field], ...cases, lastColor];
+  return ["match", mixed ? ["to-string", ["get", field]] : ["get", field], ...cases, lastColor];
 }
 
 /**

@@ -6,7 +6,7 @@
 
 - Registry 总量：**166**（V1 seeds 17 + 领域包 149）
 - 领域包：**24** 个
-- Registry 内容指纹：`bb9626d17d079b45…`
+- Registry 内容指纹：`55218fdbd910fb5b…`
 
 ## V3 分层组合总览
 
@@ -14,7 +14,7 @@
 - Composite Recipe（跨族组合）：**12**
 - Scenario Template（场景模板）：**7**
 - 分层实体合计：**339**（覆盖靠组合生成，不是平铺复制）
-- 分层指纹：`621a70cd6565a2f0…`
+- 分层指纹：`4c30d3cf9195451c…`
 
 ## Workflow Families（派生投影）
 
@@ -275,7 +275,7 @@
 - 科学义务：`coverage_ratio_denominator`（denominator → COVERAGE_RATIO_MISSING_DENOMINATOR）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → coverage_area_map（degraded）
 - 路由关键词：覆盖率、覆盖人口、覆盖评价、coverage ratio、covered population
-- 内容指纹：`d1f99120bc0406e8…`
+- 内容指纹：`808e02874cb836f3…`
 
 ### `location_allocation_planning` — 选址-分配优化
 
@@ -300,7 +300,7 @@
 - 科学义务：`isochrone_mode_disclosure`（disclosure → ISOCHRONE_MODE_DISCLOSURE）
 - 语义回退：`NETWORK_DISCONNECTED` → euclidean_buffer（proxy）
 - 路由关键词：服务区、等时圈、15分钟生活圈、步行范围、service area、isochrone
-- 内容指纹：`6cdae4241cb1f2f2…`
+- 内容指纹：`7a1a5d601d0515e7…`
 
 ### `transit_stop_accessibility` — 轨道站点步行可达
 
@@ -417,7 +417,7 @@ POI/设施两期数量对比（新增/消失点位）：数据源时点一致性
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 语义回退：`INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：渔网、网格密度、方格统计、fishnet grid、grid aggregation
-- 内容指纹：`e76f938ccf0e6ede…`
+- 内容指纹：`a2304777759a8706…`
 
 ### `density_grid_h3` — H3 六边形格网密度
 
@@ -429,7 +429,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 语义回退：`INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：h3、六边形、蜂窝格网、h3 hexbin、hexagon density
-- 内容指纹：`e3beeec99854616a…`
+- 内容指纹：`712f661449b184ed…`
 
 ### `density_hotspot_screening` — 热点初筛
 
@@ -442,7 +442,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`hotspot_significance_requires_test`（disclosure → HOTSPOT_SCREENING_NOT_SIGNIFICANCE）
 - 语义回退：`INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：热点初筛、聚集筛查、初步热点、hotspot screening、clustering screening
-- 内容指纹：`0a0b132ea18fe6ed…`
+- 内容指纹：`ce969d0bd642ab03…`
 
 ### `density_kde_surface` — KDE 核密度面
 
@@ -454,8 +454,8 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 科学义务：`kde_sample_sufficiency`（precondition → KDE_INSUFFICIENT_SAMPLES）
 - 语义回退：`KDE_INSUFFICIENT_SAMPLES` → visual_heatmap（approximation）
-- 路由关键词：核密度、kde、密度面、kde、kernel density
-- 内容指纹：`7195a73884b15d18…`
+- 路由关键词：核密度、密度面、kde、kernel density
+- 内容指纹：`b87edb3e94e0a96a…`
 
 ### `density_quantitative_per_area` — 定量密度分析
 
@@ -468,7 +468,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`density_requires_denominator`（denominator → DENSITY_MISSING_AREA_DENOMINATOR）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → raw_counts（degraded）
 - 路由关键词：定量密度、单位面积、密度排名、quantitative density、density per area
-- 内容指纹：`33ca10067c2b57d6…`
+- 内容指纹：`d21dc9bf41d3476d…`
 
 ### `density_visual_overview` — 视觉密度概览
 
@@ -481,7 +481,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`density_visual_not_significance`（disclosure → DENSITY_VISUAL_NOT_SIGNIFICANCE）
 - 语义回退：`INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：疏密、密度大概、密集程度、哪里密、visual density、density impression
-- 内容指纹：`08a002cd7d5ad09c…`
+- 内容指纹：`581a24602c9b3a42…`
 
 ## distribution
 
@@ -495,7 +495,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 语义回退：`NEEDS_ADMIN_UNITS` → point_distribution（degraded）
 - 路由关键词：清查、逐级统计、各乡镇、各街道、各街道数量、feature audit by admin unit
-- 内容指纹：`01b02d6edb97d19c…`
+- 内容指纹：`21b079f149211473…`
 
 ### `cultural_facility_distribution` — 文体设施分布
 
@@ -507,7 +507,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 语义回退：`INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：文体设施、图书馆、博物馆、体育馆分布、library distribution、museum distribution
-- 内容指纹：`a248f8ed8917dfbe…`
+- 内容指纹：`88a913dfb710cb5f…`
 
 ### `edu_facility_distribution` — 教育设施分布概览
 
@@ -519,7 +519,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 语义回退：`INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：教育设施、学校分布、幼儿园、中小学分布、school distribution、education facility
-- 内容指纹：`2d014e659a835263…`
+- 内容指纹：`33459f0abac67d64…`
 
 ### `emergency_shelter_distribution` — 应急避难场所分布
 
@@ -530,7 +530,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 核心能力：`poi_query`, `admin_boundary_query`, `admin_aggregation`, `point_profile`
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 路由关键词：避难场所、应急避难、人防设施、应急设施分布、emergency shelter、evacuation site
-- 内容指纹：`3990974a01e1d73a…`
+- 内容指纹：`a193f1f8f26cfb7b…`
 
 ### `financial_branch_distribution` — 金融网点分布
 
@@ -542,7 +542,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 语义回退：`INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：银行网点、atm、金融网点、营业部分布、bank branch、atm distribution
-- 内容指纹：`fefb9e3ce1fb542d…`
+- 内容指纹：`c5442e39769e8090…`
 
 ### `green_space_distribution` — 公园绿地分布
 
@@ -553,7 +553,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 核心能力：`poi_query`, `admin_boundary_query`, `admin_aggregation`, `point_profile`
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 路由关键词：公园、绿地、绿化分布、绿地分布、park distribution、green space
-- 内容指纹：`9ad88880e452d0e2…`
+- 内容指纹：`a057eb0cf52083e7…`
 
 ### `healthcare_facility_distribution` — 医疗设施分布概览
 
@@ -565,7 +565,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 语义回退：`INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：医疗设施、医院分布、诊所分布、药店分布、hospital distribution、healthcare facility
-- 内容指纹：`ec5adf2cc2a7cec6…`
+- 内容指纹：`304294796e500fcd…`
 
 ### `infrastructure_node_distribution` — 市政节点设施分布
 
@@ -576,7 +576,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 核心能力：`poi_query`, `admin_boundary_query`, `category_breakdown`, `point_profile`
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 路由关键词：加油站、充电站、市政设施、充电桩分布、charging station、gas station distribution
-- 内容指纹：`80277f48b17e40f4…`
+- 内容指纹：`4405f5479ccb54e7…`
 
 ### `landmark_simple_view` — 地标要素轻量查看
 
@@ -587,7 +587,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 核心能力：`poi_query`, `point_profile`
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 路由关键词：在地图上标出、地图上显示、map the、display on map
-- 内容指纹：`ba555f3c2edc5c36…`
+- 内容指纹：`ec3a4132ff3c459d…`
 
 ### `logistics_facility_distribution` — 物流网点分布
 
@@ -599,7 +599,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 语义回退：`INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：物流园、快递网点、物流网点、仓储分布、logistics facility、warehouse distribution
-- 内容指纹：`0e09b9afbdfee9a4…`
+- 内容指纹：`77bbdf643f63c168…`
 
 ### `poi_inventory_catalog` — POI 要素清单
 
@@ -610,7 +610,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 核心能力：`poi_query`, `category_breakdown`, `admin_boundary_query`, `admin_aggregation`
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 路由关键词：要素清单、本底调查、清查台账、资源台账、inventory、catalog of、asset list
-- 内容指纹：`24cd64074595b269…`
+- 内容指纹：`65706df6ddbfe9a9…`
 
 ### `transit_station_distribution` — 公交地铁站点分布
 
@@ -621,7 +621,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 核心能力：`poi_query`, `admin_boundary_query`, `point_profile`, `grid_binning`
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 路由关键词：地铁站点、公交站、站点分布、轨道站点、metro stations、bus stops、transit stops
-- 内容指纹：`9dfc4e86ec0cb1fe…`
+- 内容指纹：`918a908bdfa38f16…`
 
 ## disaster
 
@@ -647,7 +647,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）, `network`*（`*` = 必选）
 - 语义回退：`NETWORK_DISCONNECTED` → euclidean_assignment（proxy）
 - 路由关键词：应急调度、救援分配、物资调度、应急资源、emergency dispatch analysis
-- 内容指纹：`9f64c12c0bd92f63…`
+- 内容指纹：`e504146d4f7d38c6…`
 
 ### `flood_inundation_screen` — 内涝影响筛查
 
@@ -671,7 +671,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 科学义务：`hazard_point_density_semantics`（disclosure → HAZARD_DENSITY_IS_DESCRIPTIVE）
 - 路由关键词：地灾点、隐患点、地质灾害清单、隐患排查、geological hazard inventory
-- 内容指纹：`2e95c8346bb62884…`
+- 内容指纹：`77c1c0a323104c81…`
 
 ### `seismic_intensity_exposure_screen` — 震后影响快速筛查
 
@@ -710,7 +710,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`aqi_min_samples`（precondition → AQI_INSUFFICIENT_STATIONS）
 - 语义回退：`AQI_INSUFFICIENT_STATIONS` → station_points（degraded）
 - 路由关键词：空气质量、pm2.5、pm10、aqi、污染分布、air quality、pm25 surface、aqi map
-- 内容指纹：`ba7c322dba417fdd…`
+- 内容指纹：`14c9e72e91abe2ee…`
 
 ### `env_sensitivity_zoning` — 环境敏感区划
 
@@ -732,7 +732,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 核心能力：`poi_query`, `admin_boundary_query`, `admin_aggregation`, `point_profile`
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 路由关键词：监测站、站点覆盖、站网、监测点位、monitoring station coverage
-- 内容指纹：`72a6575905a7bdf6…`
+- 内容指纹：`8f1dbb47dfeefecc…`
 
 ### `noise_buffer_screen` — 噪声影响筛查
 
@@ -771,7 +771,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`equity_denominator_required`（denominator → EQUITY_MISSING_DENOMINATOR）；`equity_measure_semantics`（disclosure → EQUITY_MEASURE_SEMANTICS）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → count_density_view（degraded）
 - 路由关键词：教育资源、学位公平、学校均衡、教育公平、education equity、school balance
-- 内容指纹：`d7456b64227bc093…`
+- 内容指纹：`e479cd9d3a8e9e8d…`
 
 ### `emergency_equity_coverage` — 应急服务均衡覆盖
 
@@ -784,7 +784,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`equity_denominator_required`（denominator → EQUITY_MISSING_DENOMINATOR）；`equity_measure_semantics`（disclosure → EQUITY_MEASURE_SEMANTICS）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → count_density_view（degraded）
 - 路由关键词：应急均衡、消防均衡、避难公平、emergency equity
-- 内容指纹：`9519d1c08929eb50…`
+- 内容指纹：`a8add0d23c2eeaf5…`
 
 ### `facility_per_capita_profile` — 设施人均画像
 
@@ -797,7 +797,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`per_capita_denominator_required`（denominator → PER_CAPITA_DENOMINATOR_REQUIRED）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → count_density_view（degraded）
 - 路由关键词：人均拥有、万人拥有、千人指标、人均配置、per capita facilities
-- 内容指纹：`33cd20d574736a6a…`
+- 内容指纹：`2b208c4ede9a29f9…`
 
 ### `healthcare_equity_access` — 医疗可达公平性
 
@@ -810,7 +810,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`equity_denominator_required`（denominator → EQUITY_MISSING_DENOMINATOR）；`equity_measure_semantics`（disclosure → EQUITY_MEASURE_SEMANTICS）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → count_density_view（degraded）
 - 路由关键词：医疗公平、就医公平、医疗均衡、医疗资源分布合理性、healthcare equity、medical accessibility fairness
-- 内容指纹：`c167b12b857af7c2…`
+- 内容指纹：`03817ebf4dfdf350…`
 
 ### `park_access_equity` — 公园绿地可达公平
 
@@ -823,7 +823,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`equity_denominator_required`（denominator → EQUITY_MISSING_DENOMINATOR）；`equity_measure_semantics`（disclosure → EQUITY_MEASURE_SEMANTICS）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → count_density_view（degraded）
 - 路由关键词：公园公平、绿地公平、公园可达均衡、park equity、green space fairness
-- 内容指纹：`b664f605cc2dd8af…`
+- 内容指纹：`78b6247c5152fa47…`
 
 ## exposure
 
@@ -862,7 +862,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`exposure_population_required`（denominator → EXPOSURE_POPULATION_MISSING）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → exposure_area_map（degraded）
 - 路由关键词：人口暴露、影响人口、受影响人数、population exposure、affected population
-- 内容指纹：`f80e6aeaf5172dd3…`
+- 内容指纹：`83ec638a82ab91dd…`
 
 ### `vulnerability_profile_overlay` — 易损性画像叠加
 
@@ -889,7 +889,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：出口断面、水文站流域、控制断面、pour point、pour point basin
-- 内容指纹：`871667b8375402d3…`
+- 内容指纹：`44baf98626cf10c6…`
 
 ### `drainage_density_stats` — 排水分区密度统计
 
@@ -902,7 +902,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）；`drainage_density_denominator`（denominator → DRAINAGE_DENSITY_MISSING_AREA）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）; `DATA_ROLE_MISSING_DENOMINATOR` → stream_length_stats（degraded）
 - 路由关键词：排水密度、河网密度、水系密度、drainage density
-- 内容指纹：`276886b5e8ec1728…`
+- 内容指纹：`ce1f9ac5924db1e9…`
 
 ### `flood_extent_screening` — 淹没范围初筛
 
@@ -915,7 +915,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）；`flood_not_hydrodynamic`（disclosure → FLOOD_GEOMETRIC_APPROXIMATION）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：淹没范围、洪水淹没、内涝初筛、水位推演、flood extent、inundation screening
-- 内容指纹：`a36802eec2b2baf1…`
+- 内容指纹：`d1449718f424693d…`
 
 ### `flow_accumulation_mapping` — 汇流累积制图
 
@@ -928,7 +928,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：汇流累积、流累积量、径流路径、flow accumulation
-- 内容指纹：`2272ffea575c84a2…`
+- 内容指纹：`caeca1adc50aa325…`
 
 ### `stream_network_extraction` — 河网提取
 
@@ -941,7 +941,7 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）；`stream_threshold_disclosure`（disclosure → STREAM_THRESHOLD_SENSITIVITY）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：河网提取、水系提取、河道提取、stream extraction、river network
-- 内容指纹：`4a086a8d818c7ebe…`
+- 内容指纹：`ce3b28a1eec676dc…`
 
 ### `watershed_delineation_workflow` — 流域划分
 
@@ -954,7 +954,7 @@ DEM 流域划分：填洼 → 流向 → 汇流累积 → 出口点流域提取�
 - 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：流域划分、集水区、分水岭、汇水区、watershed delineation、catchment
-- 内容指纹：`4ca1b768eb07089e…`
+- 内容指纹：`d9e91e56eddd6589…`
 
 ## interpolation
 
@@ -969,7 +969,7 @@ IDW 插值连续表面：方法简单透明，样本充足性义务 + 平滑参�
 - 科学义务：`idw_numeric_field`（precondition → IDW_NUMERIC_FIELD_REQUIRED）；`idw_min_samples`（precondition → IDW_INSUFFICIENT_SAMPLES）
 - 语义回退：`IDW_INSUFFICIENT_SAMPLES` → point_map（degraded）
 - 路由关键词：idw、反距离、距离加权、idw、inverse distance weighting
-- 内容指纹：`64b2f5181a7ea667…`
+- 内容指纹：`94ee0e930e68fedb…`
 
 ### `interpolation_cv_compare` — 插值方法交叉验证比较
 
@@ -981,8 +981,8 @@ IDW 插值连续表面：方法简单透明，样本充足性义务 + 平滑参�
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 科学义务：`cv_numeric_field`（precondition → CV_NUMERIC_FIELD_REQUIRED）；`cv_min_samples`（precondition → CV_INSUFFICIENT_SAMPLES）
 - 语义回退：`CV_INSUFFICIENT_SAMPLES` → single_method_default（degraded）
-- 路由关键词：插值比较、交叉验证、哪个插值方法、cv、interpolation cross validation、method comparison
-- 内容指纹：`c9ae9fa5cccea5c9…`
+- 路由关键词：插值比较、交叉验证、哪个插值方法、interpolation cross validation、method comparison
+- 内容指纹：`53589f442cf15934…`
 
 ### `interpolation_uncertainty_map` — 插值不确定性图
 
@@ -994,7 +994,7 @@ IDW 插值连续表面：方法简单透明，样本充足性义务 + 平滑参�
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 科学义务：`uncertainty_requires_variance_output`（uncertainty → INTERPOLATION_VARIANCE_UNAVAILABLE）
 - 路由关键词：插值不确定性、方差面、精度图、interpolation uncertainty、variance surface
-- 内容指纹：`17bb984e659e5714…`
+- 内容指纹：`d969dfdeb9ac7142…`
 
 ### `kriging_interpolation_workflow` — 克里金插值面
 
@@ -1006,8 +1006,8 @@ IDW 插值连续表面：方法简单透明，样本充足性义务 + 平滑参�
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 科学义务：`kriging_numeric_field`（precondition → KRIGING_NUMERIC_FIELD_REQUIRED）；`kriging_projected_crs`（precondition → KRIGING_PROJECTED_CRS_REQUIRED）；`kriging_min_samples`（precondition → KRIGING_INSUFFICIENT_SAMPLES）
 - 语义回退：`KRIGING_INSUFFICIENT_SAMPLES` → point_map（degraded）; `KRIGING_PROJECTED_CRS_REQUIRED` → point_map（degraded）
-- 路由关键词：克里金、kriging、金插值、kriging
-- 内容指纹：`c828a064dc7f2ea8…`
+- 路由关键词：克里金、克里金插值、kriging
+- 内容指纹：`ecbecc3989421cbd…`
 
 ### `station_field_interpolation` — 站点观测场插值
 
@@ -1020,7 +1020,7 @@ IDW 插值连续表面：方法简单透明，样本充足性义务 + 平滑参�
 - 科学义务：`station_min_samples`（precondition → STATION_INSUFFICIENT_SAMPLES）；`station_timeslice_alignment`（disclosure → STATION_TIMESLICE_UNALIGNED）
 - 语义回退：`STATION_INSUFFICIENT_SAMPLES` → station_points（degraded）
 - 路由关键词：站点插值、气温分布、降水分布、监测站插值、station interpolation、weather surface
-- 内容指纹：`ddbbf4549ed18954…`
+- 内容指纹：`770406a0feea8ec3…`
 
 ## natural_resources
 
@@ -1034,7 +1034,7 @@ IDW 插值连续表面：方法简单透明，样本充足性义务 + 平滑参�
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 科学义务：`landclass_semantics`（disclosure → LANDCLASS_SEMANTICS）
 - 路由关键词：耕地、基本农田、耕地分布、耕地面积、cultivated land、farmland distribution
-- 内容指纹：`90724d371ad98950…`
+- 内容指纹：`18ac5646adf988c3…`
 
 ### `forest_orchard_inventory` — 林园地资源清查
 
@@ -1107,7 +1107,7 @@ IDW 插值连续表面：方法简单透明，样本充足性义务 + 平滑参�
 - 数据角色：`subject`*（block）, `network`*（`*` = 必选）
 - 语义回退：`NETWORK_DISCONNECTED` → euclidean_assignment（proxy）
 - 路由关键词：最近的医院、最近设施、就近分配、closest facility、nearest allocation
-- 内容指纹：`5da29be7cdfb0748…`
+- 内容指纹：`4028c38c5aab97d6…`
 
 ### `od_corridor_mapping` — OD 走廊图
 
@@ -1155,7 +1155,7 @@ OD 流向走廊可视化（弧线/线宽分级）：流量字段义务。
 - 科学义务：`route_snap_quality`（disclosure → ROUTE_SNAP_QUALITY）
 - 语义回退：`NETWORK_DISCONNECTED` → euclidean_line（proxy）
 - 路由关键词：最短路径、最短路线、路径规划、路线规划、怎么走、导航、shortest path、route planning
-- 内容指纹：`6788460edcce0878…`
+- 内容指纹：`5304d41f74d47960…`
 
 ### `traffic_status_overview` — 路况状态概览
 
@@ -1193,7 +1193,7 @@ OD 流向走廊可视化（弧线/线宽分级）：流量字段义务。
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 语义回退：`HULL_INSUFFICIENT_POINTS` → point_distribution（degraded）
 - 路由关键词：分布范围、活动范围、覆盖圈、足迹、convex hull、activity range
-- 内容指纹：`59646e177986b195…`
+- 内容指纹：`9edc4f7045c76bed…`
 
 ### `point_pattern_distance` — 最近邻距离格局
 
@@ -1206,7 +1206,7 @@ OD 流向走廊可视化（弧线/线宽分级）：流量字段义务。
 - 科学义务：`nni_projected_crs`（precondition → NNI_PROJECTED_CRS_REQUIRED）
 - 语义回退：`NNI_PROJECTED_CRS_REQUIRED` → visual_density（degraded）
 - 路由关键词：最近邻、点间距离、nni、nearest neighbor index、point distance
-- 内容指纹：`e6cdf1e029ceeace…`
+- 内容指纹：`c396ba86921cd5da…`
 
 ### `point_pattern_quadrat` — 点格局检验（象限法）
 
@@ -1219,7 +1219,7 @@ OD 流向走廊可视化（弧线/线宽分级）：流量字段义务。
 - 科学义务：`quadrat_min_points`（precondition → QUADRAT_INSUFFICIENT_POINTS）
 - 语义回退：`QUADRAT_INSUFFICIENT_POINTS` → visual_density（degraded）
 - 路由关键词：点格局、象限分析、分布检验、point pattern、quadrat analysis
-- 内容指纹：`efeeea45f390fb07…`
+- 内容指纹：`acd8b4baac2fb2b4…`
 
 ### `spatiotemporal_emergence_tracking` — 事件时空涌现追踪
 
@@ -1245,7 +1245,7 @@ OD 流向走廊可视化（弧线/线宽分级）：流量字段义务。
 - 科学义务：`voronoi_euclidean_disclosure`（disclosure → VORONOI_EUCLIDIAN_PROXY）
 - 语义回退：`VORONOI_INSUFFICIENT_SEEDS` → point_distribution（degraded）
 - 路由关键词：voronoi、泰森多边形、服务域、势力范围、voronoi、thiessen polygon
-- 内容指纹：`cdf7ff35e29ab7c5…`
+- 内容指纹：`61317f5886969226…`
 
 ## public_health
 
@@ -1259,7 +1259,7 @@ OD 流向走廊可视化（弧线/线宽分级）：流量字段义务。
 - 数据角色：`subject`*（block）, `boundary`*（block）, `population`（`*` = 必选）
 - 科学义务：`clinic_service_radius_semantics`（disclosure → CLINIC_RADIUS_SEMANTICS）
 - 路由关键词：社区卫生服务、诊所覆盖、基层医疗、卫生站覆盖、clinic coverage、primary care access
-- 内容指纹：`6bec090018d678a7…`
+- 内容指纹：`2c8842ff87929d9f…`
 
 ### `epidemic_density_monitor` — 疫情密度监测
 
@@ -1285,7 +1285,7 @@ OD 流向走廊可视化（弧线/线宽分级）：流量字段义务。
 - 科学义务：`health_per_capita_denominator`（denominator → PER_CAPITA_DENOMINATOR_REQUIRED）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → count_map（degraded）
 - 路由关键词：每万人、千人均、医疗资源人均、床位人均、health resources per capita
-- 内容指纹：`c0c23cd49f9b599a…`
+- 内容指纹：`7b2faba421017494…`
 
 ### `hospital_service_area_stats` — 医院服务区统计
 
@@ -1311,7 +1311,7 @@ OD 流向走廊可视化（弧线/线宽分级）：流量字段义务。
 - 科学义务：`rs_band_semantics_required`（precondition → RS_BAND_SEMANTICS_REQUIRED）
 - 语义回退：`RS_BAND_SEMANTICS_REQUIRED` → raster_view（degraded）
 - 路由关键词：不透水面、建成区、ndbi、硬化地面、built-up index、impervious surface
-- 内容指纹：`8dab8fcd8b043beb…`
+- 内容指纹：`3817872aa18e5c1c…`
 
 ### `index_time_series_trend` — 指数时序趋势
 
@@ -1348,7 +1348,7 @@ NBR/dNBR 火烧严重度评价：基期+目标期双景义务，波段语义必�
 - 科学义务：`rs_band_semantics_required`（precondition → RS_BAND_SEMANTICS_REQUIRED）；`burn_baseline_required`（temporal → BURN_BASELINE_SCENE_REQUIRED）
 - 语义回退：`BURN_BASELINE_SCENE_REQUIRED` → nbr_single_date（degraded）
 - 路由关键词：nbr、火烧迹地、过火面积、燃烧严重度、nbr、burn severity、dnbr
-- 内容指纹：`47a59a78b37c0436…`
+- 内容指纹：`4b02451d9fc364c8…`
 
 ### `ndvi_vegetation_monitor` — NDVI 植被监测
 
@@ -1361,7 +1361,7 @@ NDVI 植被指数计算与分级制图：波段语义义务 + 取值范围校验
 - 科学义务：`rs_band_semantics_required`（precondition → RS_BAND_SEMANTICS_REQUIRED）
 - 语义回退：`RS_BAND_SEMANTICS_REQUIRED` → raster_view（degraded）
 - 路由关键词：ndvi、植被覆盖、绿度、植被指数、ndvi、vegetation index
-- 内容指纹：`f3e427386bbff4b2…`
+- 内容指纹：`ba726d7960af0ddc…`
 
 ### `ndwi_water_index` — NDWI 水体指数
 
@@ -1374,7 +1374,7 @@ NDWI 水体提取与面积统计：波段语义义务 + 阈值敏感性披露。
 - 科学义务：`rs_band_semantics_required`（precondition → RS_BAND_SEMANTICS_REQUIRED）；`water_index_threshold`（disclosure → WATER_INDEX_THRESHOLD_SENSITIVITY）
 - 语义回退：`RS_BAND_SEMANTICS_REQUIRED` → raster_view（degraded）
 - 路由关键词：ndwi、水体提取、水面识别、ndwi、water index
-- 内容指纹：`36a61cfe7096f9ef…`
+- 内容指纹：`3cd85893fad3cc2c…`
 
 ### `optical_bitemporal_change` — 双时相光学变化检测
 
@@ -1399,7 +1399,7 @@ NDWI 水体提取与面积统计：波段语义义务 + 阈值敏感性披露。
 - 科学义务：`rs_cube_gap_disclosure`（disclosure → RS_CUBE_GAP_DISCLOSURE_REQUIRED）
 - 语义回退：`RS_CUBE_GRID_IDENTITY_REQUIRED` → raster_view（degraded）
 - 路由关键词：时序体检、缺口报告、数据覆盖、cube audit、gap report、coverage
-- 内容指纹：`e43b59955d3288db…`
+- 内容指纹：`5c03e4798cad1f0d…`
 
 ### `rs_scene_inventory` — 影像数据清单
 
@@ -1423,7 +1423,7 @@ NDWI 水体提取与面积统计：波段语义义务 + 阈值敏感性披露。
 - 科学义务：`rs_cube_grid_identity`（precondition → RS_CUBE_GRID_IDENTITY_REQUIRED）；`rs_cube_gap_disclosure`（disclosure → RS_CUBE_GAP_DISCLOSURE_REQUIRED）
 - 语义回退：`RS_CUBE_GRID_IDENTITY_REQUIRED` → raster_view（degraded）
 - 路由关键词：时序立方体、SAR 光学融合、物候、全年时序、多期影像、temporal cube、sar optical fusion、multi-temporal
-- 内容指纹：`8717c3f9958b951f…`
+- 内容指纹：`21d95640fc82156b…`
 
 ### `zonal_rs_index_report` — 分区遥感指数报表
 
@@ -1449,7 +1449,7 @@ NDWI 水体提取与面积统计：波段语义义务 + 阈值敏感性披露。
 - 科学义务：`seismic_proxy_disclosure`（disclosure → SEISMIC_PROXIMITY_PROXY）；`risk_receptors_confirmed`（disclosure → RISK_RECEPTORS_UNCONFIRMED）
 - 语义回退：`RISK_RECEPTORS_UNCONFIRMED` → hazard_map（degraded）
 - 路由关键词：地震、断层、烈度、地震暴露、earthquake exposure、seismic hazard
-- 内容指纹：`8a63a816515c018a…`
+- 内容指纹：`62b64fa902d9b7eb…`
 
 ### `flood_risk_assessment` — 洪水风险评估
 
@@ -1462,7 +1462,7 @@ NDWI 水体提取与面积统计：波段语义义务 + 阈值敏感性披露。
 - 科学义务：`flood_geometric_approximation`（disclosure → FLOOD_GEOMETRIC_APPROXIMATION）；`risk_receptors_confirmed`（disclosure → RISK_RECEPTORS_UNCONFIRMED）
 - 语义回退：`RISK_RECEPTORS_UNCONFIRMED` → hazard_map（degraded）
 - 路由关键词：洪水风险、洪涝、淹没风险、内涝风险、flood risk
-- 内容指纹：`c89d1a1cba3ebd9f…`
+- 内容指纹：`0521391a37825048…`
 
 ### `hazard_exposure_overlay` — 通用危险-暴露叠加
 
@@ -1475,7 +1475,7 @@ NDWI 水体提取与面积统计：波段语义义务 + 阈值敏感性披露。
 - 科学义务：`risk_receptors_confirmed`（disclosure → RISK_RECEPTORS_UNCONFIRMED）
 - 语义回退：`RISK_RECEPTORS_UNCONFIRMED` → hazard_map（degraded）
 - 路由关键词：暴露评价、影响范围叠加、危险源影响、hazard exposure、exposure overlay
-- 内容指纹：`73ecafd50209da43…`
+- 内容指纹：`118f9d933dd1873d…`
 
 ### `landslide_risk_assessment` — 滑坡风险评估
 
@@ -1488,7 +1488,7 @@ NDWI 水体提取与面积统计：波段语义义务 + 阈值敏感性披露。
 - 科学义务：`risk_receptors_confirmed`（disclosure → RISK_RECEPTORS_UNCONFIRMED）；`landslide_factor_disclosure`（disclosure → LANDSLIDE_FACTOR_SEMANTICS）
 - 语义回退：`RISK_RECEPTORS_UNCONFIRMED` → hazard_map（degraded）
 - 路由关键词：滑坡、地质灾害、崩塌、滑坡风险、landslide risk、geological hazard
-- 内容指纹：`6ddba1cfadf4d61f…`
+- 内容指纹：`e55e66744eb5a740…`
 
 ### `multi_hazard_composite` — 多灾种复合筛查
 
@@ -1552,7 +1552,7 @@ SAR 影像后向散射强度概览（描述性）：极化语义披露，不做�
 - 科学义务：`sar_calibration_evidence`（transformation → SAR_CALIBRATION_EVIDENCE_REQUIRED）；`sar_speckle_preprocess`（transformation → SAR_SPECKLE_FILTER_PLANNED）
 - 语义回退：`SAR_CALIBRATION_EVIDENCE_REQUIRED` → descriptive_relative_comparison（proxy）
 - 路由关键词：sar对比、定标、绝对后向散射、辐射定标、sar calibration、calibrated comparison
-- 内容指纹：`cdea52d83255c537…`
+- 内容指纹：`258c4c31697b56e1…`
 
 ### `sar_change_detection_workflow` — SAR 变化检测
 
@@ -1592,7 +1592,7 @@ SAR 洪水范围制图（水体镜面反射低后向散射）：阈值敏感性�
 - 科学义务：`site_criteria_declared`（disclosure → SITE_SELECTION_CRITERIA_UNDECLARED）；`site_weight_provenance`（disclosure → SITE_WEIGHT_PROVENANCE）
 - 语义回退：`SITE_SELECTION_CRITERIA_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：充电站选址、充电桩布局、ev charging site selection
-- 内容指纹：`87e12123996d4ccc…`
+- 内容指纹：`654677dec68cd1f4…`
 
 ### `generic_mcda_site_ranking` — 通用多准则选址
 
@@ -1605,7 +1605,7 @@ SAR 洪水范围制图（水体镜面反射低后向散射）：阈值敏感性�
 - 科学义务：`site_criteria_declared`（disclosure → SITE_SELECTION_CRITERIA_UNDECLARED）；`site_weight_provenance`（disclosure → SITE_WEIGHT_PROVENANCE）
 - 语义回退：`SITE_SELECTION_CRITERIA_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：多准则、加权评分、候选排序、方案比选、mcda、weighted ranking、topsis
-- 内容指纹：`77b0074251fd4132…`
+- 内容指纹：`12a4e6d06911536f…`
 
 ### `hospital_site_selection` — 医院选址评价
 
@@ -1618,7 +1618,7 @@ SAR 洪水范围制图（水体镜面反射低后向散射）：阈值敏感性�
 - 科学义务：`site_criteria_declared`（disclosure → SITE_SELECTION_CRITERIA_UNDECLARED）；`site_weight_provenance`（disclosure → SITE_WEIGHT_PROVENANCE）
 - 语义回退：`SITE_SELECTION_CRITERIA_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：医院选址、新院区、建医院、hospital site selection
-- 内容指纹：`20f2c9165b9b9118…`
+- 内容指纹：`4a09115f28cef938…`
 
 ### `landfill_site_screening` — 填埋场选址筛查
 
@@ -1631,7 +1631,7 @@ SAR 洪水范围制图（水体镜面反射低后向散射）：阈值敏感性�
 - 科学义务：`site_criteria_declared`（disclosure → SITE_SELECTION_CRITERIA_UNDECLARED）；`site_weight_provenance`（disclosure → SITE_WEIGHT_PROVENANCE）
 - 语义回退：`SITE_SELECTION_CRITERIA_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：填埋场选址、垃圾站选址、固废设施选址、landfill site、waste facility siting
-- 内容指纹：`86c0aa86d2c043f5…`
+- 内容指纹：`cf82b49a4b3b4989…`
 
 ### `school_site_selection` — 学校选址评价
 
@@ -1644,7 +1644,7 @@ SAR 洪水范围制图（水体镜面反射低后向散射）：阈值敏感性�
 - 科学义务：`site_criteria_declared`（disclosure → SITE_SELECTION_CRITERIA_UNDECLARED）；`site_weight_provenance`（disclosure → SITE_WEIGHT_PROVENANCE）
 - 语义回退：`SITE_SELECTION_CRITERIA_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：学校选址、新校址、建学校、school site selection
-- 内容指纹：`4d0328704e87a7e4…`
+- 内容指纹：`5a3041e0cbde5261…`
 
 ### `shelter_site_selection` — 避难场所选址
 
@@ -1657,7 +1657,7 @@ SAR 洪水范围制图（水体镜面反射低后向散射）：阈值敏感性�
 - 科学义务：`site_criteria_declared`（disclosure → SITE_SELECTION_CRITERIA_UNDECLARED）；`site_weight_provenance`（disclosure → SITE_WEIGHT_PROVENANCE）
 - 语义回退：`SITE_SELECTION_CRITERIA_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：避难场所选址、避难所布局、应急场所选址、shelter site selection
-- 内容指纹：`7ba438d94ddab54b…`
+- 内容指纹：`a535a82b77b0567e…`
 
 ## statistics
 
@@ -1670,7 +1670,7 @@ SAR 洪水范围制图（水体镜面反射低后向散射）：阈值敏感性�
 - 核心能力：`admin_boundary_query`, `admin_aggregation`, `category_breakdown`
 - 数据角色：`subject`*（block）, `boundary`*（block）, `measure`*（block）（`*` = 必选）
 - 路由关键词：排名、top、最多最少、统计排名、ranking by district、top n
-- 内容指纹：`6a0fbbda16f56b2d…`
+- 内容指纹：`83156d7b48f22ad8…`
 
 ### `categorical_composition_stats` — 类别构成统计
 
@@ -1693,7 +1693,7 @@ Geary's C 全局自相关（对局部差异更敏感），与 Moran's I 互为�
 - 数据角色：`subject`*（block）, `boundary`*（block）, `measure`*（block）（`*` = 必选）
 - 科学义务：`geary_numeric_field`（precondition → GEARY_NUMERIC_FIELD_REQUIRED）
 - 路由关键词：geary、geary c、geary检验、geary
-- 内容指纹：`2cf2e921a585deec…`
+- 内容指纹：`e2bc8ce1e539b9a4…`
 
 ### `general_g_cluster_analysis` — General G 聚集度分析
 
@@ -1705,7 +1705,7 @@ General G 全局聚集度检验：高值聚集 vs 低值聚集的全局判断。
 - 数据角色：`subject`*（block）, `boundary`*（block）, `measure`*（block）（`*` = 必选）
 - 科学义务：`general_g_numeric_field`（precondition → GENERAL_G_NUMERIC_FIELD_REQUIRED）
 - 路由关键词：general g、聚集度检验、高低值聚集、general g
-- 内容指纹：`c8bf844405cd057d…`
+- 内容指纹：`55c98837f9ba660a…`
 
 ### `getis_ord_hotspot_significance` — Getis-Ord Gi* 显著性热点
 
@@ -1718,7 +1718,7 @@ Gi* 统计显著性热点/冷点图：只有检验条件满足才出显著结论
 - 科学义务：`gi_star_numeric_field`（precondition → GI_STAR_NUMERIC_FIELD_REQUIRED）；`gi_star_min_units`（precondition → GI_STAR_INSUFFICIENT_UNITS）
 - 语义回退：`GI_STAR_INSUFFICIENT_UNITS` → visual_density（degraded）; `HOTSPOT_SIGNIFICANCE_UNAVAILABLE` → visual_density（degraded）
 - 路由关键词：显著性热点、gi星、getis、热点检验、统计热点、getis-ord、gi star、statistically significant hotspot
-- 内容指纹：`ecd6e2d22f229447…`
+- 内容指纹：`137f79d106ffd306…`
 
 ### `global_moran_autocorrelation` — 全局空间自相关（Moran's I）
 
@@ -1731,7 +1731,7 @@ Gi* 统计显著性热点/冷点图：只有检验条件满足才出显著结论
 - 科学义务：`autocorr_numeric_field`（precondition → AUTOCORR_NUMERIC_FIELD_REQUIRED）；`autocorr_min_units`（precondition → AUTOCORR_INSUFFICIENT_UNITS）；`autocorr_multiple_testing_note`（disclosure → AUTOCORR_MULTIPLE_TESTING）
 - 语义回退：`AUTOCORR_INSUFFICIENT_UNITS` → descriptive_summary（degraded）
 - 路由关键词：全局自相关、莫兰指数、moran、空间自相关、global moran、spatial autocorrelation
-- 内容指纹：`0a09b4fda280a5b0…`
+- 内容指纹：`548bc03ef5b43bbc…`
 
 ### `local_moran_lisa` — 局部自相关聚类图（LISA）
 
@@ -1744,7 +1744,7 @@ Local Moran's I 聚类图（HH/LL/HL/LH 四象限）：多重比较校正与聚�
 - 科学义务：`lisa_numeric_field`（precondition → LISA_NUMERIC_FIELD_REQUIRED）；`lisa_min_units`（precondition → LISA_INSUFFICIENT_UNITS）；`lisa_multiple_testing`（disclosure → LISA_MULTIPLE_TESTING）
 - 语义回退：`LISA_INSUFFICIENT_UNITS` → descriptive_summary（degraded）
 - 路由关键词：局部自相关、lisa、聚集图、冷点热点区、lisa、local moran、cluster map
-- 内容指纹：`e535e1bb53798da3…`
+- 内容指纹：`ab6c388974a1d0a9…`
 
 ### `rate_aggregation_choropleth` — 比率归一化专题图
 
@@ -1757,7 +1757,7 @@ Local Moran's I 聚类图（HH/LL/HL/LH 四象限）：多重比较校正与聚�
 - 科学义务：`rate_requires_denominator`（denominator → RATE_MISSING_DENOMINATOR）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → raw_counts（degraded）
 - 路由关键词：人均、地均、占比统计、率图、per capita、rate map、normalized ratio
-- 内容指纹：`659ea399d4c71a67…`
+- 内容指纹：`18bca5b7e4c32c1b…`
 
 ### `spatiotemporal_cluster_detection` — 时空聚类检测
 
@@ -1781,7 +1781,7 @@ Local Moran's I 聚类图（HH/LL/HL/LH 四象限）：多重比较校正与聚�
 - 核心能力：`admin_boundary_query`, `raster_source`, `zonal_statistics`, `admin_aggregation`
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 路由关键词：分区统计、各区的均值、栅格统计、zonal statistics
-- 内容指纹：`3a85c9db17bc88a4…`
+- 内容指纹：`16cb74d39214d0af…`
 
 ## suitability
 
@@ -1796,7 +1796,7 @@ Local Moran's I 聚类图（HH/LL/HL/LH 四象限）：多重比较校正与聚�
 - 科学义务：`suitability_factors_declared`（disclosure → SUITABILITY_FACTORS_UNDECLARED）；`suitability_weight_provenance`（disclosure → SUITABILITY_WEIGHT_PROVENANCE）；`suitability_normalization_semantics`（disclosure → SUITABILITY_NORMALIZATION_SEMANTICS）
 - 语义回退：`SUITABILITY_FACTORS_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：农业适宜、耕作适宜、种植适宜区、agricultural suitability
-- 内容指纹：`04d2a0b84b8bd1f7…`
+- 内容指纹：`6868a2824618cdcc…`
 
 ### `construction_suitability` — 建设适宜性评价
 
@@ -1809,7 +1809,7 @@ Local Moran's I 聚类图（HH/LL/HL/LH 四象限）：多重比较校正与聚�
 - 科学义务：`suitability_factors_declared`（disclosure → SUITABILITY_FACTORS_UNDECLARED）；`suitability_weight_provenance`（disclosure → SUITABILITY_WEIGHT_PROVENANCE）；`suitability_normalization_semantics`（disclosure → SUITABILITY_NORMALIZATION_SEMANTICS）
 - 语义回退：`SUITABILITY_FACTORS_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：建设适宜性、适建区、开发适宜、宜建区、construction suitability
-- 内容指纹：`ea8bb544c466d762…`
+- 内容指纹：`9aef2744c74f1d54…`
 
 ### `ecological_suitability` — 生态保护适宜性
 
@@ -1822,7 +1822,7 @@ Local Moran's I 聚类图（HH/LL/HL/LH 四象限）：多重比较校正与聚�
 - 科学义务：`suitability_factors_declared`（disclosure → SUITABILITY_FACTORS_UNDECLARED）；`suitability_weight_provenance`（disclosure → SUITABILITY_WEIGHT_PROVENANCE）；`suitability_normalization_semantics`（disclosure → SUITABILITY_NORMALIZATION_SEMANTICS）
 - 语义回退：`SUITABILITY_FACTORS_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：生态适宜、生态保护区、重要生态空间、ecological suitability
-- 内容指纹：`d9230b91f7bb8391…`
+- 内容指纹：`400117bce69dcf78…`
 
 ### `tourism_suitability` — 旅游开发适宜性
 
@@ -1835,7 +1835,7 @@ Local Moran's I 聚类图（HH/LL/HL/LH 四象限）：多重比较校正与聚�
 - 科学义务：`suitability_factors_declared`（disclosure → SUITABILITY_FACTORS_UNDECLARED）；`suitability_weight_provenance`（disclosure → SUITABILITY_WEIGHT_PROVENANCE）；`suitability_normalization_semantics`（disclosure → SUITABILITY_NORMALIZATION_SEMANTICS）
 - 语义回退：`SUITABILITY_FACTORS_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：旅游适宜、景区开发、文旅适宜性、tourism suitability
-- 内容指纹：`cff89691ae3fcc40…`
+- 内容指纹：`b764dc5f6477ae25…`
 
 ### `urban_expansion_suitability` — 城镇扩张适宜性
 
@@ -1848,7 +1848,7 @@ Local Moran's I 聚类图（HH/LL/HL/LH 四象限）：多重比较校正与聚�
 - 科学义务：`suitability_factors_declared`（disclosure → SUITABILITY_FACTORS_UNDECLARED）；`suitability_weight_provenance`（disclosure → SUITABILITY_WEIGHT_PROVENANCE）；`suitability_normalization_semantics`（disclosure → SUITABILITY_NORMALIZATION_SEMANTICS）
 - 语义回退：`SUITABILITY_FACTORS_UNDECLARED` → constraint_screening（degraded）
 - 路由关键词：开发边界、扩张适宜、城镇开发适宜性、双评价、urban expansion suitability、double evaluation
-- 内容指纹：`003eaefa98f33de4…`
+- 内容指纹：`0e58c785697a6588…`
 
 ## temporal
 
@@ -1941,7 +1941,7 @@ DEM 坡向衍生（方位分类）：阳坡/阴坡等向别分类制图。
 - 科学义务：`terrain_dem_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`terrain_crs_metric`（precondition → TERRAIN_METRIC_CRS_REQUIRED）
 - 语义回退：`TERRAIN_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：坡向、阴阳坡、朝向分析、aspect analysis
-- 内容指纹：`acdb95a4199fcc75…`
+- 内容指纹：`0f6104a89089098f…`
 
 ### `contour_map_product` — 等高线产品
 
@@ -1954,7 +1954,7 @@ DEM 坡向衍生（方位分类）：阳坡/阴坡等向别分类制图。
 - 科学义务：`terrain_dem_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`terrain_crs_metric`（precondition → TERRAIN_METRIC_CRS_REQUIRED）
 - 语义回退：`TERRAIN_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：等高线、等值线、contour、contour map、isoline
-- 内容指纹：`e6b895dde408523e…`
+- 内容指纹：`cb67d0db3cfc0320…`
 
 ### `hillshade_cartography` — 山体阴影渲染
 
@@ -1967,7 +1967,7 @@ DEM 坡向衍生（方位分类）：阳坡/阴坡等向别分类制图。
 - 科学义务：`terrain_dem_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`terrain_crs_metric`（precondition → TERRAIN_METRIC_CRS_REQUIRED）
 - 语义回退：`TERRAIN_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：山体阴影、hillshade、晕渲图、地形渲染、hillshade、shaded relief
-- 内容指纹：`182d12c6023c0740…`
+- 内容指纹：`994dc3d2e72521e9…`
 
 ### `slope_analysis_workflow` — 坡度分析
 
@@ -1980,7 +1980,7 @@ DEM 坡度衍生 + 分级制图：米制 CRS 义务 + 单位（度/百分比）�
 - 科学义务：`terrain_dem_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`terrain_crs_metric`（precondition → TERRAIN_METRIC_CRS_REQUIRED）
 - 语义回退：`TERRAIN_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：坡度、坡度分析、陡坡、slope analysis、steepness
-- 内容指纹：`8b9f3bc24231bbe8…`
+- 内容指纹：`2eeae5920edc6154…`
 
 ### `slope_zoning_constraint` — 坡度分区约束
 
@@ -1993,7 +1993,7 @@ DEM 坡度衍生 + 分级制图：米制 CRS 义务 + 单位（度/百分比）�
 - 科学义务：`terrain_dem_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`terrain_crs_metric`（precondition → TERRAIN_METRIC_CRS_REQUIRED）；`slope_threshold_disclosure`（disclosure → SLOPE_THRESHOLD_DECLARED）
 - 语义回退：`TERRAIN_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：坡度分区、禁建区、陡坡约束、开垦限制、slope zoning、steep slope constraint
-- 内容指纹：`8251cb8798dfee39…`
+- 内容指纹：`d48374a3981f8b91…`
 
 ### `terrain_morphometry_suite` — 地形形态计量套件
 
@@ -2006,7 +2006,7 @@ DEM 坡度衍生 + 分级制图：米制 CRS 义务 + 单位（度/百分比）�
 - 科学义务：`terrain_dem_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`terrain_crs_metric`（precondition → TERRAIN_METRIC_CRS_REQUIRED）
 - 语义回退：`TERRAIN_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：地形因子、形态计量、地形综合分析、terrain morphometry、terrain derivatives suite
-- 内容指纹：`baff986058eb81d4…`
+- 内容指纹：`caefaeb4813650c6…`
 
 ### `terrain_relief_overview` — 地势起伏概览
 
@@ -2019,7 +2019,7 @@ DEM 坡度衍生 + 分级制图：米制 CRS 义务 + 单位（度/百分比）�
 - 科学义务：`terrain_dem_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`terrain_crs_metric`（precondition → TERRAIN_METRIC_CRS_REQUIRED）
 - 语义回退：`TERRAIN_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：地势、起伏度、高程分布、地形概览、terrain relief、elevation overview
-- 内容指纹：`25ddda13e59a19de…`
+- 内容指纹：`8f459c85b9e24529…`
 
 ### `viewshed_analysis_workflow` — 视域/通视分析
 
@@ -2032,7 +2032,7 @@ DEM 坡度衍生 + 分级制图：米制 CRS 义务 + 单位（度/百分比）�
 - 科学义务：`terrain_dem_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`terrain_crs_metric`（precondition → TERRAIN_METRIC_CRS_REQUIRED）
 - 语义回退：`TERRAIN_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：视域、通视、可视域、瞭望覆盖、viewshed、visibility analysis
-- 内容指纹：`3d490f27822ea92a…`
+- 内容指纹：`ebae30afd636e919…`
 
 ## transport
 
@@ -2096,7 +2096,7 @@ DEM 坡度衍生 + 分级制图：米制 CRS 义务 + 单位（度/百分比）�
 - 科学义务：`greening_rate_denominator`（denominator → GREENING_RATE_MISSING_AREA）
 - 语义回退：`DATA_ROLE_MISSING_DENOMINATOR` → green_area_stats（degraded）
 - 路由关键词：绿化率、绿地率、人均绿地、greening rate
-- 内容指纹：`541781fea13793bc…`
+- 内容指纹：`9704aadef3e49c35…`
 
 ### `landuse_structure_admin` — 用地结构统计
 
@@ -2107,7 +2107,7 @@ DEM 坡度衍生 + 分级制图：米制 CRS 义务 + 单位（度/百分比）�
 - 核心能力：`raster_source`, `raster_reclassify`, `zonal_statistics`, `admin_boundary_query`, `admin_aggregation`, `category_breakdown`
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
 - 路由关键词：用地结构、用地构成、功能区统计、land use structure
-- 内容指纹：`5b84ef16ba57b6c3…`
+- 内容指纹：`1c012878a5f3966e…`
 
 ### `nightlight_vitality_profile` — 夜间灯光活力画像
 

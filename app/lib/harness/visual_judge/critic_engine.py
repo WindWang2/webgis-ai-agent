@@ -6,8 +6,7 @@
   输出非法 / 未配置全部归因为 ``not_evaluated`` 报告（机器可读 reason），
   绝不伪造 evaluated，更绝不产出 pass。
 - **限流**：``(session_id, mapspec_fingerprint, image_sha256)`` LRU 记忆化，
-  单轮至多一次真实外呼（含 not_evaluated 结论，与 ADR-0158 legacy 记忆化
-  同纪律：评估面高频重入不放大外呼）。
+  成功评估复用缓存；瞬时 provider 失败不缓存，允许后续请求重试。
 - **评分推导**：维度分由 critiques 确定性推导，不采信 VLM 自报分（D6）。
 - **消毒**：维度白名单 + 改图意图判废 + 置信度/文本/ bbox 有界化（契约层
   extra=forbid 之上的第二道闸，legacy sanitize 纪律）。
@@ -18,6 +17,7 @@ import json
 import logging
 import os
 import time
+from functools import lru_cache
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -85,6 +85,8 @@ class CriticMemoCache:
         return report
 
     def put(self, key: Tuple[str, str, str], report: VisualJudgeReport) -> None:
+        if report.status != "evaluated":
+            return
         self._entries[key] = report
         self._entries.move_to_end(key)
         while len(self._entries) > self.limit:
@@ -300,8 +302,13 @@ class VisualCriticEngine:
 
 
 def build_critic_engine() -> VisualCriticEngine:
-    """从 env/settings 组装引擎（每评审按需构建；key 缺席 = 特性缺席）。"""
-    config = resolve_provider_config()
+    """Reuse bounded memo state for each resolved provider configuration."""
+    return _configured_engine(tuple(sorted(resolve_provider_config().items())))
+
+
+@lru_cache(maxsize=8)
+def _configured_engine(items: Tuple[Tuple[str, str], ...]) -> VisualCriticEngine:
+    config = dict(items)
     provider = config["provider"]
     if provider not in (PROVIDER_OPENAI_COMPATIBLE, PROVIDER_GEMINI):
         # 未知 provider = 配置缺席的诚实形态（不静默猜默认）。

@@ -159,8 +159,8 @@ def test_tool_candidates_ordered_by_algorithm_priority_and_filtered():
 
 
 @pytest.fixture(scope="module")
-def real_catalog():
-    return compile_execution_catalog()
+def real_catalog(catalog_registry_instance):
+    return compile_execution_catalog(tool_registry=catalog_registry_instance)
 
 
 def test_real_catalog_width_and_shape(real_catalog):

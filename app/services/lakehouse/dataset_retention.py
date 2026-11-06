@@ -57,6 +57,14 @@ def _version_row_dict(row) -> Dict[str, Any]:
     }
 
 
+def _require_owner(dataset_row: Any, *, session_id: Optional[str], project_id: Optional[str]) -> None:
+    if bool(session_id) == bool(project_id):
+        raise RetentionError("retention requires exactly one authorized owner scope")
+    kind, key = ("session", session_id) if session_id else ("project", project_id)
+    if dataset_row.owner_type != kind or str(dataset_row.owner_id) != str(key):
+        raise RetentionError("dataset not found")
+
+
 def plan_retention(
     db,
     dataset_row,
@@ -64,6 +72,7 @@ def plan_retention(
     max_versions: int = DEFAULT_MAX_VERSIONS,
     min_age_hours: float = DEFAULT_MIN_AGE_HOURS,
     now: Optional[Any] = None,
+    session_id: Optional[str] = None, project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """dry-run 计划（确定性；只读 —— 逐条候选 + token）。
 
@@ -77,6 +86,7 @@ def plan_retention(
     from app.models.lakehouse_datasets import LakehouseDatasetVersion
     from app.services.lakehouse.dataset_registry import list_refs
 
+    _require_owner(dataset_row, session_id=session_id, project_id=project_id)
     if max_versions < 1:
         raise RetentionError("max_versions must be >= 1")
     if min_age_hours < 0:
@@ -150,7 +160,8 @@ def plan_retention(
 
 
 def execute_retention(db, plan: Dict[str, Any], *,
-                      max_prunes: int = MAX_BATCH_PRUNES) -> Dict[str, Any]:
+                      max_prunes: int = MAX_BATCH_PRUNES,
+                      session_id: Optional[str] = None, project_id: Optional[str] = None) -> Dict[str, Any]:
     """执行 prune（重验优先）：token 漂移 → typed STALE；只删版本行。
 
     指针保护重验：plan 期后新指到候选版本的 ref → 该候选剔除并披露
@@ -174,6 +185,7 @@ def execute_retention(db, plan: Dict[str, Any], *,
     dataset_row = get_dataset(db, dataset_row_id)
     if dataset_row is None:
         raise RetentionError(f"dataset not found: {dataset_row_id[:12]}")
+    _require_owner(dataset_row, session_id=session_id, project_id=project_id)
     max_versions = int(plan.get("max_versions") or DEFAULT_MAX_VERSIONS)
     min_age_hours = float(plan.get("min_age_hours") or 0.0)
     # 指针行锁（PG FOR UPDATE；SQLite 写全库序列化）—— 与并发
@@ -185,7 +197,7 @@ def execute_retention(db, plan: Dict[str, Any], *,
     )
     recheck = plan_retention(
         db, dataset_row, max_versions=max_versions,
-        min_age_hours=min_age_hours,
+        min_age_hours=min_age_hours, session_id=session_id, project_id=project_id,
     )
     if recheck["token"] != token:
         raise RetentionStalePlan(

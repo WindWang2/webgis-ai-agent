@@ -517,6 +517,6 @@ def cokriging_lmc_surface(
             "ck_stddev": float(np.sqrt(max(var, 0.0))),
         }
         for cell, pred, var in zip(target_cells, result.predictions,
-                                   result.variances)
+                                   result.variances, strict=True)
     ]
     return {"records": records, "metadata": metadata}

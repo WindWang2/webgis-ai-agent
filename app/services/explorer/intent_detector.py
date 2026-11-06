@@ -2,6 +2,8 @@
 import logging
 from pydantic import BaseModel, Field
 
+from app.services.explorer.topic_tokens import topic_tokens
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,9 +59,13 @@ class IntentDetector:
             )
 
         # 规则2：地图已有匹配主题的图层
+        query_tokens = topic_tokens(query)
         for layer in current_layers:
             layer_name = layer.get("name", "").lower()
-            if any(word in query for word in layer_name.split()):
+            layer_tokens = topic_tokens(layer_name)
+            # A shared city/generic word alone is insufficient to suppress a
+            # new topic. Require most of the existing layer's meaningful terms.
+            if layer_tokens and len(layer_tokens & query_tokens) / len(layer_tokens) >= 2 / 3:
                 return ExploreDecision(
                     decision="skip",
                     confidence=0.9,
@@ -97,7 +103,7 @@ class IntentDetector:
 
         for data_type, triggers in self.EXPLORATION_TRIGGERS.items():
             num_triggers = len(triggers) if triggers else 0
-            score = (sum(1 for t in triggers if t in query) / num_triggers) if num_triggers > 0 else 0.0
+            score = (sum(1 for t in triggers if t.lower() in query) / num_triggers) if num_triggers > 0 else 0.0
             if score > best_score:
                 best_score = score
                 best_type = data_type

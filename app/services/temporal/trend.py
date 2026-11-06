@@ -65,7 +65,7 @@ class TemporalTrendEngine:
     def compute_moving_average(values: List[float], window_size: int = 3) -> List[Optional[float]]:
         """
         Computes simple moving average over a numeric sequence.
-        Returns a list of same length with None for initial unpopulated window positions if window centered or leading.
+        Returns a trailing mean with min_periods=1, including partial initial windows.
         """
         if not values or window_size <= 0:
             return []
@@ -317,6 +317,11 @@ class TemporalTrendEngine:
         if not values:
             return TemporalTrendResult(metric_name=metric_name, total_points=0, dropped_nan=dropped_nan)
 
+        x_axis = _timestamps_to_year_axis(ts_labels)
+        if x_axis is not None:
+            order = np.argsort(x_axis, kind="stable")
+            values = [values[i] for i in order]
+            ts_labels = [ts_labels[i] for i in order]
         # 1. Moving average
         ma = self.compute_moving_average(values, window_size=moving_avg_window)
 
@@ -328,9 +333,11 @@ class TemporalTrendEngine:
 
         # Prefer OLS / Sen slope direction
         effective_slope = sens_slope if sens_slope != 0 else ols_slope
-        if effective_slope > 0.001:
+        span = (max(x_axis) - min(x_axis)) if x_axis is not None and len(x_axis) > 1 else max(len(values) - 1, 1)
+        tolerance = max(abs(float(np.mean(values))), float(np.std(values)), 1e-12) * 1e-6 / max(span, 1e-12)
+        if effective_slope > tolerance:
             direction = "increasing"
-        elif effective_slope < -0.001:
+        elif effective_slope < -tolerance:
             direction = "decreasing"
         else:
             direction = "stable"
@@ -396,6 +403,7 @@ class TemporalTrendEngine:
                 timestamps=ts_labels,
                 dropped_nan=dropped_nan,
                 slope_unit="per_year" if x_axis is not None else "per_step",
+                warnings=["Fewer than5 observations: default z-score anomaly test has insufficient resolution"] if len(values) < 5 else [],
                 trend_method=method_key,
                 significance_evidence=[b.to_evidence() for b in significance_blocks],
                 method_warnings=method_warnings,
@@ -414,6 +422,7 @@ class TemporalTrendEngine:
             timestamps=ts_labels,
             dropped_nan=dropped_nan,
             slope_unit="per_year" if x_axis is not None else "per_step",
+            warnings=["Fewer than5 observations: default z-score anomaly test has insufficient resolution"] if len(values) < 5 else [],
         )
 
 
@@ -461,7 +470,7 @@ def _average_ranks(x: np.ndarray) -> np.ndarray:
 _MK_MAX_N = 1024   # 与 Sen 斜率同策略：n×n 差矩阵的确定性上限
 
 
-def _mk_s_and_var(vals: np.ndarray) -> Tuple[int, float, int]:
+def _mk_s_and_var(vals: np.ndarray) -> Tuple[int, float, int, bool]:
     """Mann-Kendall S、tie 校正 Var(S)、并列组数（kendall1975）。
 
     评审 MAJOR-3：n×n 差矩阵无上限会在 n=20k 时吃 3.2 GB+。与
@@ -552,7 +561,8 @@ def mann_kendall(values: Sequence[float], alpha: float = 0.05) -> Dict[str, Any]
             f"（评审 MAJOR-3 内存护栏；p 值为子采样近似）")
     z, p = _mk_z_and_p(s, var_s)
 
-    r1 = _lag1_rank_autocorr(vals)
+    used_vals = vals[::int(np.ceil(n / _MK_MAX_N))] if mk_subsampled else vals
+    r1 = _lag1_rank_autocorr(used_vals)
     if abs(r1) > 1.96 / math.sqrt(n):
         warnings.append(
             f"lag-1 秩自相关 r1={r1:.3f} 超过 1.96/√n——序列相关可能夸大显著性")
@@ -560,6 +570,8 @@ def mann_kendall(values: Sequence[float], alpha: float = 0.05) -> Dict[str, Any]
     direction = "increasing" if s > 0 else ("decreasing" if s < 0 else "stable")
     return {
         "n": n,
+        "n_input": n,
+        "n_used": len(used_vals),
         "S": s,
         "var_s": float(var_s),   # 全精度（证据块自行收敛小数位）
         "z": float(z),
@@ -763,6 +775,9 @@ def seasonal_decompose_narrated(
     没有季节子序列平滑，对离群值敏感。至少需要 2 个完整周期
     （n ≥ 2×period，否则 InsufficientSamples）。
     """
+    raw_values = np.asarray(values, dtype=float)
+    if not np.isfinite(raw_values).all():
+        raise ValueError("seasonal decomposition requires finite observations at every phase; interpolate missing values explicitly")
     vals = _finite_values(values)
     n = int(vals.size)
     if n == 0:

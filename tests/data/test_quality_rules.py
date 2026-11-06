@@ -297,3 +297,10 @@ def test_raster_stats_outlier():
     uniform = RULE_FUNCTIONS["raster_stats_outlier"](
         _ctx(raster_stats=_raster(), kind="raster"))
     assert uniform.status == "pass"
+
+
+def test_top_level_nodata_ratio_is_not_inverted():
+    low = RULE_FUNCTIONS["nodata_ratio"](_ctx(kind="raster", raster_stats={"nodata_ratio": 0.1}, params={"max_nodata_ratio": 0.2}))
+    high = RULE_FUNCTIONS["nodata_ratio"](_ctx(kind="raster", raster_stats={"nodata_ratio": 0.9}, params={"max_nodata_ratio": 0.2}))
+    assert low.status == "pass"
+    assert high.status == "warn"

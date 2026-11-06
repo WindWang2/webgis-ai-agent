@@ -40,6 +40,7 @@ class MapCompletionFinding:
             "target": str(self.target)[:64],
             "detail": self.detail[:MAX_FINDING_DETAIL],
             "repair": self.repair,
+            "family": list(self.family) if self.family is not None else None,
         }
 
 

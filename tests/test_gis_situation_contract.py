@@ -182,10 +182,11 @@ def test_situation_rejects_extra_fields():
         GISSituation.from_dict(data)
 
 
-def test_situation_revision_lexicographic_monotonic():
+def test_situation_revision_is_monotonic_in_every_component():
     a = SituationRevision(mutation_revision=1, observation_sequence=0, interaction_sequence=9)
     b = SituationRevision(mutation_revision=2, observation_sequence=0, interaction_sequence=0)
-    assert b.ge(a) and not a.ge(b)
+    assert not b.ge(a) and not a.ge(b)
+    assert SituationRevision(mutation_revision=2, interaction_sequence=9).ge(a)
     assert SituationRevision().ge(SituationRevision())
 
 

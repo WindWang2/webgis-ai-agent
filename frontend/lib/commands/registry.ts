@@ -1,4 +1,5 @@
 'use client';
+import { devOnly } from '@/lib/utils/logger';
 
 import { useEffect, useRef } from 'react';
 import type { CommandDef, ShortcutConflict } from './types';
@@ -29,7 +30,7 @@ export function registerCommands(defs: CommandDef[]): () => void {
     if (registry.has(def.id)) {
       // append-only 契约：已占用的 id 不被后注册者覆盖。
       if (process.env.NODE_ENV !== 'production') {
-        console.warn(`[command-registry] 重复注册被忽略: ${def.id}`);
+        devOnly.warn(`[command-registry] 重复注册被忽略: ${def.id}`);
       }
       continue;
     }

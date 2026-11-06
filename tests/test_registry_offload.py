@@ -13,46 +13,24 @@ from app.tools.registry import ToolRegistry
 
 
 def test_sync_tool_does_not_block_event_loop():
-    """A sync tool sleeping 0.2s must allow a concurrent ticker to keep ticking.
-
-    Before the offload: the sync call ran inline, so the ticker would freeze
-    for the full 0.2s (0 ticks during the tool). After: the tool runs in a
-    thread, the event loop stays free, and the ticker advances.
-    """
+    """Verify the actual execution thread instead of scheduler-dependent ticks."""
     reg = ToolRegistry()
+    observed = {}
 
-    def slow_sync_tool(seconds: float = 0.2):
-        time.sleep(seconds)  # sync, blocking
+    def sync_tool():
+        observed["thread"] = threading.get_ident()
         return {"ok": True}
 
-    reg.register("slow_sync", "sleeps synchronously", slow_sync_tool)
+    reg.register("slow_sync", "thread identity probe", sync_tool)
 
     async def main():
-        tick_count = 0
+        loop_thread = threading.get_ident()
+        result = await reg.dispatch("slow_sync", {})
+        return loop_thread, result
 
-        async def ticker():
-            nonlocal tick_count
-            while True:
-                await asyncio.sleep(0.02)
-                tick_count += 1
-
-        ticker_task = asyncio.create_task(ticker())
-        try:
-            await reg.dispatch("slow_sync", {"seconds": 0.2})
-            # let the ticker settle a couple more ticks after the tool returns
-            await asyncio.sleep(0.05)
-        finally:
-            ticker_task.cancel()
-            try:
-                await ticker_task
-            except asyncio.CancelledError:
-                pass
-        return tick_count
-
-    ticks = asyncio.run(main())
-    # If the event loop had been blocked, ticks would be ~0 during the 0.2s sleep.
-    # With offload, the ticker runs concurrently. Assert a comfortable floor.
-    assert ticks >= 5, f"event loop was blocked during sync tool (ticks={ticks})"
+    loop_thread, result = asyncio.run(main())
+    assert result == {"ok": True}
+    assert observed["thread"] != loop_thread
 
 
 def test_sync_tool_returns_result_correctly():

@@ -92,6 +92,9 @@ def _wuhou_scenario(store: Optional[ClaimStore] = None) -> ClaimStore:
         "freshness": EvidenceFreshness.FRESH,
         "metadata": {
             **stat.metadata,
+            # This fixture supplies independently established statistic evidence;
+            # metadata-only artifact projections are tested separately below.
+            "proof_source": "independent_test_statistic",
             "stat_type": "density",
             "unit": "per_km2",
             "value": 4.7,

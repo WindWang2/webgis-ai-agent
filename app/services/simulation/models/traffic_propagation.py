@@ -116,32 +116,37 @@ class TrafficPropagationModel(DynamicPropagationLaw):
         inject = np.minimum(self._demand * dt_h, room)
         q += inject
 
-        # 2) 逐边服务 + 重力转向 + 溢流节流（确定性：按边索引升序）
+        # Every edge reads the same pre-step state. New arrivals are served
+        # on the next tick; downstream capacity is shared proportionally so
+        # competing upstream edges cannot make results depend on input order.
+        before = q.copy()
+        incoming = np.zeros_like(q)
+        transfers = []
         exited = 0.0
         for e in range(len(q)):
-            served = min(float(q[e]), float(cap_eff[e]) * dt_h)
+            served = min(float(before[e]), float(cap_eff[e]) * dt_h)
             if served <= 0.0:
                 continue
-            q[e] -= served
             outs = topo.out_edges_of_node(int(topo.head[e]))
             if outs.size == 0:
-                exited += served  # egress：驶出网络（sink 记账）
+                q[e] -= served
+                exited += served
                 continue
             weights = self.gravity_turn_weights(
                 capacities=cap_eff[outs].tolist(),
-                travel_times=self._congested_travel_times(q, outs).tolist(),
+                travel_times=self._congested_travel_times(before, outs).tolist(),
                 gamma=self._gamma,
             )
             want = np.array([served * weights[i] for i in range(outs.size)])
-            room_out = np.maximum(topo.storage_veh[outs] - q[outs], 0.0)
-            allowed = np.minimum(want, room_out)
-            total_allowed = float(allowed.sum())
-            if total_allowed > served:
-                # 重力权重归一化的 ulp 级残差会让 Σallowed 微超 served ——
-                # 等比收回，保证发送方不被透支成负队列（分岔路网必现路径）
-                allowed *= served / total_allowed
-            q[outs] += allowed
-            q[e] += max(served - float(allowed.sum()), 0.0)  # 未放行：退回上游排队
+            want *= min(1.0, served / max(float(want.sum()), 1e-12))
+            np.add.at(incoming, outs, want)
+            transfers.append((e, outs, want))
+        room_out = np.maximum(topo.storage_veh - before, 0.0)
+        scale = np.minimum(1.0, room_out / np.maximum(incoming, 1e-12))
+        for e, outs, want in transfers:
+            allowed = want * scale[outs]
+            q[e] -= float(allowed.sum())
+            np.add.at(q, outs, allowed)
 
         new_state = GraphStateMatrix(topo, {self.conserved_variable: q})
         accounting = StepAccounting(

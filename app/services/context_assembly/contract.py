@@ -39,6 +39,14 @@ CONTEXT_ITEM_SCHEMA = "ctx.item.v1"
 CONTEXT_REQUEST_SCHEMA = "ctx.req.v1"
 
 
+class SourceScopeUnavailable(ValueError):
+    """A derived projection has no independently supplied source scope."""
+
+
+class ContextAssemblyRejected(RuntimeError):
+    """Explicit admission/hard-budget denial; callers must not bypass via legacy."""
+
+
 class ContextDomain(str, Enum):
     """Closed vocabulary of prompt block families (single render source each).
 
@@ -140,8 +148,8 @@ UNTOUCHABLE_DOMAINS = frozenset({
     ContextDomain.TURN_MARKER,
 })
 
-#: guaranteed minimum (tokens) for floor-protected domains under pool
-#: pressure — floor items are truncated to their floor, never dropped.
+#: preferred minimum (tokens) under pool pressure; global hard-cap enforcement
+#: may explicitly omit even a floor-protected item.
 DOMAIN_FLOOR_TOKENS: Dict[ContextDomain, int] = {
     ContextDomain.CARTOGRAPHY_VERDICT: 120,
     ContextDomain.SESSION_PLAN: 60,
@@ -231,6 +239,14 @@ class ContextItem(BaseModel):
         (single implementation; no second sensitivity truth here)."""
         from app.services.gis_context.scope import InvalidationPolicy
 
+        if self.org_id and self.org_id != org_id:
+            return False
+        if self.project_id and self.project_id != project_id:
+            return False
+        if self.sensitivity is SensitivityClass.PROJECT_SCOPED and not self.project_id:
+            return False
+        if self.sensitivity is SensitivityClass.ORG_SCOPED and not self.org_id:
+            return False
         ref = ScopeRef(
             tier=self.scope,
             scope_id=self.scope_id,
@@ -309,6 +325,7 @@ class SharedTurnFacts(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    source_session_id: str = ""  # actual source envelope namespace, never relabeled by providers
     plan: Optional[Any] = None
     mapspec: Optional[Dict[str, Any]] = None
     map_state: Optional[Dict[str, Any]] = None
@@ -326,7 +343,7 @@ def bounded_item(
 ) -> ContextItem:
     """Item factory enforcing the per-domain char cap (single chokepoint)."""
     cap = DOMAIN_CHAR_CAPS[domain]
-    if domain is not ContextDomain.USER_MESSAGE and len(content) > cap:
+    if domain not in (ContextDomain.USER_MESSAGE, ContextDomain.ACTIVE_TOOLS, ContextDomain.TURN_MARKER) and len(content) > cap:
         # The user's own message is identity, not context — it enters whole
         # (its length is bounded upstream by request validation).
         content = content[: cap - 1] + "…"

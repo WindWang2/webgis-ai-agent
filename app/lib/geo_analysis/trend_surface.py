@@ -407,7 +407,7 @@ def trend_surface(
             "value": float(v),
             "extrapolated": bool(e),
         }
-        for cell, v, e in zip(target_cells, preds, extrapolated)
+        for cell, v, e in zip(target_cells, preds, extrapolated, strict=True)
     ]
     metadata["extrapolated_count"] = int(extrapolated.sum())
     metadata["value_range"] = [

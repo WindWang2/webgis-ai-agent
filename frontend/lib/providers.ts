@@ -49,6 +49,7 @@ export interface TileProvider {
 // 同款的「诚实缺席」：未配置 token 就不进注册表，切换器里也不出现
 // 必然失败的选项。
 const _TIANDITU_TOKEN = process.env.NEXT_PUBLIC_TIANDITU_TOKEN || "";
+const _CARTO_KEY = (process.env.NEXT_PUBLIC_CARTO_BASEMAP_KEY || "").trim();
 
 const _REMOTE_PROVIDERS: TileProvider[] = [
   // G3D01：OpenFreeMap 开源矢量样式（MIT 样式 / OSM 数据 ODbL / 免 key、
@@ -59,7 +60,7 @@ const _REMOTE_PROVIDERS: TileProvider[] = [
     id: "openfreemap-libre",
     name: "OpenFreeMap Libre",
     attribution: "© OpenFreeMap © OpenMapTiles Data from OpenStreetMap",
-    url: "https://openfreemap.org/style/libre",
+    url: "https://tiles.openfreemap.org/styles/liberty",
     type: "vector",
     keywords: ["openfreemap", "libre", "开源矢量", "开源底图", "free"],
   },
@@ -67,7 +68,7 @@ const _REMOTE_PROVIDERS: TileProvider[] = [
     id: "openfreemap-positron",
     name: "OpenFreeMap Positron",
     attribution: "© OpenFreeMap © OpenMapTiles Data from OpenStreetMap",
-    url: "https://openfreemap.org/style/positron",
+    url: "https://tiles.openfreemap.org/styles/positron",
     type: "vector",
     keywords: ["openfreemap", "positron", "开源浅色", "浅色矢量", "学术"],
   },
@@ -75,7 +76,7 @@ const _REMOTE_PROVIDERS: TileProvider[] = [
     id: "openfreemap-bright",
     name: "OpenFreeMap Bright",
     attribution: "© OpenFreeMap © OpenMapTiles Data from OpenStreetMap",
-    url: "https://openfreemap.org/style/bright",
+    url: "https://tiles.openfreemap.org/styles/bright",
     type: "vector",
     keywords: ["openfreemap", "bright", "开源彩色", "彩色矢量"],
   },
@@ -208,8 +209,11 @@ const _LOCAL_PROVIDERS: TileProvider[] = _LOCAL_BASEMAP_URL
   : [];
 
 /** 全量注册表 = 远程供应商 + 环境注入的本地供应商。 */
-export const TILE_PROVIDERS: TileProvider[] = [
-  ..._REMOTE_PROVIDERS,
+const ALL_TILE_PROVIDERS: TileProvider[] = [
+  ..._REMOTE_PROVIDERS.filter((provider) => !provider.id.startsWith("carto-") || _CARTO_KEY)
+    .map((provider) => provider.id.startsWith("carto-")
+      ? { ...provider, url: `${provider.url}?key=${encodeURIComponent(_CARTO_KEY)}` }
+      : provider),
   ..._LOCAL_PROVIDERS,
 ];
 
@@ -229,6 +233,9 @@ export const DEPLOYMENT_PROFILE: "cloud" | "air_gapped" =
  * cloud 默认 = 全量注册表，行为与引入本函数前一致。
  */
 export function getAvailableTileProviders(): TileProvider[] {
-  if (DEPLOYMENT_PROFILE !== "air_gapped") return TILE_PROVIDERS;
-  return TILE_PROVIDERS.filter((p) => p.id === "local-xyz");
+  if (DEPLOYMENT_PROFILE !== "air_gapped") return ALL_TILE_PROVIDERS;
+  return ALL_TILE_PROVIDERS.filter((p) => p.id === "local-xyz");
 }
+
+/** Runtime catalogue: every consumer respects the deployment boundary. */
+export const TILE_PROVIDERS: TileProvider[] = getAvailableTileProviders();

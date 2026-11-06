@@ -72,18 +72,18 @@ describe('RagConfig connectivity test (#390)', () => {
     const user = userEvent.setup();
     render(<RagConfig />);
 
-    await user.click(screen.getByRole('button', { name: /test connection/i }));
+    await user.click(screen.getByRole('button', { name: /测试连接/i }));
 
-    expect(await screen.findByText('Failed')).toBeInTheDocument();
+    expect(await screen.findByText('连接失败')).toBeInTheDocument();
     expect(screen.getByText(/知识库不可用: index.faiss 损坏/)).toBeInTheDocument();
 
-    // 请求确实 POST 到 /config/rag/test，并携带展示字段
+    // 请求确实 POST 到 /config/rag/test，不伪装客户端展示字段为服务端配置
     const uploadCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/config/rag/test'))!;
     expect(uploadCall).toBeDefined();
     const [url, init] = uploadCall;
     expect(String(url)).toContain('/api/v1/config/rag/test');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toEqual({ address: '', collection: 'geoagent' });
+    expect(JSON.parse(init.body)).toEqual({});
   });
 
   it('测试成功后渲染 Connected 并展示后端返回的存储详情', async () => {
@@ -93,9 +93,9 @@ describe('RagConfig connectivity test (#390)', () => {
     const user = userEvent.setup();
     render(<RagConfig />);
 
-    await user.click(screen.getByRole('button', { name: /test connection/i }));
+    await user.click(screen.getByRole('button', { name: /测试连接/i }));
 
-    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(await screen.findByText('连接正常')).toBeInTheDocument();
     expect(screen.getByText(/已索引 0 个分块/)).toBeInTheDocument();
   });
 

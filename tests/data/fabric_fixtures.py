@@ -421,6 +421,16 @@ def patched_safe_sessions(monkeypatch: pytest.MonkeyPatch):
         from tests.fixtures.data_fabric.fake_server import session_with_fake
 
         session = session_with_fake(tuple(server.routes))
+        # The simulated HTTP origin must also have simulated, public DNS.
+        # Keep the production fail-closed validator active for every URL.
+        from urllib.parse import urlparse
+        from app.services.data_fabric.security import DataFabricSecurity
+
+        fixture_host = urlparse(server.base_url).hostname
+        original_resolve = DataFabricSecurity._resolve_all
+        monkeypatch.setattr(DataFabricSecurity, "_resolve_all", staticmethod(
+            lambda host: ["93.184.216.34"] if host == fixture_host else original_resolve(host)
+        ))
 
         import app.services.data_fabric.adapters as adapter_pkg
         import importlib

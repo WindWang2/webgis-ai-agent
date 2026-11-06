@@ -23,9 +23,7 @@ import uuid
 import pytest
 
 from app.services.spatial_guardrails import (
-    GeographicImpossibilityError,
     GuardrailConfig,
-    GuardLevel,
     SpatialGuardrails,
     TopologyImplausibilityError,
     auto_flip,
@@ -165,9 +163,9 @@ def test_t1_out_of_range_lat_hard_flip():
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("lng,lat", [(-150.0, 0.0), (-30.0, 30.0), (80.0, -20.0), (-120.0, -50.0)])
 @pytest.mark.parametrize("kind", ["school", "hospital", "building", "poi"])
-def test_t2_deep_ocean_facility_blocked(lng, lat, kind):
-    with pytest.raises(GeographicImpossibilityError):
-        validate_facility_point(lng, lat, facility_kind=kind)
+def test_t2_coarse_ocean_facility_warns(lng, lat, kind):
+    issues = validate_facility_point(lng, lat, facility_kind=kind)
+    assert issues and all(issue.mode.value == "WARN_DEGRADE" for issue in issues)
 
 
 def test_t2_land_facility_passes():
@@ -272,8 +270,8 @@ def test_t4_redline_zone_json_enforcement(tmp_path):
 
 
 def test_t4_teleport_linestring_blocked():
-    with pytest.raises(TopologyImplausibilityError):
-        validate_linestring([[116.4, 39.9], [16.4, 9.9]])
+    issues = validate_linestring([[116.4, 39.9], [16.4, 9.9]])
+    assert issues and issues[0].mode.value == "WARN_DEGRADE"
     validate_linestring([[116.4, 39.9], [116.5, 40.0]])
 
 
@@ -297,10 +295,9 @@ def test_t5_gateway_blocks_ocean_facility_geojson():
         _point_feature(-150.0, 0.0, {"kind": "hospital"}),
     )
     verdict = gw.check_geojson(fc)
-    assert not verdict.passed
-    blocking = verdict.blocking()
-    assert any(i.code == "OCEAN_POINT_ON_LAND_FACILITY" for i in blocking)
-    assert any(i.level == GuardLevel.L2_GEOGRAPHIC_BOUNDS for i in blocking)
+    assert verdict.passed
+    assert not verdict.blocking()
+    assert any(i.mode.value == "WARN_DEGRADE" for i in verdict.issues)
 
 
 def test_t5_gateway_auto_flips_and_mutates_args():
@@ -329,7 +326,7 @@ def test_t5_gateway_reports_duration():
 
 def test_t5_gateway_bbox_budget_block():
     gw = SpatialGuardrails()
-    verdict = gw.check_tool_args("fetch_data", {"bbox": [-10.0, -10.0, 10.0, 10.0]})
+    verdict = gw.check_tool_args("fetch_data", {"bbox": [-10.0, -10.0, 10.0, 10.0]}, network_fetch=True)
     assert not verdict.passed
     assert verdict.blocking()[0].code == "BBOX_AREA_BUDGET_EXCEEDED"
 
@@ -360,13 +357,13 @@ async def test_t6_dispatch_blocks_before_registry_execution():
     reg = _FakeRegistry()
     svc = ToolDispatchService(registry=reg)
     result = await svc.dispatch(
-        _tc("poi_search", {"facility": "school", "location": [-150.0, 0.0]}),
+        _tc("poi_search", {"adcode": "999999", "location": [116.4, 39.9]}),
         "sess-guard-1",
         set(),
     )
     assert result.status == "error"
     assert result.geojson_ref is None
-    assert "OCEAN_POINT_ON_LAND_FACILITY" in (result.error_msg or "")
+    assert "FABRICATED_ADMIN_CODE" in (result.error_msg or "")
     assert not reg.calls, "BLOCK 后工具绝不能被真实执行"
     assert "反幻觉" in result.llm_payload or "拦截" in result.llm_payload
 
@@ -422,11 +419,11 @@ async def test_t7_apply_mutation_blocks_ocean_layer():
         session,
         UpsertLayerIntent(
             layer={"id": "L1", "source": "s", "type": "circle", "paint": {}},
-            source_data=_fc(_point_feature(-150.0, 0.0, {"kind": "school"})),
+            source_data=_fc(_point_feature(116.4, 39.9, {"kind": "school", "adcode": "999999"})),
         ),
     )
     assert res.is_error
-    assert "OCEAN_POINT_ON_LAND_FACILITY" in (res.error_msg or "")
+    assert "FABRICATED_ADMIN_CODE" in (res.error_msg or "")
     assert res.correction_hint
 
 
@@ -473,13 +470,12 @@ def test_t8_guardrails_fully_offline(_deny_network):
     """socket 全封禁下：倒置检测、掩膜校验、行政区划、GeoJSON 网关全部可用。"""
     report = detect_pair([39.9042, 116.4074])
     assert report.is_inverted and list(report.corrected) == [116.4074, 39.9042]
-    with pytest.raises(GeographicImpossibilityError):
-        validate_facility_point(-150.0, 0.0, facility_kind="school")
+    assert validate_facility_point(-150.0, 0.0, facility_kind="school")
     with pytest.raises(FabricatedAdminDivisionError):
         assert_valid_code("999999")
     gw = SpatialGuardrails()
     verdict = gw.check_geojson(_fc(_point_feature(-140.0, 40.0, {"kind": "poi"})))
-    assert not verdict.passed
+    assert verdict.passed and verdict.issues
 
 
 def test_t8_kill_switch_disables_gateway(monkeypatch):

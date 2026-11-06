@@ -97,17 +97,17 @@ def test_version_chain_monotonic_and_current_payload_advanced():
         v1 = create_version(db, _TID, {"paperSize": "A4", "showLegend": True})
         assert v1.version == 1 and v1.parent_version_id is None
         v2 = create_version(db, _TID, {"style": {"font": "serif"}})
-        assert v2.version == 2 and v2.parent_version_id == v1.id
+        assert v2.version == 2 and v2.parent_version_id is None
         # 主表 payload 前移（既有读路径兼容），但快照不变
         tmpl = db.get(CartographyTemplate, _TID)
-        assert tmpl.payload == {"paperSize": "A4", "showLegend": True, "style": {"font": "serif"}}
+        assert tmpl.payload == {"style": {"font": "serif"}}
         assert v1.payload == {"paperSize": "A4", "showLegend": True}
 
         effective, chain = resolve_payload(db, v2)
-        assert effective["paperSize"] == "A4"       # 父链继承
-        assert effective["showLegend"] is True
+        assert "paperSize" not in effective
+        assert "showLegend" not in effective
         assert effective["style"] == {"font": "serif"}  # 子覆盖
-        assert chain == [_TID, _TID]
+        assert chain == [_TID]
 
 
 def test_cross_template_parent_rejected_and_cycle_guard():
@@ -142,8 +142,9 @@ def test_cross_template_parent_rejected_and_cycle_guard():
 def test_deprecation_keeps_compatible_read():
     with SessionLocal() as db:
         v1 = create_version(db, _TID, {"paperSize": "A4"})
+        assert v1.version == 1
         v2 = create_version(db, _TID, {"paperSize": "A3"})
-        assert v2.parent_version_id == v1.id
+        assert v2.parent_version_id is None
         deprecate_version(db, _TID, 1, note="superseded")
         row = get_version(db, _TID, 1)
         assert row.deprecated_at is not None
@@ -200,3 +201,26 @@ def test_versions_rest_full_path():
     write_denied = client.post(f"/api/v1/templates/{_TID}/versions", json={
         "payload": {}})
     assert write_denied.status_code in (401, 403)
+
+
+def test_twenty_default_versions_are_complete_snapshots_not_an_inheritance_chain():
+    with SessionLocal() as db:
+        for i in range(20):
+            row = create_version(db, _TID, {"only_current": i})
+        effective, chain = resolve_payload(db, row)
+        assert effective == {"only_current": 19} and chain == [_TID]
+
+
+def test_legacy_overdeep_chain_is_rejected_not_silently_truncated():
+    from app.models.template_version import TemplateVersion
+    from app.services.templates.versioning import TemplateVersionError
+    with SessionLocal() as db:
+        parent = None
+        for i in range(20):
+            row = TemplateVersion(template_id=_TID, version=i + 1, payload={str(i): i}, parent_version_id=parent)
+            db.add(row)
+            db.flush()
+            parent = row.id
+        with pytest.raises(TemplateVersionError, match="inheritance chain"):
+            resolve_payload(db, row)
+        db.rollback()

@@ -428,11 +428,11 @@
    ],
    "expect": {
     "kind": "exact",
-    "value": "EPSG:32631"
+    "value": "EPSG:32601"
    },
    "id": "recommend_metric_crs_8",
    "kwargs": {},
-   "note": "反经线 naive 中点 0° → 31 带（行为锚，非环绕解）",
+   "note": "Wrapped midpoint ±180 normalized to -180: UTM1, not Greenwich",
    "target": "app.lib.gis.crs_safety:recommend_metric_crs"
   },
   {
@@ -567,11 +567,11 @@
    ],
    "expect": {
     "kind": "exact",
-    "value": true
+    "value": false
    },
    "id": "crs_class_allows_3",
    "kwargs": {},
-   "note": "unknown 数据类永远放行（诚实缺省）",
+   "note": "Generic projected is insufficient evidence of local metric compatibility",
    "target": "app.lib.gis.crs_safety:crs_class_allows"
   },
   {
@@ -787,13 +787,12 @@
    "expect": {
     "kind": "exact",
     "value": [
-     6,
      5
     ]
    },
    "id": "suggest_lower_resolutions_huge_bbox",
    "kwargs": {},
-   "note": "仅上限内的相邻低分辨率进入建议（独立复算）",
+   "note": "Independent exact H3 cell formula and current 200000 hard cap",
    "target": "app.lib.geo_analysis.interpolation:_suggest_lower_resolutions"
   },
   {

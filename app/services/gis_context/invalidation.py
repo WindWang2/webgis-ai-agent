@@ -109,14 +109,14 @@ def apply_changes(
         # attributed to the field paths this change staled (D3) so marker
         # reconfirmation knows exactly what must be re-verified.
         for f in wc.findings:
-            if f.basis_revision and f.basis_revision < new_revision:
+            if f.basis_revision < new_revision:
                 if f.claim_id not in outcome.stale_claim_ids:
                     outcome.stale_claim_ids.append(f.claim_id)
                     f.status = "stale"
                 _attr(f.stale_reasons, fields)
         for rec in (*wc.accepted_assumptions, *wc.rejected_alternatives,
                     *wc.unresolved_constraints):
-            if rec.basis_revision and rec.basis_revision < new_revision:
+            if rec.basis_revision < new_revision:
                 rec.stale_basis = True
                 _attr(rec.stale_reasons, fields)
 

@@ -432,6 +432,8 @@ export function DatasetInspector({
               value={aggField}
               onChange={(e) => setAggField(e.target.value)}
               disabled={!aggNeedsField}
+              aria-required={aggNeedsField}
+              aria-invalid={aggNeedsField && !aggField}
               aria-label={t('sidebar.inspector.aggFieldAria')}
               className={selectClass}
             >
@@ -465,12 +467,13 @@ export function DatasetInspector({
           )}
         </fieldset>
 
+        {aggNeedsField && !aggField && <p role="status" className="text-micro text-status-warn">{t('sidebar.inspector.aggFieldRequired')}</p>}
         {/* 操作按钮 */}
         <div className="flex items-center gap-2 border-t border-edge-subtle pt-2">
           <button
             type="button"
             onClick={() => onRunQuery(buildSpec())}
-            disabled={querying || explaining}
+            disabled={querying || explaining || (aggNeedsField && !aggField)}
             className="flex items-center gap-1 rounded-sm bg-status-accent px-2.5 py-1 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-50"
           >
             <Play size={12} aria-hidden />
@@ -479,7 +482,7 @@ export function DatasetInspector({
           <button
             type="button"
             onClick={() => onExplain(buildSpec())}
-            disabled={querying || explaining}
+            disabled={querying || explaining || (aggNeedsField && !aggField)}
             className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2.5 py-1 text-caption font-medium text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
           >
             <Sigma size={12} aria-hidden />

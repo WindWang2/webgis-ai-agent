@@ -113,6 +113,7 @@ describe('downloadWithAuth', () => {
   });
 
   it('fetches the blob through the transport with the origin-relative path', async () => {
+    vi.useFakeTimers();
     mockApiBase = 'http://localhost:8001';
     let captured: HTMLAnchorElement | null = null;
     const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation(((el: any) => {
@@ -128,7 +129,10 @@ describe('downloadWithAuth', () => {
     // transport called with the origin-relative path (buildRequest prepends API_BASE)
     expect(apiFetchBlobMock).toHaveBeenCalledWith('/api/v1/export/download/map_export_1.png', expect.anything());
     expect(createSpy).toHaveBeenCalled();
+    expect(revokeSpy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
     expect(revokeSpy).toHaveBeenCalled();
+    vi.useRealTimers();
     expect(captured).not.toBeNull();
     expect(captured!.download).toBe('map_export_1.png');
     expect(captured!.href).toContain('blob:mock-1');

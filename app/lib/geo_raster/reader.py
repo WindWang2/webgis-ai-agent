@@ -95,18 +95,15 @@ class RasterReader:
         validate_remote_href(uri)
         # Delegate to the canonical shared env (GDAL_HTTP_TIMEOUT/RETRY/
         # READDIR + GDAL_CACHEMAX from RASTER_GDAL_CACHE_MAX_MB +
-        # GDAL_NUM_THREADS=1 — app/lib/geo_raster/env.py). The env is HELD
-        # for the reader lifetime: knobs at open() only would leave every
-        # later read in a default env (cache back to GDAL's ~5%-of-RAM
-        # default, no HTTP hardening) — review finding #3.
-        from app.lib.geo_raster.env import rasterio_env
+        # GDAL_NUM_THREADS=1). Environments live only around open/read calls;
+        # reader lifetimes may overlap or close on a different thread.
+        from app.lib.geo_raster.env import rasterio_env, open_raster
+        from contextlib import ExitStack
 
-        env_cm = rasterio_env()
-        env_cm.__enter__()
+        env_cm = ExitStack()
         try:
-            import rasterio
-
-            ds = rasterio.open(uri)
+            with rasterio_env():
+                ds = env_cm.enter_context(open_raster(uri))
         except Exception as e:
             env_cm.__exit__(None, None, None)
             raise RasterReaderError(f"cannot open raster {uri!r}: {e}") from e
@@ -126,7 +123,7 @@ class RasterReader:
             try:
                 self._env.__exit__(None, None, None)
             except Exception:  # noqa: BLE001 — env teardown is best-effort
-                pass
+                logging.getLogger(__name__).warning('Raster reader context teardown failed', exc_info=True)
             self._env = None
 
     def __enter__(self) -> "RasterReader":
@@ -215,10 +212,10 @@ class RasterReader:
         try:
             ds = uri_or_ds
             if isinstance(uri_or_ds, str):
-                import rasterio
+                from app.lib.geo_raster.env import open_raster
 
-                with rasterio.open(uri_or_ds) as opened:
-                    ds = opened
+                with open_raster(uri_or_ds) as opened:
+                    return RasterReader.cog_structure_ok(opened)
             if not getattr(ds, "is_tiled", False):
                 return False
             return len(ds.overviews(1)) > 0
@@ -258,7 +255,12 @@ class RasterReader:
                 f"window {window!r} outside raster {ds.width}x{ds.height}"
             )
         if bands is None:
-            return ds.read(band, window=Window(col, row, w, h))
+            if not (1 <= int(band) <= ds.count):
+                raise RasterReaderError(f"band {band} out of range")
+            return self._budgeted_read(
+                lambda: ds.read(band, window=Window(col, row, w, h)),
+                est_bytes=self._est(w, h, 1, ds.dtypes[int(band) - 1]),
+            )
         if not bands:
             raise RasterReaderError("bands must be a non-empty sequence of 1-based indices")
         for b in bands:
@@ -277,7 +279,7 @@ class RasterReader:
                 f"{DEFAULT_FULL_READ_BUDGET_BYTES // 1e6:.0f} MB); shrink the "
                 "window or the band selection"
             )
-        return ds.read([int(b) for b in bands], window=win)
+        return self._budgeted_read(lambda: ds.read([int(b) for b in bands], window=win), est_bytes=est)
 
     def read_band(self, band: int = 1) -> np.ndarray:
         """Whole-band read via the budget guard (see read_full)."""
@@ -300,7 +302,9 @@ class RasterReader:
         from rasterio.windows import Window
 
         col, row, w, h = window
-        return ds.read_masks(1, window=Window(col, row, w, h))
+        if w <= 0 or h <= 0 or col < 0 or row < 0 or col + w > ds.width or row + h > ds.height:
+            raise RasterReaderError(f"mask window {window!r} outside raster {ds.width}x{ds.height}")
+        return self._budgeted_read(lambda: ds.read_masks(1, window=Window(col, row, w, h)), est_bytes=self._est(w, h, 1, "uint8"))
 
     def read_overview(self, band: int = 1, level: int = -1) -> np.ndarray:
         """Read a whole decimated overview level (-1 = coarsest). Raises for
@@ -357,4 +361,7 @@ class RasterReader:
                 f"(budget {DEFAULT_FULL_READ_BUDGET_BYTES // 1e6:.0f} MB); use "
                 "read_window/execute_windowed or pass budget_ok=True"
             )
-        return fn()
+        from app.lib.geo_raster.env import rasterio_env
+
+        with rasterio_env():
+            return fn()

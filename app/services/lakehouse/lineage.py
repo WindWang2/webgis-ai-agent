@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any, Dict, List, Optional
 
-from app.services.lakehouse.data_object import resolve_data_object
+from app.services.lakehouse.data_object import resolve_data_object, owner_scope_allows, DataObjectError
 
 MAX_LINEAGE_DEPTH = 8
 MAX_LINEAGE_NODES = 10_000
@@ -40,10 +40,12 @@ def _parents_of(manifest: Dict[str, Any]) -> List[str]:
 
 
 def object_lineage(
-    data_object_id: str, *, store: Optional[Any] = None
+    data_object_id: str, *, store: Optional[Any] = None, session_id: Optional[str] = None, project_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """祖先视图（BFS；节点/深度双闸）。返回
     ``{"root", "ancestors": [{id, kind, depth}], "edges", "truncated"}``。"""
+    if bool(session_id) == bool(project_id):
+        raise DataObjectError("lineage requires exactly one authorized owner scope")
     visited: set = set()
     queue: deque = deque([(data_object_id, 0)])
     ancestors: List[Dict[str, Any]] = []
@@ -60,6 +62,11 @@ def object_lineage(
         manifest = resolve_data_object(oid, store=store)
         if manifest is None:
             ancestors.append({"id": oid, "kind": "<missing>", "depth": depth})
+            continue
+        if not owner_scope_allows(manifest, session_id=session_id, project_id=project_id):
+            if oid == data_object_id:
+                raise DataObjectError("data object not found")
+            edges[:] = [edge for edge in edges if edge["parent"] != oid]
             continue
         if oid != data_object_id:
             ancestors.append({

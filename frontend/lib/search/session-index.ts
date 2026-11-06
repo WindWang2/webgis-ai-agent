@@ -1,13 +1,14 @@
 'use client';
 
 import { apiFetch } from '@/lib/api/transport';
+import { getAuthUser } from '@/lib/auth/tokenStore';
 
 /**
  * 跨会话搜索 —— client 侧本地索引（ADR-0147）。
  *
  * 契约依据（P0 勘察 §3.2）：后端 GET /chat/sessions 无全文检索参数，transcript
  * 全文只能逐会话拉取。本模块把「按需拉到的会话消息」建成持久化本地索引
- * （localStorage，LRU 按 updatedAt 淘汰，多级体积上限），搜索全在本地完成。
+ * （sessionStorage，LRU 按 updatedAt 淘汰，多级体积上限），搜索全在本地完成。
  * 后端全文端点是 PR 协调点；端点就位后本模块可作为缓存层平滑替换。
  */
 
@@ -31,7 +32,8 @@ export interface SearchHit {
   layerName?: string;
 }
 
-const INDEX_KEY = 'geoagent-cross-session-index-v1';
+const LEGACY_INDEX_KEY = 'geoagent-cross-session-index-v1';
+function indexKey(): string { return `${LEGACY_INDEX_KEY}:${getAuthUser()?.id ?? 'anonymous'}`; }
 const MAX_SESSIONS = 20;
 const MAX_DOCS_PER_SESSION = 200;
 const TEXT_CAP = 2000;
@@ -62,10 +64,11 @@ export function buildIndexedSession(
 // ── 持久化（LRU + 体积预算） ──
 
 export function loadPersistedSessions(): IndexedSession[] {
-  if (typeof localStorage === 'undefined') return [];
+  if (typeof sessionStorage === 'undefined') return [];
   let raw: string | null = null;
   try {
-    raw = localStorage.getItem(INDEX_KEY);
+    window.localStorage.removeItem(LEGACY_INDEX_KEY);
+    raw = sessionStorage.getItem(indexKey());
   } catch {
     return [];
   }
@@ -92,10 +95,10 @@ export function persistSessions(sessions: IndexedSession[]): IndexedSession[] {
   while (kept.length > 0 && JSON.stringify(kept).length > TOTAL_BUDGET_CHARS) {
     kept = kept.slice(0, kept.length - 1); // 淘汰最旧
   }
-  if (typeof localStorage !== 'undefined') {
+  if (typeof sessionStorage !== 'undefined') {
     try {
-      if (kept.length === 0) localStorage.removeItem(INDEX_KEY);
-      else localStorage.setItem(INDEX_KEY, JSON.stringify(kept));
+      if (kept.length === 0) sessionStorage.removeItem(indexKey());
+      else sessionStorage.setItem(indexKey(), JSON.stringify(kept));
     } catch {
       /* 配额/隐私模式：索引降级为会话内态 */
     }
@@ -109,7 +112,7 @@ export function upsertIndexedSession(session: IndexedSession): IndexedSession[] 
 }
 
 export function clearSearchIndex(): void {
-  if (typeof localStorage !== 'undefined') localStorage.removeItem(INDEX_KEY);
+  if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(indexKey());
 }
 
 /**
@@ -126,10 +129,11 @@ let _statsMemo: { raw: string; value: { sessions: number; messages: number; char
 
 export function searchIndexStats(): { sessions: number; messages: number; chars: number } {
   const empty = { sessions: 0, messages: 0, chars: 0 };
-  if (typeof localStorage === 'undefined') return empty;
+  if (typeof sessionStorage === 'undefined') return empty;
   let raw: string | null = null;
   try {
-    raw = localStorage.getItem(INDEX_KEY);
+    window.localStorage.removeItem(LEGACY_INDEX_KEY);
+    raw = sessionStorage.getItem(indexKey());
   } catch {
     return empty;
   }

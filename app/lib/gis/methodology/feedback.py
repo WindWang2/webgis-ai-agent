@@ -17,6 +17,7 @@ corpus**——运行时不存在任何未经审查改写 authoritative 知识表
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from typing import Any, Dict, List
 
@@ -60,6 +61,13 @@ class MethodologyFeedbackRecord(BaseModel):
     diagnostics: Dict[str, Any] = Field(default_factory=dict)
     #: 知识链指纹（记录裁决时点的知识版本，审计可回放）
     knowledge_fingerprint: str = ""
+
+    @field_validator("diagnostics")
+    @classmethod
+    def _bounded_diagnostics(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        if len(json.dumps(value, ensure_ascii=False, default=str).encode()) > 8192:
+            raise ValueError("feedback diagnostics exceed 8KiB")
+        return value
 
     @field_validator("kind")
     @classmethod
@@ -110,17 +118,23 @@ class FeedbackCorpusWriter:
         if not self.enabled:
             return False
         try:
-            count = self._count_lines()
-            if count >= MAX_RECORDS:
-                self._truncated = True
-                return False
-            payload = {
-                "schema_version": FEEDBACK_SCHEMA_VERSION,
-                **feedback.model_dump(mode="json"),
-            }
-            with open(self._sink_path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(payload, ensure_ascii=False,
-                                    separators=(",", ":")) + "\n")
+            import fcntl
+            # Kernel lock covers count+append across processes. O_APPEND
+            # prevents file-position races even if a writer crashes.
+            with open(self._sink_path, "a+", encoding="utf-8") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                fh.seek(0)
+                if sum(1 for _ in fh) >= MAX_RECORDS:
+                    self._truncated = True
+                    return False
+                payload = {"schema_version": FEEDBACK_SCHEMA_VERSION, **feedback.model_dump(mode="json")}
+                # This standalone offline sink stores no raw query/identity.
+                for field in ("query", "session_id", "project_id"):
+                    text = str(payload.pop(field, ""))
+                    payload[field + "_sha256"] = hashlib.sha256(text.encode()).hexdigest() if text else ""
+                fh.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+                fh.flush()
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
             return True
         except OSError:
             return False

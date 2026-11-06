@@ -1,4 +1,6 @@
 'use client';
+import { registerEscapeHandler } from '@/lib/utils/escape-stack';
+import { triggerBlobDownload } from '@/lib/api/authenticated-download';
 
 /**
  * SketchEditor — V7 草图编辑交互面（挂载在 <Map> 内）。
@@ -48,6 +50,7 @@ import { t as tNow, currentLocale } from '@/lib/i18n/t';
 
 const SKETCH_FILL_LAYER = 'wb-sketch-fill';
 const SKETCH_LINE_LAYER = 'wb-sketch-line';
+const SKETCH_POINT_LAYER = 'wb-sketch-point';
 const SKETCH_VERTEX_LAYER = 'wb-sketch-vertex';
 const SKETCH_DRAFT_LAYER = 'wb-sketch-draft';
 
@@ -233,6 +236,15 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
         paint: { 'line-color': SKETCH_COLOR, 'line-width': 2 },
       });
     }
+    if (!layer(SKETCH_POINT_LAYER)) {
+      map.addLayer({
+        id: SKETCH_POINT_LAYER,
+        type: 'circle',
+        source: SKETCH_SOURCE_ID,
+        filter: ['all', ['==', ['get', 'meta'], 'feature'], ['==', ['geometry-type'], 'Point']],
+        paint: { 'circle-radius': 6, 'circle-color': SKETCH_COLOR },
+      });
+    }
     if (!layer(SKETCH_DRAFT_LAYER)) {
       map.addLayer({
         id: SKETCH_DRAFT_LAYER,
@@ -260,12 +272,13 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
     source?.setData(buildSketchData());
     // 显隐/不透明度：图层树行 → 自管图层（行是用户通道，这里是渲染执行）。
     const visibility = sketchVisible ? 'visible' : 'none';
-    for (const id of [SKETCH_FILL_LAYER, SKETCH_LINE_LAYER, SKETCH_VERTEX_LAYER, SKETCH_DRAFT_LAYER]) {
+    for (const id of [SKETCH_FILL_LAYER, SKETCH_LINE_LAYER, SKETCH_POINT_LAYER, SKETCH_VERTEX_LAYER, SKETCH_DRAFT_LAYER]) {
       if (layer(id)) map.setLayoutProperty(id, 'visibility', visibility);
     }
     if (layer(SKETCH_FILL_LAYER)) map.setPaintProperty(SKETCH_FILL_LAYER, 'fill-opacity', 0.18 * sketchOpacity);
     if (layer(SKETCH_LINE_LAYER)) map.setPaintProperty(SKETCH_LINE_LAYER, 'line-opacity', sketchOpacity);
     if (layer(SKETCH_DRAFT_LAYER)) map.setPaintProperty(SKETCH_DRAFT_LAYER, 'line-opacity', sketchOpacity);
+    if (layer(SKETCH_POINT_LAYER)) map.setPaintProperty(SKETCH_POINT_LAYER, 'circle-opacity', sketchOpacity);
     if (layer(SKETCH_VERTEX_LAYER)) map.setPaintProperty(SKETCH_VERTEX_LAYER, 'circle-opacity', sketchOpacity);
   }, [mapReady, getMap, sketchVersion, sketchVisible, sketchOpacity, styleGeneration]);
 
@@ -350,7 +363,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
 
       if (active === 'delete_feature') {
         const hits = map.queryRenderedFeatures(e.point, {
-          layers: [SKETCH_FILL_LAYER, SKETCH_LINE_LAYER].filter((id) => map.getLayer?.(id)),
+          layers: [SKETCH_FILL_LAYER, SKETCH_LINE_LAYER, SKETCH_POINT_LAYER].filter((id) => map.getLayer?.(id)),
         }) as MapGeoJSONFeature[];
         const targetId = String((hits[0]?.properties?.fid as string | undefined) ?? '');
         if (!targetId) return;
@@ -369,7 +382,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
 
       if (active === 'edit_vertices') {
         const hits = map.queryRenderedFeatures(e.point, {
-          layers: [SKETCH_FILL_LAYER, SKETCH_LINE_LAYER].filter((id) => map.getLayer?.(id)),
+          layers: [SKETCH_FILL_LAYER, SKETCH_LINE_LAYER, SKETCH_POINT_LAYER].filter((id) => map.getLayer?.(id)),
         }) as MapGeoJSONFeature[];
         const targetId = String((hits[0]?.properties?.fid as string | undefined) ?? '');
         setSketchSelected(targetId
@@ -517,8 +530,10 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
         else setActiveMapTool(null);
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    const unregisterEscape = registerEscapeHandler(40, (event) => { if (!(true)) return false; onKeyDown(event); return event.defaultPrevented; });
+    const nonEscape = (event: KeyboardEvent) => { if (event.key !== 'Escape') onKeyDown(event); };
+    window.addEventListener('keydown', nonEscape);
+    return () => { unregisterEscape(); window.removeEventListener('keydown', nonEscape); };
   }, [tool, completeDraft, setActiveMapTool]);
 
   /* ─── 工具光标反馈 ─── */
@@ -556,12 +571,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
         onClick={() => {
           const data = sketchFeatureCollection();
           const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/geo+json' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `sketch-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.geojson`;
-          a.click();
-          URL.revokeObjectURL(url);
+          triggerBlobDownload(blob, `sketch-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.geojson`);
           setSketchDirty(false);
           useHudStore.getState().pushOpLog({
             id: `op-${Date.now()}`,

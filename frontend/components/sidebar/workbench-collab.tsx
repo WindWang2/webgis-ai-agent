@@ -117,10 +117,11 @@ function LeaseStrip({ state }: { state: CollabState }) {
 const t = useT();
   const { leases, clientId } = state;
   const others = leases.filter((l) => l.client !== clientId).slice(0, 3);
-  if (others.length === 0) return null;
+  if (others.length === 0 && !state.leasesUncertain) return null;
   return (
     <div className="flex items-center gap-1 border-t border-edge-subtle px-panel py-0.5 text-micro text-ink-muted">
       <Pencil aria-hidden size={10} />
+      {state.leasesUncertain && <span role="status" className="text-status-warn">{t('sidebar.collab.leasesUncertain')}</span>}
       {others.map((l) => (
         <span key={l.lockKey} className="truncate">
           {l.label ?? t('sidebar.collab.otherFallback')} {t('sidebar.collab.editing')}{' '}
@@ -190,7 +191,12 @@ export function useEditingLeasesForSelection(selectedLayerIds: readonly string[]
   const state = useCollabState();
   const clientId = state.clientId;
   const tracked = React.useRef(new Set<string>());
+  const trackedClient = React.useRef<string | null>(null);
   React.useEffect(() => {
+    if (trackedClient.current !== clientId) {
+      tracked.current.clear();
+      trackedClient.current = clientId;
+    }
     if (clientId == null) return; // 未连接（离线/匿名无通道）→ 无租约语义
     const wanted = new Set(selectedLayerIds.slice(0, 8));
     for (const id of [...tracked.current]) {

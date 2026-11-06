@@ -196,11 +196,11 @@ def test_geoparquet_configured_but_unreadable_returns_typed_error():
     metadata["error_type"] assertion moved to pytest.raises)."""
     from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
     from app.services.data_fabric.adapters.geoparquet_adapter import GeoParquetAdapter
-    from app.services.data_fabric.errors import SourceUnreachableError
+    from app.services.data_fabric.errors import SecurityBlockedError
 
     adapter = GeoParquetAdapter(ConnectionProfile(source_type="geoparquet", endpoint="s3://bucket/data.parquet"))
     assert adapter.probe() is False  # configured but not a readable local file
-    with pytest.raises(SourceUnreachableError):
+    with pytest.raises(SecurityBlockedError):
         adapter.query("data.parquet", QuerySpec(limit=5))
 
 

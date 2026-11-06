@@ -110,6 +110,17 @@ def test_cube_roundtrip(cube_store):
     assert res["times"] == TIMES[1:3]
 
 
+def test_cube_window_transform_and_band_selection_follow_slices(cube_store):
+    store, _ = cube_store
+    result = read_cube_window(store, time=slice(1, 3), y=slice(4, 20, 2), x=slice(3, 24, 3), bands=["red"])
+    assert set(result["bands"]) == {"red"}
+    assert result["bands"]["red"].shape == (2, 8, 7)
+    assert result["transform"] == [3.0, 0.0, 3.0, 0.0, -2.0, 44.0]
+    assert result["times"] == TIMES[1:3]
+    with pytest.raises(CubeError):
+        read_cube_window(store, bands=[])
+
+
 def test_cube_rejects_invalid_band_groups(tmp_path):
     # 时间片数量与 times 不齐 → typed 拒绝（绝不写半截 cube）。
     bad = {"red": _band_groups(tmp_path, "r", [1.0, 2.0])}

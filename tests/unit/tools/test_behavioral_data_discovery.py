@@ -51,8 +51,7 @@ async def _seed(session_id: str) -> None:
 async def test_search_datasets_behavioral(registry):
     sid = "bdds-search"
     # validation：LLM 幻觉参数（bbox 不在声明 schema） → 显式拒绝并列出合法参数
-    bad = await registry.dispatch("search_datasets", {
-        "session_id": sid, "bbox": [1.0, 2.0, 3.0]})
+    bad = await registry.dispatch('search_datasets', {'bbox': [1.0, 2.0, 3.0]}, session_id=sid)
     assert isinstance(bad, dict) and bad.get("success") is False, bad
     assert bad.get("code") == "VALIDATION_ERROR"
     assert "bbox" in (bad.get("message") or "")
@@ -61,7 +60,7 @@ async def test_search_datasets_behavioral(registry):
     # 注意（W10 顺序卫生暴露）：data_catalog 会列出**全局** fabric 连接
     # （其他测试文件注册且不清理），空断言不能假设全局注册表为空 ——
     # 只断言无会话私有条目泄漏 + 若有条目必为全局 fabric 作用域。
-    empty = await registry.dispatch("search_datasets", {"session_id": "bdds-none"})
+    empty = await registry.dispatch('search_datasets', {}, session_id='bdds-none')
     assert empty.get("success") is True
     entries = empty.get("datasets") or []
     assert all(e.get("scope") == "fabric" for e in entries), (
@@ -70,8 +69,7 @@ async def test_search_datasets_behavioral(registry):
 
     # happy path：按角色检索种子目录 → 命中 observation 条目
     await _seed(sid)
-    out = await registry.dispatch("search_datasets", {
-        "session_id": sid, "role": "observation", "keyword": "POI"})
+    out = await registry.dispatch('search_datasets', {'role': 'observation', 'keyword': 'POI'}, session_id=sid)
     assert out.get("success") is True, out
     assert out.get("count") == 1
     entries = out.get("datasets") or []
@@ -82,21 +80,19 @@ async def test_search_datasets_behavioral(registry):
 async def test_describe_artifact_behavioral(registry):
     sid = "bdds-desc"
     # validation：缺 ref_id → 校验错误
-    bad = await registry.dispatch("describe_artifact", {"session_id": sid})
+    bad = await registry.dispatch('describe_artifact', {}, session_id=sid)
     assert isinstance(bad, dict) and bad.get("success") is False, bad
     assert bad.get("code") == "VALIDATION_ERROR"
 
     # error path：账本中不存在的产物 → NOT_FOUND
-    missing = await registry.dispatch("describe_artifact", {
-        "session_id": sid, "ref_id": "ref:ghost"})
+    missing = await registry.dispatch('describe_artifact', {'ref_id': 'ref:ghost'}, session_id=sid)
     assert isinstance(missing, dict) and missing.get("success") is False
     assert missing.get("code") == "NOT_FOUND"
     assert "ref:ghost" in (missing.get("error") or "")
 
     # happy path：账本产物 → V3 契约视图 + 质量提示
     await _seed(sid)
-    out = await registry.dispatch("describe_artifact", {
-        "session_id": sid, "ref_id": "ref:poi"})
+    out = await registry.dispatch('describe_artifact', {'ref_id': 'ref:poi'}, session_id=sid)
     assert out.get("success") is True, out
     artifact = out.get("artifact") or {}
     assert artifact.get("artifact_id") == "ref:poi"
@@ -110,20 +106,18 @@ async def test_describe_artifact_behavioral(registry):
 async def test_find_artifacts_by_role_behavioral(registry):
     sid = "bdds-role"
     # validation：缺 role → 校验错误
-    bad = await registry.dispatch("find_artifacts_by_role", {"session_id": sid})
+    bad = await registry.dispatch('find_artifacts_by_role', {}, session_id=sid)
     assert isinstance(bad, dict) and bad.get("success") is False, bad
     assert bad.get("code") == "VALIDATION_ERROR"
 
     # error path（空会话语义）：无账本 → 空清单
-    empty = await registry.dispatch(
-        "find_artifacts_by_role", {"session_id": "bdds-none", "role": "source"})
+    empty = await registry.dispatch('find_artifacts_by_role', {'role': 'source'}, session_id='bdds-none')
     assert empty.get("success") is True
     assert empty.get("count") == 0
 
     # happy path：按 logical_role 过滤 → 只返回 observation 条目
     await _seed(sid)
-    out = await registry.dispatch(
-        "find_artifacts_by_role", {"session_id": sid, "role": "observation"})
+    out = await registry.dispatch('find_artifacts_by_role', {'role': 'observation'}, session_id=sid)
     assert out.get("success") is True, out
     ids = [d.get("id") for d in out.get("datasets") or []]
     assert ids == ["ref:poi"]
@@ -134,20 +128,18 @@ async def test_find_artifacts_by_role_behavioral(registry):
 async def test_get_lineage_behavioral(registry):
     sid = "bdds-lin"
     # validation：缺 ref_id → 校验错误
-    bad = await registry.dispatch("get_lineage", {"session_id": sid})
+    bad = await registry.dispatch('get_lineage', {}, session_id=sid)
     assert isinstance(bad, dict) and bad.get("success") is False, bad
     assert bad.get("code") == "VALIDATION_ERROR"
 
     # error path：账本中不存在的产物 → NOT_FOUND
-    missing = await registry.dispatch("get_lineage", {
-        "session_id": sid, "ref_id": "ref:ghost"})
+    missing = await registry.dispatch('get_lineage', {'ref_id': 'ref:ghost'}, session_id=sid)
     assert isinstance(missing, dict) and missing.get("success") is False
     assert missing.get("code") == "NOT_FOUND"
 
     # happy path：ref:kde ← ref:poi 血缘边可见
     await _seed(sid)
-    out = await registry.dispatch("get_lineage", {
-        "session_id": sid, "ref_id": "ref:kde", "depth": 3})
+    out = await registry.dispatch('get_lineage', {'ref_id': 'ref:kde', 'depth': 3}, session_id=sid)
     assert out.get("success") is True, out
     lineage = out.get("lineage") or {}
     node_ids = {

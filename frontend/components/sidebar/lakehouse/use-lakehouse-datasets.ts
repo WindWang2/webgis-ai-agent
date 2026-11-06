@@ -31,6 +31,8 @@ export function useLakehouseDatasets(options: {
 
   const refresh = useCallback(async () => {
     if (ownerType !== 'session' || !sessionId) {
+      reqRef.current.seq += 1;
+      reqRef.current.controller?.abort();
       // dataset REST 面只有 session 域 —— project 域数据集暂不可列举。
       setDatasets([]);
       setError(null);
@@ -87,6 +89,8 @@ export function useLakehouseDatasetDetail(options: {
 
   const refresh = useCallback(async () => {
     if (!datasetId || !sessionId) {
+      reqRef.current.seq += 1;
+      reqRef.current.controller?.abort();
       setDetail(null);
       setVersions([]);
       return;

@@ -8,9 +8,11 @@ no synthetic label. This mirrors #430's truthfulness fix for the other adapters.
 
 Contract after the fix: fixtures are served ONLY in explicit no-endpoint demo
 mode (labeled ``source="synthetic-demo"``); with a real endpoint configured,
-failure is honest — empty list / typed-error stub, never fixtures.
+failure is honest — typed exception / typed-error stub, never fixtures.
 """
+import pytest
 from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
+from app.services.data_fabric.errors import SourceUnreachableError
 from app.services.data_fabric.adapters.s3_storage_seam import (
     S3StorageSeam,
     SYNTHETIC_S3_FIXTURES,
@@ -53,15 +55,14 @@ class _HeadClient:
         return {"ContentLength": 1234, "ContentType": "application/octet-stream"}
 
 
-def test_list_datasets_boto3_failure_returns_empty_not_fixtures():
-    """#604 AC: real endpoint + credential error -> sync gets no fixture entries."""
+def test_list_datasets_boto3_failure_is_typed_not_fixtures():
+    """A failed listing must not be mistaken for a successful empty catalog."""
     adapter = _adapter("http://minio.example.com:9000")
     adapter._s3_client = lambda: _RaisingClient()
 
-    datasets = adapter.list_datasets()
-    assert datasets == []
-    fixture_ids = {item["s3_uri"] for item in SYNTHETIC_S3_FIXTURES.values()}
-    assert not fixture_ids.intersection(d.get("id") for d in datasets)
+    with pytest.raises(SourceUnreachableError) as failure:
+        adapter.list_datasets()
+    assert failure.value.code == "SOURCE_UNREACHABLE"
 
 
 def test_list_datasets_empty_bucket_returns_empty():
@@ -95,7 +96,7 @@ def test_describe_real_endpoint_failure_is_honest_stub():
 
     desc = adapter.describe("s3://geo-bucket/vectors/x.fgb")
     assert desc.metadata.get("error"), "typed error must be present"
-    assert desc.metadata.get("error_type") == "ConnectionError"
+    assert desc.metadata.get("error_type") == "SOURCE_BAD_RESPONSE"
     assert desc.feature_count is None  # no fabricated count
     assert "size_bytes" not in desc.metadata  # no fabricated size
     beijing_bboxes = [f["bbox"] for f in SYNTHETIC_S3_FIXTURES.values()]
@@ -130,7 +131,7 @@ def test_query_real_endpoint_failure_surfaces_error_and_remote_label():
     res = adapter.query("s3://geo-bucket/vectors/x.fgb", QuerySpec(limit=1))
     assert res.features == []
     assert res.metadata["source"] == "remote"
-    assert res.metadata.get("error_type") == "ConnectionError"
+    assert res.metadata.get("error_type") == "SOURCE_BAD_RESPONSE"
     assert res.metadata.get("success") is False
 
 

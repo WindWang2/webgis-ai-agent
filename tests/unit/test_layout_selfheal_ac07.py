@@ -335,6 +335,16 @@ def test_plan_repairs_required_overflow_kept_action():
     assert actions[-1]["reason"] == "required_overflow_kept"
 
 
+def test_plan_repairs_exclusive_capacity_is_an_upper_bound():
+    comps = [{"id": str(i), "type": "legend", "enabled": True,
+              "position": "top-center", "priority": i} for i in range(2)]
+    # A caller cannot expand an exclusive slot, and an explicit zero closes it.
+    roomy = plan_layout_repairs(comps, zone_capacity={"top-center": 99})
+    assert [a["component_id"] for a in roomy if a["action"] == "change_anchor"] == ["1"]
+    disabled = plan_layout_repairs(comps, zone_capacity={"top-center": 0})
+    assert {a["component_id"] for a in disabled if a["action"] == "change_anchor"} == {"0", "1"}
+
+
 # ── required_components_for ──────────────────────────────────────────────
 
 

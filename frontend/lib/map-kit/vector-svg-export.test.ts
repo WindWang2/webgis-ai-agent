@@ -67,6 +67,8 @@ const SPEC = {
 function chromeWithLegend(): ExportChromeModel {
   return {
     fromSpec: true,
+    northArrow: { kind: 'north_arrow', anchor: 'top-right' },
+    scaleBar: { kind: 'scale_bar', anchor: 'bottom-right' },
     degradations: [],
     colorbars: [],
     insets: [],
@@ -111,6 +113,14 @@ beforeEach(() => {
 });
 
 describe('buildVectorSvgExport', () => {
+  it('discloses unsupported authored filters omitted from vector content', () => {
+    const result = buildVectorSvgExport({
+      spec: { ...SPEC, layers: SPEC.layers.map((layer) => ({ ...layer, filter: ['within', {}] })) },
+      layout: layoutFor(),
+    });
+    expect(result.degradations).toContainEqual(expect.objectContaining({ code: 'layer_filter_unsupported' }));
+  });
+
   it('produces true vector output (path/circle) plus marginalia (north arrow / frame / legend)', () => {
     const { svg, degradations } = buildVectorSvgExport({
       spec: SPEC,

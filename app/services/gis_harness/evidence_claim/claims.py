@@ -5,6 +5,7 @@ LLM prose MUST NOT be the authoritative numeric source.
 from __future__ import annotations
 
 import hashlib
+import math
 from typing import Any, Dict, Optional, Sequence
 
 from .contracts import (
@@ -159,26 +160,29 @@ def claim_from_rank_table(
             val = float(row[value_key])
         except (KeyError, TypeError, ValueError):
             continue
-        ranked.append((name, val))
+        if math.isfinite(val):
+            ranked.append((name, val))
     if not ranked:
         return None
-    ranked.sort(key=lambda x: (-x[1], x[0]))
+    claim_type = claim_type if isinstance(claim_type, ClaimType) else ClaimType(str(claim_type))
+    ascending = claim_type is ClaimType.MINIMUM
+    ranked.sort(key=lambda x: (x[1] if ascending else -x[1], x[0]))
     top_name, top_val = ranked[0]
     return claim_from_statistic(
         subject=top_name,
         claim_type=claim_type,
         value=top_val,
         unit=unit,
-        comparator="highest",
+        comparator="lowest" if ascending else "highest",
         method=method,
         statistic_evidence_id=statistic_evidence_id,
         dataset_version_evidence_id=dataset_version_evidence_id,
-        spatial_scope=Scope(spatial_name=top_name, spatial_level=spatial_level, group_by=group_by),
+        spatial_scope=Scope(spatial_level=spatial_level, group_by=group_by),
         reference_scope=Scope(group_by=group_by, spatial_level=spatial_level),
         temporal_scope=Scope(temporal_label=temporal_label),
         tenant_id=tenant_id,
         session_id=session_id,
-        narrative=f"{top_name} {claim_type.value} highest",
+        narrative=f"{top_name} {claim_type.value} {'lowest' if ascending else 'highest'}",
         store=store,
     )
 

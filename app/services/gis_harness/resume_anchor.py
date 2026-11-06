@@ -26,6 +26,8 @@ V6 W14（Resume VNext — verify-not-assume）：建锚时快照逐 ref 修订�
 授权语义不变（本模块仍是唯一鉴权点）。
 """
 from __future__ import annotations
+import asyncio
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import logging
 import time
@@ -187,7 +189,7 @@ async def _snapshot_ref_evidence(
             if ref_id in evidence and fp:
                 evidence[ref_id]["descriptor_fingerprint"] = str(fp)[:96]
     except Exception:  # noqa: BLE001 — 语义快照缺席照常建锚
-        pass
+        observe_optional_failure(__name__)
     return evidence
 
 
@@ -485,8 +487,8 @@ async def resume_from_anchor(
             get_recovery_ledger,
         )
 
-        carried_entries = get_recovery_ledger().copy_between_sessions(
-            old_sid, new_sid)
+        carried_entries = await asyncio.to_thread(
+            get_recovery_ledger().copy_between_sessions, old_sid, new_sid)
     except Exception:  # noqa: BLE001 — 预算续接失败不阻断恢复
         logger.warning("[ResumeAnchor] recovery ledger carry-over failed",
                        exc_info=True)

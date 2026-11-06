@@ -5,7 +5,6 @@ invoke_model_provider 计时、计量失败不影响扩展执行。
 """
 from __future__ import annotations
 
-import unittest.mock
 
 import pytest
 from prometheus_client import REGISTRY
@@ -28,7 +27,7 @@ def test_vocabulary_rejects_unknown_values():
     assert set(ACTIVATION_RESULTS) == {
         "activated", "failed", "quarantined", "disabled"
     }
-    assert set(QUARANTINE_REASONS) == {"worker_crash", "revocation"}
+    assert set(QUARANTINE_REASONS) == {"worker_crash", "revocation", "trust_policy"}
 
 
 def test_activation_counter_counts():
@@ -65,28 +64,12 @@ def test_invocation_timer_observes():
 
 
 def test_host_fail_activation_records_metric():
-    """host 接线：_fail_activation 路径打 failed 计数（计量绝不影响执行）。"""
-    from types import SimpleNamespace
-
-    from app.extensions_platform.diagnostics import DiagnosticCode, ExtensionDiagnostic
+    """Public activation records even early unknown-extension failures."""
     from app.extensions_platform.host import ExtensionHost, HostPolicy
-    from app.extensions_platform.ledger import ProjectionLedger
     from app.tools.registry import ToolRegistry
-
     host = ExtensionHost(tool_registry=ToolRegistry(), policy=HostPolicy())
-    record = SimpleNamespace(
-        extension_id="probe.sender", state="loading",
-        diagnostics=[], worker=None,
-    )
-    with unittest.mock.patch.object(
-        ProjectionLedger, "rollback", lambda self: []
-    ):
-        before = REGISTRY.get_sample_value(
-            "extension_activation_total", {"result": "failed"}) or 0
-        host._fail_activation(record, ProjectionLedger(extension_id="probe.sender"), [
-            ExtensionDiagnostic.error(DiagnosticCode.MANIFEST_INVALID, "probe")
-        ], [])
-        after = REGISTRY.get_sample_value(
-            "extension_activation_total", {"result": "failed"})
+    before = REGISTRY.get_sample_value("extension_activation_total", {"result": "failed"}) or 0
+    diagnostics = host.activate("missing.extension")
+    assert diagnostics
+    after = REGISTRY.get_sample_value("extension_activation_total", {"result": "failed"}) or 0
     assert after - before == 1
-    assert record.state.value == "failed"

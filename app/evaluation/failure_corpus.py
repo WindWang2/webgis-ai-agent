@@ -53,15 +53,15 @@ def _exc(kind: str) -> Any:
             from pyproj.exceptions import CRSError
 
             return CRSError("invalid projection")
-        except Exception:  # noqa: BLE001 — pyproj 缺席退化为标记匹配
-            return None
+        except ImportError as exc:
+            raise RuntimeError("CRS failure corpus requires pyproj") from exc
     if kind == "cancelled":
         try:
             from app.services.jobs.cancellation import OperationCancelled
 
             return OperationCancelled("client gone")
-        except Exception:  # noqa: BLE001
-            return None
+        except ImportError as exc:
+            raise RuntimeError("cancellation failure corpus dependency is unavailable") from exc
     return None
 
 

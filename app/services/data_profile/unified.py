@@ -87,6 +87,7 @@ def build_unified_profile(
             "raster": None,
             "distribution": spatial_distribution(
                 features, resolution=distribution_resolution,
+                crs=str(payload.get("crs") or ""),
                 max_features=max_features,
             ),
             "diagnostics": [],

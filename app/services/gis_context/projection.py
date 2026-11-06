@@ -96,7 +96,7 @@ def project_memory(
 ) -> ContextProjection:
     """Select the bounded graph projection for this turn (pure)."""
     projection = ContextProjection()
-    if wc is None or not wc.derived_findings:
+    if wc is None or not (wc.derived_findings or wc.facts):
         return projection
     budget = max(0, int(token_budget))
 
@@ -136,20 +136,20 @@ def project_memory(
 
     for finding in current:
         line = f"结论: {finding.label or finding.ref}（依据 {_edge_summary(finding)}）"
-        missing = [k for k in _anchor_keys(finding) if k in fact_lines]
-        if missing and any(k not in fact_keys_included for k in missing):
-            # Anchor facts must be part of the projection for the finding
-            # to count as grounded; reserve their tokens first.
-            for key in missing:
-                if key in fact_keys_included:
-                    continue
-                if try_item("fact", fact_lines[key], 2):
-                    fact_keys_included.add(key)
-        grounded = all(k in fact_keys_included for k in _anchor_keys(finding))
-        if _anchor_keys(finding) and not grounded:
+        anchors = set(_anchor_keys(finding))
+        pending = sorted(anchors - fact_keys_included)
+        group_tokens = estimate_tokens(line) + sum(
+            estimate_tokens(fact_lines[key]) for key in pending if key in fact_lines
+        )
+        if (any(key not in fact_lines for key in pending)
+                or len(projection.items) + len(pending) + 1 > max_items
+                or projection.used_tokens + group_tokens > budget):
             projection.closure_drops.append(finding.finding_id)
             projection.dropped += 1
             continue
+        for key in pending:
+            try_item("fact", fact_lines[key], 2)
+            fact_keys_included.add(key)
         try_item("finding", line, int(finding.priority))
 
     # Facts not pulled in by closure (still bounded by the same budget).

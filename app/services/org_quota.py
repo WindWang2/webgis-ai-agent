@@ -1,33 +1,20 @@
-"""组织级配额服务（ADR-0139 P5）：存储字节 / 并发任务数 / 速率。
+"""Organization limits for storage, in-flight tasks and admission rate.
 
-三层裁决：
-
-1. **配置**：per-org 覆盖（``org_quotas`` 表，admin 端点维护）→ env
-   默认值兜底（``ORG_QUOTA_*``）；显式 NULL = 跟随全局默认。
-2. **用量**：
-   - 存储字节 = lakehouse 版本 + 目录投影 + geocompute artifacts 的
-     字节列按 ``org_id`` 聚合（V8 表已带 org，单一 SUM）；
-   - 并发任务 = geocompute_runs（queued/leased/running）+ workflow
-     instances（running）计数；
-   - 速率 = org 维度 Redis 滑窗桶（``get_rate_limiter`` 既有设施，
-     in-memory 兜底）。
-3. **裁决**：越限 → ``QuotaExceededError``（PlatformError, category=
-   QUOTA → 429 分类学信封，A 线对齐点）+ 审计事件（fail-open）。并发/
-   存储为 check-then-act（先 COUNT 再放行、无原子预留）——并发提交可
-   超额数个在途请求，配额为**近似裁决**（#1626(d) 在 admin usage
-   快照旁同等披露）。
-
-检查全部 fail-open 于**读**（查询失败视为未超限，不阻塞业务）——
-配额是保护性限流，不是可用性单点。
+Policy/usage/rate failures reject writes. HTTP ``serialized_admission`` is a
+preflight/coordination boundary. Every durable producer additionally uses
+``org_quota_admission`` in its real SQL transaction; standalone check helpers
+are observations and never substitute for that resource admission boundary.
 """
 from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+from typing import Optional, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ErrorCategory, PlatformError
@@ -46,6 +33,9 @@ def _env_int(name: str, default: int) -> int:
 DEFAULT_MAX_STORAGE_BYTES = _env_int("ORG_QUOTA_STORAGE_BYTES", 100 * 1024 ** 3)
 DEFAULT_MAX_CONCURRENT_TASKS = _env_int("ORG_QUOTA_CONCURRENT_TASKS", 50)
 DEFAULT_RATE_PER_MIN = _env_int("ORG_QUOTA_RATE_PER_MIN", 240)
+
+# Server-owned type; synchronous occupancy shares the existing job ledger.
+SYNC_EXECUTION_TASK_TYPE = "geocompute_sync"
 
 
 class QuotaExceededError(PlatformError):
@@ -70,7 +60,7 @@ class OrgQuotaLimits:
 
 
 async def effective_limits(db: AsyncSession, org_id: str) -> OrgQuotaLimits:
-    """per-org 覆盖 → env 默认（NULL = 跟随全局默认）。fail-open。"""
+    """per-org 覆盖 → env 默认（NULL = 跟随全局默认）。读失败拒绝。"""
     from app.models.db_model import OrgQuota
 
     limits = OrgQuotaLimits(
@@ -82,18 +72,19 @@ async def effective_limits(db: AsyncSession, org_id: str) -> OrgQuotaLimits:
         row = (await db.execute(
             select(OrgQuota).where(OrgQuota.org_id == org_id)
         )).scalar_one_or_none()
-    except Exception:  # noqa: BLE001 - 配置读失败按默认值（保护性限流不阻塞）
-        logger.warning("[quota] org_quotas unavailable; using defaults",
+    except Exception:  # noqa: BLE001 - 缺少策略真相时拒绝写入
+        logger.warning("[quota] org_quotas unavailable; rejecting write",
                        exc_info=True)
-        return limits
+        await db.rollback()
+        raise PlatformError("organization quota policy unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
     if row is None:
         return limits
     return OrgQuotaLimits(
-        max_storage_bytes=row.max_storage_bytes
+        max_storage_bytes=cast(int, row.max_storage_bytes)
         if row.max_storage_bytes is not None else limits.max_storage_bytes,
-        max_concurrent_tasks=row.max_concurrent_tasks
+        max_concurrent_tasks=cast(int, row.max_concurrent_tasks)
         if row.max_concurrent_tasks is not None else limits.max_concurrent_tasks,
-        rate_per_min=row.rate_limit_per_min
+        rate_per_min=cast(int, row.rate_limit_per_min)
         if row.rate_limit_per_min is not None else limits.rate_per_min,
     )
 
@@ -111,42 +102,48 @@ async def storage_bytes(db: AsyncSession, org_id: str) -> int:
             (LakehouseCatalogItem.byte_size, LakehouseCatalogItem),
             (GeoComputeArtifact.size_bytes, GeoComputeArtifact),
         ):
-            stmt = select(func.coalesce(func.sum(col), 0)).where(
+            stmt = select(func.coalesce(func.sum(case((col > 0, col), else_=0)), 0)).where(
                 model.org_id == org_id)
             if model is LakehouseCatalogItem:
                 stmt = stmt.where(LakehouseCatalogItem.status == "active")
             total += int((await db.execute(stmt)).scalar_one() or 0)
-    except Exception:  # noqa: BLE001 - 用量聚合失败按 0（fail-open 于读）
+    except Exception:  # noqa: BLE001 - 用量不可确认时拒绝写入
         logger.warning("[quota] storage aggregation failed", exc_info=True)
+        await db.rollback()
+        raise PlatformError("organization storage usage unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
     return total
 
 
 async def concurrent_tasks(db: AsyncSession, org_id: str) -> int:
     """org 并发任务数（geocompute 在飞 + workflow running）。"""
-    from app.models.db_model import GeoComputeClusterRun, WorkflowInstanceRow
+    from app.models.db_model import GeoComputeClusterRun, WorkflowInstanceRow, AnalysisTask
 
     try:
         gc = int((await db.execute(
             select(func.count()).select_from(GeoComputeClusterRun).where(
                 GeoComputeClusterRun.org_id == org_id,
-                GeoComputeClusterRun.status.in_(
-                    ("queued", "leased", "running")),
+                GeoComputeClusterRun.status.not_in(("completed", "failed", "cancelled")),
             )
         )).scalar_one() or 0)
         wf = int((await db.execute(
             select(func.count()).select_from(WorkflowInstanceRow).where(
                 WorkflowInstanceRow.org_id == org_id,
-                WorkflowInstanceRow.status == "running",
+                WorkflowInstanceRow.status.not_in(("succeeded", "failed", "cancelled", "superseded")),
             )
         )).scalar_one() or 0)
-        return gc + wf
+        sync = int((await db.execute(select(func.count()).select_from(AnalysisTask).where(
+            AnalysisTask.org_id == int(org_id), AnalysisTask.task_type == SYNC_EXECUTION_TASK_TYPE,
+            AnalysisTask.status.not_in(("completed", "failed", "cancelled")),
+        ))).scalar_one() or 0)
+        return gc + wf + sync
     except Exception:  # noqa: BLE001
         logger.warning("[quota] concurrency aggregation failed", exc_info=True)
-        return 0
+        await db.rollback()
+        raise PlatformError("organization concurrency usage unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
 
 
 async def check_concurrency(db: AsyncSession, org_id: str) -> None:
-    """并发任务配额裁决（越限抛 QuotaExceededError；查询失败放行）。"""
+    """并发任务配额裁决（越限抛 QuotaExceededError；查询失败拒绝）。"""
     limits = await effective_limits(db, org_id)
     if limits.max_concurrent_tasks <= 0:
         return
@@ -189,36 +186,37 @@ async def _audit_exceeded(db: AsyncSession, resource: str, org_id: str,
 
 async def check_rate(org_id: str, *, limit_per_min: Optional[int] = None,
                      weight: int = 1) -> bool:
-    """org 维度速率桶（复用限流设施；Redis 不可用 → 放行，返回是否允许）。
+    """org 维度速率桶（复用限流设施；Redis 不可用拒绝，返回是否允许）。
 
     ``limit_per_min``：调用方已解析的 effective limit（缺省用 env 默认）。
-    放行策略说明：速率桶的失败方向与并发/存储一致——保护性限流在
-    基础设施不可用时不放大故障（限流降级，不是拒绝服务）。
+    速率桶不可用时拒绝写入，避免把无法确认额度的请求当作已授权。
     """
-    from app.core.rate_limiter import get_rate_limiter
+    from app.core.rate_limiter import get_rate_limiter, RedisRateLimiter
+    from app.core.config import settings
 
     limiter = await get_rate_limiter()
     if limiter is None:
-        return True
+        raise PlatformError("organization rate limiter unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
+    if settings.is_production() and not isinstance(limiter, RedisRateLimiter):
+        raise PlatformError("shared organization rate limiter unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
     try:
+        if isinstance(limiter, RedisRateLimiter):
+            return await limiter.is_allowed(
+                f"org_quota_rate:{org_id}", max(1, limit_per_min or DEFAULT_RATE_PER_MIN),
+                60, fail_closed=True,
+            )
         return await limiter.is_allowed(
             f"org_quota_rate:{org_id}",
             max(1, limit_per_min or DEFAULT_RATE_PER_MIN),
             60,
         )
     except Exception:  # noqa: BLE001
-        logger.warning("[quota] rate limiter unavailable; allowing", exc_info=True)
-        return True
+        logger.warning("[quota] rate limiter unavailable; rejecting write", exc_info=True)
+        raise PlatformError("organization rate limiter unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
 
 
 async def usage_snapshot(db: AsyncSession, org_id: str) -> dict:
-    """usage 投影（admin 面展示；配额与当前用量一页看全）。
-
-    #1626(d)：并发/存储裁决是 check-then-act（先 COUNT 再放行，无原子
-    预留），并发提交可超额数个任务 —— 本快照的 used 计数为**近似裁决
-    依据**（越限审计仍如实记录），不是精确余额。模块文档明示的
-    fail-open 取舍（保护性限流不是可用性单点）在此同样适用。
-    """
+    """Admin usage snapshot; standalone reads are observations, not reservations."""
     limits = await effective_limits(db, org_id)
     return {
         "org_id": org_id,
@@ -238,20 +236,12 @@ async def enforce_for_principal(user: Optional[dict], *,
                                 storage_incoming: int = 0,
                                 include_storage: bool = False,
                                 include_concurrency: bool = True) -> str:
-    """路由入口一站式裁决（ADR-0139 P5）。
-
-    org 解析 + 速率 + 并发（+ 可选存储）。任何配额面故障 fail-open
-    （不放大故障）；越限抛 QuotaExceededError（QUOTA → 429 信封）。
-    返回 effective org 供调用方复用。
-
-    需要 ``DATABASE_URL`` 可用；AsyncSessionLocal 缺席（极端测试环境）
-    直接放行。
-    """
+    """Resolve organization and check current limits; call inside the admission guard."""
     from app.core import tenancy
     from app.core.database import AsyncSessionLocal
 
     if AsyncSessionLocal is None:
-        return ""
+        raise PlatformError("organization quota database unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
     async with AsyncSessionLocal() as qdb:
         org_eff = await tenancy.effective_org_id(user, qdb)
         limits = await effective_limits(qdb, org_eff)
@@ -263,3 +253,29 @@ async def enforce_for_principal(user: Optional[dict], *,
         if include_storage:
             await check_storage(qdb, org_eff, incoming_bytes=storage_incoming)
         return org_eff
+
+
+@asynccontextmanager
+async def serialized_admission(user: Optional[dict]) -> AsyncIterator[str]:
+    """Serialize quota check plus committed HTTP write for an organization.
+
+    This guard must cover the actual commit/cluster insertion. Redis-backed
+    locks renew while held and fail closed when configured storage is lost.
+    The development no-Redis mode is limited to one process.
+    """
+    import hashlib
+    from app.core import tenancy
+    from app.core.database import AsyncSessionLocal
+    from app.services.distributed_lock import session_lock_registry
+    from app.core.config import settings
+
+    if str(settings.ENV).lower() in ("prod", "production") and not session_lock_registry._is_redis_configured():
+        raise PlatformError("shared organization admission lock unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
+
+    if AsyncSessionLocal is None:
+        raise PlatformError("organization quota database unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
+    async with AsyncSessionLocal() as db:
+        org = await tenancy.effective_org_id(user, db)
+    key = "quota-" + hashlib.sha256(str(org).encode()).hexdigest()
+    async with session_lock_registry.lock(key, fail_on_degraded=True, fail_on_lost=True):
+        yield org

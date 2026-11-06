@@ -60,6 +60,7 @@ def project_artifact_record(
     proof_meta = {
         "artifact_type": atype[:64],
         "status": status[:32],
+        "proof_source": "self_attested_metadata",
     }
     if isinstance(meta, dict):
         for key in ("stat_type", "claim_type", "unit", "subject", "method"):
@@ -118,14 +119,14 @@ def project_artifact_registry(
                 dst=f"art:{upstream}"[:64],
             )
             store.add_edge(edge)
-            replaces = getattr(rec, "replaces", None)
-            if replaces:
-                store.add_edge(RelationEdge(
-                    edge_id=f"sup:{node.evidence_id}"[:64],
-                    relation=RelationType.SUPERSEDES,
-                    src=node.evidence_id,
-                    dst=f"art:{replaces}"[:64],
-                ))
+        replaces = getattr(rec, "replaces", None)
+        if replaces:
+            store.add_edge(RelationEdge(
+                edge_id=f"sup:{node.evidence_id}"[:64],
+                relation=RelationType.SUPERSEDES,
+                src=node.evidence_id,
+                dst=f"art:{replaces}"[:64],
+            ))
     return nodes
 
 

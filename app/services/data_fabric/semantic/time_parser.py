@@ -64,7 +64,7 @@ def _quarter_months(q: int) -> Tuple[int, int]:
     return (3 * (q - 1) + 1, 3 * q)
 
 
-def parse_time_expr(text: str, *, now: Optional[date] = None) -> Optional[TimeRange]:
+def _parse_time_expr(text: str, *, now: Optional[date] = None) -> Optional[TimeRange]:
     """Parse a (possibly Chinese) time expression embedded in a query."""
     if not text or not text.strip():
         return None
@@ -255,3 +255,11 @@ def _month_end(d: date) -> date:
 
 
 __all__ = ["TimeRange", "parse_time_expr"]
+
+
+def parse_time_expr(text: str, *, now: Optional[date] = None) -> Optional[TimeRange]:
+    """Reject malformed dates and unrepresentable relative spans."""
+    try:
+        return _parse_time_expr(text, now=now)
+    except (ValueError, OverflowError):
+        return None

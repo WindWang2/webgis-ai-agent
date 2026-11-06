@@ -126,6 +126,13 @@ class ChatRequest(BaseModel):
     map_state: Optional[dict] = Field(None, description="当前的地图状态（视角、图层等）")
     # #1648：skill_name/project_id 为检索/归属键（注册表与项目 id 词表），
     # 128 字符帽 —— 与 MapProductRestoreRequest.session_id 同纪律。
+    @field_validator("map_state", mode="before")
+    @classmethod
+    def _client_perception_only(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: item for key, item in value.items() if not str(key).startswith("_")}
+        return value
+
     skill_name: Optional[str] = Field(None, max_length=128, description="要激活的技能名称")
     project_id: Optional[str] = Field(
         None,

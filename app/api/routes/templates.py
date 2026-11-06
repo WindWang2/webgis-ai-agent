@@ -9,7 +9,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import actor_ids, get_current_user, get_current_user_optional
+from app.core.auth import actor_ids, get_current_user_with_version as get_current_user, get_current_user_optional
 from app.core.database import get_async_db
 from app.models.db_model import CartographyTemplate
 from app.schemas.pagination import Page as _Page  # noqa: F401 — re-export 供类型引用
@@ -306,7 +306,7 @@ async def create_template(
     _validate_payload(req.kind, req.payload)
 
     user_id, user_org_id = actor_ids(_user if isinstance(_user, dict) else None)
-    template_id = f"tmpl_user_{uuid.uuid4().hex[:8]}"
+    template_id = f"tmpl_user_{uuid.uuid4().hex}"
     tmpl = CartographyTemplate(
         id=template_id,
         creator_id=user_id,
@@ -353,6 +353,11 @@ async def delete_template(
     result = await db.execute(stmt)
     tmpl = result.scalar_one_or_none()
 
+    user_id, user_org_id = actor_ids(_user if isinstance(_user, dict) else None)
+    principal = _user.get("user") if isinstance(_user, dict) else None
+    role = getattr(principal, "role", None) or (_user.get("role") if isinstance(_user, dict) else None)
+    if tmpl is not None and not _template_visible(tmpl, user_id, user_org_id, role):
+        raise HTTPException(status_code=404, detail="Template not found")
     if not tmpl:
         # Check built-in seeds
         seed = next((s for s in SEED_TEMPLATES if s["id"] == template_id), None)
@@ -372,12 +377,11 @@ async def delete_template(
             detail="Built-in templates are read-only and cannot be deleted"
         )
 
-    user_id = _user.get("user_id") if isinstance(_user, dict) else None
-    role = _user.get("role") if isinstance(_user, dict) else None
-    if (tmpl.creator_id != user_id or tmpl.creator_id is None) and role != "admin":
+    is_org_admin = role == "admin" and user_org_id is not None and tmpl.org_id == user_org_id
+    if (tmpl.creator_id != user_id or tmpl.creator_id is None) and not is_org_admin:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not authorized to delete this template"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found"
         )
 
     await db.delete(tmpl)

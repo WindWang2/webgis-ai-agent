@@ -296,6 +296,9 @@ class WorkerServer:
         # V3：空闲期到达的流控帧幂等入账（信用领先/取消先行都合法）。
         if self._account_stream_frame(frame):
             return True
+        if ftype in ("call", "health"):
+            from .spawn import renew_call_cpu_budget
+            renew_call_cpu_budget()
         if ftype == "call":
             self._handle_call(frame)
         elif ftype == "health":
@@ -393,6 +396,14 @@ class WorkerServer:
         write_frame(self._outfile, {"type": "stream_start", "id": call_id})
         try:
             for event in events:
+                if seq >= max_events:
+                    raise ExtensionPlatformError(
+                        ExtensionDiagnostic.error(
+                            DiagnosticCode.STREAM_LIMIT_EXCEEDED,
+                            f"stream exceeded max_stream_events={max_events}",
+                            extension_id=self._ctx.extension_id,
+                        )
+                    )
                 if call_id in self._stream_cancelled:
                     self._stream_cancelled.discard(call_id)
                     cancelled = True
@@ -434,14 +445,6 @@ class WorkerServer:
                 write_frame(self._outfile, frame_obj)
                 self._stream_credits[call_id] = self._stream_credits.get(call_id, 0) - 1
                 seq += 1
-                if seq >= max_events:
-                    raise ExtensionPlatformError(
-                        ExtensionDiagnostic.error(
-                            DiagnosticCode.STREAM_LIMIT_EXCEEDED,
-                            f"stream exceeded max_stream_events={max_events}",
-                            extension_id=self._ctx.extension_id,
-                        )
-                    )
         finally:
             # 生成器提前终止（取消/上限/异常）都要收尾，避免悬挂引用。
             close = getattr(events, "close", None)

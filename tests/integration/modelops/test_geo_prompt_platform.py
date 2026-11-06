@@ -45,7 +45,7 @@ def test_geo_prompt_polygon_map_crs_end_to_end(service, synthetic_raster):
     )
     compiled = service.compile_geo_prompt(
         artifact.to_payload(), str(synthetic_raster)
-    )
+    , allowed_roots=[synthetic_raster.parent])
     audit = compiled["audit"]
     assert audit["coordinate_space"] == "map→pixel"
     assert audit["derived_mask_source"] == "polygon/polyline rasterized"
@@ -142,7 +142,7 @@ def test_mask_sidecar_digest_fail_closed(service, synthetic_raster, tmp_path):
             "path": str(sidecar), "sha256": sha256_of_file(str(sidecar)), "band": 1,
         }
     }
-    compiled = service.compile_geo_prompt(payload, str(synthetic_raster))
+    compiled = service.compile_geo_prompt(payload, str(synthetic_raster), allowed_roots=[synthetic_raster.parent])
     assert compiled["audit"]["derived_mask_source"] == "mask_sidecar"
     assert compiled["prompt"].prior_masks[0][10:30, 20:45].all()
 
@@ -151,7 +151,7 @@ def test_mask_sidecar_digest_fail_closed(service, synthetic_raster, tmp_path):
     with rasterio.open(sidecar, "r+") as dst:
         dst.write(mask, 1)
     with pytest.raises(PromptArtifactError, match="does not match the declared digest"):
-        service.compile_geo_prompt(payload, str(synthetic_raster))
+        service.compile_geo_prompt(payload, str(synthetic_raster), allowed_roots=[synthetic_raster.parent])
 
 
 def test_relative_mask_path_requires_root(service, synthetic_raster):
@@ -159,7 +159,7 @@ def test_relative_mask_path_requires_root(service, synthetic_raster):
         "mask_ref": {"path": "relative/prior.tif", "sha256": "a" * 64, "band": 1}
     }
     with pytest.raises(PromptArtifactError, match="mask_root"):
-        service.compile_geo_prompt(payload, str(synthetic_raster))
+        service.compile_geo_prompt(payload, str(synthetic_raster), allowed_roots=[synthetic_raster.parent])
 
 
 def test_reference_layer_prompt_end_to_end(service, synthetic_raster, tmp_path):
@@ -174,7 +174,7 @@ def test_reference_layer_prompt_end_to_end(service, synthetic_raster, tmp_path):
     ) as dst:
         dst.write(layer, 1)
     payload = {"reference_layer": {"uri": str(ref), "band": 1, "strategy": "nonzero"}}
-    compiled = service.compile_geo_prompt(payload, str(synthetic_raster))
+    compiled = service.compile_geo_prompt(payload, str(synthetic_raster), allowed_roots=[synthetic_raster.parent])
     assert compiled["audit"]["derived_mask_source"] == "reference_layer"
     prior = compiled["prompt"].prior_masks[0]
     assert prior[60:80, 90:120].all() and not prior[:60].any()

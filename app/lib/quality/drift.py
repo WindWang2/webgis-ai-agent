@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import logging
 import json
 import re
 from dataclasses import dataclass
@@ -214,8 +215,8 @@ def check_capability_contract_drift() -> List[DriftIssue]:
                     issues.append(_issue(
                         "capability_contract", "MAJOR", "CAP_MAP_MODEL_DANGLING",
                         cid, f"compatible_map_model {mid!r} not registered"))
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as _exc:  # noqa: BLE001
+                logging.getLogger(__name__).debug("drift: optional operation unavailable (%s)", type(_exc).__name__)
         if str(cap.status) == "native" and producers.get(cid, 0) == 0:
             # 工具直连 capability（无算法层）也是合法生产者：再查一次 tool 侧。
             from app.tools import init_tools
@@ -324,7 +325,8 @@ def _backend_api_routes() -> Dict[str, set]:
             import importlib
 
             module = importlib.import_module(module_name)
-        except Exception:  # noqa: BLE001 — 无法导入的 route 模块是 BLOCKER
+        except Exception as _exc:  # noqa: BLE001 — 无法导入的 route 模块是 BLOCKER
+            logging.getLogger(__name__).debug("drift: optional operation unavailable (%s)", type(_exc).__name__)
             continue
         for attr in vars(module).values():
             if isinstance(attr, APIRouter):

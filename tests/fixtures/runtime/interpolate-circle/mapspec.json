@@ -1,7 +1,10 @@
 {
   "version": "1.0",
   "view": {
-    "center": [0, 0],
+    "center": [
+      0,
+      0
+    ],
     "zoom": 2
   },
   "sources": {
@@ -12,18 +15,42 @@
         "features": [
           {
             "type": "Feature",
-            "geometry": { "type": "Point", "coordinates": [-60, 0] },
-            "properties": { "mag": 0 }
+            "geometry": {
+              "type": "Point",
+              "coordinates": [
+                -60,
+                0
+              ]
+            },
+            "properties": {
+              "mag": 0
+            }
           },
           {
             "type": "Feature",
-            "geometry": { "type": "Point", "coordinates": [60, 0] },
-            "properties": { "mag": 8 }
+            "geometry": {
+              "type": "Point",
+              "coordinates": [
+                60,
+                0
+              ]
+            },
+            "properties": {
+              "mag": 8
+            }
           },
           {
             "type": "Feature",
-            "geometry": { "type": "Point", "coordinates": [0, 20] },
-            "properties": { "mag": 0 }
+            "geometry": {
+              "type": "Point",
+              "coordinates": [
+                0,
+                20
+              ]
+            },
+            "properties": {
+              "mag": 0
+            }
           }
         ]
       }
@@ -38,9 +65,19 @@
         "color": {
           "method": "interpolate",
           "field": "mag",
-          "stops": [[0, "#2ca25f"], [8, "#de2d26"]]
+          "stops": [
+            [
+              0,
+              "#2ca25f"
+            ],
+            [
+              8,
+              "#de2d26"
+            ]
+          ]
         },
-        "radius": 8
+        "radius": 8,
+        "opacity": 1
       }
     }
   ]

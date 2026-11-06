@@ -273,7 +273,7 @@ def test_durable_rows_node_accounting_and_reuse_recorded(job_env):
     # 复用事实：进程内 store 命中 agg 的 checkpoint 键（修复前 put 内
     # _measure 抛异常被 except 吞掉，条目从不落库）
     owner_scope = owner_scope_for(None, "sess-1718-rows")
-    entry = engine._store.get(checkpoint_reuse_key(agg, owner_scope))
+    entry = engine._store.get(checkpoint_reuse_key(agg, owner_scope), owner_scope=owner_scope, run_id=run.run_id)
     assert entry is not None
     assert sorted(entry["rows"], key=lambda r: r["kind"]) == [
         {"kind": "a", "count_v": 3}, {"kind": "b", "count_v": 3}]

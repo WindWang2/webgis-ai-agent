@@ -1,3 +1,4 @@
+import { t as tNow } from '@/lib/i18n/t';
 /**
  * Export chrome — shared placement semantics for the canvas exporter (ADR-0081).
  *
@@ -29,6 +30,8 @@ import { uncertaintyKindLabel as _uncertaintyKindLabel } from './disclosure-labe
 import {
   anchorFractionInBounds,
   boundsFromCenterZoom,
+  unwrapLongitude,
+  alignWrappedBounds,
 } from '@/lib/map-components/geo-anchor';
 import { computeNiceScale, formatScaleLabel } from './scale-math';
 import { deriveLegendModel } from './legend-model';
@@ -144,6 +147,9 @@ export type ExportDegradationCode =
   /* H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（孪生发射，
    * 词表权威 app/lib/cartography/render_diagnostics.py）。 */
   | 'layer_ref_unavailable'
+  | 'layer_filter_unsupported'
+  | 'label_expression_unsupported'
+  | 'layer_coordinates_invalid'
   /* H02（任务书 §C）：标题/副标题确定性截断披露（layout-description 发射）。 */
   | 'title_truncated'
   | 'pdf_text_rasterized_cjk'
@@ -249,8 +255,8 @@ function parseBbox4(raw: unknown): { west: number; south: number; east: number; 
   const e = Number(raw[2]);
   const n = Number(raw[3]);
   if (![w, s, e, n].every(Number.isFinite)) return null;
-  if (e <= w || n <= s) return null;
-  return { west: w, south: s, east: e, north: n };
+  if (e === w || n <= s) return null;
+  return { west: w, south: s, east: e < w ? e + 360 : e, north: n };
 }
 
 /** 边界折线（≤512 点；与 live inset-map 同一上限）。 */
@@ -479,7 +485,7 @@ function _parseMethodology(raw: unknown): ExportChromeElement['disclosure'] {
     const code = typeof rec['code'] === 'string' && rec['code'] ? `${rec['code']} ` : '';
     rows.push(`${code}${rec['text']}`);
   }
-  return rows.length > 0 ? { title: '方法论披露', rows, accent: true } : undefined;
+  return rows.length > 0 ? { title: tNow('map.export.methodology'), rows, accent: true } : undefined;
 }
 
 function _parseUncertainty(raw: unknown): ExportChromeElement['disclosure'] {
@@ -503,19 +509,19 @@ function _parseUncertainty(raw: unknown): ExportChromeElement['disclosure'] {
   if (typeof rec['sampleNote'] === 'string' && rec['sampleNote'].trim()) {
     rows.push(rec['sampleNote']);
   }
-  return rows.length > 0 ? { title: '不确定性', rows, accent: false } : undefined;
+  return rows.length > 0 ? { title: tNow('map.export.uncertainty'), rows, accent: false } : undefined;
 }
 
 function _parseDecision(raw: unknown): ExportChromeElement['disclosure'] {
   if (!raw || typeof raw !== 'object') return undefined;
   const rec = raw as Record<string, unknown>;
   const method = typeof rec['method'] === 'string' && rec['method'].trim() ? rec['method'] : '';
-  const title = method ? `决策（${method}）` : '决策';
+  const title = method ? tNow('map.export.decisionMethod', { method }) : tNow('map.export.decision');
   const rows: string[] = [];
   const strike: number[] = [];
   // weightSource 首行（与 live 顺序一致）
   if (typeof rec['weightSource'] === 'string' && rec['weightSource'].trim()) {
-    rows.push(`权重来源：${rec['weightSource']}`);
+    rows.push(`${tNow('map.decision.weightSource')}${rec['weightSource']}`);
   }
   const rowsRaw = rec['rows'];
   if (Array.isArray(rowsRaw)) {
@@ -541,7 +547,7 @@ function _parseDecision(raw: unknown): ExportChromeElement['disclosure'] {
   if (Array.isArray(vetoesRaw) && rows.length < EXPORT_PANEL_MAX_ROWS) {
     const vetoes = vetoesRaw.filter((v): v is string => typeof v === 'string' && !!v.trim());
     if (vetoes.length) {
-      rows.push('硬约束否决：');
+      rows.push(tNow('map.export.vetoes'));
       for (const v of vetoes) {
         if (rows.length >= EXPORT_PANEL_MAX_ROWS) break;
         rows.push(`· ${v}`);
@@ -609,10 +615,10 @@ export async function buildExportChrome(
       origin: 'auto' as const,
     }));
   const northAbsent = !resolved.some(
-    (c) => c.type === 'north_arrow' && c.enabled,
+    (c) => c.type === 'north_arrow',
   );
   const scaleAbsent = !resolved.some(
-    (c) => c.type === 'scale_bar' && c.enabled,
+    (c) => c.type === 'scale_bar',
   );
   if (northAbsent) {
     solverParticipants.push({
@@ -740,7 +746,7 @@ export async function buildExportChrome(
       model.degradations.push({
         code: 'component_skipped_invalid',
         componentId: comp.id,
-        detail: `图例组件绑定层无 legend_spec（layerId: ${comp.layerId || '未绑定'}）`,
+        detail: `图例组件绑定层无 legend_spec（layerId: ${comp.layerId || tNow('map.export.unbound')}）`,
       });
       continue;
     }
@@ -903,7 +909,7 @@ export async function buildExportChrome(
           stats,
           // E-2：collapsed 是 mode 无关字段（锚定面板的折叠此前在导出侧
           // 永远丢失 —— live 折叠、导出展开）。
-          text: c.collapsed ? stats.title || '统计' : undefined,
+          text: c.collapsed ? stats.title || tNow('map.export.statistics') : undefined,
         });
       }
     } else if (c.type === 'chart_panel') {
@@ -1006,18 +1012,18 @@ export async function buildExportChrome(
       try {
         if (refOpt) {
           if (opts.loadTable) {
-            table = buildExportTableData(titleOpt ?? '数据表', await opts.loadTable(refOpt), columnsOpt);
+            table = buildExportTableData(titleOpt ?? tNow('map.export.table'), await opts.loadTable(refOpt), columnsOpt);
           }
         } else if (layerOpt) {
           if (opts.loadLayerTable) {
             table = buildExportTableData(
-              titleOpt ?? '属性表',
+              titleOpt ?? tNow('map.export.attributes'),
               await opts.loadLayerTable(layerOpt),
               columnsOpt,
             );
           }
         } else if (c.options['table'] != null) {
-          table = buildExportTableData(titleOpt ?? '数据表', c.options['table'], columnsOpt);
+          table = buildExportTableData(titleOpt ?? tNow('map.export.table'), c.options['table'], columnsOpt);
         }
       } catch {
         table = null; // 拉取失败 → 面板缺席（无数据不伪造）
@@ -1266,7 +1272,7 @@ export function drawChromeColorbar(
   const { ctx } = d;
   const padding = d.scalePx(10);
   const fmt = (n: number) =>
-    n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : n.toFixed(1);
+    Math.abs(n) >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : Math.abs(n) >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : n.toFixed(1);
   const suffix = spec.unit ? ` ${spec.unit}` : '';
 
   const origin = el.rect
@@ -1307,7 +1313,7 @@ export function drawChromeColorbar(
   // W7 nodata parity：色条尾部 nodata 色块条目（与 drawChromeLegend/live
   // legendEntries 同源 —— nodata.color 来自 withNoDataGuard 同一规则）。
   const nodata = spec.nodata?.color
-    ? { color: spec.nodata.color, label: spec.nodata.label || '无数据' }
+    ? { color: spec.nodata.color, label: spec.nodata.label || tNow('map.export.noData') }
     : undefined;
   const nodataH = nodata ? d.scalePx(16) : 0;
   const drawNodataRow = (nx: number, ny: number) => {
@@ -1319,7 +1325,7 @@ export function drawChromeColorbar(
     ctx.strokeRect(nx, ny, d.scalePx(14), d.scalePx(10));
     ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.7)' : 'rgba(100,116,139,0.9)';
     ctx.font = `${d.scalePx(10)}px sans-serif`;
-    _text(d, nodata.label || '无数据', nx + d.scalePx(20), ny + d.scalePx(9), 'left');
+    _text(d, nodata.label || tNow('map.export.noData'), nx + d.scalePx(20), ny + d.scalePx(9), 'left');
   };
 
   if (vertical) {
@@ -1459,7 +1465,7 @@ export function drawChromeLegend(
   _chromePanel(d, lx, ly, legendW, legendH);
   ctx.fillStyle = d.darkMode ? '#00f2ff' : '#1e293b';
   ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
-  // W5 parity：标题回退统一模型口径（原 '未知字段' 分支删除）。
+  // W5 parity：标题回退统一模型口径（原 tNow('map.export.unknownField') 分支删除）。
   _text(d, model.title, lx + padding, ly + padding + d.scalePx(12), 'left');
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
@@ -1493,7 +1499,7 @@ export function drawChromeBivariateLegend(
   const colors = Array.isArray(spec.colors) ? spec.colors : [];
   const nRaw = Number(spec.n ?? 3);
   if (!Number.isFinite(nRaw)) return;
-  const n = Math.min(4, Math.max(2, nRaw));
+  const n = Math.min(4, Math.max(2, Math.round(nRaw)));
   if (colors.length < n * n) return;
 
   const { ctx } = d;
@@ -1603,7 +1609,7 @@ export function drawChromeStatsPanel(
   if (el.stats.title || collapsed) {
     ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
     ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
-    _text(d, collapsed ? el.text || el.stats.title || '统计' : el.stats.title!, lx + padding, y + d.scalePx(12), 'left');
+    _text(d, collapsed ? el.text || el.stats.title || tNow('map.export.statistics') : el.stats.title!, lx + padding, y + d.scalePx(12), 'left');
     y += titleH;
   }
   if (collapsed) return;
@@ -1875,7 +1881,7 @@ export function drawChromeChartPanel(
     _text(d, reason, plotX + plotW / 2, plotY + plotH / 2, 'center');
   };
   if (!DRAWN_CHART_KINDS.has(chart.type)) {
-    drawEmptyDisclosure('该图表类型暂不支持导出');
+    drawEmptyDisclosure(tNow('map.export.unsupportedChart'));
     return;
   }
 
@@ -1916,8 +1922,8 @@ export function drawChromeChartPanel(
   };
 
   if (chart.type === 'pie') {
-    const total = chart.data.reduce((s, p) => s + (p.value ?? 0), 0);
-    if (total <= 0) return;
+    const total = chart.data.reduce((s, p) => s + Math.max(0, p.value ?? 0), 0);
+    if (total <= 0) { drawEmptyDisclosure(tNow('map.export.noData')); return; }
     const cx = plotX + plotW / 2;
     const cy = plotY + plotH / 2;
     const r = Math.min(plotW, plotH) / 2;
@@ -1939,8 +1945,8 @@ export function drawChromeChartPanel(
   if (chart.type === 'scatter') {
     const xs = chart.data.map((p) => p.x ?? 0);
     const ys = chart.data.map((p) => p.y ?? 0);
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const minX = xs.reduce((a, b) => Math.min(a, b), Infinity), maxX = xs.reduce((a, b) => Math.max(a, b), -Infinity);
+    const minY = ys.reduce((a, b) => Math.min(a, b), Infinity), maxY = ys.reduce((a, b) => Math.max(a, b), -Infinity);
     const spanX = maxX - minX || 1;
     const spanY = maxY - minY || 1;
     ctx.strokeStyle = gridColor;
@@ -1957,7 +1963,7 @@ export function drawChromeChartPanel(
   } else if (chart.type === 'horizontal_bar') {
     // 横向条：类目 y 轴（自上而下），条长 ∝ 值（0 基线正则化）
     const values = chart.data.map((p) => p.value ?? 0);
-    const maxV = Math.max(...values, 0);
+    const maxV = values.reduce((a, b) => Math.max(a, b), 0);
     const n = chart.data.length;
     const gutterW = Math.min(plotW * 0.35, d.scalePx(72));
     const barX = plotX + gutterW;
@@ -2011,7 +2017,9 @@ export function drawChromeChartPanel(
       }
       return arr;
     });
-    const maxV = Math.max(0, ...grid.flat()) || 1;
+    const maxV = (chart.type === 'stacked_bar'
+      ? Math.max(0, ...cats.map((_, ci) => grid.reduce((sum, row) => sum + Math.max(row[ci], 0), 0)))
+      : Math.max(0, ...grid.flat())) || 1;
     drawGrid();
     const n = cats.length;
     const slotW = plotW / Math.max(n, 1);
@@ -2043,8 +2051,8 @@ export function drawChromeChartPanel(
     // timeseries 同 line；area / cumulative 折线 + 半透明填充
     //（cumulative 数据已由上游衍生 —— live toCumulative 同约定，此处不再累加）
     const values = chart.data.map((p) => p.value ?? 0);
-    const maxV = Math.max(...values, 0);
-    const minV = Math.min(...values, 0);
+    const maxV = values.reduce((a, b) => Math.max(a, b), 0);
+    const minV = values.reduce((a, b) => Math.min(a, b), 0);
     const span = maxV - minV || 1;
     drawGrid();
     const n = chart.data.length;
@@ -2077,7 +2085,7 @@ export function drawChromeChartPanel(
     // 同 bar，barCategoryGap 0 视觉 —— 条紧贴（slot 全宽，1px 视觉缝）。
     // 分箱计数从 0 起基线（min 基线会把最小非零 bin 画成零高度条 —— 数据失真）
     const values = chart.data.map((p) => p.value ?? 0);
-    const maxV = Math.max(...values, 0);
+    const maxV = values.reduce((a, b) => Math.max(a, b), 0);
     const span = maxV || 1;
     drawGrid();
     const n = chart.data.length;
@@ -2091,9 +2099,9 @@ export function drawChromeChartPanel(
     drawXLabels((i) => chart.data[i]?.name ?? '', n);
   } else if (chart.type === 'donut') {
     // 饼图 + 内半径白圈（0.6 倍）—— 与 live donut innerRadius 同视觉
-    const total = chart.data.reduce((s, p) => s + (p.value ?? 0), 0);
+    const total = chart.data.reduce((s, p) => s + Math.max(0, p.value ?? 0), 0);
     if (total <= 0) {
-      drawEmptyDisclosure('暂无数据');
+      drawEmptyDisclosure(tNow('map.export.noData'));
     }
     if (total > 0) {
       const cx = plotX + plotW / 2;
@@ -2126,11 +2134,11 @@ export function drawChromeChartPanel(
     const cats = seriesList[0]?.data.map((p) => p.name) ?? [];
     const k = cats.length;
     if (k < 3) {
-      drawEmptyDisclosure('暂无数据（雷达图至少需要 3 个轴）');
+      drawEmptyDisclosure(tNow('map.export.radarNeedsAxes'));
     }
     if (k >= 3) {
       const values = seriesList.flatMap((s) => s.data.map((p) => p.value ?? 0));
-      const maxV = Math.max(...values, 0) || 1;
+      const maxV = values.reduce((a, b) => Math.max(a, b), 0) || 1;
       const cx = plotX + plotW / 2;
       const cy = plotY + plotH / 2;
       const R = Math.min(plotW, plotH) / 2 - d.scalePx(14);
@@ -2185,7 +2193,7 @@ export function drawChromeChartPanel(
   } else if (chart.type === 'rose') {
     // 极区扇形：角度等分（2π/n），半径 ∝ 值（0 基线正则化）
     const values = chart.data.map((p) => p.value ?? 0);
-    const maxV = Math.max(...values, 0);
+    const maxV = values.reduce((a, b) => Math.max(a, b), 0);
     if (maxV <= 0) {
       drawEmptyDisclosure('rose');
     } else {
@@ -2212,8 +2220,8 @@ export function drawChromeChartPanel(
     const nums = chart.data
       .flatMap((p) => [p.min, p.q1, p.value, p.q3, p.max])
       .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
-    const lo = nums.length ? Math.min(...nums) : 0;
-    const hi = nums.length ? Math.max(...nums) : 1;
+    const lo = nums.length ? nums.reduce((a, b) => Math.min(a, b), Infinity) : 0;
+    const hi = nums.length ? nums.reduce((a, b) => Math.max(a, b), -Infinity) : 1;
     const span = hi - lo || 1;
     ctx.strokeStyle = gridColor;
     ctx.lineWidth = d.scalePx(0.5);
@@ -2257,8 +2265,8 @@ export function drawChromeChartPanel(
       ? chart.series
       : [{ name: '', data: chart.data }];
     const allVals = rowsSrc.flatMap((r) => r.data.map((p) => p.value ?? 0)).filter(Number.isFinite);
-    const lo = allVals.length ? Math.min(...allVals) : 0;
-    const hi = allVals.length ? Math.max(...allVals) : 1;
+    const lo = allVals.length ? allVals.reduce((a, b) => Math.min(a, b), Infinity) : 0;
+    const hi = allVals.length ? allVals.reduce((a, b) => Math.max(a, b), -Infinity) : 1;
     const span = hi - lo || 1;
     const gutterW = rowsSrc.length > 1 ? Math.min(plotW * 0.25, d.scalePx(56)) : 0;
     const gridX = plotX + gutterW;
@@ -2323,7 +2331,7 @@ export function drawChromeChartPanel(
     const rowsSrc = [...chart.data]
       .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
       .slice(0, 10);
-    const maxV = Math.max(...rowsSrc.map((r) => r.value ?? 0), 1);
+    const maxV = rowsSrc.reduce((max, row) => Math.max(max, row.value ?? 0), 1);
     const rowH = plotH / Math.max(rowsSrc.length, 1);
     const rankW = d.scalePx(16);
     const nameW = Math.min(plotW * 0.3, d.scalePx(80));
@@ -2349,8 +2357,8 @@ export function drawChromeChartPanel(
     });
   } else {
     const values = chart.data.map((p) => p.value ?? 0);
-    const maxV = Math.max(...values, 0);
-    const minV = Math.min(...values, 0);
+    const maxV = values.reduce((a, b) => Math.max(a, b), 0);
+    const minV = values.reduce((a, b) => Math.min(a, b), 0);
     const span = maxV - minV || 1;
     // 网格
     ctx.strokeStyle = gridColor;
@@ -2656,7 +2664,7 @@ export function drawChromeInset(
 
   // 面板底 + 标题
   _chromePanel(d, x, y, boxW, boxH);
-  const label = el.text || (el.variant === 'location' ? '区位' : '概览');
+  const label = el.text || (el.variant === 'location' ? tNow('map.export.location') : tNow('map.export.overview'));
   ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
   ctx.font = `bold ${d.scalePx(10)}px ${d.style.fontFamily}`;
   _text(d, label.slice(0, 24), x + d.scalePx(8), y + d.scalePx(14), 'left');
@@ -2670,7 +2678,8 @@ export function drawChromeInset(
   let west = bbox.west, south = bbox.south, east = bbox.east, north = bbox.north;
   if (boundary) {
     for (const [lng, lat] of boundary) {
-      west = Math.min(west, lng); east = Math.max(east, lng);
+      const unwrapped = unwrapLongitude(lng, bbox);
+      west = Math.min(west, unwrapped); east = Math.max(east, unwrapped);
       south = Math.min(south, lat); north = Math.max(north, lat);
     }
   }
@@ -2683,7 +2692,7 @@ export function drawChromeInset(
   const offX = innerX + (innerW - drawW) / 2;
   const offY = innerY + (innerH - drawH) / 2;
   const project = (lng: number, lat: number): [number, number] => [
-    offX + (lng - west) * scale,
+    offX + (unwrapLongitude(lng, bbox) - west) * scale,
     offY + (north - lat) * scale,
   ];
 
@@ -2720,7 +2729,7 @@ export function drawChromeInset(
   ctx.stroke();
   ctx.setLineDash([]);
   // 主图范围指示框（相交裁剪）
-  const main = el.insetMainBbox;
+  const main = el.insetMainBbox ? alignWrappedBounds(el.insetMainBbox, bbox) : undefined;
   if (main) {
     const cE = Math.min(Math.max(main.east, west), east);
     const cW = Math.min(Math.max(main.west, west), east);

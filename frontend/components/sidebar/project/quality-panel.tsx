@@ -11,7 +11,7 @@
  * C 线 QualityReport 实体合并后，结果视图经 useProjectQuality 适配层增强。
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Database, ShieldCheck, Wand2 } from 'lucide-react';
 
 import { ConfirmAction } from '@/components/shared/confirm-action';
@@ -46,11 +46,23 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
   const t = useT('project');
   const ds = useProjectDatasets(projectId);
   const q = useProjectQuality(projectId);
+  const resetQuality = q.reset;
   const addToast = useToastStore((s) => s.addToast);
   const [selectedId, setSelectedId] = useState('');
   const [ops, setOps] = useState<string[]>([...KNOWN_OPERATIONS]);
   const [issueCodes, setIssueCodes] = useState<string[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const [sampleCount, setSampleCount] = useState<{ count: number; total: number } | null>(null);
+  const identity = `${projectId}:${selectedId}`;
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  useEffect(() => {
+    resetQuality();
+    setIssueCodes([]);
+    setPreviewError(null);
+    setSampleCount(null);
+  }, [identity, resetQuality]);
 
   const selected = ds.datasets.find((d) => d.id === selectedId) ?? null;
   const reportCodes = q.report
@@ -59,6 +71,7 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
 
   const handleAudit = async () => {
     if (!selected) return;
+    const auditIdentity = identity;
     setPreviewError(null);
     if (!selected.source_ref) {
       setPreviewError(t('quality.noSourceRef'));
@@ -67,7 +80,9 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
     let features: Array<Record<string, unknown>>;
     try {
       const preview = await fetchCatalogItemPreview(selected.source_ref, { limit: 100 });
+      if (identityRef.current !== auditIdentity) return;
       features = preview.features;
+      setSampleCount({ count: features.length, total: preview.total_count });
     } catch (err: unknown) {
       if (isAbortError(err)) return;
       setPreviewError(parseApiErrorDetail(err, t('quality.previewFetchFailed')));
@@ -92,7 +107,7 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
   };
 
   const handleRepair = async () => {
-    if (!selected) return;
+    if (!selected || q.report?.dataset_id !== selected.id || (sampleCount && sampleCount.total > sampleCount.count)) return;
     const result = await q.runRepair({
       operations: ops.length > 0 ? ops : undefined,
       issue_codes: issueCodes.length > 0 ? issueCodes : undefined,
@@ -153,6 +168,9 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
 
       {q.busy && q.phase === 'repairing' && <LoadingState label={t('k1wdbts1')} />}
 
+      {sampleCount && sampleCount.total > sampleCount.count && (
+        <InlineNotice variant="warning">{t('quality.sampleOnly', sampleCount)}</InlineNotice>
+      )}
       {q.report && (
         <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2">
           <div className="flex items-center justify-between">
@@ -230,7 +248,7 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
               onConfirm={() => {
                 void handleRepair();
               }}
-              disabled={!authed || q.busy || !selected}
+              disabled={!authed || q.busy || !selected || q.report?.dataset_id !== selected.id || !!(sampleCount && sampleCount.total > sampleCount.count)}
             />
           </div>
         </div>

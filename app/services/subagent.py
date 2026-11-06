@@ -37,7 +37,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING, Union
 
 from app.services.distributed_lock import LockContentionError
-from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -150,6 +149,7 @@ def select_tools_for_subagent(
     extra_tools: Optional[list[str]] = None,
     exclude_tier3: bool = True,
     allow_mutation: Optional[bool] = None,
+    tool_blacklist: Optional[list[str]] = None,
 ) -> list[dict]:
     """根据 domains + 显式工具白名单挑选子代理可见的 schema 子集。
 
@@ -171,7 +171,7 @@ def select_tools_for_subagent(
 
     domain_set = set(domains or [])
     extra_set = set(extra_tools or [])
-    _BLACKLIST_ALWAYS = {"spawn_subagent", "propose_plan", "execute_plan", "get_plan_status"}
+    _BLACKLIST_ALWAYS = {"spawn_subagent", "propose_plan", "execute_plan", "get_plan_status"} | set(tool_blacklist or [])
     _READONLY_CLASSES = {
         SideEffectClass.PURE,
         SideEffectClass.DETERMINISTIC_COMPUTE,
@@ -223,9 +223,9 @@ class AllowlistDispatchRegistry:
     模块级定义以便直接测试。
     """
 
-    def __init__(self, inner: Any, allowed: "set[str]") -> None:
+    def __init__(self, inner: Any, allowed: "set[str]", tool_blacklist: Optional[list[str]] = None) -> None:
         self._inner = inner
-        self._allowed = allowed
+        self._allowed = allowed - {"spawn_subagent", "propose_plan", "execute_plan", "get_plan_status"} - set(tool_blacklist or [])
 
     def dispatch(self, tool_name: str, *args: Any, **kwargs: Any):
         if tool_name not in self._allowed:
@@ -292,37 +292,16 @@ class SubagentDispatcher:
         from app.services.subagent_roles import (
             BudgetExceeded,
             SubagentBudget,
-            SubagentRole as _SubagentRole,
-            get_subagent_role,
             wrap_dispatch_with_budget,
         )
 
-        role_obj: Optional[_SubagentRole]
-        if isinstance(role, _SubagentRole):
-            role_obj = role
-        elif isinstance(role, str):
-            role_obj = get_subagent_role(role)
-        else:
-            role_obj = None
-        if role_obj is not None:
-            if role_obj.allowed_domains:
-                domain_set = set(domains or [])
-                domains = sorted(
-                    domain_set & set(role_obj.allowed_domains)
-                    if domain_set else set(role_obj.allowed_domains)
-                )
-            max_rounds = min(max_rounds, role_obj.max_rounds)
-        allow_mutation = role_obj.allow_mutation if role_obj is not None else None
-
-        tool_subset = select_tools_for_subagent(
-            self.registry,
-            domains=domains,
-            extra_tools=extra_tools,
-            exclude_tier3=True,
-            allow_mutation=allow_mutation,
-        )
-        if role_obj is not None and role_obj.max_tool_calls == 0:
-            tool_subset = []
+        from app.services.agent_swarm.capability_observation import resolve_subagent_surface
+        surface = resolve_subagent_surface(self.registry, domains=domains, extra_tools=extra_tools,
+                                           max_rounds=max_rounds, role=role)
+        role_obj = surface.role
+        domains = surface.domains
+        max_rounds = surface.max_rounds
+        tool_subset = surface.schemas
         tool_names = [s["function"]["name"] for s in tool_subset]
         logger.info(
             "[Subagent] parent=%s role=%s task=%r tools=%d (%s)",
@@ -332,11 +311,7 @@ class SubagentDispatcher:
             ", ".join(tool_names[:8]) + ("..." if len(tool_names) > 8 else ""),
         )
 
-        # 记下父 session 启动前已有的 refs，结束后用差集得到子任务新增的 refs
-        try:
-            refs_before = set((await session_data_manager.list_refs(self.parent_session_id)).keys())
-        except Exception:
-            refs_before = set()
+        from app.lib.runtime.ref_capture import capture_created_refs
 
         sub_engine = self._build_sub_engine(tool_subset, max_rounds)
         # ADR-0103：子代理按角色档案路由模型（subagent_worker /
@@ -407,8 +382,6 @@ class SubagentDispatcher:
 
         parent_token = current_token()
         sub_token = CancellationToken(job_id=getattr(parent_token, "job_id", None))
-        if parent_token is not None:
-            parent_token.link(sub_token)
 
         # V5 W6：token/usage 记账 —— 子代理运行绑定专属（不注册的）
         # TurnEvidence，引擎既有 usage 通道（add_llm_usage）经 ContextVar
@@ -430,8 +403,8 @@ class SubagentDispatcher:
         _lineage = {
             "parent_turn_id": getattr(parent_ev, "turn_id", "") or "",
             "parent_session_id": self.parent_session_id,
-            "depth": _subagent_depth.get(0),
-            "role": role if isinstance(role, str) else getattr(role, "name", ""),
+            "depth": _subagent_depth.get(0) + 1,
+            "role": role if isinstance(role, str) else getattr(role, "name", "adhoc"),
         }
 
         def _sub_result(**kw) -> SubagentResult:
@@ -476,13 +449,16 @@ class SubagentDispatcher:
             )
         try:
             with use_token(sub_token), _raise_subagent_depth():
-                with _bind_ev(sub_ev):
+                with _bind_ev(sub_ev), capture_created_refs() as child_refs:
+                    unlink_parent = parent_token.link(sub_token) if parent_token is not None else None
                     chat_task = asyncio.create_task(
                         sub_engine.chat(
                             message=wrapped_task_text,
                             session_id=self.parent_session_id,
                         )
                     )
+                if unlink_parent is not None:
+                    chat_task.add_done_callback(lambda _task: unlink_parent())
                 cancel_task = asyncio.create_task(sub_token.wait())
                 try:
                     # review R1 MAJOR：墙钟预算真实执行 —— asyncio.wait 带
@@ -624,12 +600,7 @@ class SubagentDispatcher:
         # 取消语义现在由令牌竞速显式判定（error="cancelled"），不再靠文案字符串猜测。
         _honest_success = bool(summary) and not sub_token.cancelled
 
-        # 子任务结束后新增的 refs
-        try:
-            refs_after = set((await session_data_manager.list_refs(self.parent_session_id)).keys())
-        except Exception:
-            refs_after = set()
-        new_refs = sorted(refs_after - refs_before)
+        new_refs = child_refs.snapshot()
 
         if not _honest_success:
             return _sub_result(

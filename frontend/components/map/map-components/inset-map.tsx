@@ -4,7 +4,7 @@ import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
 import { isFloating, placementStyle, positionClass, resolveVariant, stackedTopStyle } from './helpers';
 import type { RendererContext } from './types';
-import { bboxToBounds, validBounds, type GeoBounds } from '@/lib/map-components/geo-anchor';
+import { bboxToBounds, validBounds, unwrapLongitude, alignWrappedBounds, type GeoBounds } from '@/lib/map-components/geo-anchor';
 import { useT } from '@/lib/i18n/useT';
 
 /**
@@ -44,8 +44,9 @@ function dataBounds(b: GeoBounds, boundary?: [number, number][]): GeoBounds {
   let { west, south, east, north } = b;
   for (const [lng, lat] of boundary) {
     if (Number.isFinite(lng) && Number.isFinite(lat)) {
-      west = Math.min(west, lng);
-      east = Math.max(east, lng);
+      const unwrapped = unwrapLongitude(lng, b);
+      west = Math.min(west, unwrapped);
+      east = Math.max(east, unwrapped);
       south = Math.min(south, lat);
       north = Math.max(north, lat);
     }
@@ -64,7 +65,7 @@ function fitProjection(bounds: GeoBounds, w: number, h: number) {
   const offX = (w - drawW) / 2;
   const offY = (h - drawH) / 2;
   const project = (lng: number, lat: number): [number, number] => [
-    offX + (lng - bounds.west) * scale,
+    offX + (unwrapLongitude(lng, bounds) - bounds.west) * scale,
     offY + (bounds.north - lat) * scale, // y 向下翻转（北在上）
   ];
   return { project, drawW, drawH, scale };
@@ -101,9 +102,10 @@ function InsetMapView({ component, ctx }: { component: MapSpecComponent; ctx: Re
 
   // 主图范围：显式 mainBbox > 真实 map bounds（自动确定 —— 指示框跟随
   // 当前视口；无 bounds（测试/首次挂载）→ 不画指示框，只画范围示意）。
-  const mainBounds = parsed.mainBbox
+  const rawMainBounds = parsed.mainBbox
     ?? (validBounds(ctx.bounds ?? null) ? (ctx.bounds as GeoBounds) : undefined);
 
+  const mainBounds = rawMainBounds ? alignWrappedBounds(rawMainBounds, parsed.bbox) : undefined;
   const innerW = INSET_W - INSET_PAD * 2;
   const innerH = INSET_H - INSET_PAD * 2;
   const data = dataBounds(parsed.bbox, parsed.boundary);
@@ -125,7 +127,7 @@ function InsetMapView({ component, ctx }: { component: MapSpecComponent; ctx: Re
     );
     const se = proj.project(
       Math.min(Math.max(mainBounds.west, data.west), data.east),
-      Math.max(Math.min(mainBounds.south, data.south), data.north),
+      Math.min(Math.max(mainBounds.south, data.south), data.north),
     );
     const x = Math.min(nw[0], se[0]);
     const y = Math.min(nw[1], se[1]);

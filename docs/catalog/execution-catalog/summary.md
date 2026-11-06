@@ -5,7 +5,7 @@
 > ToolRegistry / RecipeRegistry（F07：docs/dev/f07-execution-catalog-design.md）。
 
 - catalog_version: 1
-- generation_fingerprint: `c76723cd73095e0988c7cc02b6ec6195`
+- generation_fingerprint: `9f01ee52e9cf4181baa0b9861dd8efb4`
 - 条目：capability 174 / algorithm 253 / tool 396 / recipe 166
 - deprecated 条目：0
 - provider 分布：{"core": 989}

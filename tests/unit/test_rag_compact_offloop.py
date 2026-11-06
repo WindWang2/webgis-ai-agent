@@ -1,8 +1,8 @@
 """
 KnowledgeEngine.compact_index must run compact() off the event loop.
 
-compact() re-embeds every active chunk via SentenceTransformer when the
-deleted-ratio crosses 20%. That is seconds-of-CPU work; if it runs on
+Explicit compact() reconstructs retained vectors and commits both index files.
+That is potentially seconds of CPU and filesystem work; if it runs on
 the uvicorn event loop it stalls every concurrent request until it
 finishes. PR #289 already moved index_document and search off the loop
 via asyncio.to_thread; this test pins the same contract for the
@@ -31,9 +31,10 @@ class _RecordingStore:
     def get_stats(self) -> Dict[str, Any]:
         return {"total_vectors": self._ntotal, "deleted_count": self._deleted}
 
-    def mark_deleted(self, doc_id: str) -> None:
+    def mark_deleted(self, doc_id: str, **kwargs) -> bool:
         self._deleted += 1
 
+        return True
     # The other Protocol methods aren't exercised here.
     def embed_texts(self, texts: List[str]) -> Any: raise NotImplementedError
     def add_vectors(self, vectors, chunks_metadata) -> None: raise NotImplementedError
@@ -61,10 +62,8 @@ async def test_compact_index_runs_off_loop():
 
 
 @pytest.mark.asyncio
-async def test_delete_document_runs_compact_off_loop():
-    """delete_document triggers compact when the deleted ratio crosses 20%.
-    That compaction must also run off the loop — same thread-identity
-    contract as compact_index itself."""
+async def test_delete_document_keeps_compaction_for_explicit_maintenance():
+    """Interactive deletion soft-deletes only; full rebuild is explicit maintenance."""
     from app.services.rag.engine import KnowledgeEngine, TenantContext
 
     # ntotal=10, deleted=2 → ratio=0.20 → compact triggers.
@@ -73,8 +72,8 @@ async def test_delete_document_runs_compact_off_loop():
 
     await engine.delete_document("doc_x", tenant=TenantContext(user_id="alice"))
 
-    assert store.compact_calls == 1
-    assert store.compact_thread is not threading.current_thread()
+    assert store.compact_calls == 0
+    assert store.compact_thread is None
 
 
 @pytest.mark.asyncio

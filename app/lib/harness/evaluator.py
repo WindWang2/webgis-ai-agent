@@ -154,6 +154,8 @@ class HarnessEvaluator:
         checks: Dict[str, GateCheck] = {}
         all_passed = True
         for metric_name, target in self.thresholds.items():
+            if metric_name not in dims_evaluated:
+                raise ValueError(f"Unknown quality threshold: {metric_name}")
             evaluated = dims_evaluated[metric_name]
             score = metrics.get(metric_name, 0.0)
             if metric_name in INTERACTION_METRICS or metric_name in PRODUCT_METRICS:

@@ -87,7 +87,7 @@ async def _require_session(
         conv = (await db.execute(
             select(Conversation).where(Conversation.id == session_id)
         )).scalar_one_or_none()
-    if not authorize_session_write(conv, user.get("user_id"), owner_token):
+    if conv is None or not authorize_session_write(conv, user.get("user_id"), owner_token):
         raise HTTPException(status_code=404, detail="Session not found")
     return session_id
 

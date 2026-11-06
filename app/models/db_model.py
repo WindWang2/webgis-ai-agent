@@ -8,6 +8,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+from app.core.owner_tokens import OwnerTokenColumn
 
 class Organization(Base):
     """组织机构表"""
@@ -140,8 +141,8 @@ class AnalysisTask(Base):
     display_name = Column(String(200), nullable=True)
     #: 会话归属。匿名会话的权限证明链：session_id → Conversation.owner_token
     session_id = Column(String(255), nullable=True)
-    #: 匿名归属令牌（镜像 Conversation.owner_token 的 SEC-08 模式）
-    owner_token = Column(String(64), nullable=True)
+    #: Anonymous ownership verifier; SQL binds hash transport credentials.
+    owner_token = Column(OwnerTokenColumn(), nullable=True)
     project_id = Column(String(255), nullable=True)
     #: Agent 侧关联（形成 Agent Turn → Tool Step → Durable Job 链）
     run_id = Column(String(64), nullable=True)
@@ -219,11 +220,10 @@ class Conversation(Base):
     # #1417: CASCADE so deleting a user does not leave owner_token-orphan sessions
     user_id = Column(String(255), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     title = Column(String(200), default="新对话")
-    # SEC-08：匿名会话的 owner_token。仅新建的匿名会话会生成（非 NULL）。
-    # NULL = grandfather（旧匿名会话，知道 session_id 即能力令牌）。
-    # 认证会话从不依赖此列。访问带 token 的匿名会话需通过 X-Session-Token
-    # 提供匹配值（见 history_service_async.get_session）。
-    owner_token = Column(String(64), nullable=True)
+    # SHA-256 anonymous credential verifier. NULL legacy rows fail closed.
+    # Only the creating request receives the raw credential; subsequent
+    # requests prove ownership with X-Session-Token, never the stored digest.
+    owner_token = Column(OwnerTokenColumn(), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -419,9 +419,9 @@ class GeoComputeClusterRun(Base):
     #: MAX(dispatch_seq) GROUP BY tenant 重建 —— coordinator 无隐藏内存态）
     dispatch_seq = Column(Integer, nullable=True)
     #: 集群账本预留（reclaim 时按此精确归还 —— 与状态转移同事务）
-    reserved_rows = Column(Integer, nullable=False, default=0)
-    reserved_bytes = Column(Integer, nullable=False, default=0)
-    reserved_units = Column(Integer, nullable=False, default=0)
+    reserved_rows = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
+    reserved_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
+    reserved_units = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
     #: V8：内存/GPU 维度预留（同 reserved_* 精确归还纪律）
     reserved_mem_mb = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
     reserved_gpu = Column(Integer, nullable=False, default=0)
@@ -574,9 +574,9 @@ class GeoComputeResourceUsage(Base):
     #: ADR-0139：控制面信任域列（NULL = global/历史哈希行不可逆推）。
     #: 新写入在调用方持真实 org_id 时打标（t: 作用域行），仅作审计投影。
     org_id = Column(String(255), nullable=True)
-    usage_rows = Column(Integer, nullable=False, default=0)
+    usage_rows = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
     usage_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
-    usage_units = Column(Integer, nullable=False, default=0)
+    usage_units = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
     limit_rows = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
     limit_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
     limit_units = Column(Integer, nullable=True)

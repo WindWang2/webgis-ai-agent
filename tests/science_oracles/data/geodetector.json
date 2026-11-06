@@ -544,12 +544,12 @@
     "atol": 1e-06,
     "kind": "allclose",
     "rtol": 1e-08,
-    "select": "t_statistic",
-    "value": -3.7002447095
+    "select": "f_statistic",
+    "value": 0.17961836725924768
    },
-   "id": "ecological_t_strong",
+   "id": "ecological_f_strong",
    "kwargs": {},
-   "note": "t = [SSW₁/(n−m₁) − SSW₂/(n−m₂)] / sqrt(…) 独立复算",
+   "note": "F=SSW1/SSW2; independent 50-digit Decimal group residual sums",
    "target": "app.lib.geo_analysis.statistics:geodetector_ecological"
   },
   {
@@ -638,11 +638,11 @@
     "kind": "allclose",
     "rtol": 1e-08,
     "select": "p_value",
-    "value": 0.001249336284
+    "value": 0.00011369689624946595
    },
    "id": "ecological_p_strong",
    "kwargs": {},
-   "note": "双侧 Student t（df=n−2）独立复算",
+   "note": "Two-sided F(n-1,n-1); independent incomplete-beta CDF",
    "target": "app.lib.geo_analysis.statistics:geodetector_ecological"
   },
   {
@@ -729,11 +729,11 @@
    "expect": {
     "kind": "exact",
     "select": "df",
-    "value": 22
+    "value": 23
    },
    "id": "ecological_df_strong",
    "kwargs": {},
-   "note": "保守自由度 n−2",
+   "note": "Equal sample ecological F: df=n-1",
    "target": "app.lib.geo_analysis.statistics:geodetector_ecological"
   },
   {
@@ -914,12 +914,12 @@
     "atol": 1e-06,
     "kind": "allclose",
     "rtol": 1e-08,
-    "select": "t_statistic",
-    "value": 0.4866625137
+    "select": "f_statistic",
+    "value": 1.162878331086739
    },
-   "id": "ecological_t_weak",
+   "id": "ecological_f_weak",
    "kwargs": {},
-   "note": "t = [SSW₁/(n−m₁) − SSW₂/(n−m₂)] / sqrt(…) 独立复算",
+   "note": "F=SSW1/SSW2; independent 50-digit Decimal group residual sums",
    "target": "app.lib.geo_analysis.statistics:geodetector_ecological"
   },
   {
@@ -1008,11 +1008,11 @@
     "kind": "allclose",
     "rtol": 1e-08,
     "select": "p_value",
-    "value": 0.63131064964
+    "value": 0.7205206348947868
    },
    "id": "ecological_p_weak",
    "kwargs": {},
-   "note": "双侧 Student t（df=n−2）独立复算",
+   "note": "Two-sided F(n-1,n-1); independent incomplete-beta CDF",
    "target": "app.lib.geo_analysis.statistics:geodetector_ecological"
   },
   {
@@ -1099,11 +1099,11 @@
    "expect": {
     "kind": "exact",
     "select": "df",
-    "value": 22
+    "value": 23
    },
    "id": "ecological_df_weak",
    "kwargs": {},
-   "note": "保守自由度 n−2",
+   "note": "Equal sample ecological F: df=n-1",
    "target": "app.lib.geo_analysis.statistics:geodetector_ecological"
   },
   {

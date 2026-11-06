@@ -660,6 +660,6 @@ def sgs_simulation_surface(
             "p90": float(hi),
         }
         for cell, p50, sd, lo, hi in zip(
-            target_cells, ens.p50, ens.std, ens.p10, ens.p90)
+            target_cells, ens.p50, ens.std, ens.p10, ens.p90, strict=True)
     ]
     return {"records": records, "metadata": metadata}

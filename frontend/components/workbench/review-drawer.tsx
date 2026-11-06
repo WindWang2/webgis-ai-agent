@@ -81,6 +81,8 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
   const state = getReviewState();
   const [commentDraft, setCommentDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   useDialogFocus({ open, containerRef: panelRef, onEscape: onClose });
 
@@ -115,7 +117,9 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
   const act = useCallback(
     async (action: 'submit' | 'decisions' | 'merge' | 'rebase' | 'withdraw', body?: Record<string, unknown>) => {
       const id = state.selectedId;
-      if (id == null) return;
+      if (id == null || busyRef.current) return;
+      busyRef.current = true;
+      setBusy(true);
       setError(null);
       try {
         const detail = await reviewAction(id, action, body);
@@ -143,6 +147,9 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
         } else {
           setError(err instanceof Error ? err.message : t('errorActionFailed'));
         }
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
       }
     },
     [state.selectedId, state.sessionId, t],
@@ -278,6 +285,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                 {status === 'draft' && (
                   <button
                     className="rounded border px-2 py-1 text-xs"
+                    disabled={busy}
                     onClick={() => void act('submit', { base_revision: detail.current_revision })}
                     data-testid="review-submit"
                   >
@@ -288,20 +296,23 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                   <>
                     <button
                       className="rounded border px-2 py-1 text-xs text-success-fg"
-                      onClick={() => void act('decisions', { decision: 'approve' })}
+                      disabled={busy}
+                    onClick={() => void act('decisions', { decision: 'approve' })}
                       data-testid="review-approve"
                     >
                       <CheckCircle2 className="mr-1 inline h-3 w-3" />{t('actionApprove')}
                     </button>
                     <button
                       className="rounded border px-2 py-1 text-xs"
-                      onClick={() => void act('decisions', { decision: 'request_changes' })}
+                      disabled={busy}
+                    onClick={() => void act('decisions', { decision: 'request_changes' })}
                     >
                       {t('actionRequestChanges')}
                     </button>
                     <button
                       className="rounded border px-2 py-1 text-xs text-danger-fg"
-                      onClick={() => void act('decisions', { decision: 'reject' })}
+                      disabled={busy}
+                    onClick={() => void act('decisions', { decision: 'reject' })}
                     >
                       <XCircle className="mr-1 inline h-3 w-3" />{t('actionReject')}
                     </button>
@@ -310,6 +321,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                 {status === 'approved' && detail.conflict && (
                   <button
                     className="rounded border px-2 py-1 text-xs"
+                    disabled={busy}
                     onClick={() => void act('rebase')}
                     data-testid="review-rebase"
                   >
@@ -319,6 +331,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                 {canMerge && (
                   <button
                     className="rounded bg-primary-surface px-2 py-1 text-xs"
+                    disabled={busy}
                     onClick={() => void act('merge')}
                     data-testid="review-merge"
                   >
@@ -328,6 +341,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                 {status !== 'merged' && status !== 'withdrawn' && (
                   <button
                     className="rounded border px-2 py-1 text-xs opacity-70"
+                    disabled={busy}
                     onClick={() => void act('withdraw')}
                   >
                     {t('actionWithdraw')}

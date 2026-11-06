@@ -14,6 +14,7 @@ legacy ChatEngine（tool_pipeline）与 Pi bridge 两条执行路径都经此模
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections import OrderedDict
 import copy
 from datetime import datetime, timezone
@@ -44,6 +45,7 @@ _harness: Optional[PiAgentHarness] = None
 _harnesses: "OrderedDict[str, PiAgentHarness]" = OrderedDict()
 _cartography_eval_cache: "OrderedDict[tuple[str, str, int, str], dict[str, Any]]" = OrderedDict()
 _cartography_eval_locks: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
+_cartography_eval_registry_guard = threading.RLock()
 _CARTOGRAPHY_EVAL_LOCKS_LIMIT = 256
 _deleted_cartography_sessions: "OrderedDict[str, None]" = OrderedDict()
 _DELETED_SESSION_TOMBSTONE_LIMIT = 1_024
@@ -141,36 +143,43 @@ def _lock_in_use(lock: asyncio.Lock) -> bool:
 
 def _get_cartography_eval_lock(session_id: str) -> asyncio.Lock:
     """Get or create per-session cartography evaluation lock with LRU bounds."""
-    try:
-        current_loop = asyncio.get_running_loop()
-    except RuntimeError:
-        current_loop = None
+    with _cartography_eval_registry_guard:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
 
-    lock = _cartography_eval_locks.get(session_id)
-    if lock is not None:
-        lock_loop = getattr(lock, "_loop", None)
-        if lock_loop is not None and lock_loop is not current_loop:
-            lock = asyncio.Lock()
-            _cartography_eval_locks[session_id] = lock
+        lock = _cartography_eval_locks.get(session_id)
+        if lock is not None:
+            lock_loop = getattr(lock, "_webgis_owner_loop", None) or getattr(lock, "_loop", None)
+            if lock_loop is not None and lock_loop is not current_loop:
+                if _lock_in_use(lock):
+                    raise RuntimeError("cartography session lock is active on another event loop")
+                lock = asyncio.Lock()
+                _cartography_eval_locks[session_id] = lock
+            if current_loop is not None:
+                setattr(lock, "_webgis_owner_loop", current_loop)
+            _cartography_eval_locks.move_to_end(session_id)
+            return lock
+
+        lock = asyncio.Lock()
+        if current_loop is not None:
+            setattr(lock, "_webgis_owner_loop", current_loop)
+        _cartography_eval_locks[session_id] = lock
         _cartography_eval_locks.move_to_end(session_id)
-        return lock
-
-    lock = asyncio.Lock()
-    _cartography_eval_locks[session_id] = lock
-    _cartography_eval_locks.move_to_end(session_id)
-    # #1681：逐出守卫 —— 持锁/有等待者的锁绝不逐出。此前无守卫逐出让同一
-    # 会话可同时持两把「互斥锁」（被逐出会话的下一次取锁拿到新对象），
-    # MapSpec 评审与 harness 写入并发执行且无任何异常迹象。对齐
-    # execution_engine._evict_idle_locks（F1）范本：全表持锁时暂留
-    # （表略越界），压力消退后由后续调用回收，绝不静默双持。
-    while len(_cartography_eval_locks) > _CARTOGRAPHY_EVAL_LOCKS_LIMIT:
-        for sid in list(_cartography_eval_locks):
-            if not _lock_in_use(_cartography_eval_locks[sid]):
-                del _cartography_eval_locks[sid]
+        # #1681：逐出守卫 —— 持锁/有等待者的锁绝不逐出。此前无守卫逐出让同一
+        # 会话可同时持两把「互斥锁」（被逐出会话的下一次取锁拿到新对象），
+        # MapSpec 评审与 harness 写入并发执行且无任何异常迹象。对齐
+        # execution_engine._evict_idle_locks（F1）范本：全表持锁时暂留
+        # （表略越界），压力消退后由后续调用回收，绝不静默双持。
+        while len(_cartography_eval_locks) > _CARTOGRAPHY_EVAL_LOCKS_LIMIT:
+            for sid in list(_cartography_eval_locks):
+                if not _lock_in_use(_cartography_eval_locks[sid]):
+                    del _cartography_eval_locks[sid]
+                    break
+            else:
                 break
-        else:
-            break
-    return lock
+        return lock
 
 
 def _build_session_harness(session_id: str) -> PiAgentHarness:
@@ -489,16 +498,18 @@ async def _persist_cartographic_issued_action(
         if await _get_field(session_id, "_cartographic_deleted") is True:
             return
         context = await _get_field(session_id, "_cartographic_harness_context")
+        revision = await _get_field(session_id, "_cartographic_mutation_revision")
     else:
         state = await session_data_manager.get_map_state(session_id)
         if state.get("_cartographic_deleted") is True:
             return
         context = state.get("_cartographic_harness_context")
+        revision = state.get("_cartographic_mutation_revision")
     if not isinstance(context, dict) or context.get("session_id") != session_id:
         return
     try:
         if int(context.get("mutation_revision", 0)) != int(
-            state.get("_cartographic_mutation_revision", 0)
+            revision or 0
         ):
             return
     except (TypeError, ValueError):
@@ -1001,7 +1012,10 @@ async def _advance_runtime_cartographic_repair(
     }
     for attempt in attempts:
         ack = acks_by_id.get(str(attempt.get("action_id") or ""))
-        attempt["status"] = str(ack.get("status")) if ack else "issued"
+        if ack:
+            attempt["status"] = str(ack.get("status"))
+        elif not str(attempt.get("kind") or "").startswith("commit"):
+            attempt["status"] = "issued"
         if ack and ack.get("error"):
             attempt["error"] = str(ack["error"])[:200]
     repair_state["attempts"] = attempts

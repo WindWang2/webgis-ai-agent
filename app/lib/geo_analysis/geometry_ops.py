@@ -46,7 +46,7 @@ def _crs_unit_factor(crs: Optional[CRS]) -> float:
                 and "meter" not in axis.unit_name and factor != 1.0):
             return factor
     except Exception:  # noqa: BLE001 — 不可判定 → 缺省
-        pass
+        logging.getLogger(__name__).warning('Projected unit lookup failed; retaining the documented unit-factor fallback', exc_info=True)
     return 1.0
 
 
@@ -143,7 +143,8 @@ def voronoi_polygons(
             poly = poly.intersection(clip_box)
             if poly.is_empty:
                 continue
-            props = {k: v for k, v in gdf.iloc[i].items() if k != "geometry"}
+            from app.lib.geo_analysis.statistics import _feature_props
+            props = _feature_props(gdf.iloc[i])
             _f = _crs_unit_factor(gdf.crs)
             props["area_km2"] = round(
                 float(poly.area) * _f * _f / 1e6, 4)
@@ -154,7 +155,7 @@ def voronoi_polygons(
     # Batch CRS transform: one GeoSeries instead of N per-polygon calls
     if raw_polys:
         gs = gpd.GeoSeries([p for p, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
-        for (poly, props), poly_wgs84 in zip(raw_polys, gs):
+        for (_poly, props), poly_wgs84 in zip(raw_polys, gs, strict=True):
             out_features.append({
                 "type": "Feature",
                 "geometry": mapping(poly_wgs84),

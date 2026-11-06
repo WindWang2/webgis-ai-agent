@@ -1,14 +1,14 @@
 """Map export API tests"""
 import io
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
 from app.api.routes import map as _mod
-from app.core.auth import get_current_user_with_version
+from app.core.auth import get_current_user_with_version, get_current_user_optional_with_version
 from pathlib import Path
 from app.services import export_paths as _export_paths
 
@@ -25,6 +25,7 @@ os.makedirs(_TEST_EXPORT_DIR, exist_ok=True)
 def app():
     app = FastAPI()
     app.dependency_overrides[get_current_user_with_version] = lambda: _mock_user
+    app.dependency_overrides[get_current_user_optional_with_version] = lambda: _mock_user
     app.include_router(_mod.router, prefix="/api/v1")
     return app
 
@@ -36,6 +37,14 @@ async def client(app):
         yield c
 
 
+
+@pytest.fixture(autouse=True)
+def isolated_exports(tmp_path, monkeypatch):
+    monkeypatch.setattr(__import__(__name__, fromlist=["_TEST_EXPORT_DIR"]), "_TEST_EXPORT_DIR", str(tmp_path))
+    _mod._EXPORT_OWNERS.clear()
+    yield
+    _mod._EXPORT_OWNERS.clear()
+
 # ─── PNG upload tests ─────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -46,9 +55,8 @@ async def test_upload_map_export_no_filename(client):
 
 @pytest.mark.asyncio
 async def test_upload_map_export_success(client):
-    fake_content = b"fake-png-data"
-    with patch("builtins.open", MagicMock()), \
-         patch.object(_export_paths, "exports_root", lambda: Path(_TEST_EXPORT_DIR)):
+    fake_content = _make_tiny_png()
+    with patch.object(_export_paths, "exports_root", lambda: Path(_TEST_EXPORT_DIR)):
         resp = await client.post(
             "/api/v1/export",
             files={"file": ("map.png", fake_content, "image/png")},
@@ -62,22 +70,23 @@ async def test_upload_map_export_success(client):
 
 @pytest.mark.asyncio
 async def test_download_map_export_not_found(client):
-    with patch.object(_export_paths, "exports_root", lambda: Path("/tmp/nonexistent_exports")):
-        resp = await client.get("/api/v1/export/download/nonexistent.png")
-        assert resp.status_code == 404
+    with patch.object(_export_paths, "exports_root", lambda: Path(_TEST_EXPORT_DIR)):
+        uploaded = await client.post("/api/v1/export", files={"file": ("map.png", _make_tiny_png(), "image/png")})
+        assert uploaded.status_code == 200
+        filename = uploaded.json()["filename"]
+        (Path(_TEST_EXPORT_DIR) / filename).unlink()
+        response = await client.get(f"/api/v1/export/download/{filename}")
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_upload_map_export_invalid_ext_becomes_png(client):
-    with patch("builtins.open", MagicMock()), \
-         patch.object(_export_paths, "exports_root", lambda: Path(_TEST_EXPORT_DIR)):
+async def test_upload_map_export_unsupported_format_rejected(client):
+    with patch.object(_export_paths, "exports_root", lambda: Path(_TEST_EXPORT_DIR)):
         resp = await client.post(
             "/api/v1/export",
-            files={"file": ("map.bmp", b"data", "image/bmp")},
+            files={"file": ("map.bmp", _make_tiny_png(), "image/bmp")},
         )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["filename"].endswith(".png")
+        assert resp.status_code == 415
 
 
 # ─── PDF export tests ─────────────────────────────────────────────────────────
@@ -135,6 +144,7 @@ async def test_download_pdf_media_type(tmp_path):
     with patch.object(_export_paths, "exports_root", lambda: Path(str(tmp_path))):
         app = FastAPI()
         app.dependency_overrides[get_current_user_with_version] = lambda: _mock_user
+        app.dependency_overrides[get_current_user_optional_with_version] = lambda: _mock_user
         app.include_router(_mod.router, prefix="/api/v1")
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:

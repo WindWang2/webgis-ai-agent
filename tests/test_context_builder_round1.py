@@ -61,7 +61,7 @@ def test_format_style_summary_choropleth():
     style = {"type": "choropleth", "field": "pop", "breaks": [0, 100, 200, 500], "colors": []}
     out = format_style_summary(style)
     assert out is not None
-    assert "field=pop" in out
+    assert "field=<untrusted_feature_property>pop</untrusted_feature_property>" in out
     assert "分级=3" in out
     assert "0.00~500.00" in out
 
@@ -69,11 +69,11 @@ def test_format_style_summary_choropleth():
 def test_format_style_summary_lisa():
     out = format_style_summary({"type": "lisa", "field": "income"})
     assert out is not None
-    assert "LISA" in out and "field=income" in out
+    assert "LISA" in out and "field=<untrusted_feature_property>income</untrusted_feature_property>" in out
 
 
 def test_format_style_summary_plain_color():
-    assert format_style_summary({"color": "#abcdef"}) == "色=#abcdef"
+    assert format_style_summary({"color": "#abcdef"}) == "色=<untrusted_feature_property>#abcdef</untrusted_feature_property>"
 
 
 def test_format_style_summary_none_input():
@@ -104,7 +104,7 @@ async def test_summary_renders_thematic_style(session_with_polygon_layer):
     ])
     summary = await build_map_state_summary(sid)
     assert "专题图" in summary
-    assert "field=pop" in summary
+    assert "field=<untrusted_feature_property>pop</untrusted_feature_property>" in summary
 
 
 def test_base_layer_catalog_strings_match_canonical_list():

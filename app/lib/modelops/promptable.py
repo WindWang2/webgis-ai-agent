@@ -55,6 +55,8 @@ class PromptSpec:
             if not (np_isfinite(x) and np_isfinite(y)):
                 raise DescriptorError("point prompt contains non-finite coordinate")
         for bx, by, bw, bh in self.boxes:
+            if not all(np_isfinite(value) for value in (bx, by, bw, bh)):
+                raise DescriptorError("box prompt contains non-finite coordinate or extent")
             if bw <= 0 or bh <= 0:
                 raise DescriptorError("box prompt must have positive width/height")
         if self.anchor_box is not None:

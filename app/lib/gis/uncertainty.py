@@ -107,7 +107,7 @@ class StatisticalSignificance(BaseModel):
     statistic_name: str = ""               # "Gi*" / "Moran's I" / "Mann-Kendall S"
     statistic_value: Optional[float] = None
     p_value: Optional[float] = None
-    method: Literal["permutation", "analytic_normal", "exact", "bootstrap", ""] = ""
+    method: Literal["permutation", "analytic_normal", "analytic_f", "exact", "bootstrap", ""] = ""
     permutations: Optional[int] = None
     multiple_testing: str = ""             # "BH-FDR" / ""（未校正）
     alternative: str = ""                  # "two-sided" / "greater" / ...

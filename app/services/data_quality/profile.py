@@ -229,6 +229,8 @@ def build_data_quality_profile(
 
     rules_overall = ""
     if rule_report is not None:
+        if "rules" not in checks_run:
+            checks_run.append("rules")
         rules_overall = str(rule_report.get("overall_status", "") or "")
         sections["rules"] = {
             "overall_status": rules_overall,

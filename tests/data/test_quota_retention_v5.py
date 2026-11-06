@@ -861,7 +861,7 @@ def test_data_gc_endpoints_plan_and_confirm_gate(db, monkeypatch, tmp_path):
 
     with SessionLocal() as s:
         result = execute_project_data_gc(
-            project_id=pid, data=DataGcExecuteRequest(confirm=True),
+            project_id=pid, data=DataGcExecuteRequest(confirm=True, expected_plan_fingerprint=plan_body["plan_fingerprint"]),
             db=s, user={"user_id": _OWNER})
     assert result["retention"]["deleted_revision_count"] == 1
     assert result["retention"]["deleted_blobs"] == [key]

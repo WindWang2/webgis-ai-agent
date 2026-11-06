@@ -55,7 +55,8 @@ describe('RuntimeInspector', () => {
     expect(screen.getByTestId('wf-node-cap:blocked')).toHaveTextContent('BLOCKED');
     expect(screen.getByText('复用')).toBeInTheDocument();
     expect(screen.getByText(/参数 distance 变更/)).toBeInTheDocument();
-    expect(screen.getByText(/CRS_CLASS_MISMATCH/)).toBeInTheDocument();
+    expect(screen.getAllByText(/CRS_CLASS_MISMATCH/)).toHaveLength(2);
+    expect(screen.getByText(/cap:blocked:/)).toBeInTheDocument();
   });
 
   it('shows error notice when the fetcher rejects', async () => {

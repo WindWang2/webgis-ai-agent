@@ -343,6 +343,7 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
             manifest.parameter_contracts[cid] = {
                 "version": contract.version,
                 "parameters": sorted(p.name for p in contract.parameters),
+                "semantics": contract.model_dump(mode="json"),
             }
     except Exception as e:  # noqa: BLE001
         _warn("parameter_contract_registry_unavailable", str(e))
@@ -394,11 +395,8 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
                     f"{aid}（planned）候选未注册: {missing_tools}",
                 )
         elif proj["tool_candidates"] and missing_tools == proj["tool_candidates"]:
-            # v2(review R3-P2-4)：全候选缺失降为 warning —— 根因通常是
-            # init_tools 的单模块加载失败（环境相关，已有日志），fatal 会
-            # 把可降级运行变成启动砖。静态种子错误（悬空 capability/别名/
-            # recipe）仍 fatal。
-            _warn(
+            # Native algorithms without any registered candidate cannot execute.
+            _fatal(
                 "algorithm_no_tool",
                 f"{aid} 的全部候选工具不存在（模块加载失败？）: {missing_tools}",
             )

@@ -22,7 +22,7 @@
 import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type BrowserContext } from "playwright";
 import { analyseCanvas, isBlank, type PixelStats } from "./canvas-analysis";
 import { colorWithinTolerance, dominantColorInWindow } from "./probes";
 
@@ -103,13 +103,16 @@ function startStaticServer(root: string): { server: http.Server; port: number; s
     ".html": "text/html",
     ".json": "application/json",
     ".js": "application/javascript",
+    ".mjs": "application/javascript",
     ".css": "text/css",
     ".png": "image/png",
     ".mvt": "application/vnd.mapbox-vector-tile",
   };
   const server = http.createServer((req, res) => {
     // Only GET; deny anything that isn't a plain file under root (no traversal).
-    const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0]);
+    let urlPath: string;
+    try { urlPath = decodeURIComponent((req.url ?? "/").split("?")[0]); }
+    catch { res.writeHead(400); res.end("invalid path"); return; }
     if (req.method !== "GET" || urlPath.includes("..")) {
       res.writeHead(403);
       res.end("forbidden");
@@ -175,23 +178,37 @@ async function run(): Promise<RuntimeReport> {
 
   const report = emptyReport(null);
   let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
+  const deadline = Date.now() + args.timeout;
+  const remaining = () => Math.max(1, deadline - Date.now());
   // Keep screenshot PNG for pixel-color probes (reuse same buffer).
   let capturedPng: { width: number; height: number; data: Uint8Array | Buffer } | null = null;
   try {
     browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
+    context = await browser.newContext({
       viewport: { width: args.width, height: args.height },
     });
     // Start tracing up front so a later stop always has something to flush.
     // snapshots=true keeps memory bounded; screenshots are taken on stop.
     await context.tracing.start({ screenshots: true, snapshots: true });
+    // Resolve the pinned runtime from this install, so validation works without CDN access.
+    await context.route('https://unpkg.com/maplibre-gl@*/dist/*', async (route) => {
+      const filename = new URL(route.request().url()).pathname.split('/').pop() ?? '';
+      if (!/^maplibre-gl(?:-shared|-worker)?\.(?:mjs|css)$/.test(filename)) { await route.abort(); return; }
+      const localPath = path.resolve(import.meta.dirname, '../../node_modules/maplibre-gl/dist', filename);
+      await route.fulfill({ path: localPath, contentType: filename.endsWith('.css') ? 'text/css' : 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } });
+    });
     const page = await context.newPage();
+    page.setDefaultTimeout(remaining());
 
     page.on("console", (msg) => {
       if (msg.type() === "error") report.consoleErrors.push(msg.text());
     });
     page.on("pageerror", (err) => {
       report.pageErrors.push(err.message);
+    });
+    page.on("requestfailed", (request) => {
+      report.failedRequests.push({ url: request.url(), status: 0, method: request.method() });
     });
     page.on("response", (res) => {
       const status = res.status();
@@ -200,12 +217,12 @@ async function run(): Promise<RuntimeReport> {
       }
     });
 
-    await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded", timeout: args.timeout });
+    await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded", timeout: remaining() });
 
     // Wait for MapLibre load, then idle. The HTML template sets these globals.
-    await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__MAP_LOADED__ === true, { timeout: args.timeout });
+    await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__MAP_LOADED__ === true, { timeout: remaining() });
     report.mapLoaded = true;
-    await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__MAP_IDLE__ === true, { timeout: args.timeout });
+    await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__MAP_IDLE__ === true, { timeout: remaining() });
     report.mapIdle = true;
 
     // Capture the map canvas and analyse it.
@@ -401,16 +418,16 @@ async function run(): Promise<RuntimeReport> {
       }
     }
 
-    // Save a Playwright trace if requested, for post-hoc replay.
-    if (args.outDir) {
-      await context.tracing.stop({ path: path.join(args.outDir, "trace.zip") });
-    } else {
-      await context.tracing.stop();
-    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     report.fatalError = msg;
   } finally {
+    if (context) {
+      try {
+        if (args.outDir) { fs.mkdirSync(args.outDir, { recursive: true }); await context.tracing.stop({ path: path.join(args.outDir, 'trace.zip') }); }
+        else await context.tracing.stop();
+      } catch { /* launch/tracing may have failed before start */ }
+    }
     if (browser) await browser.close();
     await stop();
   }

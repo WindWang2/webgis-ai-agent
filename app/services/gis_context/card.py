@@ -65,6 +65,7 @@ class ContextCardReceipt:
     reuse_reject_reasons: List[str] = field(default_factory=list)
     #: Revalidation receipts resolved this turn (engine-produced).
     rtv_restored: int = 0
+    rtv_rejected: int = 0
     #: H09 — memory-graph transitions this turn (dependency-precise
     #: invalidations / successful recomputes).
     graph_staled: int = 0
@@ -255,7 +256,15 @@ def render_gis_context_card(
     # inflate text up to 5x, so bounding the input alone would leave the
     # rendered block size soft (review follow-up).
     body = _untrusted(mission_header + "\n" + "".join(lines), char_budget * 6)
-    body = body[:char_budget + 256]
+    limit = max(0, char_budget + 256)
+    if len(body) > limit:
+        suffix = "\n…（内容超预算省略）"
+        prefix = body[:max(0, limit - len(suffix))]
+        # Escape entities are atomic: never expose a partial '&amp' token.
+        if prefix.rfind("&") > prefix.rfind(";"):
+            prefix = prefix[:prefix.rfind("&")]
+        body = prefix + suffix[:limit]
+        rc.truncated = True
     text = f"<gis_context>\n<untrusted_gis_context>{body}</untrusted_gis_context>\n</gis_context>\n"
     rc.chars = len(text)
     return text

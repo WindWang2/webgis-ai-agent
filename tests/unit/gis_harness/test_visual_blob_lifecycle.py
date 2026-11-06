@@ -77,11 +77,11 @@ async def test_register_creates_ref_and_resolve_is_bound(sid_a, sid_b):
     assert resolve_visual_screenshot(entry, session_id=sid_a) is not None
     # 他会话猜同一 ref → 护栏拒绝（vref 在场且不含 sid_b）。
     assert resolve_visual_screenshot(entry, session_id=sid_b) is None
-    # vref 缺席（旧数据形状）→ 放行不惩罚历史。
+    # Missing ownership evidence fails closed, including legacy blobs.
     assert blob_has_live_ref(entry.sha256, sid_a) is True
     store = get_filesystem_blob_store()
     store.delete_blob(ref_key_for(entry.sha256))
-    assert blob_has_live_ref(entry.sha256, sid_b) is True
+    assert blob_has_live_ref(entry.sha256, sid_b) is False
 
 
 @pytest.mark.asyncio

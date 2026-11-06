@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
@@ -29,7 +29,7 @@ from app.schemas.chat_schema import (
     SessionPlanViewResponse,
     TableArtifactResponse,
 )
-from app.services.auth_history_bridge import require_owned_session
+from app.services.auth_history_bridge import get_owner_token, require_owned_session
 from app.services.session_plan import load_session_plan
 
 router = APIRouter()  # tags/前缀由挂载方（chat.router）提供，避免 include 时重复
@@ -108,6 +108,7 @@ async def get_session_chart_artifact(
     session_id: str,
     ref_id: str,
     _conv: Conversation = Depends(require_owned_session),
+    owner_token: Annotated[Optional[str], Depends(get_owner_token)] = None,
 ) -> dict:
     """chart_panel 的 ref-backed 数据通道（D2 ref 路径）。
 
@@ -128,7 +129,7 @@ async def get_session_chart_artifact(
         raise HTTPException(status_code=400, detail="非法 chart artifact ref")
     from app.services.session_data import session_data_manager
 
-    res = await session_data_manager.get_ref_data(session_id, ref_id)
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "图表数据不可用")
@@ -143,6 +144,7 @@ async def get_session_table_artifact(
     session_id: str,
     ref_id: str,
     _conv: Conversation = Depends(require_owned_session),
+    owner_token: Annotated[Optional[str], Depends(get_owner_token)] = None,
 ) -> dict:
     """table_panel 的 ref-backed 数据通道（Runtime V4 §10）。
 
@@ -161,7 +163,7 @@ async def get_session_table_artifact(
         raise HTTPException(status_code=400, detail="非法 table artifact ref")
     from app.services.session_data import session_data_manager
 
-    res = await session_data_manager.get_ref_data(session_id, ref_id)
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "表格数据不可用")

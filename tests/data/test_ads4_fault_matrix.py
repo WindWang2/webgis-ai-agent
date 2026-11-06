@@ -139,6 +139,11 @@ def build_matrix_case(protocol: str, fault: str, monkeypatch: pytest.MonkeyPatch
     bind their session at __init__ — the reverse order would dial for real)."""
     from tests.fixtures.data_fabric.fake_server import session_with_fake
 
+    import socket
+    original_dns = socket.getaddrinfo
+    def declared_fake_dns(host, port, *args, **kwargs):
+        return original_dns("93.184.216.34" if host == FAKE_HOST else host, port, *args, **kwargs)
+    monkeypatch.setattr(socket, "getaddrinfo", declared_fake_dns)
     routes, url = _build_protocol_routes(protocol, fault)
     session = session_with_fake(tuple(routes))
 

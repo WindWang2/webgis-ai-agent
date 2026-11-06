@@ -374,7 +374,7 @@ def tin_surface(
     # extrapolation) — omitted from records, counted in metadata.
     records = [
         {"h3_index": cell, "value": float(v)}
-        for cell, v in zip(target_cells, out) if np.isfinite(v)
+        for cell, v in zip(target_cells, out, strict=True) if np.isfinite(v)
     ]
     metadata["n_evaluated"] = int(n_cells)
     metadata["n_outside_hull"] = n_outside
@@ -627,7 +627,7 @@ def natural_neighbor_interpolation(
             pred[ci] = vals[i1[ci]]
             n_fallback += 1
             continue
-        pred[ci] = math.fsum(w * float(vals[i]) for w, i in zip(weights, order)) / total
+        pred[ci] = math.fsum(w * float(vals[i]) for w, i in zip(weights, order, strict=True)) / total
 
     meta = {
         "method": "natural_neighbor_sibson",
@@ -727,7 +727,7 @@ def natural_neighbor_surface(
     })
     records = [
         {"h3_index": cell, "value": float(v)}
-        for cell, v in zip(target_cells, out)
+        for cell, v in zip(target_cells, out, strict=True)
         if np.isfinite(v)
     ]
     if records:

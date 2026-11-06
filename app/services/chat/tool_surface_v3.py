@@ -65,9 +65,8 @@ def _semantic_retriever_spec() -> str:
 #: kill-switch 的 spec 取值（调用期 strip + lower 后命中）。
 _SEMANTIC_OFF_SPECS = frozenset({"off", "0", "disabled", "none"})
 def _resolve_semantic_spec() -> str:
-    explicit = os.getenv("TOOL_RETRIEVAL_SEMANTIC", "").strip()
-    if explicit:
-        return explicit
+    if "TOOL_RETRIEVAL_SEMANTIC" in os.environ:
+        return os.environ["TOOL_RETRIEVAL_SEMANTIC"].strip()
     try:
         from app.services.chat.semantic_retrieval import default_semantic_spec
 
@@ -282,7 +281,7 @@ class SurfaceSelection:
 
 
 def _load_semantic_retriever():
-    spec = (_semantic_retriever_spec() or "").strip()
+    spec = (_resolve_semantic_spec() or "").strip()
     if not spec or spec.lower() in _SEMANTIC_OFF_SPECS:
         return None
     if os.getenv("GIS_TOOL_SEMANTIC", "").strip() == "0":

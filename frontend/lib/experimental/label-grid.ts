@@ -1,4 +1,5 @@
 /**
+ * EXPERIMENTAL, not wired into live rendering.
  * label-grid —— 交互侧确定性网格碰撞（V11 W4.2，ADR-0164）。
  *
  * 交互标注现状（ADR-0126）：MapLibre 内置 `text-allow-overlap:false` 逐帧

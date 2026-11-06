@@ -2,7 +2,7 @@
 
 V2 闭环（HARNESS-V2）：把 ref cursor 的"解析"从字符串前缀检查升级为真实
 SessionStore 验证：存在 + 归属正确 session + payload 类型匹配。跨 session /
-不存在的 ref 返回 NOT_FOUND / WRONG_SESSION，绝不计为 resolved。
+不存在的 ref 返回 NOT_FOUND，绝不计为 resolved。
 
 ADR-0104 决策 #6(f)（RELOAD_REF durability）：session 内存 store 的 LRU/字节
 淘汰不再是终点 —— 淘汰时 payload 已 spill 到持久副本（session_data.ref_spill_store）。
@@ -74,7 +74,7 @@ def make_session_store_resolver(session_store: Any):
                 ref=ref or "",
                 session_id=session_id,
                 status=RefResolutionStatus.MALFORMED,
-                detail="does not match ref:<type>:<id>",
+                detail="does not match ref:<type>-<id>",
             )
         expected_type, _seg = m.group(1), m.group(2)
         resolution = RefResolution(

@@ -15,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import DBAPIError
 
 from app.api.routes import upload as _mod
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user_optional_with_version
 
 _mock_user = {"user_id": "test-user"}
 
@@ -40,6 +40,12 @@ async def app(tmp_path, monkeypatch):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    from app.models.db_model import User, Conversation
+    async with session() as db:
+        db.add(User(id="test-user", username="cleanup-user", email="cleanup@example.test", role="editor", is_active=True))
+        db.add(Conversation(id="sess-issue546-upload", user_id="test-user"))
+        await db.commit()
+
     @asynccontextmanager
     async def test_db_session():
         async with session() as s:
@@ -57,7 +63,7 @@ async def app(tmp_path, monkeypatch):
     monkeypatch.setattr(_mod, "async_db_session", test_db_session)
 
     app = FastAPI()
-    app.dependency_overrides[get_current_user] = lambda: _mock_user
+    app.dependency_overrides[get_current_user_optional_with_version] = lambda: _mock_user
     app.include_router(_mod.router, prefix="/api/v1")
 
     yield app

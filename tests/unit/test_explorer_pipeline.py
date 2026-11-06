@@ -152,6 +152,20 @@ def test_multi_char_coord_pattern_uses_word_boundary_not_substring():
     assert "lat" not in plate and "lon" not in plate, plate
 
 
+def test_location_coordinates_take_priority_and_equal_matches_keep_first():
+    mapping = auto_field_mapping(_dummy_fields(
+        "location_x", "LOCATION_Y", "location_x_backup", "location_name",
+        "name", "location_address", "address_backup", "surname", "addrange",
+    ))
+    assert mapping == {
+        "lon": "location_x", "lat": "LOCATION_Y", "name": "location_name",
+        "address": "location_address",
+    }
+    assert auto_field_mapping(_dummy_fields("位置经度", "位置纬度", "学校名称", "详细地址")) == {
+        "lon": "位置经度", "lat": "位置纬度", "name": "学校名称", "address": "详细地址",
+    }
+
+
 class MockAdapter:
     async def discover(self, query, ctx):
         from app.adapters.base import DataSource
@@ -198,3 +212,22 @@ async def test_orchestrator_in_process_mode():
         "parks", ctx, session_id="sess_123", mode="in_process", adapter=MockAdapter()
     )
     assert task_id.startswith("exp_sess_123_")
+
+
+@pytest.mark.asyncio
+async def test_default_in_process_result_is_persisted_and_bridged_to_owner():
+    from app.services.session_data_protocol import get_session_store
+
+    pipeline = ExplorerPipeline()
+    context = SearchContext(query="schools", city="Beijing")
+    result = await pipeline.run_in_process("persisted-result", "schools", context,
+                                           session_id="owner-session", adapter=MockAdapter())
+    assert result.success
+    task_ref = result.data["geocoded_ref_id"]
+    session_ref = result.data["session_ref_id"]
+    store = get_session_store()
+    task_payload = await store.get("explorer:persisted-result", task_ref)
+    owner_payload = await store.get("owner-session", session_ref)
+    assert task_payload and owner_payload == task_payload
+    assert owner_payload["rows"][0]["name"] == "Central Hospital"
+    assert await store.get("foreign-session", session_ref) is None

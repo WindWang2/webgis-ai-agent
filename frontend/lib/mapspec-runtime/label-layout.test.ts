@@ -98,7 +98,8 @@ describe("zoom bands (P4)", () => {
     expect(Array.isArray(expr)).toBe(true);
     // step: <8 → 12*0.9; 8–11 → 12*0.95; >=11 → 12 (ratio 1/undefined)
     expect((expr as unknown[])[0]).toBe("step");
-    expect((expr as unknown[])[2]).toBeCloseTo(10.8);
+    expect((expr as unknown[])[2]).toBe(12);
+    expect((expr as unknown[]).slice(3)).toEqual([0, 10.8, 8, 11.399999999999999, 11, 12]);
   });
 
   it("returns a scalar when no band carries sizeRatio", () => {

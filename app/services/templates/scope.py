@@ -15,9 +15,7 @@ from app.models.db_model import CartographyTemplate
 
 
 def template_scope_clause(user_id: Optional[str], org_id, role: Optional[str] = None):
-    """SQLAlchemy predicate, or ``None`` when admin (unscoped)."""
-    if role == "admin":
-        return None
+    """Builtin, creator or current organization; admin never crosses tenants."""
     if user_id is None:
         return CartographyTemplate.is_builtin.is_(True)
     clauses = [
@@ -35,7 +33,7 @@ def template_visible(
     org_id,
     role: Optional[str] = None,
 ) -> bool:
-    if tmpl.is_builtin or role == "admin":
+    if tmpl.is_builtin:
         return True
     if org_id is not None and tmpl.org_id == org_id:
         return True

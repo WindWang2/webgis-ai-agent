@@ -13,7 +13,7 @@
 - ``capabilities ⊆ {streaming, cancellation, batch}``，且 ⊆ manifest 声明；
 - ``credentials_ref`` 必须与 manifest 声明一致；值经 secrets 通道
   （供给即授权）获取，永不进入工具结果/日志/LLM 可见面；
-- worker 模式下 ``streaming`` 不可用（单帧 RPC；manifest 层 typed 拒绝）。
+- worker 模式支持 V3 流式 RPC，事件受宿主窗口、帧尺寸和数量预算约束。
 """
 
 from __future__ import annotations
@@ -122,13 +122,15 @@ class ModelProviderSpec:
         return diagnostics
 
 
-def aggregate_stream_events(events: Any) -> dict[str, Any]:
+def aggregate_stream_events(events: Any, *, max_events: int = 10000) -> dict[str, Any]:
     """把事件迭代器聚合为单个工具结果（投影工具的默认形态）。"""
     if isinstance(events, dict):
         return events
     collected: list[dict[str, Any]] = []
     final: dict[str, Any] = {}
     for event in events:
+        if len(collected) >= max_events:
+            raise ValueError("stream exceeds aggregation event budget")
         if not isinstance(event, dict):
             collected.append({"type": "raw", "value": event})
             continue

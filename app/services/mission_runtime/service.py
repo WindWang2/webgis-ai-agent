@@ -56,6 +56,11 @@ class MissionRuntimeService:
             quota=quota,
         )
 
+    def effective_quota(self, org_id: str, requested: Dict[str, float]) -> Dict[str, float]:
+        from app.services.mission_runtime.quota_policy import mission_quota
+        with self.store._sf() as db:
+            return mission_quota(db, org_id, requested)
+
     def _require_lease(
         self, mission_id: str, worker_id: str, *, ttl_s: float = DEFAULT_LEASE_TTL_S,
         org_id: Optional[str] = None,
@@ -65,6 +70,13 @@ class MissionRuntimeService:
         if got is None:
             raise FencingError("LEASE_ACQUIRE_FAILED")
         return got[0]
+
+    def acquire_lease(
+        self, mission_id: str, worker_id: str, *, ttl_s: float = DEFAULT_LEASE_TTL_S,
+        org_id: Optional[str] = None,
+    ) -> int:
+        """Acquire/renew a fenced lease for callers that patch the durable ledger."""
+        return self._require_lease(mission_id, worker_id, ttl_s=ttl_s, org_id=org_id)
 
     def start(
         self, mission_id: str, *, worker_id: str, org_id: Optional[str] = None,
@@ -185,6 +197,7 @@ class MissionRuntimeService:
             lease_epoch=epoch,
             owner=worker_id,
             root_goal=new_goal,
+            expected_revision=rec.revision,
             bump_goal_revision=True,
             frontier=frontier,
             refs=refs,
@@ -192,10 +205,10 @@ class MissionRuntimeService:
 
     def attach_session(
         self, mission_id: str, *, worker_id: str, session_id: str,
-        session_plan_ref: str = "",
+        org_id: str, session_plan_ref: str = "",
     ) -> C.MissionRecord:
-        epoch = self._require_lease(mission_id, worker_id)
-        rec = self.store.get_mission(mission_id)
+        epoch = self._require_lease(mission_id, worker_id, org_id=org_id)
+        rec = self.store.get_mission(mission_id, org_id=org_id)
         assert rec is not None
         refs = rec.refs.model_dump()
         sessions = list(refs.get("active_session_ids") or [])
@@ -208,7 +221,7 @@ class MissionRuntimeService:
                 plans = (plans + [session_plan_ref])[: C.MAX_REFS]
                 refs["session_plan_refs"] = plans
         return self.store.patch_mission(
-            mission_id, lease_epoch=epoch, owner=worker_id, refs=refs)
+            mission_id, lease_epoch=epoch, owner=worker_id, refs=refs, expected_revision=rec.revision)
 
     # ── diagnostics ─────────────────────────────────────────────────────
 

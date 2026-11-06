@@ -62,12 +62,9 @@ async def _resume_generator_impl(
         turn NEVER yields a fabricated ``done {resumed: true}``. If the turn
         outlives ``_RESUME_LIVE_HOLD_S`` (stalled), the resume ends with a
         truthful terminal ``error {resumed: true, pending: true}`` — the
-        client may reconnect again with a newer Last-Event-ID. Anonymous
-        (``""``-key) sessions never hold (P1): the shared anonymous key skips
-        ownership checks, so holding would let anyone who knows the message +
-        Last-Event-ID tail a stranger's live turn — an anonymous resume of a
-        live turn replays the already-buffered tail and immediately ends with
-        that truthful pending error instead.
+        client may reconnect again with a newer Last-Event-ID. Empty legacy
+        session keys are refused before any lookup or replay; anonymous clients
+        use the canonical UUID and ownership capability issued at turn start.
       * ambiguous hit (multiple concurrent turns on this session key match) →
         terminal ``error {resumed: false}``: fail safe, never replay the WRONG
         turn's events into this client's stream (cross-turn leak).

@@ -62,9 +62,11 @@ function spatialLines(d: ModelOpsDescriptor, t: TranslateFn): Array<{ k: string;
 
 export function ModelOpsModelDetail({
   modelId,
+  modelVersion,
   onBack,
 }: {
   modelId: string;
+  modelVersion?: string;
   onBack: () => void;
 }) {
   const [inspect, setInspect] = useState<ModelOpsInspectResult | null>(null);
@@ -78,7 +80,7 @@ export function ModelOpsModelDetail({
     setInspectError(null);
     setInspect(null);
     setHistory(null);
-    inspectModelopsModel(modelId)
+    inspectModelopsModel(modelId, modelVersion)
       .then((res) => {
         if (seq !== seqRef.current) return;
         setInspect(res);
@@ -87,7 +89,7 @@ export function ModelOpsModelDetail({
         if (seq !== seqRef.current) return;
         setInspectError(describeApiError(err, t('loadFailed')));
       });
-    fetchModelopsHistory(modelId)
+    fetchModelopsHistory(modelId, modelVersion)
       .then((res) => {
         if (seq !== seqRef.current) return;
         setHistory(res);
@@ -95,7 +97,7 @@ export function ModelOpsModelDetail({
       .catch(() => {
         /* lineage 缺失不阻塞详情 —— 但保留空态文案 */
       });
-  }, [modelId, t]);
+  }, [modelId, modelVersion, t]);
 
   useEffect(() => {
     load();

@@ -15,7 +15,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     wf,
     auto_fallback,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _RECIPES: List[CartographyRecipe] = [
     CartographyRecipe(
@@ -29,8 +29,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="administrative_choropleth",
         secondary_cartography=["proximity_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="population missing", reason_code="DATA_ROLE_MISSING_POPULATION",
-                                  use="exposure_area_map")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=45,
         schema_version=2,

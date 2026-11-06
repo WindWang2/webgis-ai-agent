@@ -400,7 +400,7 @@ def _resolve_fixture_placeholders(turn: TurnSpec, session_id: str) -> None:
 
 #: 离线 judge 注入（生产 ``CARTO_VISUAL_JUDGE`` env 缝的 fixture 侧）：
 #: 确定性 judge + 注入截图 —— 语料声明 ``visual_judge: true`` 的 turn 生效。
-_OFFLINE_JUDGE_SPEC = "tests.harness_replay.replay_judge:deterministic_judge"
+_OFFLINE_JUDGE_SPEC = "app.lib.harness.replay.offline_judge:deterministic_judge"
 _OFFLINE_SCREENSHOT_ENV = "CARTO_VISUAL_JUDGE_SCREENSHOT"
 _SCREENSHOT_FIXTURE_DEFAULT = "tests/fixtures/replay/map.png"
 
@@ -442,6 +442,7 @@ class TurnReplayResult:
     mutation_outcomes: List[MutationOutcome] = field(default_factory=list)
     exact_diffs: List[ExactDiff] = field(default_factory=list)
     text_diffs: List[ExactDiff] = field(default_factory=list)
+    output_text: Optional[str] = None
     evidence_count: int = 0
     #: T3 bind-gate 重放条目（dispatch_backed + tool_registry 提供时）。
     dispatch_decisions: List[DispatchDecision] = field(default_factory=list)
@@ -536,6 +537,8 @@ class OfflineReplayer:
         return seeded_id("rmut", self.seed, self.run_token, scenario_id)
 
     async def replay_scenario(self, scenario: Scenario) -> ScenarioResult:
+        import copy
+        scenario = copy.deepcopy(scenario)
         session_id = self.session_for(scenario.scenario_id)
         # T1：全 turn 共享一个 harness —— 证据跨 turn 累积（会话语义）。
         harness = PiAgentHarness(session_id=session_id)
@@ -767,18 +770,18 @@ class OfflineReplayer:
         # nondeterministic_text：LLM 文本只验存在性 + 长度带。
         text_expect = turn.expect.get("user_text")
         if isinstance(text_expect, dict):
-            actual_bucket = len_bucket(turn.user_input)
+            actual_bucket = len_bucket(result.output_text or "")
             expect_present = bool(text_expect.get("present", True))
-            actual_present = bool(turn.user_input)
+            actual_present = bool(result.output_text)
             if expect_present != actual_present:
                 result.text_diffs.append({
-                    "path": "text:user_input", "expected": expect_present,
+                    "path": "text:user_output", "expected": expect_present,
                     "actual": actual_present,
                     "diff_class": "nondeterministic_text"})
             elif expect_present and text_expect.get("len_bucket") \
                     and text_expect["len_bucket"] != actual_bucket:
                 result.text_diffs.append({
-                    "path": "text:user_input",
+                    "path": "text:user_output",
                     "expected": text_expect["len_bucket"],
                     "actual": actual_bucket,
                     "diff_class": "nondeterministic_text"})

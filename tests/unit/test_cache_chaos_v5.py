@@ -248,6 +248,7 @@ async def test_get_shared_follower_never_resurrects_pre_overwrite_payload(
     from app.services.ref_payload_cache import ref_payload_cache
 
     sid, ref = "sess-epoch-race", "ref:race"
+    baseline_epoch = ref_payload_cache.current_epoch(sid, ref)
     redis_state = {"data": {"old": "payload"}}
     gate = asyncio.Event()
     leader_started = asyncio.Event()
@@ -282,7 +283,7 @@ async def test_get_shared_follower_never_resurrects_pre_overwrite_payload(
             FakeStore(), sid, ref, "data:race")
         data, raw_len, fetch_epoch = fetched
         own_epoch = ref_payload_cache.current_epoch(sid, ref)
-        assert own_epoch == 1 and fetch_epoch == 0, "交错前置条件"
+        assert own_epoch > baseline_epoch and fetch_epoch == baseline_epoch, "交错前置条件"
         return ref_payload_cache.put_if_current(
             sid, ref, data, raw_len, min(own_epoch, fetch_epoch))
 

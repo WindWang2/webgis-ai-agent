@@ -15,37 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 def compute_centroid(geometry: Dict[str, Any]) -> Optional[Tuple[float, float]]:
-    """Helper to compute basic centroid (lon, lat) of Point/Polygon geometries.
-
-    Limitation: Polygon centroid is the arithmetic mean of the exterior ring
-    vertices (holes are flattened into the same mean). True area-weighted
-    centroids of polygons with holes differ; for precise metrics use shapely
-    area centroids on projected geometries.
-    """
-    if not geometry or not isinstance(geometry, dict):
+    """Area-weighted geometry centroid; malformed/empty geometries are unknown."""
+    try:
+        from shapely.geometry import shape
+        centroid = shape(geometry).centroid
+        return None if centroid.is_empty else (float(centroid.x), float(centroid.y))
+    except (ValueError, TypeError, AttributeError):
         return None
-    gtype = geometry.get("type", "")
-    coords = geometry.get("coordinates", [])
-
-    if gtype == "Point":
-        return float(coords[0]), float(coords[1])
-    elif gtype == "Polygon" and coords:
-        ring = coords[0]
-        if not ring:
-            return None
-        lons = [pt[0] for pt in ring]
-        lats = [pt[1] for pt in ring]
-        return sum(lons) / len(lons), sum(lats) / len(lats)
-    elif gtype == "MultiPolygon" and coords:
-        lons, lats = [], []
-        for poly in coords:
-            for ring in poly:
-                for pt in ring:
-                    lons.append(pt[0])
-                    lats.append(pt[1])
-        if lons:
-            return sum(lons) / len(lons), sum(lats) / len(lats)
-    return None
 
 
 def haversine_distance(coord1: Tuple[float, float], coord2: Tuple[float, float]) -> float:
@@ -120,7 +96,7 @@ class TemporalChangeEngine:
             c1 = len(s1["features"])
             c2 = len(s2["features"])
             diff = c2 - c1
-            pct = (diff / c1 * 100.0) if c1 > 0 else (100.0 if c2 > 0 else 0.0)
+            pct = (diff / c1 * 100.0) if c1 > 0 else None
 
             count_deltas.append({
                 "from": s1["label"],
@@ -128,7 +104,7 @@ class TemporalChangeEngine:
                 "count_from": c1,
                 "count_to": c2,
                 "delta": diff,
-                "pct_change": round(pct, 2),
+                "pct_change": round(pct, 2) if pct is not None else None,
             })
 
         # Attribute deltas
@@ -139,7 +115,7 @@ class TemporalChangeEngine:
             for f in sample_features[:20]:
                 props = f.get("properties", f) if isinstance(f, dict) else {}
                 for k, v in props.items():
-                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
                         num_keys.add(k)
             numeric_fields = list(num_keys)
 
@@ -151,11 +127,11 @@ class TemporalChangeEngine:
                 for f in s["features"]:
                     props = f.get("properties", f) if isinstance(f, dict) else {}
                     v = props.get(field)
-                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
                         vals.append(float(v))
 
-                mean_val = (sum(vals) / len(vals)) if vals else 0.0
-                sum_val = sum(vals) if vals else 0.0
+                mean_val = (sum(vals) / len(vals)) if vals else None
+                sum_val = sum(vals) if vals else None
                 field_snapshots_stats.append({"mean": mean_val, "sum": sum_val, "count": len(vals)})
 
             # consecutive attribute deltas
@@ -163,15 +139,15 @@ class TemporalChangeEngine:
             for i in range(len(field_snapshots_stats) - 1):
                 st1 = field_snapshots_stats[i]
                 st2 = field_snapshots_stats[i + 1]
-                mean_diff = st2["mean"] - st1["mean"]
-                pct_change = (mean_diff / abs(st1["mean"]) * 100.0) if st1["mean"] != 0 else 0.0
+                mean_diff = st2["mean"] - st1["mean"] if st1["mean"] is not None and st2["mean"] is not None else None
+                pct_change = (mean_diff / abs(st1["mean"]) * 100.0) if mean_diff is not None and st1["mean"] not in (None, 0) else None
                 consecutive_changes.append({
                     "from": parsed_snapshots[i]["label"],
                     "to": parsed_snapshots[i + 1]["label"],
-                    "mean_from": round(st1["mean"], 4),
-                    "mean_to": round(st2["mean"], 4),
-                    "mean_delta": round(mean_diff, 4),
-                    "pct_change": round(pct_change, 2),
+                    "mean_from": round(st1["mean"], 4) if st1["mean"] is not None else None,
+                    "mean_to": round(st2["mean"], 4) if st2["mean"] is not None else None,
+                    "mean_delta": round(mean_diff, 4) if mean_diff is not None else None,
+                    "pct_change": round(pct_change, 2) if pct_change is not None else None,
                 })
 
             attribute_deltas.append({
@@ -192,7 +168,7 @@ class TemporalChangeEngine:
             id_map_s1 = {}
             for f in s1_features:
                 props = f.get("properties", f) if isinstance(f, dict) else {}
-                fid = props.get(id_field) or f.get("id")
+                fid = props.get(id_field) if props.get(id_field) is not None else f.get("id")
                 if fid is not None:
                     id_map_s1[str(fid)] = f
 
@@ -200,7 +176,7 @@ class TemporalChangeEngine:
 
             for f_end in sn_features:
                 props_end = f_end.get("properties", f_end) if isinstance(f_end, dict) else {}
-                fid = props_end.get(id_field) or f_end.get("id")
+                fid = props_end.get(id_field) if props_end.get(id_field) is not None else f_end.get("id")
                 if fid is not None and str(fid) in id_map_s1:
                     f_start = id_map_s1[str(fid)]
 
@@ -212,7 +188,13 @@ class TemporalChangeEngine:
                     c2 = compute_centroid(geom2) if geom2 else None
 
                     dist = 0.0
-                    if c1 and c2:
+                    if c1 is not None and c2 is not None:
+                        from app.lib.geo_processor.core import extract_declared_crs
+                        from pyproj import Transformer
+                        crs1 = extract_declared_crs(snapshots[0]) or "EPSG:4326"
+                        crs2 = extract_declared_crs(snapshots[-1]) or "EPSG:4326"
+                        c1 = Transformer.from_crs(crs1, 4326, always_xy=True).transform(*c1)
+                        c2 = Transformer.from_crs(crs2, 4326, always_xy=True).transform(*c2)
                         dist = haversine_distance(c1, c2)
                         shifted_distances.append(dist)
 

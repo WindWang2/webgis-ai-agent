@@ -55,9 +55,11 @@ def get_engine():
     engine_kwargs = {
         "url": _to_sync_url(settings.DATABASE_URL),
         "connect_args": connect_args,
+        "pool_pre_ping": True,
     }
 
     if not is_sqlite:
+        connect_args["options"] = "-c timezone=UTC"
         worker = process_role() == "worker"
         engine_kwargs.update({
             "pool_size": 4 if worker else 10,
@@ -99,13 +101,14 @@ if process_role() != "worker":
         from sqlalchemy.pool import NullPool
 
         _async_url = _to_async_url(settings.DATABASE_URL)
-        _async_kwargs: dict = {}
+        _async_kwargs: dict = {"pool_pre_ping": True}
         if _async_url.startswith("sqlite+aiosqlite"):
             # aiosqlite 在默认 QueuePool 下跨 asyncio loop 会泄露 WorkerThread 导致 pytest 挂起。
             # NullPool 确保 Session 关闭时立即销毁 aiosqlite 连接与后台线程。
             _async_kwargs["poolclass"] = NullPool
             _async_kwargs["connect_args"] = {"check_same_thread": False}
         elif settings.is_production():
+            _async_kwargs["connect_args"] = {"server_settings": {"timezone": "UTC"}}
             # 生产环境用 QueuePool 复用连接（asyncpg 连接池在长生命周期下高效）。
             _async_kwargs.update(
                 pool_size=10,
@@ -114,6 +117,7 @@ if process_role() != "worker":
                 pool_recycle=3600,
             )
         else:
+            _async_kwargs["connect_args"] = {"server_settings": {"timezone": "UTC"}}
             # 开发/测试环境（含 CI）：NullPool 让每个 AsyncSession 拿独立连接并在关闭时立即归还。
             # TestClient 在 threadpool 跑 async 路由，QueuePool 会把同一个 asyncpg 连接并发派给
             # 多个 session，触发 'cannot perform operation: another operation is in progress'。
@@ -157,17 +161,11 @@ async def async_db_session() -> AsyncIterator[AsyncSession]:
 
 
 async def get_async_db():
-    """Async DB dependency for FastAPI routes. Falls back to threadpool if async driver unavailable."""
-    if AsyncSessionLocal is not None:
-        async with AsyncSessionLocal() as db:
-            yield db
-    else:
-        # Fallback: run sync session in threadpool
-        db = SessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
+    """Async DB dependency; a synchronous Session cannot satisfy this contract."""
+    if AsyncSessionLocal is None:
+        raise RuntimeError("Async DB support not available (missing asyncpg or aiosqlite)")
+    async with AsyncSessionLocal() as db:
+        yield db
 
 
 def init_db():
@@ -185,6 +183,10 @@ def init_db():
 
     log = logging.getLogger(__name__)
     is_sqlite = str(settings.DATABASE_URL).startswith("sqlite")
+    if is_sqlite:
+        from app.core.sqlite_schema import upgrade_sqlite_schema
+
+        upgrade_sqlite_schema(Engine)
     if is_sqlite or os.environ.get("ALLOW_CREATE_ALL_ON_POSTGRES") == "1":
         if not is_sqlite:
             log.warning(
@@ -197,7 +199,6 @@ def init_db():
             "[init_db] non-sqlite database — skipping create_all; schema is "
             "owned by Alembic (audit #839)"
         )
-    _apply_runtime_migrations()
 
 
 def _apply_runtime_migrations() -> None:

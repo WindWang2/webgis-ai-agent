@@ -4,6 +4,44 @@
 
 > **版本**: v0.1.3 · **状态**: 活文档 · **最后更新**: 2026-08-17
 
+### 0102 凭据迁移：必须维护切换
+
+`0102_owner_token_hashes` 将匿名会话/任务的明文 token 转为单向校验值，
+旧应用不能读取新格式，新应用也不能接受旧进程继续写入的明文。存在凭据时，
+迁移默认拒绝，不能直接滚动升级。不要在长期服务环境中设置确认开关。
+
+Compose 升级前停止所有外部 DB 写入者，再执行：
+
+```bash
+sh deploy/maintenance-upgrade.sh .env.Priv docker-compose.prod.secure.yml
+# 标准生产栈使用 .env.prod / docker-compose.prod.yml；开发栈使用 .env / docker-compose.yml。
+```
+
+脚本停止本 Compose 项目的 API/Celery，确认旧容器停止，等待 DB/Redis 就绪，
+以私有权限在 `backups/` 写入 `pg_dump -Fc` 备份；仅一次性迁移容器获得
+`OWNER_TOKEN_MIGRATION_QUIESCED=1`，迁移成功后才启动服务。任一步失败即停止，
+保留维护状态和备份。跨主机、独立调度器/worker 不在脚本控制范围内，必须先停止。
+自动 SSH 生产升级也使用此脚本。首次空库没有凭据，无需确认即可迁移。
+
+Kubernetes 跨越 0102 时，先保存并停用 API HPA（包括可能的 KEDA/外部扩缩容），
+将 `webgis-api`、`webgis-celery` 及所有其他写入者缩至 0，等待旧 Pod 全部退出，
+完成并验证数据库备份。使用新镜像及同一 Secret/ConfigMap 创建一次性迁移 Job，
+仅该 Job 设置 `OWNER_TOKEN_MIGRATION_QUIESCED=1` 并执行
+`/usr/local/bin/docker-entrypoint.sh true`。成功后更新全部应用镜像、恢复副本和
+扩缩容配置。普通 initContainer 不携带确认开关，因此误用滚动升级会拒绝迁移。
+
+本地 SQLite 启动会在写锁内执行完整 Alembic 链，而非仅 `create_all`。
+已有版本库从记录的 revision 升级；含旧凭据的库同样须停止所有写入者、备份后，
+在一次性命令中设置上述开关运行 `alembic upgrade head`。无版本号的存量库拒绝
+自动收编：备份、核对实际 schema 与一个已知 revision 完全一致后，仅 stamp 该
+已验证 revision，再升级；不能 stamp head 来跳过迁移。迁移失败会阻止 API 启动。
+
+0102 降级无法恢复明文，会撤销匿名凭据。跨越该边界回滚旧镜像，必须再次停止
+全部写入者，选择恢复切换前备份（会丢失备份后的写入），或显式降级并重新签发
+匿名会话；仅切回旧镜像不兼容。0100 降级遇到跨组织重复 event_id、同 watch/event
+多个 action、超过 64 字符的 session_id 时，会在该 revision 的 DDL 前拒绝，
+保留数据，需先备份并由操作者明确处理不兼容行。
+
 ## 目录
 
 - [部署形态选型](#部署形态选型)
@@ -65,7 +103,7 @@ docker-compose logs -f celery-worker
 | api（backend-builder 阶段构建） | 127.0.0.1:18000 → 8000 | `uploads:/app/data`（与 worker 共享） |
 | celery-worker | — | `uploads:/app/data` |
 
-说明：api 与 worker 必须挂同一数据卷（celery 按本地路径打开上传的 raster/shapefile，分卷即 "No such file"）。可选设置 `WEBGIS_DEV_MOUNT=./app` 把源码 bind-mount 进容器实现热重载（默认关闭，避免覆盖镜像代码）。
+说明：api 与 worker 必须挂同一数据卷（celery 按本地路径打开上传的 raster/shapefile，分卷即 "No such file"）。开发时运行 `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` 可把源码 bind-mount 进容器；`WEBGIS_DEV_MOUNT` 可覆盖源码目录（默认 `./app`）。普通启动不挂载源码。
 
 `.env.example` 的 `DATABASE_URL=sqlite:///./data/webgis.db` 只给本机 pytest / `manage.py` 用。compose 的 api/celery **忽略**该 sqlite 值，把 `DATABASE_URL` 钉成 `postgresql://postgres:${DB_PASSWORD}@db:5432/webgis`（`app/core/config.py` 只读 `DATABASE_URL`，没有 `DB_HOST`）。本机进程要连 compose 里的 PostGIS 时，另设 `DATABASE_URL=postgresql://postgres:<DB_PASSWORD>@localhost:15432/webgis`。
 
@@ -155,8 +193,8 @@ docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
 
 ```bash
 cd deploy/k8s
-# CI 只推 sha 标签到 ghcr.io/windwang2/webgis-ai-agent —— 部署必须显式钉 tag
-kustomize edit set image ghcr.io/windwang2/webgis-ai-agent=ghcr.io/windwang2/webgis-ai-agent:<ci-pushed-sha>
+# 使用 CI build 输出的 manifest digest；脚本先验证仓库可读再更新清单
+./pin-image.sh sha256:<ci-published-manifest-digest>
 # #1688: Ingress 对外域名只改这一处（同步 CORS_ORIGINS），cert-manager 按它签证书
 #   （部署前还要把 04b-clusterissuer.yaml 的 spec.acme.email 占位值换成运维邮箱）
 sed -i 's|INGRESS_HOST: .*|INGRESS_HOST: "webgis.<真实域名>"|' 01-configmap.yaml
@@ -164,13 +202,15 @@ kubectl apply -f 04b-clusterissuer.yaml
 kubectl apply -k .
 ```
 
-裸 `kubectl apply -k` 不钉 tag 会拉取不存在的占位标签。清单内建行为：
+默认清单使用不可解析的全零摘要；未配置镜像的 raw apply 不会运行浮动版本。`pin-image.sh` 只接受非零 SHA-256 manifest digest，拒绝 master、latest 和其他可变标签。清单内建行为：
 
 - api `replicas: 2` + `sessionAffinity: ClientIP` + ingress nginx cookie（SSE turn-resume 缓冲是进程内的，重连需落回同一 pod）。
-- initContainer 在 Pod Ready 前执行镜像内的 `docker-entrypoint.sh true`（k8s `command:` 覆盖镜像 ENTRYPOINT，所以必须显式调用同一脚本：对无 `alembic_version` 的存量 create_all 库先 `alembic stamp head`，再 `upgrade head`；幂等）。默认镜像 tag 是 CI 的 branch tag `master`；生产必须 `kustomize edit set image …:<ci-sha>`。
+- initContainer 在 Pod Ready 前执行镜像内的 `docker-entrypoint.sh true`（k8s `command:` 覆盖镜像 ENTRYPOINT，所以必须显式调用同一脚本：对无 `alembic_version` 的存量 create_all 库先 `alembic stamp head`，再 `upgrade head`；幂等）。迁移、种子、API、worker 统一由镜像转换器钉到 CI 发布摘要。
+- API 与前端仍共用容器；Python supervisor 监督两个独立进程组，任一退出都会停止另一服务并以失败状态退出，收到 SIGTERM 时转发并在 10 秒后强制结束未退出的子进程。
 - api pod 注解 `prometheus.io/scrape: "true"`、`prometheus.io/path: "/metrics"`、`prometheus.io/port: "8000"`。
 - 非 root（runAsUser 1001）、readOnlyRootFilesystem（可写面仅为挂载点）、专用 ServiceAccount、topologySpread 跨节点分散。
 - HPA `minReplicas: 2 / maxReplicas: 10`。
+- Celery 默认单副本且 PDB `minAvailable: 1`，明确优先保留在途任务，因此会阻止自愿驱逐。节点维护前先将 worker 扩为至少两个可用副本；若维护窗口允许任务中断，由运维显式临时调整 PDB。不要将被 PDB 阻止的 drain 当作应用死锁，也不要默认强制驱逐。
 - api/celery 挂共享 RWX PVC 于 `/app/data`。
 - #1688: 04-ingress 的 host 来自 `01-configmap.yaml` 的 `INGRESS_HOST`（kustomize build 时注入），证书由 cert-manager + `04b-clusterissuer.yaml` 签发进 `webgis-tls`；`proxy-body-size: 100m` 对齐上传限额。
 
@@ -363,7 +403,8 @@ DATABASE_URL=sqlite:///tmp.db alembic revision --autogenerate -m "add foo column
 公开注册默认关闭（审计 S28）。运维通过 CLI 创建：
 
 ```bash
-python manage.py create-admin <username> <email> <password>
+python manage.py create-admin <username> <email>
+# 输入隐藏的密码；自动化可使用 --password-stdin 从标准输入提供密码。
 ```
 
 然后用 `POST /api/v1/auth/login` 获取 JWT。
@@ -374,3 +415,28 @@ python manage.py create-admin <username> <email> <password>
 - **对话框没反应**：查 `celery-worker` 是否在跑——大模型把计算扔给后台后一直 Pending，通常是 worker 未启动或 broker 连接失败（看 worker 日志与 `/api/v1/ready`）。
 - **secure 栈 prometheus crash-loop**：检查 `deploy/prometheus.yml` / `deploy/alerts-rules.json` 是否真的被 scp 到主机对应路径（缺失时 Docker 会把 bind-mount 源创建为空目录）。
 - **nginx 启动失败（找不到证书）**：标准 prod 栈需把 `server.crt` / `server.key` 放到 `./deploy/nginx/ssl/`；加固栈先查 `docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs tls-init`，检查辅助脚本传输、私有 TLS 卷及真实证书 override。初始化遇到不完整、符号链接或不匹配的证书对会拒绝覆盖；先由操作者检查并修复既有材料，不要自动删卷或覆盖私钥。
+
+
+## Runtime administration
+
+Production LLM configuration and Python skills are deployed consistently through
+environment/secret updates and reviewed images. Process-local LLM changes and skill
+upload/refresh endpoints return403 in production; a load-balanced admin request must
+not update just one worker. Development uploads require
+`ALLOW_RUNTIME_SKILL_UPLOAD=true`, an admin, a writable integrity lock and a new skill
+filename. Python skill execution is trusted code, not a sandbox.
+
+Kubernetes ingress isolation expects controller namespace `ingress-nginx` and metrics
+namespace `monitoring`; customize selectors for clusters using other names. Egress
+remains configurable for private geodata endpoints and is separately checked by the
+application's deployment profile. Optional Redis disables server reconfiguration and
+whole-database destructive commands; administration uses deployment/configuration.
+
+
+Remote HTTP COG access uses Rasterio's public Python opener interface with the
+connection-validated fsspec client, bounded HTTP timeouts and redirects disabled.
+GeoTIFF content is accepted; remote referencing formats or compound archives must
+be materialized locally first. This preserves range/window reads while preventing
+native GDAL/libcurl from re-resolving an attacker-controlled hostname after the
+Python preflight check. Dataset teardown closes the HTTP session. See the
+[Rasterio opener documentation](https://rasterio.readthedocs.io/en/stable/topics/vsi.html#python-file-and-filesystem-openers).

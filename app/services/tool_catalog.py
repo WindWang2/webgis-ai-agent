@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import json
 import logging
 import os
@@ -174,7 +176,7 @@ class ToolCatalog:
         self.registry = registry
         self.sticky_ttl = max(0, sticky_ttl)
         # session_id -> {domain -> 剩余轮次}
-        self._sticky: dict[str, dict[str, int]] = {}
+        self._sticky: OrderedDict[str, dict[str, int]] = OrderedDict()
         # #684：按用户轮衰减 — 记录 session 上次看到的 turn_id，用于判断是否跨用户轮
         self._sticky_turn: dict[str, Optional[str]] = {}
         self._MAX_STICKY_SESSIONS = 500
@@ -412,6 +414,8 @@ class ToolCatalog:
                 self._sticky_turn.pop(sid, None)
 
         sticky = self._sticky.get(session_id, {})
+        if session_id in self._sticky:
+            self._sticky.move_to_end(session_id)
         # #684：按用户轮衰减。turn_id 相同 → 同一用户轮内多次调用不衰减；
         # 不同 turn_id → 跨用户轮衰减 1；未传 turn_id → 按调用衰减（向后兼容）。
         if turn_id is not None:

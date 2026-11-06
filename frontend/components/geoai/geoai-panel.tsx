@@ -8,10 +8,12 @@
  * 预览元数据）；候选掩膜按分数列出，接受 = POST /geoai/prompt-refine；
  * 撤销 = 弹出提示；批次队列 = 提交历史状态机（idle/running/done/error）。
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useT } from '@/lib/i18n/useT';
-import { apiFetch, type ApiFetchOptions } from '@/lib/api/transport';
+import { apiFetch, describeApiError, type ApiFetchOptions } from '@/lib/api/transport';
+import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { restorableSessionAnchor } from '@/lib/workbench/session-anchor';
 
 import {
   type MapPrompt,
@@ -48,7 +50,19 @@ async function fetchJson(path: string, options?: ApiFetchOptions): Promise<unkno
   // 统一 transport（apiFetch）：认证头注入 + 401 刷新 + JSON 解析/错误归一。
   // 裸 fetch 在认证部署下整面板 401；2xx 非 JSON 体（网关错误页）会把
   // SyntaxError 原样抛给用户。路径为 API 相对路径（transport 自拼 API_BASE）。
-  return apiFetch<unknown>(path, options);
+  const cursor = getMapSpecSessionCursor();
+  const sessionId = cursor.sessionId ?? restorableSessionAnchor()?.sessionId;
+  if (!sessionId) throw new Error('Select a workspace session before using GeoAI.');
+  const ownerToken = cursor.sessionId === sessionId ? cursor.ownerToken : null;
+  if (options?.method === 'POST') {
+    return apiFetch<unknown>(path, {
+      ...options,
+      ownerToken,
+      body: { ...(options.body as Record<string, unknown>), session_id: sessionId },
+    });
+  }
+  const query = new URLSearchParams({ session_id: sessionId });
+  return apiFetch<unknown>(`${path}${path.includes('?') ? '&' : '?'}${query}`, { ...options, ownerToken });
 }
 
 export function GeoAiPanel() {
@@ -65,6 +79,8 @@ export function GeoAiPanel() {
   const [selectedRun, setSelectedRun] = useState<{
     runId: string;
     candidatesPath?: string;
+    modelId: string;
+    sourceUri: string;
   } | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [error, setError] = useState('');
@@ -72,11 +88,23 @@ export function GeoAiPanel() {
   const dragRef = useRef<{ px: number; py: number } | null>(null);
   const [dragBox, setDragBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const seqRef = useRef(0);
+  const busyRef = useRef(false);
+  const contextRef = useRef('');
+  const context = `${sourceUri}\u0000${modelId}`;
+  contextRef.current = context;
+  useEffect(() => {
+    setCandidates([]);
+    setCandidateFeatures([]);
+    setSelectedRun(null);
+    setPrompts([]);
+  }, [context]);
+  useEffect(() => { setPreview(null); }, [sourceUri]);
+
 
   const loadModels = useCallback(async () => {
     try {
       const body = (await fetchJson(
-        '/api/v1/geoai/models?session_id=geoai-panel',
+        '/api/v1/geoai/models',
       )) as { models: { model_id: string; task_types: string[] }[] };
       const promptable = body.models.filter((m) =>
         m.task_types.includes('promptable_segmentation'),
@@ -84,11 +112,12 @@ export function GeoAiPanel() {
       setModels(promptable);
       if (promptable.length > 0 && !modelId) setModelId(promptable[0].model_id);
     } catch (exc) {
-      setError(t('errors.modelsLoadFailed', { err: String(exc) }));
+      setError(t('errors.modelsLoadFailed', { err: describeApiError(exc, t('errors.requestFailed')) }));
     }
   }, [modelId, t]);
 
   const loadPreview = useCallback(async () => {
+    const requestSource = sourceUri;
     setError('');
     setPreview(null);
     setCandidates([]);
@@ -102,6 +131,7 @@ export function GeoAiPanel() {
       const body = (await fetchJson(
         `/api/v1/geoai/preview?source_uri=${encodeURIComponent(sourceUri.trim())}`,
       )) as { png_base64: string } & PreviewMeta;
+      if (!contextRef.current.startsWith(`${requestSource}\u0000`)) return;
       setPreview({
         png: `data:image/png;base64,${body.png_base64}`,
         meta: {
@@ -114,15 +144,18 @@ export function GeoAiPanel() {
         },
       });
     } catch (exc) {
-      setError(t('errors.previewLoadFailed', { err: String(exc) }));
+      setError(t('errors.previewLoadFailed', { err: describeApiError(exc, t('errors.requestFailed')) }));
     }
   }, [sourceUri, t]);
 
   const submit = useCallback(async () => {
+    if (busyRef.current) return;
     if (!preview || prompts.length === 0 || !modelId) {
       setError(t('errors.submitPrecondition'));
       return;
     }
+    busyRef.current = true;
+    const requestContext = contextRef.current;
     setBusy(true);
     setError('');
     const id = ++seqRef.current;
@@ -136,7 +169,6 @@ export function GeoAiPanel() {
           source_uri: sourceUri.trim(),
           artifact: buildArtifactPayload(prompts, preview.meta),
           return_candidates: true,
-          session_id: 'geoai-panel',
         },
       })) as {
         run_id: string;
@@ -147,6 +179,7 @@ export function GeoAiPanel() {
           };
         };
       };
+      if (contextRef.current !== requestContext) return;
       const windows = body.outputs.prompt_candidates?.windows ?? [];
       // 多窗 run：每窗候选集同构——聚合平均分（展示语义）。
       const agg = new Map<number, { total: number; n: number; source: string }>();
@@ -169,6 +202,8 @@ export function GeoAiPanel() {
       setCandidates(summary);
       setSelectedRun({
         runId: body.run_id,
+        modelId,
+        sourceUri: sourceUri.trim(),
         candidatesPath: body.outputs.prompt_candidates?.path,
       });
       if (body.outputs.prompt_candidates?.path) {
@@ -178,7 +213,7 @@ export function GeoAiPanel() {
               body.outputs.prompt_candidates.path,
             )}`,
           )) as { features: GeoJsonFeature[] };
-          setCandidateFeatures(geo.features ?? []);
+          if (contextRef.current === requestContext) setCandidateFeatures(geo.features ?? []);
         } catch {
           setCandidateFeatures([]);
         }
@@ -193,32 +228,34 @@ export function GeoAiPanel() {
     } catch (exc) {
       setQueue((q) =>
         q.map((item) =>
-          item.id === id ? { ...item, status: 'error' as const, error: String(exc) } : item,
+          item.id === id ? { ...item, status: 'error' as const, error: describeApiError(exc, t('errors.requestFailed')) } : item,
         ),
       );
-      setError(t('errors.submitFailed', { err: String(exc) }));
+      setError(t('errors.submitFailed', { err: describeApiError(exc, t('errors.requestFailed')) }));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }, [modelId, preview, prompts, sourceUri, t]);
 
   const acceptCandidate = useCallback(
     async (index: number) => {
+      if (busyRef.current) return;
       if (!selectedRun?.candidatesPath) {
         setError(t('errors.refinePrecondition'));
         return;
       }
+      busyRef.current = true;
       setBusy(true);
       try {
         const body = (await fetchJson('/api/v1/geoai/prompt-refine', {
           method: 'POST',
           body: {
-            model_id: modelId,
-            source_uri: sourceUri.trim(),
+            model_id: selectedRun.modelId,
+            source_uri: selectedRun.sourceUri,
             candidates_path: selectedRun.candidatesPath,
             candidate: index,
-            session_id: 'geoai-panel',
-          },
+            },
         })) as { run_id: string };
         const id = ++seqRef.current;
         setQueue((q) => [
@@ -231,12 +268,13 @@ export function GeoAiPanel() {
           },
         ].slice(-20));
       } catch (exc) {
-        setError(t('errors.refineFailed', { err: String(exc) }));
+        setError(t('errors.refineFailed', { err: describeApiError(exc, t('errors.requestFailed')) }));
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
-    [modelId, selectedRun, sourceUri, t],
+    [selectedRun, t],
   );
 
   const undo = useCallback(() => {
@@ -252,8 +290,8 @@ export function GeoAiPanel() {
   const onSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!preview) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
+    const px = (e.clientX - rect.left) * preview.meta.preview_width / (rect.width || preview.meta.preview_width);
+    const py = (e.clientY - rect.top) * preview.meta.preview_height / (rect.height || preview.meta.preview_height);
     if (e.shiftKey) {
       dragRef.current = { px, py };
       setDragBox({ x: px, y: py, w: 0, h: 0 });
@@ -266,8 +304,8 @@ export function GeoAiPanel() {
   const onSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!dragRef.current || !preview) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
+    const px = (e.clientX - rect.left) * preview.meta.preview_width / (rect.width || preview.meta.preview_width);
+    const py = (e.clientY - rect.top) * preview.meta.preview_height / (rect.height || preview.meta.preview_height);
     const s = dragRef.current;
     setDragBox({
       x: Math.min(s.px, px),
@@ -280,8 +318,8 @@ export function GeoAiPanel() {
   const onSvgPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!dragRef.current || !preview) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
+    const px = (e.clientX - rect.left) * preview.meta.preview_width / (rect.width || preview.meta.preview_width);
+    const py = (e.clientY - rect.top) * preview.meta.preview_height / (rect.height || preview.meta.preview_height);
     const s = dragRef.current;
     dragRef.current = null;
     setDragBox(null);
@@ -388,7 +426,7 @@ export function GeoAiPanel() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="relative overflow-hidden rounded border bg-slate-100">
+        <div className="relative self-start overflow-hidden rounded border bg-slate-100">
           {preview ? (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -397,15 +435,15 @@ export function GeoAiPanel() {
                 alt={t('previewAlt')}
                 width={preview.meta.preview_width}
                 height={preview.meta.preview_height}
-                className="block max-w-full select-none"
+                className="block h-auto w-full max-w-full select-none"
                 draggable={false}
               />
               <svg
                 data-testid="prompt-overlay"
                 className="absolute inset-0 cursor-crosshair"
                 viewBox={`0 0 ${preview.meta.preview_width} ${preview.meta.preview_height}`}
-                width={preview.meta.preview_width}
-                height={preview.meta.preview_height}
+                width="100%"
+                height="100%"
                 onPointerDown={onSvgPointerDown}
                 onPointerMove={onSvgPointerMove}
                 onPointerUp={onSvgPointerUp}

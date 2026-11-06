@@ -52,7 +52,7 @@ _VERDICT_ORDER = {VERDICT_EXACT: 0, VERDICT_RECOMPUTE_PARTIAL: 1, VERDICT_NOT_RE
 _UNPROBED: Any = object()
 
 
-def _claim_statuses_for(claim_ids: List[str]) -> dict[str, Optional[str]]:
+def _claim_statuses_for(claim_ids: List[str], *, tenant_id: str) -> dict[str, Optional[str]]:
     """尽力解析 claim id → 状态；解析不到 = None（不可伪造 SUPPORTED）。
 
     #1406: 旧代码 import 不存在的 ``get_session_context``，ImportError 被吞掉
@@ -68,7 +68,7 @@ def _claim_statuses_for(claim_ids: List[str]) -> dict[str, Optional[str]]:
         )
 
         for cid in claim_ids:
-            claim = find_claim(cid)
+            claim = find_claim(cid, tenant_id=tenant_id)
             out[cid] = str(claim.status.value) if claim is not None else None
     except Exception:  # noqa: BLE001 — claim 解析失败绝不影响检索主路径
         for cid in claim_ids:
@@ -202,7 +202,7 @@ def _evaluate_entry(
     # 6. verified_by claim：只有可解析且 SUPPORTED 才是正向证明。
     claim_ids = [t.id for t in entry.refs if t.relation == REL_VERIFIED_BY]
     if claim_ids and entry.authority_store != AS_SESSION_REF:
-        statuses = _claim_statuses_for(claim_ids)
+        statuses = _claim_statuses_for(claim_ids, tenant_id=entry.org_id)
         for cid, status in statuses.items():
             if status == "supported":
                 reasons.append(f"claim 支持（{cid}）")

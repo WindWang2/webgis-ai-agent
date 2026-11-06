@@ -121,9 +121,9 @@ async def templates_app(tmp_path, monkeypatch):
     from httpx import ASGITransport, AsyncClient
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    from app.core.auth import get_current_user
+    from app.core.auth import create_access_token, invalidate_live_user_state
     from app.core.database import get_async_db
-    from app.models.db_model import Base
+    from app.models.db_model import Base, Organization, User
     from app.api.routes import templates as templates_routes
 
     engine = create_async_engine(
@@ -133,6 +133,18 @@ async def templates_app(tmp_path, monkeypatch):
     sessionmaker = async_sessionmaker(bind=engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    async with sessionmaker() as db:
+        db.add_all([Organization(id=1, name="Owner organization", slug="owner-org"),
+                    Organization(id=2, name="Foreign organization", slug="foreign-org")])
+        await db.flush()
+        for actor in (_OWNER, _OTHER, _ADMIN):
+            uid = actor["user_id"]
+            db.add(User(id=uid, username=uid, email=f"{uid}@test.example",
+                        role=actor["role"], org_id=2 if actor is _OTHER else 1,
+                        is_active=True, token_version=0))
+        await db.commit()
+    monkeypatch.setattr("app.core.database.async_db_session", sessionmaker)
+    invalidate_live_user_state()
 
     @asynccontextmanager
     async def override_db():
@@ -158,15 +170,20 @@ async def templates_app(tmp_path, monkeypatch):
     app.include_router(templates_routes.router, prefix="/api/v1")
     app.dependency_overrides[get_async_db] = override_db_dep
     current = {"user": _OWNER}
-    app.dependency_overrides[get_current_user] = lambda: current["user"]
+    async def authenticate_request(request):
+        actor = current["user"]
+        request.headers["Authorization"] = "Bearer " + create_access_token(
+            {"sub": actor["user_id"], "role": actor["role"]})
     async with AsyncClient(transport=ASGITransport(app=app),
-                           base_url="http://t") as client:
+                           base_url="http://t",
+                           event_hooks={"request": [authenticate_request]}) as client:
         yield client, sessionmaker, current
     await engine.dispose()
+    invalidate_live_user_state()
 
 
 async def _seed_template(sessionmaker, *, template_id: str, creator_id,
-                         is_builtin: bool = False) -> None:
+                         is_builtin: bool = False, org_id=1) -> None:
     from app.models.db_model import CartographyTemplate
 
     async with sessionmaker() as s:
@@ -175,6 +192,7 @@ async def _seed_template(sessionmaker, *, template_id: str, creator_id,
             name=f"tmpl-{template_id}",
             kind="layout",
             creator_id=creator_id,
+            org_id=org_id,
             is_builtin=is_builtin,
             payload={"version": "1"},
         ))
@@ -215,19 +233,19 @@ async def test_template_delete_other_user_denied_row_intact(templates_app):
                          creator_id=_OWNER["user_id"])
     await _current_user(current, _OTHER)
     resp = await client.delete("/api/v1/templates/t-foreign")
-    assert resp.status_code == 403
+    assert resp.status_code == 404
     from sqlalchemy import select
     from app.models.db_model import CartographyTemplate
     async with sessionmaker() as s:
         row = (await s.execute(
             select(CartographyTemplate).where(
                 CartographyTemplate.id == "t-foreign"))).scalar_one_or_none()
-    assert row is not None, "403 拒绝后模板行必须原样保留"
+    assert row is not None, "拒绝后模板行必须原样保留"
 
 
 @pytest.mark.asyncio
 async def test_template_delete_admin_may_delete_foreign(templates_app):
-    """creator-or-admin 语义：admin 是越权删除的**显式**白名单（文档化行为）。"""
+    """A live admin may delete another creator's template in the same org."""
     client, sessionmaker, current = templates_app
     await _seed_template(sessionmaker, template_id="t-admin",
                          creator_id=_OWNER["user_id"])
@@ -294,7 +312,7 @@ async def test_template_null_creator_fail_closed_for_viewer(templates_app):
                          creator_id=None, is_builtin=False)
     await _current_user(current, _OTHER)
     resp = await client.delete("/api/v1/templates/t-null")
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 # ── knowledge document delete ────────────────────────────────────────────

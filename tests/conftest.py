@@ -48,6 +48,7 @@ _ENV_BASELINE = {
     "USE_REDIS": "false",
     "WEBGIS_DEV_MOUNT": "",
     "AUTH_DISABLED": "false",
+    "ALLOW_RUNTIME_SKILL_UPLOAD": "false",
     # 安全/工作流开关（与 Settings 默认等价；#1346 后新增键的钉扎补登）。
     "JWT_REJECT_LEGACY_TOKENS": "false",
     "REVIEW_WORKFLOW_ENABLED": "true",
@@ -498,3 +499,21 @@ from tests.data.fabric_fixtures import fake_source_server, patched_safe_sessions
 
 # ── GOAL-02 OGC 开放服务 fixture 层（Tiles/Coverages/STAC-COG 模拟源）─────
 from tests.data.ogc_service_fixtures import ogc_fake_server  # noqa: E402,F401
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_reserved_example_dns(monkeypatch):
+    """Offline example hosts resolve publicly even behind a DNS-intercepting proxy.
+
+    Individual SSRF tests can still override getaddrinfo after fixture setup.
+    Production resolution and every non-reserved hostname remain untouched.
+    """
+    import socket
+
+    original = socket.getaddrinfo
+    def resolve(host, port, *args, **kwargs):
+        name = str(host).lower().rstrip(".")
+        if any(name == root or name.endswith("." + root) for root in ("example.com", "example.org", "example.net", "example")):
+            return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", int(port or 0)))]
+        return original(host, port, *args, **kwargs)
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)

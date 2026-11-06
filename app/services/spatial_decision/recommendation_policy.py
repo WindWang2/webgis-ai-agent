@@ -202,8 +202,8 @@ def evaluate_recommendation_policy(
 
     why_selected = [
         f"Highest overall MCDA score ({top_score:.3f}) among all {len(feasible_alts)} feasible alternatives.",
-        f"Satisfies all {len(problem.constraints)} declared hard planning constraints.",
-        f"High rank stability ({rank_stability:.1f}%) under criterion weight perturbations.",
+        f"Satisfies all {sum(c.constraint_type.value == 'hard' for c in problem.constraints)} declared hard planning constraints.",
+        f"{'High' if rank_stability >= 65 else 'Low'} rank stability ({rank_stability:.1f}%) under criterion weight perturbations.",
     ]
     if top_has_soft_violations:
         why_selected.append("Conditionally recommended subject to mitigation of soft constraint penalties.")

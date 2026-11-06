@@ -652,13 +652,13 @@ async def _seed_workspace(sid: str) -> str:
 
 async def test_workspace_inspection_readonly_contract(ws_registry, ws_env):
     """检视契约：空会话诚实空清单；有产物时 describe 汇总账本。"""
-    empty = await ws_registry.dispatch("list_workspace_snapshots", {})
+    empty = await ws_registry.dispatch("list_workspace_snapshots", {}, "algo-conf-ws-empty")
     assert empty.get("success") is True
     assert empty.get("count") == 0 and empty.get("snapshots") == []
 
     sid = "algo-conf-ws-inspect"
     await _seed_workspace(sid)
-    out = await ws_registry.dispatch("describe_workspace", {"session_id": sid})
+    out = await ws_registry.dispatch("describe_workspace", {}, sid)
     assert out.get("success") is True
     assert isinstance(out, dict)
 
@@ -668,17 +668,17 @@ async def test_workspace_snapshot_durable_roundtrip(ws_registry, ws_env):
     sid = "algo-conf-ws-snap"
     await _seed_workspace(sid)
     saved = await ws_registry.dispatch("save_workspace_snapshot", {
-        "session_id": sid, "label": "conf", "materialize": "claimed"})
+        "label": "conf", "materialize": "claimed"}, sid)
     assert saved.get("success") is True, saved
     assert isinstance(saved.get("snapshot_id"), str) and saved["snapshot_id"]
     assert saved.get("artifacts") == 1
 
     listed = await ws_registry.dispatch("list_workspace_snapshots",
-                                        {"session_id": sid})
+                                        {}, sid)
     assert listed.get("success") is True
     assert saved["snapshot_id"] in [s.get("snapshot_id")
                                     for s in listed.get("snapshots") or []]
 
     restored = await ws_registry.dispatch("restore_workspace_snapshot", {
-        "session_id": sid, "snapshot_id": saved["snapshot_id"], "mode": "verify"})
+        "snapshot_id": saved["snapshot_id"], "mode": "verify"}, sid)
     assert restored.get("success") is True

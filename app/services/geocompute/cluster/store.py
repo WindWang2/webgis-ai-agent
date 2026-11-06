@@ -14,6 +14,7 @@
 会话工厂可注入（与 durable.py / run_evidence.py 同一测试惯例）。
 """
 from __future__ import annotations
+from app.services.org_quota_admission import admit_persistent_write
 
 import json
 import logging
@@ -21,7 +22,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, update, text
 
 from app.models.db_model import (
     GeoComputeClusterRun as _Run,
@@ -138,14 +139,21 @@ class ClusterRunStore:
                     resource_request = None
             except (TypeError, ValueError):
                 resource_request = None
+        _estimate_from_snapshot(plan_snapshot)
         run_id = new_run_id()
+        admission_ledger = ClusterLedger(factory=self._factory)
+        admission_ledger.ensure_scopes(["global"])
         with self._factory() as db:
             # ADR-0139：org 缺席（匿名/无 org 提交）归 default 隔离桶——
             # 经同一会话工厂解析（测试注入工厂时落在同一临时库）。
             if not org_id:
                 from app.core import tenancy
 
-                org_id = tenancy.get_or_create_default_org_id_sync(db)
+                org_id = tenancy.get_or_create_default_org_id_sync(db, commit=False)
+            admit_persistent_write(db, str(org_id), task_increment=1)
+            if not admission_ledger._ensure_scope_row(db, "global"):
+                raise ClusterBackpressureError("queue admission lock unavailable")
+            db.execute(update(_Usage).where(_Usage.scope_key == "global").values(scope_key=_Usage.scope_key))
             tenant_count = 0
             if tenant_key is not None:
                 tenant_count = db.execute(
@@ -429,7 +437,7 @@ class ClusterRunStore:
                 db.execute(
                     update(_Run)
                     .where(_Run.id == row.id)
-                    .values(reserved_rows=0, reserved_bytes=0, reserved_units=0)
+                    .values(reserved_rows=0, reserved_bytes=0, reserved_units=0, reserved_mem_mb=0, reserved_gpu=0)
                 )
             db.commit()
             return True
@@ -529,7 +537,7 @@ class ClusterRunStore:
                     db.execute(
                         update(_Run)
                         .where(_Run.id == row.id)
-                        .values(reserved_rows=0, reserved_bytes=0, reserved_units=0)
+                        .values(reserved_rows=0, reserved_bytes=0, reserved_units=0, reserved_mem_mb=0, reserved_gpu=0)
                     )
                 outcomes.append({
                     "run_id": row.run_id,
@@ -1002,7 +1010,7 @@ class ClusterRunStore:
                 db.execute(
                     update(_Run)
                     .where(_Run.id == row.id)
-                    .values(reserved_rows=0, reserved_bytes=0, reserved_units=0)
+                    .values(reserved_rows=0, reserved_bytes=0, reserved_units=0, reserved_mem_mb=0, reserved_gpu=0)
                 )
             db.commit()
             return "failed" if error_code else "requeued"
@@ -1052,10 +1060,8 @@ class ClusterRunStore:
         没有任何其他 coordinator 持有未过期 leadership —— 满足才当选并
         epoch+1。返回 leadership epoch；在任者健在 → None（standby）。
 
-        诚实边界：SQLite 写序保证严格串行；PG READ COMMITTED 下两个同时
-        首次到场的 coordinator 存在极窄的双当选窗口 —— 但调度权只决定
-        谁跑 tick，所有 run 级写路径另有 lease epoch CAS fencing，双
-        leader 不产生状态损坏（最坏是重复的 reclaim 尝试被 CAS 拒绝）。
+        SQLite 写序保证严格串行；PostgreSQL 仲裁与续约共享 transaction
+        advisory lock，防止两个 coordinator 更新不同 worker 行而同时当选。
         """
         with self._factory() as db:
             now = _utcnow()
@@ -1077,6 +1083,8 @@ class ClusterRunStore:
                 )
             db.commit()
         with self._factory() as db:
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(text("SELECT pg_advisory_xact_lock(1195598924)"))
             now = _utcnow()
             other_leader = (
                 select(_Worker.worker_id)
@@ -1117,6 +1125,8 @@ class ClusterRunStore:
         停止调度）→ False。调用方据此卸任。
         """
         with self._factory() as db:
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(text("SELECT pg_advisory_xact_lock(1195598924)"))
             now = _utcnow()
             other_leader = (
                 select(_Worker.worker_id)
@@ -1450,13 +1460,26 @@ def _scope_keys_for(global_key: str, tenant_key: Optional[str],
     return keys
 
 
-def _estimate_from_snapshot(plan_snapshot: Optional[dict[str, Any]]
-                            ) -> tuple[int, int]:
+def _estimate_from_snapshot(plan_snapshot: Optional[dict[str, Any]]) -> tuple[int, int]:
+    """Client hints cannot undercut the measurable node/input footprint."""
     est_rows = est_bytes = 0
     for node in (plan_snapshot or {}).get("nodes") or []:
-        est = node.get("estimate") or {}
-        est_rows += int(est.get("rows") or 0)
-        est_bytes += int(est.get("bytes") or 0)
+        estimate = node.get("estimate") or {}
+        parameters = node.get("parameters") or {}
+        features = parameters.get("geojson") or parameters.get("features") or []
+        if isinstance(features, dict):
+            features = features.get("features") or []
+        floor_rows = max(1, len(features) if isinstance(features, list) else 0)
+        floor_bytes = max(1024, len(json.dumps(node, ensure_ascii=False).encode()))
+        try:
+            rows = max(floor_rows, int(estimate.get("rows") or 0))
+            bytes_ = max(floor_bytes, int(estimate.get("bytes") or 0))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ClusterBackpressureError("invalid resource estimate") from exc
+        est_rows += rows
+        est_bytes += bytes_
+        if max(est_rows, est_bytes) > 2**63 - 1:
+            raise ClusterBackpressureError("resource estimate exceeds signed 64-bit capacity")
     return est_rows, est_bytes
 
 
@@ -1476,13 +1499,10 @@ def _claims_for_row(row: Any, *, units: int) -> dict[str, ResourceClaim]:
       预留，防 N 个 GPU run 超卖同一池卡）。
     """
     claims: dict[str, ResourceClaim] = {}
-    est_rows = 0
-    est_bytes = 0
+    est_rows, est_bytes = _estimate_from_snapshot(row.plan_snapshot)
     est_mem_mb = 0.0
     for node in (row.plan_snapshot or {}).get("nodes") or []:
         est = node.get("estimate") or {}
-        est_rows += int(est.get("rows") or 0)
-        est_bytes += int(est.get("bytes") or 0)
         try:
             est_mem_mb += float(est.get("memory_mb") or 0)
         except (TypeError, ValueError):

@@ -245,14 +245,19 @@ def test_decision_reaffirm_match_only():
     receipts = reaffirm_decisions(wc, ["完全不同的文本"], turn_id="t2")
     assert receipts[0].reject_reason == REJECT_TARGET_UNKNOWN
 
-    receipts = reaffirm_decisions(wc, ["分布集中于主城区"], turn_id="t2")
+    # Text alone cannot restore a decision while its supporting fact is stale.
+    blocked = reaffirm_decisions(wc, ["分布集中于主城区"], turn_id="t2", observation=_obs())
+    assert blocked[0].verdict == "rejected"
+    revalidate_claims(wc, ["claim-1"], claim_store=_supported_claim_store(),
+                      token_resolver=lambda ref: None, turn_id="t2")
+    receipts = reaffirm_decisions(wc, ["分布集中于主城区"], turn_id="t2", observation=_obs())
     r = receipts[0]
     assert r.verdict == "restored" and r.kind == KIND_DECISION
     assert wc.accepted_assumptions[0].stale_basis is False
     assert wc.accepted_assumptions[0].basis_revision == wc.revision
 
     # Second reaffirm → not_stale no-op (state-based loop guard).
-    receipts = reaffirm_decisions(wc, ["分布集中于主城区"], turn_id="t3")
+    receipts = reaffirm_decisions(wc, ["分布集中于主城区"], turn_id="t3", observation=_obs())
     assert receipts[0].reject_reason == REJECT_NOT_STALE
 
 
@@ -285,7 +290,7 @@ def test_marker_reconfirm_after_full_reverification():
     revalidate_claims(
         wc, ["claim-1"], claim_store=_supported_claim_store(),
         token_resolver=lambda ref: None, turn_id="t1")
-    reaffirm_decisions(wc, ["分布集中于主城区"], turn_id="t2")
+    reaffirm_decisions(wc, ["分布集中于主城区"], turn_id="t2", observation=_obs())
 
     receipts = reconfirm_markers(wc, _obs(), turn_id="t3")
     restored = [r for r in receipts if r.verdict == "restored"]
@@ -366,7 +371,7 @@ def test_replay_determinism():
         revalidate_claims(
             wc, ["claim-1"], claim_store=_supported_claim_store(),
             token_resolver=lambda ref: None, turn_id="t2")
-        reaffirm_decisions(wc, ["分布集中于主城区"], turn_id="t3")
+        reaffirm_decisions(wc, ["分布集中于主城区"], turn_id="t3", observation=_obs())
         reconfirm_markers(wc, _obs(), turn_id="t4")
         return [(r.receipt_id, r.kind, r.target, r.verdict) for r in wc.revalidations]
 

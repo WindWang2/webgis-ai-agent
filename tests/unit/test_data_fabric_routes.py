@@ -132,6 +132,11 @@ def test_data_fabric_rest_routes():
                 total_count=1,
             )
 
+    # Materialization writes require an actual persisted owner Conversation.
+    from app.models.db_model import Conversation
+    with SessionLocal() as db:
+        db.merge(Conversation(id="test_session_12345", title="materialize", user_id="df-user"))
+        db.commit()
     with patch("app.services.data_fabric.manager.DataFabricManager.get_adapter", staticmethod(lambda profile: _FakeAdapter())):
         mat_payload = {
             "session_id": "test_session_12345",
@@ -472,9 +477,15 @@ def test_global_source_delete_probe_sync_require_admin():
     assert client.post(f"/api/v1/data-fabric/sources/{sid}/sync", headers=_h("editor")).status_code == 403
     # 无 DB 行的 viewer 同样被拒
     assert client.delete(f"/api/v1/data-fabric/sources/{sid}",
-                         headers=_h("viewer", sub="df-nobody")).status_code == 403
+                         headers=_h("viewer", sub="df-nobody")).status_code == 401
+    # Admin authority requires a live user row, just like every other identity.
+    from app.models.db_model import User
+    with SessionLocal() as db:
+        db.add(User(id="df-admin-live", username="df-admin-live", email="df-admin-live@example.com",
+                    password_hash="unused", role="admin", is_active=True, token_version=0))
+        db.commit()
     # admin 可删除
-    r = client.delete(f"/api/v1/data-fabric/sources/{sid}", headers=_h("admin", sub="df-admin-nodb"))
+    r = client.delete(f"/api/v1/data-fabric/sources/{sid}", headers=_h("admin", sub="df-admin-live"))
     assert r.status_code == 200, r.text
 
 

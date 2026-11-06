@@ -174,14 +174,15 @@ def build_hard_negative_corpus() -> List[GISBenchmarkCase]:
     cases.sort(key=lambda c: c.id)
     # 构建期守卫：id 唯一 / query 非空 / 对抗压痕
     ids = [c.id for c in cases]
-    assert len(ids) == len(set(ids)), f"duplicate hard-negative ids: {ids}"
+    if not (len(ids) == len(set(ids))):
+        raise ValueError(f"duplicate hard-negative ids: {ids}")
     for c in cases:
-        assert c.query or c.turns, f"{c.id} empty query"
+        if not (c.query or c.turns):
+            raise ValueError(f"{c.id} empty query")
     # count vs rate 镜像对必须 recipe 不相交（对抗对的语义分流保证）
     by_id = {c.id: c for c in cases}
     count_case = by_id["HN-pvc-count-choropleth-zh"]
     rate_case = by_id["HN-cvr-rate-density-zh"]
-    assert count_case.expected_recipe != rate_case.expected_recipe, (
-        "count/rate mirror pair must select different recipes"
-    )
+    if not (count_case.expected_recipe != rate_case.expected_recipe):
+        raise ValueError("count/rate mirror pair must select different recipes")
     return cases

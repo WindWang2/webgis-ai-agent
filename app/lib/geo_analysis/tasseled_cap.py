@@ -157,7 +157,7 @@ def tasseled_cap(
     for comp in TASSELED_CAP_COMPONENTS:
         row = coef_rows[comp]
         acc = np.zeros(shape, dtype=float)
-        for coef, role in zip(row, roles):
+        for coef, role in zip(row, roles, strict=True):
             acc += coef * arrays[role]
         components[comp] = np.where(invalid, np.nan, acc)
 
@@ -167,7 +167,7 @@ def tasseled_cap(
         row = coef_rows[comp]
         abs_total = 0.0
         per_role: Dict[str, float] = {}
-        for coef, role in zip(row, roles):
+        for coef, role in zip(row, roles, strict=True):
             contrib = float(
                 np.nanmean(np.abs(coef * np.where(invalid, np.nan,
                                                   arrays[role]))))
@@ -193,7 +193,7 @@ def tasseled_cap(
     }
     return {
         "components": components,
-        "coefficients": {c: dict(zip(roles, coef_rows[c]))
+        "coefficients": {c: dict(zip(roles, coef_rows[c], strict=True))
                          for c in TASSELED_CAP_COMPONENTS},
         "contribution": contribution,
         "roles_used": list(roles),

@@ -250,6 +250,11 @@ def engine_env(tmp_path, monkeypatch):
                             lambda: fake_db_session())
     monkeypatch.setattr(durable, "session_factory",
                         lambda: fake_db_session())
+    # The production source-path gate remains active. This isolated fake scan
+    # owns only this fixture's temporary storage; it is not a real user session.
+    import app.services.scoped_raster_paths as raster_paths
+
+    monkeypatch.setattr(raster_paths, "scoped_raster_roots", lambda **scope: [tmp_path])
     yield
     eng.dispose()
 

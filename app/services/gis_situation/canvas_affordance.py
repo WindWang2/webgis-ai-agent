@@ -130,7 +130,10 @@ def _clip_str(value: Any, limit: int = _MAX_STR_CHARS) -> Any:
 def _finite(value: Any) -> Optional[float]:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    value = float(value)
+    try:
+        value = float(value)
+    except OverflowError:
+        return None
     return value if math.isfinite(value) else None
 
 
@@ -169,22 +172,47 @@ def _sanitize_geometry(raw: Any) -> Tuple[Optional[Dict[str, Any]], Any]:
     if gtype not in ALLOWED_GEOMETRY_TYPES:
         return None, "geometry_invalid"
     coords = raw.get("coordinates")
-    points = _walk_points(coords)
-    if not points:
-        return None, "geometry_invalid"
-    if len(points) > MAX_VERTICES:
-        return None, "geometry_oversize"
-    if gtype == "Polygon" and _count_rings(coords) > MAX_POLYGON_RINGS:
-        return None, "geometry_oversize"
-    for lng, lat in points:
-        if not (_LNG_RANGE[0] <= lng <= _LNG_RANGE[1]):
-            return None, "geometry_invalid"
-        if not (_LAT_RANGE[0] <= lat <= _LAT_RANGE[1]):
-            return None, "geometry_invalid"
+    points: List[Tuple[float, float]] = []
+
+    def point(value: Any) -> List[float]:
+        if len(points) >= MAX_VERTICES:
+            raise OverflowError("geometry_oversize")
+        if not isinstance(value, (list, tuple)) or len(value) < 2:
+            raise ValueError("geometry_invalid")
+        lng, lat = _finite(value[0]), _finite(value[1])
+        if lng is None or lat is None or not (-180 <= lng <= 180 and -90 <= lat <= 90):
+            raise ValueError("geometry_invalid")
+        points.append((lng, lat))
+        return [lng, lat]
+
+    clean: list[float] | list[list[float]] | list[list[list[float]]]
+    try:
+        if gtype == "Point":
+            clean = point(coords)
+        elif gtype in ("LineString", "MultiPoint"):
+            if not isinstance(coords, (list, tuple)) or not coords:
+                raise ValueError("geometry_invalid")
+            clean = [point(value) for value in coords]
+        else:
+            if not isinstance(coords, (list, tuple)) or not coords:
+                raise ValueError("geometry_invalid")
+            if len(coords) > MAX_POLYGON_RINGS:
+                raise OverflowError("geometry_oversize")
+            clean_polygon: list[list[list[float]]] = []
+            for ring in coords:
+                if not isinstance(ring, (list, tuple)) or len(ring) < 4:
+                    raise ValueError("geometry_invalid")
+                clean_ring = [point(value) for value in ring]
+                if clean_ring[0] != clean_ring[-1]:
+                    raise ValueError("geometry_invalid")
+                clean_polygon.append(clean_ring)
+            clean = clean_polygon
+    except (ValueError, OverflowError) as exc:
+        return None, str(exc)
     lons = [p[0] for p in points]
     lats = [p[1] for p in points]
     bbox = [min(lons), min(lats), max(lons), max(lats)]
-    return {"type": gtype, "coordinates": coords}, bbox  # type: ignore[return-value]
+    return {"type": gtype, "coordinates": clean}, bbox
 
 
 def _sanitize_screen_px(raw: Any) -> Optional[Dict[str, int]]:
@@ -831,7 +859,9 @@ def _reject_unsafe(payload: Any, path: str = "payload") -> None:
             _reject_unsafe(value, f"{path}.{key}")
         return
     if isinstance(payload, list):
-        for index, value in enumerate(payload[:256]):
+        if len(payload) > 256:
+            raise ValueError(f"widget payload list exceeds 256 entries at {path}")
+        for index, value in enumerate(payload):
             _reject_unsafe(value, f"{path}[{index}]")
         return
     raise ValueError(f"unsupported widget payload type at {path}")
@@ -854,8 +884,11 @@ def _validate_kind_payload(kind: str, payload: Dict[str, Any]) -> None:
                 raise ValueError("histogram_slider bin must be object")
             for k in ("lo", "hi", "count"):
                 v = b.get(k)
-                if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+                if (isinstance(v, bool) or not isinstance(v, (int, float))
+                        or not math.isfinite(v) or (k == "count" and v < 0)):
                     raise ValueError(f"histogram_slider bin.{k} invalid")
+            if b["lo"] > b["hi"]:
+                raise ValueError("histogram_slider bin bounds must be ordered")
         breaks = payload.get("breaks")
         if not isinstance(breaks, list) or len(breaks) > 64 or not all(
             isinstance(x, (int, float)) and not isinstance(x, bool) for x in breaks

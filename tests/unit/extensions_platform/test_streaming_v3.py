@@ -33,13 +33,13 @@ class FakePipe:
     """双向帧管道（host ↔ server 同进程直连）。
 
     server 侧读 = **阻塞**（与真实 stdio readline 语义一致；脚本帧先于
-    读取发送即可，无竞态）。host 侧读 = 严格 FIFO 断言（帧序出错即红）。
+    读取发送即可，无竞态）。host 侧同样阻塞等帧，保持严格 FIFO。
     """
 
     def __init__(self) -> None:
-        self.host_inbox: list[dict] = []  # worker → host（FIFO 断言用）
         import queue
 
+        self.host_inbox: "queue.Queue[dict]" = queue.Queue()
         self._server_inbox: "queue.Queue[dict]" = queue.Queue()
 
     # server 视角（阻塞）
@@ -52,13 +52,15 @@ class FakePipe:
             raise AssertionError("server inbox empty (script bug)") from exc
 
     def server_write(self, frame: dict) -> None:
-        self.host_inbox.append(frame)
+        self.host_inbox.put(frame)
 
     # host 视角
     def host_recv(self) -> dict:
-        if not self.host_inbox:
-            raise AssertionError("host inbox empty (script bug)")
-        return self.host_inbox.pop(0)
+        import queue
+        try:
+            return self.host_inbox.get(timeout=10)
+        except queue.Empty as exc:
+            raise AssertionError("worker produced no expected frame") from exc
 
     def host_send(self, frame: dict) -> None:
         self._server_inbox.put(frame)
@@ -590,3 +592,33 @@ def test_bwrap_sandbox_hides_repo_root(tmp_path):
             wp.shutdown()
         except Exception:  # noqa: BLE001
             wp.kill()
+
+
+def test_unrelated_stream_frames_do_not_renew_idle_deadline(tmp_path, monkeypatch):
+    pack = _make_pack(tmp_path, STREAM_TOOL_MAIN)
+    worker = _fake_worker_process(pack, [
+        {"type": "stream_start", "id": "s1"},
+        {"type": "unrelated_noise"},
+        {"type": "stream_end", "id": "s1", "cancelled": False},
+    ])
+    deadlines = []
+    original = worker._next_stream_frame
+    def capture(deadline):
+        deadlines.append(deadline)
+        return original(deadline)
+    monkeypatch.setattr(worker, "_next_stream_frame", capture)
+    assert list(worker.call_stream("v3demo_stream_range", {})) == []
+    assert len(deadlines) == 3 and len(set(deadlines)) == 1
+
+
+def test_legacy_window_argument_cannot_change_handshake_credit_window(tmp_path):
+    pack = _make_pack(tmp_path, STREAM_TOOL_MAIN)
+    worker = _fake_worker_process(pack, [
+        {"type": "stream_start", "id": "s1"},
+        {"type": "stream_frame", "id": "s1", "seq": 0, "more": True, "payload": {}},
+        {"type": "stream_frame", "id": "s1", "seq": 1, "more": True, "payload": {}},
+        {"type": "stream_end", "id": "s1", "cancelled": False},
+    ])
+    list(worker.call_stream("v3demo_stream_range", {}, window=1))
+    credits = [frame for frame in worker._proc.sent if frame["type"] == "stream_credit"]
+    assert len(credits) == 1 and credits[0]["n"] == worker._stream_window // 2

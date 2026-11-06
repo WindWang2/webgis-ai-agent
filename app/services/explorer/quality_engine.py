@@ -3,6 +3,7 @@ import math
 from datetime import datetime, timezone
 from typing import Optional
 from app.services.explorer.models import DataSourceQualityScore
+from app.services.explorer.topic_tokens import topic_tokens
 
 
 class QualityEngine:
@@ -60,17 +61,19 @@ class QualityEngine:
         dataset_fields = dataset_fields or []
 
         # 层1：标题+描述中的关键词匹配（简化）
-        intent_keywords = set(user_intent.lower().split())
-        title_words = set(dataset_title.lower().split())
-        desc_words = set(dataset_description.lower().split())
+        intent_keywords = topic_tokens(user_intent)
+        title_words = topic_tokens(dataset_title)
+        desc_words = topic_tokens(dataset_description)
 
         title_match = len(intent_keywords & title_words) / max(len(intent_keywords), 1)
         desc_match = len(intent_keywords & desc_words) / max(len(intent_keywords), 1)
         semantic_score = min(1.0, title_match * 0.7 + desc_match * 0.3)
 
         # 层2：标签和字段覆盖
-        tag_match = len(intent_keywords & set(dataset_tags)) / max(len(intent_keywords), 1)
-        field_match = len(intent_keywords & set(dataset_fields)) / max(len(intent_keywords), 1)
+        tag_words = set().union(*(topic_tokens(tag) for tag in dataset_tags))
+        field_words = set().union(*(topic_tokens(field) for field in dataset_fields))
+        tag_match = len(intent_keywords & tag_words) / max(len(intent_keywords), 1)
+        field_match = len(intent_keywords & field_words) / max(len(intent_keywords), 1)
         keyword_score = min(1.0, tag_match * 0.6 + field_match * 0.4)
 
         combined = semantic_score * 0.6 + keyword_score * 0.4

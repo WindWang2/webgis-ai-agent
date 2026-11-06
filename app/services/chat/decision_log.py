@@ -60,13 +60,8 @@ def _redact_and_truncate_args(args: Any, max_len: int = 2000) -> Any:
     """
     if not isinstance(args, dict):
         return args
-    REDACT_KEYS = {"api_key", "token", "password", "secret", "apikey", "Authorization"}
-    redacted = {}
-    for k, v in args.items():
-        if isinstance(k, str) and k.lower() in REDACT_KEYS:
-            redacted[k] = "<redacted>"
-        else:
-            redacted[k] = v
+    from app.services.provenance.manifest import redact_provenance_args
+    redacted = redact_provenance_args(args)
     try:
         s = json.dumps(redacted, ensure_ascii=False, default=str)
         if len(s) > max_len:

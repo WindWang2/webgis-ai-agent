@@ -13,7 +13,7 @@
 | continuous_colorbar | legend.continuous_colorbar | horizontal, vertical, slim, scientific, stepped | horizontal | multiple | bottom-right | layerId | native |
 | decision_panel | disclosure.decision_panel | default, compact | default | zero_or_one | top-left | — | native |
 | design_candidates | disclosure.design_candidates | default, compact | default | zero_or_one | top-left | — | native |
-| elevation_profile | analysis.elevation_profile | default, compact | default | multiple | bottom-left | layerId | native |
+| elevation_profile | analysis.elevation_profile | default, compact | default | multiple | bottom-left | — | native |
 | export_layout | export.page_layout | A4_landscape, A4_portrait, A3_landscape, letter | A4_landscape | single | none | — | native |
 | graticule | navigation.graticule | light, geographic, projected | light | single | none | — | native |
 | inset_map | inset.map | overview, location, hierarchy | overview | zero_or_one | top-right | — | native |

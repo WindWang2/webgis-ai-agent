@@ -53,7 +53,7 @@ def test_s44_sensitive_keys_redacted():
     d = record.to_dict()
     args = d["tool_args"]
     if isinstance(args, dict):
-        assert args["api_key"] == "<redacted>"
+        assert args["api_key"] == "[REDACTED]"
         assert args["normal_param"] == "ok"
 
 

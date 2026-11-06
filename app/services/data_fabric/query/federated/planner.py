@@ -108,6 +108,16 @@ def plan_federation_v6(req: Any) -> EnumeratedPlan:
         plan.tree = apply_fetch_windows(plan.tree, derive_fetch_windows(ctx, budget))
     plan.tree = apply_safe_aggregate_pushdown(plan.tree, ctx)
     verdict = aggregate_pushdown_verdict(ctx)
+    if verdict is not None and verdict.get("applied"):
+        stack = [plan.tree.model_dump()]
+        applied = False
+        while stack:
+            node = stack.pop()
+            applied = applied or bool(node.get("aggregate_pushdown"))
+            stack.extend(node[key] for key in ("input", "left", "right") if isinstance(node.get(key), dict))
+        verdict["applied"] = applied
+        if not applied:
+            verdict["rejected_reason"] = "safe proof exists but chosen tree is not a pair of single scans"
     if verdict is not None and len(plan.alternatives) < MAX_ALTS:
         plan.alternatives.append(verdict)
     return plan
@@ -127,16 +137,15 @@ __all__ = [
 
 
 def derive_fetch_windows(ctx: EnumerationContext, budget: Any) -> Dict[str, int]:
-    """每源 fetch 窗口（V5 奇偶默认：恒等映射 → 全部源 = ``req.limit``）。
+    """Scan windows follow the source budget; output limit applies after join.
 
-    曾经的 build 侧放宽设计（窗口 → ``min(budget.max_rows, MAX_JOIN_CANDIDATES)``）
-    在差分语料中造成**结果分歧**：V5 的窗口欠取会漏掉窗口外的匹配行，V6 放宽
-    后会找回它们 —— 「优化器不改变结果语义」红线胜过覆盖改进。窗口放宽属于
-    显式契约变更（跟随 ADR-0247 Known Limitations 的 follow-up），当前不启用。
-
-    返回空 dict（``apply_fetch_windows`` 对空窗口为恒等）。
+    Clipping each input to req.limit silently lost matches and entire groups.
+    Both V5 and V6 now reject overflow rather than reporting partial joins.
     """
-    return {}
+    from app.services.data_fabric.query.federation import MAX_JOIN_CANDIDATES
+
+    limit = min(int(budget.max_rows), MAX_JOIN_CANDIDATES)
+    return {source.source_id: limit for source in ctx.sources}
 
 
 def apply_fetch_windows(plan_tree: LogicalNode, windows: Dict[str, int]) -> LogicalNode:
@@ -176,12 +185,11 @@ def aggregate_pushdown_verdict(ctx: EnumerationContext) -> Optional[Dict[str, An
         aggregate_pushdown_proof,
     )
 
-    sources_in = tuple(s.source_id for s in ctx.sources)
     proven: list = []
     for e in ctx.joins:
         if e.kind != "aggregate_join":
             continue
-        proof = aggregate_pushdown_proof(e, sources_in, {s.source_id: s for s in ctx.sources})
+        proof = aggregate_pushdown_proof(e, (e.left_source_id,), {s.source_id: s for s in ctx.sources})
         if proof is not None:
             proven.append(proof)
     if proven:
@@ -229,7 +237,6 @@ def apply_safe_aggregate_pushdown(plan_tree: LogicalNode, ctx: EnumerationContex
     )
 
     by_id = {s.source_id: s for s in ctx.sources}
-    sources_in = tuple(s.source_id for s in ctx.sources)
 
     def _rewrite(node: LogicalNode) -> LogicalNode:
         if isinstance(node, LJ):
@@ -246,7 +253,7 @@ def apply_safe_aggregate_pushdown(plan_tree: LogicalNode, ctx: EnumerationContex
                 # 唯一键证明）；边匹配必须逐字段一致（防同右源多边选错）。
                 edge = _matching_edge(node, new_left, new_right, ctx.joins)
                 if edge is not None:
-                    proof = aggregate_pushdown_proof(edge, sources_in, by_id)
+                    proof = aggregate_pushdown_proof(edge, (new_left.source_id,), by_id)
                     if proof is not None:
                         updates["aggregate_pushdown"] = True
                         updates["right"] = new_right.model_copy(

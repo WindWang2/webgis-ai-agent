@@ -299,11 +299,19 @@ _THEME_QUERIES = {
 
 
 def _ensure_osmconf() -> Path:
+    import os
     out_dir = osm_gpkg_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     conf = out_dir / "osmconf.ini"
-    if not conf.exists():
-        conf.write_text(_OSMCONF_INI, encoding="utf-8")
+    # Atomic template refresh: stale config must not survive an application update.
+    if not conf.exists() or conf.read_text(encoding="utf-8") != _OSMCONF_INI:
+        import uuid
+        temp = conf.with_name(f".osmconf-{uuid.uuid4().hex}.tmp")
+        try:
+            temp.write_text(_OSMCONF_INI, encoding="utf-8")
+            os.replace(temp, conf)
+        finally:
+            temp.unlink(missing_ok=True)
     return conf
 
 
@@ -391,7 +399,6 @@ def ingest_pbf(
         )
 
     conf = _ensure_osmconf()
-    os.environ["OSM_CONFIG_FILE"] = str(conf)
 
     out_dir = osm_gpkg_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -412,7 +419,7 @@ def ingest_pbf(
 
     for theme in themes:
         layer, where, cat_keys = _THEME_QUERIES[theme]
-        raw = pyogrio.read_dataframe(str(pbf_path), layer=layer, where=where)
+        raw = pyogrio.read_dataframe(str(pbf_path), layer=layer, where=where, CONFIG_FILE=str(conf))
         out = _slim_theme_frame(raw, cat_keys)
         # 原子发布：先写同目录隐藏 tmp，再 os.replace 到终态。写盘中途崩溃
         # 只遗留孤儿 tmp（重跑直接忽略并覆写），残缺 GPKG 永不落终态路径

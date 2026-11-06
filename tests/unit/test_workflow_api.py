@@ -27,10 +27,14 @@ def setup_db():
 
 
 class _FakeRegistry:
+    def __init__(self):
+        self.calls = []
+
     def tool_version(self, name):
         return "1.0#cv1"
 
     async def dispatch(self, name, args, session_id=None):
+        self.calls.append(name)
         from app.services.session_data import session_data_manager
         payload = {"produced_by": name, "feature_count": 2}
         ref = f"ref:{name}"
@@ -165,6 +169,37 @@ def test_resume_endpoint(fake_registry):
         assert run1["status"] == "failed"
         assert run1["completed_steps"] == ["s1"]
 
+        # Real HTTP execution owns a durable evidence session. Its physical
+        # output and logical result remain available for continuation.
+        from app.core.database import SessionLocal
+        from app.models.db_model import Conversation, Organization, User
+        from app.models.project import Project, WorkflowRun, Artifact, ArtifactLineage
+        from app.core.auth import create_access_token, invalidate_live_user_state
+        from sqlalchemy import select
+        with SessionLocal() as db:
+            prior = db.get(WorkflowRun, run1["id"])
+            evidence_sid = prior.session_id
+            assert evidence_sid and db.get(Conversation, evidence_sid).user_id == "wf-runner"
+            artifact = db.execute(select(Artifact).join(
+                ArtifactLineage, ArtifactLineage.artifact_id == Artifact.id
+            ).where(ArtifactLineage.workflow_run_id == prior.id)).scalars().first()
+            assert artifact and artifact.storage_ref
+            physical_ref = artifact.storage_ref
+            org = Organization(name="Workflow evidence test", slug=_unique("org"))
+            db.add(org)
+            db.flush()
+            db.get(Project, proj_id).org_id = org.id
+            db.get(User, "wf-runner").org_id = org.id
+            other_id = _unique("other")
+            db.add(User(id=other_id, username=other_id, email=f"{other_id}@example.test",
+                        role="editor", org_id=org.id, is_active=True, token_version=0))
+            db.commit()
+        invalidate_live_user_state()
+        other = {"Authorization": "Bearer " + create_access_token({"sub": other_id})}
+        denied = client.post(f"/api/v1/projects/{proj_id}/runs/{run1['id']}/resume",
+                             json={"allow_rerun": False}, headers=other)
+        assert denied.status_code == 404
+
         # Switch to a succeeding registry and resume.
         ok_reg = _FakeRegistry()
         route_mod.get_tool_registry = lambda: ok_reg
@@ -173,6 +208,34 @@ def test_resume_endpoint(fake_registry):
         assert resumed.status_code == 200, resumed.text
         assert resumed.json()["status"] == "completed"
         assert resumed.json()["completed_steps"] == ["s1", "s2"]
+        assert ok_reg.calls == ["t_b"], "resume must reuse s1 rather than silently rerun it"
+        with SessionLocal() as db:
+            assert db.get(WorkflowRun, resumed.json()["id"]).session_id == evidence_sid
+        from app.core.async_runner import run_sync
+        from app.services.session_data import session_data_manager
+        assert run_sync(session_data_manager.get(evidence_sid, physical_ref)) is not None
+        # Pre-migration NULL is no proof of reconstructability.
+        with SessionLocal() as db:
+            db.get(WorkflowRun, run1["id"]).session_id = None
+            db.commit()
+        legacy = client.post(f"/api/v1/projects/{proj_id}/runs/{run1['id']}/resume",
+                             json={"allow_rerun": False}, headers=_auth_headers())
+        assert legacy.status_code == 409 and "evidence session" in legacy.text
+        denied_legacy = client.post(f"/api/v1/projects/{proj_id}/runs/{run1['id']}/resume",
+                                   json={"allow_rerun": True}, headers=other)
+        assert denied_legacy.status_code == 404
+        ok_reg.calls.clear()
+        fresh = client.post(f"/api/v1/projects/{proj_id}/runs/{run1['id']}/resume",
+                            json={"allow_rerun": True}, headers=_auth_headers())
+        assert fresh.status_code == 200, fresh.text
+        assert fresh.json()["status"] == "completed"
+        assert ok_reg.calls == ["t_a", "t_b"], "explicit legacy rerun must execute every step"
+        with SessionLocal() as db:
+            fresh_sid = db.get(WorkflowRun, fresh.json()["id"]).session_id
+            assert fresh_sid and fresh_sid != evidence_sid
+            assert db.get(Conversation, fresh_sid).user_id == "wf-runner"
+        assert run_sync(session_data_manager.get(fresh_sid, physical_ref)) is None
+
     finally:
         route_mod.get_tool_registry = orig
 

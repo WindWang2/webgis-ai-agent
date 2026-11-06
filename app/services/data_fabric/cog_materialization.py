@@ -24,6 +24,8 @@ reason code 封闭：``budget_exceeded`` / ``ssrf_blocked`` / ``unreachable`` /
 """
 from __future__ import annotations
 
+from app.lib.geo_raster.env import open_raster
+
 import asyncio
 import hashlib
 import logging
@@ -86,8 +88,13 @@ def redact_signed_url(url: str) -> str:
     return base
 
 
-class CogMaterializationError(Exception):
+from app.services.data_fabric.errors import DataFabricError
+
+
+class CogMaterializationError(DataFabricError):
     """物化失败（reason code 封闭；details 携带预算/协商事实）。"""
+
+    code = "MATERIALIZATION_FAILED"
 
     def __init__(self, message: str, *, reason_code: str, details: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(message)
@@ -134,6 +141,7 @@ def extract_cog_assets(item: Dict[str, Any]) -> List[Dict[str, Any]]:
 async def discover_stac_cog_assets(
     stac_adapter: Any,
     *,
+    collection_id: str,
     bbox: Optional[Sequence[float]] = None,
     datetime_range: Optional[Sequence[str]] = None,
     limit: int = 20,
@@ -150,7 +158,9 @@ async def discover_stac_cog_assets(
         bbox=list(bbox) if bbox else None,
         datetime_range=list(datetime_range) if datetime_range else None,
     )
-    result = await asyncio.to_thread(stac_adapter.query, "_search", spec)
+    if not collection_id or collection_id == "_search":
+        raise ValueError("COG discovery requires an explicit real STAC collection_id")
+    result = await asyncio.to_thread(stac_adapter.query, collection_id, spec)
     items = result.features or []
     enriched: List[Dict[str, Any]] = []
     for item in items:
@@ -204,7 +214,7 @@ def preview_remote_cog(href: str) -> Dict[str, Any]:
             # PAM 边车（.aux.xml/.aux）对只读远程栅格无意义且每次探测
             # 一次网络往返 —— GDAL 官方建议 /vsicurl 关闭（读取语义不变）。
             _stack.enter_context(rasterio.Env(GDAL_PAM_ENABLED="NO"))
-            with rasterio.open(vsi) as ds:
+            with open_raster(vsi) as ds:
                 info = {
                     "width": ds.width,
                     "height": ds.height,
@@ -290,7 +300,7 @@ async def materialize_remote_cog_asset(
 
             # 同 preview：只读远程栅格关闭 PAM 边车探测。
             _stack.enter_context(rasterio.Env(GDAL_PAM_ENABLED="NO"))
-            with rasterio.open(vsi) as ds:
+            with open_raster(vsi) as ds:
                 band_idx = list(bands) if bands else list(range(1, ds.count + 1))
                 for b in band_idx:
                     if not (1 <= int(b) <= ds.count):

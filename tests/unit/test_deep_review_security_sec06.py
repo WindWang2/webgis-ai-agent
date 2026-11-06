@@ -48,12 +48,12 @@ def _raster(path) -> str:
 def test_compile_rejects_source_outside_data_dir(service, data_dir, tmp_path):
     outside = _raster(tmp_path / "outside.tif")
     with pytest.raises(PromptArtifactError, match="data directory"):
-        service.compile_geo_prompt({"points": [[1, 1]]}, outside)
+        service.compile_geo_prompt({"points": [[1, 1]]}, outside, allowed_roots=[data_dir])
 
 
 def test_compile_accepts_source_inside_data_dir(service, data_dir):
     inside = _raster(data_dir / "inside.tif")
-    compiled = service.compile_geo_prompt({"points": [[10, 10]]}, inside)
+    compiled = service.compile_geo_prompt({"points": [[10, 10]]}, inside, allowed_roots=[data_dir])
     assert compiled["artifact_id"]
 
 
@@ -64,6 +64,7 @@ def test_compile_rejects_reference_layer_outside_data_dir(service, data_dir, tmp
         service.compile_geo_prompt(
             {"reference_layer": {"uri": outside, "band": 1, "strategy": "nonzero"}},
             inside,
+            allowed_roots=[data_dir],
         )
 
 
@@ -80,7 +81,7 @@ async def test_run_inference_async_rejects_source_outside_data_dir(
             source_uri=outside,
             owner_scope={"session_id": "sec06"},
             prompt=PromptSpec(points=((10.0, 10.0),)),
-        ))
+        ), allowed_roots=[data_dir])
 
 
 async def test_run_inference_async_accepts_source_inside_data_dir(service, data_dir):
@@ -93,5 +94,5 @@ async def test_run_inference_async_accepts_source_inside_data_dir(service, data_
         source_uri=inside,
         owner_scope={"session_id": "sec06-ok"},
         prompt=PromptSpec(points=((10.0, 10.0),)),
-    ))
+    ), allowed_roots=[data_dir])
     assert result.status == "completed"

@@ -528,7 +528,6 @@ def build_runtime_execution_corpus(
                     call_args = dict(args)
                     if ("geojson" in call_args and isinstance(
                             call_args["geojson"], dict)
-                            and call_args["geojson"].get("features")
                             and family_id):
                         call_args["geojson"] = _family_payload(family_id, scale)
                     script.append(ScriptedCall(

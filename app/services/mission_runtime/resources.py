@@ -44,7 +44,7 @@ class MissionResourceLedger:
         budget["quota"] = {str(k)[:64]: float(v) for k, v in (quota or {}).items()}
         return self.store.patch_mission(
             mission_id, lease_epoch=lease_epoch, owner=owner,
-            resource_budget=budget)
+            resource_budget=budget, expected_revision=rec.revision)
 
     def reserve(
         self,
@@ -60,8 +60,10 @@ class MissionResourceLedger:
             raise TransitionRejected("MISSION_NOT_FOUND")
         budget = rec.resource_budget
         # reject if would exceed quota
+        if budget.quota and dim not in budget.quota:
+            raise TransitionRejected(f"BUDGET_DIMENSION_UNAVAILABLE:{dim}")
         quota = float(budget.quota.get(dim, 0.0) or 0.0)
-        if quota > 0:
+        if dim in budget.quota:
             projected = (
                 float(budget.consumed.get(dim, 0.0))
                 + float(budget.reserved.get(dim, 0.0))
@@ -72,7 +74,7 @@ class MissionResourceLedger:
         budget.reserve(dim, amount)
         return self.store.patch_mission(
             mission_id, lease_epoch=lease_epoch, owner=owner,
-            resource_budget=budget.model_dump())
+            resource_budget=budget.model_dump(), expected_revision=rec.revision)
 
     def commit_consumption(
         self,
@@ -87,11 +89,13 @@ class MissionResourceLedger:
         idempotency_key: str = "",
         seen_keys: Optional[set] = None,
     ) -> C.MissionRecord:
-        """Charge cumulative consumption; duplicate idempotency_key is no-op.
+        """Synchronous thread-only charge; duplicate idempotency_key is no-op.
 
         RUN-15：读-改-写必须走 revision CAS（``expected_revision``）并重试
         ``REVISION_CONFLICT`` —— 并发计费/预留交错时绝不丢计费。
         """
+        from app.lib.runtime.sync_io import warn_if_event_loop
+        warn_if_event_loop("MissionResourceLedger.commit_consumption")
         if idempotency_key and seen_keys is not None and idempotency_key in seen_keys:
             got = self.store.get_mission(mission_id)
             if got is None:
@@ -157,7 +161,7 @@ class MissionResourceLedger:
         budget.release_reservation(dim, amount)
         return self.store.patch_mission(
             mission_id, lease_epoch=lease_epoch, owner=owner,
-            resource_budget=budget.model_dump())
+            resource_budget=budget.model_dump(), expected_revision=rec.revision)
 
     def exhausted(self, mission_id: str) -> list[str]:
         rec = self.store.get_mission(mission_id)

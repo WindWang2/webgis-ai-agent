@@ -85,7 +85,8 @@ def host_policy_from_settings() -> HostPolicy:
         max_worker_crashes=_parse_max_worker_crashes(settings.EXTENSIONS_MAX_WORKER_CRASHES),
         # ── V3（ADR-0119）────────────────────────────────────────────
         trust_store=_load_trust_store(settings.EXTENSION_TRUST_STORE_PATH),
-        isolation_backend=_parse_isolation_backend(settings.EXTENSIONS_ISOLATION_BACKEND),
+        isolation_backend=_parse_isolation_backend(settings.EXTENSIONS_ISOLATION_BACKEND, production=settings.is_production()),
+        require_namespace_for_untrusted=settings.is_production(),
         require_worker_for=_parse_require_worker_for(
             getattr(settings, "EXTENSIONS_REQUIRE_WORKER_FOR", "untrusted")
         ),
@@ -244,7 +245,7 @@ def _load_trust_store(raw: str) -> Any:
 _ISOLATION_BACKENDS = frozenset({"auto", "process", "bubblewrap"})
 
 
-def _parse_isolation_backend(raw: str) -> str:
+def _parse_isolation_backend(raw: str, *, production: bool = False) -> str:
     """CP-02：``auto``（缺省）= 本机可用的最安全后端（bwrap 可用 → bubblewrap，
     否则 process 并大声告警）；显式值保持原语义（bwrap 不可用 = typed 失败）。"""
     value = (raw or "auto").strip().lower()
@@ -257,6 +258,10 @@ def _parse_isolation_backend(raw: str) -> str:
             )
         )
     if value == "auto":
+        if production:
+            # Activation fails explicitly when bwrap is absent; never silently
+            # expose host files to local_untrusted code on the process backend.
+            return "bubblewrap"
         from .worker.isolation import probe_bubblewrap
 
         if probe_bubblewrap() is not None:

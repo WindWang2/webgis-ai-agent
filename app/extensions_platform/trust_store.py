@@ -216,6 +216,14 @@ class TrustStore:
 
     # ── 运维面：吊销写回（registry revoke 的传播通道）─────────────────
     def revoke_package(self, package_id: str, version: Optional[str] = None) -> None:
+        if self.source_path is None:
+            return self._revoke_package_locked(package_id, version)
+        from .marketplace.store import RegistryStore
+        lock_path = self.source_path.with_name(self.source_path.name + ".lock")
+        with RegistryStore._FileLock(lock_path):
+            self._revoke_package_locked(package_id, version)
+
+    def _revoke_package_locked(self, package_id: str, version: Optional[str] = None) -> None:
         """把 (package_id, version) 写入信任根吊销表并原子持久化。
 
         幂等：重复吊销同一 (id, version) 是 no-op。只对文件加载的实例

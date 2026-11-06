@@ -4,6 +4,7 @@ WMS & WMTS Raster Data Source Adapter
 import re
 import time
 import logging
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit, quote
 from typing import Any, List, Dict, Optional, Tuple
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.security import (
@@ -201,6 +202,17 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         self.options = self.profile.options or {}
         self.session = make_safe_session(allow_private=self.profile.allow_private)
 
+    def _public_getmap_base(self, dataset_id: str) -> Optional[str]:
+        # Browser metadata cannot carry server-side credentials. A redacted URL
+        # is not an executable substitute; refuse until a governed WMS proxy exists.
+        if self.profile.credentials or DataFabricSecurity.redact_url(self.url) != self.url:
+            return None
+        parts = urlsplit(self.url)
+        params = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                  if key.upper() not in {"SERVICE", "REQUEST", "LAYERS", "STYLES", "VERSION", "CRS", "SRS", "BBOX", "WIDTH", "HEIGHT", "FORMAT"}]
+        params.extend([("SERVICE", "WMS"), ("REQUEST", "GetMap"), ("LAYERS", dataset_id), ("STYLES", "")])
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(params, quote_via=quote), ""))
+
     def probe(self) -> bool:
         """Lightweight WMS/WMTS GetCapabilities probe（有界下载，禁裸 resp.content）。"""
         if not self.url:
@@ -324,7 +336,7 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
             if name and name not in normalized:
                 normalized.append(name)
         # 主 srs：地理 bbox 是 WGS84，优先取 4326/CRS84；否则取第一个已声明项。
-        primary = next(
+        primary = "CRS84" if "CRS84" in normalized else next(
             (c for c in normalized if c in ("EPSG:4326", "CRS84")),
             normalized[0] if normalized else None,
         )
@@ -333,16 +345,16 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         metadata: Dict[str, Any] = {
             "endpoint_url": safe_url,
             "layer": dataset_id,
-            "tile_url_template": (
-                f"{safe_url}?SERVICE={self.service_type.upper()}&REQUEST=GetMap"
-                f"&LAYERS={dataset_id}&FORMAT=image/png"
-            ),
+            "service_version": service_version,
+            "tile_url_template": self._public_getmap_base(dataset_id) if self.service_type.lower() == "wms" else None,
             # 附加（additive）键：原 keys 不动。
             "advertised_crs": advertised_crs,
             "normalized_crs": normalized,
             "bbox_crs": "EPSG:4326" if bbox is not None else None,
             "notes": notes,
         }
+        if metadata["tile_url_template"] is None:
+            metadata["preview_unavailable_reason"] = "authenticated_wms_requires_proxy" if self.service_type.lower() == "wms" else "wmts_requires_declared_gettile_matrix"
         if any("GetCapabilities" in n for n in notes):
             metadata["describe_error"] = "; ".join(notes)
         # WMS 1.3.0 + EPSG:4326 轴序诚实性（additive note，不重排存储数组：
@@ -400,7 +412,7 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         try:
             desc = self.describe(dataset_id)
             desc_meta = desc.metadata or {}
-            described_bbox = desc.bbox
+            described_bbox = query_spec.bbox or desc.bbox
             crs = desc.srs
         except Exception as e:  # noqa: BLE001 — 查询面不因 describe 失败而炸
             logger.warning(
@@ -409,12 +421,18 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
                 _redact_text(str(e)),
             )
 
-        base = (
-            f"{DataFabricSecurity.redact_url(self.url)}"
-            f"?SERVICE=WMS&REQUEST=GetMap&LAYERS={dataset_id}&STYLES="
-        )
+        base = self._public_getmap_base(dataset_id)
+        if base is None:
+            from app.services.data_fabric.errors import QueryUnsupportedError
+            raise QueryUnsupportedError("Authenticated WMS browser URLs require a governed proxy; credential-stripped preview URLs are unavailable")
+        if self.service_type.lower() == "wmts":
+            from app.services.data_fabric.errors import QueryUnsupportedError
+
+            raise QueryUnsupportedError("WMTS requires a declared tile matrix and GetTile request; GetMap is unsupported")
+        version = str(desc_meta.get("service_version") or "1.3.0")
+        base += f"&VERSION={version}"
         if crs:
-            base += f"&CRS={crs}"
+            base += f"&{'CRS' if version.startswith('1.3') else 'SRS'}={crs}"
         # Round-2 审计 MAJOR-1：describe 给出的 bbox 恒为 WGS84 度值
         # （bbox_crs=EPSG:4326）。只有当选定 CRS 同为地理坐标时二者才能
         # 配对；投影 CRS（米制）配 WGS84 度值是静默谎言——此时省略 BBOX
@@ -433,7 +451,8 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         emitted_bbox = False
         if described_bbox is not None and crs and crs_is_geographic:
             w, s, e, n = described_bbox
-            base += f"&BBOX={w},{s},{e},{n}"
+            bounds = (s, w, n, e) if version.startswith("1.3") and crs.upper() == "EPSG:4326" else (w, s, e, n)
+            base += "&BBOX=" + ",".join(str(value) for value in bounds)
             emitted_bbox = True
         elif described_bbox is not None and crs is None:
             # 无 CRS 时服务器默认 CRS 未知——WGS84 度值不可假设，省略。
@@ -443,7 +462,7 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         metadata: Dict[str, Any] = {
             "getmap_url": base,
             "tile_url": base,
-            "pushdown_bbox": bool(query_spec.bbox),
+            "pushdown_bbox": bool(query_spec.bbox) and emitted_bbox,
             # 附加（additive）键：原 keys 不动。
             "crs": crs,
             "bbox_crs": desc_meta.get("bbox_crs"),

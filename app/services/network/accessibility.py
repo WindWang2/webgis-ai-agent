@@ -241,7 +241,7 @@ class NetworkAccessibilityService:
                     "is_served": is_served,
                 })
 
-        coverage_percentage = (served_demand / total_demand * 100.0) if total_demand > 0 else 100.0
+        coverage_percentage = (served_demand / total_demand * 100.0) if total_demand > 0 else None
         avg_travel_time = (weighted_travel_time_sum / served_demand) if served_demand > 0 else 0.0
 
         return AccessibilityResult(
@@ -251,7 +251,8 @@ class NetworkAccessibilityService:
             total_demand=round(total_demand, 2),
             served_demand=round(served_demand, 2),
             unserved_demand=round(unserved_demand, 2),
-            coverage_percentage=round(coverage_percentage, 2),
+            coverage_percentage=round(coverage_percentage, 2) if coverage_percentage is not None else None,
+            warnings=["zero total demand; coverage percentage is undefined"] if total_demand <= 0 else [],
             average_travel_time_min=round(avg_travel_time, 2),
             per_zone_metrics=per_zone_metrics,
         )

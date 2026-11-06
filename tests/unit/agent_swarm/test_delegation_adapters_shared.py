@@ -20,6 +20,7 @@ test_delegation_protocol.py 的 monkeypatch 模式）。
 from __future__ import annotations
 
 import pytest
+from app.tools.registry import ToolRegistry
 
 from app.services.agent_swarm import delegation_adapters as da
 from app.services.agent_swarm.delegation import (
@@ -89,7 +90,7 @@ class TestRunnerCrashPath:
         import app.services.subagent as subagent_mod
 
         monkeypatch.setattr(subagent_mod, "SubagentDispatcher", BoomDispatcher)
-        runner = da.SubagentDispatcherRunner(object(), "s1", task="t")
+        runner = da.SubagentDispatcherRunner(ToolRegistry(), "s1", task="t")
         lease = DelegationLease(
             lease_id="lease-x", delegation_id="dg-x",
             generation=1, session_id="s1",
@@ -107,7 +108,7 @@ class TestRunnerCrashPath:
         monkeypatch.setattr(subagent_mod, "SubagentDispatcher", BoomDispatcher)
         gateway = DelegationGateway(scheduler=FairSlotScheduler())
         result, snapshot = await da.run_single_delegation(
-            object(), "s1", task="t", gateway=gateway,
+            ToolRegistry(), "s1", task="t", gateway=gateway,
         )
         # 合成诚实失败 result（非 raw SubagentResult 直传）
         assert result.success is False

@@ -63,6 +63,16 @@ def test_same_world_produces_no_changes():
     assert wc.findings[0].status == "supported"
 
 
+def test_unknown_zero_basis_is_invalidated_on_known_drift():
+    wc = _wc_with_finding()
+    wc.findings[0].basis_revision = 0
+    wc.accepted_assumptions[0].basis_revision = 0
+    obs = _obs(crs="EPSG:3857")
+    apply_changes(wc, diff_against(wc, obs), obs=obs, turn_id="next")
+    assert wc.findings[0].status == "stale"
+    assert wc.accepted_assumptions[0].stale_basis
+
+
 def test_first_observation_establishes_basis_without_invalidation():
     wc = _wc_with_finding()
     wc.basis.time_period = ""  # unknown before

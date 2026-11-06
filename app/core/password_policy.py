@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import time
+import re
 from typing import Optional
 
 #: 内置常见口令表（top 128 截选；小写比对）。
@@ -62,7 +63,8 @@ def validate_password_strength(password: str) -> None:
     if not isinstance(password, str) or not (8 <= len(password) <= 128):
         raise PasswordPolicyError("密码长度须为 8–128 位")
     lowered = password.lower()
-    if lowered in COMMON_PASSWORDS:
+    stem = re.sub(r"[\d\W_]+$", "", lowered)
+    if lowered in COMMON_PASSWORDS or stem in COMMON_PASSWORDS:
         raise PasswordPolicyError("密码过于常见，请更换")
     classes = sum([
         any(c.islower() for c in password),

@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urlparse
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
+from app.services.data_fabric.errors import DataFabricError, SecurityBlockedError, SourceUnreachableError
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -115,15 +116,23 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
 
     def _s3_client(self):
         """Build a boto3 S3 client bound to this profile's endpoint/creds."""
+        from app.core.egress import current_policy
+
+        if not self.allow_private or current_policy().mode != "unrestricted":
+            raise SecurityBlockedError(
+                "provider SDK access requires an explicitly trusted allow_private profile and unrestricted egress; use a guarded HTTPS object URL"
+            )
         import boto3
 
-        return boto3.client(
+        client = boto3.client(
             "s3",
             aws_access_key_id=self.access_key,
             aws_secret_access_key=self.secret_key,
             endpoint_url=self.endpoint if self.endpoint.startswith("http") else None,
             region_name=self.region,
         )
+        DataFabricSecurity.validate_url(client.meta.endpoint_url, allow_private=self.allow_private)
+        return client
 
     def list_datasets(self) -> List[Dict[str, Any]]:
         """Discover available geospatial objects in S3 bucket.
@@ -131,9 +140,9 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
         Truthfulness contract (#430): synthetic fixtures are served ONLY on the
         explicit no-endpoint demo path, and every entry is labeled
         ``source="synthetic-demo"``. With a real endpoint configured, any
-        discovery failure — auth error, unreachable endpoint, or a bucket
-        without geospatial objects — returns an EMPTY list with a typed warning
-        instead of silently registering demo data as the remote's contents.
+        discovery failure raises a typed error instead of silently registering
+        demo data as the remote's contents. A successfully read bucket without
+        geospatial objects returns an honest empty list.
         """
         if not self.endpoint or self.endpoint.startswith("s3://"):
             return [
@@ -174,6 +183,8 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
                 f"S3 list_datasets for '{self.endpoint}' bucket '{bucket_name}' "
                 f"returned no geospatial objects; registering an empty catalog"
             )
+        except DataFabricError:
+            raise
         except Exception as e:
             # Typed failure: the caller must see the real error, not pretend the
             # sync succeeded with demo fixtures masquerading as remote data.
@@ -181,6 +192,7 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
                 f"S3 list_datasets failed for '{self.endpoint}': "
                 f"{type(e).__name__}: {e}"
             )
+            raise SourceUnreachableError("S3 object listing failed") from e
         return []
 
     def describe(self, dataset_id: str) -> DatasetDescriptor:
@@ -239,7 +251,7 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
                 srs="EPSG:4326",
                 # No real bbox without downloading the object — report world
                 # bounds plus the actual object size; no fabricated values.
-                bbox=[-180.0, -90.0, 180.0, 90.0],
+                bbox=None,
                 feature_count=0,
                 fields=[{"name": "size_bytes", "type": "int"}, {"name": "content_type", "type": "string"}],
                 metadata={
@@ -250,8 +262,10 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
                     "sanitized_credentials": True,
                 },
             )
+        except DataFabricError:
+            raise
         except Exception as e:
-            error_type = type(e).__name__
+            error_type = "SOURCE_BAD_RESPONSE"
             error_message = f"S3 describe for '{target_uri}' failed: {e}"
             logger.warning(error_message)
 

@@ -235,7 +235,7 @@ class TestCheckpointAndPartialRerun:
     def test_unreferenced_dunder_keys_never_leak_into_outputs(self, scan_stub):
         eng = GeoExecutionEngine(max_workers=2, retain_outputs=True)
         run = eng.execute_plan(self._plan())
-        payload = eng.get_node_output(run.run_id, "filt")
+        payload = eng.get_node_output(run.run_id, "filt", owner_scope=eng._run_owners[run.run_id])
         assert payload is not None
         assert not [k for k in payload if k.startswith("__")]
 

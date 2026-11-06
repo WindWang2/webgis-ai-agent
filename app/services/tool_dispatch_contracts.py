@@ -1,7 +1,5 @@
 """Pure tool-name compatibility and result-classification contracts."""
-from typing import Any
-
-from app.services.llm_result_formatter import is_tool_error_result
+from app.lib.tool_result_errors import is_suspicious_result as is_suspicious_result
 
 # ─── 规范化工具名称映射表 ─────────────────────────────
 # 把遗留工具名规范化为 canonical webgis_* 名称。两个调用点，均刻意保留：
@@ -45,40 +43,3 @@ LEGACY_TOOL_NAME_MAP: dict[str, str] = {
 def normalize_tool_name(name: str) -> str:
     """规范化遗留工具名为 canonical webgis_* 名称 (供 dispatch 入口与历史重放两处调用，见 ADR-0010)。"""
     return LEGACY_TOOL_NAME_MAP.get(name, name)
-
-
-
-def is_suspicious_result(result: Any) -> bool:
-    """检测工具返回是否"可疑"（空数据 / 错误响应），用于触发自愈提示尾。
-
-    纯函数无副作用。本函数为单一权威定义（unified-tool-dispatch 票据 04 contract：
-    旧 chat/dispatcher.py 已删除，收敛至此）。供 ToolDispatchService 内部与
-    ChatEngine._log_tool_decision / _detect_suspicious_result 共用。
-    """
-    if not result:
-        return True
-    if isinstance(result, dict):
-        # #529: the {"error": <str>} shape is a failure, not an empty/suspicious
-        # success — classify it so standalone consumers (engine
-        # _detect_suspicious_result / decision logging) don't treat it as
-        # success. (The dispatch error branch handles it before this point.)
-        if is_tool_error_result(result):
-            return True
-        # MapSpec 封装会剥掉 features、只留 result_ref + feature_count。
-        # 若仍按「无 features 即空」判断，本地 OSM/行政区成功也会被标 empty，
-        # 模型就会再去调高德 search_poi。
-        ref = result.get("result_ref") or result.get("ref")
-        n = result.get("feature_count")
-        if n is None:
-            n = result.get("count")
-        if isinstance(ref, str) and ref.startswith("ref:") and isinstance(n, (int, float)) and n > 0:
-            return False
-        if result.get("type") == "FeatureCollection" and not result.get("features"):
-            return True
-        if "data" in result and isinstance(result["data"], list) and not result["data"]:
-            return True
-        if "poi_count" in result and result["poi_count"] == 0:
-            return True
-    if isinstance(result, list) and not result:
-        return True
-    return False

@@ -67,6 +67,9 @@
     "highlightLayer": "Highlight layer",
     "titleWithTime": "Isochrone network analysis ({minutes} min)",
     "modeDriving": "Driving",
+    "modeCycling": "Cycling",
+    "modeTransit": "Transit",
+    "modeUnknown": "Unknown",
     "modeWalking": "Walking",
     "facilityCount": "{count} facilities",
     "facilityUnknown": "Facility count unknown",
@@ -273,7 +276,8 @@
   "chart": {
     "boxPlotAria": "Box plot {title}",
     "heatMatrixAria": "Heat matrix {title}",
-    "unsupportedType": "Cannot render chart: unsupported type \"{type}\""
+    "unsupportedType": "Cannot render chart: unsupported type \"{type}\"",
+    "noData": "No data"
   },
   "code": {
     "copy": "Copy",

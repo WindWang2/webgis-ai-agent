@@ -27,6 +27,7 @@ from app.services.context_assembly.contract import (
     ProviderReport,
     SharedTurnFacts,
     TurnContextRequest,
+    SourceScopeUnavailable,
     bounded_item,
 )
 from app.services.context_assembly.flags import harness_state_block_enabled
@@ -110,7 +111,7 @@ class CartographyVerdictProvider(BaseProvider):
             domain=self.domain, content=text,
             freshness=str(current_fingerprint or ""),
             evidence_ref="cartographic_fingerprint",
-            scope_id=req.session_id,
+            scope_id=facts.source_session_id,
         )]
 
 
@@ -125,17 +126,20 @@ class CartographyMemoryProvider(BaseProvider):
 
     async def build(self, req, facts):
         from app.services.chat.context_assembler import _build_project_memory_block
-        from app.services.gis_context.scope import SensitivityClass
 
-        text = await asyncio.to_thread(_build_project_memory_block, req.project_id)
+        text = await asyncio.to_thread(
+            _build_project_memory_block, req.project_id,
+            user_id=req.user_id or None, org_id=req.org_id or None,
+        )
         if not text:
             return []
+        source_scope = getattr(text, "source_scope", None)
+        if not source_scope:
+            raise SourceScopeUnavailable("derived context is missing its source scope")
         return [bounded_item(
             item_id="carto:memory", provider_id=self.provider_id,
             domain=self.domain, content=text,
-            scope="project", scope_id=req.project_id,
-            project_id=req.project_id, org_id=req.org_id,
-            sensitivity=SensitivityClass.PROJECT_SCOPED,
+            **source_scope,
             evidence_ref="project_memory:active_facts",
         )]
 
@@ -151,7 +155,6 @@ class ProjectKnowledgeProvider(BaseProvider):
 
     async def build(self, req, facts):
         from app.services.chat.context_assembler import _build_project_knowledge_block
-        from app.services.gis_context.scope import SensitivityClass
 
         text = await asyncio.to_thread(
             _build_project_knowledge_block,
@@ -161,12 +164,13 @@ class ProjectKnowledgeProvider(BaseProvider):
         )
         if not text:
             return []
+        source_scope = getattr(text, "source_scope", None)
+        if not source_scope:
+            raise SourceScopeUnavailable("derived context is missing its source scope")
         return [bounded_item(
             item_id="knowledge:card", provider_id=self.provider_id,
             domain=self.domain, content=text,
-            scope="project", scope_id=req.project_id,
-            project_id=req.project_id, org_id=req.org_id,
-            sensitivity=SensitivityClass.PROJECT_SCOPED,
+            **source_scope,
             evidence_ref="project_knowledge:active_entries",
         )]
 
@@ -181,7 +185,6 @@ class GisMemoryProvider(BaseProvider):
         return bool(req.org_id)
 
     async def build(self, req, facts):
-        from app.services.gis_context.scope import SensitivityClass
         from app.services.gis_memory.queries import (
             MemoryProjectionInput,
             build_memory_projection,
@@ -198,15 +201,15 @@ class GisMemoryProvider(BaseProvider):
         )
         if not text:
             return []
+        source_scope = getattr(text, "source_scope", None)
+        if not source_scope:
+            raise SourceScopeUnavailable("derived context is missing its source scope")
         return [bounded_item(
             item_id="memory:gis", provider_id=self.provider_id,
             domain=self.domain, content=text,
             # ADR-0255: org-scoped cross-session prior — renderable anywhere
             # inside its org, never outside it.
-            scope="project" if req.project_id else "turn",
-            scope_id=req.project_id or req.session_id,
-            project_id=req.project_id, org_id=req.org_id,
-            sensitivity=SensitivityClass.ORG_SCOPED,
+            **source_scope,
             evidence_ref="gis_memory:projection",
         )]
 
@@ -229,7 +232,7 @@ class SessionPlanProvider(BaseProvider):
         return [bounded_item(
             item_id="plan:projection", provider_id=self.provider_id,
             domain=self.domain, content=text,
-            scope="session", scope_id=req.session_id,
+            scope="session", scope_id=str(getattr(facts.plan, "session_id", "") or ""),
             revision=str(getattr(facts.plan, "revision", "") or "")
             or str(getattr(facts.plan, "version", "") or ""),
             evidence_ref="session_plan:envelope",
@@ -247,7 +250,7 @@ class ToolSurfaceProvider(BaseProvider):
     domain = ContextDomain.TOOL_SURFACE
 
     def enabled(self, req, facts):
-        return bool(req.session_id) and facts.plan is not None
+        return bool(req.session_id) and facts.plan is not None and getattr(facts.plan, "session_id", "") == req.session_id
 
     async def build(self, req, facts):
         from app.services.chat.pi_turn_context import (
@@ -265,7 +268,7 @@ class ToolSurfaceProvider(BaseProvider):
             items.append(bounded_item(
                 item_id="surface:row", provider_id=self.provider_id,
                 domain=ContextDomain.TOOL_SURFACE, content=surface_text,
-                scope="session", scope_id=req.session_id,
+                scope="session", scope_id=str(getattr(facts.plan, "session_id", "") or ""),
             ))
         marker = await _active_tools_block_for(
             req.message, surface, facts.plan,
@@ -275,7 +278,7 @@ class ToolSurfaceProvider(BaseProvider):
             items.append(bounded_item(
                 item_id="surface:active_tools", provider_id=self.provider_id,
                 domain=ContextDomain.ACTIVE_TOOLS, content=marker,
-                scope="session", scope_id=req.session_id,
+                scope="session", scope_id=str(getattr(facts.plan, "session_id", "") or ""),
                 control_plane=True,
             ))
         return items
@@ -326,7 +329,7 @@ class V6BlocksProvider(BaseProvider):
         return [bounded_item(
             item_id="v6:blocks", provider_id=self.provider_id,
             domain=self.domain, content=text,
-            scope="session", scope_id=req.session_id,
+            scope="session", scope_id=str(getattr(facts.plan, "session_id", "") or ""),
         )]
 
 
@@ -358,7 +361,7 @@ class EvictedRefsProvider(BaseProvider):
         return [bounded_item(
             item_id="refs:tombstone", provider_id=self.provider_id,
             domain=self.domain, content=text,
-            scope="session", scope_id=req.session_id,
+            scope="session", scope_id=facts.source_session_id,
         )]
 
 
@@ -384,7 +387,7 @@ class HarnessStateProvider(BaseProvider):
         return [bounded_item(
             item_id="harness:state", provider_id=self.provider_id,
             domain=self.domain, content=text,
-            scope="session", scope_id=req.session_id,
+            scope="session", scope_id=str(getattr(ctx, "session_id", "") or ""),
             revision=str(getattr(ctx, "context_schema", "")),
             evidence_ref=f"harness_kernel:{getattr(ctx, 'context_schema', '')}",
         )]
@@ -457,11 +460,13 @@ class GisContextCardProvider(BaseProvider):
         )
         if not text:
             return []
+        source_scope = getattr(text, "source_scope", None)
+        if not source_scope:
+            raise SourceScopeUnavailable("derived context is missing its source scope")
         return [bounded_item(
             item_id="gisctx:card", provider_id=self.provider_id,
             domain=self.domain, content=text,
-            scope="mission", scope_id=req.session_id,
-            project_id=req.project_id, org_id=req.org_id,
+            **source_scope,
             evidence_ref="gis_working_context:card",
         )]
 
@@ -521,7 +526,7 @@ class RepresentationBindingProvider(BaseProvider):
             revision=str(doc.revision),
             freshness=str(payload.get("folded_patch_count", 0)),
             evidence_ref="requirement_ir_document",
-            scope_id=req.session_id,
+            scope_id=facts.source_session_id,
         )]
 
 
@@ -574,10 +579,11 @@ async def collect_cartography_wave(
             blocks.append((provider.domain, ""))
             continue
         items_by_provider[provider.provider_id] = report
-        blocks.append((
-            provider.domain,
-            report.items[0].content if report.items else "",
-        ))
+        item = report.items[0] if report.items else None
+        if item is not None and item.domain is ContextDomain.GIS_MEMORY:
+            from app.services.context_assembly.fence import apply_domain_fence, scrub_item
+            item = scrub_item(apply_domain_fence(item))
+        blocks.append((provider.domain, item.content if item is not None else ""))
     knowledge_present = any(
         report.items for report in items_by_provider.values()
         if getattr(report, "provider_id", "") == "project_knowledge"

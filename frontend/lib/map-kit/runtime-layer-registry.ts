@@ -274,7 +274,7 @@ export function unregisterRuntimeLayer(layerId: string): void {
   // 先快照将被清扫的账目（所有权转移需要 dropEntry 之前的 sourceDef）。
   const dropped: RuntimeLayerDescriptor[] = [];
   for (const id of [...registry.keys()]) {
-    if (id === layerId || id.startsWith(`${layerId}-`) || id.startsWith(`${layerId}__`)) {
+    if (id === layerId || id.startsWith(`${layerId}__`) || (id.startsWith(`${layerId}-`) && registry.get(id)?.sourceId === layerId)) {
       const entry = registry.get(id);
       if (entry) dropped.push({ ...entry, sourceDef: entry.sourceDef });
       dropEntry(id);

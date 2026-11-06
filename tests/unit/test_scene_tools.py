@@ -85,10 +85,7 @@ class TestPlanMapScene:
         assert plan["success"] is True
         assert plan["suggested_scene"]["terrain"]["source"] == "dem"
         assert "terrain_source_note" not in plan
-        res = await registry.dispatch("set_map_scene", {
-            "session_id": session_id,
-            "scene": plan["suggested_scene"],
-        })
+        res = await registry.dispatch('set_map_scene', {'scene': plan['suggested_scene']}, session_id=session_id)
         assert res["success"] is True, res
 
 
@@ -105,7 +102,7 @@ class TestSetMapScene:
             "mode": "2.5d",
             "terrain": {"source": "dem", "exaggeration": 1.0, "vertical_unit": "m"},
         }
-        res = await registry.dispatch("set_map_scene", {"session_id": session_id, "scene": scene})
+        res = await registry.dispatch('set_map_scene', {'scene': scene}, session_id=session_id)
         assert res["success"] is True, res
         assert res["scene_applied"]["mode"] == "2.5d"
         assert isinstance(res.get("mutation_revision"), int)
@@ -113,19 +110,14 @@ class TestSetMapScene:
     @pytest.mark.asyncio
     async def test_set_rejects_bad_mode(self, registry, session_id):
         await mapspec_seed(session_id)
-        res = await registry.dispatch(
-            "set_map_scene", {"session_id": session_id, "scene": {"mode": "4d"}}
-        )
+        res = await registry.dispatch('set_map_scene', {'scene': {'mode': '4d'}}, session_id=session_id)
         assert res["success"] is False
 
     @pytest.mark.asyncio
     async def test_clear_scene(self, registry, session_id):
         await mapspec_seed(session_id)
-        await registry.dispatch(
-            "set_map_scene",
-            {"session_id": session_id, "scene": {"mode": "2.5d", "terrain": {"source": "dem"}}},
-        )
-        res = await registry.dispatch("set_map_scene", {"session_id": session_id, "scene": None})
+        await registry.dispatch('set_map_scene', {'scene': {'mode': '2.5d', 'terrain': {'source': 'dem'}}}, session_id=session_id)
+        res = await registry.dispatch('set_map_scene', {'scene': None}, session_id=session_id)
         assert res["success"] is True
         assert res.get("scene_applied") is None
 
@@ -152,7 +144,7 @@ class TestSetSceneAssets:
     async def test_requires_session_and_assets(self, registry):
         res = await registry.dispatch("set_scene_assets", {})
         assert res["success"] is False
-        res2 = await registry.dispatch("set_scene_assets", {"session_id": "s"})
+        res2 = await registry.dispatch('set_scene_assets', {}, session_id='s')
         assert res2["success"] is False  # assets=None 与清空显式区分
 
     @pytest.mark.asyncio
@@ -174,28 +166,16 @@ class TestSetSceneAssets:
             ),
         )
         assert res.is_error is False
-        res2 = await registry.dispatch("set_scene_assets", {
-            "session_id": session_id,
-            "assets": [{
-                "id": "campus",
-                "source": "model-a",
-                "placement": {"anchor": [104.06, 30.67]},
-            }],
-        })
+        res2 = await registry.dispatch('set_scene_assets', {'assets': [{'id': 'campus', 'source': 'model-a', 'placement': {'anchor': [104.06, 30.67]}}]}, session_id=session_id)
         assert res2["success"] is True, res2
         assert res2["scene_assets_applied"][0]["id"] == "campus"
 
-        res3 = await registry.dispatch("set_scene_assets", {
-            "session_id": session_id, "assets": [],
-        })
+        res3 = await registry.dispatch('set_scene_assets', {'assets': []}, session_id=session_id)
         assert res3["success"] is True
         assert res3["scene_assets_applied"] == []
 
     @pytest.mark.asyncio
     async def test_rejects_dangling_source(self, registry, session_id):
         await mapspec_seed(session_id)
-        res = await registry.dispatch("set_scene_assets", {
-            "session_id": session_id,
-            "assets": [{"id": "x", "source": "nope", "placement": {"anchor": [0, 0]}}],
-        })
+        res = await registry.dispatch('set_scene_assets', {'assets': [{'id': 'x', 'source': 'nope', 'placement': {'anchor': [0, 0]}}]}, session_id=session_id)
         assert res["success"] is False

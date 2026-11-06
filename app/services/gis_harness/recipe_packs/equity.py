@@ -16,7 +16,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     subject_role,
     wf,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _EQUITY_OBLIGATIONS = [
     obl("equity_denominator_required", "denominator",
@@ -45,8 +45,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="administrative_choropleth",
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="denominator missing", reason_code="MISSING_DENOMINATOR",
-                                  use="count_only")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=43,
         schema_version=2,
@@ -71,8 +70,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="administrative_choropleth",
         secondary_cartography=["proximity_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="denominator missing", reason_code="MISSING_DENOMINATOR",
-                                  use="count_only")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=44,
         schema_version=2,
@@ -97,8 +95,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="administrative_choropleth",
         secondary_cartography=["proximity_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="denominator missing", reason_code="MISSING_DENOMINATOR",
-                                  use="count_only")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=45,
         schema_version=2,
@@ -123,8 +120,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="administrative_choropleth",
         secondary_cartography=["proximity_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="denominator missing", reason_code="MISSING_DENOMINATOR",
-                                  use="count_only")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=46,
         schema_version=2,
@@ -148,8 +144,7 @@ _RECIPES: List[CartographyRecipe] = [
                             "rate_aggregation", "point_profile"],
         primary_cartography="administrative_choropleth",
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="denominator missing", reason_code="MISSING_DENOMINATOR",
-                                  use="count_only")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=45,
         schema_version=2,

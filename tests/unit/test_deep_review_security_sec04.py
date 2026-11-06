@@ -37,7 +37,7 @@ def mission_env(monkeypatch, tmp_path):
     from app.api.routes import mission_runtime as mr_mod
     from app.core.auth import get_current_user_with_version
     from app.core.database import Base, get_async_db
-    from app.models.db_model import User
+    from app.models.db_model import User, Organization
     import app.models.mission as _mission_models  # noqa: F401 — register tables
     from app.services.mission_runtime.service import MissionRuntimeService
     from app.services.mission_runtime.store import MissionStore
@@ -67,15 +67,31 @@ def mission_env(monkeypatch, tmp_path):
     db_path = tmp_path / "sec04-users.db"
     user_engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(user_engine)
+    user_factory = sessionmaker(bind=user_engine, expire_on_commit=False)
+    monkeypatch.setattr("app.core.database.SessionLocal", user_factory)
     with user_engine.begin() as conn:
+        conn.execute(Organization.__table__.insert().values(id=1, name="test", slug="sec04", is_active=True))
         conn.execute(User.__table__.insert().values(
             id="root", username="root", email="root@test",
-            password_hash="x", role="admin",
+            password_hash="x", role="admin", org_id=1, is_active=True, token_version=0,
         ))
+        for uid in ("user-a", "user-b"):
+            conn.execute(User.__table__.insert().values(
+                id=uid, username=uid, email=f"{uid}@test", password_hash="x",
+                role="editor", org_id=1, is_active=True, token_version=0,
+            ))
+    def _live_identity():
+        with user_factory() as db:
+            user = db.get(User, holder["user"]["user_id"])
+            return {"user_id": user.id, "role": user.role, "org_id": user.org_id, "user": user}
+    app.dependency_overrides[get_current_user_with_version] = _live_identity
     async_engine = create_async_engine(
         f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool
     )
     async_session = async_sessionmaker(async_engine, expire_on_commit=False)
+    monkeypatch.setattr("app.core.database.async_db_session", async_session)
+    from app.core.auth import invalidate_live_user_state
+    invalidate_live_user_state()
 
     async def _override_async_db():
         async with async_session() as db:
@@ -93,12 +109,14 @@ def mission_env(monkeypatch, tmp_path):
                 .where(User.__table__.c.id == user_id)
                 .values(role=role)
             )
+        invalidate_live_user_state(user_id)
 
     try:
         yield {"svc": svc, "as_user": _as_user, "set_db_role": _set_db_role}
     finally:
         app.dependency_overrides.pop(get_current_user_with_version, None)
         app.dependency_overrides.pop(get_async_db, None)
+        invalidate_live_user_state()
         user_engine.dispose()
 
 

@@ -418,7 +418,7 @@ def test_eligibility_rules(index):
 
 def test_anonymous_session_scope():
     assert RU.anonymous_session_scope("anonymous", "s1") != ""
-    assert RU.anonymous_session_scope("u:abc", "s1") == ""
+    assert RU.anonymous_session_scope("u:abc", "s1") != ""
 
 
 # ── 迁移单 head + up/down/up ─────────────────────────────────────────────

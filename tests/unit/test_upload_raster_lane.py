@@ -52,13 +52,19 @@ async def app_and_db(tmp_path, monkeypatch):
     test_engine = create_async_engine(db_url, connect_args={"check_same_thread": False})
     test_session = async_sessionmaker(bind=test_engine, expire_on_commit=False)
 
-    from app.core.auth import get_current_user
+    from app.core.auth import get_current_user, get_current_user_optional_with_version
     from app.api.routes import upload as upload_routes
     from app.models.db_model import Base  # noqa: F401
     import app.models.upload  # noqa: F401
 
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    from app.models.db_model import Conversation, User
+    async with test_session() as db:
+        db.add(User(id=_MOCK_USER["user_id"], username="terrain-fixture", email="terrain-fixture@example.test", password_hash="fixture", is_active=True))
+        session_ids = [f"sess-terrain-lane-{i}" for i in range(1, 7)] + ["sess-vector-lane-1", "sess-vector-lane-2", "sess-terrain-url-01"]
+        db.add_all([Conversation(id=sid, user_id=_MOCK_USER["user_id"]) for sid in session_ids])
+        await db.commit()
 
     @asynccontextmanager
     async def override_async_db_session():
@@ -88,6 +94,7 @@ async def app_and_db(tmp_path, monkeypatch):
     app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     app.include_router(upload_routes.router, prefix="/api/v1")
     app.dependency_overrides[get_current_user] = lambda: _MOCK_USER
+    app.dependency_overrides[get_current_user_optional_with_version] = lambda: _MOCK_USER
     try:
         yield app, test_session, tmp_path
     finally:

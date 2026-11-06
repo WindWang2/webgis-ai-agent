@@ -99,6 +99,23 @@ describe("diffSpecsAsync", () => {
     expect(patch).toEqual({ sources: [], layers: [] });
   });
 
+  it('settles every concurrent request on one worker failure with per-result failure evidence', async () => {
+    class FailingWorker {
+      onerror: (() => void) | null = null;
+      postMessage() { queueMicrotask(() => this.onerror?.()); }
+      addEventListener() {}
+      removeEventListener() {}
+      terminate() {}
+    }
+    vi.stubGlobal('Worker', FailingWorker as unknown as typeof Worker);
+    const [first, second] = await Promise.all([diffSpecsAsync(null, spec), diffSpecsAsync(null, { ...spec })]);
+    expect(first).toEqual({ sources: [], layers: [] });
+    expect(second).toEqual(first);
+    expect(first).not.toBe(second);
+    expect(consumeDiffLastFailed(first)).toBe(true);
+    expect(consumeDiffLastFailed(second)).toBe(true);
+  });
+
   it("resolves an empty patch when the worker exceeds the timeout", async () => {
     class SilentWorker {
       constructor(_url: URL, _opts?: { type?: string }) {}

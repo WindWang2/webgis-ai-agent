@@ -12,8 +12,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 
 from app.api.routes import template_versions as tv
 from app.core.database import Base
@@ -29,21 +30,33 @@ def _token(sub: str, role: str = "viewer", org_id=None) -> dict:
 
 
 @pytest.fixture()
-def session_factory(monkeypatch):
+def session_factory(monkeypatch, tmp_path):
     import app.models.db_model  # noqa: F401 — CartographyTemplate
     import app.models.template_version  # noqa: F401 — TemplateVersion
 
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    path = tmp_path / "template-security.db"
+    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     import app.core.database as db_mod
+    from app.core.auth import invalidate_live_user_state
+    from app.models.db_model import Organization, User
 
     monkeypatch.setattr(db_mod, "SessionLocal", factory)
-    return factory
+    async_engine = create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool)
+    monkeypatch.setattr(db_mod, "async_db_session", async_sessionmaker(async_engine))
+    with factory() as db:
+        for oid in (1, 2, 7):
+            db.add(Organization(id=oid, name=f"Organization {oid}", slug=f"sec02-{oid}"))
+        db.flush()
+        for uid, role, oid in ((A, "viewer", 1), (B, "viewer", 2), ("root", "admin", 1)):
+            db.add(User(id=uid, username=uid, email=f"{uid}@test.example",
+                        role=role, org_id=oid, is_active=True, token_version=0))
+        db.commit()
+    invalidate_live_user_state()
+    yield factory
+    invalidate_live_user_state()
+    engine.dispose()
 
 
 @pytest.fixture()
@@ -98,7 +111,7 @@ def test_cross_user_and_anonymous_reads_404(client, session_factory):
 
 
 def test_owner_and_admin_reads_ok(client, session_factory):
-    _make_template(session_factory, "tmpl_a", creator_id=A)
+    _make_template(session_factory, "tmpl_a", creator_id=A, org_id=1)
     _make_version(session_factory, "tmpl_a", {"paperSize": "A4"}, created_by=A)
 
     owner = client.get("/api/v1/templates/tmpl_a/versions", headers=_token(A))
@@ -141,6 +154,11 @@ def test_cross_user_write_invisible_404_no_mutation(client, session_factory):
 
 
 def test_org_member_read_ok_but_write_403(client, session_factory):
+    from app.models.db_model import User
+    with session_factory() as db:
+        db.get(User, A).org_id = 7
+        db.get(User, B).org_id = 7
+        db.commit()
     _make_template(session_factory, "tmpl_a", creator_id=A, org_id=7)
     _make_version(session_factory, "tmpl_a", {"paperSize": "A4"}, created_by=A)
 
@@ -184,13 +202,41 @@ def test_owner_write_roundtrip(client, session_factory):
 
 
 def test_admin_can_write_others_template(client, session_factory):
-    _make_template(session_factory, "tmpl_a", creator_id=A)
+    _make_template(session_factory, "tmpl_a", creator_id=A, org_id=1)
     resp = client.post(
         "/api/v1/templates/tmpl_a/versions",
         json={"payload": {"paperSize": "A3"}},
         headers=_token("root", "admin"),
     )
     assert resp.status_code == 200
+
+
+def test_admin_cannot_read_foreign_org_or_unscoped_private_template(client, session_factory):
+    _make_template(session_factory, "foreign", creator_id=B, org_id=2)
+    _make_template(session_factory, "private", creator_id=B)
+    for tid in ("foreign", "private"):
+        assert client.get(
+            f"/api/v1/templates/{tid}/versions", headers=_token("root", "admin")
+        ).status_code == 404
+
+
+def test_stale_claims_cannot_grant_org_or_admin_access(client, session_factory):
+    from app.models.db_model import User
+
+    _make_template(session_factory, "tmpl_a", creator_id=A, org_id=1)
+    # The signed org claim is not the live identity's organization.
+    assert client.get(
+        "/api/v1/templates/tmpl_a/versions", headers=_token(B, org_id=1)
+    ).status_code == 404
+    with session_factory() as db:
+        db.get(User, "root").role = "viewer"
+        db.commit()
+    denied = client.post(
+        "/api/v1/templates/tmpl_a/versions",
+        json={"payload": {"paperSize": "A3"}},
+        headers=_token("root", "admin"),
+    )
+    assert denied.status_code == 403
 
 
 def test_builtin_readable_but_not_writable_by_non_admin(client, session_factory):

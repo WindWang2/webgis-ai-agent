@@ -340,7 +340,7 @@ def _apply_palette_change(layer: Dict[str, Any], colors: List[Any]) -> None:
             legend_spec[ramp_key] = list(colors)
         categories = legend_spec.get("categories")
         if isinstance(categories, list) and len(categories) == len(colors):
-            for category, color in zip(categories, colors):
+            for category, color in zip(categories, colors, strict=True):
                 if isinstance(category, dict):
                     category["color"] = color
     paint = layer.get("paint")
@@ -358,15 +358,15 @@ def _apply_palette_change(layer: Dict[str, Any], colors: List[Any]) -> None:
             else:
                 rest = colors
             stops = spec.get("stops") or []
-            for stop, color in zip(stops, rest):
+            for stop, color in zip(stops, rest, strict=True):
                 if isinstance(stop, (list, tuple)) and len(stop) >= 2:
                     stop[1] = color
         elif method == "interpolate":
-            for stop, color in zip(spec.get("stops") or [], colors):
+            for stop, color in zip(spec.get("stops") or [], colors, strict=True):
                 if isinstance(stop, (list, tuple)) and len(stop) >= 2:
                     stop[1] = color
         elif method == "match":
-            for case, color in zip(spec.get("cases") or [], colors):
+            for case, color in zip(spec.get("cases") or [], colors, strict=True):
                 if isinstance(case, (list, tuple)) and len(case) >= 2:
                     case[1] = color
 

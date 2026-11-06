@@ -93,7 +93,7 @@ def test_recompute_status_matrix():
         # nothing done / pending present → keep current status
         ([("s1", StepStatus.pending)], PlanStatus.proposed),
         ([("s1", StepStatus.failed), ("s2", StepStatus.pending)], PlanStatus.proposed),
-        ([("s1", StepStatus.cancelled)], PlanStatus.proposed),
+        ([("s1", StepStatus.cancelled)], PlanStatus.cancelled),
     ]
     for steps, expected in cases:
         assert _plan(steps).recompute_status() == expected
@@ -592,10 +592,11 @@ async def test_store_save_revision_guard_refuses_stale_clobber():
     assert current.plan_id == "p-new"
     assert current.intent == "newer"
 
-    # 同 plan_id 仍 last-writer-wins（revision 更低也允许，同一计划的进化）
+    # Same-plan stale revisions must not roll the durable plan backward.
     await store.save(CanonicalPlan(plan_id="p-new", session_id=sid, intent="newer-v2", revision=1))
     current2 = await store.load_current(sid)
-    assert current2.intent == "newer-v2"
+    assert current2.intent == "newer"
+    assert current2.revision == 3
     assert current2.plan_id == "p-new"
 
 

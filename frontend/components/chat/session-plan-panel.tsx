@@ -152,7 +152,7 @@ export function SessionPlanPanel({ sessionId, ownerToken, live }: Props) {
           <ul className="space-y-1">
             {plan.progress.map((row) => (
               <li key={row.capability} className="flex items-center gap-2 text-body">
-                <span className="shrink-0">{STATUS_META[row.status].icon}</span>
+                <span className="shrink-0">{(STATUS_META[row.status] ?? STATUS_META.pending).icon}</span>
                 <span
                   className={`flex-1 truncate ${
                     row.status === 'complete' ? 'text-ink' : 'text-ink-muted'
@@ -164,7 +164,7 @@ export function SessionPlanPanel({ sessionId, ownerToken, live }: Props) {
                   )}
                 </span>
                 <span className="shrink-0 text-micro text-ink-muted">
-                  {t(`chat.${STATUS_META[row.status].labelKey}`)}
+                  {t(`chat.${(STATUS_META[row.status] ?? STATUS_META.pending).labelKey}`)}
                 </span>
               </li>
             ))}

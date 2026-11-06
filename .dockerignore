@@ -82,3 +82,11 @@ current-state
 *.bat
 # planning skill 工件
 .planning/
+
+# Internal agent/runtime artifacts
+.agent-work/
+.wayfinder/
+.pi/
+.workbuddy/
+.zwork/
+.agents/

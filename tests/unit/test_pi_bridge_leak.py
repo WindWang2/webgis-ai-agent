@@ -7,7 +7,7 @@ client that disconnects mid-stream. Asserts the
 module-level dedup sets and dispatch-result cache return to baseline after
 every turn, and that gc/tracemalloc don't accumulate retained tool results.
 
-RED on the pre-fix code: neither _session_executed_sets[""] nor
+RED on the pre-fix code: neither the session execution bucket nor
 _dispatch_result_cache is cleaned at turn end (only at the *next* turn start,
 keyed by the real session id), so both grow monotonically across sessions.
 """
@@ -15,6 +15,7 @@ import asyncio
 import gc
 import tracemalloc
 from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,7 +49,17 @@ def _make_event_rpc(events):
 
 
 @pytest.fixture(autouse=True)
-def _clean_state():
+def _clean_state(monkeypatch):
+    # A production bridge has an initialized tracker. Exception-log capture
+    # retains traceback frames by design and is not the memory owner measured
+    # here; observability failures have a dedicated behavior test.
+    import app.services.chat.engine_instance as engines
+    tracker = SimpleNamespace(
+        create=lambda sid, message: SimpleNamespace(id=f"task-{sid}"),
+        list_by_session=lambda sid: [], cancel=lambda tid: None,
+        fail_task=lambda tid, reason: None, complete_task=lambda tid: None,
+    )
+    monkeypatch.setattr(engines, "try_get_chat_engine", lambda: SimpleNamespace(tracker=tracker))
     bridge_mod._session_executed_sets.clear()
     bridge_mod._dispatch_result_cache.clear()
     yield

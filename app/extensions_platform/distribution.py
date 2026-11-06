@@ -71,8 +71,7 @@ def safe_extract_package(blob: bytes, target_dir: Path) -> None:
       成员（显式 mkdir，不落 tar 目录位）一律拒绝；
     - 前置预算：成员数 ≤ 512、解包总字节 ≤ 8 MiB、单成员 ≤ 8 MiB；
     - 路径形状：相对、无 `..` 段、解析后必须留在 target 内；
-    - Python 3.12+ 的 ``filter="data"`` 作为最后兜底（再拒一次一切
-      绝对路径/链接/设备逃逸）。
+    - 文件与目录均逐成员检查后显式复制，不调用 extractall。
     """
     import io
 
@@ -122,9 +121,7 @@ def safe_extract_package(blob: bytes, target_dir: Path) -> None:
                 members.append(member)
             for member in members:
                 name = member.name
-                if member.isdir():
-                    continue
-                if not member.isreg():
+                if not member.isdir() and not member.isreg():
                     raise _dist_error(
                         DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
                         f"package entry {name!r} is not a regular file "
@@ -181,7 +178,7 @@ def safe_extract_package(blob: bytes, target_dir: Path) -> None:
 
 
 
-def recover_pending_swaps(install_root: Path) -> list[str]:
+def recover_pending_swaps(install_root: Path, *, trust_store: Any = None, preflight: Any = None) -> list[str]:
     """启动恢复（C-2）：active 缺失而 staging 有合法签名包 → 完成换装。
 
     必须先于 staging TTL 清扫执行；返回恢复的 staging 目录名列表。
@@ -197,8 +194,21 @@ def recover_pending_swaps(install_root: Path) -> list[str]:
         manifest, diags, _ = _parse_manifest_file(candidate / MANIFEST_FILENAME)
         if manifest is None:
             continue
-        if not (candidate / "signature.json").is_file():
+        if not (candidate / "signature.json").is_file() or trust_store is None:
             continue
+        from .signing import STATUS_SIGNED_VERIFIED, verify_pack_signature
+
+        status = verify_pack_signature(
+            candidate, publishers={}, trust_store=trust_store,
+            package_id=manifest.id, version=manifest.version,
+        )
+        if status.status != STATUS_SIGNED_VERIFIED:
+            continue
+        if preflight is not None:
+            try:
+                preflight(manifest.id, manifest.version)
+            except ExtensionPlatformError:
+                continue
         active = _active_root(install_root, manifest.id)
         if active.exists():
             continue
@@ -374,35 +384,39 @@ class ExtensionInstaller:
         staging = staging_root / f"{_safe_name(package_id)}-{_safe_name(version)}-{digest[:12]}"
         if staging.exists():
             _rmtree_quiet(staging)
-        safe_extract_package(blob, staging)
-        from .signing import STATUS_SIGNED_VERIFIED, verify_pack_signature
+        try:
+            safe_extract_package(blob, staging)
+            from .signing import STATUS_SIGNED_VERIFIED, verify_pack_signature
 
-        status = verify_pack_signature(
-            staging,
-            publishers={},
-            trust_store=self._trust_store,
-            package_id=package_id,
-            version=version,
-        )
-        if status.status != STATUS_SIGNED_VERIFIED:
-            raise _dist_error(
-                DiagnosticCode.SIGNATURE_INVALID,
-                f"staged package {package_id}=={version} signature not acceptable: "
-                f"{status.status} ({status.detail})",
+            status = verify_pack_signature(
+                staging,
+                publishers={},
+                trust_store=self._trust_store,
+                package_id=package_id,
+                version=version,
             )
-        fingerprint, fp_diag = compute_fingerprint(staging)
-        if fp_diag is not None or fingerprint is None:
-            raise _dist_error(
-                DiagnosticCode.MANIFEST_PARSE_FAILED,
-                f"staged package fingerprint unavailable: {fp_diag.message if fp_diag else '?'}",
-            )
-        if fingerprint != version_record.fingerprint:
-            raise _dist_error(
-                DiagnosticCode.PACKAGE_TAMPERED,
-                f"staged fingerprint differs from registry fingerprint for "
-                f"{package_id}=={version}",
-            )
-        return staging
+            if status.status != STATUS_SIGNED_VERIFIED:
+                raise _dist_error(
+                    DiagnosticCode.SIGNATURE_INVALID,
+                    f"staged package {package_id}=={version} signature not acceptable: "
+                    f"{status.status} ({status.detail})",
+                )
+            fingerprint, fp_diag = compute_fingerprint(staging)
+            if fp_diag is not None or fingerprint is None:
+                raise _dist_error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"staged package fingerprint unavailable: {fp_diag.message if fp_diag else '?'}",
+                )
+            if fingerprint != version_record.fingerprint:
+                raise _dist_error(
+                    DiagnosticCode.PACKAGE_TAMPERED,
+                    f"staged fingerprint differs from registry fingerprint for "
+                    f"{package_id}=={version}",
+                )
+            return staging
+        except BaseException:
+            _rmtree_quiet(staging)
+            raise
 
     def _current_trust_store(self) -> Optional[TrustStore]:
         """吊销判定前重读 trust store 文件（惰性传播：任何 install/rollback
@@ -681,7 +695,12 @@ class ExtensionInstaller:
 
     # ── 启动收敛（恢复 → 清扫）───────────────────────────────────────
     def bootstrap(self) -> dict[str, Any]:
-        recovered = recover_pending_swaps(self._install_root)
+        recovered = recover_pending_swaps(
+            self._install_root, trust_store=self._current_trust_store(),
+            preflight=lambda package_id, version: self._preflight(
+                package_id, version, current_version=self._installed_version(package_id),
+            ),
+        )
         swept = sweep_staging(self._install_root)
         return {"recovered": recovered, "swept_staging": swept}
 

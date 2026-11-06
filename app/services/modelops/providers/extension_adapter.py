@@ -175,13 +175,10 @@ class ExtensionProviderAdapter:
             with self._lock:
                 self._abandoned += 1
             raise ProviderError(
-                f"extension call exceeded {self._call_timeout}s (cancel latency "
+                f"extension call exceeded {self._call_timeout_s}s (cancel latency "
                 "upper bound = call_timeout, R1-M5; slot released when the "
                 "abandoned call actually finishes)"
             ) from exc
-        finally:
-            with self._lock:
-                self._in_flight -= 1
         return self._parse(model, result, batch)
 
     def _parse(self, model: LoadedModel, result: Any, batch: TileBatch) -> TileOutput:

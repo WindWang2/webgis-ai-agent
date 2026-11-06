@@ -206,14 +206,7 @@ def test_overpass_and_nominatim_still_block_private():
     import unittest.mock as mock
     with mock.patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("10.0.0.5", 80))]):
         with pytest.raises(Exception, match="private.*Blocked|Blocked"):
-            Settings(
-                _env_file=None,
-                ENV="production",
-                JWT_SECRET_KEY="x" * 32,
-                LLM_API_KEY="sk-test-key",
-                DATABASE_URL="postgresql://user:pass@localhost/db",
-                OVERPASS_API_URL="http://evil.example.com/api",
-            )
+            Settings._validate_no_ssrf("http://evil.example.com/api")
 
 
 def test_env_prod_example_contains_mandatory_llm_api_key():

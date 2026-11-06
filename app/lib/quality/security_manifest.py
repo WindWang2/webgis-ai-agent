@@ -187,16 +187,16 @@ SECURITY_CONTROLS: Tuple[SecurityControl, ...] = (
     ),
     SecurityControl(
         control_id="SEC-RT-03",
-        area="error oracle（is_production 门控 traceback/error_detail 出口）",
+        area="error oracle（explicit DEBUG 门控 traceback/error_detail 出口）",
         description=(
-            "exception.py:include_details = not settings.is_production() —— 生产分支"
-            "返回泛化消息、零内部信息；dev 分支 traceback 经 sanitize_traceback 剥离"
+            "exception.py:include_details = bool(settings.DEBUG) —— DEBUG关闭时"
+            "返回泛化消息、零内部信息；显式DEBUG分支 traceback 经 sanitize_traceback 剥离"
             "仓库路径（audit gap #4：生产分支此前无 e2e）。"
         ),
         impl=(
             ImplAnchor(
                 file="app/core/exception.py",
-                anchor="include_details = not settings.is_production()",
+                anchor="include_details = bool(settings.DEBUG)",
             ),
         ),
         test_nodes=(

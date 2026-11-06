@@ -1,4 +1,5 @@
 'use client';
+import { devOnly } from '@/lib/utils/logger';
 
 import { useT } from '@/lib/i18n/useT';
 /**
@@ -91,7 +92,7 @@ type ApplyOutcome =
   | { ok: false; errorKey: string; params?: Record<string, string> };
 
 /** Resolve a template providerId to a TILE_PROVIDERS entry (mirrors the
- * base_layer_change matcher: exact id/name, then keyword containment). */
+ * base_layer_change matcher: exact id/name, then exact keyword). */
 function resolveBasemapProvider(providerId: string) {
   const pid = providerId.trim().toLowerCase();
   if (!pid) return undefined;
@@ -101,7 +102,7 @@ function resolveBasemapProvider(providerId: string) {
     TILE_PROVIDERS.find((p) =>
       p.keywords.some((k) => {
         const kl = k.toLowerCase();
-        return kl === pid || pid.includes(kl);
+        return kl === pid;
       })
     )
   );
@@ -298,7 +299,7 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
           useToastStore.getState().addToast(t(outcome.errorKey, outcome.params), 'error');
         }
       } catch (err) {
-        console.warn('[TemplateGalleryV2] apply failed:', err);
+        devOnly.warn('[TemplateGalleryV2] apply failed:', err);
         const reason = err instanceof Error ? err.message : t('common.unknownError');
         useToastStore.getState().addToast(t('drawers.templates.applyError.applyFailed', { name: template.name, reason }), 'error');
       } finally {
@@ -520,6 +521,7 @@ const TemplateCard = React.memo(function TemplateCard({
             background: 'color-mix(in srgb, var(--agent-accent) 12%, transparent)',
           }}
         >
+          <span className="sr-only">{template.name}: </span>
           {applying ? t('drawers.templates.applying') : t('drawers.templates.apply')}
         </button>
       </div>

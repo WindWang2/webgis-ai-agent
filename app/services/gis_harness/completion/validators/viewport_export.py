@@ -1,6 +1,7 @@
 """视口 bbox 派生 + 导出一致性（viewport/export facet）— ADR-0081 / ADR-0091。"""
 from __future__ import annotations
 
+from ..geo_bounds import normalize_bbox, union_bboxes
 from typing import Any, Dict, List, Optional
 
 
@@ -13,7 +14,7 @@ def derive_result_bbox(
     不逐 feature 扫描、不复制 GeoJSON —— descriptor 缺 bbox 时该 ref 跳过；
     全部缺失 → None（viewport finding 由调用方判定）。
     """
-    best: Optional[List[float]] = None
+    boxes = []
     for row in list(chapter.get("data_requirements") or []) + list(
         chapter.get("analysis_steps") or []
     ):
@@ -34,18 +35,10 @@ def derive_result_bbox(
             w, s, e, n = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
         except (TypeError, ValueError):
             continue
-        if not (w <= e and s <= n):
-            continue
-        if best is None:
-            best = [w, s, e, n]
-        else:
-            best = [
-                min(best[0], w),
-                min(best[1], s),
-                max(best[2], e),
-                max(best[3], n),
-            ]
-    return best
+        normalized = normalize_bbox([w, s, e, n])
+        if normalized is not None:
+            boxes.append(normalized)
+    return union_bboxes(boxes)
 
 
 def assess_export_parity(mapspec: Dict[str, Any]) -> str:

@@ -196,7 +196,9 @@ def test_governed_adapter_uses_registry_when_governed():
     _record, adapter = get_connection_registry().attach(
         profile, TenantScope(owner="owner-9")
     )
-    ds_model = SimpleNamespace(id="gov_src", owner_id="owner-9")
+    ds_model = SimpleNamespace(id="gov_src", owner_id="owner-9", org_id=None,
+        name=profile.name, source_type=profile.source_type, endpoint_url=profile.url,
+        connection_profile=profile.model_dump())
     assert DataFabricManager._governed_adapter(ds_model) is adapter
 
 

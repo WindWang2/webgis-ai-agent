@@ -9,6 +9,7 @@
 - M5: format_error_response 按 HTTP 状态码映射 code
 - C3: Redis 错误隔离（store/get/append_event 不抛）
 """
+import threading
 import asyncio
 import os
 import numpy as np
@@ -316,6 +317,7 @@ def _make_manager_with_failing_redis(monkeypatch, fail_method: str):
     # __new__ 绕过 __init__ 时需手动初始化，否则 AttributeError。
     manager._l1 = {}
     manager._l1_order = []
+    manager._l1_lock = threading.RLock()
     # 审计 TEST-13：_ensure_connected() 引用 _bound_loop（用 __new__ 跳过 __init__
     # 时不会设置）。本 helper 只在 async 测试里调用，把 _bound_loop 指向当前运行
     # loop 让 _ensure_connected 的复用条件成立，从而保留注入的 _FakeRedis。

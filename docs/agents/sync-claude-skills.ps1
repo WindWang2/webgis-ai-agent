@@ -1,7 +1,7 @@
 # Windows: git checkouts of .claude/skills/* are often text files, not symlinks.
 # Copy .agents/skills/<name>/ into .claude/skills/<name>/ so Claude Code can load them.
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $srcRoot = Join-Path $root ".agents\skills"
 $dstRoot = Join-Path $root ".claude\skills"
 if (-not (Test-Path $srcRoot)) { throw ".agents/skills not found: $srcRoot" }

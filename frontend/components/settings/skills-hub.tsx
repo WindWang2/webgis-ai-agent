@@ -1,4 +1,5 @@
 'use client';
+import { devOnly } from '@/lib/utils/logger';
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -63,14 +64,14 @@ export function SkillsHub() {
             id: sk.name,
             name: sk.name,
             desc: sk.description,
-            category: '工作流',
+            category: sk.category || 'Other',
           }))
         );
       })
       .catch((err: unknown) => {
         // AbortError on unmount is expected; log real failures only.
         if (isApiError(err) || (err instanceof Error && err.name !== 'AbortError')) {
-          console.warn('SkillsHub: failed to load skills', err);
+          devOnly.warn('SkillsHub: failed to load skills', err);
         }
       });
   };

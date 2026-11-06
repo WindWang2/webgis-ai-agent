@@ -1,0 +1,47 @@
+# Final independent review — data runtime fixes (2026-11-06)
+
+Scope: the six fixes delegated after integration of master `40cda057`, plus the assigned final-backend failures. No permission, network, ownership, science, or debt baseline was weakened. No commit or GitHub mutation by this agent.
+
+| Review finding | Final disposition | Source and behavioral evidence |
+| --- | --- | --- |
+| Synchronous GeoCompute holds organization admission for the entire computation | fixed | `app/api/routes/geocompute.py`, `services/geocompute/sync_admission.py`, `services/{org_quota,org_quota_admission}.py`: commit a running reservation in the existing AnalysisTask ledger in the same transaction as the quota check, then exit the organization admission guard before compute. Cluster/workflow admission counts these committed reservations. Actual compute completion/failure releases only its worker-owned reservation; HTTP cancellation shields admitted work and never refunds a running thread. `tests/unit/test_geocompute_sync_reservation.py`: actual SQLite reservation, two concurrent submitters, cross-producer denial, success/exception release, HTTP cancellation with actual worker still active, and admission guard already exited when compute starts. |
+| Mission quota maps unlimited organization values to zero | fixed | `services/mission_runtime/quota_policy.py`: only strictly positive organization storage/concurrency values tighten finite server ceilings; explicit requested zero is retained. `tests/unit/test_postreview_data_runtime.py`: zero, negative, positive and requested-zero cases. |
+| Async RAG configuration probe waits on FAISS metadata lock in event loop | fixed | `api/routes/config.py::_check_rag_store`: directory checks and metadata probe run together in `asyncio.to_thread`. `test_rag_probe_waits_for_metadata_in_worker_thread` holds a real threading Event while the async caller remains responsive and verifies thread identity. |
+| Report terminal retry test shares one ORM object and misses stale response state | fixed (test validity) | `tests/test_report_event_loop_offload_426.py`: independent real SQLite AsyncSessions for the two terminal attempts and third-session verification, first commit deliberately fails, response must match the independently persisted completion. Mutation proof compiles the production method with detached-object synchronization removed and confirms the same behavioral assertion fails. Two failed terminal writes honestly return failure while independently persisted row remains in progress. |
+| Missing actual PostgreSQL cross-connection admission coverage | fixed (coverage); execution unavailable locally | `tests/integration/test_org_quota_postgres_admission.py`, marked `real_services`, is included by existing `.github/workflows/production.yml` `pytest -m real_services`. Fresh schema with explicit schema translation avoids public-table mutation. Different actual backend PIDs, uncommitted cluster producer versus a real workflow producer, lock contention, rollback freeing a slot and commit consuming it are checked. Local result: **2 skipped**, `REAL_SERVICES=1` was not enabled; no PostgreSQL execution is claimed. |
+| GC executor process death leaves plan permanently executing | fixed for fenced protocol-2 executions; historical unfenced execution boundary explicit | `services/data_lifecycle/{gc_plan,gc_recovery,jobs}.py`: process-lifetime file lock, PostgreSQL dedicated-session advisory lock, refreshed database execution token, bounded original-location manifest persisted before any move, per-object committed progress, and same-plan retry/rollback after exclusive liveness acquisition. `test_process_death_after_move_can_resume_and_restore_same_plan` actually spawns a process, moves bytes, exits with `os._exit(71)`, retries under a new fence and restores exact bytes. `test_live_executor_excludes_retry_rollback_and_purge` keeps an actual executor thread alive and verifies all competing paths refuse. Old `executing` rows without this protocol have no evidence proving a live old worker stopped: they remain explicitly refused with bytes retained, rather than treating age as proof of death. |
+| Legacy lane-less fabric staging cannot be restored | fixed for verified origins; ambiguous origin remains safely recoverable | Same files: approved object identity plus trusted LifecycleObject original-root evidence resolves legacy paths. Old `ref_spill` label is accepted only when the old data-root enumerator could not have produced that relative path. Old `fabric_geoparquet` is a format label, not a root: it never guesses between spill/data. Trusted `origin_root` reconciliation permits retry of the **same** plan. Ambiguity/occupied original targets retain staged bytes, keep a partial-recovery state, and block purge. Tests cover trusted old spill, ambiguity then same-plan reconciliation, ambiguous parquet format label, and preservation of newly created original-path bytes. |
+
+Reservation boundary: a failed final database update conservatively retains occupancy. A killed synchronous worker cannot be proved complete merely from a missed heartbeat; stale sync reservations remain counted until authoritative reconciliation. This is deliberate fail-closed accounting, not a claim of automatic crash refund.
+
+The legacy-origin reconciliation field is bounded to the server-known `spill`/`data` roots; it does not accept arbitrary filesystem paths. Existing protocol-2 origin evidence must still match the frozen approved plan, current trusted root and staging relative location.
+
+## Assigned final backend failures
+
+| Test/finding | Final disposition and contract |
+| --- | --- |
+| `test_geocompute_authz` unknown session | fixture expectation corrected: nonexistent sessions are rejected before any write (404); no first-write ownership bypass. |
+| `test_stac_windowed_read` timeout fixture | fixture now returns a real weak-reference-capable catalog-shaped fake, matching guarded client lifetime ownership. |
+| `test_rag_durability::test_compact_drops_contentless_chunks` | real residual fixed in `rag/faiss_store.py`: explicit compaction drops deleted/unavailable/contentless physical entries while reconstructing existing vectors; index/metadata pair transaction remains intact. Purged count includes both removed physical slots. |
+| `test_data_fabric_routes` materialize | fixture supplies a genuine user-owned Conversation; production session gate retained. |
+| `test_pmtiles_tile_route` local sources | real integration residual fixed: connection-profile validation delegates non-HTTP PMTiles to the adapter's existing exact local-root/symlink/size validator; generic remote URL validation is not relaxed. All five tile-route cases retain true adapter safety checks. |
+| `test_rag_service_db` compensating delete retry | fixture checks active chunks, because soft-deleted physical vectors are retained until explicit maintenance; failed ingestion remains unsearchable. |
+| `test_rag_compact_offloop` delete | obsolete expectation removed: document deletion no longer performs expensive inline maintenance. Explicit compaction still has its own off-event-loop test. |
+| V6/V7 structural scheduler performance quotas | isolated benchmark database explicitly grants enough quota for 200 queued rows. Benchmarks continue to measure structural query counts; normal production default 50 is retained. |
+
+## Validation
+
+- `/tmp/data-postreview-small1.log`: **14 passed** (initial report/projection/RAG group).
+- `/tmp/data-postreview-reservation6.log`: **36 passed** (final sync reservation, persistent admission, report and runtime group).
+- `/tmp/data-postreview-gc7.log`: **45 passed** (GC process recovery and data Low closure group).
+- `/tmp/data-postreview-fixtures3.log`: **109 passed** (all assigned failure files, including performance structural cases).
+- `/tmp/data-postreview-pg5.log`: **2 skipped**, explicit real-services lane unavailable/not enabled locally.
+- `/tmp/data-postreview-debt4.log`: full repository debt gate passed; DictAny 7085 ≤ 7086, assertless 84 ≤ 110. Scoped Ruff passed. No baseline edits.
+
+Final integrated focused run: `/tmp/data-postreview-final10.log` **223 passed, 2 skipped**. This includes the assigned failure files, FAISS transactional compaction regressions, lifecycle API/policy, runtime quota, report mutation proof, and both structural performance files. No tests were diagnostically excluded.
+
+Last GC storage-host guard: a protocol-2 recovery cannot recreate missing original-location evidence on another host/volume and falsely declare an empty local staging directory recovered. It instead retains the executing state and requires the original staging volume. Final GC/policy/API/Low group `/tmp/data-postreview-gc11.log`: **63 passed** including this additional boundary. Missing old-worker liveness evidence and ambiguous legacy origin remain explicit, accepted fail-closed deployment boundaries; they are not claimed as automatic recovery successes.
+
+Final quality checks: scoped Ruff and `git diff --check` clean; explicit mypy on the two new runtime helpers **no issues in 2 source files** (`/tmp/data-postreview-mypy9.log`); full repository debt ratchet passed again (`/tmp/data-postreview-debt11.log`), DictAny **7085/7086**, assertless **84/110**. No debt baseline increased.
+
+SOURCE_FROZEN: this delegated data scope is complete. No background source/test/document writer remains. Root owns final full-repository gates and merge.

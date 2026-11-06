@@ -14,8 +14,8 @@
 3. repair 不得修改 user lock —— W15 ``guard_intent_locks`` 是唯一执行点；本模块
    的 ``resolve_field`` 在字段面给出同向裁决（locked → incumbent 不变）。
 4. template/autofill 只能填未声明字段（``fill_undeclared``）；system reconciliation
-   不得把 stale state 当新意图（``resolve_field`` 对 SYSTEM_DEFAULT 恒保留 incumbent，
-   除非 incumbent 亦为 SYSTEM_DEFAULT）。
+   不得把 stale state 当新意图（SYSTEM_DEFAULT 不覆盖已声明值；同阶也保留，
+   只有未声明字段可以填充）。
 
 本模块是**纯函数层**：不读状态、不发 IO；执行仍由引擎/守卫承担（D-01）。
 """
@@ -73,7 +73,8 @@ def can_override(
     - incoming 严格高于 incumbent → 可覆盖（user 覆 agent、agent 覆 repair…）；
     - 同阶 → 不可覆盖（同阶重放走幂等路径，不做 last-wins 覆盖）；
     - incumbent 未声明（absent/None 值）→ 任何 incoming 可填（fill-undeclared）；
-    - SYSTEM_DEFAULT incumbent 例外：它是"无主默认"，任何显式类可改。
+    - SYSTEM_DEFAULT incumbent 只允许 REPAIR_AUTOFILL 及更高阶覆盖；
+      TEMPLATE 仍仅填空缺，同阶 system reconciliation 仍不重写已声明值。
     """
     if not incumbent_declared:
         return True

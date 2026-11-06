@@ -27,7 +27,7 @@ export default function GlobalError({
           color: '#e6eaf2',
         }}
       >
-        <div style={{ fontSize: 16, fontWeight: 600 }}>应用遇到严重错误</div>
+        <div style={{ fontSize: 16, fontWeight: 600 }}>应用遇到严重错误 / Application error</div>
         <button
           type="button"
           onClick={reset}
@@ -40,7 +40,7 @@ export default function GlobalError({
             cursor: 'pointer',
           }}
         >
-          重试
+          重试 / Retry
         </button>
       </body>
     </html>

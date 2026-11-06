@@ -16,7 +16,7 @@ from typing import Any, Dict, FrozenSet, List, Optional
 # layer_locked），组件锁拒绝复用 LOCK_CONFLICT_CODE，载荷
 # locked_component_ids 指明被锁组件 —— 不引入前端无法识别的第二码。
 LOCK_CONFLICT_CODE = "layer_locked"
-# 锁集读取上界（与 repair_planner 既有 [:64] 口径一致，有界披露）。
+# 兼容旧leaf import的阈值常量；读取全部锁，不能静默忽略第65项以后。
 _MAX_LOCK_IDS = 64
 
 
@@ -30,7 +30,7 @@ def locked_layer_ids_of(mapspec: Optional[Dict[str, Any]]) -> List[str]:
     locked = wb.get("lockedLayerIds", [])
     if not isinstance(locked, list):
         return []
-    return [x for x in locked[:_MAX_LOCK_IDS] if isinstance(x, str) and x]
+    return [x for x in locked if isinstance(x, str) and x]
 
 
 def locked_component_ids_of(mapspec: Optional[Dict[str, Any]]) -> List[str]:
@@ -43,20 +43,20 @@ def locked_component_ids_of(mapspec: Optional[Dict[str, Any]]) -> List[str]:
     locked = wb.get("lockedComponentIds", [])
     if not isinstance(locked, list):
         return []
-    return [x for x in locked[:_MAX_LOCK_IDS] if isinstance(x, str) and x]
+    return [x for x in locked if isinstance(x, str) and x]
 
 
 def _lock_matches(locked_id: str, target_id: str) -> bool:
     """锁命中判定（含层族语义，与 _should_remove_layer 谓词一致）。
 
-    精确命中 + 双向族前缀（locked 存逻辑层、目标是物理层，或反之）——
+    精确命中 + 双向显式 __ 族前缀（locked 存逻辑层、目标是物理层，或反之）——
     任一方向命中即拒绝，不留「换个 id 拼法绕过用户锁」的缺口。
     """
     if not isinstance(locked_id, str) or not target_id:
         return False
     if locked_id == target_id:
         return True
-    for sep in ("-", "__"):
+    for sep in ("__",):
         if target_id.startswith(f"{locked_id}{sep}"):
             return True
         if locked_id.startswith(f"{target_id}{sep}"):

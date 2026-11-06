@@ -109,3 +109,26 @@ def test_async_stream_missing_item_raises():
 
     with pytest.raises(ValueError, match="not found"):
         asyncio.run(_run())
+
+
+def test_slow_consumer_receives_completion_after_queue_fills(monkeypatch):
+    from app.extensions_platform.sdk.provider import StreamingVectorProvider
+
+    class Adapter(StreamingVectorProvider):
+        def stream_features(self, query, page_size=500):
+            yield from ({"properties": {"i": i}} for i in range(100))
+
+    monkeypatch.setattr(
+        "app.services.data_fabric.manager.DataFabricManager.get_adapter",
+        classmethod(lambda cls, profile: Adapter()),
+    )
+
+    async def run():
+        features = []
+        async for feature in stream_catalog_item_features(_AsyncFakeQuery(), "item-1"):
+            features.append(feature)
+            await asyncio.sleep(0.001)
+        return features
+
+    features = asyncio.run(asyncio.wait_for(run(), timeout=3))
+    assert len(features) == 100

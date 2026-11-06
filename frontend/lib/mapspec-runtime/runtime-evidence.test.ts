@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { circleRadiusExpression } from "@/lib/map-kit/symbol-law";
 import { collectCartographicRuntimeObservation } from "./runtime-evidence";
 import type { MapSpec } from "@/lib/mapspec-compiler/types";
 import type { Layer } from "@/lib/types/layer";
@@ -8,7 +9,7 @@ function fixture() {
     id: "ref:geojson-1__point",
     source: "ref:geojson-1",
     type: "circle",
-    paint: { "circle-color": "#3366cc", "circle-opacity": 0.8 },
+    paint: { "circle-color": "#3366cc", "circle-opacity": 0.8, "circle-radius": circleRadiusExpression({}) },
     layout: { visibility: "visible" },
   };
   const source = { type: "geojson" };

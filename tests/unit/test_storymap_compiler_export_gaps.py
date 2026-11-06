@@ -116,9 +116,9 @@ class TestCompileFallbacks:
         assert _payload_bbox({"center": [116.4, 39.9]}) == [
             116.4, 39.9, 116.4, 39.9,
         ]
-        # center + zoom=3 → 合成跨度 360/2^(3-1)=90°
+        # center + zoom=3 → 经度跨度90°；16:9画幅使用纬度跨度90/(2*16/9)。
         assert _payload_bbox({"center": [116.4, 39.9], "zoom": 3.0}) == [
-            71.4, 17.4, 161.4, 62.4,
+            71.4, 39.9 - 90.0 / (4 * (16 / 9)), 161.4, 39.9 + 90.0 / (4 * (16 / 9)),
         ]
         assert _payload_bbox({}) is None
 
@@ -288,3 +288,17 @@ class TestServiceAndSessionRoute:
             resp = await client.post("/api/v1/storymap/sessions/conv-1/compile")
             assert resp.status_code == 200
             assert resp.json()["chapters"][0]["id"] == "c1"
+
+
+def test_dateline_geometry_and_box_union_share_one_unwrapped_domain():
+    from app.lib.storymap.story_compiler import _payload_bbox, _union_bbox
+    payload = {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {
+        "type": "MultiPoint", "coordinates": [[170, 0], [-175, 5], [-178, 2]]}}]}
+    box = _payload_bbox(payload)
+    assert box == [170.0, 0.0, 185.0, 5.0]
+    assert _union_bbox([box, [-179, -1, -174, 4]]) == [170.0, -1, 186.0, 5.0]
+    assert _union_bbox([[170, -2, -170, 2], [-178, -1, -175, 4]]) == [170.0, -2, 190.0, 4]
+    # A broad authored interval retains its full interior, rather than treating
+    # its two endpoints as a narrow dateline feature.
+    broad = _union_bbox([[-150, -10, 150, 10], [175, -1, -175, 1]])
+    assert broad[2] - broad[0] == 335

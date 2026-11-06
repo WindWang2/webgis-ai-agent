@@ -157,7 +157,7 @@ class TestMapStateSummary:
         out = await build_map_state_summary(clean_session)
         assert "116.500000" in out
         assert "39.800000" in out
-        assert "±10m" in out
+        assert "±10.0m" in out
 
     async def test_event_log_renders(self, clean_session):
         await session_data_manager.append_event(clean_session, "tool_executed", {"tool": "geocode_cn", "ref": "ref:data-x"})

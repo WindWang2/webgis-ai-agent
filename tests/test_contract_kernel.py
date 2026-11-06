@@ -188,13 +188,16 @@ class TestWorkbenchLockInvariants:
 
         locked = frozenset({"roads"})
         assert is_entity_locked("roads", locked)
-        assert is_entity_locked("roads-1", locked)      # 物理层挂逻辑锁
+        assert is_entity_locked("roads__1", locked)      # 物理层挂逻辑锁
         assert is_entity_locked("roads__phys", locked)
-        assert is_entity_locked("roads-1-label", locked)
+        assert is_entity_locked("roads__1__label", locked)
+        assert not is_entity_locked("roads-1", locked)  # 独立连字符 ID 不是层族
+        assert not is_entity_locked("roads-1-label", locked)
         assert not is_entity_locked("road", locked)      # 前缀撞词不算
         assert not is_entity_locked("highways", locked)
         # 双向：locked 存物理层，目标是逻辑层
-        assert is_entity_locked("roads", frozenset({"roads-1"}))
+        assert is_entity_locked("roads", frozenset({"roads__1"}))
+        assert not is_entity_locked("roads", frozenset({"roads-1"}))
 
     def test_reader_bounds_and_shape(self):
         from app.contracts.workbench_locks import locked_layer_ids_of
@@ -206,7 +209,12 @@ class TestWorkbenchLockInvariants:
             {"workbench": {"lockedLayerIds": ["a", 1, "", "b"]}}
         ) == ["a", "b"]
         big = {"workbench": {"lockedLayerIds": [f"l{i}" for i in range(100)]}}
-        assert len(locked_layer_ids_of(big)) == 64  # 有界披露
+        # This reader is authority, not a bounded display projection. The
+        # 65th and later locks must still protect their target layers.
+        ids = locked_layer_ids_of(big)
+        assert ids == [f"l{i}" for i in range(100)]
+        from app.contracts.workbench_locks import is_entity_locked
+        assert is_entity_locked("l99", frozenset(ids))
 
     def test_intent_dataclasses_shape(self):
         from app.contracts.mapspec_intents import (

@@ -137,6 +137,7 @@ import {
   injectResolvedRefSources,
   subscribeRefSources,
   getRefSourcesGeneration,
+  getRefSourceBudget,
 } from "@/lib/mapspec/ref-source-resolver"
 import {
   getCommittedMapSpec,
@@ -220,7 +221,8 @@ interface MapPanelProps {
 
 import { useMapAction } from "@/lib/contexts/map-action-context"
 
-export function getMapStyle(option: MapStyleOption, index: number): string | StyleSpecification {
+export function getMapStyle(option: MapStyleOption | undefined, index: number): string | StyleSpecification {
+  if (!option) return { version: 8, sources: {}, layers: [{ id: "offline-background", type: "background", paint: { "background-color": "#17212b" } }] };
   if (option.type === "raster") {
     const sourceId = `raster-tiles-${index}`;
     const layerId = `raster-tiles-layer-${index}`;
@@ -281,6 +283,7 @@ export function MapPanel({
   // G3DV2-B M5：拾取卡文案走 map 命名空间限定键 —— 全键字面量会被
   // maplibre-mock-surface 静态扫描误判为 MapLibre 成员访问（前缀点链）。
   const tMap = useT('map');
+  const refBudgetNotice = useRef<string | null>(null);
   void _onRemoveLayer;
   void _onToggleLayer;
 
@@ -294,6 +297,7 @@ export function MapPanel({
     zoom: DEFAULT_VIEW_STATE.zoom,
     centerLat: DEFAULT_VIEW_STATE.latitude,
     bearing: 0,
+    pitch: 0,
     // P3：graticule 真实地理 bounds（move 结算时更新；缺席=渲染器自弃）。
     bounds: undefined as { west: number; south: number; east: number; north: number } | undefined,
   })
@@ -535,6 +539,7 @@ export function MapPanel({
 
     return () => {
       cancelled = true
+      if (lastFittedFocusRef.current === focusLayerId) lastFittedFocusRef.current = null
     }
   }, [focusLayerId, mapReady, layers, focusLayerSetter, t])
 
@@ -762,9 +767,12 @@ export function MapPanel({
     () => sceneCameraIdentity(getCommittedMapSpec()),
     () => sceneCameraIdentity(getCommittedMapSpec()),
   )
+  const previous3D = useRef(is3D)
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
+    const was3D = previous3D.current
+    previous3D.current = is3D
 
     const committed = getCommittedMapSpec() as any
     const scene = committed?.scene
@@ -786,7 +794,7 @@ export function MapPanel({
       map.easeTo({ pitch, bearing, duration: transitionMs })
     } else {
       renderer.disable3DTerrain(map)
-      map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
+      if (was3D) map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
     }
   }, [is3D, mapReady, sceneCameraKey, buildSceneTerrainOptions])
 
@@ -841,7 +849,7 @@ export function MapPanel({
       layers.filter((l) => typeof l._refId === 'string').map((l) => l._refId as string),
     )
     const spec = injectResolvedRefSources(
-      spec0,
+      specWithTemporal,
       sessionId
         ? { sessionId, ownerToken: ownerToken ?? sessionTokenRef?.current ?? null }
         : null,
@@ -849,7 +857,16 @@ export function MapPanel({
     )
     // FE-3: recompute interactive ids once this patch has actually applied
     // (reconcileAsync resolves when its last op ran → appliedSpec advanced).
-    void runtimeRef.current.reconcileAsync(specWithTemporal)
+    const refBudget = getRefSourceBudget();
+    const noticeKey = refBudget.omitted ? `${sessionId}:${refBudget.omitted}` : null;
+    if (noticeKey && refBudgetNotice.current !== noticeKey) {
+      void import('@/components/ui/toast').then(({ useToastStore }) => {
+        if (refBudgetNotice.current !== noticeKey) return;
+        useToastStore.getState().addToast(tMap('refSourceBudget', refBudget), 'warning', 8000);
+      });
+    }
+    refBudgetNotice.current = noticeKey;
+    void runtimeRef.current.reconcileAsync(spec)
       .then(() => {
         syncInteractiveIds()
         // GOAL 03 M4：displayed_at 门控 —— reconcile 落定（applied spec
@@ -915,7 +932,7 @@ export function MapPanel({
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, temporalLiveGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation, buildSceneTerrainOptions])
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, temporalLiveGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation, buildSceneTerrainOptions, tMap])
 
   // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
   // 单遍计数（≤20k 要素；MVT/超限层如实 unknown），latest-wins 记录进
@@ -1093,8 +1110,8 @@ export function MapPanel({
         geometry: { type: 'Polygon', coordinates: [ring] },
         properties: { label: t('map.toolbar.measureAreaLabel', { value: formatted }), kind: 'measure_polygon' },
       })
-      const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length
-      const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length
+      const cx = ring.slice(0, -1).reduce((s, p) => s + p[0], 0) / (ring.length - 1)
+      const cy = ring.slice(0, -1).reduce((s, p) => s + p[1], 0) / (ring.length - 1)
       store.addAnnotation({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [cx, cy] },
@@ -1486,6 +1503,7 @@ export function MapPanel({
         zoom: evt.viewState.zoom,
         centerLat: evt.viewState.latitude,
         bearing: evt.viewState.bearing ?? 0,
+        pitch: evt.viewState.pitch ?? 0,
         // P3：graticule live 渲染的真实地理 bounds（同一 debounce 结算，
         // 不新增任何逐帧状态）。
         bounds: bounds
@@ -1742,6 +1760,7 @@ export function MapPanel({
         <WidgetHost />
         {poiPanel && (
           <PoiInfoPanel
+            key={`${poiPanel.x},${poiPanel.y}`}
             x={poiPanel.x}
             y={poiPanel.y}
             coordinates={poiPanel.lngLat}
@@ -1887,7 +1906,7 @@ export function MapPanel({
       <MapToolbarHUD
         mapRef={mapRef}
         bearing={decorProps.bearing}
-        pitch={is3D ? 60 : 0}
+        pitch={decorState.pitch}
         activeMeasureTool={measureMode}
         onMeasureToolChange={(mode) => useHudStore.getState().setActiveMapTool(
           mode === 'distance' ? 'measure_distance' : mode === 'area' ? 'measure_area' : null,

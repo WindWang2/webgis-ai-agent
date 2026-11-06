@@ -22,7 +22,8 @@ describe('geo-anchor（共享投影语义）', () => {
     const frac = anchorFractionInBounds([104, 36], CHINA_BBOX);
     expect(frac).not.toBeNull();
     expect(frac!.fx).toBeCloseTo((104 - 73) / (135 - 73), 10);
-    expect(frac!.fy).toBeCloseTo((36 - 18) / (54 - 18), 10);
+    const mercatorY = (lat: number) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+    expect(frac!.fy).toBeCloseTo((mercatorY(36) - mercatorY(18)) / (mercatorY(54) - mercatorY(18)), 10);
   });
 
   it('bounds 退化 → null（渲染端自弃，不虚构位置）', () => {
@@ -43,7 +44,7 @@ describe('geo-anchor（共享投影语义）', () => {
 
   it('bboxToBounds：无效/退化 bbox → null', () => {
     expect(bboxToBounds([97, 26, 108, 34])).toEqual({ west: 97, south: 26, east: 108, north: 34 });
-    expect(bboxToBounds([108, 26, 97, 34])).toBeNull();
+    expect(bboxToBounds([108, 26, 97, 34])).toEqual({ west: 108, south: 26, east: 457, north: 34 });
     expect(bboxToBounds('x')).toBeNull();
   });
 });

@@ -17,7 +17,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     wf,
     auto_fallback,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _SAR_SUBJECT = role(
     "subject", capability="raster_source",
@@ -71,8 +71,7 @@ _RECIPES: List[CartographyRecipe] = [
         optional_analysis=["sar_radiometric_calibration", "sar_speckle_filtering"],
         primary_cartography="raster_surface",
         default_components=MAP_COMPONENTS_CONTINUOUS,
-        fallbacks=[RecipeFallback(when="calibration unavailable", reason_code="SAR_CALIBRATION_EVIDENCE_REQUIRED",
-                                  use="descriptive_comparison")],
+        fallbacks=[],
         export_profile={"formats": ["png"]},
         priority=45,
         schema_version=2,

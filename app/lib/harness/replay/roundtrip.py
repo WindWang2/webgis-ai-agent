@@ -7,9 +7,9 @@ recorder 产出的 ReplayTrace 不再是 write-only：真实流量沉淀为回�
 **expect 回填（ADR-0262 D3，去 green-by-construction）**：recorded 场景的
 expect 从录制事实派生（`goal` ← map_product.task_complete、
 `decision_rederive` ← 决策索引、`dispatch` ← dispatch_evidence），再经
-:func:`calibrate_recorded_scenario` 对当前重放环境做一次校准 —— 与当前
-推导不符的期望叶被裁掉并记录收据（诚实披露），保留下来的期望在后续
-重放中可失败。纪律：只期望录制时成立、且当前环境可复现的事实；
+:func:`calibrate_recorded_scenario` 报告当前重放环境差异。原始期望默认
+保留，避免回归被校准吸收；只有显式 allow_prune 才裁剪并记录收据。
+纪律：只期望录制时有证据成立的事实；
 证据缺席的维度不进 expect（不伪造）。
 
 诚实降级纪律（B1/B3）：
@@ -217,7 +217,7 @@ def traces_to_scenario(traces: Iterable[Any]) -> Optional[Scenario]:
 
     多条 = multi-turn（按 ``created_at_epoch`` 排序）；0 条 = None。
     expect 为**候选**形态（录制事实派生）—— 提交回归前应经
-    :func:`calibrate_recorded_scenario` 校准（裁掉当前环境不可复现的叶）。
+    :func:`calibrate_recorded_scenario` 报告当前环境差异（默认保留期望）。
     """
     normalized = [t for t in (_normalize(x) for x in traces) if t]
     if not normalized:
@@ -346,8 +346,9 @@ async def calibrate_recorded_scenario(
     *,
     replayer: Optional[OfflineReplayer] = None,
     seed: int = 0,
+    allow_prune: bool = False,
 ) -> Tuple[Scenario, CalibrationReport]:
-    """录制场景 expect 校准：跑一次当前环境重放，裁掉不可复现的期望叶。
+    """默认保留录制期望并报告环境差异；allow_prune 显式启用裁剪。
 
     返回（校准后场景副本, 收据）。校准保证：提交日的期望在当前环境下
     全部成立（与 --write-baseline 同时的冻结语义），此后任何维度的漂移
@@ -360,7 +361,7 @@ async def calibrate_recorded_scenario(
     calibrated = copy.deepcopy(scenario)
     result = await rp.replay_scenario(calibrated)
     dropped: List[CalibrationDrop] = []
-    for turn_result, turn in zip(result.turns, calibrated.turns):
+    for turn_result, turn in zip(result.turns, calibrated.turns, strict=True):
         if not turn.expect:
             continue
         actual = turn_result.actual_projection(
@@ -368,7 +369,9 @@ async def calibrate_recorded_scenario(
             receipt_backed=calibrated.receipt_backed)
         turn_dropped: List[CalibrationDrop] = []
         pruned = _prune_expect(turn.expect, actual, "", turn_dropped)
-        if pruned is _DROP_SENTINEL:
+        if not allow_prune:
+            pass  # Recorded expectations remain authoritative across environments.
+        elif pruned is _DROP_SENTINEL:
             turn.expect = {}
         else:
             stripped = _strip_empty(pruned)
@@ -379,7 +382,7 @@ async def calibrate_recorded_scenario(
     # 嵌套结构裁剪不应产生不一致状态）。
     verify = await rp.replay_scenario(calibrated)
     residual: List[ExactDiff] = []
-    for turn_result, turn in zip(verify.turns, calibrated.turns):
+    for turn_result, turn in zip(verify.turns, calibrated.turns, strict=True):
         semantic_expect = {
             k: v for k, v in turn.expect.items() if k != "user_text"}
         for diff in compare_exact(
@@ -389,7 +392,7 @@ async def calibrate_recorded_scenario(
                     receipt_backed=calibrated.receipt_backed)):
             residual.append({"turn": turn_result.turn_index, **diff})
     calibration: CalibrationReport = {
-        "calibrated": True,
+        "calibrated": bool(allow_prune),
         "dropped": dropped[:64],
         "dropped_count": len(dropped),
         "residual_diffs": residual[:32],

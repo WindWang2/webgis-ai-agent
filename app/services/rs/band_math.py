@@ -153,7 +153,15 @@ def compute_index_array(index_type: str, **bands: np.ndarray) -> np.ndarray:
     bands_needed, formula = INDEX_FORMULAS[idx]
     args = [bands[b] for b in bands_needed]
     if idx == "evi":
-        args = [_maybe_dn_to_reflectance(a) for a in args]
+        scales = []
+        for array in args:
+            finite = array[np.isfinite(array)]
+            if finite.size and np.max(np.abs(finite)) > 0:
+                scales.append(float(np.max(finite)) > _DN_SCALE_THRESHOLD)
+        if scales and any(scales) and not all(scales):
+            raise ValueError("EVI input bands use mixed or ambiguous DN/reflectance scales; normalize all bands explicitly")
+        if scales and all(scales):
+            args = [array / 10000.0 for array in args]
     return formula(*args)
 
 

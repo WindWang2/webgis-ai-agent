@@ -1758,9 +1758,24 @@
       "message": "标签碰撞求解：部分标签位移或省略（{detail}）"
     },
     {
+      "code": "label_expression_unsupported",
+      "severity": "warning",
+      "message": "标注表达式暂不支持，已跳过该文本，避免输出错误标注"
+    },
+    {
       "code": "label_truncated",
       "severity": "warning",
       "message": "标注文本过长，已截断显示（{detail}）"
+    },
+    {
+      "code": "layer_coordinates_invalid",
+      "severity": "warning",
+      "message": "图层包含超出经纬度合法范围的坐标，已跳过无效几何"
+    },
+    {
+      "code": "layer_filter_unsupported",
+      "severity": "warning",
+      "message": "图层过滤表达式不受矢量导出支持，已跳过该图层（{detail}）"
     },
     {
       "code": "layer_gated_by_zoom",

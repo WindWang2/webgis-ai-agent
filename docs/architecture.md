@@ -216,4 +216,4 @@ MapRequestIntent ──► Recipe/Template 选择 ──► MapProductPlanner（
 4. **MapSpec 是唯一 desired state** — 直接操作 MapLibre 或 Zustand 而不更新 desired state 的旁路禁止;新 mutation 经 `apply_gis_mutation` 门面(记录 provenance)。
 5. **失败要诚实** — `{"error": ...}` 显式返回;QA 无证据报 not_evaluated。
 6. **样式 ≠ 数据** — 栅格样式改动必须走 RasterStyleSpec(换缓存键),不得触发重计算。
-7. **架构级变更先写 ADR** — `docs/adr/` 已有 75 篇决策记录,新决策先立字据再动代码。
+7. **架构级变更先写 ADR** — `docs/adr/` 保存现有决策记录（篇数以目录为准）,新决策先立字据再动代码。

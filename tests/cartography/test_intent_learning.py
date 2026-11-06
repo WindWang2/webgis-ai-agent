@@ -84,7 +84,7 @@ def test_evidence_roundtrip_and_replay(db):
         task=intent.task,
         fallback=bool(intent.fallback_decision or {}).get("fallback", False)
         if isinstance(intent.fallback_decision, dict) else False,
-        matched_rules=list(intent.matched_rules or []),
+        matched_rules=list((intent.fallback_decision or {}).get("matched_rules", [])),
         confidence=float(intent.confidence or 0.0),
         slots={"subject": getattr(intent.subject, "name", "")},
         lang=intent.lang,

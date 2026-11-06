@@ -58,7 +58,9 @@ def test_compact_batches_reembedding(tmp_path, monkeypatch):
 
     assert result["purged"] == 5
     assert result["total"] == 10
-    assert batch_sizes == [4, 4, 2], f"Expected batches [4, 4, 2], got {batch_sizes}"
+    assert batch_sizes == [], "compaction must reuse vectors without invoking an encoder"
+    kept = [i for i in range(15) if i % 3 != 0]
+    np.testing.assert_allclose(store._get_index().reconstruct_n(0, 10), vectors[kept])
 
     # Verify index and metadata consistency
     meta = store.load_metadata()
@@ -115,7 +117,8 @@ def test_compact_default_batch_size_without_data_loss(tmp_path, monkeypatch):
 
     assert result["purged"] == 10
     assert result["total"] == 70
-    assert recorded_batches == [64, 6]
+    assert recorded_batches == [], "compaction must never load/re-run the model"
+    np.testing.assert_allclose(store._get_index().reconstruct_n(0, 70), vectors[10:])
 
     meta = store.load_metadata()
     assert len(meta["chunks"]) == 70

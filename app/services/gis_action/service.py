@@ -74,12 +74,21 @@ class RegistryToolResolver:
         if not callable(meta_fn):
             return None
         try:
+            descriptor = getattr(self._registry, "descriptor", None)
+            has = getattr(self._registry, "has", None)
+            if callable(descriptor):
+                descriptor(tool_name)  # Raises for unregistered tools.
+            elif not callable(has) or not has(tool_name):
+                return None
             meta = meta_fn(tool_name)
         except Exception:  # noqa: BLE001 — 元数据缺失 = 不可解析
             return None
         return meta if isinstance(meta, dict) and meta else None
 
     def resolve_tool(self, tool_name: str) -> Optional[ToolResolution]:
+        resolve_name = getattr(self._registry, "resolve_name", None)
+        if callable(resolve_name):
+            tool_name = resolve_name(tool_name)
         meta = self._metadata(tool_name)
         if meta is None:
             return None
@@ -89,7 +98,7 @@ class RegistryToolResolver:
             if meta.get(f"{dim}_class")
         }
         output_type = str(meta.get("output_semantic_type") or "")
-        # registry 弃用惯例：deprecation_of/fallback_tool 指向继任者。
+        # ToolDescriptor defines deprecation_of as the canonical replacement.
         successor = str(meta.get("superseded_by")
                         or meta.get("fallback_tool")
                         or meta.get("deprecation_of") or "")

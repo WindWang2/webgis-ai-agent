@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.lib.cartography.plan_ir import MapPlanIR, spec_doc_of
+from app.services.map_plan_compiler.component_delta import _component_delta
 
 __all__ = ["ObligationFinding", "ObligationReport", "check_obligations",
            "SUPPORTED_LAYER_TYPES", "SUPPORTED_EXPORT_FORMATS",
@@ -127,9 +128,12 @@ def check_obligations(
     current = spec_doc_of(current)
     live_sources = _live_source_ids(current)
     live_layers = _alias_ids(current)
-    live_outputs = {str(o) for o in analysis_output_ids} | {
-        o.output_id for o in ir.analysis_outputs
-    }
+    live_outputs = {str(o) for o in analysis_output_ids}
+    layer_sources = {str(layer.get("id")): str(layer.get("source") or "")
+                     for layer in current.get("layers", []) if isinstance(layer, dict)}
+    layout = current.get("layout") if isinstance(current.get("layout"), dict) else {}
+    components = {str(component.get("id")): component for component in layout.get("components", [])
+                  if isinstance(component, dict)}
 
     # ── 闸 1：user lock 冲突（fail-closed，user-wins）────────────────────
     locked_layers = set(ir.user_locks.layer_ids)
@@ -142,7 +146,7 @@ def check_obligations(
                 ("lock_snapshot",)))
     for ci in ir.component_intents:
         if ci.locked or (ci.component_id and ci.component_id in locked_components):
-            if ci.action != "ensure":  # ensure 已在场组件 = 无操作语义，放行
+            if ci.action != "ensure" or _component_delta(ci, components.get(ci.component_id)):
                 findings.append(_finding(
                     "PLAN_LOCK_CONFLICT", "blocking", f"component:{ci.component_id}",
                     "component intent 目标被用户锁定；编译拒绝（user-wins）",
@@ -159,10 +163,11 @@ def check_obligations(
                 "present/restyle 意图缺少 layer blueprint（表达面无从编译）"))
             continue
         ref = li.source_ref
+        if ref in layer_sources:
+            ref = layer_sources[ref]
         target_exists = bool(li.layer_id) and li.layer_id in live_layers
         if ref:
-            if ref not in live_sources and ref not in live_layers \
-                    and ref not in live_outputs:
+            if ref not in live_sources and ref not in live_outputs:
                 findings.append(_finding(
                     "DATA_REF_UNRESOLVED", "blocking", f"layer:{li.layer_id or li.intent_id}",
                     f"source_ref {ref!r} 不在当前 sources/layers/analysis outputs",

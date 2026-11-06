@@ -30,7 +30,7 @@ export function ChapterArtifact({ ref: artifactRef }: { ref: string }): React.Re
     if (isChart) {
       void loadChartArtifact(artifactRef).then((data) => {
         if (alive) setChart(data);
-      });
+      }).catch(() => { if (alive) setChart(null); });
     } else {
       void loadTableArtifact(artifactRef).then((data) => {
         if (alive) setTable(data);

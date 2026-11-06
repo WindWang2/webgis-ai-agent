@@ -107,6 +107,12 @@ class FabricRuntime:
         if not pid:
             return None
 
+        # Persisted source IDs are resolved only by DataFabricManager after a
+        # live DB authorization check. A session/global registry cache is never
+        # authority for ds_* rows (including deleted or org-only rows).
+        if str(pid).startswith("ds_"):
+            return None
+
         scope = _tenant_scope(owner)
         scope_key = scope.scope_key()
         registry = get_connection_registry()

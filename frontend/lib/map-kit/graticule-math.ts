@@ -1,3 +1,4 @@
+import { mercY } from './oversample';
 /**
  * Shared graticule geometry (P3, #1089 deferred — live graticule renderer).
  *
@@ -51,7 +52,7 @@ export function graticuleLngLines(
     value: lng,
     fraction:
       maxLng > minLng ? (lng - minLng) / (maxLng - minLng) : 0,
-    label: `${Math.abs(lng).toFixed(interval < 1 ? 1 : 0)}°${lng >= 0 ? 'E' : 'W'}`,
+    label: `${Math.abs(lng).toFixed(Math.max(0, Math.min(6, -Math.floor(Math.log10(interval)))))}°${lng >= 0 ? 'E' : 'W'}`,
   }));
 }
 
@@ -64,7 +65,7 @@ export function graticuleLatLines(
   return snapGraticuleLines(minLat, maxLat, interval).map((lat) => ({
     value: lat,
     fraction:
-      maxLat > minLat ? (lat - minLat) / (maxLat - minLat) : 0,
-    label: `${Math.abs(lat).toFixed(interval < 1 ? 1 : 0)}°${lat >= 0 ? 'N' : 'S'}`,
+      maxLat > minLat ? (mercY(lat) - mercY(minLat)) / (mercY(maxLat) - mercY(minLat)) : 0,
+    label: `${Math.abs(lat).toFixed(Math.max(0, Math.min(6, -Math.floor(Math.log10(interval)))))}°${lat >= 0 ? 'N' : 'S'}`,
   }));
 }

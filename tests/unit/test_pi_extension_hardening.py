@@ -3,7 +3,7 @@
 Validates:
 1. postToBridge 409/503 recovery guidance and fetch timeout.
 2. loadNativeTools loud logging and error handling.
-3. currentTurnToken scanning past 24 entries and pinned fallback.
+3. currentTurnToken scanning past 24 entries and no cross-context fallback.
 4. write_native_tools_file atomic write.
 5. NATIVE_TOOL_NAMES contract pinning Python, extension, and registry schema dump.
 """
@@ -56,7 +56,7 @@ requires_node = pytest.mark.skipif(
 def test_current_turn_token_scans_past_24_entries():
     """Item 3: A tool-heavy turn (>24 entries) must not age out the turn marker."""
     server_token = "valid.turn_token"
-    first_entry = f"User query [WEBGIS_TURN_CONTEXT:{server_token}]"
+    first_entry = f"User query\n\n[WEBGIS_TURN_CONTEXT:{server_token}]\n\n(Internal routing context; do not quote or modify this marker.)"
     other_entries = [{"role": "assistant", "content": f"tool_step_{i}"} for i in range(35)]
     all_entries = [first_entry] + other_entries
     assert len(all_entries) == 36
@@ -71,10 +71,10 @@ def test_current_turn_token_scans_past_24_entries():
 
 
 @requires_node
-def test_current_turn_token_falls_back_to_pinned():
-    """Item 3: Pinned token persists if entries are later pruned or empty."""
+def test_current_turn_token_does_not_reuse_a_pruned_context():
+    """Item 3: A pruned or empty context cannot inherit the prior session token."""
     server_token = "pinned.turn_token"
-    entry = f"[WEBGIS_TURN_CONTEXT:{server_token}]"
+    entry = f"[WEBGIS_TURN_CONTEXT:{server_token}]\n\n(Internal routing context; do not quote or modify this marker.)"
 
     script = f"""
       import {{ currentTurnToken, _resetPinnedTurnToken }} from {json.dumps(EXTENSION_PATH.as_uri())};
@@ -88,7 +88,7 @@ def test_current_turn_token_falls_back_to_pinned():
     res = _run_node_script(script)
     data = json.loads(res.stdout)
     assert data["token1"] == server_token
-    assert data["token2"] == server_token
+    assert data["token2"] == ""
 
 
 @requires_node
@@ -397,7 +397,7 @@ def _mock_pi_harness_script(dump_path: Path, events: dict) -> str:
 @requires_node
 def test_extension_defers_default_surface_past_load(tmp_path: Path):
     """Pi v1.5.0: no setActiveTools during load; session_start applies default;
-    a marker-less first turn is a no-op once the default already landed."""
+    each turn resets the default so prior projections cannot leak."""
     dump = tmp_path / "native-tools.json"
     dump.write_text(json.dumps(_MINIMAL_DUMP), encoding="utf-8")
     res = _run_node_script(_mock_pi_harness_script(dump, {}))
@@ -407,8 +407,9 @@ def test_extension_defers_default_surface_past_load(tmp_path: Path):
     # session_start → 默认投影（7 natives + execute proxy）
     assert data["afterSessionStartActiveCalls"] == 1
     assert len(data["setActiveTools"][0]) == 8
-    # 默认已落地后，无 marker 的首轮不再重复投影
-    assert data["afterFirstTurnActiveCalls"] == 1
+    # Each turn resets authority even after session_start initialized the runtime.
+    assert data["afterFirstTurnActiveCalls"] == 2
+    assert data["setActiveTools"][1] == data["setActiveTools"][0]
 
 
 @requires_node
