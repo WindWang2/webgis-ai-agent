@@ -340,6 +340,11 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         self.options = self.profile.options or {}
         self._meta_cache: Dict[str, _TableMeta] = {}
         self._caps = default_capabilities("postgis")
+        # Native psycopg2 connections do not accept arbitrary attributes. Keep
+        # checkout ownership on the adapter, including the exact originating
+        # pool so eviction/replacement cannot send a connection to another pool.
+        self._connection_pools: Dict[int, Any] = {}
+        self._connection_pools_lock = threading.Lock()
 
     # ── identifier 卫生 ────────────────────────────────────────────────
 
@@ -379,7 +384,8 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         if pool:
             try:
                 conn = pool.getconn()
-                setattr(conn, "_is_pooled", True)
+                with self._connection_pools_lock:
+                    self._connection_pools[id(conn)] = pool
                 return conn
             except Exception as pe:
                 from app.services.data_fabric.errors import SourceUnreachableError
@@ -423,26 +429,23 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         """归还连接（DATA-04 语义保留：putconn 失败 → putconn(close=True) → close）。"""
         if not conn:
             return
-        if getattr(conn, "_is_pooled", False):
-            pool = _get_or_create_postgis_pool(
-                self.host, self.port or 5432, self.database, self.username, self.password,
-                options=self.options,
-            )
-            if pool:
+        with self._connection_pools_lock:
+            pool = self._connection_pools.pop(id(conn), None)
+        if pool is not None:
+            try:
+                pool.putconn(conn)
+                return
+            except Exception as pe:
+                logger.warning("[PostGISAdapter] pool.putconn failed (%s); reclaiming slot", pe)
                 try:
-                    pool.putconn(conn)
+                    pool.putconn(conn, close=True)
                     return
-                except Exception as pe:
-                    logger.warning("[PostGISAdapter] pool.putconn failed (%s); reclaiming slot", pe)
+                except Exception:
                     try:
-                        pool.putconn(conn, close=True)
-                        return
+                        conn.close()
                     except Exception:
-                        try:
-                            conn.close()
-                        except Exception:
-                            pass
-                        return
+                        pass
+                    return
         try:
             conn.close()
         except Exception:
