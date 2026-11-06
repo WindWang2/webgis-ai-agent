@@ -122,10 +122,9 @@ def test_fractional_bandwidth_is_not_replaced_with_default():
 
 def test_extension_wrap_rejects_only_frozen_natives():
     source = (ROOT / "app/extensions/webgis-tools/index.mjs").read_text(encoding="utf-8")
-    assert "FALLBACK_NATIVE.includes(toolName)" in source
-    assert "nativeNames.has(toolName)" not in source
+    assert "nativeNames.has(toolName)" in source
     assert "via this proxy" not in source
-    assert "webgis_execute({toolName, arguments})" in source
+    assert "call heatmap_data or h3_binning directly" in source
 
 
 def test_nearest_facility_is_not_a_dijkstra_candidate():

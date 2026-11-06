@@ -106,6 +106,7 @@ def test_compute_turn_active_tools_gate(monkeypatch, registry):
     importlib.reload(pns)
     names = pns.compute_turn_active_tools("做一份成都市小学密度热力图")
     assert set(NATIVE_TOOL_NAMES) <= set(names)
+    assert "heatmap_data" in names
     for name in names:
         assert int(registry.descriptor(name).tier) < 3
 

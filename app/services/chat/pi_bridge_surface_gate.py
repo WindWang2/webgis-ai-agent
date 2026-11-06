@@ -39,22 +39,18 @@ logger = logging.getLogger(__name__)
 def _stale_surface_recovery(tool_name: str, mismatch: str) -> str:
     """Recovery text that matches the extension wrap rule.
 
-    Frozen natives cannot be wrapped. Registered analysis tools may be
-    called directly when active, or via webgis_execute when they are not.
+    Any name registered in the spawn dump must be called directly. The
+    extension rejects wrapping it. webgis_execute is only for names that
+    are not in the tool list.
     """
-    from app.services.chat.pi_native_surface import NATIVE_TOOL_NAME_SET
-
-    prefix = (
+    return (
         f"Tool surface for this turn is stale ({mismatch}): "
         "the registered tool contract changed or the call belongs to a "
         "superseded surface. "
-    )
-    if tool_name in NATIVE_TOOL_NAME_SET:
-        return prefix + f"Call {tool_name} directly. Do not wrap it in webgis_execute."
-    return (
-        prefix
-        + f"Call {tool_name} directly if it is in the active tool list; "
-        "otherwise re-discover via list_available_tools and call webgis_execute."
+        f"Call {tool_name} directly if it is in your tool list. "
+        "Do not wrap a registered name in webgis_execute. "
+        "Use list_available_tools, then webgis_execute, only for a name "
+        "that is not registered."
     )
 
 
