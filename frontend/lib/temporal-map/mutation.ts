@@ -13,6 +13,7 @@ import {
   commitMapSpecDocument,
   getMapSpecSessionCursor,
   setMapSpecRevision,
+  subscribeMapSpecLive,
 } from '@/lib/mapspec/session-cursor';
 import { enqueueUserMutation, newMutationId } from '@/lib/mapspec/user-mutation';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
@@ -44,9 +45,16 @@ export type TemporalCommitOutcome =
 export function commitUserTemporal(patch: TemporalPatch): Promise<TemporalCommitOutcome> {
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   const mutationId = newMutationId();
+  // Remember a detach even if A→B→A finishes before this request settles.
+  let detached = !enqueuedSessionId;
+  const unsubscribe = subscribeMapSpecLive(() => {
+    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) detached = true;
+  });
+  const isAttached = () => !detached
+    && getMapSpecSessionCursor().sessionId === enqueuedSessionId;
   return enqueueUserMutation(async (): Promise<TemporalCommitOutcome> => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
-    if (!sessionId || sessionId !== enqueuedSessionId) {
+    if (!sessionId || !isAttached()) {
       return { outcome: 'failed', error: new Error('session detached') };
     }
     try {
@@ -65,7 +73,7 @@ export function commitUserTemporal(patch: TemporalPatch): Promise<TemporalCommit
           label: 'MapSpec temporal mutation',
         },
       );
-      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) {
+      if (!isAttached()) {
         return { outcome: 'failed', error: new Error('session detached') };
       }
       if (typeof data.mutation_revision === 'number') {
@@ -77,6 +85,9 @@ export function commitUserTemporal(patch: TemporalPatch): Promise<TemporalCommit
       emitTemporalIr(patch, mutationId, 'committed', data.mutation_revision);
       return { outcome: 'committed', revision: data.mutation_revision };
     } catch (err) {
+      if (!isAttached()) {
+        return { outcome: 'failed', error: new Error('session detached') };
+      }
       if (err && typeof err === 'object' && 'status' in err
         && (err as { status?: number }).status === 409) {
         emitTemporalIr(patch, mutationId, 'superseded');
@@ -85,7 +96,7 @@ export function commitUserTemporal(patch: TemporalPatch): Promise<TemporalCommit
       emitTemporalIr(patch, mutationId, 'failed');
       return { outcome: 'failed', error: err instanceof Error ? err : new Error(String(err)) };
     }
-  });
+  }).finally(unsubscribe);
 }
 
 /**

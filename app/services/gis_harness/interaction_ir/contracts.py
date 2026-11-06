@@ -109,7 +109,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     # ≤8 标量元素）—— 框选/多选对 Agent 可见；单选时缺席（向后兼容）。
     _k(
         "feature_selected",
-        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids"),
+        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
     _k(
@@ -176,7 +176,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     #    publishSelection(source:'table')——本质是要素定位，保留来源身份）──
     _k(
         "table_selection_changed",
-        ("layer_id", "feature_id", "selected_ids", "dataset_ref", "action"),
+        ("layer_id", "feature_id", "selected_ids", "dataset_ref", "action", "id_field"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
     # ── mutation 链接型：时间窗 settle（ADR-0283 D2；钩子 temporal

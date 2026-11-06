@@ -50,6 +50,7 @@ def project_selection_history(
     truncated, superseded, cleared}。当前代 = 列表[0]（若未被清除）；
     superseded = 被后续选择替代；cleared = 被 deselect/清除终结。
     """
+    max_entries = max(1, min(int(max_entries), MAX_HISTORY_ENTRIES))
     events = [rec for rec in ledger_events if isinstance(rec, dict)]
     epochs: List[Dict[str, Any]] = []
     for record in events:
@@ -132,14 +133,14 @@ def resolve_selection_ref(
         # 其后最近代；无活跃代（已 deselect/清除）时最近代即是「刚才」。
         if not history:
             return None
-        if history[0].get("cleared"):
+        if history[0].get("cleared") or history[0].get("superseded"):
             entry = history[0] if history[0].get("feature_ids") else None
         else:
             for candidate in history[1:]:
                 if candidate.get("feature_ids"):
                     entry = candidate
                     break
-    elif ref.isdigit():
+    elif len(ref) <= 20 and ref.isascii() and ref.isdigit():
         wanted = int(ref)
         for candidate in history:
             if candidate.get("epoch_seq") == wanted and candidate.get("feature_ids"):

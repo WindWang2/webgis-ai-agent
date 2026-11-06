@@ -6,12 +6,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   disposeInteractionBus,
+  emitFeatureSelected,
   emitChartSelectionChanged,
   emitTableSelectionChanged,
   emitTemporalWindowSettled,
 } from './bus';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { KIND_COALESCE_POLICY } from './contract';
+import { publishSelection, resetSelectionStore } from '@/lib/selection/selection-store';
 
 vi.mock('@/lib/mapspec/session-cursor', () => ({
   getMapSpecSessionCursor: vi.fn(() => ({
@@ -52,6 +54,16 @@ const captured: CapturedEvent[] = [];
 
 beforeEach(() => {
   captured.length = 0;
+  resetSelectionStore();
+});
+
+it.each(['map', 'table'] as const)('preserves the actual %s selection identity field for restore', (source) => {
+  publishSelection('select', {
+    source, layer_id: 'schools', selected_ids: ['sch-1'], id_field: 'OBJECTID',
+  });
+  const emit = source === 'map' ? emitFeatureSelected : emitTableSelectionChanged;
+  emit({ layerId: 'schools', featureId: 'sch-1' });
+  expect(captured[0].payload.id_field).toBe('OBJECTID');
 });
 
 afterEach(() => {

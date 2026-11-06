@@ -11,7 +11,7 @@ import { MODE, REAL_ONLY_REASON } from '../helpers/mode';
 
 const SITUATION_WITH_SCOPE = {
   schema_version: 'situation_view.v1',
-  session_id: 's-j10',
+  session_id: 's-j1',
   situation: {},
   inconsistencies: [],
   interaction_snapshot: {

@@ -28,7 +28,7 @@ test.describe('journey-12 情境面降级', () => {
       timeout: 10_000,
     });
     // 壳照常可用（对话入口在场）——情境面绝不阻断工作台。
-    await expect(page.getByTestId('composer-input')).toBeVisible();
+    await awaitShellReady(page);
   });
 
   test('mock：无 scope 会话 → 中性 chip 不编造', async ({ page }) => {

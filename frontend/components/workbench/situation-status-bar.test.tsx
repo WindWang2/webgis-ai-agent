@@ -13,7 +13,7 @@ import {
   refreshSituationProjection,
   resetSituationProjection,
 } from '@/lib/interaction/use-situation-projection';
-import { getSelection, resetSelectionStore } from '@/lib/selection/selection-store';
+import { getSelection, getSelectionIdFilterExpression, resetSelectionStore } from '@/lib/selection/selection-store';
 import { SituationStatusBar } from './situation-status-bar';
 import { apiFetch } from '@/lib/api/transport';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
@@ -27,6 +27,7 @@ vi.mock('@/lib/mapspec/session-cursor', () => ({
     ownerToken: 'tok',
   })),
   subscribeMapSpecLive: vi.fn(() => () => {}),
+  getMapSpecLiveGeneration: vi.fn(() => 0),
 }));
 
 const mockedFetch = vi.mocked(apiFetch);
@@ -55,6 +56,7 @@ function _situationView(overrides: Record<string, unknown> = {}) {
       layer_id: 'schools',
       dataset_ref: 'ref:geojson-aaa',
       feature_ids: ['sch-1', 'sch-2'],
+      id_field: 'OBJECTID',
     },
     ...overrides,
   };
@@ -73,6 +75,7 @@ beforeEach(() => {
   resetSelectionStore();
   resetSituationProjection();
   mockedFetch.mockReset();
+  vi.mocked(getMapSpecSessionCursor).mockReturnValue({ sessionId: "sess-sb-1", ownerToken: "tok", revision: 0, mapspecFingerprint: undefined });
 });
 
 afterEach(() => {
@@ -90,6 +93,9 @@ describe('use-situation-projection store', () => {
     // boot 重放：本地空白 → 服务端 scope 变成 selection
     const selection = getSelection();
     expect(selection?.selected_ids).toEqual(['sch-1', 'sch-2']);
+    expect(getSelectionIdFilterExpression('schools')).toEqual([
+      'in', ['to-string', ['get', 'OBJECTID']], ['literal', ['sch-1', 'sch-2']],
+    ]);
     // 第二次刷新不重复重放（本地已有选择）
     await refreshSituationProjection('sess-sb-1');
     expect(mockedFetch).toHaveBeenCalledTimes(4); // 2 端点 × 2 次
@@ -154,4 +160,81 @@ describe('SituationStatusBar', () => {
     const chip = screen.getByTestId('situation-chip-scope');
     expect(chip.textContent).toMatch(/scopeNone|无分析范围|No analysis scope/);
   });
+});
+
+
+describe('independent review generation guards', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => { resolve = done; });
+    return { promise, resolve };
+  }
+
+  it('drops a delayed previous session response instead of changing current state or replaying its selection', async () => {
+    const { getSituationProjection } = await import('@/lib/interaction/use-situation-projection');
+    const a = deferred<ReturnType<typeof _situationView>>();
+    const b = deferred<ReturnType<typeof _situationView>>();
+    mockedFetch.mockImplementation(async (path) => String(path).endsWith('/turn-chain') ? _turnChain()
+      : String(path).includes('session-a') ? a.promise : b.promise);
+    vi.mocked(getMapSpecSessionCursor).mockReturnValue({ sessionId: 'session-a', ownerToken: 'a', revision: 0, mapspecFingerprint: undefined });
+    const first = refreshSituationProjection('session-a');
+    vi.mocked(getMapSpecSessionCursor).mockReturnValue({ sessionId: 'session-b', ownerToken: 'b', revision: 0, mapspecFingerprint: undefined });
+    const second = refreshSituationProjection('session-b');
+    b.resolve(_situationView({ session_id: 'session-b', claimed_scope: { kind: 'feature_single', layer_id: 'layer-b', feature_ids: ['b'] } }));
+    await second;
+    a.resolve(_situationView({ session_id: 'session-a', claimed_scope: { kind: 'feature_single', layer_id: 'layer-a', feature_ids: ['a'] } }));
+    await first;
+    expect(getSituationProjection().sessionId).toBe('session-b');
+    expect(getSelection()?.layer_id).toBe('layer-b');
+  });
+
+  it('lets the latest same-session request win and invalidates pending completion on reset', async () => {
+    const { getSituationProjection } = await import('@/lib/interaction/use-situation-projection');
+    const old = deferred<ReturnType<typeof _situationView>>();
+    const latest = deferred<ReturnType<typeof _situationView>>();
+    let requests = 0;
+    mockedFetch.mockImplementation(async (path) => String(path).endsWith('/turn-chain') ? _turnChain() : (++requests === 1 ? old.promise : latest.promise));
+    const first = refreshSituationProjection();
+    const second = refreshSituationProjection();
+    latest.resolve(_situationView({ claimed_scope: { kind: 'feature_single', layer_id: 'new', feature_ids: ['new'] } }));
+    await second;
+    old.resolve(_situationView());
+    await first;
+    expect(getSelection()?.layer_id).toBe('new');
+    const pending = deferred<ReturnType<typeof _situationView>>();
+    mockedFetch.mockImplementation(async () => pending.promise);
+    const third = refreshSituationProjection();
+    resetSituationProjection();
+    pending.resolve(_situationView());
+    await third;
+    expect(getSituationProjection().status).toBe('idle');
+    expect(getSituationProjection().view).toBeNull();
+  });
+
+  it('refreshes on durable interaction acknowledgement, coalescing a burst without polling', async () => {
+    const { notifySituationInvalidated } = await import('@/lib/interaction/projection-invalidations');
+    mockedFetch.mockImplementation(async (path) => String(path).endsWith('/situation') ? _situationView() : _turnChain());
+    render(<SituationStatusBar />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+    for (let i = 0; i < 100; i++) notifySituationInvalidated('sess-sb-1');
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(4));
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(mockedFetch).toHaveBeenCalledTimes(4);
+  });
+});
+
+it('rejects a response from before a live-session reset even if the session id returns to the same value', async () => {
+  const cursor = await import('@/lib/mapspec/session-cursor');
+  const projection = await import('@/lib/interaction/use-situation-projection');
+  let generation = 1;
+  vi.mocked(cursor.getMapSpecLiveGeneration).mockImplementation(() => generation);
+  let resolve!: (value: ReturnType<typeof _situationView>) => void;
+  mockedFetch.mockImplementation(() => new Promise((done) => { resolve = done; }));
+  const pending = refreshSituationProjection();
+  generation = 3; // A→B→A or resetLiveState, with no newer projection request yet.
+  resolve(_situationView());
+  await pending;
+  expect(projection.getSituationProjection().view).toBeNull();
+  expect(getSelection()).toBeNull();
+  vi.mocked(cursor.getMapSpecLiveGeneration).mockReturnValue(0);
 });

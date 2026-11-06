@@ -108,3 +108,12 @@ S0 characterization（12 组操作现状追踪）→ 每切片 TDD（红→绿�
 interaction_ir/situation/新模块 + 前端 interaction/selection/workbench 邻域回归 →
 manifest 双闸/openapi/scope-matrix/api-docs 生成物再生 → journey mock 全绿 →
 独立 review gate（P0/P1=0）→ PR。
+
+
+### Independent pre-landing validation corrections
+
+The desired host layer and its canonical session source reference are checked from one MapSpec read before accepting a claimed dataset ref. `source_ref_mismatch` and `layer_unavailable` are closed failure reasons; ref/ref_id/url follow the existing MapSpec source resolver. An explicitly cleared or chart-replaced current selection does not revive an older pre-turn selection. `previous` remains an explicit historical handle. Missing revision stamps remain disclosed as revision=unavailable, not proof of revision equality.
+
+Client projection completion is guarded by request and live-session generation, including reset and same-session request reordering. Persisted interaction acknowledgements, committed-map changes and receipt changes invalidate the status view through one coalesced, single-flight refresh with a trailing update; there is no periodic polling. Undo recording verifies the original receipt session after module loading and keeps at most 128 dedup identities per session.
+
+Selection recovery preserves the emitting view's resolved `id_field` through the bounded IR payload, snapshot and claimed scope, so the existing selection-store can rebuild the real map filter. No identity field is guessed for legacy records. An empty IR ledger may use pre-turn evidence; an explicit current clear or replacement takes precedence. Only box/lasso affordance geometry can supply an analysis AOI; measurement/highlight geometry cannot. The latest AOI deletion remains effective beyond the recent-interaction display window. Temporal mutation completion, including failure, checks the original session and remembers a detach across A→B→A switches before emitting IR or applying a response.

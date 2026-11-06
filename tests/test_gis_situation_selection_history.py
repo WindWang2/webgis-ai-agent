@@ -155,3 +155,11 @@ def test_review_chart_select_ends_current_epoch():
     ]
     history = project_selection_history(events)
     assert history[0]["superseded"] is True  # 要素选择代被 chart 选择替代
+
+
+def test_previous_after_chart_replacement_is_the_last_feature_epoch():
+    events = [{"server_seq": 1, "kind": "feature_selected", "payload": {"layer_id": "schools", "feature_id": "1"}},
+              {"server_seq": 2, "kind": "chart_selection_changed", "payload": {"layer_id": "schools", "categories": ["school"]}}]
+    assert resolve_selection_ref(events, "previous")["feature_ids"] == ["1"]
+    assert resolve_selection_ref(events, "²") is None
+    assert resolve_selection_ref(events, "9" * 5000) is None

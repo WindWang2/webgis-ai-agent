@@ -76,7 +76,8 @@ def register_interaction_scope_tools(registry: ToolRegistry) -> None:
         required_context=("map_state",),
         map_mutations=(),
         data_mutations=(),
-        failure_modes=("no_selection", "ref_not_resolvable", "layer_removed",
+        failure_modes=("no_selection", "no_dataset_ref", "ref_unresolvable", "layer_removed",
+                       "layer_unavailable", "source_ref_mismatch",
                        "revision_drifted", "features_missing", "disabled"),
     )
     async def webgis_selection_scope(

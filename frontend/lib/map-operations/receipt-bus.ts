@@ -12,6 +12,8 @@
  * - 确认完成后由卡面按 operation_id 更新状态（不是删除 —— 操作历史
  *   可对账「已完成动作不重复提交」）。
  */
+import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+
 export interface MapOperationEffectView {
   index: number;
   kind: string;
@@ -51,6 +53,8 @@ export interface MapOperationReceiptView {
 const MAX_VISIBLE_RECEIPTS = 4;
 
 let currentSessionId: string | null = null;
+let sessionGeneration = 0;
+const MAX_UNDO_RECORDED_OPS = 128;
 let receipts: MapOperationReceiptView[] = [];
 const listeners = new Set<() => void>();
 
@@ -68,6 +72,8 @@ function emit(): void {
 export function setReceiptBusSession(sessionId: string | null): void {
   if (currentSessionId === sessionId) return;
   currentSessionId = sessionId;
+  sessionGeneration += 1;
+  undoRecordedOps.clear();
   receipts = [];
   emit();
 }
@@ -80,7 +86,7 @@ export function pushOperationReceipt(
   if (!receipt || typeof receipt.operation_id !== 'string') return false;
   // 会话守卫：命令执行总在活跃会话上下文；bus 未绑定或跨会话 → 丢弃。
   const boundSession = sessionId ?? currentSessionId;
-  if (!boundSession || (currentSessionId && boundSession !== currentSessionId)) {
+  if (!boundSession || !currentSessionId || boundSession !== currentSessionId) {
     return false;
   }
   const next = receipts.filter((r) => r.operation_id !== receipt.operation_id);
@@ -107,13 +113,23 @@ function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
     // 幂等去重（review P3）：同一 operation_id 只录一次。
     const opKey = String(receipt.operation_id);
     if (undoRecordedOps.has(opKey)) return;
-    undoRecordedOps.add(opKey);
     const applied = (receipt.effects ?? []).filter(
-      (e) => e.state === 'applied' && (e.targets?.length ?? 0) > 0,
+      (e) => e.state === 'applied' && (e.targets?.length ?? 0) > 0
+        && (e.kind === 'set_layer_visibility' || e.kind === 'set_layer_opacity')
+        && e.before && e.after,
     );
-    if (!applied.length) return;
+    if (!applied.length || !currentSessionId) return;
+    const sid = currentSessionId;
+    const generation = sessionGeneration;
+    undoRecordedOps.add(opKey);
+    while (undoRecordedOps.size > MAX_UNDO_RECORDED_OPS) {
+      const oldest = undoRecordedOps.values().next().value;
+      if (oldest !== undefined) undoRecordedOps.delete(oldest);
+    }
     // 多效果回执逐层录制（每层独立可撤销；undo 栈有序）。
     void import('@/lib/workbench/undo').then(({ presentationCommand }) => {
+      if (generation !== sessionGeneration || currentSessionId !== sid
+          || getMapSpecSessionCursor().sessionId !== sid) return;
       for (const effect of applied) {
         const layerId = String(effect.targets?.[0] ?? '');
         if (!layerId) continue;
@@ -133,6 +149,7 @@ function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
         );
       }
     }).catch(() => {
+      if (generation === sessionGeneration) undoRecordedOps.delete(opKey);
       // undo 录制是增值面，绝不阻塞回执通道。
     });
   } catch {
@@ -144,7 +161,8 @@ function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
 const undoRecordedOps = new Set<string>();
 
 /** 按操作 id 更新状态（owner 批准提交后回填最终回执）。 */
-export function updateOperationReceipt(receipt: MapOperationReceiptView): boolean {
+export function updateOperationReceipt(receipt: MapOperationReceiptView, sessionId = currentSessionId): boolean {
+  if (!sessionId || sessionId !== currentSessionId) return false;
   if (!receipt?.operation_id) return false;
   const idx = receipts.findIndex((r) => r.operation_id === receipt.operation_id);
   if (idx < 0) return pushOperationReceipt(receipt);

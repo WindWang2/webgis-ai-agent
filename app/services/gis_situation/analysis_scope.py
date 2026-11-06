@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,10 @@ SCOPE_REASON_REF_UNRESOLVABLE = "ref_unresolvable"
 SCOPE_REASON_LAYER_REMOVED = "layer_removed"
 SCOPE_REASON_REVISION_DRIFTED = "revision_drifted"
 SCOPE_REASON_FEATURES_MISSING = "features_missing"
+SCOPE_REASON_LAYER_UNAVAILABLE = "layer_unavailable"
+SCOPE_REASON_REF_MISMATCH = "source_ref_mismatch"
 SCOPE_REASONS = frozenset({
+    SCOPE_REASON_LAYER_UNAVAILABLE, SCOPE_REASON_REF_MISMATCH,
     SCOPE_REASON_OK, SCOPE_REASON_NO_SELECTION, SCOPE_REASON_NO_DATASET_REF,
     SCOPE_REASON_REF_UNRESOLVABLE, SCOPE_REASON_LAYER_REMOVED,
     SCOPE_REASON_REVISION_DRIFTED, SCOPE_REASON_FEATURES_MISSING,
@@ -62,6 +66,18 @@ def _clip_ids(raw: Any) -> List[str]:
     return [str(v)[:128] for v in raw[:MAX_SCOPE_FEATURE_IDS] if isinstance(v, (str, int))]
 
 
+def _bbox4(value: object) -> Optional[List[float]]:
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in value):
+        return None
+    try:
+        coordinates = [float(v) for v in value]
+    except (ValueError, OverflowError):
+        return None
+    return coordinates if all(math.isfinite(v) for v in coordinates) else None
+
+
 def derive_claimed_scope(
     interaction_snapshot: Optional[Dict[str, Any]],
     pre_turn_selected: Optional[Dict[str, Any]],
@@ -79,7 +95,11 @@ def derive_claimed_scope(
     selection = selection if isinstance(selection, dict) else None
     pre_turn = pre_turn_selected if isinstance(pre_turn_selected, dict) else None
 
-    source = selection or pre_turn
+    # An empty ledger has never established a current selection. Legacy
+    # pre-turn selection is still a fallback there; a populated projection
+    # with selection=None is an explicit current empty/replaced selection.
+    has_current_selection = "selection" in snapshot and snapshot.get("event_count") != 0
+    source = selection if has_current_selection else pre_turn
     sources: List[str] = ["ir_ledger"] if selection is not None else (
         ["pre_turn"] if pre_turn is not None else []
     )
@@ -100,17 +120,30 @@ def derive_claimed_scope(
             "feature_ids": feature_ids or None,
             "claimed_at_seq": claimed_seq,
             "sources": sources,
+            **({"id_field": source["id_field"][:64]} if isinstance(source.get("id_field"), str) else {}),
         }
         if claimed["kind"] != "none":
             return claimed
 
     # AOI 面：canvas affordance 环最新带几何动作（框选/套索——几何本体在环内
     # 有界保留，见 canvas_affordance._sanitize_geometry）。
+    recent = snapshot.get("recent_interactions")
+    last_aoi = snapshot.get("last_aoi_kind")
+    if not last_aoi and isinstance(recent, list):
+        last_aoi = next((
+            event.get("kind") for event in recent if isinstance(event, dict)
+            and event.get("kind") in ("aoi_drawn", "aoi_edited", "aoi_deleted")
+        ), None)
+    if last_aoi == "aoi_deleted":
+        affordance_ring = []  # Explicit current deletion cannot resurrect old geometry.
     for entry in reversed(affordance_ring or []):
         if not isinstance(entry, dict):
             continue
+        if entry.get("kind") not in ("box_select", "freehand_lasso", "polygon_lasso"):
+            continue
         geometry = entry.get("geometry")
-        bbox = entry.get("bbox")
+        bbox = _bbox4(entry.get("bbox"))
+        sequence = entry.get("sequence", entry.get("seq"))
         if isinstance(geometry, dict) and isinstance(bbox, list) and len(bbox) == 4:
             return {
                 "kind": "aoi",
@@ -119,7 +152,7 @@ def derive_claimed_scope(
                 "feature_ids": None,
                 "bbox": [float(v) for v in bbox],
                 "geometry": geometry,
-                "claimed_at_seq": entry.get("seq") if isinstance(entry.get("seq"), int) else None,
+                "claimed_at_seq": sequence if isinstance(sequence, int) else None,
                 "sources": ["canvas_affordance"],
             }
     return {
@@ -153,7 +186,7 @@ def _feature_ids_in_payload(payload: Any, requested: List[str]) -> List[str]:
         if not isinstance(feature, dict):
             continue
         fid = resolve_feature_id(feature)  # type: ignore[arg-type]
-        if fid and fid in wanted:
+        if fid and fid in wanted and fid not in present:
             present.append(fid)
             if len(present) == len(wanted):
                 break
@@ -199,7 +232,7 @@ async def validate_analysis_scope(
         # AOI 面几何来自 canvas affordance 环（服务端摄入时已 sanitize）；
         # 无 dataset 所有权/存活问题，只回有界几何供分析参数使用。
         geometry = claimed.get("geometry")
-        bbox = claimed.get("bbox")
+        bbox = _bbox4(claimed.get("bbox"))
         if not (isinstance(geometry, dict) and isinstance(bbox, list) and len(bbox) == 4):
             result["reason"] = SCOPE_REASON_NO_SELECTION
             return result
@@ -218,30 +251,48 @@ async def validate_analysis_scope(
         return result
 
     # ── feature_ids / feature_single：五链验证 ──────────────────────────
-    dataset_ref = claimed.get("dataset_ref")
-    if not dataset_ref:
-        # review P2-4：选择事件可能不带 dataset_ref（如 table 定位）——从
-        # desired spec 的层 source（ref: URL）服务端解析，不信任前端补报。
-        spec_early = {}
-        try:
-            spec_early = await mapspec_store.get_mapspec(session_id)
-        except Exception:  # noqa: BLE001 — spec 读失败按空（下方层链再披露）
-            spec_early = {}
-        spec_early = spec_early if isinstance(spec_early, dict) else {}
-        layer_early = _spec_layer(spec_early, claimed.get("layer_id"))
-        source_key = layer_early.get("source") if isinstance(layer_early, dict) else None
-        sources = spec_early.get("sources")
-        source_entry = sources.get(source_key) if isinstance(sources, dict) and source_key else None
-        source_ref = (
-            source_entry.get("url") if isinstance(source_entry, dict)
-            and isinstance(source_entry.get("url"), str) else None
-        )
-        if source_ref and source_ref.startswith("ref:"):
-            dataset_ref = source_ref
-    if not dataset_ref:
+    # Bind the claimed input to one authoritative desired layer/source snapshot.
+    try:
+        spec = await mapspec_store.get_mapspec(session_id)
+    except Exception:  # noqa: BLE001 — unknown source is not proof of a live host
+        spec = None
+    layer_id = claimed.get("layer_id")
+    if not isinstance(spec, dict) or not isinstance(spec.get("layers"), list) or not layer_id:
+        result["reason"] = SCOPE_REASON_LAYER_UNAVAILABLE
+        return result
+    layer = _spec_layer(spec, layer_id)
+    if layer is None:
+        result["reason"] = SCOPE_REASON_LAYER_REMOVED
+        return result
+    sources = spec.get("sources")
+    source = sources.get(layer.get("source")) if isinstance(sources, dict) and isinstance(layer.get("source"), str) else None
+    from app.services.mapspec_source import ref as source_ref
+
+    host_ref = source_ref(source) if isinstance(source, dict) else None
+    if not isinstance(host_ref, str) or not host_ref.startswith("ref:"):
         result["reason"] = SCOPE_REASON_NO_DATASET_REF
         return result
+    dataset_ref = claimed.get("dataset_ref") or host_ref
+    if not isinstance(dataset_ref, str):
+        result["reason"] = SCOPE_REASON_NO_DATASET_REF
+        return result
+    resolver = getattr(store, "resolve_alias", None)
+    try:
+        canonical_host = await resolver(session_id, host_ref) if callable(resolver) else host_ref
+        canonical_claim = await resolver(session_id, dataset_ref) if callable(resolver) else dataset_ref
+    except Exception:  # noqa: BLE001 — alias identity cannot be guessed
+        result["reason"] = SCOPE_REASON_REF_UNRESOLVABLE
+        return result
+    if not isinstance(canonical_host, str) or not canonical_host.startswith("ref:"):
+        result["reason"] = SCOPE_REASON_REF_UNRESOLVABLE
+        return result
+    if canonical_host != canonical_claim:
+        result["reason"] = SCOPE_REASON_REF_MISMATCH
+        result["checks"]["layer"] = "source_ref_mismatch"
+        return result
+    dataset_ref = canonical_host
     result["dataset_ref"] = dataset_ref
+    result["checks"]["layer"] = "ok"
 
     getter = getattr(store, "get", None)
     payload: Any = None
@@ -268,36 +319,21 @@ async def validate_analysis_scope(
         descriptor = {}
     content_revision = descriptor.get("content_revision")
     result["content_revision"] = (
-        int(content_revision) if isinstance(content_revision, (int, float)) else None
+        int(content_revision) if isinstance(content_revision, (int, float)) and not isinstance(content_revision, bool) and math.isfinite(content_revision) else None
     )
     result["crs"] = descriptor.get("crs") if isinstance(descriptor.get("crs"), str) else None
     result["bbox"] = (
-        [float(v) for v in descriptor["bbox"]]
-        if isinstance(descriptor.get("bbox"), list) and len(descriptor["bbox"]) == 4
-        else None
+        _bbox4(descriptor.get("bbox"))
     )
-
-    # 宿主层在架（desired spec 只读）。
-    try:
-        spec = await mapspec_store.get_mapspec(session_id)
-    except Exception:  # noqa: BLE001 — spec 读失败按 unknown 披露，不阻断
-        spec = {}
-    spec = spec if isinstance(spec, dict) else {}
-    layer_id = claimed.get("layer_id")
-    layer = _spec_layer(spec, layer_id)
-    if layer_id and isinstance(spec.get("layers"), list) and layer is None:
-        result["reason"] = SCOPE_REASON_LAYER_REMOVED
-        return result
-    result["checks"]["layer"] = "ok" if layer is not None else "unknown"
 
     # revision 一致（层 provenance 盖章 vs descriptor；无盖章 → 诚实 unavailable）。
     provenance = layer.get("provenance") if isinstance(layer, dict) else None
     stamped = (
         provenance.get("content_revision")
         if isinstance(provenance, dict)
-        else None
+        else source.get("content_revision") if isinstance(source, dict) else None
     )
-    if isinstance(stamped, (int, float)) and result["content_revision"] is not None:
+    if isinstance(stamped, (int, float)) and not isinstance(stamped, bool) and math.isfinite(stamped) and result["content_revision"] is not None:
         if int(stamped) != result["content_revision"]:
             result["reason"] = SCOPE_REASON_REVISION_DRIFTED
             result["status"] = _STATUS_STALE

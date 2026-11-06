@@ -187,3 +187,12 @@ def test_review_chart_clear_keeps_chart_face_none_only():
         _ev_record(2, "chart_selection_changed", {"layer_id": "d", "action": "clear"}),
     ])
     assert snap["chart_selection"] is None
+
+
+def test_chart_selection_is_replaced_by_a_later_table_row():
+    snapshot = project_interaction_snapshot([
+        {"server_seq": 1, "kind": "chart_selection_changed", "payload": {"layer_id": "l", "categories": ["old"]}},
+        {"server_seq": 2, "kind": "table_selection_changed", "payload": {"layer_id": "l", "feature_id": "new"}},
+    ])
+    assert snapshot["chart_selection"] is None
+    assert snapshot["selection"]["feature_id"] == "new"

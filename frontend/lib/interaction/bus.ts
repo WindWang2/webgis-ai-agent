@@ -11,7 +11,9 @@
  * 几何摘要 geometryDigest 是**非密码学**噪声容忍摘要（坐标四舍五入到
  * ~1e-6 度后 FNV 组合哈希）：用于去重/关联，不用于完整性校验。
  */
+import { notifySituationInvalidated } from './projection-invalidations';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { getSelection } from '@/lib/selection/selection-store';
 import {
   INTERACTION_SCHEMA_VERSION,
   type InteractionEventKind,
@@ -32,6 +34,7 @@ let unregisterPageHide: (() => void) | null = null;
 function ensureOutbox(): InteractionOutbox {
   if (outbox) return outbox;
   outbox = createInteractionOutbox({
+    onAcknowledged: notifySituationInvalidated,
     getSessionId: () => {
       try {
         return getMapSpecSessionCursor().sessionId ?? undefined;
@@ -202,6 +205,7 @@ export function emitFeatureSelected(info: {
   // 调用方不再白传全量几何）。
   const names = fieldNamesOf(info.properties);
   const digest = bboxDigest(info.bbox);
+  const idField = selectionIdField(info.layerId, info.selectedIds ?? [info.featureId]);
   const selectedIds = (info.selectedIds ?? [])
     .map((id) => String(id).slice(0, 32))
     .filter(Boolean)
@@ -212,6 +216,7 @@ export function emitFeatureSelected(info: {
     ...(names ? { field_names: names } : {}),
     ...(digest ? { geometry_digest: digest } : {}),
     ...(info.datasetRef ? { dataset_ref: info.datasetRef } : {}),
+    ...(idField ? { id_field: idField } : {}),
     ...(selectedIds.length > 1 ? { selected_ids: selectedIds } : {}),
   });
 }
@@ -323,6 +328,7 @@ export function emitTableSelectionChanged(info: {
   selectedIds?: ReadonlyArray<string | number>;
   action?: 'select' | 'clear';
 }): void {
+  const idField = selectionIdField(info.layerId, info.selectedIds ?? [info.featureId]);
   const selectedIds = (info.selectedIds ?? [])
     .map((id) => String(id).slice(0, 32))
     .filter(Boolean)
@@ -331,8 +337,18 @@ export function emitTableSelectionChanged(info: {
     layer_id: info.layerId,
     ...(info.featureId !== undefined ? { feature_id: String(info.featureId).slice(0, 128) } : {}),
     ...(selectedIds.length > 0 ? { selected_ids: selectedIds } : {}),
+    ...(idField && info.action !== 'clear' ? { id_field: idField } : {}),
     action: info.action ?? 'select',
   });
+}
+
+/** The UI already resolved feature identity; preserve it without guessing. */
+function selectionIdField(layerId: string, ids: ReadonlyArray<string | number | undefined>): string | undefined {
+  const selection = getSelection();
+  const requested = ids.filter((id) => id !== undefined).map(String);
+  return selection?.layer_id === layerId && selection.id_field && requested.length > 0
+    && requested.every((id) => selection.selected_ids.includes(id))
+    ? selection.id_field.slice(0, 64) : undefined;
 }
 
 /**

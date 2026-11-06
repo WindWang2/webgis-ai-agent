@@ -55,6 +55,11 @@ async def _seed_session(sid: str, events: list, *, payload: dict | None = None,
     state = LedgerState()
     for e in events:
         apply_event(state, e)
+    host = next((event.get("payload", {}) for event in reversed(events) if event.get("payload", {}).get("dataset_ref")), None)
+    if host:
+        from app.services.mapspec.store import mapspec_store_instance
+        await mapspec_store_instance.save_mapspec(sid, {"version": "1.0", "sources": {"s": {"type": "geojson", "ref_id": host["dataset_ref"]}},
+                                                      "layers": [{"id": host["layer_id"], "type": "circle", "source": "s"}]})
     await session_data_manager.set_map_state(sid, LEDGER_KEY, state.events)
     await session_data_manager.set_map_state(sid, "_interaction_ir_meta", {
         "server_seq": state.server_seq, "dropped": 0})
@@ -196,7 +201,11 @@ async def test_j4_layer_visibility_user_wins():
           "mutation_revisions": [3], "provenance": {"turn_id": "t1"},
           "effects": [{"kind": "set_layer_visibility", "targets": ["heatmap"],
                        "state": "applied"}]}],
-        map_state[LEDGER_KEY], [], observed_revision=3,
+        map_state[LEDGER_KEY], [
+            {"origin": "user", "kind": "PatchLayerPresentationIntent",
+             "target": "heatmap", "revision": 2,
+             "detail": {"visible": False}},
+        ], observed_revision=3,
     )
     turn = chain["turns"][0]
     agent_change = next(c for c in turn["changes"]

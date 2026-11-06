@@ -114,6 +114,11 @@ async def test_get_turn_chain_happy_path_three_classes(client):
              "payload": {"layer_id": "heatmap", "visible": False},
              "client_mutation_id": "m-1", "mutation_outcome": "committed"},
         ],
+        "_gis_provenance": [
+            {"origin": "user", "kind": "PatchLayerPresentationIntent",
+             "target": "heatmap", "revision": 3,
+             "detail": {"visible": False}},
+        ],
         "_cartographic_observation": {"mapspec_revision": 4},
     })
 

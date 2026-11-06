@@ -31,6 +31,12 @@ async def _seed_selection(sid: str, events: list) -> None:
     state = LedgerState()
     for e in events:
         apply_event(state, e)
+    # Feature scope requires a real desired host/source, not a self-reported ref.
+    latest = next((event.get("payload", {}) for event in reversed(events) if event.get("payload", {}).get("dataset_ref")), None)
+    if latest:
+        from app.services.mapspec.store import mapspec_store_instance
+        await mapspec_store_instance.save_mapspec(sid, {"version": "1.0", "sources": {"s": {"type": "geojson", "ref_id": latest["dataset_ref"]}},
+                                                     "layers": [{"id": latest["layer_id"], "type": "circle", "source": "s"}]})
     await session_data_manager.set_map_state(sid, LEDGER_KEY, state.events)
     await session_data_manager.set_map_state(sid, "_interaction_ir_meta", {
         "server_seq": state.server_seq, "dropped": 0,

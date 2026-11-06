@@ -78,6 +78,7 @@ def test_claimed_scope_from_ir_multi_select():
         _ev(1, "feature_selected", {
             "layer_id": "schools", "dataset_ref": "ref:geojson-aaa",
             "selected_ids": ["sch-1", "sch-2"],
+            "id_field": "OBJECTID",
         }),
     ])
     claimed = derive_claimed_scope(_snapshot(state.events), None)
@@ -86,6 +87,7 @@ def test_claimed_scope_from_ir_multi_select():
     assert claimed["feature_ids"] == ["sch-1", "sch-2"]
     assert claimed["layer_id"] == "schools"
     assert claimed["sources"] == ["ir_ledger"]
+    assert claimed["id_field"] == "OBJECTID"
 
 
 def test_claimed_scope_single_feature_and_pre_turn_fallback():
@@ -99,14 +101,14 @@ def test_claimed_scope_single_feature_and_pre_turn_fallback():
     )
     assert claimed["kind"] == "feature_single"
     assert claimed["feature_ids"] == ["sch-1"]
-    # IR 投影无 selection（deselect 后）→ pre-turn 快照兜底（双源合并语义）。
+    # Explicit deselect wins over an older pre-turn snapshot.
     state2 = _fold([_ev(1, "feature_deselected", {})])
     pre_turn = {"layer_id": "schools", "feature_id": "sch-9",
                 "dataset_ref": "ref:geojson-aaa"}
     claimed2 = derive_claimed_scope(_snapshot(state2.events), pre_turn)
-    assert claimed2["kind"] == "feature_single"
-    assert claimed2["sources"] == ["pre_turn"]
-    assert claimed2["feature_ids"] == ["sch-9"]
+    assert claimed2["kind"] == "none"
+    assert derive_claimed_scope(None, pre_turn)["feature_ids"] == ["sch-9"]
+    assert derive_claimed_scope(_snapshot([]), pre_turn)["feature_ids"] == ["sch-9"]
 
 
 def test_claimed_scope_none_when_no_evidence():
@@ -166,7 +168,7 @@ def test_validate_no_dataset_ref():
     claimed["dataset_ref"] = None
     result = validate_analysis_scope_sync_wrapper("s1", claimed)
     assert result["status"] == "unusable"
-    assert result["reason"] == "no_dataset_ref"
+    assert result["reason"] == "layer_unavailable"
 
 
 def test_validate_ref_unresolvable_cross_session():
@@ -349,6 +351,7 @@ def test_review_reason_vocabulary_closed():
     assert mod.SCOPE_REASONS == frozenset({
         "ok", "no_selection", "no_dataset_ref", "ref_unresolvable",
         "layer_removed", "revision_drifted", "features_missing",
+        "source_ref_mismatch", "layer_unavailable",
     })
 
 
@@ -374,3 +377,67 @@ def test_review_dataset_ref_falls_back_to_layer_source():
     assert result["dataset_ref"] == "ref:geojson-aaa"
     assert result["feature_ids"] == ["sch-1"]
 
+
+
+def test_claimed_ref_must_match_actual_host_source_even_with_matching_ids_and_revision():
+    claimed = _usable_claim()
+    claimed["dataset_ref"] = "ref:dataset-b"
+    store = ScopeStore(payloads={"ref:dataset-b": _geojson_ref_payload()}, descriptors={"ref:dataset-b": {"content_revision": 1}})
+    result = run_validate("s1", claimed, store=store, mapspec_store=FakeMapspecStore(_spec_with_schools_layer()))
+    assert result["status"] == "unusable" and result["reason"] == "source_ref_mismatch"
+
+
+@pytest.mark.parametrize("key", ["ref", "ref_id", "url"])
+def test_table_missing_ref_uses_authoritative_source_shape(key):
+    spec = _spec_with_schools_layer()
+    spec["sources"]["src-1"] = {"type": "geojson", key: "ref:geojson-aaa", "content_revision": 2}
+    claimed = _usable_claim()
+    claimed["dataset_ref"] = None
+    store = ScopeStore(payloads={"ref:geojson-aaa": _geojson_ref_payload()}, descriptors={"ref:geojson-aaa": {"content_revision": 2}})
+    result = run_validate("s1", claimed, store=store, mapspec_store=FakeMapspecStore(spec))
+    assert result["status"] == "usable" and result["dataset_ref"] == "ref:geojson-aaa"
+    assert result["checks"]["revision"] == "ok"
+
+
+def test_alias_equality_is_resolved_by_the_current_session():
+    class Aliased(ScopeStore):
+        async def resolve_alias(self, sid, value):
+            assert sid == "s1"
+            return "ref:geojson-aaa" if value == "ref:alias" else value
+    claimed = _usable_claim()
+    claimed["dataset_ref"] = "ref:alias"
+    store = Aliased(payloads={"ref:geojson-aaa": _geojson_ref_payload()})
+    result = run_validate("s1", claimed, store=store, mapspec_store=FakeMapspecStore(_spec_with_schools_layer()))
+    assert result["status"] == "usable" and result["dataset_ref"] == "ref:geojson-aaa"
+
+
+def test_current_aoi_deletion_does_not_reuse_an_old_affordance_geometry():
+    snapshot = _snapshot(_fold([_ev(1, "aoi_deleted", {})]).events)
+    claimed = derive_claimed_scope(snapshot, None, affordance_ring=[{
+        "kind": "box_select",
+        "geometry": {"type": "Polygon", "coordinates": []}, "bbox": [0, 0, 1, 1],
+    }])
+    assert claimed["kind"] == "none"
+
+
+def test_aoi_deletion_remains_current_after_recent_interaction_window_rolls_over():
+    events = _fold([_ev(1, "aoi_deleted", {})] + [
+        _ev(seq, "comparison_mode_changed", {"enabled": bool(seq % 2)})
+        for seq in range(2, 16)
+    ]).events
+    snapshot = _snapshot(events)
+    assert all(event["kind"] != "aoi_deleted" for event in snapshot["recent_interactions"])
+    claimed = derive_claimed_scope(snapshot, None, affordance_ring=[{
+        "kind": "box_select", "geometry": {"type": "Polygon", "coordinates": []},
+        "bbox": [0, 0, 1, 1], "sequence": 7,
+    }])
+    assert claimed["kind"] == "none"
+
+
+@pytest.mark.parametrize("kind", ["measure", "highlight", "snap_pick", "widget_reply"])
+def test_unrelated_canvas_geometry_is_not_an_analysis_area(kind):
+    claimed = derive_claimed_scope(_snapshot([]), None, affordance_ring=[{
+        "kind": kind, "geometry": {"type": "LineString", "coordinates": [[0, 0], [1, 1]]},
+        "bbox": [0, 0, 1, 1],
+    }])
+    assert claimed["kind"] == "none"

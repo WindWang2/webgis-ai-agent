@@ -11,14 +11,15 @@
  */
 import { useSyncExternalStore } from 'react';
 import { apiFetch } from '@/lib/api/transport';
-import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
-import { getSelection, publishSelection } from '@/lib/selection/selection-store';
+import { getMapSpecSessionCursor, getMapSpecLiveGeneration } from '@/lib/mapspec/session-cursor';
+import { getSelection, getSelectionGeneration, publishSelection } from '@/lib/selection/selection-store';
 
 export interface ClaimedScope {
   kind: 'feature_ids' | 'feature_single' | 'aoi' | 'none';
   layer_id?: string | null;
   dataset_ref?: string | null;
   feature_ids?: string[] | null;
+  id_field?: string;
   bbox?: number[] | null;
   claimed_at_seq?: number | null;
 }
@@ -105,6 +106,8 @@ let state: SituationProjectionState = {
 
 const listeners = new Set<() => void>();
 let version = 0;
+let requestGeneration = 0;
+let activeRequest: AbortController | null = null;
 
 function emitChange(): void {
   version += 1;
@@ -126,6 +129,10 @@ export function getSituationProjectionVersion(): number {
 
 /** 会话切换/测试复位。 */
 export function resetSituationProjection(): void {
+  requestGeneration += 1;
+  activeRequest?.abort();
+  activeRequest = null;
+  replayedSessions.clear();
   state = {
     status: 'idle',
     sessionId: null,
@@ -137,7 +144,7 @@ export function resetSituationProjection(): void {
 }
 
 /** boot 重放标记（有界：>32 会话时最旧的让位——防长生命周期无界）。 */
-let replayedSessions = new Set<string>();
+const replayedSessions = new Set<string>();
 function markReplayed(sid: string): void {
   if (replayedSessions.size >= 32) {
     const oldest = replayedSessions.values().next().value;
@@ -155,7 +162,15 @@ export async function refreshSituationProjection(
   options: { replaySelection?: boolean } = {},
 ): Promise<void> {
   const sid = sessionId ?? getMapSpecSessionCursor().sessionId ?? undefined;
-  if (!sid) return;
+  if (!sid || sid !== getMapSpecSessionCursor().sessionId) return;
+  const generation = ++requestGeneration;
+  const liveGeneration = getMapSpecLiveGeneration();
+  const selectionGeneration = getSelectionGeneration();
+  activeRequest?.abort();
+  const controller = new AbortController();
+  activeRequest = controller;
+  const isCurrent = () => generation === requestGeneration && !controller.signal.aborted
+    && sid === getMapSpecSessionCursor().sessionId && liveGeneration === getMapSpecLiveGeneration();
   if (state.sessionId !== sid) {
     state = { ...state, status: 'loading', sessionId: sid, view: null, turnChain: null };
     emitChange();
@@ -166,18 +181,23 @@ export async function refreshSituationProjection(
   try {
     const ownerToken = getMapSpecSessionCursor().ownerToken ?? null;
     const view = await apiFetch<SituationView>(
-      `/api/v1/chat/sessions/${sid}/situation`,
-      { ownerToken, timeoutMs: 15_000, label: 'Situation projection' },
+      `/api/v1/chat/sessions/${encodeURIComponent(sid)}/situation`,
+      { ownerToken, signal: controller.signal, timeoutMs: 15_000, label: 'Situation projection' },
     );
+    if (!isCurrent()) return;
+    if (view.session_id !== sid || (view.situation.identity?.session_id && view.situation.identity.session_id !== sid)) {
+      throw new Error("Situation response belongs to another session");
+    }
     let turnChain: TurnChainView | null = null;
     try {
       turnChain = await apiFetch<TurnChainView>(
-        `/api/v1/chat/sessions/${sid}/turn-chain`,
-        { ownerToken, timeoutMs: 15_000, label: 'Turn chain' },
+        `/api/v1/chat/sessions/${encodeURIComponent(sid)}/turn-chain`,
+        { ownerToken, signal: controller.signal, timeoutMs: 15_000, label: 'Turn chain' },
       );
     } catch {
       turnChain = null; // 链面缺席诚实为空（状态面仍可用）
     }
+    if (!isCurrent()) return;
     state = {
       status: 'ready',
       sessionId: sid,
@@ -188,9 +208,10 @@ export async function refreshSituationProjection(
     emitChange();
     if (options.replaySelection !== false && !replayedSessions.has(sid)) {
       markReplayed(sid);
-      replaySelectionFromScope(view);
+      if (selectionGeneration === getSelectionGeneration()) replaySelectionFromScope(view);
     }
   } catch (err) {
+    if (!isCurrent()) return;
     state = {
       ...state,
       status: 'error',
@@ -198,6 +219,8 @@ export async function refreshSituationProjection(
       fetchedAtSeq: state.fetchedAtSeq + 1,
     };
     emitChange();
+  } finally {
+    if (activeRequest === controller) activeRequest = null;
   }
 }
 
@@ -215,6 +238,7 @@ function replaySelectionFromScope(view: SituationView): void {
         source: 'map',
         layer_id: scope.layer_id,
         selected_ids: scope.feature_ids.slice(0, 50),
+        id_field: scope.id_field,
       });
     } else if (scope.kind === 'feature_single') {
       const single = scope.feature_ids?.[0];
@@ -223,6 +247,7 @@ function replaySelectionFromScope(view: SituationView): void {
           source: 'map',
           layer_id: scope.layer_id,
           feature_id: single,
+          id_field: scope.id_field,
         });
       }
     }

@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,8 @@ def classify_change(
         return "failed"
     if origin == "user" and outcome == "committed":
         return "user_explicit"
+    if receipt_status not in ("committed", "partial") and outcome != "committed":
+        return "not_executed"
     # agent（或 system）commit：是否已被较新可信观察覆盖。
     if mutation_revision is None:
         return "unknown_revision"
@@ -81,7 +84,7 @@ def classify_change(
 
 
 def _as_int(value: Any) -> Optional[int]:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return None
     return int(value)
 
@@ -92,7 +95,7 @@ def _receipt_revision(receipt: Dict[str, Any]) -> Optional[int]:
         tail = _as_int(revisions[-1])
         if tail is not None:
             return tail
-    return _as_int(receipt.get("base_revision"))
+    return _as_int(receipt.get("final_revision")) or _as_int(receipt.get("mutation_revision"))
 
 
 def _effect_targets(effect: Dict[str, Any]) -> List[str]:
@@ -112,6 +115,7 @@ def build_turn_chain(
     max_turns: int = MAX_CHAIN_TURNS,
 ) -> Dict[str, Any]:
     """纯装配：四源 → per-turn 变更链（新 → 旧 turn 输出）。"""
+    max_turns = max(1, min(int(max_turns), MAX_CHAIN_TURNS))
     # ── 收集用户显式变更（IR mutation-linked committed + provenance user）──
     user_changes: List[Dict[str, Any]] = []
     user_layer_touch: Dict[str, int] = {}  # layer → 变更序（user-wins 判据）
@@ -128,13 +132,14 @@ def build_turn_chain(
         payload = payload if isinstance(payload, dict) else {}
         layer_id = str(payload.get("layer_id") or "")[:64]
         order += 1
-        if layer_id:
-            user_layer_touch[layer_id] = order
+        # IR payloads remain client claims even when a mutation id exists.
+        # Only authoritative user provenance establishes a user-wins layer.
         user_changes.append({
             "source": "interaction_ir",
             "kind": kind,
             "layer_id": layer_id or None,
-            "wins": True,  # user-wins：agent 后续 mutation 必须尊重
+            "class": "user_claimed",
+            "wins": False,
             "link": {
                 "client_mutation_id": record.get("client_mutation_id"),
                 "mutation_verified": bool(record.get("mutation_verified")),
@@ -225,11 +230,11 @@ def build_turn_chain(
 
     # 回执 turn 归属未知时归入 "unattributed" 组（诚实，不猜 turn）。
     for change in receipt_changes:
-        turn_id = change.get("turn_id")
-        if turn_id and turn_id not in turn_mutations:
-            turn_mutations[turn_id] = []
-            turn_order.append(turn_id)
-    if receipt_changes and not turn_order:
+        receipt_turn = change.get("turn_id")
+        if isinstance(receipt_turn, str) and receipt_turn and receipt_turn not in turn_mutations:
+            turn_mutations[receipt_turn] = []
+            turn_order.append(receipt_turn)
+    if any(not change.get("turn_id") for change in receipt_changes) or (user_changes and not turn_order):
         turn_order.append("unattributed")
         turn_mutations["unattributed"] = []
 
@@ -238,7 +243,9 @@ def build_turn_chain(
         mutations = sorted(set(turn_mutations.get(turn_id) or []))
         changes: List[Dict[str, Any]] = [
             c for c in receipt_changes if (c.get("turn_id") or None) == turn_id
-        ] or ([] if turn_id != "unattributed" else receipt_changes)
+        ]
+        if turn_id == "unattributed":
+            changes = [c for c in receipt_changes if not c.get("turn_id")]
         turn_view: Dict[str, Any] = {
             "turn_id": turn_id,
             "intent_digest": turn_intent.get(turn_id),
@@ -249,7 +256,7 @@ def build_turn_chain(
         # changes（class=user_explicit，wins=true）；无 turn 时进 unattributed。
         if turn_order and turn_id == turn_order[-1]:
             turn_view["changes"] = (
-                [{**c, "class": "user_explicit", "turn_id": turn_id}
+                [{**c, "class": c.get("class", "user_explicit"), "turn_id": turn_id}
                  for c in user_changes[-16:]] + turn_view["changes"]
             )
         turns.append(turn_view)
@@ -260,7 +267,7 @@ def build_turn_chain(
         "observed_revision": observed_revision,
         "user_wins_layers": sorted(user_layer_touch)[:16],
         "counts": {
-            "user_explicit": len(user_changes),
+            "user_explicit": sum(1 for c in user_changes if c.get("class", "user_explicit") == "user_explicit"),
             "agent_receipts": len(receipt_changes),
             "agent_pending": sum(
                 1 for c in receipt_changes

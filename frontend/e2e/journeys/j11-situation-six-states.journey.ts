@@ -15,7 +15,7 @@ test.describe('journey-11 情境六态 @smoke', () => {
     const world = defaultWorld();
     world.situationView = {
       schema_version: 'situation_view.v1',
-      session_id: 's-j11',
+      session_id: 's-j1',
       situation: {
         interaction: {
           pending_mutations: {

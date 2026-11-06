@@ -85,6 +85,7 @@
         "feature_id",
         "field_names",
         "geometry_digest",
+        "id_field",
         "layer_id",
         "selected_ids"
       ],
@@ -167,6 +168,7 @@
         "action",
         "dataset_ref",
         "feature_id",
+        "id_field",
         "layer_id",
         "selected_ids"
       ],

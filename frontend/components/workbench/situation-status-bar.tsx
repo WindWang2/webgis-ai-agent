@@ -10,7 +10,7 @@
  */
 'use client';
 
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useT } from '@/lib/i18n/useT';
 import {
   refreshSituationProjection,
@@ -20,7 +20,9 @@ import {
   getMapSpecSessionCursor,
   subscribeMapSpecLive,
 } from '@/lib/mapspec/session-cursor';
-import { getSituationProjection } from '@/lib/interaction/use-situation-projection';
+import { subscribeSituationInvalidation } from '@/lib/interaction/projection-invalidations';
+import { subscribeReceipts } from '@/lib/map-operations/receipt-bus';
+import { resetSituationProjection } from '@/lib/interaction/use-situation-projection';
 
 interface StatusChip {
   key: string;
@@ -30,33 +32,49 @@ interface StatusChip {
 }
 
 function useRefreshOnSession(): void {
-  const versionRef = useRef(0);
   useEffect(() => {
+    let sessionId: string | null | undefined;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let pending: Promise<void> | null = null;
+    let dirty = false;
+    const launch = (replaySelection: boolean) => {
+      const sid = getMapSpecSessionCursor().sessionId;
+      if (!sid) return;
+      const task = refreshSituationProjection(sid, { replaySelection }).finally(() => {
+        if (pending !== task) return;
+        pending = null;
+        if (dirty) schedule();
+      });
+      pending = task;
+    };
+    const schedule = () => {
+      dirty = true;
+      if (pending || timer !== null) return;
+      timer = setTimeout(() => { timer = null; dirty = false; launch(false); }, 500);
+    };
     const sync = () => {
-      const cursor = getMapSpecSessionCursor();
-      if (!cursor.sessionId) return;
-      // review P2-5：会话切换（投影 store 还停在旧会话）也必须刷新——
-      // 否则状态条永久显示上一会话的 scope/selection。
-      const staleSession = getSituationProjection().sessionId;
-      if (versionRef.current === 0 || staleSession !== cursor.sessionId) {
-        versionRef.current += 1;
-        void refreshSituationProjection(cursor.sessionId);
-      }
+      const sid = getMapSpecSessionCursor().sessionId ?? null;
+      if (sid !== sessionId) {
+        if (timer !== null) clearTimeout(timer);
+        timer = null;
+        sessionId = sid;
+        pending = null; dirty = false;
+        resetSituationProjection();
+        if (sid) launch(true);
+      } else if (sid) schedule();
     };
     sync();
-    // 会话建立/切换由 session-cursor live 通道驱动（本组件自己的投影
-    // store 订阅不会在会话建立时发信号）。
     const unsubscribe = subscribeMapSpecLive(sync);
-    // 重连/可见性恢复：窗口重新可见时刷新一次（服务端事实源）。
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        const sid = getMapSpecSessionCursor().sessionId;
-        if (sid) void refreshSituationProjection(sid);
-      }
-    };
+    const unacked = subscribeSituationInvalidation((sid) => {
+      if (sid === getMapSpecSessionCursor().sessionId) schedule();
+    });
+    const unreceipt = subscribeReceipts(schedule);
+    const onVisible = () => { if (document.visibilityState === 'visible') schedule(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
-      unsubscribe();
+      if (timer !== null) clearTimeout(timer);
+      pending = null; dirty = false;
+      unsubscribe(); unacked(); unreceipt();
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
@@ -69,7 +87,7 @@ export function SituationStatusBar(): React.ReactElement {
 
   const chips = useMemo<StatusChip[]>(() => {
     const out: StatusChip[] = [];
-    const view = projection.view;
+    const view = projection.sessionId === getMapSpecSessionCursor().sessionId ? projection.view : null;
     if (projection.status === 'error' || !view) {
       out.push({
         key: 'scope', tone: 'neutral',

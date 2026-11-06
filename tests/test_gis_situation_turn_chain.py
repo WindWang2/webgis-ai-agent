@@ -192,3 +192,22 @@ async def test_project_turn_chain_reads_authoritative_state():
         ledger=None,
     )
     assert chain["turns"][0]["changes"][0]["class"] == "agent_proposed_pending"
+
+
+def test_unknown_or_noop_receipts_never_become_executed_by_reusing_base_revision():
+    journal = [_journal_row("actual", "turn_started")]
+    receipts = [{"operation_id": "unknown", "status": "committed", "base_revision": 9},
+                {"operation_id": "noop", "status": "noop", "base_revision": 9}]
+    chain = build_turn_chain(journal, receipts, [], [], observed_revision=9)
+    assert chain["counts"]["executed_observed"] == 0
+    changes = [change for turn in chain["turns"] for change in turn["changes"]]
+    assert {row["operation_id"] for row in changes} == {"unknown", "noop"}
+    assert {row["class"] for row in changes} == {"unknown_revision", "not_executed"}
+
+
+def test_client_claimed_committed_event_cannot_establish_authoritative_user_wins():
+    chain = build_turn_chain([], [], [_ir_event(1, "layer_visibility_changed", {"layer_id": "victim", "visible": False})], [], observed_revision=9)
+    assert chain["user_wins_layers"] == []
+    assert chain["counts"]["user_explicit"] == 0
+    assert chain["turns"][0]["changes"][0]["class"] == "user_claimed"
+    assert chain["turns"][0]["changes"][0]["wins"] is False
