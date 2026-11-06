@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 
 # Bundled Pi (vendor/pi) — never the user's global `pi` CLI / ~/.pi tree.
 REPO_ROOT = Path(__file__).resolve().parents[3]
-# Pi ≥v1.5.0 ships a self-contained `dist/bundle/rpc-entry.js` (no node_modules
-# resolution at runtime — the only artifact a production image must carry).
+# Pi ≥v1.5.0 ships `dist/bundle/rpc-entry.js`; loading even an .mjs extension
+# also requires its locked external jiti package under vendor/pi/node_modules.
 # The tsgo-emitted `dist/rpc-entry.js` (workspace-wide build) stays a fallback
 # for source checkouts. First existing entry wins; pi_doctor surfaces which.
 PI_RPC_ENTRY_CANDIDATES = (

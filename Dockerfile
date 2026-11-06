@@ -56,6 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=backend-deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-deps /usr/local/bin /usr/local/bin
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY requirements.txt ./
 COPY main.py ./
 COPY app/ ./app/
@@ -66,6 +67,7 @@ COPY app/ ./app/
 # 消费者都拿到可执行入口（review P2：compose api target 亦修复 #400）。
 COPY vendor/ ./vendor/
 COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
+COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules/jiti
 
 # Stage 4b: Node runtime for the runner stage
 # PLT-03（#1750）：Debian bookworm 的 `nodejs` apt 包是 18.x，而 Next 16
@@ -78,7 +80,7 @@ COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
 
 # Stage 4c: Pi RPC runtime builder（ADR-0282；同 Dockerfile.prod 的
-# pi-builder —— bundle 为自包含产物；backend-builder（compose api 目标）
+# pi-builder —— bundle 及其锁定的 jiti 扩展加载器；backend-builder（compose api 目标）
 # 与 runner 两个消费者都复制该目录）。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS pi-builder
 WORKDIR /app
@@ -128,9 +130,10 @@ COPY --from=backend-builder /app ./
 # Copy installed Python packages and binaries
 COPY --from=backend-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-builder /usr/local/bin /usr/local/bin
-# Pi v1.5.0 自包含 RPC bundle（pi-builder 构建产物）—— 覆盖 COPY vendor/
+# Pi v1.5.0 RPC bundle（pi-builder 构建产物）—— 覆盖 COPY vendor/
 # 源码中不存在的 dist 产物，保证 USE_NEW_AGENT=true 时入口可执行。
 COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
+COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules/jiti
 
 # Create non-root user
 RUN addgroup --system --gid 1001 appgroup && adduser --system --uid 1001 appuser

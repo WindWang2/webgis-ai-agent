@@ -373,6 +373,38 @@ async def test_handshake_and_prompt_acceptance(harness):
     assert disposition in ("started", "queued"), f"unexpected disposition {disposition!r}"
 
 
+async def test_deployed_bundle_loads_extension_without_builder_dependencies(harness, tmp_path, monkeypatch):
+    """The runtime image needs bundle+jiti, even for an .mjs extension.
+
+    Copy the deployment shape outside the vendor workspace so ancestor
+    node_modules cannot accidentally satisfy the external dependency.
+    """
+    import tests.integration.test_pi_vendor_contract as module
+
+    runtime = tmp_path / "runtime"
+    package = runtime / "vendor/pi/packages/coding-agent"
+    package.mkdir(parents=True)
+    shutil.copy2(REPO_ROOT / "vendor/pi/packages/coding-agent/package.json", package)
+    entry = _vendor_entry()
+    assert entry is not None and entry.parent.name == "bundle"
+    shutil.copytree(entry.parent, package / "dist/bundle")
+    jiti = REPO_ROOT / "vendor/pi/node_modules/jiti"
+    shutil.copytree(jiti, runtime / "vendor/pi/node_modules/jiti")
+    extension = runtime / "app/extensions/webgis-tools/index.mjs"
+    extension.parent.mkdir(parents=True)
+    shutil.copy2(EXTENSION_PATH, extension)
+    assert sorted(p.name for p in (runtime / "vendor/pi/node_modules").iterdir()) == ["jiti"]
+    monkeypatch.setattr(module, "_vendor_entry", lambda: package / "dist/bundle/rpc-entry.js")
+    monkeypatch.setattr(module, "EXTENSION_PATH", extension)
+    result = harness.run_turn(TURN_PROMPT)
+    responses = _responses(result)
+    assert any(r.get("command") == "get_state" and r.get("success") is True for r in responses)
+    events = _events(result)
+    assert any(e.get("type") == "tool_execution_start" and e.get("toolName") == "webgis_map_intent" for e in events)
+    assert sum(e.get("type") == "agent_settled" for e in events) == 1
+    assert "Cannot find module" not in result["stderrHead"]
+
+
 async def test_full_turn_event_sequence_and_sole_terminal(harness):
     """Wire contract: the vocabulary the bridge/mapper rely on, in order, with
     agent_settled appearing exactly once as the sole terminator."""

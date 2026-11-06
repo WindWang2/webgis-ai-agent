@@ -33,9 +33,9 @@ stable tag，2304 commits）引入两处影响本仓的 breaking change：工具
    `session_start`（两阶段加载），首轮 `before_agent_start` 兜底；上游 preamble
    改写为双串匹配（v0.81 原串 + v1.5.0 新串），未识别时前缀兜底行为不变。
 4. **构建可复现**：`scripts/build-vendor-pi.sh`（幂等 npm install+build）；RPC 入口
-   解析顺序 **bundle → dist**（v1.5.0 的 `dist/bundle/rpc-entry.js` 自包含，仅依赖
-   node 内建）；Dockerfile/Dockerfile.prod 新增 `pi-builder` 阶段，镜像首次真正
-   携带可执行 Pi runtime。
+   解析顺序 **bundle → dist**。v1.5.0 的 `dist/bundle/rpc-entry.js` 加载 WebGIS
+   扩展还需锁定的 `jiti@2.7.0`；Dockerfile/Dockerfile.prod 的 `pi-builder`
+   构建后同时复制 bundle 和该包，Compose backend-builder 目标也携带 Node。
 5. **身份门与诊断**：`pi_compat.pi_vendor_identity()` 在启动时披露实际 pin/
    describe/入口形态/node 版本/协议下限（WARN 不阻断，spawn 的 fail-closed 不变）；
    `/health` 新增 `pi_vendor`（None=未构建 —— 与 agent_runtime 徽章可对账）；
@@ -55,7 +55,8 @@ stable tag，2304 commits）引入两处影响本仓的 breaking change：工具
 - 回退路径：`git -C vendor/pi checkout dd6bea41 && git checkout -- index.mjs 相关
   commit`；`USE_NEW_AGENT=false` 是引擎级应急开关（原有）。旧 pin 无法干净构建是
   回退的现实代价，已在 doctor 与部署文档标注。
-- 生产镜像体积 +≈9.2MiB（bundle 82 文件）；换来「徽章为 pi 时确有可执行 Pi」。
+- bundle 约 9.2MiB（82 文件），镜像另携带锁定的 jiti 扩展加载器；运行形态测试
+  在不含 builder node_modules 的隔离目录验证真实扩展加载与 RPC 握手。
 
 ## Alternatives considered
 

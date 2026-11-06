@@ -11,7 +11,7 @@
 | Node engines | unchanged | 两 ref 均 `>=22.19.0`（root/coding-agent）；本地 24.21、镜像 node:26 均满足 | ✅ 本机构建+运行 |
 | 干净 checkout 构建 | changed | v1.5.0 `npm install && npm run build`（根）成功；新链 telemetry→schema→chord→tui→codemode→mcp→ai→durable→env→agent→coding-agent；`packages/server`/`storage` 已移除 | ✅ exit 0，`dist/rpc-entry.js` 与 `dist/bundle/rpc-entry.js` 均产出 |
 | 旧 pin 干净构建 | **失败（升级论据）** | dd6bea41 在当前工具链下 `packages/ai` tsgo 类型错误（`"google-generative-ai"` 不在 api 联合类型）；根无 lockfile → 传递依赖漂移 | ❌ 复现于本机 |
-| RPC 入口产物 | additive | 新增自包含 `dist/bundle/rpc-entry.js`（82 文件/9.1MiB，无 node_modules 依赖）；旧 `dist/rpc-entry.js` 仍由 tsgo 产出但依赖整仓 dist+node_modules | ✅ 两者均可启动 |
+| RPC 入口产物 | additive | `dist/bundle/rpc-entry.js`（82 文件/9.1MiB）加载扩展仍需锁定的外部 `jiti@2.7.0`；运行镜像复制 bundle+jiti。旧 `dist/rpc-entry.js` 依赖整仓 dist+node_modules | builder 内启动与隔离运行形态分别验证，不推断 Docker 实际构建已通过 |
 | spawn CLI 旗标 | unchanged | `--mode rpc` `--no-session` `--no-builtin-tools` `--extension` 全部存在（args.ts:96/132/149/186） | ✅ 真实 spawn |
 | 内建工具排除 | unchanged+additive | `--no-builtin-tools` 保留；新增 settings `defaultTools:[]` 等价路径 | ✅ |
 

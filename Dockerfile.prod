@@ -50,9 +50,9 @@ FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f
 
 # Stage 2c: Pi RPC runtime builder（goal-pi-native-host-vnext / #400 根因清偿）
 # 此前镜像只 COPY vendor/ 源码而从未构建 dist —— USE_NEW_AGENT=true 时
-# bridge 找不到 rpc-entry.js 而静默回退旧引擎。Pi v1.5.0 起产出自包含
-# bundle（dist/bundle/rpc-entry.js，仅依赖 node 内建模块），构建一次、
-# 单独复制即可让镜像内 Pi 真正可用。本地等价命令：scripts/build-vendor-pi.sh。
+# bridge 找不到 rpc-entry.js 而静默回退旧引擎。Pi v1.5.0 的 RPC bundle
+# 仍需锁定的外部 jiti 加载 WebGIS 扩展；两者一起复制到运行镜像。
+# 本地等价命令：scripts/build-vendor-pi.sh。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS pi-builder
 WORKDIR /app
 # 层缓存次序：先 manifest + npm ci（源码不变时命中缓存），再拷源码构建。
@@ -135,6 +135,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # 构建产物随镜像分发 —— USE_NEW_AGENT=true 不再静默回退旧引擎。
 COPY vendor/ ./vendor/
 COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
+COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules/jiti
 
 # Create non root user
 RUN groupadd --system --gid 1001 appgroup && \

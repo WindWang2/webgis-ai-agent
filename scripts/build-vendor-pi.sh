@@ -2,7 +2,7 @@
 # Build the vendored Pi RPC runtime (goal-pi-native-host-vnext / ADR-0282).
 #
 # Produces the artifacts the backend Pi bridge spawns:
-#   vendor/pi/packages/coding-agent/dist/bundle/rpc-entry.js  (self-contained, primary)
+#   vendor/pi/packages/coding-agent/dist/bundle/rpc-entry.js  (primary; also needs locked jiti)
 #   vendor/pi/packages/coding-agent/dist/rpc-entry.js         (workspace build, fallback)
 #
 # Idempotent: skips npm install when node_modules is already present unless
