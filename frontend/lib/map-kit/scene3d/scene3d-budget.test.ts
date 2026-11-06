@@ -266,7 +266,7 @@ describe('tile budget deferral (review R1-P2-3)', () => {
     // 不可驱动 —— 直测预算门语义；prevRender 预置使 tile 过期检查放行）。
     const internals = mgr as unknown as {
       mounted: Map<string, {
-        tiles: Map<string, { tile: { id: string; contentUri: string }; model: unknown; budgetDeferredAt: number | null; loading: boolean }>;
+        tiles: Map<string, { tile: { id: string; contentUri: string }; model: unknown; attached: boolean; budgetDeferredAt: number | null; loading: boolean }>;
         prevRender: Set<string>;
       }>;
       loadTile: (m: unknown, e: unknown) => Promise<void>;
@@ -289,9 +289,10 @@ describe('tile budget deferral (review R1-P2-3)', () => {
       && e.reason?.startsWith('budget_exceeded:triangles'))).toBe(true);
     expect(mgr.budgetUsage().triangles).toBe(2);
 
-    // 压力腾挪（evictForBudget）：tile1 移出 render 集（相机移走）后再载
+    // 压力腾挪（evictForBudget）：tile1 摘挂（相机移走 → 缓存态）后再载
     // tile2 —— 逐出不可见 tile1 腾出预算，tile2 成功载入（不 deferred）。
     mounted!.prevRender.delete(entries[0].tile.id);
+    entries[0].attached = false; // B4：render 集外 = 摘挂缓存（evict 候选）
     await internals.loadTile(mounted, entries[1]);
     expect(entries[1].model).toBeTruthy();
     expect(entries[0].model).toBeFalsy(); // LRU 逐出（不可见）

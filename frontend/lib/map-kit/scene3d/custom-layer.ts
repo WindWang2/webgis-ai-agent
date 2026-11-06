@@ -3,13 +3,16 @@
  *
  * 桥语义（工作单 D1 决策：three + 自维护最小胶水）：
  * - 每资产一个 custom layer（id `scene3d-<assetId>`，renderingMode '3d'），
- *  共享 map 级单例 THREE.WebGLRenderer（MapLibre 的 gl context 复用）。
- * - render(gl, args)：把 `args.modelViewProjectionMatrix`（mercator→clip）
- *  灌入正交相机投影面 —— three 在世界（mercator）坐标绘制；深度测试开启
- *  （与 MapLibre 已绘内容的遮挡关系由 depth buffer 决定；terrain 在场时
- *  是近似遮挡 —— 能力边界已在 DECISIONS.md D4 声明）。
+ *   共享 map 级单例 THREE.WebGLRenderer（MapLibre 的 gl context 复用）。
+ * - render(gl, args)：把 `args.defaultProjectionData.mainMatrix`（MapLibre
+ *   6.10 实测语义：输入域 = mercator [0,1]³，z 为 mercator-z —— 内部已含
+ *   ×W 与 ×pixelPerMeter 折算；对照 `modelViewProjectionMatrix` 的输入域是
+ *   (世界像素 x, 世界像素 y, z 米)，z 域不同不可混用）灌入正交相机投影面
+ *   —— three 在 mercator 世界坐标绘制，placement 不再做任何 ×worldScale；
+ *   深度测试开启（与 MapLibre 已绘内容的遮挡关系由 depth buffer 决定；
+ *   terrain 在场时是近似遮挡 —— 能力边界已在 DECISIONS.md D4 声明）。
  * - onAdd/onRemove 生命周期由 manager 驱动；context lost = 整图重建路径
- *  （map-panel mapKey bump），本层不自行恢复。
+ *   （map-panel mapKey bump），本层不自行恢复。
  * - 事件驱动渲染：仅在内容变化时 triggerRepaint；无自建 rAF 循环。
  */
 
@@ -19,13 +22,12 @@ export interface Scene3dLayerHooks {
   /**
    * 帧回调（manager 注入：拾取矩阵快照 / 调度 tick）。
    *
-   * @param mvp mercator 像素世界 → clip（MapLibre v6 语义：世界 =
-   *   mercator[0,1] × worldSize，z = 海拔 × pixelPerMeter 同域 —— 见
-   *   maplibre transform._viewProjMatrix 源：x/y 平移 merc[0,1]、z 缩放
-   *   pixelPerMeter，透视距为像素单位）。
-   * @param worldScale 本帧 worldSize（512·2^zoom；placement 乘它进像素域）。
+   * @param mvp mercator [0,1]³ 世界 → clip（defaultProjectionData.mainMatrix
+   *   语义 —— 与 placement 同域；mercator 域局部各向同性，距离 × 纬度周长
+   *   即米）。z 列在矩阵内 ×(W/pixelPerMeter) 折算，与 MapLibre 自身 3D
+   *   内容同深度域。
    */
-  onFrame?: (mvp: number[] | Float32Array, worldScale: number) => void;
+  onFrame?: (mvp: number[] | Float32Array) => void;
 }
 
 export interface RendererCarrier {
@@ -164,7 +166,7 @@ export function makeScene3dCustomLayer(params: {
   assetId: string;
   map: object;
   group: THREE.Group;
-  /** [0,1] mercator 域放置矩阵（manager 持有；每帧 × worldScale）。 */
+  /** [0,1] mercator 域放置矩阵（manager 持有；与 mainMatrix 同域直用）。 */
   placement: () => number[];
   hooks?: Scene3dLayerHooks;
   /** 渲染降档（弱机：关抗锯齿/光照简化由 manager 在 renderer 上配置）。 */
@@ -180,25 +182,17 @@ export function makeScene3dCustomLayer(params: {
   const layerId = `scene3d-${params.assetId}`;
   let carrier: RendererCarrier | null = null;
   let groupMounted = false;
-  const scaleMat = new THREE.Matrix4();
 
-  const mapRef = params.map as { getZoom?: () => number } | undefined;
   const layer = {
     id: layerId,
     type: 'custom' as const,
     renderingMode: '3d' as const,
-    map: mapRef,
     onAdd(_map: unknown, gl: WebGLRenderingContext | WebGL2RenderingContext) {
       carrier = acquireRenderer(params.map, gl);
       if (carrier && !groupMounted) {
         carrier.scene.add(params.group);
         groupMounted = true;
       }
-    },
-    /** 本帧 worldSize（MapLibre transform tileSize=512 × 2^zoom）。 */
-    _worldScale(this: { map?: { getZoom?: () => number } }): number {
-      const zoom = this.map?.getZoom?.();
-      return 512 * Math.pow(2, typeof zoom === 'number' && Number.isFinite(zoom) ? zoom : 0);
     },
     onRemove(_map: unknown, _gl: unknown) {
       if (carrier && groupMounted) {
@@ -219,14 +213,11 @@ export function makeScene3dCustomLayer(params: {
       }
       const mvp = extractMvp(args);
       if (!mvp) return;
-      // 本帧世界尺度：placement（[0,1] mercator 域）× W 进像素世界。
-      const layerThis = this as unknown as { map?: { getZoom?: () => number }; _worldScale(): number };
-      const worldScale = layerThis._worldScale();
-      applyPlacement(params.group, params.placement(), worldScale, scaleMat);
+      applyPlacement(params.group, params.placement());
       try {
         carrier.camera.projectionMatrix.fromArray(mvp);
         carrier.camera.projectionMatrixInverse.copy(carrier.camera.projectionMatrix).invert();
-        params.hooks?.onFrame?.(mvp, worldScale);
+        params.hooks?.onFrame?.(mvp);
         const renderer = carrier.renderer;
         renderer.resetState();
         renderer.render(carrier.scene, carrier.camera);
@@ -239,30 +230,23 @@ export function makeScene3dCustomLayer(params: {
 }
 
 /**
- * 应用像素世界放置：group.matrix = S(worldScale) · placement。
- * （均匀缩放与旋转交换 → 等价 T(anchor·W)·R·F·S(meterUnit·W)；
- * MapLibre mercator-z 与 x/y 同 ×W —— 见 hooks.onFrame 语义注记。）
+ * 应用放置矩阵：group.matrix = placement（[0,1] mercator 域与
+ * defaultProjectionData.mainMatrix 输入域一致 —— 不做任何 ×worldScale；
+ * z 域换算由 mainMatrix 内部的 ×(W/pixelPerMeter) 完成）。
  */
-export function applyPlacement(
-  group: THREE.Group,
-  placement: number[],
-  worldScale: number,
-  scratch: THREE.Matrix4,
-): void {
-  scratch.makeScale(worldScale, worldScale, worldScale);
-  group.matrix.fromArray(placement).premultiply(scratch);
+export function applyPlacement(group: THREE.Group, placement: number[]): void {
+  group.matrix.fromArray(placement);
   group.matrixAutoUpdate = false;
   group.matrixWorldNeedsUpdate = true;
 }
 
 interface RenderArgsLike {
-  modelViewProjectionMatrix?: number[];
   defaultProjectionData?: { mainMatrix?: number[] };
 }
 
 function extractMvp(args: unknown): number[] | Float32Array | null {
   const a = args as RenderArgsLike | undefined;
-  const mvp = a?.modelViewProjectionMatrix ?? a?.defaultProjectionData?.mainMatrix;
+  const mvp = a?.defaultProjectionData?.mainMatrix;
   // MapLibre 的 mat4 是 Float32Array（非普通数组 —— Array.isArray 会误拒）。
   if (mvp && typeof mvp === 'object' && mvp.length === 16) return mvp;
   return null;

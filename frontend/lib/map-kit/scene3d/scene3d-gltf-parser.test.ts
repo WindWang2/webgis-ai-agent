@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildGlbFixture } from './__fixtures__/glb';
-import { GltfParseError, parseGlbContainer, parseGltf } from './gltf/gltf-parser';
+import { GltfParseError, MAX_NODES_PER_ASSET, parseGlbContainer, parseGltf } from './gltf/gltf-parser';
 
 function glbJsonOf(jsonBytes: Uint8Array): ArrayBuffer {
   const pad = (4 - (jsonBytes.length % 4)) % 4;
@@ -58,6 +58,18 @@ describe('glb container', () => {
 });
 
 describe('parseGltf fixture round-trip', () => {
+  it('rejects repeated empty nodes before a compact DAG expands exponentially', async () => {
+    const nodes = Array.from({ length: 14 }, (_, i) => i < 13 ? { children: [i + 1, i + 1] } : {});
+    await expect(parseGltf(glbJson({ asset: { version: '2.0' }, scenes: [{ nodes: [0] }], nodes })))
+      .rejects.toThrow(/multiple parents/);
+  });
+
+  it('bounds a broad scene even when empty nodes consume no vertex budget', async () => {
+    const nodes = Array.from({ length: MAX_NODES_PER_ASSET + 1 }, () => ({}));
+    const roots = nodes.map((_, i) => i);
+    await expect(parseGltf(glbJson({ asset: { version: '2.0' }, scenes: [{ nodes: roots }], nodes })))
+      .rejects.toMatchObject({ code: 'budget_exceeded' });
+  });
   it('parses indexed triangle mesh with stats', async () => {
     const parsed = await parseGltf(buildGlbFixture({ triangles: 4 }));
     expect(parsed.roots).toHaveLength(1);
@@ -409,5 +421,61 @@ describe('strict accessor semantics (G3DV2-B: byteStride/sparse/normalized)', ()
       buffers: [{ byteLength: bin.length }],
     };
     await expect(parseGltf(glbJsonBin(doc, bin))).rejects.toMatchObject({ code: 'corrupt' });
+  });
+});
+
+describe('semantic ↔ accessor.type gate (review B6)', () => {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+
+  it('rejects POSITION declared as VEC2 (silent garbage geometry otherwise)', async () => {
+    const bin = new Uint8Array(positions.buffer);
+    const doc = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC2' }],
+      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: bin.length }],
+      buffers: [{ byteLength: bin.length }],
+    };
+    await expect(parseGltf(glbJsonBin(doc, bin))).rejects.toThrowError(/POSITION accessor type VEC2 invalid/);
+  });
+
+  it('rejects NORMAL declared as SCALAR and TEXCOORD_0 declared as VEC3', async () => {
+    const normals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]);
+    const uvs = new Float32Array([0, 0, 0, 1, 1, 0, 1, 1, 1]);
+    const bin = new Uint8Array(positions.byteLength + normals.byteLength + uvs.byteLength);
+    bin.set(new Uint8Array(positions.buffer), 0);
+    bin.set(new Uint8Array(normals.buffer), positions.byteLength);
+    bin.set(new Uint8Array(uvs.buffer), positions.byteLength + normals.byteLength);
+    const base = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      buffers: [{ byteLength: bin.length }],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: positions.byteLength },
+        { buffer: 0, byteOffset: positions.byteLength, byteLength: normals.byteLength },
+        { buffer: 0, byteOffset: positions.byteLength + normals.byteLength, byteLength: uvs.byteLength },
+      ],
+    };
+    await expect(parseGltf(glbJsonBin({
+      ...base,
+      meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 } }] }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+        { bufferView: 1, componentType: 5126, count: 3, type: 'SCALAR' },
+      ],
+    }, bin))).rejects.toThrowError(/NORMAL accessor type SCALAR invalid/);
+    await expect(parseGltf(glbJsonBin({
+      ...base,
+      meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 } }] }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+        { bufferView: 2, componentType: 5126, count: 3, type: 'VEC3' },
+      ],
+    }, bin))).rejects.toThrowError(/TEXCOORD_0 accessor type VEC3 invalid/);
   });
 });

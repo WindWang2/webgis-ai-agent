@@ -448,3 +448,26 @@ describe('useCartographicObservation pure-3D fingerprint gate (G3DV2-B M1)', () 
     expect(apiFetch).not.toHaveBeenCalled();
   });
 });
+
+describe('useCartographicObservation scene3d status ring hygiene (D2)', () => {
+  it('clears the scene3d asset status ring when the session changes', async () => {
+    const { recordSceneAssetStatus, resetSceneAssetStatusForTests, sceneAssetStatusSnapshot }
+      = await import('@/lib/map-kit/scene3d');
+    const dispatchAction = vi.fn();
+    const runtimeRef = { current: null as MapSpecRuntime | null };
+    const hook = renderHook(
+      ({ sessionId }) => useCartographicObservation({
+        runtimeRef, sessionId, ownerToken: null, dispatchAction,
+      }),
+      { initialProps: { sessionId: 'sid-a' } },
+    );
+    // 会话 A 记录资产终态（曾跨会话残留 —— B 的首个观察把 A 的失败当作
+    // 自己的 scene3d_assets 证据上行）。
+    recordSceneAssetStatus('campus', 'load_failed', 'test');
+    expect(sceneAssetStatusSnapshot().length).toBeGreaterThan(0);
+    hook.rerender({ sessionId: 'sid-b' });
+    await flushAsync();
+    expect(sceneAssetStatusSnapshot()).toEqual([]);
+    resetSceneAssetStatusForTests();
+  });
+});

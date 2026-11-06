@@ -77,6 +77,13 @@ export function sceneAssetLatestStatuses(): Map<string, SceneAssetStatusEvent> {
   return latest;
 }
 
-export function resetSceneAssetStatusForTests(): void {
+/**
+ * 清空状态环（生产语义：会话切换时调用 —— 旧会话的资产状态不得作为新
+ * 会话的观察证据上行；测试亦复用同一入口）。
+ */
+export function resetSceneAssetStatus(): void {
   ring = [];
 }
+
+/** 兼容别名（既有测试引用面）。 */
+export const resetSceneAssetStatusForTests = resetSceneAssetStatus;

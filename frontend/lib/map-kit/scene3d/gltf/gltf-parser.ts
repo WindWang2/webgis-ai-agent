@@ -24,6 +24,7 @@ import { identityMat4, multiplyMat4, translationMat4 } from '../geo';
 export const MAX_TRIANGLES_PER_ASSET = 5_000_000;
 export const MAX_VERTICES_PER_ASSET = 5_000_000;
 export const MAX_JSON_BYTES = 8 * 1024 * 1024;
+export const MAX_NODES_PER_ASSET = 8192;
 /**
  * 解码预算（review P0）：按**展开后字节数**计（Float32 化的 accessor
  * 载荷），在分配前检查 —— 防御「多 primitive 共享同一巨型 accessor」/
@@ -424,6 +425,17 @@ export async function parseGltf(
     if (!acc) throw new GltfParseError('corrupt', `accessor ${index} missing`);
     const arity = TYPE_ARITY[acc.type];
     if (!arity) throw new GltfParseError('unsupported_feature', `accessor type ${acc.type}`);
+    // 语义 ↔ type 门（评审 B6）：畸形 arity 不拒绝会静默错渲染 ——
+    // POSITION/NORMAL 非 VEC3 顶点数取整错位、TEXCOORD_0 非 VEC2 与
+    // BufferAttribute(uv, 2) 步长错配，产出垃圾几何而非 typed 拒绝。
+    const SEMANTIC_TYPE: Record<'POSITION' | 'NORMAL' | 'TEXCOORD_0', string> = {
+      POSITION: 'VEC3',
+      NORMAL: 'VEC3',
+      TEXCOORD_0: 'VEC2',
+    };
+    if (acc.type !== SEMANTIC_TYPE[semantic]) {
+      throw new GltfParseError('corrupt', `${semantic} accessor type ${acc.type} invalid`);
+    }
     const compBytes = COMPONENT_BYTES[acc.componentType];
     if (!compBytes) throw new GltfParseError('unsupported_feature', `componentType ${acc.componentType}`);
     const count = acc.count;
@@ -547,8 +559,19 @@ export async function parseGltf(
     return out;
   };
 
-  const parseNode = (index: number, visiting: Set<number>): ParsedNode => {
+  const expandedNodes = new Set<number>();
+  const parseNode = (index: number, visiting: Set<number>, depth = 0): ParsedNode => {
     if (visiting.has(index)) throw new GltfParseError('corrupt', `node cycle at ${index}`);
+    // glTF nodes form a tree per scene; repeated parents can otherwise expand
+    // a tiny empty-node DAG exponentially without consuming vertex budgets.
+    if (expandedNodes.has(index)) throw new GltfParseError('corrupt', `node ${index} has multiple parents`);
+    if (expandedNodes.size >= MAX_NODES_PER_ASSET) {
+      throw new GltfParseError('budget_exceeded', `nodes > ${MAX_NODES_PER_ASSET}`);
+    }
+    expandedNodes.add(index);
+    // 深度门（评审 B5 同款）：节点数/字节预算不限深度 —— 深链先于预算
+    // 触达 V8 栈深；真实场景图 ≤10 量级。
+    if (depth > 256) throw new GltfParseError('budget_exceeded', `node tree deeper than 256 at ${index}`);
     visiting.add(index);
     const n = doc.nodes?.[index];
     if (!n) throw new GltfParseError('corrupt', `node ${index} missing`);
@@ -606,7 +629,7 @@ export async function parseGltf(
           + (uvs?.byteLength ?? 0) + (indices?.byteLength ?? 0);
       }
     }
-    const children = (n.children ?? []).map((c) => parseNode(c, visiting));
+    const children = (n.children ?? []).map((c) => parseNode(c, visiting, depth + 1));
     visiting.delete(index);
     return {
       name: typeof n.name === 'string' ? n.name : null,

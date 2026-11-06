@@ -253,6 +253,12 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
         "view": _bounded_metadata(mapspec.get("view") or {}, budget=budget),
         "layout": _bounded_metadata(mapspec.get("layout") or {}, budget=budget),
         "time": _bounded_metadata(mapspec.get("time") or {}, budget=budget),
+        # D1（评审）：scene（mode/terrain/camera/assets）此前不进指纹 ——
+        # scene-only 变更（换模式/资产增删显隐）revision 前进而指纹不变，
+        # 观察接受门只比对指纹，settle 窗口内的旧观察被误盖章到新 revision
+        #（scene3d_assets/layers 证据归属错代）。与 view/layout/time 同款
+        # 有界投影（指针/参数面，无数据负载；预算与截断语义一致）。
+        "scene": _bounded_metadata(mapspec.get("scene") or {}, budget=budget),
         "sources": projected_sources,
         "layers": projected_layers,
         "source_count": len(sources),

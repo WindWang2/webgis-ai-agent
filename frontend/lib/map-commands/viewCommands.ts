@@ -228,8 +228,10 @@ export const viewCommands: Record<string, CommandEntry> = {
     },
   },
   fly_camera: {
-    requiredParams: (p) => p['center'] === undefined || p['target'] === undefined
-      || Array.isArray(p['center']) || typeof p['target'] === 'object',
+    // 后端真实参数：session_id/pitch/bearing/center/zoom（无 target）。
+    // center 缺省合法（只动 pitch/bearing/zoom）；出现时必须是 [lng, lat]。
+    requiredParams: (p) => p['center'] === undefined
+      || (Array.isArray(p['center']) && p['center'].length === 2),
     run(): void {
       /* 相机移动由 MapLibre 执行通道落地；命令即确认 */
     },
@@ -250,7 +252,9 @@ export const viewCommands: Record<string, CommandEntry> = {
           if (params?.center) {
             navigation.flyTo(map, {
               center: params.center,
-              zoom: params?.zoom || 12,
+              // zoom 0（全球视野）是合法目标 —— || 12 会把它静默改成 12，
+              // 收敛核对随之谎报 SUCCEEDED。仅 undefined 缺省才回退。
+              zoom: params?.zoom ?? 12,
               bearing: params.bearing,
               pitch: params.pitch,
             });
@@ -260,7 +264,7 @@ export const viewCommands: Record<string, CommandEntry> = {
         // execute body's zoom default so the comparison is apples-to-apples.
         {
           center: ctx.params?.center as [number, number],
-          zoom: (ctx.params?.zoom as number) || 12,
+          zoom: (ctx.params?.zoom as number) ?? 12,
         },
       );
     },

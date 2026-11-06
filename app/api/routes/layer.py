@@ -1124,7 +1124,9 @@ async def get_terrain_tile(
 async def get_terrain_tilejson(
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
-    token: Optional[str] = Query(None, description="匿名会话 owner token（tiles URL 将原样携带）"),
+    # A8（评审）：与 terrain-tiles 瓦片路由的 token Query 边界对齐（超长串
+    # 不进常量时间比较）。
+    token: Optional[str] = Query(None, max_length=128, description="匿名会话 owner token（tiles URL 将原样携带）"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(_require_owned_session_qtoken),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
@@ -1227,6 +1229,15 @@ async def get_terrain_tilejson(
         "elevation_max_m": receipt_data.get("elevation_max_m") if isinstance(receipt_data, dict) else None,
     }
 
+    tile_bounds = bounds
+    if len(bounds) == 4 and bounds[0] > bounds[2]:
+        # MapLibre TileBounds requires west <= east and would discard every
+        # tile for a wrapped scientific bbox. Publish a conservative envelope;
+        # retain the precise wrapped coverage and its rendering caveat below.
+        tile_bounds = [-180.0, bounds[1], 180.0, bounds[3]]
+        terrain_block["coverage_bbox_epsg4326"] = bounds
+        terrain_block["tile_bounds_policy"] = "antimeridian_envelope"
+
     body = {
         "tilejson": "3.0.0",
         "name": f"session-dem:{ref_id}",
@@ -1234,7 +1245,7 @@ async def get_terrain_tilejson(
         "version": "1.0.0",
         "attribution": attribution,
         "tiles": [tiles_url],
-        "bounds": bounds,
+        "bounds": tile_bounds,
         "minzoom": 0,
         "maxzoom": maxzoom,
         # 扩展块（非 TileJSON 标准字段；消费者按扩展命名空间理解）
@@ -1366,7 +1377,7 @@ async def list_terrain_sources(
                 ),
                 content_sha256=str(payload.get("content_sha256") or ""),
             )
-        # 发布 URL 内嵌会话鉴权参数（评审 P2：消费方照抄即用，不自拼）。
+        # Publish a short-lived, ref-bound capability; never embed the owner credential.
         from app.core.signing import signed_terrain_query
         _auth_qs = signed_terrain_query(session_id, ref_id)
         session_entries.append(SessionTerrainSourceEntry(

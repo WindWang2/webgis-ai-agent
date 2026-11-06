@@ -128,6 +128,8 @@ describe('SceneController', () => {
     openPanel();
     const slider = screen.getByLabelText(/sceneController.exaggeration/, { selector: 'input' });
     fireEvent.change(slider, { target: { value: '2.5' } });
+    // C7：拖拽走本地 draft，释放（pointerUp/blur）才一次性提交。
+    fireEvent.pointerUp(slider);
     await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalled());
     const payload = commitUserScene.mock.calls[0][0];
     expect(payload.terrain.exaggeration).toBe(2.5);
@@ -214,6 +216,85 @@ describe('SceneController', () => {
 });
 
 // ── R2-4：fallback source 解析（committed 无 terrain 块但有 dem 源）────
+describe('SceneController review fixes (C3/C5)', () => {
+  beforeEach(() => {
+    committed = null;
+    is3D = false;
+    commitUserScene.mockReset().mockResolvedValue({ outcome: 'committed' });
+    scene3dSetAssetPresentation.mockReset().mockReturnValue(true);
+  });
+  afterEach(() => cleanup());
+
+  it('Escape closes the panel even when opened by mouse (focus stays on trigger)', () => {
+    // 评审 C5：监听曾挂在 dialog 节点上 —— 鼠标打开（焦点留在兄弟触发
+    // 按钮上）时 Escape 永远到不了 dialog；现在挂 window + open 即 focus。
+    commitSpec({ scene: { mode: '3d' }, sources: {} });
+    render(<SceneController />);
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.title' }));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('asset visibility rollback: renderer rejects (asset not mounted) → local checkbox unchanged', () => {
+    // 评审 C3：setAssetPresentation 返回 false（在途未挂载）不得翻转本地
+    // 态 —— 否则 UI 说隐藏、加载完成后资产实际可见。
+    commitSpec({
+      scene: { mode: '3d', assets: [{ id: 'campus', source: 'm', visible: true }] },
+      sources: { m: { type: 'model3d' } },
+    });
+    render(<SceneController getMap={() => ({})} />);
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.title' }));
+    const cb = screen.getByLabelText('campus') as HTMLInputElement;
+    expect(cb.checked).toBe(true);
+    scene3dSetAssetPresentation.mockReturnValue(false);
+    fireEvent.click(cb);
+    expect(scene3dSetAssetPresentation).toHaveBeenCalled();
+    // 本地态回滚：重渲染后 checkbox 仍勾选（未与渲染器脱钩）。
+    expect((screen.getByLabelText('campus') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('disables exaggeration while a scene mutation is in flight', async () => {
+    let resolveCommit!: (value: { outcome: string }) => void;
+    commitUserScene.mockImplementationOnce(() => new Promise((resolve) => { resolveCommit = resolve; }));
+    commitSpec({
+      scene: { mode: '3d', camera: { pitch: 50 }, terrain: { source: 'dem', exaggeration: 1 } },
+      sources: { dem: { type: 'raster-dem' } },
+    });
+    render(<SceneController />);
+    openPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.pitchUp' }));
+    const slider = screen.getByLabelText(/sceneController.exaggeration/, { selector: 'input' }) as HTMLInputElement;
+    expect(slider.disabled).toBe(true);
+    resolveCommit({ outcome: 'committed' });
+    await vi.waitFor(() => expect(slider.disabled).toBe(false));
+    fireEvent.change(slider, { target: { value: '2' } });
+    fireEvent.pointerUp(slider);
+    await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalledTimes(2));
+    expect(commitUserScene.mock.calls[1][0].terrain.exaggeration).toBe(2);
+  });
+
+  it('retains a released drag if another control becomes busy before release', async () => {
+    let resolveCommit!: (value: { outcome: string }) => void;
+    commitUserScene.mockImplementationOnce(() => new Promise((resolve) => { resolveCommit = resolve; }));
+    commitSpec({
+      scene: { mode: '3d', camera: { pitch: 50 }, terrain: { source: 'dem', exaggeration: 1 } },
+      sources: { dem: { type: 'raster-dem' } },
+    });
+    render(<SceneController />);
+    openPanel();
+    const slider = screen.getByLabelText(/sceneController.exaggeration/, { selector: 'input' }) as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.pitchUp' }));
+    fireEvent.blur(slider);
+    expect(slider.value).toBe('2');
+    expect(commitUserScene).toHaveBeenCalledTimes(1);
+    resolveCommit({ outcome: 'committed' });
+    await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalledTimes(2));
+    expect(commitUserScene.mock.calls[1][0].terrain.exaggeration).toBe(2);
+  });
+});
+
 describe('SceneController fallback terrain source (R2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -232,6 +313,7 @@ describe('SceneController fallback terrain source (R2)', () => {
     const slider = screen.getByLabelText(/sceneController.exaggeration/, { selector: 'input' });
     expect((slider as HTMLInputElement).disabled).toBe(false);
     fireEvent.change(slider, { target: { value: '2' } });
+    fireEvent.pointerUp(slider);
     await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalled());
     const payload = commitUserScene.mock.calls[0][0];
     expect(payload.terrain).toMatchObject({ source: 'dem', exaggeration: 2 });
