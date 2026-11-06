@@ -857,6 +857,15 @@
       "minGrayDelta": 0.108
     },
     {
+      "id": "blues",
+      "kind": "native_heatmap",
+      "colorblindSafe": false,
+      "colorblindSafeMaxClasses": 0,
+      "printSafe": false,
+      "grayLevels": 0,
+      "minGrayDelta": 0.0
+    },
+    {
       "id": "classic",
       "kind": "native_heatmap",
       "colorblindSafe": false,

@@ -104,13 +104,33 @@ async def test_heatmap_native_does_not_pollute_shared_ref_payload():
 
 
 def test_spatial_heatmap_categorical_enums():
+    from app.lib.cartography.palettes import NATIVE_HEATMAP_COLORS
     from app.tools.spatial import register_spatial_tools
 
     reg = ToolRegistry()
     register_spatial_tools(reg)
     props = _props_of(reg, "heatmap_data")
     assert props["render_type"]["enum"] == ["native", "raster", "grid"]
-    assert props["palette"]["enum"] == ["classic", "magma", "viridis", "thermal"]
+    assert props["palette"]["enum"] == ["classic", "magma", "viridis", "thermal", "blues"]
+    assert props["palette"]["enum"] == list(NATIVE_HEATMAP_COLORS)
+
+
+@pytest.mark.parametrize("palette", ["classic", "magma", "viridis", "thermal", "blues"])
+async def test_spatial_heatmap_declared_palettes_reach_native_legend(palette):
+    from app.lib.cartography.palettes import HEATMAP_LEGEND_PALETTE_KEY, NATIVE_HEATMAP_COLORS
+    from app.tools.spatial import register_spatial_tools
+
+    reg = ToolRegistry()
+    register_spatial_tools(reg)
+    result = await reg.dispatch(
+        "heatmap_data",
+        {"geojson": _big_point_fc(12), "render_type": "native", "palette": palette},
+        session_id="",
+    )
+    assert result["command"] == "add_native_heatmap"
+    assert result["metadata"]["palette"] == palette
+    assert result["legend_spec"]["palette"] == HEATMAP_LEGEND_PALETTE_KEY[palette]
+    assert result["legend_spec"]["palette_colors"] == NATIVE_HEATMAP_COLORS[palette][1:]
 
 
 def test_chinese_maps_plan_route_categorical_enums():

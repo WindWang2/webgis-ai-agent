@@ -95,7 +95,7 @@
 - status: native；version: 1.0
 - input: poi_feature_set, point_feature_set
 - output: line_feature_set
-- algorithm `network.closest_facility`（priority=10；scientific=VALIDATED）→ tools: network_closest_facility, nearest_facility
+- algorithm `network.closest_facility`（priority=10；scientific=VALIDATED）→ tools: network_closest_facility
 
 ## cloud_qc_advisory（云 QC 咨询掩膜）
 - status: native；version: 1.0

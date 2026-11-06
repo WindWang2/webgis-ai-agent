@@ -193,7 +193,7 @@
 | multi_ring_buffer | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | multi_ring_buffer |
 | multiazimuth_hillshade | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | terrain_geomorphometry |
 | natural_neighbor_surface | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | triangulation_interpolation |
-| nearest_facility | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | closest_facility |
+| nearest_facility | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | — |
 | nearest_neighbor | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | point_pattern_analysis |
 | nearest_neighbor_surface | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | spatial_interpolation |
 | network_accessibility | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | accessibility |
