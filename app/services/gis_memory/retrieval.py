@@ -62,7 +62,7 @@ class MemoryQueryContext:
 def _naive_now(ctx_now: Optional[datetime]) -> datetime:
     if ctx_now is None:
         return datetime.now(timezone.utc).replace(tzinfo=None)
-    return ctx_now.replace(tzinfo=None) if ctx_now.tzinfo else ctx_now
+    return ctx_now.astimezone(timezone.utc).replace(tzinfo=None) if ctx_now.tzinfo else ctx_now
 
 
 def _freshness_bonus(last_validated_at: Optional[str], now: datetime) -> float:
@@ -73,7 +73,7 @@ def _freshness_bonus(last_validated_at: Optional[str], now: datetime) -> float:
     except ValueError:
         return 0.0
     if validated.tzinfo:
-        validated = validated.replace(tzinfo=None)
+        validated = validated.astimezone(timezone.utc).replace(tzinfo=None)
     age_days = max((now - validated).total_seconds(), 0.0) / 86400.0
     if age_days <= 1.0:
         return 1.0

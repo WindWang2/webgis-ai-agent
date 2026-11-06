@@ -67,6 +67,18 @@
 - output: terrain_surface
 - algorithm `interpolation.block_kriging`（priority=25；scientific=VALIDATED）→ tools: block_kriging_surface
 
+## cartography_scale_apply（多尺度表达受控落笔）
+- status: native；version: 1.0
+- algorithm `cartography.scale.apply`（priority=10）→ tools: webgis_apply_scale_representation
+
+## cartography_scale_inspect（多尺度表达证据检视）
+- status: native；version: 1.0
+- algorithm `cartography.scale.inspect`（priority=10）→ tools: webgis_inspect_map_scale_profile
+
+## cartography_scale_preview（多尺度表达计划预览）
+- status: native；version: 1.0
+- algorithm `cartography.scale.preview`（priority=10）→ tools: webgis_preview_scale_representation
+
 ## category_breakdown（类别构成统计）
 - status: native；version: 1.0
 - input: poi_feature_set, point_feature_set
@@ -127,6 +139,10 @@
 ## crs_transformation（坐标系转换）
 - status: planned；version: 1.0
 - algorithm `platform.crs_transformation`（priority=50）→ tools: reproject_coordinates, transform_coordinates
+
+## data_preparation（数据集准备）
+- status: native；version: 1.0
+- algorithm `data.prepare`（priority=10）→ tools: prepare_dataset
 
 ## data_source_pipeline（数据源管道）
 - status: planned；version: 1.0
@@ -332,6 +348,12 @@
 - output: stats_table
 - algorithm `ecology.landscape_metrics`（priority=20；scientific=VALIDATED）→ tools: landscape_metrics_analysis
 
+## layer_browse（图层要素浏览）
+- status: native；version: 1.0
+- algorithm `layer.aggregate`（priority=20）→ tools: webgis_layer_aggregate
+- algorithm `layer.feature.detail`（priority=30）→ tools: webgis_layer_feature_detail
+- algorithm `layer.features.page`（priority=10）→ tools: webgis_layer_features_page
+
 ## layer_display_control（图层显示控制）
 - status: planned；version: 1.0
 - algorithm `platform.layer_display_control`（priority=50）→ tools: alias_layer, apply_layer_filter, display_layer, finalize_display, remove_layer, reorder_layer, set_layer_status, switch_base_layer, update_layer_appearance
@@ -509,7 +531,7 @@
 
 ## plan_workflow_orchestration（计划与工作流编排）
 - status: planned；version: 1.0
-- algorithm `platform.plan_workflow_orchestration`（priority=50）→ tools: cancel_execution_run, execute_execution_plan, execute_plan, get_execution_run, get_plan_status, propose_plan, rerun_workflow, save_plan_as_workflow, validate_execution_plan, webgis_action_plan, catalog_discover, catalog_lookup, capability_runtime_status
+- algorithm `platform.plan_workflow_orchestration`（priority=50）→ tools: cancel_execution_run, execute_execution_plan, execute_plan, get_execution_run, get_plan_status, propose_plan, rerun_workflow, save_plan_as_workflow, validate_execution_plan, webgis_action_plan, catalog_discover, catalog_lookup, capability_runtime_status, catalog_conformance, gis_task_classify, gis_method_qualify, gis_method_rank, gis_method_explain, gis_skill_search, gis_skill_detail, gis_skill_replay_check, gis_skill_policy, webgis_analysis_workflow_plan, webgis_analysis_workflow_run, webgis_analysis_workflow_status, webgis_analysis_workflow_recompute
 
 ## poi_query（POI 要素获取）
 - status: native；version: 1.0
@@ -704,6 +726,18 @@
 - status: planned；version: 1.0
 - algorithm `platform.scenario_simulation`（priority=50）→ tools: spatial_decision_v2, spatial_reasoning, what_if_simulate
 
+## scene_camera_action（场景相机动作）
+- status: planned；version: 1.0
+- input: scene_config
+- output: scene_config
+- algorithm `platform.scene_camera_action`（priority=50）→ tools: fly_camera
+
+## scene_representation（三维场景表达决策）
+- status: planned；version: 1.0
+- input: raster_surface
+- output: scene_config
+- algorithm `platform.scene_representation`（priority=50）→ tools: get_3d_capabilities, run_3d_analysis
+
 ## service_area（网络服务区）
 - status: native；version: 1.0
 - input: poi_feature_set, point_feature_set
@@ -774,6 +808,10 @@
 - algorithm `sampling.stratified_points`（priority=20；scientific=VALIDATED）→ tools: sample_stratified_points
 - algorithm `sampling.systematic_grid`（priority=20；scientific=VALIDATED）→ tools: sample_systematic_grid
 
+## spatial_semantics（空间语义契约检视）
+- status: native；version: 1.0
+- algorithm `spatial.semantics.inspect`（priority=10）→ tools: inspect_spatial_semantics
+
 ## spatial_weights_diagnostics（空间权重诊断）
 - status: native；version: 1.0
 - input: admin_aggregate_table, grid_aggregate, poi_feature_set, point_feature_set
@@ -825,17 +863,29 @@
 - output: stats_table
 - algorithm `temporal.aggregate`（priority=10；scientific=VALIDATED）→ tools: temporal_aggregate
 
+## temporal_bind（时序视图绑定）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
 ## temporal_change_point（时序均值变点）
 - status: native；version: 1.0
 - input: stats_table
 - output: stats_table
 - algorithm `temporal.changepoint`（priority=15；scientific=VALIDATED）→ tools: temporal_changepoint
 
+## temporal_compare（时序两期对照）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
 ## temporal_composite（多时相合成）
 - status: native；version: 1.0
 - input: raster_surface
 - output: raster_surface
 - algorithm `remote.medoid_composite`（priority=15；scientific=VALIDATED）→ tools: medoid_composite
+
+## temporal_control（时序播放控制）
+- status: planned；version: 1.0
+- （无 native 算法实现）
 
 ## temporal_feature_extraction（时序特征提取）
 - status: native；version: 1.0
@@ -936,10 +986,17 @@
 - status: native；version: 1.0
 - input: terrain_surface
 - output: line_feature_set, stats_table
+- algorithm `terrain.cut_fill_volume`（priority=65；scientific=VALIDATED）→ tools: cut_fill_volume_analysis
 - algorithm `terrain.line_of_sight`（priority=64；scientific=VALIDATED）→ tools: line_of_sight_analysis
 - algorithm `terrain.profile`（priority=63；scientific=VALIDATED）→ tools: terrain_profile
 - algorithm `terrain.surface_area`（priority=66；scientific=VALIDATED）→ tools: surface_area_analysis
 - algorithm `terrain.surface_distance`（priority=65；scientific=VALIDATED）→ tools: surface_distance_analysis
+
+## terrain_scene_binding（地形场景绑定）
+- status: planned；version: 1.0
+- input: raster_surface
+- output: scene_config
+- algorithm `platform.terrain_scene_binding`（priority=50）→ tools: apply_scene_representation
 
 ## terrain_sky_view（地平线与天空可视因子）
 - status: native；version: 1.0
@@ -970,7 +1027,7 @@
 
 ## thematic_cartography（专题制图与样式）
 - status: planned；version: 1.0
-- algorithm `platform.thematic_cartography`（priority=50）→ tools: apply_layer_style, apply_template, combine_map_theme, control_floating_chart, create_3d_extrusion_map, create_thematic_map, list_templates, webgis_component_update, webgis_layout_set, webgis_map_combine, webgis_layer_upsert, webgis_layer_remove, webgis_map_intent, webgis_map_product, webgis_apply_composition, webgis_discover_components, webgis_plan_component_replace, gis_template_plan, plan_map_scene, set_map_scene
+- algorithm `platform.thematic_cartography`（priority=50）→ tools: apply_layer_style, apply_template, combine_map_theme, control_floating_chart, create_3d_extrusion_map, create_thematic_map, list_templates, webgis_component_update, webgis_layout_set, webgis_map_combine, webgis_layer_upsert, webgis_layer_remove, webgis_map_intent, webgis_map_product, webgis_apply_composition, webgis_discover_components, webgis_plan_component_replace, gis_template_plan, plan_map_scene, set_map_scene, gis_component_query, add_tile_service_layer, set_scene_assets, webgis_compile_map_plan, webgis_map_design_select, webgis_product_edit, webgis_list_composition_template_assets, webgis_save_composition_template
 
 ## traffic_status（实时路况）
 - status: native；version: 1.0
@@ -1002,6 +1059,12 @@
 - output: stats_table
 - algorithm `interpolation.directional_variogram`（priority=50；scientific=VALIDATED）→ tools: directional_variogram_analysis
 - algorithm `interpolation.variogram_selection`（priority=50；scientific=VALIDATED）→ tools: variogram_model_selection
+
+## volume_estimation（基准面土方量）
+- status: native；version: 1.0
+- input: terrain_surface
+- output: polygon_feature_set, stats_table
+- algorithm `terrain.cut_fill_volume`（priority=65；scientific=VALIDATED）→ tools: cut_fill_volume_analysis
 
 ## voronoi_tessellation（Voronoi 剖分）
 - status: native；version: 1.0

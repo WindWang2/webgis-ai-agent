@@ -8,7 +8,9 @@ from datetime import timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from app.main import app as _fastapi_app
 from app.core.database import get_async_db
@@ -42,19 +44,35 @@ async def _override_get_async_db():
 
 
 @pytest.fixture(autouse=True)
-async def setup_db(tmp_path):
+async def setup_db(tmp_path, monkeypatch):
     global _engine, _Session
     _engine = create_async_engine(
         f"sqlite+aiosqlite:///{tmp_path}/g04api.db")
     _Session = async_sessionmaker(_engine, expire_on_commit=False)
     import app.models  # noqa: F401 — 注册全部模型
     from app.core import database as db_module
+    from app.core.auth import invalidate_live_user_state
+    from app.models.db_model import Organization, User
+    sync_engine = create_engine(f"sqlite:///{tmp_path}/g04api.db")
+    monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(sync_engine))
+    monkeypatch.setattr(db_module, "async_db_session", _Session)
+    invalidate_live_user_state()
     async with _engine.begin() as conn:
         await conn.run_sync(db_module.Base.metadata.create_all)
+    async with _Session() as db:
+        db.add(Organization(id=1, name="Asset test organization", slug="asset-tests"))
+        await db.flush()
+        for uid, role in (("u1", "viewer"), ("u2", "viewer"), ("admin1", "admin")):
+            db.add(User(id=uid, username=uid, email=f"{uid}@test.example",
+                        role=role, org_id=1 if uid != "u2" else None,
+                        is_active=True, token_version=0))
+        await db.commit()
     _fastapi_app.dependency_overrides[get_async_db] = _override_get_async_db
     yield
     _fastapi_app.dependency_overrides.pop(get_async_db, None)
     await _engine.dispose()
+    sync_engine.dispose()
+    invalidate_live_user_state()
 
 
 async def _client() -> AsyncClient:
@@ -199,6 +217,10 @@ async def test_idor_other_user_gets_404():
 
 async def test_write_other_user_gets_403_when_org_shared():
     """org 共享资产：同 org 他人可见（200）但不可写（403）。"""
+    from app.models.db_model import User
+    async with _Session() as db:
+        (await db.get(User, "u2")).org_id = 1
+        await db.commit()
     async with await _client() as client:
         created = await client.post(
             "/api/v1/composition-template-assets",
@@ -208,8 +230,12 @@ async def test_write_other_user_gets_403_when_org_shared():
         seen = await client.get(
             f"/api/v1/composition-template-assets/{asset_id}",
             headers=other_headers)
-        assert seen.status_code == 404  # u2 无 org 上下文（viewer token）
-        # admin 全见
+        assert seen.status_code == 200
+        denied = await client.post(
+            f"/api/v1/composition-template-assets/{asset_id}/versions/1/publish",
+            headers=other_headers)
+        assert denied.status_code == 403
+        # 同组织的实时 admin 可管理该共享资产。
         as_admin = await client.get(
             f"/api/v1/composition-template-assets/{asset_id}",
             headers=admin_headers)

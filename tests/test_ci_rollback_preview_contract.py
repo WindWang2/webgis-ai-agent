@@ -111,3 +111,23 @@ def test_rollback_requires_explicit_master_dispatch_input():
     assert "github.ref == 'refs/heads/master'" in cond
     assert "inputs.rollback_production == true" in cond
     assert "inputs.rollback_confirm == 'ROLLBACK'" in cond
+
+
+def test_production_transfers_artifact_without_loading_it_on_runner():
+    """Only the target host needs expanded layers, not the transfer-only runner."""
+    steps = _workflow()["jobs"]["deploy-prod"]["steps"]
+    assert not any(step.get("name") == "Load Docker Image" for step in steps)
+    download = _step("deploy-prod", "Download Image Artifact")
+    assert download["if"] == "vars.SSH_HOST != ''"
+    deploy = _step("deploy-prod", "Deploy to Server via SSH")["run"]
+    assert "scp webgis-image.tar" in deploy
+    assert "docker load < ~/webgis-image.tar" in deploy
+    assert "docker manifest inspect" in _step(
+        "deploy-prod", "Confirm Image Available in Registry"
+    )["run"]
+
+
+def test_preview_still_loads_the_built_image():
+    assert "docker load < webgis-image.tar" in _step(
+        "preview", "Load Docker Image"
+    )["run"]

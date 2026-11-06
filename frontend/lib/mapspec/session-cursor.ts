@@ -54,6 +54,11 @@ export function resetLiveState(): void {
   void import('../layers/filter-evidence')
     .then((m) => m.clearFilterEvidence())
     .catch(() => { /* best-effort */ });
+  // GOAL 03：时序播放 live 帧同属会话内 transient 态（停播 + 清 live
+  // 帧/控制器；displayed 状态不跨会话泄漏，新会话以 committed cursor 恢复）。
+  void import('../temporal-map/live-frame')
+    .then((m) => m.resetTemporalLiveState())
+    .catch(() => { /* best-effort */ });
   // #1078(G-4): chart artifact 缓存同样随会话失效 —— 此前生产代码从不
   // 调 resetChartArtifactCache（只有测试调），旧会话的 ref 条目永久滞留
   // 且随会话切换增长。动态 import 避免与 chart-artifact 的静态环
@@ -206,7 +211,8 @@ export function mergePendingPresentation(
   emit();
 }
 
-export function clearPendingPresentation(layerId?: string): void {
+export function clearPendingPresentation(layerId?: string, expectedMutationId?: string): void {
+  if (layerId && expectedMutationId && pendingMeta[layerId]?.mutationId !== expectedMutationId) return;
   if (!layerId) {
     if (Object.keys(pending).length === 0) return;
     pending = {};

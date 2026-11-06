@@ -18,6 +18,10 @@ typed DAG 上给出**精确**回答（正向闭包），替代「全量重跑」
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    WorkflowDAG,
+)
+
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 from pydantic import BaseModel, Field
@@ -109,7 +113,7 @@ def _node_id_of(endpoint: str, node_set: Set[str]) -> str:
 
 
 def compute_affected_subgraph(
-    dag: Dict[str, Any],
+    dag: WorkflowDAG,
     changes: Sequence[WorkflowChange],
 ) -> RecomputePlan:
     """bounded typed DAG（to_bounded_dict 形态）上的受影响子图计算。
@@ -127,17 +131,6 @@ def compute_affected_subgraph(
 
     adjacency: Dict[str, List[str]] = {}
     for e in dag.get("edges") or []:
-        src = str(e.get("from", ""))
-        dst = str(e.get("to", ""))
-        # bounded 边端点是 "node.port" 形态（TypedWorkflowEdge.to_bounded_dict：
-        # "cap:x.output"）。node_id 词表（data:/cap:/transform:/output: 前
-        # 缀 + 角色/能力名）不含 "."——端点不是已知节点 id 时剥离 port 后
-        # 缀归一到节点。此前直接用原始端点建邻接：live to_bounded_dict 形
-        # 状下闭包静默断链（下游永不污染，reuse 被错误判安全）。
-        if src not in node_set and "." in src:
-            src = src.rsplit(".", 1)[0]
-        if dst not in node_set and "." in dst:
-            dst = dst.rsplit(".", 1)[0]
         src = _node_id_of(e.get("from", ""), node_set)
         dst = _node_id_of(e.get("to", ""), node_set)
         adjacency.setdefault(src, []).append(dst)

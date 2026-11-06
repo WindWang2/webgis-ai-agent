@@ -18,6 +18,7 @@ MapModelRegistry、模板选择归 TemplateSelector —— 本文件不再持有
 知识的硬编码表。plan_id 由 (query, recipe_id) 决定性派生。
 """
 from __future__ import annotations
+from app.services.gis_harness.planner_text_signals import _interpolation_query_signals, _uncertainty_demand
 
 import hashlib
 import json
@@ -161,6 +162,11 @@ def _composition_alternatives_evidence(
 _TASK_CATEGORY_BY_INTENT = {
     "distribution_overview": ("spatial_distribution",),
     "density_analysis": ("density",),
+    # carto-design（评审 P2-5）：真实任务族此前落入 thematic_cartography
+    # 兜底——定量密度/集中度语义应路由 density 类目（候选引擎类目质量
+    # 依赖本表；density_analysis 为历史 key 保留）。
+    "analytical_density": ("density",),
+    "concentration_analysis": ("density", "hotspot"),
     "aggregation_overview": ("administrative_aggregation",),
     "hotspot_analysis": ("hotspot",),
     "clustering_analysis": ("clustering",),
@@ -194,8 +200,9 @@ def _record_chain_exhausted_failure(recipe: Any) -> None:
         from app.services.cartography.intent_learning import (
             _get_session_local, record_recipe_outcome,
         )
-        with _get_session_local() as db:
+        with _get_session_local()() as db:
             record_recipe_outcome(db, recipe_id=recipe.id, success=False)
+            db.commit()
 
 def capability_tool_map() -> Dict[str, List[str]]:
     """capability → 有序工具候选。
@@ -229,25 +236,8 @@ def resolve_tool_for_capability(
 # raster_distribution 查询如「查看 DEM」不会过度计划插值），(b) 向
 # resolver 传 algorithm_hint —— 用户点名克里金时算法不被静默换成默认
 # IDW（hint 只在算法通过全部硬门后生效）。
-_INTERPOLATION_QUERY_RE = None  # lazily compiled below
 
 
-def _interpolation_query_signals(query: str) -> tuple[bool, str]:
-    """Return (plan_interpolation_capability, algorithm_hint) for a query."""
-    import re as _re
-
-    global _INTERPOLATION_QUERY_RE
-    if _INTERPOLATION_QUERY_RE is None:
-        _INTERPOLATION_QUERY_RE = _re.compile(
-            r"(克里金|kriging|插值|interpolat)", _re.I
-        )
-    q = query or ""
-    if not _INTERPOLATION_QUERY_RE.search(q):
-        return (False, "")
-    hint = "interpolation.kriging" if _re.search(
-        r"(克里金|kriging)", q, _re.I
-    ) else ""
-    return (True, hint)
 
 
 # 模块级兼容名（DEPRECATED：新代码用 capability_tool_map()）。
@@ -275,19 +265,8 @@ def __getattr__(name: str):
 #   b) 产出可选 capability 追加（regression_kriging / model_selection）
 #      —— 仅当 spatial_interpolation 已被计划（文本门不放大）且事实支持。
 # 证据缺席（profile None / 事实键不在）→ 空投影 = 旧行为逐位保留。
-_UNCERTAINTY_QUERY_RE = None  # lazily compiled below
 
 
-def _uncertainty_demand(query: str) -> bool:
-    """查询文本是否携带不确定性需求（方差/误差/置信…；纯词面、确定性）。"""
-    import re as _re
-
-    global _UNCERTAINTY_QUERY_RE
-    if _UNCERTAINTY_QUERY_RE is None:
-        _UNCERTAINTY_QUERY_RE = _re.compile(
-            r"(不确定|方差|误差|置信|uncertaint|variance|confidence|error)", _re.I
-        )
-    return bool(_UNCERTAINTY_QUERY_RE.search(query or ""))
 
 
 # ── V4（ADR-0151 #P5）：事实优先信号通用化 ────────────────────────────
@@ -871,69 +850,74 @@ class MapProductPlanner:
         with best_effort(
             "plan-evidence-chain-emit", "planner-evidence-chain-best-effort"
         ):
-            from app.lib.runtime.chain_emitters import emit_chain, emit_chain_once
-            from app.lib.runtime.decision_record import (
-                DECISION_KIND_PLAN_SELECTION,
-                alternative_entry,
-                decision_record,
-            )
-            from app.lib.runtime.gis_trace import Stage
-            from app.services.gis_harness.recipes import (
-                RECIPE_SELECTION_POLICY_VERSION,
-            )
+            from app.lib.runtime.chain_emitters import has_chain_context
 
-            emit_chain(Stage.USER_INTENT, query=str(intent.query or "")[:200])
-            emit_chain_once(
-                Stage.PARSED_INTENT,
-                task=str(getattr(intent, "task", "") or ""),
-                area=str(getattr(intent, "area", "") or "")[:64],
-            )
-            emit_chain_once(
-                Stage.TASK_ONTOLOGY,
-                task=str(getattr(intent, "task", "") or ""),
-                cartography=str(getattr(intent, "cartography", "") or ""),
-            )
-            # ADR-0212：plan_selection 决策溯源 —— 12 层排序的产出（候选
-            # 稳定序）+ 情境投影（situation 参与 decision_id）；排序层无
-            # 逐候选量化分，alternatives 只带 rank（诚实省略 score）。
-            _selection_inputs: Dict[str, Any] = {
-                "task": str(getattr(intent, "task", "") or ""),
-                "cartography_intents": [
-                    str(c)[:48]
-                    for c in (getattr(intent, "cartography_intents", None) or [])[:8]
-                ],
-            }
-            if situation is not None and hasattr(situation, "to_dict"):
-                # #1549：情境投影缺席按空，经 best_effort 可见化。
-                with best_effort(
-                    "situation-projection",
-                    "planner-situation-projection-best-effort",
-                ):
-                    _selection_inputs["situation"] = situation.to_dict()
-            _selected_recipe_id = str(getattr(recipe, "id", "") or "")
-            emit_chain_once(
-                Stage.CANDIDATE_WORKFLOWS,
-                candidates=[str(getattr(c, "id", "")) for c in (candidates or [])][:8],
-                selected=_selected_recipe_id,
-                decision=decision_record(
+            # The emitters are unconditional no-ops without a bound turn.
+            # Avoid hashing/serializing payloads which cannot be recorded.
+            if has_chain_context():
+                from app.lib.runtime.chain_emitters import emit_chain, emit_chain_once
+                from app.lib.runtime.decision_record import (
                     DECISION_KIND_PLAN_SELECTION,
+                    alternative_entry,
+                    decision_record,
+                )
+                from app.lib.runtime.gis_trace import Stage
+                from app.services.gis_harness.recipes import (
+                    RECIPE_SELECTION_POLICY_VERSION,
+                )
+
+                emit_chain(Stage.USER_INTENT, query=str(intent.query or "")[:200])
+                emit_chain_once(
+                    Stage.PARSED_INTENT,
+                    task=str(getattr(intent, "task", "") or ""),
+                    area=str(getattr(intent, "area", "") or "")[:64],
+                )
+                emit_chain_once(
+                    Stage.TASK_ONTOLOGY,
+                    task=str(getattr(intent, "task", "") or ""),
+                    cartography=str(getattr(intent, "cartography", "") or ""),
+                )
+                # ADR-0212：plan_selection 决策溯源 —— 12 层排序的产出（候选
+                # 稳定序）+ 情境投影（situation 参与 decision_id）；排序层无
+                # 逐候选量化分，alternatives 只带 rank（诚实省略 score）。
+                _selection_inputs: Dict[str, Any] = {
+                    "task": str(getattr(intent, "task", "") or ""),
+                    "cartography_intents": [
+                        str(c)[:48]
+                        for c in (getattr(intent, "cartography_intents", None) or [])[:8]
+                    ],
+                }
+                if situation is not None and hasattr(situation, "to_dict"):
+                    # #1549：情境投影缺席按空，经 best_effort 可见化。
+                    with best_effort(
+                        "situation-projection",
+                        "planner-situation-projection-best-effort",
+                    ):
+                        _selection_inputs["situation"] = situation.to_dict()
+                _selected_recipe_id = str(getattr(recipe, "id", "") or "")
+                emit_chain_once(
+                    Stage.CANDIDATE_WORKFLOWS,
+                    candidates=[str(getattr(c, "id", "")) for c in (candidates or [])][:8],
                     selected=_selected_recipe_id,
-                    alternatives=[
-                        alternative_entry(str(getattr(c, "id", "")), rank=i)
-                        for i, c in enumerate(candidates or [])
-                    ][:8],
-                    inputs=_selection_inputs,
-                    evidence_refs=(
-                        [f"recipe:{_selected_recipe_id}"]
-                        if _selected_recipe_id else []
+                    decision=decision_record(
+                        DECISION_KIND_PLAN_SELECTION,
+                        selected=_selected_recipe_id,
+                        alternatives=[
+                            alternative_entry(str(getattr(c, "id", "")), rank=i)
+                            for i, c in enumerate(candidates or [])
+                        ][:8],
+                        inputs=_selection_inputs,
+                        evidence_refs=(
+                            [f"recipe:{_selected_recipe_id}"]
+                            if _selected_recipe_id else []
+                        ),
+                        policy_version=RECIPE_SELECTION_POLICY_VERSION,
                     ),
-                    policy_version=RECIPE_SELECTION_POLICY_VERSION,
-                ),
-            )
-            emit_chain_once(
-                Stage.SELECTED_WORKFLOW,
-                recipe_id=str(getattr(recipe, "id", "") or ""),
-            )
+                )
+                emit_chain_once(
+                    Stage.SELECTED_WORKFLOW,
+                    recipe_id=str(getattr(recipe, "id", "") or ""),
+                )
 
         # 模板选择：TemplateSelector 确定性评分（subject/task/outputs/
         # priority）是证据基线；显式 template_id（plan 连续性回放）只在
@@ -1063,14 +1047,15 @@ class MapProductPlanner:
                     plan.capability_evidence = resolution.to_dict()
                     # ADR-0212：capability_resolution 决策溯源（SELECTED_
                     # WORKFLOW 附加记录；emit_chain 自吞异常）。
-                    from app.lib.runtime.chain_emitters import emit_chain
+                    from app.lib.runtime.chain_emitters import emit_chain, has_chain_context
                     from app.lib.runtime.gis_trace import Stage
 
-                    emit_chain(
-                        Stage.SELECTED_WORKFLOW,
-                        phase="capability_resolution",
-                        decisions=resolution.to_decision_records(),
-                    )
+                    if has_chain_context():
+                        emit_chain(
+                            Stage.SELECTED_WORKFLOW,
+                            phase="capability_resolution",
+                            decisions=resolution.to_decision_records(),
+                        )
 
         # 图层角色：来自产品模板或 recipe 声明（layer_type 由模型库推导）
         if template:
@@ -1198,6 +1183,24 @@ class MapProductPlanner:
                         "overlay_from": overlay.id,
                     })
                     existing_codes.add(code)
+
+        # A terrain plan without a profile cannot yet prove metric coordinates.
+        # Carry that scientific precondition even when the winning recipe itself
+        # is not part of the keyword overlay.
+        chosen_recipe = self.recipes.get(plan.recipe_id)
+        if chosen_recipe is not None and chosen_recipe.workflow is not None:
+            disclosed = {w.get("code") for w in plan.methodology_warnings}
+            for obligation in chosen_recipe.workflow.obligations:
+                if obligation.precondition_id != "local_metric_crs_required":
+                    continue
+                code = obligation.warning_code
+                if code and code not in disclosed:
+                    plan.methodology_warnings.append({
+                        "pattern": "workflow_precondition", "code": code,
+                        "warning_codes": [code], "stage": "planning",
+                        "disclosures": [obligation.description],
+                    })
+                    disclosed.add(code)
 
         if memo_key is not None:
             # 存入即深拷贝：调用方持有返回对象并可变（plan1.data_requirements=[]
@@ -1329,14 +1332,15 @@ class MapProductPlanner:
                 resolution = resolve_capabilities(goal, sit)
                 finalized.capability_evidence = resolution.to_dict()
                 # ADR-0212：finalize 复检的决策溯源（phase 区分于计划面）。
-                from app.lib.runtime.chain_emitters import emit_chain
+                from app.lib.runtime.chain_emitters import emit_chain, has_chain_context
                 from app.lib.runtime.gis_trace import Stage
 
-                emit_chain(
-                    Stage.SELECTED_WORKFLOW,
-                    phase="capability_resolution_finalize",
-                    decisions=resolution.to_decision_records(),
-                )
+                if has_chain_context():
+                    emit_chain(
+                        Stage.SELECTED_WORKFLOW,
+                        phase="capability_resolution_finalize",
+                        decisions=resolution.to_decision_records(),
+                    )
                 existing_codes = {
                     str(w.get("code")) for w in finalized.methodology_warnings
                     if w.get("code")

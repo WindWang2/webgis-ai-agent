@@ -30,10 +30,31 @@ const BLOCKED_VERBS = [
 
 /** 剥掉 `--`/`/* *\/`/`#` 注释，防止注释伪装绕过关键词检测。 */
 export function stripSqlComments(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/--[^\n]*/g, ' ')
-    .replace(/#[^\n]*/g, ' ');
+  let out = '';
+  let quote = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      out += ch;
+      if (ch === quote) {
+        if (text[i + 1] === quote) { out += text[++i]; } else { quote = ''; }
+      } else if (ch === '\\' && i + 1 < text.length) { out += text[++i]; }
+    } else if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+      out += ch;
+    } else if (ch === '#' || (ch === '-' && text[i + 1] === '-')) {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += i < text.length ? ' \n' : ' ';
+    } else if (ch === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i++;
+      out += ' ';
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 export interface GuardVerdict {

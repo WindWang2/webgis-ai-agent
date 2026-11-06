@@ -49,6 +49,8 @@ export const DEFAULT_COMPONENT_ANCHOR: Record<string, ChromeAnchor> = {
   // 缺行会导致 resolver 落 'none' → hidden —— 组件静默不可见）。
   methodology_note: 'bottom-left',
   uncertainty_panel: 'bottom-right',
+  // carto-design（#1870）：设计候选面板 —— 与 statistics/chart 同侧
+  design_candidates: 'top-left',
   decision_panel: 'top-left',
   // Workbench V4（audit 03 P0）：table_panel 缺行导致无显式 placement 时
   // resolver 落 'none' → 组件静默隐藏（与 backend registry defaultPosition

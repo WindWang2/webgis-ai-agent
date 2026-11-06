@@ -50,6 +50,8 @@ def save_png(session_dir: Path, raster_id: str, png_bytes: bytes) -> str:
   import os
   import uuid
 
+  if not re.fullmatch(r"[A-Za-z0-9_-]+", raster_id):
+    raise ValueError("raster_id contains unsupported characters")
   path = raster_dir(session_dir) / f"{raster_id}.png"
   tmp = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex[:8]}")
   try:
@@ -62,6 +64,9 @@ def save_png(session_dir: Path, raster_id: str, png_bytes: bytes) -> str:
     except OSError:
       pass
     raise
+  from app.lib.runtime.ref_capture import note_created_ref
+
+  note_created_ref(f"ref:raster/{raster_id}")
   return f"ref:raster/{raster_id}"
 
 
@@ -79,5 +84,7 @@ def resolve_png_path(session_dir: Path, image_ref: str) -> Optional[Path]:
   raster_id = image_ref[len("ref:raster/"):]
   if not _RASTER_ID_RE.fullmatch(raster_id):
     return None
+  if not re.fullmatch(r"[A-Za-z0-9_-]+", raster_id):
+    raise ValueError("raster_id contains unsupported characters")
   path = raster_dir(session_dir) / f"{raster_id}.png"
   return path if path.exists() else None

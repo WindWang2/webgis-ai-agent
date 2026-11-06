@@ -6,6 +6,11 @@
       "title": "Allow Public Register",
       "type": "boolean"
     },
+    "ALLOW_RUNTIME_SKILL_UPLOAD": {
+      "default": false,
+      "title": "Allow Runtime Skill Upload",
+      "type": "boolean"
+    },
     "AMAP_API_KEY": {
       "default": "",
       "title": "Amap Api Key",
@@ -583,6 +588,11 @@
     "MAP_QUALITY_GATE_MODE": {
       "default": "enforce",
       "title": "Map Quality Gate Mode",
+      "type": "string"
+    },
+    "METRICS_TOKEN": {
+      "default": "",
+      "title": "Metrics Token",
       "type": "string"
     },
     "NASA_EARTHDATA_PASSWORD": {

@@ -104,11 +104,14 @@ def derive_goal_contract(
     group_by = str(intent.get("group_by") or "")
 
     requirements: List[GoalRequirement] = []
+    truncated = len(analysis_rows) > 48
 
     def _append(req: GoalRequirement) -> bool:
+        nonlocal truncated
         """有界追加；满额返回 False（显式意图优先于行需求 —— review
         P1-2：大章节不得把显式 export/comparison 意图挤出契约）。"""
         if len(requirements) >= MAX_REQUIREMENTS:
+            truncated = True
             return False
         requirements.append(req)
         return True
@@ -168,6 +171,7 @@ def derive_goal_contract(
     seen_caps: set = set()
     for row in analysis_rows[:48]:
         if len(requirements) >= MAX_REQUIREMENTS:
+            truncated = True
             break
         cap = str(row.get("capability") or "").strip()
         if not cap or cap in seen_caps:
@@ -207,6 +211,12 @@ def derive_goal_contract(
 
     constraints = [str(a)[:200] for a in (intent.get("assumptions") or [])
                    if isinstance(a, str) and a.strip()][:MAX_CONSTRAINTS]
+    if truncated:
+        requirements = requirements[:MAX_REQUIREMENTS - 1] + [GoalRequirement(
+            id="requirements:truncated", kind=RequirementKind.ANALYSIS, required=True,
+            capability="requirements_truncated", summary="Additional requirements exceed the evaluation budget",
+            source="chapter:requirements_truncated",
+        )]
     contract = GoalContract(
         goal_id=_goal_id(chapter, user_goal),
         summary=str(chapter.get("query") or intent.get("query")

@@ -32,7 +32,14 @@ from app.services.data_fabric.errors import (
     QueryBudgetExceededError,
 )
 from app.services.data_fabric.query.execution import StreamingBudget
-from app.services.data_fabric.query.models import ExecutionBudget
+from app.services.data_fabric.query.models import ExecutionBudget, AggSpec
+from pydantic import ValidationError
+from app.services.data_fabric.query.federation_contracts import (
+    AggregateGroup, AggregateSpecRecord, EstimateBasisRecord,
+    FederatedPlanRecord, RejectedOrderRecord, SemiJoinReductionRecord,
+    SourceQueryOptions, SourceSideRecord, V6PlanRecord,
+    ReprojectSideRecord, JoinSideRecord, UnknownSideRecord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,24 +64,24 @@ class FederatedPlan:
     """两源联邦计划（可序列化描述）。"""
 
     kind: str  # attribute_join | spatial_join | aggregate_join
-    left: Dict[str, Any] = field(
+    left: SourceSideRecord = field(
         default_factory=dict
     )  # {source_id, dataset_id, spec extras}
-    right: Dict[str, Any] = field(default_factory=dict)
+    right: SourceSideRecord = field(default_factory=dict)
     join_field_left: Optional[str] = None
     join_field_right: Optional[str] = None
     spatial_op: Optional[str] = None  # within | intersects
     group_by_right: Optional[List[str]] = None
-    aggregates: Optional[List[Dict[str, Any]]] = None
+    aggregates: Optional[List[AggregateSpecRecord]] = None
     strategy: str = "local_hash_or_strtree"  # server_side | local_hash | local_strtree
     estimated_left_rows: Optional[int] = None
     estimated_right_rows: Optional[int] = None
     warnings: List[str] = field(default_factory=list)
     # ---- V4 additive（ADR-0101 D7）：被拒绝的替代序（EXPLAIN 诚实披露）----
-    rejected_orders: List[Dict[str, Any]] = field(default_factory=list)
+    rejected_orders: List[RejectedOrderRecord] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
-        out = {
+    def to_dict(self) -> FederatedPlanRecord:
+        out: FederatedPlanRecord = {
             "kind": self.kind,
             "left": self.left,
             "right": self.right,
@@ -108,7 +115,7 @@ class FederatedQueryRequest:
     spatial_op: Optional[str] = None  # within | intersects
     # aggregate+join
     group_by_right: Optional[List[str]] = None
-    aggregates: Optional[List[Dict[str, Any]]] = None  # [{func, field}]
+    aggregates: Optional[List[AggregateSpecRecord]] = None  # [{func, field}]
     # 共同谓词（分别应用到两侧源查询）
     left_where: Optional[Any] = None
     right_where: Optional[Any] = None
@@ -131,6 +138,14 @@ def plan_federated(req: FederatedQueryRequest) -> FederatedPlan:
         raise FederatedQueryError(
             "aggregate join requires group_by fields from the right side"
         )
+
+    # Validate with the same closed model used by local aggregation before a
+    # fast path can bypass it (unsupported aliases must never silently succeed).
+    try:
+        for aggregate in req.aggregates or []:
+            AggSpec.model_validate(aggregate)
+    except ValidationError as exc:
+        raise FederatedQueryError("invalid aggregate specification") from exc
 
     kind = (
         "aggregate_join"
@@ -172,6 +187,7 @@ class _LocalSpatialIndex:
     def __init__(self, geoms: List[Any]):
         self._geoms = geoms
         self._tree = None
+        self._fallback_candidates = 0
         try:
             from shapely.strtree import STRtree
 
@@ -183,11 +199,17 @@ class _LocalSpatialIndex:
     def candidates(self, geom: Any) -> List[int]:
         """返回可能相交的索引（候选集；调用方做精确判定）。"""
         if self._tree is None or not self._geoms:
+            self._fallback_candidates += len(self._geoms)
+            if self._fallback_candidates > 1_000_000:
+                raise QueryBudgetExceededError("spatial index fallback exceeded candidate budget")
             return list(range(len(self._geoms)))
         try:
             hits = self._tree.query(geom)
             return [int(i) for i in hits]
         except Exception:
+            self._fallback_candidates += len(self._geoms)
+            if self._fallback_candidates > 1_000_000:
+                raise QueryBudgetExceededError("spatial index fallback exceeded candidate budget")
             return list(range(len(self._geoms)))
 
 
@@ -350,7 +372,7 @@ def _hashable_key(v: Any) -> Any:
 
 def aggregate_join_rows(
     joined_rows: Sequence[Dict[str, Any]],
-    aggregates: Sequence[Dict[str, Any]],
+    aggregates: Sequence[AggregateSpecRecord],
     group_by: Sequence[str],
 ):
     """join 行 → 分组聚合（复用 V2 本地聚合器语义）。"""
@@ -380,7 +402,7 @@ class _AggregateState:
     def __init__(self, aggs, group_by):
         self.aggs = list(aggs)
         self.group_by = list(group_by)
-        self.groups: Dict[Tuple, Dict[str, Any]] = {}
+        self.groups: Dict[Tuple, AggregateGroup] = {}
 
     def update(self, row: Dict[str, Any]) -> None:
         right = row.get("__right__") or {}
@@ -496,7 +518,12 @@ class FederatedExecutor:
         # 同源 server-side 优先（PostGIS 快路径）
         if (
             req.left_source_id == req.right_source_id
-            and plan.kind in ("spatial_join", "aggregate_join")
+            and plan.kind == "aggregate_join"
+            and req.spatial_op is not None
+            and req.left_where is None and req.right_where is None and req.bbox is None
+            and len(req.group_by_right or []) == 1
+            and len(req.aggregates or []) == 1
+            and all(a.get("func") == "count" and not a.get("field") for a in req.aggregates)
             and hasattr(left_adapter, "server_spatial_join")
         ):
             try:
@@ -540,7 +567,7 @@ class FederatedExecutor:
         fields: Optional[List[str]],
         limit: int,
     ) -> List[Dict[str, Any]]:
-        extras: Dict[str, Any] = {}
+        extras: SourceQueryOptions = {}
         if fields:
             extras["fields"] = fields
         if side_where is not None:
@@ -550,15 +577,33 @@ class FederatedExecutor:
         extras["limit"] = limit
         extras["deadline_s"] = req.budget.deadline_s
         extras["max_rows"] = req.budget.max_rows
-        spec = QuerySpec(**extras)
-        result = adapter.query(dataset_id, spec)
-        feats = result.features or []
-        if len(feats) > req.budget.max_rows:
-            raise QueryBudgetExceededError(
-                f"source returned {len(feats)} rows (budget {req.budget.max_rows})",
-                details={"hint": "narrow bbox or add filters on both sides"},
-            )
-        return feats
+        rows = []
+        offset = 0
+        started = time.monotonic()
+        while offset < limit:
+            if time.monotonic() - started > req.budget.deadline_s:
+                raise QueryBudgetExceededError("federated source scan exceeded its deadline")
+            page_size = min(10_000, limit - offset)
+            extras["limit"] = page_size
+            extras["offset"] = offset
+            result = adapter.query(dataset_id, QuerySpec(**extras))
+            feats = result.features or []
+            rows.extend(feats)
+            if len(rows) > req.budget.max_rows:
+                raise QueryBudgetExceededError(
+                    f"source rows exceed budget {req.budget.max_rows}",
+                )
+            more = bool(getattr(result, "has_more", False) or getattr(result, "truncated", False))
+            if len(feats) < page_size and not more:
+                break
+            offset += len(feats)
+            if offset >= limit and more:
+                raise QueryBudgetExceededError(
+                    f"source scan exceeds {limit} join candidates; narrow the source filter",
+                )
+            if not feats and more:
+                raise QueryBudgetExceededError("source returned an empty nonterminal page")
+        return rows
 
     def _execute_local(self, req, plan, left_adapter, right_adapter, started):
         budget = StreamingBudget(
@@ -568,8 +613,6 @@ class FederatedExecutor:
         )
         # 右侧（多边形/维表侧）先行 —— 通常是小结果侧，物化成本最低
         right_fields = None
-        if req.join_field_right:
-            right_fields = [req.join_field_right] + (req.group_by_right or [])
         right_rows = self._source_query(
             right_adapter,
             req.right_dataset_id,
@@ -587,14 +630,14 @@ class FederatedExecutor:
             )
 
         # 左侧流式分页扫描 + 逐页 join（页大小 JOIN_PAGE_SIZE，页数受预算约束）
-        left_fields = [req.join_field_left] if req.join_field_left else None
+        left_fields = None
         joined: List[Dict[str, Any]] = []
         rows_fetched = 0
         offset = 0
         # V5（Wave 9 审计步骤 5）：链式半连接约减回迁两源路径 —— 等值 join
         # 的右行只在键出现于本页左侧键集时才进哈希索引（内连接语义不变；
         # 键集超上限诚实放弃）。spatial join 无键可约减，不适用。
-        semi_join_stats: List[Dict[str, Any]] = []
+        semi_join_stats: List[SemiJoinReductionRecord] = []
         deadline = started + req.budget.deadline_s
         # R4-M4：右侧空间索引只构建一次（跨左页复用）
         spatial_index = None
@@ -711,7 +754,7 @@ class FederatedExecutor:
     def _source_query_page(
         self, adapter, dataset_id, req, side_where, *, fields, limit, offset
     ):
-        extras: Dict[str, Any] = {
+        extras: SourceQueryOptions = {
             "limit": limit,
             "offset": offset,
             "deadline_s": req.budget.deadline_s,
@@ -827,7 +870,7 @@ class ChainJoin:
     join_field_right: Optional[str] = None
     spatial_op: Optional[str] = None  # within | intersects
     group_by_right: Optional[List[str]] = None
-    aggregates: Optional[List[Dict[str, Any]]] = None
+    aggregates: Optional[List[AggregateSpecRecord]] = None
     left_source_id: Optional[str] = None
     right_source_id: Optional[str] = None
 
@@ -865,7 +908,7 @@ class FederatedChainRequest:
     # FabricRuntime 填充：rows_basis（request_hint | source_facts:<basis>
     # [×feedback:<factor>(samples=N)]）、caps_basis（probed|default）、
     # governed。EXPLAIN 如实渲染；None = 无富集（行为与 V7 逐位一致）。
-    estimate_basis: Optional[Dict[str, Dict[str, Any]]] = None
+    estimate_basis: Optional[Dict[str, EstimateBasisRecord]] = None
 
 
 def _chain_budget(req: FederatedChainRequest) -> ExecutionBudget:
@@ -1454,7 +1497,7 @@ def execute_federated_chain(
             _SideView(req, src),
             src.where,
             fields=fields,
-            limit=req.limit,
+            limit=min(req.budget.max_rows, MAX_JOIN_CANDIDATES),
         )
 
     streaming = StreamingBudget(
@@ -1465,58 +1508,17 @@ def execute_federated_chain(
     per_source_rows: List[int] = []
     adapters: List[Any] = []
     semi_join_stats: List[Dict[str, int]] = []
-    left_adapter0 = executor._adapter_factory(ordered_sources[0].source_id)
-    right_adapter0 = executor._adapter_factory(ordered_sources[1].source_id)
-    first_join = ordered_joins[0]
+    # The adapter seam returns grouped counts, not row-preserving spatial
+    # joins. Chain hops require all attributes and geometry for later hops.
     server_side_first_hop = False
-    accumulated: List[Dict[str, Any]] = []
-    if (
-        ordered_sources[0].source_id == ordered_sources[1].source_id
-        and first_join.kind in ("spatial_join", "aggregate_join")
-        and left_adapter0 is not None
-        and hasattr(left_adapter0, "server_spatial_join")
-        and left_adapter0 is right_adapter0
-    ):
-        try:
-            rows = left_adapter0.server_spatial_join(
-                ordered_sources[0].dataset_id,
-                ordered_sources[1].dataset_id,
-                join_op=first_join.spatial_op or "within",
-                group_by_polygon_field=(first_join.group_by_right or [None])[0],
-                limit=req.limit,
-            )
-            accumulated = list(rows)
-            per_source_rows = [len(rows), len(rows)]
-            server_side_first_hop = True
-        except DataFabricError:
-            raise
-        except Exception as e:  # noqa: BLE001 - server join 不可用 → 本地回退
-            logger.info(
-                "[Federation] chain server-side first hop unavailable, "
-                "falling back to local: %s",
-                e,
-            )
-            plans[0].warnings.append(
-                f"server-side first hop failed ({e}); local execution used"
-            )
-    if not server_side_first_hop:
-        for src in ordered_sources:
-            feats = _fetch(src)
-            per_source_rows.append(len(feats))
-            adapters.append(feats)
-        accumulated = adapters[0]
-    else:
-        # 首跳已在服务端完成：占位 [None, None] 保持 adapters[i] 与
-        # ordered_sources[i] 的对齐不变量，仅拉取链上剩余源。
-        adapters = [None, None]
-        for src in ordered_sources[2:]:
-            feats = _fetch(src)
-            per_source_rows.append(len(feats))
-            adapters.append(feats)
-
-    joined_total = len(accumulated) if server_side_first_hop else 0
-    hops = ordered_joins[1:] if server_side_first_hop else ordered_joins
-    hop_offset = 1 if server_side_first_hop else 0
+    for src in ordered_sources:
+        feats = _fetch(src)
+        per_source_rows.append(len(feats))
+        adapters.append(feats)
+    accumulated: List[Dict[str, Any]] = adapters[0]
+    joined_total = 0
+    hops = ordered_joins
+    hop_offset = 0
 
     for i, join in enumerate(hops):
         src_pos = i + hop_offset
@@ -1802,11 +1804,11 @@ def enrich_request_from_runtime(
 
     runtime = get_fabric_runtime()
     owner = getattr(req, "session_owner", None)
-    basis: Dict[str, Dict[str, Any]] = {}
+    basis: Dict[str, EstimateBasisRecord] = {}
     # review P2-10：浅拷贝 dict 仍共享 ChainSourceStats 实例 —— 注入 caps/
     # ndv 会改写调用方的共享对象。逐值拷贝（dataclass）后注入只影响本次
     # 请求。
-    hints: Dict[str, Any] = {
+    hints: Dict[str, ChainSourceStats] = {
         k: _copy.copy(v) for k, v in (req.stats_hints or {}).items()
     }
 
@@ -1814,7 +1816,7 @@ def enrich_request_from_runtime(
         rs = resolved_by_sid.get(src.source_id)
         if rs is None:
             continue
-        entry: Dict[str, Any] = {
+        entry: EstimateBasisRecord = {
             "governed": bool(getattr(rs, "governed", False)),
         }
         # 1) source_type（静态能力激活）。
@@ -2158,7 +2160,7 @@ def _execute_v6_with_governance(executor, req, engine_breaker, cache_ctx, cache)
     return _execute_and_build()
 
 
-def _v6_plan_dicts(plan) -> List[Dict[str, Any]]:
+def _v6_plan_dicts(plan) -> List[V6PlanRecord]:
     """把 V6 计划树投影为 V5 ``plans`` 形状的逐跳 dict（工具契约兼容）。"""
     from app.services.data_fabric.query.federated.logical import (
         LogicalJoin,
@@ -2166,9 +2168,9 @@ def _v6_plan_dicts(plan) -> List[Dict[str, Any]]:
         LogicalScan,
     )
 
-    out: List[Dict[str, Any]] = []
+    out: List[V6PlanRecord] = []
 
-    def side_dict(node) -> Dict[str, Any]:
+    def side_dict(node) -> SourceSideRecord | ReprojectSideRecord | JoinSideRecord | UnknownSideRecord:
         if isinstance(node, LogicalScan):
             return {
                 "source_id": node.source_id,
@@ -2287,6 +2289,8 @@ def _v7_cache_context(executor, req):
                 limit=req.limit,
                 order_strategy=req.order_strategy,
                 derive_projection=getattr(req, "derive_projection", True),
+                budget=req.budget,
+                stats_hints=getattr(req, "stats_hints", None),
             ),
         )
         return scope_key, key, fingerprints

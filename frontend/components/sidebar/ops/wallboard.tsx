@@ -183,11 +183,9 @@ export function Wallboard({
 
       {/* 当前视图 */}
       <div className="min-h-0 flex-1">
-        {VIEWS[viewIdx].key === 'cluster' && (
-          <ClusterDashboard ownerToken={ownerToken} variant="wallboard" />
-        )}
-        {VIEWS[viewIdx].key === 'breaker' && <BreakerPanel />}
-        {VIEWS[viewIdx].key === 'health' && <SystemHealthPanel ownerToken={ownerToken} />}
+        <div hidden={VIEWS[viewIdx].key !== 'cluster'}><ClusterDashboard ownerToken={ownerToken} variant="wallboard" /></div>
+        <div hidden={VIEWS[viewIdx].key !== 'breaker'}><BreakerPanel /></div>
+        <div hidden={VIEWS[viewIdx].key !== 'health'}><SystemHealthPanel ownerToken={ownerToken} /></div>
       </div>
 
       <p className="mt-3 text-micro text-ink-muted">

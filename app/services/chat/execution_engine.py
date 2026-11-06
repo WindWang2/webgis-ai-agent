@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.services.tool_catalog import ToolCatalog
 
 from app.core.config import settings
+from app.lib.cancellation import OperationCancelled
 from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskStatus, TaskTracker
 from app.services.session_data import session_data_manager
@@ -46,6 +47,7 @@ from app.services.chat import turn_registration as _turn_reg
 
 from app.services.chat.llm_client import (
     LLMConfig,
+    ProviderStreamTruncated,
     LRUCache,
     call_llm,
     call_llm_stream,
@@ -60,6 +62,7 @@ from app.services.chat.turn_recovery import (  # noqa: F401
     NoProgressError,
     TurnTimeoutError,
     classify_failure as _classify_failure_impl,
+    recovery_from_outcome as _recovery_from_outcome,
 )
 
 # H03：跨 Pi/legacy 统一错误词表（error_class additive 单一映射表）
@@ -139,29 +142,7 @@ def _settle_cancel() -> None:
     if _ev is not None:
         _ev.settle(Outcome.CANCELLED)
 
-# 计划自身 ref 的判定（P2-6 / recovery P2）：plan-mode 计划以 ref:plan-* 存，
-# canonical 计划经别名 plan-current / plan-id:* 寻址。它们只代表"计划存在"，
-# 不代表会话有可复用的数据 —— session_has_refs 必须把它们排除，否则
-# "仅存了计划"的会话会被 ref_reuse 分类误判。
-_PLAN_REF_PREFIX = "ref:plan-"
-_PLAN_ALIAS_PREFIX = "plan-id:"
-_PLAN_CURRENT_ALIAS = "plan-current"
-
-
-def _has_non_plan_refs(refs: dict) -> bool:
-    """list_refs() 结果里是否存在非计划数据引用（ref:plan-* / plan 别名除外）。"""
-    from app.services.session_plan import is_session_plan_listing
-    for rid, alias in (refs or {}).items():
-        rid_s = str(rid)
-        alias_s = str(alias or "")
-        if rid_s.startswith(_PLAN_REF_PREFIX):
-            continue
-        if alias_s == _PLAN_CURRENT_ALIAS or alias_s.startswith(_PLAN_ALIAS_PREFIX):
-            continue
-        if is_session_plan_listing(rid_s, alias_s):
-            continue
-        return True
-    return False
+from app.services.chat.plan_ref_classification import _has_non_plan_refs
 
 
 #: F9/F28: 非流式工具波被抢占式取消时，未完成任务的结果槽用哨兵占位 ——
@@ -630,7 +611,7 @@ class ChatExecutionEngine:
             future = loop.run_in_executor(None, target_func, *(() if kwargs else args))
             future.add_done_callback(lambda f: (
                 logger.error(f"Background sync task failed: {f.exception()}")
-                if f.exception() else None
+                if not f.cancelled() and f.exception() else None
             ))
             _track_background_task(asyncio.wrap_future(future))  # F15
 
@@ -670,8 +651,8 @@ class ChatExecutionEngine:
             return None
 
     def get_session_owner_token(self, session_id: str) -> Optional[str]:
-        """取出并消费 session 的 owner_token（SEC-08）"""
-        return self._session_owner_tokens.pop(session_id, None)
+        """Return the session credential for each turn; eviction/clear releases it."""
+        return self._session_owner_tokens.get(session_id)
 
     async def _get_map_state_summary(self, session_id: str) -> str:
         return await _build_map_state_summary(session_id)
@@ -697,11 +678,21 @@ class ChatExecutionEngine:
                 tools_payload = json.dumps(tools, ensure_ascii=False)
             except (TypeError, ValueError):
                 tools_payload = None
+        org_id = None
+        if user_id and user_id.lower() not in {"anonymous", "anon"}:
+            from app.core.tenancy import effective_org_in_thread
+
+            live_org = await asyncio.to_thread(
+                effective_org_in_thread, {"user_id": user_id}
+            )
+            if live_org:
+                org_id = int(live_org)
         res = await self.context_assembler.assemble(
             session_id,
             messages,
             project_id=project_id,
             user_id=user_id,
+            org_id=org_id,
             tools_payload=tools_payload,
             # #436：子代理不继承父会话的活跃计划块（输出侧 #407 已隔离，这里
             # 切掉输入侧）。getattr 兜底：__new__ 构造的测试引擎无该属性。
@@ -1006,7 +997,7 @@ class ChatExecutionEngine:
                 title = title.strip()
 
             if title:
-                title = title.strip('"\'""''《》')
+                title = title.strip('"\'“”‘’《》「」')
                 if len(title) > 50:
                     title = first_user_message[:20].rstrip() + "..."
             if not title:
@@ -1234,15 +1225,19 @@ class ChatExecutionEngine:
         async def _observed_stream():
             timer = LatencyTimer()
             failure = None
+            completed = False
             try:
                 async for chunk in inner:
                     yield chunk
+                completed = True
             except Exception as exc:
                 failure = exc
                 raise
             finally:
                 # 流中断/截断异常按失败分类入健康表；正常耗尽按成功。
-                observe_outcome(decision, latency_s=timer.elapsed(), exc=failure)
+                if completed or failure is not None:
+                    observe_outcome(decision, latency_s=timer.elapsed(), exc=failure)
+                await inner.aclose()
 
         return _observed_stream()
 
@@ -1268,7 +1263,7 @@ class ChatExecutionEngine:
         """
         viewport_seq = map_state.get("viewport_seq")
         for k, v in map_state.items():
-            if k == "viewport_seq" or k == "layers":
+            if k not in {"viewport", "selected_feature", "selected_features", "selection", "visible_layers", "basemap", "base_layer", "user_location", "is3D", "time"}:
                 continue
             await session_data_manager.set_map_state(
                 session_id, k, v, seq=viewport_seq if k == "viewport" else None
@@ -1299,11 +1294,6 @@ class ChatExecutionEngine:
         _turn_task = _turn_reg.register_active_turn_task(self._active_turn_tasks, session_id)
         _entered_turn = False
         try:
-            if map_state:
-                await self._persist_map_state(session_id, map_state)
-                from app.services.viewport_naming import schedule_populate_from_map_state
-                schedule_populate_from_map_state(map_state)
-
             # RUN-03 (deep-audit round 2): serialize the whole turn per session.
             # The previous non-streaming chat() ran its tool loop with NO session
             # lock, so two concurrent requests on the same session_id interleaved
@@ -1358,6 +1348,10 @@ class ChatExecutionEngine:
 
             async with _post_lock_settle(), lock:
                 self._reject_if_clearing(session_id)
+                if map_state:
+                    await self._persist_map_state(session_id, map_state)
+                    from app.services.viewport_naming import schedule_populate_from_map_state
+                    schedule_populate_from_map_state(map_state)
                 # P1（deep-review）：拿到锁后夺回注册 —— 并发第二请求的早注册
                 # 不得掩盖正在运行的 turn（quiesce 必须等得到在跑者）。
                 _turn_reg.register_active_turn_task(self._active_turn_tasks, session_id)
@@ -1596,6 +1590,8 @@ class ChatExecutionEngine:
                     # audit4 #985: 非流式响应里的 usage 同样记账
                     _ev.add_llm_usage(response.get("usage"))
                 choice = (response.get("choices") or [{}])[0]
+                if choice.get("finish_reason") == "length":
+                    raise ProviderStreamTruncated("provider output exceeded its token budget; response is incomplete")
                 assistant_msg = choice.get("message", {})
 
                 raw_content = assistant_msg.get("content") or ""
@@ -2414,6 +2410,7 @@ class ChatExecutionEngine:
             async for event_type, event_data in _stream_with_token_keepalive(
                 self._call_llm_stream(messages_with_context, tools),
                 timeout_s=_LLM_TOKEN_KEEPALIVE_S,
+                cancel_token=task.cancel_token,
             ):
                 if event_type == "token":
                     if _ttft_ms is None:
@@ -2428,6 +2425,8 @@ class ChatExecutionEngine:
                     async for chunk in token_batcher.drain():
                         yield chunk
                 elif event_type == "done":
+                    if event_data.get("finish_reason") == "length":
+                        raise ProviderStreamTruncated("provider output exceeded its token budget; response is incomplete")
                     # 收尾：冲刷尾部 token，保证流式内容完整到达前端
                     for chunk in token_batcher.flush():
                         yield chunk
@@ -2441,6 +2440,15 @@ class ChatExecutionEngine:
                     # — heartbeat the wire so idle proxies don't kill
                     # the stream (same event the tool-wave wait uses).
                     yield sse_event("keep_alive", event_data)
+            # Cleanup awaits in the helper can race with a final DELETE.
+            if task.cancel_token is not None:
+                task.cancel_token.raise_if_cancelled()
+        except OperationCancelled:
+            for chunk in token_batcher.flush():
+                yield chunk
+            for event in ctx.cancelled_events(_settle_cancel, include_done=True):
+                yield event
+            return
         except Exception:
             # #409: mid-stream failure — flush the batched tokens
             # BEFORE the exception reaches the route (which yields
@@ -2821,6 +2829,7 @@ class ChatExecutionEngine:
                             failure_class=failure_class,
                             recovery_action=recovery_action,
                             error_class=error_class_for_tool_failure(failure_class),
+                            recovery=_recovery_from_outcome(outcome),
                         )
                         yield ctx.emitter.tool_result(tool_name, msg_result_str)
                     else:
@@ -2876,12 +2885,8 @@ class ChatExecutionEngine:
                         yield evt
                     # F9: 补齐孤儿 tool_call（已完成工具不在其列）
                     await self._repair_orphaned_tool_calls(session_id, ctx.messages)
-                    pf = ctx.plan_finalized_event()
-                    if pf:
-                        yield pf
-                    _settle_cancel()  # cooperative cancel ≠ success
-                    yield ctx.emitter.task_cancelled(task.id)
-                    ctx.turn_finished = True
+                    for event in ctx.cancelled_events(_settle_cancel):
+                        yield event
                     return
         finally:
             # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务。
@@ -3153,6 +3158,7 @@ class ChatExecutionEngine:
         # 已删除的 conversation；新的 turn 被干净地拒绝。标记在 finally 中、
         # 有界 quiesce 之后清除。
         self._clearing_sessions.add(session_id)
+        deleted = False
         try:
             # #750: publish cross-replica — in-flight turns on OTHER pods read
             # this marker and suppress their message writes for this session.
@@ -3194,7 +3200,7 @@ class ChatExecutionEngine:
                 # (pre-audit behavior); the eviction path keeps the full grace
                 # rule.
                 lock = self._session_locks.get(session_id)
-                if lock is not None and not lock.locked():
+                if lock is not None and not _lock_in_use(lock):
                     self._session_locks.pop(session_id, None)
                     self._session_lock_last_used.pop(session_id, None)
                 self._session_owner_tokens.pop(session_id, None)
@@ -3228,6 +3234,11 @@ class ChatExecutionEngine:
                         logger.warning(f"clear_session: catalog reset failed for {session_id}: {e}")
             return deleted
         finally:
+            if not deleted:
+                try:
+                    await session_data_manager.unset_session_clearing(session_id)
+                except Exception as exc:
+                    logger.warning("clear_session: clearing marker rollback failed: %s", exc)
             self._clearing_sessions.discard(session_id)
 
     def _detect_suspicious_result(self, result: Any) -> bool:

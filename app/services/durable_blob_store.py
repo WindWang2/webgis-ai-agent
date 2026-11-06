@@ -178,28 +178,30 @@ class BlobStore:
 
         key = safe_blob_key(key)
         src = _Path(path)
-        # 审查 B5：此前先流式算一遍 digest 却丢弃结果（死循环），再全量读。
-        return self.put_blob(key, src.read_bytes(), content_type)
+        # Byte-only third-party backends have an explicit materialization cap;
+        # the shipped filesystem/S3 backends override this with streaming I/O.
+        with src.open("rb") as source:
+            data = source.read(MAX_BLOB_READ_BYTES + 1)
+        if len(data) > MAX_BLOB_READ_BYTES:
+            raise BlobSizeExceeded(key, len(data))
+        return self.put_blob(key, data, content_type)
 
     def get_blob_stream(
         self, key: str, expected_sha256: Optional[str] = None, *,
         chunk_size: int = 1024 * 1024,
     ):
-        """blob → 字节迭代器（峰值内存 O(chunk_size)；digest 流式累计，
-        尾部判定 —— 不符抛 :class:`BlobDigestMismatch`）。"""
+        """blob → 字节迭代器（峰值内存 O(chunk_size)；发送首块前校验摘要，
+        不符拒绝 —— 不符抛 :class:`BlobDigestMismatch`）。"""
         import hashlib as _hashlib
 
         key = safe_blob_key(key)
         data = self.get_blob(key, expected_sha256=expected_sha256)
         if data is None:
             return
-        digest = _hashlib.sha256()
-        for i in range(0, len(data), chunk_size):
-            chunk = data[i:i + chunk_size]
-            digest.update(chunk)
-            yield chunk
-        if expected_sha256 and digest.hexdigest() != expected_sha256:
+        if expected_sha256 and _hashlib.sha256(data).hexdigest() != expected_sha256:
             raise BlobDigestMismatch(key)
+        for i in range(0, len(data), chunk_size):
+            yield data[i:i + chunk_size]
 
     def iter_objects(self, *, limit: int = 10_000):
         """有界对象枚举（元数据级；孤儿扫描/GC 的后端 parity 面）。
@@ -285,14 +287,12 @@ class FilesystemBlobStore(BlobStore):
             # 内容一致才按去重命中跳过；不符（磁盘损坏 / 外部覆写 / 外来内容
             # 占位）即原子重写 —— 绝不把坏字节当命中，也绝不去删别人的键。
             try:
-                existing = path.read_bytes()
+                existing_size = path.stat().st_size
+                existing_digest = self._digest_of(path)
             except OSError:
-                existing = None
-            existing_digest = (
-                sha256_of_bytes(existing) if existing is not None else None
-            )
-            if (existing is not None
-                    and len(existing) == len(data)
+                existing_size, existing_digest = None, None
+            if (existing_size is not None
+                    and existing_size == len(data)
                     and existing_digest == sha256_of_bytes(data)):
                 _touch_dedup_hit(path)
                 return PutResult(put_new=False, location=location)
@@ -423,20 +423,27 @@ class FilesystemBlobStore(BlobStore):
         self, key: str, expected_sha256: Optional[str] = None, *,
         chunk_size: int = 1024 * 1024,
     ):
-        """blob → 字节迭代器（真流式；digest 流式累计，尾部判定）。"""
+        """blob → 字节迭代器（真流式；校验完成后才从有界内存/磁盘 spool 发送）。"""
         import hashlib as _hashlib
 
         key = safe_blob_key(key)
         path = self._first_existing(key)
         if path is None:
             return
-        hasher = _hashlib.sha256()
-        with path.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(chunk_size), b""):
-                hasher.update(chunk)
+        import tempfile
+        # Verified spool also prevents a source-file mutation between hash and
+        # send from leaking bytes that were never checked.
+        with tempfile.SpooledTemporaryFile(max_size=1024 * 1024) as verified:
+            hasher = _hashlib.sha256()
+            with path.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(chunk_size), b""):
+                    hasher.update(chunk)
+                    verified.write(chunk)
+            if expected_sha256 and hasher.hexdigest() != expected_sha256:
+                raise BlobDigestMismatch(key)
+            verified.seek(0)
+            for chunk in iter(lambda: verified.read(chunk_size), b""):
                 yield chunk
-        if expected_sha256 and hasher.hexdigest() != expected_sha256:
-            raise BlobDigestMismatch(key)
 
     @property
     def supports_enumeration(self) -> bool:

@@ -9,8 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import ijson
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile
-from urllib.parse import quote
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy import select, func, update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -116,6 +115,7 @@ async def upload_files(
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id", description="存在即视为请求 register_ref（值不作为会话来源——归属一律以已校验的 session_id 表单为准）"),
     _user: dict = Depends(get_current_user_optional_with_version),
+    request: Request = None,
 ):
     """
     上传 GIS 数据文件
@@ -126,6 +126,11 @@ async def upload_files(
 
     限制: 矢量文件 50MB, 栅格文件 200MB
     """
+    # This API defaults to deduplication, unlike an unchecked HTML checkbox.
+    # Newer FastAPI versions coerce absent boolean form fields to False.
+    if request is not None and "dedup" not in await request.form():
+        dedup = True
+
     if not files:
         raise HTTPException(status_code=400, detail="请选择至少一个文件")
 
@@ -139,6 +144,13 @@ async def upload_files(
             detail="session_id is required: uploads are scoped to a chat "
                    "session (ownership, dedup and listing all key on it)",
         )
+
+    # Check authority before reading, hashing, writing or parsing any upload.
+    async with async_db_session() as db:
+        await verify_session_owner(db, session_id, user_id=_user.get("user_id"), owner_token=owner_token)
+
+    from app.api.upload_budget import enforce_upload_budget
+    await enforce_upload_budget(session_id, request)
 
     # 只处理第一个文件（多文件上传可扩展）。V4：丢弃的文件必须如实披露，
     # 不再静默吞掉（审计 R8 —— 数据丢失形状的事实必须可见）。
@@ -302,9 +314,9 @@ async def upload_files(
                             select(Conversation).where(Conversation.id == session_id)
                         )
                     ).scalar_one_or_none()
-                    # Same rules as get_session / materialize: missing row is a
-                    # first-turn write; an existing row needs user_id or SEC-08 token.
-                    if not authorize_session_write(
+                    # Recheck under the write boundary: a deleted conversation
+                    # must not become a new unowned namespace mid-upload.
+                    if conv is None or not authorize_session_write(
                         conv, _user.get("user_id"), owner_token
                     ):
                         raise HTTPException(status_code=404, detail="Session not found")
@@ -317,6 +329,7 @@ async def upload_files(
                             .where(
                                 UploadRecord.session_id == session_id,
                                 UploadRecord.content_sha256 == content_sha256,
+                                UploadRecord.crs == meta.get("crs"),
                             )
                             .order_by(UploadRecord.upload_time.desc())
                             .limit(1)
@@ -470,6 +483,14 @@ async def upload_files(
             if lane_out.get("duplicate") and session_ref:
                 warnings.append(f"会话中已存在相同内容的数据引用，复用 {session_ref}")
 
+    if session_ref:
+        from app.services.upload_refs import persist_upload_ref_binding
+        try:
+            await persist_upload_ref_binding(Path(record.filename), meta, session_id, session_ref)
+        except (OSError, ValueError):
+            logger.error("upload ref binding persistence failed", exc_info=True)
+            raise HTTPException(status_code=503, detail="上传引用登记未完成，请重试")
+
     return UploadResponse(
         id=record.id,
         original_name=record.original_name,
@@ -603,13 +624,9 @@ async def _run_raster_ingest_lane(
     out["duplicate"] = bool(result.get("duplicate"))
     out["warnings"] = list(result.get("warnings") or [])
     if receipt_dump is not None:
-        # 发布 URL 内嵌会话鉴权参数（评审 P2：消费方照抄即用；匿名会话
-        # 由 owner_token 头补 token query —— 与 /sessions/{sid}/raster 同语义）。
-        # A9（评审）：query 值 URL 编码 —— session_id 客户端可控，原样插值
-        # 在含 &/#/空格时截断/破坏 URL。
-        auth_qs = f"?session_id={quote(str(session_id), safe='')}"
-        if owner_token:
-            auth_qs += f"&token={quote(str(owner_token), safe='')}"
+        # Publish a short-lived, ref-bound capability; never embed the owner credential.
+        from app.core.signing import signed_terrain_query
+        auth_qs = signed_terrain_query(session_id, str(result.get("ref_id") or ""))
         out["terrain"] = {
             "qualification": receipt_dump.get("qualification"),
             "reasons": [
@@ -793,6 +810,12 @@ async def delete_upload(
         )
 
         file_path = Path(record.filename)
+        from app.services.upload_refs import clear_upload_refs
+        try:
+            await clear_upload_refs(record.session_id, file_path, record.file_type)
+        except Exception as exc:
+            logger.warning("upload ref cleanup failed", exc_info=True)
+            raise HTTPException(status_code=503, detail="上传引用清理失败，请重试") from exc
         await db.delete(record)
 
     # File cleanup AFTER DB commit succeeds

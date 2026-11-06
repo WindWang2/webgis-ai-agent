@@ -17,13 +17,14 @@ providers/skills…）、命名空间化投影名、持久化认证报告状态
 from __future__ import annotations
 
 from typing import Any
+from pathlib import Path
 
 from .diagnostics import DiagnosticCode
 from .discovery import CERTIFICATION_FILENAME
 from .host import ExtensionHost, ExtensionRecord
 
 
-def certification_status_for(record: ExtensionRecord) -> dict[str, Any]:
+def certification_status_for(record: ExtensionRecord, *, mode: str = "evidence", key_file: Path | None = None) -> dict[str, Any]:
     """单包认证报告状态（只读；evidence 模式指纹校验，不验 HMAC）。"""
     from .capability_certification import load_certification_report
 
@@ -31,7 +32,7 @@ def certification_status_for(record: ExtensionRecord) -> dict[str, Any]:
     if record.fingerprint is None:
         base.update(state="invalid", detail="pack fingerprint unavailable")
         return base
-    report, diag = load_certification_report(record.path, record.fingerprint, mode="evidence")
+    report, diag = load_certification_report(record.path, record.fingerprint, mode=mode, hmac_key_file=key_file)
     if report is not None:
         base.update(
             state="valid",
@@ -61,7 +62,7 @@ def _extension_entry(host: ExtensionHost, record: ExtensionRecord) -> dict[str, 
         "trust": record.trust.value,
         "description": manifest.description,
         "execution_mode": manifest.execution.mode if manifest.execution else "in_process",
-        "certification": certification_status_for(record),
+        "certification": certification_status_for(record, mode=host._policy.certification_trust, key_file=host._policy.certification_key),
         "surface": {
             "tools": [
                 {

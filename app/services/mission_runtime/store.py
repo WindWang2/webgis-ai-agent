@@ -112,8 +112,12 @@ def _row_to_record(row: GISMissionRow) -> C.MissionRecord:
 class MissionStore:
     """Durable Mission ledger (injectable session factory for hermetic tests)."""
 
-    def __init__(self, factory: Optional[Callable] = None) -> None:
+    def __init__(self, factory: Optional[Callable] = None, *, clock: Optional[Callable[[], datetime]] = None) -> None:
         self._factory = factory
+        self._clock = clock
+
+    def _now(self) -> datetime:
+        return self._clock() if self._clock is not None else _utcnow()
 
     def _sf(self):
         if self._factory is not None:
@@ -136,7 +140,7 @@ class MissionStore:
         mission_id: Optional[str] = None,
     ) -> C.MissionRecord:
         mid = mission_id or new_mission_id()
-        now = _utcnow()
+        now = self._now()
         refs: Dict[str, List[str]] = {
             "active_session_ids": [session_id] if session_id else [],
             "session_plan_refs": [],
@@ -237,7 +241,7 @@ class MissionStore:
         New acquire (different owner or expired) bumps ``lease_epoch``.
         Same owner renew does **not** bump epoch (heartbeat).
         """
-        now = _utcnow()
+        now = self._now()
         expires = now + timedelta(seconds=max(1.0, float(ttl_s)))
         owner_tok = str(owner or "")[:128]
         if not owner_tok:
@@ -257,9 +261,7 @@ class MissionStore:
                 same = (row.lease_owner or "") == owner_tok
                 if held > now and not same:
                     return None
-                new_epoch = int(row.lease_epoch or 0)
-                if not same:
-                    new_epoch += 1
+                new_epoch = int(row.lease_epoch or 0) + 1
                 updated = db.execute(
                     sa.update(GISMissionRow)
                     .where(
@@ -292,7 +294,7 @@ class MissionStore:
         ttl_s: float = DEFAULT_LEASE_TTL_S,
     ) -> bool:
         """Extend lease only if owner+epoch still match (fencing)."""
-        now = _utcnow()
+        now = self._now()
         expires = now + timedelta(seconds=max(1.0, float(ttl_s)))
         try:
             with self._sf() as db:
@@ -329,7 +331,7 @@ class MissionStore:
                     .values(
                         lease_owner=None,
                         lease_expires_at=None,
-                        updated_at=_utcnow(),
+                        updated_at=self._now(),
                     )
                 )
                 db.commit()
@@ -352,7 +354,7 @@ class MissionStore:
     ) -> C.MissionRecord:
         """State transition under fencing + optional revision CAS."""
         dest = C.MissionState(to_state)
-        now = _utcnow()
+        now = self._now()
         # #1407: empty owner must never fence-match an unleased row.
         if not str(owner or "").strip():
             raise FencingError("EMPTY_LEASE_OWNER")
@@ -424,7 +426,7 @@ class MissionStore:
         expected_revision: Optional[int] = None,
     ) -> C.MissionRecord:
         """Fenced field patch (refs/frontier/budget/goal)."""
-        now = _utcnow()
+        now = self._now()
         try:
             with self._sf() as db:
                 row = db.query(GISMissionRow).filter(
@@ -527,7 +529,7 @@ class MissionStore:
                             "last_checkpoint_at": cp.created_at,
                         },
                         revision=int(rec.revision) + 1,
-                        updated_at=_utcnow(),
+                        updated_at=self._now(),
                     )
                 )
                 if not updated.rowcount:
@@ -541,7 +543,7 @@ class MissionStore:
                     goal_revision=cp.goal_revision,
                     state=cp.state,
                     snapshot=snap,
-                    created_at=_utcnow(),
+                    created_at=self._now(),
                 ))
                 # prune ring
                 rows = (
@@ -603,7 +605,7 @@ class MissionStore:
         swarm_run_id: Optional[str] = None,
     ) -> C.SwarmRunDurable:
         sid = swarm_run_id or new_swarm_run_id()
-        now = _utcnow()
+        now = self._now()
         task_map = dict(tasks or {})
         if len(task_map) > C.MAX_SWARM_TASKS:
             # deterministic truncate by sorted key
@@ -704,7 +706,7 @@ class MissionStore:
         swarm_run_id: str,
         receipt: C.SwarmTaskReceipt,
     ) -> C.SwarmRunDurable:
-        now = _utcnow()
+        now = self._now()
         try:
             with self._sf() as db:
                 row = db.query(GISMissionSwarmRunRow).filter(

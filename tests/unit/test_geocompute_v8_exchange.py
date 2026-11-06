@@ -47,17 +47,17 @@ class TestExchangeCore:
     def test_put_get_roundtrip_raw_and_zlib(self, ex):
         exchange, _ = ex
         data = json.dumps({"features": [{"a": i} for i in range(100)]}).encode()
-        handle = exchange.put_bytes(data, kind="spill")
+        handle = exchange.put_bytes(data, kind="spill", owner_scope="test-owner")
         assert handle.codec == "zlib"  # 可压缩载荷默认 zlib
         assert handle.size_bytes == len(data)
-        assert exchange.get_bytes(handle) == data
+        assert exchange.get_bytes(handle, owner_scope="test-owner") == data
 
     def test_put_if_absent_content_addressed(self, ex):
         """同内容两次 put → 同一键（全局去重），存储只有一份字节。"""
         exchange, factory = ex
         data = b"hello geocompute v8"
-        h1 = exchange.put_bytes(data, run_id="r1", kind="spill")
-        h2 = exchange.put_bytes(data, run_id="r2", kind="spill")
+        h1 = exchange.put_bytes(data, run_id="r1", kind="spill", owner_scope="test-owner")
+        h2 = exchange.put_bytes(data, run_id="r2", kind="spill", owner_scope="test-owner")
         assert h1.key == h2.key
         from app.models.db_model import GeoComputeArtifact
 
@@ -72,28 +72,28 @@ class TestExchangeCore:
         monkeypatch.setattr(ex_mod, "MAX_COMPRESS_BYTES", 10)
         exchange, _ = ex
         data = b"12345678901234567890"  # > 10B 钳制
-        handle = exchange.put_bytes(data)
+        handle = exchange.put_bytes(data, owner_scope="test-owner")
         assert handle.codec == "raw"
-        assert exchange.get_bytes(handle) == data
+        assert exchange.get_bytes(handle, owner_scope="test-owner") == data
 
     def test_get_missing_fails_typed(self, ex):
         exchange, _ = ex
         handle = SpillHandle(key="0" * 64, size_bytes=3, codec="raw")
         with pytest.raises(RuntimeError, match="unreadable"):
-            exchange.get_bytes(handle)
+            exchange.get_bytes(handle, owner_scope="test-owner")
 
     def test_size_mismatch_fails(self, ex):
         exchange, _ = ex
         data = b"abc"
-        handle = exchange.put_bytes(data)
+        handle = exchange.put_bytes(data, owner_scope="test-owner")
         bad = SpillHandle(key=handle.key, size_bytes=99, codec="raw")
         with pytest.raises(RuntimeError, match="size mismatch|unreadable"):
-            exchange.get_bytes(bad)
+            exchange.get_bytes(bad, owner_scope="test-owner")
 
     def test_cleanup_expired(self, ex):
         exchange, factory = ex
         data = b"transient payload"
-        handle = exchange.put_bytes(data)
+        handle = exchange.put_bytes(data, owner_scope="test-owner")
         # 强制过期（expires_at < now）
         from datetime import datetime, timezone
 
@@ -113,7 +113,7 @@ class TestExchangeCore:
         assert removed == 1
         # blob 字节已删：读回失败（类型化）
         with pytest.raises(RuntimeError):
-            exchange.get_bytes(handle)
+            exchange.get_bytes(handle, owner_scope="test-owner")
 
 
 class TestDisabledExchange:
@@ -123,7 +123,7 @@ class TestDisabledExchange:
         assert exchange.enabled is False
         assert exchange.cleanup_expired() == 0
         with pytest.raises(RuntimeError, match="not enabled"):
-            exchange.put_bytes(b"x")
+            exchange.put_bytes(b"x", owner_scope="test-owner")
 
     def test_singleton_respects_env(self, monkeypatch, tmp_path):
         monkeypatch.setenv("WEBGIS_EXCHANGE_ROOT", str(tmp_path / "x"))
@@ -217,3 +217,42 @@ class TestNodeResultStoreSpill:
         # 直接删 blob（绕过 exchange 元数据）
         store._exchange._store.delete_blob(stub_info["key"])
         assert store.get("k") is None
+
+
+def test_exchange_owner_acl_and_scoped_dedup(ex):
+    exchange, _ = ex
+    first = exchange.put_bytes(b"same", owner_scope="owner-a")
+    second = exchange.put_bytes(b"same", owner_scope="owner-b")
+    assert first.key != second.key
+    assert exchange.get_bytes(first, owner_scope="owner-a") == b"same"
+    with pytest.raises(PermissionError):
+        exchange.get_bytes(first, owner_scope="owner-b")
+    with pytest.raises(PermissionError):
+        exchange.get_bytes(first)
+
+
+def test_exchange_bounded_decompression_and_logical_digest(ex):
+    import zlib
+    exchange, _ = ex
+    handle = exchange.put_bytes(b"tiny", owner_scope="owner-a")
+    exchange._store.put_blob(handle.key, zlib.compress(b"x" * 2_000_000), content_type="binary")
+    with pytest.raises(RuntimeError, match="decompression"):
+        exchange.get_bytes(handle, owner_scope="owner-a")
+    raw = exchange.put_bytes(b"abc", owner_scope="owner-a", compress=False)
+    exchange._store.put_blob(raw.key, b"xyz", content_type="binary")
+    with pytest.raises(RuntimeError, match="digest"):
+        exchange.get_bytes(raw, owner_scope="owner-a")
+
+
+def test_exchange_run_organization_is_part_of_authorization(ex):
+    from app.models.db_model import GeoComputeClusterRun
+    exchange, factory = ex
+    with factory() as db:
+        for run_id, org_id in [('org-run-a','org-a'),('org-run-b','org-b')]:
+            db.add(GeoComputeClusterRun(run_id=run_id, owner_scope='shared-owner', org_id=org_id,
+                status='queued', plan_snapshot={}, plan_fingerprint='p'))
+        db.commit()
+    handle = exchange.put_bytes(b'organization-a-data', owner_scope='shared-owner', run_id='org-run-a')
+    assert exchange.get_bytes(handle, owner_scope='shared-owner', run_id='org-run-a') == b'organization-a-data'
+    with pytest.raises(PermissionError):
+        exchange.get_bytes(handle, owner_scope='shared-owner', run_id='org-run-b')

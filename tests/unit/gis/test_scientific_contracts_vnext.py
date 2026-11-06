@@ -131,7 +131,7 @@ class TestCRSSafety:
         assert not crs_class_allows("PROJECTED_REQUIRED", "geographic")
         assert not crs_class_allows("LOCAL_METRIC_REQUIRED", "geographic")
         # 3857 是投影但不是局部度量
-        assert crs_class_allows("PROJECTED_REQUIRED", "projected")
+        assert not crs_class_allows("PROJECTED_REQUIRED", "projected")  # generic projections may be feet/3857
         assert not crs_class_allows("LOCAL_METRIC_REQUIRED", "projected")
         assert crs_class_allows("LOCAL_METRIC_REQUIRED", "projected_local_metric")
         # 地理 OK / GEODESIC / AGNOSTIC 全放行；unknown 永远放行

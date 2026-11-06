@@ -9,17 +9,17 @@
  * 使用此模块替代直接 console.* 调用。
  */
 
-const IS_DEV = process.env.NODE_ENV === "development";
+const isDev = () => process.env.NODE_ENV === "development";
 
 export const devOnly = {
   log: (...args: unknown[]) => {
-    if (IS_DEV) console.log(...args);
+    if (isDev()) console.log(...args);
   },
   warn: (...args: unknown[]) => {
-    if (IS_DEV) console.warn(...args);
+    if (isDev()) console.warn(...args);
   },
   error: (...args: unknown[]) => {
-    if (IS_DEV) console.error(...args);
+    if (isDev()) console.error(...args);
   },
 };
 
@@ -28,7 +28,7 @@ export const devOnly = {
  * Use this for user-facing errors where the user should see something.
  */
 export const safeError = (...args: unknown[]) => {
-  if (IS_DEV) {
+  if (isDev()) {
     console.error(...args);
   } else {
     // Production: log generic message without internal details

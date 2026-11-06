@@ -6,6 +6,8 @@ v1 标量基线保持兼容（退回旧"仅总量"判定）。词法屏蔽器把
 """
 import ast
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +19,108 @@ from scripts import debt_ratchet  # noqa: E402
 
 def _parse(src: str) -> ast.Module:
     return ast.parse(src)
+
+
+def _assert_cli_check_passes(root: Path, baseline: Path) -> None:
+    # The scanner reads source text rather than executing app code. Do not let
+    # inherited coverage startup hooks trace its stdlib AST walks again.
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("COV_CORE_")
+        and key not in {"COVERAGE_PROCESS_START", "COVERAGE_PROCESS_CONFIG"}
+    }
+    try:
+        result = subprocess.run(
+            [sys.executable, str(debt_ratchet.REPO_ROOT / "scripts" / "debt_ratchet.py"),
+             "check", "--root", str(root), "--baseline", str(baseline)],
+            cwd=debt_ratchet.REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=150,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"debt ratchet CLI timed out after {exc.timeout}s\n"
+            f"stdout: {exc.stdout!r}\nstderr: {exc.stderr!r}")
+    assert result.returncode == 0, (
+        f"debt ratchet CLI exited {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+    assert "debt ratchet OK" in result.stdout
+
+
+class TestFileDiscovery:
+    @pytest.mark.parametrize("subdir,suffixes", [
+        ("frontend", (".ts", ".tsx")),
+        ("app", (".py",)),
+        ("scripts", (".py",)),
+        ("tests", (".py",)),
+    ])
+    def test_preserves_included_paths(self, tmp_path, subdir, suffixes):
+        base = tmp_path / subdir
+        for directory in ("src", "buildings", "distances", "node_modules_like",
+                          *debt_ratchet._FRONTEND_EXCLUDE):
+            target = base / directory
+            target.mkdir(parents=True)
+            (target / f"source{suffixes[0]}").write_text("", encoding="utf-8")
+        (base / "src" / "next-env.d.ts").write_text("", encoding="utf-8")
+        (base / "ignored.txt").write_text("", encoding="utf-8")
+        # Preserve rglob's treatment of suffix-bearing directories.
+        (base / f"directory{suffixes[0]}").mkdir()
+        expected = sorted(
+            path for path in base.rglob("*")
+            if path.suffix in suffixes
+            and not any(part in debt_ratchet._FRONTEND_EXCLUDE for part in path.parts)
+        )
+
+        assert debt_ratchet._iter_files(tmp_path, subdir, suffixes) == expected
+        assert base / "node_modules_like" / f"source{suffixes[0]}" in expected
+
+    def test_preserves_symlinks_without_descending_into_them(self, tmp_path):
+        base = tmp_path / "frontend"
+        (base / "src").mkdir(parents=True)
+        source = base / "src" / "source.ts"
+        source.write_text("", encoding="utf-8")
+        linked_file = base / "linked_file.ts"
+        linked_directory = base / "linked_directory.ts"
+        try:
+            linked_file.symlink_to(source)
+            linked_directory.symlink_to(base / "src", target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"test environment cannot create symlinks: {exc}")
+
+        assert debt_ratchet._iter_files(tmp_path, "frontend", (".ts",)) == sorted(
+            [linked_file, linked_directory, source])
+
+    def test_excluded_subtrees_are_not_visited(self, tmp_path, monkeypatch):
+        base = tmp_path / "frontend"
+        for directory in debt_ratchet._FRONTEND_EXCLUDE:
+            target = base / "src" / directory / "nested"
+            target.mkdir(parents=True)
+            (target / "hidden.ts").write_text("", encoding="utf-8")
+        included = base / "src" / "included.ts"
+        included.write_text("", encoding="utf-8")
+        visited = []
+        original_scandir = debt_ratchet.os.scandir
+
+        def record_scandir(path):
+            visited.append(Path(path))
+            return original_scandir(path)
+
+        monkeypatch.setattr(debt_ratchet.os, "scandir", record_scandir)
+
+        assert debt_ratchet._iter_files(tmp_path, "frontend", (".ts",)) == [included]
+        assert visited == [base, base / "src"]
+
+    def test_missing_tree_is_empty(self, tmp_path):
+        assert debt_ratchet._iter_files(tmp_path, "frontend", (".ts",)) == []
+
+    def test_excluded_ancestor_is_empty(self, tmp_path):
+        root = tmp_path / "build"
+        (root / "app").mkdir(parents=True)
+        (root / "app" / "source.py").write_text("", encoding="utf-8")
+        assert debt_ratchet._iter_files(root, "app", (".py",)) == []
 
 
 class TestSilentHandlerDetection:
@@ -150,6 +254,9 @@ class TestCheckGate:
         assert debt_ratchet.check() == 2
 
     def test_zero_baseline_fails_on_any_debt(self, monkeypatch, tmp_path):
+        # Exercise the real scanner on a bounded fixture. Scanning the entire
+        # application again under coverage can exhaust the xdist worker budget.
+        _make_tree(tmp_path)
         bp = tmp_path / "baseline.json"
         bp.write_text(json.dumps({
             "frontend_explicit_any": 0,
@@ -159,14 +266,54 @@ class TestCheckGate:
             "unannotated_defs_pct": 0,
         }), encoding="utf-8")
         monkeypatch.setattr(debt_ratchet, "BASELINE_PATH", bp)
-        assert debt_ratchet.check() == 1
+        assert debt_ratchet.check(bp, tmp_path) == 1
 
     def test_checked_in_baseline_passes(self):
         """入库基线与当前代码一致时 check 必须绿。"""
         assert debt_ratchet.BASELINE_PATH.is_file()
-        assert debt_ratchet.check() == 0
+        # Run the complete real scan through its CLI. It reads source text, not
+        # application code; tracing its AST walks in an app-coverage worker adds
+        # no application coverage and can exhaust the 180-second test budget.
+        # Bound the child below that budget so a stalled scan reports a failure
+        # instead of terminating the xdist worker.
+        _assert_cli_check_passes(debt_ratchet.REPO_ROOT, debt_ratchet.BASELINE_PATH)
 
-    def test_new_god_module_fails(self, monkeypatch, tmp_path):
+    def test_cli_propagates_real_gate_failure(self, tmp_path):
+        baseline = _make_tree(tmp_path)
+        baseline["frontend_explicit_any"] = {}
+        bp = _write_baseline(tmp_path, baseline)
+
+        with pytest.raises(AssertionError, match="debt ratchet CLI exited 1") as exc:
+            _assert_cli_check_passes(tmp_path, bp)
+        assert "debt ratchet FAILED" in str(exc.value)
+        assert "frontend_explicit_any" in str(exc.value)
+
+    def test_cli_timeout_reports_output_and_removes_coverage_hooks(self, monkeypatch):
+        for key in ("COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE",
+                    "COVERAGE_PROCESS_START", "COVERAGE_PROCESS_CONFIG"):
+            monkeypatch.setenv(key, "inherited-instrumentation")
+        monkeypatch.setenv("DEBT_SCANNER_TEST_KEEP", "preserved")
+
+        def timed_out(command, **kwargs):
+            assert kwargs["timeout"] == 150
+            assert kwargs["capture_output"] is True
+            assert kwargs["env"]["DEBT_SCANNER_TEST_KEEP"] == "preserved"
+            assert not any(key.startswith("COV_CORE_") for key in kwargs["env"])
+            assert "COVERAGE_PROCESS_START" not in kwargs["env"]
+            assert "COVERAGE_PROCESS_CONFIG" not in kwargs["env"]
+            raise subprocess.TimeoutExpired(
+                command, kwargs["timeout"], output=b"scan progress", stderr=b"scan diagnostic")
+
+        monkeypatch.setattr(subprocess, "run", timed_out)
+        with pytest.raises(pytest.fail.Exception, match="timed out after 150s") as exc:
+            _assert_cli_check_passes(debt_ratchet.REPO_ROOT, debt_ratchet.BASELINE_PATH)
+        assert "scan progress" in str(exc.value)
+        assert "scan diagnostic" in str(exc.value)
+
+    def test_new_god_module_fails(self, monkeypatch, tmp_path, capsys):
+        _make_tree(tmp_path)
+        (tmp_path / "app" / "oversized.py").write_text(
+            "pass\n" * (debt_ratchet.GOD_MODULE_LINES + 1), encoding="utf-8")
         bp = tmp_path / "baseline.json"
         bp.write_text(json.dumps({
             "frontend_explicit_any": 999999,
@@ -176,8 +323,8 @@ class TestCheckGate:
             "unannotated_defs_pct": 99.0,
         }), encoding="utf-8")
         monkeypatch.setattr(debt_ratchet, "BASELINE_PATH", bp)
-        # 基线没有 god_modules 条目 → 当前所有 >2000 行文件都算 NEW
-        assert debt_ratchet.check() == 1
+        assert debt_ratchet.check(bp, tmp_path) == 1
+        assert "god_modules: NEW" in capsys.readouterr().out
 
 
 # ------------------------------------------------------- v2 颗粒化（G14）

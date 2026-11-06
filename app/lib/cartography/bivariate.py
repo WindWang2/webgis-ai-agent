@@ -165,13 +165,14 @@ def compute_bivariate_classes(
 def bivariate_class_colors(matrix: str, n: int = 3) -> List[str]:
     """取 n×n 色阵的行主序颜色表。
 
-    库存矩阵按 3×3 行主序存储；n<3 时取**左上 n×n 子阵**（行/列独立
-    截取 —— 保持轴语义：前 n 行 × 前 n 列），不是前 n² 个元素的平铺
-    截断（那会混入越轴颜色，双变量两轴失义）。n=4 需矩阵本身 16 色。
+    库存矩阵按 3×3 行主序存储；n=2 时取四角，保留两轴低/高端语义。
+    n=4 需矩阵本身 16 色。
     """
     colors = BIVARIATE_MATRICES.get(matrix)
     if colors is None:
         raise ValueError(f"未知双变量色阵: {matrix}")
+    if n == 2:
+        return [colors[index] for index in (0, 2, 6, 8)]
     if n > 3:
         if len(colors) < n * n:
             raise ValueError(f"色阵 {matrix} 不足以支撑 n={n}")

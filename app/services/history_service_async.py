@@ -147,7 +147,9 @@ class AsyncHistoryService(HistoryStoreProtocol):
         """
         # get_or_create 确保行存在（建行或取回同一行）；消息在下面的
         # selectinload 查询中一并取回，返回值无需使用。
-        await self.get_or_create_conversation(session_id, user_id=user_id)
+        # Hold the freshly issued transport credential through SQLAlchemy's
+        # weak identity map until the message load has returned the same row.
+        _created_conversation = await self.get_or_create_conversation(session_id, user_id=user_id)
         # #731: windowed tail load — truncation used to happen AFTER hydrating
         # the WHOLE conversation (a 200-message session moved ~1-2 MB of rows
         # per turn). Load the newest _HISTORY_WINDOW messages; fall back to
@@ -214,14 +216,20 @@ class AsyncHistoryService(HistoryStoreProtocol):
         internal_ok: bool = False,
     ) -> HistoryContext:
         """Deep seam method: load conversation, validate SEC-08 owner_token, and format LLM messages."""
-        self._internal_load_ok = internal_ok
         if self.db is not None:
             conv = await self._get_or_create_with_messages(session_id, user_id=user_id)
         else:
             async with async_db_session() as db:
                 svc = AsyncHistoryService(db)
-                svc._internal_load_ok = internal_ok
                 conv = await svc._get_or_create_with_messages(session_id, user_id=user_id)
+
+        if conv.user_id is not None and (
+            (user_id is not None and str(user_id) != str(conv.user_id))
+            or (user_id is None and not internal_ok)
+        ):
+            logger.warning("History context ownership mismatch for session %s", session_id)
+            return HistoryContext(session_id=session_id, owner_token=None, user_id=None,
+                llm_messages=[], raw_conversation=None)
 
         # #618-12: owner_token 失配按 SEC-08 契约 fail-closed，与 _authorize
         # 的语义一致（「否则视为不存在」）—— 不得 warning 后仍返回全量消息
@@ -236,7 +244,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
         if (
             conv.user_id is None
             and conv.owner_token is None
-            and not self._internal_load_ok
+            and not internal_ok
         ):
             logger.warning(
                 "Legacy NULL/NULL session %s — returning empty context (#1109 fail-closed)",
@@ -252,7 +260,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
         if (
             conv.user_id is None
             and conv.owner_token is not None
-            and (owner_token or not self._internal_load_ok)
+            and (owner_token or not internal_ok)
         ):
             # #1711: 非 ASCII token 经 owner_token_matches fail-closed
             # （compare_digest 对非 ASCII str 直接 TypeError → 500）。
@@ -287,7 +295,10 @@ class AsyncHistoryService(HistoryStoreProtocol):
 
         return HistoryContext(
             session_id=session_id,
-            owner_token=conv.owner_token,
+            owner_token=(
+                getattr(conv, "_issued_owner_token", None)
+                or owner_token
+            ) if conv.user_id is None else None,
             user_id=conv.user_id,
             llm_messages=llm_messages,
             raw_conversation=conv,
@@ -391,7 +402,8 @@ class AsyncHistoryService(HistoryStoreProtocol):
         import anyio
         owner = None if _is_anonymous(user_id) else user_id
         # SEC-08：新建匿名会话时生成 owner_token。认证会话（owner 非空）不需要。
-        # token 写入 owner_token 列；调用方通过 conv.owner_token 读取并回传给前端。
+        # SQL bind stores only a digest; the creating request receives the
+        # one-time raw value through _issued_owner_token.
         new_owner_token = secrets.token_urlsafe(32) if owner is None else None
         for attempt in range(3):
             try:
@@ -428,7 +440,9 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 # 提交后重新 SELECT：返回事务收敛后的行（并发 cap 驱逐等状态的
                 # 最新视图）。同样不加载 messages —— 需要消息的调用方显式补载。
                 result = await self.db.execute(stmt)
-                return result.scalar_one(), True
+                created_conversation = result.scalar_one()
+                setattr(created_conversation, "_issued_owner_token", new_owner_token)
+                return created_conversation, True
             except Exception as e:
                 # SEC-10 (deep-audit round 3): two concurrent first-messages for
                 # the same session both see "absent", both INSERT, and the loser
@@ -442,9 +456,12 @@ class AsyncHistoryService(HistoryStoreProtocol):
                     isinstance(e, Exception) and "integrityerror" in str(type(e).__name__).lower()
                 )
                 is_locked = "locked" in str(e).lower()
+                # A denied admission follows flush but precedes commit. Do
+                # not leave the rejected row available to a caller's later
+                # commit; rollback is required for non-retryable errors too.
+                await self.db.rollback()
                 if (is_conflict or is_locked) and attempt < 2:
                     await anyio.sleep(0.1 * (attempt + 1))
-                    await self.db.rollback()
                     continue
                 raise
 
@@ -509,6 +526,16 @@ class AsyncHistoryService(HistoryStoreProtocol):
         result = await self.db.execute(stmt)
         return result.scalars().all()
 
+    async def count_sessions(self, user_id: Optional[str] = None) -> int:
+        """Count the same owner-only scope used by list_sessions."""
+        if _is_anonymous(user_id):
+            return 0
+        return int((await self.db.execute(
+            select(func.count()).select_from(Conversation).where(
+                Conversation.user_id == user_id
+            )
+        )).scalar_one())
+
     @staticmethod
     def _authorize(
         conv: Optional[Conversation],
@@ -555,10 +582,17 @@ class AsyncHistoryService(HistoryStoreProtocol):
         owner_token: Optional[str] = None,
     ) -> Optional[Conversation]:
         """带所有权检查的会话取回（含消息集合，用于需要完整历史的调用方）。"""
-        stmt = select(Conversation).where(Conversation.id == session_id).options(selectinload(Conversation.messages))
+        stmt = select(Conversation).where(Conversation.id == session_id)
         result = await self.db.execute(stmt)
-        conv = result.scalar_one_or_none()
-        return self._authorize(conv, user_id, owner_token)
+        conv = self._authorize(result.scalar_one_or_none(), user_id, owner_token)
+        if conv is None:
+            return None
+        messages = (await self.db.execute(select(Message).where(
+            Message.conversation_id == session_id).order_by(Message.id.desc()).limit(1001))).scalars().all()
+        from sqlalchemy.orm.attributes import set_committed_value
+        conv.history_truncated = len(messages) > 1000
+        set_committed_value(conv, "messages", list(reversed(messages[:1000])))
+        return conv
 
     async def get_session_meta(
         self,
@@ -641,6 +675,16 @@ class AsyncHistoryService(HistoryStoreProtocol):
         clear_session 协议清理这些会话）。删除仍在当前事务内，与新建行原子
         生效；失败回滚时驱逐也一并回滚，不会发生"行还在、缓存已清"的撕裂。
         """
+        if user_id is None:
+            # New anonymous tokens are distinct capabilities, so enforce an
+            # admission cap across the anonymous population without evicting
+            # another anonymous owner's still-valid history.
+            total_anonymous = (await self.db.execute(select(func.count()).select_from(Conversation).where(
+                Conversation.user_id.is_(None)
+            ))).scalar_one()
+            if total_anonymous > MAX_SESSIONS:
+                from app.core.errors import PlatformError, ErrorCategory
+                raise PlatformError("anonymous session capacity exhausted", category=ErrorCategory.QUOTA)
         if user_id is not None:
             bucket = Conversation.user_id == user_id
         elif owner_token:

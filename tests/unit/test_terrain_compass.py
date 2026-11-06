@@ -183,9 +183,8 @@ async def test_stac_cell_size_applies_cos_lat_to_east_west(monkeypatch, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_stac_projected_dem_has_no_cos_lat_correction(monkeypatch, tmp_path):
-    """Projected (UTM) DEMs are already in metres on both axes — no x
-    correction and no cell_size_x_m key."""
+async def test_stac_projected_dem_reports_reprojected_grid_spacing(monkeypatch, tmp_path):
+    """Physical spacing follows the actual WGS84 overlay pixel grid."""
     from rasterio.crs import CRS
     from rasterio.warp import transform_bounds
     from app.services.rs.stac_client import StacClientPrimitive, stac_primitive
@@ -208,5 +207,12 @@ async def test_stac_projected_dem_has_no_cos_lat_correction(monkeypatch, tmp_pat
         ds_factor=1,
     )
     assert "error" not in res, res.get("error")
-    assert res["cell_size_m"] == pytest.approx(30.0)
-    assert "cell_size_x_m" not in res
+    import rasterio
+    from rasterio.vrt import WarpedVRT
+    from rasterio.enums import Resampling
+    with rasterio.open(dem_path) as source, WarpedVRT(source, crs="EPSG:4326", resampling=Resampling.bilinear) as warped:
+        expected_y = abs(warped.transform.e) * 111320.0
+        latitude = (res["bounds"][1] + res["bounds"][3]) / 2
+        expected_x = abs(warped.transform.a) * 111320.0 * abs(math.cos(math.radians(latitude)))
+    assert res["cell_size_m"] == pytest.approx(expected_y)
+    assert res["cell_size_x_m"] == pytest.approx(expected_x)

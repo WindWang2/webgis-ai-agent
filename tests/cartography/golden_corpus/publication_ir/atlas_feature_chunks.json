@@ -38,6 +38,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "1-2"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,
@@ -135,6 +138,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "time_window": null,
         "title": "1-2"
       },
       {
@@ -170,6 +174,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "3-4"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,
@@ -267,6 +274,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "time_window": null,
         "title": "3-4"
       }
     ]

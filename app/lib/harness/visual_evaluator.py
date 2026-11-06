@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from app.lib.harness.result_contracts import GoalSatisfaction, VisualCritiqueRecord, VisualJudgeSummary
+
 logger = logging.getLogger(__name__)
 
 #: 视觉裁判维度（P2 最低集）。评审判据输出之外的维度一律丢弃（严格白名单）。
@@ -102,7 +104,7 @@ class VisualCritique:
     confidence: Optional[float] = None
     evidence: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> VisualCritiqueRecord:
         return {
             "dimension": self.dimension,
             "severity": self.severity,
@@ -134,7 +136,7 @@ class VisualJudgeReport:
     def error_count(self) -> int:
         return sum(1 for c in self.critiques if c.severity == "error")
 
-    def to_summary(self) -> Dict[str, Any]:
+    def to_summary(self) -> VisualJudgeSummary:
         """有界摘要（进 ``CartographicReviewEvidence.visual_evidence``）。"""
         return {
             "evidence_class": "visual",
@@ -293,12 +295,9 @@ _JUDGE_SYSTEM_PROMPT = (
 
 def _resolve_vlm_config() -> Tuple[str, str, str]:
     """(base_url, api_key, model)。键缺失返回占位符空串由调用方 fail-closed。"""
-    from app.core.config import settings
-
-    base_url = _env("CARTO_VISUAL_JUDGE_BASE_URL") or settings.LLM_BASE_URL
-    api_key = _env("CARTO_VISUAL_JUDGE_API_KEY") or settings.LLM_API_KEY
-    model = _env("CARTO_VISUAL_JUDGE_MODEL") or settings.LLM_MODEL
-    return base_url, api_key, model
+    from app.lib.harness.visual_judge.vlm_provider import resolve_provider_config
+    config = resolve_provider_config()
+    return config["base_url"], config["api_key"], config["model"]
 
 
 def _is_placeholder_key(api_key: str) -> bool:
@@ -382,13 +381,17 @@ def _find_screenshot_path(
     if not fingerprint:
         return None
     for call in reversed(list(results_by_id.values())):
-        result = call.get("result") if isinstance(call.get("result"), dict) else {}
+        result_raw = call.get("result")
+        result = result_raw if isinstance(result_raw, dict) else {}
         if result.get("mapspec_fingerprint") != fingerprint:
             continue
         runtime_dir = str(result.get(_RUNTIME_DIR_KEY) or "")
         if not runtime_dir:
             continue
-        candidate = Path(runtime_dir) / _SCREENSHOT_NAME
+        from app.services.mapspec.store import BASE_STORAGE_DIR
+        candidate = (Path(runtime_dir) / _SCREENSHOT_NAME).resolve()
+        if not candidate.is_relative_to(BASE_STORAGE_DIR.resolve()):
+            continue
         if candidate.is_file():
             return candidate
     return None
@@ -559,7 +562,7 @@ async def attach_visual_judgement(
         report.reason = "provider_error"
     finally:
         report.duration_ms = int((time.monotonic() - start) * 1000)
-    if digest:
+    if digest and report.status == "evaluated":
         _memo_put(memo_key, report)
     _apply_report(cartography, report)
 
@@ -628,7 +631,7 @@ def _apply_report(cartography, report: VisualJudgeReport) -> None:
 
 # ── L5 推导（P3） ────────────────────────────────────────────────────────
 
-def derive_goal_satisfaction(cartography) -> Dict[str, Any]:
+def derive_goal_satisfaction(cartography) -> GoalSatisfaction:
     """从可信制图证据推导 L5 ``goal_satisfaction``（fail-closed）。
 
     - 无已评估的视觉结论 ⇒ ``not_evaluated``（携带机器可读原因）；

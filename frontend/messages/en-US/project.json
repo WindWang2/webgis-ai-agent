@@ -206,7 +206,8 @@
     "cloneTitle": "Pointer clone (zero-copy)",
     "copied": "Copied",
     "copyRef": "Copy reference",
-    "locationSuffix": " · location {location}"
+    "locationSuffix": " · location {location}",
+    "loadedFilters": "Type filters and sorting apply to loaded artifacts. Load more to see remaining items."
   },
   "snapshot": {
     "restorable": "Restorable",
@@ -252,7 +253,8 @@
     "opsNone": "(none)",
     "opsEmpty": "No operations",
     "repairDone": "Repair complete: {ops} · {before}→{after} features",
-    "repairedRefSuffix": " · repaired ref {ref}"
+    "repairedRefSuffix": " · repaired ref {ref}",
+    "sampleOnly": "Audited a sample of {count}/{total} features. Full data was not audited; full-dataset repair is disabled."
   },
   "preview": {
     "loadFailed": "Failed to load preview",

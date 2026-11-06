@@ -78,14 +78,21 @@ def test_g1_disclosure_survives_local_chain(gd_env, monkeypatch):
     from app.services.local_first import try_local_osm_poi
     from app.core.config import settings as _settings
 
-    # 单元隔离：开关显式打开；行政边界库不在本 fixture 内，bbox 直接给定
+    # Seed an actual authoritative polygon; a coarse bbox is deliberately
+    # insufficient to claim an administrative-boundary spatial predicate.
     monkeypatch.setattr(_settings, "LOCAL_QUERY_FIRST", True, raising=False)
     monkeypatch.setattr(lf, "admin_bbox_wgs84", lambda area: (103.9, 30.5, 104.7, 30.8))
+    from shapely.geometry import box
+    monkeypatch.setattr(lf, "resolve_local_admin", lambda area, **kwargs: box(103.9, 30.5, 104.7, 30.8))
 
     result = try_local_osm_poi("成都市", "小学", limit=6)
     assert result is not None
     assert result["count"] == 6
-    assert result.get("total_matched") == 24
+    assert "total_matched" not in result  # bbox candidates are not an exact polygon total
+    assert result.get("candidate_total_matched") == 24
+    assert result.get("candidate_count") == 24
+    assert result.get("count_basis") == "bounded_spatial_candidate_window"
+    assert result.get("spatial_filter_applied") == "polygon"
     assert result.get("truncated") is True
 
 

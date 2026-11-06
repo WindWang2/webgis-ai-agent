@@ -69,13 +69,21 @@ const EMPTY_PATCH: SpecPatch = { sources: [], layers: [] };
  * leak into a later reconcile, whose success clears it).
  */
 let lastDiffFailed = false;
+const failedPatches = new WeakSet<SpecPatch>();
+const workerFailureHandlers = new WeakMap<Worker, Set<() => void>>();
 
 /**
  * FIX-3-6: read and clear the failed-diff flag atomically. Used by
  * MapSpecRuntime.applyPatchDebounced to detect a worker-failure empty patch;
  * exported for the runtime test suite as well.
  */
-export function consumeDiffLastFailed(): boolean {
+export function consumeDiffLastFailed(patch?: SpecPatch): boolean {
+  if (patch) {
+    const failed = failedPatches.has(patch);
+    failedPatches.delete(patch);
+    lastDiffFailed = false;
+    return failed;
+  }
   const v = lastDiffFailed;
   lastDiffFailed = false;
   return v;
@@ -146,7 +154,7 @@ let inlineTokenCache: WeakMap<object, number> = new WeakMap();
 // a same-reference FC that is mutated would keep its stale token and diff as
 // "no change". The adapter honors this by emitting `inlineData: layer.source`
 // unchanged across reconciles.
-let lastInlineDataBySource: Map<string, { data: object; token: number }> = new Map();
+let lastInlineDataBySource: Map<string, { data: object; token: number; revision?: number }> = new Map();
 
 /**
  * FE-3: max entries in the per-source inline-data registry. Evicted sources
@@ -165,7 +173,7 @@ export function _inlineTokenRegistrySizeForTests(): number {
  * Return a stable identity token for an inlineData payload. Two payloads that
  * should be considered "the same data" yield the same number.
  */
-function inlineIdentityToken(sourceId: string, data: object): number {
+function inlineIdentityToken(sourceId: string, data: object, revision?: number): number {
   // 1. Same reference → cached token (fast path; the overwhelmingly common
   //    case because the adapter reuses `layer.source` by reference).
   const cached = inlineTokenCache.get(data);
@@ -174,7 +182,7 @@ function inlineIdentityToken(sourceId: string, data: object): number {
   // 2. New reference — is it deep-equal to the last payload for this source?
   //    If so, reuse the existing token so the diff still reports "no change".
   const last = lastInlineDataBySource.get(sourceId);
-  if (last && isDeepEqualInline(last.data, data)) {
+  if (last && last.revision === revision && isDeepEqualInline(last.data, data)) {
     inlineTokenCache.set(data, last.token);
     return last.token;
   }
@@ -182,7 +190,7 @@ function inlineIdentityToken(sourceId: string, data: object): number {
   // 3. Genuinely new data → fresh monotonic token, registry FIFO-bounded.
   const token = ++inlineTokenSeq;
   inlineTokenCache.set(data, token);
-  lastInlineDataBySource.set(sourceId, { data, token });
+  lastInlineDataBySource.set(sourceId, { data, token, revision });
   if (lastInlineDataBySource.size > INLINE_TOKEN_CACHE_MAX) {
     const oldest = lastInlineDataBySource.keys().next().value;
     if (oldest !== undefined) lastInlineDataBySource.delete(oldest);
@@ -295,11 +303,9 @@ function stripInlineForTransfer(spec: MapSpec | null): MapSpec | null {
     const s = sources[id];
     const geo = s as GeoJSONMapSpecSource;
     if (geo.type === "geojson" && geo.inlineData && typeof geo.inlineData === "object") {
-      const token = inlineIdentityToken(id, geo.inlineData as object);
+      const token = inlineIdentityToken(id, geo.inlineData as object, geo.content_revision);
       strippedSources[id] = {
-        type: "geojson",
-        ...(geo.dataPath !== undefined ? { dataPath: geo.dataPath } : {}),
-        ...(geo.url !== undefined ? { url: geo.url } : {}),
+        ...geo,
         inlineData: { __inlineToken: token } as any,
       } as MapSpecSource;
     }
@@ -307,10 +313,8 @@ function stripInlineForTransfer(spec: MapSpec | null): MapSpec | null {
     if (ras.type === "raster" && typeof ras.imageRef === "string") {
       const token = imageRefIdentityToken(ras.imageRef);
       strippedSources[id] = {
-        type: "raster",
+        ...ras,
         imageRef: { __inlineToken: token } as any,
-        bounds: ras.bounds,
-        ...(ras.imageSize !== undefined ? { imageSize: ras.imageSize } : {}),
       } as MapSpecSource;
     }
   }
@@ -443,6 +447,8 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
     const id = `diff-${++nextRequestId}`;
 
     let settled = false;
+    const failures = workerFailureHandlers.get(worker) ?? new Set<() => void>();
+    workerFailureHandlers.set(worker, failures);
 
     /**
      * Settle the request exactly once. Decrement the active request count;
@@ -460,14 +466,14 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
       lastDiffFailed = isErrorResponse || patch === EMPTY_PATCH;
       clearTimeout(timer);
       worker.removeEventListener("message", onMessage);
-      worker.onerror = null;
-      worker.onmessageerror = null;
-      workerWithOnexit.onexit = null;
+      failures.delete(onError);
       activeRequestsCount = Math.max(0, activeRequestsCount - 1);
       if (activeRequestsCount === 0 && sharedWorker === worker) {
         scheduleIdleTermination(worker);
       }
-      resolve(rehydratePatch(patch, prev, next));
+      const result = lastDiffFailed ? { sources: [], layers: [] } : rehydratePatch(patch, prev, next);
+      if (lastDiffFailed) failedPatches.add(result);
+      resolve(result);
     };
 
     const onMessage = (event: MessageEvent<DiffResponse>) => {
@@ -499,19 +505,15 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
       try { dead.terminate(); } catch { /* already gone */ }
       if (sharedWorker === dead) sharedWorker = null;
     };
-    worker.onerror = (_e: unknown) => {
+    const onError = () => {
       killDeadWorker();
       finish(EMPTY_PATCH);
     };
-    // Structured-clone / deserialization failure of the response.
-    worker.onmessageerror = () => {
-      killDeadWorker();
-      finish(EMPTY_PATCH);
-    };
-    // Explicit non-zero exit without a response.
-    workerWithOnexit.onexit = (event) => {
-      if (event.code !== 0) { killDeadWorker(); finish(EMPTY_PATCH); }
-    };
+    failures.add(onError);
+    const failPending = () => { for (const fail of Array.from(failures)) fail(); };
+    worker.onerror = failPending;
+    worker.onmessageerror = failPending;
+    workerWithOnexit.onexit = (event) => { if (event.code !== 0) failPending(); };
 
     // All settle paths fire asynchronously, so `timer` is always assigned
     // before `finish` can run.

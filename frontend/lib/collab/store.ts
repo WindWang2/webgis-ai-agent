@@ -20,6 +20,7 @@ export interface CollabState {
   participants: CollabParticipant[];
   /** 当前会话的编辑租约（服务端快照）。 */
   leases: CollabLeaseInfo[];
+  leasesUncertain?: boolean;
   /** 远端操作 journal（跨浏览器；有界 200）。 */
   remoteOps: CollabOpEntry[];
   /** 降级（无总线）：正确性不受影响，UI 显式披露。 */
@@ -113,8 +114,10 @@ export function collabApplyPresenceAction(action: string, raw: unknown): void {
   }
 }
 
+export function collabSetLeaseUncertainty(leasesUncertain: boolean): void { patch({ leasesUncertain }); }
+
 export function collabSetLeases(leases: CollabLeaseInfo[]): void {
-  patch({ leases: leases.slice(0, 64) });
+  patch({ leases: leases.slice(0, 64), leasesUncertain: false });
 }
 
 export function collabPushRemoteOp(entry: CollabOpEntry): void {
@@ -152,6 +155,7 @@ export function collabResetForSession(): void {
     clientId: null,
     participants: [],
     leases: [],
+    leasesUncertain: false,
     remoteOps: [],
     degraded: false,
     conflict: null,

@@ -57,6 +57,54 @@ env:
   PYTHON_VERSION: '3.12'
 
 jobs:
+  docker-build-smoke:
+    name: Independent Production Image Build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Detect image inputs
+        id: inputs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --quiet "$BASE_SHA" HEAD -- Dockerfile Dockerfile.prod requirements.txt requirements.lock pyproject.toml frontend vendor; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        if: steps.inputs.outputs.changed == 'true'
+      - name: Build runner without waiting for test lanes
+        if: steps.inputs.outputs.changed == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          file: Dockerfile.prod
+          target: runner
+          push: false
+          cache-from: type=gha,scope=docker-smoke
+          cache-to: type=gha,mode=max,scope=docker-smoke
+
+  compose-config:
+    name: Validate Compose Configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Validate dev stack and optional source mounts
+        env:
+          DB_PASSWORD: compose-validation-only
+          REDIS_PASSWORD: compose-validation-only
+        run: |
+          touch .env
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+
   # ============ Stage 1: 代码质量检查 ============
   lint:
     name: Code Quality Check
@@ -174,7 +222,7 @@ jobs:
   # ============ Stage 2: 单元测试 ============
   # 2026-10-23：单 job 全量跑已在 110 分钟预算上撞墙（零测试失败，纯跑不完；
   # G01–G05 合并后用例量增长推过临界）。按下方注释夙愿落地 sharding：
-  # 6 个并行 shard 按目录切分 tests/，各自独立跑 + 独立覆盖率。分支保护要求
+  # 6 个并行 shard 按目录切分 tests/，原始覆盖率在聚合闸合并。分支保护要求
   # 的 "Backend Tests" 上下文名由聚合 job（test-backend-gate）复现，因此
   # required-check 名单无需改动；任一 shard 失败即 gate 失败。
   # 切分原则（目录即语义域，互不共享模块级 fixture 的跨目录副作用），
@@ -226,7 +274,7 @@ jobs:
         # requirements.txt:120）经 -r 链锁-constrained 进入，无需在此重复
         # 显式安装。#1734：本 lane 无 Postgres service（跑 SQLite，TC-10），
         # 显式 psycopg2-binary 的唯一理由随容器删除一起消失。
-        run: pip install -c requirements.lock -r requirements-dev.txt httpx
+        run: pip install -c requirements.lock -r requirements-dev.txt httpx coverage==7.17.1
 
       - name: Install pnpm
         # test_mapspec_store 编译走 frontend/lib/mapspec-compiler（jiti 运行时）。
@@ -262,6 +310,7 @@ jobs:
           echo "ADS_FORCE_OFFLINE=1" >> $GITHUB_ENV
 
       - name: Run Tests with Coverage
+        id: backend-tests
         # #564：旧注释宣称"现实基线 ~10%"是失真的 —— 本地全量实测
         # （master bb09e8c + 本批修复后）TOTAL 82.16%（37299 stmts）。闸值
         # 10 因此是装饰性的（任何覆盖率都能绿）。按 ratchet 模式设为 75：
@@ -303,75 +352,107 @@ jobs:
         # 改为 pytest-xdist（requirements-dev 已含）-n auto --dist loadfile
         # （同文件用例同 worker，保留模块级 fixture 语义），-rfE 输出失败/错误
         # 摘要替代逐条 -v。coverage 由 pytest-cov 跨 worker 合并。
-        # 2026-10-23 sharding：按 matrix.shard 选目标集（见 job 头部注释的
-        # 切分原则）。--cov-fail-under 只在 shard 2 上执行：单片的覆盖率天然
-        # 低于全量 82%（分片只跑部分代码），对其他 shard 设 75 闸会假红。
-        # 全量覆盖率由 codecov 跨 shard 合并体现，75 闸的语义由 shard 2 +
-        # codecov 合并报表共同承担。
+        # 单片覆盖率不代表全量。六片原始数据在 test-backend-gate 合并，
+        # 再对完整 app 分母执行同一个 75% 门禁，不能用非阻断 Codecov 代替。
         # marker 排除（not perf/cartography/real_services）在各 shard 统一生效。
         run: |
-          # unit 的 21 个子目录显式列举（避免 tests/unit/*/ 把 __pycache__ 等
+          # unit 的 22 个子目录显式列举（避免 tests/unit/*/ 把 __pycache__ 等
           # 非测试目录也传进 pytest 命令行）。新增子目录时必须同步此列表 ——
-          # tests/test_ci_local_gate_contract.py 不校验本列表，漏加会静默
-          # 少跑，故改动时须同时跑一次 tests/unit --co 核对总数。
+          # tests/test_ci_backend_coverage_aggregation.py 对全 tests/ 的测试
+          # 文件清单校验无遗漏、无重叠，新增目录漏分片会直接报错。
           case "${{ matrix.shard }}" in
             1) TARGETS="tests/test_*.py tests/data tests/quality" ;;
-            2) TARGETS="tests/unit/ads5_golden tests/unit/agent_swarm tests/unit/api_contract tests/unit/capability_runtime tests/unit/cockpit tests/unit/context_assembly tests/unit/core tests/unit/dataset_semantics tests/unit/evaluation tests/unit/extensions_platform tests/unit/gis tests/unit/gis_context tests/unit/gis_harness tests/unit/gis_tool_conformance tests/unit/lib tests/unit/mission_runtime tests/unit/modelops tests/unit/spatial_events tests/unit/tools tests/unit/turn_journal tests/unit/workflow_runtime" ;;
+            2) TARGETS="tests/unit/ads5_golden tests/unit/agent_swarm tests/unit/api_contract tests/unit/capability_runtime tests/unit/cockpit tests/unit/context_assembly tests/unit/core tests/unit/dataset_semantics tests/unit/evaluation tests/unit/extensions_platform tests/unit/feature_edit tests/unit/gis tests/unit/gis_context tests/unit/gis_harness tests/unit/gis_tool_conformance tests/unit/lib tests/unit/mission_runtime tests/unit/modelops tests/unit/spatial_events tests/unit/tools tests/unit/turn_journal tests/unit/workflow_runtime" ;;
             3) TARGETS="tests/unit/test_*.py" ;;
             4) TARGETS="tests/cartography tests/harness_replay tests/integration tests/acceptance" ;;
             5) TARGETS="tests/benchmarks tests/perf" ;;
             6) TARGETS="tests/governor tests/jobs tests/lab tests/review tests/science_oracles" ;;
           esac
-          EXTRA=""
-          if [ "${{ matrix.shard }}" = "2" ]; then EXTRA="--cov-fail-under=75"; fi
-          pytest -n auto --dist loadfile --cov=app --cov-report=xml --cov-report=term-missing $EXTRA --timeout=180 --timeout-method=thread -m "not perf and not cartography and not real_services" -q -rfE $TARGETS
+          pytest -n auto --dist loadfile --cov=app --cov-report=xml --cov-report=term-missing --timeout=180 --timeout-method=thread -m "not perf and not cartography and not real_services" -q -rfE $TARGETS
 
-      - name: Upload Coverage Report
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          files: ./coverage.xml
-          fail_ci_if_error: false
+      - name: Record Coverage Shard
+        if: always()
+        env:
+          SHARD: ${{ matrix.shard }}
+          TEST_OUTCOME: ${{ steps.backend-tests.outcome }}
+        run: python scripts/combine_backend_coverage.py record --shard "$SHARD" --commit "$GITHUB_SHA" --test-outcome "$TEST_OUTCOME" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
 
-      - name: Upload Coverage XML
+      - name: Upload Coverage Data
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: coverage-report-${{ matrix.shard }}
-          path: coverage.xml
+          name: backend-coverage-${{ matrix.shard }}
+          overwrite: true
+          path: |
+            .coverage
+            coverage-manifest.json
+            coverage.xml
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
   # 2026-10-23 sharding 聚合闸：分支保护要求的 "Backend Tests" 上下文名由本
   # job 复现（matrix 产生的上下文名形如 "Backend Tests (1)"，与 protection
-  # 名单里的 "Backend Tests" 不匹配）。无 step，只做 needs 聚合 —— 任一 shard
-  # 失败/取消/跳过即整体失败，杜绝把分片失败或漏跑伪装成通过的缺口。
+  # 名单里的 "Backend Tests" 不匹配）。needs 按 job ID 提供 matrix 的整体结果，
+  # 不是六个独立结果；仅 success 放行，失败/取消/跳过及缺失结果均阻断。
   # if: always() 不可省：needs 的上游 job 失败时本 job 默认会被跳过，那样
-  # required check 会因"未上报"而永久 pending。
+  # required check 可能因 skipped 被视为通过，而没有实际验证 shard 结果。
   test-backend-gate:
     name: Backend Tests
     runs-on: ubuntu-latest
     # 治理不变量（tests/test_ci_workflow_governance_contract.py）：所有 job
-    # 必须有正的 timeout-minutes。本 job 只跑 shell 断言，10 分钟绰绰有余，
+    # 必须有正的 timeout-minutes。本 job 只合并已有数据，10 分钟绰绰有余，
     # 但绝不能省 —— 缺值即治理测试红。
     timeout-minutes: 10
     needs: [test-backend]
     if: always()
     steps:
       - name: Aggregate shard results
+        env:
+          BACKEND_RESULT: ${{ needs.test-backend.result }}
         run: |
-          results="${{ join(needs.*.result, ',') }}"
-          echo "shard results: ${results}"
-          expected=6
-          actual=$(echo "${results}" | tr ',' '\n' | grep -c .)
-          if [ "${actual}" -ne "${expected}" ]; then
-            echo "shard 数量不符：期望 ${expected}，实得 ${actual}"
+          echo "Backend Tests matrix result: ${BACKEND_RESULT}"
+          if [ "${BACKEND_RESULT}" != "success" ]; then
+            echo "Backend Tests matrix 未全部通过"
             exit 1
           fi
-          case "${results}" in
-            *failure*|*cancelled*|*skipped*)
-              echo "至少一个 Backend Tests shard 未通过"
-              exit 1
-              ;;
-          esac
-          echo "全部 ${expected} 个 shard 通过"
+          echo "全部 Backend Tests shard 通过"
+
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Coverage
+        run: pip install -c requirements.lock coverage==7.17.1
+
+      - name: Download Coverage Data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: backend-coverage-*
+          path: coverage-shards
+
+      - name: Enforce Combined Backend Coverage
+        run: python scripts/combine_backend_coverage.py combine --artifacts-dir coverage-shards --shards 1 2 3 4 5 6 --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --fail-under 75
+
+      - name: Upload Combined Coverage XML
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: coverage-report-backend
+          overwrite: true
+          path: coverage.xml
+          if-no-files-found: warn
           retention-days: 7
+
+      - name: Upload Coverage Report
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
 
   # ============ Stage 2a: 迁移链对真实 PostGIS 的执行门 (#476) ============
   # 之前所有测试从全新 create_all 起步 —— 迁移链从未在真实 Postgres 上执行过
@@ -411,6 +492,16 @@ jobs:
         # requirements.txt 自带 alembic + sqlalchemy + psycopg2-binary；
         # dev 依赖只需要 pytest（drift check 用）。
         run: pip install -c requirements.lock -r requirements.txt pytest pytest-cov
+
+      - name: Bootstrap fresh PostGIS through production entrypoint
+        # PostGIS 自带 extension 表：必须通过真实入口探测，再跑完整迁移链。
+        # 只运行 alembic 会漏掉将扩展表误判成 legacy 的启动拒绝。
+        env:
+          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_db
+          ADOPT_LEGACY_SCHEMA: 'false'
+          SKIP_DB_MIGRATIONS: 'false'
+          DB_MIGRATION_RETRIES: '1'
+        run: sh deploy/docker-entrypoint.sh true
 
       - name: Run Alembic Upgrade Head against PostGIS
         env:
@@ -651,7 +742,7 @@ jobs:
         # 进 PR。test_perf_harness_v2.py（event-loop lag）与
         # test_perf_mapspec_e2e.py（1k/10k/50k + lag monitor）保持 nightly
         # 专属，避免打满本 job 的 180s thread timeout。
-        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py tests/benchmarks/test_job_runtime_perf.py tests/benchmarks/test_provenance_perf.py tests/benchmarks/test_llm_http_pooling_perf.py tests/benchmarks/test_perf_mapspec_mutation_cost.py tests/benchmarks/test_dispatch_stall_perf.py tests/benchmarks/test_perf_large_workspace.py tests/benchmarks/test_data_control_plane_v5.py tests/perf/test_runtime_v2_perf_contracts.py tests/benchmarks/test_gis_registry_perf.py tests/benchmarks/test_template_registry_perf.py tests/benchmarks/test_planner_runtime_perf.py tests/benchmarks/test_pi_perf.py tests/benchmarks/test_data_runtime_v2_perf.py tests/benchmarks/test_geobench_v3.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
+        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py tests/benchmarks/test_job_runtime_perf.py tests/benchmarks/test_provenance_perf.py tests/benchmarks/test_llm_http_pooling_perf.py tests/benchmarks/test_perf_mapspec_mutation_cost.py tests/benchmarks/test_dispatch_stall_perf.py tests/benchmarks/test_perf_large_workspace.py tests/benchmarks/test_data_control_plane_v5.py tests/perf/test_runtime_v2_perf_contracts.py tests/benchmarks/test_gis_registry_perf.py tests/benchmarks/test_template_registry_perf.py tests/benchmarks/test_planner_runtime_perf.py tests/benchmarks/test_pi_perf.py tests/benchmarks/test_data_runtime_v2_perf.py tests/benchmarks/test_geobench_v3.py tests/benchmarks/test_quality_scenario_corpus_perf.py tests/benchmarks/test_network_closest_facility_perf.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
 
   # ============ Stage 2c: 制图 / Harness 闭环 smoke（确定性，release-blocking）============
   cartography-smoke:
@@ -841,7 +932,7 @@ jobs:
   # tests/conftest.py 的 QUALITY_ORDER_SEED 支持确定性 shuffle，但此前没有
   # 任何 CI lane 设置它（只在 scripts/quality_runner.py 的本地 profile 里）。
   # 顺序污染因此从未在门禁里现形。选择 nightly 而非 PR lane（成本)：固定
-  # seed 跑单元套件（tests/unit，SQLite + fakeredis，无需 PostGIS），失败可
+  # seed 跑完整后端套件（真实服务由独立 lane 负责），失败可
   # 用同 seed 精确重放（同 seed 顺序可复现）。2 个 seed 并行 matrix，
   # 单 leg 失败不掩盖另一 leg。
   order-randomization:
@@ -878,12 +969,12 @@ jobs:
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
           echo "ADS_FORCE_OFFLINE=1" >> $GITHUB_ENV
-      - name: Run unit suite under fixed shuffle seed
+      - name: Run backend suite under fixed shuffle seed
         # 与 test-backend 同款 marker 排除（perf/cartography/real_services
         # 由专属 lane 拥有），只是以固定 seed 打乱收集顺序。
         env:
           QUALITY_ORDER_SEED: ${{ matrix.seed }}
-        run: pytest tests/unit -m "not perf and not cartography and not real_services" --no-cov --timeout=180 --timeout-method=thread -q
+        run: pytest tests -m "not perf and not cartography and not real_services" --no-cov --timeout=180 --timeout-method=thread -q
 
   test-frontend:
     name: Frontend Tests
@@ -976,6 +1067,10 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate Redis production entrypoint
+        # 真 Redis 解析 + 认证检查：文本断言曾把第二个裸 conf 参数误认成 include。
+        run: sh deploy/smoke-redis-entrypoint.sh 'redis:7-alpine@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7'
 
       - name: Validate nginx config syntax (nginx -t)
         # E-F-1/E-F-7：SSE location 正则、keepalive map、超时配置都必须语法合法。
@@ -1078,20 +1173,13 @@ jobs:
         # diff 的红/绿会随 uv 升级漂移而无法归因。版本为 CI 当天
         # （2026-10-18）实测锁定。
         #
-        # #1754 维护者决策（2026-10-23，master 55731498 实测）：**保持响亮
-        # 失败，暂不重新生成 lock**。当前已知漂移 41 行，含两个 major 升级
-        # 与三个新传递依赖，属供应链决策而非机械刷新：
-        #   - huggingface-hub 1.33.0 → 2.2.0（major；sentence-transformers
-        #     的依赖，牵动 geoai 语义检索面）
-        #   - python-dateutil 2.9.0.post0 → 3.0.0（major）
-        #   - 新增 httpcore2 / httpx2 / truststore（huggingface-hub 2.x 传递）
-        #   - fastapi 0.156.8 → 0.161.0、sentence-transformers 6.1.0 → 6.2.0
-        #     等 minor/patch 升级
-        # 不重生成的理由：master 尚有存量红灯（Backend Tests 50 项），此刻
-        # 一次性升级几十个依赖会使新增失败与存量失败无法归因；须先清偿存量
-        # 红灯，再以独立 dependency 波次做升级评审 + real-services lane 全量
-        # 验证。因此本步的红是**已知且已登记的待刷新状态**，不是新回归 ——
-        # 读到红时先比对上述清单，清单外的新增漂移才是真信号。
+        # 2026-11-04：清偿 #1754 暂缓的刷新，按当前声明窗口重编译。
+        # 唯一新增兼容上界是 python-dateutil<3：pandas 2.3.3 无法处理
+        # dateutil 3/4 的 tzfile（pandas upstream #71459，真实 DST 回归见
+        # tests/test_dependency_runtime_compatibility.py）。不钉回旧版来藏漂移。
+        # 同文件还验证本地微型 BERT 的真实加载/编码/FAISS 路径，避免
+        # Hugging Face 2.x / Transformers / Torch 升级仅靠 mock 验证。
+        # freshness 仍从不存在的临时目标重新解析，任何后续漂移照常失败。
         run: |
           pip install uv==0.13.1
           uv pip compile requirements.txt -o /tmp/requirements.lock.fresh
@@ -1125,7 +1213,7 @@ jobs:
     # TEST-01：contract-gate（API 契约 / OpenAPI 快照 / api-docs drift /
     # schemathesis）与 perf-budget-gate（quality-e2e 的预算线）此前不在任何
     # 发布 DAG 上 —— master push 可在契约/预算红的情况下直达 deploy。
-    needs: [lint, test-backend-gate, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations, real-services-smoke, contract-gate, perf-budget-gate]
+    needs: [lint, compose-config, test-backend-gate, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations, real-services-smoke, contract-gate, perf-budget-gate]
     steps:
       - name: Release gate passed
         run: echo "All release-blocking checks (quality, backend, frontend, security, perf, cartography, contract, perf-budget) passed."
@@ -1301,15 +1389,12 @@ jobs:
           # 从 REDIS_PASSWORD 环境变量注入——即上面写入 .env.Priv 的随机口令，
           # 经 --env-file 传给容器。无需在此 sed 修改任何文件。
 
-          # nginx.conf 监听 443 端口并需要 /etc/nginx/ssl/server.crt 和
-          # .key 文件。deploy/nginx/ssl 目录并未被追踪（证书不属于仓库内容），
-          # 因此 docker 会自动将其创建为一个空目录，导致 nginx 启动失败。
-          # 为预览环境（仅限 localhost）生成一个自签名证书。
-          mkdir -p deploy/nginx/ssl
-          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-            -keyout deploy/nginx/ssl/server.key \
-            -out deploy/nginx/ssl/server.crt \
-            -subj "/CN=localhost" >/dev/null 2>&1
+          # Alertmanager 不展开环境变量，原始 URL 占位符会在加载配置时失败。
+          # 预览强制使用 .invalid 目标，不继承任何真实通知 webhook。
+          ALERT_WEBHOOK_URL='' sh deploy/render-alertmanager-config.sh /tmp/preview-alertmanager.yml
+          cp /tmp/preview-alertmanager.yml deploy/alertmanager.yml
+
+          # TLS scaffold 由 tls-init 在私有命名卷内生成；nginx 只读消费。
 
           # #520：compose 的 image: ${WEBGIS_IMAGE:-webgis-ai-agent:local} 必须解析到
           # 本步骤开头 docker load 出的 ghcr.io/<repo>:<sha> 镜像 —— 上面 sed 已把
@@ -1330,11 +1415,13 @@ jobs:
           # 预览栈在一次性 runner 上启动，无公网地址（PR 读者浏览器里的
           # localhost 指向读者本机）。真实验证：在 runner 上经 nginx 发布
           # 的端口探测——80 强制 301 到 443（自签名证书，curl 用 -k）；
-          # /health 是 nginx 自身端点，/api/v1/health/live 经反代到 api。
+          # /health 经反代到 API readiness，另探进程 live 与 Alertmanager ready。
           ok=0
           for i in $(seq 1 30); do
             if curl -sfk https://localhost/health >/dev/null 2>&1 && \
-               curl -sfk https://localhost/api/v1/health/live >/dev/null 2>&1; then
+               curl -sfk https://localhost/api/v1/health/live >/dev/null 2>&1 && \
+               curl -sf http://localhost:9093/-/ready >/dev/null 2>&1 && \
+               curl -sfk https://localhost/ >/dev/null 2>&1; then
               ok=1
               break
             fi
@@ -1347,9 +1434,13 @@ jobs:
             docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 api
             echo "--- nginx logs ---"
             docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 nginx
+            echo "--- TLS init logs ---"
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 tls-init
+            echo "--- alertmanager logs ---"
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 alertmanager
             exit 1
           fi
-          echo "preview stack healthy (nginx + api via https://localhost)"
+          echo "preview stack healthy (nginx + api via https://localhost + alertmanager)"
 
       - name: Comment Preview URL
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -1402,13 +1493,13 @@ jobs:
         run: echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Download Image Artifact
+        # SSH 只转传 tar，registry-only 分支不消费 artifact。不要在 runner
+        # 再 docker load：展开大型 Python/CUDA 层会耗尽磁盘，且无人消费。
+        if: vars.SSH_HOST != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webgis-image
           path: .
-
-      - name: Load Docker Image
-        run: docker load < webgis-image.tar
 
       - name: Login to Container Registry
         # 审计 CICD-01：deploy-prod 需要 registry 读权限以校验镜像可达（manifest inspect）
@@ -1456,7 +1547,9 @@ jobs:
           # redis 启动失败）。
           ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
-          scp deploy/redis.conf deploy/redis-entrypoint.sh ${{ vars.SSH_HOST }}:~/deploy/
+          scp deploy/redis.conf deploy/redis-entrypoint.sh deploy/generate_tls_scaffold.py ${{ vars.SSH_HOST }}:~/deploy/
+          # configs.file 是只读 bind；显式保证非 root appuser 可读公开脚本。
+          ssh ${{ vars.SSH_HOST }} 'chmod 644 ~/deploy/generate_tls_scaffold.py'
           # #530：prometheus 服务 bind-mount ./deploy/prometheus.yml 与
           # ./deploy/alerts-rules.json —— 不随部署送达主机时，Docker 把缺失的
           # 挂载源创建为空目录，prometheus 把目录当 config 加载即 crash-loop、
@@ -1474,13 +1567,15 @@ jobs:
           scp .env.Priv ${{ vars.SSH_HOST }}:~/.env.Priv.incoming
           ssh ${{ vars.SSH_HOST }} 'chmod 600 ~/.env.Priv.incoming && mv -f ~/.env.Priv.incoming ~/.env.Priv'
           scp webgis-image.tar ${{ vars.SSH_HOST }}:~/
+          scp deploy/maintenance-upgrade.sh ${{ vars.SSH_HOST }}:~/deploy/
 
           ssh ${{ vars.SSH_HOST }} << 'EOF'
+            set -eu
             docker load < ~/webgis-image.tar
             # redis requirepass 由容器 entrypoint 从环境注入，无需额外渲染；
             # 但 db/redis 的 ${DB_PWD:?...} / ${REDIS_PASSWORD:?...} 插值依赖
             # compose 从 --env-file 读到变量（默认 .env 指向普通开发文件）。
-            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
+            sh deploy/maintenance-upgrade.sh .env.Priv docker-compose.prod.secure.yml
             docker system prune -f
           EOF
 
@@ -1510,7 +1605,7 @@ jobs:
           # （依赖 DB/Redis/Celery/LLM，未就绪返回 503）而不是 /health/live
           # （只证明进程可响应）—— 否则部署带着坏依赖也报绿。
           if [ -n "${{ vars.SSH_HOST }}" ]; then
-            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready || exit 1'
+            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready && curl -sfk https://localhost/ >/dev/null'
           else
             echo "SSH_HOST 未配置，跳过远程健康检查"
           fi
@@ -1659,9 +1754,12 @@ jobs:
           # 回退构建路径（Fallback - Checkout Previous Version）检出的是 PREV_SHA，
           # 可能早于 redis.conf / redis-entrypoint.sh 的存在（本分支新增），且该
           # 路径的旧 compose 也不挂载 redis 配置——文件缺失时跳过 scp。
-          for f in deploy/redis.conf deploy/redis-entrypoint.sh; do
+          for f in deploy/redis.conf deploy/redis-entrypoint.sh deploy/generate_tls_scaffold.py; do
             [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
           done
+          if [ -f deploy/generate_tls_scaffold.py ]; then
+            ssh ${{ vars.SSH_HOST }} 'chmod 644 ~/deploy/generate_tls_scaffold.py'
+          fi
           # #530：与 deploy-prod 一致，prometheus 配置必须随回滚送达主机（否则
           # 空目录 bind-mount 让 prometheus crash-loop）。回退构建路径检出的
           # PREV_SHA 可能早于这些文件，同样用存在性守卫跳过。
@@ -1701,7 +1799,7 @@ jobs:
           # 同 deploy-prod：通过 SSH 在生产主机上验证。TEST-08：503-aware 的
           # /api/v1/ready（依赖未就绪即红），不再是只证明进程活着的 health/live。
           if [ -n "${{ vars.SSH_HOST }}" ]; then
-            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready'
+            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready && curl -sfk https://localhost/ >/dev/null'
           else
             echo "SSH_HOST 未配置，跳过远程健康检查"
           fi

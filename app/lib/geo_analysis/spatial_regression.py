@@ -900,9 +900,8 @@ def sar_ml_regression_narrated(
     pseudo_r2 = 1.0 - sse / ols["sse"] if ols["sse"] > 0 else 0.0
     # 条件渐近协方差（给定 ρ̂）：σ²(X_ρ'A'A X_ρ)⁻¹ 的对角，A = I − ρW。
     # 不含 ρ̂ 自身的估计不确定性（披露于 docstring），t/p 仅作参考量级。
-    a_x = x_mat - rho * (wm.matrix @ x_mat)
     se = np.sqrt(np.maximum(
-        np.diag(np.linalg.pinv(a_x.T @ a_x)) * sigma2, 0.0))
+        np.diag(np.linalg.pinv(x_mat.T @ x_mat)) * sigma2, 0.0))
     with np.errstate(divide="ignore", invalid="ignore"):
         t_vals = np.where(se > 0, beta / se, np.nan)
     p_vals = 2.0 * sps.t.sf(np.abs(t_vals),
@@ -1270,6 +1269,8 @@ def gwr_regression_narrated(
     gdf, y, x_raw, names = _regression_inputs(geojson, target_field, names_raw)
     x_mat, col_names = _design_matrix(x_raw, names)
     n, p = x_mat.shape
+    if n > 2000:
+        raise ResourceScaleMismatch("GWR exceeds 2000-observation solve budget; use spatial sampling", estimated=f"n={n}", limit="n<=2000")
     _check_min_samples(n, p)
     if float(np.ptp(y)) == 0.0:
         raise DegenerateData(

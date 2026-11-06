@@ -153,7 +153,7 @@ class TestCalibration:
         scenario = traces_to_scenario([trace])
         assert scenario.turns[0].expect, "候选期望应含 dispatch/decision/goal"
 
-        calibrated, receipt = await calibrate_recorded_scenario(scenario)
+        calibrated, receipt = await calibrate_recorded_scenario(scenario, allow_prune=True)
         kept = calibrated.turns[0].expect
         # dispatch pin（bare context 下 allowed 可复现）保留。
         call_id = calibrated.turns[0].ops[0].call_id
@@ -175,7 +175,7 @@ class TestCalibration:
         trace = _recorded_trace_with_dispatch(
             turn_id="eb-f", session_id="rs-eb-f", action="refused")
         scenario = traces_to_scenario([trace])
-        calibrated, receipt = await calibrate_recorded_scenario(scenario)
+        calibrated, receipt = await calibrate_recorded_scenario(scenario, allow_prune=True)
         turn = calibrated.turns[0]
         # 重放端 bare context 判 allowed → 录制的 refused pin 不可复现 → 裁。
         call_id = turn.ops[0].call_id
@@ -197,7 +197,7 @@ class TestCalibration:
         scenario = traces_to_scenario([trace])
         assert scenario.expect_source == ""
         assert "expect_recorded" not in scenario.tags
-        calibrated, receipt = await calibrate_recorded_scenario(scenario)
+        calibrated, receipt = await calibrate_recorded_scenario(scenario, allow_prune=True)
         assert receipt["underfilled"] is True
         assert "expect_underfilled" in calibrated.tags
         assert not any(turn.expect for turn in calibrated.turns)
@@ -210,7 +210,7 @@ class TestFalsifiability:
         trace = _recorded_trace_with_dispatch(
             turn_id="eb-h", session_id="rs-eb-h")
         scenario = traces_to_scenario([trace])
-        calibrated, receipt = await calibrate_recorded_scenario(scenario)
+        calibrated, receipt = await calibrate_recorded_scenario(scenario, allow_prune=True)
         assert receipt["residual_diffs"] == []
         call_id = calibrated.turns[0].ops[0].call_id
         assert calibrated.turns[0].expect["dispatch"][call_id] == {

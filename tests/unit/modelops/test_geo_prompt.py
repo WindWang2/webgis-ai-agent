@@ -191,7 +191,7 @@ def test_compile_map_crs_known_answer_roundtrip():
     map_points = tuple(_forward_map(transform, c, r) for c, r in known_pixels)
     artifact = GeoPromptArtifact(crs="EPSG:32650", points=map_points)
     compiled = compile_prompt(
-        artifact, transform=transform, raster_height=64, raster_width=64
+        artifact, transform=transform, raster_height=64, raster_width=64, raster_crs=artifact.crs
     )
     for (col, row), got in zip(known_pixels, compiled.prompt.points):
         assert abs(got[0] - col) <= 1e-9
@@ -203,7 +203,7 @@ def test_compile_map_crs_known_answer_roundtrip():
 def test_compile_map_crs_requires_transform():
     artifact = GeoPromptArtifact(crs="EPSG:4326", points=((1.0, 1.0),))
     with pytest.raises(PlanningError, match="no transform"):
-        compile_prompt(artifact, transform=None, raster_height=8, raster_width=8)
+        compile_prompt(artifact, transform=None, raster_height=8, raster_width=8, raster_crs=artifact.crs)
 
 
 def test_compile_degenerate_transform_rejected():
@@ -211,7 +211,7 @@ def test_compile_degenerate_transform_rejected():
     singular = Affine(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     artifact = GeoPromptArtifact(crs="EPSG:4326", points=((1.0, 1.0),))
     with pytest.raises(PlanningError, match="invertible"):
-        compile_prompt(artifact, transform=singular, raster_height=8, raster_width=8)
+        compile_prompt(artifact, transform=singular, raster_height=8, raster_width=8, raster_crs=artifact.crs)
 
 
 def test_compile_ill_conditioned_roundtrip_tolerance():
@@ -222,12 +222,12 @@ def test_compile_ill_conditioned_roundtrip_tolerance():
         crs="EPSG:32650", points=(_forward_map(transform, 7.0, 9.0),)
     )
     compiled = compile_prompt(
-        artifact, transform=transform, raster_height=64, raster_width=64
+        artifact, transform=transform, raster_height=64, raster_width=64, raster_crs=artifact.crs
     )
     assert compiled.audit.roundtrip_max_error_px <= PROMPT_ROUNDTRIP_TOL_PX
     with pytest.raises(PlanningError, match="roundtrip error"):
         compile_prompt(
-            artifact, transform=transform, raster_height=64, raster_width=64,
+            artifact, transform=transform, raster_height=64, raster_width=64, raster_crs=artifact.crs,
             tolerance_px=0.0,
         )
 
@@ -286,7 +286,7 @@ def test_mask_sidecar_requires_loader_fail_closed():
         mask_ref=MaskReference(path="sidecar.tif", sha256="a" * 64)
     )
     with pytest.raises(PromptArtifactError, match="mask_loader"):
-        compile_prompt(artifact, transform=None, raster_height=8, raster_width=8)
+        compile_prompt(artifact, transform=None, raster_height=8, raster_width=8, raster_crs=artifact.crs)
 
 
 def test_mask_sidecar_grid_alignment_gate():
@@ -344,7 +344,7 @@ def test_reference_layer_resolution_strategies():
 def test_reference_layer_requires_reader_fail_closed():
     artifact = GeoPromptArtifact(reference_layer=ReferenceLayer(uri="r.tif"))
     with pytest.raises(PromptArtifactError, match="reference_reader"):
-        compile_prompt(artifact, transform=None, raster_height=8, raster_width=8)
+        compile_prompt(artifact, transform=None, raster_height=8, raster_width=8, raster_crs=artifact.crs)
 
 
 def test_empty_compiled_mask_with_no_geometry_rejected():

@@ -664,7 +664,7 @@ async def bridge_session_explorer_progress(
         return
     ownerless = [
         task_id for task_id, owner in tasks
-        if not TaskQueueService.verify_owner(task_id, user_id or "")
+        if not owner
     ]
     if not ownerless:
         return

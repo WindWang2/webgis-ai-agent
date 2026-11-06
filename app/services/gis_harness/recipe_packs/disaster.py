@@ -14,7 +14,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     wf,
     auto_fallback,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _RECIPES: List[CartographyRecipe] = [
     CartographyRecipe(
@@ -28,8 +28,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="point_overlay",
         secondary_cartography=["administrative_choropleth"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="point_count < threshold", reason_code="INSUFFICIENT_POINTS",
-                                  use="point_distribution")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=46,
         schema_version=2,
@@ -119,8 +118,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="proximity_overlay",
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="network unavailable", reason_code="NETWORK_DISCONNECTED",
-                                  use="euclidean_proxy")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=47,
         schema_version=2,

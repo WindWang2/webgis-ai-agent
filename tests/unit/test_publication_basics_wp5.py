@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api.routes import map as _mod
-from app.core.auth import get_current_user_with_version
+from app.core.auth import get_current_user_with_version, get_current_user_optional_with_version
 from app.lib.cartography.mapspec_schema import parse_mapspec
 from app.services import publication_export as pe
 
@@ -49,6 +49,7 @@ def _auth(client):
     client._transport.app.dependency_overrides[get_current_user_with_version] = (
         lambda: _USER
     )
+    client._transport.app.dependency_overrides[get_current_user_optional_with_version] = lambda: _USER
 
 
 # ── 1) page profile ──────────────────────────────────────────────────────
@@ -168,6 +169,10 @@ def test_clamp_canvas_dpi():
 
 @pytest.mark.asyncio
 async def test_canvas_export_dpi_reaches_lineage(client, monkeypatch):
+    from io import BytesIO
+    from PIL import Image
+    png = BytesIO()
+    Image.new("RGB", (1, 1)).save(png, format="PNG")
     _auth(client)
     seen: dict = {}
 
@@ -178,7 +183,7 @@ async def test_canvas_export_dpi_reaches_lineage(client, monkeypatch):
     monkeypatch.setattr(_mod, "_record_lineage", _fake_record)
     resp = await client.post(
         "/api/v1/export",
-        files={"file": ("map.png", b"png-bytes", "image/png")},
+        files={"file": ("map.png", png.getvalue(), "image/png")},
         data={"dpi": "150"},
     )
     assert resp.status_code == 200
@@ -187,7 +192,7 @@ async def test_canvas_export_dpi_reaches_lineage(client, monkeypatch):
     seen.clear()
     resp2 = await client.post(
         "/api/v1/export",
-        files={"file": ("map.png", b"png-bytes", "image/png")},
+        files={"file": ("map.png", png.getvalue(), "image/png")},
         data={},
     )
     assert resp2.status_code == 200

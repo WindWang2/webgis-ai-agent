@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 
+from app.services.network.contracts import ODComputation, ODPairInfo, ODPaths
+
 from app.services.network.models import (
     NetworkDataset,
     TravelProfile,
@@ -158,8 +160,8 @@ class NetworkODMatrixService:
         impedance: Optional[Impedance] = None,
         barriers: Optional[List[Barrier]] = None,
         cutoff_s: Optional[float] = None,
-    ) -> Dict[str, Any]:
-        """Batch OD with full shortest-path trees, one Dijkstra per unique origin.
+    ) -> ODPaths:
+        """Batch OD with requested paths, one Dijkstra per unique origin.
 
         Returns a dict with:
         - ``origin_nodes`` / ``origin_labels``: resolved (node_id, label) per origin
@@ -185,7 +187,7 @@ class NetworkODMatrixService:
             cutoff_s=cutoff_s, need_paths=True,
         )
 
-        pairs: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        pairs: Dict[Tuple[str, str], ODPairInfo] = {}
         for o_node, o_label in res["origin_nodes"]:
             origin_res = res["results"].get(o_node, {})
             costs = origin_res.get("dists", {})
@@ -229,7 +231,7 @@ class NetworkODMatrixService:
         barriers: Optional[List[Barrier]] = None,
         cutoff_s: Optional[float] = None,
         need_paths: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> ODComputation:
         """Shared multi-source Dijkstra core used by matrix and path variants.
 
         #449: ``need_paths=False`` (cost-only matrix) runs
@@ -237,11 +239,11 @@ class NetworkODMatrixService:
         ``cutoff_s`` pruning and NO path materialization (networkx's
         ``single_source_dijkstra`` builds full path lists for every reachable
         node, O(V²) worst case, which the old code then re-walked in Python
-        to re-sum distance/time). ``need_paths=True`` keeps networkx's
-        path-returning variant (closest-facility / VRP reconstruct routes
-        from the trees) and forwards the cutoff to it, but distance/time are
-        accumulated along each node's predecessor edge in O(V) per origin
-        instead of re-walking the full paths edge-by-edge (#600).
+        to re-sum distance/time). ``need_paths=True`` keeps NetworkX's
+        predecessor tree and cutoff semantics, but materializes paths only
+        for requested destinations. Full cost/distance/time maps remain
+        available; secondary metrics follow the first predecessor selected
+        by NetworkX instead of re-walking every full path (#600).
         """
         # #453: coordinate / PointSnappingResult inputs are resolved on a
         # single working-copy graph with the SAME virtual-node mid-edge
@@ -249,6 +251,8 @@ class NetworkODMatrixService:
         # endpoint-only resolution made the OD family report up to ~2 edge
         # lengths more than routing for the same physical OD pair. Node-id
         # inputs keep using the caller's graph untouched (no copy).
+        if need_paths and len(origins) > 256:
+            raise ValueError("path reconstruction supports at most256 origins; split the request")
         needs_split = any(not isinstance(t, str) for t in origins) or any(
             not isinstance(t, str) for t in destinations
         )
@@ -305,29 +309,36 @@ class NetworkODMatrixService:
                 dijkstra_time[o_node] = times
                 dijkstra_paths[o_node] = {}
             else:
-                # Path variant: networkx returns (dist_dict, path_dict); the
-                # cutoff keeps nodes beyond it out of both maps. The full path
-                # materialization is unavoidable (consumers reconstruct routes
-                # from the trees), but distance/time accumulate along the
-                # predecessor tree in O(V) instead of re-walking every node's
-                # full path edge-by-edge — O(sum|path|) ≈ O(V²) on a path
-                # graph (#600, sibling of #449).
-                dists, paths = nx.single_source_dijkstra(
+                # Keep the same Dijkstra search and first-predecessor tie
+                # choice as NetworkX's full-path API, without copying a full
+                # origin-to-node list for every reachable node. On an 8k
+                # chain that retained ~32M node references for one 8k path.
+                predecessors, dists = nx.dijkstra_predecessor_and_distance(
                     graph_view, o_node, weight=weight_func, cutoff=cutoff_s
                 )
                 dijkstra_results[o_node] = dists
+
+                paths = {}
+                for node, _ in dest_nodes:
+                    if node not in dists or node in paths:
+                        continue
+                    path = [node]
+                    while path[-1] != o_node:
+                        path.append(predecessors[path[-1]][0])
+                    path.reverse()
+                    paths[node] = path
                 dijkstra_paths[o_node] = paths
 
                 distances: Dict[str, float] = {o_node: 0.0}
                 times: Dict[str, float] = {o_node: 0.0}
-                # Each node's predecessor on the tree is its path's penultimate
-                # element. Weights are positive, so cost strictly increases
-                # along tree edges — processing nodes in cost order guarantees
-                # every node's parent is accumulated before it.
-                for node in sorted(paths, key=lambda n: dists[n]):
+                # Preserve the full metric trees. The stable cost sort retains
+                # Dijkstra's settled order for floating-point equal costs, so
+                # even a positive edge rounded away at large magnitudes keeps
+                # the first predecessor before its child.
+                for node in sorted(dists, key=lambda n: dists[n]):
                     if node == o_node:
                         continue
-                    parent = paths[node][-2]
+                    parent = predecessors[node][0]
                     edge_data = graph_view[parent][node]
                     distances[node] = distances[parent] + float(edge_data.get("length_m", 0.0))
                     times[node] = times[parent] + float(edge_data.get("travel_time_s", 0.0))

@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import os
 
-_FALSE = ("0", "false", "False", "")
+_FALSE = {"0", "false", "off", "no", ""}
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
-    return os.getenv(name, default) not in _FALSE
+    return os.getenv(name, default).strip().lower() not in _FALSE
 
 
 def _env_float(name: str, default: float) -> float:

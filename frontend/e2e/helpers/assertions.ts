@@ -5,6 +5,7 @@
  */
 import type { Page, Response } from 'playwright/test';
 import { expect } from 'playwright/test';
+import { getJourneyAuth } from './bootstrap';
 
 /** The map canvas is mounted and MapLibre has created its GL context. */
 export async function expectMapReady(page: Page): Promise<void> {
@@ -89,13 +90,10 @@ export async function expectExportLanded(page: Page): Promise<{ url: string; fil
 
   // Fetch the artifact the same way the authenticated-download helper does and
   // assert PNG magic bytes (PNG \x89PNG\r\n\x1a\n) — the 落盘 contract.
-  const bytes = await page.evaluate(async (downloadPath) => {
-    const tokenRaw = window.localStorage.getItem('webgis_auth');
+  const auth = getJourneyAuth(page);
+  const bytes = await page.evaluate(async ({ downloadPath, accessToken }) => {
     const headers: Record<string, string> = {};
-    try {
-      const token = tokenRaw ? (JSON.parse(tokenRaw)?.accessToken as string) : undefined;
-      if (token) headers.Authorization = `Bearer ${token}`;
-    } catch { /* anonymous */ }
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     const res = await fetch(downloadPath, { headers });
     const buf = await res.arrayBuffer();
     return {
@@ -106,7 +104,9 @@ export async function expectExportLanded(page: Page): Promise<{ url: string; fil
         .map((b) => b.toString(16).padStart(2, '0'))
         .join(''),
     };
-  }, payload.url);
+  // Backend export URLs are relative. Resolve against the server that issued
+  // the export, not window.location (the nightly frontend has no API proxy).
+  }, { downloadPath: new URL(payload.url, exportResponse.url()).href, accessToken: auth?.accessToken });
   expect(bytes.status).toBe(200);
   expect(bytes.magic).toBe('89504e470d0a1a0a');
   expect(bytes.size).toBeGreaterThan(0);

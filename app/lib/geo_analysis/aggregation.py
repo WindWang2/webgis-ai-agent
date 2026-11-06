@@ -35,8 +35,7 @@ def generate_fishnet(bounds: tuple[float, float, float, float], cell_size: float
     xmin, ymin, xmax, ymax = bounds
 
     # Pick a metric CRS for the (WGS84) bounds: UTM, or polar stereographic.
-    abs_max_lat = max(abs(float(ymin)), abs(float(ymax)))
-    if abs_max_lat > 84.0:
+    if float(ymax) > 84.0 or float(ymin) < -80.0:
         metric_crs = "EPSG:3413" if (float(ymin) + float(ymax)) / 2 >= 0 else "EPSG:3031"
     else:
         try:
@@ -76,7 +75,7 @@ def generate_fishnet(bounds: tuple[float, float, float, float], cell_size: float
         # Vectorized cell grid, x-major order preserved (for each x, all y).
         xs = np.repeat(cols, len(rows))
         ys = np.tile(rows, len(cols))
-        metric_polys = [box(x, y, x + cell_size, y + cell_size) for x, y in zip(xs, ys)]
+        metric_polys = [box(x, y, x + cell_size, y + cell_size) for x, y in zip(xs, ys, strict=True)]
 
     elif type == 'hexagon':
         R = cell_size / np.sqrt(3)
@@ -272,7 +271,7 @@ def _geodesic_area_if_wide(zones_gdf: gpd.GeoDataFrame) -> pd.Series | None:
     except Exception:
         return None
     lon_span = maxx - minx
-    polar = max(abs(miny), abs(maxy)) > _UTM_MAX_ABS_LAT
+    polar = maxy > 84.0 or miny < -80.0
     if lon_span <= _SINGLE_ZONE_MAX_LON_SPAN and not polar:
         return None
     geod = Geod(ellps="WGS84")
@@ -595,7 +594,7 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
         # Assign H3 index (向量化：避免 O(n) apply lambda)
         lats = gdf.geometry.y.values
         lngs = gdf.geometry.x.values
-        gdf['h3_index'] = [h3.latlng_to_cell(lat, lng, resolution) for lat, lng in zip(lats, lngs)]
+        gdf['h3_index'] = [h3.latlng_to_cell(lat, lng, resolution) for lat, lng in zip(lats, lngs, strict=True)]
         
         # Group by H3 index
         if stat_method == 'count':

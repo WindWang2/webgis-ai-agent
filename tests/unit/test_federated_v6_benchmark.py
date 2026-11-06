@@ -167,7 +167,7 @@ def test_build_side_cap_respected():
     # build 侧（sB）fetch 窗口 = req.limit（V5 奇偶），行数被硬界约束
     scan_b = _find_scan(plan.tree, "sB")
     assert scan_b is not None
-    assert scan_b.fetch_limit <= 10_000
+    assert scan_b.fetch_limit <= MAX_JOIN_CANDIDATES
     assert out["per_source_rows"]["sB"] <= MAX_JOIN_CANDIDATES
 
 

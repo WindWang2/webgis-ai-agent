@@ -588,7 +588,7 @@
    "AssessRequest": {
     "properties": {
      "persist": {
-      "default": true,
+      "default": false,
       "title": "Persist",
       "type": "boolean"
      }
@@ -675,6 +675,30 @@
      }
     },
     "title": "AssetNewVersionRequest",
+    "type": "object"
+   },
+   "AtlasJobDetailResponse": {
+    "properties": {
+     "artifacts": {
+      "additionalProperties": true,
+      "title": "Artifacts",
+      "type": "object"
+     },
+     "job": {
+      "additionalProperties": true,
+      "title": "Job",
+      "type": "object"
+     },
+     "pages": {
+      "items": {},
+      "title": "Pages",
+      "type": "array"
+     }
+    },
+    "required": [
+     "job"
+    ],
+    "title": "AtlasJobDetailResponse",
     "type": "object"
    },
    "AtlasRequestPolicy": {
@@ -765,6 +789,101 @@
      }
     },
     "title": "AtlasRequestPolicy",
+    "type": "object"
+   },
+   "AtlasSubmitRequest": {
+    "description": "提交请求（atlas 策略字段复用既有 AtlasRequestPolicy 形状）。",
+    "properties": {
+     "atlas": {
+      "additionalProperties": true,
+      "title": "Atlas",
+      "type": "object"
+     },
+     "classification_scope": {
+      "default": "shared",
+      "pattern": "^(shared|local)$",
+      "title": "Classification Scope",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "simulated_data": {
+      "default": false,
+      "title": "Simulated Data",
+      "type": "boolean"
+     },
+     "target_dpi": {
+      "default": 300,
+      "maximum": 600.0,
+      "minimum": 72.0,
+      "title": "Target Dpi",
+      "type": "integer"
+     },
+     "title": {
+      "default": "",
+      "maxLength": 160,
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "AtlasSubmitRequest",
+    "type": "object"
+   },
+   "AtlasSubmitResponse": {
+    "properties": {
+     "idempotent_reuse": {
+      "default": false,
+      "title": "Idempotent Reuse",
+      "type": "boolean"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+     },
+     "plan": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Plan"
+     },
+     "poll_url": {
+      "default": "",
+      "title": "Poll Url",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "success": {
+      "default": true,
+      "title": "Success",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "job_id",
+     "status"
+    ],
+    "title": "AtlasSubmitResponse",
     "type": "object"
    },
    "AudioNarrative": {
@@ -910,6 +1029,17 @@
        }
       ],
       "title": "Scale Text"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
      },
      "subtitle": {
       "anyOf": [
@@ -1164,7 +1294,7 @@
      "zoom": {
       "default": 4.0,
       "maximum": 18.0,
-      "minimum": 3.0,
+      "minimum": 0.0,
       "title": "Zoom",
       "type": "number"
      }
@@ -2373,6 +2503,8 @@
      },
      "priority": {
       "default": 5,
+      "maximum": 10.0,
+      "minimum": 0.0,
       "title": "Priority",
       "type": "integer"
      },
@@ -2589,7 +2721,12 @@
      },
      "quota": {
       "additionalProperties": {
+       "minimum": 0.0,
        "type": "number"
+      },
+      "maxProperties": 16,
+      "propertyNames": {
+       "maxLength": 64
       },
       "title": "Quota",
       "type": "object"
@@ -2669,6 +2806,7 @@
      "thumbnail_url": {
       "anyOf": [
        {
+        "maxLength": 2048,
         "type": "string"
        },
        {
@@ -2896,6 +3034,19 @@
       "default": false,
       "title": "Confirm",
       "type": "boolean"
+     },
+     "expected_plan_fingerprint": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "minLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Plan Fingerprint"
      }
     },
     "title": "DataGcExecuteRequest",
@@ -2994,6 +3145,7 @@
      "source_ref": {
       "anyOf": [
        {
+        "maxLength": 255,
         "type": "string"
        },
        {
@@ -3314,6 +3466,129 @@
     "title": "DeprecateRequest",
     "type": "object"
    },
+   "DiscardPlanResponse": {
+    "properties": {
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan_id",
+     "state"
+    ],
+    "title": "DiscardPlanResponse",
+    "type": "object"
+   },
+   "DisplayAckRequest": {
+    "additionalProperties": false,
+    "description": "owner 显式确认当前地图显示（render_seq=所确认的观察代次）。",
+    "properties": {
+     "render_seq": {
+      "minimum": 0.0,
+      "title": "Render Seq",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "render_seq"
+    ],
+    "title": "DisplayAckRequest",
+    "type": "object"
+   },
+   "DisplayAckResponse": {
+    "properties": {
+     "accepted": {
+      "title": "Accepted",
+      "type": "boolean"
+     },
+     "confirmed": {
+      "title": "Confirmed",
+      "type": "boolean"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     },
+     "render_seq": {
+      "default": 0,
+      "title": "Render Seq",
+      "type": "integer"
+     },
+     "task_complete": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Task Complete"
+     }
+    },
+    "required": [
+     "accepted",
+     "confirmed"
+    ],
+    "title": "DisplayAckResponse",
+    "type": "object"
+   },
+   "DisplayConfirmationStatusResponse": {
+    "description": "最终显示确认状态（GET）。\n\n- mode: auto（历史行为，恒 confirmed）/ required\n- pending: required 且已有终验裁决但未确认（前端确认卡的显示条件）\n- required_render_seq: 当前裁决依据的观察代次（ack 必须 ≥ 此值且\n  等于最新观察代次才算新鲜）",
+    "properties": {
+     "confirmed": {
+      "title": "Confirmed",
+      "type": "boolean"
+     },
+     "latest_observation_seq": {
+      "default": 0,
+      "title": "Latest Observation Seq",
+      "type": "integer"
+     },
+     "mode": {
+      "title": "Mode",
+      "type": "string"
+     },
+     "pending": {
+      "title": "Pending",
+      "type": "boolean"
+     },
+     "required_render_seq": {
+      "default": 0,
+      "title": "Required Render Seq",
+      "type": "integer"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "verdict_present": {
+      "default": false,
+      "title": "Verdict Present",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "session_id",
+     "mode",
+     "confirmed",
+     "pending"
+    ],
+    "title": "DisplayConfirmationStatusResponse",
+    "type": "object"
+   },
    "DuplicateComponentBody": {
     "description": "Component Lifecycle V3（§19）：复制多实例组件。",
     "properties": {
@@ -3367,6 +3642,161 @@
      "component_id"
     ],
     "title": "DuplicateComponentBody",
+    "type": "object"
+   },
+   "EditOpModel": {
+    "additionalProperties": false,
+    "description": "编辑操作（discriminated by `op`；词表见 feature_edit.contracts.EDIT_OPS）。",
+    "properties": {
+     "dx_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dx M"
+     },
+     "dy_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dy M"
+     },
+     "fields": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fields"
+     },
+     "fixes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fixes"
+     },
+     "from": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "From"
+     },
+     "op": {
+      "enum": [
+       "set_fields",
+       "rename_field",
+       "repair_geometry",
+       "move_by",
+       "snap_to_ref"
+      ],
+      "title": "Op",
+      "type": "string"
+     },
+     "ref_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref Id"
+     },
+     "to": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "To"
+     },
+     "tolerance_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tolerance M"
+     }
+    },
+    "required": [
+     "op"
+    ],
+    "title": "EditOpModel",
+    "type": "object"
+   },
+   "EditTargetModel": {
+    "additionalProperties": false,
+    "properties": {
+     "feature_ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Feature Ids"
+     },
+     "mode": {
+      "default": "selection",
+      "enum": [
+       "selection",
+       "explicit"
+      ],
+      "title": "Mode",
+      "type": "string"
+     },
+     "ref_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref Id"
+     }
+    },
+    "title": "EditTargetModel",
     "type": "object"
    },
    "ElevationProfileAvailability": {
@@ -3700,6 +4130,18 @@
     "title": "ExecutePlanRequest",
     "type": "object"
    },
+   "ExecuteResponse": {
+    "properties": {
+     "receipt": {
+      "$ref": "#/components/schemas/ReceiptSummaryOut"
+     }
+    },
+    "required": [
+     "receipt"
+    ],
+    "title": "ExecuteResponse",
+    "type": "object"
+   },
    "ExecutionNodeIn": {
     "properties": {
      "cancellable": {
@@ -3854,6 +4296,7 @@
       "items": {
        "$ref": "#/components/schemas/ExecutionNodeIn"
       },
+      "maxItems": 256,
       "title": "Nodes",
       "type": "array"
      },
@@ -4021,6 +4464,169 @@
      "ref"
     ],
     "title": "ExportLineageInfo",
+    "type": "object"
+   },
+   "FeatureEditPreviewRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "ops": {
+      "items": {
+       "$ref": "#/components/schemas/EditOpModel"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Ops",
+      "type": "array"
+     },
+     "target": {
+      "$ref": "#/components/schemas/EditTargetModel"
+     }
+    },
+    "required": [
+     "target",
+     "ops"
+    ],
+    "title": "FeatureEditPreviewRequest",
+    "type": "object"
+   },
+   "FieldBindingRequest": {
+    "properties": {
+     "roles": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "description": "{字段名: 提案角色码}（用户确认结果）",
+      "title": "Roles",
+      "type": "object"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "source_ref",
+     "roles"
+    ],
+    "title": "FieldBindingRequest",
+    "type": "object"
+   },
+   "FieldBindingResponse": {
+    "properties": {
+     "bound_fields": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Bound Fields",
+      "type": "array"
+     },
+     "descriptor_fingerprint": {
+      "default": "",
+      "title": "Descriptor Fingerprint",
+      "type": "string"
+     },
+     "skipped": {
+      "items": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "title": "Skipped",
+      "type": "array"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "source_ref"
+    ],
+    "title": "FieldBindingResponse",
+    "type": "object"
+   },
+   "FieldProposalOut": {
+    "properties": {
+     "candidates": {
+      "items": {
+       "$ref": "#/components/schemas/RoleCandidateOut"
+      },
+      "title": "Candidates",
+      "type": "array"
+     },
+     "dtype": {
+      "default": "",
+      "title": "Dtype",
+      "type": "string"
+     },
+     "field": {
+      "title": "Field",
+      "type": "string"
+     },
+     "needs_clarification": {
+      "default": false,
+      "title": "Needs Clarification",
+      "type": "boolean"
+     },
+     "rejected": {
+      "items": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "title": "Rejected",
+      "type": "array"
+     }
+    },
+    "required": [
+     "field"
+    ],
+    "title": "FieldProposalOut",
+    "type": "object"
+   },
+   "FindingOut": {
+    "properties": {
+     "code": {
+      "title": "Code",
+      "type": "string"
+     },
+     "evidence": {
+      "additionalProperties": true,
+      "title": "Evidence",
+      "type": "object"
+     },
+     "field": {
+      "default": "",
+      "title": "Field",
+      "type": "string"
+     },
+     "message_zh": {
+      "default": "",
+      "title": "Message Zh",
+      "type": "string"
+     },
+     "severity": {
+      "title": "Severity",
+      "type": "string"
+     },
+     "suggestion": {
+      "default": "none",
+      "title": "Suggestion",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "severity"
+    ],
+    "title": "FindingOut",
     "type": "object"
    },
    "GCExecuteRequest": {
@@ -4425,6 +5031,75 @@
      "expected_revision"
     ],
     "title": "InitProjectBody",
+    "type": "object"
+   },
+   "InspectRequest": {
+    "properties": {
+     "session_id": {
+      "description": "归属会话（鉴权与 ref 命名空间）",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "description": "会话内数据 ref（如 ref:data-…/ref:prep-…）",
+      "title": "Source Ref",
+      "type": "string"
+     },
+     "user_hints": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "description": "可选角色提示 {字段名: 角色码}（来自用户对话；错误提示会被值域/类型反证并披露）",
+      "title": "User Hints",
+      "type": "object"
+     }
+    },
+    "required": [
+     "session_id",
+     "source_ref"
+    ],
+    "title": "InspectRequest",
+    "type": "object"
+   },
+   "InspectResponse": {
+    "properties": {
+     "input_fingerprint": {
+      "default": "",
+      "title": "Input Fingerprint",
+      "type": "string"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "proposals": {
+      "items": {
+       "$ref": "#/components/schemas/FieldProposalOut"
+      },
+      "title": "Proposals",
+      "type": "array"
+     },
+     "receipt": {
+      "$ref": "#/components/schemas/ReceiptOut"
+     },
+     "sample": {
+      "items": {
+       "$ref": "#/components/schemas/SampleFeatureOut"
+      },
+      "title": "Sample",
+      "type": "array"
+     },
+     "sample_truncated": {
+      "default": false,
+      "title": "Sample Truncated",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "input_ref",
+     "receipt"
+    ],
+    "title": "InspectResponse",
     "type": "object"
    },
    "InstanceCancelResponse": {
@@ -5280,6 +5955,21 @@
       "description": "展示名。不含用户原始请求原文",
       "title": "Name",
       "type": "string"
+     },
+     "page_status": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Status"
      },
      "progress": {
       "anyOf": [
@@ -6457,6 +7147,72 @@
     "title": "MapExportResponse",
     "type": "object"
    },
+   "MapOperationCommitRequest": {
+    "additionalProperties": false,
+    "description": "owner 批准 pending 敏感操作（expected_revision 缺省=批准时现读）。",
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     }
+    },
+    "title": "MapOperationCommitRequest",
+    "type": "object"
+   },
+   "MapOperationListResponse": {
+    "description": "回执环只读面（有界，最新在前）。",
+    "properties": {
+     "operations": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Operations",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "MapOperationListResponse",
+    "type": "object"
+   },
+   "MapOperationReceiptResponse": {
+    "description": "单操作回执 / 批准结果（服务端构造的自由形状 + 信封字段）。",
+    "properties": {
+     "operation_id": {
+      "title": "Operation Id",
+      "type": "string"
+     },
+     "receipt": {
+      "additionalProperties": true,
+      "title": "Receipt",
+      "type": "object"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "operation_id"
+    ],
+    "title": "MapOperationReceiptResponse",
+    "type": "object"
+   },
    "MapProductDiffResponse": {
     "additionalProperties": true,
     "description": "GET /projects/{project_id}/map-products/{from}/diff/{to} 响应。",
@@ -6622,8 +7378,10 @@
     "properties": {
      "artifact_ids": {
       "items": {
+       "maxLength": 128,
        "type": "string"
       },
+      "maxItems": 64,
       "title": "Artifact Ids",
       "type": "array"
      },
@@ -6631,6 +7389,7 @@
       "additionalProperties": {
        "type": "string"
       },
+      "maxProperties": 256,
       "title": "Input Dataset Fingerprints",
       "type": "object"
      },
@@ -8651,6 +9410,52 @@
     "title": "PlanConfirmRequest",
     "type": "object"
    },
+   "PlanDecisionRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "approve",
+       "reject"
+      ],
+      "title": "Action",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "title": "PlanDecisionRequest",
+    "type": "object"
+   },
+   "PlanDriftCheckRequest": {
+    "properties": {
+     "plan": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ExecutionPlanIn"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "stored": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Stored"
+     }
+    },
+    "title": "PlanDriftCheckRequest",
+    "type": "object"
+   },
    "PlanDriftCheckResponse": {
     "additionalProperties": true,
     "description": "POST /geocompute/plans/drift-check 响应。",
@@ -8663,6 +9468,121 @@
     "description": "POST /geocompute/plans/execute 响应。",
     "properties": {},
     "title": "PlanExecuteResponse",
+    "type": "object"
+   },
+   "PlanListResponse": {
+    "properties": {
+     "plans": {
+      "items": {
+       "$ref": "#/components/schemas/PlanOut"
+      },
+      "title": "Plans",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plans"
+    ],
+    "title": "PlanListResponse",
+    "type": "object"
+   },
+   "PlanOut": {
+    "properties": {
+     "input_fingerprint": {
+      "default": "",
+      "title": "Input Fingerprint",
+      "type": "string"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "mutates_data": {
+      "default": false,
+      "title": "Mutates Data",
+      "type": "boolean"
+     },
+     "plan_hash": {
+      "title": "Plan Hash",
+      "type": "string"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     },
+     "steps": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Steps",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan_id",
+     "plan_hash",
+     "state",
+     "input_ref"
+    ],
+    "title": "PlanOut",
+    "type": "object"
+   },
+   "PlanRequest": {
+    "properties": {
+     "auto_steps": {
+      "default": false,
+      "description": "由服务端按收据证据自动补齐安全步（仅 filter_rows 与经用户 hints 确认的 field_mapping）",
+      "title": "Auto Steps",
+      "type": "boolean"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     },
+     "steps": {
+      "description": "closed-union 步集（type 判别）",
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Steps",
+      "type": "array"
+     }
+    },
+    "required": [
+     "session_id",
+     "steps",
+     "source_ref"
+    ],
+    "title": "PlanRequest",
+    "type": "object"
+   },
+   "PlanResponse": {
+    "properties": {
+     "plan": {
+      "$ref": "#/components/schemas/PlanOut"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "PlanResponse",
     "type": "object"
    },
    "PlanRunCancelResponse": {
@@ -8679,11 +9599,52 @@
     "title": "PlanRunSubmitResponse",
     "type": "object"
    },
+   "PlanStepOut": {
+    "properties": {
+     "data_changed": {
+      "default": false,
+      "title": "Data Changed",
+      "type": "boolean"
+     },
+     "detail": {
+      "additionalProperties": true,
+      "title": "Detail",
+      "type": "object"
+     },
+     "type": {
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type"
+    ],
+    "title": "PlanStepOut",
+    "type": "object"
+   },
    "PlanValidateResponse": {
     "additionalProperties": true,
     "description": "POST /geocompute/plans/validate 响应。",
     "properties": {},
     "title": "PlanValidateResponse",
+    "type": "object"
+   },
+   "PolicyPutRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "mode": {
+      "enum": [
+       "confirm_all",
+       "allow_safe_attribute"
+      ],
+      "title": "Mode",
+      "type": "string"
+     }
+    },
+    "required": [
+     "mode"
+    ],
+    "title": "PolicyPutRequest",
     "type": "object"
    },
    "PolicyUpsertRequest": {
@@ -8740,6 +9701,55 @@
     "title": "PolicyUpsertRequest",
     "type": "object"
    },
+   "PreviewResponse": {
+    "properties": {
+     "degraded": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Degraded",
+      "type": "array"
+     },
+     "estimated_rows_after": {
+      "default": 0,
+      "title": "Estimated Rows After",
+      "type": "integer"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "quality_delta_sample": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Quality Delta Sample",
+      "type": "object"
+     },
+     "sampled_rows": {
+      "default": 0,
+      "title": "Sampled Rows",
+      "type": "integer"
+     },
+     "steps": {
+      "items": {
+       "$ref": "#/components/schemas/PlanStepOut"
+      },
+      "title": "Steps",
+      "type": "array"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "plan_id"
+    ],
+    "title": "PreviewResponse",
+    "type": "object"
+   },
    "ProfileRequest": {
     "properties": {
      "crs": {
@@ -8780,6 +9790,7 @@
      "description": {
       "anyOf": [
        {
+        "maxLength": 16000,
         "type": "string"
        },
        {
@@ -9084,6 +10095,7 @@
      "description": {
       "anyOf": [
        {
+        "maxLength": 16000,
         "type": "string"
        },
        {
@@ -9119,6 +10131,7 @@
      "status": {
       "anyOf": [
        {
+        "pattern": "^(active|archived)$",
         "type": "string"
        },
        {
@@ -9403,6 +10416,20 @@
      "detail"
     ],
     "title": "QualificationReason",
+    "type": "object"
+   },
+   "QualityAuditRequest": {
+    "properties": {
+     "geojson": {
+      "additionalProperties": true,
+      "title": "Geojson",
+      "type": "object"
+     }
+    },
+    "required": [
+     "geojson"
+    ],
+    "title": "QualityAuditRequest",
     "type": "object"
    },
    "QualityAuditResponse": {
@@ -9832,6 +10859,176 @@
      "project_id"
     ],
     "title": "RebuildResponse",
+    "type": "object"
+   },
+   "ReceiptOut": {
+    "properties": {
+     "axis_order_guessed": {
+      "default": "",
+      "title": "Axis Order Guessed",
+      "type": "string"
+     },
+     "blocked": {
+      "default": false,
+      "title": "Blocked",
+      "type": "boolean"
+     },
+     "coordinate_range": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Coordinate Range"
+     },
+     "crs_source": {
+      "default": "",
+      "title": "Crs Source",
+      "type": "string"
+     },
+     "encoding": {
+      "default": "",
+      "title": "Encoding",
+      "type": "string"
+     },
+     "findings": {
+      "items": {
+       "$ref": "#/components/schemas/FindingOut"
+      },
+      "title": "Findings",
+      "type": "array"
+     },
+     "geometry_type": {
+      "default": "",
+      "title": "Geometry Type",
+      "type": "string"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "pk_field": {
+      "default": "",
+      "title": "Pk Field",
+      "type": "string"
+     },
+     "pk_status": {
+      "default": "",
+      "title": "Pk Status",
+      "type": "string"
+     },
+     "row_count": {
+      "default": 0,
+      "title": "Row Count",
+      "type": "integer"
+     },
+     "sample_rows_scanned": {
+      "default": 0,
+      "title": "Sample Rows Scanned",
+      "type": "integer"
+     },
+     "srs": {
+      "default": "",
+      "title": "Srs",
+      "type": "string"
+     },
+     "time_fields": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Time Fields",
+      "type": "array"
+     },
+     "tz_status": {
+      "default": "",
+      "title": "Tz Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "input_ref"
+    ],
+    "title": "ReceiptOut",
+    "type": "object"
+   },
+   "ReceiptSummaryOut": {
+    "properties": {
+     "degraded": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Degraded",
+      "type": "array"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "output_fingerprint": {
+      "default": "",
+      "title": "Output Fingerprint",
+      "type": "string"
+     },
+     "output_ref": {
+      "title": "Output Ref",
+      "type": "string"
+     },
+     "plan_hash": {
+      "title": "Plan Hash",
+      "type": "string"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "quality_after": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Quality After",
+      "type": "object"
+     },
+     "quality_before": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Quality Before",
+      "type": "object"
+     },
+     "row_after": {
+      "default": 0,
+      "title": "Row After",
+      "type": "integer"
+     },
+     "row_before": {
+      "default": 0,
+      "title": "Row Before",
+      "type": "integer"
+     },
+     "user_confirmations": {
+      "items": {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      "title": "User Confirmations",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan_id",
+     "plan_hash",
+     "input_ref",
+     "output_ref"
+    ],
+    "title": "ReceiptSummaryOut",
     "type": "object"
    },
    "RecomputePlanResponse": {
@@ -10484,6 +11681,31 @@
     "title": "RevokeRequest",
     "type": "object"
    },
+   "RoleCandidateOut": {
+    "properties": {
+     "confidence": {
+      "title": "Confidence",
+      "type": "number"
+     },
+     "reasons": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Reasons",
+      "type": "array"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     }
+    },
+    "required": [
+     "role",
+     "confidence"
+    ],
+    "title": "RoleCandidateOut",
+    "type": "object"
+   },
    "RotateOwnerTokenResponse": {
     "description": "POST /chat/sessions/{session_id}/rotate-owner-token 响应（#1346）。\n\nowner_token 轮换结果：新 token 立即生效，旧 token 立即失效。",
     "examples": [
@@ -11087,6 +12309,36 @@
     "title": "RuntimeSnapshotSummary",
     "type": "object"
    },
+   "SampleFeatureOut": {
+    "properties": {
+     "first_position": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "First Position"
+     },
+     "geometry_type": {
+      "default": "",
+      "title": "Geometry Type",
+      "type": "string"
+     },
+     "properties": {
+      "additionalProperties": true,
+      "title": "Properties",
+      "type": "object"
+     }
+    },
+    "title": "SampleFeatureOut",
+    "type": "object"
+   },
    "SearchRequest": {
     "description": "POST /knowledge/search 请求体。",
     "examples": [
@@ -11211,6 +12463,106 @@
     "title": "SessionDetailResponse",
     "type": "object"
    },
+   "SessionFeatureAggregateResponse": {
+    "description": "会话 ref 分组聚合响应（Track B vNext）。\n\n``total_matching`` 是 filter×bbox 的精确匹配数（全扫口径）；``truncated``\n= 组溢出并入 ``__other__``；``null_key_count``/``non_numeric_count`` 是\n分母/数值准入的诚实披露 —— 消费端不得把部分集聚合表述为全量。",
+    "properties": {
+     "agg": {
+      "default": "count",
+      "title": "Agg",
+      "type": "string"
+     },
+     "agg_field": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agg Field"
+     },
+     "feature_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Feature Count"
+     },
+     "group_by": {
+      "default": "",
+      "title": "Group By",
+      "type": "string"
+     },
+     "group_count": {
+      "default": 0,
+      "title": "Group Count",
+      "type": "integer"
+     },
+     "is_complete": {
+      "default": true,
+      "title": "Is Complete",
+      "type": "boolean"
+     },
+     "non_numeric_count": {
+      "default": 0,
+      "title": "Non Numeric Count",
+      "type": "integer"
+     },
+     "null_key_count": {
+      "default": 0,
+      "title": "Null Key Count",
+      "type": "integer"
+     },
+     "reason_codes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Reason Codes",
+      "type": "array"
+     },
+     "revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revision"
+     },
+     "rows": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Rows",
+      "type": "array"
+     },
+     "scanned": {
+      "default": 0,
+      "title": "Scanned",
+      "type": "integer"
+     },
+     "total_matching": {
+      "default": 0,
+      "title": "Total Matching",
+      "type": "integer"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     }
+    },
+    "title": "SessionFeatureAggregateResponse",
+    "type": "object"
+   },
    "SessionFeaturePageResponse": {
     "description": "会话 ref 窗口分页响应（W12 数据平面 vNext）。\n\nFC 信封 + 分页游标：稳定序 = FC 自然序（revision 内不可变）；\n``next_cursor`` 不透明、单调；``revision`` 为服务出的这份数据的\ncontent_revision（客户端续页必须回传 ``v=<revision>``，不符 → 409）。\n``bbox_mode='coarse'``：窗口粗滤是保守超集（可能含边界外要素，\n显示层再裁剪），绝不漏。",
     "properties": {
@@ -11224,6 +12576,17 @@
        }
       ],
       "title": "Bbox Mode"
+     },
+     "duplicate_id_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Duplicate Id Count"
      },
      "feature_count": {
       "anyOf": [
@@ -11244,10 +12607,28 @@
       "title": "Features",
       "type": "array"
      },
+     "id_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id Mode"
+     },
      "pagination": {
       "additionalProperties": true,
       "title": "Pagination",
       "type": "object"
+     },
+     "reason_codes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Reason Codes",
+      "type": "array"
      },
      "revision": {
       "anyOf": [
@@ -11259,6 +12640,17 @@
        }
       ],
       "title": "Revision"
+     },
+     "total_matching": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Total Matching"
      },
      "type": {
       "default": "FeatureCollection",
@@ -11813,6 +13205,70 @@
      "expected_revision"
     ],
     "title": "SetSceneBody",
+    "type": "object"
+   },
+   "SetTemporalViewBody": {
+    "description": "时态控制层用户面写入（GOAL 03；temporal_view.v1 契约体）。\n\nconfig/patch/remove 语义与 SetTemporalViewIntent 一一对应；用户\n时间轴交互（seek/pause/速度）走 patch + expected_revision CAS。",
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "config": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Config"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "set_temporal_view",
+      "title": "Intent",
+      "type": "string"
+     },
+     "patch": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Patch"
+     },
+     "remove": {
+      "default": false,
+      "title": "Remove",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision"
+    ],
+    "title": "SetTemporalViewBody",
     "type": "object"
    },
    "SetTimeBody": {
@@ -14592,15 +16048,12 @@
    "WorkerRequest": {
     "properties": {
      "worker_id": {
+      "default": "",
       "maxLength": 128,
-      "minLength": 1,
       "title": "Worker Id",
       "type": "string"
      }
     },
-    "required": [
-     "worker_id"
-    ],
     "title": "WorkerRequest",
     "type": "object"
    },
@@ -14620,6 +16073,7 @@
      "description": {
       "anyOf": [
        {
+        "maxLength": 16000,
         "type": "string"
        },
        {
@@ -14674,6 +16128,7 @@
       "items": {
        "$ref": "#/components/schemas/WorkflowStepSpec"
       },
+      "maxItems": 200,
       "title": "Steps",
       "type": "array"
      }
@@ -15841,7 +17296,7 @@
  "paths": {
   "/api/v1/admin/audit": {
    "get": {
-    "description": "跨组织审计查询（全 admin 面；org_id 可选过滤）。",
+    "description": "当前组织审计查询；默认范围来自实时管理员身份。",
     "operationId": "query_global_audit_api_v1_admin_audit_get",
     "parameters": [
      {
@@ -16220,6 +17675,137 @@
     "tags": [
      "Security Admin (V9)",
      "Security Admin (V9)"
+    ]
+   }
+  },
+  "/api/v1/atlas/jobs": {
+   "post": {
+    "description": "提交批量图册 durable job（幂等；重复提交复用同一 job 行）。",
+    "operationId": "submit_atlas_export_job_api_v1_atlas_jobs_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AtlasSubmitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AtlasSubmitResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Submit Atlas Export Job",
+    "tags": [
+     "地图制图",
+     "地图制图"
+    ]
+   }
+  },
+  "/api/v1/atlas/jobs/{job_id}": {
+   "get": {
+    "description": "图册 job 详情（页级状态 + 产物链接；非属主 404 不泄露存在性）。",
+    "operationId": "get_atlas_export_job_api_v1_atlas_jobs__job_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AtlasJobDetailResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Atlas Export Job",
+    "tags": [
+     "地图制图",
+     "地图制图"
     ]
    }
   },
@@ -16968,7 +18554,7 @@
   },
   "/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}": {
    "get": {
-    "description": "chart_panel 的 ref-backed 数据通道（D2 ref 路径）。\n\n与 /layers/data/{ref}（GeoJSON 序列化面）不同，chart artifact 是\n{chart: ChartData} 小载荷（生成时已受 100KB/500 点上限约束）——\n直接 JSON 返回，无分块序列化需求。所有权校验复用 require_owned_session。",
+    "description": "chart_panel 的 ref-backed 数据通道（D2 ref 路径）。\n\n与 /layers/data/{ref}（GeoJSON 序列化面）不同，chart artifact 是\n{chart: ChartData} 小载荷（生成时已受 100KB/500 点上限约束）——\n直接 JSON 返回，无分块序列化需求。所有权校验复用 require_owned_session。\n\nG3D-V2-C（ADR-0276）：elevation_profile 面板的 ``ref:profile-*``\n工件走同一 {chart: ChartData} 协议与端点（前端 loadChartArtifact\n同一拉取面）——剖面族与图表族共享校验/缓存纪律，不另开第二端点。",
     "operationId": "get_session_chart_artifact_api_v1_chat_sessions__session_id__chart_artifacts__ref_id__get",
     "parameters": [
      {
@@ -17179,6 +18765,773 @@
     "tags": [
      "AI对话",
      "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/display-confirmation": {
+   "get": {
+    "description": "确认状态（auto → confirmed/pending 恒为 True/False 的历史语义）。",
+    "operationId": "get_display_confirmation_api_v1_chat_sessions__session_id__display_confirmation_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DisplayConfirmationStatusResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Display Confirmation",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/display-confirmation/ack": {
+   "post": {
+    "description": "owner 显式确认当前地图显示（新鲜度门 fail-closed）。",
+    "operationId": "post_display_ack_api_v1_chat_sessions__session_id__display_confirmation_ack_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DisplayAckRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DisplayAckResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Post Display Ack",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}": {
+   "get": {
+    "operationId": "get_feature_edit_plan_api_v1_chat_sessions__session_id__feature_edits_plans__plan_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Feature Edit Plan Api V1 Chat Sessions  Session Id  Feature Edits Plans  Plan Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Feature Edit Plan",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}/decision": {
+   "post": {
+    "operationId": "decide_feature_edit_plan_api_v1_chat_sessions__session_id__feature_edits_plans__plan_id__decision_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Idempotency-Key"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanDecisionRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Decide Feature Edit Plan Api V1 Chat Sessions  Session Id  Feature Edits Plans  Plan Id  Decision Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Decide Feature Edit Plan",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/policy": {
+   "get": {
+    "operationId": "get_feature_edit_policy_api_v1_chat_sessions__session_id__feature_edits_policy_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Feature Edit Policy Api V1 Chat Sessions  Session Id  Feature Edits Policy Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Feature Edit Policy",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   },
+   "put": {
+    "operationId": "put_feature_edit_policy_api_v1_chat_sessions__session_id__feature_edits_policy_put",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PolicyPutRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Put Feature Edit Policy Api V1 Chat Sessions  Session Id  Feature Edits Policy Put",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Put Feature Edit Policy",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/preview": {
+   "post": {
+    "operationId": "preview_feature_edit_api_v1_chat_sessions__session_id__feature_edits_preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/FeatureEditPreviewRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Preview Feature Edit Api V1 Chat Sessions  Session Id  Feature Edits Preview Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview Feature Edit",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/history": {
+   "get": {
+    "operationId": "feature_edit_history_api_v1_chat_sessions__session_id__feature_edits__ref_id__history_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Feature Edit History Api V1 Chat Sessions  Session Id  Feature Edits  Ref Id  History Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Feature Edit History",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/redo": {
+   "post": {
+    "operationId": "redo_feature_edit_api_v1_chat_sessions__session_id__feature_edits__ref_id__redo_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Redo Feature Edit Api V1 Chat Sessions  Session Id  Feature Edits  Ref Id  Redo Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Redo Feature Edit",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/undo": {
+   "post": {
+    "operationId": "undo_feature_edit_api_v1_chat_sessions__session_id__feature_edits__ref_id__undo_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Undo Feature Edit Api V1 Chat Sessions  Session Id  Feature Edits  Ref Id  Undo Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Undo Feature Edit",
+    "tags": [
+     "AI对话",
+     "AI对话"
     ]
    }
   },
@@ -17397,6 +19750,228 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/map-operations": {
+   "get": {
+    "description": "回执环（最新在前，≤8 条；slim 形状无 mapspec 大对象）。",
+    "operationId": "list_map_operations_api_v1_chat_sessions__session_id__map_operations_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MapOperationListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Map Operations",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}": {
+   "get": {
+    "operationId": "get_map_operation_api_v1_chat_sessions__session_id__map_operations__operation_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "operation_id",
+      "required": true,
+      "schema": {
+       "title": "Operation Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MapOperationReceiptResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Map Operation",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}/commit": {
+   "post": {
+    "description": "owner 批准 pending 敏感操作（confirmation_required → 提交）。\n\n批准语义：预览卡已向 owner 披露 before/after；本端点在 owner 身份\n验证通过后，以 origin=user（引擎强制 CAS）重放该操作的效果集。\n基线 revision 在批准时**现读**（不信任预览时的旧值）；并发推进则\nsuperseded 如实返回，绝不盲写。",
+    "operationId": "commit_pending_map_operation_api_v1_chat_sessions__session_id__map_operations__operation_id__commit_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "operation_id",
+      "required": true,
+      "schema": {
+       "title": "Operation Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MapOperationCommitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MapOperationReceiptResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Commit Pending Map Operation",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/map-state": {
    "get": {
     "description": "Return persisted map state (viewport, layers) for session restoration.\n\n审计 S31：之前 _user 注入但未做所有权校验 —— 任何认证用户知道 session_id\n就能读取他人的 viewport/layers。复用 get_session_detail 的同款检查。\nSEC-08：匿名会话需匹配 owner_token。",
@@ -17587,6 +20162,7 @@
           "reorder_layers": "#/components/schemas/ReorderLayersBody",
           "set_layout": "#/components/schemas/SetLayoutBody",
           "set_scene": "#/components/schemas/SetSceneBody",
+          "set_temporal_view": "#/components/schemas/SetTemporalViewBody",
           "set_time": "#/components/schemas/SetTimeBody",
           "set_view": "#/components/schemas/SetViewBody"
          },
@@ -17628,6 +20204,9 @@
          },
          {
           "$ref": "#/components/schemas/SetTimeBody"
+         },
+         {
+          "$ref": "#/components/schemas/SetTemporalViewBody"
          },
          {
           "$ref": "#/components/schemas/InitProjectBody"
@@ -19048,6 +21627,7 @@
       "required": false,
       "schema": {
        "default": 0,
+       "maximum": 8192,
        "minimum": 0,
        "title": "Width",
        "type": "integer"
@@ -19059,6 +21639,7 @@
       "required": false,
       "schema": {
        "default": 0,
+       "maximum": 8192,
        "minimum": 0,
        "title": "Height",
        "type": "integer"
@@ -19487,6 +22068,24 @@
    "post": {
     "description": "直接执行单个工具（非流式通过 chat）\n\n审计 S30：原本任何登录用户都能 dispatch 任意工具，包括 tier-3 的\n`create_new_skill`（写盘 + importlib.exec_module 等同 RCE）和\n`what_if_simulate`。改为 admin-only + tier-3 必须显式 confirm_destructive。",
     "operationId": "execute_tool_direct_api_v1_chat_tools_execute_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -20644,7 +23243,6 @@
   },
   "/api/v1/config/skills/refresh": {
    "post": {
-    "description": "手动触发技能刷新（admin only）",
     "operationId": "refresh_skills_api_v1_config_skills_refresh_post",
     "responses": {
      "200": {
@@ -20724,20 +23322,21 @@
     "operationId": "list_spatial_catalog_api_v1_data_fabric_catalog_get",
     "parameters": [
      {
-      "description": "Search keyword query",
+      "description": "Literal keyword query",
       "in": "query",
       "name": "q",
       "required": false,
       "schema": {
        "anyOf": [
         {
+         "maxLength": 128,
          "type": "string"
         },
         {
          "type": "null"
         }
        ],
-       "description": "Search keyword query",
+       "description": "Literal keyword query",
        "title": "Q"
       }
      },
@@ -20760,20 +23359,32 @@
       }
      },
      {
-      "description": "Filter by geometry type",
+      "description": "Exact geometry type",
       "in": "query",
       "name": "geometry_type",
       "required": false,
       "schema": {
        "anyOf": [
         {
+         "enum": [
+          "Point",
+          "MultiPoint",
+          "LineString",
+          "MultiLineString",
+          "Polygon",
+          "MultiPolygon",
+          "GeometryCollection",
+          "Raster",
+          "Table",
+          "Unknown"
+         ],
          "type": "string"
         },
         {
          "type": "null"
         }
        ],
-       "description": "Filter by geometry type",
+       "description": "Exact geometry type",
        "title": "Geometry Type"
       }
      },
@@ -21216,14 +23827,14 @@
       }
      },
      {
-      "description": "NDJSON 总行数帽（有界响应）",
+      "description": "NDJSON 总行数帽；更大结果请分区查询",
       "in": "query",
       "name": "limit",
       "required": false,
       "schema": {
-       "default": 50000,
-       "description": "NDJSON 总行数帽（有界响应）",
-       "maximum": 200000,
+       "default": 5000,
+       "description": "NDJSON 总行数帽；更大结果请分区查询",
+       "maximum": 50000,
        "minimum": 1,
        "title": "Limit",
        "type": "integer"
@@ -21294,6 +23905,121 @@
      }
     ],
     "summary": "Stream Catalog Item Features Http",
+    "tags": [
+     "Data Fabric / 数据织网",
+     "Data Fabric / 数据织网"
+    ]
+   }
+  },
+  "/api/v1/data-fabric/catalog/{item_id}/ogc-tiles/{z}/{x}/{y}": {
+   "get": {
+    "description": "目录 OGC API - Tiles tileset 的受控瓦片代理（GOAL-02 / M2）。\n\n- 权限：会话归属（require_owned_session，与 /layers/data MVT 瓦片路由\n  同语义 —— 浏览器 MapLibre 经 ``?session_id=`` 携带）+ 目录条目租户\n  校验（_require_tenant_owned）；鉴权先于缓存查找（API-01）。\n- 协议适配 only：缓存/ETag/single-flight 在\n  ``app.services.data_fabric.ogc_tiles_proxy``；远端获取走\n  ``OGCTilesAdapter.fetch_tile``（SSRF 同源模板、display 三态资格门、\n  zoom 矩阵校验、单瓦片字节帽、401/403/429 typed）。\n- 空瓦片（远端 404 / zoom 超出服务声明范围）= 204；命中返回原始字节\n  （不重压缩）+ 内容寻址 ETag（If-None-Match 304）。\n- MapSpec 消费：vector tileset → source.tiles 模板；raster tileset →\n  data_fabric source.url 模板（build_mapspec_source 统一构造）。",
+    "operationId": "get_catalog_ogc_tile_api_v1_data_fabric_catalog__item_id__ogc_tiles__z___x___y__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "item_id",
+      "required": true,
+      "schema": {
+       "title": "Item Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "z",
+      "required": true,
+      "schema": {
+       "title": "Z",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "x",
+      "required": true,
+      "schema": {
+       "title": "X",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "y",
+      "required": true,
+      "schema": {
+       "title": "Y",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     },
+     {
+      "in": "header",
+      "name": "If-None-Match",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "If-None-Match"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Catalog Ogc Tile",
     "tags": [
      "Data Fabric / 数据织网",
      "Data Fabric / 数据织网"
@@ -22718,6 +25444,568 @@
     ]
    }
   },
+  "/api/v1/data-preparation/bindings/fields": {
+   "post": {
+    "description": "用户确认角色写回 descriptor（版本化；address 等无对应角色诚实跳过）。",
+    "operationId": "bind_fields_api_v1_data_preparation_bindings_fields_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/FieldBindingRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FieldBindingResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Bind Fields",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/inspect": {
+   "post": {
+    "description": "检查数据源：空间收据 + 字段角色候选 + 有界样本（≤50 行）。",
+    "operationId": "inspect_api_v1_data_preparation_inspect_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InspectRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InspectResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan": {
+   "post": {
+    "description": "构建准备计划（服务端校验步与收据事实匹配；不执行）。",
+    "operationId": "create_plan_api_v1_data_preparation_plan_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PlanResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Plan",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan/{plan_id}": {
+   "delete": {
+    "description": "作废未执行计划（executed/verified 不可作废 —— 走产物删除面）。",
+    "operationId": "discard_api_v1_data_preparation_plan__plan_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DiscardPlanResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Discard",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan/{plan_id}/execute": {
+   "post": {
+    "description": "幂等执行计划 → prepared ref + 收据（原件不可变）。",
+    "operationId": "execute_api_v1_data_preparation_plan__plan_id__execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ExecuteResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan/{plan_id}/preview": {
+   "post": {
+    "description": "dry-run 预演（采样 ≤2000 行；不落任何 store）。",
+    "operationId": "preview_plan_api_v1_data_preparation_plan__plan_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PreviewResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview Plan",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plan/{plan_id}/receipt": {
+   "get": {
+    "description": "查执行收据（幂等键查询；未执行 → 404 诚实披露）。",
+    "operationId": "plan_receipt_api_v1_data_preparation_plan__plan_id__receipt_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "plan_hash（收据幂等键）",
+      "in": "query",
+      "name": "session_hash",
+      "required": true,
+      "schema": {
+       "description": "plan_hash（收据幂等键）",
+       "title": "Session Hash",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ReceiptSummaryOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plan Receipt",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
+  "/api/v1/data-preparation/plans": {
+   "get": {
+    "description": "列出会话内计划（有界 ≤64）。",
+    "operationId": "plans_api_v1_data_preparation_plans_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PlanListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plans",
+    "tags": [
+     "数据准备"
+    ]
+   }
+  },
   "/api/v1/data-quality/autofix/apply": {
    "post": {
     "description": "确定性修复 → **新载荷**（new-ref 语义；绝不覆写源）。\n\nsession_id 提供时经所有权守卫（外来 session 一律 404）注册为新会话 ref。",
@@ -23523,6 +26811,38 @@
        "title": "Filename",
        "type": "string"
       }
+     },
+     {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
+      }
      }
     ],
     "responses": {
@@ -23609,6 +26929,24 @@
    "post": {
     "description": "将前端合成的地图图片嵌入标准 A4 横向专题底图 PDF。\n\nPDF 布局包含：\n- 标题 / 副标题区\n- 地图影像主体（保留原 Canvas 分辨率）\n- 页脚（时间戳、制图者、比例说明）",
     "operationId": "export_map_as_pdf_api_v1_export_pdf_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "multipart/form-data": {
@@ -24741,9 +28079,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "additionalProperties": true,
-        "title": "Body",
-        "type": "object"
+        "$ref": "#/components/schemas/PlanDriftCheckRequest"
        }
       }
      },
@@ -28276,9 +31612,196 @@
     ]
    }
   },
+  "/api/v1/layers/data/{ref_id}/aggregate": {
+   "get": {
+    "description": "会话 ref 的分组聚合（Track B vNext）—— 视口/过滤统计的服务端真值。\n\n诚实规则：超 AGG_SCAN_LIMIT → 422（不是慢扫）；sum/mean/min/max 只吃\n数值，非数值计入 non_numeric_count；null 键计入 null_key_count；组溢出\n并入 ``__other__`` + truncated=true。响应携带 total_matching/revision，\n消费端（图表/Agent）不得把部分集聚合表述为全量。",
+    "operationId": "get_session_layer_aggregate_api_v1_layers_data__ref_id__aggregate_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "分组字段（properties 键）",
+      "in": "query",
+      "name": "group_by",
+      "required": true,
+      "schema": {
+       "description": "分组字段（properties 键）",
+       "maxLength": 64,
+       "title": "Group By",
+       "type": "string"
+      }
+     },
+     {
+      "description": "count|sum|mean|min|max",
+      "in": "query",
+      "name": "agg",
+      "required": false,
+      "schema": {
+       "default": "count",
+       "description": "count|sum|mean|min|max",
+       "title": "Agg",
+       "type": "string"
+      }
+     },
+     {
+      "description": "聚合数值字段（agg≠count 必填）",
+      "in": "query",
+      "name": "agg_field",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 64,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "聚合数值字段（agg≠count 必填）",
+       "title": "Agg Field"
+      }
+     },
+     {
+      "description": "窗口 'w,s,e,n'（经纬度，粗滤）",
+      "in": "query",
+      "name": "bbox",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "窗口 'w,s,e,n'（经纬度，粗滤）",
+       "title": "Bbox"
+      }
+     },
+     {
+      "description": "typed 谓词 AST（JSON，同 /features）",
+      "in": "query",
+      "name": "where",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 2048,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "typed 谓词 AST（JSON，同 /features）",
+       "title": "Where"
+      }
+     },
+     {
+      "description": "组数上限（溢出并入 __other__）",
+      "in": "query",
+      "name": "max_groups",
+      "required": false,
+      "schema": {
+       "default": 64,
+       "description": "组数上限（溢出并入 __other__）",
+       "maximum": 256,
+       "minimum": 1,
+       "title": "Max Groups",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "revision guard",
+      "in": "query",
+      "name": "v",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "revision guard",
+       "title": "V"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SessionFeatureAggregateResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Session Layer Aggregate",
+    "tags": [
+     "图层管理",
+     "图层数据"
+    ]
+   }
+  },
   "/api/v1/layers/data/{ref_id}/feature/{feature_id}": {
    "get": {
-    "description": "Return a single GeoJSON Feature by its id property (server-side lookup, wire carries one feature).",
+    "description": "Return a single GeoJSON Feature by its id property (server-side lookup, wire carries one feature).\n\n``id_mode=positional``：MVT 位置 id 回查（Track B）——无链内稳定 id 的\n数据集以 FC 自然索引+1 寻址；越界/非整数 → 404/400。链内寻址语义不变。",
     "operationId": "get_session_layer_feature_api_v1_layers_data__ref_id__feature__feature_id__get",
     "parameters": [
      {
@@ -28306,6 +31829,42 @@
       "schema": {
        "title": "Session Id",
        "type": "string"
+      }
+     },
+     {
+      "description": "寻址模式：缺省=链内稳定 id；'positional'=位置 id（FC 自然索引+1，仅 revision 内稳定）",
+      "in": "query",
+      "name": "id_mode",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "寻址模式：缺省=链内稳定 id；'positional'=位置 id（FC 自然索引+1，仅 revision 内稳定）",
+       "title": "Id Mode"
+      }
+     },
+     {
+      "description": "revision guard（位置 id 仅 revision 内稳定，强烈建议携带）",
+      "in": "query",
+      "name": "v",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "revision guard（位置 id 仅 revision 内稳定，强烈建议携带）",
+       "title": "V"
       }
      },
      {
@@ -28359,7 +31918,7 @@
   },
   "/api/v1/layers/data/{ref_id}/features": {
    "get": {
-    "description": "会话 ref 的窗口/分页要素读（W12 数据平面 vNext）。\n\n浏览语义补全（ADR-0047 浏览半边）：显示走 MVT 之外，属性表/检查器/\n选择详情可按小批窗口浏览 —— 2 万～10 万要素的 inline-only ref 不再\n被迫整包拉取。稳定序 = FC 自然序（revision 内不可变）；``v`` 与服务端\n当前 content_revision 不符 → 409（绝不静默跨版拼接页）。响应携带当前\nrevision 与 descriptor feature_count，供客户端续页与决策。",
+    "description": "会话 ref 的窗口/分页要素读（W12 数据平面 vNext）。\n\n浏览语义补全（ADR-0047 浏览半边）：显示走 MVT 之外，属性表/检查器/\n选择详情可按小批窗口浏览 —— 2 万～10 万要素的 inline-only ref 不再\n被迫整包拉取。稳定序 = FC 自然序（revision 内不可变）；``v`` 与服务端\n当前 content_revision 不符 → 409（绝不静默跨版拼接页）。响应携带当前\nrevision 与 descriptor feature_count，供客户端续页与决策。\n\nTrack B vNext（additive）：``order`` 排序序（v2 cursor 绑定 order 摘要）、\n``where`` typed 谓词、``total_matching``（可证才给，超限 null）、\n``truncated``/``is_complete``/``reason_codes`` 诚实元数据、``id_mode``\n稳定 id 披露（无链内 id 的要素投影位置 id，仅 revision 内稳定）。",
     "operationId": "get_session_layer_features_page_api_v1_layers_data__ref_id__features_get",
     "parameters": [
      {
@@ -28467,6 +32026,44 @@
        ],
        "description": "客户端持有的 content_revision（revision guard）",
        "title": "V"
+      }
+     },
+     {
+      "description": "单字段排序：'<field>' 升序 / '-<field>' 降序（缺失值恒最后）",
+      "in": "query",
+      "name": "order",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 129,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "单字段排序：'<field>' 升序 / '-<field>' 降序（缺失值恒最后）",
+       "title": "Order"
+      }
+     },
+     {
+      "description": "typed 谓词 AST（JSON）：{field,op:eq|ne|in|between|contains|startswith,...} / {op:and|or,terms} / {op:not,term}",
+      "in": "query",
+      "name": "where",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 2048,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "typed 谓词 AST（JSON）：{field,op:eq|ne|in|between|contains|startswith,...} / {op:and|or,terms} / {op:not,term}",
+       "title": "Where"
       }
      },
      {
@@ -28716,6 +32313,39 @@
       }
      },
      {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
+      }
+     },
+     {
       "in": "header",
       "name": "X-Session-Token",
       "required": false,
@@ -28849,6 +32479,39 @@
        ],
        "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
        "title": "Token"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
       }
      },
      {
@@ -29138,6 +32801,39 @@
        ],
        "description": "匿名会话 owner token（MapLibre 瓦片请求无法带自定义头；与 /sessions/{sid}/raster?token= 同语义）",
        "title": "Token"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
       }
      },
      {
@@ -32014,9 +35710,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "additionalProperties": true,
-        "title": "Payload",
-        "type": "object"
+        "$ref": "#/components/schemas/QualityAuditRequest"
        }
       }
      },
@@ -33857,7 +37551,7 @@
   },
   "/api/v1/ready": {
    "get": {
-    "description": "就绪检查：数据库 + LLM + Redis + Celery 连通性。\n\n任一依赖不可达时返回 HTTP 503，让 k8s readinessProbe 暂停把流量打过来；\n全部就绪时返回 HTTP 200。\n\nSEC-11：响应体只返回极简状态（不附带 DB/Redis/Celery 的具体连通细节），\n因为 /ready 是无鉴权端点——之前的 body 会把内部依赖拓扑（哪个挂了、\n哪个连着）泄露给任意调用方，便于攻击者做侦察。详细连通信息只在服务端\n日志里保留，运维仍可定位故障点。",
+    "description": "就绪检查：本进程硬依赖数据库与 Redis；LLM/Celery 属于降级信号。\n\n任一依赖不可达时返回 HTTP 503，让 k8s readinessProbe 暂停把流量打过来；\n全部就绪时返回 HTTP 200。\n\nSEC-11：响应体只返回极简状态（不附带 DB/Redis/Celery 的具体连通细节），\n因为 /ready 是无鉴权端点——之前的 body 会把内部依赖拓扑（哪个挂了、\n哪个连着）泄露给任意调用方，便于攻击者做侦察。详细连通信息只在服务端\n日志里保留，运维仍可定位故障点。",
     "operationId": "readiness_check_api_v1_ready_get",
     "responses": {
      "200": {
@@ -34230,6 +37924,69 @@
    }
   },
   "/api/v1/reports/{report_id}/share": {
+   "delete": {
+    "description": "Revoke both public metadata and download access using normal ownership.",
+    "operationId": "revoke_share_link_api_v1_reports__report_id__share_delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "report_id",
+      "required": true,
+      "schema": {
+       "title": "Report Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ApiResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Revoke Share Link",
+    "tags": [
+     "报告生成",
+     "报告生成"
+    ]
+   },
    "post": {
     "description": "生成分享链接",
     "operationId": "create_share_link_api_v1_reports__report_id__share_post",
@@ -35286,7 +39043,7 @@
   },
   "/api/v1/status/detailed": {
    "get": {
-    "description": "鉴权 SRE 组件健康分类学（Epic 10 W11）。\n\n安全模型见文件头注释：不在限流豁免前缀内 + JWT 鉴权 + 组件拓扑\n细节只在鉴权面暴露（B-1）。TTL 10s 缓存，快照原子换入；k8s probe\n不得指向本端点（/health/live、/ready 语义不变）。整体 down → 503\n（与 /ready 的探测语义对齐，M-3），degraded 保持 200。",
+    "description": "鉴权 SRE 组件健康分类学（Epic 10 W11）。\n\n安全模型见文件头注释：不在限流豁免前缀内 + 实时管理员角色鉴权；组件拓扑\n细节仅向管理员暴露（B-1）。TTL 10s 缓存，快照原子换入；k8s probe\n不得指向本端点（/health/live、/ready 语义不变）。整体 down → 503\n（与 /ready 的探测语义对齐，M-3），degraded 保持 200。",
     "operationId": "sre_status_detailed_api_v1_status_detailed_get",
     "responses": {
      "200": {
@@ -35507,7 +39264,9 @@
      "200": {
       "content": {
        "application/json": {
-        "schema": {}
+        "schema": {
+         "$ref": "#/components/schemas/StoryMapSpec"
+        }
        }
       },
       "description": "Successful Response"
@@ -38251,9 +42010,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "additionalProperties": true,
-        "title": "Body",
-        "type": "object"
+        "$ref": "#/components/schemas/PlanDriftCheckRequest"
        }
       }
      },

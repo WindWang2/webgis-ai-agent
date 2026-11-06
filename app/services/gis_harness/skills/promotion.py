@@ -164,6 +164,9 @@ def build_promotion_report(
     if security_sandbox_status in ("failed", "quarantined", "unsafe"):
         disposition = "quarantine"
         reasons.append("security_sandbox_failed")
+    elif security_sandbox_status != "passed":
+        disposition = "keep_shadow"
+        reasons.append("security_sandbox_not_passed")
     elif counterexamples:
         disposition = "reject" if len(counterexamples) >= 2 else "keep_shadow"
         reasons.append("counterexamples_present")

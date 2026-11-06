@@ -380,6 +380,8 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         registry,
         name="modelops_record_metrics",
         description="登记模型训练指标/评估结果/晋升退役状态（append-only lineage）",
+        output_semantic_type="object",
+        result_size_policy="inline_small",
         param_descriptions={
             "model_id": "模型 id",
             "model_version": "模型版本",

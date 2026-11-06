@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+from app.contracts.modelops import DetectionRecord as DetectionPayload
+
 import pathlib
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -69,9 +71,13 @@ def merge_segmentation(
     - 输出 valid_mask = 输入 nodata 取反 ∧ 概率覆盖（未覆盖=0 → invalid）。
     """
     h, w = plan.raster_height, plan.raster_width
+    from app.lib.modelops.errors import ResourceUnavailable
+
+    if h * w * (num_classes * 8 + 16) > 256 * 1024 * 1024:
+        raise ResourceUnavailable("segmentation merge exceeds256MiB RAM budget; use the windowed inference engine")
     acc = np.zeros((num_classes, h, w), dtype=np.float32)
     weight = np.zeros((h, w), dtype=np.float32)
-    for tile, probs in zip(plan.tiles, outputs):
+    for tile, probs in zip(plan.tiles, outputs, strict=True):
         if probs is None:
             continue
         row, col, core_h, core_w = tile.core_window
@@ -128,13 +134,13 @@ class DetectionRecord:
     score: float
     box: Tuple[float, float, float, float]  # 全局像素坐标 (x, y, w, h)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> DetectionPayload:
         return {"label": self.label, "score": self.score, "box": list(self.box)}
 
 
 def merge_detections(
     plan: TilePlan,
-    outputs: Sequence[List[Dict[str, Any]]],  # 每 tile 的 tile-local 检测
+    outputs: Sequence[List[DetectionPayload]],  # 每 tile 的 tile-local 检测
     *,
     iou_threshold: float = NMS_IOU_THRESHOLD,
     score_threshold: float = 0.0,
@@ -142,7 +148,7 @@ def merge_detections(
 ) -> List[DetectionRecord]:
     """tile-local → 全局坐标 + 类内 NMS（边缘重复消除；确定性 tie-break）。"""
     mapped: List[DetectionRecord] = []
-    for tile, dets in zip(plan.tiles, outputs):
+    for tile, dets in zip(plan.tiles, outputs, strict=True):
         # provider 的 box 是 **chip（含 pad 的 context 窗）像素坐标**。
         # chip 数组原点 = read_window 原点 - pad（planning.py：边缘 tile 的
         # pad_left/top>0，np.pad 把缺失 context 补在数组前部）。
@@ -189,8 +195,12 @@ def _classwise_nms(
     by_label: Dict[int, List[DetectionRecord]] = {}
     for rec in sorted(records, key=lambda d: (-d.score, d.box, d.label)):
         by_label.setdefault(rec.label, []).append(rec)
-    for label, recs in by_label.items():
+    for _label, recs in by_label.items():
         local_kept: List[DetectionRecord] = []
+        if len(recs) > 5000:
+            from app.lib.modelops.errors import ResourceUnavailable
+
+            raise ResourceUnavailable("NMS class exceeds5000 bounded candidates; raise model score threshold")
         for cand in recs:  # 已按分数降序
             if all(_iou(cand, k) <= iou_threshold for k in local_kept):
                 local_kept.append(cand)
@@ -240,7 +250,7 @@ def merge_instances(
         )
     global_classes: Dict[int, int] = {}
     next_id = 1
-    for tile, inst_mask, cls_map in zip(plan.tiles, outputs, instance_classes):
+    for tile, inst_mask, cls_map in zip(plan.tiles, outputs, instance_classes, strict=True):
         if inst_mask is None:
             continue
         row, col, core_h, core_w = tile.core_window
@@ -285,7 +295,7 @@ def merge_instances(
     return result
 
 
-def _polygonize(instance_ids: np.ndarray) -> Dict[str, Any]:
+def _polygonize(instance_ids: np.ndarray, *, transform: Any = None, crs: Optional[str] = None) -> Dict[str, Any]:
     """实例栅格 → GeoJSON FeatureCollection（rasterio.features，像素坐标）。"""
     try:
         from rasterio import features
@@ -294,7 +304,8 @@ def _polygonize(instance_ids: np.ndarray) -> Dict[str, Any]:
 
         raise ModelOpsError(f"polygonize unavailable: {exc}") from exc
     features_iter = features.shapes(
-        instance_ids, mask=instance_ids > 0, connectivity=4
+        instance_ids, mask=instance_ids > 0, connectivity=4,
+        **({"transform": transform} if transform is not None else {}),
     )
     out_features = []
     for geom, value in features_iter:
@@ -305,7 +316,10 @@ def _polygonize(instance_ids: np.ndarray) -> Dict[str, Any]:
                 "geometry": geom,
             }
         )
-    return {"type": "FeatureCollection", "features": out_features}
+    result = {"type": "FeatureCollection", "features": out_features}
+    if crs is not None:
+        result["crs"] = {"type": "name", "properties": {"name": str(crs)}}
+    return result
 
 
 # ── Embedding / classification ───────────────────────────────────────
@@ -339,7 +353,7 @@ def collect_embeddings(
 ) -> List[SpatialEmbedding]:
     """per-chip 输出收集 + core 窗口空间锚定（embedding/classification）。"""
     collected: List[SpatialEmbedding] = []
-    for i, (tile, vec) in enumerate(zip(plan.tiles, outputs)):
+    for i, (tile, vec) in enumerate(zip(plan.tiles, outputs, strict=True)):
         if vec is None:
             continue
         label = None

@@ -99,7 +99,8 @@ export function substituteTileUrl(template: string, x: number, y: number, z: num
  */
 export function resolveOversampledTileGrid(options: TileGridOptions): TileGridItem[] {
   const { bounds, width, height, padding, targetDpi, tileUrlTemplate, baseZoom: customBaseZoom } = options;
-  const [minLon, minLat, maxLon, maxLat] = bounds;
+  const [minLon, minLat, rawMaxLon, maxLat] = bounds;
+  const maxLon = rawMaxLon < minLon ? rawMaxLon + 360 : rawMaxLon;
 
   const isTemplate = /\{[xyzs]|TILECOL|TILEROW|TILEMATRIX\}/.test(tileUrlTemplate);
   const zoomBoost = computeOversampleBoost(targetDpi);
@@ -126,10 +127,11 @@ export function resolveOversampledTileGrid(options: TileGridOptions): TileGridIt
 
   const calculatedBase = Math.max(0, Math.min(19, Math.floor(Math.log2(360 / Math.max(Math.max(rangeX, rangeY), 0.0001)))));
   const baseZoom = customBaseZoom ?? calculatedBase;
-  const z = Math.max(0, Math.min(19, baseZoom + zoomBoost));
-
-  const xMin = lonToTileX(minLon, z);
-  const xMax = lonToTileX(maxLon, z);
+  let z = Math.max(0, Math.min(19, baseZoom + zoomBoost));
+  const tileX = (lon: number) => Math.floor((lon + 180) / 360 * 2 ** z);
+  while (z > 0 && (tileX(maxLon) - tileX(minLon) + 1) * (latToTileY(minLat, z) - latToTileY(maxLat, z) + 1) > 512) z -= 1;
+  const xMin = tileX(minLon);
+  const xMax = Math.max(xMin, Math.ceil((maxLon + 180) / 360 * 2 ** z) - 1);
   const yMin = latToTileY(maxLat, z);
   const yMax = latToTileY(minLat, z);
 
@@ -154,7 +156,7 @@ export function resolveOversampledTileGrid(options: TileGridOptions): TileGridIt
       const ph = projY(latS) - projY(latN);
 
       items.push({
-        url: substituteTileUrl(tileUrlTemplate, tx, ty, z),
+        url: substituteTileUrl(tileUrlTemplate, ((tx % 2 ** z) + 2 ** z) % 2 ** z, ty, z),
         x: px,
         y: py,
         width: pw,

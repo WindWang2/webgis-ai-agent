@@ -108,6 +108,31 @@ export function recordCommand(cmd: Omit<WorkbenchCommand, 'id' | 'ts' | 'session
   emitChange();
 }
 
+/** /goal 03：要素编辑命令 —— undo/redo 反向走同一 REST CAS 写路径
+ * （/feature-edits/{ref}/undo|redo；服务端 journal head 语义，409 冲突
+ * 由调用方 toast 收敛）。async 发起即忘（与 presentation 重放同纪律）。 */
+export function featureEditCommand(args: {
+  label: string;
+  actor: 'user' | 'agent';
+  refId: string;
+  undo: () => Promise<unknown>;
+  redo: () => Promise<unknown>;
+  /** R2 P3-9：void 包装会吞错 —— 失败（如 409 冲突）交调用方 toast 收敛。 */
+  onError?: (phase: 'undo' | 'redo', err: unknown) => void;
+}): void {
+  const run = (phase: 'undo' | 'redo') => {
+    const p = phase === 'undo' ? args.undo() : args.redo();
+    void p.catch((err: unknown) => args.onError?.(phase, err));
+  };
+  recordCommand({
+    label: args.label,
+    kind: 'feature_edit',
+    actor: args.actor,
+    undo: () => run('undo'),
+    redo: () => run('redo'),
+  });
+}
+
 /** 不可逆操作仅入 journal（如 remove_layer 落账）—— 不进 undo 栈。 */
 export function journalOnly(entry: {
   type: OpLogEntry['type'];
@@ -344,18 +369,23 @@ export function reorderCommand(
     kind: 'reorder',
     actor,
     layerIds: beforeOrder.slice(0, 5).map((l) => l.id),
-    undo: () => void replayReorder(beforeOrder),
-    redo: () => void replayReorder(afterOrder),
+    undo: () => void replayReorder(beforeOrder.map((layer) => layer.id)),
+    redo: () => void replayReorder(afterOrder.map((layer) => layer.id)),
   });
 }
 
-function replayReorder(order: { id: string; _mapspecLayerId?: string }[]): void {
+function replayReorder(order: string[]): void {
+  const current = useHudStore.getState().layers;
+  const byId = new Map(current.map((layer) => [layer.id, layer]));
+  const ordered = order.flatMap((id) => byId.has(id) ? [byId.get(id)!] : []);
+  let index = 0;
+  const next = current.map((layer) => order.includes(layer.id) ? ordered[index++] : layer);
   Promise.all([
-    useHudStore.getState().reorderLayers(order as never),
+    useHudStore.getState().reorderLayers(next),
     loadUserMutation().then(({ commitMapSpecMutation }) =>
       commitMapSpecMutation({
         intent: 'reorder_layers',
-        layer_ids: order.map((layer) => String(layer._mapspecLayerId || layer.id)),
+        layer_ids: next.map((layer) => String(layer._mapspecLayerId || layer.id)),
       }),
     ),
   ]).catch((err) => devOnly.warn('[undo] reorder replay failed:', err));

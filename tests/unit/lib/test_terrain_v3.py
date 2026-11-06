@@ -393,9 +393,9 @@ def _write_tif(path, arr, transform, crs=None, nodata=None):
 @pytest.fixture()
 def terrain_tools(monkeypatch):
     from app.tools.registry import ToolRegistry
-    from app.tools import terrain_analysis as ta
+    from app.tools import _terrain_support, terrain_analysis as ta
 
-    monkeypatch.setattr(ta, "validate_data_path", lambda p: str(p))
+    monkeypatch.setattr(_terrain_support, "validate_data_path", lambda p: str(p))
     registry = ToolRegistry()
     ta.register_terrain_tools(registry)
     return registry

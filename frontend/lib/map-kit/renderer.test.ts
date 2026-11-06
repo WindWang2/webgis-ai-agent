@@ -91,13 +91,13 @@ describe('renderer', () => {
         source: 'lisa-layer',
         layout: {},
         paint: {
-          'fill-color': ['match', ['get', 'cluster'], 'HH', '#red', 'LL', '#blue', '#cccccc'],
+          'fill-color': ['match', ['to-string', ['get', 'cluster']], 'HH', '#red', 'LL', '#blue', '#cccccc'],
           'fill-opacity': 0.8
         }
       }, undefined);
     });
 
-    it('#557 断点 3: categorical style (list categories) → match expression, numeric keys preserved', () => {
+    it('#557 断点 3: categorical style (list categories) → match expression, numeric keys normalized with input', () => {
       mapMock.getLayer.mockReturnValue(undefined);
       addThematicLayer(mapMock, 'cat-layer', { type: 'FeatureCollection', features: [] }, {
         type: 'categorical',
@@ -115,7 +115,7 @@ describe('renderer', () => {
         source: 'cat-layer',
         layout: {},
         paint: {
-          'fill-color': ['match', ['get', 'code'], 1, '#fca5a5', 2, '#93c5fd', '#cccccc'],
+          'fill-color': ['match', ['to-string', ['get', 'code']], '1', '#fca5a5', '2', '#93c5fd', '#cccccc'],
           'fill-opacity': 0.8
         }
       }, undefined);
@@ -429,9 +429,11 @@ describe('renderer', () => {
       mapMock.getStyle.mockReturnValue({
         layers: [
           { id: 'custom-foo' },
-          { id: 'custom-foo-fill' },
-          { id: 'custom-foo-stroke' },
-          { id: 'custom-foobar-fill' }
+          { id: 'custom-foo-fill', source: 'custom-foo' },
+          { id: 'custom-foo-stroke', source: 'custom-foo' },
+          { id: 'custom-foobar-fill' },
+          { id: 'custom-foo_schools', source: 'custom-foo_schools' },
+          { id: 'custom-foo-other', source: 'custom-foo-other' }
         ]
       });
       mapMock.getSource.mockReturnValue({});
@@ -442,6 +444,8 @@ describe('renderer', () => {
       expect(mapMock.removeLayer).toHaveBeenCalledWith('custom-foo-fill');
       expect(mapMock.removeLayer).toHaveBeenCalledWith('custom-foo-stroke');
       expect(mapMock.removeLayer).not.toHaveBeenCalledWith('custom-foobar-fill');
+      expect(mapMock.removeLayer).not.toHaveBeenCalledWith('custom-foo_schools');
+      expect(mapMock.removeLayer).not.toHaveBeenCalledWith('custom-foo-other');
     });
 
     it('should detach dependent layers before removing sources and clean up image textures', () => {

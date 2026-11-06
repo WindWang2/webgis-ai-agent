@@ -136,13 +136,14 @@ async def build_situation_turn_context(
         if _se_flags.runtime_enabled():
             facts = await projected_facts(session_id, store=store)
             if facts:
+                from app.services.gis_situation.projection import _xml_fence
+
                 lines = []
                 for f in facts[:8]:  # 有界：最多 8 条摘要
-                    lines.append(
-                        f"- {f.get('occurred_at', '')[:19]} "
-                        f"{f.get('kind', '')} {f.get('subject_key', '')}"
-                        + (f" ({f.get('summary')})" if f.get("summary") else "")
-                    )
+                    raw = (f"{str(f.get('occurred_at', ''))[:19]} "
+                           f"{str(f.get('kind', ''))[:48]} {str(f.get('subject_key', ''))[:128]}"
+                           + (f" ({str(f.get('summary'))[:256]})" if f.get("summary") else ""))
+                    lines.append("- " + _xml_fence("event", raw))
                 text = f"{text}\n[空间事件]\n" + "\n".join(lines)
     except Exception:  # noqa: BLE001 — 事件块是增值上下文，绝不阻断 turn
         logger.debug(

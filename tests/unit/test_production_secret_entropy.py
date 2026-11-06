@@ -27,6 +27,8 @@ def _prod_kwargs(**over):
     kwargs = dict(
         _env_file=None,
         ENV="production",
+        ALLOW_PUBLIC_REGISTER=False,
+        ALLOW_RUNTIME_SKILL_UPLOAD=False,
         JWT_SECRET_KEY="x" * 32,
         LLM_API_KEY="sk-test-key-for-entropy-test",
         DATABASE_URL="postgresql://user:pass@localhost/db",

@@ -46,9 +46,11 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from .diagnostics import DiagnosticCode, ExtensionDiagnostic
+from .certification_contracts import CapabilityCheckRecord
+
+from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
 from .discovery import CERTIFICATION_FILENAME, compute_fingerprint
 from .host import ExtensionHost, ExtensionState
 
@@ -74,8 +76,8 @@ _RESULT_SIZE_BUDGET_BYTES = {
 # ── 检查项构造（与 certification.py 的 {check,status,detail} 同形）──────
 def _check(
     stage: str, target: str, ok: bool, detail: str, *, warn_only: bool = False
-) -> dict[str, Any]:
-    status = "warn" if warn_only else ("pass" if ok else "fail")
+) -> CapabilityCheckRecord:
+    status: Literal["warn", "pass", "fail"] = "warn" if warn_only else ("pass" if ok else "fail")
     return {"stage": stage, "capability": target, "status": status, "detail": detail}
 
 
@@ -88,7 +90,7 @@ def _result_digest(result: Any) -> str:
 
 
 # ── 阶段 1：supply_chain（复用既有确定性助手）────────────────────────────
-def _stage_supply_chain(host: ExtensionHost, record) -> list[dict[str, Any]]:
+def _stage_supply_chain(host: ExtensionHost, record) -> list[CapabilityCheckRecord]:
     from .certification import (
         _check_package_layout,
         _check_protocol_compat,
@@ -100,7 +102,7 @@ def _stage_supply_chain(host: ExtensionHost, record) -> list[dict[str, Any]]:
     from .signing import verify_pack_signature
 
     manifest = record.manifest
-    checks: list[dict[str, Any]] = []
+    checks: list[CapabilityCheckRecord] = []
     baseline_errors = [
         d
         for d in record.diagnostics
@@ -133,7 +135,7 @@ def _stage_supply_chain(host: ExtensionHost, record) -> list[dict[str, Any]]:
     )
     checks.append(
         _check("supply_chain", "pack",
-               signature.status not in ("invalid", "tampered", "revoked"),
+               signature.status == "signed_verified",
                signature.status
                + (f" (publisher={signature.publisher})" if signature.publisher else "")
                + (f": {signature.detail}" if signature.detail else ""))
@@ -161,8 +163,8 @@ def _stage_supply_chain(host: ExtensionHost, record) -> list[dict[str, Any]]:
 _SCHEMA_STATUS_VOCAB = frozenset({"", "EXPERIMENTAL", "VALIDATED", "PRODUCTION", "DEPRECATED"})
 
 
-def _stage_schema(manifest) -> list[dict[str, Any]]:
-    checks: list[dict[str, Any]] = []
+def _stage_schema(manifest) -> list[CapabilityCheckRecord]:
+    checks: list[CapabilityCheckRecord] = []
     for decl in manifest.tools:
         classified = decl.side_effect != "unclassified"
         checks.append(
@@ -288,7 +290,7 @@ def _classify_result_size(policy: Optional[str], result: Any) -> tuple[bool, str
 
 
 def _run_probe(host: ExtensionHost, manifest, target_tool: str, probe, stage: str,
-               capability_label: str) -> list[dict[str, Any]]:
+               capability_label: str) -> list[CapabilityCheckRecord]:
     """按 manifest 短名定位工具并执行探针。"""
     return _run_probe_by_registered_name(
         host, manifest.namespaced_tool_name(target_tool), probe, stage, capability_label,
@@ -297,9 +299,9 @@ def _run_probe(host: ExtensionHost, manifest, target_tool: str, probe, stage: st
 
 def _run_probe_by_registered_name(
     host: ExtensionHost, projected: str, probe, stage: str, capability_label: str,
-) -> list[dict[str, Any]]:
+) -> list[CapabilityCheckRecord]:
     """对真实注册的工具执行一个探针（断言 + 重放 + 类别核验）。"""
-    checks: list[dict[str, Any]] = []
+    checks: list[CapabilityCheckRecord] = []
     registry = host._tool_registry
     func = registry._tools.get(projected)
     if func is None:
@@ -380,12 +382,15 @@ def run_pack_certification(
             "schema_version": REPORT_SCHEMA_VERSION,
             "extension_id": extension_id,
             "certified": False,
+            "trust": "unknown",
+            "execution_mode": "unknown",
             "checks": [
                 _check("discovery", "pack", False, f"unknown extension {extension_id!r}")
             ],
         }
     manifest = record.manifest
-    checks: list[dict[str, Any]] = []
+    certified_fingerprint, _initial_diag = compute_fingerprint(record.path)
+    checks: list[CapabilityCheckRecord] = []
     checks.extend(_stage_supply_chain(host, record))
     checks.extend(_stage_schema(manifest))
 
@@ -435,8 +440,11 @@ def run_pack_certification(
         checks.extend(_stage_runtime_probe(host, record))
 
     capabilities = _capability_summary(record)
-    certified = all(c["status"] != "fail" for c in checks)
     fingerprint, _fp_diag = compute_fingerprint(record.path)
+    if not certified_fingerprint or fingerprint != certified_fingerprint:
+        checks.append(_check("supply_chain", "pack", False, "pack changed during certification"))
+    certified = all(c["status"] != "fail" for c in checks)
+    fingerprint = certified_fingerprint
     report: dict[str, Any] = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "extension_id": extension_id,
@@ -456,15 +464,15 @@ def run_pack_certification(
                 sign_key_file=sign_key_file, sign_key_id=sign_key_id,
             )
             report["saved"] = str(CERTIFICATION_FILENAME)
-        except ExtensionDiagnostic as exc:  # _fingerprint 失败等 typed 路径
-            report["saved"] = f"failed: {exc.message}"
+        except ExtensionPlatformError as exc:  # _fingerprint 失败等 typed 路径
+            report["saved"] = f"failed: {exc.diagnostic.message}"
     return report
 
 
 # ── 阶段 3：implementation（声明 ↔ 投影核对）────────────────────────────
-def _stage_implementation(host: ExtensionHost, record) -> list[dict[str, Any]]:
+def _stage_implementation(host: ExtensionHost, record) -> list[CapabilityCheckRecord]:
     manifest = record.manifest
-    checks: list[dict[str, Any]] = []
+    checks: list[CapabilityCheckRecord] = []
     registry = host._tool_registry
     for decl in manifest.tools:
         projected = manifest.namespaced_tool_name(decl.name)
@@ -508,9 +516,9 @@ def _stage_implementation(host: ExtensionHost, record) -> list[dict[str, Any]]:
 
 
 # ── 阶段 4：tests（pack 自带证据重放）────────────────────────────────────
-def _stage_tests(record) -> list[dict[str, Any]]:
+def _stage_tests(record) -> list[CapabilityCheckRecord]:
     manifest = record.manifest
-    checks: list[dict[str, Any]] = []
+    checks: list[CapabilityCheckRecord] = []
     module = record.module
     specs_by_kind: dict[str, list[Any]] = {}
     for attr, kind in (("TOOLS", "tool"), ("ALGORITHMS", "algorithm")):
@@ -615,10 +623,10 @@ def _algorithm_implementation(spec, module, namespace: str):
 
 
 # ── 阶段 5：runtime probe（真实注册面执行）───────────────────────────────
-def _stage_runtime_probe(host: ExtensionHost, record) -> list[dict[str, Any]]:
+def _stage_runtime_probe(host: ExtensionHost, record) -> list[CapabilityCheckRecord]:
     manifest = record.manifest
     cert = manifest.certification
-    checks: list[dict[str, Any]] = []
+    checks: list[CapabilityCheckRecord] = []
     if cert is None:
         return [_check(
             "runtime_probe", "pack", True,
@@ -651,8 +659,8 @@ def _stage_runtime_probe(host: ExtensionHost, record) -> list[dict[str, Any]]:
 
 
 # ── 阶段 6：lifecycle（干净停用 + 无孤儿投影）────────────────────────────
-def _stage_lifecycle(host: ExtensionHost, extension_id: str) -> list[dict[str, Any]]:
-    checks: list[dict[str, Any]] = []
+def _stage_lifecycle(host: ExtensionHost, extension_id: str) -> list[CapabilityCheckRecord]:
+    checks: list[CapabilityCheckRecord] = []
     record = host.get_record(extension_id)
     if record is None:
         return [_check("lifecycle", "pack", False, "record vanished during certification")]
@@ -696,7 +704,7 @@ def _stage_lifecycle(host: ExtensionHost, extension_id: str) -> list[dict[str, A
     return checks
 
 
-def _capability_summary(record) -> dict[str, Any]:
+def _capability_summary(record) -> dict[str, list[str]]:
     manifest = record.manifest
     return {
         "tools": sorted(manifest.namespaced_tool_name(t.name) for t in manifest.tools),

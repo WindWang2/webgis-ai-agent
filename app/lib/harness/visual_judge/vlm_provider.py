@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import logging
 import json
 import os
 import re
@@ -28,24 +29,22 @@ _CONTEXT_BUDGET = 800  # 确定性摘要进 prompt 的字符预算（有界）
 _CRITIQUE_ITEM_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["dimension", "severity", "suggestion", "confidence"],
+    "required": ["dimension", "severity", "suggestion", "confidence", "evidence", "bbox", "defect_type"],
     "properties": {
-        "dimension": {"enum": [d.value for d in VisualDimension]},
-        "severity": {"enum": ["info", "warning", "error"]},
+        "dimension": {"type": "string", "enum": [d.value for d in VisualDimension]},
+        "severity": {"type": "string", "enum": ["info", "warning", "error"]},
         "suggestion": {"type": "string"},
-        "evidence": {"type": "string"},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence": {"type": ["string", "null"]},
+        "confidence": {"type": "number"},
         "bbox": {
-            "type": "array",
+            "type": ["array", "null"],
             "items": {"type": "number"},
-            "minItems": 4,
-            "maxItems": 4,
             "description": (
                 "defect location as [ymin, xmin, ymax, xmax] in image "
                 "percentage coordinates (0-100, origin top-left)"
             ),
         },
-        "defect_type": {"type": "string"},
+        "defect_type": {"type": ["string", "null"]},
     },
 }
 
@@ -57,7 +56,6 @@ CRITIC_OUTPUT_SCHEMA: Dict[str, Any] = {
     "properties": {
         "critiques": {
             "type": "array",
-            "maxItems": 12,
             "items": _CRITIQUE_ITEM_SCHEMA,
         }
     },
@@ -317,11 +315,12 @@ def resolve_provider_config() -> Dict[str, str]:
         try:
             from app.core.config import settings
 
+            same_endpoint = not base_url or base_url.rstrip("/") == settings.LLM_BASE_URL.rstrip("/")
             base_url = base_url or settings.LLM_BASE_URL
-            api_key = api_key or settings.LLM_API_KEY
+            api_key = api_key or (settings.LLM_API_KEY if same_endpoint else "")
             model = model or settings.LLM_MODEL
-        except Exception:  # noqa: BLE001 — settings 缺席 ⇒ 交由占位符检测 fail-closed
-            pass
+        except Exception as _exc:  # noqa: BLE001 — settings 缺席 ⇒ 交由占位符检测 fail-closed
+            logging.getLogger(__name__).debug("vlm_provider: optional operation unavailable (%s)", type(_exc).__name__)
     return {
         "provider": provider,
         "base_url": base_url,

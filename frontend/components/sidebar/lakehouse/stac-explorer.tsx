@@ -51,6 +51,8 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
 
   const load = useCallback(async () => {
     if (!ownerId || (ownerType === 'session' && !sessionId)) {
+      reqRef.current.seq += 1;
+      reqRef.current.controller?.abort();
       setResult(null);
       return;
     }

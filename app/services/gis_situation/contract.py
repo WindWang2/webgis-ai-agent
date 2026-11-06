@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.services.gis_situation.facts import SitFact
+from app.services.gis_situation.facts import SitFact, unknown
 
 COMPILER_VERSION = 1
 
@@ -62,7 +62,7 @@ class SituationRevision(BaseModel):
         )
 
     def ge(self, other: "SituationRevision") -> bool:
-        return self.as_tuple() >= other.as_tuple()
+        return all(current >= previous for current, previous in zip(self.as_tuple(), other.as_tuple(), strict=True))
 
 
 class SituationIdentity(BaseModel):
@@ -120,6 +120,7 @@ class MapContext(BaseModel):
     fingerprint: SitFact
     layers: SitFact      # 有界摘要（id/type/visible/role）
     layer_count: SitFact
+    layer_ids: SitFact = Field(default_factory=lambda: SitFact(source="mapspec.layers"))
     sources: SitFact     # 有界摘要
     basemap: SitFact
     observed: SitFact    # runtime 观察阶梯摘要（observation_states 派生）
@@ -151,6 +152,12 @@ class InteractionContext(BaseModel):
     pending_mutations: SitFact    # 进行中后台任务（event_log 派生）
     recent_interactions: SitFact  # S4 交互环投影（有界）
     display_mode: SitFact         # is_3d
+    # /goal 03 additive：持久要素编辑回执（EditActionReceipt 的 situation
+    # 投影 —— journal 最近 ≤5 条，数据面事件非交互事件，不进 IR 词表）。
+    # default_factory=unknown：旧构造方（测试/既有调用）零改动兼容。
+    feature_edits: SitFact = Field(
+        default_factory=lambda: unknown(source="map_state._feature_edit_journals")
+    )
 
 
 class DeliveryContext(BaseModel):

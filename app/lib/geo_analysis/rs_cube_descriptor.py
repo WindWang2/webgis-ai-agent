@@ -440,7 +440,7 @@ def build_cube_descriptor(
     decorated = sorted(
         entries, key=lambda a: (parse_time_iso(a.time_iso), a.role, a.ref))
     if len(entries) > 1 and any(
-            a is not b for a, b in zip(entries, decorated)):
+            a is not b for a, b in zip(entries, decorated, strict=True)):
         extra = extra + (
             "资产表已按 (time, role, ref) 规范化排序——描述符是元数据，"
             "无行序数据语义；数据栈层的重排红线在 temporal_cube.build_cube",

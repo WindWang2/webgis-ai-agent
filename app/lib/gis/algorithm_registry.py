@@ -509,9 +509,7 @@ class AlgorithmRegistry:
         # 的半截派生态把平台工具带进复用/回填语义。
         from app.lib.gis.capability_registry import get_capability_registry
 
-        capabilities = get_capability_registry().descriptors() \
-            if hasattr(get_capability_registry(), "descriptors") \
-            else {}
+        capabilities = get_capability_registry()
         ordered = sorted(self._by_id.values(), key=lambda a: (a.priority, a.id))
         mapping: Dict[str, List[str]] = {}
         for algo in ordered:
@@ -606,7 +604,14 @@ class AlgorithmRegistry:
             # ── VNext（ADR-0099）科学元数据校验：每个声明字段都有
             # 存在性/一致性消费方 —— 死 metadata 在注册表门被拒。──────
             issues.extend(self._validate_scientific_metadata(algo))
+        # R（GOAL 03）：与 _is_analysis_capability 同门 —— 只有 native 能力
+        # 承诺算法 producer 契约；planned（platform 工具面，见 capabilities/
+        # platform.py 设计说明）无算法是诚实中间态，不构成注册表违规。
+        # 注意：data_preparation/layer_browse 为 native（#1868/#1875 落地）
+        # 仍走既有算法校验 —— 其预存红属数据准备轨所有权，此处不越权清偿。
         for cap in capabilities.all_ids:
+            if not self._is_analysis_capability(cap, capabilities):
+                continue
             if not self._by_capability.get(cap):
                 issues.append(f"capability {cap}: no algorithm registered")
         return issues

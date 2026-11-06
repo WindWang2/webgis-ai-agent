@@ -450,3 +450,18 @@ describe('DataPlaneScheduler — external signal listener lifecycle (#1745 6)', 
     expect(signal.size()).toBe(0);
   });
 });
+
+
+it('one deduplicated caller aborting does not cancel the other (#1848 S7b4-005)', async () => {
+  const h = makeHarness();
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  const first = h.scheduler.request(req({ signal: firstController.signal }));
+  const second = h.scheduler.request(req({ signal: secondController.signal }));
+  firstController.abort();
+  expect((await first).status).toBe('cancelled');
+  expect(h.fetchCalls[0].signal.aborted).toBe(false);
+  h.resolveAll();
+  expect((await second).status).toBe('fulfilled');
+  expect(h.fetchCalls).toHaveLength(1);
+});

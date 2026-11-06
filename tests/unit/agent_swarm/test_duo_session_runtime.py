@@ -309,7 +309,8 @@ class TestAggregatorIntegration:
         assert collect["session_id"] == "duo-agg"
         assert collect["run_id"] == "run-8"
         assert len(collect["receipts"]) == 2
-        assert collect["tasks"] == []
+        assert collect["tasks"] == {}
+        assert isinstance(collect["receipts"], dict)
         assert len(aggregator.merges) == 1
 
     async def test_aggregator_failure_is_fail_open(self):

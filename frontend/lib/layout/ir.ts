@@ -82,6 +82,7 @@ export interface LayoutIrComponent {
   constraints: LayoutIrConstraints;
   style: LayoutIrStyle;
   typography: LayoutIrTypography | null;
+  content?: Record<string, unknown>;
 }
 
 export interface LayoutIrDegradation {
@@ -107,6 +108,7 @@ export interface LayoutIrComponentInput {
   constraints?: LayoutIrConstraints;
   style?: Partial<LayoutIrStyle>;
   typography?: LayoutIrTypography | null;
+  content?: Record<string, unknown>;
 }
 
 /**
@@ -133,6 +135,8 @@ export function buildLayoutIr(params: {
     constraints: comp.constraints ?? {},
     style: { ...comp.style, token: comp.style?.token ?? null },
     typography: comp.typography ?? null,
+    ...(comp.content && typeof comp.content === 'object' && !Array.isArray(comp.content)
+      ? { content: structuredClone(comp.content) } : {}),
   }));
   normalized.sort((a, b) => (a.frame.z - b.frame.z) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return {

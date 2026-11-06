@@ -6,6 +6,16 @@ canonical 指纹可算。纯数据与纯函数；I/O 归 store/driver/service。
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    AttemptRecord,
+    BindingRecord,
+    ChangeRecord,
+    DecisionRecord,
+    ReuseRecord,
+    TransitionRecord,
+    ViolationRecord,
+)
+
 import hashlib
 import json
 from typing import Any, Dict, List, Optional, Tuple
@@ -168,7 +178,7 @@ class StateTransitionRecord(BaseModel):
     reason_code: str = ""
     event: str = ""
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> TransitionRecord:
         return {
             "rev": self.revision,
             "from": self.from_state[:16],
@@ -184,7 +194,7 @@ class PortViolation(BaseModel):
     code: str                       # ARTIFACT_TYPE_MISMATCH / CRS_CLASS_MISMATCH / ...
     detail: str = ""
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> ViolationRecord:
         return {
             "port": self.port[:48],
             "code": self.code[:48],
@@ -200,7 +210,7 @@ class BindingVerdict(BaseModel):
     violations: List[PortViolation] = Field(default_factory=list)
     disclosures: List[str] = Field(default_factory=list)
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> BindingRecord:
         return {
             "node_id": self.node_id[:64],
             "ok": self.ok,
@@ -221,7 +231,7 @@ class ReuseEvidence(BaseModel):
     fingerprint_level: str = ""     # content | profile_digest
     skipped_reason: str = ""        # 未复用时的类型化原因
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> ReuseRecord:
         return {
             "reused": self.reused,
             "reuse_fingerprint": self.reuse_fingerprint[:32],
@@ -243,7 +253,7 @@ class NodeAttempt(BaseModel):
     backend: str = ""               # geocompute_inprocess | geocompute_durable | harness_record
     output_ref: str = ""
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> AttemptRecord:
         return {
             "attempt": self.attempt,
             "status": self.status[:16],
@@ -263,7 +273,7 @@ class PendingChange(BaseModel):
     detail: str = ""
     source: str = ""                # api | style_hook | data_hook
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> ChangeRecord:
         return {
             "dimension": self.dimension[:24],
             "target_kind": self.target_kind[:24],
@@ -285,7 +295,7 @@ class RecomputeDecision(BaseModel):
     style_only: bool = False
     explanations: List[str] = Field(default_factory=list)
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> DecisionRecord:
         return {
             "seq": self.seq,
             "changes_fp": self.changes_fingerprint[:32],
@@ -379,7 +389,8 @@ def instance_status_from_nodes(
     if any(s == NodeState.CANCELLED for s in statuses.values()):
         return InstanceStatus.CANCELLED
     if all(s in (NodeState.SUCCEEDED, NodeState.SKIPPED)
-           for s in statuses.values()):
+           or optional_nodes.get(nid, False) and s in (NodeState.FAILED, NodeState.BLOCKED)
+           for nid, s in statuses.items()):
         return InstanceStatus.SUCCEEDED
     for node_id, s in statuses.items():
         required = not optional_nodes.get(node_id, False)

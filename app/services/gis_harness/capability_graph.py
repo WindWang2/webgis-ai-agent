@@ -18,6 +18,7 @@ Provider 纳入一等节点 —— Agent 规划第一次拥有单一的
   （接入 registry_validation 与 preflight 轨道）。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import hashlib
 import json
@@ -349,23 +350,27 @@ def source_fingerprints() -> Dict[str, str]:
         try:
             fps[name] = _fingerprint_of(ids) if ids is not None else "absent"
         except Exception:  # noqa: BLE001
+            logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
             fps[name] = "absent"
 
     try:
         from app.lib.gis.capability_registry import get_capability_registry
         _fp("capability_registry", get_capability_registry().all_ids)
     except Exception:  # noqa: BLE001
+        logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
         _fp("capability_registry", None)
     try:
         from app.lib.gis.algorithm_registry import get_algorithm_registry
         _fp("algorithm_registry", list(getattr(
             get_algorithm_registry(), "_by_id", {}) or {}))
     except Exception:  # noqa: BLE001
+        logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
         _fp("algorithm_registry", None)
     try:
         from app.lib.gis.runtime_manifest import get_runtime_manifest
         _fp("runtime_manifest", [str(get_runtime_manifest().fingerprint)])
     except Exception:  # noqa: BLE001
+        logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
         _fp("runtime_manifest", None)
     # #1402: fingerprint consumed tool-descriptor fields (not membership alone)
     # so content mutation (capabilities / credentials / cost / …) rebuilds.
@@ -392,22 +397,25 @@ def source_fingerprints() -> Dict[str, str]:
                 ]))
             _fp("tool_descriptors", rows)
     except Exception:  # noqa: BLE001
+        logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
         _fp("tool_descriptors", None)
     try:
         store = _shared_model_registry_store()
         try:
             store.load()
         except Exception:  # noqa: BLE001 — 未初始化目录按缺席
-            pass
+            observe_optional_failure(__name__)
         records = getattr(store, "_records", {}) or {}
         _fp("modelops_registry", [f"{k[1]}@{k[2]}" for k in records.keys()])
     except Exception:  # noqa: BLE001
+        logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
         _fp("modelops_registry", None)
     # ── V1（ADR-0181）：四段新来源入缓存键 ──────────────────────────
     try:
         from app.services.gis_harness.recipes import get_recipe_registry
         _fp("recipe_registry", get_recipe_registry().all_ids)
     except Exception:  # noqa: BLE001
+        logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
         _fp("recipe_registry", None)
     try:
         from app.services.gis_harness.product_templates import (
@@ -415,17 +423,20 @@ def source_fingerprints() -> Dict[str, str]:
         )
         _fp("product_templates", get_product_template_registry().all_ids)
     except Exception:  # noqa: BLE001
+        logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
         _fp("product_templates", None)
     try:
         from app.lib.cartography.component_registry import get_component_registry
         _fp("component_registry", get_component_registry().all_ids)
     except Exception:  # noqa: BLE001
+        logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
         _fp("component_registry", None)
     try:
         from app.services.data_fabric.registry import get_registry
         adapters = get_registry()
         _fp("data_fabric_adapters", adapters.supported_source_types())
     except Exception:  # noqa: BLE001
+        logger.warning("Capability graph registry fingerprint unavailable", exc_info=True)
         _fp("data_fabric_adapters", None)
     return fps
 
@@ -655,7 +666,7 @@ def build_capability_graph() -> CapabilityGraph:
         try:
             store.load()
         except Exception:  # noqa: BLE001
-            pass
+            observe_optional_failure(__name__)
         records = getattr(store, "_records", {}) or {}
         for key in sorted(records.keys())[:MAX_INDEX_MODELS]:
             scope_key, model_id, version = key
@@ -706,7 +717,7 @@ def build_capability_graph() -> CapabilityGraph:
             _add(GraphNode(at, KIND_ARTIFACT_TYPE, "artifact_registry",
                            label=str(at)))
     except Exception:  # noqa: BLE001
-        pass  # 缺席时 validate 以 info 披露（见 validate_graph）
+        observe_optional_failure(__name__)
 
     # 6) recipe registry（V1：workflow 一等节点 ——「怎么做」的能力面）
     #    requires → preferred/optional capability；fallback_to → 声明式
@@ -915,22 +926,39 @@ def _modelops_task_capabilities(task_types: Iterable[str]) -> List[str]:
 _graph_cache: Dict[str, Any] = {"fingerprint": None, "graph": None}
 _build_counter: List[int] = [0]
 _graph_lock = threading.RLock()
+_graph_checked_until = 0.0
+_GRAPH_CHECK_TTL_SECONDS = 0.5
 
 
 def get_capability_graph() -> CapabilityGraph:
     """进程级缓存投影：source 指纹未变 → 同一实例（零重建）。"""
+    global _graph_checked_until
+    from app.lib.gis.capability_registry import get_capability_registry
+    registry = get_capability_registry()
+    # Membership changes are cheap to observe; never hide an explicit registry
+    # registration/reset behind the expensive cross-registry fingerprint TTL.
+    membership = (id(registry), tuple(registry.all_ids))
     with _graph_lock:
-        fp = hashlib.sha256(
-            json.dumps(source_fingerprints(), sort_keys=True).encode("utf-8")
-        ).hexdigest()[:32]
+        if _graph_cache.get("membership") != membership:
+            _graph_checked_until = 0.0
+            _graph_cache["membership"] = membership
+        if _graph_cache["graph"] is not None and time.monotonic() < _graph_checked_until:
+            return _graph_cache["graph"]
+    fingerprints = source_fingerprints()
+    fp = hashlib.sha256(json.dumps(fingerprints, sort_keys=True).encode("utf-8")).hexdigest()[:32]
+    complete = all(fingerprints.get(name) != "absent" for name in ("capability_registry", "algorithm_registry", "runtime_manifest"))
+    with _graph_lock:
         cached = _graph_cache["graph"]
-        if _graph_cache["fingerprint"] == fp and cached is not None:
+        if complete and _graph_cache["fingerprint"] == fp and cached is not None:
+            _graph_checked_until = time.monotonic() + _GRAPH_CHECK_TTL_SECONDS
             return cached
         started = time.perf_counter()
         _build_counter[0] += 1
         graph = build_capability_graph()
-        _graph_cache["fingerprint"] = fp
-        _graph_cache["graph"] = graph
+        if complete:
+            _graph_cache["fingerprint"] = fp
+            _graph_cache["graph"] = graph
+            _graph_checked_until = time.monotonic() + _GRAPH_CHECK_TTL_SECONDS
         # review P2：首次构建/重建（冷启动 ~秒级）进 info 日志 —— 热路径
         # 延迟尖峰可观测；常规路径（缓存命中）零开销零日志。
         logger.info(

@@ -23,6 +23,7 @@ from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     InvalidQueryError,
+    QueryBudgetExceededError,
     SecurityBlockedError,
     SourceBadResponseError,
     SourceUnreachableError,
@@ -65,6 +66,8 @@ def _resolve_gpkg_path(endpoint: str, options: Dict[str, Any]) -> Path:
                 f"no .gpkg files under {base}",
                 details={"hint": "ingest local data first"},
             )
+        if len(candidates) > 1:
+            raise InvalidQueryError("multiple GeoPackages found; configure an explicit .gpkg endpoint")
         try:
             resolved = [
                 Path(resolve_safe_local_path(str(c), roots, max_bytes))
@@ -122,7 +125,7 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
     def list_datasets(self) -> List[Dict[str, Any]]:
         path = self._require_existing()
         datasets = [
-            {"id": layer, "name": layer, "data_type": "vector", "path": str(path)}
+            {"id": layer, "name": layer, "data_type": "vector"}
             for layer in self._layers()
         ]
         if len(datasets) == 1 and datasets[0]["id"] != path.stem:
@@ -158,7 +161,7 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
             srs=str(info.get("crs") or "") or None,
             fields=fields,
             query_capabilities=self.capabilities(),
-            metadata={"path": str(path), "layer": layer, "adapter": "ads.geopackage"},
+            metadata={"layer": layer, "adapter": "ads.geopackage"},
         )
 
     def preview(self, dataset_id: str, limit: int = _PREVIEW_LIMIT) -> Dict[str, Any]:
@@ -182,36 +185,51 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
     def query(self, dataset_id: str, query_spec) -> QueryResult:
         import pyogrio
 
+        if any(getattr(query_spec, key, None) for key in ("where", "filter_expr", "datetime_range")):
+            raise InvalidQueryError("GeoPackage adapter does not support attribute/time predicates")
         path = self._require_existing()
         layer = self._resolve_layer(dataset_id)
         limit = max(0, min(int(query_spec.limit or 0), _MAX_QUERY_FEATURES))
         offset = max(0, int(query_spec.offset or 0))
+        if offset >= _MAX_QUERY_FEATURES:
+            raise QueryBudgetExceededError("GeoPackage offset exceeds bounded scan budget")
         columns = list(query_spec.columns or []) or None
         bbox = query_spec.bbox
         try:
+            info = pyogrio.read_info(str(path), layer=layer)
             if bbox:
-                minx, miny, maxx, maxy = (float(v) for v in bbox)
-                gdf = pyogrio.read_dataframe(
-                    str(path), layer=layer, bbox=(minx, miny, maxx, maxy),
-                    columns=columns, max_features=_MAX_QUERY_FEATURES,
-                )
-            else:
-                gdf = pyogrio.read_dataframe(
-                    str(path), layer=layer, columns=columns, max_features=_MAX_QUERY_FEATURES,
-                )
+                if not info.get("crs"):
+                    raise InvalidQueryError("GeoPackage bbox requires a known source CRS")
+                from pyproj import Transformer
+
+                bbox = Transformer.from_crs("EPSG:4326", info["crs"], always_xy=True).transform_bounds(*bbox)
+            gdf = pyogrio.read_dataframe(
+                str(path), layer=layer, bbox=bbox, columns=columns,
+                max_features=_MAX_QUERY_FEATURES + 1,
+            )
+            if gdf.crs is not None:
+                gdf = gdf.to_crs("EPSG:4326")
+        except InvalidQueryError:
+            raise
         except Exception as e:  # noqa: BLE001
             raise SourceBadResponseError(f"GeoPackage read failed for '{layer}': {e}") from e
+        if len(gdf) > _MAX_QUERY_FEATURES:
+            raise QueryBudgetExceededError("GeoPackage result exceeds bounded scan budget")
         page = gdf.iloc[offset: offset + limit] if limit else gdf.iloc[offset:]
+        has_more = bool(limit and offset + len(page) < len(gdf))
         return QueryResult(
             dataset_id=dataset_id,
             query_spec=query_spec,
             features=page.to_geo_dict()["features"],
+            returned_count=len(page), total_count=len(gdf), total_matching=len(gdf),
+            has_more=has_more, truncated=has_more,
             metadata={
                 "adapter": "ads.geopackage",
                 "source": "local_gpkg",
                 "is_demo": False,
                 "count": int(len(page)),
                 "total_matched": int(len(gdf)),
+                "delivered_crs": "EPSG:4326" if gdf.crs is not None else None,
             },
         )
 
@@ -220,6 +238,7 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
         return DataFabricHealth(
             source_type="geopackage",
             reachable=reachable,
+            status="healthy" if reachable else "unreachable",
             latency_ms=0.0,
             details={"path": str(self._path) if self._path else None},
         )

@@ -25,6 +25,7 @@ esac
 # 把项目虚拟环境放到 PATH 最前：下面的命令与 CI 字面一致（ruff/pytest 直名调用），
 # 本地解析到 .venv/bin 里的版本；CI 里是 pip install 的全局命令。
 [ -d .venv/bin ] && export PATH="$PWD/.venv/bin:$PATH"
+[ -d .venv/Scripts ] && export PATH="$PWD/.venv/Scripts:$PATH"
 
 # 与 CI 的 Set Environment Variables 对齐（不覆盖已有的本地配置）。
 export JWT_SECRET_KEY="${JWT_SECRET_KEY:-ci-test-secret-key-32-chars-ok}"
@@ -109,6 +110,8 @@ pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_per
   tests/benchmarks/test_gis_registry_perf.py tests/benchmarks/test_template_registry_perf.py \
   tests/benchmarks/test_planner_runtime_perf.py tests/benchmarks/test_pi_perf.py \
   tests/benchmarks/test_data_runtime_v2_perf.py tests/benchmarks/test_geobench_v3.py \
+  tests/benchmarks/test_quality_scenario_corpus_perf.py \
+  tests/benchmarks/test_network_closest_facility_perf.py \
   -m perf --no-cov --timeout=180 --timeout-method=thread -q
 
 step "cartography smoke (cartography-smoke job)"

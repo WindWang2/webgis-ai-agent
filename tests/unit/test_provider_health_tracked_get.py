@@ -211,5 +211,5 @@ async def test_tracked_provider_get_post(monkeypatch):
     mock_session.post.assert_called_once()
     call_kwargs = mock_session.post.call_args.kwargs
     assert call_kwargs.get("data") == {"data": "[out:json];node(1);out;"}
-    assert call_kwargs.get("timeout") == 60
+    assert call_kwargs["timeout"].total == 60
     mock_session.get.assert_not_called()

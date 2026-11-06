@@ -162,6 +162,12 @@
     "titleLabel": "Title:",
     "geomTypeLabel": "Geometry type:",
     "srsLabel": "SRS:",
+    "capabilityLabel": "Service capability:",
+    "capability": {
+      "supported": "declared & supported",
+      "unsupported": "declared, unsupported (see reasons)",
+      "unknown": "not declared (no guessing)"
+    },
     "fieldSchema": "Field schema ({count})",
     "type": {
       "postgis": "PostGIS database"
@@ -174,7 +180,8 @@
     "loadToMap": "Load to map",
     "addSource": "Add data source",
     "listFailed": "Failed to load the data source list",
-    "catalogLoadFailed": "Failed to load the spatial catalog"
+    "catalogLoadFailed": "Failed to load the spatial catalog",
+    "loadMoreCatalog": "Load more catalog items"
   },
   "comp": {
     "emptyNoSpecTitle": "No map components yet",
@@ -228,7 +235,8 @@
       "agent": "AI task",
       "analysis": "Spatial analysis",
       "workflow": "Workflow",
-      "explorer": "Data exploration"
+      "explorer": "Data exploration",
+      "atlas_export": "Atlas batch"
     },
     "attemptSuffix": " · attempt {count}",
     "fromStepSuffix": " · from {step}",
@@ -238,7 +246,14 @@
     "cancelAria": "Cancel {name}",
     "retryAria": "Retry {name}",
     "collapseTimelineAria": "Collapse {name} execution timeline",
-    "expandTimelineAria": "Expand {name} execution timeline"
+    "expandTimelineAria": "Expand {name} execution timeline",
+    "atlasPages": "Atlas pages (per-page status)",
+    "atlasPageRendered": "✓ rendered",
+    "atlasPageFailed": "✗ failed",
+    "atlasPdf": "Download PDF",
+    "atlasManifest": "Provenance",
+    "atlasDownloadPdf": "Download atlas PDF: {name}",
+    "atlasDownloadManifest": "Download reproducible provenance manifest: {name}"
   },
   "studio": {
     "decoration": {
@@ -308,7 +323,15 @@
     "docSummaryEmpty": "Not filled in yet",
     "docSummaryFilled": "{filled}/4 filled in",
     "elementSummary": "{enabled}/{total} enabled",
-    "loginToExportTitle": "Export requires signing in (Settings → Account)"
+    "loginToExportTitle": "Export requires signing in (Settings → Account)",
+    "atlasBatch": "Background batch job",
+    "atlasBatchNote": "Submit as a background atlas job: per-page progress, cancellable, failed pages retry individually; download the PDF and provenance manifest from the task center when done.",
+    "atlasBatchNoSession": "No active session; cannot submit an atlas batch job",
+    "atlasBatchSubmitted": "Atlas batch job submitted (job {jobId}, {count} pages planned) — track it in the task center",
+    "atlasBatchReused": "An identical atlas batch job is already running (job {jobId}); reused the same job",
+    "atlasBatchFailed": "Atlas batch job submission failed: {reason}",
+    "removeFromList": "Remove from list",
+    "confirmRemoveFromList": "Confirm removal"
   },
   "inspector": {
     "emptyTitle": "No dataset selected",
@@ -364,7 +387,8 @@
     "aggFieldAria": "Aggregate field",
     "groupByAria": "Group-by field",
     "noGroup": "No grouping",
-    "statsModeHint": "result_mode will switch to statistics (aggregate results only, no geometry transferred)"
+    "statsModeHint": "result_mode will switch to statistics (aggregate results only, no geometry transferred)",
+    "aggFieldRequired": "Choose an aggregate field before running or explaining the query."
   },
   "explain": {
     "queryFingerprint": "Query fingerprint",
@@ -697,7 +721,8 @@
     "overflowTitle": "{count} other participants (max {max})",
     "otherFallback": "Other",
     "groupKind": "group",
-    "layerKind": "layer"
+    "layerKind": "layer",
+    "leasesUncertain": "Lease status temporarily unverified"
   },
   "wf": {
     "compare": "Compare",

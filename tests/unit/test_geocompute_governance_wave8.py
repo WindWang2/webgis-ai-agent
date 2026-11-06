@@ -621,7 +621,7 @@ class TestSlotLeaseWatchdog:
         thread_a.start()
         try:
             assert started.wait(5.0), "zombie node never started"
-            assert eng_a.cancel_run(seen["run_id"], "w8 cancel")
+            assert eng_a.cancel_run(seen["run_id"], "w8 cancel", owner_scope=eng_a._run_owners[seen["run_id"]])
             deadline = time.monotonic() + 3.0
             reclaimed: list[dict] = []
             while time.monotonic() < deadline and not reclaimed:

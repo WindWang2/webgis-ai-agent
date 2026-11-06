@@ -64,14 +64,22 @@ _TAXONOMY_TABLE: Dict[str, tuple] = {
     # requirement.scene.dimension（agent origin 不投影：agent 决策不是
     # 用户偏好，见 semantic_projection 的 origin 门）。
     "SetSceneIntent": ("requirement_significant", "scene_mode"),
+    # v1.7（G3D02）：三维场景资产表 —— 跨轮保持的制图语义（资产挂载决策）。
+    "SetSceneAssetsIntent": ("requirement_significant", "scene_assets"),
     # ── presentation-ephemeral（永不进入 requirement） ──────────────────
     "SetViewIntent": ("presentation_ephemeral", "none"),
     # ── system repair（不冒充用户偏好） ────────────────────────────────
     "ApplyVisualHealPatchIntent": ("system_repair", "none"),
+    # /goal 03：要素编辑后的数据新鲜度盖章（origin 恒 system，非用户决策）。
+    "RefreshDataRevisionIntent": ("system_repair", "none"),
     # ── data / science（不属于 representation binding） ────────────────
     "UpsertSourceIntent": ("data_science", "none"),
     "UpsertLayerIntent": ("data_science", "none"),
     "SetTimeIntent": ("data_science", "none"),
+    # GOAL 03：时态控制层（temporal_view.v1）—— 时间语义契约/游标与
+    # representation binding 正交（与 SetTimeIntent 同判；游标不是用户
+    # 表达偏好，user_pinned 的 user-wins 在 temporal service 层裁决）。
+    "SetTemporalViewIntent": ("data_science", "none"),
     "SetBasemapIntent": ("data_science", "none"),
     # ── unbound（组织面；undo 经 undo_rebaseline 特判见下） ─────────────
     "InitProjectIntent": ("unbound", "none"),

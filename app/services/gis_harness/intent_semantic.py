@@ -19,6 +19,7 @@ adaptive 入口被调用，永不影响 ``resolve_map_request_intent`` 的可复
 """
 
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import json
 import logging
@@ -988,10 +989,10 @@ def extract_slots(query: str) -> IntentSlots:
         slots.confidence = 0.3
     else:
         slots.confidence = 0.7
-    m = re.search(r"(\d+)\s*(?:m|米|km|公里|千米)", query, re.I)
+    m = re.search(r"(\d+)\s*(?:km(?![a-z])|m(?![a-z])|公里|千米|米)", query, re.I)
     if m:
         slots.constraints.append(SlotConstraint(kind="distance", value=m.group(0)))
-    if re.search(r"(除|不含|没有|排除|非|not|without|excluding)", query, re.I):
+    if re.search(r"(排除|不含|没有|除外|非[^常]类|\b(?:not|without|excluding)\b)", query, re.I):
         slots.constraints.append(SlotConstraint(kind="negation", value=""))
     return slots
 
@@ -1165,6 +1166,23 @@ def _parse_llm_json(content: str) -> Optional[Dict[str, Any]]:
     return payload if isinstance(payload, dict) else None
 
 
+def _run_async_call(coro: Any) -> Any:
+    """Run one async LLM call without leaking a coroutine into sync callers."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    # The adaptive resolver is intentionally synchronous for its existing
+    # callers. A worker thread gives it a private event loop when invoked
+    # from an async request handler, avoiding nested-loop errors.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(asyncio.run, coro).result()
+
+
 def extract_slots_with_llm(query: str) -> IntentSlots:
     """LLM 结构化槽位抽取。不可用/失败 → 空槽位 + degraded_reason，不抛错。"""
     if not llm_available():
@@ -1191,7 +1209,7 @@ def extract_slots_with_llm(query: str) -> IntentSlots:
             {"role": "system", "content": system},
             {"role": "user", "content": query},
         ]
-        response = call_llm(cfg, messages)
+        response = _run_async_call(call_llm(cfg, messages))
         content = ((response or {}).get("choices") or [{}])[0].get(
             "message", {}).get("content", "")
         payload = _parse_llm_json(content)
@@ -1286,7 +1304,7 @@ def record_resolve(lang: str, outcome: str) -> None:
             outcome=outcome if outcome in _OUTCOMES else "rule",
         ).inc()
     except Exception:  # noqa: BLE001
-        pass
+        observe_optional_failure(__name__)
 
 
 def record_clarification(slot: str) -> None:
@@ -1295,7 +1313,7 @@ def record_clarification(slot: str) -> None:
     try:
         _CLARIFY_TOTAL.labels(slot=slot).inc()
     except Exception:  # noqa: BLE001
-        pass
+        observe_optional_failure(__name__)
 
 
 def record_degraded(reason: str) -> None:
@@ -1306,7 +1324,7 @@ def record_degraded(reason: str) -> None:
             reason=reason if reason in _DEGRADED_REASONS else "llm_error",
         ).inc()
     except Exception:  # noqa: BLE001
-        pass
+        observe_optional_failure(__name__)
 
 
 __all__ = [

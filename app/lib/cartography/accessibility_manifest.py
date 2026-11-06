@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
 
 from app.lib.cartography.defaults import DEFAULT_PALETTE
@@ -71,7 +72,7 @@ def build_accessibility_manifest(
         "palette": palette_name,
         "context": palette_context,
         "declaration": (
-            f"色带 {palette_name} 在当前上下文（{palette_context}）通过可分辨校验；"
+            f"色带 {palette_name} 在当前上下文（{palette_context}）尚未校验可分辨性；"
             "若目标受众含色觉差异读者，建议改用感知均匀色带（Viridis 等同族）"
         ),
         "checked": False,
@@ -84,13 +85,15 @@ def build_accessibility_manifest(
         colorblind["checked"] = True
         colorblind["separable"] = bool(cell["separable"])
         colorblind["minMetric"] = cell["min_metric"]
-        if not cell["separable"]:
+        if cell["separable"]:
+            colorblind["declaration"] = f"色带 {palette_name} 在 {ctx} 上下文通过可分辨校验"
+        else:
             colorblind["declaration"] = (
                 f"色带 {palette_name} 在 {ctx} 上下文未通过可分辨校验 —— "
                 "导出前建议换用感知均匀色带（诚实披露，不静默放行）"
             )
-    except Exception:  # noqa: BLE001 —— 校验不可得时 checked=False（诚实）
-        pass
+    except Exception as _exc:  # noqa: BLE001 —— 校验不可得时 checked=False（诚实）
+        logging.getLogger(__name__).debug("accessibility_manifest: optional operation unavailable (%s)", type(_exc).__name__)
 
     if not alt_text:
         alt_text = f"{title}；图层：{'、'.join(layer_labels[:6]) or '无'}"

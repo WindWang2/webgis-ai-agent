@@ -8,7 +8,8 @@
 - 确定性：两次构建 id 与查询完全一致；构建期反垃圾护栏（id 唯一、
   (family, state) 查询唯一、每族 profile 变体 ≤ 64）；
 - 全量回放零失败：按 scenario_kind 前缀分片（basemap / science /
-  cartography / data / agent），每片实测 ≪ 60s 测试超时；
+  cartography / data / agent），保留在覆盖率车道；basemap/science/data 的
+  原 45s 墙钟预算由必过 PR perf 车道无 coverage 地执行同一回放；
 - 新 DSL 字段（Wave 2+3）：语料覆盖（≥1 生成案例携带）+ 逐字段「必须
   触发」测试（手构案例对真实 registry 断言失败信息）。
 """
@@ -74,36 +75,40 @@ def test_build_determinism_and_anti_garbage():
     assert len(ref_queries) == len(set(ref_queries))
 
 
-@pytest.mark.parametrize("prefix", ["basemap_", "science_"])
-@pytest.mark.asyncio
-async def test_slice_geometry_states_green(prefix):
-    """几何态分片（basemap / science）全量回放零失败。"""
+async def replay_quality_slice(prefix: str) -> tuple[float, list[tuple[str, list[str]]]]:
+    """Shared real replay for covered correctness and the required perf gate.
+
+    Corpus construction stays outside the timer, exactly as in the original
+    tests. Registry/planner startup and every case remain inside it; no warmup,
+    sampling, cached results, or skipped failures are introduced.
+    """
     from app.evaluation.runner import GISBenchmarkRunner
 
-    cases = [c for c in build_quality_scenario_corpus()
-             if (c.scenario_kind or "").startswith(prefix)]
-    assert cases, f"slice {prefix} must exist"
+    cases = _slice_by_prefix(build_quality_scenario_corpus(), prefix)
+    if prefix == "data_":
+        assert len(cases) >= 59 * 8, f"data slice: {len(cases)}"
+    else:
+        assert cases, f"slice {prefix} must exist"
     started = time.monotonic()
     results = await GISBenchmarkRunner().run(cases)
     elapsed = time.monotonic() - started
     failed = [(r.case_id, r.failures) for r in results if not r.passed]
+    return elapsed, failed
+
+
+@pytest.mark.parametrize("prefix", ["basemap_", "science_"])
+@pytest.mark.asyncio
+async def test_slice_geometry_states_green(prefix):
+    """几何态全量正确性保留在 coverage 车道；45s 门在 PR perf 车道。"""
+    _, failed = await replay_quality_slice(prefix)
     assert failed == [], f"{len(failed)} failures: {failed[:5]}"
-    assert elapsed < 45, f"slice {prefix} took {elapsed:.1f}s (budget 45s)"
 
 
 @pytest.mark.asyncio
 async def test_slice_data_states_green():
-    """数据状态分片（data_*，59 族 × 8 语义数据状态）全量回放零失败。"""
-    from app.evaluation.runner import GISBenchmarkRunner
-
-    cases = _slice_by_prefix(build_quality_scenario_corpus(), "data_")
-    assert len(cases) >= 59 * 8, f"data slice: {len(cases)}"
-    started = time.monotonic()
-    results = await GISBenchmarkRunner().run(cases)
-    elapsed = time.monotonic() - started
-    failed = [(r.case_id, r.failures) for r in results if not r.passed]
+    """数据状态全量正确性（≥59族×8状态）；45s 门在 PR perf 车道。"""
+    _, failed = await replay_quality_slice("data_")
     assert failed == [], f"{len(failed)} failures: {failed[:5]}"
-    assert elapsed < 45, f"data slice took {elapsed:.1f}s (budget 45s)"
 
 
 @pytest.mark.asyncio

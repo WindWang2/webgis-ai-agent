@@ -25,6 +25,7 @@ from app.services.project_runtime.contract import (
     RESUME_DATASET_VERSION_CHANGED,
     RESUME_MISSING_ARTIFACT,
     RESUME_PERMISSION_CHANGED,
+    RESUME_READY_WITH_STALE_INPUTS,
     RESUME_REQUIRES_RECOMPUTE,
     RecoveryPlan,
     SourceDisposition,
@@ -104,6 +105,18 @@ async def validate_runtime_snapshot(
                 "resuming a runtime snapshot created by another user "
                 "(same project scope); provenance is preserved"
             ),
+        ))
+
+    for key in ("source_bindings_truncated", "datasets_truncated"):
+        if snapshot.disclosure.get(key):
+            report.findings.append(ValidationFinding(
+                state="requires_recompute", subject=key,
+                reason="frozen projection omitted entries beyond its documented budget",
+            ))
+    if not snapshot.workspace_snapshot_id:
+        report.findings.append(ValidationFinding(
+            state="missing_artifact", subject="workspace_snapshot",
+            reason="snapshot has no authoritative workspace ledger",
         ))
 
     # ── MapSpec 文档完整性 ──
@@ -209,6 +222,10 @@ async def _validate_sources(snapshot: Any, report: ValidationReport) -> None:
         if await _ref_live_in_old_session(old_sid, binding.ref):
             disposition.disposition = DISPOSITION_RESTORE_LIVE
             disposition.detail = "old session still alive"
+            if not binding.live_payload_sha256:
+                report.findings.append(ValidationFinding(
+                    state=RESUME_READY_WITH_STALE_INPUTS, subject=binding.ref,
+                    reason="live fallback has no frozen payload digest; content at the freeze cut cannot be verified"))
             report.dispositions.append(disposition)
             continue
         disposition.disposition = DISPOSITION_NEEDS_RECOMPUTE
@@ -258,7 +275,7 @@ async def _validate_datasets(
                     ProjectDataset.id,
                     ProjectDataset.version_fingerprint,
                     ProjectDataset.detached_at,
-                ).where(ProjectDataset.id.in_(ids))
+                ).where(ProjectDataset.id.in_(ids), ProjectDataset.project_id == snapshot.project_id)
             ).all()
             return {r[0]: (r[1], r[2]) for r in rows}
 

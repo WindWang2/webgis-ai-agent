@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import fixture from '../../../tests/cartography/golden_corpus/layout_ir/basic.json';
+import contentFixture from '../../../tests/cartography/golden_corpus/layout_ir/content.json';
 import {
   buildLayoutIr,
   validateLayoutIr,
@@ -22,6 +23,14 @@ const input = fixture.input as {
 };
 
 describe('C2 layout IR golden（ADR-0160 双端对拍）', () => {
+  it('preserves atlas page text/content against the shared Python golden without aliasing input', () => {
+    const components = structuredClone(contentFixture.input.components) as LayoutIrComponentInput[];
+    const ir = buildLayoutIr({ canvas: contentFixture.input.canvas, components });
+    expect(ir).toEqual(contentFixture.expected);
+    const content = components[0].content!;
+    content.text = 'changed input';
+    expect(ir.components[0].content?.text).toBe('成都 — atlas page 2');
+  });
   it('TS 镜像复现 expected（逐字段深等）', () => {
     const ir = buildLayoutIr({
       canvas: input.canvas,

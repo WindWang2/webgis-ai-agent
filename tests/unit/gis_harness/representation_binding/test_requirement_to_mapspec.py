@@ -106,7 +106,7 @@ class TestBuildProposals:
         doc2 = _set_user(None, doc, "representation.palette", "Blues", "op-p1")
         proposals = build_binding_proposals(doc2, None)
         assert [p.target_kind for p in proposals] == [BINDING_TARGET_GRAMMAR_FACE]
-        assert proposals[0].payload["pinned_palette"] == "blue"
+        assert proposals[0].payload["pinned_palette"] == "blues"
 
     def test_unknown_geometry_kind_ineligible(self, doc):
         doc2 = _set_user(None, doc, "representation.geometry_kind", "hologram", "op-g1")
@@ -156,7 +156,7 @@ class TestGrammarFacePins:
         doc2 = _set_user(None, doc, "representation.palette", "Blues", "op-p2")
         doc2 = _set_user(None, doc2, "representation.geometry_kind", "heatmap", "op-g3")
         pins = grammar_face_pins(doc2)
-        assert pins["pinned_palette"] == "blue"
+        assert pins["pinned_palette"] == "blues"
         assert pins["pinned_representation"] == "visual_heatmap"
 
     def test_agent_fields_never_pin(self, doc):

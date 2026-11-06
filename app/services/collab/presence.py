@@ -64,6 +64,23 @@ redis.call('PEXPIRE', key, ttl_ms)
 return 1
 """
 
+# Merge and renew only a live, existing member; leave/expiry cannot be undone.
+_HEARTBEAT_SCRIPT = """
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+if not raw then return 0 end
+local ok, record = pcall(cjson.decode, raw)
+if not ok or tonumber(record.exp or 0) < tonumber(ARGV[3]) then
+  redis.call('HDEL', KEYS[1], ARGV[1])
+  return 0
+end
+local patch = cjson.decode(ARGV[2])
+for k, v in pairs(patch) do record[k] = v end
+record.exp = tonumber(ARGV[3]) + tonumber(ARGV[4])
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(record))
+redis.call('PEXPIRE', KEYS[1], ARGV[5])
+return 1
+"""
+
 # 快照 = 清扫过期 + 全量读（≤32+ 条，单 RTT）。
 _SNAPSHOT_SCRIPT = """
 local key = KEYS[1]
@@ -150,6 +167,7 @@ class PresenceRegistry:
             self._scripts = {
                 "join": self._client.register_script(_JOIN_SCRIPT),
                 "snapshot": self._client.register_script(_SNAPSHOT_SCRIPT),
+                "heartbeat": self._client.register_script(_HEARTBEAT_SCRIPT),
             }
             return self._client
         except Exception:  # noqa: BLE001
@@ -164,7 +182,7 @@ class PresenceRegistry:
     # ── 记录构造 ────────────────────────────────────────────────────────
     def _record(self, client_id: str, patch: Dict[str, Any], now: float) -> str:
         record = {"cid": str(client_id), **_sanitize_patch(patch), "exp": int(now) + self._ttl_s}
-        return json.dumps(record, ensure_ascii=False, default=str)
+        return json.dumps(record, ensure_ascii=False, default=str, separators=(",", ":"))
 
     # ── API ─────────────────────────────────────────────────────────────
     async def join(self, session_id: str, client_id: str, info: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
@@ -216,15 +234,11 @@ class PresenceRegistry:
             try:
                 clean = _sanitize_patch(patch)
                 key = _KEY.format(sid=str(session_id))
-                current = await client.hget(key, str(client_id))
-                if current:
-                    record = json.loads(current)
-                else:
-                    record = {"cid": str(client_id)}
-                record.update(clean)
-                record["exp"] = int(now) + self._ttl_s
-                await client.hset(key, str(client_id), json.dumps(record, ensure_ascii=False))
-                await client.pexpire(key, 3600_000)
+                await self._scripts["heartbeat"](
+                    keys=[key],
+                    args=[str(client_id), json.dumps(clean, ensure_ascii=False, allow_nan=False),
+                          int(now), self._ttl_s, 3600_000],
+                )
                 return
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[collab-presence] redis heartbeat failed: %s", exc)
@@ -233,7 +247,7 @@ class PresenceRegistry:
         if bucket is None:
             return
         record = bucket.get(client_id)
-        if record is None:
+        if record is None or record.get("exp", 0) < now:
             return
         record.update(_sanitize_patch(patch))
         record["exp"] = int(now) + self._ttl_s

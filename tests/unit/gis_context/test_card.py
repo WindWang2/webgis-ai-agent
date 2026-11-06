@@ -112,6 +112,22 @@ def test_untrusted_strings_are_fenced():
     assert "<script>" not in text
 
 
+def test_escaped_card_truncation_keeps_entities_and_omission_notice_complete():
+    from xml.etree import ElementTree
+
+    wc = _wc(
+        mission_id="&" * 32,
+        basis=WorkingBasis(aoi_name="&" * 40, time_period="&" * 32, crs="&" * 24),
+    )
+    receipt = ContextCardReceipt()
+    text = render_gis_context_card(wc, char_budget=180, receipt=receipt)
+    parsed = ElementTree.fromstring(text)
+    body = parsed.find("untrusted_gis_context").text
+    assert receipt.truncated
+    assert body.endswith("…（内容超预算省略）")
+    assert "&amp" not in body
+
+
 def test_empty_sections_render_no_block():
     wc = GISWorkingContext(mission_id="msn-empty")
     receipt = ContextCardReceipt()

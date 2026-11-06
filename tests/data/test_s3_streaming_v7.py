@@ -132,8 +132,10 @@ class FakeS3V7:
         self.multipart[UploadId].append((PartNumber, bytes(Body)))
         return {"ETag": self._etag(bytes(Body))}
 
-    def complete_multipart_upload(self, Bucket, Key, UploadId, MultipartUpload):
+    def complete_multipart_upload(self, Bucket, Key, UploadId, MultipartUpload, IfNoneMatch=None):
         self._guard("complete_multipart_upload")
+        if IfNoneMatch == "*" and Key in self.objects:
+            raise RuntimeError("412 PreconditionFailed")
         if UploadId not in self.uploads_open:
             raise RuntimeError("404 no such upload")
         parts = sorted(MultipartUpload["Parts"], key=lambda p: p["PartNumber"])
@@ -169,8 +171,8 @@ def _store(fake=None, prefix="", fail_times=None):
 
 def test_put_blob_stream_multipart_roundtrip_and_dedup_meta():
     store, fake = _store()
-    key = "a" * 64
     data = b"x" * (8 * 1024 * 1024) + b"y" * 1024  # 2 parts
+    key = hashlib.sha256(data).hexdigest()
     result = store.put_blob_stream(key, [data[:8 * 1024 * 1024], data[8 * 1024 * 1024:]])
     assert result.put_new is True
     assert store.get_blob(key) == data
@@ -193,7 +195,7 @@ def test_put_blob_stream_zero_bytes_typed_and_no_object():
 def test_upload_part_transient_failure_retries_and_succeeds():
     fake = FakeS3V7(fail_times={"upload_part": 1})
     store, _ = _store(fake)
-    key = "c" * 64
+    key = hashlib.sha256(b"hello world").hexdigest()
     store.put_blob_stream(key, iter([b"hello world"]))
     assert store.get_blob(key) == b"hello world"
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import statistics
+import math
 import threading
 import time
 from collections import OrderedDict
@@ -87,6 +88,8 @@ class PlannerFeedbackStore:
             if bucket is None:
                 bucket = OrderedDict()
                 self._obs[key] = bucket
+            while now in bucket:
+                now = math.nextafter(now, float("inf"))
             bucket[now] = ratio
             bucket.move_to_end(now)
             while len(bucket) > self._max_obs:
@@ -111,6 +114,8 @@ class PlannerFeedbackStore:
             ratios = [r for ts, r in bucket.items() if now - ts <= self._ttl_s]
             for ts in [ts for ts in bucket if now - ts > self._ttl_s]:
                 del bucket[ts]
+            if not bucket:
+                self._obs.pop(key, None)
         if len(ratios) < self._min_samples:
             return PlannerCorrection(
                 factor=1.0, samples=len(ratios), basis="insufficient_samples")

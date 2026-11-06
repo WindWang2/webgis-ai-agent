@@ -8,6 +8,7 @@ Enterprise Geospatial Data Fabric Security Module:
 """
 import ipaddress
 import logging
+import re
 import socket
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional
@@ -91,7 +92,12 @@ def _is_blocked_ip(ip_str: str) -> bool:
     if hasattr(ip, "ipv4_mapped") and ip.ipv4_mapped is not None:
         if _is_blocked_ip(str(ip.ipv4_mapped)):
             return True
-    return any(ip in net for net in BLOCKED_NETWORKS)
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.sixtofour is not None and _is_blocked_ip(str(ip.sixtofour)):
+            return True
+        if ip in ipaddress.ip_network("64:ff9b::/96") and _is_blocked_ip(str(ipaddress.IPv4Address(int(ip) & 0xffffffff))):
+            return True
+    return not ip.is_global or ip.is_multicast or any(ip in net for net in BLOCKED_NETWORKS)
 
 
 class DataFabricSecurity:
@@ -131,7 +137,7 @@ class DataFabricSecurity:
         # SecurityBlockedError，reliability 层按 permanent 不重试）。
         # unrestricted（cloud 默认）零行为变化；send 面的逐跳兜底由
         # SSRFSafeHTTPAdapter 的 AirGappedEgressError 承担。
-        if scheme in ("http", "https"):
+        if scheme in ("http", "https", "postgresql", "postgres", "s3", "minio", "gs"):
             from app.core.egress import current_policy
 
             policy = current_policy()
@@ -206,15 +212,8 @@ class DataFabricSecurity:
             else:
                 resolved = DataFabricSecurity._resolve_all(hostname)
                 if not resolved:
-                    # Could not resolve here. An unresolvable hostname cannot
-                    # complete a connection, so we do not hard-block (the test
-                    # suite and air-gapped deploys use non-resolving example URLs).
-                    # The hard SSRF gate is the resolved-IP check below: any
-                    # hostname that resolves to a private/loopback/metadata
-                    # address is rejected regardless of how it was reached.
-                    logger.warning(
-                        f"Unable to resolve hostname '{hostname}' for SSRF check; "
-                        f"private-IP gate will still apply if it later resolves."
+                    raise DataFabricSecurityError(
+                        f"SSRF Protection: unable to resolve hostname '{hostname}'"
                     )
                 for ip_str in resolved:
                     if _is_blocked_ip(ip_str):
@@ -251,27 +250,30 @@ class DataFabricSecurity:
 
     @staticmethod
     def redact_url(url: Optional[str]) -> Optional[str]:
-        """Strip ``user:password@`` userinfo from a URL for safe egress.
+        """Strip authority userinfo from an absolute ``scheme://`` URL.
 
         ``postgres://user:pass@host/db`` connection strings and HTTP URLs with
         embedded tokens were returned verbatim in source egress responses
         (list/get/create). The userinfo never needs to reach the client.
-        Returns the input unchanged for non-URL / parseable-without-userinfo.
+        Preserve everything else, including IPv6 brackets and malformed legacy
+        host/port values: egress redaction must not validate or normalize URLs.
+        Non-URLs and URLs without authority userinfo are returned unchanged.
         """
         if not url or not isinstance(url, str):
             return url
-        try:
-            parsed = urlparse(url)
-        except Exception:
+        # Read the raw authority instead of hostname/port properties: urlparse
+        # can reject invalid brackets, .port can raise, and .hostname drops IPv6
+        # brackets. Recognize urlparse's ignored C0 prefix and tabs/CR/LF
+        # without normalizing the original text or skipping its credentials.
+        match = re.match(
+            r"^([\x00-\x20]*[a-zA-Z][a-zA-Z0-9+.\t\r\n-]*:"
+            r"[\t\r\n]*/[\t\r\n]*/)([^/?#]*)",
+            url,
+        )
+        if not match or "@" not in match.group(2):
             return url
-        if not parsed.scheme or "@" not in (parsed.netloc or ""):
-            return url
-        # Keep host:port; drop the userinfo segment.
-        hostport = parsed.hostname or ""
-        if parsed.port:
-            hostport = f"{hostport}:{parsed.port}"
-        rebuilt = parsed._replace(netloc=hostport)
-        return rebuilt.geturl()
+        hostport = match.group(2).rsplit("@", 1)[1]
+        return match.group(1) + hostport + url[match.end():]
 
     @staticmethod
     def sanitize_profile_dict(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -281,8 +283,10 @@ class DataFabricSecurity:
         password supplied via ``options={"password": ...}`` — the path used by
         ``create_data_source`` (its signature has no top-level password field) —
         is redacted too. The previous shallow redaction left ``options.password``
-        in plaintext on every egress response. Lists of dicts are recursed per
-        element; non-dict values are left untouched.
+        in plaintext on every egress response. Recurse through lists too and
+        strip URL userinfo from string values, including the ``url``,
+        ``endpoint`` and ``endpoint_url`` aliases emitted by ConnectionProfile.
+        Build a copy: stored credentials must remain usable by the adapters.
         """
         # 审计 F-2（ADR-0094 §10）：补齐常见凭证键（Authorization/x-api-key/
         # apikey/passwd/pwd/private_key/client_secret）；headers 子树整体视为
@@ -307,6 +311,8 @@ class DataFabricSecurity:
                 return out
             if isinstance(value, list):
                 return [_redact(v) for v in value]
+            if isinstance(value, str):
+                return DataFabricSecurity.redact_url(value)
             return value
 
         return _redact(profile_dict)
@@ -344,53 +350,76 @@ class DataFabricSecurity:
 # on *every* request. Because ``requests`` re-invokes the mounted adapter for
 # each redirect hop, every redirect target is re-validated against the same
 # SSRF policy (private IPs, loopback, metadata, ULA/link-local, IPv4-mapped
-# IPv6). Re-resolving inside ``send()`` also shrinks the DNS-rebinding TOCTOU
-# window: the hostname is resolved immediately before the underlying urllib3
-# connect, not seconds earlier at registration time. (A residual micro-window
-# between resolve and connect remains; full connect-time IP pinning would need
-# a socket-level transport and is documented as ADR-0053 follow-up.)
+# IPv6). Each direct urllib3 connection resolves, validates and pins its own
+# numeric address while preserving the original hostname for TLS verification.
+# No process-global resolver mutation is needed. Native GDAL /vsicurl is a
+# separate transport and remains governed by deployment network isolation.
 
 
-def _pinned_dns(hostname: str, infos):
-    """把 ``socket.getaddrinfo`` 对 *hostname* 钉到一组预验证的解析结果。
+class _SafeConnectionMixin:
+    """Pin only this connection to a vetted address; preserve the TLS hostname."""
 
-    audit ISSUE-001/003（#1346）：``send()`` 内 validate_url 的解析与底层
-    urllib3 connect 的再解析之间仍有 micro TOCTOU 窗口——DNS rebinding
-    可在两次解析间切换 A 记录；注册时不可解析、连接时才解析到私网的主机
-    名也是同型残余。此补丁让 connect 期对同一主机名的 getaddrinfo 直接
-    重放本次已验证的结果集（不再走真实 DNS），窗口即闭合。
-    其他主机名的查询原样透传；同主机名的并发线程同样拿到已验证地址
-    （方向只会更安全）。
-    """
-    import contextlib
-
-    host_lower = hostname.lower()
-    orig = socket.getaddrinfo
-
-    def patched(host, port, family=0, type=0, proto=0, flags=0):
-        if isinstance(host, str) and host.lower() == host_lower:
-            if family or type or proto:
-                filtered = [
-                    i for i in infos
-                    if (not family or i[0] == family)
-                    and (not type or i[1] == type)
-                    and (not proto or i[2] == proto)
-                ]
-                return filtered if filtered else orig(
-                    host, port, family, type, proto, flags,
-                )
-            return list(infos)
-        return orig(host, port, family, type, proto, flags)
-
-    @contextlib.contextmanager
-    def _ctx():
-        socket.getaddrinfo = patched
+    def _new_conn(self) -> socket.socket:
+        original_host = self._dns_host
         try:
-            yield
-        finally:
-            socket.getaddrinfo = orig
+            infos = socket.getaddrinfo(original_host, self.port, 0, socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise DataFabricSecurityError(f"Unable to resolve hostname '{original_host}'") from exc
+        if not infos or any(_is_blocked_ip(info[4][0].split("%", 1)[0]) for info in infos):
+            raise DataFabricSecurityError(f"SSRF Protection: blocked DNS result for '{original_host}'")
+        last_error = None
+        for info in infos:
+            self._dns_host = info[4][0]
+            try:
+                # urllib3 connects to the numeric address using the original
+                # destination port. HTTPS.connect sees the restored hostname
+                # for SNI/certificate verification after this method returns.
+                return super()._new_conn()
+            except OSError as exc:
+                last_error = exc
+            finally:
+                self._dns_host = original_host
+        raise last_error
 
-    return _ctx()
+
+async def safe_fsspec_http_client(*, allow_private: bool = False, **kwargs: Any) -> Any:
+    """fsspec HTTP sessions validate the actual DNS answers used to connect.
+
+    Callers disable redirects separately so a new target never bypasses the
+    initial URL/egress gate. A connector owns its resolver for this session.
+    """
+    import aiohttp
+
+    class SafeResolver(aiohttp.resolver.DefaultResolver):
+        async def resolve(self, host: str, port: int = 0, family: int = socket.AF_INET) -> list[dict[str, Any]]:
+            addresses = await super().resolve(host, port, family)
+            if not addresses or (
+                not allow_private and any(_is_blocked_ip(item["host"]) for item in addresses)
+            ):
+                raise DataFabricSecurityError("SSRF Protection: blocked HTTP DNS result")
+            return addresses
+
+    kwargs["connector"] = aiohttp.TCPConnector(resolver=SafeResolver())
+    return aiohttp.ClientSession(**kwargs)
+
+
+def _safe_pool_classes() -> dict[str, type]:
+    from urllib3.connection import HTTPConnection, HTTPSConnection
+    from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
+
+    class SafeHTTPConnection(_SafeConnectionMixin, HTTPConnection):
+        pass
+
+    class SafeHTTPSConnection(_SafeConnectionMixin, HTTPSConnection):
+        pass
+
+    class SafeHTTPPool(HTTPConnectionPool):
+        ConnectionCls = SafeHTTPConnection
+
+    class SafeHTTPSPool(HTTPSConnectionPool):
+        ConnectionCls = SafeHTTPSConnection
+
+    return {"http": SafeHTTPPool, "https": SafeHTTPSPool}
 
 
 class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
@@ -400,13 +429,31 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
     initial requests AND every redirect hop are validated.
     """
 
-    def __init__(self, *args, allow_private: bool = False, **kwargs):
+    def __init__(self, *args, allow_private: bool = False, **kwargs) -> None:
         self._allow_private = allow_private
         super().__init__(*args, **kwargs)
+
+    def init_poolmanager(self, *args: Any, **kwargs: Any) -> None:
+        super().init_poolmanager(*args, **kwargs)
+        if not self._allow_private:
+            self.poolmanager.pool_classes_by_scheme = _safe_pool_classes()
+
+    def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:
+        manager = super().proxy_manager_for(proxy, **proxy_kwargs)
+        if not self._allow_private:
+            manager.pool_classes_by_scheme = _safe_pool_classes()
+        return manager
 
     def send(self, request, **kwargs):  # type: ignore[override]
         url = getattr(request, "url", None)
         if url:
+            from requests.utils import select_proxy
+
+            if not self._allow_private and select_proxy(str(url), kwargs.get("proxies") or {}):
+                raise DataFabricSecurityError(
+                    "SSRF guarded data connections require direct transport; "
+                    "proxy-side DNS cannot be validated by the application"
+                )
             # ADR-0202：egress 守卫先于 SSRF 校验——离线/内网部署下出网
             # 是策略拒绝（typed AirGappedEgressError），必须先于"可达性"
             # 检查给出正确失败语义。requests 对每跳 redirect 重挂 adapter，
@@ -418,34 +465,6 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
                 assert_egress_allowed(str(url), dependency_id="data_fabric")
             DataFabricSecurity.validate_url(url, allow_private=self._allow_private)
 
-            # audit ISSUE-001/003（#1346）：connect 前再做一次带原始
-            # getaddrinfo 元组的解析+校验，并在 super().send() 期间把该
-            # 主机名的 DNS 钉到此结果集——validate 的解析与 connect 的
-            # 再解析之间不再存在可切换的 DNS 窗口；注册时不可解析、发送
-            # 时才解析到私网的主机名也在此被拦。
-            parsed = urlparse(str(url))
-            host = parsed.hostname
-            if (
-                host
-                and not self._allow_private
-                and DataFabricSecurity._try_parse_ip(host) is None
-            ):
-                try:
-                    infos = socket.getaddrinfo(host, None)
-                except socket.gaierror:
-                    infos = []
-                for _fam, _type, _proto, _canon, sockaddr in infos:
-                    ip_str = sockaddr[0]
-                    if "%" in ip_str:
-                        ip_str = ip_str.split("%", 1)[0]
-                    if _is_blocked_ip(ip_str):
-                        raise DataFabricSecurityError(
-                            f"SSRF Protection: hostname '{host}' resolves to "
-                            f"blocked private IP '{ip_str}' at send time"
-                        )
-                if infos:
-                    with _pinned_dns(host, infos):
-                        return super().send(request, **kwargs)
         return super().send(request, **kwargs)
 
 
@@ -605,6 +624,8 @@ def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
 
     if not path or not isinstance(path, str):
         raise DataFabricSecurityError("empty or invalid local file path")
+    if not allowed_roots:
+        raise DataFabricSecurityError("local file access requires nonempty allowed roots")
     raw = Path(path)
     real = raw.resolve() if raw.is_absolute() else (Path.cwd() / raw).resolve()
     real_str = str(real)
@@ -653,7 +674,7 @@ def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
     return real
 
 
-def _local_file_roots_from_settings():
+def _local_file_roots_from_settings() -> list[str]:
     """Resolve the configured local-file roots list from settings (helper for adapters)."""
     from app.core.config import settings
 
@@ -661,7 +682,7 @@ def _local_file_roots_from_settings():
     return [r.strip() for r in raw.split(",") if r.strip()]
 
 
-def _local_file_max_bytes_from_settings():
+def _local_file_max_bytes_from_settings() -> int:
     from app.core.config import settings
 
     return int(getattr(settings, "DATA_FABRIC_LOCAL_FILE_MAX_BYTES", 1024 * 1024 * 1024))

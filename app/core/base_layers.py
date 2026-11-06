@@ -7,18 +7,12 @@ G3D01 起，本模块**派生自** ``app/lib/cartography/basemap_profiles.py``
 前端 ``frontend/lib/providers.ts`` 仍是渲染端真相（env 门控逻辑在手写端），
 两侧一致性同样由契约测试保证。
 """
-from typing import TypedDict
-
 # ADR-0216 分层：画像 kernel 契约在 app/contracts（app.core 禁依赖 app.lib）。
 from app.contracts.basemap_profiles import (
     BASEMAP_PROVIDER_PROFILES,
+    BaseLayerInfo as BaseLayerInfo,
     iter_llm_catalog,
 )
-
-
-class BaseLayerInfo(TypedDict):
-    name: str
-    keywords: list[str]
 
 
 # 派生自 basemap_profiles.BASEMAP_PROVIDER_PROFILES（llm_visible 过滤）。
@@ -59,7 +53,7 @@ def resolve_provider_id_to_name(provider_id: str) -> str | None:
 
     apply_template 的 basemap 分支必须发出 frontend `base_layer_change` 期望的
     ``params.name``（TILE_PROVIDERS[].name），而不是模板载荷里的 providerId。
-    解析顺序：精确 id 映射 → 种子别名 → 目录模糊（子串/关键字）→ 意象关键字兜底；
+    解析顺序：精确 id 映射 → 种子别名 → 精确目录名/关键字；
     解析不出返回 None，交给调用方显式报错（绝不静默降级）。
     """
     pid = (provider_id or "").strip().lower()
@@ -72,18 +66,11 @@ def resolve_provider_id_to_name(provider_id: str) -> str | None:
         return _SEED_PROVIDER_ALIASES[pid]
 
     for name in get_base_layer_names():
-        low = name.lower()
-        if low == pid or pid in low or low in pid:
+        if name.lower() == pid:
             return name
     for info in BASE_LAYER_CATALOG:
-        if any(pid in k.lower() or k.lower() in pid for k in info["keywords"]):
+        if any(pid == keyword.lower() for keyword in info["keywords"]):
             return info["name"]
-    if any(k in pid for k in ("影像", "卫星", "satellite", "imagery")):
-        return "ESRI 影像"
-    if any(k in pid for k in ("深色", "dark")):
-        return "Carto 深色"
-    if any(k in pid for k in ("地图", "osm", "street")):
-        return "OSM 地图"
     return None
 
 

@@ -9,6 +9,7 @@ from typing import Dict, List, Any, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
+from app.tools.upload_tools import _resolve_session_id
 from app.services.spatial_decision.engine import DecisionEngine
 from app.services.spatial_decision.comparison_engine import ScenarioComparisonEngine
 from app.services.spatial_decision.decision_engine_v3 import DecisionEngineV3
@@ -147,6 +148,10 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         baseline_data_ref: str = "",
         session_id: str = "",
     ) -> dict:
+        resolved_session = _resolve_session_id(session_id or None)
+        if session_id and resolved_session is None:
+            return {"type": "error", "message": "session is unavailable in the verified caller scope"}
+        session_id = resolved_session or ""
         if parameters is None:
             parameters = {}
 
@@ -238,6 +243,10 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         optimization_goals: Dict[str, str] = None,
         session_id: str = "",
     ) -> dict:
+        resolved_session = _resolve_session_id(session_id or None)
+        if session_id and resolved_session is None:
+            return {"type": "error", "message": "session is unavailable in the verified caller scope"}
+        session_id = resolved_session or ""
         if not scenarios:
             return {"type": "error", "message": "至少需要提供一个方案进行对比。"}
 
@@ -272,12 +281,9 @@ def register_spatial_decision_tools(registry: ToolRegistry):
                 # 其他形状跳过（与旧串行版一致）
 
             evaluated_results = []
-            for item, res in zip(
-                pending,
-                await asyncio.gather(
-                    *[_evaluate_one(p) for p in pending],
-                    return_exceptions=True,
-                ),
+            for res in await asyncio.gather(
+                *[_evaluate_one(p) for p in pending],
+                return_exceptions=True,
             ):
                 if isinstance(res, BaseException):
                     logger.error(
@@ -369,6 +375,10 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         mcda_method: str = "wsm",
         session_id: str = "",
     ) -> dict:
+        resolved_session = _resolve_session_id(session_id or None)
+        if session_id and resolved_session is None:
+            return {"type": "error", "message": "session is unavailable in the verified caller scope"}
+        session_id = resolved_session or ""
         if not alternatives:
             return {"type": "error", "message": "至少需要提供一个候选方案进行决策推演。"}
 

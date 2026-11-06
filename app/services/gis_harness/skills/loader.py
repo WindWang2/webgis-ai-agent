@@ -152,27 +152,22 @@ class SkillLibrary:
         return hashlib.sha256(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
-_singleton: Optional[SkillLibrary] = None
+from app.services.gis_harness.skills.instances import skill_instance, reset_skill_instance
+
+
+def _build_skill_library() -> SkillLibrary:
+    skills, compositions, violations = load_skill_library()
+    if violations:
+        raise SkillLibraryError("skill library 校验失败（fail loud）：\n- " + "\n- ".join(violations[:32]))
+    return SkillLibrary(skills, compositions, capability_exists=default_validation_predicates()["capability_exists"])
 
 
 def get_skill_library() -> SkillLibrary:
-    """进程级单例（装载期校验违规 → SkillLibraryError，fail loud）。"""
-    global _singleton
-    if _singleton is None:
-        skills, compositions, violations = load_skill_library()
-        if violations:
-            raise SkillLibraryError(
-                "skill library 校验失败（fail loud）：\n- "
-                + "\n- ".join(violations[:32]))
-        _singleton = SkillLibrary(skills, compositions)
-        logger.info("skill library loaded: %d skills / %d compositions",
-                    len(skills), len(compositions))
-    return _singleton
+    return skill_instance('library', _build_skill_library, mutable=False)
 
 
 def reset_skill_library() -> None:
-    global _singleton
-    _singleton = None
+    reset_skill_instance('library')
 
 
 __all__ = [

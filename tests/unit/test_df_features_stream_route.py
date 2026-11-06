@@ -6,6 +6,7 @@
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -27,6 +28,8 @@ def _app() -> FastAPI:
 
 @pytest.fixture
 async def client():
+    from app.services.data_fabric.stream_limits import reset_for_tests
+    reset_for_tests()
     application = _app()
     application.dependency_overrides[df_routes.get_current_user] = lambda: {"user_id": "u"}
     transport = ASGITransport(app=application)
@@ -118,7 +121,7 @@ def _install(monkeypatch, adapter, item_fingerprint="fp1"):
 async def test_ndjson_lines_and_eof_meta(client, monkeypatch):
     closed = {"n": 0}
     _install(monkeypatch, _CloseTrackingStream(5, closed))
-    with patch.object(df_routes, "_authorize_catalog_item", lambda *a, **k: None):
+    with patch.object(df_routes, "_authorize_catalog_item", lambda *a, **k: SimpleNamespace(source_id="source-fixture")):
         async with client.stream("GET", f"/api/v1/data-fabric/catalog/{_ITEM_ID}/features/stream") as r:
             assert r.status_code == 200
             assert r.headers["content-type"].startswith("application/x-ndjson")
@@ -134,7 +137,7 @@ async def test_ndjson_lines_and_eof_meta(client, monkeypatch):
 async def test_limit_cap_honestly_marked(client, monkeypatch):
     closed = {"n": 0}
     _install(monkeypatch, _CloseTrackingStream(100, closed))
-    with patch.object(df_routes, "_authorize_catalog_item", lambda *a, **k: None):
+    with patch.object(df_routes, "_authorize_catalog_item", lambda *a, **k: SimpleNamespace(source_id="source-fixture")):
         async with client.stream(
             "GET",
             f"/api/v1/data-fabric/catalog/{_ITEM_ID}/features/stream",
@@ -179,7 +182,7 @@ async def test_abandoned_stream_cancels_token_and_closes_upstream(client, monkey
 
     monkeypatch.setattr(fabric_bridge, "stream_features_from_adapter", _spy)
 
-    with patch.object(df_routes, "_authorize_catalog_item", lambda *a, **k: None):
+    with patch.object(df_routes, "_authorize_catalog_item", lambda *a, **k: SimpleNamespace(source_id="source-fixture")):
         async with client.stream(
             "GET",
             f"/api/v1/data-fabric/catalog/{_ITEM_ID}/features/stream",

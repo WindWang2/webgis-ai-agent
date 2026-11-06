@@ -1,4 +1,5 @@
 'use client';
+import { bboxIntersects, geometryBBox } from '@/lib/utils/geo';
 import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ChartData } from '@/lib/types';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
@@ -27,6 +28,8 @@ import {
 } from '@/lib/selection/viewport-context';
 import { registerChartRenderState, unregisterChartRenderState } from '@/lib/map-components/chart-render-registry';
 import { commitComponentPatch } from '@/lib/mapspec/component-mutation';
+import { isMvtLayer } from '@/lib/store/layer-data';
+import { useViewportAggregate } from '@/lib/map-components/viewport-aggregate';
 import { useT } from '@/lib/i18n/useT';
 
 /**
@@ -94,25 +97,9 @@ function contentHeight(variant: string, panelHeight: number | undefined): number
 
 /** 要素几何是否与 bbox 相交（有界采样：坐标序列取前 64 点近似）。导出仅供测试。 */
 export function geometryIntersectsBbox(geometry: unknown, bbox: [number, number, number, number]): boolean {
-  const [w, s, e, n] = bbox;
-  const inBox = (x: number, y: number) => x >= w && x <= e && y >= s && y <= n;
-  const coords = (c: unknown, depth = 0): number[] | null => {
-    if (typeof c !== 'object' || c === null) return null;
-    if (Array.isArray(c)) {
-      if (typeof c[0] === 'number' && typeof c[1] === 'number') {
-        return inBox(c[0], c[1]) ? [c[0], c[1]] : null;
-      }
-      if (depth > 3) return null;
-      for (const item of c.slice(0, 64)) {
-        const hit = coords(item, depth + 1);
-        if (hit) return hit;
-      }
-    }
-    return null;
-  };
-  const geom = geometry as { type?: string; coordinates?: unknown } | null;
-  if (!geom?.coordinates) return false;
-  return coords(geom.coordinates) !== null;
+  const geom = geometry as { type: string; coordinates: unknown } | null;
+  const bounds = geometryBBox(geom);
+  return bounds !== null && bboxIntersects(bounds, bbox);
 }
 
 /** 视口内命中要素的 selectionField 值集（有界 ≤ 512）。导出仅供测试。 */
@@ -193,7 +180,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     };
   }, [chartRef]);
 
-  const state: ChartState = chartRef ? refChartState(chartRef, fetched) : inlineChartState(patched);
+  const state: ChartState = React.useMemo(() => chartRef ? refChartState(chartRef, fetched) : inlineChartState(patched), [chartRef, fetched, patched]);
 
   // Workspace V2（Goal D）：map ↔ chart 共享选择。
   // - chart→map（D3）：类别点击发布 select（layer_id + filter_field 协议），
@@ -211,7 +198,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
   const boundLayerId = typeof options['layerId'] === 'string' ? (options['layerId'] as string) : '';
 
   // Workbench V4（Wave 5）：视野联动（显式 opt-in：options.extentLinked）。
-  useSyncExternalStore(subscribeViewportContext, getViewportGeneration);
+  const viewportGeneration = useSyncExternalStore(subscribeViewportContext, getViewportGeneration);
   const extentLinked = options['extentLinked'] === true;
   const extentFilterField = selectionField;
 
@@ -281,6 +268,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     boundLayerId ? s.layers.find((row: { _mapspecLayerId?: string; id: string }) =>
       row.id === boundLayerId || row._mapspecLayerId === boundLayerId) : undefined);
   const extentFilteredChart = React.useMemo(() => {
+    void viewportGeneration; // External viewport store changes invalidate this projection.
     if (state.status !== 'ready' || !extentLinked || !extentFilterField || !boundRow) {
       return state.status === 'ready' ? state.chart : null;
     }
@@ -291,7 +279,42 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     const filtered = state.chart.data.filter((p) => values.has(p.name));
     // 全不命中 = 视野内无该图层要素 —— 保留全量并降级（避免清空面板抖动）。
     return filtered.length > 0 ? { ...state.chart, data: filtered } : state.chart;
-  }, [state, extentLinked, extentFilterField, boundRow]);
+  }, [state, extentLinked, extentFilterField, boundRow, viewportGeneration]);
+
+  // ── Track B（M7/M8）：MVT 层的视口统计走服务端聚合 ───────────────────
+  // inline 层保留 Wave 5 本地过滤（≤5000 有界采样，上方 extentFilteredChart）；
+  // MVT 大图层无内联要素 —— extentLinked 时以 /aggregate（bbox+group_by，
+  // 全扫口径）为窗口真值，图表数据点替换为聚合计数，证据行随行披露。
+  const viewport = getViewportContext();
+  const mvtAggregateMode = !!(
+    extentLinked && extentFilterField && boundRow && isMvtLayer(boundRow)
+    && !(boundRow.source as { features?: unknown[] } | undefined)?.features?.length
+  );
+  const viewportAgg = useViewportAggregate({
+    enabled: mvtAggregateMode,
+    layer: boundRow,
+    groupBy: extentFilterField,
+    bbox: viewport?.bbox ?? null,
+    generation: viewport?.generation ?? 0,
+  });
+  const mc = useT('mapChart');
+  const mvtAggregateChart = React.useMemo(() => {
+    if (!mvtAggregateMode || state.status !== 'ready' || viewportAgg.status !== 'ready') return null;
+    const data = viewportAgg.rows
+      .filter((r) => r.key !== null)
+      // 溢出合并行（__other__ 哨兵/递进变体）本地化展示 —— 原始键不进轴标签
+      .map((r) => ({
+        name: typeof r.key === 'string' && r.key.startsWith('__other__')
+          ? mc('agg.otherCategory')
+          : String(r.key),
+        value: r.count,
+      }));
+    if (!data.length) return null;
+    // 组溢出行（__other__）保留 —— truncated 证据行披露其语义。
+    return { ...state.chart, data };
+  }, [mvtAggregateMode, state, viewportAgg, mc]);
+
+  const displayChart = mvtAggregateChart ?? extentFilteredChart;
 
   const toggleExtentLinked = () => {
     void commitComponentPatch(patched.id, {
@@ -305,15 +328,17 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
   React.useEffect(() => {
     // review R2 #3：loading/取数中 = pending（非终态）—— 服务端对全 pending
     // 的观察按 warning 披露，绝不把取数竞速误判为「渲染了但无数据」error。
-    const ready = state.status === 'ready' && !!extentFilteredChart
-      && Array.isArray(extentFilteredChart.data) && extentFilteredChart.data.length > 0;
+    const pending = state.status === 'loading'
+      || (mvtAggregateMode && viewportAgg.status === 'loading');
+    const ready = state.status === 'ready' && !!displayChart
+      && Array.isArray(displayChart.data) && displayChart.data.length > 0;
     registerChartRenderState(String(patched.id ?? ''), {
       rendered: ready,
-      data_points: ready ? extentFilteredChart.data.length : 0,
-      pending: state.status === 'loading',
+      data_points: ready ? displayChart.data.length : 0,
+      pending,
     });
     return () => unregisterChartRenderState(String(patched.id ?? ''));
-  }, [state.status, extentFilteredChart, patched.id]);
+  }, [state.status, displayChart, patched.id, mvtAggregateMode, viewportAgg.status]);
 
   const bodyClass = variant === 'compact' ? 'p-1.5' : variant === 'report' ? 'p-3' : 'p-2';
 
@@ -327,14 +352,46 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
       transparent={variant === 'transparent'}
       bodyClassName={bodyClass}
     >
-      {state.status === 'ready' && extentFilteredChart ? (
+      {state.status === 'ready' && displayChart ? (
         <>
           <ChartCore
-            chart={applyKindPreset(extentFilteredChart, kindPreset)}
+            chart={applyKindPreset(displayChart, kindPreset)}
             height={contentHeight(variant, panelHeight)}
             highlightedCategories={highlightedCategories}
             onSelectCategory={handleSelectCategory}
           />
+          {mvtAggregateMode && viewportAgg.status === 'ready' && (
+            <div
+              data-testid="chart-agg-evidence"
+              className="mt-1 flex flex-wrap items-center gap-x-2 text-micro text-map-chrome-ink-muted"
+            >
+              <span>
+                {mc('agg.evidence', {
+                  scanned: viewportAgg.meta.scanned,
+                  matched: viewportAgg.meta.totalMatching ?? '?',
+                  groups: viewportAgg.meta.groupCount,
+                  revision: viewportAgg.meta.revision ?? '?',
+                })}
+              </span>
+              {viewportAgg.meta.truncated && (
+                <span className="rounded-xs bg-status-accent-soft px-1" data-testid="chart-agg-truncated">
+                  {mc('agg.truncated')}
+                </span>
+              )}
+              {viewportAgg.meta.nullKeyCount > 0 && (
+                <span>{mc('agg.nullKeys', { count: viewportAgg.meta.nullKeyCount })}</span>
+              )}
+            </div>
+          )}
+          {mvtAggregateMode && viewportAgg.status === 'loading' && (
+            <div className="mt-1 text-micro text-map-chrome-ink-muted" role="status">{mc('agg.loading')}</div>
+          )}
+          {mvtAggregateMode && viewportAgg.status === 'overlimit' && (
+            <div className="mt-1 text-micro text-map-chrome-ink-muted" role="status">{mc('agg.overLimit')}</div>
+          )}
+          {mvtAggregateMode && viewportAgg.status === 'error' && (
+            <div className="mt-1 text-micro text-map-chrome-ink-muted" role="status">{mc('agg.error')}</div>
+          )}
           {boundLayerId && (
             <button
               type="button"

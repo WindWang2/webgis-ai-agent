@@ -157,6 +157,7 @@ describe('exporter', () => {
 
   describe('downloadBlob', () => {
     it('should trigger a download', () => {
+      vi.useFakeTimers();
       const blob = new Blob(['test'], { type: 'image/png' });
       const filename = 'test.png';
       
@@ -189,7 +190,10 @@ describe('exporter', () => {
       expect(createElement).toHaveBeenCalledWith('a');
       expect(linkMock.download).toBe(filename);
       expect(linkMock.click).toHaveBeenCalled();
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1000);
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:url');
+      vi.useRealTimers();
     });
   });
 });

@@ -16,6 +16,8 @@ import zhChat from '@/messages/zh-CN/chat.json'
 import zhTweaks from '@/messages/zh-CN/tweaks.json'
 import zhSidebar from '@/messages/zh-CN/sidebar.json'
 import zhMap from '@/messages/zh-CN/map.json'
+import zhMapTable from '@/messages/zh-CN/mapTable.json'
+import zhMapChart from '@/messages/zh-CN/mapChart.json'
 import zhDrawers from '@/messages/zh-CN/drawers.json'
 import zhStory from '@/messages/zh-CN/story.json'
 import zhGeoai from '@/messages/zh-CN/geoai.json'
@@ -36,6 +38,7 @@ import zhHud from '@/messages/zh-CN/hud.json'
 import zhTable from '@/messages/zh-CN/table.json'
 import zhModelops from '@/messages/zh-CN/modelops.json'
 import zhCompositionAssets from '@/messages/zh-CN/compositionAssets.json'
+import zhDataPreparation from '@/messages/zh-CN/dataPreparation.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
@@ -45,6 +48,8 @@ import enChat from '@/messages/en-US/chat.json'
 import enTweaks from '@/messages/en-US/tweaks.json'
 import enSidebar from '@/messages/en-US/sidebar.json'
 import enMap from '@/messages/en-US/map.json'
+import enMapTable from '@/messages/en-US/mapTable.json'
+import enMapChart from '@/messages/en-US/mapChart.json'
 import enDrawers from '@/messages/en-US/drawers.json'
 import enStory from '@/messages/en-US/story.json'
 import enGeoai from '@/messages/en-US/geoai.json'
@@ -65,6 +70,7 @@ import enHud from '@/messages/en-US/hud.json'
 import enTable from '@/messages/en-US/table.json'
 import enModelops from '@/messages/en-US/modelops.json'
 import enCompositionAssets from '@/messages/en-US/compositionAssets.json'
+import enDataPreparation from '@/messages/en-US/dataPreparation.json'
 import enMarket from '@/messages/en-US/market.json'
 import type { AppLocale } from './config'
 
@@ -77,6 +83,8 @@ export interface AppMessages {
   tweaks: typeof zhTweaks
   sidebar: typeof zhSidebar
   map: typeof zhMap
+  mapTable: typeof zhMapTable
+  mapChart: typeof zhMapChart
   drawers: typeof zhDrawers
   story: typeof zhStory
   geoai: typeof zhGeoai
@@ -98,6 +106,7 @@ export interface AppMessages {
   modelops: typeof zhModelops
   market: typeof zhMarket
   compositionAssets: typeof zhCompositionAssets
+  dataPreparation: typeof zhDataPreparation
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -110,8 +119,11 @@ export const messages: Record<AppLocale, AppMessages> = {
     tweaks: zhTweaks,
     sidebar: zhSidebar,
     map: zhMap,
+    mapTable: zhMapTable,
+    mapChart: zhMapChart,
     drawers: zhDrawers,
     compositionAssets: zhCompositionAssets,
+    dataPreparation: zhDataPreparation,
     story: zhStory,
     geoai: zhGeoai,
     commands: zhCommands,
@@ -142,8 +154,11 @@ export const messages: Record<AppLocale, AppMessages> = {
     tweaks: enTweaks as unknown as AppMessages['tweaks'],
     sidebar: enSidebar as unknown as AppMessages['sidebar'],
     map: enMap as unknown as AppMessages['map'],
+    mapTable: enMapTable as unknown as AppMessages['mapTable'],
+    mapChart: enMapChart as unknown as AppMessages['mapChart'],
     drawers: enDrawers as unknown as AppMessages['drawers'],
     compositionAssets: enCompositionAssets as unknown as AppMessages['compositionAssets'],
+    dataPreparation: enDataPreparation as unknown as AppMessages['dataPreparation'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],
     commands: enCommands as unknown as AppMessages['commands'],

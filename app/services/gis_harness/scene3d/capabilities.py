@@ -20,15 +20,17 @@ from pydantic import BaseModel, Field
 
 from app.services.gis_harness.scene3d.evidence import EvidenceBundle
 
-#: 能力项词表（G3D04 关心的 3D 面）。
+#: 能力项词表（G3D04 关心的 3D 面；G3D-V2-C 增 terrain_measurement/cut_fill_volume）。
 CAPABILITY_KEYS = (
     "scene_mode",        # 2d/2.5d/3d 场景切换（SetSceneIntent 通道）
     "terrain",           # 地形呈现（需要合格 raster-dem 源）
     "extrusion",         # 立体挤出（需要已核实高度字段证据 + polygon）
     "camera",            # 相机动作（SetViewIntent 通道 + user-wins 守卫）
     "viewshed_analysis",  # DEM 视域分析（terrain.viewshed 算法 + 工具）
-    "line_of_sight",     # 独立通视（待 G3D03 算法；typed unavailable）
-    "skyline",           # 天际线（待 G3D03；typed unavailable）
+    "line_of_sight",     # 两点通视（#1773 工具真实探测）
+    "terrain_measurement",  # 剖面/地表距离/地表面积（#1773 工具族真实探测）
+    "cut_fill_volume",   # 基准面土方（G3D-V2-C 新增）
+    "skyline",           # 天际线（算法未实现；typed unavailable）
     "scene_asset",       # 3D Tiles/gltf 资产挂载（G3D02 渲染面；typed unavailable）
 )
 
@@ -179,16 +181,87 @@ def probe_scene3d_capabilities(
         ))
 
     # 相邻方向边界：typed unavailable + alternatives（不假装可做）
-    entries.append(CapabilityEntry(
-        key="line_of_sight", status="unavailable",
-        reason_code="SCENE_CAP_ALGORITHM_PENDING_G3D03",
-        detail="独立两点通视算法待 G3D03（viewshed 掩膜可部分覆盖，语义不同）",
-        alternatives=["viewshed 掩膜 + 观察点（语义差异须披露）"],
-    ))
+    # G3D-V2-C（ADR-0276）：#1773 起量测工具族已在 registry——line_of_sight
+    # 从「typed unavailable 待 G3D03」升级为真实探测（工具注册 + DEM 证据，
+    # 与 viewshed 同口径）；新增 terrain_measurement（profile/distance/area）
+    # 与 cut_fill_volume 键。skyline 仍是真不做（typed unavailable）。
+    if _tool_available("line_of_sight_analysis"):
+        if dem_ids or evidence.has_elevation:
+            entries.append(CapabilityEntry(
+                key="line_of_sight", status="available",
+                reason_code="SCENE_CAP_LOS_READY",
+                detail="line_of_sight_analysis 工具已注册且存在已核实 DEM 证据",
+                alternatives=[],
+            ))
+        else:
+            entries.append(CapabilityEntry(
+                key="line_of_sight", status="unavailable",
+                reason_code="SCENE_CAP_VIEWSHED_NO_DEM",
+                detail="工具在但缺 DEM 数据事实（LOS 输入是 terrain_surface）",
+                alternatives=["先经数据面注册 raster-dem 源（G3D01）",
+                              "viewshed 掩膜 + 观察点（语义差异须披露）"],
+            ))
+    else:
+        entries.append(CapabilityEntry(
+            key="line_of_sight", status="unavailable",
+            reason_code="SCENE_CAP_TOOL_NOT_REGISTERED",
+            detail="line_of_sight_analysis 未注册（registry 无此工具）",
+            alternatives=[],
+        ))
+    if _tool_available("terrain_profile") and _tool_available(
+        "surface_area_analysis"
+    ):
+        if dem_ids or evidence.has_elevation:
+            entries.append(CapabilityEntry(
+                key="terrain_measurement", status="available",
+                reason_code="SCENE_CAP_MEASUREMENT_READY",
+                detail="terrain_profile/surface_distance/surface_area 工具族"
+                       "已注册且存在已核实 DEM 证据",
+                alternatives=[],
+            ))
+        else:
+            entries.append(CapabilityEntry(
+                key="terrain_measurement", status="unavailable",
+                reason_code="SCENE_CAP_VIEWSHED_NO_DEM",
+                detail="量测工具族在但缺 DEM 数据事实",
+                alternatives=["先经数据面注册 raster-dem 源（G3D01）"],
+            ))
+    else:
+        entries.append(CapabilityEntry(
+            key="terrain_measurement", status="unavailable",
+            reason_code="SCENE_CAP_TOOL_NOT_REGISTERED",
+            detail="量测工具族未注册（registry 缺 terrain_profile/"
+                   "surface_area_analysis）",
+            alternatives=[],
+        ))
+    if _tool_available("cut_fill_volume_analysis"):
+        if dem_ids or evidence.has_elevation:
+            entries.append(CapabilityEntry(
+                key="cut_fill_volume", status="available",
+                reason_code="SCENE_CAP_CUTFILL_READY",
+                detail="cut_fill_volume_analysis 工具已注册且存在已核实 DEM 证据"
+                       "（基准面土方：constant/mean）",
+                alternatives=[],
+            ))
+        else:
+            entries.append(CapabilityEntry(
+                key="cut_fill_volume", status="unavailable",
+                reason_code="SCENE_CAP_VIEWSHED_NO_DEM",
+                detail="工具在但缺 DEM 数据事实（体积输入是 terrain_surface）",
+                alternatives=["先经数据面注册 raster-dem 源（G3D01）",
+                              "surface_area_analysis（面积而非体积）"],
+            ))
+    else:
+        entries.append(CapabilityEntry(
+            key="cut_fill_volume", status="unavailable",
+            reason_code="SCENE_CAP_TOOL_NOT_REGISTERED",
+            detail="cut_fill_volume_analysis 未注册（registry 无此工具）",
+            alternatives=[],
+        ))
     entries.append(CapabilityEntry(
         key="skyline", status="unavailable",
         reason_code="SCENE_CAP_ALGORITHM_PENDING_G3D03",
-        detail="天际线算法待 G3D03",
+        detail="天际线算法待实现（honest pending，不假装可做）",
         alternatives=["山体阴影/晕渲表达地形轮廓（非天际线分析）"],
     ))
     entries.append(CapabilityEntry(

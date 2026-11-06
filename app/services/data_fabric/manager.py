@@ -47,10 +47,13 @@ def _invalidate_catalog_tiles(item_id: str) -> None:
     ``_DF_TILE_CACHE``）；缓存失效失败绝不影响 catalog 同步。
     G3D01：PMTiles→XYZ 缓存键带 ``pmtiles:`` 前缀（与 MVT 表示隔离），
     在此一并失效 —— 同一 item 变更必须清掉它的全部表示缓存。
+    GOAL-02：OGC Tiles 代理缓存键带 ``ogc-tiles:`` 前缀（第三种表示），
+    同款一并失效（R1 P1-4）。
     """
     try:
         TILE_CACHE.invalidate_item(item_id)
         TILE_CACHE.invalidate_item(f"pmtiles:{item_id}")
+        TILE_CACHE.invalidate_item(f"ogc-tiles:{item_id}")
     except Exception:  # noqa: BLE001 — 缓存失效是尽力而为
         logger.debug("tile cache invalidation skipped for %s", item_id, exc_info=True)
 
@@ -149,24 +152,28 @@ class DataFabricManager:
         monkeypatch/子类定制不被 registry 内部工厂绕过）；治理任何故障 →
         行为契约逐字节保留。
         """
-        from app.services.data_fabric.fabric.runtime import get_fabric_runtime
-
-        try:
-            resolved = get_fabric_runtime().resolve(
-                ds_model.id, owner=getattr(ds_model, "owner_id", None)
-            )
-            if resolved is not None and resolved.adapter is not None:
-                return resolved.adapter
-        except Exception as exc:  # noqa: BLE001 - 治理层故障不改变 REST 契约
-            logger.debug(
-                "[DataFabricManager] runtime resolve failed for %s: %s",
-                ds_model.id, exc,
-            )
-        profile = _profile_from_model(ds_model)
-        adapter = cls.get_adapter(profile)
-        get_fabric_runtime().attach_prebuilt(
-            profile, adapter, owner=getattr(ds_model, "owner_id", None)
+        from app.services.data_fabric.fabric.connection_registry import (
+            get_connection_registry, TenantScope,
         )
+
+        profile = _profile_from_model(ds_model)
+        scope = TenantScope(org_id=getattr(ds_model, "org_id", None),
+                            owner=getattr(ds_model, "owner_id", None))
+        registry = get_connection_registry()
+        # Reconcile the authoritative DB profile on every request. attach is
+        # idempotent for an unchanged revision and revokes changed credentials.
+        old = registry.peek(str(ds_model.id), scope)
+        record, _ = registry.attach(profile, scope, build_adapter=False)
+        if old is not None and old.revision != record.revision:
+            from app.services.data_fabric.fabric.probing import get_capability_probe_service
+            from app.services.data_fabric.fabric.source_facts import get_source_facts_service
+
+            get_capability_probe_service().invalidate(str(ds_model.id))
+            get_source_facts_service().invalidate_profile(str(ds_model.id))
+        adapter = registry.resolve(str(ds_model.id), scope, allow_global_fallback=False)
+        if adapter is None:
+            adapter = cls.get_adapter(profile)
+            registry.attach(profile, scope, build_adapter=False, prebuilt_adapter=adapter)
         return adapter
 
     @classmethod
@@ -347,6 +354,12 @@ class DataFabricManager:
         seen_ids = set()
         for name in names:
             item_id = f"cat_{source_id}_{name}".replace(".", "_").replace("/", "_")
+            if "." in name or "/" in name:
+                import hashlib
+
+                item_id += "_" + hashlib.sha256(name.encode()).hexdigest()[:16]
+            if item_id in seen_ids:
+                continue
             # DATA-05: a name that is still listed by the source is NOT a
             # removal, even when its describe call fails transiently. The
             # removal pass below only marks names absent from the listing.
@@ -378,7 +391,6 @@ class DataFabricManager:
                     unchanged += 1
                     synced_items.append(existing)
                     continue
-                was_unavailable = existing.availability != "available"
                 if existing.fingerprint != fp:
                     # API-04: fingerprint 变化即失效该 item 的全部缓存瓦片。
                     _invalidate_catalog_tiles(item_id)
@@ -393,7 +405,7 @@ class DataFabricManager:
                 existing.fingerprint = fp
                 existing.availability = "available"
                 existing.updated_at = now
-                updated += 1 if not was_unavailable else 0
+                updated += 1
                 synced_items.append(existing)
             else:
                 new_item = CatalogItemModel(

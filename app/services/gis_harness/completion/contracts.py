@@ -634,6 +634,9 @@ class MapCompletionResult:
     # 来源 = map_product["goal_satisfaction"]；仅供 SSE 载荷透传，不入
     # ``to_dict`` 序列化面 —— 该面已由块承载）。None = 旧路径/评估缺席。
     goal_satisfaction: Optional[Dict[str, Any]] = None
+    # GOAL 05（ADR-0279 M4）：终验点上已持久化的 goal verification 对账
+    # 块快照（来源/纪律同上 —— 持久化成功才赋值；None = 旧路径/缺席）。
+    goal_verification: Optional[Dict[str, Any]] = None
     # 环内修复停止原因（W-C）：``""``（未触发）| ``no_progress``（同运行内
     # 同 finding 复现 / findings 集合修复后不变 —— 诚实停止，不空转轮数）。
     loop_stop: str = LOOP_STOP_NONE

@@ -13,7 +13,7 @@ import { CodeBlock } from '@/components/code-highlight/code-block';
 // V9 citation 扩展（ADR-0145）：知识库引用角标。chat 气泡实际渲染走 MiniMd，
 // 与 story-markdown 共用同一 CitationArea 组合件（单一实现，避免双路径漂移）。
 // 无引用定义块的消息：正文逐字节不变、组件表行为不变（零回归）。
-import { CitationAnchor, CitationArea, isCitationHref } from './citation';
+import { CitationAnchor, CitationArea, isCitationHref, citationRemark } from './citation';
 
 export interface MiniMdProps {
   text: string;
@@ -26,29 +26,22 @@ export interface MiniMdProps {
 export const safeUrlTransform: UrlTransform = (url) => {
   if (!url) return url;
   const trimmed = url.trim();
-  // 相对路径 / 同源锚点 / 标准协议放行
-  if (
-    trimmed.startsWith('/') ||
-    trimmed.startsWith('#') ||
-    trimmed.startsWith('http://') ||
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('mailto:') ||
-    trimmed.startsWith('tel:')
-  ) {
-    return trimmed;
+  try {
+    const resolved = new URL(trimmed, typeof location === 'undefined' ? 'https://localhost/' : location.href);
+    return ['http:', 'https:', 'mailto:', 'tel:'].includes(resolved.protocol) ? trimmed : '';
+  } catch {
+    return '';
   }
-  // 其他（javascript:, data:, file:, vbscript: 等）一律拒绝
-  return '';
 };
 
 export default function MiniMd({ text }: MiniMdProps) {
   return (
     <CitationArea
       text={text}
-      renderMarkdown={(body) => (
+      renderMarkdown={(body, sources) => (
         <div className="prose-agent text-body leading-[1.7] text-ink-secondary max-w-none break-words">
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={[remarkGfm, citationRemark(sources)]}
           urlTransform={safeUrlTransform}
         components={{
           p: ({ children }) => <p className="mb-2.5 last:mb-0 leading-relaxed">{children}</p>,

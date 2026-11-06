@@ -12,7 +12,10 @@ and cooperative timeout instead of decorative fields), label text fitting
 diagnostics on the authoritative render-diagnostics vocabulary.
 """
 
-import html as _html
+from app.services.mapspec_svg_bounds import bounded_source_bounds
+from app.services.mapspec_svg_labels import _svg_label_text, _svg_layers, valid_geographic_coordinates
+from app.services.mapspec_filter import evaluate_filter, supported_filter
+from app.lib.cartography.render_scene import ResolvedComponent
 import logging
 import math as _math
 import time as _time
@@ -36,6 +39,9 @@ from app.lib.cartography.label_collision import (
 )
 from app.lib.cartography.label_collision import (
     solve_export_labels as _solve_export_labels,
+)
+from app.lib.cartography.label_typography import (
+    wrap_label_multilingual as _wrap_label_multilingual,
 )
 from app.lib.cartography.render_scene import (
     MAX_LEGEND_ITEMS_PER_BOX as _MAX_LEGEND_ITEMS_PER_BOX,
@@ -86,9 +92,6 @@ from app.lib.cartography.svg_marginalia import (
     _panel_text as _panel_text,
 )
 from app.lib.cartography.svg_marginalia import (
-    ANNOTATION_MAX_LINES as _ANNOTATION_MAX_LINES,
-)
-from app.lib.cartography.svg_marginalia import (
     colorbar_height as _colorbar_height,
 )
 from app.lib.cartography.svg_marginalia import (
@@ -119,6 +122,9 @@ from app.lib.cartography.representation import (
     export_adjudicate_layer,
     export_zoom_of_mapspec,
 )
+from app.lib.cartography.multiscale.export_adjudication import (
+    export_source_override as _export_source_override,
+)
 from app.lib.cartography.render_diagnostics import (
     MAX_DIAGNOSTICS_PER_EXPORT as _MAX_DIAGNOSTICS_PER_EXPORT,
 )
@@ -132,6 +138,21 @@ from app.services.mapspec_expr import (
     MAPLIBRE_EXPR_OPS,
     evaluate_map_libre_expression,
     interpolate_value,
+)
+
+from app.services.mapspec_svg_payloads import (
+    _escape_svg_attr as _escape_svg_attr,
+    _safe_float as _safe_float,
+    _fmt_num as _fmt_num,
+    _table_height as _table_height,
+    _panel_payload as _panel_payload,
+    _parse_stats_rows as _parse_stats_rows,
+    _parse_disclosure as _parse_disclosure,
+    _parse_scene_disclosure as _parse_scene_disclosure,
+    _profile_to_chart as _profile_to_chart,
+    _parse_annotation as _parse_annotation,
+    _colorbar_spec as _colorbar_spec,
+    _table_payload as _table_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -186,7 +207,7 @@ def _resolve_export_thresholds(
             return False
         try:
             f = float(val)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return False
         if not _math.isfinite(f):
             return False
@@ -205,7 +226,7 @@ def _resolve_export_thresholds(
         t_ms = float(thresholds["timeoutMs"])
     else:
         t_ms = DEFAULT_EXPORT_TIMEOUT_MS
-    return cap, t_ms
+    return min(cap, TIER_EXPORT_FEATURES), min(t_ms, DEFAULT_EXPORT_TIMEOUT_MS)
 
 
 def resolve_spec_timeout_ms(mapspec: Any) -> float:
@@ -214,48 +235,86 @@ def resolve_spec_timeout_ms(mapspec: Any) -> float:
     return _resolve_export_thresholds(mapspec, None, None)[1]
 
 
-def _escape_svg_attr(value: Any) -> str:
-    """Escape a value for safe interpolation into an SVG attribute.
+#: 线标注 repeat 锚点上限（对齐 MapLibre symbol-spacing 多贴的有界子集）。
+_LINE_REPEAT_MAX_ANCHORS = 4
+#: repeat 锚点计算的参与坐标帽（R2 评审：单条百万坐标线的 project 逐点
+#: 循环不可中断 —— 确定性跨步采样到帽内再算锚点，语义是等距近似的
+#: 有界化，不改变正常线的输出）。
+_LINE_REPEAT_MAX_POINTS = 20_000
 
-    Mirrors the JS twin's escapeSvgAttr: MapSpec paint values flow into
-    attributes like fill="...", so a crafted value containing `"` could break
-    out of the attribute (attribute-injection / XSS). quote=True escapes both
-    double and single quotes.
+
+def _line_repeat_anchors(
+    coords: Any, project, _dpi_spacing: float
+) -> List[Tuple[float, float, float]]:
+    """symbol-placement=line 的等距 repeat 锚点（≤4，TS 孪生同构）。
+
+    语义（对齐 live MapLibre 沿线多贴的确定性子集）：首个锚点在线弧长
+    中点，随后向两侧按 ``spacing``（= MapLibre symbol-spacing 缺省 250px ×
+    dpi_scale）扩展，超出线长即停；每个锚点带所在段的方位角（keep-upright
+    由求解器负责）。总弧长 < 2×spacing 时只有中点单锚（与旧行为一致）。
+    project() 返回 fmt_num 字符串 —— 全程 float() 还原。
+    坐标帽采样：首点恒保留；尾点在一般 N 下落在两个采样格之间而被略去
+    （弧长轻微低估，确定性且双孪生同式 —— R3 评审措辞修正）。
     """
-    return _html.escape(str(value), quote=True)
+    if not isinstance(coords, list) or len(coords) < 2 or _dpi_spacing <= 0:
+        return []
+    # 坐标帽：超长线确定性跨步采样（首/尾点恒保留），project 调用数有界。
+    coords_list: List[Any] = coords
+    if len(coords_list) > _LINE_REPEAT_MAX_POINTS:
+        step = len(coords_list) / _LINE_REPEAT_MAX_POINTS
+        coords_list = [coords_list[min(len(coords_list) - 1, int(k * step))]
+                       for k in range(_LINE_REPEAT_MAX_POINTS)]
+    pts: List[Tuple[float, float]] = []
+    for c in coords_list:
+        if isinstance(c, (list, tuple)) and len(c) >= 2:
+            try:
+                px, py = project(c)
+                pts.append((float(px), float(py)))
+            except Exception:
+                return []
+    if len(pts) < 2:
+        return []
+    seg_lens: List[float] = []
+    total = 0.0
+    for i in range(len(pts) - 1):
+        dx = pts[i + 1][0] - pts[i][0]
+        dy = pts[i + 1][1] - pts[i][1]
+        seg_len = _math.hypot(dx, dy)
+        seg_lens.append(seg_len)
+        total += seg_len
+    if total <= 0 or total < 2 * _dpi_spacing:
+        return []
 
+    def _anchor_at(s: float) -> Tuple[float, float, float]:
+        acc = 0.0
+        for i, seg_len in enumerate(seg_lens):
+            if acc + seg_len >= s or i == len(seg_lens) - 1:
+                t = 0.0 if seg_len <= 0 else (s - acc) / seg_len
+                t = min(1.0, max(0.0, t))
+                x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t
+                y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t
+                ang = _math.degrees(_math.atan2(
+                    pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0]))
+                return (x, y, ang)
+            acc += seg_len
+        return pts[-1][0], pts[-1][1], 0.0  # pragma: no cover - 数值边界
 
-def _safe_float(val: Any, default: float = 0.0) -> float:
-    """Safely convert value to float, returning default if invalid, None, NaN, or Inf."""
-    try:
-        if val is None:
-            return default
-        f = float(val)
-        return f if _math.isfinite(f) else default
-    except (ValueError, TypeError):
-        return default
-
-
-def _fmt_num(v: Any) -> str:
-    """Format a number for byte-identical parity with the TS twin.
-
-    Both twins reduce every numeric SVG attribute to a canonical "minimal" form:
-    round to 2 decimals, then strip trailing zeros and a dangling decimal point.
-    So ``50.0`` -> ``"50"``, ``1.0`` -> ``"1"``, ``0.6`` -> ``"0.6"``,
-    ``20.83`` -> ``"20.83"``. Mirrors ``fmtNum`` in the TS twin exactly
-    (``f"{v:.2f}".rstrip('0').rstrip('.')``). The parity tests pin the expected
-    strings, so any divergence fails the suite.
-    """
-    try:
-        v_float = float(v)
-        if not _math.isfinite(v_float):
-            return "0"
-        s = f"{v_float:.2f}"
-        if "." in s:
-            s = s.rstrip("0").rstrip(".")
-        return s
-    except Exception:
-        return "0"
+    mid = total / 2.0
+    positions = [mid]
+    k = 1
+    while len(positions) < _LINE_REPEAT_MAX_ANCHORS:
+        added = False
+        if mid + k * _dpi_spacing <= total:
+            positions.append(mid + k * _dpi_spacing)
+            added = True
+        if len(positions) < _LINE_REPEAT_MAX_ANCHORS and mid - k * _dpi_spacing >= 0:
+            positions.append(mid - k * _dpi_spacing)
+            added = True
+        if not added:
+            break
+        k += 1
+    positions.sort()
+    return [_anchor_at(s) for s in positions]
 
 
 def _merc_y(lat: float) -> float:
@@ -267,7 +326,7 @@ def _merc_y(lat: float) -> float:
         lat_val = float(lat)
         if not _math.isfinite(lat_val):
             lat_val = 0.0
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         lat_val = 0.0
     clamped_lat = max(-85.05112878, min(85.05112878, lat_val))
     return _math.log(_math.tan(_math.pi / 4.0 + (clamped_lat * _math.pi) / 360.0))
@@ -489,285 +548,6 @@ from app.services.export_lineage import (  # noqa: E402
     _MAX_COVERAGE_OMITTED as _MAX_COVERED_OMITTED,
 )
 #: 表格卡装配前高度估计（review P2-7：渲染几何同表，消除右下栈重叠估算差）。
-def _table_height(rows: List[Any], total: int) -> float:
-    shown = min(len(rows), 8)
-    tail = 1 if total > shown else 0
-    return 32.0 + 20.0 + (shown + 1) * 14.0 + (12.0 if tail else 0.0)
-
-
-
-def _panel_payload(comp: Any, key: str) -> Any:
-    """组件 options 的协议容器（仅 dict/list 有效载荷）。"""
-    v = (comp.options or {}).get(key)
-    return v if isinstance(v, (dict, list)) and v else None
-
-
-def _parse_stats_rows(comp: Any) -> List[str]:
-    """statistics_panel options.stats → "label：value unit" 行（≤12）。"""
-    stats = _panel_payload(comp, "stats")
-    if not isinstance(stats, dict):
-        return []
-    rows: List[str] = []
-    for item in stats.get("items") or []:
-        if not isinstance(item, dict) or len(rows) >= 12:
-            break
-        label = item.get("label")
-        value = item.get("value")
-        unit = item.get("unit")
-        if label is None and value is None:
-            continue
-        parts = []
-        if isinstance(label, str) and label:
-            parts.append(label)
-        if isinstance(value, (int, float, str)) and not isinstance(value, bool):
-            parts.append(f"{value}")
-        if isinstance(unit, str) and unit:
-            parts.append(unit)
-        if parts:
-            rows.append("：".join(parts[0:1]) + (
-                f" {parts[1]}" if len(parts) > 1 else "") + (
-                f" {parts[2]}" if len(parts) > 2 else ""))
-    return rows
-
-
-def _parse_disclosure(comp: Any) -> Tuple[str, List[str], bool, Tuple[int, ...]]:
-    """披露族 → (title, rows, accent, strike_rows)。空 rows = 面板缺席。"""
-    opts = comp.options or {}
-    if comp.type == "methodology_note":
-        warnings = opts.get("warnings")
-        rows: List[str] = []
-        if isinstance(warnings, list):
-            for item in warnings:
-                if len(rows) >= 16:
-                    break
-                if isinstance(item, str) and item.strip():
-                    rows.append(item)
-                elif isinstance(item, dict):
-                    text = item.get("text")
-                    if isinstance(text, str) and text.strip():
-                        code = item.get("code")
-                        prefix = f"{code} " if isinstance(code, str) and code else ""
-                        rows.append(f"{prefix}{text}")
-        return ("方法论披露", rows, True, ())
-    if comp.type == "uncertainty_panel":
-        unc = opts.get("uncertainty")
-        if not isinstance(unc, dict):
-            return ("", [], False, ())
-        rows = []
-        for item in unc.get("items") or []:
-            if len(rows) >= 16:
-                break
-            if not isinstance(item, dict):
-                continue
-            label = item.get("label")
-            if not (isinstance(label, str) and label.strip()):
-                continue
-            kind = item.get("kind")
-            kind_s = f"{kind} · " if isinstance(kind, str) and kind else ""
-            detail = item.get("detail")
-            detail_s = f"：{detail}" if isinstance(detail, str) and detail else ""
-            rows.append(f"{kind_s}{label}{detail_s}")
-        interval = unc.get("interval")
-        if isinstance(interval, (list, tuple)) and len(interval) >= 2 and len(rows) < 16:
-            rows.append(f"置信区间：[{interval[0]}, {interval[1]}]")
-        confidence = unc.get("confidence")
-        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) and len(rows) < 16:
-            rows.append(f"置信度：{confidence:g}")
-        for key in ("sampleNote", "sample_limit"):
-            note = unc.get(key)
-            if isinstance(note, str) and note.strip() and len(rows) < 16:
-                rows.append(note)
-        return ("不确定性", rows, False, ())
-    if comp.type == "decision_panel":
-        decision = opts.get("decision")
-        title = "决策"
-        if isinstance(decision, dict):
-            method = decision.get("method")
-            if isinstance(method, str) and method.strip():
-                title = f"决策（{method}）"
-        rows = []
-        strikes: List[int] = []
-        weight_source = decision.get("weightSource") if isinstance(decision, dict) else None
-        if isinstance(weight_source, str) and weight_source.strip():
-            rows.append(f"权重来源：{weight_source}")
-        row_list = (
-            decision.get("rows") if isinstance(decision, dict) else None
-        ) or (opts.get("rows") if isinstance(opts.get("rows"), list) else None) or []
-        seq = 0
-        for item in row_list:
-            if not isinstance(item, dict) or len(rows) >= 16:
-                break
-            name = item.get("name")
-            if not (isinstance(name, str) and name.strip()):
-                continue
-            seq += 1
-            rank = item.get("rank")
-            rank_s = f"{rank}. " if isinstance(rank, (int, float)) else f"{seq}. "
-            score = item.get("score")
-            score_s = f" — {score}" if isinstance(score, (int, float, str)) and not isinstance(score, bool) else ""
-            vetoed = item.get("basis") == "vetoed" or item.get("vetoed") is True
-            if vetoed:
-                strikes.append(len(rows))
-            rows.append(f"{rank_s}{name}{score_s}")
-        vetoes = decision.get("vetoes") if isinstance(decision, dict) else None
-        if isinstance(vetoes, list):
-            vs = [v for v in vetoes if isinstance(v, str) and v.strip()]
-            if vs:
-                rows.append("硬约束否决：")
-                for v in vs:
-                    if len(rows) >= 16:
-                        break
-                    rows.append(f"· {v}")
-        return (title, rows, False, tuple(strikes))
-    return ("", [], False, ())
-
-
-def _parse_scene_disclosure(
-    mapspec: Dict[str, Any], comp: Any,
-) -> Tuple[str, List[str]]:
-    """G3D05：scene_disclosure → (title, rows)，内容派生自 spec.scene。
-
-    矢量孪生通道语义：本通道渲染的是**平面 2D 投影**——scene.mode=3d
-    时如实披露"矢量导出已降级"；比例尺在本通道可信（无透视），与
-    canvas 透视截图通道（比例尺仅供参考）语义区分、不矛盾。
-    无 scene 块时返回空 rows（面板缺席，不虚构场景状态）。
-    """
-    scene = mapspec.get("scene") if isinstance(mapspec, dict) else None
-    if not isinstance(scene, dict):
-        return ("场景披露", [])
-    rows: List[str] = []
-    mode = scene.get("mode")
-    if mode == "3d":
-        rows.append("矢量导出为 2D 投影（三维透视不可矢量化，已降级）")
-        rows.append("原场景模式：3D 透视")
-    elif mode == "2.5d":
-        rows.append("矢量导出为 2D 投影（2.5D 场景已按平面表达）")
-        rows.append("原场景模式：2.5D")
-    else:
-        rows.append("场景模式：2D")
-    terrain = scene.get("terrain")
-    if isinstance(terrain, dict):
-        exag = terrain.get("exaggeration")
-        if isinstance(exag, (int, float)) and not isinstance(exag, bool):
-            exag_s = f"地形夸张系数：{exag:g}×"
-            if float(exag) > 1.0:
-                exag_s += "（垂直比例夸张，非真实坡度）"
-            rows.append(exag_s)
-        v_unit = terrain.get("vertical_unit")
-        if isinstance(v_unit, str) and v_unit:
-            rows.append(f"垂直单位：{v_unit}")
-        elev_ref = terrain.get("elevation_ref")
-        if isinstance(elev_ref, str) and elev_ref:
-            rows.append(f"高程基准：{elev_ref}")
-        elif rows and rows[0].startswith("矢量导出"):
-            rows.append("高程基准：未声明")
-    opts = comp.options or {}
-    for note in (opts.get("extraNotes") or [])[:4]:
-        if isinstance(note, str) and note.strip():
-            rows.append(note)
-    return ("场景披露", rows[:16])
-
-
-def _profile_to_chart(comp: Any) -> Optional[Dict[str, Any]]:
-    """G3D05：elevation_profile options.points → 矢量图表链 chart dict。
-
-    距离（m）格式化为 km 标签、高程为值；剖面本质是折线图，复用
-    ``render_chart_panel``（与 chart_panel 同渲染器，无第二套绘制）。
-    points 缺席/非法 → None（装配层记 profile_ref_unavailable）。
-    """
-    opts = comp.options or {}
-    points = opts.get("points")
-    if not isinstance(points, list) or len(points) < 2:
-        return None
-    chart_points: List[Dict[str, Any]] = []
-    for p in points:
-        if not isinstance(p, dict):
-            return None
-        d, e = p.get("distance_m"), p.get("elevation_m")
-        if not isinstance(d, (int, float)) or not isinstance(e, (int, float)):
-            return None
-        if isinstance(d, bool) or isinstance(e, bool):
-            return None
-        chart_points.append({
-            "name": f"{float(d) / 1000.0:.2f}km"
-            if float(d) >= 1000.0 else f"{float(d):.0f}m",
-            "value": float(e),
-        })
-    unit = opts.get("unit") if isinstance(opts.get("unit"), str) else "m"
-    title = "高程剖面"
-    datum = opts.get("verticalDatum")
-    if isinstance(datum, str) and datum:
-        title += f"（基准：{datum}）"
-    return {
-        "type": "line",
-        "title": title,
-        "points": chart_points,
-        "yAxisLabel": f"高程（{unit}）",
-        "xAxisLabel": "线路里程",
-    }
-
-
-def _parse_annotation(comp: Any) -> Tuple[List[str], List[Tuple[float, float]]]:
-    """annotation → (静态行, callout 锚点列表)。行 ≤8、callout ≤8。"""
-    opts = comp.options or {}
-    lines: List[str] = []
-    if comp.text:
-        lines = [ln for ln in comp.text.split("\n") if ln.strip()][
-            :_ANNOTATION_MAX_LINES]
-    anchors: List[Tuple[float, float]] = []
-    coord = opts.get("anchorCoordinate")
-    if isinstance(coord, dict):
-        lng, lat = coord.get("lng", coord.get("lon")), coord.get("lat")
-        try:
-            anchors.append((float(lng), float(lat)))
-        except (TypeError, ValueError):
-            pass
-    elif isinstance(coord, (list, tuple)) and len(coord) >= 2:
-        try:
-            anchors.append((float(coord[0]), float(coord[1])))
-        except (TypeError, ValueError):
-            pass
-    return lines, anchors[:_ANNOTATION_MAX_LINES]
-
-
-def _colorbar_spec(mapspec: Dict[str, Any], comp: Any) -> Optional[Dict[str, Any]]:
-    """colorbar 数据源：绑定 layer 的 continuous legend_spec 优先，options 内联兜底
-    （前端 ``el.legendSpec`` 同语义；E-5：无 palette = 不可绘制）。"""
-    layer_id = comp.layer_id or (comp.options or {}).get("layerId")
-    if isinstance(layer_id, str) and layer_id:
-        for layer in mapspec.get("layers", []) or []:
-            if isinstance(layer, dict) and layer.get("id") == layer_id:
-                spec = layer.get("legend_spec")
-                if isinstance(spec, dict) and spec.get("type") == "continuous":
-                    return spec
-    opts = comp.options or {}
-    if isinstance(opts.get("palette_colors"), list) and opts["palette_colors"]:
-        inline = {k: opts[k] for k in ("palette_colors", "min", "max", "unit",
-                                       "field", "nodata", "title")
-                  if opts.get(k) is not None}
-        inline["title"] = inline.get("title", comp.text or "")
-        return inline
-    return None
-
-
-def _table_payload(comp: Any) -> Optional[Tuple[List[str], List[Any], int]]:
-    """table_panel 内联快照 → (columns, rows, total)。缺内联（ref 未水合）→ None。"""
-    table = _panel_payload(comp, "table")
-    if isinstance(table, dict):
-        columns = [str(c) for c in (table.get("columns") or []) if c]
-        rows = [r for r in (table.get("rows") or []) if isinstance(r, list)]
-        if rows:
-            return (columns, rows, len(rows))
-    if isinstance(table, list) and table:
-        first = table[0]
-        if isinstance(first, dict):
-            columns = [str(k) for k in first.keys()][:6]
-            rows = [[row.get(k) for k in first.keys()] for row in table
-                    if isinstance(row, dict)]
-            return (columns, rows, len(rows))
-        rows = [r if isinstance(r, list) else [r] for r in table]
-        return ([], rows, len(rows))
-    return None
 
 
 def _render_chrome_groups(
@@ -800,7 +580,7 @@ def _render_chrome_groups(
     truncations: List[str] = []
     m = _CHROME_MARGIN
 
-    def _first_of_type(t: str):
+    def _first_of_type(t: str) -> Optional[ResolvedComponent]:
         return next((c for c in enabled if c.type == t), None)
 
     def _mark_rendered(t: str) -> None:
@@ -834,9 +614,27 @@ def _render_chrome_groups(
     # 标题 / 副标题（top-center 居中；文本来自组件 options.text）
     title = _first_of_type("title")
     subtitle = _first_of_type("subtitle")
-    if title is not None or subtitle is not None:
+    # GOAL 03 M6：时序视图时间注记 —— temporal 启用时把当前帧标签并入
+    # 副标题（导出图纸自带时间证据；缺 subtitle 时独立成行同款排版）。
+    temporal_note = ""
+    temporal_cfg = mapspec.get("temporal") if isinstance(mapspec, dict) else None
+    if isinstance(temporal_cfg, dict) and temporal_cfg.get("enabled"):
+        frames = temporal_cfg.get("frames") or []
+        cursor = temporal_cfg.get("cursor_frame")
+        frame = next(
+            (f for f in frames if isinstance(f, dict) and f.get("id") == cursor), None
+        )
+        if frame is not None:
+            temporal_note = (
+                f"时间: {frame.get('label', cursor)}"
+                f"（粒度 {temporal_cfg.get('granularity') or ''}，"
+                f"窗口 [{frame.get('start')} ~ {frame.get('end')}）"
+            )
+    if title is not None or subtitle is not None or temporal_note:
         t_text = title.text if title else ""
         s_text = subtitle.text if subtitle else ""
+        if temporal_note:
+            s_text = f"{s_text} — {temporal_note}" if s_text else temporal_note
         tx = canvas_w / 2.0
         if t_text and s_text:
             parts.append(
@@ -886,9 +684,14 @@ def _render_chrome_groups(
             lng_pad = max((e0 - w0) * 1.5, 0.5)
             lat_pad = max((n0 - s0) * 1.5, 0.5)
             context = [w0 - lng_pad, s0 - lat_pad, e0 + lng_pad, n0 + lat_pad]
-            parts.append(_render_inset_locator(canvas_w - m - 150.0, m + 60.0, (150.0, 110.0), context, geo_bounds))
-            _mark_rendered("inset_map")
-        except (ValueError, TypeError):
+            authored = (inset.options or {}).get("bbox")
+            if isinstance(authored, (list, tuple)) and len(authored) == 4:
+                context = list(authored)
+            fragment = _render_inset_locator(canvas_w - m - 150.0, m + 60.0, (150.0, 110.0), context, geo_bounds)
+            if fragment:
+                parts.append(fragment)
+                _mark_rendered("inset_map")
+        except (ValueError, TypeError, OverflowError):
             pass
 
     # 署名（左下）
@@ -1278,7 +1081,7 @@ def compile_mapspec_to_svg_detailed(
     # 均被 MAX_LABELS_PER_EXPORT 封顶（防 spec 放大预算）。
     try:
         _labels_budget = int(max_labels)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         _labels_budget = 0
     _layout_for_labels = mapspec.get("layout") if isinstance(mapspec, dict) else None
     if _labels_budget <= 0 and isinstance(_layout_for_labels, dict):
@@ -1286,7 +1089,7 @@ def compile_mapspec_to_svg_detailed(
         if isinstance(_lc, dict):
             try:
                 _labels_budget = int(_lc.get("maxLabels"))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 _labels_budget = 0
     _labels_budget = min(_labels_budget if _labels_budget > 0 else _MAX_LABELS_PER_EXPORT, _MAX_LABELS_PER_EXPORT)
     timeout_s = timeout_ms_val / 1000.0
@@ -1339,77 +1142,47 @@ def compile_mapspec_to_svg_detailed(
             target_dpi_val = float(target_dpi)
             if not _math.isfinite(target_dpi_val) or target_dpi_val <= 0:
                 target_dpi_val = 300.0
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             target_dpi_val = 300.0
+        target_dpi_val = min(target_dpi_val, 600.0)
         dpi_scale = target_dpi_val / 72.0
 
         try:
             width_val = int(width) if _math.isfinite(float(width)) and width > 0 else 1200
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             width_val = 1200
 
         try:
             height_val = int(height) if _math.isfinite(float(height)) and height > 0 else 800
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             height_val = 800
 
         try:
             padding_val = int(padding) if _math.isfinite(float(padding)) and padding >= 0 else 40
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             padding_val = 40
 
+        width_val, height_val = min(width_val, 16384), min(height_val, 16384)
+        padding_val = min(padding_val, width_val // 2, height_val // 2)
         scaled_width = width_val * dpi_scale
         scaled_height = height_val * dpi_scale
         scaled_padding = padding_val * dpi_scale
 
-        min_x, max_x = float("inf"), float("-inf")
-        min_y, max_y = float("inf"), float("-inf")
-
         sources = mapspec.get("sources", {})
-        if isinstance(sources, dict):
-            for src in sources.values():
-                if not isinstance(src, dict):
-                    continue
-                geojson = _source_geojson(src)
-                if not isinstance(geojson, dict):
-                    continue
-                features = (
-                    geojson.get("features", [geojson])
-                    if geojson.get("type") == "FeatureCollection"
-                    else [geojson]
-                )
-                if not isinstance(features, list):
-                    features = [geojson]
-
-                for feat in features:
-                    if not isinstance(feat, dict):
-                        continue
-                    geom = feat.get("geometry")
-                    if not isinstance(geom, dict):
-                        continue
-
-                    def extract_coords(c: Any) -> None:
-                        nonlocal min_x, max_x, min_y, max_y
-                        if (
-                            isinstance(c, (list, tuple))
-                            and len(c) >= 2
-                            and isinstance(c[0], (int, float))
-                            and isinstance(c[1], (int, float))
-                        ):
-                            try:
-                                x_val, y_val = float(c[0]), float(c[1])
-                                if _math.isfinite(x_val) and _math.isfinite(y_val):
-                                    min_x = min(min_x, x_val)
-                                    max_x = max(max_x, x_val)
-                                    min_y = min(min_y, y_val)
-                                    max_y = max(max_y, y_val)
-                            except (ValueError, TypeError):
-                                pass
-                        elif isinstance(c, list):
-                            for sub in c:
-                                extract_coords(sub)
-
-                    extract_coords(geom.get("coordinates", []))
+        rendered_source_ids = list(dict.fromkeys(
+            layer.get("source") for layer in _svg_layers(mapspec.get("layers", []))
+            if isinstance(layer, dict) and layer.get("visible") is not False
+            and (layer.get("layout") if isinstance(layer.get("layout"), dict) else {}).get("visibility") != "none"
+            and export_adjudicate_layer(layer, _export_zoom) in ("render", "render_heatmap")
+        ))
+        (min_x, min_y, max_x, max_y), bounds_truncated, bounds_timeout = bounded_source_bounds(
+            sources, rendered_source_ids, _source_geojson, valid_geographic_coordinates,
+            max_features=cap, deadline=start_mono + timeout_s)
+        if bounds_truncated:
+            truncated_features = True
+        if bounds_timeout:
+            timed_out = True
+            _emit_diag("export_timeout_partial", detail="extent discovery deadline")
 
         if (
             not _math.isfinite(min_x)
@@ -1429,7 +1202,7 @@ def compile_mapspec_to_svg_detailed(
                 _b = [float(v) for v in bounds]
                 if all(_math.isfinite(v) for v in _b) and _b[2] > _b[0] and _b[3] > _b[1]:
                     min_x, min_y, max_x, max_y = _b[0], _b[1], _b[2], _b[3]
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 pass
 
         geo_bounds = [min_x, min_y, max_x, max_y]
@@ -1448,7 +1221,7 @@ def compile_mapspec_to_svg_detailed(
                 else:
                     lon = float(coord[0]) if _math.isfinite(float(coord[0])) else 0.0
                     lat = float(coord[1]) if _math.isfinite(float(coord[1])) else 0.0
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 lon, lat = 0.0, 0.0
 
             w_span = scaled_width - scaled_padding * 2
@@ -1468,7 +1241,7 @@ def compile_mapspec_to_svg_detailed(
         elements_svg = ""
         layers = mapspec.get("layers", [])
         if isinstance(layers, list):
-            for layer in layers:
+            for layer in _svg_layers(layers):
                 if not isinstance(layer, dict):
                     continue
 
@@ -1550,6 +1323,17 @@ def compile_mapspec_to_svg_detailed(
 
                 try:
                     src_id = layer.get("source")
+                    # GOAL 04（M6 同合同）：活跃 artifact 窗携带源覆盖时，
+                    # 导出从派生工件源取数（与前端孪生/livec compiler 同一
+                    # 裁决语义）；统计/图例口径仍为 original_source。
+                    _src_override = _export_source_override(layer, _export_zoom)
+                    if _src_override:
+                        src_id = _src_override
+                        _emit_diag(
+                            "layer_generalized_artifact",
+                            detail=str(src_id),
+                            layer_id=layer.get("id"),
+                        )
                     src = sources.get(src_id, {}) if isinstance(sources, dict) else {}
                     if not isinstance(src, dict) or not src:
                         continue
@@ -1631,13 +1415,32 @@ def compile_mapspec_to_svg_detailed(
                     if not isinstance(features, list):
                         features = [data]
 
+                    layer_filter = layer.get("filter")
+                    if layer_filter is not None:
+                        if not supported_filter(layer_filter):
+                            _emit_diag("layer_filter_unsupported", layer_id=_lid)
+                            continue
+                        selected = []
+                        for feat in features:
+                            if _time.monotonic() >= start_mono + timeout_s:
+                                timed_out = True
+                                _emit_diag("export_timeout_partial", detail="filter deadline", layer_id=_lid)
+                                break
+                            if isinstance(feat, dict) and evaluate_filter(layer_filter, feat):
+                                selected.append(feat)
+                                if len(selected) > max(0, cap - feature_count):
+                                    break
+                        features = selected
+
                     # W4 阈值执行：每图层特征数超限 → 确定性截断（保持原
                     # 顺序取前 N）+ features_truncated 诊断。
-                    if len(features) > cap:
-                        features = features[:cap]
+                    remaining = max(0, cap - feature_count)
+                    if len(features) > remaining:
+                        features = features[:remaining]
                         truncated_features = True
                         _emit_diag("features_truncated", detail=str(cap), layer_id=_lid)
 
+                    invalid_coordinates_diagnosed = False
                     for feat in features:
                         if not isinstance(feat, dict):
                             continue
@@ -1653,6 +1456,11 @@ def compile_mapspec_to_svg_detailed(
                         n_svg_before = len(elements_svg)
                         geom = feat.get("geometry")
                         if not isinstance(geom, dict):
+                            continue
+                        if not valid_geographic_coordinates(geom.get("coordinates")):
+                            if not invalid_coordinates_diagnosed:
+                                _emit_diag("layer_coordinates_invalid", layer_id=_lid)
+                                invalid_coordinates_diagnosed = True
                             continue
                         props = feat.get("properties") if isinstance(feat.get("properties"), dict) else {}
 
@@ -1716,7 +1524,7 @@ def compile_mapspec_to_svg_detailed(
                             for line_coords in lines:
                                 if not isinstance(line_coords, list) or not line_coords:
                                     continue
-                                path_str = " L ".join(f"{project(c)[0]},{project(c)[1]}" for c in line_coords)
+                                path_str = " L ".join(",".join(project(c)) for c in line_coords)
                                 elements_svg += f'<path d="M {path_str}" stroke="{color}" stroke-width="{line_w}" stroke-opacity="{opacity}" fill="none"{extra_attrs} />\n'
 
                         elif layer_type in ("fill", "fill-extrusion") and geom.get("type") in ("Polygon", "MultiPolygon"):
@@ -1745,7 +1553,7 @@ def compile_mapspec_to_svg_detailed(
                                 for ring in poly_rings:
                                     if not isinstance(ring, list) or not ring:
                                         continue
-                                    pts = " L ".join(f"{project(c)[0]},{project(c)[1]}" for c in ring)
+                                    pts = " L ".join(",".join(project(c)) for c in ring)
                                     ring_paths.append(f"M {pts} Z")
                                 if not ring_paths:
                                     continue
@@ -1778,9 +1586,10 @@ def compile_mapspec_to_svg_detailed(
                             layout = layer.get("layout", {})
                             if not isinstance(layout, dict):
                                 layout = {}
-                            text_field_pattern = str(layout.get("text-field") or paint.get("text-field") or "{name}")
-                            field_name = text_field_pattern.strip("{}")
-                            raw_text = props.get(field_name) or props.get("name") or props.get("label") or ("" if text_field_pattern.startswith("{") else text_field_pattern)
+                            text_field_pattern = layout.get("text-field", paint.get("text-field", "{name}"))
+                            raw_text = _svg_label_text(text_field_pattern, props)
+                            if raw_text is None:
+                                _emit_diag("label_expression_unsupported", str(layer.get("id", "")))
                             if not raw_text:
                                 continue
 
@@ -1823,7 +1632,7 @@ def compile_mapspec_to_svg_detailed(
                                                 p_max_x = max(p_max_x, xv)
                                                 p_min_y = min(p_min_y, yv)
                                                 p_max_y = max(p_max_y, yv)
-                                        except (ValueError, TypeError):
+                                        except (ValueError, TypeError, OverflowError):
                                             pass
                                     elif isinstance(c, list):
                                         for sub in c:
@@ -1895,43 +1704,98 @@ def compile_mapspec_to_svg_detailed(
                                 # 请求供全图求解（标签组置顶，制图惯例）。
                                 # feature_count 按收集计数（求解抑制的要素
                                 # 在诊断 label_collision_relaxed 中披露）。
+                                #
+                                # Track B（M9）三项确定性收敛（TS 孪生同构，
+                                # INTERFACE_CONTRACTS §6）：
+                                # 1) 折行：CJK 按字/拉丁按词，宽度 ≈8em
+                                #    （13 窄字符位；对齐 live MapLibre
+                                #    text-max-width 8em 缺省），≤2 行；行内
+                                #    仍受 MAX_SVG_LABEL_CHARS 截断兜底；
+                                # 2) 重要度：layer.label.priorityField 数值
+                                #    代理 → 求解 priority=稳定名次（缺失时
+                                #    保持收集序 —— 与 schema「缺省按原序」
+                                #    契约一致，live Top-N 同向：值大先保）；
+                                # 3) 线 repeat：symbol-placement=line 时按
+                                #    MapLibre symbol-spacing 缺省 250px 等距
+                                #    生成 ≤4 个锚点候选（对齐 live 沿线多贴；
+                                #    非 line placement 保持单中点锚）。
+                                wrap_lines = _wrap_label_multilingual(
+                                    text_value, max_chars=13, max_lines=2)
+                                # 折行宽度预算 13 窄字符位（≈8em）保证单行
+                                # ≤~21 code points，恒低于 MAX_SVG_LABEL_CHARS；
+                                # >60 的整文本已在上文 legacy 口径发射
+                                # label_truncated。15-59 字名折行截尾
+                                # （R3 评审：静默丢字读者无从得知）→ 补发
+                                # wrapped 口径诊断（区分 legacy 的 60 截断）。
+                                if sum(len(_wl) for _wl in wrap_lines) < len(text_value):
+                                    _emit_diag(
+                                        "label_truncated",
+                                        detail=f"layer={_lid} wrapped-drop len={len(text_value)}",
+                                        layer_id=_lid,
+                                    )
+                                _coll_text = "\n".join(wrap_lines)
+
+                                _label_cfg = layer.get("label")
+                                _pf = None
+                                if isinstance(_label_cfg, dict):
+                                    _pf = _label_cfg.get("priorityField") or _label_cfg.get("priority_field")
+                                _importance = None
+                                if isinstance(_pf, str) and _pf:
+                                    _pv = props.get(_pf)
+                                    if isinstance(_pv, (int, float)) and not isinstance(_pv, bool) and _math.isfinite(_pv):
+                                        _importance = float(_pv)
+
                                 _gtype_c = geom.get("type")
                                 _coords_c = geom.get("coordinates")
                                 _lkind = "point"
-                                _lang = 0.0
-                                if (
-                                    _gtype_c == "LineString"
-                                    and isinstance(_coords_c, list)
-                                    and len(_coords_c) >= 2
-                                ):
+                                if _gtype_c == "LineString" and isinstance(_coords_c, list) and len(_coords_c) >= 2:
                                     _lkind = "line"
-                                    _mi = len(_coords_c) // 2
-                                    _pa = project(_coords_c[_mi - 1] if _mi >= 1 else _coords_c[0])
-                                    _pb = project(_coords_c[_mi] if _mi >= 1 else _coords_c[1])
-                                    # project() 返回 fmt_num 字符串 —— 角度计算前转 float
-                                    _lang = _math.degrees(_math.atan2(
-                                        float(_pb[1]) - float(_pa[1]),
-                                        float(_pb[0]) - float(_pa[0]),
-                                    ))
                                 elif _gtype_c in ("Polygon", "MultiPolygon"):
                                     _lkind = "polygon"
-                                label_requests.append({
-                                    "id": f"lbl{len(label_requests)}-{_lid}-{_fmt_num(coord[0])}-{_fmt_num(coord[1])}",
-                                    "text": fitted_text,
-                                    "kind": _lkind,
-                                    "x": float(x),
-                                    "y": float(y),
-                                    "angle": _lang,
-                                    "font_px": base_size * dpi_scale,
-                                    "font_size_attr": font_size,
-                                    "color": color,
-                                    "opacity": opacity,
-                                    "font_family": font_family,
-                                    "halo_w": halo_w,
-                                    "halo_color": halo_color,
-                                    "halo_opacity": halo_opacity,
-                                    "layer_id": _lid,
-                                })
+
+                                # 锚点集：默认单锚（point/polygon 中心、line
+                                # 中点）；line + symbol-placement=line → 等距
+                                # repeat 锚（≤4，间距 250px×dpi_scale）。
+                                _anchors: List[Tuple[float, float, float]] = []
+                                if (
+                                    _lkind == "line"
+                                    and str(layout.get("symbol-placement") or "") == "line"
+                                ):
+                                    _anchors = _line_repeat_anchors(
+                                        _coords_c, project, _dpi_spacing=250.0 * dpi_scale
+                                    )
+                                if not _anchors:
+                                    _lang0 = 0.0
+                                    if _lkind == "line":
+                                        _mi = len(_coords_c) // 2
+                                        _pa = project(_coords_c[_mi - 1] if _mi >= 1 else _coords_c[0])
+                                        _pb = project(_coords_c[_mi] if _mi >= 1 else _coords_c[1])
+                                        # project() 返回 fmt_num 字符串 —— 角度计算前转 float
+                                        _lang0 = _math.degrees(_math.atan2(
+                                            float(_pb[1]) - float(_pa[1]),
+                                            float(_pb[0]) - float(_pa[0]),
+                                        ))
+                                    _anchors = [(float(x), float(y), _lang0)]
+                                for _ai, (_ax, _ay, _alang) in enumerate(_anchors):
+                                    _id_suffix = "" if _ai == 0 else f"-r{_ai}"
+                                    label_requests.append({
+                                        "id": f"lbl{len(label_requests)}{_id_suffix}-{_lid}-{_fmt_num(coord[0])}-{_fmt_num(coord[1])}",
+                                        "text": _coll_text,
+                                        "kind": _lkind,
+                                        "x": _ax,
+                                        "y": _ay,
+                                        "angle": _alang,
+                                        "font_px": base_size * dpi_scale,
+                                        "font_size_attr": font_size,
+                                        "color": color,
+                                        "opacity": opacity,
+                                        "font_family": font_family,
+                                        "halo_w": halo_w,
+                                        "halo_color": halo_color,
+                                        "halo_opacity": halo_opacity,
+                                        "layer_id": _lid,
+                                        "importance": _importance,
+                                    })
                                 feature_count += 1
                                 continue
 
@@ -1953,12 +1817,26 @@ def compile_mapspec_to_svg_detailed(
 
         labels_group = ""
         if collision_mode and label_requests:
+            # Track B（M9）：priority = 重要度稳定名次 —— layer.label
+            # .priorityField 数值大者先保（live Top-N 同向），并列按收集序；
+            # 无 priorityField/importance 全缺 → 名次=收集序（schema「缺省
+            # 按原序」契约，既有行为不变）。
+            _order = sorted(
+                range(len(label_requests)),
+                key=lambda i: (
+                    -(label_requests[i]["importance"]
+                      if isinstance(label_requests[i].get("importance"), (int, float))
+                      else float("-inf")),
+                    i,
+                ),
+            )
+            _rank_of = {orig: rank for rank, orig in enumerate(_order)}
             solution = _solve_export_labels(
                 [
                     _CollisionLabel(
                         id=r["id"], text=r["text"], kind=r["kind"],
                         x=r["x"], y=r["y"], angle=r["angle"],
-                        font_size=r["font_px"], priority=i,
+                        font_size=r["font_px"], priority=_rank_of[i],
                     )
                     for i, r in enumerate(label_requests)
                 ],
@@ -1972,9 +1850,11 @@ def compile_mapspec_to_svg_detailed(
                     continue
                 r = by_id[p.id]
                 _fs = r["font_px"]
+                _lines = r["text"].split("\n")
                 if r["kind"] == "point":
                     # 渲染映射：求解盒左下角 → 基线 y（上升部补偿），文本
                     # 起排 —— 盒与可见字形对齐；TS 侧同式（差分 fixtures 锁定）。
+                    # 多行：盒高（estimate 行数口径）参与基线补偿，行距 1.2em。
                     _h = _estimate_collision_box(r["text"], _fs)[1]
                     _tx, _ty = p.x, p.y + _h - 0.25 * _fs
                     _anchor, _baseline, _transform = "start", "auto", ""
@@ -1985,6 +1865,24 @@ def compile_mapspec_to_svg_detailed(
                         f' transform="rotate({_fmt_num(p.angle)} {_fmt_num(p.x)} {_fmt_num(p.y)})"'
                         if p.angle != 0.0 else ""
                     )
+
+                def _line_y(k: int, n: int) -> float:
+                    # point：首行基线 + k×1.2em；line/polygon：行组中心对齐。
+                    if r["kind"] == "point":
+                        return _ty + k * 1.2 * _fs
+                    return _ty + (k - (n - 1) / 2.0) * 1.2 * _fs
+
+                def _text_body() -> str:
+                    if len(_lines) == 1:
+                        return _escape_svg_attr(_lines[0])
+                    # 多行 tspan：每行绝对 y（fmtNum 确定性）；单行标签保持
+                    # 既有无 tspan 形态（byte 稳定）。
+                    return "".join(
+                        f'<tspan x="{_fmt_num(_tx)}" y="{_fmt_num(_line_y(k, len(_lines)))}">'
+                        f"{_escape_svg_attr(ln)}</tspan>"
+                        for k, ln in enumerate(_lines)
+                    )
+
                 _halo_main = ""
                 if r["halo_w"] is not None:
                     _halo_main = (
@@ -1993,14 +1891,14 @@ def compile_mapspec_to_svg_detailed(
                         f'stroke-width="{r["halo_w"]}" stroke-opacity="{r["halo_opacity"]}" '
                         f'stroke-linejoin="round" stroke-linecap="round" '
                         f'text-anchor="{_anchor}" dominant-baseline="{_baseline}"{_transform}>'
-                        f'{_escape_svg_attr(r["text"])}</text>\n'
+                        f'{_text_body()}</text>\n'
                     )
                 parts.append(
                     _halo_main
                     + f'<text x="{_fmt_num(_tx)}" y="{_fmt_num(_ty)}" font-size="{r["font_size_attr"]}" '
                     f'font-family="{r["font_family"]}" fill="{r["color"]}" fill-opacity="{r["opacity"]}" '
                     f'text-anchor="{_anchor}" dominant-baseline="{_baseline}"{_transform}>'
-                    f'{_escape_svg_attr(r["text"])}</text>'
+                    f'{_text_body()}</text>'
                 )
             _sup_n = solution.suppressed_count
             if _sup_n:
@@ -2009,7 +1907,7 @@ def compile_mapspec_to_svg_detailed(
                     detail=f"placed={solution.stats['placed']} suppressed={_sup_n}",
                 )
             if solution.budget_exceeded:
-                _emit_diag("label_budget_exceeded", detail=str(_MAX_LABELS_PER_EXPORT))
+                _emit_diag("label_budget_exceeded", detail=str(_labels_budget))
             if parts:
                 labels_group = (
                     '  <g class="mapspec-labels">\n    '
@@ -2040,6 +1938,8 @@ def compile_mapspec_to_svg_detailed(
                 f"<title>{_t}</title><desc>WebGIS AI Agent 专题地图导出（矢量）</desc>"
             )
 
+        if bounds_truncated and not any(item.get("code") == "features_truncated" for item in diagnostics):
+            _emit_diag("features_truncated", detail=str(cap))
         return SvgCompilation(
             svg=f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}
   <rect width="100%" height="100%" fill="#ffffff" />
@@ -2056,8 +1956,8 @@ def compile_mapspec_to_svg_detailed(
         )
 
     except Exception:
-        w_fallback = width if isinstance(width, (int, float)) and width > 0 else 1200
-        h_fallback = height if isinstance(height, (int, float)) and height > 0 else 800
+        w_fallback = min(width, 16384) if isinstance(width, (int, float)) and width > 0 else 1200
+        h_fallback = min(height, 16384) if isinstance(height, (int, float)) and height > 0 else 800
         return SvgCompilation(
             svg=f"""<svg width="{int(w_fallback)}" height="{int(h_fallback)}" viewBox="0 0 {int(w_fallback)} {int(h_fallback)}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />

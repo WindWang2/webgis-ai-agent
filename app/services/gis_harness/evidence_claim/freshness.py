@@ -86,20 +86,14 @@ def affected_descendants(
                 affected_claims.add(nid)
             else:
                 affected_evidence.add(nid)
-        # Claims that support-depend on seed
-        for claim in store.all_claims():
-            if seed in claim.supporting_evidence_refs or any(
-                seed == eid or (store.get_evidence(eid) and store.get_evidence(eid).ref == ref_or_evidence_id)
-                for eid in claim.supporting_evidence_refs
-            ):
-                affected_claims.add(claim.claim_id)
-
-    # Also: edges pointing to seed (inbound) already covered by descendants();
-    # claims listing seed in supporting refs:
-    for claim in store.all_claims():
-        for eid in claim.supporting_evidence_refs:
-            if eid in seeds or eid == ref_or_evidence_id:
-                affected_claims.add(claim.claim_id)
+    # Indexed reverse lookup; retain only support dependencies, not contradictions.
+    for ref in set(seeds + [ref_or_evidence_id]):
+        for claim in store.claims_for_artifact(ref):
+            for eid in claim.supporting_evidence_refs:
+                node = store.get_evidence(eid)
+                if eid in seeds or eid == ref_or_evidence_id or (node and node.ref == ref_or_evidence_id):
+                    affected_claims.add(claim.claim_id)
+                    break
 
     analysis = sorted(e for e in affected_evidence if e.startswith("art:") or e.startswith("facet:"))
     layers = sorted(e for e in affected_evidence if e.startswith("layer:"))

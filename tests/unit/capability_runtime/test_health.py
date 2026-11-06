@@ -269,3 +269,14 @@ class TestBoundsAndSwitch:
         v1 = reg.verdict("tool:x")
         v2 = reg.verdict("tool:x")
         assert v1.to_dict() == v2.to_dict()
+
+
+def test_caller_errors_and_unknown_exceptions_cannot_open_shared_provider_breaker():
+    reg = ProviderHealthRegistry()
+    for exc in (ValueError("bad argument"), TypeError("bad type"), KeyError("missing"), RuntimeError("unclassified")):
+        kind = classify_failure(exc)
+        assert kind in {ProviderFailureClass.PERMANENT, ProviderFailureClass.UNKNOWN}
+        for _ in range(10):
+            reg.record_failure("tool:shared", kind)
+    assert reg.state("tool:shared") == "closed"
+    assert classify_failure(ConnectionError("network")) == ProviderFailureClass.TRANSIENT

@@ -33,8 +33,11 @@ from app.core.idempotency import IdempotencyMiddleware
 from prometheus_client import Counter
 from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes, feature_edits as feature_edits_routes
+from app.api.routes import atlas_jobs as atlas_jobs_routes  # noqa: E402  # 批量图册发布
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
+from app.api.routes import map_operations as map_operations_routes  # noqa: E402  # ADR-0278
+from app.api.routes import display_confirmation as display_confirmation_routes  # noqa: E402  # ADR-0278
 from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0226
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
@@ -52,6 +55,7 @@ from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 # V9 data-lifecycle（ADR-0140）：质量规则引擎 / 统一生命周期策略 —— 新增路由
 # 文件，不改任何既有路由的签名/response_model（§8 冲突契约）。
 from app.api.routes import data_quality as data_quality_routes
+from app.api.routes import data_preparation as data_preparation_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
 from app.api.routes import composition_template_assets as composition_template_assets_routes
@@ -94,6 +98,9 @@ def _install_root_logging() -> None:
       即是死配置）。无法解析的级别名回落 INFO 而非启动失败 —— 日志配置不
       应该有否决进程启动的权力。
     """
+    from app.core.logging_config import install_transport_log_redaction
+
+    install_transport_log_redaction()
     root = logging.getLogger()
     if root.handlers:
         return
@@ -220,14 +227,10 @@ async def lifespan(app: FastAPI):
         settings.CORS_ORIGINS,
         is_production=settings.is_production(),
     )
-    # 守卫式 SQLite 迁移（_apply_runtime_migrations 内部已做 SQLite 检测）；
-    # 没这一行新增/重命名字段就只能靠手动 ALTER，跑久了必出 "no such column"。
-    try:
-        from app.core.database import init_db
-        init_db()
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"[lifespan] init_db skipped: {e}")
+    # Schema failures must stop startup; accepting requests against a partial
+    # migration can corrupt credentials or persist rows the new code cannot read.
+    from app.core.database import init_db
+    init_db()
 
     # ADR-0101 D11：跨进程缓存失效广播的**监听**端（best-effort；无
     # Redis = 进程内模式，直接跳过）。失效权威仍是 ref_lifecycle ——
@@ -407,6 +410,7 @@ async def lifespan(app: FastAPI):
     # running —— 用户面对一个永不结束的任务。这里周期性把心跳超时的 job
     # 收敛为 stale（终态但可 retry）。
     stale_sweep_task = asyncio.create_task(_periodic_stale_job_sweep())
+    sre_refresh_task = asyncio.create_task(_periodic_sre_refresh())
 
     # Workflow V6：workflow 实例恢复清扫（crash → recover 的主动面）。
     # driver 死亡后 RUNNING 实例/节点会永久滞留 —— 周期把孤儿节点复位
@@ -468,7 +472,7 @@ async def lifespan(app: FastAPI):
 
     # 关闭后台清理任务
     for bg_task in (cleanup_task, stale_sweep_task, workflow_recovery_task,
-                    turn_journal_sweep_task, visual_blob_sweep_task):
+                    turn_journal_sweep_task, visual_blob_sweep_task, sre_refresh_task):
         bg_task.cancel()
         try:
             await bg_task
@@ -557,6 +561,19 @@ async def lifespan(app: FastAPI):
             logger.warning(f"[lifespan] async engine dispose failed: {e}")
 
     Engine.dispose()
+
+
+async def _periodic_sre_refresh(interval_seconds: float = 30) -> None:
+    """Every API replica publishes fresh SRE gauges independently of traffic."""
+    from app.api.routes.health import refresh_sre_snapshot
+    while True:
+        try:
+            await refresh_sre_snapshot(force=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("SRE metrics refresh failed", exc_info=True)
+        await asyncio.sleep(max(1.0, interval_seconds))
 
 
 async def _periodic_session_cleanup(interval_seconds: int = 600) -> None:
@@ -904,18 +921,8 @@ class RequestCorrelationMiddleware(BaseHTTPMiddleware):
 
 # Rate limiting middleware (Redis with in-memory fallback)
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    # 会话恢复一次并发拉取 8-15 个图层 geojson（restoreSessionMapLayers），
-    # 60/min 的全局预算会被瞬间打爆，随后图层重试与制图观测全部 429 一整
-    # 分钟，地图进入半残状态。两层缓解：
-    #   1. 预算提到 240/min（本地/内网部署的合理值）；
-    #   2. 豁免只读图层/瓦片数据 GET（有 session/owner_token 鉴权，且为
-    #      恢复路径的重负载主体）。
-    RATE_LIMIT_EXEMPT_PREFIXES = (
-        "/api/v1/layers/data/",
-        "/api/v1/health",
-        "/api/v1/local-data/",
-        "/healthz",
-    )
+    RATE_LIMIT_EXEMPT_PATHS = frozenset({"/healthz", "/api/v1/health/live"})
+    DATA_PREFIXES = ("/api/v1/layers/data/", "/api/v1/local-data/")
     #: 429 文案与 _STATUS_DEFAULT_MESSAGE[429] 一致（app/core/exception.py）
     RATE_LIMIT_MESSAGE = "请求过于频繁，请稍后再试"
 
@@ -929,7 +936,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if path.startswith(self.RATE_LIMIT_EXEMPT_PREFIXES):
+        if path in self.RATE_LIMIT_EXEMPT_PATHS:
             return await call_next(request)
 
         # SEC-F4: behind nginx, request.client.host is the proxy IP — one
@@ -938,9 +945,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         client_ip = client_ip_from(request)
         limiter = await get_rate_limiter()
+        data_request = path.startswith(self.DATA_PREFIXES)
         allowed = await limiter.is_allowed(
-            f"rate_limit:{client_ip}",
-            self.max_requests,
+            f"rate_limit:{'data' if data_request else 'general'}:{client_ip}",
+            max(480, self.max_requests) if data_request else self.max_requests,
             self.window,
         )
         if not allowed:
@@ -1095,6 +1103,10 @@ app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
+app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对话"])  # /goal 03 feature editing
+# ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
+app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])
+app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(review_proposals.router, prefix="/api/v1", tags=["审查会签"])
 # F15（ADR-0263）：user-approved visual repair + 截图 ref-only 通道。
 app.include_router(visual_repairs.router, prefix="/api/v1", tags=["AI对话"])
@@ -1105,8 +1117,10 @@ app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
 # ADR-0052: 统一任务中心必须先注册 —— task.router 的 GET /tasks/{task_id}
 # 会把字面量 "jobs" 当成 task_id 匹配掉。
 app.include_router(jobs_routes.router, prefix="/api/v1", tags=["任务管理"])
+app.include_router(atlas_jobs_routes.router, prefix="/api/v1", tags=["地图制图"])
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
+app.include_router(data_preparation_routes.router, prefix="/api/v1", tags=["数据准备"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(ws_collab.router, prefix="/api/v1", tags=["WebSocket 协作"])

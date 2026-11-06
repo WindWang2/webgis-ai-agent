@@ -239,15 +239,21 @@ def propose_repairs(quality_report: Any) -> List[RepairProposal]:
     ``issues``（含 ``code``/``field``）的对象均可）—— 避免导入环，
     码→词表映射统一走 ``propose_repairs_for_issue_codes``。
     """
-    issues = list(getattr(quality_report, "issues", None) or [])
-    codes = [_issue_code_str(getattr(i, "code", "")) for i in issues]
-    return propose_repairs_for_issue_codes(
-        codes,
-        fields={
-            _issue_code_str(getattr(i, "code", "")): str(getattr(i, "field", "") or "")
-            for i in issues
-        },
-    )
+    proposals: List[RepairProposal] = []
+    seen: Set[Tuple[str, str]] = set()
+    for issue in getattr(quality_report, "issues", None) or []:
+        code = _issue_code_str(getattr(issue, "code", ""))
+        target = str(getattr(issue, "field", "") or "")
+        key = (code, target)
+        if not code or key in seen:
+            continue
+        seen.add(key)
+        proposal = _proposal_for_issue(code, target)
+        if proposal is not None:
+            proposals.append(proposal)
+        if len(proposals) >= _MAX_PROPOSALS:
+            break
+    return proposals
 
 
 def propose_repairs_for_issue_codes(

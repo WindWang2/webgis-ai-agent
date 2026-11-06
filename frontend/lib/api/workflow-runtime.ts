@@ -156,11 +156,12 @@ function parseRuntimeError(err: unknown): never {
 
 type OwnerOpts = { ownerToken?: string | null; signal?: AbortSignal };
 
-async function rt<T>(path: string, init: OwnerOpts & { method?: string; body?: unknown } = {}): Promise<T> {
+async function rt<T>(path: string, init: OwnerOpts & { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
   try {
     return await apiFetch<T>(`/api/v1/workflow-runtime${path}`, {
       ownerToken: init.ownerToken ?? null,
       signal: init.signal,
+      timeoutMs: init.timeoutMs,
       ...(init.method ? { method: init.method } : {}),
       ...(init.body !== undefined ? { body: init.body } : {}),
     });
@@ -257,6 +258,7 @@ export async function runInstance(
     ...opts,
     method: 'POST',
     body: { deadline_s: opts.deadlineS ?? 60.0 },
+    timeoutMs: ((opts.deadlineS ?? 60) + 15) * 1000,
   });
 }
 

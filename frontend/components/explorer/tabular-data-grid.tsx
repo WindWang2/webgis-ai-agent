@@ -121,7 +121,7 @@ function normalizeRows(
         props.id = feature.id;
       }
       if (feature.geometry && props.geometry === undefined && props._geometry === undefined) {
-        props.geometry = formatGeometrySummary(feature.geometry);
+        props.geometry = feature.geometry;
       }
       return props;
     }
@@ -150,10 +150,6 @@ function inferType(values: unknown[]): ColumnType {
     } else if (typeof val === 'object') {
       hasObject = true;
     } else if (typeof val === 'string') {
-      // Check if it represents geometry
-      if (val.startsWith('Point [') || val.startsWith('Polygon') || val.startsWith('LineString')) {
-        return 'geometry';
-      }
       hasString = true;
     }
   }
@@ -280,7 +276,7 @@ function formatCellValue(value: unknown, type: ColumnType): React.ReactNode {
       </span>
     );
   }
-  if (type === 'geometry' || (typeof value === 'string' && (value.startsWith('Point [') || value.startsWith('Polygon') || value.startsWith('LineString')))) {
+  if (type === 'geometry' && typeof value === 'object') {
     const geomStr = typeof value === 'object' && value !== null ? formatGeometrySummary(value) : String(value);
     return (
       <span className="inline-flex items-center gap-1 font-mono text-micro text-status-success">
@@ -430,6 +426,7 @@ export function TabularDataGrid({
       const valB = b[key];
 
       // Nulls always sort to bottom
+      if (valA == null && valB == null) return 0;
       if (valA === null || valA === undefined) return 1;
       if (valB === null || valB === undefined) return -1;
 

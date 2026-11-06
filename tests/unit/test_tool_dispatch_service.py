@@ -372,10 +372,16 @@ async def test_raster_result_ref_never_masquerades_as_geojson(
     )
 
     assert result.status == "ok"
+    # 不变量：raster 身份停留在图像路径——不铸 geojson ref、不进 GeoJSON
+    # 挂载授权（ref_descriptor 面不消费）。
     assert result.geojson_ref is None
     assert result.ref_descriptor is None
     assert result.raw_result["result_ref"] == "ref:raster/r1"
-    descriptor.assert_not_awaited()
+    # G3D-V2-C（_parsed 预初始化修复）：artifact 登记路径对非能力工具
+    # 恢复运行（master 上被 UnboundLocalError 经 best_effort 静默跳过）
+    # ——登记内部合法咨询 descriptor（ref revisions），不再断言"从未
+    # 被等"。栅格不冒充 GeoJSON 的不变量由上面三行钉住。
+    assert descriptor.await_count <= 1
 
 
 @pytest.mark.asyncio
@@ -419,7 +425,8 @@ async def test_heatmap_raster_enters_mapspec_review(service, fake_registry, clea
     params = commands[0]["params"]
     image_url = result.raw_result["image"]
     assert image_url.startswith(f"/api/v1/sessions/{clean_session}/raster/")
-    assert image_url.endswith("/raster/raster-heat_1-source.png")
+    assert image_url.split("?", 1)[0].endswith("/raster/raster-heat_1-source.png")
+    assert "sig=" in image_url and "token=" not in image_url
     assert params["image"] == image_url
     assert params["bbox"] == [116.0, 39.0, 117.0, 40.0]
     # 命令必须被铸成 SSE map action（前端经此消费执行）。

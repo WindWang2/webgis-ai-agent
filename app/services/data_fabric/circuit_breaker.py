@@ -195,12 +195,15 @@ class CircuitBreakerRegistry:
 
 # Per-process default registry. Tests construct their own to inject fake clocks.
 _breaker_registry: Optional[CircuitBreakerRegistry] = None
+_registry_init_lock = threading.Lock()
 
 
 def get_breaker_registry() -> CircuitBreakerRegistry:
     global _breaker_registry
     if _breaker_registry is None:
-        _breaker_registry = CircuitBreakerRegistry()
+        with _registry_init_lock:
+            if _breaker_registry is None:
+                _breaker_registry = CircuitBreakerRegistry()
     return _breaker_registry
 
 

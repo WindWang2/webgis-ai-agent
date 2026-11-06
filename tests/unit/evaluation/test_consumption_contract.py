@@ -17,7 +17,7 @@ PKG_DIR = Path(__file__).resolve().parents[3] / "app" / "evaluation"
 
 def test_all_evaluation_modules_importable():
     files = sorted(PKG_DIR.glob("*.py"))
-    assert len(files) == 32, f"app/evaluation 模块数漂移: {len(files)}"
+    assert len(files) == 34, f"app/evaluation 模块数漂移: {len(files)}"
     for f in files:
         assert importlib.import_module(f"app.evaluation.{f.stem}") is not None
 
@@ -48,7 +48,7 @@ def test_builtin_corpus_manifest_shape_and_prefix_uniqueness():
     from app.evaluation.index import corpus_manifest
 
     manifest = corpus_manifest()
-    assert len(manifest) == 18, f"内置语料数漂移: {sorted(manifest)}"
+    assert len(manifest) == 19, f"内置语料数漂移: {sorted(manifest)}"
     prefixes = []
     for name, entry in manifest.items():
         assert set(entry) == {"count", "version_hash", "prefix", "group"}, name

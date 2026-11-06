@@ -82,6 +82,11 @@ def sanitize_dict(value: Any) -> Any:
         return out
     if isinstance(value, (list, tuple)):
         return [sanitize_dict(v) for v in value]
+    if isinstance(value, str):
+        from app.lib.redaction import scrub_secret_strings
+        # URL credentials may appear inside prose as well as URL-only fields.
+        value = re.sub(r"(?i)([?&](?:api[_-]?key|token|access[_-]?token|secret|password|signature|sig)=)[^&#\s\"<>]+", r"\1REDACTED", value)
+        return scrub_secret_strings(value)
     return value
 
 

@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from app.services.gis_harness.skills.contract import SkillContract
@@ -24,6 +25,7 @@ def default_capability_exists(capability_id: str) -> bool:
         from app.lib.gis.capability_registry import get_capability_registry
         return get_capability_registry().has(capability_id)
     except Exception:  # noqa: BLE001 - 校验面宁可保守，不虚报存在
+        logging.getLogger(__name__).exception("Skill validation predicate unavailable")
         return False
 
 
@@ -32,6 +34,7 @@ def default_recipe_exists(recipe_id: str) -> bool:
         from app.services.gis_harness.recipes import get_recipe_registry
         return recipe_id in get_recipe_registry()
     except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Skill validation predicate unavailable")
         return False
 
 
@@ -40,6 +43,7 @@ def default_ontology_task_exists(task_id: str) -> bool:
         from app.services.gis_harness.gis_ontology import get_task_ontology
         return get_task_ontology().has(task_id)
     except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Skill validation predicate unavailable")
         return False
 
 
@@ -48,6 +52,7 @@ def default_artifact_type_exists(artifact_type: str) -> bool:
         from app.lib.gis.artifacts import get_artifact_type_registry
         return get_artifact_type_registry().has(artifact_type)
     except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Skill validation predicate unavailable")
         return False
 
 
@@ -56,6 +61,7 @@ def default_precondition_exists(precondition_id: str) -> bool:
         from app.lib.gis.scientific_preconditions import precondition_exists
         return bool(precondition_exists(precondition_id))
     except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Skill validation predicate unavailable")
         return False
 
 

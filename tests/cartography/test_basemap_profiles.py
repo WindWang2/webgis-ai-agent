@@ -310,7 +310,8 @@ class TestAvailabilityEvaluation:
             assert p is not None
             verdict = evaluate_basemap_availability(p, env={}, deployment="air_gapped")
             assert verdict.state == "unavailable", pid
-            assert verdict.reason_code == "deployment_not_permitted", pid
+            expected = "missing_env_gate" if p.env_gate else "deployment_not_permitted"
+            assert verdict.reason_code == expected, pid
 
     def test_elevation_fallback_blocked_in_air_gapped(self):
         fb = get_elevation_profile(ELEVATION_FALLBACK_ID)

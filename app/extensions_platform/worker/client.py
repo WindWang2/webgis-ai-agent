@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ..diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
+from .stderr_capture import StderrCapture
 from .protocol import (
     WORKER_PROTOCOL_VERSION,
     ProtocolError,
@@ -125,6 +126,7 @@ class WorkerProcess:
         # （见 _reader_loop / iter_frames_bounded），不依赖对端逐帧换行。
         self._frames: "queue.Queue[Any]" = queue.Queue(maxsize=64)
         self._reader: Optional[threading.Thread] = None
+        self._stderr_capture: Optional[StderrCapture] = None
         self._lock = threading.RLock()
         self.in_flight = False
         self.tools: list[dict[str, Any]] = []
@@ -143,6 +145,8 @@ class WorkerProcess:
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
                 return
+            if self._proc is not None:
+                self._release()
             self._frames = queue.Queue(maxsize=64)
             # CP-02：``-P``（3.11+）阻止把 cwd（系统临时目录，全局可写）前置进
             # sys.path——否则 /tmp/app/... 可劫持 worker 的 ``app`` 导入。
@@ -199,8 +203,9 @@ class WorkerProcess:
                 start_new_session=hasattr(os, "setsid"),
             )
             self.pid = self._proc.pid
+            self._stderr_capture = StderrCapture(self._proc.stderr) if self._proc.stderr is not None else None
             self._reader = threading.Thread(
-                target=self._reader_loop, args=(self._proc.stdout,), daemon=True
+                target=self._reader_loop, args=(self._proc.stdout, self._frames, self._proc), daemon=True
             )
             self._reader.start()
             deadline = time.monotonic() + self._startup_timeout_s
@@ -271,30 +276,35 @@ class WorkerProcess:
         }
         return env
 
-    def _reader_loop(self, stdout: Any) -> None:
+    def _reader_loop(self, stdout: Any, frames: Any = None, proc: Any = None) -> None:
+        # Capture this generation: a retired reader must never touch its successor.
+        frames = self._frames if frames is None else frames
+        proc = self._proc if proc is None else proc
+
+        def deliver(frame: dict[str, Any]) -> bool:
+            while True:
+                try:
+                    frames.put(frame, timeout=0.25)
+                    return True
+                except queue.Full:
+                    if proc is not None and (self._proc is not proc or proc.poll() is not None):
+                        return False
+
         try:
-            # #1709：**有界**拆帧。``for line in stdout`` 会让「只写不换行」
-            # 的 worker 无界堆积宿主内存（FRAME_MAX_BYTES 检查在 decode_frame
-            # 内、整行读完之后才执行）；改为按字节累计上限拆帧，超限即
-            # ProtocolError → 归一为 __protocol_error__ 并杀 worker。
             for line in iter_frames_bounded(stdout):
                 try:
                     frame = decode_frame(line)
                 except ProtocolError:
                     frame = {"type": "__protocol_error__", "message": "undecodable frame"}
-                # 阻塞 put：满队列 = 宿主消费不过来（或恶意洪泛）→ reader
-                # 停读 → 管道背压反压 worker（结构性内存上界的一部分）。
-                self._frames.put(frame)
+                if not deliver(frame):
+                    return
         except ProtocolError as exc:
-            # 读帧超限：不再把后续字节读进宿主内存；协议失败即信任失败
-            # （与 shutdown 的 kill 调用同形——kill 自身已把进程组死亡/
-            # 权限/等待超时归一，不再引入静默 except）。
-            self._frames.put(
-                {"type": "__protocol_error__", "message": f"worker frame read failed: {exc}"}
-            )
-            self.kill()
+            deliver({"type": "__protocol_error__", "message": f"worker frame read failed: {exc}"})
+            with self._lock:
+                if self._proc is proc:
+                    self.kill()
         finally:
-            self._frames.put({"type": "__eof__"})
+            deliver({"type": "__eof__"})
 
     def _next_frame(self, deadline: float, timeout_code: DiagnosticCode) -> dict[str, Any]:
         while True:
@@ -325,19 +335,10 @@ class WorkerProcess:
         )
 
     def _stderr_tail(self, limit: int = 400) -> str:
-        """崩溃留痕抽取。Round-1 审查 CRITICAL-1 修复：必须先 killpg 并有界
-        等待死亡，再以 select+os.read 非阻塞抽取——此前的无界阻塞
-        ``stderr.read()`` 会被「关 stdout 但存活并握住 stderr」的 worker
-        永久挂起宿主线程（击穿崩溃隔离声明）。"""
-        import select
-        import time as _time
-
+        """Stop a crashed producer, then inspect its already-drained bounded tail."""
         proc = self._proc
-        stderr = getattr(proc, "stderr", None) if proc is not None else None
-        if stderr is None:
-            return ""
         try:
-            if proc.poll() is None:
+            if proc is not None and proc.poll() is None:
                 if hasattr(os, "killpg"):
                     os.killpg(os.getpgid(proc.pid), 9)
                 else:
@@ -345,21 +346,11 @@ class WorkerProcess:
                 proc.wait(timeout=2)
         except Exception:  # noqa: BLE001 - 进程已死/权限/等待超时都不阻断留痕
             pass
-        data = b""
-        try:
-            fd = stderr.fileno()
-            deadline = _time.monotonic() + 0.5
-            while _time.monotonic() < deadline and len(data) < 65536:
-                ready, _, _ = select.select([fd], [], [], 0.1)
-                if not ready:
-                    break
-                chunk = os.read(fd, 8192)
-                if not chunk:
-                    break
-                data += chunk
-        except Exception:  # noqa: BLE001
-            pass
-        return data.decode("utf-8", "replace")[-limit:].strip()
+        capture = self._stderr_capture
+        if capture is None:
+            return ""
+        capture.finish()
+        return capture.snapshot(limit)
 
     # ── 调用面 ───────────────────────────────────────────────────────
     def call(
@@ -412,7 +403,7 @@ class WorkerProcess:
     ) -> "Any":
         """流式调用：yield 事件 payload；返回生成器（消费方驱动）。
 
-        - 逐帧 idle timeout（每帧重置；**不**用整 call deadline，C-3）；
+        - 有效结果事件重置 idle timeout（broker/无关帧不重置；**不**用整 call deadline，C-3）；
         - idle 超时 / 流控取消 → typed STREAM_FLOW_CONTROL，**不**进入
           worker 崩溃计数（由调用方显式决定处置）；
         - host 收帧处检查每帧序列化尺寸 ≤ per_frame_max_bytes（M-5）；
@@ -424,7 +415,7 @@ class WorkerProcess:
             args,
             idle_timeout_s=self._call_timeout_s if idle_timeout_s is None else idle_timeout_s,
             max_events=max_events,
-            window=window,
+            window=self._stream_window,  # worker handshake is authoritative; legacy arg ignored
             per_frame_max_bytes=per_frame_max_bytes,
         )
 
@@ -533,7 +524,6 @@ class WorkerProcess:
                     frame = self._next_stream_frame(deadline)
                     parsed = _consume_frame(frame)
                     if parsed is None:
-                        deadline = time.monotonic() + max(idle_timeout_s, 0.01)
                         continue
                     if "__stream_end__" in parsed:
                         ended_normally = True
@@ -747,6 +737,8 @@ class WorkerProcess:
 
     def _release(self) -> None:
         proc = self._proc
+        if self._stderr_capture is not None:
+            self._stderr_capture.finish()
         if proc is not None:
             for stream in (proc.stdin, proc.stdout, proc.stderr):
                 try:

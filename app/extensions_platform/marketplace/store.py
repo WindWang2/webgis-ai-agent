@@ -154,7 +154,7 @@ class RegistryStore:
         丢失更新防线：整个「读索引 → 改 → 写」在文件锁内串行；本方法
         假定调用方已持锁（`RegistryService` 保证）。
         """
-        state = self.load_state()
+        state = self.load_state(use_cache=False)
         existing = state.packages.get(package.id)
         if existing is not None and existing.publisher != package.publisher:
             raise _store_error(
@@ -193,7 +193,7 @@ class RegistryStore:
 
     def mutate_package(self, package_id: str, mutate) -> RegistryState:
         """锁内包级变更（deprecate/revoke/yank）；mutate: PackageRecord→PackageRecord。"""
-        state = self.load_state()
+        state = self.load_state(use_cache=False)
         record = state.packages.get(package_id)
         if record is None:
             raise _store_error(f"unknown package {package_id!r}")
@@ -224,7 +224,7 @@ class RegistryStore:
 
     # ── 文件锁 ───────────────────────────────────────────────────────
     class _FileLock:
-        """O_EXCL lockfile：超时 typed 失败；陈旧锁（mtime 超龄）接管。"""
+        """Kernel-owned advisory lock; process death releases it without lock stealing."""
 
         def __init__(self, path: Path, timeout_s: float = LOCK_TIMEOUT_S) -> None:
             self._path = path
@@ -232,44 +232,29 @@ class RegistryStore:
             self._fd: Optional[int] = None
 
         def __enter__(self):
+            import fcntl
+
             self._path.parent.mkdir(parents=True, exist_ok=True)
             deadline = time.monotonic() + self._timeout_s
+            self._fd = os.open(str(self._path), os.O_CREAT | os.O_RDWR, 0o600)
             while True:
                 try:
-                    self._fd = os.open(str(self._path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                    os.write(self._fd, str(os.getpid()).encode())
+                    fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     return self
-                except FileExistsError:
-                    self._steal_if_stale()
+                except BlockingIOError:
                     if time.monotonic() >= deadline:
-                        raise _store_error(
-                            "registry lock held by another publisher "
-                            f"(timeout {self._timeout_s}s)"
-                        )
+                        os.close(self._fd)
+                        self._fd = None
+                        raise _store_error("registry lock held by another publisher (timeout)")
                     time.sleep(0.05)
                 except OSError as exc:
-                    raise _store_error(f"registry lock unavailable: {exc}")
-
-        def _steal_if_stale(self) -> None:
-            try:
-                age = time.time() - self._path.stat().st_mtime
-            except OSError:
-                return
-            if age > LOCK_STALE_S:
-                try:
-                    os.unlink(self._path)
-                except OSError:
-                    pass
+                    os.close(self._fd)
+                    self._fd = None
+                    raise _store_error(f"registry lock unavailable: {exc}") from exc
 
         def __exit__(self, *exc) -> None:
             if self._fd is not None:
-                try:
-                    os.close(self._fd)
-                finally:
-                    try:
-                        os.unlink(self._path)
-                    except OSError:
-                        pass
+                os.close(self._fd)
                 self._fd = None
 
     def locked(self):
@@ -279,7 +264,7 @@ class RegistryStore:
     def gc_orphan_blobs(self, now: Optional[float] = None) -> int:
         """删除「不在当前索引且 mtime > GC_MIN_AGE_S」的 blob；返回删除数。"""
         now = now if now is not None else time.time()
-        state = self.load_state()
+        state = self.load_state(use_cache=False)
         referenced = {v.digest for p in state.packages.values() for v in p.versions.values()}
         removed = 0
         if not self._objects.is_dir():

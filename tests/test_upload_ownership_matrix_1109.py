@@ -263,6 +263,7 @@ def test_migration_g1109_mints_tokens_for_legacy_rows(tmp_path):
             {"id": "lg-3", "user_id": None, "owner_token": "already-set", "title": "c"},
             {"id": "lg-4", "user_id": "u1", "owner_token": None, "title": "d"},
         ]))
+        existing_before = conn.execute(sa.select(Conversation.owner_token).where(Conversation.id == "lg-3")).scalar_one()
         _mint_legacy_tokens(conn)
     with eng.connect() as conn:
         rows = conn.execute(
@@ -272,7 +273,7 @@ def test_migration_g1109_mints_tokens_for_legacy_rows(tmp_path):
     tokens = {r[0]: r[1] for r in rows}
     assert tokens["lg-1"] and len(tokens["lg-1"]) >= 32, "NULL/NULL row not minted"
     assert tokens["lg-2"] and tokens["lg-2"] != tokens["lg-1"], "tokens must be unique"
-    assert tokens["lg-3"] == "already-set", "existing token must not be overwritten"
+    assert tokens["lg-3"] == existing_before, "existing token must not be overwritten"
     assert tokens["lg-4"] is None, "user-bound row must not be touched"
 
 

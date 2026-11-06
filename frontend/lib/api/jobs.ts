@@ -20,7 +20,21 @@ export type JobStatus =
   | 'cancelled'
   | 'stale';
 
-export type JobKind = 'agent' | 'analysis' | 'workflow' | 'explorer';
+export type JobKind =
+  | 'agent'
+  | 'analysis'
+  | 'workflow'
+  | 'explorer'
+  | 'atlas_export';
+
+/** 批量图册 job 的页级状态（additive；仅 kind=atlas_export 填充，≤21 条）。 */
+export interface AtlasPageStatusView {
+  page_id: string;
+  title: string;
+  page_number: number;
+  status: string;
+  error: string | null;
+}
 
 export interface JobView {
   id: string;
@@ -43,6 +57,8 @@ export interface JobView {
   /** 单行错误摘要。后端保证不含 traceback */
   error: string | null;
   result_ref: string | null;
+  /** 批量图册页级状态（有界安全摘要；其他 kind 为 null/缺席） */
+  page_status?: AtlasPageStatusView[] | null;
   step_count: number;
   created_at: string | null;
   started_at: string | null;

@@ -4,20 +4,20 @@
 # ============================================================
 
 # Stage 1: Frontend Dependencies
-FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS frontend-deps
+FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS frontend-deps
 WORKDIR /app/frontend
 
-# pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。corepack 随
-# node:26 内置；pin pnpm@10 与 CI workflow 的 pnpm/action-setup 版本一致。
+# pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。Node 25+
+# 不再内置 Corepack；用 npm 显式安装固定 pnpm 版本（应用仍由 pnpm 安装）。
 # node:26：jest-dom@7 / jsonlint-lines-primitives@2.0.3 等要求 node >=22（engine-strict）。
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+RUN npm install --global pnpm@10.15.1
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prefer-offline
 
 # Stage 2: Frontend Builder
-FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS frontend-builder
+FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS frontend-builder
 WORKDIR /app/frontend
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+RUN npm install --global pnpm@10.15.1
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
 COPY frontend/ ./
 
@@ -35,6 +35,9 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 # cross-origin backend.
 ARG NEXT_PUBLIC_WS_URL=""
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+# Optional public browser key; enables the credential-gated CARTO profiles.
+ARG NEXT_PUBLIC_CARTO_BASEMAP_KEY=""
+ENV NEXT_PUBLIC_CARTO_BASEMAP_KEY=$NEXT_PUBLIC_CARTO_BASEMAP_KEY
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_RUNTIME=nodejs
@@ -42,14 +45,16 @@ RUN pnpm run build
 
 # Stage 2b: Node runtime for the runner stage
 # PLT-03：Debian bookworm 的 `nodejs` apt 包是 18.x，而 Next 16 要求
-# >=20.9（frontend/package.json engines；CVE 修复也要求新版）。从官方
-# node:25-bookworm-slim（与 runner 同 glibc 基线；alpine 的 musl 二进制
+# >=20.9（Next.js 16 运行时要求；CVE 修复也要求新版）。从官方
+# node:26-bookworm-slim（与 runner 同 glibc 基线；alpine 的 musl 二进制
 # 不可用）只复制 node 单二进制 —— 运行时只需 `node server.js` 与 Pi RPC
 # 的 `node rpc-entry.js`，npm/corepack 不入镜像以控制体积。
-FROM node:26-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS node-runtime
+FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
 
 # Stage 3: Backend Python Dependencies
-FROM python:3.15-slim-bookworm@sha256:575f8bc12ec26542e0678bc6b60e385218248019d433157ec327264a78c3a853 AS backend-deps
+# 与 .python-version / requirements.lock 及下方 site-packages COPY 保持 3.12；
+# bookworm 与 GDAL runtime 包名及 node-runtime 的 glibc 基线一致。
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS backend-deps
 WORKDIR /app/backend
 
 # Install GDAL/GEOS/PROJ system libraries required by rasterio, pyogrio, geopandas
@@ -65,7 +70,7 @@ RUN pip install --no-cache-dir --break-system-packages \
     && uv pip install --system --no-cache -r requirements.lock
 
 # Stage 4: Final Runner
-FROM python:3.15-slim-bookworm@sha256:575f8bc12ec26542e0678bc6b60e385218248019d433157ec327264a78c3a853 AS runner
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runner
 WORKDIR /app/backend
 
 # #662：生产容器离线加载 RAG embedding 模型 —— 未缓存时首用秒级失败（有界），
@@ -73,14 +78,14 @@ WORKDIR /app/backend
 # docs/DEPLOYMENT.md（HF_HOME 卷预热或构建期下载）。
 ENV RAG_EMBEDDING_OFFLINE=true
 
-# Install tini and GDAL/GEOS/PROJ runtime libraries. Node 25 comes from the
+# Install tini and GDAL/GEOS/PROJ runtime libraries. Node 26 comes from the
 # node-runtime stage (NOT Debian's nodejs 18 package — PLT-03); libstdc++6 is
 # the shared lib the official Node binary links against.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini libgdal32 libgeos-c1v5 libproj25 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# PLT-03: official Node 25 binary (FROM node:25-bookworm-slim above).
+# PLT-03: official Node 26 binary (FROM node:26-bookworm-slim above).
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
 # Copy frontend standalone output.
@@ -106,6 +111,7 @@ COPY main.py ./
 # 生产形态首次部署后无任何 admin 引导通道。
 COPY manage.py ./
 COPY app/ ./app/
+COPY skills-lock.json ./
 COPY alembic.ini ./
 COPY migrations/ ./migrations/
 # #476: 镜像一直带着 alembic.ini + migrations/ 却没有任何路径执行它 ——
@@ -145,10 +151,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # #476: tini 仍是 PID 1（信号收割），entrypoint 在 exec CMD 前执行
 # `alembic upgrade head`（迁移失败 = 容器失败，不带旧 schema 起服务）。
 ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
-# 审计 I9：trap-kill-wait 模式让 SIGTERM 正确传播给两个子进程。
-# 之前 sh -c "A & B" 在 tini 下：sh 不 wait 任何子进程，uvicorn OOM 后
-# 容器仍"健康"（node 还活），SIGTERM 也不传播 → 滚动更新脏退出。
-# #1694 SEC-13：--ws-max-size 与 app/api/routes/ws.py:29 / ws_collab.py:51 的
-# _MAX_INBOUND_BYTES=16*1024 对齐（应用层长度检查在整帧 receive_text() 缓冲之后，
-# 协议层先限 size 才不会把超大帧整体读进内存）。与 Dockerfile / k8s args 一致。
-CMD ["sh", "-c", "trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws-max-size 16384 & node frontend/.next/standalone/server.js -p 3000 & wait"]
+# The supervisor forwards shutdown to both service groups and exits if either
+# service stops; a surviving sibling cannot conceal a failed container.
+# Its uvicorn command enforces the 16KiB WebSocket frame boundary.
+CMD ["python", "-m", "app.lib.runtime.service_supervisor"]

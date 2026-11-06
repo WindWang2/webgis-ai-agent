@@ -1,6 +1,6 @@
 """
 统一异常处理模块
-提供基于环境的全局异常处理器，开发环境返回详细错误生产环境返回安全错误
+提供统一异常处理器，仅 DEBUG 显式开启时返回内部诊断
 """
 import logging
 import sys
@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi import Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.core.config import settings
@@ -141,9 +142,7 @@ async def global_exception_handler(
     """
     全局异常处理器
     
-    根据环境配置决定返回的错误级别：
-    - 开发环境(development): 返回完整错误信息堆栈跟踪请求路径等
-    - 生产环境(production): 返回通用错误提示不泄露任何内部信息
+    DEBUG 显式开启时返回诊断；其余环境返回通用错误提示。
     
     Args:
         request: FastAPI请求对象
@@ -152,8 +151,8 @@ async def global_exception_handler(
     Returns:
         JSON格式的错误响应
     """
-    # 判断是否显示详细信息：非生产环境都显示
-    include_details = not settings.is_production()
+    # Public staging environments are private-by-default too.
+    include_details = bool(settings.DEBUG)
 
     
     # 无论哪种环境都记录完整日志便于服务端调试；category 供日志侧按类型
@@ -179,9 +178,7 @@ async def global_exception_handler(
     )
     
     # 确定HTTP状态码：HTTPException使用其自带的状态码
-    status_code = 500
-    if hasattr(exc, "status_code"):
-        status_code = getattr(exc, "status_code", 500)
+    status_code = classify_exception(exc).http_status
 
     return JSONResponse(
         status_code=status_code,
@@ -298,7 +295,9 @@ async def unified_validation_exception_handler(
 ) -> JSONResponse:
     """请求体/参数校验失败（422）→ 统一信封 / legacy detail。"""
     if wants_legacy_envelope(request):
-        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+        detail = (jsonable_encoder(exc.errors()[:20], exclude={"input", "ctx"})
+                  if settings.DEBUG else "请求参数校验失败")
+        return JSONResponse(status_code=422, content={"detail": detail})
     errors = [
         {
             "loc": list(map(str, e.get("loc", []))),
@@ -308,7 +307,7 @@ async def unified_validation_exception_handler(
         for e in list(exc.errors())[:20]
     ]
     envelope = unified_error_envelope(422, "请求参数校验失败", request=request)
-    if not settings.is_production():
+    if settings.DEBUG:
         envelope["errors"] = errors
     return JSONResponse(status_code=422, content=envelope)
 

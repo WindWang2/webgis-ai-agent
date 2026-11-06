@@ -153,14 +153,14 @@ class TestStaleLease:
         monkeypatch.setenv("GIS_SPATIAL_EVENT_MISSION_BRIDGE", "1")
         monkeypatch.setattr(svc_mod, "DEFERRED_BACKOFF_S", 0.0)  # 立即可重试
         # 预置活动 mission（org-a）
-        m = runtime.create(org_id="org-a", root_goal="原始目标")
+        m = runtime.create(org_id="org-a", root_goal="原始目标", session_id="lease-session")
         # 他方持有 lease（epoch=E）
         got = runtime.store.acquire_lease(
             m.mission_id, owner="other-worker", org_id="org-a")
         assert got is not None
 
         svc = SpatialEventService(ledger, mission_runtime=runtime)
-        svc.ingest_sync(_evt("rev-1"))
+        svc.ingest_sync(_evt("rev-1", session_id="lease-session"))
         summary = await svc.drain_once("w")
         # revise 需要 lease → FencingError/LEASE 失败 → deferred（可重试）
         assert summary["deferred"] == 1

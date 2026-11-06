@@ -15,6 +15,10 @@
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    WorkflowNode,
+)
+
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -90,7 +94,7 @@ class SubworkflowExecutor:
         self.org_id = org_id
 
     async def __call__(
-        self, node: Dict[str, Any], *, parent: Dict[str, Any],
+        self, node: WorkflowNode, *, parent: Dict[str, Any],
         parent_visited: List[str], session_id: str,
         input_refs: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
@@ -142,6 +146,9 @@ class SubworkflowExecutor:
                 or (parent_row.get("org_id") if parent_row else None)
                 or None)
         except Exception as exc:  # noqa: BLE001 — typed 错误映射
+            from app.services.workflow_runtime.store import SubworkflowCapacityExceeded
+            if isinstance(exc, SubworkflowCapacityExceeded):
+                return {"ok": False, "error_code": "SUBWORKFLOW_CAP"}
             return {"ok": False, "error_code": "SUBWORKFLOW_EXPAND_FAIL",
                     "detail": str(exc)[:120]}
         # typed boundary：父节点输入 refs 按声明序传入子实例 data 角色
@@ -150,13 +157,27 @@ class SubworkflowExecutor:
 
         child_nodes = await _asyncio.to_thread(
             self.service.store.get_nodes, child["instance_id"])
-        data_nodes = sorted(
-            (n["node_id"] for n in child_nodes
-             if n["state"] == C.NodeState.PENDING and not n["bound_ref"]
-             and n["node_id"].startswith("data:")))
-        for nid, ref in zip(data_nodes, list(input_refs or [])[:4]):
-            if not ref or ref.startswith("wi:"):
-                continue
+        from app.services.workflow_runtime.subworkflow_inputs import child_input_bindings
+
+        child_dag = await self.service._instance_dag(child)
+        parent_dag = await self.service._instance_dag(parent_row) if parent_row else {}
+        parent_nodes = await _asyncio.to_thread(
+            self.service.store.get_nodes, parent["instance_id"])
+        try:
+            bindings = child_input_bindings(
+                parent_dag, parent_nodes, str(node.get("node_id", "")),
+                child_dag, child_nodes, list(input_refs or []))
+        except ValueError as exc:
+            from datetime import datetime, timezone
+
+            await _asyncio.to_thread(
+                self.service.store.update_instance, child["instance_id"],
+                expected_revision=child["revision"],
+                fields={"status": C.InstanceStatus.FAILED,
+                        "terminal_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                        "error_code": "SUBWORKFLOW_INPUT_AMBIGUOUS"})
+            return {"ok": False, "error_code": "SUBWORKFLOW_INPUT_AMBIGUOUS", "detail": str(exc)}
+        for nid, ref in bindings.items():
             await _asyncio.to_thread(
                 self.service.store.transition_node,
                 child["instance_id"], nid, C.NodeState.READY,
@@ -170,8 +191,6 @@ class SubworkflowExecutor:
             caller=self.caller,
             subworkflow_executor=self,
             parent_visited=visited + [child_pkg])
-        child_dag = await self.service._instance_dag(child)
-
         async def _watch_parent() -> None:
             """父取消旗标 → 子实例持久取消（全异步传播；V6 Phase F）。"""
             import asyncio as _a

@@ -186,14 +186,15 @@ async def clean_session():
 
 
 async def _save_plan(sid: str, chapter: Dict[str, Any]) -> None:
-    from app.services.session_plan import SessionPlan, save_session_plan
+    from app.services.session_plan import SessionPlan, save_session_plan, load_session_plan
 
-    await save_session_plan(SessionPlan(
-        envelope_id=f"env-{chapter.get('plan_id') or 'x'}",
-        session_id=sid,
-        user_goal=str(chapter.get("query") or "goal"),
-        gis_chapter=chapter,
-    ))
+    plan = await load_session_plan(sid)
+    if plan is None:
+        plan = SessionPlan(envelope_id=f"env-{chapter.get('plan_id') or 'x'}", session_id=sid)
+    plan.user_goal = str(chapter.get("query") or "goal")
+    plan.gis_chapter = chapter
+    assert await save_session_plan(plan)
+
 
 
 @pytest.mark.asyncio

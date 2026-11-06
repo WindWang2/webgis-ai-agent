@@ -1,6 +1,8 @@
 """G3D01 投影契约：再生成幂等 + 前后端目录一致性锚点。"""
 from __future__ import annotations
 
+from typing import get_type_hints
+
 from app.core import base_layers
 from app.lib.cartography import basemap_profile_projection
 from app.lib.cartography.basemap_profiles import (
@@ -39,6 +41,20 @@ class TestBaseLayersDerivation:
 
     def test_catalog_equals_profile_derivation(self):
         assert base_layers.BASE_LAYER_CATALOG == iter_llm_catalog()
+
+    def test_catalog_return_type_matches_consumer_contract(self):
+        assert get_type_hints(iter_llm_catalog)["return"] == list[base_layers.BaseLayerInfo]
+        assert get_type_hints(base_layers.BaseLayerInfo) == {
+            "name": str,
+            "keywords": list[str],
+        }
+
+    def test_catalog_keywords_are_independent_copies(self):
+        catalog = iter_llm_catalog()
+        original = iter_llm_catalog()
+        catalog[0]["keywords"].append("caller-only-keyword")
+        assert iter_llm_catalog() == original
+        assert base_layers.BASE_LAYER_CATALOG == original
 
     def test_providers_by_id_covers_all_llm_visible_profiles(self):
         by_id = base_layers._providers_by_id()

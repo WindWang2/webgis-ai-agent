@@ -1,4 +1,5 @@
 'use client';
+import { ProjectionStatus } from './cockpit-shared';
 
 /**
  * Mission 视图：组织内未终结 mission 列表 + 选中 mission 的投影详情 +
@@ -60,12 +61,11 @@ export function MissionView({ enabled, ownerToken, selectedId, onSelect }: Missi
   const [armed, setArmed] = useState<Op | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
-  const [bump, setBump] = useState(0); // 动作成功后的重新投影触发器
 
   const list = useCockpitProjection(
     (signal) =>
       listCockpitMissions({ signal, ownerToken }),
-    { enabled, resetKey: `missions#${bump}` },
+    { enabled, resetKey: 'missions' },
   );
 
   const detail = useCockpitProjection(
@@ -114,7 +114,9 @@ export function MissionView({ enabled, ownerToken, selectedId, onSelect }: Missi
         }
       } else await cancelCockpitMission(selectedId, args);
       setArmed(null);
-      setBump((n) => n + 1); // 无乐观写：动作成功后只触发重新投影
+      list.refresh();
+      detail.refresh();
+      timeline.refresh();
     } catch (err) {
       setArmed(null);
       if (err instanceof ApiError && err.status === 409) {
@@ -132,6 +134,9 @@ export function MissionView({ enabled, ownerToken, selectedId, onSelect }: Missi
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2" data-testid="cockpit-mission-view">
+      <ProjectionStatus projection={list} />
+      <ProjectionStatus projection={detail} />
+      <ProjectionStatus projection={timeline} />
       {/* Mission 列表 */}
       {missions.length === 0 ? (
         <EmptyState testId="cockpit-missions-empty">

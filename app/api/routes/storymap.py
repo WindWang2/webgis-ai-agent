@@ -124,7 +124,7 @@ async def save_session_story_spec(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.get("/sessions/{session_id}/spec", response_model=None)
+@router.get("/sessions/{session_id}/spec", response_model=StoryMapSpec)
 async def get_session_story_spec(
     session_id: str,
     conv: Conversation = Depends(require_owned_session),

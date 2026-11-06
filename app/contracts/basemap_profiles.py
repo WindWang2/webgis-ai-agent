@@ -8,7 +8,7 @@ import 面零破坏）。
 from __future__ import annotations
 
 import re
-from typing import Literal, Optional
+from typing import Literal, Optional, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -29,6 +29,13 @@ AVAILABILITY_REASONS = (
 )
 
 AvailabilityState = Literal["available", "unavailable"]
+
+
+class BaseLayerInfo(TypedDict):
+    """LLM 感知目录条目（派生端与消费端共享的 kernel 契约）。"""
+
+    name: str
+    keywords: list[str]
 
 
 class ProfileValidationError(ValueError):
@@ -141,7 +148,7 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
         name="OpenFreeMap Libre",
         kind="vector_style",
         map_style_type="vector",
-        url="https://openfreemap.org/style/libre",
+        url="https://tiles.openfreemap.org/styles/liberty",
         attribution=_OPENFREEMAP_ATTRIBUTION,
         license="MIT styles / OSM data ODbL-1.0",
         license_url="https://github.com/hyperknot/openfreemap-styles",
@@ -163,7 +170,7 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
         name="OpenFreeMap Positron",
         kind="vector_style",
         map_style_type="vector",
-        url="https://openfreemap.org/style/positron",
+        url="https://tiles.openfreemap.org/styles/positron",
         attribution=_OPENFREEMAP_ATTRIBUTION,
         license="MIT styles / OSM data ODbL-1.0",
         license_url="https://github.com/hyperknot/openfreemap-styles",
@@ -182,7 +189,7 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
         name="OpenFreeMap Bright",
         kind="vector_style",
         map_style_type="vector",
-        url="https://openfreemap.org/style/bright",
+        url="https://tiles.openfreemap.org/styles/bright",
         attribution=_OPENFREEMAP_ATTRIBUTION,
         license="MIT styles / OSM data ODbL-1.0",
         license_url="https://github.com/hyperknot/openfreemap-styles",
@@ -202,11 +209,14 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
         name="Carto Positron 矢量",
         kind="vector_style",
         map_style_type="vector",
-        url="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        url="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json?key={env:NEXT_PUBLIC_CARTO_BASEMAP_KEY}",
         attribution="© OpenStreetMap contributors © CARTO",
         license="ODbL-1.0 (data) / CARTO ToS",
         license_url="https://carto.com/attribution/",
-        tos_url="https://carto.com/legal/terms-of-service/",
+        tos_url="https://www.carto.com/legal/basemap-terms/",
+        requires_credentials=True,
+        credentials_env="NEXT_PUBLIC_CARTO_BASEMAP_KEY",
+        env_gate="NEXT_PUBLIC_CARTO_BASEMAP_KEY",
         max_zoom=14,
         cache_policy=CachePolicy(
             browser_cache_allowed=True,
@@ -220,11 +230,14 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
         name="Carto Dark Matter 矢量",
         kind="vector_style",
         map_style_type="vector",
-        url="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+        url="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json?key={env:NEXT_PUBLIC_CARTO_BASEMAP_KEY}",
         attribution="© OpenStreetMap contributors © CARTO",
         license="ODbL-1.0 (data) / CARTO ToS",
         license_url="https://carto.com/attribution/",
-        tos_url="https://carto.com/legal/terms-of-service/",
+        tos_url="https://www.carto.com/legal/basemap-terms/",
+        requires_credentials=True,
+        credentials_env="NEXT_PUBLIC_CARTO_BASEMAP_KEY",
+        env_gate="NEXT_PUBLIC_CARTO_BASEMAP_KEY",
         max_zoom=14,
         cache_policy=CachePolicy(
             browser_cache_allowed=True,
@@ -238,11 +251,14 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
         name="Carto 浅色",
         kind="raster_xyz",
         map_style_type="raster",
-        url="https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+        url="https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png?key={env:NEXT_PUBLIC_CARTO_BASEMAP_KEY}",
         attribution="© OpenStreetMap contributors © CARTO",
         license="ODbL-1.0 (data) / CARTO ToS",
         license_url="https://carto.com/attribution/",
-        tos_url="https://carto.com/legal/terms-of-service/",
+        tos_url="https://www.carto.com/legal/basemap-terms/",
+        requires_credentials=True,
+        credentials_env="NEXT_PUBLIC_CARTO_BASEMAP_KEY",
+        env_gate="NEXT_PUBLIC_CARTO_BASEMAP_KEY",
         max_zoom=20,
         cache_policy=CachePolicy(
             browser_cache_allowed=True,
@@ -256,11 +272,14 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
         name="Carto 深色",
         kind="raster_xyz",
         map_style_type="raster",
-        url="https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+        url="https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png?key={env:NEXT_PUBLIC_CARTO_BASEMAP_KEY}",
         attribution="© OpenStreetMap contributors © CARTO",
         license="ODbL-1.0 (data) / CARTO ToS",
         license_url="https://carto.com/attribution/",
-        tos_url="https://carto.com/legal/terms-of-service/",
+        tos_url="https://www.carto.com/legal/basemap-terms/",
+        requires_credentials=True,
+        credentials_env="NEXT_PUBLIC_CARTO_BASEMAP_KEY",
+        env_gate="NEXT_PUBLIC_CARTO_BASEMAP_KEY",
         max_zoom=20,
         cache_policy=CachePolicy(
             browser_cache_allowed=True,
@@ -348,6 +367,7 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
     ),
     BasemapProviderProfile(
         provider_id="amap-img",
+        crs="GCJ-02",
         name="高德影像",
         kind="raster_xyz",
         map_style_type="raster",
@@ -367,6 +387,7 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
     ),
     BasemapProviderProfile(
         provider_id="amap-vec",
+        crs="GCJ-02",
         name="高德矢量",
         kind="raster_xyz",
         map_style_type="raster",
@@ -460,7 +481,7 @@ BASEMAP_PROVIDER_PROFILES: tuple[BasemapProviderProfile, ...] = (
 )
 
 
-def iter_llm_catalog() -> list[dict[str, list[str]]]:
+def iter_llm_catalog() -> list[BaseLayerInfo]:
     """LLM 感知目录派生（base_layers.BASE_LAYER_CATALOG 的上游）。"""
     return [
         {"name": p.name, "keywords": list(p.keywords)}

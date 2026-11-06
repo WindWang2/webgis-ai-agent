@@ -6,6 +6,15 @@ capabilities 与结果，不触 provider internals（Epic §N）。异步工具�
 """
 from __future__ import annotations
 
+from app.contracts.modelops import (
+    InferenceProgress,
+    LineageEvent,
+    ModelHistory,
+    VersionHistory,
+    WarmPoolRecord,
+    WarmPoolStatus,
+)
+
 import asyncio
 import logging
 import threading
@@ -118,14 +127,14 @@ class ModelOpsService:
         for model_id in self._settings.warm_pool:
             self._warm_pool.pin(model_id.strip())
 
-    def warm_pool_status(self) -> Dict[str, Any]:
+    def warm_pool_status(self) -> WarmPoolStatus:
         """warm pool / GPU 账本状态（观测面）。"""
         return {
             "pinned": self._warm_pool.status(),
             "vram_ledger": self._ledger.snapshot(),
         }
 
-    def pin_warm_pool(self, model_id: str, *, device: str = "cpu") -> Dict[str, Any]:
+    def pin_warm_pool(self, model_id: str, *, device: str = "cpu") -> WarmPoolRecord:
         """运行期把一个模型钉进 warm pool（幂等；typed 结果不抛）。"""
         return self._warm_pool.pin(model_id, device=device)
 
@@ -137,7 +146,7 @@ class ModelOpsService:
         *,
         metrics: Dict[str, Any],
         actor: str = "",
-    ) -> Dict[str, Any]:
+    ) -> LineageEvent:
         """登记一个模型版本的训练指标（append-only lineage 事件）。"""
         return self._lineage.append(
             model_id, model_version,
@@ -153,7 +162,7 @@ class ModelOpsService:
         metrics_summary: Optional[Dict[str, Any]] = None,
         dataset_refs: Optional[List[str]] = None,
         actor: str = "",
-    ) -> Dict[str, Any]:
+    ) -> LineageEvent:
         """登记一次评估（data_object 引用 + 摘要 + 数据 lineage）。"""
         payload: Dict[str, Any] = {
             "evaluation_data_object_id": data_object_id,
@@ -173,7 +182,7 @@ class ModelOpsService:
         promote: bool,
         stage: str = "production",
         actor: str = "",
-    ) -> Dict[str, Any]:
+    ) -> LineageEvent:
         """晋升 / 退役一个模型版本（append-only；状态为推导值）。"""
         if promote:
             return self._lineage.append(
@@ -189,10 +198,10 @@ class ModelOpsService:
         model_id: str,
         *,
         model_version: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> ModelHistory:
         """模型 lineage 时间线 + 推导状态（工具面/前端消费）。"""
         events = self._lineage.history(model_id, model_version)
-        versions: Dict[str, Any] = {}
+        versions: dict[str, VersionHistory] = {}
         for event in events:
             version = str(event.get("model_version"))
             entry = versions.setdefault(version, {"events": [], "deployment_state": "registered"})
@@ -383,7 +392,9 @@ class ModelOpsService:
         *,
         session_id: Optional[str] = None,
         project_id: Optional[str] = None,
+        allowed_roots: Optional[List[Path]] = None,
     ) -> Dict[str, Any]:
+        self._gate_source_uri(source_uri, allowed_roots=self._scope_roots(session_id, project_id, allowed_roots))
         record = self._registry.resolve(
             model_id, None, session_id=session_id, project_id=project_id
         )
@@ -402,7 +413,9 @@ class ModelOpsService:
         *,
         session_id: Optional[str] = None,
         project_id: Optional[str] = None,
+        allowed_roots: Optional[List[Path]] = None,
     ) -> Dict[str, Any]:
+        self._gate_source_uri(source_uri, allowed_roots=self._scope_roots(session_id, project_id, allowed_roots))
         record = self._registry.resolve(
             model_id, None, session_id=session_id, project_id=project_id
         )
@@ -439,12 +452,17 @@ class ModelOpsService:
         self,
         request: InferenceRequest,
         *,
-        progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+        progress: Optional[Callable[[InferenceProgress], None]] = None,
         cancel_key: Optional[str] = None,
+        allowed_roots: Optional[List[Path]] = None,
     ) -> InferenceResult:
         # R1-M5：取消键 = 本次 run 的唯一键（run_id），绝不默认 model_id
         # （同模型并发跑会互相覆盖取消令牌）。
         import uuid as _uuid
+        roots = self._scope_roots(request.owner_scope.get("session_id"), request.owner_scope.get("project_id"), allowed_roots)
+        self._gate_source_uri(request.source_uri, allowed_roots=roots)
+        if request.source_uri_b is not None:
+            self._gate_source_uri(request.source_uri_b, allowed_roots=roots)
 
         key = cancel_key or _uuid.uuid4().hex[:16]
         request = _replace_request(request, run_key=key)
@@ -455,7 +473,7 @@ class ModelOpsService:
             self._unregister_cancel(key, token)
 
     async def run_inference_async(
-        self, request: InferenceRequest, *, progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+        self, request: InferenceRequest, *, progress: Optional[Callable[[InferenceProgress], None]] = None,
         cancel_key: Optional[str] = None,
         allowed_roots: Optional[List[Path]] = None,
     ) -> InferenceResult:
@@ -463,7 +481,10 @@ class ModelOpsService:
 
         # SEC-06：LLM 工具面不再绕过 source-path 门 —— 服务层是所有调用者
         # （工具/HTTP/内部）的唯一入口，默认只放行 DATA_DIR 数据域。
-        self._gate_source_uri(request.source_uri, allowed_roots=allowed_roots)
+        roots = self._scope_roots(request.owner_scope.get("session_id"), request.owner_scope.get("project_id"), allowed_roots)
+        self._gate_source_uri(request.source_uri, allowed_roots=roots)
+        if request.source_uri_b is not None:
+            self._gate_source_uri(request.source_uri_b, allowed_roots=roots)
         key = cancel_key or _uuid.uuid4().hex[:16]
         request = _replace_request(request, run_key=key)
         token = self._register_cancel(run_key=key)
@@ -524,6 +545,18 @@ class ModelOpsService:
             roots.append(Path(registry).resolve())
         return roots
 
+    def _scope_roots(self, session_id: Optional[str], project_id: Optional[str],
+                     allowed_roots: Optional[List[Path]]) -> List[Path]:
+        if allowed_roots is not None:
+            return allowed_roots
+        from app.services.scoped_raster_paths import scoped_raster_roots
+
+        roots = scoped_raster_roots(session_id=session_id, project_id=project_id)
+        scope = {"session_id": session_id} if session_id else {"project_id": project_id}
+        key = "_".join(f"{name}-{value}" for name, value in sorted(scope.items()))
+        roots.append((self._settings.registry_dir / "outputs" / key).resolve())
+        return roots
+
     @staticmethod
     def _gate_path(
         uri: str,
@@ -532,10 +565,11 @@ class ModelOpsService:
         roots: Optional[List[Path]],
         error_cls: type,
     ) -> str:
-        """路径门（SEC-06）：解析后必须落在 ``roots`` 之一；空 roots = 受信
-        调用者显式豁免（历史 opt-out 语义保留）。"""
+        """解析后的本地路径必须落在非空授权 roots 之一；空 roots 拒绝。"""
         if not roots:
-            return uri
+            raise error_cls(f"{what} requires nonempty authorized roots")
+        if uri.startswith("/vsi") or "://" in uri:
+            raise error_cls(f"{what} must be a local file in the owner scope")
         p = Path(uri)
         try:
             resolved = p.resolve()
@@ -595,14 +629,12 @@ class ModelOpsService:
         )
 
         artifact = GeoPromptArtifact.from_payload(artifact_payload)
-        source_roots = (
-            allowed_roots if allowed_roots is not None else self._data_dir_roots()
-        )
-        ref_roots = (
-            allowed_roots
-            if allowed_roots is not None
-            else self._default_allowed_roots()
-        )
+        if allowed_roots is None:
+            from app.core.runtime_context import current_runtime_context
+            context = current_runtime_context()
+            allowed_roots = self._scope_roots(getattr(context, "session_id", None), getattr(context, "project_id", None), None)
+        source_roots = allowed_roots
+        ref_roots = allowed_roots
         source_uri = self._gate_path(
             source_uri[:2048], what="source_uri", roots=source_roots,
             error_cls=PromptArtifactError,
@@ -655,6 +687,7 @@ class ModelOpsService:
         compiled = compile_prompt(
             artifact,
             transform=transform,
+            raster_crs=meta.crs,
             raster_height=meta.height,
             raster_width=meta.width,
             mask_loader=mask_loader if artifact.mask_ref is not None else None,
@@ -704,27 +737,17 @@ class ModelOpsService:
 
         # SEC-06：refine 也走同一道 source-path 门（工具面的 source_uri 由
         # 模型控制，不能被当任意本地栅格读取器）。
-        source_uri = self._gate_source_uri(source_uri, allowed_roots=allowed_roots)
-
+        roots = self._scope_roots(session_id, project_id, allowed_roots)
+        source_uri = self._gate_source_uri(source_uri, allowed_roots=roots)
+        candidates_path = self._gate_path(candidates_path, what="candidates_path", roots=roots, error_cls=ModelOpsError)
         cand_path = Path(candidates_path)
         if not cand_path.exists():
             raise ModelOpsError(
                 f"prompt candidates artifact not found: {candidates_path!r}",
                 correction_hint="re-run with return_candidates=True first",
             )
-        # review fix：candidates 工件限定 registry 数据域（run 产物的落盘
-        # 位置）——不读任意路径的 GeoJSON 当先验。
-        try:
-            cand_path.resolve().relative_to(
-                Path(self._settings.registry_dir).resolve()
-            )
-        except ValueError:
-            raise ModelOpsError(
-                "candidates_path must resolve inside the modelops registry "
-                "(run artifacts only)",
-                correction_hint="pass the prompt_candidates path returned by "
-                "the producing run",
-            ) from None
+        if cand_path.stat().st_size > 16 * 1024 * 1024:
+            raise ModelOpsError("prompt candidates exceed 16MiB JSON budget")
         try:
             features = _json.loads(
                 cand_path.read_text(encoding="utf-8")
@@ -785,7 +808,8 @@ class ModelOpsService:
                 correction_hint="candidate/source grid mismatch — rerun the "
                 "original inference on this source",
             )
-        ref_dir = self._settings.registry_dir / "prompt_refs"
+        scope_key = "_".join(f"{key}-{value}" for key, value in sorted(normalize_scope(session_id=session_id, project_id=project_id).items()))
+        ref_dir = self._settings.registry_dir / "outputs" / scope_key / "prompt_refs"
         ref_dir.mkdir(parents=True, exist_ok=True)
         # review fix：sidecar 以**掩膜内容**寻址（同内容重 refine 复用同一
         # 文件——prompt_refs 不随 run 数线性增长）。
@@ -806,7 +830,7 @@ class ModelOpsService:
                 "band": 1,
             }
         }
-        compiled = self.compile_geo_prompt(payload, uri, allowed_roots=allowed_roots)
+        compiled = self.compile_geo_prompt(payload, uri, allowed_roots=roots)
         scope = normalize_scope(session_id=session_id, project_id=project_id)
         result = self.run_inference(InferenceRequest(
             model_id=model_id,
@@ -815,7 +839,7 @@ class ModelOpsService:
             prompt=compiled["prompt"],
             prompt_artifact_id=compiled["artifact_id"],
             prompt_audit=compiled["audit"],
-        ))
+        ), allowed_roots=roots)
         return result, {
             "candidate": int(candidate_index),
             "source_run_candidates": str(cand_path),
@@ -824,13 +848,15 @@ class ModelOpsService:
         }
 
     # ── 评估 / 复用 / provenance ────────────────────────────────────
-    def evaluate(self, request: EvaluationRequest) -> Dict[str, Any]:
+    def evaluate(self, request: EvaluationRequest, *, allowed_roots: Optional[List[Path]] = None) -> Dict[str, Any]:
+        self._gate_eval_paths(request, allowed_roots=allowed_roots)
         report = self._evaluation.evaluate(request)
         self._record_eval_lineage(request.model_id, request.model_version, report)
         return report
 
-    def evaluate_drift(self, request: DriftEvaluationRequest) -> Dict[str, Any]:
+    def evaluate_drift(self, request: DriftEvaluationRequest, *, allowed_roots: Optional[List[Path]] = None) -> Dict[str, Any]:
         """漂移评估（V3 §G）+ 自动 lineage 记录（model_id 提供时）。"""
+        self._gate_eval_paths(request, allowed_roots=allowed_roots)
         report = self._evaluation.evaluate_drift(request)
         self._record_eval_lineage(request.model_id, request.model_version, report)
         return report
@@ -863,7 +889,7 @@ class ModelOpsService:
             logger.warning("evaluation lineage append failed: %s", exc)
 
     def _gate_eval_paths(
-        self, request: EvaluationRequest, *, allowed_roots: Optional[List[Path]] = None
+        self, request: Any, *, allowed_roots: Optional[List[Path]] = None
     ) -> None:
         """评估族输入栅格的路径门（SEC-06）：与推理族 ``_gate_source_uri``
         同一道门 —— ``predictions_path`` / ``references_path`` / 可选
@@ -871,13 +897,13 @@ class ModelOpsService:
         ``settings.DATA_DIR``（或受信调用者显式 ``allowed_roots``），
         模型控制的路径不能被当任意本地栅格读取器。
         """
-        roots = (
-            allowed_roots
-            if allowed_roots is not None
-            else self._data_dir_roots()
-        )
-        for attr in ("predictions_path", "references_path",
-                     "confidence_path", "regions_path"):
+        roots = self._scope_roots(request.owner_scope.get("session_id"), request.owner_scope.get("project_id"), allowed_roots)
+        if request.output_dir is not None:
+            target = Path(request.output_dir).resolve()
+            if not any(target.is_relative_to(Path(root).resolve()) for root in roots):
+                raise ModelOpsError("evaluation output_dir escapes owner roots")
+        for attr in ("predictions_path", "references_path", "baseline_path", "current_path",
+                     "confidence_path", "regions_path", "baseline_confidence_path", "current_confidence_path"):
             uri = getattr(request, attr, None)
             if uri is None:
                 continue
@@ -889,7 +915,7 @@ class ModelOpsService:
         # SEC-06：LLM 工具面不再绕过 source-path 门 —— 服务层是所有调用者
         # （工具/HTTP/内部）的唯一入口，默认只放行 DATA_DIR 数据域。
         self._gate_eval_paths(request, allowed_roots=allowed_roots)
-        return await asyncio.to_thread(self._evaluation.evaluate, request)
+        return await asyncio.to_thread(self.evaluate, request, allowed_roots=allowed_roots)
 
     async def evaluate_drift_async(self, request: DriftEvaluationRequest) -> Dict[str, Any]:
         return await asyncio.to_thread(self.evaluate_drift, request)

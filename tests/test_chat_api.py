@@ -27,7 +27,13 @@ async def client(app):
 
 
 @pytest.mark.asyncio
-async def test_list_tools(client):
+async def test_list_tools(client, monkeypatch):
+    from app.core import auth
+
+    async def live_user(user_id):
+        return "ok", (0, True, "viewer", None)
+
+    monkeypatch.setattr(auth, "_load_live_user_state", live_user)
     with patch.object(_chat_mod, "registry", MagicMock(get_schemas=lambda: [])):
         # A-7: the tool catalog (incl. tier-3 schemas) requires authentication.
         resp = await client.get("/api/chat/tools")

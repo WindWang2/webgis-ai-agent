@@ -197,8 +197,9 @@ def test_buffer_smart_projected_crs_preservation():
     }
     res = buffer_smart(feature, 50, source_crs="EPSG:3857")
     assert res.success is True
-    assert res.data["stats"]["reprojected"] is False
-    assert res.data["stats"]["working_crs"] == "EPSG:3857"
+    assert res.data["stats"]["reprojected"] is True
+    assert res.data["stats"]["working_crs"].startswith("EPSG:326")
+    assert res.data["crs"]["properties"]["name"] == "EPSG:3857"
 
 
 # ── Issue #524: unit conversion direction for non-metre projected CRS ────────
@@ -243,7 +244,7 @@ def test_buffer_smart_state_plane_feet_distance_in_meters(crs_epsg, point):
     res = buffer_smart(feature, 1000, unit="m", source_crs=f"EPSG:{crs_epsg}")
 
     assert res.success is True, res.summary
-    assert res.data["stats"]["reprojected"] is False  # projected input kept
+    assert res.data["stats"]["reprojected"] is True  # Metric work in local UTM, output back in original feet.
     geom = shape(res.data["features"][0]["geometry"])
     radius_crs_units = (geom.area / math.pi) ** 0.5
     radius_m = radius_crs_units * _ft_to_m_factor(crs_epsg)

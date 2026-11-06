@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Lightbulb, X } from 'lucide-react';
 import { useOnboardingStore } from '@/lib/onboarding/use-onboarding';
 import { useT } from '@/lib/i18n/useT';
@@ -24,7 +24,7 @@ export function HintQueue(): React.ReactElement | null {
   const setActiveHint = useOnboardingStore((s) => s.setActiveHint);
   const markHintSeen = useOnboardingStore((s) => s.markHintSeen);
 
-  const unseen = HINTS.filter((h) => !hintsSeen.includes(h.id));
+  const unseen = useMemo(() => HINTS.filter((h) => !hintsSeen.includes(h.id)), [hintsSeen]);
 
   // 取下一条未读提示
   useEffect(() => {
@@ -64,7 +64,7 @@ export function HintQueue(): React.ReactElement | null {
       </div>
       <div className="mt-1.5 flex items-center justify-between">
         <span className="text-caption text-ink-muted">
-          {t('hint.progress', { current: hintsSeen.length + 1, total: HINTS.length })}
+          {t('hint.progress', { current: HINTS.length - unseen.length + 1, total: HINTS.length })}
         </span>
         <button
           type="button"

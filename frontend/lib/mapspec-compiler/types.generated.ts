@@ -93,6 +93,7 @@ export interface MapSpec {
   thresholds?: MapThresholds;
   scenario_mode?: "split_view" | "swipe_compare";
   scene?: MapSceneConfig;
+  temporal?: MapSpecTemporalConfig;
 }
 
 export interface MapSpecView {
@@ -177,6 +178,7 @@ export interface MapSpecLayer {
   bivariate?: MapSpecLayerBivariate;
   data_binding?: MapSpecLayerDataBinding;
   representation?: MapSpecLayerRepresentation;
+  scale_profile?: Record<string, unknown>;
 }
 
 export interface MapSpecLayerExtrusion {
@@ -218,6 +220,7 @@ export interface MapSpecRepresentationWindow {
   max_zoom: number;
   mode: "raw" | "point_cluster" | "visual_heatmap" | "aggregate_grid" | "generalized" | "hidden";
   reason_codes?: string[];
+  source?: string;
 }
 
 export interface MapSpecLayerRepresentation {
@@ -269,7 +272,7 @@ export interface ComponentPlacement {
 
 export interface MapSpecComponent {
   id: string;
-  type: "basemap" | "legend" | "continuous_colorbar" | "categorical_legend" | "north_arrow" | "scale_bar" | "title" | "subtitle" | "annotation" | "graticule" | "map_border" | "attribution" | "statistics_panel" | "chart_panel" | "table_panel" | "export_layout" | "inset_map" | "methodology_note" | "uncertainty_panel" | "decision_panel" | "label_layer" | "scene_disclosure" | "elevation_profile";
+  type: "basemap" | "legend" | "continuous_colorbar" | "categorical_legend" | "north_arrow" | "scale_bar" | "title" | "subtitle" | "annotation" | "graticule" | "map_border" | "attribution" | "statistics_panel" | "chart_panel" | "table_panel" | "export_layout" | "inset_map" | "methodology_note" | "uncertainty_panel" | "decision_panel" | "design_candidates" | "label_layer" | "scene_disclosure" | "elevation_profile";
   enabled?: boolean;
   position?: "top-left" | "top-center" | "top-right" | "bottom-left" | "bottom-center" | "bottom-right" | "none";
   priority?: number;
@@ -393,4 +396,58 @@ export interface SceneAssetVertical {
 export interface SceneAssetLodPolicy {
   max_sse?: number;
   max_visible_tiles?: number;
+}
+
+export interface MapSpecTemporalConfig {
+  schema_version?: "temporal_view.v1";
+  enabled: boolean;
+  layers: TemporalLayerBinding[];
+  time_field: string;
+  time_semantics: "event" | "snapshot" | "valid_time";
+  time_representation: "iso_string" | "date_string" | "epoch_s" | "epoch_ms" | "year_int";
+  time_format_hint?: string;
+  timezone?: string;
+  granularity: "year" | "quarter" | "month" | "week" | "day" | "hour";
+  extent: unknown;
+  frames: TemporalFrame[];
+  cursor_frame: string;
+  playback?: TemporalPlaybackConfig;
+  compare?: TemporalCompareConfig;
+  missing_policy?: "strict" | "nearest" | "skip";
+  quality?: string[];
+  source_ref: string;
+  content_revision?: number;
+  user_pinned?: boolean;
+  render_path?: "client_filter" | "cube_window" | "none";
+  disclosures?: string[];
+}
+
+export interface TemporalFrame {
+  id: string;
+  label: string;
+  start: string;
+  end: string;
+  feature_count?: number;
+}
+
+export interface TemporalLayerBinding {
+  layer_id: string;
+  source_ref?: string;
+}
+
+export interface TemporalClassification {
+  breaks: number[];
+  scope?: "shared" | "local";
+  method?: string;
+}
+
+export interface TemporalCompareConfig {
+  enabled: boolean;
+  frame_id_b: string;
+  classification?: TemporalClassification;
+}
+
+export interface TemporalPlaybackConfig {
+  playing?: boolean;
+  rate?: number;
 }

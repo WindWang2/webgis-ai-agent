@@ -5,7 +5,8 @@
  * 因为用户的底图偏好需要重启保留 — 由 useHudStore 的 partialize 决定）。
  */
 import type { StateCreator } from 'zustand';
-import type { HudState, AiStatus, LeftTab, SettingsTab, ExportItem } from '../hud-types';
+import { TILE_PROVIDERS } from '@/lib/providers';
+import type { HudState, AiStatus, LeftTab, SettingsTab, ExportItem, SystemMessage } from '../hud-types';
 
 /**
  * FE-3: 操作日志队列上限（队首最新，超限丢最旧）。
@@ -71,7 +72,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
         },
       };
     }),
-  baseLayer: 'Carto 深色',
+  baseLayer: TILE_PROVIDERS[0]?.name ?? '',
   setBaseLayer: (name) => set({ baseLayer: name }),
   is3D: false,
   setIs3D: (v: boolean) => set({ is3D: v }),
@@ -95,19 +96,20 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   // 审计 F35：之前 pendingSystemMessage 是单字符串，rapid back-to-back 调用
   // 互相覆盖。改为队列：setPendingSystemMessage 入队，consumer 调用
   // clearPendingSystemMessage 取出最早的。
-  pendingSystemMessage: null as string | null,
-  _systemMessageQueue: [] as string[],
-  setPendingSystemMessage: (msg: string | null) =>
+  pendingSystemMessage: null as SystemMessage | null,
+  _systemMessageQueue: [] as SystemMessage[],
+  setPendingSystemMessage: (msg: string | null, level?: 'info' | 'success' | 'error') =>
     set((s) => {
       if (msg === null) {
         // null = 清空信号（向后兼容）
         return { pendingSystemMessage: null, _systemMessageQueue: [] };
       }
+      const payload = level ? { text: msg, level } : msg;
       // 入队；如果当前 pendingSystemMessage 为空则立即激活
       if (s.pendingSystemMessage === null) {
-        return { pendingSystemMessage: msg, _systemMessageQueue: [] };
+        return { pendingSystemMessage: payload, _systemMessageQueue: [] };
       }
-      return { _systemMessageQueue: [...s._systemMessageQueue, msg] };
+      return { _systemMessageQueue: [...s._systemMessageQueue, payload] };
     }),
   // consumer 调用：取出并激活下一条（无下一条则置 null）
   drainSystemMessage: () =>
@@ -231,6 +233,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
     atlasLayerId: '',
     atlasIncludeCover: true,
     atlasTitle: '',
+    atlasBatch: false,
   },
   updateExportSettings: (updates) =>
     set((s) => ({

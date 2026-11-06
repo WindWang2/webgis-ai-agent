@@ -25,7 +25,7 @@ CONTINUATION_KEYWORDS = [
 # already holds data refs). Deliberately phrase-based ("这个结果"), so a bare
 # 再 / 那个 in a new request does not hijack the classifier.
 REF_REUSE_KEYWORDS = [
-    "刚才", "上一个", "那个", "该结果", "这个结果", "上次", "前一个",
+    "刚才", "上一个", "那个结果", "那个图层", "该结果", "这个结果", "上次", "前一个",
     "之前的结果", "上面的", "this result", "that result", "previous result",
 ]
 

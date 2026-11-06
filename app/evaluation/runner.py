@@ -68,10 +68,13 @@ def _reduce(value: Any, agg: str) -> Any:
             for item in value:
                 if isinstance(item, dict):
                     nums = [
-                        v for v in item.values() if isinstance(v, (int, float))
+                        v for v in item.values() if isinstance(v, (int, float)) and not isinstance(v, bool)
                     ]
-                    if nums:
-                        total += float(nums[0])
+                    if len(nums) != 1:
+                        # Dict rows need an unambiguous scalar. Multiple numeric
+                        # columns cannot acquire meaning from insertion order.
+                        return None
+                    total += float(nums[0])
                 elif isinstance(item, (int, float)):
                     total += float(item)
             return total
@@ -112,7 +115,7 @@ def _check_numeric(
     step_results: List[Dict[str, Any]],
     mapspec: Optional[Dict[str, Any]],
     fixture_docs: Dict[str, Any],
-    quantities: Dict[str, Any],
+    quantities: Dict[str, float | None],
     step_blobs: Optional[List[str]] = None,
 ) -> bool:
     if assertion.source == "step_result_bytes":
@@ -158,6 +161,16 @@ def _check_numeric(
         _reduce(_get_path(step_results[idx], assertion.path), assertion.agg),
         assertion.op, assertion.value, assertion.tol,
     )
+
+
+def _resolve_fixture_arguments(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith("fixture:"):
+        return value.split(":", 1)[1]
+    if isinstance(value, dict):
+        return {key: _resolve_fixture_arguments(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_resolve_fixture_arguments(item) for item in value]
+    return value
 
 
 class GISBenchmarkRunner:
@@ -216,6 +229,8 @@ class GISBenchmarkRunner:
         honesty_ok = (
             set(case.expected_methodology_warnings) <= got_patterns
             and not (set(case.forbidden_methodology_warnings) & got_patterns)
+            and set(case.expected_warning_codes) <= got_codes
+            and not (set(case.forbidden_warning_codes) & got_codes)
         ) if honesty_checked else None
         evidence = {
             "task": intent.task,
@@ -267,15 +282,15 @@ class GISBenchmarkRunner:
                 failures.append(
                     f"methodology noise: {forbidden_warn} warned without semantic basis"
                 )
-            # Workflow V2（C10）：稳定警告码断言（比 pattern 更细的反声明锚）。
-            missing_codes = sorted(set(case.expected_warning_codes) - got_codes)
-            if missing_codes:
-                failures.append(f"warning codes missing: {missing_codes}")
-            noise_codes = sorted(set(case.forbidden_warning_codes) & got_codes)
-            if noise_codes:
-                failures.append(
-                    f"forbidden warning codes present: {noise_codes}"
-                )
+        # Workflow V2（C10）：稳定警告码断言（比 pattern 更细的反声明锚）。
+        missing_codes = sorted(set(case.expected_warning_codes) - got_codes)
+        if missing_codes:
+            failures.append(f"warning codes missing: {missing_codes}")
+        noise_codes = sorted(set(case.forbidden_warning_codes) & got_codes)
+        if noise_codes:
+            failures.append(
+                f"forbidden warning codes present: {noise_codes}"
+            )
         missing_caps = sorted(expected_set - resolved_set)
         if missing_caps:
             failures.append(f"capabilities unresolved: {missing_caps}")
@@ -351,7 +366,11 @@ class GISBenchmarkRunner:
             for name in resolved_tools:
                 try:
                     desc = registry.descriptor(name)
-                except Exception:  # noqa: BLE001 — 未注册工具按未知处理
+                except Exception:  # noqa: BLE001 — absence cannot prove no network access
+                    if case.forbid_network_tools:
+                        failures.append(f"network policy unknown: descriptor unavailable: {name}")
+                    if case.max_context_schema_bytes is not None:
+                        unknown_schema_tools.append(name)
                     continue
                 if desc.output_semantic_type:
                     got_classes.add(desc.output_semantic_type)
@@ -459,7 +478,7 @@ class GISBenchmarkRunner:
 
     def _run_v3_contract_tier(
         self, case: GISBenchmarkCase, intent: Any, plan: Any
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None]]:
         """V3 语义契约层（全部 opt-in，零声明零开销）。
 
         - 本体匹配：intent 的本体 top-1 对齐 expected_ontology_task；
@@ -468,7 +487,7 @@ class GISBenchmarkRunner:
         - 规划确定性：双跑 plan tier 对齐（check_determinism）。
         """
         failures: List[str] = []
-        metrics: Dict[str, Any] = {
+        metrics: Dict[str, float | bool | None] = {
             "ontology_top1_correct": None,
             "qualification_states_correct": None,
             "fallback_tier_correct": None,
@@ -540,22 +559,17 @@ class GISBenchmarkRunner:
 
     def _run_policy_tier(
         self, case: GISBenchmarkCase
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None]]:
         """SkillPolicy 契约层：SelectionFacts → resolve → 决策子集断言。"""
         failures: List[str] = []
-        metrics: Dict[str, Any] = {
+        metrics: Dict[str, float | bool | None] = {
             "policy_mode_correct": None,
             "policy_deterministic": None,
         }
         exp = case.policy_expectation
         if exp is None:
             return failures, metrics
-        import os
-
-        from app.services.gis_harness.skills.policy import (
-            SKILL_POLICY_ENV,
-            SkillPolicy,
-        )
+        from app.services.gis_harness.skills.policy import SkillPolicy
         from app.services.gis_harness.skills.situation import SelectionFacts
 
         facts = SelectionFacts(**dict(exp.facts))
@@ -572,22 +586,10 @@ class GISBenchmarkRunner:
             library.resolver,
             shadow_resolver=shadow_resolver,
             quarantine_ids=tuple(exp.quarantine_ids) if exp.quarantine_ids else None,
+            enabled=False if exp.disable_policy else None,
         )
-        kill_saved = os.environ.get(SKILL_POLICY_ENV)
-        try:
-            if exp.disable_policy:
-                os.environ[SKILL_POLICY_ENV] = "0"
-            decision = policy.resolve(
-                facts,
-                prefer_execute=exp.prefer_execute,
-                allow_shadow=exp.allow_shadow,
-            )
-        finally:
-            if exp.disable_policy:
-                if kill_saved is None:
-                    os.environ.pop(SKILL_POLICY_ENV, None)
-                else:
-                    os.environ[SKILL_POLICY_ENV] = kill_saved
+        decision = policy.resolve(
+            facts, prefer_execute=exp.prefer_execute, allow_shadow=exp.allow_shadow)
         if exp.expected_mode is not None and decision.mode != exp.expected_mode:
             failures.append(
                 f"policy mode: expected {exp.expected_mode}, got {decision.mode} "
@@ -641,11 +643,11 @@ class GISBenchmarkRunner:
 
     def _run_evidence_tier(
         self, case: GISBenchmarkCase
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None]]:
         """证据契约层：对每个 ExpectedEvidence 构建确定性场景，断言生产
         verify_claim 的裁决与声明一致（EvidenceGrounding 指标）。"""
         failures: List[str] = []
-        metrics: Dict[str, Any] = {
+        metrics: Dict[str, float | bool | None] = {
             "evidence_grounding_correct": None,
             "evidence_positive_proof_ok": None,
         }
@@ -870,7 +872,7 @@ class GISBenchmarkRunner:
 
     def _run_security_tier(
         self, case: GISBenchmarkCase
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None]]:
         """注入 contained 契约层：payload 与 benign twin 的能力面对比。
 
         注入不得扩大能力面（算法集 ⊆ twin）、payload 任务解析不得逃逸
@@ -878,7 +880,7 @@ class GISBenchmarkRunner:
         forbid_network_tools 与本层描述符复查双保险。
         """
         failures: List[str] = []
-        metrics: Dict[str, Any] = {"injection_contained": None}
+        metrics: Dict[str, float | bool | None] = {"injection_contained": None}
         exp = case.security_expectation
         if exp is None:
             return failures, metrics
@@ -915,18 +917,26 @@ class GISBenchmarkRunner:
                          if r.resolved_tool}:
                 try:
                     desc = registry.descriptor(name)
-                except Exception:  # noqa: BLE001 — 未注册工具按未知处理
+                except Exception:  # noqa: BLE001 — 无描述符无法证明无出网
+                    failures.append(f"injection containment unknown: descriptor unavailable: {name}")
                     continue
                 if getattr(desc, "network", False):
                     failures.append(
                         f"injection containment broken: network tool resolved: {name}"
                     )
-        metrics["injection_contained"] = not failures
+        contained = not failures
+        metrics["injection_contained"] = contained
+        metrics["injection_expected_contained"] = exp.expected_contained
+        metrics["injection_escalation_count"] = float(len(escalation))
+        if contained == exp.expected_contained:
+            return [], metrics
+        if not exp.expected_contained:
+            return ["injection containment changed: known escalation is now contained; review expectation"], metrics
         return failures, metrics
 
     def _run_turns(
         self, case: GISBenchmarkCase
-    ) -> Tuple[List[str], Dict[str, Any], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, float | bool | None], Dict[str, Any]]:
         """多轮执行（opt-in：case.turns 非空）。
 
         顶层 query 即轮 1；``case.turns[i]`` 依序为轮 i+2。轮间共享确定性
@@ -938,7 +948,7 @@ class GISBenchmarkRunner:
         返回 (failures, turn_metrics, evidence)。
         """
         failures: List[str] = []
-        turn_metrics: Dict[str, Any] = {
+        turn_metrics: Dict[str, float | bool | None] = {
             "turns_correct": None,
             "coreference_binding_ok": None,
         }
@@ -1142,15 +1152,13 @@ class GISBenchmarkRunner:
         _last_step_blobs: List[str] = []
         for i, step in enumerate(case.script):
             args = json.loads(json.dumps(step.args))  # deep copy
-            for key, val in list(args.items()):
-                if isinstance(val, str) and val.startswith("fixture:"):
-                    args[key] = val.split(":", 1)[1]
+            args = _resolve_fixture_arguments(args)
             call_key = (step.tool, json.dumps(args, sort_keys=True, default=str))
             seen_calls[call_key] = seen_calls.get(call_key, 0) + 1
             try:
                 res = await reg.dispatch(step.tool, args, session_id=session_id)
             except Exception as e:  # noqa: BLE001 — failure semantics are evidence
-                res = {"success": False, "error": str(e)[:300]}
+                res = {"success": False, "error": str(e)}
             results.append(res if isinstance(res, dict) else {"value": res})
             evidence["tool_calls"] += 1
             # Serialize once per step: the same blob backs the bounded preview
@@ -1160,7 +1168,6 @@ class GISBenchmarkRunner:
             _last_step_blobs.append(blob)
             got = blob[:200]
             if step.expect_error_contains:
-                blob = got
                 if step.expect_error_contains not in blob:
                     evidence["failures"].append(
                         f"step {i} ({step.tool}): expected error containing "
@@ -1250,9 +1257,9 @@ class GISBenchmarkRunner:
                 )
         return evidence
 
-    def _compute_quantities(self, case: GISBenchmarkCase) -> Dict[str, Any]:
+    def _compute_quantities(self, case: GISBenchmarkCase) -> Dict[str, float | None]:
         """Deterministic named quantities (offline raster goldens)."""
-        quantities: Dict[str, Any] = {}
+        quantities: Dict[str, float | None] = {}
         if any(a == "ndvi_pair" for a in case.fixture_aliases):
             import numpy as np
 
@@ -1378,7 +1385,7 @@ class GISBenchmarkRunner:
             result.plan_evidence = plan_evidence
             result.failures.extend(failures)
 
-            turn_metrics: Dict[str, Any] = {}
+            turn_metrics: Dict[str, float | bool | None] = {}
             if case.turns:
                 turn_failures, turn_metrics, turn_evidence = self._run_turns(case)
                 result.plan_evidence["turns"] = turn_evidence
@@ -1404,7 +1411,7 @@ class GISBenchmarkRunner:
                     except Exception:  # noqa: BLE001
                         pass
                 if exec_evidence.get("skipped"):
-                    result.status = "skipped"
+                    result.status = "fail" if result.failures else "skipped"
                     result.skipped_reason = exec_evidence["skipped"]
                     result.metrics = {
                         **plan_evidence.get("metrics", {}),
@@ -1415,7 +1422,7 @@ class GISBenchmarkRunner:
                 result.failures.extend(exec_evidence.get("failures") or [])
 
             # Assemble B3 metrics.
-            metrics: Dict[str, Any] = dict(plan_evidence.get("metrics") or {})
+            metrics: Dict[str, float | bool | None] = dict(plan_evidence.get("metrics") or {})
             metrics.update(turn_metrics)
             metrics["numerical_correct"] = None
             metrics["artifact_contract_valid"] = None

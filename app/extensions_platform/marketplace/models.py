@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # digest 形状红线：任何进入 registry 的 blob 引用必须是 sha256 hex。
 # 该形状同时是下载 API 的路径穿越防线（blob 文件名 = digest）。
@@ -54,6 +54,14 @@ class VersionRecord(BaseModel):
     yanked: bool = False  # 维度性撤回（仍可显式版本安装，不进 latest 解析）
     created_at: str = ""  # ISO8601，纯信息性（不参与任何判定）
 
+    @field_validator("version")
+    @classmethod
+    def _version_semver(cls, value: str) -> str:
+        from ..api_version import parse_version
+        if parse_version(value) is None:
+            raise ValueError("version must be a valid semantic version")
+        return value
+
     @field_validator("digest", "sbom_digest", "fingerprint")
     @classmethod
     def _digest_shape(cls, v: str) -> str:
@@ -82,6 +90,12 @@ class PackageRecord(BaseModel):
     status: str = PACKAGE_STATUS_ACTIVE
     deprecation_note: str = ""
     versions: dict[str, VersionRecord] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _version_keys(self) -> "PackageRecord":
+        if any(key != record.version for key, record in self.versions.items()):
+            raise ValueError("version index key must equal record.version")
+        return self
 
     @field_validator("id")
     @classmethod

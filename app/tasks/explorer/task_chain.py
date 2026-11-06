@@ -1,36 +1,13 @@
 """Explorer Celery task chain"""
 import logging
-import asyncio
 from app.services.task_queue import celery_app
+from app.services.geocompute._async_bridge import run_coro_sync
 
 logger = logging.getLogger(__name__)
 
-# 为 Celery prefork worker 提供持久事件循环，避免每次 asyncio.run() 创建新 loop
-_celery_loop: asyncio.AbstractEventLoop | None = None
-
-def _get_celery_loop() -> asyncio.AbstractEventLoop:
-    """获取或创建当前 worker 进程的持久事件循环。"""
-    global _celery_loop
-    if _celery_loop is None or _celery_loop.is_closed():
-        _celery_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(_celery_loop)
-    return _celery_loop
-
-
 def _run_async(coro):
-    """在 Celery worker 的持久事件循环中执行 async coroutine。"""
-    try:
-        running_loop = asyncio.get_running_loop()
-    except RuntimeError:
-        running_loop = None
-
-    if running_loop and running_loop.is_running():
-        return asyncio.run_coroutine_threadsafe(coro, running_loop).result()
-
-    loop = _get_celery_loop()
-    if loop.is_running():
-        return asyncio.run_coroutine_threadsafe(coro, loop).result()
-    return loop.run_until_complete(coro)
+    """Reuse the supervised loop bridge for prefork and concurrent thread pools."""
+    return run_coro_sync(coro, timeout_s=180.0)
 
 
 def _store_ref(data: dict, task_id: str, prefix: str = "explorer") -> str:

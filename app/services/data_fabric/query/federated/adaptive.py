@@ -154,6 +154,7 @@ def pick_tail_order(
         tail_sources=tail_sources,
         tail_edges=tail_edges,
         ndv_by_source=ndv_by_source,
+        entry_sources=entry_sources,
     )
     if not ranked:
         controller.mark_replan(adopted=False, reason="no connected tail order")

@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import json
 import logging
 import os
@@ -99,6 +101,12 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
         "图层", "删掉", "删除", "移除", "去掉", "清掉", "隐藏", "显示",
         "版面", "布局", "制图组件", "图例位置",
     ],
+    # 制图与多尺度表达
+    "cartography": ["制图", "图集", "瓦片服务", "多尺度", "缩放", "比例尺",
+                    "atlas", "cartography", "tile service", "scale representation"],
+    # 多步分析工作流与空间语义检查
+    "analysis": ["分析", "工作流", "坐标系", "空间语义", "analysis",
+                 "workflow", "CRS", "spatial semantics"],
     # 报告 / 导出
     "report": [
         "报告", "导出", "PDF", "下载", "图件", "制图",
@@ -106,7 +114,7 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
     # 数据接入 / 编目 / 上传（#678：dataset 域工具从 tier-1 降级后必须有激活词，
     # 否则永远不可见。裸"数据"过宽不加——几乎所有 GIS 查询都含它）
     "dataset": [
-        "数据集", "数据源", "上传", "编目", "物化",
+        "数据集", "数据源", "上传", "编目", "物化", "属性表", "要素详情", "分页",
         "dataset", "data source", "materialize",
     ],
     # What-if 情景模拟与空间决策
@@ -168,7 +176,7 @@ class ToolCatalog:
         self.registry = registry
         self.sticky_ttl = max(0, sticky_ttl)
         # session_id -> {domain -> 剩余轮次}
-        self._sticky: dict[str, dict[str, int]] = {}
+        self._sticky: OrderedDict[str, dict[str, int]] = OrderedDict()
         # #684：按用户轮衰减 — 记录 session 上次看到的 turn_id，用于判断是否跨用户轮
         self._sticky_turn: dict[str, Optional[str]] = {}
         self._MAX_STICKY_SESSIONS = 500
@@ -250,7 +258,8 @@ class ToolCatalog:
         """audit4 #981: tier-2 增量字节硬预算。
 
         超预算时按域优先级（本轮关键词命中域 → 计划声明域 → 其余粘性域，
-        域内按工具名排序保持确定性）截断 tier-2；tier-1 必发不截。LLM 的
+        明确技术标识符优先，再按域/前门/工具名保持确定性）装入 tier-2；
+        放不下的 schema 跳过而非终止后续候选；tier-1 必发不截。LLM 的
         自救通道（list_available_tools，tier-1 恒可见）不受影响。
 
         Runtime V4：surface.preferred_tools（阶段前门）与 tier-1 同列必发
@@ -278,8 +287,16 @@ class ToolCatalog:
             else:
                 tier2.append((name, s))
 
+        # Explicit technical identifiers (CRS codes, formats, method names)
+        # are stronger evidence than a shared domain or a webgis_ prefix.
+        query_terms = set(re.findall(r"[a-z][a-z0-9_:-]{2,}", (user_message or "").lower()))
+        query_terms -= {"the", "and", "for", "with", "this", "that", "from", "into"}
+
         def _rank(item: tuple[str, dict]) -> tuple:
-            name, _ = item
+            name, schema = item
+            description = schema.get("function", {}).get("description", "").lower()
+            identifiers = set(re.findall(r"[a-z][a-z0-9_:-]{2,}", description + " " + name.lower()))
+            explicit_matches = len(query_terms & identifiers)
             ranks = [
                 domain_rank[d]
                 for d in all_meta.get(name, {}).get("domains", [])
@@ -289,7 +306,7 @@ class ToolCatalog:
             # 预算截断时绝不能被同域的字母序挤掉——否则"各区…数量"这类
             # canonical 场景又回到intent不可达。
             front_door = 0 if name.startswith("webgis_") else 1
-            return (min(ranks) if ranks else len(domain_rank), front_door, name)
+            return (-explicit_matches, min(ranks) if ranks else len(domain_rank), front_door, name)
 
         sizes: dict[str, int] = {}
         for s in schemas:
@@ -306,7 +323,7 @@ class ToolCatalog:
         used = 0
         for name, _ in tier2:
             if used + sizes[name] > budget:
-                break
+                continue
             kept_names.append(name)
             used += sizes[name]
         dropped = len(tier2) - (len(kept_names) - len(tier1))
@@ -397,6 +414,8 @@ class ToolCatalog:
                 self._sticky_turn.pop(sid, None)
 
         sticky = self._sticky.get(session_id, {})
+        if session_id in self._sticky:
+            self._sticky.move_to_end(session_id)
         # #684：按用户轮衰减。turn_id 相同 → 同一用户轮内多次调用不衰减；
         # 不同 turn_id → 跨用户轮衰减 1；未传 turn_id → 按调用衰减（向后兼容）。
         if turn_id is not None:

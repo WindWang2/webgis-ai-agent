@@ -182,7 +182,7 @@ def test_core_wildcard_removed_style_tool_does_not_tick_core_step():
     orchestrator.clear_plan(session_id)
 
 
-def test_advance_step_normalizes_legacy_tool_name():
+def test_advance_step_normalizes_legacy_presentation_without_advancing_core():
     """R7: 遗留名（set_layer_style）规范化后匹配 canonical 工具 domain。"""
     orchestrator = AgentPlanOrchestrator()
     session_id = "sess_legacy_name"
@@ -199,8 +199,10 @@ def test_advance_step_normalizes_legacy_tool_name():
             # canonical 工具 webgis_layer_upsert 无 domain，但这里给它 core 声明
             return {"domains": ["core"]}
 
-    assert orchestrator.advance_step(session_id, "set_layer_style", LegacyRegistry()) == 1
-    assert plan.steps[0].done is True
+    # Canonical upsert is presentation-only: alias normalization must not let
+    # a style action falsely complete an analysis/core task.
+    assert orchestrator.advance_step(session_id, "set_layer_style", LegacyRegistry()) is None
+    assert plan.steps[0].done is False
     orchestrator.clear_plan(session_id)
 
 
@@ -316,7 +318,9 @@ async def test_flush_partially_completed_survives_restart_as_active(monkeypatch)
     assert orch.advance_step(sid, "hotspot_analysis", Reg()) == 1
     assert orch.advance_step(sid, "export_batch_maps", Reg()) == 2
     # 步骤 3 失败（模拟：直接置 canonical 状态，等价未来"失败步骤写回"路径）
-    canon = plan_store.peek(sid)
+    # peek() deliberately returns a defensive copy. Inject the simulated
+    # step failure into the orchestrator's authoritative in-flight plan.
+    canon = orch._canonical.get(sid)
     canon.steps[2].status = StepStatus.failed
     # flush 前 status 必须是 recompute 推导的（不靠调用方手动设置）
     await orch.flush(sid)

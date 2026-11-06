@@ -257,7 +257,8 @@ def test_replay_run_from_another_project_is_404():
     assert "not found in project" in resp.json()["message"]
 
 
-def test_resume_of_completed_run_is_conflict_409():
+@pytest.mark.parametrize("allow_rerun", [False, True])
+def test_resume_of_completed_run_is_conflict_409(allow_rerun):
     """状态机拒绝 → 409（引擎 ValueError 的诚实映射，非"猜"出来的）。"""
     project_id = _make_project(_unique("proj"))
     workflow_id = _make_workflow(project_id, _unique("wf"))
@@ -265,7 +266,7 @@ def test_resume_of_completed_run_is_conflict_409():
 
     resp = client.post(
         f"/api/v1/projects/{project_id}/runs/{run_id}/resume",
-        json={"allow_rerun": False}, headers=_auth_headers())
+        json={"allow_rerun": allow_rerun}, headers=_auth_headers())
     assert resp.status_code == 409, resp.text
     body = resp.json()
     assert body["code"] == "CONFLICT"

@@ -83,6 +83,8 @@ export interface VisualSnapshotUploadResult {
   reason?: string
 }
 
+const uploadsInFlight = new WeakSet<object>()
+
 /**
  * 采集当前画布并上传到 `/visual-snapshots`（观察被接受后调用 ——
  * revision 是服务端盖章值，fingerprint 是本次观察通过的指纹）。
@@ -104,6 +106,7 @@ export async function captureAndUploadVisualSnapshot(opts: {
   now?: number
 }): Promise<VisualSnapshotUploadResult> {
   const { map, sessionId, ownerToken, revision, fingerprint, stateRef } = opts
+  if (uploadsInFlight.has(stateRef)) return { uploaded: false, reason: 'upload_in_flight' }
   const decision = shouldCaptureVisualSnapshot({
     revision,
     now: opts.now ?? Date.now(),
@@ -112,6 +115,7 @@ export async function captureAndUploadVisualSnapshot(opts: {
   if (!decision.capture) {
     return { uploaded: false, reason: decision.reason }
   }
+  uploadsInFlight.add(stateRef)
   try {
     const blob = await captureMapCanvas(map as Parameters<typeof captureMapCanvas>[0])
     if (!blob || blob.size === 0) {
@@ -135,7 +139,7 @@ export async function captureAndUploadVisualSnapshot(opts: {
         method: 'POST',
         rawBody: form,
         ownerToken,
-        timeoutMs: 0,
+        timeoutMs: 30_000,
         label: 'Visual snapshot upload error',
       },
     )
@@ -156,5 +160,7 @@ export async function captureAndUploadVisualSnapshot(opts: {
   } catch (error) {
     devOnly.log('[visual-snapshot] capture/upload failed', error)
     return { uploaded: false, reason: 'capture_or_upload_failed' }
+  } finally {
+    uploadsInFlight.delete(stateRef)
   }
 }

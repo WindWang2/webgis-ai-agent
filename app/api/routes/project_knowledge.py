@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import logging
+import asyncio
+import hashlib
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -38,14 +40,17 @@ def _uid(user: Dict[str, Any]) -> str:
     return str(user.get("user_id") or user.get("id") or user.get("sub") or "")
 
 
-def _gate(project_id: str, user: Dict[str, Any], db: Session):
+def _gate(project_id: str, user: Dict[str, Any], db: Session, *, write: bool = False):
     """flag + IDOR 门：off → 503；越权 → 404（不区分缺失与拒绝）。"""
     if not project_knowledge_enabled():
         raise HTTPException(status_code=503, detail="project_knowledge_disabled")
     _ensure_hook_registered()
     org_id = _org(user)
-    project = ProjectService.get_project_with_auth(
-        db, project_id, user_id=_uid(user), org_id=_org_int(user)
+    if not org_id:
+        raise HTTPException(status_code=404, detail="project_not_found")
+    lookup = ProjectService.get_project_for_write if write else ProjectService.get_project_with_auth
+    project = lookup(
+        db, project_id, user_id=_uid(user), org_id=_org_int(org_id)
     )
     if project is None:
         raise HTTPException(status_code=404, detail="project_not_found")
@@ -66,13 +71,33 @@ def _ensure_hook_registered() -> None:
         logger.debug("[ProjectKnowledge] hook registration failed", exc_info=True)
 
 
-def _org_int(user: Dict[str, Any]) -> Optional[int]:
+def _org_int(org_id: str) -> Optional[int]:
     """project auth 门需要 int org（projects.org_id 是 Integer FK）。"""
-    raw = user.get("org_id")
     try:
-        return int(raw) if raw is not None else None
+        return int(org_id)
     except (TypeError, ValueError):
         return None
+
+
+async def _rebuild_budget(
+    project_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db),
+) -> None:
+    """Authorize before consuming shared actor/project rebuild cost budgets."""
+    await asyncio.to_thread(_gate, project_id, user, db, write=True)
+    from app.core.config import settings
+    from app.core.rate_limiter import get_rate_limiter, RedisRateLimiter
+
+    limiter = await get_rate_limiter()
+    if settings.is_production() and not isinstance(limiter, RedisRateLimiter):
+        raise HTTPException(status_code=503, detail="knowledge_rebuild_rate_ledger_unavailable")
+    for scope in (f"actor:{_uid(user)}", f"project:{project_id}"):
+        key = "project_knowledge:rebuild:" + hashlib.sha256(scope.encode()).hexdigest()
+        if isinstance(limiter, RedisRateLimiter):
+            allowed = await limiter.is_allowed(key, 6, 60, fail_closed=True)
+        else:
+            allowed = await limiter.is_allowed(key, 6, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="knowledge_rebuild_rate_limit", headers={"Retry-After": "60"})
 
 
 class RebuildResponse(BaseModel):
@@ -101,15 +126,12 @@ def get_knowledge_card(
     db: Session = Depends(get_db),
 ) -> CardResponse:
     project, org_id = _gate(project_id, user, db)
-    from app.services.project_knowledge import store as ks
-    from app.services.project_knowledge.card import render_project_knowledge_card
+    from app.services.project_knowledge.card import load_project_knowledge_card
 
-    entries = ks.get_active_entries(
-        db, org_id=org_id, project_id=project.id, limit=200
+    card = load_project_knowledge_card(
+        db, org_id=org_id, project_id=project.id, project_name=str(project.name or ""),
     )
-    card = render_project_knowledge_card(
-        entries, project_id=project.id, project_name=str(project.name or ""),
-    )
+    db.commit()
     return CardResponse(
         project_id=project.id,
         text=card.text,
@@ -136,16 +158,8 @@ def search_knowledge(
     kinds = [kind] if kind else None
     entries = ks.get_active_entries(
         db, org_id=org_id, project_id=project.id, kinds=kinds,
-        limit=max(1, min(int(limit), 100)),
+        limit=max(1, min(int(limit), 100)), query=q,
     )
-    needle = (q or "").strip().lower()
-    if needle:
-        # 文本过滤只影响**展示**命中（search 是浏览面）；复用判定永远不
-        # 看 subject 文本（见 retrieval）。
-        entries = [
-            e for e in entries
-            if needle in e.subject.lower() or needle in (e.summary or "").lower()
-        ]
     return {
         "project_id": project.id,
         "count": len(entries),
@@ -190,8 +204,9 @@ def rebuild_knowledge(
     project_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _budget: None = Depends(_rebuild_budget),
 ) -> RebuildResponse:
-    project, org_id = _gate(project_id, user, db)
+    project, org_id = _gate(project_id, user, db, write=True)
     from app.services.project_knowledge.indexer import rebuild_project_knowledge
 
     report = rebuild_project_knowledge(db, project=project, org_id=org_id)

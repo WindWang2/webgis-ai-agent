@@ -77,8 +77,7 @@ export function ClarificationCard({ state, onSubmit, onRefresh }: ClarificationC
   };
 
   const allAnswered = questions.every((q) => answerOf(q) !== undefined);
-  const anyWaived = questions.some((q) => waived[q.context_key]);
-  const canSubmit = !disabled && (allAnswered || anyWaived);
+  const canSubmit = !disabled && allAnswered;
 
   const handleSubmit = () => {
     if (!canSubmit) return;

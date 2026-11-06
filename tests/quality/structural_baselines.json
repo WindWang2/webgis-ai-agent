@@ -1,20 +1,20 @@
 {
  "context_chars_multi_domain_turn": {
-  "chars": 56863
+  "chars": 61616
  },
  "context_chars_network_turn": {
-  "chars": 52490
+  "chars": 57223
  },
  "context_chars_no_domain_first_turn": {
-  "chars": 32324
+  "chars": 37057
  },
  "schema_count_multi_domain_turn": {
-  "count": 71
+  "count": 72
  },
  "schema_count_network_turn": {
-  "count": 62
+  "count": 69
  },
  "schema_count_no_domain_first_turn": {
-  "count": 42
+  "count": 49
  }
 }

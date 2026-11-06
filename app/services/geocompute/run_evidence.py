@@ -15,9 +15,17 @@ owner 校验回放 —— 读取不再 404（快照来源在 ``ExecutionRun.sour
 """
 from __future__ import annotations
 
+from app.contracts.execution import (
+    EvidenceRecord,
+    RunExtras,
+    RunSnapshot,
+    SnapshotRun,
+    SnapshotSummary,
+)
+
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 from sqlalchemy import select
 
@@ -48,9 +56,9 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _evidence_full(ev: Any) -> dict[str, Any]:
+def _evidence_full(ev: Any) -> EvidenceRecord:
     """完整 evidence 投影（错误文本按快照预算截断）。"""
-    dump = ev.model_dump()
+    dump = cast(EvidenceRecord, ev.model_dump())
     msg = dump.get("error_message")
     if isinstance(msg, str) and len(msg) > _SNAPSHOT_ERROR_CHARS:
         dump["error_message"] = msg[:_SNAPSHOT_ERROR_CHARS]
@@ -60,7 +68,7 @@ def _evidence_full(ev: Any) -> dict[str, Any]:
     return dump
 
 
-def _evidence_compact(ev: Any) -> dict[str, Any]:
+def _evidence_compact(ev: Any) -> EvidenceRecord:
     """压缩 evidence 投影（L2：丢摘要/错误文本/指纹，保留判型字段）。"""
     return {
         "status": ev.status,
@@ -76,7 +84,7 @@ def _evidence_compact(ev: Any) -> dict[str, Any]:
     }
 
 
-def build_snapshot(run: Any, *, extras: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def build_snapshot(run: Any, *, extras: RunExtras | None = None) -> RunSnapshot:
     """ExecutionRun → 有界（≤ ``MAX_SNAPSHOT_BYTES``）JSON dict（确定性）。
 
     阶梯：L1 完整 evidence → L1.5 lineage 收缩 → L2 压缩 evidence →
@@ -90,7 +98,7 @@ def build_snapshot(run: Any, *, extras: Optional[dict[str, Any]] = None) -> dict
     - ``lineage``：无载荷 lineage 投影（≤32 条）—— 超限时按确定性阶梯
       收缩（32 → 8 → 省略）：evidence 细节优先于 lineage 广度。
     """
-    run_dict = {
+    run_dict: SnapshotRun = {
         "run_id": run.run_id,
         "plan_id": run.plan_id,
         "plan_fingerprint": run.plan_fingerprint,
@@ -108,7 +116,7 @@ def build_snapshot(run: Any, *, extras: Optional[dict[str, Any]] = None) -> dict
         lineage = None
 
     evidence = {nid: _evidence_full(ev) for nid, ev in run.evidence.items()}
-    snapshot: dict[str, Any] = {"run": run_dict, "evidence": evidence}
+    snapshot: RunSnapshot = {"run": run_dict, "evidence": evidence}
     if lineage:
         snapshot["lineage"] = lineage
     if _fits(snapshot):
@@ -143,7 +151,7 @@ def build_snapshot(run: Any, *, extras: Optional[dict[str, Any]] = None) -> dict
     keep = total
     while keep > 1:
         keep //= 2
-        candidate = {
+        candidate: RunSnapshot = {
             "run": run_dict,
             "evidence": dict(list(compact.items())[:keep]),
             "evidence_detail": "compact",
@@ -161,14 +169,14 @@ def build_snapshot(run: Any, *, extras: Optional[dict[str, Any]] = None) -> dict
     }
 
 
-def _fits(snapshot: dict[str, Any]) -> bool:
+def _fits(snapshot: RunSnapshot) -> bool:
     from app.services.geocompute.normalization import canonical_dumps
 
     return len(canonical_dumps(snapshot).encode("utf-8")) <= MAX_SNAPSHOT_BYTES
 
 
 def save_snapshot(
-    run: Any, owner_scope: str, *, extras: Optional[dict[str, Any]] = None
+    run: Any, owner_scope: str, *, extras: RunExtras | None = None
 ) -> bool:
     """run 终态快照 upsert（run_id 主键）；fail-open，返回是否落库。
 
@@ -221,7 +229,7 @@ def list_snapshots(
     *,
     limit: int = 50,
     exclude_ids: Optional[set[str]] = None,
-) -> list[dict[str, Any]]:
+) -> list[SnapshotSummary]:
     """owner 域的终态快照列表（V6 run 列表合并域；有界 ≤100）。
 
     只暴露有界摘要列（绝无快照 JSON 本体/载荷）；``exclude_ids`` 用于与
@@ -286,7 +294,7 @@ def load_snapshot(
 
 def load_snapshot_extras(
     run_id: str, *, owner_scope: Optional[str] = None
-) -> dict[str, Any]:
+) -> RunExtras:
     """读取快照中的 Wave-11 附加证据（reproducibility 判定 + lineage 投影）。
 
     owner 域校验与 ``load_snapshot`` 同一纪律：他人/未知 → ``{}``（不泄漏
@@ -308,8 +316,10 @@ def load_snapshot_extras(
                 return {}
             if owner_scope is not None and row.owner_scope != owner_scope:
                 return {}
-            snapshot = row.snapshot if isinstance(row.snapshot, dict) else {}
-            out: dict[str, Any] = {}
+            if not isinstance(row.snapshot, dict):
+                return {}
+            snapshot = cast(RunSnapshot, row.snapshot)
+            out: RunExtras = {}
             run_block = snapshot.get("run")
             if isinstance(run_block, dict) and isinstance(
                 run_block.get("reproducibility"), dict

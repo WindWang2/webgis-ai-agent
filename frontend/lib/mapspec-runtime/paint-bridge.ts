@@ -102,7 +102,7 @@ const FALLBACK_COLOR = "#cccccc";
  */
 export function sanitizeMapLibreExpression(
   value: unknown,
-  fallback: string = FALLBACK_COLOR,
+  fallback: string | number = FALLBACK_COLOR,
 ): unknown {
   if (!Array.isArray(value) || typeof value[0] !== "string") return value;
   const op = value[0];
@@ -248,7 +248,7 @@ export function toMapLibrePaint(
   }
 
   for (const [key, value] of Object.entries(out)) {
-    out[key] = sanitizeMapLibreExpression(value);
+    out[key] = sanitizeMapLibreExpression(value, key.includes("color") ? FALLBACK_COLOR : 0);
   }
 
   return out;

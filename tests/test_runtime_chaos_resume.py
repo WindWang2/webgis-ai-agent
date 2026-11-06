@@ -407,7 +407,8 @@ async def test_resume_racing_stalled_turn_emits_truthful_error_not_done(
     ``asyncio.wait_for(timeout=0)`` that raises TimeoutError immediately when
     the event is unset (no wall-clock sleep), so the outcome is deterministic.
     """
-    monkeypatch.setattr(chat_route, "_RESUME_LIVE_HOLD_S", 0.0)
+    from app.api.routes import chat_resume
+    monkeypatch.setattr(chat_resume, "_RESUME_LIVE_HOLD_S", 0.0)
     bridge = _GatedBridge(turns=1)
     _pi_path(bridge)
 
@@ -534,18 +535,18 @@ async def test_anonymous_resume_without_prior_contact_is_refused(_pi_path):
 def test_register_evicts_ended_before_live_when_over_cap():
     """P2 (review): over the per-session buffer cap an ENDED buffer is evicted
     first — a still-LIVE turn's buffer must survive N concurrent registrations
-    on the same key (e.g. five anonymous POSTs sharing ''), or a resume of the
+    on the same key (e.g. five queued turns in one canonical session), or a resume of the
     live turn fails → client resends → duplicate execution. A live buffer is
     only evicted when every buffer in the deque is live."""
     reg = TurnResumeRegistry(max_buffers_per_session=4)
-    live = TurnEventBuffer("", "live")
-    reg.register("", live)  # oldest registration, still LIVE
+    live = TurnEventBuffer("canonical-session", "live")
+    reg.register("canonical-session", live)  # oldest registration, still LIVE
     for i in range(4):
-        ended = TurnEventBuffer("", f"ended{i}")
-        ended.record(sse_event("done", {"session_id": ""}))  # terminal → ended
-        reg.register("", ended)
+        ended = TurnEventBuffer("canonical-session", f"ended{i}")
+        ended.record(sse_event("done", {"session_id": "canonical-session"}))  # terminal → ended
+        reg.register("canonical-session", ended)
 
-    survivors = list(reg._buffers[""])  # noqa: SLF001 — eviction asserted directly
+    survivors = list(reg._buffers["canonical-session"])  # noqa: SLF001 — eviction asserted directly
     assert len(survivors) == 4
     assert live in survivors, "the still-live buffer must survive eviction"
     assert all(b.ended for b in survivors if b is not live)
@@ -553,8 +554,8 @@ def test_register_evicts_ended_before_live_when_over_cap():
     # All-live overflow still caps (falls back to oldest-first eviction).
     all_live = TurnResumeRegistry(max_buffers_per_session=2)
     for _ in range(3):
-        all_live.register("", TurnEventBuffer("", "x"))
-    assert len(all_live._buffers[""]) == 2  # noqa: SLF001
+        all_live.register("canonical-session", TurnEventBuffer("canonical-session", "x"))
+    assert len(all_live._buffers["canonical-session"]) == 2  # noqa: SLF001
 
 
 @pytest.mark.asyncio

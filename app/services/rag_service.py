@@ -95,7 +95,8 @@ async def add_document(
         # 补偿用与删除同源的幂等原语（engine.delete_document → mark_deleted），
         # 只在向量确实已提交的路径执行（本 except 仅在 index_document 成功之后）。
         try:
-            await engine.delete_document(doc_id, tenant=tenant)
+            if not await engine.delete_document(doc_id, tenant=tenant):
+                raise RuntimeError("vector compensation did not delete the indexed document")
             logger.warning(
                 "[RAG] add_document compensation: soft-deleted orphan vectors for %s", doc_id
             )
@@ -233,7 +234,7 @@ async def list_documents(
     user_id: Optional[str] = None,
     org_id: Optional[int] = None,
 ) -> dict[str, Any]:
-    """列出知识库文档"""
+    """列出当前用户可检索的私有文档（同组织不隐含共享）。"""
     from sqlalchemy import func, select
 
     from app.models.knowledge_base import Document
@@ -244,11 +245,15 @@ async def list_documents(
         # `count(Document)`，导致分页 total 按全局文档数计算（翻页越界），
         # 并向每个租户泄露全平台文档总量。过滤条件单源化为一个 where 列表，
         # 两边引用同一份，杜绝再次漂移。
-        tenant_filters = []
+        if not user_id:
+            return {"total": 0, "items": []}
+        # FAISS ingestion always assigns a creator: org membership does not
+        # grant access to another creator's chunks. Keep listing consistent.
+        tenant_filters = [Document.creator_id == user_id]
         if org_id is not None:
             tenant_filters.append(Document.org_id == org_id)
-        elif user_id is not None:
-            tenant_filters.append(Document.creator_id == user_id)
+        else:
+            tenant_filters.append(Document.org_id.is_(None))
 
         count_stmt = select(func.count()).select_from(Document)
         if tenant_filters:

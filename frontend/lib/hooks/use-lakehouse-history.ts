@@ -1,5 +1,6 @@
 'use client';
 
+import { getAuthUser, subscribeAuth } from '@/lib/auth/tokenStore';
 import { useCallback, useEffect, useState } from 'react';
 
 /**
@@ -29,10 +30,10 @@ export interface LakehouseQueryRecord {
 function readJson<T>(key: string, fallback: T): T {
   try {
     if (typeof window === 'undefined') return fallback;
-    const raw = window.localStorage.getItem(key);
+    const raw = window.sessionStorage.getItem(`${key}:${getAuthUser()?.id ?? 'anonymous'}`);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as T;
-    return Array.isArray(parsed) ? parsed : fallback;
+    return Array.isArray(parsed) ? parsed.filter((record) => record && typeof record === 'object' && typeof record.id === 'string' && typeof record.label === 'string' && typeof record.ref === 'string' && typeof record.createdAt === 'number' && ['window', 'labeled', 'scan', 'rs', 'revise'].includes(record.kind) && record.request && typeof record.request === 'object') as T : fallback;
   } catch {
     return fallback;
   }
@@ -41,7 +42,7 @@ function readJson<T>(key: string, fallback: T): T {
 function writeJson(key: string, value: unknown): void {
   try {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem(key, JSON.stringify(value));
+    window.sessionStorage.setItem(`${key}:${getAuthUser()?.id ?? 'anonymous'}`, JSON.stringify(value));
   } catch {
     // 5MB 配额耗尽 / 隐私模式：历史缓存可丢弃，不打扰用户。
   }
@@ -61,9 +62,11 @@ export function useLakehouseHistory() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    setHistory(loadHistory());
-    setFavorites(loadFavorites());
-    setHydrated(true);
+    const load = () => { setHistory(loadHistory()); setFavorites(loadFavorites()); setHydrated(true); };
+    window.localStorage.removeItem(LAKEHOUSE_HISTORY_KEY);
+    window.localStorage.removeItem(LAKEHOUSE_FAVORITES_KEY);
+    load();
+    return subscribeAuth(load);
   }, []);
 
   const record = useCallback((entry: Omit<LakehouseQueryRecord, 'id' | 'createdAt'>) => {

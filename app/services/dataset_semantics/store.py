@@ -211,6 +211,18 @@ class DatasetSemanticStore:
         descriptor: GISDatasetDescriptor,
         fingerprint: str,
     ) -> PutResult:
+        from app.services.dataset_semantics.locking import dataset_write_lock
+
+        with dataset_write_lock(self._dataset_dir(session_id, dataset_key) / ".write.lock"):
+            return self._put_locked_sync(session_id, dataset_key, descriptor, fingerprint)
+
+    def _put_locked_sync(
+        self,
+        session_id: str,
+        dataset_key: str,
+        descriptor: GISDatasetDescriptor,
+        fingerprint: str,
+    ) -> PutResult:
         ddir = self._dataset_dir(session_id, dataset_key)
         head_path = ddir / _HEAD_NAME
         history: List[str] = []

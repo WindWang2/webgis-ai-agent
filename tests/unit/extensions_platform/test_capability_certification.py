@@ -225,6 +225,35 @@ class TestReviewRound3Fixes:
         ]
         assert size_checks and all(c["status"] == "pass" for c in size_checks)
 
+    @pytest.mark.parametrize("return_error", [True, False])
+    def test_error_return_and_raised_exception_never_bypass_probe(self, return_error):
+        """The callable boundary includes returned errors, not just successes."""
+        from types import SimpleNamespace
+
+        from app.extensions_platform.capability_certification import (
+            _run_probe_by_registered_name,
+        )
+        from app.tools.registry import ToolRegistry
+
+        def error_tool():
+            if return_error:
+                return {"success": False, "message": "界" * 20_000}
+            raise ValueError("invalid probe input")
+
+        registry = ToolRegistry()
+        registry.register(
+            "certv4_error_tool", "error boundary", error_tool,
+            result_size_policy="inline_small",
+        )
+        probe = SimpleNamespace(args={}, replay=False, expect_key=None)
+        checks = _run_probe_by_registered_name(
+            SimpleNamespace(_tool_registry=registry), "certv4_error_tool",
+            probe, "runtime_probe", "tool:error",
+        )
+        expected = "result size exceeds" if return_error else "probe raised"
+        assert any(c["status"] == "fail" and expected in c["detail"] for c in checks)
+        assert not any("result within" in c["detail"] for c in checks)
+
     def test_non_dict_result_with_expect_key_fails(self):
         """P2-4a：expect_key 声明了但结果非 JSON object → 如实失败，
         禁止 None==None 的空洞性通过。"""

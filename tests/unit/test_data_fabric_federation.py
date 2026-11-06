@@ -194,7 +194,7 @@ def test_executor_budget_exceeded_typed():
     ex = FederatedExecutor(lambda sid: adapters.get(sid))
     from app.services.data_fabric.query.models import ExecutionBudget
 
-    small = ExecutionBudget(max_rows=5, max_bytes=10**9, max_vertices=10**9, max_pages=2)
+    small = ExecutionBudget(max_rows=5, max_bytes=512 * 1024 * 1024, max_vertices=50_000_000, max_pages=2)
     req = FederatedQueryRequest(
         "srcA", "schools", "srcB", "districts", spatial_op="within", limit=5,
     )

@@ -1,3 +1,4 @@
+import { evaluateFilterBounded, isSupportedFilter } from '../layers/filter-evidence';
 /**
  * MapSpec-to-SVG Compiler Target
  *
@@ -10,7 +11,7 @@ import {
   resolveLayerVisibility,
 } from "../carto-ir/visibility";
 import {
-  representationModeAtZoom,
+  representationWindowAtZoom,
   resolveRepresentationPlan,
 } from "../carto-ir/representation";
 
@@ -31,12 +32,96 @@ export interface MapSpecToSvgOptions {
 }
 
 import { computeOversampleBoost, resolveOversampledTileGrid, mercY } from "../map-kit/oversample";
+import { wrapLabelMultilingual } from "@/lib/label-geometry";
 import {
   estimateLabelBox,
   fitLabel,
   MAX_LABELS_PER_EXPORT,
   solveExportLabels,
 } from "./label-solver";
+
+/** 线标注 repeat 锚点上限（Python _LINE_REPEAT_MAX_ANCHORS 同值）。 */
+const LINE_REPEAT_MAX_ANCHORS = 4;
+/** repeat 锚点计算的参与坐标帽（Python _LINE_REPEAT_MAX_POINTS 同值；
+ *  超长线确定性跨步采样，project 调用数有界）。 */
+const LINE_REPEAT_MAX_POINTS = 20000;
+
+/** symbol-placement=line 的等距 repeat 锚点（≤4；Python _line_repeat_anchors
+ *  逐分支孪生）：首锚在弧长中点，向两侧按 spacing 扩展；总长 < 2×spacing
+ *  时返回空（调用方回退单中点锚）。坐标帽采样：首点恒保留；尾点在一般 N
+ *  下被采样略去（弧长轻微低估，双孪生同式 —— R3 评审措辞修正）。 */
+function lineRepeatAnchors(
+  coords: unknown,
+  project: (c: [number, number]) => [string, string],
+  dpiSpacing: number,
+): Array<{ x: number; y: number; angle: number }> {
+  if (!Array.isArray(coords) || coords.length < 2 || dpiSpacing <= 0) return [];
+  // 坐标帽：超长线确定性跨步采样（首/尾点恒保留），与 Python 孪生同式。
+  let coordsList: unknown[] = coords;
+  if (coordsList.length > LINE_REPEAT_MAX_POINTS) {
+    const step = coordsList.length / LINE_REPEAT_MAX_POINTS;
+    coordsList = Array.from(
+      { length: LINE_REPEAT_MAX_POINTS },
+      (_, k) => coordsList[Math.min(coordsList.length - 1, Math.floor(k * step))],
+    );
+  }
+  const pts: Array<[number, number]> = [];
+  for (const c of coordsList) {
+    if (Array.isArray(c) && c.length >= 2) {
+      try {
+        const [px, py] = project(c as [number, number]);
+        pts.push([Number(px), Number(py)]);
+      } catch {
+        return [];
+      }
+    }
+  }
+  if (pts.length < 2) return [];
+  const segLens: number[] = [];
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    segLens.push(l);
+    total += l;
+  }
+  if (total <= 0 || total < 2 * dpiSpacing) return [];
+
+  const anchorAt = (s: number) => {
+    let acc = 0;
+    for (let i = 0; i < segLens.length; i += 1) {
+      const l = segLens[i];
+      if (acc + l >= s || i === segLens.length - 1) {
+        const t = l <= 0 ? 0 : Math.min(1, Math.max(0, (s - acc) / l));
+        return {
+          x: pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t,
+          y: pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t,
+          angle: (Math.atan2(pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0]) * 180) / Math.PI,
+        };
+      }
+      acc += l;
+    }
+    return { x: pts[pts.length - 1][0], y: pts[pts.length - 1][1], angle: 0 };
+  };
+
+  const mid = total / 2;
+  const positions = [mid];
+  let k = 1;
+  while (positions.length < LINE_REPEAT_MAX_ANCHORS) {
+    let added = false;
+    if (mid + k * dpiSpacing <= total) {
+      positions.push(mid + k * dpiSpacing);
+      added = true;
+    }
+    if (positions.length < LINE_REPEAT_MAX_ANCHORS && mid - k * dpiSpacing >= 0) {
+      positions.push(mid - k * dpiSpacing);
+      added = true;
+    }
+    if (!added) break;
+    k += 1;
+  }
+  positions.sort((a, b) => a - b);
+  return positions.map((s) => anchorAt(s));
+}
 
 /**
  * Escapes a string for safe interpolation into an SVG attribute value.
@@ -146,6 +231,7 @@ const MAPLIBRE_EXPR_OPS = new Set([
   "step",
   "match",
   "literal",
+  "case",
 ]);
 
 /** Compile-time zoom used to evaluate MapLibre interpolate arrays (#1385 F04). */
@@ -155,7 +241,15 @@ function expressionInput(
   input: unknown,
   props: Record<string, any> | undefined,
   zoom: number,
+  depth = 0,
 ): number | string | undefined {
+  if (depth > 16) return undefined;
+  if (Array.isArray(input) && ['to-number', 'to-string', 'coalesce'].includes(input[0])) {
+    const values = input.slice(1).map((value) => expressionInput(value, props, zoom, depth + 1));
+    if (input[0] === 'to-string') return values[0] === undefined ? undefined : String(values[0]);
+    if (input[0] === 'to-number') return values.map(Number).find(Number.isFinite);
+    return values.find((value) => value !== undefined);
+  }
   if (input === "zoom" || (Array.isArray(input) && input[0] === "zoom")) return zoom;
   if (Array.isArray(input) && input[0] === "get" && typeof input[1] === "string") {
     return props?.[input[1]] as number | string | undefined;
@@ -171,6 +265,10 @@ function evaluateMapLibreExpression(
   fallback: unknown,
 ): unknown {
   const op = val[0];
+  if (op === 'case') {
+    for (let i = 1; i + 1 < val.length; i += 2) if (evaluateFilterBounded(val[i], { properties: props ?? {} }) === true) return val[i + 1];
+    return val[val.length - 1] ?? fallback;
+  }
   if (op === "literal") return val[1] !== undefined ? val[1] : fallback;
   if (op === "interpolate" || op === "interpolate-hcl" || op === "interpolate-lab") {
     const inputVal = Number(expressionInput(val[2], props, zoom));
@@ -209,7 +307,7 @@ function evaluateMapLibreExpression(
     const inputVal = expressionInput(val[1], props, zoom);
     for (let i = 2; i + 1 < val.length - 1; i += 2) {
       const label = val[i];
-      if (inputVal === label || String(inputVal) === String(label)) return val[i + 1];
+      if ((Array.isArray(label) ? label : [label]).some((item) => inputVal === item || String(inputVal) === String(item))) return val[i + 1];
     }
     return val.length >= 3 ? val[val.length - 1] : fallback;
   }
@@ -364,6 +462,31 @@ export function resolvePaintValue(
   return spec.value !== undefined ? spec.value : fallback;
 }
 
+function validGeographicCoordinates(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  if (typeof value[0] === 'number') return value.length >= 2 && Number.isFinite(value[0]) && Number.isFinite(value[1]) && Math.abs(value[0]) <= 180 && Math.abs(value[1]) <= 90;
+  return value.every(validGeographicCoordinates);
+}
+
+function resolveLabelText(value: unknown, properties: Record<string, unknown>, depth = 0): string | undefined {
+  if (depth > 16) return undefined;
+  if (typeof value === 'string') return value.replace(/\{([^{}]+)\}/g, (_, key: string) => String(properties[key] ?? ''));
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (!Array.isArray(value)) return undefined;
+  const [op, ...args] = value;
+  if (op === 'get' && typeof args[0] === 'string') {
+    const found = properties[args[0]];
+    return typeof found === 'string' || typeof found === 'number' || typeof found === 'boolean' ? String(found) : undefined;
+  }
+  if (op === 'to-string' || op === 'literal') return resolveLabelText(args[0], properties, depth + 1);
+  if (op === 'coalesce') return args.map((arg) => resolveLabelText(arg, properties, depth + 1)).find((text) => text !== undefined);
+  if (op === 'concat' || op === 'format') {
+    const parts = (op === 'format' ? args.filter((_, index) => index % 2 === 0) : args).map((arg) => resolveLabelText(arg, properties, depth + 1));
+    return parts.some((part) => part === undefined) ? undefined : parts.join('');
+  }
+  return undefined;
+}
+
 export function compileMapSpecToSvg(
   mapspec: any,
   options: MapSpecToSvgOptions = {}
@@ -410,7 +533,14 @@ function compileMapSpecToSvgBody(
     maxY = -Infinity;
 
   const sources = mapspec?.sources || {};
-  Object.values(sources).forEach((src: unknown) => {
+  const renderedSourceIds = new Set((mapspec.layers ?? []).filter((layer: Parameters<typeof resolveLayerVisibility>[0]) => {
+    const visibility = resolveLayerVisibility(layer);
+    if (visibility.visibility === 'none') return false;
+    return (visibility.gate.minzoom === undefined || activeExportZoom >= visibility.gate.minzoom)
+      && (visibility.gate.maxzoom === undefined || activeExportZoom < visibility.gate.maxzoom);
+  }).map((layer: { source?: string }) => layer.source));
+  Object.entries(sources).forEach(([sourceId, src]: [string, unknown]) => {
+    if (!renderedSourceIds.has(sourceId)) return;
     const rec = src as { inlineData?: { type?: string; features?: unknown[] }; data?: { type?: string; features?: unknown[] } } | undefined;
     const geojson = rec?.inlineData ?? rec?.data;
     if (!geojson) return;
@@ -427,7 +557,7 @@ function compileMapSpecToSvgBody(
           typeof c[0] === "number" &&
           typeof c[1] === "number" &&
           Number.isFinite(c[0]) &&
-          Number.isFinite(c[1])
+          Number.isFinite(c[1]) && Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90
         ) {
           minX = Math.min(minX, c[0]);
           maxX = Math.max(maxX, c[0]);
@@ -482,10 +612,18 @@ function compileMapSpecToSvgBody(
 
   // 2. Render Layers to SVG paths
   let elementsSvg = "";
-  const layers = mapspec?.layers || [];
+  const layers = (mapspec?.layers || []).flatMap((layer: { id: string; type: string; layout?: Record<string, unknown>; label?: { field?: string; size?: number; color?: string; haloColor?: string; haloWidth?: number } }) => {
+    if (!layer.label?.field || ['raster', 'heatmap', 'background', 'hillshade', 'symbol', 'text'].includes(layer.type)) return [layer];
+    const label = layer.label;
+    return [layer, { ...layer, id: `${layer.id}-label`, type: 'symbol',
+      layout: { ...layer.layout, 'text-field': ['get', label.field], 'text-size': label.size ?? 12 },
+      paint: { 'text-color': label.color ?? '#000000', 'text-halo-color': label.haloColor ?? '#ffffff', 'text-halo-width': label.haloWidth ?? 1 },
+    }];
+  });
 
+  const invalidCoordinatesDiagnosed = new Set<string>();
   layers.forEach((rawLayer: unknown) => {
-    const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string; visibility?: unknown; representation?: unknown };
+    const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string; visibility?: unknown; representation?: unknown; filter?: unknown };
     let layerType = layer.type || "circle";
 
     // v1.6（方向 5 / C6）：导出 = 固定 zoom 的一次裁决 —— 显隐/结构 zoom
@@ -508,8 +646,10 @@ function compileMapSpecToSvgBody(
       return;
     }
     const repPlan = resolveRepresentationPlan(layer as never);
+    let windowSourceOverride: string | undefined;
     if (repPlan?.nonTrivial) {
-      const mode = representationModeAtZoom(repPlan, exportZoom);
+      const activeWindow = representationWindowAtZoom(repPlan, exportZoom);
+      const mode = activeWindow.mode;
       if (mode === "hidden") {
         options.onDiagnostic?.(
           "layer_representation_hidden",
@@ -521,6 +661,16 @@ function compileMapSpecToSvgBody(
       // layer_approximated_heatmap 诊断）；其余模式导出按声明层型渲染。
       if (mode === "visual_heatmap" && layerType === "circle") {
         layerType = "heatmap";
+      }
+      // GOAL 04（M6 同合同）：artifact 窗源覆盖 —— 导出从派生工件源取数
+      // （与后端 multiscale/export_adjudication.export_source_override 孪生；
+      // 统计/图例口径仍为 original_source）。
+      if ((mode === "generalized" || mode === "aggregate_grid") && activeWindow.source) {
+        windowSourceOverride = activeWindow.source;
+        options.onDiagnostic?.(
+          "layer_generalized_artifact",
+          `layer=${layer.id} source=${windowSourceOverride} zoom=${exportZoom}`,
+        );
       }
     }
 
@@ -543,7 +693,7 @@ function compileMapSpecToSvgBody(
       return;
     }
 
-    const srcId = layer.source;
+    const srcId = windowSourceOverride ?? layer.source;
     if (!srcId) return;
     const src = sources[srcId] as {
       tiles?: string[];
@@ -591,6 +741,12 @@ function compileMapSpecToSvgBody(
       options.onDiagnostic?.("layer_ref_unavailable", String(layer.id ?? ""));
       return;
     }
+    if (layer.filter && !isSupportedFilter(layer.filter)) {
+      options.onDiagnostic?.('layer_filter_unsupported', String(layer.id ?? ''));
+      return;
+    }
+    if (layerType === 'heatmap') options.onDiagnostic?.('layer_approximated_heatmap', `layer=${layer.id}`);
+    if (layerType === 'fill-extrusion') options.onDiagnostic?.('layer_approximated_extrusion', `layer=${layer.id}`);
     const features: unknown[] = srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
 
     features.forEach((rawFeat: unknown) => {
@@ -598,8 +754,14 @@ function compileMapSpecToSvgBody(
         geometry?: { type?: string; coordinates?: any };
         properties?: Record<string, any>;
       } | null;
+      if (layer.filter && (!feat || evaluateFilterBounded(layer.filter, feat) !== true)) return;
       const geom = feat?.geometry;
       if (!geom) return;
+      if (!validGeographicCoordinates(geom.coordinates)) {
+        const id = String(layer.id ?? '');
+        if (!invalidCoordinatesDiagnosed.has(id)) { invalidCoordinatesDiagnosed.add(id); options.onDiagnostic?.('layer_coordinates_invalid', id); }
+        return;
+      }
       const props = feat?.properties || {};
 
       if (layerType === "circle" && geom.type === "Point") {
@@ -665,7 +827,7 @@ function compileMapSpecToSvgBody(
         if (layerType === "fill-extrusion") {
           // 3D 透视压平为平面 fill —— 逐层近似诊断（与产物内
           // data-export-degraded 标记同义，供 content="mixed" 判定）。
-          options.onDiagnostic?.("layer_approximated_extrusion", `layer=${layer.id}`);
+
         }
         const polygons = geom.type === "Polygon" ? [geom.coordinates] : geom.coordinates;
         const defaultColor = layerType === "fill-extrusion" ? "#94a3b8" : "#60a5fa";
@@ -696,7 +858,7 @@ function compileMapSpecToSvgBody(
       } else if (layerType === "heatmap") {
         // 核密度以半透明圆近似（无 kernel 权重）—— 逐层近似诊断，
         // 导出面据此置 data-export-content="mixed"（不静默近似）。
-        options.onDiagnostic?.("layer_approximated_heatmap", `layer=${layer.id}`);
+
         const pts: [number, number][] = [];
         if (geom.type === "Point" && Array.isArray(geom.coordinates)) {
           pts.push(geom.coordinates as [number, number]);
@@ -720,9 +882,9 @@ function compileMapSpecToSvgBody(
         });
       } else if (layerType === "symbol" || layerType === "text") {
         const layout = layer.layout || {};
-        const textFieldPattern = String(layout["text-field"] ?? paint["text-field"] ?? "{name}");
-        const fieldName = textFieldPattern.replace(/^\{|\}$/g, "");
-        const rawText = props?.[fieldName] ?? props?.name ?? props?.label ?? (textFieldPattern.startsWith("{") ? "" : textFieldPattern);
+        const textFieldPattern = layout['text-field'] ?? paint['text-field'] ?? '{name}';
+        const rawText = resolveLabelText(textFieldPattern, props);
+        if (rawText === undefined) options.onDiagnostic?.('label_expression_unsupported', String(layer.id ?? ''));
         if (!rawText) return;
 
         let coord: [number, number] | undefined;
@@ -825,38 +987,76 @@ function compileMapSpecToSvgBody(
           // W6：确定性碰撞模式 —— 收集请求供全图求解（与 Python 孪生同构）。
           // 注意 project() 返回 fmtNum 字符串：数值用途须 Number() 还原。
           // MINOR-7：截断诊断与 Python 孪生同发射（label_truncated）。
-          const [fittedText, textTruncated] = fitLabel(String(rawText));
+          const [, textTruncated] = fitLabel(String(rawText));
           if (textTruncated) {
             options.onDiagnostic?.("label_truncated", `layer=${layer.id} len=${String(rawText).length}`);
           }
+          // Track B（M9，Python 孪生同构）：折行（≈8em，13 窄字符位，≤2 行，
+          // CJK 按字/拉丁按词）。15-59 字名折行截尾 → 补发 wrapped 口径
+          // 诊断（R3 评审：静默丢字必须披露；>60 已由上方 fitLabel 覆盖）。
+          const wrapLines = wrapLabelMultilingual(String(rawText), 13, 2);
+          const wrappedLen = wrapLines.reduce((n, ln) => n + Array.from(ln).length, 0);
+          if (wrappedLen < Array.from(String(rawText)).length) {
+            options.onDiagnostic?.(
+              "label_truncated",
+              `layer=${layer.id} wrapped-drop len=${Array.from(String(rawText)).length}`,
+            );
+          }
+          const collText = wrapLines.join("\n");
           let lkind: "point" | "line" | "polygon" = "point";
-          let lang = 0;
           if (geom.type === "LineString" && Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
             lkind = "line";
-            const mi = Math.floor(geom.coordinates.length / 2);
-            const pa = project(geom.coordinates[mi - 1] ?? geom.coordinates[0]);
-            const pb = project(geom.coordinates[mi] ?? geom.coordinates[1]);
-            lang = (Math.atan2(Number(pb[1]) - Number(pa[1]), Number(pb[0]) - Number(pa[0])) * 180) / Math.PI;
           } else if (geom.type === "Polygon" || geom.type === "MultiPolygon") {
             lkind = "polygon";
           }
-          labelRequests.push({
-            id: `lbl${labelRequests.length}-${layer.id}-${fmtNum((coord as [number, number])[0])}-${fmtNum((coord as [number, number])[1])}`,
-            // 与 Python 孪生 fitted_text 同口径（>60 code points 截断）
-            text: fittedText,
-            kind: lkind,
-            x: Number(x),
-            y: Number(y),
-            angle: lang,
-            fontPx: baseSize * dpiScale,
-            fontSizeAttr: fontSize,
-            color,
-            opacity,
-            fontFamily,
-            haloWidth,
-            haloColor,
-            haloOpacity,
-          });
+          // Track B（M9）：layer.label.priorityField 数值代理 → importance。
+          const labelCfg = (layer as { label?: Record<string, unknown> }).label;
+          const pf = labelCfg && typeof labelCfg === "object"
+            ? (labelCfg.priorityField ?? labelCfg.priority_field)
+            : undefined;
+          let importance: number | null = null;
+          if (typeof pf === "string" && pf) {
+            const pv = props[pf];
+            if (typeof pv === "number" && Number.isFinite(pv)) importance = pv;
+          }
+          // 锚点集：默认单锚；line + symbol-placement=line → 等距 repeat
+          // 锚（≤4，间距 250px×dpiScale，对齐 MapLibre symbol-spacing 缺省）。
+          let anchors: Array<{ x: number; y: number; angle: number }> = [];
+          if (lkind === "line" && String(layout["symbol-placement"] ?? "") === "line") {
+            anchors = lineRepeatAnchors(geom.coordinates, project, 250 * dpiScale);
+          }
+          if (anchors.length === 0) {
+            let lang = 0;
+            if (lkind === "line") {
+              const coordsArr = geom.coordinates as [number, number][];
+              const mi = Math.floor(coordsArr.length / 2);
+              const pa = project(coordsArr[mi - 1] ?? coordsArr[0]);
+              const pb = project(coordsArr[mi] ?? coordsArr[1]);
+              lang = (Math.atan2(Number(pb[1]) - Number(pa[1]), Number(pb[0]) - Number(pa[0])) * 180) / Math.PI;
+            }
+            anchors = [{ x: Number(x), y: Number(y), angle: lang }];
+          }
+          for (let ai = 0; ai < anchors.length; ai += 1) {
+            const a = anchors[ai];
+            const idSuffix = ai === 0 ? "" : `-r${ai}`;
+            labelRequests.push({
+              id: `lbl${labelRequests.length}${idSuffix}-${layer.id}-${fmtNum((coord as [number, number])[0])}-${fmtNum((coord as [number, number])[1])}`,
+              text: collText,
+              kind: lkind,
+              x: a.x,
+              y: a.y,
+              angle: a.angle,
+              fontPx: baseSize * dpiScale,
+              fontSizeAttr: fontSize,
+              color,
+              opacity,
+              fontFamily,
+              haloWidth,
+              haloColor,
+              haloOpacity,
+              importance,
+            });
+          }
           return;
         }
 
@@ -874,16 +1074,27 @@ function compileMapSpecToSvgBody(
 
   let labelsGroup = "";
   if (collisionMode && labelRequests.length > 0) {
+    // Track B（M9，Python 孪生同构）：priority = importance 稳定名次
+    // （priorityField 数值大者先保，live Top-N 同向；并列按收集序；
+    // 全缺 → 名次=收集序，既有行为不变）。
+    const order = labelRequests
+      .map((r: { importance?: number | null }, i: number) => ({
+        imp: typeof r.importance === "number" ? r.importance : -Infinity,
+        i,
+      }))
+      .sort((a, b) => b.imp - a.imp || a.i - b.i);
+    const rankOf = new Map<number, number>();
+    order.forEach((o, rank) => rankOf.set(o.i, rank));
     const solution = solveExportLabels(
-      labelRequests.map((r, i) => ({
-        id: r.id,
-        text: r.text,
-        kind: r.kind,
-        x: r.x,
-        y: r.y,
-        angle: r.angle,
-        fontSize: r.fontPx,
-        priority: i,
+      labelRequests.map((r: Record<string, unknown>, i: number) => ({
+        id: r.id as string,
+        text: r.text as string,
+        kind: r.kind as "point" | "line" | "polygon",
+        x: r.x as number,
+        y: r.y as number,
+        angle: r.angle as number,
+        fontSize: r.fontPx as number,
+        priority: rankOf.get(i) ?? i,
       })),
       [0, 0, scaledWidth, scaledHeight],
       labelBudget,
@@ -894,9 +1105,11 @@ function compileMapSpecToSvgBody(
       if (p.status !== "placed") continue;
       const r = byId.get(p.id)!;
       const fs = r.fontPx;
+      const lines = String(r.text).split("\n");
       let tx: number, ty: number, anchor: string, baseline: string, transform = "";
       if (r.kind === "point") {
         // 渲染映射：求解盒左下角 → 基线 y（上升部补偿）—— Python 孪生同式。
+        // 多行：盒高（行数口径）参与基线补偿，行距 1.2em。
         const h = estimateLabelBox(r.text, fs)[1];
         tx = p.x;
         ty = p.y + h - 0.25 * fs;
@@ -909,13 +1122,27 @@ function compileMapSpecToSvgBody(
         baseline = "central";
         transform = p.angle !== 0 ? ` transform="rotate(${fmtNum(p.angle)} ${fmtNum(p.x)} ${fmtNum(p.y)})"` : "";
       }
+      const lineY = (k: number, n: number): number =>
+        r.kind === "point"
+          ? ty + k * 1.2 * fs
+          : ty + (k - (n - 1) / 2) * 1.2 * fs;
+      // 多行 tspan（每行绝对 y，fmtNum 确定性）；单行保持既有无 tspan 形态。
+      const textBody =
+        lines.length === 1
+          ? escapeSvgAttr(lines[0])
+          : lines
+              .map(
+                (ln, k) =>
+                  `<tspan x="${fmtNum(tx)}" y="${fmtNum(lineY(k, lines.length))}">${escapeSvgAttr(ln)}</tspan>`,
+              )
+              .join("");
       let haloMain = "";
       if (r.haloWidth !== null) {
-        haloMain += `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="none" stroke="${r.haloColor}" stroke-width="${r.haloWidth}" stroke-opacity="${r.haloOpacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${escapeSvgAttr(r.text)}</text>\n`;
+        haloMain += `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="none" stroke="${r.haloColor}" stroke-width="${r.haloWidth}" stroke-opacity="${r.haloOpacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${textBody}</text>\n`;
       }
       parts.push(
         haloMain +
-          `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="${r.color}" fill-opacity="${r.opacity}" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${escapeSvgAttr(r.text)}</text>`,
+          `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="${r.color}" fill-opacity="${r.opacity}" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${textBody}</text>`,
       );
     }
     if (solution.stats.suppressed > 0) {
@@ -925,7 +1152,7 @@ function compileMapSpecToSvgBody(
       );
     }
     if (solution.budgetExceeded) {
-      options.onDiagnostic?.("label_budget_exceeded", String(MAX_LABELS_PER_EXPORT));
+      options.onDiagnostic?.("label_budget_exceeded", String(labelBudget));
     }
     if (parts.length > 0) {
       labelsGroup = `  <g class="mapspec-labels">\n    ${parts.join("\n    ")}\n  </g>\n`;

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Compass } from 'lucide-react';
+import { computeNiceScale } from '@/lib/map-kit/scale-math';
 import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
 import { useT } from '@/lib/i18n/useT';
 
@@ -15,14 +16,8 @@ interface Props {
 
 // Convert zoom + latitude to meters/pixel, then snap to a human-friendly scale
 export function computeScale(zoom: number, lat: number): { meters: number; pixels: number } {
-  const metersPerPixel = metersPerPixelAt(zoom, lat);
-  const targetMeters = metersPerPixel * 100;
-  const candidates = [50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000];
-  let best = candidates[0];
-  for (const c of candidates) {
-    if (c <= targetMeters) best = c;
-  }
-  return { meters: best, pixels: best / metersPerPixel };
+  const { meters, px } = computeNiceScale(metersPerPixelAt(zoom, lat), 100);
+  return { meters, pixels: px };
 }
 
 function formatMeters(m: number): string {

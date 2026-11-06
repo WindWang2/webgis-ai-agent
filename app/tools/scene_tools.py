@@ -59,6 +59,7 @@ def register_scene_tools(registry: ToolRegistry):
               "terrain_source": "决策含地形时绑定：spec 内 raster-dem 源 id（写入 suggested_scene.terrain.source；缺省时建议省略 terrain 并披露 —— 无源 terrain 会被 set_map_scene 拒绝）",
           },
           side_effect="cacheable_read",
+          network=False,
           deterministic=True,
           latency_class="fast",
           memory_class="light",

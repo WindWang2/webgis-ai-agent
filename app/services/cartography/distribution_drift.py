@@ -14,7 +14,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+import math
+from typing import Any, Dict, List, Optional, Sequence, TypeGuard
 
 logger = logging.getLogger(__name__)
 
@@ -57,18 +58,31 @@ def distribution_fingerprint(field_profile: Optional[Dict[str, Any]]) -> Optiona
     quantiles = field_profile.get("quantiles")
     if not isinstance(quantiles, list) or not quantiles:
         return None
-    payload = {
-        "quantiles": [round(float(q), 6) for q in quantiles if _is_number(q)],
-        "null_ratio": round(float(field_profile.get("null_ratio") or 0.0), 4),
-    }
-    if not payload["quantiles"]:
+    values = _quantile_vector(field_profile)
+    null_ratio = _null_ratio(field_profile)
+    if not values or null_ratio is None:
         return None
+    payload = {"quantiles": [round(q, 6) for q in values], "null_ratio": round(null_ratio, 4)}
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+def _is_number(value: object) -> TypeGuard[int | float]:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _null_ratio(evidence: Optional[Dict[str, Any]]) -> Optional[float]:
+    if not isinstance(evidence, dict):
+        return None
+    value = (evidence or {}).get("null_ratio")
+    if value is None:
+        return 0.0
+    return float(value) if _is_number(value) and 0 <= value <= 1 else None
 
 
 def detect_distribution_drift(
@@ -93,7 +107,9 @@ def detect_distribution_drift(
     """
     held_q = _quantile_vector(held)
     incoming_q = _quantile_vector(incoming)
-    if not held_q or not incoming_q or len(held_q) != len(incoming_q):
+    held_null, incoming_null = _null_ratio(held), _null_ratio(incoming)
+    if (not held_q or not incoming_q or len(held_q) != len(incoming_q)
+            or held_null is None or incoming_null is None):
         return {
             "evaluated": False,
             "drifted": False,
@@ -104,11 +120,9 @@ def detect_distribution_drift(
         max(incoming_q) - min(incoming_q),
     )
     max_dev = 0.0
-    for a, b in zip(held_q, incoming_q):
+    for a, b in zip(held_q, incoming_q, strict=True):
         denominator = max(abs(a), abs(b), span, 1e-9)
         max_dev = max(max_dev, abs(a - b) / denominator)
-    held_null = float((held or {}).get("null_ratio") or 0.0)
-    incoming_null = float((incoming or {}).get("null_ratio") or 0.0)
     null_delta = abs(incoming_null - held_null)
     drifted = max_dev > relative_threshold or null_delta > null_ratio_threshold
     return {
@@ -134,7 +148,7 @@ def _quantile_vector(evidence: Optional[Dict[str, Any]]) -> List[float]:
     quantiles = evidence.get("quantiles")
     if not isinstance(quantiles, list):
         return []
-    return [float(q) for q in quantiles if _is_number(q)]
+    return [float(q) for q in quantiles] if all(_is_number(q) for q in quantiles) else []
 
 
 def distribution_evidence(field_profile: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -142,11 +156,12 @@ def distribution_evidence(field_profile: Optional[Dict[str, Any]]) -> Optional[D
     if not isinstance(field_profile, dict):
         return None
     quantiles = _quantile_vector(field_profile)
-    if not quantiles:
+    null_ratio = _null_ratio(field_profile)
+    if not quantiles or null_ratio is None:
         return None
     return {
         "quantiles": quantiles,
-        "null_ratio": round(float(field_profile.get("null_ratio") or 0.0), 6),
+        "null_ratio": round(null_ratio, 6),
     }
 
 

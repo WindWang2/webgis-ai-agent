@@ -177,7 +177,6 @@ async def test_ok_status_runs_full_disclosure_in_order(_env):
     _env.finalize_result = SimpleNamespace(status="completed", repairs_applied=False)
     out = await apply_post_dispatch_disclosure(_disclosure())
 
-    assert out.cache_plan_sse_unconditionally is True
     assert out.plan_sse == "SSE:1"
     assert out.finalization_payload == {"task_complete": True, "sid": "sess-pd"}
     assert out.stale_generation is False

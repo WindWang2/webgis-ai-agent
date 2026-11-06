@@ -63,7 +63,7 @@ def _transform_tuple(transform) -> Tuple[float, float, float, float, float, floa
 
 def _transforms_equal(t1, t2) -> bool:
     a, b = _transform_tuple(t1), _transform_tuple(t2)
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=True):
         if not math.isclose(x, y, rel_tol=_TRANSFORM_RTOL, abs_tol=_TRANSFORM_ATOL):
             return False
     return True
@@ -507,7 +507,7 @@ def iter_bounded_windows(
                 yield from (w for _, w in blocks)
                 return
         except Exception:  # noqa: BLE001 — block 枚举失败退固定网格
-            pass
+            logging.getLogger(__name__).warning('Raster block discovery failed; using the fixed bounded window grid', exc_info=True)
 
     for row0 in range(0, height, window_side):
         for col0 in range(0, width, window_side):

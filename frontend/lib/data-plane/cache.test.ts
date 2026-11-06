@@ -37,6 +37,23 @@ describe('estimateFeatureCollectionBytes', () => {
     expect(estimateFeatureCollectionBytes(undefined as never)).toBe(0);
     expect(estimateFeatureCollectionBytes({ type: 'FeatureCollection' } as never)).toBe(0);
   });
+
+  it('recounts in-place property growth without counting inherited or cyclic payload twice', () => {
+    const collection = fc(1);
+    const properties: Record<string, unknown> = collection.features[0].properties;
+    const original = estimateFeatureCollectionBytes(collection);
+    properties.payload = 'x'.repeat(100);
+    expect(estimateFeatureCollectionBytes(collection)).toBe(original + 214);
+    properties.self = properties;
+    Object.setPrototypeOf(properties, { inherited: 'x'.repeat(10_000) });
+    expect(estimateFeatureCollectionBytes(collection)).toBe(original + 222);
+    const cache = new RefDataCache({ maxBytes: original + 250 });
+    cache.set('before', collection);
+    properties.payload = 'x'.repeat(1000);
+    cache.set('after', collection);
+    expect(cache.peek('after')).toBeUndefined();
+    expect(cache.peek('before')).toBeDefined();
+  });
 });
 
 describe('RefDataCache — basic LRU', () => {

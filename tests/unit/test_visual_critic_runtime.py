@@ -718,12 +718,12 @@ class TestCriticEngineMemoization:
         assert client.calls == 1  # 单轮至多一次外呼
         assert r2.status == r1.status == "evaluated"
 
-    async def test_cache_hits_including_not_evaluated(self):
+    async def test_transient_failures_are_retried(self):
         engine, client = _engine_with(exception=CriticTimeout("slow"))
         image = _png_bytes()
         await engine.evaluate(session_id="s1", mapspec_fingerprint="fp1", image=image)
         r2 = await engine.evaluate(session_id="s1", mapspec_fingerprint="fp1", image=image)
-        assert client.calls == 1
+        assert client.calls == 2
         assert r2.reason == "provider_timeout"  # 缓存回放，不再外呼
 
     async def test_cache_key_distinguishes_session_fingerprint_image(self):

@@ -138,6 +138,9 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
       };
 
+      const lockedRepairs = partitionByLock(patches.map((patch) => patch.layer_id)).locked;
+      if (lockedRepairs.length) return { status: 'failed', error: LOCK_CONFLICT_ERROR, result: { locked_layer_ids: lockedRepairs } };
+
       // Validate the entire patch before changing any layer. A user edit made
       // after the triggering observation supersedes the stale autonomous plan.
       for (const patch of patches) {
@@ -745,6 +748,8 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       // 跨 id 体系解析（同 layer_visibility_update：ref → 恢复层 id）。
       const targetIds = resolveLayerTargetsByRef(layer_id, getHudState);
+      const locked = partitionByLock(targetIds.length ? targetIds : [layer_id]).locked;
+      if (locked.length) return { status: 'failed', error: LOCK_CONFLICT_ERROR, result: { locked_layer_ids: locked } };
       const effectiveId = targetIds[0] ?? layer_id;
 
       // V3 round-2 FIX-B: resolve across BOTH id schemes (custom-… + store …__…).
@@ -861,6 +866,9 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { layer_id, position, before_id } = params || {};
+      const targets = typeof layer_id === 'string' ? resolveLayerTargetsByRef(layer_id, getHudState) : [];
+      const locked = partitionByLock(targets.length ? targets : typeof layer_id === 'string' ? [layer_id] : []).locked;
+      if (locked.length) return { status: 'failed', error: LOCK_CONFLICT_ERROR, result: { locked_layer_ids: locked } };
       // V3: silent no-ops become explicit failed results (design §6).
       if (!layer_id || typeof layer_id !== 'string' || !layer_id.trim() || layer_id === 'ref:' || layer_id === 'custom-') {
         return { status: 'failed', error: 'target_not_found' };
@@ -1042,6 +1050,9 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const layer_id = resolveTargetId(params, ['layer_id']);
+      const targets = typeof layer_id === 'string' ? resolveLayerTargetsByRef(layer_id, getHudState) : [];
+      const locked = partitionByLock(targets.length ? targets : typeof layer_id === 'string' ? [layer_id] : []).locked;
+      if (locked.length) return { status: 'failed', error: LOCK_CONFLICT_ERROR, result: { locked_layer_ids: locked } };
       const { filter } = (params || {}) as any;
       // V3: missing target → explicit failed result (was a silent return).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };

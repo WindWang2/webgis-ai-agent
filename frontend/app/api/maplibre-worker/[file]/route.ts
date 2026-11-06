@@ -17,6 +17,8 @@ import path from "node:path";
  */
 const ALLOWED = new Set(["maplibre-gl-worker.mjs", "maplibre-gl-shared.mjs"]);
 
+const contentCache = new Map<string, string>();
+
 type Ctx = { params: Promise<{ file: string }> };
 
 export async function GET(_req: Request, { params }: Ctx) {
@@ -26,11 +28,12 @@ export async function GET(_req: Request, { params }: Ctx) {
   }
   const filePath = path.join(process.cwd(), "node_modules", "maplibre-gl", "dist", file);
   try {
-    const content = await readFile(filePath, "utf-8");
+    const content = contentCache.get(file) ?? await readFile(filePath, "utf-8");
+    contentCache.set(file, content);
     return new NextResponse(content, {
       headers: {
         "Content-Type": "text/javascript; charset=utf-8",
-        "Cache-Control": "no-store",
+        "Cache-Control": "public, max-age=3600, must-revalidate",
       },
     });
   } catch {

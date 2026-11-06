@@ -114,7 +114,7 @@ function RunRow({ run }: { run: ModelOpsSessionRun }) {
 
 export function ModelOpsTab(_props: ModelOpsTabProps) {
   const [list, setList] = useState<ListState>({ status: 'loading' });
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ id: string; version: string } | null>(null);
   const seqRef = useRef(0);
   const mountedRef = useRef(true);
   const runs = useModelopsRuns();
@@ -146,7 +146,7 @@ export function ModelOpsTab(_props: ModelOpsTabProps) {
   }, [refresh]);
 
   if (selected) {
-    return <ModelOpsModelDetail modelId={selected} onBack={() => setSelected(null)} />;
+    return <ModelOpsModelDetail modelId={selected.id} modelVersion={selected.version} onBack={() => setSelected(null)} />;
   }
 
   return (
@@ -197,7 +197,7 @@ export function ModelOpsTab(_props: ModelOpsTabProps) {
             <li key={`${m.model_id}@${m.model_version}`}>
               <button
                 type="button"
-                onClick={() => setSelected(m.model_id)}
+                onClick={() => setSelected({ id: m.model_id, version: m.model_version })}
                 className="w-full rounded-md border border-edge-subtle bg-surface-raised px-3 py-2 text-left transition-colors hover:bg-surface-hover"
               >
                 <div className="flex items-center gap-2">

@@ -145,7 +145,7 @@ async def test_call_llm_retries_connect_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_llm_retries_429(monkeypatch):
+async def test_call_llm_does_not_replay_http_429(monkeypatch):
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -155,8 +155,9 @@ async def test_call_llm_retries_429(monkeypatch):
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
     async with _mock_pool(monkeypatch, handler):
-        await call_llm(_cfg(), [{"role": "user", "content": "hi"}])
-    assert calls["n"] == 2
+        with pytest.raises(httpx.HTTPStatusError):
+            await call_llm(_cfg(), [{"role": "user", "content": "hi"}])
+    assert calls["n"] == 1
 
 
 @pytest.mark.asyncio
@@ -174,7 +175,7 @@ async def test_call_llm_no_retry_on_400(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stream_retries_pre_yield_429(monkeypatch):
+async def test_stream_does_not_replay_http_503(monkeypatch):
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -185,10 +186,11 @@ async def test_stream_retries_pre_yield_429(monkeypatch):
 
     async with _mock_pool(monkeypatch, handler):
         events = []
-        async for ev in call_llm_stream(_cfg(), [{"role": "user", "content": "x"}]):
-            events.append(ev)
-    assert calls["n"] == 2
-    assert any(e[0] == "done" for e in events)
+        with pytest.raises(httpx.HTTPStatusError):
+            async for ev in call_llm_stream(_cfg(), [{"role": "user", "content": "x"}]):
+                events.append(ev)
+    assert calls["n"] == 1
+    assert events == []
 
 
 # ── #1005 部分: 无效缓存头移除 ────────────────────────────────────────────

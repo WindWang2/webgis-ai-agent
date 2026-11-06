@@ -5,7 +5,7 @@
 返回可操作修复计划（一键 op 序列）；warning 级 → 放行但把
 quality_advisories 与 P7 profile 契约扩展写进 layer/source 元数据。
 settings.MAP_QUALITY_GATE_MODE = enforce|advisory|off 是总开关与回滚面；
-per-intent ``quality_gate_bypass`` 是逃生舱（block 降级放行，必须留
+调用方 ``quality_gate_bypass`` 不授予绕过权限；服务端 advisory 模式放行并留
 审计事件）。与 09 线的边界：09 改评审段（cartographic_review），本钩子
 只在 pre-commit 数据质量面；若上游冲突本线让位。
 """
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # 返回可操作修复计划（一键 op 序列）；warning 级 → 放行但把
 # quality_advisories 与 P7 profile 契约扩展写进 layer/source 元数据。
 # settings.MAP_QUALITY_GATE_MODE = enforce|advisory|off 是总开关与回滚面；
-# per-intent ``quality_gate_bypass`` 是逃生舱（block 降级放行，必须留
+# 调用方 ``quality_gate_bypass`` 不授予绕过权限；服务端 advisory 模式放行并留
 # 审计事件）。与 09 线的边界：09 改评审段（cartographic_review），本钩子
 # 只在 pre-commit 数据质量面；若上游冲突本线让位。
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ async def _run_quality_gate_hook(
         return None
 
     blocking_codes = list(verdict.get("blocking_codes") or [])
-    bypass = bool(processed_layer.get("quality_gate_bypass") is True)
+    bypass = False  # Client/agent layer fields cannot override the server quality policy.
     if mode == "advisory" or bypass:
         # 逃生舱：降级放行，但必须留审计事件（禁止静默放行）。
         record_gate_event(
@@ -179,8 +179,7 @@ async def _run_quality_gate_hook(
             f"destructive_decisions: plan_id 附于 advisories。CRS 推断："
             f"{(verdict.get('crs_inference') or {}).get('crs') or '未知'}"
             f"（{(verdict.get('crs_inference') or {}).get('confidence') or '-'}）。"
-            "如确需跳过：该次 mutation 显式携带 quality_gate_bypass=true"
-            "（将记录审计事件）。"
+            "如需调整门禁，请由管理员修改服务端质量策略。"
         ),
         warnings=[
             str(a.get("message", ""))[:200]

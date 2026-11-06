@@ -260,6 +260,8 @@ def mnf(
         xc = xc / std
 
     c_noise, n_diffs = _noise_covariance_local_diff(arr, common)
+    if standardize:
+        c_noise = c_noise / std[:, None] / std[None, :]
     d_vals, u_vecs = np.linalg.eigh(c_noise)      # 升序
     # 奇异判定：相对 + 绝对双闸（纯梯度栈的差分协方差整体≈数值 0，
     # 仅相对闸会漏检——用数据方差尺度兜底）。
@@ -897,7 +899,8 @@ def mad_change(
         raise ValueError(
             f"两期栈形状不一致：A={arr_a.shape} vs B={arr_b.shape}"
             "（需同波段数同网格，先对齐）")
-    _check_scale(arr_a, "MAD 变化检测（两期合计 ×2）")
+    if arr_a.size * 6 > RS_SCALE_LIMIT_CELLS:
+        raise ResourceScaleMismatch("MAD combined stacks and workspace exceed raster budget", estimated=f"{arr_a.size * 6} float64 cells", limit=f"{RS_SCALE_LIMIT_CELLS} cells")
     n_bands, height, width = arr_a.shape
     common_a, _, frac_a, warn = _common_valid(arr_a, nodata_a, "MAD(T1)")
     common_b, _, frac_b, warn2 = _common_valid(arr_b, nodata_b, "MAD(T2)")
@@ -1171,7 +1174,7 @@ def extract_endmembers_vca(
 
     found_idx: List[int] = []
     found_basis = np.zeros((p, 0), dtype=float)   # 已选端元方向的规范正交基
-    for step in range(m):
+    for _step in range(m):
         if found_basis.shape[1] < p:
             a = rng.standard_normal(p)
             if found_basis.shape[1]:
@@ -1359,6 +1362,8 @@ def fcls_unmix(
     # ── 阶段 B：边界像元 δ-增广 NNLS（scipy 精确非负解，披露路径）──
     n_boundary = int((~interior).sum())
     x_all = x_con
+    if n_boundary > _FCLS_NNLS_BUDGET:
+        raise ValueError("FCLS NNLS boundary pixels exceed bounded computation budget; reduce raster extent")
     if n_boundary:
         from scipy.optimize import nnls as _nnls
 
@@ -1634,6 +1639,8 @@ def robust_normalize(
                 f"reference 波段数 {ref.shape[0]} != 栈波段数 {n_bands}"
                 "（逐波段同序匹配）")
         ref_invalid = ~np.isfinite(ref)
+        if nodata is not None:
+            ref_invalid |= ref == float(nodata)
         ref_values = np.where(ref_invalid, np.nan, ref)
         ref_lo = np.nanpercentile(ref_values, lo_q, axis=(1, 2))
         ref_hi = np.nanpercentile(ref_values, hi_q, axis=(1, 2))

@@ -18,14 +18,25 @@
 - owner 隔离：全部读路径按 owner_scope 过滤（他人 404 语义 → None）。
 """
 from __future__ import annotations
+from app.services.org_quota_admission import admit_persistent_write
+
+from app.contracts.workflow import (
+    InstancePatch,
+    InstanceRecord,
+    NodeRecord,
+    BindingRecord,
+    ReuseRecord,
+    NodeSpec,
+)
 
 import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import sqlalchemy as sa
+from sqlalchemy.orm import Session, Query
 from sqlalchemy.exc import OperationalError
 
 from app.services.workflow_runtime import contracts as C
@@ -65,6 +76,10 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+class SubworkflowCapacityExceeded(RuntimeError):
+    """Atomic owner-scoped child reservation limit reached."""
+
+
 class StoreUnavailable(RuntimeError):
     """存储暂不可用（SQLite busy / 连接池耗尽）—— 与 not_found 分道。"""
 
@@ -86,7 +101,7 @@ class TransitionResult:
         return f"TransitionResult(ok={self.ok}, code={self.code!r})"
 
 
-def _row_to_node(row: Any) -> Dict[str, Any]:
+def _row_to_node(row: Any) -> NodeRecord:
     return {
         "instance_id": row.instance_id,
         "node_id": row.node_id,
@@ -98,8 +113,8 @@ def _row_to_node(row: Any) -> Dict[str, Any]:
         "bound_ref": row.bound_ref or "",
         "output_ref": row.output_ref or "",
         "output_fingerprint": row.output_fingerprint or "",
-        "binding": dict(row.binding or {}),
-        "reuse": dict(row.reuse or {}),
+        "binding": cast(BindingRecord, dict(row.binding or {})),
+        "reuse": cast(ReuseRecord, dict(row.reuse or {})),
         "attempts_log": list(row.attempts_log or [])[:C.MAX_NODE_ATTEMPTS],
         "transitions": list(row.transitions or [])[:C.MAX_NODE_TRANSITIONS],
         "lease_expires_at": row.lease_expires_at.isoformat()
@@ -112,7 +127,7 @@ def _row_to_node(row: Any) -> Dict[str, Any]:
     }
 
 
-def _row_to_instance(row: Any) -> Dict[str, Any]:
+def _row_to_instance(row: Any) -> InstanceRecord:
     return {
         "instance_id": row.instance_id,
         "package_id": row.package_id,
@@ -165,14 +180,16 @@ class InstanceStore:
         project_id: str = "",
         parent_instance_id: str = "",
         parent_node_id: str = "",
-        node_specs: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        node_specs: list[NodeSpec],
+    ) -> InstanceRecord:
         """创建实例 + 全节点 PENDING 行（原子单事务）。
 
         ``node_specs``: [{node_id, optional}]，≤ MAX_INSTANCE_NODES。
         ``org_id``（ADR-0139）：租户作用域——REST 路径必传（effective
         org）；缺席（进程内信任域/匿名）时经同一会话工厂归 default 桶。
         """
+        if len(owner_scope) > 40:
+            raise ValueError("owner_scope exceeds 40 characters")
         if not node_specs:
             raise ValueError("instance requires at least one node")
         if len(node_specs) > C.MAX_INSTANCE_NODES:
@@ -193,10 +210,24 @@ class InstanceStore:
         turn_id_ctx = (_ctx.turn_id or "") if _ctx else ""
         run_id_ctx = (_ctx.run_id or "") if _ctx else ""
         with self._factory() as db:
+            if parent_instance_id:
+                from app.services.workflow_runtime.subworkflow import MAX_ACTIVE_SUBINSTANCES
+                dialect = db.get_bind().dialect.name
+                if dialect == "sqlite":
+                    db.execute(sa.text("BEGIN IMMEDIATE"))
+                elif dialect == "postgresql":
+                    import hashlib
+                    key = int.from_bytes(hashlib.sha256(owner_scope.encode()).digest()[:8], "big", signed=True)
+                    db.execute(sa.text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+                else:
+                    raise StoreUnavailable("atomic child reservations require SQLite or PostgreSQL")
+                if self._active_child_query(db, owner_scope, now).count() >= MAX_ACTIVE_SUBINSTANCES:
+                    raise SubworkflowCapacityExceeded("SUBWORKFLOW_CAP")
             if not org_id:
                 from app.core import tenancy
 
-                org_id = tenancy.get_or_create_default_org_id_sync(db)
+                org_id = tenancy.get_or_create_default_org_id_sync(db, commit=False)
+            admit_persistent_write(db, str(org_id), task_increment=1)
             db.add(WorkflowInstanceRow(
                 instance_id=instance_id,
                 package_id=package_id[:64],
@@ -237,7 +268,7 @@ class InstanceStore:
     def get_instance(
         self, instance_id: str, owner_scope: Optional[str] = None,
         *, org_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> InstanceRecord | None:
         """读实例（owner 过滤：他人实例 → None，防存在性预言机）。
 
         ``org_id``（ADR-0139）：传入时叠加租户谓词（REST 路径必传；
@@ -269,13 +300,13 @@ class InstanceStore:
             ).filter(WorkflowInstanceNodeRow.instance_id == instance_id).all()
             return {r.node_id: r.state for r in rows}
 
-    def get_nodes(self, instance_id: str) -> List[Dict[str, Any]]:
+    def get_nodes(self, instance_id: str) -> list[NodeRecord]:
         with self._factory() as db:
             rows = db.query(WorkflowInstanceNodeRow).filter(
                 WorkflowInstanceNodeRow.instance_id == instance_id).all()
             return [_row_to_node(r) for r in rows]
 
-    def get_node(self, instance_id: str, node_id: str) -> Optional[Dict[str, Any]]:
+    def get_node(self, instance_id: str, node_id: str) -> NodeRecord | None:
         with self._factory() as db:
             row = db.query(WorkflowInstanceNodeRow).filter(
                 WorkflowInstanceNodeRow.instance_id == instance_id,
@@ -313,6 +344,8 @@ class InstanceStore:
           白名单键）；
         - 每次成功转移**同事务**写一行 ``workflow_events`` journal。
         """
+        from app.lib.runtime.sync_io import warn_if_event_loop
+        warn_if_event_loop("WorkflowStore.transition_node")
         patch = dict(patch or {})
         # 幂等完成入口：目标状态已达成 → OK_IDEMPOTENT（重复完成事件
         # 绝不二次副作用；[R1-C3] 完成类转移永不放弃）。
@@ -479,8 +512,8 @@ class InstanceStore:
         self, instance_id: str, *,
         owner_scope: Optional[str] = None,
         expected_revision: Optional[int] = None,
-        fields: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        fields: InstancePatch,
+    ) -> InstanceRecord | None:
         """实例级 CAS 更新（revision +1；0 行 = 冲突返回 None）。"""
         allowed = {
             "status", "cancel_requested", "pending_changes", "decisions",
@@ -815,7 +848,7 @@ class InstanceStore:
     def list_recoverable_instances(
         self, *, now: Optional[datetime] = None,
         ttl_s: float = DEFAULT_LEASE_TTL_S, limit: int = 16,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[InstanceRecord]:
         """RUNNING 且需要恢复的实例（租约过期 / 无主超时 / 挂了取消旗标）。
 
         - run 租约过期 → driver 死亡，节点按孤儿处理；
@@ -854,7 +887,7 @@ class InstanceStore:
         self, session_id: str, *, owner_scope: Optional[str] = None,
         org_id: Optional[str] = None,
         active_only: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[InstanceRecord]:
         """会话实例清单（supersede/attach 判定用；有界 ≤16）。
 
         ``org_id``（ADR-0139）：REST 路径必传（叠加租户谓词）；进程内
@@ -878,7 +911,7 @@ class InstanceStore:
         self, owner_scope: str, *, org_id: Optional[str] = None,
         limit: int = 32,
         statuses: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[InstanceRecord]:
         with self._factory() as db:
             q = db.query(WorkflowInstanceRow).filter(
                 WorkflowInstanceRow.owner_scope == owner_scope)
@@ -897,27 +930,24 @@ class InstanceStore:
                 WorkflowInstanceRow.owner_scope == owner_scope[:40],
             ).limit(1).scalar()
 
-    def count_active_subworkflows(
-        self, owner_scope: str,
-    ) -> int:
-        """每 owner 活跃子实例计数（≤32 上界的判定输入 [R1-M7]）。
+    @staticmethod
+    def _active_child_query(db: Session, owner_scope: str, now: datetime) -> Query[WorkflowInstanceRow]:
+        # A new child reserves capacity before its driver acquires a run lease.
+        # Abandoned reservations age out on the same bounded lease horizon.
+        return db.query(WorkflowInstanceRow).filter(
+            WorkflowInstanceRow.owner_scope == owner_scope,
+            WorkflowInstanceRow.status == C.InstanceStatus.RUNNING,
+            WorkflowInstanceRow.parent_instance_id.isnot(None),
+            WorkflowInstanceRow.parent_instance_id != "",
+            sa.or_(WorkflowInstanceRow.run_lease_expires_at > now,
+                sa.and_(WorkflowInstanceRow.run_lease_expires_at.is_(None),
+                    WorkflowInstanceRow.created_at >= now - timedelta(seconds=DEFAULT_LEASE_TTL_S))),
+        )
 
-        只计**租约未过期**的 running 子实例 —— 父进程崩溃遗留的泄漏
-        RUNNING 行不永久占用上限（租约过期即让位；行本身的清扫为
-        follow-up，R2-M5 披露）。
-        """
+    def count_active_subworkflows(self, owner_scope: str) -> int:
+        """SQL count of live child leases and unclaimed recent reservations."""
         with self._factory() as db:
-            rows = db.query(WorkflowInstanceRow).filter(
-                WorkflowInstanceRow.owner_scope == owner_scope,
-                WorkflowInstanceRow.status == C.InstanceStatus.RUNNING,
-                WorkflowInstanceRow.parent_instance_id.isnot(None),
-                WorkflowInstanceRow.parent_instance_id != "",
-            ).all()
-            now = _utcnow()
-            return sum(
-                1 for r in rows
-                if r.run_lease_expires_at is not None
-                and r.run_lease_expires_at > now)
+            return self._active_child_query(db, owner_scope, _utcnow()).count()
 
     def instance_content_fingerprint(self, instance_id: str) -> str:
         """实例证据内容指纹（确定性测试 oracle；不含时间戳/revision）。"""

@@ -10,82 +10,31 @@
  * canvas export (map-kit/exporter), image bookkeeping (map-kit/renderer), DPI
  * management, controls and terrain — ran with zero coverage.
  *
- * This test statically scans frontend/lib + frontend/components (non-test
- * sources) for every `map.<ident>` access (call sites and bare accesses, e.g.
- * `typeof map.hasImage === 'function'` or passing `map.getLayoutProperty` as a
- * value), and asserts the identifier exists as a function on the shared mock.
- * The scan is deliberately a cheap regex over source text (per issue #404): it
- * fails loudly the day someone calls a new MapLibre method without adding it
- * to the mock, and it is trivially auditable.
- *
- * All map receivers in the app are named `map` (function params, or
- * `mapRef.current?.getMap()` / `mapInstance.getMap()` results), so the regex
- * `\bmap\.` captures the full runtime surface. False positives from the word
- * boundary (e.g. `"map.png"` output paths) are covered by NON_API_WHITELIST
- * below — every entry must state why it is not a MapLibre member.
+ * This test parses frontend/lib + frontend/components (non-test sources)
+ * for member accesses on the application's `map` variables, including bare
+ * method references and optional chains. Strings, comments, JSX text, and
+ * native collection fields are not MapLibre accesses. Nested map receivers
+ * such as `this.map` and `ctx.map` remain covered. This is a
+ * syntax-level contract, not whole-program type analysis.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeMockMaplibreMap } from './__mocks__/maplibre-map';
+import { scanMapAccesses } from './helpers/scan-map-accesses';
 
 const FRONTEND_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Application code only — tests may use their own stubs; the contract this
 // meta-test guards is the app's runtime surface, not test scaffolding.
 const SCAN_DIRS = ['lib', 'components'];
 
-/**
- * Identifiers the scan can match that are NOT MapLibre members. Every entry
- * must explain why it is exempt — adding entries without a real reason is how
- * mock drift sneaks back in.
- */
-const NON_API_WHITELIST: Record<string, string> = {
-  // Filesystem output path string literal — `path.join(args.outDir, "map.png")`
-  // in lib/mapspec-compiler/runtime-validate.ts. The word boundary before
-  // `map` holds inside the quoted string, so the access regex matches it;
-  // it is not a MapLibre member (unlike `map.getCanvas()` etc.).
-  png: 'string literal "map.png" (output file path) in lib/mapspec-compiler/runtime-validate.ts',
-  // Runtime V4 brush：dragPan/boxZoom 是 MapLibre 的 handler **对象**
-  // （{enable,disable,isEnabled}），不是方法 —— mock 同款对象形态。
-  dragPan: 'DragPanHandler object (map.dragPan.disable/enable) in map-panel brush mode',
-  boxZoom: 'BoxZoomHandler object (map.boxZoom.disable/enable) in map-panel brush mode',
-  // ADR-0144 P6/P7：
-  //  - i18n catalog 键字符串（`t('map.xxx.yyy')` / messages.json 导入路径）
-  //    以 `map.` 开头但非 MapLibre 成员；
-  //  - touchZoomRotate/touchPitch 是 handler **对象**（旋转/俯仰开关），
-  //    sketch 编辑器触控消歧使用 —— mock 已补同款对象形态。
-  json: 'i18n import path & catalog strings beginning with "map." (lib/i18n/messages.ts)',
-  compare: "i18n key string `map.compare.*` in comparison-view",
-  toolbar: "i18n key string `map.toolbar.*` across map components",
-  poi: "i18n key string `map.poi.*` in poi-info-panel",
-  webgl: "i18n key string `map.webgl.*` in map-panel",
-  table: "i18n key string `map.table.*` in table-panel",
-  legends: "i18n key string `map.legends.*` in legends",
-  sketch: "i18n key string `map.sketch.*` in sketch-editor",
-  decision: "i18n key string `map.decision.*` in decision-panel",
-  chrome: "i18n key string `map.chrome.*` in floating-chrome",
-  methodology: "i18n key string `map.methodology.*` in methodology-note",
-  uncertainty: "i18n key string `map.uncertainty.*` in uncertainty-panel",
-  chartPanel: "i18n key string `map.chartPanel.*` in chart-panel",
-  statsPanel: "i18n key string `map.statsPanel.*` in statistics-panel",
-  readout: "i18n key string `map.readout.*` in map-status-readout",
-  // C13 视觉修复卡片文案键（map.visualRepair.*）—— i18n catalog 字符串，
-  // 键名以 `map.` 开头但非 MapLibre 成员。
-  visualRepair: "i18n key string `map.visualRepair.*` in visual-repair-card",
-  // 复位/框选反馈的 toast 文案键（map.toast.* / map.brush.*）—— 键名以
-  // `map.` 开头但同样是 i18n catalog 字符串，非 MapLibre 成员。
-  toast: "i18n key string `map.toast.*` (focus-reset disclosure) in map-panel",
-  brush: "i18n key string `map.brush.*` (box-select feedback) in map-panel",
-  // settings 域 basemap 卡片副标题键（settings.map.providerVector/Raster）
-  // —— `map.` 段是键路径的一部分，同样非 MapLibre 成员。
-  providerVector: "i18n key string `settings.map.providerVector` in map-config",
-  providerRaster: "i18n key string `settings.map.providerRaster` in map-config",
-  touchZoomRotate: 'TouchZoomRotateHandler object (map.touchZoomRotate.disableRotation/enableRotation) in sketch-editor touch disambiguation',
-  touchPitch: 'TouchPitchHandler object (map.touchPitch.disable/enable) in sketch-editor touch disambiguation',
-};
-
-const ACCESS_RE = /\bmap\.([A-Za-z_][A-Za-z0-9_]*)/g;
+// MapLibre handlers are objects rather than methods. Unlike text exclusions,
+// these are real API members and must also exist on the mock.
+const HANDLER_MEMBERS = new Set([
+  'dragPan', 'boxZoom', 'touchZoomRotate', 'touchPitch',
+  'scrollZoom', 'dragRotate', 'tapZoom', 'keyboard', 'style',
+]);
 
 interface AccessSite {
   file: string;
@@ -114,15 +63,8 @@ function collectAccesses(): Map<string, AccessSite[]> {
           !/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name)
         ) {
           const src = fs.readFileSync(full, 'utf8');
-          ACCESS_RE.lastIndex = 0;
-          let m: RegExpExecArray | null;
-          while ((m = ACCESS_RE.exec(src)) !== null) {
-            const name = m[1];
-            const after = src.slice(ACCESS_RE.lastIndex);
-            const kind: AccessSite['kind'] =
-              after.startsWith('(') || after.startsWith('?.(') ? 'call' : 'access';
-            const line = src.slice(0, m.index).split('\n').length;
-            add(name, { file: full, line, kind });
+          for (const access of scanMapAccesses(src, full)) {
+            add(access.name, { file: full, line: access.line, kind: access.kind });
           }
         }
       }
@@ -133,6 +75,16 @@ function collectAccesses(): Map<string, AccessSite[]> {
 }
 
 describe('shared MapLibre mock covers the app-level MapLibre surface (#404)', () => {
+  it.each(['dragPan', 'scrollZoom', 'dragRotate', 'touchZoomRotate', 'tapZoom', 'keyboard'])(
+    '%s models the idle interaction state used by camera commands',
+    (name) => {
+      const map = makeMockMaplibreMap();
+      expect(map[name].isActive()).toBe(false);
+      map[name].isActive.mockReturnValue(true);
+      expect(map[name].isActive()).toBe(true);
+    },
+  );
+
   it('every map.<method> the application source touches exists on the mock', () => {
     const map = makeMockMaplibreMap();
     const accesses = collectAccesses();
@@ -140,17 +92,22 @@ describe('shared MapLibre mock covers the app-level MapLibre surface (#404)', ()
     // Sanity: the scan must actually find the known surface, otherwise the
     // meta-test silently guards nothing.
     expect(accesses.size).toBeGreaterThan(10);
-    // (forEach rather than for-of: the test tsconfig targets ES3, where only
-    // array iteration is allowed without downlevelIteration.)
     (['addLayer', 'getSource', 'queryRenderedFeatures', 'isStyleLoaded'] as const).forEach(
       (mustFind) => {
         expect(accesses.has(mustFind), `scan must still see ${mustFind}`).toBe(true);
       },
     );
 
+    // Keep class-owned MapLibre maps covered alongside the native cache field.
+    for (const name of ['triggerRepaint', 'queryTerrainElevation']) {
+      expect(accesses.get(name)?.some((site) =>
+        path.relative(FRONTEND_ROOT, site.file) === 'lib/map-kit/scene3d/asset-manager.ts',
+      ), `scan must still see this.map.${name} in the asset manager`).toBe(true);
+    }
+
     const missing: string[] = [];
     accesses.forEach((sites, name) => {
-      if (NON_API_WHITELIST[name]) return;
+      if (HANDLER_MEMBERS.has(name) && map[name] && typeof map[name] === 'object') return;
       if (typeof map[name] !== 'function') {
         const first = sites[0];
         missing.push(

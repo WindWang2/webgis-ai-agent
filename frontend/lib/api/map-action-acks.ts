@@ -21,7 +21,7 @@
  */
 
 import { API_BASE } from '@/lib/api/config';
-import { getAccessToken } from '@/lib/auth/tokenStore';
+import { getAccessToken, refreshAuthToken } from '@/lib/auth/tokenStore';
 import { devOnly } from '@/lib/utils/logger';
 import type { MapActionCorrelation, MapActionTerminalStatus } from '@/lib/types';
 
@@ -359,6 +359,11 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
         signal: controller.signal,
       },
     ).then(async (response) => {
+      if (response.status === 401 && accessToken && await refreshAuthToken()) {
+        finishRequest();
+        settleBatch(sessionId, items, { kind: 'transient', reason: 'http_401' }, gen);
+        return;
+      }
       let body: unknown;
       if (typeof response.json === 'function') {
         try {

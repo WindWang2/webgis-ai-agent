@@ -18,6 +18,7 @@
 零持久化、零修复动作（修复仍走既有 mutation 通道）、全部有界。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 from typing import Any, Dict, List, Optional
 
@@ -166,6 +167,7 @@ def validate_map_model_compat(
             model = registry.resolve(cartography)
             table = getattr(model, "geometry_layer_types", None) or {}
         except Exception:  # noqa: BLE001 — 单模型解析失败不阻断
+            observe_optional_failure(__name__)
             continue
         if not table:
             continue

@@ -1,6 +1,7 @@
 """GIS Skill Library 只读工具面（ADR-0182 §2.6；goal S17/S19/S20/S25）。
 
-3 个只读工具，全部以 ``SkillLibrary`` 为界（零副作用、确定性、有界投影）：
+4 个知识咨询工具，全部以 ``SkillLibrary`` 为界（确定性、有界投影）：
+search/policy 会追加进程级选择证据，不是可缓存的纯读；detail/replay 纯读。
 LLM 可问「有哪些技能、某个技能的完整作业过程、它的义务是否已被
 plan/evidence 覆盖」，但**看不到也不能改**技能资产，且第一步只看到
 SkillCard（渐进披露，不注入全文）。
@@ -20,27 +21,17 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 
-# 会话级证据记录器（有界环形；进程级共享，测试可 reset）
-_recorder = None
+from app.services.gis_harness.skills.instances import skill_instance, reset_skill_instance
 
 
 def get_skill_evidence_recorder():
-    """进程级 SkillEvidenceRecorder（惰性单例；测试用 reset 函数清理）。"""
-    global _recorder
-    if _recorder is None:
-        from app.services.gis_harness.skills.evidence import (
-            SkillEvidenceRecorder,
-        )
-        _recorder = SkillEvidenceRecorder()
-    return _recorder
+    from app.services.gis_harness.skills.evidence import SkillEvidenceRecorder
+    return skill_instance('evidence_recorder', SkillEvidenceRecorder)
 
 
 def reset_skill_evidence_recorder() -> None:
-    global _recorder
-    _recorder = None
+    reset_skill_instance('evidence_recorder')
 
-
-# ── args models（typed schema；public contract）─────────────────────────
 
 class SkillSearchArgs(BaseModel):
     query: str = Field(..., description="用户自然语言 GIS 目标（≤200 字）")
@@ -76,7 +67,7 @@ class SkillReplayArgs(BaseModel):
 
 
 def register_skill_library_tools(registry: ToolRegistry):
-    """注册技能库只读工具（tier 2：查询廉价、无副作用）。"""
+    """注册技能库咨询工具（tier 2；search/policy 保留证据写入语义）。"""
 
     @tool(
         registry,
@@ -89,8 +80,9 @@ def register_skill_library_tools(registry: ToolRegistry):
             "\n何时用：规划一个 GIS 作业前，先查『有哪些标准作业方法（skill）可用』；"
             "选中的技能再经 gis_skill_detail 读取完整过程。"
         ),
+        # record_selection appends to the observable evidence recorder on each call.
         args_model=SkillSearchArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="state_mutation", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "技能", "skill", "方法", "knowledge"),
         capabilities=["plan_workflow_orchestration"],
@@ -109,7 +101,8 @@ def register_skill_library_tools(registry: ToolRegistry):
             ontology_matches=[t.strip() for t in ontology_tasks.split(",") if t.strip()],
         )
         lib = get_skill_library()
-        result = lib.resolver.resolve(facts)
+        from app.services.gis_harness.skills.policy import TRUSTED_PACKS
+        result = lib.resolver.resolve(facts, packs=TRUSTED_PACKS)
         recorder = get_skill_evidence_recorder()
         if result.selected:
             top = result.top
@@ -137,7 +130,7 @@ def register_skill_library_tools(registry: ToolRegistry):
             "\n何时用：已选定技能、准备按其 procedure 执行作业时。"
         ),
         args_model=SkillDetailArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="pure", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "技能", "过程", "knowledge"),
         capabilities=["plan_workflow_orchestration"],
@@ -161,7 +154,7 @@ def register_skill_library_tools(registry: ToolRegistry):
             "\n何时用：作业完成或验收前，验证『该做的步骤都做了、该留的证据都在』。"
         ),
         args_model=SkillReplayArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="pure", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "技能", "重放", "验收", "knowledge"),
         capabilities=["plan_workflow_orchestration"],
@@ -194,8 +187,9 @@ def register_skill_library_tools(registry: ToolRegistry):
             "有界规划投影与回落原因。无合适技能时干净回落既有 harness planning。"
             "\n不授予能力/安全绕过权；induced 不进入本工具受信路径。"
         ),
+        # resolve_skill_guidance records policy/selection evidence by default.
         args_model=SkillPolicyArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="state_mutation", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "技能", "policy", "规划", "knowledge"),
         capabilities=["plan_workflow_orchestration"],

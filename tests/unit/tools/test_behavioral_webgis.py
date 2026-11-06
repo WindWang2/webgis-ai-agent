@@ -77,12 +77,11 @@ async def _commit_layer(sid: str, layer_id: str = "pop_layer") -> None:
 
 @pytest.mark.asyncio
 async def test_webgis_map_combine_behavioral(registry, session_base):
-    # validation：geojson 不在声明参数模型里 → 显式拒绝（unknown param 闸）
-    bad = await registry.dispatch("webgis_map_combine", {
-        "session_id": "bdw-combine", "geojson": {"type": "FeatureCollection"}})
+    # validation：geojson 形状非法（缺 features）→ 显式拒绝（参数模型字段
+    # 校验先于 unknown-param 闸 —— 拒绝语义即契约，消息由模型层产生）。
+    bad = await registry.dispatch('webgis_map_combine', {'geojson': {'type': 'FeatureCollection'}}, session_id='bdw-combine')
     assert isinstance(bad, dict) and bad.get("success") is False, bad
     assert bad.get("code") == "VALIDATION_ERROR"
-    assert "geojson" in (bad.get("message") or "")
 
     # happy path：5 槽位规范组合 → MapSpec 组装（未提交会话）
     assembled = await registry.dispatch("webgis_map_combine", {
@@ -194,7 +193,7 @@ async def test_webgis_world_state_behavioral(registry, session_base):
     assert "session" in (bad.get("message") or "").lower()
 
     # happy path：空会话也有可读快照（revision/summary，只读、无数据负载）
-    fresh = await registry.dispatch("webgis_world_state", {"session_id": "bdw-ws"})
+    fresh = await registry.dispatch('webgis_world_state', {}, session_id='bdw-ws')
     assert fresh.get("success") is True, fresh
     assert "revision" in fresh
     assert isinstance(fresh.get("summary"), str) and fresh["summary"]
@@ -202,7 +201,7 @@ async def test_webgis_world_state_behavioral(registry, session_base):
     # happy path：已提交图层 → 世界状态反映图层清单
     sid = "bdw-ws2"
     await _commit_layer(sid)
-    out = await registry.dispatch("webgis_world_state", {"session_id": sid})
+    out = await registry.dispatch('webgis_world_state', {}, session_id=sid)
     assert out.get("success") is True, out
     assert out.get("layer_count_total") == 1
     layers = out.get("layers") or []

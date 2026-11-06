@@ -235,10 +235,22 @@ def clean_turn_state():
     surface_receipt_store.clear()
 
 
-async def _register_turn(session_id: str, turn_id: str):
-    from app.agent_pi_bridge import register_active_pi_turn
+@pytest.fixture
+async def register_turn():
+    """Own manual route-test registrations through assertion failures too."""
+    registrations = []
 
-    await register_active_pi_turn(session_id, turn_id)
+    async def register(session_id: str, turn_id: str):
+        # Record before awaiting: registration can write local state before I/O.
+        registrations.append((session_id, turn_id))
+        await bridge_mod.register_active_pi_turn(session_id, turn_id)
+
+    try:
+        yield register
+    finally:
+        for session_id, turn_id in reversed(registrations):
+            # The real owner check must preserve a newer turn for this session.
+            await bridge_mod.unregister_active_pi_turn(session_id, turn_id)
 
 
 def _proxy_body(tool_call_id, inner_tool, token):
@@ -251,10 +263,10 @@ def _proxy_body(tool_call_id, inner_tool, token):
 
 
 @pytest.mark.asyncio
-async def test_unknown_tool_rejection_carries_machine_code(h01_registry, async_client):
+async def test_unknown_tool_rejection_carries_machine_code(h01_registry, async_client, register_turn):
     session_id, turn_id = "sess-h01-unknown", "turn-h01-unknown"
     token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
-    await _register_turn(session_id, turn_id)
+    await register_turn(session_id, turn_id)
 
     resp = await async_client.post(
         "/pi-tools/execute",
@@ -272,10 +284,10 @@ async def test_unknown_tool_rejection_carries_machine_code(h01_registry, async_c
 
 
 @pytest.mark.asyncio
-async def test_tier3_rejection_carries_machine_code(h01_registry, async_client):
+async def test_tier3_rejection_carries_machine_code(h01_registry, async_client, register_turn):
     session_id, turn_id = "sess-h01-tier3", "turn-h01-tier3"
     token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
-    await _register_turn(session_id, turn_id)
+    await register_turn(session_id, turn_id)
 
     resp = await async_client.post(
         "/pi-tools/execute",

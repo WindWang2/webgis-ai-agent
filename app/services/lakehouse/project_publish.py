@@ -8,7 +8,7 @@ session → project 的**零字节发布**：blobs 已在 CAS（内容寻址）�
 owner 链（R0-9，绝不泄漏存在性）：
 
 1. ``verify_session_owner``（async，SEC-08）—— session 归请求者；
-2. project 查无 / 他人 project → ``PublishError``（404 同族语义）；
+2. project 必须授予当前 live owner/editor 写权限，否则 ``PublishError``（404 同族）；
 3. 对象 manifest owner 校验（virtual children 同 owner 归解析层）。
 
 事务/并发形态：DB 变更走**同步单会话单事务**
@@ -61,6 +61,8 @@ async def publish_to_project(
     from app.services.auth_history_bridge import verify_session_owner
     from app.services.artifact_registry import get_artifact
 
+    if not actor_id or actor_id == "anonymous":
+        raise PublishError("project not found", code="LAKEHOUSE_PUBLISH_PROJECT_MISSING")
     if not object_ids or len(object_ids) > 200:
         raise PublishError("object_ids must be 1..200 entries")
     # owner 链 1：session 归请求者（fail-closed 404 语义由守卫给出）。
@@ -104,10 +106,8 @@ def _publish_sync(
     store: Optional[Any],
     ref_manifest_ids: Optional[Dict[str, Optional[str]]] = None,
 ) -> Dict[str, Any]:
-    from sqlalchemy import select
-
     from app.core.database import SessionLocal
-    from app.models.project import Project
+    from app.services.project_service import ProjectService
     from app.services.artifact_revisions import record_revision
     from app.services.lakehouse.catalog_service import (
         derive_entry_from_manifest,
@@ -120,17 +120,9 @@ def _publish_sync(
     )
 
     with SessionLocal() as db:
-        # owner 链 2：project 归请求者（查无/他人 → 404 同族，不泄漏）。
-        project = (
-            db.execute(
-                select(Project).where(
-                    Project.id == project_id, Project.status == "active"
-                )
-            )
-        ).scalar_one_or_none()
-        if project is None or (
-            actor_id is not None and str(project.owner_id) != str(actor_id)
-        ):
+        # Live owner/editor project write authority; denied reads share 404 semantics.
+        project = ProjectService.get_project_for_write(db, project_id, user_id=actor_id)
+        if project is None or project.status != "active":
             raise PublishError(
                 "project not found",
                 code="LAKEHOUSE_PUBLISH_PROJECT_MISSING",
@@ -287,24 +279,18 @@ async def revoke_project_objects(
     db, *, project_id: str, object_ids: Sequence[str], actor_id: Optional[str],
 ) -> Dict[str, Any]:
     """撤销项目内的发布（catalog tombstone；owner 校验同发布）。"""
-    from sqlalchemy import select
+    from app.services.project_service import ProjectService
 
-    from app.models.project import Project
+    if not actor_id or actor_id == "anonymous":
+        raise PublishError("project not found", code="LAKEHOUSE_PUBLISH_PROJECT_MISSING")
 
     def _revoke_sync() -> Dict[str, Any]:
         from app.core.database import SessionLocal
         from app.services.lakehouse.catalog_service import revoke_catalog_entries
 
         with SessionLocal() as sync_db:
-            project = (
-                sync_db.execute(
-                    select(Project).where(Project.id == project_id)
-                )
-            ).scalar_one_or_none()
-            if project is None or (
-                actor_id is not None
-                and str(project.owner_id) != str(actor_id)
-            ):
+            project = ProjectService.get_project_for_write(sync_db, project_id, user_id=actor_id)
+            if project is None:
                 raise PublishError(
                     "project not found",
                     code="LAKEHOUSE_PUBLISH_PROJECT_MISSING",

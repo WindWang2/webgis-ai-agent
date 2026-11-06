@@ -5,16 +5,16 @@
 > ToolRegistry / RecipeRegistry（F07：docs/dev/f07-execution-catalog-design.md）。
 
 - catalog_version: 1
-- generation_fingerprint: `86239bf50e73369aa795f29fc77bbde9`
-- 条目：capability 161 / algorithm 241 / tool 363 / recipe 166
+- generation_fingerprint: `9f01ee52e9cf4181baa0b9861dd8efb4`
+- 条目：capability 174 / algorithm 253 / tool 396 / recipe 166
 - deprecated 条目：0
-- provider 分布：{"core": 931}
-- conformance：fatal 0 / warning 294（truncate=False）
+- provider 分布：{"core": 989}
+- conformance：fatal 0 / warning 296（truncate=False）
 
 ## conformance 码分布
 
-- `capability_binding_unbacked`: 63
-- `catalog_output_contract_mismatch`: 54
-- `descriptor_metadata_incomplete`: 158
-- `provider_output_contract_divergence`: 19
+- `capability_binding_unbacked`: 66
+- `catalog_output_contract_mismatch`: 51
+- `descriptor_metadata_incomplete`: 157
+- `provider_output_contract_divergence`: 22
 

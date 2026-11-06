@@ -93,6 +93,13 @@ class _Comp:
         self.floating = floating
 
 
+def _priority(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (ValueError, TypeError, OverflowError):
+        return 0
+
+
 def _normalize(components: Iterable[Any]) -> List[_Comp]:
     out: List[_Comp] = []
     for c in components:
@@ -106,7 +113,7 @@ def _normalize(components: Iterable[Any]) -> List[_Comp]:
                     "none" if placement.get("mode") == "floating"
                     else str(c.get("position") or "none")
                 ),
-                priority=int(c.get("priority") or 0),
+                priority=_priority(c.get("priority")),
                 optional=c.get("required") is not True,
                 floating=placement.get("mode") == "floating",
             ))
@@ -117,7 +124,7 @@ def _normalize(components: Iterable[Any]) -> List[_Comp]:
                 ctype=str(getattr(c, "type", "") or ""),
                 enabled=bool(getattr(c, "enabled", True)),
                 position=str(getattr(c, "position", "none") or "none"),
-                priority=int(getattr(c, "priority", 0) or 0),
+                priority=_priority(getattr(c, "priority", 0)),
                 optional=getattr(c, "required", False) is not True,
                 floating=False,
             ))
@@ -197,6 +204,9 @@ def plan_layout_repairs(
     caps = dict(ZONE_CAPACITY)
     if zone_capacity:
         caps.update(zone_capacity)
+    # Exclusive is an upper bound, not permission to reopen a disabled zone.
+    caps = {zone: max(0, min(cap, 1) if zone in EXCLUSIVE_ZONES else cap)
+            for zone, cap in caps.items()}
     actions: List[Dict[str, Any]] = []
     step = [0]
 
@@ -217,7 +227,7 @@ def plan_layout_repairs(
     # 1. 槽位超容 / exclusive 重复（exclusive 槽有效容量恒 1 —— top-center）
     loads = _zone_loads(live)
     for zone in _ZONES:
-        cap = 1 if zone in EXCLUSIVE_ZONES else caps.get(zone, 2)
+        cap = caps.get(zone, 2)
         occupants = sorted(loads.get(zone, []), key=lambda c: (c.priority, c.id))
         if len(occupants) <= cap:
             continue
@@ -297,8 +307,8 @@ def _rehome(
     # L3 折叠为溢出面板（可折叠族）：镜像 V4 —— 落到专属溢出槽
     # bottom-center（requested 即溢出槽时镜像 top-center），collapsed 由
     # 消费端标记（动作载荷只带位置裁决）。
-    if c.type in COLLAPSIBLE_TYPES:
-        overflow_slot = "top-center" if from_pos == "bottom-center" else "bottom-center"
+    overflow_slot = "top-center" if from_pos == "bottom-center" else "bottom-center"
+    if c.type in COLLAPSIBLE_TYPES and len(loads.get(overflow_slot, [])) < caps.get(overflow_slot, 2):
         emit("collapse_to_overflow", c, from_=from_pos, to=overflow_slot,
              reason="still_at_capacity")
         loads[from_pos].remove(c)

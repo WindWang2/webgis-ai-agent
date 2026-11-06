@@ -38,11 +38,45 @@ import time
 from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from app.services.feature_pages import FEATURE_ID_KEYS
 from app.services.singleflight import SingleFlight
 
 logger = logging.getLogger(__name__)
 
 _LAYER_NAME = "data"
+
+
+def _chain_stable_id(feature: Any) -> Optional[str]:
+    """FEATURE_ID_KEYS 链（顶层 id 优先）→ 稳定 id；无 → None。
+
+    与 feature_pages.resolve_feature_stable_id / layer.py::_find_feature_by_id
+    同链同语义（常量取自 feature_pages 单一真相，避免三处漂移）。
+    """
+    if not isinstance(feature, dict):
+        return None
+    top = feature.get("id")
+    if isinstance(top, (str, int)) and not isinstance(top, bool):
+        return str(top)
+    props = feature.get("properties")
+    if isinstance(props, dict):
+        for key in FEATURE_ID_KEYS:
+            value = props.get(key)
+            if isinstance(value, (str, int)) and not isinstance(value, bool):
+                return str(value)
+    return None
+
+
+def _positional_feature_id(feature: Any, natural_index: int) -> Optional[int]:
+    """要素 → MVT field 1 id：无链内稳定 id 时 = FC 自然索引+1，否则 None。
+
+    位置 id 仅 revision 内稳定（锚点 = revision 内不可变的 FC 数组，与
+    feature_pages cursor 同源）；跨 revision 不可寻址，也不进入 feature_edit
+    写通道（#1873 WFID 独立）。有链内 id 的要素返回 None —— 瓦片字节与
+    master 保持一致，前端继续用 properties 字段过滤寻址。
+    """
+    if not isinstance(feature, dict) or _chain_stable_id(feature) is not None:
+        return None
+    return natural_index + 1 if natural_index >= 0 else None
 _EXTENT = 4096
 
 # wire types
@@ -194,6 +228,8 @@ def _encode_value(v: Any) -> Optional[bytes]:
     if isinstance(v, bool):
         return _field(_VAL_BOOL, _VARINT) + _varint(1 if v else 0)
     if isinstance(v, int) and not isinstance(v, bool):
+        if v < -(1 << 63) or v >= (1 << 63):
+            return _encode_value(str(v))  # preserve identifier precision safely
         # GIS-P3-1: int_value is sint64 — emit the FULL 64-bit value. The old
         # 32-bit wrap silently corrupted real-world IDs > 2^31 (OSM ids,
         # int64 keys): 2**31 → -2**31, 2**32+5 → 5. Negatives go through the
@@ -214,8 +250,15 @@ def _double_bytes(v: float) -> bytes:
     return struct.pack("<d", v)
 
 
-def _encode_feature(geometry: bytes, tags: List[int], type_: int = _GT_POINT) -> bytes:
+def _encode_feature(
+    geometry: bytes, tags: List[int], type_: int = _GT_POINT, feature_id: Optional[int] = None
+) -> bytes:
     out = bytearray()
+    # MVT field 1 (uint64 feature id)：仅给「无链内稳定 id」的要素编码位置
+    # id（FC 自然索引+1，revision 内稳定）—— 有链内 id 的数据集保持字节
+    # 不变（ETag/瓦片缓存奇偶性），其要素寻址继续走 properties 字段过滤。
+    if feature_id is not None and feature_id > 0:
+        out += _field(1, _VARINT) + _varint(feature_id)
     out += _field(3, _VARINT) + _varint(type_)
     if tags:
         tag_bytes = bytearray()
@@ -563,16 +606,11 @@ def _normalize_ring(coords) -> Optional[List[Tuple[float, float]]]:
 
 
 def _orient_ring(ring: List[Tuple[float, float]], exterior: bool) -> List[Tuple[float, float]]:
-    """Force ring winding: exterior CCW / holes CW in geographic (lon/lat) terms.
-
-    World/tile y points down, so geographic CCW ⇔ shoelace < 0 in y-down
-    coordinates. This matches RFC 7946 GeoJSON winding and, after the y flip,
-    the MVT 2.1 spec orientation.
-    """
+    """MVT tile coordinates: exterior signed area positive, holes negative."""
     s = _shoelace(ring)
-    if exterior and s > 0:
+    if exterior and s < 0:
         return list(reversed(ring))
-    if not exterior and s < 0:
+    if not exterior and s > 0:
         return list(reversed(ring))
     return ring
 
@@ -850,17 +888,12 @@ def _simplify_and_project(gtype: str, geom_lonlat, geom_z0, z: int):
         if geom_z0 is not None:
             return geom_z0
         return shapely.transform(geom_lonlat, _transform_z0)
-    # z < threshold: simplify in lon/lat space, then project the result.
-    # half a pixel at zoom z; in degree terms: 360 / (256 * 2^z) / 2,
-    # converted to z0 world px (world = 256): 2 ** -(z + 1)
-    simplified = geom_lonlat.simplify(2.0 ** -(z + 1), preserve_topology=True)
+    projected = geom_z0 if geom_z0 is not None else shapely.transform(geom_lonlat, _transform_z0)
+    # Half a display pixel in the z0 world plane, independent of latitude.
+    simplified = projected.simplify(2.0 ** -(z + 1), preserve_topology=True)
     if simplified.is_empty:
         return None
-    if not is_poly or simplified.is_valid:
-        geom_lonlat = simplified
-    # else: simplification produced self-intersection → keep the original
-    # (which passed the is_valid gate above)
-    return shapely.transform(geom_lonlat, _transform_z0)
+    return simplified if not is_poly or simplified.is_valid else projected
 
 
 def _clip_and_encode(geom, is_poly: bool, z: int, x: int, y: int) -> Optional[bytes]:
@@ -973,6 +1006,13 @@ def _encode_geometry_pieces(gtype: str, coords, z: int, x: int, y: int) -> List[
     return []
 
 
+MAX_TILE_FEATURES = 50_000
+
+
+class TileFeatureBudgetExceeded(ValueError):
+    """A tile needs subdivision before it can be encoded within its budget."""
+
+
 # ─── public encode API ──────────────────────────────────────────────────────
 
 
@@ -999,7 +1039,10 @@ def extract_features(data) -> List[dict]:
 def _to_feature_dicts(features_data) -> List[dict]:
     """Normalize encode_tile input into a list of GeoJSON feature dicts."""
     if isinstance(features_data, dict):
-        return extract_features(features_data)
+        fc = features_data.get("geojson", features_data)
+        if isinstance(fc, dict) and fc.get("type") == "FeatureCollection":
+            return [item if isinstance(item, dict) else {} for item in fc.get("features", [])]
+        return []
     if isinstance(features_data, (list, tuple)):
         out = []
         for item in features_data:
@@ -1038,11 +1081,14 @@ def _type_id_for(gtype: str) -> Optional[int]:
 def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
     """Assemble the final MVT tile bytes from encoded feature records.
 
-    Each record is ``(type_id, geometry_bytes, properties)``. Property keys and
-    values are deduplicated in first-seen order, exactly as the wire format
-    requires. Returns b"" when no feature produced geometry (a valid empty tile
-    message with no layer).
+    Each record is ``(type_id, geometry_bytes, properties, feature_id)`` —
+    ``feature_id``（MVT field 1）仅对无链内稳定 id 的要素非 None（位置 id
+    = FC 自然索引+1）。Property keys and values are deduplicated in
+    first-seen order, exactly as the wire format requires. Returns b"" when no
+    feature produced geometry (a valid empty tile message with no layer).
     """
+    if len(records) > MAX_TILE_FEATURES:
+        raise TileFeatureBudgetExceeded("tile feature budget exceeded; zoom in")
     keys: List[str] = []
     key_idx: Dict[str, int] = {}
     values: List[bytes] = []
@@ -1061,7 +1107,9 @@ def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
         return value_idx[encoded]
 
     feature_msgs: List[bytes] = []
-    for type_id, geom_bytes, props in records:
+    for record in records:
+        type_id, geom_bytes, props = record[0], record[1], record[2]
+        fid = record[3] if len(record) > 3 else None
         tags: List[int] = []
         for k, v in (props or {}).items():
             encoded = _encode_value(v)
@@ -1069,7 +1117,7 @@ def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
                 continue
             tags.append(_k(k))
             tags.append(_v(encoded))
-        feature_msgs.append(_encode_feature(geom_bytes, tags, type_id))
+        feature_msgs.append(_encode_feature(geom_bytes, tags, type_id, feature_id=fid))
 
     if not feature_msgs:
         return b""  # empty tile: valid empty message (no layer)
@@ -1089,7 +1137,7 @@ def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
     return bytes(tile)
 
 
-def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
+def encode_tile(features_data, z: int, x: int, y: int, natural_indices=None) -> bytes:
     """Encode features into a raw (uncompressed) MVT tile for (z, x, y).
 
     ``features_data`` may be a list of GeoJSON feature dicts, a bare
@@ -1101,10 +1149,17 @@ def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
     shapely geometries on each call. The index-aware path
     (``encode_tile_from_index``) reuses geometries already built by the spatial
     index and produces byte-identical output.
+
+    ``natural_indices``（可选，与输入要素列表平行）：各要素在源 FC 里的
+    自然索引 —— 子集调用（index 回退路径）必须显式传入，位置 id（MVT
+    field 1）才与全量路径一致；缺省按输入列表枚举（全量输入时即自然序）。
     """
     features = _to_feature_dicts(features_data)
-    records: List[Tuple[int, bytes, Dict[str, Any]]] = []
-    for f in features:
+    indices = natural_indices if natural_indices is not None else range(len(features))
+    records: List[Tuple[int, bytes, Dict[str, Any], Optional[int]]] = []
+    for natural_index, f in zip(indices, features):
+        if len(records) >= MAX_TILE_FEATURES:
+            raise TileFeatureBudgetExceeded("tile feature budget exceeded; zoom in")
         geometry = f.get("geometry")
         if not isinstance(geometry, dict):
             continue
@@ -1119,10 +1174,12 @@ def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
         if type_id is None:
             continue
         props = f.get("properties") or {}
+        fid = _positional_feature_id(f, natural_index)
         # Issue #598: an AM-crossing geometry may yield several pieces; each
-        # is emitted as its own feature record (cursor-relative MVT commands).
+        # is emitted as its own feature record (cursor-relative MVT commands),
+        # carrying the same feature id (同一要素的分裂件，同 id 正确).
         for geom_bytes in _encode_geometry_pieces(gtype, coords, z, x, y):
-            records.append((type_id, geom_bytes, props))
+            records.append((type_id, geom_bytes, props, fid))
     return _assemble_mvt(records)
 
 
@@ -1155,9 +1212,15 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
     (shapely unavailable).
     """
     if not _SHAPELY or entry.geoms is None:
-        return encode_tile(entry.query_tile(z, x, y), z, x, y)
-    records: List[Tuple[int, bytes, Dict[str, Any]]] = []
-    for feature, geom_lonlat, geom_z0, crosses_am in entry.query_candidates(z, x, y):
+        indices = entry._candidate_indices(z, x, y)
+        return encode_tile(
+            [entry.features[i] for i in indices], z, x, y, natural_indices=[entry.natural_indices[i] for i in indices]
+        )
+    records: List[Tuple[int, bytes, Dict[str, Any], Optional[int]]] = []
+    candidates = entry.query_candidates_indexed(z, x, y)
+    if len(candidates) > MAX_TILE_FEATURES:
+        raise TileFeatureBudgetExceeded("tile feature budget exceeded; zoom in")
+    for natural_index, (feature, geom_lonlat, geom_z0, crosses_am) in candidates:
         geometry = feature.get("geometry")
         gtype = geometry.get("type") if isinstance(geometry, dict) else None
         # GeometryCollections and unsupported types are excluded at index-build
@@ -1169,12 +1232,13 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
         if type_id is None:
             continue
         props = feature.get("properties") or {}
+        fid = _positional_feature_id(feature, natural_index)
         if gtype in _IS_POINT:
             coords = geometry.get("coordinates")
             pts = coords if gtype == "MultiPoint" else [coords]
             geom_bytes = _encode_points(pts, z, x, y)
             if geom_bytes is not None:
-                records.append((type_id, geom_bytes, props))
+                records.append((type_id, geom_bytes, props, fid))
         else:
             coords = geometry.get("coordinates") if isinstance(geometry, dict) else None
             # #1003: AM-crossing flag precomputed at index-build time; the old
@@ -1189,7 +1253,7 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
                 # affects the rare AM-crossing features; the cached-geometry
                 # fast path below is unchanged.
                 for geom_bytes in _encode_geometry_pieces(gtype, coords, z, x, y):
-                    records.append((type_id, geom_bytes, props))
+                    records.append((type_id, geom_bytes, props, fid))
             else:
                 try:
                     geom_bytes = _encode_line_polygon_from_geoms(gtype, geom_lonlat, geom_z0, z, x, y)
@@ -1202,9 +1266,9 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
                     logger.warning("mvt: shapely encode failed, using pure-python fallback", exc_info=True)
                     geom_bytes = None
                     for gb in _encode_geometry_pieces(gtype, coords, z, x, y):
-                        records.append((type_id, gb, props))
+                        records.append((type_id, gb, props, fid))
                 if geom_bytes is not None:
-                    records.append((type_id, geom_bytes, props))
+                    records.append((type_id, geom_bytes, props, fid))
     return _assemble_mvt(records)
 
 
@@ -1229,11 +1293,13 @@ class SpatialIndexEntry:
 
     __slots__ = (
         "key", "features", "geoms", "geoms_lonlat", "crosses_am",
-        "tree", "bounds", "estimated_bytes",
+        "tree", "bounds", "estimated_bytes", "id_index", "natural_indices", "source_features",
     )
 
     def __init__(self, key, features, geoms, geoms_lonlat, crosses_am, tree, bounds,
-                 estimated_bytes: int = 0):
+                 estimated_bytes: int = 0, natural_indices=None, source_features=None) -> None:
+        self.natural_indices = list(range(len(features))) if natural_indices is None else natural_indices
+        self.source_features = features if source_features is None else source_features
         self.key = key
         self.features = features
         self.geoms = geoms
@@ -1245,6 +1311,10 @@ class SpatialIndexEntry:
         self.tree = tree
         self.bounds = bounds
         self.estimated_bytes = estimated_bytes
+        # 链内稳定 id → 自然索引（懒构建，first-wins；重复 id 的寻址语义 =
+        # 首中即返，与 layer.py::_find_feature_by_id 一致）。单要素详情端点
+        # 用它把 O(n) 线性扫降为 O(1)。
+        self.id_index: Optional[Dict[str, int]] = None
 
     def _candidate_indices(self, z: int, x: int, y: int) -> List[int]:
         """Insertion-ordered feature indices whose bbox intersects the tile."""
@@ -1276,6 +1346,25 @@ class SpatialIndexEntry:
             (self.features[i], self.geoms_lonlat[i], self.geoms[i], self.crosses_am[i])
             for i in self._candidate_indices(z, x, y)
         ]
+
+    def query_candidates_indexed(self, z: int, x: int, y: int):
+        """同 ``query_candidates``，但携带 (natural_index, tuple) —— 瓦片编码
+        需要自然索引推导位置 id（MVT field 1，仅无链内 id 的要素）。"""
+        return [
+            (self.natural_indices[i], (self.features[i], self.geoms_lonlat[i], self.geoms[i], self.crosses_am[i]))
+            for i in self._candidate_indices(z, x, y)
+        ]
+
+    def feature_id_index(self) -> Dict[str, int]:
+        """链内稳定 id → 自然索引（懒构建一次；并发重复构建幂等无害）。"""
+        if self.id_index is None:
+            index: Dict[str, int] = {}
+            for i, f in enumerate(self.features):
+                sid = _chain_stable_id(f)
+                if sid is not None and sid not in index:
+                    index[sid] = i
+            self.id_index = index
+        return self.id_index
 
 
 def _pure_bounds(gtype: str, coords) -> Optional[Tuple[float, float, float, float]]:
@@ -1318,13 +1407,17 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
     """
     if data is None:
         raise RefDataUnavailableError(f"ref data unavailable for index build: {key}")
-    features = extract_features(data)
+    fc = data.get("geojson", data) if isinstance(data, dict) else {}
+    features = fc.get("features", []) if isinstance(fc, dict) and fc.get("type") == "FeatureCollection" else []
+    natural_indices = []
     geoms: List[Any] = []
     geoms_lonlat: List[Any] = []
     crosses_am: List[bool] = []
     bounds: List[Tuple[float, float, float, float]] = []
     kept: List[dict] = []
-    for f in features:
+    for natural_index, f in enumerate(features):
+        if not isinstance(f, dict):
+            continue
         g = f.get("geometry")
         gtype = g.get("type") if isinstance(g, dict) else None
         coords = g.get("coordinates") if isinstance(g, dict) else None
@@ -1343,18 +1436,23 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
                 continue
             geoms_lonlat.append(geom)
             geoms.append(geom_z0)
-            bounds.append(tuple(b))
-            crosses_am.append(bool(_crosses_antimeridian(gtype, coords)))
+            crosses = bool(_crosses_antimeridian(gtype, coords))
+            bounds.append((0.0, b[1], 256.0, b[3]) if crosses else tuple(b))
+            crosses_am.append(crosses)
         else:  # pragma: no cover - no-shapely environments
             b = _pure_bounds(gtype, coords)
             if b is None:
                 continue
             bounds.append(b)
         kept.append(f)
+        natural_indices.append(natural_index)
     tree = None
     if _SHAPELY and geoms:
         try:
-            tree = shapely.STRtree(geoms)
+            tree = shapely.STRtree([
+                shapely.geometry.box(*bounds[i]) if crosses_am[i] else geom
+                for i, geom in enumerate(geoms)
+            ])
         except Exception:  # pragma: no cover - defensive
             tree = None
 
@@ -1377,7 +1475,7 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
         except Exception:  # pragma: no cover - defensive
             vertex_count = 0
     est_bytes = (
-        _estimate_json_bytes(kept)
+        _estimate_json_bytes(features)
         + vertex_count * _COORD_OBJ_BYTES
         + len(kept) * _FEATURE_OBJ_BYTES
         + len(geoms) * _GEOM_OBJ_BYTES
@@ -1394,7 +1492,7 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
         crosses_am if _SHAPELY else None,
         tree,
         bounds,
-        estimated_bytes=est_bytes,
+        estimated_bytes=est_bytes, natural_indices=natural_indices, source_features=features,
     )
 
 
@@ -1422,9 +1520,10 @@ class SpatialIndexCache:
     is enforced solely by the epoch guards, exactly as before.
     """
 
-    def __init__(self, max_refs: int = 256, max_bytes: int = 256 * 1024 * 1024):
+    def __init__(self, max_refs: int = 256, max_bytes: int = 256 * 1024 * 1024, max_entry_bytes: int = 64 * 1024 * 1024) -> None:
         self._max_refs = max_refs
         self._max_bytes = max_bytes
+        self._max_entry_bytes = min(max_entry_bytes, max_bytes)
         self._entries: "OrderedDict[tuple, SpatialIndexEntry]" = OrderedDict()
         self._total_bytes = 0
         self._lock = threading.Lock()
@@ -1440,6 +1539,7 @@ class SpatialIndexCache:
         # keys the per-key table has never seen (in-flight builds for
         # brand-new keys). Captures are (global, per_key) composites.
         self._global_gen = 0
+        self._building: Dict[tuple, int] = {}
         # R4a: per-instance build dedup (thread context — get_or_build runs on
         # asyncio.to_thread workers). Instance-scoped so independent caches
         # (tests, alternate budgets) never share flight state. Overload above
@@ -1480,14 +1580,25 @@ class SpatialIndexCache:
                 self._entries.move_to_end(key)
                 return entry
             build_epoch = (self._global_gen, self._epochs.get(key, (0, 0.0))[0])
+            self._building[key] = self._building.get(key, 0) + 1
         # R4a: heavy work outside the lock AND deduplicated per key — concurrent
         # tile misses share one build_fn execution. Epoch guards below are
         # unchanged and per-caller: each waiter re-validates its own captured
         # epoch at insert time, so an invalidation during the shared build
         # still refuses the stale result for every participant.
-        entry = self._build_flight.run(("spatial_index", *key), build_fn)
+        try:
+            entry = self._build_flight.run(("spatial_index", *key), build_fn)
+        except BaseException:
+            with self._lock:
+                self._building[key] -= 1
+                if not self._building[key]:
+                    del self._building[key]
+            raise
         entry_bytes = getattr(entry, "estimated_bytes", 0)
         with self._lock:
+            self._building[key] -= 1
+            if not self._building[key]:
+                del self._building[key]
             # P1-1: the authoritative payload was invalidated while this build
             # ran — inserting would resurrect ghost geometry derived from the
             # superseded payload. Raise so the caller refetches fresh data and
@@ -1500,6 +1611,8 @@ class SpatialIndexCache:
             existing = self._entries.get(key)
             if existing is not None:
                 return existing
+            if entry_bytes > self._max_entry_bytes:
+                return entry  # serve without flushing other tenants' hot refs
             self._entries[key] = entry
             self._prune_epochs_locked()
             self._entries.move_to_end(key)
@@ -1549,7 +1662,7 @@ class SpatialIndexCache:
         now = time.monotonic()
         for k in [
             k for k, v in self._epochs.items()
-            if k not in self._entries and (now - v[1]) >= _EPOCH_PRUNE_GRACE_S
+            if k not in self._entries and k not in self._building and (now - v[1]) >= _EPOCH_PRUNE_GRACE_S
         ]:
             del self._epochs[k]
 
@@ -1557,9 +1670,12 @@ class SpatialIndexCache:
         """Invalidate all spatial index entries for session_id."""
         with self._lock:
             to_remove = [k for k in self._entries if k[0] == session_id]
-            # Global bump covers every key of this session — including
-            # in-flight builds for keys the per-key table has never seen.
-            self._global_gen += 1
+            # In-flight keys are registered before leaving the lock. Invalidate
+            # only this session, keeping other sessions' builds usable.
+            affected = {key for key in (*self._epochs, *self._entries, *self._building) if key[0] == session_id}
+            for key in affected:
+                previous = self._epochs.get(key, (0, 0.0))[0]
+                self._epochs[key] = (previous + 1, time.monotonic())
             removed = 0
             for k in to_remove:
                 entry = self._entries.pop(k, None)
@@ -1591,7 +1707,7 @@ class TileLRUCache:
         max_tiles: int = 4096,
         max_bytes: int = 256 * 1024 * 1024,
         max_entry_bytes: int = 4 * 1024 * 1024,
-    ):
+    ) -> None:
         self._max_tiles = max_tiles
         self._max_bytes = max_bytes
         self._max_entry_bytes = max_entry_bytes
@@ -1722,7 +1838,7 @@ class SingleFlightManager:
     等待者自身的取消原样传播（``return_fut`` 未完成即自身取消）。
     """
 
-    def __init__(self, max_inflight: int = 512, wait_timeout: float = 30.0):
+    def __init__(self, max_inflight: int = 512, wait_timeout: float = 30.0) -> None:
         self._max_inflight = max_inflight
         self._wait_timeout = max(0.0, float(wait_timeout))
         self._inflight: Dict[Any, "asyncio.Future"] = {}

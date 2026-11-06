@@ -199,6 +199,10 @@ describe('i18n 代码引用键 ⊆ catalog（#1748）', () => {
     // 模板串/变量键（`t(\`ns.${x}\`)`）天然不可静态判定，本扫描器不计数
     // （基线 2026-10-20：42 处 / 25 文件）。
     const QUOTA: Record<string, number> = {
+      // carto-design（#1870）：design-candidates.tsx 的 3 处 namespace 经
+      // props/helper 传入调用点作用域外，静态不可判定 —— 登记实际数（棘轮：
+      // 增长即失败，收敛请内联）。
+      'components/map/map-components/design-candidates.tsx': 3,
       'components/chat/cartography-result-card.tsx': 7,
       'components/settings/map-config.tsx': 2,
       'components/sidebar/modelops/modelops-model-detail.tsx': 7,

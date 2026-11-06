@@ -28,7 +28,7 @@ def _clean_ctx():
 
 
 def test_claim_statuses_resolves_supported_from_session_store():
-    store = get_or_create_claim_store("sess-pk-1406", tenant_id="")
+    store = get_or_create_claim_store("sess-pk-1406", tenant_id="org-a")
     store.upsert_claim(
         Claim(
             claim_id="clm_supported_1",
@@ -37,7 +37,7 @@ def test_claim_statuses_resolves_supported_from_session_store():
             status=ClaimStatus.SUPPORTED,
         )
     )
-    statuses = retrieval_mod._claim_statuses_for(["clm_supported_1", "clm_missing"])
+    statuses = retrieval_mod._claim_statuses_for(["clm_supported_1", "clm_missing"], tenant_id="org-a")
     assert statuses["clm_supported_1"] == "supported"
     assert statuses["clm_missing"] is None
 
@@ -56,7 +56,7 @@ def test_evaluate_entry_claims_supported_reason(monkeypatch):
         refs=[RefTag(relation=REL_VERIFIED_BY, authority="session_ref", id="clm_ok")],
         status=ST_ACTIVE,
     )
-    store = get_or_create_claim_store("sess-pk-1406b")
+    store = get_or_create_claim_store("sess-pk-1406b", tenant_id="org-a")
     store.upsert_claim(
         Claim(claim_id="clm_ok", claim_type=ClaimType.NARRATIVE, narrative="ok", status=ClaimStatus.SUPPORTED)
     )

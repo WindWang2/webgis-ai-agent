@@ -65,7 +65,10 @@ class DataFabricError(Exception):
         self.details: Dict[str, Any] = details or {}
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"error_type": self.code, "error": str(self), "details": self.details}
+        result = {"error_type": self.code, "error": str(self), "details": self.details}
+        if getattr(self, "reason_code", None):
+            result["reason_code"] = self.reason_code
+        return result
 
 
 class UnsupportedSourceError(DataFabricError):

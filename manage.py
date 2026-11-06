@@ -4,7 +4,7 @@ WebGIS AI Agent 管理命令行工具 (V3.2 DevX Enhanced)
 
 Usage:
     python manage.py init-db                  初始化数据库
-    python manage.py create-admin <user> <email> <password>
+    python manage.py create-admin <user> <email>  # hidden password prompt
                                              创建 admin 账号（公开注册关闭后的入口）
     python manage.py check                    基础设施诊断 (Agent CNS Health Check)
     python manage.py dev                      一键拉起全栈开发环境 (Backend + Worker + Frontend)
@@ -529,7 +529,8 @@ def main():
     p_ca = subparsers.add_parser("create-admin", help="Create an admin account (entry point when public register is disabled)")
     p_ca.add_argument("username")
     p_ca.add_argument("email")
-    p_ca.add_argument("password")
+    p_ca.add_argument("--password-stdin", action="store_true",
+                      help="Read password from stdin instead of a hidden prompt")
 
     # check
     subparsers.add_parser("check", help="Infrastructure diagnostic (Agent CNS Health Check)")
@@ -597,7 +598,13 @@ def main():
     if args.command == "init-db":
         cmd_init_db()
     elif args.command == "create-admin":
-        cmd_create_admin(args.username, args.email, args.password)
+        if args.password_stdin:
+            password = sys.stdin.readline().rstrip("\r\n")
+        else:
+            from getpass import getpass
+
+            password = getpass("Admin password: ")
+        cmd_create_admin(args.username, args.email, password)
     elif args.command == "check":
         asyncio.run(check_infrastructure())
     elif args.command == "dev":

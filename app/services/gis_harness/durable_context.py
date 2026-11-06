@@ -138,12 +138,8 @@ async def record_source_fingerprints(
 
     additive evidence：store 不可用 / 升级失败只 log 不抛 —— 这不是预算
     语义（update_recovery_state 的 fail-closed 不适用），证据缺席由消费面
-    按无指纹诚实披露。并发纪律（review R2 #4，与实现一致）：无锁读改写
-    （调用方 session lock 契约不覆盖 ingest/mapspec 缝）；写前**重读最新
-    态、只覆写 source_fingerprints 键**（descriptor 解析的 await 窗口不
-    携带旧快照）—— 与并发 update_recovery_state 之间仍存在最后一段非原子
-    RMW 窗口（互踩最坏丢一次计数/一条证据，证据面接受，预算记账方契约
-    不变）。
+    按无指纹诚实披露。descriptor 解析在提交前完成；最终合并与计数
+    共用后端原子更新，不能覆写并发 loops/history。
     """
     if not session_id or not isinstance(entries, list) or not entries:
         return
@@ -161,25 +157,22 @@ async def record_source_fingerprints(
         fps_by_ref = await descriptor_fingerprints_for_session(session_id, refs)
         incoming = augment_source_fingerprints(
             entries, fps_by_ref)[:MAX_SOURCE_FINGERPRINTS]
-        # 重读最新态（review R2 #4）：descriptor 解析期间并发记账方可能已
-        # 推进 loops/history —— 只把本键覆写到**新读的快照**上写回。
-        state = await load_recovery_state(session_id)
-        if state.get("_unavailable"):
-            return
-        # 累积合并：既有条目保留，同 ref 被新值覆盖；顺序 = 旧在前新在后。
-        merged: Dict[str, Dict[str, Any]] = {}
-        for item in list(state.get("source_fingerprints") or []):
-            if isinstance(item, dict) and item.get("ref"):
-                merged[str(item["ref"])[:200]] = item
-        for item in incoming:
-            merged[str(item.get("ref") or "")[:200]] = item
-        state["source_fingerprints"] = list(merged.values())[
-            -MAX_SOURCE_FINGERPRINTS:]
-        state["updated_at"] = time.time()
         from app.services.session_data import session_data_manager
+        from app.services.session_state_atomic import atomic_update_state
 
-        await session_data_manager.set_map_state(
-            session_id, RECOVERY_STATE_KEY, state)
+        def merge(snapshot: Any) -> dict:
+            raw = snapshot.get(RECOVERY_STATE_KEY)
+            state = raw if isinstance(raw, dict) and isinstance(raw.get("loops"), dict) else new_recovery_state()
+            merged = {str(item["ref"])[:200]: item for item in state.get("source_fingerprints", [])
+                      if isinstance(item, dict) and item.get("ref")}
+            for item in incoming:
+                merged[str(item.get("ref") or "")[:200]] = item
+            state["source_fingerprints"] = list(merged.values())[-MAX_SOURCE_FINGERPRINTS:]
+            state["updated_at"] = time.time()
+            return {RECOVERY_STATE_KEY: state}
+
+        if await atomic_update_state(session_data_manager, session_id, [RECOVERY_STATE_KEY], merge) is None:
+            raise RecoveryStoreUnavailable("source fingerprint commit unavailable")
     except Exception:  # noqa: BLE001 — additive 证据面不阻断主链
         logger.warning("[DurableContext] record_source_fingerprints skipped sid=%s",
                        session_id, exc_info=True)
@@ -221,39 +214,36 @@ async def update_recovery_state(
     - ``reset_loop``：计数清零（如 spec 内容变化 → 修复预算重置语义）；
     - ``position``：merge 更新 workflow 位置摘要（浅合并，值截断）。
 
-    并发纪律：读改写非原子 —— 当前由调用方 session lock 兜底（
-    runtime_repair 契约「调用方持 session lock」）；跨锁并发写入者会
-    后写覆盖（计数可能少记一次）。写失败抛 ``RecoveryStoreUnavailable``\n    （fail-closed —— 调用方不得假装已记账，#1401）。"""
-    state = await load_recovery_state(session_id)
-    if state.get("_unavailable"):
-        raise RecoveryStoreUnavailable(
-            f"recovery store unavailable for session {session_id}")
-    if position:
-        pos = state.setdefault("position", {})
-        for k, v in list(position.items())[:8]:
-            pos[str(k)[:48]] = str(v)[:120]
-    if reset_loop in LOOP_BUDGETS:
-        state.setdefault("loops", {})[reset_loop] = 0
-    if loop in LOOP_BUDGETS:
-        state.setdefault("loops", {})
-        state["loops"][loop] = int(state["loops"].get(loop) or 0) + 1
-        hist = state.setdefault("history", [])
-        hist.append({"loop": loop, "detail": str(detail)[:160],
-                     "ts": time.time()})
-        del hist[:-MAX_LOOP_HISTORY]
-    state["updated_at"] = time.time()
-    try:
-        from app.services.session_data import session_data_manager
+    并发纪律：后端原子 targeted read-modify-write（memory 锁 / Redis WATCH）。写失败抛 ``RecoveryStoreUnavailable``\n    （fail-closed —— 调用方不得假装已记账，#1401）。"""
+    from app.services.session_data import session_data_manager
+    from app.services.session_state_atomic import atomic_update_state
 
-        await session_data_manager.set_map_state(
-            session_id, RECOVERY_STATE_KEY, state)
-    except Exception as exc:  # noqa: BLE001 — 写失败 → fail-closed (#1401)
-        logger.warning("[DurableContext] persist recovery_state failed sid=%s",
-                       session_id, exc_info=True)
-        raise RecoveryStoreUnavailable(
-            f"recovery store write failed for session {session_id}"
-        ) from exc
-    return state
+    def update(snapshot: Any) -> dict:
+        raw = snapshot.get(RECOVERY_STATE_KEY)
+        state = raw if isinstance(raw, dict) and isinstance(raw.get("loops"), dict) else new_recovery_state()
+        if position:
+            pos = state.setdefault("position", {})
+            for k, v in list(position.items())[:8]:
+                pos[str(k)[:48]] = str(v)[:120]
+        if reset_loop in LOOP_BUDGETS:
+            state.setdefault("loops", {})[reset_loop] = 0
+        if loop in LOOP_BUDGETS:
+            state.setdefault("loops", {})
+            state["loops"][loop] = int(state["loops"].get(loop) or 0) + 1
+            hist = state.setdefault("history", [])
+            hist.append({"loop": loop, "detail": str(detail)[:160],
+                         "ts": time.time()})
+            del hist[:-MAX_LOOP_HISTORY]
+        state["updated_at"] = time.time()
+        return {RECOVERY_STATE_KEY: state}
+
+    try:
+        committed = await atomic_update_state(session_data_manager, session_id, [RECOVERY_STATE_KEY], update)
+        if committed is None:
+            raise RecoveryStoreUnavailable("recovery state CAS unavailable")
+        return committed[RECOVERY_STATE_KEY]
+    except Exception as exc:
+        raise RecoveryStoreUnavailable(f"recovery store write failed for session {session_id}") from exc
 
 
 def reasoning_digest(chapter: Dict[str, Any], recovery: Dict[str, Any],

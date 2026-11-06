@@ -46,9 +46,9 @@ function deepFreeze<T>(value: T): T {
 }
 
 describe("migrateMapSpec：已知版本词表", () => {
-  it("SUPPORTED_MAPSPEC_VERSIONS 词表与契约镜像锁定到 1.7（v1.7 = G3D02 三维场景资产）", () => {
-    expect(SUPPORTED_MAPSPEC_VERSIONS).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"]);
-    expect(LATEST_SUPPORTED_MAPSPEC_VERSION).toBe("1.7");
+  it("SUPPORTED_MAPSPEC_VERSIONS 词表与契约镜像锁定到 1.9（v1.9 = GOAL 04 多尺度表达档案）", () => {
+    expect(SUPPORTED_MAPSPEC_VERSIONS).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"]);
+    expect(LATEST_SUPPORTED_MAPSPEC_VERSION).toBe("1.9");
     expect(DEFAULT_MAPSPEC_VERSION).toBe("1.0");
   });
 
@@ -145,10 +145,10 @@ describe("migrateMapSpec：forward version → fail-safe 拒绝", () => {
     expect(result.disclosures[0]?.detail).toContain('spec version "2.0" is not in the supported vocabulary');
   });
 
-  it('词表外的版本 "1.8" 同样拒绝（未知 = forward fail-safe）', () => {
-    const result = expectMigratedFail(migrateMapSpec({ version: "1.8", layers: [] }));
+  it('词表外的版本 "2.0" 同样拒绝（未知 = forward fail-safe）', () => {
+    const result = expectMigratedFail(migrateMapSpec({ version: "2.0", layers: [] }));
     expect(result.reason).toBe("forward_version");
-    expect(result.version).toBe("1.8");
+    expect(result.version).toBe("2.0");
   });
 });
 

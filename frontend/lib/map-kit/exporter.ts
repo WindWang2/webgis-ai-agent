@@ -1,3 +1,7 @@
+import { t as tNow } from '@/lib/i18n/t';
+import { triggerBlobDownload } from '@/lib/api/authenticated-download';
+import { exportNotificationTitle } from './export-notification';
+import { anchorFractionInBounds, boundsFromCenterZoom } from '@/lib/map-components/geo-anchor';
 import type { Map } from 'maplibre-gl';
 import type { LegendSpec } from './types';
 import type { Layer } from '@/lib/types/layer';
@@ -471,7 +475,7 @@ export function composeLayout(
 
   // 4. Compass
   if (showCompass) {
-    const bearing = mapBearing;
+    const bearing = -mapBearing;
     const cx = targetW - scalePx(64), cy = scalePx(64), r = scalePx(28);
     ctx.save();
     ctx.translate(cx, cy);
@@ -555,7 +559,7 @@ function _drawWatermarkAndMetadata(
   if (showWatermark) {
     ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
     ctx.textAlign = "right";
-    ctx.font = `bold ${scalePx(16)} monospace`;
+    ctx.font = `bold ${scalePx(16)}px monospace`;
     ctx.fillText(watermarkText ?? "WebGIS AI Agent", targetW - scalePx(36), targetH - scalePx(18));
     ctx.textAlign = "left";
   }
@@ -563,7 +567,7 @@ function _drawWatermarkAndMetadata(
     const parts: string[] = [];
     if (author) parts.push(`作者: ${author}`);
     parts.push(`日期: ${new Date().toISOString().slice(0, 10)}`);
-    if (mapCenter) parts.push(`CRS: EPSG:4326 (display)`);
+    if (mapCenter) parts.push(`CRS: EPSG:3857 (display)`);
     if (dataSource) parts.push(`数据: ${dataSource}`);
 
     if (parts.length > 0) {
@@ -600,21 +604,9 @@ function _drawGraticules(
   // live 渲染器与导出侧单一语义源（ADR-0081 parity）。
   const interval = graticuleIntervalForZoom(mapZoom);
 
-  // Calculate geographic extent from center and zoom (via shared 512-tile helper)
-  const metersPerPixel = metersPerPixelAt(mapZoom, mapCenter.lat);
-  // #802: 经纬网范围按逻辑(CSS)像素宽度推导 —— 设备像素会随 dpr/dpi 虚增
-  const halfWidthMeters = (targetW / pxPerLogical / 2) * metersPerPixel;
-  const halfHeightMeters = (targetH / pxPerLogical / 2) * metersPerPixel;
-
-  // Convert meters to degrees (approximate)
-  const metersPerDegree = 111319.9;
-  const halfWidthDeg = halfWidthMeters / metersPerDegree;
-  const halfHeightDeg = halfHeightMeters / (metersPerDegree * Math.cos((mapCenter.lat * Math.PI) / 180));
-
-  const minLng = mapCenter.lng - halfWidthDeg;
-  const maxLng = mapCenter.lng + halfWidthDeg;
-  const minLat = mapCenter.lat - halfHeightDeg;
-  const maxLat = mapCenter.lat + halfHeightDeg;
+  const bounds = boundsFromCenterZoom(mapCenter, mapZoom, targetW / pxPerLogical, targetH / pxPerLogical);
+  if (!bounds) return;
+  const { west: minLng, east: maxLng, south: minLat, north: maxLat } = bounds;
 
   // Snap to interval grid
   const lngLines = graticuleLngLines(minLng, maxLng, interval);
@@ -641,7 +633,7 @@ function _drawGraticules(
 
   // Draw latitude lines (horizontal)
   for (const { value: lat, label } of latLines) {
-    const y = targetH - ((lat - minLat) / (maxLat - minLat)) * targetH;
+    const y = targetH * (1 - anchorFractionInBounds({ lng: mapCenter.lng, lat }, bounds)!.fy);
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(targetW, y);
@@ -827,7 +819,10 @@ function _drawLegend(
   // Legend 1: LegendSpec from layer.legend_spec (structured, typed)
   if (opts.legendSpec) {
     const spec = opts.legendSpec;
-    if (spec.type === 'graduated' || spec.type === 'continuous' || spec.type === 'divergent') {
+    if (spec.type === 'continuous') {
+      drawChromeColorbar({ ...ld, darkMode: ld.dark_mode, style: resolveStyle(ld.dark_mode ? 'dark' : 'light') }, { kind: 'colorbar', anchor: 'bottom-right', legendSpec: { ...spec, palette_colors: spec.palette_colors || COLOR_PALETTES[spec.palette] || COLOR_PALETTES.YlOrRd } }, { marginX: 56, marginY: 56 });
+      yOffset += ld.scalePx(96);
+    } else if (spec.type === 'graduated' || spec.type === 'divergent') {
       const colors = spec.palette_colors || COLOR_PALETTES[spec.palette] || COLOR_PALETTES['YlOrRd'];
       const formatNum = (n: number) =>
         n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` :
@@ -838,11 +833,6 @@ function _drawLegend(
         for (let i = 0; i < spec.breaks.length - 1; i++) {
           labels.push(`${formatNum(spec.breaks[i])} – ${formatNum(spec.breaks[i + 1])}`);
         }
-      } else if (spec.type === 'continuous' && spec.min !== undefined && spec.max !== undefined) {
-        labels.push(formatNum(spec.min));
-        labels.push(formatNum((spec.min + spec.max) / 2));
-        labels.push(formatNum(spec.max));
-        while (labels.length < colors.length) labels.push('');
       }
       yOffset += _drawDiscreteLegend(ld, spec.field || '未知字段', colors, labels, yOffset);
     } else if (spec.type === 'categorical') {
@@ -1153,17 +1143,7 @@ export async function exportToPDF(
  * reintroduced from git history when it gets a caller.
  */
 
-export function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
+export const downloadBlob = triggerBlobDownload;
 
 export interface ExportRequest {
   title?: string;
@@ -1296,7 +1276,7 @@ export function discoverLegendData(layers: Layer[]): LegendData {
 
   return {
     legendSpec: nonHeatLegendLayer?.legend_spec,
-    thematicLayer: (thematicLayerInfo?.style?.type
+    thematicLayer: thematicLayerInfo === nonHeatLegendLayer ? undefined : (thematicLayerInfo?.style?.type
       ? thematicLayerInfo.style
       : thematicLayerInfo) as LegacyThematicLegendInput | undefined,
     heatmapLegend: heatmapLayer
@@ -1450,7 +1430,7 @@ export async function composeExportSpec(
   removed: string[] = [],
 ): Promise<unknown> {
   const { composeLiveMapSpec } = await import('@/lib/mapspec/live-spec');
-  return composeLiveMapSpec(
+  const composed = composeLiveMapSpec(
     committed as Parameters<typeof composeLiveMapSpec>[0],
     {
       layers: (hudState.layers ?? []) as Parameters<typeof composeLiveMapSpec>[1]['layers'],
@@ -1462,6 +1442,21 @@ export async function composeExportSpec(
     pending,
     removed,
   );
+  // GOAL 03 M6：导出同帧 —— 与 live 地图同一 temporal 注入（live 帧 >
+  // cursor）；导出图纸的时间窗与画布所见一致（停播导出 = 该帧状态）。
+  const temporalCfg = (committed as { temporal?: Parameters<
+    typeof import('@/lib/temporal-map/filter').applyTemporalToSpec
+  >[1] } | null)?.temporal;
+  if (temporalCfg?.enabled) {
+    const { applyTemporalToSpec } = await import('@/lib/temporal-map/filter');
+    const { getLiveTemporalFrame } = await import('@/lib/temporal-map/live-frame');
+    return applyTemporalToSpec(
+      composed as Parameters<typeof applyTemporalToSpec>[0],
+      temporalCfg,
+      getLiveTemporalFrame(),
+    );
+  }
+  return composed;
 }
 
 /**
@@ -1567,13 +1562,11 @@ async function runFrameExport(
       d.code === 'atlas_page_skipped' ||
       d.code === 'small_multiple_panel_skipped',
   ).length;
-  const frameStat =
-    skippedFrames > 0
-      ? `成功 ${composed.canvases.length}/${composed.canvases.length + skippedFrames} 帧（${skippedFrames} 帧渲染失败已跳过）`
-      : `${composed.canvases.length} 帧`;
+  const frameStat = tNow('map.export.frames', { successful: composed.canvases.length, total: composed.canvases.length + skippedFrames, skipped: skippedFrames });
 
   if (fmt === 'pdf') {
     const pdfDegradations: ExportDegradation[] = [];
+    const fontB64 = await loadPublicationFontB64();
     const pdfBlob = await MapExporterEngine.exportToPDF(
       composed.canvases[0],
       ctx.title,
@@ -1583,6 +1576,8 @@ async function runFrameExport(
         orientation: ctx.orientation as 'landscape' | 'portrait',
         author: ctx.author,
         dataSource: ctx.dataSource,
+        fontB64,
+        colorMode: req.color_mode ?? 'srgb',
         pages: composed.canvases.map((canvas, i) => ({ canvas, title: composed.titles[i] })),
         onDegradation: (d) => pdfDegradations.push(d),
       },
@@ -1594,11 +1589,7 @@ async function runFrameExport(
     );
     recordExport(getHudState, ctx.title, upload.filename, 'pdf', pdfBlob.size);
     getHudState().setPendingSystemMessage(
-      `[系统通知] 图集 PDF \`${ctx.title || '未命名'}\` 已成功生成` +
-        `（${frameStat}，首页为封面·嵌入第 1 帧；地图为位图画布 + 页标题矢量/栅格化混合文本层），` +
-        `文件已落盘并分配URL：${upload.url}。请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
-        degradationNote + formatDegradationNote(pdfDegradations) +
-        `注意展示完链接后直接结束。`,
+      tNow('map.export.ready', { title: exportNotificationTitle(ctx.title), format: tNow('map.export.atlasPdf'), url: API_BASE + upload.url }) + frameStat + degradationNote + formatDegradationNote(pdfDegradations), 'success',
     );
     return { ok: true, format: 'pdf', url: upload.url, filename: upload.filename };
   }
@@ -1628,12 +1619,7 @@ async function runFrameExport(
     );
     recordExport(getHudState, ctx.title, upload.filename, 'svg', svgBlob.size);
     getHudState().setPendingSystemMessage(
-      `[系统通知] 多帧拼板 SVG \`${ctx.title || '未命名'}\` 已成功生成` +
-        `（${frameStat}，位图回退：多帧拼板为位图合成，不含矢量要素），` +
-        `文件已落盘并分配URL：${upload.url}。可通过以下链接下载：[下载SVG](${API_BASE}${upload.url})。` +
-        degradationNote +
-        formatDegradationNote([{ code: 'vector_svg_fallback_raster', detail: '多帧拼板为位图合成' }]) +
-        `注意展示完链接后直接结束。`,
+      tNow('map.export.ready', { title: exportNotificationTitle(ctx.title), format: tNow('map.export.gridSvg'), url: API_BASE + upload.url }) + frameStat + degradationNote + formatDegradationNote([{ code: 'vector_svg_fallback_raster', detail: '多帧拼板为位图合成' }]), 'success',
     );
     return { ok: true, format: 'svg', url: upload.url, filename: upload.filename };
   }
@@ -1643,10 +1629,7 @@ async function runFrameExport(
   const upload = await uploadExport(blob, 'export-atlas.png', ctx.title, composed.degradations, ctx.dpi);
   recordExport(getHudState, ctx.title, upload.filename, 'png', blob.size);
   getHudState().setPendingSystemMessage(
-    `[系统通知] 多帧拼板图 \`${ctx.title || '未命名'}\` 已成功生成` +
-      `（${frameStat} grid 拼板，行优先 + 每帧小标题），` +
-      `文件已落盘并分配URL：${upload.url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${upload.url})\` 将该成品展示给用户。` +
-      degradationNote + `注意展示完图片后直接结束。`,
+      tNow('map.export.ready', { title: exportNotificationTitle(ctx.title), format: tNow('map.export.gridPng'), url: API_BASE + upload.url }) + frameStat + degradationNote, 'success',
   );
   return { ok: true, format: 'png', url: upload.url, filename: upload.filename };
 }
@@ -1843,7 +1826,7 @@ async function runExportInternal(
 
   try {
     getHudState().setPendingSystemMessage(
-      `[系统通知] 正在生成 ${String(format).toUpperCase()} 导出文件…`,
+      tNow('map.export.generating', { format: String(format).toUpperCase() }), 'info',
     );
   } catch {
     /* defensive */
@@ -1871,7 +1854,6 @@ async function runExportInternal(
     // 附 info 诊断如实披露（细节增益由矢量引擎孪生 oversample 承担）。
     // 在 try 内调用：异常路径由下方 catch 给出失败文案、finally 恢复比率。
     const highDpi = await enterHighDpiRender(map, dpi, deps.idleTimeoutMs);
-    const highDpiDegraded = highDpi.mode === 'degraded-native';
 
     // ADR-0157 P4：所见即所得 —— 遮罩范围 → 图框导出范围。纸张档出图前把
     // 相机 fit 到与图框同纵横比的导出范围（⊇ 视口遮罩，零内容裁切）；此后
@@ -2164,7 +2146,7 @@ async function runExportInternal(
       scaleNote: sceneDisclosureModel.scaleNoteZh ?? undefined,
     });
 
-    const dataUrl = exportCanvas.toDataURL('image/png');
+    const getDataUrl = () => exportCanvas.toDataURL('image/png');
     const fmt = fmtEarly;
 
     // Wave 9：显式降级汇入导出后系统消息（此前 chart/table 面板拉取失败
@@ -2301,20 +2283,19 @@ async function runExportInternal(
           spec: hydratedSpec,
           layout: publicationLayout,
           dpi,
-          fallbackRaster: () => buildSvgText(exportCanvas, title, dataUrl),
+          fallbackRaster: () => buildSvgText(exportCanvas, title, getDataUrl()),
         });
         svgText = vector.svg;
         svgDegradations = vector.degradations;
       } catch (e) {
         // fallbackRaster 未注入/自身抛错的双保险位图回退（不静默）。
         devOnly.warn('[MapExporter] vector svg build failed — raster fallback', e);
-        const wrapper = buildSvgWrapper(exportCanvas, title, dataUrl);
+        const wrapper = buildSvgWrapper(exportCanvas, title, getDataUrl());
         svgText = await wrapper.text();
         svgDegradations = [
           { code: 'vector_svg_fallback_raster', detail: e instanceof Error ? e.message : String(e) },
         ];
       }
-      const rasterFallback = svgDegradations.some((d) => d.code === 'vector_svg_fallback_raster');
       const svgBlob = new Blob([svgText], { type: 'image/svg+xml' });
       const upload = await uploadExport(
         svgBlob, 'export.svg', title, [...chromeDegradations, ...svgDegradations],
@@ -2322,11 +2303,7 @@ async function runExportInternal(
       );
       recordExport(getHudState, title, upload.filename, 'svg', svgBlob.size);
       getHudState().setPendingSystemMessage(
-        `[系统通知] 专题地图 SVG \`${title || '未命名'}\` 已成功生成` +
-          `（${rasterFallback ? '位图回退：数据层矢量编译失败，含嵌入位图' : '真矢量：数据层矢量要素，不含栅格底图'}），` +
-          `文件已落盘并分配URL：${upload.url}。可通过以下链接下载：[下载SVG](${API_BASE}${upload.url})。` +
-          formatDegradationNote([...chromeDegradations, ...svgDegradations]) +
-          `注意展示完链接后直接结束。`,
+      tNow('map.export.ready', { title: exportNotificationTitle(title), format: 'SVG', url: API_BASE + upload.url }) + formatDegradationNote([...chromeDegradations, ...svgDegradations]), 'success',
       );
       return { ok: true, format: 'svg', url: upload.url, filename: upload.filename };
     } else if (fmt === 'pdf') {
@@ -2373,26 +2350,15 @@ async function runExportInternal(
       );
       recordExport(getHudState, title, upload.filename, 'pdf', pdfBlob.size);
       getHudState().setPendingSystemMessage(
-        `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成` +
-          (highDpiDegraded ? '（高 DPI 重渲染超时，已降级为当前分辨率）' : '') +
-          `（地图为位图画布 + 文本层${pdfFontEmbedded ? '矢量（嵌入 Noto Sans SC 子集，中文可选取可检索）' : pdfVectorText ? '矢量（标题/副标题为 PDF 矢量文本）' : '栅格化（标题/副标题随画布位图，避免 CJK 乱码）'}），` +
-          `文件已落盘并分配URL：${upload.url}。` +
-          `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
-          formatDegradationNote([...chromeDegradations, ...pdfDegradations]) +
-          `注意展示完链接后直接结束。`,
+      tNow('map.export.ready', { title: exportNotificationTitle(title), format: 'PDF', url: API_BASE + upload.url }) + tNow(pdfVectorText || pdfFontEmbedded ? 'map.export.pdfTextVector' : 'map.export.pdfTextRaster') + formatDegradationNote([...chromeDegradations, ...pdfDegradations]), 'success',
       );
       return { ok: true, format: 'pdf', url: upload.url, filename: upload.filename };
     } else {
-      const res = await fetch(dataUrl);
-      const blob = await res.blob();
+      const blob = await captureMapCanvas({ getCanvas: () => exportCanvas } as Map);
       const upload = await uploadExport(blob, 'export.png', title, chromeDegradations, dpi);
       recordExport(getHudState, title, upload.filename, 'png', blob.size);
       getHudState().setPendingSystemMessage(
-        `[系统通知] 专题地图 \`${title || '未命名'}\` 已成功排版合成` +
-          (highDpiDegraded ? '（高 DPI 重渲染超时，已降级为当前分辨率）' : '') +
-          `，` +
-          `文件已落盘并分配URL：${upload.url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${upload.url})\` 将该成品展示给用户，并祝其研究顺利！` +
-          formatDegradationNote(chromeDegradations) + `注意展示完图片后直接结束。`,
+      tNow('map.export.ready', { title: exportNotificationTitle(title), format: 'PNG', url: API_BASE + upload.url }) + formatDegradationNote(chromeDegradations), 'success',
       );
       return { ok: true, format: 'png', url: upload.url, filename: upload.filename };
     }
@@ -2412,11 +2378,7 @@ async function runExportInternal(
           ? e.message
           : String(e);
     getHudState().setPendingSystemMessage(
-      idleTimeout
-        ? `[系统通知] ${e.message}。已恢复原始分辨率。请告知用户并结束流程。`
-        : authRequired
-          ? '[系统通知] 导出失败：导出功能需要登录账号（认证失败或会话已过期）。请到 设置 → 账户 重新登录后再导出。'
-          : `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`,
+      tNow(idleTimeout ? 'map.export.redrawIncomplete' : authRequired ? 'map.export.signInRequired' : 'map.export.failed'), 'error',
     );
     return { ok: false, format: (format ?? 'png').toLowerCase(), error: errorMsg };
   } finally {

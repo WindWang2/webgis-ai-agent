@@ -70,7 +70,7 @@ def register_knowledge_tools(registry: ToolRegistry):
             "零证据（乱码/无关请求）会显式 abstain。"
         ),
         args_model=ClassifyArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="pure", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "分类", "任务", "方法", "knowledge"),
         capabilities=["plan_workflow_orchestration"],
@@ -92,7 +92,7 @@ def register_knowledge_tools(registry: ToolRegistry):
             "\n何时用：执行前确认某专业方法在当前数据事实上是否成立。"
         ),
         args_model=QualifyArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="pure", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "资格", "方法", "数据画像", "knowledge"),
         capabilities=["plan_workflow_orchestration"],
@@ -119,7 +119,7 @@ def register_knowledge_tools(registry: ToolRegistry):
             "\n何时用：确定类目后询问『有哪些可行方法、哪个最优、哪些被拒及原因』。"
         ),
         args_model=RankArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="pure", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "方法", "排序", "推荐", "knowledge"),
         capabilities=["plan_workflow_orchestration"],
@@ -147,7 +147,7 @@ def register_knowledge_tools(registry: ToolRegistry):
             "\n何时用：需要向用户解释『这个方法是什么、何时不可用』时。"
         ),
         args_model=ExplainArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="pure", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "解释", "方法", "knowledge"),
         capabilities=["plan_workflow_orchestration"],
@@ -168,7 +168,7 @@ def register_knowledge_tools(registry: ToolRegistry):
             "\n何时用：方法选定后询问『这张图该由哪些组件组成、数据怎么绑定』。"
         ),
         args_model=TemplatePlanArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="pure", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "模板", "组合", "组件", "knowledge"),
         capabilities=["thematic_cartography"],
@@ -191,7 +191,7 @@ def register_knowledge_tools(registry: ToolRegistry):
             "\n何时用：需要确认某类组件是否存在、其渲染/导出支持与放置约束时。"
         ),
         args_model=ComponentsArgs,
-        side_effect="pure", deterministic=True,
+        side_effect="pure", deterministic=True, network=False,
         latency_class="fast", memory_class="light", scale_class="small",
         tags=("GIS", "组件", "目录", "knowledge"),
         capabilities=["thematic_cartography"],

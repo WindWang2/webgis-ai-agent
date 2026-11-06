@@ -128,12 +128,16 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     // 不参与 mixed 判定（review-r1 修正：长标签不再误标 mixed）。
     let layerApproximations = 0;
     const refUnavailableLayers: string[] = [];
+    const compilerDegradations: ExportDegradation[] = [];
     const compiled = compileMapSpecToSvg(input.spec, {
       targetDpi: 72,
       width,
       height,
       padding: 0,
       onDiagnostic: (code, detail) => {
+        if (compilerDegradations.length < 64 && (code === 'layer_filter_unsupported' || code === 'label_expression_unsupported' || code === 'layer_coordinates_invalid')) {
+          compilerDegradations.push({ code, detail: detail.slice(0, 200) });
+        }
         if (code === 'layer_approximated_heatmap' || code === 'layer_approximated_extrusion') {
           layerApproximations += 1;
         }
@@ -145,6 +149,7 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     });
 
     const degradations: ExportDegradation[] = [
+      ...compilerDegradations,
       { code: 'basemap_omitted_vector_svg', detail: '矢量 SVG 不含栅格底图' },
     ];
     // G3D05（ADR-0275）：三维场景的矢量降级收据 —— scene.mode∈{3d,2.5d}
@@ -200,34 +205,42 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     parts.push(renderSvgFrameBorder({ width, height, margin }));
     // 标题 / 副标题（layout.texts 单源 —— 与画布 chrome 同回退链）
     let cursorY = margin + 30;
-    if (title) {
+    if (title && (layout.chromeModel?.title || !layout.chromeModel?.fromSpec)) {
       parts.push(
         `<text x="${margin + 12}" y="${cursorY}" font-family="sans-serif" font-size="22" font-weight="bold" fill="${ink}">${escapeSvgText(title)}</text>`,
       );
       cursorY += 22;
     }
-    if (subtitle) {
+    if (subtitle && (layout.chromeModel?.subtitle || !layout.chromeModel?.fromSpec)) {
       parts.push(
         `<text x="${margin + 12}" y="${cursorY}" font-family="sans-serif" font-size="12" fill="${ink}" opacity="0.75">${escapeSvgText(subtitle)}</text>`,
       );
     }
     // 指北针（右上；renderSvgNorthArrow 自带 <svg> 根，嵌套合法）
-    parts.push(
+    if (layout.chromeModel?.northArrow || !layout.chromeModel?.fromSpec) parts.push(
       `<g transform="translate(${width - margin - 60}, ${margin + 8})">${renderSvgNorthArrow({ width: 44, height: 44, color: '#1e3a8a' })}</g>`,
     );
     // 比例尺（右下；layout.scaleBar 单源数字 —— 米/像素缺席 → 不画，不虚构比例）
-    if (layout.scaleBar) {
+    if (layout.scaleBar && (layout.chromeModel?.scaleBar || !layout.chromeModel?.fromSpec)) {
       const nice = layout.scaleBar.nice;
       parts.push(
         `<g transform="translate(${width - margin - 16 - (nice.px + 16)}, ${height - margin - 16 - 28})">${renderSvgScalebar({ lengthPx: nice.px, labelText: layout.scaleBar.label })}</g>`,
       );
     }
     // 图例（左下；chromeModel.legends 全实例逐个堆叠 —— 多图层语义与画布一致）
-    const legendModels = (layout.chromeModel?.legends ?? [])
+    const legendElements = layout.chromeModel?.legends ?? [];
+    if (legendElements.some((element) => element.legendSpec?.type === 'bivariate')) degradations.push({ code: 'legend_entries_truncated', detail: 'bivariate matrix omitted in vector SVG' });
+    const legendModels = legendElements
       .map((el) => legendItemsOf(el.legendSpec))
       .filter((l): l is NonNullable<typeof l> => l !== null && l.items.length > 0);
     let legendBottom = height - margin - 16;
     for (const legend of legendModels) {
+      const available = Math.max(0, Math.floor((legendBottom - cursorY - 62) / 20));
+      if (legend.items.length > available) {
+        degradations.push({ code: 'legend_entries_truncated', detail: `${legend.items.length - available} entries omitted` });
+        legend.items = legend.items.slice(0, available);
+      }
+      if (legend.items.length === 0) continue;
       const legendH = 24 + 18 + legend.items.length * 20;
       const top = legendBottom - legendH;
       parts.push(

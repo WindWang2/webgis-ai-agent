@@ -139,6 +139,7 @@ def _spec(layer_ids: List[str], *, ref: str = "ref:geojson-parks",
     raster = layer_type == "raster"
     paint, geom_types = _LAYER_TYPE_SHAPES.get(
         layer_type, ({"circle-color": "#3182bd", "circle-radius": 5}, ["Point"]))
+    paint = dict(paint)
     profile: Dict[str, Any] = {
         "featureCount": 120, "bbox": [116.0, 39.0, 117.0, 40.0],
         "geometryTypes": geom_types, "crs": crs,
@@ -290,6 +291,15 @@ def _single_turn_scenario(category: str, variant: int) -> Scenario:
                         faults=[{"type": "invalid_tool_result",
                                  "target": f"call-upsert-dirty-{variant}"}])
     spec = _SINGLE_TURN_MAKES[category](variant)
+    spec["view"]["zoom"] = 7.0 + variant * 0.25
+    for layer in spec["layers"]:
+        paint = layer.setdefault("paint", {})
+        if layer.get("type") == "circle":
+            paint["circle-radius"] = 3.0 + variant
+        elif layer.get("type") == "line":
+            paint["line-width"] = .5 + variant * .5
+        elif layer.get("type") == "fill":
+            paint["fill-opacity"] = .3 + variant * .05
     visual = category not in ("multi_source_fallback", "missing_crs",
                               "dirty_data")
     turn = _turn(f"把 {spec['layers'][0]['id']} 做成地图", spec, visual=visual)
@@ -322,7 +332,7 @@ def _multi_turn_variants(category: str, variant: int) -> Scenario:
         ]
         if variant % 2 == 0:
             turns.append(_turn(f"给 {sid}-base 补视觉验证", spec_a))
-        for index, turn in enumerate(turns):
+        for _index, turn in enumerate(turns):
             turn.expect["gate"]["checks"]["MapSpecValidity"] = {
                 "evaluated": True, "passed": True}
         return Scenario(scenario_id=f"mt-{category}-{variant:02d}",
@@ -486,7 +496,7 @@ def dump_corpus(out_dir, *, indent: Optional[int] = None) -> List:
         })
     with (out / "index.csv").open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(
-            fh, fieldnames=["scenario_id", "category", "turns", "faults",
+            fh, lineterminator="\n", fieldnames=["scenario_id", "category", "turns", "faults",
                             "dispatch_backed"])
         writer.writeheader()
         writer.writerows(index_rows)
@@ -501,6 +511,7 @@ def _scenario_to_json(scenario: Scenario, *, indent: Optional[int] = None) -> st
             "call_id": op.call_id, "tool": op.tool,
             "arguments": op.arguments, "result": op.result,
             "is_error": op.is_error, "error_msg": op.error_msg,
+            "error_code": op.error_code,
             "duration_ms": op.duration_ms,
         }
 
@@ -521,6 +532,12 @@ def _scenario_to_json(scenario: Scenario, *, indent: Optional[int] = None) -> st
         "description": scenario.description,
         "schema_version": scenario.schema_version,
         "dispatch_backed": scenario.dispatch_backed,
+        "receipt_backed": scenario.receipt_backed,
+        "decisions": scenario.decisions,
+        "registry_digest": scenario.registry_digest,
+        "tool_registry": scenario.tool_registry,
+        "expect_source": scenario.expect_source,
+        "expect_calibration": scenario.expect_calibration,
         "faults": scenario.faults,
         "tags": scenario.tags,
         "turns": [_turn_dict(t) for t in scenario.turns],

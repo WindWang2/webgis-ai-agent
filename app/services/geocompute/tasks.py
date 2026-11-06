@@ -109,6 +109,7 @@ def run_geocompute_node(
     resource_envelope: Optional[dict] = None,
     owner_scope: Optional[str] = None,
     caller: Optional[dict] = None,
+    caller_identity: Optional[dict] = None,
 ) -> dict[str, Any]:
     """执行单个 ExecutionNode（经 ops 注册表），结果落 session ref。
 
@@ -163,6 +164,8 @@ def run_geocompute_node(
         logger.warning(
             "[geocompute] run_geocompute_node called without job_id (eager/test path)"
         )
+        from app.services.geocompute.task_identity import verify_task_identity
+        verify_task_identity({"caller": caller, "session_id": session_id, "node": node, "owner_scope": owner_scope}, caller_identity)
         ctx = ops.OperatorContext(
             run_id="direct", node_id=exec_node.node_id, session_id=session_id,
             caller=caller, budget=ctx_budget,
@@ -173,6 +176,8 @@ def run_geocompute_node(
     from app.services.jobs.worker import durable_job, finish_job
 
     with durable_job(job_id, celery_task=self) as job:
+        from app.services.geocompute.task_identity import verify_task_identity
+        verify_task_identity({"caller": caller, "session_id": session_id, "node": node, "owner_scope": owner_scope}, caller_identity)
         job.progress(5, "GeoCompute 节点开始执行", phase="execute")
         job.ensure_not_cancelled()
         deadline_ts = time.monotonic() + deadline_s if deadline_s else None
@@ -228,7 +233,7 @@ def run_geocompute_node(
                     bytes_=_estimate_payload_bytes(payload))
 
         result = _bounded_summary(payload)
-        finish_job(job_id, result=result, result_ref=ref_id)
+        finish_job(job_id, result=result, result_ref=ref_id, worker_id=job.worker_id, attempt=job.attempt)
         return result
 
 

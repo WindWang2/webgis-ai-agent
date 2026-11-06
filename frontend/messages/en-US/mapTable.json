@@ -1,0 +1,25 @@
+{
+  "paged": {
+    "loadMore": "Load more",
+    "loadingMore": "Loading…",
+    "countLine": "Showing {shown} rows{matched}{total}",
+    "matchedSuffix": " · matched {matched}",
+    "totalSuffix": " · of {total}",
+    "matchedUnknown": " · matched count unknown",
+    "truncatedPage": "This page stopped at the scan budget; more pages available",
+    "conflictTitle": "Data advanced to revision {revision}; current paging is stale",
+    "conflictReload": "Reload",
+    "rateLimited": "Rate limited — retrying shortly…",
+    "networkError": "Network error",
+    "retry": "Retry",
+    "forbidden": "No access to this layer's data",
+    "notFound": "Layer ref missing or deleted",
+    "overLimit": "Dataset exceeds the aggregate scan limit; stats unavailable",
+    "positionalIdNote": "This layer has no stable feature IDs; row ids are valid only within the current data revision",
+    "duplicateIdNote": "{count} duplicate feature IDs; first match wins",
+    "serverMode": "Server-paged",
+    "sortServerTitle": "Sort by {column} (server)",
+    "locateTitle": "Locate on map",
+    "emptyPage": "No features under the current conditions"
+  }
+}

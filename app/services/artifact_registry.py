@@ -410,6 +410,39 @@ def fabric_parquet_ref_exists(session_id: str, ref: str) -> bool:
         return False
 
 
+# ── GOAL-02：COG 栅格工件 disk-cursor（fabric-cog）────────────────────────
+# ref:fabric-cog/<id> → DATA_DIR/<sid>/fabric-cog/<id>.tif。coverage 受控
+# 读取与远程 COG 物化共用（raster_materialization.publish_cog_artifact）。
+_FABRIC_COG_REF_PREFIX = "ref:fabric-cog/"
+
+
+def fabric_cog_path(session_id: str, ref: str) -> Optional["Path"]:
+    """ref:fabric-cog/<id> → 会话 fabric-cog 目录下的 COG 路径。
+
+    与 fabric_parquet_path 同款：session/ref id 双 charset 白名单（`..` 与
+    分隔符在边界即拒绝），DATA_DIR 调用时实时取值。
+    """
+    artifact_id = ref[len(_FABRIC_COG_REF_PREFIX):]
+    if not artifact_id or not _RASTER_ID_RE.match(artifact_id):
+        return None
+    if not _RASTER_ID_RE.match(session_id or ""):
+        return None
+    from app.core.config import settings
+
+    return Path(settings.DATA_DIR) / session_id / "fabric-cog" / f"{artifact_id}.tif"
+
+
+def fabric_cog_ref_exists(session_id: str, ref: str) -> bool:
+    """COG 工件活性（O(1) stat；路径非法 → False）。"""
+    path = fabric_cog_path(session_id, ref)
+    if path is None:
+        return False
+    try:
+        return path.is_file()
+    except OSError:  # noqa: BLE001
+        return False
+
+
 # ── Lakehouse Cube 磁盘工件 V6（ADR-0249 Wave 7）─────────────────────────
 # ref:cube/<id> → DATA_DIR/<sid>/lakehouse-cubes/<id>.zarr（**目录**形态
 # 的 disk-cursor —— zarr store 是目录树）。与 raster/fabric-parquet 完全
@@ -513,6 +546,7 @@ async def register_artifact(
     metadata: Optional[Dict[str, Any]] = None,
     profile_digest: Optional[Dict[str, Any]] = None,
     lock: Any = None,
+    store: Any = None,
 ) -> Optional[ArtifactRecord]:
     """注册/更新一条产物记录（幂等 upsert；同 capability 换 ref 自动 supersede）。
 
@@ -619,11 +653,11 @@ async def register_artifact(
         if lock is not None:
             from app.services.session_data import session_data_manager as sdm
 
-            return await _mutate(sdm)
+            return await _mutate(store if store is not None else sdm)
         async with session_lock_registry.lock(session_id, fail_on_degraded=False):
             from app.services.session_data import session_data_manager as sdm
 
-            return await _mutate(sdm)
+            return await _mutate(store if store is not None else sdm)
     except Exception:  # noqa: BLE001 — 注册失败只影响记录，不影响产物
         logger.warning(
             "[ArtifactRegistry] register failed session=%s artifact=%s",
@@ -982,10 +1016,16 @@ def _gc_protection_skip(aid: str, records: Dict[str, ArtifactRecord]) -> Optiona
         if str(md.get("persistence_tier") or "") in _GC_PROTECTED_TIERS:
             return f"persistence_tier={md.get('persistence_tier')}"
     valid_inputs: set = set()
-    for other in records.values():
-        if other.status == A_VALID:
-            for parent in other.inputs:
-                valid_inputs.add(parent)
+    pending = [parent for other in records.values() if other.status == A_VALID
+               for parent in other.inputs]
+    while pending:
+        parent = pending.pop()
+        if parent in valid_inputs:
+            continue
+        valid_inputs.add(parent)
+        ancestor = records.get(parent)
+        if ancestor is not None:
+            pending.extend(ancestor.inputs)
     if aid in valid_inputs:
         return "retained lineage root (has live downstream)"
     return None

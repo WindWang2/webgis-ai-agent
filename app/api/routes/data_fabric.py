@@ -1,6 +1,11 @@
 """
 Enterprise Geospatial Data Fabric REST Routes
 """
+from collections.abc import Callable, Coroutine
+from typing import TypeVar, Literal, Annotated
+from pydantic import BeforeValidator
+
+_ORMResult = TypeVar("_ORMResult")
 import asyncio
 import concurrent.futures
 import contextlib
@@ -13,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.auth import get_current_user, get_current_user_optional
+from app.services.auth_history_bridge import require_owned_session
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (  # noqa: F401 - 模块属性保持
     CatalogDescriptorResponse,
@@ -36,10 +42,13 @@ from app.schemas.data_fabric_schema import (  # noqa: F401 - 模块属性保持
 from app.services.data_fabric.manager import data_fabric_manager
 from app.services.data_fabric.tile_service import catalog_tile_service
 from app.services.data_fabric.pmtiles_tile_service import pmtiles_tile_service
+from app.services.data_fabric.ogc_tiles_proxy import ogc_tiles_proxy_service
 from app.services.data_fabric.errors import (
     DataFabricError,
     InvalidQueryError,
+    QueryUnsupportedError,
     ResultTooLargeError,
+    SourceUnreachableError,
     UnsupportedSourceError,
 )
 from app.services.data_fabric.security import DataFabricSecurity
@@ -48,6 +57,26 @@ from app.services.data_fabric.registry import resolve_adapter_spec
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_GEOMETRY_TYPES = {name.lower(): name for name in ("Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "GeometryCollection", "Raster", "Table", "Unknown")}
+GeometryFilter = Annotated[Literal["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "GeometryCollection", "Raster", "Table", "Unknown"], BeforeValidator(lambda value: _GEOMETRY_TYPES.get(str(value).lower(), value))]
+
+
+def _literal_catalog_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+class _AdmittedStreamResponse(StreamingResponse):
+    def __init__(self, *args: Any, lease: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._stream_lease = lease
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._stream_lease.close()
+
 
 
 _ANONYMOUS_USER_IDS = {"anonymous", "anon"}
@@ -102,6 +131,7 @@ def _tenant_filter(query, user: Optional[Dict[str, Any]]):
             or_(
                 DataSourceModel.org_id == org_id,
                 DataSourceModel.owner_id == user_id,
+                and_(DataSourceModel.org_id.is_(None), DataSourceModel.owner_id.is_(None)),
             )
         )
     # Authenticated user with no org claim (tokens carry org_id only when the
@@ -119,7 +149,7 @@ def _tenant_filter(query, user: Optional[Dict[str, Any]]):
     )
 
 
-def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str, Any]]):
+def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str, Any]]) -> DataSourceModel:
     """Authorize a single DataSource belongs to the caller's tenant (or 404).
 
     Returns 404 (not 403) to avoid leaking the existence of cross-tenant rows.
@@ -133,7 +163,7 @@ def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str,
             raise HTTPException(status_code=404, detail="Data source not found")
         return s
     if org_id is not None:
-        if s.org_id == org_id or s.owner_id == user_id:
+        if s.org_id == org_id or s.owner_id == user_id or (s.org_id is None and s.owner_id is None):
             return s
         raise HTTPException(status_code=404, detail="Data source not found")
     # Authenticated, no org claim: own row or truly global.
@@ -166,7 +196,7 @@ def _require_source_manage(
     )
 
 
-def _authorize_catalog_item(db: Session, item_id: str, user: Optional[Dict[str, Any]]):
+def _authorize_catalog_item(db: Session, item_id: str, user: Optional[Dict[str, Any]]) -> CatalogItemModel:
     """Authorize catalog-item access for the caller's tenant (or 404).
 
     Cross-tenant access to preview/query/materialize previously had NO guard —
@@ -188,12 +218,7 @@ def _require_existing_session_owner(
     user: Optional[Dict[str, Any]],
     owner_token: Optional[str],
 ) -> None:
-    """Block materialize into someone else's existing Conversation.
-
-    A session_id with no Conversation row is allowed (same as the first chat
-    turn creating store keys). If the row exists, the caller must match
-    user_id or X-Session-Token — otherwise this is a write-IDOR.
-    """
+    """Require a live owned conversation before materializing any ref."""
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
     from app.models.db_model import Conversation
@@ -201,7 +226,7 @@ def _require_existing_session_owner(
     from app.core.auth import authorize_session_write
 
     conv = db.query(Conversation).filter(Conversation.id == session_id).first()
-    if not authorize_session_write(conv, _real_user_id(user), owner_token):
+    if conv is None or not authorize_session_write(conv, _real_user_id(user), owner_token):
         raise HTTPException(status_code=404, detail="Session not found")
 
 
@@ -217,10 +242,10 @@ def _require_existing_session_owner(
 # are unchanged — only the execution thread moves.
 
 
-def _run_sync_orm(fn):
+def _run_sync_orm(fn: Callable[[Session], _ORMResult]) -> Coroutine[None, None, _ORMResult]:
     """Run ``fn(session)`` — a route's sync ORM work — in a worker thread
     with its own SessionLocal(). Returns the plain data the closure builds."""
-    def _worker():
+    def _worker() -> _ORMResult:
         with SessionLocal() as thread_db:
             return fn(thread_db)
 
@@ -245,7 +270,7 @@ def _run_sync_orm(fn):
 # 的客户端），故 per-request loop 可安全恢复。
 
 
-def _run_async_manager(fn):
+def _run_async_manager(fn: Callable[[Session], Coroutine[None, None, _ORMResult]]) -> Coroutine[None, None, _ORMResult]:
     """Run an async data_fabric manager call (``fn(session) -> coroutine``) in
     a worker thread's OWN event loop with a request-scoped SessionLocal().
 
@@ -255,7 +280,7 @@ def _run_async_manager(fn):
     Session 随请求创建/关闭：close 即归还连接，``loop.close()`` 同时关闭该
     loop 的默认执行器（无跨请求线程/执行器残留）。
     """
-    def _worker():
+    def _worker() -> _ORMResult:
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
@@ -268,7 +293,7 @@ def _run_async_manager(fn):
     return asyncio.to_thread(_worker)
 
 
-async def _run_async_manager_cancellable(fn):
+async def _run_async_manager_cancellable(fn: Callable[[Session], Coroutine[None, None, _ORMResult]]) -> _ORMResult:
     """``_run_async_manager`` 的真取消版（W12 断线取消；#1683 后 per-request loop）。
 
     每个调用一条自己的 worker loop（跑在 ``asyncio.to_thread`` 同款默认执行器
@@ -285,7 +310,7 @@ async def _run_async_manager_cancellable(fn):
     # worker → handler 的 task 句柄交接（concurrent.futures.Future 跨线程安全）
     task_box: "concurrent.futures.Future" = concurrent.futures.Future()
 
-    def _worker():
+    def _worker() -> _ORMResult:
         asyncio.set_event_loop(loop)
         try:
             with SessionLocal() as thread_db:
@@ -620,9 +645,9 @@ async def sync_data_source_catalog(
 
 @router.get("/data-fabric/catalog", tags=["Data Fabric / 数据织网"], response_model=CatalogListResponse)
 async def list_spatial_catalog(
-    q: Optional[str] = Query(None, description="Search keyword query"),
+    q: Optional[str] = Query(None, max_length=128, description="Literal keyword query"),
     source_id: Optional[str] = Query(None, description="Filter by source ID"),
-    geometry_type: Optional[str] = Query(None, description="Filter by geometry type"),
+    geometry_type: Optional[GeometryFilter] = Query(None, description="Exact geometry type"),
     feature_type: Optional[str] = Query(None, description="Filter by feature type (vector/raster)"),
     availability: Optional[str] = Query(
         None, description="Filter by availability: 'available' | 'unavailable' (ADR-0094 §9)"
@@ -658,7 +683,8 @@ async def list_spatial_catalog(
         if source_id:
             query = query.filter(CatalogItemModel.source_id == source_id)
         if geometry_type:
-            query = query.filter(CatalogItemModel.geometry_type.ilike(f"%{geometry_type}%"))
+            from sqlalchemy import func
+            query = query.filter(func.lower(CatalogItemModel.geometry_type) == geometry_type.lower())
         if feature_type:
             query = query.filter(CatalogItemModel.feature_type == feature_type)
         if availability:
@@ -666,11 +692,11 @@ async def list_spatial_catalog(
             # 源消失但保留元数据供 stale 检索）。
             query = query.filter(CatalogItemModel.availability == availability)
         if q:
-            kw = f"%{q}%"
+            kw = f"%{_literal_catalog_like(q)}%"
             query = query.filter(
-                (CatalogItemModel.name.ilike(kw)) |
-                (CatalogItemModel.title.ilike(kw)) |
-                (CatalogItemModel.description.ilike(kw))
+                (CatalogItemModel.name.ilike(kw, escape="\\")) |
+                (CatalogItemModel.title.ilike(kw, escape="\\")) |
+                (CatalogItemModel.description.ilike(kw, escape="\\"))
             )
 
         # Defer the heavy JSON columns at the ORM level so the list query
@@ -1012,6 +1038,101 @@ async def get_catalog_pmtiles_tile(
     return resp
 
 
+@router.get(
+    "/data-fabric/catalog/{item_id}/ogc-tiles/{z}/{x}/{y}",
+    tags=["Data Fabric / 数据织网"],
+)
+async def get_catalog_ogc_tile(
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv=Depends(require_owned_session),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+):
+    """目录 OGC API - Tiles tileset 的受控瓦片代理（GOAL-02 / M2）。
+
+    - 权限：会话归属（require_owned_session，与 /layers/data MVT 瓦片路由
+      同语义 —— 浏览器 MapLibre 经 ``?session_id=`` 携带）+ 目录条目租户
+      校验（_require_tenant_owned）；鉴权先于缓存查找（API-01）。
+    - 协议适配 only：缓存/ETag/single-flight 在
+      ``app.services.data_fabric.ogc_tiles_proxy``；远端获取走
+      ``OGCTilesAdapter.fetch_tile``（SSRF 同源模板、display 三态资格门、
+      zoom 矩阵校验、单瓦片字节帽、401/403/429 typed）。
+    - 空瓦片（远端 404 / zoom 超出服务声明范围）= 204；命中返回原始字节
+      （不重压缩）+ 内容寻址 ETag（If-None-Match 304）。
+    - MapSpec 消费：vector tileset → source.tiles 模板；raster tileset →
+      data_fabric source.url 模板（build_mapspec_source 统一构造）。
+    """
+    if not (0 <= z <= 24) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+        raise HTTPException(status_code=400, detail="非法瓦片坐标")
+
+    async def _serve_tile(session: Session):
+        # API-01：鉴权必须在缓存查找**之前**（同 MVT/PMTiles 路由）。
+        item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+        if not item:
+            raise ValueError(f"Catalog item '{item_id}' not found")
+        src = session.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
+        _require_tenant_owned(src, user)
+        # A5（#1771 D11 清偿同款）：同租户同源率限（鉴权后、缓存前）。
+        from app.services.data_fabric.tile_rate_limiter import (
+            data_fabric_tile_rpm,
+            enforce_tile_rate,
+        )
+
+        _tenant = (user or {}).get("org_id") or _real_user_id(user) or "anon"
+        enforce_tile_rate(
+            f"df:ogc-tiles:{_tenant}:{item_id}",
+            data_fabric_tile_rpm(),
+            scope="data_fabric_ogc_tile",
+        )
+        ds_model = item.data_source or src
+        return await ogc_tiles_proxy_service.serve_tile(item, ds_model, z, x, y)
+
+    try:
+        result = await _run_async_manager(_serve_tile)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except InvalidQueryError as e:
+        raise HTTPException(status_code=400, detail=str(e) or "瓦片请求参数非法")
+    except QueryUnsupportedError as e:
+        # tileset 三态资格未过门：诚实 422 + reason codes（agent 可解释）。
+        raise HTTPException(status_code=422, detail=str(e) or "tileset 不满足显示资格")
+    except UnsupportedSourceError as e:
+        raise HTTPException(status_code=422, detail=str(e) or "该数据集类型不支持 OGC Tiles 瓦片服务")
+    except SourceUnreachableError:
+        raise HTTPException(status_code=502, detail="瓦片服务认证/网络不可达")
+    except DataFabricError as exc:
+        # #766 同族：远端失败 ≠ 空瓦片 —— typed 502，全文仅在服务端日志。
+        logger.error(f"OGC tile fetch failed for '{item_id}' {z}/{x}/{y}: {exc}", exc_info=True)
+        raise HTTPException(status_code=502, detail="瓦片获取失败")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"OGC tile fetch failed for '{item_id}' {z}/{x}/{y}: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="瓦片获取失败")
+
+    if result.body is None:
+        return Response(status_code=204)
+
+    headers = {
+        "Cache-Control": "private, max-age=60",
+        "ETag": result.etag,
+        "X-Content-Type-Options": "nosniff",
+        "X-Dataset-Fingerprint": result.fingerprint[:16],
+    }
+    if if_none_match:
+        candidate = if_none_match.strip()
+        if candidate == "*" or candidate.strip('"') == result.etag.strip('"'):
+            return Response(status_code=304, headers=headers)
+    resp = Response(content=result.body, media_type=result.content_type, headers=headers)
+    resp.headers["X-Tile-Cache"] = result.cache_state
+    return resp
+
+
 @router.post("/data-fabric/catalog/{item_id}/query", tags=["Data Fabric / 数据织网"], response_model=CatalogQueryResponse)
 async def query_catalog_item(
     item_id: str,
@@ -1129,7 +1250,7 @@ async def stream_catalog_item_features_http(
     request: Request,
     user: Dict[str, Any] = Depends(get_current_user),
     page_size: int = Query(500, ge=1, le=2000, description="adapter 内部翻页批大小"),
-    limit: int = Query(50_000, ge=1, le=200_000, description="NDJSON 总行数帽（有界响应）"),
+    limit: int = Query(5_000, ge=1, le=50_000, description="NDJSON 总行数帽；更大结果请分区查询"),
     bbox: Optional[str] = Query(None, max_length=128, description="窗口 'w,s,e,n'（经纬度）"),
     fields: Optional[str] = Query(None, max_length=1024, description="字段投影 CSV"),
 ):
@@ -1156,20 +1277,34 @@ async def stream_catalog_item_features_http(
     except FeaturePageError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    from app.services.data_fabric.stream_limits import StreamLease, StreamLimitExceeded
+    try:
+        lease = StreamLease(_real_user_id(user) or "")
+    except StreamLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail={"code": "STREAM_LIMITED", "reason": exc.reason}, headers={"Retry-After": str(exc.retry_after)}) from exc
+
     async def _prep(session: Session):
-        _authorize_catalog_item(session, item_id, user)
+        item = _authorize_catalog_item(session, item_id, user)
+        lease.bind_source(str(item.source_id))
         return data_fabric_manager.resolve_catalog_stream(session, item_id)
 
     try:
         adapter, dataset_name = await _run_async_manager(_prep)
+    except StreamLimitExceeded as exc:
+        lease.close()
+        raise HTTPException(status_code=429, detail={"code": "STREAM_LIMITED", "reason": exc.reason}, headers={"Retry-After": str(exc.retry_after)}) from exc
     except ValueError as e:
+        lease.close()
         raise HTTPException(status_code=404, detail=str(e))
     except UnsupportedSourceError as e:
+        lease.close()
         # 与目录瓦片路由同语义：源类型不支持 → 422（非 502；失败 ≠ 不支持）。
         raise HTTPException(status_code=422, detail=str(e) or "该数据集类型不支持流式取数")
     except DataFabricError as e:
+        lease.close()
         return JSONResponse(status_code=502, content={"success": False, **e.to_dict()})
-    except HTTPException:
+    except BaseException:
+        lease.close()
         raise
 
     spec = QuerySpec(limit=limit, bbox=window_bbox, fields=field_list)
@@ -1212,11 +1347,14 @@ async def stream_catalog_item_features_http(
             ) + "\n"
         finally:
             cancel_token.cancel("stream closed")
-            with contextlib.suppress(Exception):
-                await pump.aclose()
+            try:
+                with contextlib.suppress(Exception):
+                    await pump.aclose()
+            finally:
+                lease.close()
 
-    return StreamingResponse(
-        _ndjson(),
+    return _AdmittedStreamResponse(
+        _ndjson(), lease=lease,
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

@@ -50,6 +50,7 @@ class TemporalUnit(str, Enum):
     DAY = "day"
     WEEK = "week"
     MONTH = "month"
+    QUARTER = "quarter"
     YEAR = "year"
 
 
@@ -93,7 +94,11 @@ class TimeInstant(BaseModel):
         return cls(iso_string=dt.isoformat(), epoch_seconds=seconds, tz_name=tz_name)
 
     def to_datetime(self) -> datetime:
-        return datetime.fromtimestamp(self.epoch_seconds, tz=timezone.utc)
+        try:
+            tz = datetime.fromisoformat(self.iso_string.replace("Z", "+00:00")).tzinfo or timezone.utc
+        except ValueError:
+            tz = timezone.utc
+        return datetime.fromtimestamp(self.epoch_seconds, tz=tz)
 
 
 class TimeInterval(BaseModel):
@@ -243,6 +248,7 @@ class TemporalTrendResult(BaseModel):
     # trend math — previously a single NaN poisoned slope to NaN, clamped
     # r² to a spurious 1.0, and silenced anomaly detection.
     dropped_nan: int = 0
+    warnings: List[str] = Field(default_factory=list)
     # #594: "per_year" when slope/intercept were fit on a real-time axis
     # (x normalized to years), "per_step" when they fell back to slice
     # indices (no parseable timestamps in the series).

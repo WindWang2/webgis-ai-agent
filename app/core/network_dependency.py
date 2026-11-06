@@ -79,6 +79,15 @@ class NetworkDependency:
                 return value
         return self.constant_endpoint or self.endpoint
 
+    def endpoint_status(self) -> str:
+        """Descriptors and missing configuration are unknown, not remote URLs."""
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(self.resolved_endpoint())
+            return "known" if parsed.scheme in ("http", "https", "s3") and parsed.hostname else "unknown"
+        except ValueError:
+            return "unknown"
+
     def is_local_endpoint(self) -> bool:
         """无 DNS 的保守本地/内网判定（与 egress 同一函数，语义不漂移）。"""
         from app.core.egress import _is_private_host
@@ -119,6 +128,7 @@ class NetworkDependency:
             "category": self.category,
             "description": self.description,
             "endpoint": self.resolved_endpoint(),
+            "endpoint_status": self.endpoint_status(),
             "setting_key": self.setting_key,
             "env_key": self.env_key,
             "call_sites": list(self.call_sites),

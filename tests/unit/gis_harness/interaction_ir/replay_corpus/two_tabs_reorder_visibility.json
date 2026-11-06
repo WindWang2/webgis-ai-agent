@@ -1,6 +1,6 @@
 {
   "name": "two_tabs_reorder_visibility",
-  "description": "tab A 排序 / tab B 可见性交错 —— 水印独立、互不判 stale；overrides 合并两名用户的决策。",
+  "description": "tab A 排序 / tab B 可见性交错，独立水印；未验证提交只能形成 attempted，不能形成 overrides。",
   "events": [
     {
       "event_id": "two_tabs_reo-0001",
@@ -57,16 +57,19 @@
   "expect": {
     "verdicts": "all_accepted",
     "projection": {
-      "user_overrides": [
+      "user_overrides": [],
+      "attempted_not_applied": [
         {
-          "layer_id": "l3"
+          "layer_id": "l1",
+          "outcome": "committed"
         },
         {
           "layer_id": "l2",
-          "visible": false
+          "outcome": "committed"
         },
         {
-          "layer_id": "l1"
+          "layer_id": "l3",
+          "outcome": "committed"
         }
       ]
     },

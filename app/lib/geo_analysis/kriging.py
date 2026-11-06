@@ -350,8 +350,12 @@ def stratified_subsample(
         per_cell.setdefault((int(gx[i]), int(gy[i])), []).append(int(i))
     per_cell_take = max(1, max_points // max(1, len(per_cell)))
     keep: list[int] = []
-    for cell_key in sorted(per_cell.keys()):
-        members = per_cell[cell_key]
+    rng = np.random.default_rng(42)
+    cell_keys = sorted(per_cell.keys())
+    rng.shuffle(cell_keys)
+    for cell_key in cell_keys:
+        members = per_cell[cell_key].copy()
+        rng.shuffle(members)
         keep.extend(members[:per_cell_take])
         if len(keep) >= max_points:
             break
@@ -1012,8 +1016,11 @@ def universal_kriging(
         gamma_ss[:, idx_diag, idx_diag] = ridge
 
         # drift design: F rows [1, x_i, y_i] in REAL coordinates; f0 likewise
-        F = np.concatenate([np.ones((c, k, 1)), nb_xy], axis=2)      # (c, k, 3)
-        f0 = np.column_stack([np.ones(c), target_pts[start:end]])    # (c, 3)
+        center = target_pts[start:end, None, :]
+        scale = np.maximum(np.max(np.abs(nb_xy - center), axis=(1, 2)), 1.0)
+        drift_xy = (nb_xy - center) / scale[:, None, None]
+        F = np.concatenate([np.ones((c, k, 1)), drift_xy], axis=2)
+        f0 = np.column_stack([np.ones(c), np.zeros((c, 2))])
 
         mat = np.zeros((c, k + _TREND_TERMS, k + _TREND_TERMS))
         mat[:, :k, :k] = gamma_ss
@@ -1221,20 +1228,20 @@ def cross_validate_kriging(
     else:
         fold_id = np.arange(n) % folds
         block_id = None
-    pts_t = apply_anisotropy(pts_metric, anisotropy_angle, anisotropy_ratio)
     errs: list[float] = []
+    tested_values: list[float] = []
     z_scores: list[float] = []
     folds_used = 0
     per_fold: list[dict] = []
     for f in range(folds):
         test = fold_id == f
-        train_xy, train_v = pts_t[~test], values[~test]
+        train_xy, train_v = pts_metric[~test], values[~test]
         if len(train_v) < MIN_SAMPLES:
             continue
         try:
             if method == "universal":
                 res = universal_kriging_detrended(
-                    train_xy, train_v, pts_t[test],
+                    train_xy, train_v, pts_metric[test],
                     variogram_model=model, k=k,
                     anisotropy_angle=anisotropy_angle,
                     anisotropy_ratio=anisotropy_ratio,
@@ -1249,7 +1256,7 @@ def cross_validate_kriging(
                     matern_smoothness=matern_smoothness,
                 )
                 res = ordinary_kriging(
-                    train_xy, train_v, pts_t[test], vfit, k=k,
+                    train_xy, train_v, pts_metric[test], vfit, k=k,
                     anisotropy_angle=anisotropy_angle,
                     anisotropy_ratio=anisotropy_ratio,
                     solve_backend=solve_backend,
@@ -1259,6 +1266,7 @@ def cross_validate_kriging(
         folds_used += 1
         fold_err = res.predictions - values[test]
         errs.extend(fold_err.tolist())
+        tested_values.extend(values[test].tolist())
         z_scores.extend(
             (fold_err / np.sqrt(np.maximum(res.variances, 0.0))).tolist())
         entry: dict = {
@@ -1276,7 +1284,8 @@ def cross_validate_kriging(
         )
     e = np.asarray(errs)
     ss_res = float(np.sum(e ** 2))
-    ss_tot = float(np.sum((values - values.mean()) ** 2))
+    tested = np.asarray(tested_values, dtype=float)
+    ss_tot = float(np.sum((tested - tested.mean()) ** 2))
     z_mean: Optional[float] = None
     z_cover: Optional[float] = None
     z_n = 0
@@ -1543,7 +1552,7 @@ def fit_anisotropy(
             _level_crossing_lag(lags, gamma, cnt, level * sill, cap)
             for _az, lags, gamma, cnt in curves
         ]
-        present = [(az, 1.0 / (v * v)) for az, v in zip(azimuths, row) if v is not None]
+        present = [(az, 1.0 / (v * v)) for az, v in zip(azimuths, row, strict=True) if v is not None]
         if len(present) < 4:
             continue
         med = float(np.median([v for _az, v in present]))
@@ -1957,7 +1966,12 @@ def collocated_cokriging(
     # 次变量重网格化到目标（协同定位假设；非精确协同定位取最近值——披露）
     tree_s = cKDTree(spts)
     d_t, i_t = tree_s.query(targets, k=1)
-    y_target = y[i_t]
+    # MM1 uses the primary marginal mean and variance for both variables.
+    # Standardize the secondary observations before entering that system.
+    secondary_std = float(np.std(y))
+    if not math.isfinite(secondary_std) or secondary_std <= 0.0:
+        raise DegenerateData("次变量零方差，无法标准化协同克里金变量。")
+    y_target = (y[i_t] - float(np.mean(y))) / secondary_std * float(np.std(z)) + float(np.mean(z))
     n_exact_colocated = int((np.asarray(d_t) < 1e-9).sum())
     tree_p = cKDTree(ppts)
     dist_t, idx_t = tree_p.query(targets, k=k)
@@ -2746,7 +2760,11 @@ def _metric_crs_for(declared: Optional[str], lonlat: np.ndarray) -> tuple[str, b
 
         return _pick_metric_crs(lonlat), True
     if norm == "EPSG:3857":
-        return "EPSG:3857", False
+        from pyproj import Transformer
+        from app.lib.geo_analysis.interpolation import _pick_metric_crs
+
+        longitude, latitude = Transformer.from_crs(3857, 4326, always_xy=True).transform(lonlat[:, 0], lonlat[:, 1])
+        return _pick_metric_crs(np.column_stack([longitude, latitude])), False
     epsg_num = norm.split(":")[-1] if ":" in norm else ""
     if len(epsg_num) == 5 and epsg_num.isdigit() and epsg_num[:3] in ("326", "327"):
         return f"EPSG:{epsg_num}", False
@@ -2884,8 +2902,8 @@ def kriging_interpolation(
         if drift_missing.any():
             # 漂移缺失的样本整体剔除（value/drift/坐标对齐）；计数披露
             keep_mask = ~drift_missing
-            lons = [x for x, keep in zip(lons, keep_mask) if keep]
-            lats = [x for x, keep in zip(lats, keep_mask) if keep]
+            lons = [x for x, keep in zip(lons, keep_mask, strict=True) if keep]
+            lats = [x for x, keep in zip(lats, keep_mask, strict=True) if keep]
             vals = vals[keep_mask]
             drift_vals = drift_vals[keep_mask]
         if len(drift_vals) < 4:
@@ -2895,8 +2913,8 @@ def kriging_interpolation(
                 correction_hint="补齐辅助变量观测或改用 ordinary kriging")
     finite = np.isfinite(vals)
     if not finite.all():
-        lons = [x for x, keep in zip(lons, finite) if keep]
-        lats = [x for x, keep in zip(lats, finite) if keep]
+        lons = [x for x, keep in zip(lons, finite, strict=True) if keep]
+        lats = [x for x, keep in zip(lats, finite, strict=True) if keep]
         vals = vals[finite]
         if drift_vals is not None:
             drift_vals = drift_vals[finite]
@@ -2946,12 +2964,17 @@ def kriging_interpolation(
     else:
         # Metric-declared coordinates: the geometry already IS the working
         # CRS; the H3 bbox needs the 4326 view, so reproject once.
-        pts_metric = lonlat.copy()
+        if str(declared_crs).strip().upper() == "EPSG:3857":
+            from pyproj import Transformer
+            x, y = Transformer.from_crs(3857, working_crs, always_xy=True).transform(lonlat[:, 0], lonlat[:, 1])
+            pts_metric = np.column_stack([x, y])
+        else:
+            pts_metric = lonlat.copy()
         lonlat = np.asarray(
             [
                 (p.x, p.y)
                 for p in gpd.GeoDataFrame(
-                    geometry=gpd.points_from_xy(lonlat[:, 0], lonlat[:, 1]),
+                    geometry=gpd.points_from_xy(pts_metric[:, 0], pts_metric[:, 1]),
                     crs=working_crs,
                 )
                 .to_crs("EPSG:4326")
@@ -3100,7 +3123,7 @@ def kriging_interpolation(
     for cell, v, var, sd, lo, hi in zip(
             target_cells, result.predictions, result.variances, stddevs,
             result.pi95_low if has_pi else [None] * len(target_cells),
-            result.pi95_high if has_pi else [None] * len(target_cells)):
+            result.pi95_high if has_pi else [None] * len(target_cells), strict=True):
         rec = {
             "h3_index": cell,
             "value": float(v),
@@ -3362,7 +3385,7 @@ def collocated_cokriging_surface(
         for cell, pred, var, sd in zip(
             target_cells, result["predictions"], result["variances"],
             result["stddev"],
-        )
+         strict=True)
     ]
     return {"records": records, "metadata": metadata}
 
@@ -3378,7 +3401,7 @@ def block_kriging_surface(
     """H3 块克里金表面 driver。
 
     ``block_size``（米，工作 CRS 单位）为 0 时按 H3 分辨率平均六边形边长
-    自动取值（h3.average_hexagon_edge_length，全局平均近似——已披露）。
+    自动取值（sqrt(h3.average_hexagon_area)，等面积正方形近似——已披露）。
     records 带 ``block_variance``/``block_stddev``；块支撑经 2×2 离散化
     进入 RHS 与方差修正（Isaaks & Srivastava 1989，披露）。
     """
@@ -3404,7 +3427,7 @@ def block_kriging_surface(
     bs = float(block_size)
     if bs == 0.0:
         try:
-            bs = float(_h3.average_hexagon_edge_length(int(resolution), unit="m"))
+            bs = float(math.sqrt(_h3.average_hexagon_area(int(resolution), unit="m^2")))
             metadata["block_size_auto"] = True
         except (AttributeError, TypeError, ValueError):
             bs = 1000.0
@@ -3443,6 +3466,6 @@ def block_kriging_surface(
         for cell, pred, var, sd in zip(
             target_cells, result["predictions"], result["variances"],
             result["stddev"],
-        )
+         strict=True)
     ]
     return {"records": records, "metadata": metadata}

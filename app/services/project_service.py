@@ -121,13 +121,34 @@ class ProjectService:
         org_id: Optional[int] = None,
     ) -> Optional[Project]:
         """Tenant & Owner safe project lookup (IDOR protection)"""
-        stmt = select(Project).where(Project.id == project_id)
+        stmt = select(Project).where(Project.id == project_id, Project.status != "deleted")
         project = db.execute(stmt).scalar_one_or_none()
         if not project:
             return None
         if not _caller_may_access_project(project, user_id, org_id):
             return None
         return project
+
+    @staticmethod
+    def get_project_for_write(
+        db: Session, project_id: str, user_id: Optional[str] = None,
+        org_id: Optional[int] = None,
+    ) -> Optional[Project]:
+        """Live owner/editor authority; public legacy rows remain read-only."""
+        from app.models.db_model import User
+        if not user_id or user_id == "anonymous":
+            return None
+        identity = db.execute(select(User.role, User.org_id, User.is_active).where(User.id == str(user_id))).first()
+        if identity is None or not identity[2]:
+            return None
+        project = db.execute(select(Project).where(Project.id == project_id, Project.status != "deleted")).scalar_one_or_none()
+        if project is None:
+            return None
+        if project.owner_id is not None and str(project.owner_id) == str(user_id):
+            return project
+        if project.org_id is not None and project.org_id == identity[1] and identity[0] in ("editor", "admin"):
+            return project
+        return None
 
     @staticmethod
     def get_project_context_summary(
@@ -308,7 +329,7 @@ class ProjectService:
 
         base = select(Project).where(Project.status == status)
         if org_id:
-            base = base.where(Project.org_id == org_id)
+            base = base.where(or_(Project.org_id == org_id, and_(Project.owner_id == user_id, Project.org_id.is_(None))) if user_id else Project.org_id == org_id)
         elif user_id:
             # security F-11: ownerless rows only when they are also org-less
             # (legacy public) — org-owned ownerless rows stay org-only.
@@ -339,7 +360,7 @@ class ProjectService:
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
     ) -> Optional[Project]:
-        project = ProjectService.get_project_with_auth(db, project_id, user_id, org_id)
+        project = ProjectService.get_project_for_write(db, project_id, user_id, org_id)
         if not project:
             return None
 
@@ -367,7 +388,7 @@ class ProjectService:
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
     ) -> Optional[ProjectDataset]:
-        project = ProjectService.get_project_with_auth(db, project_id, user_id, org_id)
+        project = ProjectService.get_project_for_write(db, project_id, user_id, org_id)
         if not project:
             return None
 
@@ -424,7 +445,7 @@ class ProjectService:
         """
         from app.lib.data.vocabulary import QualityStatus
 
-        project = ProjectService.get_project_with_auth(
+        project = ProjectService.get_project_for_write(
             db, project_id, user_id=user_id, org_id=org_id
         )
         if not project:
@@ -471,7 +492,7 @@ class ProjectService:
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
     ) -> bool:
-        project = ProjectService.get_project_with_auth(db, project_id, user_id, org_id)
+        project = ProjectService.get_project_for_write(db, project_id, user_id, org_id)
         if not project:
             return False
 
@@ -562,7 +583,7 @@ class ProjectService:
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
     ) -> Optional[Workflow]:
-        project = ProjectService.get_project_with_auth(db, project_id, user_id, org_id)
+        project = ProjectService.get_project_for_write(db, project_id, user_id, org_id)
         if not project:
             return None
 
@@ -675,7 +696,7 @@ class ProjectService:
         graph changed (INV-REV2). Prior revisions stay immutable, so historical
         runs remain accurately replayable after an edit.
         """
-        project = ProjectService.get_project_with_auth(db, project_id, user_id, org_id)
+        project = ProjectService.get_project_for_write(db, project_id, user_id, org_id)
         if not project:
             return None
         workflow = db.execute(
@@ -717,6 +738,27 @@ class ProjectService:
         # read is not even needed.
         _invalidate_project_context_cache(project_id)
         return workflow
+
+    @staticmethod
+    def page_workflow_revisions(
+        db: Session, project_id: str, workflow_id: str,
+        user_id: Optional[str] = None, org_id: Optional[int] = None,
+        *, limit: int = 50, offset: int = 0,
+    ) -> Optional[Tuple[List[WorkflowRevision], int]]:
+        if not ProjectService.get_project_with_auth(db, project_id, user_id, org_id):
+            return None
+        from app.services.workflow_revision_queries import revision_page
+        return revision_page(db, project_id, workflow_id, min(200, max(1, limit)), max(0, offset))
+
+    @staticmethod
+    def get_workflow_revision(
+        db: Session, project_id: str, workflow_id: str, revision_id: str,
+        user_id: Optional[str] = None, org_id: Optional[int] = None,
+    ) -> Optional[WorkflowRevision]:
+        if not ProjectService.get_project_with_auth(db, project_id, user_id, org_id):
+            return None
+        from app.services.workflow_revision_queries import revision_by_id
+        return revision_by_id(db, project_id, workflow_id, revision_id)
 
     @staticmethod
     def list_workflow_revisions(

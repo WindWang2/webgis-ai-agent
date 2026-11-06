@@ -80,7 +80,13 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
          # 同属专题制图 surface，绑定后参与治理派生面（unbacked 分歧消除）。
          "webgis_apply_composition", "webgis_discover_components",
          "webgis_plan_component_replace", "gis_template_plan",
-         "plan_map_scene", "set_map_scene"],
+         "plan_map_scene", "set_map_scene",
+         # 已实现的组件查询、图件编辑与模板资产面；同属既有绑定契约，
+         # 不声明可互换的分析算法，也不改变 capability 的 planned 状态。
+         "gis_component_query", "add_tile_service_layer", "set_scene_assets",
+         "webgis_compile_map_plan", "webgis_map_design_select",
+         "webgis_product_edit", "webgis_list_composition_template_assets",
+         "webgis_save_composition_template"],
     ),
     _platform_binding(
         "map_export_publishing", "地图导出发布（工具面绑定契约）",
@@ -118,7 +124,14 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
          "webgis_action_plan",
          # H05 目录发现三件：规划前的能力发现/复核/运行时五态投影
          #（只读 planning 支撑面，绑定消除 unbacked 分歧）。
-         "catalog_discover", "catalog_lookup", "capability_runtime_status"],
+         "catalog_discover", "catalog_lookup", "capability_runtime_status",
+         # 同一规划支撑面：工具对账、方法/技能咨询与真实工作流生命周期。
+         # 候选仅补全工具绑定，不授予 planned 能力算法派发资格。
+         "catalog_conformance", "gis_task_classify", "gis_method_qualify",
+         "gis_method_rank", "gis_method_explain", "gis_skill_search",
+         "gis_skill_detail", "gis_skill_replay_check", "gis_skill_policy",
+         "webgis_analysis_workflow_plan", "webgis_analysis_workflow_run",
+         "webgis_analysis_workflow_status", "webgis_analysis_workflow_recompute"],
     ),
     _platform_binding(
         "scenario_simulation", "情景推演（工具面绑定契约）",

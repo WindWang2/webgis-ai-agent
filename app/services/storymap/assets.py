@@ -32,44 +32,32 @@ async def save_story_spec(
     if len(text.encode("utf-8")) > MAX_STORY_SPEC_BYTES:
         raise ValueError(
             f"story spec exceeds {MAX_STORY_SPEC_BYTES} bytes budget")
-    # R1-P1c（评审修复）：双标签并发首存 —— SELECT-then-INSERT 竞态窗口
-    # 内两笔都走 INSERT，后者撞 conversation 唯一约束炸 IntegrityError →
-    # 裸 500。捕获后回滚并按"行已存在"重走 UPDATE+1 路径一次（SQLite/
-    # PostgreSQL 同语义；不加锁不长事务；每次保存仍单调 +1）。
+    from sqlalchemy import update, func
     from sqlalchemy.exc import IntegrityError
-
     title = (spec.metadata.title or "StoryMap 专报")[:255]
-    row = await db.scalar(
-        select(StoryMapAsset).where(StoryMapAsset.conversation_id == conv.id)
-    )
-    if row is not None:
-        row.title = title
-        row.spec = text
-        row.revision = int(row.revision or 1) + 1
-        await db.flush()
-        return {"revision": int(row.revision), "title": row.title}
-    row = StoryMapAsset(
-        conversation_id=conv.id, title=title, spec=text, revision=1)
-    db.add(row)
-    try:
-        await db.flush()
-        return {"revision": 1, "title": row.title}
-    except IntegrityError as exc:
-        # R2-2：裸 raise 在 except 块外执行会 RuntimeError（无活动异常可
-        # 重抛）—— 显式持有引用重抛原异常。
-        await db.rollback()
-        _race_exc = exc
-    # 竞态输家：行已被并发首存 —— 重读并按保存语义 +1。
-    row = await db.scalar(
-        select(StoryMapAsset).where(StoryMapAsset.conversation_id == conv.id)
-    )
-    if row is None:
-        raise _race_exc
-    row.title = title
-    row.spec = text
-    row.revision = int(row.revision or 1) + 1
-    await db.flush()
-    return {"revision": int(row.revision), "title": row.title}
+    # UPDATE obtains the row/write lock and increments at the database. It also
+    # begins SQLite's physical write transaction before the insert savepoint.
+    for attempt in range(2):
+        result = await db.execute(update(StoryMapAsset).where(
+            StoryMapAsset.conversation_id == conv.id,
+        ).values(title=title, spec=text, revision=func.coalesce(StoryMapAsset.revision, 0) + 1)
+          .execution_options(synchronize_session=False))
+        if result.rowcount:
+            row = (await db.execute(select(StoryMapAsset.revision, StoryMapAsset.title).where(
+                StoryMapAsset.conversation_id == conv.id,
+            ))).one()
+            return {"revision": int(row[0]), "title": row[1]}
+        try:
+            async with db.begin_nested():
+                db.add(StoryMapAsset(conversation_id=conv.id, title=title, spec=text, revision=1))
+                await db.flush()
+            return {"revision": 1, "title": title}
+        except IntegrityError:
+            if attempt:
+                raise
+            # Only the insert savepoint rolled back. Caller-owned changes survive.
+    raise RuntimeError("story asset revision could not be persisted")
+
 
 
 async def load_story_spec(

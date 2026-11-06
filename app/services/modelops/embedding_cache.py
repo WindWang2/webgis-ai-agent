@@ -202,11 +202,14 @@ class EmbeddingCache:
                 self._misses += 1
                 return None
             meta = entry["meta"]
-            if _file_sha256(npy) != meta.get("digest"):
+            stat = npy.stat()
+            signature = (stat.st_size, stat.st_mtime_ns, stat.st_ino)
+            if entry.get("verified_stat") != signature and _file_sha256(npy) != meta.get("digest"):
                 self._digest_failures += 1
                 self._evict_key(key)
                 self._misses += 1
                 return None
+            entry["verified_stat"] = signature
             if tuple(array.shape) != tuple(meta.get("shape", ())) or str(
                 array.dtype
             ) != meta.get("dtype"):

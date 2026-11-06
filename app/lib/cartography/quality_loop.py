@@ -245,7 +245,7 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
             "__omitted_layers__": len(omitted_layers),
             "sha256": _omitted_digest(omitted_layers, _project_layer),
         })
-    return {
+    projection = {
         "version": mapspec.get("version"),
         "cartographic_profile": _bounded_metadata(
             mapspec.get("cartographic_profile"), budget=budget
@@ -264,6 +264,12 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
         "source_count": len(sources),
         "layer_count": len(layers),
     }
+    # v1.8（GOAL 03）：时态控制层**在场才**进投影 —— 时间游标/播放/对照
+    # 变化必须是可观察 spec 变更（displayed_at 门控依赖）；同时存量无
+    # temporal 的 spec 指纹逐位不变（product manifest 跨版本不漂移）。
+    if mapspec.get("temporal"):
+        projection["temporal"] = _bounded_metadata(mapspec.get("temporal"), budget=budget)
+    return projection
 
 
 def cartographic_fingerprint(mapspec: Dict[str, Any]) -> str:
@@ -340,7 +346,7 @@ def _apply_palette_change(layer: Dict[str, Any], colors: List[Any]) -> None:
             legend_spec[ramp_key] = list(colors)
         categories = legend_spec.get("categories")
         if isinstance(categories, list) and len(categories) == len(colors):
-            for category, color in zip(categories, colors):
+            for category, color in zip(categories, colors, strict=True):
                 if isinstance(category, dict):
                     category["color"] = color
     paint = layer.get("paint")
@@ -358,15 +364,15 @@ def _apply_palette_change(layer: Dict[str, Any], colors: List[Any]) -> None:
             else:
                 rest = colors
             stops = spec.get("stops") or []
-            for stop, color in zip(stops, rest):
+            for stop, color in zip(stops, rest, strict=True):
                 if isinstance(stop, (list, tuple)) and len(stop) >= 2:
                     stop[1] = color
         elif method == "interpolate":
-            for stop, color in zip(spec.get("stops") or [], colors):
+            for stop, color in zip(spec.get("stops") or [], colors, strict=True):
                 if isinstance(stop, (list, tuple)) and len(stop) >= 2:
                     stop[1] = color
         elif method == "match":
-            for case, color in zip(spec.get("cases") or [], colors):
+            for case, color in zip(spec.get("cases") or [], colors, strict=True):
                 if isinstance(case, (list, tuple)) and len(case) >= 2:
                     case[1] = color
 

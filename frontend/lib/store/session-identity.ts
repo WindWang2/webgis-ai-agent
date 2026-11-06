@@ -7,6 +7,12 @@
  * and would create a store → store cycle, #1109).
  */
 
+const listeners = new Set<() => void>();
+export function subscribeSessionIdentity(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
 let _currentSessionId: string | undefined;
 let _currentOwnerToken: string | null | undefined;
 
@@ -14,8 +20,10 @@ export function setSessionIdentity(
   sessionId: string | undefined,
   ownerToken: string | null | undefined
 ): void {
+  if (_currentSessionId === sessionId && _currentOwnerToken === ownerToken) return;
   _currentSessionId = sessionId;
   _currentOwnerToken = ownerToken;
+  listeners.forEach((listener) => listener());
 }
 
 export function getSessionIdentity(): {

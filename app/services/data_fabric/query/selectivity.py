@@ -105,8 +105,8 @@ def estimate_predicate_selectivity(
         if col is not None and col.min_value is not None and col.max_value is not None:
             span = col.max_value - col.min_value
             if span and span > 0:
-                lo = getattr(node, "value", None)
-                hi = getattr(node, "second_value", None) if op == "between" else lo
+                lo = getattr(node, "low", None) if op == "between" else getattr(node, "value", None)
+                hi = getattr(node, "high", None) if op == "between" else lo
                 try:
                     if op in ("gt", "ge") and lo is not None:
                         frac = (col.max_value - float(lo)) / span

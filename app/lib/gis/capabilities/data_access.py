@@ -74,4 +74,54 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             deterministic=False,
             purpose_template="{subject} 工作空间快照",
         ),
+
+        # ── 数据准备（sdo #1868）：inspect→propose→prepare→bind 工具面 ───
+        # prepare_dataset 等工具声明 capabilities=["data_preparation"]，
+        # 未注册即 manifest fatal（app 严格模式启动失败）。工具直连类
+        # 与 poi_query 同格，算法绑定由 algorithms/data_access.py 登记。
+        CapabilityDescriptor(
+            id="data_preparation", name="数据集准备", category="data_access",
+            description="多源空间数据自动准备：字段提案/计划执行/语义绑定"
+                        "（inspect→propose→validate→prepare→bind，只读检视+受控写入）。",
+            preferred_execution="async",
+            deterministic=False,
+            purpose_template="{subject} 数据准备",
+            version="1.0",
+        ),
+
+        # ── Track B（M14）：图层浏览/聚合只读读面 ────────────────────────
+        # 会话 ref 的有界分页浏览（order/where typed AST/bbox/fields）、
+        # 分组聚合（count/sum/mean/min/max 全扫口径）与单要素详情 —— 工具
+        # 直连（webgis_layer_features_page / webgis_layer_aggregate /
+        # webgis_layer_feature_detail），每个操作在 algorithms/data_access.py 单独绑定
+        # （与 poi_query 同为数据获取类能力）。
+        CapabilityDescriptor(
+            id="layer_browse", name="图层要素浏览", category="data_access",
+            description="会话图层要素的有界分页浏览与窗口聚合：排序/typed 谓词/"
+                        "bbox 窗口/字段投影、分组计数与单要素详情（只读，不整包拉取）。",
+            preferred_execution="local_first",
+            deterministic=True,
+            supports_large_data=True,
+            purpose_template="{subject} 图层浏览",
+            version="1.0",
+        ),
+
+        # ── GOAL 01：空间语义契约检视只读面 ────────────────────────────
+        # inspect_spatial_semantics 工具直连（按分析/数据域载入）：数据 → typed
+        # SpatialSemanticContract 投影（CRS 来源四态/坐标结构/轴序嫌疑/
+        # 计算空间推荐/尺度精度/偏移帧风险）。检视类能力（与 layer_browse
+        # 同为只读取面），preflight 判定真相在
+        # app/services/gis_harness/spatial_semantics/。
+        CapabilityDescriptor(
+            id="spatial_semantics", name="空间语义契约检视",
+            category="data_access",
+            description="数据的空间语义只读检视：CRS 声明来源（declared/"
+                        "rfc7946_default/assumed/unknown）、坐标结构/轴序嫌疑/"
+                        "偏移帧归一链、计算空间推荐（UTM/极区/测地）与尺度精度"
+                        "—— 度量敏感工具执行前的 typed 判定（未知不猜）。",
+            preferred_execution="local_first",
+            deterministic=True,
+            purpose_template="{subject} 空间语义检视",
+            version="1.0",
+        ),
 ]

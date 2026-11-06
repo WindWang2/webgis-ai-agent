@@ -11,6 +11,11 @@ vi.mock('@/lib/hooks/use-job-center', () => ({
   useJobCenter: hook.useJobCenter,
 }));
 
+const downloadWithAuth = vi.hoisted(() => ({ downloadWithAuth: vi.fn() }));
+vi.mock('@/lib/api/authenticated-download', () => ({
+  downloadWithAuth: downloadWithAuth.downloadWithAuth,
+}));
+
 function job(overrides: Partial<JobView> = {}): JobView {
   return {
     id: 'job-1',
@@ -223,5 +228,73 @@ describe('TasksTab — 结果与刷新', () => {
       ownerToken: 'tok-a',
       enabled: true,
     });
+  });
+});
+
+// ── 批量图册（atlas_export）：页级状态与产物下载 ─────────────────────────
+describe('TasksTab — 批量图册任务', () => {
+  it('渲染 atlas_export 类型标签与逐页状态（成功/失败并存）', () => {
+    mockCenter([
+      job({
+        id: 'job-atlas',
+        kind: 'atlas_export',
+        name: '批量图册导出 · 成都小学图册',
+        status: 'failed',
+        progress: 72,
+        active: false,
+        page_status: [
+          { page_id: 'cover', title: '', page_number: 1, status: 'rendered', error: null },
+          { page_id: 'cat_锦江区', title: '锦江区', page_number: 2, status: 'rendered', error: null },
+          { page_id: 'cat_金牛区', title: '金牛区', page_number: 3, status: 'failed', error: 'atlas_page_skipped: page cat_金牛区: ValueError' },
+        ],
+      }),
+    ]);
+    render(<TasksTab sessionId="sess-a" />);
+    expect(screen.getByText('批量图册')).toBeInTheDocument();
+    const list = screen.getByTestId('atlas-pages-job-atlas');
+    expect(list).toBeInTheDocument();
+    expect(screen.getByText(/1\. /)).toBeInTheDocument();
+    expect(screen.getByText(/2\. 锦江区/)).toBeInTheDocument();
+    expect(screen.getByText(/3\. 金牛区/)).toBeInTheDocument();
+    expect(screen.getAllByText('✓ 已渲染').length).toBe(2);
+    expect(screen.getByText('✗ 失败')).toBeInTheDocument();
+    // 失败页证据以 title 悬浮披露
+    expect(screen.getByTitle('atlas_page_skipped: page cat_金牛区: ValueError')).toBeInTheDocument();
+  });
+
+  it('完成的图册任务提供 PDF 与来源清单下载（认证下载通道）', async () => {
+    mockCenter([
+      job({
+        id: 'job-atlas-done',
+        kind: 'atlas_export',
+        name: '批量图册导出 · 图册',
+        status: 'completed',
+        progress: 100,
+        active: false,
+        cancellable: false,
+        result_ref: 'atlas_9_1730000000.pdf',
+        page_status: [
+          { page_id: 'cover', title: '', page_number: 1, status: 'rendered', error: null },
+        ],
+      }),
+    ]);
+    render(<TasksTab sessionId="sess-a" />);
+    fireEvent.click(screen.getByRole('button', { name: /下载图册 PDF/ }));
+    expect(downloadWithAuth.downloadWithAuth).toHaveBeenCalledWith(
+      '/api/v1/export/download/atlas_9_1730000000.pdf',
+      { filename: 'atlas_9_1730000000.pdf' },
+    );
+    // 来源清单 = 同 stem 的 .manifest.json
+    fireEvent.click(screen.getByRole('button', { name: /下载可复现来源清单/ }));
+    expect(downloadWithAuth.downloadWithAuth).toHaveBeenCalledWith(
+      '/api/v1/export/download/atlas_9_1730000000.manifest.json',
+      { filename: 'atlas_9_1730000000.manifest.json' },
+    );
+  });
+
+  it('非 atlas 任务不渲染页级状态区', () => {
+    mockCenter([job({ kind: 'analysis' })]);
+    render(<TasksTab sessionId="sess-a" />);
+    expect(screen.queryByTestId('atlas-pages-job-1')).not.toBeInTheDocument();
   });
 });

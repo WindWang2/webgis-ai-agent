@@ -46,6 +46,10 @@ ComponentType = Literal[
     "methodology_note",         # 方法论披露（警告码 + 文案，随产品渲染）
     "uncertainty_panel",        # 不确定性面板（区间/置信度/样本限制）
     "decision_panel",           # 决策面板（候选排名/权重来源/硬约束否决）
+    # ── carto-design（/goal 04）：设计候选面板（表达方案对比 + typed
+    # blocked + user-wins 指引；接受动作经 webgis_map_design_select 统一
+    # action，面板只读不自带状态机）。
+    "design_candidates",
     # ── ac-05（ADR-0154）：标注图层（可寻址的标注绑定/决策面）────────
     # options 持有 label_plan 的字段挑选与策略编排（field/mode/topN/
     # priorityField/zoomBands）；rebind(field) 换字段 = 局部突变。
@@ -245,7 +249,7 @@ def _valid_bbox4(raw: Any) -> bool:
         w, s, e, n = (float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
     except (TypeError, ValueError):
         return False
-    return -180 <= w <= 180 and -180 <= e <= 180 and -90 <= s <= 90 and -90 <= n <= 90 and w <= e and s <= n
+    return -180 <= w <= 180 and -180 <= e <= 180 and -90 <= s <= 90 and -90 <= n <= 90 and s <= n
 
 def validate_inset_payload(options: Any) -> "str | None":
     """校验 inset_map options（bbox / 边界折线 / 指示范围）。"""
@@ -255,10 +259,10 @@ def validate_inset_payload(options: Any) -> "str | None":
     if bbox is None:
         return "inset_map 需要 options.bbox=[w, s, e, n]（插图范围）"
     if not _valid_bbox4(bbox):
-        return "inset_map.bbox 必须是有序 [w, s, e, n]（经纬度合法范围）"
+        return "inset_map.bbox 必须是合法 [w, s, e, n]（西经大于东经表示跨日期线）"
     main_bbox = options.get("mainBbox")
     if main_bbox is not None and not _valid_bbox4(main_bbox):
-        return "inset_map.mainBbox 必须是有序 [w, s, e, n]（主图范围指示）"
+        return "inset_map.mainBbox 必须是合法 [w, s, e, n]（主图范围指示）"
     boundary = options.get("boundary")
     if boundary is not None:
         if not isinstance(boundary, list) or len(boundary) < 3:
@@ -383,6 +387,28 @@ def validate_uncertainty_payload(options: Any) -> "str | None":
         for i, it in enumerate(items):
             if not isinstance(it, dict) or not isinstance(it.get("label"), str):
                 return f"uncertainty.items[{i}] 必须含 label 字符串"
+    return None
+
+def validate_design_candidates_payload(options: Any) -> "str | None":
+    """design_candidates options.design：{count?, candidates?, blocked?, honored?}。
+
+    只读披露面板载荷（design_digest 有界投影）；缺省 = 空面板（数据缺席
+    不是错误）。防御式：坏形状拒绝，坏条目跳过。
+    """
+    if not isinstance(options, dict):
+        return "options 必须是对象"
+    design = options.get("design")
+    if design is None:
+        return None
+    if not isinstance(design, dict):
+        return "options.design 必须是对象"
+    cands = design.get("candidates")
+    if cands is not None and not isinstance(cands, list):
+        return "options.design.candidates 必须是数组"
+    if isinstance(cands, list):
+        for i, item in enumerate(cands[:8]):
+            if not isinstance(item, dict):
+                return f"design.candidates[{i}] 必须是对象"
     return None
 
 def validate_decision_payload(options: Any) -> "str | None":
@@ -527,6 +553,7 @@ __all__ = [
     "validate_methodology_payload",
     "validate_uncertainty_payload",
     "validate_decision_payload",
+    "validate_design_candidates_payload",
     "MAX_SCENE_DISCLOSURE_NOTES",
     "MAX_SCENE_DISCLOSURE_TEXT",
     "MAX_PROFILE_POINTS",

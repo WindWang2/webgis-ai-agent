@@ -732,9 +732,9 @@ class FakeStore:
     async def get(self, session_id: str, ref_id: str) -> Any:
         return self.data.get(f"{session_id}:{ref_id}")
 
-    async def overwrite(self, session_id: str, ref_id: str, payload: Any) -> bool:
+    async def overwrite(self, session_id: str, ref_id: str, payload: Any, *, expected_revision=None) -> bool:
         key = f"{session_id}:{ref_id}"
-        if key in self.data:
+        if key in self.data and (expected_revision is None or self.data[key].get("revision") == expected_revision):
             self.data[key] = payload
             return True
         return False
@@ -747,6 +747,13 @@ class FakeStore:
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         self.aliases[f"{session_id}:{alias}"] = ref_id
+
+    async def set_alias_if_absent(self, session_id: str, ref_id: str, alias: str) -> bool:
+        key = f"{session_id}:{alias}"
+        if key in self.aliases:
+            return False
+        self.aliases[key] = ref_id
+        return True
 
     async def ref_exists(self, session_id: str, ref_id: str) -> bool:
         return f"{session_id}:{ref_id}" in self.data

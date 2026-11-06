@@ -37,7 +37,11 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.dasymetric_tools": "analysis",       # 面插值重分配（量守恒分析）
     "app.tools.data_discovery": "inspection",           # 目录/画像/lineage 只读发现
     "app.tools.data_fabric_tools": "data_access",
+    # GOAL-02：服务发现只读面（inspect_data_service）+ 受控读取/物化（读 =
+    # data_access；瓦片上图名字覆盖 map_mutation 在模块内声明）。
+    "app.tools.ogc_service_tools": "data_access",
     "app.tools.ingest_tools": "data_access",            # 入库（detect→profile→register）
+    "app.tools.data_preparation_tools": "data_access",  # 数据准备（inspect→propose→prepare→bind）
     "app.tools.raster_tools_cog": "transformation",     # COG 转换
     "app.tools.explorer_tools": "data_access",
     "app.tools.geocoding": "data_access",
@@ -60,11 +64,22 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.scene_orchestration_tools": "inspection",
     "app.tools.geocompute_tools": "analysis",           # 执行平面；validate/run 查询名字覆盖
     "app.tools.layer_manager": "map_mutation",
+    # 分析流程编排（goal-02）：plan/recompute/run/status 四工具 —— 编排层
+    # 归 analysis（消费既有算子，不自建算法面）。
+    "app.tools.analysis_workflow_tools": "analysis",
+    # 批量图册导出（atlas-batch #1871）：export_atlas —— 出版导出面。
+    "app.tools.atlas_export_tools": "export",
+    # Track B（M14）：图层浏览/聚合只读工具面 —— 数据获取/检视，非突变
+    "app.tools.layer_browse_tools": "data_access",
+    # GOAL 01：空间语义契约检视（inspect_spatial_semantics）—— 只读检视面
+    "app.tools.spatial_semantics_tools": "inspection",
     "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
     "app.tools.local_admin": "data_access",
     "app.tools.local_osm": "data_access",
     "app.tools.local_stats": "data_access",
     "app.tools.map_view": "map_mutation",
+    "app.tools.map_operations_tools": "map_mutation",   # ADR-0278 表现层操作事务
+    "app.tools.scale_profile_tools": "map_mutation",   # GOAL 04 多尺度表达档案
     "app.tools.meta_tools": "debug_internal",
     "app.tools.modelops_tools": "analysis",
     "app.tools.monitoring_report": "export",
@@ -90,7 +105,10 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.templates": "rendering",                 # 模板/主题组合
     "app.tools.temporal_tools": "analysis",
     "app.tools.science_temporal_tools": "analysis",  # science-v5 物候/立方体/异常
+    "app.tools.temporal_view_tools": "rendering",  # GOAL 03：时态视图控制（MapSpec temporal 写面/时间轴驱动）
     "app.tools.terrain_analysis": "analysis",
+    "app.tools.terrain_hydrology": "analysis",
+    "app.tools.terrain_measurements": "analysis",
     "app.tools.upload_tools": "inspection",
     "app.tools.workspace_tools": "data_access",         # workspace 持久化 save/restore
     "app.tools.web_crawler": "data_access",       # 网络 POI 采集（数据获取通道）
@@ -109,6 +127,8 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # gis_harness.tools：计划 2 + 组件突变 1 + 检视 2
     "webgis_map_intent": "planning",
     "webgis_map_product": "planning",
+    "webgis_product_edit": "planning",
+    "webgis_map_design_select": "planning",
     "webgis_component_update": "map_mutation",
     "webgis_component_catalog": "inspection",
     "webgis_world_state": "inspection",
@@ -148,6 +168,10 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # project_tools：空间质检是检视（只读评估）
     "audit_spatial_quality": "inspection",
     "repair_spatial_dataset": "transformation",
+    # feature_edit_tools（/goal 03）：预览/历史只读检视；提交是数据状态突变
+    "vector_feature_edit_preview": "inspection",
+    "vector_feature_edit_history": "inspection",
+    "vector_feature_edit_commit": "transformation",
     # geocompute_tools：计划校验与 run 查询是只读检视
     "validate_execution_plan": "inspection",
     "get_execution_run": "inspection",

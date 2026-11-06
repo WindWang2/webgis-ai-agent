@@ -5,6 +5,8 @@ GeoJSON feature property sampling, self-healing error formatting, and event log 
 """
 from __future__ import annotations
 
+from app.lib.tool_result_errors import is_error_like_result
+
 import json
 import logging
 from typing import Any, Optional
@@ -44,12 +46,17 @@ _PRESERVED_META_KEYS = (
     # Kriging slice：不确定面（克里金标准差）的独立 ref。工具 summary 声称
     # 已输出不确定面 —— 没有这个键 LLM 永远拿不到 ref，声明就是假的。
     "uncertainty_ref",
+    # carto-design M2：设计候选紧凑投影（webgis_map_product 的
+    # design_digest；全量 design_candidates 走 details/raw 面）。Agent
+    # 解释「为何选/为何弃」的通道——summary 分支此前整包丢弃。
+    "design_digest",
 )
 
 
 # ── #439: 最终体积闸（Zero-Big-Data-Context 的最后一道防线） ──────────────────
-# slim_tool_result 是工具结果进入 LLM 上下文前的唯一闸口
-# (tool_dispatch_service.llm_payload)。旧实现只对特定形状/键
+# slim_tool_result 是常规工具结果进入 LLM 上下文前的闸口
+# (tool_dispatch_service.llm_payload)；错误文案走 bound_llm_text。
+# 旧实现只对特定形状/键
 # (geojson/image/features) 做了削减：
 #   (a) 纯字符串结果超长时原样返回（return result_str 兜底）；
 #   (b) dict 分支里 data/rows/chart 等非 geojson 键全量保留
@@ -61,6 +68,19 @@ _SLIM_DICT_MAX_KEYS = 30          # dict 初始保留键数（与 _truncate_prop
 _SLIM_HARD_FLOOR = 40             # 折半下限；到顶仍超预算则硬切并打标
 _SLIM_TRUNCATION_SUFFIX = "…[已截断]"
 _SLIM_MAX_DEPTH = 8
+
+
+def bound_llm_text(text: str, *, max_chars: int = MSG_MAX_CHARS) -> str:
+    """Bound presentation text only, preserving small messages verbatim.
+
+    Callers may reserve space for a bounded suffix such as a recovery note.
+    This character budget does not apply to raw diagnostics or result data.
+    """
+    max_chars = max(0, max_chars)
+    if len(text) <= max_chars:
+        return text
+    marker = _SLIM_TRUNCATION_SUFFIX[:max_chars]
+    return text[:max_chars - len(marker)] + marker
 
 
 def _clamp_sized_value(v: Any, str_limit: int, list_limit: int, depth: int = 0) -> Any:
@@ -185,58 +205,6 @@ def is_error_dict(result: Any) -> bool:
     return isinstance(result, dict) and result.get("success") is False and "code" in result
 
 
-def is_error_like_result(result: Any) -> bool:
-    """#529/#589: normal-return failure shapes.
-
-    Tool sites return failure dicts instead of raising or returning the
-    canonical ``std_error_response`` shape; only the canonical shape was
-    recognized, so these were classified as success (marked completed, same-args
-    retries intercepted with a fabricated "已成功执行", plans advanced past
-    failures).
-
-    Recognized error-as-value key shapes:
-      - ``{"error": <str>}``                — the #529 family (~139 sites),
-      - ``{"type": "error", ...}``          — network/temporal/spatial_decision,
-      - ``{"status": "error"|"failed"}``    — project/workflow/explorer,
-      - ``{"success": False, "message": <str>}`` — audit4 #984: the
-        cartography_tools/webgis_component_update family (~17 sites).
-        ``success is False`` 是无歧义的失败信号（与 registry metrics 的判定
-        口径一致），此前仅因缺 code 键逃过归一 —— 被标 completed、同参重试
-        被「已成功执行」拦截。
-
-    Conservative by design (mirrors ``chinese_maps/http.py``'s
-    ``_is_provider_error_dict``): only a **string** ``error`` value classifies,
-    so business payloads that merely carry an ``error`` key (``None``, numeric,
-    nested error info) are not reclassified. The string may be empty — an
-    ``{"error": ""}`` result is still an error channel, not a success. ``type``
-    and ``status`` only classify at their canonical error values, so legitimate
-    uses of those keys (``{"type": "FeatureCollection"}``, ``{"status": "ok"}``,
-    ``{"status": "template_applied"}``, ...) are never reclassified. An explicit
-    ``success=True`` shields partial-success payloads (e.g. geocode returning
-    results alongside an error note).
-    """
-    if not isinstance(result, dict) or result.get("success") is True:
-        return False
-    if isinstance(result.get("error"), str):
-        return True
-    if result.get("type") == "error":
-        return True
-    if result.get("status") in ("error", "failed"):
-        return True
-    if result.get("success") is False and isinstance(result.get("message"), str):
-        return True
-    # V2(§34) GeoAnalysisResult 失败族：to_llm_response 的失败形状是
-    # {success: False, summary: <message>, data: None}（无 error/message
-    # 键），此前逃过所有族 → 被标 completed、同参重试被“已成功执行”拦截。
-    # data 缺席守卫：带 data 的部分成功载荷不由本族分类。
-    if (
-        result.get("success") is False
-        and isinstance(result.get("summary"), str)
-        and result.get("summary")
-        and result.get("data") is None
-    ):
-        return True
-    return False
 
 
 def is_tool_error_result(result: Any) -> bool:
@@ -342,8 +310,13 @@ def slim_event_result(result: Any) -> Any:
             bbox = geojson_bbox(result)
 
     if isinstance(bbox, str) and bbox:
-        parts = [float(x) for x in bbox.split(",") if x.strip()]
-        if len(parts) == 4:
+        import math
+        try:
+            parts = [float(x) for x in bbox.split(",") if x.strip()]
+        except (ValueError, TypeError, OverflowError):
+            parts = []
+        bbox = None
+        if len(parts) == 4 and all(math.isfinite(value) for value in parts):
             # GIS-P3-6: every producer in the repo emits [w,s,e,n] — parse in
             # that canonical order (the old s,w,n,e unpacking transposed a
             # canonical string into [s,w,n,e]).
@@ -364,6 +337,8 @@ def slim_event_result(result: Any) -> Any:
 
     if bbox:
         slim["bbox"] = bbox
+    else:
+        slim.pop("bbox", None)
 
     if "geojson" in result or "features" in result:
         slim["_streaming_note"] = "大体积要素数据已过滤，仅保留元数据。完整图层已自动加载。"

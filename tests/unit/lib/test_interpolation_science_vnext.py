@@ -306,11 +306,11 @@ def test_universal_kriging_exact_plane_zero_residual_variance():
     assert float(np.abs(res.variances).max()) == 0.0
     assert np.abs(res.predictions - z[:5]).max() / np.abs(z[:5]).max() < 1e-6
 
-    # driver path (declared EPSG:3857 → metric pass-through)
-    fc = _point_fc(xy[:, 0], xy[:, 1], z, crs_member="urn:ogc:def:crs:EPSG::3857")
+    # driver path (declared EPSG:32631 → metric pass-through)
+    fc = _point_fc(xy[:, 0], xy[:, 1], z, crs_member="urn:ogc:def:crs:EPSG::32631")
     out = kriging_interpolation(
         fc, "val", resolution=6, method="universal", cross_validate=False,
-        declared_crs="EPSG:3857",
+        declared_crs="EPSG:32631",
     )
     meta = out["metadata"]
     assert meta["disclosures"] == ["zero_residual_variance"]
@@ -323,7 +323,7 @@ def test_universal_kriging_exact_plane_zero_residual_variance():
     # predictions exact at cell centres (reprojected to the working CRS)
     cell_lonlat = np.array([h3.cell_to_latlng(r["h3_index"]) for r in out["records"]])
     cell_metric = _project_metric(
-        np.column_stack([cell_lonlat[:, 1], cell_lonlat[:, 0]]), "EPSG:3857"
+        np.column_stack([cell_lonlat[:, 1], cell_lonlat[:, 0]]), "EPSG:32631"
     )
     truth = 2.0 + 3.0 * cell_metric[:, 0] + 5.0 * cell_metric[:, 1]
     got = np.array([r["value"] for r in out["records"]])
@@ -442,7 +442,7 @@ def test_kriging_tool_universal_routes_to_uk_descriptor():
     rng = np.random.default_rng(2)
     xy = rng.uniform(200000.0, 260000.0, (40, 2))
     z = 2.0 + 3.0 * xy[:, 0] + 5.0 * xy[:, 1]
-    fc = _point_fc(xy[:, 0], xy[:, 1], z, crs_member="urn:ogc:def:crs:EPSG::3857")
+    fc = _point_fc(xy[:, 0], xy[:, 1], z, crs_member="urn:ogc:def:crs:EPSG::32631")
     result = asyncio.run(reg.dispatch("kriging_interpolation", {
         "geojson": fc, "value_field": "val", "resolution": 6,
         "method": "universal", "cross_validate": False,

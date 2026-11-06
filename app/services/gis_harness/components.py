@@ -7,6 +7,7 @@ chart 协议的行为面：variant 目录权威（coerce_variant）、组件工�
 契约核符号经 import + re-export 保持全部既有 import path（36 引用方零改动）。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import math
 
@@ -52,7 +53,7 @@ def valid_variants_for_type(component_type: str) -> tuple:
         if desc is not None and desc.variants:
             return tuple(desc.variants)
     except Exception:  # noqa: BLE001 - 目录不可用不阻塞组件构造（宽松回退）
-        pass
+        observe_optional_failure(__name__)
     return ()
 
 def coerce_variant(component_type: str, variant: str) -> str:
@@ -67,7 +68,7 @@ def coerce_variant(component_type: str, variant: str) -> str:
         if desc is not None and desc.default_variant:
             return desc.default_variant
     except Exception:  # noqa: BLE001
-        pass
+        observe_optional_failure(__name__)
     return candidates[0]
 
 def north_arrow_component(
@@ -704,11 +705,17 @@ def mutate_component(
         # chart ↔ chartRef 互斥绑定：新值携带其一时移除另一个键——深合并会
         # 保留旧 inline chart，导致 renderer（inline 优先）与 catalog 一直
         # 显示旧数据（review P1-3）。
+        # points ↔ profileRef 同理（G3D-V2-C / ADR-0276）：points 优先
+        # 渲染，保留旧 points 会让 ref 绑定静默失效——chart 族同一互斥纪律。
         merged_opts = {**mutated.options}
         if "chart" in options:
             merged_opts.pop("chartRef", None)
         if "chartRef" in options:
             merged_opts.pop("chart", None)
+        if "profileRef" in options:
+            merged_opts.pop("points", None)
+        if "points" in options:
+            merged_opts.pop("profileRef", None)
         for k, v in options.items():
             if isinstance(v, dict) and isinstance(merged_opts.get(k), dict):
                 merged_opts[k] = {**merged_opts[k], **v}
@@ -908,6 +915,18 @@ _FACTORY_BY_TYPE = {
     "decision_panel": lambda component_id: decision_panel_component(component_id=component_id),
     # ac-05（ADR-0154）：标注图层（空绑定起步形态，upsert 后突变/重绑填充）。
     "label_layer": lambda component_id: label_layer_component(component_id=component_id),
+    # G3D-V2-C（ADR-0276）：G3D05 组件此前缺工厂——elevation_profile 的
+    # upsert 创建路径恒失败（「无生产写入方」断链的组成部分）。工厂种子
+    # 是占位形态（2 点占位 points），同一 mutate 事务内即被真实 options
+    # 覆盖（points↔profileRef 互斥合并保证不留双绑定）。
+    "elevation_profile": lambda component_id: elevation_profile_component(
+        points=[{"distance_m": 0.0, "elevation_m": 0.0},
+                {"distance_m": 1.0, "elevation_m": 0.0}],
+        component_id=component_id,
+    ),
+    "scene_disclosure": lambda component_id: scene_disclosure_component(
+        component_id=component_id,
+    ),
 }
 
 __all__ = [

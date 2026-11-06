@@ -121,7 +121,7 @@
   "kemjzhh": "就绪探针",
   "kg2r2v6": "服务版本",
   "kjo1f01": "组件状态",
-  "apiV1StatusDetailedjwt10s": "/api/v1/status/detailed（JWT，10s 缓存）",
+  "apiV1StatusDetailedjwt10s": "/api/v1/status/detailed（管理员，10s 缓存）",
   "k2mc0vi": "后端组件状态",
   "khuy6": "总体",
   "durable": "Durable 队列深度",
@@ -244,5 +244,8 @@
   "waterfallAria": "run {runId} 阶段瀑布",
   "nodeSpanAria": "{node} {state}{attempts}",
   "attemptLabel": "（尝试 {count} 次）",
-  "running": "进行中"
+  "running": "进行中",
+  "cancelRunTitle": "取消此运行？",
+  "cancelRunDescription": "取消后将停止此运行中待执行的任务。",
+  "cancelRunFailed": "取消运行失败，请重试。"
 }

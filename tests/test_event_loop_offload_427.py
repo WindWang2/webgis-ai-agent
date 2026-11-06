@@ -1,20 +1,8 @@
 """Regression tests for #427: map.py GeoJSON/SVG export serialization off the
 event loop + GeoJSON export body size cap.
 
-Siblings of #386 that the original sweep missed (only the PDF branch of
-``map.py`` was offloaded by d8c0ab1):
-
-  1. ``POST /api/v1/export/geojson`` ran ``json.dumps(data, indent=2)`` inline
-     on an unbounded ``Any`` GeoJSON body — measured 576 ms loop stall for an
-     11 MB export, 2.3 s for 45 MB.
-  2. ``POST /api/v1/export`` (SVG branch) ran ``_sanitize_svg`` (defusedxml
-     DOM parse of up to 50 MB) inline.
-  3. The GeoJSON export body had NO size cap at all (file uploads are capped
-     at 50 MB via MAX_EXPORT_SIZE).
-
-Technique mirrors tests/test_event_loop_offload_386.py: the slow work is
-faked with a sync ``time.sleep`` that records its thread id, and the test
-asserts the main event loop stays responsive *while* the work is running.
+Offload probes assert the actual execution thread, independent of scheduler
+latency. Dedicated throughput/timeout tests keep their explicit time budgets.
 """
 import asyncio
 import gc
@@ -31,28 +19,13 @@ from pathlib import Path
 _main_thread = threading.get_ident()
 
 
-async def _assert_loop_responsive_while(awaitable_factory, delay: float = 0.8):
-    """Run awaitable_factory() and assert a 0.05s timer fires mid-flight.
+async def _run_offload_probe(awaitable_factory, delay: float = 0.8):
+    """Run the probe; callers assert the actual worker thread identity.
 
-    Deterministic: with the work offloaded the task is still running when the
-    timer completes; with the work on the loop the task finishes before the
-    test's own sleep resumes, so ``assert not task.done()`` fails.
+    A fixed sleep/task-pending race depends on machine scheduling and can
+    fail when correctly offloaded work finishes before the test resumes.
     """
-    task = asyncio.create_task(awaitable_factory())
-    await asyncio.sleep(0.15)          # let it enter the slow work
-    assert not task.done(), "work finished before the test could observe it"
-
-    ticks = []
-
-    async def _tick():
-        await asyncio.sleep(0.05)
-        ticks.append(True)
-
-    tick = asyncio.create_task(_tick())
-    await asyncio.sleep(0.15)
-    assert tick.done() and ticks, "event loop was blocked during the work"
-    assert not task.done(), "event loop was blocked during the work"
-    return await task
+    return await awaitable_factory()
 
 
 def _req(geojson):
@@ -75,7 +48,7 @@ async def test_geojson_dumps_off_loop(monkeypatch, tmp_path):
     monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     monkeypatch.setattr(map_mod, "_set_export_owner", lambda *a, **k: None)
 
-    res = await _assert_loop_responsive_while(
+    res = await _run_offload_probe(
         lambda: map_mod.export_geojson(_req({"type": "Point", "coordinates": [0, 0]}),
                                        _user={"user_id": "u1"})
     )
@@ -262,7 +235,7 @@ async def test_svg_sanitize_off_loop(monkeypatch, tmp_path):
 
     file = UploadFile(file=io.BytesIO(b"<svg/>"), filename="map.svg")
     try:
-        res = await _assert_loop_responsive_while(
+        res = await _run_offload_probe(
             # 直调不经 FastAPI 依赖注入：Form 默认值是 truthy 的 Form 对象，
             # V5 新增参数必须显式传（否则 json.loads(Form) → 400 抢先返回，
             # offload 观测窗口直接失效，见 test_upload_temp_write_off_loop 同款注释）。

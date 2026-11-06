@@ -77,7 +77,7 @@ def validate_execution(chapter: Dict[str, Any]) -> List[MapCompletionFinding]:
             )
         return findings
     # 兜底（无图）：行状态直读（unavailable 与 failed 同为阻塞态）
-    open_rows = [r for r in rows if str(r.get("status") or "") == "pending"]
+    open_rows = [r for r in rows if str(r.get("status") or "") in ("pending", "ready", "running")]
     failed_rows = [
         r for r in rows if str(r.get("status") or "") in ("failed", "unavailable")
     ]

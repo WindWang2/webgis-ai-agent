@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from dataclasses import dataclass
@@ -26,19 +27,21 @@ class CorpusRegistration:
     """一个语料的登记项。"""
 
     name: str
-    prefix: str  # 案例 id 前缀（跨语料唯一性锚）
+    prefix: str  # 唯一注册命名空间；benchmark 案例默认也以此开头
     builder: Callable[[], List[Any]]
     #: 案例是否为 GISBenchmarkCase（True → 进入 iter_all_cases）
     is_benchmark_case: bool = True
     #: 报告聚合的组名（非 case 语料由驱动器决定组名）
     group: str = ""
+    # Explicit legacy ID families; empty means the registered prefix is mandatory.
+    id_prefixes: tuple[str, ...] = ()
 
 
 _REGISTRY: List[CorpusRegistration] = []
 _BUILTINS_LOADED = False
 #: 语料构建缓存（builder 均为确定性纯函数；33k 案例全量构建 ≈5.5s，
 #: manifest/iter 多次消费时缓存将成本摊平为一次）。
-_BUILDER_CACHE: Dict[str, List[Any]] = {}
+_BUILDER_CACHE: Dict[str, tuple[Callable[[], List[Any]], tuple[Any, ...]]] = {}
 
 
 def register(corpus: CorpusRegistration) -> None:
@@ -52,9 +55,12 @@ def register(corpus: CorpusRegistration) -> None:
 
 def corpus_cases(reg: CorpusRegistration) -> List[Any]:
     """语料案例（带缓存；首次构建后复用 —— 语料确定性由各自守卫保证）。"""
-    if reg.name not in _BUILDER_CACHE:
-        _BUILDER_CACHE[reg.name] = reg.builder()
-    return _BUILDER_CACHE[reg.name]
+    cached = _BUILDER_CACHE.get(reg.name)
+    if cached is None or cached[0] is not reg.builder:
+        cached = (reg.builder, tuple(copy.deepcopy(reg.builder())))
+        _BUILDER_CACHE[reg.name] = cached
+    return copy.deepcopy(list(cached[1]))
+
 
 
 def _all_registrations() -> List[CorpusRegistration]:
@@ -77,6 +83,7 @@ def _ensure_builtin_registrations() -> None:
         hard_negative_corpus,
         methodology_corpus,
         quality_corpus,
+        recovery_corpus,
         reliability_corpus,
         retrieval_eval_corpus,
         runtime_corpus,
@@ -98,7 +105,8 @@ def _ensure_builtin_registrations() -> None:
         is_benchmark_case=False, group="anti-claim"))
     register(CorpusRegistration(
         name="golden_matrix", prefix="GIS-",
-        builder=case_matrix.build_matrix_cases, group="form"))
+        builder=case_matrix.build_matrix_cases, group="form",
+        id_prefixes=("C", "D", "F", "M", "N", "P", "S")))
     register(CorpusRegistration(
         name="conformance", prefix="CF-",
         builder=lambda: conformance.build_conformance_corpus(),
@@ -139,6 +147,12 @@ def _ensure_builtin_registrations() -> None:
         name="reliability", prefix="RL-",
         builder=reliability_corpus.build_reliability_corpus,
         is_benchmark_case=False, group="reliability"))
+    # GOAL 05（ADR-0281 M7）：恢复裁决语料（输入状态 + 允许/禁止动作；
+    # oracle 族驱动 recovery_policy/goal_verification 生产纯函数）。
+    register(CorpusRegistration(
+        name="recovery", prefix="RC-",
+        builder=recovery_corpus.build_recovery_corpus,
+        is_benchmark_case=False, group="recovery"))
     register(CorpusRegistration(
         name="retrieval_eval", prefix="RT-",
         builder=retrieval_eval_corpus.build_retrieval_eval_corpus,
@@ -189,23 +203,17 @@ def corpus_manifest() -> Dict[str, Dict[str, Any]]:
     seen_prefixes: Dict[str, str] = {}
     for reg in _all_registrations():
         cases = corpus_cases(reg)
-        # 跨语料 id 唯一性只对 GISBenchmarkCase 语料强制 —— 专用管线语料
-        # （mission/failure/…）的 id 字段语义各异，由各自构建期守卫负责。
+        owner = seen_prefixes.setdefault(reg.prefix, reg.name)
+        if not reg.prefix or owner != reg.name:
+            raise ValueError(f"id prefix {reg.prefix!r} claimed by both {owner} and {reg.name}")
         if reg.is_benchmark_case:
-            ids = [
-                str(getattr(c, "id", "") or getattr(c, "case_id", "")
-                    or getattr(c, "scenario_id", ""))
-                for c in cases
-            ]
+            ids = [str(getattr(c, "id", "") or getattr(c, "case_id", "")
+                       or getattr(c, "scenario_id", "")) for c in cases]
             if len(ids) != len(set(ids)):
-                raise AssertionError(f"corpus {reg.name} has duplicate ids")
-            for cid in ids:
-                owner = seen_prefixes.setdefault(reg.prefix, reg.name)
-                if owner != reg.name:
-                    raise AssertionError(
-                        f"id prefix {reg.prefix!r} claimed by both {owner} "
-                        f"and {reg.name}"
-                    )
+                raise ValueError(f"corpus {reg.name} has duplicate ids")
+            accepted = reg.id_prefixes or (reg.prefix,)
+            if any(not cid.startswith(accepted) for cid in ids):
+                raise ValueError(f"corpus {reg.name} has ids outside prefix {accepted!r}")
         manifest[reg.name] = {
             "count": len(cases),
             "version_hash": corpus_version_hash(cases),

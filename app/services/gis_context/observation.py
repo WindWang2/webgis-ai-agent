@@ -120,7 +120,13 @@ class SessionObservation:
 def _bbox_close(a: List[float], b: List[float]) -> bool:
     if len(a) != 4 or len(b) != 4:
         return False
-    return all(abs(float(x) - float(y)) <= _AOI_EPSILON for x, y in zip(a, b))
+    if all(abs(float(x) - float(y)) <= _AOI_EPSILON for x, y in zip(a, b)):
+        return True
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    overlap = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    union = area_a + area_b - overlap
+    return union > 0 and overlap / union >= 0.8
 
 
 def _bounds_of(value: Any) -> Optional[List[float]]:
@@ -215,7 +221,8 @@ def _user_hidden_from_provenance(state: Dict[str, Any]) -> tuple:
             isinstance(entry, dict)
             and entry.get("origin") == "user"
             and entry.get("kind") == _USER_HIDDEN_KIND
-            and entry.get("detail", {}).get("visible") is False
+            and isinstance(entry.get("detail"), dict)
+            and entry["detail"].get("visible") is False
             and entry.get("target")
         ):
             continue

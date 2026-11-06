@@ -19,9 +19,17 @@
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    WorkflowDAG,
+    WorkflowNode,
+    WorkerRecord,
+)
+
 import asyncio
+import weakref
 import logging
 import os
+from app.services.workflow_runtime.metrics import DISPATCH_ACTIVE, DISPATCH_CAPACITY
 from typing import Any, Dict, List, Optional
 
 from app.services.workflow_runtime.adapters_geocompute import (
@@ -60,16 +68,17 @@ def isolation_enabled() -> bool:
 
 #: 进程级派发信号量（per-event-loop 字典 —— Semaphore 绑定首个 await 它
 #: 的 loop，跨 loop 复用会 RuntimeError；每 loop 各一份，容量同源）。
-_slots_sems: Dict[int, asyncio.Semaphore] = {}
+_slots_sems: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, weakref.ReferenceType[asyncio.Semaphore]] = weakref.WeakKeyDictionary()
 _slots_in_use = 0
 
 
 def get_slots_semaphore() -> asyncio.Semaphore:
-    loop_id = id(asyncio.get_running_loop())
-    sem = _slots_sems.get(loop_id)
+    loop_id = asyncio.get_running_loop()
+    reference = _slots_sems.get(loop_id)
+    sem = reference() if reference is not None else None
     if sem is None:
         sem = asyncio.Semaphore(dispatch_slots())
-        _slots_sems[loop_id] = sem
+        _slots_sems[loop_id] = weakref.ref(sem)
     return sem
 
 
@@ -77,11 +86,16 @@ def slots_in_use() -> int:
     return _slots_in_use
 
 
+# Callback registration remains safe when dispatch configuration is reloaded.
+DISPATCH_ACTIVE.set_function(slots_in_use)
+DISPATCH_CAPACITY.set_function(dispatch_slots)
+
+
 class NoCapableWorker(Exception):
     """隔离要求下无合格 worker（typed；映射不可重试失败证据）。"""
 
 
-def node_profile(node: Dict[str, Any]) -> str:
+def node_profile(node: WorkflowNode) -> str:
     """workflow 节点 → 主 profile（确定性；durable 队列词表子集）。
 
     优先节点声明的 ``resources.profile``；缺省按 kind 推导（transform →
@@ -113,7 +127,7 @@ class WorkerCapacityExhausted(Exception):
             f"(in_flight={self.in_flight} >= slots={self.slots})")
 
 
-def profile_capacity(worker_rows: List[Dict[str, Any]], *,
+def profile_capacity(worker_rows: list[WorkerRecord], *,
                      profile: str) -> "tuple[int, int]":
     """worker 行 → (declared_slots, reported_in_flight)（有界求和）。
 
@@ -146,7 +160,7 @@ def profile_capacity(worker_rows: List[Dict[str, Any]], *,
 
 
 def choose_dispatch(
-    node: Dict[str, Any], *, input_rows: int,
+    node: WorkflowNode, *, input_rows: int,
     registry: Optional[WorkerRegistry] = None,
 ) -> str:
     """派发决策（纯读；local | durable）。
@@ -166,10 +180,8 @@ def choose_dispatch(
         registry = registry or WorkerRegistry()
         capable = registry.list_active(profile=profile, backend="durable")
         if not capable:
-            if mode == "durable" or isolate:
-                raise NoCapableWorker(
-                    f"no active durable worker covers profile={profile!r}")
-            return "durable"
+            raise NoCapableWorker(
+                f"no active durable worker covers profile={profile!r}")
         slots, in_flight = profile_capacity(capable, profile=profile)
         if slots > 0 and in_flight >= slots:
             raise WorkerCapacityExhausted(profile, in_flight, slots)
@@ -191,7 +203,7 @@ class LocalDispatcher:
         self.caller = caller
 
     async def execute(
-        self, *, node: Dict[str, Any], dag: Dict[str, Any],
+        self, *, node: WorkflowNode, dag: WorkflowDAG,
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
         run_id: str = "", node_attempt: Optional[int] = None,
@@ -256,7 +268,7 @@ class DurableDispatcher:
         self.registry = registry or WorkerRegistry()
 
     async def execute(
-        self, *, node: Dict[str, Any], dag: Dict[str, Any],
+        self, *, node: WorkflowNode, dag: WorkflowDAG,
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
         run_id: str = "", node_attempt: Optional[int] = None,
@@ -306,7 +318,7 @@ class DurableDispatcher:
                 _slots_in_use -= 1
 
     async def _await_job(
-        self, node: Dict[str, Any], plan: Any, op_node: Any,
+        self, node: WorkflowNode, plan: Any, op_node: Any,
         session_id: str, cancel_token: Any,
         *,
         input_refs: Optional[List[str]] = None,
@@ -386,7 +398,7 @@ class AutoDispatcher:
                                           registry=self.registry)
 
     async def execute(
-        self, *, node: Dict[str, Any], dag: Dict[str, Any],
+        self, *, node: WorkflowNode, dag: WorkflowDAG,
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
         run_id: str = "", node_attempt: Optional[int] = None,
@@ -443,7 +455,7 @@ def _dispatch_sync(
     *,
     input_refs: Optional[List[str]] = None,
     port_idents: Optional[Dict[str, Dict[str, str]]] = None,
-    node: Optional[Dict[str, Any]] = None,
+    node: WorkflowNode | None = None,
     run_id: Optional[str] = None,
     node_attempt: Optional[int] = None,
     resource_envelope: Optional[Dict[str, Any]] = None,
@@ -476,7 +488,7 @@ def _dispatch_sync(
 
     if resource_envelope is None:
         resources = (node or {}).get("resources") if isinstance(node, dict) else None
-        resource_envelope = resources if isinstance(resources, dict) else None
+        resource_envelope = dict(resources) if isinstance(resources, dict) else None
 
     if run_id is None:
         try:

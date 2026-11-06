@@ -152,7 +152,12 @@ def register_flow_tools(registry: ToolRegistry) -> None:
         tier=2, domains=["network"],
         tags=["od", "flow", "mobility"],
         side_effect="deterministic_compute",
+        network=False,  # Only resolves existing session data; no routing/provider API.
         deterministic=True,
+        # Core dispatch stores the complete FC under a session-owned ref.
+        # The edge-count cap does not bound arbitrary origin/destination IDs.
+        output_semantic_type="geojson_fc",
+        result_size_policy="ref_offload",
     )
     async def od_flow_edges(
         od_table_ref: str,

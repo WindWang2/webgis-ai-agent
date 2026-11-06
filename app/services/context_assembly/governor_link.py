@@ -119,7 +119,7 @@ async def plan_turn_context(
         plan.reservation = reservation
         plan.ticket = ticket
         if plan.decision == "reject":
-            # Context is non-deferrable: record, never block the turn.
+            # The assembly caller enforces this explicit denial; no legacy fallback.
             plan.extra["reject_reasons"] = [str(r) for r in decision.reasons][:4]
     except Exception as exc:  # noqa: BLE001 — governor 缺席绝不阻断 turn
         logger.debug("[ctx_governor] plan skipped: %s", type(exc).__name__)

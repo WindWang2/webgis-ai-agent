@@ -8,21 +8,24 @@
 -r requirements.txt
 
 # Testing framework
-pytest>=9.1.1
-pytest-asyncio>=1.4.0
+# 依赖并集：#1887（pytest>=9.2.0）+ #1886（pytest-asyncio>=1.4.1）
+pytest>=9.2.0
+pytest-asyncio>=1.4.1
 pytest-cov>=7.1.0
 pytest-timeout>=2.4.0
 # 里程碑并行门禁（`pytest tests/unit -q -n 2 ...`，ADR-0153 门禁书命令）
 pytest-xdist>=3.8.0
+# 类型契约回归会通过当前解释器运行 mypy（正/负 fixture）；backend lane
+# 也必须显式安装，不能依赖 quality job 的独立工具环境。保持已验证的
+# 2.3 minor 线，与 production.yml 的工具 pin（2.3.1）同步评审。
+mypy>=2.3.1,<2.4
 
 # In-memory Redis fake for unit tests (tests/test_async_session_data.py 等使用)
-fakeredis>=2.40.0
+fakeredis[lua]>=2.40.0
 
 # Excel parsing for local stats / yearbook ingest tests
 openpyxl>=3.1.5
 python-calamine>=0.9.0
 
-# audit #1734：下限与 requirements.txt / requirements.lock 钉版（6.21.1）对齐 ——
-# 下限落后于 lock 时 CI 的 `pip install -c requirements.lock -r requirements-dev.txt`
-# 会解析到旧版，Lockfile Freshness 的「lock 是否新鲜」信号也被下限掩盖。
-pypdf>=6.21.2  # WeasyPrint 70 ObjStm 页对象结构化读取（test_report_service_vector_svg）
+# 与 requirements.txt / requirements.lock 同步，避免 CI 约束安装冲突。
+pypdf>=6.21.4  # WeasyPrint 70 ObjStm 页对象结构化读取（test_report_service_vector_svg）

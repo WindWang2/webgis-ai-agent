@@ -159,20 +159,6 @@ async def geocode_stage(
     def _out_of_budget() -> bool:
         return time_budget is not None and (monotonic() - start_time) >= time_budget
 
-    if total_rows == 0:
-        missing_on_empty: list[str] = []
-        for parsed in parsed_sources:
-            ref_id = parsed.get("ref_id")
-            data = load_ref(ref_id) if ref_id else None
-            if not data:
-                missing_on_empty.append(ref_id or "<none>")
-        result = GeocodeStageResult()
-        result.summary.missing_refs = missing_on_empty
-        result.summary.incomplete = bool(missing_on_empty)
-        if store_ref is not None:
-            store_ref({"rows": [], "summary": result.summary.as_dict()})
-        return result
-
     all_geocoded: list[dict] = []
     processed = 0
     missing_refs: list[str] = []
@@ -183,7 +169,7 @@ async def geocode_stage(
 
     def _report_progress() -> None:
         if on_progress is not None:
-            on_progress(int(processed / total_rows * 100))
+            on_progress(min(100, max(0, int(processed / max(total_rows, 1) * 100))))
 
     _report_progress()
 
@@ -252,6 +238,9 @@ async def geocode_stage(
     if store_ref is not None:
         store_ref({"rows": all_geocoded, "summary": summary.as_dict()})
 
+    if on_progress is not None:
+        on_progress(100)
+
     return GeocodeStageResult(rows=all_geocoded, summary=summary)
 
 
@@ -313,7 +302,12 @@ async def _geocode_chunk(
         )
         if hit:
             flag.hit = True
-        addr_to_result.update(zip(partition, results))
+        if len(results) != len(partition):
+            # Without one result per input the positional association is not
+            # trustworthy. Do not credit a truncated or shifted result list.
+            logger.warning("Explorer geocode result count mismatch: expected=%d actual=%d", len(partition), len(results))
+            continue
+        addr_to_result.update(zip(partition, results, strict=True))
 
     # Fan out unique-address results to every row_idx that shares the address;
     # budget-skipped addresses get an honest "skipped" annotation.
@@ -335,9 +329,13 @@ async def _geocode_chunk(
         else:
             row["_lat"] = None
             row["_lon"] = None
-            row["_geocode_status"] = "skipped"
+            skipped = addr in skipped_addresses
+            row["_geocode_status"] = "skipped" if skipped else "failed"
             row["_geocode_provider"] = None
-            row["_geocode_error"] = "skipped: geocode time budget exceeded"
+            row["_geocode_error"] = (
+                "skipped: geocode time budget exceeded" if skipped
+                else "geocode result count mismatch or missing result"
+            )
             row["_geocode_precision"] = None
             row["_geocode_fallback"] = False
 

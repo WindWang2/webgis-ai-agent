@@ -51,6 +51,9 @@ class StepKind(str, Enum):
     INTERACTION_EVENT = "interaction_event"  # G3D04：注入 Interaction IR 事件
     # （arguments.events = InteractionEventV1 最小字段集列表；经真实
     # ingest_interaction_batch 摄入，供 user-wins 相机守卫/失效裁决 E2E）
+    MAPSPEC_SOURCE = "mapspec_source"  # G3D-V2-C：注册 spec 源（真实
+    # UpsertSourceIntent 事务——分析数据资格的 scripted 等价物；生产面
+    # 的 DEM 供给注册归 A 方向数据管线，本 step 只走同一 mapspec 引擎）
 
 
 class AgentStep(BaseModel):

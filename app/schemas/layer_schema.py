@@ -94,3 +94,32 @@ class SessionFeaturePageResponse(BaseModel):
     revision: Optional[int] = None
     feature_count: Optional[int] = None
     bbox_mode: Optional[str] = None
+    # Track B vNext（additive 诚实元数据）
+    total_matching: Optional[int] = None
+    id_mode: Optional[str] = None
+    duplicate_id_count: Optional[int] = None
+    reason_codes: List[str] = Field(default_factory=list)
+
+
+class SessionFeatureAggregateResponse(BaseModel):
+    """会话 ref 分组聚合响应（Track B vNext）。
+
+    ``total_matching`` 是 filter×bbox 的精确匹配数（全扫口径）；``truncated``
+    = 组溢出并入 ``__other__``；``null_key_count``/``non_numeric_count`` 是
+    分母/数值准入的诚实披露 —— 消费端不得把部分集聚合表述为全量。
+    """
+
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
+    group_count: int = 0
+    is_complete: bool = True
+    truncated: bool = False
+    scanned: int = 0
+    total_matching: int = 0
+    null_key_count: int = 0
+    non_numeric_count: int = 0
+    agg: str = "count"
+    agg_field: Optional[str] = None
+    group_by: str = ""
+    revision: Optional[int] = None
+    feature_count: Optional[int] = None
+    reason_codes: List[str] = Field(default_factory=list)

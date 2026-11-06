@@ -111,6 +111,11 @@ def dataset_to_cube_store(
         transform_from_coords,
     )
 
+    # write_labeled_store materializes variables; reject before touching lazy
+    # values when their combined logical bytes exceed the bounded import lane.
+    estimated_bytes = sum(int(da.size) * int(np.dtype(da.dtype).itemsize) for da in ds.data_vars.values())
+    if estimated_bytes > 256 * 1024 * 1024:
+        raise CubeSchemaError("xarray import exceeds 256MiB materialization budget; use chunk descriptors")
     data_vars: Dict[str, List[str]] = {}
     arrays: Dict[str, Any] = {}
     dims: List[str] = []
@@ -137,7 +142,7 @@ def dataset_to_cube_store(
                 f"variable {name!r} spatial shape {da.shape[-2:]} != "
                 f"anchor {shape[-2:]}"
             )
-    if shape is None:
+    if not shape:
         raise CubeSchemaError("dataset has no data variables")
 
     crs = str(ds.attrs.get("crs") or "")

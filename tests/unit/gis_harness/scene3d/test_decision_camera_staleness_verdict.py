@@ -105,10 +105,15 @@ def test_capabilities_viewshed_requires_registry_injection():
 
 
 def test_capabilities_pending_directions_typed_unavailable():
+    """G3D-V2-C 后 line_of_sight 是真实探测（裸进程 = 工具未注册 →
+    unavailable）；skyline/scene_asset 仍是 honest pending。"""
     caps = probe_scene3d_capabilities(verify_vertical_evidence(None))
-    for key, code in (("line_of_sight", "SCENE_CAP_ALGORITHM_PENDING_G3D03"),
-                      ("skyline", "SCENE_CAP_ALGORITHM_PENDING_G3D03"),
-                      ("scene_asset", "SCENE_CAP_PENDING_G3D02")):
+    for key, code in (("skyline", "SCENE_CAP_ALGORITHM_PENDING_G3D03"),
+                      ("scene_asset", "SCENE_CAP_PENDING_G3D02"),
+                      ("line_of_sight", "SCENE_CAP_TOOL_NOT_REGISTERED"),
+                      ("viewshed_analysis", "SCENE_CAP_TOOL_NOT_REGISTERED"),
+                      ("terrain_measurement", "SCENE_CAP_TOOL_NOT_REGISTERED"),
+                      ("cut_fill_volume", "SCENE_CAP_TOOL_NOT_REGISTERED")):
         entry = caps.entry(key)
         assert entry.unavailable and entry.reason_code == code, key
 

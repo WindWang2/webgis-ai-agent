@@ -130,6 +130,16 @@ def test_secrets_never_enter_manifest_or_location(env, monkeypatch):
 def test_publish_object_ids_cap(env):
     from app.services.lakehouse.project_publish import PublishError
     import asyncio
+    from app.core.database import Base, Engine, SessionLocal
+    from app.models.db_model import User, Conversation
+    from app.models.project import Project
+    Base.metadata.create_all(Engine)
+    with SessionLocal() as db:
+        db.merge(User(id="publish-cap-actor", username="publish-cap-actor", email="publish-cap-actor@example.com", role="viewer", is_active=True))
+        db.flush()
+        db.merge(Conversation(id="publish-cap-session", user_id="publish-cap-actor"))
+        db.merge(Project(id="publish-cap-project", name="cap", owner_id="publish-cap-actor", status="active"))
+        db.commit()
 
     with pytest.raises(PublishError, match="1..200"):
         async def _run():
@@ -138,9 +148,9 @@ def test_publish_object_ids_cap(env):
             )
 
             await publish_to_project(
-                None, session_id="s", project_id="p",
+                None, session_id="publish-cap-session", project_id="publish-cap-project",
                 object_ids=[f"{i:064x}" for i in range(201)],
-                actor_id=None,
+                actor_id="publish-cap-actor",
             )
 
         asyncio.run(_run())

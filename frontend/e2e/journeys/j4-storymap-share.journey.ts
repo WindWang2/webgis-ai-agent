@@ -7,8 +7,10 @@
  * the same story — that is the sharing contract.
  */
 import { test, expect } from 'playwright/test';
-import { defaultWorld } from '../helpers/bootstrap';
+import { copyJourneyAuth, defaultWorld, loginViaApi } from '../helpers/bootstrap';
+import { seedConversationViaApi } from '../helpers/real-chat';
 import { installJourneyStubs } from '../fixtures/api-stubs';
+import storySeed from '../fixtures/story-seed.json';
 import { MODE, REAL_ONLY_REASON } from '../helpers/mode';
 
 const SESSION_ID = 's-j4';
@@ -34,7 +36,12 @@ function storyWorld() {
 
 async function openStory(page: import('playwright/test').Page, sessionId: string): Promise<void> {
   await page.goto(`/story?session_id=${sessionId}`);
-  // 第一条 assistant 消息的 markdown 标题渲染出来即视为故事加载完成。
+  if (MODE === 'real') {
+    // The backend compiler replaces the local-message fallback asynchronously.
+    // Assert the stable compiled view, not headings that briefly appear before it.
+    await expect(page.locator('[data-story-narrator]')).toBeVisible({ timeout: 20_000 });
+  }
+  // Both the local mock view and the compiled real view retain this heading.
   await expect(
     page.getByRole('heading', { name: '商业 POI 空间分布' }),
   ).toBeVisible({ timeout: 20_000 });
@@ -52,6 +59,7 @@ test.describe('journey-4 StoryMap 分享回放', () => {
     await expect(play).toBeEnabled({ timeout: 15_000 });
     await play.click();
     await expect(page.locator('button[aria-label="暂停"]').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('story-scrubber-range')).toHaveValue('1');
 
     // 分享：复制当前 URL（grant 了 clipboard 权限）。
     const share = page.locator('button[aria-label="分享"]').first();
@@ -64,6 +72,7 @@ test.describe('journey-4 StoryMap 分享回放', () => {
 
     // 回放：分享链接在全新页面打开 → 同一会话内容再次渲染。
     const replay = await page.context().newPage();
+    await copyJourneyAuth(page, replay);
     await installJourneyStubs(replay, storyWorld());
     await replay.goto(clip);
     await expect(
@@ -77,20 +86,18 @@ test.describe('journey-4 StoryMap 分享回放', () => {
     // Self-seeding: create the story session through the real (stub-backed)
     // chat API — two turns produce user+assistant messages server-side; the
     // scripted LLM answers with deterministic markdown.
-    const turns = ['用标题总结商业 POI 分析：## 商业 POI 空间分布', '继续：生成 15 分钟等时圈结论'];
-    let sessionId = '';
-    for (const message of turns) {
-      const res = await page.request.post('/api/v1/chat/completions', { data: { message } });
-      if (!res.ok()) throw new Error(`real-mode story seeding failed: ${res.status()}`);
-      const payload = (await res.json()) as { session_id?: string };
-      sessionId = payload.session_id || sessionId;
-    }
-    if (!sessionId) throw new Error('real-mode story seeding produced no session id');
+    const accessToken = await loginViaApi(page);
+    // The compiler uses first/last message for the two-chapter fallback. Keep
+    // the first prompt's heading on its own markdown line in both views.
+    const turns = storySeed.map((turn) => turn.message);
+    const sessionId = await seedConversationViaApi(page.request, accessToken, turns);
     await openStory(page, sessionId);
+    await expect(page.getByRole('heading', { name: '15 分钟等时圈' })).toBeVisible();
     const play = page.locator('button[aria-label="播放"]').first();
     await expect(play).toBeEnabled({ timeout: 15_000 });
     await play.click();
     await expect(page.locator('button[aria-label="暂停"]').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('story-scrubber-range')).toHaveValue('1');
     const share = page.locator('button[aria-label="分享"]').first();
     await share.click();
     const toast = page.locator('[role="status"], [data-testid^="toast"]').filter({ hasText: '已复制分享链接' });
@@ -102,10 +109,13 @@ test.describe('journey-4 StoryMap 分享回放', () => {
     expect(clip).toContain('/story');
     expect(clip).toContain(`session_id=${sessionId}`);
     const replay = await page.context().newPage();
+    await copyJourneyAuth(page, replay);
     await replay.goto(clip);
+    await expect(replay.locator('[data-story-narrator]')).toBeVisible({ timeout: 20_000 });
     await expect(
       replay.getByRole('heading', { name: '商业 POI 空间分布' }),
     ).toBeVisible({ timeout: 20_000 });
+    await expect(replay.getByRole('heading', { name: '15 分钟等时圈' })).toBeVisible();
     await replay.close();
   });
 });

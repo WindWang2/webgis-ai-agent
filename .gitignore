@@ -13,6 +13,8 @@ scripts/
 # 该目录承载测试 import 的守卫脚本，必须入库。
 !/frontend/scripts/
 !/scripts/ci-local.sh
+# Required backend coverage aggregation must be present in clean CI checkouts.
+!/scripts/combine_backend_coverage.py
 # G05：任务级验收本地入口（run/compare/report/pin；planning/g05 契约）
 !/scripts/g05_task_acceptance.py
 # G05：本地运行产物（CLI 报告）与栅格 fixture 工作区（validate_data_path 允许区）
@@ -308,3 +310,10 @@ frontend/package-lock.json
 .venv
 # 工具能力 8 面对账 CLI（G03）：测试/CI 引用的入库脚本
 !/scripts/check_tool_capability_conformance.py
+
+# Runner-local real task fixture used by J2 and its backend regression.
+!/scripts/seed_journey_retry.py
+
+# Local agent workspaces
+/.workbuddy/
+/.zwork/

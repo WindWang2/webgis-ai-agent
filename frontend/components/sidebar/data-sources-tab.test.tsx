@@ -257,7 +257,7 @@ describe('DataSourcesTab — materialize session + layer wiring (#463)', () => {
 
     // Fetch-on-demand hydrates the layer with the stored ref payload.
     expect(fetchRef()).toHaveBeenCalledWith('ref:df-abc123', 'sess-real-42', expect.anything());
-    expect(hudStore.updateLayer).toHaveBeenCalledWith('df-cat1', { source: GEOJSON });
+    expect(hudStore.updateLayer).toHaveBeenCalledWith('df-cat1', { source: GEOJSON, _refId: 'ref:df-abc123' });
   });
 
   it('keeps the layer but warns when the ref payload fetch fails (no false silence)', async () => {

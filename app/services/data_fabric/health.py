@@ -37,6 +37,15 @@ STATUS_AUTH_FAILED = "auth_failed"
 _FAILURE_STATUSES = frozenset({STATUS_UNREACHABLE, STATUS_DEGRADED, STATUS_TIMEOUT})
 
 
+def adapter_health_key(adapter: GeospatialDataSourceAdapter) -> str:
+    """Registry scope/revision is authoritative; unmanaged instances stay isolated."""
+    bound = getattr(adapter, "_data_fabric_health_key", None)
+    if bound:
+        return str(bound)
+    profile = getattr(adapter, "profile", None)
+    return f"{getattr(profile, 'id', 'unknown')}|instance:{id(adapter)}"
+
+
 class SourceDownError(SourceUnreachableError):
     """Raised internally to feed health-check failures into the circuit breaker.
 
@@ -98,7 +107,7 @@ class DataFabricHealthCheck:
         ``circuit_open`` without a remote probe. Caches by ``source_key`` (or
         ``adapter.profile.id``) so repeated calls within TTL skip the probe.
         """
-        key = source_key or (adapter.profile.id if adapter and adapter.profile else "unknown")
+        key = source_key or adapter_health_key(adapter)
 
         # 缓存先行（M1 修复）：allow() 在 HALF_OPEN 下会占用唯一 trial 名额；
         # 若缓存命中在 allow 之后提前返回，名额永不释放 → 源被永久 fail-fast。
@@ -187,6 +196,8 @@ class DataFabricHealthCheck:
                 reg.record_success(source_key)
             elif health.status in _FAILURE_STATUSES:
                 reg.record_failure(source_key, SourceDownError(source_key))
+            else:
+                reg.release_trial(source_key)
         except Exception:  # pragma: no cover - defensive
             pass
 

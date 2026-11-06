@@ -316,7 +316,7 @@ def test_ogc_describe_without_declared_crs_is_none_769(ogc):
     ogc.session.routes  # noqa: B018 - routes replaced below
     original = ogc.session.get
 
-    def route(url, params=None, timeout=None):
+    def route(url, params=None, timeout=None, **kwargs):
         if url.endswith("/collections/parcels") and params is None:
             return FakeResponse(json_data=col)
         return original(url, params=params, timeout=timeout)

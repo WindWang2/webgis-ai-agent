@@ -19,6 +19,8 @@ export interface UseDialogFocusOptions {
   initialFocusSelector?: string;
 }
 
+const openDialogs: HTMLElement[] = [];
+
 export function useDialogFocus({
   open,
   containerRef,
@@ -28,6 +30,8 @@ export function useDialogFocus({
   // 初始聚焦 + 焦点归还
   useEffect(() => {
     if (!open) return;
+    const dialog = containerRef.current;
+    if (dialog) openDialogs.push(dialog);
     const restore = document.activeElement as HTMLElement | null;
     const t = setTimeout(() => {
       const container = containerRef.current;
@@ -39,6 +43,7 @@ export function useDialogFocus({
     }, 50);
     return () => {
       clearTimeout(t);
+      if (dialog) { const index = openDialogs.indexOf(dialog); if (index >= 0) openDialogs.splice(index, 1); }
       restore?.focus?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -48,9 +53,10 @@ export function useDialogFocus({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (openDialogs.at(-1) !== containerRef.current) return;
+      if (e.key === 'Escape' && !e.defaultPrevented) {
         if (onEscape) {
-          e.stopPropagation();
+          e.stopImmediatePropagation();
           onEscape();
         }
         return;
@@ -59,8 +65,16 @@ export function useDialogFocus({
         trapTabKey(e, containerRef.current);
       }
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    // Bubble Escape after the focused control has had a chance to consume it.
+    // Capture Tab independently so focus cannot escape through a child handler.
+    const onCaptureTab = (e: KeyboardEvent) => { if (e.key === 'Tab') onKey(e); };
+    const onBubbleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') onKey(e); };
+    document.addEventListener('keydown', onCaptureTab, true);
+    document.addEventListener('keydown', onBubbleEscape);
+    return () => {
+      document.removeEventListener('keydown', onCaptureTab, true);
+      document.removeEventListener('keydown', onBubbleEscape);
+    };
   }, [open, onEscape, containerRef]);
 }
 

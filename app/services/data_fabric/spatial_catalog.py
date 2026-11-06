@@ -49,6 +49,7 @@ class SpatialCatalogService:
 
         self._catalog: "OrderedDict[str, DatasetDescriptor]" = OrderedDict()
         self._tags: Dict[str, List[str]] = {}
+        self._search_text: Dict[str, str] = {}
         self._profile_map: Dict[str, str] = {}
         self._owner_map: Dict[str, Optional[str]] = {}
         self._max_entries = max(1, int(max_entries))
@@ -69,6 +70,12 @@ class SpatialCatalogService:
                 self._tags[descriptor.id] = list(tags)
             elif descriptor.id not in self._tags:
                 self._tags[descriptor.id] = []
+            # Normalize the keyword index once per registration, not once per
+            # row on every search. NUL separates fields to prevent cross-field hits.
+            self._search_text[descriptor.id] = "\0".join(
+                [descriptor.id, descriptor.name or "", descriptor.title or "",
+                 descriptor.description or "", *self._tags[descriptor.id]]
+            ).lower()
             if profile_id:
                 self._profile_map[descriptor.id] = profile_id
             # 重复注册以最近一次 owner 为准（会话重连）
@@ -77,6 +84,7 @@ class SpatialCatalogService:
             while len(self._catalog) > self._max_entries:
                 evicted_id, _ = self._catalog.popitem(last=False)
                 self._tags.pop(evicted_id, None)
+                self._search_text.pop(evicted_id, None)
                 self._profile_map.pop(evicted_id, None)
                 self._owner_map.pop(evicted_id, None)
 
@@ -120,6 +128,7 @@ class SpatialCatalogService:
         if dataset_id in self._catalog:
             del self._catalog[dataset_id]
             self._tags.pop(dataset_id, None)
+            self._search_text.pop(dataset_id, None)
             self._profile_map.pop(dataset_id, None)
             self._owner_map.pop(dataset_id, None)
             logger.info("[SpatialCatalog] Unregistered dataset '%s'", dataset_id)
@@ -213,13 +222,16 @@ class SpatialCatalogService:
 
             # 4. Keyword query filter
             if query_lower:
-                title_match = query_lower in (descriptor.title or "").lower()
-                desc_match = query_lower in (descriptor.description or "").lower()
-                name_match = query_lower in (descriptor.name or "").lower()
-                id_match = query_lower in descriptor.id.lower()
-                tag_match = any(query_lower in t.lower() for t in dataset_tags)
-                if not (title_match or desc_match or name_match or id_match or tag_match):
+                search_text = self._search_text.get(dataset_id, "")
+                if query_lower not in search_text:
                     continue
+                if "\0" in query_lower:
+                    # Preserve substring semantics for unusual input, too.
+                    fields = [descriptor.id, descriptor.name or "",
+                              descriptor.title or "", descriptor.description or "",
+                              *dataset_tags]
+                    if not any(query_lower in field.lower() for field in fields):
+                        continue
 
             # 5. Spatial BBox filter
             if bbox:
@@ -250,6 +262,7 @@ class SpatialCatalogService:
         with self._lock:
             self._catalog.clear()
             self._tags.clear()
+            self._search_text.clear()
             self._profile_map.clear()
             self._owner_map.clear()
 

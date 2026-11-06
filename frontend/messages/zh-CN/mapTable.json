@@ -1,0 +1,25 @@
+{
+  "paged": {
+    "loadMore": "加载更多",
+    "loadingMore": "加载中…",
+    "countLine": "已显示 {shown} 行{matched}{total}",
+    "matchedSuffix": " · 匹配 {matched}",
+    "totalSuffix": " · 共 {total}",
+    "matchedUnknown": " · 匹配数未知",
+    "truncatedPage": "本页因扫描预算未集满，可继续翻页",
+    "conflictTitle": "数据已更新到版本 {revision}，当前分页已失效",
+    "conflictReload": "重新加载",
+    "rateLimited": "请求过于频繁，稍候自动重试…",
+    "networkError": "网络错误",
+    "retry": "重试",
+    "forbidden": "无权访问该图层数据",
+    "notFound": "图层 ref 不存在或已删除",
+    "overLimit": "数据量超出聚合上限，统计不可用",
+    "positionalIdNote": "本图层无稳定要素 ID，行号仅在当前数据版本内有效",
+    "duplicateIdNote": "存在 {count} 个重复要素 ID，按首个匹配定位",
+    "serverMode": "服务端分页",
+    "sortServerTitle": "{column} 排序（服务端）",
+    "locateTitle": "在地图上定位",
+    "emptyPage": "当前条件下没有要素"
+  }
+}

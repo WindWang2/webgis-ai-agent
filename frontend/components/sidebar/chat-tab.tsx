@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
+import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
 import { Send, Sparkles, CheckCircle2, Square, RotateCcw } from 'lucide-react';
 import type { AiStatus } from '@/lib/store/hud-types';
@@ -9,6 +9,7 @@ import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { ClarificationCard } from '@/components/chat/clarification-card';
+import { EditProposalCard } from '@/components/chat/edit-proposal-card';
 import type { ClarificationCardState } from '@/lib/types/clarification';
 import { PlanCard } from '@/components/chat/plan-card';
 import { SessionPlanPanel } from '@/components/chat/session-plan-panel';
@@ -22,6 +23,7 @@ import {
   parseAgentRuntime,
   type AgentRuntime,
 } from '@/lib/agent-runtime';
+import { CitationSourcesProvider, CitationSourceList, splitCitationBlocks, type CitationSource } from '@/components/chat/citation';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { adaptChartData } from "@/lib/chart-adapter";
 import { useLocale, useT } from '@/lib/i18n/useT';
@@ -112,6 +114,8 @@ interface ChatMessage {
   resultId?: string;
   /** 方向 3：requirement IR blocking 澄清卡片状态。 */
   clarification?: ClarificationCardState;
+  /** /goal 03：要素编辑提案卡状态。 */
+  featureEditProposal?: import('@/lib/types/feature-edit').FeatureEditProposalState;
 }
 
 /**
@@ -136,6 +140,11 @@ interface ChatTabProps {
   onCancel?: () => void;
   /** Plan Mode: 用户在卡片上点按钮时回调，由父组件发送对应 chat 消息并更新 plan.status */
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
+  /** /goal 03：EditProposalCard 决策（approve/reject → REST 决策端点）。 */
+  onFeatureEditDecision?: (
+    proposal: import('@/lib/types/feature-edit').FeatureEditProposalState,
+    action: 'approve' | 'reject',
+  ) => void;
   /** 方向 3（ADR-0222）：ClarificationCard 提交（REST 应答；waiveKeys 为逐问题豁免）。 */
   onClarificationSubmit?: (
     state: import('@/lib/types/clarification').ClarificationCardState,
@@ -176,6 +185,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   thinkingText,
   onPlanAction,
   onClarificationSubmit,
+  onFeatureEditDecision,
   onClarificationRefresh,
 }: {
   message: ChatMessage;
@@ -186,6 +196,10 @@ const ChatMessageItem = memo(function ChatMessageItem({
     state: import('@/lib/types/clarification').ClarificationCardState,
     answers: { context_key: string; value: string }[],
     waiveKeys: string[],
+  ) => void;
+  onFeatureEditDecision?: (
+    proposal: import('@/lib/types/feature-edit').FeatureEditProposalState,
+    action: 'approve' | 'reject',
   ) => void;
   onClarificationRefresh?: () => void;
 }) {
@@ -219,7 +233,8 @@ const t = useT();
             backgroundColor: 'var(--agent-accent)'
           }}
         >
-          <div className="whitespace-pre-wrap">{msg.content}</div>
+          <div className="whitespace-pre-wrap">{splitCitationBlocks(msg.content).body}</div>
+          <CitationSourceList sources={splitCitationBlocks(msg.content).sources} />
         </div>
       </div>
     </div>
@@ -282,7 +297,7 @@ const t = useT();
             {msg.think && (
               <CollapsibleThink
                 content={msg.think}
-                isStreaming={!msg.content && !!msg.think}
+                isStreaming={!!msg.isThinking}
               />
             )}
             {msg.agentPlan && (
@@ -319,6 +334,15 @@ const t = useT();
                 onRefresh={onClarificationRefresh}
               />
             )}
+            {msg.featureEditProposal && (
+              <EditProposalCard
+                proposal={msg.featureEditProposal}
+                onDecide={(planId, action) => {
+                  const proposal = msg.featureEditProposal;
+                  if (proposal) onFeatureEditDecision?.(proposal, action);
+                }}
+              />
+            )}
             {msg.charts?.map((raw: unknown, idx: number) => {
               const chart = adaptChartData(raw);
               if (!chart) return null;
@@ -335,7 +359,7 @@ const t = useT();
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, onClarificationSubmit, onClarificationRefresh, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, onClarificationSubmit, onFeatureEditDecision, onClarificationRefresh, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
 const t = useT();
   const [configuredRuntime, setConfiguredRuntime] = useState<AgentRuntime | null>(null);
   useEffect(() => {
@@ -413,6 +437,14 @@ const t = useT();
       clearTimeout(clear);
     };
   }, [sessionId, messages.length]);
+
+  const citationSourcesByMessage = useMemo(() => {
+    let latest: CitationSource[] = [];
+    return messages.map((message) => {
+      if (message.role === 'user') latest = splitCitationBlocks(message.content).sources;
+      return latest;
+    });
+  }, [messages]);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -507,14 +539,17 @@ const t = useT();
               data-chat-locate-hit={locateIndex === idx ? 'true' : undefined}
               className={locateIndex === idx ? 'rounded-md ring-2 ring-status-accent' : undefined}
             >
+              <CitationSourcesProvider sources={citationSourcesByMessage[idx]}>
               <ChatMessageItem
                 message={msg}
                 mounted={mounted}
                 thinkingText={thinkingText}
                 onPlanAction={onPlanAction}
                 onClarificationSubmit={onClarificationSubmit}
+      onFeatureEditDecision={onFeatureEditDecision}
                 onClarificationRefresh={onClarificationRefresh}
               />
+              </CitationSourcesProvider>
             </div>
           ))}
 

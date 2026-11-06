@@ -1,5 +1,7 @@
 [run]
 source = app
+# Keep raw shard data portable across checkout directories.
+relative_files = true
 # TC-16：SQLAlchemy async 经 greenlet 切换执行；缺少 greenlet 并发跟踪时，
 # 第一个 await db.execute(...) 之后的代码全部误报为未覆盖（如 auth refresh 路径）。
 concurrency = greenlet,thread
@@ -10,6 +12,9 @@ omit =
     tests/*
 
 [report]
+# Namespace directories (for example app/lib) are part of the denominator,
+# including files that no shard imports.
+include_namespace_packages = true
 exclude_lines =
     pragma: no cover
     if __name__ == .__main__.

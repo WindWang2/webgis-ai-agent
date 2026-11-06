@@ -10,6 +10,8 @@ V2 gate policy（HARNESS-V2）：缺失证据不等于成功。
 import logging
 from typing import Any, Dict, Optional
 
+from app.lib.harness.result_contracts import GateCheck, GateResult
+
 logger = logging.getLogger(__name__)
 
 # Default Acceptance Thresholds
@@ -54,14 +56,14 @@ class HarnessEvaluator:
     def evaluate_session(
         self,
         harness_metrics: Dict[str, float]
-    ) -> Dict[str, Any]:
+    ) -> GateResult:
         """
         Evaluate harness metrics against quality gate thresholds.
 
         :param harness_metrics: Dictionary of computed metric scores.
         :return: Evaluation result containing metrics, thresholds, checks, and overall pass status.
         """
-        checks: Dict[str, Dict[str, Any]] = {}
+        checks: Dict[str, GateCheck] = {}
         all_passed = True
 
         for metric_name, target_threshold in self.thresholds.items():
@@ -99,7 +101,7 @@ class HarnessEvaluator:
         require_interaction: bool = False,
         require_cartography: Optional[bool] = None,
         require_map_product: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> GateResult:
         """Evaluate a structured ``evaluate_with_evidence`` result.
 
         Per gate policy, unevaluated dimensions are treated as FAILURE rather than
@@ -149,9 +151,11 @@ class HarnessEvaluator:
             "MapProductCompleteness": had_product,
         }
 
-        checks: Dict[str, Dict[str, Any]] = {}
+        checks: Dict[str, GateCheck] = {}
         all_passed = True
         for metric_name, target in self.thresholds.items():
+            if metric_name not in dims_evaluated:
+                raise ValueError(f"Unknown quality threshold: {metric_name}")
             evaluated = dims_evaluated[metric_name]
             score = metrics.get(metric_name, 0.0)
             if metric_name in INTERACTION_METRICS or metric_name in PRODUCT_METRICS:
@@ -250,7 +254,7 @@ class HarnessEvaluator:
     def generate_markdown_report(
         self,
         session_id: str,
-        evaluation_result: Dict[str, Any]
+        evaluation_result: GateResult
     ) -> str:
         """Generate a formatted Markdown evaluation report."""
         overall_status = "✅ PASSED" if evaluation_result["overall_passed"] else "❌ FAILED"

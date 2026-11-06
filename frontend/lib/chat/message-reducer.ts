@@ -32,6 +32,8 @@ export interface ChatStreamMessage {
   resultId?: string;
   /** 方向 3：requirement IR blocking 澄清卡片（SSE clarification 事件挂载）。 */
   clarification?: ClarificationCardState;
+  /** /goal 03：要素编辑提案卡状态（EditProposalCard 渲染）。 */
+  featureEditProposal?: import('@/lib/types/feature-edit').FeatureEditProposalState;
   [key: string]: unknown;
 }
 
@@ -460,4 +462,40 @@ export function settleThinkingMessage(
       ? { ...m, isThinking: false, content: m.content || args.fallbackText || '完成。' }
       : m,
   );
+}
+
+
+/** /goal 03：要素编辑提案挂到当前助手消息（EditProposalCard 渲染）。 */
+export function attachFeatureEditProposal(
+  prev: ChatStreamMessage[],
+  args: { messageId: string; proposal: import('@/lib/types/feature-edit').FeatureEditProposalState },
+): ChatStreamMessage[] {
+  const idx = findIndexById(prev, args.messageId);
+  if (idx === -1) return prev;
+  // 幂等：同 plan_id 已挂载（SSE 重放）原样返回
+  const existing = prev[idx].featureEditProposal;
+  if (existing && existing.plan_id === args.proposal.plan_id) return prev;
+  const copy = [...prev];
+  copy[idx] = { ...prev[idx], featureEditProposal: args.proposal };
+  return copy;
+}
+
+/** /goal 03：提案卡状态迁移（approving/applied/rejected/stale/conflicted/expired/error）。 */
+export function setFeatureEditProposalStatus(
+  prev: ChatStreamMessage[],
+  args: {
+    planId: string;
+    status: import('@/lib/types/feature-edit').FeatureEditProposalStatus;
+    error?: string;
+    receipt?: import('@/lib/types/feature-edit').FeatureEditProposalState['receipt'];
+  },
+): ChatStreamMessage[] {
+  return prev.map((m) => {
+    const p = m.featureEditProposal;
+    if (!p || p.plan_id !== args.planId) return m;
+    return {
+      ...m,
+      featureEditProposal: { ...p, status: args.status, error: args.error, receipt: args.receipt ?? p.receipt },
+    };
+  });
 }

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.lib.harness.tool_call_event import ToolCallEvent
+from app.lib.runtime.file_lock import exclusive_file_lock
 
 logger = logging.getLogger(__name__)
 
@@ -46,18 +47,15 @@ _lock = threading.Lock()
 
 # ─── writer 线程 ─────────────────────────────────────────────────
 _queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=_MAX_QUEUE)
-_STOP = object()
+_STOP = None
 _writer_thread: Optional[threading.Thread] = None
 _writer_started = False
 _start_lock = threading.Lock()
 # 尚未落盘的行数（入队 +1，writer 每批落盘 -N）。测试隔离用：_reset_for_tests
 # 等待其归零，避免 in-flight batch 在 LOG_PATH 切换后写入下一个测试的文件。
 #
-# 跨线程记账：_pending_rows 由调用方线程（_enqueue +1）与 writer 线程
-# （_flush_batch -N）共同修改。这里依赖 CPython GIL 让 int 的 += / -=
-# 原子化（无锁安全）；改用 threading.Lock 会引入竞争点且收益为零，因为
-# 该计数仅用于测试 quiescence 等待，非生产正确性路径。
 _pending_rows = 0
+_pending_lock = threading.Lock()
 
 
 def _ensure_writer() -> None:
@@ -80,7 +78,8 @@ def _flush_batch(batch: list[str]) -> None:
     except Exception as e:  # noqa: BLE001 — 单批失败不能杀死 writer 线程
         logger.exception(f"[tool_metrics] writer flush failed: {type(e).__name__}: {e}")
     finally:
-        _pending_rows -= len(batch)
+        with _pending_lock:
+            _pending_rows -= len(batch)
 
 
 def _writer_loop() -> None:
@@ -94,7 +93,7 @@ def _writer_loop() -> None:
                 _flush_batch(batch)
                 batch = []
             continue
-        if line is _STOP:
+        if line is None:
             if batch:
                 _flush_batch(batch)
             return
@@ -144,18 +143,23 @@ def _append_batch(lines: list[str]) -> None:
     Callers (writer loop) wrap this in ``_flush_batch`` so a failure here can
     never kill the writer thread or wedge the pending-rows counter.
     """
-    _rotate_if_needed()
     _ensure_log_dir()
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write("".join(lines))
+    # Every worker holds the same stable lock inode across rotation and append.
+    # Locking the log itself would stop protecting it after os.replace().
+    with open(f"{LOG_PATH}.lock", "a+b") as lock_file:
+        with exclusive_file_lock(lock_file.fileno()):
+            _rotate_if_needed()
+            with open(LOG_PATH, "a", encoding="utf-8") as f:
+                f.write("".join(lines))
 
 
 def _enqueue(line: str) -> None:
     global _pending_rows
     _ensure_writer()
     try:
-        _queue.put_nowait(line)
-        _pending_rows += 1
+        with _pending_lock:
+            _queue.put_nowait(line)
+            _pending_rows += 1
     except queue.Full:
         # 背压: 丢弃新行, 绝不阻塞事件循环。
         logger.warning("[tool_metrics] queue full — dropping row")
@@ -169,7 +173,10 @@ def _wait_idle(timeout: float = 5.0) -> None:
     path (then _reset_for_tests), so the batch lands on the old path.
     """
     deadline = time.monotonic() + timeout
-    while _pending_rows > 0 and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        with _pending_lock:
+            if _pending_rows <= 0:
+                return
         time.sleep(0.01)
 
 
@@ -184,7 +191,8 @@ def _reset_for_tests() -> None:
     while True:
         try:
             _queue.get_nowait()
-            _pending_rows -= 1
+            with _pending_lock:
+                _pending_rows -= 1
         except queue.Empty:
             break
 
@@ -394,17 +402,18 @@ def emit_digest() -> None:
             return
         n = _call_counter
         # top 5 by cumulative ms
-        top_cum = sorted(
+        top_cum = [(tool, list(slot)) for tool, slot in sorted(
             _aggregator.items(), key=lambda kv: kv[1][1], reverse=True
-        )[:5]
+        )[:5]]
         # top 5 by max_ms（真实 max，不是 p99）
-        top_max = sorted(
+        top_max = [(tool, list(slot)) for tool, slot in sorted(
             _aggregator.items(), key=lambda kv: kv[1][2], reverse=True
-        )[:5]
+        )[:5]]
         errors = [(t, v[4]) for t, v in _aggregator.items() if v[4] > 0]
+        hist = {tool: list(_hist.get(tool, [])) for tool, _ in top_cum}
 
     def _fmt_stats(tool: str, slot: list[int]) -> str:
-        p = _percentiles(_hist.get(tool, []), slot[0])
+        p = _percentiles(hist.get(tool, []), slot[0])
         return (f'("{tool}",count={slot[0]},total_ms={slot[1]},'
                 f'p50={p["p50"]},p90={p["p90"]},p95={p["p95"]},p99={p["p99"]},'
                 f'max={slot[2]},hits={slot[3]},errors={slot[4]},result_bytes={slot[5]})')
@@ -413,5 +422,5 @@ def emit_digest() -> None:
     max_str = ",".join(f'("{t}",{v[2]})' for t, v in top_max)
     err_str = ",".join(f'("{t}",{n})' for t, n in errors)
     logger.info(
-        f"TOOL_METRICS_DIGEST n={n} top_cumulative=[{cum_str}] top_max=[{max_str}] errors=[{err_str}]"
+        f"TOOL_METRICS_DIGEST scope=process pid={os.getpid()} n={n} top_cumulative=[{cum_str}] top_max=[{max_str}] errors=[{err_str}]"
     )

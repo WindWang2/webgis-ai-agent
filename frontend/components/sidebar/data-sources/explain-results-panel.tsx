@@ -174,7 +174,7 @@ export function ExplainResultsPanel({
     return aggRows.length > 0 ? Object.keys(aggRows[0]) : [];
   })();
   const strategy = plan?.pagination_strategy ?? (queryResult?.next_cursor ? 'cursor' : 'offset');
-  const isCursorMode = strategy === 'cursor' && !!queryResult?.next_cursor;
+  const isCursorMode = strategy === 'cursor';
   const hasResult = !!queryResult;
   const hasAnyContent = hasResult || explainLines.length > 0 || !!explainError || !!queryError;
 
@@ -361,7 +361,7 @@ export function ExplainResultsPanel({
                       <button
                         type="button"
                         onClick={() => onOffsetPage((page + 1) * pageSize)}
-                        disabled={!queryResult.has_more && queryResult.features.length < pageSize}
+                        disabled={typeof queryResult.has_more === 'boolean' ? !queryResult.has_more : queryResult.features.length < pageSize}
                         className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
                       >
                         <span>{t('sidebar.explain.nextPage')}</span>

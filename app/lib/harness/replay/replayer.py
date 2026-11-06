@@ -25,7 +25,12 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
+
+from app.lib.harness.result_contracts import (
+    ActualProjection, DigestTurn, DispatchDecision, ExactDiff, GateResult, GoalSatisfaction,
+    MetricRow, MutationOutcome, ReceiptProjection, RederivedDecision, project_dispatch,
+)
 
 from app.lib.harness.evidence import (
     CartographicReviewEvidence,
@@ -199,9 +204,9 @@ def make_cartography_reader(turn: TurnSpec):
 # ── 比对（exact / text 两类；tolerant 走 metrics+ratchet）────────────────────
 
 
-def compare_exact(expected: Any, actual: Any, path: str = "") -> List[Dict[str, Any]]:
+def compare_exact(expected: Any, actual: Any, path: str = "") -> List[ExactDiff]:
     """白名单精确比对：以 expect 树为骨架，实际值逐叶比对。返回 diff 列表。"""
-    diffs: List[Dict[str, Any]] = []
+    diffs: List[ExactDiff] = []
     if isinstance(expected, dict):
         if not isinstance(actual, dict):
             return [{"path": path or "$", "expected": "<dict>",
@@ -319,11 +324,11 @@ class _sandboxed_mutation_store:
 
 async def replay_mutations(
     session_id: str, mutations: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+) -> List[MutationOutcome]:
     """op 序列 → 真实 lifecycle engine（沙箱存储）；产出确定性证据。"""
     from app.services.mapspec_store import mapspec_store
 
-    outcomes: List[Dict[str, Any]] = []
+    outcomes: List[MutationOutcome] = []
     _ = mapspec_store  # 实际调用统一发生在下方沙箱 CM 内
     with _sandboxed_mutation_store():
       for mut in mutations:
@@ -395,7 +400,7 @@ def _resolve_fixture_placeholders(turn: TurnSpec, session_id: str) -> None:
 
 #: 离线 judge 注入（生产 ``CARTO_VISUAL_JUDGE`` env 缝的 fixture 侧）：
 #: 确定性 judge + 注入截图 —— 语料声明 ``visual_judge: true`` 的 turn 生效。
-_OFFLINE_JUDGE_SPEC = "tests.harness_replay.replay_judge:deterministic_judge"
+_OFFLINE_JUDGE_SPEC = "app.lib.harness.replay.offline_judge:deterministic_judge"
 _OFFLINE_SCREENSHOT_ENV = "CARTO_VISUAL_JUDGE_SCREENSHOT"
 _SCREENSHOT_FIXTURE_DEFAULT = "tests/fixtures/replay/map.png"
 
@@ -432,18 +437,19 @@ class _offline_judge_env:
 @dataclass
 class TurnReplayResult:
     turn_index: int
-    gate_result: Dict[str, Any] = field(default_factory=dict)
-    goal_satisfaction: Dict[str, Any] = field(default_factory=dict)
-    mutation_outcomes: List[Dict[str, Any]] = field(default_factory=list)
-    exact_diffs: List[Dict[str, Any]] = field(default_factory=list)
-    text_diffs: List[Dict[str, Any]] = field(default_factory=list)
+    gate_result: GateResult = field(default_factory=GateResult)
+    goal_satisfaction: GoalSatisfaction = field(default_factory=GoalSatisfaction)
+    mutation_outcomes: List[MutationOutcome] = field(default_factory=list)
+    exact_diffs: List[ExactDiff] = field(default_factory=list)
+    text_diffs: List[ExactDiff] = field(default_factory=list)
+    output_text: Optional[str] = None
     evidence_count: int = 0
     #: T3 bind-gate 重放条目（dispatch_backed + tool_registry 提供时）。
-    dispatch_decisions: List[Dict[str, Any]] = field(default_factory=list)
+    dispatch_decisions: List[DispatchDecision] = field(default_factory=list)
     #: ADR-0262 D3：决策重推导条目（scenario 级事实，挂首 turn 展示）。
-    decision_rederive: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    decision_rederive: Dict[str, RederivedDecision] = field(default_factory=dict)
     #: ADR-0262 D6：T4 receipt 级实测投影 {receipt: {...}, receipt_repeat: {...}}。
-    receipt_actual: Dict[str, Any] = field(default_factory=dict)
+    receipt_actual: ReceiptProjection = field(default_factory=ReceiptProjection)
 
     @property
     def ok(self) -> bool:
@@ -453,9 +459,9 @@ class TurnReplayResult:
     def actual_projection(
         self, *, dispatch_backed: bool = False,
         receipt_backed: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> ActualProjection:
         """重放实测树（exact 比对与 expect 校准共用的唯一形状）。"""
-        actual: Dict[str, Any] = {
+        actual: ActualProjection = {
             "gate": {
                 "overall_passed": self.gate_result.get("overall_passed"),
                 "checks": {
@@ -498,7 +504,7 @@ class ScenarioResult:
     replay_digest: str = ""
     levels_run: List[str] = field(default_factory=list)
     not_run: List[str] = field(default_factory=list)
-    metrics_rows: List[Dict[str, Any]] = field(default_factory=list)
+    metrics_rows: List[MetricRow] = field(default_factory=list)
     #: ADR-0212：声明面里**系统级未实现**的层（不毒化 ok —— 与作者声明
     #: 了却跑不了的 not_run 区分；receipt 级经 ToolDispatchService 重发
     #: 在离线约束下不做，诚实披露）。
@@ -531,6 +537,8 @@ class OfflineReplayer:
         return seeded_id("rmut", self.seed, self.run_token, scenario_id)
 
     async def replay_scenario(self, scenario: Scenario) -> ScenarioResult:
+        import copy
+        scenario = copy.deepcopy(scenario)
         session_id = self.session_for(scenario.scenario_id)
         # T1：全 turn 共享一个 harness —— 证据跨 turn 累积（会话语义）。
         harness = PiAgentHarness(session_id=session_id)
@@ -594,7 +602,7 @@ class OfflineReplayer:
     @staticmethod
     def _rederive_decisions(
         decisions: List[Dict[str, Any]],
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> Dict[str, RederivedDecision]:
         """scenario 级决策重推导（只 capability_resolution 面；缺席诚实）。"""
         if not decisions:
             return {}
@@ -604,7 +612,7 @@ class OfflineReplayer:
             )
         except Exception:  # noqa: BLE001 — 重推导缺席不伪造
             return {}
-        out: Dict[str, Dict[str, Any]] = {}
+        out: Dict[str, RederivedDecision] = {}
         for record in decisions[:16]:
             if not isinstance(record, dict) \
                     or record.get("kind") != "capability_resolution":
@@ -625,7 +633,7 @@ class OfflineReplayer:
 
     def _dispatch_gate_entries(
         self, scenario: Scenario, turn: TurnSpec, session_id: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[DispatchDecision]:
         """turn 内逐 op 重放 dispatch bind gate（生产同函数，离线纯查询）。"""
         if not scenario.tool_registry:
             return []
@@ -636,7 +644,7 @@ class OfflineReplayer:
         except Exception:  # noqa: BLE001 — bind 面缺席 → 不伪造决策
             return []
         registry = self._fixture_tool_registry(scenario.tool_registry)
-        entries: List[Dict[str, Any]] = []
+        entries: List[DispatchDecision] = []
         for op in turn.ops:
             if not op.tool:
                 continue
@@ -664,7 +672,7 @@ class OfflineReplayer:
     async def _replay_turn(
         self, scenario: Scenario, turn: TurnSpec, *, index: int,
         session_id: str, harness: PiAgentHarness,
-        rederive: Optional[Dict[str, Dict[str, Any]]] = None,
+        rederive: Optional[Dict[str, RederivedDecision]] = None,
     ) -> TurnReplayResult:
         run_id = seeded_id("rrun", self.seed, scenario.scenario_id, index)
         turn_id = seeded_id("rturn", self.seed, scenario.scenario_id, index)
@@ -708,7 +716,7 @@ class OfflineReplayer:
         )
         goal = derive_goal_satisfaction(cartography_obj)
 
-        mutation_outcomes: List[Dict[str, Any]] = []
+        mutation_outcomes: List[MutationOutcome] = []
         if turn.mutations:
             mutation_outcomes = await replay_mutations(
                 self.mutation_session_for(scenario.scenario_id), turn.mutations,
@@ -717,7 +725,7 @@ class OfflineReplayer:
         # T3 bind-gate 重放（ADR-0212 决策五）：dispatch_backed 场景逐 op
         # 过生产 check_tool_capability_at_dispatch，allow/deny + alternatives
         # 可被 expect["dispatch"] 白名单钉住。
-        dispatch_entries: List[Dict[str, Any]] = []
+        dispatch_entries: List[DispatchDecision] = []
         if scenario.dispatch_backed:
             dispatch_entries = self._dispatch_gate_entries(
                 scenario, turn, session_id,
@@ -733,7 +741,7 @@ class OfflineReplayer:
             mutation_outcomes=mutation_outcomes,
             evidence_count=len(evidence_result.get("evidence") or []),
             dispatch_decisions=dispatch_entries,
-            decision_rederive=(rederive if index == 0 else {}),
+            decision_rederive=(rederive if index == 0 and rederive is not None else {}),
         )
         # T4 receipt 级（ADR-0262 D6）：真实 dispatch 合同沙箱重放。
         if scenario.receipt_backed:
@@ -762,18 +770,18 @@ class OfflineReplayer:
         # nondeterministic_text：LLM 文本只验存在性 + 长度带。
         text_expect = turn.expect.get("user_text")
         if isinstance(text_expect, dict):
-            actual_bucket = len_bucket(turn.user_input)
+            actual_bucket = len_bucket(result.output_text or "")
             expect_present = bool(text_expect.get("present", True))
-            actual_present = bool(turn.user_input)
+            actual_present = bool(result.output_text)
             if expect_present != actual_present:
                 result.text_diffs.append({
-                    "path": "text:user_input", "expected": expect_present,
+                    "path": "text:user_output", "expected": expect_present,
                     "actual": actual_present,
                     "diff_class": "nondeterministic_text"})
             elif expect_present and text_expect.get("len_bucket") \
                     and text_expect["len_bucket"] != actual_bucket:
                 result.text_diffs.append({
-                    "path": "text:user_input",
+                    "path": "text:user_output",
                     "expected": text_expect["len_bucket"],
                     "actual": actual_bucket,
                     "diff_class": "nondeterministic_text"})
@@ -786,9 +794,9 @@ class OfflineReplayer:
         score 是 canned 数据的纯函数（无计时抖动），是确定性回归的主信号；
         计时/token 用量不进 digest（走 tolerant ratchet 行）。
         """
-        projection = []
+        projection: List[DigestTurn] = []
         for r in turn_results:
-            entry = {
+            entry: DigestTurn = {
                 "gate_passed": r.gate_result.get("overall_passed"),
                 "checks": {
                     name: {
@@ -800,13 +808,12 @@ class OfflineReplayer:
                 },
                 "goal": r.goal_satisfaction,
                 "mutations": [
-                    {k: v for k, v in m.items() if k != "error_msg"}
+                    cast(MutationOutcome, {k: v for k, v in m.items() if k != "error_msg"})
                     for m in r.mutation_outcomes
                 ],
                 # T3 bind-gate 裁决入 digest（决策面漂移进基线比对信号）。
                 "dispatch": [
-                    {k: entry.get(k) for k in ("call_id", "allowed", "capability")
-                     if entry.get(k) is not None}
+                    project_dispatch(entry)
                     for entry in r.dispatch_decisions
                 ],
             }
@@ -825,9 +832,9 @@ class OfflineReplayer:
 
     def _metric_rows(
         self, scenario: Scenario, turn_results: List[TurnReplayResult],
-    ) -> List[Dict[str, Any]]:
+    ) -> List[MetricRow]:
         """重放结论 → tolerant ratchet 观测行（turn 粒度）。"""
-        rows: List[Dict[str, Any]] = []
+        rows: List[MetricRow] = []
         for r in turn_results:
             trace_like: Dict[str, Any] = {
                 "verdict": {"map_product": {}},

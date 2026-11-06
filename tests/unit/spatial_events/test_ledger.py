@@ -88,7 +88,7 @@ class TestClaimAndProcess:
         assert rows[0]["claimed_by"] == "worker-a"
         # 第二个 worker 抢不到同一批
         assert ledger.claim_batch("worker-b", limit=4) == []
-        ledger.mark_processed(r.row_id)
+        ledger.mark_processed(r.row_id, worker_id="worker-a")
         assert ledger.get_event(r.row_id, org_id="org-a")["status"] == "processed"
 
     def test_priority_orders_claim(self, ledger):
@@ -102,7 +102,7 @@ class TestClaimAndProcess:
     def test_failed_retry_backoff(self, ledger):
         r = ledger.append(_evt())
         ledger.claim_batch("w", limit=1)
-        ledger.mark_failed(r.row_id, error_code="BRIDGE_DOWN", backoff_s=30)
+        ledger.mark_failed(r.row_id, worker_id="w", error_code="BRIDGE_DOWN", backoff_s=30)
         row = ledger.get_event(r.row_id, org_id="org-a")
         assert row["status"] == "pending"
         assert row["attempts"] == 1
@@ -114,7 +114,7 @@ class TestClaimAndProcess:
         r = ledger.append(_evt())
         for _ in range(5):
             ledger.claim_batch("w", limit=1)
-            ledger.mark_failed(r.row_id, error_code="X", backoff_s=0)
+            ledger.mark_failed(r.row_id, worker_id="w", error_code="X", backoff_s=0)
         row = ledger.get_event(r.row_id, org_id="org-a")
         assert row["status"] == "failed"
 

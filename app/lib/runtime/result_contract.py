@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # 复用全库既有的错误形状判定（#529/#589 家族）与预算化字节估计
-from app.services.llm_result_formatter import is_error_like_result  # noqa: F401
+from app.lib.tool_result_errors import is_error_like_result  # noqa: F401
 from app.lib.json_size import estimate_json_bytes
 
 

@@ -339,7 +339,7 @@ export function FloatingChrome({
       if (Number.isFinite(z) && z > maxZ) maxZ = z;
     }
     if (maxZ > currentZ && placement?.mode === 'floating') {
-      const next: ComponentPlacement = { ...placement, zIndex: maxZ + 1 };
+      const next: ComponentPlacement = { ...placement, zIndex: Math.min(49, maxZ + 1) };
       commitPlacement(next, next);
     }
   }

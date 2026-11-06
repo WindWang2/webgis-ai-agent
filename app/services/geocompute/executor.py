@@ -17,6 +17,10 @@ project workflow 路由同一模式），绝不阻塞事件循环。
 """
 from __future__ import annotations
 
+from app.contracts.execution import (
+    RunExtras,
+)
+
 import hashlib
 import logging
 import os
@@ -253,33 +257,26 @@ class NodeResultStore:
         self._max_entries = max_entries
         self._max_bytes = max_bytes
         self._exchange = exchange
+        self._internal_owner = uuid.uuid4().hex
         self._entries: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._bytes = 0
         self._lock = threading.Lock()
 
+    def _owner(self, owner_scope: Optional[str], run_id: Optional[str]) -> str:
+        raw = owner_scope or self._internal_owner
+        if self._exchange is not None and getattr(self._exchange, "enabled", False):
+            return self._exchange.authorization_scope(raw, run_id)
+        return raw
+
     @staticmethod
     def _measure(payload: dict[str, Any]) -> int:
-        """近似字节量：采样 64 条外推（评审 m2 —— 全量 str() 是大节点上的
-        瞬时垃圾源；采样估计对字节预算足够）。
+        """Exact serialized UTF8 size, without retaining a full JSON string."""
+        import json
 
-        #1718：``features`` 键下的 rows 信封 dict（durable 回传面的历史
-        盲包形状）必须先还原成 rows 列表再采样 —— 对 dict 切片
-        （``items[:64]``）会抛 KeyError/TypeError，把 governor 记账与
-        NodeResultStore.put 一起炸断。
-        """
-        total = 0
-        for key in ("features", "rows"):
-            items = payload.get(key)
-            if isinstance(items, dict):
-                items = items.get("rows")
-            if not isinstance(items, list) or not items:
-                continue
-            sample = items[:64]
-            avg = sum(len(str(f)) for f in sample) / len(sample)
-            total += int(avg * len(items))
-        return total
+        return sum(len(chunk.encode("utf-8")) for chunk in json.JSONEncoder(default=str).iterencode(payload))
 
-    def _spill(self, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _spill(self, payload: dict[str, Any], *, owner_scope: str,
+               run_id: Optional[str] = None) -> Optional[dict[str, Any]]:
         """超预算载荷 → exchange stub（fail-open：失败 = V7 丢弃语义）。
 
         **只能在 ``self._lock`` 外调用** —— 序列化+zlib+BlobStore 写 +
@@ -293,7 +290,7 @@ class NodeResultStore:
             import json as _json
 
             blob = _json.dumps(clean, default=str).encode("utf-8")
-            handle = self._exchange.put_bytes(blob, kind="spill")
+            handle = self._exchange.put_bytes(blob, kind="spill", owner_scope=owner_scope, run_id=run_id)
             try:
                 from app.services.geocompute.cluster.metrics import record_spill
 
@@ -306,17 +303,24 @@ class NodeResultStore:
         except Exception:  # noqa: BLE001 - spill 失败 = 诚实退回丢弃
             return None
 
-    def get(self, key: str) -> Optional[dict[str, Any]]:
+    def get(self, key: str, *, owner_scope: Optional[str] = None,
+            run_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+        try:
+            owner = self._owner(owner_scope, run_id)
+        except Exception:
+            logger.debug("geocompute cache authorization unavailable", exc_info=True)
+            return None
         with self._lock:
             entry = self._entries.get(key)
-            if entry is None:
+            if entry is None or entry.get("__owner_scope__") != owner:
                 return None
             self._entries.move_to_end(key)
             if self._SPILL_KEY not in entry:
                 return entry
-        return self._rehydrate(entry, key)
+        return self._rehydrate(entry, key, owner_scope=owner_scope or self._internal_owner, run_id=run_id)
 
-    def _rehydrate(self, entry: dict[str, Any], key: str) -> Optional[dict[str, Any]]:
+    def _rehydrate(self, entry: dict[str, Any], key: str, *, owner_scope: str,
+                   run_id: Optional[str] = None) -> Optional[dict[str, Any]]:
         """stub → 原载荷（锁外 IO；失败 = 复用 miss，诚实重算）。
 
         回填走与 ``put`` 相同的**入账 + 驱逐**路径（评审 MAJOR：此前回填
@@ -332,7 +336,7 @@ class NodeResultStore:
                 return None
             from app.services.geocompute.cluster.exchange import SpillHandle
 
-            blob = self._exchange.get_bytes(SpillHandle(**stub))
+            blob = self._exchange.get_bytes(SpillHandle(**stub), owner_scope=owner_scope, run_id=run_id)
             import json as _json
 
             payload = _json.loads(blob)
@@ -345,7 +349,7 @@ class NodeResultStore:
             if size > self._max_bytes:
                 # 大载荷回填后立即重新落盘（IO 在锁外；内部驻留回到 stub，
                 # 内存上界不被单次回填突破）；失败 → 摘除条目
-                re_spilled = self._spill(clean)
+                re_spilled = self._spill(clean, owner_scope=owner_scope, run_id=run_id)
                 if re_spilled is None:
                     with self._lock:
                         self._entries.pop(key, None)
@@ -355,10 +359,10 @@ class NodeResultStore:
                 if old is not None:
                     self._bytes -= old.get("__size__", 0)
                 if re_spilled is not None:
-                    self._entries[key] = {**re_spilled, "__size__": stub_size}
+                    self._entries[key] = {**re_spilled, "__size__": stub_size, "__owner_scope__": entry["__owner_scope__"]}
                     self._bytes += stub_size
                 else:
-                    self._entries[key] = {"__size__": size, **clean}
+                    self._entries[key] = {"__size__": size, "__owner_scope__": entry["__owner_scope__"], **clean}
                     self._bytes += size
                 while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
                     if not self._entries:
@@ -388,15 +392,26 @@ class NodeResultStore:
                 pass
             return None
 
-    def put(self, key: str, payload: dict[str, Any]) -> None:
-        size = min(self._measure(payload), self._max_bytes + 1)
+    def put(self, key: str, payload: dict[str, Any], *, owner_scope: Optional[str] = None,
+            run_id: Optional[str] = None) -> None:
+        try:
+            owner = self._owner(owner_scope, run_id)
+        except Exception:
+            logger.debug("geocompute cache authorization unavailable", exc_info=True)
+            return
+        measured = self._measure(payload)
+        if self._exchange is not None and getattr(self._exchange, "enabled", False):
+            from app.services.geocompute.cluster.exchange import MAX_LOGICAL_BYTES
+            if measured > MAX_LOGICAL_BYTES:
+                return
+        size = min(measured, self._max_bytes + 1)
         if size > self._max_bytes:
             # V8：超预算 → spill 落盘。**序列化+zlib+BlobStore 写 + 元数据
             # DB 注册全部在锁外完成**（评审 MAJOR：持锁做大载荷 IO 会阻塞
             # 全部节点线程的 get/put）；锁内只做 stub 插入与驱逐。stub 按
             # 驻留字节小额记账 —— 载荷本体已不在内存，预算约束的是驻留
             # 量。exchange 停用/失败 → V7 语义（直接丢弃）。
-            stub = self._spill(payload)
+            stub = self._spill(payload, owner_scope=owner_scope or self._internal_owner, run_id=run_id)
             if stub is None:
                 return
             stub_size = min(_SPILLED_STUB_BYTES, self._max_bytes)
@@ -404,7 +419,7 @@ class NodeResultStore:
                 old = self._entries.pop(key, None)
                 if old is not None:
                     self._bytes -= old.get("__size__", 0)
-                self._entries[key] = {**stub, "__size__": stub_size}
+                self._entries[key] = {**stub, "__size__": stub_size, "__owner_scope__": owner}
                 self._bytes += stub_size
                 while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
                     if not self._entries:
@@ -419,7 +434,7 @@ class NodeResultStore:
             # dunder 键是存储保留命名空间：载荷侧同名键丢弃（评审 MINOR ——
             # 否则载荷 __size__ 会腐蚀字节记账，evaluation 期 TypeError）。
             clean = {k: v for k, v in payload.items() if not k.startswith("__")}
-            self._entries[key] = {"__size__": size, **clean}
+            self._entries[key] = {"__size__": size, "__owner_scope__": owner, **clean}
             self._bytes += size
             while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
                 _, evicted = self._entries.popitem(last=False)
@@ -466,7 +481,7 @@ class GeoExecutionEngine:
         self._run_owners: dict[str, str] = {}
         # Wave-11（audit 08 §6.2.1）：run 终态附加证据（reproducibility 判定
         # + 无载荷 lineage 投影）。有界：随 run 注册表同一容量上界逐出。
-        self._run_extras: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._run_extras: OrderedDict[str, RunExtras] = OrderedDict()
         self._run_tokens: dict[str, CancellationToken] = {}
         self._run_lock = threading.Lock()
         self._run_cache_size = run_cache_size
@@ -652,7 +667,7 @@ class GeoExecutionEngine:
         # 注意：run_bundled 必须在 run_finished 之前发射 —— replay 校验器视
         # run_finished 为终态，其后任何 trace 事件都判违规
         # （test_replay_security_v4::test_happy_path_trace_is_valid）。
-        run_extras: dict[str, Any] = {}
+        run_extras: RunExtras = {}
         try:
             from app.lib.gis.runtime_manifest import get_runtime_manifest
             from app.services.geocompute import reproducibility as _rb
@@ -696,13 +711,16 @@ class GeoExecutionEngine:
         self._run_tokens.pop(run_id, None)
         return run
 
-    def cancel_run(self, run_id: str, reason: str = "cancelled by caller") -> bool:
+    def cancel_run(self, run_id: str, reason: str = "cancelled by caller", *, owner_scope: Optional[str] = None) -> bool:
         """请求取消一个 run（幂等；未知 run → False）。
 
         级联：run token 已在 execute_plan 内传入各节点 → durable 分支会把
         取消请求写入 job 行（request_cancel_sync），worker 侧 checkpoint
         生效。
         """
+        with self._run_lock:
+            if self._run_owners.get(run_id) and self._run_owners.get(run_id) != owner_scope:
+                return False
         token = self._run_tokens.get(run_id)
         if token is None:
             return False
@@ -733,13 +751,15 @@ class GeoExecutionEngine:
         except Exception:  # noqa: BLE001 - 回放失败按未命中处理（诚实 404）
             return None
 
-    def get_node_output(self, run_id: str, node_id: str) -> Optional[dict[str, Any]]:
+    def get_node_output(self, run_id: str, node_id: str, *, owner_scope: Optional[str] = None) -> Optional[dict[str, Any]]:
         with self._run_lock:
+            if self._run_owners.get(run_id) and self._run_owners.get(run_id) != owner_scope:
+                return None
             return (self._run_outputs.get(run_id) or {}).get(node_id)
 
     def get_run_extras(
         self, run_id: str, *, owner_scope: Optional[str] = None
-    ) -> dict[str, Any]:
+    ) -> RunExtras:
         """读取 run 的 Wave-11 附加证据（reproducibility 判定 + 无载荷
         lineage 投影）。
 
@@ -891,6 +911,7 @@ class GeoExecutionEngine:
                              node_id=nid, reason="lease_expired",
                              concurrency=lease["units"])
 
+        admission_backoff_s = 0.01
         with ThreadPoolExecutor(
             max_workers=self._max_workers, thread_name_prefix="geocompute-node",
         ) as pool:
@@ -941,6 +962,7 @@ class GeoExecutionEngine:
                             # 紧张时不再制造新任务；等一个在飞节点落定。
                             break
                     ready.pop(0)
+                    admission_backoff_s = 0.01
                     tracing.emit("node_admitted", run_id=run.run_id, node_id=nid,
                                  status="running", policy=node.policy.value,
                                  concurrency=units)
@@ -971,7 +993,8 @@ class GeoExecutionEngine:
                     if ready:
                         # governor 持续拒绝且无在飞槽位可等：短暂让步后重试
                         #（deadline sweep 兜底，绝不无限自旋）。
-                        time.sleep(0.01)
+                        time.sleep(min(admission_backoff_s, max(0.0, deadline_ts - time.monotonic())))
+                        admission_backoff_s = min(admission_backoff_s * 2.0, 0.5)
                         continue
                     break
 
@@ -1075,7 +1098,7 @@ class GeoExecutionEngine:
         # 上游一致性后跳过执行（ADR-0101 D4）。
         # owner_scope 使不同用户/会话即使指纹相同也绝不共享缓存条目（SEC）。
         if node.reuse == NodeReusePolicy.ALLOW:
-            cached = self._store.get(reuse_key)
+            cached = self._store.get(reuse_key, owner_scope=owner_scope, run_id=run.run_id)
             if cached is not None and _SIZE_KEY in cached:
                 stale = self._checkpoint_stale(node, cached, outputs_fp)
                 if stale is None:
@@ -1133,7 +1156,7 @@ class GeoExecutionEngine:
                         s: outputs_fp[s] for s in node.inputs if s in outputs_fp
                     },
                     **payload,
-                })
+                }, owner_scope=owner_scope, run_id=run.run_id)
                 self._governor_charge(
                     governor, gov_path, node, payload, charge_ledger
                 )
@@ -1321,7 +1344,7 @@ class GeoExecutionEngine:
             ev.duration_s = round(time.monotonic() - started_pt, 6)
             return
         try:
-            plan = self._build_partition_plan(node, outputs)
+            plan = self._build_partition_plan(node, outputs, session_id=session_id or "")
         except RasterioUnavailableError as exc:
             _fail("RASTERIO_UNAVAILABLE", str(exc))
             return
@@ -1497,7 +1520,8 @@ class GeoExecutionEngine:
         )
 
     def _build_partition_plan(
-        self, node: ExecutionNode, outputs: dict[str, dict[str, Any]]
+        self, node: ExecutionNode, outputs: dict[str, dict[str, Any]],
+        *, session_id: Optional[str] = None,
     ) -> Any:
         """输入形状 → 分区计划（纯函数；形状不可得 = 类型化失败）。"""
         from app.services.geocompute import partitioning as P
@@ -1520,6 +1544,10 @@ class GeoExecutionEngine:
                 )
             from app.lib.geo_analysis.raster_mosaic import raster_header
 
+            if session_id is not None:
+                from app.services.scoped_raster_paths import resolve_scoped_raster_path
+
+                raster_path = resolve_scoped_raster_path(raster_path, session_id=session_id)
             head = raster_header(raster_path)
             spec_eff = spec
             if spec.per_tile_mem_budget_mb and est_mem:
@@ -1714,6 +1742,13 @@ class GeoExecutionEngine:
         out_dir = os.path.dirname(str(tiles[0]["path"])) or "."
         out_path = os.path.join(
             out_dir, f"merged-{node.semantic_fingerprint()}.tif")
+        if session_id is not None:
+            from app.services.scoped_raster_paths import resolve_scoped_raster_path, scoped_raster_roots
+
+            roots = scoped_raster_roots(session_id=session_id)
+            out_path = resolve_scoped_raster_path(out_path, roots=roots)
+            for tile in tiles:
+                tile["path"] = resolve_scoped_raster_path(tile["path"], roots=roots)
         merged = P.merge_raster_tiles(
             tiles, out_path=out_path,
             width=int(head.get("width", 0)), height=int(head.get("height", 0)),
@@ -2148,7 +2183,7 @@ class GeoExecutionEngine:
         """
         node_fp = node.semantic_fingerprint()
         reuse_key = graph.checkpoint_reuse_key(node, owner_scope)
-        cached = self._store.get(reuse_key)
+        cached = self._store.get(reuse_key, owner_scope=owner_scope, run_id=run.run_id)
         if cached is not None and _SIZE_KEY in cached:
             stale = self._checkpoint_stale(node, cached, outputs_fp)
             if stale is None:
@@ -2211,7 +2246,7 @@ class GeoExecutionEngine:
             _OUT_FP_KEY: out_fp,
             _UPSTREAM_KEY: upstream,
             **payload,
-        })
+        }, owner_scope=owner_scope, run_id=run.run_id)
         self._accept_durable_reuse(
             run, node, outputs, outputs_fp, ev, payload,
             source="cross_process_index", out_fp=out_fp,
@@ -2285,7 +2320,7 @@ class GeoExecutionEngine:
                     _UPSTREAM_KEY: upstream,
                     **payload,
                 },
-            )
+             owner_scope=owner_scope, run_id=run.run_id)
         except Exception:  # noqa: BLE001 - 复用记录是尽力而为
             pass
         ref = payload.get("ref_id")

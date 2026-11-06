@@ -252,8 +252,8 @@ def test_differential_limit_truncation_parity():
         engine="v6",
     )
     v5, v6 = _run_both(adapters, req)
-    # 语料 i=0 的 region 为空串 → 只 R1/R2 命中 dims[:3]（R0,R1,R2）
-    assert v6["row_count"] == v5["row_count"] == 2
+    # Inputs retain budget-bounded rows; limit applies after joining.
+    assert v6["row_count"] == v5["row_count"] == 3
     assert _canon(v6["rows"]) == _canon(v5["rows"])
 
 

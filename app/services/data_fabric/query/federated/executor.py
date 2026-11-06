@@ -19,6 +19,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_fabric.errors import QueryBudgetExceededError
+from app.services.data_fabric.query.federation_contracts import (
+    BloomTraceRecord, CrsFallbackRecord, CrsTransformRecord,
+    HopTraceRecord, SemiJoinTraceRecord,
+)
 from app.services.data_fabric.query.federated.adaptive import (
     AdaptiveController,
     pick_tail_order,
@@ -70,7 +74,7 @@ class ExecutionTrace:
     # 双重变换缺陷。
     per_source_delivered_srid: Dict[str, int] = field(default_factory=dict)
     #: server placement 交付校验失败并已本地回退的披露。
-    crs_fallbacks: List[Dict[str, Any]] = field(default_factory=list)
+    crs_fallbacks: List[CrsFallbackRecord] = field(default_factory=list)
     #: V7 R1-C2：每源「无过滤且取回完整（未触及窗口）」事实 —— 仅这类源
     #: 允许 feedback 回写 SourceFacts 行数（observe_unfiltered_count 契约）。
     per_source_scan_complete_unfiltered: Dict[str, bool] = field(default_factory=dict)
@@ -78,10 +82,10 @@ class ExecutionTrace:
     server_placements: int = 0
     per_source_rows: Dict[str, int] = field(default_factory=dict)
     pages_fetched: int = 0
-    hop_stats: List[Dict[str, Any]] = field(default_factory=list)
+    hop_stats: List[HopTraceRecord] = field(default_factory=list)
     adaptive_notes: List[str] = field(default_factory=list)
-    bloom_stats: List[Dict[str, Any]] = field(default_factory=list)
-    crs_transforms_applied: List[Dict[str, Any]] = field(default_factory=list)
+    bloom_stats: List[BloomTraceRecord] = field(default_factory=list)
+    crs_transforms_applied: List[CrsTransformRecord] = field(default_factory=list)
     cancelled: bool = False
 
 
@@ -137,8 +141,13 @@ class PhysicalExecutor:
             max_vertices=self._budget.max_vertices,
         )
         self.trace = ExecutionTrace()  # m3（评审 R1）：复用实例时证据不串台
+        chain_root = plan_tree
+        final_limit = self._limit
+        while isinstance(chain_root, LogicalLimit):
+            final_limit = min(final_limit, chain_root.limit)
+            chain_root = chain_root.input
         try:
-            chain = _flatten_chain(plan_tree)
+            chain = _flatten_chain(chain_root)
             if chain is not None and len(chain[1]) >= 2 and self.adaptive.enabled:
                 rows, joined_total = self._execute_chain_adaptive(
                     chain[0],
@@ -159,7 +168,7 @@ class PhysicalExecutor:
         except CancelledError:
             self.trace.cancelled = True
             raise
-        final_rows = rows[: self._limit]
+        final_rows = rows[:final_limit]
         self.trace.adaptive_notes = list(self.adaptive.notes)
         return {
             "rows": final_rows,
@@ -256,9 +265,18 @@ class PhysicalExecutor:
             )
             + f"; new cost {new_cost:.0f} < old cost {old_cost:.0f} (pinned basis)"
         )
+        from app.services.data_fabric.query.execution import StreamingBudget
+
+        first_streaming, first_trace = self._streaming, self.trace
+        self._streaming = StreamingBudget(
+            max_rows=self._budget.max_rows, max_bytes=self._budget.max_bytes,
+            max_vertices=self._budget.max_vertices,
+        )
+        self.trace = ExecutionTrace()
         try:
             return self._eval(new_tree, lift_key=None)
         except Exception as exc:  # noqa: BLE001 - R1-M7：重执行失败保留首次合法结果
+            self._streaming, self.trace = first_streaming, first_trace
             self.adaptive.notes.append(
                 f"bushy replan re-execution failed ({exc}); keeping first result"
             )
@@ -308,7 +326,6 @@ class PhysicalExecutor:
             # 交付 CRS 语义与行扫描一致（聚合无几何列 → 不需 output_crs）。
             req = node.aggregate_request
             rows: List[Dict[str, Any]] = []
-            adapter = self._adapter_factory(node.source_id)
             if adapter is None:
                 from app.services.data_fabric.query.federation import (
                     FederatedQueryError,
@@ -340,6 +357,14 @@ class PhysicalExecutor:
             result = adapter.query(node.dataset_id, QuerySpec(**extras))
             self.trace.pages_fetched += 1
             rows = list(result.data or []) if isinstance(result.data, list) else []
+            if (getattr(result, "truncated", False) or getattr(result, "has_more", False)
+                    or len(rows) >= min(fetch_window, 10_000)):
+                from app.services.data_fabric.errors import QueryBudgetExceededError
+
+                raise QueryBudgetExceededError("aggregate pushdown returned an incomplete group window")
+            if self._streaming is not None:
+                for row in rows:
+                    self._streaming.add_feature(row)
             self.trace.per_source_rows[node.source_id] = len(rows)
             return rows, len(rows)
         where = None
@@ -422,11 +447,18 @@ class PhysicalExecutor:
             requested = _parse_crs_srid(output_crs)
             effective = delivered if delivered is not None else declared
             if requested is not None and effective != requested:
+                if effective is None and not any(isinstance(row.get("geometry"), dict) for row in rows):
+                    return rows, None, complete_unfiltered
                 # server 未按请求交付（忽略或硬拒绝）→ 一次性回退：
                 # 无 output_crs 重扫 + 本地一次性变换（诚实披露）。
+                delivered_holder["srid"] = None
                 rows = _scan_once(None)
                 effective2 = delivered_holder["srid"]
                 from_srid = effective2 if effective2 is not None else declared
+                if from_srid is None:
+                    from app.services.data_fabric.query.federation import FederatedQueryError
+
+                    raise FederatedQueryError("cannot deliver requested output CRS: source CRS is unknown")
                 if from_srid is not None and from_srid != requested:
                     rows = transform_rows_geometry(rows, from_srid, requested)
                 delivered = requested
@@ -751,7 +783,7 @@ class PhysicalExecutor:
         accumulated: List[Dict[str, Any]],
         right_rows: List[Dict[str, Any]],
         node: LogicalJoin,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], SemiJoinTraceRecord]:
         """build 侧预滤：Bloom（盈利时）→ V5 键集 semi-join 兜底。
 
         两者都只是键过滤 —— 内连接语义不变（假阳性由精确 join 兜底）。
@@ -760,7 +792,7 @@ class PhysicalExecutor:
             _semi_join_reduce_right,
         )
 
-        semi_stats: Dict[str, Any] = {}
+        semi_stats: SemiJoinTraceRecord = {}
         ndv_left = self._ndv_hints.get("__left__", {}).get(node.join_field_left or "")
         ndv_right = self._ndv_hints.get("__right__", {}).get(
             node.join_field_right or ""

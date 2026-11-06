@@ -37,7 +37,7 @@ export function buildMvtTileUrl(
   if (typeof sessionId !== 'string' || sessionId.trim() === '') {
     return NO_MVT_TILE_URL;
   }
-  const base = `${API_BASE}/api/v1/layers/data/${refId}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionId}`;
+  const base = `${API_BASE}/api/v1/layers/data/${encodeURIComponent(refId)}/tiles/{z}/{x}/{y}.mvt?session_id=${encodeURIComponent(sessionId)}`;
   if (contentRevision === undefined || contentRevision === null || contentRevision <= 0) {
     return base;
   }

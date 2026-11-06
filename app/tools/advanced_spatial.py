@@ -67,24 +67,12 @@ class FishnetGridArgs(BaseModel):
     cell_size: float = Field(..., description="网格大小（米）")
     type: str = Field("square", description="网格类型: square(正方形), hexagon(六边形)")
 
-class RasterReclassifyArgs(BaseModel):
-    raster_path: str = Field(..., description="输入栅格文件路径（data/ 内）")
-    scheme: List[dict] = Field(..., description="重分类方案，每项含 min/max/value/label，如 [{\"min\":0,\"max\":0.2,\"value\":1,\"label\":\"低\"},...]")
-    nodata: Optional[float] = Field(None, description="输出 NoData 值（默认继承输入栅格）")
-
-class RasterCalculatorArgs(BaseModel):
-    raster_a: str = Field(..., description="主栅格文件路径（data/ 内）")
-    raster_b: Optional[str] = Field(None, description="副栅格文件路径（data/ 内）；留空则用 constant")
-    expression: str = Field("A + B", description="运算表达式，用 A/B 指代栅格，如 A+B, (A-B)/(A+B), where(A>0,A,0)")
-    constant: Optional[float] = Field(None, description="当 raster_b 留空时的常数")
-    nodata: Optional[float] = Field(None, description="输出 NoData 值")
-    resampling: Optional[str] = Field(None, description="B 对齐到 A 的重采样方法（bilinear 默认；分类栅格必须 nearest）")
-
-class RasterResampleArgs(BaseModel):
-    raster_path: str = Field(..., description="输入栅格文件路径（data/ 内）")
-    target_resolution: float = Field(..., description="目标像元大小（米或度，取决于 CRS）")
-    target_crs: Optional[str] = Field(None, description="目标 CRS（如 EPSG:3857），留空则保持原 CRS")
-    resampling: str = Field("bilinear", description="重采样方法: bilinear(默认), nearest, cubic, mode, average")
+from app.tools.raster_transform_tools import (
+    RasterCalculatorArgs as RasterCalculatorArgs,
+    RasterReclassifyArgs as RasterReclassifyArgs,
+    RasterResampleArgs as RasterResampleArgs,
+    register_raster_transform_tools,
+)
 
 def register_advanced_spatial_tools(registry: ToolRegistry):
     """注册高级空间分析工具"""
@@ -112,13 +100,30 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            result_size_policy="ref_offload",
            failure_modes=("invalid_args", "missing_data", "memory"))
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
+        # Reject unsafe filesystem/remote paths before semantic diagnostics.
+        _, path_error = SpatialAnalyzer._prepare_raster_paths([raster_path])
+        if path_error:
+            return path_error.to_llm_response()
         data = safe_parse_geojson(geojson)
+        # GOAL 01（M4）：zones 侧 preflight（S12 无效范围/投影样缺 CRS
+        # blocked）；栅格侧分辨率/CRS 元数据在分析器内部读取，此处按
+        # not_evaluated 披露（诚实缺省，不虚构栅格事实）。
+        from app.services.gis_harness.spatial_semantics import (
+            SpatialSemanticBlocked,
+            attach_semantics_evidence,
+            preflight_tool_input,
+        )
+        try:
+            pf = preflight_tool_input(data, operation="zonal_statistics")
+        except SpatialSemanticBlocked as exc:
+            raise ValueError(str(exc)) from None
         # GIS-682: forward the whole FeatureCollection so a declared `crs`
         # member survives the tool boundary — previously only the features
         # list was forwarded and the FC-level crs was silently dropped
         # (mirrors the pre-#599 clip/overlay half-stack).
         res = SpatialAnalyzer.zonal_stats(data, raster_path)
-        return res.to_llm_response()
+        return attach_semantics_evidence(
+            res.to_llm_response(), pf, raster_side="not_evaluated")
 
     @tool(registry, name="idw_interpolation",
            description="反距离加权插值(IDW)：将离散采样点转换为连续的 H3 六边形网格表面。适用于气象、污染等连续变量建模。默认附 LOOCV 交叉验证指标与残差分位数证据（无理论方差，不确定性全部为经验残差）。",
@@ -342,7 +347,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, value_field)
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["kriging_variance"] = round(rec["kriging_variance"], 6)
             feat["properties"]["kriging_stddev"] = round(rec["kriging_stddev"], 6)
 
@@ -771,7 +776,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         geojson_result = h3_to_geojson(pred_records, value_field)
-        for feat, rec in zip(geojson_result["features"], driver["records"]):
+        for feat, rec in zip(geojson_result["features"], driver["records"], strict=True):
             if rec.get("extrapolated"):
                 feat["properties"]["extrapolated"] = True
         geojson_result["summary"] = (
@@ -911,7 +916,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["rk_variance"] = round(rec["rk_variance"], 6)
             feat["properties"]["rk_stddev"] = round(rec["rk_stddev"], 6)
         uncertainty_records = [
@@ -1089,6 +1094,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="directional_variogram_analysis",
     side_effect="deterministic_compute",
+    output_semantic_type="stats",
+    result_size_policy="bounded",  # <=64 numeric bins + bounded parameter evidence.
     tags=('变异函数', '各向异性', '地统计', '方向半方差'),
            description=(
                "方向变异函数：沿单一方位角轴向（双向）计算经验半方差曲线，"
@@ -1204,6 +1211,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="variogram_model_selection",
     side_effect="deterministic_compute",
+    output_semantic_type="stats",
+    result_size_policy="bounded",  # <=6 fixed-shape model rows + bounded evidence.
     tags=('变异函数', '模型选型', '地统计', 'aicc'),
            description=(
                "变异函数模型选择：spherical/exponential/gaussian/matern/wave/cubic 6 家族"
@@ -1399,7 +1408,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             params["value_field"],
         )
         thr_sorted = meta["thresholds"]
-        for feat, rec in zip(pred_fc["features"], driver["records"]):
+        for feat, rec in zip(pred_fc["features"], driver["records"], strict=True):
             props = feat["properties"]
             props["p50_threshold"] = rec["p50_threshold"]
             for j, p in (rec.get("probabilities") or {}).items():
@@ -1542,7 +1551,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["ck_variance"] = round(rec["ck_variance"], 6)
             feat["properties"]["ck_stddev"] = round(rec["ck_stddev"], 6)
         uncertainty_records = [
@@ -1791,7 +1800,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["block_variance"] = round(rec["block_variance"], 6)
             feat["properties"]["block_stddev"] = round(rec["block_stddev"], 6)
         uncertainty_records = [
@@ -1911,7 +1920,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["sgs_std"] = round(rec["sgs_std"], 6)
             feat["properties"]["p10"] = round(rec["p10"], 6)
             feat["properties"]["p90"] = round(rec["p90"], 6)
@@ -2043,7 +2052,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["primary_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["ck_variance"] = round(rec["ck_variance"], 6)
             feat["properties"]["ck_stddev"] = round(rec["ck_stddev"], 6)
         prediction_fc.update({
@@ -2173,7 +2182,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["st_variance"] = round(rec["st_variance"], 6)
             feat["properties"]["st_stddev"] = round(rec["st_stddev"], 6)
         prediction_fc.update({
@@ -2310,6 +2319,20 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         data_left = safe_parse_geojson(left_layer)
         data_right = safe_parse_geojson(right_layer)
         from app.services.spatial_analyzer import SpatialAnalyzer
+        # GOAL 01（M4）：双层 preflight —— 未声明 CRS 的投影样数据 blocked、
+        # 声明偏移帧（gcj02/bd09）归一链与中国偏移风险进证据（S8/S9）。
+        from app.services.gis_harness.spatial_semantics import (
+            SpatialSemanticBlocked,
+            attach_semantics_evidence,
+            preflight_tool_input,
+        )
+        try:
+            pf_left = preflight_tool_input(
+                data_left, operation="spatial_join", purpose="topology")
+            preflight_tool_input(data_right, operation="spatial_join",
+                                 purpose="topology")
+        except SpatialSemanticBlocked as exc:
+            raise ValueError(str(exc)) from None
         # #765: forward the parsed FeatureCollections (not bare features
         # lists) so declared `crs` members reach gdf_from_features (#599).
         res = SpatialAnalyzer.spatial_join(
@@ -2318,7 +2341,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             join_type=join_type,
             predicate=predicate
         )
-        return res.to_llm_response()
+        resp = res.to_llm_response()
+        return attach_semantics_evidence(
+            resp, pf_left,
+            right_crs=(data_right.get("crs") if isinstance(data_right, dict)
+                       else None))
 
     @tool(registry, name="clip_layer",
            description="裁剪图层：仅保留位于指定遮罩图层（通常是行政边界）范围内的要素。适合解决『搜索结果超出了行政区范围』的问题，实现精准区域分析。",
@@ -2363,6 +2390,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "numerator_field": "可选：点要素数值字段（按区求和作为分子）；缺省=要素计数",
                "denominator": "denominator_kind=field 时的分母字段名（区面属性，如人口）",
                "denominator_kind": "分母类型：count(默认,纯计数)/field(区字段)/area(区面积密度)",
+               "requested_density_unit": "可选：用户请求的密度口径（per_km2=每平方公里/per_10k_persons=每万人）；传入时与 denominator_kind 做一致性对账，冲突则拒绝",
            },
            side_effect="deterministic_compute",
            network=False,
@@ -2384,9 +2412,32 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         numerator_field: Optional[str] = None,
         denominator: Optional[str] = None,
         denominator_kind: str = "count",
+        requested_density_unit: Optional[str] = None,
     ) -> dict:
         pts = safe_parse_geojson(points)
         polys = safe_parse_geojson(polygons)
+        # GOAL 01（M4）：执行前统一 preflight —— 分母口径对账（S7：
+        # denominator_kind=field(人口) 但用户请求 per_km2 → requires_
+        # clarification）、投影样缺 CRS 数据 blocked、密度单位合成进证据。
+        # requested_density_unit：用户原始口径（per_km2/per_10k_persons…），
+        # 由 planner/agent 显式传入 —— 工具不猜口径。
+        from app.services.gis_harness.spatial_semantics import (
+            SpatialSemanticBlocked,
+            attach_semantics_evidence,
+            compose_density_unit,
+            preflight_tool_input,
+        )
+        try:
+            # R1 P1：points 层同样过门（度量分子；此前只查 zones，未声明
+            # 投影样点层逃逸到执行层才报误导性错误）。
+            preflight_tool_input(pts, operation="spatial_aggregate",
+                                 purpose="distance")
+            pf = preflight_tool_input(
+                polys, operation="spatial_aggregate",
+                denominator_kind=denominator_kind,
+                requested_density_denominator=requested_density_unit)
+        except SpatialSemanticBlocked as exc:
+            raise ValueError(str(exc)) from None
         # #764: count_field names the OUTPUT count column, it is not a point
         # attribute selector — forwarding it as value_field was inert for
         # stats=['count'] (and would silently change the aggregated metric if
@@ -2417,6 +2468,47 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             )
             import json as _json
             fc = _json.loads(out_gdf.to_json())
+            # GOAL 01（M3 单位科学 + R1 P0）：库层 rate 的真实口径是
+            # per-person（field 分母）或 per m²（area 分母）—— 图例口径串
+            # 必须与数值量级一致，换算链入证据：
+            # · area + per_km²（默认图例口径）：×1e6；
+            # · field + 请求 per_10k_persons：×1e4（per-person → 每万人）；
+            # · 其余：不合成口径串（density_unit=""，rate_unit 透传库层真值）。
+            rate_factor = 1.0
+            lib_rate_unit = str(norm_evidence.get("rate_unit") or "")
+            rate_unit_target = lib_rate_unit
+            if denominator_kind == "area" and lib_rate_unit == "per_m2":
+                rate_factor = 1e6
+                rate_unit_target = "per_km2"
+            elif (denominator_kind == "field"
+                  and requested_density_unit == "per_10k_persons"):
+                rate_factor = 1e4
+                rate_unit_target = "per_10k_persons"
+            if rate_factor != 1.0:
+                for feat in fc.get("features", []):
+                    props = feat.get("properties") or {}
+                    rate = props.get("rate")
+                    if rate is not None:
+                        props["rate"] = float(rate) * rate_factor
+                norm_evidence = dict(norm_evidence)
+                norm_evidence["rate_unit"] = rate_unit_target
+                norm_evidence["rate_unit_conversion"] = (
+                    f"{lib_rate_unit}(库层)→{rate_unit_target}"
+                    f"(factor={rate_factor:g}) —— 率值换算到图例口径")
+            # 分子显示：要素计数 → "个"；字段求和（如产值）→ 不虚构计数单位。
+            numerator_display = "" if numerator_field else "个"
+            density_unit_out = ""
+            if denominator_kind == "area" and rate_unit_target == "per_km2":
+                density_unit_out = compose_density_unit(
+                    numerator_display or "Σ", "km2")
+            elif rate_unit_target == "per_10k_persons":
+                # R2 P2：分母显示按字段语义 —— 人口字段 → "人"；其余
+                # （如 households）按字段名如实呈现，不冒称人口。
+                _den = str(denominator or "")
+                _den_disp = ("人" if any(
+                    k in _den.lower() for k in ("population", "人口", "居民", "pop"))
+                    else _den[:12] or "?")
+                density_unit_out = f"{numerator_display or 'Σ'}/万{_den_disp}"
             descriptor = get_algorithm_registry().get("spatial.aggregate.rates")
             evidence = build_evidence(
                 descriptor, tool="spatial_aggregate",
@@ -2428,15 +2520,22 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                 diagnostics=[],
             ) if descriptor else {}
             evidence["normalization"] = norm_evidence
-            return {
-                "success": True,
-                "data": declare_crs(fc, "EPSG:4326"),
-                "summary": {
-                    "rate_kind": denominator_kind,
-                    "zones": int(len(out_gdf)),
+            return attach_semantics_evidence(
+                {
+                    "success": True,
+                    "data": declare_crs(fc, "EPSG:4326"),
+                    "summary": {
+                        "rate_kind": denominator_kind,
+                        "zones": int(len(out_gdf)),
+                    },
+                    "scientific_evidence": evidence,
                 },
-                "scientific_evidence": evidence,
-            }
+                pf,
+                # S6/R1-P0：口径串与换算后的数值量级一致；field 分母未请求
+                # per_万人 时不合成口径（rate_unit 透传库层真值，不伪造）。
+                density_unit=density_unit_out,
+                area_unit=("km2" if denominator_kind == "area" else ""),
+            )
         res = SpatialAnalyzer.aggregate(
             pts,
             polys,
@@ -2447,7 +2546,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                 props = feat.setdefault("properties", {})
                 if "count" in props:
                     props[count_field] = props.pop("count")
-        return res.to_llm_response()
+        return attach_semantics_evidence(res.to_llm_response(), pf)
 
     @tool(registry, name="isochrone_network",
            description="等时线分析（路网模式）：基于路网计算从设施点出发在指定时间内可达的范围。需要输入路网要素。",
@@ -2731,112 +2830,4 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         res = nearest_neighbor_features(source_points, target_points)
         return res.to_llm_response()
 
-    @tool(registry, name="raster_reclassify",
-    anti_examples=("改变像元分辨率（用 raster_resample）",),
-           description=(
-               "栅格重分类：将连续栅格值按方案映射为离散类别。"
-               "\n何时用：『把 NDVI 连续值分成低/中/高植被覆盖等级』；"
-               "把高程分成平原/丘陵/山地；把坡度分成安全/中等/危险等级。"
-               "\n何时不用：(1) 只是查看统计值 — 用 zonal_stats；"
-               "(2) 两个栅格做运算 — 用 raster_calculator。"
-               "\n关键约束：scheme 按 min→max 排序，首个匹配 wins；未匹配像素变 nodata。"
-           ),
-           tier=2, domains=["raster"],
-           args_model=RasterReclassifyArgs,
-           side_effect="deterministic_compute",
-           network=False,
-           deterministic=True,
-           latency_class="slow",
-           memory_class="heavy",
-           scale_class="large",
-           tags=("重分类", "栅格", "reclassify", "分级", "ndvi", "dem"),
-           output_semantic_type="ref",
-           result_size_policy="inline_small",
-           failure_modes=("invalid_args", "missing_data", "memory"))
-    def raster_reclassify(raster_path: str, scheme: List[dict], nodata: Optional[float] = None) -> dict:
-        res = SpatialAnalyzer.raster_reclassify(raster_path, scheme, nodata)
-        return res.to_llm_response()
-
-    @tool(registry, name="raster_calculator",
-           description=(
-               "栅格计算器：对两个栅格做像素级数学运算（A+B, A-B, (A-B)/(A+B) 等）。"
-               "\n何时用：『NDVI = (NIR-Red)/(NIR+Red)』『DEM 差值 = A-B』『比值指数』；"
-               "任意两个栅格的逐像素运算。"
-               "\n何时不用：(1) 单栅格重分类 — 用 raster_reclassify；"
-               "(2) 双时相变化检测（差值+阈值分类一步到位）— 用 detect_raster_change；"
-               "(3) 需要地理加权（如 focal）— 未实现，先用 focal_stats。"
-               "\n关键约束：expression 用 A/B 指代栅格；支持 numexpr 语法；自动 nodata 掩膜。"
-               "A 是基准网格：分辨率/CRS 不一致的 B 会自动虚拟重投影对齐到 A（连续量 bilinear），"
-               "对齐事实进 quality_evidence。"
-           ),
-           tier=2, domains=["raster"],
-           args_model=RasterCalculatorArgs,
-           side_effect="deterministic_compute",
-           network=False,
-           deterministic=True,
-           latency_class="slow",
-           memory_class="heavy",
-           scale_class="large",
-           tags=("栅格计算", "raster calculator", "ndvi", "像元运算", "差值"),
-           output_semantic_type="ref",
-           result_size_policy="inline_small",
-           failure_modes=("invalid_args", "missing_data", "memory"))
-    def raster_calculator(raster_a: str, raster_b: Optional[str] = None, expression: str = "A + B", constant: Optional[float] = None, nodata: Optional[float] = None, resampling: Optional[str] = None) -> dict:
-        res = SpatialAnalyzer.raster_calculator(raster_a, raster_b, expression, constant, nodata, resampling)
-        return res.to_llm_response()
-
-    @tool(registry, name="detect_raster_change",
-           description=(
-               "双时相栅格变化检测：对本地两个栅格工件（如两期 NDVI/分类/DEM 产物）"
-               "做像元级变化检测，输出变化栅格 + 统计 + 质量证据。"
-               "\n何时用：『对比这两个时期的 NDVI 栅格哪里变了』『两期分类图差异』；"
-               "已上传/已生成两个 .tif 工件的变化分析。"
-               "\n何时不用：(1) 无本地栅格、只有 bbox+日期 — 用 detect_vegetation_change（在线 STAC）；"
-               "(2) 只要差值统计不要栅格 — temporal_raster；"
-               "(3) 两个栅格做任意表达式运算 — raster_calculator。"
-               "\n关键约束：raster_a（T1）是基准网格；B 分辨率/CRS 不一致时自动虚拟对齐"
-               "（对齐/重采样/裁剪事实进 quality_evidence）；method 可选 "
-               "difference/absolute_difference/normalized_difference；threshold 给定时"
-               "输出二分类变化栅格（1=变化，0=稳定，255=nodata）；分类图输入时"
-               "传 resampling=nearest（默认 bilinear 仅适用连续量）。"
-           ),
-           tier=2, domains=["raster"],
-           side_effect="deterministic_compute",
-           network=False,
-           deterministic=True,
-           latency_class="slow",
-           memory_class="heavy",
-           scale_class="large",
-           tags=("变化检测", "双时相", "ndvi变化", "raster change", "差异"),
-           output_semantic_type="ref",
-           result_size_policy="inline_small",
-           failure_modes=("invalid_args", "missing_data", "memory"))
-    def detect_raster_change(raster_a: str, raster_b: str, method: str = "difference", threshold: Optional[float] = None, band: int = 1, resampling: Optional[str] = None) -> dict:
-        res = SpatialAnalyzer.raster_change(raster_a, raster_b, method=method, threshold=threshold, band=band, resampling=resampling)
-        return res.to_llm_response()
-
-    @tool(registry, name="raster_resample",
-    anti_examples=("重分类分级（用 raster_reclassify）",),
-           description=(
-               "栅格重采样：改变像元大小和/或 CRS。"
-               "\n何时用：『把 30m DEM 重采样到 90m 做概览』『把 WGS84 栅格转到 UTM 做面积计算』；"
-               "不同分辨率/投影的栅格对齐前预处理。"
-               "\n何时不用：(1) 只改元数据 — 用 gdal_translate 更快；"
-               "(2) 已经同分辨率同 CRS — 不需要重采样。"
-               "\n关键约束：resampling 可选 bilinear/nearest/cubic/mode/average。"
-           ),
-           tier=2, domains=["raster"],
-           args_model=RasterResampleArgs,
-           side_effect="deterministic_compute",
-           network=False,
-           deterministic=True,
-           latency_class="slow",
-           memory_class="heavy",
-           scale_class="large",
-           tags=("重采样", "resample", "分辨率", "投影转换", "栅格"),
-           output_semantic_type="ref",
-           result_size_policy="inline_small",
-           failure_modes=("invalid_args", "missing_data", "memory"))
-    def raster_resample(raster_path: str, target_resolution: float, target_crs: Optional[str] = None, resampling: str = "bilinear") -> dict:
-        res = SpatialAnalyzer.raster_resample(raster_path, target_resolution, target_crs, resampling)
-        return res.to_llm_response()
+    register_raster_transform_tools(registry)

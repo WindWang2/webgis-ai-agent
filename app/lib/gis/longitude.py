@@ -22,6 +22,7 @@ V4 基线：0-360 / antimeridian 的真实处理只存在于 MVT 瓦片切分
 投影变换（CRS 变换走 geo_processor/pyproj）。
 """
 from __future__ import annotations
+import logging
 
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -31,6 +32,25 @@ LongitudeConvention = str  # "pm180" | "e360" | "ambiguous"
 def normalize_lon_pm180(lon: float) -> float:
     """任一经度换算到 [-180, 180)。"""
     return (float(lon) + 180.0) % 360.0 - 180.0
+
+
+def minimal_longitude_interval(lons: Sequence[float]) -> tuple[float, float]:
+    """Continuous west/east bounds; wrap only when the largest empty gap exceeds180°.
+
+    The east bound may exceed180°. Broad distributions with no empty hemisphere
+    keep their broad bounds instead of being mistaken for a narrow dateline band.
+    """
+    values = sorted(set(normalize_lon_pm180(value) for value in lons))
+    if not values:
+        raise ValueError("longitude interval requires coordinates")
+    if len(values) == 1:
+        return values[0], values[0]
+    gaps = [values[index + 1] - values[index] for index in range(len(values) - 1)]
+    gaps.append(values[0] + 360.0 - values[-1])
+    index = max(range(len(gaps)), key=gaps.__getitem__)
+    if gaps[index] <= 180.0 or index == len(values) - 1:
+        return values[0], values[-1]
+    return values[index + 1], values[index] + 360.0
 
 
 def normalize_lon_e360(lon: float) -> float:
@@ -157,7 +177,7 @@ def _split_e360_geometry(geom: Dict[str, Any]) -> List[Dict[str, Any]]:
                 if float(part.area) < 1e-12:
                     continue
             except Exception:  # noqa: BLE001 — 面积不可得按原样保留
-                pass
+                logging.getLogger(__name__).warning('Geometry fragment area unavailable; preserving the fragment', exc_info=True)
         geo = part.__geo_interface__
         if shift:
             geo = {
@@ -178,6 +198,17 @@ def split_geometry_at_antimeridian(
     输入几何可以是 pm180（含环绕表示）或 e360 约定 —— 统一先平移进
     0-360 连续帧再按 180 经线二分。任何失败返回原几何（诚实降级）。
     """
+    gtype = geometry.get("type")
+    if gtype == "GeometryCollection":
+        return [part for child in geometry.get("geometries", []) for part in split_geometry_at_antimeridian(child)]
+    if gtype in ("MultiPolygon", "MultiLineString"):
+        child_type = "Polygon" if gtype == "MultiPolygon" else "LineString"
+        return [part for coords in geometry.get("coordinates", [])
+                for part in split_geometry_at_antimeridian({"type": child_type, "coordinates": coords})]
+    normalized = _shift_coords_to_pm180(geometry.get("coordinates"))
+    normalized_lons = _sample_lons(normalized)
+    if normalized_lons and max(normalized_lons) - min(normalized_lons) <= 180:
+        return [{"type": gtype, "coordinates": normalized}]
     try:
         shifted: Dict[str, Any] = {
             "type": geometry.get("type"),
@@ -201,6 +232,8 @@ def normalize_geojson_geometry(
     if gtype not in ("Point", "MultiPoint", "LineString", "MultiLineString",
                      "Polygon", "MultiPolygon", "GeometryCollection"):
         return geometry
+    if gtype == "GeometryCollection":
+        return {"type": gtype, "geometries": [normalize_geojson_geometry(child, target_convention) for child in geometry.get("geometries", [])]}
     if target_convention == "e360":
         try:
             return {
@@ -255,7 +288,8 @@ def geometry_crosses_antimeridian(lons: Sequence[float]) -> bool:
     但不穿越；真穿越（170 → -170 直接连边）跳变 340。
     """
     vals = [float(v) for v in lons]
-    for a, b in zip(vals, vals[1:]):
+    # Adjacent pairs intentionally omit the unmatched final endpoint.
+    for a, b in zip(vals, vals[1:], strict=False):
         if abs(b - a) > 180.0:
             return True
     return False

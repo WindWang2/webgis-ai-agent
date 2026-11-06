@@ -172,9 +172,10 @@ def test_scenario_c_academic_map_with_inset_selected():
 
 
 def test_scenario_c_inset_payload_validation():
-    """C（payload 门）：bbox 缺失/无序、boundary 超限均拒绝。"""
+    """C：经度允许跨日界线；缺失、纬度倒置及 boundary 超限仍拒绝。"""
     assert validate_inset_payload({}) is not None  # 缺 bbox
-    assert validate_inset_payload({"bbox": [108, 26, 97, 34]}) is not None  # 无序
+    assert validate_inset_payload({"bbox": [170, 26, -170, 34]}) is None
+    assert validate_inset_payload({"bbox": [97, 34, 108, 26]}) is not None
     ok = validate_inset_payload({"bbox": [97, 26, 108, 34], "label": "区位"})
     assert ok is None
     big = {"bbox": [97, 26, 108, 34], "boundary": [[0.0, 0.0]] * 513}

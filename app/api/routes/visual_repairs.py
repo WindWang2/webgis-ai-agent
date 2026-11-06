@@ -269,179 +269,181 @@ async def apply_visual_repair(
     background_tasks: BackgroundTasks,
     _conv: Conversation = Depends(require_owned_session),
 ) -> Dict[str, Any]:
-    from app.services.gis_harness.visual_observation.recurrence import (
-        load_ledger,
-        reset_fingerprints,
-        save_ledger,
-    )
-    from app.services.gis_harness.visual_observation.repair_bridge import (
-        defects_from_proposal,
-        load_proposal,
-    )
-
-    # 批准是结构门槛：缺省/False 一律拒绝（无「默认同意」语义）。
-    if req.approved is not True:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "approval_required",
-                    "message": "visual repair 需要显式 approved=true。"},
+    from app.services.distributed_lock import session_lock
+    async with session_lock("visual-repair-decision:" + session_id):
+        from app.services.gis_harness.visual_observation.recurrence import (
+            load_ledger,
+            reset_fingerprints,
+            save_ledger,
         )
-    proposal = await load_proposal(session_id, req.proposal_id)
-    if proposal is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "proposal_not_found",
-                    "message": "提案不存在或已淘汰（≤4 FIFO），请重新 plan。"},
-        )
-    # C13 拒绝记忆：用户否决过的提案不可再执行（结构门槛，非 UI 礼仪）。
-    if proposal.get("rejected") is True:
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "proposal_rejected",
-                    "message": "提案已被用户拒绝，如需修复请重新 plan。"},
-        )
-    from app.services.gis_harness.visual_observation.repair_decisions import (
-        DECISION_APPROVED,
-        DECISION_REJECTED,
-        decision_for_proposal,
-        load_decisions,
-    )
-
-    prior = decision_for_proposal(
-        await load_decisions(session_id), req.proposal_id)
-    if prior is not None and str(prior.get("decision") or "") == DECISION_REJECTED:
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "proposal_rejected",
-                    "message": "提案已被用户拒绝，如需修复请重新 plan。"},
-        )
-    base_revision = int(proposal.get("base_revision") or 0)
-    current_revision = await _current_revision(session_id)
-    if current_revision != base_revision:
-        # plan→apply 之间状态漂移：提案可能基于陈旧 spec，拒绝并要求重提。
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "proposal_stale",
-                    "message": "提案基于旧 revision，请重新 plan。",
-                    "base_revision": base_revision,
-                    "current_revision": current_revision},
-        )
-    defects = defects_from_proposal(proposal)
-    if not defects:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "proposal_corrupt",
-                    "message": "提案缺陷载荷无法还原，请重新 plan。"},
-        )
-    try:
-        # 注：显式 mutation_id 的幂等重放语义有一处可辩边界 —— healer 收敛
-        # 账本预检（attempts≥2 → HEAL_CONVERGENCE_EXHAUSTED）先于引擎
-        # dedup（lifecycle_engine.apply_visual_heal_patch 预检顺序），故
-        # 预算耗尽后的重放收到 hard_stop 回执而非 duplicate 世代。
-        result = await _engine.apply_visual_heal_patch(
-            session_id,
-            defects,
-            origin="user",
-            expected_revision=req.expected_revision,
-            mutation_id=f"vrepair:{req.proposal_id}",
-            on_exhausted="degrade",
-        )
-    except (TimeoutError, LockContentionError):
-        raise HTTPException(
-            status_code=503,
-            detail={"error": "session_busy",
-                    "message": "会话正被 Agent 操作占用，请稍后重试。"},
-        )
-    except (LockDegradedError, LockLostError):
-        raise HTTPException(
-            status_code=503,
-            detail={"error": "session_lock_unavailable",
-                    "message": "会话锁暂不可用，状态未修改，请稍后重试。"},
-        )
-    # CAS 漂移（stale expected_revision）先于错误/成功判定 —— superseded
-    # 结果 is_error=False 但**未提交**，漏判会把未提交误报为 applied。
-    if result.superseded:
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "revision_conflict",
-                    "message": "expected_revision 已漂移，未提交；请重读后重试。",
-                    "mutation_revision": int(result.mutation_revision or 0)},
+        from app.services.gis_harness.visual_observation.repair_bridge import (
+            defects_from_proposal,
+            load_proposal,
         )
 
-    applied = result.is_error is False
-    reason = ""
-    if result.is_error:
-        if result.error_code == "HEAL_CONVERGENCE_EXHAUSTED":
-            # 收敛硬停：同一缺陷指纹的自愈预算耗尽 —— 诚实回执（非 5xx），
-            # 用户须人工研判或改变上游策略后再试（correction_hint 已携带）。
-            return VisualRepairApplyResponse(
-                session_id=session_id,
-                proposal_id=req.proposal_id,
-                applied=False,
-                reason="convergence_exhausted",
-                hard_stop=True,
-                mutation_revision=int(result.mutation_revision or 0),
-                correction_hint=str(result.correction_hint or "")[:200],
-            ).model_dump()
-        reason = str(result.error_code or "apply_failed")[:48]
-    if applied and not result.duplicate:
-        # 修复尝试即进展信号：重置相关指纹的 recurrence 计数（fail-open）。
+        # 批准是结构门槛：缺省/False 一律拒绝（无「默认同意」语义）。
+        if req.approved is not True:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "approval_required",
+                        "message": "visual repair 需要显式 approved=true。"},
+            )
+        proposal = await load_proposal(session_id, req.proposal_id)
+        if proposal is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "proposal_not_found",
+                        "message": "提案不存在或已淘汰（≤4 FIFO），请重新 plan。"},
+            )
+        # C13 拒绝记忆：用户否决过的提案不可再执行（结构门槛，非 UI 礼仪）。
+        if proposal.get("rejected") is True:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "proposal_rejected",
+                        "message": "提案已被用户拒绝，如需修复请重新 plan。"},
+            )
+        from app.services.gis_harness.visual_observation.repair_decisions import (
+            DECISION_APPROVED,
+            DECISION_REJECTED,
+            decision_for_proposal,
+            load_decisions,
+        )
+
+        prior = decision_for_proposal(
+            await load_decisions(session_id), req.proposal_id)
+        if prior is not None and str(prior.get("decision") or "") == DECISION_REJECTED:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "proposal_rejected",
+                        "message": "提案已被用户拒绝，如需修复请重新 plan。"},
+            )
+        base_revision = int(proposal.get("base_revision") or 0)
+        current_revision = await _current_revision(session_id)
+        if current_revision != base_revision:
+            # plan→apply 之间状态漂移：提案可能基于陈旧 spec，拒绝并要求重提。
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "proposal_stale",
+                        "message": "提案基于旧 revision，请重新 plan。",
+                        "base_revision": base_revision,
+                        "current_revision": current_revision},
+            )
+        defects = defects_from_proposal(proposal)
+        if not defects:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "proposal_corrupt",
+                        "message": "提案缺陷载荷无法还原，请重新 plan。"},
+            )
         try:
-            wanted_ids = {str(x) for x in (proposal.get("finding_ids") or [])}
-            stored_findings = await _stored_visual_findings(session_id)
-            fingerprints = [
-                str(f.get("recurrence_fingerprint") or "")
-                for f in stored_findings
-                if isinstance(f, dict)
-                and str(f.get("finding_id") or "") in wanted_ids
-            ]
-            if fingerprints:
-                ledger = await load_ledger(session_id)
-                await save_ledger(
-                    session_id, reset_fingerprints(ledger, fingerprints))
-            # C13：批准决策入账（因果链：批准 → mutation_revision）。
-            from app.services.gis_harness.visual_observation.repair_decisions import (
-                record_decision,
-            )
-            from app.services.gis_harness.visual_observation.repair_intent import (
-                intent_fingerprint,
-                intent_from_dict,
-            )
-
-            stored_intent = intent_from_dict(proposal.get("intent"))
-            await record_decision(
+            # 注：显式 mutation_id 的幂等重放语义有一处可辩边界 —— healer 收敛
+            # 账本预检（attempts≥2 → HEAL_CONVERGENCE_EXHAUSTED）先于引擎
+            # dedup（lifecycle_engine.apply_visual_heal_patch 预检顺序），故
+            # 预算耗尽后的重放收到 hard_stop 回执而非 duplicate 世代。
+            result = await _engine.apply_visual_heal_patch(
                 session_id,
-                decision=DECISION_APPROVED,
-                proposal_id=req.proposal_id,
-                intent_fingerprint=(
-                    intent_fingerprint(stored_intent)
-                    if stored_intent is not None else ""),
-                defect_fingerprint=str(
-                    proposal.get("defect_fingerprint") or "")[:96],
-                recurrence_fingerprints=fingerprints,
-                origin="user", revision=int(result.mutation_revision or 0),
-                finding_ids=proposal.get("finding_ids") or (),
+                defects,
+                origin="user",
+                expected_revision=req.expected_revision,
+                mutation_id=f"vrepair:{req.proposal_id}",
+                on_exhausted="degrade",
             )
-        except Exception:  # noqa: BLE001 — 披露面，绝不阻断回执
-            logger.debug("[VisualRepair] recurrence reset failed",
-                         exc_info=True)
+        except (TimeoutError, LockContentionError):
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "session_busy",
+                        "message": "会话正被 Agent 操作占用，请稍后重试。"},
+            )
+        except (LockDegradedError, LockLostError):
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "session_lock_unavailable",
+                        "message": "会话锁暂不可用，状态未修改，请稍后重试。"},
+            )
+        # CAS 漂移（stale expected_revision）先于错误/成功判定 —— superseded
+        # 结果 is_error=False 但**未提交**，漏判会把未提交误报为 applied。
+        if result.superseded:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "revision_conflict",
+                        "message": "expected_revision 已漂移，未提交；请重读后重试。",
+                        "mutation_revision": int(result.mutation_revision or 0)},
+            )
 
-    if applied:
-        # visual_repair 触发复验（seam 白名单既有词的生产消费方）；heal 已
-        # 推进 mutation revision，去重门自然打开。后台执行，绝不阻断回执。
-        background_tasks.add_task(_reverify_after_repair, session_id)
+        applied = result.is_error is False
+        reason = ""
+        if result.is_error:
+            if result.error_code == "HEAL_CONVERGENCE_EXHAUSTED":
+                # 收敛硬停：同一缺陷指纹的自愈预算耗尽 —— 诚实回执（非 5xx），
+                # 用户须人工研判或改变上游策略后再试（correction_hint 已携带）。
+                return VisualRepairApplyResponse(
+                    session_id=session_id,
+                    proposal_id=req.proposal_id,
+                    applied=False,
+                    reason="convergence_exhausted",
+                    hard_stop=True,
+                    mutation_revision=int(result.mutation_revision or 0),
+                    correction_hint=str(result.correction_hint or "")[:200],
+                ).model_dump()
+            reason = str(result.error_code or "apply_failed")[:48]
+        if applied and not result.duplicate:
+            # 修复尝试即进展信号：重置相关指纹的 recurrence 计数（fail-open）。
+            try:
+                wanted_ids = {str(x) for x in (proposal.get("finding_ids") or [])}
+                stored_findings = await _stored_visual_findings(session_id)
+                fingerprints = [
+                    str(f.get("recurrence_fingerprint") or "")
+                    for f in stored_findings
+                    if isinstance(f, dict)
+                    and str(f.get("finding_id") or "") in wanted_ids
+                ]
+                if fingerprints:
+                    ledger = await load_ledger(session_id)
+                    await save_ledger(
+                        session_id, reset_fingerprints(ledger, fingerprints))
+                # C13：批准决策入账（因果链：批准 → mutation_revision）。
+                from app.services.gis_harness.visual_observation.repair_decisions import (
+                    record_decision,
+                )
+                from app.services.gis_harness.visual_observation.repair_intent import (
+                    intent_fingerprint,
+                    intent_from_dict,
+                )
 
-    return VisualRepairApplyResponse(
-        session_id=session_id,
-        proposal_id=req.proposal_id,
-        applied=applied,
-        duplicate=bool(result.duplicate),
-        reason=reason,
-        hard_stop=False,
-        mutation_revision=int(result.mutation_revision or 0),
-        correction_hint=str(result.correction_hint or "")[:200],
-        reverify="visual_repair" if applied else "",
-    ).model_dump()
+                stored_intent = intent_from_dict(proposal.get("intent"))
+                await record_decision(
+                    session_id,
+                    decision=DECISION_APPROVED,
+                    proposal_id=req.proposal_id,
+                    intent_fingerprint=(
+                        intent_fingerprint(stored_intent)
+                        if stored_intent is not None else ""),
+                    defect_fingerprint=str(
+                        proposal.get("defect_fingerprint") or "")[:96],
+                    recurrence_fingerprints=fingerprints,
+                    origin="user", revision=int(result.mutation_revision or 0),
+                    finding_ids=proposal.get("finding_ids") or (),
+                )
+            except Exception:  # noqa: BLE001 — 披露面，绝不阻断回执
+                logger.debug("[VisualRepair] recurrence reset failed",
+                             exc_info=True)
+
+        if applied:
+            # visual_repair 触发复验（seam 白名单既有词的生产消费方）；heal 已
+            # 推进 mutation revision，去重门自然打开。后台执行，绝不阻断回执。
+            background_tasks.add_task(_reverify_after_repair, session_id)
+
+        return VisualRepairApplyResponse(
+            session_id=session_id,
+            proposal_id=req.proposal_id,
+            applied=applied,
+            duplicate=bool(result.duplicate),
+            reason=reason,
+            hard_stop=False,
+            mutation_revision=int(result.mutation_revision or 0),
+            correction_hint=str(result.correction_hint or "")[:200],
+            reverify="visual_repair" if applied else "",
+        ).model_dump()
 
 
 async def _reverify_after_repair(session_id: str) -> None:
@@ -472,51 +474,61 @@ async def reject_visual_repair(
     同一缺陷编译同一 patch；缺陷证据变化（观察重盖章、指纹更新）后自然
     放行。幂等：重复拒绝返回相同回执（决策按 proposal_id 原位替换）。
     """
-    from app.services.gis_harness.visual_observation.repair_bridge import (
-        load_proposal,
-        save_proposal,
-    )
-    from app.services.gis_harness.visual_observation.repair_decisions import (
-        DECISION_REJECTED,
-        record_decision,
-    )
-
-    proposal = await load_proposal(session_id, req.proposal_id)
-    if proposal is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "proposal_not_found",
-                    "message": "提案不存在或已淘汰（≤4 FIFO）。"},
+    from app.services.distributed_lock import session_lock
+    async with session_lock("visual-repair-decision:" + session_id):
+        from app.services.gis_harness.visual_observation.repair_bridge import (
+            load_proposal,
+            save_proposal,
         )
-    proposal["rejected"] = True
-    proposal["reject_reason"] = str(req.reason or "")[:200]
-    await save_proposal(session_id, proposal)
+        from app.services.gis_harness.visual_observation.repair_decisions import (
+            DECISION_REJECTED,
+            record_decision,
+        )
 
-    wanted_ids = {str(x) for x in (proposal.get("finding_ids") or [])}
-    recurrence = [
-        str(f.get("recurrence_fingerprint") or "")
-        for f in await _stored_visual_findings(session_id)
-        if isinstance(f, dict)
-        and str(f.get("finding_id") or "") in wanted_ids
-        and f.get("recurrence_fingerprint")
-    ]
-    await record_decision(
-        session_id,
-        decision=DECISION_REJECTED,
-        proposal_id=req.proposal_id,
-        defect_fingerprint=str(proposal.get("defect_fingerprint") or "")[:96],
-        recurrence_fingerprints=recurrence,
-        origin="user",
-        revision=int(proposal.get("base_revision") or 0),
-        finding_ids=proposal.get("finding_ids") or (),
-        reason=req.reason,
-    )
-    return VisualRepairRejectResponse(
-        session_id=session_id,
-        proposal_id=req.proposal_id,
-        rejected=True,
-        defect_fingerprint=str(proposal.get("defect_fingerprint") or "")[:96],
-    ).model_dump()
+        proposal = await load_proposal(session_id, req.proposal_id)
+        if proposal is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "proposal_not_found",
+                        "message": "提案不存在或已淘汰（≤4 FIFO）。"},
+            )
+        from app.services.gis_harness.visual_observation.repair_decisions import (
+            decision_for_proposal, load_decisions, DECISION_APPROVED, DECISION_AUTO_APPLIED,
+        )
+        prior = decision_for_proposal(await load_decisions(session_id), req.proposal_id)
+        if prior and prior.get("decision") in (DECISION_APPROVED, DECISION_AUTO_APPLIED):
+            raise HTTPException(status_code=409, detail="An applied proposal cannot be rejected")
+        if proposal.get("applied") or proposal.get("applied_at") or proposal.get("status") == "applied":
+            raise HTTPException(status_code=409, detail="An applied proposal cannot be rejected")
+        proposal["rejected"] = True
+        proposal["reject_reason"] = str(req.reason or "")[:200]
+        await save_proposal(session_id, proposal)
+
+        wanted_ids = {str(x) for x in (proposal.get("finding_ids") or [])}
+        recurrence = [
+            str(f.get("recurrence_fingerprint") or "")
+            for f in await _stored_visual_findings(session_id)
+            if isinstance(f, dict)
+            and str(f.get("finding_id") or "") in wanted_ids
+            and f.get("recurrence_fingerprint")
+        ]
+        await record_decision(
+            session_id,
+            decision=DECISION_REJECTED,
+            proposal_id=req.proposal_id,
+            defect_fingerprint=str(proposal.get("defect_fingerprint") or "")[:96],
+            recurrence_fingerprints=recurrence,
+            origin="user",
+            revision=int(proposal.get("base_revision") or 0),
+            finding_ids=proposal.get("finding_ids") or (),
+            reason=req.reason,
+        )
+        return VisualRepairRejectResponse(
+            session_id=session_id,
+            proposal_id=req.proposal_id,
+            rejected=True,
+            defect_fingerprint=str(proposal.get("defect_fingerprint") or "")[:96],
+        ).model_dump()
 
 
 @router.post(
@@ -529,8 +541,8 @@ async def upload_visual_snapshot(
     background_tasks: BackgroundTasks,
     mapspec_revision: int = Query(default=0, ge=0),
     mapspec_fingerprint: str = Query(default="", max_length=96),
-    width: int = Query(default=0, ge=0),
-    height: int = Query(default=0, ge=0),
+    width: int = Query(default=0, ge=0, le=8192),
+    height: int = Query(default=0, ge=0, le=8192),
     _conv: Conversation = Depends(require_owned_session),
 ) -> Dict[str, Any]:
     from app.services.gis_harness.visual_observation.store import (
@@ -569,7 +581,11 @@ async def upload_visual_snapshot(
         )
 
         if get_visual_evaluator() is not None:
-            background_tasks.add_task(_reverify_after_repair, session_id)
+            from app.api.visual_reverify_budget import admit_snapshot_reverify
+            if await admit_snapshot_reverify(session_id, entry.mapspec_revision, entry.sha256):
+                background_tasks.add_task(_reverify_after_repair, session_id)
+            else:
+                logger.info("[VisualRepair] snapshot stored; automatic reverify deferred by budget session=%s", session_id)
     except Exception:  # noqa: BLE001 — 复验是增值面
         logger.debug("[VisualRepair] snapshot reverify schedule failed",
                      exc_info=True)

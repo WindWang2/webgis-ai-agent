@@ -54,6 +54,7 @@ _EVIDENCE_OP_ORDER = (
     "fix_gaps",
     "drop_outliers_or_flag",
     "attribute_drop_or_flag",
+    "fix_topology_overlap",
 )
 
 #: ADR-0153 编排器（plan_repair_ops）产出的固定 op 顺序 —— 任务书 §2 P2
@@ -381,7 +382,7 @@ def plan_repair_ops(
                            "显式 allow_destructive 后 remove_empty 将携带 drop_zero_coordinates。",
             })
     if "fix_topology_overlap" in candidate_ops:
-        if overlap_pair_ratio >= OVERLAP_PAIR_RATIO_THRESHOLD:
+        if allow_destructive and overlap_pair_ratio >= OVERLAP_PAIR_RATIO_THRESHOLD:
             op_params["fix_topology_overlap"] = {"mode": "difference"}
             destructive_decisions["fix_topology_overlap"] = (
                 f"mode=difference(overlap_pair_ratio={overlap_pair_ratio:.4f})"
@@ -571,6 +572,7 @@ class SpatialRepairPipeline:
 
         logs: List[str] = []
         cleaned_features = []
+        unprocessed_features = []
 
         # ----------------------------------------------------
         # Operation: crs_transform
@@ -588,6 +590,9 @@ class SpatialRepairPipeline:
         for idx, feat in enumerate(features):
             if not isinstance(feat, dict):
                 logs.append(f"Feature {idx}: Skipped non-dictionary record")
+                unprocessed_features.append(feat)
+                for op in active_ops:
+                    _bump(op, failed=1)
                 continue
 
             geom_raw = feat.get("geometry")
@@ -608,6 +613,9 @@ class SpatialRepairPipeline:
                 geom = shape(geom_raw)
             except Exception as e:
                 logs.append(f"Feature {idx}: Skipped due to unparseable geometry: {e}")
+                unprocessed_features.append(feat)
+                for op in active_ops:
+                    _bump(op, failed=1)
                 continue
 
             if geom.is_empty:
@@ -622,15 +630,15 @@ class SpatialRepairPipeline:
             # ----------------------------------------------------
             # Operation: remove_empty (drop_zero_coordinates, ADR-0153)
             # ----------------------------------------------------
-            # Null Island 扩展：centroid 落在 (0,0)±1e-7（与 audit 同判据）的
-            # 要素视为缺失值填充；仅在 plan 裁决（allow_destructive）显式
+            # Only geometry entirely within (0,0)±1e-7 is a zero-coordinate placeholder.
+            # A legitimate large polygon centered at the origin must remain intact.
+            # 仅在 plan 裁决（allow_destructive）显式
             # 开启时剔除，默认保留并走 advisory。
             if (
                 _drop_zero_coords
                 and "remove_empty" in active_ops
             ):
-                centroid = geom.centroid
-                if abs(centroid.x) < 1e-7 and abs(centroid.y) < 1e-7:
+                if max(abs(value) for value in geom.bounds) < 1e-7:
                     area_delta_by_op["remove_empty"] = (
                         area_delta_by_op.get("remove_empty", 0.0) - float(geom.area)
                     )
@@ -984,6 +992,15 @@ class SpatialRepairPipeline:
         # Operation: attribute_type_normalization
         # ----------------------------------------------------
         if "attribute_type_normalization" in active_ops and cleaned_features:
+            fields_requested = params_by_op.get("attribute_type_normalization", {}).get("fields")
+            field_types: Dict[str, set] = {}
+            for feature in cleaned_features:
+                for key, value in (feature.get("properties") or {}).items():
+                    if value is not None:
+                        field_types.setdefault(key, set()).add(type(value))
+            normalized_fields = set(fields_requested or [
+                key for key, types in field_types.items() if str in types and (int in types or float in types)
+            ])
             all_keys = set()
             for f in cleaned_features:
                 if isinstance(f.get("properties"), dict):
@@ -999,8 +1016,13 @@ class SpatialRepairPipeline:
                         props[k] = None
 
                 for k, v in list(props.items()):
+                    if k not in normalized_fields:
+                        continue
                     if isinstance(v, str):
                         v_stripped = v.strip()
+                        digits = v_stripped.lstrip("-+")
+                        if digits.isdigit() and (len(digits) > 15 or (len(digits) > 1 and digits.startswith("0"))):
+                            continue
                         if v_stripped.isdigit() or (v_stripped.startswith("-") and v_stripped[1:].isdigit()):
                             props[k] = int(v_stripped)
                         else:
@@ -1084,6 +1106,17 @@ class SpatialRepairPipeline:
                         continue
                     _lo = _spec.get("lower")
                     _hi = _spec.get("upper")
+                    if _lo is None and _hi is None:
+                        _clip = _spec.get("suggested_clip")
+                        if isinstance(_clip, (list, tuple)) and len(_clip) == 2:
+                            _lo, _hi = _clip
+                        else:
+                            _arr = [value for _, value in _numeric[_fname]]
+                            if len(_arr) < 3:
+                                continue
+                            _mean = sum(_arr) / len(_arr)
+                            _std = math.sqrt(sum((value - _mean) ** 2 for value in _arr) / len(_arr))
+                            _lo, _hi = _mean - 3 * _std, _mean + 3 * _std
                     _bounds[_fname] = (
                         float(_lo) if _lo is not None else float("-inf"),
                         float(_hi) if _hi is not None else float("inf"),
@@ -1137,6 +1170,7 @@ class SpatialRepairPipeline:
                         "clip/trim is line-03's outlier_policy decision)"
                     )
 
+        cleaned_features.extend(unprocessed_features)
         repaired_geojson["features"] = cleaned_features
 
         # Wave-4: bounded per-op evidence in canonical op order (≤16 entries).

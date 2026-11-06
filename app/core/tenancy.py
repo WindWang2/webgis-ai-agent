@@ -2,8 +2,8 @@
 
 三层语义：
 
-1. **effective org**：JWT 用户的 org 是权威值（DB ``User.org_id``，随
-   claim 传播）；无 org 的用户、匿名 owner_token 会话、AUTH_DISABLED
+1. **effective org**：实时数据库 ``User.org_id`` 是权威值（不信任过时的
+   JWT org claim）；无 org 的用户、匿名 owner_token 会话、AUTH_DISABLED
    bypass 统一归入 **default 组织隔离桶**（``organizations.slug='default'``，
    幂等 ensure）。default org id 进程内缓存一次——organizations.slug
    唯一且行不可变，缓存失真面为零（迁移回填保证存量行全有 org）。
@@ -74,33 +74,47 @@ async def get_or_create_default_org_id(db: AsyncSession) -> str:
     return _default_org_id
 
 
-def get_or_create_default_org_id_sync(db) -> str:
-    """同步会话变体（geocompute 同步线程路由 / store 侧使用）。"""
+def get_or_create_default_org_id_sync(db, *, commit: bool = True) -> str:
+    """Resolve the default organization without committing a caller-owned unit.
+
+    DAO callers pass ``commit=False``. Their new organization remains in the
+    caller's transaction and must not enter the process cache before commit.
+    """
     global _default_org_id
-    if _default_org_id is not None:
+    if commit and _default_org_id is not None:
         return _default_org_id
-    from sqlalchemy import select as _select
+    from sqlalchemy.exc import IntegrityError
 
     from app.models.db_model import Organization
 
     org_id = db.execute(
-        _select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
+        select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
     ).scalar_one_or_none()
     if org_id is None:
-        org = Organization(name="Default Organization", slug=DEFAULT_ORG_SLUG,
-                           is_active=True)
-        db.add(org)
+        connection = db.connection()
+        if connection.dialect.name == "sqlite":
+            # sqlite3 legacy transaction mode does not BEGIN for SELECT. If
+            # this is the first write, releasing a bare SAVEPOINT would commit
+            # the new row despite commit=False and a later caller rollback.
+            driver = connection.connection.driver_connection
+            if not driver.in_transaction:
+                connection.exec_driver_sql("BEGIN")
         try:
-            db.commit()
-        except Exception:  # noqa: BLE001 - 并发创建时唯一约束兜底
-            db.rollback()
+            with db.begin_nested():
+                org = Organization(name="Default Organization", slug=DEFAULT_ORG_SLUG,
+                                   is_active=True)
+                db.add(org)
+                db.flush()
+                org_id = cast(int, org.id)
+        except IntegrityError:
             org_id = db.execute(
-                _select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
+                select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
             ).scalar_one()
-        else:
-            org_id = cast(int, org.id)
-    _default_org_id = str(org_id)
-    return _default_org_id
+        if commit:
+            db.commit()
+    if commit:
+        _default_org_id = str(org_id)
+    return str(org_id)
 
 
 def reset_default_org_cache() -> None:
@@ -117,8 +131,8 @@ async def effective_org_id(
 ) -> str:
     """请求的 effective org（字符串原文）。
 
-    - JWT 用户带 org → ``str(org_id)``（既有行为不变：geocompute runs
-      0033 起就写这个值）；
+    - 已登录用户 → 数据库实时 org（忽略 token 中可能已过时的组织）；
+    - 已删除或停用身份 → 空 scope，拒绝任何组织域匹配；
     - 无 org 用户 / 匿名 owner_token 会话 → default 桶。匿名桶内的
       会话级隔离仍由既有 owner_scope / owner_token 过滤承担——org 谓词
       是**叠加的硬边界**，不是共享授权。
@@ -131,9 +145,12 @@ async def effective_org_id(
         uid = user.get("user_id") or user.get("id") or user.get("sub")
         anonymous = uid is None or str(uid).lower() in {"anonymous", "anon"}
         if not anonymous:
-            org = user.get("org_id")
-            if org is not None:
-                return str(org)
+            from app.models.db_model import User
+            identity = (await db.execute(select(User.org_id, User.is_active).where(User.id == str(uid)))).first()
+            if identity is None or not identity[1]:
+                return ""
+            if identity[0] is not None:
+                return str(identity[0])
     return await get_or_create_default_org_id(db)
 
 
@@ -200,9 +217,12 @@ def effective_org_id_sync(user: Optional[dict], db) -> str:
         uid = user.get("user_id") or user.get("id") or user.get("sub")
         anonymous = uid is None or str(uid).lower() in {"anonymous", "anon"}
         if not anonymous:
-            org = user.get("org_id")
-            if org is not None:
-                return str(org)
+            from app.models.db_model import User
+            identity = (db.execute(select(User.org_id, User.is_active).where(User.id == str(uid)))).first()
+            if identity is None or not identity[1]:
+                return ""
+            if identity[0] is not None:
+                return str(identity[0])
     return get_or_create_default_org_id_sync(db)
 
 

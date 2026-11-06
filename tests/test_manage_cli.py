@@ -66,13 +66,14 @@ def _run_manage(args, env_overrides=None, timeout=120):
         [sys.executable, "manage.py", *args],
         cwd=str(REPO_ROOT), env=env, capture_output=True, text=True,
         timeout=timeout,
+        input="password123\n" if "--password-stdin" in args else None,
     )
 
 
 def test_create_admin_happy_path_on_fresh_sqlite(tmp_path):
     """正常路径不被预检破坏：全新 SQLite 上 create-admin 直接成功。"""
     proc = _run_manage(
-        ["create-admin", "admin", "admin@example.com", "password123"],
+        ["create-admin", "admin", "admin@example.com", "--password-stdin"],
         {"DATABASE_URL": f"sqlite:///{tmp_path / 'webgis.db'}"},
     )
     assert proc.returncode == 0, (
@@ -85,7 +86,7 @@ def test_create_admin_happy_path_on_fresh_sqlite(tmp_path):
 def test_create_admin_unreachable_postgres_fails_without_traceback(tmp_path):
     """非 sqlite 库连不上：可读错误 + exit 2，而不是裸 traceback。"""
     proc = _run_manage(
-        ["create-admin", "admin", "admin@example.com", "password123"],
+        ["create-admin", "admin", "admin@example.com", "--password-stdin"],
         {
             # 裸 postgresql:// —— _to_sync_url/_to_async_url 显式支持的形态
             # （#1592；带 +psycopg2 后缀会让 async engine 构造在 import 期炸）。
@@ -130,9 +131,9 @@ def test_create_admin_unmigrated_schema_guides_alembic_upgrade(tmp_path):
     env.pop("ALLOW_CREATE_ALL_ON_POSTGRES", None)
     proc = subprocess.run(
         [sys.executable, str(driver), "create-admin", "admin",
-         "admin@example.com", "password123"],
+         "admin@example.com", "--password-stdin"],
         cwd=str(REPO_ROOT), env=env, capture_output=True, text=True,
-        timeout=120,
+        timeout=120, input="password123\n",
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 2, combined[-800:]

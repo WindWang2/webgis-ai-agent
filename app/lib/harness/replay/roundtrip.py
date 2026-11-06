@@ -7,9 +7,9 @@ recorder 产出的 ReplayTrace 不再是 write-only：真实流量沉淀为回�
 **expect 回填（ADR-0262 D3，去 green-by-construction）**：recorded 场景的
 expect 从录制事实派生（`goal` ← map_product.task_complete、
 `decision_rederive` ← 决策索引、`dispatch` ← dispatch_evidence），再经
-:func:`calibrate_recorded_scenario` 对当前重放环境做一次校准 —— 与当前
-推导不符的期望叶被裁掉并记录收据（诚实披露），保留下来的期望在后续
-重放中可失败。纪律：只期望录制时成立、且当前环境可复现的事实；
+:func:`calibrate_recorded_scenario` 报告当前重放环境差异。原始期望默认
+保留，避免回归被校准吸收；只有显式 allow_prune 才裁剪并记录收据。
+纪律：只期望录制时有证据成立的事实；
 证据缺席的维度不进 expect（不伪造）。
 
 诚实降级纪律（B1/B3）：
@@ -30,7 +30,12 @@ multi-turn Scenario —— 重放器共享 harness 的会话语义承载跨轮�
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
+
+from app.lib.harness.result_contracts import DispatchProjection, ExactDiff
+from app.lib.harness.replay.recording_contracts import (
+    CalibrationDrop, CalibrationReport, RecordedToolCall, ReceiptPin,
+)
 
 from app.lib.harness.replay.replayer import (
     OfflineReplayer,
@@ -41,7 +46,7 @@ from app.lib.harness.replay.replayer import (
 )
 
 
-def _receipt_from_call(call: Dict[str, Any]) -> Dict[str, Any]:
+def _receipt_from_call(call: RecordedToolCall) -> Dict[str, Any]:
     """tool_call 块 → canned receipt（``result_ref`` 即消毒后的收据形状）。"""
     ref = call.get("result_ref")
     if isinstance(ref, dict):
@@ -49,7 +54,7 @@ def _receipt_from_call(call: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
-def _op_from_tool_call(call: Dict[str, Any], index: int) -> ScenarioOp:
+def _op_from_tool_call(call: RecordedToolCall, index: int) -> ScenarioOp:
     arguments = call.get("arguments")
     return ScenarioOp(
         call_id=str(call.get("tool_call_id") or f"call-{index + 1}"),
@@ -79,8 +84,8 @@ def _is_degraded(trace: Dict[str, Any]) -> bool:
 
 
 def _dispatch_pins(
-    trace: Dict[str, Any], calls: List[Dict[str, Any]],
-) -> Tuple[Dict[str, Any], Dict[str, List[str]]]:
+    trace: Dict[str, Any], calls: List[RecordedToolCall],
+) -> Tuple[Dict[str, DispatchProjection], Dict[str, List[str]]]:
     """dispatch_evidence × tool_calls（同工具按出现序 join）→ dispatch
     expect pins + T3 fixture（tool → capability 声明）。"""
     evidence = [
@@ -89,7 +94,7 @@ def _dispatch_pins(
     ]
     if not evidence:
         return {}, {}
-    pins: Dict[str, Any] = {}
+    pins: Dict[str, DispatchProjection] = {}
     registry: Dict[str, List[str]] = {}
     used: set = set()
     for call in calls:
@@ -111,7 +116,7 @@ def _dispatch_pins(
         refused = str(entry.get("action") or "") == "refused"
         cap = str(entry.get("capability")
                   or entry.get("rank_capability") or "")[:96]
-        pin: Dict[str, Any] = {"allowed": not refused}
+        pin: DispatchProjection = {"allowed": not refused}
         if refused and cap:
             pin["capability"] = cap
         pins[call_id] = pin
@@ -123,7 +128,7 @@ def _dispatch_pins(
 
 
 def _candidate_expect(
-    trace: Dict[str, Any], calls: List[Dict[str, Any]],
+    trace: Dict[str, Any], calls: List[RecordedToolCall],
 ) -> Tuple[Dict[str, Any], Dict[str, List[str]]]:
     """trace 录制事实 → 候选 expect 树 + tool_registry fixture。
 
@@ -132,9 +137,10 @@ def _candidate_expect(
     不带（FINAL_VERDICT 只带 verdict/final_map_status）→ 不伪造 gate 期望。
     """
     expect: Dict[str, Any] = {}
-    verdict = trace.get("verdict") if isinstance(trace.get("verdict"), dict) else {}
-    map_product = verdict.get("map_product") \
-        if isinstance(verdict.get("map_product"), dict) else {}
+    verdict_raw = trace.get("verdict")
+    verdict = verdict_raw if isinstance(verdict_raw, dict) else {}
+    map_product_raw = verdict.get("map_product")
+    map_product = map_product_raw if isinstance(map_product_raw, dict) else {}
     # goal：task_complete=True 是录制时的事实；重放端 L5 推导不成立即红。
     if map_product.get("task_complete") is True:
         expect["goal"] = {"status": "pass"}
@@ -156,21 +162,22 @@ def _candidate_expect(
         expect["dispatch"] = dispatch_pins
     # receipt pins（T4）：录制的调用终态 + ref 铸造面 —— 真实 dispatch
     # 合同重放必须复现（ok→ok / error→error / 有 ref → ref_minted）。
-    receipt_pins: Dict[str, Any] = {}
+    receipt_pins: Dict[str, ReceiptPin] = {}
     for call in calls:
         call_id = str(call.get("tool_call_id") or "")
         status = str(call.get("status") or "")
         if not call_id or status not in ("ok", "error"):
             continue
-        ref = call.get("result_ref") if isinstance(call.get("result_ref"), dict) else {}
-        pin: Dict[str, Any] = {"status": status}
+        ref_raw = call.get("result_ref")
+        ref = ref_raw if isinstance(ref_raw, dict) else {}
+        receipt_pin: ReceiptPin = {"status": status}
         if status == "ok" and ref.get("geojson_ref"):
-            pin["ref_minted"] = True
+            receipt_pin["ref_minted"] = True
         if status == "error" and call.get("error_code"):
             # 只钉折叠 code（录制 TOOL_RESULTS 的 code 键）—— 与 T4 实测
             # 端同量纲；自由文本 error_msg 不钉（review P2-2）。
-            pin["error_code"] = str(call["error_code"])[:48]
-        receipt_pins[call_id] = pin
+            receipt_pin["error_code"] = str(call["error_code"])[:48]
+        receipt_pins[call_id] = receipt_pin
     if receipt_pins:
         expect["receipt"] = receipt_pins
         # dedup 合同（review P2-3）：首 op 同参重发必为 repeated ——
@@ -181,8 +188,10 @@ def _candidate_expect(
 
 
 def _trace_turn(trace: Dict[str, Any]) -> Tuple[TurnSpec, Dict[str, List[str]]]:
+    # The trace codec owns the call fields. Keep the legacy dict boundary,
+    # including unknown additive fields, rather than reconstructing the record.
     calls = [
-        call for call in (trace.get("tool_calls") or [])
+        cast(RecordedToolCall, call) for call in (trace.get("tool_calls") or [])
         if isinstance(call, dict) and (call.get("tool_name") or call.get("tool_call_id"))
     ]
     expect, registry = _candidate_expect(trace, calls)
@@ -208,7 +217,7 @@ def traces_to_scenario(traces: Iterable[Any]) -> Optional[Scenario]:
 
     多条 = multi-turn（按 ``created_at_epoch`` 排序）；0 条 = None。
     expect 为**候选**形态（录制事实派生）—— 提交回归前应经
-    :func:`calibrate_recorded_scenario` 校准（裁掉当前环境不可复现的叶）。
+    :func:`calibrate_recorded_scenario` 报告当前环境差异（默认保留期望）。
     """
     normalized = [t for t in (_normalize(x) for x in traces) if t]
     if not normalized:
@@ -296,7 +305,7 @@ def _strip_empty(value: Any) -> Any:
 
 def _prune_expect(
     expected: Any, actual: Any, path: str,
-    dropped: List[Dict[str, Any]],
+    dropped: List[CalibrationDrop],
 ) -> Any:
     """校准：与当前推导不符的期望叶裁掉（收据留痕）；符合的保留。"""
     if isinstance(expected, dict):
@@ -337,8 +346,9 @@ async def calibrate_recorded_scenario(
     *,
     replayer: Optional[OfflineReplayer] = None,
     seed: int = 0,
-) -> Tuple[Scenario, Dict[str, Any]]:
-    """录制场景 expect 校准：跑一次当前环境重放，裁掉不可复现的期望叶。
+    allow_prune: bool = False,
+) -> Tuple[Scenario, CalibrationReport]:
+    """默认保留录制期望并报告环境差异；allow_prune 显式启用裁剪。
 
     返回（校准后场景副本, 收据）。校准保证：提交日的期望在当前环境下
     全部成立（与 --write-baseline 同时的冻结语义），此后任何维度的漂移
@@ -350,16 +360,18 @@ async def calibrate_recorded_scenario(
     rp = replayer or OfflineReplayer(seed=seed)
     calibrated = copy.deepcopy(scenario)
     result = await rp.replay_scenario(calibrated)
-    dropped: List[Dict[str, Any]] = []
-    for turn_result, turn in zip(result.turns, calibrated.turns):
+    dropped: List[CalibrationDrop] = []
+    for turn_result, turn in zip(result.turns, calibrated.turns, strict=True):
         if not turn.expect:
             continue
         actual = turn_result.actual_projection(
             dispatch_backed=calibrated.dispatch_backed,
             receipt_backed=calibrated.receipt_backed)
-        turn_dropped: List[Dict[str, Any]] = []
+        turn_dropped: List[CalibrationDrop] = []
         pruned = _prune_expect(turn.expect, actual, "", turn_dropped)
-        if pruned is _DROP_SENTINEL:
+        if not allow_prune:
+            pass  # Recorded expectations remain authoritative across environments.
+        elif pruned is _DROP_SENTINEL:
             turn.expect = {}
         else:
             stripped = _strip_empty(pruned)
@@ -369,8 +381,8 @@ async def calibrate_recorded_scenario(
     # 期望校验口径与重放器一致：剩余期望在当前环境必须零 diff（防呆：
     # 嵌套结构裁剪不应产生不一致状态）。
     verify = await rp.replay_scenario(calibrated)
-    residual: List[Dict[str, Any]] = []
-    for turn_result, turn in zip(verify.turns, calibrated.turns):
+    residual: List[ExactDiff] = []
+    for turn_result, turn in zip(verify.turns, calibrated.turns, strict=True):
         semantic_expect = {
             k: v for k, v in turn.expect.items() if k != "user_text"}
         for diff in compare_exact(
@@ -379,8 +391,8 @@ async def calibrate_recorded_scenario(
                     dispatch_backed=calibrated.dispatch_backed,
                     receipt_backed=calibrated.receipt_backed)):
             residual.append({"turn": turn_result.turn_index, **diff})
-    calibration: Dict[str, Any] = {
-        "calibrated": True,
+    calibration: CalibrationReport = {
+        "calibrated": bool(allow_prune),
         "dropped": dropped[:64],
         "dropped_count": len(dropped),
         "residual_diffs": residual[:32],

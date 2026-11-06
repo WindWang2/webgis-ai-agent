@@ -73,7 +73,10 @@ def _base_triple() -> tuple[str, str, str]:
 
 def resolve_llm_config(role: ModelRole | str = ModelRole.EXECUTION) -> LLMConfig:
     """按角色解析一份 LLMConfig —— 全进程唯一的 LLM 基础配置解析点。"""
-    role = ModelRole(role)
+    try:
+        role = ModelRole(role)
+    except ValueError:
+        role = ModelRole.EXECUTION
     base_url, model, api_key = _base_triple()
     if role is ModelRole.PLANNER and settings.LLM_PLANNER_MODEL:
         model = settings.LLM_PLANNER_MODEL

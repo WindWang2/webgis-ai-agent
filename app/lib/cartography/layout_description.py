@@ -150,6 +150,9 @@ def build_layout_ir(
             "style": {**style_in, "token": style_in.get("token")},
             "typography": comp.get("typography"),
         }
+        if isinstance(comp.get("content"), dict):
+            import copy
+            entry["content"] = copy.deepcopy(comp["content"])
         normalized.append(entry)
     normalized.sort(key=lambda c: (c["frame"]["z"], c["id"]))
     return {

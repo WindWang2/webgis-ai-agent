@@ -15,14 +15,17 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import List, Optional, Set
+
+from app.contracts.gis_trace import TraceChainRecord
+from app.evaluation.runtime_metrics import ChainGateEntry, ChainGateReport
 
 from app.lib.runtime.gis_trace import ALL_STAGES, STAGE_IDS, Stage
 
 DEFAULT_MIN_COMPLETENESS = 0.95
 
 
-def load_session_chains(session_id: str) -> List[Dict[str, Any]]:
+def load_session_chains(session_id: str) -> List[TraceChainRecord]:
     """会话持久化链（trace_store.read_chains 的评测侧别名）。"""
     from app.services.gis_harness.trace_store import read_chains
 
@@ -30,12 +33,12 @@ def load_session_chains(session_id: str) -> List[Dict[str, Any]]:
 
 
 def evaluate_chain_gate(
-    records: List[Dict[str, Any]],
+    records: List[TraceChainRecord],
     *,
     min_completeness: float = DEFAULT_MIN_COMPLETENESS,
     na_stages: Optional[Set[str]] = None,
     expected_stages: Optional[Set[str]] = None,
-) -> Dict[str, Any]:
+) -> ChainGateReport:
     """门裁决（纯函数）。
 
     records: ``chain.as_dict()`` 形状列表（含 ``stages`` / ``completeness`` /
@@ -47,9 +50,13 @@ def evaluate_chain_gate(
     仅在修复发生时发射）不应列入 expected。给 expected 时按集合覆盖
     裁决；否则退回比率门。
     """
+    known_stages = {Stage(int(i)).name for i in STAGE_IDS}
+    unknown_expected = set(expected_stages or ()) - known_stages
+    if unknown_expected:
+        raise ValueError(f"unknown expected trace stages: {sorted(unknown_expected)}")
     na = {str(s) for s in (na_stages or set())}
     unknown_na = na - {Stage(int(i)).name for i in STAGE_IDS}
-    per_chain: List[Dict[str, Any]] = []
+    per_chain: List[ChainGateEntry] = []
     passed = bool(records)
     # #1709：取消 records[:64] 截断——第 65 条以后的链此前既不计 passed
     # 也不进报告（静默绕过）。改为全量遍历，并在报告披露 total/truncated
@@ -109,7 +116,7 @@ def run_chain_gate_for_session(
     min_completeness: float = DEFAULT_MIN_COMPLETENESS,
     na_stages: Optional[Set[str]] = None,
     expected_stages: Optional[Set[str]] = None,
-) -> Dict[str, Any]:
+) -> ChainGateReport:
     """会话级门：读持久化链 + 裁决（评测/CI 入口）。"""
     return evaluate_chain_gate(
         load_session_chains(session_id),

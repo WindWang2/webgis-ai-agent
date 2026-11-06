@@ -198,6 +198,26 @@ def _features_from_input(payloads: dict[str, NodePayload], node: ExecutionNode) 
     )
 
 
+def _input_fc(payloads: dict[str, NodePayload], node: ExecutionNode) -> dict[str, Any]:
+    """features → FC（GOAL 01 G2 修复：上游声明的 CRS 随载荷过管）。
+
+    旧实现重建 FC 时丢掉 crs member —— 已投影（3857/UTM）载荷进入
+    buffer_smart 后被当 EPSG:4326 度处理（度/米混淆现行通路）。CRS 事实
+    由 ``_payload_from_feature_collection`` 记入 metadata，在此重新挂回。
+    """
+    feats = _features_from_input(payloads, node)
+    fc: dict[str, Any] = {"type": "FeatureCollection", "features": feats}
+    # 只信 inputs 载荷的 metadata.crs（数据带来的声明）。不读
+    # node.parameters["crs"]（R1 P2：parameters 是工作流作者自由 dict，
+    # "crs" 不是已接线 op 的标准参数 —— 从那里取会发明数据没有的声明）。
+    for src in node.inputs:
+        meta = payloads.get(src, {}).get("metadata")
+        if isinstance(meta, dict) and meta.get("crs"):
+            fc["crs"] = meta["crs"]
+            break
+    return fc
+
+
 def _props_of(item: Any) -> dict:
     """feature / 裸属性行 → 谓词与聚合作用的属性行。
 
@@ -243,7 +263,11 @@ def _rows_from_input(payloads: dict[str, NodePayload], node: ExecutionNode) -> l
 
 def _payload_from_feature_collection(fc: dict[str, Any], **extra: Any) -> NodePayload:
     feats = fc.get("features", fc if isinstance(fc, list) else [])
-    return {"features": list(feats), "metadata": {"feature_count": len(feats), **extra}}
+    meta: dict[str, Any] = {"feature_count": len(feats), **extra}
+    # GOAL 01 G2：声明 CRS 随载荷传递（_input_fc 在下游重建 FC 时挂回）。
+    if isinstance(fc, dict) and fc.get("crs"):
+        meta["crs"] = fc["crs"]
+    return {"features": list(feats), "metadata": meta}
 
 
 def _check_row_budget(rows: list[Any], ctx: OperatorContext, node: ExecutionNode) -> None:
@@ -460,8 +484,7 @@ def _op_vector_operation(ctx: OperatorContext, node: "ExecutionNode", payloads: 
     from app.lib.geo_processor.overlay import overlay_smart
 
     op = node.operation or node.parameters.get("op")
-    feats = _features_from_input(payloads, node)
-    fc = {"type": "FeatureCollection", "features": feats}
+    fc = _input_fc(payloads, node)
     params = node.parameters
     if op == "buffer":
         result = buffer_smart(
@@ -494,10 +517,14 @@ def _op_vector_operation(ctx: OperatorContext, node: "ExecutionNode", payloads: 
 
 def _payloads_fc(payloads: dict[str, NodePayload], node: "ExecutionNode", idx: int) -> dict[str, Any]:
     src = node.inputs[idx] if idx < len(node.inputs) else None
+    meta = (payloads.get(src or "", {}) or {}).get("metadata")
     feats = (payloads.get(src or "", {}) or {}).get("features")
     if not feats:
         raise NodeExecutionError(f"node '{node.node_id}' missing secondary feature input", node_id=node.node_id)
-    return {"type": "FeatureCollection", "features": feats}
+    fc: dict[str, Any] = {"type": "FeatureCollection", "features": feats}
+    if isinstance(meta, dict) and meta.get("crs"):
+        fc["crs"] = meta["crs"]
+    return fc
 
 
 def _op_raster_window_operation(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[str, NodePayload]) -> NodePayload:
@@ -510,6 +537,12 @@ def _op_raster_window_operation(ctx: OperatorContext, node: "ExecutionNode", pay
             node_id=node.node_id,
         )
     params = node.parameters
+    from app.services.scoped_raster_paths import resolve_scoped_raster_path, scoped_raster_roots
+
+    roots = scoped_raster_roots(session_id=ctx.session_id)
+    raster_path = resolve_scoped_raster_path(str(raster_path), roots=roots)
+    if params.get("out_path"):
+        resolve_scoped_raster_path(str(params["out_path"]), roots=roots)
     if op == "raster_calculator":
         from app.lib.geo_analysis.raster_math import raster_calculator
 
@@ -517,6 +550,8 @@ def _op_raster_window_operation(ctx: OperatorContext, node: "ExecutionNode", pay
         if not expression:
             raise NodeExecutionError("raster_calculator requires parameters.expression", node_id=node.node_id)
         second = params.get("raster_path_b") or _raster_from_inputs(payloads, node, index=1)
+        if second:
+            second = resolve_scoped_raster_path(str(second), roots=roots)
         result = raster_calculator(
             raster_a=str(raster_path),
             raster_b=str(second) if second else None,
@@ -577,8 +612,7 @@ def _raster_from_inputs(payloads: dict[str, NodePayload], node: "ExecutionNode",
 def _op_interpolation(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[str, NodePayload]) -> NodePayload:
     """INTERPOLATION：IDW（H3 网格，资源守卫内置）或普通克里金（含不确定度）。"""
     method = str(node.operation or node.parameters.get("method", "idw")).lower()
-    feats = _features_from_input(payloads, node)
-    fc = {"type": "FeatureCollection", "features": feats}
+    fc = _input_fc(payloads, node)
     value_field = node.parameters.get("value_field")
     if not value_field:
         raise NodeExecutionError("INTERPOLATION requires parameters.value_field", node_id=node.node_id)
@@ -786,7 +820,7 @@ def execute_node(ctx: OperatorContext, node: ExecutionNode, payloads: dict[str, 
                 # raster tile：源路径经 node.parameters 注入（coordinator
                 # 在 fan-out 时把上游 raster_path 写进 tile 参数 —— 路径
                 # 字符串是既有的 raster 载荷通货），worker 侧裁剪 halo 窗口。
-                node = _prepare_raster_tile_node(node, part, payloads)
+                node = _prepare_raster_tile_node(node, part, payloads, session_id=ctx.session_id or "")
             payloads, tile_empty = _apply_partition_slice(payloads, part, node)
             if tile_empty:
                 # 空格网 cell 是合法分区（该 cell 无数据）—— 跳过算子直接
@@ -821,6 +855,7 @@ def _prepare_raster_tile_node(
     node: ExecutionNode,
     part: dict[str, Any],
     payloads: dict[str, NodePayload],
+    *, session_id: Optional[str] = None,
 ) -> ExecutionNode:
     """raster tile 的源路径 → 裁剪后 tile 路径（返回参数重写后的节点副本）。
 
@@ -852,6 +887,12 @@ def _prepare_raster_tile_node(
     base, ext = _os.path.splitext(str(src_path))
     tile_path = "{}.tile{}{}".format(base, int(part.get("index", 0)),
                                      ext or ".tif")
+    if session_id is not None:
+        from app.services.scoped_raster_paths import resolve_scoped_raster_path, scoped_raster_roots
+
+        roots = scoped_raster_roots(session_id=session_id)
+        src_path = resolve_scoped_raster_path(str(src_path), roots=roots)
+        tile_path = resolve_scoped_raster_path(tile_path, roots=roots)
     result = crop_raster_window(src_path, dict(part["window"]), tile_path)
     params = {k: v for k, v in node.parameters.items()
               if k not in ("raster_path", "raster_path_b")}

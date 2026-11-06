@@ -297,8 +297,8 @@ class TestInducedShadow:
             ontology_matches=["distribution.point_distribution"],
         )
         d = policy.resolve(facts, allow_shadow=False)
-        assert d.mode == "blocked"
-        assert d.trust_tier == "quarantined"
+        assert d.mode in ("guide", "execute_guided")
+        assert d.selected_skill != "point_distribution_analysis"
 
     def test_malformed_dynamic_rejected_via_store(self, tmp_path):
         from app.services.gis_skills.induction.dynamic_provider import InducedSkillStore

@@ -12,9 +12,9 @@ aiosignal==1.4.0
     # via aiohttp
 aiosqlite==0.22.1
     # via -r requirements.txt
-alembic==1.20.0
+alembic==1.20.1
     # via -r requirements.txt
-amqp==5.4.1
+amqp==5.4.2
     # via kombu
 annotated-doc==0.0.5
     # via
@@ -22,9 +22,10 @@ annotated-doc==0.0.5
     #   typer
 annotated-types==0.8.0
     # via pydantic
-anyio==4.15.1
+anyio==4.16.0
     # via
     #   httpx
+    #   httpx2
     #   starlette
     #   watchfiles
 asyncpg==0.32.0
@@ -36,13 +37,15 @@ attrs==26.1.0
     #   rasterio
 beautifulsoup4==4.15.0
     # via libpysal
-billiard==4.3.1
+billiard==4.3.2
     # via celery
-brotli==1.2.0
-    # via fonttools
+brotli==1.2.1
+    # via
+    #   -r requirements.txt
+    #   fonttools
 celery==5.6.3
     # via -r requirements.txt
-certifi==2026.10.19
+certifi==2026.10.23
     # via
     #   httpcore
     #   httpx
@@ -86,9 +89,9 @@ cssselect2==0.10.1
     # via weasyprint
 cuda-bindings==13.4.4
     # via torch
-cuda-pathfinder==1.8.3
+cuda-pathfinder==1.8.5
     # via cuda-bindings
-cuda-toolkit==13.0.3.0
+cuda-toolkit==13.2.2
     # via torch
 cycler==0.12.1
     # via matplotlib
@@ -100,13 +103,13 @@ esda==2.10.0
     # via -r requirements.txt
 faiss-cpu==1.15.1
     # via -r requirements.txt
-fastapi==0.156.8
+fastapi==0.162.0
     # via -r requirements.txt
-filelock==4.2.4
+filelock==4.2.8
     # via
     #   huggingface-hub
     #   torch
-fonttools==4.67.0
+fonttools==4.68.0
     # via
     #   matplotlib
     #   weasyprint
@@ -128,20 +131,23 @@ greenlet==3.5.6
 h11==0.16.0
     # via
     #   httpcore
+    #   httpcore2
     #   uvicorn
 h3==4.5.0
     # via -r requirements.txt
-hf-xet==1.7.0
+hf-xet==1.8.0
     # via huggingface-hub
 httpcore==1.0.9
     # via httpx
+httpcore2==2.16.0
+    # via httpx2
 httptools==0.9.0
     # via uvicorn
 httpx==0.28.1
-    # via
-    #   -r requirements.txt
-    #   huggingface-hub
-huggingface-hub==1.33.0
+    # via -r requirements.txt
+httpx2==2.16.0
+    # via huggingface-hub
+huggingface-hub==2.4.0
     # via
     #   sentence-transformers
     #   tokenizers
@@ -150,6 +156,7 @@ idna==3.20
     # via
     #   anyio
     #   httpx
+    #   httpx2
     #   requests
     #   yarl
 ijson==3.6.0
@@ -163,9 +170,9 @@ joblib==1.6.0
     # via scikit-learn
 kiwisolver==1.5.1
     # via matplotlib
-kombu==5.6.2
+kombu==5.7.0
     # via celery
-libpysal==4.15.0
+libpysal==4.15.1
     # via
     #   -r requirements.txt
     #   esda
@@ -185,11 +192,11 @@ mdurl==0.1.2
     # via markdown-it-py
 mpmath==1.3.0
     # via sympy
-multidict==7.1.0
+multidict==7.2.1
     # via
     #   aiohttp
     #   yarl
-narwhals==2.27.1
+narwhals==2.28.0
     # via scikit-learn
 networkx==3.7
     # via
@@ -216,30 +223,30 @@ numpy==2.5.4
     #   sentence-transformers
     #   shapely
     #   transformers
-nvidia-cublas==13.1.1.3
+nvidia-cublas==13.4.1.3
     # via
     #   cuda-toolkit
     #   nvidia-cudnn-cu13
     #   nvidia-cusolver
-nvidia-cuda-cupti==13.0.85
+nvidia-cuda-cccl==13.3.4.3.1
+    # via nvidia-nvshmem-cu13
+nvidia-cuda-cupti==13.2.86
     # via cuda-toolkit
-nvidia-cuda-nvrtc==13.0.88
+nvidia-cuda-nvrtc==13.2.86
     # via
     #   cuda-toolkit
     #   nvidia-cublas
-nvidia-cuda-runtime==13.0.96
+nvidia-cuda-runtime==13.2.86
     # via cuda-toolkit
-nvidia-cudnn-cu13==9.24.0.43
+nvidia-cudnn-cu13==9.26.0.51
     # via torch
-nvidia-cufft==12.0.0.61
+nvidia-cufft==12.2.0.57
     # via cuda-toolkit
-nvidia-cufile==1.15.1.6
+nvidia-cufile==1.17.1.22
     # via cuda-toolkit
-nvidia-curand==10.4.0.35
+nvidia-cusolver==12.2.0.11
     # via cuda-toolkit
-nvidia-cusolver==12.0.4.66
-    # via cuda-toolkit
-nvidia-cusparse==12.6.3.3
+nvidia-cusparse==12.7.10.12
     # via
     #   cuda-toolkit
     #   nvidia-cusolver
@@ -253,11 +260,11 @@ nvidia-nvjitlink==13.4.92
     #   nvidia-cufft
     #   nvidia-cusolver
     #   nvidia-cusparse
-nvidia-nvshmem-cu13==3.4.5
+nvidia-nvshmem-cu13==3.7.2
     # via torch
-nvidia-nvtx==13.0.85
+nvidia-nvtx==13.2.86
     # via cuda-toolkit
-opentelemetry-api==1.45.1
+opentelemetry-api==1.45.2
     # via fastapi
 osmium==4.3.2
     # via -r requirements.txt
@@ -266,7 +273,6 @@ packaging==26.3
     #   faiss-cpu
     #   geopandas
     #   huggingface-hub
-    #   kombu
     #   libpysal
     #   matplotlib
     #   pyogrio
@@ -282,7 +288,7 @@ pillow==13.0.0
     #   -r requirements.txt
     #   matplotlib
     #   weasyprint
-platformdirs==4.13.5
+platformdirs==4.14.4
     # via libpysal
 primp==2.0.1
     # via duckduckgo-search
@@ -300,16 +306,16 @@ propcache==0.5.4
     #   yarl
 psycopg2-binary==2.9.13
     # via -r requirements.txt
-pycparser==3.11
+pycparser==3.12
     # via cffi
-pydantic==2.14.1
+pydantic==2.14.2
     # via
     #   -r requirements.txt
     #   fastapi
     #   pydantic-settings
-pydantic-core==2.50.1
+pydantic-core==2.50.2
     # via pydantic
-pydantic-settings==2.16.1
+pydantic-settings==2.16.2
     # via -r requirements.txt
 pydyf==0.13.0
     # via weasyprint
@@ -326,7 +332,7 @@ pyparsing==3.3.3
     # via
     #   matplotlib
     #   rasterio
-pypdf==6.21.2
+pypdf==6.21.4
     # via -r requirements.txt
 pyphen==0.18.1
     # via weasyprint
@@ -416,6 +422,7 @@ pystac-ext-xarray-assets==1.0.1
     # via pystac
 python-dateutil==2.9.0.post0
     # via
+    #   -r requirements.txt
     #   celery
     #   matplotlib
     #   pandas
@@ -426,9 +433,9 @@ python-dotenv==1.2.4
     #   -r requirements.txt
     #   pydantic-settings
     #   uvicorn
-python-multipart==0.0.32
+python-multipart==0.0.33
     # via -r requirements.txt
-pytz==2026.5
+pytz==2026.6
     # via pandas
 pyyaml==6.0.3
     # via
@@ -474,7 +481,7 @@ scipy==1.18.1
     #   libpysal
     #   scikit-learn
     #   sentence-transformers
-sentence-transformers==6.1.0
+sentence-transformers==6.2.0
     # via -r requirements.txt
 setuptools==84.2.1
     # via torch
@@ -491,13 +498,13 @@ simplejson==4.2.0
     # via rasterstats
 six==1.17.0
     # via python-dateutil
-soupsieve==3.0.3
+soupsieve==4.0
     # via beautifulsoup4
-sqlalchemy==2.0.55
+sqlalchemy==2.0.57
     # via
     #   -r requirements.txt
     #   alembic
-starlette==1.9.0
+starlette==1.10.0
     # via
     #   -r requirements.txt
     #   fastapi
@@ -518,17 +525,21 @@ tokenizers==0.23.3
     # via
     #   sentence-transformers
     #   transformers
-torch==2.14.1
+torch==2.15.0
     # via sentence-transformers
 tqdm==4.70.1
     # via
     #   huggingface-hub
     #   sentence-transformers
     #   transformers
-transformers==5.20.2
+transformers==5.22.1
     # via sentence-transformers
-triton==3.8.0
+triton==3.9.0
     # via torch
+truststore==0.10.5
+    # via
+    #   httpcore2
+    #   httpx2
 typer==0.27.3
     # via transformers
 typing-extensions==4.16.0
@@ -540,6 +551,7 @@ typing-extensions==4.16.0
     #   beautifulsoup4
     #   click-repl
     #   fastapi
+    #   httpx2
     #   huggingface-hub
     #   opentelemetry-api
     #   pydantic
@@ -555,11 +567,9 @@ typing-inspection==0.4.4
     #   fastapi
     #   pydantic
     #   pydantic-settings
-tzdata==2026.5
-    # via
-    #   kombu
-    #   pandas
-tzlocal==5.4.4
+tzdata==2026.6
+    # via pandas
+tzlocal==5.4.5
     # via celery
 urllib3==2.8.0
     # via requests
@@ -574,7 +584,7 @@ vine==5.1.0
     #   kombu
 watchfiles==1.3.0
     # via uvicorn
-wcwidth==0.9.3
+wcwidth==0.9.4
     # via prompt-toolkit
 weasyprint==70.0
     # via -r requirements.txt
@@ -583,7 +593,7 @@ webencodings==0.6.1
     #   cssselect2
     #   tinycss2
     #   tinyhtml5
-websockets==17.3
+websockets==17.4
     # via uvicorn
 yarl==1.25.1
     # via aiohttp

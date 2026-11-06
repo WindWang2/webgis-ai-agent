@@ -55,7 +55,7 @@ def client(monkeypatch, tmp_path):
     async def fake_verify(db, session_id, **kw):
         if session_id not in _OWNED_SESSIONS:
             raise HTTPException(status_code=404, detail="Session not found")
-        return SimpleNamespace(session_id=session_id)
+        return SimpleNamespace(id=session_id, session_id=session_id)
 
     monkeypatch.setattr(lakehouse_mod, "verify_session_owner", fake_verify)
     app = FastAPI()

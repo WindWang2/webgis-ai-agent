@@ -5,18 +5,21 @@
 接收前端 Canvas 合成结果并持久化。支持 PNG 和标准 PDF 制图输出。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from typing import Optional, Any
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from typing import Optional
 import asyncio
 import json  # noqa: F401  (kept: tests/test_event_loop_offload_427 monkeypatches map_mod.json.dumps)
 import logging
 import os
+import re
+from urllib.parse import quote
 import uuid
 import time
 import tempfile
+from pathlib import Path
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.auth import get_current_user_with_version, get_owner_token
+from app.core.auth import get_current_user_with_version, get_current_user_optional_with_version, get_owner_token
 from app.core.database import get_async_db
 from app.lib.cartography.pdf_renderer import RasterPdfBusyError
 from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
@@ -92,15 +95,48 @@ def _export_owners_remember(filename: str, owner: str) -> None:
         _EXPORT_OWNERS.popitem(last=False)
 
 
+async def _export_principal(user: dict, session_id: Optional[str], token: Optional[str], db: AsyncSession) -> str:
+    uid = user.get("user_id") if isinstance(user, dict) else None
+    if uid and uid != "anonymous":
+        return str(uid)
+    if not isinstance(session_id, str) or not session_id:
+        raise HTTPException(status_code=401, detail="An owned session is required for anonymous export")
+    from app.services.auth_history_bridge import verify_session_owner
+    await verify_session_owner(db, session_id, user_id=None, owner_token=token)
+    return f"session:{session_id}"
+
+
+def _export_download_url(filename: str, principal: str) -> str:
+    path = f"/api/v1/export/download/{filename}"
+    if principal.startswith("session:"):
+        from app.core.signing import sign_path
+        exp, sig = sign_path(path, ttl_seconds=3600)
+        return f"{path}?exp={exp}&sig={sig}"
+    return path
+
+
 def _set_export_owner(filename: str, user_id: str) -> None:
     """记录文件所有权，并在 EXPORT_DIR 下持久化 .owner 侧车文件以支持多 worker 进程环境。"""
-    _export_owners_remember(filename, user_id)
-    meta_path = os.path.join(_exports_dir_write(), f"{filename}.owner")
+    path = Path(_exports_dir_write()) / f"{filename}.owner"
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with open(meta_path, "w", encoding="utf-8") as f:
-            f.write(user_id)
-    except Exception as e:
-        logger.warning(f"Failed to write export owner sidecar: {e}")
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(user_id)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    _export_owners_remember(filename, user_id)
+
+
+async def _publish_export_owner(filename: str, owner: str) -> None:
+    try:
+        await asyncio.to_thread(_set_export_owner, filename, owner)
+    except OSError as exc:
+        logger.error("Export ownership receipt persistence failed", exc_info=True)
+        await asyncio.to_thread((Path(_exports_dir_str()) / filename).unlink, missing_ok=True)
+        raise HTTPException(503, "Export ownership receipt could not be persisted") from exc
 
 
 def _get_export_owner(filename: str) -> Optional[str]:
@@ -126,62 +162,7 @@ def _get_export_owner(filename: str) -> Optional[str]:
 # currently serves SVGs as application/octet-stream + attachment, but any
 # future code change that flips the disposition would activate stored XSS.
 # We sanitize at the gate (upload) so the on-disk file is always safe.
-_SVG_DANGEROUS_TAGS = {"script", "foreignObject", "iframe", "embed", "object", "use"}
-_SVG_HREF_ATTRS = {"href", "{http://www.w3.org/1999/xlink}href"}
-
-
-def _sanitize_svg(content: bytes) -> bytes:
-    """Parse + sanitize SVG content. Returns sanitized bytes.
-
-    Raises HTTPException(400) if content is not well-formed XML, root is not
-    <svg>, or the document uses XML entities (DTD / ENTITY — billion-laughs
-    / XXE protection).
-    """
-    from defusedxml import ElementTree as DET
-    from xml.etree import ElementTree as ET  # for serialization (defused parser, stdlib writer)
-
-    try:
-        root = DET.fromstring(content)  # forbid_dtd / forbid_entities default True
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"SVG 解析失败: {e}")
-
-    # Root must be <svg> (allow namespace prefix)
-    tag = root.tag.split("}", 1)[-1] if "}" in root.tag else root.tag
-    if tag.lower() != "svg":
-        raise HTTPException(status_code=400, detail=f"SVG 根元素必须是 svg, 实际是 {tag}")
-
-    # Walk the tree, strip dangerous elements + attributes in place.
-    # We do a two-pass walk to safely mutate.
-    def _walk(elem: Any) -> None:
-        # Strip on* attributes and javascript:/data:text href values
-        for attr in list(elem.attrib.keys()):
-            local = attr.split("}", 1)[-1] if "}" in attr else attr
-            if local.lower().startswith("on"):
-                del elem.attrib[attr]
-                continue
-            if attr in _SVG_HREF_ATTRS or local.lower() == "href":
-                val = elem.attrib.get(attr, "").strip().lower()
-                # Allow only data:image/... and same-doc fragments. Reject everything else.
-                if val.startswith("javascript:") or val.startswith("data:text") or val.startswith("data:application"):
-                    del elem.attrib[attr]
-                elif val.startswith("data:") and not val.startswith("data:image"):
-                    del elem.attrib[attr]
-        # Recurse, then remove children with dangerous tags
-        for child in list(elem):
-            child_tag = child.tag.split("}", 1)[-1] if "}" in child.tag else child.tag
-            if child_tag in _SVG_DANGEROUS_TAGS:
-                elem.remove(child)
-                continue
-            _walk(child)
-
-    _walk(root)
-
-    # Re-serialize. ElementTree's default emits xmlns properly.
-    try:
-        return ET.tostring(root, encoding="utf-8", xml_declaration=True)
-    except TypeError:
-        # Older Python: xml_declaration kw not on tostring; fall back
-        return b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="utf-8")
+from app.services.export_image_security import sanitize_svg as _sanitize_svg
 
 
 async def _record_lineage(
@@ -267,17 +248,18 @@ async def upload_map_export(
     # F14（ADR-0211 增补）：渲染 DPI —— 此前 canvas 链 lineage metadata 永远
     # 缺 dpi（前端 dpi 只作画布倍率）。72-600 钳制后如实入档。
     dpi: Optional[int] = Form(default=None),
-    _user: dict = Depends(get_current_user_with_version),
+    _user: dict = Depends(get_current_user_optional_with_version),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
     """接收来自前端的 Canvas 合成结果并持久化，返回可供下载访问的链接。"""
+    export_owner = await _export_principal(_user, session_id, owner_token, db)
     if not file.filename:
         raise HTTPException(status_code=400, detail="未提供文件名")
 
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in [".png", ".jpg", ".jpeg", ".svg"]:
-        ext = ".png"
+        raise HTTPException(415, "Unsupported export image format")
 
     filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:12]}{ext}"
 
@@ -306,6 +288,9 @@ async def upload_map_export(
         # 避免阻塞事件循环上所有并发 SSE 流（#386 同类遗留）。
         if ext == ".svg":
             content = await asyncio.to_thread(_sanitize_svg, content)
+        else:
+            from app.services.export_image_security import verify_bitmap
+            await asyncio.to_thread(verify_bitmap, content, ext)
 
         # 写入临时文件再原子移动，防止进程崩溃留下残缺文件 —— 同步写盘移出
         # 事件循环（#592：≤50MB 写入内联在 async def 会冻结全部并发流）。
@@ -329,7 +314,7 @@ async def upload_map_export(
 
     # 审计 P0：记录文件所有权，防止 IDOR（sidecar 与成品同名前缀，
     # 所有权以成品为准，读取端继承同一校验）。
-    _set_export_owner(filename, _user.get("user_id", "unknown"))
+    await _publish_export_owner(filename, export_owner)
 
     lineage: Optional[ExportLineageInfo] = None
     try:
@@ -428,7 +413,7 @@ async def upload_map_export(
             logger.warning("[export] manifest generation errored file=%s",
                            filename, exc_info=True)
 
-    download_url = f"/api/v1/export/download/{filename}"
+    download_url = _export_download_url(filename, export_owner)
     return MapExportResponse(
         success=True,
         filename=filename,
@@ -501,7 +486,7 @@ def _render_pdf_to_file(
 )
 async def export_map_as_vector_pdf(
     body: VectorPdfRequest,
-    _user: dict = Depends(get_current_user_with_version),
+    _user: dict = Depends(get_current_user_optional_with_version),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -520,6 +505,7 @@ async def export_map_as_vector_pdf(
     矢量入口待接线（接线时：ref 载体源须由调用方内联；未内联 → 400 typed
     拒绝；503 时回退栅格并向用户披露 vector_pdf_unavailable）。
     """
+    export_owner = await _export_principal(_user, body.session_id, owner_token, db)
     # R2-M6：载荷体积检查在事件循环外（线程）执行，避免主循环全量序列化
     import json as _json
 
@@ -529,8 +515,8 @@ async def export_map_as_vector_pdf(
     from app.services.publication_export import (
         PublicationBusyError,
         PublicationUnavailableError,
-        render_publication_pdf,
     )
+    from app.services.publication_render_worker import render_publication_bounded
     from app.lib.cartography.mapspec_schema import MapSpecSchemaError
 
     loop = asyncio.get_running_loop()
@@ -580,7 +566,7 @@ async def export_map_as_vector_pdf(
         result = await asyncio.wait_for(
             loop.run_in_executor(
                 None,
-                lambda: render_publication_pdf(
+                lambda: render_publication_bounded(
                     body.mapspec,
                     title=body.title or "WebGIS AI Agent 专题地图",
                     # 直传钳制：None→300 缺省，0/负→72 下限（生效值随响应披露）
@@ -611,8 +597,8 @@ async def export_map_as_vector_pdf(
     # R2-M6：同步落盘在工作线程（#592 不变式，与既有导出路由同模式）
     pdf_filename = f"map_vector_{int(time.time())}_{uuid.uuid4().hex[:12]}.pdf"
     _target = os.path.join(_exports_dir_write(), pdf_filename)
-    await loop.run_in_executor(None, lambda: open(_target, "wb").write(result.pdf))
-    _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
+    await asyncio.to_thread(Path(_target).write_bytes, result.pdf)
+    await _publish_export_owner(pdf_filename, export_owner)
 
     # F14 D6：矢量链结构化降级回执落 sidecar（与 canvas /export 同形：
     # GET /export/diagnostics/{filename} 立即可读、所有权同源）。此前矢量链
@@ -667,7 +653,7 @@ async def export_map_as_vector_pdf(
     return {
         "success": True,
         "filename": pdf_filename,
-        "url": f"/api/v1/export/download/{pdf_filename}",
+        "url": _export_download_url(pdf_filename, export_owner),
         "format": "pdf",
         "vector": True,
         "pages": result.page_count,
@@ -692,7 +678,10 @@ async def export_map_as_pdf(
     subtitle: Optional[str] = Form(default=None),
     author: Optional[str] = Form(default="WebGIS AI Agent"),
     scale_text: Optional[str] = Form(default=None),
-    _user: dict = Depends(get_current_user_with_version),
+    _user: dict = Depends(get_current_user_optional_with_version),
+    session_id: Optional[str] = Form(default=None),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     将前端合成的地图图片嵌入标准 A4 横向专题底图 PDF。
@@ -702,6 +691,7 @@ async def export_map_as_pdf(
     - 地图影像主体（保留原 Canvas 分辨率）
     - 页脚（时间戳、制图者、比例说明）
     """
+    export_owner = await _export_principal(_user, session_id, owner_token, db)
     try:
         content = await file.read(MAX_EXPORT_SIZE + 1)
         if len(content) > MAX_EXPORT_SIZE:
@@ -729,21 +719,26 @@ async def export_map_as_pdf(
         raise HTTPException(status_code=500, detail="PDF 生成失败")
 
     # 审计 P0：记录文件所有权
-    _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
+    await _publish_export_owner(pdf_filename, export_owner)
 
     return {
         "success": True,
         "filename": pdf_filename,
-        "url": f"/api/v1/export/download/{pdf_filename}",
+        "url": _export_download_url(pdf_filename, export_owner),
         "format": "pdf",
         "message": "专题底图 PDF 已成功生成",
     }
 
 
 @router.get("/export/download/{filename}", tags=["地图制图"])
-def download_map_export(filename: str, _user: dict = Depends(get_current_user_with_version)) -> FileResponse:
+def download_map_export(filename: str, _user: dict = Depends(get_current_user_optional_with_version),
+                        exp: Optional[int] = Query(None), sig: Optional[str] = Query(None)) -> FileResponse:
     """下载生成的专题地图成果（PNG / PDF）— 需验证文件所有权。"""
     safe_filename = os.path.basename(filename)
+    from app.core.signing import verify_signature
+    signed = bool(sig and exp) and verify_signature(f"/api/v1/export/download/{safe_filename}", exp, sig)
+    if _user.get("user_id") in (None, "", "anonymous") and not signed:
+        raise HTTPException(status_code=401, detail="Authentication or export capability required")
     filepath = os.path.join(_exports_dir_str(), safe_filename)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="地图文件不存在或已过期失效")
@@ -757,7 +752,7 @@ def download_map_export(filename: str, _user: dict = Depends(get_current_user_wi
     owner = _get_export_owner(safe_filename)
     if owner is None:
         raise HTTPException(status_code=404, detail="地图文件存在性无法验证，拒绝下载")
-    if owner != _user.get("user_id"):
+    if owner != _user.get("user_id") and not signed:
         raise HTTPException(status_code=403, detail="无权下载此文件")
 
     ext = os.path.splitext(safe_filename)[1].lower()
@@ -767,7 +762,8 @@ def download_map_export(filename: str, _user: dict = Depends(get_current_user_wi
     return FileResponse(
         filepath,
         media_type=media_type,
-        headers={"Content-Disposition": f'{disposition}; filename="{safe_filename}"'},
+        headers={"Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(safe_filename, safe='')}",
+                 "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'"},
     )
 
 
@@ -813,14 +809,14 @@ async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_cu
     if len(content) > MAX_EXPORT_SIZE:
         raise HTTPException(status_code=413, detail="GeoJSON 过大，上限 50MB")
 
-    safe_name = os.path.basename(req.filename).replace(" ", "_")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(req.filename)).strip("._")[:100] or "export"
     filename = f"{safe_name}_{uuid.uuid4().hex[:12]}.geojson"
     filepath = os.path.join(_exports_dir_write(), filename)
 
     await asyncio.to_thread(_write_export_file, filepath, content)
 
     # 审计 P0：记录文件所有权
-    _set_export_owner(filename, _user.get("user_id", "unknown"))
+    await _publish_export_owner(filename, _user["user_id"])
 
     return GeoJSONExportResponse(
         filename=filename,

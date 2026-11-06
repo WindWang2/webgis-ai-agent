@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { Database, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare } from 'lucide-react';
+import { Database, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
@@ -31,16 +31,17 @@ import { DatasetDescriptorModal } from './data-sources/dataset-descriptor-modal'
 import { PreviewModal } from './data-sources/preview-modal';
 import { DatasetInspector } from './data-sources/dataset-inspector';
 import { ExplainResultsPanel, type TypedQueryError } from './data-sources/explain-results-panel';
+import { PrepareFlow } from './data-preparation/prepare-flow';
 
 // A-F-08: debounce window re-exported so consumers/tests keep importing it from
 // the tab entry point (constant itself lives with the catalog hook).
 export { CATALOG_SEARCH_DEBOUNCE_MS } from './data-sources/use-spatial-catalog';
 
 /** 数据工作台子页签（V2 / ADR-0094：目录 → 数据源 → 数据集 → 查询计划）。 */
-type DataSubTab = 'catalog' | 'sources' | 'dataset' | 'explain';
+type DataSubTab = 'catalog' | 'sources' | 'dataset' | 'explain' | 'prepare';
 
 /** 子页签顺序即渲染顺序（V4 tablist 键盘导航用）。空间目录保持默认首页签。 */
-const SUBTABS: DataSubTab[] = ['catalog', 'sources', 'dataset', 'explain'];
+const SUBTABS: DataSubTab[] = ['catalog', 'sources', 'dataset', 'explain', 'prepare'];
 
 /** sync 后的增量 diff 通知（V2 / ADR-0094 §9：added/updated/removed + warnings）。 */
 interface SyncNotice {
@@ -116,6 +117,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
   const [materializingId, setMaterializingId] = useState<string | null>(null);
 
   // ── V2 数据工作台状态（数据集检视器 + 查询计划/结果） ─────────────────
+  const inspectedIdRef = useRef<string | null>(null);
   const [inspectedItem, setInspectedItem] = useState<CatalogItem | null>(null);
   const [inspectedDescriptor, setInspectedDescriptor] = useState<DatasetDescriptor | null>(null);
   const [loadingDescriptor, setLoadingDescriptor] = useState(false);
@@ -141,6 +143,8 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
   const {
     catalogItems,
     catalogTotal,
+    hasMoreCatalog,
+    loadMoreCatalog,
     loadingCatalog,
     searchQuery,
     setSearchQuery,
@@ -228,6 +232,9 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
   /** 打开数据集检视器：切换子页签 + 重置上一数据集的计划/结果 + 拉取契约。 */
   const handleInspect = useCallback(
     async (item: CatalogItem) => {
+      inspectedIdRef.current = item.id;
+      setQuerying(false);
+      setExplaining(false);
       setInspectedItem(item);
       setActiveSubTab('dataset');
       // 结果/计划归属旧数据集 —— 重置，避免跨数据集串显。
@@ -241,11 +248,12 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       setLoadingDescriptor(true);
       try {
         const desc = await dataFabricApi.getCatalogItemDescriptor(item.id);
+        if (inspectedIdRef.current !== item.id) return;
         setInspectedDescriptor(desc);
       } catch (err) {
         addToast(describeApiError(err, t('sidebar.ds.descriptorFailed')), 'error');
       } finally {
-        setLoadingDescriptor(false);
+        if (inspectedIdRef.current === item.id) setLoadingDescriptor(false);
       }
     },
     [addToast, t]
@@ -262,6 +270,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       if (extras?.offset !== undefined && extras.offset > 0) fullSpec.offset = extras.offset;
       try {
         const res = await dataFabricApi.queryCatalogItem(inspectedItem.id, fullSpec);
+        if (inspectedIdRef.current !== inspectedItem.id) return;
         setQueryResult(res);
         setLastSpec(spec);
         const pageSize = Math.max(1, spec.limit ?? 100);
@@ -270,10 +279,11 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         else setQueryPage(0);
         setActiveSubTab('explain');
       } catch (err) {
+        if (inspectedIdRef.current !== inspectedItem.id) return;
         setQueryError(extractTypedError(err, t('sidebar.explain.queryFailed')));
         setActiveSubTab('explain');
       } finally {
-        setQuerying(false);
+        if (inspectedIdRef.current === inspectedItem.id) setQuerying(false);
       }
     },
     [inspectedItem, t]
@@ -287,12 +297,16 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       setExplainError(null);
       try {
         const res = await dataFabricApi.explainCatalogItem(inspectedItem.id, spec);
+        if (inspectedIdRef.current !== inspectedItem.id) return;
         setExplainResult(res);
       } catch (err) {
+        if (inspectedIdRef.current !== inspectedItem.id) return;
         setExplainError(extractTypedError(err, t('sidebar.explain.planFailed')));
       } finally {
-        setExplaining(false);
-        setActiveSubTab('explain');
+        if (inspectedIdRef.current === inspectedItem.id) {
+          setExplaining(false);
+          setActiveSubTab('explain');
+        }
       }
     },
     [inspectedItem, t]
@@ -347,7 +361,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       try {
         const geojson = await dataFabricApi.fetchRefGeoJSON(res.ref_id, sessionId, { ownerToken });
         if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
-          updateLayer(layerId, { source: geojson });
+          updateLayer(layerId, { source: geojson, _refId: res.ref_id });
         }
       } catch {
         // The layer exists and the ref was stored — only the immediate
@@ -415,6 +429,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           {renderSubTabButton('sources', t('sidebar.ds.subtabSources', { count: sources.length }), Database)}
           {renderSubTabButton('dataset', t('sidebar.ds.dataset'), Table2)}
           {renderSubTabButton('explain', t('sidebar.explain.planTitle'), Sigma)}
+          {renderSubTabButton('prepare', t('dataPreparation.subtab'), FlaskConical)}
         </div>
         {/* ADR-0147：高级查询控制台入口（写 SQL 的用户直达，不必经 chat）。
             tablist 内只放 tab（APG），入口按钮置于 tablist 兄弟位。 */}
@@ -449,7 +464,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
 
           {/* Catalog items list */}
           <div className="flex-1 space-y-2 overflow-y-auto p-2">
-            {loadingCatalog ? (
+            {loadingCatalog && catalogItems.length === 0 ? (
               <LoadingState label={t('sidebar.ds.loadingCatalog')} />
             ) : catalogItems.length === 0 ? (
               <EmptyState icon={SearchX} title={t('sidebar.ds.emptyCatalog')} />
@@ -465,6 +480,12 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
                   onInspect={handleInspect}
                 />
               ))
+            )}
+            {hasMoreCatalog && (
+              <button type="button" disabled={loadingCatalog} onClick={() => void loadMoreCatalog()}
+                className="w-full rounded-md border border-edge-subtle px-2 py-2 text-meta text-ink-secondary hover:bg-surface-hover disabled:opacity-50">
+                {loadingCatalog ? t('sidebar.ds.loadingCatalog') : t('sidebar.ds.loadMoreCatalog')}
+              </button>
             )}
           </div>
         </div>
@@ -554,6 +575,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
           <DatasetInspector
+            key={inspectedItem?.id}
             item={inspectedItem}
             descriptor={inspectedDescriptor}
             loadingDescriptor={loadingDescriptor}
@@ -569,6 +591,16 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       )}
 
       {/* Explain & Results (V2) */}
+      {activeSubTab === 'prepare' && (
+        <div
+          role="tabpanel"
+          id="data-subtab-panel-prepare"
+          aria-labelledby="data-subtab-prepare"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        >
+          <PrepareFlow sessionId={sessionId} ownerToken={ownerToken} />
+        </div>
+      )}
       {activeSubTab === 'explain' && (
         <div
           role="tabpanel"

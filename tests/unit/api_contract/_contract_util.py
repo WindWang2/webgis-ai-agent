@@ -38,6 +38,8 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/layers/data/{ref_id}/feature/{feature_id}"): "single feature passthrough (media_type)",
     ("GET", "/api/v1/uploads/{upload_id}/geojson"): "GeoJSON passthrough (application/geo+json)",
     ("GET", "/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf"): "vector tile bytes",
+    ("GET", "/api/v1/data-fabric/catalog/{item_id}/pmtiles-tiles/{z}/{x}/{y}"): "archive tile bytes with original media type, ETag and 204/304",
+    ("GET", "/api/v1/data-fabric/catalog/{item_id}/ogc-tiles/{z}/{x}/{y}"): "OGC tile bytes with upstream media type, ETag and 204/304",
     ("GET", "/metrics"): "Prometheus exposition format",
     # ── G3D-V2-A：TileJSON 手工构造 Response（ETag 字节稳定序列化 + 304 语义，
     #    response_model 介入会破坏 ETag 可重现性；同族先例 pmtiles-tiles）──

@@ -468,3 +468,314 @@ def _check_isoline_contour_rules(
                     evidence={"levels_count": len(levels)},
                 )
 
+
+
+# ── /goal cartography-design M4：跨组件口径 / 视口覆盖 / 密度语义诚实 ──────
+# 三个检查共用「单位语义族」词表（审定静态表；中英双语 token）。族间冲突
+# 的判据是**词法证据**（图面文本/字段名/图层类型），不做语义推断——证据
+# 缺席一律 not_evaluated，不伪造 pass（契约 not_evaluable_tail 纪律）。
+
+#: 单位语义族 token（小写子串匹配；先具体后泛化——判定顺序即优先级）。
+_MEASURE_FAMILY_TOKENS: List[tuple] = [
+    ("density_per_pop", ("每万人", "每千人", "人均", "人口密度",
+                          "population density", "per capita", "per 10k",
+                          "万人口")),
+    ("density_per_area", ("每平方公里", "每km²", "每平方千米", "/km²", "/km2",
+                           "per km²", "per km2", "per square")),
+    ("count", ("个", "所", "家", "条", "处", "数量", "计数", "总数",
+                "count", "number of", "total")),
+    ("density_generic", ("密度", "density")),
+]
+#: 披露 token（在场即视为口径已披露——核密度估计/估计值/模拟等）。
+_DISCLOSURE_TOKENS = ("核密度", "kde", "kernel density", "估计", "估算",
+                       "模拟", "simulated", "口径不同", "另注口径")
+
+
+def _classify_measure_family(text: str) -> Optional[str]:
+    """文本 → 单位语义族（词法证据；多族命中取最具体——表序即优先级）。"""
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return None
+    for family, tokens in _MEASURE_FAMILY_TOKENS:
+        if any(tok in lowered for tok in tokens):
+            return family
+    return None
+
+
+def _layer_measure_text(layer: Dict[str, Any]) -> str:
+    """层的度量语义面：图层名 + legend_spec 标题/单位 + data_binding 字段。"""
+    parts: List[str] = [str(layer.get("name") or "")]
+    legend = layer.get("legend_spec")
+    if isinstance(legend, dict):
+        for key in ("title", "units", "unit", "label", "field"):
+            value = legend.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+    binding = layer.get("data_binding")
+    if isinstance(binding, dict):
+        parts.append(str(binding.get("field") or ""))
+    return " ".join(p for p in parts if p)
+
+
+def _thematic_layers(layers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """主题层：带 legend_spec 或 data_binding 的可见层（口径对账的对象面）。"""
+    return [
+        ly for ly in layers
+        if isinstance(ly, dict) and ly.get("visible", True)
+        and (isinstance(ly.get("legend_spec"), dict)
+             or isinstance(ly.get("data_binding"), dict))
+    ]
+
+
+def _chart_measure_components(
+    mapspec: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """携带度量语义的图表/表格组件（chart_panel / table_panel）。"""
+    layout = mapspec.get("layout") if isinstance(mapspec.get("layout"), dict) else {}
+    raw = layout.get("components")
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for comp in raw:
+        if not isinstance(comp, dict) or comp.get("type") not in (
+                "chart_panel", "table_panel"):
+            continue
+        options = comp.get("options") if isinstance(comp.get("options"), dict) else {}
+        chart = options.get("chart") if isinstance(options.get("chart"), dict) else {}
+        text = " ".join(str(t) for t in filter(None, (
+            options.get("title"), comp.get("title"),
+            chart.get("title"), chart.get("y_label"), chart.get("x_label"),
+        )) if isinstance(t, str))
+        if text.strip():
+            out.append({"id": str(comp.get("id") or ""), "text": text})
+    return out
+
+
+def _check_chart_map_field_coherence(
+    report: "CartographyReport", mapspec: Dict[str, Any],
+) -> None:
+    """统计图 ↔ 地图主题层度量口径对账（M4；图面共同口径收据）。
+
+    - 双侧单位语义族在场且矛盾（率/密度 vs 计数）且无披露 → fail；
+    - 同族 → pass；单侧证据 → not_evaluated；双侧无度量语义 → 不发检查
+      （该图无统计图组件或图面无度量语义，维度不适用）。
+    """
+    charts = _chart_measure_components(mapspec)
+    layers = [ly for ly in (mapspec.get("layers") or [])
+              if isinstance(ly, dict)]
+    thematic = _thematic_layers(layers)
+    if not charts or not thematic:
+        return
+    worst: Optional[Dict[str, Any]] = None
+    for chart in charts:
+        chart_family = _classify_measure_family(chart["text"])
+        for layer in thematic:
+            map_family = _classify_measure_family(_layer_measure_text(layer))
+            if chart_family is None or map_family is None:
+                continue
+            disclosed = any(tok in (chart["text"] +
+                                    _layer_measure_text(layer)).lower()
+                            for tok in _DISCLOSURE_TOKENS)
+            rate_families = ("density_per_pop", "density_per_area")
+            contradictory = (
+                (chart_family in rate_families) != (map_family in rate_families))
+            if contradictory and not disclosed:
+                item = {"status": "fail", "chart": chart["id"],
+                        "layer": str(layer.get("id") or ""),
+                        "chartFamily": chart_family, "mapFamily": map_family}
+            elif contradictory:
+                item = {"status": "warning", "chart": chart["id"],
+                        "layer": str(layer.get("id") or ""),
+                        "chartFamily": chart_family, "mapFamily": map_family,
+                        "disclosed": True}
+            else:
+                item = {"status": "pass", "chart": chart["id"],
+                        "layer": str(layer.get("id") or ""),
+                        "chartFamily": chart_family, "mapFamily": map_family}
+            order = {"fail": 0, "warning": 1, "pass": 2}
+            if worst is None or order[item["status"]] < order[worst["status"]]:
+                worst = item
+    if worst is None:
+        report.add_check(
+            "CHART_MAP_FIELD_COHERENCE", "not_evaluated",
+            "chart/map measure semantics present on one side only — "
+            "cannot reconcile units",
+            evidence_class="desired_state",
+        )
+        return
+    message = {
+        "fail": (f"chart '{worst['chart']}' 与图层 '{worst['layer']}' 度量口径"
+                 f"矛盾（{worst['chartFamily']} vs {worst['mapFamily']}）且无披露"),
+        "warning": (f"chart '{worst['chart']}' 与图层 '{worst['layer']}' 度量口径"
+                    f"矛盾（{worst['chartFamily']} vs {worst['mapFamily']}），"
+                    "已有披露标注"),
+        "pass": (f"chart '{worst['chart']}' 与图层 '{worst['layer']}' 度量口径"
+                 f"同族（{worst['chartFamily']}）"),
+    }[worst["status"]]
+    report.add_check(
+        "CHART_MAP_FIELD_COHERENCE", worst["status"], message,
+        severity="error" if worst["status"] == "fail" else
+        ("warning" if worst["status"] == "warning" else "info"),
+        evidence_class="desired_state", evidence=worst,
+    )
+
+
+def _check_viewport_covers_results(
+    report: "CartographyReport", mapspec: Dict[str, Any],
+) -> None:
+    """视口必须覆盖可见结果层（M4；补 carto.load.ratio coverage=0 反 pass 漏洞）。
+
+    证据：view center/zoom（Web-Mercator 尺度推视口跨度，2× 屏宽余量）
+    × 可见层 source profile bbox。任一可见层与视口相交 → pass；全部
+    （有 bbox 证据者）零交集 → fail；view 或 bbox 证据缺席 → not_evaluated。
+    """
+    view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
+    center = view.get("center")
+    zoom = view.get("zoom")
+    sources = mapspec.get("sources") if isinstance(mapspec.get("sources"), dict) else {}
+    layers = [ly for ly in (mapspec.get("layers") or []) if isinstance(ly, dict)]
+
+    visible_with_bbox: List[Dict[str, Any]] = []
+    for layer in layers:
+        if not layer.get("visible", True):
+            continue
+        source = sources.get(layer.get("source") or "")
+        profile = source.get("profile") if isinstance(source, dict) else None
+        bbox = profile.get("bbox") if isinstance(profile, dict) else None
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            visible_with_bbox.append(
+                {"id": str(layer.get("id") or ""), "bbox": [float(b) for b in bbox]})
+
+    if not isinstance(center, (list, tuple)) or len(center) != 2 or zoom is None:
+        report.add_check(
+            "VIEWPORT_COVERS_RESULTS", "not_evaluated",
+            "view center/zoom absent — viewport coverage not computable",
+            evidence_class="desired_state",
+            evidence={"visible_layers_checked": len(visible_with_bbox)},
+        )
+        return
+    if not visible_with_bbox:
+        report.add_check(
+            "VIEWPORT_COVERS_RESULTS", "not_evaluated",
+            "no visible layer carries bbox evidence — coverage not computable",
+            evidence_class="desired_state", evidence={},
+        )
+        return
+    # Web-Mercator 视口跨度估算（全屏世界宽 360°/2^z；2× 余量覆盖超宽屏与
+    # pitch）。经度差归一到 [-180,180]（跨日界线诚实）。
+    try:
+        zoom_f = float(zoom)
+        cx, cy = float(center[0]), float(center[1])
+    except (TypeError, ValueError):
+        report.add_check(
+            "VIEWPORT_COVERS_RESULTS", "not_evaluated",
+            "view center/zoom malformed", evidence_class="desired_state")
+        return
+    margin = 2.0
+    half_w = margin * 360.0 / (2.0 ** (zoom_f + 1))
+    half_h = margin * 170.0 / (2.0 ** (zoom_f + 1))
+    for item in visible_with_bbox:
+        w, s, e, n = item["bbox"]
+        # 环绕归一：视口中心与 bbox 最近经度差（跨日界线诚实）
+        nearest_lng = max(w, min(cx, e))
+        dx = (cx - nearest_lng + 180.0) % 360.0 - 180.0
+        dy = cy - max(s, min(cy, n))
+        if abs(dx) <= half_w and abs(dy) <= half_h:
+            report.add_check(
+                "VIEWPORT_COVERS_RESULTS", "pass",
+                f"viewport intersects visible layer '{item['id']}' bounds",
+                evidence_class="desired_state",
+                evidence={"layer": item["id"], "bbox": item["bbox"],
+                          "center": [cx, cy], "zoom": zoom_f},
+            )
+            return
+    report.add_check(
+        "VIEWPORT_COVERS_RESULTS", "fail",
+        "viewport does not intersect any visible layer with bounds evidence "
+        "— necessary results are off-screen",
+        severity="error",
+        evidence_class="desired_state",
+        evidence={"center": [cx, cy], "zoom": zoom_f,
+                  "layers_outside": [i["id"] for i in visible_with_bbox[:6]],
+                  "half_span_deg": [round(half_w, 3), round(half_h, 3)]},
+    )
+
+
+_COUNT_FIELD_TOKENS = ("count", "数量", "计数", "总数", "num", "_cnt",
+                        "total", "sum", "个数")
+
+
+def _check_density_semantics_honesty(
+    report: "CartographyReport", mapspec: Dict[str, Any],
+) -> None:
+    """密度图面语义诚实（M4；分布图误标密度 / KDE 冒充人口密度）。
+
+    - heatmap 层声称人口/单位面积密度且无核密度披露 → fail；
+    - 原始计数字段标注率/密度口径且无披露 → warning；
+    - 泛「密度」声称在 heatmap 上无核密度披露 → warning；
+    - 数据口径证据不足（无字段证据可判）→ not_evaluated。
+    无密度语义线索的层不发检查（维度不适用）。
+    """
+    layers = [ly for ly in (mapspec.get("layers") or []) if isinstance(ly, dict)]
+    for layer in layers:
+        lid = str(layer.get("id") or "")
+        text = _layer_measure_text(layer)
+        claim = _classify_measure_family(text)
+        if claim not in ("density_per_pop", "density_per_area",
+                         "density_generic"):
+            continue
+        disclosed = any(tok in text.lower() for tok in _DISCLOSURE_TOKENS)
+        is_kde = str(layer.get("type") or "") == "heatmap"
+        binding = layer.get("data_binding")
+        field = str(binding.get("field") or "") if isinstance(binding, dict) else ""
+        legend = layer.get("legend_spec")
+        if not field and isinstance(legend, dict):
+            field = str(legend.get("field") or "")
+        field_countish = any(tok in field.lower() for tok in _COUNT_FIELD_TOKENS)
+        if claim in ("density_per_pop", "density_per_area"):
+            if is_kde and not disclosed:
+                report.add_check(
+                    "DENSITY_SEMANTICS_HONESTY", "fail",
+                    f"layer '{lid}' 图面声称 {claim}，但热力层是核密度估计且"
+                    "无披露——不得冒充人口/单位面积密度",
+                    severity="error", layer_id=lid,
+                    evidence_class="desired_state",
+                    evidence={"claim": claim, "layer_type": "heatmap",
+                              "disclosed": False},
+                )
+            elif is_kde:
+                report.add_check(
+                    "DENSITY_SEMANTICS_HONESTY", "pass",
+                    f"layer '{lid}' 热力密度声称带核密度披露",
+                    layer_id=lid, evidence_class="desired_state",
+                    evidence={"claim": claim, "disclosed": True})
+            elif field_countish and not disclosed:
+                report.add_check(
+                    "DENSITY_SEMANTICS_HONESTY", "warning",
+                    f"layer '{lid}' 字段 '{field}' 为原始计数，图面标注"
+                    f"{claim} 口径——需归一分母或改注计数口径",
+                    severity="warning", layer_id=lid,
+                    evidence_class="desired_state",
+                    evidence={"claim": claim, "field": field},
+                )
+            else:
+                report.add_check(
+                    "DENSITY_SEMANTICS_HONESTY", "not_evaluated",
+                    f"layer '{lid}' 密度口径声称在场，但数据字段口径证据不足",
+                    layer_id=lid, evidence_class="desired_state",
+                    evidence={"claim": claim, "field": field or None})
+        elif claim == "density_generic" and is_kde:
+            if disclosed:
+                report.add_check(
+                    "DENSITY_SEMANTICS_HONESTY", "pass",
+                    f"layer '{lid}' 热力密度概览带核密度披露",
+                    layer_id=lid, evidence_class="desired_state",
+                    evidence={"claim": claim, "disclosed": True})
+            else:
+                report.add_check(
+                    "DENSITY_SEMANTICS_HONESTY", "warning",
+                    f"layer '{lid}' 热力层声称密度但未披露核密度估计性质"
+                    "（KDE ≠ 人口密度）",
+                    severity="warning", layer_id=lid,
+                    evidence_class="desired_state",
+                    evidence={"claim": claim, "disclosed": False})

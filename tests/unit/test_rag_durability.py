@@ -333,7 +333,8 @@ def test_compact_drops_contentless_chunks(patch_embed):
         # Only the broken chunk is active (d1 was deleted, d_broken
         # has no content to rebuild). New behavior: drops content-less
         # chunks entirely, so the index and metadata end up empty.
-        assert result["purged"] == 1  # d1
+        assert result["purged"] == 2  # deleted d1 plus unusable content-less slot
+        assert patch_embed["calls"] == 0  # maintenance reconstructs, never re-embeds
         # The "kept" count after dropping content-less chunks is 0.
         assert result["total"] == 0
         meta = store.load_metadata()
@@ -660,8 +661,8 @@ def test_recovery_pads_orphan_slots_when_index_is_ahead():
     store, dir_ = _tmp_store()
     try:
         store.add_vectors(_fake_vectors(2), [
-            {"document_id": "d1", "content": "alpha"},
-            {"document_id": "d2", "content": "beta"},
+            {"document_id": "d1", "content": "alpha", "user_id": "alice"},
+            {"document_id": "d2", "content": "beta", "user_id": "alice"},
         ])
 
         # Crash window: index gains 2 orphan vectors, metadata stays at 2.
@@ -696,7 +697,7 @@ def test_recovery_pads_orphan_slots_when_index_is_ahead():
         # Search skips the orphan slots: a query matching the row-0 vector
         # hits both slot 0 (real) and slot 2 (orphan, same vector) — only
         # the real one may come back.
-        results = fresh.search(_fake_vectors(1), top_k=10)
+        results = fresh.search(_fake_vectors(1), top_k=10, user_id="alice")
         assert {r["content"] for r in results} == {"alpha", "beta"}, (
             f"orphan slots leaked into search results: {[r.get('content') for r in results]}"
         )
@@ -728,8 +729,8 @@ def test_add_vectors_after_index_ahead_crash_keeps_slots_aligned():
     store, dir_ = _tmp_store()
     try:
         store.add_vectors(np.vstack([v_alpha, v_beta]), [
-            {"document_id": "d1", "content": "alpha"},
-            {"document_id": "d2", "content": "beta"},
+            {"document_id": "d1", "content": "alpha", "user_id": "alice"},
+            {"document_id": "d2", "content": "beta", "user_id": "alice"},
         ])
 
         # Crash window: index.faiss lands with 1 extra (orphan) vector,
@@ -738,7 +739,7 @@ def test_add_vectors_after_index_ahead_crash_keeps_slots_aligned():
         store._index = None  # next op reloads the crashed index from disk
 
         # The upload that arrives after the crash.
-        store.add_vectors(v_gamma, [{"document_id": "d3", "content": "gamma"}])
+        store.add_vectors(v_gamma, [{"document_id": "d3", "content": "gamma", "user_id": "alice"}])
 
         meta = store.load_metadata()
         disk_idx = faiss.read_index(os.path.join(dir_, "index.faiss"))
@@ -760,7 +761,7 @@ def test_add_vectors_after_index_ahead_crash_keeps_slots_aligned():
         # Query the orphan vector: pre-fix its top hit (slot 2) was answered
         # with d3/gamma's metadata; post-fix the slot is skipped and the
         # top hit is the real nearest neighbour, alpha.
-        top = store.search(v_orphan, top_k=1)
+        top = store.search(v_orphan, top_k=1, user_id="alice")
         assert len(top) == 1
         assert top[0]["content"] == "alpha", (
             f"#1704: orphan slot surfaced wrong metadata: {top[0]}"
@@ -768,12 +769,12 @@ def test_add_vectors_after_index_ahead_crash_keeps_slots_aligned():
         assert top[0]["document_id"] == "d1"
 
         # Query gamma's own vector: must hit gamma's own metadata.
-        top_gamma = store.search(v_gamma, top_k=1)
+        top_gamma = store.search(v_gamma, top_k=1, user_id="alice")
         assert top_gamma[0]["content"] == "gamma"
         assert top_gamma[0]["document_id"] == "d3"
 
         # No result may ever carry the placeholder marker.
-        for r in store.search(v_orphan, top_k=10) + store.search(v_gamma, top_k=10):
+        for r in store.search(v_orphan, top_k=10, user_id="alice") + store.search(v_gamma, top_k=10, user_id="alice"):
             assert not r.get("unavailable")
     finally:
         import shutil

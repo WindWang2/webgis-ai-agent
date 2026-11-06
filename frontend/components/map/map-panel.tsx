@@ -116,6 +116,7 @@ import { MapDecorations } from "./map-decorations"
 import { CHROME_RENDERABLE_TYPES, specHasDecorationComponent } from '@/lib/map-components/chrome-types'
 import { MapToolbarHUD, type MeasureMode } from "./map-toolbar-hud"
 import { VisualRepairCard } from "./visual-repair-card"
+import { MapHarnessCards } from "./map-harness-cards"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
 import { remountCustomOverlays } from "@/lib/map-kit/custom-overlay-registry"
@@ -136,6 +137,7 @@ import {
   injectResolvedRefSources,
   subscribeRefSources,
   getRefSourcesGeneration,
+  getRefSourceBudget,
 } from "@/lib/mapspec/ref-source-resolver"
 import {
   getCommittedMapSpec,
@@ -157,6 +159,16 @@ import {
 } from "@/lib/interaction/bus"
 import type { Scene3dPickHit } from "@/lib/map-kit/scene3d"
 import { ComparisonView } from "@/components/map/comparison"
+import { TemporalTimeController } from "@/components/map/temporal-time-controller"
+import { applyTemporalToSpec } from "@/lib/temporal-map/filter"
+import type { MapSpecTemporalConfig } from "@/lib/mapspec-compiler/types"
+import {
+  getLiveTemporalFrame,
+  getLiveTemporalGeneration,
+  getLiveTemporalRequest,
+  markLiveApplied,
+  subscribeLiveTemporal,
+} from "@/lib/temporal-map/live-frame"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
@@ -209,7 +221,8 @@ interface MapPanelProps {
 
 import { useMapAction } from "@/lib/contexts/map-action-context"
 
-export function getMapStyle(option: MapStyleOption, index: number): string | StyleSpecification {
+export function getMapStyle(option: MapStyleOption | undefined, index: number): string | StyleSpecification {
+  if (!option) return { version: 8, sources: {}, layers: [{ id: "offline-background", type: "background", paint: { "background-color": "#17212b" } }] };
   if (option.type === "raster") {
     const sourceId = `raster-tiles-${index}`;
     const layerId = `raster-tiles-layer-${index}`;
@@ -270,6 +283,7 @@ export function MapPanel({
   // G3DV2-B M5：拾取卡文案走 map 命名空间限定键 —— 全键字面量会被
   // maplibre-mock-surface 静态扫描误判为 MapLibre 成员访问（前缀点链）。
   const tMap = useT('map');
+  const refBudgetNotice = useRef<string | null>(null);
   void _onRemoveLayer;
   void _onToggleLayer;
 
@@ -527,6 +541,7 @@ export function MapPanel({
 
     return () => {
       cancelled = true
+      if (lastFittedFocusRef.current === focusLayerId) lastFittedFocusRef.current = null
     }
   }, [focusLayerId, mapReady, layers, focusLayerSetter, t])
 
@@ -738,6 +753,14 @@ export function MapPanel({
     getRefSourcesGeneration,
   )
 
+  // GOAL 03：时序播放 live 帧信号（播放/拖动中帧切换驱动 reconcile；
+  // 静止时无 live 帧 —— spec cursor 即真相，不触发本信号）。
+  const temporalLiveGeneration = useSyncExternalStore(
+    subscribeLiveTemporal,
+    getLiveTemporalGeneration,
+    getLiveTemporalGeneration,
+  )
+
   // ADR-0199 3D Terrain spec 驱动重放：只依赖 is3D / scene.mode / 显式
   // scene.camera（#1385 F01）。liveGeneration 会在图层开关等 pending 写
   // 时跳动，2D 路径的 easeTo({pitch:0,bearing:0}) 会把用户旋转拽回北朝上。
@@ -746,9 +769,12 @@ export function MapPanel({
     () => sceneCameraIdentity(getCommittedMapSpec()),
     () => sceneCameraIdentity(getCommittedMapSpec()),
   )
+  const previous3D = useRef(is3D)
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
+    const was3D = previous3D.current
+    previous3D.current = is3D
 
     const committed = getCommittedMapSpec() as any
     const scene = committed?.scene
@@ -770,7 +796,7 @@ export function MapPanel({
       map.easeTo({ pitch, bearing, duration: transitionMs })
     } else {
       renderer.disable3DTerrain(map)
-      map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
+      if (was3D) map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
     }
   }, [is3D, mapReady, sceneCameraKey, buildSceneTerrainOptions])
 
@@ -810,13 +836,22 @@ export function MapPanel({
       getPendingPresentation(),
       getPendingRemoved(),
     )
+    // GOAL 03 M4：时序帧过滤注入（live 帧 > spec cursor；绑定层 layer.filter
+    // 与 runtime V4 setFilter 快路径 —— 帧切换零结构 churn、零数据重拉）。
+    const temporalCfg = (getCommittedMapSpec() as { temporal?: MapSpecTemporalConfig } | null)?.temporal;
+    // P2 修正：捕获**本次合成实际消费**的 live 请求（帧+seq）—— reconcile
+    // 期间到达的更新请求由其自己的 effect 回执，displayed 不领先画布。
+    const temporalAppliedReq = temporalCfg?.enabled ? getLiveTemporalRequest() : null;
+    const specWithTemporal = temporalCfg?.enabled
+      ? applyTemporalToSpec(spec0, temporalCfg, getLiveTemporalFrame())
+      : spec0;
     // HUD 已挂靠的 ref 由 live-spec 的 ref_id 合并解析；解析器只兜底
     // 无 HUD 挂靠的（避免对同一份 ref 双下载）。
     const hudOwnedRefs = new Set(
       layers.filter((l) => typeof l._refId === 'string').map((l) => l._refId as string),
     )
     const spec = injectResolvedRefSources(
-      spec0,
+      specWithTemporal,
       sessionId
         ? { sessionId, ownerToken: ownerToken ?? sessionTokenRef?.current ?? null }
         : null,
@@ -824,9 +859,21 @@ export function MapPanel({
     )
     // FE-3: recompute interactive ids once this patch has actually applied
     // (reconcileAsync resolves when its last op ran → appliedSpec advanced).
+    const refBudget = getRefSourceBudget();
+    const noticeKey = refBudget.omitted ? `${sessionId}:${refBudget.omitted}` : null;
+    if (noticeKey && refBudgetNotice.current !== noticeKey) {
+      void import('@/components/ui/toast').then(({ useToastStore }) => {
+        if (refBudgetNotice.current !== noticeKey) return;
+        useToastStore.getState().addToast(tMap('refSourceBudget', refBudget), 'warning', 8000);
+      });
+    }
+    refBudgetNotice.current = noticeKey;
     void runtimeRef.current.reconcileAsync(spec)
       .then(() => {
         syncInteractiveIds()
+        // GOAL 03 M4：displayed_at 门控 —— reconcile 落定（applied spec
+        // 已前进）后才回执**本次应用**的 live 帧；stale/乱序由控制器拒绝。
+        if (temporalAppliedReq) markLiveApplied(temporalAppliedReq.seq, temporalAppliedReq.frame);
         const map = mapRef.current?.getMap()
         // #461 (sibling of #401): the imperative `custom-*` overlays
         // (add_layer / heatmap / thematic-map commands) are buried by every
@@ -881,13 +928,13 @@ export function MapPanel({
         // G3D02 v1.7：reconcile 落定后重放 3D 资产同步（basemap setStyle
         // 抹除 custom layer 后的恢复点 —— 与 terrain 重挂同时机；幂等）。
         if (map) {
-          renderer.syncSceneAssets(map, spec)
+          renderer.syncSceneAssets(map, spec, sessionId)
         }
         issueCartographicObservation({ map, spec, layers })
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation, buildSceneTerrainOptions])
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, temporalLiveGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation, buildSceneTerrainOptions, tMap])
 
   // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
   // 单遍计数（≤20k 要素；MVT/超限层如实 unknown），latest-wins 记录进
@@ -1081,8 +1128,8 @@ export function MapPanel({
         geometry: { type: 'Polygon', coordinates: [ring] },
         properties: { label: t('map.toolbar.measureAreaLabel', { value: formatted }), kind: 'measure_polygon' },
       })
-      const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length
-      const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length
+      const cx = ring.slice(0, -1).reduce((s, p) => s + p[0], 0) / (ring.length - 1)
+      const cy = ring.slice(0, -1).reduce((s, p) => s + p[1], 0) / (ring.length - 1)
       store.addAnnotation({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [cx, cy] },
@@ -1412,6 +1459,19 @@ export function MapPanel({
         matched_count: projection.matched_count,
         bbox,
       })
+      // /goal 03：框选多要素对 Agent 可见（ADR-0227 feature_selected 的
+      // selected_ids additive 扩展；无稳定 id 字段时不上行——语义为空集）。
+      if (projection.id_field && projection.selected_ids.length > 0) {
+        const brushRef = useHudStore.getState().layers.find(
+          (l) => l.id === family && typeof l._refId === 'string',
+        )?._refId as string | undefined
+        emitFeatureSelected({
+          layerId: family,
+          featureId: projection.selected_ids[0],
+          datasetRef: brushRef?.startsWith('ref:') ? brushRef : undefined,
+          selectedIds: projection.selected_ids,
+        })
+      }
       if (!projection.id_field) {
         setBrushFeedback(t('map.brush.matchedNoStableId', { count: projection.matched_count }))
       } else {
@@ -1728,6 +1788,7 @@ export function MapPanel({
         <WidgetHost />
         {poiPanel && (
           <PoiInfoPanel
+            key={`${poiPanel.x},${poiPanel.y}`}
             x={poiPanel.x}
             y={poiPanel.y}
             coordinates={poiPanel.lngLat}
@@ -1811,6 +1872,10 @@ export function MapPanel({
       {/* Wave 8 对比工作区覆盖层（before/after swipe + side-by-side）：盖在主
           地图之上、弹层之下（z-40 < z-50）。第二张 MaplibreMap 挂在覆盖层里
           镜像 committed MapSpec 的副图层族 —— 主地图本体零改动。 */}
+      {/* GOAL 03 M4：时序时间轴（committed temporal 启用时渲染；组件内部
+          自行判断 disabled → null，不伪造时间轴）。 */}
+      <TemporalTimeController />
+
       <ComparisonView
         primaryMapRef={mapRef}
         mapStyle={currentMapStyle}
@@ -1867,6 +1932,10 @@ export function MapPanel({
       {/* C13：视觉修复审批/预览/diff 卡片（自包含；拒绝记忆在后端）。
           挂在工具 HUD 同侧 —— 观察/截图闭环的生产入口。 */}
       <VisualRepairCard sessionId={sessionId} ownerToken={ownerToken} />
+
+      {/* ADR-0278：地图操作回执卡 + 最终显示确认卡（receipt-bus 驱动；
+          显示确认自水合，auto 模式永不显示 —— 历史行为零变化）。 */}
+      <MapHarnessCards sessionId={sessionId} ownerToken={ownerToken} />
 
       {/* Interactive Floating GIS Toolbar HUD */}
       <MapToolbarHUD

@@ -73,7 +73,14 @@ def estimate_label_box(text: str, font_size: float = 12.0) -> Tuple[float, float
     宽 = Σ 每字符 em 宽 × font_size（CJK 1.0em / 其他 0.6em，中文注记宽度
     约为字号本身）；高 = font_size × 1.2。与 ``carto.label.collision_est``
     的字宽口径一致。
+
+    多行（``\\n`` 分行；Track B 导出折行）：宽 = 最宽行、高 = 行数 ×
+    1.2em —— 与 TS 孪生 ``estimateLabelBox`` 逐常量一致（parity 冻结）。
     """
+    if "\n" in text:
+        lines = text.split("\n")
+        widths = [estimate_label_box(ln, font_size)[0] for ln in lines]
+        return (max(widths), len(lines) * font_size * 1.2)
     if not text:
         return (0.0, font_size * 1.2)
     em_sum = sum(1.0 if is_cjk(ch) else 0.6 for ch in text)

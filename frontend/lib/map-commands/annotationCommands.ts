@@ -63,8 +63,8 @@ export const annotationCommands: Record<string, CommandEntry> = {
           properties: { label: label || null, kind: 'measure_polygon' },
         });
         // 也撒一个 label 点在质心，便于地图上看到数值
-        const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-        const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length;
+        const cx = ring.slice(0, -1).reduce((s, p) => s + p[0], 0) / (ring.length - 1);
+        const cy = ring.slice(0, -1).reduce((s, p) => s + p[1], 0) / (ring.length - 1);
         if (label) {
           store.addAnnotation({
             type: 'Feature',

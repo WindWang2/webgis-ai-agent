@@ -34,6 +34,7 @@ _SCOPE_ORDER = {
 #: reason codes emitted into the receipt
 REASON_EXACT_DUP = "dedupe:exact_content"
 REASON_STALE_AUTHORITY = "dedupe:stale_authority"
+REASON_AUTHORITY_CONFLICT = "dedupe:authority_conflict"
 
 
 @dataclass
@@ -71,28 +72,37 @@ def dedupe_items(items: List[ContextItem]) -> DedupeResult:
         by_fingerprint[fp] = winner
 
     # phase 2 — authority-scoped freshness among the survivors
-    by_authority: Dict[str, ContextItem] = {}
+    by_authority: Dict[str, List[ContextItem]] = {}
     survivors = [i for i in items if id(i) not in dropped
                  and by_fingerprint.get(i.fingerprint or i.content) is i]
     for item in survivors:
         auth = _authority_key(item)
-        if not auth:
+        if auth:
+            by_authority.setdefault(auth, []).append(item)
+    for group in by_authority.values():
+        if len(group) < 2:
             continue
-        incumbent = by_authority.get(auth)
-        if incumbent is None:
-            by_authority[auth] = item
+        revisions = [int(item.revision) if len(item.revision) <= 128 and item.revision.isdecimal() else None for item in group]
+        # A freshness fingerprint is opaque: lexicographic hash/item ordering
+        # cannot tell which fact is newer. Without comparable authority
+        # revisions, omit competing facts rather than label an arbitrary old
+        # rendering as current.
+        if any(revision is None for revision in revisions):
+            for item in group:
+                dropped[id(item)] = (item, REASON_AUTHORITY_CONFLICT)
             continue
-        winner = _prefer(incumbent, item)
-        loser = item if winner is incumbent else incumbent
-        stale = (
-            loser.freshness != ""
-            and winner.freshness != ""
-            and loser.freshness != winner.freshness
-        )
-        dropped[id(loser)] = (
-            loser, REASON_STALE_AUTHORITY if stale else REASON_EXACT_DUP
-        )
-        by_authority[auth] = winner
+        newest = max(revision for revision in revisions if revision is not None)
+        candidates = [item for item, revision in zip(group, revisions, strict=True) if revision == newest]
+        if len({item.fingerprint or item.content for item in candidates}) > 1:
+            for item in group:
+                dropped[id(item)] = (item, REASON_AUTHORITY_CONFLICT)
+            continue
+        winner = candidates[0]
+        for item in candidates[1:]:
+            winner = _prefer(winner, item)
+        for item in group:
+            if item is not winner:
+                dropped[id(item)] = (item, REASON_STALE_AUTHORITY)
 
     kept = [i for i in items if id(i) not in dropped]
     return DedupeResult(kept=kept, dropped=list(dropped.values()))

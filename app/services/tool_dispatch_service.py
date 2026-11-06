@@ -29,6 +29,7 @@ legacy 路径在 03 票据迁移、Pi 路径在 02 票据迁移，最后 04 票�
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import base64
 import hashlib
 import json
@@ -57,48 +58,11 @@ from app.lib.runtime.evidence import current_turn_evidence
 logger = logging.getLogger(__name__)
 
 
-# ─── 规范化工具名称映射表 ─────────────────────────────
-# 把遗留工具名规范化为 canonical webgis_* 名称。两个调用点，均刻意保留：
-# (1) dispatch 入口 (本模块 dispatch()) — 规范化来自 ChatEngine LLM 输出 / Pi bridge
-#     客户端请求的 *实时* tool_call，避免模型或客户端发出遗留名时 registry 找不到工具。
-# (2) history replay (history_service_async) — 重放存储的历史 tool_call 前翻译遗留名。
-# 见 ADR-0010：架构评审曾提议移除 (1)，但两条实时路径都可能收到遗留名，(1) 并非冗余；
-# 由 test_dispatch_normalizes_legacy_tool_names ("Seam B") 锁定。
-
-LEGACY_TOOL_NAME_MAP: dict[str, str] = {
-    # 图层管理与样式设置
-    "add_layer": "webgis_layer_upsert",
-    "set_layer_style": "webgis_layer_upsert",
-    "update_layer": "webgis_layer_upsert",
-    # remove_layer 不在别名表：#516 其已是 registry 现役工具
-    # (app/tools/layer_manager.py，参数 layer_ref)。别名改写会把合法调用
-    # 重定向到 webgis_layer_remove (layer_id schema)，导致校验失败——
-    # LLM 按目录可见名调用即命中现役工具。
-    "delete_layer": "webgis_layer_remove",
-    # 视角与导航
-    "set_view": "webgis_view_set",
-    "move_view": "webgis_view_set",
-    # zoom_to_layer 不在别名表：#516 其已是 registry 现役工具
-    # (app/tools/map_view.py，参数 layer_ref/padding)。改写为全可选
-    # webgis_view_set 会吞掉 layer_ref 参数使缩放命令永不触发。
-    # MapSpec 生命周期与检验
-    "init_project": "webgis_project_init",
-    "get_state": "webgis_state_get",
-    "get_map_state": "webgis_state_get",
-    "profile_source": "webgis_source_profile",
-    "get_source_profile": "webgis_source_profile",
-    "set_layout": "webgis_layout_set",
-    "validate_spec": "webgis_validate",
-    "compile_maplibre": "webgis_compile_maplibre",
-    "runtime_validate": "webgis_runtime_validate",
-    "checkpoint": "webgis_checkpoint",
-    "create_checkpoint": "webgis_checkpoint",
-}
-
-
-def normalize_tool_name(name: str) -> str:
-    """规范化遗留工具名为 canonical webgis_* 名称 (供 dispatch 入口与历史重放两处调用，见 ADR-0010)。"""
-    return LEGACY_TOOL_NAME_MAP.get(name, name)
+from app.services.tool_dispatch_contracts import (
+    LEGACY_TOOL_NAME_MAP,
+    is_suspicious_result,
+    normalize_tool_name,
+)
 
 
 # ─── 结果脱敏与元数据提取 (重定向至 app.services.llm_result_formatter) ───
@@ -126,13 +90,18 @@ from app.services.llm_result_formatter import (
     is_error_dict,
     is_error_like_result,
     is_tool_error_result,
+    bound_llm_text,
     wrap_error_dict_for_llm,
     slim_tool_result,
     slim_event_result,
 )
 
 
+from app.services.analysis_reuse_snapshot import snapshot_scoped_raster_inputs as _snapshot_scoped_raster_inputs
+
 DispatchStatus = Literal["ok", "repeated", "error"]
+
+
 
 
 @dataclass
@@ -302,7 +271,7 @@ class ToolDispatchService:
         # 重复命中时若 key ∈ _completed_keys → post-success 语义（原文案）；
         # 否则视为"并发在飞"→ 不谎报成功的软化文案。有界：超限整体清空只会
         # 把个别后序重复从"成功文案"降级为"在飞文案"，去重本身不受影响。
-        self._completed_keys: set[tuple[str, str]] = set()
+        self._completed_keys: OrderedDict[tuple[str, tuple[str, str]], None] = OrderedDict()
         self._COMPLETED_KEYS_MAX = 4096
 
     async def dispatch(
@@ -650,8 +619,15 @@ class ToolDispatchService:
                     except (json.JSONDecodeError, TypeError):
                         _guard_args = None
                     if isinstance(_guard_args, dict):
+                        _descriptor_fn = getattr(self._registry, "descriptor", None)
+                        _network_fetch = False
+                        if callable(_descriptor_fn):
+                            try:
+                                _network_fetch = bool(getattr(_descriptor_fn(tool_name), "network", False))
+                            except (KeyError, ValueError):
+                                pass
                         _guard_verdict = get_guardrails().check_tool_args(
-                            tool_name, _guard_args
+                            tool_name, _guard_args, network_fetch=_network_fetch,
                         )
                         if not _guard_verdict.passed:
                             _first = _guard_verdict.blocking()[0]
@@ -699,6 +675,11 @@ class ToolDispatchService:
             analysis_key: Optional[str] = None
             input_shapes: Optional[Dict[str, dict]] = None
             reused_result: Optional[Dict[str, Any]] = None
+            # _parsed 在复用块内条件赋值；非能力工具（fly_camera 等）走到
+            # 下方 artifact 登记块的 `if _parsed is not None` 时未绑定 →
+            # UnboundLocalError 经 best_effort 掩盖成警告、登记被静默跳过
+            # （G3D-V2-C E2E 显形；预初始化恢复登记路径）。
+            _parsed = None
             if os.getenv("GIS_ANALYSIS_REUSE", "1") != "0":
                 # #1549：复用是纯加速，查找失败绝不阻塞执行；经 best_effort
                 # 可见降级（跳过复用 = 如实重算，不留静默痕迹）。
@@ -727,7 +708,7 @@ class ToolDispatchService:
                             analysis_key = compute_analysis_key(tool_name, _parsed)
                             if analysis_key is not None:
                                 input_shapes = await snapshot_input_shapes(session_id, _parsed)
-                                raster_fps = None
+                                raster_fps = {"__snapshot_error__": "unverifiable"}
                                 # #1549：指纹是增值记录，绝不阻塞执行；失败经
                                 # best_effort 可见降级（None = 不参与复用匹配）。
                                 with best_effort(
@@ -735,11 +716,7 @@ class ToolDispatchService:
                                     "tool-dispatch-reuse-raster-fp-best-effort",
                                     ctx={"tool": tool_name},
                                 ):
-                                    from app.lib.gis.analysis_reuse import (
-                                        snapshot_raster_fingerprints,
-                                    )
-
-                                    raster_fps = snapshot_raster_fingerprints(_parsed) or None
+                                    raster_fps = await _snapshot_scoped_raster_inputs(session_id, _parsed)
                                 reuse = await find_reusable_artifact(
                                     session_id,
                                     analysis_key=analysis_key,
@@ -1032,6 +1009,10 @@ class ToolDispatchService:
             correction_hint = result.get("correction_hint")
             # V5：typed diagnose —— 泛化错误码之上的统一失败分类 +
             # 有界 remediation 裁决（ADR-0248 D2）。记录面绝不阻断。
+            # GOAL 05（ADR-0279）：诊断 + 恢复裁决 —— M1/M2 纯函数，
+            # additive ``recovery`` 键 + LLM 单行提示；零执行零 IO，
+            # 与 harness_failure 同一 best_effort 纪律。
+            _recovery_note = ""
             with best_effort(
                 "failure-taxonomy-classify",
                 "tool-dispatch-taxonomy-best-effort",
@@ -1041,7 +1022,7 @@ class ToolDispatchService:
                     classify_and_remediate,
                 )
 
-                result["harness_failure"] = classify_and_remediate(
+                result["harness_failure"] = await asyncio.to_thread(classify_and_remediate,
                     status=result.get("status"),
                     code=result.get("code"),
                     error_type=result.get("error_type"),
@@ -1049,6 +1030,36 @@ class ToolDispatchService:
                     tool_name=tool_name,
                     session_id=session_id or "",
                 )
+                try:
+                    from app.services.gis_harness.recovery_policy.wiring import (
+                        build_recovery_payload,
+                    )
+
+                    # R1-B：风险裁决面需要真实描述符事实
+                    # （SideEffectClass/tier）—— 缺席按保守缺省
+                    # （unclassified 不放宽自动重试）。
+                    _tool_desc = None
+                    try:
+                        _tool_desc = self._registry.descriptor(tool_name)
+                    except Exception:  # noqa: BLE001 — KeyError 等 → 保守
+                        _tool_desc = None
+                    _rec = build_recovery_payload(
+                        status=result.get("status"),
+                        code=result.get("code"),
+                        error_type=result.get("error_type"),
+                        message=error_msg,
+                        tool_name=tool_name,
+                        harness_failure=result.get("harness_failure"),
+                        session_id=session_id or "",
+                        descriptor=_tool_desc,
+                    )
+                    result["recovery"] = {
+                        "diagnostic": _rec.get("diagnostic"),
+                        "decision": _rec.get("decision"),
+                    }
+                    _recovery_note = str(_rec.get("llm_note") or "")
+                except Exception:  # noqa: BLE001 — 增值诊断绝不阻断
+                    _recovery_note = ""
                 # 方向 9（ADR-0255）：provider_failure 记忆候选入 pending
                 # 缓冲（org 由 turn 端 harvest 烙印；TTL 7d 默认；零 IO、
                 # 绝不阻断——durable authority 仍是 RecoveryLedger）。
@@ -1075,7 +1086,9 @@ class ToolDispatchService:
                             scope=SCOPE_SESSION, scope_id=session_id,
                             subject=str(tool_name)[:200],
                             value={
-                                "failure_class": str(_hf.get("failure_class") or "unknown"),
+                                # payload 键是 "class"（RemediationDecision
+                                # .to_payload）—— 旧读 failure_class 恒空。
+                                "failure_class": str(_hf.get("class") or "unknown"),
                                 "tool": str(tool_name)[:120],
                             },
                             evidence=MemoryEvidence(
@@ -1083,7 +1096,19 @@ class ToolDispatchService:
                             ),
                             confidence=0.85, org_id="",
                         ))
-            llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
+            # Classification/recovery above consume the full diagnostics. Only
+            # this LLM presentation is clipped, including HTML-escaped errors.
+            llm_payload = bound_llm_text(
+                correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
+            )
+            if _recovery_note and _recovery_note not in llm_payload:
+                # 两引擎共用同一恢复文案源（Pi HTTP 回包 / legacy
+                # tool_result 消息）—— 单行、有界（≤240）、无用户原文。
+                # Reserve the newline and note inside the existing budget.
+                llm_payload = bound_llm_text(
+                    llm_payload, max_chars=MSG_MAX_CHARS - len(_recovery_note) - 1
+                )
+                llm_payload = f"{llm_payload}\n{_recovery_note}"
             await self._session_data.append_event(
                 session_id,
                 "tool_failed",
@@ -1098,11 +1123,17 @@ class ToolDispatchService:
                 from app.lib.runtime.chain_emitters import emit_chain_once
                 from app.lib.runtime.gis_trace import Stage
 
+                # GOAL 05：诊断随链（扁平有界键；不抛、不改变既有
+                # emit-once 语义）。
+                _rec_d = (result.get("recovery") or {}).get("diagnostic") or {}
                 emit_chain_once(
                     Stage.TOOL_RESULTS,
                     tool=tool_name,
                     status="error",
                     code=str(result.get("code") or "")[:48] or None,
+                    recovery_reason=str(_rec_d.get("reason") or "")[:48] or None,
+                    recovery_disposition=str(
+                        _rec_d.get("disposition") or "")[:32] or None,
                 )
             return ToolDispatchResult(
                 status="error",
@@ -1166,6 +1197,18 @@ class ToolDispatchService:
                 # the ref. Registry-level dispatch (runner/tests) still sees
                 # the inline FC — the seam is the only minting consumer.
                 result.pop("uncertainty", None)
+            # G3D-V2-C（ADR-0276）：剖面图 artifact。与 #517/uncertainty
+            # 同一「认可键 → ref」纪律：工具只给 {chart: ChartData} 数据，
+            # 缝负责铸造（prefix=profile → ref:profile-*）并剥内联体——
+            # elevation_profile 面板经 chart-artifact 工件通道拉取。
+            profile_ref: Optional[str] = None
+            if isinstance(result.get("profile_chart"), dict):
+                profile_ref = await self._session_data.store(
+                    session_id, result["profile_chart"], prefix="profile"
+                )
+                result = dict(result)
+                result["profile_ref"] = profile_ref
+                result.pop("profile_chart", None)
             if result.get("type") == "heatmap_raster":
                 heatmap_ref = await self._session_data.store(
                     session_id, result, prefix="heatmap"
@@ -1182,6 +1225,7 @@ class ToolDispatchService:
                 is_unavailable_ref(geojson_ref)
                 or is_unavailable_ref(heatmap_ref)
                 or is_unavailable_ref(uncertainty_ref)
+                or is_unavailable_ref(profile_ref)
             ):
                 self._release_key(executed_tools, tool_key, session_id or "")
                 return ToolDispatchResult(
@@ -1218,9 +1262,7 @@ class ToolDispatchService:
                         "tool-dispatch-register-raster-fp-best-effort",
                         ctx={"tool": tool_name},
                     ):
-                        from app.lib.gis.analysis_reuse import snapshot_raster_fingerprints
-
-                        raster_fps = snapshot_raster_fingerprints(_parsed) or None
+                        raster_fps = await _snapshot_scoped_raster_inputs(session_id, _parsed)
                 # V3 data foundation：输入 ref revision 快照（保形状覆写的
                 # 复用盲区守卫；增值记录，失败不阻塞）。
                 ref_revs = None
@@ -1653,6 +1695,47 @@ class ToolDispatchService:
             ):
                 if lifecycle.get(key) is not None:
                     result[key] = lifecycle[key]
+            # G3D-V2-C（ADR-0276）：剖面伴生组件。带 profile_ref 的分析
+            # （terrain_profile 等）在层挂载后 upsert elevation_profile
+            # 面板——失败是 additive 证据（层已挂，面板缺席可披露，不推翻
+            # 已完成的制图授权）；成功则刷新权威 mapspec/指纹（组件突变
+            # 产生新代）供下方一致性校验与 render_work 信封消费。
+            _profile_ref = result.get("profile_ref")
+            if isinstance(_profile_ref, str) and _profile_ref.startswith("ref:profile-"):
+                try:
+                    _meta_info = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+                    _datum = str(_meta_info.get("vertical_datum") or "").strip()
+                    comp = await mapspec_store.patch_component(
+                        session_id,
+                        component_id="elevation-profile",
+                        component_type="elevation_profile",
+                        options={
+                            "profileRef": _profile_ref,
+                            "unit": "m",
+                            **({"verticalDatum": _datum} if _datum else {}),
+                        },
+                        upsert=True,
+                        actor=f"tool:{tool_name}",
+                    )
+                    if comp.get("success") and isinstance(comp.get("mapspec"), dict):
+                        mapspec = comp["mapspec"]
+                        result["mapspec"] = mapspec
+                        result["mapspec_fingerprint"] = (
+                            cartographic_fingerprint(mapspec)
+                        )
+                        lifecycle["mapspec"] = mapspec
+                    result["profile_component"] = {
+                        "component_id": "elevation-profile",
+                        "component_type": "elevation_profile",
+                        "profile_ref": _profile_ref,
+                        "success": bool(comp.get("success")),
+                    }
+                except Exception as profile_exc:  # noqa: BLE001 — additive
+                    result["profile_component"] = {
+                        "component_id": "elevation-profile",
+                        "profile_ref": _profile_ref,
+                        "error": str(profile_exc)[:160],
+                    }
             # Defensive consistency check: never attach a runtime generation
             # whose fingerprint is not the just-persisted desired state.
             if result.get("mapspec_fingerprint") != cartographic_fingerprint(mapspec):
@@ -1775,24 +1858,13 @@ class ToolDispatchService:
             # 没有 image → 前端 add_heatmap_raster 校验器拒绝（invalid_params）
             # 且 auto-mount gate 不满足，图层永不挂载。复用 webgis_layer_upsert
             # 的同一 seam：ref:raster/<id> → /api/v1/sessions/{sid}/raster/<id>.png
-            # （匿名会话的 owner_token 以查询参数附加 —— MapLibre 图片请求带不了
-            # 请求头，路由要求所有权校验）。
+            # （匿名会话使用路径绑定的短时签名，图片请求无需长期凭据）。
             image_url = None
             if isinstance(image_ref, str) and image_ref.startswith("ref:raster/"):
                 raster_id = image_ref[len("ref:raster/"):]
                 image_url = f"/api/v1/sessions/{session_id}/raster/{raster_id}.png"
-                # #1549：owner_token 缺席 → 匿名 URL（前端挂载会 401）；经
-                # best_effort 可见降级，不静默产出打不开的图层 URL。
-                session_token = None
-                with best_effort(
-                    "session-owner-token-lookup",
-                    "tool-dispatch-session-token-best-effort",
-                    ctx={"session": session_id},
-                ):
-                    from app.services.session_ownership import lookup_session_owner_token
-                    session_token = await lookup_session_owner_token(session_id)
-                if session_token:
-                    image_url = f"{image_url}?token={session_token}"
+                from app.core.signing import signed_raster_query
+                image_url = f"{image_url}?{signed_raster_query(image_url, ttl_seconds=600)}"
             layer = {
                 "id": layer_id,
                 "source": source_id,
@@ -1935,13 +2007,18 @@ class ToolDispatchService:
         操作（GIL），无需持锁；check-and-add 的原子性由 _dedup_lock 保证。
         """
         executed_tools.discard(tool_key)
-        self._completed_keys.discard((session_id or "", tool_key))
+        self._completed_keys.pop((session_id or "", tool_key), None)
 
     def _mark_completed(self, tool_key: tuple[str, str], session_id: str = "") -> None:
         """成功完成的调用标记为 completed（post-success dedup 语义；会话维键）。"""
-        self._completed_keys.add((session_id or "", tool_key))
-        if len(self._completed_keys) > self._COMPLETED_KEYS_MAX:
-            self._completed_keys.clear()
+        key = (session_id or "", tool_key)
+        self._completed_keys[key] = None
+        self._completed_keys.move_to_end(key)
+        session_keys = [entry for entry in self._completed_keys if entry[0] == key[0]]
+        for old in session_keys[:-128]:
+            self._completed_keys.pop(old, None)
+        while len(self._completed_keys) > self._COMPLETED_KEYS_MAX:
+            self._completed_keys.popitem(last=False)
 
     # ── V3: 地图动作 action_id 铸造 ──────────────────────────────────────
 
@@ -2030,39 +2107,3 @@ class ToolDispatchService:
         await self._session_data.append_event(
             session_id, "tool_executed", event_payload
         )
-
-
-def is_suspicious_result(result: Any) -> bool:
-    """检测工具返回是否"可疑"（空数据 / 错误响应），用于触发自愈提示尾。
-
-    纯函数无副作用。本函数为单一权威定义（unified-tool-dispatch 票据 04 contract：
-    旧 chat/dispatcher.py 已删除，收敛至此）。供 ToolDispatchService 内部与
-    ChatEngine._log_tool_decision / _detect_suspicious_result 共用。
-    """
-    if not result:
-        return True
-    if isinstance(result, dict):
-        # #529: the {"error": <str>} shape is a failure, not an empty/suspicious
-        # success — classify it so standalone consumers (engine
-        # _detect_suspicious_result / decision logging) don't treat it as
-        # success. (The dispatch error branch handles it before this point.)
-        if is_tool_error_result(result):
-            return True
-        # MapSpec 封装会剥掉 features、只留 result_ref + feature_count。
-        # 若仍按「无 features 即空」判断，本地 OSM/行政区成功也会被标 empty，
-        # 模型就会再去调高德 search_poi。
-        ref = result.get("result_ref") or result.get("ref")
-        n = result.get("feature_count")
-        if n is None:
-            n = result.get("count")
-        if isinstance(ref, str) and ref.startswith("ref:") and isinstance(n, (int, float)) and n > 0:
-            return False
-        if result.get("type") == "FeatureCollection" and not result.get("features"):
-            return True
-        if "data" in result and isinstance(result["data"], list) and not result["data"]:
-            return True
-        if "poi_count" in result and result["poi_count"] == 0:
-            return True
-    if isinstance(result, list) and not result:
-        return True
-    return False

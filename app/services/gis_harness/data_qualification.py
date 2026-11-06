@@ -20,6 +20,7 @@
 - 本模块不执行任何变换 —— 只产出显式 transform step 供 plan 具象化。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -355,6 +356,7 @@ def _unit_dimension_guard(
             fs = derive_field_semantics(
                 str(bound_field), roles, has_temporal=has_temporal)
         except Exception:  # noqa: BLE001 — 推导失败按无证据（不虚构失败）
+            observe_optional_failure(__name__)
             continue
         if fs.checks:
             first = fs.checks[0]
@@ -429,7 +431,7 @@ def qualify_data_role(
 
             resolver_profile = descriptor_resolver_profile(descriptor)
         except Exception:  # noqa: BLE001 — 投影失败按无 descriptor（诚实缺席）
-            pass
+            observe_optional_failure(__name__)
     if descriptor is not None and semantic_profile is None:
         semantic_profile = _semantic_view_from_descriptor(descriptor)
 
@@ -519,7 +521,7 @@ def qualify_data_role(
                     delta = compare_descriptors(recorded_descriptor, descriptor)
                     stale_code = qualification_stale_reason(delta.change_class)
                 except Exception:  # noqa: BLE001 — 精确分类失败按通用码
-                    pass
+                    observe_optional_failure(__name__)
             return DataQualification(
                 role=req.role, state="degraded",
                 reason_code=stale_code,

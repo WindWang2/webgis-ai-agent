@@ -23,6 +23,8 @@ support/accessibility/compatibility/dependencies/defaults）。
 """
 from __future__ import annotations
 
+import logging
+import math
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from pydantic import BaseModel, Field
@@ -168,6 +170,16 @@ def _f(
         min=min, max=max, max_len=max_len, description=description)
 
 
+def _seed_enum(component_type: str, key: str, base: tuple = ()) -> tuple:
+    from app.lib.cartography.component_templates import SEED_COMPONENT_TEMPLATES
+    values = list(base)
+    for template in SEED_COMPONENT_TEMPLATES:
+        value = template.default_options.get(key) if template.component_type == component_type else None
+        if isinstance(value, (str, int, float)) and value not in values:
+            values.append(value)
+    return tuple(values)
+
+
 _NORTH_ARROW_VARIANTS = (
     "compass_minimal_black", "arrow_simple", "compass_needle", "compass_rose")
 
@@ -180,18 +192,18 @@ _NORTH_ARROW_VARIANTS = (
 #: 与自检测试双锁）。
 COMPONENT_ABI_META: Dict[str, ComponentABIMeta] = {
     "north_arrow": ComponentABIMeta(props_schema={
-        "variant": _f("str", enum=_NORTH_ARROW_VARIANTS, default="compass_minimal_black",
+        "variant": _f("str", enum=_seed_enum("north_arrow", "variant", _NORTH_ARROW_VARIANTS), default="compass_minimal_black",
                       description="指北针样式变体"),
         "showDeclination": _f("bool", default=False, description="显示磁偏角"),
     }),
     "scale_bar": ComponentABIMeta(props_schema={
         "orientation": _f("str", enum=("horizontal", "vertical"), default="horizontal"),
-        "unit": _f("str", enum=("metric", "imperial"), default="metric"),
-        "style": _f("str", enum=("minimal", "boxed", "academic"), default="minimal"),
+        "unit": _f("str", enum=_seed_enum("scale_bar", "unit", ("metric", "imperial")), default="metric"),
+        "style": _f("str", enum=_seed_enum("scale_bar", "style", ("minimal", "boxed", "academic")), default="minimal"),
     }),
     "legend": ComponentABIMeta(props_schema={
         "orientation": _f("str", enum=("horizontal", "vertical"), default="vertical"),
-        "style": _f("str", enum=("academic", "compact", "report"), default="academic"),
+        "style": _f("str", enum=_seed_enum("legend", "style", ("academic", "compact", "report")), default="academic"),
     }),
     "categorical_legend": ComponentABIMeta(props_schema={
         "orientation": _f("str", enum=("horizontal", "vertical"), default="vertical"),
@@ -199,7 +211,7 @@ COMPONENT_ABI_META: Dict[str, ComponentABIMeta] = {
     }),
     "continuous_colorbar": ComponentABIMeta(props_schema={
         "orientation": _f("str", enum=("horizontal", "vertical"), default="horizontal"),
-        "style": _f("str", enum=("default", "slim"), max_len=32, default="default"),
+        "style": _f("str", enum=_seed_enum("continuous_colorbar", "style", ("default", "slim")), max_len=32, default="default"),
         "ticks": _f("int", min=2, max=16, default=5, description="刻度数"),
     }),
     "annotation": ComponentABIMeta(props_schema={
@@ -227,7 +239,7 @@ COMPONENT_ABI_META: Dict[str, ComponentABIMeta] = {
     }),
     "label_layer": ComponentABIMeta(props_schema={
         "mode": _f("str", max_len=16, description="标注策略模式"),
-        "topN": _f("int", min=1, max=200, default=30),
+        "topN": _f("int", min=1, max=400, default=30),
         "auto": _f("bool", default=True),
     }),
     "methodology_note": ComponentABIMeta(props_schema={
@@ -260,6 +272,7 @@ COMPONENT_ABI_META: Dict[str, ComponentABIMeta] = {
     "table_panel": ComponentABIMeta(),
     "uncertainty_panel": ComponentABIMeta(),
     "decision_panel": ComponentABIMeta(),
+    "design_candidates": ComponentABIMeta(),
 }
 
 
@@ -288,7 +301,11 @@ def validate_props(
         spec = meta.props_schema[key]
         if spec.required and key not in props:
             issues.append(f"props_invalid:{key}:missing_required")
-    for key in sorted(props.keys())[:MAX_PROPS_FIELDS * 2]:
+    if len(props) > MAX_PROPS_FIELDS * 2:
+        issues.append("props_invalid:__:too_many_fields")
+    for key in sorted(meta.props_schema):
+        if key not in props:
+            continue
         spec = meta.props_schema.get(str(key))
         if spec is None:
             continue
@@ -332,6 +349,9 @@ def validate_props(
                 continue
         elif spec.type == "float":
             num = float(value)
+            if not math.isfinite(num):
+                issues.append(f"props_invalid:{key}:not_finite")
+                continue
             if spec.min is not None and num < spec.min:
                 issues.append(f"props_invalid:{key}:below_min")
                 continue
@@ -441,6 +461,10 @@ def validate_component_abi(registry: Any) -> List[str]:
         for ctype in sorted(COMPONENT_ABI_META):
             if registry.get_by_type(ctype) is None:
                 issues.append(f"abi_meta_orphan: {ctype}")
+        from app.lib.cartography.component_templates import SEED_COMPONENT_TEMPLATES
+        for template in SEED_COMPONENT_TEMPLATES:
+            if template.runtime_status == 'native':
+                issues.extend(f"abi_seed_invalid:{template.id}:{issue}" for issue in validate_props(template.component_type, template.default_options))
         # props 键接地自检：声明键必须出现在 seed default_options 或
         # renderer 消费键白名单（防 schema 漂移成空头契约）。
         grounded = _grounded_option_keys()
@@ -472,8 +496,8 @@ def _grounded_option_keys() -> Dict[str, set]:
         for t in SEED_COMPONENT_TEMPLATES:
             grounded.setdefault(t.component_type, set()).update(
                 t.default_options.keys())
-    except Exception:  # pragma: no cover - 防御性
-        pass
+    except Exception as _exc:  # pragma: no cover - 防御性
+        logging.getLogger(__name__).debug("component_abi: optional operation unavailable (%s)", type(_exc).__name__)
     for ctype, keys in _RENDERER_CONSUMED_KEYS.items():
         grounded.setdefault(ctype, set()).update(keys)
     return grounded

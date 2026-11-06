@@ -218,6 +218,12 @@ _DEFAULTS: Dict[str, AdapterCapabilitiesV2] = {
     "wms": _generic_defaults("wms"),
     "s3": _generic_defaults("s3"),
     "generic": _generic_defaults("generic"),
+    # GOAL-02：OGC Tiles/Coverages 的 QuerySpec 通道零下推能力（瓦片字节
+    # 经 ogc_tiles_proxy 显示；数值 subset 经 coverage_read —— 均非
+    # QuerySpec 通道）。R1 P1-5：vector_tiles/range_requests 加位曾与
+    # adapter 的 typed 拒绝矛盾（planner 会放行到运行时才炸）—— 全 False。
+    "ogc_api_tiles": _generic_defaults("ogc_api_tiles"),
+    "ogc_api_coverages": _generic_defaults("ogc_api_coverages"),
 }
 
 # registry 别名 → canonical
@@ -227,6 +233,9 @@ _ALIAS_MAP = {
     "mock": "generic",
     "sample": "generic",
     "demo": "generic",
+    # GOAL-02 registry 别名
+    "ogc_tiles": "ogc_api_tiles",
+    "ogc_coverages": "ogc_api_coverages",
 }
 
 
@@ -235,7 +244,7 @@ def default_capabilities(source_type: str) -> AdapterCapabilitiesV2:
     caps = _DEFAULTS.get(canonical)
     if caps is None:
         return _generic_defaults(source_type)
-    return caps.model_copy()
+    return caps.model_copy(deep=True)
 
 
 def get_capabilities(source_type: str, overrides: Optional[dict] = None) -> AdapterCapabilitiesV2:

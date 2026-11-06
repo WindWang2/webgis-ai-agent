@@ -151,6 +151,10 @@ def localized_user_message(
         return user_message_for(classification_or_category, locale)
     category = getattr(classification_or_category, "category", None)
     if isinstance(category, ErrorCategory):
+        explicit = getattr(classification_or_category, "user_message", None)
+        if (getattr(classification_or_category, "declared", False)
+                and explicit and explicit != category_defaults(category).user_message):
+            return str(explicit)
         return user_message_for(category, locale)
     return user_message_for(ErrorCategory.PERMANENT, locale)
 
@@ -185,17 +189,18 @@ class AcceptLanguageMiddleware(BaseHTTPMiddleware):
         if locale == DEFAULT_LOCALE:
             return response  # 默认语言：信封原样（zh 短语即现值）
 
-        body = b""
+        body_buffer = bytearray()
         overflow = False
         async for chunk in response.body_iterator:
-            body += chunk
-            if len(body) > MAX_ERROR_BODY_BYTES:
+            body_buffer.extend(chunk)
+            if len(body_buffer) > MAX_ERROR_BODY_BYTES:
                 overflow = True
                 break
         if overflow:
             # 大错误体不整体缓冲：已读前缀 + 原迭代器剩余流原样重组（内存
             # 有界、响应体完整），本地化跳过（超限体非本平台信封形态）。
-            return self._reissue_stream(response, bytes(body))
+            return self._reissue_stream(response, bytes(body_buffer))
+        body = bytes(body_buffer)
         try:
             data = json.loads(body)
         except Exception:  # noqa: BLE001 — 非 JSON 体原样返回
@@ -211,7 +216,11 @@ class AcceptLanguageMiddleware(BaseHTTPMiddleware):
         if category is None:
             return self._reissue(response, body)
 
-        data["message"] = user_message_for(category, locale)
+        # Preserve deliberate route/domain guidance; only generic catalog text
+        # is ours to translate at this infrastructure layer.
+        generic = (None, "", user_message_for(category, DEFAULT_LOCALE), category_defaults(category).user_message)
+        if data.get("message") in generic:
+            data["message"] = user_message_for(category, locale)
         return self._reissue(response, json.dumps(data, ensure_ascii=False).encode("utf-8"))
 
     @staticmethod
@@ -219,14 +228,11 @@ class AcceptLanguageMiddleware(BaseHTTPMiddleware):
         """按原状态/头重发响应体（content-length 按新体重算）。"""
         from starlette.responses import Response as StarletteResponse
 
-        headers = dict(response.headers)
-        headers.pop("content-length", None)
-        return StarletteResponse(
-            content=body,
-            status_code=response.status_code,
-            headers=headers,
-            media_type=response.headers.get("content-type"),
-        )
+        out = StarletteResponse(content=body, status_code=response.status_code,
+            media_type=response.headers.get("content-type"), background=response.background)
+        out.raw_headers.extend((key, value) for key, value in response.raw_headers
+            if key.lower() not in (b"content-length", b"content-type"))
+        return out
 
     @staticmethod
     def _reissue_stream(
@@ -248,14 +254,12 @@ class AcceptLanguageMiddleware(BaseHTTPMiddleware):
             ):
                 yield chunk
 
-        headers = dict(response.headers)
-        headers.pop("content-length", None)
-        return StreamingResponse(
-            body_iter(),
-            status_code=response.status_code,
-            headers=headers,
-            media_type=response.headers.get("content-type"),
-        )
+        out = StreamingResponse(body_iter(), status_code=response.status_code,
+            media_type=response.headers.get("content-type"), background=response.background)
+        out.raw_headers.extend((key, value) for key, value in response.raw_headers
+            if key.lower() not in (b"content-length", b"content-type"))
+        return out
+
 
 
 __all__ = [

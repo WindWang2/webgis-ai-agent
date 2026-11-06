@@ -18,12 +18,18 @@ _TOOL_MODULES = [
     ("app.tools.chart", "register_chart_tools"),
     ("app.tools.cartography", "register_cartography_tools"),
     ("app.tools.map_view", "register_map_view_tools"),
+    # Track A（ADR-0278）：地图表现层操作事务 —— preview/commit/回执
+    ("app.tools.map_operations_tools", "register_map_operation_tools"),
+    # GOAL 04：多尺度表达档案 —— inspect/preview/apply（scale_profile.v1）
+    ("app.tools.scale_profile_tools", "register_scale_profile_tools"),
     # F12（ADR-0260）：Map Plan Compiler —— MapPlanIR → 最小 MapSpec mutations
     ("app.tools.map_plan_tools", "register_map_plan_tools"),
     # H10（ADR-0217）：GISAction IR —— typed 执行计划 dry-run/收敛指标面
     ("app.tools.gis_action_tools", "register_gis_action_tools"),
     ("app.tools.annotation", "register_annotation_tools"),
     ("app.tools.nature_resources", "register_nature_resource_tools"),
+    # 批量图册发布（atlas durable job 提交面）
+    ("app.tools.atlas_export_tools", "register_atlas_export_tools"),
     ("app.tools.upload_tools", "register_upload_tools"),
     ("app.tools.web_crawler", "register_crawler_tools"),
     ("app.tools.chinese_maps", "register_chinese_map_tools"),
@@ -33,6 +39,8 @@ _TOOL_MODULES = [
     ("app.tools.spatial_stats", "register_spatial_stats_tools"),
     # Science V6：空间抽样工具面（Goal 07 新域，独立模块防并发冲突）
     ("app.tools.sampling_tools", "register_sampling_tools"),
+    # /goal 03：持久数据要素编辑工具面（preview/commit/history）
+    ("app.tools.feature_edit_tools", "register_feature_edit_tools"),
     # Science V6：生态分析工具面（Goal 07 新域，独立模块防并发冲突）
     ("app.tools.ecology_tools", "register_ecology_tools"),
     ("app.tools.point_pattern_tools", "register_point_pattern_tools"),
@@ -65,15 +73,22 @@ _TOOL_MODULES = [
     # ADR-0214：组合契约工具面（discover/apply_composition/plan_replace）
     ("app.tools.composition_tools", "register_composition_tools"),
     ("app.tools.data_fabric_tools", "register_data_fabric_tools"),
+    # GOAL-02：OGC 开放服务与远程资产工具面（发现/coverage 读/COG 物化/瓦片上图）
+    ("app.tools.ogc_service_tools", "register_ogc_service_tools"),
     ("app.tools.data_discovery", "register_data_discovery_tools"),
     ("app.tools.workspace_tools", "register_workspace_tools"),
     ("app.tools.ingest_tools", "register_ingest_tools"),
+    # 数据准备域：inspect→propose→prepare→bind 工具面（独立模块防并发冲突）
+    ("app.tools.data_preparation_tools", "register_data_preparation_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
     ("app.tools.flow_tools", "register_flow_tools"),
     ("app.tools.dasymetric_tools", "register_dasymetric_tools"),
     ("app.tools.geocompute_tools", "register_geocompute_tools"),
     # science-v5 W8：物候/时空立方体/时间异常工具面（独立模块防并发冲突）
     ("app.tools.science_temporal_tools", "register_science_temporal_tools"),
+    # GOAL 03：时态视图控制工具面（bind/control/compare/unbind/status；
+    # 写 MapSpec temporal 分支，独立模块防并发冲突）
+    ("app.tools.temporal_view_tools", "register_temporal_view_tools"),
     ("app.tools.modelops_tools", "register_modelops_tools"),
     # Platform 11 / ADR-0198：GeoAI prompt artifact/候选/精化/语义工具面
     ("app.tools.geoai_tools", "register_geoai_tools"),
@@ -89,6 +104,14 @@ _TOOL_MODULES = [
     # F07：ExecutionCatalog 只读发现工具面（capability-first discovery，
     # 独立模块防并发冲突）
     ("app.tools.catalog_discovery_tools", "register_catalog_discovery_tools"),
+    # goal-02：多步 GIS 分析工作流编排工具面（plan/run/status/recompute；
+    # 独立模块防并发冲突；执行真相=registry.dispatch）
+    ("app.tools.analysis_workflow_tools", "register_analysis_workflow_tools"),
+    # Track B（M14）：图层浏览/聚合只读工具面（分页/typed 过滤/视口统计）
+    ("app.tools.layer_browse_tools", "register_layer_browse_tools"),
+    # GOAL 01：空间语义与量纲可信契约只读工具面（inspect_spatial_semantics；
+    # 独立模块防并发冲突，preflight 真相在 gis_harness/spatial_semantics/）
+    ("app.tools.spatial_semantics_tools", "register_spatial_semantics_tools"),
 ]
 
 

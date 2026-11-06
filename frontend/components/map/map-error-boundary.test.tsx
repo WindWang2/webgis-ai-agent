@@ -39,7 +39,7 @@ describe('MapErrorBoundary', () => {
     );
 
     expect(screen.getByText('map canvas')).toBeInTheDocument();
-    expect(screen.queryByText(/map unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/地图暂不可用/)).not.toBeInTheDocument();
   });
 
   it('contains a throwing child instead of letting the error escape', () => {
@@ -49,7 +49,7 @@ describe('MapErrorBoundary', () => {
       </MapErrorBoundary>
     );
 
-    expect(screen.getByText(/map unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/地图暂不可用/)).toBeInTheDocument();
   });
 
   it('explains a tile-load failure as a network problem, not a crash', () => {
@@ -59,9 +59,9 @@ describe('MapErrorBoundary', () => {
       </MapErrorBoundary>
     );
 
-    expect(screen.getByText(/basemap tiles could not be loaded/i)).toBeInTheDocument();
+    expect(screen.getByText(/底图无法加载/)).toBeInTheDocument();
     // The whole point of scoping the boundary: the rest of the app survives.
-    expect(screen.getByText(/chat and analysis still work/i)).toBeInTheDocument();
+    expect(screen.getByText(/聊天和分析仍可使用/)).toBeInTheDocument();
   });
 
   it('surfaces the raw message for non-network failures', () => {
@@ -71,8 +71,8 @@ describe('MapErrorBoundary', () => {
       </MapErrorBoundary>
     );
 
-    expect(screen.getByText('layer id collision: eq')).toBeInTheDocument();
-    expect(screen.queryByText(/basemap tiles could not be loaded/i)).not.toBeInTheDocument();
+    expect(screen.getByText('地图暂时无法显示。')).toBeInTheDocument();
+    expect(screen.queryByText(/底图无法加载/)).not.toBeInTheDocument();
   });
 
   it('clears the error state on retry so a recovered map can remount', () => {
@@ -89,13 +89,13 @@ describe('MapErrorBoundary', () => {
       </MapErrorBoundary>
     );
 
-    expect(screen.getByText(/map unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/地图暂不可用/)).toBeInTheDocument();
 
     shouldThrow = false;
-    fireEvent.click(screen.getByRole('button', { name: /retry map/i }));
+    fireEvent.click(screen.getByRole('button', { name: /重试地图/ }));
 
     expect(screen.getByText('map canvas')).toBeInTheDocument();
-    expect(screen.queryByText(/map unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/地图暂不可用/)).not.toBeInTheDocument();
   });
 
   it('forces children remount via incremented retryKey on retry (FRONT-08)', () => {
@@ -116,11 +116,11 @@ describe('MapErrorBoundary', () => {
       </MapErrorBoundary>
     );
 
-    expect(screen.getByText(/map unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/地图暂不可用/)).toBeInTheDocument();
     expect(mountCount).toBe(0);
 
     shouldThrow = false;
-    fireEvent.click(screen.getByRole('button', { name: /retry map/i }));
+    fireEvent.click(screen.getByRole('button', { name: /重试地图/ }));
 
     expect(screen.getByText('Mounted Child')).toBeInTheDocument();
     expect(mountCount).toBe(1);

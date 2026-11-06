@@ -52,6 +52,9 @@ def test_planning_surface_is_bounded():
         # ADR-0258 M6（#1282）：语义产品编辑与 intent/product 同族 ——
         # 改的是"产品是什么"（product_spec），不是执行面。
         "webgis_product_edit",
+        # carto-design（#1870）：设计候选选择与 intent/product 同族 ——
+        # 定的是"产品用哪个表达方案"（user-wins），不是执行面。
+        "webgis_map_design_select",
         "propose_plan",
         "execute_plan",
         "get_plan_status",
@@ -83,3 +86,18 @@ def test_classify_tool_deterministic_rules():
     assert classify_tool("whatever", "app.tools.unknown_module") == "uncategorized"
     # 同名不同模块：名字覆盖优先于模块默认
     assert classify_tool("measure_distance", "app.tools.annotation") == "inspection"
+
+
+def test_extracted_terrain_tools_keep_analysis_category():
+    """Splitting registration modules must preserve their original category."""
+    registry = _registry()
+    for name in (
+        "hydrology_v4_analysis", "terrain_profile", "surface_distance_analysis",
+        "surface_area_analysis", "cut_fill_volume_analysis", "line_of_sight_analysis",
+        "cost_distance_analysis", "least_cost_path_analysis",
+    ):
+        tool = registry._tools[name]
+        assert tool.__module__ in {
+            "app.tools.terrain_hydrology", "app.tools.terrain_measurements",
+        }
+        assert classify_tool(name, tool.__module__) == "analysis"

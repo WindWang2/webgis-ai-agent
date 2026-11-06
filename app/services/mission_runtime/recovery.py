@@ -145,7 +145,7 @@ class MissionRecoveryCoordinator:
         if acquired is None:
             return {"ok": False, "reason": "LEASE_ACQUIRE_FAILED"}
         epoch, expires = acquired
-        completed = False
+        recovery_succeeded = False
 
         try:
             rec = self.store.get_mission(mission_id, org_id=org_id)
@@ -159,17 +159,11 @@ class MissionRecoveryCoordinator:
                 # allow direct recover from active non-terminal via whitelist
                 to = C.MissionState.RECOVERING
                 if not C.transition_allowed(rec.state, to):
-                    # force path: suspend first if needed
-                    if C.transition_allowed(rec.state, C.MissionState.SUSPENDED):
-                        rec = self.store.transition(
-                            mission_id, to_state=C.MissionState.SUSPENDED.value,
-                            lease_epoch=epoch, owner=worker_id)
-                    if not C.transition_allowed(rec.state, to):
-                        return {
-                            "ok": False,
-                            "reason": f"CANNOT_ENTER_RECOVERING_FROM_{rec.state.value}",
-                            "lease_epoch": epoch,
-                        }
+                    return {
+                        "ok": False,
+                        "reason": f"CANNOT_ENTER_RECOVERING_FROM_{rec.state.value}",
+                        "lease_epoch": epoch,
+                    }
                 rec = self.store.transition(
                     mission_id,
                     to_state=C.MissionState.RECOVERING.value,
@@ -259,7 +253,7 @@ class MissionRecoveryCoordinator:
                         owner=worker_id,
                     )
 
-            completed = True
+            recovery_succeeded = True
             return {
                 "ok": True,
                 "mission_id": mission_id,
@@ -279,7 +273,7 @@ class MissionRecoveryCoordinator:
             # RUN-16: every early/exception return after acquire_lease must
             # release it; only a successful recovery keeps the lease alive
             # (the mission continues RUNNING under this worker).
-            if not completed:
+            if not recovery_succeeded:
                 try:
                     self.store.release_lease(
                         mission_id, owner=worker_id, lease_epoch=epoch)

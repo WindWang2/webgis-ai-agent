@@ -148,9 +148,8 @@ def test_truncation_when_issue_cap_binds():
     assert report.truncated is True
     assert report.total_features == 400
     topo = [i for i in report.issues if i.dimension == "topology"]
-    assert len(topo) == SpatialQualityEngine.MAX_TOPOLOGY_ISSUES, (
-        f"topology issues {len(topo)} must stop exactly at the cap"
-    )
+    assert len(topo) == min(200, SpatialQualityEngine.MAX_TOPOLOGY_ISSUES)
+    assert report.truncation_details["issues_omitted_by_code"]["TOPOLOGY_OVERLAP"] > 0
     details = report.truncation_details
     assert details is not None
     assert "max_issues" in details.get("reasons", [])
@@ -190,7 +189,7 @@ def test_truncation_when_pair_budget_binds():
     # total j>i pairs over 600 features = 599·600/2; the rest were budget-skipped
     total_pairs = 599 * 600 // 2
     assert details["candidates_skipped_by_budget"] == total_pairs - expected_examined
-    assert report.truncated_count == details["candidates_skipped_by_budget"] + details["dangling_endpoints_undetermined"]
+    assert report.truncated_count == details["candidates_skipped_by_budget"] + details["dangling_endpoints_undetermined"] + sum(details.get("issues_omitted_by_code", {}).values())
     # zero pairwise issues found (correct — rings don't touch); the partial
     # scan is explicit, not masked
     assert len([i for i in report.issues if i.dimension == "topology"] ) == 0

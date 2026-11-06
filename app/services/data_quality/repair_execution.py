@@ -145,7 +145,7 @@ async def execute_repair(
     )
 
     result: Dict[str, Any] = {
-        "status": "success",
+        "status": "partial" if any(int(op.get("failed_count") or 0) > 0 for op in ops_evidence) else "success",
         "operations_applied": list(evidence["ops_applied"]),
         "ops_evidence": list(evidence["op_evidence"]),
         "logs": [str(line)[:_MAX_LOG_ENTRY_CHARS] for line in logs[:_MAX_LOG_ENTRIES]],

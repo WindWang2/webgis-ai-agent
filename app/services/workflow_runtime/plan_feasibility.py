@@ -16,6 +16,12 @@ peak / retry 乘数 / cache 折扣 / unknown 保守地板）接到 workflow DAG�
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    PlanAdmission,
+    WorkflowDAG,
+)
+
+
 import logging
 import os
 from dataclasses import dataclass, field
@@ -65,7 +71,7 @@ class PlanFeasibility:
         """enforce 下是否应拒绝实例启动（observe/off 恒 False）。"""
         return bool(self.violations) and self.mode == "enforce"
 
-    def to_bounded_dict(self) -> Dict[str, Any]:
+    def to_bounded_dict(self) -> PlanAdmission:
         return {
             "mode": self.mode,
             "violations": [v[:96] for v in self.violations[:12]],
@@ -83,7 +89,7 @@ class PlanFeasibility:
         }
 
 
-def dag_waves(dag: Dict[str, Any]) -> List[List[str]]:
+def dag_waves(dag: WorkflowDAG) -> List[List[str]]:
     """DAG → 拓扑波次（层内声明序；确定性；环内节点收敛进末波）。
 
     与 driver ``ready_set`` 的可派发语义同构：同一波的节点可并行派发
@@ -128,7 +134,7 @@ def dag_waves(dag: Dict[str, Any]) -> List[List[str]]:
 
 
 def dag_plan_nodes(
-    dag: Dict[str, Any],
+    dag: WorkflowDAG,
     *,
     max_parallel: int = 1,
     expected_attempts: int = 1,
@@ -178,7 +184,7 @@ def dag_plan_nodes(
 
 
 def evaluate_plan(
-    dag: Dict[str, Any],
+    dag: WorkflowDAG,
     *,
     max_parallel: int = 1,
     expected_attempts: int = 1,

@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
+from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult, QuerySpec
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     InvalidQueryError,
@@ -152,7 +152,7 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
             return False
 
     def capabilities(self) -> List[str]:
-        return ["pagination", "projection"]
+        return ["limit"]
 
     def list_datasets(self) -> List[Dict[str, Any]]:
         decls = self._datasets_decl()
@@ -192,10 +192,12 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
         )
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
-        result = self.query(dataset_id, _SimpleSpec(limit=limit))
+        result = self.query(dataset_id, QuerySpec(limit=limit))
         return {"dataset_id": dataset_id, "features": result.features, "is_demo": False}
 
     def query(self, dataset_id: str, query_spec) -> QueryResult:
+        if any(getattr(query_spec, key, None) for key in ("bbox", "where", "filter_expr", "datetime_range", "offset", "fields", "columns")):
+            raise InvalidQueryError("stats_api adapter does not support these predicates/projections")
         decl = self._decl(dataset_id)
         rel_path = str(decl.get("path") or "").strip("/")
         if not rel_path:
@@ -206,7 +208,8 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
         url = f"{self._base_url()}/{rel_path}"
         page_param = decl.get("page_param")
         page_size_param = decl.get("page_size_param")
-        page_size = min(int(query_spec.limit or decl.get("page_size") or 100), _MAX_ROWS)
+        row_limit = max(1, min(int(query_spec.limit or decl.get("page_size") or 100), _MAX_ROWS))
+        page_size = row_limit
         items_path = str(decl.get("items_path") or "")
 
         features: List[Dict[str, Any]] = []
@@ -238,7 +241,7 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
                 )
             features.extend(self._rows_to_features(rows, decl))
             got_full_page = len(rows) >= page_size
-            if len(features) >= _MAX_ROWS:
+            if len(features) >= row_limit:
                 hit_row_cap = True
                 break
             if not page_param or not got_full_page:
@@ -248,9 +251,9 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
                 break
             page += 1
 
-        if len(features) > _MAX_ROWS:
+        if len(features) > row_limit:
             hit_row_cap = True
-        features = features[: _MAX_ROWS]
+        features = features[:row_limit]
         truncated = bool(
             hit_row_cap
             or hit_page_cap
@@ -278,18 +281,8 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
         reachable = self.probe()
         return DataFabricHealth(
             source_type="stats_api",
+            status="healthy" if reachable else "unreachable",
             reachable=reachable,
             latency_ms=0.0,
-            details={"endpoint": self._base_url()},
+            details={"endpoint": self.profile.endpoint_url or self.profile.url or ""},
         )
-
-
-class _SimpleSpec:
-    """Minimal QuerySpec stand-in for preview()."""
-
-    def __init__(self, limit: int = 10):
-        self.limit = limit
-        self.offset = 0
-        self.bbox = None
-        self.columns = None
-        self.filter_expr = None

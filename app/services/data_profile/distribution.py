@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,8 @@ def _representative_point(geometry: Dict[str, Any]) -> Optional[Tuple[float, flo
         head = node[0]
         if isinstance(head, (int, float)) and len(node) >= 2 \
                 and isinstance(node[1], (int, float)):
-            return (float(node[0]), float(node[1]))
+            point = (float(node[0]), float(node[1]))
+            return point if all(math.isfinite(v) for v in point) and abs(point[0]) <= 180 and abs(point[1]) <= 90 else None
         return first_pos(head)
 
     def _mid_any(node: Any) -> Optional[Tuple[float, float]]:
@@ -63,8 +65,17 @@ def spatial_distribution(
     resolution: int = _DEFAULT_RESOLUTION,
     max_features: int = _MAX_FEATURES,
     max_cells: int = _MAX_CELLS,
+    crs: Optional[str] = None,
 ) -> Dict[str, Any]:
     """features → H3 直方图 + 热点摘要（有界、纯函数）。"""
+    if crs:
+        from pyproj import CRS
+
+        try:
+            if not CRS.from_user_input(crs).is_geographic:
+                return {"available": False, "reason": "projected_crs"}
+        except ValueError:
+            return {"available": False, "reason": "invalid_crs"}
     try:
         import h3
     except Exception as exc:  # noqa: BLE001 — 诚实降级
@@ -77,6 +88,7 @@ def spatial_distribution(
 
     def bucket(target_res: int) -> Dict[str, int]:
         nonlocal skipped
+        skipped = 0
         b: Dict[str, int] = {}
         for f in features[:max_features]:
             geometry = f.get("geometry") if isinstance(f, dict) else None

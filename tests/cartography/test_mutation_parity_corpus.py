@@ -15,6 +15,7 @@ lifecycle 解巨石重构（per-intent handler + registry dispatch）必须逐 c
 
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -509,12 +510,134 @@ CASES = [
         ],
     },
     {
+        # /goal 03：要素编辑盖章 intent —— seed 挂 ref 源 + upsert 层，盖章只
+        # 改 content_revision（无匹配源时 terminal 警告回执，不进 commit 面）。
+        "name": "refresh_data_revision_stamp",
+        "seed": [
+            {
+                "class": "UpsertSourceIntent",
+                "fields": {
+                    "source_id": "ref-src",
+                    "source": {"type": "geojson", "ref_id": "ref:data-edit1", "content_revision": 1},
+                },
+            },
+            {
+                "class": "UpsertLayerIntent",
+                "fields": {
+                    "layer": {"id": "edited", "type": "circle", "source": "ref-src"},
+                },
+            },
+        ],
+        "actions": [
+            {
+                "class": "RefreshDataRevisionIntent",
+                "fields": {"ref_id": "ref:data-edit1", "content_revision": 2},
+            }
+        ],
+    },
+    {
         "name": "set_time_defaults_merge",
         "actions": [
             {
                 "class": "SetTimeIntent",
                 "fields": {"enabled": True, "field": "ts", "step": 2.0},
             }
+        ],
+    },
+    {
+        "name": "temporal_view_bind_config",
+        "actions": [
+            {
+                "class": "SetTemporalViewIntent",
+                "fields": {
+                    "config": {
+                        "schema_version": "temporal_view.v1",
+                        "enabled": True,
+                        "layers": [{"layer_id": "schools", "source_ref": "ref:schools"}],
+                        "time_field": "year",
+                        "time_semantics": "snapshot",
+                        "time_representation": "year_int",
+                        "timezone": "UTC",
+                        "granularity": "year",
+                        "extent": ["2021-01-01T00:00:00Z", "2023-01-01T00:00:00Z"],
+                        "frames": [
+                            {"id": "f-2021", "label": "2021",
+                             "start": "2021-01-01T00:00:00Z",
+                             "end": "2022-01-01T00:00:00Z", "feature_count": 2},
+                            {"id": "f-2022", "label": "2022",
+                             "start": "2022-01-01T00:00:00Z",
+                             "end": "2023-01-01T00:00:00Z", "feature_count": 3},
+                        ],
+                        "cursor_frame": "f-2022",
+                        "playback": {"playing": False, "rate": 1.0},
+                        "source_ref": "ref:schools",
+                        "content_revision": 3,
+                    }
+                },
+            }
+        ],
+    },
+    {
+        "name": "temporal_view_control_patch",
+        "seed": [
+            {
+                "class": "SetTemporalViewIntent",
+                "fields": {
+                    "config": {
+                        "enabled": True,
+                        "layers": [{"layer_id": "schools"}],
+                        "time_field": "year", "time_semantics": "snapshot",
+                        "time_representation": "year_int", "granularity": "year",
+                        "extent": ["2021-01-01T00:00:00Z", "2023-01-01T00:00:00Z"],
+                        "frames": [
+                            {"id": "f-2021", "label": "2021",
+                             "start": "2021-01-01T00:00:00Z",
+                             "end": "2022-01-01T00:00:00Z", "feature_count": 2},
+                            {"id": "f-2022", "label": "2022",
+                             "start": "2022-01-01T00:00:00Z",
+                             "end": "2023-01-01T00:00:00Z", "feature_count": 3},
+                        ],
+                        "cursor_frame": "f-2022",
+                        "source_ref": "ref:schools",
+                    }
+                },
+            }
+        ],
+        "actions": [
+            {"class": "SetTemporalViewIntent",
+             "fields": {"patch": {"cursor_frame": "f-2021",
+                                  "playback": {"playing": True}}}},
+            {"class": "SetTemporalViewIntent", "fields": {"remove": True}},
+        ],
+    },
+    {
+        "name": "temporal_view_single_frame_refused",
+        "actions": [
+            {
+                "class": "SetTemporalViewIntent",
+                "fields": {
+                    "config": {
+                        "enabled": True,
+                        "layers": [{"layer_id": "x"}],
+                        "time_field": "year", "time_semantics": "snapshot",
+                        "time_representation": "year_int", "granularity": "year",
+                        "extent": ["2023-01-01T00:00:00Z", "2024-01-01T00:00:00Z"],
+                        "frames": [
+                            {"id": "f-2023", "label": "2023",
+                             "start": "2023-01-01T00:00:00Z",
+                             "end": "2024-01-01T00:00:00Z", "feature_count": 1},
+                        ],
+                        "cursor_frame": "f-2023",
+                        "source_ref": "ref:x",
+                    }
+                },
+            }
+        ],
+    },
+    {
+        "name": "temporal_view_remove_noop",
+        "actions": [
+            {"class": "SetTemporalViewIntent", "fields": {"remove": True}},
         ],
     },
     {
@@ -831,6 +954,13 @@ def _projection(result):
     """结果信封的归一化投影（剔除易变面）。"""
     d = result.to_dict()
     d.pop("mapspec", None)
+    if isinstance(d.get("message"), str):
+        # Pydantic help URLs carry its release version, not mutation semantics.
+        d["message"] = re.sub(
+            r"https://errors\.pydantic\.dev/\d+\.\d+/v/",
+            "https://errors.pydantic.dev/<version>/v/",
+            d["message"],
+        )
     if d.get("checkpoint_id"):
         d["checkpoint_id"] = "<ckpt>"
     d["has_mapspec"] = result.mapspec is not None
@@ -840,6 +970,20 @@ def _projection(result):
         if isinstance(layer, dict)
     ]
     return d
+
+
+@pytest.mark.parametrize("version", ["2.13", "2.14"])
+def test_projection_normalizes_only_validation_help_version(version):
+    from types import SimpleNamespace
+
+    message = ("invalid scene: literal_error input_value='4d' "
+               f"https://errors.pydantic.dev/{version}/v/literal_error")
+    result = SimpleNamespace(mapspec=None, to_dict=lambda: {"message": message})
+    projected = _projection(result)
+    assert projected["message"] == (
+        "invalid scene: literal_error input_value='4d' "
+        "https://errors.pydantic.dev/<version>/v/literal_error"
+    )
 
 
 async def _state_projection(engine, session_id):

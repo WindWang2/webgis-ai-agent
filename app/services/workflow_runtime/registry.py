@@ -7,9 +7,11 @@ re-emit 比对指纹（不一致拒绝）；本表只管「哪些包存在、哪
 """
 from __future__ import annotations
 
+from app.contracts.workflow import PackageRecord
+
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -50,7 +52,7 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _row_to_dict(row: Any) -> Dict[str, Any]:
+def _row_to_dict(row: Any) -> PackageRecord:
     return {
         "package_id": row.package_id,
         "version": row.version,
@@ -79,13 +81,16 @@ class PackageRegistry:
         self, package: Any, *, owner_scope: str,
         environment_fingerprint: str = "", project_id: str = "",
         org_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> PackageRecord:
         """注册（draft）；同 (id, version) 指纹相同幂等，不同抛冲突。
 
         ``org_id``（ADR-0139）：租户作用域；缺席时按 owner 域锚定既有
         实例行，再兜底 default 隔离桶。
         """
         from app.models.db_model import WorkflowPackageRow
+
+        if len(owner_scope) > 40:
+            raise ValueError("owner_scope exceeds40 characters")
 
         with self._factory() as db:
             if not org_id:
@@ -146,9 +151,12 @@ class PackageRegistry:
 
     def publish(
         self, package_id: str, version: str, *, owner_scope: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> PackageRecord | None:
         """draft → published（幂等；已 published 原样返回）。"""
         from app.models.db_model import WorkflowPackageRow
+
+        if len(owner_scope) > 40:
+            raise ValueError("owner_scope exceeds40 characters")
 
         try:
             with self._factory() as db:
@@ -168,6 +176,7 @@ class PackageRegistry:
                 row = db.query(WorkflowPackageRow).filter(
                     WorkflowPackageRow.package_id == package_id,
                     WorkflowPackageRow.version == version,
+                    WorkflowPackageRow.owner_scope == owner_scope,
                 ).first()
                 return _row_to_dict(row) if row is not None else None
         except OperationalError:
@@ -177,7 +186,7 @@ class PackageRegistry:
     def resolve(
         self, package_id: str, *, owner_scope: str,
         version: str = "", require_published: bool = False,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> PackageRecord | None:
         """解析包行（version 缺省 = 最新发布版 → 最新 draft）。"""
         from app.models.db_model import WorkflowPackageRow
 
@@ -214,7 +223,7 @@ class PackageRegistry:
 
     def get_by_fingerprint(
         self, fingerprint: str, *, owner_scope: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> PackageRecord | None:
         from app.models.db_model import WorkflowPackageRow
 
         with self._factory() as db:
@@ -230,7 +239,7 @@ class PackageRegistry:
 
     def list_packages(
         self, *, owner_scope: str, limit: int = 32,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[PackageRecord]:
         from app.models.db_model import WorkflowPackageRow
 
         with self._factory() as db:
@@ -242,7 +251,7 @@ class PackageRegistry:
 
     def list_versions(
         self, package_id: str, *, owner_scope: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[PackageRecord]:
         from app.models.db_model import WorkflowPackageRow
 
         with self._factory() as db:

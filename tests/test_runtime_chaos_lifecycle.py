@@ -15,6 +15,7 @@ Covers:
 import asyncio
 
 import pytest
+from starlette.websockets import WebSocketState
 
 from tests.fixtures.perf_budget import aassert_within_budget
 
@@ -113,17 +114,19 @@ async def test_async_db_session_closes_on_cancellation(tracking_sessions):
 
 
 class _HealthyWS:
+    application_state = WebSocketState.CONNECTING
     def __init__(self):
         self.sent = []
 
     async def accept(self):
-        pass
+        self.application_state = WebSocketState.CONNECTED
 
     async def send_json(self, message):
         self.sent.append(message)
 
 
 class _StuckWS:
+    application_state = WebSocketState.CONNECTING
     """send_json parks forever — simulates a dead-but-not-errored socket."""
 
     def __init__(self):
@@ -131,22 +134,24 @@ class _StuckWS:
         self.closed = False
 
     async def accept(self):
-        pass
+        self.application_state = WebSocketState.CONNECTED
 
     async def send_json(self, message):
         await self.release.wait()
 
     async def close(self):
         self.closed = True
+        self.application_state = WebSocketState.DISCONNECTED
 
 
 class _FailingWS:
+    application_state = WebSocketState.CONNECTING
     def __init__(self):
         self.attempts = 0
         self.closed = False
 
     async def accept(self):
-        pass
+        self.application_state = WebSocketState.CONNECTED
 
     async def send_json(self, message):
         self.attempts += 1
@@ -154,6 +159,7 @@ class _FailingWS:
 
     async def close(self):
         self.closed = True
+        self.application_state = WebSocketState.DISCONNECTED
 
 
 @pytest.fixture

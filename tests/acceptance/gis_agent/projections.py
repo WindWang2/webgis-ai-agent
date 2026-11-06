@@ -60,6 +60,11 @@ async def build_task_evidence(session_id: str, scenario) -> Dict[str, Any]:
     evidence["scene3d"] = _project_scene3d(spec, revision)
     evidence["interaction"] = await _project_interaction(session_id)
 
+    # ── G3D-V2-C：3D 分析绑定与失效裁决（analysis_binding_store 只读）──
+    evidence["analysis_workflow"] = await _project_analysis_workflow(session_id)
+    evidence["scene3d_analysis"] = await _project_scene3d_analysis(
+        session_id, spec)
+
     # ── 最终答复（dispatch 缝不可观测的最终文本 → 诚实 not_evaluated 面）
     evidence["final_answer"] = {
         "observable": False,
@@ -161,6 +166,98 @@ def _project_progress(plan) -> Dict[str, Any]:
         "mandatory_complete": all(
             r["status"] not in ("pending", "failed") for r in mandatory),
     }
+
+
+async def _project_analysis_workflow(session_id: str) -> Optional[Dict[str, Any]]:
+    """goal-02 F28：分析工作流运行态投影（METHOD 面）。
+
+    权威寻址 = 别名（``analysis_workflow.v1:<workflow_id>``，工具层单写者
+    落址）——当前会话的**当前工作流**（单工作流语义；多工作流会话里后
+    plan 者覆写 alias，即「最新 plan 的工作流」）。uuid ref 排序无时间
+    语义，不用于选择。fail-open：无状态/损坏 → None。
+    """
+    try:
+        from app.services.session_data import session_data_manager
+        refs = await session_data_manager.list_refs(session_id)
+        # 权威寻址 = 别名（analysis_workflow.v1:<workflow_id>，工具层单写者
+        # 落址）；uuid ref 排序无时间语义，不能用来选「最新」。
+        aliased = [r for r, alias in refs.items()
+                   if str(alias).startswith("analysis_workflow.v1:")]
+        for ref in aliased:
+            payload = await session_data_manager.get(session_id, ref)
+            if not isinstance(payload, dict):
+                continue
+            steps = payload.get("steps") or {}
+            envelopes = payload.get("envelopes") or {}
+            return {
+                "workflow_id": payload.get("workflow_id", ""),
+                "family": payload.get("family", ""),
+                "status": payload.get("status", ""),
+                "steps": {
+                    sid: (e or {}).get("state", "")
+                    for sid, e in steps.items()},
+                "step_reasons": {
+                    sid: (e or {}).get("reason_code", "")
+                    for sid, e in steps.items() if (e or {}).get("reason_code")},
+                "layers": {
+                    sid: (env or {}).get("ref", "")
+                    for sid, env in envelopes.items()
+                    if (env or {}).get("ref")},
+                "receipts": sorted((payload.get("receipts") or {}).keys()),
+                # B5：run 侧执行证据（负例防「run 退化 no-op 也绿」——
+                # workflow_start/end 事件证明 run 真实驱动过状态机）
+                "run_log_events": [
+                    (e or {}).get("event", "")
+                    for e in (payload.get("run_log") or [])][-8:],
+            }
+        return None
+    except Exception:  # noqa: BLE001 — 投影面 fail-open
+        return None
+
+
+async def _project_scene3d_analysis(
+    session_id: str, spec: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """G3D-V2-C：分析绑定台账 + 当前失效裁决（生产只读模块投影）。
+
+    无绑定时返回 None（未运行过 3D 分析——不是错误）；有绑定时给出
+    有界 evaluations（binding/staleness 摘要：goal/observer/状态/码）。
+    """
+    try:
+        from app.services.gis_harness.scene3d.analysis_binding_store import (
+            evaluate_session_staleness,
+            load_analysis_bindings,
+        )
+
+        bindings = await load_analysis_bindings(session_id)
+        if not bindings:
+            return None
+        evaluations = await evaluate_session_staleness(session_id, mapspec=spec)
+        return {
+            "binding_count": len(bindings),
+            "analysis_goals": sorted({b.analysis_goal for b in bindings}),
+            "stale_reason_codes": sorted({
+                (e.get("verdict") or {}).get("reason_code") or ""
+                for e in evaluations
+                if (e.get("verdict") or {}).get("state") != "fresh"
+            } - {""}),
+            "all_fresh": all(
+                (e.get("verdict") or {}).get("state") == "fresh"
+                for e in evaluations
+            ),
+            "evaluations": [
+                {
+                    "analysis_goal": (e.get("binding") or {}).get("analysis_goal"),
+                    "state": (e.get("verdict") or {}).get("state"),
+                    "reason_code": (e.get("verdict") or {}).get("reason_code"),
+                    "recommended_action": (e.get("verdict") or {}).get(
+                        "recommended_action"),
+                }
+                for e in evaluations
+            ],
+        }
+    except Exception:  # noqa: BLE001 — 只读取证面 fail-open
+        return None
 
 
 def _project_mapspec(spec) -> Optional[Dict[str, Any]]:
@@ -281,6 +378,9 @@ async def _project_requirement(session_id: str) -> Optional[Dict[str, Any]]:
             "revision": summary.get("revision"),
             "requirement_digest": str(summary.get("requirement_digest") or ""),
             "folded_patch_count": getattr(state, "folded_patch_count", 0),
+            # carto-design（M6）：user-wins 表达 pin（design-select 落档面）
+            "representation_pin": str(
+                doc.intent.representation.geometry_kind or ""),
             # G3D04：SceneSpec 投影（typed 3D 需求面）
             "scene": {
                 "dimension": scene.dimension,

@@ -32,12 +32,13 @@ def validate_artifacts(
         and str(r.get("status") or "") in ("available", "done")
         and not bool(r.get("optional"))
     ]
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for row in rows:
         cap = str(row.get("capability") or "?")
-        if cap in seen:
+        identity = (cap, str(row.get("bound_ref") or ""))
+        if identity in seen:
             continue
-        seen.add(cap)
+        seen.add(identity)
         policy = _capability_fc_ref_policy(cap)
         if policy == "none":
             continue

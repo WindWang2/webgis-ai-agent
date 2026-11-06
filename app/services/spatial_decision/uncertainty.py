@@ -28,7 +28,9 @@ def sample_parameter_distribution(
     p = param.params
 
     if dist == DistributionType.FIXED:
-        val = p.get("value", p.get("expected", 0.0))
+        val = float(p.get("value", p.get("expected", 0.0)))
+        if not np.isfinite(val):
+            raise ValueError("fixed uncertainty value must be finite")
         return np.full(n_samples, val, dtype=float)
 
     elif dist == DistributionType.INTERVAL:
@@ -69,8 +71,10 @@ def sample_parameter_distribution(
         values = p.get("values")
         if isinstance(values, (list, tuple)) and len(values) > 0:
             arr = np.array(values, dtype=float)
+            if not np.isfinite(arr).all():
+                raise ValueError("empirical uncertainty values must be finite")
             return rng.choice(arr, size=n_samples, replace=True)
-        return np.zeros(n_samples, dtype=float)
+        raise ValueError("empirical uncertainty requires nonempty values")
 
     # Fallback
     return np.zeros(n_samples, dtype=float)

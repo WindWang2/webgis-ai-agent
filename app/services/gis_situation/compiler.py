@@ -319,7 +319,7 @@ def compile_map(
         evidence.omitted.append(f"map.layers(+{omitted_layers})")
     layers_fact = (
         known(layers_value, source="mapspec.layers", revision=revision)
-        if layers_value else unknown(source="mapspec.layers")
+        if isinstance(mapspec.get("layers"), list) else unknown(source="mapspec.layers")
     )
     layer_count_fact = known(
         len(raw_layers), source="mapspec.layers", revision=revision,
@@ -368,6 +368,11 @@ def compile_map(
     return MapContext(
         desired_revision=rev_fact, fingerprint=fingerprint,
         layers=layers_fact, layer_count=layer_count_fact,
+        layer_ids=(known([str(row["id"]) for row in raw_layers
+                          if isinstance(row, dict) and row.get("id")],
+                         source="mapspec.layers", revision=revision)
+                   if isinstance(mapspec.get("layers"), list)
+                   else unknown(source="mapspec.layers")),
         sources=sources_fact, basemap=basemap, observed=observed,
     )
 
@@ -460,16 +465,27 @@ def compile_interaction(
     # durable user 隐藏决策：与 gis_world_state.state 同裁决（全环派生）。
     provenance = map_state.get(_PROVENANCE_KEY)
     provenance = list(provenance) if isinstance(provenance, list) else []
-    user_hidden = [
-        str(entry.get("target")) for entry in provenance
-        if entry.get("origin") == "user"
-        and entry.get("kind") == _USER_HIDDEN_KIND
-        and entry.get("detail", {}).get("visible") is False
-        and entry.get("target")
-    ]
+    from app.services.gis_world_state.provenance import last_presentation_owner
+
+    targets = {str(entry.get("target")) for entry in provenance
+               if isinstance(entry, dict) and entry.get("target")}
+    for entry in provenance:
+        if not isinstance(entry, dict) or not isinstance(entry.get("detail"), dict):
+            continue
+        for key in ("shown", "hidden"):
+            values = entry["detail"].get(key)
+            if isinstance(values, list):
+                targets.update(str(target) for target in values if isinstance(target, str))
+    user_hidden = []
+    for target in targets:
+        owner = last_presentation_owner(provenance, target)
+        if (owner and owner.get("origin") == "user"
+                and isinstance(owner.get("detail"), dict)
+                and owner["detail"].get("visible") is False):
+            user_hidden.append(target)
     user_hidden_fact = (
         known(sorted(set(user_hidden)), source="map_state._gis_provenance")
-        if user_hidden else unknown(source="map_state._gis_provenance")
+        if isinstance(map_state.get(_PROVENANCE_KEY), list) else unknown(source="map_state._gis_provenance")
     )
 
     pending = []
@@ -514,10 +530,41 @@ def compile_interaction(
             known(recent, source="map_state._situation_interactions")
             if recent else unknown(source="map_state._situation_interactions")
         )
+    # /goal 03：要素编辑回执投影（EditActionReceipt）—— journal 最近 ≤5
+    # 条跨数据集 receipt（kind/actor/变更数/数据版本），Agent 下一 turn 可
+    # 观察「数据真的改了、谁改的、改了几个」；FIFO 丢弃以 dropped 披露。
+    feature_edit_receipts: List[Dict[str, Any]] = []
+    journals = map_state.get("_feature_edit_journals")
+    if isinstance(journals, dict):
+        for ref_id, journal in journals.items():
+            if not isinstance(journal, dict):
+                continue
+            dropped = int(journal.get("dropped") or 0)
+            for entry in (journal.get("entries") or [])[-3:]:
+                if not isinstance(entry, dict):
+                    continue
+                feature_edit_receipts.append({
+                    "ref_id": ref_id,
+                    "seq": entry.get("seq"),
+                    "kind": entry.get("kind"),
+                    "actor": entry.get("actor"),
+                    "origin": entry.get("origin"),
+                    "changed_features": len({d.get("wfid") for d in entry.get("deltas") or [] if isinstance(d, dict)}),
+                    "schema_ops": len(entry.get("schema_ops") or []),
+                    "content_revision_after": entry.get("content_revision_after"),
+                    "journal_dropped": dropped or None,
+                })
+        feature_edit_receipts.sort(key=lambda r: (r.get("seq") or 0), reverse=True)
+        feature_edit_receipts = feature_edit_receipts[:5]
+    edits_fact = (
+        known(feature_edit_receipts, source="map_state._feature_edit_journals")
+        if feature_edit_receipts else unknown(source="map_state._feature_edit_journals")
+    )
     return InteractionContext(
         selected_feature=selected_fact, focus_layer_id=focus_fact,
         user_hidden_layers=user_hidden_fact, pending_mutations=pending_fact,
         recent_interactions=interactions_fact, display_mode=display,
+        feature_edits=edits_fact,
     )
 
 

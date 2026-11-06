@@ -143,7 +143,7 @@ def eigenvector_centrality(
         converged = True  # 全零是不动点（诚实披露 no_edges=True）
     else:
         for iterations in range(1, max_iter + 1):
-            y = At @ x
+            y = At @ x + x  # Shift A+I removes period-two oscillation.
             norm = float(np.linalg.norm(y))
             if norm == 0.0:
                 # 非负 A 理论上不会发生（Perron-Frobenius）；数值防御，
@@ -163,7 +163,7 @@ def eigenvector_centrality(
     if scores_arr.sum() < 0:
         # 符号规范：非负 A 的主特征向量取非负代表元（数值噪声防御）。
         scores_arr = -scores_arr
-    scores: Dict[Any, float] = {node: float(v) for node, v in zip(nodes, scores_arr)}
+    scores: Dict[Any, float] = {node: (0.0 if graph.degree(node) == 0 else float(v)) for node, v in zip(nodes, scores_arr)}
 
     # 连通性披露：主导分量语义（DiGraph 按无向化视角数连通分量）。
     component_count = nx.number_connected_components(graph.to_undirected())
@@ -300,10 +300,17 @@ class NetworkCentralityService:
         if "eigenvector" in wanted:
             # Foundation V3（opt-in）：幂迭代特征向量中心性 —— 迭代数/达成
             # 增量/收敛性/连通性全量进 summary，绝不静默。
+            strength_graph = graph.copy()
+            for _u, _v, attrs in strength_graph.edges(data=True):
+                cost = float(attrs.get(weight_field, 0.0))
+                if not np.isfinite(cost) or cost <= 0:
+                    raise UnsupportedMethod("eigenvector inverse-cost weights require positive finite costs")
+                attrs["_strength"] = 1.0 / cost
             eigenvector, eigenvector_meta = eigenvector_centrality(
-                graph, max_iter=_EIGENVECTOR_MAX_ITER, tol=_EIGENVECTOR_TOL,
-                weight=weight_field,
+                strength_graph, max_iter=_EIGENVECTOR_MAX_ITER, tol=_EIGENVECTOR_TOL,
+                weight="_strength",
             )
+            eigenvector_meta["weight_semantics"] = "inverse_cost"
             metrics_out.append("eigenvector")
 
         records: List[Dict[str, Any]] = []

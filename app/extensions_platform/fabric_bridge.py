@@ -214,9 +214,19 @@ async def stream_features_from_adapter(
             except BaseException as exc:  # noqa: BLE001 - 异常转交消费方
                 pump_error.append(exc)
             finally:
-                drain_done.set()
-                with contextlib.suppress(Exception):
-                    loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+                try:
+                    if not stop.is_set():
+                        future = asyncio.run_coroutine_threadsafe(queue.put(_DONE), loop)
+                        while not future.done():
+                            if stop.is_set():
+                                future.cancel()
+                                break
+                            try:
+                                future.result(timeout=0.25)
+                            except concurrent.futures.TimeoutError:
+                                continue
+                finally:
+                    drain_done.set()
 
         drain_done = threading.Event()
         pump_task = asyncio.create_task(asyncio.to_thread(_drain))

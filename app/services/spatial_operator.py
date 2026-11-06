@@ -42,6 +42,10 @@ def spatial_operator(
                     return result
                 return GeoAnalysisResult(True, result, f"{name} analysis completed successfully")
             except Exception as e:
+                from app.core.errors import CooperativeCancellation
+                from billiard.exceptions import SoftTimeLimitExceeded
+                if isinstance(e, (CooperativeCancellation, SoftTimeLimitExceeded)):
+                    raise
                 return GeoAnalysisResult(False, None, f"{name} failed: {str(e)}")
         return wrapper
     return decorator

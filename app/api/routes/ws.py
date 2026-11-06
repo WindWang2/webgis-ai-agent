@@ -11,6 +11,7 @@ WS 感知通道在前端是死代码（useWebSocket 从未挂载），所以收�
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 import json
+import asyncio
 import logging
 import time
 from typing import NoReturn
@@ -74,7 +75,7 @@ async def websocket_endpoint(
             break
     if subproto_token:
         token = subproto_token
-    selected_subprotocol = "bearer" if subproto_token else None
+    selected_subprotocol = "bearer" if subproto_token and "bearer" in requested_subprotocols else None
 
     # Rate limit per client IP
     from app.core.client_ip import client_ip_from
@@ -86,6 +87,17 @@ async def websocket_endpoint(
     ):
         await websocket.close(code=4029, reason="Rate limit exceeded")
         return
+
+    from app.core.ws_handshake import AUTH_FRAME_PROTOCOL, receive_auth_frame
+    if AUTH_FRAME_PROTOCOL in requested_subprotocols:
+        credentials = await receive_auth_frame(websocket)
+        if credentials is None:
+            return
+        mode, token = credentials
+        if mode != "bearer":
+            await websocket.close(code=4001, reason="Bearer authentication required")
+            return
+        selected_subprotocol = AUTH_FRAME_PROTOCOL
 
     # SEC-03 / #1412: 必须有合法 access token（含 legacy sunset + ver/is_active）
     if not token:
@@ -118,6 +130,17 @@ async def websocket_endpoint(
         return
 
     await manager.connect(websocket, session_id, subprotocol=selected_subprotocol)
+    from app.core.ws_revalidation import watch_authorization, stop_watchdog
+
+    async def _connection_still_owned() -> bool:
+        current = await authenticate_ws_token(token)
+        async with async_db_session() as db:
+            return await AsyncHistoryService(db).get_session_meta(session_id, current["user_id"]) is not None
+
+    watchdog_closing = asyncio.Event()
+    watchdog_stopped = asyncio.Event()
+    watchdog = asyncio.create_task(watch_authorization(websocket, _connection_still_owned,
+        interval=_REAUTH_INTERVAL_S, closing=watchdog_closing, stopped=watchdog_stopped, on_invalid=lambda: manager.disconnect(websocket, session_id)))
     budget = float(_MSG_BUDGET_CAPACITY)
     last_refill = time.monotonic()
     last_reauth = last_refill
@@ -165,4 +188,5 @@ async def websocket_endpoint(
     except Exception as e:
         logger.error(f"WebSocket error for session {session_id}: {e}")
     finally:
+        await stop_watchdog(watchdog, closing=watchdog_closing, stopped=watchdog_stopped)
         manager.disconnect(websocket, session_id)

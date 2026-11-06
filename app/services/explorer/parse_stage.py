@@ -72,24 +72,26 @@ def auto_field_mapping(fields: list) -> dict:
     lon_patterns = [("longitude", 3), ("经度", 3), ("lng", 2), ("lon", 2), ("x", 1)]
 
     def consider(key: str, field_name: str, score: int) -> None:
-        if key not in scores or score >= scores[key]:
+        if key not in scores or score > scores[key]:
             scores[key] = score
             mapping[key] = field_name
 
     for field in fields:
         fname = field.name
-        fname_l = fname.lower()
-        if any(p in fname_l for p in name_patterns):
-            mapping["name"] = field.name
-        elif any(p in fname_l for p in address_patterns):
-            mapping["address"] = field.name
+        lat_score = _best_coord_match(fname, lat_patterns)
+        lon_score = _best_coord_match(fname, lon_patterns)
+        if lat_score is not None and (lon_score is None or lat_score >= lon_score):
+            consider("lat", fname, lat_score)
+        elif lon_score is not None:
+            consider("lon", fname, lon_score)
         else:
-            lat_score = _best_coord_match(fname, lat_patterns)
-            lon_score = _best_coord_match(fname, lon_patterns)
-            if lat_score is not None and (lon_score is None or lat_score >= lon_score):
-                consider("lat", fname, lat_score)
-            elif lon_score is not None:
-                consider("lon", fname, lon_score)
+            tokens = _field_tokens(fname)
+            for key, patterns in (("name", name_patterns), ("address", address_patterns)):
+                # English uses complete tokens; Chinese compounds conventionally
+                # end with the semantic field name (e.g. 学校名称/详细地址).
+                if any(p in tokens or (not p.isascii() and fname.endswith(p)) for p in patterns):
+                    mapping.setdefault(key, fname)
+                    break
 
     return mapping
 
@@ -173,14 +175,16 @@ async def run_parse_stage(
     # Partial misses (some refs resolved) stay success — one source failing
     # shouldn't sink the whole pipeline.
     if fetch_results and not parsed_all:
+        causes = []
+        if missing_refs:
+            causes.append(f"{len(missing_refs)} fetch ref(s) unresolved (missing={missing_refs}); check session-store handoff")
+        if errors:
+            causes.append(f"{len(errors)} source(s) failed payload decoding or parsing; see errors")
         return StageResult(
             stage="parse",
             data={"task_id": task_id, "parsed_results": [], "missing_refs": missing_refs, "errors": errors},
             success=False,
-            message=(
-                f"Parse stage produced no output: all {len(missing_refs)} fetch ref(s) "
-                f"unresolved (missing={missing_refs}). Likely a session-store handoff failure."
-            ),
+            message="Parse stage produced no output: " + "; ".join(causes),
         )
 
     return StageResult(

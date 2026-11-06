@@ -61,6 +61,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -87,6 +88,9 @@ _ASSERT_CALLS = {
     "assertIn", "assertIs", "assertRaises", "assertAlmostEqual",
     "assertDictEqual", "assertListEqual", "assertIsNone", "assertIsNotNone",
     "assertGreater", "assertLess", "assertRegex", "fail",
+    "assert_allclose", "assert_array_equal", "assert_array_almost_equal",
+    "assert_equal", "assert_almost_equal", "assert_approx_equal",
+    "assert_array_less", "assert_string_equal",
 }
 
 # 计数型规则的稳定输出顺序（check / locate / baseline 摘要共用）
@@ -245,13 +249,19 @@ def _mask_ts_noncode(text: str) -> str:
 
 def _iter_files(root: Path, subdir: str, suffixes: tuple[str, ...]) -> list[Path]:
     base = root / subdir
-    if not base.is_dir():
+    if not base.is_dir() or any(part in _FRONTEND_EXCLUDE for part in base.parts):
         return []
-    return sorted(
-        p for p in base.rglob("*")
-        if p.suffix in suffixes
-        and not any(part in _FRONTEND_EXCLUDE for part in p.parts)
-    )
+    paths: list[Path] = []
+    # Prune before descent: filtering rglob's results still traverses every
+    # installed dependency and generated artifact, especially costly under
+    # coverage. Keep the same exclusions and do not follow directory symlinks.
+    for directory, dirnames, filenames in os.walk(base):
+        dirnames[:] = [name for name in dirnames if name not in _FRONTEND_EXCLUDE]
+        for name in (*dirnames, *filenames):
+            path = Path(directory) / name
+            if path.suffix in suffixes and name not in _FRONTEND_EXCLUDE:
+                paths.append(path)
+    return sorted(paths)
 
 
 def _rel(root: Path, path: Path) -> str:
@@ -370,6 +380,15 @@ def collect_assertless_tests(root: Path) -> list[DebtItem]:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
                     and node.name.startswith("test_") \
+                    and not any(
+                        isinstance(decorator, ast.Name) and decorator.id == "fixture"
+                        or isinstance(decorator, ast.Attribute) and decorator.attr == "fixture"
+                        or isinstance(decorator, ast.Call) and (
+                            isinstance(decorator.func, ast.Name) and decorator.func.id == "fixture"
+                            or isinstance(decorator.func, ast.Attribute) and decorator.func.attr == "fixture"
+                        )
+                        for decorator in node.decorator_list
+                    ) \
                     and not _has_assertion(node):
                 items.append(DebtItem("assertless_tests", rel, node.lineno,
                                       node.name))

@@ -87,6 +87,10 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+class _SerializationFailure(str):
+    """Wire-safe error payload that cannot masquerade as a successful event."""
+
+
 def _serialize_sse_data(data: Any) -> str:
     """
     安全地将数据序列化为 JSON 字符串，防止序列化失败导致流中断。
@@ -105,19 +109,17 @@ def _serialize_sse_data(data: Any) -> str:
         return json.dumps(_json_safe(data), ensure_ascii=False)
     except Exception as e:
         logger.error(f"SSE serialization error: {e}, data type: {type(data)}")
-        # 尝试提取 session_id 或 task_id 用于基本的错误追踪
         info = {}
         if isinstance(data, dict):
-            if "session_id" in data:
-                info["session_id"] = data["session_id"]
-            if "task_id" in data:
-                info["task_id"] = data["task_id"]
-        
-        return json.dumps({
+            for key in ("session_id", "task_id", "turn_id"):
+                if isinstance(data.get(key), (str, int)):
+                    info[key] = data[key]
+        return _SerializationFailure(json.dumps({
             "error": "Internal serialization error",
-            "detail": str(e),
-            **info
-        }, ensure_ascii=False)
+            "code": "SSE_SERIALIZATION_ERROR",
+            **info,
+        }, ensure_ascii=False))
+
 
 
 def sse_event(event_type: str, data: Any, event_id: int | None = None) -> str:
@@ -136,7 +138,11 @@ def sse_event(event_type: str, data: Any, event_id: int | None = None) -> str:
             event_id = current
             _SSE_EVENT_ID.set(current + 1)
     id_line = f"id: {event_id}\n" if event_id is not None else ""
-    return f"event: {event_type}\n{id_line}data: {_serialize_sse_data(data)}\n\n"
+    payload = _serialize_sse_data(data)
+    if isinstance(payload, _SerializationFailure):
+        payload = json.dumps({**json.loads(payload), "original_event": event_type}, ensure_ascii=False)
+        event_type = "error"
+    return f"event: {event_type}\n{id_line}data: {payload}\n\n"
 
 
 # ---------------------------------------------------------------------------

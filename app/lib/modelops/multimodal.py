@@ -149,7 +149,7 @@ class SemanticClassMap:
                 f"semantic class count exceeds cap {MAX_SEMANTIC_CLASSES}"
             )
         vectors = self._encoder.encode(names)
-        for name, vec in zip(names, vectors):
+        for name, vec in zip(names, vectors, strict=True):
             self._prototypes[name] = _unit(vec)
         return {
             "registered": names,

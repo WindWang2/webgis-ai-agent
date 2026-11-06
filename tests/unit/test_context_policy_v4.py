@@ -70,6 +70,27 @@ class FakePolicyStore:
         self._metadata = metadata or {}
         self.refs: dict[str, object] = {}
         self.counter = 0
+        self.aliases: dict[tuple[str, str], str] = {}
+
+    async def resolve_alias(self, session_id, alias):
+        ref = self.aliases.get((session_id, alias), alias)
+        if ref != alias and ref not in self.refs:
+            self.aliases.pop((session_id, alias), None)
+            return alias
+        return ref
+
+    async def set_alias_if_absent(self, session_id, ref, alias):
+        key = (session_id, alias)
+        if key in self.aliases or ref not in self.refs:
+            return False
+        self.aliases[key] = ref
+        return True
+
+    async def delete_ref(self, session_id, ref):
+        existed = ref in self.refs
+        self.refs.pop(ref, None)
+        self.aliases = {k: v for k, v in self.aliases.items() if v != ref}
+        return existed
 
     async def get_session_metadata(self, session_id):
         return self._metadata
@@ -79,7 +100,7 @@ class FakePolicyStore:
 
     async def store(self, session_id, data, prefix="data"):
         self.counter += 1
-        ref = f"ref:data-{self.counter:016x}"
+        ref = f"ref:{prefix}-{self.counter:016x}"
         self.refs[ref] = data
         return ref
 
@@ -283,7 +304,8 @@ def test_keep_pin_survives_intra_turn_fold(kill_switch_on):
 def test_pin_bound_max_pinned_turns(kill_switch_on):
     msgs = _history(40, payload_chars=800)
     # 全部轮次都带安全标记 → pin 有界（最多 MAX_PINNED_TURNS 轮受保护）
-    for i in range(0, len(msgs), 3):
+    for i in range(1, len(msgs), 3):
+        # Server/assistant verdicts may pin; user text cannot manufacture pins.
         c = msgs[i].get("content") or ""
         msgs[i] = {**msgs[i], "content": c + " [CARTOGRAPHY_VERDICT]"}
     pinned = find_safety_pinned_indexes(msgs)
@@ -402,7 +424,7 @@ async def test_offload_pass_converts_inline_results(kill_switch_on):
     assert len(decisions) == 1
     assert decisions[0]["op"] == ContextOp.OFFLOAD_REF.value
     new_ref = decisions[0]["ref"]
-    assert new_ref and new_ref.startswith("ref:data-")
+    assert new_ref and new_ref.startswith("ref:contextoffload-")
     assert store.refs[new_ref]["result"] == "y" * 20_000
     new_content = head[3]["content"]
     assert new_ref in new_content
@@ -672,7 +694,7 @@ async def test_execute_advice_condense_then_offload(kill_switch_on):
     assert ContextOp.CONDENSE.value in ops
     assert ContextOp.OFFLOAD_REF.value in ops
     assert _estimate_tokens(head[1]["content"]) <= 1_000
-    assert any("ref:data-" in str(head[i]["content"]) for i in (3, 4))
+    assert any("ref:contextoffload-" in str(head[i]["content"]) for i in (3, 4))
 
 
 async def test_execute_advice_reports_compress_out_of_scope(kill_switch_on):

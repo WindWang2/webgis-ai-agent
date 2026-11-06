@@ -69,7 +69,7 @@ class ProviderCapabilitiesRecord(BaseModel):
 
 def _rate_limit_from_headers(headers: Any, status_code: int = 200) -> Optional[RateLimitHints]:
     rl = headers.get("X-RateLimit-Limit") or headers.get("X-Rate-Limit-Limit")
-    window = headers.get("X-RateLimit-Window") or headers.get("X-Rate-Limit-Reset")
+    window = headers.get("X-RateLimit-Window")
     retry_after = headers.get("Retry-After")
     if rl is None and retry_after is None and status_code != 429:
         return None
@@ -123,7 +123,6 @@ def _probe_ogc_api(adapter: Any, cost: ProbeCost) -> Dict[str, Any]:
                 overrides["filter_encoding"] = "cql2-text"
         except Exception as exc:  # noqa: BLE001 - 探测失败回落默认
             logger.debug("[probing] ogc conformance unavailable: %s", exc)
-            overrides.setdefault("filter_encoding", "cql2-text")
     return overrides
 
 
@@ -173,6 +172,8 @@ _CANONICAL_SOURCE_TYPES = {
     "wfs2": "wfs",
     "wmts": "wms",
     "wms_wmts": "wms",
+    "ogc_tiles": "ogc_api_tiles",
+    "ogc_coverages": "ogc_api_coverages",
     "arcgis_rest": "arcgis",
     "featureserver": "arcgis",
     "mapserver": "arcgis",

@@ -38,6 +38,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "总览"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,
@@ -135,6 +138,7 @@
           "profile": "a4_landscape",
           "width_mm": 297.0
         },
+        "time_window": null,
         "title": "总览"
       },
       {
@@ -170,6 +174,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "放大"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,
@@ -267,6 +274,7 @@
           "profile": "",
           "width_mm": 200.0
         },
+        "time_window": null,
         "title": "放大"
       }
     ]

@@ -22,7 +22,8 @@
   },
   "telemetry": {
     "basemap": "Basemap",
-    "layers": "Layers"
+    "layers": "Layers",
+    "coordinates": "Display coordinates"
   },
   "agentRun": {
     "toggleAria": "Toggle the execution details panel (agent intent / execution chain / artifacts / map effects)",
@@ -79,5 +80,9 @@
     "reset": "Reset style",
     "commitFailed": "Style change did not take effect (reverted): {reason}",
     "networkError": "Network error"
+  },
+  "signal": {
+    "active": "Agent active",
+    "idle": "Agent idle"
   }
 }

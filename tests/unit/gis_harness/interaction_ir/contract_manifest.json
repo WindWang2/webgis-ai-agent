@@ -72,7 +72,8 @@
         "feature_id",
         "field_names",
         "geometry_digest",
-        "layer_id"
+        "layer_id",
+        "selected_ids"
       ],
       "sensitivity": "limited",
       "state_changing": false

@@ -257,12 +257,12 @@ async def test_apply_engine_lock_rejection_maps_reason_code(registry, clean_sess
     """review P2-1：引擎守卫拒绝（陈旧锁 id 绕过预检）必须映射为
     component_locked:user_wins，而非空 reason_codes。"""
     from app.services.mapspec_store import mapspec_store as store
-    # 锁 id "legend"（族前缀）不在当前组件清单 → 工具预检的
-    # locked∩payload 为空；但引擎守卫按族匹配命中新建的 legend-main。
+    # An explicit logical/physical family lock is absent from the old layout,
+    # so preflight cannot catch it. The engine must still refuse legend-main.
     spec = {
         "version": "1.0", "sources": {}, "layers": [],
         "layout": {"components": [{"id": "title", "type": "title"}]},
-        "workbench": {"lockedComponentIds": ["legend"]},
+        "workbench": {"lockedComponentIds": ["legend-main__physical"]},
     }
     await store.save_mapspec(clean_session, spec)
     res = await registry.dispatch(

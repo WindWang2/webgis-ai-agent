@@ -1,6 +1,8 @@
 """Layer schema inference, caching, and formatting for chat context."""
 from __future__ import annotations
 
+from app.services.chat.context.formatters import _finite_number
+
 import asyncio
 import logging
 
@@ -156,14 +158,6 @@ def _is_user_pinned_layer(ref_id: str, visibility_map: dict) -> bool:
     if not ref_id or not visibility_map:
         return False
     meta = visibility_map.get(ref_id)
-    if meta is None:
-        meta = next(
-            (
-                m for aid, m in visibility_map.items()
-                if isinstance(aid, str) and (aid in ref_id or ref_id in aid)
-            ),
-            None,
-        )
     if not isinstance(meta, dict):
         return False
     if meta.get("visible") is False:
@@ -247,10 +241,7 @@ async def format_layer_lines(
                 if isinstance(s, BaseException):
                     logger.warning("build_layer_schema failed for ref=%s: %s", rid, s)
         for ref_id, alias in items:
-            meta = visibility_map.get(ref_id) or next(
-                (m for aid, m in visibility_map.items() if aid in ref_id or ref_id in aid),
-                {},
-            )
+            meta = visibility_map.get(ref_id) or {}
             visible = meta.get("visible")
             status = "可见" if visible is True else "隐藏" if visible is False else "未知"
             attrs = []
@@ -259,7 +250,7 @@ async def format_layer_lines(
                 attrs.append(f"别名={_xml_fence(TAG_UNTRUSTED_LAYER_ALIAS, alias)}")
             if meta.get("type"):
                 attrs.append(f"类型={_xml_fence(TAG_UNTRUSTED_LAYER_TYPE, meta['type'])}")
-            if meta.get("featureCount") is not None:
+            if _finite_number(meta.get("featureCount")) is not None:
                 attrs.append(f"要素={meta['featureCount']}")
             style_str = format_style_summary(meta.get("style"))
             if style_str:
@@ -280,9 +271,10 @@ async def format_layer_lines(
         attrs = []
         if layer.get("type"):
             attrs.append(f"类型={_xml_fence(TAG_UNTRUSTED_LAYER_TYPE, layer['type'])}")
-        if layer.get("featureCount") is not None:
+        if _finite_number(layer.get("featureCount")) is not None:
             attrs.append(f"要素={layer['featureCount']}")
-        opacity = layer.get("opacity", 1.0)
+        opacity = _finite_number(layer.get("opacity", 1.0))
+        opacity = 1.0 if opacity is None else min(1.0, max(0.0, opacity))
         attrs.append(f"不透明度={opacity:.0%}")
         style_str = format_style_summary(layer.get("style"))
         if style_str:

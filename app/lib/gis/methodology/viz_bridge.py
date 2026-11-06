@@ -131,7 +131,7 @@ _VIZ_BRIDGE: Tuple[VizBridgeEntry, ...] = (
        slots=("continuous_colorbar", "title"),
        note="坡度/指数：连续色条；局部度量 CRS 义务随义务链携带。"),
     # 遥感指数——连续
-    _e("remote_sensing_index", "classified_raster", "continuous",
+    _e("remote_sensing_index", "interpolation_surface", "continuous",
        slots=("continuous_colorbar", "title"),
        note="光谱指数：连续色条 + 波段语义披露。"),
     # 变化集——显著性/分级 + 对比框
@@ -261,12 +261,18 @@ def bridge_plan(
             ).to_bounded_dict())
             desc = registry.get(at)
             models = list(getattr(desc, "typical_map_models", ()) or ())
+            geometry_kind = str(getattr(desc, "geometry_kind", "unknown"))
+            family = {"point": "point_distribution", "polygon": "choropleth_raw", "raster": "interpolation_surface", "line": "flow_map", "network": "flow_map", "table": "statistics_chart"}.get(geometry_kind)
+            if family is None:
+                disclosures.append(VizDisclosure(artifact_type=at, resolution="Geometry is unknown; visualization family requires explicit selection.").to_bounded_dict())
+                continue
+            legend = "continuous" if geometry_kind == "raster" else "graduated"
             entries.append({"artifact_type": at[:40],
-                            "family": "statistics_chart",
-                            "legend": "graduated",
+                            "family": family,
+                            "legend": legend,
                             "models": ",".join(m[:32] for m in models[:4])})
-            families.append("statistics_chart")
-            legends.append("graduated")
+            families.append(family)
+            legends.append(legend)
             continue
         families.append(entry.family)
         legends.append(entry.legend_semantics)

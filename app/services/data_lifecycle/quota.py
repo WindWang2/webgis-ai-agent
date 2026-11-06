@@ -420,7 +420,7 @@ def _retention_revision_protection(
     return None
 
 
-def _retention_scan_state(db) -> Tuple[set, set]:
+def _retention_scan_state(db, artifact_ids: Optional[List[str]] = None) -> Tuple[set, set]:
     """head 修订 id 集合 + 有下游的 artifact id 集合（单查询口径）。
 
     round-1 review PERF MAJOR-2：谓词全部裸列（无函数包裹），
@@ -442,6 +442,7 @@ def _retention_scan_state(db) -> Tuple[set, set]:
             ArtifactRevision.artifact_id.label("artifact_id"),
             func.max(ArtifactRevision.revision_no).label("max_no"),
         )
+        .where(ArtifactRevision.artifact_id.in_(artifact_ids) if artifact_ids is not None else True)
         .group_by(ArtifactRevision.artifact_id)
         .subquery()
     )
@@ -461,7 +462,8 @@ def _retention_scan_state(db) -> Tuple[set, set]:
     lineage_parent_ids = set(
         db.execute(
             select(ArtifactLineage.parent_artifact_id).where(
-                ArtifactLineage.parent_artifact_id.isnot(None)
+                ArtifactLineage.parent_artifact_id.isnot(None),
+                ArtifactLineage.parent_artifact_id.in_(artifact_ids) if artifact_ids is not None else True,
             )
         ).scalars().all()
     )
@@ -519,21 +521,48 @@ def plan_retention_cleanup(
     if policy.max_age_days <= 0:
         return plan
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=policy.max_age_days)
-    # 注意：pinned 不在 SQL 层预过滤 —— 保护判定交给
-    # ``_retention_revision_protection``（双侧同函数），pin 保护在计划里
-    # 如实披露（protected_counts），绝不静默吞掉。
+    from sqlalchemy import exists
+    from sqlalchemy.orm import aliased
+
+    cutoff = datetime.fromtimestamp(now, timezone.utc) - timedelta(days=policy.max_age_days)
+    newer = aliased(ArtifactRevision)
     stmt = (
         select(ArtifactRevision, Artifact)
         .join(Artifact, Artifact.id == ArtifactRevision.artifact_id)
-        .where(ArtifactRevision.created_at < cutoff)
+        .where(ArtifactRevision.created_at < cutoff,
+               ArtifactRevision.pinned_at.is_(None),
+               exists(select(newer.id).where(
+                   newer.artifact_id == ArtifactRevision.artifact_id,
+                   newer.revision_no > ArtifactRevision.revision_no,
+               )))
+        .order_by(ArtifactRevision.created_at, ArtifactRevision.id)
+        .limit(max(1, int(limit or 200)) * 16)
     )
     if project_id:
         stmt = stmt.where(Artifact.project_id == project_id)
     rows = db.execute(stmt).all()
+    plan["scan_bounded"] = len(rows) >= max(1, int(limit or 200)) * 16
+    head_ids, lineage_parent_ids = _retention_scan_state(
+        db, [str(artifact.id) for _, artifact in rows])
+    from sqlalchemy import func
 
-    head_ids, lineage_parent_ids = _retention_scan_state(db)
+    old_scope = select(func.count(ArtifactRevision.id)).join(
+        Artifact, Artifact.id == ArtifactRevision.artifact_id,
+    ).where(ArtifactRevision.created_at < cutoff)
+    if project_id:
+        old_scope = old_scope.where(Artifact.project_id == project_id)
     protected: Dict[str, int] = {}
+    pin_count = db.execute(old_scope.where(ArtifactRevision.pinned_at.is_not(None))).scalar_one()
+    head_count = db.execute(old_scope.where(
+        ArtifactRevision.pinned_at.is_(None), ~exists(select(newer.id).where(
+            newer.artifact_id == ArtifactRevision.artifact_id,
+            newer.revision_no > ArtifactRevision.revision_no,
+        )),
+    )).scalar_one()
+    if pin_count:
+        protected["pinned"] = int(pin_count)
+    if head_count:
+        protected["head revision (current content)"] = int(head_count)
     candidates = []
     for revision, artifact in rows:
         reason = _retention_revision_protection(
@@ -639,6 +668,25 @@ def plan_retention_cleanup(
     return plan
 
 
+def retention_plan_fingerprint(plan: Dict[str, Any]) -> str:
+    """Stable approval identity; elapsed time cannot expand deletion scope."""
+    import hashlib
+    import json
+
+    revisions = [
+        {key: value for key, value in item.items() if key != "age_days"}
+        for item in plan.get("candidate_revisions", [])
+    ]
+    payload = {
+        "project_id": plan.get("project_id"), "policy": plan.get("policy"),
+        "disabled": plan.get("disabled"),
+        "candidate_revisions": sorted(revisions, key=lambda item: str(item.get("revision_id", ""))),
+        "candidate_blobs": sorted(plan.get("candidate_blobs", []), key=lambda item: str(item.get("key", ""))),
+        "protection_scan_truncated": bool(plan.get("protection_scan_truncated")),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+
+
 def execute_retention_cleanup(
     plan: Dict[str, Any],
     *,
@@ -680,7 +728,8 @@ def execute_retention_cleanup(
 
         db = SessionLocal()
     try:
-        head_ids, lineage_parent_ids = _retention_scan_state(db)
+        head_ids, lineage_parent_ids = _retention_scan_state(
+            db, [str(item.get("artifact_id") or "") for item in candidates])
         deleted_rows: List[Any] = []
         for cand in candidates:
             rid = str(cand.get("revision_id") or "")
@@ -818,6 +867,7 @@ def execute_orphan_revision_cleanup(plan: Dict[str, Any], *, db=None) -> Dict[st
         db = SessionLocal()
     try:
         deleted = 0
+        removed_blobs: Dict[str, str] = {}
         for rid in candidate_ids:
             row = db.execute(
                 select(ArtifactRevision).where(ArtifactRevision.id == rid)
@@ -829,11 +879,43 @@ def execute_orphan_revision_cleanup(plan: Dict[str, Any], *, db=None) -> Dict[st
             ).first()
             if artifact_row is not None:
                 continue  # plan 后 artifact 行回来了 → 不再是孤儿
+            if row.content_sha256 and row.content_location:
+                removed_blobs[str(row.content_sha256)] = str(row.content_location)
             db.delete(row)
             deleted += 1
             result["deleted_revision_ids"].append(rid)
         db.commit()
         result["deleted_count"] = deleted
+        if removed_blobs:
+            from app.services.artifact_revisions import (
+                artifact_content_locations, pinned_content_sha256s,
+                referencing_counts, referencing_sha_counts,
+            )
+            from app.services.durable_blob_store import get_filesystem_blob_store
+
+            store = get_filesystem_blob_store()
+            locations, shas, truncated = workspace_snapshot_protected_pointers()
+            if truncated:
+                result["blob_cleanup_deferred"] = "snapshot protection scan truncated"
+            else:
+                snap = {
+                    "refcounts_by_location": referencing_counts(db, list(removed_blobs.values())),
+                    "refcounts_by_sha": referencing_sha_counts(db, list(removed_blobs)),
+                    "artifact_locations": set(artifact_content_locations(db)),
+                    "pinned_shas": set(pinned_content_sha256s(db)),
+                    "snapshot_locations": locations, "snapshot_shas": shas,
+                }
+                result["deleted_blobs"] = []
+                for key, location in removed_blobs.items():
+                    path = (store.root / location).resolve()
+                    if not path.is_relative_to(store.root.resolve()):
+                        continue
+                    if promotion_blob_protection(
+                        key, location, store.blob_mtime(path), now=time.time(),
+                        grace_hours=RetentionPolicy.from_env().grace_hours, **snap,
+                    ) is None and store.delete_blob(key):
+                        result["deleted_blobs"].append(key)
+
     finally:
         if owned:
             db.close()

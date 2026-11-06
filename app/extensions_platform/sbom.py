@@ -65,7 +65,7 @@ def _content_files(pack_dir: Path) -> list[Path]:
             if name.endswith(".pyc") or name == SIGNATURE_FILENAME:
                 continue
             path = Path(root) / name
-            if path.is_file():
+            if path.is_file() and not path.is_symlink():
                 files.append(path)
     files.sort()
     return files
@@ -127,19 +127,16 @@ def build_sbom(pack_dir: Path, manifest: GisExtensionManifest, fingerprint: str)
                 "sha256": hashlib.sha256(data).hexdigest(),
             }
         )
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            continue  # 二进制文件：无 imports / secret 扫描面
+        text = data.decode("utf-8", errors="replace")
         if path.suffix == ".py":
             imports |= _top_level_imports(text)
         _scan_secrets(findings, files[-1]["path"], text)
     # signature.json 不进清单（不在指纹覆盖面内），但仍在 secret 扫描面
     # ——签名文件同样可能携带泄漏。此处补扫包根的签名文件。
     sig_path = pack_dir / SIGNATURE_FILENAME
-    if sig_path.is_file():
+    if sig_path.is_file() and not sig_path.is_symlink():
         try:
-            _scan_secrets(findings, SIGNATURE_FILENAME, sig_path.read_bytes().decode("utf-8"))
+            _scan_secrets(findings, SIGNATURE_FILENAME, sig_path.read_bytes().decode("utf-8", errors="replace"))
         except UnicodeDecodeError:
             pass  # 二进制噪声不构成扫描面
     findings.sort(key=lambda f: (f["file"], f["kind"]))

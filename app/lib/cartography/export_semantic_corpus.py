@@ -43,7 +43,7 @@ except Exception:  # pragma: no cover - fallback only if defusedxml unavailable
 
 from app.lib.cartography.component_renderers import PUBLICATION_COMPONENT_TYPES
 from app.lib.cartography.render_scene import (
-    MAX_LEGEND_ITEMS_PER_BOX,
+    MAX_LEGEND_ITEMS_PER_BOX as MAX_LEGEND_ITEMS_PER_BOX,
     plan_legend_draws,
 )
 from app.lib.cartography.render_scene import resolve_components
@@ -59,7 +59,6 @@ MAX_WALK_DEPTH = 64        # SVG 遍历深度上限
 
 #: 图例单盒渲染条目上限（C14 起单一真相在 render_scene；此处别名再导出
 #: 保留历史导入面 —— 与 svg_marginalia.render_legend_box(max_items=12) 同口径）。
-MAX_LEGEND_ITEMS_PER_BOX  # noqa: F401  (re-export)
 
 #: 图例族归并键：legend / categorical_legend 两型都画 ``chrome-legend``。
 LEGEND_FAMILY = "legend"

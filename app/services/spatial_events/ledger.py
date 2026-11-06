@@ -128,7 +128,7 @@ class SpatialEventLedger:
         with self._factory() as db:
             existing = db.execute(
                 select(SpatialEventRow).where(
-                    SpatialEventRow.event_id == envelope.event_id
+                    SpatialEventRow.event_id == envelope.event_id, SpatialEventRow.org_id == envelope.org_id
                 )
             ).scalar_one_or_none()
             if existing is not None:
@@ -158,7 +158,7 @@ class SpatialEventLedger:
                 db.rollback()
                 winner = db.execute(
                     select(SpatialEventRow).where(
-                        SpatialEventRow.event_id == envelope.event_id
+                        SpatialEventRow.event_id == envelope.event_id, SpatialEventRow.org_id == envelope.org_id
                     )
                 ).scalar_one_or_none()
                 if winner is not None:
@@ -184,8 +184,8 @@ class SpatialEventLedger:
             )
             if org_id is not None:
                 stmt = stmt.where(SpatialEventRow.org_id == org_id)
-            row = db.execute(stmt).scalar_one_or_none()
-            return _row_to_event(row) if row is not None else None
+            rows = db.execute(stmt.limit(2)).scalars().all()
+            return _row_to_event(rows[0]) if len(rows) == 1 else None
 
     def list_events(
         self,
@@ -292,11 +292,12 @@ class SpatialEventLedger:
             db.commit()
             return [_row_to_event(r) for r in rows]
 
-    def mark_processed(self, row_id: int) -> bool:
+    def mark_processed(self, row_id: int, *, worker_id: str) -> bool:
         with self._factory() as db:
             res = db.execute(
                 update(SpatialEventRow)
-                .where(SpatialEventRow.id == row_id)
+                .where(SpatialEventRow.id == row_id, SpatialEventRow.status == "processing",
+                       SpatialEventRow.claimed_by == worker_id)
                 .values(
                     status="processed",
                     processed_at=_utcnow_naive(),
@@ -307,11 +308,12 @@ class SpatialEventLedger:
             db.commit()
             return bool(res.rowcount)
 
-    def mark_skipped(self, row_id: int, *, reason: str) -> bool:
+    def mark_skipped(self, row_id: int, *, reason: str, worker_id: str) -> bool:
         with self._factory() as db:
             res = db.execute(
                 update(SpatialEventRow)
-                .where(SpatialEventRow.id == row_id)
+                .where(SpatialEventRow.id == row_id, SpatialEventRow.status == "processing",
+                       SpatialEventRow.claimed_by == worker_id)
                 .values(
                     status="skipped",
                     processed_at=_utcnow_naive(),
@@ -323,31 +325,54 @@ class SpatialEventLedger:
             return bool(res.rowcount)
 
     def mark_failed(
-        self, row_id: int, *, error_code: str, backoff_s: float = 30.0
+        self, row_id: int, *, worker_id: str, error_code: str, backoff_s: float = 30.0, deferred: bool = False
     ) -> bool:
         """失败：未达上限回 pending（带退避）；达上限落终态 failed（不丢行）。"""
         with self._factory() as db:
             row = db.get(SpatialEventRow, row_id)
-            if row is None or row.status not in ("processing", "pending"):
+            if row is None or row.status != "processing" or row.claimed_by != worker_id:
                 return False
-            terminal = row.attempts >= flags.max_attempts()
+            terminal = not deferred and row.attempts >= flags.max_attempts()
             next_at = (
                 _utcnow_naive() + timedelta(seconds=max(0.0, backoff_s))
                 if not terminal
                 else None
             )
-            db.execute(
+            res = db.execute(
                 update(SpatialEventRow)
-                .where(SpatialEventRow.id == row_id)
+                .where(SpatialEventRow.id == row_id, SpatialEventRow.status == "processing",
+                       SpatialEventRow.claimed_by == worker_id)
                 .values(
                     status="failed" if terminal else "pending",
+                    attempts=max(0, row.attempts - 1) if deferred else row.attempts,
                     error_code=error_code[:128],
                     claimed_by=None,
                     next_attempt_at=next_at,
                 )
             )
             db.commit()
-            return True
+            return bool(res.rowcount)
+
+    def renew_claims(self, row_ids: List[int], *, worker_id: str) -> int:
+        """Renew only this attempt's claims, including rows queued in its batch."""
+        with self._factory() as db:
+            result = db.execute(update(SpatialEventRow).where(
+                SpatialEventRow.id.in_(row_ids), SpatialEventRow.status == "processing",
+                SpatialEventRow.claimed_by == worker_id,
+            ).values(claimed_at=_utcnow_naive()))
+            db.commit()
+            return int(result.rowcount or 0)
+
+    def claim_replay(self, row_id: int, *, org_id: str, worker_id: str) -> bool:
+        """Exclusive force replay; never steal an active worker's event."""
+        with self._factory() as db:
+            result = db.execute(update(SpatialEventRow).where(
+                SpatialEventRow.id == row_id, SpatialEventRow.org_id == org_id,
+                SpatialEventRow.status != "processing",
+            ).values(status="processing", claimed_by=worker_id,
+                     claimed_at=_utcnow_naive(), attempts=SpatialEventRow.attempts + 1))
+            db.commit()
+            return bool(result.rowcount)
 
     def requeue_stale_processing(self, *, older_than_s: float) -> int:
         """崩溃恢复：claimed_at 超过阈值的 processing 行复位 pending。"""
@@ -381,6 +406,7 @@ class SpatialEventLedger:
                 select(SpatialEventRow)
                 .where(
                     SpatialEventRow.status == "pending",
+                    SpatialEventRow.kind.in_(("map.mutation", "dataset.version_changed", "artifact.revision_changed", "mapproduct.version_changed")),
                     (
                         SpatialEventRow.next_attempt_at.is_(None)
                         | (SpatialEventRow.next_attempt_at <= now)
@@ -396,10 +422,10 @@ class SpatialEventLedger:
         # priority 最高（interactive>normal>batch）——coalesce 不得吞掉
         # 更高优先级的投递语义。
         prio_rank = {"interactive": 0, "normal": 1, "batch": 2}
-        groups: Dict[Tuple[str, str, str, str], List[SpatialEventRow]] = {}
+        groups: Dict[tuple, List[SpatialEventRow]] = {}
         for r in rows:
             groups.setdefault(
-                (r.org_id, r.kind, r.subject_key, r.dedupe_key or ""), []
+                (r.org_id, r.kind, r.subject_key, r.dedupe_key or "", r.session_id or "", r.project_id or ""), []
             ).append(r)
         coalesced = 0
         survivors = 0
@@ -412,24 +438,11 @@ class SpatialEventLedger:
                     key=lambda r: (r.occurred_at, r.id),
                 )
                 keeper = ordered[-1]
-                # priority 最高者接管幸存（即使它不是最新——新鲜 payload
-                # 由 collapsed 列表保留 ref 语义；v1 幸存者携带最高优先级）
-                best_prio = min(
-                    (prio_rank.get(m.priority, 1) for m in members), default=1
-                )
-                if prio_rank.get(keeper.priority, 1) != best_prio:
-                    better = [
-                        m for m in ordered
-                        if prio_rank.get(m.priority, 1) == best_prio
-                    ]
-                    if better:
-                        keeper = better[-1]
-                        ordered.remove(keeper)
-                        losers = ordered
-                    else:
-                        losers = ordered[:-1]
-                else:
-                    losers = ordered[:-1]
+                best_priority = min(members, key=lambda item: prio_rank.get(item.priority, 1)).priority
+                db.execute(update(SpatialEventRow).where(
+                    SpatialEventRow.id == keeper.id, SpatialEventRow.status == "pending"
+                ).values(priority=best_priority))
+                losers = ordered[:-1]
                 n_loss = 0
                 for loser in losers:
                     res = db.execute(
@@ -600,13 +613,14 @@ class SpatialEventLedger:
                 db.rollback()
                 return False
             row.state = state.model_dump(mode="json")
+            row.revision = int(row.revision or 1) + 1
             row.updated_at = _utcnow_naive()
             db.commit()
             return True
 
     def get_watch_state_with_revision(
         self, watch_id: str, *, org_id: str
-    ) -> Tuple[Optional[WatchState], Optional[datetime]]:
+    ) -> Tuple[Optional[WatchState], Optional[int]]:
         """State + its revision token (``updated_at``) for a CAS write.
 
         RUN-11: the token lets a drainer detect that another drainer committed
@@ -616,7 +630,7 @@ class SpatialEventLedger:
             row = db.get(SpatialWatchRow, watch_id)
             if row is None or row.org_id != org_id:
                 return None, None
-            return WatchState(**(row.state or {})), row.updated_at
+            return WatchState(**(row.state or {})), row.revision
 
     def compare_and_swap_watch_state(
         self,
@@ -624,7 +638,7 @@ class SpatialEventLedger:
         state: WatchState,
         *,
         org_id: str,
-        expected_revision: Optional[datetime],
+        expected_revision: Optional[int],
     ) -> bool:
         """Atomic CAS: write ``state`` only if ``updated_at`` still matches.
 
@@ -641,10 +655,11 @@ class SpatialEventLedger:
                 .where(
                     SpatialWatchRow.watch_id == watch_id,
                     SpatialWatchRow.org_id == org_id,
-                    SpatialWatchRow.updated_at == expected_revision,
+                    SpatialWatchRow.revision == expected_revision,
                 )
                 .values(
                     state=state.model_dump(mode="json"),
+                    revision=SpatialWatchRow.revision + 1,
                     updated_at=_utcnow_naive(),
                 )
             )
@@ -662,6 +677,7 @@ class SpatialEventLedger:
                 select(SpatialWatchFireRow).where(
                     SpatialWatchFireRow.watch_id == record.watch_id,
                     SpatialWatchFireRow.event_id == record.event_id,
+                    SpatialWatchFireRow.action == record.action,
                 )
             ).scalar_one_or_none()
             if existing is not None:
@@ -717,14 +733,15 @@ class SpatialEventLedger:
                 )
             return out
 
-    def get_fire(self, watch_id: str, event_id: str) -> Optional[Dict[str, Any]]:
+    def get_fire(self, watch_id: str, event_id: str, *, action: Optional[str] = None) -> Optional[Dict[str, Any]]:
         with self._factory() as db:
             row = db.execute(
                 select(SpatialWatchFireRow).where(
                     SpatialWatchFireRow.watch_id == watch_id,
                     SpatialWatchFireRow.event_id == event_id,
+                    True if action is None else SpatialWatchFireRow.action == action,
                 )
-            ).scalar_one_or_none()
+            ).scalars().first()
             if row is None:
                 return None
             return {
@@ -747,7 +764,7 @@ class SpatialEventLedger:
         }
     )
 
-    def claim_fire(self, watch_id: str, event_id: str) -> bool:
+    def claim_fire(self, watch_id: str, event_id: str, *, action: Optional[str] = None) -> bool:
         """把 pending/deferred 触发置为 executing（条件更新 = 认领）。
 
         多副本同时重试同一触发时只有一方 claim 成功；mission_revise 这类
@@ -760,6 +777,7 @@ class SpatialEventLedger:
                 .where(
                     SpatialWatchFireRow.watch_id == watch_id,
                     SpatialWatchFireRow.event_id == event_id,
+                    True if action is None else SpatialWatchFireRow.action == action,
                     SpatialWatchFireRow.outcome.in_(("pending", "deferred")),
                 )
                 .values(outcome="executing", claimed_at=_utcnow_naive())
@@ -788,6 +806,7 @@ class SpatialEventLedger:
         event_id: str,
         outcome: str,
         detail: Optional[Dict[str, Any]] = None,
+        *, action: Optional[str] = None,
     ) -> bool:
         if outcome not in self._FIRE_OUTCOMES:
             return False
@@ -796,8 +815,9 @@ class SpatialEventLedger:
                 select(SpatialWatchFireRow).where(
                     SpatialWatchFireRow.watch_id == watch_id,
                     SpatialWatchFireRow.event_id == event_id,
+                    True if action is None else SpatialWatchFireRow.action == action,
                 )
-            ).scalar_one_or_none()
+            ).scalars().first()
             if row is None:
                 db.rollback()
                 return False

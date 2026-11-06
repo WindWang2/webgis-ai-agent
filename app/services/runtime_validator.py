@@ -11,6 +11,8 @@ module owns the Python side: invoke it, parse its JSON report, compute the
 import asyncio
 import json
 import logging
+import os
+import signal
 import subprocess
 import time
 import weakref
@@ -268,7 +270,7 @@ class RuntimeValidator:
             comp_res = await compile_via_cli(staging_path, out_dir_pre)
         finally:
             try:
-                staging_path.unlink(missing_ok=True)
+                await asyncio.to_thread(staging_path.unlink, missing_ok=True)
             except Exception:
                 pass
     else:
@@ -281,7 +283,7 @@ class RuntimeValidator:
       }
     out_dir = Path(comp_res["out_dir"])
     runtime_dir = out_dir.parent / "runtime"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(runtime_dir.mkdir, parents=True, exist_ok=True)
 
     # 1a-continued: copy live-session raster PNGs into dist/raster/ so the
     # headless static server (serving dist/) can resolve __ORIGIN__/raster/*.png.
@@ -293,7 +295,7 @@ class RuntimeValidator:
         # Use rewritten mapspec for id extraction so both cursor and
         # already-rewritten forms are recognised.
         source_mapspec = rewritten_mapspec if needs_rewrite else mapspec
-        copy_session_raster_assets(session_dir_for_raster, out_dir, source_mapspec)
+        await asyncio.to_thread(copy_session_raster_assets, session_dir_for_raster, out_dir, source_mapspec)
     except Exception as e:  # noqa: BLE001 - copy failure should not block validation
         logger.warning("raster asset copy failed for %s: %s", session_id, e)
 
@@ -306,14 +308,14 @@ class RuntimeValidator:
     # traceback, not a misleading 404.
     if probes_path is not None:
         probe_parent = Path(probes_path).parent
-        if (probe_parent / "points.geojson").is_file():
+        if await asyncio.to_thread((probe_parent / "points.geojson").is_file):
             from app.services.runtime_asset_assembly import assemble_mvt_assets
 
-            assemble_mvt_assets(probe_parent, out_dir)
-        if (probe_parent / "raster.json").is_file():
+            await asyncio.to_thread(assemble_mvt_assets, probe_parent, out_dir)
+        if await asyncio.to_thread((probe_parent / "raster.json").is_file):
             from app.services.runtime_asset_assembly import assemble_raster_assets
 
-            assemble_raster_assets(probe_parent, out_dir)
+            await asyncio.to_thread(assemble_raster_assets, probe_parent, out_dir)
 
     # 2. Drive the headless Playwright validator over the compiled output.
     # The subprocess can run up to RUNTIME_TIMEOUT_S (90s) — offload to a
@@ -324,13 +326,13 @@ class RuntimeValidator:
     # 3. Enrich + compute the 5-dimension eval score.
     report["timestamp"] = time.time()
     report["stats"] = comp_res.get("report", {}).get("stats", {})
-    report["_evidenceComplete"] = self._evidence_complete(runtime_dir)
+    report["_evidenceComplete"] = await asyncio.to_thread(self._evidence_complete, runtime_dir)
     scores = compute_eval_scores(report, mapspec)
     report["eval_scores"] = scores
 
     # 4. Persist the report alongside the screenshot/trace.
-    with open(runtime_dir / "report.json", "w", encoding="utf-8") as f:
-      json.dump(report, f, ensure_ascii=False, indent=2)
+    from app.services.mapspec.store import _atomic_write_json_sync
+    await asyncio.to_thread(_atomic_write_json_sync, runtime_dir / "report.json", report)
 
     # valid = the browser contract held AND the canvas is not blank AND all probes pass.
     # The canvas-blank signal is a *risk* flag: a legitimate minimal map can trip
@@ -342,6 +344,7 @@ class RuntimeValidator:
         and report.get("fatalError") is None
         and len(report.get("pageErrors", [])) == 0
         and len(report.get("consoleErrors", [])) == 0
+        and len(report.get("failedRequests", [])) == 0
         and not (report.get("canvas") or {}).get("blank", True)
         and not probe_failed
     )
@@ -402,16 +405,24 @@ class RuntimeValidator:
     if probes_path is not None:
       cmd.extend(["--probes", str(probes_path)])
     try:
-      proc = subprocess.run(
+      proc = subprocess.Popen(
           cmd,
           cwd=str(PROJECT_ROOT / "frontend"),
-          capture_output=True,
-          text=True,
-          timeout=RUNTIME_TIMEOUT_S,
+          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+          start_new_session=True,
       )
+      try:
+        stdout, stderr = proc.communicate(timeout=RUNTIME_TIMEOUT_S)
+      except subprocess.TimeoutExpired:
+        if hasattr(os, "killpg"):
+          os.killpg(proc.pid, signal.SIGKILL)
+        else:
+          proc.kill()
+        proc.communicate()
+        raise
       # The script writes the report to stdout regardless of exit code.
-      if proc.stdout.strip():
-        return json.loads(proc.stdout)
+      if stdout.strip():
+        return json.loads(stdout)
       # No stdout → the script itself failed to start (e.g. missing chromium).
       return {
           "mapLoaded": False,
@@ -422,7 +433,7 @@ class RuntimeValidator:
           "canvas": None,
           "controls": {"overflow": [], "collisions": []},
           "fatalError": (
-              proc.stderr.strip()
+              stderr.strip()
               or f"validator exited {proc.returncode} with no output"
           ),
       }
@@ -452,7 +463,7 @@ class RuntimeValidator:
 
   @staticmethod
   def _evidence_complete(runtime_dir: Path) -> bool:
-    """True when the full evidence trail (screenshot + trace + report) exists."""
+    """Check screenshot and trace before atomically persisting their report."""
     return (
         (runtime_dir / "map.png").exists()
         and (runtime_dir / "trace.zip").exists()

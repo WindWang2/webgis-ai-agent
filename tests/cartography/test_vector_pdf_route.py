@@ -18,7 +18,7 @@ pytestmark = pytest.mark.cartography
 from fastapi import FastAPI  # noqa: E402
 
 from app.api.routes.map import router as map_router  # noqa: E402
-from app.core.auth import get_current_user_with_version  # noqa: E402
+from app.core.auth import get_current_user_optional_with_version, get_current_user_with_version  # noqa: E402
 from pathlib import Path
 
 
@@ -39,7 +39,7 @@ def client():
     app.include_router(map_router, prefix="/api/v1")
     # #1483 鉴权对齐：导出路由族已换 get_current_user_with_version ——
     # override 必须跟着路由走，否则 401（master 既有红，F14 顺带修复）。
-    app.dependency_overrides[get_current_user_with_version] = lambda: {"user_id": "vec-pdf-user"}
+    app.dependency_overrides[get_current_user_optional_with_version] = app.dependency_overrides[get_current_user_with_version] = lambda: {"user_id": "vec-pdf-user"}
     return fastapi_testclient.TestClient(app)
 
 

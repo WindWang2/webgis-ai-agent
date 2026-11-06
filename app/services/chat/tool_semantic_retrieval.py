@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.services.chat.tool_retrieval import RetrievalHit, ToolRetrievalIndex
@@ -46,7 +47,16 @@ _MAX_INDEXED_TOOLS = 512
 EmbedFn = Callable[[Sequence[str]], Sequence[Sequence[float]]]
 
 
+_model_lock = threading.RLock()
+
+
 def _default_embed(texts: Sequence[str]) -> List[List[float]]:
+    """Serialize initialization and encoding of the shared local encoder."""
+    with _model_lock:
+        return _default_embed_locked(texts)
+
+
+def _default_embed_locked(texts: Sequence[str]) -> List[List[float]]:
     """生产编码器（SentenceTransformer；RAG_EMBEDDING_OFFLINE 时零网络）。"""
     from sentence_transformers import SentenceTransformer
 
@@ -98,13 +108,25 @@ class ToolSemanticIndex:
 
     def __init__(self, embed_fn: Optional[EmbedFn] = None) -> None:
         self._embed_fn: EmbedFn = embed_fn or _default_embed
+        from collections import OrderedDict
+        from threading import RLock
+
+        self._snapshots = OrderedDict()
+        self._lock = RLock()
         self._key: Optional[str] = None
         self._names: Tuple[str, ...] = ()
         self._vectors: Tuple[Tuple[float, ...], ...] = ()
 
     def build_if_stale(self, registry: Any) -> None:
+        with self._lock:
+            self._build_locked(registry)
+
+    def _build_locked(self, registry: Any) -> None:
         key = ToolRetrievalIndex._index_key(registry)
-        if self._vectors and self._key == key:
+        if key in self._snapshots:
+            self._names, self._vectors = self._snapshots[key]
+            self._snapshots.move_to_end(key)
+            self._key = key
             return
         names: List[str] = []
         texts: List[str] = []
@@ -125,16 +147,21 @@ class ToolSemanticIndex:
         self._names = tuple(names)
         self._vectors = tuple(vectors)
         self._key = key
+        self._snapshots[key] = (self._names, self._vectors)
+        while len(self._snapshots) > 8:
+            self._snapshots.popitem(last=False)
 
     def query(self, registry: Any, query: str, top_k: int) -> List[RetrievalHit]:
         # opt-in 说明：首轮 / registry 指纹变更重建时本调用同步阻塞（模型
         # encode 在查询线程内执行）—— 高频首轮场景由调用方预热 build_if_stale。
-        self.build_if_stale(registry)
-        if not self._names:
+        with self._lock:
+            self._build_locked(registry)
+            names, vectors = self._names, self._vectors
+        if not names:
             return []
         qv = list(map(float, self._embed_fn([query[:400]])[0]))
         scored: List[Tuple[float, str]] = []
-        for name, vec in zip(self._names, self._vectors):
+        for name, vec in zip(names, vectors, strict=True):
             sim = _cosine(qv, vec)
             if sim >= _MIN_SIMILARITY:
                 scored.append((sim, name))

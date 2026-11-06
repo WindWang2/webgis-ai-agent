@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import logging
 import copy
 import os
 from dataclasses import dataclass
@@ -325,15 +326,15 @@ def _rotate_step_colors(paint_spec: Dict[str, Any], colors: List[str]) -> None:
             rest = colors[1:]
         else:
             rest = colors
-        for stop, color in zip(paint_spec.get("stops") or [], rest):
+        for stop, color in zip(paint_spec.get("stops") or [], rest, strict=True):
             if isinstance(stop, (list, tuple)) and len(stop) >= 2:
                 stop[1] = color
     elif method == "interpolate":
-        for stop, color in zip(paint_spec.get("stops") or [], colors):
+        for stop, color in zip(paint_spec.get("stops") or [], colors, strict=True):
             if isinstance(stop, (list, tuple)) and len(stop) >= 2:
                 stop[1] = color
     elif method == "match":
-        for case, color in zip(paint_spec.get("cases") or [], colors):
+        for case, color in zip(paint_spec.get("cases") or [], colors, strict=True):
             if isinstance(case, (list, tuple)) and len(case) >= 2:
                 case[1] = color
 
@@ -367,7 +368,8 @@ def _build_palette_rotation(layer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             continue
         try:
             colors = resolve_palette_colors(name)
-        except Exception:  # noqa: BLE001 — 单个候选失败不阻塞
+        except Exception as _exc:  # noqa: BLE001 — 单个候选失败不阻塞
+            logging.getLogger(__name__).debug("selfheal_actions: optional operation unavailable (%s)", type(_exc).__name__)
             continue
         if len(colors) < n:
             continue
@@ -393,7 +395,7 @@ def _build_palette_rotation(layer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     categories = legend_spec.get("categories")
     if isinstance(categories, list) and len(categories) == len(best_colors):
         new_categories = []
-        for category, color in zip(categories, best_colors):
+        for category, color in zip(categories, best_colors, strict=True):
             if isinstance(category, dict):
                 new_categories.append({**category, "color": color})
             else:

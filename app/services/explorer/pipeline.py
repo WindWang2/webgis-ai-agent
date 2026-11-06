@@ -110,6 +110,18 @@ class ExplorerPipelineRunner:
             else:
                 geocoded_ref_id = None
 
+        # Intermediate refs may stay local, but the final product must survive
+        # this call and use the same task namespace as the Celery bridge.
+        if geocoded_ref_id and store_ref is None:
+            from app.services.session_data_protocol import get_session_store, is_unavailable_ref
+
+            payload = in_memory_refs[geocoded_ref_id]
+            geocoded_ref_id = await get_session_store().store(
+                f"explorer:{task_id}", payload, prefix="geocoded")
+            if is_unavailable_ref(geocoded_ref_id):
+                return StageResult(stage="validate", success=False,
+                                   message="final exploration result could not be persisted")
+
         # 5. Validate Stage
         async with self.tracker.track_step(task_id, "explorer_validate", {}):
             logger.info(f"[ExplorerPipelineRunner:{task_id}] Stage 5: Validate")

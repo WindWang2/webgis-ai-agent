@@ -9,7 +9,7 @@ path, with honest omission instead of random truncation:
   category budget (``GIS_SECTION_CAPS`` fractions) or the item's own hard
   limit.
 - **Floors** — floor-protected domains (verdict / plan / environment) are
-  truncated to their floor under pressure, never silently dropped.
+  truncated to their floor under pressure, then explicitly omitted if the global hard cap still cannot fit them.
 - **Untouchable** — user message and control-plane markers are never
   touched.
 - **Yield order** — within a pool, lowest value-density yields first:
@@ -201,9 +201,9 @@ def allocate(
     # floor-trimmed items are already small).
     total = sum(i.est_tokens for i in accepted.values())
     if plan.window_known:
-        for item in sorted(
-            [i for i in accepted.values() if i.domain not in UNTOUCHABLE_DOMAINS],
-            key=_yield_key,
+        for original_id, item in sorted(
+            [(key, value) for key, value in accepted.items() if value.domain not in UNTOUCHABLE_DOMAINS],
+            key=lambda pair: _yield_key(pair[1]),
         ):
             if total <= plan.usable:
                 break
@@ -212,24 +212,25 @@ def allocate(
             if floor > 0:
                 trimmed = _truncate_content(item, floor)
                 total -= item.est_tokens - trimmed.est_tokens
-                accepted[id(item)] = trimmed
+                accepted[original_id] = trimmed
                 pool_used[domain_pool(item.domain)] = (
                     pool_used.get(domain_pool(item.domain), 0)
                     - item.est_tokens + trimmed.est_tokens
                 )
-                records.append(AllocationRecord(
-                    item_id=item.item_id, provider_id=item.provider_id,
-                    domain=item.domain, decision="truncated",
-                    reason_code=REASON_TRUNCATED_FLOOR,
-                    est_tokens_before=item.est_tokens,
-                    est_tokens_after=trimmed.est_tokens,
-                ))
+                if trimmed.est_tokens < item.est_tokens:
+                    records.append(AllocationRecord(
+                        item_id=item.item_id, provider_id=item.provider_id,
+                        domain=item.domain, decision="truncated",
+                        reason_code=REASON_TRUNCATED_FLOOR,
+                        est_tokens_before=item.est_tokens,
+                        est_tokens_after=trimmed.est_tokens,
+                    ))
                 if total <= plan.usable:
                     break
-                continue
+                item = trimmed
             over_at_decision = total
             total -= item.est_tokens
-            accepted.pop(id(item), None)
+            accepted.pop(original_id, None)
             pool_used[domain_pool(item.domain)] = max(
                 0, pool_used.get(domain_pool(item.domain), 0) - item.est_tokens
             )
@@ -264,7 +265,16 @@ def allocate(
     final_items = [accepted[id(i)] for i in items if id(i) in accepted]
 
     result.items = final_items
-    result.records = records
+    # One final allocation outcome per provider/item, preserving the original
+    # input cost when a pool trim is followed by a global trim or omission.
+    outcomes: Dict[tuple[str, str], AllocationRecord] = {}
+    for record in records:
+        key = (record.provider_id, record.item_id)
+        previous = outcomes.get(key)
+        if previous is not None:
+            record.est_tokens_before = previous.est_tokens_before
+        outcomes[key] = record
+    result.records = list(outcomes.values())
     result.planned_tokens = sum(i.est_tokens for i in final_items)
     result.pool_usage = {p.name: int(v) for p, v in pool_used.items()}
     if not plan.window_known:

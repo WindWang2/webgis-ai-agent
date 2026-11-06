@@ -118,7 +118,7 @@ def _split_quoted(text: str, separator: str) -> List[str]:
                     break
                 i += 1
             continue
-        if text[i:i + sep_len] == separator:
+        if text[i:i + sep_len].upper() == separator.upper():
             parts.append("".join(buf))
             buf = []
             i += sep_len
@@ -137,15 +137,17 @@ def _parse_single_clause(clause: str) -> Predicate:
     rest = clause[m.end():].strip()
 
     if op_token.upper().startswith("IS"):
+        if rest:
+            raise InvalidQueryError("unexpected text after IS NULL predicate")
         negated = "NOT" in op_token.upper()
         return IsNull(field=field, negated=negated)
 
-    if op_token.upper().startswith("IN"):
+    if "IN" in op_token.upper():
         not_in = op_token.upper().startswith("NOT")
-        close = rest.find(")")
-        if close < 0:
+        parts = _split_quoted(rest, ")")
+        if len(parts) != 2 or parts[1].strip():
             raise InvalidQueryError("unclosed IN list")
-        inner = rest[:close].strip()
+        inner = parts[0].strip()
         values = [_coerce_literal(v.strip()) for v in _split_quoted(inner, ",") if v.strip()]
         if not values:
             raise InvalidQueryError("empty IN list")
@@ -308,8 +310,8 @@ def normalize_query_spec(spec: QuerySpec) -> QuerySpecV2:
     execution = ExecutionBudget(
         deadline_s=float(extras.get("deadline_s", ExecutionBudget().deadline_s)),
         max_rows=_int_extra(extras, "max_rows", ExecutionBudget().max_rows),
-        max_bytes=_int_extra(extras, "max_bytes", ExecutionBudget().max_bytes),
-        max_vertices=_int_extra(extras, "max_vertices", ExecutionBudget().max_vertices),
+        max_bytes=min(_int_extra(extras, "max_bytes", ExecutionBudget().max_bytes), 512 * 1024 * 1024),
+        max_vertices=min(_int_extra(extras, "max_vertices", ExecutionBudget().max_vertices), 50_000_000),
         max_pages=_int_extra(extras, "max_pages", ExecutionBudget().max_pages),
     )
 

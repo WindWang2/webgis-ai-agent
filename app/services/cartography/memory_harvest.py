@@ -12,6 +12,8 @@ memory lags evidence by one step and can never short-circuit review
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from typing import Callable, Optional
 
@@ -36,6 +38,7 @@ def set_session_local_factory(factory: Optional[Callable]) -> None:
 
 def _harvest_sync(
     project_id: str, mapspec: dict, review: Optional[dict], recipe_id: str = "",
+    session_id: str = "",
 ) -> dict:
     """Drift-then-harvest in one transaction.
 
@@ -59,27 +62,51 @@ def _harvest_sync(
     SessionLocal = _get_session_local()
     with SessionLocal() as db:
         try:
+            from sqlalchemy import select, update
+            from app.models.project import CartoProjectFact, Project
+            from app.lib.cartography.quality_loop import cartographic_fingerprint
+
+            # Serialize the read/receipt/count transaction across workers.
+            # A SQLite no-op write acquires its writer lock without changing
+            # project activity; Postgres uses the stable project row lock.
+            if db.get_bind().dialect.name == "sqlite":
+                db.execute(update(Project).where(Project.id == project_id).values(updated_at=Project.updated_at))
+            else:
+                db.execute(select(Project.id).where(Project.id == project_id).with_for_update(nowait=True))
             events = apply_distribution_drift(
                 db, project_id, _numeric_field_profiles(mapspec)
             )
             written = harvest_facts_from_review(db, project_id, mapspec, review)
-            if recipe_id and _review_is_trustworthy(review):
-                record_fact(
+            review_digest = hashlib.sha256(json.dumps(
+                {"session": session_id, "map": cartographic_fingerprint(mapspec)},
+                sort_keys=True, ensure_ascii=False, default=str,
+            ).encode()).hexdigest()
+
+            prior_outcome = db.execute(select(CartoProjectFact).where(
+                CartoProjectFact.project_id == project_id,
+                CartoProjectFact.kind == "recipe_outcome",
+                CartoProjectFact.subject == recipe_id,
+            ).with_for_update()).scalar_one_or_none() if recipe_id else None
+            prior_payload = prior_outcome.payload if prior_outcome is not None and isinstance(prior_outcome.payload, dict) else {}
+            receipts = prior_payload.get("outcome_receipts")
+            receipts = [r for r in receipts if isinstance(r, str)] if isinstance(receipts, list) else []
+            already_recorded = review_digest in receipts or (prior_outcome is not None and prior_outcome.evidence_digest == review_digest)
+            if recipe_id and _review_is_trustworthy(review) and not already_recorded:
+                outcome = record_fact(
                     db, project_id, "recipe_outcome", recipe_id,
-                    {"task": _recipe_task(mapspec)},
+                    {"task": _recipe_task(mapspec), "outcome_receipts": [*receipts[-127:], review_digest]},
                     fingerprint=None,
+                    evidence_digest=review_digest,
                     validity_tier=_review_tier(review),
                 )
-                written += 1
-                # V11 W1.3（ADR-0161）：引擎级配方亲和记账（与项目事实同缝，
-                # 评审通过 = success）—— fail-safe，失败不影响项目事实。
-                try:
+                # Keep the last128 session/map receipts with the bounded fact;
+                # review timing or repeated turns are not new outcome samples.
+                if outcome is not None and outcome.status == "active" and outcome.evidence_digest == review_digest:
+                    written += 1
                     from app.services.cartography.intent_learning import (
                         record_recipe_outcome,
                     )
                     record_recipe_outcome(db, recipe_id=recipe_id, success=True)
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("recipe affinity 学习跳过: %s", exc)
             if events or written:
                 db.commit()
             else:
@@ -102,7 +129,7 @@ def _recipe_task(mapspec: dict) -> str:
 
 
 def _numeric_field_profiles(mapspec: dict) -> dict:
-    """Collect ``field -> field_profile`` for numeric thematic fields.
+    """Collect source/field identities for only the fields actually classified on each source.
 
     Only fields a layer actually classifies on are drift-relevant: an unused
     column changing shape does not invalidate any cartographic prior. Reads
@@ -110,17 +137,20 @@ def _numeric_field_profiles(mapspec: dict) -> dict:
     materialization (metadata-first contract).
     """
     sources = mapspec.get("sources") if isinstance(mapspec.get("sources"), dict) else {}
+    from app.services.cartography.memory_subjects import field_subject
     thematic_fields = set()
     for layer in mapspec.get("layers") or []:
         if not isinstance(layer, dict):
             continue
         legend_spec = layer.get("legend_spec")
         if isinstance(legend_spec, dict) and isinstance(legend_spec.get("field"), str):
-            thematic_fields.add(legend_spec["field"])
+            source_id = layer.get("source")
+            if isinstance(source_id, str):
+                thematic_fields.add((source_id, legend_spec["field"]))
     if not thematic_fields:
         return {}
     collected: dict = {}
-    for source in sources.values():
+    for source_id, source in sources.items():
         if not isinstance(source, dict):
             continue
         profile = source.get("profile")
@@ -128,8 +158,8 @@ def _numeric_field_profiles(mapspec: dict) -> dict:
         if not isinstance(fields, dict):
             continue
         for field, field_profile in fields.items():
-            if str(field) in thematic_fields and isinstance(field_profile, dict):
-                collected[str(field)] = field_profile
+            if (str(source_id), str(field)) in thematic_fields and isinstance(field_profile, dict):
+                collected[field_subject(str(source_id), str(field))] = field_profile
     return collected
 
 
@@ -168,7 +198,7 @@ async def harvest_project_memory(
         except Exception:  # noqa: BLE001 — plan 缺席不阻断收割
             recipe_id = ""
         return await asyncio.to_thread(
-            _harvest_sync, project_id, mapspec, review, recipe_id,
+            _harvest_sync, project_id, mapspec, review, recipe_id, session_id,
         )
     except Exception as ex:  # noqa: BLE001 — best-effort by contract
         logger.warning(

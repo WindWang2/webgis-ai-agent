@@ -108,3 +108,19 @@ TileJSON 现在使用 `[-180, south, 180, north]` 作为保守瓦片请求 envel
 - TileJSON envelope 仅用于避免 MapLibre 错误剔除。它不证明整个经度范围都有数据；连续经度源的负经度半区仍可能因瓦片窗口与源网格不相交而透明。消费者应读取原 receipt、`coverage_bbox_epsg4326` 和原因码，不能把 envelope 当作全覆盖科学证据。本次 PNG 回归只证明正经度一侧可渲染。
 - 本轮采用有界输入和定向回归，没有执行全量前后端、性能压力或部署后验证。
 - 与较新的地形认证改动整合时，必须保留短时签名 URL 和 live owner-auth fallback；原 PR 的 query 编码改动不能覆盖这些认证边界。本报告的当前分支测试不能替代整合后的认证回归。
+
+## 本地 checkpoint 整合补记
+
+在审查修复提交 `58b315b1ba3f24348220bbbf31f1442bbddb7427` 上本地合入精确 checkpoint `45393a07534e1590d684c636a8f509fa504f5ba0`，不推送或发布。以下为冲突决策：
+
+| 文件 | 保留的行为 |
+| --- | --- |
+| `app/api/routes/layer.py` | 使用 checkpoint 的十分钟、会话/ref 绑定的签名地形 URL，保留失效签名后的独立 live owner-auth 校验；保留 PR 的 token 输入上界及科学 bbox/TileJSON envelope 区分。 |
+| `app/api/routes/upload.py` | 使用 checkpoint 的签名 URL 和上传前置归属/预算边界；保留 PR 的 dedup 命中后栅格注册车道。去掉不再使用的 raw-query 编码分支。 |
+| `frontend/components/map/map-panel.tsx` | HUD 使用同一份实际 pitch；保留 PR 的拾取、表象 scope、模型重挂与 checkpoint 的新功能。checkpoint 新增的 reconcile-settle 资产同步调用显式传入同一个 `sessionId`，避免重置当前覆盖 scope。 |
+| `frontend/lib/hooks/use-cartographic-observation.ts` | 保留 checkpoint 的 settle 签发序号守卫，以及 PR 的签发时 revision 快照、3D 状态环会话清理；两份同义 revision 变量合并为一份。 |
+| `docs/quality/generated-artifacts.json` | 保留 checkpoint 的生成记录，不在本次局部整合执行全局生成；组合输入 fingerprint 仍需最终统一生成检查。 |
+
+自动合入的 owner-token hash 存储、科学计算边界未回退；PR 的渲染矩阵、调度预算、glTF 节点上界及 manager 生命周期源码保持审查修复版本。上传 dedup 回归的 fixture 补建所属 Conversation，以满足 checkpoint 更严格的前置授权，未放松生产守卫。
+
+冲突相关验证：12 个前端文件、174 项通过；40 项后端通过，包括签名 URL 不含 owner token、匿名签名瓦片直接读取、签名失效后的 live 用户/owner 凭据重验、无独立凭据时拒绝，以及 owner-token hash 存储。生产 `tsc --noEmit`、冲突前端文件 ESLint、相关 Python Ruff 均通过。后端有 3 条相同 Rasterio 弃用提示。本次整合未运行全量 suite、全局生成或真实 WebGL；最终组合检查仍由上层整合流程执行。

@@ -11,10 +11,16 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
+
+from app.lib.harness.result_contracts import (
+    BenchBaseline, BenchEntry, BenchReport, ComparisonReport, DiffReport, DiffSummary,
+    DriftAttributes, MetricRow, ProjectionDelta, ResumeState, ScenarioDrift,
+    ScenarioProjection, TurnProjection, baseline_entry, project_dispatch, project_mutation,
+)
 
 from app.lib.harness.replay.faults import apply_faults, assert_fault_contract
-from app.lib.harness.replay.replayer import OfflineReplayer, Scenario
+from app.lib.harness.replay.replayer import OfflineReplayer, Scenario, ScenarioResult
 
 SUITES = ("core", "multi-turn", "faults", "all")
 _PROFILES = ("small", "medium", "large")
@@ -60,9 +66,9 @@ def apply_profile(scenario: Scenario, profile: str) -> Scenario:
 
 async def run_one(replayer: OfflineReplayer, scenario: Scenario,
                   *, record_perf: bool = True,
-                  rows_sink: Optional[List[Dict[str, Any]]] = None,
+                  rows_sink: Optional[List[MetricRow]] = None,
                   contract_sink: Optional[List[str]] = None,
-                  current_registry_digest: Optional[str] = None) -> Dict[str, Any]:
+                  current_registry_digest: Optional[str] = None) -> BenchEntry:
     started = time.perf_counter()
     # 故障编译：声明 faults 的场景在 replayer 环境边界做纯变换（D8）。
     replayed = apply_faults(scenario) if scenario.faults else scenario
@@ -79,7 +85,7 @@ async def run_one(replayer: OfflineReplayer, scenario: Scenario,
         if violation:
             contract_sink.append(violation)
     duration_ms = (time.perf_counter() - started) * 1000.0
-    entry: Dict[str, Any] = {
+    entry: BenchEntry = {
         "scenario_id": scenario.scenario_id,
         "category": scenario.category,
         "ok": result.ok,
@@ -108,7 +114,7 @@ async def run_one(replayer: OfflineReplayer, scenario: Scenario,
 
 
 def _drift_attributes(scenario: Scenario, *,
-                      current_registry_digest: Optional[str]) -> Dict[str, Any]:
+                      current_registry_digest: Optional[str]) -> DriftAttributes:
     from app.lib.harness.replay.drift import (
         capability_registry_digest,
         decisions_digest,
@@ -117,7 +123,7 @@ def _drift_attributes(scenario: Scenario, *,
         registry_drift,
     )
 
-    attributes: Dict[str, Any] = {
+    attributes: DriftAttributes = {
         "decision_count": len(scenario.decisions),
     }
     if scenario.decisions:
@@ -147,13 +153,13 @@ def _drift_attributes(scenario: Scenario, *,
     return attributes
 
 
-def _projection_of(result) -> Dict[str, Any]:
+def _projection_of(result: ScenarioResult) -> ScenarioProjection:
     """场景级结构化投影（ADR-0262 D7）：digest 漂移的下钻定位面。
 
     只含确定性事实（passed/evaluated/allowed/status/selected/指纹）——
     计时与自由文本不进投影。
     """
-    turns = []
+    turns: List[TurnProjection] = []
     for index, t in enumerate(result.turns):
         turns.append({
             "turn": index,
@@ -170,13 +176,11 @@ def _projection_of(result) -> Dict[str, Any]:
             },
             "goal": t.goal_satisfaction,
             "mutations": [
-                {k: m.get(k) for k in
-                 ("op", "success", "spec_fingerprint", "error_code")}
+                project_mutation(m)
                 for m in t.mutation_outcomes
             ],
             "dispatch": [
-                {k: entry.get(k) for k in ("call_id", "allowed", "capability")
-                 if entry.get(k) is not None}
+                project_dispatch(entry)
                 for entry in t.dispatch_decisions
             ],
             "receipt": t.receipt_actual,
@@ -187,10 +191,10 @@ def _projection_of(result) -> Dict[str, Any]:
 async def run_suite(
     scenarios: List[Scenario], *, seed: int = 0,
     profile: str = "small", resume_path: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> BenchReport:
     """跑一个 suite；resume 状态文件跳过已完成场景（最终合并全量报告）。"""
     replayer = OfflineReplayer(seed=seed)
-    completed: Dict[str, Any] = {}
+    completed: ResumeState = {}
     if resume_path and Path(resume_path).exists():
         try:
             completed = json.loads(
@@ -199,12 +203,12 @@ async def run_suite(
             completed = {}  # 损坏状态文件 → 诚实重跑，不崩 CLI
         if completed.get("seed") != seed or completed.get("profile") != profile:
             completed = {}  # 基线参数变化 → 重跑（不混账）
-    entry_map: Dict[str, Any] = completed.get("entries") or {}
+    entry_map: Dict[str, BenchEntry] = completed.get("entries") or {}
     if not isinstance(entry_map, dict):
         entry_map = {}
     wanted_ids = {s.scenario_id for s in scenarios}
     # 只保留本次 suite 的条目（防已删除场景的僵尸记录虚增计数）。
-    entries: List[Dict[str, Any]] = [
+    entries: List[BenchEntry] = [
         e for e in entry_map.values()
         if isinstance(e, dict) and e.get("scenario_id") in wanted_ids]
     done_ids = {e["scenario_id"] for e in entries}
@@ -222,7 +226,7 @@ async def run_suite(
         tmp.write_text(payload, encoding="utf-8")
         os.replace(tmp, target)
 
-    rows: List[Dict[str, Any]] = []
+    rows: List[MetricRow] = []
     contract_violations: List[str] = []
     # ADR-0212：suite 级算一次 registry 指纹（录制场景的 drift 归因面）。
     try:
@@ -254,18 +258,18 @@ async def run_suite(
     }
 
 
-def compare_results(report: Dict[str, Any], baseline_path: str) -> Dict[str, Any]:
+def compare_results(report: BenchReport, baseline_path: str) -> ComparisonReport:
     """对照基线：digest 漂移 + 绿/red 计数漂移（+ 决策摘要漂移归因）。"""
     baseline = json.loads(Path(baseline_path).read_text(encoding="utf-8"))
     base_entries = {e["scenario_id"]: e for e in baseline.get("entries") or []}
-    drifts = []
+    drifts: List[ScenarioDrift] = []
     for entry in report.get("entries") or []:
         base = base_entries.get(entry["scenario_id"])
         if base is None:
             drifts.append({"scenario_id": entry["scenario_id"],
                            "kind": "new"})
         elif base.get("replay_digest") != entry.get("replay_digest"):
-            drift = {
+            drift: ScenarioDrift = {
                 "scenario_id": entry["scenario_id"],
                 "kind": "digest_drift",
                 "baseline_ok": base.get("ok"),
@@ -278,7 +282,7 @@ def compare_results(report: Dict[str, Any], baseline_path: str) -> Dict[str, Any
             if base_dd and cur_dd:
                 drift["decisions_digest_drift"] = base_dd != cur_dd
             drifts.append(drift)
-    for sid, base in base_entries.items():
+    for sid, _base in base_entries.items():
         if not any(e["scenario_id"] == sid
                    for e in report.get("entries") or []):
             drifts.append({"scenario_id": sid, "kind": "missing"})
@@ -293,7 +297,7 @@ BASELINE_KIND = "replay_bench_baseline"
 # ── differential replay（ADR-0262 D7）：digest 漂移 → step 级结构化 delta ────
 
 
-def diff_reports(baseline_path: str, current_path: str) -> Dict[str, Any]:
+def diff_reports(baseline_path: str, current_path: str) -> DiffReport:
     """文件形态入口：读两份 report JSON → :func:`diff_payloads`。"""
     base_report = json.loads(Path(baseline_path).read_text(encoding="utf-8"))
     cur_report = json.loads(Path(current_path).read_text(encoding="utf-8"))
@@ -301,9 +305,9 @@ def diff_reports(baseline_path: str, current_path: str) -> Dict[str, Any]:
                          baseline=baseline_path, current=current_path)
 
 
-def diff_payloads(base_report: Dict[str, Any], cur_report: Dict[str, Any],
+def diff_payloads(base_report: BenchReport, cur_report: BenchReport,
                   *, baseline: str = "<memory>",
-                  current: str = "<memory>") -> Dict[str, Any]:
+                  current: str = "<memory>") -> DiffReport:
     """master 报告 vs feature 报告 → 结构化 delta（可定位到 turn/step）。
 
     两个输入都是 replay_bench 的 **report**（含 projection 投影）；
@@ -318,8 +322,8 @@ def diff_payloads(base_report: Dict[str, Any], cur_report: Dict[str, Any],
         e["scenario_id"]: e for e in base_report.get("entries") or []
         if isinstance(e, dict) and e.get("scenario_id")
     }
-    deltas: List[Dict[str, Any]] = []
-    summary = {"scenarios_compared": 0, "drifted": 0,
+    deltas: List[ScenarioDrift] = []
+    summary: DiffSummary = {"scenarios_compared": 0, "drifted": 0,
                "new": 0, "missing": 0, "unchanged": 0}
     cur_ids = set()
     for entry in cur_report.get("entries") or []:
@@ -374,10 +378,10 @@ def diff_payloads(base_report: Dict[str, Any], cur_report: Dict[str, Any],
     }
 
 
-def _drill_projection(base: Dict[str, Any],
-                      current: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _drill_projection(base: ScenarioProjection,
+                      current: ScenarioProjection) -> List[ProjectionDelta]:
     """两份场景投影 → 逐 turn 逐 aspect 的结构化 delta。"""
-    deltas: List[Dict[str, Any]] = []
+    deltas: List[ProjectionDelta] = []
     base_turns = {
         t.get("turn"): t for t in (base.get("turns") or []) if isinstance(t, dict)}
     cur_turns = {
@@ -386,7 +390,7 @@ def _drill_projection(base: Dict[str, Any],
                            key=lambda k: (k is None, k)):
         bt = base_turns.get(turn_key) or {}
         ct = cur_turns.get(turn_key) or {}
-        loc = {"turn": turn_key if turn_key is not None else "?"}
+        turn_location = turn_key if turn_key is not None else "?"
 
         # gate checks（passed/evaluated/score —— score-only 漂移也可定位）。
         b_gate = (bt.get("gate") or {}).get("checks") or {}
@@ -396,7 +400,7 @@ def _drill_projection(base: Dict[str, Any],
             c_entry = c_gate.get(name) or {}
             if b_entry != c_entry:
                 deltas.append({
-                    **loc, "kind": "gate_check_flip", "aspect": "gate",
+                    "turn": turn_location, "kind": "gate_check_flip", "aspect": "gate",
                     "key": name,
                     "baseline": {"passed": b_entry.get("passed"),
                                  "evaluated": b_entry.get("evaluated"),
@@ -408,7 +412,7 @@ def _drill_projection(base: Dict[str, Any],
         # goal。
         if bt.get("goal") != ct.get("goal"):
             deltas.append({
-                **loc, "kind": "goal_status_changed", "aspect": "goal",
+                "turn": turn_location, "kind": "goal_status_changed", "aspect": "goal",
                 "key": "status",
                 "baseline": (bt.get("goal") or {}).get("status"),
                 "current": (ct.get("goal") or {}).get("status"),
@@ -423,17 +427,17 @@ def _drill_projection(base: Dict[str, Any],
                     or b_m.get("success") != c_m.get("success") \
                     or b_m.get("spec_fingerprint") != c_m.get("spec_fingerprint"):
                 deltas.append({
-                    **loc, "kind": "mutation_drift", "aspect": "mutations",
+                    "turn": turn_location, "kind": "mutation_drift", "aspect": "mutations",
                     "key": f"[{i}]{c_m.get('op') or b_m.get('op') or '?'}",
-                    "baseline": {k: b_m.get(k) for k in
-                                 ("op", "success", "spec_fingerprint")},
-                    "current": {k: c_m.get(k) for k in
-                                ("op", "success", "spec_fingerprint")},
+                    "baseline": {"op": b_m.get("op"), "success": b_m.get("success"),
+                                 "spec_fingerprint": b_m.get("spec_fingerprint")},
+                    "current": {"op": c_m.get("op"), "success": c_m.get("success"),
+                                "spec_fingerprint": c_m.get("spec_fingerprint")},
                 })
         # dispatch bind 裁决。
-        b_disp = {d.get("call_id"): d
+        b_disp = {cast(str, d.get("call_id")): d
                   for d in (bt.get("dispatch") or []) if isinstance(d, dict)}
-        c_disp = {d.get("call_id"): d
+        c_disp = {cast(str, d.get("call_id")): d
                   for d in (ct.get("dispatch") or []) if isinstance(d, dict)}
         for call_id in sorted(set(b_disp) | set(c_disp)):
             if (b_disp.get(call_id) or {}).get("allowed") \
@@ -441,7 +445,7 @@ def _drill_projection(base: Dict[str, Any],
                     or (b_disp.get(call_id) or {}).get("capability") \
                     != (c_disp.get(call_id) or {}).get("capability"):
                 deltas.append({
-                    **loc, "kind": "dispatch_flip", "aspect": "dispatch",
+                    "turn": turn_location, "kind": "dispatch_flip", "aspect": "dispatch",
                     "key": call_id,
                     "baseline": b_disp.get(call_id),
                     "current": c_disp.get(call_id),
@@ -452,7 +456,7 @@ def _drill_projection(base: Dict[str, Any],
         for call_id in sorted(set(b_rec) | set(c_rec)):
             if b_rec.get(call_id) != c_rec.get(call_id):
                 deltas.append({
-                    **loc, "kind": "receipt_drift", "aspect": "receipt",
+                    "turn": turn_location, "kind": "receipt_drift", "aspect": "receipt",
                     "key": call_id,
                     "baseline": b_rec.get(call_id),
                     "current": c_rec.get(call_id),
@@ -462,7 +466,7 @@ def _drill_projection(base: Dict[str, Any],
         for call_id in sorted(set(b_repeat) | set(c_repeat)):
             if b_repeat.get(call_id) != c_repeat.get(call_id):
                 deltas.append({
-                    **loc, "kind": "receipt_repeat_drift",
+                    "turn": turn_location, "kind": "receipt_repeat_drift",
                     "aspect": "receipt_repeat", "key": call_id,
                     "baseline": b_repeat.get(call_id),
                     "current": c_repeat.get(call_id),
@@ -470,23 +474,17 @@ def _drill_projection(base: Dict[str, Any],
     return deltas
 
 
-def write_baseline(report: Dict[str, Any], output: str, *,
-                   corpus_version: Optional[int] = None) -> Dict[str, Any]:
+def write_baseline(report: BenchReport, output: str, *,
+                   corpus_version: Optional[int] = None) -> BenchBaseline:
     """基线投影：只含确定性字段（digest/裁决/计数 —— 计时等易变面不进）。"""
-    payload: Dict[str, Any] = {
+    payload: BenchBaseline = {
         "kind": BASELINE_KIND,
         "suite_seed": report.get("suite_seed"),
         "profile": report.get("profile"),
         "green": report.get("green"),
         "red": report.get("red"),
         "entries": [
-            {
-                "scenario_id": e.get("scenario_id"),
-                "ok": e.get("ok"),
-                "replay_digest": e.get("replay_digest"),
-                **({"decisions_digest": e["decisions_digest"]}
-                   if e.get("decisions_digest") else {}),
-            }
+            baseline_entry(e)
             for e in sorted(
                 (x for x in report.get("entries") or []
                  if isinstance(x, dict)),
@@ -506,7 +504,7 @@ def write_baseline(report: Dict[str, Any], output: str, *,
     return payload
 
 
-def write_report(report: Dict[str, Any], fmt: str, output: str) -> None:
+def write_report(report: BenchReport, fmt: str, output: str) -> None:
     if fmt == "json":
         text = json.dumps(report, ensure_ascii=False, indent=1)
     elif fmt == "csv":
@@ -515,7 +513,7 @@ def write_report(report: Dict[str, Any], fmt: str, output: str) -> None:
 
         buffer = io.StringIO()
         writer = csv.DictWriter(
-            buffer, fieldnames=["scenario_id", "category", "ok",
+            buffer, lineterminator="\n", fieldnames=["scenario_id", "category", "ok",
                                 "replay_digest", "duration_ms",
                                 "exact_diff_count"])
         writer.writeheader()
@@ -552,7 +550,7 @@ def write_report(report: Dict[str, Any], fmt: str, output: str) -> None:
 # duration_ms 是唯一允许漂移的字段（计时面，本就不进 digest/基线）。
 
 
-def run_shard_entry(args: Dict[str, Any]) -> Dict[str, Any]:
+def run_shard_entry(args: Dict[str, Any]) -> BenchReport:
     """子进程入口（模块顶层函数，spawn 安全）：单片 suite 报告。"""
     scenarios = [Scenario.from_dict(s) for s in args.get("scenarios") or []]
     import asyncio
@@ -562,11 +560,11 @@ def run_shard_entry(args: Dict[str, Any]) -> Dict[str, Any]:
         profile=str(args.get("profile") or "small")))
 
 
-def merge_shard_reports(shards: List[Dict[str, Any]], *, seed: int,
-                        profile: str) -> Dict[str, Any]:
+def merge_shard_reports(shards: List[BenchReport], *, seed: int,
+                        profile: str) -> BenchReport:
     """按 scenario_id 归并分片报告（复原 run_suite 的全量报告形状）。"""
-    entries: List[Dict[str, Any]] = []
-    rows: List[Dict[str, Any]] = []
+    entries: List[BenchEntry] = []
+    rows: List[MetricRow] = []
     violations: List[str] = []
     for shard in shards:
         entries.extend(e for e in shard.get("entries") or []
@@ -574,7 +572,7 @@ def merge_shard_reports(shards: List[Dict[str, Any]], *, seed: int,
         rows.extend(shard.get("ratchet_rows") or [])
         violations.extend(shard.get("fault_contract_violations") or [])
     entries.sort(key=lambda e: str(e.get("scenario_id") or ""))
-    merged: Dict[str, Any] = {
+    merged: BenchReport = {
         "suite_seed": seed,
         "profile": profile,
         "scenarios": len(entries),
@@ -600,7 +598,7 @@ def shard_scenarios(scenarios: List[Scenario], procs: int) -> List[List[Scenario
 def run_suite_multiprocess(
     scenarios: List[Scenario], *, seed: int = 0, profile: str = "small",
     procs: int = 2,
-) -> Dict[str, Any]:
+) -> BenchReport:
     """本地多进程分片跑 suite（进程数 = 分片数；归并与单进程可比）。
 
     resume 语义不适用（分片内各自完整执行）；调用方需要断点续跑时用

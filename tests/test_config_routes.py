@@ -16,13 +16,19 @@ os.environ.setdefault("ENV", "development")
 
 
 @pytest_asyncio.fixture
-async def app_and_client():
+async def app_and_client(monkeypatch):
     """加载 config 路由 + chat 路由（config 依赖 chat.get_engine/get_registry）。"""
     from app.api.routes import config as config_routes
     from app.api.routes import chat as chat_routes
     from app.services.chat_engine import ChatEngine
     from app.tools.registry import ToolRegistry
     from app.core.auth import get_current_user, get_current_user_with_version
+    import app.core.auth as auth_mod
+
+    async def live_user(user_id):
+        return ("ok", (0, True, "viewer" if user_id == "v1" else "admin", None))
+
+    monkeypatch.setattr(auth_mod, "_load_live_user_state", live_user)
 
     # audit4 #1005: 连通性测试 60s 去抖缓存按用例隔离 —— 成功用例写入的
     # 缓存不能把后续失败用例（同引擎默认配置键）伪装成 200。
@@ -240,12 +246,13 @@ async def test_config_llm_test_connect_failure_returns_502(app_and_client, monke
     body = resp.json()
     # V9（ADR-0138）：502 走统一信封 message（原 detail）
     assert "连接失败" in body["message"]
-    assert "connection refused" in body["message"]
+    assert "网络连接失败" in body["message"]
+    assert "connection refused" not in body["message"]
 
 
 @pytest.mark.asyncio
 async def test_config_llm_test_provider_error_detail(app_and_client, monkeypatch):
-    """#390: 上游 4xx 时返回 provider 的 error.message 作为详情。"""
+    """Upstream status remains actionable without exposing raw provider bodies."""
     request = httpx.Request("POST", "https://overpass-api.de/v1/chat/completions")
 
     async def failing_probe(cfg, timeout=httpx.Timeout(1)):
@@ -264,7 +271,8 @@ async def test_config_llm_test_provider_error_detail(app_and_client, monkeypatch
         "/api/v1/config/llm/test", json={}, headers=_admin_headers()
     )
     assert resp.status_code == 502
-    assert "invalid api key" in resp.json()["message"]
+    assert "401" in resp.json()["message"]
+    assert "invalid api key" not in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -371,8 +379,11 @@ async def test_config_skills_upload_audit_logs_real_actor(
         }
 
     app.dependency_overrides[require_admin] = _fake_admin
+    from app.api.routes.config import settings
+    monkeypatch.setattr(settings, "ALLOW_RUNTIME_SKILL_UPLOAD", True)
     # skills_dir 是路由内相对路径 —— 切到临时目录避免污染仓库
     monkeypatch.chdir(tmp_path)
+    (tmp_path / "skills-lock.json").write_text('{"runtime_skills": {}}')
 
     with caplog.at_level(logging.WARNING, logger="app.api.routes.config"):
         resp = await client.post(
@@ -400,6 +411,8 @@ async def test_config_skills_upload_invalid_utf8_and_reserved_name(
         return {"user_id": "admin-1", "role": "admin", "org_id": None}
 
     app.dependency_overrides[require_admin] = _fake_admin
+    from app.api.routes.config import settings
+    monkeypatch.setattr(settings, "ALLOW_RUNTIME_SKILL_UPLOAD", True)
     monkeypatch.chdir(tmp_path)
     resp = await client.post(
         "/api/v1/config/skills/upload",
@@ -412,3 +425,32 @@ async def test_config_skills_upload_invalid_utf8_and_reserved_name(
     )
     assert resp.status_code == 400, resp.text
     app.dependency_overrides.pop(require_admin, None)
+
+
+@pytest.mark.asyncio
+async def test_production_runtime_mutations_are_disabled(app_and_client, monkeypatch):
+    from app.api.routes.config import settings
+    from app.core.auth import require_admin
+
+    app, client = app_and_client
+    app.dependency_overrides[require_admin] = lambda: {"user_id": "admin", "role": "admin"}
+    monkeypatch.setattr(settings, "ENV", "production")
+    monkeypatch.setattr(settings, "ALLOW_RUNTIME_SKILL_UPLOAD", True)
+    for path, arguments in [
+        ("/api/v1/config/llm", {"json": {"model": "another-model"}}),
+        ("/api/v1/config/skills/refresh", {}),
+        ("/api/v1/config/skills/upload", {"files": {"file": ("script.py", b"pass\n", "text/python")}}),
+    ]:
+        response = await client.post(path, **arguments)
+        assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_provider_probe_cannot_send_stored_key_to_new_origin(app_and_client):
+    from app.core.auth import require_admin
+
+    app, client = app_and_client
+    app.dependency_overrides[require_admin] = lambda: {"user_id": "admin", "role": "admin"}
+    response = await client.post("/api/v1/config/llm/test", json={"base_url": "https://different.example/v1"})
+    assert response.status_code == 400
+    assert "API Key" in response.text

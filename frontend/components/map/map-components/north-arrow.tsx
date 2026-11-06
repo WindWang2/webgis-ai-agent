@@ -6,7 +6,6 @@ import { registerComponentRenderer } from './registry';
 import { positionClass, resolveVariant } from './helpers';
 import type { RendererContext } from './types';
 import { useT } from '@/lib/i18n/useT';
-import { bboxCenter, magneticDeclinationAt } from '@/lib/layout/magnetic-declination';
 
 // D7：arrow_simple —— 简单箭头字形（实心北向箭头 + 尾杆），随容器
 // rotate(-bearing) 一起旋转（与其它 glyph 同一方位角语义）。
@@ -36,15 +35,10 @@ function NorthArrowView({ component, ctx }: { component: MapSpecComponent; ctx: 
   // V3（ADR-0238 D3）：monochrome —— 灰度渲染（黑白出版/打印友好），
   // glyph 仍是 compass（单色语义），仅色彩通道去饱和。
   const mono = variant === 'monochrome';
-  // AC-07（ADR-0156 P4）：真北/磁北偏角注记 —— bbox 中心偶极子近似
-  // （恒 approximate 标记）；options.showDeclination === false 可关。
-  const options = (component.options ?? {}) as Record<string, unknown>;
-  const showDeclination = options['showDeclination'] !== false && !!ctx.bounds;
-  const declination = showDeclination && ctx.bounds
-    ? magneticDeclinationAt(
-        bboxCenter(ctx.bounds).lat,
-        bboxCenter(ctx.bounds).lng,
-      )
+  // Only display a measured/model-backed declination explicitly supplied by the caller.
+  const configured = component.options?.declination;
+  const declination = typeof configured === 'number' && Number.isFinite(configured)
+    ? { label: `${Math.abs(configured).toFixed(1)}°${configured >= 0 ? 'E' : 'W'}` }
     : undefined;
   const bearing = Math.round(ctx.bearing);
   const ariaLabel = declination

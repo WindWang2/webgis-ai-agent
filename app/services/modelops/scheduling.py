@@ -19,6 +19,12 @@
 """
 from __future__ import annotations
 
+from app.contracts.modelops import (
+    GpuDeviceRecord,
+    VramSnapshot,
+    WarmPoolRecord,
+)
+
 import hashlib
 import logging
 import threading
@@ -40,7 +46,7 @@ class GpuDeviceInfo:
     index: int
     total_mem_bytes: int
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> GpuDeviceRecord:
         return {"index": self.index, "total_mem_bytes": self.total_mem_bytes}
 
 
@@ -149,7 +155,7 @@ class VramLedger:
             self._oom_factor[key] = new_factor
             return new_factor
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> VramSnapshot:
         with self._lock:
             return {
                 "devices": [d.as_dict() for d in self._devices],
@@ -191,7 +197,7 @@ class WarmPoolManager:
         self._registry = registry
         self._providers = providers
         self._lock = threading.Lock()
-        self._pinned: Dict[str, Dict[str, Any]] = {}
+        self._pinned: dict[str, WarmPoolRecord] = {}
 
     def pin(
         self,
@@ -199,7 +205,7 @@ class WarmPoolManager:
         *,
         model_version: Optional[str] = None,
         device: str = "cpu",
-    ) -> Dict[str, Any]:
+    ) -> WarmPoolRecord:
         """把一个模型钉进 warm pool（幂等；失败 honest 记录）。"""
         from app.lib.modelops.fingerprint import software_env_fingerprint
         from app.services.modelops.loaded_cache import load_key
@@ -231,7 +237,7 @@ class WarmPoolManager:
             )
             acquired = True
             provider.warmup(model)
-            state = {
+            state: WarmPoolRecord = {
                 "model_id": model_id,
                 "model_version": model_version or "",
                 "device": device,
@@ -270,9 +276,9 @@ class WarmPoolManager:
                 logger.warning("warm pool release of %s failed: %s", state["model_id"], exc)
         return len(pinned)
 
-    def status(self) -> Dict[str, Dict[str, Any]]:
+    def status(self) -> dict[str, WarmPoolRecord]:
         with self._lock:
-            return {k: dict(v) for k, v in self._pinned.items()}
+            return {k: v.copy() for k, v in self._pinned.items()}
 
 
 __all__ = [

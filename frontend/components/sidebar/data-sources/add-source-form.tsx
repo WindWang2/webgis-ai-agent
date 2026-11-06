@@ -16,6 +16,9 @@ import { useT } from '@/lib/i18n/useT';
  */
 const SOURCE_TYPES: Array<{ value: string; label?: string; labelKey?: string }> = [
   { value: 'ogc_api', label: 'OGC API Features' },
+  // GOAL-02：OGC 开放瓦片/覆盖服务（发现 + 受控消费链）。
+  { value: 'ogc_api_tiles', label: 'OGC API Tiles' },
+  { value: 'ogc_api_coverages', label: 'OGC API Coverages' },
   { value: 'postgis', labelKey: 'sidebar.ds.type.postgis' },
   { value: 'wfs', label: 'OGC WFS' },
   { value: 'wms', label: 'OGC WMS' },

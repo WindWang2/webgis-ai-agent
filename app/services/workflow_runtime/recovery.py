@@ -17,9 +17,14 @@ V5 的孤儿复位只在 ``Driver._run_loop`` 波界被动触发（依赖有人�
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    InstancePatch,
+    RecoveryReport,
+)
+
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from app.services.workflow_runtime import contracts as C
 from app.services.workflow_runtime.store import (
@@ -56,13 +61,13 @@ def sweep_recoverable(
     ttl_s: float = DEFAULT_LEASE_TTL_S,
     batch: int = SWEEP_BATCH,
     worker_registry: Optional[Any] = None,
-) -> Dict[str, Any]:
+) -> RecoveryReport:
     """一轮恢复清扫（同步；调用方负责 to_thread 卸载）。
 
     返回报告 {scanned, cancelled, orphan_reset, finalized, errors}。
     """
     store = store or InstanceStore()
-    report: Dict[str, Any] = {
+    report: RecoveryReport = {
         "scanned": 0, "cancelled": 0, "orphan_reset": 0,
         "finalized": 0, "errors": 0, "workers_stale": [],
     }
@@ -126,15 +131,18 @@ def _consume_cancel(store: InstanceStore, instance_id: str) -> int:
             cancelled += 1
     fresh = store.get_instance(instance_id)
     if fresh is not None and fresh["status"] == C.InstanceStatus.RUNNING:
-        store.append_event(
-            instance_id, kind=C.EventKind.RECOVERY_FINALIZE,
-            reason="CANCEL_CONVERGED", actor="recovery",
-            payload={"cancelled_nodes": cancelled})
-        store.update_instance(
+        updated = store.update_instance(
             instance_id,
+            expected_revision=fresh["revision"],
             fields={"status": C.InstanceStatus.CANCELLED,
                     "terminal_at": _utcnow(),
                     "error_code": "RECOVERY_CANCELLED"})
+        if updated is not None:
+            store.append_event(
+                instance_id, kind=C.EventKind.RECOVERY_FINALIZE,
+                reason="CANCEL_CONVERGED", actor="recovery",
+                payload={"cancelled_nodes": cancelled})
+
     return cancelled
 
 
@@ -200,24 +208,30 @@ def _finalize_if_decided(store: InstanceStore, instance_id: str) -> int:
     # optional 事实从节点行不可得（optional 不落节点行）——愈合按全
     # required 裁决（保守：FAILED 在场即 failed；与 driver optional_map
     # 缺省 False 一致）。
-    status = C.instance_status_from_nodes(states, optional_nodes={})
-    store.append_event(
-        instance_id, kind=C.EventKind.RECOVERY_FINALIZE,
-        reason="CRASH_BEFORE_FINALIZE", actor="recovery",
-        payload={"status": status})
-    fields: Dict[str, Any] = {"status": status, "terminal_at": _utcnow()}
+    from app.services.workflow_runtime.registry import PackageRegistry
+    package = PackageRegistry(factory=store._factory).resolve(
+        inst["package_id"], owner_scope=inst["owner_scope"], version=inst["package_version"])
+    dag = ((package or {}).get("compiled_form") or {}).get("typed_dag") or {}
+    optional = {str(n.get("node_id")): bool(n.get("optional")) for n in dag.get("nodes", [])}
+    status = C.instance_status_from_nodes(states, optional_nodes=optional)
+    fields: InstancePatch = {"status": status, "terminal_at": _utcnow()}
     if status == C.InstanceStatus.FAILED:
         failed = [n for n, s in states.items()
                   if s in (C.NodeState.FAILED, C.NodeState.BLOCKED)]
         fields["error_code"] = "NODES_INCOMPLETE"
         fields["error_detail"] = ",".join(failed[:6])[:255]
-    store.update_instance(instance_id, fields=fields)
-    return 1
+    updated = store.update_instance(instance_id, expected_revision=inst["revision"], fields=fields)
+    if updated is not None:
+        store.append_event(
+            instance_id, kind=C.EventKind.RECOVERY_FINALIZE,
+            reason="CRASH_BEFORE_FINALIZE", actor="recovery",
+            payload={"status": status})
+    return 1 if updated is not None else 0
 
 
 async def sweep_recoverable_async(
     store: Optional[InstanceStore] = None, **kwargs: Any,
-) -> Dict[str, Any]:
+) -> RecoveryReport:
     """async 包装（lifespan 周期任务用）。"""
     import asyncio
 

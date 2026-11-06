@@ -46,8 +46,8 @@ def test_reproject_transforms_every_feature_beyond_scan_window():
             f"要素 {i} 未按目标 CRS 变换：{(x, y)} != {(ex, ey)}"
 
 
-def test_reproject_without_pyproj_discloses_label_only():
-    """pyproj 缺席时仍只打标签，但证据诚实写明（不冒充已重投影）。"""
+def test_reproject_without_pyproj_preserves_source_crs():
+    """缺少变换器时保留源坐标和源 CRS，避免错误坐标标签。"""
     import app.services.data_quality.autofix as af
 
     payload = dict(_point_fc(3))
@@ -64,7 +64,9 @@ def test_reproject_without_pyproj_discloses_label_only():
     entry = evidence["operations"][0]
     assert entry["reprojected"] is False
     assert entry["features_transformed"] == 0
-    assert "pyproj unavailable" in entry["note"]
+    assert "source CRS retained" in entry["note"]
+    assert _new_payload["crs"] == "EPSG:4326"
+    assert not evidence["changed"]
 
 
 def test_dry_run_reproject_does_not_mutate_input():

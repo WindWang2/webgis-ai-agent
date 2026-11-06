@@ -2,8 +2,11 @@
 
 语义边界（谁失效谁不失效）：
 
-- **观察点移动**（``feature_selected`` 换点 / AOI 变更）→ 分析失效
-  （视域是观察点的函数）→ ``stale_observer_moved``，建议重算；
+- **观察点移动**（``feature_selected`` 换点 / AOI 变更）→ **观察者语义
+  分析**失效（视域/通视是观察点的函数）→ ``stale_observer_moved``，建议
+  重算；G3D-V2-C 语义收窄：profile/surface/volume 等线路/区域语义分析
+  不进选择检查（显式绑定 ``observer_feature_id`` 的任何目标仍进——
+  调用方声明优先）；
 - **数据输入变化**（DEM 源被移除/替换）→ 分析失效 → ``stale_inputs``；
 - **图层显隐**（用户隐藏结果层）→ 分析**不**失效，但"用户可见性"
   失效 → ``display_stale``——完成判据不得宣称"用户可见"；
@@ -55,6 +58,13 @@ class StaleVerdict(BaseModel):
         return self.state == "stale"
 
 
+#: 观察者语义分析族（结果是指定观察点的函数——选择漂移才失效）。
+#: G3D-V2-C：profile/surface/volume 是线路/区域语义，用户换选要素不
+#: 改变其输入（G3D04 语义收窄：非观察者分析不进选择检查；显式绑定
+#: observer_feature_id 的任何目标仍进——调用方声明优先）。
+_OBSERVER_GOALS = frozenset({"viewshed", "line_of_sight"})
+
+
 def evaluate_staleness(
     binding: AnalysisBinding,
     *,
@@ -83,21 +93,23 @@ def evaluate_staleness(
         )
 
     # ── 观察点失效：用户选择了新的观察要素（feature_selected 语义） ──
+    # 仅观察者语义目标参与（_OBSERVER_GOALS 或显式 observer_feature_id）；
     selection = snap.get("selection")
-    if isinstance(selection, dict):
-        sel_feature = str(selection.get("feature_id") or "")
-        sel_layer = str(selection.get("layer_id") or "")
-        if sel_feature and sel_feature != binding.observer_feature_id:
-            # 用户点选了非分析观察点的要素 → 观察点语义漂移（点别的看）
-            return StaleVerdict(
-                state="stale",
-                reason_code="SCENE_STALE_OBSERVER_MOVED",
-                detail=f"用户当前选择 {sel_layer or '?'}/{sel_feature} 与分析"
-                       f"观察点 {binding.observer_feature_id or '坐标点'} 不符"
-                       "——观察点语义已漂移",
-                recommended_action="recompute",
-                stale_inputs=["observer"],
-            )
+    if binding.analysis_goal in _OBSERVER_GOALS or binding.observer_feature_id:
+        if isinstance(selection, dict):
+            sel_feature = str(selection.get("feature_id") or "")
+            sel_layer = str(selection.get("layer_id") or "")
+            if sel_feature and sel_feature != binding.observer_feature_id:
+                # 用户点选了非分析观察点的要素 → 观察点语义漂移（点别的看）
+                return StaleVerdict(
+                    state="stale",
+                    reason_code="SCENE_STALE_OBSERVER_MOVED",
+                    detail=f"用户当前选择 {sel_layer or '?'}/{sel_feature} 与分析"
+                           f"观察点 {binding.observer_feature_id or '坐标点'} 不符"
+                           "——观察点语义已漂移",
+                    recommended_action="recompute",
+                    stale_inputs=["observer"],
+                )
 
     # ── 显示失效：结果层被用户隐藏（分析不失效，可见性失效） ─────────
     # user_overrides 的真实投影形状是 list（projection.py 按 override_order

@@ -351,6 +351,12 @@ def _resource_summary(ordered: Sequence[GISAction]) -> ResourceSummary:
                       for d, v in sorted(by_dim.items())})
 
 
+COMPENSATION_TOOLS = {
+    "remove_layer": "webgis_layer_remove",
+    "remove_component": "webgis_component_update",
+}
+
+
 def compile_actions(
     plan: GISActionPlan,
     *,
@@ -369,6 +375,12 @@ def compile_actions(
                 continue
             ok = _check_side_effect(action, res, findings)
             _check_failure_strategy(action, findings)
+            if action.compensation.kind != "none":
+                compensation_tool = COMPENSATION_TOOLS.get(action.compensation.kind)
+                if not compensation_tool or resolver.resolve_tool(compensation_tool) is None:
+                    findings.append(_finding("COMPENSATION_UNRESOLVED", "blocking", action.action_id,
+                                             "declared compensation has no registered execution channel"))
+                    ok = False
             if res.deprecated:
                 findings.append(_finding(
                     "TOOL_DEPRECATED", "blocking", action.action_id,

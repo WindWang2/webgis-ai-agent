@@ -13,6 +13,10 @@ Phase H「真实执行」：analysis 节点的 stats 类 capability 直接调用
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    WorkflowNode,
+)
+
 import logging
 from typing import Any, Dict, List
 
@@ -68,7 +72,7 @@ def _aggs_for(capability: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 async def execute_science_node(
-    node: Dict[str, Any], *, input_refs: List[str], params: Dict[str, Any],
+    node: WorkflowNode, *, input_refs: List[str], params: Dict[str, Any],
     session_id: str,
 ) -> ScienceOutcome:
     """真实执行 stats 类 analysis 节点（data_fabric compute_aggregates）。"""

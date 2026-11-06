@@ -50,7 +50,7 @@ class StoragePressureView:
         self._provider = provider or default_artifact_provider
         self._high = high_watermark
         self._ttl = cache_ttl_s
-        self._cached: Optional[Tuple[float, float]] = None  # (pressure, ts)
+        self._cached: Optional[Tuple[float, float, bool]] = None  # (pressure, ts, known)
         self._lock = threading.Lock()
 
     def pressure(self) -> float:
@@ -72,19 +72,19 @@ class StoragePressureView:
         import time as _time
         with self._lock:
             if self._cached is not None:
-                p, ts = self._cached
+                p, ts, known = self._cached
                 if _time.monotonic() - ts <= self._ttl:
-                    return (p, True)
+                    return (p, known)
             try:
                 reading = self._provider()
             except Exception:  # noqa: BLE001
                 reading = None
             if reading is None:
-                self._cached = (0.0, _time.monotonic())
+                self._cached = (0.0, _time.monotonic(), False)
                 return (0.0, False)
             used, cap = reading
             p = max(0.0, min(1.0, used / cap)) if cap > 0 else 0.0
-            self._cached = (p, _time.monotonic())
+            self._cached = (p, _time.monotonic(), True)
             return (p, True)
 
     def snapshot(self) -> dict:

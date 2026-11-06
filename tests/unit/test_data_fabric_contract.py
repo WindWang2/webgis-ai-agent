@@ -67,5 +67,5 @@ def test_ssrf_security_boundary():
         DataFabricSecurity.validate_url("http://10.0.0.1/db")
 
     # Valid external URL should pass
-    valid_url = "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/World_Cities/FeatureServer/0"
+    valid_url = "https://93.184.216.34/arcgis/rest/services/World_Cities/FeatureServer/0"
     assert DataFabricSecurity.validate_url(valid_url) == valid_url

@@ -5,6 +5,7 @@
 | tool | v | status | side_effect | latency | memory | scale | capabilities |
 |---|---|---|---|---|---|---|---|
 | add_marker | 1.0#cv1 | stable | state_mutation | fast | light | small | map_annotation_measurement |
+| add_tile_service_layer | 1.0#cv1 | stable | state_mutation | medium | light | small | thematic_cartography |
 | aggregate_dataset | 1.0#cv1 | stable | cacheable_read | medium | light | large | data_source_pipeline |
 | alias_layer | 1.0#cv1 | stable | state_mutation | fast | light | small | layer_display_control |
 | analyze_vegetation_index | 1.0#cv1 | stable | artifact_creation | slow | heavy | large | spectral_index |
@@ -48,6 +49,7 @@
 | create_thematic_map | 1.0#cv1 | stable | state_mutation | medium | medium | medium | thematic_cartography |
 | cross_k_analysis | 1.0#cv1 | stable | deterministic_compute | slow | medium | medium | cross_k_function |
 | cross_pcf_analysis | 1.0#cv1 | stable | deterministic_compute | slow | medium | medium | cross_pair_correlation |
+| cut_fill_volume_analysis | 1.0#cv1 | stable | deterministic_compute | fast | heavy | large | terrain_measurement |
 | dasymetric_reallocation | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | areal_interpolation |
 | deep_explore | 1.0#cv1 | stable | state_mutation | slow | medium | large | meta_tool_surface |
 | depression_fill | 1.0#cv1 | stable | artifact_creation | slow | heavy | large | terrain_hydrology_advanced |
@@ -66,6 +68,7 @@
 | emerging_hotspot_analysis | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | emerging_hotspot_analysis |
 | execute_execution_plan | 1.0#cv1 | stable | artifact_creation | slow | heavy | large | plan_workflow_orchestration |
 | execute_plan | 1.0#cv1 | stable | state_mutation | slow | medium | large | plan_workflow_orchestration |
+| export_atlas | 1.0#cv1 | stable | artifact_creation | slow | heavy | large | map_export_publishing |
 | export_batch_maps | 1.0#cv1 | stable | artifact_creation | fast | light | medium | map_export_publishing |
 | export_thematic_map | 1.0#cv1 | stable | artifact_creation | fast | light | medium | map_export_publishing |
 | extract_contours | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | terrain_contours |
@@ -116,9 +119,9 @@
 | gis_method_qualify | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | gis_method_rank | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | gis_skill_detail | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
-| gis_skill_policy | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
+| gis_skill_policy | 1.0#cv1 | stable | state_mutation | fast | light | small | plan_workflow_orchestration |
 | gis_skill_replay_check | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
-| gis_skill_search | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
+| gis_skill_search | 1.0#cv1 | stable | state_mutation | fast | light | small | plan_workflow_orchestration |
 | gis_task_classify | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | gis_template_plan | 1.0#cv1 | stable | pure | fast | light | small | thematic_cartography |
 | gwr_regression | 1.0#cv1 | stable | deterministic_compute | slow | heavy | medium | gwr |
@@ -134,7 +137,9 @@
 | indicator_kriging_surface | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | indicator_kriging |
 | ingest_dataset | 1.0#cv1 | stable | artifact_creation | medium | heavy | unknown | dataset_ingest |
 | input_tips | 1.0#cv1 | stable | cacheable_read | fast | light | small | poi_query |
+| inspect_data_service | 1.0#cv1 | stable | cacheable_read | medium | light | small | data_source_pipeline |
 | inspect_data_source | 1.0#cv1 | stable | cacheable_read | medium | light | medium | data_source_pipeline |
+| inspect_spatial_semantics | 1.0#cv1 | stable | deterministic_compute | fast | light | small | spatial_semantics |
 | interpolation_model_compare | 1.0#cv1 | stable | deterministic_compute | slow | heavy | medium | interpolation_model_selection |
 | inventory_layers | 1.0#cv1 | stable | pure | fast | light | small | workspace_state_inspection |
 | isochrone_analysis | 1.0#cv1 | stable | cacheable_read | medium | light | medium | service_area |
@@ -165,6 +170,7 @@
 | mantel_test_analysis | 1.0#cv1 | stable | deterministic_compute | slow | medium | medium | mantel_test |
 | matched_filter | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | spectral_target_detection |
 | materialize_dataset | 1.0#cv1 | stable | state_mutation | medium | medium | medium | dataset_ingest |
+| materialize_remote_raster_asset | 1.0#cv1 | stable | state_mutation | slow | medium | large | dataset_ingest |
 | measure_area | 1.0#cv1 | stable | state_mutation | fast | light | small | map_annotation_measurement |
 | measure_distance | 1.0#cv1 | stable | state_mutation | fast | light | small | map_annotation_measurement |
 | medoid_composite | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | temporal_composite |
@@ -207,6 +213,7 @@
 | plan_data_query | 1.0#cv1 | stable | cacheable_read | medium | light | small | data_source_pipeline |
 | plan_map_scene | 1.0#cv1 | stable | cacheable_read | fast | light | small | thematic_cartography |
 | plan_route | 1.0#cv1 | stable | cacheable_read | fast | light | small | external_route_planning |
+| prepare_dataset | 1.0#cv1 | stable | artifact_creation | medium | medium | unknown | data_preparation |
 | profile_dataset | 1.0#cv1 | stable | pure | unknown | unknown | unknown | dataset_profiling_quality |
 | profile_dataset_semantics | 1.0#cv1 | stable | pure | fast | medium | medium | dataset_profiling_quality |
 | propose_plan | 1.0#cv1 | stable | state_mutation | fast | light | small | plan_workflow_orchestration |
@@ -228,6 +235,7 @@
 | raster_resample | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | raster_resample |
 | rate_smoothing | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | rate_smoothing |
 | rbf_interpolation | 1.0#cv1 | stable | deterministic_compute | slow | heavy | medium | spatial_interpolation |
+| read_coverage_subset | 1.0#cv1 | stable | state_mutation | medium | medium | medium | dataset_ingest |
 | refresh_data_source | 1.0#cv1 | stable | cacheable_read | medium | light | small | data_source_pipeline |
 | refresh_skill_surface | 1.0#cv1 | stable | destructive | medium | light | small | meta_tool_surface |
 | regression_kriging | 1.0#cv1 | stable | deterministic_compute | slow | heavy | medium | regression_kriging |
@@ -285,6 +293,7 @@
 | set_layer_status | 1.0#cv1 | stable | state_mutation | fast | light | small | layer_display_control |
 | set_map_scene | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
 | set_map_view | 1.0#cv1 | stable | state_mutation | fast | light | small | map_viewport_control |
+| set_scene_assets | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
 | sgs_simulation | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | geostatistical_simulation |
 | sky_view_factor_analysis | 1.0#cv1 | stable | cacheable_read | unknown | unknown | unknown | terrain_sky_view |
 | slx_regression | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | spatial_regression |
@@ -320,6 +329,11 @@
 | temporal_raster | 1.0#cv1 | stable | destructive | slow | heavy | large | temporal_trend |
 | temporal_seasonal_decompose | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | temporal_trend |
 | temporal_trend | 1.0#cv1 | stable | deterministic_compute | fast | medium | medium | temporal_trend |
+| temporal_view_bind | 1.0#cv1 | stable | state_mutation | fast | medium | medium | temporal_bind |
+| temporal_view_compare | 1.0#cv1 | stable | state_mutation | fast | medium | medium | temporal_compare |
+| temporal_view_control | 1.0#cv1 | stable | state_mutation | fast | light | medium | temporal_control |
+| temporal_view_status | 1.0#cv1 | stable | cacheable_read | fast | light | medium | temporal_control |
+| temporal_view_unbind | 1.0#cv1 | stable | state_mutation | fast | light | medium | temporal_bind |
 | terrain_derivatives | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | terrain_derivatives |
 | terrain_openness_analysis | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_geomorphometry |
 | terrain_profile | 1.0#cv1 | stable | deterministic_compute | fast | heavy | large | terrain_measurement |
@@ -331,13 +345,21 @@
 | update_layer_appearance | 1.0#cv1 | stable | state_mutation | fast | light | small | layer_display_control |
 | validate_execution_plan | 1.0#cv1 | stable | deterministic_compute | fast | light | small | plan_workflow_orchestration |
 | variogram_model_selection | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | variogram_analysis |
+| vector_feature_edit_commit | 1.0#cv1 | stable | state_mutation | medium | medium | unknown | dataset_ingest |
+| vector_feature_edit_history | 1.0#cv1 | stable | cacheable_read | fast | light | unknown | dataset_ingest |
+| vector_feature_edit_preview | 1.0#cv1 | stable | state_mutation | medium | medium | unknown | dataset_ingest |
 | viewshed_analysis | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | terrain_viewshed |
 | voronoi_polygons | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | voronoi_tessellation |
 | watershed_delineation | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_hydrology |
 | watershed_morphometry_analysis | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | terrain_hydrology_advanced |
 | web_search | 1.0#cv1 | stable | cacheable_read | medium | light | small | meta_tool_surface |
 | webgis_action_plan | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
+| webgis_analysis_workflow_plan | 1.0#cv1 | stable | state_mutation | fast | light | small | plan_workflow_orchestration |
+| webgis_analysis_workflow_recompute | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | plan_workflow_orchestration |
+| webgis_analysis_workflow_run | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | plan_workflow_orchestration |
+| webgis_analysis_workflow_status | 1.0#cv1 | stable | pure | fast | light | small | plan_workflow_orchestration |
 | webgis_apply_composition | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
+| webgis_apply_scale_representation | 1.0#cv1 | stable | state_mutation | slow | heavy | large | cartography_scale_apply |
 | webgis_cartography_status | 1.0#cv1 | stable | pure | fast | light | small | map_export_publishing |
 | webgis_checkpoint | 1.0#cv1 | stable | state_mutation | medium | medium | medium | workspace_snapshot |
 | webgis_compile_map_plan | 1.0#cv1 | stable | state_mutation | medium | medium | medium | thematic_cartography |
@@ -347,14 +369,21 @@
 | webgis_context_bind_mission | 1.0#cv1 | stable | state_mutation | fast | light | small | gis_context_revalidation |
 | webgis_context_revalidate | 1.0#cv1 | stable | state_mutation | fast | light | small | gis_context_revalidation |
 | webgis_discover_components | 1.0#cv1 | stable | pure | fast | light | small | thematic_cartography |
+| webgis_inspect_map_scale_profile | 1.0#cv1 | stable | cacheable_read | medium | medium | medium | cartography_scale_inspect |
+| webgis_layer_aggregate | 1.0#cv1 | stable | cacheable_read | medium | light | large | layer_browse |
+| webgis_layer_feature_detail | 1.0#cv1 | stable | cacheable_read | fast | light | large | layer_browse |
+| webgis_layer_features_page | 1.0#cv1 | stable | cacheable_read | medium | light | large | layer_browse |
 | webgis_layer_remove | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
 | webgis_layer_upsert | 1.0#cv1 | stable | state_mutation | medium | medium | medium | thematic_cartography |
 | webgis_layout_set | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
 | webgis_list_composition_template_assets | 1.0#cv1 | stable | pure | fast | light | small | thematic_cartography |
 | webgis_map_combine | 1.0#cv1 | stable | state_mutation | medium | medium | medium | thematic_cartography |
+| webgis_map_design_select | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
 | webgis_map_intent | 1.0#cv3 | stable | deterministic_compute | fast | light | small | thematic_cartography |
+| webgis_map_operation | 1.0#cv1 | stable | state_mutation | medium | medium | medium | layer_display_control, map_viewport_control |
 | webgis_map_product | 1.0#cv2 | stable | state_mutation | medium | medium | medium | thematic_cartography |
 | webgis_plan_component_replace | 1.0#cv1 | stable | pure | fast | light | small | thematic_cartography |
+| webgis_preview_scale_representation | 1.0#cv1 | stable | cacheable_read | medium | heavy | large | cartography_scale_preview |
 | webgis_product_edit | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
 | webgis_project_init | 1.0#cv1 | stable | state_mutation | fast | light | small | map_export_publishing |
 | webgis_rollback | 1.0#cv1 | stable | state_mutation | medium | medium | medium | workspace_snapshot |

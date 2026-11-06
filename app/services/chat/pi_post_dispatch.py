@@ -68,8 +68,6 @@ class DisclosureOutcome:
     """pipeline 回答「披露后发生了什么」；bridge 负责转成 PiToolResponse/SSE 缓存。"""
 
     plan_sse: str = ""
-    # ok 分支无条件缓存（含空事件串，保持既有行为）；error 分支仅非空才缓存。
-    cache_plan_sse_unconditionally: bool = False
     finalization_payload: Optional[dict] = None   # 非 pending 的 map_finalization 负载
     stale_generation: bool = False                # 诚实短路：旧 MapSpec 世代结果
 
@@ -92,7 +90,6 @@ async def apply_post_dispatch_disclosure(d: DispatchDisclosure) -> DisclosureOut
     if not d.late_for_plan:
         if d.status == "ok":
             out.plan_sse = await _apply_tool_evidence(d, success=True)
-            out.cache_plan_sse_unconditionally = True
             # 顺序即权威序（review P1 #2）：终验先落 chapter["map_product"]，
             # 投影（workflow/state/bridge）随后读取 —— 与基线一致，完成度
             # 评级不被本回合投影读到旧值。
@@ -102,7 +99,13 @@ async def apply_post_dispatch_disclosure(d: DispatchDisclosure) -> DisclosureOut
             out.plan_sse = await _apply_tool_evidence(d, success=False)
             await _advance_runtime_projections(d, ok=False)
 
-    out.stale_generation = await _record_cartographic_evidence(d)
+    try:
+        out.stale_generation = await _record_cartographic_evidence(d)
+    except Exception:
+        logger.warning(
+            "[PiBridge][post-dispatch] cartographic evidence unavailable session=%s tool=%s",
+            d.session_id, d.tool_name, exc_info=True,
+        )
     if out.stale_generation:
         return out
 
@@ -314,9 +317,9 @@ async def _record_cartographic_evidence(d: DispatchDisclosure) -> bool:
                 session_id=d.session_id,
                 tool_call_id=d.tool_call_id,
                 turn_id="",
-                action_id=ma["action_id"],
-                command=ma["command"],
-                requested=ma["requested"],
+                action_id=str(ma.get("action_id") or ""),
+                command=str(ma.get("command") or ""),
+                requested=ma.get("requested") or {},
                 mapspec_fingerprint=ma.get("mapspec_fingerprint"),
             )
     harness.record_event(event)

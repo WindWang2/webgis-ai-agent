@@ -183,9 +183,10 @@ async def advance_snapshot(
                 return False
             if stored is not None and situation.identity.revision.as_tuple() == \
                     stored.identity.revision.as_tuple():
-                # 同 revision：保留先到的（避免并发双写互相覆盖）；内容等
-                # 价时幂等。
-                return True
+                # Refs, plans and descriptors can change without advancing a
+                # transport counter. Preserve idempotence only for equal facts.
+                if situation.to_dict() == stored.to_dict():
+                    return True
             await store.set_map_state(
                 session_id, _SNAPSHOT_KEY, situation.to_dict()
             )

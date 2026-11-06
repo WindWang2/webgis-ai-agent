@@ -6,6 +6,19 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from app.utils.geojson import geojson_bbox
 
 
+def _sample_values(values: List[Any], limit: int = 5) -> List[Any]:
+  seen: set[str] = set()
+  samples: List[Any] = []
+  for value in values:
+    key = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    if key not in seen:
+      seen.add(key)
+      samples.append(value)
+      if len(samples) >= limit:
+        break
+  return samples
+
+
 def _declared_crs(data: Dict[str, Any]) -> Tuple[Optional[str], str]:
   """Return only CRS evidence explicitly carried by the source descriptor."""
   raw = data.get("crs")
@@ -279,13 +292,10 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
   """
   Analyzes a GeoJSON data source and produces a Spatial Meta Profile.
   """
-  if isinstance(geojson_data, (str, Path)):
-    path_obj = Path(geojson_data)
-    if path_obj.is_file():
-      with open(path_obj, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    else:
-      data = json.loads(str(geojson_data))
+  if isinstance(geojson_data, str):
+    data = json.loads(geojson_data)
+  elif isinstance(geojson_data, Path):
+    raise ValueError("GeoJSON profiling accepts inline data, not filesystem paths")
   elif isinstance(geojson_data, bytes):
     data = json.loads(geojson_data.decode("utf-8"))
   else:
@@ -376,7 +386,7 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
       f_min = min(numeric_vals)
       f_max = max(numeric_vals)
       f_mean = sum(numeric_vals) / len(numeric_vals)
-      sample = list(dict.fromkeys(vals))[:5]
+      sample = _sample_values(vals)
       fields_profile[k] = {
           "type": field_type,
           "min": round(f_min, 4),
@@ -397,12 +407,12 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
     elif len(bool_vals) == len(vals):
       fields_profile[k] = {
           "type": "boolean",
-          "sampleValues": list(dict.fromkeys(vals))[:5],
+          "sampleValues": _sample_values(vals),
           "null_count": null_count,
       }
     else:
       # String / Date
-      sample = list(dict.fromkeys(vals))[:5]
+      sample = _sample_values(vals)
       fields_profile[k] = {
           "type": "string",
           "sampleValues": sample,

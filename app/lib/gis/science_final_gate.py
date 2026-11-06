@@ -113,10 +113,11 @@ def _selection_view(selection: Any) -> Dict[str, Any]:
         "fallback_trail": getattr(selection, "fallback_trail", None) or [],
         "not_evaluated": getattr(selection, "not_evaluated", None) or [],
         "profile_digest": getattr(selection, "profile_digest", ""),
+        "step_id": getattr(selection, "step_id", ""),
     }
 
 
-def _trail_semantics(step: Any) -> Tuple[str, str]:
+def _trail_semantics(step: Any) -> Tuple[str, str, str]:
     """(from, to, semantics) —— FallbackStep / dict 双形态。"""
     if isinstance(step, dict):
         return (
@@ -175,14 +176,14 @@ def run_science_final_gate(
                     f"{capability or algorithm} — {unevaluated[0][:80]}")
 
     # 执行 evidence 对账（可选注入；注入即激活 freshness/block 面）
-    exec_caps: Dict[str, Dict[str, Any]] = {}
+    exec_caps: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
     if execution_evidence:
         for step_id, ev in execution_evidence.items():
             if not isinstance(ev, dict):
                 continue
             cap = str(ev.get("capability", "") or "")[:64]
             if cap:
-                exec_caps[cap] = ev
+                exec_caps.setdefault(cap, []).append((str(step_id), ev))
             if ev.get("science_hard_block"):
                 blocked = True
                 findings.append(ScienceGateFinding(
@@ -196,21 +197,23 @@ def run_science_final_gate(
             view = _selection_view(sel)
             capability = str(view.get("capability", "") or "")
             plan_digest = str(view.get("profile_digest", "") or "")
-            ev = exec_caps.get(capability)
-            if not ev or not plan_digest:
+            planned_step = str(view.get("step_id", "") or "")
+            candidates = exec_caps.get(capability, [])
+            if not planned_step and len(candidates) > 1:
+                disclosures.append(f"{capability}: multiple execution steps; profile freshness needs a plan step_id")
                 continue
-            exec_digest = str(ev.get("profile_digest", "") or "")
-            if exec_digest and plan_digest != exec_digest:
-                findings.append(ScienceGateFinding(
-                    code="G-FRESHNESS",
-                    subject=capability,
-                    detail=(
-                        f"plan={plan_digest} execute={exec_digest}"
-                        "（数据事实在 plan 后变化；执行门已按新事实复验）")))
+            for step_id, ev in candidates:
+                if planned_step and step_id != planned_step:
+                    continue
+                exec_digest = str(ev.get("profile_digest", "") or "")
+                if plan_digest and exec_digest and plan_digest != exec_digest:
+                    findings.append(ScienceGateFinding(
+                        code="G-FRESHNESS", subject=capability,
+                        detail=f"plan={plan_digest} execute={exec_digest}（执行数据事实已变化）"))
 
     # 有界 + 截断后重算（disclosures 单条同 detail 上界 —— review P3-4：
     # frm/to 可来自任意鸭子类型 selection，不依赖注册表 id 约束时防溢出）
-    findings = findings[:_MAX_FINDINGS]
+    findings = sorted(findings, key=lambda item: item.severity != "block")[:_MAX_FINDINGS]
     return ScienceGateResult(
         findings=findings,
         blocked=blocked,

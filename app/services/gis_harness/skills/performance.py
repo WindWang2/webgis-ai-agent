@@ -155,8 +155,10 @@ class SkillPerformanceStore:
         prof = self._profiles.get(key)
         if prof is None:
             prof = profile_from_facts(skill_id, facts, skill_version=skill_version)
+            if len(self._profiles) >= self._capacity and self._profiles:
+                victim = min(self._profiles, key=lambda item: (self._profiles[item].attempts, item))
+                del self._profiles[victim]
             self._profiles[key] = prof
-            self._evict_if_needed()
         return prof
 
     def record(
@@ -198,19 +200,15 @@ class SkillPerformanceStore:
         return [p.to_bounded_dict() for p in items[:limit]]
 
 
-_store: Optional[SkillPerformanceStore] = None
+from app.services.gis_harness.skills.instances import skill_instance, reset_skill_instance
 
 
 def get_skill_performance_store() -> SkillPerformanceStore:
-    global _store
-    if _store is None:
-        _store = SkillPerformanceStore()
-    return _store
+    return skill_instance('performance', SkillPerformanceStore)
 
 
 def reset_skill_performance_store() -> None:
-    global _store
-    _store = None
+    reset_skill_instance('performance')
 
 
 __all__ = [

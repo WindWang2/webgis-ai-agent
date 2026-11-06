@@ -355,6 +355,10 @@ class MemorySessionStore(BaseSessionStore):
 
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存储数据并返回生成的游标 ID"""
+        from app.services.session_control_refs import is_control_ref
+        from app.services.session_control_budget import encoded_size
+        control_size = await asyncio.to_thread(encoded_size, data) if is_control_ref(f"ref:{prefix}-") else None
+        spills = []
         async with self._lock:
             if session_id not in self._store:
                 self._store[session_id] = OrderedDict()
@@ -376,6 +380,11 @@ class MemorySessionStore(BaseSessionStore):
             except Exception:
                 _new_size = 0
 
+            if control_size is not None:
+                _new_size = control_size
+            if _new_size > _max_bytes:
+                raise ValueError("session payload exceeds the per-session byte budget")
+
             # DA-P2-1: O(1) incremental accounting (sizes maintained at each write
             # point: store/overwrite/delete/evict/clear). A lazy one-off sync only
             # for a session created before this field existed (defensive).
@@ -394,17 +403,21 @@ class MemorySessionStore(BaseSessionStore):
                 self._session_bytes[session_id] = total_bytes
             total_bytes = self._session_bytes.get(session_id, 0)
 
-            while session_cache and (len(session_cache) >= self.capacity or (total_bytes + _new_size > _max_bytes and total_bytes > 0)):
+            from app.services.session_control_refs import CONTROL_REF_PREFIXES
+
+            control_prefixes = CONTROL_REF_PREFIXES
+            control_bytes = sum(size for rid, size in sizes.items() if rid.startswith(control_prefixes))
+            eligible = [rid for rid in session_cache if not rid.startswith(control_prefixes)]
+            while eligible and not ref_id.startswith(control_prefixes) and (
+                len(eligible) >= self.capacity or total_bytes - control_bytes + _new_size > _max_bytes
+            ):
                 # ADR-0104 #6(f)：淘汰前先把 payload 落持久副本（RELOAD_REF 回退的
                 # "durable"半边）。peek→spill→pop；spill 失败绝不阻断淘汰本身。
-                oldest_ref = next(iter(session_cache))
+                oldest_ref = eligible.pop(0)
                 evict_data = session_cache.get(oldest_ref)
                 if evict_data is not None:
-                    try:
-                        await asyncio.to_thread(ref_spill_store.spill, session_id, oldest_ref, evict_data)
-                    except Exception as e:  # noqa: BLE001 — spill 是增值面，失败只降级
-                        logger.debug(f"Session {session_id}: spill {oldest_ref} failed: {e}")
-                session_cache.popitem(last=False)
+                    spills.append((oldest_ref, evict_data))
+                session_cache.pop(oldest_ref, None)
                 total_bytes -= sizes.pop(oldest_ref, 0)
                 self._remove_alias_by_ref(session_id, oldest_ref)
                 if session_id in self._descriptors:
@@ -413,26 +426,36 @@ class MemorySessionStore(BaseSessionStore):
                 self._invalidate_derived_caches(session_id, oldest_ref, reason='EVICT')
                 logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
 
+            if ref_id.startswith(control_prefixes):
+                from app.services.session_control_budget import trim_memory_for_write
+                trim_memory_for_write(self, session_id, ref_id, data, _new_size)
+                total_bytes = self._session_bytes.get(session_id, 0)
             session_cache[ref_id] = data
             sizes[ref_id] = _new_size
             self._session_bytes[session_id] = total_bytes + _new_size
             self._ref_revisions.setdefault(session_id, {})[ref_id] = 1
             self._touch_session(session_id)
 
-            # V3 Performance: compute descriptor once at store time so every subsequent
-            # descriptor read is O(1) instead of O(features).
+        # Disk and descriptor work must not hold the process-wide cache lock.
+        for spilled_ref, payload in spills:
             try:
-                from app.schemas.ref_descriptor import compute_descriptor
-                descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
-                if session_id not in self._descriptors:
-                    self._descriptors[session_id] = {}
-                self._descriptors[session_id][ref_id] = descriptor.to_dict()
-            except Exception as e:
-                logger.warning(f"V3: Failed to compute descriptor for {ref_id}: {e}")
+                await asyncio.to_thread(ref_spill_store.spill, session_id, spilled_ref, payload)
+            except Exception as exc:
+                logger.debug("Session %s: spill %s failed: %s", session_id, spilled_ref, exc)
+        try:
+            from app.schemas.ref_descriptor import compute_descriptor
+            descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
+            async with self._lock:
+                if (self._store.get(session_id, {}).get(ref_id) is data
+                        and self._ref_revisions.get(session_id, {}).get(ref_id) == 1):
+                    self._descriptors.setdefault(session_id, {})[ref_id] = descriptor.to_dict()
+        except Exception as exc:
+            logger.warning("Failed to compute descriptor for %s: %s", ref_id, exc)
+        from app.lib.runtime.ref_capture import note_created_ref
+        note_created_ref(ref_id)
+        return ref_id
 
-            return ref_id
-
-    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
+    async def overwrite(self, session_id: str, ref_id: str, data: Any, *, expected_revision: Optional[int] = None) -> bool:
         """Overwrite the data stored at an existing ``ref_id``.
 
         Unlike ``store`` (which always mints a new ref_id), this writes back to the
@@ -441,25 +464,37 @@ class MemorySessionStore(BaseSessionStore):
 
         Returns True if the ref_id existed and was updated, False otherwise.
         """
+        from app.services.session_control_refs import is_control_ref
+        from app.services.session_control_budget import encoded_size
+        control_size = await asyncio.to_thread(encoded_size, data) if is_control_ref(ref_id) else None
         async with self._lock:
             session_cache = self._store.get(session_id)
             if not session_cache or ref_id not in session_cache:
                 return False
-            if data is session_cache[ref_id]:
+            if expected_revision is not None:
+                current = session_cache[ref_id]
+                if not isinstance(current, dict) or current.get("revision", 0) != expected_revision:
+                    return False
+            if data is session_cache[ref_id] and not is_control_ref(ref_id):
                 # Same object re-persisted (plan_mode persists step_results after
                 # every wave) — nothing changed, skip the O(features) size
                 # estimate + descriptor recompute (G-2 hot-path guard).
                 self._touch_cache_item(session_cache, ref_id)
                 self._touch_session(session_id)
                 return True
-            session_cache[ref_id] = data
             # DA-P2-1：覆写尺寸 O(1) 增减
             try:
                 from app.lib.json_size import estimate_json_bytes as _est_bytes
                 new_size = _est_bytes(data) if isinstance(data, (dict, list)) else len(str(data).encode())
             except Exception:
                 new_size = 0
+            if control_size is not None:
+                new_size = control_size
             sizes = self._ref_sizes.get(session_id)
+            if is_control_ref(ref_id):
+                from app.services.session_control_budget import trim_memory_for_write
+                trim_memory_for_write(self, session_id, ref_id, data, new_size)
+            session_cache[ref_id] = data
             if sizes is not None:
                 self._session_bytes[session_id] = (
                     self._session_bytes.get(session_id, 0) - sizes.get(ref_id, 0) + new_size
@@ -511,12 +546,25 @@ class MemorySessionStore(BaseSessionStore):
             self._ref_revisions.get(session_id, {}).pop(ref_id, None)
             return True
 
+    async def set_alias_if_absent(self, session_id: str, ref_id: str, alias: str) -> bool:
+        async with self._lock:
+            if ref_id not in self._store.get(session_id, {}):
+                return False
+            aliases = self._aliases.setdefault(session_id, {})
+            if alias in aliases:
+                return False
+            aliases[alias] = ref_id
+            return True
+
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         """为引用 ID 设置别名"""
-        if session_id not in self._aliases:
-            self._aliases[session_id] = {}
-        self._aliases[session_id][alias] = ref_id
-        self._touch_session(session_id)
+        async with self._lock:
+            if ref_id not in self._store.get(session_id, {}):
+                raise ValueError("cannot alias a missing session ref")
+            if session_id not in self._aliases:
+                self._aliases[session_id] = {}
+            self._aliases[session_id][alias] = ref_id
+            self._touch_session(session_id)
 
     async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
         """Resolve a ref or alias to its canonical ref_id.
@@ -595,6 +643,7 @@ class MemorySessionStore(BaseSessionStore):
 
     async def list_refs(self, session_id: str) -> dict[str, str]:
         """列出所有引用及其别名"""
+        from app.lib.runtime.ref_cursors import CONTEXT_OFFLOAD_REF_PREFIX
         aliases = self._aliases.get(session_id, {})
         # 反转别名映射以便查找
         ref_to_alias = {v: k for k, v in aliases.items()}
@@ -602,7 +651,8 @@ class MemorySessionStore(BaseSessionStore):
         results = {}
         session_cache = self._store.get(session_id, {})
         for ref_id in session_cache:
-            results[ref_id] = ref_to_alias.get(ref_id, "")
+            if not ref_id.startswith(CONTEXT_OFFLOAD_REF_PREFIX):
+                results[ref_id] = ref_to_alias.get(ref_id, "")
         return results
 
     def _remove_alias_by_ref(self, session_id: str, ref_id: str):
@@ -637,11 +687,7 @@ class MemorySessionStore(BaseSessionStore):
         防 #701 的引用逃逸）。"""
         state = self._map_state.get(session_id, {})
         value = state.get(field)
-        if isinstance(value, list):
-            return list(value)
-        if isinstance(value, dict):
-            return dict(value)
-        return value
+        return copy.deepcopy(value)
 
     async def commit_mapspec_state(
         self, session_id: str, fields: dict, layer_op: Optional[tuple] = None,
@@ -880,6 +926,7 @@ class MemorySessionStore(BaseSessionStore):
         d = self._descriptors.get(session_id, {}).get(ref_id)
         if d is None:
             return None
+        d = copy.deepcopy(d)
         d["content_revision"] = self._ref_revisions.get(session_id, {}).get(ref_id, d.get("content_revision", 0))
         return d
 
@@ -912,6 +959,9 @@ class MemorySessionStore(BaseSessionStore):
             pending_memory_buffer.discard(session_id)
         except Exception:  # noqa: BLE001 — 清理面绝不阻断
             pass
+
+    async def unset_session_clearing(self, session_id: str) -> None:
+        self._clearing_markers.pop(session_id, None)
 
     async def is_session_clearing(self, session_id: str) -> bool:
         import time as _time

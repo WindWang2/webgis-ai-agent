@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+import os
 import re
 from typing import Any, Dict, List, Optional, Set
 
@@ -353,7 +354,7 @@ def _approx_eq_list(a: List[float], b: List[float], tol: float = 1e-6) -> bool:
     """Order-sensitive float list equality within tolerance."""
     if len(a) != len(b):
         return False
-    return all(abs(x - y) <= tol for x, y in zip(a, b))
+    return all(abs(x - y) <= tol for x, y in zip(a, b, strict=True))
 
 
 def _is_num(v: Any) -> bool:
@@ -700,15 +701,6 @@ def _check_thematic_consistency(
     # detector. Categorical comparison is order-independent (match case order is
     # semantically irrelevant in MapLibre); graduated also compares break values.
     if has_legend and color_spec is not None:
-        lfield = thematic_field(legend_spec)
-        pfield = color_spec.get("field")
-        if lfield and pfield and lfield != pfield:
-            report.findings.append(CartographyFinding(
-                check="LEGEND_STYLE_EQUIVALENCE", severity="error",
-                message=(f"Layer '{lid}' legend field '{lfield}' differs from "
-                         f"paint field '{pfield}'"),
-                layer_id=lid, source_id=sid,
-            ))
         ltype = legend_spec.get("type")
         if ltype == "categorical":
             # Compare as {key: color} maps — order-independent.
@@ -910,7 +902,7 @@ def _check_thematic_consistency(
 # 假通过；多边形填充负载模型显式推迟（无 check，绝不猜）。
 
 def _carto_threshold(name: str, default: float) -> float:
-    """Read a rule threshold from settings, falling back to the shipped default.
+    """Read an operator environment threshold or the shipped default.
 
     Thresholds are operator-tunable (spec open question 1) but resolved ONCE at
     import so the rules themselves stay pure functions of their inputs — a rule
@@ -918,11 +910,9 @@ def _carto_threshold(name: str, default: float) -> float:
     Tests override the module constants directly (monkeypatch), not the env.
     """
     try:
-        from app.core.config import settings
-
-        value = getattr(settings, name, None)
-        return float(value) if value is not None else default
-    except Exception:  # noqa: BLE001 — config must never break rule import
+        value = float(os.environ.get(name, default))
+        return value if math.isfinite(value) and value >= 0 else default
+    except (TypeError, ValueError):
         return default
 
 
@@ -2177,7 +2167,7 @@ def _check_layer_paint_fields(
             stops = spec.get("stops") or []
             fmin, fmax = field_info.get("min"), field_info.get("max")
             if stops and fmin is not None and fmax is not None:
-                stop_inputs = [s[0] for s in stops if isinstance(s, (list, tuple)) and s]
+                stop_inputs = [s[0] for s in stops if isinstance(s, (list, tuple)) and s and _is_num(s[0])]
                 if stop_inputs:
                     s_lo, s_hi = min(stop_inputs), max(stop_inputs)
                     # No overlap between [s_lo,s_hi] and [fmin,fmax] → out of range.
@@ -2484,6 +2474,12 @@ def _check_layer_quantitative_rules(
     _check_label_collision(report, mapspec, layer, lid, sid, profile)
     _check_scale_svs(report, mapspec, layer, lid, sid, profile)
     _check_scale_representation(report, mapspec, layer, lid, sid)
+    # GOAL 04（M5）：多尺度表达档案声明一致性（无声明 → not/no-op，零行为变化）
+    from app.lib.cartography.multiscale.semantic_checks_scale_profile import (
+        check_scale_profile,
+    )
+
+    check_scale_profile(report, mapspec, layer, lid, sid)
     _check_3d_extrusion_rules(report, mapspec, layer, lid, sid, profile)
     _check_isoline_contour_rules(report, mapspec, layer, lid, sid)
 
@@ -2558,6 +2554,16 @@ def evaluate_cartography_semantics(
     # 7pre-V7（Goal 08 Phase I）：组件图级 QA —— 重复绑定 / 越界浮动 /
     # 显式边成环。与 LAYOUT_COLLISION 正交（图语义 vs 槽位计数）。
     _check_component_graph_semantics(report, mapspec)
+    # /goal cartography-design M4：跨组件口径 / 视口覆盖 / 密度语义诚实
+    # （场景级新检查簇；证据缺席 not_evaluated，不伪造 pass）。
+    from app.lib.cartography.semantic_checks_maplevel import (
+        _check_chart_map_field_coherence,
+        _check_density_semantics_honesty,
+        _check_viewport_covers_results,
+    )
+    _check_chart_map_field_coherence(report, mapspec)
+    _check_viewport_covers_results(report, mapspec)
+    _check_density_semantics_honesty(report, mapspec)
 
     # 7. Legend / style field consistency (warning).
     legend = (mapspec.get("layout") or {}).get("legend") or {}

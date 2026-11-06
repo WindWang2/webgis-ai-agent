@@ -191,3 +191,21 @@ describe('TopBar 右侧集群窄档折叠（#1667）', () => {
     expect(within(screen.getByTestId('topbar-actions')).getAllByRole('button')).toHaveLength(5);
   });
 });
+describe('location feedback', () => {
+  it('exposes and disables an in-progress request accessibly', () => {
+    render(<TopBar onRequestLocation={vi.fn()} locationLoading />);
+    const button = screen.getByRole('button', { name: '正在获取位置…' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('正在获取位置…');
+  });
+
+  it('explains permission denial and offers explicit retry without auto-requesting', async () => {
+    const request = vi.fn();
+    render(<TopBar onRequestLocation={request} locationError="denied" />);
+    expect(request).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('定位权限被拒绝');
+    await userEvent.click(within(screen.getByRole('alert')).getByRole('button', { name: '重试定位' }));
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+});

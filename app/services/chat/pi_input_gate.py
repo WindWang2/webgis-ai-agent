@@ -72,8 +72,11 @@ def _scalar_only_annotation(ann: Any) -> bool:
     """
     if ann in _SCALAR_ONLY_ANNOTATION_TYPES:
         return True
-    origin = getattr(ann, "__origin__", None)
-    if origin is Union:
+    from types import UnionType
+    from typing import get_origin
+
+    origin = get_origin(ann)
+    if origin in (Union, UnionType):
         args = [a for a in getattr(ann, "__args__", ()) if a is not type(None)]
         return bool(args) and all(a in _SCALAR_ONLY_ANNOTATION_TYPES for a in args)
     return False

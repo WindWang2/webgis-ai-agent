@@ -63,11 +63,27 @@ def _frontend_dependencies() -> Dict[str, Any]:
     except Exception:  # noqa: BLE001 — 前端目录缺失时诚实缺失
         return {"dependencies": {}, "devDependencies": {},
                 "source": "frontend/package.json (missing)"}
-    return {
+    result = {
         "dependencies": dict(data.get("dependencies") or {}),
         "devDependencies": dict(data.get("devDependencies") or {}),
         "source": "frontend/package.json",
     }
+    try:
+        import yaml
+
+        lock = yaml.safe_load(pkg.with_name("pnpm-lock.yaml").read_text(encoding="utf-8"))
+        packages = []
+        for key in sorted((lock or {}).get("packages", {})):
+            name, separator, version = str(key).rpartition("@")
+            if separator and name and version:
+                packages.append({"name": name, "version": version.split("(", 1)[0]})
+        result["resolved_packages"] = packages
+        result["lock_source"] = "frontend/pnpm-lock.yaml"
+    except (OSError, ValueError):
+        result["resolved_packages"] = []
+        result["lock_source"] = "frontend/pnpm-lock.yaml (unavailable)"
+    return result
+
 
 
 def generate_asset_manifest() -> Dict[str, Any]:
@@ -108,18 +124,31 @@ def _static(asset_id: str, description: str, status: str,
     }
 
 
-def _check_rag_model() -> Dict[str, Any]:
-    from app.core.config import settings
+def rag_model_cache_present() -> bool:
+    """Inspect the active Hugging Face cache revision without loading/network IO."""
+    import os
+    from pathlib import Path
+    from huggingface_hub.constants import HF_HUB_CACHE
+    from app.services.rag.faiss_store import _EMBEDDING_MODEL_NAME
 
-    offline = bool(settings.RAG_EMBEDDING_OFFLINE)
+    root = Path(os.getenv("SENTENCE_TRANSFORMERS_HOME") or HF_HUB_CACHE)
+    repository = root / ("models--sentence-transformers--" + _EMBEDDING_MODEL_NAME)
+    try:
+        revision = (repository / "refs" / "main").read_text().strip()
+        if not revision or "/" in revision or "\\" in revision or revision in (".", ".."):
+            return False
+        snapshot = repository / "snapshots" / revision
+        return (all((snapshot / name).is_file() for name in ("config.json", "modules.json", "1_Pooling/config.json"))
+                and any((snapshot / name).is_file() for name in ("model.safetensors", "pytorch_model.bin")))
+    except OSError:
+        return False
+
+
+def _check_rag_model() -> Dict[str, Any]:
     return _static(
-        "rag_embedding_model",
-        "RAG embedding 模型（paraphrase-multilingual-MiniLM-L12-v2）",
-        "operator_supplied" if offline else "absent",
-        provisioning=(
-            "构建机出网预热 HF 缓存 volume 后随镜像分发；"
-            "RAG_EMBEDDING_OFFLINE=true 启用（docs/DEPLOYMENT-offline.md）"
-        ),
+        "rag_embedding_model", "RAG embedding 模型（paraphrase-multilingual-MiniLM-L12-v2）",
+        "present" if rag_model_cache_present() else "absent",
+        provisioning="预热 Hugging Face 缓存并随离线部署分发；RAG_EMBEDDING_OFFLINE=true 禁止下载",
     )
 
 

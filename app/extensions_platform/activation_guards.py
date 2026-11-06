@@ -29,8 +29,16 @@ def worker_required(policy: str, trust: TrustLevel) -> bool:
 
 
 def isolation_policy_error(
-    policy: str, trust: TrustLevel, is_worker_mode: bool, extension_id: str
+    policy: str, trust: TrustLevel, is_worker_mode: bool, extension_id: str, *,
+    require_namespace_for_untrusted: bool = False, backend: str = "process",
 ) -> Optional[ExtensionDiagnostic]:
+    if (require_namespace_for_untrusted and trust is TrustLevel.LOCAL_UNTRUSTED
+            and (not is_worker_mode or backend != "bubblewrap")):
+        return ExtensionDiagnostic.error(
+            DiagnosticCode.ISOLATION_UNAVAILABLE,
+            "production refuses untrusted extension execution without filesystem/network namespace isolation",
+            extension_id=extension_id,
+        )
     if is_worker_mode or not worker_required(policy, trust):
         return None
     return ExtensionDiagnostic.error(

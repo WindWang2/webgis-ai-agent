@@ -90,41 +90,19 @@ def test_kustomize_new_name_is_ci_published_coordinate():
         )
 
 
-def test_default_image_tag_matches_ci_branch_tag():
-    """#618-37: Deployment 默认 tag 不得再是从未被 CI 推送的 `v0.1.2`。
-
-    production.yml build job 推送 ``<full sha>``；metadata-action 还声明
-    ``type=ref,event=branch``（``master``）与无 ``v`` 前缀的 semver。
-    清单默认用 ``master`` 作为 raw-apply 回退；生产必须 kustomize pin sha。
-    """
+def test_default_images_require_explicit_digest_configuration():
+    """Raw apply must never pull a floating branch release."""
     for fname in ("02-api-deployment.yaml", "03-celery-deployment.yaml"):
-        docs = [
-            d
-            for d in yaml.safe_load_all((K8S_DIR / fname).read_text(encoding="utf-8"))
-            if d
-        ]
-        for doc in docs:
-            if doc.get("kind") != "Deployment":
+        for doc in yaml.safe_load_all((K8S_DIR / fname).read_text(encoding="utf-8")):
+            if not doc or doc.get("kind") != "Deployment":
                 continue
             pod = doc["spec"]["template"]["spec"]
-            containers = pod.get("containers", []) + pod.get("initContainers", [])
-            for c in containers:
-                image = c.get("image", "")
-                tag = image.rsplit(":", 1)[-1]
-                assert tag != "v0.1.2", (
-                    f"{fname} {c.get('name')}: tag v0.1.2 与 CI 约定不符"
-                )
-                assert not tag.startswith("v"), (
-                    f"{fname} {c.get('name')}: CI semver 无 v 前缀，默认 tag="
-                    f"{tag!r}"
-                )
-                assert tag == "master", (
-                    f"{fname} {c.get('name')}: 默认 tag 应为 master "
-                    f"（CI branch tag），实际 {tag!r}。部署时再钉 sha。"
-                )
+            for container in pod.get("containers", []) + pod.get("initContainers", []):
+                assert container["image"].endswith("@sha256:" + "0" * 64)
+                assert container["imagePullPolicy"] == "IfNotPresent"
 
 
-def test_ci_pushes_manifest_default_master_tag():
+def test_ci_branch_convenience_tag_is_only_pushed_from_master():
     """:master 默认 tag 必须真的被 CI 推送 —— production.yml build job 只推
     <sha> tag 时，raw apply（imagePullPolicy: Always）必然 ImagePullBackOff。
 

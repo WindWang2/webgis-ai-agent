@@ -94,6 +94,7 @@ export function useCartographicObservation({
   // 停止派发（观测照常上报），告警一次。会话切换随 sessionId 重置。
   const totalRepairsRef = useRef(0)
   const repairBudgetExhaustedWarnedRef = useRef(false)
+  const settleIssueSeqRef = useRef(0)
   const mountedRef = useRef(true)
   const observationAbortRef = useRef<AbortController | null>(null)
   // P9：有界 runtime error 环（map 'error' 事件 → dedup → 随观测上报）。
@@ -207,8 +208,10 @@ export function useCartographicObservation({
     // P9：签发改异步 —— bounded settle 后再采集（MapLibre idle 或超时，
     // 先到为准）。settle 期间的 unmount/会话切换由下方守卫吸收；渲染观察
     // 永不阻塞渲染本身（settle 是 race，无长等待）。
+    const issueSeq = ++settleIssueSeqRef.current
     void (async () => {
       const mapIdle = await waitForRenderSettle(map)
+      if (issueSeq !== settleIssueSeqRef.current) return
       if (!mountedRef.current || cartographicSessionIdRef.current !== sessionId) return
 
       const observation = collectRenderObservation({

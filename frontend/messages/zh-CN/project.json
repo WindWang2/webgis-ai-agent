@@ -206,7 +206,8 @@
     "cloneTitle": "指针克隆（零复制）",
     "copied": "已复制",
     "copyRef": "复制引用",
-    "locationSuffix": " · 位置 {location}"
+    "locationSuffix": " · 位置 {location}",
+    "loadedFilters": "类型筛选和排序应用于已加载的产物；加载更多可查看其余条目。"
   },
   "snapshot": {
     "restorable": "可恢复",
@@ -252,7 +253,8 @@
     "opsNone": "（无）",
     "opsEmpty": "无操作",
     "repairDone": "修复完成：{ops} · {before}→{after} 要素",
-    "repairedRefSuffix": " · 修复引用 {ref}"
+    "repairedRefSuffix": " · 修复引用 {ref}",
+    "sampleOnly": "仅审计样本 {count}/{total} 条，完整数据未审计；样本不支持整库修复。"
   },
   "preview": {
     "loadFailed": "预览加载失败",

@@ -18,6 +18,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.services.data_fabric.query.federation_contracts import BloomBuildRecord
+
 #: 位图上限（128Kb —— 结构性内存界；超出即饱和降级）。
 DEFAULT_MAX_BITS = 1 << 20
 DEFAULT_FP_RATE = 0.01
@@ -68,7 +70,7 @@ def _canonical_join_key(v: Any) -> bytes:
 class BloomFilter:
     """有界确定性 Bloom（sha256 双哈希派生 k 位）。"""
 
-    __slots__ = ("num_bits", "num_hashes", "_bits", "keys_added", "saturated")
+    __slots__ = ("num_bits", "num_hashes", "_bits", "keys_added", "saturated", "_capacity")
 
     def __init__(self, num_bits: int, num_hashes: int):
         if num_bits <= 0 or num_hashes <= 0:
@@ -78,6 +80,7 @@ class BloomFilter:
         self._bits = bytearray(num_bits // 8 + 1)
         self.keys_added = 0
         self.saturated = False
+        self._capacity = num_bits * (math.log(2) ** 2) / -math.log(DEFAULT_FP_RATE)
 
     @classmethod
     def with_capacity(
@@ -91,7 +94,10 @@ class BloomFilter:
         ideal_m = math.ceil(-n * math.log(p) / (math.log(2) ** 2))
         m = max(8, min(ideal_m, max_bits))
         k = max(1, round((m / n) * math.log(2)))
-        return cls(num_bits=m, num_hashes=k)
+        result = cls(num_bits=m, num_hashes=k)
+        result._capacity = m * (math.log(2) ** 2) / -math.log(p)
+        result.saturated = ideal_m > m
+        return result
 
     @property
     def bits(self) -> bytes:
@@ -103,7 +109,7 @@ class BloomFilter:
         self.keys_added += 1
         # 经验饱和信号：键数超过按 1% fp 的理想容量 → 调用方降级。
         if not self.saturated:
-            ideal = self.num_bits / (math.log(2) ** 2)
+            ideal = self._capacity
             if self.keys_added > ideal:
                 self.saturated = True
 
@@ -142,14 +148,14 @@ def build_bloom_from_rows(
     *,
     expected_keys: Optional[int] = None,
     max_bits: int = DEFAULT_MAX_BITS,
-) -> Tuple[Optional[BloomFilter], Dict[str, Any]]:
+) -> Tuple[Optional[BloomFilter], BloomBuildRecord]:
     """从累积左行构建键 Bloom。无任何有效键 → (None, stats)（诚实空）。"""
     keys = []
     for row in rows:
         k = _extract_join_key(row, field)
         if k is not None:
             keys.append(k)
-    stats = {"keys_added": len(keys), "saturated": False}
+    stats: BloomBuildRecord = {"keys_added": len(keys), "saturated": False}
     if not keys:
         return None, stats
     bloom = BloomFilter.with_capacity(

@@ -744,6 +744,8 @@ async def test_result_abi_cancelled_dispatch_envelope(toy_registry, client):
 # ---------------------------------------------------------------------------
 
 def _node_harness(dump_path: str) -> str:
+    # Server-owned final suffix; a bare marker must not authenticate callbacks.
+    turn_context = json.dumps("fixture\n\n[WEBGIS_TURN_CONTEXT:tok.adv1]\n\n(Internal routing context; do not quote or modify this marker.)")
     return f"""
       process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(dump_path)};
       process.env.WEBGIS_BRIDGE_SECRET = "sec-adv-node";
@@ -768,7 +770,7 @@ def _node_harness(dump_path: str) -> str:
       }};
       const ctx = {{
         sessionManager: {{
-          getEntries: () => [{{ role: "user", content: "[WEBGIS_TURN_CONTEXT:tok.adv1]" }}],
+          getEntries: () => [{{ role: "user", content: {turn_context} }}],
         }},
       }};
       const byName = (n) => registrations.find((r) => r.name === n);

@@ -83,7 +83,7 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
         elif kind in _OVERRIDE_FIELDS:
             layer_id = str(payload.get("layer_id") or "")[:200]
             outcome = record.get("mutation_outcome")
-            if layer_id and outcome == "committed":
+            if layer_id and outcome == "committed" and record.get("mutation_verified") is True:
                 entry = overrides.get(layer_id, {"layer_id": layer_id})
                 for field_name in _OVERRIDE_FIELDS[kind]:
                     if field_name in payload:
@@ -94,7 +94,7 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
                     override_order.remove(layer_id)
                 override_order.append(layer_id)
                 overrides[layer_id] = entry
-            elif layer_id and outcome in ("superseded", "failed"):
+            elif layer_id and outcome in ("committed", "superseded", "failed"):
                 attempted.append({
                     "kind": kind,
                     "layer_id": layer_id,
@@ -103,11 +103,11 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
                 })
         elif kind == "layer_removed":
             layer_id = str(payload.get("layer_id") or "")[:200]
-            if record.get("mutation_outcome") == "committed":
+            if record.get("mutation_outcome") == "committed" and record.get("mutation_verified") is True:
                 overrides.pop(layer_id, None)
                 if layer_id in override_order:
                     override_order.remove(layer_id)
-            elif layer_id and record.get("mutation_outcome") in ("superseded", "failed"):
+            elif layer_id and record.get("mutation_outcome") in ("committed", "superseded", "failed"):
                 attempted.append({
                     "kind": kind,
                     "layer_id": layer_id,
@@ -159,8 +159,9 @@ def _viewport_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str,
 
 
 def _selection_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
-    view = {key: payload[key] for key in ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref")
-            if key in payload}
+    view = {key: payload[key] for key in (
+        "layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids",
+    ) if key in payload}
     view["source"] = {
         "client_instance_id": record.get("client_instance_id"),
         "client_seq": record.get("client_seq"),

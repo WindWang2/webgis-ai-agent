@@ -28,10 +28,27 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
 from app.agent_pi_bridge import PiRpcError
+
+
+def _write_agent_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Publish whole configuration files atomically across worker spawns."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding=encoding, dir=path.parent,
+                                         prefix=f".{path.name}.", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 logger = logging.getLogger(__name__)
 
@@ -250,8 +267,9 @@ class PiRpcClient:
         # Wait for Pi to initialize by polling get_state until it responds
         try:
             await asyncio.wait_for(self._wait_for_ready(), timeout=PI_STARTUP_READY_TIMEOUT)
-        except asyncio.TimeoutError:
-            logger.warning(f"[PiRpcClient] Pi did not become ready within {PI_STARTUP_READY_TIMEOUT}s, continuing anyway")
+        except (asyncio.TimeoutError, PiRpcError) as exc:
+            await self.stop()
+            raise PiRpcError("Pi did not become ready within its startup deadline") from exc
 
         # audit4 #987: 可选的显式模型选择 —— PI_PROVIDER + PI_MODEL 同时设置
         # 时通过 set_model RPC 把 Pi 切到目录内指定模型（provider/modelId 必须
@@ -309,7 +327,7 @@ class PiRpcClient:
             pass
 
         if llm_base and llm_model:
-            (PI_AGENT_DIR / "models.json").write_text(
+            _write_agent_text(PI_AGENT_DIR / "models.json",
                 json.dumps(
                     {
                         "providers": {
@@ -333,7 +351,7 @@ class PiRpcClient:
                 + "\n",
                 encoding="utf-8",
             )
-            (PI_AGENT_DIR / "settings.json").write_text(
+            _write_agent_text(PI_AGENT_DIR / "settings.json",
                 json.dumps(
                     {"defaultProvider": BUNDLED_PI_PROVIDER, "defaultModel": llm_model},
                     ensure_ascii=False,
@@ -387,10 +405,14 @@ class PiRpcClient:
     async def _wait_for_ready(self) -> None:
         """Poll get_state until Pi responds or the reader task ends."""
         while True:
+            if self.process_died:
+                raise PiRpcError("Pi exited before becoming ready")
             try:
                 await self.request("get_state", {})
                 return  # Pi is ready
             except PiRpcError:
+                if self.process_died:
+                    raise
                 await asyncio.sleep(0.2)
 
     async def stop(self) -> None:
@@ -451,6 +473,38 @@ class PiRpcClient:
         except Exception as e:
             logger.debug(f"[PiStderr] Reader exited: {e}")
 
+    def _enqueue_event(self, event: dict) -> None:
+        """Keep completion events when incremental messages exhaust the budget."""
+        terminal = {"agent_settled", "agent_end", "tool_execution_end"}
+        try:
+            self._event_queue.put_nowait(event)
+            return
+        except asyncio.QueueFull:
+            if event.get("type") not in terminal:
+                logger.warning("Pi event queue full; dropping incremental event %s", event.get("type"))
+                return
+        buffered = []
+        while not self._event_queue.empty():
+            buffered.append(self._event_queue.get_nowait())
+        victim = next((i for i, item in enumerate(buffered)
+                       if item.get("type") in {"message_update", "message_delta"}), None)
+        if victim is None:
+            victim = next((i for i, item in enumerate(buffered)
+                           if item.get("type") not in terminal), None)
+        if victim is None:
+            # No safe eviction remains: make the turn fail explicitly, never hang.
+            for item in buffered:
+                self._event_queue.put_nowait(item)
+            self._process_died = True
+            self._process_died_event.set()
+            self._fail_all_pending("Pi terminal event queue overflow")
+            logger.error("Pi terminal event queue overflow; turn must restart")
+            return
+        buffered.pop(victim)
+        for item in buffered:
+            self._event_queue.put_nowait(item)
+        self._event_queue.put_nowait(event)
+
     async def _read_responses(self) -> None:
         """Read responses and events from Pi stdout.
 
@@ -476,7 +530,10 @@ class PiRpcClient:
                         "(no newline within budget); stream may be resyncing",
                         MAX_STDOUT_LINE_BYTES,
                     )
-                    continue
+                    self._fail_all_pending("Pi response exceeded stdout byte budget")
+                    if self._process is not None:
+                        self._process.terminate()
+                    break
                 if not line:
                     break
                 line = line.strip()
@@ -489,19 +546,7 @@ class PiRpcClient:
                         await self._handle_response(obj)
                     # AgentSessionEvent: has "type" but no "id"
                     elif "type" in obj and "id" not in obj:
-                        try:
-                            self._event_queue.put_nowait(obj)
-                        except asyncio.QueueFull:
-                            # Drop new events on overflow rather than blocking
-                            # the reader (which would backpressure Pi's stdout
-                            # pipe and can hang the subprocess). The consumer
-                            # is by definition not keeping up; one dropped
-                            # event is preferable to a stuck reader.
-                            logger.warning(
-                                "[PiRpcClient] Event queue full (%d); dropping event "
-                                "type=%s — SSE consumer is not keeping up",
-                                MAX_EVENT_QUEUE_SIZE, obj.get("type"),
-                            )
+                        self._enqueue_event(obj)
                 except json.JSONDecodeError:
                     logger.warning(f"[PiRpcClient] Invalid JSON: {line[:200]}")
         except asyncio.CancelledError:
@@ -581,13 +626,23 @@ class PiRpcClient:
         oversized payload).
 
         Synchronous — called via run_in_executor so it doesn't block the
-        event loop. Reads byte-by-byte from the underlying buffer to avoid
-        the unbounded buffering that a bare readline() would do on a
-        malformed stream.
+        event loop. Production buffered pipes use one size-bounded readline;
+        minimal legacy pipe adapters retain the bounded read(1) compatibility
+        path. Neither buffers an entire unbounded malformed line.
         """
         stdout = self._process.stdout
         if stdout is None:
             return b""
+        import io
+
+        if isinstance(stdout, (io.BufferedIOBase, io.RawIOBase, io.TextIOBase)):
+            line = stdout.readline(MAX_STDOUT_LINE_BYTES)
+            data = line.encode("utf-8") if isinstance(line, str) else line
+            if len(data) > MAX_STDOUT_LINE_BYTES:
+                return None
+            if data.endswith(b"\n") or len(data) < MAX_STDOUT_LINE_BYTES:
+                return data
+            return None
         buf = bytearray()
         budget = MAX_STDOUT_LINE_BYTES
         while budget > 0:

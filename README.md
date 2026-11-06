@@ -2,6 +2,8 @@
 
 **用自然语言完成空间分析、遥感计算与专业制图的 AI GIS 工作台。**
 
+[位置数据与外部服务隐私说明](docs/privacy.md)
+
 WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS + rasterio)结合:
 你用中文或英文描述任务("分析北京学校分布并出一张专题图"),Agent 规划工具调用链,
 在后端执行真实的地理计算,并通过 SSE 流式把图层、进度与结果推回地图工作台。
@@ -129,9 +131,9 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 │   ├── components/          # chat / map / hud / sidebar / explorer / report / settings
 │   ├── lib/                 # Zustand store · map-kit · SSE 解析 · MapSpec 编译器
 │   └── test/                # vitest + 设计系统契约测试 + 视觉回归
-├── migrations/              # Alembic 迁移链(67 个 revision)
+├── migrations/              # Alembic 迁移链(见 migrations/versions/)
 ├── deploy/                  # nginx / k8s kustomize / redis / prometheus / grafana
-├── docs/                    # 文档与 ADR(254 篇决策记录)
+├── docs/                    # 文档与 ADR(见 docs/adr/)
 ├── tests/                   # pytest:根回归 + unit + jobs + cartography + perf + benchmarks
 ├── manage.py                # 开发运维 CLI(dev / server / worker / check / init-db / create-admin)
 ├── docker-compose.yml       # 开发栈(db / redis / api / celery)
@@ -243,9 +245,9 @@ ruff check app/ tests/ main.py manage.py   # lint(仓级,与 CI 同)
 
 # 前端(vitest 覆盖率闸 75/70/75/60)
 cd frontend
-npx vitest run
-npm run typecheck && npm run lint
-npx next build                             # 构建是页面导出的最终门禁
+pnpm exec vitest run
+pnpm run typecheck && pnpm run lint
+pnpm run build                             # 构建是页面导出的最终门禁
 ```
 
 CI([`.github/workflows/production.yml`](.github/workflows/production.yml))PR 必须全绿合并的 11 项门禁:
@@ -299,7 +301,7 @@ CI 在 release-gate 通过后自动构建镜像推送 `ghcr.io`,并支持 PR 预
 | [前端文档](frontend/README.md) | Visual System V4 设计系统与组件架构 |
 | [工程纪律](CODE_REVIEW.md) | 代码红线与历史缺陷修补录 |
 | [变更日志](CHANGELOG.md) | 逐版本变更记录 |
-| [ADR](docs/adr/) | 254 篇架构决策记录 |
+| [ADR](docs/adr/) | 架构决策记录（以目录内容为准） |
 
 <a id="roadmap"></a>
 

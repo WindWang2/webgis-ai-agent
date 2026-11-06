@@ -108,27 +108,17 @@ def _now() -> float:
 
 
 async def _save_if_fresh(plan: SessionPlan, *, store: Any, host: str = "") -> bool:
-    """Stale-revision guard (K2 / review S5): refuse to clobber a newer
-    persisted envelope.
+    """Atomically refuse stale/equal-revision competing writers at the backend.
 
-    Under a healthy session lock the check is a no-op (writes are serialized;
-    persisted revision == loaded revision). It bites exactly when the lock
-    degraded (cross-pod write raced ahead): the stale writer's kernel-layer
-    mutation is dropped with a counter + warning instead of silently
-    reverting newer state. One extra envelope read per kernel save —
-    correctness first (P1-perf note in ledger covers the amplification).
+    Healthy session locks serialize normal writes; storage CAS also fences a
+    writer whose distributed lease was lost before this commit.
     """
-    persisted = await load_session_plan(plan.session_id, store=store)
-    if persisted is not None and int(persisted.revision or 0) > int(plan.revision or 0):
+    saved = await save_session_plan(plan, store=store, expected_revision=int(plan.revision or 0))
+    if not saved:
         hk_metrics.record("stale_write_refused", host=host)
-        logger.warning(
-            "[HarnessKernel] stale envelope write refused session=%s "
-            "loaded_rev=%d persisted_rev=%d",
-            plan.session_id, plan.revision, persisted.revision,
-        )
-        return False
-    await save_session_plan(plan, store=store)
-    return True
+        logger.warning("[HarnessKernel] atomic stale envelope write refused session=%s revision=%d", plan.session_id, plan.revision)
+    return saved
+
 
 
 @asynccontextmanager
@@ -701,6 +691,7 @@ class GISSessionRuntime:
         host: PlanHost,
         status: TurnStatus = "completed",
         checkpoint: bool = True,
+        settle_token: str = "",
         lock: Any = None,
     ) -> List[SessionPlanEvent]:
         """Settle a turn: journal + phase terminalization + in-flight step
@@ -729,6 +720,8 @@ class GISSessionRuntime:
             )
             if record is None:
                 return []
+            if settle_token and record.settle_token != settle_token:
+                return []  # An expired claim cannot terminalize its successor.
             if record.status != "running":
                 return []  # idempotent re-settle (e.g. double finally)
             # Canonical terminalization (before the status write so the
@@ -1517,9 +1510,16 @@ class GISSessionRuntime:
         standing on. Caller holds the session lock.
         """
         backend = self._store if self._store is not None else _default_store()
-        slot = int(plan.revision or 0) % MAX_CHECKPOINT_SLOTS
+        previous_recovery = plan.recovery.model_copy(deep=True)
+        previous_decisions = list(plan.decisions)
+        sequence = plan.recovery.checkpoint_sequence + 1
+        slot = (sequence - 1) % MAX_CHECKPOINT_SLOTS
         alias = f"{_CP_ALIAS_PREFIX}{slot}"
-        checkpoint_id = f"cp-{plan.envelope_id}-r{plan.revision}"
+        checkpoint_id = f"cp-{plan.envelope_id}-c{sequence}-r{plan.revision}"
+        plan.recovery.checkpoint_sequence = sequence
+        plan.recovery.checkpoint_id = checkpoint_id
+        plan.recovery.checkpoint_at = _now()
+        _journal(plan, "checkpoint", host=host, turn_id=turn_id, note=f"{checkpoint_id} ({reason[:120]})")
         payload = plan.model_dump()
         try:
             ref_id = await backend.resolve_alias(self.session_id, alias)
@@ -1539,13 +1539,9 @@ class GISSessionRuntime:
                 "[HarnessKernel] checkpoint archive failed session=%s",
                 self.session_id, exc_info=True,
             )
+            plan.recovery = previous_recovery
+            plan.decisions = previous_decisions
             return ""
-        plan.recovery.checkpoint_id = checkpoint_id
-        plan.recovery.checkpoint_at = _now()
-        _journal(
-            plan, "checkpoint", host=host, turn_id=turn_id,
-            note=f"{checkpoint_id} ({reason[:120]})",
-        )
         hk_metrics.record("checkpoint_written", host=host)
         return checkpoint_id
 

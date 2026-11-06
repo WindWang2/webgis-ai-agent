@@ -1828,3 +1828,1055 @@ def f26_03_verdict_blocked_without_evidence() -> ScenarioContract:
         not_evaluated=COMMON_NOT_EVALUATED,
         tags=["scene3d", "negative", "verdict", "honesty"],
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# G3D-V2-C · F27 三维分析产品任务级场景族（ADR-0276）
+#
+# 覆盖：真数据正例（合成 DEM 锥形 fixture，EPSG:32648，simulated 披露）
+# 经 run_3d_analysis 全算法族真实 dispatch → 分析结果上图（geojson 通道）
+# → 剖面组件 ref 挂接 → 失效裁决（拖点判旧 / camera-only 不判旧）→
+# 2D 退化 → 用户中断恢复 → 导出诚实；负例：无 DEM 源 / 非法垂直基准 /
+# nodata 观察点 / 坏参数 JSON。多轮旅程覆盖任务书「给剖面→换观察点→
+# 查通视→改显示角度→导出」全动作链。
+# ══════════════════════════════════════════════════════════════════════
+
+#: DEM 源注册步（真实 UpsertSourceIntent 事务——分析数据资格）。
+_DEM_SOURCE = {
+    "type": "raster-dem",
+    "url": "https://example.test/dem/{z}/{x}/{y}.png",
+}
+
+#: 锥形 DEM 的世界坐标锚（UL (500000, 4000000)，cell 10 m，61×61）。
+_OBS = (500305.0, 3999695.0)       # 锥顶旁（有效）
+_OBS_NODATA = (500300.0, 3999700.0)  # nodata 洞中央（负例）
+_ROUTE = [[500050.0, 3999950.0], [500550.0, 3999950.0]]
+_TARGET = (500450.0, 3999550.0)
+_SITE = [
+    [500100.0, 3999900.0], [500400.0, 3999900.0],
+    [500400.0, 3999600.0], [500100.0, 3999600.0],
+    [500100.0, 3999900.0],
+]
+
+_F27_NOT_EVALUATED = [
+    *COMMON_NOT_EVALUATED,
+    "dem_supply: 真实 DEM 数据供给管线（摄入/瓦片）属 A 方向；F27 用"
+    "确定性合成 DEM fixture（simulated 披露）走同一分析/编排/制图面",
+]
+
+
+def _dem_seed_steps(store_id: str = "dem", source_id: str = "dem"):
+    """store DEM fixture + 注册 spec raster-dem 源（数据资格两步）。"""
+    return [
+        _step(f"store-{store_id}", StepKind.STORE_DATA,
+              arguments={"name": store_id, "dataset_kind": "raster_dem_cone"}),
+        _step(f"src-{source_id}", StepKind.MAPSPEC_SOURCE,
+              arguments={"source_id": source_id, "source": dict(_DEM_SOURCE)}),
+    ]
+
+
+@register
+def f27_01_profile_then_los_multiturn() -> ScenarioContract:
+    """多轮正例：「给剖面」→「查通视」（两次 run_3d_analysis 真实 dispatch）。"""
+    q1 = "沿这条线路给个地形剖面"
+    q2 = "再查一下线路两端能不能互相看见"
+    return ScenarioContract(
+        id="f27-01-profile-then-los", family="F27",
+        title="多轮：地形剖面 → 两点通视（全算法编排正例）",
+        user_goal=q1,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[
+            TurnSpec(turn_id="t1", message=q1, steps=[
+                _step("intent", StepKind.INTENT),
+                *_dem_seed_steps(),
+                _step("prof", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "terrain_profile",
+                                 "raster_path": "{{ref:dem}}",
+                                 "vertices": _ROUTE}),
+            ]),
+            TurnSpec(turn_id="t2", message=q2, steps=[
+                _step("intent2", StepKind.INTENT),
+                _step("los", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "line_of_sight",
+                                 "raster_path": "{{ref:dem}}",
+                                 "observer_x": _ROUTE[0][0],
+                                 "observer_y": _ROUTE[0][1],
+                                 "target_x": _ROUTE[1][0],
+                                 "target_y": _ROUTE[1][1]}),
+            ]),
+        ],
+        expectations=[
+            _exp("f27-01-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=2,
+                 note="剖面 3D LineString + LOS 双线均经 geojson 通道挂层"),
+            _exp("f27-01-profile-comp", Face.MAPSPEC, "mapspec_component",
+                 "mapspec.component_types", op="contains",
+                 value="elevation_profile",
+                 note="剖面图 ref:profile-* 工件 + 组件自动挂接（M2c 缝）"),
+            _exp("f27-01-binding", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.analysis_goals", op="contains",
+                 value="terrain_profile"),
+            _exp("f27-01-binding-los", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.analysis_goals", op="contains",
+                 value="line_of_sight"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "multiturn", "analysis"],
+    )
+
+
+@register
+def f27_02_viewshed_geometry_on_map() -> ScenarioContract:
+    """视域上图正例：bool 栅格 → 可视面 fill 层（#1829 stats-only 修复）。"""
+    q = "从这个观察点算能看到哪些范围"
+    return ScenarioContract(
+        id="f27-02-viewshed-layer", family="F27",
+        title="视域：观察点视域面挂图（几何不再是 stats-only）",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[TurnSpec(turn_id="t1", message=q, steps=[
+            _step("intent", StepKind.INTENT),
+            *_dem_seed_steps(),
+            _step("vs", StepKind.RAW, tool="run_3d_analysis",
+                  arguments={"analysis": "viewshed",
+                             "raster_path": "{{ref:dem}}",
+                             "observer_x": _OBS[0], "observer_y": _OBS[1],
+                             "observer_feature_id": "obs-1",
+                             "dem_source_id": "dem",
+                             "options": '{"max_distance": 250}'}),
+        ])],
+        expectations=[
+            _exp("f27-02-fill-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_types", op="contains", value="fill",
+                 note="可视面 Polygon → fill 图层（converter geojson 通道）"),
+            _exp("f27-02-binding", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.analysis_goals", op="contains",
+                 value="viewshed"),
+            _exp("f27-02-fresh", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.all_fresh", value=True),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "viewshed", "analysis"],
+    )
+
+
+@register
+def f27_03_observer_change_staleness() -> ScenarioContract:
+    """换观察点：用户点选新要素 → 既有视域分析判旧（staleness 生产闭环）。"""
+    q = "先算这个点的视域，然后我想看看另一个山头"
+    return ScenarioContract(
+        id="f27-03-observer-stale", family="F27",
+        title="失效：换观察点 → 视域判旧（SCENE_STALE_OBSERVER_MOVED）",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[
+            TurnSpec(turn_id="t1", message=q, steps=[
+                _step("intent", StepKind.INTENT),
+                *_dem_seed_steps(),
+                _step("vs", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "viewshed",
+                                 "raster_path": "{{ref:dem}}",
+                                 "observer_x": _OBS[0], "observer_y": _OBS[1],
+                                 "observer_feature_id": "obs-1",
+                                 "dem_source_id": "dem",
+                                 "options": '{"max_distance": 250}'}),
+            ]),
+            TurnSpec(turn_id="t2", message="换成那个山头", steps=[
+                _step("intent2", StepKind.INTENT),
+                _interaction_step("sel", [{
+                    "kind": "feature_selected", "client_seq": 1,
+                    "payload": {"layer_id": "peaks",
+                                "feature_id": "peak-b"}}]),
+                _step("apply2", StepKind.RAW, tool="apply_scene_representation",
+                      arguments={"user_dimension": "3d"}),
+            ]),
+        ],
+        expectations=[
+            _exp("f27-03-stale-code", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.stale_reason_codes", op="contains",
+                 value="SCENE_STALE_OBSERVER_MOVED"),
+            _exp("f27-03-not-fresh", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.all_fresh", value=False),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "staleness", "interaction"],
+    )
+
+
+@register
+def f27_04_camera_only_keeps_fresh() -> ScenarioContract:
+    """改显示角度：视角变化（viewport + fly_camera）不判旧（范畴红线）。"""
+    q = "算完视域后换个角度看"
+    return ScenarioContract(
+        id="f27-04-camera-fresh", family="F27",
+        title="不失效：camera-only 变化 → 分析保持 fresh",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[
+            TurnSpec(turn_id="t1", message=q, steps=[
+                _step("intent", StepKind.INTENT),
+                *_dem_seed_steps(),
+                _step("vs", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "viewshed",
+                                 "raster_path": "{{ref:dem}}",
+                                 "observer_x": _OBS[0], "observer_y": _OBS[1],
+                                 "observer_feature_id": "obs-1",
+                                 "dem_source_id": "dem",
+                                 "options": '{"max_distance": 250}'}),
+                _step("fly", StepKind.RAW, tool="fly_camera",
+                      arguments={"pitch": 60.0, "bearing": 120.0},
+                      allow_error=True),
+                _step("apply", StepKind.RAW, tool="apply_scene_representation",
+                      arguments={"user_dimension": "3d"}),
+            ]),
+        ],
+        expectations=[
+            _exp("f27-04-fresh", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.all_fresh", value=True,
+                 note="视域是观察点的函数，与镜头无关——相机不进失效判定"),
+            _exp("f27-04-camera-applied", Face.MAPSPEC, "mapspec_view",
+                 "mapspec.view.pitch", value=60.0),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "staleness", "camera", "negative"],
+    )
+
+
+@register
+def f27_05_cut_fill_volume_positive() -> ScenarioContract:
+    """土方正例：场平多边形 mean 基准 → 挖填分区上图 + net=0 解析恒等。"""
+    q = "估算这块场地的平整土方量"
+    return ScenarioContract(
+        id="f27-05-cut-fill", family="F27",
+        title="土方：基准面 cut/fill 分区挂图（解析 oracle 口径）",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[TurnSpec(turn_id="t1", message=q, steps=[
+            _step("intent", StepKind.INTENT),
+            *_dem_seed_steps(),
+            _step("vol", StepKind.RAW, tool="run_3d_analysis",
+                  arguments={"analysis": "cut_fill_volume",
+                             "raster_path": "{{ref:dem}}",
+                             "polygon": _SITE, "reference": "mean"}),
+        ])],
+        expectations=[
+            _exp("f27-05-fill-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_types", op="contains", value="fill",
+                 note="挖方/填方分区 Polygon 挂层"),
+            _exp("f27-05-binding", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.analysis_goals", op="contains",
+                 value="cut_fill_volume"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "volume", "analysis"],
+    )
+
+
+@register
+def f27_06_no_dem_source_decline() -> ScenarioContract:
+    """数据资格负例：DEM 文件在场但 spec 无 raster-dem 源 → typed decline。"""
+    q = "直接对这片做视域分析（没绑定数据源）"
+    return ScenarioContract(
+        id="f27-06-no-dem-source", family="F27", negative=True,
+        title="资格：无 raster-dem 源 → 分析门拒绝（不猜数据资格）",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[TurnSpec(turn_id="t1", message=q, steps=[
+            _step("intent", StepKind.INTENT),
+            _step("init", StepKind.RAW, tool="webgis_project_init",
+                  arguments={}),
+            _step("store", StepKind.STORE_DATA,
+                  arguments={"name": "dem", "dataset_kind": "raster_dem_cone"}),
+            _step("vs", StepKind.RAW, tool="run_3d_analysis",
+                  arguments={"analysis": "viewshed",
+                             "raster_path": "{{ref:dem}}",
+                             "observer_x": _OBS[0], "observer_y": _OBS[1]},
+                  expect_error=True),
+        ])],
+        expectations=[
+            _exp("f27-06-no-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", value=0,
+                 note="decline 不产生任何分析/图层副作用"),
+            _exp("f27-06-reason", Face.METHOD, "decline_code",
+                 "scripted_errors.vs", value="SCENE_CAP_VIEWSHED_NO_DEM",
+                 note="review F1：钉 typed decline 码——意外 bug 失败不得绿"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "negative", "decline", "qualification"],
+    )
+
+
+@register
+def f27_07_vertical_datum_mismatch_refused() -> ScenarioContract:
+    """非法垂直基准负例：基准面声明 datum ≠ DEM datum → 类型化拒绝。"""
+    q = "按 EGM96 基准面算土方（DEM 声明的是椭球高）"
+    return ScenarioContract(
+        id="f27-07-datum-mismatch", family="F27", negative=True,
+        title="垂直基准：跨 datum 混算 → VERTICAL_REFERENCE_MISMATCH",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[TurnSpec(turn_id="t1", message=q, steps=[
+            _step("intent", StepKind.INTENT),
+            *_dem_seed_steps(),
+            _step("vol", StepKind.RAW, tool="run_3d_analysis",
+                  arguments={"analysis": "cut_fill_volume",
+                             "raster_path": "{{ref:dem}}",
+                             "polygon": _SITE, "base_z": 50.0,
+                             "options": '{"vertical_datum":'
+                                        ' "ellipsoid_height",'
+                                        ' "override_vertical_datum":'
+                                        ' "geoid_height_egm96"}'},
+                  expect_error=True),
+        ])],
+        expectations=[
+            _exp("f27-07-no-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", value=0),
+            _exp("f27-07-reason", Face.METHOD, "decline_code",
+                 "scripted_error_messages.vol", op="regex",
+                 value="VERTICAL_REFERENCE_MISMATCH|mixing heights",
+                 note="跨 datum 拒绝的语义必须可辨（非泛化失败）"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "negative", "vertical-datum"],
+    )
+
+
+@register
+def f27_08_nodata_observer_fails_typed() -> ScenarioContract:
+    """nodata 负例：观察点落 nodata 洞 → 类型化失败（不静默给错视域）。"""
+    q = "在数据洞正中央做视域"
+    return ScenarioContract(
+        id="f27-08-nodata-observer", family="F27", negative=True,
+        title="nodata：观察点无高程 → 分析类型化失败",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_nodata")],
+        turns=[TurnSpec(turn_id="t1", message=q, steps=[
+            _step("intent", StepKind.INTENT),
+            _step("store", StepKind.STORE_DATA,
+                  arguments={"name": "dem", "dataset_kind": "raster_dem_nodata"}),
+            _step("src", StepKind.MAPSPEC_SOURCE,
+                  arguments={"source_id": "dem", "source": dict(_DEM_SOURCE)}),
+            _step("vs", StepKind.RAW, tool="run_3d_analysis",
+                  arguments={"analysis": "viewshed",
+                             "raster_path": "{{ref:dem}}",
+                             "observer_x": _OBS_NODATA[0],
+                             "observer_y": _OBS_NODATA[1]},
+                  expect_error=True),
+        ])],
+        expectations=[
+            _exp("f27-08-no-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", value=0,
+                 note="失败分析不挂层——宁拒不给错的视域"),
+            _exp("f27-08-reason", Face.METHOD, "decline_code",
+                 "scripted_error_messages.vs", op="regex",
+                 value="observer cell is nodata|NoValidObservations|NO_VALID_OBSERVATIONS",
+                 note="nodata 观察点的类型化语义必须可辨"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "negative", "nodata"],
+    )
+
+
+@register
+def f27_09_bad_options_json_decline() -> ScenarioContract:
+    """坏参数负例：options 非法 JSON → typed decline（不猜参数）。"""
+    q = "做个视域（参数传坏了）"
+    return ScenarioContract(
+        id="f27-09-bad-options", family="F27", negative=True,
+        title="参数：options 非法 JSON → SCENE_ANALYSIS_BAD_OPTIONS_JSON",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[TurnSpec(turn_id="t1", message=q, steps=[
+            _step("intent", StepKind.INTENT),
+            *_dem_seed_steps(),
+            _step("vs", StepKind.RAW, tool="run_3d_analysis",
+                  arguments={"analysis": "viewshed",
+                             "raster_path": "{{ref:dem}}",
+                             "observer_x": _OBS[0], "observer_y": _OBS[1],
+                             "options": "{not-json"},
+                  expect_error=True),
+        ])],
+        expectations=[
+            _exp("f27-09-no-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", value=0),
+            _exp("f27-09-reason", Face.METHOD, "decline_code",
+                 "scripted_errors.vs", value="SCENE_ANALYSIS_BAD_OPTIONS_JSON"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "negative", "invalid-args"],
+    )
+
+
+@register
+def f27_10_user_cancel_then_resume() -> ScenarioContract:
+    """用户中断恢复：t1 user_cancel 结算 → t2 重跑分析完成（幂等重入）。"""
+    q = "算视域（中途取消后再来）"
+    return ScenarioContract(
+        id="f27-10-cancel-resume", family="F27",
+        title="中断：user_cancel → 下一轮重跑分析成功",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[
+            TurnSpec(turn_id="t1", message="算视域", steps=[
+                _step("intent", StepKind.INTENT),
+                *_dem_seed_steps(),
+            ], settle_cause="user_cancel"),
+            TurnSpec(turn_id="t2", message="重新算视域", steps=[
+                _step("intent2", StepKind.INTENT),
+                _step("vs", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "viewshed",
+                                 "raster_path": "{{ref:dem}}",
+                                 "observer_x": _OBS[0], "observer_y": _OBS[1],
+                                 "dem_source_id": "dem",
+                                 "options": '{"max_distance": 250}'}),
+            ]),
+        ],
+        expectations=[
+            _exp("f27-10-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_types", op="contains", value="fill",
+                 note="取消轮无分析副作用；重跑轮视域面正常挂图"),
+            _exp("f27-10-binding", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.analysis_goals", op="contains",
+                 value="viewshed"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "interruption", "resume"],
+    )
+
+
+@register
+def f27_11_print_medium_analysis_still_valid() -> ScenarioContract:
+    """2D 退化：print 媒介禁 3D 透视 → 场景诚实降级，剖面分析仍有效。"""
+    q = "出一张打印用的线路剖面图"
+    return ScenarioContract(
+        id="f27-11-print-degrade", family="F27",
+        title="2D 退化：静态媒介 → 3d 档禁用，剖面/图层照常",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[TurnSpec(turn_id="t1", message=q, steps=[
+            _step("intent", StepKind.INTENT),
+            *_dem_seed_steps(),
+            _step("apply", StepKind.RAW, tool="apply_scene_representation",
+                  arguments={"user_dimension": "3d", "medium": "print"}),
+            _step("prof", StepKind.RAW, tool="run_3d_analysis",
+                  arguments={"analysis": "terrain_profile",
+                             "raster_path": "{{ref:dem}}",
+                             "vertices": _ROUTE}),
+        ])],
+        expectations=[
+            _exp("f27-11-mode", Face.MAPSPEC, "mapspec_scene",
+                 "mapspec.scene.mode", op="ne", value="3d",
+                 note="静态媒介禁 3D 透视档（诚实降级，偏好保留）"),
+            _exp("f27-11-profile-layer", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_types", op="contains", value="line",
+                 note="分析结果不随媒介降级——剖面线照常挂图"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "degrade", "print"],
+    )
+
+
+@register
+def f27_12_export_semantics() -> ScenarioContract:
+    """导出：分析图层 + 组件在场 → 导出语义一致性（产品面闭环）。"""
+    q = "把剖面成果导出"
+    return ScenarioContract(
+        id="f27-12-export", family="F27",
+        title="导出：分析产品导出语义一致（图层/组件/披露随行）",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[TurnSpec(turn_id="t1", message=q, steps=[
+            _step("intent", StepKind.INTENT),
+            *_dem_seed_steps(),
+            _step("prof", StepKind.RAW, tool="run_3d_analysis",
+                  arguments={"analysis": "terrain_profile",
+                             "raster_path": "{{ref:dem}}",
+                             "vertices": _ROUTE}),
+            _step("export", StepKind.RAW, tool="export_thematic_map",
+                  arguments={"title": "线路高程剖面图"}),
+        ])],
+        expectations=[
+            _exp("f27-12-profile-comp", Face.MAPSPEC, "mapspec_component",
+                 "mapspec.component_types", op="contains",
+                 value="elevation_profile"),
+            _exp("f27-12-export-consistent", Face.RENDER_EXPORT,
+                 "export_status", "export.available", value=True),
+            _exp("f27-12-export-no-failed", Face.RENDER_EXPORT,
+                 "export_status", "export.failed_aspects", value=[],
+                 note="图层/组件/ref 工件在导出投影中语义一致（零失败面）"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "export"],
+    )
+
+
+@register
+def f27_13_surface_distance_area_positive() -> ScenarioContract:
+    """量测族正例：surface_distance + surface_area 编排接入（多轮）。"""
+    q = "这条线路的沿线地表距离多少？再算这块坡的真实面积"
+    return ScenarioContract(
+        id="f27-13-distance-area", family="F27",
+        title="量测：地表距离 + 地表面积编排（#1773↔#1829 接缝）",
+        user_goal=q,
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[
+            TurnSpec(turn_id="t1", message=q, steps=[
+                _step("intent", StepKind.INTENT),
+                *_dem_seed_steps(),
+                _step("dist", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "surface_distance",
+                                 "raster_path": "{{ref:dem}}",
+                                 "vertices": _ROUTE}),
+            ]),
+            TurnSpec(turn_id="t2", message="再算真实面积", steps=[
+                _step("intent2", StepKind.INTENT),
+                _step("area", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "surface_area",
+                                 "raster_path": "{{ref:dem}}",
+                                 "polygon": _SITE}),
+            ]),
+        ],
+        expectations=[
+            _exp("f27-13-layers", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=2,
+                 note="距离线 + 面积面挂层（#1773 工具经 #1829 编排）"),
+            _exp("f27-13-goals", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.analysis_goals", op="contains",
+                 value="surface_area"),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "measurement"],
+    )
+
+
+@register
+def f27_14_full_journey_multiturn() -> ScenarioContract:
+    """完整旅程（任务书验收链）：给剖面 → 换观察点 → 查通视 → 改显示角度
+    → 导出——每个动作的状态迁移可断言。"""
+    return ScenarioContract(
+        id="f27-14-full-journey", family="F27",
+        title="全链：剖面→换点→通视→改角度→导出（任务级闭环）",
+        user_goal="沿线路给剖面，换到山顶观察点查与终点的通视，调整视角后导出",
+        datasets=[DatasetSpec(name="dem", dataset_kind="raster_dem_cone")],
+        turns=[
+            TurnSpec(turn_id="t1", message="沿这条线路给个地形剖面", steps=[
+                _step("intent", StepKind.INTENT),
+                *_dem_seed_steps(),
+                _step("prof", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "terrain_profile",
+                                 "raster_path": "{{ref:dem}}",
+                                 "vertices": _ROUTE}),
+            ]),
+            TurnSpec(turn_id="t2", message="换到山顶那个观察点", steps=[
+                _step("intent2", StepKind.INTENT),
+                _interaction_step("sel", [{
+                    "kind": "feature_selected", "client_seq": 1,
+                    "payload": {"layer_id": "peaks", "feature_id": "peak-a"}}]),
+                _step("vs", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "viewshed",
+                                 "raster_path": "{{ref:dem}}",
+                                 "observer_x": _OBS[0], "observer_y": _OBS[1],
+                                 "observer_feature_id": "peak-a",
+                                 "dem_source_id": "dem",
+                                 "options": '{"max_distance": 250}'}),
+            ]),
+            TurnSpec(turn_id="t3", message="山顶能看到线路终点吗", steps=[
+                _step("intent3", StepKind.INTENT),
+                _step("los", StepKind.RAW, tool="run_3d_analysis",
+                      arguments={"analysis": "line_of_sight",
+                                 "raster_path": "{{ref:dem}}",
+                                 "observer_x": _OBS[0], "observer_y": _OBS[1],
+                                 "target_x": _TARGET[0], "target_y": _TARGET[1]}),
+            ]),
+            TurnSpec(turn_id="t4", message="换个角度看", steps=[
+                _step("intent4", StepKind.INTENT),
+                _interaction_step("vp", [{
+                    "kind": "viewport_settled", "client_seq": 2,
+                    "payload": {"center": [500305.0, 3999695.0],
+                                "zoom": 15.0, "bearing": 45.0,
+                                "pitch": 60.0}}]),
+                _step("fly", StepKind.RAW, tool="fly_camera",
+                      arguments={"pitch": 55.0, "bearing": 60.0},
+                      allow_error=True),
+            ]),
+            TurnSpec(turn_id="t5", message="导出这张图", steps=[
+                _step("intent5", StepKind.INTENT),
+                _step("export", StepKind.RAW, tool="export_thematic_map",
+                      arguments={"title": "山地通视分析图"}),
+            ]),
+        ],
+        expectations=[
+            _exp("f27-14-layers", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=3,
+                 note="剖面线 + 视域面 + LOS 双线"),
+            _exp("f27-14-profile-comp", Face.MAPSPEC, "mapspec_component",
+                 "mapspec.component_types", op="contains",
+                 value="elevation_profile"),
+            _exp("f27-14-camera", Face.DATA, "interaction_state",
+                 "interaction.viewport.pitch", value=60.0,
+                 note="改显示角度 = 用户 viewport（user-wins：agent 相机"
+                      "不偷改用户镜头）"),
+            _exp("f27-14-fresh-after-camera", Face.METHOD, "analysis_binding",
+                 "scene3d_analysis.all_fresh", value=True,
+                 note="改显示角度（camera-only）不判旧——空间事实与视角无关"),
+            _exp("f27-14-export", Face.RENDER_EXPORT, "export_status",
+                 "export.failed_aspects", value=[]),
+        ],
+        not_evaluated=_F27_NOT_EVALUATED,
+        tags=["scene3d", "g3dv2c", "multiturn", "journey", "acceptance"],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# goal-02 · F28 多步分析工作流族（AnalysisWorkflowContract 编排面）
+# ══════════════════════════════════════════════════════════════════════
+
+_F28_NOT_EVALUATED = COMMON_NOT_EVALUATED + [
+    "nl_family_choice: 场景→族的选择由 scripted plan 调用代替（生产面由 "
+    "Pi LLM + 技能库解析）",
+    "persistent_dataset_supply: 数据角色的持久数据集供给（data_fabric 通道）"
+    "不在本 lane——F28 用合成 store_data 种子",
+]
+
+
+@register
+def f28_01_admin_distribution_workflow() -> ScenarioContract:
+    """行政区设施分布正例：plan→run 真实编排（计数+面积密度+分母率）。"""
+    q = "统计各区小学数量、每平方公里密度和每万人学校数"
+    return ScenarioContract(
+        id="f28-01-admin-distribution", family="F28",
+        title="行政区设施分布：三步工作流（计数/面积密度/每万人率）",
+        description=(
+            "webgis_analysis_workflow_plan→run 真实 dispatch 编排："
+            "denominator 绑定带 population 字段的区面层 → per_capita 步骤"
+            "执行；receipts 有界投影。"),
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "admin_facility_distribution",
+                          "role_refs": (
+                              '{"subject": "{{ref:schools}}", '
+                              '"boundary": "{{ref:districts}}", '
+                              '"denominator": "{{ref:districts}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"}),
+                _step("product", StepKind.PRODUCT,
+                      arguments={
+                          "primary_ref": "{{ref:districts}}",
+                          "overlay_refs": ["{{ref:schools}}"],
+                          "title": "成都各区小学分布与密度（模拟数据）"}),
+            ],
+        )],
+        expectations=[
+            _exp("f28-01-wf-status", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="satisfied"),
+            _exp("f28-01-wf-count", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.zones_count", value="satisfied"),
+            _exp("f28-01-wf-density", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.area_density", value="satisfied"),
+            _exp("f28-01-wf-rate", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.per_capita_rate",
+                 value="satisfied",
+                 note="denominator 绑定区面 population 字段 → 率步骤执行"),
+            _exp("f28-01-wf-receipts", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.receipts", op="contains",
+                 value="zones_count"),
+            _exp("f28-01-mapspec", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=1),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "admin", "distribution", "goal-02"],
+    )
+
+
+@register
+def f28_02_no_network_typed_blocked() -> ScenarioContract:
+    """可达性负例：无路网 → plan typed blocked，run 拒绝数值结论。"""
+    q = "小学 15 分钟步行可达范围"
+    return ScenarioContract(
+        id="f28-02-no-network-blocked", family="F28",
+        title="可达性：无路网 typed 阻断（不得『15 分钟可达』结论）",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "service_accessibility",
+                          "role_refs": (
+                              '{"subject": "{{ref:schools}}", '
+                              '"boundary": "{{ref:districts}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"},
+                      allow_error=True),
+            ],
+        )],
+        expectations=[
+            _exp("f28-02-plan-honest", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="blocked",
+                 note="run 执行后工作流整体 blocked（isochrone 无路网）"),
+            _exp("f28-02-blocked-code", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.step_reasons.isochrone",
+                 value="AWF_NO_NETWORK_FOR_ACCESSIBILITY"),
+            _exp("f28-02-run-drove-state", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.run_log_events", op="contains",
+                 value="workflow_start",
+                 note="run 侧证据：状态机被真实驱动（非 plan 裁决冒充）"),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "accessibility", "negative",
+              "goal-02"],
+    )
+
+
+@register
+def f28_03_accessibility_real_network() -> ScenarioContract:
+    """可达性正例：真路网 → 等时圈 → 覆盖区（人口缺 → skipped）。"""
+    q = "沿路网算小学 15 分钟步行可达范围和各区覆盖"
+    return ScenarioContract(
+        id="f28-03-accessibility-network", family="F28",
+        title="可达性：真路网等时圈 + 覆盖区（覆盖人口 typed skipped）",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+            DatasetSpec(name="roads", dataset_kind="road_network"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("store3", StepKind.STORE_DATA,
+                      arguments={"name": "roads",
+                                 "dataset_kind": "road_network"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "service_accessibility",
+                          "role_refs": (
+                              '{"subject": "{{ref:schools}}", '
+                              '"boundary": "{{ref:districts}}", '
+                              '"network": "{{ref:roads}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"}),
+            ],
+        )],
+        expectations=[
+            _exp("f28-03-wf-status", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="satisfied"),
+            _exp("f28-03-isochrone", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.isochrone", value="satisfied",
+                 note="真 Dijkstra 路网等时圈（速度表/STRtree 投影）"),
+            _exp("f28-03-coverage", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.coverage_zones",
+                 value="satisfied"),
+            _exp("f28-03-pop-skipped", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.coverage_population",
+                 value="skipped",
+                 note="无人口点数据 → 覆盖人口 typed skipped 不伪装"),
+            _exp("f28-03-layer-ref", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.layers.isochrone", op="exists",
+                 note="等时圈产物 ref:geojson-* 可被 map_product 消费"),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "accessibility", "network", "goal-02"],
+    )
+
+
+@register
+def f28_04_temporal_misalignment_rejected() -> ScenarioContract:
+    """时态负例：双期年份相同 → typed 拒绝差分（不静默比较）。"""
+    q = "对比这两期建成区变化"
+    return ScenarioContract(
+        id="f28-04-temporal-mismatch", family="F28",
+        title="多期变化：年份未对齐 typed 拒绝",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="phase_a", dataset_kind="district_polygons"),
+            DatasetSpec(name="phase_b", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "phase_a",
+                                 "dataset_kind": "district_polygons"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "phase_b",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "temporal_change",
+                          "role_refs": (
+                              '{"baseline": {"ref": "{{ref:phase_a}}", '
+                              '"qualifier": {"year": 2023}}, '
+                              '"target_time": {"ref": "{{ref:phase_b}}", '
+                              '"qualifier": {"year": 2023}}}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"},
+                      allow_error=True),
+            ],
+        )],
+        expectations=[
+            _exp("f28-04-blocked", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="blocked"),
+            _exp("f28-04-code", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.step_reasons.change_diff",
+                 value="AWF_TEMPORAL_MISMATCH",
+                 note="同年份双期 → 拒绝静默差分"),
+            _exp("f28-04-run-drove-state", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.run_log_events", op="contains",
+                 value="workflow_start"),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "temporal", "negative", "goal-02"],
+    )
+
+
+@register
+def f28_05_recompute_selective() -> ScenarioContract:
+    """选择性重算：换数据 → 受影响步骤重跑、产物 ref 更新。"""
+    q = "先按区统计小学，再换新数据重算"
+    return ScenarioContract(
+        id="f28-05-recompute", family="F28",
+        title="局部重算：输入变更 → 受影响子图重跑",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points"),
+            DatasetSpec(name="schools_v2", dataset_kind="school_points_dense"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "admin_facility_distribution",
+                          "role_refs": (
+                              '{"subject": "{{ref:schools}}", '
+                              '"boundary": "{{ref:districts}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"}),
+            ],
+        ),
+            TurnSpec(turn_id="t2", message="换新数据重算", steps=[
+                _step("intent2", StepKind.INTENT),
+                _step("store3", StepKind.STORE_DATA,
+                      arguments={"name": "schools_v2",
+                                 "dataset_kind": "school_points_dense"}),
+                _step("recompute", StepKind.RAW,
+                      tool="webgis_analysis_workflow_recompute",
+                      arguments={
+                          "workflow_id": "{{step:plan:workflow_id}}",
+                          "role_refs": '{"subject": "{{ref:schools_v2}}"}'}),
+            ]),
+        ],
+        expectations=[
+            _exp("f28-05-final-status", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="satisfied"),
+            _exp("f28-05-count", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.zones_count", value="satisfied"),
+            _exp("f28-05-layer", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.layers.zones_count", op="exists",
+                 note="重算后产物 ref 存在（新数据 → 新 ref）"),
+        ],
+        not_evaluated=_F28_NOT_EVALUATED,
+        tags=["analysis_workflow", "recompute", "multiturn", "goal-02"],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# FD 设计候选与 user-wins 表达选择（/goal cartography-design）
+# ══════════════════════════════════════════════════════════════════════
+
+@register
+def fd1_design_candidates_delivered() -> ScenarioContract:
+    """正例：点分布产品 → 表达模型层候选随产品交付（≥2 候选、点族在场）。"""
+    q = "成都市小学分布情况"
+    return ScenarioContract(
+        id="fd1-design-candidates-delivered", family="FD",
+        title="设计候选：分布产品交付 2–4 个可比较表达方案",
+        user_goal=q,
+        datasets=[DatasetSpec(name="schools", dataset_kind="school_points_dense")],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points_dense"}),
+                _step("product", StepKind.PRODUCT,
+                      arguments={"primary_ref": "{{ref:schools}}",
+                                 "title": "成都市小学分布（模拟数据）"}),
+            ],
+        )],
+        expectations=[
+            _exp("fd1-count", Face.METHOD, "design_candidates",
+                 "design.product.count", op="ge", value=2,
+                 note="表达模型层候选必须随产品结果交付（2–4）"),
+            _exp("fd1-point-family", Face.METHOD, "design_family",
+                 "design.product.families", op="contains", value="point",
+                 note="点分布任务必须有点族候选（表达多样性）"),
+            _exp("fd1-no-block", Face.METHOD, "design_blocked",
+                 "design.product.blocked", value=[],
+                 note="40 点足额 → 无 typed blocked 候选"),
+            _exp("fd1-mapspec", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=1),
+            *_pending_honest_exps("fd1"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["design", "candidates"],
+    )
+
+
+@register
+def fd2_denominator_rate_candidates() -> ScenarioContract:
+    """正例：分母在场（district_polygons.population）→ 率语义候选进池。"""
+    q = "成都市各区小学密度统计"
+    return ScenarioContract(
+        id="fd2-denominator-rate-candidates", family="FD",
+        title="分母门控对：population 字段在场 → normalized 候选可计算",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="schools", dataset_kind="school_points_dense"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points_dense"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("agg", StepKind.EXECUTE, tool="spatial_aggregate",
+                      arguments={"points": "{{ref:schools}}",
+                                 "polygons": "{{ref:districts}}"}),
+                _step("product", StepKind.PRODUCT,
+                      arguments={"primary_ref": "{{ref:schools}}",
+                                 "overlay_refs": ["{{ref:districts}}"],
+                                 "title": "各区小学密度（模拟数据）"}),
+            ],
+        )],
+        expectations=[
+            _exp("fd2-normalized-in-pool", Face.METHOD, "design_rate",
+                 "design.product.models", op="contains",
+                 value="normalized_choropleth",
+                 note="overlay 行政区（含 population 分母）在场 → 归一化"
+                      "表达可行且分母满足（跨源分母投影）"),
+            _exp("fd2-no-blocked-rate", Face.METHOD, "design_blocked",
+                 "design.product.blocked", value=[],
+                 note="分母在场 → normalized 非 blocked"),
+            _exp("fd2-mapspec", Face.MAPSPEC, "mapspec_layer",
+                 "mapspec.layer_count", op="ge", value=1),
+            *_pending_honest_exps("fd2"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["design", "denominator", "rate"],
+    )
+
+
+@register
+def fd3_design_select_pin_honored() -> ScenarioContract:
+    """多轮：候选选择 → user-wins pin 落档 → 下一轮产品 honored。"""
+    q = "成都市小学分布情况"
+    return ScenarioContract(
+        id="fd3-design-select-pin-honored", family="FD",
+        title="user-wins：point_cluster 选定固化 → 下轮候选面 honored",
+        user_goal=q,
+        datasets=[DatasetSpec(name="schools", dataset_kind="school_points_dense")],
+        turns=[
+            TurnSpec(
+                turn_id="t1", message=q,
+                steps=[
+                    _step("intent", StepKind.INTENT),
+                    _step("store", StepKind.STORE_DATA,
+                          arguments={"name": "schools",
+                                     "dataset_kind": "school_points_dense"}),
+                    _step("product", StepKind.PRODUCT,
+                          arguments={"primary_ref": "{{ref:schools}}",
+                                     "title": "成都市小学分布（模拟数据）"}),
+                    _step("select", StepKind.RAW,
+                          tool="webgis_map_design_select",
+                          arguments={"query": q,
+                                     "map_model_id": "point_cluster",
+                                     "reason": "用户要聚合表达"}),
+                ],
+            ),
+            TurnSpec(
+                turn_id="t2", message="重新出图，用我选的聚合方案",
+                steps=[
+                    _step("product2", StepKind.PRODUCT,
+                          arguments={"primary_ref": "{{ref:schools}}",
+                                     "title": "成都市小学分布·聚合（模拟数据）"}),
+                ],
+            ),
+        ],
+        expectations=[
+            _exp("fd3-select-ok", Face.REQUIREMENT, "design_select",
+                 "design.select.pin_success", value=True,
+                 note="pin 写入 + 读回校验成功"),
+            _exp("fd3-pinned-model", Face.REQUIREMENT, "design_pin",
+                 "design.select.pinned_model", value="point_cluster"),
+            _exp("fd3-requirement-pin", Face.REQUIREMENT,
+                 "requirement_pin", "requirement.representation_pin",
+                 value="point_cluster",
+                 note="RequirementDocument 权威面承载 user-wins 表达"),
+            _exp("fd3-next-product-honors", Face.METHOD, "pin_honored",
+                 "design.product2.honored", op="contains",
+                 value="point_cluster",
+                 note="下一轮产品的候选面把 pin 作为用户显式要求"),
+        ],
+        not_evaluated=COMMON_NOT_EVALUATED,
+        tags=["design", "user-wins", "multiturn"],
+    )

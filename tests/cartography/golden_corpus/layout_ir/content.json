@@ -1,0 +1,68 @@
+{
+  "name": "layout_ir_content",
+  "input": {
+    "canvas": {
+      "widthPx": 400,
+      "heightPx": 200
+    },
+    "components": [
+      {
+        "id": "title",
+        "kind": "title",
+        "frame": {
+          "x": 10,
+          "y": 10,
+          "width": 350,
+          "height": 50
+        },
+        "content": {
+          "text": "成都 — atlas page 2",
+          "metadata": {
+            "page": 2
+          }
+        }
+      }
+    ],
+    "degradations": []
+  },
+  "expected": {
+    "version": 2,
+    "canvas": {
+      "widthPx": 400,
+      "heightPx": 200
+    },
+    "layers": [
+      {
+        "id": "title",
+        "z": 0
+      }
+    ],
+    "components": [
+      {
+        "id": "title",
+        "kind": "title",
+        "role": "decorative",
+        "frame": {
+          "x": 10,
+          "y": 10,
+          "width": 350,
+          "height": 50,
+          "anchor": "top_left",
+          "z": 0
+        },
+        "constraints": {},
+        "style": {
+          "token": null
+        },
+        "typography": null,
+        "content": {
+          "text": "成都 — atlas page 2",
+          "metadata": {
+            "page": 2
+          }
+        }
+      }
+    ],
+    "degradations": []
+  }
+}

@@ -26,15 +26,11 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 
 def normalize_admin_name(name: str) -> str:
-    """行政区名规范形：去空白、剥常见后缀（迭代剥，如「成都市」→「成都」）。"""
+    """行政区名规范形：去空白、剥常见后缀（只剥一次，如「杭州市」→「杭州」）。"""
     value = _WHITESPACE_RE.sub("", (name or "")).strip()
-    changed = True
-    while changed and value:
-        changed = False
-        for suffix in _ADMIN_SUFFIXES:
-            if len(value) > len(suffix) and value.endswith(suffix):
-                value = value[: -len(suffix)]
-                changed = True
+    for suffix in _ADMIN_SUFFIXES:
+        if value.endswith(suffix) and len(value) - len(suffix) >= 2:
+            return value[:-len(suffix)]
     return value
 
 
@@ -60,14 +56,20 @@ _STATISTIC_TABLE: Tuple[Tuple[Tuple[str, ...], StatisticVocab], ...] = (
 )
 
 
+def _contains(value: str, synonym: str) -> bool:
+    if synonym.isascii():
+        return re.search(r"(?<![a-z0-9_])" + re.escape(synonym) + r"(?![a-z0-9_])", value, re.I) is not None
+    return synonym in value
+
+
 def normalize_statistic(text: str) -> StatisticVocab:
     """统计词规范形；未表达 → ``none``（歧义由 clarify 判定，不猜）。"""
     value = normalize_text(text)
     if not value:
         return "none"
-    for synonyms, statistic in _STATISTIC_TABLE:
+    for synonyms, statistic in sorted(_STATISTIC_TABLE, key=lambda item: -max(map(len, item[0]))):
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return statistic
     return "none"
 
@@ -97,9 +99,9 @@ def normalize_group_by(text: str) -> Tuple[DimensionVocab, str]:
     value = normalize_text(text)
     if not value:
         return ("none", "")
-    for synonyms, dimension, canonical in _GROUP_BY_TABLE:
+    for synonyms, dimension, canonical in sorted(_GROUP_BY_TABLE, key=lambda item: -max(map(len, item[0]))):
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return (dimension, canonical)
     custom = _CUSTOM_GROUP_RE.search(value)
     if custom and custom.group(1).strip():
@@ -124,7 +126,7 @@ def normalize_normalization(text: str) -> NormalizationVocab:
         return "none"
     for synonyms, normalization in _NORMALIZATION_TABLE:
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return normalization
     return "none"
 
@@ -152,7 +154,7 @@ def normalize_time(text: str) -> Tuple[str, str, TimeGranularity, bool]:
         return ("", "", "none", False)
     for synonyms, granularity, series in _TIME_TABLE:
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return ("", "", granularity, series)
     year_values = [m.group(0) for m in _YEAR_RE.finditer(value)]
     if len(year_values) >= 2:
@@ -160,6 +162,34 @@ def normalize_time(text: str) -> Tuple[str, str, TimeGranularity, bool]:
     if len(year_values) == 1:
         return (year_values[0], year_values[0], "year", False)
     return ("", "", "none", False)
+
+
+# ── 时态控制（GOAL 03 M3）：对照/播放/保留图层 ──────────────────────────
+
+_COMPARE_MARKERS = ("对比", "比较", "对照", "相比", " versus ", " vs ", " vs.")
+_PLAYBACK_MARKERS = ("播放", "回放", "动画", "逐帧", "animate", "playback")
+_HOLD_MARKERS = ("保留图层", "保持图层", "图层不变", "只换年份", "只改年份", "只变年份", "只换时间")
+
+
+def normalize_temporal_dynamics(text: str) -> Tuple[str, str, bool, bool]:
+    """时态控制显式表达 → (compare_start, compare_end, playback, hold_layers)。
+
+    只收**显式**表达（对照动词+两个年份才构成对照期对；播放/保留词面）。
+    未表达 → 全空/False（digest 稳定）。
+    """
+    value = normalize_text(text)
+    if not value:
+        return ("", "", False, False)
+
+    compare_start = compare_end = ""
+    years = [m.group(0) for m in _YEAR_RE.finditer(value)]
+    has_compare = any(m in value for m in _COMPARE_MARKERS)
+    if has_compare and len(years) >= 2:
+        compare_start, compare_end = years[0], years[-1]
+
+    playback = any(m in value for m in _PLAYBACK_MARKERS)
+    hold = any(m in value for m in _HOLD_MARKERS)
+    return (compare_start, compare_end, playback, hold)
 
 
 # ── 调色板 / 表达 ────────────────────────────────────────────────────
@@ -183,7 +213,7 @@ def normalize_palette(text: str) -> str:
         return ""
     for synonyms, palette in _PALETTE_TABLE:
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return palette
     return value[:48]
 
@@ -202,9 +232,17 @@ def normalize_geometry_kind(text: str) -> str:
     value = normalize_text(text)
     if not value:
         return ""
+    # 精确注册 id 预检（carto-design 评审 R2 F2）：整串恰为 model_library
+    # canonical id 时不走同义词子串塌缩——子串匹配会把含同义词的长 id
+    # 改道（"normalized_choropleth" 含 "choropleth" → 塌缩为原始计数
+    # 模型的别名），率语义模型从此无法被 pin。NL 输入永不恰好等于
+    # canonical id，该分支只影响程序化写入（design-select 工具）。
+    from app.lib.cartography.model_library import get_map_model_registry
+    if get_map_model_registry().get(value) is not None:
+        return value[:48]
     for synonyms, kind in _GEOMETRY_KIND_TABLE:
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return kind
     return value[:48]
 

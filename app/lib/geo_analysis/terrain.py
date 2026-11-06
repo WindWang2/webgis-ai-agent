@@ -32,7 +32,16 @@ from __future__ import annotations
 
 import heapq
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
+
+from numpy.typing import NDArray
+from typing_extensions import Unpack
+
+from app.contracts.geojson import GeoJSONFeature, GeoJSONFeatureCollection
+from app.lib.geo_analysis.terrain_types import (
+    D8RoutingFacts, FlowTopologyReport, GeomorphonResult, HorizonResult, LandformResult,
+    SkyViewResult, TerrainFacts, TerrainMetadata, ViewshedResult, WatershedMetrics,
+)
 
 import numpy as np
 
@@ -79,7 +88,7 @@ MIN_WINDOW = 3
 MAX_WINDOW = 101
 
 # Foundation V2（A5）：网格规模护栏（先拒绝、后分配）与射线半径上限。
-MAX_HYDRO_CELLS = 50_000_000
+MAX_HYDRO_CELLS = 2_000_000
 MAX_OPENNESS_RADIUS_CELLS = 100
 MAX_GEOMORPHON_RADIUS_CELLS = 128
 
@@ -146,14 +155,15 @@ def _prepare(dem: np.ndarray, nodata: Optional[float]) -> Tuple[np.ndarray, np.n
     return z, valid
 
 
-def _meta_base(algorithm: str, valid: np.ndarray, **facts: Any) -> Dict[str, Any]:
-    meta: Dict[str, Any] = {
+def _meta_base(algorithm: str, valid: np.ndarray, **facts: Unpack[TerrainFacts]) -> TerrainMetadata:
+    meta: TerrainMetadata = {
         "algorithm": algorithm,
         "edge_policy": EDGE_POLICY,
         "cells_total": int(valid.size),
         "cells_valid": int(valid.sum()),
     }
-    meta.update({k: v for k, v in facts.items() if v is not None})
+    # Filtering absent facts preserves the supplied keys and field types.
+    meta.update(cast(TerrainFacts, {k: v for k, v in facts.items() if v is not None}))
     return meta
 
 
@@ -189,7 +199,7 @@ def _box_sums(
 
 def topographic_position_index(
     dem: np.ndarray, window: int = 3, nodata: Optional[float] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """TPI（Weiss 2001）：z − 邻域窗口均值。
 
     窗口均值**包含中心像元**（与 SAGA 局部均值同口径；meta 披露）。
@@ -213,7 +223,7 @@ def topographic_position_index(
 
 def roughness(
     dem: np.ndarray, window: int = 3, nodata: Optional[float] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """粗糙度：邻域窗口内高程标准差（总体 std，ddof=0）。
 
     注：Wilson et al. (2007) 的 roughness 原口径是 max−min；本实现
@@ -247,7 +257,7 @@ def roughness(
 
 def terrain_ruggedness_index(
     dem: np.ndarray, nodata: Optional[float] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """TRI（Riley et al. 1999 sqrt-of-sum 口径；Wilson et al. 2007 的口径
 
     是均方差 —— 本实现取 Riley 形式）：
@@ -279,7 +289,7 @@ def surface_curvature(
     dem: np.ndarray, cell_size: float,
     cell_size_x: Optional[float] = None,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+) -> Tuple[Dict[str, np.ndarray], TerrainMetadata]:
     """平面/剖面曲率（Zevenbergen & Thorne 1987 二阶导数族）。
 
     约定（精确文档，测试按此断言）：
@@ -418,7 +428,7 @@ def viewshed(
     target_height: float = 0.0,
     max_distance: float = 5000.0,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[ViewshedResult, TerrainMetadata]:
     """布尔视域：扇区化视线角扫描（R3 型判据的向量化实现）。
 
     判据（R3 型近似）：观察点 O（高程 = 观察点地形 + observer_height），
@@ -542,7 +552,7 @@ def viewshed(
 
     n_valid = int(valid.sum())
     visible_fraction = float(visible.sum()) / n_valid if n_valid else 0.0
-    result = {
+    result: ViewshedResult = {
         "visible": visible,
         "visible_fraction": round(visible_fraction, 6),
         "visible_area_m2": float(visible.sum()) * cx * cy,
@@ -587,7 +597,7 @@ def d8_flow(
     *,
     flat_routing: str = "none",
     flat_epsilon: float = DEFAULT_FLAT_EPSILON,
-) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+) -> Tuple[Dict[str, np.ndarray], TerrainMetadata]:
     """D8 单向流（ESRI 2 的幂编码；O'Callaghan & Mark / Tarboton 1997 语境）。
 
     语义（精确）：
@@ -652,7 +662,7 @@ def d8_flow(
     receiver = np.full(h * w, -1, dtype=np.int64)
     has_recv = valid & (best_slope > 0)
     rows_f, cols_f = np.nonzero(has_recv)
-    for idx, (_, code, dr, dc) in enumerate(_D8_NEIGHBORS):
+    for _idx, (_, code, dr, dc) in enumerate(_D8_NEIGHBORS):
         sel = direction[rows_f, cols_f] == code
         if sel.any():
             rr = rows_f[sel] + dr
@@ -672,7 +682,7 @@ def d8_flow(
             f"surface (Barnes et al. 2014, epsilon={float(flat_epsilon):g} z-units "
             "per cell, terrain.sink_fill machinery); flats/pits drain toward their "
             "spill outlet instead of staying sinks (code 0)")
-        routing_meta: Dict[str, Any] = {
+        routing_meta: D8RoutingFacts = {
             "flat_routing": "epsilon",
             "flat_epsilon": float(flat_epsilon),
             "filled_cell_count": int(fill_meta["filled_cell_count"]),
@@ -701,7 +711,7 @@ def d8_flow(
 
 def flow_accumulation(
     d8: Dict[str, np.ndarray],
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """D8 汇流累积（上游贡献像元数，**不含自身**；起点 0）。
 
     拓扑序：按高程降序处理（接收者必严格更低 → 处理某像元时其全部
@@ -725,11 +735,11 @@ def flow_accumulation(
     contrib = cells[order]
     recv_flat = receiver[contrib]
     acc_flat = acc.ravel()
-    for src, dst in cancellable(zip(contrib.tolist(), recv_flat.tolist()),
+    for src, dst in cancellable(zip(contrib.tolist(), recv_flat.tolist(), strict=True),
                                 every=4096):
         if dst >= 0:
             acc_flat[dst] += acc_flat[src] + 1
-    meta = {
+    meta: TerrainMetadata = {
         "algorithm": "terrain.flow_accumulation",
         "method": "topological accumulation in descending elevation order (D8 single-flow)",
         "counting_convention": "number of upstream contributing cells, self excluded (outlet of a full N-cell basin = N-1)",
@@ -741,7 +751,7 @@ def flow_accumulation(
 def upstream_watershed(
     d8: Dict[str, np.ndarray],
     pour_cells: Sequence[Tuple[int, int]],
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """逆 D8 BFS：汇入任一 pour point 的全部上游像元掩膜（含 pour point 自身）。"""
     receiver = d8["receiver"]
     valid = d8["valid"]
@@ -782,7 +792,7 @@ def upstream_watershed(
         frontier = children
 
     mask = mask_flat.reshape(h, w)
-    meta = {
+    meta: TerrainMetadata = {
         "algorithm": "terrain.watershed",
         "method": "reverse-D8 BFS over upstream adjacency (all cells whose flow path reaches a pour point)",
         "pour_cells": [(int(r), int(c)) for r, c in pour_cells],
@@ -824,7 +834,7 @@ def extract_contours(
     n_levels: int = 10,
     interval: Optional[float] = None,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[GeoJSONFeatureCollection, TerrainMetadata]:
     """等值线提取 → GeoJSON-like FeatureCollection（LineString + "level"）。
 
     - matplotlib Agg（无显示环境）：marching squares；
@@ -855,9 +865,9 @@ def extract_contours(
     identity = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
     tf = tuple(float(v) for v in transform[:6]) if transform is not None else identity
 
-    features: List[Dict[str, Any]] = []
+    features: List[GeoJSONFeature] = []
     levels_drawn: List[float] = []
-    for level, segments in zip(cs.levels, cs.allsegs):
+    for level, segments in zip(cs.levels, cs.allsegs, strict=True):
         emitted = 0
         for seg in segments:
             if len(seg) < 2:
@@ -867,7 +877,7 @@ def extract_contours(
             xs, ys = _cell_to_world(tf, cols, rows)
             coords = [
                 [round(float(x), 6), round(float(y), 6)]
-                for x, y in zip(xs, ys)
+                for x, y in zip(xs, ys, strict=True)
             ]
             if len(coords) < 2:
                 continue
@@ -880,8 +890,8 @@ def extract_contours(
         if emitted:
             levels_drawn.append(float(level))
 
-    fc: Dict[str, Any] = {"type": "FeatureCollection", "features": features}
-    meta = {
+    fc: GeoJSONFeatureCollection = {"type": "FeatureCollection", "features": features}
+    meta: TerrainMetadata = {
         "algorithm": "terrain.contours",
         "method": "matplotlib Agg marching-squares contours on the cell grid; vertices mapped to world coords via the raster transform",
         "levels_policy": policy,
@@ -905,7 +915,7 @@ def watershed(
     transform: Optional[Sequence[float]] = None,
     cell_size_x: Optional[float] = None,
     nodata: Optional[float] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """DEM + pour point(s) → 上游贡献掩膜（d8_flow + upstream BFS 组合）。
 
     pour_points 为 (row, col) 数组坐标；或（给 transform 时）(x, y) 世界
@@ -920,8 +930,8 @@ def watershed(
         cells.append((int(round(row)), int(round(col))))
     d8, d8_meta = d8_flow(dem, cell_size, cell_size_x=cell_size_x, nodata=nodata)
     mask, w_meta = upstream_watershed(d8, cells)
-    meta = dict(w_meta)
-    meta["d8"] = {k: d8_meta[k] for k in ("encoding", "tie_break", "flats", "boundary")}
+    meta = w_meta.copy()
+    meta["d8"] = {"encoding": d8_meta["encoding"], "tie_break": d8_meta["tie_break"], "flats": d8_meta["flats"], "boundary": d8_meta["boundary"]}
     meta["algorithm"] = "terrain.watershed"
     return mask, meta
 
@@ -985,7 +995,7 @@ def fill_depressions(
     *,
     epsilon: float = 0.0,
     nodata: Optional[float] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """Priority-Flood 填洼（Barnes, Lehman & Mulla 2014；O(N log N) heapq）。
 
     种子 = 网格边界上的有效像元 + 与 nodata/非有限像元相邻的有效像元
@@ -1103,7 +1113,7 @@ def dinf_flow_direction(
     dem: np.ndarray, cell_size: float,
     cell_size_x: Optional[float] = None,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+) -> Tuple[Dict[str, np.ndarray], TerrainMetadata]:
     """D∞ 多向流方向（Tarboton 1997，8 三角面最陡下降）。
 
     每像元在 8 个三角面（相邻两邻域与中心构成的平面）上解平面梯度：
@@ -1242,7 +1252,7 @@ def dinf_flow_direction(
 
 def dinf_flow_accumulation(
     dinf: Dict[str, np.ndarray],
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """D∞ 汇流累积（比例分流；拓扑序 = 高程降序）。
 
     每像元向下游两邻域按角度比例分配 ``(acc + 1)``（上游贡献像元数，
@@ -1274,7 +1284,7 @@ def dinf_flow_accumulation(
         if rb[i] >= 0 and fb[i] > 0.0:
             acc_flat[rb[i]] += unit * fb[i]
 
-    meta = {
+    meta: TerrainMetadata = {
         "algorithm": "terrain.dinf_accumulation",
         "method": "topological accumulation in descending elevation order (D-infinity fractional splitting)",
         "counting_convention": (
@@ -1293,7 +1303,7 @@ def flow_length(
     mode: str = "downstream",
     cell_size: float = 1.0,
     cell_size_x: Optional[float] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """流程长度（米；基于 ``d8_flow`` 的接收者索引，各向异性像元感知）。
 
     - ``mode="downstream"``：每像元沿流路到出口的累计距离
@@ -1364,7 +1374,7 @@ def flow_length(
 
 def extract_streams(
     flow_accum: np.ndarray, threshold: float,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """河网像元掩膜：``flow_accum >= threshold``（确定性阈值口径）。
 
     threshold 单位 = 上游贡献像元数（与 flow_accumulation 同口径）。
@@ -1379,7 +1389,7 @@ def extract_streams(
             f"threshold must be >= 1 upstream cell (got {threshold!r})")
     finite = np.isfinite(acc)
     mask = finite & (acc >= float(threshold))
-    meta = {
+    meta: TerrainMetadata = {
         "algorithm": "terrain.streams",
         "method": "stream cells = flow accumulation >= threshold (D8/D∞ accumulation input)",
         "threshold": float(threshold),
@@ -1392,7 +1402,7 @@ def extract_streams(
 
 def stream_order(
     d8: Dict[str, np.ndarray], flow_accum: np.ndarray, threshold: float,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """Strahler 河流分级（Strahler 1957；拓扑序 = 高程降序）。
 
     河网像元 = ``flow_accum >= threshold``。处理序（降序高程）保证某像元
@@ -1446,7 +1456,7 @@ def stream_order(
         processing_order="descending elevation (receivers are strictly lower; deterministic (row, col) tie-break)",
         stream_cells=int(streams.sum()),
         max_order=int(codes.max()) if codes.size else 0,
-        order_distribution={str(int(o)): int(n) for o, n in zip(unique, counts)},
+        order_distribution={str(int(o)): int(n) for o, n in zip(unique, counts, strict=True)},
     )
     return order, meta
 
@@ -1459,7 +1469,7 @@ def breach_depressions(
     *,
     nodata: Optional[float] = None,
     max_breach_depth: Optional[float] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """Depression breaching（最小代价切沟）：切穿洼地出口而非整体填平。
 
     算法（确定性）：
@@ -1606,7 +1616,7 @@ def hand(
     stream_threshold: float = 1000.0,
     nodata: Optional[float] = None,
     d8: Optional[Dict[str, np.ndarray]] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """HAND（Height Above Nearest Drainage，最近排水高程）。
 
     定义：像元高程减去其 D8 下游链上**第一个河网像元**的高程。
@@ -1634,7 +1644,7 @@ def hand(
     vflat = valid.ravel()
     # 升序高程处理（接收者严格更低 → **先**结算，望远镜求和成立）
     _n = 0
-    for parent in _topology_order(z, valid, descending=False).tolist():
+    for parent in _topology_order(np.asarray(d8.get("dem", z)), valid, descending=False).tolist():
         # science-v4 review R1：O(N) 主循环取消检查点（64K 粒度）
         _n += 1
         if _n % 65536 == 0:
@@ -1670,7 +1680,7 @@ def hand(
 
 def shreve_magnitude(
     d8: Dict[str, np.ndarray], flow_accum: np.ndarray, threshold: float,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """Shreve 河流量级（Shreve 1966）：量级 = 上游量级之和（源头 = 1）。
 
     与 Strahler（并列最高级才升级）互补：Shreve 量级线性计上游链接数，
@@ -1715,7 +1725,7 @@ def shreve_magnitude(
         stream_cells=int(streams.sum()),
         max_magnitude=int(codes.max()) if codes.size else 0,
         magnitude_distribution_top={
-            str(int(o)): int(n) for o, n in sorted(zip(unique, counts))[-8:]
+            str(int(o)): int(n) for o, n in sorted(zip(unique, counts, strict=True))[-8:]
         },
     )
     return magnitude, meta
@@ -1766,7 +1776,7 @@ def pfafstetter_codes(
     *,
     transform: Optional[Sequence[float]] = None,
     max_tributaries: int = 4,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """单级 Pfafstetter 编码（干流 + 4 大支流，奇偶交错约定）。
 
     从出口沿干流上溯（每步取上游**汇流最大**的河网像元 = 干流规则）；
@@ -1795,9 +1805,9 @@ def pfafstetter_codes(
         ocol, orow = _world_to_cell(transform, float(outlet[0]), float(outlet[1]))
         row, col = int(round(float(orow))), int(round(float(ocol)))
     else:
-        row, col = int(outlet[0]), int(outlet[1])
+        row, col = int(round(outlet[0])), int(round(outlet[1]))
     out_flat = row * w + col
-    if not (0 <= out_flat < h * w):
+    if not (0 <= row < h and 0 <= col < w):
         raise DegenerateData(
             f"pfafstetter outlet ({row}, {col}) outside grid {(h, w)}",
             correction_hint="pour point 必须落在栅格范围内")
@@ -1860,7 +1870,7 @@ def pfafstetter_codes(
         tributary_codes={str(2 * i + 1): int(acc_flat[c]) for i, (_a, _p, c) in enumerate(chosen)},
         max_tributaries=int(max_tributaries),
         hierarchy_note="single-level (multi-level recursive sub-basin coding not implemented)",
-        code_distribution={str(int(c0)): int(n) for c0, n in zip(unique, counts)},
+        code_distribution={str(int(c0)): int(n) for c0, n in zip(unique, counts, strict=True)},
     )
     return codes, meta
 
@@ -1878,7 +1888,7 @@ def pfafstetter_codes_multilevel(
     transform: Optional[Sequence[float]] = None,
     max_tributaries: int = 4,
     levels: int = 2,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """多级 Pfafstetter 编码（science-v5 W9；单级的递归推广）。
 
     - **level 1**：与 :func:`pfafstetter_codes` 同一走法 helper（levels=1
@@ -1910,9 +1920,9 @@ def pfafstetter_codes_multilevel(
             transform, float(outlet[0]), float(outlet[1]))
         row, col = int(round(float(orow))), int(round(float(ocol)))
     else:
-        row, col = int(outlet[0]), int(outlet[1])
+        row, col = int(round(outlet[0])), int(round(outlet[1]))
     out_flat = row * w + col
-    if not (0 <= out_flat < h * w):
+    if not (0 <= row < h and 0 <= col < w):
         raise DegenerateData(
             f"pfafstetter outlet ({row}, {col}) outside grid {(h, w)}",
             correction_hint="pour point 必须落在栅格范围内")
@@ -2029,7 +2039,7 @@ def pfafstetter_codes_multilevel(
             f"{_PF_MIN_SEGMENT_CELLS} stream cells not subdivided (counted)"),
         code_distribution={
             str(int(c0)): int(n) for c0, n in
-            sorted(zip(unique, counts), key=lambda kv: -kv[1])[:16]},
+            sorted(zip(unique, counts, strict=True), key=lambda kv: -kv[1])[:16]},
         distinct_codes=int(unique.size),
         level_segments=level_meta,
     )
@@ -2038,7 +2048,7 @@ def pfafstetter_codes_multilevel(
 
 def validate_flow_topology(
     d8: Dict[str, np.ndarray], flow_accum: np.ndarray,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[FlowTopologyReport, TerrainMetadata]:
     """流网拓扑校验（science-v5 W9）—— 结构事实报告，不 raise。
 
     检查（全部有界步数，无无界递归/无无界重试）：
@@ -2136,7 +2146,7 @@ def validate_flow_topology(
         idx = np.flatnonzero(mask)[:k]
         return [[int(i) // w, int(i) % w] for i in idx]
 
-    report = {
+    report: FlowTopologyReport = {
         "n_cells": int(n),
         "n_valid": int(valid_flat.sum()),
         "outlets": int(out_mask.sum()),
@@ -2175,7 +2185,7 @@ def watershed_morphometry(
     transform: Optional[Sequence[float]] = None,
     stream_threshold: Optional[float] = None,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[WatershedMetrics, TerrainMetadata]:
     """流域形态量测（Strahler 1957 水文地貌学口径；复用 upstream_watershed）。
 
     - 圈定：pour point 逆 D8 BFS 上流域（(row, col) 数组坐标，或给
@@ -2228,7 +2238,7 @@ def watershed_morphometry(
     if basin_length <= 0:
         basin_length = max(math.hypot(cx, cy), 1e-12)  # 单像元流域退化保护
 
-    metrics: Dict[str, Any] = {
+    metrics: WatershedMetrics = {
         "pour_point_row_col": (int(round(row)), int(round(col))),
         "cell_count": n_basin,
         "area_m2": round(area_m2, 6),
@@ -2267,7 +2277,7 @@ def watershed_morphometry(
     else:
         metrics["drainage_density_km_per_km2"] = None
 
-    meta = {
+    meta: TerrainMetadata = {
         "algorithm": "terrain.morphometry",
         "method": (
             "watershed morphometry (Strahler 1957): area/perimeter from the "
@@ -2328,7 +2338,7 @@ def topographic_wetness_index(
     cell_size: float, cell_size_x: Optional[float] = None,
     *,
     slope_units: str = "degrees",
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """地形湿润指数 TWI = ln(SCA / tanβ)（Beven & Kirkby 1979）。
 
     - SCA = (accum + 1)·cell_area / contour_width，等流宽度 = cell_size
@@ -2362,7 +2372,7 @@ def stream_power_index(
     cell_size: float, cell_size_x: Optional[float] = None,
     *,
     slope_units: str = "degrees",
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """水流功率指数 SPI = SCA·tanβ（与 TWI 同 SCA 口径；Beven-Kirkby 派生）。
 
     SCA = (accum + 1)·cell_area / contour_width（等流宽度 = cell_size）；
@@ -2401,7 +2411,7 @@ def ls_factor(
     method: str = "mccool",
     slope_units: str = "percent",
     flow_accum: Optional[np.ndarray] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """USLE LS 因子（Wischmeier & Smith 1978；Desmet & Govers 1996）。
 
     - ``method="mccool"``（默认）：
@@ -2475,7 +2485,7 @@ def terrain_openness(
     radius_cells: int = 8,
     azimuth_count: int = 16,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+) -> Tuple[Dict[str, np.ndarray], TerrainMetadata]:
     """正/负地形开放度（Yokoyama, Shirasawa & Pike 2002，度）。
 
     沿 ``azimuth_count`` 个方位（自北顺时针等角距），对 d = 1..R 像元
@@ -2688,7 +2698,7 @@ def horizon_angle(
     azimuths: Sequence[float] = (0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0),
     max_search_radius: int = 100,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[HorizonResult, TerrainMetadata]:
     """地平线角（度；Steyn 1980 的输入量，openness 家族射线行走）。
 
     - 每方位（罗盘度，自北顺时针）沿 1 像元步长射线取
@@ -2716,14 +2726,14 @@ def horizon_angle(
 
     # P0 内存重构（science-v3 审计）：逐方位流式构造输出 dict，不再物化
     # (n_az,h,w) 中间栈 —— 峰值 ≈ 输出体量 + 单方位瞬态。
-    horizon: Dict[str, Any] = {}
+    horizon: Dict[str, NDArray[np.float64]] = {}
     max_arr: Optional[np.ndarray] = None
     for az_deg in az_list:
         h_row = _horizon_single_azimuth(z, valid, cx, cy, az_deg, radius)
         horizon[f"{float(az_deg):g}"] = np.where(valid, h_row, np.nan)
         max_arr = h_row if max_arr is None else np.fmax(max_arr, h_row)
     assert max_arr is not None  # az_list ≥ 1（_validate_azimuth_list 保证）
-    result = {
+    result: HorizonResult = {
         "azimuths": [round(float(a), 6) for a in az_list],
         "horizon": horizon,
         "max": np.where(valid, max_arr, np.nan),
@@ -2760,7 +2770,7 @@ def sky_view_factor(
     n_azimuths: int = 16,
     max_search_radius: int = 100,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[SkyViewResult, TerrainMetadata]:
     """天空可视因子 SVF（Steyn 1980）：SVF = (1/N) Σ_i cos²(ψ_i)。
 
     - ψ_i = 与 ``horizon_angle`` 共用射线行走（``_horizon_rasters``）得到的
@@ -2793,7 +2803,7 @@ def sky_view_factor(
     # P0 内存重构（science-v3 审计）：逐方位流式累加 cos² 并构造输出
     # dict，不再物化 (n_az,h,w) 的 horiz/cos2 中间栈。
     cos2_sum = np.zeros(z.shape, dtype=np.float64)
-    horizon: Dict[str, Any] = {}
+    horizon: Dict[str, NDArray[np.float64]] = {}
     for az_deg in az_list:
         h_row = _horizon_single_azimuth(z, valid, cx, cy, az_deg, radius)
         horizon[f"{float(az_deg):g}"] = np.where(valid, h_row, np.nan)
@@ -2801,7 +2811,7 @@ def sky_view_factor(
             cos2_sum += np.cos(np.radians(h_row)) ** 2
     svf_raw = cos2_sum / n_az
     svf = np.where(valid, svf_raw, np.nan)
-    result = {
+    result: SkyViewResult = {
         "svf": svf,
         "azimuths": [round(float(a), 6) for a in az_list],
         "horizon": horizon,
@@ -2870,7 +2880,7 @@ def geomorphons(
     flatten: float = 0.0,
     far: float = 0.0,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[GeomorphonResult, TerrainMetadata]:
     """Geomorphons 地貌形态分类（Jasiewicz & Stepinski 2013）。
 
     每像元沿 8 方位（自北起 45° 步进）做视线扫描至 ``lookup_radius_cells``：
@@ -2972,8 +2982,8 @@ def geomorphons(
     valid_k = klass[klass > 0]
     unique, counts = np.unique(valid_k, return_counts=True)
     distribution = {GEOMORPHON_CLASSES[int(o) - 1]: int(n)
-                    for o, n in zip(unique, counts)}
-    result = {
+                    for o, n in zip(unique, counts, strict=True)}
+    result: GeomorphonResult = {
         "classes": klass,           # 1..10（顺序见 GEOMORPHON_CLASSES）；0 = 无效
         "class_names": GEOMORPHON_CLASSES,
         "ternary_legs": codes,
@@ -3026,7 +3036,7 @@ def landform_classification(
     tpi_window_large: int = 25,
     elevation_tolerance: float = 0.1,
     nodata: Optional[float] = None,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[LandformResult, TerrainMetadata]:
     """双尺度 TPI 地类分级（Weiss 2001 决策表；10 类）。
 
     s = TPI(window_small)/SD_s、l = TPI(window_large)/SD_l（标准化 TPI；
@@ -3098,8 +3108,8 @@ def landform_classification(
     valid_k = klass[klass > 0]
     unique, counts = np.unique(valid_k, return_counts=True)
     distribution = {LANDFORM_CLASSES[int(o) - 1]: int(n)
-                    for o, n in zip(unique, counts)}
-    result = {
+                    for o, n in zip(unique, counts, strict=True)}
+    result: LandformResult = {
         "classes": klass,          # 1..10（顺序见 LANDFORM_CLASSES）；0 = 无效
         "class_names": LANDFORM_CLASSES,
         "tpi_standardized_small": s_arr,
@@ -3140,7 +3150,7 @@ def hillshade_multiazimuth(
     azimuths: Sequence[float] = (315.0, 135.0),
     combine: str = "mean",
     nodata: Optional[float] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """多方位山体阴影（0-255；罗盘光照模型，#379 修复语义）。
 
     单方位公式与 ``app/services/rs/band_math.compute_hillshade`` 逐位一致
@@ -3162,6 +3172,7 @@ def hillshade_multiazimuth(
         raise ValueError(f"combine must be 'mean' or 'min' (got {combine!r})")
 
     z, valid = _prepare(dem, nodata)
+    z = np.where(valid, z, np.nan)
     _guard_cells(z.shape, "terrain.hillshade_multi")
 
     # 与 band_math.compute_hillshade 逐位相同的单方位实现（真相源注释）。
@@ -3182,7 +3193,7 @@ def hillshade_multiazimuth(
         shades.append(np.clip(hs * 255.0, 0.0, 255.0))
 
     stack = np.stack(shades, axis=0)
-    shade = np.mean(stack, axis=0) if combine == "mean" else np.min(stack, axis=0)
+    shade = np.where(valid, np.mean(stack, axis=0) if combine == "mean" else np.min(stack, axis=0), np.nan)
 
     meta = _meta_base(
         "terrain.hillshade_multi", valid,
@@ -3209,7 +3220,7 @@ def hypsometry(
     *,
     n_levels: int = 100,
     nodata: Optional[float] = None,
-) -> Tuple[Tuple[np.ndarray, np.ndarray], Dict[str, Any]]:
+) -> Tuple[Tuple[np.ndarray, np.ndarray], TerrainMetadata]:
     """高程面积曲线（hypsometric curve）与高程积分（Strahler 1952）。
 
     曲线 = (归一化高程 e, 高于 e 的面积占比 a(e))，n_levels 级确定性直方；
@@ -3265,7 +3276,7 @@ def solar_radiation(
     day_of_year: int = 172,
     transmissivity: float = 0.75,
     nodata: Optional[float] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """晴空日总辐照量近似（FAO-56 大气顶辐射 × 地形入射修正）。
 
     - 大气顶日辐射 Ra（FAO-56 eq. 21：dr / δ / ωs 解析式，Gsc=0.0820）；
@@ -3276,6 +3287,7 @@ def solar_radiation(
     返回 ``(insolation (MJ m⁻² day⁻¹), meta)``。
     """
     z, valid = _prepare(dem, nodata)
+    z = np.where(valid, z, np.nan)
     h, w = z.shape
     _guard_cells((h, w), "terrain.solar_radiation")
     if not (-90.0 <= float(latitude_deg) <= 90.0):
@@ -3307,7 +3319,7 @@ def solar_radiation(
     aspect = np.arctan2(-gx, gy)
     # 太阳方位近似：正午太阳方位 = 赤纬决定（北半球夏偏南）；取
     # az_sun = π + delta（弧度，0=北顺时针）作为日积分代表方位（近似披露）。
-    az_sun = math.pi + delta
+    az_sun = math.pi if phi >= delta else 0.0
     # 方位项 = cos(az_sun − aspect)（docstring 公式；两角同为罗盘约定）。
     incidence = np.cos(slope) + np.sin(slope) * np.cos(az_sun - aspect)
     factor = np.clip(incidence, 0.15, None)
@@ -3348,7 +3360,7 @@ def fill_depressions_chunked(
     n_bands: int = PF_CHUNK_BANDS,
     max_sweeps: int = 8,
     cancellable_check: bool = True,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, TerrainMetadata]:
     """列带（band）分块 Priority-Flood + 交替方向迭代到收敛。
 
     语义：每带用与 :func:`fill_depressions` 完全同一 heapq 泛洪机器

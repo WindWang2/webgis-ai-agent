@@ -166,7 +166,7 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
     ComponentTemplate(
         id="graticule/light", component_type="graticule", category="navigation.graticule",
         name="Light Graticule", variant="light",
-        default_options={"style": "light", "opacity": "0.3"}, priority=10,
+        default_options={"style": "light", "opacity": 0.3}, priority=10,
     ),
     ComponentTemplate(
         id="graticule/geographic", component_type="graticule", category="navigation.graticule",
@@ -365,6 +365,17 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
     ComponentTemplate(
         id="decision-panel/compact", component_type="decision_panel", category="disclosure.decision_panel",
         name="Compact Decision Panel", variant="compact",
+        default_style={"fontSize": "11px"}, priority=20,
+    ),
+    # ── carto-design（/goal 04）：设计候选面板（只读披露，接受动作经
+    # webgis_map_design_select 统一 action）──────────────────────────
+    ComponentTemplate(
+        id="design-candidates/default", component_type="design_candidates", category="disclosure.design_candidates",
+        name="Default Design Candidates", variant="default", priority=10,
+    ),
+    ComponentTemplate(
+        id="design-candidates/compact", component_type="design_candidates", category="disclosure.design_candidates",
+        name="Compact Design Candidates", variant="compact",
         default_style={"fontSize": "11px"}, priority=20,
     ),
     # ── V4：原前瞻变体转正（bivariate/uncertainty/hierarchy 渲染链落地）──
@@ -668,8 +679,8 @@ class ComponentTemplateRegistry:
                     issues.append(
                         f"template {tpl.id}: default_options.variant '{opt_variant}' "
                         f"!= template variant '{tpl.variant}'")
-        except Exception:
-            pass
+        except Exception as exc:
+            issues.append(f"template validation error: {type(exc).__name__}")
         return issues
 
     @property

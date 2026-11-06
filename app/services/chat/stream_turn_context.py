@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Iterator, Optional
 
+from app.lib.cancellation import CancellationToken
 from app.services.chat.sse_contracts import TurnEventEmitter
 
 if TYPE_CHECKING:
@@ -113,6 +114,24 @@ class StreamTurnContext:
             logger.warning(f"[chat_execution_engine] plan_finalized 构造失败: {e}")
             return None
 
+    def cancelled_events(
+        self, settle: Callable[[], None], *, include_done: bool = False,
+    ) -> Iterator[str]:
+        """Yield the shared cancellation tail without changing its pause points.
+
+        Settlement follows the optional plan event; turn_finished is only set
+        once the caller resumes past the final terminal event. Tool-wave and
+        token-stream callers retain their existing done-event difference.
+        """
+        finalized = self.plan_finalized_event()
+        if finalized:
+            yield finalized
+        settle()  # cooperative cancel ≠ success
+        yield self.emitter.task_cancelled(self.task.id)
+        if include_done:
+            yield self.emitter.done()
+        self.turn_finished = True
+
     def aborted_step_events(self) -> list:
         """F7/F8: 取消/断连路径上把未完成的 step 记 cancelled
         （绝不留 running），并生成对应的 step_cancelled SSE 事件。"""
@@ -185,6 +204,7 @@ class _AcquiredLock:
 async def _stream_with_token_keepalive(
     stream: AsyncGenerator[tuple[str, dict], None],
     timeout_s: float = _LLM_TOKEN_KEEPALIVE_S,
+    cancel_token: CancellationToken | None = None,
 ) -> AsyncGenerator[tuple[str, dict], None]:
     """Adapt an LLM provider event stream: when no item arrives within
     ``timeout_s`` seconds, a keep_alive tuple is yielded instead (the caller
@@ -192,41 +212,57 @@ async def _stream_with_token_keepalive(
     items are delivered in order, unchanged; provider exceptions are re-raised
     in the consumer. The pump task owns the provider generator, so a timeout
     never cancels the underlying HTTP read; the pump is cancelled in the
-    ``finally`` when the consumer exits early (disconnect).
+    ``finally`` when the consumer exits early (disconnect). An explicit task
+    cancellation interrupts the provider immediately, including before its
+    first token, and takes precedence over an already-queued late completion.
     """
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=64)
 
     async def _pump() -> None:
         try:
             async for item in stream:
-                queue.put_nowait(item)
+                await queue.put(item)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
-            queue.put_nowait(exc)
+            await queue.put(exc)
         else:
-            queue.put_nowait(_QUEUE_END)
+            await queue.put(_QUEUE_END)
 
+    if cancel_token is not None:
+        cancel_token.raise_if_cancelled()
     pump = asyncio.create_task(_pump())
+    cancel_watch = asyncio.create_task(cancel_token.wait()) if cancel_token is not None else None
+    next_item: asyncio.Task | None = None
     try:
         while True:
-            try:
-                item = await asyncio.wait_for(queue.get(), timeout_s)
-            except asyncio.TimeoutError:
+            next_item = asyncio.create_task(queue.get())
+            waiters = {next_item}
+            if cancel_watch is not None:
+                waiters.add(cancel_watch)
+            done, _ = await asyncio.wait(waiters, timeout=timeout_s, return_when=asyncio.FIRST_COMPLETED)
+            if cancel_token is not None:
+                # Cancellation wins if a provider token/completion and the
+                # cancellation signal become ready in the same loop turn.
+                cancel_token.raise_if_cancelled()
+            if next_item not in done:
+                next_item.cancel()
+                await asyncio.gather(next_item, return_exceptions=True)
                 if pump.done() and queue.empty():
                     return
                 yield _KEEPALIVE_EVENT
                 continue
+            item = next_item.result()
             if item is _QUEUE_END:
                 return
             if isinstance(item, BaseException):
                 raise item  # type: ignore[misc]  # noqa: B904
             yield item
     finally:
-        if not pump.done():
-            pump.cancel()
-        try:
-            await pump
-        except BaseException:  # noqa: BLE001 — the pump's outcome is already surfaced
-            # 泵的结局已在消费侧浮出（异常经队列重抛）；此处仅收割任务。
-            logger.debug("[stream_turn_context] keepalive pump teardown", exc_info=True)
+        pending = [task for task in (pump, next_item, cancel_watch) if task is not None]
+        for task in pending:
+            if not task.done():
+                task.cancel()
+        # Reap both the provider read and cancellation/queue waiters before
+        # the caller emits terminal cancellation or releases the session lock.
+        await asyncio.gather(*pending, return_exceptions=True)

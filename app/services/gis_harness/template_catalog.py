@@ -6,6 +6,7 @@ ProductTemplateRegistry。进程内 registry 直查，O(1)/有界扫描；DB 用
 仍由 list_templates 工具面按需合并（本目录不做每请求 DB 查询）。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 from typing import Any, Dict, List, Optional
 
@@ -93,7 +94,7 @@ class TemplateCatalog:
             try:
                 return TemplateCompatibility.model_validate(raw)
             except Exception:  # noqa: BLE001 - 显式键损坏时退到推导并让 validate 报告
-                pass
+                observe_optional_failure(__name__)
         return _infer_style_compatibility(entry)
 
     def find_style_candidates(

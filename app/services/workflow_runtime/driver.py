@@ -18,6 +18,15 @@
 """
 from __future__ import annotations
 
+from app.contracts.workflow import (
+    BindingRecord,
+    InstancePatch,
+    RunSummary,
+    WorkflowDAG,
+    WorkflowNode,
+)
+
+
 import asyncio
 import contextlib
 import logging
@@ -120,11 +129,11 @@ class Driver:
     # ── 主循环 ────────────────────────────────────────────────────────
 
     async def run(
-        self, instance_id: str, dag: Dict[str, Any], *,
+        self, instance_id: str, dag: WorkflowDAG, *,
         node_params: Dict[str, Dict[str, Any]],
         session_id: str, run_token: str,
         package_fingerprint: str = "", package_id: str = "",
-    ) -> Dict[str, Any]:
+    ) -> RunSummary:
         """驱动实例至终态或 deadline。返回 {status, states}。"""
         optional_map = {
             str(n.get("node_id", "")): bool(n.get("optional", False))
@@ -158,8 +167,8 @@ class Driver:
                 owner_scope=self.owner_scope, token=run_token)
 
     async def _plan_admission_gate(
-        self, instance_id: str, dag: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        self, instance_id: str, dag: WorkflowDAG,
+    ) -> RunSummary | None:
         """计划级资源 feasibility（ADR-0264 D3）：observe 披露 / enforce 拒绝。
 
         - limits 未登记（manifest scope=workflow 缺席）→ 零裁决零开销
@@ -206,7 +215,7 @@ class Driver:
             self.store.append_event, instance_id,
             kind=C.EventKind.PLAN_ADMISSION, node_id="",
             reason=f"PLAN_ADMISSION_{feasibility.mode.upper()}"[:96],
-            actor="driver", payload=feasibility.to_bounded_dict())
+            actor="driver", payload=dict(feasibility.to_bounded_dict()))
         if not feasibility.blocked:
             logger.info(
                 "[WorkflowRuntime] plan admission observe violations=%s "
@@ -233,11 +242,11 @@ class Driver:
                 "plan_admission": feasibility.to_bounded_dict()}
 
     async def _run_loop(
-        self, instance_id: str, dag: Dict[str, Any],
+        self, instance_id: str, dag: WorkflowDAG,
         node_params: Dict[str, Dict[str, Any]], session_id: str,
         run_token: str, optional_map: Dict[str, bool], deadline: float,
         cancel_token: Any,
-    ) -> Dict[str, Any]:
+    ) -> RunSummary:
         while time.monotonic() < deadline:
             try:
                 inst = await asyncio.to_thread(
@@ -329,6 +338,15 @@ class Driver:
                         reason="STALE_RECOMPUTE", event="recompute")
                     if r.ok:
                         states[nid] = C.NodeState.READY
+            failed_optional = {nid for nid, state in states.items()
+                               if optional_map.get(nid, False) and state in (C.NodeState.FAILED, C.NodeState.BLOCKED)}
+            for nid in M.downstream_closure(dag, failed_optional):
+                if nid in failed_optional or states.get(nid) not in (C.NodeState.PENDING, C.NodeState.READY, C.NodeState.BLOCKED, C.NodeState.STALE):
+                    continue
+                transition = await asyncio.to_thread(self.store.transition_node, instance_id, nid,
+                    C.NodeState.SKIPPED, reason="OPTIONAL_UPSTREAM_FAILED", event="skip")
+                if transition.ok:
+                    states[nid] = C.NodeState.SKIPPED
             ready = M.ready_set(dag, states)
             ready, gated = await self._split_retry_gates(instance_id, ready)
             if not ready:
@@ -430,7 +448,7 @@ class Driver:
         # #1397: never resurrect superseded/cancelled/other terminal rows
         if inst["status"] in C.INSTANCE_TERMINAL_STATUSES:
             return
-        fields: Dict[str, Any] = {"status": status}
+        fields: InstancePatch = {"status": status}
         if status in C.INSTANCE_TERMINAL_STATUSES:
             fields["terminal_at"] = _utcnow()
         if status == C.InstanceStatus.FAILED:
@@ -488,7 +506,7 @@ class Driver:
         return dispatchable, gated
 
     async def _run_node(
-        self, instance_id: str, dag: Dict[str, Any], node_id: str,
+        self, instance_id: str, dag: WorkflowDAG, node_id: str,
         states: Dict[str, str], node_params: Dict[str, Dict[str, Any]],
         session_id: str, run_token: str, cancel_token: Any,
     ) -> None:
@@ -594,7 +612,7 @@ class Driver:
                 return
 
     async def _run_node_claimed(
-        self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
+        self, instance_id: str, dag: WorkflowDAG, node: WorkflowNode,
         node_id: str, states: Dict[str, str],
         node_params: Dict[str, Dict[str, Any]], session_id: str,
         run_token: str, cancel_token: Any, input_refs: List[str],
@@ -1074,7 +1092,7 @@ class Driver:
     # ── 输入收集 / 绑定校验 ───────────────────────────────────────────
 
     async def _gather_inputs(
-        self, instance_id: str, dag: Dict[str, Any], node_id: str,
+        self, instance_id: str, dag: WorkflowDAG, node_id: str,
         session_id: str,
     ) -> Tuple[List[str], Dict[str, Any], Dict[str, Dict[str, str]]]:
         """上游 refs + 逐端口 descriptor + 内容身份（绑定门/复用指纹输入）。"""
@@ -1124,7 +1142,7 @@ class Driver:
     # ── 复用闭环 ──────────────────────────────────────────────────────
 
     def _reuse_fp(
-        self, dag: Dict[str, Any], node: Dict[str, Any], node_id: str,
+        self, dag: WorkflowDAG, node: WorkflowNode, node_id: str,
         port_idents: Dict[str, Dict[str, str]], package_fingerprint: str,
         effective_params: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, str]:
@@ -1151,7 +1169,7 @@ class Driver:
         return fp, env_fp
 
     async def _try_reuse(
-        self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
+        self, instance_id: str, dag: WorkflowDAG, node: WorkflowNode,
         node_id: str, port_idents: Dict[str, Dict[str, str]],
         session_id: str, run_token: str,
         effective_params: Optional[Dict[str, Any]] = None,
@@ -1163,7 +1181,7 @@ class Driver:
             effective_params=effective_params)
 
     async def _try_reuse_stale(
-        self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
+        self, instance_id: str, dag: WorkflowDAG, node: WorkflowNode,
         node_id: str, port_idents: Dict[str, Dict[str, str]],
         session_id: str,
         effective_params: Optional[Dict[str, Any]] = None,
@@ -1176,7 +1194,7 @@ class Driver:
             effective_params=effective_params)
 
     async def _reuse_resolve(
-        self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
+        self, instance_id: str, dag: WorkflowDAG, node: WorkflowNode,
         node_id: str, port_idents: Dict[str, Dict[str, str]],
         session_id: str, run_token: str, *, require_claim: bool,
         expected_from: str,
@@ -1257,7 +1275,7 @@ class Driver:
         return bool(resolved.ok)
 
     async def _record_reuse(
-        self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
+        self, instance_id: str, dag: WorkflowDAG, node: WorkflowNode,
         node_id: str, port_idents: Dict[str, Dict[str, str]],
         session_id: str, output_ref: str, output_fp: str,
         effective_params: Optional[Dict[str, Any]] = None,
@@ -1331,7 +1349,7 @@ class Driver:
             return None
 
     async def _execute_via_geocompute(
-        self, node: Dict[str, Any], input_refs: List[str],
+        self, node: WorkflowNode, input_refs: List[str],
         params: Dict[str, Any], session_id: str, cancel_token: Any,
         port_idents: Dict[str, Dict[str, str]],
     ) -> GeoComputeNodeOutcome:
@@ -1409,7 +1427,7 @@ def _plan_version() -> int:
     return int(EXECUTION_PLAN_VERSION)
 
 
-def _node_side_effect(node: Optional[Dict[str, Any]]) -> str:
+def _node_side_effect(node: WorkflowNode | None) -> str:
     """节点副作用类别（方向 5 ADR-0184 E3）。
 
     bounded dict 显式携带 ``side_effect``（新包）；旧包缺字段时按 kind
@@ -1425,12 +1443,12 @@ def _node_side_effect(node: Optional[Dict[str, Any]]) -> str:
     return "derived_external" if kind == "data_input" else "pure"
 
 
-def _dag_node(dag: Dict[str, Any], node_id: str) -> Optional[Dict[str, Any]]:
+def _dag_node(dag: WorkflowDAG, node_id: str) -> WorkflowNode | None:
     return next((n for n in dag.get("nodes") or []
                  if n.get("node_id") == node_id), None)
 
 
-def _node_priority(node: Optional[Dict[str, Any]]) -> int:
+def _node_priority(node: WorkflowNode | None) -> int:
     """节点派发优先级（有界词表；高先派；同优先级保持声明序 = FIFO 公平）。"""
     try:
         raw = int((node or {}).get("priority", 5))
@@ -1484,7 +1502,7 @@ def _estimate_deadline_s(estimate: Any) -> Optional[float]:
         return None
 
 
-def _science_executable(node: Dict[str, Any]) -> bool:
+def _science_executable(node: WorkflowNode) -> bool:
     """analysis 节点是否有已接线的真实 science 执行路径（data_fabric）。"""
     from app.services.workflow_runtime.adapters_science import (
         science_executable,
@@ -1494,8 +1512,8 @@ def _science_executable(node: Dict[str, Any]) -> bool:
     return science_executable(cap)
 
 
-def _verify_node(node: Dict[str, Any],
-                 input_descs: Dict[str, Any]) -> Dict[str, Any]:
+def _verify_node(node: WorkflowNode,
+                 input_descs: Dict[str, Any]) -> BindingRecord:
     """节点绑定校验（线程内；dict 形态 TypedPort → SimpleNamespace）。"""
     from types import SimpleNamespace
 

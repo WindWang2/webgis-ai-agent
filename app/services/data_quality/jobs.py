@@ -31,6 +31,7 @@ def data_quality_evaluate_task(
     project_id: Optional[str] = None,
     rule_defs: Optional[list] = None,
     created_by: Optional[str] = None,
+    org_id: Optional[int] = None,
     **_kwargs: Any,
 ) -> dict:
     """session ref 载荷 → 质量评估 → 落库（幂等；重试安全）。"""
@@ -43,6 +44,7 @@ def data_quality_evaluate_task(
         project_id=project_id,
         rule_defs=rule_defs,
         created_by=created_by,
+        org_id=org_id,
     )
 
 

@@ -1,0 +1,165 @@
+# GIS Core Skills — Analysis Workflows（goal-02 / ADR-0182 语义）
+# 五个多步分析工作流族的作业过程与质量义务声明：本包只声明「怎么组合、
+# 何时阻断、何时降级披露」，不重新实现算法——执行真相在 ToolRegistry 工具
+# （编排面 webgis_analysis_workflow_plan/run/status/recompute）。
+skills:
+  - id: analysis_workflow_orchestration
+    name: 多步分析工作流编排
+    description: 把「按区统计+可达性+暴露/变化/分区」类多图层分析装配为带数据角色合同与科学前置的步骤链；缺数据 typed 阻断、缺分母不伪装率、无路网不冒充可达、双期不对齐拒绝差分。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [分析工作流, 多步分析, 组合分析, 多图层分析, 串联分析, 局部重算, analysis workflow, multi-step analysis, multi-layer analysis]
+    # 编排元技能不声明领域本体任务——本体信号归各领域技能（resolver 语义）
+    task_types: [administrative_statistic, accessibility_analysis, risk_exposure, change_detection, spatial_autocorrelation]
+    when_to_use: 用户场景需要 ≥3 个空间工具按依赖串联（如「按区统计+可达性+低覆盖」复合目标），或明确要求组合成工作流/局部重算/证据链。单目标分析场景由各领域技能承接（可达性→network_accessibility_analysis 等）。
+    when_not_to_use: 单工具即可回答（直接调该工具）；LLM 自由组合非常规步骤（propose_plan 通用计划通道）。
+    required_situation:
+      geometry_kinds: [point, line, polygon]
+      data_roles: [subject]
+    optional_situation:
+      data_roles: [boundary, network, denominator, population, hazard, receptor, baseline, target_time]
+    capability_requirements:
+      - capability_id: admin_aggregation
+        purpose: 按区计数/率聚合
+        criticality: required
+        hard_gate: true
+      - capability_id: service_area
+        purpose: 路网等时圈（可达性族）
+        criticality: optional
+        hard_gate: false
+      - capability_id: geometry_buffer
+        purpose: 危险源缓冲（暴露族）
+        criticality: optional
+        hard_gate: false
+      - capability_id: geometry_overlay
+        purpose: 叠加/差分（暴露/时态族）
+        criticality: optional
+        hard_gate: false
+      - capability_id: grid_binning
+        purpose: H3 网格聚合（分区族）
+        criticality: optional
+        hard_gate: false
+    input_roles: [subject, boundary, network, hazard, receptor, baseline, target_time]
+    output_roles: [boundary, measure]
+    output_artifacts: [polygon_feature_set, stats_table]
+    recipe_refs: [edu_facility_distribution, facility_coverage_ratio, hazard_exposure_overlay, urban_expansion_monitor, rate_aggregation_choropleth]
+    procedure:
+      steps:
+        - step_id: qualify_roles
+          title: 数据角色资格裁决
+          kind: inspect
+          description: 五族角色词表逐一绑定；required+block 缺失 → typed 阻断 + 获取建议（不猜 ref）。
+          evidence_requirements:
+            - evidence_kind: data_qualification
+              description: 角色绑定与缺失码
+        - step_id: check_science_preconditions
+          title: 科学前置检查
+          kind: decide
+          description: 单位合同/时态对齐/网格身份（grid_identity_match）/点支持前置；无路网 → 不得等时数值结论。
+          evidence_requirements:
+            - evidence_kind: precondition_verdicts
+              description: 前置裁决与 typed 码
+        - step_id: execute_steps
+          title: 步骤执行（真实工具分发）
+          kind: analyze
+          description: 波次执行；每步 registry.dispatch + 产物铸 ref + MethodUseContract receipt；幂等（同输入指纹复用）。
+          evidence_requirements:
+            - evidence_kind: step_receipts
+              description: 每步已执行证明（未执行步骤不得出现）
+        - step_id: validate_results
+          title: 结果守恒与口径校验
+          kind: validate
+          description: 计数守恒（总数=分区合计或多方属披露）/单位一致/nodata 与缺失区分/小样本警示。
+          evidence_requirements:
+            - evidence_kind: conservation_checks
+              description: 守恒与口径断言结果
+        - step_id: handoff_cartography
+          title: 交给制图 Harness
+          kind: design
+          description: 结果 ref 交给 webgis_map_product → MapSpec 图层（可视化建议只是元数据）。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: density_gate
+          question: 是否给率/密度结论？
+          default_option_id: counts_only
+          decided_by: [denominator_availability]
+          options:
+            - option_id: counts_only
+              condition: 无人口分母
+              then_step_ids: [validate_results]
+            - option_id: per_capita
+              condition: 分母绑定且有 population 字段
+              then_step_ids: [execute_steps, validate_results]
+        - node_id: accessibility_fallback_gate
+          question: 无路网时的可达性替代？
+          default_option_id: blocked
+          decided_by: [network_availability]
+          options:
+            - option_id: blocked
+              condition: 无路网
+              then_step_ids: [check_science_preconditions]
+            - option_id: buffer_proxy
+              condition: 用户接受欧氏 proxy 且显著披露科学含义差异
+              then_step_ids: [execute_steps]
+      requirements:
+        - node_id: req_boundary
+          requirement_kind: data_role
+          value: boundary
+          reason_code: AWF_DATA_ROLE_MISSING:BOUNDARY
+          on_fail: reject
+        - node_id: req_temporal_alignment
+          requirement_kind: temporal_mode
+          value: bitemporal_aligned
+          reason_code: AWF_TEMPORAL_MISMATCH
+          on_fail: reject
+      evidence_nodes:
+        - node_id: ev_qualification
+          evidence_kind: data_qualification
+        - node_id: ev_preconditions
+          evidence_kind: precondition_verdicts
+        - node_id: ev_receipts
+          evidence_kind: step_receipts
+        - node_id: ev_conservation
+          evidence_kind: conservation_checks
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_network
+          trigger: provider_unavailable
+          action: blocked
+          reason_code: AWF_NO_NETWORK_FOR_ACCESSIBILITY
+          disclosure: 无真实路网——不得给出『15 分钟可达』类数值结论；buffer 替代须注明欧氏距离≠通达时间。
+        - node_id: fb_no_denominator
+          trigger: missing_input
+          action: reduced_output
+          reason_code: AWF_DENOMINATOR_MISSING
+          disclosure: 分母缺失——只输出原始计数/面积密度，不给每万人率。
+        - node_id: fb_temporal_misaligned
+          trigger: missing_input
+          action: blocked
+          reason_code: AWF_TEMPORAL_MISMATCH
+          disclosure: 双期年份/口径未对齐——拒绝静默差分。
+        - node_id: fb_budget_exceeded
+          trigger: budget_exceeded
+          action: blocked
+          reason_code: AWF_BUDGET_EXCEEDED
+          disclosure: 输入行数超预算——限额阻断，不无界加载。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本工作流族的支持范围——不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count, rate, density, area_share]
+      normalization: 率必须显式分母（field/area）；intersects 多方属披露下区计数合计≥去重总数。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: city
+      analysis_unit: polygon

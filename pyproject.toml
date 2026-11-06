@@ -1,6 +1,6 @@
 [project]
 name = "webgis-ai-agent"
-version = "0.1.3"
+version = "0.1.4"
 description = "AI-powered GIS analysis platform with natural language interface"
 readme = "README.md"
 # #1558 环境漂移防护：已验证窗口 = 容器 3.12（python:3.12-slim，digest 锁定）
@@ -30,16 +30,20 @@ dependencies = [
     "alembic>=1.13.0",
     "geopandas>=1.1.4",
     "shapely>=2.1.2",
-    "rasterio>=1.3.10",
+    "rasterio>=1.4.0",
     "rasterstats>=0.21.0",
     "pyogrio>=0.13.0",
     "pandas>=2.2.2,<3.0",
+    # pandas 2.x 与 dateutil >=3 的 tzfile 不兼容（pandas #71459）；
+    # 与 requirements.txt 的 DST 兼容上界同步。
+    "python-dateutil>=2.8.2,<3",
     "pydantic>=2.13.4,<2.15",
     # 扩展平台 V3 非对称包签名（Ed25519，ADR-0119）；直接使用的库必须直接声明。
     "cryptography>=50.0.1",
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.0.0",
     "httpx>=0.26.0",
+    "brotli>=1.2.1",
     "requests>=2.31.0",
     "pyyaml>=6.0.3",
     # 直接 import 的库必须直接声明（#618-35；同类问题见 requirements.txt 的 rich 注释）
@@ -52,7 +56,7 @@ dependencies = [
     "numpy>=1.26.0,<2.6",
     "scikit-learn>=1.4.0",
     "Pillow>=10.0.0",
-    "numexpr>=2.8.0",
+    "numexpr>=2.8.5",
     "pystac-client>=0.8.0",
     "Jinja2>=3.1.4",
     "defusedxml>=0.7.1",

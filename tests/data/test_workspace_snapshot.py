@@ -4,6 +4,7 @@ import pytest
 from app.services.artifact_registry import register_artifact
 from app.services.session_data import session_data_manager
 from app.services.workspace.snapshot import (
+    WorkspaceSnapshot,
     _snapshot_path,
     get_workspace_snapshot_service,
     reset_workspace_snapshot_service,
@@ -83,6 +84,31 @@ class TestVerify:
 
 
 class TestRestore:
+    async def test_restore_loads_one_manifest_off_event_loop(self, monkeypatch):
+        import threading
+
+        sid = "ws-restore-one-read"
+        await _seed_workspace(sid)
+        svc = get_workspace_snapshot_service()
+        snap = await svc.save_snapshot(sid)
+        assert snap is not None
+        loop_thread = threading.get_ident()
+        reads = []
+        original_load = svc._load_snapshot
+
+        def load_once(
+            session_id: str, snapshot_id: str, *, project_id: str = ""
+        ) -> WorkspaceSnapshot | None:
+            reads.append(threading.get_ident())
+            return original_load(session_id, snapshot_id, project_id=project_id)
+
+        monkeypatch.setattr(svc, "_load_snapshot", load_once)
+        result = await svc.restore_snapshot(sid, snap.snapshot_id, mode="register")
+        assert result["verification"]["exists"]
+        assert result["registered"] >= 2
+        assert len(reads) == 1
+        assert reads[0] != loop_thread
+
     async def test_verify_mode_touches_nothing(self):
         sid = "ws-restore-v"
         await _seed_workspace(sid)
@@ -126,12 +152,22 @@ class TestRestore:
 
 
 class TestClone:
+    @pytest.mark.parametrize("creator,caller", [("owner", ""), ("", "owner"), ("", ""), ("owner", "other")])
+    async def test_snapshot_mutation_requires_recorded_matching_owner(self, creator, caller):
+        svc = get_workspace_snapshot_service()
+        sid = "snapshot-owner-boundary"
+        snap = await svc.save_snapshot(sid, owner_id=creator)
+        assert snap is not None
+        assert await svc.clone_snapshot(sid, snap.snapshot_id, "owner-target", owner_id=caller) is None
+        assert await svc.delete_snapshot(sid, snap.snapshot_id, owner_id=caller) is None
+        assert (await svc.verify_snapshot(sid, snap.snapshot_id)).exists
+
     async def test_clone_copies_and_reports_ref_semantics(self):
         src = "ws-clone-src"
         await _seed_workspace(src)
         svc = get_workspace_snapshot_service()
-        snap = await svc.save_snapshot(src)
-        clone = await svc.clone_snapshot(src, snap.snapshot_id, "ws-clone-dst")
+        snap = await svc.save_snapshot(src, owner_id="owner")
+        clone = await svc.clone_snapshot(src, snap.snapshot_id, "ws-clone-dst", owner_id="owner")
         assert clone is not None
         verification = await svc.verify_snapshot("ws-clone-dst", clone["snapshot_id"])
         assert verification.exists
@@ -152,3 +188,13 @@ def test_path_traversal_guarded():
     assert _snapshot_path("../evil", "ws-abc") is None
     assert _snapshot_path("ok-session", "../../etc/passwd") is None
     assert _snapshot_path("", "ws-abc") is None
+
+
+async def test_snapshot_listing_prefers_latest_before_bounding():
+    svc = get_workspace_snapshot_service()
+    sid = 'ws-latest-review'
+    older = await svc.save_snapshot(sid, label='older')
+    newer = await svc.save_snapshot(sid, label='newer')
+    listed = await svc.list_snapshots(sid)
+    ids = [entry['snapshot_id'] for entry in listed]
+    assert ids.index(newer.snapshot_id) < ids.index(older.snapshot_id)

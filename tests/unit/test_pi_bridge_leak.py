@@ -7,7 +7,7 @@ client that disconnects mid-stream. Asserts the
 module-level dedup sets and dispatch-result cache return to baseline after
 every turn, and that gc/tracemalloc don't accumulate retained tool results.
 
-RED on the pre-fix code: neither _session_executed_sets[""] nor
+RED on the pre-fix code: neither the session execution bucket nor
 _dispatch_result_cache is cleaned at turn end (only at the *next* turn start,
 keyed by the real session id), so both grow monotonically across sessions.
 """
@@ -15,6 +15,7 @@ import asyncio
 import gc
 import tracemalloc
 from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,12 +49,35 @@ def _make_event_rpc(events):
 
 
 @pytest.fixture(autouse=True)
-def _clean_state():
+def _clean_state(monkeypatch):
+    # A production bridge has an initialized tracker. Exception-log capture
+    # retains traceback frames by design and is not the memory owner measured
+    # here; observability failures have a dedicated behavior test.
+    import app.services.chat.engine_instance as engines
+    tracker = SimpleNamespace(
+        create=lambda sid, message: SimpleNamespace(id=f"task-{sid}"),
+        list_by_session=lambda sid: [], cancel=lambda tid: None,
+        fail_task=lambda tid, reason: None, complete_task=lambda tid: None,
+    )
+    monkeypatch.setattr(engines, "try_get_chat_engine", lambda: SimpleNamespace(tracker=tracker))
     bridge_mod._session_executed_sets.clear()
     bridge_mod._dispatch_result_cache.clear()
     yield
     bridge_mod._session_executed_sets.clear()
     bridge_mod._dispatch_result_cache.clear()
+
+
+@pytest.fixture(params=[False, True], ids=["automatic-gc", "deferred-gc"])
+def _gc_schedule(request):
+    """Exercise retained-memory measurement independently of cyclic-GC timing."""
+    was_enabled = gc.isenabled()
+    if request.param:
+        gc.disable()
+    try:
+        yield
+    finally:
+        if was_enabled:
+            gc.enable()
 
 
 async def _fake_dispatch(self, tc, session_id, executed):
@@ -71,22 +95,31 @@ async def _fake_dispatch(self, tc, session_id, executed):
 
 async def _run_one_session(i, monkeypatch):
     """One chat session: two Pi tool dispatches + a stream the client abandons."""
-    for j in range(2):
-        await dispatch_tool(PiToolRequest(
-            name="query_map_features",
-            toolCallId=f"tc-{i}-{j}",
-            arguments={"bbox": [116.0, 39.0, 116.1, 39.1]},
-            # The signed-token HTTP route always stamps the verified turn
-            # session; the bridge rejects sessionId-less callbacks since the
-            # cross-session mutation fix.
-            sessionId=f"session-{i}",
-        ))
     rpc = _make_event_rpc([make_token_event("hello")])
     bridge = PiBridge(rpc=rpc)
     agen = bridge.stream_prompt(f"msg {i}", session_id=f"session-{i}")
-    ev = await agen.__anext__()
-    assert ev.startswith("event: task_start")
-    await agen.aclose()  # client disconnect -> GeneratorExit -> finally
+    try:
+        ev = await agen.__anext__()
+        assert ev.startswith("event: task_start")
+        # Dispatch inside the active turn so only disconnect cleanup, not
+        # the next turn's startup cleanup, can remove these cached results.
+        for j in range(2):
+            response = await dispatch_tool(PiToolRequest(
+                name="webgis_execute",
+                toolCallId=f"tc-{i}-{j}",
+                arguments={
+                    "toolName": "query_map_features",
+                    "arguments": {"bbox": [116.0, 39.0, 116.1, 39.1]},
+                },
+                # Long-tail tools use the proxy; a rejected bare name would
+                # never call _fake_dispatch and make this leak guard vacuous.
+                sessionId=f"session-{i}",
+            ))
+            assert not response.isError, response
+            assert (f"session-{i}", f"tc-{i}-{j}") in bridge_mod._dispatch_result_cache
+        assert bridge_mod._session_executed_sets[f"session-{i}"]
+    finally:
+        await agen.aclose()  # client disconnect -> GeneratorExit -> finally
 
 
 @pytest.mark.asyncio
@@ -106,7 +139,7 @@ async def test_turn_state_returns_to_baseline_across_many_sessions(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_no_retained_objects_or_memory_growth(monkeypatch):
+async def test_no_retained_objects_or_memory_growth(monkeypatch, _gc_schedule):
     monkeypatch.setattr(bridge_mod, "get_tool_registry", lambda: _StubRegistry())
     monkeypatch.setattr(bridge_mod.ToolDispatchService, "dispatch", _fake_dispatch)
 
@@ -115,15 +148,20 @@ async def test_no_retained_objects_or_memory_growth(monkeypatch):
     # 增长而非冷启动导入成本（CI 边缘抖动的根因；两分支同一修复）。
     for i in range(3):
         await _run_one_session(i, monkeypatch)
+    gc.collect()
     tracemalloc.start()
     try:
         for i in range(50):
             await _run_one_session(3 + i, monkeypatch)
+        # Measure retained allocations, just like the object guard below.
+        # RPC MagicMock/AsyncMock cycles can leave several MB of unreachable
+        # garbage until generation 2 runs, depending on earlier suite activity.
+        # Collection does not remove reachable caches or leaked tool results.
+        gc.collect()
         current, _peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
 
-    gc.collect()
     retained = [o for o in gc.get_objects() if isinstance(o, ToolDispatchResult)]
     assert len(retained) <= 5, f"{len(retained)} ToolDispatchResult objects retained after 50 sessions"
     # 4.5MB（2026-10-17 二次校准）：澄清闭环 envelope + settle coordinator

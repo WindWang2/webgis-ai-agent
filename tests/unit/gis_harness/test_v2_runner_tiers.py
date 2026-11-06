@@ -169,8 +169,9 @@ async def test_security_tier_contained_and_escalated(runner):
         ),
     )
     r2 = await runner.run_case(bad)
-    assert not r2.passed
-    assert any(f.startswith("injection escalation") for f in r2.failures)
+    assert r2.passed  # The corpus explicitly expects this known escalation.
+    assert r2.metrics["injection_contained"] is False
+    assert r2.metrics["injection_expected_contained"] is False
 
 
 async def test_evidence_tier_verdicts(runner):

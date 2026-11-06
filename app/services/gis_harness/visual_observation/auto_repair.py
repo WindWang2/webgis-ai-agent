@@ -31,7 +31,6 @@ MAX_AUTO_PER_REVISION = 1
 #: 每会话自动修复总预算。
 MAX_AUTO_PER_SESSION = 4
 #: 预算窗口内保留的 revision 记录数（有界）。
-_BUDGET_REVISION_WINDOW = 8
 
 
 def auto_repair_enabled() -> bool:
@@ -48,33 +47,6 @@ def _receipt(reason: str, **extra: Any) -> Dict[str, Any]:
     }
     out.update(extra)
     return out
-
-
-async def _load_budget(session_id: str) -> Dict[str, Any]:
-    from app.services.session_data import session_data_manager
-
-    try:
-        raw = await session_data_manager.get_map_state(session_id)
-        budget = (raw or {}).get(BUDGET_KEY)
-        return dict(budget) if isinstance(budget, dict) else {}
-    except Exception:  # noqa: BLE001 — 预算缺席 = 未消费
-        return {}
-
-
-async def _save_budget(session_id: str, budget: Dict[str, Any]) -> None:
-    from app.services.session_data import session_data_manager
-
-    revisions = budget.get("revisions")
-    trimmed: Dict[str, int] = {}
-    if isinstance(revisions, dict):
-        for k, v in list(revisions.items())[-_BUDGET_REVISION_WINDOW:]:
-            try:
-                trimmed[str(k)[:32]] = int(v)
-            except (TypeError, ValueError):
-                continue
-    budget["revisions"] = trimmed
-    budget["session_total"] = int(budget.get("session_total") or 0)
-    await session_data_manager.set_map_state(session_id, BUDGET_KEY, budget)
 
 
 async def run_auto_repair_pass(
@@ -192,14 +164,14 @@ async def run_auto_repair_pass(
         defect_fingerprint=str(plan.defect_fingerprint or "")[:96],
     )
 
-    budget = await _load_budget(session_id)
-    revisions = budget.get("revisions") if isinstance(
-        budget.get("revisions"), dict) else {}
-    session_total = int(budget.get("session_total") or 0)
-    if int(revisions.get(str(current_revision), 0)) >= MAX_AUTO_PER_REVISION:
-        return _receipt("revision_budget_exhausted")
-    if session_total >= MAX_AUTO_PER_SESSION:
-        return _receipt("session_budget_exhausted")
+    from app.services.session_data import session_data_manager
+    from app.services.gis_harness.visual_observation.auto_budget import reserve, finish
+
+    reservation, budget_error = await reserve(
+        session_data_manager, session_id, BUDGET_KEY, current_revision,
+        per_revision=MAX_AUTO_PER_REVISION, per_session=MAX_AUTO_PER_SESSION)
+    if not reservation:
+        return _receipt(budget_error)
 
     async def _record(decision: str, reason: str, revision: int) -> None:
         try:
@@ -235,26 +207,21 @@ async def run_auto_repair_pass(
     except Exception:  # noqa: BLE001 — 锁/引擎异常按诚实回执（自动通道绝不炸终验）
         logger.warning("[VisualAutoRepair] apply failed session=%s",
                        session_id, exc_info=True)
+        await finish(session_data_manager, session_id, BUDGET_KEY, reservation, retain_charge=False)
         await _record(DECISION_AUTO_FAILED, "apply_error", current_revision)
         return _receipt("apply_error")
 
     if getattr(result, "superseded", False):
+        await finish(session_data_manager, session_id, BUDGET_KEY, reservation, retain_charge=False)
         await _record(DECISION_AUTO_FAILED, "revision_conflict",
                       int(result.mutation_revision or 0))
         return _receipt("revision_conflict",
                         mutation_revision=int(result.mutation_revision or 0))
 
     applied = getattr(result, "is_error", True) is False
+    await finish(session_data_manager, session_id, BUDGET_KEY, reservation,
+                 retain_charge=applied and not getattr(result, "duplicate", False))
     if applied and not getattr(result, "duplicate", False):
-        budget["revisions"] = dict(revisions)
-        budget["revisions"][str(current_revision)] = \
-            int(revisions.get(str(current_revision), 0)) + 1
-        budget["session_total"] = session_total + 1
-        try:
-            await _save_budget(session_id, budget)
-        except Exception:  # noqa: BLE001 — 预算落账失败不回滚已提交修复
-            logger.warning("[VisualAutoRepair] budget save failed",
-                          exc_info=True)
         # 与 user 批准路径同款：修复尝试 = 进展信号 → 重置 recurrence。
         try:
             from app.services.gis_harness.visual_observation.recurrence import (

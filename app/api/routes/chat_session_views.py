@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
@@ -29,7 +29,7 @@ from app.schemas.chat_schema import (
     SessionPlanViewResponse,
     TableArtifactResponse,
 )
-from app.services.auth_history_bridge import require_owned_session
+from app.services.auth_history_bridge import get_owner_token, require_owned_session
 from app.services.session_plan import load_session_plan
 
 router = APIRouter()  # tags/前缀由挂载方（chat.router）提供，避免 include 时重复
@@ -108,18 +108,28 @@ async def get_session_chart_artifact(
     session_id: str,
     ref_id: str,
     _conv: Conversation = Depends(require_owned_session),
+    owner_token: Annotated[Optional[str], Depends(get_owner_token)] = None,
 ) -> dict:
     """chart_panel 的 ref-backed 数据通道（D2 ref 路径）。
 
     与 /layers/data/{ref}（GeoJSON 序列化面）不同，chart artifact 是
     {chart: ChartData} 小载荷（生成时已受 100KB/500 点上限约束）——
     直接 JSON 返回，无分块序列化需求。所有权校验复用 require_owned_session。
+
+    G3D-V2-C（ADR-0276）：elevation_profile 面板的 ``ref:profile-*``
+    工件走同一 {chart: ChartData} 协议与端点（前端 loadChartArtifact
+    同一拉取面）——剖面族与图表族共享校验/缓存纪律，不另开第二端点。
     """
-    if not ref_id or not ref_id.startswith("ref:chart-") or len(ref_id) > 128:
+    _CHART_REF_PREFIXES = ("ref:chart-", "ref:profile-")
+    if (
+        not ref_id
+        or len(ref_id) > 128
+        or not ref_id.startswith(_CHART_REF_PREFIXES)
+    ):
         raise HTTPException(status_code=400, detail="非法 chart artifact ref")
     from app.services.session_data import session_data_manager
 
-    res = await session_data_manager.get_ref_data(session_id, ref_id)
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "图表数据不可用")
@@ -134,6 +144,7 @@ async def get_session_table_artifact(
     session_id: str,
     ref_id: str,
     _conv: Conversation = Depends(require_owned_session),
+    owner_token: Annotated[Optional[str], Depends(get_owner_token)] = None,
 ) -> dict:
     """table_panel 的 ref-backed 数据通道（Runtime V4 §10）。
 
@@ -152,7 +163,7 @@ async def get_session_table_artifact(
         raise HTTPException(status_code=400, detail="非法 table artifact ref")
     from app.services.session_data import session_data_manager
 
-    res = await session_data_manager.get_ref_data(session_id, ref_id)
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "表格数据不可用")
