@@ -22,6 +22,12 @@ ROOT = Path(__file__).resolve().parents[1]
     ("auth", "unauthenticated PING was not rejected"),
     ("appendonly", "appendonly is not enabled"),
     ("eviction", "maxmemory-policy is not noeviction"),
+    ("persistence_missing", "appendonly is not enabled"),
+    ("persistence_error", "cannot read Redis persistence status"),
+    ("memory_missing", "maxmemory-policy is not noeviction"),
+    ("memory_error", "cannot read Redis memory status"),
+    ("config_enabled", "CONFIG command is not disabled"),
+    ("config_error", "cannot verify CONFIG is disabled"),
     ("mode", "runtime config mode is not 0400"),
     ("owner", "runtime config is not owned by Redis user"),
     ("root_user", "Redis user has root UID"),
@@ -64,14 +70,27 @@ def test_smoke_reports_named_failures_without_secrets(tmp_path, fault, diagnosti
         ),
         "redis-cli": (
             "fault = os.environ['FAULT']\n"
-            "if sys.argv[-1] == 'ping':\n"
+            "args = [arg.lower() for arg in sys.argv[1:] if arg != '--raw']\n"
+            "if args == ['ping']:\n"
             "    auth = bool(os.environ.get('REDISCLI_AUTH'))\n"
             "    print('PONG' if (auth and fault != 'readiness') or fault == 'auth' "
             "else 'NOAUTH Authentication required.')\n"
-            "elif sys.argv[-1] == 'appendonly':\n"
-            "    print('appendonly\\n' + ('no' if fault == 'appendonly' else 'yes'))\n"
+            "elif args == ['info', 'persistence']:\n"
+            "    if fault == 'persistence_error': sys.exit(1)\n"
+            "    print('# Persistence\\r\\nloading:0\\r\\n' + "
+            "('' if fault == 'persistence_missing' else "
+            "'aof_enabled:' + ('0' if fault == 'appendonly' else '1') + '\\r\\n'))\n"
+            "elif args == ['info', 'memory']:\n"
+            "    if fault == 'memory_error': sys.exit(1)\n"
+            "    print('# Memory\\r\\nused_memory:1234\\r\\n' + "
+            "('' if fault == 'memory_missing' else "
+            "'maxmemory_policy:' + ('allkeys-lru' if fault == 'eviction' else 'noeviction') + '\\r\\n'))\n"
+            "elif args == ['config', 'get', 'appendonly']:\n"
+            "    if fault == 'config_error': sys.exit(1)\n"
+            "    if fault == 'config_enabled': print('appendonly\\nyes')\n"
+            "    else: print(\"ERR unknown command 'config', with args beginning with: 'get' 'appendonly'\")\n"
             "else:\n"
-            "    print('maxmemory-policy\\n' + ('allkeys-lru' if fault == 'eviction' else 'noeviction'))"
+            "    raise AssertionError('Unexpected Redis command: ' + repr(args))"
         ),
         "docker": (
             "with open(os.environ['DOCKER_LOG'], 'a') as log:\n"

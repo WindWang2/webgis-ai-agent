@@ -46,8 +46,16 @@ docker exec "$container" sh -ec '
     fail() { echo "Redis smoke failed: $1" >&2; exit 1; }
     redis-cli --raw ping | grep -q "NOAUTH" || fail "unauthenticated PING was not rejected"
     export REDISCLI_AUTH="$REDIS_PASSWORD"
-    [ "$(redis-cli --raw config get appendonly | tail -n 1)" = yes ] || fail "appendonly is not enabled"
-    [ "$(redis-cli --raw config get maxmemory-policy | tail -n 1)" = noeviction ] || fail "maxmemory-policy is not noeviction"
+    # CONFIG is deliberately disabled in the production config. Observe the
+    # effective server state through INFO, without reopening admin commands.
+    persistence=$(redis-cli --raw info persistence) || fail "cannot read Redis persistence status"
+    printf "%s\n" "$persistence" | tr -d "\r" | grep -qx "aof_enabled:1" || fail "appendonly is not enabled"
+    memory=$(redis-cli --raw info memory) || fail "cannot read Redis memory status"
+    printf "%s\n" "$memory" | tr -d "\r" | grep -qx "maxmemory_policy:noeviction" || fail "maxmemory-policy is not noeviction"
+    # Probe only a non-mutating command, and require the hardening to remain.
+    # redis-cli reports Redis errors in stdout, often with a zero exit status.
+    config_probe=$(redis-cli --raw config get appendonly) || fail "cannot verify CONFIG is disabled"
+    printf "%s\n" "$config_probe" | grep -q "^ERR unknown command" || fail "CONFIG command is not disabled"
     [ "$(stat -c %a /dev/shm/redis-runtime.conf)" = 400 ] || fail "runtime config mode is not 0400"
     redis_uid=$(id -u redis) || fail "Redis user is missing"
     [ "$redis_uid" != 0 ] || fail "Redis user has root UID"
@@ -64,4 +72,4 @@ docker exec "$container" sh -ec '
             ;;
     esac
 '
-echo 'Redis entrypoint smoke passed: authenticated, noeviction, private config, unprivileged process'
+echo 'Redis entrypoint smoke passed: authenticated, appendonly, noeviction, CONFIG disabled, private config, unprivileged process'
