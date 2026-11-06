@@ -1,6 +1,6 @@
 """Component catalog contract: backend registry ↔ checked-in frontend artifact.
 
-scripts/export_component_catalog.py writes
+python -m app.lib.cartography.export_component_catalog writes
 frontend/lib/map-components/component-catalog.generated.json; this test
 regenerates the payload and fails on drift, so the frontend parity test and
 the backend registry can never silently diverge.
@@ -18,13 +18,13 @@ pytestmark = pytest.mark.unit
 def test_checked_in_catalog_matches_backend_registry():
     assert OUTPUT.exists(), (
         "frontend/lib/map-components/component-catalog.generated.json missing — "
-        "run: python scripts/export_component_catalog.py"
+        "run: python -m app.lib.cartography.export_component_catalog"
     )
     checked_in = json.loads(OUTPUT.read_text(encoding="utf-8"))
     fresh = build_catalog()
     assert checked_in == fresh, (
         "component-catalog.generated.json is stale vs backend registry — "
-        "re-run scripts/export_component_catalog.py"
+        "re-run python -m app.lib.cartography.export_component_catalog"
     )
 
 
