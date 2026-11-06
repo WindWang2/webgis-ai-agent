@@ -77,7 +77,7 @@ class TestNetworkAndTemporalFamilies:
             "network.accessibility": ["network_accessibility"],
             "network.location_allocation": ["location_allocation"],
             "network.route_optimization": ["optimize_route"],
-            "network.closest_facility": ["network_closest_facility", "nearest_facility"],
+            "network.closest_facility": ["network_closest_facility"],
         }
         for algo_id, tools in expected.items():
             algo = reg.get(algo_id)

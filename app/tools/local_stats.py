@@ -237,6 +237,12 @@ def register_local_stats_tools(registry: ToolRegistry):
                                 "features": features,
                                 "count": len(features),
                                 "source": "amap_online_fallback",
+                                "success": False,
+                                "code": "partial_online_fallback",
+                                "error": (
+                                    "本地 POI 库缺失，在线结果只是截断样本，"
+                                    "不能当作全市分布或热力成功。"
+                                ),
                                 "note": "本地 gd_pois.gpkg 离线库未挂载，已自动降级使用在线高德 POI 接口检索。",
                             }
             except Exception as exc:

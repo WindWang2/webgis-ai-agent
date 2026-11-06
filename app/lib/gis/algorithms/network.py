@@ -128,7 +128,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             id="network.closest_facility", name="最近设施", category="network_analysis",
             capabilities=["closest_facility"],
             output_artifact_type="line_feature_set",
-            tool_candidates=["network_closest_facility", "nearest_facility"],
+            tool_candidates=["network_closest_facility"],
             cpu_cost="high", memory_cost="medium", io_cost="high",
             preferred_execution_policy="ASYNC", priority=10,
             algorithm_family="closest_facility",

@@ -455,7 +455,8 @@ def nearest_neighbor_features(source_points: dict | str, target_points: dict | s
                 "properties": {
                     **props[i],
                     id_key: tgt_ids[int(min_indices[i])],
-                    "distance_m": float(min_distances[i])
+                    "distance_m": float(min_distances[i]),
+                    "distance_method": "euclidean",
                 }
             }
             for i in range(len(src_coords))
@@ -467,7 +468,8 @@ def nearest_neighbor_features(source_points: dict | str, target_points: dict | s
             success=True,
             data={"type": "FeatureCollection", "features": out_features},
             summary=(
-                f"Calculated nearest neighbors for {len(gdf_src)} points. "
+                f"Calculated Euclidean nearest neighbors for {len(gdf_src)} points. "
+                f"distance_method=euclidean (straight-line metres, not road-network distance). "
                 f"Average distance: {avg_dist:.1f}m.{id_note}"
             )
         )

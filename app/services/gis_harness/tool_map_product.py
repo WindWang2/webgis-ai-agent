@@ -276,6 +276,25 @@ async def webgis_map_product(
     if (need_heatmap or need_points) and primary_ref:
         # 只在确需补层时取全量数据（get 返回 deepcopy，避免无谓 O(N) 拷贝）
         primary_data = await session_data_manager.get(session_id, primary_ref)
+    if primary_data is not None and getattr(intent.scope, "name", ""):
+        from app.services.gis_harness.scope_ref_guard import scope_ref_mismatch
+
+        features = primary_data.get("features") if isinstance(primary_data, dict) else None
+        mismatch = scope_ref_mismatch(
+            str(intent.scope.name),
+            descriptor=primary_descriptor,
+            features=features if isinstance(features, list) else None,
+        )
+        if mismatch:
+            return {
+                "success": False,
+                "code": "scope_ref_mismatch",
+                "message": (
+                    f"primary_ref 的地点与当前范围 {intent.scope.name} 不一致，"
+                    "已拒绝把旧城市数据画到新图上。请重新查询该范围的数据。"
+                ),
+                "reason": mismatch,
+            }
     if primary_data is not None:
         from app.services.analysis_cartography_converter import (
             convert_analysis_to_mapspec_layer,
