@@ -368,6 +368,11 @@ class Settings(BaseSettings):
     # 返回 404，其余行为不变（additive feature-off 语义）。
     REVIEW_WORKFLOW_ENABLED: bool = True
 
+    # ADR-0284 D6：分析工作流产品最终门（partial ≠ final）——webgis_map_product
+    # 拒绝把非 satisfied run / 科学终局 blocked 的工作流产物 ref 当成品层
+    # （外科式降级 + 警告）。False = bit 级回退 master 行为（不门控）。
+    GIS_AWF_PRODUCT_GATE: bool = True
+
     # #662：RAG embedding 模型离线加载（local_files_only）。开启后未缓存的
     # 首次加载秒级失败（有界），而不是无超时的 HF 下载把 to_thread worker
     # 线程挂死、连累进程优雅关停。默认 False：开发机首用自动下载行为不变；

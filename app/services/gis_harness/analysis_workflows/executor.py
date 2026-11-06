@@ -32,9 +32,19 @@ from app.services.gis_harness.analysis_workflows.contracts import (
     AnalysisWorkflowContract,
     AnalysisArtifactEnvelope,
 )
+from app.services.gis_harness.analysis_workflows.envelope_facts import (
+    aggregation_basis_for,
+    collect_fc_facts,
+    collect_raster_facts,
+    collect_result_semantics,
+)
 from app.services.gis_harness.analysis_workflows.evidence import (
     StepReceipt,
     build_step_receipt,
+)
+from app.services.gis_harness.analysis_workflows.semantic_gate import (
+    check_envelope_semantics,
+    check_payload_semantics,
 )
 from app.services.gis_harness.analysis_workflows.recompute import (
     ref_identity,
@@ -43,6 +53,10 @@ from app.services.gis_harness.analysis_workflows.recompute import (
 from app.services.gis_harness.analysis_workflows.state import (
     WorkflowRunState,
     verdict_of,
+)
+
+from app.services.gis_harness.analysis_workflows.runtime_integrity import (
+    incomplete_routes, local_raster_identity, network_facts,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,14 +68,59 @@ DEFAULT_MAX_FEATURES = 100_000
 MAX_ENVELOPE_STATS_KEYS = 12
 
 
-def _extract_fc(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """从工具结果提取主 FeatureCollection（data/geojson 键；无则 None）。"""
-    for key in ("data", "geojson"):
+def _extract_fc(
+    result: Dict[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], int]:
+    """从工具结果提取主 FeatureCollection（返回 (fc, trimmed_stub_count)——
+    trimmed_stub=被丢弃的无 coordinates 摘要桩路线数，调用方入 envelope
+    警告，桩丢弃永不静默）。
+
+    适配两族工具响应形状（不改变任何工具的返回契约）：
+    - GeoAnalysisResult 族：``data`` / ``geojson`` 键直挂 FC；
+    - NetworkAnalysisResult 族（network_tools 10 工具）：``status=success`` +
+      ``routes`` 列表（每 route 自带 geometry/properties）→ 就地组 FC
+      （路线即产物；数量已被输入预算门与 number_to_find 约束）。
+    """
+    for key in ("data", "geojson", "result_geojson"):
         candidate = result.get(key)
         if (isinstance(candidate, dict)
                 and candidate.get("type") == "FeatureCollection"):
-            return candidate
-    return None
+            return candidate, 0
+    routes = result.get("routes")
+    if isinstance(routes, list) and routes:
+        features = []
+        trimmed_stub = 0
+        for route in routes:
+            if not (isinstance(route, dict) and isinstance(
+                    route.get("geometry"), dict)):
+                continue
+            # R1 评审 F-1 修复：trim_network_result 在结果超预算时把
+            # route.geometry 替换为无 coordinates 的摘要桩——桩不是几何，
+            # 绝不进 FC（否则步骤 satisfied 而产物 ref 内是无效几何）。
+            coords = route["geometry"].get("coordinates")
+            if not (isinstance(coords, (list, tuple)) and coords):
+                trimmed_stub += 1
+                continue
+            props = {
+                k: v for k, v in (route.get("properties")
+                                  or {}).items()}
+            for key in ("route_id", "origin_id", "destination_id",
+                        "total_cost", "total_distance_m", "total_time_s"):
+                if key in route:
+                    props.setdefault(key, route[key])
+            features.append({
+                "type": "Feature",
+                "properties": props,
+                "geometry": route["geometry"],
+            })
+        if features:
+            return {"type": "FeatureCollection",
+                    "features": features}, trimmed_stub
+        if trimmed_stub:
+            # 全部是 trim 桩（超预算结果）——诚实返回 None（无 FC 产物），
+            # 不把摘要桩伪装成几何产物（计数仍向上披露）。
+            return None, trimmed_stub
+    return None, 0
 
 
 def _extract_ref(result: Dict[str, Any]) -> str:
@@ -117,6 +176,21 @@ class WorkflowExecutor:
         if binding is None or binding.missing or not binding.ref:
             return None
         return binding.ref
+
+    async def _role_revision(self, session_id: str,
+                             ref: str) -> Optional[str]:
+        """ref 的活体 content_revision（descriptor 可得时；失败=None）。"""
+        if self._sd is None:
+            return None
+        try:
+            descriptor = await self._sd.get_ref_descriptor(session_id, ref)
+        except Exception:  # noqa: BLE001 — descriptor 是优化面
+            return None
+        if isinstance(descriptor, dict):
+            rev = descriptor.get("content_revision")
+            if rev is not None:
+                return str(rev)
+        return None
 
     async def _hydrate(self, session_id: str, ref: str,
                        param: str, step_id: str) -> Tuple[
@@ -179,11 +253,23 @@ class WorkflowExecutor:
         for param, source in step.role_inputs.items():
             if source.startswith("role:"):
                 role = source.removeprefix("role:")
+                binding = contract.data_contracts.get(role)
                 ref = await self._role_ref(contract, role)
                 if ref is None:
                     warnings.append(
                         f"数据角色 {role} 未绑定 [AWF_DATA_ROLE_MISSING:{role.upper()}]")
                     return None, identities, warnings
+                # ADR-0284 D3：raster/table 角色 ref 直通（不水合为 dict——
+                # zonal_stats.raster_path 等原生接受 ref/路径；registry
+                # _resolve_references 既有语义不变）。行数预算门不适用。
+                if binding is not None and binding.role_kind in (
+                        "raster", "table"):
+                    rev = await self._role_revision(session_id, ref)
+                    if rev is None:
+                        rev = await asyncio.to_thread(local_raster_identity, ref)
+                    args[param] = ref
+                    identities[param] = ref_identity(ref, rev)
+                    continue
                 cache_key = (role, ref)
                 if cache_key in self._role_cache:
                     payload, ident = self._role_cache[cache_key]
@@ -194,6 +280,12 @@ class WorkflowExecutor:
                     if payload is None and hydrate_warnings:
                         return None, identities, warnings
                     self._role_cache[cache_key] = (payload, ident)
+                # ADR-0284 D2：执行期衔接门（实测几何 vs 步骤语义合同）
+                gate = check_payload_semantics(
+                    param, payload, step.semantic_contract)
+                if gate is not None:
+                    warnings.append(f"{gate.message} [{gate.code}]")
+                    return None, identities, warnings
                 args[param] = payload
                 identities[param] = ident
             else:  # step:<upstream>
@@ -202,6 +294,21 @@ class WorkflowExecutor:
                 if entry is None or entry.state != "satisfied":
                     warnings.append(
                         f"上游步骤 {upstream} 未满足（{entry.state if entry else 'absent'}）")
+                    return None, identities, warnings
+                upstream_env = state.envelopes.get(upstream)
+                # ADR-0284 D3：上游产物是栅格 ref（无 FC）→ ref 直通下游
+                if upstream_env is not None and upstream_env.ref \
+                        and not self._step_payloads.get(upstream) \
+                        and (upstream_env.raster
+                             or upstream_env.ref.startswith("ref:raster")):
+                    args[param] = upstream_env.ref
+                    identities[param] = f"fp:{entry.fingerprint}"
+                    continue
+                # ADR-0284 D2：上游 envelope 实测几何 vs 本步骤语义合同
+                gate = check_envelope_semantics(
+                    param, upstream_env, step.semantic_contract)
+                if gate is not None:
+                    warnings.append(f"{gate.message} [{gate.code}]")
                     return None, identities, warnings
                 payload = self._step_payloads.get(upstream)
                 if payload is None:
@@ -358,22 +465,83 @@ class WorkflowExecutor:
                       error=entry.reason_code)
             return
 
-        if not isinstance(result, dict) or not result.get("success"):
+        # R1 评审（P3）收紧：success 键存在时以它为权威（{"success": 1} 类
+        # 真值不再翻转）；NetworkAnalysisResult 族（无 success 键）以
+        # status=="success" 判定。
+        if not isinstance(result, dict) or not (
+                result.get("success")
+                if "success" in result
+                else str(result.get("status", "")).lower() == "success"):
             inner = result if isinstance(result, dict) else {}
-            entry.state = "failed"
-            entry.reason_code = str(
+            reason_code = str(
                 inner.get("reason_code") or inner.get("code")
                 or inner.get("error_type") or "TOOL_FAILED")
+            # ADR-0284 D7：同 run 内 dispatch 去重（repeated）命中而本步骤
+            # 与某已 satisfied 步骤指纹相同 → 步骤级幂等复用其产物
+            # （同工具+同参+同输入身份=同一计算，不重复执行也绝不把空
+            # 载荷当新成功）；无孪生步骤时保持诚实 failed。
+            if reason_code == "TOOL_DISPATCH_REPEATED":
+                twin = next(
+                    (sid for sid, other in state.steps.items()
+                     if sid != step.step_id and other.state == "satisfied"
+                     and other.fingerprint == fp), None)
+                if twin is not None and twin in state.envelopes:
+                    twin_env = state.envelopes[twin]
+                    envelope_clone = twin_env.model_copy(deep=True)
+                    envelope_clone.step_id = step.step_id
+                    envelope_clone.fingerprint = fp
+                    state.envelopes[step.step_id] = envelope_clone
+                    twin_receipt = dict(state.receipts.get(twin) or {})
+                    twin_receipt["step_id"] = step.step_id
+                    twin_receipt["reused_from_step"] = twin
+                    state.receipts[step.step_id] = twin_receipt
+                    if envelope_clone.ref and self._sd is not None:
+                        self._step_payloads[step.step_id] = await self._sd.get(
+                            session_id, envelope_clone.ref)  # type: ignore[assignment]
+                    entry.state = "satisfied"
+                    entry.reason_code = ""
+                    entry.message = ""
+                    entry.envelope_ref_hint = envelope_clone.ref
+                    entry.touch()
+                    state.log("step_reused", step=step.step_id,
+                              reused_from=twin, cause="dispatch_repeated")
+                    return
+            entry.state = "failed"
+            entry.reason_code = reason_code
             entry.message = str(
                 inner.get("message") or inner.get("error") or "")[:300]
             entry.touch()
             state.log("step_failed", step=step.step_id, code=entry.reason_code)
             return
 
+        if incomplete_routes(result):
+            entry.state = "blocked"
+            entry.reason_code = "AWF_INCOMPLETE_NETWORK_RESULT"
+            entry.message = "路线结果已截断为预览，不能作为完整需求总体聚合；请缩小输入或使用完整几何结果"
+            entry.touch()
+            state.log("step_blocked", step=step.step_id, code=entry.reason_code)
+            return
+
         # 产物：分发缝已铸 ref（dispatch_ref/结果内 ref:）直接沿用；
         # 未铸（registry 直调路径）才由本层 store（prefix=geojson 同族）。
-        fc = _extract_fc(result)
+        fc, trimmed_stub_routes = _extract_fc(result)
         ref = _extract_ref(result) or str(result.get("dispatch_ref", "") or "")
+        # ADR-0284 D3：非 FC 的栅格工件（raster_resample 族——结果形状
+        # ``data.output_path`` 文件路径）→ 路径即产物引用（下游 raster
+        # 参数直通；envelope.raster 带 output_kind=raster_file 事实）。
+        # 相对路径规范化为绝对（工具相对 cwd 返回 ``data/artifacts/…``，
+        # 下游 validate_data_path 会把相对路径再拼到 data_dir 下——二次
+        # 前缀导致假「文件不存在」；工作流层记录规范工件身份）。
+        raster_output = False
+        if fc is None and not ref:
+            data_obj = result.get("data")
+            output_path = (data_obj.get("output_path")
+                           if isinstance(data_obj, dict) else None)
+            if isinstance(output_path, str) and output_path:
+                from pathlib import Path as _Path
+
+                ref = str(_Path(output_path).resolve())
+                raster_output = True
         if fc is not None and not ref:
             if self._sd is not None:
                 try:
@@ -396,18 +564,34 @@ class WorkflowExecutor:
             result.get("stats"), dict) else {}
         result_warnings = [str(w) for w in (
             result.get("warnings") or []) if w]
+        if trimmed_stub_routes:
+            # R2 复核 P3：摘要桩路线丢弃永不静默（envelope.feature_count
+            # 因此小于 routes 总数——差异显性化）。
+            result_warnings.append(
+                f"{trimmed_stub_routes} 条路线因结果超预算被 trim 为摘要桩"
+                "（无几何）——未进产物，计数在此披露")
         feature_count = _feature_count(fc) if fc else int(
             result.get("dispatch_feature_count", 0) or 0)
+        # ADR-0284 D1：实测事实采集（有界；采集不到=缺省，绝不虚填）。
+        fc_facts = collect_fc_facts(fc) if fc is not None else None
+        result_semantics = collect_result_semantics(result)
+        raster_facts = collect_raster_facts(result)
+        if raster_output:
+            raster_facts.setdefault("output_kind", "raster_file")
+        crs_value = str(result.get("crs", "") or "")
+        if not crs_value and fc_facts is not None and fc_facts.crs:
+            crs_value = fc_facts.crs
         envelope = AnalysisArtifactEnvelope(
             step_id=step.step_id,
             workflow_id=contract.workflow_id,
             tool_name=step.tool_name,
             ref=ref,
-            crs=str(result.get("crs", "") or ""),
+            crs=crs_value,
             units=dict(step.unit_contract),
             feature_count=feature_count,
             empty=((fc is not None and _feature_count(fc) == 0)
-                   or (fc is None and ref != "" and feature_count == 0)),
+                   or (fc is None and ref != "" and feature_count == 0
+                       and not raster_facts)),
             stats={k: stats[k] for k in sorted(stats)
                    [:MAX_ENVELOPE_STATS_KEYS]} if stats else {},
             warnings=tuple(result_warnings[:8]),
@@ -418,6 +602,15 @@ class WorkflowExecutor:
                     if s.startswith("role:")] if v)[:16],
             fingerprint=fp,
             output_roles=step.output_roles,
+            # ── v2 实测（envelope_facts 有界采集）────────────────────
+            geometry_types=(fc_facts.geometry_types if fc_facts else ()),
+            extent=(fc_facts.extent if fc_facts else ()),
+            result_semantics=result_semantics,
+            raster=raster_facts,
+            network=network_facts(result),
+            aggregation_basis=aggregation_basis_for(
+                step.tool_name, step.step_params),
+            owner_session_id=session_id,
         )
         state.envelopes[step.step_id] = envelope
         receipt: StepReceipt = build_step_receipt(
@@ -451,6 +644,10 @@ class WorkflowExecutor:
         only_steps: Optional[Set[str]] = None,
     ) -> WorkflowRunState:
         """波次执行（同波无依赖步骤并发；波间严格顺序；失败停波）。"""
+        # These caches are run-local: a caller may reuse this executor after
+        # a source ref was overwritten in place. Always re-read live identity.
+        self._role_cache.clear()
+        self._step_payloads.clear()
         state.status = "running"
         state.touch()
         state.log("workflow_start", turn=self._turn)
@@ -498,6 +695,27 @@ class WorkflowExecutor:
                 break
         state.status = verdict_of(state)
         state.touch()
+        # ADR-0284 D5：全步骤终态后写科学终审投影（G02 run_science_final_gate
+        # 的结论进状态机——不再是只有返回体字段；fail-open：门内部错误=
+        # not_evaluated，绝不阻断状态落盘）。
+        if all(e.state not in ("pending", "running")
+               for e in state.steps.values()):
+            try:
+                from app.services.gis_harness.analysis_workflows.evidence import (
+                    run_final_gate,
+                )
+                gate = run_final_gate(state)
+                state.science_validation = {
+                    "final_gate": ("blocked" if gate.get("blocked")
+                                   else "pass"),
+                    "checked_in_turn": self._turn,
+                    "findings_n": len(gate.get("findings") or []),
+                }
+            except Exception:  # noqa: BLE001 — 终审失败=not_evaluated
+                state.science_validation = {
+                    "final_gate": "not_evaluated",
+                    "checked_in_turn": self._turn,
+                }
         state.log("workflow_end", status=state.status)
         if self._persist is not None:
             await self._persist(state)

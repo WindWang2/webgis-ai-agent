@@ -461,7 +461,12 @@ def aggregate_with_denominator(
         numerator = zones.index.map(counts).fillna(0).astype("int64")
     else:
         values = pd.to_numeric(joined[numerator_field], errors="coerce")
-        nan_numerator_excluded = int(values.isna().sum())
+        # ADR-0284 B2（数值极值修复）：非有限值（±inf）与 NaN 同为无效观测
+        # ——一并剔除并计入排除计数（inf 进 sum 会把分子毒化为 inf，
+        # 产出伪无穷率；修复前行为：inf 保留 → numerator=inf）。
+        _finite = np.isfinite(values.to_numpy(dtype="float64"))
+        nan_numerator_excluded = int((~_finite).sum())
+        values = values.where(_finite)
         sums = values.groupby(joined["index_right"]).sum(min_count=1)
         numerator = zones.index.map(sums).astype("float64").fillna(0.0)
         # M2（科学评审修复）：有相交要素但数值**全部** NaN 的区 —— 分子

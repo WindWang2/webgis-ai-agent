@@ -1,5 +1,5 @@
 """Raster transformation schemas and tools used by the advanced-spatial catalog."""
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,8 @@ class RasterCalculatorArgs(BaseModel):
 
 class RasterResampleArgs(BaseModel):
     raster_path: str = Field(..., description="输入栅格文件路径（data/ 内）")
-    target_resolution: float = Field(..., description="目标像元大小（米或度，取决于 CRS）")
+    target_resolution: float = Field(..., gt=0, allow_inf_nan=False, description="目标像元大小（米或度，取决于 CRS）")
+    resolution_unit: Literal["auto", "crs"] = Field("auto", description="crs=严格使用目标CRS单位；auto=兼容旧自动推断")
     target_crs: Optional[str] = Field(None, description="目标 CRS（如 EPSG:3857），留空则保持原 CRS")
     resampling: str = Field("bilinear", description="重采样方法: bilinear(默认), nearest, cubic, mode, average")
 
@@ -134,6 +135,6 @@ def register_raster_transform_tools(registry: ToolRegistry) -> None:
            output_semantic_type="ref",
            result_size_policy="inline_small",
            failure_modes=("invalid_args", "missing_data", "memory"))
-    def raster_resample(raster_path: str, target_resolution: float, target_crs: Optional[str] = None, resampling: str = "bilinear") -> dict:
-        res = SpatialAnalyzer.raster_resample(raster_path, target_resolution, target_crs, resampling)
+    def raster_resample(raster_path: str, target_resolution: float, target_crs: Optional[str] = None, resampling: str = "bilinear", resolution_unit: Literal["auto", "crs"] = "auto") -> dict:
+        res = SpatialAnalyzer.raster_resample(raster_path, target_resolution, target_crs, resampling, resolution_unit=resolution_unit)
         return res.to_llm_response()

@@ -457,3 +457,39 @@ ref 证据与 MapSpec 单位链路。
 权威边界：CRS 分类在 crs_safety、字段量纲在 measurement、算法要求在
 MethodUseContract、偏移帧数学在 utils/coord_transform —— 本契约组合它们，
 不复制。
+
+## Typed Analysis Artifact Envelope v2 与混合方法链（ADR-0284，2026-11-06）
+
+> 代码：`app/services/gis_harness/analysis_workflows/`（envelope_facts /
+> semantic_gate / product_gate / discovery 新模块 + 既有七模块 additive 扩展）。
+> 测试：`tests/unit/gis_harness/analysis_workflows/`（141 例）+ G05 F29 场景族。
+
+在 goal-02 AnalysisWorkflowContract v1 之上的四个增量：
+
+1. **Envelope v2（实测类型化产物）**：阶段产物封套携带**实测**事实——
+   geometry_types / extent（有界扫描 ≤2000 特征）、result_semantics（取自
+   ADR-0279 证据块的 working_crs/density_unit 等口径）、raster（nodata/
+   resolution/valid_pixel_coverage）、aggregation_basis（聚合基数词表）、
+   owner_session_id。缺省=未知，绝不虚填；`units` 仍是声明参数单位（实测
+   口径在 result_semantics，不混淆）。
+2. **typed 衔接门**：`semantic_contract`（param→geometry_kind/crs_class）
+   在执行期核验水合载荷与上游 envelope（Multi* 折叠/network→line 归一）；
+   plan 期用 binding.qualifier 画像事实前置裁决（事实在且冲突 → typed
+   blocked；缺失 → 披露不阻断——权威仍在工具级 preflight，本门是纵深防御）。
+3. **三条混合方法链**：`raster_zonal_summary`（链②：raster 角色 ref 直通
+   不水合 + zonal 逐 zone valid_pixel_coverage + optional resample 剔除后
+   确定性回接）与 `network_proximity`（链③：真 Dijkstra 最近设施→区均
+   网络成本=Σtotal_cost/count 均值语义）；admin 族 per-capita 分母字段从
+   qualifier.field 解析（缺列 plan 期 typed skipped）；grid_rate 改显式
+   分母真率（人口/设施负荷）；service_accessibility 族默认剔除脱离路网
+   设施的 5m 占位面（计数进 stats，部分失败显性化）。
+4. **状态闭环与产品最终门**：stale 态获得赋值路径（指纹实测漂移的
+   satisfied 步骤）；science_validation（G02 终局门投影）进运行态状态机；
+   `product_gate` 使 webgis_map_product 拒绝把非 satisfied run / 科学
+   blocked 的工作流产物 ref 当成品层（`GIS_AWF_PRODUCT_GATE=0` bit 级
+   回退）；plan 附预算估计（descriptor 行数画像超限 → typed 指引分块/
+   降采样）与 blocked_next_steps 结构化下一步（封闭 action 词表）。
+
+发现面：`analysis_workflows.discovery.family_catalog()`（awf.discovery.v1）
+机读族目录——步骤/科学前置/单位合同/可制图性/资源画像/角色需求，零 IO
+纯投影（不把 200 个工具 schema 灌入 Pi）。

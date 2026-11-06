@@ -8,6 +8,10 @@
     "iterations": 7,
     "median_ms": 264.755
   },
+  "awf_plan_typed_gates": {
+    "iterations": 7,
+    "median_ms": 0.145
+  },
   "barriers_indexed_50kE_x3": {
     "floor_ms": 1400.0,
     "iterations": 7,
@@ -21,6 +25,10 @@
   "dispatch_overhead": {
     "iterations": 7,
     "median_ms": 0.897
+  },
+  "envelope_facts_bounded_50k": {
+    "iterations": 7,
+    "median_ms": 1.708
   },
   "geojson_bbox_large": {
     "floor_ms": 47.7,

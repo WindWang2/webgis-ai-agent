@@ -43,9 +43,22 @@ AWF_BUDGET_EXCEEDED = "AWF_BUDGET_EXCEEDED"
 AWF_CARDINALITY_UNBOUNDED = "AWF_CARDINALITY_UNBOUNDED"
 AWF_UNKNOWN_FAMILY = "AWF_UNKNOWN_FAMILY"
 AWF_INVALID_CONTRACT = "AWF_INVALID_CONTRACT"
+# ADR-0284：typed 衔接门（事实在且冲突才发射——事实缺失走披露）
+AWF_INPUT_SEMANTIC_MISMATCH = "AWF_INPUT_SEMANTIC_MISMATCH"  # + ":<param>"
+AWF_ROLE_GEOMETRY_MISMATCH = "AWF_ROLE_GEOMETRY_MISMATCH"    # + ":<ROLE>"
+AWF_ROLE_KIND_MISMATCH = "AWF_ROLE_KIND_MISMATCH"            # + ":<ROLE>"
 
 #: 步骤参数单位合同的合法单位词表（长度/时间/无量纲；扩展走 additive）。
 UNIT_VOCABULARY = ("m", "km", "min", "h", "unitless")
+
+#: 阶段产物聚合基数词表（ADR-0284 D1；"" = 未声明——比错误声明诚实）。
+AGGREGATION_BASIS_VOCABULARY = (
+    "", "one_to_one", "many_to_one_sum", "m_n_join",
+    "zonal_mean", "zonal_sum",
+)
+
+#: 数据角色绑定载荷类型（raster = ref/路径直通，不水合为 dict——ADR-0284 D3）。
+ROLE_KINDS = ("vector", "raster", "table")
 
 
 def role_missing_code(role: str) -> str:
@@ -73,6 +86,10 @@ class DataRoleBinding(BaseModel):
     ref 非空 = 已绑定（session store ref 或本地路径）；
     ref 空 + missing=True = 显式缺失（typed blocked 裁决依据）；
     二者皆空 = 未决（调用方还没给——plan 期允许，run 期按缺失处理）。
+
+    role_kind（ADR-0284 D3）：vector（默认——水合为 FC dict）/ raster
+    （ref/路径直通，executor 不水合——zonal_stats.raster_path 原生接受
+    ref）/ table（直通，表格类载荷）。默认值保证旧绑定行为零漂移。
     """
 
     role: str                                            # ⊆ DATA_ROLES
@@ -80,6 +97,7 @@ class DataRoleBinding(BaseModel):
     dataset_hint: str = ""                               # 供给线索（不猜 ref）
     missing: bool = False
     qualifier: Dict[str, Any] = Field(default_factory=dict)  # 行数/几何类/年份等画像事实
+    role_kind: str = "vector"
 
 
 class AnalysisStepSpec(BaseModel):
@@ -101,6 +119,10 @@ class AnalysisStepSpec(BaseModel):
     output_roles: Tuple[str, ...] = ()
     fallback: str = ""                                   # 显式降级名（如 buffer_proxy_disclosed）
     optional: bool = False                               # True: 输入缺失时 typed skipped 而非 blocked
+    semantic_contract: Dict[str, str] = Field(default_factory=dict)
+    # ^ ADR-0284 D2：param → "key:value"（key ∈ {geometry_kind, crs_class}；
+    #   geometry_kind 由 executor 衔接门核验，crs_class 由工具级 preflight
+    #   权威裁决——本合同是声明与纵深防御，不是第二语义源）。
 
 
 class AnalysisWorkflowContract(BaseModel):
@@ -141,6 +163,11 @@ class AnalysisArtifactEnvelope(BaseModel):
     与 artifact_registry.ArtifactRecord 的关系：Record 是注册表行（lineage/
     supersede/LRU），本封套是工作流步骤视角的**结果证据**（stats/单位/
     receipt/警告），二者经 ``ref`` 关联，不复制 lineage 语义。
+
+    v2（ADR-0284 D1）：**实测**类型化事实（采集不到=缺省空值，绝不虚填；
+    ``units`` 保持=声明的参数单位，实测口径在 ``result_semantics``）。
+    v1 旧载荷反序列化时新键取缺省（未知），消费方按「事实缺失=披露不
+    阻断」处理——权威守门仍在工具级 SpatialSemanticContract preflight。
     """
 
     step_id: str
@@ -157,6 +184,17 @@ class AnalysisArtifactEnvelope(BaseModel):
     method_algorithm_id: str = ""                         # MethodUseContract.algorithm_id
     fingerprint: str = ""                                 # recompute.step_fingerprint
     output_roles: Tuple[str, ...] = ()
+    # ── v2 additive（默认=未知）────────────────────────────────────────
+    schema_version: int = 2
+    geometry_types: Tuple[str, ...] = ()                  # 实测（≤4，有界扫描）
+    extent: Tuple[float, ...] = ()                        # ()=未知，否则 4 元组
+    result_semantics: Dict[str, str] = Field(default_factory=dict)   # 实测口径 ≤8
+    temporal: Dict[str, Any] = Field(default_factory=dict)
+    raster: Dict[str, Any] = Field(default_factory=dict)  # 栅格事实 ≤8
+    aggregation_basis: str = ""                           # AGGREGATION_BASIS_VOCABULARY
+    provenance: Dict[str, str] = Field(default_factory=dict)         # ≤6 摘要引用
+    network: dict[str, object] = Field(default_factory=dict)  # bounded measured population facts
+    owner_session_id: str = ""
 
 
 class ContractValidationError(ValueError):
@@ -265,6 +303,12 @@ def validate_workflow_contract(
             raise ContractValidationError(
                 AWF_INVALID_CONTRACT,
                 f"未知数据角色 {role}（词表: {DATA_ROLES}）")
+        binding = contract.data_contracts[role]
+        if binding.role_kind not in ROLE_KINDS:
+            raise ContractValidationError(
+                AWF_INVALID_CONTRACT,
+                f"角色 {role} 的 role_kind 越界: {binding.role_kind}"
+                f"（词表: {ROLE_KINDS}）")
 
     _check_step_dag(list(contract.steps))
 
@@ -292,6 +336,15 @@ def validate_workflow_contract(
                 raise ContractValidationError(
                     AWF_UNIT_CONTRACT_VIOLATION,
                     f"步骤 {step.step_id} 参数 {param} 单位越界: {unit}")
+        for param, spec in step.semantic_contract.items():
+            key = str(spec).partition(":")[0].strip()
+            if param not in step.role_inputs or key not in (
+                    "geometry_kind", "crs_class"):
+                raise ContractValidationError(
+                    AWF_INVALID_CONTRACT,
+                    f"步骤 {step.step_id} 语义合同非法: {param}→{spec}"
+                    "（格式 <param>:<key>:<value>，key ∈ geometry_kind/"
+                    "crs_class，param 须是本步骤输入）")
         for source in step.role_inputs.values():
             if not (source.startswith("role:") or source.startswith("step:")):
                 raise ContractValidationError(

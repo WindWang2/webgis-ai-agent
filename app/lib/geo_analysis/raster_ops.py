@@ -215,10 +215,17 @@ def _windowed_zonal_stats(
                 [poly], out_shape=arr.shape,
                 transform=reader.window_transform(win), invert=True,
             )
-            vals = arr[mask]
+            vals_all = arr[mask]
             if meta.nodata is not None:
-                vals = vals[vals != meta.nodata]
+                vals = vals_all[vals_all != meta.nodata]
+            else:
+                vals = vals_all
             vals = vals[np.isfinite(vals)]
+            # ADR-0284（断点 9 修复）：逐 zone 有效像元覆盖率披露——
+            # 90% nodata 的 zone 均值与全有效 zone 在产物上不再不可区分。
+            total_masked = int(vals_all.size)
+            coverage = (float(vals.size) / total_masked
+                        if total_masked > 0 else None)
             row: dict = {}
             if repair_rec is not None:
                 row["geometry_repair"] = repair_rec.to_dict()
@@ -244,7 +251,12 @@ def _windowed_zonal_stats(
                     )
                     row[key] = None
             if "count" not in stats and vals.size == 0:
+                repair_rec_kept = row.get("geometry_repair")
                 row = {k: None for k in stats}
+                if repair_rec_kept is not None:
+                    # 修复披露不可被重置丢弃（修复永不静默）
+                    row["geometry_repair"] = repair_rec_kept
+            row["valid_pixel_coverage"] = coverage
             out.append(row)
         return out
     finally:
