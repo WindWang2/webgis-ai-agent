@@ -52,6 +52,35 @@ def _push(found: list[tuple[str, str]], key: str, value: object) -> None:
     found.append((key, text))
 
 
+def attach_query_place(result: dict, district: str | None) -> dict:
+    """Stamp the query place onto a POI payload so a later city switch can see it.
+
+    Feature properties are not the only place evidence. A reused ref must
+    carry the district the query actually asked for.
+    """
+    place = str(district or "").strip()
+    if not place or not isinstance(result, dict):
+        return result
+    stamped = dict(result)
+    stamped.setdefault("district", place)
+    return stamped
+
+
+def place_evidence_from_payload(
+    descriptor: Optional[Mapping[str, Any]],
+    payload: Optional[Mapping[str, Any]],
+) -> dict:
+    """Merge descriptor place fields with collection-level query stamps."""
+    merged: dict = dict(descriptor or {})
+    if not isinstance(payload, Mapping):
+        return merged
+    for key in ("district", "cityname", "city", "place", "query", "pname"):
+        value = payload.get(key)
+        if value and not merged.get(key):
+            merged[key] = value
+    return merged
+
+
 def collect_place_tokens(
     descriptor: Optional[Mapping[str, Any]],
     features: Optional[Iterable[Any]] = None,

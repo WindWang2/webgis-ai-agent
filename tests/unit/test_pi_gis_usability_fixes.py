@@ -77,6 +77,60 @@ def test_goal_map_requirement_not_fulfilled_without_observation():
     assert EvidenceKind.MAP_PRODUCT  # import used by the evaluator's evidence filter
 
 
+def test_stamped_query_place_blocks_city_reuse():
+    from app.services.gis_harness.scope_ref_guard import (
+        attach_query_place,
+        place_evidence_from_payload,
+        scope_ref_mismatch,
+    )
+
+    payload = attach_query_place(
+        {"type": "FeatureCollection", "features": [{"properties": {"name": "学校"}}]},
+        "成都市",
+    )
+    assert payload["district"] == "成都市"
+    reason = scope_ref_mismatch(
+        "北京市",
+        descriptor=place_evidence_from_payload(None, payload),
+        features=payload["features"],
+    )
+    assert reason is not None
+    assert scope_ref_mismatch(
+        "成都市",
+        descriptor=place_evidence_from_payload(None, payload),
+    ) is None
+
+
+def test_selection_filter_does_not_keep_unselected_points():
+    from app.tools.advanced_spatial import _filter_features_by_ids
+
+    source = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "id": "a", "properties": {}, "geometry": {"type": "Point", "coordinates": [1, 1]}},
+            {"type": "Feature", "id": "b", "properties": {}, "geometry": {"type": "Point", "coordinates": [2, 2]}},
+        ],
+    }
+    kept = _filter_features_by_ids(source, ["a"])
+    assert [f["id"] for f in kept["features"]] == ["a"]
+    missed = _filter_features_by_ids(source, ["missing"])
+    assert missed["success"] is False
+    assert missed["code"] == "selection_miss"
+
+
+def test_online_fallback_payload_is_an_error():
+    from app.services.llm_result_formatter import is_error_dict
+
+    payload = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature"}],
+        "success": False,
+        "code": "partial_online_fallback",
+        "error": "本地 POI 库缺失",
+    }
+    assert is_error_dict(payload) is True
+
+
 def test_scope_ref_rejects_chengdu_points_for_beijing():
     features = [{
         "type": "Feature",

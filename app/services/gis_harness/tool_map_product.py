@@ -277,12 +277,18 @@ async def webgis_map_product(
         # 只在确需补层时取全量数据（get 返回 deepcopy，避免无谓 O(N) 拷贝）
         primary_data = await session_data_manager.get(session_id, primary_ref)
     if primary_data is not None and getattr(intent.scope, "name", ""):
-        from app.services.gis_harness.scope_ref_guard import scope_ref_mismatch
+        from app.services.gis_harness.scope_ref_guard import (
+            place_evidence_from_payload,
+            scope_ref_mismatch,
+        )
 
         features = primary_data.get("features") if isinstance(primary_data, dict) else None
         mismatch = scope_ref_mismatch(
             str(intent.scope.name),
-            descriptor=primary_descriptor,
+            descriptor=place_evidence_from_payload(
+                primary_descriptor,
+                primary_data if isinstance(primary_data, dict) else None,
+            ),
             features=features if isinstance(features, list) else None,
         )
         if mismatch:
