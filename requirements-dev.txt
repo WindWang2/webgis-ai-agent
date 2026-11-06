@@ -15,6 +15,8 @@ pytest-cov>=7.1.0
 pytest-timeout>=2.4.0
 # 里程碑并行门禁（`pytest tests/unit -q -n 2 ...`，ADR-0153 门禁书命令）
 pytest-xdist>=3.8.0
+# Strict JSON Schema validation for the visual-critic export harness.
+jsonschema>=4.26.0
 # 类型契约回归会通过当前解释器运行 mypy（正/负 fixture）；backend lane
 # 也必须显式安装，不能依赖 quality job 的独立工具环境。保持已验证的
 # 2.3 minor 线，与 production.yml 的工具 pin（2.3.1）同步评审。

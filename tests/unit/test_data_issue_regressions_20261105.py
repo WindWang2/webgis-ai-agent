@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 
-def test_http_connection_pins_address_preserves_port_and_global_resolver(monkeypatch):
+@pytest.mark.parametrize("is_verified", [True, False])
+def test_http_connection_pins_address_preserves_port_and_global_resolver(monkeypatch, is_verified):
     import urllib3.connection
     from app.services.data_fabric.security import _safe_pool_classes
 
@@ -32,12 +33,18 @@ def test_http_connection_pins_address_preserves_port_and_global_resolver(monkeyp
     tls_arguments = {}
     def wrap_tls(**kwargs):
         tls_arguments.update(kwargs)
-        return SimpleNamespace(socket=sock, is_verified=True)
+        # Use urllib3's real return type: 2.8 unpacks the pair, while older
+        # releases read its attributes. SimpleNamespace only supports the latter.
+        return urllib3.connection._WrappedAndVerifiedSocket(socket=sock, is_verified=is_verified)
 
     monkeypatch.setattr(urllib3.connection, "_ssl_wrap_socket_and_match_hostname", wrap_tls)
     connection.connect()
     assert tls_arguments["server_hostname"] == "public.example"
-    assert connection.is_verified is True
+    assert connection.sock is sock
+    assert connection.is_verified is is_verified
+    assert seen == [(public_ip, 8443), (public_ip, 8443)]
+    assert connection._dns_host == "public.example"
+    assert socket.getaddrinfo is resolve
 
 
 def test_http_dns_failure_and_connect_time_rebinding_fail_closed(monkeypatch):
