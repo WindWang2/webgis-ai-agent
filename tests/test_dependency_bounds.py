@@ -274,6 +274,12 @@ class TestPyprojectScanSurface:
 class TestLiveRepoGate:
     """实测门：仓库当前状态必须干净（ oracle：退出码 0）。"""
 
+    def test_schema_validator_is_declared_in_test_environment(self):
+        # The export harness imports jsonschema directly. A developer's ambient
+        # install or a separate schemathesis job cannot supply backend CI shards.
+        specs = guard.parse_requirements(REPO / "requirements-dev.txt")
+        assert "jsonschema" in specs, "Declare jsonschema in requirements-dev.txt"
+
     def test_repo_requirements_are_clean(self):
         errors = guard.check(
             [
