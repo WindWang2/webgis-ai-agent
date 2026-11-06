@@ -236,6 +236,19 @@ describe('scheduleTiles', () => {
     expect(decision.degraded.budgetCappedTiles).toBeGreaterThan(0);
   });
 
+  it.each([{ children: [] }, { children: ['0/0', '0/1'] }])('retains the ready ancestor when descendant selection exceeds the render budget ($children)', ({ children }) => {
+    const root = fixtureNodes();
+    const decision = scheduleTiles(
+      root, cam({ eyeEnu: { x: 0, y: 0, z: 150 } }),
+      { maxSse: 16, maxVisibleTiles: 1 },
+      new Set(['0', ...children]), new Set(['0']),
+    );
+    expect([...decision.render]).toEqual(['0']);
+    expect(decision.unload).not.toContain('0');
+    if (children.length === 0) expect(decision.load.length).toBeGreaterThan(0);
+    else expect(decision.load).toEqual([]);
+  });
+
   it('unload = prevRender minus current render', () => {
     const root = fixtureNodes();
     const near = cam({ eyeEnu: { x: 0, y: 0, z: 150 } });

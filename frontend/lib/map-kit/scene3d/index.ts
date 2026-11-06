@@ -27,8 +27,9 @@ export { isAllowedUrl, resolveUri, fetchJson, fetchBinary, Scene3dResourceFailur
 export function syncSceneAssets(
   map: object,
   spec: MapSpec | null | undefined,
+  sessionId?: string | null,
 ): { mounted: number; removed: number; updated: number } {
-  return getScene3dManager(map).sync(spec);
+  return getScene3dManager(map).sync(spec, sessionId ?? null);
 }
 
 /** renderer 缝：全部释放（map unmount / WebGL 重建）。 */

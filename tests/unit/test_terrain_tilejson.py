@@ -129,6 +129,26 @@ SESSION = "sess-tilejson-auth-0001"
 
 
 class TestTileJsonContract:
+    async def test_wrapped_receipt_uses_non_wrapped_tile_envelope(self, client, env, monkeypatch):
+        import io
+        import sys
+        from PIL import Image
+
+        monkeypatch.setattr(sys.modules[__name__], "_BBOX", (170.0, 10.0, 190.0, 12.0))
+        sid = "sess-antimeridian-tilejson"
+        await _seed_conversation(env["db"], sid, user_id=_MOCK_USER["user_id"])
+        ref_id = await _register_dem(env, sid)
+        response = await client.get(f"/api/v1/layers/data/{ref_id}/terrain-tiles.json?session_id={sid}")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["bounds"] == pytest.approx([-180, 10, 180, 12])
+        assert body["terrain"]["coverage_bbox_epsg4326"] == pytest.approx([170, 10, -170, 12])
+        assert body["terrain"]["tile_bounds_policy"] == "antimeridian_envelope"
+        tile = await client.get(body["tiles"][0].format(z=5, x=31, y=15))
+        assert tile.status_code == 200, tile.text
+        with Image.open(io.BytesIO(tile.content)) as image:
+            assert image.convert("RGBA").getchannel("A").getextrema()[1] > 0
+
     async def test_receipt_driven_tilejson_and_tile_chain(self, client, env):
         await _seed_conversation(env["db"], SESSION, user_id=_MOCK_USER["user_id"])
         ref_id = await _register_dem(env, SESSION)

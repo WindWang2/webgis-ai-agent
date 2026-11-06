@@ -79,14 +79,15 @@ export function scheduleTiles(
   let budgetCapped = 0;
   let culled = 0;
 
-  const select = (tile: TileNode): void => {
-    if (tile.contentUri === null) return;
+  const select = (tile: TileNode): boolean => {
+    if (tile.contentUri === null || render.has(tile.id)) return true;
     if (render.size >= policy.maxVisibleTiles) {
       budgetCapped += 1;
-      return;
+      return false;
     }
     render.add(tile.id);
     if (!loadedSet.has(tile.id)) load.push(tile.id);
+    return true;
   };
 
   /**
@@ -95,7 +96,9 @@ export function scheduleTiles(
    */
   const suppressSubtree = (tile: TileNode): void => {
     for (const child of tile.children) {
-      if (loadedSet.has(child.id)) render.delete(child.id);
+      // Load requests have their own list and remain queued. Pending render
+      // placeholders must also yield their slots to the ready ancestor.
+      render.delete(child.id);
       suppressSubtree(child);
     }
   };
@@ -112,8 +115,8 @@ export function scheduleTiles(
     const sse = sseOf(tile, cam);
     const wantsRefine = sse > policy.maxSse && tile.children.length > 0;
     if (!wantsRefine) {
-      select(tile);
-      const ready = loadedSet.has(tile.id) || tile.contentUri === null;
+      const selected = select(tile);
+      const ready = (selected && loadedSet.has(tile.id)) || tile.contentUri === null;
       return { ready, covered: ready };
     }
     if (tile.refine === 'ADD') {

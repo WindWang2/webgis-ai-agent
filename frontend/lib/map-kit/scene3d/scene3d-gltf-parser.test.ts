@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildGlbFixture } from './__fixtures__/glb';
-import { GltfParseError, parseGlbContainer, parseGltf } from './gltf/gltf-parser';
+import { GltfParseError, MAX_NODES_PER_ASSET, parseGlbContainer, parseGltf } from './gltf/gltf-parser';
 
 function glbJsonOf(jsonBytes: Uint8Array): ArrayBuffer {
   const pad = (4 - (jsonBytes.length % 4)) % 4;
@@ -58,6 +58,18 @@ describe('glb container', () => {
 });
 
 describe('parseGltf fixture round-trip', () => {
+  it('rejects repeated empty nodes before a compact DAG expands exponentially', async () => {
+    const nodes = Array.from({ length: 14 }, (_, i) => i < 13 ? { children: [i + 1, i + 1] } : {});
+    await expect(parseGltf(glbJson({ asset: { version: '2.0' }, scenes: [{ nodes: [0] }], nodes })))
+      .rejects.toThrow(/multiple parents/);
+  });
+
+  it('bounds a broad scene even when empty nodes consume no vertex budget', async () => {
+    const nodes = Array.from({ length: MAX_NODES_PER_ASSET + 1 }, () => ({}));
+    const roots = nodes.map((_, i) => i);
+    await expect(parseGltf(glbJson({ asset: { version: '2.0' }, scenes: [{ nodes: roots }], nodes })))
+      .rejects.toMatchObject({ code: 'budget_exceeded' });
+  });
   it('parses indexed triangle mesh with stats', async () => {
     const parsed = await parseGltf(buildGlbFixture({ triangles: 4 }));
     expect(parsed.roots).toHaveLength(1);

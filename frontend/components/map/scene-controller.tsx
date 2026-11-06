@@ -91,7 +91,7 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null } = {}) {
+export function SceneController({ getMap, sessionId }: { getMap?: () => MapViewSeam | null; sessionId?: string | null } = {}) {
   const t = useT('map');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -105,6 +105,10 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
   // C4：透明度本地受控态（与显隐对称 —— 非受控 defaultValue 会在面板
   // 关开/资产重挂后与实际渲染透明度双向漂移）。
   const [assetOpacity, setAssetOpacityState] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setAssetVisibility({});
+    setAssetOpacityState({});
+  }, [sessionId]);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const nextViewpointId = useRef(1);
   // C5：Escape 关闭挂 window（触发按钮是对话框的兄弟节点 —— 鼠标打开时
@@ -124,26 +128,12 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
   // liveGeneration 触发重渲染；场景读 committed（单一真相）。
-  const liveGeneration = useSyncExternalStore(
+  useSyncExternalStore(
     subscribeMapSpecLive,
     getMapSpecLiveGeneration,
     getMapSpecLiveGeneration,
   );
-  // C3：本地表象在资产重挂后回灌 —— 渲染器侧重挂（revision 换代/setStyle
-  // 清扫/context restored）会把 presentation 复位为 null，本地覆盖若不
-  // 重放会形成「死开关」（UI 说隐藏、渲染器实际可见）。user-wins：本地
-  // 覆盖在 spec 同步后仍生效。
-  useEffect(() => {
-    const map = getMap?.() as unknown as object | null;
-    if (!map) return;
-    for (const [id, visible] of Object.entries(assetVisibility)) {
-      renderer.scene3dSetAssetPresentation(map, id, { visible });
-    }
-    for (const [id, opacity] of Object.entries(assetOpacity)) {
-      renderer.scene3dSetAssetPresentation(map, id, { opacity });
-    }
-    // liveGeneration 变化 = spec 世代变化（重挂窗口）；getMap 稳定缝。
-  }, [liveGeneration, getMap, assetVisibility, assetOpacity]);
+  // 模型重挂的表象回灌由 manager 同步处理，避免 child effect 先于父 sync。
   const scene = readScene();
   // 每渲染直读（sources 扫描廉价；committed 变更由 liveGeneration 驱动重渲染）。
   const terrain = terrainEvidence();
@@ -156,12 +146,21 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
   const [exaggerationDraft, setExaggerationDraft] = useState<number | null>(null);
   const exaggerationShown = exaggerationDraft ?? exaggeration;
   const setExaggerationRef = useRef<(v: number) => void>(() => {});
+  const exaggerationCommitPendingRef = useRef(false);
   const commitExaggerationDraft = useCallback(() => {
     if (exaggerationDraft === null) return;
+    if (busyRef.current) {
+      exaggerationCommitPendingRef.current = true;
+      return;
+    }
+    exaggerationCommitPendingRef.current = false;
     const value = exaggerationDraft;
     setExaggerationDraft(null);
     if (value !== exaggeration) setExaggerationRef.current(value);
   }, [exaggerationDraft, exaggeration]);
+  useEffect(() => {
+    if (!busy && exaggerationCommitPendingRef.current) commitExaggerationDraft();
+  }, [busy, commitExaggerationDraft]);
   const pitch = scene?.camera?.pitch ?? 0;
   const bearing = scene?.camera?.bearing ?? 0;
 
@@ -371,7 +370,7 @@ export function SceneController({ getMap }: { getMap?: () => MapViewSeam | null 
             max={EXAGGERATION_MAX}
             step={EXAGGERATION_STEP}
             value={exaggerationShown}
-            disabled={!terrain.ready}
+            disabled={!terrain.ready || busy}
             onChange={(e) => setExaggerationDraft(Number(e.target.value))}
             onPointerUp={commitExaggerationDraft}
             onKeyUp={commitExaggerationDraft}

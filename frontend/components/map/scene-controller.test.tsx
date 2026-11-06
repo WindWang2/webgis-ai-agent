@@ -254,27 +254,44 @@ describe('SceneController review fixes (C3/C5)', () => {
     expect((screen.getByLabelText('campus') as HTMLInputElement).checked).toBe(true);
   });
 
-  it('local presentation re-applies after spec generation change (remount resync)', async () => {
-    // 评审 C3：渲染器重挂（revision 换代/context restore）复位 presentation ——
-    // 本地覆盖需在 liveGeneration 变化后重放，否则形成死开关。
+  it('disables exaggeration while a scene mutation is in flight', async () => {
+    let resolveCommit!: (value: { outcome: string }) => void;
+    commitUserScene.mockImplementationOnce(() => new Promise((resolve) => { resolveCommit = resolve; }));
     commitSpec({
-      scene: { mode: '3d', assets: [{ id: 'campus', source: 'm', visible: true }] },
-      sources: { m: { type: 'model3d' } },
+      scene: { mode: '3d', camera: { pitch: 50 }, terrain: { source: 'dem', exaggeration: 1 } },
+      sources: { dem: { type: 'raster-dem' } },
     });
-    render(<SceneController getMap={() => ({})} />);
-    fireEvent.click(screen.getByRole('button', { name: 'sceneController.title' }));
-    scene3dSetAssetPresentation.mockClear();
-    fireEvent.click(screen.getByLabelText('campus')); // 本地隐藏
-    expect(scene3dSetAssetPresentation).toHaveBeenCalledWith(expect.anything(), 'campus', { visible: false });
-    // spec 世代变化（重挂窗口）→ 本地表象重放。
-    scene3dSetAssetPresentation.mockClear();
+    render(<SceneController />);
+    openPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.pitchUp' }));
+    const slider = screen.getByLabelText(/sceneController.exaggeration/, { selector: 'input' }) as HTMLInputElement;
+    expect(slider.disabled).toBe(true);
+    resolveCommit({ outcome: 'committed' });
+    await vi.waitFor(() => expect(slider.disabled).toBe(false));
+    fireEvent.change(slider, { target: { value: '2' } });
+    fireEvent.pointerUp(slider);
+    await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalledTimes(2));
+    expect(commitUserScene.mock.calls[1][0].terrain.exaggeration).toBe(2);
+  });
+
+  it('retains a released drag if another control becomes busy before release', async () => {
+    let resolveCommit!: (value: { outcome: string }) => void;
+    commitUserScene.mockImplementationOnce(() => new Promise((resolve) => { resolveCommit = resolve; }));
     commitSpec({
-      scene: { mode: '3d', assets: [{ id: 'campus', source: 'm', visible: true }] },
-      sources: { m: { type: 'model3d' } },
+      scene: { mode: '3d', camera: { pitch: 50 }, terrain: { source: 'dem', exaggeration: 1 } },
+      sources: { dem: { type: 'raster-dem' } },
     });
-    // commitSpec 的订阅通知不在 act 内 —— 重渲染/effect 异步调度。
-    await vi.waitFor(() => expect(scene3dSetAssetPresentation).toHaveBeenCalledWith(
-      expect.anything(), 'campus', { visible: false }));
+    render(<SceneController />);
+    openPanel();
+    const slider = screen.getByLabelText(/sceneController.exaggeration/, { selector: 'input' }) as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.pitchUp' }));
+    fireEvent.blur(slider);
+    expect(slider.value).toBe('2');
+    expect(commitUserScene).toHaveBeenCalledTimes(1);
+    resolveCommit({ outcome: 'committed' });
+    await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalledTimes(2));
+    expect(commitUserScene.mock.calls[1][0].terrain.exaggeration).toBe(2);
   });
 });
 

@@ -111,7 +111,7 @@ interface MountedAsset {
   /**
    * 本地表象覆盖（G3DV2-B M5，user-wins 表象层）：
    * visible=false 隐藏 / opacity∈[0.05,1] —— 不进 MapSpec（非持久
-   * desired-state），spec 同步后仍生效；卸载/换代即复位（重挂新实例）。
+   * desired-state），同会话重挂保留；资产移除/会话切换后清空。
    */
   presentation: { visible: boolean | null; opacity: number | null };
 }
@@ -172,6 +172,9 @@ function policyOf(asset: SceneAssetSpec, options: Scene3dSyncOptions): LodPolicy
 
 export class Scene3DManager {
   private mounted = new Map<string, MountedAsset>();
+  /** 本地图当前会话的用户表象；模型重挂时由执行端同步回灌。 */
+  private presentations = new Map<string, MountedAsset['presentation']>();
+  private sessionId: string | null | undefined;
   private moveHandler: (() => void) | null = null;
   private disposed = false;
   /** 跨资产累计资源预算（G3DV2-B M3）。 */
@@ -189,9 +192,23 @@ export class Scene3DManager {
   }
 
   /** 幂等差分同步（MapSpec → 挂载集）。返回本次变更摘要（观察面）。 */
-  sync(spec: MapSpec | null | undefined): { mounted: number; removed: number; updated: number } {
-    if (this.disposed || this.contextLost) return { mounted: 0, removed: 0, updated: 0 };
+  sync(spec: MapSpec | null | undefined, sessionId = this.sessionId): { mounted: number; removed: number; updated: number } {
+    if (this.disposed) return { mounted: 0, removed: 0, updated: 0 };
+    let removedCount = 0;
+    if (sessionId !== this.sessionId) {
+      for (const assetId of [...this.mounted.keys()]) {
+        this.unmountAsset(assetId);
+        removedCount += 1;
+      }
+      this.presentations.clear();
+      this.sessionId = sessionId;
+    }
+    if (this.contextLost) return { mounted: 0, removed: removedCount, updated: 0 };
     const assets = spec?.scene?.assets ?? [];
+    const declaredIds = new Set(assets.map((asset) => asset?.id));
+    for (const assetId of this.presentations.keys()) {
+      if (!declaredIds.has(assetId)) this.presentations.delete(assetId);
+    }
     const sources = spec?.sources ?? {};
     const sceneActive = !!spec?.scene && spec.scene.mode !== '2d';
 
@@ -203,7 +220,6 @@ export class Scene3DManager {
     }
 
     let mountedCount = 0;
-    let removedCount = 0;
     let updatedCount = 0;
 
     for (const assetId of [...this.mounted.keys()]) {
@@ -333,6 +349,7 @@ export class Scene3DManager {
     }
     this.detachMoveHandler();
     this.ledger.releaseAll();
+    this.presentations.clear();
   }
 
   /** 观察面：跨资产累计预算用量（telemetry/测试消费；零分配快照）。 */
@@ -355,6 +372,7 @@ export class Scene3DManager {
     if (typeof patch.opacity === 'number' && Number.isFinite(patch.opacity)) {
       asset.presentation.opacity = Math.min(1, Math.max(0.05, patch.opacity));
     }
+    this.presentations.set(assetId, asset.presentation);
     this.applyPresentation(asset);
     this.map.triggerRepaint?.();
     return true;
@@ -495,7 +513,7 @@ export class Scene3DManager {
       lastMvp: null,
       generation: 0,
       loadPending: true,
-      presentation: { visible: null, opacity: null },
+      presentation: this.presentations.get(assetId) ?? { visible: null, opacity: null },
     };
     this.mounted.set(assetId, mounted);
     const generation = mounted.generation;
@@ -572,6 +590,7 @@ export class Scene3DManager {
         mounted.singleModel = built;
         mounted.group.add(built.root);
         this.applyPlacement(mounted);
+        this.applyPresentation(mounted);
         for (const w of parsed.warnings) recordSceneAssetStatus(assetId, 'degraded', w);
         mounted.loadPending = false;
         recordSceneAssetStatus(assetId, 'mounted', `${parsed.stats.triangles}tri`);

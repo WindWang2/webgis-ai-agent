@@ -785,8 +785,8 @@ export function MapPanel({
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
-    renderer.syncSceneAssets(map, getCommittedMapSpec())
-  }, [mapReady, sceneAssetsKey, currentMapStyle])
+    renderer.syncSceneAssets(map, getCommittedMapSpec(), sessionId)
+  }, [mapReady, sceneAssetsKey, currentMapStyle, sessionId])
 
   // G3D05（ADR-0275）：Agent 场景写入 → is3D 单向桥。此前 set_map_scene
   // 只写 spec，is3D 闸门留在 false，Agent 的 3D 场景从不激活（语义动作
@@ -1888,7 +1888,7 @@ export function MapPanel({
           （读写均走 committed MapSpec.scene；Agent set_map_scene 与用户
           操作汇合同一事务管线）。 */}
       {/* M5：getMap 缝供本地表象控制（资产显隐/透明度/光照/视角书签）。 */}
-      <SceneController getMap={() => (mapRef.current?.getMap() ?? null) as never} />
+      <SceneController sessionId={sessionId} getMap={() => (mapRef.current?.getMap() ?? null) as never} />
 
       {/* Runtime V4：框选矩形覆盖层 —— 命令式更新（mousedown/mousemove 直接
           写 style，60Hz 拖拽零 React 渲染；display 由 paintRect 管理）。 */}

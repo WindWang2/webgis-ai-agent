@@ -945,6 +945,15 @@ async def get_terrain_tilejson(
         "elevation_max_m": receipt_data.get("elevation_max_m") if isinstance(receipt_data, dict) else None,
     }
 
+    tile_bounds = bounds
+    if len(bounds) == 4 and bounds[0] > bounds[2]:
+        # MapLibre TileBounds requires west <= east and would discard every
+        # tile for a wrapped scientific bbox. Publish a conservative envelope;
+        # retain the precise wrapped coverage and its rendering caveat below.
+        tile_bounds = [-180.0, bounds[1], 180.0, bounds[3]]
+        terrain_block["coverage_bbox_epsg4326"] = bounds
+        terrain_block["tile_bounds_policy"] = "antimeridian_envelope"
+
     body = {
         "tilejson": "3.0.0",
         "name": f"session-dem:{ref_id}",
@@ -952,7 +961,7 @@ async def get_terrain_tilejson(
         "version": "1.0.0",
         "attribution": attribution,
         "tiles": [tiles_url],
-        "bounds": bounds,
+        "bounds": tile_bounds,
         "minzoom": 0,
         "maxzoom": maxzoom,
         # 扩展块（非 TileJSON 标准字段；消费者按扩展命名空间理解）
