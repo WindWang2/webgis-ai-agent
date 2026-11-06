@@ -147,6 +147,10 @@ NATIVE_HEATMAP_COLORS: Dict[str, List[str]] = {
                 "#7acb62", "#fdd53c", "#ffffdc"],
     "thermal": ["rgba(0,40,255,0)", "#0066ff", "#00d6ff", "#50f078",
                 "#ffe600", "#ff7800", "#eb1414"],
+    # Sequential blue ramp (ColorBrewer Blues, transparent cold end). Used when
+    # a follow-up asks to recolor a heatmap blue without rebuilding the grid.
+    "blues": ["rgba(4,24,51,0)", "#f7fbff", "#9ecae1", "#4292c6",
+              "#0868ac", "#084081", "#041833"],
 }
 
 
@@ -162,6 +166,7 @@ HEATMAP_LEGEND_PALETTE_KEY: Dict[str, str] = {
     "magma": "Magma",
     "viridis": "Viridis",
     "thermal": "Reds",
+    "blues": "Blues",
 }
 
 

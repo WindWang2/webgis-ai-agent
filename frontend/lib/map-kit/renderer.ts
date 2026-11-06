@@ -633,6 +633,15 @@ const HEATMAP_PALETTES = {
     'rgb(255,230,0)',
     'rgb(255,120,0)',
     'rgb(235,20,20)'
+  ],
+  blues: [
+    'rgba(4,24,51,0)',
+    'rgb(247,251,255)',
+    'rgb(158,202,225)',
+    'rgb(66,146,198)',
+    'rgb(8,104,172)',
+    'rgb(8,64,129)',
+    'rgb(4,24,51)'
   ]
 };
 
@@ -652,7 +661,7 @@ function heatmapPaletteStops(palette: string | string[] | undefined): (number | 
 export interface HeatmapOptions {
   id: string;
   source: string;
-  /** 命名键（classic/magma/viridis/thermal，未知名回落 classic）或颜色数组。 */
+  /** 命名键（classic/magma/viridis/thermal/blues，未知名回落 classic）或颜色数组。 */
   palette?: string | string[];
   /** 显式视觉热力半径（MapLibre 屏幕像素）—— 契约字段，直接 clamp [4,80]。 */
   radiusPx?: number;

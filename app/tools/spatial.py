@@ -272,23 +272,23 @@ class BufferAnalysisArgs(BaseModel):
 
 class HeatmapDataArgs(BaseModel):
     geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
-    cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000（raster/grid 分析模式用）")
+    cell_size: float = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000（raster/grid 分析模式用；连续米值，禁止截断为整数）")
     radius_px: Optional[int] = Field(
         None, ge=4, le=80,
         description="视觉热力半径（MapLibre 屏幕像素，仅 native 渲染）。显式像素语义，"
                     "与米制分析带宽(bandwidth_m)分离；缺省 30px")
-    bandwidth_m: Optional[int] = Field(
+    bandwidth_m: Optional[float] = Field(
         None, ge=10, le=10000,
         description="分析密度带宽（米），raster/grid 模式的核平滑半径。定量密度语义")
-    radius: Optional[int] = Field(
+    radius: Optional[float] = Field(
         None, ge=10, le=10000,
-        description="[兼容] 旧搜索半径（米）。会被归一化为 bandwidth_m；native 视觉半径"
+        description="[兼容] 旧搜索半径（米，连续值）。会被归一化为 bandwidth_m；native 视觉半径"
                     "在 4-60 历史窗口内直通为像素，否则用默认 30px 并告警。"
                     "新调用请显式用 radius_px/bandwidth_m")
     render_type: Literal["native", "raster", "grid"] = Field(
         "native", description="渲染模式: native(原生逐点密度，默认推荐), raster(服务端栅格PNG), grid(格网)")
-    palette: Literal["classic", "magma", "viridis", "thermal"] = Field(
-        "classic", description="配色方案: classic, magma, viridis, thermal")
+    palette: Literal["classic", "magma", "viridis", "thermal", "blues"] = Field(
+        "classic", description="配色方案: classic, magma, viridis, thermal, blues")
     palette_context: Optional[Literal[
         "screen", "projector", "print",
         "cvd_deuteranopia", "cvd_protanopia", "cvd_tritanopia"]] = Field(
@@ -472,9 +472,9 @@ def register_spatial_tools(registry: ToolRegistry):
            result_size_policy="ref_offload",
            failure_modes=("timeout", "invalid_args", "missing_data"))
     @cached_tool(ttl=3600)
-    def heatmap_data(geojson: Any, cell_size: int = 500, radius: Optional[int] = None,
+    def heatmap_data(geojson: Any, cell_size: float = 500, radius: Optional[float] = None,
                      render_type: str = "native", palette: str = "classic",
-                     radius_px: Optional[int] = None, bandwidth_m: Optional[int] = None,
+                     radius_px: Optional[int] = None, bandwidth_m: Optional[float] = None,
                      intensity: Optional[float] = None, weight_field: Optional[str] = None,
                      weight: Optional[float] = None, opacity: Optional[float] = None,
                      max_zoom: Optional[int] = None, min_zoom: Optional[int] = None,

@@ -56,7 +56,7 @@ class HeatmapRadiusContract:
     """归一化后的热力半径契约。核心链路只读显式字段。"""
 
     radius_px: int = DEFAULT_RADIUS_PX
-    bandwidth_m: Optional[int] = None
+    bandwidth_m: Optional[float] = None
     # explicit | default | legacy_radius_visual_default_applied
     source: str = "default"
     warnings: List[str] = field(default_factory=list)
@@ -84,6 +84,22 @@ def _coerce_int(value: Any) -> Optional[int]:
     return None
 
 
+def _coerce_meters(value: Any) -> Optional[float]:
+    """Finite meter quantity. Non-integer floats are kept, not dropped.
+
+    Dropping 250.5 used to look like a missing value and fall back to the
+    1000 m default. Pixel radii stay on ``_coerce_int``.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if number != number or number in (float("inf"), float("-inf")):
+            return None
+        return number
+    return None
+
+
 def normalize_heatmap_radius(
     *,
     radius_px: Any = None,
@@ -99,8 +115,8 @@ def normalize_heatmap_radius(
     warnings: List[str] = []
 
     explicit_px = _coerce_int(radius_px)
-    explicit_bw = _coerce_int(bandwidth_m)
-    legacy = _coerce_int(legacy_radius)
+    explicit_bw = _coerce_meters(bandwidth_m)
+    legacy = _coerce_meters(legacy_radius)
 
     if explicit_px is not None:
         clamped = clamp_radius_px(explicit_px)
