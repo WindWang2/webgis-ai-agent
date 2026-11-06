@@ -54,9 +54,26 @@ logger = logging.getLogger(__name__)
 
 # Bundled Pi (vendor/pi) — never the user's global `pi` CLI / ~/.pi tree.
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PI_RPC_ENTRY = (
-    REPO_ROOT / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "rpc-entry.js"
+# Pi ≥v1.5.0 ships `dist/bundle/rpc-entry.js`; loading even an .mjs extension
+# also requires its locked external jiti package under vendor/pi/node_modules.
+# The tsgo-emitted `dist/rpc-entry.js` (workspace-wide build) stays a fallback
+# for source checkouts. First existing entry wins; pi_doctor surfaces which.
+PI_RPC_ENTRY_CANDIDATES = (
+    REPO_ROOT / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "bundle" / "rpc-entry.js",
+    REPO_ROOT / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "rpc-entry.js",
 )
+
+
+def resolve_pi_rpc_entry() -> Path:
+    """First built Pi RPC entry that exists (bundle preferred), else the
+    canonical bundle path (so the FileNotFoundError names the primary target)."""
+    for candidate in PI_RPC_ENTRY_CANDIDATES:
+        if candidate.is_file():
+            return candidate
+    return PI_RPC_ENTRY_CANDIDATES[0]
+
+
+PI_RPC_ENTRY = resolve_pi_rpc_entry()
 PI_AGENT_DIR = REPO_ROOT / ".pi" / "agent"
 DEFAULT_SESSION_DIR = REPO_ROOT / ".pi" / "sessions"
 BUNDLED_PI_PROVIDER = "webgis"

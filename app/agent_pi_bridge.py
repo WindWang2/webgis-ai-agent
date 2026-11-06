@@ -2096,7 +2096,7 @@ class PiBridge:
                         query_text=context_query_text or "",
                     )
                     try:
-                        await self._rpc.request("prompt", data)
+                        prompt_resp = await self._rpc.request("prompt", data)
                     except PiRpcError as send_exc:
                         # #790 (B-6 parity with stream_prompt's ``send_failed``): the
                         # prompt RPC itself raised. Pi may already have started the
@@ -2110,6 +2110,24 @@ class PiBridge:
                             detail=str(send_exc)[:200],
                         )
                         raise
+                    # ADR-0282：disposition=handled —— prompt 被扩展 input
+                    # handler 消费，无 agent run 启动，agent_settled 永不到达。
+                    # 立即诚实结算为失败，不挂满 PI_EVENT_DRAIN/TOTAL 预算。
+                    # 观测面拆分（review P3，有意为之）：rt_ev 记
+                    # pi_prompt_handled；kernel settle seam 沿用 send_failed
+                    # 派生（cause=send_fail —— 共享信号面不改签名）；SSE 面
+                    # error_class=internal_error。三面均为 FAILED 真值。
+                    if isinstance(prompt_resp, dict) and prompt_resp.get("disposition") == "handled":
+                        send_failed = True
+                        rt_ev.settle(
+                            Outcome.FAILED,
+                            failure_class="pi_prompt_handled",
+                            detail="prompt consumed by an input handler; no agent run started",
+                        )
+                        raise PiRpcError(
+                            "Pi consumed the prompt via an input handler "
+                            "(disposition=handled); no agent run started"
+                        )
 
                     # Drain events from the queue (non-streaming mode).
                     # audit #816: message_update carries the ACCUMULATED partial
@@ -2599,7 +2617,7 @@ class PiBridge:
 
                     # Send prompt command
                     try:
-                        await self._rpc.request("prompt", data)
+                        prompt_resp = await self._rpc.request("prompt", data)
                     except PiRpcError as e:
                         logger.error(f"[PiBridge] stream_prompt send failed: {e}")
                         send_failed = True
@@ -2614,6 +2632,33 @@ class PiBridge:
                                 "have partially started; please retry."
                             ),
                             "error_class": error_class_for_turn_failure("pi_send_error"),
+                        })
+                        yield sse_event("done", {"session_id": turn_sid})
+                        return
+                    # ADR-0282：disposition=handled —— 无 agent run，SSE 终态
+                    # exactly-once 在此路径收敛（error+done，不等待不可能到达
+                    # 的 agent_settled）。观测面拆分说明见上方非流分支注释。
+                    if isinstance(prompt_resp, dict) and prompt_resp.get("disposition") == "handled":
+                        logger.error(
+                            "[PiBridge] stream_prompt disposition=handled (input "
+                            "handler consumed the prompt; no agent run started)"
+                        )
+                        send_failed = True
+                        rt_ev.settle(
+                            Outcome.FAILED,
+                            failure_class="pi_prompt_handled",
+                            detail="prompt consumed by an input handler; no agent run started",
+                        )
+                        yield sse_event("task_error", {
+                            "task_id": turn_sid,
+                            "session_id": turn_sid,
+                            "turn_id": turn_id,
+                            "error": (
+                                "The agent consumed this message through an input "
+                                "handler and no task was started. Please rephrase "
+                                "or retry."
+                            ),
+                            "error_class": error_class_for_turn_failure("pi_prompt_handled"),
                         })
                         yield sse_event("done", {"session_id": turn_sid})
                         return

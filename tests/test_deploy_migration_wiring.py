@@ -647,3 +647,14 @@ def test_dev_dockerfile_copies_vendor_for_pi_bridge():
     assert "COPY vendor/" in builder_stage, (
         "backend-builder 必须 COPY vendor/（PI_RPC_ENTRY + Pi dist）"
     )
+    # ADR-0282（review P2）：compose api 以 backend-builder 为 target ——
+    # 自包含 bundle 也必须进入该阶段，否则开发栈保留 #400 静默回退。
+    assert "COPY --from=pi-builder" in builder_stage, (
+        "backend-builder 必须 COPY --from=pi-builder 的 dist/bundle"
+    )
+    # 生产镜像同理（runner 阶段）。
+    prod_df = (REPO_ROOT / "Dockerfile.prod").read_text(encoding="utf-8")
+    prod_runner = prod_df.split(" AS runner", 1)[-1]
+    assert "COPY --from=pi-builder" in prod_runner, (
+        "Dockerfile.prod runner 必须 COPY --from=pi-builder 的 dist/bundle"
+    )

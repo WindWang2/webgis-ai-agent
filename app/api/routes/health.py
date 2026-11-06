@@ -23,6 +23,13 @@ _LLM_CACHE_TTL = 30.0
 _llm_last_check = 0.0
 _llm_last_result = False
 
+# ADR-0282：Pi vendor 身份事实在进程生命周期内不变（除事后补构建）——
+# /health 是无鉴权、限流豁免的热路径，pi_vendor_identity 会 fork 数个
+# git/node 子进程（review P1），故按 _check_llm 同款 TTL 缓存。
+_PI_VENDOR_CACHE_TTL = 30.0
+_pi_vendor_last_check = 0.0
+_pi_vendor_last_result: Optional[str] = None
+
 
 def _check_db():
     """检查数据库连接"""
@@ -118,6 +125,7 @@ def health_check() -> HealthResponse:
         # the badge still says "pi". Disclose the per-worker split so the
         # badge can be reconciled against reality.
         pi_workers_alive=_pi_workers_alive(),
+        pi_vendor=_pi_vendor_summary(),
     )
 
 
@@ -134,6 +142,30 @@ def _pi_workers_alive() -> Optional[str]:
         return f"{alive}/{pool.size}"
     except Exception:
         return None
+
+
+def _pi_vendor_summary() -> Optional[str]:
+    """ADR-0282: which vendored Pi the bridge would run, e.g. "v1.5.0 (bundle)".
+
+    None = no built entry (agent_runtime would honestly report chatengine via
+    the fail-closed badge anyway) or probe failure — never fabricate."""
+    global _pi_vendor_last_check, _pi_vendor_last_result
+    now = time.monotonic()
+    if now - _pi_vendor_last_check < _PI_VENDOR_CACHE_TTL:
+        return _pi_vendor_last_result
+    try:
+        from app.services.chat.pi_compat import pi_vendor_identity
+
+        ident = pi_vendor_identity()
+        result = (
+            f"{ident.describe or ident.head_commit or 'unknown'} ({ident.entry_kind})"
+            if ident.entry_built else None
+        )
+    except Exception:
+        result = None
+    _pi_vendor_last_check = now
+    _pi_vendor_last_result = result
+    return result
 
 
 @router.get("/health/live", response_model=LivenessResponse)

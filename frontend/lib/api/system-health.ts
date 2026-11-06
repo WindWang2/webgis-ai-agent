@@ -21,6 +21,8 @@ export interface HealthBasic {
   version: string;
   agent_runtime: 'pi' | 'chatengine' | string;
   pi_workers_alive: string | null;
+  /** ADR-0282: 实际运行的 vendored Pi 版本/入口形态；null=未构建（与 agent_runtime 徽章可对账）。 */
+  pi_vendor: string | null;
 }
 
 export interface LiveProbe {
