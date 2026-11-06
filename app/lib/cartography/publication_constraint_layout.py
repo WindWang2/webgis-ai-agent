@@ -7,11 +7,13 @@ leave the document unchanged so default publication bytes stay the same.
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Iterable, List, Literal, Mapping, NotRequired, Optional, Sequence, Tuple, TypedDict
 
-from app.lib.cartography.layout_constraint_spec import derive_layout_constraints
+from app.lib.cartography.layout_constraint_spec import LayoutConstraintDocument, derive_layout_constraints
 from app.lib.cartography.layout_solver import (
     LayoutParticipantV4,
+    LayoutSolutionV4,
+    LayoutSolutionV5,
     page_profiles,
     solve_layout_v4,
     solve_layout_v5,
@@ -31,7 +33,41 @@ _ANCHORS = frozenset({
 _SOLVER_PROFILES = frozenset(page_profiles())
 
 
-def not_evaluated(page_profile: str = "", reason: str = "page_profile_absent") -> Dict[str, Any]:
+class ConstraintLayoutPlacement(TypedDict):
+    id: str
+    type: str
+    zone: str
+    moved: bool
+
+
+class ConstraintLayoutSuppression(TypedDict):
+    id: str
+    type: str
+    reason: str
+
+
+class ConstraintLayoutFinding(TypedDict):
+    code: str
+    component_id: str
+
+
+class ConstraintLayoutReport(TypedDict):
+    """Bounded solver disclosure; unevaluated exports may omit details."""
+
+    constraint_layout: Literal["evaluated", "not_evaluated"]
+    page_profile: NotRequired[str]
+    reason: NotRequired[str]
+    placements: NotRequired[list[ConstraintLayoutPlacement]]
+    placement_zones: NotRequired[dict[str, str]]
+    suppressed: NotRequired[list[ConstraintLayoutSuppression]]
+    suppressed_ids: NotRequired[list[str]]
+    findings: NotRequired[list[ConstraintLayoutFinding]]
+    key_component_ids: NotRequired[list[str]]
+    disclosures_truncated: NotRequired[bool]
+    user_lock_kept: NotRequired[list[str]]
+
+
+def not_evaluated(page_profile: str = "", reason: str = "page_profile_absent") -> ConstraintLayoutReport:
     """Disclosure for a path that did not run the constraint solver."""
     return {
         "constraint_layout": "not_evaluated",
@@ -51,7 +87,8 @@ def _components(raw: Any) -> List[Mapping[str, Any]]:
 
 
 def _zone(comp: Mapping[str, Any]) -> str:
-    placement = comp.get("placement") if isinstance(comp.get("placement"), Mapping) else {}
+    placement_value = comp.get("placement")
+    placement = placement_value if isinstance(placement_value, Mapping) else {}
     anchor = placement.get("anchor") if placement.get("mode") == "anchor" else ""
     zone = anchor or comp.get("position") or ""
     if isinstance(zone, str) and zone in _ANCHORS:
@@ -80,8 +117,10 @@ def _participants(components: Iterable[Mapping[str, Any]]) -> List[LayoutPartici
     return participants
 
 
-def _report_from_solution(solution: Any, spec: Any, profile: str) -> Dict[str, Any]:
-    placements = [
+def _report_from_solution(
+    solution: LayoutSolutionV5, spec: LayoutConstraintDocument, profile: str,
+) -> ConstraintLayoutReport:
+    placements: list[ConstraintLayoutPlacement] = [
         {
             "id": item.id,
             "type": item.type,
@@ -90,11 +129,11 @@ def _report_from_solution(solution: Any, spec: Any, profile: str) -> Dict[str, A
         }
         for item in solution.placements
     ]
-    suppressed = [
+    suppressed: list[ConstraintLayoutSuppression] = [
         {"id": item.id, "type": item.type, "reason": item.reason}
         for item in solution.suppressed
     ]
-    findings = [
+    findings: list[ConstraintLayoutFinding] = [
         {"code": finding.code, "component_id": finding.component_id}
         for finding in solution.constraint_findings
     ]
@@ -118,7 +157,7 @@ def evaluate_constraint_layout(
     components: Any,
     *,
     page_profile: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> ConstraintLayoutReport:
     """Run ``solve_layout_v5`` only for an explicit solver page profile."""
     profile = str(page_profile or "").strip()
     if not profile:
@@ -137,7 +176,7 @@ def evaluate_constraint_layout(
 def resolve_cartographer_layout(
     participants: Iterable[LayoutParticipantV4],
     purpose: str,
-) -> Tuple[Any, Dict[str, Any]]:
+) -> Tuple[LayoutSolutionV4 | LayoutSolutionV5, ConstraintLayoutReport]:
     """Print profiles use v5 once. Screen purposes stay on v4 viewport."""
     parts = list(participants)
     if purpose not in _SOLVER_PROFILES:
@@ -161,10 +200,10 @@ def resolve_cartographer_layout(
 
 
 def prepare_publication_document(
-    document: Dict[str, Any],
+    document: dict[str, object],
     *,
     page_profile: Optional[str] = None,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[dict[str, object], ConstraintLayoutReport]:
     """Return the original document unless an explicit profile is evaluated.
 
     Identity on the default path is the byte-stability contract: callers must
@@ -182,7 +221,8 @@ def prepare_publication_document(
         cloned["layout"] = cloned_layout
     cloned_layout["constraint_layout"] = "evaluated"
     cloned_layout["page_profile"] = report["page_profile"]
-    workbench = cloned.get("workbench") if isinstance(cloned.get("workbench"), dict) else {}
+    workbench_value = cloned.get("workbench")
+    workbench = workbench_value if isinstance(workbench_value, dict) else {}
     locked = {
         str(item) for item in (workbench.get("lockedComponentIds") or [])
         if isinstance(item, str)
@@ -199,7 +239,8 @@ def prepare_publication_document(
         if not isinstance(comp, dict):
             continue
         cid = str(comp.get("id") or "")
-        placement = comp.get("placement") if isinstance(comp.get("placement"), dict) else {}
+        placement_value = comp.get("placement")
+        placement = placement_value if isinstance(placement_value, dict) else {}
         if placement.get("mode") == "floating" or cid in locked:
             if cid:
                 kept_locks.append(cid)
@@ -213,6 +254,6 @@ def prepare_publication_document(
         if cid in suppressed and cid not in keys:
             comp["enabled"] = False
     if kept_locks:
-        report = dict(report)
+        report = report.copy()
         report["user_lock_kept"] = kept_locks[:16]
     return cloned, report

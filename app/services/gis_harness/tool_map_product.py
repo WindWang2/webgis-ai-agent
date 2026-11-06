@@ -7,6 +7,7 @@ from app.tools.registry import tool
 from functools import partial
 from app.services.gis_harness.failure_observation import observe_optional_failure
 from app.services.gis_harness.analysis_workflows.product_gate import RefEligibility
+from app.services.gis_harness.scope_ref_guard import ScopeGeographyVerdict
 
 from app.services.gis_harness.tools import (
     ToolRegistry,
@@ -277,7 +278,7 @@ async def webgis_map_product(
         # 只在确需补层时取全量数据（get 返回 deepcopy，避免无谓 O(N) 拷贝）
         primary_data = await session_data_manager.get(session_id, primary_ref)
     scope_name = str(getattr(intent.scope, "name", "") or "")
-    scope_verdict: Optional[Dict[str, Any]] = None
+    scope_verdict: Optional[ScopeGeographyVerdict] = None
     scope_warning = ""
     if scope_name and primary_ref:
         from app.services.gis_harness.scope_ref_guard import (
