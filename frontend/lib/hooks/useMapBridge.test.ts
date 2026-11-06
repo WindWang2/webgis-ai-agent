@@ -1058,10 +1058,11 @@ describe('useMapBridge', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    // Switch session → pending actions cancelled + ACK queue flushed.
+    // send() clears queued map actions so a new question cannot keep the
+    // previous turn's camera. Session switch clears again and flushes ACKs.
     act(() => { rerender({ sid: 's2' }); });
 
-    expect(clearActions).toHaveBeenCalledTimes(1);
+    expect(clearActions).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain('/sessions/s1/map-action-ack');

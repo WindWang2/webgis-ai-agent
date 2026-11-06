@@ -303,7 +303,11 @@ def _handle_agent_settled(event: dict, session_id: str, cache_lookup: Optional[C
     # ADR-0081：task_complete 有界披露地图成品完成态（DAG 完成 ≠ 地图
     # 完成；前端据此区分“turn 结束且地图已验证”与“turn 结束但未验证”）。
     map_product = stats.get("map_product")
-    if isinstance(map_product, dict) and map_product.get("status"):
+    if (
+        isinstance(map_product, dict)
+        and map_product.get("status")
+        and not map_product.get("reused_prior_completion")
+    ):
         payload["map_product"] = {
             "status": str(map_product.get("status")),
             "summary": str(map_product.get("summary") or "")[:120],

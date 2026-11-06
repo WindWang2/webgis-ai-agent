@@ -269,6 +269,30 @@ def _project_frontend_layers(raw_layers: Any) -> list[dict[str, Any]]:
     return layers
 
 
+def _bounded_selection(raw: Any) -> dict[str, Any] | None:
+    """Brush/click selection the next turn can name without waiting on ingest."""
+    if not isinstance(raw, dict):
+        return None
+    ids_raw = raw.get("selected_ids")
+    ids = [
+        str(item)[:128]
+        for item in (ids_raw if isinstance(ids_raw, list) else [])[:50]
+        if isinstance(item, (str, int)) and str(item)
+    ]
+    predicate = raw.get("predicate") if isinstance(raw.get("predicate"), dict) else None
+    if not ids and not predicate:
+        return None
+    matched = raw.get("matched_count")
+    return {
+        "layer_id": str(raw.get("layer_id") or "")[:128],
+        "id_field": str(raw.get("id_field") or "")[:64],
+        "selected_ids": ids,
+        "matched_count": matched if isinstance(matched, int) else len(ids),
+        "predicate": predicate,
+        "approximate": bool(raw.get("approximate")),
+    }
+
+
 def _bounded_observation_list(entries: Any) -> list[dict[str, Any]]:
     """Bounded projection of observation sub-lists（P9 components/errors）。
 
@@ -314,6 +338,18 @@ async def _record_frontend_cartographic_observation(
     selected_feature = _bounded_observation_fragment(
         map_state.get("selected_feature"), _budget=node_budget
     )
+    selection = _bounded_selection(map_state.get("selection"))
+    if selection and isinstance(selected_feature, dict) and selection.get("selected_ids"):
+        selected_feature = dict(selected_feature)
+        selected_feature["selected_ids"] = selection["selected_ids"]
+        if not selected_feature.get("layer_id"):
+            selected_feature["layer_id"] = selection.get("layer_id")
+    elif selection and not isinstance(selected_feature, dict) and selection.get("selected_ids"):
+        selected_feature = {
+            "layer_id": selection.get("layer_id"),
+            "feature_id": selection["selected_ids"][0],
+            "selected_ids": selection["selected_ids"],
+        }
     user_location = _bounded_observation_fragment(
         map_state.get("user_location"), _budget=node_budget
     )
@@ -354,6 +390,7 @@ async def _record_frontend_cartographic_observation(
                 "base_layer": base_layer,
                 "selected_feature": selected_feature
                 if isinstance(selected_feature, dict) else None,
+                "selection": selection,
                 "user_location": user_location
                 if isinstance(user_location, dict) else None,
                 "focus_layer_id": focus_layer_id,

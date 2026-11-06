@@ -456,7 +456,20 @@ async def run_settle_effects(
                         read_stored_map_product,
                     )
 
-                    map_product = await read_stored_map_product(session_id)
+                    stored = await read_stored_map_product(session_id)
+                    if isinstance(stored, dict):
+                        # Idempotent skip reused a previous map's completion.
+                        # Do not present that status as this turn's cartography
+                        # success (a non-map question must not look finished).
+                        map_product = {
+                            key: value
+                            for key, value in stored.items()
+                            if key not in ("status", "task_complete", "goal_satisfaction")
+                        }
+                        map_product["reused_prior_completion"] = True
+                        map_product["cartography_this_turn"] = "not_evaluated"
+                    else:
+                        map_product = stored
                 receipts.append(SettleEffectReceipt(EFFECT_MAP_PRODUCT_DISCLOSURE, "applied"))
             except Exception as exc:  # noqa: BLE001
                 receipts.append(SettleEffectReceipt(EFFECT_MAP_PRODUCT_DISCLOSURE, "failed", str(exc)))

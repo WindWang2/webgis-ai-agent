@@ -21,6 +21,7 @@ import {
   captureAndUploadVisualSnapshot,
   type VisualSnapshotGateState,
 } from '@/lib/map-kit/visual-snapshot';
+import { subscribeTurnEpoch } from '@/lib/map/turn-epoch';
 import { devOnly } from '@/lib/utils/logger';
 import type { Layer } from '@/lib/types/layer';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
@@ -105,6 +106,11 @@ export function useCartographicObservation({
 
   // Cancel any in-flight observation on unmount so a late response can never
   // setState / dispatch a map action after the panel is gone (INV-6).
+  useEffect(() => subscribeTurnEpoch(() => {
+    observationAbortRef.current?.abort()
+    observationAbortRef.current = null
+  }), [])
+
   useEffect(() => {
     mountedRef.current = true
     return () => {

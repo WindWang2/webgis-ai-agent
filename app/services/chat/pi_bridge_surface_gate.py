@@ -36,6 +36,24 @@ if TYPE_CHECKING:  # pragma: no cover — 仅类型标注；运行时延迟导�
 logger = logging.getLogger(__name__)
 
 
+def _stale_surface_recovery(tool_name: str, mismatch: str) -> str:
+    """Recovery text that matches the extension wrap rule.
+
+    Any name registered in the spawn dump must be called directly. The
+    extension rejects wrapping it. webgis_execute is only for names that
+    are not in the tool list.
+    """
+    return (
+        f"Tool surface for this turn is stale ({mismatch}): "
+        "the registered tool contract changed or the call belongs to a "
+        "superseded surface. "
+        f"Call {tool_name} directly if it is in your tool list. "
+        "Do not wrap a registered name in webgis_execute. "
+        "Use list_available_tools, then webgis_execute, only for a name "
+        "that is not registered."
+    )
+
+
 def evict_turn_receipts(turn_sid: str) -> None:
     """Turn 终态时清理该 session 的 SurfaceReceipt（对照真相随 turn 回收）。
 
@@ -95,12 +113,7 @@ def stale_surface_gate(
             toolCallId=request.toolCallId,
             content=[{
                 "type": "text",
-                "text": (
-                    f"Tool surface for this turn is stale ({mismatch}): "
-                    "the registered tool contract changed or the call "
-                    "belongs to a superseded surface. Re-discover via "
-                    "list_available_tools, then call webgis_execute."
-                ),
+                "text": _stale_surface_recovery(tool_name, mismatch),
             }],
             details={
                 "error": "surface_stale",

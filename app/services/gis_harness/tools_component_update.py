@@ -149,6 +149,7 @@ def register_component_update_tool(registry: ToolRegistry) -> None:
         variant: Optional[str] = None,
         style: Optional[Dict[str, Any]] = None,
         options: Optional[Dict[str, Any]] = None,
+        palette: Optional[str] = None,
         chart: Optional[Dict[str, Any]] = None,
         stats: Optional[Dict[str, Any]] = None,
         create: bool = False,
@@ -167,6 +168,21 @@ def register_component_update_tool(registry: ToolRegistry) -> None:
 
         if not session_id:
             return {"success": False, "message": "Missing session_id"}
+        palette_name = palette or (options or {}).get("heatmap_palette")
+        palette_result = None
+        if isinstance(palette_name, str) and palette_name.strip():
+            from app.services.gis_harness.heatmap_restyle import recolor_session_heatmaps
+
+            palette_result = await recolor_session_heatmaps(session_id, palette_name)
+            if not palette_result.get("success"):
+                return palette_result
+            option_keys = set(options or {}) - {"heatmap_palette"}
+            component_edit = any(
+                v is not None
+                for v in (enabled, position, placement, variant, style, chart, stats)
+            ) or bool(option_keys) or bool(action)
+            if not component_edit:
+                return palette_result
         # Component Lifecycle V3（Runtime V4 §17）：生命周期动作与 patch 同一
         # 工具入口（不开 per-action 工具），但走专用意图 + 事务内验证。
         if action and action != "patch":

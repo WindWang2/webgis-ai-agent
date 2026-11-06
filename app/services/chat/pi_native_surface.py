@@ -48,7 +48,7 @@ _LABELS = {
 _SNIPPETS = {
     "webgis_map_intent": "First GIS step for 分布/密度. Pass {query: the user text}.",
     "webgis_map_product": "Assemble the map after data tools return. Same SessionPlan envelope.",
-    "webgis_component_update": "Restyle one map component. Does not start a new city analysis.",
+    "webgis_component_update": "Restyle one map component or heatmap palette. Does not re-query data.",
     "webgis_cartography_status": "Zero-argument verdict pull AFTER the map changed. Call with {}.",
     "query_local_poi": "China POI. district + subtype, e.g. 成都市 + 小学.",
     "get_local_admin_boundary": "China admin boundary. name e.g. 成都市.",
@@ -555,6 +555,46 @@ def _continuation_tools_snapshot(active_capabilities: Sequence[str]) -> list[str
         return []
 
 
+_DISTRIBUTION_MARKERS = ("分布", "密度", "热力", "heatmap")
+_DISTRIBUTION_TOOLS = ("heatmap_data", "h3_binning")
+
+
+def distribution_cartography_tools(message: str) -> tuple[str, ...]:
+    """Tools a distribution/heatmap sentence must be able to call directly.
+
+    They are registered, so the extension rejects wrapping them. If they are
+    not in the active set, the model has no legal call. Dynamic-surface off
+    still returns an empty projection; the caller must not invent a marker.
+    """
+    text = message or ""
+    if any(marker in text for marker in _DISTRIBUTION_MARKERS):
+        return _DISTRIBUTION_TOOLS
+    return ()
+
+
+def _pin_registered_tools(
+    registry: Any,
+    names: Sequence[str],
+    extra: Sequence[str],
+    *,
+    skip: set[str] | None = None,
+) -> list[str]:
+    """Append registered tier<3 names that a turn must be able to call."""
+    blocked = skip or set()
+    pinned = list(names)
+    for name in extra:
+        if name in pinned or name in blocked:
+            continue
+        try:
+            desc = registry.descriptor(name)
+        except Exception:  # noqa: BLE001 — 未注册就不激活
+            continue
+        if int(desc.tier) >= 3 or int(getattr(desc, "effective_security_tier", 0) or 0) >= 3:
+            continue
+        pinned.append(name)
+    return pinned
+
+
 def compute_turn_active_tools(
     message: str,
     *,
@@ -653,14 +693,21 @@ def compute_turn_active_tools(
                     "confidence": float(selection.confidence),
                     "reason": str(selection.abstain_reason)[:96],
                 })
-            _record_abstained_receipt(registry, session_id, turn_id)
-            return list(NATIVE_TOOL_NAMES)
+            pinned = _pin_registered_tools(
+                registry, NATIVE_TOOL_NAMES, distribution_cartography_tools(message),
+            )
+            _record_abstained_receipt(registry, session_id, turn_id, extra=pinned)
+            return pinned
         if disclosure is not None:
             disclosure.update({
                 "abstained": False,
                 "confidence": float(getattr(selection, "confidence", 1.0) or 1.0),
             })
-        names = list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names]))
+        names = _pin_registered_tools(
+            registry,
+            list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names])),
+            distribution_cartography_tools(message),
+        )
         safe: list[str] = []
         for name in names:
             try:
@@ -688,6 +735,14 @@ def compute_turn_active_tools(
             safe = list(qualification["selected"])
             if disclosure is not None and qualification["dropped"]:
                 disclosure["qualification_dropped"] = qualification["dropped"][:12]
+        qual_dropped = {
+            str(item.get("tool"))
+            for item in ((qualification or {}).get("dropped") or [])
+            if isinstance(item, dict)
+        }
+        safe = _pin_registered_tools(
+            registry, safe, distribution_cartography_tools(message), skip=qual_dropped,
+        )
         # ADR-0253 D2：激活面 schema 字节预算 —— 只裁动态候选，native 前门
         # 恒保留；裁剪记因（disclosure + 链发射 + metrics），绝不阻断 turn。
         try:
@@ -696,6 +751,11 @@ def compute_turn_active_tools(
             )
         except Exception:  # noqa: BLE001 — 预算是增强，度量失败不裁名单
             budget_info = None
+        # Distribution tools are a product path, not optional retrieval.
+        # Re-pin after the byte budget so a Chengdu heatmap call stays legal.
+        safe = _pin_registered_tools(
+            registry, safe, distribution_cartography_tools(message), skip=qual_dropped,
+        )
         # ADR-0224：铸造 SurfaceReceipt（最终激活面 + 资格/预算全部逐出因；
         # 同 turn 幂等 —— 首次铸造后本 turn 内 surface 不可变）。
         _turn_receipt = None
@@ -841,7 +901,12 @@ def _apply_surface_qualification(
     }
 
 
-def _record_abstained_receipt(registry: Any, session_id: str, turn_id: str) -> None:
+def _record_abstained_receipt(
+    registry: Any,
+    session_id: str,
+    turn_id: str,
+    extra: Sequence[str] = (),
+) -> None:
     """V6 弃权 turn 的 receipt：native 前门 only + abstained 标记。
 
     回调 fingerprint echo 在弃权 turn 也要有对照真相（native 7 的 spec
@@ -860,8 +925,9 @@ def _record_abstained_receipt(registry: Any, session_id: str, turn_id: str) -> N
         if not tool_abi_enabled():
             return
         generation = current_registry_generation()
+        selected = list(dict.fromkeys([*NATIVE_TOOL_NAMES, *extra]))
         specs = []
-        for name in NATIVE_TOOL_NAMES:
+        for name in selected:
             try:
                 spec = compile_tool_spec(registry, name, registry_generation=generation)
             except Exception:  # noqa: BLE001
@@ -872,8 +938,8 @@ def _record_abstained_receipt(registry: Any, session_id: str, turn_id: str) -> N
             specs,
             session_id=session_id,
             turn_id=turn_id,
-            candidates=list(NATIVE_TOOL_NAMES),
-            selected=list(NATIVE_TOOL_NAMES),
+            candidates=selected,
+            selected=selected,
             drops=[],
             abstained=True,
         )

@@ -11,6 +11,7 @@ import { bboxToFlyTo, isValidBbox } from '@/lib/utils/geo';
 import type { StepResultEvent } from '@/lib/types/agent-events';
 import { MapActionContext } from '@/lib/contexts/map-action-context';
 import type { MapActionContextType } from '@/lib/contexts/map-action-context';
+import { bumpTurnEpoch } from '@/lib/map/turn-epoch';
 import { createMapActionAckSender } from '@/lib/api/map-action-acks';
 import type { MapActionAckSender, MapActionAckSink } from '@/lib/api/map-action-acks';
 
@@ -303,6 +304,8 @@ export function useMapBridge(
     async (content: string, mapSnapshot: Record<string, unknown>): Promise<void> => {
       // [ENG-P4] abort any in-flight stream before starting a new one
       abortControllerRef.current?.abort();
+      mapActionCtxRef.current?.clearActions?.();
+      bumpTurnEpoch();
       const controller = new AbortController();
       abortControllerRef.current = controller;
       const streamEpoch = ++streamEpochRef.current;
@@ -672,6 +675,8 @@ export function useMapBridge(
     const controller = abortControllerRef.current;
     if (!controller || controller.signal.aborted) return;
     controller.abort();
+    mapActionCtxRef.current?.clearActions?.();
+    bumpTurnEpoch();
     onEvent({
       event: 'task_cancelled',
       data: {} as Record<string, unknown>,

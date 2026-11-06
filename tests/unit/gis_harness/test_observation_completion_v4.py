@@ -237,7 +237,13 @@ def test_task_complete_fold_from_stored_block():
     assert _is_task_complete({
         "product_verdict": "READY_WITH_WARNINGS",
         "final_map_status": "verified_with_degradation",
+        "render_status": "verified",
     }) is True
+    assert _is_task_complete({
+        "product_verdict": "READY_WITH_WARNINGS",
+        "final_map_status": "verified_with_degradation",
+        "render_status": "unknown",
+    }) is False
     assert _is_task_complete({
         "product_verdict": "BLOCKED_BY_METHOD", "final_map_status": "verified",
     }) is False

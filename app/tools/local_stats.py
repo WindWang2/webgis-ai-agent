@@ -165,7 +165,9 @@ def register_local_stats_tools(registry: ToolRegistry):
         # 空间过滤优先级：polygon（任意矢量区域，精确包含）> bbox（矩形）
         # > district/adcode（行政区精确归属——行政区查询首选，无矩形外溢）。
         raw_bbox = list(bbox) if isinstance(bbox, (list, tuple)) else (bbox or None)
-        res = query_gd_poi(
+        from app.services.gis_harness.scope_ref_guard import attach_query_place
+
+        res = attach_query_place(query_gd_poi(
             raw_bbox,
             name_like=name_like,
             category=category,
@@ -174,7 +176,7 @@ def register_local_stats_tools(registry: ToolRegistry):
             district=district,
             polygon=polygon,
             limit=_to_int(limit, 2000),
-        )
+        ), district)
         if isinstance(res, dict) and "error" in res and ("未生成" in str(res.get("error")) or "缺失" in str(res.get("error"))):
             # 自动降级至在线高德 POI 检索通道
             try:
@@ -232,13 +234,19 @@ def register_local_stats_tools(registry: ToolRegistry):
                                     },
                                 })
                         if features:
-                            return {
+                            return attach_query_place({
                                 "type": "FeatureCollection",
                                 "features": features,
                                 "count": len(features),
                                 "source": "amap_online_fallback",
+                                "success": False,
+                                "code": "partial_online_fallback",
+                                "error": (
+                                    "本地 POI 库缺失，在线结果只是截断样本，"
+                                    "不能当作全市分布或热力成功。"
+                                ),
                                 "note": "本地 gd_pois.gpkg 离线库未挂载，已自动降级使用在线高德 POI 接口检索。",
-                            }
+                            }, district)
             except Exception as exc:
                 logger.warning("[local_stats] query_local_poi online fallback failed: %s", exc)
 

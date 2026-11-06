@@ -122,7 +122,13 @@ class MapSpecStore:
         （工具 authoring 路径的归因缺口）。统一改走 apply_gis_mutation：
         守卫/溯源/事件语义与其余生产入口一致，引擎事务面不变。信封缺省由
         门面铸造（每笔突变必有 mutation_id/producer_class 身份）。
+
+        取消令牌在提交前检查。已取消的 Pi 回合若已越过 HTTP 409 门，
+        仍不得把图层写入 MapSpec。无 token 时 checkpoint 是空操作。
         """
+        from app.lib.cancellation import checkpoint
+
+        checkpoint()
         from app.services.gis_world_state import apply_gis_mutation
 
         return await apply_gis_mutation(

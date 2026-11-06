@@ -16,6 +16,109 @@ from app.lib.geo_processor.core import (
 logger = logging.getLogger(__name__)
 
 
+def _filter_features_by_ids(source: Any, feature_ids: List[str]) -> Any:
+    """Keep only features whose resolved id is in ``feature_ids``.
+
+    Returns an error dict when the caller named ids and none survive. Does
+    not fall back to the full collection.
+    """
+    from app.services.feature_edit.identity import resolve_feature_id
+
+    wanted = {str(item) for item in feature_ids if item is not None and str(item)}
+    if not wanted:
+        return source
+    if not isinstance(source, dict):
+        return {
+            "success": False,
+            "code": "selection_unusable",
+            "error": "无法按选择过滤源点：输入不是 FeatureCollection",
+        }
+    features = source.get("features")
+    if not isinstance(features, list):
+        return {
+            "success": False,
+            "code": "selection_unusable",
+            "error": "无法按选择过滤源点：缺少 features",
+        }
+    kept = []
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        fid = resolve_feature_id(feature)
+        if fid and fid in wanted:
+            kept.append(feature)
+    if not kept:
+        return {
+            "success": False,
+            "code": "selection_miss",
+            "error": "选择中的要素不在源点集合内，未对整层做距离分析",
+        }
+    filtered = dict(source)
+    filtered["features"] = kept
+    filtered["count"] = len(kept)
+    return filtered
+
+
+async def _scope_source_points(
+    source: Any,
+    feature_ids: Optional[List[str]],
+    session_id: Optional[str],
+) -> Any:
+    """Apply an explicit id list, or the session's validated selection.
+
+    No selection and no ids: return the source unchanged. A live selection
+    that fails validation is an error, not a silent full-layer analysis.
+    """
+    ids = [str(item) for item in (feature_ids or []) if item]
+    if not ids and session_id:
+        from app.services.gis_situation.analysis_scope import (
+            derive_claimed_scope,
+            validate_analysis_scope,
+        )
+        from app.services.gis_harness.interaction_ir.projection import (
+            interaction_snapshot_via_store,
+        )
+        from app.services.session_data import session_data_manager
+
+        try:
+            snapshot = await interaction_snapshot_via_store(
+                session_data_manager, session_id,
+            )
+        except Exception:  # noqa: BLE001 — 读失败按无选择，不扩大分析面
+            snapshot = {}
+        pre_turn = None
+        try:
+            map_state = await session_data_manager.get_map_state(session_id)
+            observation = map_state.get("_cartographic_context_observation")
+            if isinstance(observation, dict):
+                selected = observation.get("selected_feature")
+                pre_turn = selected if isinstance(selected, dict) else None
+                selection = observation.get("selection")
+                if pre_turn is None and isinstance(selection, dict):
+                    pre_turn = selection
+                elif isinstance(selection, dict) and not pre_turn.get("selected_ids"):
+                    merged = dict(pre_turn)
+                    merged["selected_ids"] = selection.get("selected_ids")
+                    pre_turn = merged
+        except Exception:  # noqa: BLE001
+            pre_turn = None
+        claimed = derive_claimed_scope(snapshot, pre_turn)
+        claimed_ids = claimed.get("feature_ids") or []
+        if claimed.get("kind") != "none" and claimed_ids:
+            validated = await validate_analysis_scope(session_id, claimed)
+            if validated.get("status") != "usable":
+                return {
+                    "success": False,
+                    "code": "selection_unusable",
+                    "error": "当前选择未通过归属校验，未对整层做距离分析",
+                    "reason": validated.get("reason"),
+                }
+            ids = [str(item) for item in (validated.get("feature_ids") or claimed_ids)]
+    if not ids:
+        return source
+    return _filter_features_by_ids(source, ids)
+
+
 def _resolve_kriging_declared_crs(data: Any) -> Optional[str]:
     """FC-level ``crs`` member → declared CRS string (GIS-106).
 
@@ -2843,6 +2946,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            param_descriptions={
                "source_points": "源点要素集 (GeoJSON 或 ref:xxx) — 每个点会找一个最近目标",
                "target_points": "目标点要素集 (GeoJSON 或 ref:xxx) — 候选设施集合",
+                "feature_ids": "可选。只分析这些源要素 id。缺省时若会话有已验证选择则用选择。",
            },
            side_effect="deterministic_compute",
            network=False,
@@ -2855,9 +2959,25 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            result_size_policy="ref_offload",
            unit_semantics="meters",
            failure_modes=("invalid_args", "missing_data"))
-    def nearest_facility(source_points: Any, target_points: Any) -> dict:
+    async def nearest_facility(
+        source_points: Any,
+        target_points: Any,
+        feature_ids: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+    ) -> dict:
         from app.lib.geo_analysis.network import nearest_neighbor_features
-        res = nearest_neighbor_features(source_points, target_points)
-        return res.to_llm_response()
+
+        scoped = await _scope_source_points(source_points, feature_ids, session_id)
+        if isinstance(scoped, dict) and scoped.get("success") is False:
+            return scoped
+        res = nearest_neighbor_features(scoped, target_points)
+        payload = res.to_llm_response()
+        if isinstance(payload, dict):
+            payload["distance_method"] = "euclidean"
+            payload.setdefault(
+                "disclosure",
+                "straight-line metres, not road-network distance",
+            )
+        return payload
 
     register_raster_transform_tools(registry)

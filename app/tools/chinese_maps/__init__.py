@@ -607,7 +607,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
            capabilities=("poi_query",))
     async def search_poi_around(
         center: list,
-        radius_m: int = 1000,
+        radius_m: float = 1000,
         keyword: str = "",
         types: str = "",
         provider: str = "amap",
