@@ -36,10 +36,9 @@ import pytest
 from app.evaluation import index
 
 _BASELINES = Path(__file__).parent / "baselines"
-# 724965a864a4 calibrated G4's descriptor-only bound from 24KB to 30KB.
-# Reverting only that value reproduces the prior cdba7152... pin exactly;
-# the corpus declarations and payload limits themselves are unchanged here.
-_GOLDEN_HASH_BASELINE = "6ae6a5db46136024775b44330e7c776d"
+# G4 separates canonical raw UTF-8 JSON (same 30,000 cap) from the real
+# dispatch model payload (new 2,500-byte cap). No other case was changed.
+_GOLDEN_HASH_BASELINE = "a8a70a17cbbac2cac8262df014ed476e"
 
 #: 注册目标态：每个语料模块 + golden 语料都应受 manifest 管理。
 #: 当前 index._ensure_builtin_registrations 只登记 18 条（缺
@@ -219,6 +218,7 @@ class TestPinnedBaselines:
             for rule in case.numeric_assertions
         ] == [
             ("step_result_bytes", 0, "", "value", "<=", 30000),
+            ("llm_payload_bytes", 0, "", "value", "<=", 2500),
             ("step_result", 0, "features", "len", "<=", 0),
             ("step_result", 0, "data", "len", "<=", 0),
         ]

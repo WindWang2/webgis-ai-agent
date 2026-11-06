@@ -117,21 +117,30 @@ def _check_numeric(
     fixture_docs: Dict[str, Any],
     quantities: Dict[str, float | None],
     step_blobs: Optional[List[str]] = None,
+    llm_payloads: Optional[List[Optional[str]]] = None,
 ) -> bool:
-    if assertion.source == "step_result_bytes":
-        # LLM-facing boundedness: the serialized tool result must stay under
-        # a byte budget (large-data contract — descriptors, not payloads).
+    if assertion.source in ("step_result_bytes", "llm_payload_bytes"):
+        # Raw diagnostics and model-facing content are different contracts.
+        # Raw size uses canonical compact JSON, not incidental pretty spacing;
+        # model size measures the exact dispatch string without reserialization.
         if not step_results:
             return False
         idx = assertion.step if assertion.step is not None else len(step_results) - 1
         if idx < 0 or idx >= len(step_results):
             return False
-        if step_blobs is not None and idx < len(step_blobs):
-            size = len(step_blobs[idx])  # reuse the dispatch-time serialization
+        if assertion.source == "llm_payload_bytes":
+            if (llm_payloads is None or idx >= len(llm_payloads)
+                    or not isinstance(llm_payloads[idx], str)):
+                return False
+            blob = llm_payloads[idx]
+        elif step_blobs is not None and idx < len(step_blobs):
+            blob = step_blobs[idx]  # reuse the canonical raw serialization
         else:
             import json as _json
 
-            size = len(_json.dumps(step_results[idx], ensure_ascii=False, default=str))
+            blob = _json.dumps(step_results[idx], ensure_ascii=False, default=str,
+                               separators=(",", ":"))
+        size = len(blob.encode("utf-8"))
         return _check_op(size, assertion.op, assertion.value, assertion.tol)
     if assertion.source == "quantity":
         actual = quantities.get(assertion.quantity or "")
@@ -1150,13 +1159,37 @@ class GISBenchmarkRunner:
         seen_calls: Dict[Tuple[str, str], int] = {}
         results: List[Dict[str, Any]] = []
         _last_step_blobs: List[str] = []
+        llm_payloads: Optional[List[Optional[str]]] = None
+        dispatch_service = None
+        executed_tools: set[tuple[str, str]] = set()
+        if any(a.source == "llm_payload_bytes" for a in case.numeric_assertions):
+            from app.services.tool_dispatch_service import ToolDispatchService
+
+            dispatch_service = ToolDispatchService(registry=reg)
+            llm_payloads = []
         for i, step in enumerate(case.script):
             args = json.loads(json.dumps(step.args))  # deep copy
             args = _resolve_fixture_arguments(args)
             call_key = (step.tool, json.dumps(args, sort_keys=True, default=str))
             seen_calls[call_key] = seen_calls.get(call_key, 0) + 1
+            if llm_payloads is not None:
+                llm_payloads.append(None)  # retain indices if dispatch raises
             try:
-                res = await reg.dispatch(step.tool, args, session_id=session_id)
+                if dispatch_service is not None:
+                    dispatched = await dispatch_service.dispatch(
+                        {"id": f"bench-step-{i}", "function": {
+                            "name": step.tool, "arguments": args}},
+                        session_id, executed_tools,
+                    )
+                    res = dispatched.raw_result
+                    if llm_payloads is not None:
+                        llm_payloads[-1] = dispatched.llm_payload
+                    if dispatched.status != "ok" and not step.expect_error_contains:
+                        evidence["failures"].append(
+                            f"step {i} ({step.tool}) dispatch status: {dispatched.status}"
+                        )
+                else:
+                    res = await reg.dispatch(step.tool, args, session_id=session_id)
             except Exception as e:  # noqa: BLE001 — failure semantics are evidence
                 res = {"success": False, "error": str(e)}
             results.append(res if isinstance(res, dict) else {"value": res})
@@ -1164,7 +1197,7 @@ class GISBenchmarkRunner:
             # Serialize once per step: the same blob backs the bounded preview
             # and the (later) step_result_bytes assertion — no double dump of
             # large results.
-            blob = json.dumps(res, ensure_ascii=False, default=str)
+            blob = json.dumps(res, ensure_ascii=False, default=str, separators=(",", ":"))
             _last_step_blobs.append(blob)
             got = blob[:200]
             if step.expect_error_contains:
@@ -1184,6 +1217,8 @@ class GISBenchmarkRunner:
                         f"step {i} ({step.tool}) failed: {got}"
                     )
         evidence["results"] = results
+        if llm_payloads is not None:
+            evidence["llm_payloads"] = llm_payloads
         evidence["retry_count"] = sum(c - 1 for c in seen_calls.values() if c > 1)
 
         # MapSpec-derived assertions.
@@ -1251,6 +1286,7 @@ class GISBenchmarkRunner:
                 fixture_docs=fixture_docs,
                 quantities=quantities,
                 step_blobs=_last_step_blobs,
+                llm_payloads=llm_payloads,
             ):
                 evidence["failures"].append(
                     f"numeric assertion failed: {assertion.label or assertion.model_dump()}"
