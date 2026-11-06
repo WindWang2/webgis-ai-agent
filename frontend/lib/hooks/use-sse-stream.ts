@@ -15,6 +15,9 @@ import { reportLayerFetchFailure, syncSpecLayersToStore } from '@/lib/session/ma
 import { commitMapSpecDocument, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { ingestRenderWork } from '@/lib/render-protocol/render-work';
 import { nextTurn, noteAgentDisplayed } from '@/lib/chat/turn-focus';
+import { flushInteractionBus } from '@/lib/interaction/bus';
+import { subscribeTurnEpoch } from '@/lib/map/turn-epoch';
+import { getSelection } from '@/lib/selection/selection-store';
 import { useToastStore } from '@/components/ui/toast';
 import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
@@ -435,6 +438,13 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       );
     });
   }
+
+  const rotateLayerFetches = useCallback(() => {
+    layerFetchAbortRef.current?.abort();
+    layerFetchAbortRef.current = new AbortController();
+  }, []);
+
+  useEffect(() => subscribeTurnEpoch(rotateLayerFetches), [rotateLayerFetches]);
 
   // Reset abort controller on session change to cancel in-flight layer fetches.
   // undefined → assigned is the server binding the currently live stream
@@ -899,6 +909,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       } else if (event.event === 'task_cancelled') {
         // #466: 抢占取消的 task 不再发 step_result/step_cancelled —— 清空
         // turn-scoped pending args + 兜底终结全部 running 行。
+        rotateLayerFetches();
         useHudStore.getState().resetPendingToolArgs();
         finalizeToolCalls('failed', '已取消');
         setMessages((prev) => appendTurnNotice(prev, {
@@ -983,7 +994,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         }
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent, refreshDatasetLayer]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent, refreshDatasetLayer, rotateLayerFetches]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit
@@ -1139,6 +1150,19 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       // step_cancelled, exhausted reconnects) must never be FIFO-consumed by
       // THIS turn's step_results as wrong input evidence.
       useHudStore.getState().resetPendingToolArgs();
+      flushInteractionBus();
+      const brush = getSelection();
+      const brushIds = brush?.selected_ids?.slice(0, 50) ?? [];
+      const selection = brush && (brushIds.length > 0 || brush.predicate)
+        ? {
+            layer_id: brush.layer_id,
+            id_field: brush.id_field ?? null,
+            selected_ids: brushIds,
+            predicate: brush.predicate ?? null,
+            matched_count: brush.matched_count ?? brushIds.length,
+            approximate: (brush.matched_count ?? brushIds.length) > brushIds.length,
+          }
+        : null;
 
       const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature, focusLayerId } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();
@@ -1178,8 +1202,19 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         // 稳定要素标识、≤5 个标量关键属性、可算时的 bbox。原始要素 payload /
         // geometry 永远不进 prompt 路径（后端 build_map_state_summary 只消费这些字段）。
         selected_feature: selectedFeature
-          ? buildSelectedFeatureSnapshot(selectedFeature, hudLayers.map((l) => l.id))
-          : null,
+          ? {
+              ...buildSelectedFeatureSnapshot(selectedFeature, hudLayers.map((l) => l.id)),
+              ...(brushIds.length ? { selected_ids: brushIds } : {}),
+            }
+          : (brushIds.length
+              ? {
+                  layer_id: brush?.layer_id ?? null,
+                  feature_id: brushIds[0],
+                  selected_ids: brushIds,
+                  is_approximate: selection?.approximate || undefined,
+                }
+              : null),
+        selection,
         // FE-4 (design §7)：用户聚焦图层（tool-call 卡片 / 图层面板聚焦）随 map_state
         // 上报，后端以"用户聚焦图层: Z"注入环境感知；无聚焦时省略。
         focus_layer_id: focusLayerId ?? null,
